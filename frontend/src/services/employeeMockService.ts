@@ -19,7 +19,6 @@ const initialTrackedFields: { section: FieldHistorySection; field: string; label
   { section: "DATOS_LABORALES", field: "shift", label: "Turno habitual", get: (employee) => employee.shift },
   { section: "CONTACTO_DOMICILIO", field: "domicilio.localidadNombre", label: "Localidad", get: (employee) => employee.domicilio?.localidadNombre || employee.city },
   { section: "RESPONSABLES_ASIGNACIONES", field: "timeResponsible", label: "Responsable de carga horaria", get: (employee) => employee.timeResponsible },
-  { section: "TRANSPORTE", field: "transportRoute", label: "Recorrido", get: (employee) => employee.transportRoute },
 ];
 
 const fmt = (value: unknown) => Array.isArray(value) ? value.join(", ") : value === undefined || value === null || value === "" ? "" : String(value);
@@ -54,7 +53,7 @@ export const employeeMockService = {
       if (previous.timeResponsible !== employee.timeResponsible) addEvent("Cambio de responsable de carga horaria", `Responsable: ${previous.timeResponsible || "-"} -> ${employee.timeResponsible || "-"}`);
       if (previous.endDate !== employee.endDate && employee.endDate) addEvent(new Date(`${employee.endDate}T00:00:00`) > new Date() ? "Baja laboral programada" : "Baja laboral registrada", `Fecha de baja: ${employee.endDate}.`);
       if (previousStatus !== nextStatus) addEvent("Cambio de estado laboral calculado", `El colaborador pasó a estado ${nextStatus} por fecha de baja.`);
-      if (previous.transport !== employee.transport || previous.transportRoute !== employee.transportRoute) addEvent("Cambio de transporte", "Se modificó la configuración de transporte.");
+      if (previous.transport !== employee.transport || previous.city !== employee.city || previous.transportNotes !== employee.transportNotes) addEvent("Cambio de transporte", "Se modificó la configuración de transporte.");
     }
     const value = { ...employee, status: nextStatus, historyEvents: events };
     writeStore("employees", all.map((e) => e.id === value.id ? value : e));
