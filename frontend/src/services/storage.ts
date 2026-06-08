@@ -1,11 +1,12 @@
 import { mockAudit, mockDocuments, mockEmployees, mockNovelties, mockTimeEntries, mockUsers } from "../data/mockData";
+import { mockPositions } from "../data/mockPositions";
 import { locationMockService } from "./locationMockService";
 import type { Employee, EmployeeAddress, EmployeeLocationMap, LaborMovement } from "../types";
 
-export type StoreKey = "employees" | "users" | "timeEntries" | "novelties" | "audit" | "documents" | "changeLogs" | "fieldHistory" | "blockHistory";
-const seeds = { employees: mockEmployees, users: mockUsers, timeEntries: mockTimeEntries, novelties: mockNovelties, audit: mockAudit, documents: mockDocuments, changeLogs: [], fieldHistory: [], blockHistory: [] };
+export type StoreKey = "employees" | "users" | "timeEntries" | "novelties" | "audit" | "documents" | "changeLogs" | "fieldHistory" | "blockHistory" | "positions" | "positionHistory";
+const seeds = { employees: mockEmployees, users: mockUsers, timeEntries: mockTimeEntries, novelties: mockNovelties, audit: mockAudit, documents: mockDocuments, changeLogs: [], fieldHistory: [], blockHistory: [], positions: mockPositions, positionHistory: mockPositions.flatMap((position) => position.history) };
 const key = (name: StoreKey) => `losod_demo_${name}`;
-const seedVersion = "2026-06-field-history-v1";
+const seedVersion = "2026-06-positions-v1";
 
 function normalizeLocationMap(value: unknown, employee: Partial<Employee>): EmployeeLocationMap {
   if (value && typeof value === "object" && "source" in value) return value as EmployeeLocationMap;
@@ -64,6 +65,13 @@ function normalizeEmployee(employee: Partial<Employee> & Record<string, unknown>
     legajo: String(employee.legajo || legajoInterno),
     legajoInterno,
     legajoFinnegans: employee.legajoFinnegans ? String(employee.legajoFinnegans) : "",
+    companies: Array.isArray(employee.companies) ? employee.companies.map(String) : [String(employee.company || "")].filter(Boolean),
+    positionId: employee.positionId ? String(employee.positionId) : employee.puestoId ? String(employee.puestoId) : "",
+    puestoId: employee.puestoId ? String(employee.puestoId) : employee.positionId ? String(employee.positionId) : "",
+    puestoNombre: String(employee.puestoNombre || employee.position || employee.puesto || ""),
+    healthInsurance: String(employee.healthInsurance || employee.obraSocial || "OSPRERA"),
+    directManagers: Array.isArray(employee.directManagers) ? employee.directManagers.map(String) : [String(employee.directManager || "")].filter(Boolean),
+    timeResponsibles: Array.isArray(employee.timeResponsibles) ? employee.timeResponsibles.map(String) : [String(employee.timeResponsible || "")].filter(Boolean),
     address: String(employee.address || addressStreet),
     addressStreet,
     addressNumber: String(employee.addressNumber || employee.numeroDireccion || "S/N"),
@@ -83,7 +91,15 @@ function ensureSeedVersion() {
     const raw = localStorage.getItem(key(name));
     if (!raw) return localStorage.setItem(key(name), JSON.stringify(seeds[name]));
     if (name === "employees") {
-      localStorage.setItem(key(name), JSON.stringify((JSON.parse(raw) as Array<Partial<Employee> & Record<string, unknown>>).map(normalizeEmployee)));
+      const seedById = new Map(mockEmployees.map((employee) => [employee.id, employee]));
+      const current = (JSON.parse(raw) as Array<Partial<Employee> & Record<string, unknown>>).map((employee) => {
+        const normalized = normalizeEmployee(employee);
+        const seed = seedById.get(normalized.id);
+        return seed?.companies?.length ? { ...normalized, companies: seed.companies } : normalized;
+      });
+      const currentIds = new Set(current.map((employee) => employee.id));
+      const additions = mockEmployees.filter((employee) => !currentIds.has(employee.id));
+      localStorage.setItem(key(name), JSON.stringify([...current, ...additions]));
     }
   });
   localStorage.setItem("losod_demo_seed_version", seedVersion);

@@ -50,7 +50,7 @@ export const dashboardMetricsMockService = {
       reviewLoads: new Set(entries.filter((entry) => entry.status === "En revisión").map((entry) => entry.employeeId)).size,
       expiredDocuments: documents.filter((document) => document.status === "Vencido").length,
       expiringDocuments: documents.filter((document) => document.status === "Por vencer").length,
-      missingResponsible: active.filter((employee) => !employee.timeResponsible).length,
+      missingResponsible: active.filter((employee) => !employee.timeResponsible && !employee.timeResponsibles?.length).length,
       pendingNovelties: novelties.filter((novelty) => novelty.status === "Pendiente").length,
       headcountByCompany: groupCount(active.map((employee) => employee.company)),
       headcountBySector: groupCount(active.map((employee) => employee.sector)),

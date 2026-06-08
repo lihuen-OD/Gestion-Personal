@@ -6,7 +6,7 @@ export const timeEntryMockService = {
   getByEmployee: (employeeId: string, period: string) => readStore<TimeEntry>("timeEntries").filter((t) => t.employeeId === employeeId && t.period === period),
   getEmployeesFor: (name: string, role: string) => {
     const all = readStore<Employee>("employees");
-    return role === "Nivel 3 - Administrativo de Carga Horaria" ? all.filter((e) => e.timeResponsible === name) : all;
+    return role === "Nivel 3 - Administrativo de Carga Horaria" ? all.filter((e) => e.timeResponsible === name || e.timeResponsibles?.includes(name)) : all;
   },
   save: (entry: Omit<TimeEntry, "id">) => {
     const all = readStore<TimeEntry>("timeEntries");

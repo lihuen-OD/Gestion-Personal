@@ -6,19 +6,22 @@ import { calculateEmployeeStatus } from "./employeeStatusService";
 import { readStore, writeStore } from "./storage";
 
 const initialTrackedFields: { section: FieldHistorySection; field: string; label: string; get: (employee: Employee) => unknown }[] = [
-  { section: "DATOS_LABORALES", field: "company", label: "Empresa", get: (employee) => employee.company },
+  { section: "DATOS_LABORALES", field: "companies", label: "Empresa", get: (employee) => employee.companies || [employee.company] },
   { section: "DATOS_LABORALES", field: "businessUnit", label: "Unidad de negocio", get: (employee) => employee.businessUnit },
   { section: "DATOS_LABORALES", field: "establishment", label: "Establecimiento", get: (employee) => employee.establishment },
   { section: "DATOS_LABORALES", field: "costCenter", label: "Centro de costo", get: (employee) => employee.costCenter },
   { section: "DATOS_LABORALES", field: "sector", label: "Sector", get: (employee) => employee.sector },
+  { section: "DATOS_LABORALES", field: "positionId", label: "Puesto vinculado", get: (employee) => employee.positionId },
+  { section: "DATOS_LABORALES", field: "puestoNombre", label: "Puesto", get: (employee) => employee.puestoNombre || employee.position },
   { section: "DATOS_LABORALES", field: "position", label: "Puesto", get: (employee) => employee.position },
   { section: "DATOS_LABORALES", field: "receiptCategory", label: "Categoria de recibo", get: (employee) => employee.receiptCategory },
   { section: "DATOS_LABORALES", field: "internalCategory", label: "Categoria interna", get: (employee) => employee.internalCategory },
   { section: "DATOS_LABORALES", field: "agreement", label: "Convenio", get: (employee) => employee.agreement },
-  { section: "DATOS_LABORALES", field: "workday", label: "Jornada laboral", get: (employee) => employee.workday },
-  { section: "DATOS_LABORALES", field: "shift", label: "Turno habitual", get: (employee) => employee.shift },
+  { section: "DATOS_LABORALES", field: "healthInsurance", label: "Obra Social", get: (employee) => employee.healthInsurance },
   { section: "CONTACTO_DOMICILIO", field: "domicilio.localidadNombre", label: "Localidad", get: (employee) => employee.domicilio?.localidadNombre || employee.city },
+  { section: "RESPONSABLES_ASIGNACIONES", field: "directManagers", label: "Encargados directos", get: (employee) => employee.directManagers || [employee.directManager] },
   { section: "RESPONSABLES_ASIGNACIONES", field: "timeResponsible", label: "Responsable de carga horaria", get: (employee) => employee.timeResponsible },
+  { section: "RESPONSABLES_ASIGNACIONES", field: "timeResponsibles", label: "Responsables de carga horaria", get: (employee) => employee.timeResponsibles || [employee.timeResponsible] },
 ];
 
 const fmt = (value: unknown) => Array.isArray(value) ? value.join(", ") : value === undefined || value === null || value === "" ? "" : String(value);
@@ -49,8 +52,8 @@ export const employeeMockService = {
       if (previous.sector !== employee.sector) addEvent("Cambio de sector", `Sector: ${previous.sector || "-"} -> ${employee.sector || "-"}`);
       if (previous.position !== employee.position) addEvent("Cambio de puesto", `Puesto: ${previous.position || "-"} -> ${employee.position || "-"}`);
       if (previous.internalCategory !== employee.internalCategory || previous.receiptCategory !== employee.receiptCategory) addEvent("Cambio de categoría", "Se modificó la categoría del colaborador.");
-      if (previous.directManager !== employee.directManager) addEvent("Cambio de encargado directo", `Encargado: ${previous.directManager || "-"} -> ${employee.directManager || "-"}`);
-      if (previous.timeResponsible !== employee.timeResponsible) addEvent("Cambio de responsable de carga horaria", `Responsable: ${previous.timeResponsible || "-"} -> ${employee.timeResponsible || "-"}`);
+      if ((previous.directManagers || [previous.directManager]).join(", ") !== (employee.directManagers || [employee.directManager]).join(", ")) addEvent("Cambio de encargado directo", `Encargados: ${(previous.directManagers || [previous.directManager]).filter(Boolean).join(", ") || "-"} -> ${(employee.directManagers || [employee.directManager]).filter(Boolean).join(", ") || "-"}`);
+      if ((previous.timeResponsibles || [previous.timeResponsible]).join(", ") !== (employee.timeResponsibles || [employee.timeResponsible]).join(", ")) addEvent("Cambio de responsable de carga horaria", `Responsables: ${(previous.timeResponsibles || [previous.timeResponsible]).filter(Boolean).join(", ") || "-"} -> ${(employee.timeResponsibles || [employee.timeResponsible]).filter(Boolean).join(", ") || "-"}`);
       if (previous.endDate !== employee.endDate && employee.endDate) addEvent(new Date(`${employee.endDate}T00:00:00`) > new Date() ? "Baja laboral programada" : "Baja laboral registrada", `Fecha de baja: ${employee.endDate}.`);
       if (previousStatus !== nextStatus) addEvent("Cambio de estado laboral calculado", `El colaborador pasó a estado ${nextStatus} por fecha de baja.`);
       if (previous.transport !== employee.transport || previous.city !== employee.city || previous.transportNotes !== employee.transportNotes) addEvent("Cambio de transporte", "Se modificó la configuración de transporte.");
