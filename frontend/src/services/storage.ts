@@ -1,12 +1,14 @@
 import { mockAudit, mockDocuments, mockEmployees, mockNovelties, mockTimeEntries, mockUsers } from "../data/mockData";
+import { mockNoveltyTypes } from "../data/mockNoveltyTypes";
 import { mockPositions } from "../data/mockPositions";
 import { locationMockService } from "./locationMockService";
 import type { Employee, EmployeeAddress, EmployeeLocationMap, LaborMovement } from "../types";
+import type { Position } from "../types/position.types";
 
-export type StoreKey = "employees" | "users" | "timeEntries" | "novelties" | "audit" | "documents" | "changeLogs" | "fieldHistory" | "blockHistory" | "positions" | "positionHistory";
-const seeds = { employees: mockEmployees, users: mockUsers, timeEntries: mockTimeEntries, novelties: mockNovelties, audit: mockAudit, documents: mockDocuments, changeLogs: [], fieldHistory: [], blockHistory: [], positions: mockPositions, positionHistory: mockPositions.flatMap((position) => position.history) };
+export type StoreKey = "employees" | "users" | "timeEntries" | "novelties" | "noveltyTypes" | "audit" | "documents" | "changeLogs" | "fieldHistory" | "blockHistory" | "positions" | "positionHistory";
+const seeds = { employees: mockEmployees, users: mockUsers, timeEntries: mockTimeEntries, novelties: mockNovelties, noveltyTypes: mockNoveltyTypes, audit: mockAudit, documents: mockDocuments, changeLogs: [], fieldHistory: [], blockHistory: [], positions: mockPositions, positionHistory: mockPositions.flatMap((position) => position.history) };
 const key = (name: StoreKey) => `losod_demo_${name}`;
-const seedVersion = "2026-06-positions-v1";
+const seedVersion = "2026-06-novelty-types-v1";
 
 function normalizeLocationMap(value: unknown, employee: Partial<Employee>): EmployeeLocationMap {
   if (value && typeof value === "object" && "source" in value) return value as EmployeeLocationMap;
@@ -85,6 +87,16 @@ function normalizeEmployee(employee: Partial<Employee> & Record<string, unknown>
   } as Employee;
 }
 
+function normalizePosition(position: Partial<Position> & Record<string, unknown>): Position {
+  return {
+    ...position,
+    businessUnitNames: Array.isArray(position.businessUnitNames) ? position.businessUnitNames.map(String) : [String(position.businessUnitName || "")].filter(Boolean),
+    establishmentNames: Array.isArray(position.establishmentNames) ? position.establishmentNames.map(String) : [String(position.establishmentName || "")].filter(Boolean),
+    sectorNames: Array.isArray(position.sectorNames) ? position.sectorNames.map(String) : [String(position.sector || "")].filter(Boolean),
+    salaryRangeCategories: Array.isArray(position.salaryRangeCategories) ? position.salaryRangeCategories.map(String) : [],
+  } as Position;
+}
+
 function ensureSeedVersion() {
   if (localStorage.getItem("losod_demo_seed_version") === seedVersion) return;
   (Object.keys(seeds) as StoreKey[]).forEach((name) => {
@@ -114,6 +126,7 @@ export function readStore<T>(name: StoreKey): T[] {
   }
   const parsed = JSON.parse(raw);
   if (name === "employees") return (parsed as Array<Partial<Employee> & Record<string, unknown>>).map(normalizeEmployee) as T[];
+  if (name === "positions") return (parsed as Array<Partial<Position> & Record<string, unknown>>).map(normalizePosition) as T[];
   return parsed as T[];
 }
 

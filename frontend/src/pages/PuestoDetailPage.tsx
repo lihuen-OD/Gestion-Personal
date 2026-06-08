@@ -10,12 +10,13 @@ import { PuestoIndicatorsTab } from "../components/puestos/PuestoIndicatorsTab";
 import { PuestoMissionTab } from "../components/puestos/PuestoMissionTab";
 import { PuestoRelationsTab } from "../components/puestos/PuestoRelationsTab";
 import { PuestoResponsibilitiesTab } from "../components/puestos/PuestoResponsibilitiesTab";
+import { PuestoSalaryRangeTab } from "../components/puestos/PuestoSalaryRangeTab";
 import { PuestoWorkConditionsTab } from "../components/puestos/PuestoWorkConditionsTab";
 import { useAuth } from "../context/AuthContext";
 import { positionMockService } from "../services/positionMockService";
 import type { Position } from "../types/position.types";
 
-const tabs = ["Identificacion", "Proposito / Mision", "Responsabilidades", "Relaciones", "Competencias", "Condiciones", "Indicadores", "Criterios", "Personas Asignadas", "Historial"];
+const tabs = ["Identificacion", "Proposito / Mision", "Rango Salarial", "Responsabilidades", "Relaciones", "Competencias", "Condiciones", "Indicadores", "Criterios", "Personas Asignadas", "Historial"];
 function roleLevel(role: string) { return role.startsWith("Nivel 1") ? 1 : role.startsWith("Nivel 2") ? 2 : 3; }
 
 export function PuestoDetailPage() {
@@ -52,19 +53,20 @@ export function PuestoDetailPage() {
   const render = () => {
     if (tab === 0) return <PuestoIdentificationTab position={position} setPosition={setPosition} disabled={!canEdit} />;
     if (tab === 1) return <PuestoMissionTab position={position} setPosition={setPosition} disabled={!canEdit} />;
-    if (tab === 2) return <PuestoResponsibilitiesTab position={position} setPosition={setPosition} disabled={!canEdit} />;
-    if (tab === 3) return <PuestoRelationsTab position={position} setPosition={setPosition} disabled={!canEdit} />;
-    if (tab === 4) return <PuestoCompetenciesTab position={position} setPosition={setPosition} disabled={!canEdit} />;
-    if (tab === 5) return <PuestoWorkConditionsTab position={position} setPosition={setPosition} disabled={!canEdit} />;
-    if (tab === 6) return <PuestoIndicatorsTab position={position} setPosition={setPosition} disabled={!canEdit} />;
-    if (tab === 7) return <PuestoEvaluationCriteriaTab position={position} setPosition={setPosition} disabled={!canEdit} />;
-    if (tab === 8) return <PuestoAssignedPeopleTab employees={assigned} />;
+    if (tab === 2) return <PuestoSalaryRangeTab position={position} setPosition={setPosition} disabled={!canEdit} />;
+    if (tab === 3) return <PuestoResponsibilitiesTab position={position} setPosition={setPosition} disabled={!canEdit} />;
+    if (tab === 4) return <PuestoRelationsTab position={position} setPosition={setPosition} disabled={!canEdit} />;
+    if (tab === 5) return <PuestoCompetenciesTab position={position} setPosition={setPosition} disabled={!canEdit} />;
+    if (tab === 6) return <PuestoWorkConditionsTab position={position} setPosition={setPosition} disabled={!canEdit} />;
+    if (tab === 7) return <PuestoIndicatorsTab position={position} setPosition={setPosition} disabled={!canEdit} />;
+    if (tab === 8) return <PuestoEvaluationCriteriaTab position={position} setPosition={setPosition} disabled={!canEdit} />;
+    if (tab === 9) return <PuestoAssignedPeopleTab employees={assigned} />;
     return <PuestoHistoryTab position={position} />;
   };
   return <>
     <PuestoHeader position={position} assignedCount={assigned.length} canEdit={canEdit} onRemove={remove} onToggleStatus={toggle} />
     {notice && <div className="toast">{notice}</div>}
     <div className="tabs">{tabs.map((label, index) => <button key={label} className={tab === index ? "active" : ""} onClick={() => setTab(index)}>{index + 1}. {label}</button>)}</div>
-    <section className="panel"><div className="panel-head"><div><h3>{tabs[tab]}</h3><p>{tab === 8 ? "Calculado desde legajos activos vinculados a este puesto." : tab === 9 ? "Historial general del puesto." : "Informacion editable de la descripcion de puesto."}</p></div>{canEdit && tab < 8 && <button className="button primary" onClick={() => save()}>Guardar cambios</button>}</div><div className="panel-body">{render()}</div></section>
+    <section className="panel"><div className="panel-head"><div><h3>{tabs[tab]}</h3><p>{tab === 9 ? "Calculado desde legajos activos vinculados a este puesto." : tab === 10 ? "Historial general del puesto." : "Informacion editable de la descripcion de puesto."}</p></div>{canEdit && tab < 9 && <button className="button primary" onClick={() => save()}>Guardar cambios</button>}</div><div className="panel-body">{render()}</div></section>
   </>;
 }

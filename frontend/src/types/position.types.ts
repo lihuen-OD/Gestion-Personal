@@ -36,14 +36,18 @@ export type Position = {
   companyName?: string;
   businessUnitId?: string;
   businessUnitName?: string;
+  businessUnitNames?: string[];
   establishmentId?: string;
   establishmentName?: string;
+  establishmentNames?: string[];
+  sectorNames?: string[];
   suggestedCostCenterId?: string;
   suggestedCostCenterName?: string;
   suggestedReceiptCategoryId?: string;
   suggestedReceiptCategoryName?: string;
   suggestedInternalCategoryId?: string;
   suggestedInternalCategoryName?: string;
+  salaryRangeCategories?: string[];
   mission: string;
   responsibilities: PositionResponsibility[];
   internalRelations: PositionRelation[];
@@ -67,13 +71,11 @@ export type Position = {
 
 export type PositionFilters = {
   search: string;
-  companyName: string;
   businessUnitName: string;
   establishmentName: string;
   areaDepartment: string;
   sector: string;
-  suggestedInternalCategoryName: string;
-  suggestedReceiptCategoryName: string;
+  salaryRangeCategory: string;
   status: "" | PositionStatus;
 };
 

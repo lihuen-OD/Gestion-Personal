@@ -16,10 +16,14 @@ export const mockPositions: Position[] = [
     status: "ACTIVO",
     companyName: "Los O'Dwyer S.A.",
     businessUnitName: "Administracion Central",
+    businessUnitNames: ["Administracion Central", "Administración", "Direccion Corporativa"],
     establishmentName: "Casa Central",
+    establishmentNames: ["Casa Central", "Oficina Central Arroyo Baru"],
+    sectorNames: ["Contable", "Administración", "Finanzas", "Compras"],
     suggestedCostCenterName: "Administracion",
     suggestedReceiptCategoryName: "Administrativo",
     suggestedInternalCategoryName: "Administrativo",
+    salaryRangeCategories: ["Administrativo", "Administrativo A", "Administrativo B", "Administrativo C"],
     mission: "Garantizar la registracion precisa, ordenada y completa de los comprobantes contables en el sistema de gestion, asegurando la correcta imputacion contable, la verificacion de la informacion asociada y el adecuado archivo fisico y digital de la documentacion. Su labor constituye un pilar esencial para la calidad y trazabilidad de la informacion contable.",
     responsibilities: [
       "Recibir y verificar los comprobantes de compras, gastos, servicios y movimientos internos, controlando requisitos legales e impositivos.",
@@ -65,10 +69,14 @@ export const mockPositions: Position[] = [
     status: "ACTIVO",
     companyName: "Los O'Dwyer S.A.",
     businessUnitName: "Direccion Corporativa",
+    businessUnitNames: ["Direccion Corporativa", "Dirección Corporativa"],
     establishmentName: "Casa Central",
+    establishmentNames: ["Casa Central", "Establecimientos"],
+    sectorNames: ["Direccion General", "Dirección General", "Operaciones"],
     suggestedCostCenterName: "Direccion General",
     suggestedReceiptCategoryName: "Direccion",
     suggestedInternalCategoryName: "Director",
+    salaryRangeCategories: ["Directorio", "Director", "Gerente General", "Direccion"],
     mission: "Conducir la estrategia integral de las empresas del grupo, asegurando continuidad operativa, rentabilidad, desarrollo de equipos y cumplimiento de objetivos corporativos.",
     responsibilities: [
       { id: "resp-dir-1", description: "Definir prioridades estrategicas y lineamientos de gestion para las unidades de negocio.", order: 1 },
@@ -88,4 +96,3 @@ export const mockPositions: Position[] = [
     updatedBy: "Sistema"
   }
 ];
-

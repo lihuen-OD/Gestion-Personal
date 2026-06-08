@@ -55,7 +55,7 @@ export interface TimeEntry {
 }
 
 export interface Novelty {
-  id: string; employeeId: string; type: string; from: string; to: string; quantity: string;
+  id: string; employeeId: string; type: string; noveltyTypeId?: string; from: string; to: string; quantity: string;
   affectsSettlement: boolean; status: string; createdBy: string;
 }
 

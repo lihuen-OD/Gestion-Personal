@@ -8,6 +8,14 @@ import { readStore, writeStore } from "./storage";
 const normalize = (value: unknown) => String(value || "").trim().toLowerCase();
 const todayIso = () => new Date().toISOString();
 
+function nextPositionCode(positions: Position[]) {
+  const numbers = positions.map((position) => {
+    const match = String(position.code || "").match(/(\d+)$/);
+    return match ? Number(match[1]) : 0;
+  });
+  return `PUE-${String(Math.max(0, ...numbers) + 1).padStart(3, "0")}`;
+}
+
 function history(positionId: string, user: User | undefined, action: string, description: string, oldValue?: string, newValue?: string): PositionHistoryRecord {
   return { id: crypto.randomUUID(), positionId, action, description, oldValue, newValue, createdAt: todayIso(), createdByUserId: user?.id || "system", createdByUserName: user?.name || "Sistema" };
 }
@@ -29,20 +37,19 @@ function assignedEmployees(position: Position) {
 
 function matchesFilters(position: Position, filters: PositionFilters) {
   const query = normalize(filters.search);
-  const text = normalize(`${position.code} ${position.name} ${position.areaDepartment} ${position.sector}`);
+  const text = normalize(`${position.code} ${position.name} ${position.businessUnitName} ${position.establishmentName} ${position.areaDepartment} ${position.sector} ${(position.salaryRangeCategories || []).join(" ")}`);
   return (!query || text.includes(query))
-    && (!filters.companyName || position.companyName === filters.companyName)
     && (!filters.businessUnitName || position.businessUnitName === filters.businessUnitName)
     && (!filters.establishmentName || position.establishmentName === filters.establishmentName)
     && (!filters.areaDepartment || position.areaDepartment === filters.areaDepartment)
     && (!filters.sector || position.sector === filters.sector)
-    && (!filters.suggestedInternalCategoryName || position.suggestedInternalCategoryName === filters.suggestedInternalCategoryName)
-    && (!filters.suggestedReceiptCategoryName || position.suggestedReceiptCategoryName === filters.suggestedReceiptCategoryName)
+    && (!filters.salaryRangeCategory || position.salaryRangeCategories?.includes(filters.salaryRangeCategory))
     && (!filters.status || position.status === filters.status);
 }
 
 export const positionMockService = {
-  getEmptyFilters: (): PositionFilters => ({ search: "", companyName: "", businessUnitName: "", establishmentName: "", areaDepartment: "", sector: "", suggestedInternalCategoryName: "", suggestedReceiptCategoryName: "", status: "" }),
+  getEmptyFilters: (): PositionFilters => ({ search: "", businessUnitName: "", establishmentName: "", areaDepartment: "", sector: "", salaryRangeCategory: "", status: "" }),
+  getNextCode: () => nextPositionCode(readStore<Position>("positions")),
   getAll: () => readStore<Position>("positions"),
   getById: (id: string) => readStore<Position>("positions").find((position) => position.id === id),
   getFiltered: (filters: PositionFilters) => readStore<Position>("positions").filter((position) => matchesFilters(position, filters)),
@@ -68,20 +75,20 @@ export const positionMockService = {
     const positions = readStore<Position>("positions");
     const unique = (items: (string | undefined)[]) => Array.from(new Set(items.filter(Boolean) as string[])).sort((a, b) => a.localeCompare(b, "es"));
     return {
-      companyName: unique(positions.map((position) => position.companyName)),
       businessUnitName: unique(positions.map((position) => position.businessUnitName)),
       establishmentName: unique(positions.map((position) => position.establishmentName)),
       areaDepartment: unique(positions.map((position) => position.areaDepartment)),
       sector: unique(positions.map((position) => position.sector)),
-      suggestedInternalCategoryName: unique(positions.map((position) => position.suggestedInternalCategoryName)),
-      suggestedReceiptCategoryName: unique(positions.map((position) => position.suggestedReceiptCategoryName)),
+      salaryRangeCategory: unique(positions.flatMap((position) => position.salaryRangeCategories || [])),
     };
   },
   create: (data: Omit<Position, "id" | "createdAt" | "updatedAt" | "history"> & { id?: string }, user: User) => {
+    const current = readStore<Position>("positions");
     const positionId = data.id || crypto.randomUUID();
+    const code = data.code?.trim() || nextPositionCode(current);
     const entry = history(positionId, user, "Alta de puesto", `Se creo el puesto ${data.name}.`);
-    const position: Position = { ...data, id: positionId, history: [entry], createdAt: todayIso(), updatedAt: todayIso(), createdBy: user.name, updatedBy: user.name };
-    writeStore("positions", [position, ...readStore<Position>("positions")]);
+    const position: Position = { ...data, code, id: positionId, history: [entry], createdAt: todayIso(), updatedAt: todayIso(), createdBy: user.name, updatedBy: user.name };
+    writeStore("positions", [position, ...current]);
     writeStore("positionHistory", [entry, ...readStore<PositionHistoryRecord>("positionHistory")]);
     auditMockService.create({ user: user.name, role: user.role, action: "Crear puesto", entity: `Puesto ${position.name}`, previous: "-", next: position.status, reason: "Alta de puesto mock" });
     return position;
@@ -90,7 +97,7 @@ export const positionMockService = {
     const all = readStore<Position>("positions");
     const previous = all.find((position) => position.id === id);
     const entry = history(id, user, action, description, previous ? previous.updatedAt : undefined, todayIso());
-    const next = { ...data, id, updatedAt: todayIso(), updatedBy: user.name, history: [entry, ...(data.history || [])] };
+    const next = { ...data, id, code: data.code?.trim() || nextPositionCode(all.filter((position) => position.id !== id)), updatedAt: todayIso(), updatedBy: user.name, history: [entry, ...(data.history || [])] };
     writeStore("positions", all.map((position) => position.id === id ? next : position));
     writeStore("positionHistory", [entry, ...readStore<PositionHistoryRecord>("positionHistory")]);
     auditMockService.create({ user: user.name, role: user.role, action, entity: `Puesto ${next.name}`, previous: entry.oldValue || "-", next: entry.newValue || "-", reason: description });
