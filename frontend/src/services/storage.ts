@@ -1,4 +1,5 @@
 import { mockAudit, mockDocuments, mockEmployees, mockNovelties, mockTimeEntries, mockUsers } from "../data/mockData";
+import { mockHourConcepts } from "../data/mockHourConcepts";
 import { mockNoveltyTypes } from "../data/mockNoveltyTypes";
 import { mockOrgStructure } from "../data/mockOrgStructure";
 import { mockPositions } from "../data/mockPositions";
@@ -6,10 +7,10 @@ import { locationMockService } from "./locationMockService";
 import type { Employee, EmployeeAddress, EmployeeLocationMap, LaborMovement } from "../types";
 import type { Position } from "../types/position.types";
 
-export type StoreKey = "employees" | "users" | "timeEntries" | "novelties" | "noveltyTypes" | "orgStructure" | "audit" | "documents" | "changeLogs" | "fieldHistory" | "blockHistory" | "positions" | "positionHistory";
-const seeds = { employees: mockEmployees, users: mockUsers, timeEntries: mockTimeEntries, novelties: mockNovelties, noveltyTypes: mockNoveltyTypes, orgStructure: [mockOrgStructure], audit: mockAudit, documents: mockDocuments, changeLogs: [], fieldHistory: [], blockHistory: [], positions: mockPositions, positionHistory: mockPositions.flatMap((position) => position.history) };
+export type StoreKey = "employees" | "users" | "timeEntries" | "novelties" | "noveltyTypes" | "hourConcepts" | "orgStructure" | "audit" | "documents" | "changeLogs" | "fieldHistory" | "blockHistory" | "positions" | "positionHistory";
+const seeds = { employees: mockEmployees, users: mockUsers, timeEntries: mockTimeEntries, novelties: mockNovelties, noveltyTypes: mockNoveltyTypes, hourConcepts: mockHourConcepts, orgStructure: [mockOrgStructure], audit: mockAudit, documents: mockDocuments, changeLogs: [], fieldHistory: [], blockHistory: [], positions: mockPositions, positionHistory: mockPositions.flatMap((position) => position.history) };
 const key = (name: StoreKey) => `losod_demo_${name}`;
-const seedVersion = "2026-06-org-structure-v1";
+const seedVersion = "2026-06-hour-concepts-v1";
 
 function normalizeLocationMap(value: unknown, employee: Partial<Employee>): EmployeeLocationMap {
   if (value && typeof value === "object" && "source" in value) return value as EmployeeLocationMap;

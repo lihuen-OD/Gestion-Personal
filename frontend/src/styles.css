@@ -102,6 +102,9 @@
 .catalog-link-list{display:grid;gap:10px}
 .catalog-link-row{display:grid;grid-template-columns:130px 1.2fr 1.2fr 86px 110px 1fr 34px;gap:9px;align-items:end;padding:12px;border:1px solid #e1e8ee;border-radius:10px;background:#fbfdfe}
 .catalog-link-row input,.catalog-link-row select{width:100%}
+.hour-concept-editor{display:grid;gap:16px}
+.hour-concept-editor .catalog-check-block{margin:0 18px}
+.hour-concept-editor>.catalog-finnegans{padding-top:0}
 @media(max-width:1180px){.catalog-filters,.catalog-link-row{grid-template-columns:1fr 1fr}.novelty-type-summary{grid-template-columns:repeat(2,1fr)}}
 @media(max-width:720px){.catalog-rule-grid,.catalog-filters,.catalog-link-row,.novelty-type-summary{grid-template-columns:1fr}}
 
