@@ -1,4 +1,5 @@
-import L, { type LatLngExpression } from "leaflet";
+import L from "leaflet";
+import { useEffect, useState } from "react";
 import { MapContainer, Marker, TileLayer, useMap, useMapEvents } from "react-leaflet";
 import type { EmployeeLocationMap } from "../types";
 
@@ -25,9 +26,22 @@ function labelFor(props: Pick<LocationMapPickerProps, "provinceName" | "departme
   return [props.addressStreet, props.addressNumber, props.localityName, props.departmentName, props.provinceName].filter(Boolean).join(", ");
 }
 
-function Recenter({ center, zoom }: { center: LatLngExpression; zoom: number }) {
+function coordinatesFromGoogleMapsUrl(url: string) {
+  const decoded = decodeURIComponent(url.trim());
+  const exact = decoded.match(/!3d(-?\d+(?:\.\d+)?)!4d(-?\d+(?:\.\d+)?)/);
+  if (exact) return { lat: Number(exact[1]), lng: Number(exact[2]) };
+  const viewport = decoded.match(/@(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?),/);
+  if (viewport) return { lat: Number(viewport[1]), lng: Number(viewport[2]) };
+  const query = decoded.match(/[?&]query=(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/);
+  if (query) return { lat: Number(query[1]), lng: Number(query[2]) };
+  return null;
+}
+
+function Recenter({ lat, lng, zoom }: { lat: number; lng: number; zoom: number }) {
   const map = useMap();
-  map.setView(center, zoom);
+  useEffect(() => {
+    map.setView([lat, lng], zoom, { animate: true });
+  }, [lat, lng, map, zoom]);
   return null;
 }
 
@@ -41,14 +55,23 @@ function ClickHandler({ disabled, onPick }: { disabled?: boolean; onPick: (lat: 
 }
 
 export function LocationMapPicker(props: LocationMapPickerProps) {
-  const hasLocality = Boolean(props.provinceName && props.departmentName && props.localityName && props.initialCenter);
+  const [mapsUrl, setMapsUrl] = useState("");
+  const [mapsUrlError, setMapsUrlError] = useState("");
   const selectedCenter = props.value.lat !== null && props.value.lng !== null ? { lat: props.value.lat, lng: props.value.lng } : undefined;
+  const hasLocality = Boolean(props.provinceName && props.departmentName && props.localityName && (props.initialCenter || selectedCenter));
   const mapCenter = selectedCenter || props.initialCenter;
   const zoom = selectedCenter ? 16 : props.initialCenter?.zoom || 14;
   const description = labelFor(props);
 
-  const setPoint = (lat: number, lng: number) => {
-    props.onChange({ lat: Number(lat.toFixed(6)), lng: Number(lng.toFixed(6)), source: "MANUAL", label: description });
+  const setPoint = (lat: number, lng: number, label = description) => {
+    props.onChange({ lat: Number(lat.toFixed(6)), lng: Number(lng.toFixed(6)), source: "MANUAL", label });
+  };
+
+  const applyGoogleMapsUrl = () => {
+    const coordinates = coordinatesFromGoogleMapsUrl(mapsUrl);
+    if (!coordinates) return setMapsUrlError("No pude leer coordenadas de esa URL. Pegá el link completo de Google Maps.");
+    setMapsUrlError("");
+    setPoint(coordinates.lat, coordinates.lng, `${description} · Google Maps`);
   };
 
   if (!hasLocality || !mapCenter) {
@@ -61,13 +84,16 @@ export function LocationMapPicker(props: LocationMapPickerProps) {
         <b>Ubicación seleccionada: {props.localityName}, {props.departmentName}, {props.provinceName}</b>
         <span>{props.value.label ? `Marcador guardado: ${props.value.label}` : "Hacé clic en el mapa para marcar el domicilio aproximado."}</span>
       </div>
-      <div className="map-toolbar">
-        <button type="button" className="button subtle" disabled={props.readOnly} onClick={() => props.initialCenter && props.onChange({ lat: props.initialCenter.lat, lng: props.initialCenter.lng, source: "MOCK", label: description })}>Usar centro de la localidad</button>
-        <button type="button" className="button subtle" disabled={props.readOnly} onClick={() => props.onChange({ lat: null, lng: null, source: "MOCK", label: "" })}>Limpiar ubicación</button>
-      </div>
     </div>
+    {!props.readOnly && <div className="google-map-url-panel">
+      <label>URL de Google Maps
+        <input value={mapsUrl} placeholder="Pegá el link de Google Maps para tomar sus coordenadas" onChange={(event) => { setMapsUrl(event.target.value); setMapsUrlError(""); }} />
+      </label>
+      <button type="button" className="button subtle" disabled={!mapsUrl.trim()} onClick={applyGoogleMapsUrl}>Usar coordenadas del link</button>
+      {mapsUrlError && <small>{mapsUrlError}</small>}
+    </div>}
     <MapContainer center={[mapCenter.lat, mapCenter.lng]} zoom={zoom} scrollWheelZoom className="leaflet-map">
-      <Recenter center={[mapCenter.lat, mapCenter.lng]} zoom={zoom} />
+      <Recenter lat={mapCenter.lat} lng={mapCenter.lng} zoom={zoom} />
       <TileLayer attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>' url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
       <ClickHandler disabled={props.readOnly} onPick={setPoint} />
       {selectedCenter && <Marker

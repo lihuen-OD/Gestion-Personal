@@ -3,6 +3,7 @@ import type { Employee, Role } from "../types";
 import type { OrgCategory, OrgChartFilters, OrgChartModel, OrgEdge, OrgEmployeeNode } from "../types/organizationChart.types";
 import { calculateEmployeeStatus } from "./employeeStatusService";
 import { employeeMockService } from "./employeeMockService";
+import { orgStructureMockService } from "./orgStructureMockService";
 
 const emptyFilters: OrgChartFilters = {
   company: "", businessUnit: "", establishment: "", costCenter: "", sector: "", position: "",
@@ -63,12 +64,13 @@ export const organizationChartMockService = {
   getEmployees: (role: Role, userSector?: string, filters: OrgChartFilters = emptyFilters) => scopedEmployees(role, userSector).filter((employee) => calculateEmployeeStatus(employee) === "Activo").filter((employee) => employeeMatches(employee, filters)),
   getFilterOptions: (role: Role, userSector?: string) => {
     const employees = scopedEmployees(role, userSector);
+    const structure = orgStructureMockService.getOptions();
     return {
-      company: unique(employees.flatMap(employeeCompanies)),
-      businessUnit: unique(employees.map((employee) => employee.businessUnit)),
-      establishment: unique(employees.map((employee) => employee.establishment)),
-      costCenter: unique(employees.map((employee) => employee.costCenter)),
-      sector: unique(employees.map((employee) => employee.sector)),
+      company: unique([...structure.companies, ...employees.flatMap(employeeCompanies)]),
+      businessUnit: unique([...structure.businessUnits, ...employees.map((employee) => employee.businessUnit)]),
+      establishment: unique([...structure.establishments, ...employees.map((employee) => employee.establishment)]),
+      costCenter: unique([...structure.costCenters, ...employees.map((employee) => employee.costCenter)]),
+      sector: unique([...structure.sectors, ...employees.map((employee) => employee.sector)]),
       position: unique(employees.map((employee) => employee.position)),
       internalCategory: unique(employees.map((employee) => employee.internalCategory)),
       receiptCategory: unique(employees.map((employee) => employee.receiptCategory)),

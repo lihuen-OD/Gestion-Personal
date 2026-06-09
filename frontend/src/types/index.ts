@@ -30,6 +30,7 @@ export interface EmployeeLocationMap {
 
 export interface EmployeeAddress {
   calle: string; numero: string; provinciaId: string; provinciaNombre: string; departamentoId: string; departamentoNombre: string; localidadId: string; localidadNombre: string; codigoPostal: string; ubicacionMapa: EmployeeLocationMap;
+  referencia?: string; direccionNormalizada?: string; fuenteGeocoding?: "GEOREF" | "LOCALITY_CENTER" | "MANUAL_MARKER" | "NOT_FOUND"; precisionGeocoding?: number;
 }
 
 export interface EmployeeHistoryEvent {
@@ -56,7 +57,7 @@ export interface TimeEntry {
 
 export interface Novelty {
   id: string; employeeId: string; type: string; noveltyTypeId?: string; from: string; to: string; quantity: string;
-  affectsSettlement: boolean; status: string; createdBy: string;
+  affectsSettlement: boolean; status: string; createdBy: string; documentationFileName?: string; documentationNotes?: string;
 }
 
 export interface AuditEntry {

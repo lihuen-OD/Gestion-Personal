@@ -1,14 +1,15 @@
 import { mockAudit, mockDocuments, mockEmployees, mockNovelties, mockTimeEntries, mockUsers } from "../data/mockData";
 import { mockNoveltyTypes } from "../data/mockNoveltyTypes";
+import { mockOrgStructure } from "../data/mockOrgStructure";
 import { mockPositions } from "../data/mockPositions";
 import { locationMockService } from "./locationMockService";
 import type { Employee, EmployeeAddress, EmployeeLocationMap, LaborMovement } from "../types";
 import type { Position } from "../types/position.types";
 
-export type StoreKey = "employees" | "users" | "timeEntries" | "novelties" | "noveltyTypes" | "audit" | "documents" | "changeLogs" | "fieldHistory" | "blockHistory" | "positions" | "positionHistory";
-const seeds = { employees: mockEmployees, users: mockUsers, timeEntries: mockTimeEntries, novelties: mockNovelties, noveltyTypes: mockNoveltyTypes, audit: mockAudit, documents: mockDocuments, changeLogs: [], fieldHistory: [], blockHistory: [], positions: mockPositions, positionHistory: mockPositions.flatMap((position) => position.history) };
+export type StoreKey = "employees" | "users" | "timeEntries" | "novelties" | "noveltyTypes" | "orgStructure" | "audit" | "documents" | "changeLogs" | "fieldHistory" | "blockHistory" | "positions" | "positionHistory";
+const seeds = { employees: mockEmployees, users: mockUsers, timeEntries: mockTimeEntries, novelties: mockNovelties, noveltyTypes: mockNoveltyTypes, orgStructure: [mockOrgStructure], audit: mockAudit, documents: mockDocuments, changeLogs: [], fieldHistory: [], blockHistory: [], positions: mockPositions, positionHistory: mockPositions.flatMap((position) => position.history) };
 const key = (name: StoreKey) => `losod_demo_${name}`;
-const seedVersion = "2026-06-novelty-types-v1";
+const seedVersion = "2026-06-org-structure-v1";
 
 function normalizeLocationMap(value: unknown, employee: Partial<Employee>): EmployeeLocationMap {
   if (value && typeof value === "object" && "source" in value) return value as EmployeeLocationMap;
@@ -34,6 +35,10 @@ function normalizeAddress(employee: Partial<Employee> & Record<string, unknown>,
       localidadNombre: current.localidadNombre || city,
       codigoPostal: current.codigoPostal || String(employee.zip || ""),
       ubicacionMapa: normalizeLocationMap(current.ubicacionMapa || locationMap, employee),
+      referencia: current.referencia || "",
+      direccionNormalizada: current.direccionNormalizada || "",
+      fuenteGeocoding: current.fuenteGeocoding,
+      precisionGeocoding: current.precisionGeocoding,
     };
   }
   const provinceId = locationMockService.getProvinceByName(province)?.id || "";
