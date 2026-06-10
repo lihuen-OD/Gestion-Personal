@@ -1,0 +1,25 @@
+Auditá la UI actual como Senior Product Designer.
+
+Buscá señales de diseño generado por IA:
+- demasiado minimalista
+- cards sin jerarquía
+- mucho espacio vacío
+- contenido centrado incorrectamente
+- dashboard débil
+- iconos superpuestos
+- números que se pisan
+- tablas angostas
+- formularios poco profesionales
+- falta de consistencia
+- mala adaptación desktop
+- mobile bien pero desktop mal
+
+Entregá:
+1. Problemas críticos de UI.
+2. Problemas de layout global.
+3. Problemas de componentes.
+4. Problemas de responsive.
+5. Componentes que deben crearse o normalizarse.
+6. Plan de corrección por prioridad.
+
+No modifiques código todavía.

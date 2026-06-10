@@ -1,0 +1,16 @@
+Resolvé esto con criterio Super Senior y sin sobreingeniería.
+
+Reglas:
+- solución simple
+- no duplicar código
+- no agregar dependencias innecesarias
+- no crear capas innecesarias
+- no refactor masivo
+- no cambiar contratos existentes
+- reutilizar patrones actuales
+- validar seguridad
+- mantener código fácil de entender
+- mantener UI consistente
+- no inventar diseño por pantalla si existe componente compartido
+
+Quiero una solución profesional, liviana y mantenible.

@@ -1,0 +1,20 @@
+Actuá como Super Senior Full Stack Engineer y Senior Product Designer.
+
+Primero estudiá el proyecto completo y generá contexto técnico y visual.
+
+Tareas:
+1. Analizar estructura de carpetas.
+2. Detectar stack frontend.
+3. Detectar stack backend.
+4. Detectar base de datos/ORM.
+5. Detectar autenticación y roles.
+6. Detectar comandos de instalación, dev, build, test y migración.
+7. Detectar variables de entorno.
+8. Detectar módulos principales.
+9. Detectar layout global y sistema visual.
+10. Detectar riesgos técnicos.
+11. Detectar riesgos visuales.
+12. Completar o actualizar `docs/PROJECT_CONTEXT.md`.
+13. Completar o actualizar `docs/PROJECT_UI_CONTEXT.md`.
+
+No modifiques lógica funcional todavía.

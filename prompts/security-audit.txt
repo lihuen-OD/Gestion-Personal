@@ -1,0 +1,26 @@
+Actuá como Security Engineer Senior.
+
+Auditá el proyecto buscando:
+- problemas de autenticación
+- problemas de autorización
+- endpoints sin protección
+- exposición de datos sensibles
+- validaciones faltantes
+- CORS inseguro
+- secrets hardcodeados
+- uploads inseguros
+- errores que filtran información
+- queries inseguras
+- dependencias riesgosas
+- permisos débiles
+- problemas de configuración para producción
+
+Entregá:
+1. Crítico
+2. Alto
+3. Medio
+4. Bajo
+5. Cambios recomendados
+6. Archivos afectados
+
+No modifiques código sin aprobación.

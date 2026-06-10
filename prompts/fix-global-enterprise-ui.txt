@@ -1,0 +1,52 @@
+Necesito corregir la UI global de la aplicación con criterio de Senior Product Designer y Senior Frontend Engineer.
+
+Problema:
+La app funciona y es responsive, pero visualmente parece generada por IA. En desktop se ve mal: demasiado minimalista, mucho espacio vacío, layouts centrados, cards débiles, dashboards poco profesionales y posibles solapamientos entre íconos, números y textos.
+
+Objetivo:
+Quiero una UI enterprise profesional, similar en calidad visual a Replit/Lovable, pero aplicada a un sistema empresarial tipo SaaS/admin/ERP.
+
+Antes de modificar:
+1. Leé `docs/DESIGN_SYSTEM_STANDARDS.md`.
+2. Leé `docs/PROJECT_UI_CONTEXT.md`.
+3. Leé `docs/UI_QA_CHECKLIST.md`.
+4. Revisá el AppShell/Layout global.
+5. Revisá Sidebar, Topbar, PageContainer, cards, tablas, formularios y grids.
+6. Detectá qué estilos globales están causando mala distribución en desktop.
+
+Reglas:
+- No cambiar lógica funcional.
+- No cambiar datos.
+- No tocar backend.
+- No hacer refactor masivo.
+- Corregir primero layout global.
+- Después corregir componentes reutilizables.
+- No parchear pantalla por pantalla si la causa es global.
+- Reutilizar componentes comunes.
+- Mantener responsive mobile sin sacrificar desktop.
+
+Desktop obligatorio:
+- 1366x768
+- 1440x900
+- 1920x1080
+
+Corregir:
+- contenido excesivamente centrado
+- max-widths incorrectos
+- whitespace innecesario
+- KPI cards con overflow
+- íconos tapando textos/números
+- cards inconsistentes
+- tablas angostas
+- formularios mal distribuidos
+- falta de jerarquía visual
+
+Resultado esperado:
+La app debe verse como un SaaS empresarial real, completa, consistente, profesional y lista para demostración.
+
+Antes de terminar:
+1. Indicá diagnóstico.
+2. Indicá archivos modificados.
+3. Indicá qué componentes globales ajustaste.
+4. Indicá cómo probar en desktop/tablet/mobile.
+5. Confirmá que no hay overlap ni overflow visual.

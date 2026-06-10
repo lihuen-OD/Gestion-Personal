@@ -1,0 +1,27 @@
+Actuá como Software Architect Senior.
+
+Revisá:
+- estructura de carpetas
+- separación de responsabilidades
+- módulos
+- frontend
+- backend
+- base de datos
+- patrones usados
+- deuda técnica
+- escalabilidad
+- mantenibilidad
+- seguridad
+- deploy
+- diseño global del frontend
+- componentes compartidos
+
+Entregá:
+1. Diagnóstico general
+2. Problemas críticos
+3. Problemas importantes
+4. Mejoras recomendadas
+5. Refactors pequeños
+6. Refactors grandes para segunda etapa
+
+No modifiques código todavía.

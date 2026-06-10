@@ -1,16 +1,19 @@
+import { mockAuditParameters } from "../data/mockAuditParameters";
 import { mockAudit, mockDocuments, mockEmployees, mockNovelties, mockTimeEntries, mockUsers } from "../data/mockData";
+import { mockDocumentCategories } from "../data/mockDocumentCategories";
 import { mockHourConcepts } from "../data/mockHourConcepts";
 import { mockNoveltyTypes } from "../data/mockNoveltyTypes";
 import { mockOrgStructure } from "../data/mockOrgStructure";
 import { mockPositions } from "../data/mockPositions";
+import { mockSettlementConfigs } from "../data/mockSettlementConfigs";
 import { locationMockService } from "./locationMockService";
-import type { Employee, EmployeeAddress, EmployeeLocationMap, LaborMovement } from "../types";
+import type { Employee, EmployeeAddress, EmployeeLocationMap, LaborMovement, TimeEntry } from "../types";
 import type { Position } from "../types/position.types";
 
-export type StoreKey = "employees" | "users" | "timeEntries" | "novelties" | "noveltyTypes" | "hourConcepts" | "orgStructure" | "audit" | "documents" | "changeLogs" | "fieldHistory" | "blockHistory" | "positions" | "positionHistory";
-const seeds = { employees: mockEmployees, users: mockUsers, timeEntries: mockTimeEntries, novelties: mockNovelties, noveltyTypes: mockNoveltyTypes, hourConcepts: mockHourConcepts, orgStructure: [mockOrgStructure], audit: mockAudit, documents: mockDocuments, changeLogs: [], fieldHistory: [], blockHistory: [], positions: mockPositions, positionHistory: mockPositions.flatMap((position) => position.history) };
+export type StoreKey = "employees" | "users" | "timeEntries" | "novelties" | "noveltyTypes" | "hourConcepts" | "settlementConfigs" | "documentCategories" | "auditParameters" | "orgStructure" | "audit" | "documents" | "changeLogs" | "fieldHistory" | "blockHistory" | "positions" | "positionHistory";
+const seeds = { employees: mockEmployees, users: mockUsers, timeEntries: mockTimeEntries, novelties: mockNovelties, noveltyTypes: mockNoveltyTypes, hourConcepts: mockHourConcepts, settlementConfigs: mockSettlementConfigs, documentCategories: mockDocumentCategories, auditParameters: mockAuditParameters, orgStructure: [mockOrgStructure], audit: mockAudit, documents: mockDocuments, changeLogs: [], fieldHistory: [], blockHistory: [], positions: mockPositions, positionHistory: mockPositions.flatMap((position) => position.history) };
 const key = (name: StoreKey) => `losod_demo_${name}`;
-const seedVersion = "2026-06-hour-concepts-v1";
+const seedVersion = "2026-06-document-audit-v1";
 
 function normalizeLocationMap(value: unknown, employee: Partial<Employee>): EmployeeLocationMap {
   if (value && typeof value === "object" && "source" in value) return value as EmployeeLocationMap;
@@ -103,6 +106,21 @@ function normalizePosition(position: Partial<Position> & Record<string, unknown>
   } as Position;
 }
 
+function normalizeTimeEntry(entry: Partial<TimeEntry> & Record<string, unknown>): TimeEntry {
+  const period = String(entry.period || "");
+  const day = Number(entry.day || 1);
+  const hours = Number(entry.hours || 0);
+  return {
+    ...entry,
+    period,
+    day,
+    hours,
+    date: String(entry.date || `${period}-${String(day).padStart(2, "0")}`),
+    totalMinutes: Number(entry.totalMinutes ?? Math.round(hours * 60)),
+    origin: (entry.origin as TimeEntry["origin"]) || "MANUAL",
+  } as TimeEntry;
+}
+
 function ensureSeedVersion() {
   if (localStorage.getItem("losod_demo_seed_version") === seedVersion) return;
   (Object.keys(seeds) as StoreKey[]).forEach((name) => {
@@ -133,6 +151,7 @@ export function readStore<T>(name: StoreKey): T[] {
   const parsed = JSON.parse(raw);
   if (name === "employees") return (parsed as Array<Partial<Employee> & Record<string, unknown>>).map(normalizeEmployee) as T[];
   if (name === "positions") return (parsed as Array<Partial<Position> & Record<string, unknown>>).map(normalizePosition) as T[];
+  if (name === "timeEntries") return (parsed as Array<Partial<TimeEntry> & Record<string, unknown>>).map(normalizeTimeEntry) as T[];
   return parsed as T[];
 }
 

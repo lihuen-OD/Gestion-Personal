@@ -4,6 +4,7 @@ import type { OrgCategory, OrgChartFilters, OrgChartModel, OrgEdge, OrgEmployeeN
 import { calculateEmployeeStatus } from "./employeeStatusService";
 import { employeeMockService } from "./employeeMockService";
 import { orgStructureMockService } from "./orgStructureMockService";
+import { positionMockService } from "./positionMockService";
 
 const emptyFilters: OrgChartFilters = {
   company: "", businessUnit: "", establishment: "", costCenter: "", sector: "", position: "",
@@ -14,6 +15,7 @@ const normalize = (value: string) => value.normalize("NFD").replace(/[\u0300-\u0
 const text = (value: unknown) => String(value || "").toLowerCase();
 const unique = (items: string[]) => Array.from(new Set(items.filter(Boolean))).sort((a, b) => a.localeCompare(b, "es"));
 const fullName = (employee: Employee) => `${employee.lastName}, ${employee.firstName}`;
+const employeePositionName = (employee: Employee) => employee.puestoNombre || employee.position || "";
 const categoryKey = (employee: Employee) => normalize(employee.internalCategory || employee.receiptCategory || "");
 const managerKey = (employee: Employee) => normalize(`${employee.directManager || ""}`);
 const employeeNameKey = (employee: Employee) => normalize(`${employee.firstName} ${employee.lastName}`);
@@ -34,7 +36,7 @@ function employeeMatches(employee: Employee, filters: OrgChartFilters) {
     && (!filters.establishment || employee.establishment === filters.establishment)
     && (!filters.costCenter || employee.costCenter === filters.costCenter)
     && (!filters.sector || employee.sector === filters.sector)
-    && (!filters.position || employee.position === filters.position)
+    && (!filters.position || employee.positionId === filters.position || employeePositionName(employee) === filters.position)
     && (!filters.internalCategory || employee.internalCategory === filters.internalCategory)
     && (!filters.receiptCategory || employee.receiptCategory === filters.receiptCategory)
     && (!filters.status || calculateEmployeeStatus(employee) === filters.status)
@@ -71,7 +73,7 @@ export const organizationChartMockService = {
       establishment: unique([...structure.establishments, ...employees.map((employee) => employee.establishment)]),
       costCenter: unique([...structure.costCenters, ...employees.map((employee) => employee.costCenter)]),
       sector: unique([...structure.sectors, ...employees.map((employee) => employee.sector)]),
-      position: unique(employees.map((employee) => employee.position)),
+      position: unique([...positionMockService.getAll().map((position) => position.name), ...employees.map(employeePositionName)]),
       internalCategory: unique(employees.map((employee) => employee.internalCategory)),
       receiptCategory: unique(employees.map((employee) => employee.receiptCategory)),
       directManager: unique(employees.flatMap(employeeManagers)),

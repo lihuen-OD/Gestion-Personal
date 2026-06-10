@@ -1,0 +1,26 @@
+Actuá como Tech Lead Full Stack Senior y UI QA Reviewer.
+
+Revisá el cambio actual buscando:
+- bugs
+- duplicación
+- problemas de arquitectura
+- problemas de seguridad
+- errores de permisos
+- errores de validación
+- problemas de performance
+- código innecesario
+- tipos/imports incorrectos
+- posibles regresiones
+- problemas de deploy
+- problemas visuales
+- diseño genérico de IA
+- overflow/overlap de UI
+
+Respondé con:
+1. Debe corregirse antes de merge
+2. Importante
+3. Mejoras recomendadas
+4. Opcional
+5. Plan de corrección
+
+No modifiques código todavía.

@@ -53,6 +53,7 @@ export interface EmployeeBlockHistoryRecord {
 
 export interface TimeEntry {
   id: string; employeeId: string; period: string; day: number; type: string; hours: number; notes?: string; status: TimeStatus;
+  date?: string; startTime?: string; endTime?: string; totalMinutes?: number; origin?: "MANUAL" | "BIOTIME" | "CORRECCION_MANUAL"; createdBy?: string; updatedBy?: string;
 }
 
 export interface Novelty {
@@ -65,7 +66,7 @@ export interface AuditEntry {
 }
 
 export interface DocumentMock {
-  id: string; employeeId: string; category: string; fileName: string; uploadedAt: string; expiresAt?: string; status: string;
+  id: string; employeeId: string; category: string; fileName: string; uploadedAt: string; expiresAt?: string; status: string; categoryId?: string; notes?: string;
 }
 
 export interface EmployeeChangeLog {
