@@ -24,7 +24,7 @@ const uid = () => crypto.randomUUID();
 const uniqueIds = (values: string[]) => Array.from(new Set(values.filter(Boolean)));
 
 function PageHeader({ eyebrow, title, description, action }: { eyebrow: string; title: string; description: string; action?: React.ReactNode }) {
-  return <div className="page-header"><div><p className="eyebrow">{eyebrow}</p><h1>{title}</h1><p>{description}</p></div>{action}</div>;
+  return <div className="page-header"><div className="page-title-block"><p className="eyebrow">{eyebrow}</p><h1>{title}</h1><p>{description}</p></div>{action && <div className="page-actions">{action}</div>}</div>;
 }
 
 function blank(type: Tab): Editable {

@@ -34,6 +34,6 @@ export function PuestosPage() {
   return <>
     <div className="page-header"><div><p className="eyebrow">PUESTOS</p><h1>Puestos</h1><p>Administracion de descripciones de puesto y estructura funcional.</p></div>{canEdit && <Link className="button primary" to="/puestos/nuevo"><Plus size={17} /> Crear puesto</Link>}</div>
     <PuestoSummaryCards summary={positionMockService.getSummary()} />
-    <section className="panel"><div className="panel-head"><div><h3>Listado de puestos</h3><p>{positions.length} resultados segun filtros aplicados.</p></div></div><div className="panel-body"><PuestoFilters filters={filters} options={positionMockService.getFilterOptions()} onChange={setFilters} /><PuestoTable positions={positions} assignedCount={(id) => positionMockService.getAssignedEmployees(id).length} canEdit={canEdit} onRemove={remove} onToggleStatus={toggle} /></div></section>
+    <section className="panel position-list-panel"><div className="panel-head"><div><h3>Listado de puestos</h3><p>{positions.length} resultados segun filtros aplicados.</p></div></div><div className="panel-body position-list-body"><PuestoFilters filters={filters} options={positionMockService.getFilterOptions()} onChange={setFilters} /><PuestoTable positions={positions} assignedCount={(id) => positionMockService.getAssignedEmployees(id).length} canEdit={canEdit} onRemove={remove} onToggleStatus={toggle} /></div></section>
   </>;
 }

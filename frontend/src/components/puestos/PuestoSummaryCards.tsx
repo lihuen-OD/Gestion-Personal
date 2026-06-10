@@ -2,7 +2,7 @@ import { AlertTriangle, Archive, CheckCircle2, Link2, Users } from "lucide-react
 import type { PositionSummary } from "../../types/position.types";
 
 function Card({ label, value, detail, tone = "blue", icon: Icon }: { label: string; value: number; detail: string; tone?: string; icon: typeof Users }) {
-  return <div className="stat-card"><div className={`stat-icon ${tone}`}><Icon size={20} /></div><div><small>{label}</small><strong>{value}</strong><span>{detail}</span></div></div>;
+  return <div className="stat-card position-summary-card"><div className="stat-copy"><small>{label}</small><strong>{value}</strong><span>{detail}</span></div><div className={`stat-icon ${tone}`}><Icon size={20} /></div></div>;
 }
 
 export function PuestoSummaryCards({ summary }: { summary: PositionSummary }) {
