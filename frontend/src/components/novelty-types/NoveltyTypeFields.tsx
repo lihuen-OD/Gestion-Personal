@@ -1,27 +1,39 @@
-import type { NoveltyType, NoveltyTypeKind } from "../../types/noveltyType.types";
+import type { NoveltyTimeImpact, NoveltyType, NoveltyTypeKind, NoveltyTypeOrigin, NoveltyUiColor } from "../../types/noveltyType.types";
+import { noveltyColorClass, noveltyUiColors } from "../../utils/noveltyColor";
 
 export const noveltyKinds: NoveltyTypeKind[] = ["AUSENCIA", "LICENCIA", "HORARIA", "ACCIDENTE", "VACACIONES", "SANCION", "OTRO"];
+export const noveltyOrigins: NoveltyTypeOrigin[] = ["INTERNA", "FINNEGANS", "MIXTA"];
+export const noveltyTimeImpacts: NoveltyTimeImpact[] = ["NO_AFECTA_HORAS", "REGISTRA_HORAS_NO_TRABAJADAS", "BLOQUEA_CARGA_DIA"];
 export const roleOptions = ["Nivel 1 - RRHH", "Nivel 2 - Supervisión / Gestión", "Nivel 3 - Administrativo de Carga Horaria"] as const;
+export const noveltyUiColorLabels: Record<NoveltyUiColor, string> = {
+  blue: "Azul",
+  green: "Verde",
+  amber: "Ambar",
+  red: "Rojo",
+  violet: "Violeta",
+  teal: "Turquesa",
+};
 
 export function emptyNoveltyType(): NoveltyType {
   return {
     id: "",
     code: "",
     name: "",
+    uiColor: "blue",
     kind: "AUSENCIA",
+    origin: "INTERNA",
     description: "",
     status: "ACTIVO",
     rules: {
-      affectsAttendance: true,
-      affectsSettlement: true,
+      exportsToFinnegans: false,
       requiresApproval: true,
       requiresDocumentation: false,
-      allowsFullDay: true,
-      allowsHalfDay: false,
       allowsHours: false,
       allowsDateTo: true,
-      allowsQuantityDays: true,
-      allowsQuantityHours: false,
+      hasValidity: true,
+      blocksTimeEntry: false,
+      setsWorkedHoursToZero: false,
+      timeImpact: "NO_AFECTA_HORAS",
     },
     allowedLoadRoles: ["Nivel 1 - RRHH", "Nivel 2 - Supervisión / Gestión", "Nivel 3 - Administrativo de Carga Horaria"],
     approvalRoles: ["Nivel 1 - RRHH", "Nivel 2 - Supervisión / Gestión"],
@@ -50,4 +62,25 @@ export function TextAreaField({ label, value, onChange, disabled }: { label: str
 export function RoleChecklist({ label, value, onChange, disabled }: { label: string; value: string[]; onChange: (value: string[]) => void; disabled?: boolean }) {
   const toggle = (role: string) => onChange(value.includes(role) ? value.filter((item) => item !== role) : [...value, role]);
   return <div className="catalog-check-block"><small>{label}</small><div className="check-grid inline">{roleOptions.map((role) => <label className="check-card" key={role}><input type="checkbox" disabled={disabled} checked={value.includes(role)} onChange={() => toggle(role)} />{role}</label>)}</div></div>;
+}
+
+export function NoveltyColorField({ value, onChange, disabled }: { value: NoveltyUiColor; onChange: (value: NoveltyUiColor) => void; disabled?: boolean }) {
+  return <div className="catalog-check-block form-wide">
+    <small>Color en carga horaria</small>
+    <div className="novelty-color-grid">
+      {noveltyUiColors.map((color) => {
+        const active = value === color;
+        return <button
+          key={color}
+          type="button"
+          className={`novelty-color-option ${active ? "active" : ""}`}
+          disabled={disabled}
+          onClick={() => onChange(color)}
+        >
+          <span className={`cell-novelty-pill ${noveltyColorClass(color, color)}`}>{noveltyUiColorLabels[color]}</span>
+          <small>{active ? "Seleccionado" : "Usar color"}</small>
+        </button>;
+      })}
+    </div>
+  </div>;
 }

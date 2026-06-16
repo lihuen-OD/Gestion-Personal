@@ -150,3 +150,46 @@ When finishing a task, respond with:
 6. Risks or pending improvements.
 
 Keep the answer concise unless the task is complex.
+
+# Mandatory visual reference rule
+
+Before modifying any frontend UI, always read:
+
+- `docs/PROJECT_CONTEXT.md`
+- `docs/PROJECT_UI_CONTEXT.md`
+- `docs/FRONTEND_STANDARDS.md`
+- `docs/DESIGN_SYSTEM_STANDARDS.md`
+- `docs/UI_QA_CHECKLIST.md`
+
+Also inspect the visual reference images in:
+
+- `docs/reference-ui/dashboard-reference.png`
+- `docs/reference-ui/list-reference.png`
+- `docs/reference-ui/detail-reference.png`
+- `docs/reference-ui/form-reference.png`
+- `docs/reference-ui/sidebar-topbar-reference.png`
+
+The images in `docs/reference-ui/` are the mandatory visual reference.
+
+Do not invent a new visual identity.
+
+The frontend must match the reference UI system:
+
+- Same sidebar style
+- Same topbar style
+- Same page structure
+- Same card style
+- Same KPI card style
+- Same table style
+- Same form style
+- Same button style
+- Same badge style
+- Same spacing
+- Same typography
+- Same border radius
+- Same shadows
+- Same enterprise density
+
+For visual refactors, modify only layout, styles and reusable UI components.
+
+Do not modify business logic, routes, services, models, validations, data structure or existing functionality unless explicitly requested.

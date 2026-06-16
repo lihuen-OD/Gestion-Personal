@@ -19,8 +19,8 @@ export function NoveltyTypeCreatePage() {
   const save = (event: FormEvent) => {
     event.preventDefault();
     if (!item.name.trim() || !item.description.trim()) return setError("Completá nombre y descripción funcional.");
-    const invalidLink = item.finnegansLinks.some((link) => link.code.trim() && (!link.name.trim() || !link.settlementConcept.trim()));
-    if (invalidLink) return setError("Si cargás un código Finnegans, completá nombre y concepto liquidable.");
+    const invalidLink = item.finnegansLinks.some((link) => link.code.trim() && (!link.name.trim() || !link.exportConcept.trim()));
+    if (invalidLink) return setError("Si cargás un código Finnegans, completá nombre y concepto exportable.");
     const created = noveltyTypeMockService.create(item, user!);
     navigate(`/configuracion/tipos-novedades/${created.id}`, { state: { created: true } });
   };
@@ -28,7 +28,7 @@ export function NoveltyTypeCreatePage() {
     <div className="page-header"><div><p className="eyebrow">TIPOS DE NOVEDADES</p><h1>Crear tipo de novedad</h1><p>Definí la novedad interna, sus reglas y la vinculación con Finnegans.</p></div></div>
     <section className="panel"><div className="panel-head"><div><h3>1. Identificación interna</h3><p>Datos visibles para RRHH, supervisión y carga horaria.</p></div></div><NoveltyTypeIdentificationTab item={item} setItem={setItem} /></section>
     <section className="panel"><div className="panel-head"><div><h3>2. Reglas operativas</h3><p>Controlan qué campos se habilitan y qué impactos genera la novedad.</p></div></div><NoveltyTypeRulesTab item={item} setItem={setItem} /></section>
-    <section className="panel"><div className="panel-head"><div><h3>3. Vinculación Finnegans</h3><p>Equivalencias externas para liquidación e integración futura.</p></div></div><NoveltyTypeFinnegansTab item={item} setItem={setItem} /></section>
+    <section className="panel"><div className="panel-head"><div><h3>3. Vinculación Finnegans</h3><p>Equivalencias externas para exportación e integración futura.</p></div></div><NoveltyTypeFinnegansTab item={item} setItem={setItem} /></section>
     {error && <p className="error create-error">{error}</p>}
     <div className="form-actions create-actions"><Link to="/configuracion/tipos-novedades" className="button subtle">Cancelar</Link><button className="button primary">Guardar tipo</button></div>
   </form>;

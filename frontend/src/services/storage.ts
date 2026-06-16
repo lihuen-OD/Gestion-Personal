@@ -13,7 +13,7 @@ import type { Position } from "../types/position.types";
 export type StoreKey = "employees" | "users" | "timeEntries" | "novelties" | "noveltyTypes" | "hourConcepts" | "settlementConfigs" | "documentCategories" | "auditParameters" | "orgStructure" | "audit" | "documents" | "changeLogs" | "fieldHistory" | "blockHistory" | "positions" | "positionHistory";
 const seeds = { employees: mockEmployees, users: mockUsers, timeEntries: mockTimeEntries, novelties: mockNovelties, noveltyTypes: mockNoveltyTypes, hourConcepts: mockHourConcepts, settlementConfigs: mockSettlementConfigs, documentCategories: mockDocumentCategories, auditParameters: mockAuditParameters, orgStructure: [mockOrgStructure], audit: mockAudit, documents: mockDocuments, changeLogs: [], fieldHistory: [], blockHistory: [], positions: mockPositions, positionHistory: mockPositions.flatMap((position) => position.history) };
 const key = (name: StoreKey) => `losod_demo_${name}`;
-const seedVersion = "2026-06-document-audit-v1";
+const seedVersion = "2026-06-novedades-horas-finnegans-v1";
 
 function normalizeLocationMap(value: unknown, employee: Partial<Employee>): EmployeeLocationMap {
   if (value && typeof value === "object" && "source" in value) return value as EmployeeLocationMap;
@@ -136,6 +136,8 @@ function ensureSeedVersion() {
       const currentIds = new Set(current.map((employee) => employee.id));
       const additions = mockEmployees.filter((employee) => !currentIds.has(employee.id));
       localStorage.setItem(key(name), JSON.stringify([...current, ...additions]));
+    } else if (["hourConcepts", "noveltyTypes"].includes(name)) {
+      localStorage.setItem(key(name), JSON.stringify(seeds[name]));
     }
   });
   localStorage.setItem("losod_demo_seed_version", seedVersion);

@@ -1,30 +1,14 @@
 import type { Role } from "./index";
 
 export type HourConceptStatus = "ACTIVO" | "INACTIVO";
-export type HourConceptKind = "NORMAL" | "EXTRA" | "FERIADO" | "NOCTURNA" | "FRANCO" | "GUARDIA" | "AUSENCIA_HORARIA" | "LLEGADA_TARDE" | "OTRO";
-export type HourConceptUnit = "HORAS" | "DIAS" | "EVENTOS";
+export type HourConceptKind = "NORMAL" | "EXTRA" | "FERIADO" | "NOCTURNA" | "GUARDIA" | "SERENO" | "TRANSPORTE" | "OTRO";
+export type HourConceptUnit = "HORAS";
 
 export interface HourConceptRules {
-  affectsAttendance: boolean;
-  affectsSettlement: boolean;
-  requiresApproval: boolean;
-  requiresObservation: boolean;
-  allowsManualLoad: boolean;
-  allowsRange: boolean;
-  allowsQuantity: boolean;
+  affectsSettlement?: boolean;
   defaultUnit: HourConceptUnit;
-  multiplier: number;
+  multiplier?: number;
   maxDailyHours?: number;
-}
-
-export interface FinnegansHourConceptLink {
-  id: string;
-  code: string;
-  name: string;
-  settlementConcept: string;
-  priority: number;
-  status: HourConceptStatus;
-  notes?: string;
 }
 
 export interface HourConceptHistoryRecord {
@@ -46,7 +30,7 @@ export interface HourConcept {
   rules: HourConceptRules;
   allowedLoadRoles: Role[];
   approvalRoles: Role[];
-  finnegansLinks: FinnegansHourConceptLink[];
+  finnegansLinks?: never[];
   notes?: string;
   createdAt: string;
   updatedAt: string;
@@ -58,7 +42,5 @@ export interface HourConcept {
 export interface HourConceptFilters {
   search: string;
   kind: string;
-  affectsSettlement: string;
-  requiresApproval: string;
   status: string;
 }

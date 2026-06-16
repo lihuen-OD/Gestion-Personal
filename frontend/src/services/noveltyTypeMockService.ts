@@ -1,6 +1,7 @@
 import type { User } from "../types";
 import type { FinnegansNoveltyLink, NoveltyType, NoveltyTypeFilters, NoveltyTypeHistoryRecord } from "../types/noveltyType.types";
 import { readStore, writeStore } from "./storage";
+import { resolveNoveltyUiColor } from "../utils/noveltyColor";
 
 const todayIso = () => new Date().toISOString();
 const normalize = (value: string) => value.trim().toLowerCase();
@@ -11,11 +12,11 @@ function history(user: User | undefined, action: string, description: string): N
 
 function matchesFilters(item: NoveltyType, filters: NoveltyTypeFilters) {
   const search = normalize(filters.search);
-  const text = normalize(`${item.code} ${item.name} ${item.description} ${item.finnegansLinks.map((link) => `${link.code} ${link.name} ${link.settlementConcept}`).join(" ")}`);
+  const text = normalize(`${item.code} ${item.name} ${item.description} ${item.finnegansLinks.map((link) => `${link.code} ${link.name} ${link.exportConcept || ""}`).join(" ")}`);
   if (search && !text.includes(search)) return false;
   if (filters.kind && item.kind !== filters.kind) return false;
   if (filters.status && item.status !== filters.status) return false;
-  if (filters.affectsSettlement && String(item.rules.affectsSettlement) !== filters.affectsSettlement) return false;
+  if (filters.exportsToFinnegans && String(item.rules.exportsToFinnegans) !== filters.exportsToFinnegans) return false;
   if (filters.requiresApproval && String(item.rules.requiresApproval) !== filters.requiresApproval) return false;
   return true;
 }
@@ -25,13 +26,39 @@ function nextCode(items: NoveltyType[]) {
   return `NOV-${String(max + 1).padStart(3, "0")}`;
 }
 
+function normalizeNoveltyType(item: NoveltyType): NoveltyType {
+  const hasFinnegans = item.finnegansLinks?.some((link) => link.status === "ACTIVO");
+  const storedTimeImpact = String(item.rules.timeImpact || "");
+  const timeImpact = storedTimeImpact === "DESCUENTA_HORAS"
+    ? "REGISTRA_HORAS_NO_TRABAJADAS"
+    : storedTimeImpact === "BLOQUEA_CARGA_DIA"
+      ? "BLOQUEA_CARGA_DIA"
+      : storedTimeImpact === "REGISTRA_HORAS_NO_TRABAJADAS"
+        ? "REGISTRA_HORAS_NO_TRABAJADAS"
+        : "NO_AFECTA_HORAS";
+  return {
+    ...item,
+    uiColor: resolveNoveltyUiColor(item.uiColor, item.id || item.name || item.code),
+    origin: item.origin || (hasFinnegans ? "FINNEGANS" : "INTERNA"),
+    rules: {
+      ...item.rules,
+      exportsToFinnegans: item.rules.exportsToFinnegans ?? Boolean(item.rules.affectsSettlement && hasFinnegans),
+      hasValidity: item.rules.hasValidity ?? Boolean(item.rules.allowsDateTo),
+      blocksTimeEntry: item.rules.blocksTimeEntry ?? ["VACACIONES", "LICENCIA", "ACCIDENTE", "SANCION"].includes(item.kind),
+      setsWorkedHoursToZero: item.rules.setsWorkedHoursToZero ?? ["VACACIONES", "LICENCIA", "ACCIDENTE", "SANCION"].includes(item.kind),
+      timeImpact,
+    },
+    finnegansLinks: (item.finnegansLinks || []).map((link) => ({ ...link, exportConcept: link.exportConcept || link.settlementConcept || link.name, hasValidity: link.hasValidity ?? Boolean(item.rules.allowsDateTo) })),
+  };
+}
+
 export const noveltyTypeMockService = {
-  getAll: () => readStore<NoveltyType>("noveltyTypes"),
-  getActive: () => readStore<NoveltyType>("noveltyTypes").filter((item) => item.status === "ACTIVO"),
-  getById: (id: string) => readStore<NoveltyType>("noveltyTypes").find((item) => item.id === id),
-  getByName: (name: string) => readStore<NoveltyType>("noveltyTypes").find((item) => normalize(item.name) === normalize(name)),
-  getEmptyFilters: (): NoveltyTypeFilters => ({ search: "", kind: "", affectsSettlement: "", requiresApproval: "", status: "ACTIVO" }),
-  getFiltered: (filters: NoveltyTypeFilters) => readStore<NoveltyType>("noveltyTypes").filter((item) => matchesFilters(item, filters)),
+  getAll: () => readStore<NoveltyType>("noveltyTypes").map(normalizeNoveltyType),
+  getActive: () => noveltyTypeMockService.getAll().filter((item) => item.status === "ACTIVO"),
+  getById: (id: string) => noveltyTypeMockService.getAll().find((item) => item.id === id),
+  getByName: (name: string) => noveltyTypeMockService.getAll().find((item) => normalize(item.name) === normalize(name)),
+  getEmptyFilters: (): NoveltyTypeFilters => ({ search: "", kind: "", exportsToFinnegans: "", requiresApproval: "", status: "ACTIVO" }),
+  getFiltered: (filters: NoveltyTypeFilters) => noveltyTypeMockService.getAll().filter((item) => matchesFilters(item, filters)),
   getFilterOptions: () => {
     const items = readStore<NoveltyType>("noveltyTypes");
     return {
@@ -62,6 +89,6 @@ export const noveltyTypeMockService = {
     if (!item) return undefined;
     return noveltyTypeMockService.update(id, { ...item, status }, user, status === "ACTIVO" ? "Activacion" : "Inactivacion", `Se cambio el estado a ${status}.`);
   },
-  addFinnegansLink: (item: NoveltyType): NoveltyType => ({ ...item, finnegansLinks: [...item.finnegansLinks, { id: crypto.randomUUID(), code: "", name: "", settlementConcept: "", priority: item.finnegansLinks.length + 1, status: "ACTIVO" } as FinnegansNoveltyLink] }),
+  addFinnegansLink: (item: NoveltyType): NoveltyType => ({ ...item, rules: { ...item.rules, exportsToFinnegans: true }, finnegansLinks: [...item.finnegansLinks, { id: crypto.randomUUID(), code: "", name: "", exportConcept: "", priority: item.finnegansLinks.length + 1, status: "ACTIVO", hasValidity: item.rules.hasValidity } as FinnegansNoveltyLink] }),
   removeFinnegansLink: (item: NoveltyType, linkId: string): NoveltyType => ({ ...item, finnegansLinks: item.finnegansLinks.filter((link) => link.id !== linkId) }),
 };

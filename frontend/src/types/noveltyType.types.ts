@@ -2,28 +2,35 @@ import type { Role } from "./index";
 
 export type NoveltyTypeStatus = "ACTIVO" | "INACTIVO";
 export type NoveltyTypeKind = "AUSENCIA" | "LICENCIA" | "HORARIA" | "ACCIDENTE" | "VACACIONES" | "SANCION" | "OTRO";
+export type NoveltyTypeOrigin = "INTERNA" | "FINNEGANS" | "MIXTA";
+export type NoveltyTimeImpact = "NO_AFECTA_HORAS" | "REGISTRA_HORAS_NO_TRABAJADAS" | "BLOQUEA_CARGA_DIA";
+export type NoveltyUiColor = "blue" | "green" | "amber" | "red" | "violet" | "teal";
 
 export interface FinnegansNoveltyLink {
   id: string;
   code: string;
   name: string;
-  settlementConcept: string;
+  exportConcept: string;
+  settlementConcept?: string;
   priority: number;
   status: NoveltyTypeStatus;
   notes?: string;
+  hasValidity?: boolean;
 }
 
 export interface NoveltyTypeRules {
-  affectsAttendance: boolean;
-  affectsSettlement: boolean;
+  exportsToFinnegans: boolean;
   requiresApproval: boolean;
   requiresDocumentation: boolean;
-  allowsFullDay: boolean;
-  allowsHalfDay: boolean;
   allowsHours: boolean;
   allowsDateTo: boolean;
-  allowsQuantityDays: boolean;
-  allowsQuantityHours: boolean;
+  hasValidity: boolean;
+  blocksTimeEntry: boolean;
+  setsWorkedHoursToZero: boolean;
+  timeImpact: NoveltyTimeImpact;
+  affectsSettlement?: boolean;
+  settlementImpact?: string;
+  hourConceptName?: string;
 }
 
 export interface NoveltyTypeHistoryRecord {
@@ -39,7 +46,9 @@ export interface NoveltyType {
   id: string;
   code: string;
   name: string;
+  uiColor: NoveltyUiColor;
   kind: NoveltyTypeKind;
+  origin: NoveltyTypeOrigin;
   description: string;
   status: NoveltyTypeStatus;
   rules: NoveltyTypeRules;
@@ -57,7 +66,7 @@ export interface NoveltyType {
 export interface NoveltyTypeFilters {
   search: string;
   kind: string;
-  affectsSettlement: string;
+  exportsToFinnegans: string;
   requiresApproval: string;
   status: string;
 }

@@ -1,6 +1,7 @@
 import type { DocumentMock, Employee, Novelty, TimeEntry } from "../types";
 import { calculateEmployeeStatus } from "./employeeStatusService";
 import { readStore } from "./storage";
+import { timeEntryMockService } from "./timeEntryMockService";
 
 const referenceDate = new Date("2026-06-02T12:00:00");
 const dayMs = 86_400_000;
@@ -22,10 +23,12 @@ export const dashboardMetricsMockService = {
     const employees = readStore<Employee>("employees").filter(scope || (() => true));
     const active = employees.filter((employee) => calculateEmployeeStatus(employee) === "Activo");
     const employeeIds = new Set(employees.map((employee) => employee.id));
-    const entries = readStore<TimeEntry>("timeEntries").filter((entry) => employeeIds.has(entry.employeeId) && entry.period === "2026-06");
+    const period = timeEntryMockService.getDefaultPeriod();
+    const entries = readStore<TimeEntry>("timeEntries").filter((entry) => employeeIds.has(entry.employeeId) && entry.period === period);
+    const countableEntries = entries.filter((entry) => timeEntryMockService.isCountableStatus(entry.status));
     const novelties = readStore<Novelty>("novelties").filter((novelty) => employeeIds.has(novelty.employeeId));
     const documents = readStore<DocumentMock>("documents").filter((document) => employeeIds.has(document.employeeId));
-    const absenceDays = novelties.filter((novelty) => absenceTypes.has(novelty.type) && novelty.from.startsWith("2026-06")).reduce((total, novelty) => total + dayCount(novelty.from, novelty.to), 0);
+    const absenceDays = novelties.filter((novelty) => absenceTypes.has(novelty.type) && novelty.from.startsWith(period)).reduce((total, novelty) => total + dayCount(novelty.from, novelty.to), 0);
     const upcomingBirthdays = active.filter((employee) => {
       const birthDate = new Date(`${employee.birthDate}T12:00:00`);
       let next = new Date(referenceDate.getFullYear(), birthDate.getMonth(), birthDate.getDate(), 12);
@@ -33,7 +36,7 @@ export const dashboardMetricsMockService = {
       return (next.getTime() - referenceDate.getTime()) / dayMs <= 30;
     }).sort((a, b) => a.birthDate.slice(5).localeCompare(b.birthDate.slice(5)));
     const transported = active.filter((employee) => employee.transport);
-    const withEntries = new Set(entries.map((entry) => entry.employeeId));
+    const withEntries = new Set(countableEntries.map((entry) => entry.employeeId));
     const inactiveThisYear = employees.filter((employee) => employee.endDate?.startsWith("2026"));
     return {
       total: employees.length, active: active.length, inactive: employees.length - active.length,
@@ -44,8 +47,8 @@ export const dashboardMetricsMockService = {
       averageTenure: active.length ? (active.reduce((total, employee) => total + yearsBetween(employee.startDate), 0) / active.length).toFixed(1) : "0.0",
       transported: transported.length, transportByCity: groupCount(transported.map((employee) => employee.city)),
       transportRoutes: groupCount(transported.map((employee) => employee.transportRoute)),
-      loadedHours: entries.reduce((total, entry) => total + entry.hours, 0),
-      loadCoverage: active.length ? Math.round(withEntries.size / active.length * 100) : 0,
+      loadedHours: countableEntries.reduce((total, entry) => total + entry.hours, 0),
+      loadCoverage: active.length ? Math.round(new Set(countableEntries.map((entry) => entry.employeeId)).size / active.length * 100) : 0,
       pendingLoads: active.filter((employee) => !withEntries.has(employee.id)).length,
       reviewLoads: new Set(entries.filter((entry) => entry.status === "En revisión").map((entry) => entry.employeeId)).size,
       expiredDocuments: documents.filter((document) => document.status === "Vencido").length,

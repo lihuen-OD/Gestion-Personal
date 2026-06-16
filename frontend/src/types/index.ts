@@ -53,12 +53,16 @@ export interface EmployeeBlockHistoryRecord {
 
 export interface TimeEntry {
   id: string; employeeId: string; period: string; day: number; type: string; hours: number; notes?: string; status: TimeStatus;
-  date?: string; startTime?: string; endTime?: string; totalMinutes?: number; origin?: "MANUAL" | "BIOTIME" | "CORRECCION_MANUAL"; createdBy?: string; updatedBy?: string;
+  date?: string; startTime?: string; endTime?: string; totalMinutes?: number; origin?: "MANUAL" | "BIOTIME" | "CORRECCION_MANUAL" | "NOVEDAD"; createdBy?: string; updatedBy?: string;
+  conceptId?: string; isSpecial?: boolean; finnegansCode?: string; exportToFinnegans?: boolean;
 }
 
 export interface Novelty {
   id: string; employeeId: string; type: string; noveltyTypeId?: string; from: string; to: string; quantity: string;
   affectsSettlement: boolean; status: string; createdBy: string; documentationFileName?: string; documentationNotes?: string;
+  origin?: "INTERNA" | "FINNEGANS" | "MIXTA"; timeImpact?: string; hoursImpact?: number;
+  targetHourConceptId?: string; targetHourConceptName?: string;
+  exportsToFinnegans?: boolean; finnegansCode?: string; finnegansName?: string; valor1?: string; fechaAplicacion?: string; hasValidity?: boolean; blocksTimeEntry?: boolean; setsWorkedHoursToZero?: boolean;
 }
 
 export interface AuditEntry {
