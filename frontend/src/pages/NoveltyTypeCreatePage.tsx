@@ -1,35 +1,64 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { Link, Navigate, useNavigate } from "react-router-dom";
 import { emptyNoveltyType } from "../components/novelty-types/NoveltyTypeFields";
 import { NoveltyTypeFinnegansTab } from "../components/novelty-types/NoveltyTypeFinnegansTab";
 import { NoveltyTypeIdentificationTab } from "../components/novelty-types/NoveltyTypeIdentificationTab";
 import { NoveltyTypeRulesTab } from "../components/novelty-types/NoveltyTypeRulesTab";
 import { useAuth } from "../context/AuthContext";
+import { noveltyTypeApiService } from "../services/api/noveltyTypeApiService";
 import { noveltyTypeMockService } from "../services/noveltyTypeMockService";
 import type { NoveltyType } from "../types/noveltyType.types";
-
-function roleLevel(role: string) { return role.startsWith("Nivel 1") ? 1 : role.startsWith("Nivel 2") ? 2 : 3; }
+import { roleLevel } from "../utils/roles";
 
 export function NoveltyTypeCreatePage() {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const [usesApi, setUsesApi] = useState(false);
   const [item, setItem] = useState<NoveltyType>({ ...emptyNoveltyType(), id: crypto.randomUUID(), code: noveltyTypeMockService.getNextCode() });
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    let alive = true;
+    noveltyTypeApiService.getAll()
+      .then((items) => {
+        if (!alive) return;
+        setUsesApi(true);
+        setItem((current) => ({ ...current, code: noveltyTypeApiService.getNextCode(items) }));
+      })
+      .catch(() => setUsesApi(false));
+    return () => { alive = false; };
+  }, []);
+
   if (roleLevel(user!.role) !== 1) return <Navigate to="/configuracion" />;
-  const save = (event: FormEvent) => {
+
+  const save = async (event: FormEvent) => {
     event.preventDefault();
-    if (!item.name.trim() || !item.description.trim()) return setError("Completá nombre y descripción funcional.");
+    if (!item.name.trim() || !item.description.trim()) return setError("Completa nombre y descripcion funcional.");
     const invalidLink = item.finnegansLinks.some((link) => link.code.trim() && (!link.name.trim() || !link.exportConcept.trim()));
-    if (invalidLink) return setError("Si cargás un código Finnegans, completá nombre y concepto exportable.");
-    const created = noveltyTypeMockService.create(item, user!);
-    navigate(`/configuracion/tipos-novedades/${created.id}`, { state: { created: true } });
+    if (invalidLink) return setError("Si cargas un codigo Finnegans, completa nombre y concepto exportable.");
+
+    try {
+      const created = usesApi ? await noveltyTypeApiService.create(item) : noveltyTypeMockService.create(item, user!);
+      navigate(`/configuracion/tipos-novedades/${created.id}`, { state: { created: true, usesApi } });
+    } catch {
+      setError("No se pudo guardar en backend. Revisa la conexion o el codigo duplicado.");
+    }
   };
-  return <form onSubmit={save}>
-    <div className="page-header"><div><p className="eyebrow">TIPOS DE NOVEDADES</p><h1>Crear tipo de novedad</h1><p>Definí la novedad interna, sus reglas y la vinculación con Finnegans.</p></div></div>
-    <section className="panel"><div className="panel-head"><div><h3>1. Identificación interna</h3><p>Datos visibles para RRHH, supervisión y carga horaria.</p></div></div><NoveltyTypeIdentificationTab item={item} setItem={setItem} /></section>
-    <section className="panel"><div className="panel-head"><div><h3>2. Reglas operativas</h3><p>Controlan qué campos se habilitan y qué impactos genera la novedad.</p></div></div><NoveltyTypeRulesTab item={item} setItem={setItem} /></section>
-    <section className="panel"><div className="panel-head"><div><h3>3. Vinculación Finnegans</h3><p>Equivalencias externas para exportación e integración futura.</p></div></div><NoveltyTypeFinnegansTab item={item} setItem={setItem} /></section>
-    {error && <p className="error create-error">{error}</p>}
-    <div className="form-actions create-actions"><Link to="/configuracion/tipos-novedades" className="button subtle">Cancelar</Link><button className="button primary">Guardar tipo</button></div>
-  </form>;
+
+  return (
+    <form onSubmit={save}>
+      <div className="page-header">
+        <div>
+          <p className="eyebrow">TIPOS DE NOVEDADES</p>
+          <h1>Crear tipo de novedad</h1>
+          <p>Defini la novedad interna, sus reglas y la vinculacion con Finnegans.</p>
+        </div>
+      </div>
+      <section className="panel"><div className="panel-head"><div><h3>1. Identificacion interna</h3><p>Datos visibles para RRHH, supervision y carga horaria.</p></div></div><NoveltyTypeIdentificationTab item={item} setItem={setItem} /></section>
+      <section className="panel"><div className="panel-head"><div><h3>2. Reglas operativas</h3><p>Controlan que campos se habilitan y que impactos genera la novedad.</p></div></div><NoveltyTypeRulesTab item={item} setItem={setItem} /></section>
+      <section className="panel"><div className="panel-head"><div><h3>3. Vinculacion Finnegans</h3><p>Equivalencias externas para exportacion e integracion futura.</p></div></div><NoveltyTypeFinnegansTab item={item} setItem={setItem} /></section>
+      {error && <p className="error create-error">{error}</p>}
+      <div className="form-actions create-actions"><Link to="/configuracion/tipos-novedades" className="button subtle">Cancelar</Link><button className="button primary">Guardar tipo</button></div>
+    </form>
+  );
 }

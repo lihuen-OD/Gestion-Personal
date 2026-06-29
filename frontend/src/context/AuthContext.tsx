@@ -1,12 +1,53 @@
 import { createContext, useContext, useState, type ReactNode } from "react";
 import type { Role, User } from "../types";
-import { authMockService } from "../services/authMockService";
+import { authApiService, demoCredentialsByRole } from "../services/api/authApiService";
+import { refreshTokenStorage, tokenStorage } from "../services/api/apiClient";
 
-interface AuthValue { user?: User; login: (email: string, password: string) => boolean; loginAs: (role: Role) => void; logout: () => void; }
+interface AuthValue {
+  user?: User;
+  login: (email: string, password: string) => Promise<boolean>;
+  loginAs: (role: Role) => Promise<boolean>;
+  logout: () => void;
+}
 const AuthContext = createContext<AuthValue | undefined>(undefined);
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<User | undefined>(() => JSON.parse(sessionStorage.getItem("losod_user") || "null") || undefined);
-  const save = (value?: User) => { setUser(value); value ? sessionStorage.setItem("losod_user", JSON.stringify(value)) : sessionStorage.removeItem("losod_user"); };
-  return <AuthContext.Provider value={{ user, login: (email, password) => { const found = authMockService.login(email, password); save(found); return !!found; }, loginAs: (role) => save(authMockService.loginAsRole(role)), logout: () => save() }}>{children}</AuthContext.Provider>;
+  const [user, setUser] = useState<User | undefined>(() => {
+    const savedUser = JSON.parse(sessionStorage.getItem("losod_user") || "null") || undefined;
+    if (tokenStorage.get()) return savedUser;
+    sessionStorage.removeItem("losod_user");
+    return undefined;
+  });
+  const save = (value?: User) => {
+    setUser(value);
+    value ? sessionStorage.setItem("losod_user", JSON.stringify(value)) : sessionStorage.removeItem("losod_user");
+  };
+
+  const login = async (email: string, password: string) => {
+    try {
+      const result = await authApiService.login(email, password);
+      tokenStorage.set(result.accessToken);
+      refreshTokenStorage.set(result.refreshToken);
+      save(result.user);
+      return true;
+    } catch {
+      tokenStorage.clear();
+      refreshTokenStorage.clear();
+      save();
+      return false;
+    }
+  };
+
+  const loginAs = async (role: Role) => {
+    const credentials = demoCredentialsByRole[role];
+    return login(credentials.email, credentials.password);
+  };
+
+  const logout = () => {
+    tokenStorage.clear();
+    refreshTokenStorage.clear();
+    save();
+  };
+
+  return <AuthContext.Provider value={{ user, login, loginAs, logout }}>{children}</AuthContext.Provider>;
 }
 export const useAuth = () => useContext(AuthContext)!;

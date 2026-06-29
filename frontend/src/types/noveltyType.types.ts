@@ -4,7 +4,22 @@ export type NoveltyTypeStatus = "ACTIVO" | "INACTIVO";
 export type NoveltyTypeKind = "AUSENCIA" | "LICENCIA" | "HORARIA" | "ACCIDENTE" | "VACACIONES" | "SANCION" | "OTRO";
 export type NoveltyTypeOrigin = "INTERNA" | "FINNEGANS" | "MIXTA";
 export type NoveltyTimeImpact = "NO_AFECTA_HORAS" | "REGISTRA_HORAS_NO_TRABAJADAS" | "BLOQUEA_CARGA_DIA";
-export type NoveltyUiColor = "blue" | "green" | "amber" | "red" | "violet" | "teal";
+export type NoveltyUiColor =
+  | "blue"
+  | "sky"
+  | "cyan"
+  | "teal"
+  | "emerald"
+  | "green"
+  | "lime"
+  | "amber"
+  | "orange"
+  | "red"
+  | "rose"
+  | "pink"
+  | "violet"
+  | "purple"
+  | "slate";
 
 export interface FinnegansNoveltyLink {
   id: string;

@@ -1,3 +1,5 @@
+import { useEffect, useState } from "react";
+import { salaryCategoryApiService } from "../../services/api/salaryCategoryApiService";
 import { salaryRangeMockService, type SalaryGroup } from "../../services/salaryRangeMockService";
 import type { Position } from "../../types/position.types";
 
@@ -7,7 +9,23 @@ function uniqueSorted(values: string[]) {
 
 export function PuestoSalaryRangeTab({ position, setPosition, disabled = false }: { position: Position; setPosition: (position: Position) => void; disabled?: boolean }) {
   const selected = position.salaryRangeCategories || [];
-  const groups = salaryRangeMockService.getGroups();
+  const [groups, setGroups] = useState<SalaryGroup[]>(() => salaryRangeMockService.getGroups());
+  useEffect(() => {
+    let mounted = true;
+    salaryCategoryApiService.getGroups()
+      .then((apiGroups) => {
+        if (mounted && apiGroups.length) {
+          salaryRangeMockService.setApiGroups(apiGroups);
+          setGroups(apiGroups);
+        }
+      })
+      .catch(() => {
+        if (mounted) setGroups(salaryRangeMockService.getGroups());
+      });
+    return () => {
+      mounted = false;
+    };
+  }, []);
   const setSelected = (salaryRangeCategories: string[]) => setPosition({ ...position, salaryRangeCategories });
   const clear = () => setSelected([]);
   const selectGroup = (group: SalaryGroup) => setSelected(uniqueSorted([...selected, ...group.categories]));

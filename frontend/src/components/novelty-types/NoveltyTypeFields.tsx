@@ -1,3 +1,5 @@
+import { useEffect } from "react";
+import { noveltyTypeMockService } from "../../services/noveltyTypeMockService";
 import type { NoveltyTimeImpact, NoveltyType, NoveltyTypeKind, NoveltyTypeOrigin, NoveltyUiColor } from "../../types/noveltyType.types";
 import { noveltyColorClass, noveltyUiColors } from "../../utils/noveltyColor";
 
@@ -7,11 +9,20 @@ export const noveltyTimeImpacts: NoveltyTimeImpact[] = ["NO_AFECTA_HORAS", "REGI
 export const roleOptions = ["Nivel 1 - RRHH", "Nivel 2 - Supervisión / Gestión", "Nivel 3 - Administrativo de Carga Horaria"] as const;
 export const noveltyUiColorLabels: Record<NoveltyUiColor, string> = {
   blue: "Azul",
-  green: "Verde",
-  amber: "Ambar",
-  red: "Rojo",
-  violet: "Violeta",
+  sky: "Celeste",
+  cyan: "Cian",
   teal: "Turquesa",
+  emerald: "Esmeralda",
+  green: "Verde",
+  lime: "Lima",
+  amber: "Ambar",
+  orange: "Naranja",
+  red: "Rojo",
+  rose: "Rosa oscuro",
+  pink: "Rosa",
+  violet: "Violeta",
+  purple: "Purpura",
+  slate: "Pizarra",
 };
 
 export function emptyNoveltyType(): NoveltyType {
@@ -64,23 +75,38 @@ export function RoleChecklist({ label, value, onChange, disabled }: { label: str
   return <div className="catalog-check-block"><small>{label}</small><div className="check-grid inline">{roleOptions.map((role) => <label className="check-card" key={role}><input type="checkbox" disabled={disabled} checked={value.includes(role)} onChange={() => toggle(role)} />{role}</label>)}</div></div>;
 }
 
-export function NoveltyColorField({ value, onChange, disabled }: { value: NoveltyUiColor; onChange: (value: NoveltyUiColor) => void; disabled?: boolean }) {
+export function NoveltyColorField({ value, onChange, disabled, noveltyTypeId }: { value: NoveltyUiColor; onChange: (value: NoveltyUiColor) => void; disabled?: boolean; noveltyTypeId?: string }) {
+  const usedColors = new Set(
+    noveltyTypeMockService
+      .getAll()
+      .filter((type) => type.id !== noveltyTypeId)
+      .map((type) => type.uiColor),
+  );
+  const firstAvailable = noveltyUiColors.find((color) => !usedColors.has(color));
+
+  useEffect(() => {
+    if (!disabled && usedColors.has(value) && firstAvailable) onChange(firstAvailable);
+  }, [disabled, firstAvailable, onChange, usedColors, value]);
+
   return <div className="catalog-check-block form-wide">
     <small>Color en carga horaria</small>
     <div className="novelty-color-grid">
       {noveltyUiColors.map((color) => {
         const active = value === color;
+        const alreadyUsed = usedColors.has(color);
         return <button
           key={color}
           type="button"
           className={`novelty-color-option ${active ? "active" : ""}`}
-          disabled={disabled}
+          disabled={disabled || alreadyUsed}
           onClick={() => onChange(color)}
+          title={alreadyUsed ? "Este color ya esta asignado a otra novedad." : undefined}
         >
           <span className={`cell-novelty-pill ${noveltyColorClass(color, color)}`}>{noveltyUiColorLabels[color]}</span>
-          <small>{active ? "Seleccionado" : "Usar color"}</small>
+          <small>{alreadyUsed ? "Ya asignado" : active ? "Seleccionado" : "Usar color"}</small>
         </button>;
       })}
     </div>
+    {!firstAvailable && !noveltyTypeId ? <p className="info-note compact">Todos los colores disponibles ya estan asignados.</p> : null}
   </div>;
 }

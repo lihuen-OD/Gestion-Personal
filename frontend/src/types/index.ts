@@ -63,6 +63,7 @@ export interface Novelty {
   origin?: "INTERNA" | "FINNEGANS" | "MIXTA"; timeImpact?: string; hoursImpact?: number;
   targetHourConceptId?: string; targetHourConceptName?: string;
   exportsToFinnegans?: boolean; finnegansCode?: string; finnegansName?: string; valor1?: string; fechaAplicacion?: string; hasValidity?: boolean; blocksTimeEntry?: boolean; setsWorkedHoursToZero?: boolean;
+  approvalRoles?: Role[];
 }
 
 export interface AuditEntry {

@@ -5,10 +5,7 @@ export type HourConceptKind = "NORMAL" | "EXTRA" | "FERIADO" | "NOCTURNA" | "GUA
 export type HourConceptUnit = "HORAS";
 
 export interface HourConceptRules {
-  affectsSettlement?: boolean;
   defaultUnit: HourConceptUnit;
-  multiplier?: number;
-  maxDailyHours?: number;
 }
 
 export interface HourConceptHistoryRecord {

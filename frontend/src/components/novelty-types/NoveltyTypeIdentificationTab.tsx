@@ -8,7 +8,7 @@ export function NoveltyTypeIdentificationTab({ item, setItem, disabled }: { item
     <SelectField label="Origen" value={item.origin || "INTERNA"} disabled={disabled} options={noveltyOrigins} onChange={(origin) => setItem({ ...item, origin: origin as NoveltyType["origin"] })} />
     <SelectField label="Tipo" value={item.kind} disabled={disabled} options={noveltyKinds} onChange={(kind) => setItem({ ...item, kind: kind as NoveltyType["kind"] })} />
     <SelectField label="Estado" value={item.status} disabled={disabled} options={["ACTIVO", "INACTIVO"]} onChange={(status) => setItem({ ...item, status: status as NoveltyType["status"] })} />
-    <NoveltyColorField value={item.uiColor} disabled={disabled} onChange={(uiColor) => setItem({ ...item, uiColor })} />
+    <NoveltyColorField value={item.uiColor} noveltyTypeId={item.id} disabled={disabled} onChange={(uiColor) => setItem({ ...item, uiColor })} />
     <div className="form-wide"><TextAreaField label="Descripción funcional" value={item.description} disabled={disabled} onChange={(description) => setItem({ ...item, description })} /></div>
     <div className="form-wide"><TextAreaField label="Observaciones internas" value={item.notes || ""} disabled={disabled} onChange={(notes) => setItem({ ...item, notes })} /></div>
   </div>;

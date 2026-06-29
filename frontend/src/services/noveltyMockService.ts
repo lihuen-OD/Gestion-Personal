@@ -9,7 +9,7 @@ function canApproveNovelty(novelty: Novelty, user: User) {
   return Boolean(type?.approvalRoles.includes(user.role));
 }
 
-function updateStatus(id: string, status: "Aprobado" | "Rechazado", user: User) {
+function updateStatus(id: string, status: "Aprobado" | "Rechazado", user: User, reason = "Circuito de aprobacion de novedades") {
   const all = readStore<Novelty>("novelties");
   const current = all.find((novelty) => novelty.id === id);
   if (!current || !canApproveNovelty(current, user)) return undefined;
@@ -38,5 +38,5 @@ export const noveltyMockService = {
     return novelty;
   },
   approve: (id: string, user: User) => updateStatus(id, "Aprobado", user),
-  reject: (id: string, user: User) => updateStatus(id, "Rechazado", user),
+  reject: (id: string, user: User, reason?: string) => updateStatus(id, "Rechazado", user, reason),
 };

@@ -2,218 +2,319 @@
 
 ## Objetivo
 
-Este documento deja explícito qué parte del frontend ya está razonablemente preparada para migrar a backend y qué parte todavía depende de mocks, localStorage o reglas de UI que deberán bajar a una capa de dominio/API.
+Este documento deja explícito el estado actual entre frontend y backend.
 
-La app sigue en fase `frontend-only`.
+La app ya no está solamente en fase frontend-only: ahora existe un backend local real con Node.js, Express, Prisma, PostgreSQL y Neon development.
 
-No hay backend real, base de datos ni contratos HTTP implementados en esta etapa.
+La decisión de producto sigue siendo correcta: **no conectar todo el frontend de golpe**. La migración debe hacerse por etapas para no romper flujos ya validados.
 
-## Fronteras actuales
+## Estado actual
 
-### Persistencia actual
-- `localStorage` para catálogos, legajos, horas, novedades, documentos, auditoría y estructura.
-- `sessionStorage` para sesión mock.
-- Servicios mock centralizados como fuente de verdad.
+### Frontend
 
-### Frontera objetivo futura
-- `types` compartidos o DTOs equivalentes.
-- `mock service` reemplazable por `api service`.
-- selectores/helpers de presentación sin dependencia de storage.
-- reglas críticas validadas también en backend.
+El frontend ya está conectado al backend en los módulos principales, manteniendo mocks/localStorage como fallback temporal.
 
-## Módulos y estado de preparación
+Los mocks siguen siendo útiles para:
 
-### 1. Legajos
-**Estado:** intermedio
+- validar UX sin depender del backend durante ajustes visuales;
+- comparar visual contra lo ya aprobado;
+- mantener velocidad de iteración;
+- evitar romper módulos sensibles si el backend local no está levantado.
 
-Ya existe:
-- entidad `Employee` rica en datos personales, laborales y de relaciones;
-- historial de cambios por campo y por bloque;
-- integración con estructura, puestos, horas habilitadas y documentación.
+### Backend
 
-Falta antes de backend:
-- cerrar contrato de relaciones múltiples (`companies`, responsables, encargados);
-- definir validaciones servidor-side de unicidad (`legajo`, `dni`, `cuil`);
-- separar mejor defaults de alta vs datos persistidos;
-- decidir estrategia de versionado/historial en backend.
+Backend real creado en:
 
-### 2. Puestos
-**Estado:** bastante listo para migrar
+```txt
+backend/
+```
 
-Ya existe:
-- catálogo bien tipado;
-- rango salarial;
-- relaciones con estructura;
-- asignación visual a personas.
+Stack:
 
-Falta:
-- definir contrato formal de compatibilidad puesto vs legajo;
-- documentar reglas obligatorias de estructura y categorías;
-- bajar comparación y warnings críticos a backend.
+- Node.js;
+- Express;
+- TypeScript;
+- Prisma;
+- PostgreSQL;
+- Neon development.
 
-### 3. Empresas y estructura
-**Estado:** bastante listo para migrar
+Base local sugerida para este repo:
 
-Ya existe:
-- catálogo central;
-- relaciones configurables;
-- derivaciones parciales ya resueltas en frontend.
+```txt
+http://localhost:4002/api
+```
 
-Falta:
-- definir claramente qué relaciones se calculan y cuáles se cargan manualmente;
-- formalizar IDs externos/internos para backend;
-- validar integridad relacional en servidor.
+Si `4002` está ocupado, usar el `PORT` configurado en `backend/.env` y reflejar el mismo valor en `frontend/.env`.
 
-### 4. Tipos de novedades
-**Estado:** listo para migración temprana
+## Contratos backend disponibles
 
-Ya existe:
-- catálogo maestro;
-- reglas funcionales;
-- color UI por tipo;
-- vínculo Finnegans;
-- aprobación por rol mock.
+Ver detalle completo en:
 
-Falta:
-- consolidar contrato de reglas en DTO/API;
-- formalizar auditoría de cambios;
-- definir si approval roles serán IDs, roles lógicos o permisos.
+```txt
+docs/BACKEND_API_CONTRACTS.md
+```
 
-### 5. Horas especiales
-**Estado:** listo para migración temprana
+Módulos con backend inicial:
 
-Ya existe:
-- catálogo separado de novedades;
-- habilitación por legajo;
-- reglas de uso en carga de horas.
+- Auth.
+- Usuarios y roles.
+- Auditoría.
+- Parámetros de auditoría.
+- Categorías salariales.
+- Empresas y estructura.
+- Legajos.
+- Contacto.
+- Domicilio.
+- Transporte.
+- Documentos del legajo.
+- Movimientos laborales.
+- Responsables/asignaciones.
+- Horas especiales.
+- Tipos de novedades.
+- Novedades operativas.
+- Carga horaria.
+- Mis pendientes.
+- Exportación Finnegans.
+- Exportación de horas por persona.
 
-Falta:
-- decidir restricciones duras por concepto;
-- formalizar si backend validará máximos diarios o por período.
+## Estrategia recomendada de conexión frontend
 
-### 6. Novedades operativas
-**Estado:** intermedio
+### Regla principal
 
-Ya existe:
-- alta individual o múltiple;
-- documentación adjunta mock;
+No reemplazar todos los mocks juntos.
+
+Cada módulo debe migrarse con esta secuencia:
+
+1. Crear `apiClient` base.
+2. Crear servicio API del módulo.
+3. Mantener servicio mock como fallback temporal si hace falta.
+4. Conectar una pantalla o flujo puntual.
+5. Validar visual y funcional.
+6. Recién después avanzar al siguiente módulo.
+
+## Orden recomendado
+
+### Etapa 1. Base técnica
+
+- Crear configuración frontend:
+
+```txt
+VITE_API_URL=http://localhost:4002/api
+```
+
+- Crear cliente HTTP central.
+- Manejar token JWT.
+- Manejar errores API con mensaje consistente.
+- No mezclar `fetch` directo en componentes.
+
+### Etapa 2. Auth
+
+Conectar:
+
+- login;
+- usuario actual;
+- logout local.
+
+No avanzar con módulos operativos hasta que auth quede estable.
+
+### Etapa 3. Catálogos de lectura
+
+Conectar primero pantallas de bajo riesgo:
+
+- `GET /api/org-structure`
+- `GET /api/hour-concepts`
+- `GET /api/novelty-types`
+
+Esto permite alimentar selects/autocompletes sin tocar todavía edición compleja.
+
+### Etapa 4. Legajos
+
+Conectar:
+
+- listado de legajos;
+- detalle;
+- contacto;
+- domicilio;
+- transporte;
+- documentos metadata;
+- asignaciones;
+- horas habilitadas.
+
+Mantener especial cuidado con:
+
+- mapas;
+- formularios grandes;
+- historial visual;
+- campos que hoy dependen de mocks.
+
+### Etapa 5. Novedades y carga horaria
+
+Conectar:
+
+- novedades operativas;
 - aprobación/rechazo;
-- exportación Finnegans;
-- impacto visual en carga horaria.
+- carga horaria;
+- envío a revisión;
+- aprobación/rechazo;
+- Mis Pendientes.
+
+Esta etapa es sensible porque toca estados y permisos.
+
+### Etapa 6. Exportaciones
+
+Conectar:
+
+- exportación Finnegans JSON/CSV;
+- exportación horas por persona JSON/CSV.
+
+Luego decidir si el frontend sigue generando XLSX o si el backend incorpora XLSX nativo.
+
+## Variables de entorno frontend recomendadas
+
+Crear:
+
+```txt
+frontend/.env.example
+```
+
+Contenido sugerido:
+
+```bash
+VITE_API_URL=http://localhost:4002/api
+```
+
+Para desarrollo local real:
+
+```txt
+frontend/.env
+```
+
+No commitear `.env` real.
+
+## Reglas que ya bajaron al backend
+
+- Autenticación JWT.
+- Permisos por rol.
+- Alcance por legajo.
+- Unicidad de `legajo`, `dni`, `cuil`.
+- Validación de estructuras relacionales.
+- Estado de alta/baja.
+- Validación de horas habilitadas por legajo.
+- Bloqueo de edición de horas aprobadas/cerradas.
+- Aprobación/rechazo de novedades.
+- Aprobación/rechazo de carga horaria.
+- Auditoría de cambios críticos.
+- Exportaciones filtradas por estado.
+
+## Reglas todavía pendientes o mejorables
+
+### Documentos
+
+Hoy se guarda metadata, `storageKey` y el backend acepta `fileBase64` para resolver el archivo mediante la capa de storage configurada.
 
 Falta:
-- definir reversión/compensación al rechazar;
-- cerrar precedencia entre novedad bloqueante y carga existente;
-- formalizar lifecycle completo del registro.
 
-### 7. Carga horaria
-**Estado:** intermedio / sensible
+- activar y probar Cloudinary con variables de entorno reales;
+- validación de extensión además de MIME;
+- política de acceso/descarga a archivos.
 
-Ya existe:
-- período dinámico;
-- resumen por persona;
-- revisión y aprobación;
-- exportación Excel operativa;
-- novedades contextuales por celda;
-- reglas básicas de bloqueo.
+### Paginación
+
+Muchos listados usan `take`.
 
 Falta:
-- endurecer permisos por rol y alcance;
-- cerrar ciclo completo de estados;
-- bajar a backend reglas de edición sobre registros aprobados;
-- resolver futura trazabilidad completa por alta/edición/revisión/exportación.
 
-### 8. Exportación Finnegans
-**Estado:** bastante listo para integración
+- cursor pagination o page/pageSize;
+- total count cuando la UI lo necesite;
+- orden configurable en listados grandes.
 
-Ya existe:
-- armado real de Excel;
-- filtro de registros exportables;
-- columnas alineadas con el formato funcional actual.
+### Refresh token
 
-Falta:
-- validar layout final con archivos reales de prueba;
-- decidir naming/versionado del archivo;
-- documentar reglas exactas de inclusión/exclusión por estado.
+El backend ya expone renovacion de sesion mediante `POST /api/auth/refresh` y el frontend reintenta automaticamente una vez cuando una request protegida responde `401`.
 
-### 9. Usuarios, roles y sesión
-**Estado:** no listo para migración directa
+Falta endurecer para produccion:
 
-Ya existe:
-- mock de usuarios;
-- rol y alcance visibles en UI;
-- sesión simulada.
+- persistir refresh tokens para permitir revocacion por dispositivo;
+- rotacion con deteccion de reutilizacion;
+- estrategia de logout global por expiracion o cambio de contrasena.
 
-Falta:
-- auth real;
-- permisos reales por endpoint;
-- modelo de sesión/token;
-- estrategia de refresh/expiración;
-- backend enforcement completo.
+### Puestos
 
-### 10. Auditoría
-**Estado:** intermedio
+El backend ya cubre CRUD, rango salarial, conteo de legajos asignados y consulta especifica de empleados activos asignados por puesto.
 
-Ya existe:
-- registro mock centralizado;
-- tablas legibles;
-- varios eventos ya disparados desde servicios.
+Falta mejorar:
 
-Falta:
-- catálogo uniforme de eventos;
-- persistencia inmutable;
-- correlación por usuario, entidad y acción;
-- decisión de retención/exportación.
+- validaciones backend más profundas de compatibilidad puesto vs estructura/categoría.
 
-## Reglas que hoy viven en frontend y después deben vivir también en backend
+### Dashboard
 
-- unicidad de legajo/dni/cuil;
-- alcance por rol en carga horaria;
-- permisos de aprobación de novedades;
-- bloqueo de edición en horas aprobadas;
-- validaciones de rango de fechas;
-- consistencia entre puesto y estructura;
-- documentos obligatorios según tipo de novedad;
-- inclusión o exclusión en exportaciones.
+Ya existe backend de métricas agregadas.
 
-## Prioridad recomendada de migración futura
+Falta mejorar:
 
-1. Catálogos maestros:
-   - estructura
-   - puestos
-   - tipos de novedades
-   - horas especiales
-   - categorías documentales
-   - parámetros de auditoría
+- paginación/ventanas temporales configurables para métricas pesadas;
+- criterios finales de qué estados cuentan en indicadores ejecutivos.
 
-2. Seguridad:
-   - usuarios
-   - autenticación
-   - permisos
+### Organigrama
 
-3. Operación core:
-   - legajos
-   - documentos
-   - novedades
-   - carga horaria
+El frontend ya alimenta el organigrama desde un endpoint backend optimizado cuando el backend está disponible:
 
-4. Integraciones y reporting:
-   - exportación Finnegans
-   - reportes
-   - dashboard
-   - auditoría consolidada
+```txt
+GET /api/employees/org-chart
+```
 
-## Señales de que el frontend ya quedó mejor preparado
+Este endpoint trae datos reducidos de legajos activos, estructura, puesto, empresas asociadas y asignaciones, sin cargar el detalle completo de cada legajo.
 
-- menos lógica compartida incrustada en `App.tsx`;
-- shell, dashboard y helpers base extraídos a módulos dedicados;
-- utilidades comunes centralizadas (`roles`, `status`, `employee`, `hoursExport`);
-- contratos funcionales más explícitos para futuras APIs;
-- menor duplicación para reglas básicas usadas en varias pantallas.
+Falta mejorar:
 
-## Pendientes técnicos todavía visibles
+- paginación/infinite loading en frontend si el diagrama crece mucho;
+- endpoints auxiliares de filtros/agrupaciones si el organigrama necesita vistas muy pesadas.
 
-- `App.tsx` sigue siendo grande y conviene seguir extrayendo páginas sensibles;
-- el bundle sigue pesado y más adelante conviene sumar code splitting real;
-- todavía hay helpers repetidos en algunas páginas legacy;
-- algunos mocks siguen mezclando normalización, persistencia y reglas de negocio.
+## Criterio para decir "listo para conectar frontend"
+
+Módulo listo si cumple:
+
+- endpoints existentes;
+- validación backend;
+- permisos backend;
+- auditoría si aplica;
+- respuesta estable;
+- build backend OK;
+- prueba manual contra Neon OK;
+- contrato documentado.
+
+## Estado por módulo
+
+| Módulo | Backend | Listo para conectar frontend |
+|---|---:|---:|
+| Auth | Sí | Sí |
+| Usuarios | Sí | Sí |
+| Auditoría | Sí | Sí |
+| Parámetros de auditoría | Sí | Sí |
+| Categorías salariales | Sí | Sí |
+| Empresas y estructura | Sí | Sí |
+| Legajos base | Sí | Sí |
+| Contacto/Domicilio | Sí | Sí |
+| Transporte | Sí | Sí |
+| Documentos metadata + storage | Sí | Parcial |
+| Horas especiales | Sí | Sí |
+| Tipos de novedades | Sí | Sí |
+| Novedades operativas | Sí | Sí |
+| Carga horaria | Sí | Sí |
+| Mis pendientes | Sí | Sí |
+| Exportación Finnegans | Sí | Sí |
+| Exportación horas | Sí | Sí |
+| Puestos | Sí | Sí |
+| Dashboard métricas | Sí | Sí |
+| Organigrama | Sí | Sí |
+
+## Próximo paso recomendado
+
+La conexión base ya está avanzada. El próximo foco recomendado es cerrar brechas de producción:
+
+1. completar paginación/total count en listados grandes;
+2. activar Cloudinary y cerrar política de acceso/descarga de archivos;
+3. sumar paginación/infinite loading visual en organigrama si el volumen real lo pide;
+4. endurecer validaciones backend que hoy todavía dependen de reglas de UI;
+5. sumar pruebas automatizadas mínimas por módulo crítico;
+6. persistir/rotar refresh tokens si se requiere control por dispositivo.

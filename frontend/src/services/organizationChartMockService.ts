@@ -23,9 +23,12 @@ const employeeCompanies = (employee: Employee) => employee.companies?.length ? e
 const employeeManagers = (employee: Employee) => employee.directManagers?.length ? employee.directManagers : [employee.directManager].filter(Boolean);
 const employeeTimeResponsibles = (employee: Employee) => employee.timeResponsibles?.length ? employee.timeResponsibles : [employee.timeResponsible].filter(Boolean);
 
-function scopedEmployees(role: Role, userSector?: string) {
-  const employees = employeeMockService.getAll();
+function scopedEmployeesFrom(employees: Employee[], role: Role, userSector?: string) {
   return role.startsWith("Nivel 2") ? employees.filter((employee) => employee.sector === userSector) : employees;
+}
+
+function scopedEmployees(role: Role, userSector?: string) {
+  return scopedEmployeesFrom(employeeMockService.getAll(), role, userSector);
 }
 
 function employeeMatches(employee: Employee, filters: OrgChartFilters) {
@@ -64,8 +67,25 @@ export const organizationChartMockService = {
   getEmptyFilters: () => ({ ...emptyFilters }),
   getCategories: () => [...mockOrgCategories].sort((a, b) => a.order - b.order),
   getEmployees: (role: Role, userSector?: string, filters: OrgChartFilters = emptyFilters) => scopedEmployees(role, userSector).filter((employee) => calculateEmployeeStatus(employee) === "Activo").filter((employee) => employeeMatches(employee, filters)),
+  getEmployeesFrom: (employees: Employee[], role: Role, userSector?: string, filters: OrgChartFilters = emptyFilters) => scopedEmployeesFrom(employees, role, userSector).filter((employee) => calculateEmployeeStatus(employee) === "Activo").filter((employee) => employeeMatches(employee, filters)),
   getFilterOptions: (role: Role, userSector?: string) => {
     const employees = scopedEmployees(role, userSector);
+    const structure = orgStructureMockService.getOptions();
+    return {
+      company: unique([...structure.companies, ...employees.flatMap(employeeCompanies)]),
+      businessUnit: unique([...structure.businessUnits, ...employees.map((employee) => employee.businessUnit)]),
+      establishment: unique([...structure.establishments, ...employees.map((employee) => employee.establishment)]),
+      costCenter: unique([...structure.costCenters, ...employees.map((employee) => employee.costCenter)]),
+      sector: unique([...structure.sectors, ...employees.map((employee) => employee.sector)]),
+      position: unique([...positionMockService.getAll().map((position) => position.name), ...employees.map(employeePositionName)]),
+      internalCategory: unique(employees.map((employee) => employee.internalCategory)),
+      receiptCategory: unique(employees.map((employee) => employee.receiptCategory)),
+      directManager: unique(employees.flatMap(employeeManagers)),
+      timeResponsible: unique(employees.flatMap(employeeTimeResponsibles)),
+    };
+  },
+  getFilterOptionsFrom: (employeesInput: Employee[], role: Role, userSector?: string) => {
+    const employees = scopedEmployeesFrom(employeesInput, role, userSector);
     const structure = orgStructureMockService.getOptions();
     return {
       company: unique([...structure.companies, ...employees.flatMap(employeeCompanies)]),

@@ -1,14 +1,55 @@
 import { Plus } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, Navigate } from "react-router-dom";
 import { PuestoFilters } from "../components/puestos/PuestoFilters";
 import { PuestoSummaryCards } from "../components/puestos/PuestoSummaryCards";
 import { PuestoTable } from "../components/puestos/PuestoTable";
 import { useAuth } from "../context/AuthContext";
+import { positionApiService } from "../services/api/positionApiService";
 import { positionMockService } from "../services/positionMockService";
-import type { Position } from "../types/position.types";
+import type { Position, PositionFilters, PositionSummary } from "../types/position.types";
+import { roleLevel } from "../utils/roles";
 
-function roleLevel(role: string) { return role.startsWith("Nivel 1") ? 1 : role.startsWith("Nivel 2") ? 2 : 3; }
+const norm = (value: unknown) => String(value || "").trim().toLowerCase();
+
+function matches(position: Position, filters: PositionFilters) {
+  const query = norm(filters.search);
+  const text = norm(`${position.code} ${position.name} ${position.businessUnitName} ${position.establishmentName} ${position.areaDepartment} ${position.sector} ${(position.salaryRangeCategories || []).join(" ")}`);
+  return (!query || text.includes(query))
+    && (!filters.businessUnitName || position.businessUnitName === filters.businessUnitName)
+    && (!filters.establishmentName || position.establishmentName === filters.establishmentName)
+    && (!filters.areaDepartment || position.areaDepartment === filters.areaDepartment)
+    && (!filters.sector || position.sector === filters.sector)
+    && (!filters.salaryRangeCategory || position.salaryRangeCategories?.includes(filters.salaryRangeCategory))
+    && (!filters.status || position.status === filters.status);
+}
+
+function options(items: Position[]) {
+  const unique = (values: (string | undefined)[]) => Array.from(new Set(values.filter(Boolean) as string[])).sort((a, b) => a.localeCompare(b, "es"));
+  return {
+    businessUnitName: unique(items.map((position) => position.businessUnitName)),
+    establishmentName: unique(items.map((position) => position.establishmentName)),
+    areaDepartment: unique(items.map((position) => position.areaDepartment)),
+    sector: unique(items.map((position) => position.sector)),
+    salaryRangeCategory: unique(items.flatMap((position) => position.salaryRangeCategories || [])),
+  };
+}
+
+function summary(items: Position[]): PositionSummary {
+  const linkedToEmployees = items.reduce((total, position) => total + (position.assignedCount || 0), 0);
+  return {
+    total: items.length,
+    active: items.filter((position) => position.status === "ACTIVO").length,
+    inactive: items.filter((position) => position.status === "INACTIVO").length,
+    withoutPeople: items.filter((position) => (position.assignedCount || 0) === 0).length,
+    pendingUpdate: 0,
+    linkedToEmployees,
+  };
+}
+
+function getAssignedCount(position: Position) {
+  return position.assignedCount || 0;
+}
 
 export function PuestosPage() {
   const { user } = useAuth();
@@ -16,24 +57,57 @@ export function PuestosPage() {
   const canEdit = level === 1;
   const [filters, setFilters] = useState(positionMockService.getEmptyFilters());
   const [refresh, setRefresh] = useState(0);
+  const [apiItems, setApiItems] = useState<Position[] | null>(null);
+  const [isLoadingApi, setIsLoadingApi] = useState(true);
+  const [apiWarning, setApiWarning] = useState("");
+
+  useEffect(() => {
+    let alive = true;
+    setIsLoadingApi(true);
+    positionApiService.getAll()
+      .then((items) => {
+        if (!alive) return;
+        setApiItems(items);
+        setApiWarning("");
+      })
+      .catch(() => {
+        if (!alive) return;
+        setApiItems(null);
+        setApiWarning("Backend no disponible: usando puestos locales de respaldo.");
+      })
+      .finally(() => {
+        if (alive) setIsLoadingApi(false);
+      });
+    return () => { alive = false; };
+  }, [refresh]);
+
   if (level === 3) return <Navigate to="/horas" />;
-  void refresh;
-  const positions = positionMockService.getFiltered(filters);
-  const toggle = (position: Position) => {
+
+  const all = apiItems || positionMockService.getAll();
+  const positions = useMemo(() => all.filter((position) => matches(position, filters)), [all, filters]);
+
+  const toggle = async (position: Position) => {
     if (!confirm(`Confirmar ${position.status === "ACTIVO" ? "inactivacion" : "activacion"} del puesto ${position.name}?`)) return;
-    positionMockService.changeStatus(position.id, position.status === "ACTIVO" ? "INACTIVO" : "ACTIVO", user!);
+    if (apiItems) await positionApiService.update({ ...position, status: position.status === "ACTIVO" ? "INACTIVO" : "ACTIVO" });
+    else positionMockService.changeStatus(position.id, position.status === "ACTIVO" ? "INACTIVO" : "ACTIVO", user!);
     setRefresh((value) => value + 1);
   };
-  const remove = (position: Position) => {
-    const assigned = positionMockService.getAssignedEmployees(position.id).length;
-    const message = assigned ? `El puesto ${position.name} tiene ${assigned} persona(s) asignadas. No se borra para no romper legajos; se va a inactivar/ocultar. ¿Confirmar?` : `El puesto ${position.name} no tiene personas asignadas. ¿Confirmar eliminación?`;
+
+  const remove = async (position: Position) => {
+    const assigned = apiItems ? getAssignedCount(position) : positionMockService.getAssignedEmployees(position.id).length;
+    const message = assigned ? `El puesto ${position.name} tiene ${assigned} persona(s) asignadas. No se borra para no romper legajos; se va a inactivar/ocultar. Confirmar?` : `Confirmar ocultar/eliminar ${position.name}?`;
     if (!confirm(message)) return;
-    positionMockService.removeOrHide(position.id, user!);
+    if (apiItems) await positionApiService.removeOrHide(position.id);
+    else positionMockService.removeOrHide(position.id, user!);
     setRefresh((value) => value + 1);
   };
-  return <>
-    <div className="page-header"><div><p className="eyebrow">PUESTOS</p><h1>Puestos</h1><p>Administracion de descripciones de puesto y estructura funcional.</p></div>{canEdit && <Link className="button primary" to="/puestos/nuevo"><Plus size={17} /> Crear puesto</Link>}</div>
-    <PuestoSummaryCards summary={positionMockService.getSummary()} />
-    <section className="panel position-list-panel"><div className="panel-head"><div><h3>Listado de puestos</h3><p>{positions.length} resultados segun filtros aplicados.</p></div></div><div className="panel-body position-list-body"><PuestoFilters filters={filters} options={positionMockService.getFilterOptions()} onChange={setFilters} /><PuestoTable positions={positions} assignedCount={(id) => positionMockService.getAssignedEmployees(id).length} canEdit={canEdit} onRemove={remove} onToggleStatus={toggle} /></div></section>
-  </>;
+
+  return (
+    <>
+      <div className="page-header"><div><p className="eyebrow">PUESTOS</p><h1>Puestos</h1><p>Administracion de descripciones de puesto y estructura funcional.</p></div>{canEdit && <Link className="button primary" to="/puestos/nuevo"><Plus size={17} /> Crear puesto</Link>}</div>
+      {apiWarning && <div className="info-note compact"><b>Modo local</b><p>{apiWarning}</p></div>}
+      <PuestoSummaryCards summary={apiItems ? summary(all) : positionMockService.getSummary()} />
+      <section className="panel position-list-panel"><div className="panel-head"><div><h3>Listado de puestos</h3><p>{isLoadingApi ? "Cargando puestos desde backend..." : `${positions.length} resultados segun filtros aplicados.`}</p></div></div><div className="panel-body position-list-body"><PuestoFilters filters={filters} options={apiItems ? options(all) : positionMockService.getFilterOptions()} onChange={setFilters} /><PuestoTable positions={positions} assignedCount={(id) => apiItems ? getAssignedCount(positions.find((position) => position.id === id)!) : positionMockService.getAssignedEmployees(id).length} canEdit={canEdit} onRemove={remove} onToggleStatus={toggle} /></div></section>
+    </>
+  );
 }

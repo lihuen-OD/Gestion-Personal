@@ -1,6 +1,22 @@
 import type { NoveltyUiColor } from "../types/noveltyType.types";
 
-export const noveltyUiColors = ["blue", "green", "amber", "red", "violet", "teal"] as const satisfies readonly NoveltyUiColor[];
+export const noveltyUiColors = [
+  "blue",
+  "sky",
+  "cyan",
+  "teal",
+  "emerald",
+  "green",
+  "lime",
+  "amber",
+  "orange",
+  "red",
+  "rose",
+  "pink",
+  "violet",
+  "purple",
+  "slate",
+] as const satisfies readonly NoveltyUiColor[];
 
 const noveltyColorSet = new Set<string>(noveltyUiColors);
 

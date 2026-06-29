@@ -1,18 +1,19 @@
 import { Pencil, Plus } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Navigate } from "react-router-dom";
 import { OverflowCell } from "../components/ui/OverflowCell";
 import { TableShell } from "../components/ui/TableShell";
 import { useAuth } from "../context/AuthContext";
+import { documentCategoryApiService } from "../services/api/documentCategoryApiService";
 import { documentCategoryMockService } from "../services/documentCategoryMockService";
 import type { Role } from "../types";
 import type { DocumentCategory, DocumentCategoryKind, DocumentCategoryScope, ExternalDocumentLink } from "../types/documentCategory.types";
+import { roleLevel } from "../utils/roles";
 
 const roles: Role[] = ["Nivel 1 - RRHH", "Nivel 2 - Supervisión / Gestión", "Nivel 3 - Administrativo de Carga Horaria"];
 const kinds: DocumentCategoryKind[] = ["PERSONAL", "LABORAL", "MEDICA", "LIQUIDACION", "TRANSPORTE", "CAPACITACION", "LEGAL", "NOVEDAD", "OTRO"];
 const scopes: DocumentCategoryScope[] = ["LEGAJO", "NOVEDAD", "LIQUIDACION", "TRANSPORTE", "ALTA_BAJA", "PUESTO"];
 
-function roleLevel(role: string) { return role.startsWith("Nivel 1") ? 1 : role.startsWith("Nivel 2") ? 2 : 3; }
 function toggleValue<T extends string>(values: T[], value: T) { return values.includes(value) ? values.filter((item) => item !== value) : [...values, value]; }
 
 function emptyCategory(code: string): DocumentCategory {
@@ -27,9 +28,23 @@ function CheckList<T extends string>({ label, options, value, onChange }: { labe
   return <div className="catalog-check-block"><small>{label}</small><div className="check-grid inline">{options.map((option) => <label className="check-card" key={option}><input type="checkbox" checked={value.includes(option)} onChange={() => onChange(toggleValue(value, option))} />{option}</label>)}</div></div>;
 }
 
+function addExternalLink(item: DocumentCategory): DocumentCategory {
+  return {
+    ...item,
+    externalLinks: [
+      ...item.externalLinks,
+      { id: crypto.randomUUID(), provider: "FINNEGANS", code: "", name: "", status: "ACTIVO" },
+    ],
+  };
+}
+
+function removeExternalLink(item: DocumentCategory, linkId: string): DocumentCategory {
+  return { ...item, externalLinks: item.externalLinks.filter((link) => link.id !== linkId) };
+}
+
 function ExternalLinks({ item, setItem }: { item: DocumentCategory; setItem: (item: DocumentCategory) => void }) {
   const update = (id: string, patch: Partial<ExternalDocumentLink>) => setItem({ ...item, externalLinks: item.externalLinks.map((link) => link.id === id ? { ...link, ...patch } : link) });
-  return <div className="catalog-finnegans"><div className="panel-head compact"><div><h3>Vinculos externos</h3><p>Codigos o carpetas externas para integraciones futuras.</p></div><button type="button" className="button subtle" onClick={() => setItem(documentCategoryMockService.addExternalLink(item))}>Agregar vinculo</button></div><div className="catalog-link-list">{item.externalLinks.map((link) => <div className="catalog-link-row" key={link.id}><label>Proveedor<select value={link.provider} onChange={(event) => update(link.id, { provider: event.target.value as ExternalDocumentLink["provider"] })}><option>FINNEGANS</option><option>CARPETA_RED</option><option>OTRO</option></select></label><label>Codigo<input value={link.code} onChange={(event) => update(link.id, { code: event.target.value })} /></label><label>Nombre<input value={link.name} onChange={(event) => update(link.id, { name: event.target.value })} /></label><label>Estado<select value={link.status} onChange={(event) => update(link.id, { status: event.target.value as "ACTIVO" | "INACTIVO" })}><option>ACTIVO</option><option>INACTIVO</option></select></label><label>Notas<input value={link.notes || ""} onChange={(event) => update(link.id, { notes: event.target.value })} /></label><button className="icon-button danger-link" type="button" onClick={() => setItem(documentCategoryMockService.removeExternalLink(item, link.id))}>x</button></div>)}</div></div>;
+  return <div className="catalog-finnegans"><div className="panel-head compact"><div><h3>Vinculos externos</h3><p>Codigos o carpetas externas para integraciones futuras.</p></div><button type="button" className="button subtle" onClick={() => setItem(addExternalLink(item))}>Agregar vinculo</button></div><div className="catalog-link-list">{item.externalLinks.map((link) => <div className="catalog-link-row" key={link.id}><label>Proveedor<select value={link.provider} onChange={(event) => update(link.id, { provider: event.target.value as ExternalDocumentLink["provider"] })}><option>FINNEGANS</option><option>CARPETA_RED</option><option>OTRO</option></select></label><label>Codigo<input value={link.code} onChange={(event) => update(link.id, { code: event.target.value })} /></label><label>Nombre<input value={link.name} onChange={(event) => update(link.id, { name: event.target.value })} /></label><label>Estado<select value={link.status} onChange={(event) => update(link.id, { status: event.target.value as "ACTIVO" | "INACTIVO" })}><option>ACTIVO</option><option>INACTIVO</option></select></label><label>Notas<input value={link.notes || ""} onChange={(event) => update(link.id, { notes: event.target.value })} /></label><button className="icon-button danger-link" type="button" onClick={() => setItem(removeExternalLink(item, link.id))}>x</button></div>)}</div></div>;
 }
 
 function CategoryEditor({ item, setItem }: { item: DocumentCategory; setItem: (item: DocumentCategory) => void }) {
@@ -56,28 +71,50 @@ function CategoryEditor({ item, setItem }: { item: DocumentCategory; setItem: (i
 
 export function DocumentCategoriesPage() {
   const { user } = useAuth();
-  const [filters, setFilters] = useState(documentCategoryMockService.getEmptyFilters());
+  const [filters, setFilters] = useState(documentCategoryApiService.getEmptyFilters());
   const [editing, setEditing] = useState<DocumentCategory | null>(null);
   const [notice, setNotice] = useState("");
   const [refresh, setRefresh] = useState(0);
+  const [all, setAll] = useState<DocumentCategory[]>(() => documentCategoryMockService.getAll());
+  useEffect(() => {
+    let mounted = true;
+    documentCategoryApiService
+      .getAll()
+      .then((items) => {
+        if (mounted) setAll(items);
+      })
+      .catch(() => {
+        if (mounted) setAll(documentCategoryMockService.getAll());
+      });
+    return () => {
+      mounted = false;
+    };
+  }, [refresh]);
   if (roleLevel(user!.role) !== 1) return <Navigate to="/configuracion" />;
-  void refresh;
-  const all = documentCategoryMockService.getAll();
-  const items = documentCategoryMockService.getFiltered(filters);
-  const options = documentCategoryMockService.getFilterOptions();
+  const items = documentCategoryApiService.getFiltered(all, filters);
+  const options = documentCategoryApiService.getFilterOptions(all);
   const summary = useMemo(() => [["Categorias", all.length], ["Obligatorias", all.filter((item) => item.rules.mandatory).length], ["Con vencimiento", all.filter((item) => item.rules.expires).length], ["Con aprobacion", all.filter((item) => item.rules.requiresApproval).length]], [all]);
   const save = () => {
     if (!editing) return;
     if (!editing.name.trim() || !editing.description.trim()) return setNotice("Completa nombre y descripcion.");
-    const exists = Boolean(documentCategoryMockService.getById(editing.id));
-    const saved = exists ? documentCategoryMockService.update(editing.id, editing, user!) : documentCategoryMockService.create(editing, user!);
-    setEditing(saved || null);
-    setRefresh((value) => value + 1);
+    const exists = all.some((item) => item.id === editing.id);
+    const persist = exists
+      ? documentCategoryApiService.update(editing.id, editing)
+      : documentCategoryApiService.create(editing);
+    persist
+      .then((saved) => setEditing(saved))
+      .catch(() => {
+        const saved = exists
+          ? documentCategoryMockService.update(editing.id, editing, user!)
+          : documentCategoryMockService.create(editing, user!);
+        setEditing(saved || null);
+      })
+      .finally(() => setRefresh((value) => value + 1));
     setNotice("Categoria documental guardada correctamente.");
     setTimeout(() => setNotice(""), 2200);
   };
   return <>
-    <div className="page-header"><div><p className="eyebrow">CONFIGURACION</p><h1>Categorias documentales</h1><p>Catalogo documental conectado a legajos, novedades, liquidacion, alertas e historial.</p></div><button className="button primary" onClick={() => setEditing(emptyCategory(documentCategoryMockService.getNextCode()))}><Plus size={17} /> Crear categoria</button></div>
+    <div className="page-header"><div><p className="eyebrow">CONFIGURACION</p><h1>Categorias documentales</h1><p>Catalogo documental conectado a legajos, novedades, liquidacion, alertas e historial.</p></div><button className="button primary" onClick={() => setEditing(emptyCategory(documentCategoryApiService.getNextCode(all)))}><Plus size={17} /> Crear categoria</button></div>
     {notice && <div className="toast">{notice}</div>}
     <div className="stat-grid novelty-type-summary">{summary.map(([label, value]) => <div className="stat-card" key={label}><div><small>{label}</small><strong>{value}</strong><span>Documentacion</span></div></div>)}</div>
     <section className="panel"><div className="panel-head"><div><h3>Listado de categorias</h3><p>{items.length} resultados segun filtros aplicados.</p></div></div><div className="panel-body"><div className="filters catalog-filters"><label className="search-field"><input placeholder="Buscar por codigo, nombre o vinculo externo" value={filters.search} onChange={(event) => setFilters({ ...filters, search: event.target.value })} /></label><label>Tipo<select value={filters.kind} onChange={(event) => setFilters({ ...filters, kind: event.target.value })}><option value="">Todos</option>{options.kinds.map((kind) => <option key={kind}>{kind}</option>)}</select></label><label>Modulo<select value={filters.scope} onChange={(event) => setFilters({ ...filters, scope: event.target.value })}><option value="">Todos</option>{options.scopes.map((scope) => <option key={scope}>{scope}</option>)}</select></label><label>Obligatoria<select value={filters.mandatory} onChange={(event) => setFilters({ ...filters, mandatory: event.target.value })}><option value="">Todas</option><option value="true">Si</option><option value="false">No</option></select></label><label>Estado<select value={filters.status} onChange={(event) => setFilters({ ...filters, status: event.target.value })}><option value="">Todos</option>{options.statuses.map((status) => <option key={status}>{status}</option>)}</select></label></div><TableShell minWidth={1080}><table><thead><tr><th>Codigo</th><th>Categoria</th><th>Tipo</th><th>Modulos</th><th>Reglas</th><th>Estado</th><th>Accion</th></tr></thead><tbody>{items.map((item) => <tr key={item.id}><td><b>{item.code}</b></td><td><OverflowCell value={item.name} /><span className="table-sub">{item.description}</span></td><td>{item.kind}</td><td><OverflowCell value={item.scopes.join(", ")} /></td><td><OverflowCell value={`${item.rules.mandatory ? "Obligatoria" : "Opcional"} · ${item.rules.expires ? `Vence / alerta ${item.rules.alertBeforeDays}d` : "Sin vencimiento"}`} /></td><td><span className={item.status === "ACTIVO" ? "badge success" : "badge neutral"}>{item.status}</span></td><td><button className="table-link table-icon-action" title="Editar" aria-label="Editar" onClick={() => setEditing(item)}><Pencil size={14}/><span>Editar</span></button></td></tr>)}</tbody></table></TableShell></div></section>

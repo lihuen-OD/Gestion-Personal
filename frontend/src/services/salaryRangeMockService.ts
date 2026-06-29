@@ -16,6 +16,7 @@ const salaryFamilies: SalaryGroup[] = [
 
 const normalize = (value: string) => value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
 const uniqueSorted = (values: string[]) => Array.from(new Set(values.filter(Boolean))).sort((a, b) => a.localeCompare(b, "es"));
+let apiGroupsCache: SalaryGroup[] | null = null;
 
 function allCategories(employees: Employee[] = employeeMockService.getAll()) {
   return uniqueSorted([
@@ -26,7 +27,11 @@ function allCategories(employees: Employee[] = employeeMockService.getAll()) {
 }
 
 export const salaryRangeMockService = {
+  setApiGroups: (groups: SalaryGroup[]) => {
+    apiGroupsCache = groups.length ? groups : null;
+  },
   getGroups: (employees?: Employee[]) => {
+    if (!employees && apiGroupsCache?.length) return apiGroupsCache;
     const values = allCategories(employees);
     const used = new Set<string>();
     const groups = salaryFamilies.map((family) => {

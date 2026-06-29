@@ -1,0 +1,818 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum RoleName {
+  NIVEL_1_RRHH
+  NIVEL_2_SUPERVISION
+  NIVEL_3_CARGA_HORARIA
+}
+
+enum RecordStatus {
+  ACTIVO
+  INACTIVO
+}
+
+enum EmployeeStatus {
+  ACTIVO
+  INACTIVO
+}
+
+enum LaborMovementType {
+  ALTA
+  BAJA
+}
+
+enum NoveltyTypeKind {
+  AUSENCIA
+  LICENCIA
+  HORARIA
+  ACCIDENTE
+  VACACIONES
+  SANCION
+  OTRO
+}
+
+enum NoveltyTypeOrigin {
+  INTERNA
+  FINNEGANS
+  MIXTA
+}
+
+enum NoveltyTimeImpact {
+  NO_AFECTA_HORAS
+  REGISTRA_HORAS_NO_TRABAJADAS
+  BLOQUEA_CARGA_DIA
+}
+
+enum ApprovalStatus {
+  BORRADOR
+  PENDIENTE
+  EN_REVISION
+  APROBADO
+  RECHAZADO
+  DEVUELTO
+  CERRADO
+}
+
+enum HourConceptKind {
+  NORMAL
+  EXTRA
+  NOCTURNA
+  GUARDIA
+  SERENO
+  TRANSPORTE
+  FERIADO
+  OTRO
+}
+
+enum DocumentStatus {
+  PENDIENTE
+  VIGENTE
+  POR_VENCER
+  VENCIDO
+  RECHAZADO
+}
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+  ACTIVATE
+  DEACTIVATE
+  APPROVE
+  REJECT
+  RETURN
+  LOGIN
+  EXPORT
+}
+
+model User {
+  id           String       @id @default(uuid())
+  name         String
+  email        String       @unique
+  passwordHash String
+  role         RoleName
+  status       RecordStatus @default(ACTIVO)
+  companyId    String?
+  sectorId     String?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  company            Company?           @relation(fields: [companyId], references: [id])
+  sector             Sector?            @relation(fields: [sectorId], references: [id])
+  createdEmployees   Employee[]         @relation("EmployeeCreatedBy")
+  laborMovements     LaborMovement[]
+  fieldHistory        EmployeeFieldHistory[]
+  blockHistory        EmployeeBlockHistory[]
+  noveltiesCreated   Novelty[]          @relation("NoveltyCreatedBy")
+  timeEntriesCreated TimeEntry[]        @relation("TimeEntryCreatedBy")
+  documentsUploaded  EmployeeDocument[]
+  auditLogs          AuditLog[]
+
+  @@index([role])
+  @@index([status])
+}
+
+model Company {
+  id        String       @id @default(uuid())
+  name      String       @unique
+  code      String       @unique
+  status    RecordStatus @default(ACTIVO)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  users              User[]
+  businessUnits      BusinessUnit[]
+  establishments     Establishment[]
+  employees          EmployeeCompany[]
+  businessUnitLinks  BusinessUnitCompany[]
+  establishmentLinks EstablishmentCompany[]
+  costCenterLinks    CostCenterCompany[]
+}
+
+model BusinessUnit {
+  id        String       @id @default(uuid())
+  name      String
+  code      String
+  status    RecordStatus @default(ACTIVO)
+  companyId String
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  company            Company                     @relation(fields: [companyId], references: [id])
+  establishments     Establishment[]
+  companies          BusinessUnitCompany[]
+  establishmentLinks EstablishmentBusinessUnit[]
+  areaLinks          AreaBusinessUnit[]
+  costCenterLinks    CostCenterBusinessUnit[]
+
+  @@unique([companyId, code])
+  @@index([companyId])
+}
+
+model BusinessUnitCompany {
+  businessUnitId String
+  companyId      String
+
+  businessUnit BusinessUnit @relation(fields: [businessUnitId], references: [id], onDelete: Cascade)
+  company      Company      @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@id([businessUnitId, companyId])
+  @@index([companyId])
+}
+
+model Establishment {
+  id             String       @id @default(uuid())
+  name           String
+  code           String
+  status         RecordStatus @default(ACTIVO)
+  companyId      String
+  businessUnitId String?
+  province       String?
+  department     String?
+  city           String?
+  street         String?
+  streetNumber   String?
+  postalCode     String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  company         Company                     @relation(fields: [companyId], references: [id])
+  businessUnit    BusinessUnit?               @relation(fields: [businessUnitId], references: [id])
+  areas           Area[]
+  companies       EstablishmentCompany[]
+  businessUnits   EstablishmentBusinessUnit[]
+  areaLinks       AreaEstablishment[]
+  sectorLinks     SectorEstablishment[]
+  costCenterLinks CostCenterEstablishment[]
+
+  @@unique([companyId, code])
+  @@index([businessUnitId])
+}
+
+model EstablishmentCompany {
+  establishmentId String
+  companyId       String
+
+  establishment Establishment @relation(fields: [establishmentId], references: [id], onDelete: Cascade)
+  company       Company       @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@id([establishmentId, companyId])
+  @@index([companyId])
+}
+
+model EstablishmentBusinessUnit {
+  establishmentId String
+  businessUnitId  String
+
+  establishment Establishment @relation(fields: [establishmentId], references: [id], onDelete: Cascade)
+  businessUnit  BusinessUnit  @relation(fields: [businessUnitId], references: [id], onDelete: Cascade)
+
+  @@id([establishmentId, businessUnitId])
+  @@index([businessUnitId])
+}
+
+model Area {
+  id              String       @id @default(uuid())
+  name            String
+  code            String       @unique
+  status          RecordStatus @default(ACTIVO)
+  establishmentId String?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  establishment   Establishment?      @relation(fields: [establishmentId], references: [id])
+  sectors         Sector[]
+  positions       Position[]
+  businessUnits   AreaBusinessUnit[]
+  establishments  AreaEstablishment[]
+  sectorLinks     SectorArea[]
+  costCenterLinks CostCenterArea[]
+
+  @@index([establishmentId])
+}
+
+model AreaBusinessUnit {
+  areaId         String
+  businessUnitId String
+
+  area         Area         @relation(fields: [areaId], references: [id], onDelete: Cascade)
+  businessUnit BusinessUnit @relation(fields: [businessUnitId], references: [id], onDelete: Cascade)
+
+  @@id([areaId, businessUnitId])
+  @@index([businessUnitId])
+}
+
+model AreaEstablishment {
+  areaId          String
+  establishmentId String
+
+  area          Area          @relation(fields: [areaId], references: [id], onDelete: Cascade)
+  establishment Establishment @relation(fields: [establishmentId], references: [id], onDelete: Cascade)
+
+  @@id([areaId, establishmentId])
+  @@index([establishmentId])
+}
+
+model Sector {
+  id        String       @id @default(uuid())
+  name      String
+  code      String       @unique
+  status    RecordStatus @default(ACTIVO)
+  areaId    String?
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  area            Area?                 @relation(fields: [areaId], references: [id])
+  users           User[]
+  employees       Employee[]
+  positions       Position[]
+  areas           SectorArea[]
+  establishments  SectorEstablishment[]
+  costCenterLinks CostCenterSector[]
+
+  @@index([areaId])
+}
+
+model SectorArea {
+  sectorId String
+  areaId   String
+
+  sector Sector @relation(fields: [sectorId], references: [id], onDelete: Cascade)
+  area   Area   @relation(fields: [areaId], references: [id], onDelete: Cascade)
+
+  @@id([sectorId, areaId])
+  @@index([areaId])
+}
+
+model SectorEstablishment {
+  sectorId        String
+  establishmentId String
+
+  sector        Sector        @relation(fields: [sectorId], references: [id], onDelete: Cascade)
+  establishment Establishment @relation(fields: [establishmentId], references: [id], onDelete: Cascade)
+
+  @@id([sectorId, establishmentId])
+  @@index([establishmentId])
+}
+
+model CostCenter {
+  id        String       @id @default(uuid())
+  name      String
+  code      String       @unique
+  status    RecordStatus @default(ACTIVO)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  employees      Employee[]
+  companies      CostCenterCompany[]
+  businessUnits  CostCenterBusinessUnit[]
+  establishments CostCenterEstablishment[]
+  areas          CostCenterArea[]
+  sectors        CostCenterSector[]
+}
+
+model CostCenterCompany {
+  costCenterId String
+  companyId    String
+
+  costCenter CostCenter @relation(fields: [costCenterId], references: [id], onDelete: Cascade)
+  company    Company    @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@id([costCenterId, companyId])
+  @@index([companyId])
+}
+
+model CostCenterBusinessUnit {
+  costCenterId   String
+  businessUnitId String
+
+  costCenter   CostCenter   @relation(fields: [costCenterId], references: [id], onDelete: Cascade)
+  businessUnit BusinessUnit @relation(fields: [businessUnitId], references: [id], onDelete: Cascade)
+
+  @@id([costCenterId, businessUnitId])
+  @@index([businessUnitId])
+}
+
+model CostCenterEstablishment {
+  costCenterId    String
+  establishmentId String
+
+  costCenter    CostCenter    @relation(fields: [costCenterId], references: [id], onDelete: Cascade)
+  establishment Establishment @relation(fields: [establishmentId], references: [id], onDelete: Cascade)
+
+  @@id([costCenterId, establishmentId])
+  @@index([establishmentId])
+}
+
+model CostCenterArea {
+  costCenterId String
+  areaId       String
+
+  costCenter CostCenter @relation(fields: [costCenterId], references: [id], onDelete: Cascade)
+  area       Area       @relation(fields: [areaId], references: [id], onDelete: Cascade)
+
+  @@id([costCenterId, areaId])
+  @@index([areaId])
+}
+
+model CostCenterSector {
+  costCenterId String
+  sectorId     String
+
+  costCenter CostCenter @relation(fields: [costCenterId], references: [id], onDelete: Cascade)
+  sector     Sector     @relation(fields: [sectorId], references: [id], onDelete: Cascade)
+
+  @@id([costCenterId, sectorId])
+  @@index([sectorId])
+}
+
+model SalaryCategory {
+  id        String       @id @default(uuid())
+  name      String       @unique
+  family    String?
+  order     Int
+  status    RecordStatus @default(ACTIVO)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  positions PositionSalaryCategory[]
+}
+
+model Position {
+  id                    String       @id @default(uuid())
+  code                  String       @unique
+  name                  String
+  status                RecordStatus @default(ACTIVO)
+  mission               String?
+  description           String?
+  areaDepartment        String?
+  sectorName            String?
+  businessUnitName      String?
+  establishmentName     String?
+  lastUpdatedAt         DateTime?
+  businessUnitNames     Json?
+  establishmentNames    Json?
+  sectorNames           Json?
+  salaryRangeCategories Json?
+  responsibilities      Json?
+  internalRelations     Json?
+  externalRelations     Json?
+  competencies          Json?
+  workConditions        Json?
+  performanceIndicators Json?
+  evaluationCriteria    Json?
+  areaId                String?
+  sectorId              String?
+  createdAt             DateTime     @default(now())
+  updatedAt             DateTime     @updatedAt
+
+  area             Area?                    @relation(fields: [areaId], references: [id])
+  sector           Sector?                  @relation(fields: [sectorId], references: [id])
+  employees        Employee[]
+  salaryCategories PositionSalaryCategory[]
+
+  @@index([areaId])
+  @@index([sectorId])
+}
+
+model PositionSalaryCategory {
+  positionId       String
+  salaryCategoryId String
+
+  position       Position       @relation(fields: [positionId], references: [id], onDelete: Cascade)
+  salaryCategory SalaryCategory @relation(fields: [salaryCategoryId], references: [id], onDelete: Cascade)
+
+  @@id([positionId, salaryCategoryId])
+}
+
+model Employee {
+  id                String         @id @default(uuid())
+  legajo            String         @unique
+  legajoFinnegans   String?
+  cuil              String         @unique
+  dni               String         @unique
+  firstName         String
+  lastName          String
+  birthDate         DateTime?
+  email             String?
+  phone             String?
+  mobile            String?
+  emergencyContact  String?
+  emergencyRelation String?
+  emergencyPhone    String?
+  status            EmployeeStatus @default(ACTIVO)
+  positionId        String?
+  sectorId          String?
+  costCenterId      String?
+  healthInsurance   String?
+  agreement         String?
+  receiptCategory   String?
+  internalCategory  String?
+  createdByUserId   String?
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+
+  position       Position?             @relation(fields: [positionId], references: [id])
+  sector         Sector?               @relation(fields: [sectorId], references: [id])
+  costCenter     CostCenter?           @relation(fields: [costCenterId], references: [id])
+  createdBy      User?                 @relation("EmployeeCreatedBy", fields: [createdByUserId], references: [id])
+  address        EmployeeAddress?
+  companies      EmployeeCompany[]
+  laborMovements LaborMovement[]
+  assignments    EmployeeAssignment[]
+  hourConcepts   EmployeeHourConcept[]
+  transport      EmployeeTransport?
+  fieldHistory   EmployeeFieldHistory[]
+  blockHistory   EmployeeBlockHistory[]
+  novelties      Novelty[]
+  timeEntries    TimeEntry[]
+  documents      EmployeeDocument[]
+
+  @@index([lastName, firstName])
+  @@index([status])
+  @@index([sectorId])
+  @@index([costCenterId])
+}
+
+model EmployeeCompany {
+  employeeId String
+  companyId  String
+  isPrimary  Boolean @default(false)
+
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  company  Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@id([employeeId, companyId])
+}
+
+model EmployeeAddress {
+  id           String   @id @default(uuid())
+  employeeId   String   @unique
+  province     String?
+  department   String?
+  city         String?
+  street       String?
+  streetNumber String?
+  postalCode   String?
+  latitude     Decimal? @db.Decimal(10, 7)
+  longitude    Decimal? @db.Decimal(10, 7)
+  mapLabel     String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+}
+
+model EmployeeTransport {
+  id                   String   @id @default(uuid())
+  employeeId           String   @unique
+  usesCompanyTransport Boolean  @default(false)
+  locality             String?
+  pickupAddress        String?
+  pickupReference      String?
+  busLine              String?
+  schedule             String?
+  observation          String?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+}
+
+model LaborMovement {
+  id              String            @id @default(uuid())
+  employeeId      String
+  type            LaborMovementType
+  effectiveFrom   DateTime
+  reason          String
+  observation     String?
+  createdByUserId String?
+  createdAt       DateTime          @default(now())
+
+  employee  Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  createdBy User?    @relation(fields: [createdByUserId], references: [id])
+
+  @@index([employeeId, effectiveFrom])
+}
+
+model EmployeeAssignment {
+  id         String   @id @default(uuid())
+  employeeId String
+  userId     String?
+  personName String?
+  type       String
+  createdAt  DateTime @default(now())
+
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@index([employeeId, type])
+}
+
+model HourConcept {
+  id             String          @id @default(uuid())
+  code           String          @unique
+  name           String
+  kind           HourConceptKind
+  status         RecordStatus    @default(ACTIVO)
+  countsAsWorked Boolean         @default(true)
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  employees   EmployeeHourConcept[]
+  timeEntries TimeEntry[]
+  novelties   Novelty[]
+}
+
+model EmployeeHourConcept {
+  employeeId    String
+  hourConceptId String
+
+  employee    Employee    @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  hourConcept HourConcept @relation(fields: [hourConceptId], references: [id], onDelete: Cascade)
+
+  @@id([employeeId, hourConceptId])
+}
+
+model EmployeeFieldHistory {
+  id              String   @id @default(uuid())
+  employeeId      String
+  section         String
+  field           String
+  fieldLabel      String
+  oldValue        String?
+  newValue        String
+  effectiveFrom   DateTime
+  reason          String
+  createdByUserId String?
+  createdAt       DateTime @default(now())
+
+  employee  Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  createdBy User?    @relation(fields: [createdByUserId], references: [id])
+
+  @@index([employeeId, section, field])
+  @@index([effectiveFrom])
+}
+
+model EmployeeBlockHistory {
+  id              String   @id @default(uuid())
+  employeeId      String
+  section         String
+  block           String
+  blockLabel      String
+  oldValue        String?
+  newValue        String
+  effectiveFrom   DateTime
+  reason          String
+  createdByUserId String?
+  createdAt       DateTime @default(now())
+
+  employee  Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  createdBy User?    @relation(fields: [createdByUserId], references: [id])
+
+  @@index([employeeId, section, block])
+  @@index([effectiveFrom])
+}
+
+model NoveltyType {
+  id                    String            @id @default(uuid())
+  code                  String            @unique
+  name                  String
+  uiColor               String
+  kind                  NoveltyTypeKind
+  origin                NoveltyTypeOrigin
+  status                RecordStatus      @default(ACTIVO)
+  description           String?
+  exportsToFinnegans    Boolean           @default(false)
+  requiresApproval      Boolean           @default(true)
+  requiresDocumentation Boolean           @default(false)
+  allowsHours           Boolean           @default(false)
+  allowsDateTo          Boolean           @default(true)
+  hasValidity           Boolean           @default(true)
+  blocksTimeEntry       Boolean           @default(false)
+  setsWorkedHoursToZero Boolean           @default(false)
+  timeImpact            NoveltyTimeImpact @default(NO_AFECTA_HORAS)
+  allowedLoadRoles      Json              @default("[]")
+  approvalRoles         Json              @default("[]")
+  createdAt             DateTime          @default(now())
+  updatedAt             DateTime          @updatedAt
+
+  finnegansLinks FinnegansNoveltyLink[]
+  novelties      Novelty[]
+}
+
+model FinnegansNoveltyLink {
+  id            String       @id @default(uuid())
+  noveltyTypeId String
+  code          String
+  name          String
+  exportConcept String
+  priority      Int          @default(1)
+  status        RecordStatus @default(ACTIVO)
+  hasValidity   Boolean      @default(false)
+  notes         String?
+
+  noveltyType NoveltyType @relation(fields: [noveltyTypeId], references: [id], onDelete: Cascade)
+
+  @@unique([noveltyTypeId, code])
+  @@index([noveltyTypeId])
+}
+
+model Novelty {
+  id                  String         @id @default(uuid())
+  employeeId          String
+  noveltyTypeId       String
+  status              ApprovalStatus @default(PENDIENTE)
+  fromDate            DateTime
+  toDate              DateTime?
+  quantityHours       Decimal?       @db.Decimal(8, 2)
+  quantityDays        Decimal?       @db.Decimal(8, 2)
+  observation         String?
+  targetHourConceptId String?
+  createdByUserId     String?
+  approvedByUserId    String?
+  approvedAt          DateTime?
+  rejectedAt          DateTime?
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+
+  employee          Employee           @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  noveltyType       NoveltyType        @relation(fields: [noveltyTypeId], references: [id])
+  targetHourConcept HourConcept?       @relation(fields: [targetHourConceptId], references: [id])
+  createdBy         User?              @relation("NoveltyCreatedBy", fields: [createdByUserId], references: [id])
+  documents         EmployeeDocument[]
+
+  @@index([employeeId, fromDate])
+  @@index([noveltyTypeId])
+  @@index([status])
+}
+
+model TimeEntry {
+  id               String         @id @default(uuid())
+  employeeId       String
+  hourConceptId    String
+  date             DateTime
+  period           String
+  day              Int
+  hours            Decimal        @db.Decimal(8, 2)
+  totalMinutes     Int
+  status           ApprovalStatus @default(BORRADOR)
+  observation      String?
+  createdByUserId  String?
+  approvedByUserId String?
+  approvedAt       DateTime?
+  rejectedAt       DateTime?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  employee    Employee    @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  hourConcept HourConcept @relation(fields: [hourConceptId], references: [id])
+  createdBy   User?       @relation("TimeEntryCreatedBy", fields: [createdByUserId], references: [id])
+
+  @@index([employeeId, period])
+  @@index([date])
+  @@index([status])
+}
+
+model DocumentCategory {
+  id            String       @id @default(uuid())
+  code          String       @unique
+  name          String
+  kind          String       @default("PERSONAL")
+  status        RecordStatus @default(ACTIVO)
+  description   String?
+  scopes        Json         @default("[]")
+  rules         Json         @default("{}")
+  uploadRoles   Json         @default("[]")
+  viewRoles     Json         @default("[]")
+  approvalRoles Json         @default("[]")
+  externalLinks Json         @default("[]")
+  notes         String?
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  documents EmployeeDocument[]
+}
+
+model AuditParameter {
+  id                      String       @id @default(uuid())
+  code                    String       @unique
+  name                    String
+  scope                   String
+  severity                String
+  status                  RecordStatus @default(ACTIVO)
+  description             String
+  trackCreate             Boolean      @default(true)
+  trackUpdate             Boolean      @default(true)
+  trackDeleteOrDeactivate Boolean      @default(false)
+  trackApproval           Boolean      @default(false)
+  trackExport             Boolean      @default(false)
+  requiresReason          Boolean      @default(false)
+  requiresEffectiveDate   Boolean      @default(false)
+  visibleToRoles          Json         @default("[]")
+  notification            Json         @default("{}")
+  retention               Json         @default("{}")
+  notes                   String?
+  createdBy               String?
+  updatedBy               String?
+  history                 Json         @default("[]")
+  createdAt               DateTime     @default(now())
+  updatedAt               DateTime     @updatedAt
+
+  @@index([scope])
+  @@index([severity])
+  @@index([status])
+}
+
+model EmployeeDocument {
+  id               String         @id @default(uuid())
+  employeeId       String
+  categoryId       String
+  noveltyId        String?
+  fileName         String
+  fileMimeType     String
+  fileSizeBytes    Int
+  storageKey       String
+  status           DocumentStatus @default(PENDIENTE)
+  notes            String?
+  issuedAt         DateTime?
+  expiresAt        DateTime?
+  uploadedByUserId String?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  employee   Employee         @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  category   DocumentCategory @relation(fields: [categoryId], references: [id])
+  novelty    Novelty?         @relation(fields: [noveltyId], references: [id])
+  uploadedBy User?            @relation(fields: [uploadedByUserId], references: [id])
+
+  @@index([employeeId])
+  @@index([categoryId])
+  @@index([status])
+}
+
+model AuditLog {
+  id          String      @id @default(uuid())
+  action      AuditAction
+  entity      String
+  entityId    String?
+  description String
+  before      Json?
+  after       Json?
+  userId      String?
+  ipAddress   String?
+  userAgent   String?
+  createdAt   DateTime    @default(now())
+
+  user User? @relation(fields: [userId], references: [id])
+
+  @@index([entity, entityId])
+  @@index([userId])
+  @@index([createdAt])
+}

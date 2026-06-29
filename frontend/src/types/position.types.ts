@@ -25,6 +25,7 @@ export type Position = {
   id: string;
   code?: string;
   name: string;
+  assignedCount?: number;
   areaDepartment: string;
   sector: string;
   reportsTo?: string;

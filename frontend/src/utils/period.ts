@@ -8,6 +8,10 @@ export function getMonthDays(period: string) {
   return Array.from({ length: getPeriodDayCount(period) }, (_, index) => index + 1);
 }
 
+export function currentMonthPeriod() {
+  return new Date().toISOString().slice(0, 7);
+}
+
 export function monthDate(period: string, day: number) {
   return `${period}-${String(day).padStart(2, "0")}`;
 }

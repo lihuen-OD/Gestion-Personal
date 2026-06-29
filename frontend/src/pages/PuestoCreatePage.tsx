@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { Link, Navigate, useNavigate } from "react-router-dom";
 import { PuestoCompetenciesTab } from "../components/puestos/PuestoCompetenciesTab";
 import { PuestoEvaluationCriteriaTab } from "../components/puestos/PuestoEvaluationCriteriaTab";
@@ -11,23 +11,43 @@ import { PuestoResponsibilitiesTab } from "../components/puestos/PuestoResponsib
 import { PuestoSalaryRangeTab } from "../components/puestos/PuestoSalaryRangeTab";
 import { PuestoWorkConditionsTab } from "../components/puestos/PuestoWorkConditionsTab";
 import { useAuth } from "../context/AuthContext";
+import { positionApiService } from "../services/api/positionApiService";
 import { positionMockService } from "../services/positionMockService";
 import type { Position } from "../types/position.types";
-
-function roleLevel(role: string) { return role.startsWith("Nivel 1") ? 1 : role.startsWith("Nivel 2") ? 2 : 3; }
+import { roleLevel } from "../utils/roles";
 
 export function PuestoCreatePage() {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const [usesApi, setUsesApi] = useState(false);
   const [position, setPosition] = useState<Position>({ ...emptyPosition(), code: positionMockService.getNextCode(), id: crypto.randomUUID(), history: [], createdAt: "", updatedAt: "" });
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    let alive = true;
+    positionApiService.getAll()
+      .then((items) => {
+        if (!alive) return;
+        setUsesApi(true);
+        setPosition((current) => ({ ...current, code: positionApiService.getNextCode(items) }));
+      })
+      .catch(() => setUsesApi(false));
+    return () => { alive = false; };
+  }, []);
+
   if (roleLevel(user!.role) !== 1) return <Navigate to="/puestos" />;
-  const save = (event: FormEvent) => {
+
+  const save = async (event: FormEvent) => {
     event.preventDefault();
-    if (!position.name.trim() || !position.areaDepartment.trim() || !position.sector.trim() || !position.status || !position.mission.trim() || !position.lastUpdatedAt) return setError("Completá nombre, area/departamento, sector, estado, mision y fecha de actualizacion.");
-    const created = positionMockService.create(position, user!);
-    navigate(`/puestos/${created.id}`, { state: { created: true } });
+    if (!position.name.trim() || !position.areaDepartment.trim() || !position.sector.trim() || !position.status || !position.mission.trim() || !position.lastUpdatedAt) return setError("Completa nombre, area/departamento, sector, estado, mision y fecha de actualizacion.");
+    try {
+      const created = usesApi ? await positionApiService.create(position) : positionMockService.create(position, user!);
+      if (created) navigate(`/puestos/${created.id}`, { state: { created: true, usesApi } });
+    } catch {
+      setError("No se pudo guardar el puesto en backend. Revisa codigo duplicado o conexion.");
+    }
   };
+
   return <form onSubmit={save}>
     <div className="page-header"><div><p className="eyebrow">PUESTOS</p><h1>Crear nuevo puesto</h1><p>Descripcion funcional reutilizable para legajos, organigramas, dashboard y evaluaciones futuras.</p></div></div>
     <section className="panel"><div className="panel-head"><div><h3>1. Identificacion del puesto</h3><p>Datos base y estructura sugerida.</p></div></div><PuestoIdentificationTab position={position} setPosition={setPosition} /></section>

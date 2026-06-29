@@ -1,13 +1,14 @@
 import { Pencil, Plus } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Navigate } from "react-router-dom";
 import { GeoAddressFields } from "../components/GeoAddressFields";
 import { OverflowCell } from "../components/ui/OverflowCell";
 import { TableShell } from "../components/ui/TableShell";
 import { useAuth } from "../context/AuthContext";
+import { orgStructureApiService } from "../services/api/orgStructureApiService";
 import { orgStructureMockService } from "../services/orgStructureMockService";
 import type { EmployeeAddress, Role } from "../types";
-import type { OrgArea, OrgBusinessUnit, OrgCompany, OrgCostCenter, OrgEstablishment, OrgSector, OrgStructureEntityType, OrgStructureStatus } from "../types/orgStructure.types";
+import type { OrgArea, OrgBusinessUnit, OrgCompany, OrgCostCenter, OrgEstablishment, OrgSector, OrgStructureCatalog, OrgStructureEntityType, OrgStructureStatus } from "../types/orgStructure.types";
 
 type Tab = OrgStructureEntityType;
 type Editable = OrgCompany | OrgBusinessUnit | OrgEstablishment | OrgArea | OrgSector | OrgCostCenter;
@@ -29,8 +30,15 @@ function PageHeader({ eyebrow, title, description, action }: { eyebrow: string; 
   return <div className="page-header"><div className="page-title-block"><p className="eyebrow">{eyebrow}</p><h1>{title}</h1><p>{description}</p></div>{action && <div className="page-actions">{action}</div>}</div>;
 }
 
-function blank(type: Tab): Editable {
-  const code = orgStructureMockService.nextCode(type);
+function nextCodeFromCatalog(type: Tab, catalog: OrgStructureCatalog) {
+  const list = type === "COMPANY" ? catalog.companies : type === "BUSINESS_UNIT" ? catalog.businessUnits : type === "ESTABLISHMENT" ? catalog.establishments : type === "AREA" ? catalog.areas : type === "SECTOR" ? catalog.sectors : catalog.costCenters;
+  const prefix = type === "COMPANY" ? "EMP" : type === "BUSINESS_UNIT" ? "UN" : type === "ESTABLISHMENT" ? "EST" : type === "AREA" ? "AREA" : type === "SECTOR" ? "SEC" : "CC";
+  const max = list.reduce((value, item) => Math.max(value, Number(item.code.replace(/\D/g, "")) || 0), 0);
+  return `${prefix}-${String(max + 1).padStart(3, "0")}`;
+}
+
+function blank(type: Tab, catalog: OrgStructureCatalog): Editable {
+  const code = nextCodeFromCatalog(type, catalog);
   if (type === "COMPANY") return { id: uid(), code, name: "", legalName: "", cuit: "", status: "ACTIVO" };
   if (type === "BUSINESS_UNIT") return { id: uid(), code, name: "", companyIds: [], status: "ACTIVO" };
   if (type === "ESTABLISHMENT") return { id: uid(), code, name: "", companyIds: [], businessUnitIds: [], province: "", department: "", locality: "", address: "", status: "ACTIVO" };
@@ -43,11 +51,11 @@ function nameById(items: { id: string; name: string }[], ids: string[] = []) {
   return ids.map((id) => items.find((item) => item.id === id)?.name).filter(Boolean).join(", ") || "-";
 }
 
-function deriveCompanyIds(catalog: ReturnType<typeof orgStructureMockService.getCatalog>, businessUnitIds: string[] = []) {
+function deriveCompanyIds(catalog: OrgStructureCatalog, businessUnitIds: string[] = []) {
   return uniqueIds(catalog.businessUnits.filter((item) => businessUnitIds.includes(item.id)).flatMap((item) => item.companyIds));
 }
 
-function normalizeDerivedRelations(type: Tab, item: Editable, catalog: ReturnType<typeof orgStructureMockService.getCatalog>): Editable {
+function normalizeDerivedRelations(type: Tab, item: Editable, catalog: OrgStructureCatalog): Editable {
   if (type === "ESTABLISHMENT" && "businessUnitIds" in item) return { ...item, companyIds: deriveCompanyIds(catalog, item.businessUnitIds) } as Editable;
   return item;
 }
@@ -69,8 +77,7 @@ function StatusField({ value, onChange }: { value: OrgStructureStatus; onChange:
   return <label>Estado<select value={value} onChange={(event) => onChange(event.target.value as OrgStructureStatus)}><option>ACTIVO</option><option>INACTIVO</option></select></label>;
 }
 
-function Editor({ type, item, onChange }: { type: Tab; item: Editable; onChange: (item: Editable) => void }) {
-  const catalog = orgStructureMockService.getCatalog();
+function Editor({ type, item, catalog, onChange }: { type: Tab; item: Editable; catalog: OrgStructureCatalog; onChange: (item: Editable) => void }) {
   const normalizedItem = normalizeDerivedRelations(type, item, catalog);
   const set = (patch: Partial<Editable>) => onChange(normalizeDerivedRelations(type, { ...item, ...patch } as Editable, catalog));
   const establishmentAddress: EmployeeAddress | undefined = "province" in item ? { calle: item.address, numero: "", provinciaId: "", provinciaNombre: item.province, departamentoId: "", departamentoNombre: item.department, localidadId: "", localidadNombre: item.locality, codigoPostal: "", ubicacionMapa: { lat: null, lng: null, source: "MOCK", label: "" } } : undefined;
@@ -109,14 +116,18 @@ function Editor({ type, item, onChange }: { type: Tab; item: Editable; onChange:
   </div>;
 }
 
-function Rows({ type, onEdit }: { type: Tab; onEdit: (item: Editable) => void }) {
-  const catalog = orgStructureMockService.getCatalog();
-  if (type === "COMPANY") return <tbody>{catalog.companies.map((item) => <tr key={item.id}><td><b>{item.code}</b></td><td><OverflowCell value={item.name} /><span className="table-sub">{item.legalName}</span></td><td>{item.cuit || "-"}</td><td>-</td><td><span className={item.status === "ACTIVO" ? "badge success" : "badge neutral"}>{item.status}</span></td><td><button className="table-link table-icon-action" title="Editar" aria-label="Editar" onClick={() => onEdit(item)}><Pencil size={14}/><span>Editar</span></button></td></tr>)}</tbody>;
-  if (type === "BUSINESS_UNIT") return <tbody>{catalog.businessUnits.map((item) => <tr key={item.id}><td><b>{item.code}</b></td><td><OverflowCell value={item.name} /></td><td><OverflowCell value={nameById(catalog.companies, item.companyIds)} /></td><td>-</td><td><span className={item.status === "ACTIVO" ? "badge success" : "badge neutral"}>{item.status}</span></td><td><button className="table-link table-icon-action" title="Editar" aria-label="Editar" onClick={() => onEdit(item)}><Pencil size={14}/><span>Editar</span></button></td></tr>)}</tbody>;
-  if (type === "ESTABLISHMENT") return <tbody>{catalog.establishments.map((item) => <tr key={item.id}><td><b>{item.code}</b></td><td><OverflowCell value={item.name} /><span className="table-sub">{item.locality}, {item.department}</span></td><td><OverflowCell value={nameById(catalog.companies, deriveCompanyIds(catalog, item.businessUnitIds))} /></td><td><OverflowCell value={nameById(catalog.businessUnits, item.businessUnitIds)} /></td><td><span className={item.status === "ACTIVO" ? "badge success" : "badge neutral"}>{item.status}</span></td><td><button className="table-link table-icon-action" title="Editar" aria-label="Editar" onClick={() => onEdit(item)}><Pencil size={14}/><span>Editar</span></button></td></tr>)}</tbody>;
-  if (type === "AREA") return <tbody>{catalog.areas.map((item) => <tr key={item.id}><td><b>{item.code}</b></td><td><OverflowCell value={item.name} /></td><td><OverflowCell value={nameById(catalog.businessUnits, item.businessUnitIds)} /></td><td><OverflowCell value={nameById(catalog.establishments, item.establishmentIds)} /></td><td><span className={item.status === "ACTIVO" ? "badge success" : "badge neutral"}>{item.status}</span></td><td><button className="table-link table-icon-action" title="Editar" aria-label="Editar" onClick={() => onEdit(item)}><Pencil size={14}/><span>Editar</span></button></td></tr>)}</tbody>;
-  if (type === "SECTOR") return <tbody>{catalog.sectors.map((item) => <tr key={item.id}><td><b>{item.code}</b></td><td><OverflowCell value={item.name} /></td><td><OverflowCell value={nameById(catalog.areas, item.areaIds)} /></td><td><OverflowCell value={nameById(catalog.establishments, item.establishmentIds)} /></td><td><span className={item.status === "ACTIVO" ? "badge success" : "badge neutral"}>{item.status}</span></td><td><button className="table-link table-icon-action" title="Editar" aria-label="Editar" onClick={() => onEdit(item)}><Pencil size={14}/><span>Editar</span></button></td></tr>)}</tbody>;
-  return <tbody>{catalog.costCenters.map((item) => <tr key={item.id}><td><b>{item.code}</b></td><td><OverflowCell value={item.name} /><span className="table-sub">{item.finnegansCode || "Sin codigo Finnegans"}</span></td><td><OverflowCell value={nameById(catalog.companies, item.companyIds)} /></td><td><OverflowCell value={nameById(catalog.sectors, item.sectorIds)} /></td><td><span className={item.status === "ACTIVO" ? "badge success" : "badge neutral"}>{item.status}</span></td><td><button className="table-link table-icon-action" title="Editar" aria-label="Editar" onClick={() => onEdit(item)}><Pencil size={14}/><span>Editar</span></button></td></tr>)}</tbody>;
+function EditAction({ item, readOnly, onEdit }: { item: Editable; readOnly: boolean; onEdit: (item: Editable) => void }) {
+  if (readOnly) return <span className="badge neutral">Solo lectura</span>;
+  return <button className="table-link table-icon-action" title="Editar" aria-label="Editar" onClick={() => onEdit(item)}><Pencil size={14}/><span>Editar</span></button>;
+}
+
+function Rows({ type, catalog, readOnly, onEdit }: { type: Tab; catalog: OrgStructureCatalog; readOnly: boolean; onEdit: (item: Editable) => void }) {
+  if (type === "COMPANY") return <tbody>{catalog.companies.map((item) => <tr key={item.id}><td><b>{item.code}</b></td><td><OverflowCell value={item.name} /><span className="table-sub">{item.legalName}</span></td><td>{item.cuit || "-"}</td><td>-</td><td><span className={item.status === "ACTIVO" ? "badge success" : "badge neutral"}>{item.status}</span></td><td><EditAction item={item} readOnly={readOnly} onEdit={onEdit} /></td></tr>)}</tbody>;
+  if (type === "BUSINESS_UNIT") return <tbody>{catalog.businessUnits.map((item) => <tr key={item.id}><td><b>{item.code}</b></td><td><OverflowCell value={item.name} /></td><td><OverflowCell value={nameById(catalog.companies, item.companyIds)} /></td><td>-</td><td><span className={item.status === "ACTIVO" ? "badge success" : "badge neutral"}>{item.status}</span></td><td><EditAction item={item} readOnly={readOnly} onEdit={onEdit} /></td></tr>)}</tbody>;
+  if (type === "ESTABLISHMENT") return <tbody>{catalog.establishments.map((item) => <tr key={item.id}><td><b>{item.code}</b></td><td><OverflowCell value={item.name} /><span className="table-sub">{item.locality}, {item.department}</span></td><td><OverflowCell value={nameById(catalog.companies, deriveCompanyIds(catalog, item.businessUnitIds))} /></td><td><OverflowCell value={nameById(catalog.businessUnits, item.businessUnitIds)} /></td><td><span className={item.status === "ACTIVO" ? "badge success" : "badge neutral"}>{item.status}</span></td><td><EditAction item={item} readOnly={readOnly} onEdit={onEdit} /></td></tr>)}</tbody>;
+  if (type === "AREA") return <tbody>{catalog.areas.map((item) => <tr key={item.id}><td><b>{item.code}</b></td><td><OverflowCell value={item.name} /></td><td><OverflowCell value={nameById(catalog.businessUnits, item.businessUnitIds)} /></td><td><OverflowCell value={nameById(catalog.establishments, item.establishmentIds)} /></td><td><span className={item.status === "ACTIVO" ? "badge success" : "badge neutral"}>{item.status}</span></td><td><EditAction item={item} readOnly={readOnly} onEdit={onEdit} /></td></tr>)}</tbody>;
+  if (type === "SECTOR") return <tbody>{catalog.sectors.map((item) => <tr key={item.id}><td><b>{item.code}</b></td><td><OverflowCell value={item.name} /></td><td><OverflowCell value={nameById(catalog.areas, item.areaIds)} /></td><td><OverflowCell value={nameById(catalog.establishments, item.establishmentIds)} /></td><td><span className={item.status === "ACTIVO" ? "badge success" : "badge neutral"}>{item.status}</span></td><td><EditAction item={item} readOnly={readOnly} onEdit={onEdit} /></td></tr>)}</tbody>;
+  return <tbody>{catalog.costCenters.map((item) => <tr key={item.id}><td><b>{item.code}</b></td><td><OverflowCell value={item.name} /><span className="table-sub">{item.finnegansCode || "Sin codigo Finnegans"}</span></td><td><OverflowCell value={nameById(catalog.companies, item.companyIds)} /></td><td><OverflowCell value={nameById(catalog.sectors, item.sectorIds)} /></td><td><span className={item.status === "ACTIVO" ? "badge success" : "badge neutral"}>{item.status}</span></td><td><EditAction item={item} readOnly={readOnly} onEdit={onEdit} /></td></tr>)}</tbody>;
 }
 
 export function OrgStructurePage() {
@@ -125,28 +136,77 @@ export function OrgStructurePage() {
   const [editing, setEditing] = useState<Editable | null>(null);
   const [refresh, setRefresh] = useState(0);
   const [notice, setNotice] = useState("");
-  const catalog = orgStructureMockService.getCatalog();
+  const [apiCatalog, setApiCatalog] = useState<OrgStructureCatalog | null>(null);
+  const [isLoadingApi, setIsLoadingApi] = useState(true);
+  const [apiWarning, setApiWarning] = useState("");
+
+  useEffect(() => {
+    let alive = true;
+    setIsLoadingApi(true);
+    orgStructureApiService.getCatalog()
+      .then((value) => {
+        if (!alive) return;
+        setApiCatalog(value);
+        setApiWarning("");
+      })
+      .catch(() => {
+        if (!alive) return;
+        setApiCatalog(null);
+        setApiWarning("Backend no disponible: usando estructura local editable.");
+      })
+      .finally(() => {
+        if (alive) setIsLoadingApi(false);
+      });
+    return () => { alive = false; };
+  }, [refresh]);
+
+  const catalog = apiCatalog || orgStructureMockService.getCatalog();
+  const usesApiCatalog = Boolean(apiCatalog);
   const counts = useMemo(() => [
     ["Empresas", catalog.companies.length],
     ["Unidades", catalog.businessUnits.length],
     ["Establecimientos", catalog.establishments.length],
     ["Sectores", catalog.sectors.length],
-  ], [catalog, refresh]);
+  ], [catalog]);
   if (roleLevel(user!.role) !== 1) return <Navigate to="/configuracion" />;
-  const save = () => {
+  const save = async () => {
     if (!editing?.name.trim()) return setNotice("Completa el nombre antes de guardar.");
-    orgStructureMockService.upsert(tab, normalizeDerivedRelations(tab, editing, catalog));
-    setRefresh((value) => value + 1);
-    setEditing(null);
-    setNotice("Estructura guardada correctamente.");
-    setTimeout(() => setNotice(""), 2200);
+    const normalized = normalizeDerivedRelations(tab, editing, catalog);
+    try {
+      if (usesApiCatalog) {
+        const exists = [
+          ...catalog.companies,
+          ...catalog.businessUnits,
+          ...catalog.establishments,
+          ...catalog.areas,
+          ...catalog.sectors,
+          ...catalog.costCenters,
+        ].some((item) => item.id === normalized.id);
+        if (tab === "COMPANY") exists ? await orgStructureApiService.updateCompany(normalized as OrgCompany) : await orgStructureApiService.createCompany(normalized as OrgCompany);
+        if (tab === "BUSINESS_UNIT") exists ? await orgStructureApiService.updateBusinessUnit(normalized as OrgBusinessUnit) : await orgStructureApiService.createBusinessUnit(normalized as OrgBusinessUnit);
+        if (tab === "ESTABLISHMENT") exists ? await orgStructureApiService.updateEstablishment(normalized as OrgEstablishment) : await orgStructureApiService.createEstablishment(normalized as OrgEstablishment);
+        if (tab === "AREA") exists ? await orgStructureApiService.updateArea(normalized as OrgArea) : await orgStructureApiService.createArea(normalized as OrgArea);
+        if (tab === "SECTOR") exists ? await orgStructureApiService.updateSector(normalized as OrgSector) : await orgStructureApiService.createSector(normalized as OrgSector);
+        if (tab === "COST_CENTER") exists ? await orgStructureApiService.updateCostCenter(normalized as OrgCostCenter) : await orgStructureApiService.createCostCenter(normalized as OrgCostCenter);
+      } else {
+        orgStructureMockService.upsert(tab, normalized);
+      }
+      setRefresh((value) => value + 1);
+      setEditing(null);
+      setNotice("Estructura guardada correctamente.");
+      setTimeout(() => setNotice(""), 2200);
+    } catch {
+      setNotice("No se pudo guardar la estructura. Revisa relaciones obligatorias o codigos duplicados.");
+    }
   };
   return <>
-    <PageHeader eyebrow="CONFIGURACION" title="Empresas y estructura" description="Catalogo maestro de estructura organizacional para alimentar seleccionables, filtros, legajos, puestos y organigrama." action={<button className="button primary" onClick={() => setEditing(blank(tab))}><Plus size={16} /> Nuevo registro</button>} />
+    <PageHeader eyebrow="CONFIGURACION" title="Empresas y estructura" description="Catalogo maestro de estructura organizacional para alimentar seleccionables, filtros, legajos, puestos y organigrama." action={<button className="button primary" onClick={() => setEditing(blank(tab, catalog))}><Plus size={16} /> Nuevo registro</button>} />
     {notice && <div className="toast">{notice}</div>}
+    {apiWarning && <div className="info-note compact"><b>Modo local</b><p>{apiWarning}</p></div>}
+    {usesApiCatalog && <div className="info-note compact"><b>Datos reales</b><p>Lectura y escritura conectadas a backend con soporte de relaciones multiples.</p></div>}
     <div className="stat-grid org-structure-summary">{counts.map(([label, value]) => <div className="stat-card" key={label}><div><small>{label}</small><strong>{value}</strong><span>Catalogo maestro</span></div></div>)}</div>
     <div className="tabs">{tabs.map((item) => <button key={item.id} className={tab === item.id ? "active" : ""} onClick={() => { setTab(item.id); setEditing(null); }}>{item.label}</button>)}</div>
-    <section className="panel"><div className="panel-head"><div><h3>{tabs.find((item) => item.id === tab)?.label}</h3><p>Administracion de relaciones y estados disponibles para operacion.</p></div></div><div className="panel-body"><TableShell minWidth={940}><table><thead><tr><th>Codigo</th><th>Nombre</th><th>Relacion principal</th><th>Relacion secundaria</th><th>Estado</th><th>Accion</th></tr></thead><Rows type={tab} onEdit={setEditing} /></table></TableShell></div></section>
-    {editing && <section className="panel"><div className="panel-head"><div><h3>{editing.code ? "Editar registro" : "Nuevo registro"}</h3><p>Los cambios quedan disponibles para los modulos conectados.</p></div><button className="button primary" onClick={save}>Guardar estructura</button></div><div className="panel-body"><Editor type={tab} item={editing} onChange={setEditing} /></div></section>}
+    <section className="panel"><div className="panel-head"><div><h3>{tabs.find((item) => item.id === tab)?.label}</h3><p>{isLoadingApi ? "Cargando estructura desde backend..." : "Administracion de relaciones y estados disponibles para operacion."}</p></div></div><div className="panel-body"><TableShell minWidth={940}><table><thead><tr><th>Codigo</th><th>Nombre</th><th>Relacion principal</th><th>Relacion secundaria</th><th>Estado</th><th>Accion</th></tr></thead><Rows type={tab} catalog={catalog} readOnly={false} onEdit={setEditing} /></table></TableShell></div></section>
+    {editing && <section className="panel"><div className="panel-head"><div><h3>{editing.code ? "Editar registro" : "Nuevo registro"}</h3><p>Los cambios quedan disponibles para los modulos conectados.</p></div><button className="button primary" onClick={save}>Guardar estructura</button></div><div className="panel-body"><Editor type={tab} item={editing} catalog={catalog} onChange={setEditing} /></div></section>}
   </>;
 }

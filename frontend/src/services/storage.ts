@@ -5,13 +5,12 @@ import { mockHourConcepts } from "../data/mockHourConcepts";
 import { mockNoveltyTypes } from "../data/mockNoveltyTypes";
 import { mockOrgStructure } from "../data/mockOrgStructure";
 import { mockPositions } from "../data/mockPositions";
-import { mockSettlementConfigs } from "../data/mockSettlementConfigs";
 import { locationMockService } from "./locationMockService";
 import type { Employee, EmployeeAddress, EmployeeLocationMap, LaborMovement, TimeEntry } from "../types";
 import type { Position } from "../types/position.types";
 
-export type StoreKey = "employees" | "users" | "timeEntries" | "novelties" | "noveltyTypes" | "hourConcepts" | "settlementConfigs" | "documentCategories" | "auditParameters" | "orgStructure" | "audit" | "documents" | "changeLogs" | "fieldHistory" | "blockHistory" | "positions" | "positionHistory";
-const seeds = { employees: mockEmployees, users: mockUsers, timeEntries: mockTimeEntries, novelties: mockNovelties, noveltyTypes: mockNoveltyTypes, hourConcepts: mockHourConcepts, settlementConfigs: mockSettlementConfigs, documentCategories: mockDocumentCategories, auditParameters: mockAuditParameters, orgStructure: [mockOrgStructure], audit: mockAudit, documents: mockDocuments, changeLogs: [], fieldHistory: [], blockHistory: [], positions: mockPositions, positionHistory: mockPositions.flatMap((position) => position.history) };
+export type StoreKey = "employees" | "users" | "timeEntries" | "novelties" | "noveltyTypes" | "hourConcepts" | "documentCategories" | "auditParameters" | "orgStructure" | "audit" | "documents" | "changeLogs" | "fieldHistory" | "blockHistory" | "positions" | "positionHistory";
+const seeds = { employees: mockEmployees, users: mockUsers, timeEntries: mockTimeEntries, novelties: mockNovelties, noveltyTypes: mockNoveltyTypes, hourConcepts: mockHourConcepts, documentCategories: mockDocumentCategories, auditParameters: mockAuditParameters, orgStructure: [mockOrgStructure], audit: mockAudit, documents: mockDocuments, changeLogs: [], fieldHistory: [], blockHistory: [], positions: mockPositions, positionHistory: mockPositions.flatMap((position) => position.history) };
 const key = (name: StoreKey) => `losod_demo_${name}`;
 const seedVersion = "2026-06-novedades-horas-finnegans-v1";
 
