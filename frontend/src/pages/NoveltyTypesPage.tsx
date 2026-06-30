@@ -6,7 +6,6 @@ import { NoveltyTypeSummaryCards } from "../components/novelty-types/NoveltyType
 import { NoveltyTypeTable } from "../components/novelty-types/NoveltyTypeTable";
 import { useAuth } from "../context/AuthContext";
 import { noveltyTypeApiService } from "../services/api/noveltyTypeApiService";
-import { noveltyTypeMockService } from "../services/noveltyTypeMockService";
 import type { NoveltyType, NoveltyTypeFilters as NoveltyTypeFiltersModel } from "../types/noveltyType.types";
 import { roleLevel } from "../utils/roles";
 
@@ -36,7 +35,7 @@ export function NoveltyTypesPage() {
   const { user } = useAuth();
   const level = roleLevel(user!.role);
   const canEdit = level === 1;
-  const [filters, setFilters] = useState(noveltyTypeMockService.getEmptyFilters());
+  const [filters, setFilters] = useState<NoveltyTypeFiltersModel>({ search: "", kind: "", exportsToFinnegans: "", requiresApproval: "", status: "" });
   const [refresh, setRefresh] = useState(0);
   const [apiItems, setApiItems] = useState<NoveltyType[] | null>(null);
   const [isLoadingApi, setIsLoadingApi] = useState(true);
@@ -64,18 +63,14 @@ export function NoveltyTypesPage() {
 
   if (level !== 1) return <Navigate to="/configuracion" />;
 
-  const all = apiItems || noveltyTypeMockService.getAll();
+  const all = apiItems || [];
   const items = useMemo(() => all.filter((item) => matchesFilters(item, filters)), [all, filters]);
   const options = useMemo(() => getFilterOptions(all), [all]);
 
   const toggle = async (item: NoveltyType) => {
     if (!confirm(`Confirmar ${item.status === "ACTIVO" ? "inactivacion" : "activacion"} de ${item.name}?`)) return;
     const nextStatus = item.status === "ACTIVO" ? "INACTIVO" : "ACTIVO";
-    if (apiItems) {
-      await noveltyTypeApiService.update(item.id, { ...item, status: nextStatus });
-    } else {
-      noveltyTypeMockService.changeStatus(item.id, nextStatus, user!);
-    }
+    await noveltyTypeApiService.update(item.id, { ...item, status: nextStatus });
     setRefresh((value) => value + 1);
   };
 

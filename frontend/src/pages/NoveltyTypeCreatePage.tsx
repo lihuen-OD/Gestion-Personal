@@ -6,15 +6,13 @@ import { NoveltyTypeIdentificationTab } from "../components/novelty-types/Novelt
 import { NoveltyTypeRulesTab } from "../components/novelty-types/NoveltyTypeRulesTab";
 import { useAuth } from "../context/AuthContext";
 import { noveltyTypeApiService } from "../services/api/noveltyTypeApiService";
-import { noveltyTypeMockService } from "../services/noveltyTypeMockService";
 import type { NoveltyType } from "../types/noveltyType.types";
 import { roleLevel } from "../utils/roles";
 
 export function NoveltyTypeCreatePage() {
   const { user } = useAuth();
   const navigate = useNavigate();
-  const [usesApi, setUsesApi] = useState(false);
-  const [item, setItem] = useState<NoveltyType>({ ...emptyNoveltyType(), id: crypto.randomUUID(), code: noveltyTypeMockService.getNextCode() });
+  const [item, setItem] = useState<NoveltyType>({ ...emptyNoveltyType(), id: crypto.randomUUID(), code: "" });
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -22,10 +20,9 @@ export function NoveltyTypeCreatePage() {
     noveltyTypeApiService.getAll()
       .then((items) => {
         if (!alive) return;
-        setUsesApi(true);
         setItem((current) => ({ ...current, code: noveltyTypeApiService.getNextCode(items) }));
       })
-      .catch(() => setUsesApi(false));
+      .catch(() => {});
     return () => { alive = false; };
   }, []);
 
@@ -38,8 +35,8 @@ export function NoveltyTypeCreatePage() {
     if (invalidLink) return setError("Si cargas un codigo Finnegans, completa nombre y concepto exportable.");
 
     try {
-      const created = usesApi ? await noveltyTypeApiService.create(item) : noveltyTypeMockService.create(item, user!);
-      navigate(`/configuracion/tipos-novedades/${created.id}`, { state: { created: true, usesApi } });
+      const created = await noveltyTypeApiService.create(item);
+      navigate(`/configuracion/tipos-novedades/${created.id}`, { state: { created: true, usesApi: true } });
     } catch {
       setError("No se pudo guardar en backend. Revisa la conexion o el codigo duplicado.");
     }

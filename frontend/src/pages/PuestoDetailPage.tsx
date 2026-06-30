@@ -14,7 +14,6 @@ import { PuestoSalaryRangeTab } from "../components/puestos/PuestoSalaryRangeTab
 import { PuestoWorkConditionsTab } from "../components/puestos/PuestoWorkConditionsTab";
 import { useAuth } from "../context/AuthContext";
 import { positionApiService } from "../services/api/positionApiService";
-import { positionMockService } from "../services/positionMockService";
 import type { Employee } from "../types";
 import type { Position } from "../types/position.types";
 import { roleLevel } from "../utils/roles";
@@ -27,7 +26,6 @@ export function PuestoDetailPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const [position, setPosition] = useState<Position | undefined>(undefined);
-  const [usesApi, setUsesApi] = useState(Boolean(location.state?.usesApi));
   const [isLoading, setIsLoading] = useState(true);
   const [assigned, setAssigned] = useState<Employee[]>([]);
   const [tab, setTab] = useState(0);
@@ -40,13 +38,11 @@ export function PuestoDetailPage() {
     positionApiService.getById(id)
       .then((source) => {
         if (!alive) return;
-        setPosition(source);
-        setUsesApi(Boolean(source));
+        setPosition(source ?? undefined);
       })
       .catch(() => {
         if (!alive) return;
-        setPosition(positionMockService.getById(id));
-        setUsesApi(false);
+        setPosition(undefined);
       })
       .finally(() => {
         if (alive) setIsLoading(false);
@@ -60,20 +56,16 @@ export function PuestoDetailPage() {
       setAssigned([]);
       return () => { alive = false; };
     }
-    if (!usesApi) {
-      setAssigned(positionMockService.getAssignedEmployees(position.id));
-      return () => { alive = false; };
-    }
     positionApiService.getAssignedEmployees(position.id)
       .then((employees) => {
         if (!alive) return;
         setAssigned(employees);
       })
       .catch(() => {
-        if (alive) setAssigned(positionMockService.getAssignedEmployees(position.id));
+        if (alive) setAssigned([]);
       });
     return () => { alive = false; };
-  }, [position?.id, position?.name, usesApi]);
+  }, [position?.id, position?.name]);
 
   if (roleLevel(user!.role) === 3) return <Navigate to="/horas" />;
   if (isLoading) return <section className="panel"><div className="panel-body"><div className="empty">Cargando puesto...</div></div></section>;
@@ -81,9 +73,9 @@ export function PuestoDetailPage() {
 
   const canEdit = roleLevel(user!.role) === 1;
 
-  const save = async (action = `Edicion de ${tabs[tab]}`) => {
+  const save = async () => {
     try {
-      const saved = usesApi ? await positionApiService.update(position) : positionMockService.update(position.id, position, user!, action, `Se actualizo la solapa ${tabs[tab]}.`);
+      const saved = await positionApiService.update(position);
       if (saved) setPosition(saved);
       setNotice("Cambios guardados correctamente.");
       setTimeout(() => setNotice(""), 2200);
@@ -95,14 +87,14 @@ export function PuestoDetailPage() {
   const toggle = async () => {
     if (!confirm(`Confirmar ${position.status === "ACTIVO" ? "inactivacion" : "activacion"} del puesto ${position.name}?`)) return;
     const next = { ...position, status: position.status === "ACTIVO" ? "INACTIVO" : "ACTIVO" } as Position;
-    const saved = usesApi ? await positionApiService.update(next) : positionMockService.changeStatus(position.id, next.status, user!);
+    const saved = await positionApiService.update(next);
     if (saved) setPosition(saved);
   };
 
   const remove = async () => {
     const message = assigned.length ? `Este puesto tiene ${assigned.length} persona(s) asignadas. No se borra para no romper legajos; se va a inactivar/ocultar. Confirmar?` : "Confirmar ocultar/eliminar este puesto?";
     if (!confirm(message)) return;
-    const result = usesApi ? await positionApiService.removeOrHide(position.id) : positionMockService.removeOrHide(position.id, user!);
+    const result = await positionApiService.removeOrHide(position.id);
     if (result) { setPosition(result); setNotice("Puesto inactivado para conservar trazabilidad."); }
     else navigate("/puestos");
   };
@@ -124,7 +116,7 @@ export function PuestoDetailPage() {
   return <>
     <PuestoHeader position={position} assignedCount={assigned.length} canEdit={canEdit} onRemove={remove} onToggleStatus={toggle} />
     {notice && <div className="toast">{notice}</div>}
-    {!usesApi && <div className="info-note compact"><b>Modo local</b><p>Backend no disponible para este puesto: usando datos locales de respaldo.</p></div>}
+
     <div className="tabs">{tabs.map((label, index) => <button key={label} className={tab === index ? "active" : ""} onClick={() => setTab(index)}>{index + 1}. {label}</button>)}</div>
     <section className="panel"><div className="panel-head"><div><h3>{tabs[tab]}</h3><p>{tab === 9 ? "Calculado desde legajos activos vinculados a este puesto." : tab === 10 ? "Historial general del puesto." : "Informacion editable de la descripcion de puesto."}</p></div>{canEdit && tab < 9 && <button className="button primary" onClick={() => save()}>Guardar cambios</button>}</div><div className="panel-body">{render()}</div></section>
   </>;

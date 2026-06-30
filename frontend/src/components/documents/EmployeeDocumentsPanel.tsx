@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { Download, Plus } from "lucide-react";
 import { documentApiService } from "../../services/api/documentApiService";
-import { documentMockService } from "../../services/documentMockService";
 import type { DocumentMock, Employee, User } from "../../types";
 import { statusClass } from "../../utils/status";
 import { EmptyState } from "../ui/EmptyState";
@@ -20,7 +19,7 @@ export function EmployeeDocumentsPanel({
 }) {
   const [open, setOpen] = useState(false);
   const [refresh, setRefresh] = useState(0);
-  const [docs, setDocs] = useState<DocumentMock[]>(() => documentMockService.getByEmployee(employee.id));
+  const [docs, setDocs] = useState<DocumentMock[]>([]);
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -30,9 +29,7 @@ export function EmployeeDocumentsPanel({
       .then((items) => {
         if (mounted) setDocs(items);
       })
-      .catch(() => {
-        if (mounted) setDocs(documentMockService.getByEmployee(employee.id));
-      });
+      .catch(() => {});
     return () => {
       mounted = false;
     };

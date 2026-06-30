@@ -1,15 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { salaryCategoryApiService } from "../../../services/api/salaryCategoryApiService";
 import { orgStructureApiService } from "../../../services/api/orgStructureApiService";
-import { employeeMockService } from "../../../services/employeeMockService";
-import { orgStructureMockService } from "../../../services/orgStructureMockService";
 import { salaryRangeMockService } from "../../../services/salaryRangeMockService";
 import type { Employee } from "../../../types";
 import { uniqueOptions } from "./sharedOptions";
 
 export function useLaborSelectOptions(employee?: Employee) {
-  const [salaryCategories, setSalaryCategories] = useState<string[]>(() => salaryRangeMockService.getOrderedCategories());
-  const [structure, setStructure] = useState(() => orgStructureMockService.getOptions());
+  const [salaryCategories, setSalaryCategories] = useState<string[]>([]);
+  const [structure, setStructure] = useState<{ companies: string[]; businessUnits: string[]; establishments: string[]; areas: string[]; sectors: string[]; costCenters: string[] }>({ companies: [], businessUnits: [], establishments: [], areas: [], sectors: [], costCenters: [] });
 
   useEffect(() => {
     let mounted = true;
@@ -31,8 +29,6 @@ export function useLaborSelectOptions(employee?: Employee) {
           sectors: catalog.sectors.filter((item) => item.status === "ACTIVO").map((item) => item.name),
           costCenters: catalog.costCenters.filter((item) => item.status === "ACTIVO").map((item) => item.name),
         });
-      } else {
-        setStructure(orgStructureMockService.getOptions());
       }
     });
     return () => {
@@ -46,16 +42,8 @@ export function useLaborSelectOptions(employee?: Employee) {
       businessUnit: uniqueOptions([employee?.businessUnit || "", ...structure.businessUnits]),
       establishment: uniqueOptions([employee?.establishment || "", ...structure.establishments]),
       sector: uniqueOptions([employee?.sector || "", ...structure.sectors]),
-      receiptCategory: uniqueOptions([
-        employee?.receiptCategory || "",
-        ...employeeMockService.getAll().map((item) => item.receiptCategory),
-        ...receiptBase,
-      ]),
-      internalCategory: uniqueOptions([
-        employee?.internalCategory || "",
-        ...salaryCategories,
-        ...employeeMockService.getAll().map((item) => item.internalCategory),
-      ]),
+      receiptCategory: uniqueOptions([employee?.receiptCategory || "", ...receiptBase]),
+      internalCategory: uniqueOptions([employee?.internalCategory || "", ...salaryCategories]),
     };
   }, [
     employee?.businessUnit,

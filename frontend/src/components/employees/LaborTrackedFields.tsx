@@ -3,43 +3,33 @@ import { employeeApiService } from "../../services/api/employeeApiService";
 import { employeeHistoryApiService } from "../../services/api/employeeHistoryApiService";
 import { orgStructureApiService } from "../../services/api/orgStructureApiService";
 import { positionApiService } from "../../services/api/positionApiService";
-import { employeeFieldHistoryMockService } from "../../services/employeeFieldHistoryMockService";
-import { employeeMockService } from "../../services/employeeMockService";
-import { orgStructureMockService } from "../../services/orgStructureMockService";
-import { positionMockService } from "../../services/positionMockService";
 import type { Employee, EmployeeFieldHistoryRecord, User } from "../../types";
 import type { Position } from "../../types/position.types";
 import { EmptyState } from "../ui/EmptyState";
 import { Field } from "../ui/FormControls";
 
-const companies = () => orgStructureMockService.getCompanyNames();
-
-async function persistTrackedEmployee(updated: Employee, user: User, onSaved: (employee: Employee) => void) {
+async function persistTrackedEmployee(updated: Employee, onSaved: (employee: Employee) => void) {
   try {
     onSaved(await employeeApiService.update(updated));
   } catch (error) {
-    onSaved(employeeMockService.update(updated, user));
+    throw error;
   }
 }
 
-type CreateFieldHistoryInput = Parameters<typeof employeeFieldHistoryMockService.create>[0];
+type CreateFieldHistoryInput = { employeeId: string; section: string; field: string; fieldLabel: string; oldValue: string | null; newValue: string; effectiveFrom: string; reason: string; };
 
 async function recordFieldHistory(
   record: CreateFieldHistoryInput,
-  user: User,
-  auditEntity: string,
 ) {
   try {
     return await employeeHistoryApiService.createFieldHistory(record);
   } catch (error) {
-    return employeeFieldHistoryMockService.create(record, user, auditEntity);
+    throw error;
   }
 }
 
 function useBackendFieldHistory(employeeId: string, field: string) {
-  const [history, setHistory] = useState<EmployeeFieldHistoryRecord[]>(() =>
-    employeeFieldHistoryMockService.getByField(employeeId, "DATOS_LABORALES", field),
-  );
+  const [history, setHistory] = useState<EmployeeFieldHistoryRecord[]>([]);
 
   useEffect(() => {
     let mounted = true;
@@ -49,7 +39,6 @@ function useBackendFieldHistory(employeeId: string, field: string) {
         if (mounted) setHistory(rows);
       })
       .catch(() => {
-        if (mounted) setHistory(employeeFieldHistoryMockService.getByField(employeeId, "DATOS_LABORALES", field));
       });
     return () => {
       mounted = false;
@@ -60,7 +49,7 @@ function useBackendFieldHistory(employeeId: string, field: string) {
 }
 
 function useCompanyOptions() {
-  const [options, setOptions] = useState<string[]>(() => companies());
+  const [options, setOptions] = useState<string[]>([]);
 
   useEffect(() => {
     let mounted = true;
@@ -70,7 +59,6 @@ function useCompanyOptions() {
         if (mounted) setOptions(catalog.companies.map((company) => company.name));
       })
       .catch(() => {
-        if (mounted) setOptions(companies());
       });
     return () => {
       mounted = false;
@@ -81,7 +69,7 @@ function useCompanyOptions() {
 }
 
 function useActivePositions() {
-  const [positions, setPositions] = useState<Position[]>(() => positionMockService.getAll().filter((position) => position.status === "ACTIVO"));
+  const [positions, setPositions] = useState<Position[]>([]);
 
   useEffect(() => {
     let mounted = true;
@@ -91,7 +79,6 @@ function useActivePositions() {
         if (mounted) setPositions(items.filter((position) => position.status === "ACTIVO"));
       })
       .catch(() => {
-        if (mounted) setPositions(positionMockService.getAll().filter((position) => position.status === "ACTIVO"));
       });
     return () => {
       mounted = false;
@@ -134,25 +121,28 @@ export function MultiCompanyField({ employee, canEdit, user, onSaved }: TrackedF
       companies: selected,
       company: selected.includes(employee.company) ? employee.company : selected[0],
     };
-    const historyRow = await recordFieldHistory(
-      {
-        employeeId: employee.id,
-        section: "DATOS_LABORALES",
-        field: "companies",
-        fieldLabel: "Empresa",
-        oldValue: label || null,
-        newValue: selected.join(", "),
-        effectiveFrom: from,
-        reason,
-      },
-      user,
-      `Legajo ${employee.legajoInterno || employee.legajo}`,
-    );
-    setHistory((rows) => [historyRow, ...rows.filter((row) => row.id !== historyRow.id)]);
-    await persistTrackedEmployee(updated, user, onSaved);
-    setEditing(false);
-    setOpen(true);
-    setError("");
+    try {
+      const historyRow = await recordFieldHistory(
+        {
+          employeeId: employee.id,
+          section: "DATOS_LABORALES",
+          field: "companies",
+          fieldLabel: "Empresa",
+          oldValue: label || null,
+          newValue: selected.join(", "),
+          effectiveFrom: from,
+          reason,
+        },
+      );
+      setHistory((rows) => [historyRow, ...rows.filter((row) => row.id !== historyRow.id)]);
+      await persistTrackedEmployee(updated, onSaved);
+      setEditing(false);
+      setOpen(true);
+      setError("");
+    } catch {
+      setError("No se pudo guardar. Verifica que el backend esté activo.");
+      return;
+    }
   };
 
   return (
@@ -261,25 +251,28 @@ export function EmployeePositionField({ employee, canEdit, user, onSaved }: Trac
           position: selected.name,
         }
       : { ...employee, positionId: "", puestoId: "", puestoNombre: "", position: "" };
-    const historyRow = await recordFieldHistory(
-      {
-        employeeId: employee.id,
-        section: "DATOS_LABORALES",
-        field: "positionId",
-        fieldLabel: "Puesto",
-        oldValue: employee.puestoNombre || employee.position || null,
-        newValue: selected?.name || "Sin puesto vinculado",
-        effectiveFrom: from,
-        reason,
-      },
-      user,
-      `Legajo ${employee.legajoInterno || employee.legajo}`,
-    );
-    setHistory((rows) => [historyRow, ...rows.filter((row) => row.id !== historyRow.id)]);
-    await persistTrackedEmployee(updated, user, onSaved);
-    setEditing(false);
-    setOpen(true);
-    setError("");
+    try {
+      const historyRow = await recordFieldHistory(
+        {
+          employeeId: employee.id,
+          section: "DATOS_LABORALES",
+          field: "positionId",
+          fieldLabel: "Puesto",
+          oldValue: employee.puestoNombre || employee.position || null,
+          newValue: selected?.name || "Sin puesto vinculado",
+          effectiveFrom: from,
+          reason,
+        },
+      );
+      setHistory((rows) => [historyRow, ...rows.filter((row) => row.id !== historyRow.id)]);
+      await persistTrackedEmployee(updated, onSaved);
+      setEditing(false);
+      setOpen(true);
+      setError("");
+    } catch {
+      setError("No se pudo guardar. Verifica que el backend esté activo.");
+      return;
+    }
   };
 
   return (

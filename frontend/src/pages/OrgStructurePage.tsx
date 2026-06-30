@@ -6,7 +6,6 @@ import { OverflowCell } from "../components/ui/OverflowCell";
 import { TableShell } from "../components/ui/TableShell";
 import { useAuth } from "../context/AuthContext";
 import { orgStructureApiService } from "../services/api/orgStructureApiService";
-import { orgStructureMockService } from "../services/orgStructureMockService";
 import type { EmployeeAddress, Role } from "../types";
 import type { OrgArea, OrgBusinessUnit, OrgCompany, OrgCostCenter, OrgEstablishment, OrgSector, OrgStructureCatalog, OrgStructureEntityType, OrgStructureStatus } from "../types/orgStructure.types";
 
@@ -160,7 +159,7 @@ export function OrgStructurePage() {
     return () => { alive = false; };
   }, [refresh]);
 
-  const catalog = apiCatalog || orgStructureMockService.getCatalog();
+  const catalog: OrgStructureCatalog = apiCatalog ?? { companies: [], businessUnits: [], establishments: [], areas: [], sectors: [], costCenters: [] };
   const usesApiCatalog = Boolean(apiCatalog);
   const counts = useMemo(() => [
     ["Empresas", catalog.companies.length],
@@ -188,8 +187,6 @@ export function OrgStructurePage() {
         if (tab === "AREA") exists ? await orgStructureApiService.updateArea(normalized as OrgArea) : await orgStructureApiService.createArea(normalized as OrgArea);
         if (tab === "SECTOR") exists ? await orgStructureApiService.updateSector(normalized as OrgSector) : await orgStructureApiService.createSector(normalized as OrgSector);
         if (tab === "COST_CENTER") exists ? await orgStructureApiService.updateCostCenter(normalized as OrgCostCenter) : await orgStructureApiService.createCostCenter(normalized as OrgCostCenter);
-      } else {
-        orgStructureMockService.upsert(tab, normalized);
       }
       setRefresh((value) => value + 1);
       setEditing(null);

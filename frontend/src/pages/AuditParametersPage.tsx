@@ -5,7 +5,6 @@ import { OverflowCell } from "../components/ui/OverflowCell";
 import { TableShell } from "../components/ui/TableShell";
 import { useAuth } from "../context/AuthContext";
 import { auditParameterApiService } from "../services/api/auditParameterApiService";
-import { auditParameterMockService } from "../services/auditParameterMockService";
 import type { Role } from "../types";
 import type { AuditEventScope, AuditEventSeverity, AuditParameter, AuditRetentionUnit } from "../types/auditParameter.types";
 import { roleLevel } from "../utils/roles";
@@ -58,7 +57,7 @@ function ParameterEditor({ item, setItem }: { item: AuditParameter; setItem: (it
 
 export function AuditParametersPage() {
   const { user } = useAuth();
-  const [filters, setFilters] = useState(auditParameterMockService.getEmptyFilters());
+  const [filters, setFilters] = useState({ search: "", scope: "", severity: "", requiresReason: "", status: "" });
   const [apiItems, setApiItems] = useState<AuditParameter[] | null>(null);
   const [usesBackend, setUsesBackend] = useState(false);
   const [editing, setEditing] = useState<AuditParameter | null>(null);
@@ -82,7 +81,7 @@ export function AuditParametersPage() {
     };
   }, [refresh]);
   if (roleLevel(user!.role) !== 1) return <Navigate to="/configuracion" />;
-  const all = apiItems || auditParameterMockService.getAll();
+  const all = apiItems ?? [];
   const filterText = filters.search.trim().toLowerCase();
   const items = all.filter((item) => {
     const text = `${item.code} ${item.name} ${item.description} ${item.scope} ${item.severity}`.toLowerCase();
@@ -103,16 +102,10 @@ export function AuditParametersPage() {
     if (!editing) return;
     if (!editing.name.trim() || !editing.description.trim()) return setNotice("Completa nombre y descripcion.");
     try {
-      const exists = usesBackend
-        ? Boolean(apiItems?.some((item) => item.id === editing.id))
-        : Boolean(auditParameterMockService.getById(editing.id));
-      const saved = usesBackend
-        ? exists
-          ? await auditParameterApiService.update(editing)
-          : await auditParameterApiService.create(editing)
-        : exists
-          ? auditParameterMockService.update(editing.id, editing, user!)
-          : auditParameterMockService.create(editing, user!);
+      const exists = Boolean(apiItems?.some((item) => item.id === editing.id));
+      const saved = exists
+        ? await auditParameterApiService.update(editing)
+        : await auditParameterApiService.create(editing);
       setEditing(saved || null);
       setRefresh((value) => value + 1);
       setNotice("Parametro de auditoria guardado correctamente.");

@@ -2,7 +2,7 @@ import { Prisma } from "@prisma/client";
 import type { AuditContext } from "../audit/audit.service";
 import { auditService } from "../audit/audit.service";
 import { AppError } from "../../shared/errors/AppError";
-import { salaryCategoriesRepository } from "./salaryCategories.repository";
+import { salaryCategoriesRepository, invalidateSalaryCategoriesCache } from "./salaryCategories.repository";
 import type {
   CreateSalaryCategoryInput,
   ListSalaryCategoriesQuery,
@@ -46,6 +46,7 @@ export const salaryCategoriesService = {
 
   async create(input: CreateSalaryCategoryInput, audit?: AuditContext) {
     const item = await execute(() => salaryCategoriesRepository.create(input));
+    invalidateSalaryCategoriesCache();
     await auditService.register({
       ...audit,
       action: "CREATE",
@@ -61,6 +62,7 @@ export const salaryCategoriesService = {
     const before = await salaryCategoriesRepository.findById(id);
     if (!before) throw new AppError("Salary category not found", 404, "SALARY_CATEGORY_NOT_FOUND");
     const item = await execute(() => salaryCategoriesRepository.update(id, input));
+    invalidateSalaryCategoriesCache();
     await auditService.register({
       ...audit,
       action: "UPDATE",

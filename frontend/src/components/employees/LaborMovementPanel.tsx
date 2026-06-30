@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { employeeApiService } from "../../services/api/employeeApiService";
 import { calculateLaborStatus } from "../../services/employeeStatusService";
-import { laborMovementMockService } from "../../services/laborMovementMockService";
 import type { Employee, LaborMovementType, User } from "../../types";
 import { EmptyState } from "../ui/EmptyState";
 import { Field, Select } from "../ui/FormControls";
@@ -53,13 +52,9 @@ export function LaborMovementPanel({
         observation: observation.trim() || null,
       });
       onSaved(updated);
-    } catch (error) {
-      const updated = laborMovementMockService.addMovement(
-        employee.id,
-        { type, effectiveFrom, reason, observation },
-        user,
-      );
-      onSaved(updated);
+    } catch {
+      setError("No se pudo registrar el movimiento. Verifica que el backend esté activo.");
+      return;
     }
     setOpen(false);
     setReason("");

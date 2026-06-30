@@ -383,6 +383,8 @@ model SalaryCategory {
   updatedAt DateTime     @updatedAt
 
   positions PositionSalaryCategory[]
+
+  @@index([status])
 }
 
 model Position {
@@ -420,6 +422,8 @@ model Position {
 
   @@index([areaId])
   @@index([sectorId])
+  @@index([status])
+  @@index([areaId, sectorId])
 }
 
 model PositionSalaryCategory {
@@ -540,6 +544,7 @@ model LaborMovement {
   createdBy User?    @relation(fields: [createdByUserId], references: [id])
 
   @@index([employeeId, effectiveFrom])
+  @@index([employeeId, type])
 }
 
 model EmployeeAssignment {
@@ -568,6 +573,8 @@ model HourConcept {
   employees   EmployeeHourConcept[]
   timeEntries TimeEntry[]
   novelties   Novelty[]
+
+  @@index([status])
 }
 
 model EmployeeHourConcept {
@@ -645,6 +652,8 @@ model NoveltyType {
 
   finnegansLinks FinnegansNoveltyLink[]
   novelties      Novelty[]
+
+  @@index([status])
 }
 
 model FinnegansNoveltyLink {
@@ -718,6 +727,7 @@ model TimeEntry {
   @@index([employeeId, period])
   @@index([date])
   @@index([status])
+  @@index([status, period])
 }
 
 model DocumentCategory {
@@ -738,6 +748,8 @@ model DocumentCategory {
   updatedAt     DateTime     @updatedAt
 
   documents EmployeeDocument[]
+
+  @@index([status])
 }
 
 model AuditParameter {

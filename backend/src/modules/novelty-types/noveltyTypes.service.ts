@@ -2,7 +2,7 @@ import { Prisma } from "@prisma/client";
 import type { AuditContext } from "../audit/audit.service";
 import { auditService } from "../audit/audit.service";
 import { AppError } from "../../shared/errors/AppError";
-import { noveltyTypesRepository } from "./noveltyTypes.repository";
+import { noveltyTypesRepository, invalidateNoveltyTypesCache } from "./noveltyTypes.repository";
 import type { CreateNoveltyTypeInput, ListNoveltyTypesQuery, UpdateNoveltyTypeInput } from "./noveltyTypes.schemas";
 
 function mapPrismaError(error: unknown) {
@@ -57,12 +57,14 @@ export const noveltyTypesService = {
 
   async create(data: CreateNoveltyTypeInput, audit?: AuditContext) {
     const item = await execute(() => noveltyTypesRepository.create(data));
+    invalidateNoveltyTypesCache();
     await auditChange("CREATE", item, audit);
     return item;
   },
 
   async update(id: string, data: UpdateNoveltyTypeInput, audit?: AuditContext) {
     const item = await execute(() => noveltyTypesRepository.update(id, data));
+    invalidateNoveltyTypesCache();
     await auditChange("UPDATE", item, audit);
     return item;
   },

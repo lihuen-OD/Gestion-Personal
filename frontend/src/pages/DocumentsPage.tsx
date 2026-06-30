@@ -9,8 +9,6 @@ import { Section } from "../components/ui/Section";
 import { TableShell } from "../components/ui/TableShell";
 import { documentApiService } from "../services/api/documentApiService";
 import { employeeApiService } from "../services/api/employeeApiService";
-import { documentMockService } from "../services/documentMockService";
-import { employeeMockService } from "../services/employeeMockService";
 import type { DocumentMock, Employee } from "../types";
 import { displayLegajo, fullName } from "../utils/employee";
 import { statusClass } from "../utils/status";
@@ -19,8 +17,8 @@ export function DocumentsPage() {
   const { user } = useAuth();
   const [open, setOpen] = useState(false);
   const [refresh, setRefresh] = useState(0);
-  const [docs, setDocs] = useState<DocumentMock[]>(() => documentMockService.getAll());
-  const [employees, setEmployees] = useState<Employee[]>(() => employeeMockService.getAll());
+  const [docs, setDocs] = useState<DocumentMock[]>([]);
+  const [employees, setEmployees] = useState<Employee[]>([]);
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -33,8 +31,6 @@ export function DocumentsPage() {
       })
       .catch(() => {
         if (!mounted) return;
-        setEmployees(employeeMockService.getAll());
-        setDocs(documentMockService.getAll());
       });
     return () => {
       mounted = false;

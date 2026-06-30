@@ -1,7 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
 import { orgStructureApiService } from "../../../services/api/orgStructureApiService";
-import { employeeMockService } from "../../../services/employeeMockService";
-import { orgStructureMockService } from "../../../services/orgStructureMockService";
 import { uniqueOptions } from "./sharedOptions";
 
 type StructureOptionField =
@@ -15,23 +13,11 @@ type StructureOptionField =
 type StructureOptionCurrent = Partial<Record<StructureOptionField, string>>;
 
 export function structureSelectOptions(field: StructureOptionField, current = "") {
-  const structure = orgStructureMockService.getOptions();
-  if (field === "company") return uniqueOptions([current, ...structure.companies]);
-  if (field === "businessUnit") return uniqueOptions([current, ...structure.businessUnits]);
-  if (field === "establishment") return uniqueOptions([current, ...structure.establishments]);
-  if (field === "sector") return uniqueOptions([current, ...structure.sectors]);
-  if (field === "costCenter") {
-    return uniqueOptions([
-      current,
-      ...structure.costCenters,
-      ...employeeMockService.getAll().map((employee) => employee.costCenter),
-    ]);
-  }
-  return uniqueOptions([current, ...structure.areas]);
+  return uniqueOptions([current].filter(Boolean));
 }
 
 export function useStructureSelectOptions(current: StructureOptionCurrent = {}) {
-  const [options, setOptions] = useState(() => orgStructureMockService.getOptions());
+  const [options, setOptions] = useState<{ companies: string[]; businessUnits: string[]; establishments: string[]; areas: string[]; sectors: string[]; costCenters: string[] }>({ companies: [], businessUnits: [], establishments: [], areas: [], sectors: [], costCenters: [] });
 
   useEffect(() => {
     let mounted = true;
@@ -48,9 +34,7 @@ export function useStructureSelectOptions(current: StructureOptionCurrent = {}) 
           costCenters: catalog.costCenters.filter((item) => item.status === "ACTIVO").map((item) => item.name),
         });
       })
-      .catch(() => {
-        if (mounted) setOptions(orgStructureMockService.getOptions());
-      });
+      .catch(() => {});
     return () => {
       mounted = false;
     };
@@ -60,11 +44,7 @@ export function useStructureSelectOptions(current: StructureOptionCurrent = {}) 
     company: uniqueOptions([current.company || "", ...options.companies]),
     businessUnit: uniqueOptions([current.businessUnit || "", ...options.businessUnits]),
     establishment: uniqueOptions([current.establishment || "", ...options.establishments]),
-    costCenter: uniqueOptions([
-      current.costCenter || "",
-      ...options.costCenters,
-      ...employeeMockService.getAll().map((employee) => employee.costCenter),
-    ]),
+    costCenter: uniqueOptions([current.costCenter || "", ...options.costCenters]),
     area: uniqueOptions([current.area || "", ...options.areas]),
     sector: uniqueOptions([current.sector || "", ...options.sectors]),
   }), [

@@ -5,10 +5,7 @@ import { useAuth } from "../context/AuthContext";
 import { employeeApiService } from "../services/api/employeeApiService";
 import { orgStructureApiService } from "../services/api/orgStructureApiService";
 import { timeEntryApiService } from "../services/api/timeEntryApiService";
-import { employeeMockService } from "../services/employeeMockService";
 import { calculateEmployeeStatus } from "../services/employeeStatusService";
-import { orgStructureMockService } from "../services/orgStructureMockService";
-import { timeEntryMockService } from "../services/timeEntryMockService";
 import type { Employee } from "../types";
 import { displayLegajo, employeeCompanies } from "../utils/employee";
 import { roleLevel } from "../utils/roles";
@@ -29,8 +26,8 @@ export function EmployeesPage() {
   const [refresh, setRefresh] = useState(0);
   const [syncing, setSyncing] = useState(false);
   const [syncMessage, setSyncMessage] = useState("");
-  const [all, setAll] = useState<Employee[]>(() => employeeMockService.getAll());
-  const [structureCompanies, setStructureCompanies] = useState<string[]>(() => orgStructureMockService.getCompanyNames());
+  const [all, setAll] = useState<Employee[]>([]);
+  const [structureCompanies, setStructureCompanies] = useState<string[]>([]);
   const [pendingTimeLoads, setPendingTimeLoads] = useState(0);
 
   useEffect(() => {
@@ -40,9 +37,7 @@ export function EmployeesPage() {
       .then((items) => {
         if (mounted) setAll(items);
       })
-      .catch(() => {
-        if (mounted) setAll(employeeMockService.getAll());
-      });
+      .catch(() => {});
     return () => {
       mounted = false;
     };
@@ -58,7 +53,7 @@ export function EmployeesPage() {
       })
       .catch(() => {
         if (!mounted) return;
-        setPendingTimeLoads(new Set(timeEntryMockService.getAll().filter((entry) => pendingTimeStatuses.has(entry.status)).map((entry) => entry.employeeId)).size);
+        setPendingTimeLoads(0);
       });
     return () => {
       mounted = false;
@@ -72,9 +67,7 @@ export function EmployeesPage() {
       .then((catalog) => {
         if (mounted) setStructureCompanies(catalog.companies.filter((item) => item.status === "ACTIVO").map((item) => item.name));
       })
-      .catch(() => {
-        if (mounted) setStructureCompanies(orgStructureMockService.getCompanyNames());
-      });
+      .catch(() => {});
     return () => {
       mounted = false;
     };

@@ -47,11 +47,9 @@ export function OrganigramasPage() {
   const { user } = useAuth();
   const level = roleLevel(user!.role);
   const [tab, setTab] = useState<OrgChartTab>("CATEGORIES");
-  const [filters, setFilters] = useState<OrgChartFilters>(() => organizationChartMockService.getEmptyFilters());
+  const [filters, setFilters] = useState<OrgChartFilters>({ company: "", businessUnit: "", establishment: "", costCenter: "", sector: "", position: "", internalCategory: "", receiptCategory: "", status: "", directManager: "", timeResponsible: "", search: "" });
   const [toast, setToast] = useState("");
   const [sourceEmployees, setSourceEmployees] = useState<Employee[]>([]);
-  const [usesBackend, setUsesBackend] = useState(false);
-
   useEffect(() => {
     let mounted = true;
     employeeApiService
@@ -59,7 +57,6 @@ export function OrganigramasPage() {
       .then((employees) => {
         if (!mounted) return;
         setSourceEmployees(employees);
-        setUsesBackend(true);
       })
       .catch(() => {
         employeeApiService
@@ -67,12 +64,10 @@ export function OrganigramasPage() {
           .then((employees) => {
             if (!mounted) return;
             setSourceEmployees(employees);
-            setUsesBackend(true);
           })
           .catch(() => {
             if (!mounted) return;
             setSourceEmployees([]);
-            setUsesBackend(false);
           });
       });
     return () => {
@@ -81,20 +76,18 @@ export function OrganigramasPage() {
   }, []);
 
   const options = useMemo(
-    () => usesBackend ? organizationChartMockService.getFilterOptionsFrom(sourceEmployees, user!.role, user!.sector) : organizationChartMockService.getFilterOptions(user!.role, user!.sector),
-    [sourceEmployees, user, usesBackend],
+    () => organizationChartMockService.getFilterOptionsFrom(sourceEmployees, user!.role, user!.sector),
+    [sourceEmployees, user],
   );
   const categories = useMemo(() => organizationChartMockService.getCategories(), []);
-  const employees = usesBackend
-    ? organizationChartMockService.getEmployeesFrom(sourceEmployees, user!.role, user!.sector, filters)
-    : organizationChartMockService.getEmployees(user!.role, user!.sector, filters);
+  const employees = organizationChartMockService.getEmployeesFrom(sourceEmployees, user!.role, user!.sector, filters);
   const model = organizationChartMockService.buildCategoryModel(employees, categories);
   const exportView = () => {
     exportOrganigramWorkbook(employees, tab);
     setToast(`Se exportaron ${employees.length} personas visibles del organigrama.`);
     setTimeout(() => setToast(""), 2500);
   };
-  const filterControls = <OrganigramFilters filters={filters} options={options} onChange={setFilters} onClear={() => setFilters(organizationChartMockService.getEmptyFilters())} />;
+  const filterControls = <OrganigramFilters filters={filters} options={options} onChange={setFilters} onClear={() => setFilters({ company: "", businessUnit: "", establishment: "", costCenter: "", sector: "", position: "", internalCategory: "", receiptCategory: "", status: "", directManager: "", timeResponsible: "", search: "" })} />;
 
   if (level === 3) return <><PageHeader eyebrow="ACCESO RESTRINGIDO" title="Organigramas" description="Tu perfil de carga horaria no tiene acceso al módulo de estructura organizacional." /></>;
 

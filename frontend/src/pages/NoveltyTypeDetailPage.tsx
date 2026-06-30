@@ -7,7 +7,6 @@ import { NoveltyTypeIdentificationTab } from "../components/novelty-types/Novelt
 import { NoveltyTypeRulesTab } from "../components/novelty-types/NoveltyTypeRulesTab";
 import { useAuth } from "../context/AuthContext";
 import { noveltyTypeApiService } from "../services/api/noveltyTypeApiService";
-import { noveltyTypeMockService } from "../services/noveltyTypeMockService";
 import type { NoveltyType } from "../types/noveltyType.types";
 import { roleLevel } from "../utils/roles";
 
@@ -19,7 +18,6 @@ export function NoveltyTypeDetailPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const [item, setItem] = useState<NoveltyType | undefined>(undefined);
-  const [usesApi, setUsesApi] = useState(Boolean(location.state?.usesApi));
   const [isLoading, setIsLoading] = useState(true);
   const [tab, setTab] = useState(0);
   const [notice, setNotice] = useState(location.state?.created ? "Tipo de novedad creado correctamente." : "");
@@ -32,14 +30,8 @@ export function NoveltyTypeDetailPage() {
       .then((source) => {
         if (!alive) return;
         setItem(source);
-        setUsesApi(true);
       })
-      .catch(() => {
-        if (!alive) return;
-        const source = noveltyTypeMockService.getById(id);
-        setItem(source);
-        setUsesApi(false);
-      })
+      .catch(() => {})
       .finally(() => {
         if (alive) setIsLoading(false);
       });
@@ -53,9 +45,7 @@ export function NoveltyTypeDetailPage() {
   const save = async () => {
     if (!item.name.trim() || !item.description.trim()) return setNotice("Completa nombre y descripcion funcional.");
     try {
-      const saved = usesApi
-        ? await noveltyTypeApiService.update(item.id, item)
-        : noveltyTypeMockService.update(item.id, item, user!, `Edicion de ${tabs[tab]}`, `Se actualizo la solapa ${tabs[tab]}.`);
+      const saved = await noveltyTypeApiService.update(item.id, item);
       if (saved) setItem(saved);
       setNotice("Cambios guardados correctamente.");
       setTimeout(() => setNotice(""), 2200);
@@ -68,9 +58,7 @@ export function NoveltyTypeDetailPage() {
     if (!confirm(`Confirmar ${item.status === "ACTIVO" ? "inactivacion" : "activacion"} de ${item.name}?`)) return;
     const next = { ...item, status: item.status === "ACTIVO" ? "INACTIVO" : "ACTIVO" } as NoveltyType;
     try {
-      const saved = usesApi
-        ? await noveltyTypeApiService.update(item.id, next)
-        : noveltyTypeMockService.changeStatus(item.id, next.status, user!);
+      const saved = await noveltyTypeApiService.update(item.id, next);
       if (saved) setItem(saved);
     } catch {
       setNotice("No se pudo cambiar el estado en backend.");
@@ -103,7 +91,6 @@ export function NoveltyTypeDetailPage() {
         </div>
       </div>
       {notice && <div className="toast">{notice}</div>}
-      {!usesApi && <div className="info-note compact"><b>Modo local</b><p>Backend no disponible para este registro: usando datos locales de respaldo.</p></div>}
       <div className="tabs">{tabs.map((label, index) => <button key={label} className={tab === index ? "active" : ""} onClick={() => setTab(index)}>{index + 1}. {label}</button>)}</div>
       <section className="panel">
         <div className="panel-head">

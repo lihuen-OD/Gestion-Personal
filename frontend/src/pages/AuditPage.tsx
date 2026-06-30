@@ -4,11 +4,10 @@ import { PageHeader } from "../components/ui/PageHeader";
 import { Section } from "../components/ui/Section";
 import { TableShell } from "../components/ui/TableShell";
 import { auditApiService } from "../services/api/auditApiService";
-import { auditMockService } from "../services/auditMockService";
 import type { AuditEntry } from "../types";
 
 export function AuditPage() {
-  const [audits, setAudits] = useState<AuditEntry[]>(() => auditMockService.getAll());
+  const [audits, setAudits] = useState<AuditEntry[]>([]);
 
   useEffect(() => {
     let mounted = true;
@@ -17,9 +16,7 @@ export function AuditPage() {
       .then((items) => {
         if (mounted) setAudits(items);
       })
-      .catch(() => {
-        if (mounted) setAudits(auditMockService.getAll());
-      });
+      .catch(() => {});
 
     return () => {
       mounted = false;

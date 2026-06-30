@@ -2,7 +2,7 @@ import { Prisma } from "@prisma/client";
 import type { AuditContext } from "../audit/audit.service";
 import { auditService } from "../audit/audit.service";
 import { AppError } from "../../shared/errors/AppError";
-import { orgStructureRepository } from "./orgStructure.repository";
+import { invalidateOverviewCache, orgStructureRepository } from "./orgStructure.repository";
 import type {
   CreateAreaInput,
   CreateBusinessUnitInput,
@@ -68,66 +68,78 @@ export const orgStructureService = {
 
   async createCompany(data: CreateCompanyInput, audit?: AuditContext) {
     const item = await execute(() => orgStructureRepository.createCompany(data));
+    invalidateOverviewCache();
     await auditCatalogChange("CREATE", "Company", item, audit);
     return item;
   },
   async updateCompany(id: string, data: UpdateCompanyInput, audit?: AuditContext) {
     const item = await execute(() => orgStructureRepository.updateCompany(id, data));
+    invalidateOverviewCache();
     await auditCatalogChange("UPDATE", "Company", item, audit);
     return item;
   },
 
   async createBusinessUnit(data: CreateBusinessUnitInput, audit?: AuditContext) {
     const item = await execute(() => orgStructureRepository.createBusinessUnit(data));
+    invalidateOverviewCache();
     await auditCatalogChange("CREATE", "BusinessUnit", item, audit);
     return item;
   },
   async updateBusinessUnit(id: string, data: UpdateBusinessUnitInput, audit?: AuditContext) {
     const item = await execute(() => orgStructureRepository.updateBusinessUnit(id, data));
+    invalidateOverviewCache();
     await auditCatalogChange("UPDATE", "BusinessUnit", item, audit);
     return item;
   },
 
   async createEstablishment(data: CreateEstablishmentInput, audit?: AuditContext) {
     const item = await execute(() => orgStructureRepository.createEstablishment(data));
+    invalidateOverviewCache();
     await auditCatalogChange("CREATE", "Establishment", item, audit);
     return item;
   },
   async updateEstablishment(id: string, data: UpdateEstablishmentInput, audit?: AuditContext) {
     const item = await execute(() => orgStructureRepository.updateEstablishment(id, data));
+    invalidateOverviewCache();
     await auditCatalogChange("UPDATE", "Establishment", item, audit);
     return item;
   },
 
   async createArea(data: CreateAreaInput, audit?: AuditContext) {
     const item = await execute(() => orgStructureRepository.createArea(data));
+    invalidateOverviewCache();
     await auditCatalogChange("CREATE", "Area", item, audit);
     return item;
   },
   async updateArea(id: string, data: UpdateAreaInput, audit?: AuditContext) {
     const item = await execute(() => orgStructureRepository.updateArea(id, data));
+    invalidateOverviewCache();
     await auditCatalogChange("UPDATE", "Area", item, audit);
     return item;
   },
 
   async createSector(data: CreateSectorInput, audit?: AuditContext) {
     const item = await execute(() => orgStructureRepository.createSector(data));
+    invalidateOverviewCache();
     await auditCatalogChange("CREATE", "Sector", item, audit);
     return item;
   },
   async updateSector(id: string, data: UpdateSectorInput, audit?: AuditContext) {
     const item = await execute(() => orgStructureRepository.updateSector(id, data));
+    invalidateOverviewCache();
     await auditCatalogChange("UPDATE", "Sector", item, audit);
     return item;
   },
 
   async createCostCenter(data: CreateCostCenterInput, audit?: AuditContext) {
     const item = await execute(() => orgStructureRepository.createCostCenter(data));
+    invalidateOverviewCache();
     await auditCatalogChange("CREATE", "CostCenter", item, audit);
     return item;
   },
   async updateCostCenter(id: string, data: UpdateCostCenterInput, audit?: AuditContext) {
     const item = await execute(() => orgStructureRepository.updateCostCenter(id, data));
+    invalidateOverviewCache();
     await auditCatalogChange("UPDATE", "CostCenter", item, audit);
     return item;
   },

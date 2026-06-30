@@ -3,16 +3,12 @@ import { employeeApiService, type EmployeePositionValidation } from "../../servi
 import { orgStructureApiService } from "../../services/api/orgStructureApiService";
 import { positionApiService } from "../../services/api/positionApiService";
 import { salaryCategoryApiService } from "../../services/api/salaryCategoryApiService";
-import { orgStructureMockService } from "../../services/orgStructureMockService";
-import { positionMockService } from "../../services/positionMockService";
 import { salaryRangeMockService } from "../../services/salaryRangeMockService";
 import type { Employee } from "../../types";
 import type { Position } from "../../types/position.types";
 
-const companies = () => orgStructureMockService.getCompanyNames();
-
 function useCompanyNames() {
-  const [items, setItems] = useState<string[]>(() => companies());
+  const [items, setItems] = useState<string[]>([]);
 
   useEffect(() => {
     let mounted = true;
@@ -20,9 +16,7 @@ function useCompanyNames() {
       .then((catalog) => {
         if (mounted) setItems(catalog.companies.filter((company) => company.status === "ACTIVO").map((company) => company.name));
       })
-      .catch(() => {
-        if (mounted) setItems(companies());
-      });
+      .catch(() => {});
     return () => {
       mounted = false;
     };
@@ -32,10 +26,7 @@ function useCompanyNames() {
 }
 
 function usePositions(activeOnly = false) {
-  const [items, setItems] = useState<Position[]>(() => {
-    const positions = positionMockService.getAll();
-    return activeOnly ? positions.filter((position) => position.status === "ACTIVO") : positions;
-  });
+  const [items, setItems] = useState<Position[]>([]);
 
   useEffect(() => {
     let mounted = true;
@@ -44,11 +35,7 @@ function usePositions(activeOnly = false) {
         if (!mounted) return;
         setItems(activeOnly ? positions.filter((position) => position.status === "ACTIVO") : positions);
       })
-      .catch(() => {
-        if (!mounted) return;
-        const positions = positionMockService.getAll();
-        setItems(activeOnly ? positions.filter((position) => position.status === "ACTIVO") : positions);
-      });
+      .catch(() => {});
     return () => {
       mounted = false;
     };

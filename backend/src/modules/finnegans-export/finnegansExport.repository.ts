@@ -53,6 +53,7 @@ export const finnegansExportRepository = {
         },
       },
       orderBy: [{ fromDate: "asc" }, { employee: { legajo: "asc" } }],
+      take: 10000,
     });
   },
 };

@@ -14,8 +14,46 @@ import type {
   UpdateSectorInput,
 } from "./orgStructure.schemas";
 
+// ---------------------------------------------------------------------------
+// Overview cache
+// ---------------------------------------------------------------------------
+
+const OVERVIEW_CACHE_TTL_MS = 60_000; // 60 segundos
+
+type OrgOverview = Awaited<ReturnType<typeof fetchOverview>>;
+
+interface OverviewCache {
+  data: OrgOverview;
+  expiresAt: number;
+}
+
+let overviewCache: OverviewCache | null = null;
+
+function fetchOverview() {
+  return Promise.all([
+    prisma.company.findMany({ take: 500, orderBy: { name: "asc" }, include: { businessUnits: true, establishments: true } }),
+    prisma.businessUnit.findMany({ take: 500, orderBy: { name: "asc" }, include: { company: true, companies: true } }),
+    prisma.establishment.findMany({ take: 500, orderBy: { name: "asc" }, include: { company: true, businessUnit: true, companies: true, businessUnits: true } }),
+    prisma.area.findMany({ take: 500, orderBy: { name: "asc" }, include: { establishment: true, businessUnits: true, establishments: true } }),
+    prisma.sector.findMany({ take: 500, orderBy: { name: "asc" }, include: { area: true, areas: true, establishments: true } }),
+    prisma.costCenter.findMany({ take: 500, orderBy: { code: "asc" }, include: { companies: true, businessUnits: true, establishments: true, areas: true, sectors: true } }),
+  ]);
+}
+
+async function getCachedOverview(): Promise<OrgOverview> {
+  if (overviewCache && Date.now() < overviewCache.expiresAt) {
+    return overviewCache.data;
+  }
+  const data = await fetchOverview();
+  overviewCache = { data, expiresAt: Date.now() + OVERVIEW_CACHE_TTL_MS };
+  return data;
+}
+
+export function invalidateOverviewCache(): void {
+  overviewCache = null;
+}
+
 const compactIds = (values: Array<string | null | undefined>) => Array.from(new Set(values.filter(Boolean))) as string[];
-const firstId = (direct: string | null | undefined, values?: string[]) => direct || values?.[0];
 const requireId = (value: string | undefined, message: string) => {
   if (!value) throw new Error(message);
   return value;
@@ -48,14 +86,7 @@ function costCenterData(input: CreateCostCenterInput | UpdateCostCenterInput) {
 
 export const orgStructureRepository = {
   getOverview() {
-    return Promise.all([
-      prisma.company.findMany({ orderBy: { name: "asc" }, include: { businessUnits: true, establishments: true } }),
-      prisma.businessUnit.findMany({ orderBy: { name: "asc" }, include: { company: true, companies: true } }),
-      prisma.establishment.findMany({ orderBy: { name: "asc" }, include: { company: true, businessUnit: true, companies: true, businessUnits: true } }),
-      prisma.area.findMany({ orderBy: { name: "asc" }, include: { establishment: true, businessUnits: true, establishments: true } }),
-      prisma.sector.findMany({ orderBy: { name: "asc" }, include: { area: true, areas: true, establishments: true } }),
-      prisma.costCenter.findMany({ orderBy: { code: "asc" }, include: { companies: true, businessUnits: true, establishments: true, areas: true, sectors: true } }),
-    ]);
+    return getCachedOverview();
   },
 
   createCompany(data: CreateCompanyInput) {

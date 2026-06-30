@@ -5,7 +5,6 @@ import { OverflowCell } from "../components/ui/OverflowCell";
 import { TableShell } from "../components/ui/TableShell";
 import { useAuth } from "../context/AuthContext";
 import { documentCategoryApiService } from "../services/api/documentCategoryApiService";
-import { documentCategoryMockService } from "../services/documentCategoryMockService";
 import type { Role } from "../types";
 import type { DocumentCategory, DocumentCategoryKind, DocumentCategoryScope, ExternalDocumentLink } from "../types/documentCategory.types";
 import { roleLevel } from "../utils/roles";
@@ -75,7 +74,7 @@ export function DocumentCategoriesPage() {
   const [editing, setEditing] = useState<DocumentCategory | null>(null);
   const [notice, setNotice] = useState("");
   const [refresh, setRefresh] = useState(0);
-  const [all, setAll] = useState<DocumentCategory[]>(() => documentCategoryMockService.getAll());
+  const [all, setAll] = useState<DocumentCategory[]>([]);
   useEffect(() => {
     let mounted = true;
     documentCategoryApiService
@@ -83,9 +82,7 @@ export function DocumentCategoriesPage() {
       .then((items) => {
         if (mounted) setAll(items);
       })
-      .catch(() => {
-        if (mounted) setAll(documentCategoryMockService.getAll());
-      });
+      .catch(() => {});
     return () => {
       mounted = false;
     };
@@ -104,10 +101,7 @@ export function DocumentCategoriesPage() {
     persist
       .then((saved) => setEditing(saved))
       .catch(() => {
-        const saved = exists
-          ? documentCategoryMockService.update(editing.id, editing, user!)
-          : documentCategoryMockService.create(editing, user!);
-        setEditing(saved || null);
+        setNotice("No se pudo guardar en backend. Verifica que la API este activa.");
       })
       .finally(() => setRefresh((value) => value + 1));
     setNotice("Categoria documental guardada correctamente.");

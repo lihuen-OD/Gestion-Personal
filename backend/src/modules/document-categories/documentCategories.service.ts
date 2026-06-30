@@ -2,7 +2,7 @@ import { Prisma } from "@prisma/client";
 import type { AuditContext } from "../audit/audit.service";
 import { auditService } from "../audit/audit.service";
 import { AppError } from "../../shared/errors/AppError";
-import { documentCategoriesRepository } from "./documentCategories.repository";
+import { documentCategoriesRepository, invalidateDocumentCategoriesCache } from "./documentCategories.repository";
 import type {
   CreateDocumentCategoryInput,
   ListDocumentCategoriesQuery,
@@ -46,6 +46,7 @@ export const documentCategoriesService = {
 
   async create(input: CreateDocumentCategoryInput, audit?: AuditContext) {
     const item = await execute(() => documentCategoriesRepository.create(input));
+    invalidateDocumentCategoriesCache();
     await auditService.register({
       ...audit,
       action: "CREATE",
@@ -61,6 +62,7 @@ export const documentCategoriesService = {
     const before = await documentCategoriesRepository.findById(id);
     if (!before) throw new AppError("Document category not found", 404, "DOCUMENT_CATEGORY_NOT_FOUND");
     const item = await execute(() => documentCategoriesRepository.update(id, input));
+    invalidateDocumentCategoriesCache();
     await auditService.register({
       ...audit,
       action: "UPDATE",

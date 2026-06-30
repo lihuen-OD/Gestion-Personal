@@ -6,7 +6,6 @@ import { PuestoSummaryCards } from "../components/puestos/PuestoSummaryCards";
 import { PuestoTable } from "../components/puestos/PuestoTable";
 import { useAuth } from "../context/AuthContext";
 import { positionApiService } from "../services/api/positionApiService";
-import { positionMockService } from "../services/positionMockService";
 import type { Position, PositionFilters, PositionSummary } from "../types/position.types";
 import { roleLevel } from "../utils/roles";
 
@@ -55,11 +54,10 @@ export function PuestosPage() {
   const { user } = useAuth();
   const level = roleLevel(user!.role);
   const canEdit = level === 1;
-  const [filters, setFilters] = useState(positionMockService.getEmptyFilters());
+  const [filters, setFilters] = useState<PositionFilters>({});
   const [refresh, setRefresh] = useState(0);
-  const [apiItems, setApiItems] = useState<Position[] | null>(null);
+  const [apiItems, setApiItems] = useState<Position[]>([]);
   const [isLoadingApi, setIsLoadingApi] = useState(true);
-  const [apiWarning, setApiWarning] = useState("");
 
   useEffect(() => {
     let alive = true;
@@ -68,12 +66,10 @@ export function PuestosPage() {
       .then((items) => {
         if (!alive) return;
         setApiItems(items);
-        setApiWarning("");
       })
       .catch(() => {
         if (!alive) return;
-        setApiItems(null);
-        setApiWarning("Backend no disponible: usando puestos locales de respaldo.");
+        setApiItems([]);
       })
       .finally(() => {
         if (alive) setIsLoadingApi(false);
@@ -83,31 +79,27 @@ export function PuestosPage() {
 
   if (level === 3) return <Navigate to="/horas" />;
 
-  const all = apiItems || positionMockService.getAll();
-  const positions = useMemo(() => all.filter((position) => matches(position, filters)), [all, filters]);
+  const positions = useMemo(() => apiItems.filter((position) => matches(position, filters)), [apiItems, filters]);
 
   const toggle = async (position: Position) => {
     if (!confirm(`Confirmar ${position.status === "ACTIVO" ? "inactivacion" : "activacion"} del puesto ${position.name}?`)) return;
-    if (apiItems) await positionApiService.update({ ...position, status: position.status === "ACTIVO" ? "INACTIVO" : "ACTIVO" });
-    else positionMockService.changeStatus(position.id, position.status === "ACTIVO" ? "INACTIVO" : "ACTIVO", user!);
+    await positionApiService.update({ ...position, status: position.status === "ACTIVO" ? "INACTIVO" : "ACTIVO" });
     setRefresh((value) => value + 1);
   };
 
   const remove = async (position: Position) => {
-    const assigned = apiItems ? getAssignedCount(position) : positionMockService.getAssignedEmployees(position.id).length;
+    const assigned = getAssignedCount(position);
     const message = assigned ? `El puesto ${position.name} tiene ${assigned} persona(s) asignadas. No se borra para no romper legajos; se va a inactivar/ocultar. Confirmar?` : `Confirmar ocultar/eliminar ${position.name}?`;
     if (!confirm(message)) return;
-    if (apiItems) await positionApiService.removeOrHide(position.id);
-    else positionMockService.removeOrHide(position.id, user!);
+    await positionApiService.removeOrHide(position.id);
     setRefresh((value) => value + 1);
   };
 
   return (
     <>
       <div className="page-header"><div><p className="eyebrow">PUESTOS</p><h1>Puestos</h1><p>Administracion de descripciones de puesto y estructura funcional.</p></div>{canEdit && <Link className="button primary" to="/puestos/nuevo"><Plus size={17} /> Crear puesto</Link>}</div>
-      {apiWarning && <div className="info-note compact"><b>Modo local</b><p>{apiWarning}</p></div>}
-      <PuestoSummaryCards summary={apiItems ? summary(all) : positionMockService.getSummary()} />
-      <section className="panel position-list-panel"><div className="panel-head"><div><h3>Listado de puestos</h3><p>{isLoadingApi ? "Cargando puestos desde backend..." : `${positions.length} resultados segun filtros aplicados.`}</p></div></div><div className="panel-body position-list-body"><PuestoFilters filters={filters} options={apiItems ? options(all) : positionMockService.getFilterOptions()} onChange={setFilters} /><PuestoTable positions={positions} assignedCount={(id) => apiItems ? getAssignedCount(positions.find((position) => position.id === id)!) : positionMockService.getAssignedEmployees(id).length} canEdit={canEdit} onRemove={remove} onToggleStatus={toggle} /></div></section>
+      <PuestoSummaryCards summary={summary(apiItems)} />
+      <section className="panel position-list-panel"><div className="panel-head"><div><h3>Listado de puestos</h3><p>{isLoadingApi ? "Cargando puestos desde backend..." : `${positions.length} resultados segun filtros aplicados.`}</p></div></div><div className="panel-body position-list-body"><PuestoFilters filters={filters} options={options(apiItems)} onChange={setFilters} /><PuestoTable positions={positions} assignedCount={(id) => getAssignedCount(positions.find((position) => position.id === id)!)} canEdit={canEdit} onRemove={remove} onToggleStatus={toggle} /></div></section>
     </>
   );
 }

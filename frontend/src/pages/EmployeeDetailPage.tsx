@@ -1,10 +1,8 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Link, Navigate, useLocation, useParams } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
-import { auditMockService } from "../services/auditMockService";
 import { auditApiService } from "../services/api/auditApiService";
 import { employeeApiService } from "../services/api/employeeApiService";
-import { employeeMockService } from "../services/employeeMockService";
 import { calculateEmployeeStatus } from "../services/employeeStatusService";
 import { EmployeeDocumentsPanel } from "../components/documents/EmployeeDocumentsPanel";
 import { EmployeeNoveltiesPanel } from "../components/novelties/EmployeeNoveltiesPanel";
@@ -54,24 +52,27 @@ export function EmployeeDetailPage() {
   const location = useLocation();
   const level = roleLevel(user!.role);
   const [tab, setTab] = useState(0);
-  const [employee, setEmployee] = useState<Employee | null>(() => employeeMockService.getById(id!) || null);
-  const [auditRows, setAuditRows] = useState(() =>
-    employee ? auditMockService.getAll().filter((audit) => audit.entity.includes(displayLegajo(employee))) : [],
-  );
+  const [employee, setEmployee] = useState<Employee | null>(null);
+  const [auditRows, setAuditRows] = useState<Awaited<ReturnType<typeof auditApiService.getAll>>>([]);
   const [notice, setNotice] = useState(location.state?.created ? "Legajo creado correctamente." : "");
+  const [loading, setLoading] = useState(!!id);
   const laborOptions = useLaborSelectOptions(employee || undefined);
   const structureOptions = useStructureSelectOptions({ costCenter: employee?.costCenter || "" });
 
   useEffect(() => {
     if (!id) return;
     let mounted = true;
+    setLoading(true);
     employeeApiService
       .getById(id)
       .then((item) => {
         if (mounted) setEmployee(item);
       })
       .catch(() => {
-        if (mounted) setEmployee(employeeMockService.getById(id) || null);
+        if (mounted) setEmployee(null);
+      })
+      .finally(() => {
+        if (mounted) setLoading(false);
       });
     return () => {
       mounted = false;
@@ -87,49 +88,43 @@ export function EmployeeDetailPage() {
         if (mounted) setAuditRows(items);
       })
       .catch(() => {
-        if (mounted) {
-          setAuditRows(auditMockService.getAll().filter((audit) => audit.entity.includes(displayLegajo(employee))));
-        }
+        if (mounted) setAuditRows([]);
       });
     return () => {
       mounted = false;
     };
   }, [employee?.id]);
 
-  if (!employee) return <Navigate to="/legajos" />;
+  if (loading) return <div className="page-loading">Cargando legajo...</div>;
+  if (!loading && !employee) return <Navigate to="/legajos" />;
   const editable = level === 1;
 
   const save = async () => {
-    const all = (await employeeApiService.getAll().catch(() => employeeMockService.getAll())).filter((item) => item.id !== employee.id);
-    if (!employee.legajoInterno) return setNotice("Legajo Interno es obligatorio.");
-    if (!employee.startDate) return setNotice("Fecha de alta / ingreso es obligatoria.");
-    if (employee.endDate && employee.startDate && employee.endDate < employee.startDate) {
+    const all = (await employeeApiService.getAll()).filter((item) => item.id !== employee!.id);
+    if (!employee!.legajoInterno) return setNotice("Legajo Interno es obligatorio.");
+    if (!employee!.startDate) return setNotice("Fecha de alta / ingreso es obligatoria.");
+    if (employee!.endDate && employee!.startDate && employee!.endDate < employee!.startDate) {
       return setNotice("Fecha de baja / egreso no puede ser anterior a la fecha de alta.");
     }
-    if (employee.endDate && !employee.exitReason) {
+    if (employee!.endDate && !employee!.exitReason) {
       return setNotice("Si cargás fecha de baja / egreso, debés indicar el motivo.");
     }
-    if (all.some((item) => item.legajoInterno === employee.legajoInterno)) {
+    if (all.some((item) => item.legajoInterno === employee!.legajoInterno)) {
       return setNotice("Ya existe un colaborador con este Legajo Interno.");
     }
     if (
-      employee.legajoFinnegans &&
-      all.some((item) => item.legajoFinnegans === employee.legajoFinnegans)
+      employee!.legajoFinnegans &&
+      all.some((item) => item.legajoFinnegans === employee!.legajoFinnegans)
     ) {
       return setNotice("Ya existe un colaborador con este Legajo Finnegans.");
     }
     try {
-      const updated = await employeeApiService.update({ ...employee, legajo: employee.legajoInterno, address: employee.addressStreet });
+      const updated = await employeeApiService.update({ ...employee!, legajo: employee!.legajoInterno, address: employee!.addressStreet });
       setEmployee(updated);
       setNotice("Cambios guardados correctamente.");
       setTimeout(() => setNotice(""), 2200);
-    } catch (error) {
-      const updated = employeeMockService.update(
-        { ...employee, legajo: employee.legajoInterno, address: employee.addressStreet },
-        user!,
-      );
-      setEmployee(updated);
-      setNotice("Cambios guardados localmente. No se pudo sincronizar con backend.");
+    } catch {
+      setNotice("Error al guardar. Verifica que el backend esté activo.");
       setTimeout(() => setNotice(""), 3000);
     }
   };
@@ -212,7 +207,7 @@ function renderEmployeeTab(
   user: User,
   structureOptions: ReturnType<typeof useStructureSelectOptions>,
   laborOptions: ReturnType<typeof useLaborSelectOptions>,
-  auditRows: ReturnType<typeof auditMockService.getAll>,
+  auditRows: Awaited<ReturnType<typeof auditApiService.getAll>>,
 ): ReactNode {
   const update = (field: keyof Employee, value: Employee[keyof Employee]) =>
     setEmployee({ ...employee, [field]: value });

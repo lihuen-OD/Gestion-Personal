@@ -5,10 +5,33 @@ import { PageHeader } from "../components/ui/PageHeader";
 import { Section } from "../components/ui/Section";
 import { StatCard } from "../components/ui/StatCard";
 import { dashboardMetricsApiService, type DashboardMetrics } from "../services/api/dashboardMetricsApiService";
-import { dashboardMetricsMockService } from "../services/dashboardMetricsMockService";
 
 export function ReportsPage() {
-  const [metrics, setMetrics] = useState<DashboardMetrics>(() => dashboardMetricsMockService.getMetrics());
+  const [metrics, setMetrics] = useState<DashboardMetrics>({
+    total: 0,
+    active: 0,
+    inactive: 0,
+    absenceDays: 0,
+    absenceRate: "0",
+    turnoverRate: "0",
+    exits: 0,
+    upcomingBirthdays: [],
+    averageAge: "0",
+    averageTenure: "0",
+    transported: 0,
+    transportByCity: [],
+    transportRoutes: [],
+    loadedHours: 0,
+    loadCoverage: 0,
+    pendingLoads: 0,
+    reviewLoads: 0,
+    expiredDocuments: 0,
+    expiringDocuments: 0,
+    missingResponsible: 0,
+    pendingNovelties: 0,
+    headcountByCompany: [],
+    headcountBySector: [],
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -16,8 +39,8 @@ export function ReportsPage() {
       try {
         const apiMetrics = await dashboardMetricsApiService.getMetrics();
         if (!cancelled) setMetrics(apiMetrics);
-      } catch (error) {
-        if (!cancelled) setMetrics(dashboardMetricsMockService.getMetrics());
+      } catch {
+        // error handled: initial empty state is already set
       }
     }
     load();

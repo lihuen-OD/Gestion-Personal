@@ -73,6 +73,7 @@ export const timeEntriesRepository = {
         hourConcept: true,
       },
       orderBy: [{ employee: { lastName: "asc" } }, { employee: { firstName: "asc" } }, { date: "asc" }],
+      take: 5000,
     });
   },
 

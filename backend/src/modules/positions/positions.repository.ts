@@ -105,6 +105,7 @@ export const positionsRepository = {
         },
       },
       orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
+      take: 500,
     });
   },
 

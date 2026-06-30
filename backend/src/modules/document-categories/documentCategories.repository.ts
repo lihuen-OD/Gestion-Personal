@@ -6,6 +6,26 @@ import type {
   UpdateDocumentCategoryInput,
 } from "./documentCategories.schemas";
 
+// Cache en memoria para listados sin filtros
+type DocumentCategoryRow = Awaited<ReturnType<typeof prisma.documentCategory.findMany>>[number];
+let listCache: { data: DocumentCategoryRow[]; expiresAt: number } | null = null;
+const CACHE_TTL_MS = 120_000; // 2 minutos
+
+export function invalidateDocumentCategoriesCache() {
+  listCache = null;
+}
+
+function hasActiveFilters(query: ListDocumentCategoriesQuery): boolean {
+  return !!(
+    query.kind ||
+    query.status ||
+    query.scope ||
+    query.mandatory !== undefined ||
+    query.expires !== undefined ||
+    query.search?.trim()
+  );
+}
+
 function buildWhere(query: ListDocumentCategoriesQuery): Prisma.DocumentCategoryWhereInput {
   const search = query.search?.trim();
   return {
@@ -44,18 +64,32 @@ function mapData(data: CreateDocumentCategoryInput | UpdateDocumentCategoryInput
 }
 
 export const documentCategoriesRepository = {
-  findMany(query: ListDocumentCategoriesQuery) {
-    const where = buildWhere(query);
-    const skip = (query.page - 1) * query.take;
-    return prisma.$transaction([
-      prisma.documentCategory.findMany({
-        where,
+  async findMany(query: ListDocumentCategoriesQuery): Promise<[DocumentCategoryRow[], number]> {
+    if (hasActiveFilters(query)) {
+      const where = buildWhere(query);
+      const skip = (query.page - 1) * query.take;
+      return prisma.$transaction([
+        prisma.documentCategory.findMany({
+          where,
+          orderBy: [{ status: "asc" }, { kind: "asc" }, { name: "asc" }],
+          skip,
+          take: query.take,
+        }),
+        prisma.documentCategory.count({ where }),
+      ]);
+    }
+
+    if (!listCache || Date.now() >= listCache.expiresAt) {
+      const data = await prisma.documentCategory.findMany({
         orderBy: [{ status: "asc" }, { kind: "asc" }, { name: "asc" }],
-        skip,
-        take: query.take,
-      }),
-      prisma.documentCategory.count({ where }),
-    ]);
+        take: 500,
+      });
+      listCache = { data, expiresAt: Date.now() + CACHE_TTL_MS };
+    }
+
+    const skip = (query.page - 1) * query.take;
+    const page = listCache.data.slice(skip, skip + query.take);
+    return [page, listCache.data.length];
   },
 
   findById(id: string) {

@@ -18,7 +18,6 @@ import {
   userRoleOptions,
 } from "../components/employees/employeeOptions";
 import { employeeApiService } from "../services/api/employeeApiService";
-import { employeeMockService } from "../services/employeeMockService";
 import { calculateEmployeeStatus } from "../services/employeeStatusService";
 import type { Employee } from "../types";
 
@@ -140,7 +139,7 @@ export function EmployeeCreatePage() {
 
   const save = async (event: FormEvent) => {
     event.preventDefault();
-    const all = await employeeApiService.getAll().catch(() => employeeMockService.getAll());
+    const all = await employeeApiService.getAll();
     if (
       !value.legajoInterno ||
       !value.dni ||
@@ -205,9 +204,8 @@ export function EmployeeCreatePage() {
     try {
       const saved = await employeeApiService.create(created);
       navigate(`/legajos/${saved.id}`, { state: { created: true } });
-    } catch (error) {
-      employeeMockService.create(created, user!);
-      navigate(`/legajos/${created.id}`, { state: { created: true } });
+    } catch {
+      setError("No se pudo guardar el legajo. Intentá de nuevo.");
     }
   };
 

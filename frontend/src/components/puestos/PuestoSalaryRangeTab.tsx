@@ -9,7 +9,7 @@ function uniqueSorted(values: string[]) {
 
 export function PuestoSalaryRangeTab({ position, setPosition, disabled = false }: { position: Position; setPosition: (position: Position) => void; disabled?: boolean }) {
   const selected = position.salaryRangeCategories || [];
-  const [groups, setGroups] = useState<SalaryGroup[]>(() => salaryRangeMockService.getGroups());
+  const [groups, setGroups] = useState<SalaryGroup[]>([]);
   useEffect(() => {
     let mounted = true;
     salaryCategoryApiService.getGroups()
@@ -19,9 +19,7 @@ export function PuestoSalaryRangeTab({ position, setPosition, disabled = false }
           setGroups(apiGroups);
         }
       })
-      .catch(() => {
-        if (mounted) setGroups(salaryRangeMockService.getGroups());
-      });
+      .catch(() => {});
     return () => {
       mounted = false;
     };

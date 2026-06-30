@@ -3,8 +3,6 @@ import { KeyRound, Pencil, Plus, Power } from "lucide-react";
 import type { Role, User } from "../types";
 import { orgStructureApiService } from "../services/api/orgStructureApiService";
 import { userApiService } from "../services/api/userApiService";
-import { orgStructureMockService } from "../services/orgStructureMockService";
-import { userMockService } from "../services/userMockService";
 import { PageHeader } from "../components/ui/PageHeader";
 import { Section } from "../components/ui/Section";
 import { TableShell } from "../components/ui/TableShell";
@@ -37,9 +35,9 @@ function emptyUserDraft(): UserDraft {
 }
 
 export function UsersPage() {
-  const [users, setUsers] = useState<User[]>(() => userMockService.getAll());
-  const [companyOptions, setCompanyOptions] = useState<string[]>(() => orgStructureMockService.getCompanyNames());
-  const [sectorOptions, setSectorOptions] = useState<string[]>(() => orgStructureMockService.getOptions().sectors);
+  const [users, setUsers] = useState<User[]>([]);
+  const [companyOptions, setCompanyOptions] = useState<string[]>([]);
+  const [sectorOptions, setSectorOptions] = useState<string[]>([]);
   const [usesBackend, setUsesBackend] = useState(false);
   const [refresh, setRefresh] = useState(0);
   const [open, setOpen] = useState(false);
@@ -59,9 +57,6 @@ export function UsersPage() {
       })
       .catch(() => {
         if (!mounted) return;
-        setUsers(userMockService.getAll());
-        setCompanyOptions(orgStructureMockService.getCompanyNames());
-        setSectorOptions(orgStructureMockService.getOptions().sectors);
         setUsesBackend(false);
       });
     return () => {
@@ -93,8 +88,7 @@ export function UsersPage() {
   };
 
   const reload = () => {
-    if (usesBackend) setRefresh((value) => value + 1);
-    else setUsers(userMockService.getAll());
+    setRefresh((value) => value + 1);
   };
 
   const save = async () => {
@@ -119,18 +113,11 @@ export function UsersPage() {
     };
 
     try {
-      if (usesBackend) {
-        if (editingUserId) {
-          await userApiService.update({ ...payload, id: editingUserId });
-          if (password) await userApiService.resetPassword(editingUserId, password);
-        } else {
-          await userApiService.create(payload);
-        }
-      } else if (editingUserId) {
-        userMockService.update({ ...payload, id: editingUserId });
-        if (password) userMockService.resetPassword(editingUserId, password);
+      if (editingUserId) {
+        await userApiService.update({ ...payload, id: editingUserId });
+        if (password) await userApiService.resetPassword(editingUserId, password);
       } else {
-        userMockService.create({ ...payload, id: crypto.randomUUID() });
+        await userApiService.create(payload);
       }
       reload();
       close();
@@ -142,8 +129,7 @@ export function UsersPage() {
   const toggleStatus = async (user: User) => {
     const next: User = { ...user, password: "", status: user.status === "Activo" ? "Inactivo" : "Activo" };
     try {
-      if (usesBackend) await userApiService.update(next);
-      else userMockService.update(next);
+      await userApiService.update(next);
       reload();
     } catch {
       setError("No se pudo cambiar el estado del usuario.");

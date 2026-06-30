@@ -1,9 +1,6 @@
 import { useEffect, useState } from "react";
 import { employeeApiService } from "../../services/api/employeeApiService";
 import { employeeHistoryApiService } from "../../services/api/employeeHistoryApiService";
-import { employeeBlockHistoryMockService } from "../../services/employeeBlockHistoryMockService";
-import { employeeFieldHistoryMockService } from "../../services/employeeFieldHistoryMockService";
-import { employeeMockService } from "../../services/employeeMockService";
 import type { Employee, FieldHistorySection, User } from "../../types";
 import { EmptyState } from "../ui/EmptyState";
 import { Field, Select } from "../ui/FormControls";
@@ -51,7 +48,7 @@ export function FieldWithHistory({
   const [from, setFrom] = useState(effectiveFrom || new Date().toISOString().slice(0, 10));
   const [reason, setReason] = useState("");
   const [error, setError] = useState("");
-  const [history, setHistory] = useState(() => employeeFieldHistoryMockService.getByField(employee.id, section, field));
+  const [history, setHistory] = useState([]);
 
   useEffect(() => {
     let mounted = true;
@@ -60,9 +57,7 @@ export function FieldWithHistory({
       .then((rows) => {
         if (mounted) setHistory(rows);
       })
-      .catch(() => {
-        if (mounted) setHistory(employeeFieldHistoryMockService.getByField(employee.id, section, field));
-      });
+      .catch(() => {});
     return () => {
       mounted = false;
     };
@@ -70,7 +65,6 @@ export function FieldWithHistory({
 
   const currentFrom =
     history[0]?.effectiveFrom ||
-    employeeFieldHistoryMockService.getCurrentEffectiveFrom(employee.id, section, field) ||
     effectiveFrom ||
     employee.startDate ||
     "Sin cargar";
@@ -97,10 +91,10 @@ export function FieldWithHistory({
         return employeeFromApi;
       })
       .catch(() => {
-        const historyRow = employeeFieldHistoryMockService.create(record, user, `Legajo ${employee.legajoInterno || employee.legajo}`);
-        setHistory((rows) => [historyRow, ...rows.filter((row) => row.id !== historyRow.id)]);
-        return employeeMockService.update(updated, user);
+        setError("No se pudo guardar el cambio. Verifica que el backend esté activo.");
+        return;
       });
+    if (!saved) return;
     onSaved(saved);
     setEditing(false);
     setOpen(true);
@@ -193,7 +187,7 @@ export function BlockHistoryTimeline({
   block,
   empty,
 }: BlockHistoryTimelineProps) {
-  const [rows, setRows] = useState(() => employeeBlockHistoryMockService.getByBlock(employeeId, section, block));
+  const [rows, setRows] = useState([]);
 
   useEffect(() => {
     let mounted = true;
@@ -202,9 +196,7 @@ export function BlockHistoryTimeline({
       .then((items) => {
         if (mounted) setRows(items);
       })
-      .catch(() => {
-        if (mounted) setRows(employeeBlockHistoryMockService.getByBlock(employeeId, section, block));
-      });
+      .catch(() => {});
     return () => {
       mounted = false;
     };

@@ -2,11 +2,8 @@ import { useEffect, useState } from "react";
 import { documentCategoryApiService } from "../../services/api/documentCategoryApiService";
 import { documentApiService } from "../../services/api/documentApiService";
 import { employeeApiService } from "../../services/api/employeeApiService";
-import { documentCategoryMockService } from "../../services/documentCategoryMockService";
-import { documentMockService } from "../../services/documentMockService";
-import { employeeMockService } from "../../services/employeeMockService";
 import type { Employee, User } from "../../types";
-import { defaultDocumentExpiration, documentStatusByExpiration, isoToday } from "../../utils/documentStatus";
+import { defaultDocumentExpiration, documentStatusByExpiration } from "../../utils/documentStatus";
 import { displayLegajo, fullName } from "../../utils/employee";
 import { Field, Select } from "../ui/FormControls";
 import { Modal } from "../ui/Modal";
@@ -34,7 +31,7 @@ export function DocumentUploadModal({
   close: () => void;
   saved: (employee?: Employee) => void;
 }) {
-  const [categories, setCategories] = useState<DocumentCategory[]>(() => documentCategoryMockService.getActive());
+  const [categories, setCategories] = useState<DocumentCategory[]>([]);
   const [employeeId, setEmployeeId] = useState(fixedEmployee?.id || employees[0]?.id || "");
   const [categoryId, setCategoryId] = useState(categories[0]?.id || "");
   const selectedCategory = categories.find((item) => item.id === categoryId);
@@ -56,14 +53,7 @@ export function DocumentUploadModal({
           setCategoryId(active[0]?.id || "");
         }
       })
-      .catch(() => {
-        if (!mounted) return;
-        const fallback = documentCategoryMockService.getActive();
-        setCategories(fallback);
-        if (!fallback.some((item) => item.id === categoryId)) {
-          setCategoryId(fallback[0]?.id || "");
-        }
-      });
+      .catch(() => {});
     return () => {
       mounted = false;
     };
@@ -75,41 +65,6 @@ export function DocumentUploadModal({
     setStatus(documentStatusByExpiration(next));
     setError("");
   }, [categoryId, selectedCategory]);
-
-  const saveFallback = (employee: Employee) => {
-    documentMockService.create(
-      {
-        id: crypto.randomUUID(),
-        employeeId: employee.id,
-        category: selectedCategory!.name,
-        categoryId: selectedCategory!.id,
-        fileName: file!.name,
-        uploadedAt: isoToday(),
-        expiresAt: expiresAt || undefined,
-        status,
-        notes: notes || undefined,
-      },
-      user,
-    );
-    if (fixedEmployee) {
-      const updated = {
-        ...fixedEmployee,
-        historyEvents: [
-          {
-            id: crypto.randomUUID(),
-            date: new Date().toLocaleDateString("es-AR"),
-            type: "Documento cargado",
-            description: `${selectedCategory!.name}: ${file!.name}`,
-            user: user.name,
-          },
-          ...(fixedEmployee.historyEvents || []),
-        ],
-      };
-      saved(employeeMockService.update(updated, user));
-      return;
-    }
-    saved(employee);
-  };
 
   const save = async () => {
     const employee = employees.find((item) => item.id === employeeId) || fixedEmployee;
@@ -135,8 +90,8 @@ export function DocumentUploadModal({
         return;
       }
       saved(employee);
-    } catch (apiError) {
-      saveFallback(employee);
+    } catch {
+      setError("No se pudo guardar el documento. Intentá nuevamente.");
     }
   };
 

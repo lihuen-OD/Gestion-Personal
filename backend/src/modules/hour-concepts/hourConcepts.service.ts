@@ -2,7 +2,7 @@ import { Prisma } from "@prisma/client";
 import type { AuditContext } from "../audit/audit.service";
 import { auditService } from "../audit/audit.service";
 import { AppError } from "../../shared/errors/AppError";
-import { hourConceptsRepository } from "./hourConcepts.repository";
+import { hourConceptsRepository, invalidateHourConceptsCache } from "./hourConcepts.repository";
 import type { CreateHourConceptInput, ListHourConceptsQuery, UpdateHourConceptInput } from "./hourConcepts.schemas";
 
 function mapPrismaError(error: unknown) {
@@ -53,12 +53,14 @@ export const hourConceptsService = {
 
   async create(data: CreateHourConceptInput, audit?: AuditContext) {
     const item = await execute(() => hourConceptsRepository.create(data));
+    invalidateHourConceptsCache();
     await auditChange("CREATE", item, audit);
     return item;
   },
 
   async update(id: string, data: UpdateHourConceptInput, audit?: AuditContext) {
     const item = await execute(() => hourConceptsRepository.update(id, data));
+    invalidateHourConceptsCache();
     await auditChange("UPDATE", item, audit);
     return item;
   },

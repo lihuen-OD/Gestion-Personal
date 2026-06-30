@@ -2,8 +2,6 @@ import { useEffect, useState } from "react";
 import { Plus } from "lucide-react";
 import { employeeApiService } from "../../services/api/employeeApiService";
 import { noveltyApiService } from "../../services/api/noveltyApiService";
-import { employeeMockService } from "../../services/employeeMockService";
-import { noveltyMockService } from "../../services/noveltyMockService";
 import type { Employee, Novelty, User } from "../../types";
 import { NoveltyModal } from "./NoveltyModal";
 import { NoveltyTable } from "./NoveltyTable";
@@ -19,7 +17,7 @@ export function EmployeeNoveltiesPanel({
 }) {
   const [open, setOpen] = useState(false);
   const [refresh, setRefresh] = useState(0);
-  const [rows, setRows] = useState<Novelty[]>(() => noveltyMockService.getByEmployee(employee.id));
+  const [rows, setRows] = useState<Novelty[]>([]);
 
   useEffect(() => {
     let mounted = true;
@@ -28,9 +26,7 @@ export function EmployeeNoveltiesPanel({
       .then((items) => {
         if (mounted) setRows(items);
       })
-      .catch(() => {
-        if (mounted) setRows(noveltyMockService.getByEmployee(employee.id));
-      });
+      .catch(() => {});
     return () => {
       mounted = false;
     };
@@ -54,7 +50,7 @@ export function EmployeeNoveltiesPanel({
     employeeApiService
       .update(updated)
       .then(onSaved)
-      .catch(() => onSaved(employeeMockService.update(updated, user)));
+      .catch(() => {});
     setRefresh((value) => value + 1);
     setOpen(false);
   };

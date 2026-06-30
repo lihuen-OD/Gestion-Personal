@@ -1,5 +1,4 @@
 import { useEffect } from "react";
-import { noveltyTypeMockService } from "../../services/noveltyTypeMockService";
 import type { NoveltyTimeImpact, NoveltyType, NoveltyTypeKind, NoveltyTypeOrigin, NoveltyUiColor } from "../../types/noveltyType.types";
 import { noveltyColorClass, noveltyUiColors } from "../../utils/noveltyColor";
 
@@ -76,12 +75,7 @@ export function RoleChecklist({ label, value, onChange, disabled }: { label: str
 }
 
 export function NoveltyColorField({ value, onChange, disabled, noveltyTypeId }: { value: NoveltyUiColor; onChange: (value: NoveltyUiColor) => void; disabled?: boolean; noveltyTypeId?: string }) {
-  const usedColors = new Set(
-    noveltyTypeMockService
-      .getAll()
-      .filter((type) => type.id !== noveltyTypeId)
-      .map((type) => type.uiColor),
-  );
+  const usedColors = new Set<NoveltyUiColor>();
   const firstAvailable = noveltyUiColors.find((color) => !usedColors.has(color));
 
   useEffect(() => {

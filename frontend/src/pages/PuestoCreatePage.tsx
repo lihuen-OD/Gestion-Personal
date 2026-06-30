@@ -12,7 +12,6 @@ import { PuestoSalaryRangeTab } from "../components/puestos/PuestoSalaryRangeTab
 import { PuestoWorkConditionsTab } from "../components/puestos/PuestoWorkConditionsTab";
 import { useAuth } from "../context/AuthContext";
 import { positionApiService } from "../services/api/positionApiService";
-import { positionMockService } from "../services/positionMockService";
 import type { Position } from "../types/position.types";
 import { roleLevel } from "../utils/roles";
 
@@ -20,7 +19,7 @@ export function PuestoCreatePage() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [usesApi, setUsesApi] = useState(false);
-  const [position, setPosition] = useState<Position>({ ...emptyPosition(), code: positionMockService.getNextCode(), id: crypto.randomUUID(), history: [], createdAt: "", updatedAt: "" });
+  const [position, setPosition] = useState<Position>({ ...emptyPosition(), id: crypto.randomUUID(), history: [], createdAt: "", updatedAt: "" });
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -41,7 +40,7 @@ export function PuestoCreatePage() {
     event.preventDefault();
     if (!position.name.trim() || !position.areaDepartment.trim() || !position.sector.trim() || !position.status || !position.mission.trim() || !position.lastUpdatedAt) return setError("Completa nombre, area/departamento, sector, estado, mision y fecha de actualizacion.");
     try {
-      const created = usesApi ? await positionApiService.create(position) : positionMockService.create(position, user!);
+      const created = await positionApiService.create(position);
       if (created) navigate(`/puestos/${created.id}`, { state: { created: true, usesApi } });
     } catch {
       setError("No se pudo guardar el puesto en backend. Revisa codigo duplicado o conexion.");

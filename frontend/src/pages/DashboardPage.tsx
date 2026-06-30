@@ -2,8 +2,6 @@ import { useEffect, useMemo, useState } from "react";
 import { Activity, BriefcaseBusiness, Bus, Cake, Clock3, FileBarChart, FolderOpen, UserRoundMinus, Users } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { dashboardMetricsApiService, type DashboardMetrics } from "../services/api/dashboardMetricsApiService";
-import { auditMockService } from "../services/auditMockService";
-import { dashboardMetricsMockService } from "../services/dashboardMetricsMockService";
 import type { AuditEntry, Employee } from "../types";
 import { OverflowCell } from "../components/ui/OverflowCell";
 import { TableShell } from "../components/ui/TableShell";
@@ -29,8 +27,8 @@ export function DashboardPage() {
     () => (level === 2 ? (employee: Employee) => employee.sector === user!.sector : undefined),
     [level, user],
   );
-  const [metrics, setMetrics] = useState<DashboardMetrics>(() => dashboardMetricsMockService.getMetrics(fallbackScope));
-  const [audit, setAudit] = useState<AuditEntry[]>(() => auditMockService.getAll());
+  const [metrics, setMetrics] = useState<DashboardMetrics>({ active: 0, inactive: 0, total: 0, absenceRate: "0", absenceDays: 0, turnoverRate: "0", exits: 0, averageAge: "0", averageTenure: "0", transported: 0, loadedHours: 0, loadCoverage: 0, pendingLoads: 0, reviewLoads: 0, expiredDocuments: 0, expiringDocuments: 0, missingResponsible: 0, pendingNovelties: 0, headcountByCompany: [], headcountBySector: [], transportByCity: [], transportRoutes: [], upcomingBirthdays: [], period: "" });
+  const [audit, setAudit] = useState<AuditEntry[]>([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -43,10 +41,8 @@ export function DashboardPage() {
         if (cancelled) return;
         setMetrics(apiMetrics);
         setAudit(apiAudit);
-      } catch (error) {
+      } catch {
         if (cancelled) return;
-        setMetrics(dashboardMetricsMockService.getMetrics(fallbackScope));
-        setAudit(auditMockService.getAll());
       }
     }
     load();

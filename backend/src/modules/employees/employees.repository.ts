@@ -33,19 +33,65 @@ const employeeListSelect = {
   companies: { include: { company: { select: { id: true, name: true, code: true } } } },
 } satisfies Prisma.EmployeeSelect;
 
-const employeeDetailInclude = {
+const employeeDetailSelect = {
+  id: true,
+  legajo: true,
+  legajoFinnegans: true,
+  cuil: true,
+  dni: true,
+  firstName: true,
+  lastName: true,
+  birthDate: true,
+  email: true,
+  phone: true,
+  mobile: true,
+  emergencyContact: true,
+  emergencyRelation: true,
+  emergencyPhone: true,
+  status: true,
+  healthInsurance: true,
+  agreement: true,
+  receiptCategory: true,
+  internalCategory: true,
+  createdAt: true,
+  updatedAt: true,
+  createdByUserId: true,
   address: true,
   transport: true,
-  sector: { include: { area: { include: { establishment: { include: { businessUnit: true } } } } } },
-  costCenter: true,
+  sector: {
+    select: {
+      id: true,
+      name: true,
+      code: true,
+      area: {
+        select: {
+          id: true,
+          name: true,
+          establishment: {
+            select: {
+              id: true,
+              name: true,
+              businessUnit: { select: { id: true, name: true } },
+            },
+          },
+        },
+      },
+    },
+  },
+  costCenter: { select: { id: true, name: true, code: true } },
   position: true,
-  companies: { include: { company: true } },
-  laborMovements: { orderBy: { effectiveFrom: "desc" } },
-  assignments: true,
-  hourConcepts: { include: { hourConcept: true } },
-  novelties: { include: { noveltyType: true }, orderBy: { fromDate: "desc" }, take: 20 },
-  documents: { include: { category: true }, orderBy: { createdAt: "desc" }, take: 20 },
-} satisfies Prisma.EmployeeInclude;
+  companies: {
+    select: {
+      isPrimary: true,
+      company: { select: { id: true, name: true, code: true } },
+    },
+  },
+  laborMovements: { orderBy: { effectiveFrom: "desc" as const }, take: 50 },
+  assignments: { take: 100 },
+  hourConcepts: { select: { hourConcept: { select: { id: true, code: true, name: true } } } },
+  novelties: { include: { noveltyType: true }, orderBy: { fromDate: "desc" as const }, take: 20 },
+  documents: { include: { category: true }, orderBy: { createdAt: "desc" as const }, take: 20 },
+} satisfies Prisma.EmployeeSelect;
 
 const employeeOrgChartSelect = {
   id: true,
@@ -198,6 +244,25 @@ function companyLinks(companyIds: string[], primaryCompanyId?: string | null) {
   }));
 }
 
+async function fetchSyncBatch(cursor: string | undefined): Promise<Array<{ id: string; currentStatus: EmployeeStatus; nextStatus: EmployeeStatus }>> {
+  const rows = await prisma.employee.findMany({
+    take: 100,
+    skip: cursor ? 1 : 0,
+    cursor: cursor ? { id: cursor } : undefined,
+    orderBy: { id: "asc" },
+    select: {
+      id: true,
+      status: true,
+      laborMovements: { select: { type: true, effectiveFrom: true }, orderBy: { effectiveFrom: "desc" }, take: 5 },
+    },
+  });
+  return rows.map((emp) => ({
+    id: emp.id,
+    currentStatus: emp.status as EmployeeStatus,
+    nextStatus: resolveLaborStatus(emp.laborMovements.map((m) => ({ effectiveFrom: m.effectiveFrom, type: m.type as "ALTA" | "BAJA" }))),
+  }));
+}
+
 export const employeesRepository = {
   findMany(query: ListEmployeesQuery, accessWhere: Prisma.EmployeeWhereInput) {
     const where = { AND: [buildWhere(query), accessWhere] };
@@ -230,7 +295,7 @@ export const employeesRepository = {
   },
 
   findById(id: string, accessWhere: Prisma.EmployeeWhereInput = {}) {
-    return prisma.employee.findFirst({ where: { AND: [{ id }, accessWhere] }, include: employeeDetailInclude });
+    return prisma.employee.findFirst({ where: { AND: [{ id }, accessWhere] }, select: employeeDetailSelect });
   },
 
   findByUniqueFields(input: Pick<CreateEmployeeInput, "legajo" | "cuil" | "dni">) {
@@ -241,35 +306,31 @@ export const employeesRepository = {
   },
 
   async syncLaborStatuses() {
-    const employees = await prisma.employee.findMany({
-      select: {
-        id: true,
-        status: true,
-        laborMovements: { select: { type: true, effectiveFrom: true } },
-      },
-    });
-    const changes = employees
-      .map((employee) => ({
-        id: employee.id,
-        currentStatus: employee.status,
-        nextStatus: resolveLaborStatus(employee.laborMovements),
-      }))
-      .filter((item) => item.currentStatus !== item.nextStatus);
+    let cursor: string | undefined = undefined;
+    let totalScanned = 0;
+    let totalUpdated = 0;
 
-    if (!changes.length) {
-      return { scanned: employees.length, updated: 0 };
-    }
+    while (true) {
+      const batch = await fetchSyncBatch(cursor);
 
-    await prisma.$transaction(
-      changes.map((change) =>
-        prisma.employee.update({
+      if (batch.length === 0) break;
+
+      cursor = batch[batch.length - 1]!.id;
+      totalScanned += batch.length;
+
+      const changes = batch
+        .filter((emp) => emp.currentStatus !== emp.nextStatus);
+
+      for (const change of changes) {
+        await prisma.employee.update({
           where: { id: change.id },
           data: { status: change.nextStatus },
-        }),
-      ),
-    );
+        });
+        totalUpdated++;
+      }
+    }
 
-    return { scanned: employees.length, updated: changes.length };
+    return { scanned: totalScanned, updated: totalUpdated };
   },
 
   create(input: CreateEmployeeInput, createdByUserId?: string | null) {
@@ -281,7 +342,7 @@ export const employeesRepository = {
         ...(companies.length ? { companies: { createMany: { data: companies } } } : {}),
         ...(input.address ? { address: { create: input.address } } : {}),
       },
-      include: employeeDetailInclude,
+      select: employeeDetailSelect,
     });
   },
 
@@ -312,7 +373,7 @@ export const employeesRepository = {
             }
           : {}),
       },
-      include: employeeDetailInclude,
+      select: employeeDetailSelect,
     });
   },
 
@@ -327,7 +388,7 @@ export const employeesRepository = {
         ...(input.emergencyRelation !== undefined ? { emergencyRelation: input.emergencyRelation || null } : {}),
         ...(input.emergencyPhone !== undefined ? { emergencyPhone: input.emergencyPhone || null } : {}),
       },
-      include: employeeDetailInclude,
+      select: employeeDetailSelect,
     });
   },
 
@@ -342,7 +403,7 @@ export const employeesRepository = {
           },
         },
       },
-      include: employeeDetailInclude,
+      select: employeeDetailSelect,
     });
   },
 
@@ -357,7 +418,7 @@ export const employeesRepository = {
           },
         },
       },
-      include: employeeDetailInclude,
+      select: employeeDetailSelect,
     });
   },
 
@@ -374,7 +435,7 @@ export const employeesRepository = {
           })),
         });
       }
-      return tx.employee.findUniqueOrThrow({ where: { id: employeeId }, include: employeeDetailInclude });
+      return tx.employee.findUniqueOrThrow({ where: { id: employeeId }, select: employeeDetailSelect });
     });
   },
 
@@ -387,7 +448,7 @@ export const employeesRepository = {
           data: uniqueIds.map((hourConceptId) => ({ employeeId, hourConceptId })),
         });
       }
-      return tx.employee.findUniqueOrThrow({ where: { id: employeeId }, include: employeeDetailInclude });
+      return tx.employee.findUniqueOrThrow({ where: { id: employeeId }, select: employeeDetailSelect });
     });
   },
 
@@ -414,7 +475,7 @@ export const employeesRepository = {
         data: { status: resolveLaborStatus(movements) },
       });
 
-      const employee = await tx.employee.findUniqueOrThrow({ where: { id: employeeId }, include: employeeDetailInclude });
+      const employee = await tx.employee.findUniqueOrThrow({ where: { id: employeeId }, select: employeeDetailSelect });
       return { employee, movement };
     });
   },
@@ -438,7 +499,7 @@ export const employeesRepository = {
         },
       });
 
-      return tx.employee.findUniqueOrThrow({ where: { id: employeeId }, include: employeeDetailInclude });
+      return tx.employee.findUniqueOrThrow({ where: { id: employeeId }, select: employeeDetailSelect });
     });
   },
 

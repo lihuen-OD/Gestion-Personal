@@ -6,6 +6,19 @@ const noveltyTypeInclude = {
   finnegansLinks: { orderBy: [{ priority: "asc" }, { code: "asc" }] },
 } satisfies Prisma.NoveltyTypeInclude;
 
+// Cache en memoria para listados sin filtros
+type NoveltyTypeRow = Awaited<ReturnType<typeof prisma.noveltyType.findMany<{ include: typeof noveltyTypeInclude }>>>[number];
+let listCache: { data: NoveltyTypeRow[]; expiresAt: number } | null = null;
+const CACHE_TTL_MS = 120_000; // 2 minutos
+
+export function invalidateNoveltyTypesCache() {
+  listCache = null;
+}
+
+function hasActiveFilters(query: ListNoveltyTypesQuery): boolean {
+  return !!(query.kind || query.origin || query.status || query.exportsToFinnegans !== undefined || query.search?.trim());
+}
+
 function buildWhere(query: ListNoveltyTypesQuery): Prisma.NoveltyTypeWhereInput {
   const search = query.search?.trim();
   return {
@@ -37,19 +50,34 @@ function updateNoveltyTypeData(input: UpdateNoveltyTypeInput) {
 }
 
 export const noveltyTypesRepository = {
-  findMany(query: ListNoveltyTypesQuery) {
-    const where = buildWhere(query);
-    const skip = (query.page - 1) * query.take;
-    return prisma.$transaction([
-      prisma.noveltyType.findMany({
-        where,
+  async findMany(query: ListNoveltyTypesQuery): Promise<[NoveltyTypeRow[], number]> {
+    if (hasActiveFilters(query)) {
+      const where = buildWhere(query);
+      const skip = (query.page - 1) * query.take;
+      return prisma.$transaction([
+        prisma.noveltyType.findMany({
+          where,
+          include: noveltyTypeInclude,
+          orderBy: [{ status: "asc" }, { name: "asc" }],
+          skip,
+          take: query.take,
+        }),
+        prisma.noveltyType.count({ where }),
+      ]);
+    }
+
+    if (!listCache || Date.now() >= listCache.expiresAt) {
+      const data = await prisma.noveltyType.findMany({
         include: noveltyTypeInclude,
         orderBy: [{ status: "asc" }, { name: "asc" }],
-        skip,
-        take: query.take,
-      }),
-      prisma.noveltyType.count({ where }),
-    ]);
+        take: 500,
+      });
+      listCache = { data, expiresAt: Date.now() + CACHE_TTL_MS };
+    }
+
+    const skip = (query.page - 1) * query.take;
+    const page = listCache.data.slice(skip, skip + query.take);
+    return [page, listCache.data.length];
   },
 
   findById(id: string) {

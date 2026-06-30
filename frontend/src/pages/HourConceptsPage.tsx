@@ -5,7 +5,6 @@ import { OverflowCell } from "../components/ui/OverflowCell";
 import { TableShell } from "../components/ui/TableShell";
 import { useAuth } from "../context/AuthContext";
 import { hourConceptApiService } from "../services/api/hourConceptApiService";
-import { hourConceptMockService } from "../services/hourConceptMockService";
 import type { Role } from "../types";
 import type { HourConcept, HourConceptFilters, HourConceptKind } from "../types/hourConcept.types";
 import { roleLevel } from "../utils/roles";
@@ -99,13 +98,12 @@ function ConceptEditor({ item, setItem }: { item: HourConcept; setItem: (item: H
 
 export function HourConceptsPage() {
   const { user } = useAuth();
-  const [filters, setFilters] = useState(hourConceptMockService.getEmptyFilters());
+  const [filters, setFilters] = useState<HourConceptFilters>({ search: "", kind: "", status: "" });
   const [editing, setEditing] = useState<HourConcept | null>(null);
   const [notice, setNotice] = useState("");
   const [refresh, setRefresh] = useState(0);
   const [apiItems, setApiItems] = useState<HourConcept[] | null>(null);
   const [isLoadingApi, setIsLoadingApi] = useState(true);
-  const [apiWarning, setApiWarning] = useState("");
 
   useEffect(() => {
     let alive = true;
@@ -114,12 +112,11 @@ export function HourConceptsPage() {
       .then((items) => {
         if (!alive) return;
         setApiItems(items);
-        setApiWarning("");
       })
       .catch(() => {
         if (!alive) return;
-        setApiItems(null);
-        setApiWarning("Backend no disponible: usando datos locales de respaldo.");
+        setApiItems([]);
+        setIsLoadingApi(false);
       })
       .finally(() => {
         if (alive) setIsLoadingApi(false);
@@ -129,7 +126,7 @@ export function HourConceptsPage() {
 
   if (roleLevel(user!.role) !== 1) return <Navigate to="/configuracion" />;
 
-  const all = apiItems || hourConceptMockService.getAll();
+  const all = apiItems ?? [];
   const items = all.filter((item) => matchesFilters(item, filters));
   const options = getFilterOptions(all);
   const summary = useMemo(() => [
@@ -145,14 +142,9 @@ export function HourConceptsPage() {
 
     try {
       const existsInApi = Boolean(apiItems?.some((item) => item.id === editing.id));
-      const existsInMock = Boolean(hourConceptMockService.getById(editing.id));
-      const saved = apiItems
-        ? existsInApi
-          ? await hourConceptApiService.update(editing.id, editing)
-          : await hourConceptApiService.create(editing)
-        : existsInMock
-          ? hourConceptMockService.update(editing.id, editing, user!)
-          : hourConceptMockService.create(editing, user!);
+      const saved = existsInApi
+        ? await hourConceptApiService.update(editing.id, editing)
+        : await hourConceptApiService.create(editing);
 
       setEditing(saved || null);
       setRefresh((value) => value + 1);
@@ -172,13 +164,12 @@ export function HourConceptsPage() {
           <h1>Horas especiales</h1>
           <p>Catalogo de horas trabajadas clasificadas. Sereno, guardia, manejo de colectivo, nocturna, feriados y extras se cargan aca, no como novedades.</p>
         </div>
-        <button className="button primary" onClick={() => setEditing(emptyConcept(apiItems ? hourConceptApiService.getNextCode(all) : hourConceptMockService.getNextCode()))}>
+        <button className="button primary" onClick={() => setEditing(emptyConcept(hourConceptApiService.getNextCode(all)))}>
           <Plus size={17} /> Crear hora especial
         </button>
       </div>
 
       {notice && <div className="toast">{notice}</div>}
-      {apiWarning && <div className="info-note compact"><b>Modo local</b><p>{apiWarning}</p></div>}
 
       <div className="stat-grid novelty-type-summary">
         {summary.map(([label, value]) => (

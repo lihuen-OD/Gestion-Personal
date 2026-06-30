@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { Search } from "lucide-react";
 import { employeeApiService } from "../../services/api/employeeApiService";
-import { employeeMockService } from "../../services/employeeMockService";
 import type { Employee } from "../../types";
 import { displayLegajo } from "../../utils/employee";
 
@@ -29,7 +28,7 @@ export function PeopleMultiSearch({
   excludeId?: string;
 }) {
   const [query, setQuery] = useState("");
-  const [candidates, setCandidates] = useState<Employee[]>(() => employeeMockService.getAll());
+  const [candidates, setCandidates] = useState<Employee[]>([]);
 
   useEffect(() => {
     let mounted = true;
@@ -37,9 +36,7 @@ export function PeopleMultiSearch({
       .then((employees) => {
         if (mounted) setCandidates(employees);
       })
-      .catch(() => {
-        if (mounted) setCandidates(employeeMockService.getAll());
-      });
+      .catch(() => {});
     return () => {
       mounted = false;
     };

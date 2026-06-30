@@ -3,8 +3,6 @@ import { GeoAddressFields } from "../GeoAddressFields";
 import { LocationMapPicker } from "../LocationMapPicker";
 import { employeeApiService } from "../../services/api/employeeApiService";
 import { employeeHistoryApiService } from "../../services/api/employeeHistoryApiService";
-import { employeeBlockHistoryMockService } from "../../services/employeeBlockHistoryMockService";
-import { employeeMockService } from "../../services/employeeMockService";
 import { locationService } from "../../services/locationService";
 import type { Employee, User } from "../../types";
 import { Field, Select } from "../ui/FormControls";
@@ -38,23 +36,23 @@ const hoursSummary = (employee: Employee) =>
   employee.enabledHours.length ? employee.enabledHours.join(", ") : "Sin horas especiales";
 
 type EmployeeBlockPersistKind = "general" | "address" | "transport" | "assignments" | "hourConcepts";
-type CreateBlockHistoryInput = Parameters<typeof employeeBlockHistoryMockService.create>[0];
+type CreateBlockHistoryInput = { employeeId: string; section: string; block: string; blockLabel: string; oldValue: string | null; newValue: string; effectiveFrom: string; reason: string; };
 
 async function recordBlockHistory(
   record: CreateBlockHistoryInput,
-  user: User,
-  auditEntity: string,
+  _user: User,
+  _auditEntity: string,
 ) {
   try {
-    return await employeeHistoryApiService.createBlockHistory(record);
+    return await employeeHistoryApiService.createBlockHistory(record as Parameters<typeof employeeHistoryApiService.createBlockHistory>[0]);
   } catch (error) {
-    return employeeBlockHistoryMockService.create(record, user, auditEntity);
+    throw error;
   }
 }
 
 async function persistEmployeeBlock(
   updated: Employee,
-  user: User,
+  _user: User,
   onSaved: (employee: Employee) => void,
   kind: EmployeeBlockPersistKind = "general",
 ) {
@@ -71,7 +69,7 @@ async function persistEmployeeBlock(
               : await employeeApiService.update(updated);
     onSaved(saved);
   } catch (error) {
-    onSaved(employeeMockService.update(updated, user));
+    throw error;
   }
 }
 
@@ -141,21 +139,26 @@ export function AddressEditBlock({ employee, user, canEdit, onSaved }: EmployeeB
       zip: draft.codigoPostal,
       locationMap: draft.ubicacionMapa,
     };
-    await recordBlockHistory(
-      {
-        employeeId: employee.id,
-        section: "CONTACTO_DOMICILIO",
-        block: "DOMICILIO",
-        blockLabel: "Domicilio",
-        oldValue,
-        newValue: addressSummary(updated),
-        effectiveFrom: from,
-        reason,
-      },
-      user,
-      `Legajo ${employee.legajoInterno || employee.legajo}`,
-    );
-    await persistEmployeeBlock(updated, user, onSaved, "address");
+    try {
+      await recordBlockHistory(
+        {
+          employeeId: employee.id,
+          section: "CONTACTO_DOMICILIO",
+          block: "DOMICILIO",
+          blockLabel: "Domicilio",
+          oldValue,
+          newValue: addressSummary(updated),
+          effectiveFrom: from,
+          reason,
+        },
+        user,
+        `Legajo ${employee.legajoInterno || employee.legajo}`,
+      );
+      await persistEmployeeBlock(updated, user, onSaved, "address");
+    } catch {
+      setError("No se pudo guardar. Verifica que el backend esté activo.");
+      return;
+    }
     setEditing(false);
     setShowHistory(true);
   };
@@ -310,21 +313,26 @@ export function AssignmentBlock({
     const nextSummary = isManager
       ? `${clean.length ? clean.join(", ") : "Sin asignar"} · Desde ${from}`
       : `${clean.length ? clean.join(", ") : "Sin asignar"} · ${roleDraft || "Sin rol"} · Desde ${from}`;
-    await recordBlockHistory(
-      {
-        employeeId: employee.id,
-        section: "RESPONSABLES_ASIGNACIONES",
-        block,
-        blockLabel: title,
-        oldValue: summary(),
-        newValue: nextSummary,
-        effectiveFrom: from,
-        reason,
-      },
-      user,
-      `Legajo ${employee.legajoInterno || employee.legajo}`,
-    );
-    await persistEmployeeBlock(updated, user, onSaved, "assignments");
+    try {
+      await recordBlockHistory(
+        {
+          employeeId: employee.id,
+          section: "RESPONSABLES_ASIGNACIONES",
+          block,
+          blockLabel: title,
+          oldValue: summary(),
+          newValue: nextSummary,
+          effectiveFrom: from,
+          reason,
+        },
+        user,
+        `Legajo ${employee.legajoInterno || employee.legajo}`,
+      );
+      await persistEmployeeBlock(updated, user, onSaved, "assignments");
+    } catch {
+      setError("No se pudo guardar. Verifica que el backend esté activo.");
+      return;
+    }
     setEditing(false);
     setShowHistory(true);
   };
@@ -428,21 +436,26 @@ export function TransportBlock({ employee, user, canEdit, onSaved }: EmployeeBlo
       transportRoute: "",
       transportNotes: notes,
     };
-    await recordBlockHistory(
-      {
-        employeeId: employee.id,
-        section: "TRANSPORTE",
-        block: "TRANSPORTE",
-        blockLabel: "Transporte",
-        oldValue: transportSummary(employee),
-        newValue: transportSummary(updated),
-        effectiveFrom: from,
-        reason,
-      },
-      user,
-      `Legajo ${employee.legajoInterno || employee.legajo}`,
-    );
-    await persistEmployeeBlock(updated, user, onSaved, "transport");
+    try {
+      await recordBlockHistory(
+        {
+          employeeId: employee.id,
+          section: "TRANSPORTE",
+          block: "TRANSPORTE",
+          blockLabel: "Transporte",
+          oldValue: transportSummary(employee),
+          newValue: transportSummary(updated),
+          effectiveFrom: from,
+          reason,
+        },
+        user,
+        `Legajo ${employee.legajoInterno || employee.legajo}`,
+      );
+      await persistEmployeeBlock(updated, user, onSaved, "transport");
+    } catch {
+      setError("No se pudo guardar. Verifica que el backend esté activo.");
+      return;
+    }
     setEditing(false);
     setShowHistory(true);
   };
@@ -517,21 +530,26 @@ export function HoursSpecialBlock({ employee, user, canEdit, onSaved }: Employee
     if (!from) return setError("La fecha desde es obligatoria.");
     if (!reason.trim()) return setError("El motivo del cambio es obligatorio.");
     const updated = { ...employee, enabledHours: hours };
-    await recordBlockHistory(
-      {
-        employeeId: employee.id,
-        section: "CONFIGURACION_HORARIA_LIQUIDACION",
-        block: "HORAS_ESPECIALES",
-        blockLabel: "Horas especiales habilitadas",
-        oldValue: hoursSummary(employee),
-        newValue: hoursSummary(updated),
-        effectiveFrom: from,
-        reason,
-      },
-      user,
-      `Legajo ${employee.legajoInterno || employee.legajo}`,
-    );
-    await persistEmployeeBlock(updated, user, onSaved, "hourConcepts");
+    try {
+      await recordBlockHistory(
+        {
+          employeeId: employee.id,
+          section: "CONFIGURACION_HORARIA_LIQUIDACION",
+          block: "HORAS_ESPECIALES",
+          blockLabel: "Horas especiales habilitadas",
+          oldValue: hoursSummary(employee),
+          newValue: hoursSummary(updated),
+          effectiveFrom: from,
+          reason,
+        },
+        user,
+        `Legajo ${employee.legajoInterno || employee.legajo}`,
+      );
+      await persistEmployeeBlock(updated, user, onSaved, "hourConcepts");
+    } catch {
+      setError("No se pudo guardar. Verifica que el backend esté activo.");
+      return;
+    }
     setEditing(false);
     setShowHistory(true);
   };
