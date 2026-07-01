@@ -4,8 +4,8 @@ const companies = ["Los O'Dwyer S.A.", "Brasita de Fuego", "Cría OD", "Particul
 
 const common = {
   nationality: "Argentina", phone: "02323 440000", province: "Buenos Aires", department: "Luján", zip: "6700", civilStatus: "Soltero/a",
-  agreement: "UATRE", healthInsurance: "OSPRERA", workday: "8 h", shift: "Mañana", settlementType: "Normal", transport: true, transportRoute: "Luján - La Sucho",
-  transportNotes: "", affectsSettlement: true, exportable: true, attendanceBonus: true, award: false, productiveGoals: false, humanGoals: false, settlementNotes: "",
+  agreement: "UATRE", healthInsurance: "OSPRERA", transport: true, transportRoute: "Luján - La Sucho",
+  transportNotes: "",
   directManagerFrom: "2023-03-01", directManagerStatus: "Activo", directManagerNotes: "", timeResponsibleRole: "Nivel 3 - Administrativo de Carga Horaria",
   timeResponsibleFrom: "2026-01-01", timeResponsibleStatus: "Activo", timeResponsibleNotes: "", mapLocation: "",
   addressNumber: "S/N", locationMap: { lat: null, lng: null, source: "MOCK" as const, label: "" },
@@ -109,4 +109,3 @@ export const mockDocuments: DocumentMock[] = [
   { id: "d4", employeeId: "e5", category: "Licencias", fileName: "licencia_profesional.pdf", uploadedAt: "10/06/2025", expiresAt: "15/06/2026", status: "Por vencer" },
   { id: "d5", employeeId: "e9", category: "Contrato", fileName: "contrato_natalia_castro.pdf", uploadedAt: "04/04/2022", status: "Vigente" },
 ];
-

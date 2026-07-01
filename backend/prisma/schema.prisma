@@ -101,12 +101,15 @@ model User {
   status       RecordStatus @default(ACTIVO)
   companyId    String?
   sectorId     String?
+  employeeId   String?      @unique
   createdAt    DateTime     @default(now())
   updatedAt    DateTime     @updatedAt
 
   company            Company?           @relation(fields: [companyId], references: [id])
   sector             Sector?            @relation(fields: [sectorId], references: [id])
+  employee           Employee?          @relation("EmployeeUserAccount", fields: [employeeId], references: [id])
   createdEmployees   Employee[]         @relation("EmployeeCreatedBy")
+  employeeAssignments EmployeeAssignment[]
   laborMovements     LaborMovement[]
   fieldHistory        EmployeeFieldHistory[]
   blockHistory        EmployeeBlockHistory[]
@@ -445,6 +448,9 @@ model Employee {
   firstName         String
   lastName          String
   birthDate         DateTime?
+  gender            String?
+  civilStatus       String?
+  nationality       String?
   email             String?
   phone             String?
   mobile            String?
@@ -478,6 +484,7 @@ model Employee {
   novelties      Novelty[]
   timeEntries    TimeEntry[]
   documents      EmployeeDocument[]
+  userAccount    User?                 @relation("EmployeeUserAccount")
 
   @@index([lastName, firstName])
   @@index([status])
@@ -553,11 +560,18 @@ model EmployeeAssignment {
   userId     String?
   personName String?
   type       String
+  role       String?
+  effectiveFrom DateTime?
+  effectiveTo   DateTime?
+  status     String?
+  notes      String?
   createdAt  DateTime @default(now())
 
   employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  user     User?    @relation(fields: [userId], references: [id])
 
   @@index([employeeId, type])
+  @@index([userId])
 }
 
 model HourConcept {

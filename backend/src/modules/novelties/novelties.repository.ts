@@ -36,6 +36,7 @@ function buildWhere(query: ListNoveltiesQuery, employeeAccessWhere: Prisma.Emplo
       ? {
           OR: [
             { employee: { legajo: { contains: search, mode: "insensitive" } } },
+            { employee: { cuil: { contains: search, mode: "insensitive" } } },
             { employee: { dni: { contains: search, mode: "insensitive" } } },
             { employee: { firstName: { contains: search, mode: "insensitive" } } },
             { employee: { lastName: { contains: search, mode: "insensitive" } } },

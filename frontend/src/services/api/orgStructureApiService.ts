@@ -88,6 +88,8 @@ type ApiOrgStructureResponse = {
   };
 };
 
+let catalogCache: Promise<OrgStructureCatalog> | null = null;
+
 function compactIds(values: Array<string | null | undefined>) {
   return Array.from(new Set(values.filter(Boolean))) as string[];
 }
@@ -165,34 +167,52 @@ function mapCostCenter(item: ApiCostCenter): OrgCostCenter {
   };
 }
 
+function mapCatalog(response: ApiOrgStructureResponse): OrgStructureCatalog {
+  return {
+    companies: response.data.companies.map(mapCompany),
+    businessUnits: response.data.businessUnits.map(mapBusinessUnit),
+    establishments: response.data.establishments.map(mapEstablishment),
+    areas: response.data.areas.map(mapArea),
+    sectors: response.data.sectors.map(mapSector),
+    costCenters: response.data.costCenters.map(mapCostCenter),
+  };
+}
+
+function clearCatalogCache() {
+  catalogCache = null;
+}
+
+async function writeAndRefresh<T>(request: Promise<T>) {
+  try {
+    return await request;
+  } finally {
+    clearCatalogCache();
+  }
+}
+
 export const orgStructureApiService = {
   async getCatalog(): Promise<OrgStructureCatalog> {
-    const response = await apiRequest<ApiOrgStructureResponse>("/org-structure");
-    return {
-      companies: response.data.companies.map(mapCompany),
-      businessUnits: response.data.businessUnits.map(mapBusinessUnit),
-      establishments: response.data.establishments.map(mapEstablishment),
-      areas: response.data.areas.map(mapArea),
-      sectors: response.data.sectors.map(mapSector),
-      costCenters: response.data.costCenters.map(mapCostCenter),
-    };
+    catalogCache ??= apiRequest<ApiOrgStructureResponse>("/org-structure").then(mapCatalog);
+    return catalogCache;
   },
 
-  createCompany: (item: OrgCompany) => apiRequest("/org-structure/companies", { method: "POST", body: { code: item.code, name: item.name, status: item.status } }),
-  updateCompany: (item: OrgCompany) => apiRequest(`/org-structure/companies/${item.id}`, { method: "PATCH", body: { code: item.code, name: item.name, status: item.status } }),
+  clearCache: clearCatalogCache,
 
-  createBusinessUnit: (item: OrgBusinessUnit) => apiRequest("/org-structure/business-units", { method: "POST", body: { code: item.code, name: item.name, status: item.status, companyIds: item.companyIds } }),
-  updateBusinessUnit: (item: OrgBusinessUnit) => apiRequest(`/org-structure/business-units/${item.id}`, { method: "PATCH", body: { code: item.code, name: item.name, status: item.status, companyIds: item.companyIds } }),
+  createCompany: (item: OrgCompany) => writeAndRefresh(apiRequest("/org-structure/companies", { method: "POST", body: { code: item.code, name: item.name, status: item.status } })),
+  updateCompany: (item: OrgCompany) => writeAndRefresh(apiRequest(`/org-structure/companies/${item.id}`, { method: "PATCH", body: { code: item.code, name: item.name, status: item.status } })),
 
-  createEstablishment: (item: OrgEstablishment) => apiRequest("/org-structure/establishments", { method: "POST", body: { code: item.code, name: item.name, status: item.status, companyIds: item.companyIds, businessUnitIds: item.businessUnitIds, province: item.province, department: item.department, city: item.locality, street: item.address } }),
-  updateEstablishment: (item: OrgEstablishment) => apiRequest(`/org-structure/establishments/${item.id}`, { method: "PATCH", body: { code: item.code, name: item.name, status: item.status, companyIds: item.companyIds, businessUnitIds: item.businessUnitIds, province: item.province, department: item.department, city: item.locality, street: item.address } }),
+  createBusinessUnit: (item: OrgBusinessUnit) => writeAndRefresh(apiRequest("/org-structure/business-units", { method: "POST", body: { code: item.code, name: item.name, status: item.status, companyIds: item.companyIds } })),
+  updateBusinessUnit: (item: OrgBusinessUnit) => writeAndRefresh(apiRequest(`/org-structure/business-units/${item.id}`, { method: "PATCH", body: { code: item.code, name: item.name, status: item.status, companyIds: item.companyIds } })),
 
-  createArea: (item: OrgArea) => apiRequest("/org-structure/areas", { method: "POST", body: { code: item.code, name: item.name, status: item.status, businessUnitIds: item.businessUnitIds, establishmentIds: item.establishmentIds } }),
-  updateArea: (item: OrgArea) => apiRequest(`/org-structure/areas/${item.id}`, { method: "PATCH", body: { code: item.code, name: item.name, status: item.status, businessUnitIds: item.businessUnitIds, establishmentIds: item.establishmentIds } }),
+  createEstablishment: (item: OrgEstablishment) => writeAndRefresh(apiRequest("/org-structure/establishments", { method: "POST", body: { code: item.code, name: item.name, status: item.status, companyIds: item.companyIds, businessUnitIds: item.businessUnitIds, province: item.province, department: item.department, city: item.locality, street: item.address } })),
+  updateEstablishment: (item: OrgEstablishment) => writeAndRefresh(apiRequest(`/org-structure/establishments/${item.id}`, { method: "PATCH", body: { code: item.code, name: item.name, status: item.status, companyIds: item.companyIds, businessUnitIds: item.businessUnitIds, province: item.province, department: item.department, city: item.locality, street: item.address } })),
 
-  createSector: (item: OrgSector) => apiRequest("/org-structure/sectors", { method: "POST", body: { code: item.code, name: item.name, status: item.status, areaIds: item.areaIds, establishmentIds: item.establishmentIds } }),
-  updateSector: (item: OrgSector) => apiRequest(`/org-structure/sectors/${item.id}`, { method: "PATCH", body: { code: item.code, name: item.name, status: item.status, areaIds: item.areaIds, establishmentIds: item.establishmentIds } }),
+  createArea: (item: OrgArea) => writeAndRefresh(apiRequest("/org-structure/areas", { method: "POST", body: { code: item.code, name: item.name, status: item.status, businessUnitIds: item.businessUnitIds, establishmentIds: item.establishmentIds } })),
+  updateArea: (item: OrgArea) => writeAndRefresh(apiRequest(`/org-structure/areas/${item.id}`, { method: "PATCH", body: { code: item.code, name: item.name, status: item.status, businessUnitIds: item.businessUnitIds, establishmentIds: item.establishmentIds } })),
 
-  createCostCenter: (item: OrgCostCenter) => apiRequest("/org-structure/cost-centers", { method: "POST", body: { code: item.code, name: item.name, status: item.status, companyIds: item.companyIds, businessUnitIds: item.businessUnitIds, establishmentIds: item.establishmentIds, areaIds: item.areaIds, sectorIds: item.sectorIds } }),
-  updateCostCenter: (item: OrgCostCenter) => apiRequest(`/org-structure/cost-centers/${item.id}`, { method: "PATCH", body: { code: item.code, name: item.name, status: item.status, companyIds: item.companyIds, businessUnitIds: item.businessUnitIds, establishmentIds: item.establishmentIds, areaIds: item.areaIds, sectorIds: item.sectorIds } }),
+  createSector: (item: OrgSector) => writeAndRefresh(apiRequest("/org-structure/sectors", { method: "POST", body: { code: item.code, name: item.name, status: item.status, areaIds: item.areaIds, establishmentIds: item.establishmentIds } })),
+  updateSector: (item: OrgSector) => writeAndRefresh(apiRequest(`/org-structure/sectors/${item.id}`, { method: "PATCH", body: { code: item.code, name: item.name, status: item.status, areaIds: item.areaIds, establishmentIds: item.establishmentIds } })),
+
+  createCostCenter: (item: OrgCostCenter) => writeAndRefresh(apiRequest("/org-structure/cost-centers", { method: "POST", body: { code: item.code, name: item.name, status: item.status, companyIds: item.companyIds, businessUnitIds: item.businessUnitIds, establishmentIds: item.establishmentIds, areaIds: item.areaIds, sectorIds: item.sectorIds } })),
+  updateCostCenter: (item: OrgCostCenter) => writeAndRefresh(apiRequest(`/org-structure/cost-centers/${item.id}`, { method: "PATCH", body: { code: item.code, name: item.name, status: item.status, companyIds: item.companyIds, businessUnitIds: item.businessUnitIds, establishmentIds: item.establishmentIds, areaIds: item.areaIds, sectorIds: item.sectorIds } })),
 };

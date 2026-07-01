@@ -52,6 +52,8 @@ type ApiAssignedEmployee = {
 
 type ApiAssignedEmployeesResponse = { data: ApiAssignedEmployee[] };
 
+const listCache = new Map<string, Promise<Position[]>>();
+
 const asStringArray = (value: unknown): string[] => Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 const asArray = <T>(value: unknown): T[] => Array.isArray(value) ? value as T[] : [];
 
@@ -162,8 +164,12 @@ function nextCode(items: Position[]) {
 
 export const positionApiService = {
   async getAll(filters?: Partial<PositionFilters>) {
-    const response = await apiRequest<ApiListResponse>(`/positions${toQuery(filters)}`);
-    return response.data.map(mapFromApi);
+    const query = toQuery(filters);
+    const key = `/positions${query}`;
+    if (!listCache.has(key)) {
+      listCache.set(key, apiRequest<ApiListResponse>(key).then((response) => response.data.map(mapFromApi)));
+    }
+    return listCache.get(key)!;
   },
   async getById(id: string) {
     const response = await apiRequest<ApiItemResponse>(`/positions/${id}`);
@@ -175,14 +181,17 @@ export const positionApiService = {
   },
   async create(position: Position) {
     const response = await apiRequest<ApiItemResponse>("/positions", { method: "POST", body: mapToApi(position) });
+    listCache.clear();
     return response.data ? mapFromApi(response.data) : undefined;
   },
   async update(position: Position) {
     const response = await apiRequest<ApiItemResponse>(`/positions/${position.id}`, { method: "PATCH", body: mapToApi(position) });
+    listCache.clear();
     return response.data ? mapFromApi(response.data) : undefined;
   },
   async removeOrHide(id: string) {
     const response = await apiRequest<ApiItemResponse>(`/positions/${id}`, { method: "DELETE" });
+    listCache.clear();
     return response.data ? mapFromApi(response.data) : undefined;
   },
   getNextCode: nextCode,

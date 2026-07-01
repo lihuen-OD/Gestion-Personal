@@ -2,58 +2,73 @@ import { Link } from "react-router-dom";
 import { AlertTriangle, Archive, CheckCircle2, Clock3, Eye, Plus, RefreshCcw, Search, SlidersHorizontal, Users } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useAuth } from "../context/AuthContext";
-import { employeeApiService } from "../services/api/employeeApiService";
+import { employeeApiService, type EmployeeSummary } from "../services/api/employeeApiService";
 import { orgStructureApiService } from "../services/api/orgStructureApiService";
-import { timeEntryApiService } from "../services/api/timeEntryApiService";
-import { calculateEmployeeStatus } from "../services/employeeStatusService";
 import type { Employee } from "../types";
 import { displayLegajo, employeeCompanies } from "../utils/employee";
 import { roleLevel } from "../utils/roles";
 import { statusClass } from "../utils/status";
+import { useDebouncedValue } from "../utils/useDebouncedValue";
 import { OverflowCell } from "../components/ui/OverflowCell";
 import { TableShell } from "../components/ui/TableShell";
 import { PageHeader } from "../components/ui/PageHeader";
 import { Section } from "../components/ui/Section";
 import { StatCard } from "../components/ui/StatCard";
 
-const pendingTimeStatuses = new Set(["Pendiente", "En revision", "En revisión"]);
+const pageSize = 25;
+const emptySummary: EmployeeSummary = {
+  total: 0,
+  active: 0,
+  inactive: 0,
+  missingTimeResponsible: 0,
+  pendingTimeLoads: 0,
+};
 
 export function EmployeesPage() {
   const { user } = useAuth();
   const level = roleLevel(user!.role);
   const [search, setSearch] = useState("");
+  const debouncedSearch = useDebouncedValue(search);
   const [company, setCompany] = useState("");
+  const [page, setPage] = useState(1);
   const [refresh, setRefresh] = useState(0);
   const [syncing, setSyncing] = useState(false);
   const [syncMessage, setSyncMessage] = useState("");
   const [all, setAll] = useState<Employee[]>([]);
-  const [structureCompanies, setStructureCompanies] = useState<string[]>([]);
-  const [pendingTimeLoads, setPendingTimeLoads] = useState(0);
+  const [structureCompanies, setStructureCompanies] = useState<Array<{ id: string; name: string }>>([]);
+  const [summary, setSummary] = useState<EmployeeSummary>(emptySummary);
+  const [meta, setMeta] = useState({ total: 0, page: 1, pageSize, hasMore: false });
+
+  useEffect(() => {
+    let mounted = true;
+    const companyId = structureCompanies.find((item) => item.name === company)?.id;
+    employeeApiService
+      .list({ search: debouncedSearch, companyId, page, take: pageSize })
+      .then((result) => {
+        if (!mounted) return;
+        setAll(result.items);
+        setMeta(result.meta);
+      })
+      .catch(() => {
+        if (!mounted) return;
+        setAll([]);
+        setMeta({ total: 0, page, pageSize, hasMore: false });
+      });
+    return () => {
+      mounted = false;
+    };
+  }, [company, debouncedSearch, page, refresh, structureCompanies]);
 
   useEffect(() => {
     let mounted = true;
     employeeApiService
-      .getAll()
-      .then((items) => {
-        if (mounted) setAll(items);
-      })
-      .catch(() => {});
-    return () => {
-      mounted = false;
-    };
-  }, [refresh]);
-
-  useEffect(() => {
-    let mounted = true;
-    timeEntryApiService
-      .getAll({ take: 1000 })
-      .then((entries) => {
-        if (!mounted) return;
-        setPendingTimeLoads(new Set(entries.filter((entry) => pendingTimeStatuses.has(entry.status)).map((entry) => entry.employeeId)).size);
+      .getSummary()
+      .then((result) => {
+        if (mounted) setSummary(result);
       })
       .catch(() => {
         if (!mounted) return;
-        setPendingTimeLoads(0);
+        setSummary(emptySummary);
       });
     return () => {
       mounted = false;
@@ -65,7 +80,7 @@ export function EmployeesPage() {
     orgStructureApiService
       .getCatalog()
       .then((catalog) => {
-        if (mounted) setStructureCompanies(catalog.companies.filter((item) => item.status === "ACTIVO").map((item) => item.name));
+        if (mounted) setStructureCompanies(catalog.companies.filter((item) => item.status === "ACTIVO").map((item) => ({ id: item.id, name: item.name })));
       })
       .catch(() => {});
     return () => {
@@ -73,15 +88,9 @@ export function EmployeesPage() {
     };
   }, []);
 
-  const companyOptions = Array.from(new Set([...structureCompanies, ...all.flatMap((employee) => employeeCompanies(employee))])).filter(Boolean);
-  const employees = all.filter(
-    (employee) =>
-      (level !== 2 || employee.sector === user!.sector) &&
-      (!company || employeeCompanies(employee).includes(company)) &&
-      `${displayLegajo(employee)} ${employee.legajoFinnegans} ${employee.dni} ${employee.cuil} ${employee.lastName} ${employee.firstName}`
-        .toLowerCase()
-        .includes(search.toLowerCase()),
-  );
+  const companyOptions = Array.from(new Set([...structureCompanies.map((item) => item.name), ...all.flatMap((employee) => employeeCompanies(employee))])).filter(Boolean);
+  const employees = all;
+  const totalPages = Math.max(1, Math.ceil(meta.total / meta.pageSize));
 
   const syncLaborStatuses = async () => {
     setSyncing(true);
@@ -119,31 +128,16 @@ export function EmployeesPage() {
       {syncMessage ? <div className="info-note compact">{syncMessage}</div> : null}
 
       <div className="stat-grid five">
-        <StatCard label="Total legajos" value={all.length} icon={Users} />
-        <StatCard
-          label="Activos"
-          value={all.filter((employee) => calculateEmployeeStatus(employee) === "Activo").length}
-          icon={CheckCircle2}
-          tone="green"
-        />
-        <StatCard
-          label="Inactivos"
-          value={all.filter((employee) => calculateEmployeeStatus(employee) === "Inactivo").length}
-          icon={Archive}
-          tone="red"
-        />
-        <StatCard
-          label="Sin responsable"
-          value={all.filter((employee) => !employee.timeResponsible).length}
-          icon={AlertTriangle}
-          tone="orange"
-        />
-        <StatCard label="Carga pendiente" value={pendingTimeLoads} icon={Clock3} tone="purple" />
+        <StatCard label="Total legajos" value={summary.total} icon={Users} />
+        <StatCard label="Activos" value={summary.active} icon={CheckCircle2} tone="green" />
+        <StatCard label="Inactivos" value={summary.inactive} icon={Archive} tone="red" />
+        <StatCard label="Sin responsable" value={summary.missingTimeResponsible} icon={AlertTriangle} tone="orange" />
+        <StatCard label="Carga pendiente" value={summary.pendingTimeLoads} icon={Clock3} tone="purple" />
       </div>
 
       <Section
         title="Listado de legajos"
-        subtitle={`${employees.length} resultados`}
+        subtitle={`${meta.total} resultados`}
         action={
           <button className="button subtle">
             <SlidersHorizontal size={16} /> Mas filtros
@@ -156,10 +150,19 @@ export function EmployeesPage() {
             <input
               placeholder="Buscar por legajo, DNI, CUIL, apellido o nombre"
               value={search}
-              onChange={(event) => setSearch(event.target.value)}
+              onChange={(event) => {
+                setSearch(event.target.value);
+                setPage(1);
+              }}
             />
           </label>
-          <select value={company} onChange={(event) => setCompany(event.target.value)}>
+          <select
+            value={company}
+            onChange={(event) => {
+              setCompany(event.target.value);
+              setPage(1);
+            }}
+          >
             <option value="">Todas las empresas</option>
             {companyOptions.map((item) => (
               <option key={item}>{item}</option>
@@ -181,39 +184,46 @@ export function EmployeesPage() {
               </tr>
             </thead>
             <tbody>
-              {employees.map((employee) => {
-                const laborStatus = calculateEmployeeStatus(employee);
-                return (
-                  <tr key={employee.id}>
-                    <td>
-                      <b>{displayLegajo(employee)}</b>
-                    </td>
-                    <td>{employee.cuil}</td>
-                    <td>{employee.lastName}</td>
-                    <td>{employee.firstName}</td>
-                    <td>
-                      <OverflowCell value={employee.costCenter} />
-                    </td>
-                    <td>
-                      <span className={statusClass(laborStatus)}>{laborStatus}</span>
-                    </td>
-                    <td>
-                      <Link
-                        className="table-link table-icon-action"
-                        title="Ver detalle"
-                        aria-label="Ver detalle"
-                        to={`/legajos/${employee.id}`}
-                      >
-                        <Eye size={14} />
-                        <span>Ver detalle</span>
-                      </Link>
-                    </td>
-                  </tr>
-                );
-              })}
+              {employees.map((employee) => (
+                <tr key={employee.id}>
+                  <td>
+                    <b>{displayLegajo(employee)}</b>
+                  </td>
+                  <td>{employee.cuil}</td>
+                  <td>{employee.lastName}</td>
+                  <td>{employee.firstName}</td>
+                  <td>
+                    <OverflowCell value={employee.costCenter} />
+                  </td>
+                  <td>
+                    <span className={statusClass(employee.status)}>{employee.status}</span>
+                  </td>
+                  <td>
+                    <Link
+                      className="table-link table-icon-action"
+                      title="Ver detalle"
+                      aria-label="Ver detalle"
+                      to={`/legajos/${employee.id}`}
+                    >
+                      <Eye size={14} />
+                      <span>Ver detalle</span>
+                    </Link>
+                  </td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </TableShell>
+
+        <div className="form-actions inline-actions">
+          <button className="button subtle" type="button" disabled={page <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))}>
+            Anterior
+          </button>
+          <span className="muted small">Pagina {meta.page} de {totalPages}</span>
+          <button className="button subtle" type="button" disabled={!meta.hasMore} onClick={() => setPage((value) => value + 1)}>
+            Siguiente
+          </button>
+        </div>
       </Section>
     </>
   );

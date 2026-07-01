@@ -48,6 +48,8 @@ type ApiNovelty = {
 };
 
 type ApiListResponse = { data: ApiNovelty[] };
+type ApiListMeta = { total: number; page: number; pageSize: number; hasMore: boolean };
+type ApiPaginatedListResponse = ApiListResponse & { meta: ApiListMeta };
 type ApiCreateResponse = { data: ApiNovelty[] };
 type ApiItemResponse = { data: ApiNovelty };
 
@@ -118,6 +120,8 @@ function mapFromApi(item: ApiNovelty): Novelty {
     affectsSettlement: item.noveltyType.exportsToFinnegans,
     status: toFrontendStatus(item.status),
     createdBy: "Backend",
+    employeeLegajo: item.employee?.legajo,
+    employeeName: item.employee ? `${item.employee.lastName}, ${item.employee.firstName}` : undefined,
     documentationFileName: item.documents?.[0]?.fileName,
     documentationNotes: item.observation || undefined,
     origin: item.noveltyType.origin,
@@ -137,9 +141,18 @@ function mapFromApi(item: ApiNovelty): Novelty {
   };
 }
 
-function toQuery(filters?: { employeeId?: string; search?: string; exportable?: boolean }) {
+export type NoveltyListFilters = {
+  employeeId?: string;
+  search?: string;
+  exportable?: boolean;
+  page?: number;
+  take?: number;
+};
+
+function toQuery(filters?: NoveltyListFilters) {
   const params = new URLSearchParams();
-  params.set("take", "300");
+  params.set("page", String(filters?.page || 1));
+  params.set("take", String(filters?.take || 25));
   if (filters?.employeeId) params.set("employeeId", filters.employeeId);
   if (filters?.search?.trim()) params.set("search", filters.search.trim());
   if (filters?.exportable !== undefined) params.set("exportable", String(filters.exportable));
@@ -147,9 +160,17 @@ function toQuery(filters?: { employeeId?: string; search?: string; exportable?: 
 }
 
 export const noveltyApiService = {
-  async getAll(filters?: { employeeId?: string; search?: string; exportable?: boolean }) {
-    const response = await apiRequest<ApiListResponse>(`/novelties${toQuery(filters)}`);
-    return response.data.map(mapFromApi);
+  async list(filters?: NoveltyListFilters) {
+    const response = await apiRequest<ApiPaginatedListResponse>(`/novelties${toQuery(filters)}`);
+    return {
+      items: response.data.map(mapFromApi),
+      meta: response.meta,
+    };
+  },
+
+  async getAll(filters?: NoveltyListFilters) {
+    const response = await this.list({ ...filters, take: filters?.take || 100 });
+    return response.items;
   },
 
   async create(input: CreateNoveltyApiInput) {

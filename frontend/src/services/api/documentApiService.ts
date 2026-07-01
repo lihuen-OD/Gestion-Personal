@@ -34,7 +34,17 @@ type ApiEmployeeDetail = {
 };
 
 type ApiEmployeeDetailResponse = { data: ApiEmployeeDetail };
-type ApiDocumentsListResponse = { data: ApiEmployeeDocument[] };
+type ApiListMeta = { total: number; page: number; pageSize: number; hasMore: boolean };
+type ApiDocumentsListResponse = { data: ApiEmployeeDocument[]; meta: ApiListMeta };
+
+export type DocumentListFilters = {
+  page?: number;
+  take?: number;
+  search?: string;
+  employeeId?: string;
+  categoryId?: string;
+  status?: ApiDocumentStatus;
+};
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -72,6 +82,8 @@ function mapFromApi(item: ApiEmployeeDocument): DocumentMock {
     expiresAt: dateOnly(item.expiresAt) || undefined,
     status: toFrontendStatus(item.status),
     notes: item.notes || undefined,
+    employeeLegajo: item.employee?.legajo,
+    employeeName: item.employee ? `${item.employee.lastName}, ${item.employee.firstName}` : undefined,
   };
 }
 
@@ -83,9 +95,24 @@ async function getEmployeeDocuments(employeeId: string) {
 export const documentApiService = {
   getByEmployee: getEmployeeDocuments,
 
+  async list(filters: DocumentListFilters = {}) {
+    const params = new URLSearchParams();
+    params.set("page", String(filters.page || 1));
+    params.set("take", String(filters.take || 25));
+    if (filters.search?.trim()) params.set("search", filters.search.trim());
+    if (filters.employeeId) params.set("employeeId", filters.employeeId);
+    if (filters.categoryId) params.set("categoryId", filters.categoryId);
+    if (filters.status) params.set("status", filters.status);
+    const response = await apiRequest<ApiDocumentsListResponse>(`/documents?${params.toString()}`);
+    return {
+      items: response.data.map(mapFromApi),
+      meta: response.meta,
+    };
+  },
+
   async getAll() {
-    const response = await apiRequest<ApiDocumentsListResponse>("/documents?take=500");
-    return response.data.map(mapFromApi);
+    const response = await this.list({ take: 100 });
+    return response.items;
   },
 
   async create(input: {

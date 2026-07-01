@@ -5,7 +5,15 @@ import { AppError } from "../../shared/errors/AppError";
 import { employeeAccessWhere } from "../employees/employeeAccess";
 import { roles } from "../../shared/security/roles";
 import { timeEntriesRepository } from "./timeEntries.repository";
-import type { CreateTimeEntryInput, ListTimeEntriesQuery, RejectTimeEntryInput, TimeEntriesExportQuery, UpdateTimeEntryInput } from "./timeEntries.schemas";
+import type {
+  CreateTimeEntryInput,
+  ListTimeEntriesQuery,
+  RejectTimeEntryInput,
+  TimeEntriesExportQuery,
+  TimeEntriesPeriodEmployeesQuery,
+  TimeEntriesSummaryQuery,
+  UpdateTimeEntryInput,
+} from "./timeEntries.schemas";
 
 export type TimeEntriesExportRow = {
   CUIL: string;
@@ -97,6 +105,10 @@ function escapeCsv(value: string) {
   return value;
 }
 
+function currentPeriod() {
+  return new Date().toISOString().slice(0, 7);
+}
+
 export function timeEntriesExportToCsv(rows: TimeEntriesExportRow[]) {
   const headers: (keyof TimeEntriesExportRow)[] = [
     "CUIL",
@@ -123,6 +135,23 @@ export const timeEntriesService = {
         page: query.page,
         pageSize: query.take,
         hasMore: query.page * query.take < total,
+      },
+    };
+  },
+
+  summary(query: TimeEntriesSummaryQuery, user: Express.AuthUser) {
+    return timeEntriesRepository.summary(query.period || currentPeriod(), employeeAccessWhere(user));
+  },
+
+  async periodEmployees(query: TimeEntriesPeriodEmployeesQuery, user: Express.AuthUser) {
+    const result = await timeEntriesRepository.findPeriodEmployees(query, employeeAccessWhere(user));
+    return {
+      items: result.items,
+      meta: {
+        total: result.total,
+        page: query.page,
+        pageSize: query.take,
+        hasMore: query.page * query.take < result.total,
       },
     };
   },

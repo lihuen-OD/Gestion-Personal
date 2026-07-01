@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Plus } from "lucide-react";
+import { Plus, Search } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { employeeApiService } from "../services/api/employeeApiService";
 import { noveltyApiService } from "../services/api/noveltyApiService";
@@ -8,36 +8,59 @@ import { NoveltyModal } from "../components/novelties/NoveltyModal";
 import { NoveltyTable } from "../components/novelties/NoveltyTable";
 import { PageHeader } from "../components/ui/PageHeader";
 import { Section } from "../components/ui/Section";
+import { useDebouncedValue } from "../utils/useDebouncedValue";
+
+const pageSize = 25;
 
 export function NoveltiesPage() {
   const { user } = useAuth();
   const [open, setOpen] = useState(false);
   const [refresh, setRefresh] = useState(0);
+  const [page, setPage] = useState(1);
+  const [search, setSearch] = useState("");
+  const debouncedSearch = useDebouncedValue(search);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [novelties, setNovelties] = useState<Novelty[]>([]);
+  const [meta, setMeta] = useState({ total: 0, page: 1, pageSize, hasMore: false });
+  const [loadingEmployees, setLoadingEmployees] = useState(false);
   const [loadError, setLoadError] = useState("");
 
   useEffect(() => {
     let mounted = true;
     setLoadError("");
-    Promise.all([employeeApiService.getAll(), noveltyApiService.getAll()])
-      .then(([apiEmployees, apiNovelties]) => {
+    noveltyApiService
+      .list({ page, take: pageSize, search: debouncedSearch })
+      .then((result) => {
         if (!mounted) return;
-        setEmployees(apiEmployees);
-        const ids = new Set(apiEmployees.map((employee) => employee.id));
-        setNovelties(apiNovelties.filter((item) => ids.has(item.employeeId)));
+        setNovelties(result.items);
+        setMeta(result.meta);
       })
       .catch(() => {
         if (mounted) {
-          setEmployees([]);
           setNovelties([]);
+          setMeta({ total: 0, page, pageSize, hasMore: false });
           setLoadError("No se pudieron cargar novedades desde backend. Verifica que la API este levantada y que existan datos en la base.");
         }
       });
     return () => {
       mounted = false;
     };
-  }, [refresh, user]);
+  }, [debouncedSearch, page, refresh, user]);
+
+  const openCreate = async () => {
+    setLoadError("");
+    setLoadingEmployees(true);
+    try {
+      if (!employees.length) {
+        setEmployees(await employeeApiService.getAll());
+      }
+      setOpen(true);
+    } catch (error) {
+      setLoadError("No se pudieron cargar los legajos para crear novedades.");
+    } finally {
+      setLoadingEmployees(false);
+    }
+  };
 
   return (
     <>
@@ -46,8 +69,8 @@ export function NoveltiesPage() {
         title="Novedades"
         description="Registro centralizado de ausencias, licencias y novedades horarias."
         action={
-          <button className="button primary" onClick={() => setOpen(true)}>
-            <Plus size={16} /> Nueva novedad
+          <button className="button primary" onClick={openCreate} disabled={loadingEmployees}>
+            <Plus size={16} /> {loadingEmployees ? "Cargando..." : "Nueva novedad"}
           </button>
         }
       />
@@ -56,14 +79,36 @@ export function NoveltiesPage() {
 
       <Section
         title="Novedades registradas"
-        subtitle={`${novelties.length} registros visibles según tu perfil`}
+        subtitle={`${meta.total} registros visibles según tu perfil`}
       >
+        <div className="filters">
+          <label className="search-field">
+            <Search size={17} />
+            <input
+              placeholder="Buscar por legajo, DNI, empleado o tipo de novedad"
+              value={search}
+              onChange={(event) => {
+                setSearch(event.target.value);
+                setPage(1);
+              }}
+            />
+          </label>
+        </div>
         <NoveltyTable
           rows={novelties}
           employees={employees}
           currentUser={user!}
           onChanged={() => setRefresh((value) => value + 1)}
         />
+        <div className="form-actions inline-actions">
+          <button className="button subtle" type="button" disabled={page <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))}>
+            Anterior
+          </button>
+          <span className="muted small">Pagina {meta.page} de {Math.max(1, Math.ceil(meta.total / meta.pageSize))}</span>
+          <button className="button subtle" type="button" disabled={!meta.hasMore} onClick={() => setPage((value) => value + 1)}>
+            Siguiente
+          </button>
+        </div>
       </Section>
 
       {open ? (

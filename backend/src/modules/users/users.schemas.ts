@@ -19,6 +19,7 @@ export const createUserSchema = z.object({
   status: statusSchema.default("ACTIVO"),
   companyId: z.string().uuid().optional().nullable(),
   sectorId: z.string().uuid().optional().nullable(),
+  employeeId: z.string().uuid().optional().nullable(),
 });
 
 export const updateUserSchema = z.object({
@@ -28,6 +29,7 @@ export const updateUserSchema = z.object({
   status: statusSchema.optional(),
   companyId: z.string().uuid().optional().nullable(),
   sectorId: z.string().uuid().optional().nullable(),
+  employeeId: z.string().uuid().optional().nullable(),
 });
 
 export const resetPasswordSchema = z.object({

@@ -32,8 +32,12 @@ function coordinatesFromGoogleMapsUrl(url: string) {
   if (exact) return { lat: Number(exact[1]), lng: Number(exact[2]) };
   const viewport = decoded.match(/@(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?),/);
   if (viewport) return { lat: Number(viewport[1]), lng: Number(viewport[2]) };
-  const query = decoded.match(/[?&]query=(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/);
+  const query = decoded.match(/[?&](?:query|q|ll|center|daddr|saddr)=(-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)/);
   if (query) return { lat: Number(query[1]), lng: Number(query[2]) };
+  const place = decoded.match(/\/place\/(-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)(?:[/?]|$)/);
+  if (place) return { lat: Number(place[1]), lng: Number(place[2]) };
+  const plain = decoded.match(/^\s*(-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)\s*$/);
+  if (plain) return { lat: Number(plain[1]), lng: Number(plain[2]) };
   return null;
 }
 
@@ -69,7 +73,7 @@ export function LocationMapPicker(props: LocationMapPickerProps) {
 
   const applyGoogleMapsUrl = () => {
     const coordinates = coordinatesFromGoogleMapsUrl(mapsUrl);
-    if (!coordinates) return setMapsUrlError("No pude leer coordenadas de esa URL. Pegá el link completo de Google Maps.");
+    if (!coordinates) return setMapsUrlError("No pude leer coordenadas de esa URL. Pegá el link completo de Google Maps o las coordenadas lat,lng.");
     setMapsUrlError("");
     setPoint(coordinates.lat, coordinates.lng, `${description} · Google Maps`);
   };

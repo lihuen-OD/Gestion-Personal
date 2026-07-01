@@ -65,7 +65,7 @@ export function LaborMovementPanel({
   return (
     <Section
       title="Alta / Baja laboral"
-      subtitle="Movimientos laborales que calculan el estado del colaborador"
+      subtitle={`Movimientos laborales registrados solo para ${employee.firstName} ${employee.lastName}`}
       action={
         canEdit ? (
           <button type="button" className="button primary" onClick={() => setOpen(true)}>
@@ -83,7 +83,7 @@ export function LaborMovementPanel({
                 <th>Fecha desde</th>
                 <th>Motivo</th>
                 <th>Observación</th>
-                <th>Usuario</th>
+                <th>Registrado por</th>
                 <th>Fecha de registro</th>
                 <th>Estado</th>
               </tr>
@@ -117,8 +117,7 @@ export function LaborMovementPanel({
         {!(employee.laborMovements || []).length ? (
           <EmptyState text="No hay movimientos laborales registrados." />
         ) : null}
-        {employee.status === "Inactivo" &&
-        !(employee.laborMovements || []).some((item) => item.type === "BAJA") ? (
+        {employee.status === "Inactivo" && !(employee.laborMovements || []).length ? (
           <p className="soft-alert">
             Este legajo figura como inactivo en datos anteriores, pero no tiene movimiento de baja
             registrado.

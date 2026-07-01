@@ -1,4 +1,5 @@
 import { apiRequest } from "./apiClient";
+import { mapEmployeeFromApi } from "./employeeApiService";
 import { hourConceptApiService } from "./hourConceptApiService";
 import type { Employee, TimeEntry, TimeStatus, User } from "../../types";
 import type { HoursExportRow } from "../../utils/hoursExport";
@@ -40,8 +41,28 @@ type ApiTimeEntry = {
   };
 };
 
+type ApiEmployeePeriodRow = {
+  employee: Parameters<typeof mapEmployeeFromApi>[0];
+  summary: {
+    total: number;
+    status: ApiApprovalStatus;
+  };
+};
+
 type ApiListResponse = { data: ApiTimeEntry[] };
 type ApiItemResponse = { data: ApiTimeEntry };
+type ApiListMeta = { total: number; page: number; pageSize: number; hasMore: boolean };
+type ApiEmployeePeriodRowsResponse = { data: ApiEmployeePeriodRow[]; meta: ApiListMeta };
+type ApiSummaryResponse = {
+  data: {
+    activeEmployees: number;
+    employeesWithEntries: number;
+    pendingEmployees: number;
+    reviewEmployees: number;
+    countableHours: number;
+    coverage: number;
+  };
+};
 type ApiExportResponse = {
   data: {
     total: number;
@@ -120,6 +141,8 @@ function mapFromApi(item: ApiTimeEntry): TimeEntry {
     updatedBy: item.updatedByUserId || undefined,
     conceptId: item.hourConceptId,
     isSpecial: item.hourConcept?.kind !== "NORMAL",
+    employeeLegajo: item.employee?.legajo,
+    employeeName: item.employee ? `${item.employee.lastName}, ${item.employee.firstName}` : undefined,
   };
 }
 
@@ -169,19 +192,56 @@ function toExportRow(row: ApiExportResponse["data"]["rows"][number]): HoursExpor
 }
 
 export const timeEntryApiService = {
-  async getAll(filters: { period?: string; employeeId?: string; status?: TimeStatus; take?: number } = {}) {
+  async list(filters: { period?: string; employeeId?: string; status?: TimeStatus; search?: string; costCenterId?: string; page?: number; take?: number } = {}) {
     const params = new URLSearchParams();
-    params.set("take", String(filters.take || 500));
+    params.set("page", String(filters.page || 1));
+    params.set("take", String(filters.take || 25));
     if (filters.period) params.set("period", filters.period);
     if (filters.employeeId) params.set("employeeId", filters.employeeId);
     if (filters.status && statusToApi[filters.status]) params.set("status", statusToApi[filters.status]!);
+    if (filters.search?.trim()) params.set("search", filters.search.trim());
+    if (filters.costCenterId) params.set("costCenterId", filters.costCenterId);
     const query = params.toString();
-    const response = await apiRequest<ApiListResponse>(`/time-entries${query ? `?${query}` : ""}`);
-    return response.data.map(mapFromApi);
+    const response = await apiRequest<ApiListResponse & { meta: ApiListMeta }>(`/time-entries${query ? `?${query}` : ""}`);
+    return {
+      items: response.data.map(mapFromApi),
+      meta: response.meta,
+    };
+  },
+
+  async getAll(filters: { period?: string; employeeId?: string; status?: TimeStatus; take?: number } = {}) {
+    const response = await this.list({ ...filters, take: filters.take || 500 });
+    return response.items;
   },
 
   getByPeriod(period: string) {
     return this.getAll({ period });
+  },
+
+  async getSummary(period: string) {
+    const params = new URLSearchParams({ period });
+    const response = await apiRequest<ApiSummaryResponse>(`/time-entries/summary?${params.toString()}`);
+    return response.data;
+  },
+
+  async getPeriodEmployees(filters: { period: string; search?: string; costCenterId?: string; page?: number; take?: number }) {
+    const params = new URLSearchParams();
+    params.set("period", filters.period);
+    params.set("page", String(filters.page || 1));
+    params.set("take", String(filters.take || 25));
+    if (filters.search?.trim()) params.set("search", filters.search.trim());
+    if (filters.costCenterId) params.set("costCenterId", filters.costCenterId);
+    const response = await apiRequest<ApiEmployeePeriodRowsResponse>(`/time-entries/period-employees?${params.toString()}`);
+    return {
+      items: response.data.map((row) => ({
+        employee: mapEmployeeFromApi(row.employee),
+        summary: {
+          total: row.summary.total,
+          status: statusFromApi[row.summary.status] || "Pendiente",
+        },
+      })),
+      meta: response.meta,
+    };
   },
 
   getByEmployee(employeeId: string, period: string) {

@@ -53,6 +53,8 @@ type ApiNoveltyType = {
 type ApiListResponse = { data: ApiNoveltyType[] };
 type ApiItemResponse = { data: ApiNoveltyType };
 
+const listCache = new Map<string, Promise<NoveltyType[]>>();
+
 const fallbackApprovalRoles: Role[] = ["Nivel 1 - RRHH"];
 const fallbackAllowedLoadRoles: Role[] = ["Nivel 1 - RRHH", "Nivel 2 - Supervisión / Gestión", "Nivel 3 - Administrativo de Carga Horaria"];
 const validRoles: Role[] = ["Nivel 1 - RRHH", "Nivel 2 - Supervisión / Gestión", "Nivel 3 - Administrativo de Carga Horaria"];
@@ -170,8 +172,12 @@ function nextCode(items: NoveltyType[]) {
 
 export const noveltyTypeApiService = {
   async getAll(filters?: Partial<NoveltyTypeFilters>) {
-    const response = await apiRequest<ApiListResponse>(`/novelty-types${toQuery(filters)}`);
-    return response.data.map(mapFromApi);
+    const query = toQuery(filters);
+    const key = `/novelty-types${query}`;
+    if (!listCache.has(key)) {
+      listCache.set(key, apiRequest<ApiListResponse>(key).then((response) => response.data.map(mapFromApi)));
+    }
+    return listCache.get(key)!;
   },
 
   async getById(id: string) {
@@ -184,6 +190,7 @@ export const noveltyTypeApiService = {
       method: "POST",
       body: mapToApi(item),
     });
+    listCache.clear();
     return mapFromApi(response.data);
   },
 
@@ -192,6 +199,7 @@ export const noveltyTypeApiService = {
       method: "PATCH",
       body: mapToApi(item),
     });
+    listCache.clear();
     return mapFromApi(response.data);
   },
 

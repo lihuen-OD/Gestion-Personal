@@ -125,7 +125,13 @@ function bufferFromBase64(value?: string | null) {
 async function ensureUniqueEmployee(input: CreateEmployeeInput) {
   const existing = await employeesRepository.findByUniqueFields(input);
   if (!existing) return;
-  throw new AppError("Employee with same legajo, CUIL or DNI already exists", 409, "EMPLOYEE_ALREADY_EXISTS", existing);
+  throw new AppError("Employee with same legajo, Legajo Finnegans, CUIL or DNI already exists", 409, "EMPLOYEE_ALREADY_EXISTS", existing);
+}
+
+async function ensureNoEmployeeConflict(id: string, input: UpdateEmployeeInput) {
+  const existing = await employeesRepository.findConflictingUniqueFields(id, input);
+  if (!existing) return;
+  throw new AppError("Employee with same legajo, Legajo Finnegans, CUIL or DNI already exists", 409, "EMPLOYEE_ALREADY_EXISTS", existing);
 }
 
 export const employeesService = {
@@ -140,6 +146,10 @@ export const employeesService = {
         hasMore: query.page * query.take < total,
       },
     };
+  },
+
+  summary(user: Express.AuthUser) {
+    return employeesRepository.summary(employeeAccessWhere(user));
   },
 
   async listOrgChart(query: ListEmployeeOrgChartQuery, user: Express.AuthUser) {
@@ -228,6 +238,7 @@ export const employeesService = {
   },
 
   async update(id: string, input: UpdateEmployeeInput, audit?: AuditContext) {
+    await ensureNoEmployeeConflict(id, input);
     const before = await employeesService.getById(id);
     const employee = await execute(() => employeesRepository.update(id, input));
     await auditService.register({
@@ -293,7 +304,7 @@ export const employeesService = {
       ...audit,
       action: "UPDATE",
       entity: "EmployeeAddress",
-      entityId: employee.address?.id || employee.id,
+      entityId: employee.id,
       description: `Se actualizo domicilio del legajo ${employee.legajo}.`,
       before: before.address as Prisma.InputJsonValue,
       after: employee.address as Prisma.InputJsonValue,
@@ -308,7 +319,7 @@ export const employeesService = {
       ...audit,
       action: "UPDATE",
       entity: "EmployeeTransport",
-      entityId: employee.transport?.id || employee.id,
+      entityId: employee.id,
       description: `Se actualizo transporte del legajo ${employee.legajo}.`,
       before: before.transport as Prisma.InputJsonValue,
       after: employee.transport as Prisma.InputJsonValue,
@@ -338,7 +349,7 @@ export const employeesService = {
       ...audit,
       action: "UPDATE",
       entity: "LaborMovement",
-      entityId: movement?.id || employee.id,
+      entityId: employee.id,
       description: `Se registro movimiento ${input.type} para el legajo ${employee.legajo}.`,
       before: { status: before.status, laborMovements: before.laborMovements } as Prisma.InputJsonValue,
       after: { status: employee.status, movement } as Prisma.InputJsonValue,
@@ -366,7 +377,7 @@ export const employeesService = {
       ...audit,
       action: "CREATE",
       entity: "EmployeeDocument",
-      entityId: document?.id || employee.id,
+      entityId: employee.id,
       description: `Se agrego documentacion al legajo ${employee.legajo}.`,
       before: before.documents as Prisma.InputJsonValue,
       after: employee.documents as Prisma.InputJsonValue,

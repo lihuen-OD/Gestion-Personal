@@ -9,6 +9,7 @@ type LaborStatusCardProps = {
 export function LaborStatusCard({ employee }: LaborStatusCardProps) {
   const status = calculateLaborStatus(employee.laborMovements || []);
   const movement = status.currentMovement;
+  const visibleMovement = movement || status.scheduledMovement;
 
   return (
     <div className="labor-status-card">
@@ -21,12 +22,12 @@ export function LaborStatusCard({ employee }: LaborStatusCardProps) {
         <p>El estado laboral se calcula automáticamente según los movimientos de Alta / Baja laboral.</p>
       </div>
       <div>
-        <small>Último movimiento vigente</small>
-        <b>{movement ? `${movement.type} · ${movement.reason}` : "Sin movimiento"}</b>
+        <small>{movement ? "Último movimiento vigente" : status.scheduledMovement ? "Próximo movimiento" : "Último movimiento vigente"}</small>
+        <b>{visibleMovement ? `${visibleMovement.type} · ${visibleMovement.reason}` : "Sin movimiento"}</b>
       </div>
       <div>
         <small>Fecha desde</small>
-        <b>{movement?.effectiveFrom || status.scheduledTermination?.effectiveFrom || "Sin cargar"}</b>
+        <b>{visibleMovement?.effectiveFrom || status.scheduledTermination?.effectiveFrom || "Sin cargar"}</b>
       </div>
     </div>
   );

@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { KeyRound, Pencil, Plus, Power } from "lucide-react";
-import type { Role, User } from "../types";
+import type { Employee, Role, User } from "../types";
 import { orgStructureApiService } from "../services/api/orgStructureApiService";
 import { userApiService } from "../services/api/userApiService";
+import { employeeApiService } from "../services/api/employeeApiService";
 import { PageHeader } from "../components/ui/PageHeader";
 import { Section } from "../components/ui/Section";
 import { TableShell } from "../components/ui/TableShell";
@@ -11,6 +12,7 @@ import { Modal } from "../components/ui/Modal";
 import { Field, Select } from "../components/ui/FormControls";
 import { statusClass } from "../utils/status";
 import { roleOptions } from "../utils/roles";
+import { displayLegajo } from "../utils/employee";
 
 type UserDraft = Omit<User, "id">;
 
@@ -31,6 +33,8 @@ function emptyUserDraft(): UserDraft {
     status: "Activo",
     company: "",
     sector: "",
+    employeeId: "",
+    employeeName: "",
   };
 }
 
@@ -38,6 +42,7 @@ export function UsersPage() {
   const [users, setUsers] = useState<User[]>([]);
   const [companyOptions, setCompanyOptions] = useState<string[]>([]);
   const [sectorOptions, setSectorOptions] = useState<string[]>([]);
+  const [employeeOptions, setEmployeeOptions] = useState<Employee[]>([]);
   const [usesBackend, setUsesBackend] = useState(false);
   const [refresh, setRefresh] = useState(0);
   const [open, setOpen] = useState(false);
@@ -47,12 +52,13 @@ export function UsersPage() {
 
   useEffect(() => {
     let mounted = true;
-    Promise.all([userApiService.getAll(), orgStructureApiService.getCatalog()])
-      .then(([apiUsers, catalog]) => {
+    Promise.all([userApiService.getAll(), orgStructureApiService.getCatalog(), employeeApiService.getAll()])
+      .then(([apiUsers, catalog, apiEmployees]) => {
         if (!mounted) return;
         setUsers(apiUsers);
         setCompanyOptions(catalog.companies.map((item) => item.name));
         setSectorOptions(catalog.sectors.map((item) => item.name));
+        setEmployeeOptions(apiEmployees);
         setUsesBackend(true);
       })
       .catch(() => {
@@ -154,6 +160,7 @@ export function UsersPage() {
               <th>Rol</th>
               <th>Estado</th>
               <th>Empresa / Area</th>
+              <th>Empleado vinculado</th>
               <th>Acciones</th>
             </tr>
           </thead>
@@ -165,6 +172,7 @@ export function UsersPage() {
                 <td><OverflowCell value={user.role} /></td>
                 <td><span className={statusClass(user.status)}>{user.status}</span></td>
                 <td><OverflowCell value={`${user.company || "Acceso global"} ${user.sector ? `- ${user.sector}` : ""}`.trim()} /></td>
+                <td><OverflowCell value={user.employeeName || "-"} /></td>
                 <td>
                   <div className="table-actions">
                     <button className="icon-button" title="Editar usuario" onClick={() => openEdit(user)}><Pencil size={15} /></button>
@@ -198,6 +206,27 @@ export function UsersPage() {
           <Select label="Estado" value={draft.status} set={(status) => setDraft({ ...draft, status: status as User["status"] })} options={["Activo", "Inactivo"]} />
           <Select label="Empresa / alcance" value={draft.company || ""} set={(company) => setDraft({ ...draft, company })} options={companyOptions} />
           <Select label="Sector / area" value={draft.sector || ""} set={(sector) => setDraft({ ...draft, sector })} options={sectorOptions} />
+          <label>
+            Empleado vinculado
+            <select
+              value={draft.employeeId || ""}
+              onChange={(event) => {
+                const employee = employeeOptions.find((item) => item.id === event.target.value);
+                setDraft({
+                  ...draft,
+                  employeeId: event.target.value,
+                  employeeName: employee ? `${employee.firstName} ${employee.lastName}` : "",
+                });
+              }}
+            >
+              <option value="">Sin empleado vinculado</option>
+              {employeeOptions.map((employee) => (
+                <option key={employee.id} value={employee.id}>
+                  {employee.lastName}, {employee.firstName} - Legajo {displayLegajo(employee)}
+                </option>
+              ))}
+            </select>
+          </label>
 
           {error && <p className="error">{error}</p>}
 

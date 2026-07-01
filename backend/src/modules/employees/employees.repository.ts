@@ -1,4 +1,4 @@
-import { EmployeeStatus, Prisma } from "@prisma/client";
+import { ApprovalStatus, EmployeeStatus, Prisma } from "@prisma/client";
 import { prisma } from "../../shared/prisma/client";
 import type {
   CreateEmployeeDocumentInput,
@@ -24,6 +24,10 @@ const employeeListSelect = {
   dni: true,
   firstName: true,
   lastName: true,
+  birthDate: true,
+  gender: true,
+  civilStatus: true,
+  nationality: true,
   status: true,
   createdAt: true,
   updatedAt: true,
@@ -31,6 +35,21 @@ const employeeListSelect = {
   costCenter: { select: { id: true, name: true, code: true } },
   position: { select: { id: true, name: true, code: true } },
   companies: { include: { company: { select: { id: true, name: true, code: true } } } },
+  laborMovements: {
+    select: {
+      id: true,
+      employeeId: true,
+      type: true,
+      effectiveFrom: true,
+      reason: true,
+      observation: true,
+      createdAt: true,
+      createdByUserId: true,
+      createdBy: { select: { id: true, name: true } },
+    },
+    orderBy: { effectiveFrom: "desc" as const },
+    take: 5,
+  },
 } satisfies Prisma.EmployeeSelect;
 
 const employeeDetailSelect = {
@@ -42,6 +61,9 @@ const employeeDetailSelect = {
   firstName: true,
   lastName: true,
   birthDate: true,
+  gender: true,
+  civilStatus: true,
+  nationality: true,
   email: true,
   phone: true,
   mobile: true,
@@ -86,8 +108,12 @@ const employeeDetailSelect = {
       company: { select: { id: true, name: true, code: true } },
     },
   },
-  laborMovements: { orderBy: { effectiveFrom: "desc" as const }, take: 50 },
-  assignments: { take: 100 },
+  laborMovements: {
+    include: { createdBy: { select: { id: true, name: true } } },
+    orderBy: { effectiveFrom: "desc" as const },
+    take: 50,
+  },
+  assignments: { take: 100, include: { user: { select: { id: true, name: true, employeeId: true } } } },
   hourConcepts: { select: { hourConcept: { select: { id: true, code: true, name: true } } } },
   novelties: { include: { noveltyType: true }, orderBy: { fromDate: "desc" as const }, take: 20 },
   documents: { include: { category: true }, orderBy: { createdAt: "desc" as const }, take: 20 },
@@ -130,17 +156,26 @@ function startOfTodayUtc() {
 
 function resolveLaborStatus(movements: Array<{ type: "ALTA" | "BAJA"; effectiveFrom: Date }>): EmployeeStatus {
   const today = startOfTodayUtc();
-  const effective = [...movements]
-    .filter((movement) => movement.effectiveFrom <= today)
-    .sort((a, b) => a.effectiveFrom.getTime() - b.effectiveFrom.getTime());
+  const sorted = [...movements].sort((a, b) => a.effectiveFrom.getTime() - b.effectiveFrom.getTime());
+  const effective = sorted.filter((movement) => movement.effectiveFrom <= today);
   const current = effective[effective.length - 1];
+  const scheduledStart = sorted.find((movement) => movement.type === "ALTA" && movement.effectiveFrom > today);
+  if (!current && scheduledStart) return EmployeeStatus.INACTIVO;
   return current?.type === "BAJA" ? EmployeeStatus.INACTIVO : EmployeeStatus.ACTIVO;
+}
+
+function laborStatusMovements(movements: Array<{ type: "ALTA" | "BAJA"; effectiveFrom: Date }>) {
+  return movements.map((movement) => ({ effectiveFrom: movement.effectiveFrom, type: movement.type }));
+}
+
+function resolveEmployeeStatus(employee: { status: EmployeeStatus; laborMovements: Array<{ type: "ALTA" | "BAJA"; effectiveFrom: Date }> }) {
+  if (!employee.laborMovements.length) return employee.status;
+  return resolveLaborStatus(laborStatusMovements(employee.laborMovements));
 }
 
 function buildWhere(query: ListEmployeesQuery): Prisma.EmployeeWhereInput {
   const search = query.search?.trim();
   return {
-    ...(query.status ? { status: query.status } : {}),
     ...(query.sectorId ? { sectorId: query.sectorId } : {}),
     ...(query.costCenterId ? { costCenterId: query.costCenterId } : {}),
     ...(query.companyId ? { companies: { some: { companyId: query.companyId } } } : {}),
@@ -193,6 +228,9 @@ function createEmployeeData(input: CreateEmployeeInput) {
     firstName: input.firstName,
     lastName: input.lastName,
     birthDate: input.birthDate || null,
+    gender: input.gender || null,
+    civilStatus: input.civilStatus || null,
+    nationality: input.nationality || null,
     email: input.email || null,
     phone: input.phone || null,
     mobile: input.mobile || null,
@@ -219,6 +257,9 @@ function updateEmployeeData(input: UpdateEmployeeInput) {
     ...(input.firstName !== undefined ? { firstName: input.firstName } : {}),
     ...(input.lastName !== undefined ? { lastName: input.lastName } : {}),
     ...(input.birthDate !== undefined ? { birthDate: input.birthDate || null } : {}),
+    ...(input.gender !== undefined ? { gender: input.gender || null } : {}),
+    ...(input.civilStatus !== undefined ? { civilStatus: input.civilStatus || null } : {}),
+    ...(input.nationality !== undefined ? { nationality: input.nationality || null } : {}),
     ...(input.email !== undefined ? { email: input.email || null } : {}),
     ...(input.phone !== undefined ? { phone: input.phone || null } : {}),
     ...(input.mobile !== undefined ? { mobile: input.mobile || null } : {}),
@@ -264,9 +305,18 @@ async function fetchSyncBatch(cursor: string | undefined): Promise<Array<{ id: s
 }
 
 export const employeesRepository = {
-  findMany(query: ListEmployeesQuery, accessWhere: Prisma.EmployeeWhereInput) {
+  async findMany(query: ListEmployeesQuery, accessWhere: Prisma.EmployeeWhereInput) {
     const where = { AND: [buildWhere(query), accessWhere] };
     const skip = (query.page - 1) * query.take;
+    if (query.status) {
+      const rows = await prisma.employee.findMany({
+        where,
+        select: employeeListSelect,
+        orderBy: [{ status: "asc" }, { lastName: "asc" }, { firstName: "asc" }],
+      });
+      const filteredRows = rows.filter((employee) => resolveEmployeeStatus(employee) === query.status);
+      return [filteredRows.slice(skip, skip + query.take), filteredRows.length] as const;
+    }
     return prisma.$transaction([
       prisma.employee.findMany({
         where,
@@ -277,6 +327,47 @@ export const employeesRepository = {
       }),
       prisma.employee.count({ where }),
     ]);
+  },
+
+  async summary(accessWhere: Prisma.EmployeeWhereInput) {
+    const [employees, pendingTimeEmployeeGroups] = await prisma.$transaction([
+      prisma.employee.findMany({
+        where: accessWhere,
+        select: {
+          id: true,
+          status: true,
+          laborMovements: { select: { type: true, effectiveFrom: true }, orderBy: { effectiveFrom: "desc" }, take: 5 },
+        },
+      }),
+      prisma.timeEntry.groupBy({
+        by: ["employeeId"],
+        orderBy: { employeeId: "asc" },
+        where: {
+          employee: accessWhere,
+          status: { in: [ApprovalStatus.PENDIENTE, ApprovalStatus.EN_REVISION] },
+        },
+      }),
+    ]);
+    const total = employees.length;
+    const activeIds = employees.filter((employee) => resolveEmployeeStatus(employee) === EmployeeStatus.ACTIVO).map((employee) => employee.id);
+    const active = activeIds.length;
+    const inactive = total - active;
+    const missingTimeResponsible = activeIds.length
+      ? await prisma.employee.count({
+          where: {
+            AND: [accessWhere, { id: { in: activeIds } }],
+            assignments: { none: { type: "TIME_RESPONSIBLE" } },
+          },
+        })
+      : 0;
+
+    return {
+      total,
+      active,
+      inactive,
+      missingTimeResponsible,
+      pendingTimeLoads: pendingTimeEmployeeGroups.length,
+    };
   },
 
   findOrgChart(query: ListEmployeeOrgChartQuery, accessWhere: Prisma.EmployeeWhereInput) {
@@ -298,10 +389,29 @@ export const employeesRepository = {
     return prisma.employee.findFirst({ where: { AND: [{ id }, accessWhere] }, select: employeeDetailSelect });
   },
 
-  findByUniqueFields(input: Pick<CreateEmployeeInput, "legajo" | "cuil" | "dni">) {
+  findByUniqueFields(input: Pick<CreateEmployeeInput, "legajo" | "legajoFinnegans" | "cuil" | "dni">) {
+    const uniqueFields: Prisma.EmployeeWhereInput[] = [
+      { legajo: input.legajo },
+      { cuil: input.cuil },
+      { dni: input.dni },
+    ];
+    if (input.legajoFinnegans) uniqueFields.push({ legajoFinnegans: input.legajoFinnegans });
     return prisma.employee.findFirst({
-      where: { OR: [{ legajo: input.legajo }, { cuil: input.cuil }, { dni: input.dni }] },
-      select: { id: true, legajo: true, cuil: true, dni: true },
+      where: { OR: uniqueFields },
+      select: { id: true, legajo: true, legajoFinnegans: true, cuil: true, dni: true },
+    });
+  },
+
+  findConflictingUniqueFields(id: string, input: UpdateEmployeeInput) {
+    const uniqueFields: Prisma.EmployeeWhereInput[] = [];
+    if (input.legajo !== undefined) uniqueFields.push({ legajo: input.legajo });
+    if (input.legajoFinnegans) uniqueFields.push({ legajoFinnegans: input.legajoFinnegans });
+    if (input.cuil !== undefined) uniqueFields.push({ cuil: input.cuil });
+    if (input.dni !== undefined) uniqueFields.push({ dni: input.dni });
+    if (!uniqueFields.length) return null;
+    return prisma.employee.findFirst({
+      where: { id: { not: id }, OR: uniqueFields },
+      select: { id: true, legajo: true, legajoFinnegans: true, cuil: true, dni: true },
     });
   },
 
@@ -432,6 +542,11 @@ export const employeesRepository = {
             type: assignment.type,
             userId: assignment.userId || null,
             personName: assignment.personName || null,
+            role: assignment.role || null,
+            effectiveFrom: assignment.effectiveFrom || null,
+            effectiveTo: assignment.effectiveTo || null,
+            status: assignment.status || null,
+            notes: assignment.notes || null,
           })),
         });
       }

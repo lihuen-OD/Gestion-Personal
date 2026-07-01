@@ -4,6 +4,14 @@
 
 Make projects deployable, observable and stable in production.
 
+## Performance and network plan
+
+Before production deploy, review:
+
+- `docs/PERFORMANCE_NETWORK_OPTIMIZATION_PLAN.md`
+
+This plan defines how to measure endpoint latency, reduce network transfer, optimize database access, cache stable data and repeat the same process when new modules are added.
+
 ## Deployment checklist
 
 Before deploy:

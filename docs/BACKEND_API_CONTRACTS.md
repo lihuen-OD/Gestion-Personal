@@ -167,6 +167,34 @@ take
 page
 ```
 
+Devuelve `meta` de paginacion. Las pantallas de listado deben consumir este endpoint de forma paginada y no pedir todos los legajos para calcular tarjetas.
+
+### Resumen de legajos
+
+```txt
+GET /api/employees/summary
+```
+
+Devuelve contadores agregados para KPI cards:
+
+```json
+{
+  "data": {
+    "total": 120,
+    "active": 110,
+    "inactive": 10,
+    "missingTimeResponsible": 4,
+    "pendingTimeLoads": 8
+  }
+}
+```
+
+Reglas:
+
+- Respeta el alcance del rol autenticado.
+- No devuelve listas completas.
+- Debe usarse para tarjetas del modulo Legajos en lugar de calcular desde `/api/employees` o `/api/time-entries`.
+
 ### Listar legajos para organigrama
 
 ```txt
@@ -685,6 +713,8 @@ take
 page
 ```
 
+Las pantallas de listado deben usar los datos de empleado incluidos en cada novedad cuando alcance para mostrar legajo/persona. No deben pedir todos los legajos solo para resolver nombres.
+
 ### Crear individual o masiva
 
 ```txt
@@ -829,6 +859,144 @@ Devuelve:
   }
 }
 ```
+
+## Documentos
+
+### Listar documentos
+
+```txt
+GET /api/documents
+```
+
+Query:
+
+```txt
+employeeId
+categoryId
+status
+search
+take
+page
+```
+
+Reglas:
+
+- Devuelve datos minimos de categoria y empleado para renderizar la tabla.
+- Las pantallas de listado no deben pedir `/api/employees` solo para mostrar legajo/persona.
+- El listado debe mantenerse paginado; las subidas de documentos pueden cargar legajos bajo demanda al abrir el modal.
+
+## Carga horaria
+
+### Listar cargas
+
+```txt
+GET /api/time-entries
+```
+
+Query:
+
+```txt
+period=YYYY-MM
+employeeId
+hourConceptId
+status
+search
+costCenterId
+from
+to
+take
+page
+```
+
+Reglas:
+
+- Devuelve `meta` de paginacion.
+- `search` filtra por datos del empleado: legajo, legajo Finnegans, CUIL, DNI, nombre o apellido.
+- `costCenterId` filtra por centro de costo del empleado.
+- La bandeja de revision de Horas debe usar `status=EN_REVISION` y paginacion, no descargar todas las cargas del periodo.
+
+### Resumen del periodo
+
+```txt
+GET /api/time-entries/summary
+```
+
+Query:
+
+```txt
+period=YYYY-MM
+```
+
+Response:
+
+```json
+{
+  "data": {
+    "activeEmployees": 110,
+    "employeesWithEntries": 82,
+    "pendingEmployees": 28,
+    "reviewEmployees": 12,
+    "countableHours": 1540,
+    "coverage": 75
+  }
+}
+```
+
+Reglas:
+
+- Respeta el alcance del rol autenticado.
+- Debe usarse para KPI cards del modulo Horas.
+- Evita traer todas las cargas del periodo solo para calcular contadores.
+
+### Personas del periodo para tabla
+
+```txt
+GET /api/time-entries/period-employees
+```
+
+Query:
+
+```txt
+period=YYYY-MM
+search
+costCenterId
+take
+page
+```
+
+Response:
+
+```json
+{
+  "data": [
+    {
+      "employee": {
+        "id": "uuid",
+        "legajo": "000001",
+        "firstName": "Nombre",
+        "lastName": "Apellido"
+      },
+      "summary": {
+        "total": 160,
+        "status": "APROBADO"
+      }
+    }
+  ],
+  "meta": {
+    "total": 120,
+    "page": 1,
+    "pageSize": 25,
+    "hasMore": true
+  }
+}
+```
+
+Reglas:
+
+- Respeta el alcance del rol autenticado.
+- Devuelve empleados activos paginados.
+- Calcula total y estado solo para los empleados visibles.
+- Debe usarse para la tabla principal de Horas en lugar de descargar todos los legajos y todas las cargas del periodo.
 
 ## Exportaciones
 

@@ -7,10 +7,24 @@ export const listTimeEntriesQuerySchema = z.object({
   hourConceptId: z.string().uuid().optional(),
   status: approvalStatusSchema.optional(),
   period: z.string().regex(/^\d{4}-\d{2}$/).optional(),
+  search: z.string().trim().optional(),
+  costCenterId: z.string().uuid().optional(),
   from: z.coerce.date().optional(),
   to: z.coerce.date().optional(),
   page: z.coerce.number().int().positive().max(10000).default(1),
   take: z.coerce.number().int().positive().max(500).default(200),
+});
+
+export const timeEntriesSummaryQuerySchema = z.object({
+  period: z.string().regex(/^\d{4}-\d{2}$/).optional(),
+});
+
+export const timeEntriesPeriodEmployeesQuerySchema = z.object({
+  period: z.string().regex(/^\d{4}-\d{2}$/),
+  search: z.string().trim().optional(),
+  costCenterId: z.string().uuid().optional(),
+  page: z.coerce.number().int().positive().max(10000).default(1),
+  take: z.coerce.number().int().positive().max(100).default(25),
 });
 
 export const createTimeEntrySchema = z.object({
@@ -39,6 +53,8 @@ export const timeEntriesExportQuerySchema = z.object({
 });
 
 export type ListTimeEntriesQuery = z.infer<typeof listTimeEntriesQuerySchema>;
+export type TimeEntriesSummaryQuery = z.infer<typeof timeEntriesSummaryQuerySchema>;
+export type TimeEntriesPeriodEmployeesQuery = z.infer<typeof timeEntriesPeriodEmployeesQuerySchema>;
 export type CreateTimeEntryInput = z.infer<typeof createTimeEntrySchema>;
 export type UpdateTimeEntryInput = z.infer<typeof updateTimeEntrySchema>;
 export type RejectTimeEntryInput = z.infer<typeof rejectTimeEntrySchema>;

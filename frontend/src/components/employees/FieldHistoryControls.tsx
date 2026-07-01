@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { employeeApiService } from "../../services/api/employeeApiService";
 import { employeeHistoryApiService } from "../../services/api/employeeHistoryApiService";
-import type { Employee, FieldHistorySection, User } from "../../types";
+import type { Employee, EmployeeBlockHistoryRecord, EmployeeFieldHistoryRecord, FieldHistorySection, User } from "../../types";
 import { EmptyState } from "../ui/EmptyState";
 import { Field, Select } from "../ui/FormControls";
 
@@ -48,7 +48,7 @@ export function FieldWithHistory({
   const [from, setFrom] = useState(effectiveFrom || new Date().toISOString().slice(0, 10));
   const [reason, setReason] = useState("");
   const [error, setError] = useState("");
-  const [history, setHistory] = useState([]);
+  const [history, setHistory] = useState<EmployeeFieldHistoryRecord[]>([]);
 
   useEffect(() => {
     let mounted = true;
@@ -187,7 +187,7 @@ export function BlockHistoryTimeline({
   block,
   empty,
 }: BlockHistoryTimelineProps) {
-  const [rows, setRows] = useState([]);
+  const [rows, setRows] = useState<EmployeeBlockHistoryRecord[]>([]);
 
   useEffect(() => {
     let mounted = true;

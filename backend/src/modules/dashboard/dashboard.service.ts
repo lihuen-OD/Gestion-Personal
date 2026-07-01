@@ -1,8 +1,12 @@
 import { employeeAccessWhere } from "../employees/employeeAccess";
+import { createTtlCache } from "../../shared/cache/ttlCache";
 import { dashboardRepository } from "./dashboard.repository";
 import type { DashboardMetricsQuery } from "./dashboard.schemas";
 
 const dayMs = 86_400_000;
+const dashboardMetricsCache = createTtlCache<DashboardMetricsResult>(
+  Number(process.env.DASHBOARD_METRICS_CACHE_MS || 30_000),
+);
 
 function currentPeriod() {
   return new Date().toISOString().slice(0, 7);
@@ -77,121 +81,128 @@ function upcomingBirthdays(
 export const dashboardService = {
   async metrics(query: DashboardMetricsQuery, user: Express.AuthUser) {
     const period = query.period || currentPeriod();
-    const accessWhere = employeeAccessWhere(user);
-    const now = new Date();
-    const year = now.getUTCFullYear();
-
-    const [
-      total,
-      active,
-      exits,
-      transported,
-      hoursResult,
-      employeesWithEntries,
-      pendingLoads,
-      reviewLoads,
-      absenceRanges,
-      pendingNovelties,
-      expiredDocuments,
-      expiringDocuments,
-      missingResponsible,
-      birthdayEmployees,
-      dateFieldEmployees,
-      sectorEmployees,
-      companyLinkEmployees,
-    ] = await Promise.all([
-      dashboardRepository.countTotal(accessWhere),
-      dashboardRepository.countActive(accessWhere),
-      dashboardRepository.countExitsThisYear(accessWhere, year),
-      dashboardRepository.countTransported(accessWhere),
-      dashboardRepository.sumLoadedHours(period, accessWhere),
-      dashboardRepository.countEmployeesWithEntries(period, accessWhere),
-      dashboardRepository.countEmployeesWithoutEntries(period, accessWhere),
-      dashboardRepository.countEmployeesInReview(period, accessWhere),
-      dashboardRepository.findPeriodAbsenceDateRanges(period, accessWhere),
-      dashboardRepository.countPendingNovelties(accessWhere),
-      dashboardRepository.countExpiredDocuments(accessWhere),
-      dashboardRepository.countExpiringDocuments(accessWhere),
-      dashboardRepository.countMissingTimeResponsible(accessWhere),
-      dashboardRepository.findActiveBirthDateEmployees(accessWhere),
-      dashboardRepository.findActiveDateFields(accessWhere),
-      dashboardRepository.findActiveSectors(accessWhere),
-      dashboardRepository.findActiveCompanyLinks(accessWhere),
-    ]);
-
-    const inactive = total - active;
-    const loadedHours = formatDecimal(hoursResult._sum.hours);
-
-    const absenceDays = absenceRanges.reduce(
-      (total, novelty) => total + dayCount(novelty.fromDate, novelty.toDate),
-      0,
-    );
-
-    // averageAge — uses birthDate only
-    const averageAge =
-      active > 0
-        ? (
-            dateFieldEmployees.reduce((sum: number, e) => sum + yearsBetween(e.birthDate), 0) / active
-          ).toFixed(1)
-        : "0.0";
-
-    // averageTenure — uses first ALTA effectiveFrom, falling back to createdAt
-    const averageTenure =
-      active > 0
-        ? (
-            dateFieldEmployees.reduce(
-              (sum: number, e) =>
-                sum + yearsBetween(e.laborMovements[0]?.effectiveFrom ?? e.createdAt),
-              0,
-            ) / active
-          ).toFixed(1)
-        : "0.0";
-
-    // Transport breakdowns
-    const transportedEmployees = await dashboardRepository.findTransportedEmployees(accessWhere);
-    const transportByCity = groupCount(
-      transportedEmployees.map((e) => e.address?.city || e.transport?.locality || ""),
-    );
-    const transportRoutes = groupCount(
-      transportedEmployees.map((e) => e.transport?.busLine || ""),
-    );
-
-    // Sector breakdown
-    const headcountBySector = groupCount(sectorEmployees.map((e) => e.sector?.name || ""));
-
-    // Company breakdown — primary company wins, fallback to first
-    const headcountByCompany = groupCount(
-      companyLinkEmployees.map((e) => {
-        const primary = e.companies.find((link) => link.isPrimary) ?? e.companies[0];
-        return primary?.company.name || "";
-      }),
-    );
-
-    return {
+    const cacheKey = JSON.stringify({
       period,
-      total,
-      active,
-      inactive,
-      absenceDays,
-      absenceRate: active ? ((absenceDays / (active * 21)) * 100).toFixed(1) : "0.0",
-      turnoverRate: total ? ((exits / ((active + total) / 2)) * 100).toFixed(1) : "0.0",
-      exits,
-      upcomingBirthdays: upcomingBirthdays(birthdayEmployees),
-      averageAge,
-      averageTenure,
-      transported,
-      transportByCity,
-      transportRoutes,
-      loadedHours,
-      loadCoverage: active ? Math.round((employeesWithEntries / active) * 100) : 0,
-      pendingLoads,
-      reviewLoads,
-      expiredDocuments,
-      expiringDocuments,
-      missingResponsible,
-      pendingNovelties,
-      headcountByCompany,
-      headcountBySector,
-    };
+      userId: user.id,
+      role: user.role,
+      companyId: user.companyId || null,
+      sectorId: user.sectorId || null,
+    });
+    const cached = dashboardMetricsCache.get(cacheKey);
+    if (cached) return cached;
+
+    const metrics = await calculateMetrics(period, user);
+    dashboardMetricsCache.set(cacheKey, metrics);
+    return metrics;
   },
 };
+
+async function calculateMetrics(period: string, user: Express.AuthUser) {
+  const accessWhere = employeeAccessWhere(user);
+  const now = new Date();
+  const year = now.getUTCFullYear();
+
+  const [
+    total,
+    active,
+    exits,
+    transported,
+    hoursResult,
+    employeesWithEntries,
+    pendingLoads,
+    reviewLoads,
+    absenceRanges,
+    pendingNovelties,
+    expiredDocuments,
+    expiringDocuments,
+    missingResponsible,
+    birthdayEmployees,
+    dateFieldEmployees,
+    sectorEmployees,
+    companyLinkEmployees,
+    transportedEmployees,
+  ] = await Promise.all([
+    dashboardRepository.countTotal(accessWhere),
+    dashboardRepository.countActive(accessWhere),
+    dashboardRepository.countExitsThisYear(accessWhere, year),
+    dashboardRepository.countTransported(accessWhere),
+    dashboardRepository.sumLoadedHours(period, accessWhere),
+    dashboardRepository.countEmployeesWithEntries(period, accessWhere),
+    dashboardRepository.countEmployeesWithoutEntries(period, accessWhere),
+    dashboardRepository.countEmployeesInReview(period, accessWhere),
+    dashboardRepository.findPeriodAbsenceDateRanges(period, accessWhere),
+    dashboardRepository.countPendingNovelties(accessWhere),
+    dashboardRepository.countExpiredDocuments(accessWhere),
+    dashboardRepository.countExpiringDocuments(accessWhere),
+    dashboardRepository.countMissingTimeResponsible(accessWhere),
+    dashboardRepository.findActiveBirthDateEmployees(accessWhere),
+    dashboardRepository.findActiveDateFields(accessWhere),
+    dashboardRepository.findActiveSectors(accessWhere),
+    dashboardRepository.findActiveCompanyLinks(accessWhere),
+    dashboardRepository.findTransportedEmployees(accessWhere),
+  ]);
+
+  const inactive = total - active;
+  const loadedHours = formatDecimal(hoursResult._sum.hours);
+
+  const absenceDays = absenceRanges.reduce(
+    (total, novelty) => total + dayCount(novelty.fromDate, novelty.toDate),
+    0,
+  );
+
+  const averageAge =
+    active > 0
+      ? (dateFieldEmployees.reduce((sum: number, e) => sum + yearsBetween(e.birthDate), 0) / active).toFixed(1)
+      : "0.0";
+
+  const averageTenure =
+    active > 0
+      ? (
+          dateFieldEmployees.reduce(
+            (sum: number, e) => sum + yearsBetween(e.laborMovements[0]?.effectiveFrom ?? e.createdAt),
+            0,
+          ) / active
+        ).toFixed(1)
+      : "0.0";
+
+  const transportByCity = groupCount(
+    transportedEmployees.map((e) => e.address?.city || e.transport?.locality || ""),
+  );
+  const transportRoutes = groupCount(transportedEmployees.map((e) => e.transport?.busLine || ""));
+  const headcountBySector = groupCount(sectorEmployees.map((e) => e.sector?.name || ""));
+  const headcountByCompany = groupCount(
+    companyLinkEmployees.map((e) => {
+      const primary = e.companies.find((link) => link.isPrimary) ?? e.companies[0];
+      return primary?.company.name || "";
+    }),
+  );
+
+  return {
+    period,
+    total,
+    active,
+    inactive,
+    absenceDays,
+    absenceRate: active ? ((absenceDays / (active * 21)) * 100).toFixed(1) : "0.0",
+    turnoverRate: total ? ((exits / ((active + total) / 2)) * 100).toFixed(1) : "0.0",
+    exits,
+    upcomingBirthdays: upcomingBirthdays(birthdayEmployees),
+    averageAge,
+    averageTenure,
+    transported,
+    transportByCity,
+    transportRoutes,
+    loadedHours,
+    loadCoverage: active ? Math.round((employeesWithEntries / active) * 100) : 0,
+    pendingLoads,
+    reviewLoads,
+    expiredDocuments,
+    expiringDocuments,
+    missingResponsible,
+    pendingNovelties,
+    headcountByCompany,
+    headcountBySector,
+  };
+}
+
+type DashboardMetricsResult = Awaited<ReturnType<typeof calculateMetrics>>;

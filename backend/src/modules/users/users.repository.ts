@@ -10,10 +10,12 @@ export const userSelect = {
   status: true,
   companyId: true,
   sectorId: true,
+  employeeId: true,
   createdAt: true,
   updatedAt: true,
   company: { select: { id: true, name: true, code: true } },
   sector: { select: { id: true, name: true, code: true } },
+  employee: { select: { id: true, legajo: true, firstName: true, lastName: true } },
 } satisfies Prisma.UserSelect;
 
 function buildWhere(query: ListUsersQuery): Prisma.UserWhereInput {
@@ -66,6 +68,7 @@ export const usersRepository = {
         status: input.status,
         companyId: input.companyId || null,
         sectorId: input.sectorId || null,
+        employeeId: input.employeeId || null,
       },
       select: userSelect,
     });
@@ -81,6 +84,7 @@ export const usersRepository = {
         ...(input.status !== undefined ? { status: input.status } : {}),
         ...(input.companyId !== undefined ? { companyId: input.companyId || null } : {}),
         ...(input.sectorId !== undefined ? { sectorId: input.sectorId || null } : {}),
+        ...(input.employeeId !== undefined ? { employeeId: input.employeeId || null } : {}),
       },
       select: userSelect,
     });

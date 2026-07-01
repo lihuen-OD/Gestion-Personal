@@ -3,7 +3,7 @@ import { employeeApiService } from "../../services/api/employeeApiService";
 import { employeeHistoryApiService } from "../../services/api/employeeHistoryApiService";
 import { orgStructureApiService } from "../../services/api/orgStructureApiService";
 import { positionApiService } from "../../services/api/positionApiService";
-import type { Employee, EmployeeFieldHistoryRecord, User } from "../../types";
+import type { Employee, EmployeeFieldHistoryRecord, FieldHistorySection, User } from "../../types";
 import type { Position } from "../../types/position.types";
 import { EmptyState } from "../ui/EmptyState";
 import { Field } from "../ui/FormControls";
@@ -16,7 +16,7 @@ async function persistTrackedEmployee(updated: Employee, onSaved: (employee: Emp
   }
 }
 
-type CreateFieldHistoryInput = { employeeId: string; section: string; field: string; fieldLabel: string; oldValue: string | null; newValue: string; effectiveFrom: string; reason: string; };
+type CreateFieldHistoryInput = { employeeId: string; section: FieldHistorySection; field: string; fieldLabel: string; oldValue: string | null; newValue: string; effectiveFrom: string; reason: string; };
 
 async function recordFieldHistory(
   record: CreateFieldHistoryInput,
@@ -122,6 +122,7 @@ export function MultiCompanyField({ employee, canEdit, user, onSaved }: TrackedF
       company: selected.includes(employee.company) ? employee.company : selected[0],
     };
     try {
+      await persistTrackedEmployee(updated, onSaved);
       const historyRow = await recordFieldHistory(
         {
           employeeId: employee.id,
@@ -135,7 +136,6 @@ export function MultiCompanyField({ employee, canEdit, user, onSaved }: TrackedF
         },
       );
       setHistory((rows) => [historyRow, ...rows.filter((row) => row.id !== historyRow.id)]);
-      await persistTrackedEmployee(updated, onSaved);
       setEditing(false);
       setOpen(true);
       setError("");
@@ -252,6 +252,7 @@ export function EmployeePositionField({ employee, canEdit, user, onSaved }: Trac
         }
       : { ...employee, positionId: "", puestoId: "", puestoNombre: "", position: "" };
     try {
+      await persistTrackedEmployee(updated, onSaved);
       const historyRow = await recordFieldHistory(
         {
           employeeId: employee.id,
@@ -265,7 +266,6 @@ export function EmployeePositionField({ employee, canEdit, user, onSaved }: Trac
         },
       );
       setHistory((rows) => [historyRow, ...rows.filter((row) => row.id !== historyRow.id)]);
-      await persistTrackedEmployee(updated, onSaved);
       setEditing(false);
       setOpen(true);
       setError("");

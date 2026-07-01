@@ -42,6 +42,12 @@ employeesRouter.get(
 );
 
 employeesRouter.get(
+  "/summary",
+  requireAnyRole([roles.rrhh, roles.supervision, roles.cargaHoraria]),
+  asyncHandler(employeesController.summary),
+);
+
+employeesRouter.get(
   "/:id/position-validation",
   requireAnyRole([roles.rrhh, roles.supervision, roles.cargaHoraria]),
   asyncHandler(employeesController.getPositionValidation),

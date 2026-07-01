@@ -73,6 +73,8 @@ export function NoveltyTable({
         <tbody>
           {rows.map((novelty) => {
             const employee = employees.find((item) => item.id === novelty.employeeId);
+            const employeeLegajo = employee ? displayLegajo(employee) : novelty.employeeLegajo || "-";
+            const employeeName = employee ? fullName(employee) : novelty.employeeName || "-";
             const code = novelty.finnegansCode || "-";
             const canApprove =
               novelty.status === "Pendiente" &&
@@ -80,9 +82,9 @@ export function NoveltyTable({
 
             return (
               <tr key={novelty.id}>
-                <td>{displayLegajo(employee)}</td>
+                <td>{employeeLegajo}</td>
                 <td>
-                  <OverflowCell value={employee ? fullName(employee) : "-"} />
+                  <OverflowCell value={employeeName} />
                 </td>
                 <td>
                   <b>{novelty.type}</b>

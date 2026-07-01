@@ -13,8 +13,10 @@ type ApiUser = {
   status: ApiStatus;
   companyId?: string | null;
   sectorId?: string | null;
+  employeeId?: string | null;
   company?: { id: string; name: string; code: string } | null;
   sector?: { id: string; name: string; code: string } | null;
+  employee?: { id: string; legajo: string; firstName: string; lastName: string } | null;
 };
 
 type ApiListResponse = { data: ApiUser[] };
@@ -50,6 +52,8 @@ function mapFromApi(item: ApiUser): User {
     status: statusFromApi(item.status),
     company: item.company?.name || "",
     sector: item.sector?.name || "",
+    employeeId: item.employeeId || item.employee?.id || "",
+    employeeName: item.employee ? `${item.employee.firstName} ${item.employee.lastName}` : "",
   };
 }
 
@@ -84,6 +88,7 @@ export const userApiService = {
         status: statusToApi(user.status),
         companyId: scope.companyId,
         sectorId: scope.sectorId,
+        employeeId: user.employeeId || null,
       },
     });
     return mapFromApi(response.data);
@@ -100,6 +105,7 @@ export const userApiService = {
         status: statusToApi(user.status),
         companyId: scope.companyId,
         sectorId: scope.sectorId,
+        employeeId: user.employeeId || null,
       },
     });
     return mapFromApi(response.data);

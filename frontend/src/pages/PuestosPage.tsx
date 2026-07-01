@@ -50,11 +50,21 @@ function getAssignedCount(position: Position) {
   return position.assignedCount || 0;
 }
 
+const emptyFilters: PositionFilters = {
+  search: "",
+  businessUnitName: "",
+  establishmentName: "",
+  areaDepartment: "",
+  sector: "",
+  salaryRangeCategory: "",
+  status: "",
+};
+
 export function PuestosPage() {
   const { user } = useAuth();
   const level = roleLevel(user!.role);
   const canEdit = level === 1;
-  const [filters, setFilters] = useState<PositionFilters>({});
+  const [filters, setFilters] = useState<PositionFilters>(emptyFilters);
   const [refresh, setRefresh] = useState(0);
   const [apiItems, setApiItems] = useState<Position[]>([]);
   const [isLoadingApi, setIsLoadingApi] = useState(true);

@@ -97,29 +97,33 @@ export function EmployeeDetailPage() {
 
   if (loading) return <div className="page-loading">Cargando legajo...</div>;
   if (!loading && !employee) return <Navigate to="/legajos" />;
+  const currentEmployee = employee!;
   const editable = level === 1;
 
   const save = async () => {
-    const all = (await employeeApiService.getAll()).filter((item) => item.id !== employee!.id);
-    if (!employee!.legajoInterno) return setNotice("Legajo Interno es obligatorio.");
-    if (!employee!.startDate) return setNotice("Fecha de alta / ingreso es obligatoria.");
-    if (employee!.endDate && employee!.startDate && employee!.endDate < employee!.startDate) {
+    const all = (await employeeApiService.getAll()).filter((item) => item.id !== currentEmployee.id);
+    if (!currentEmployee.legajoInterno) return setNotice("Legajo Interno es obligatorio.");
+    if (!currentEmployee.birthDate) return setNotice("Fecha de nacimiento es obligatoria.");
+    if (!currentEmployee.gender) return setNotice("Sexo es obligatorio.");
+    if (!currentEmployee.nationality) return setNotice("Nacionalidad es obligatoria.");
+    if (!currentEmployee.startDate) return setNotice("Fecha de alta / ingreso es obligatoria.");
+    if (currentEmployee.endDate && currentEmployee.startDate && currentEmployee.endDate < currentEmployee.startDate) {
       return setNotice("Fecha de baja / egreso no puede ser anterior a la fecha de alta.");
     }
-    if (employee!.endDate && !employee!.exitReason) {
+    if (currentEmployee.endDate && !currentEmployee.exitReason) {
       return setNotice("Si cargás fecha de baja / egreso, debés indicar el motivo.");
     }
-    if (all.some((item) => item.legajoInterno === employee!.legajoInterno)) {
+    if (all.some((item) => item.legajoInterno === currentEmployee.legajoInterno)) {
       return setNotice("Ya existe un colaborador con este Legajo Interno.");
     }
     if (
-      employee!.legajoFinnegans &&
-      all.some((item) => item.legajoFinnegans === employee!.legajoFinnegans)
+      currentEmployee.legajoFinnegans &&
+      all.some((item) => item.legajoFinnegans === currentEmployee.legajoFinnegans)
     ) {
       return setNotice("Ya existe un colaborador con este Legajo Finnegans.");
     }
     try {
-      const updated = await employeeApiService.update({ ...employee!, legajo: employee!.legajoInterno, address: employee!.addressStreet });
+      const updated = await employeeApiService.update({ ...currentEmployee, legajo: currentEmployee.legajoInterno, address: currentEmployee.addressStreet });
       setEmployee(updated);
       setNotice("Cambios guardados correctamente.");
       setTimeout(() => setNotice(""), 2200);
@@ -129,7 +133,10 @@ export function EmployeeDetailPage() {
     }
   };
 
-  const laborStatus = calculateEmployeeStatus(employee);
+  const laborStatus =
+    currentEmployee.laborMovements?.length || currentEmployee.startDate
+      ? calculateEmployeeStatus(currentEmployee)
+      : currentEmployee.status;
 
   return (
     <>
@@ -139,16 +146,16 @@ export function EmployeeDetailPage() {
         </Link>
         <div>
           <div className="avatar">
-            {employee.firstName[0]}
-            {employee.lastName[0]}
+            {currentEmployee.firstName[0]}
+            {currentEmployee.lastName[0]}
           </div>
           <div>
-            <p className="eyebrow">LEGAJO {displayLegajo(employee)}</p>
+            <p className="eyebrow">LEGAJO {displayLegajo(currentEmployee)}</p>
             <h1>
-              {employee.firstName} {employee.lastName}
+              {currentEmployee.firstName} {currentEmployee.lastName}
             </h1>
             <p>
-              {employee.cuil} · {employee.company} · {employee.costCenter}
+              {currentEmployee.cuil} · {currentEmployee.company} · {currentEmployee.costCenter}
             </p>
           </div>
         </div>
@@ -185,12 +192,12 @@ export function EmployeeDetailPage() {
         }
       >
         <fieldset className="readonly-scope" disabled={!editable}>
-          {renderEmployeeTab(tab, employee, setEmployee, editable, user!, structureOptions, laborOptions, auditRows)}
+          {renderEmployeeTab(tab, currentEmployee, setEmployee, editable, user!, structureOptions, laborOptions, auditRows)}
         </fieldset>
       </Section>
       {![2, 3, 4, 5, 6, 7].includes(tab) && tabSections[tab] ? (
         <SectionChangeHistory
-          employeeId={employee.id}
+          employeeId={currentEmployee.id}
           section={tabSections[tab]}
           title="Historial de cambios de esta sección"
         />
@@ -225,10 +232,10 @@ function renderEmployeeTab(
         <Field label="Nombre" value={employee.firstName} set={(value) => update("firstName", value)} />
         <Field label="DNI" value={employee.dni} set={(value) => update("dni", value)} />
         <Field label="CUIL" value={employee.cuil} set={(value) => update("cuil", value)} />
-        <Field label="Fecha nacimiento" type="date" value={employee.birthDate} set={(value) => update("birthDate", value)} />
-        <Select label="Sexo" value={employee.gender} set={(value) => update("gender", value)} options={["Femenino", "Masculino", "Otro"]} />
+        <Field label="Fecha nacimiento *" type="date" value={employee.birthDate} set={(value) => update("birthDate", value)} />
+        <Select label="Sexo *" value={employee.gender} set={(value) => update("gender", value)} options={["Femenino", "Masculino", "Otro"]} />
         <Field label="Estado civil" value={employee.civilStatus} set={(value) => update("civilStatus", value)} />
-        <Field label="Nacionalidad" value={employee.nationality} set={(value) => update("nationality", value)} />
+        <Field label="Nacionalidad *" value={employee.nationality} set={(value) => update("nationality", value)} />
       </div>
     );
   }
@@ -255,11 +262,11 @@ function renderEmployeeTab(
     return (
       <>
         <LaborStatusCard employee={employee} />
-        <LaborMovementPanel employee={employee} user={user} canEdit={editable} onSaved={setEmployee} />
+          <LaborMovementPanel employee={employee} user={user} canEdit={editable} onSaved={setEmployee} />
         <div className="tracked-grid">
           <MultiCompanyField employee={employee} canEdit={editable} user={user} onSaved={setEmployee} />
-          <FieldWithHistory employee={employee} section="DATOS_LABORALES" field="businessUnit" label="Unidad de negocio" value={employee.businessUnit} canEdit={editable} user={user} options={laborOptions.businessUnit} onSaved={setEmployee} />
-          <FieldWithHistory employee={employee} section="DATOS_LABORALES" field="establishment" label="Establecimiento" value={employee.establishment} canEdit={editable} user={user} options={laborOptions.establishment} onSaved={setEmployee} />
+          <DerivedLaborField label="Unidad de negocio" value={employee.businessUnit} />
+          <DerivedLaborField label="Establecimiento" value={employee.establishment} />
           <FieldWithHistory employee={employee} section="DATOS_LABORALES" field="costCenter" label="Centro de costo" value={employee.costCenter} canEdit={editable} user={user} options={structureOptions.costCenter} onSaved={setEmployee} />
           <FieldWithHistory employee={employee} section="DATOS_LABORALES" field="sector" label="Sector" value={employee.sector} canEdit={editable} user={user} options={laborOptions.sector} onSaved={setEmployee} />
           <EmployeePositionField employee={employee} canEdit={editable} user={user} onSaved={setEmployee} />
@@ -318,15 +325,15 @@ function renderEmployeeTab(
   }
 
   return (
-    <TableShell minWidth={860}>
+    <TableShell minWidth={960}>
       <table>
         <thead>
           <tr>
             <th>Fecha</th>
             <th>Usuario</th>
             <th>Acción</th>
-            <th>Valor anterior</th>
-            <th>Valor nuevo</th>
+            <th>Detalle</th>
+            <th>Cambio</th>
           </tr>
         </thead>
         <tbody>
@@ -338,15 +345,27 @@ function renderEmployeeTab(
                 <td>{audit.user}</td>
                 <td>{audit.action}</td>
                 <td>
-                  <OverflowCell value={audit.previous} />
+                  <OverflowCell value={audit.reason} />
                 </td>
                 <td>
-                  <OverflowCell value={audit.next} />
+                  <OverflowCell value={`${audit.previous !== "-" ? `Antes: ${audit.previous}` : ""}${audit.previous !== "-" && audit.next !== "-" ? " | " : ""}${audit.next !== "-" ? `Despues: ${audit.next}` : ""}` || "-"} />
                 </td>
               </tr>
             ))}
         </tbody>
       </table>
     </TableShell>
+  );
+}
+
+function DerivedLaborField({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="tracked-field">
+      <div className="tracked-main">
+        <small>{label}</small>
+        <b>{value || "Sin cargar"}</b>
+        <span>Dato derivado del sector seleccionado</span>
+      </div>
+    </div>
   );
 }

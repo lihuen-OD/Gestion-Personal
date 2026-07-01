@@ -143,7 +143,15 @@ export function EmployeePositionCreateField({
   );
 }
 
-export function SalaryRangeValidationCard({ employee }: { employee: Employee }) {
+type SalaryRangeValidationCardProps = {
+  employee: Employee;
+  useBackendValidation?: boolean;
+};
+
+export function SalaryRangeValidationCard({
+  employee,
+  useBackendValidation = true,
+}: SalaryRangeValidationCardProps) {
   const positions = usePositions();
   const [backendValidation, setBackendValidation] = useState<EmployeePositionValidation | null>(null);
   const [, setSalaryCatalogLoaded] = useState(0);
@@ -216,7 +224,7 @@ export function SalaryRangeValidationCard({ employee }: { employee: Employee }) 
 
   useEffect(() => {
     let mounted = true;
-    if (!employee.id) {
+    if (!useBackendValidation || !employee.id) {
       setBackendValidation(null);
       return () => {
         mounted = false;
@@ -233,7 +241,15 @@ export function SalaryRangeValidationCard({ employee }: { employee: Employee }) 
     return () => {
       mounted = false;
     };
-  }, [employee.id, employee.positionId, employee.internalCategory, employee.businessUnit, employee.establishment, employee.sector]);
+  }, [
+    useBackendValidation,
+    employee.id,
+    employee.positionId,
+    employee.internalCategory,
+    employee.businessUnit,
+    employee.establishment,
+    employee.sector,
+  ]);
 
   return (
     <div className={`salary-range-check ${validation.tone}`}>

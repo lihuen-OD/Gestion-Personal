@@ -30,6 +30,8 @@ type ApiDocumentCategory = {
 type ApiListResponse = { data: ApiDocumentCategory[] };
 type ApiItemResponse = { data: ApiDocumentCategory };
 
+const listCache = new Map<string, Promise<DocumentCategory[]>>();
+
 const defaultRules = {
   expires: false,
   alertBeforeDays: 0,
@@ -121,14 +123,19 @@ function matchesFilters(item: DocumentCategory, filters: DocumentCategoryFilters
 
 export const documentCategoryApiService = {
   async getAll(filters?: Partial<DocumentCategoryFilters>) {
-    const response = await apiRequest<ApiListResponse>(`/document-categories${toQuery(filters)}`);
-    return response.data.map(mapFromApi);
+    const query = toQuery(filters);
+    const key = `/document-categories${query}`;
+    if (!listCache.has(key)) {
+      listCache.set(key, apiRequest<ApiListResponse>(key).then((response) => response.data.map(mapFromApi)));
+    }
+    return listCache.get(key)!;
   },
   async create(item: DocumentCategory) {
     const response = await apiRequest<ApiItemResponse>("/document-categories", {
       method: "POST",
       body: mapToApi(item),
     });
+    listCache.clear();
     return mapFromApi(response.data);
   },
   async update(id: string, item: DocumentCategory) {
@@ -136,6 +143,7 @@ export const documentCategoryApiService = {
       method: "PATCH",
       body: mapToApi(item),
     });
+    listCache.clear();
     return mapFromApi(response.data);
   },
   getEmptyFilters: (): DocumentCategoryFilters => ({ search: "", kind: "", scope: "", mandatory: "", expires: "", status: "ACTIVO" }),

@@ -50,6 +50,7 @@ export function OrganigramasPage() {
   const [filters, setFilters] = useState<OrgChartFilters>({ company: "", businessUnit: "", establishment: "", costCenter: "", sector: "", position: "", internalCategory: "", receiptCategory: "", status: "", directManager: "", timeResponsible: "", search: "" });
   const [toast, setToast] = useState("");
   const [sourceEmployees, setSourceEmployees] = useState<Employee[]>([]);
+  const [usesBackend, setUsesBackend] = useState(false);
   useEffect(() => {
     let mounted = true;
     employeeApiService
@@ -57,6 +58,7 @@ export function OrganigramasPage() {
       .then((employees) => {
         if (!mounted) return;
         setSourceEmployees(employees);
+        setUsesBackend(true);
       })
       .catch(() => {
         employeeApiService
@@ -64,10 +66,12 @@ export function OrganigramasPage() {
           .then((employees) => {
             if (!mounted) return;
             setSourceEmployees(employees);
+            setUsesBackend(true);
           })
           .catch(() => {
             if (!mounted) return;
             setSourceEmployees([]);
+            setUsesBackend(false);
           });
       });
     return () => {

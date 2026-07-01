@@ -18,6 +18,7 @@ import {
   userRoleOptions,
 } from "../components/employees/employeeOptions";
 import { employeeApiService } from "../services/api/employeeApiService";
+import { ApiError } from "../services/api/apiClient";
 import { calculateEmployeeStatus } from "../services/employeeStatusService";
 import type { Employee } from "../types";
 
@@ -97,22 +98,12 @@ const blankEmployee: Employee = {
   startDate: "",
   endDate: "",
   exitReason: "",
-  workday: "8 h",
-  shift: "Mañana",
   transport: false,
   transportRoute: "",
   transportNotes: "",
   mapLocation: "",
   locationMap: emptyMap,
   enabledHours: ["Hora normal"],
-  settlementType: "Normal",
-  affectsSettlement: true,
-  exportable: true,
-  attendanceBonus: true,
-  award: false,
-  productiveGoals: false,
-  humanGoals: false,
-  settlementNotes: "",
   status: "Activo",
   laborMovements: [],
   novelties: [],
@@ -127,6 +118,7 @@ export function EmployeeCreatePage() {
   const navigate = useNavigate();
   const [value, setValue] = useState<Employee>({ ...blankEmployee, id: crypto.randomUUID() });
   const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
   const [tab, setTab] = useState(0);
   const [entryReason, setEntryReason] = useState(entryReasons[0]);
   const [entryObservation, setEntryObservation] = useState("");
@@ -139,73 +131,93 @@ export function EmployeeCreatePage() {
 
   const save = async (event: FormEvent) => {
     event.preventDefault();
-    const all = await employeeApiService.getAll();
-    if (
-      !value.legajoInterno ||
-      !value.dni ||
-      !value.cuil ||
-      !value.firstName ||
-      !value.lastName ||
-      !value.company ||
-      !value.costCenter ||
-      !value.startDate
-    ) {
-      return setError(
-        "Completá los campos obligatorios de Información General y Datos Laborales, incluida la fecha de alta.",
-      );
-    }
-    if (!entryReason) return setError("El motivo de alta es obligatorio.");
-    if (all.some((employee) => employee.legajoInterno === value.legajoInterno)) {
-      return setError("Ya existe un colaborador con este Legajo Interno.");
-    }
-    if (
-      value.legajoFinnegans &&
-      all.some((employee) => employee.legajoFinnegans === value.legajoFinnegans)
-    ) {
-      return setError("Ya existe un colaborador con este Legajo Finnegans.");
-    }
-    if (all.some((employee) => employee.dni === value.dni)) {
-      return setError("El DNI ya existe.");
-    }
-
-    const laborMovements = [
-      {
-        id: crypto.randomUUID(),
-        type: "ALTA" as const,
-        effectiveFrom: value.startDate,
-        reason: entryReason,
-        observation: entryObservation,
-        createdAt: new Date().toISOString(),
-        createdByUserId: user!.id,
-        createdByUserName: user!.name,
-      },
-    ];
-
-    const created: Employee = {
-      ...value,
-      companies: value.companies?.length ? value.companies : [value.company],
-      legajo: value.legajoInterno,
-      address: value.addressStreet,
-      endDate: "",
-      exitReason: "",
-      laborMovements,
-      status: calculateEmployeeStatus({ ...value, laborMovements }),
-      historyEvents: [
-        {
-          id: crypto.randomUUID(),
-          date: new Date().toLocaleDateString("es-AR"),
-          type: "Alta",
-          description: "Se creó el legajo del colaborador.",
-          user: user!.name,
-        },
-      ],
-    };
+    if (saving) return;
+    setSaving(true);
+    setError("");
 
     try {
+      const all = await employeeApiService.getAll();
+      if (
+        !value.legajoInterno ||
+        !value.dni ||
+        !value.cuil ||
+        !value.firstName ||
+        !value.lastName ||
+        !value.birthDate ||
+        !value.gender ||
+        !value.nationality ||
+        !value.company ||
+        !value.costCenter ||
+        !value.startDate
+      ) {
+        setError(
+          "Completá los campos obligatorios de Información General y Datos Laborales, incluida fecha de nacimiento, sexo, nacionalidad y fecha de alta.",
+        );
+        return;
+      }
+      if (!entryReason) {
+        setError("El motivo de alta es obligatorio.");
+        return;
+      }
+      if (all.some((employee) => employee.legajoInterno === value.legajoInterno)) {
+        setError("Ya existe un colaborador con este Legajo Interno.");
+        return;
+      }
+      if (
+        value.legajoFinnegans &&
+        all.some((employee) => employee.legajoFinnegans === value.legajoFinnegans)
+      ) {
+        setError("Ya existe un colaborador con este Legajo Finnegans.");
+        return;
+      }
+      if (all.some((employee) => employee.dni === value.dni)) {
+        setError("El DNI ya existe.");
+        return;
+      }
+
+      const laborMovements = [
+        {
+          id: crypto.randomUUID(),
+          type: "ALTA" as const,
+          effectiveFrom: value.startDate,
+          reason: entryReason,
+          observation: entryObservation,
+          createdAt: new Date().toISOString(),
+          createdByUserId: user!.id,
+          createdByUserName: user!.name,
+        },
+      ];
+
+      const created: Employee = {
+        ...value,
+        companies: value.companies?.length ? value.companies : [value.company],
+        legajo: value.legajoInterno,
+        address: value.addressStreet,
+        endDate: "",
+        exitReason: "",
+        laborMovements,
+        status: calculateEmployeeStatus({ ...value, laborMovements }),
+        historyEvents: [
+          {
+            id: crypto.randomUUID(),
+            date: new Date().toLocaleDateString("es-AR"),
+            type: "Alta",
+            description: "Se creó el legajo del colaborador.",
+            user: user!.name,
+          },
+        ],
+      };
+
       const saved = await employeeApiService.create(created);
       navigate(`/legajos/${saved.id}`, { state: { created: true } });
-    } catch {
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 409) {
+        setError("Ya existe un legajo con el mismo Legajo Interno, Legajo Finnegans, CUIL o DNI.");
+        return;
+      }
       setError("No se pudo guardar el legajo. Intentá de nuevo.");
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -260,24 +272,20 @@ export function EmployeeCreatePage() {
               <Field label="DNI *" value={value.dni} set={(next) => upd("dni", next)} />
               <Field label="CUIL *" value={value.cuil} set={(next) => upd("cuil", next)} />
               <Field
-                label="Fecha de nacimiento"
+                label="Fecha de nacimiento *"
                 type="date"
                 value={value.birthDate}
                 set={(next) => upd("birthDate", next)}
               />
               <Select
-                label="Sexo"
+                label="Sexo *"
                 value={value.gender}
                 set={(next) => upd("gender", next)}
                 options={["Femenino", "Masculino", "Otro"]}
               />
+              <Field label="Estado civil" value={value.civilStatus} set={(next) => upd("civilStatus", next)} />
               <Field
-                label="Estado civil"
-                value={value.civilStatus}
-                set={(next) => upd("civilStatus", next)}
-              />
-              <Field
-                label="Nacionalidad"
+                label="Nacionalidad *"
                 value={value.nationality}
                 set={(next) => upd("nationality", next)}
               />
@@ -334,7 +342,7 @@ export function EmployeeCreatePage() {
                   set={(next) => upd("internalCategory", next)}
                   options={laborOptions.internalCategory}
                 />
-                <SalaryRangeValidationCard employee={value} />
+                <SalaryRangeValidationCard employee={value} useBackendValidation={false} />
                 <Field label="Convenio" value={value.agreement} set={(next) => upd("agreement", next)} />
                 <Field
                   label="Obra Social"
@@ -502,7 +510,9 @@ export function EmployeeCreatePage() {
                 Siguiente
               </button>
             ) : null}
-            <button className="button primary">Guardar nuevo legajo</button>
+            <button className="button primary" disabled={saving}>
+              {saving ? "Guardando..." : "Guardar nuevo legajo"}
+            </button>
           </div>
         </Section>
       </form>

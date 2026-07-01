@@ -140,6 +140,7 @@ export function AddressEditBlock({ employee, user, canEdit, onSaved }: EmployeeB
       locationMap: draft.ubicacionMapa,
     };
     try {
+      await persistEmployeeBlock(updated, user, onSaved, "address");
       await recordBlockHistory(
         {
           employeeId: employee.id,
@@ -154,7 +155,6 @@ export function AddressEditBlock({ employee, user, canEdit, onSaved }: EmployeeB
         user,
         `Legajo ${employee.legajoInterno || employee.legajo}`,
       );
-      await persistEmployeeBlock(updated, user, onSaved, "address");
     } catch {
       setError("No se pudo guardar. Verifica que el backend esté activo.");
       return;
@@ -314,6 +314,7 @@ export function AssignmentBlock({
       ? `${clean.length ? clean.join(", ") : "Sin asignar"} · Desde ${from}`
       : `${clean.length ? clean.join(", ") : "Sin asignar"} · ${roleDraft || "Sin rol"} · Desde ${from}`;
     try {
+      await persistEmployeeBlock(updated, user, onSaved, "assignments");
       await recordBlockHistory(
         {
           employeeId: employee.id,
@@ -328,7 +329,6 @@ export function AssignmentBlock({
         user,
         `Legajo ${employee.legajoInterno || employee.legajo}`,
       );
-      await persistEmployeeBlock(updated, user, onSaved, "assignments");
     } catch {
       setError("No se pudo guardar. Verifica que el backend esté activo.");
       return;
@@ -437,6 +437,7 @@ export function TransportBlock({ employee, user, canEdit, onSaved }: EmployeeBlo
       transportNotes: notes,
     };
     try {
+      await persistEmployeeBlock(updated, user, onSaved, "transport");
       await recordBlockHistory(
         {
           employeeId: employee.id,
@@ -451,7 +452,6 @@ export function TransportBlock({ employee, user, canEdit, onSaved }: EmployeeBlo
         user,
         `Legajo ${employee.legajoInterno || employee.legajo}`,
       );
-      await persistEmployeeBlock(updated, user, onSaved, "transport");
     } catch {
       setError("No se pudo guardar. Verifica que el backend esté activo.");
       return;
@@ -531,6 +531,7 @@ export function HoursSpecialBlock({ employee, user, canEdit, onSaved }: Employee
     if (!reason.trim()) return setError("El motivo del cambio es obligatorio.");
     const updated = { ...employee, enabledHours: hours };
     try {
+      await persistEmployeeBlock(updated, user, onSaved, "hourConcepts");
       await recordBlockHistory(
         {
           employeeId: employee.id,
@@ -545,7 +546,6 @@ export function HoursSpecialBlock({ employee, user, canEdit, onSaved }: Employee
         user,
         `Legajo ${employee.legajoInterno || employee.legajo}`,
       );
-      await persistEmployeeBlock(updated, user, onSaved, "hourConcepts");
     } catch {
       setError("No se pudo guardar. Verifica que el backend esté activo.");
       return;

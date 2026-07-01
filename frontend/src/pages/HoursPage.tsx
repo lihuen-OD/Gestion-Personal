@@ -13,15 +13,16 @@ import {
   X,
 } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
-import { employeeApiService } from "../services/api/employeeApiService";
+import { orgStructureApiService } from "../services/api/orgStructureApiService";
 import { pendingApiService, type PendingItem } from "../services/api/pendingApiService";
 import { timeEntryApiService } from "../services/api/timeEntryApiService";
 import { noveltyApiService } from "../services/api/noveltyApiService";
 import type { Employee, TimeEntry } from "../types";
-import { buildHoursExportWorkbook, type HoursExportRow } from "../utils/hoursExport";
+import { buildHoursExportWorkbook } from "../utils/hoursExport";
 import { displayLegajo, fullName } from "../utils/employee";
 import { currentMonthPeriod, formatPeriodDay } from "../utils/period";
 import { statusClass } from "../utils/status";
+import { useDebouncedValue } from "../utils/useDebouncedValue";
 import { OverflowCell } from "../components/ui/OverflowCell";
 import { TableShell } from "../components/ui/TableShell";
 import { Modal } from "../components/ui/Modal";
@@ -34,18 +35,36 @@ function uniqueOptions(values: string[]) {
   return Array.from(new Set(values.filter(Boolean))).sort((a, b) => a.localeCompare(b, "es"));
 }
 
+const emptyHoursSummary = {
+  activeEmployees: 0,
+  employeesWithEntries: 0,
+  pendingEmployees: 0,
+  reviewEmployees: 0,
+  countableHours: 0,
+  coverage: 0,
+};
+const pageSize = 25;
+
 export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
   const { user } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const [search, setSearch] = useState("");
+  const debouncedSearch = useDebouncedValue(search);
   const period = searchParams.get("period") || currentMonthPeriod();
   const [costCenter, setCostCenter] = useState("");
+  const [page, setPage] = useState(1);
   const [refresh, setRefresh] = useState(0);
   const [review, setReview] = useState<{ entry: TimeEntry; action: "reject" | "return" }>();
   const [noveltyReject, setNoveltyReject] = useState<PendingItem>();
   const [reviewReason, setReviewReason] = useState("");
   const [baseEmployees, setBaseEmployees] = useState<Employee[]>([]);
+  const [periodRows, setPeriodRows] = useState<Array<{ employee: Employee; summary: { total: number; status: string } }>>([]);
+  const [periodRowsMeta, setPeriodRowsMeta] = useState({ total: 0, page: 1, pageSize, hasMore: false });
+  const [reviewPage, setReviewPage] = useState(1);
+  const [reviewEntriesMeta, setReviewEntriesMeta] = useState({ total: 0, page: 1, pageSize, hasMore: false });
   const [periodEntriesSource, setPeriodEntriesSource] = useState<TimeEntry[]>([]);
+  const [costCenterOptions, setCostCenterOptions] = useState<Array<{ id: string; name: string }>>([]);
+  const [hoursSummary, setHoursSummary] = useState(emptyHoursSummary);
   const [pendingItems, setPendingItems] = useState<PendingItem[]>([]);
   const [usesBackend, setUsesBackend] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -60,22 +79,32 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
       setLoading(true);
       setLoadError("");
       try {
-        const [apiEmployees, apiEntries] = await Promise.all([
-          employeeApiService.getAll(),
-          timeEntryApiService.getByPeriod(period),
+        const costCenterId = costCenterOptions.find((item) => item.name === costCenter)?.id;
+        const [apiRows, apiSummary, apiReviewEntries] = await Promise.all([
+          timeEntryApiService.getPeriodEmployees({ period, search: debouncedSearch, costCenterId, page, take: pageSize }),
+          timeEntryApiService.getSummary(period).catch(() => emptyHoursSummary),
+          pendingOnly ? timeEntryApiService.list({ period, status: "En revisión", search: debouncedSearch, costCenterId, page: reviewPage, take: pageSize }) : Promise.resolve({ items: [], meta: { total: 0, page: 1, pageSize, hasMore: false } }),
         ]);
         const apiPending = pendingOnly
           ? await pendingApiService.getAll({ period, kind: "all", take: 300 }).catch(() => undefined)
           : undefined;
         if (cancelled) return;
-        setBaseEmployees(apiEmployees);
-        setPeriodEntriesSource(apiEntries);
+        setBaseEmployees([]);
+        setPeriodRows(apiRows.items);
+        setPeriodRowsMeta(apiRows.meta);
+        setPeriodEntriesSource(apiReviewEntries.items);
+        setReviewEntriesMeta(apiReviewEntries.meta);
+        setHoursSummary(apiSummary);
         setPendingItems(apiPending?.data || []);
         setUsesBackend(true);
       } catch (error) {
         if (cancelled) return;
         setBaseEmployees([]);
+        setPeriodRows([]);
+        setPeriodRowsMeta({ total: 0, page, pageSize, hasMore: false });
         setPeriodEntriesSource([]);
+        setReviewEntriesMeta({ total: 0, page: reviewPage, pageSize, hasMore: false });
+        setHoursSummary(emptyHoursSummary);
         setPendingItems([]);
         setUsesBackend(false);
         setLoadError("No se pudo cargar carga horaria desde backend. Verifica que la API este levantada y que existan datos en la base.");
@@ -87,23 +116,30 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
     return () => {
       cancelled = true;
     };
-  }, [period, refresh, user]);
+  }, [costCenter, costCenterOptions, debouncedSearch, page, pendingOnly, period, refresh, reviewPage, user]);
 
-  const costCenters = uniqueOptions(baseEmployees.map((employee) => employee.costCenter));
-  const employees = baseEmployees.filter((employee) => {
-    const searchText =
-      `${displayLegajo(employee)} ${employee.legajoFinnegans} ${employee.dni} ${employee.cuil} ${employee.firstName} ${employee.lastName}`.toLowerCase();
-    return (
-      (!costCenter || employee.costCenter === costCenter) &&
-      searchText.includes(search.toLowerCase())
-    );
-  });
+  useEffect(() => {
+    let mounted = true;
+    orgStructureApiService
+      .getCatalog()
+      .then((catalog) => {
+        if (mounted) setCostCenterOptions(catalog.costCenters.filter((item) => item.status === "ACTIVO").map((item) => ({ id: item.id, name: item.name })));
+      })
+      .catch(() => {});
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  const costCenters = uniqueOptions(costCenterOptions.map((item) => item.name));
+  const employees = periodRows.map((row) => row.employee);
   const employeeIds = new Set(employees.map((employee) => employee.id));
   const periodEntries = periodEntriesSource.filter((entry) => employeeIds.has(entry.employeeId));
   const reviewEntries = periodEntries.filter((entry) => entry.status === "En revisión");
   const pendingNoveltyItems = pendingItems.filter((item) => item.kind === "novelty");
   const canReview = user ? timeEntryApiService.canReview(user) : false;
   const summary = (employeeId: string) =>
+    periodRows.find((row) => row.employee.id === employeeId)?.summary ||
     timeEntryApiService.getEmployeePeriodSummary(periodEntries, employeeId);
   const shown = pendingOnly
     ? employees.filter((employee) =>
@@ -111,27 +147,20 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
       )
     : employees;
   const exportRows = timeEntryApiService.getPeriodExportRowsFromEntries(period, shown, periodEntries);
-  const filterExportRowsToShown = (rows: HoursExportRow[]) => {
-    const shownCuils = new Set(shown.map((employee) => employee.cuil).filter(Boolean));
-    const shownLegajos = new Set(
-      shown.flatMap((employee) => [employee.legajoInterno, employee.legajoFinnegans, employee.legajo]).filter(Boolean),
-    );
-    return rows.filter((row) => shownCuils.has(row.cuil) || shownLegajos.has(row.legajo));
-  };
   const employeeFor = (entry: TimeEntry) =>
-    baseEmployees.find((employee) => employee.id === entry.employeeId);
-  const approvedHours = periodEntries
-    .filter((entry) => timeEntryApiService.isCountableStatus(entry.status))
-    .reduce((sum, entry) => sum + entry.hours, 0);
-
-  const setPeriodValue = (value: string) => setSearchParams(value ? { period: value } : {});
+    baseEmployees.find((employee) => employee.id === entry.employeeId) || periodRows.find((row) => row.employee.id === entry.employeeId)?.employee;
+  const totalPages = Math.max(1, Math.ceil(periodRowsMeta.total / periodRowsMeta.pageSize));
+  const reviewTotalPages = Math.max(1, Math.ceil(reviewEntriesMeta.total / reviewEntriesMeta.pageSize));
+  const setPeriodValue = (value: string) => {
+    setPage(1);
+    setReviewPage(1);
+    setSearchParams(value ? { period: value } : {});
+  };
   const exportHours = async () => {
     setExportError("");
     setExporting(true);
     try {
-      const rows = usesBackend
-        ? filterExportRowsToShown(await timeEntryApiService.getPeriodExportRows(period))
-        : exportRows;
+      const rows = usesBackend ? await timeEntryApiService.getPeriodExportRows(period) : exportRows;
       if (!rows.length) {
         setExportError("No hay horas aprobadas para exportar con los filtros actuales.");
         return;
@@ -197,7 +226,7 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
             <button
               className="button subtle"
               type="button"
-              disabled={exporting || !exportRows.length}
+              disabled={exporting || (!usesBackend && !exportRows.length)}
               onClick={exportHours}
             >
               <FileBarChart size={16} /> {exporting ? "Exportando..." : "Exportar horas"}
@@ -209,22 +238,22 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
       {exportError ? <div className="form-error">{exportError}</div> : null}
 
       <div className="stat-grid">
-        <StatCard label="Personas visibles" value={employees.length} icon={Users} />
+        <StatCard label="Personas activas" value={hoursSummary.activeEmployees} icon={Users} />
         <StatCard
           label="Pendientes"
-          value={employees.filter((employee) => summary(employee.id).status === "Pendiente").length}
+          value={hoursSummary.pendingEmployees}
           icon={Clock3}
           tone="orange"
         />
         <StatCard
           label="En revisión"
-          value={new Set(reviewEntries.map((entry) => entry.employeeId)).size}
+          value={hoursSummary.reviewEmployees}
           icon={ClipboardList}
           tone="purple"
         />
         <StatCard
           label="Horas contables"
-          value={`${approvedHours} h`}
+          value={`${hoursSummary.countableHours} h`}
           icon={BarChart3}
           tone="green"
         />
@@ -324,10 +353,21 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
               <input
                 placeholder="Buscar por legajo, DNI, CUIL, apellido o nombre"
                 value={search}
-                onChange={(event) => setSearch(event.target.value)}
+                onChange={(event) => {
+                  setSearch(event.target.value);
+                  setPage(1);
+                  setReviewPage(1);
+                }}
               />
             </label>
-            <select value={costCenter} onChange={(event) => setCostCenter(event.target.value)}>
+            <select
+              value={costCenter}
+              onChange={(event) => {
+                setCostCenter(event.target.value);
+                setPage(1);
+                setReviewPage(1);
+              }}
+            >
               <option value="">Todos los centros de costo</option>
               {costCenters.map((center) => (
                 <option key={center} value={center}>
@@ -355,13 +395,15 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
                 <tbody>
                   {reviewEntries.map((entry) => {
                     const employee = employeeFor(entry);
+                    const employeeLegajo = employee ? displayLegajo(employee) : entry.employeeLegajo || "-";
+                    const employeeName = employee ? fullName(employee) : entry.employeeName || "-";
                     return (
                       <tr key={entry.id}>
                         <td>
-                          <b>{displayLegajo(employee)}</b>
+                          <b>{employeeLegajo}</b>
                         </td>
                         <td>
-                          <OverflowCell value={employee ? fullName(employee) : "-"} />
+                          <OverflowCell value={employeeName} />
                         </td>
                         <td>{formatPeriodDay(entry.period, entry.day)}</td>
                         <td>
@@ -420,6 +462,15 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
           ) : (
             <EmptyState text="No hay horas en revisión para los filtros seleccionados." />
           )}
+          <div className="form-actions inline-actions">
+            <button className="button subtle" type="button" disabled={reviewPage <= 1} onClick={() => setReviewPage((value) => Math.max(1, value - 1))}>
+              Anterior
+            </button>
+            <span className="muted small">Pagina {reviewEntriesMeta.page} de {reviewTotalPages}</span>
+            <button className="button subtle" type="button" disabled={!reviewEntriesMeta.hasMore} onClick={() => setReviewPage((value) => value + 1)}>
+              Siguiente
+            </button>
+          </div>
           </Section>
         </>
       ) : null}
@@ -442,10 +493,21 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
             <input
               placeholder="Buscar persona por legajo, DNI, CUIL, apellido o nombre"
               value={search}
-              onChange={(event) => setSearch(event.target.value)}
+              onChange={(event) => {
+                setSearch(event.target.value);
+                setPage(1);
+                setReviewPage(1);
+              }}
             />
           </label>
-          <select value={costCenter} onChange={(event) => setCostCenter(event.target.value)}>
+          <select
+            value={costCenter}
+            onChange={(event) => {
+              setCostCenter(event.target.value);
+              setPage(1);
+              setReviewPage(1);
+            }}
+          >
             <option value="">Todos los centros de costo</option>
             {costCenters.map((center) => (
               <option key={center} value={center}>
@@ -521,6 +583,15 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
             </tbody>
           </table>
         </TableShell>
+        <div className="form-actions inline-actions">
+          <button className="button subtle" type="button" disabled={page <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))}>
+            Anterior
+          </button>
+          <span className="muted small">Pagina {periodRowsMeta.page} de {totalPages}</span>
+          <button className="button subtle" type="button" disabled={!periodRowsMeta.hasMore} onClick={() => setPage((value) => value + 1)}>
+            Siguiente
+          </button>
+        </div>
       </Section>
 
       {review ? (

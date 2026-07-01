@@ -7,7 +7,7 @@ export type LaborMovementType = "ALTA" | "BAJA";
 
 export interface User {
   id: string; name: string; email: string; password: string; role: Role; status: "Activo" | "Inactivo";
-  company?: string; sector?: string;
+  company?: string; sector?: string; employeeId?: string; employeeName?: string;
 }
 
 export interface Employee {
@@ -16,8 +16,8 @@ export interface Employee {
   address: string; addressStreet: string; addressNumber: string; city: string; department: string; province: string; zip: string; domicilio: EmployeeAddress; emergencyContact: string; emergencyRelation: string; emergencyPhone: string;
   company: string; companies?: string[]; businessUnit: string; establishment: string; costCenter: string; sector: string; position: string; positionId?: string; puestoId?: string; puestoNombre?: string;
   receiptCategory: string; internalCategory: string; agreement: string; healthInsurance: string; directManager: string; directManagers?: string[]; timeResponsible: string; timeResponsibles?: string[];
-  startDate: string; endDate?: string; exitReason?: string; workday: string; shift: string; transport: boolean; transportRoute: string; transportNotes: string; enabledHours: string[];
-  settlementType: string; affectsSettlement: boolean; exportable: boolean; attendanceBonus: boolean; award: boolean; productiveGoals: boolean; humanGoals: boolean; settlementNotes: string; status: EmployeeStatus;
+  startDate: string; endDate?: string; exitReason?: string; transport: boolean; transportRoute: string; transportNotes: string; enabledHours: string[];
+  status: EmployeeStatus;
   laborMovements?: LaborMovement[];
   directManagerFrom: string; directManagerTo?: string; directManagerStatus: string; directManagerNotes: string;
   timeResponsibleRole: string; timeResponsibleFrom: string; timeResponsibleTo?: string; timeResponsibleStatus: string; timeResponsibleNotes: string;
@@ -55,11 +55,13 @@ export interface TimeEntry {
   id: string; employeeId: string; period: string; day: number; type: string; hours: number; notes?: string; status: TimeStatus;
   date?: string; startTime?: string; endTime?: string; totalMinutes?: number; origin?: "MANUAL" | "BIOTIME" | "CORRECCION_MANUAL" | "NOVEDAD"; createdBy?: string; updatedBy?: string;
   conceptId?: string; isSpecial?: boolean; finnegansCode?: string; exportToFinnegans?: boolean;
+  employeeLegajo?: string; employeeName?: string;
 }
 
 export interface Novelty {
   id: string; employeeId: string; type: string; noveltyTypeId?: string; from: string; to: string; quantity: string;
   affectsSettlement: boolean; status: string; createdBy: string; documentationFileName?: string; documentationNotes?: string;
+  employeeLegajo?: string; employeeName?: string;
   origin?: "INTERNA" | "FINNEGANS" | "MIXTA"; timeImpact?: string; hoursImpact?: number;
   targetHourConceptId?: string; targetHourConceptName?: string;
   exportsToFinnegans?: boolean; finnegansCode?: string; finnegansName?: string; valor1?: string; fechaAplicacion?: string; hasValidity?: boolean; blocksTimeEntry?: boolean; setsWorkedHoursToZero?: boolean;
@@ -72,6 +74,7 @@ export interface AuditEntry {
 
 export interface DocumentMock {
   id: string; employeeId: string; category: string; fileName: string; uploadedAt: string; expiresAt?: string; status: string; categoryId?: string; notes?: string;
+  employeeLegajo?: string; employeeName?: string;
 }
 
 export interface EmployeeChangeLog {

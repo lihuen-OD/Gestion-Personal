@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Download, Plus } from "lucide-react";
+import { Download, Plus, Search } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { DocumentUploadModal } from "../components/documents/DocumentUploadModal";
 import { EmptyState } from "../components/ui/EmptyState";
@@ -12,30 +12,56 @@ import { employeeApiService } from "../services/api/employeeApiService";
 import type { DocumentMock, Employee } from "../types";
 import { displayLegajo, fullName } from "../utils/employee";
 import { statusClass } from "../utils/status";
+import { useDebouncedValue } from "../utils/useDebouncedValue";
+
+const pageSize = 25;
 
 export function DocumentsPage() {
   const { user } = useAuth();
   const [open, setOpen] = useState(false);
   const [refresh, setRefresh] = useState(0);
+  const [page, setPage] = useState(1);
+  const [search, setSearch] = useState("");
+  const debouncedSearch = useDebouncedValue(search);
   const [docs, setDocs] = useState<DocumentMock[]>([]);
   const [employees, setEmployees] = useState<Employee[]>([]);
+  const [meta, setMeta] = useState({ total: 0, page: 1, pageSize, hasMore: false });
+  const [loadingEmployees, setLoadingEmployees] = useState(false);
   const [error, setError] = useState("");
 
   useEffect(() => {
     let mounted = true;
-    Promise.all([employeeApiService.getAll(), documentApiService.getAll()])
-      .then(([apiEmployees, apiDocs]) => {
+    documentApiService
+      .list({ page, take: pageSize, search: debouncedSearch })
+      .then((result) => {
         if (!mounted) return;
-        setEmployees(apiEmployees);
-        setDocs(apiDocs);
+        setDocs(result.items);
+        setMeta(result.meta);
       })
       .catch(() => {
         if (!mounted) return;
+        setDocs([]);
+        setMeta({ total: 0, page, pageSize, hasMore: false });
       });
     return () => {
       mounted = false;
     };
-  }, [refresh]);
+  }, [debouncedSearch, page, refresh]);
+
+  const openUpload = async () => {
+    setError("");
+    setLoadingEmployees(true);
+    try {
+      if (!employees.length) {
+        setEmployees(await employeeApiService.getAll());
+      }
+      setOpen(true);
+    } catch (loadError) {
+      setError("No se pudieron cargar los legajos para subir documentación.");
+    } finally {
+      setLoadingEmployees(false);
+    }
+  };
 
   const download = async (doc: DocumentMock) => {
     setError("");
@@ -53,15 +79,28 @@ export function DocumentsPage() {
         title="Documentacion"
         description="Seguimiento de documentacion laboral, certificados y vencimientos."
         action={
-          <button className="button primary" onClick={() => setOpen(true)}>
-            <Plus size={16} /> Agregar documento
+          <button className="button primary" onClick={openUpload} disabled={loadingEmployees}>
+            <Plus size={16} /> {loadingEmployees ? "Cargando..." : "Agregar documento"}
           </button>
         }
       />
 
       {error ? <div className="form-error">{error}</div> : null}
 
-      <Section title="Documentos del personal" subtitle={`${docs.length} documentos registrados`}>
+      <Section title="Documentos del personal" subtitle={`${meta.total} documentos registrados`}>
+        <div className="filters">
+          <label className="search-field">
+            <Search size={17} />
+            <input
+              placeholder="Buscar por legajo, CUIL, DNI, empleado, categoria o archivo"
+              value={search}
+              onChange={(event) => {
+                setSearch(event.target.value);
+                setPage(1);
+              }}
+            />
+          </label>
+        </div>
         {docs.length ? (
           <TableShell minWidth={1200}>
             <table>
@@ -81,11 +120,13 @@ export function DocumentsPage() {
               <tbody>
                 {docs.map((doc) => {
                   const employee = employees.find((item) => item.id === doc.employeeId);
+                  const employeeLegajo = employee ? displayLegajo(employee) : doc.employeeLegajo || "-";
+                  const employeeName = employee ? fullName(employee) : doc.employeeName || "-";
                   return (
                     <tr key={doc.id}>
-                      <td>{displayLegajo(employee)}</td>
+                      <td>{employeeLegajo}</td>
                       <td>
-                        <OverflowCell value={employee ? fullName(employee) : "-"} />
+                        <OverflowCell value={employeeName} />
                       </td>
                       <td>
                         <OverflowCell value={doc.category} />
@@ -122,6 +163,15 @@ export function DocumentsPage() {
         ) : (
           <EmptyState text="Todavia no hay documentos cargados." />
         )}
+        <div className="form-actions inline-actions">
+          <button className="button subtle" type="button" disabled={page <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))}>
+            Anterior
+          </button>
+          <span className="muted small">Pagina {meta.page} de {Math.max(1, Math.ceil(meta.total / meta.pageSize))}</span>
+          <button className="button subtle" type="button" disabled={!meta.hasMore} onClick={() => setPage((value) => value + 1)}>
+            Siguiente
+          </button>
+        </div>
       </Section>
 
       {open ? (

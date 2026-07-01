@@ -2,6 +2,8 @@ import { apiRequest } from "./apiClient";
 import { hourConceptApiService } from "./hourConceptApiService";
 import { orgStructureApiService } from "./orgStructureApiService";
 import { positionApiService } from "./positionApiService";
+import { userApiService } from "./userApiService";
+import { calculateLaborStatus } from "../employeeStatusService";
 import type { Employee, EmployeeStatus, LaborMovement } from "../../types";
 
 type ApiEmployeeStatus = "ACTIVO" | "INACTIVO";
@@ -15,6 +17,9 @@ type ApiEmployee = {
   firstName: string;
   lastName: string;
   birthDate?: string | null;
+  gender?: string | null;
+  civilStatus?: string | null;
+  nationality?: string | null;
   email?: string | null;
   phone?: string | null;
   mobile?: string | null;
@@ -57,16 +62,27 @@ type ApiEmployee = {
     schedule?: string | null;
     observation?: string | null;
   } | null;
-  assignments?: Array<{ type: "DIRECT_MANAGER" | "TIME_RESPONSIBLE"; personName?: string | null }>;
+  assignments?: Array<{
+    type: "DIRECT_MANAGER" | "TIME_RESPONSIBLE";
+    userId?: string | null;
+    personName?: string | null;
+    role?: string | null;
+    effectiveFrom?: string | null;
+    effectiveTo?: string | null;
+    status?: string | null;
+    notes?: string | null;
+  }>;
   hourConcepts?: Array<{ hourConcept: { id: string; name: string } }>;
   laborMovements?: Array<{
     id: string;
+    employeeId?: string;
     type: "ALTA" | "BAJA";
     effectiveFrom: string;
     reason: string;
     observation?: string | null;
     createdAt: string;
     createdByUserId?: string | null;
+    createdBy?: { id: string; name: string } | null;
   }>;
   createdAt?: string;
   updatedAt?: string;
@@ -75,6 +91,27 @@ type ApiEmployee = {
 type ApiEmployeeListResponse = { data: ApiEmployee[] };
 type ApiEmployeeItemResponse = { data: ApiEmployee };
 type ApiLaborStatusSyncResponse = { data: { scanned: number; updated: number } };
+type ApiListMeta = { total: number; page: number; pageSize: number; hasMore: boolean };
+type ApiEmployeePaginatedResponse = ApiEmployeeListResponse & { meta: ApiListMeta };
+type ApiEmployeeSummaryResponse = {
+  data: {
+    total: number;
+    active: number;
+    inactive: number;
+    missingTimeResponsible: number;
+    pendingTimeLoads: number;
+  };
+};
+
+export type EmployeeListFilters = {
+  search?: string;
+  companyId?: string;
+  status?: "ACTIVO" | "INACTIVO";
+  page?: number;
+  take?: number;
+};
+
+export type EmployeeSummary = ApiEmployeeSummaryResponse["data"];
 
 export type EmployeePositionValidation = {
   tone: "success" | "warning" | "danger" | "neutral";
@@ -110,16 +147,16 @@ function asNumber(value: string | number | null | undefined) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function mapLaborMovements(items: ApiEmployee["laborMovements"] = []): LaborMovement[] {
-  return items.map((item) => ({
+function mapLaborMovements(items: ApiEmployee["laborMovements"] = [], employeeId?: string): LaborMovement[] {
+  return items.filter((item) => !item.employeeId || !employeeId || item.employeeId === employeeId).map((item) => ({
     id: item.id,
     type: item.type,
     effectiveFrom: dateOnly(item.effectiveFrom),
     reason: item.reason,
     observation: item.observation || "",
     createdAt: item.createdAt,
-    createdByUserId: item.createdByUserId || "",
-    createdByUserName: "Backend",
+    createdByUserId: item.createdByUserId || item.createdBy?.id || "",
+    createdByUserName: item.createdBy?.name || "Sistema",
   }));
 }
 
@@ -128,6 +165,8 @@ export function mapEmployeeFromApi(item: ApiEmployee): Employee {
   const primaryCompany = item.companies?.find((link) => link.isPrimary)?.company.name || companies[0] || "";
   const directManagers = compact((item.assignments || []).filter((link) => link.type === "DIRECT_MANAGER").map((link) => link.personName));
   const timeResponsibles = compact((item.assignments || []).filter((link) => link.type === "TIME_RESPONSIBLE").map((link) => link.personName));
+  const directManagerAssignment = item.assignments?.find((link) => link.type === "DIRECT_MANAGER");
+  const timeResponsibleAssignment = item.assignments?.find((link) => link.type === "TIME_RESPONSIBLE");
   const address = item.address;
   const mapLocation = {
     lat: asNumber(address?.latitude),
@@ -135,9 +174,10 @@ export function mapEmployeeFromApi(item: ApiEmployee): Employee {
     source: "API" as const,
     label: address?.mapLabel || [address?.street, address?.streetNumber, address?.city].filter(Boolean).join(" "),
   };
-  const laborMovements = mapLaborMovements(item.laborMovements);
+  const laborMovements = mapLaborMovements(item.laborMovements, item.id);
   const startMovement = laborMovements.find((movement) => movement.type === "ALTA");
   const endMovement = laborMovements.find((movement) => movement.type === "BAJA");
+  const status = laborMovements.length ? calculateLaborStatus(laborMovements).status : toFrontendStatus(item.status);
 
   return {
     id: item.id,
@@ -149,9 +189,9 @@ export function mapEmployeeFromApi(item: ApiEmployee): Employee {
     dni: item.dni,
     cuil: item.cuil,
     birthDate: dateOnly(item.birthDate),
-    gender: "",
-    civilStatus: "",
-    nationality: "Argentina",
+    gender: item.gender || "",
+    civilStatus: item.civilStatus || "",
+    nationality: item.nationality || "Argentina",
     phone: item.phone || "",
     mobile: item.mobile || "",
     email: item.email || "",
@@ -200,29 +240,21 @@ export function mapEmployeeFromApi(item: ApiEmployee): Employee {
     startDate: startMovement?.effectiveFrom || "",
     endDate: endMovement?.effectiveFrom,
     exitReason: endMovement?.reason,
-    workday: "",
-    shift: "",
     transport: Boolean(item.transport?.usesCompanyTransport),
     transportRoute: item.transport?.busLine || "",
     transportNotes: item.transport?.observation || item.transport?.pickupReference || "",
     enabledHours: (item.hourConcepts || []).map((link) => link.hourConcept.name),
-    settlementType: "",
-    affectsSettlement: false,
-    exportable: false,
-    attendanceBonus: false,
-    award: false,
-    productiveGoals: false,
-    humanGoals: false,
-    settlementNotes: "",
-    status: toFrontendStatus(item.status),
+    status,
     laborMovements,
-    directManagerFrom: "",
-    directManagerStatus: "",
-    directManagerNotes: "",
-    timeResponsibleRole: "",
-    timeResponsibleFrom: "",
-    timeResponsibleStatus: "",
-    timeResponsibleNotes: "",
+    directManagerFrom: dateOnly(directManagerAssignment?.effectiveFrom),
+    directManagerTo: dateOnly(directManagerAssignment?.effectiveTo),
+    directManagerStatus: directManagerAssignment?.status || "",
+    directManagerNotes: directManagerAssignment?.notes || "",
+    timeResponsibleRole: timeResponsibleAssignment?.role || "",
+    timeResponsibleFrom: dateOnly(timeResponsibleAssignment?.effectiveFrom),
+    timeResponsibleTo: dateOnly(timeResponsibleAssignment?.effectiveTo),
+    timeResponsibleStatus: timeResponsibleAssignment?.status || "",
+    timeResponsibleNotes: timeResponsibleAssignment?.notes || "",
     mapLocation: mapLocation.label,
     locationMap: mapLocation,
     novelties: [],
@@ -244,11 +276,22 @@ async function resolveRelations(employee: Employee) {
   const sectorId = catalog?.sectors.find((item) => item.name === employee.sector)?.id;
   const costCenterId = catalog?.costCenters.find((item) => item.name === employee.costCenter || item.code === employee.costCenter)?.id;
   const positionId = employee.positionId || employee.puestoId || positions.find((item) => item.name === employee.puestoNombre || item.name === employee.position)?.id;
-  return { companyIds, primaryCompanyId, sectorId, costCenterId, positionId };
+  return {
+    companyIds,
+    primaryCompanyId,
+    sectorId,
+    costCenterId,
+    positionId,
+    companiesResolved: Boolean(catalog) && (!companyNames.length || companyIds.length === companyNames.length),
+    sectorResolved: Boolean(catalog) && (!employee.sector || Boolean(sectorId)),
+    costCenterResolved: Boolean(catalog) && (!employee.costCenter || Boolean(costCenterId)),
+    positionResolved: Boolean(employee.positionId || employee.puestoId) || !(employee.puestoNombre || employee.position) || Boolean(positionId),
+  };
 }
 
-async function mapEmployeeToApi(employee: Employee) {
+async function mapEmployeeToApi(employee: Employee, mode: "create" | "update" = "create") {
   const relations = await resolveRelations(employee);
+  const shouldSendAllRelations = mode === "create";
   return {
     legajo: employee.legajoInterno || employee.legajo,
     legajoFinnegans: employee.legajoFinnegans || null,
@@ -257,6 +300,9 @@ async function mapEmployeeToApi(employee: Employee) {
     firstName: employee.firstName,
     lastName: employee.lastName,
     birthDate: employee.birthDate || null,
+    gender: employee.gender || null,
+    civilStatus: employee.civilStatus || null,
+    nationality: employee.nationality || null,
     email: employee.email || null,
     phone: employee.phone || null,
     mobile: employee.mobile || null,
@@ -264,15 +310,19 @@ async function mapEmployeeToApi(employee: Employee) {
     emergencyRelation: employee.emergencyRelation || null,
     emergencyPhone: employee.emergencyPhone || null,
     status: toApiStatus(employee.status),
-    positionId: relations.positionId || null,
-    sectorId: relations.sectorId || null,
-    costCenterId: relations.costCenterId || null,
+    ...(shouldSendAllRelations || relations.positionResolved ? { positionId: relations.positionId || null } : {}),
+    ...(shouldSendAllRelations || relations.sectorResolved ? { sectorId: relations.sectorId || null } : {}),
+    ...(shouldSendAllRelations || relations.costCenterResolved ? { costCenterId: relations.costCenterId || null } : {}),
     healthInsurance: employee.healthInsurance || null,
     agreement: employee.agreement || null,
     receiptCategory: employee.receiptCategory || null,
     internalCategory: employee.internalCategory || null,
-    companyIds: relations.companyIds,
-    primaryCompanyId: relations.primaryCompanyId || null,
+    ...(shouldSendAllRelations || relations.companiesResolved
+      ? {
+          companyIds: relations.companyIds,
+          primaryCompanyId: relations.primaryCompanyId || null,
+        }
+      : {}),
     address: {
       province: employee.province || employee.domicilio?.provinciaNombre || null,
       department: employee.department || employee.domicilio?.departamentoNombre || null,
@@ -280,9 +330,9 @@ async function mapEmployeeToApi(employee: Employee) {
       street: employee.addressStreet || employee.domicilio?.calle || null,
       streetNumber: employee.addressNumber || employee.domicilio?.numero || null,
       postalCode: employee.zip || employee.domicilio?.codigoPostal || null,
-      latitude: employee.locationMap?.lat || employee.domicilio?.ubicacionMapa?.lat || null,
-      longitude: employee.locationMap?.lng || employee.domicilio?.ubicacionMapa?.lng || null,
-      mapLabel: employee.locationMap?.label || employee.mapLocation || null,
+      latitude: employee.domicilio?.ubicacionMapa?.lat ?? employee.locationMap?.lat ?? null,
+      longitude: employee.domicilio?.ubicacionMapa?.lng ?? employee.locationMap?.lng ?? null,
+      mapLabel: employee.domicilio?.ubicacionMapa?.label || employee.locationMap?.label || employee.mapLocation || null,
     },
   };
 }
@@ -295,9 +345,9 @@ function addressPayload(employee: Employee) {
     street: employee.addressStreet || employee.domicilio?.calle || null,
     streetNumber: employee.addressNumber || employee.domicilio?.numero || null,
     postalCode: employee.zip || employee.domicilio?.codigoPostal || null,
-    latitude: employee.locationMap?.lat || employee.domicilio?.ubicacionMapa?.lat || null,
-    longitude: employee.locationMap?.lng || employee.domicilio?.ubicacionMapa?.lng || null,
-    mapLabel: employee.locationMap?.label || employee.mapLocation || null,
+    latitude: employee.domicilio?.ubicacionMapa?.lat ?? employee.locationMap?.lat ?? null,
+    longitude: employee.domicilio?.ubicacionMapa?.lng ?? employee.locationMap?.lng ?? null,
+    mapLabel: employee.domicilio?.ubicacionMapa?.label || employee.locationMap?.label || employee.mapLocation || null,
   };
 }
 
@@ -313,16 +363,32 @@ function transportPayload(employee: Employee) {
   };
 }
 
-function assignmentsPayload(employee: Employee) {
+async function assignmentsPayload(employee: Employee) {
+  const users = await userApiService.getAll().catch(() => []);
+  const userByName = new Map(users.map((user) => [user.employeeName || user.name, user]));
   const assignments = [
     ...(employee.directManagers || (employee.directManager ? [employee.directManager] : [])).map((personName) => ({
       type: "DIRECT_MANAGER" as const,
       personName,
+      role: null,
+      effectiveFrom: employee.directManagerFrom || null,
+      effectiveTo: employee.directManagerTo || null,
+      status: employee.directManagerStatus || null,
+      notes: employee.directManagerNotes || null,
     })),
-    ...(employee.timeResponsibles || (employee.timeResponsible ? [employee.timeResponsible] : [])).map((personName) => ({
-      type: "TIME_RESPONSIBLE" as const,
-      personName,
-    })),
+    ...(employee.timeResponsibles || (employee.timeResponsible ? [employee.timeResponsible] : [])).map((personName) => {
+      const linkedUser = userByName.get(personName);
+      return {
+        type: "TIME_RESPONSIBLE" as const,
+        userId: linkedUser?.id || null,
+        personName,
+        role: employee.timeResponsibleRole || null,
+        effectiveFrom: employee.timeResponsibleFrom || null,
+        effectiveTo: employee.timeResponsibleTo || null,
+        status: employee.timeResponsibleStatus || null,
+        notes: employee.timeResponsibleNotes || null,
+      };
+    }),
   ].filter((item) => item.personName?.trim());
   return { assignments };
 }
@@ -345,7 +411,7 @@ async function syncEmployeeExtras(employeeId: string, employee: Employee, option
     );
   }
 
-  const { assignments } = assignmentsPayload(employee);
+  const { assignments } = await assignmentsPayload(employee);
   if (assignments.length) {
     requests.push(
       apiRequest(`/employees/${employeeId}/assignments`, {
@@ -385,9 +451,26 @@ async function syncEmployeeExtras(employeeId: string, employee: Employee, option
 }
 
 export const employeeApiService = {
+  async list(filters: EmployeeListFilters = {}) {
+    const params = new URLSearchParams();
+    params.set("page", String(filters.page || 1));
+    params.set("take", String(filters.take || 25));
+    if (filters.search?.trim()) params.set("search", filters.search.trim());
+    if (filters.companyId) params.set("companyId", filters.companyId);
+    if (filters.status) params.set("status", filters.status);
+    const response = await apiRequest<ApiEmployeePaginatedResponse>(`/employees?${params.toString()}`);
+    return {
+      items: response.data.map(mapEmployeeFromApi),
+      meta: response.meta,
+    };
+  },
   async getAll() {
-    const response = await apiRequest<ApiEmployeeListResponse>("/employees?take=500");
-    return response.data.map(mapEmployeeFromApi);
+    const response = await this.list({ take: 200 });
+    return response.items;
+  },
+  async getSummary() {
+    const response = await apiRequest<ApiEmployeeSummaryResponse>("/employees/summary");
+    return response.data;
   },
   async getOrgChart() {
     const response = await apiRequest<ApiEmployeeListResponse>("/employees/org-chart?take=1000");
@@ -404,7 +487,7 @@ export const employeeApiService = {
   async create(employee: Employee) {
     const response = await apiRequest<ApiEmployeeItemResponse>("/employees", {
       method: "POST",
-      body: await mapEmployeeToApi(employee),
+      body: await mapEmployeeToApi(employee, "create"),
     });
     await syncEmployeeExtras(response.data.id, employee, { createInitialMovement: true });
     return this.getById(response.data.id);
@@ -412,7 +495,7 @@ export const employeeApiService = {
   async update(employee: Employee) {
     const response = await apiRequest<ApiEmployeeItemResponse>(`/employees/${employee.id}`, {
       method: "PATCH",
-      body: await mapEmployeeToApi(employee),
+      body: await mapEmployeeToApi(employee, "update"),
     });
     await syncEmployeeExtras(response.data.id, employee);
     return this.getById(response.data.id);
@@ -434,7 +517,7 @@ export const employeeApiService = {
   async replaceAssignments(employee: Employee) {
     await apiRequest<ApiEmployeeItemResponse>(`/employees/${employee.id}/assignments`, {
       method: "PUT",
-      body: assignmentsPayload(employee),
+      body: await assignmentsPayload(employee),
     });
     return this.getById(employee.id);
   },

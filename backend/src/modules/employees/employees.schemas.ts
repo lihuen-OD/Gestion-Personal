@@ -42,7 +42,10 @@ export const createEmployeeSchema = z.object({
   dni: z.string().trim().min(5).max(20),
   firstName: z.string().trim().min(2).max(100),
   lastName: z.string().trim().min(2).max(100),
-  birthDate: z.coerce.date().optional().nullable(),
+  birthDate: z.coerce.date(),
+  gender: z.string().trim().min(1).max(40),
+  civilStatus: z.string().trim().max(80).optional().nullable(),
+  nationality: z.string().trim().min(1).max(80),
   email: z.string().trim().email().max(160).optional().nullable(),
   phone: z.string().trim().max(80).optional().nullable(),
   mobile: z.string().trim().max(80).optional().nullable(),
@@ -105,6 +108,11 @@ export const employeeAssignmentSchema = z.object({
   type: assignmentTypeSchema,
   userId: z.string().uuid().optional().nullable(),
   personName: z.string().trim().min(2).max(160).optional().nullable(),
+  role: z.string().trim().max(120).optional().nullable(),
+  effectiveFrom: z.coerce.date().optional().nullable(),
+  effectiveTo: z.coerce.date().optional().nullable(),
+  status: z.string().trim().max(80).optional().nullable(),
+  notes: z.string().trim().max(600).optional().nullable(),
 }).refine((value) => Boolean(value.userId || value.personName), {
   message: "userId or personName is required",
 });

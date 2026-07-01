@@ -1,12 +1,22 @@
 import type { RequestHandler } from "express";
 import { requestAuditContext } from "../../shared/audit/requestAuditContext";
 import { requireParam } from "../../shared/http/params";
-import type { ListTimeEntriesQuery, TimeEntriesExportQuery } from "./timeEntries.schemas";
+import type { ListTimeEntriesQuery, TimeEntriesExportQuery, TimeEntriesPeriodEmployeesQuery, TimeEntriesSummaryQuery } from "./timeEntries.schemas";
 import { timeEntriesExportToCsv, timeEntriesService } from "./timeEntries.service";
 
 export const timeEntriesController = {
   list: (async (req, res) => {
     const result = await timeEntriesService.list(req.query as unknown as ListTimeEntriesQuery, req.user!);
+    res.json({ data: result.items, meta: result.meta });
+  }) satisfies RequestHandler,
+
+  summary: (async (req, res) => {
+    const result = await timeEntriesService.summary(req.query as unknown as TimeEntriesSummaryQuery, req.user!);
+    res.json({ data: result });
+  }) satisfies RequestHandler,
+
+  periodEmployees: (async (req, res) => {
+    const result = await timeEntriesService.periodEmployees(req.query as unknown as TimeEntriesPeriodEmployeesQuery, req.user!);
     res.json({ data: result.items, meta: result.meta });
   }) satisfies RequestHandler,
 

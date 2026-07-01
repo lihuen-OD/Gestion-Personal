@@ -1,11 +1,29 @@
-import { Prisma } from "@prisma/client";
+import { ApprovalStatus, EmployeeStatus, Prisma } from "@prisma/client";
 import { prisma } from "../../shared/prisma/client";
-import type { CreateTimeEntryInput, ListTimeEntriesQuery, TimeEntriesExportQuery, UpdateTimeEntryInput } from "./timeEntries.schemas";
+import type { CreateTimeEntryInput, ListTimeEntriesQuery, TimeEntriesExportQuery, TimeEntriesPeriodEmployeesQuery, UpdateTimeEntryInput } from "./timeEntries.schemas";
 
 const timeEntryInclude = {
   employee: { select: { id: true, legajo: true, cuil: true, firstName: true, lastName: true, status: true } },
   hourConcept: true,
 } satisfies Prisma.TimeEntryInclude;
+
+const periodEmployeeSelect = {
+  id: true,
+  legajo: true,
+  legajoFinnegans: true,
+  cuil: true,
+  dni: true,
+  firstName: true,
+  lastName: true,
+  status: true,
+  sector: { select: { id: true, name: true, code: true } },
+  costCenter: { select: { id: true, name: true, code: true } },
+  position: { select: { id: true, name: true, code: true } },
+  companies: { select: { isPrimary: true, company: { select: { id: true, name: true, code: true } } } },
+  assignments: { select: { type: true, personName: true }, take: 100 },
+} satisfies Prisma.EmployeeSelect;
+
+const statusPriority = ["EN_REVISION", "RECHAZADO", "PENDIENTE", "BORRADOR", "APROBADO", "CERRADO"] as const;
 
 function periodFromDate(date: Date) {
   const year = date.getUTCFullYear();
@@ -22,8 +40,28 @@ function minutesFromHours(hours: number) {
 }
 
 function buildWhere(query: ListTimeEntriesQuery, employeeAccessWhere: Prisma.EmployeeWhereInput): Prisma.TimeEntryWhereInput {
+  const search = query.search?.trim();
   return {
-    employee: employeeAccessWhere,
+    employee: {
+      AND: [
+        employeeAccessWhere,
+        {
+          ...(query.costCenterId ? { costCenterId: query.costCenterId } : {}),
+          ...(search
+            ? {
+                OR: [
+                  { legajo: { contains: search, mode: "insensitive" } },
+                  { legajoFinnegans: { contains: search, mode: "insensitive" } },
+                  { cuil: { contains: search, mode: "insensitive" } },
+                  { dni: { contains: search, mode: "insensitive" } },
+                  { firstName: { contains: search, mode: "insensitive" } },
+                  { lastName: { contains: search, mode: "insensitive" } },
+                ],
+              }
+            : {}),
+        },
+      ],
+    },
     ...(query.employeeId ? { employeeId: query.employeeId } : {}),
     ...(query.hourConceptId ? { hourConceptId: query.hourConceptId } : {}),
     ...(query.status ? { status: query.status } : {}),
@@ -37,6 +75,35 @@ function buildWhere(query: ListTimeEntriesQuery, employeeAccessWhere: Prisma.Emp
         }
       : {}),
   };
+}
+
+function buildPeriodEmployeeWhere(query: TimeEntriesPeriodEmployeesQuery, employeeAccessWhere: Prisma.EmployeeWhereInput): Prisma.EmployeeWhereInput {
+  const search = query.search?.trim();
+  return {
+    AND: [
+      employeeAccessWhere,
+      {
+        status: EmployeeStatus.ACTIVO,
+        ...(query.costCenterId ? { costCenterId: query.costCenterId } : {}),
+        ...(search
+          ? {
+              OR: [
+                { legajo: { contains: search, mode: "insensitive" } },
+                { legajoFinnegans: { contains: search, mode: "insensitive" } },
+                { cuil: { contains: search, mode: "insensitive" } },
+                { dni: { contains: search, mode: "insensitive" } },
+                { firstName: { contains: search, mode: "insensitive" } },
+                { lastName: { contains: search, mode: "insensitive" } },
+              ],
+            }
+          : {}),
+      },
+    ],
+  };
+}
+
+function resolvePeriodStatus(statuses: string[]) {
+  return statusPriority.find((status) => statuses.includes(status)) || "PENDIENTE";
 }
 
 export const timeEntriesRepository = {
@@ -53,6 +120,124 @@ export const timeEntriesRepository = {
       }),
       prisma.timeEntry.count({ where }),
     ]);
+  },
+
+  async summary(period: string, employeeAccessWhere: Prisma.EmployeeWhereInput) {
+    const countableStatuses = [ApprovalStatus.APROBADO, ApprovalStatus.EN_REVISION];
+    const [activeEmployees, employeesWithEntries, pendingEmployees, reviewEmployeeGroups, hoursResult] = await prisma.$transaction([
+      prisma.employee.count({
+        where: { ...employeeAccessWhere, status: EmployeeStatus.ACTIVO },
+      }),
+      prisma.employee.count({
+        where: {
+          ...employeeAccessWhere,
+          status: EmployeeStatus.ACTIVO,
+          timeEntries: {
+            some: {
+              period,
+              status: { in: countableStatuses },
+            },
+          },
+        },
+      }),
+      prisma.employee.count({
+        where: {
+          ...employeeAccessWhere,
+          status: EmployeeStatus.ACTIVO,
+          timeEntries: {
+            none: {
+              period,
+              status: { in: countableStatuses },
+            },
+          },
+        },
+      }),
+      prisma.timeEntry.groupBy({
+        by: ["employeeId"],
+        orderBy: { employeeId: "asc" },
+        where: {
+          period,
+          employee: employeeAccessWhere,
+          status: ApprovalStatus.EN_REVISION,
+        },
+      }),
+      prisma.timeEntry.aggregate({
+        where: {
+          period,
+          employee: employeeAccessWhere,
+          status: { in: countableStatuses },
+        },
+        _sum: { hours: true },
+      }),
+    ]);
+
+    const countableHours = Number(hoursResult._sum.hours?.toString() || 0);
+
+    return {
+      activeEmployees,
+      employeesWithEntries,
+      pendingEmployees,
+      reviewEmployees: reviewEmployeeGroups.length,
+      countableHours,
+      coverage: activeEmployees ? Math.round((employeesWithEntries / activeEmployees) * 100) : 0,
+    };
+  },
+
+  async findPeriodEmployees(query: TimeEntriesPeriodEmployeesQuery, employeeAccessWhere: Prisma.EmployeeWhereInput) {
+    const where = buildPeriodEmployeeWhere(query, employeeAccessWhere);
+    const skip = (query.page - 1) * query.take;
+
+    return prisma.$transaction(async (tx) => {
+      const [employees, total] = await Promise.all([
+        tx.employee.findMany({
+          where,
+          select: periodEmployeeSelect,
+          orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
+          skip,
+          take: query.take,
+        }),
+        tx.employee.count({ where }),
+      ]);
+
+      const employeeIds = employees.map((employee) => employee.id);
+      const entries = employeeIds.length
+        ? await tx.timeEntry.findMany({
+            where: {
+              period: query.period,
+              employeeId: { in: employeeIds },
+            },
+            select: {
+              employeeId: true,
+              hours: true,
+              status: true,
+            },
+          })
+        : [];
+
+      const grouped = new Map<string, { total: number; statuses: string[] }>();
+      for (const entry of entries) {
+        const current = grouped.get(entry.employeeId) || { total: 0, statuses: [] };
+        if (entry.status === ApprovalStatus.APROBADO || entry.status === ApprovalStatus.EN_REVISION) {
+          current.total += Number(entry.hours.toString());
+        }
+        current.statuses.push(entry.status);
+        grouped.set(entry.employeeId, current);
+      }
+
+      return {
+        items: employees.map((employee) => {
+          const summary = grouped.get(employee.id);
+          return {
+            employee,
+            summary: {
+              total: summary?.total || 0,
+              status: resolvePeriodStatus(summary?.statuses || []),
+            },
+          };
+        }),
+        total,
+      };
+    });
   },
 
   findForExport(query: TimeEntriesExportQuery, employeeAccessWhere: Prisma.EmployeeWhereInput) {
