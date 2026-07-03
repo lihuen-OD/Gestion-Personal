@@ -64,6 +64,12 @@ async function ensureEmployeesVisible(employeeIds: string[], user: Express.AuthU
   }
 }
 
+function sameUtcDate(left: Date, right: Date) {
+  return left.getUTCFullYear() === right.getUTCFullYear() &&
+    left.getUTCMonth() === right.getUTCMonth() &&
+    left.getUTCDate() === right.getUTCDate();
+}
+
 async function ensureNoveltyTypeReady(input: CreateNoveltyInput) {
   const type = await noveltiesRepository.findNoveltyType(input.noveltyTypeId);
   if (!type || type.status !== "ACTIVO") {
@@ -72,13 +78,20 @@ async function ensureNoveltyTypeReady(input: CreateNoveltyInput) {
   if (!type.allowsHours && input.quantityHours) {
     throw new AppError("This novelty type does not allow quantity hours", 400, "NOVELTY_HOURS_NOT_ALLOWED");
   }
-  if (!type.allowsDateTo && input.toDate) {
+  if (!type.allowsDateTo && input.toDate && !sameUtcDate(input.toDate, input.fromDate)) {
     throw new AppError("This novelty type does not allow toDate", 400, "NOVELTY_TO_DATE_NOT_ALLOWED");
   }
-  if (type.hasValidity && !input.toDate) {
+  if (type.hasValidity && type.allowsDateTo && !input.toDate) {
     throw new AppError("This novelty type requires fromDate and toDate", 400, "NOVELTY_VALIDITY_REQUIRED");
   }
   return type;
+}
+
+function normalizeCreateInput(input: CreateNoveltyInput, type: Awaited<ReturnType<typeof noveltiesRepository.findNoveltyType>>): CreateNoveltyInput {
+  if (!type?.allowsDateTo) {
+    return { ...input, toDate: null };
+  }
+  return input;
 }
 
 export const noveltiesService = {
@@ -98,10 +111,11 @@ export const noveltiesService = {
   async create(input: CreateNoveltyInput, user: Express.AuthUser, audit?: AuditContext) {
     await ensureEmployeesVisible(input.employeeIds, user);
     const type = await ensureNoveltyTypeReady(input);
+    const normalizedInput = normalizeCreateInput(input, type);
     assertCanLoad(type, user);
     const status = type.requiresApproval ? "PENDIENTE" : "APROBADO";
     const items = await execute(() =>
-      noveltiesRepository.createMany(input, status, user.id, {
+      noveltiesRepository.createMany(normalizedInput, status, user.id, {
         createZeroTimeEntries: type.setsWorkedHoursToZero,
         noveltyName: type.name,
       }),
@@ -111,7 +125,7 @@ export const noveltiesService = {
       ...audit,
       action: "CREATE",
       entity: "Novelty",
-      entityId: items[0]?.id || input.noveltyTypeId,
+      entityId: items[0]?.id || normalizedInput.noveltyTypeId,
       description: `Se cargaron ${items.length} novedades ${type.code} - ${type.name}.`,
       after: items as Prisma.InputJsonValue,
     });

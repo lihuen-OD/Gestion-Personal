@@ -8,6 +8,7 @@ import { useAuth } from "../context/AuthContext";
 import { noveltyTypeApiService } from "../services/api/noveltyTypeApiService";
 import type { NoveltyType } from "../types/noveltyType.types";
 import { roleLevel } from "../utils/roles";
+import { useAsyncAction } from "../utils/useAsyncAction";
 
 export function NoveltyTypeCreatePage() {
   const { user } = useAuth();
@@ -26,9 +27,7 @@ export function NoveltyTypeCreatePage() {
     return () => { alive = false; };
   }, []);
 
-  if (roleLevel(user!.role) !== 1) return <Navigate to="/configuracion" />;
-
-  const save = async (event: FormEvent) => {
+  const { isRunning: isSaving, run: save } = useAsyncAction(async (event: FormEvent) => {
     event.preventDefault();
     if (!item.name.trim() || !item.description.trim()) return setError("Completa nombre y descripcion funcional.");
     const invalidLink = item.finnegansLinks.some((link) => link.code.trim() && (!link.name.trim() || !link.exportConcept.trim()));
@@ -40,7 +39,9 @@ export function NoveltyTypeCreatePage() {
     } catch {
       setError("No se pudo guardar en backend. Revisa la conexion o el codigo duplicado.");
     }
-  };
+  });
+
+  if (roleLevel(user!.role) !== 1) return <Navigate to="/configuracion" />;
 
   return (
     <form onSubmit={save}>
@@ -55,7 +56,7 @@ export function NoveltyTypeCreatePage() {
       <section className="panel"><div className="panel-head"><div><h3>2. Reglas operativas</h3><p>Controlan que campos se habilitan y que impactos genera la novedad.</p></div></div><NoveltyTypeRulesTab item={item} setItem={setItem} /></section>
       <section className="panel"><div className="panel-head"><div><h3>3. Vinculacion Finnegans</h3><p>Equivalencias externas para exportacion e integracion futura.</p></div></div><NoveltyTypeFinnegansTab item={item} setItem={setItem} /></section>
       {error && <p className="error create-error">{error}</p>}
-      <div className="form-actions create-actions"><Link to="/configuracion/tipos-novedades" className="button subtle">Cancelar</Link><button className="button primary">Guardar tipo</button></div>
+      <div className="form-actions create-actions"><Link to="/configuracion/tipos-novedades" className="button subtle">Cancelar</Link><button className="button primary" disabled={isSaving}>{isSaving ? "Guardando..." : "Guardar tipo"}</button></div>
     </form>
   );
 }

@@ -8,6 +8,7 @@ import { documentCategoryApiService } from "../services/api/documentCategoryApiS
 import type { Role } from "../types";
 import type { DocumentCategory, DocumentCategoryKind, DocumentCategoryScope, ExternalDocumentLink } from "../types/documentCategory.types";
 import { roleLevel } from "../utils/roles";
+import { useAsyncAction } from "../utils/useAsyncAction";
 
 const roles: Role[] = ["Nivel 1 - RRHH", "Nivel 2 - Supervisión / Gestión", "Nivel 3 - Administrativo de Carga Horaria"];
 const kinds: DocumentCategoryKind[] = ["PERSONAL", "LABORAL", "MEDICA", "LIQUIDACION", "TRANSPORTE", "CAPACITACION", "LEGAL", "NOVEDAD", "OTRO"];
@@ -87,31 +88,31 @@ export function DocumentCategoriesPage() {
       mounted = false;
     };
   }, [refresh]);
-  if (roleLevel(user!.role) !== 1) return <Navigate to="/configuracion" />;
   const items = documentCategoryApiService.getFiltered(all, filters);
   const options = documentCategoryApiService.getFilterOptions(all);
   const summary = useMemo(() => [["Categorias", all.length], ["Obligatorias", all.filter((item) => item.rules.mandatory).length], ["Con vencimiento", all.filter((item) => item.rules.expires).length], ["Con aprobacion", all.filter((item) => item.rules.requiresApproval).length]], [all]);
-  const save = () => {
+  const { isRunning: isSaving, run: save } = useAsyncAction(async () => {
     if (!editing) return;
     if (!editing.name.trim() || !editing.description.trim()) return setNotice("Completa nombre y descripcion.");
     const exists = all.some((item) => item.id === editing.id);
-    const persist = exists
-      ? documentCategoryApiService.update(editing.id, editing)
-      : documentCategoryApiService.create(editing);
-    persist
-      .then((saved) => setEditing(saved))
-      .catch(() => {
-        setNotice("No se pudo guardar en backend. Verifica que la API este activa.");
-      })
-      .finally(() => setRefresh((value) => value + 1));
-    setNotice("Categoria documental guardada correctamente.");
-    setTimeout(() => setNotice(""), 2200);
-  };
+    try {
+      const saved = exists
+        ? await documentCategoryApiService.update(editing.id, editing)
+        : await documentCategoryApiService.create(editing);
+      setEditing(saved);
+      setRefresh((value) => value + 1);
+      setNotice("Categoria documental guardada correctamente.");
+      setTimeout(() => setNotice(""), 2200);
+    } catch {
+      setNotice("No se pudo guardar en backend. Verifica que la API este activa.");
+    }
+  });
+  if (roleLevel(user!.role) !== 1) return <Navigate to="/configuracion" />;
   return <>
     <div className="page-header"><div><p className="eyebrow">CONFIGURACION</p><h1>Categorias documentales</h1><p>Catalogo documental conectado a legajos, novedades, liquidacion, alertas e historial.</p></div><button className="button primary" onClick={() => setEditing(emptyCategory(documentCategoryApiService.getNextCode(all)))}><Plus size={17} /> Crear categoria</button></div>
     {notice && <div className="toast">{notice}</div>}
     <div className="stat-grid novelty-type-summary">{summary.map(([label, value]) => <div className="stat-card" key={label}><div><small>{label}</small><strong>{value}</strong><span>Documentacion</span></div></div>)}</div>
     <section className="panel"><div className="panel-head"><div><h3>Listado de categorias</h3><p>{items.length} resultados segun filtros aplicados.</p></div></div><div className="panel-body"><div className="filters catalog-filters"><label className="search-field"><input placeholder="Buscar por codigo, nombre o vinculo externo" value={filters.search} onChange={(event) => setFilters({ ...filters, search: event.target.value })} /></label><label>Tipo<select value={filters.kind} onChange={(event) => setFilters({ ...filters, kind: event.target.value })}><option value="">Todos</option>{options.kinds.map((kind) => <option key={kind}>{kind}</option>)}</select></label><label>Modulo<select value={filters.scope} onChange={(event) => setFilters({ ...filters, scope: event.target.value })}><option value="">Todos</option>{options.scopes.map((scope) => <option key={scope}>{scope}</option>)}</select></label><label>Obligatoria<select value={filters.mandatory} onChange={(event) => setFilters({ ...filters, mandatory: event.target.value })}><option value="">Todas</option><option value="true">Si</option><option value="false">No</option></select></label><label>Estado<select value={filters.status} onChange={(event) => setFilters({ ...filters, status: event.target.value })}><option value="">Todos</option>{options.statuses.map((status) => <option key={status}>{status}</option>)}</select></label></div><TableShell minWidth={1080}><table><thead><tr><th>Codigo</th><th>Categoria</th><th>Tipo</th><th>Modulos</th><th>Reglas</th><th>Estado</th><th>Accion</th></tr></thead><tbody>{items.map((item) => <tr key={item.id}><td><b>{item.code}</b></td><td><OverflowCell value={item.name} /><span className="table-sub">{item.description}</span></td><td>{item.kind}</td><td><OverflowCell value={item.scopes.join(", ")} /></td><td><OverflowCell value={`${item.rules.mandatory ? "Obligatoria" : "Opcional"} · ${item.rules.expires ? `Vence / alerta ${item.rules.alertBeforeDays}d` : "Sin vencimiento"}`} /></td><td><span className={item.status === "ACTIVO" ? "badge success" : "badge neutral"}>{item.status}</span></td><td><button className="table-link table-icon-action" title="Editar" aria-label="Editar" onClick={() => setEditing(item)}><Pencil size={14}/><span>Editar</span></button></td></tr>)}</tbody></table></TableShell></div></section>
-    {editing && <section className="panel"><div className="panel-head"><div><h3>{editing.name || "Nueva categoria"}</h3><p>Definicion documental, reglas de vencimiento, permisos y vinculos externos.</p></div><div className="hero-actions"><button className="button subtle" onClick={() => setEditing(null)}>Cerrar</button><button className="button primary" onClick={save}>Guardar categoria</button></div></div><div className="panel-body"><CategoryEditor item={editing} setItem={setEditing} /></div></section>}
+    {editing && <section className="panel"><div className="panel-head"><div><h3>{editing.name || "Nueva categoria"}</h3><p>Definicion documental, reglas de vencimiento, permisos y vinculos externos.</p></div><div className="hero-actions"><button className="button subtle" onClick={() => setEditing(null)}>Cerrar</button><button className="button primary" onClick={save} disabled={isSaving}>{isSaving ? "Guardando..." : "Guardar categoria"}</button></div></div><div className="panel-body"><CategoryEditor item={editing} setItem={setEditing} /></div></section>}
   </>;
 }

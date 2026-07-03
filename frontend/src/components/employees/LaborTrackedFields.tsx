@@ -5,6 +5,7 @@ import { orgStructureApiService } from "../../services/api/orgStructureApiServic
 import { positionApiService } from "../../services/api/positionApiService";
 import type { Employee, EmployeeFieldHistoryRecord, FieldHistorySection, User } from "../../types";
 import type { Position } from "../../types/position.types";
+import { useAsyncAction } from "../../utils/useAsyncAction";
 import { EmptyState } from "../ui/EmptyState";
 import { Field } from "../ui/FormControls";
 
@@ -112,7 +113,7 @@ export function MultiCompanyField({ employee, canEdit, user, onSaved }: TrackedF
       current.includes(company) ? current.filter((item) => item !== company) : [...current, company],
     );
 
-  const save = async () => {
+  const { isRunning: isSaving, run: save } = useAsyncAction(async () => {
     if (!selected.length) return setError("Seleccioná al menos una empresa.");
     if (!from) return setError("La fecha desde es obligatoria.");
     if (!reason.trim()) return setError("El motivo del cambio es obligatorio.");
@@ -143,7 +144,7 @@ export function MultiCompanyField({ employee, canEdit, user, onSaved }: TrackedF
       setError("No se pudo guardar. Verifica que el backend esté activo.");
       return;
     }
-  };
+  });
 
   return (
     <div className="tracked-field">
@@ -213,8 +214,8 @@ export function MultiCompanyField({ employee, canEdit, user, onSaved }: TrackedF
                 <button type="button" className="button subtle" onClick={() => setEditing(false)}>
                   Cancelar
                 </button>
-                <button type="button" className="button primary" onClick={save}>
-                  Guardar modificación
+                <button type="button" className="button primary" onClick={save} disabled={isSaving}>
+                  {isSaving ? "Guardando..." : "Guardar modificación"}
                 </button>
               </div>
             </div>
@@ -239,7 +240,7 @@ export function EmployeePositionField({ employee, canEdit, user, onSaved }: Trac
   const { history, setHistory } = useBackendFieldHistory(employee.id, "positionId");
   const selected = positions.find((position) => position.id === selectedId);
 
-  const save = async () => {
+  const { isRunning: isSaving, run: save } = useAsyncAction(async () => {
     if (!from) return setError("La fecha desde es obligatoria.");
     if (!reason.trim()) return setError("El motivo del cambio es obligatorio.");
     const updated = selected
@@ -273,7 +274,7 @@ export function EmployeePositionField({ employee, canEdit, user, onSaved }: Trac
       setError("No se pudo guardar. Verifica que el backend esté activo.");
       return;
     }
-  };
+  });
 
   return (
     <div className="tracked-field position-field-card">
@@ -339,8 +340,8 @@ export function EmployeePositionField({ employee, canEdit, user, onSaved }: Trac
                 <button type="button" className="button subtle" onClick={() => setEditing(false)}>
                   Cancelar
                 </button>
-                <button type="button" className="button primary" onClick={save}>
-                  Guardar puesto
+                <button type="button" className="button primary" onClick={save} disabled={isSaving}>
+                  {isSaving ? "Guardando..." : "Guardar puesto"}
                 </button>
               </div>
             </div>

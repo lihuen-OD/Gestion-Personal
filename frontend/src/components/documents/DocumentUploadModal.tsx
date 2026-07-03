@@ -5,6 +5,7 @@ import { employeeApiService } from "../../services/api/employeeApiService";
 import type { Employee, User } from "../../types";
 import { defaultDocumentExpiration, documentStatusByExpiration } from "../../utils/documentStatus";
 import { displayLegajo, fullName } from "../../utils/employee";
+import { useAsyncAction } from "../../utils/useAsyncAction";
 import { Field, Select } from "../ui/FormControls";
 import { Modal } from "../ui/Modal";
 import type { DocumentCategory } from "../../types/documentCategory.types";
@@ -66,7 +67,7 @@ export function DocumentUploadModal({
     setError("");
   }, [categoryId, selectedCategory]);
 
-  const save = async () => {
+  const { isRunning: isSaving, run: save } = useAsyncAction(async () => {
     const employee = employees.find((item) => item.id === employeeId) || fixedEmployee;
     if (!employee) return setError("Seleccioná un legajo para asociar el documento.");
     if (!selectedCategory) return setError("Seleccioná una categoría documental.");
@@ -93,7 +94,7 @@ export function DocumentUploadModal({
     } catch {
       setError("No se pudo guardar el documento. Intentá nuevamente.");
     }
-  };
+  });
 
   return (
     <Modal title="Agregar documento" close={close}>
@@ -181,8 +182,8 @@ export function DocumentUploadModal({
               <button className="button subtle" onClick={close}>
                 Cancelar
               </button>
-              <button className="button primary" onClick={save}>
-                Guardar documento
+              <button className="button primary" onClick={save} disabled={isSaving}>
+                {isSaving ? "Guardando..." : "Guardar documento"}
               </button>
             </div>
           </>

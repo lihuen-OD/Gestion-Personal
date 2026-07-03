@@ -9,6 +9,7 @@ import { useAuth } from "../context/AuthContext";
 import { noveltyTypeApiService } from "../services/api/noveltyTypeApiService";
 import type { NoveltyType } from "../types/noveltyType.types";
 import { roleLevel } from "../utils/roles";
+import { useAsyncAction } from "../utils/useAsyncAction";
 
 const tabs = ["Identificacion", "Reglas operativas", "Finnegans", "Historial"];
 
@@ -38,11 +39,8 @@ export function NoveltyTypeDetailPage() {
     return () => { alive = false; };
   }, [id]);
 
-  if (roleLevel(user!.role) !== 1) return <Navigate to="/configuracion" />;
-  if (isLoading) return <section className="panel"><div className="panel-body"><div className="empty">Cargando tipo de novedad...</div></div></section>;
-  if (!item) return <Navigate to="/configuracion/tipos-novedades" />;
-
-  const save = async () => {
+  const { isRunning: isSaving, run: save } = useAsyncAction(async () => {
+    if (!item) return;
     if (!item.name.trim() || !item.description.trim()) return setNotice("Completa nombre y descripcion funcional.");
     try {
       const saved = await noveltyTypeApiService.update(item.id, item);
@@ -52,7 +50,11 @@ export function NoveltyTypeDetailPage() {
     } catch {
       setNotice("No se pudo guardar en backend. Revisa la conexion o el codigo duplicado.");
     }
-  };
+  });
+
+  if (roleLevel(user!.role) !== 1) return <Navigate to="/configuracion" />;
+  if (isLoading) return <section className="panel"><div className="panel-body"><div className="empty">Cargando tipo de novedad...</div></div></section>;
+  if (!item) return <Navigate to="/configuracion/tipos-novedades" />;
 
   const toggle = async () => {
     if (!confirm(`Confirmar ${item.status === "ACTIVO" ? "inactivacion" : "activacion"} de ${item.name}?`)) return;
@@ -98,7 +100,7 @@ export function NoveltyTypeDetailPage() {
             <h3>{tabs[tab]}</h3>
             <p>{tab === 2 ? "Equivalencias entre la novedad interna y conceptos externos." : tab === 3 ? "Trazabilidad del catalogo." : "Configuracion editable del tipo de novedad."}</p>
           </div>
-          {tab < 3 && <button className="button primary" onClick={save}>Guardar cambios</button>}
+          {tab < 3 && <button className="button primary" onClick={save} disabled={isSaving}>{isSaving ? "Guardando..." : "Guardar cambios"}</button>}
         </div>
         <div className="panel-body">{render()}</div>
       </section>

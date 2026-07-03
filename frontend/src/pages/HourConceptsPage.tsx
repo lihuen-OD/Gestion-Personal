@@ -8,6 +8,7 @@ import { hourConceptApiService } from "../services/api/hourConceptApiService";
 import type { Role } from "../types";
 import type { HourConcept, HourConceptFilters, HourConceptKind } from "../types/hourConcept.types";
 import { roleLevel } from "../utils/roles";
+import { useAsyncAction } from "../utils/useAsyncAction";
 
 const roles: Role[] = ["Nivel 1 - RRHH", "Nivel 2 - Supervisión / Gestión", "Nivel 3 - Administrativo de Carga Horaria"];
 const kinds: HourConceptKind[] = ["NORMAL", "EXTRA", "FERIADO", "NOCTURNA", "GUARDIA", "SERENO", "TRANSPORTE", "OTRO"];
@@ -124,8 +125,6 @@ export function HourConceptsPage() {
     return () => { alive = false; };
   }, [refresh]);
 
-  if (roleLevel(user!.role) !== 1) return <Navigate to="/configuracion" />;
-
   const all = apiItems ?? [];
   const items = all.filter((item) => matchesFilters(item, filters));
   const options = getFilterOptions(all);
@@ -133,7 +132,7 @@ export function HourConceptsPage() {
     ["Activas", all.filter((item) => item.status === "ACTIVO").length],
   ], [all]);
 
-  const save = async () => {
+  const { isRunning: isSaving, run: save } = useAsyncAction(async () => {
     if (!editing) return;
     if (!editing.name.trim() || !editing.description.trim()) {
       setNotice("Completa nombre y descripcion funcional.");
@@ -154,7 +153,9 @@ export function HourConceptsPage() {
       setNotice("No se pudo guardar en backend. Revisa la conexion e intenta nuevamente.");
       setTimeout(() => setNotice(""), 3000);
     }
-  };
+  });
+
+  if (roleLevel(user!.role) !== 1) return <Navigate to="/configuracion" />;
 
   return (
     <>
@@ -222,7 +223,7 @@ export function HourConceptsPage() {
             </div>
             <div className="hero-actions">
               <button className="button subtle" onClick={() => setEditing(null)}>Cerrar</button>
-              <button className="button primary" onClick={save}>Guardar hora especial</button>
+              <button className="button primary" onClick={save} disabled={isSaving}>{isSaving ? "Guardando..." : "Guardar hora especial"}</button>
             </div>
           </div>
           <div className="panel-body"><ConceptEditor item={editing} setItem={setEditing} /></div>

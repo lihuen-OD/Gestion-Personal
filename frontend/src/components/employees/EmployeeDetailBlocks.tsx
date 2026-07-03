@@ -5,6 +5,7 @@ import { employeeApiService } from "../../services/api/employeeApiService";
 import { employeeHistoryApiService } from "../../services/api/employeeHistoryApiService";
 import { locationService } from "../../services/locationService";
 import type { Employee, User } from "../../types";
+import { useAsyncAction } from "../../utils/useAsyncAction";
 import { Field, Select } from "../ui/FormControls";
 import { Modal } from "../ui/Modal";
 import { BlockHistoryTimeline } from "./FieldHistoryControls";
@@ -123,7 +124,7 @@ export function AddressEditBlock({ employee, user, canEdit, onSaved }: EmployeeB
         : null),
     });
 
-  const save = async () => {
+  const { isRunning: isSaving, run: save } = useAsyncAction(async () => {
     if (!from) return setError("La fecha desde es obligatoria.");
     if (!reason.trim()) return setError("El motivo del cambio es obligatorio.");
     const oldValue = addressSummary(employee);
@@ -161,7 +162,7 @@ export function AddressEditBlock({ employee, user, canEdit, onSaved }: EmployeeB
     }
     setEditing(false);
     setShowHistory(true);
-  };
+  });
 
   return (
     <div className="block-card">
@@ -239,8 +240,8 @@ export function AddressEditBlock({ employee, user, canEdit, onSaved }: EmployeeB
               <button className="button subtle" onClick={() => setEditing(false)}>
                 Cancelar
               </button>
-              <button className="button primary" onClick={save}>
-                Guardar domicilio
+              <button className="button primary" onClick={save} disabled={isSaving}>
+                {isSaving ? "Guardando..." : "Guardar domicilio"}
               </button>
             </div>
           </div>
@@ -286,7 +287,7 @@ export function AssignmentBlock({
           fromValue || "Sin cargar"
         }`;
 
-  const save = async () => {
+  const { isRunning: isSaving, run: save } = useAsyncAction(async () => {
     if (!from) return setError("La fecha desde es obligatoria.");
     if (!reason.trim()) return setError("El motivo del cambio es obligatorio.");
     const clean = names.filter(Boolean);
@@ -335,7 +336,7 @@ export function AssignmentBlock({
     }
     setEditing(false);
     setShowHistory(true);
-  };
+  });
 
   return (
     <div className="block-card">
@@ -405,8 +406,8 @@ export function AssignmentBlock({
               <button className="button subtle" onClick={() => setEditing(false)}>
                 Cancelar
               </button>
-              <button className="button primary" onClick={save}>
-                Guardar asignacion
+              <button className="button primary" onClick={save} disabled={isSaving}>
+                {isSaving ? "Guardando..." : "Guardar asignacion"}
               </button>
             </div>
           </div>
@@ -426,7 +427,7 @@ export function TransportBlock({ employee, user, canEdit, onSaved }: EmployeeBlo
   const [reason, setReason] = useState("");
   const [error, setError] = useState("");
 
-  const save = async () => {
+  const { isRunning: isSaving, run: save } = useAsyncAction(async () => {
     if (!from) return setError("La fecha desde es obligatoria.");
     if (!reason.trim()) return setError("El motivo del cambio es obligatorio.");
     const updated = {
@@ -458,7 +459,7 @@ export function TransportBlock({ employee, user, canEdit, onSaved }: EmployeeBlo
     }
     setEditing(false);
     setShowHistory(true);
-  };
+  });
 
   return (
     <div className="block-card">
@@ -506,8 +507,8 @@ export function TransportBlock({ employee, user, canEdit, onSaved }: EmployeeBlo
               <button className="button subtle" onClick={() => setEditing(false)}>
                 Cancelar
               </button>
-              <button className="button primary" onClick={save}>
-                Guardar transporte
+              <button className="button primary" onClick={save} disabled={isSaving}>
+                {isSaving ? "Guardando..." : "Guardar transporte"}
               </button>
             </div>
           </div>
@@ -526,7 +527,7 @@ export function HoursSpecialBlock({ employee, user, canEdit, onSaved }: Employee
   const [reason, setReason] = useState("");
   const [error, setError] = useState("");
 
-  const save = async () => {
+  const { isRunning: isSaving, run: save } = useAsyncAction(async () => {
     if (!from) return setError("La fecha desde es obligatoria.");
     if (!reason.trim()) return setError("El motivo del cambio es obligatorio.");
     const updated = { ...employee, enabledHours: hours };
@@ -552,7 +553,7 @@ export function HoursSpecialBlock({ employee, user, canEdit, onSaved }: Employee
     }
     setEditing(false);
     setShowHistory(true);
-  };
+  });
 
   return (
     <div className="block-card">
@@ -608,8 +609,8 @@ export function HoursSpecialBlock({ employee, user, canEdit, onSaved }: Employee
               <button className="button subtle" onClick={() => setEditing(false)}>
                 Cancelar
               </button>
-              <button className="button primary" onClick={save}>
-                Guardar horas
+              <button className="button primary" onClick={save} disabled={isSaving}>
+                {isSaving ? "Guardando..." : "Guardar horas"}
               </button>
             </div>
           </div>

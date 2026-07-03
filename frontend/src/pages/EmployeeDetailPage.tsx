@@ -29,6 +29,7 @@ import { SalaryRangeValidationCard } from "../components/employees/EmployeeLabor
 import { useLaborSelectOptions, useStructureSelectOptions } from "../components/employees/employeeOptions";
 import type { Employee, User } from "../types";
 import { displayLegajo } from "../utils/employee";
+import { useAsyncAction } from "../utils/useAsyncAction";
 import { roleLevel } from "../utils/roles";
 import { statusClass } from "../utils/status";
 
@@ -103,12 +104,9 @@ export function EmployeeDetailPage() {
     };
   }, [auditLoaded, employee, tab]);
 
-  if (loading) return <div className="page-loading">Cargando legajo...</div>;
-  if (!loading && !employee) return <Navigate to="/legajos" />;
-  const currentEmployee = employee!;
-  const editable = level === 1;
-
-  const save = async () => {
+  const { isRunning: isSaving, run: save } = useAsyncAction(async () => {
+    if (!employee) return;
+    const currentEmployee = employee;
     if (!currentEmployee.legajoInterno) return setNotice("Legajo Interno es obligatorio.");
     if (!currentEmployee.birthDate) return setNotice("Fecha de nacimiento es obligatoria.");
     if (!currentEmployee.gender) return setNotice("Sexo es obligatorio.");
@@ -150,11 +148,16 @@ export function EmployeeDetailPage() {
       } else if (error instanceof ApiError) {
         setNotice(`No se pudo guardar: ${error.message} (${error.code}).`);
       } else {
-        setNotice("Error al guardar. Verifica que el backend esté activo.");
+      setNotice("Error al guardar. Verifica que el backend esté activo.");
       }
       setTimeout(() => setNotice(""), 3000);
     }
-  };
+  });
+
+  if (loading) return <div className="page-loading">Cargando legajo...</div>;
+  if (!loading && !employee) return <Navigate to="/legajos" />;
+  const currentEmployee = employee!;
+  const editable = level === 1;
 
   const laborStatus =
     currentEmployee.laborMovements?.length || currentEmployee.startDate
@@ -185,8 +188,8 @@ export function EmployeeDetailPage() {
         <div className="hero-actions">
           <span className={statusClass(laborStatus)}>{laborStatus}</span>
           {editable ? (
-            <button className="button primary" onClick={save}>
-              Guardar cambios
+            <button className="button primary" onClick={save} disabled={isSaving}>
+              {isSaving ? "Guardando..." : "Guardar cambios"}
             </button>
           ) : null}
         </div>

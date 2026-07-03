@@ -1,4 +1,4 @@
-﻿import { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { hourConceptApiService } from "../../services/api/hourConceptApiService";
 import { noveltyApiService } from "../../services/api/noveltyApiService";
 import { noveltyTypeApiService } from "../../services/api/noveltyTypeApiService";
@@ -7,6 +7,7 @@ import type { HourConcept } from "../../types/hourConcept.types";
 import type { NoveltyType } from "../../types/noveltyType.types";
 import { displayLegajo, fullName } from "../../utils/employee";
 import { currentMonthPeriod } from "../../utils/period";
+import { useAsyncAction } from "../../utils/useAsyncAction";
 import { Field, Select } from "../ui/FormControls";
 import { Modal } from "../ui/Modal";
 
@@ -99,14 +100,14 @@ export function NoveltyModal({
         : [...current, id],
     );
 
-  const save = async () => {
+  const { isRunning: isSaving, run: save } = useAsyncAction(async () => {
     if (!selectedType) return;
-    if (!employeeIds.length) return setError("SeleccionÃ¡ al menos un legajo.");
+    if (!employeeIds.length) return setError("Selecciona al menos un legajo.");
     if (requiresTargetHour && !normalizedTargetHour) {
-      return setError("SeleccionÃ¡ sobre quÃ© tipo de hora aplica esta novedad.");
+      return setError("Selecciona sobre que tipo de hora aplica esta novedad.");
     }
     if (selectedType.rules.requiresDocumentation && !fileName) {
-      return setError("AdjuntÃ¡ la documentaciÃ³n requerida para guardar esta novedad.");
+      return setError("Adjunta la documentacion requerida para guardar esta novedad.");
     }
     if (selectedType.rules.hasValidity && selectedType.rules.allowsDateTo && to < from) {
       return setError("La fecha hasta no puede ser anterior a la fecha desde.");
@@ -135,7 +136,7 @@ export function NoveltyModal({
       return setError("No se pudo guardar la novedad en backend. Revisa los datos e intenta nuevamente.");
     }
 
-  };
+  });
 
   return (
     <Modal title="Nueva novedad" close={close}>
@@ -155,7 +156,7 @@ export function NoveltyModal({
               >
                 {activeTypes.map((item) => (
                   <option key={item.id} value={item.id}>
-                    {item.code} Â· {item.name}
+                    {item.code} · {item.name}
                   </option>
                 ))}
               </select>
@@ -164,7 +165,7 @@ export function NoveltyModal({
             <div className="document-upload-card">
               <b>Legajos alcanzados</b>
               <p>
-                PodÃ©s cargar la misma novedad para una o varias personas. Se genera
+                Podes cargar la misma novedad para una o varias personas. Se genera
                 un registro individual por legajo.
               </p>
               <div className="check-grid">
@@ -175,7 +176,7 @@ export function NoveltyModal({
                       checked={employeeIds.includes(employee.id)}
                       onChange={() => toggleEmployee(employee.id)}
                     />
-                    {displayLegajo(employee)} Â· {fullName(employee)}
+                    {displayLegajo(employee)} · {fullName(employee)}
                   </label>
                 ))}
               </div>
@@ -223,9 +224,9 @@ export function NoveltyModal({
 
             {selectedType?.rules.requiresDocumentation ? (
               <div className="document-upload-card">
-                <b>DocumentaciÃ³n requerida</b>
+                <b>Documentacion requerida</b>
                 <p>
-                  AdjuntÃ¡ el comprobante, certificado o archivo respaldatorio de
+                  Adjunta el comprobante, certificado o archivo respaldatorio de
                   esta novedad.
                 </p>
                 <label>
@@ -239,7 +240,7 @@ export function NoveltyModal({
                 </label>
                 {fileName ? <small>Archivo seleccionado: {fileName}</small> : null}
                 <label>
-                  ObservaciÃ³n documental
+                  Observacion documental
                   <textarea
                     value={docNotes}
                     onChange={(event) => setDocNotes(event.target.value)}
@@ -255,14 +256,14 @@ export function NoveltyModal({
               <button className="button subtle" onClick={close}>
                 Cancelar
               </button>
-              <button className="button primary" onClick={save}>
-                Guardar novedad
+              <button className="button primary" onClick={save} disabled={isSaving}>
+                {isSaving ? "Guardando..." : "Guardar novedad"}
               </button>
             </div>
           </>
         ) : (
           <div className="empty">
-            No hay tipos de novedades activos. Cargalos desde ConfiguraciÃ³n &gt;
+            No hay tipos de novedades activos. Cargalos desde Configuracion &gt;
             Tipos de novedades.
           </div>
         )}

@@ -8,6 +8,7 @@ import { useAuth } from "../context/AuthContext";
 import { orgStructureApiService } from "../services/api/orgStructureApiService";
 import type { EmployeeAddress, Role } from "../types";
 import type { OrgArea, OrgBusinessUnit, OrgCompany, OrgCostCenter, OrgEstablishment, OrgSector, OrgStructureCatalog, OrgStructureEntityType, OrgStructureStatus } from "../types/orgStructure.types";
+import { useAsyncAction } from "../utils/useAsyncAction";
 
 type Tab = OrgStructureEntityType;
 type Editable = OrgCompany | OrgBusinessUnit | OrgEstablishment | OrgArea | OrgSector | OrgCostCenter;
@@ -185,8 +186,7 @@ export function OrgStructurePage() {
     ["Establecimientos", catalog.establishments.length],
     ["Sectores", catalog.sectors.length],
   ], [catalog]);
-  if (roleLevel(user!.role) !== 1) return <Navigate to="/configuracion" />;
-  const save = async () => {
+  const { isRunning: isSaving, run: save } = useAsyncAction(async () => {
     if (!editing?.name.trim()) return setNotice("Completa el nombre antes de guardar.");
     const normalized = normalizeDerivedRelations(tab, editing, catalog);
     try {
@@ -213,7 +213,8 @@ export function OrgStructurePage() {
     } catch {
       setNotice("No se pudo guardar la estructura. Revisa relaciones obligatorias o codigos duplicados.");
     }
-  };
+  });
+  if (roleLevel(user!.role) !== 1) return <Navigate to="/configuracion" />;
   return <>
     <PageHeader eyebrow="CONFIGURACION" title="Empresas y estructura" description="Catalogo maestro de estructura organizacional para alimentar seleccionables, filtros, legajos, puestos y organigrama." action={<button className="button primary" onClick={() => setEditing(blank(tab, catalog))}><Plus size={16} /> Nuevo registro</button>} />
     {notice && <div className="toast">{notice}</div>}
@@ -222,6 +223,6 @@ export function OrgStructurePage() {
     <div className="stat-grid org-structure-summary">{counts.map(([label, value]) => <div className="stat-card" key={label}><div><small>{label}</small><strong>{value}</strong><span>Catalogo maestro</span></div></div>)}</div>
     <div className="tabs">{tabs.map((item) => <button key={item.id} className={tab === item.id ? "active" : ""} onClick={() => { setTab(item.id); setEditing(null); }}>{item.label}</button>)}</div>
     <section className="panel"><div className="panel-head"><div><h3>{tabs.find((item) => item.id === tab)?.label}</h3><p>{isLoadingApi ? "Cargando estructura desde backend..." : "Administracion de relaciones y estados disponibles para operacion."}</p></div></div><div className="panel-body"><TableShell minWidth={940}><table><thead><tr><th>Codigo</th><th>Nombre</th><th>Relacion principal</th><th>Relacion secundaria</th><th>Estado</th><th>Accion</th></tr></thead><Rows type={tab} catalog={catalog} readOnly={false} onEdit={setEditing} /></table></TableShell></div></section>
-    {editing && <section className="panel"><div className="panel-head"><div><h3>{editing.code ? "Editar registro" : "Nuevo registro"}</h3><p>Los cambios quedan disponibles para los modulos conectados.</p></div><button className="button primary" onClick={save}>Guardar estructura</button></div><div className="panel-body"><Editor type={tab} item={editing} catalog={catalog} onChange={setEditing} /></div></section>}
+    {editing && <section className="panel"><div className="panel-head"><div><h3>{editing.code ? "Editar registro" : "Nuevo registro"}</h3><p>Los cambios quedan disponibles para los modulos conectados.</p></div><button className="button primary" onClick={save} disabled={isSaving}>{isSaving ? "Guardando..." : "Guardar estructura"}</button></div><div className="panel-body"><Editor type={tab} item={editing} catalog={catalog} onChange={setEditing} /></div></section>}
   </>;
 }

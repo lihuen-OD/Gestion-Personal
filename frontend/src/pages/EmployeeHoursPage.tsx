@@ -1,4 +1,4 @@
-﻿import { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { AlertTriangle, Bell, CalendarDays, Clock3 } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
@@ -17,6 +17,7 @@ import { noveltyColorClass } from "../utils/noveltyColor";
 import { displayLegajo, fullName } from "../utils/employee";
 import { currentMonthPeriod, formatPeriodDay, formatPeriodLabel, getMonthDays, monthDate } from "../utils/period";
 import { statusClass } from "../utils/status";
+import { useAsyncAction } from "../utils/useAsyncAction";
 import { Field } from "../components/ui/FormControls";
 import { Modal } from "../components/ui/Modal";
 import { Section } from "../components/ui/Section";
@@ -25,22 +26,40 @@ import { StatCard } from "../components/ui/StatCard";
 const noveltyTone = (novelty?: Novelty, uiColor?: string) =>
   novelty ? noveltyColorClass(uiColor, novelty.noveltyTypeId || novelty.type) : "";
 
+const normalHourConcept: HourConcept = {
+  id: "normal-hour-fallback",
+  code: "HN",
+  name: "Hora normal",
+  kind: "NORMAL",
+  description: "Hora trabajada base",
+  status: "ACTIVO",
+  rules: { defaultUnit: "HORAS" },
+  allowedLoadRoles: [],
+  approvalRoles: [],
+  finnegansLinks: [],
+  createdAt: "",
+  updatedAt: "",
+  createdBy: "",
+  updatedBy: "",
+  history: [],
+};
+
 function timeEntrySaveErrorMessage(error: unknown) {
   if (error instanceof ApiError) {
     if (error.code === "TIME_ENTRY_DAY_BLOCKED_BY_NOVELTY") {
-      return "Ese dÃ­a estÃ¡ bloqueado por una novedad. Solo se permiten 0 hs salvo que se modifique la novedad.";
+      return "Ese dia esta bloqueado por una novedad. Solo se permiten 0 hs salvo que se modifique la novedad.";
     }
     if (error.code === "TIME_ENTRY_DUPLICATED") {
-      return "Ya existe una carga para esa persona, dÃ­a y tipo de hora.";
+      return "Ya existe una carga para esa persona, dia y tipo de hora.";
     }
     if (error.code === "TIME_ENTRY_LOCKED") {
-      return "La carga ya estÃ¡ aprobada o cerrada y no puede editarse.";
+      return "La carga ya esta aprobada o cerrada y no puede editarse.";
     }
     if (error.code === "HOUR_CONCEPT_NOT_ENABLED") {
-      return "Ese tipo de hora no estÃ¡ habilitado para este legajo.";
+      return "Ese tipo de hora no esta habilitado para este legajo.";
     }
   }
-  return "No se pudo guardar la carga horaria. RevisÃ¡ los datos e intentÃ¡ nuevamente.";
+  return "No se pudo guardar la carga horaria. Revisa los datos e intenta nuevamente.";
 }
 
 export function EmployeeHoursPage() {
@@ -67,6 +86,7 @@ export function EmployeeHoursPage() {
   const [fileName, setFileName] = useState("");
   const [docNotes, setDocNotes] = useState("");
   const [error, setError] = useState("");
+  const [savingStatus, setSavingStatus] = useState<TimeStatus | null>(null);
   const [entries, setEntries] = useState<TimeEntry[]>([]);
   const [periodNovelties, setPeriodNovelties] = useState<Novelty[]>([]);
   const [loading, setLoading] = useState(true);
@@ -118,28 +138,15 @@ export function EmployeeHoursPage() {
     };
   }, [id, period, refresh]);
 
-  if (loading) {
-    return (
-      <Section title="Carga de horas" subtitle="Cargando datos desde backend">
-        <div className="empty">Preparando grilla horaria...</div>
-      </Section>
-    );
-  }
-
-  if (loadError || !employee) {
-    return (
-      <Section title="Carga de horas" subtitle="No se pudo obtener el legajo desde backend">
-        <div className="empty">{loadError || "Legajo no encontrado."}</div>
-      </Section>
-    );
-  }
-
   const enabledNames = new Set(
-    employee.enabledHours?.length ? employee.enabledHours : ["Hora normal"],
+    employee?.enabledHours?.length ? employee.enabledHours : ["Hora normal"],
   );
-  const concepts = catalog.filter(
+  const conceptsFromCatalog = catalog.filter(
     (concept) => enabledNames.has(concept.name) || concept.name === "Hora normal",
   );
+  const concepts = conceptsFromCatalog.length
+    ? conceptsFromCatalog
+    : [normalHourConcept];
   const selectedType = activeTypes.find((item) => item.id === noveltyTypeId);
   const noveltyVisualClass = (novelty?: Novelty) => {
     if (!novelty) return "";
@@ -218,8 +225,8 @@ export function EmployeeHoursPage() {
     }
     return days;
   };
-  const save = async (status: TimeStatus) => {
-    if (!selected) return;
+  const { isRunning: isSaving, run: save } = useAsyncAction(async (status: TimeStatus) => {
+    if (!selected || !employee) return;
     if (!user || !id) return;
     if (selectedLocked) {
       return setError(
@@ -227,7 +234,7 @@ export function EmployeeHoursPage() {
       );
     }
     if (selectedType?.rules.requiresDocumentation && !fileName) {
-      return setError("AdjuntÃ¡ la documentaciÃ³n requerida para guardar esta novedad.");
+      return setError("Adjunta la documentacion requerida para guardar esta novedad.");
     }
     if (
       selectedType?.rules.hasValidity &&
@@ -251,58 +258,82 @@ export function EmployeeHoursPage() {
         origin: "MANUAL",
       } satisfies Omit<TimeEntry, "id">;
     let savedEntry: TimeEntry | undefined;
+    setSavingStatus(status);
     try {
-      savedEntry = await timeEntryApiService.save(payload);
-    } catch (saveError) {
-      return setError(timeEntrySaveErrorMessage(saveError));
-    }
-    if (!savedEntry) {
-      return setError(
-        "La carga no se pudo guardar porque el registro estÃ¡ bloqueado para ediciÃ³n.",
-      );
-    }
-    if (selectedType) {
-      const hoursImpact = selectedType.rules.allowsHours ? Number(noveltyHours) || 0 : 0;
-      let createdNovelties: Novelty[] = [];
       try {
-        createdNovelties = await noveltyApiService.create({
-          employeeIds: [id],
-          noveltyTypeId: selectedType.id,
-          fromDate: noveltyFrom,
-          toDate: selectedType.rules.allowsDateTo ? noveltyTo : noveltyFrom,
-          quantityHours: selectedType.rules.allowsHours ? hoursImpact : null,
-          quantityDays: selectedType.rules.allowsHours ? null : Math.max(1, noveltyRange().length),
-          observation: docNotes || null,
-          targetHourConceptId: concept?.id || null,
-        });
-      } catch (noveltyError) {
-        return setError("La hora se guardo, pero no se pudo guardar la novedad en backend. Revisa el tipo de novedad y volve a intentar.");
+        savedEntry = await timeEntryApiService.save(payload);
+      } catch (saveError) {
+        return setError(timeEntrySaveErrorMessage(saveError));
       }
-      if (fileName) {
+      if (!savedEntry) {
+        return setError(
+          "La carga no se pudo guardar porque el registro esta bloqueado para edicion.",
+        );
+      }
+      if (selectedType) {
+        const hoursImpact = selectedType.rules.allowsHours ? Number(noveltyHours) || 0 : 0;
+        let createdNovelties: Novelty[] = [];
         try {
-          const categories = await documentCategoryApiService.getAll({ status: "ACTIVO", scope: "NOVEDAD" });
-          const category = categories.find((item) => item.kind === "NOVEDAD") || categories[0];
-          if (!category) {
-            return setError("No hay una categorÃ­a documental activa para novedades.");
-          }
-          await documentApiService.create({
-            employeeId: id,
-            noveltyId: createdNovelties[0]?.id,
-            categoryId: category.id,
-            fileName,
-            fileMimeType: "application/octet-stream",
-            fileSizeBytes: 1,
-            status: "Vigente",
-            notes: docNotes,
+          createdNovelties = await noveltyApiService.create({
+            employeeIds: [id],
+            noveltyTypeId: selectedType.id,
+            fromDate: noveltyFrom,
+            toDate: selectedType.rules.allowsDateTo ? noveltyTo : null,
+            quantityHours: selectedType.rules.allowsHours ? hoursImpact : null,
+            quantityDays: selectedType.rules.allowsHours ? null : Math.max(1, noveltyRange().length),
+            observation: docNotes || null,
+            targetHourConceptId: concept?.id || null,
           });
-        } catch (documentError) {
-          return setError("La novedad se guardo, pero no se pudo asociar la documentacion en backend.");
+        } catch (noveltyError) {
+          if (noveltyError instanceof ApiError) {
+            return setError(`La hora se guardo, pero no se pudo guardar la novedad: ${noveltyError.message} (${noveltyError.code}).`);
+          }
+          return setError("La hora se guardo, pero no se pudo guardar la novedad en backend. Revisa el tipo de novedad y volve a intentar.");
+        }
+        if (fileName) {
+          try {
+            const categories = await documentCategoryApiService.getAll({ status: "ACTIVO", scope: "NOVEDAD" });
+            const category = categories.find((item) => item.kind === "NOVEDAD") || categories[0];
+            if (!category) {
+              return setError("No hay una categoria documental activa para novedades.");
+            }
+            await documentApiService.create({
+              employeeId: id,
+              noveltyId: createdNovelties[0]?.id,
+              categoryId: category.id,
+              fileName,
+              fileMimeType: "application/octet-stream",
+              fileSizeBytes: 1,
+              status: "Vigente",
+              notes: docNotes,
+            });
+          } catch (documentError) {
+            return setError("La novedad se guardo, pero no se pudo asociar la documentacion en backend.");
+          }
         }
       }
+      setRefresh((value) => value + 1);
+      setSelected(undefined);
+    } finally {
+      setSavingStatus(null);
     }
-    setRefresh((value) => value + 1);
-    setSelected(undefined);
-  };
+  });
+
+  if (loading) {
+    return (
+      <Section title="Carga de horas" subtitle="Cargando datos desde backend">
+        <div className="empty">Preparando grilla horaria...</div>
+      </Section>
+    );
+  }
+
+  if (loadError || !employee) {
+    return (
+      <Section title="Carga de horas" subtitle="No se pudo obtener el legajo desde backend">
+        <div className="empty">{loadError || "Legajo no encontrado."}</div>
+      </Section>
+    );
+  }
   const periodSummary = timeEntryApiService.getEmployeePeriodSummary(entries, id!);
   const total = periodSummary.total;
   const specialTotal = periodSummary.specialHours;
@@ -317,7 +348,7 @@ export function EmployeeHoursPage() {
     <>
       <div className="detail-hero compact">
         <Link to={`/horas?period=${period}`} className="back-link">
-          â† Volver a carga de horas
+          ← Volver a carga de horas
         </Link>
         <div>
           <div className="avatar">
@@ -326,13 +357,13 @@ export function EmployeeHoursPage() {
           </div>
           <div>
             <p className="eyebrow">
-              {formatPeriodLabel(period)} Â· LEGAJO {displayLegajo(employee)}
+              {formatPeriodLabel(period)} · LEGAJO {displayLegajo(employee)}
             </p>
             <h1>
               {employee.firstName} {employee.lastName}
             </h1>
             <p>
-              {employee.company} Â· {employee.costCenter} Â· {employee.cuil}
+              {employee.company} · {employee.costCenter} · {employee.cuil}
             </p>
           </div>
         </div>
@@ -350,7 +381,7 @@ export function EmployeeHoursPage() {
           tone="orange"
         />
         <StatCard
-          label="DÃ­as con carga"
+          label="Dias con carga"
           value={periodSummary.daysWithEntries}
           icon={CalendarDays}
           tone="blue"
@@ -427,7 +458,7 @@ export function EmployeeHoursPage() {
 
       {selected ? (
         <Modal
-          title={`Cargar ${selected.concept} Â· ${formatPeriodDay(period, selected.day)}`}
+          title={`Cargar ${selected.concept} · ${formatPeriodDay(period, selected.day)}`}
           close={() => setSelected(undefined)}
         >
           <div className="form-stack">
@@ -435,7 +466,7 @@ export function EmployeeHoursPage() {
               <div>
                 <b>{selected.concept}</b>
                 <span>
-                  {fullName(employee)} Â· {monthDate(period, selected.day)}
+                  {fullName(employee)} · {monthDate(period, selected.day)}
                 </span>
               </div>
               <span className="badge neutral">
@@ -448,7 +479,7 @@ export function EmployeeHoursPage() {
             {selectedLocked ? (
               <div className="info-note compact">
                 <b>Registro aprobado</b>
-                <p>Esta carga ya fue aprobada y quedÃ³ bloqueada para ediciÃ³n directa.</p>
+                <p>Esta carga ya fue aprobada y quedo bloqueada para edicion directa.</p>
               </div>
             ) : null}
 
@@ -482,7 +513,7 @@ export function EmployeeHoursPage() {
               <div>
                 <b>Novedad asociada a esta hora</b>
                 <span>
-                  Opcional. Si cargÃ¡s una novedad acÃ¡, queda marcada solo en esta fila de la
+                  Opcional. Si cargas una novedad aca, queda marcada solo en esta fila de la
                   grilla.
                 </span>
               </div>
@@ -502,7 +533,7 @@ export function EmployeeHoursPage() {
                     <option value="">Sin novedad</option>
                     {activeTypes.map((item) => (
                       <option key={item.id} value={item.id}>
-                        {item.code} Â· {item.name}
+                        {item.code} · {item.name}
                       </option>
                     ))}
                   </select>
@@ -551,8 +582,8 @@ export function EmployeeHoursPage() {
 
               {selectedType?.rules.requiresDocumentation ? (
                 <div className="document-upload-card">
-                  <b>DocumentaciÃ³n requerida</b>
-                  <p>AdjuntÃ¡ el comprobante o certificado respaldatorio.</p>
+                  <b>Documentacion requerida</b>
+                  <p>Adjunta el comprobante o certificado respaldatorio.</p>
                   <label>
                     Adjuntar documento
                     <input
@@ -563,7 +594,7 @@ export function EmployeeHoursPage() {
                   </label>
                   {fileName ? <small>Archivo seleccionado: {fileName}</small> : null}
                   <label>
-                    ObservaciÃ³n documental
+                    Observacion documental
                     <textarea
                       value={docNotes}
                       disabled={selectedLocked}
@@ -581,7 +612,7 @@ export function EmployeeHoursPage() {
                       className={`cell-novelty-pill ${noveltyVisualClass(novelty)}`}
                       key={novelty.id}
                     >
-                      {novelty.type} Â· {novelty.quantity}
+                      {novelty.type} · {novelty.quantity}
                     </span>
                   ))}
                 </div>
@@ -596,11 +627,11 @@ export function EmployeeHoursPage() {
               </button>
               {!selectedLocked ? (
                 <>
-                  <button className="button subtle" onClick={() => save("Borrador")}>
-                    Guardar borrador
+                  <button className="button subtle" onClick={() => save("Borrador")} disabled={isSaving}>
+                    {isSaving && savingStatus === "Borrador" ? "Guardando..." : "Guardar borrador"}
                   </button>
-                  <button className="button primary" onClick={() => save("En revisión")}>
-                    Enviar a revisión
+                  <button className="button primary" onClick={() => save("En revisión")} disabled={isSaving}>
+                    {isSaving && savingStatus === "En revisión" ? "Enviando..." : "Enviar a revisión"}
                   </button>
                 </>
               ) : null}

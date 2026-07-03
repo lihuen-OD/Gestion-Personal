@@ -2,6 +2,7 @@ import { useState } from "react";
 import { employeeApiService } from "../../services/api/employeeApiService";
 import { calculateLaborStatus } from "../../services/employeeStatusService";
 import type { Employee, LaborMovementType, User } from "../../types";
+import { useAsyncAction } from "../../utils/useAsyncAction";
 import { EmptyState } from "../ui/EmptyState";
 import { Field, Select } from "../ui/FormControls";
 import { Modal } from "../ui/Modal";
@@ -40,7 +41,7 @@ export function LaborMovementPanel({
   const [error, setError] = useState("");
   const status = calculateLaborStatus(employee.laborMovements || []);
 
-  const save = async () => {
+  const { isRunning: isSaving, run: save } = useAsyncAction(async () => {
     if (!type) return setError("El tipo de movimiento es obligatorio.");
     if (!effectiveFrom) return setError("La fecha desde es obligatoria.");
     if (!reason.trim()) return setError("El motivo del cambio es obligatorio.");
@@ -60,7 +61,7 @@ export function LaborMovementPanel({
     setReason("");
     setObservation("");
     setError("");
-  };
+  });
 
   return (
     <Section
@@ -156,8 +157,8 @@ export function LaborMovementPanel({
               <button className="button subtle" onClick={() => setOpen(false)}>
                 Cancelar
               </button>
-              <button className="button primary" onClick={save}>
-                Guardar movimiento
+              <button className="button primary" onClick={save} disabled={isSaving}>
+                {isSaving ? "Guardando..." : "Guardar movimiento"}
               </button>
             </div>
           </div>

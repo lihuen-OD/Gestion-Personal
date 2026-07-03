@@ -17,6 +17,7 @@ import { positionApiService } from "../services/api/positionApiService";
 import type { Employee } from "../types";
 import type { Position } from "../types/position.types";
 import { roleLevel } from "../utils/roles";
+import { useAsyncAction } from "../utils/useAsyncAction";
 
 const tabs = ["Identificacion", "Proposito / Mision", "Rango Salarial", "Responsabilidades", "Relaciones", "Competencias", "Condiciones", "Indicadores", "Criterios", "Personas Asignadas", "Historial"];
 
@@ -67,13 +68,8 @@ export function PuestoDetailPage() {
     return () => { alive = false; };
   }, [position?.id, position?.name]);
 
-  if (roleLevel(user!.role) === 3) return <Navigate to="/horas" />;
-  if (isLoading) return <section className="panel"><div className="panel-body"><div className="empty">Cargando puesto...</div></div></section>;
-  if (!position) return <Navigate to="/puestos" />;
-
-  const canEdit = roleLevel(user!.role) === 1;
-
-  const save = async () => {
+  const { isRunning: isSaving, run: save } = useAsyncAction(async () => {
+    if (!position) return;
     try {
       const saved = await positionApiService.update(position);
       if (saved) setPosition(saved);
@@ -82,7 +78,13 @@ export function PuestoDetailPage() {
     } catch {
       setNotice("No se pudo guardar el puesto en backend.");
     }
-  };
+  });
+
+  if (roleLevel(user!.role) === 3) return <Navigate to="/horas" />;
+  if (isLoading) return <section className="panel"><div className="panel-body"><div className="empty">Cargando puesto...</div></div></section>;
+  if (!position) return <Navigate to="/puestos" />;
+
+  const canEdit = roleLevel(user!.role) === 1;
 
   const toggle = async () => {
     if (!confirm(`Confirmar ${position.status === "ACTIVO" ? "inactivacion" : "activacion"} del puesto ${position.name}?`)) return;
@@ -118,6 +120,6 @@ export function PuestoDetailPage() {
     {notice && <div className="toast">{notice}</div>}
 
     <div className="tabs">{tabs.map((label, index) => <button key={label} className={tab === index ? "active" : ""} onClick={() => setTab(index)}>{index + 1}. {label}</button>)}</div>
-    <section className="panel"><div className="panel-head"><div><h3>{tabs[tab]}</h3><p>{tab === 9 ? "Calculado desde legajos activos vinculados a este puesto." : tab === 10 ? "Historial general del puesto." : "Informacion editable de la descripcion de puesto."}</p></div>{canEdit && tab < 9 && <button className="button primary" onClick={() => save()}>Guardar cambios</button>}</div><div className="panel-body">{render()}</div></section>
+    <section className="panel"><div className="panel-head"><div><h3>{tabs[tab]}</h3><p>{tab === 9 ? "Calculado desde legajos activos vinculados a este puesto." : tab === 10 ? "Historial general del puesto." : "Informacion editable de la descripcion de puesto."}</p></div>{canEdit && tab < 9 && <button className="button primary" onClick={save} disabled={isSaving}>{isSaving ? "Guardando..." : "Guardar cambios"}</button>}</div><div className="panel-body">{render()}</div></section>
   </>;
 }

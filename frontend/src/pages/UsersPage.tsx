@@ -13,6 +13,7 @@ import { Field, Select } from "../components/ui/FormControls";
 import { statusClass } from "../utils/status";
 import { roleOptions } from "../utils/roles";
 import { displayLegajo } from "../utils/employee";
+import { useAsyncAction } from "../utils/useAsyncAction";
 
 type UserDraft = Omit<User, "id">;
 
@@ -97,7 +98,7 @@ export function UsersPage() {
     setRefresh((value) => value + 1);
   };
 
-  const save = async () => {
+  const { isRunning: isSaving, run: save } = useAsyncAction(async () => {
     const email = draft.email.trim().toLowerCase();
     const password = draft.password.trim();
 
@@ -130,7 +131,7 @@ export function UsersPage() {
     } catch {
       setError("No se pudo guardar el usuario. Revisa email, contrasena y alcance.");
     }
-  };
+  });
 
   const toggleStatus = async (user: User) => {
     const next: User = { ...user, password: "", status: user.status === "Activo" ? "Inactivo" : "Activo" };
@@ -232,7 +233,7 @@ export function UsersPage() {
 
           <div className="form-actions">
             <button className="button subtle" onClick={close}>Cancelar</button>
-            <button className="button primary" onClick={save}>{editingUserId ? "Guardar cambios" : "Guardar usuario"}</button>
+            <button className="button primary" onClick={save} disabled={isSaving}>{isSaving ? "Guardando..." : editingUserId ? "Guardar cambios" : "Guardar usuario"}</button>
           </div>
         </div>
       </Modal>

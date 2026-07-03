@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { employeeApiService } from "../../services/api/employeeApiService";
 import { employeeHistoryApiService } from "../../services/api/employeeHistoryApiService";
 import type { Employee, EmployeeBlockHistoryRecord, EmployeeFieldHistoryRecord, FieldHistorySection, User } from "../../types";
+import { useAsyncAction } from "../../utils/useAsyncAction";
 import { EmptyState } from "../ui/EmptyState";
 import { Field, Select } from "../ui/FormControls";
 
@@ -69,7 +70,7 @@ export function FieldWithHistory({
     employee.startDate ||
     "Sin cargar";
 
-  const save = async () => {
+  const { isRunning: isSaving, run: save } = useAsyncAction(async () => {
     if (!from) return setError("La fecha desde es obligatoria.");
     if (!reason.trim()) return setError("El motivo del cambio es obligatorio.");
     const updated = setValueByPath(employee, field, next);
@@ -99,7 +100,7 @@ export function FieldWithHistory({
     setEditing(false);
     setOpen(true);
     setError("");
-  };
+  });
 
   return (
     <div className="tracked-field">
@@ -162,8 +163,8 @@ export function FieldWithHistory({
                 <button type="button" className="button subtle" onClick={() => setEditing(false)}>
                   Cancelar
                 </button>
-                <button type="button" className="button primary" onClick={save}>
-                  Guardar modificación
+                <button type="button" className="button primary" onClick={save} disabled={isSaving}>
+                  {isSaving ? "Guardando..." : "Guardar modificación"}
                 </button>
               </div>
             </div>

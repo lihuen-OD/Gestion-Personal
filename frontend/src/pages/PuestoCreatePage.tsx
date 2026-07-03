@@ -14,6 +14,7 @@ import { useAuth } from "../context/AuthContext";
 import { positionApiService } from "../services/api/positionApiService";
 import type { Position } from "../types/position.types";
 import { roleLevel } from "../utils/roles";
+import { useAsyncAction } from "../utils/useAsyncAction";
 
 export function PuestoCreatePage() {
   const { user } = useAuth();
@@ -34,9 +35,7 @@ export function PuestoCreatePage() {
     return () => { alive = false; };
   }, []);
 
-  if (roleLevel(user!.role) !== 1) return <Navigate to="/puestos" />;
-
-  const save = async (event: FormEvent) => {
+  const { isRunning: isSaving, run: save } = useAsyncAction(async (event: FormEvent) => {
     event.preventDefault();
     if (!position.name.trim() || !position.areaDepartment.trim() || !position.sector.trim() || !position.status || !position.mission.trim() || !position.lastUpdatedAt) return setError("Completa nombre, area/departamento, sector, estado, mision y fecha de actualizacion.");
     try {
@@ -45,7 +44,9 @@ export function PuestoCreatePage() {
     } catch {
       setError("No se pudo guardar el puesto en backend. Revisa codigo duplicado o conexion.");
     }
-  };
+  });
+
+  if (roleLevel(user!.role) !== 1) return <Navigate to="/puestos" />;
 
   return <form onSubmit={save}>
     <div className="page-header"><div><p className="eyebrow">PUESTOS</p><h1>Crear nuevo puesto</h1><p>Descripcion funcional reutilizable para legajos, organigramas, dashboard y evaluaciones futuras.</p></div></div>
@@ -59,6 +60,6 @@ export function PuestoCreatePage() {
     <section className="panel"><div className="panel-head"><div><h3>8. Indicadores de desempeno</h3></div></div><PuestoIndicatorsTab position={position} setPosition={setPosition} /></section>
     <section className="panel"><div className="panel-head"><div><h3>9. Criterios de evaluacion</h3></div></div><PuestoEvaluationCriteriaTab position={position} setPosition={setPosition} /></section>
     {error && <p className="error create-error">{error}</p>}
-    <div className="form-actions create-actions"><Link to="/puestos" className="button subtle">Cancelar</Link><button className="button primary">Guardar puesto</button></div>
+    <div className="form-actions create-actions"><Link to="/puestos" className="button subtle">Cancelar</Link><button className="button primary" disabled={isSaving}>{isSaving ? "Guardando..." : "Guardar puesto"}</button></div>
   </form>;
 }
