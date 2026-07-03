@@ -10,7 +10,6 @@ import { TableShell } from "../components/ui/TableShell";
 import { documentApiService } from "../services/api/documentApiService";
 import { employeeApiService } from "../services/api/employeeApiService";
 import type { DocumentMock, Employee } from "../types";
-import { displayLegajo, fullName } from "../utils/employee";
 import { statusClass } from "../utils/status";
 import { useDebouncedValue } from "../utils/useDebouncedValue";
 
@@ -53,7 +52,8 @@ export function DocumentsPage() {
     setLoadingEmployees(true);
     try {
       if (!employees.length) {
-        setEmployees(await employeeApiService.getAll());
+        const result = await employeeApiService.getOptions({ take: 1000 });
+        setEmployees(result.items);
       }
       setOpen(true);
     } catch (loadError) {
@@ -119,9 +119,8 @@ export function DocumentsPage() {
               </thead>
               <tbody>
                 {docs.map((doc) => {
-                  const employee = employees.find((item) => item.id === doc.employeeId);
-                  const employeeLegajo = employee ? displayLegajo(employee) : doc.employeeLegajo || "-";
-                  const employeeName = employee ? fullName(employee) : doc.employeeName || "-";
+                  const employeeLegajo = doc.employeeLegajo || "-";
+                  const employeeName = doc.employeeName || "-";
                   return (
                     <tr key={doc.id}>
                       <td>{employeeLegajo}</td>

@@ -2,6 +2,7 @@ import bcrypt from "bcryptjs";
 import type { Prisma } from "@prisma/client";
 import type { AuditContext } from "../audit/audit.service";
 import { auditService } from "../audit/audit.service";
+import { invalidateCurrentUserCache } from "../auth/auth.service";
 import { AppError } from "../../shared/errors/AppError";
 import type { CreateUserInput, ListUsersQuery, ResetPasswordInput, UpdateUserInput } from "./users.schemas";
 import { usersRepository } from "./users.repository";
@@ -39,6 +40,7 @@ export const usersService = {
     const passwordHash = await bcrypt.hash(input.password, 12);
 
     const user = await usersRepository.create({ ...input, email, passwordHash });
+    invalidateCurrentUserCache(user.id);
     await auditService.register({
       ...audit,
       action: "CREATE",
@@ -56,6 +58,7 @@ export const usersService = {
     if (email) await ensureUniqueEmail(email, id);
 
     const user = await usersRepository.update(id, { ...input, ...(email !== undefined ? { email } : {}) });
+    invalidateCurrentUserCache(user.id);
     await auditService.register({
       ...audit,
       action: "UPDATE",
@@ -73,6 +76,7 @@ export const usersService = {
     const passwordHash = await bcrypt.hash(input.password, 12);
 
     const user = await usersRepository.updatePassword(id, passwordHash);
+    invalidateCurrentUserCache(user.id);
     await auditService.register({
       ...audit,
       action: "UPDATE",

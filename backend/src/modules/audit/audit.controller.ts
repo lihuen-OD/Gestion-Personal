@@ -1,9 +1,7 @@
 import type { RequestHandler } from "express";
-import { createTtlCache } from "../../shared/cache/ttlCache";
+import { auditListCache } from "./audit.cache";
 import type { ListAuditQuery } from "./audit.schemas";
 import { auditService } from "./audit.service";
-
-const auditListCache = createTtlCache<Awaited<ReturnType<typeof auditService.list>>>(15_000);
 
 export const auditController = {
   list: (async (req, res) => {

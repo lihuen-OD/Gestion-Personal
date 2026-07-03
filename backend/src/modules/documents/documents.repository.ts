@@ -2,6 +2,22 @@ import type { Prisma } from "@prisma/client";
 import { prisma } from "../../shared/prisma/client";
 import type { ListDocumentsQuery } from "./documents.schemas";
 
+const documentListInclude = {
+  category: { select: { id: true, code: true, name: true } },
+  employee: {
+    select: {
+      id: true,
+      legajo: true,
+      legajoFinnegans: true,
+      cuil: true,
+      dni: true,
+      firstName: true,
+      lastName: true,
+    },
+  },
+  novelty: { select: { id: true, fromDate: true, toDate: true, noveltyType: { select: { name: true } } } },
+} satisfies Prisma.EmployeeDocumentInclude;
+
 function buildWhere(query: ListDocumentsQuery, employeeAccessWhere: Prisma.EmployeeWhereInput): Prisma.EmployeeDocumentWhereInput {
   const search = query.search?.trim();
   return {
@@ -55,21 +71,7 @@ export const documentsRepository = {
     return prisma.$transaction([
       prisma.employeeDocument.findMany({
         where,
-        include: {
-          category: true,
-          employee: {
-            select: {
-              id: true,
-              legajo: true,
-              legajoFinnegans: true,
-              cuil: true,
-              dni: true,
-              firstName: true,
-              lastName: true,
-            },
-          },
-          novelty: { select: { id: true, fromDate: true, toDate: true, noveltyType: { select: { name: true } } } },
-        },
+        include: documentListInclude,
         orderBy: [{ createdAt: "desc" }, { employee: { lastName: "asc" } }],
         skip,
         take: query.take,

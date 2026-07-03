@@ -47,6 +47,7 @@ export function GeoAddressFields({ value, onChange, includeStreet = true, showGe
   const [localities, setLocalities] = useState<GeoOption[]>([]);
   const [streets, setStreets] = useState<GeoOption[]>([]);
   const [selectedStreet, setSelectedStreet] = useState<GeoOption | undefined>();
+  const [streetQuery, setStreetQuery] = useState("");
   const [lastGeocoded, setLastGeocoded] = useState("");
   const [isLoadingProvinces, setIsLoadingProvinces] = useState(false);
   const [isLoadingDepartments, setIsLoadingDepartments] = useState(false);
@@ -93,9 +94,21 @@ export function GeoAddressFields({ value, onChange, includeStreet = true, showGe
 
   useEffect(() => {
     if (!selectedDepartmentId || !value.localidadNombre) return setStreets([]);
-    setIsLoadingStreets(true);
-    locationService.searchStreetsAsync({ provinceId: selectedProvinceId, departmentId: selectedDepartmentId, localityId: value.localidadId, censusLocalityId: selectedLocality?.censusLocalityId }).then(setStreets).catch(() => setGeoError(geoServiceErrorMessage)).finally(() => setIsLoadingStreets(false));
-  }, [selectedProvinceId, selectedDepartmentId, value.localidadId, value.localidadNombre, selectedLocality?.censusLocalityId]);
+    const query = streetQuery.trim() || value.calle.trim();
+    if (query.length < 2) {
+      setStreets([]);
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      setIsLoadingStreets(true);
+      locationService
+        .searchStreetsAsync({ provinceId: selectedProvinceId, departmentId: selectedDepartmentId, localityId: value.localidadId, censusLocalityId: selectedLocality?.censusLocalityId, query })
+        .then(setStreets)
+        .catch(() => setGeoError(geoServiceErrorMessage))
+        .finally(() => setIsLoadingStreets(false));
+    }, 350);
+    return () => window.clearTimeout(timer);
+  }, [selectedProvinceId, selectedDepartmentId, value.localidadId, value.localidadNombre, value.calle, streetQuery, selectedLocality?.censusLocalityId]);
 
   const useLocality = (option: GeoOption) => {
     const nextAddress = { ...value, localidadId: option.id, localidadNombre: option.name, calle: "", numero: "", codigoPostal: option.zip || value.codigoPostal };
@@ -106,6 +119,7 @@ export function GeoAddressFields({ value, onChange, includeStreet = true, showGe
 
   const useStreet = (option: GeoOption) => {
     setSelectedStreet(option);
+    setStreetQuery(option.name);
     setLastGeocoded("");
     setGeoStatus("");
     setGeoError("");
@@ -175,9 +189,9 @@ export function GeoAddressFields({ value, onChange, includeStreet = true, showGe
     }} onSelect={useLocality} />
     {includeStreet && <>
       <GeoSelect label="Dirección / Calle" value={value.calle} options={streets} loading={isLoadingStreets} disabled={readOnly || !value.localidadNombre} emptyText="Escriba al menos dos letras para buscar calles." onQuery={(query) => {
+        setStreetQuery(query);
         setStreet({ calle: query, direccionNormalizada: "", fuenteGeocoding: undefined, precisionGeocoding: undefined });
         resetStreetSearch();
-        if (query.trim().length >= 2) locationService.searchStreetsAsync({ provinceId: selectedProvinceId, departmentId: selectedDepartmentId, localityId: value.localidadId, censusLocalityId: selectedLocality?.censusLocalityId, query }).then(setStreets).catch(() => setGeoError(geoServiceErrorMessage));
       }} onSelect={useStreet} />
       <label>Número<input disabled={readOnly || !value.calle} value={value.numero} list="geo-address-number-list" placeholder={rangeText || "Ingresá número o S/N"} onChange={(event) => { setLastGeocoded(""); setGeoStatus(""); setGeoError(""); setStreet({ numero: event.target.value, direccionNormalizada: "", fuenteGeocoding: undefined, precisionGeocoding: undefined }); }} />{rangeText && <small>{rangeText}</small>}<datalist id="geo-address-number-list">{numberSuggestions.map((number) => <option key={number} value={number} />)}</datalist></label>
     </>}

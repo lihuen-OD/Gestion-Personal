@@ -2,13 +2,15 @@ import type { RequestHandler } from "express";
 import { requestAuditContext } from "../../shared/audit/requestAuditContext";
 import { createTtlCache } from "../../shared/cache/ttlCache";
 import { requireParam } from "../../shared/http/params";
-import type { ListEmployeeHistoryQuery, ListEmployeeOrgChartQuery, ListEmployeesQuery } from "./employees.schemas";
+import { clearDocumentsReadCaches } from "../documents/documents.cache";
+import type { ListEmployeeHistoryQuery, ListEmployeeOptionsQuery, ListEmployeeOrgChartQuery, ListEmployeesQuery } from "./employees.schemas";
 import { employeesService } from "./employees.service";
 
 const employeeDetailCache = createTtlCache<unknown>(30_000);
 const employeeListCache = createTtlCache<Awaited<ReturnType<typeof employeesService.list>>>(20_000);
 const employeeSummaryCache = createTtlCache<Awaited<ReturnType<typeof employeesService.summary>>>(20_000);
 const employeeOrgChartCache = createTtlCache<Awaited<ReturnType<typeof employeesService.listOrgChart>>>(20_000);
+const employeeOptionsCache = createTtlCache<Awaited<ReturnType<typeof employeesService.listOptions>>>(30_000);
 
 function detailCacheKey(req: Parameters<RequestHandler>[0]) {
   return `${req.user?.id || "anon"}:${req.user?.role || "none"}:${requireParam(req, "id")}`;
@@ -23,6 +25,7 @@ function clearEmployeeReadCaches() {
   employeeListCache.clear();
   employeeSummaryCache.clear();
   employeeOrgChartCache.clear();
+  employeeOptionsCache.clear();
 }
 
 export const employeesController = {
@@ -44,6 +47,15 @@ export const employeesController = {
     res.json({ data: result.items, meta: result.meta });
   }) satisfies RequestHandler,
 
+  listOptions: (async (req, res) => {
+    const key = userScopedCacheKey(req);
+    const cached = employeeOptionsCache.get(key);
+    if (cached) return res.json({ data: cached.items, meta: cached.meta });
+    const result = await employeesService.listOptions(req.query as unknown as ListEmployeeOptionsQuery, req.user!);
+    employeeOptionsCache.set(key, result);
+    res.json({ data: result.items, meta: result.meta });
+  }) satisfies RequestHandler,
+
   summary: (async (req, res) => {
     const key = userScopedCacheKey(req);
     const cached = employeeSummaryCache.get(key);
@@ -58,6 +70,15 @@ export const employeesController = {
     const cached = employeeDetailCache.get(key);
     if (cached) return res.json({ data: cached });
     const employee = await employeesService.getById(requireParam(req, "id"), req.user!);
+    employeeDetailCache.set(key, employee);
+    res.json({ data: employee });
+  }) satisfies RequestHandler,
+
+  getOverviewById: (async (req, res) => {
+    const key = `${detailCacheKey(req)}:overview`;
+    const cached = employeeDetailCache.get(key);
+    if (cached) return res.json({ data: cached });
+    const employee = await employeesService.getOverviewById(requireParam(req, "id"), req.user!);
     employeeDetailCache.set(key, employee);
     res.json({ data: employee });
   }) satisfies RequestHandler,
@@ -124,6 +145,7 @@ export const employeesController = {
   createDocument: (async (req, res) => {
     const employee = await employeesService.createDocument(requireParam(req, "id"), req.body, requestAuditContext(req));
     clearEmployeeReadCaches();
+    clearDocumentsReadCaches();
     res.status(201).json({ data: employee });
   }) satisfies RequestHandler,
 

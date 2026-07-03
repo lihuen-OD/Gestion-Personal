@@ -52,7 +52,8 @@ export function NoveltiesPage() {
     setLoadingEmployees(true);
     try {
       if (!employees.length) {
-        setEmployees(await employeeApiService.getAll());
+        const result = await employeeApiService.getOptions({ take: 1000 });
+        setEmployees(result.items);
       }
       setOpen(true);
     } catch (error) {

@@ -60,7 +60,7 @@ export const authApiService = {
   },
 
   async me() {
-    const response = await apiRequest<{ data: BackendUser }>("/auth/me");
+    const response = await apiRequest<{ data: BackendUser }>("/auth/me", { apiCache: false });
     return mapUser(response.data);
   },
 };

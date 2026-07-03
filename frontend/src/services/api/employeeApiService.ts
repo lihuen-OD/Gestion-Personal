@@ -246,6 +246,8 @@ export function mapEmployeeFromApi(item: ApiEmployee): Employee {
     enabledHours: (item.hourConcepts || []).map((link) => link.hourConcept.name),
     status,
     laborMovements,
+    createdAt: item.createdAt,
+    updatedAt: item.updatedAt,
     directManagerFrom: dateOnly(directManagerAssignment?.effectiveFrom),
     directManagerTo: dateOnly(directManagerAssignment?.effectiveTo),
     directManagerStatus: directManagerAssignment?.status || "",
@@ -292,6 +294,7 @@ async function resolveRelations(employee: Employee) {
 async function mapEmployeeToApi(employee: Employee, mode: "create" | "update" = "create") {
   const relations = await resolveRelations(employee);
   const shouldSendAllRelations = mode === "create";
+  const createHourConcepts = mode === "create" && employee.enabledHours?.length ? await hourConceptsPayload(employee) : { hourConceptIds: [] };
   return {
     legajo: employee.legajoInterno || employee.legajo,
     legajoFinnegans: employee.legajoFinnegans || null,
@@ -334,6 +337,19 @@ async function mapEmployeeToApi(employee: Employee, mode: "create" | "update" = 
       longitude: employee.domicilio?.ubicacionMapa?.lng ?? employee.locationMap?.lng ?? null,
       mapLabel: employee.domicilio?.ubicacionMapa?.label || employee.locationMap?.label || employee.mapLocation || null,
     },
+    ...(mode === "create" && createHourConcepts.hourConceptIds.length
+      ? { hourConceptIds: createHourConcepts.hourConceptIds }
+      : {}),
+    ...(mode === "create" && employee.startDate
+      ? {
+          initialLaborMovement: {
+            type: "ALTA",
+            effectiveFrom: employee.startDate,
+            reason: employee.laborMovements?.[0]?.reason || "Alta inicial",
+            observation: employee.laborMovements?.[0]?.observation || null,
+          },
+        }
+      : {}),
   };
 }
 
@@ -364,10 +380,14 @@ function transportPayload(employee: Employee) {
 }
 
 async function assignmentsPayload(employee: Employee) {
-  const users = await userApiService.getAll().catch(() => []);
+  const directManagerNames = employee.directManagers || (employee.directManager ? [employee.directManager] : []);
+  const timeResponsibleNames = employee.timeResponsibles || (employee.timeResponsible ? [employee.timeResponsible] : []);
+  if (!directManagerNames.length && !timeResponsibleNames.length) return { assignments: [] };
+
+  const users = timeResponsibleNames.length ? await userApiService.getAll().catch(() => []) : [];
   const userByName = new Map(users.map((user) => [user.employeeName || user.name, user]));
   const assignments = [
-    ...(employee.directManagers || (employee.directManager ? [employee.directManager] : [])).map((personName) => ({
+    ...directManagerNames.map((personName) => ({
       type: "DIRECT_MANAGER" as const,
       personName,
       role: null,
@@ -376,7 +396,7 @@ async function assignmentsPayload(employee: Employee) {
       status: employee.directManagerStatus || null,
       notes: employee.directManagerNotes || null,
     })),
-    ...(employee.timeResponsibles || (employee.timeResponsible ? [employee.timeResponsible] : [])).map((personName) => {
+    ...timeResponsibleNames.map((personName) => {
       const linkedUser = userByName.get(personName);
       return {
         type: "TIME_RESPONSIBLE" as const,
@@ -399,7 +419,11 @@ async function hourConceptsPayload(employee: Employee) {
   return { hourConceptIds };
 }
 
-async function syncEmployeeExtras(employeeId: string, employee: Employee, options: { createInitialMovement?: boolean } = {}) {
+async function syncEmployeeExtras(
+  employeeId: string,
+  employee: Employee,
+  options: { createInitialMovement?: boolean; syncHourConcepts?: boolean } = {},
+) {
   const requests: Promise<unknown>[] = [];
 
   if (employee.transport || employee.transportRoute || employee.transportNotes) {
@@ -421,7 +445,7 @@ async function syncEmployeeExtras(employeeId: string, employee: Employee, option
     );
   }
 
-  if (employee.enabledHours?.length) {
+  if (options.syncHourConcepts !== false && employee.enabledHours?.length) {
     const { hourConceptIds } = await hourConceptsPayload(employee);
     if (hourConceptIds.length) {
       requests.push(
@@ -468,6 +492,19 @@ export const employeeApiService = {
     const response = await this.list({ take: 200 });
     return response.items;
   },
+  async getOptions(filters: EmployeeListFilters = {}) {
+    const params = new URLSearchParams();
+    params.set("page", String(filters.page || 1));
+    params.set("take", String(filters.take || 500));
+    if (filters.search?.trim()) params.set("search", filters.search.trim());
+    if (filters.companyId) params.set("companyId", filters.companyId);
+    if (filters.status) params.set("status", filters.status);
+    const response = await apiRequest<ApiEmployeePaginatedResponse>(`/employees/options?${params.toString()}`);
+    return {
+      items: response.data.map(mapEmployeeFromApi),
+      meta: response.meta,
+    };
+  },
   async getSummary() {
     const response = await apiRequest<ApiEmployeeSummaryResponse>("/employees/summary");
     return response.data;
@@ -480,6 +517,10 @@ export const employeeApiService = {
     const response = await apiRequest<ApiEmployeeItemResponse>(`/employees/${id}`);
     return mapEmployeeFromApi(response.data);
   },
+  async getOverviewById(id: string) {
+    const response = await apiRequest<ApiEmployeeItemResponse>(`/employees/${id}/overview`);
+    return mapEmployeeFromApi(response.data);
+  },
   async getPositionValidation(id: string) {
     const response = await apiRequest<ApiEmployeePositionValidationResponse>(`/employees/${id}/position-validation`);
     return response.data;
@@ -489,54 +530,53 @@ export const employeeApiService = {
       method: "POST",
       body: await mapEmployeeToApi(employee, "create"),
     });
-    await syncEmployeeExtras(response.data.id, employee, { createInitialMovement: true });
-    return this.getById(response.data.id);
+    await syncEmployeeExtras(response.data.id, employee, { createInitialMovement: false, syncHourConcepts: false });
+    return mapEmployeeFromApi(response.data);
   },
   async update(employee: Employee) {
     const response = await apiRequest<ApiEmployeeItemResponse>(`/employees/${employee.id}`, {
       method: "PATCH",
       body: await mapEmployeeToApi(employee, "update"),
     });
-    await syncEmployeeExtras(response.data.id, employee);
-    return this.getById(response.data.id);
+    return mapEmployeeFromApi(response.data);
   },
   async updateAddress(employee: Employee) {
-    await apiRequest<ApiEmployeeItemResponse>(`/employees/${employee.id}/address`, {
+    const response = await apiRequest<ApiEmployeeItemResponse>(`/employees/${employee.id}/address`, {
       method: "PUT",
       body: addressPayload(employee),
     });
-    return this.getById(employee.id);
+    return mapEmployeeFromApi(response.data);
   },
   async updateTransport(employee: Employee) {
-    await apiRequest<ApiEmployeeItemResponse>(`/employees/${employee.id}/transport`, {
+    const response = await apiRequest<ApiEmployeeItemResponse>(`/employees/${employee.id}/transport`, {
       method: "PUT",
       body: transportPayload(employee),
     });
-    return this.getById(employee.id);
+    return mapEmployeeFromApi(response.data);
   },
   async replaceAssignments(employee: Employee) {
-    await apiRequest<ApiEmployeeItemResponse>(`/employees/${employee.id}/assignments`, {
+    const response = await apiRequest<ApiEmployeeItemResponse>(`/employees/${employee.id}/assignments`, {
       method: "PUT",
       body: await assignmentsPayload(employee),
     });
-    return this.getById(employee.id);
+    return mapEmployeeFromApi(response.data);
   },
   async replaceHourConcepts(employee: Employee) {
-    await apiRequest<ApiEmployeeItemResponse>(`/employees/${employee.id}/hour-concepts`, {
+    const response = await apiRequest<ApiEmployeeItemResponse>(`/employees/${employee.id}/hour-concepts`, {
       method: "PUT",
       body: await hourConceptsPayload(employee),
     });
-    return this.getById(employee.id);
+    return mapEmployeeFromApi(response.data);
   },
   async createLaborMovement(
     employeeId: string,
     input: { type: "ALTA" | "BAJA"; effectiveFrom: string; reason: string; observation?: string | null },
   ) {
-    await apiRequest<ApiEmployeeItemResponse>(`/employees/${employeeId}/labor-movements`, {
+    const response = await apiRequest<ApiEmployeeItemResponse>(`/employees/${employeeId}/labor-movements`, {
       method: "POST",
       body: input,
     });
-    return this.getById(employeeId);
+    return mapEmployeeFromApi(response.data);
   },
   async syncLaborStatuses() {
     const response = await apiRequest<ApiLaborStatusSyncResponse>("/employees/sync-labor-statuses", {

@@ -19,6 +19,7 @@ export interface Employee {
   startDate: string; endDate?: string; exitReason?: string; transport: boolean; transportRoute: string; transportNotes: string; enabledHours: string[];
   status: EmployeeStatus;
   laborMovements?: LaborMovement[];
+  createdAt?: string; updatedAt?: string;
   directManagerFrom: string; directManagerTo?: string; directManagerStatus: string; directManagerNotes: string;
   timeResponsibleRole: string; timeResponsibleFrom: string; timeResponsibleTo?: string; timeResponsibleStatus: string; timeResponsibleNotes: string;
   mapLocation: string; locationMap: EmployeeLocationMap; novelties: string[]; documents: string[]; historyEvents: EmployeeHistoryEvent[]; audit: string[]; routeHistory: string[];

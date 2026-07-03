@@ -2,7 +2,7 @@ import { Prisma } from "@prisma/client";
 import type { AuditContext } from "../audit/audit.service";
 import { auditService } from "../audit/audit.service";
 import { AppError } from "../../shared/errors/AppError";
-import { positionsRepository } from "./positions.repository";
+import { invalidatePositionsCache, positionsRepository } from "./positions.repository";
 import type { CreatePositionInput, ListPositionsQuery, UpdatePositionInput } from "./positions.schemas";
 
 function mapPrismaError(error: unknown) {
@@ -59,12 +59,14 @@ export const positionsService = {
 
   async create(data: CreatePositionInput, audit?: AuditContext) {
     const item = await execute(() => positionsRepository.create(data));
+    invalidatePositionsCache();
     await auditChange("CREATE", item, audit);
     return positionsRepository.findById(item.id);
   },
 
   async update(id: string, data: UpdatePositionInput, audit?: AuditContext) {
     const item = await execute(() => positionsRepository.update(id, data));
+    invalidatePositionsCache();
     await auditChange("UPDATE", item, audit);
     return positionsRepository.findById(item.id);
   },
@@ -73,10 +75,12 @@ export const positionsService = {
     const current = await execute(() => positionsRepository.findById(id));
     if (current._count.employees > 0) {
       const item = await execute(() => positionsRepository.update(id, { status: "INACTIVO" }));
+      invalidatePositionsCache();
       await auditChange("UPDATE", item, audit);
       return positionsRepository.findById(item.id);
     }
     const item = await execute(() => positionsRepository.delete(id));
+    invalidatePositionsCache();
     await auditChange("DELETE", item, audit);
     return null;
   },

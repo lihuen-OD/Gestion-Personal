@@ -12,6 +12,7 @@ import {
   createEmployeeFieldHistorySchema,
   createEmployeeSchema,
   createLaborMovementSchema,
+  listEmployeeOptionsQuerySchema,
   listEmployeeOrgChartQuerySchema,
   listEmployeeHistoryQuerySchema,
   listEmployeesQuerySchema,
@@ -48,9 +49,22 @@ employeesRouter.get(
 );
 
 employeesRouter.get(
+  "/options",
+  requireAnyRole([roles.rrhh, roles.supervision, roles.cargaHoraria]),
+  validateQuery(listEmployeeOptionsQuerySchema),
+  asyncHandler(employeesController.listOptions),
+);
+
+employeesRouter.get(
   "/:id/position-validation",
   requireAnyRole([roles.rrhh, roles.supervision, roles.cargaHoraria]),
   asyncHandler(employeesController.getPositionValidation),
+);
+
+employeesRouter.get(
+  "/:id/overview",
+  requireAnyRole([roles.rrhh, roles.supervision, roles.cargaHoraria]),
+  asyncHandler(employeesController.getOverviewById),
 );
 
 employeesRouter.get(

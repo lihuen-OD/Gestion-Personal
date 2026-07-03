@@ -52,13 +52,13 @@ export function UsersPage() {
 
   useEffect(() => {
     let mounted = true;
-    Promise.all([userApiService.getAll(), orgStructureApiService.getCatalog(), employeeApiService.getAll()])
-      .then(([apiUsers, catalog, apiEmployees]) => {
+    Promise.all([userApiService.getAll(), orgStructureApiService.getCatalog(), employeeApiService.getOptions({ take: 1000 })])
+      .then(([apiUsers, catalog, apiEmployeeOptions]) => {
         if (!mounted) return;
         setUsers(apiUsers);
         setCompanyOptions(catalog.companies.map((item) => item.name));
         setSectorOptions(catalog.sectors.map((item) => item.name));
-        setEmployeeOptions(apiEmployees);
+        setEmployeeOptions(apiEmployeeOptions.items);
         setUsesBackend(true);
       })
       .catch(() => {

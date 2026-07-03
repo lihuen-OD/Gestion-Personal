@@ -33,7 +33,7 @@ export function LaborMovementPanel({
   onSaved,
 }: LaborMovementPanelProps) {
   const [open, setOpen] = useState(false);
-  const [type, setType] = useState<LaborMovementType>("BAJA");
+  const [type, setType] = useState<LaborMovementType>((employee.laborMovements || []).length ? "BAJA" : "ALTA");
   const [effectiveFrom, setEffectiveFrom] = useState(new Date().toISOString().slice(0, 10));
   const [reason, setReason] = useState("");
   const [observation, setObservation] = useState("");
@@ -68,7 +68,14 @@ export function LaborMovementPanel({
       subtitle={`Movimientos laborales registrados solo para ${employee.firstName} ${employee.lastName}`}
       action={
         canEdit ? (
-          <button type="button" className="button primary" onClick={() => setOpen(true)}>
+          <button
+            type="button"
+            className="button primary"
+            onClick={() => {
+              if (!(employee.laborMovements || []).length) setType("ALTA");
+              setOpen(true);
+            }}
+          >
             Registrar movimiento laboral
           </button>
         ) : undefined

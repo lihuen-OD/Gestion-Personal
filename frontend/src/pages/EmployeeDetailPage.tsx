@@ -3,6 +3,7 @@ import { Link, Navigate, useLocation, useParams } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { auditApiService } from "../services/api/auditApiService";
 import { employeeApiService } from "../services/api/employeeApiService";
+import { ApiError } from "../services/api/apiClient";
 import { calculateEmployeeStatus } from "../services/employeeStatusService";
 import { EmployeeDocumentsPanel } from "../components/documents/EmployeeDocumentsPanel";
 import { EmployeeNoveltiesPanel } from "../components/novelties/EmployeeNoveltiesPanel";
@@ -54,6 +55,7 @@ export function EmployeeDetailPage() {
   const [tab, setTab] = useState(0);
   const [employee, setEmployee] = useState<Employee | null>(null);
   const [auditRows, setAuditRows] = useState<Awaited<ReturnType<typeof auditApiService.getAll>>>([]);
+  const [auditLoaded, setAuditLoaded] = useState(false);
   const [notice, setNotice] = useState(location.state?.created ? "Legajo creado correctamente." : "");
   const [loading, setLoading] = useState(!!id);
   const laborOptions = useLaborSelectOptions(employee || undefined);
@@ -64,7 +66,7 @@ export function EmployeeDetailPage() {
     let mounted = true;
     setLoading(true);
     employeeApiService
-      .getById(id)
+      .getOverviewById(id)
       .then((item) => {
         if (mounted) setEmployee(item);
       })
@@ -80,20 +82,26 @@ export function EmployeeDetailPage() {
   }, [id]);
 
   useEffect(() => {
-    if (!employee) return;
+    if (!employee || tab !== 9 || auditLoaded) return;
     let mounted = true;
     auditApiService
       .getAll({ entityId: employee.id, take: 200 })
       .then((items) => {
-        if (mounted) setAuditRows(items);
+        if (mounted) {
+          setAuditRows(items);
+          setAuditLoaded(true);
+        }
       })
       .catch(() => {
-        if (mounted) setAuditRows([]);
+        if (mounted) {
+          setAuditRows([]);
+          setAuditLoaded(true);
+        }
       });
     return () => {
       mounted = false;
     };
-  }, [employee?.id]);
+  }, [auditLoaded, employee, tab]);
 
   if (loading) return <div className="page-loading">Cargando legajo...</div>;
   if (!loading && !employee) return <Navigate to="/legajos" />;
@@ -101,34 +109,49 @@ export function EmployeeDetailPage() {
   const editable = level === 1;
 
   const save = async () => {
-    const all = (await employeeApiService.getAll()).filter((item) => item.id !== currentEmployee.id);
     if (!currentEmployee.legajoInterno) return setNotice("Legajo Interno es obligatorio.");
     if (!currentEmployee.birthDate) return setNotice("Fecha de nacimiento es obligatoria.");
     if (!currentEmployee.gender) return setNotice("Sexo es obligatorio.");
     if (!currentEmployee.nationality) return setNotice("Nacionalidad es obligatoria.");
-    if (!currentEmployee.startDate) return setNotice("Fecha de alta / ingreso es obligatoria.");
+    if (currentEmployee.endDate && !currentEmployee.startDate) {
+      return setNotice("Para cargar una baja / egreso primero debe existir una fecha de alta.");
+    }
     if (currentEmployee.endDate && currentEmployee.startDate && currentEmployee.endDate < currentEmployee.startDate) {
       return setNotice("Fecha de baja / egreso no puede ser anterior a la fecha de alta.");
     }
     if (currentEmployee.endDate && !currentEmployee.exitReason) {
       return setNotice("Si cargás fecha de baja / egreso, debés indicar el motivo.");
     }
-    if (all.some((item) => item.legajoInterno === currentEmployee.legajoInterno)) {
-      return setNotice("Ya existe un colaborador con este Legajo Interno.");
-    }
-    if (
-      currentEmployee.legajoFinnegans &&
-      all.some((item) => item.legajoFinnegans === currentEmployee.legajoFinnegans)
-    ) {
-      return setNotice("Ya existe un colaborador con este Legajo Finnegans.");
-    }
     try {
+      const duplicateCandidates = await employeeApiService
+        .list({ search: currentEmployee.legajoInterno, take: 10 })
+        .then((result) => result.items.filter((item) => item.id !== currentEmployee.id))
+        .catch(() => []);
+      if (duplicateCandidates.some((item) => item.legajoInterno === currentEmployee.legajoInterno)) {
+        return setNotice("Ya existe un colaborador con este Legajo Interno.");
+      }
+      if (currentEmployee.legajoFinnegans) {
+        const finnegansCandidates = await employeeApiService
+          .list({ search: currentEmployee.legajoFinnegans, take: 10 })
+          .then((result) => result.items.filter((item) => item.id !== currentEmployee.id))
+          .catch(() => []);
+        if (finnegansCandidates.some((item) => item.legajoFinnegans === currentEmployee.legajoFinnegans)) {
+          return setNotice("Ya existe un colaborador con este Legajo Finnegans.");
+        }
+      }
       const updated = await employeeApiService.update({ ...currentEmployee, legajo: currentEmployee.legajoInterno, address: currentEmployee.addressStreet });
       setEmployee(updated);
+      setAuditLoaded(false);
       setNotice("Cambios guardados correctamente.");
       setTimeout(() => setNotice(""), 2200);
-    } catch {
-      setNotice("Error al guardar. Verifica que el backend esté activo.");
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 409) {
+        setNotice("No se pudo guardar: ya existe otro legajo con el mismo Legajo, Legajo Finnegans, CUIL o DNI.");
+      } else if (error instanceof ApiError) {
+        setNotice(`No se pudo guardar: ${error.message} (${error.code}).`);
+      } else {
+        setNotice("Error al guardar. Verifica que el backend esté activo.");
+      }
       setTimeout(() => setNotice(""), 3000);
     }
   };

@@ -1,6 +1,10 @@
 import { locationMockService } from "./locationMockService";
 
 const API = "https://apis.datos.gob.ar/georef/api";
+const PERSISTED_CACHE_PREFIX = "losod_georef:";
+const PERSISTED_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+const RATE_LIMIT_COOLDOWN_MS = 60_000;
+const RATE_LIMIT_STORAGE_KEY = "losod_georef_rate_limited_until";
 
 export interface GeoOption {
   id: string;
@@ -26,12 +30,62 @@ export interface GeocodedAddressResult {
 }
 
 const cache = new Map<string, GeoOption[]>();
+const pending = new Map<string, Promise<GeoOption[]>>();
+let rateLimitedUntil = readRateLimitedUntil();
 const normalize = (value: string) => value.trim();
 
 async function getJson(path: string) {
+  if (Date.now() < rateLimitedUntil) throw new Error("Georef rate limited");
   const response = await fetch(`${API}${path}`);
+  if (response.status === 429) {
+    setRateLimitedUntil(Date.now() + RATE_LIMIT_COOLDOWN_MS);
+  }
   if (!response.ok) throw new Error(`Georef ${response.status}`);
   return response.json();
+}
+
+function readRateLimitedUntil() {
+  try {
+    return Number(sessionStorage.getItem(RATE_LIMIT_STORAGE_KEY) || 0);
+  } catch {
+    return 0;
+  }
+}
+
+function setRateLimitedUntil(value: number) {
+  rateLimitedUntil = value;
+  try {
+    sessionStorage.setItem(RATE_LIMIT_STORAGE_KEY, String(value));
+  } catch {
+    // Session storage may be unavailable; the in-memory cooldown still applies.
+  }
+}
+
+function persistedKey(key: string) {
+  return `${PERSISTED_CACHE_PREFIX}${key}`;
+}
+
+function readPersisted(key: string) {
+  try {
+    const raw = localStorage.getItem(persistedKey(key));
+    if (!raw) return undefined;
+    const parsed = JSON.parse(raw) as { expiresAt?: number; data?: GeoOption[] };
+    if (!parsed.expiresAt || parsed.expiresAt < Date.now() || !Array.isArray(parsed.data)) {
+      localStorage.removeItem(persistedKey(key));
+      return undefined;
+    }
+    return parsed.data;
+  } catch {
+    return undefined;
+  }
+}
+
+function writePersisted(key: string, data: GeoOption[]) {
+  try {
+    localStorage.setItem(persistedKey(key), JSON.stringify({ data, expiresAt: Date.now() + PERSISTED_CACHE_TTL_MS }));
+  } catch {
+    // localStorage may be full or unavailable; memory cache still protects this session.
+  }
 }
 
 function centerFrom(item: { centroide?: { lat?: number; lon?: number } }) {
@@ -68,15 +122,35 @@ async function geocodeInGeoref(params: { provinceName: string; departmentName?: 
 
 async function cached(key: string, loader: () => Promise<GeoOption[]>, fallback: () => GeoOption[]) {
   if (cache.has(key)) return cache.get(key)!;
-  try {
-    const result = await loader();
-    cache.set(key, result);
-    return result;
-  } catch {
-    const result = fallback();
-    cache.set(key, result);
-    return result;
+  const persisted = readPersisted(key);
+  if (persisted) {
+    cache.set(key, persisted);
+    return persisted;
   }
+  const inFlight = pending.get(key);
+  if (inFlight) return inFlight;
+  const request = (async () => {
+    try {
+      const result = await loader();
+      cache.set(key, result);
+      writePersisted(key, result);
+      return result;
+    } catch {
+      const result = fallback();
+      cache.set(key, result);
+      return result;
+    } finally {
+      pending.delete(key);
+    }
+  })();
+  pending.set(key, request);
+  return request;
+}
+
+function emptyCached(key: string) {
+  const result: GeoOption[] = [];
+  cache.set(key, result);
+  return result;
 }
 
 export const locationService = {
@@ -126,6 +200,7 @@ export const locationService = {
   searchStreetsAsync: (params: { provinceId?: string; departmentId?: string; localityId?: string; censusLocalityId?: string; query?: string }) => {
     const query = normalize(params.query || "");
     const key = `streets:${params.provinceId || ""}:${params.departmentId || ""}:${params.localityId || ""}:${params.censusLocalityId || ""}:${query}`;
+    if (query.length < 2) return Promise.resolve(cache.get(key) || emptyCached(key));
     return cached(key, async () => {
       const search = new URLSearchParams({ campos: "id,nombre,categoria,altura,provincia,departamento,localidad_censal", max: "80" });
       if (params.provinceId) search.set("provincia", params.provinceId);

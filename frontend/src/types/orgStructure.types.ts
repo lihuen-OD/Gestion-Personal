@@ -30,6 +30,8 @@ export interface OrgEstablishment {
   department: string;
   locality: string;
   address: string;
+  streetNumber?: string;
+  postalCode?: string;
   status: OrgStructureStatus;
   notes?: string;
 }

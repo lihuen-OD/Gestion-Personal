@@ -113,6 +113,18 @@ const blankEmployee: Employee = {
   routeHistory: [],
 };
 
+async function findDuplicateCandidates(value: Employee) {
+  const searches = [value.legajoInterno, value.legajoFinnegans, value.dni, value.cuil]
+    .map((item) => item?.trim())
+    .filter((item): item is string => Boolean(item));
+  const results = await Promise.all(
+    Array.from(new Set(searches)).map((search) =>
+      employeeApiService.getOptions({ search, take: 10 }).catch(() => ({ items: [] as Employee[] })),
+    ),
+  );
+  return results.flatMap((result) => result.items);
+}
+
 export function EmployeeCreatePage() {
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -136,7 +148,6 @@ export function EmployeeCreatePage() {
     setError("");
 
     try {
-      const all = await employeeApiService.getAll();
       if (
         !value.legajoInterno ||
         !value.dni ||
@@ -159,19 +170,24 @@ export function EmployeeCreatePage() {
         setError("El motivo de alta es obligatorio.");
         return;
       }
-      if (all.some((employee) => employee.legajoInterno === value.legajoInterno)) {
+      const duplicateCandidates = await findDuplicateCandidates(value);
+      if (duplicateCandidates.some((employee) => employee.legajoInterno === value.legajoInterno || employee.legajo === value.legajoInterno)) {
         setError("Ya existe un colaborador con este Legajo Interno.");
         return;
       }
       if (
         value.legajoFinnegans &&
-        all.some((employee) => employee.legajoFinnegans === value.legajoFinnegans)
+        duplicateCandidates.some((employee) => employee.legajoFinnegans === value.legajoFinnegans)
       ) {
         setError("Ya existe un colaborador con este Legajo Finnegans.");
         return;
       }
-      if (all.some((employee) => employee.dni === value.dni)) {
+      if (duplicateCandidates.some((employee) => employee.dni === value.dni)) {
         setError("El DNI ya existe.");
+        return;
+      }
+      if (duplicateCandidates.some((employee) => employee.cuil === value.cuil)) {
+        setError("El CUIL ya existe.");
         return;
       }
 
@@ -213,6 +229,10 @@ export function EmployeeCreatePage() {
     } catch (error) {
       if (error instanceof ApiError && error.status === 409) {
         setError("Ya existe un legajo con el mismo Legajo Interno, Legajo Finnegans, CUIL o DNI.");
+        return;
+      }
+      if (error instanceof ApiError) {
+        setError(`No se pudo guardar el legajo: ${error.message} (${error.code}).`);
         return;
       }
       setError("No se pudo guardar el legajo. Intentá de nuevo.");

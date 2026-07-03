@@ -80,14 +80,12 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
       setLoadError("");
       try {
         const costCenterId = costCenterOptions.find((item) => item.name === costCenter)?.id;
-        const [apiRows, apiSummary, apiReviewEntries] = await Promise.all([
+        const [apiRows, apiSummary, apiReviewEntries, apiPending] = await Promise.all([
           timeEntryApiService.getPeriodEmployees({ period, search: debouncedSearch, costCenterId, page, take: pageSize }),
           timeEntryApiService.getSummary(period).catch(() => emptyHoursSummary),
           pendingOnly ? timeEntryApiService.list({ period, status: "En revisión", search: debouncedSearch, costCenterId, page: reviewPage, take: pageSize }) : Promise.resolve({ items: [], meta: { total: 0, page: 1, pageSize, hasMore: false } }),
+          pendingOnly ? pendingApiService.getAll({ period, kind: "all", take: 300 }).catch(() => undefined) : Promise.resolve(undefined),
         ]);
-        const apiPending = pendingOnly
-          ? await pendingApiService.getAll({ period, kind: "all", take: 300 }).catch(() => undefined)
-          : undefined;
         if (cancelled) return;
         setBaseEmployees([]);
         setPeriodRows(apiRows.items);

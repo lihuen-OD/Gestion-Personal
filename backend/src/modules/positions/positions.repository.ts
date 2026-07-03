@@ -2,7 +2,21 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "../../shared/prisma/client";
 import type { CreatePositionInput, ListPositionsQuery, UpdatePositionInput } from "./positions.schemas";
 
+const positionInclude = {
+  area: true,
+  sector: true,
+  salaryCategories: { include: { salaryCategory: true } },
+  _count: { select: { employees: true } },
+} satisfies Prisma.PositionInclude;
+
 const json = (value: unknown): Prisma.InputJsonValue => value as Prisma.InputJsonValue;
+type PositionRow = Awaited<ReturnType<typeof prisma.position.findMany<{ include: typeof positionInclude }>>>[number];
+const POSITION_CACHE_TTL_MS = 120_000;
+let listCache: { data: PositionRow[]; expiresAt: number } | null = null;
+
+export function invalidatePositionsCache() {
+  listCache = null;
+}
 
 function buildWhere(query: ListPositionsQuery): Prisma.PositionWhereInput {
   const search = query.search?.trim();
@@ -60,13 +74,36 @@ function dataFromInput(input: CreatePositionInput | UpdatePositionInput): Prisma
 }
 
 export const positionsRepository = {
-  findMany(query: ListPositionsQuery) {
+  async findMany(query: ListPositionsQuery) {
     const where = buildWhere(query);
     const skip = (query.page - 1) * query.take;
+    const hasFilters = Boolean(
+      query.status ||
+        query.businessUnitName ||
+        query.establishmentName ||
+        query.areaDepartment ||
+        query.sector ||
+        query.salaryRangeCategory ||
+        query.search?.trim(),
+    );
+
+    if (!hasFilters) {
+      if (!listCache || Date.now() >= listCache.expiresAt) {
+        const data = await prisma.position.findMany({
+          where,
+          include: positionInclude,
+          orderBy: [{ status: "asc" }, { name: "asc" }],
+          take: 500,
+        });
+        listCache = { data, expiresAt: Date.now() + POSITION_CACHE_TTL_MS };
+      }
+      return [listCache.data.slice(skip, skip + query.take), listCache.data.length] as const;
+    }
+
     return prisma.$transaction([
       prisma.position.findMany({
         where,
-        include: { area: true, sector: true, salaryCategories: { include: { salaryCategory: true } }, _count: { select: { employees: true } } },
+        include: positionInclude,
         orderBy: [{ status: "asc" }, { name: "asc" }],
         skip,
         take: query.take,
@@ -78,7 +115,7 @@ export const positionsRepository = {
   findById(id: string) {
     return prisma.position.findUniqueOrThrow({
       where: { id },
-      include: { area: true, sector: true, salaryCategories: { include: { salaryCategory: true } }, _count: { select: { employees: true } } },
+      include: positionInclude,
     });
   },
 

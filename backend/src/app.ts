@@ -29,6 +29,10 @@ export function createApp() {
   );
   app.use(express.json({ limit: env.JSON_BODY_LIMIT }));
   app.use(requestLogger);
+  app.use((_req, res, next) => {
+    res.setHeader("Cache-Control", "no-store");
+    next();
+  });
   app.use(env.API_PREFIX, apiRouter);
   app.use(notFoundHandler);
   app.use(errorHandler);

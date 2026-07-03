@@ -13,6 +13,7 @@ import type {
   CreateLaborMovementInput,
   ListEmployeeHistoryQuery,
   ListEmployeeOrgChartQuery,
+  ListEmployeeOptionsQuery,
   ListEmployeesQuery,
   ReplaceEmployeeAssignmentsInput,
   ReplaceEmployeeHourConceptsInput,
@@ -165,8 +166,27 @@ export const employeesService = {
     };
   },
 
+  async listOptions(query: ListEmployeeOptionsQuery, user: Express.AuthUser) {
+    const [items, total] = await employeesRepository.findOptions(query, employeeAccessWhere(user));
+    return {
+      items,
+      meta: {
+        total,
+        page: query.page,
+        pageSize: query.take,
+        hasMore: query.page * query.take < total,
+      },
+    };
+  },
+
   async getById(id: string, user?: Express.AuthUser) {
     const employee = await employeesRepository.findById(id, user ? employeeAccessWhere(user) : {});
+    if (!employee) throw new AppError("Employee not found", 404, "EMPLOYEE_NOT_FOUND");
+    return employee;
+  },
+
+  async getOverviewById(id: string, user: Express.AuthUser) {
+    const employee = await employeesRepository.findOverviewById(id, employeeAccessWhere(user));
     if (!employee) throw new AppError("Employee not found", 404, "EMPLOYEE_NOT_FOUND");
     return employee;
   },
@@ -343,7 +363,7 @@ export const employeesService = {
   },
 
   async createLaborMovement(id: string, input: CreateLaborMovementInput, audit?: AuditContext) {
-    const before = await employeesService.getById(id);
+    const before = await employeesRepository.findLaborAuditSnapshot(id);
     const { employee, movement } = await execute(() => employeesRepository.createLaborMovement(id, input, audit?.userId));
     await auditService.register({
       ...audit,

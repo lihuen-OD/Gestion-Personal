@@ -1,12 +1,9 @@
 import { employeeAccessWhere } from "../employees/employeeAccess";
-import { createTtlCache } from "../../shared/cache/ttlCache";
+import { dashboardMetricsCache } from "./dashboard.cache";
 import { dashboardRepository } from "./dashboard.repository";
 import type { DashboardMetricsQuery } from "./dashboard.schemas";
 
 const dayMs = 86_400_000;
-const dashboardMetricsCache = createTtlCache<DashboardMetricsResult>(
-  Number(process.env.DASHBOARD_METRICS_CACHE_MS || 30_000),
-);
 
 function currentPeriod() {
   return new Date().toISOString().slice(0, 7);
@@ -39,7 +36,7 @@ function formatDecimal(value: unknown) {
 }
 
 function upcomingBirthdays(
-  employees: Awaited<ReturnType<typeof dashboardRepository.findActiveBirthDateEmployees>>,
+  employees: Awaited<ReturnType<typeof dashboardRepository.findActiveDashboardEmployees>>,
 ) {
   const referenceDate = new Date();
   return employees
@@ -116,10 +113,7 @@ async function calculateMetrics(period: string, user: Express.AuthUser) {
     expiredDocuments,
     expiringDocuments,
     missingResponsible,
-    birthdayEmployees,
-    dateFieldEmployees,
-    sectorEmployees,
-    companyLinkEmployees,
+    activeDashboardEmployees,
     transportedEmployees,
   ] = await Promise.all([
     dashboardRepository.countTotal(accessWhere),
@@ -135,10 +129,7 @@ async function calculateMetrics(period: string, user: Express.AuthUser) {
     dashboardRepository.countExpiredDocuments(accessWhere),
     dashboardRepository.countExpiringDocuments(accessWhere),
     dashboardRepository.countMissingTimeResponsible(accessWhere),
-    dashboardRepository.findActiveBirthDateEmployees(accessWhere),
-    dashboardRepository.findActiveDateFields(accessWhere),
-    dashboardRepository.findActiveSectors(accessWhere),
-    dashboardRepository.findActiveCompanyLinks(accessWhere),
+    dashboardRepository.findActiveDashboardEmployees(accessWhere),
     dashboardRepository.findTransportedEmployees(accessWhere),
   ]);
 
@@ -152,13 +143,13 @@ async function calculateMetrics(period: string, user: Express.AuthUser) {
 
   const averageAge =
     active > 0
-      ? (dateFieldEmployees.reduce((sum: number, e) => sum + yearsBetween(e.birthDate), 0) / active).toFixed(1)
+      ? (activeDashboardEmployees.reduce((sum: number, e) => sum + yearsBetween(e.birthDate), 0) / active).toFixed(1)
       : "0.0";
 
   const averageTenure =
     active > 0
       ? (
-          dateFieldEmployees.reduce(
+          activeDashboardEmployees.reduce(
             (sum: number, e) => sum + yearsBetween(e.laborMovements[0]?.effectiveFrom ?? e.createdAt),
             0,
           ) / active
@@ -169,9 +160,9 @@ async function calculateMetrics(period: string, user: Express.AuthUser) {
     transportedEmployees.map((e) => e.address?.city || e.transport?.locality || ""),
   );
   const transportRoutes = groupCount(transportedEmployees.map((e) => e.transport?.busLine || ""));
-  const headcountBySector = groupCount(sectorEmployees.map((e) => e.sector?.name || ""));
+  const headcountBySector = groupCount(activeDashboardEmployees.map((e) => e.sector?.name || ""));
   const headcountByCompany = groupCount(
-    companyLinkEmployees.map((e) => {
+    activeDashboardEmployees.map((e) => {
       const primary = e.companies.find((link) => link.isPrimary) ?? e.companies[0];
       return primary?.company.name || "";
     }),
@@ -186,7 +177,7 @@ async function calculateMetrics(period: string, user: Express.AuthUser) {
     absenceRate: active ? ((absenceDays / (active * 21)) * 100).toFixed(1) : "0.0",
     turnoverRate: total ? ((exits / ((active + total) / 2)) * 100).toFixed(1) : "0.0",
     exits,
-    upcomingBirthdays: upcomingBirthdays(birthdayEmployees),
+    upcomingBirthdays: upcomingBirthdays(activeDashboardEmployees.filter((employee) => employee.birthDate)),
     averageAge,
     averageTenure,
     transported,
@@ -205,4 +196,4 @@ async function calculateMetrics(period: string, user: Express.AuthUser) {
   };
 }
 
-type DashboardMetricsResult = Awaited<ReturnType<typeof calculateMetrics>>;
+export type DashboardMetricsResult = Awaited<ReturnType<typeof calculateMetrics>>;

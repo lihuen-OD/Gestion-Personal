@@ -36,7 +36,7 @@ export function DashboardPage() {
       try {
         const [apiMetrics, apiAudit] = await Promise.all([
           dashboardMetricsApiService.getMetrics(level === 2 ? (employee: Employee) => employee.sector === user!.sector : undefined),
-          dashboardMetricsApiService.getAudit(5),
+          level === 1 ? dashboardMetricsApiService.getAudit(5) : Promise.resolve([]),
         ]);
         if (cancelled) return;
         setMetrics(apiMetrics);

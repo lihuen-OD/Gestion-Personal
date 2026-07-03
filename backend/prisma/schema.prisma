@@ -488,6 +488,9 @@ model Employee {
 
   @@index([lastName, firstName])
   @@index([status])
+  @@index([status, lastName, firstName])
+  @@index([status, sectorId])
+  @@index([status, costCenterId])
   @@index([sectorId])
   @@index([costCenterId])
 }
@@ -501,6 +504,8 @@ model EmployeeCompany {
   company  Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
 
   @@id([employeeId, companyId])
+  @@index([companyId])
+  @@index([companyId, employeeId])
 }
 
 model EmployeeAddress {
@@ -535,6 +540,8 @@ model EmployeeTransport {
   updatedAt            DateTime @updatedAt
 
   employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@index([usesCompanyTransport])
 }
 
 model LaborMovement {
@@ -712,6 +719,9 @@ model Novelty {
   documents         EmployeeDocument[]
 
   @@index([employeeId, fromDate])
+  @@index([employeeId, status, fromDate])
+  @@index([status, fromDate])
+  @@index([fromDate, toDate])
   @@index([noveltyTypeId])
   @@index([status])
 }
@@ -739,6 +749,9 @@ model TimeEntry {
   createdBy   User?       @relation("TimeEntryCreatedBy", fields: [createdByUserId], references: [id])
 
   @@index([employeeId, period])
+  @@index([employeeId, hourConceptId, date])
+  @@index([period, employeeId])
+  @@index([period, status])
   @@index([date])
   @@index([status])
   @@index([status, period])
@@ -819,8 +832,11 @@ model EmployeeDocument {
   uploadedBy User?            @relation(fields: [uploadedByUserId], references: [id])
 
   @@index([employeeId])
+  @@index([employeeId, createdAt])
   @@index([categoryId])
   @@index([status])
+  @@index([status, expiresAt])
+  @@index([createdAt])
 }
 
 model AuditLog {
@@ -839,6 +855,7 @@ model AuditLog {
   user User? @relation(fields: [userId], references: [id])
 
   @@index([entity, entityId])
+  @@index([entity, entityId, createdAt])
   @@index([userId])
   @@index([createdAt])
 }

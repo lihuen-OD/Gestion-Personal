@@ -88,8 +88,8 @@ function mapFromApi(item: ApiEmployeeDocument): DocumentMock {
 }
 
 async function getEmployeeDocuments(employeeId: string) {
-  const response = await apiRequest<ApiEmployeeDetailResponse>(`/employees/${employeeId}`);
-  return (response.data.documents || []).map(mapFromApi);
+  const response = await apiRequest<ApiDocumentsListResponse>(`/documents?employeeId=${employeeId}&page=1&take=100`);
+  return response.data.map(mapFromApi);
 }
 
 export const documentApiService = {
@@ -148,7 +148,7 @@ export const documentApiService = {
       },
     });
 
-    return (response.data.documents || []).map(mapFromApi);
+    return getEmployeeDocuments(input.employeeId);
   },
 
   async download(document: Pick<DocumentMock, "id" | "fileName">) {

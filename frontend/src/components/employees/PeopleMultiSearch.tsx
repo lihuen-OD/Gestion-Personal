@@ -3,6 +3,7 @@ import { Search } from "lucide-react";
 import { employeeApiService } from "../../services/api/employeeApiService";
 import type { Employee } from "../../types";
 import { displayLegajo } from "../../utils/employee";
+import { useDebouncedValue } from "../../utils/useDebouncedValue";
 
 function employeeSearchLabel(employee: Employee) {
   return `${employee.lastName}, ${employee.firstName} · Legajo ${displayLegajo(employee)} · DNI ${employee.dni} · CUIL ${employee.cuil}`;
@@ -29,18 +30,24 @@ export function PeopleMultiSearch({
 }) {
   const [query, setQuery] = useState("");
   const [candidates, setCandidates] = useState<Employee[]>([]);
+  const debouncedQuery = useDebouncedValue(query, 250);
 
   useEffect(() => {
+    const search = debouncedQuery.trim();
+    if (search.length < 1) {
+      setCandidates([]);
+      return;
+    }
     let mounted = true;
-    employeeApiService.getAll()
-      .then((employees) => {
-        if (mounted) setCandidates(employees);
+    employeeApiService.getOptions({ search, take: 20 })
+      .then((result) => {
+        if (mounted) setCandidates(result.items);
       })
       .catch(() => {});
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [debouncedQuery]);
 
   const normalized = normalizePeopleSearch(query.trim());
   const cleanSelected = selected.filter(Boolean);

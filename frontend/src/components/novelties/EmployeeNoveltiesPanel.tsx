@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { Plus } from "lucide-react";
-import { employeeApiService } from "../../services/api/employeeApiService";
 import { noveltyApiService } from "../../services/api/noveltyApiService";
 import type { Employee, Novelty, User } from "../../types";
 import { NoveltyModal } from "./NoveltyModal";
@@ -47,10 +46,7 @@ export function EmployeeNoveltiesPanel({
       ],
     };
 
-    employeeApiService
-      .update(updated)
-      .then(onSaved)
-      .catch(() => {});
+    onSaved(updated);
     setRefresh((value) => value + 1);
     setOpen(false);
   };

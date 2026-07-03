@@ -23,6 +23,15 @@ export const listEmployeeOrgChartQuerySchema = z.object({
   take: z.coerce.number().int().positive().max(1000).default(500),
 });
 
+export const listEmployeeOptionsQuerySchema = z.object({
+  search: z.string().trim().optional(),
+  status: employeeStatusSchema.optional(),
+  companyId: z.string().uuid().optional(),
+  sectorId: z.string().uuid().optional(),
+  page: z.coerce.number().int().positive().max(10000).default(1),
+  take: z.coerce.number().int().positive().max(1000).default(250),
+});
+
 export const employeeAddressSchema = z.object({
   province: z.string().trim().max(120).optional().nullable(),
   department: z.string().trim().max(120).optional().nullable(),
@@ -33,6 +42,15 @@ export const employeeAddressSchema = z.object({
   latitude: z.number().optional().nullable(),
   longitude: z.number().optional().nullable(),
   mapLabel: z.string().trim().max(240).optional().nullable(),
+});
+
+export const laborMovementTypeSchema = z.enum(["ALTA", "BAJA"]);
+
+const initialLaborMovementSchema = z.object({
+  type: laborMovementTypeSchema.default("ALTA"),
+  effectiveFrom: z.coerce.date(),
+  reason: z.string().trim().min(2).max(180),
+  observation: z.string().trim().max(600).optional().nullable(),
 });
 
 export const createEmployeeSchema = z.object({
@@ -63,6 +81,8 @@ export const createEmployeeSchema = z.object({
   companyIds: z.array(z.string().uuid()).default([]),
   primaryCompanyId: z.string().uuid().optional().nullable(),
   address: employeeAddressSchema.optional(),
+  hourConceptIds: z.array(z.string().uuid()).max(50).optional(),
+  initialLaborMovement: initialLaborMovementSchema.optional(),
 });
 
 export const updateEmployeeSchema = createEmployeeSchema.partial();
@@ -125,8 +145,6 @@ export const replaceEmployeeHourConceptsSchema = z.object({
   hourConceptIds: z.array(z.string().uuid()).max(50),
 });
 
-export const laborMovementTypeSchema = z.enum(["ALTA", "BAJA"]);
-
 export const createLaborMovementSchema = z.object({
   type: laborMovementTypeSchema,
   effectiveFrom: z.coerce.date(),
@@ -188,6 +206,7 @@ export const createEmployeeBlockHistorySchema = z.object({
 
 export type ListEmployeesQuery = z.infer<typeof listEmployeesQuerySchema>;
 export type ListEmployeeOrgChartQuery = z.infer<typeof listEmployeeOrgChartQuerySchema>;
+export type ListEmployeeOptionsQuery = z.infer<typeof listEmployeeOptionsQuerySchema>;
 export type CreateEmployeeInput = z.infer<typeof createEmployeeSchema>;
 export type UpdateEmployeeInput = z.infer<typeof updateEmployeeSchema>;
 export type UpdateEmployeeContactInput = z.infer<typeof updateEmployeeContactSchema>;

@@ -40,7 +40,7 @@ function blank(type: Tab, catalog: OrgStructureCatalog): Editable {
   const code = nextCodeFromCatalog(type, catalog);
   if (type === "COMPANY") return { id: uid(), code, name: "", legalName: "", cuit: "", status: "ACTIVO" };
   if (type === "BUSINESS_UNIT") return { id: uid(), code, name: "", companyIds: [], status: "ACTIVO" };
-  if (type === "ESTABLISHMENT") return { id: uid(), code, name: "", companyIds: [], businessUnitIds: [], province: "", department: "", locality: "", address: "", status: "ACTIVO" };
+  if (type === "ESTABLISHMENT") return { id: uid(), code, name: "", companyIds: [], businessUnitIds: [], province: "", department: "", locality: "", address: "", streetNumber: "", postalCode: "", status: "ACTIVO" };
   if (type === "AREA") return { id: uid(), code, name: "", businessUnitIds: [], establishmentIds: [], status: "ACTIVO" };
   if (type === "SECTOR") return { id: uid(), code, name: "", areaIds: [], establishmentIds: [], status: "ACTIVO" };
   return { id: uid(), code, name: "", companyIds: [], businessUnitIds: [], establishmentIds: [], areaIds: [], sectorIds: [], finnegansCode: "", status: "ACTIVO" };
@@ -79,8 +79,26 @@ function StatusField({ value, onChange }: { value: OrgStructureStatus; onChange:
 function Editor({ type, item, catalog, onChange }: { type: Tab; item: Editable; catalog: OrgStructureCatalog; onChange: (item: Editable) => void }) {
   const normalizedItem = normalizeDerivedRelations(type, item, catalog);
   const set = (patch: Partial<Editable>) => onChange(normalizeDerivedRelations(type, { ...item, ...patch } as Editable, catalog));
-  const establishmentAddress: EmployeeAddress | undefined = "province" in item ? { calle: item.address, numero: "", provinciaId: "", provinciaNombre: item.province, departamentoId: "", departamentoNombre: item.department, localidadId: "", localidadNombre: item.locality, codigoPostal: "", ubicacionMapa: { lat: null, lng: null, source: "MOCK", label: "" } } : undefined;
-  const setEstablishmentAddress = (address: EmployeeAddress) => set({ province: address.provinciaNombre, department: address.departamentoNombre, locality: address.localidadNombre, address: [address.calle, address.numero].filter(Boolean).join(" ") } as Partial<Editable>);
+  const establishmentAddress: EmployeeAddress | undefined = "province" in item ? {
+    calle: item.address,
+    numero: item.streetNumber || "",
+    provinciaId: "",
+    provinciaNombre: item.province,
+    departamentoId: "",
+    departamentoNombre: item.department,
+    localidadId: "",
+    localidadNombre: item.locality,
+    codigoPostal: item.postalCode || "",
+    ubicacionMapa: { lat: null, lng: null, source: "MOCK", label: "" },
+  } : undefined;
+  const setEstablishmentAddress = (address: EmployeeAddress) => set({
+    province: address.provinciaNombre,
+    department: address.departamentoNombre,
+    locality: address.localidadNombre,
+    address: address.calle,
+    streetNumber: address.numero,
+    postalCode: address.codigoPostal,
+  } as Partial<Editable>);
 
   return <div className="org-structure-editor">
     <div className="form-grid">

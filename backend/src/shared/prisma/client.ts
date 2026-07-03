@@ -5,11 +5,9 @@ import { recordPrismaQuery } from "../observability/requestMetrics";
 declare global {
   // eslint-disable-next-line no-var
   var prisma: PrismaClient<Prisma.PrismaClientOptions, "query"> | undefined;
-  // eslint-disable-next-line no-var
-  var prismaQueryLoggerAttached: boolean | undefined;
 }
 
-export const prisma =
+const prismaClient =
   globalThis.prisma ??
   new PrismaClient<Prisma.PrismaClientOptions, "query">({
     log:
@@ -23,12 +21,22 @@ export const prisma =
   });
 
 if (process.env.NODE_ENV !== "production") {
-  globalThis.prisma = prisma;
+  globalThis.prisma = prismaClient;
 }
 
-if (!isProduction && !globalThis.prismaQueryLoggerAttached) {
-  prisma.$on("query", (event) => {
-    recordPrismaQuery(event.query, event.duration);
-  });
-  globalThis.prismaQueryLoggerAttached = true;
-}
+export const prisma = prismaClient.$extends({
+  query: {
+    $allModels: {
+      async $allOperations({ model, operation, args, query }) {
+        const startedAt = performance.now();
+        try {
+          return await query(args);
+        } finally {
+          if (!isProduction) {
+            recordPrismaQuery(`${model}.${operation}`, performance.now() - startedAt);
+          }
+        }
+      },
+    },
+  },
+});

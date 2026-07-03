@@ -4,10 +4,32 @@ import type { CreateNoveltyInput, ListNoveltiesQuery } from "./novelties.schemas
 
 const noveltyInclude = {
   employee: { select: { id: true, legajo: true, cuil: true, dni: true, firstName: true, lastName: true, status: true } },
-  noveltyType: { include: { finnegansLinks: { where: { status: "ACTIVO" }, orderBy: { priority: "asc" } } } },
-  targetHourConcept: true,
-  documents: { include: { category: true }, orderBy: { createdAt: "desc" } },
+  noveltyType: {
+    select: {
+      id: true,
+      code: true,
+      name: true,
+      origin: true,
+      exportsToFinnegans: true,
+      allowsHours: true,
+      allowsDateTo: true,
+      hasValidity: true,
+      blocksTimeEntry: true,
+      setsWorkedHoursToZero: true,
+      timeImpact: true,
+      approvalRoles: true,
+      finnegansLinks: {
+        where: { status: "ACTIVO" },
+        orderBy: { priority: "asc" },
+        select: { code: true, name: true, hasValidity: true, status: true },
+      },
+    },
+  },
+  targetHourConcept: { select: { id: true, name: true } },
+  documents: { select: { fileName: true }, orderBy: { createdAt: "desc" }, take: 1 },
 } satisfies Prisma.NoveltyInclude;
+
+type ZeroTimeEntryTransaction = Pick<typeof prisma, "employeeHourConcept" | "timeEntry">;
 
 function buildWhere(query: ListNoveltiesQuery, employeeAccessWhere: Prisma.EmployeeWhereInput): Prisma.NoveltyWhereInput {
   const search = query.search?.trim();
@@ -69,7 +91,7 @@ function dateRange(from: Date, to?: Date | null) {
   return days;
 }
 
-async function findZeroHourConcept(tx: Prisma.TransactionClient, employeeId: string, targetHourConceptId?: string | null) {
+async function findZeroHourConcept(tx: ZeroTimeEntryTransaction, employeeId: string, targetHourConceptId?: string | null) {
   if (targetHourConceptId) {
     return tx.employeeHourConcept.findFirst({
       where: {
@@ -91,7 +113,7 @@ async function findZeroHourConcept(tx: Prisma.TransactionClient, employeeId: str
 }
 
 async function syncZeroTimeEntries(
-  tx: Prisma.TransactionClient,
+  tx: ZeroTimeEntryTransaction,
   input: CreateNoveltyInput,
   noveltyName: string,
   createdByUserId?: string | null,

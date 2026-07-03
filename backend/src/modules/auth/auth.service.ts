@@ -23,6 +23,18 @@ function issueTokens(user: { id: string; email: string; role: string }) {
   };
 }
 
+type PublicUser = NonNullable<Awaited<ReturnType<typeof authRepository.findActivePublicById>>>;
+const currentUserCache = new Map<string, { user: PublicUser; expiresAt: number }>();
+const currentUserCacheTtlMs = Number(process.env.AUTH_USER_CACHE_MS || 5_000);
+
+export function invalidateCurrentUserCache(userId?: string | null) {
+  if (userId) {
+    currentUserCache.delete(userId);
+    return;
+  }
+  currentUserCache.clear();
+}
+
 export const authService = {
   async login(input: LoginInput) {
     const user = await authRepository.findByEmailWithPassword(input.email.toLowerCase().trim());
@@ -68,12 +80,16 @@ export const authService = {
   },
 
   async getCurrentUser(id: string) {
+    const cached = currentUserCache.get(id);
+    if (cached && cached.expiresAt > Date.now()) return cached.user;
+
     const user = await authRepository.findActivePublicById(id);
 
     if (!user || user.status !== "ACTIVO") {
       throw new AppError("Authenticated user is no longer active", 401, "USER_INACTIVE");
     }
 
+    currentUserCache.set(id, { user, expiresAt: Date.now() + currentUserCacheTtlMs });
     return user;
   },
 };

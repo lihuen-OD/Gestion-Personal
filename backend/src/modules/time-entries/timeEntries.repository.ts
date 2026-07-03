@@ -20,7 +20,6 @@ const periodEmployeeSelect = {
   costCenter: { select: { id: true, name: true, code: true } },
   position: { select: { id: true, name: true, code: true } },
   companies: { select: { isPrimary: true, company: { select: { id: true, name: true, code: true } } } },
-  assignments: { select: { type: true, personName: true }, take: 100 },
 } satisfies Prisma.EmployeeSelect;
 
 const statusPriority = ["EN_REVISION", "RECHAZADO", "PENDIENTE", "BORRADOR", "APROBADO", "CERRADO"] as const;

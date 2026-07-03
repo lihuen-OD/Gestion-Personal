@@ -31,12 +31,86 @@ let overviewCache: OverviewCache | null = null;
 
 function fetchOverview() {
   return Promise.all([
-    prisma.company.findMany({ take: 500, orderBy: { name: "asc" }, include: { businessUnits: true, establishments: true } }),
-    prisma.businessUnit.findMany({ take: 500, orderBy: { name: "asc" }, include: { company: true, companies: true } }),
-    prisma.establishment.findMany({ take: 500, orderBy: { name: "asc" }, include: { company: true, businessUnit: true, companies: true, businessUnits: true } }),
-    prisma.area.findMany({ take: 500, orderBy: { name: "asc" }, include: { establishment: true, businessUnits: true, establishments: true } }),
-    prisma.sector.findMany({ take: 500, orderBy: { name: "asc" }, include: { area: true, areas: true, establishments: true } }),
-    prisma.costCenter.findMany({ take: 500, orderBy: { code: "asc" }, include: { companies: true, businessUnits: true, establishments: true, areas: true, sectors: true } }),
+    prisma.company.findMany({
+      take: 500,
+      orderBy: { name: "asc" },
+      select: { id: true, code: true, name: true, status: true },
+    }),
+    prisma.businessUnit.findMany({
+      take: 500,
+      orderBy: { name: "asc" },
+      select: {
+        id: true,
+        code: true,
+        name: true,
+        status: true,
+        companyId: true,
+        companies: { select: { companyId: true } },
+      },
+    }),
+    prisma.establishment.findMany({
+      take: 500,
+      orderBy: { name: "asc" },
+      select: {
+        id: true,
+        code: true,
+        name: true,
+        status: true,
+        companyId: true,
+        businessUnitId: true,
+        province: true,
+        department: true,
+        city: true,
+        street: true,
+        streetNumber: true,
+        postalCode: true,
+        companies: { select: { companyId: true } },
+        businessUnits: { select: { businessUnitId: true } },
+      },
+    }),
+    prisma.area.findMany({
+      take: 500,
+      orderBy: { name: "asc" },
+      select: {
+        id: true,
+        code: true,
+        name: true,
+        status: true,
+        establishmentId: true,
+        establishment: { select: { businessUnitId: true } },
+        businessUnits: { select: { businessUnitId: true } },
+        establishments: { select: { establishmentId: true } },
+      },
+    }),
+    prisma.sector.findMany({
+      take: 500,
+      orderBy: { name: "asc" },
+      select: {
+        id: true,
+        code: true,
+        name: true,
+        status: true,
+        areaId: true,
+        area: { select: { establishmentId: true } },
+        areas: { select: { areaId: true } },
+        establishments: { select: { establishmentId: true } },
+      },
+    }),
+    prisma.costCenter.findMany({
+      take: 500,
+      orderBy: { code: "asc" },
+      select: {
+        id: true,
+        code: true,
+        name: true,
+        status: true,
+        companies: { select: { companyId: true } },
+        businessUnits: { select: { businessUnitId: true } },
+        establishments: { select: { establishmentId: true } },
+        areas: { select: { areaId: true } },
+        sectors: { select: { sectorId: true } },
+      },
+    }),
   ]);
 }
 

@@ -24,8 +24,8 @@ export const pendingRepository = {
       },
       include: {
         employee: { select: { id: true, legajo: true, firstName: true, lastName: true, sectorId: true } },
-        noveltyType: true,
-        targetHourConcept: true,
+        noveltyType: { select: { id: true, code: true, name: true } },
+        targetHourConcept: { select: { id: true, code: true, name: true } },
       },
       orderBy: [{ fromDate: "asc" }, { createdAt: "asc" }],
       take: query.take,
@@ -41,7 +41,7 @@ export const pendingRepository = {
       },
       include: {
         employee: { select: { id: true, legajo: true, firstName: true, lastName: true, sectorId: true } },
-        hourConcept: true,
+        hourConcept: { select: { id: true, code: true, name: true } },
       },
       orderBy: [{ date: "asc" }, { createdAt: "asc" }],
       take: query.take,

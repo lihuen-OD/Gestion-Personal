@@ -8,6 +8,8 @@ type SlowQuery = {
 type RequestMetrics = {
   method: string;
   path: string;
+  userId?: string | null;
+  role?: string | null;
   queryCount: number;
   queryDurationMs: number;
   slowQueries: SlowQuery[];
@@ -22,6 +24,13 @@ function normalizeQuery(query: string) {
 
 export function runWithRequestMetrics<T>(metrics: RequestMetrics, callback: () => T) {
   return storage.run(metrics, callback);
+}
+
+export function updateRequestMetricsUser(user?: { id?: string | null; role?: string | null } | null) {
+  const metrics = storage.getStore();
+  if (!metrics || !user) return;
+  metrics.userId = user.id || null;
+  metrics.role = user.role || null;
 }
 
 export function getRequestMetrics() {
@@ -47,6 +56,8 @@ export function createRequestMetrics(method: string, path: string): RequestMetri
   return {
     method,
     path,
+    userId: null,
+    role: null,
     queryCount: 0,
     queryDurationMs: 0,
     slowQueries: [],

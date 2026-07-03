@@ -209,65 +209,24 @@ export const dashboardRepository = {
    * Filtering for the 30-day window is done in the service (requires local
    * date arithmetic that Prisma cannot express portably).
    */
-  findActiveBirthDateEmployees(accessWhere: Prisma.EmployeeWhereInput) {
+  findActiveDashboardEmployees(accessWhere: Prisma.EmployeeWhereInput) {
     return prisma.employee.findMany({
-      where: { ...activeWhere(accessWhere), birthDate: { not: null } },
+      where: activeWhere(accessWhere),
       select: {
         id: true,
         firstName: true,
         lastName: true,
         birthDate: true,
-        sector: { select: { name: true } },
-      },
-    });
-  },
-
-  // ── Age & tenure ──────────────────────────────────────────────────────────
-
-  /**
-   * Minimal projection for active employees to calculate averageAge and
-   * averageTenure. Includes the earliest ALTA movement date for tenure.
-   */
-  findActiveDateFields(accessWhere: Prisma.EmployeeWhereInput) {
-    return prisma.employee.findMany({
-      where: activeWhere(accessWhere),
-      select: {
-        birthDate: true,
         createdAt: true,
+        sector: { select: { name: true } },
+        companies: {
+          select: { isPrimary: true, company: { select: { name: true } } },
+        },
         laborMovements: {
           where: { type: LaborMovementType.ALTA },
           orderBy: { effectiveFrom: "asc" },
           take: 1,
           select: { effectiveFrom: true },
-        },
-      },
-    });
-  },
-
-  // ── Headcount breakdowns ──────────────────────────────────────────────────
-
-  /**
-   * Minimal projection for headcountBySector.
-   * groupBy is not usable here because sector.name lives in a joined table.
-   */
-  findActiveSectors(accessWhere: Prisma.EmployeeWhereInput) {
-    return prisma.employee.findMany({
-      where: activeWhere(accessWhere),
-      select: { sector: { select: { name: true } } },
-    });
-  },
-
-  /**
-   * Minimal projection for headcountByCompany.
-   * We need company.name and isPrimary — groupBy cannot span a many-to-many
-   * junction with a join-table flag.
-   */
-  findActiveCompanyLinks(accessWhere: Prisma.EmployeeWhereInput) {
-    return prisma.employee.findMany({
-      where: activeWhere(accessWhere),
-      select: {
-        companies: {
-          select: { isPrimary: true, company: { select: { name: true } } },
         },
       },
     });

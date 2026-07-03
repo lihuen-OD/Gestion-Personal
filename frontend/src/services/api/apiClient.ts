@@ -17,12 +17,37 @@ export class ApiError extends Error {
 type RequestOptions = Omit<RequestInit, "body"> & {
   body?: unknown;
   auth?: boolean;
+  apiCache?: boolean;
+  cacheTtlMs?: number;
 };
+
+type CacheEntry = {
+  expiresAt: number;
+  value: unknown;
+};
+
+const DEFAULT_GET_CACHE_TTL_MS = 15_000;
+const responseCache = new Map<string, CacheEntry>();
+const pendingGetRequests = new Map<string, Promise<unknown>>();
+let cacheGeneration = 0;
+let refreshPromise: Promise<boolean> | null = null;
+
+function clearApiCache() {
+  cacheGeneration += 1;
+  responseCache.clear();
+  pendingGetRequests.clear();
+}
 
 export const tokenStorage = {
   get: () => sessionStorage.getItem(TOKEN_KEY),
-  set: (token: string) => sessionStorage.setItem(TOKEN_KEY, token),
-  clear: () => sessionStorage.removeItem(TOKEN_KEY),
+  set: (token: string) => {
+    sessionStorage.setItem(TOKEN_KEY, token);
+    clearApiCache();
+  },
+  clear: () => {
+    sessionStorage.removeItem(TOKEN_KEY);
+    clearApiCache();
+  },
 };
 
 export const refreshTokenStorage = {
@@ -57,30 +82,13 @@ async function requestRaw(path: string, options: RequestOptions = {}) {
   });
 }
 
-async function refreshAccessToken() {
-  const refreshToken = refreshTokenStorage.get();
-  if (!refreshToken) return false;
-
-  const response = await requestRaw("/auth/refresh", {
-    method: "POST",
-    auth: false,
-    body: { refreshToken },
-  });
-  const payload = await parseResponse(response);
-  if (!response.ok) {
-    tokenStorage.clear();
-    refreshTokenStorage.clear();
-    return false;
-  }
-
-  const tokens = payload as { accessToken?: string; refreshToken?: string };
-  if (!tokens.accessToken || !tokens.refreshToken) return false;
-  tokenStorage.set(tokens.accessToken);
-  refreshTokenStorage.set(tokens.refreshToken);
-  return true;
+function cacheKey(path: string, options: RequestOptions) {
+  const token = options.auth === false ? "public" : tokenStorage.get() || "anon";
+  return `${options.method || "GET"}:${path}:${token}`;
 }
 
-export async function apiRequest<T>(path: string, options: RequestOptions = {}): Promise<T> {
+async function requestParsed<T>(path: string, options: RequestOptions) {
+  await ensureFreshAccessToken(options);
   let response = await requestRaw(path, options);
 
   if (response.status === 401 && options.auth !== false) {
@@ -95,6 +103,103 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
   }
 
   return payload as T;
+}
+
+async function refreshAccessToken() {
+  if (refreshPromise) return refreshPromise;
+  const refreshToken = refreshTokenStorage.get();
+  if (!refreshToken) return false;
+
+  refreshPromise = (async () => {
+    const response = await requestRaw("/auth/refresh", {
+      method: "POST",
+      auth: false,
+      body: { refreshToken },
+    });
+    const payload = await parseResponse(response);
+    if (!response.ok) {
+      tokenStorage.clear();
+      refreshTokenStorage.clear();
+      return false;
+    }
+
+    const tokens = payload as { accessToken?: string; refreshToken?: string };
+    if (!tokens.accessToken || !tokens.refreshToken) return false;
+    tokenStorage.set(tokens.accessToken);
+    refreshTokenStorage.set(tokens.refreshToken);
+    return true;
+  })().finally(() => {
+    refreshPromise = null;
+  });
+
+  return refreshPromise;
+}
+
+function tokenExpiresAt(token: string) {
+  try {
+    const [, payload] = token.split(".");
+    if (!payload) return 0;
+    const base64 = payload.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), "=");
+    const decoded = JSON.parse(atob(padded)) as { exp?: number };
+    return typeof decoded.exp === "number" ? decoded.exp * 1000 : 0;
+  } catch {
+    return 0;
+  }
+}
+
+async function ensureFreshAccessToken(options: RequestOptions) {
+  if (options.auth === false) return;
+  const method = (options.method || "GET").toUpperCase();
+  if (method === "GET") return;
+
+  const token = tokenStorage.get();
+  if (!token) return;
+
+  const expiresAt = tokenExpiresAt(token);
+  if (!expiresAt || expiresAt - Date.now() > 60_000) return;
+
+  await refreshAccessToken();
+}
+
+export async function apiRequest<T>(path: string, options: RequestOptions = {}): Promise<T> {
+  const method = (options.method || "GET").toUpperCase();
+  const canCache = method === "GET" && options.apiCache !== false;
+  const key = canCache ? cacheKey(path, { ...options, method }) : "";
+
+  if (canCache) {
+    const cached = responseCache.get(key);
+    if (cached && cached.expiresAt > Date.now()) return cached.value as T;
+    responseCache.delete(key);
+
+    const pending = pendingGetRequests.get(key);
+    if (pending) return pending as Promise<T>;
+  }
+
+  const startedGeneration = cacheGeneration;
+  const request = requestParsed<T>(path, { ...options, method });
+
+  if (canCache) {
+    pendingGetRequests.set(key, request);
+    try {
+      const payload = await request;
+      if (startedGeneration === cacheGeneration) {
+        responseCache.set(key, {
+          value: payload,
+          expiresAt: Date.now() + (options.cacheTtlMs || DEFAULT_GET_CACHE_TTL_MS),
+        });
+      }
+      return payload;
+    } finally {
+      pendingGetRequests.delete(key);
+    }
+  }
+
+  try {
+    return await request;
+  } finally {
+    if (method !== "GET") clearApiCache();
+  }
 }
 
 function fileNameFromContentDisposition(value: string | null) {

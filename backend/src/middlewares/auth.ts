@@ -3,6 +3,7 @@ import type { RequestHandler } from "express";
 import { env } from "../config/env";
 import { AppError } from "../shared/errors/AppError";
 import { authService } from "../modules/auth/auth.service";
+import { updateRequestMetricsUser } from "../shared/observability/requestMetrics";
 
 interface AccessTokenPayload {
   sub: string;
@@ -21,6 +22,7 @@ export const requireAuth: RequestHandler = async (req, _res, next) => {
     const payload = jwt.verify(token, env.JWT_ACCESS_SECRET) as AccessTokenPayload;
     const user = await authService.getCurrentUser(payload.sub);
     req.user = user;
+    updateRequestMetricsUser(user);
     next();
   } catch (error) {
     next(error instanceof AppError ? error : new AppError("Invalid or expired token", 401, "INVALID_TOKEN"));
