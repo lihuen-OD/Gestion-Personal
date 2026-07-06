@@ -21,7 +21,7 @@ import type { Employee, TimeEntry } from "../types";
 import { buildHoursExportWorkbook } from "../utils/hoursExport";
 import { displayLegajo, fullName } from "../utils/employee";
 import { currentMonthPeriod, formatPeriodDay } from "../utils/period";
-import { statusClass } from "../utils/status";
+import { statusTone } from "../utils/status";
 import { useDebouncedValue } from "../utils/useDebouncedValue";
 import { OverflowCell } from "../components/ui/OverflowCell";
 import { TableShell } from "../components/ui/TableShell";
@@ -30,6 +30,9 @@ import { PageHeader } from "../components/ui/PageHeader";
 import { Section } from "../components/ui/Section";
 import { StatCard } from "../components/ui/StatCard";
 import { EmptyState } from "../components/ui/EmptyState";
+import { Button } from "../components/ui/Button";
+import { Badge } from "../components/ui/Badge";
+import { Pagination } from "../components/ui/Pagination";
 
 function uniqueOptions(values: string[]) {
   return Array.from(new Set(values.filter(Boolean))).sort((a, b) => a.localeCompare(b, "es"));
@@ -147,8 +150,6 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
   const exportRows = timeEntryApiService.getPeriodExportRowsFromEntries(period, shown, periodEntries);
   const employeeFor = (entry: TimeEntry) =>
     baseEmployees.find((employee) => employee.id === entry.employeeId) || periodRows.find((row) => row.employee.id === entry.employeeId)?.employee;
-  const totalPages = Math.max(1, Math.ceil(periodRowsMeta.total / periodRowsMeta.pageSize));
-  const reviewTotalPages = Math.max(1, Math.ceil(reviewEntriesMeta.total / reviewEntriesMeta.pageSize));
   const setPeriodValue = (value: string) => {
     setPage(1);
     setReviewPage(1);
@@ -221,14 +222,14 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
         }
         action={
           !pendingOnly ? (
-            <button
-              className="button subtle"
-              type="button"
+            <Button
+              variant="subtle"
+              icon={FileBarChart}
               disabled={exporting || (!usesBackend && !exportRows.length)}
               onClick={exportHours}
             >
-              <FileBarChart size={16} /> {exporting ? "Exportando..." : "Exportar horas"}
-            </button>
+              {exporting ? "Exportando..." : "Exportar horas"}
+            </Button>
           ) : undefined
         }
       />
@@ -292,7 +293,7 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
                         </td>
                         <td>{item.quantity || "-"}</td>
                         <td>
-                          <span className={statusClass(item.status)}>{item.status}</span>
+                          <Badge tone={statusTone(item.status)}>{item.status}</Badge>
                         </td>
                         <td>
                           {canReview ? (
@@ -414,7 +415,7 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
                           <OverflowCell value={entry.notes || "-"} />
                         </td>
                         <td>
-                          <span className={statusClass(entry.status)}>{entry.status}</span>
+                          <Badge tone={statusTone(entry.status)}>{entry.status}</Badge>
                         </td>
                         <td>
                           {canReview ? (
@@ -460,15 +461,7 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
           ) : (
             <EmptyState text="No hay horas en revisión para los filtros seleccionados." />
           )}
-          <div className="form-actions inline-actions">
-            <button className="button subtle" type="button" disabled={reviewPage <= 1} onClick={() => setReviewPage((value) => Math.max(1, value - 1))}>
-              Anterior
-            </button>
-            <span className="muted small">Pagina {reviewEntriesMeta.page} de {reviewTotalPages}</span>
-            <button className="button subtle" type="button" disabled={!reviewEntriesMeta.hasMore} onClick={() => setReviewPage((value) => value + 1)}>
-              Siguiente
-            </button>
-          </div>
+          <Pagination page={reviewEntriesMeta.page} pageSize={reviewEntriesMeta.pageSize} total={reviewEntriesMeta.total} hasMore={reviewEntriesMeta.hasMore} onPageChange={setReviewPage} itemLabel="registros" />
           </Section>
         </>
       ) : null}
@@ -560,9 +553,9 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
                     </td>
                     <td>{periodSummary.total} h</td>
                     <td>
-                      <span className={statusClass(periodSummary.status)}>
+                      <Badge tone={statusTone(periodSummary.status)}>
                         {periodSummary.status}
-                      </span>
+                      </Badge>
                     </td>
                     <td>
                       <Link
@@ -581,15 +574,7 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
             </tbody>
           </table>
         </TableShell>
-        <div className="form-actions inline-actions">
-          <button className="button subtle" type="button" disabled={page <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))}>
-            Anterior
-          </button>
-          <span className="muted small">Pagina {periodRowsMeta.page} de {totalPages}</span>
-          <button className="button subtle" type="button" disabled={!periodRowsMeta.hasMore} onClick={() => setPage((value) => value + 1)}>
-            Siguiente
-          </button>
-        </div>
+        <Pagination page={periodRowsMeta.page} pageSize={periodRowsMeta.pageSize} total={periodRowsMeta.total} hasMore={periodRowsMeta.hasMore} onPageChange={setPage} itemLabel="legajos" />
       </Section>
 
       {review ? (
@@ -624,15 +609,15 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
               <p className="error">La observación es obligatoria.</p>
             ) : null}
             <div className="form-actions">
-              <button className="button subtle" onClick={() => setReview(undefined)}>
+              <Button variant="subtle" onClick={() => setReview(undefined)}>
                 Cancelar
-              </button>
-              <button
-                className={review.action === "reject" ? "button danger-button" : "button primary"}
+              </Button>
+              <Button
+                variant={review.action === "reject" ? "danger" : "primary"}
                 onClick={confirmReview}
               >
                 {review.action === "reject" ? "Rechazar" : "Devolver"}
-              </button>
+              </Button>
             </div>
           </div>
         </Modal>
@@ -657,12 +642,12 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
               <p className="error">La observación es obligatoria.</p>
             ) : null}
             <div className="form-actions">
-              <button className="button subtle" onClick={() => setNoveltyReject(undefined)}>
+              <Button variant="subtle" onClick={() => setNoveltyReject(undefined)}>
                 Cancelar
-              </button>
-              <button className="button danger-button" onClick={confirmNoveltyReject}>
+              </Button>
+              <Button variant="danger" onClick={confirmNoveltyReject}>
                 Rechazar
-              </button>
+              </Button>
             </div>
           </div>
         </Modal>

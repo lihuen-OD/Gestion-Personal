@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { PageHeader } from "../components/ui/PageHeader";
 import { Section } from "../components/ui/Section";
+import { Button } from "../components/ui/Button";
 import { Field, Select } from "../components/ui/FormControls";
 import {
   CompanyMultiCreateField,
@@ -521,18 +522,18 @@ export function EmployeeCreatePage() {
               Cancelar
             </Link>
             {tab > 0 ? (
-              <button type="button" className="button subtle" onClick={() => setTab(tab - 1)}>
+              <Button type="button" variant="subtle" onClick={() => setTab(tab - 1)}>
                 Anterior
-              </button>
+              </Button>
             ) : null}
             {tab < sections.length - 1 ? (
-              <button type="button" className="button subtle" onClick={() => setTab(tab + 1)}>
+              <Button type="button" variant="subtle" onClick={() => setTab(tab + 1)}>
                 Siguiente
-              </button>
+              </Button>
             ) : null}
-            <button className="button primary" disabled={saving}>
+            <Button variant="primary" disabled={saving}>
               {saving ? "Guardando..." : "Guardar nuevo legajo"}
-            </button>
+            </Button>
           </div>
         </Section>
       </form>

@@ -10,6 +10,8 @@ import { CategoryOrgChart } from "../components/organigramas/CategoryOrgChart";
 import { FunctionalOrgChart } from "../components/organigramas/FunctionalOrgChart";
 import { OrganigramFilters } from "../components/organigramas/OrganigramFilters";
 import { OrgChartTabs, type OrgChartTab } from "../components/organigramas/OrgChartTabs";
+import { PageHeader } from "../components/ui/PageHeader";
+import { Button } from "../components/ui/Button";
 
 const roleLevel = (role: Role) => role.startsWith("Nivel 1") ? 1 : role.startsWith("Nivel 2") ? 2 : 3;
 
@@ -37,10 +39,6 @@ function exportOrganigramWorkbook(employees: Employee[], tab: OrgChartTab) {
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, worksheet, "Organigrama");
   XLSX.writeFile(workbook, `organigrama_${tab.toLowerCase()}_${new Date().toISOString().slice(0, 10)}.xlsx`, { compression: true });
-}
-
-function PageHeader({ eyebrow, title, description, action }: { eyebrow: string; title: string; description: string; action?: React.ReactNode }) {
-  return <div className="page-header"><div className="page-title-block"><p className="eyebrow">{eyebrow}</p><h1>{title}</h1><p>{description}</p></div>{action && <div className="page-actions">{action}</div>}</div>;
 }
 
 export function OrganigramasPage() {
@@ -95,7 +93,7 @@ export function OrganigramasPage() {
 
   if (level === 3) return <><PageHeader eyebrow="ACCESO RESTRINGIDO" title="Organigramas" description="Tu perfil de carga horaria no tiene acceso al módulo de estructura organizacional." /></>;
 
-  return <><PageHeader eyebrow="ESTRUCTURA ORGANIZACIONAL" title="Organigramas" description={usesBackend ? "Visualización alimentada desde legajos reales: categoría interna, encargado directo, sector, centro de costo y estado." : "Visualización alimentada desde Legajos en modo demo local."} action={<button className="button subtle" onClick={exportView}><FileBarChart size={16}/> Exportar vista</button>} />
+  return <><PageHeader eyebrow="ESTRUCTURA ORGANIZACIONAL" title="Organigramas" description={usesBackend ? "Visualización alimentada desde legajos reales: categoría interna, encargado directo, sector, centro de costo y estado." : "Visualización alimentada desde Legajos en modo demo local."} action={<Button variant="subtle" icon={FileBarChart} onClick={exportView}>Exportar vista</Button>} />
     {toast && <div className="toast">{toast}</div>}
     <OrgChartTabs active={tab} onChange={setTab} />
     {filterControls}

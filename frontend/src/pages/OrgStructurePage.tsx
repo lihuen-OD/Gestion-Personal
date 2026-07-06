@@ -3,7 +3,12 @@ import { useEffect, useMemo, useState } from "react";
 import { Navigate } from "react-router-dom";
 import { GeoAddressFields } from "../components/GeoAddressFields";
 import { OverflowCell } from "../components/ui/OverflowCell";
-import { TableShell } from "../components/ui/TableShell";
+import { DataTable } from "../components/ui/DataTable";
+import { PageHeader } from "../components/ui/PageHeader";
+import { Section } from "../components/ui/Section";
+import { Tabs } from "../components/ui/Tabs";
+import { Button } from "../components/ui/Button";
+import { Badge } from "../components/ui/Badge";
 import { useAuth } from "../context/AuthContext";
 import { orgStructureApiService } from "../services/api/orgStructureApiService";
 import type { EmployeeAddress, Role } from "../types";
@@ -25,10 +30,6 @@ const tabs: Array<{ id: Tab; label: string }> = [
 const roleLevel = (role: Role) => role.startsWith("Nivel 1") ? 1 : role.startsWith("Nivel 2") ? 2 : 3;
 const uid = () => crypto.randomUUID();
 const uniqueIds = (values: string[]) => Array.from(new Set(values.filter(Boolean)));
-
-function PageHeader({ eyebrow, title, description, action }: { eyebrow: string; title: string; description: string; action?: React.ReactNode }) {
-  return <div className="page-header"><div className="page-title-block"><p className="eyebrow">{eyebrow}</p><h1>{title}</h1><p>{description}</p></div>{action && <div className="page-actions">{action}</div>}</div>;
-}
 
 function nextCodeFromCatalog(type: Tab, catalog: OrgStructureCatalog) {
   const list = type === "COMPANY" ? catalog.companies : type === "BUSINESS_UNIT" ? catalog.businessUnits : type === "ESTABLISHMENT" ? catalog.establishments : type === "AREA" ? catalog.areas : type === "SECTOR" ? catalog.sectors : catalog.costCenters;
@@ -135,17 +136,21 @@ function Editor({ type, item, catalog, onChange }: { type: Tab; item: Editable; 
 }
 
 function EditAction({ item, readOnly, onEdit }: { item: Editable; readOnly: boolean; onEdit: (item: Editable) => void }) {
-  if (readOnly) return <span className="badge neutral">Solo lectura</span>;
+  if (readOnly) return <Badge tone="neutral">Solo lectura</Badge>;
   return <button className="table-link table-icon-action" title="Editar" aria-label="Editar" onClick={() => onEdit(item)}><Pencil size={14}/><span>Editar</span></button>;
 }
 
+function StatusBadge({ status }: { status: OrgStructureStatus }) {
+  return <Badge tone={status === "ACTIVO" ? "success" : "neutral"}>{status}</Badge>;
+}
+
 function Rows({ type, catalog, readOnly, onEdit }: { type: Tab; catalog: OrgStructureCatalog; readOnly: boolean; onEdit: (item: Editable) => void }) {
-  if (type === "COMPANY") return <tbody>{catalog.companies.map((item) => <tr key={item.id}><td><b>{item.code}</b></td><td><OverflowCell value={item.name} /><span className="table-sub">{item.legalName}</span></td><td>{item.cuit || "-"}</td><td>-</td><td><span className={item.status === "ACTIVO" ? "badge success" : "badge neutral"}>{item.status}</span></td><td><EditAction item={item} readOnly={readOnly} onEdit={onEdit} /></td></tr>)}</tbody>;
-  if (type === "BUSINESS_UNIT") return <tbody>{catalog.businessUnits.map((item) => <tr key={item.id}><td><b>{item.code}</b></td><td><OverflowCell value={item.name} /></td><td><OverflowCell value={nameById(catalog.companies, item.companyIds)} /></td><td>-</td><td><span className={item.status === "ACTIVO" ? "badge success" : "badge neutral"}>{item.status}</span></td><td><EditAction item={item} readOnly={readOnly} onEdit={onEdit} /></td></tr>)}</tbody>;
-  if (type === "ESTABLISHMENT") return <tbody>{catalog.establishments.map((item) => <tr key={item.id}><td><b>{item.code}</b></td><td><OverflowCell value={item.name} /><span className="table-sub">{item.locality}, {item.department}</span></td><td><OverflowCell value={nameById(catalog.companies, deriveCompanyIds(catalog, item.businessUnitIds))} /></td><td><OverflowCell value={nameById(catalog.businessUnits, item.businessUnitIds)} /></td><td><span className={item.status === "ACTIVO" ? "badge success" : "badge neutral"}>{item.status}</span></td><td><EditAction item={item} readOnly={readOnly} onEdit={onEdit} /></td></tr>)}</tbody>;
-  if (type === "AREA") return <tbody>{catalog.areas.map((item) => <tr key={item.id}><td><b>{item.code}</b></td><td><OverflowCell value={item.name} /></td><td><OverflowCell value={nameById(catalog.businessUnits, item.businessUnitIds)} /></td><td><OverflowCell value={nameById(catalog.establishments, item.establishmentIds)} /></td><td><span className={item.status === "ACTIVO" ? "badge success" : "badge neutral"}>{item.status}</span></td><td><EditAction item={item} readOnly={readOnly} onEdit={onEdit} /></td></tr>)}</tbody>;
-  if (type === "SECTOR") return <tbody>{catalog.sectors.map((item) => <tr key={item.id}><td><b>{item.code}</b></td><td><OverflowCell value={item.name} /></td><td><OverflowCell value={nameById(catalog.areas, item.areaIds)} /></td><td><OverflowCell value={nameById(catalog.establishments, item.establishmentIds)} /></td><td><span className={item.status === "ACTIVO" ? "badge success" : "badge neutral"}>{item.status}</span></td><td><EditAction item={item} readOnly={readOnly} onEdit={onEdit} /></td></tr>)}</tbody>;
-  return <tbody>{catalog.costCenters.map((item) => <tr key={item.id}><td><b>{item.code}</b></td><td><OverflowCell value={item.name} /><span className="table-sub">{item.finnegansCode || "Sin codigo Finnegans"}</span></td><td><OverflowCell value={nameById(catalog.companies, item.companyIds)} /></td><td><OverflowCell value={nameById(catalog.sectors, item.sectorIds)} /></td><td><span className={item.status === "ACTIVO" ? "badge success" : "badge neutral"}>{item.status}</span></td><td><EditAction item={item} readOnly={readOnly} onEdit={onEdit} /></td></tr>)}</tbody>;
+  if (type === "COMPANY") return <tbody>{catalog.companies.map((item) => <tr key={item.id}><td><b>{item.code}</b></td><td><OverflowCell value={item.name} /><span className="table-sub">{item.legalName}</span></td><td>{item.cuit || "-"}</td><td>-</td><td><StatusBadge status={item.status} /></td><td><EditAction item={item} readOnly={readOnly} onEdit={onEdit} /></td></tr>)}</tbody>;
+  if (type === "BUSINESS_UNIT") return <tbody>{catalog.businessUnits.map((item) => <tr key={item.id}><td><b>{item.code}</b></td><td><OverflowCell value={item.name} /></td><td><OverflowCell value={nameById(catalog.companies, item.companyIds)} /></td><td>-</td><td><StatusBadge status={item.status} /></td><td><EditAction item={item} readOnly={readOnly} onEdit={onEdit} /></td></tr>)}</tbody>;
+  if (type === "ESTABLISHMENT") return <tbody>{catalog.establishments.map((item) => <tr key={item.id}><td><b>{item.code}</b></td><td><OverflowCell value={item.name} /><span className="table-sub">{item.locality}, {item.department}</span></td><td><OverflowCell value={nameById(catalog.companies, deriveCompanyIds(catalog, item.businessUnitIds))} /></td><td><OverflowCell value={nameById(catalog.businessUnits, item.businessUnitIds)} /></td><td><StatusBadge status={item.status} /></td><td><EditAction item={item} readOnly={readOnly} onEdit={onEdit} /></td></tr>)}</tbody>;
+  if (type === "AREA") return <tbody>{catalog.areas.map((item) => <tr key={item.id}><td><b>{item.code}</b></td><td><OverflowCell value={item.name} /></td><td><OverflowCell value={nameById(catalog.businessUnits, item.businessUnitIds)} /></td><td><OverflowCell value={nameById(catalog.establishments, item.establishmentIds)} /></td><td><StatusBadge status={item.status} /></td><td><EditAction item={item} readOnly={readOnly} onEdit={onEdit} /></td></tr>)}</tbody>;
+  if (type === "SECTOR") return <tbody>{catalog.sectors.map((item) => <tr key={item.id}><td><b>{item.code}</b></td><td><OverflowCell value={item.name} /></td><td><OverflowCell value={nameById(catalog.areas, item.areaIds)} /></td><td><OverflowCell value={nameById(catalog.establishments, item.establishmentIds)} /></td><td><StatusBadge status={item.status} /></td><td><EditAction item={item} readOnly={readOnly} onEdit={onEdit} /></td></tr>)}</tbody>;
+  return <tbody>{catalog.costCenters.map((item) => <tr key={item.id}><td><b>{item.code}</b></td><td><OverflowCell value={item.name} /><span className="table-sub">{item.finnegansCode || "Sin codigo Finnegans"}</span></td><td><OverflowCell value={nameById(catalog.companies, item.companyIds)} /></td><td><OverflowCell value={nameById(catalog.sectors, item.sectorIds)} /></td><td><StatusBadge status={item.status} /></td><td><EditAction item={item} readOnly={readOnly} onEdit={onEdit} /></td></tr>)}</tbody>;
 }
 
 export function OrgStructurePage() {
@@ -215,14 +220,27 @@ export function OrgStructurePage() {
     }
   });
   if (roleLevel(user!.role) !== 1) return <Navigate to="/configuracion" />;
+  const activeRows = tab === "COMPANY" ? catalog.companies : tab === "BUSINESS_UNIT" ? catalog.businessUnits : tab === "ESTABLISHMENT" ? catalog.establishments : tab === "AREA" ? catalog.areas : tab === "SECTOR" ? catalog.sectors : catalog.costCenters;
   return <>
-    <PageHeader eyebrow="CONFIGURACION" title="Empresas y estructura" description="Catalogo maestro de estructura organizacional para alimentar seleccionables, filtros, legajos, puestos y organigrama." action={<button className="button primary" onClick={() => setEditing(blank(tab, catalog))}><Plus size={16} /> Nuevo registro</button>} />
+    <PageHeader eyebrow="CONFIGURACION" title="Empresas y estructura" description="Catalogo maestro de estructura organizacional para alimentar seleccionables, filtros, legajos, puestos y organigrama." action={<Button variant="primary" icon={Plus} onClick={() => setEditing(blank(tab, catalog))}>Nuevo registro</Button>} />
     {notice && <div className="toast">{notice}</div>}
     {apiWarning && <div className="info-note compact"><b>Modo local</b><p>{apiWarning}</p></div>}
     {usesApiCatalog && <div className="info-note compact"><b>Datos reales</b><p>Lectura y escritura conectadas a backend con soporte de relaciones multiples.</p></div>}
     <div className="stat-grid org-structure-summary">{counts.map(([label, value]) => <div className="stat-card" key={label}><div><small>{label}</small><strong>{value}</strong><span>Catalogo maestro</span></div></div>)}</div>
-    <div className="tabs">{tabs.map((item) => <button key={item.id} className={tab === item.id ? "active" : ""} onClick={() => { setTab(item.id); setEditing(null); }}>{item.label}</button>)}</div>
-    <section className="panel"><div className="panel-head"><div><h3>{tabs.find((item) => item.id === tab)?.label}</h3><p>{isLoadingApi ? "Cargando estructura desde backend..." : "Administracion de relaciones y estados disponibles para operacion."}</p></div></div><div className="panel-body"><TableShell minWidth={940}><table><thead><tr><th>Codigo</th><th>Nombre</th><th>Relacion principal</th><th>Relacion secundaria</th><th>Estado</th><th>Accion</th></tr></thead><Rows type={tab} catalog={catalog} readOnly={false} onEdit={setEditing} /></table></TableShell></div></section>
-    {editing && <section className="panel"><div className="panel-head"><div><h3>{editing.code ? "Editar registro" : "Nuevo registro"}</h3><p>Los cambios quedan disponibles para los modulos conectados.</p></div><button className="button primary" onClick={save} disabled={isSaving}>{isSaving ? "Guardando..." : "Guardar estructura"}</button></div><div className="panel-body"><Editor type={tab} item={editing} catalog={catalog} onChange={setEditing} /></div></section>}
+    <Tabs tabs={tabs.map((item) => ({ key: item.id, label: item.label }))} active={tab} onChange={(key) => { setTab(key as Tab); setEditing(null); }} />
+    <Section title={tabs.find((item) => item.id === tab)?.label || ""} subtitle={isLoadingApi ? "Cargando estructura desde backend..." : "Administracion de relaciones y estados disponibles para operacion."}>
+      <DataTable status={isLoadingApi ? "loading" : activeRows.length === 0 ? "empty" : "ready"} minWidth={940} emptyText="No hay registros cargados para esta categoria.">
+        <table><thead><tr><th>Codigo</th><th>Nombre</th><th>Relacion principal</th><th>Relacion secundaria</th><th>Estado</th><th>Accion</th></tr></thead><Rows type={tab} catalog={catalog} readOnly={false} onEdit={setEditing} /></table>
+      </DataTable>
+    </Section>
+    {editing && (
+      <Section
+        title={editing.code ? "Editar registro" : "Nuevo registro"}
+        subtitle="Los cambios quedan disponibles para los modulos conectados."
+        action={<Button variant="primary" onClick={save} disabled={isSaving}>{isSaving ? "Guardando..." : "Guardar estructura"}</Button>}
+      >
+        <Editor type={tab} item={editing} catalog={catalog} onChange={setEditing} />
+      </Section>
+    )}
   </>;
 }

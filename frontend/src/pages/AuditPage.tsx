@@ -2,26 +2,33 @@ import { useEffect, useState } from "react";
 import { OverflowCell } from "../components/ui/OverflowCell";
 import { PageHeader } from "../components/ui/PageHeader";
 import { Section } from "../components/ui/Section";
-import { TableShell } from "../components/ui/TableShell";
+import { DataTable } from "../components/ui/DataTable";
 import { auditApiService } from "../services/api/auditApiService";
 import type { AuditEntry } from "../types";
 
 export function AuditPage() {
   const [audits, setAudits] = useState<AuditEntry[]>([]);
+  const [status, setStatus] = useState<"loading" | "success" | "error">("loading");
+  const [retry, setRetry] = useState(0);
 
   useEffect(() => {
     let mounted = true;
+    setStatus("loading");
     auditApiService
       .getAll({ take: 200 })
       .then((items) => {
-        if (mounted) setAudits(items);
+        if (!mounted) return;
+        setAudits(items);
+        setStatus("success");
       })
-      .catch(() => {});
+      .catch(() => {
+        if (mounted) setStatus("error");
+      });
 
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [retry]);
 
   return (
     <>
@@ -32,7 +39,13 @@ export function AuditPage() {
       />
 
       <Section title="Historial de actividad" subtitle={`${audits.length} eventos registrados`}>
-        <TableShell minWidth={1280}>
+        <DataTable
+          status={status === "loading" ? "loading" : status === "error" ? "error" : audits.length === 0 ? "empty" : "ready"}
+          minWidth={1280}
+          emptyText="Todavía no hay eventos de auditoría registrados."
+          errorMessage="No se pudo cargar el historial de auditoría."
+          onRetry={() => setRetry((value) => value + 1)}
+        >
           <table>
             <thead>
               <tr>
@@ -77,7 +90,7 @@ export function AuditPage() {
               ))}
             </tbody>
           </table>
-        </TableShell>
+        </DataTable>
       </Section>
     </>
   );

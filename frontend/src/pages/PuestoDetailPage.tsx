@@ -18,6 +18,11 @@ import type { Employee } from "../types";
 import type { Position } from "../types/position.types";
 import { roleLevel } from "../utils/roles";
 import { useAsyncAction } from "../utils/useAsyncAction";
+import { Section } from "../components/ui/Section";
+import { LoadingState } from "../components/ui/LoadingState";
+import { ErrorState } from "../components/ui/ErrorState";
+import { Tabs } from "../components/ui/Tabs";
+import { Button } from "../components/ui/Button";
 
 const tabs = ["Identificacion", "Proposito / Mision", "Rango Salarial", "Responsabilidades", "Relaciones", "Competencias", "Condiciones", "Indicadores", "Criterios", "Personas Asignadas", "Historial"];
 
@@ -27,7 +32,8 @@ export function PuestoDetailPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const [position, setPosition] = useState<Position | undefined>(undefined);
-  const [isLoading, setIsLoading] = useState(true);
+  const [loadStatus, setLoadStatus] = useState<"loading" | "success" | "error">("loading");
+  const [loadRetry, setLoadRetry] = useState(0);
   const [assigned, setAssigned] = useState<Employee[]>([]);
   const [tab, setTab] = useState(0);
   const [notice, setNotice] = useState(location.state?.created ? "Puesto creado correctamente." : "");
@@ -35,21 +41,20 @@ export function PuestoDetailPage() {
   useEffect(() => {
     let alive = true;
     if (!id) return;
-    setIsLoading(true);
+    setLoadStatus("loading");
     positionApiService.getById(id)
       .then((source) => {
         if (!alive) return;
         setPosition(source ?? undefined);
+        setLoadStatus("success");
       })
       .catch(() => {
         if (!alive) return;
         setPosition(undefined);
-      })
-      .finally(() => {
-        if (alive) setIsLoading(false);
+        setLoadStatus("error");
       });
     return () => { alive = false; };
-  }, [id]);
+  }, [id, loadRetry]);
 
   useEffect(() => {
     let alive = true;
@@ -81,7 +86,8 @@ export function PuestoDetailPage() {
   });
 
   if (roleLevel(user!.role) === 3) return <Navigate to="/horas" />;
-  if (isLoading) return <section className="panel"><div className="panel-body"><div className="empty">Cargando puesto...</div></div></section>;
+  if (loadStatus === "loading") return <Section title="Puesto"><LoadingState text="Cargando puesto..." /></Section>;
+  if (loadStatus === "error") return <Section title="Puesto"><ErrorState message="No se pudo cargar el puesto." onRetry={() => setLoadRetry((value) => value + 1)} /></Section>;
   if (!position) return <Navigate to="/puestos" />;
 
   const canEdit = roleLevel(user!.role) === 1;
@@ -119,7 +125,13 @@ export function PuestoDetailPage() {
     <PuestoHeader position={position} assignedCount={assigned.length} canEdit={canEdit} onRemove={remove} onToggleStatus={toggle} />
     {notice && <div className="toast">{notice}</div>}
 
-    <div className="tabs">{tabs.map((label, index) => <button key={label} className={tab === index ? "active" : ""} onClick={() => setTab(index)}>{index + 1}. {label}</button>)}</div>
-    <section className="panel"><div className="panel-head"><div><h3>{tabs[tab]}</h3><p>{tab === 9 ? "Calculado desde legajos activos vinculados a este puesto." : tab === 10 ? "Historial general del puesto." : "Informacion editable de la descripcion de puesto."}</p></div>{canEdit && tab < 9 && <button className="button primary" onClick={save} disabled={isSaving}>{isSaving ? "Guardando..." : "Guardar cambios"}</button>}</div><div className="panel-body">{render()}</div></section>
+    <Tabs tabs={tabs.map((label, index) => ({ key: String(index), label: `${index + 1}. ${label}` }))} active={String(tab)} onChange={(key) => setTab(Number(key))} />
+    <Section
+      title={tabs[tab]}
+      subtitle={tab === 9 ? "Calculado desde legajos activos vinculados a este puesto." : tab === 10 ? "Historial general del puesto." : "Informacion editable de la descripcion de puesto."}
+      action={canEdit && tab < 9 ? <Button variant="primary" onClick={save} disabled={isSaving}>{isSaving ? "Guardando..." : "Guardar cambios"}</Button> : undefined}
+    >
+      {render()}
+    </Section>
   </>;
 }

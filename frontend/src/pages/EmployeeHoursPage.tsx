@@ -16,12 +16,14 @@ import type { NoveltyType } from "../types/noveltyType.types";
 import { noveltyColorClass } from "../utils/noveltyColor";
 import { displayLegajo, fullName } from "../utils/employee";
 import { currentMonthPeriod, formatPeriodDay, formatPeriodLabel, getMonthDays, monthDate } from "../utils/period";
-import { statusClass } from "../utils/status";
+import { statusTone } from "../utils/status";
 import { useAsyncAction } from "../utils/useAsyncAction";
 import { Field } from "../components/ui/FormControls";
 import { Modal } from "../components/ui/Modal";
 import { Section } from "../components/ui/Section";
 import { StatCard } from "../components/ui/StatCard";
+import { Button } from "../components/ui/Button";
+import { Badge } from "../components/ui/Badge";
 
 const noveltyTone = (novelty?: Novelty, uiColor?: string) =>
   novelty ? noveltyColorClass(uiColor, novelty.noveltyTypeId || novelty.type) : "";
@@ -368,7 +370,7 @@ export function EmployeeHoursPage() {
           </div>
         </div>
         <div className="hero-actions">
-          <span className={statusClass(periodSummary.status)}>{periodSummary.status}</span>
+          <Badge tone={statusTone(periodSummary.status)}>{periodSummary.status}</Badge>
         </div>
       </div>
 
@@ -622,17 +624,17 @@ export function EmployeeHoursPage() {
             {error ? <p className="error">{error}</p> : null}
 
             <div className="form-actions">
-              <button className="button subtle" onClick={() => setSelected(undefined)}>
+              <Button variant="subtle" onClick={() => setSelected(undefined)}>
                 Cancelar
-              </button>
+              </Button>
               {!selectedLocked ? (
                 <>
-                  <button className="button subtle" onClick={() => save("Borrador")} disabled={isSaving}>
+                  <Button variant="subtle" onClick={() => save("Borrador")} disabled={isSaving}>
                     {isSaving && savingStatus === "Borrador" ? "Guardando..." : "Guardar borrador"}
-                  </button>
-                  <button className="button primary" onClick={() => save("En revisión")} disabled={isSaving}>
+                  </Button>
+                  <Button variant="primary" onClick={() => save("En revisión")} disabled={isSaving}>
                     {isSaving && savingStatus === "En revisión" ? "Enviando..." : "Enviar a revisión"}
-                  </button>
+                  </Button>
                 </>
               ) : null}
             </div>
