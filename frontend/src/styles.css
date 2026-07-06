@@ -1424,3 +1424,15 @@ html,body,#root,.app-shell{
   }
 }
 
+/* Fase 2: componentes compartidos (Button, LoadingState, ErrorState) */
+.button.danger{background:var(--color-danger);border-color:var(--color-danger);color:#fff}
+.button.danger:hover{background:#991b1b;border-color:#991b1b}
+.button.ghost{background:transparent;border-color:transparent;color:var(--color-text-secondary)}
+.button.ghost:hover{background:var(--color-bg-subtle);color:var(--color-text-primary)}
+.empty-icon.danger{background:var(--color-danger-bg);color:var(--color-danger)}
+.loading-inline{display:inline-flex;align-items:center;gap:8px;color:var(--color-text-muted);font-size:13px}
+.loading-table{display:flex;flex-direction:column;gap:1px}
+.loading-table-row{display:flex;gap:16px;padding:12px 16px}
+.skeleton-bar{display:block;flex:1;height:14px;border-radius:6px;background:linear-gradient(90deg,var(--color-bg-subtle) 25%,var(--color-bg-muted) 37%,var(--color-bg-subtle) 63%);background-size:400% 100%;animation:skeleton-shimmer 1.4s ease infinite}
+@keyframes skeleton-shimmer{0%{background-position:100% 50%}100%{background-position:0 50%}}
+
