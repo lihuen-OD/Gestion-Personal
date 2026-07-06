@@ -14,7 +14,7 @@ export const listEmployeesQuerySchema = z.object({
 
 export const listEmployeeOrgChartQuerySchema = z.object({
   search: z.string().trim().optional(),
-  status: employeeStatusSchema.default("ACTIVO"),
+  status: employeeStatusSchema.optional(),
   companyId: z.string().uuid().optional(),
   sectorId: z.string().uuid().optional(),
   positionId: z.string().uuid().optional(),

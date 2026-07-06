@@ -23,6 +23,54 @@ export function Alert({ label, value, tone }: { label: string; value: string; to
   return <div className="alert-row"><span className={`alert-dot ${tone}`} /><b>{label}</b><span>{value}</span></div>;
 }
 
+const entityLabels: Record<string, string> = {
+  Employee: "Legajo",
+  FinnegansExport: "Exportación a Finnegans",
+  Novelty: "Novedad",
+  TimeEntry: "Carga horaria",
+  Document: "Documento",
+  Position: "Puesto",
+  User: "Usuario",
+};
+
+const actionLabels: Record<string, string> = {
+  Alta: "Alta",
+  Modificacion: "Modificación",
+  Aprobacion: "Aprobación",
+  Rechazo: "Rechazo",
+  Devolucion: "Devolución",
+  Exportacion: "Exportación",
+};
+
+function polishSpanishText(value: string) {
+  return value
+    .replace(/\baprobo\b/gi, "aprobó")
+    .replace(/\bactualizo\b/gi, "actualizó")
+    .replace(/\benvio\b/gi, "envió")
+    .replace(/\brechazo\b/gi, "rechazó")
+    .replace(/\bdevolvio\b/gi, "devolvió")
+    .replace(/\bcargo\b/gi, "cargó")
+    .replace(/\bpreparo\b/gi, "preparó")
+    .replace(/\bexportacion\b/gi, "exportación")
+    .replace(/\blegajo\b/gi, "legajo")
+    .replace(/\bcarga horaria\b/gi, "carga horaria");
+}
+
+function readableAuditDetail(item: AuditEntry) {
+  const preferred = item.reason && item.reason !== "-" ? item.reason : item.next;
+  if (!preferred || preferred === "-") return "Movimiento registrado en el sistema.";
+
+  return polishSpanishText(preferred)
+    .replace(/\s*\|\s*Id:\s*[a-f0-9-]{20,}/gi, "")
+    .replace(/\bEstado:\s*EN_REVISION\b/g, "Estado: en revisión")
+    .replace(/\bEstado:\s*APROBADO\b/g, "Estado: aprobado")
+    .replace(/\bInclude Pending:\s*(true|false)\b/gi, (_, value) => `Incluye pendientes: ${value === "true" ? "sí" : "no"}`)
+    .replace(/\bTotal Rows:\s*(\d+)\b/gi, (_, total) => `${total} registro${total === "1" ? "" : "s"}`)
+    .replace(/\bQuery:\s*/gi, "")
+    .replace(/\bPeriod:\s*(\d{4}-\d{2})\b/gi, (_, period) => `Periodo ${formatPeriodLabel(period)}`)
+    .replace(/\s+\|\s+/g, " · ");
+}
+
 export function DashboardPage() {
   const { user } = useAuth();
   const level = roleLevel(user!.role);
@@ -99,7 +147,7 @@ export function DashboardPage() {
     </div>
     {level === 1 && <Section title="Actividad reciente" subtitle="Últimos movimientos registrados en la plataforma">
       <DataTable status={audit.length ? "ready" : "empty"} minWidth={860} emptyText="Todavía no hay actividad registrada.">
-        <table><thead><tr><th>Fecha</th><th>Usuario</th><th>Acción</th><th>Entidad</th><th>Detalle</th></tr></thead><tbody>{audit.slice(0, 5).map((item) => <tr key={item.id}><td>{item.date} · {item.time}</td><td>{item.user}</td><td>{item.action}</td><td><OverflowCell value={item.entity} /></td><td><OverflowCell value={item.next} /></td></tr>)}</tbody></table>
+        <table className="dashboard-activity-table"><thead><tr><th>Fecha</th><th>Usuario</th><th>Movimiento</th><th>Registro</th><th>Resumen</th></tr></thead><tbody>{audit.slice(0, 5).map((item) => <tr key={item.id}><td>{item.date} · {item.time}</td><td>{item.user}</td><td>{actionLabels[item.action] || item.action}</td><td><OverflowCell value={entityLabels[item.entity] || item.entity} /></td><td><span className="dashboard-activity-detail">{readableAuditDetail(item)}</span></td></tr>)}</tbody></table>
       </DataTable>
     </Section>}
   </>;

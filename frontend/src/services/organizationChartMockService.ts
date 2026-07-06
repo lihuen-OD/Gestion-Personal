@@ -16,6 +16,7 @@ const text = (value: unknown) => String(value || "").toLowerCase();
 const unique = (items: string[]) => Array.from(new Set(items.filter(Boolean))).sort((a, b) => a.localeCompare(b, "es"));
 const fullName = (employee: Employee) => `${employee.lastName}, ${employee.firstName}`;
 const employeePositionName = (employee: Employee) => employee.puestoNombre || employee.position || "";
+const employeeStatus = (employee: Employee) => employee.status || calculateEmployeeStatus(employee);
 const categoryKey = (employee: Employee) => normalize(employee.internalCategory || employee.receiptCategory || "");
 const managerKey = (employee: Employee) => normalize(`${employee.directManager || ""}`);
 const employeeNameKey = (employee: Employee) => normalize(`${employee.firstName} ${employee.lastName}`);
@@ -42,7 +43,7 @@ function employeeMatches(employee: Employee, filters: OrgChartFilters) {
     && (!filters.position || employee.positionId === filters.position || employeePositionName(employee) === filters.position)
     && (!filters.internalCategory || employee.internalCategory === filters.internalCategory)
     && (!filters.receiptCategory || employee.receiptCategory === filters.receiptCategory)
-    && (!filters.status || calculateEmployeeStatus(employee) === filters.status)
+    && (!filters.status || employeeStatus(employee) === filters.status)
     && (!filters.directManager || employeeManagers(employee).includes(filters.directManager))
     && (!filters.timeResponsible || employeeTimeResponsibles(employee).includes(filters.timeResponsible))
     && (!query || haystack.includes(query));
@@ -66,8 +67,8 @@ function categoryBaseY(category: OrgCategory) {
 export const organizationChartMockService = {
   getEmptyFilters: () => ({ ...emptyFilters }),
   getCategories: () => [...mockOrgCategories].sort((a, b) => a.order - b.order),
-  getEmployees: (role: Role, userSector?: string, filters: OrgChartFilters = emptyFilters) => scopedEmployees(role, userSector).filter((employee) => calculateEmployeeStatus(employee) === "Activo").filter((employee) => employeeMatches(employee, filters)),
-  getEmployeesFrom: (employees: Employee[], role: Role, userSector?: string, filters: OrgChartFilters = emptyFilters) => scopedEmployeesFrom(employees, role, userSector).filter((employee) => calculateEmployeeStatus(employee) === "Activo").filter((employee) => employeeMatches(employee, filters)),
+  getEmployees: (role: Role, userSector?: string, filters: OrgChartFilters = emptyFilters) => scopedEmployees(role, userSector).filter((employee) => employeeMatches(employee, filters)),
+  getEmployeesFrom: (employees: Employee[], role: Role, userSector?: string, filters: OrgChartFilters = emptyFilters) => scopedEmployeesFrom(employees, role, userSector).filter((employee) => employeeMatches(employee, filters)),
   getFilterOptions: (role: Role, userSector?: string) => {
     const employees = scopedEmployees(role, userSector);
     const structure = orgStructureMockService.getOptions();

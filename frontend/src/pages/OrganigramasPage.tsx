@@ -68,14 +68,14 @@ export function OrganigramasPage() {
           })
           .catch(() => {
             if (!mounted) return;
-            setSourceEmployees([]);
+            setSourceEmployees(organizationChartMockService.getEmployees(user!.role, user!.sector));
             setUsesBackend(false);
           });
       });
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [user]);
 
   const options = useMemo(
     () => organizationChartMockService.getFilterOptionsFrom(sourceEmployees, user!.role, user!.sector),
