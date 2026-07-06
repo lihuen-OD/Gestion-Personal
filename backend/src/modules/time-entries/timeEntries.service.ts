@@ -7,7 +7,12 @@ import { roles } from "../../shared/security/roles";
 import { timeEntriesRepository } from "./timeEntries.repository";
 import type {
   CreateTimeEntryInput,
+  CreateWorkShiftInput,
+  ClockByEmployeeInput,
+  ClockByDniInput,
+  ClockEmployeeSearchQuery,
   ListTimeEntriesQuery,
+  PreviewWorkShiftInput,
   RejectTimeEntryInput,
   TimeEntriesExportQuery,
   TimeEntriesPeriodEmployeesQuery,
@@ -109,6 +114,124 @@ function currentPeriod() {
   return new Date().toISOString().slice(0, 7);
 }
 
+const ARGENTINA_OFFSET_MINUTES = -180;
+const MAX_SHIFT_MINUTES = 16 * 60;
+
+function offsetMs() {
+  return ARGENTINA_OFFSET_MINUTES * 60_000;
+}
+
+function localDateParts(value: Date) {
+  const shifted = new Date(value.getTime() + offsetMs());
+  return {
+    year: shifted.getUTCFullYear(),
+    month: shifted.getUTCMonth() + 1,
+    day: shifted.getUTCDate(),
+    key: shifted.toISOString().slice(0, 10),
+  };
+}
+
+function dateAtUtcMidnight(localDateKey: string) {
+  return new Date(`${localDateKey}T00:00:00.000Z`);
+}
+
+function nextLocalMidnightUtc(value: Date) {
+  const parts = localDateParts(value);
+  return new Date(Date.UTC(parts.year, parts.month - 1, parts.day + 1) - offsetMs());
+}
+
+function formatLocalTime(value: Date) {
+  return new Intl.DateTimeFormat("es-AR", {
+    timeZone: "America/Argentina/Cordoba",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(value);
+}
+
+function buildShiftSegments(startAt: Date, endAt: Date) {
+  if (endAt <= startAt) {
+    throw new AppError("La hora de salida debe ser posterior a la hora de ingreso.", 400, "WORK_SHIFT_INVALID_RANGE");
+  }
+  const totalMinutes = Math.round((endAt.getTime() - startAt.getTime()) / 60_000);
+  if (totalMinutes > MAX_SHIFT_MINUTES) {
+    throw new AppError("La jornada supera el máximo permitido de 16 horas. Requiere revisión manual.", 400, "WORK_SHIFT_TOO_LONG");
+  }
+
+  const segments: Array<{ date: Date; startAt: Date; endAt: Date; minutes: number; hours: number; label: string }> = [];
+  let cursor = startAt;
+  while (cursor < endAt) {
+    const segmentEnd = new Date(Math.min(endAt.getTime(), nextLocalMidnightUtc(cursor).getTime()));
+    const minutes = Math.round((segmentEnd.getTime() - cursor.getTime()) / 60_000);
+    const localDate = localDateParts(cursor).key;
+    if (minutes > 0) {
+      segments.push({
+        date: dateAtUtcMidnight(localDate),
+        startAt: cursor,
+        endAt: segmentEnd,
+        minutes,
+        hours: Number((minutes / 60).toFixed(2)),
+        label: `${localDate} ${formatLocalTime(cursor)}-${formatLocalTime(segmentEnd)} (${formatNumber(minutes / 60)} h)`,
+      });
+    }
+    cursor = segmentEnd;
+  }
+  return { totalMinutes, segments };
+}
+
+async function resolveShiftEmployee(input: Pick<PreviewWorkShiftInput, "employeeId" | "dni">, user: Express.AuthUser) {
+  const employee = await timeEntriesRepository.findEmployeeForShift(input, employeeAccessWhere(user));
+  if (!employee) throw new AppError("No se encontró un legajo habilitado para ese DNI o empleado.", 404, "WORK_SHIFT_EMPLOYEE_NOT_FOUND");
+  return employee;
+}
+
+async function resolveShiftConcept(employeeId: string, hourConceptId?: string) {
+  const enabled = await timeEntriesRepository.findDefaultHourConcept(employeeId, hourConceptId);
+  if (!enabled || enabled.hourConcept.status !== "ACTIVO") {
+    throw new AppError("El empleado no tiene una hora normal habilitada para generar la carga.", 400, "WORK_SHIFT_HOUR_CONCEPT_NOT_ENABLED");
+  }
+  return enabled.hourConcept;
+}
+
+async function validateShift(input: PreviewWorkShiftInput, user: Express.AuthUser) {
+  const employee = await resolveShiftEmployee(input, user);
+  const hourConcept = await resolveShiftConcept(employee.id, input.hourConceptId);
+  const calculation = buildShiftSegments(input.startAt, input.endAt);
+
+  const overlap = await timeEntriesRepository.findOverlappingWorkShift(employee.id, input.startAt, input.endAt);
+  if (overlap) {
+    throw new AppError("Ya existe una marcación superpuesta para este empleado.", 409, "WORK_SHIFT_OVERLAP");
+  }
+
+  for (const segment of calculation.segments) {
+    await ensureDayIsNotBlocked(employee.id, segment.date, segment.hours);
+  }
+
+  return { employee, hourConcept, ...calculation };
+}
+
+function publicEmployeeLabel(employee: { id?: string; firstName: string; lastName: string; legajo: string; dni?: string }) {
+  return {
+    id: employee.id,
+    legajo: employee.legajo,
+    dni: employee.dni,
+    firstName: employee.firstName,
+    lastName: employee.lastName,
+    name: `${employee.lastName}, ${employee.firstName}`,
+  };
+}
+
+async function resolveClockEmployee(dni: string) {
+  const employee = await timeEntriesRepository.findEmployeeByDniForClock(dni);
+  if (!employee) throw new AppError("No se encontró un legajo para el DNI ingresado.", 404, "CLOCK_EMPLOYEE_NOT_FOUND");
+  return employee;
+}
+
+async function resolveClockEmployeeById(employeeId: string) {
+  const employee = await timeEntriesRepository.findEmployeeByIdForClock(employeeId);
+  if (!employee) throw new AppError("No se encontró el legajo seleccionado.", 404, "CLOCK_EMPLOYEE_NOT_FOUND");
+  return employee;
+}
+
 export function timeEntriesExportToCsv(rows: TimeEntriesExportRow[]) {
   const headers: (keyof TimeEntriesExportRow)[] = [
     "CUIL",
@@ -172,6 +295,239 @@ export const timeEntriesService = {
       after: item as Prisma.InputJsonValue,
     });
     return item;
+  },
+
+  async previewWorkShift(input: PreviewWorkShiftInput, user: Express.AuthUser) {
+    const result = await validateShift(input, user);
+    return {
+      employee: result.employee,
+      hourConcept: result.hourConcept,
+      totalMinutes: result.totalMinutes,
+      totalHours: Number((result.totalMinutes / 60).toFixed(2)),
+      segments: result.segments.map((segment) => ({
+        date: segment.date,
+        startAt: segment.startAt,
+        endAt: segment.endAt,
+        minutes: segment.minutes,
+        hours: segment.hours,
+        label: segment.label,
+      })),
+    };
+  },
+
+  async createWorkShift(input: CreateWorkShiftInput, user: Express.AuthUser, audit?: AuditContext) {
+    const result = await validateShift(input, user);
+    try {
+      const created = await timeEntriesRepository.createFromWorkShift({
+        employeeId: result.employee.id,
+        hourConceptId: result.hourConcept.id,
+        source: input.source,
+        startAt: input.startAt,
+        endAt: input.endAt,
+        totalMinutes: result.totalMinutes,
+        observation: input.observation,
+        segments: result.segments,
+        createdByUserId: user.id,
+      });
+
+      await auditService.register({
+        ...audit,
+        action: "CREATE",
+        entity: "WorkShift",
+        entityId: created.workShift.id,
+        description: `Se registro marcacion de ${formatNumber(result.totalMinutes / 60)} hs para el legajo ${result.employee.legajo}.`,
+        after: {
+          workShift: created.workShift,
+          segments: result.segments.map((segment) => segment.label),
+          timeEntryIds: created.entries.map((entry) => entry.id),
+        } as Prisma.InputJsonValue,
+      });
+
+      return {
+        ...created,
+        preview: {
+          employee: result.employee,
+          hourConcept: result.hourConcept,
+          totalMinutes: result.totalMinutes,
+          totalHours: Number((result.totalMinutes / 60).toFixed(2)),
+          segments: result.segments,
+        },
+      };
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith("TIME_ENTRY_LOCKED:")) {
+        throw new AppError("La jornada coincide con una carga horaria aprobada o cerrada. Debe corregirse manualmente.", 409, "WORK_SHIFT_LOCKED_TIME_ENTRY");
+      }
+      throw error;
+    }
+  },
+
+  async clockStatus(input: ClockByDniInput) {
+    const employee = await resolveClockEmployee(input.dni);
+    const openShift = await timeEntriesRepository.findOpenWorkShift(employee.id);
+    return {
+      employee: publicEmployeeLabel(employee),
+      openShift: openShift ? {
+        id: openShift.id,
+        startAt: openShift.startAt,
+      } : null,
+    };
+  },
+
+  async clockSearch(query: ClockEmployeeSearchQuery) {
+    const employees = await timeEntriesRepository.searchEmployeesForClock(query.search);
+    return employees.map(publicEmployeeLabel);
+  },
+
+  async clockStatusByEmployee(input: ClockByEmployeeInput) {
+    const employee = await resolveClockEmployeeById(input.employeeId);
+    const openShift = await timeEntriesRepository.findOpenWorkShift(employee.id);
+    return {
+      employee: publicEmployeeLabel(employee),
+      openShift: openShift ? {
+        id: openShift.id,
+        startAt: openShift.startAt,
+      } : null,
+    };
+  },
+
+  async clockIn(input: ClockByDniInput) {
+    const employee = await resolveClockEmployee(input.dni);
+    const openShift = await timeEntriesRepository.findOpenWorkShift(employee.id);
+    if (openShift) {
+      throw new AppError("Ya existe un ingreso abierto para este empleado.", 409, "CLOCK_ALREADY_OPEN");
+    }
+    const now = new Date();
+    const workShift = await timeEntriesRepository.createOpenWorkShift({
+      employeeId: employee.id,
+      source: "PORTAL_DNI",
+      startAt: now,
+    });
+    return {
+      employee: publicEmployeeLabel(employee),
+      workShift: {
+        id: workShift.id,
+        startAt: workShift.startAt,
+      },
+    };
+  },
+
+  async clockInByEmployee(input: ClockByEmployeeInput) {
+    const employee = await resolveClockEmployeeById(input.employeeId);
+    const openShift = await timeEntriesRepository.findOpenWorkShift(employee.id);
+    if (openShift) {
+      throw new AppError("Ya existe un ingreso abierto para este empleado.", 409, "CLOCK_ALREADY_OPEN");
+    }
+    const now = new Date();
+    const workShift = await timeEntriesRepository.createOpenWorkShift({
+      employeeId: employee.id,
+      source: "PORTAL_DNI",
+      startAt: now,
+    });
+    return {
+      employee: publicEmployeeLabel(employee),
+      workShift: {
+        id: workShift.id,
+        startAt: workShift.startAt,
+      },
+    };
+  },
+
+  async clockOut(input: ClockByDniInput) {
+    const employee = await resolveClockEmployee(input.dni);
+    const openShift = await timeEntriesRepository.findOpenWorkShift(employee.id);
+    if (!openShift) {
+      throw new AppError("No hay un ingreso abierto para este empleado.", 409, "CLOCK_NO_OPEN_SHIFT");
+    }
+    const hourConcept = await resolveShiftConcept(employee.id);
+    const endAt = new Date();
+    const calculation = buildShiftSegments(openShift.startAt, endAt);
+    for (const segment of calculation.segments) {
+      await ensureDayIsNotBlocked(employee.id, segment.date, segment.hours);
+    }
+    try {
+      const created = await timeEntriesRepository.closeOpenWorkShift({
+        workShiftId: openShift.id,
+        employeeId: employee.id,
+        hourConceptId: hourConcept.id,
+        source: "PORTAL_DNI",
+        endAt,
+        totalMinutes: calculation.totalMinutes,
+        segments: calculation.segments,
+      });
+      return {
+        employee: publicEmployeeLabel(employee),
+        workShift: {
+          id: created.workShift.id,
+          startAt: created.workShift.startAt,
+          endAt: created.workShift.endAt,
+          totalMinutes: created.workShift.totalMinutes,
+          totalHours: Number((calculation.totalMinutes / 60).toFixed(2)),
+        },
+        segments: calculation.segments.map((segment) => ({
+          date: segment.date,
+          startAt: segment.startAt,
+          endAt: segment.endAt,
+          minutes: segment.minutes,
+          hours: segment.hours,
+          label: segment.label,
+        })),
+        entries: created.entries,
+      };
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith("TIME_ENTRY_LOCKED:")) {
+        throw new AppError("La salida coincide con una carga horaria aprobada o cerrada. Avisá a RRHH para corregirla.", 409, "CLOCK_LOCKED_TIME_ENTRY");
+      }
+      throw error;
+    }
+  },
+
+  async clockOutByEmployee(input: ClockByEmployeeInput) {
+    const employee = await resolveClockEmployeeById(input.employeeId);
+    const openShift = await timeEntriesRepository.findOpenWorkShift(employee.id);
+    if (!openShift) {
+      throw new AppError("No hay un ingreso abierto para este empleado.", 409, "CLOCK_NO_OPEN_SHIFT");
+    }
+    const hourConcept = await resolveShiftConcept(employee.id);
+    const endAt = new Date();
+    const calculation = buildShiftSegments(openShift.startAt, endAt);
+    for (const segment of calculation.segments) {
+      await ensureDayIsNotBlocked(employee.id, segment.date, segment.hours);
+    }
+    try {
+      const created = await timeEntriesRepository.closeOpenWorkShift({
+        workShiftId: openShift.id,
+        employeeId: employee.id,
+        hourConceptId: hourConcept.id,
+        source: "PORTAL_DNI",
+        endAt,
+        totalMinutes: calculation.totalMinutes,
+        segments: calculation.segments,
+      });
+      return {
+        employee: publicEmployeeLabel(employee),
+        workShift: {
+          id: created.workShift.id,
+          startAt: created.workShift.startAt,
+          endAt: created.workShift.endAt,
+          totalMinutes: created.workShift.totalMinutes,
+          totalHours: Number((calculation.totalMinutes / 60).toFixed(2)),
+        },
+        segments: calculation.segments.map((segment) => ({
+          date: segment.date,
+          startAt: segment.startAt,
+          endAt: segment.endAt,
+          minutes: segment.minutes,
+          hours: segment.hours,
+          label: segment.label,
+        })),
+        entries: created.entries,
+      };
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith("TIME_ENTRY_LOCKED:")) {
+        throw new AppError("La salida coincide con una carga horaria aprobada o cerrada. Avisá a RRHH para corregirla.", 409, "CLOCK_LOCKED_TIME_ENTRY");
+      }
+      throw error;
+    }
   },
 
   async update(id: string, input: UpdateTimeEntryInput, user: Express.AuthUser, audit?: AuditContext) {

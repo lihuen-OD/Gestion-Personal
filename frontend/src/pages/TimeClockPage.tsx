@@ -1,0 +1,216 @@
+import { useEffect, useMemo, useState } from "react";
+import { LogIn, LogOut, Search } from "lucide-react";
+import { timeClockApiService } from "../services/api/timeClockApiService";
+import { Button } from "../components/ui/Button";
+
+function formatDateTime(value?: string) {
+  if (!value) return "-";
+  return new Date(value).toLocaleString("es-AR", {
+    dateStyle: "short",
+    timeStyle: "short",
+  });
+}
+
+function formatCurrentTime(value: Date) {
+  return value.toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
+export function TimeClockPage() {
+  const [search, setSearch] = useState("");
+  const [selected, setSelected] = useState<Awaited<ReturnType<typeof timeClockApiService.searchEmployees>>[number]>();
+  const [matches, setMatches] = useState<Awaited<ReturnType<typeof timeClockApiService.searchEmployees>>>([]);
+  const [now, setNow] = useState(new Date());
+  const [status, setStatus] = useState<Awaited<ReturnType<typeof timeClockApiService.status>>>();
+  const [result, setResult] = useState<Awaited<ReturnType<typeof timeClockApiService.clockOut>> | Awaited<ReturnType<typeof timeClockApiService.clockIn>>>();
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(new Date()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const query = search.trim();
+    if (query.length < 2 || selected) {
+      setMatches([]);
+      return undefined;
+    }
+    const timer = window.setTimeout(async () => {
+      setLoading(true);
+      setError("");
+      try {
+        const items = await timeClockApiService.searchEmployees(query);
+        if (!cancelled) setMatches(items);
+      } catch {
+        if (!cancelled) setError("No se pudo buscar empleados.");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }, 250);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [search, selected]);
+
+  const canSubmit = Boolean(selected?.id) && !loading;
+  const employeeLabel = useMemo(() => status?.employee || result?.employee, [result, status]);
+
+  const refreshStatus = async (employeeId = selected?.id) => {
+    if (!employeeId || loading) return;
+    if (!canSubmit) return;
+    setError("");
+    setResult(undefined);
+    setLoading(true);
+    try {
+      setStatus(await timeClockApiService.status(employeeId));
+    } catch {
+      setStatus(undefined);
+      setError("No pudimos consultar el estado del legajo seleccionado.");
+    } finally {
+      setLoading(false);
+    }
+  };
+  const selectEmployee = async (employee: Awaited<ReturnType<typeof timeClockApiService.searchEmployees>>[number]) => {
+    setSelected(employee);
+    setSearch(`${employee.lastName}, ${employee.firstName}`);
+    setMatches([]);
+    setResult(undefined);
+    setError("");
+    setLoading(true);
+    try {
+      setStatus(await timeClockApiService.status(employee.id));
+    } catch {
+      setStatus(undefined);
+      setError("No pudimos consultar el estado del legajo seleccionado.");
+    } finally {
+      setLoading(false);
+    }
+  };
+  const clearEmployee = () => {
+    setSelected(undefined);
+    setStatus(undefined);
+    setResult(undefined);
+    setSearch("");
+    setMatches([]);
+    setError("");
+  };
+
+  const clockIn = async () => {
+    if (!canSubmit) return;
+    setError("");
+    setLoading(true);
+    try {
+      const response = await timeClockApiService.clockIn(selected!.id);
+      setResult(response);
+      setStatus({ employee: response.employee, openShift: response.workShift });
+    } catch {
+      setError("No se pudo registrar el ingreso. Verificá si ya tenés una jornada abierta.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const clockOut = async () => {
+    if (!canSubmit) return;
+    setError("");
+    setLoading(true);
+    try {
+      const response = await timeClockApiService.clockOut(selected!.id);
+      setResult(response);
+      setStatus({ employee: response.employee, openShift: null });
+    } catch {
+      setError("No se pudo registrar la salida. Verificá que exista un ingreso abierto o avisá a RRHH.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <main className="clock-page">
+      <section className="clock-panel">
+        <div className="clock-heading">
+          <p className="eyebrow">CONTROL HORARIO</p>
+          <h1>Fichador de personal</h1>
+          <strong>{formatCurrentTime(now)}</strong>
+        </div>
+
+        <label className="clock-dni-field">
+          Buscar por nombre o apellido
+          <div>
+            <input
+              value={search}
+              onChange={(event) => {
+                setSearch(event.target.value);
+                setSelected(undefined);
+                setStatus(undefined);
+                setResult(undefined);
+                setError("");
+              }}
+              placeholder="Ej.: Pérez Juan"
+            />
+            <button type="button" className="icon-button" onClick={() => refreshStatus()} title="Actualizar estado" aria-label="Actualizar estado" disabled={!selected}>
+              <Search />
+            </button>
+          </div>
+        </label>
+
+        {matches.length ? (
+          <div className="clock-results-list">
+            {matches.map((employee) => (
+              <button key={employee.id} type="button" onClick={() => selectEmployee(employee)}>
+                <b>{employee.lastName}, {employee.firstName}</b>
+                <span>DNI {employee.dni} · Legajo {employee.legajo}</span>
+              </button>
+            ))}
+          </div>
+        ) : null}
+
+        {employeeLabel ? (
+          <div className="clock-employee">
+            <b>{employeeLabel.lastName}, {employeeLabel.firstName}</b>
+            <span>DNI {employeeLabel.dni} · Legajo {employeeLabel.legajo}</span>
+            <button type="button" className="table-link" onClick={clearEmployee}>Cambiar empleado</button>
+          </div>
+        ) : null}
+
+        {status?.openShift ? (
+          <div className="clock-open">
+            <b>Ingreso abierto</b>
+            <span>Registrado: {formatDateTime(status.openShift.startAt)}</span>
+          </div>
+        ) : null}
+
+        <div className="clock-actions">
+          <Button variant="primary" icon={LogIn} disabled={!canSubmit || Boolean(status?.openShift)} onClick={clockIn}>
+            Marcar ingreso
+          </Button>
+          <Button variant="subtle" icon={LogOut} disabled={!canSubmit || !status?.openShift} onClick={clockOut}>
+            Marcar salida
+          </Button>
+        </div>
+
+        {result && "workShift" in result ? (
+          <div className="clock-result">
+            {"totalHours" in result.workShift ? (
+              <>
+                <b>Salida registrada: {result.workShift.totalHours} h</b>
+                {"segments" in result && result.segments.length ? (
+                  <ul>
+                    {result.segments.map((segment) => <li key={`${segment.date}-${segment.startAt}`}>{segment.label}</li>)}
+                  </ul>
+                ) : null}
+              </>
+            ) : (
+              <b>Ingreso registrado: {formatDateTime(result.workShift.startAt)}</b>
+            )}
+          </div>
+        ) : null}
+
+        {error ? <p className="error">{error}</p> : null}
+      </section>
+    </main>
+  );
+}

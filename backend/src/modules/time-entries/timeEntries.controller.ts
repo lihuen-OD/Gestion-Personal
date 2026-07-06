@@ -1,7 +1,7 @@
 import type { RequestHandler } from "express";
 import { requestAuditContext } from "../../shared/audit/requestAuditContext";
 import { requireParam } from "../../shared/http/params";
-import type { ListTimeEntriesQuery, TimeEntriesExportQuery, TimeEntriesPeriodEmployeesQuery, TimeEntriesSummaryQuery } from "./timeEntries.schemas";
+import type { ClockByDniInput, ClockByEmployeeInput, ClockEmployeeSearchQuery, CreateWorkShiftInput, ListTimeEntriesQuery, PreviewWorkShiftInput, TimeEntriesExportQuery, TimeEntriesPeriodEmployeesQuery, TimeEntriesSummaryQuery } from "./timeEntries.schemas";
 import { clearTimeEntriesReadCaches, timeEntriesListCache, timeEntriesPeriodEmployeesCache, timeEntriesSummaryCache } from "./timeEntries.cache";
 import { timeEntriesExportToCsv, timeEntriesService } from "./timeEntries.service";
 
@@ -10,6 +10,43 @@ function userScopedCacheKey(req: Parameters<RequestHandler>[0]) {
 }
 
 export const timeEntriesController = {
+  clockSearch: (async (req, res) => {
+    const result = await timeEntriesService.clockSearch(req.query as unknown as ClockEmployeeSearchQuery);
+    res.json({ data: result });
+  }) satisfies RequestHandler,
+
+  clockStatus: (async (req, res) => {
+    const result = await timeEntriesService.clockStatus(req.body as ClockByDniInput);
+    res.json({ data: result });
+  }) satisfies RequestHandler,
+
+  clockStatusByEmployee: (async (req, res) => {
+    const result = await timeEntriesService.clockStatusByEmployee(req.body as ClockByEmployeeInput);
+    res.json({ data: result });
+  }) satisfies RequestHandler,
+
+  clockIn: (async (req, res) => {
+    const result = await timeEntriesService.clockIn(req.body as ClockByDniInput);
+    res.status(201).json({ data: result });
+  }) satisfies RequestHandler,
+
+  clockInByEmployee: (async (req, res) => {
+    const result = await timeEntriesService.clockInByEmployee(req.body as ClockByEmployeeInput);
+    res.status(201).json({ data: result });
+  }) satisfies RequestHandler,
+
+  clockOut: (async (req, res) => {
+    const result = await timeEntriesService.clockOut(req.body as ClockByDniInput);
+    clearTimeEntriesReadCaches();
+    res.json({ data: result });
+  }) satisfies RequestHandler,
+
+  clockOutByEmployee: (async (req, res) => {
+    const result = await timeEntriesService.clockOutByEmployee(req.body as ClockByEmployeeInput);
+    clearTimeEntriesReadCaches();
+    res.json({ data: result });
+  }) satisfies RequestHandler,
+
   list: (async (req, res) => {
     const key = userScopedCacheKey(req);
     const cached = timeEntriesListCache.get(key);
@@ -41,6 +78,17 @@ export const timeEntriesController = {
     const item = await timeEntriesService.create(req.body, req.user!, requestAuditContext(req));
     clearTimeEntriesReadCaches();
     res.status(201).json({ data: item });
+  }) satisfies RequestHandler,
+
+  previewWorkShift: (async (req, res) => {
+    const result = await timeEntriesService.previewWorkShift(req.body as PreviewWorkShiftInput, req.user!);
+    res.json({ data: result });
+  }) satisfies RequestHandler,
+
+  createWorkShift: (async (req, res) => {
+    const result = await timeEntriesService.createWorkShift(req.body as CreateWorkShiftInput, req.user!, requestAuditContext(req));
+    clearTimeEntriesReadCaches();
+    res.status(201).json({ data: result });
   }) satisfies RequestHandler,
 
   update: (async (req, res) => {

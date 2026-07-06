@@ -29,6 +29,7 @@ const UsersPage = lazy(() => import("./pages/UsersPage").then((module) => ({ def
 const AuditPage = lazy(() => import("./pages/AuditPage").then((module) => ({ default: module.AuditPage })));
 const SettingsPage = lazy(() => import("./pages/SettingsPage").then((module) => ({ default: module.SettingsPage })));
 const ReportsPage = lazy(() => import("./pages/ReportsPage").then((module) => ({ default: module.ReportsPage })));
+const TimeClockPage = lazy(() => import("./pages/TimeClockPage").then((module) => ({ default: module.TimeClockPage })));
 
 function PageLoader() {
   return (
@@ -41,7 +42,16 @@ function PageLoader() {
 export function App() {
   const { user } = useAuth();
 
-  if (!user) return <LoginPage />;
+  if (!user) {
+    return (
+      <Suspense fallback={<PageLoader />}>
+        <Routes>
+          <Route path="/fichador" element={<TimeClockPage />} />
+          <Route path="*" element={<LoginPage />} />
+        </Routes>
+      </Suspense>
+    );
+  }
 
   const level = roleLevel(user.role);
 
@@ -49,6 +59,7 @@ export function App() {
     <AppShell>
       <Suspense fallback={<PageLoader />}>
         <Routes>
+          <Route path="/fichador" element={<TimeClockPage />} />
           <Route path="/" element={level === 3 ? <Navigate to="/horas" /> : <DashboardPage />} />
           <Route path="/legajos" element={<EmployeesPage />} />
           <Route path="/legajos/nuevo" element={<EmployeeCreatePage />} />

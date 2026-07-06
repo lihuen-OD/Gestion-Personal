@@ -17,9 +17,13 @@ type ApiTimeEntry = {
   id: string;
   employeeId: string;
   hourConceptId: string;
+  workShiftId?: string | null;
   date: string;
   hours: string | number;
   totalMinutes?: number | null;
+  segmentStartAt?: string | null;
+  segmentEndAt?: string | null;
+  source?: string | null;
   status: ApiApprovalStatus;
   observation?: string | null;
   createdByUserId?: string | null;
@@ -51,6 +55,51 @@ type ApiEmployeePeriodRow = {
 
 type ApiListResponse = { data: ApiTimeEntry[] };
 type ApiItemResponse = { data: ApiTimeEntry };
+type ApiWorkShiftPreviewResponse = {
+  data: {
+    employee: {
+      id: string;
+      legajo: string;
+      dni: string;
+      cuil: string;
+      firstName: string;
+      lastName: string;
+      status: string;
+    };
+    hourConcept: {
+      id: string;
+      code: string;
+      name: string;
+      kind: string;
+      status: string;
+    };
+    totalMinutes: number;
+    totalHours: number;
+    segments: Array<{
+      date: string;
+      startAt: string;
+      endAt: string;
+      minutes: number;
+      hours: number;
+      label: string;
+    }>;
+  };
+};
+type ApiWorkShiftCreateResponse = {
+  data: {
+    workShift: {
+      id: string;
+      employeeId: string;
+      startAt: string;
+      endAt: string;
+      totalMinutes: number;
+      source: string;
+      status: string;
+    };
+    entries: ApiTimeEntry[];
+    preview: ApiWorkShiftPreviewResponse["data"];
+  };
+};
 type ApiListMeta = { total: number; page: number; pageSize: number; hasMore: boolean };
 type ApiEmployeePeriodRowsResponse = { data: ApiEmployeePeriodRow[]; meta: ApiListMeta };
 type ApiSummaryResponse = {
@@ -137,6 +186,8 @@ function mapFromApi(item: ApiTimeEntry): TimeEntry {
     date,
     totalMinutes: item.totalMinutes ?? Math.round(hours * 60),
     origin: "MANUAL",
+    startTime: item.segmentStartAt || undefined,
+    endTime: item.segmentEndAt || undefined,
     createdBy: item.createdByUserId || undefined,
     updatedBy: item.updatedByUserId || undefined,
     conceptId: item.hourConceptId,
@@ -216,6 +267,26 @@ export const timeEntryApiService = {
 
   getByPeriod(period: string) {
     return this.getAll({ period });
+  },
+
+  async previewWorkShift(input: { employeeId?: string; dni?: string; hourConceptId?: string; startAt: string; endAt: string; observation?: string }) {
+    const response = await apiRequest<ApiWorkShiftPreviewResponse>("/time-entries/work-shifts/preview", {
+      method: "POST",
+      body: { ...input, source: "ADMIN" },
+    });
+    return response.data;
+  },
+
+  async createWorkShift(input: { employeeId?: string; dni?: string; hourConceptId?: string; startAt: string; endAt: string; observation?: string }) {
+    const response = await apiRequest<ApiWorkShiftCreateResponse>("/time-entries/work-shifts", {
+      method: "POST",
+      body: { ...input, source: "ADMIN", confirm: true },
+    });
+    return {
+      workShift: response.data.workShift,
+      preview: response.data.preview,
+      entries: response.data.entries.map(mapFromApi),
+    };
   },
 
   async getSummary(period: string) {

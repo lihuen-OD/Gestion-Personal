@@ -60,6 +60,20 @@ enum ApprovalStatus {
   CERRADO
 }
 
+enum WorkShiftStatus {
+  ABIERTO
+  PROCESADO
+  OBSERVADO
+  ANULADO
+}
+
+enum WorkShiftSource {
+  ADMIN
+  PORTAL_DNI
+  KIOSK
+  BIOTIME
+}
+
 enum HourConceptKind {
   NORMAL
   EXTRA
@@ -483,6 +497,7 @@ model Employee {
   blockHistory   EmployeeBlockHistory[]
   novelties      Novelty[]
   timeEntries    TimeEntry[]
+  workShifts     WorkShift[]
   documents      EmployeeDocument[]
   userAccount    User?                 @relation("EmployeeUserAccount")
 
@@ -730,11 +745,15 @@ model TimeEntry {
   id               String         @id @default(uuid())
   employeeId       String
   hourConceptId    String
+  workShiftId      String?
   date             DateTime
   period           String
   day              Int
   hours            Decimal        @db.Decimal(8, 2)
   totalMinutes     Int
+  segmentStartAt   DateTime?
+  segmentEndAt     DateTime?
+  source           WorkShiftSource?
   status           ApprovalStatus @default(BORRADOR)
   observation      String?
   createdByUserId  String?
@@ -746,15 +765,39 @@ model TimeEntry {
 
   employee    Employee    @relation(fields: [employeeId], references: [id], onDelete: Cascade)
   hourConcept HourConcept @relation(fields: [hourConceptId], references: [id])
+  workShift   WorkShift?  @relation(fields: [workShiftId], references: [id], onDelete: SetNull)
   createdBy   User?       @relation("TimeEntryCreatedBy", fields: [createdByUserId], references: [id])
 
   @@index([employeeId, period])
   @@index([employeeId, hourConceptId, date])
+  @@index([workShiftId])
   @@index([period, employeeId])
   @@index([period, status])
   @@index([date])
   @@index([status])
   @@index([status, period])
+}
+
+model WorkShift {
+  id              String          @id @default(uuid())
+  employeeId      String
+  source          WorkShiftSource @default(ADMIN)
+  status          WorkShiftStatus @default(PROCESADO)
+  startAt         DateTime
+  endAt           DateTime?
+  totalMinutes    Int?
+  observation     String?
+  createdByUserId String?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  employee    Employee    @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  timeEntries TimeEntry[]
+
+  @@index([employeeId, startAt])
+  @@index([employeeId, endAt])
+  @@index([status])
+  @@index([source])
 }
 
 model DocumentCategory {

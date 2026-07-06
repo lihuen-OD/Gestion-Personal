@@ -52,6 +52,42 @@ export const timeEntriesExportQuerySchema = z.object({
   includeInReview: z.coerce.boolean().default(false),
 });
 
+export const workShiftSourceSchema = z.enum(["ADMIN", "PORTAL_DNI", "KIOSK", "BIOTIME"]);
+
+const workShiftBaseSchema = z.object({
+  employeeId: z.string().uuid().optional(),
+  dni: z.string().trim().min(6).max(20).optional(),
+  hourConceptId: z.string().uuid().optional(),
+  startAt: z.coerce.date(),
+  endAt: z.coerce.date(),
+  source: workShiftSourceSchema.default("ADMIN"),
+  observation: z.string().trim().max(800).optional().nullable(),
+});
+
+export const previewWorkShiftSchema = workShiftBaseSchema.refine((value) => Boolean(value.employeeId || value.dni), {
+  message: "employeeId or dni is required",
+  path: ["employeeId"],
+});
+
+export const createWorkShiftSchema = workShiftBaseSchema.extend({
+  confirm: z.literal(true).default(true),
+}).refine((value) => Boolean(value.employeeId || value.dni), {
+  message: "employeeId or dni is required",
+  path: ["employeeId"],
+});
+
+export const clockByDniSchema = z.object({
+  dni: z.string().trim().min(6).max(20),
+});
+
+export const clockEmployeeSearchQuerySchema = z.object({
+  search: z.string().trim().min(2).max(80),
+});
+
+export const clockByEmployeeSchema = z.object({
+  employeeId: z.string().uuid(),
+});
+
 export type ListTimeEntriesQuery = z.infer<typeof listTimeEntriesQuerySchema>;
 export type TimeEntriesSummaryQuery = z.infer<typeof timeEntriesSummaryQuerySchema>;
 export type TimeEntriesPeriodEmployeesQuery = z.infer<typeof timeEntriesPeriodEmployeesQuerySchema>;
@@ -59,3 +95,8 @@ export type CreateTimeEntryInput = z.infer<typeof createTimeEntrySchema>;
 export type UpdateTimeEntryInput = z.infer<typeof updateTimeEntrySchema>;
 export type RejectTimeEntryInput = z.infer<typeof rejectTimeEntrySchema>;
 export type TimeEntriesExportQuery = z.infer<typeof timeEntriesExportQuerySchema>;
+export type PreviewWorkShiftInput = z.infer<typeof previewWorkShiftSchema>;
+export type CreateWorkShiftInput = z.infer<typeof createWorkShiftSchema>;
+export type ClockByDniInput = z.infer<typeof clockByDniSchema>;
+export type ClockEmployeeSearchQuery = z.infer<typeof clockEmployeeSearchQuerySchema>;
+export type ClockByEmployeeInput = z.infer<typeof clockByEmployeeSchema>;

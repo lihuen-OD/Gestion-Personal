@@ -209,7 +209,6 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
     setReviewReason("");
     setRefresh((value) => value + 1);
   };
-
   return (
     <>
       <PageHeader
@@ -652,6 +651,7 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
           </div>
         </Modal>
       ) : null}
+
     </>
   );
 }
