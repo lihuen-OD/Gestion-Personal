@@ -15,6 +15,9 @@ import { positionApiService } from "../services/api/positionApiService";
 import type { Position } from "../types/position.types";
 import { roleLevel } from "../utils/roles";
 import { useAsyncAction } from "../utils/useAsyncAction";
+import { PageHeader } from "../components/ui/PageHeader";
+import { Section } from "../components/ui/Section";
+import { Button } from "../components/ui/Button";
 
 export function PuestoCreatePage() {
   const { user } = useAuth();
@@ -49,17 +52,20 @@ export function PuestoCreatePage() {
   if (roleLevel(user!.role) !== 1) return <Navigate to="/puestos" />;
 
   return <form onSubmit={save}>
-    <div className="page-header"><div><p className="eyebrow">PUESTOS</p><h1>Crear nuevo puesto</h1><p>Descripcion funcional reutilizable para legajos, organigramas, dashboard y evaluaciones futuras.</p></div></div>
-    <section className="panel"><div className="panel-head"><div><h3>1. Identificacion del puesto</h3><p>Datos base y estructura sugerida.</p></div></div><PuestoIdentificationTab position={position} setPosition={setPosition} /></section>
-    <section className="panel"><div className="panel-head"><div><h3>2. Proposito / Mision</h3></div></div><PuestoMissionTab position={position} setPosition={setPosition} /></section>
-    <section className="panel"><div className="panel-head"><div><h3>3. Rango salarial</h3></div></div><PuestoSalaryRangeTab position={position} setPosition={setPosition} /></section>
-    <section className="panel"><div className="panel-head"><div><h3>4. Responsabilidades</h3></div></div><PuestoResponsibilitiesTab position={position} setPosition={setPosition} /></section>
-    <section className="panel"><div className="panel-head"><div><h3>5. Relaciones internas y externas</h3></div></div><PuestoRelationsTab position={position} setPosition={setPosition} /></section>
-    <section className="panel"><div className="panel-head"><div><h3>6. Competencias clave</h3></div></div><PuestoCompetenciesTab position={position} setPosition={setPosition} /></section>
-    <section className="panel"><div className="panel-head"><div><h3>7. Condiciones de trabajo</h3></div></div><PuestoWorkConditionsTab position={position} setPosition={setPosition} /></section>
-    <section className="panel"><div className="panel-head"><div><h3>8. Indicadores de desempeno</h3></div></div><PuestoIndicatorsTab position={position} setPosition={setPosition} /></section>
-    <section className="panel"><div className="panel-head"><div><h3>9. Criterios de evaluacion</h3></div></div><PuestoEvaluationCriteriaTab position={position} setPosition={setPosition} /></section>
+    <PageHeader eyebrow="PUESTOS" title="Crear nuevo puesto" description="Descripcion funcional reutilizable para legajos, organigramas, dashboard y evaluaciones futuras." />
+    <Section title="1. Identificacion del puesto" subtitle="Datos base y estructura sugerida."><PuestoIdentificationTab position={position} setPosition={setPosition} /></Section>
+    <Section title="2. Proposito / Mision"><PuestoMissionTab position={position} setPosition={setPosition} /></Section>
+    <Section title="3. Rango salarial"><PuestoSalaryRangeTab position={position} setPosition={setPosition} /></Section>
+    <Section title="4. Responsabilidades"><PuestoResponsibilitiesTab position={position} setPosition={setPosition} /></Section>
+    <Section title="5. Relaciones internas y externas"><PuestoRelationsTab position={position} setPosition={setPosition} /></Section>
+    <Section title="6. Competencias clave"><PuestoCompetenciesTab position={position} setPosition={setPosition} /></Section>
+    <Section title="7. Condiciones de trabajo"><PuestoWorkConditionsTab position={position} setPosition={setPosition} /></Section>
+    <Section title="8. Indicadores de desempeno"><PuestoIndicatorsTab position={position} setPosition={setPosition} /></Section>
+    <Section title="9. Criterios de evaluacion"><PuestoEvaluationCriteriaTab position={position} setPosition={setPosition} /></Section>
     {error && <p className="error create-error">{error}</p>}
-    <div className="form-actions create-actions"><Link to="/puestos" className="button subtle">Cancelar</Link><button className="button primary" disabled={isSaving}>{isSaving ? "Guardando..." : "Guardar puesto"}</button></div>
+    <div className="form-actions create-actions">
+      <Link to="/puestos" className="button subtle">Cancelar</Link>
+      <Button variant="primary" disabled={isSaving}>{isSaving ? "Guardando..." : "Guardar puesto"}</Button>
+    </div>
   </form>;
 }

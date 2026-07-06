@@ -7,13 +7,16 @@ import { orgStructureApiService } from "../services/api/orgStructureApiService";
 import type { Employee } from "../types";
 import { displayLegajo, employeeCompanies } from "../utils/employee";
 import { roleLevel } from "../utils/roles";
-import { statusClass } from "../utils/status";
+import { statusTone } from "../utils/status";
 import { useDebouncedValue } from "../utils/useDebouncedValue";
 import { OverflowCell } from "../components/ui/OverflowCell";
-import { TableShell } from "../components/ui/TableShell";
 import { PageHeader } from "../components/ui/PageHeader";
 import { Section } from "../components/ui/Section";
 import { StatCard } from "../components/ui/StatCard";
+import { Button } from "../components/ui/Button";
+import { Badge } from "../components/ui/Badge";
+import { DataTable } from "../components/ui/DataTable";
+import { Pagination } from "../components/ui/Pagination";
 
 const pageSize = 25;
 const emptySummary: EmployeeSummary = {
@@ -35,12 +38,14 @@ export function EmployeesPage() {
   const [syncing, setSyncing] = useState(false);
   const [syncMessage, setSyncMessage] = useState("");
   const [all, setAll] = useState<Employee[]>([]);
+  const [listStatus, setListStatus] = useState<"loading" | "success" | "error">("loading");
   const [structureCompanies, setStructureCompanies] = useState<Array<{ id: string; name: string }>>([]);
   const [summary, setSummary] = useState<EmployeeSummary>(emptySummary);
   const [meta, setMeta] = useState({ total: 0, page: 1, pageSize, hasMore: false });
 
   useEffect(() => {
     let mounted = true;
+    setListStatus("loading");
     const companyId = structureCompanies.find((item) => item.name === company)?.id;
     employeeApiService
       .list({ search: debouncedSearch, companyId, page, take: pageSize })
@@ -48,11 +53,13 @@ export function EmployeesPage() {
         if (!mounted) return;
         setAll(result.items);
         setMeta(result.meta);
+        setListStatus("success");
       })
       .catch(() => {
         if (!mounted) return;
         setAll([]);
         setMeta({ total: 0, page, pageSize, hasMore: false });
+        setListStatus("error");
       });
     return () => {
       mounted = false;
@@ -90,7 +97,6 @@ export function EmployeesPage() {
 
   const companyOptions = Array.from(new Set([...structureCompanies.map((item) => item.name), ...all.flatMap((employee) => employeeCompanies(employee))])).filter(Boolean);
   const employees = all;
-  const totalPages = Math.max(1, Math.ceil(meta.total / meta.pageSize));
 
   const syncLaborStatuses = async () => {
     setSyncing(true);
@@ -115,9 +121,9 @@ export function EmployeesPage() {
         action={
           level === 1 ? (
             <div className="form-actions inline-actions">
-              <button className="button subtle" type="button" onClick={syncLaborStatuses} disabled={syncing}>
-                <RefreshCcw size={16} /> {syncing ? "Sincronizando..." : "Sincronizar estados"}
-              </button>
+              <Button variant="subtle" icon={RefreshCcw} onClick={syncLaborStatuses} disabled={syncing}>
+                {syncing ? "Sincronizando..." : "Sincronizar estados"}
+              </Button>
               <Link to="/legajos/nuevo" className="button primary">
                 <Plus size={17} /> Nuevo legajo
               </Link>
@@ -138,11 +144,7 @@ export function EmployeesPage() {
       <Section
         title="Listado de legajos"
         subtitle={`${meta.total} resultados`}
-        action={
-          <button className="button subtle">
-            <SlidersHorizontal size={16} /> Mas filtros
-          </button>
-        }
+        action={<Button variant="subtle" icon={SlidersHorizontal}>Mas filtros</Button>}
       >
         <div className="filters">
           <label className="search-field">
@@ -170,7 +172,13 @@ export function EmployeesPage() {
           </select>
         </div>
 
-        <TableShell minWidth={980}>
+        <DataTable
+          status={listStatus === "loading" ? "loading" : listStatus === "error" ? "error" : employees.length === 0 ? "empty" : "ready"}
+          minWidth={980}
+          emptyText="No se encontraron legajos con los filtros aplicados."
+          errorMessage="No se pudieron cargar los legajos. Intentá nuevamente."
+          onRetry={() => setRefresh((value) => value + 1)}
+        >
           <table>
             <thead>
               <tr>
@@ -196,7 +204,7 @@ export function EmployeesPage() {
                     <OverflowCell value={employee.costCenter} />
                   </td>
                   <td>
-                    <span className={statusClass(employee.status)}>{employee.status}</span>
+                    <Badge tone={statusTone(employee.status)}>{employee.status}</Badge>
                   </td>
                   <td>
                     <Link
@@ -213,17 +221,11 @@ export function EmployeesPage() {
               ))}
             </tbody>
           </table>
-        </TableShell>
+        </DataTable>
 
-        <div className="form-actions inline-actions">
-          <button className="button subtle" type="button" disabled={page <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))}>
-            Anterior
-          </button>
-          <span className="muted small">Pagina {meta.page} de {totalPages}</span>
-          <button className="button subtle" type="button" disabled={!meta.hasMore} onClick={() => setPage((value) => value + 1)}>
-            Siguiente
-          </button>
-        </div>
+        {listStatus === "success" && employees.length > 0 && (
+          <Pagination page={meta.page} pageSize={meta.pageSize} total={meta.total} hasMore={meta.hasMore} onPageChange={setPage} itemLabel="legajos" />
+        )}
       </Section>
     </>
   );

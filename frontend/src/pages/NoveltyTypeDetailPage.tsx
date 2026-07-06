@@ -10,8 +10,15 @@ import { noveltyTypeApiService } from "../services/api/noveltyTypeApiService";
 import type { NoveltyType } from "../types/noveltyType.types";
 import { roleLevel } from "../utils/roles";
 import { useAsyncAction } from "../utils/useAsyncAction";
+import { Section } from "../components/ui/Section";
+import { LoadingState } from "../components/ui/LoadingState";
+import { ErrorState } from "../components/ui/ErrorState";
+import { Tabs } from "../components/ui/Tabs";
+import { Badge } from "../components/ui/Badge";
+import { Button } from "../components/ui/Button";
 
 const tabs = ["Identificacion", "Reglas operativas", "Finnegans", "Historial"];
+const tabItems = tabs.map((label, index) => ({ key: String(index), label: `${index + 1}. ${label}` }));
 
 export function NoveltyTypeDetailPage() {
   const { id } = useParams();
@@ -19,25 +26,26 @@ export function NoveltyTypeDetailPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const [item, setItem] = useState<NoveltyType | undefined>(undefined);
-  const [isLoading, setIsLoading] = useState(true);
+  const [loadStatus, setLoadStatus] = useState<"loading" | "success" | "error">("loading");
+  const [loadRetry, setLoadRetry] = useState(0);
   const [tab, setTab] = useState(0);
   const [notice, setNotice] = useState(location.state?.created ? "Tipo de novedad creado correctamente." : "");
 
   useEffect(() => {
     let alive = true;
     if (!id) return;
-    setIsLoading(true);
+    setLoadStatus("loading");
     noveltyTypeApiService.getById(id)
       .then((source) => {
         if (!alive) return;
         setItem(source);
+        setLoadStatus("success");
       })
-      .catch(() => {})
-      .finally(() => {
-        if (alive) setIsLoading(false);
+      .catch(() => {
+        if (alive) setLoadStatus("error");
       });
     return () => { alive = false; };
-  }, [id]);
+  }, [id, loadRetry]);
 
   const { isRunning: isSaving, run: save } = useAsyncAction(async () => {
     if (!item) return;
@@ -53,7 +61,8 @@ export function NoveltyTypeDetailPage() {
   });
 
   if (roleLevel(user!.role) !== 1) return <Navigate to="/configuracion" />;
-  if (isLoading) return <section className="panel"><div className="panel-body"><div className="empty">Cargando tipo de novedad...</div></div></section>;
+  if (loadStatus === "loading") return <Section title="Tipo de novedad"><LoadingState text="Cargando tipo de novedad..." /></Section>;
+  if (loadStatus === "error") return <Section title="Tipo de novedad"><ErrorState message="No se pudo cargar el tipo de novedad." onRetry={() => setLoadRetry((value) => value + 1)} /></Section>;
   if (!item) return <Navigate to="/configuracion/tipos-novedades" />;
 
   const toggle = async () => {
@@ -87,20 +96,20 @@ export function NoveltyTypeDetailPage() {
           </div>
         </div>
         <div className="hero-actions">
-          <span className={item.status === "ACTIVO" ? "badge success" : "badge neutral"}>{item.status}</span>
+          <Badge tone={item.status === "ACTIVO" ? "success" : "neutral"}>{item.status}</Badge>
           <button className="table-icon-action" title={item.status === "ACTIVO" ? "Inactivar" : "Activar"} aria-label={item.status === "ACTIVO" ? "Inactivar" : "Activar"} onClick={toggle}><Power size={14} /><span>{item.status === "ACTIVO" ? "Inactivar" : "Activar"}</span></button>
           <button className="table-icon-action danger-link" title="Ocultar" aria-label="Ocultar" onClick={() => { if (confirm("No se elimina para conservar trazabilidad. Se va a inactivar el tipo.")) toggle(); }}><Trash2 size={14} /><span>Ocultar</span></button>
         </div>
       </div>
       {notice && <div className="toast">{notice}</div>}
-      <div className="tabs">{tabs.map((label, index) => <button key={label} className={tab === index ? "active" : ""} onClick={() => setTab(index)}>{index + 1}. {label}</button>)}</div>
+      <Tabs tabs={tabItems} active={String(tab)} onChange={(key) => setTab(Number(key))} />
       <section className="panel">
         <div className="panel-head">
           <div>
             <h3>{tabs[tab]}</h3>
             <p>{tab === 2 ? "Equivalencias entre la novedad interna y conceptos externos." : tab === 3 ? "Trazabilidad del catalogo." : "Configuracion editable del tipo de novedad."}</p>
           </div>
-          {tab < 3 && <button className="button primary" onClick={save} disabled={isSaving}>{isSaving ? "Guardando..." : "Guardar cambios"}</button>}
+          {tab < 3 && <Button variant="primary" onClick={save} disabled={isSaving}>{isSaving ? "Guardando..." : "Guardar cambios"}</Button>}
         </div>
         <div className="panel-body">{render()}</div>
       </section>
