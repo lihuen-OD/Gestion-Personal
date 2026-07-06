@@ -1121,7 +1121,17 @@ td b{color:var(--ds-slate-900)!important;font-weight:600!important}
 .modal-head h3{font-size:14px!important;font-weight:600!important;color:var(--ds-slate-800)!important}
 .modal-body{padding:20px!important}
 
-@media(max-width:980px){.workspace{width:100%!important;margin-left:0!important}.page-wrap{padding:24px!important}.topbar-search{display:none!important}}
+@media(max-width:980px){
+  .workspace{width:100%!important;margin-left:0!important}
+  .page-wrap{padding:24px!important}
+  .topbar-search{display:none!important}
+  /* Bug real de responsive detectado en QA (Fase 7): el sidebar fijo
+     seguia ocupando 256px sin colapsar entre 821px y 980px, mientras
+     el workspace ya perdia su margen izquierdo, superponiendose. */
+  .sidebar{transform:translateX(-100%)!important;transition:transform .2s ease}
+  .sidebar.open{transform:translateX(0)!important;box-shadow:10px 0 25px rgba(0,21,39,.27)!important}
+  .sidebar-close,.menu-toggle{display:inline-grid!important}
+}
 @media(max-width:640px){.page-wrap{padding:24px!important}.stat-grid,.stat-grid.five,.stat-grid.kpi-grid{grid-template-columns:1fr!important}.topbar{padding:0 16px!important}.panel-body{padding:16px!important}.filters,.catalog-filters{grid-template-columns:1fr!important}}
 
 /* KPI exact behavior from Enterprise UI spec */

@@ -2,6 +2,7 @@ import { Activity, ChevronRight, Clock3, ShieldCheck, Users } from "lucide-react
 import { useState, type FormEvent } from "react";
 import { useAuth } from "../context/AuthContext";
 import type { Role } from "../types";
+import { Button } from "../components/ui/Button";
 
 export function LoginPage() {
   const { login, loginAs } = useAuth();
@@ -70,9 +71,9 @@ export function LoginPage() {
             <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} />
           </label>
           {error && <span className="error">No se pudo ingresar. Revisá credenciales o que el backend esté corriendo.</span>}
-          <button className="button primary" type="submit" disabled={loading}>
+          <Button variant="primary" type="submit" disabled={loading}>
             {loading ? "Ingresando..." : "Ingresar"} <ChevronRight size={17} />
-          </button>
+          </Button>
         </form>
 
         <div className="login-divider">
