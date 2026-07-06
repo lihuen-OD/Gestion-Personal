@@ -4,6 +4,8 @@ import { Link, Navigate } from "react-router-dom";
 import { NoveltyTypeFilters } from "../components/novelty-types/NoveltyTypeFilters";
 import { NoveltyTypeSummaryCards } from "../components/novelty-types/NoveltyTypeSummaryCards";
 import { NoveltyTypeTable } from "../components/novelty-types/NoveltyTypeTable";
+import { PageHeader } from "../components/ui/PageHeader";
+import { Section } from "../components/ui/Section";
 import { useAuth } from "../context/AuthContext";
 import { noveltyTypeApiService } from "../services/api/noveltyTypeApiService";
 import type { NoveltyType, NoveltyTypeFilters as NoveltyTypeFiltersModel } from "../types/noveltyType.types";
@@ -76,28 +78,18 @@ export function NoveltyTypesPage() {
 
   return (
     <>
-      <div className="page-header">
-        <div>
-          <p className="eyebrow">CONFIGURACION</p>
-          <h1>Tipos de novedades</h1>
-          <p>Catalogo maestro interno con reglas operativas y equivalencias Finnegans.</p>
-        </div>
-        {canEdit && <Link className="button primary" to="/configuracion/tipos-novedades/nuevo"><Plus size={17} /> Crear tipo</Link>}
-      </div>
+      <PageHeader
+        eyebrow="CONFIGURACION"
+        title="Tipos de novedades"
+        description="Catalogo maestro interno con reglas operativas y equivalencias Finnegans."
+        action={canEdit ? <Link to="/configuracion/tipos-novedades/nuevo" className="button primary"><Plus size={17} /> Crear tipo</Link> : undefined}
+      />
       {apiWarning && <div className="info-note compact"><b>Modo local</b><p>{apiWarning}</p></div>}
       <NoveltyTypeSummaryCards items={all} />
-      <section className="panel">
-        <div className="panel-head">
-          <div>
-            <h3>Listado de tipos</h3>
-            <p>{isLoadingApi ? "Cargando catalogo desde backend..." : `${items.length} resultados segun filtros aplicados.`}</p>
-          </div>
-        </div>
-        <div className="panel-body">
-          <NoveltyTypeFilters filters={filters} options={options} onChange={setFilters} />
-          <NoveltyTypeTable items={items} canEdit={canEdit} onToggleStatus={toggle} />
-        </div>
-      </section>
+      <Section title="Listado de tipos" subtitle={isLoadingApi ? "Cargando catalogo desde backend..." : `${items.length} resultados segun filtros aplicados.`}>
+        <NoveltyTypeFilters filters={filters} options={options} onChange={setFilters} />
+        <NoveltyTypeTable items={items} canEdit={canEdit} onToggleStatus={toggle} />
+      </Section>
     </>
   );
 }

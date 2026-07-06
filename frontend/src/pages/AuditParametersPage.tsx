@@ -2,7 +2,11 @@ import { Pencil, Plus } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Navigate } from "react-router-dom";
 import { OverflowCell } from "../components/ui/OverflowCell";
-import { TableShell } from "../components/ui/TableShell";
+import { DataTable } from "../components/ui/DataTable";
+import { PageHeader } from "../components/ui/PageHeader";
+import { Section } from "../components/ui/Section";
+import { Button } from "../components/ui/Button";
+import { Badge } from "../components/ui/Badge";
 import { useAuth } from "../context/AuthContext";
 import { auditParameterApiService } from "../services/api/auditParameterApiService";
 import type { Role } from "../types";
@@ -64,18 +68,22 @@ export function AuditParametersPage() {
   const [editing, setEditing] = useState<AuditParameter | null>(null);
   const [notice, setNotice] = useState("");
   const [refresh, setRefresh] = useState(0);
+  const [listStatus, setListStatus] = useState<"loading" | "success" | "error">("loading");
   useEffect(() => {
     let mounted = true;
+    setListStatus("loading");
     auditParameterApiService.getAll()
       .then((items) => {
         if (!mounted) return;
         setApiItems(items);
         setUsesBackend(true);
+        setListStatus("success");
       })
       .catch(() => {
         if (!mounted) return;
         setApiItems(null);
         setUsesBackend(false);
+        setListStatus("error");
       });
     return () => {
       mounted = false;
@@ -116,10 +124,17 @@ export function AuditParametersPage() {
   });
   if (roleLevel(user!.role) !== 1) return <Navigate to="/configuracion" />;
   return <>
-    <div className="page-header"><div><p className="eyebrow">CONFIGURACION</p><h1>Parametros de auditoria</h1><p>Reglas de trazabilidad, notificacion y retencion para todos los modulos conectados.</p></div><button className="button primary" onClick={() => setEditing(emptyParameter(nextAuditCode(all)))}><Plus size={17} /> Crear parametro</button></div>
+    <PageHeader eyebrow="CONFIGURACION" title="Parametros de auditoria" description="Reglas de trazabilidad, notificacion y retencion para todos los modulos conectados." action={<Button variant="primary" icon={Plus} onClick={() => setEditing(emptyParameter(nextAuditCode(all)))}>Crear parametro</Button>} />
     {notice && <div className="toast">{notice}</div>}
     <div className="stat-grid novelty-type-summary">{summary.map(([label, value]) => <div className="stat-card" key={label}><div><small>{label}</small><strong>{value}</strong><span>Auditoria</span></div></div>)}</div>
-    <section className="panel"><div className="panel-head"><div><h3>Listado de parametros</h3><p>{items.length} resultados segun filtros aplicados.</p></div></div><div className="panel-body"><div className="filters catalog-filters"><label className="search-field"><input placeholder="Buscar por codigo, nombre o modulo" value={filters.search} onChange={(event) => setFilters({ ...filters, search: event.target.value })} /></label><label>Modulo<select value={filters.scope} onChange={(event) => setFilters({ ...filters, scope: event.target.value })}><option value="">Todos</option>{options.scopes.map((scope) => <option key={scope}>{scope}</option>)}</select></label><label>Severidad<select value={filters.severity} onChange={(event) => setFilters({ ...filters, severity: event.target.value })}><option value="">Todas</option>{options.severities.map((severity) => <option key={severity}>{severity}</option>)}</select></label><label>Motivo<select value={filters.requiresReason} onChange={(event) => setFilters({ ...filters, requiresReason: event.target.value })}><option value="">Todos</option><option value="true">Requiere</option><option value="false">No requiere</option></select></label><label>Estado<select value={filters.status} onChange={(event) => setFilters({ ...filters, status: event.target.value })}><option value="">Todos</option>{options.statuses.map((status) => <option key={status}>{status}</option>)}</select></label></div><TableShell minWidth={1040}><table><thead><tr><th>Codigo</th><th>Parametro</th><th>Modulo</th><th>Eventos</th><th>Retencion</th><th>Estado</th><th>Accion</th></tr></thead><tbody>{items.map((item) => <tr key={item.id}><td><b>{item.code}</b></td><td><OverflowCell value={item.name} /><span className="table-sub">{item.description}</span></td><td><OverflowCell value={`${item.scope} · ${item.severity}`} /></td><td><OverflowCell value={[item.trackCreate && "Alta", item.trackUpdate && "Edicion", item.trackApproval && "Aprobacion", item.trackExport && "Exportacion"].filter(Boolean).join(", ")} /></td><td>{item.retention.amount} {item.retention.unit}</td><td><span className={item.status === "ACTIVO" ? "badge success" : "badge neutral"}>{item.status}</span></td><td><button className="table-link table-icon-action" title="Editar" aria-label="Editar" onClick={() => setEditing(item)}><Pencil size={14}/><span>Editar</span></button></td></tr>)}</tbody></table></TableShell></div></section>
-    {editing && <section className="panel"><div className="panel-head"><div><h3>{editing.name || "Nuevo parametro"}</h3><p>Eventos auditados, retencion, motivo obligatorio y notificaciones.</p></div><div className="hero-actions"><button className="button subtle" onClick={() => setEditing(null)}>Cerrar</button><button className="button primary" onClick={save} disabled={isSaving}>{isSaving ? "Guardando..." : "Guardar parametro"}</button></div></div><div className="panel-body"><ParameterEditor item={editing} setItem={setEditing} /></div></section>}
+    <Section title="Listado de parametros" subtitle={`${items.length} resultados segun filtros aplicados.`}>
+      <div className="filters catalog-filters"><label className="search-field"><input placeholder="Buscar por codigo, nombre o modulo" value={filters.search} onChange={(event) => setFilters({ ...filters, search: event.target.value })} /></label><label>Modulo<select value={filters.scope} onChange={(event) => setFilters({ ...filters, scope: event.target.value })}><option value="">Todos</option>{options.scopes.map((scope) => <option key={scope}>{scope}</option>)}</select></label><label>Severidad<select value={filters.severity} onChange={(event) => setFilters({ ...filters, severity: event.target.value })}><option value="">Todas</option>{options.severities.map((severity) => <option key={severity}>{severity}</option>)}</select></label><label>Motivo<select value={filters.requiresReason} onChange={(event) => setFilters({ ...filters, requiresReason: event.target.value })}><option value="">Todos</option><option value="true">Requiere</option><option value="false">No requiere</option></select></label><label>Estado<select value={filters.status} onChange={(event) => setFilters({ ...filters, status: event.target.value })}><option value="">Todos</option>{options.statuses.map((status) => <option key={status}>{status}</option>)}</select></label></div>
+      <DataTable status={listStatus === "loading" ? "loading" : listStatus === "error" ? "error" : items.length === 0 ? "empty" : "ready"} minWidth={1040} emptyText="No hay parametros de auditoria con los filtros aplicados." errorMessage="No se pudieron cargar los parametros de auditoria." onRetry={() => setRefresh((value) => value + 1)}>
+        <table><thead><tr><th>Codigo</th><th>Parametro</th><th>Modulo</th><th>Eventos</th><th>Retencion</th><th>Estado</th><th>Accion</th></tr></thead><tbody>{items.map((item) => <tr key={item.id}><td><b>{item.code}</b></td><td><OverflowCell value={item.name} /><span className="table-sub">{item.description}</span></td><td><OverflowCell value={`${item.scope} · ${item.severity}`} /></td><td><OverflowCell value={[item.trackCreate && "Alta", item.trackUpdate && "Edicion", item.trackApproval && "Aprobacion", item.trackExport && "Exportacion"].filter(Boolean).join(", ")} /></td><td>{item.retention.amount} {item.retention.unit}</td><td><Badge tone={item.status === "ACTIVO" ? "success" : "neutral"}>{item.status}</Badge></td><td><button className="table-link table-icon-action" title="Editar" aria-label="Editar" onClick={() => setEditing(item)}><Pencil size={14}/><span>Editar</span></button></td></tr>)}</tbody></table>
+      </DataTable>
+    </Section>
+    {editing && <Section title={editing.name || "Nuevo parametro"} subtitle="Eventos auditados, retencion, motivo obligatorio y notificaciones." action={<div className="hero-actions"><Button variant="subtle" onClick={() => setEditing(null)}>Cerrar</Button><Button variant="primary" onClick={save} disabled={isSaving}>{isSaving ? "Guardando..." : "Guardar parametro"}</Button></div>}>
+      <ParameterEditor item={editing} setItem={setEditing} />
+    </Section>}
   </>;
 }

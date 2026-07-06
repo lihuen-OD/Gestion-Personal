@@ -2,7 +2,11 @@ import { Pencil, Plus } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Navigate } from "react-router-dom";
 import { OverflowCell } from "../components/ui/OverflowCell";
-import { TableShell } from "../components/ui/TableShell";
+import { DataTable } from "../components/ui/DataTable";
+import { PageHeader } from "../components/ui/PageHeader";
+import { Section } from "../components/ui/Section";
+import { Button } from "../components/ui/Button";
+import { Badge } from "../components/ui/Badge";
 import { useAuth } from "../context/AuthContext";
 import { hourConceptApiService } from "../services/api/hourConceptApiService";
 import type { Role } from "../types";
@@ -105,10 +109,12 @@ export function HourConceptsPage() {
   const [refresh, setRefresh] = useState(0);
   const [apiItems, setApiItems] = useState<HourConcept[] | null>(null);
   const [isLoadingApi, setIsLoadingApi] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
 
   useEffect(() => {
     let alive = true;
     setIsLoadingApi(true);
+    setLoadFailed(false);
     hourConceptApiService.getAll()
       .then((items) => {
         if (!alive) return;
@@ -117,7 +123,7 @@ export function HourConceptsPage() {
       .catch(() => {
         if (!alive) return;
         setApiItems([]);
-        setIsLoadingApi(false);
+        setLoadFailed(true);
       })
       .finally(() => {
         if (alive) setIsLoadingApi(false);
@@ -159,16 +165,12 @@ export function HourConceptsPage() {
 
   return (
     <>
-      <div className="page-header">
-        <div>
-          <p className="eyebrow">CONFIGURACION</p>
-          <h1>Horas especiales</h1>
-          <p>Catalogo de horas trabajadas clasificadas. Sereno, guardia, manejo de colectivo, nocturna, feriados y extras se cargan aca, no como novedades.</p>
-        </div>
-        <button className="button primary" onClick={() => setEditing(emptyConcept(hourConceptApiService.getNextCode(all)))}>
-          <Plus size={17} /> Crear hora especial
-        </button>
-      </div>
+      <PageHeader
+        eyebrow="CONFIGURACION"
+        title="Horas especiales"
+        description="Catalogo de horas trabajadas clasificadas. Sereno, guardia, manejo de colectivo, nocturna, feriados y extras se cargan aca, no como novedades."
+        action={<Button variant="primary" icon={Plus} onClick={() => setEditing(emptyConcept(hourConceptApiService.getNextCode(all)))}>Crear hora especial</Button>}
+      />
 
       {notice && <div className="toast">{notice}</div>}
 
@@ -180,54 +182,46 @@ export function HourConceptsPage() {
         ))}
       </div>
 
-      <section className="panel">
-        <div className="panel-head">
-          <div>
-            <h3>Listado de horas especiales</h3>
-            <p>{isLoadingApi ? "Cargando catalogo desde backend..." : `${items.length} resultados segun filtros aplicados.`}</p>
-          </div>
+      <Section title="Listado de horas especiales" subtitle={isLoadingApi ? "Cargando catalogo desde backend..." : `${items.length} resultados segun filtros aplicados.`}>
+        <div className="filters catalog-filters">
+          <label className="search-field">
+            <input placeholder="Buscar por codigo, nombre o tipo" value={filters.search} onChange={(event) => setFilters({ ...filters, search: event.target.value })} />
+          </label>
+          <label>Tipo<select value={filters.kind} onChange={(event) => setFilters({ ...filters, kind: event.target.value })}><option value="">Todos</option>{options.kinds.map((kind) => <option key={kind}>{kind}</option>)}</select></label>
+          <label>Estado<select value={filters.status} onChange={(event) => setFilters({ ...filters, status: event.target.value })}><option value="">Todos</option>{options.statuses.map((status) => <option key={status}>{status}</option>)}</select></label>
         </div>
-        <div className="panel-body">
-          <div className="filters catalog-filters">
-            <label className="search-field">
-              <input placeholder="Buscar por codigo, nombre o tipo" value={filters.search} onChange={(event) => setFilters({ ...filters, search: event.target.value })} />
-            </label>
-            <label>Tipo<select value={filters.kind} onChange={(event) => setFilters({ ...filters, kind: event.target.value })}><option value="">Todos</option>{options.kinds.map((kind) => <option key={kind}>{kind}</option>)}</select></label>
-            <label>Estado<select value={filters.status} onChange={(event) => setFilters({ ...filters, status: event.target.value })}><option value="">Todos</option>{options.statuses.map((status) => <option key={status}>{status}</option>)}</select></label>
-          </div>
-          <TableShell minWidth={900}>
-            <table>
-              <thead><tr><th>Codigo</th><th>Hora especial</th><th>Tipo</th><th>Estado</th><th>Accion</th></tr></thead>
-              <tbody>
-                {items.map((item) => (
-                  <tr key={item.id}>
-                    <td><b>{item.code}</b></td>
-                    <td><OverflowCell value={item.name} /><span className="table-sub">{item.description}</span></td>
-                    <td>{item.kind}</td>
-                    <td><span className={item.status === "ACTIVO" ? "badge success" : "badge neutral"}>{item.status}</span></td>
-                    <td><button className="table-link table-icon-action" title="Editar" aria-label="Editar" onClick={() => setEditing(item)}><Pencil size={14}/><span>Editar</span></button></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </TableShell>
-        </div>
-      </section>
+        <DataTable
+          status={isLoadingApi ? "loading" : loadFailed ? "error" : items.length === 0 ? "empty" : "ready"}
+          minWidth={900}
+          emptyText="No hay horas especiales con los filtros aplicados."
+          errorMessage="No se pudo cargar el catalogo de horas especiales."
+          onRetry={() => setRefresh((value) => value + 1)}
+        >
+          <table>
+            <thead><tr><th>Codigo</th><th>Hora especial</th><th>Tipo</th><th>Estado</th><th>Accion</th></tr></thead>
+            <tbody>
+              {items.map((item) => (
+                <tr key={item.id}>
+                  <td><b>{item.code}</b></td>
+                  <td><OverflowCell value={item.name} /><span className="table-sub">{item.description}</span></td>
+                  <td>{item.kind}</td>
+                  <td><Badge tone={item.status === "ACTIVO" ? "success" : "neutral"}>{item.status}</Badge></td>
+                  <td><button className="table-link table-icon-action" title="Editar" aria-label="Editar" onClick={() => setEditing(item)}><Pencil size={14}/><span>Editar</span></button></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </DataTable>
+      </Section>
 
       {editing && (
-        <section className="panel">
-          <div className="panel-head">
-            <div>
-              <h3>{editing.name || "Nueva hora especial"}</h3>
-              <p>Definicion operativa interna para carga horaria. No se exporta a Finnegans.</p>
-            </div>
-            <div className="hero-actions">
-              <button className="button subtle" onClick={() => setEditing(null)}>Cerrar</button>
-              <button className="button primary" onClick={save} disabled={isSaving}>{isSaving ? "Guardando..." : "Guardar hora especial"}</button>
-            </div>
-          </div>
-          <div className="panel-body"><ConceptEditor item={editing} setItem={setEditing} /></div>
-        </section>
+        <Section
+          title={editing.name || "Nueva hora especial"}
+          subtitle="Definicion operativa interna para carga horaria. No se exporta a Finnegans."
+          action={<div className="hero-actions"><Button variant="subtle" onClick={() => setEditing(null)}>Cerrar</Button><Button variant="primary" onClick={save} disabled={isSaving}>{isSaving ? "Guardando..." : "Guardar hora especial"}</Button></div>}
+        >
+          <ConceptEditor item={editing} setItem={setEditing} />
+        </Section>
       )}
     </>
   );

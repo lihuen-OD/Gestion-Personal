@@ -2,7 +2,11 @@ import { Pencil, Plus } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Navigate } from "react-router-dom";
 import { OverflowCell } from "../components/ui/OverflowCell";
-import { TableShell } from "../components/ui/TableShell";
+import { DataTable } from "../components/ui/DataTable";
+import { PageHeader } from "../components/ui/PageHeader";
+import { Section } from "../components/ui/Section";
+import { Button } from "../components/ui/Button";
+import { Badge } from "../components/ui/Badge";
 import { useAuth } from "../context/AuthContext";
 import { documentCategoryApiService } from "../services/api/documentCategoryApiService";
 import type { Role } from "../types";
@@ -76,14 +80,20 @@ export function DocumentCategoriesPage() {
   const [notice, setNotice] = useState("");
   const [refresh, setRefresh] = useState(0);
   const [all, setAll] = useState<DocumentCategory[]>([]);
+  const [listStatus, setListStatus] = useState<"loading" | "success" | "error">("loading");
   useEffect(() => {
     let mounted = true;
+    setListStatus("loading");
     documentCategoryApiService
       .getAll()
       .then((items) => {
-        if (mounted) setAll(items);
+        if (!mounted) return;
+        setAll(items);
+        setListStatus("success");
       })
-      .catch(() => {});
+      .catch(() => {
+        if (mounted) setListStatus("error");
+      });
     return () => {
       mounted = false;
     };
@@ -109,10 +119,17 @@ export function DocumentCategoriesPage() {
   });
   if (roleLevel(user!.role) !== 1) return <Navigate to="/configuracion" />;
   return <>
-    <div className="page-header"><div><p className="eyebrow">CONFIGURACION</p><h1>Categorias documentales</h1><p>Catalogo documental conectado a legajos, novedades, liquidacion, alertas e historial.</p></div><button className="button primary" onClick={() => setEditing(emptyCategory(documentCategoryApiService.getNextCode(all)))}><Plus size={17} /> Crear categoria</button></div>
+    <PageHeader eyebrow="CONFIGURACION" title="Categorias documentales" description="Catalogo documental conectado a legajos, novedades, liquidacion, alertas e historial." action={<Button variant="primary" icon={Plus} onClick={() => setEditing(emptyCategory(documentCategoryApiService.getNextCode(all)))}>Crear categoria</Button>} />
     {notice && <div className="toast">{notice}</div>}
     <div className="stat-grid novelty-type-summary">{summary.map(([label, value]) => <div className="stat-card" key={label}><div><small>{label}</small><strong>{value}</strong><span>Documentacion</span></div></div>)}</div>
-    <section className="panel"><div className="panel-head"><div><h3>Listado de categorias</h3><p>{items.length} resultados segun filtros aplicados.</p></div></div><div className="panel-body"><div className="filters catalog-filters"><label className="search-field"><input placeholder="Buscar por codigo, nombre o vinculo externo" value={filters.search} onChange={(event) => setFilters({ ...filters, search: event.target.value })} /></label><label>Tipo<select value={filters.kind} onChange={(event) => setFilters({ ...filters, kind: event.target.value })}><option value="">Todos</option>{options.kinds.map((kind) => <option key={kind}>{kind}</option>)}</select></label><label>Modulo<select value={filters.scope} onChange={(event) => setFilters({ ...filters, scope: event.target.value })}><option value="">Todos</option>{options.scopes.map((scope) => <option key={scope}>{scope}</option>)}</select></label><label>Obligatoria<select value={filters.mandatory} onChange={(event) => setFilters({ ...filters, mandatory: event.target.value })}><option value="">Todas</option><option value="true">Si</option><option value="false">No</option></select></label><label>Estado<select value={filters.status} onChange={(event) => setFilters({ ...filters, status: event.target.value })}><option value="">Todos</option>{options.statuses.map((status) => <option key={status}>{status}</option>)}</select></label></div><TableShell minWidth={1080}><table><thead><tr><th>Codigo</th><th>Categoria</th><th>Tipo</th><th>Modulos</th><th>Reglas</th><th>Estado</th><th>Accion</th></tr></thead><tbody>{items.map((item) => <tr key={item.id}><td><b>{item.code}</b></td><td><OverflowCell value={item.name} /><span className="table-sub">{item.description}</span></td><td>{item.kind}</td><td><OverflowCell value={item.scopes.join(", ")} /></td><td><OverflowCell value={`${item.rules.mandatory ? "Obligatoria" : "Opcional"} · ${item.rules.expires ? `Vence / alerta ${item.rules.alertBeforeDays}d` : "Sin vencimiento"}`} /></td><td><span className={item.status === "ACTIVO" ? "badge success" : "badge neutral"}>{item.status}</span></td><td><button className="table-link table-icon-action" title="Editar" aria-label="Editar" onClick={() => setEditing(item)}><Pencil size={14}/><span>Editar</span></button></td></tr>)}</tbody></table></TableShell></div></section>
-    {editing && <section className="panel"><div className="panel-head"><div><h3>{editing.name || "Nueva categoria"}</h3><p>Definicion documental, reglas de vencimiento, permisos y vinculos externos.</p></div><div className="hero-actions"><button className="button subtle" onClick={() => setEditing(null)}>Cerrar</button><button className="button primary" onClick={save} disabled={isSaving}>{isSaving ? "Guardando..." : "Guardar categoria"}</button></div></div><div className="panel-body"><CategoryEditor item={editing} setItem={setEditing} /></div></section>}
+    <Section title="Listado de categorias" subtitle={`${items.length} resultados segun filtros aplicados.`}>
+      <div className="filters catalog-filters"><label className="search-field"><input placeholder="Buscar por codigo, nombre o vinculo externo" value={filters.search} onChange={(event) => setFilters({ ...filters, search: event.target.value })} /></label><label>Tipo<select value={filters.kind} onChange={(event) => setFilters({ ...filters, kind: event.target.value })}><option value="">Todos</option>{options.kinds.map((kind) => <option key={kind}>{kind}</option>)}</select></label><label>Modulo<select value={filters.scope} onChange={(event) => setFilters({ ...filters, scope: event.target.value })}><option value="">Todos</option>{options.scopes.map((scope) => <option key={scope}>{scope}</option>)}</select></label><label>Obligatoria<select value={filters.mandatory} onChange={(event) => setFilters({ ...filters, mandatory: event.target.value })}><option value="">Todas</option><option value="true">Si</option><option value="false">No</option></select></label><label>Estado<select value={filters.status} onChange={(event) => setFilters({ ...filters, status: event.target.value })}><option value="">Todos</option>{options.statuses.map((status) => <option key={status}>{status}</option>)}</select></label></div>
+      <DataTable status={listStatus === "loading" ? "loading" : listStatus === "error" ? "error" : items.length === 0 ? "empty" : "ready"} minWidth={1080} emptyText="No hay categorias documentales con los filtros aplicados." errorMessage="No se pudieron cargar las categorias documentales." onRetry={() => setRefresh((value) => value + 1)}>
+        <table><thead><tr><th>Codigo</th><th>Categoria</th><th>Tipo</th><th>Modulos</th><th>Reglas</th><th>Estado</th><th>Accion</th></tr></thead><tbody>{items.map((item) => <tr key={item.id}><td><b>{item.code}</b></td><td><OverflowCell value={item.name} /><span className="table-sub">{item.description}</span></td><td>{item.kind}</td><td><OverflowCell value={item.scopes.join(", ")} /></td><td><OverflowCell value={`${item.rules.mandatory ? "Obligatoria" : "Opcional"} · ${item.rules.expires ? `Vence / alerta ${item.rules.alertBeforeDays}d` : "Sin vencimiento"}`} /></td><td><Badge tone={item.status === "ACTIVO" ? "success" : "neutral"}>{item.status}</Badge></td><td><button className="table-link table-icon-action" title="Editar" aria-label="Editar" onClick={() => setEditing(item)}><Pencil size={14}/><span>Editar</span></button></td></tr>)}</tbody></table>
+      </DataTable>
+    </Section>
+    {editing && <Section title={editing.name || "Nueva categoria"} subtitle="Definicion documental, reglas de vencimiento, permisos y vinculos externos." action={<div className="hero-actions"><Button variant="subtle" onClick={() => setEditing(null)}>Cerrar</Button><Button variant="primary" onClick={save} disabled={isSaving}>{isSaving ? "Guardando..." : "Guardar categoria"}</Button></div>}>
+      <CategoryEditor item={editing} setItem={setEditing} />
+    </Section>}
   </>;
 }

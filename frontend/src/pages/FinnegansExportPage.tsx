@@ -2,7 +2,11 @@ import { useEffect, useState } from "react";
 import { Download, FileBarChart, Search } from "lucide-react";
 import * as XLSX from "xlsx";
 import { OverflowCell } from "../components/ui/OverflowCell";
-import { TableShell } from "../components/ui/TableShell";
+import { DataTable } from "../components/ui/DataTable";
+import { PageHeader } from "../components/ui/PageHeader";
+import { Section } from "../components/ui/Section";
+import { Button } from "../components/ui/Button";
+import { Badge } from "../components/ui/Badge";
 import { finnegansExportApiService, type FinnegansExportRow } from "../services/api/finnegansExportApiService";
 import { currentMonthPeriod } from "../utils/period";
 
@@ -57,33 +61,30 @@ export function FinnegansExportPage() {
   const [period, setPeriod] = useState(currentMonthPeriod());
   const [search, setSearch] = useState("");
   const [rows, setRows] = useState<FinnegansExportRow[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [loadError, setLoadError] = useState("");
+  const [status, setStatus] = useState<"loading" | "success" | "error">("loading");
+  const [retry, setRetry] = useState(0);
 
   useEffect(() => {
     let mounted = true;
-    setLoading(true);
-    setLoadError("");
+    setStatus("loading");
 
     finnegansExportApiService
       .getNoveltyRows(period)
       .then((items) => {
         if (!mounted) return;
         setRows(items);
+        setStatus("success");
       })
       .catch(() => {
         if (!mounted) return;
         setRows([]);
-        setLoadError("No se pudo cargar la exportacion desde backend. Verifica que la API este levantada.");
-      })
-      .finally(() => {
-        if (mounted) setLoading(false);
+        setStatus("error");
       });
 
     return () => {
       mounted = false;
     };
-  }, [period]);
+  }, [period, retry]);
 
   const normalizedSearch = search.toLowerCase();
   const filtered = rows.filter((row) =>
@@ -96,24 +97,12 @@ export function FinnegansExportPage() {
 
   return (
     <>
-      <div className="page-header">
-        <div>
-          <p className="eyebrow">FINNEGANS</p>
-          <h1>Exportacion Finnegans</h1>
-          <p>
-            Vista mensual de novedades exportables. La app no calcula sueldos ni
-            exporta horas especiales.
-          </p>
-        </div>
-        <button
-          className="button subtle"
-          type="button"
-          disabled={!canExport}
-          onClick={() => exportFinnegansExcel(filtered, period)}
-        >
-          <Download size={16} /> Exportar Excel Finnegans
-        </button>
-      </div>
+      <PageHeader
+        eyebrow="FINNEGANS"
+        title="Exportacion Finnegans"
+        description="Vista mensual de novedades exportables. La app no calcula sueldos ni exporta horas especiales."
+        action={<Button variant="subtle" icon={Download} disabled={!canExport} onClick={() => exportFinnegansExcel(filtered, period)}>Exportar Excel Finnegans</Button>}
+      />
 
       <div className="stat-grid novelty-type-summary">
         <div className="stat-card">
@@ -146,86 +135,72 @@ export function FinnegansExportPage() {
         </div>
       </div>
 
-      <section className="panel">
-        <div className="panel-head">
-          <div>
-            <h3>Registros preparados para importar</h3>
-            <p>
-              El archivo respeta el formato Finnegans. Centro de costo se incluye
-              como columna vacia.
-            </p>
-          </div>
-          <FileBarChart size={22} />
+      <Section title="Registros preparados para importar" subtitle="El archivo respeta el formato Finnegans. Centro de costo se incluye como columna vacia." action={<FileBarChart size={22} />}>
+        <div className="filters catalog-filters">
+          <label>
+            Periodo
+            <input
+              type="month"
+              value={period}
+              onChange={(event) => setPeriod(event.target.value)}
+            />
+          </label>
+          <label className="search-field">
+            <Search size={17} />
+            <input
+              placeholder="Buscar por legajo, persona, codigo o detalle"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+            />
+          </label>
         </div>
-        <div className="panel-body">
-          <div className="filters catalog-filters">
-            <label>
-              Periodo
-              <input
-                type="month"
-                value={period}
-                onChange={(event) => setPeriod(event.target.value)}
-              />
-            </label>
-            <label className="search-field">
-              <Search size={17} />
-              <input
-                placeholder="Buscar por legajo, persona, codigo o detalle"
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-              />
-            </label>
-          </div>
 
-          {loadError ? <p className="form-error">{loadError}</p> : null}
-
-          {loading ? (
-            <div className="empty">Cargando registros exportables...</div>
-          ) : filtered.length ? (
-            <TableShell minWidth={1120}>
-              <table>
-                <thead>
-                  <tr>
-                    <th>Origen</th>
-                    <th>Legajo</th>
-                    <th>Persona</th>
-                    <th>Novedad</th>
-                    <th>Centro de costo</th>
-                    <th>Valor 1</th>
-                    <th>Fecha Aplicacion</th>
-                    <th>Fecha desde</th>
-                    <th>Fecha hasta</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filtered.map((row) => (
-                    <tr key={row.id}>
-                      <td>
-                        <span className="badge neutral">{row.source}</span>
-                        <span className="table-sub">{row.detail}</span>
-                      </td>
-                      <td>
-                        <b>{row.legajo}</b>
-                      </td>
-                      <td>
-                        <OverflowCell value={row.employeeName} />
-                      </td>
-                      <td>{row.novedad}</td>
-                      <td>{row.centroCosto || "-"}</td>
-                      <td>{row.valor1}</td>
-                      <td>{row.fechaAplicacion}</td>
-                      <td>{row.fechaDesde || "-"}</td>
-                      <td>{row.fechaHasta || "-"}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </TableShell>
-          ) : (
-            <div className="empty">No hay registros para exportar en este periodo.</div>
-          )}
-        </div>
-      </section>
+        <DataTable
+          status={status === "loading" ? "loading" : status === "error" ? "error" : filtered.length === 0 ? "empty" : "ready"}
+          minWidth={1120}
+          emptyText="No hay registros para exportar en este periodo."
+          errorMessage="No se pudo cargar la exportacion desde backend. Verifica que la API este levantada."
+          onRetry={() => setRetry((value) => value + 1)}
+        >
+          <table>
+            <thead>
+              <tr>
+                <th>Origen</th>
+                <th>Legajo</th>
+                <th>Persona</th>
+                <th>Novedad</th>
+                <th>Centro de costo</th>
+                <th>Valor 1</th>
+                <th>Fecha Aplicacion</th>
+                <th>Fecha desde</th>
+                <th>Fecha hasta</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((row) => (
+                <tr key={row.id}>
+                  <td>
+                    <Badge tone="neutral">{row.source}</Badge>
+                    <span className="table-sub">{row.detail}</span>
+                  </td>
+                  <td>
+                    <b>{row.legajo}</b>
+                  </td>
+                  <td>
+                    <OverflowCell value={row.employeeName} />
+                  </td>
+                  <td>{row.novedad}</td>
+                  <td>{row.centroCosto || "-"}</td>
+                  <td>{row.valor1}</td>
+                  <td>{row.fechaAplicacion}</td>
+                  <td>{row.fechaDesde || "-"}</td>
+                  <td>{row.fechaHasta || "-"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </DataTable>
+      </Section>
     </>
   );
 }

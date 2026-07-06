@@ -4,6 +4,8 @@ import { Link, Navigate } from "react-router-dom";
 import { PuestoFilters } from "../components/puestos/PuestoFilters";
 import { PuestoSummaryCards } from "../components/puestos/PuestoSummaryCards";
 import { PuestoTable } from "../components/puestos/PuestoTable";
+import { PageHeader } from "../components/ui/PageHeader";
+import { Section } from "../components/ui/Section";
 import { useAuth } from "../context/AuthContext";
 import { positionApiService } from "../services/api/positionApiService";
 import type { Position, PositionFilters, PositionSummary } from "../types/position.types";
@@ -107,9 +109,19 @@ export function PuestosPage() {
 
   return (
     <>
-      <div className="page-header"><div><p className="eyebrow">PUESTOS</p><h1>Puestos</h1><p>Administracion de descripciones de puesto y estructura funcional.</p></div>{canEdit && <Link className="button primary" to="/puestos/nuevo"><Plus size={17} /> Crear puesto</Link>}</div>
+      <PageHeader
+        eyebrow="PUESTOS"
+        title="Puestos"
+        description="Administracion de descripciones de puesto y estructura funcional."
+        action={canEdit ? <Link className="button primary" to="/puestos/nuevo"><Plus size={17} /> Crear puesto</Link> : undefined}
+      />
       <PuestoSummaryCards summary={summary(apiItems)} />
-      <section className="panel position-list-panel"><div className="panel-head"><div><h3>Listado de puestos</h3><p>{isLoadingApi ? "Cargando puestos desde backend..." : `${positions.length} resultados segun filtros aplicados.`}</p></div></div><div className="panel-body position-list-body"><PuestoFilters filters={filters} options={options(apiItems)} onChange={setFilters} /><PuestoTable positions={positions} assignedCount={(id) => getAssignedCount(positions.find((position) => position.id === id)!)} canEdit={canEdit} onRemove={remove} onToggleStatus={toggle} /></div></section>
+      <Section className="position-list-panel" title="Listado de puestos" subtitle={isLoadingApi ? "Cargando puestos desde backend..." : `${positions.length} resultados segun filtros aplicados.`}>
+        <div className="position-list-body">
+          <PuestoFilters filters={filters} options={options(apiItems)} onChange={setFilters} />
+          <PuestoTable positions={positions} assignedCount={(id) => getAssignedCount(positions.find((position) => position.id === id)!)} canEdit={canEdit} onRemove={remove} onToggleStatus={toggle} />
+        </div>
+      </Section>
     </>
   );
 }
