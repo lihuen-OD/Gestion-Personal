@@ -8,6 +8,8 @@ import { NoveltyModal } from "../components/novelties/NoveltyModal";
 import { NoveltyTable } from "../components/novelties/NoveltyTable";
 import { PageHeader } from "../components/ui/PageHeader";
 import { Section } from "../components/ui/Section";
+import { Button } from "../components/ui/Button";
+import { Pagination } from "../components/ui/Pagination";
 import { useDebouncedValue } from "../utils/useDebouncedValue";
 
 const pageSize = 25;
@@ -70,9 +72,9 @@ export function NoveltiesPage() {
         title="Novedades"
         description="Registro centralizado de ausencias, licencias y novedades horarias."
         action={
-          <button className="button primary" onClick={openCreate} disabled={loadingEmployees}>
-            <Plus size={16} /> {loadingEmployees ? "Cargando..." : "Nueva novedad"}
-          </button>
+          <Button variant="primary" icon={Plus} onClick={openCreate} disabled={loadingEmployees}>
+            {loadingEmployees ? "Cargando..." : "Nueva novedad"}
+          </Button>
         }
       />
 
@@ -101,15 +103,9 @@ export function NoveltiesPage() {
           currentUser={user!}
           onChanged={() => setRefresh((value) => value + 1)}
         />
-        <div className="form-actions inline-actions">
-          <button className="button subtle" type="button" disabled={page <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))}>
-            Anterior
-          </button>
-          <span className="muted small">Pagina {meta.page} de {Math.max(1, Math.ceil(meta.total / meta.pageSize))}</span>
-          <button className="button subtle" type="button" disabled={!meta.hasMore} onClick={() => setPage((value) => value + 1)}>
-            Siguiente
-          </button>
-        </div>
+        {novelties.length > 0 && (
+          <Pagination page={meta.page} pageSize={meta.pageSize} total={meta.total} hasMore={meta.hasMore} onPageChange={setPage} itemLabel="novedades" />
+        )}
       </Section>
 
       {open ? (

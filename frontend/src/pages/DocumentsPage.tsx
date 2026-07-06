@@ -2,15 +2,17 @@ import { useEffect, useState } from "react";
 import { Download, Plus, Search } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { DocumentUploadModal } from "../components/documents/DocumentUploadModal";
-import { EmptyState } from "../components/ui/EmptyState";
 import { OverflowCell } from "../components/ui/OverflowCell";
 import { PageHeader } from "../components/ui/PageHeader";
 import { Section } from "../components/ui/Section";
-import { TableShell } from "../components/ui/TableShell";
+import { DataTable } from "../components/ui/DataTable";
+import { Button } from "../components/ui/Button";
+import { Badge } from "../components/ui/Badge";
+import { Pagination } from "../components/ui/Pagination";
 import { documentApiService } from "../services/api/documentApiService";
 import { employeeApiService } from "../services/api/employeeApiService";
 import type { DocumentMock, Employee } from "../types";
-import { statusClass } from "../utils/status";
+import { statusTone } from "../utils/status";
 import { useDebouncedValue } from "../utils/useDebouncedValue";
 
 const pageSize = 25;
@@ -27,20 +29,24 @@ export function DocumentsPage() {
   const [meta, setMeta] = useState({ total: 0, page: 1, pageSize, hasMore: false });
   const [loadingEmployees, setLoadingEmployees] = useState(false);
   const [error, setError] = useState("");
+  const [listStatus, setListStatus] = useState<"loading" | "success" | "error">("loading");
 
   useEffect(() => {
     let mounted = true;
+    setListStatus("loading");
     documentApiService
       .list({ page, take: pageSize, search: debouncedSearch })
       .then((result) => {
         if (!mounted) return;
         setDocs(result.items);
         setMeta(result.meta);
+        setListStatus("success");
       })
       .catch(() => {
         if (!mounted) return;
         setDocs([]);
         setMeta({ total: 0, page, pageSize, hasMore: false });
+        setListStatus("error");
       });
     return () => {
       mounted = false;
@@ -79,9 +85,9 @@ export function DocumentsPage() {
         title="Documentacion"
         description="Seguimiento de documentacion laboral, certificados y vencimientos."
         action={
-          <button className="button primary" onClick={openUpload} disabled={loadingEmployees}>
-            <Plus size={16} /> {loadingEmployees ? "Cargando..." : "Agregar documento"}
-          </button>
+          <Button variant="primary" icon={Plus} onClick={openUpload} disabled={loadingEmployees}>
+            {loadingEmployees ? "Cargando..." : "Agregar documento"}
+          </Button>
         }
       />
 
@@ -101,76 +107,72 @@ export function DocumentsPage() {
             />
           </label>
         </div>
-        {docs.length ? (
-          <TableShell minWidth={1200}>
-            <table>
-              <thead>
-                <tr>
-                  <th>Legajo</th>
-                  <th>Empleado</th>
-                  <th>Categoria</th>
-                  <th>Archivo</th>
-                  <th>Fecha carga</th>
-                  <th>Vencimiento</th>
-                  <th>Estado</th>
-                  <th>Observacion</th>
-                  <th>Accion</th>
-                </tr>
-              </thead>
-              <tbody>
-                {docs.map((doc) => {
-                  const employeeLegajo = doc.employeeLegajo || "-";
-                  const employeeName = doc.employeeName || "-";
-                  return (
-                    <tr key={doc.id}>
-                      <td>{employeeLegajo}</td>
-                      <td>
-                        <OverflowCell value={employeeName} />
-                      </td>
-                      <td>
-                        <OverflowCell value={doc.category} />
-                      </td>
-                      <td>
-                        <OverflowCell value={doc.fileName} />
-                      </td>
-                      <td>{doc.uploadedAt}</td>
-                      <td>{doc.expiresAt || "-"}</td>
-                      <td>
-                        <span className={statusClass(doc.status)}>{doc.status}</span>
-                      </td>
-                      <td>
-                        <OverflowCell value={doc.notes || "-"} />
-                      </td>
-                      <td>
-                        <button
-                          className="table-link table-icon-action"
-                          type="button"
-                          title="Abrir archivo"
-                          aria-label="Abrir archivo"
-                          onClick={() => download(doc)}
-                        >
-                          <Download size={14} />
-                          <span>Abrir</span>
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </TableShell>
-        ) : (
-          <EmptyState text="Todavia no hay documentos cargados." />
+        <DataTable
+          status={listStatus === "loading" ? "loading" : listStatus === "error" ? "error" : docs.length === 0 ? "empty" : "ready"}
+          minWidth={1200}
+          emptyText="Todavia no hay documentos cargados."
+          errorMessage="No se pudieron cargar los documentos."
+          onRetry={() => setRefresh((value) => value + 1)}
+        >
+          <table>
+            <thead>
+              <tr>
+                <th>Legajo</th>
+                <th>Empleado</th>
+                <th>Categoria</th>
+                <th>Archivo</th>
+                <th>Fecha carga</th>
+                <th>Vencimiento</th>
+                <th>Estado</th>
+                <th>Observacion</th>
+                <th>Accion</th>
+              </tr>
+            </thead>
+            <tbody>
+              {docs.map((doc) => {
+                const employeeLegajo = doc.employeeLegajo || "-";
+                const employeeName = doc.employeeName || "-";
+                return (
+                  <tr key={doc.id}>
+                    <td>{employeeLegajo}</td>
+                    <td>
+                      <OverflowCell value={employeeName} />
+                    </td>
+                    <td>
+                      <OverflowCell value={doc.category} />
+                    </td>
+                    <td>
+                      <OverflowCell value={doc.fileName} />
+                    </td>
+                    <td>{doc.uploadedAt}</td>
+                    <td>{doc.expiresAt || "-"}</td>
+                    <td>
+                      <Badge tone={statusTone(doc.status)}>{doc.status}</Badge>
+                    </td>
+                    <td>
+                      <OverflowCell value={doc.notes || "-"} />
+                    </td>
+                    <td>
+                      <button
+                        className="table-link table-icon-action"
+                        type="button"
+                        title="Abrir archivo"
+                        aria-label="Abrir archivo"
+                        onClick={() => download(doc)}
+                      >
+                        <Download size={14} />
+                        <span>Abrir</span>
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </DataTable>
+        {listStatus === "success" && docs.length > 0 && (
+          <Pagination page={meta.page} pageSize={meta.pageSize} total={meta.total} hasMore={meta.hasMore} onPageChange={setPage} itemLabel="documentos" />
         )}
-        <div className="form-actions inline-actions">
-          <button className="button subtle" type="button" disabled={page <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))}>
-            Anterior
-          </button>
-          <span className="muted small">Pagina {meta.page} de {Math.max(1, Math.ceil(meta.total / meta.pageSize))}</span>
-          <button className="button subtle" type="button" disabled={!meta.hasMore} onClick={() => setPage((value) => value + 1)}>
-            Siguiente
-          </button>
-        </div>
       </Section>
 
       {open ? (

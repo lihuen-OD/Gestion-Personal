@@ -4,10 +4,13 @@ import { useAuth } from "../context/AuthContext";
 import { dashboardMetricsApiService, type DashboardMetrics } from "../services/api/dashboardMetricsApiService";
 import type { AuditEntry, Employee } from "../types";
 import { OverflowCell } from "../components/ui/OverflowCell";
-import { TableShell } from "../components/ui/TableShell";
 import { PageHeader } from "../components/ui/PageHeader";
 import { Section } from "../components/ui/Section";
 import { StatCard } from "../components/ui/StatCard";
+import { Button } from "../components/ui/Button";
+import { DataTable } from "../components/ui/DataTable";
+import { LoadingState } from "../components/ui/LoadingState";
+import { ErrorState } from "../components/ui/ErrorState";
 import { formatPeriodLabel } from "../utils/period";
 import { roleLevel } from "../utils/roles";
 
@@ -29,10 +32,13 @@ export function DashboardPage() {
   );
   const [metrics, setMetrics] = useState<DashboardMetrics>({ active: 0, inactive: 0, total: 0, absenceRate: "0", absenceDays: 0, turnoverRate: "0", exits: 0, averageAge: "0", averageTenure: "0", transported: 0, loadedHours: 0, loadCoverage: 0, pendingLoads: 0, reviewLoads: 0, expiredDocuments: 0, expiringDocuments: 0, missingResponsible: 0, pendingNovelties: 0, headcountByCompany: [], headcountBySector: [], transportByCity: [], transportRoutes: [], upcomingBirthdays: [], period: "" });
   const [audit, setAudit] = useState<AuditEntry[]>([]);
+  const [status, setStatus] = useState<"loading" | "success" | "error">("loading");
+  const [retry, setRetry] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
     async function load() {
+      setStatus("loading");
       try {
         const [apiMetrics, apiAudit] = await Promise.all([
           dashboardMetricsApiService.getMetrics(level === 2 ? (employee: Employee) => employee.sector === user!.sector : undefined),
@@ -41,16 +47,31 @@ export function DashboardPage() {
         if (cancelled) return;
         setMetrics(apiMetrics);
         setAudit(apiAudit);
+        setStatus("success");
       } catch {
         if (cancelled) return;
+        setStatus("error");
       }
     }
     load();
     return () => {
       cancelled = true;
     };
-  }, [fallbackScope, level, user]);
-  return <><PageHeader eyebrow={level === 2 ? "PANEL DE GESTIÓN" : "DASHBOARD RRHH"} title={`Buen día, ${user!.name.split(" ")[0]}`} description={level === 2 ? `Indicadores calculados para tu área: ${user!.sector}.` : "Indicadores integrales de personas, novedades y control horario calculados desde los datos demo."} action={<button className="button subtle"><FileBarChart size={17} /> Exportar resumen</button>} />
+  }, [fallbackScope, level, user, retry]);
+
+  if (status === "error") {
+    return <><PageHeader eyebrow={level === 2 ? "PANEL DE GESTIÓN" : "DASHBOARD RRHH"} title={`Buen día, ${user!.name.split(" ")[0]}`} description="No se pudieron cargar los indicadores." />
+      <Section title="Indicadores"><ErrorState onRetry={() => setRetry((value) => value + 1)} /></Section>
+    </>;
+  }
+
+  if (status === "loading") {
+    return <><PageHeader eyebrow={level === 2 ? "PANEL DE GESTIÓN" : "DASHBOARD RRHH"} title={`Buen día, ${user!.name.split(" ")[0]}`} description="Cargando indicadores..." />
+      <div className="stat-grid kpi-grid"><LoadingState variant="table" rows={2} columns={4} /></div>
+    </>;
+  }
+
+  return <><PageHeader eyebrow={level === 2 ? "PANEL DE GESTIÓN" : "DASHBOARD RRHH"} title={`Buen día, ${user!.name.split(" ")[0]}`} description={level === 2 ? `Indicadores calculados para tu área: ${user!.sector}.` : "Indicadores integrales de personas, novedades y control horario calculados desde los datos demo."} action={<Button variant="subtle" icon={FileBarChart}>Exportar resumen</Button>} />
     <div className="stat-grid kpi-grid">
       <StatCard label={level === 2 ? "Dotación de mi área" : "Dotación activa"} value={metrics.active} detail={`${metrics.inactive} inactivos · ${metrics.total} legajos`} icon={Users} />
       <StatCard label="Ausentismo mensual" value={`${metrics.absenceRate}%`} detail={`${metrics.absenceDays} días registrados`} icon={Activity} tone="red" />
@@ -67,11 +88,19 @@ export function DashboardPage() {
     </div>
     <div className="dashboard-grid">
       <Section title="Transporte por localidad" subtitle={`${metrics.transported} personas utilizan transporte de la empresa`}><DashboardBars rows={metrics.transportByCity} /></Section>
-      <Section title="Próximos cumpleaños" subtitle="Cumpleaños durante los próximos 30 días"><TableShell minWidth={720}><table><thead><tr><th>Empleado</th><th>Fecha</th><th>Sector</th></tr></thead><tbody>{metrics.upcomingBirthdays.map((employee) => <tr key={employee.id}><td><b>{employee.lastName}, {employee.firstName}</b></td><td>{new Date(`${employee.birthDate}T12:00:00`).toLocaleDateString("es-AR", { day: "2-digit", month: "long" })}</td><td><OverflowCell value={employee.sector} /></td></tr>)}</tbody></table></TableShell></Section>
+      <Section title="Próximos cumpleaños" subtitle="Cumpleaños durante los próximos 30 días">
+        <DataTable status={metrics.upcomingBirthdays.length ? "ready" : "empty"} minWidth={720} emptyText="No hay cumpleaños en los próximos 30 días.">
+          <table><thead><tr><th>Empleado</th><th>Fecha</th><th>Sector</th></tr></thead><tbody>{metrics.upcomingBirthdays.map((employee) => <tr key={employee.id}><td><b>{employee.lastName}, {employee.firstName}</b></td><td>{new Date(`${employee.birthDate}T12:00:00`).toLocaleDateString("es-AR", { day: "2-digit", month: "long" })}</td><td><OverflowCell value={employee.sector} /></td></tr>)}</tbody></table>
+        </DataTable>
+      </Section>
     </div>
     <div className="dashboard-grid">
       <Section title="Control de carga horaria" subtitle={`Periodo ${metrics.period ? formatPeriodLabel(metrics.period) : "actual"}`}><div className="compact-metrics"><div><b>{metrics.loadCoverage}%</b><span>Cobertura</span></div><div><b>{metrics.pendingLoads}</b><span>Pendientes</span></div><div><b>{metrics.reviewLoads}</b><span>En revisión</span></div><div><b>{metrics.loadedHours} h</b><span>Cargadas</span></div></div></Section>
     </div>
-    {level === 1 && <Section title="Actividad reciente" subtitle="Últimos movimientos registrados en la plataforma"><TableShell minWidth={860}><table><thead><tr><th>Fecha</th><th>Usuario</th><th>Acción</th><th>Entidad</th><th>Detalle</th></tr></thead><tbody>{audit.slice(0, 5).map((item) => <tr key={item.id}><td>{item.date} · {item.time}</td><td>{item.user}</td><td>{item.action}</td><td><OverflowCell value={item.entity} /></td><td><OverflowCell value={item.next} /></td></tr>)}</tbody></table></TableShell></Section>}
+    {level === 1 && <Section title="Actividad reciente" subtitle="Últimos movimientos registrados en la plataforma">
+      <DataTable status={audit.length ? "ready" : "empty"} minWidth={860} emptyText="Todavía no hay actividad registrada.">
+        <table><thead><tr><th>Fecha</th><th>Usuario</th><th>Acción</th><th>Entidad</th><th>Detalle</th></tr></thead><tbody>{audit.slice(0, 5).map((item) => <tr key={item.id}><td>{item.date} · {item.time}</td><td>{item.user}</td><td>{item.action}</td><td><OverflowCell value={item.entity} /></td><td><OverflowCell value={item.next} /></td></tr>)}</tbody></table>
+      </DataTable>
+    </Section>}
   </>;
 }

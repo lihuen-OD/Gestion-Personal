@@ -6,11 +6,13 @@ import { userApiService } from "../services/api/userApiService";
 import { employeeApiService } from "../services/api/employeeApiService";
 import { PageHeader } from "../components/ui/PageHeader";
 import { Section } from "../components/ui/Section";
-import { TableShell } from "../components/ui/TableShell";
+import { DataTable } from "../components/ui/DataTable";
 import { OverflowCell } from "../components/ui/OverflowCell";
 import { Modal } from "../components/ui/Modal";
 import { Field, Select } from "../components/ui/FormControls";
-import { statusClass } from "../utils/status";
+import { Button } from "../components/ui/Button";
+import { Badge } from "../components/ui/Badge";
+import { statusTone } from "../utils/status";
 import { roleOptions } from "../utils/roles";
 import { displayLegajo } from "../utils/employee";
 import { useAsyncAction } from "../utils/useAsyncAction";
@@ -46,6 +48,7 @@ export function UsersPage() {
   const [employeeOptions, setEmployeeOptions] = useState<Employee[]>([]);
   const [usesBackend, setUsesBackend] = useState(false);
   const [refresh, setRefresh] = useState(0);
+  const [listStatus, setListStatus] = useState<"loading" | "success" | "error">("loading");
   const [open, setOpen] = useState(false);
   const [editingUserId, setEditingUserId] = useState<string | null>(null);
   const [draft, setDraft] = useState<UserDraft>(() => emptyUserDraft());
@@ -53,6 +56,7 @@ export function UsersPage() {
 
   useEffect(() => {
     let mounted = true;
+    setListStatus("loading");
     Promise.all([userApiService.getAll(), orgStructureApiService.getCatalog(), employeeApiService.getOptions({ take: 1000 })])
       .then(([apiUsers, catalog, apiEmployeeOptions]) => {
         if (!mounted) return;
@@ -61,10 +65,12 @@ export function UsersPage() {
         setSectorOptions(catalog.sectors.map((item) => item.name));
         setEmployeeOptions(apiEmployeeOptions.items);
         setUsesBackend(true);
+        setListStatus("success");
       })
       .catch(() => {
         if (!mounted) return;
         setUsesBackend(false);
+        setListStatus("error");
       });
     return () => {
       mounted = false;
@@ -148,11 +154,17 @@ export function UsersPage() {
       eyebrow="SEGURIDAD Y ACCESOS"
       title="Usuarios y roles"
       description="Administra usuarios reales de acceso, roles y alcance organizacional."
-      action={<button className="button primary" onClick={openCreate}><Plus size={16} /> Crear usuario</button>}
+      action={<Button variant="primary" icon={Plus} onClick={openCreate}>Crear usuario</Button>}
     />
 
     <Section title="Usuarios habilitados" subtitle={`${users.length} perfiles configurados`}>
-      <TableShell minWidth={1020}>
+      <DataTable
+        status={listStatus === "loading" ? "loading" : listStatus === "error" ? "error" : users.length === 0 ? "empty" : "ready"}
+        minWidth={1020}
+        emptyText="Todavía no hay usuarios configurados."
+        errorMessage="No se pudieron cargar los usuarios."
+        onRetry={() => setRefresh((value) => value + 1)}
+      >
         <table>
           <thead>
             <tr>
@@ -171,7 +183,7 @@ export function UsersPage() {
                 <td><b>{user.name}</b></td>
                 <td>{user.email}</td>
                 <td><OverflowCell value={user.role} /></td>
-                <td><span className={statusClass(user.status)}>{user.status}</span></td>
+                <td><Badge tone={statusTone(user.status)}>{user.status}</Badge></td>
                 <td><OverflowCell value={`${user.company || "Acceso global"} ${user.sector ? `- ${user.sector}` : ""}`.trim()} /></td>
                 <td><OverflowCell value={user.employeeName || "-"} /></td>
                 <td>
@@ -185,7 +197,7 @@ export function UsersPage() {
             ))}
           </tbody>
         </table>
-      </TableShell>
+      </DataTable>
     </Section>
 
     {open && (
@@ -232,8 +244,8 @@ export function UsersPage() {
           {error && <p className="error">{error}</p>}
 
           <div className="form-actions">
-            <button className="button subtle" onClick={close}>Cancelar</button>
-            <button className="button primary" onClick={save} disabled={isSaving}>{isSaving ? "Guardando..." : editingUserId ? "Guardar cambios" : "Guardar usuario"}</button>
+            <Button variant="subtle" onClick={close}>Cancelar</Button>
+            <Button variant="primary" onClick={save} disabled={isSaving}>{isSaving ? "Guardando..." : editingUserId ? "Guardar cambios" : "Guardar usuario"}</Button>
           </div>
         </div>
       </Modal>

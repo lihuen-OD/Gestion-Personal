@@ -8,9 +8,14 @@ import { calculateEmployeeStatus } from "../services/employeeStatusService";
 import { EmployeeDocumentsPanel } from "../components/documents/EmployeeDocumentsPanel";
 import { EmployeeNoveltiesPanel } from "../components/novelties/EmployeeNoveltiesPanel";
 import { OverflowCell } from "../components/ui/OverflowCell";
-import { TableShell } from "../components/ui/TableShell";
 import { Field, Select } from "../components/ui/FormControls";
 import { Section } from "../components/ui/Section";
+import { LoadingState } from "../components/ui/LoadingState";
+import { ErrorState } from "../components/ui/ErrorState";
+import { Tabs } from "../components/ui/Tabs";
+import { Badge } from "../components/ui/Badge";
+import { Button } from "../components/ui/Button";
+import { DataTable } from "../components/ui/DataTable";
 import {
   employeeDetailTabSections,
   SectionChangeHistory,
@@ -31,7 +36,7 @@ import type { Employee, User } from "../types";
 import { displayLegajo } from "../utils/employee";
 import { useAsyncAction } from "../utils/useAsyncAction";
 import { roleLevel } from "../utils/roles";
-import { statusClass } from "../utils/status";
+import { statusTone } from "../utils/status";
 
 const tabs = [
   "Información General",
@@ -58,29 +63,31 @@ export function EmployeeDetailPage() {
   const [auditRows, setAuditRows] = useState<Awaited<ReturnType<typeof auditApiService.getAll>>>([]);
   const [auditLoaded, setAuditLoaded] = useState(false);
   const [notice, setNotice] = useState(location.state?.created ? "Legajo creado correctamente." : "");
-  const [loading, setLoading] = useState(!!id);
+  const [loadStatus, setLoadStatus] = useState<"loading" | "success" | "error">(id ? "loading" : "success");
+  const [loadRetry, setLoadRetry] = useState(0);
   const laborOptions = useLaborSelectOptions(employee || undefined);
   const structureOptions = useStructureSelectOptions({ costCenter: employee?.costCenter || "" });
 
   useEffect(() => {
     if (!id) return;
     let mounted = true;
-    setLoading(true);
+    setLoadStatus("loading");
     employeeApiService
       .getOverviewById(id)
       .then((item) => {
-        if (mounted) setEmployee(item);
+        if (!mounted) return;
+        setEmployee(item);
+        setLoadStatus("success");
       })
       .catch(() => {
-        if (mounted) setEmployee(null);
-      })
-      .finally(() => {
-        if (mounted) setLoading(false);
+        if (!mounted) return;
+        setEmployee(null);
+        setLoadStatus("error");
       });
     return () => {
       mounted = false;
     };
-  }, [id]);
+  }, [id, loadRetry]);
 
   useEffect(() => {
     if (!employee || tab !== 9 || auditLoaded) return;
@@ -154,8 +161,9 @@ export function EmployeeDetailPage() {
     }
   });
 
-  if (loading) return <div className="page-loading">Cargando legajo...</div>;
-  if (!loading && !employee) return <Navigate to="/legajos" />;
+  if (loadStatus === "loading") return <Section title="Legajo"><LoadingState text="Cargando legajo..." /></Section>;
+  if (loadStatus === "error") return <Section title="Legajo"><ErrorState message="No se pudo cargar el legajo." onRetry={() => setLoadRetry((value) => value + 1)} /></Section>;
+  if (!employee) return <Navigate to="/legajos" />;
   const currentEmployee = employee!;
   const editable = level === 1;
 
@@ -186,29 +194,21 @@ export function EmployeeDetailPage() {
           </div>
         </div>
         <div className="hero-actions">
-          <span className={statusClass(laborStatus)}>{laborStatus}</span>
+          <Badge tone={statusTone(laborStatus)}>{laborStatus}</Badge>
           {editable ? (
-            <button className="button primary" onClick={save} disabled={isSaving}>
+            <Button variant="primary" onClick={save} disabled={isSaving}>
               {isSaving ? "Guardando..." : "Guardar cambios"}
-            </button>
+            </Button>
           ) : null}
         </div>
       </div>
 
       {notice ? <div className="toast">{notice}</div> : null}
-      <div className="tabs">
-        {tabs
-          .filter((_, index) => index !== 9 || level === 1)
-          .map((tabName, index) => (
-            <button
-              className={tab === index ? "active" : ""}
-              onClick={() => setTab(index)}
-              key={tabName}
-            >
-              {tabName}
-            </button>
-          ))}
-      </div>
+      <Tabs
+        tabs={tabs.filter((_, index) => index !== 9 || level === 1).map((tabName, index) => ({ key: String(index), label: tabName }))}
+        active={String(tab)}
+        onChange={(key) => setTab(Number(key))}
+      />
       <Section
         title={tabs[tab]}
         subtitle={
@@ -351,7 +351,7 @@ function renderEmployeeTab(
   }
 
   return (
-    <TableShell minWidth={960}>
+    <DataTable status={auditRows.length ? "ready" : "empty"} minWidth={960} emptyText="Todavía no hay eventos de auditoría para este legajo.">
       <table>
         <thead>
           <tr>
@@ -380,7 +380,7 @@ function renderEmployeeTab(
             ))}
         </tbody>
       </table>
-    </TableShell>
+    </DataTable>
   );
 }
 
