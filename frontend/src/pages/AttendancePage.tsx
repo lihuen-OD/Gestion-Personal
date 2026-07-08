@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { AlertTriangle, CalendarDays, CheckCircle2, Clock3, DoorOpen, Eye, RefreshCcw, TimerReset } from "lucide-react";
+import { AlertTriangle, CalendarDays, Camera, CheckCircle2, Clock3, DoorOpen, Eye, RefreshCcw, TimerReset } from "lucide-react";
 import { attendanceApiService, type AttendancePunch, type AttendanceShift } from "../services/api/attendanceApiService";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
@@ -61,6 +61,7 @@ function sourceLabel(source: string) {
   const labels: Record<string, string> = {
     ADMIN: "Admin",
     PORTAL_DNI: "Fichador",
+    PUBLIC_CLOCK_PHOTO: "Fichador con foto",
     KIOSK: "Kiosco",
     BIOTIME: "BioTime",
     FACIAL: "Facial",
@@ -68,7 +69,38 @@ function sourceLabel(source: string) {
   return labels[source] || source;
 }
 
-function ShiftRows({ items, emptyText, showSegments = false, onAction }: { items: AttendanceShift[]; emptyText: string; showSegments?: boolean; onAction?: (shift: AttendanceShift, action: ShiftActionType) => void }) {
+function faceStatusLabel(status?: string | null) {
+  const labels: Record<string, string> = {
+    VALID: "Rostro válido",
+    NO_FACE: "Sin rostro",
+    MULTIPLE_FACES: "Más de una cara",
+    LOW_LIGHT: "Baja luz",
+    FACE_TOO_SMALL: "Rostro pequeño",
+    CAMERA_ERROR: "Error cámara",
+  };
+  return status ? labels[status] || status : "Sin validación";
+}
+
+function hasPunchPhoto(punch?: { photoStoragePath?: string | null; photoUrl?: string | null } | null) {
+  return Boolean(punch?.photoStoragePath || punch?.photoUrl);
+}
+
+function PunchEvidence({ punch, label, onViewPhoto }: { punch?: AttendanceShift["startPunch"] | AttendanceShift["endPunch"] | null; label: string; onViewPhoto: (id: string) => void }) {
+  if (!punch) return null;
+  return (
+    <div className="attendance-evidence">
+      <span>{faceStatusLabel(punch.faceValidationStatus)}</span>
+      {hasPunchPhoto(punch) ? (
+        <button type="button" className="table-link" onClick={() => onViewPhoto(punch.id)}>
+          <Camera size={14} />
+          {label}
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+function ShiftRows({ items, emptyText, showSegments = false, onAction, onViewPhoto }: { items: AttendanceShift[]; emptyText: string; showSegments?: boolean; onAction?: (shift: AttendanceShift, action: ShiftActionType) => void; onViewPhoto: (id: string) => void }) {
   if (!items.length) return <EmptyState text={emptyText} icon={Clock3} />;
   return (
     <table className="attendance-table">
@@ -95,8 +127,14 @@ function ShiftRows({ items, emptyText, showSegments = false, onAction }: { items
             </td>
             <td>{shift.employee.legajo}</td>
             <td>{shift.employee.sector?.name || "-"}</td>
-            <td>{formatDateTime(shift.startAt)}</td>
-            <td>{formatDateTime(shift.endAt)}</td>
+            <td>
+              {formatDateTime(shift.startAt)}
+              <PunchEvidence punch={shift.startPunch} label="Ver foto" onViewPhoto={onViewPhoto} />
+            </td>
+            <td>
+              {formatDateTime(shift.endAt)}
+              <PunchEvidence punch={shift.endPunch} label="Ver foto" onViewPhoto={onViewPhoto} />
+            </td>
             <td>{formatDuration(shift.workedMinutes || shift.totalMinutes)}</td>
             <td>{sourceLabel(shift.source)}</td>
             <td><Badge tone={statusTone(shift.status)}>{shift.status.replace(/_/g, " ")}</Badge></td>
@@ -140,7 +178,7 @@ type ShiftAction = {
   type: ShiftActionType;
 };
 
-function PunchRows({ items }: { items: AttendancePunch[] }) {
+function PunchRows({ items, onViewPhoto }: { items: AttendancePunch[]; onViewPhoto: (id: string) => void }) {
   if (!items.length) return <EmptyState text="No hay intentos observados para la fecha." icon={AlertTriangle} />;
   return (
     <table className="attendance-table">
@@ -151,6 +189,7 @@ function PunchRows({ items }: { items: AttendancePunch[] }) {
           <th>Tipo</th>
           <th>Hora</th>
           <th>Origen</th>
+          <th>Validación</th>
           <th>Motivo</th>
         </tr>
       </thead>
@@ -165,6 +204,17 @@ function PunchRows({ items }: { items: AttendancePunch[] }) {
             <td>{punch.type === "INGRESO" ? "Ingreso" : "Salida"}</td>
             <td>{formatDateTime(punch.timestamp)}</td>
             <td>{sourceLabel(punch.source)}</td>
+            <td>
+              <div className="attendance-evidence">
+                <span>{faceStatusLabel(punch.faceValidationStatus)}</span>
+                {hasPunchPhoto(punch) ? (
+                  <button type="button" className="table-link" onClick={() => onViewPhoto(punch.id)}>
+                    <Camera size={14} />
+                    Ver foto
+                  </button>
+                ) : null}
+              </div>
+            </td>
             <td>{punch.observation || "Intento observado"}</td>
           </tr>
         ))}
@@ -173,15 +223,15 @@ function PunchRows({ items }: { items: AttendancePunch[] }) {
   );
 }
 
-function ObservedRows({ shifts, punches, onAction }: { shifts: AttendanceShift[]; punches: AttendancePunch[]; onAction: (shift: AttendanceShift, action: ShiftActionType) => void }) {
+function ObservedRows({ shifts, punches, onAction, onViewPhoto }: { shifts: AttendanceShift[]; punches: AttendancePunch[]; onAction: (shift: AttendanceShift, action: ShiftActionType) => void; onViewPhoto: (id: string) => void }) {
   if (!shifts.length && !punches.length) {
     return <EmptyState text="No hay marcaciones observadas para la fecha." icon={AlertTriangle} />;
   }
 
   return (
     <div className="attendance-observed-grid">
-      {shifts.length ? <ShiftRows items={shifts} emptyText="" showSegments onAction={onAction} /> : null}
-      {punches.length ? <PunchRows items={punches} /> : null}
+      {shifts.length ? <ShiftRows items={shifts} emptyText="" showSegments onAction={onAction} onViewPhoto={onViewPhoto} /> : null}
+      {punches.length ? <PunchRows items={punches} onViewPhoto={onViewPhoto} /> : null}
     </div>
   );
 }
@@ -197,6 +247,8 @@ export function AttendancePage() {
   const [actionReason, setActionReason] = useState("");
   const [manualEndAt, setManualEndAt] = useState(toDateTimeLocalValue());
   const [summary, setSummary] = useState<Awaited<ReturnType<typeof attendanceApiService.getSummary>>>();
+  const [photoPreview, setPhotoPreview] = useState<{ url: string; title: string }>();
+  const [photoError, setPhotoError] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -217,6 +269,12 @@ export function AttendancePage() {
     };
   }, [date, refreshKey]);
 
+  useEffect(() => {
+    return () => {
+      if (photoPreview?.url) URL.revokeObjectURL(photoPreview.url);
+    };
+  }, [photoPreview?.url]);
+
   const observedCount = useMemo(() => (summary?.observedShifts.length || 0) + (summary?.observedPunches.length || 0), [summary]);
 
   const openAction = (shift: AttendanceShift, type: ShiftActionType) => {
@@ -230,6 +288,26 @@ export function AttendancePage() {
     setShiftAction(undefined);
     setActionReason("");
     setActionError("");
+  };
+
+  const closePhotoPreview = () => {
+    if (photoPreview?.url) URL.revokeObjectURL(photoPreview.url);
+    setPhotoPreview(undefined);
+    setPhotoError("");
+  };
+
+  const openPunchPhoto = async (id: string) => {
+    setPhotoError("");
+    try {
+      const result = await attendanceApiService.downloadPunchPhoto(id);
+      closePhotoPreview();
+      setPhotoPreview({
+        url: URL.createObjectURL(result.blob),
+        title: result.fileName || "Foto de fichada",
+      });
+    } catch (err) {
+      setPhotoError(err instanceof Error ? err.message : "No se pudo abrir la foto de la fichada.");
+    }
   };
 
   const confirmShiftAction = async () => {
@@ -285,17 +363,19 @@ export function AttendancePage() {
       {error && <div className="form-error">{error}</div>}
 
       <Section title="Jornadas abiertas" subtitle="Empleados que marcaron ingreso y todavía no registraron salida.">
-        {loading ? <EmptyState text="Cargando jornadas abiertas..." icon={Clock3} /> : <ShiftRows items={summary?.openShifts || []} emptyText="No hay jornadas abiertas para esta fecha." onAction={openAction} />}
+        {loading ? <EmptyState text="Cargando jornadas abiertas..." icon={Clock3} /> : <ShiftRows items={summary?.openShifts || []} emptyText="No hay jornadas abiertas para esta fecha." onAction={openAction} onViewPhoto={openPunchPhoto} />}
       </Section>
+
+      {photoError ? <div className="form-error">{photoError}</div> : null}
 
       <Section title="Marcaciones observadas" subtitle="Intentos inválidos y jornadas con conflictos para revisar.">
         {loading ? <EmptyState text="Cargando observaciones..." icon={AlertTriangle} /> : (
-          <ObservedRows shifts={summary?.observedShifts || []} punches={summary?.observedPunches || []} onAction={openAction} />
+          <ObservedRows shifts={summary?.observedShifts || []} punches={summary?.observedPunches || []} onAction={openAction} onViewPhoto={openPunchPhoto} />
         )}
       </Section>
 
       <Section title="Jornadas cerradas" subtitle="Jornadas procesadas con sus tramos calculados y carga horaria generada.">
-        {loading ? <EmptyState text="Cargando jornadas cerradas..." icon={CheckCircle2} /> : <ShiftRows items={summary?.closedShifts || []} emptyText="No hay jornadas cerradas para esta fecha." showSegments onAction={openAction} />}
+        {loading ? <EmptyState text="Cargando jornadas cerradas..." icon={CheckCircle2} /> : <ShiftRows items={summary?.closedShifts || []} emptyText="No hay jornadas cerradas para esta fecha." showSegments onAction={openAction} onViewPhoto={openPunchPhoto} />}
       </Section>
 
       {shiftAction ? (
@@ -323,6 +403,14 @@ export function AttendancePage() {
                 Confirmar
               </Button>
             </div>
+          </div>
+        </Modal>
+      ) : null}
+
+      {photoPreview ? (
+        <Modal title={photoPreview.title} close={closePhotoPreview}>
+          <div className="attendance-photo-preview">
+            <img src={photoPreview.url} alt="Evidencia de fichada" />
           </div>
         </Modal>
       ) : null}

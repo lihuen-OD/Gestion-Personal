@@ -1,4 +1,5 @@
 import { apiRequest } from "./apiClient";
+import { cachePolicies, cachedData, invalidateCacheFamily } from "../cache";
 import type {
   FinnegansNoveltyLink,
   NoveltyTimeImpact,
@@ -52,8 +53,6 @@ type ApiNoveltyType = {
 
 type ApiListResponse = { data: ApiNoveltyType[] };
 type ApiItemResponse = { data: ApiNoveltyType };
-
-const listCache = new Map<string, Promise<NoveltyType[]>>();
 
 const fallbackApprovalRoles: Role[] = ["Nivel 1 - RRHH"];
 const fallbackAllowedLoadRoles: Role[] = ["Nivel 1 - RRHH", "Nivel 2 - Supervisión / Gestión", "Nivel 3 - Administrativo de Carga Horaria"];
@@ -170,19 +169,33 @@ function nextCode(items: NoveltyType[]) {
   return `NOV-${String(max + 1).padStart(3, "0")}`;
 }
 
+function isNoveltyType(value: NoveltyType) {
+  return Boolean(value && typeof value.id === "string" && typeof value.code === "string" && typeof value.name === "string");
+}
+
+function isNoveltyTypeList(value: NoveltyType[]) {
+  return Array.isArray(value) && value.every(isNoveltyType);
+}
+
 export const noveltyTypeApiService = {
   async getAll(filters?: Partial<NoveltyTypeFilters>) {
     const query = toQuery(filters);
     const key = `/novelty-types${query}`;
-    if (!listCache.has(key)) {
-      listCache.set(key, apiRequest<ApiListResponse>(key).then((response) => response.data.map(mapNoveltyTypeFromApi)));
-    }
-    return listCache.get(key)!;
+    return cachedData({
+      requestKey: `GET:${key}`,
+      policy: cachePolicies.noveltyTypesCatalog,
+      fetcher: () => apiRequest<ApiListResponse>(key, { apiCache: false }).then((response) => response.data.map(mapNoveltyTypeFromApi)),
+      validate: isNoveltyTypeList,
+    });
   },
 
   async getById(id: string) {
-    const response = await apiRequest<ApiItemResponse>(`/novelty-types/${id}`);
-    return mapNoveltyTypeFromApi(response.data);
+    return cachedData({
+      requestKey: `GET:/novelty-types/${id}`,
+      policy: cachePolicies.noveltyTypesCatalog,
+      fetcher: () => apiRequest<ApiItemResponse>(`/novelty-types/${id}`, { apiCache: false }).then((response) => mapNoveltyTypeFromApi(response.data)),
+      validate: isNoveltyType,
+    });
   },
 
   async create(item: NoveltyType) {
@@ -190,7 +203,7 @@ export const noveltyTypeApiService = {
       method: "POST",
       body: mapToApi(item),
     });
-    listCache.clear();
+    await invalidateCacheFamily("novelty-types", "novelty type created");
     return mapNoveltyTypeFromApi(response.data);
   },
 
@@ -199,7 +212,7 @@ export const noveltyTypeApiService = {
       method: "PATCH",
       body: mapToApi(item),
     });
-    listCache.clear();
+    await invalidateCacheFamily("novelty-types", "novelty type updated");
     return mapNoveltyTypeFromApi(response.data);
   },
 

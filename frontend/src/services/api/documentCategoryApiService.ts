@@ -1,4 +1,5 @@
 import { apiRequest } from "./apiClient";
+import { cachePolicies, cachedData, invalidateCacheFamily } from "../cache";
 import type { Role } from "../../types";
 import type {
   DocumentCategory,
@@ -29,8 +30,6 @@ type ApiDocumentCategory = {
 
 type ApiListResponse = { data: ApiDocumentCategory[] };
 type ApiItemResponse = { data: ApiDocumentCategory };
-
-const listCache = new Map<string, Promise<DocumentCategory[]>>();
 
 const defaultRules = {
   expires: false,
@@ -121,21 +120,27 @@ function matchesFilters(item: DocumentCategory, filters: DocumentCategoryFilters
   return true;
 }
 
+function isDocumentCategoryList(value: DocumentCategory[]) {
+  return Array.isArray(value) && value.every((item) => typeof item.id === "string" && typeof item.code === "string" && typeof item.name === "string");
+}
+
 export const documentCategoryApiService = {
   async getAll(filters?: Partial<DocumentCategoryFilters>) {
     const query = toQuery(filters);
     const key = `/document-categories${query}`;
-    if (!listCache.has(key)) {
-      listCache.set(key, apiRequest<ApiListResponse>(key).then((response) => response.data.map(mapFromApi)));
-    }
-    return listCache.get(key)!;
+    return cachedData({
+      requestKey: `GET:${key}`,
+      policy: cachePolicies.documentCategoriesCatalog,
+      fetcher: () => apiRequest<ApiListResponse>(key, { apiCache: false }).then((response) => response.data.map(mapFromApi)),
+      validate: isDocumentCategoryList,
+    });
   },
   async create(item: DocumentCategory) {
     const response = await apiRequest<ApiItemResponse>("/document-categories", {
       method: "POST",
       body: mapToApi(item),
     });
-    listCache.clear();
+    await invalidateCacheFamily("document-categories", "document category created");
     return mapFromApi(response.data);
   },
   async update(id: string, item: DocumentCategory) {
@@ -143,7 +148,7 @@ export const documentCategoryApiService = {
       method: "PATCH",
       body: mapToApi(item),
     });
-    listCache.clear();
+    await invalidateCacheFamily("document-categories", "document category updated");
     return mapFromApi(response.data);
   },
   getEmptyFilters: (): DocumentCategoryFilters => ({ search: "", kind: "", scope: "", mandatory: "", expires: "", status: "ACTIVO" }),

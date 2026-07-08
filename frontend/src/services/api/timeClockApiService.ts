@@ -57,6 +57,20 @@ type ClockOutResponse = {
 
 type ClockSearchResponse = { data: ClockEmployee[] };
 
+export type ClockPhotoPunchInput = {
+  employeeId: string;
+  punchType: "IN" | "OUT";
+  photo: string;
+  faceValidationStatus: "VALID" | "NO_FACE" | "MULTIPLE_FACES" | "LOW_LIGHT" | "FACE_TOO_SMALL" | "CAMERA_ERROR";
+  faceDetectionScore?: number;
+  device?: {
+    userAgent?: string;
+    platform?: string;
+    language?: string;
+    cameraLabel?: string;
+  };
+};
+
 function body(employeeId: string) {
   return { employeeId };
 }
@@ -94,6 +108,15 @@ export const timeClockApiService = {
       method: "POST",
       auth: false,
       body: body(employeeId),
+    });
+    return response.data;
+  },
+
+  async photoPunch(input: ClockPhotoPunchInput) {
+    const response = await apiRequest<ClockInResponse | ClockOutResponse>("/time-entries/clock/photo-punch", {
+      method: "POST",
+      auth: false,
+      body: input,
     });
     return response.data;
   },

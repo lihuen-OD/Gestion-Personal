@@ -1,4 +1,5 @@
 import { apiRequest } from "./apiClient";
+import { cachePolicies, cachedData, invalidateCacheFamily } from "../cache";
 import type { AuditParameter, AuditParameterFilters } from "../../types/auditParameter.types";
 
 type ApiAuditParameter = AuditParameter;
@@ -16,10 +17,19 @@ function query(filters?: AuditParameterFilters) {
   return params.toString();
 }
 
+function isAuditParameterList(value: AuditParameter[]) {
+  return Array.isArray(value) && value.every((item) => typeof item.id === "string" && typeof item.code === "string" && typeof item.name === "string");
+}
+
 export const auditParameterApiService = {
   async getAll(filters?: AuditParameterFilters) {
-    const response = await apiRequest<ApiListResponse>(`/audit-parameters?${query(filters)}`);
-    return response.data;
+    const key = `/audit-parameters?${query(filters)}`;
+    return cachedData({
+      requestKey: `GET:${key}`,
+      policy: cachePolicies.auditParametersCatalog,
+      fetcher: () => apiRequest<ApiListResponse>(key, { apiCache: false }).then((response) => response.data),
+      validate: isAuditParameterList,
+    });
   },
 
   async create(parameter: AuditParameter) {
@@ -27,6 +37,7 @@ export const auditParameterApiService = {
       method: "POST",
       body: parameter,
     });
+    await invalidateCacheFamily("audit-parameters", "audit parameter created");
     return response.data;
   },
 
@@ -35,6 +46,7 @@ export const auditParameterApiService = {
       method: "PATCH",
       body: parameter,
     });
+    await invalidateCacheFamily("audit-parameters", "audit parameter updated");
     return response.data;
   },
 };

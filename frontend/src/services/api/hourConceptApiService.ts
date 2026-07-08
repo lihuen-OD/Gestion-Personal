@@ -1,4 +1,5 @@
 import { apiRequest } from "./apiClient";
+import { cachePolicies, cachedData, invalidateCacheFamily } from "../cache";
 import type { HourConcept, HourConceptFilters, HourConceptKind, HourConceptStatus } from "../../types/hourConcept.types";
 
 type ApiHourConcept = {
@@ -14,8 +15,6 @@ type ApiHourConcept = {
 
 type ApiListResponse = { data: ApiHourConcept[] };
 type ApiItemResponse = { data: ApiHourConcept };
-
-const listCache = new Map<string, Promise<HourConcept[]>>();
 
 export function mapHourConceptFromApi(item: ApiHourConcept): HourConcept {
   return {
@@ -63,14 +62,20 @@ function nextCode(items: HourConcept[]) {
   return `HOR-${String(max + 1).padStart(3, "0")}`;
 }
 
+function isHourConceptList(value: HourConcept[]) {
+  return Array.isArray(value) && value.every((item) => typeof item.id === "string" && typeof item.code === "string" && typeof item.name === "string");
+}
+
 export const hourConceptApiService = {
   async getAll(filters?: Partial<HourConceptFilters>) {
     const query = toQuery(filters);
     const key = `/hour-concepts${query}`;
-    if (!listCache.has(key)) {
-      listCache.set(key, apiRequest<ApiListResponse>(key).then((response) => response.data.map(mapHourConceptFromApi)));
-    }
-    return listCache.get(key)!;
+    return cachedData({
+      requestKey: `GET:${key}`,
+      policy: cachePolicies.hourConceptsCatalog,
+      fetcher: () => apiRequest<ApiListResponse>(key, { apiCache: false }).then((response) => response.data.map(mapHourConceptFromApi)),
+      validate: isHourConceptList,
+    });
   },
 
   async create(item: HourConcept) {
@@ -78,7 +83,7 @@ export const hourConceptApiService = {
       method: "POST",
       body: mapToApi(item),
     });
-    listCache.clear();
+    await invalidateCacheFamily("hour-concepts", "hour concept created");
     return mapHourConceptFromApi(response.data);
   },
 
@@ -87,7 +92,7 @@ export const hourConceptApiService = {
       method: "PATCH",
       body: mapToApi(item),
     });
-    listCache.clear();
+    await invalidateCacheFamily("hour-concepts", "hour concept updated");
     return mapHourConceptFromApi(response.data);
   },
 

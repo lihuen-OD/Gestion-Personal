@@ -6,6 +6,7 @@ import { orgStructureApiService } from "./orgStructureApiService";
 import { positionApiService } from "./positionApiService";
 import { mapTimeEntryFromApi, type ApiTimeEntry } from "./timeEntryApiService";
 import { userApiService } from "./userApiService";
+import { cachePolicies, cachedData, invalidateCacheFamily } from "../cache";
 import { calculateLaborStatus } from "../employeeStatusService";
 import type { Employee, EmployeeStatus, LaborMovement, Novelty, TimeEntry } from "../../types";
 import type { HourConcept } from "../../types/hourConcept.types";
@@ -497,6 +498,26 @@ async function syncEmployeeExtras(
   await Promise.all(requests);
 }
 
+async function invalidateEmployeeDependentCaches(reason: string) {
+  await Promise.all([
+    invalidateCacheFamily("employees", reason),
+    invalidateCacheFamily("dashboard", reason),
+    invalidateCacheFamily("positions", reason),
+  ]);
+}
+
+function isEmployeeOptionsResponse(value: { items: Employee[]; meta?: unknown }) {
+  return Boolean(value && Array.isArray(value.items) && value.items.every((item) => typeof item.id === "string" && typeof item.firstName === "string" && typeof item.lastName === "string"));
+}
+
+function isEmployeeSummary(value: EmployeeSummary) {
+  return Boolean(value && typeof value.total === "number" && typeof value.active === "number" && typeof value.inactive === "number");
+}
+
+function isEmployeeList(value: Employee[]) {
+  return Array.isArray(value) && value.every((item) => typeof item.id === "string" && typeof item.firstName === "string" && typeof item.lastName === "string");
+}
+
 export const employeeApiService = {
   async list(filters: EmployeeListFilters = {}) {
     const params = new URLSearchParams();
@@ -522,19 +543,32 @@ export const employeeApiService = {
     if (filters.search?.trim()) params.set("search", filters.search.trim());
     if (filters.companyId) params.set("companyId", filters.companyId);
     if (filters.status) params.set("status", filters.status);
-    const response = await apiRequest<ApiEmployeePaginatedResponse>(`/employees/options?${params.toString()}`);
-    return {
-      items: response.data.map(mapEmployeeFromApi),
-      meta: response.meta,
-    };
+    const key = `/employees/options?${params.toString()}`;
+    return cachedData({
+      requestKey: `GET:${key}`,
+      policy: cachePolicies.employeesOptions,
+      fetcher: () => apiRequest<ApiEmployeePaginatedResponse>(key, { apiCache: false }).then((response) => ({
+        items: response.data.map(mapEmployeeFromApi),
+        meta: response.meta,
+      })),
+      validate: isEmployeeOptionsResponse,
+    });
   },
   async getSummary() {
-    const response = await apiRequest<ApiEmployeeSummaryResponse>("/employees/summary");
-    return response.data;
+    return cachedData({
+      requestKey: "GET:/employees/summary",
+      policy: cachePolicies.employeesSummary,
+      fetcher: () => apiRequest<ApiEmployeeSummaryResponse>("/employees/summary", { apiCache: false }).then((response) => response.data),
+      validate: isEmployeeSummary,
+    });
   },
   async getOrgChart() {
-    const response = await apiRequest<ApiEmployeeListResponse>("/employees/org-chart?take=1000");
-    return response.data.map(mapEmployeeFromApi);
+    return cachedData({
+      requestKey: "GET:/employees/org-chart?take=1000",
+      policy: cachePolicies.employeesOrgChart,
+      fetcher: () => apiRequest<ApiEmployeeListResponse>("/employees/org-chart?take=1000", { apiCache: false }).then((response) => response.data.map(mapEmployeeFromApi)),
+      validate: isEmployeeList,
+    });
   },
   async getById(id: string) {
     const response = await apiRequest<ApiEmployeeItemResponse>(`/employees/${id}`);
@@ -547,9 +581,7 @@ export const employeeApiService = {
   async getTimeGrid(id: string, period: string, options: { includeDetails?: boolean } = {}): Promise<EmployeeTimeGrid> {
     const params = new URLSearchParams({ period });
     if (options.includeDetails !== undefined) params.set("includeDetails", String(options.includeDetails));
-    const response = await apiRequest<ApiTimeGridResponse>(`/employees/${id}/time-grid?${params.toString()}`, {
-      cacheTtlMs: 60_000,
-    });
+    const response = await apiRequest<ApiTimeGridResponse>(`/employees/${id}/time-grid?${params.toString()}`);
     return {
       employee: mapEmployeeFromApi(response.data.employee),
       entries: response.data.entries.map(mapTimeEntryFromApi),
@@ -568,6 +600,7 @@ export const employeeApiService = {
       body: await mapEmployeeToApi(employee, "create"),
     });
     await syncEmployeeExtras(response.data.id, employee, { createInitialMovement: false, syncHourConcepts: false });
+    await invalidateEmployeeDependentCaches("employee created");
     return mapEmployeeFromApi(response.data);
   },
   async update(employee: Employee) {
@@ -575,6 +608,7 @@ export const employeeApiService = {
       method: "PATCH",
       body: await mapEmployeeToApi(employee, "update"),
     });
+    await invalidateEmployeeDependentCaches("employee updated");
     return mapEmployeeFromApi(response.data);
   },
   async updateAddress(employee: Employee) {
@@ -582,6 +616,7 @@ export const employeeApiService = {
       method: "PUT",
       body: addressPayload(employee),
     });
+    await invalidateEmployeeDependentCaches("employee address updated");
     return mapEmployeeFromApi(response.data);
   },
   async updateTransport(employee: Employee) {
@@ -589,6 +624,7 @@ export const employeeApiService = {
       method: "PUT",
       body: transportPayload(employee),
     });
+    await invalidateEmployeeDependentCaches("employee transport updated");
     return mapEmployeeFromApi(response.data);
   },
   async replaceAssignments(employee: Employee) {
@@ -596,6 +632,7 @@ export const employeeApiService = {
       method: "PUT",
       body: await assignmentsPayload(employee),
     });
+    await invalidateEmployeeDependentCaches("employee assignments updated");
     return mapEmployeeFromApi(response.data);
   },
   async replaceHourConcepts(employee: Employee) {
@@ -603,6 +640,7 @@ export const employeeApiService = {
       method: "PUT",
       body: await hourConceptsPayload(employee),
     });
+    await invalidateEmployeeDependentCaches("employee hour concepts updated");
     return mapEmployeeFromApi(response.data);
   },
   async createLaborMovement(
@@ -613,12 +651,14 @@ export const employeeApiService = {
       method: "POST",
       body: input,
     });
+    await invalidateEmployeeDependentCaches("employee labor movement created");
     return mapEmployeeFromApi(response.data);
   },
   async syncLaborStatuses() {
     const response = await apiRequest<ApiLaborStatusSyncResponse>("/employees/sync-labor-statuses", {
       method: "POST",
     });
+    await invalidateEmployeeDependentCaches("labor statuses synced");
     return response.data;
   },
 };

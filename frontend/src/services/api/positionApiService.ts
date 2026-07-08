@@ -1,4 +1,5 @@
 import { apiRequest } from "./apiClient";
+import { cachePolicies, cachedData, invalidateCacheFamily } from "../cache";
 import type { Employee } from "../../types";
 import type { Position, PositionFilters, PositionStatus } from "../../types/position.types";
 
@@ -51,8 +52,6 @@ type ApiAssignedEmployee = {
 };
 
 type ApiAssignedEmployeesResponse = { data: ApiAssignedEmployee[] };
-
-const listCache = new Map<string, Promise<Position[]>>();
 
 const asStringArray = (value: unknown): string[] => Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 const asArray = <T>(value: unknown): T[] => Array.isArray(value) ? value as T[] : [];
@@ -162,18 +161,36 @@ function nextCode(items: Position[]) {
   return `PUE-${String(max + 1).padStart(3, "0")}`;
 }
 
+function isPosition(value: Position | undefined): value is Position {
+  return Boolean(value && typeof value.id === "string" && typeof value.code === "string" && typeof value.name === "string");
+}
+
+function isPositionDetail(value: Position | undefined) {
+  return value === undefined || isPosition(value);
+}
+
+function isPositionList(value: Position[]) {
+  return Array.isArray(value) && value.every(isPosition);
+}
+
 export const positionApiService = {
   async getAll(filters?: Partial<PositionFilters>) {
     const query = toQuery(filters);
     const key = `/positions${query}`;
-    if (!listCache.has(key)) {
-      listCache.set(key, apiRequest<ApiListResponse>(key).then((response) => response.data.map(mapFromApi)));
-    }
-    return listCache.get(key)!;
+    return cachedData({
+      requestKey: `GET:${key}`,
+      policy: cachePolicies.positionsCatalog,
+      fetcher: () => apiRequest<ApiListResponse>(key, { apiCache: false }).then((response) => response.data.map(mapFromApi)),
+      validate: isPositionList,
+    });
   },
   async getById(id: string) {
-    const response = await apiRequest<ApiItemResponse>(`/positions/${id}`);
-    return response.data ? mapFromApi(response.data) : undefined;
+    return cachedData({
+      requestKey: `GET:/positions/${id}`,
+      policy: cachePolicies.positionsCatalog,
+      fetcher: () => apiRequest<ApiItemResponse>(`/positions/${id}`, { apiCache: false }).then((response) => response.data ? mapFromApi(response.data) : undefined),
+      validate: isPositionDetail,
+    });
   },
   async getAssignedEmployees(id: string) {
     const response = await apiRequest<ApiAssignedEmployeesResponse>(`/positions/${id}/employees`);
@@ -181,17 +198,17 @@ export const positionApiService = {
   },
   async create(position: Position) {
     const response = await apiRequest<ApiItemResponse>("/positions", { method: "POST", body: mapToApi(position) });
-    listCache.clear();
+    await invalidateCacheFamily("positions", "position created");
     return response.data ? mapFromApi(response.data) : undefined;
   },
   async update(position: Position) {
     const response = await apiRequest<ApiItemResponse>(`/positions/${position.id}`, { method: "PATCH", body: mapToApi(position) });
-    listCache.clear();
+    await invalidateCacheFamily("positions", "position updated");
     return response.data ? mapFromApi(response.data) : undefined;
   },
   async removeOrHide(id: string) {
     const response = await apiRequest<ApiItemResponse>(`/positions/${id}`, { method: "DELETE" });
-    listCache.clear();
+    await invalidateCacheFamily("positions", "position removed");
     return response.data ? mapFromApi(response.data) : undefined;
   },
   getNextCode: nextCode,

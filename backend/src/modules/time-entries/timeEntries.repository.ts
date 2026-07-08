@@ -25,6 +25,31 @@ const periodEmployeeSelect = {
 const statusPriority = ["EN_REVISION", "RECHAZADO", "PENDIENTE", "BORRADOR", "APROBADO", "CERRADO"] as const;
 const editableStatuses: ApprovalStatus[] = [ApprovalStatus.BORRADOR, ApprovalStatus.PENDIENTE, ApprovalStatus.DEVUELTO, ApprovalStatus.RECHAZADO];
 
+type PunchEvidenceInput = {
+  photoUrl?: string | null;
+  photoStoragePath?: string | null;
+  faceDetected?: boolean;
+  faceValidationStatus?: "VALID" | "NO_FACE" | "MULTIPLE_FACES" | "LOW_LIGHT" | "FACE_TOO_SMALL" | "CAMERA_ERROR" | null;
+  faceDetectionScore?: number | null;
+  ipAddress?: string | null;
+  userAgent?: string | null;
+  rawPayload?: Prisma.InputJsonValue;
+};
+
+function punchEvidenceData(evidence?: PunchEvidenceInput) {
+  if (!evidence) return {};
+  return {
+    photoUrl: evidence.photoUrl || null,
+    photoStoragePath: evidence.photoStoragePath || null,
+    faceDetected: Boolean(evidence.faceDetected),
+    faceValidationStatus: evidence.faceValidationStatus || null,
+    faceDetectionScore: evidence.faceDetectionScore ?? null,
+    ipAddress: evidence.ipAddress || null,
+    userAgent: evidence.userAgent || null,
+    rawPayload: evidence.rawPayload,
+  };
+}
+
 function periodFromDate(date: Date) {
   const year = date.getUTCFullYear();
   const month = String(date.getUTCMonth() + 1).padStart(2, "0");
@@ -300,8 +325,34 @@ export const timeEntriesRepository = {
             crossesMidnight: true,
             observation: true,
             employee: { select: employeeSelect },
-            startPunch: { select: { id: true, timestamp: true, source: true, status: true, observation: true } },
-            endPunch: { select: { id: true, timestamp: true, source: true, status: true, observation: true } },
+            startPunch: {
+              select: {
+                id: true,
+                timestamp: true,
+                source: true,
+                status: true,
+                observation: true,
+                photoStoragePath: true,
+                photoUrl: true,
+                faceDetected: true,
+                faceValidationStatus: true,
+                faceDetectionScore: true,
+              },
+            },
+            endPunch: {
+              select: {
+                id: true,
+                timestamp: true,
+                source: true,
+                status: true,
+                observation: true,
+                photoStoragePath: true,
+                photoUrl: true,
+                faceDetected: true,
+                faceValidationStatus: true,
+                faceDetectionScore: true,
+              },
+            },
             timeSegments: {
               select: {
                 id: true,
@@ -346,6 +397,11 @@ export const timeEntriesRepository = {
             source: true,
             status: true,
             observation: true,
+            photoStoragePath: true,
+            photoUrl: true,
+            faceDetected: true,
+            faceValidationStatus: true,
+            faceDetectionScore: true,
             employee: { select: employeeSelect },
           },
           orderBy: { timestamp: "desc" },
@@ -362,6 +418,22 @@ export const timeEntriesRepository = {
       include: {
         employee: { select: { id: true, legajo: true, dni: true, firstName: true, lastName: true, status: true } },
         timeEntries: { select: { id: true, status: true } },
+      },
+    });
+  },
+
+  findAttendancePunchEvidence(id: string, employeeAccessWhere: Prisma.EmployeeWhereInput) {
+    return prisma.attendancePunch.findFirst({
+      where: { id, employee: employeeAccessWhere },
+      select: {
+        id: true,
+        employeeId: true,
+        type: true,
+        timestamp: true,
+        source: true,
+        photoUrl: true,
+        photoStoragePath: true,
+        employee: { select: { legajo: true, firstName: true, lastName: true } },
       },
     });
   },
@@ -483,7 +555,7 @@ export const timeEntriesRepository = {
     });
   },
 
-  createOpenWorkShift(input: { employeeId: string; source: WorkShiftSource; startAt: Date }) {
+  createOpenWorkShift(input: { employeeId: string; source: WorkShiftSource; startAt: Date; punchEvidence?: PunchEvidenceInput }) {
     return prisma.$transaction(async (tx) => {
       const punch = await tx.attendancePunch.create({
         data: {
@@ -491,6 +563,7 @@ export const timeEntriesRepository = {
           type: "INGRESO",
           timestamp: input.startAt,
           source: input.source,
+          ...punchEvidenceData(input.punchEvidence),
         },
       });
 
@@ -507,7 +580,7 @@ export const timeEntriesRepository = {
     });
   },
 
-  rolloverExpiredOpenWorkShift(input: { openWorkShiftId: string; employeeId: string; source: WorkShiftSource; startAt: Date; missingOutObservation: string }) {
+  rolloverExpiredOpenWorkShift(input: { openWorkShiftId: string; employeeId: string; source: WorkShiftSource; startAt: Date; missingOutObservation: string; punchEvidence?: PunchEvidenceInput }) {
     return prisma.$transaction(async (tx) => {
       await tx.workShift.update({
         where: { id: input.openWorkShiftId },
@@ -524,6 +597,7 @@ export const timeEntriesRepository = {
           timestamp: input.startAt,
           source: input.source,
           observation: "Ingreso habilitado luego de marcar automaticamente la jornada anterior como olvido de salida.",
+          ...punchEvidenceData(input.punchEvidence),
         },
       });
 
@@ -540,7 +614,7 @@ export const timeEntriesRepository = {
     });
   },
 
-  createObservedPunch(input: { employeeId: string; type: "INGRESO" | "SALIDA"; source: WorkShiftSource; timestamp: Date; observation: string }) {
+  createObservedPunch(input: { employeeId: string; type: "INGRESO" | "SALIDA"; source: WorkShiftSource; timestamp: Date; observation: string; punchEvidence?: PunchEvidenceInput }) {
     return prisma.attendancePunch.create({
       data: {
         employeeId: input.employeeId,
@@ -549,6 +623,7 @@ export const timeEntriesRepository = {
         source: input.source,
         status: "OBSERVADA",
         observation: input.observation,
+        ...punchEvidenceData(input.punchEvidence),
       },
     });
   },
@@ -782,6 +857,7 @@ export const timeEntriesRepository = {
     totalMinutes: number;
     segments: Array<{ date: Date; startAt: Date; endAt: Date; minutes: number; hours: number }>;
     observation?: string | null;
+    punchEvidence?: PunchEvidenceInput;
   }) {
     return prisma.$transaction(async (tx) => {
       const endPunch = await tx.attendancePunch.create({
@@ -791,6 +867,7 @@ export const timeEntriesRepository = {
           timestamp: input.endAt,
           source: input.source,
           observation: input.observation || null,
+          ...punchEvidenceData(input.punchEvidence),
         },
       });
 

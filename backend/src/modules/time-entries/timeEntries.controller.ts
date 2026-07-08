@@ -1,7 +1,7 @@
 import type { RequestHandler } from "express";
 import { requestAuditContext } from "../../shared/audit/requestAuditContext";
 import { requireParam } from "../../shared/http/params";
-import type { AdminCloseWorkShiftInput, AdminWorkShiftReasonInput, AttendanceSummaryQuery, ClockByDniInput, ClockByEmployeeInput, ClockEmployeeSearchQuery, CreateWorkShiftInput, ListTimeEntriesQuery, PreviewWorkShiftInput, TimeEntriesExportQuery, TimeEntriesPeriodEmployeesQuery, TimeEntriesSummaryQuery } from "./timeEntries.schemas";
+import type { AdminCloseWorkShiftInput, AdminWorkShiftReasonInput, AttendanceSummaryQuery, ClockByDniInput, ClockByEmployeeInput, ClockEmployeeSearchQuery, ClockPhotoPunchInput, CreateWorkShiftInput, ListTimeEntriesQuery, PreviewWorkShiftInput, TimeEntriesExportQuery, TimeEntriesPeriodEmployeesQuery, TimeEntriesSummaryQuery } from "./timeEntries.schemas";
 import { clearTimeEntriesReadCaches, timeEntriesListCache, timeEntriesPeriodEmployeesCache, timeEntriesSummaryCache } from "./timeEntries.cache";
 import { timeEntriesExportToCsv, timeEntriesService } from "./timeEntries.service";
 
@@ -47,6 +47,12 @@ export const timeEntriesController = {
     res.json({ data: result });
   }) satisfies RequestHandler,
 
+  clockPhotoPunch: (async (req, res) => {
+    const result = await timeEntriesService.clockPhotoPunch(req.body as ClockPhotoPunchInput, requestAuditContext(req));
+    clearTimeEntriesReadCaches();
+    res.status(201).json({ data: result });
+  }) satisfies RequestHandler,
+
   list: (async (req, res) => {
     const key = userScopedCacheKey(req);
     const cached = timeEntriesListCache.get(key);
@@ -77,6 +83,17 @@ export const timeEntriesController = {
   attendanceSummary: (async (req, res) => {
     const result = await timeEntriesService.attendanceSummary(req.query as unknown as AttendanceSummaryQuery, req.user!);
     res.json({ data: result });
+  }) satisfies RequestHandler,
+
+  attendancePunchPhoto: (async (req, res) => {
+    const result = await timeEntriesService.attendancePunchPhoto(requireParam(req, "id"), req.user!);
+    if (result.kind === "redirect") {
+      res.redirect(result.url);
+      return;
+    }
+    res.setHeader("Content-Type", result.mimeType);
+    res.setHeader("Content-Disposition", `inline; filename*=UTF-8''${encodeURIComponent(result.fileName)}`);
+    res.sendFile(result.path);
   }) satisfies RequestHandler,
 
   create: (async (req, res) => {

@@ -1,4 +1,5 @@
 import { apiRequest } from "./apiClient";
+import { invalidateCacheFamily } from "../cache";
 import type { Novelty, Role, User } from "../../types";
 
 type ApiNoveltyStatus = "BORRADOR" | "PENDIENTE" | "EN_REVISION" | "APROBADO" | "RECHAZADO" | "DEVUELTO" | "CERRADO";
@@ -52,6 +53,14 @@ type ApiListMeta = { total: number; page: number; pageSize: number; hasMore: boo
 type ApiPaginatedListResponse = ApiListResponse & { meta: ApiListMeta };
 type ApiCreateResponse = { data: ApiNovelty[] };
 type ApiItemResponse = { data: ApiNovelty };
+
+async function invalidateNoveltyDependentCaches(reason: string) {
+  await Promise.all([
+    invalidateCacheFamily("dashboard", reason),
+    invalidateCacheFamily("novelties", reason),
+    invalidateCacheFamily("time-entries", reason),
+  ]);
+}
 
 const fallbackApprovalRoles: Role[] = ["Nivel 1 - RRHH"];
 const validRoles: Role[] = ["Nivel 1 - RRHH", "Nivel 2 - Supervisión / Gestión", "Nivel 3 - Administrativo de Carga Horaria"];
@@ -178,11 +187,13 @@ export const noveltyApiService = {
       method: "POST",
       body: input,
     });
+    await invalidateNoveltyDependentCaches("novelty created");
     return response.data.map(mapNoveltyFromApi);
   },
 
   async approve(id: string) {
     const response = await apiRequest<ApiItemResponse>(`/novelties/${id}/approve`, { method: "POST" });
+    await invalidateNoveltyDependentCaches("novelty approved");
     return mapNoveltyFromApi(response.data);
   },
 
@@ -191,6 +202,7 @@ export const noveltyApiService = {
       method: "POST",
       body: { reason },
     });
+    await invalidateNoveltyDependentCaches("novelty rejected");
     return mapNoveltyFromApi(response.data);
   },
 

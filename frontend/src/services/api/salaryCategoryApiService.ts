@@ -1,4 +1,5 @@
 import { apiRequest } from "./apiClient";
+import { cachePolicies, cachedData } from "../cache";
 import type { SalaryGroup } from "../salaryRangeMockService";
 
 type ApiSalaryCategory = {
@@ -28,10 +29,18 @@ function toGroups(items: ApiSalaryCategory[]): SalaryGroup[] {
   })).filter((group) => group.categories.length);
 }
 
+function isSalaryCategoryList(value: ApiSalaryCategory[]) {
+  return Array.isArray(value) && value.every((item) => typeof item.id === "string" && typeof item.name === "string" && typeof item.order === "number");
+}
+
 export const salaryCategoryApiService = {
   async getAll() {
-    const response = await apiRequest<ApiListResponse>("/salary-categories?take=300");
-    return response.data;
+    return cachedData({
+      requestKey: "GET:/salary-categories?take=300",
+      policy: cachePolicies.salaryCategoriesCatalog,
+      fetcher: () => apiRequest<ApiListResponse>("/salary-categories?take=300", { apiCache: false }).then((response) => response.data),
+      validate: isSalaryCategoryList,
+    });
   },
 
   async getGroups() {

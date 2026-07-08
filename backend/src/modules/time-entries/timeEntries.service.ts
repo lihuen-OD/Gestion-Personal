@@ -1,14 +1,17 @@
+import { access } from "node:fs/promises";
 import { Prisma } from "@prisma/client";
 import type { AuditContext } from "../audit/audit.service";
 import { auditService } from "../audit/audit.service";
 import { AppError } from "../../shared/errors/AppError";
 import { employeeAccessWhere } from "../employees/employeeAccess";
 import { roles } from "../../shared/security/roles";
+import { storageService } from "../../shared/storage/storage.service";
 import { timeEntriesRepository } from "./timeEntries.repository";
 import type {
   AdminCloseWorkShiftInput,
   AdminWorkShiftReasonInput,
   AttendanceSummaryQuery,
+  ClockPhotoPunchInput,
   CreateTimeEntryInput,
   CreateWorkShiftInput,
   ClockByEmployeeInput,
@@ -267,6 +270,98 @@ async function ensureClockEmployeeActive(employee: { id: string; status: string 
   throw new AppError("El legajo no está activo para fichar. Comunicate con administración.", 403, "CLOCK_EMPLOYEE_INACTIVE");
 }
 
+type ClockPunchEmployee = Awaited<ReturnType<typeof resolveClockEmployeeById>>;
+
+type ClockPhotoEvidence = {
+  photoUrl?: string | null;
+  photoStoragePath?: string | null;
+  faceDetected: boolean;
+  faceValidationStatus: ClockPhotoPunchInput["faceValidationStatus"];
+  faceDetectionScore?: number | null;
+  ipAddress?: string | null;
+  userAgent?: string | null;
+  rawPayload: Prisma.InputJsonValue;
+};
+
+const supportedClockPhotoMimes = new Set(["image/jpeg", "image/webp", "image/png"]);
+
+function decodeClockPhoto(dataUrl: string) {
+  const match = dataUrl.match(/^data:(image\/(?:jpeg|jpg|webp|png));base64,([a-zA-Z0-9+/=]+)$/);
+  if (!match) {
+    throw new AppError("La foto de fichada tiene un formato inválido.", 400, "CLOCK_PHOTO_INVALID_FORMAT");
+  }
+  const rawMimeType = match[1];
+  const base64Payload = match[2];
+  if (!rawMimeType || !base64Payload) {
+    throw new AppError("La foto de fichada tiene un formato inválido.", 400, "CLOCK_PHOTO_INVALID_FORMAT");
+  }
+  const mimeType = rawMimeType === "image/jpg" ? "image/jpeg" : rawMimeType;
+  if (!supportedClockPhotoMimes.has(mimeType)) {
+    throw new AppError("La foto de fichada debe ser JPEG, WebP o PNG.", 400, "CLOCK_PHOTO_UNSUPPORTED_TYPE");
+  }
+
+  const buffer = Buffer.from(base64Payload, "base64");
+  if (buffer.length < 5_000) {
+    throw new AppError("La foto de fichada es demasiado pequeña.", 400, "CLOCK_PHOTO_TOO_SMALL");
+  }
+  if (buffer.length > 2_500_000) {
+    throw new AppError("La foto de fichada es demasiado grande.", 413, "CLOCK_PHOTO_TOO_LARGE");
+  }
+
+  return { buffer, mimeType };
+}
+
+async function storeClockPunchPhoto(input: ClockPhotoPunchInput, audit?: AuditContext): Promise<ClockPhotoEvidence> {
+  const { buffer, mimeType } = decodeClockPhoto(input.photo);
+  const extension = mimeType === "image/webp" ? "webp" : mimeType === "image/png" ? "png" : "jpg";
+  const stored = await storageService.upload({
+    buffer,
+    mimeType,
+    folder: `attendance-punches/${input.employeeId}`,
+    fileName: `${input.punchType.toLowerCase()}-${Date.now()}.${extension}`,
+    metadata: {
+      employeeId: input.employeeId,
+      punchType: input.punchType,
+      faceValidationStatus: input.faceValidationStatus,
+    },
+  });
+
+  const userAgent = audit?.userAgent || input.device?.userAgent || null;
+  return {
+    photoUrl: stored.publicUrl || null,
+    photoStoragePath: stored.storageKey,
+    faceDetected: input.faceValidationStatus === "VALID",
+    faceValidationStatus: input.faceValidationStatus,
+    faceDetectionScore: input.faceDetectionScore ?? null,
+    ipAddress: audit?.ipAddress || null,
+    userAgent,
+    rawPayload: {
+      device: {
+        platform: input.device?.platform || null,
+        language: input.device?.language || null,
+        cameraLabel: input.device?.cameraLabel || null,
+      },
+      photo: {
+        mimeType,
+        bytes: buffer.length,
+        providerPath: stored.storageKey,
+      },
+    },
+  };
+}
+
+function faceStatusObservation(status: ClockPhotoPunchInput["faceValidationStatus"]) {
+  const labels: Record<ClockPhotoPunchInput["faceValidationStatus"], string> = {
+    VALID: "Validacion facial correcta.",
+    NO_FACE: "No se detecto una cara en la foto.",
+    MULTIPLE_FACES: "Se detecto mas de una cara en la foto.",
+    LOW_LIGHT: "La foto fue rechazada por baja iluminacion.",
+    FACE_TOO_SMALL: "El rostro detectado es demasiado pequeno.",
+    CAMERA_ERROR: "No se pudo validar la camara.",
+  };
+  return labels[status];
+}
+
 export function timeEntriesExportToCsv(rows: TimeEntriesExportRow[]) {
   const headers: (keyof TimeEntriesExportRow)[] = [
     "CUIL",
@@ -348,6 +443,33 @@ export const timeEntriesService = {
       closedShifts,
       observedShifts,
       observedPunches: result.observedPunches,
+    };
+  },
+
+  async attendancePunchPhoto(id: string, user: Express.AuthUser) {
+    const punch = await timeEntriesRepository.findAttendancePunchEvidence(id, employeeAccessWhere(user));
+    if (!punch) throw new AppError("Fichada no encontrada", 404, "ATTENDANCE_PUNCH_NOT_FOUND");
+    if (!punch.photoStoragePath) throw new AppError("La fichada no tiene foto asociada.", 404, "ATTENDANCE_PUNCH_PHOTO_NOT_FOUND");
+
+    const publicUrl = punch.photoUrl || storageService.getPublicUrl(punch.photoStoragePath);
+    if (publicUrl) {
+      return {
+        kind: "redirect" as const,
+        url: publicUrl,
+      };
+    }
+
+    const filePath = storageService.getFilePath(punch.photoStoragePath);
+    if (!filePath) throw new AppError("Foto no disponible en storage.", 404, "ATTENDANCE_PUNCH_PHOTO_UNAVAILABLE");
+    await access(filePath).catch(() => {
+      throw new AppError("Foto no encontrada en storage.", 404, "ATTENDANCE_PUNCH_PHOTO_FILE_NOT_FOUND");
+    });
+
+    return {
+      kind: "file" as const,
+      path: filePath,
+      fileName: `fichada-${punch.employee.legajo}-${punch.type.toLowerCase()}.jpg`,
+      mimeType: "image/jpeg",
     };
   },
 
@@ -540,6 +662,168 @@ export const timeEntriesService = {
         startAt: openShift.startAt,
       } : null,
     };
+  },
+
+  async clockPhotoPunch(input: ClockPhotoPunchInput, audit?: AuditContext) {
+    const employee = await resolveClockEmployeeById(input.employeeId);
+    const punchType = input.punchType === "IN" ? "INGRESO" : "SALIDA";
+    const now = new Date();
+    const evidence = await storeClockPunchPhoto(input, audit);
+
+    if (input.faceValidationStatus !== "VALID") {
+      await timeEntriesRepository.createObservedPunch({
+        employeeId: employee.id,
+        type: punchType,
+        source: "PUBLIC_CLOCK_PHOTO",
+        timestamp: now,
+        observation: faceStatusObservation(input.faceValidationStatus),
+        punchEvidence: evidence,
+      });
+      await auditService.register({
+        ...audit,
+        action: "CREATE",
+        entity: "AttendancePunch",
+        entityId: employee.id,
+        description: `Fichada publica observada para legajo ${employee.legajo}: ${faceStatusObservation(input.faceValidationStatus)}`,
+        after: { employeeId: employee.id, punchType, faceValidationStatus: input.faceValidationStatus } as Prisma.InputJsonValue,
+      });
+      throw new AppError("No se pudo validar el rostro para registrar la fichada.", 400, "CLOCK_FACE_VALIDATION_FAILED");
+    }
+
+    await ensureClockEmployeeActive(employee, punchType);
+
+    if (input.punchType === "IN") {
+      const openShift = await timeEntriesRepository.findOpenWorkShift(employee.id);
+      if (openShift) {
+        if (shiftMinutes(openShift.startAt, now) > MAX_SHIFT_MINUTES) {
+          const workShift = await timeEntriesRepository.rolloverExpiredOpenWorkShift({
+            openWorkShiftId: openShift.id,
+            employeeId: employee.id,
+            source: "PUBLIC_CLOCK_PHOTO",
+            startAt: now,
+            missingOutObservation: "Olvido de salida marcado automaticamente al registrar un nuevo ingreso desde el fichador con foto.",
+            punchEvidence: evidence,
+          });
+          await auditService.register({
+            ...audit,
+            action: "CREATE",
+            entity: "WorkShift",
+            entityId: workShift.id,
+            description: `Ingreso publico con foto registrado para legajo ${employee.legajo}.`,
+            after: { workShiftId: workShift.id, employeeId: employee.id, source: "PUBLIC_CLOCK_PHOTO" } as Prisma.InputJsonValue,
+          });
+          return {
+            employee: publicEmployeeLabel(employee),
+            previousOpenShift: {
+              id: openShift.id,
+              startAt: openShift.startAt,
+              status: "FALTA_SALIDA",
+            },
+            workShift: {
+              id: workShift.id,
+              startAt: workShift.startAt,
+            },
+          };
+        }
+        await timeEntriesRepository.createObservedPunch({
+          employeeId: employee.id,
+          type: "INGRESO",
+          source: "PUBLIC_CLOCK_PHOTO",
+          timestamp: now,
+          observation: "Intento de ingreso con una jornada abierta.",
+          punchEvidence: evidence,
+        });
+        throw new AppError("Ya existe un ingreso abierto para este empleado.", 409, "CLOCK_ALREADY_OPEN");
+      }
+
+      const workShift = await timeEntriesRepository.createOpenWorkShift({
+        employeeId: employee.id,
+        source: "PUBLIC_CLOCK_PHOTO",
+        startAt: now,
+        punchEvidence: evidence,
+      });
+      await auditService.register({
+        ...audit,
+        action: "CREATE",
+        entity: "WorkShift",
+        entityId: workShift.id,
+        description: `Ingreso publico con foto registrado para legajo ${employee.legajo}.`,
+        after: { workShiftId: workShift.id, employeeId: employee.id, source: "PUBLIC_CLOCK_PHOTO" } as Prisma.InputJsonValue,
+      });
+      return {
+        employee: publicEmployeeLabel(employee),
+        workShift: {
+          id: workShift.id,
+          startAt: workShift.startAt,
+        },
+      };
+    }
+
+    const openShift = await timeEntriesRepository.findOpenWorkShift(employee.id);
+    if (!openShift) {
+      await timeEntriesRepository.createObservedPunch({
+        employeeId: employee.id,
+        type: "SALIDA",
+        source: "PUBLIC_CLOCK_PHOTO",
+        timestamp: now,
+        observation: "Intento de salida sin ingreso abierto.",
+        punchEvidence: evidence,
+      });
+      throw new AppError("No hay un ingreso abierto para este empleado.", 409, "CLOCK_NO_OPEN_SHIFT");
+    }
+
+    const hourConcept = await resolveShiftConcept(employee.id);
+    const calculation = buildShiftSegments(openShift.startAt, now);
+    for (const segment of calculation.segments) {
+      await ensureDayIsNotBlocked(employee.id, segment.date, segment.hours);
+    }
+
+    try {
+      const created = await timeEntriesRepository.closeOpenWorkShift({
+        workShiftId: openShift.id,
+        employeeId: employee.id,
+        hourConceptId: hourConcept.id,
+        hourConceptName: hourConcept.name,
+        source: "PUBLIC_CLOCK_PHOTO",
+        endAt: now,
+        totalMinutes: calculation.totalMinutes,
+        segments: calculation.segments,
+        punchEvidence: evidence,
+      });
+      await auditService.register({
+        ...audit,
+        action: "CREATE",
+        entity: "WorkShift",
+        entityId: created.workShift.id,
+        description: `Salida publica con foto registrada para legajo ${employee.legajo}.`,
+        after: { workShiftId: created.workShift.id, employeeId: employee.id, source: "PUBLIC_CLOCK_PHOTO" } as Prisma.InputJsonValue,
+      });
+      return {
+        employee: publicEmployeeLabel(employee),
+        workShift: {
+          id: created.workShift.id,
+          startAt: created.workShift.startAt,
+          endAt: created.workShift.endAt,
+          totalMinutes: created.workShift.totalMinutes,
+          totalHours: Number((calculation.totalMinutes / 60).toFixed(2)),
+        },
+        segments: calculation.segments.map((segment) => ({
+          date: segment.date,
+          startAt: segment.startAt,
+          endAt: segment.endAt,
+          minutes: segment.minutes,
+          hours: segment.hours,
+          label: segment.label,
+        })),
+        entries: created.entries,
+        timeSegments: created.timeSegments,
+      };
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith("TIME_ENTRY_LOCKED:")) {
+        throw new AppError("La salida coincide con una carga horaria aprobada o cerrada. Avisá a RRHH para corregirla.", 409, "CLOCK_LOCKED_TIME_ENTRY");
+      }
+      throw error;
+    }
   },
 
   async clockIn(input: ClockByDniInput) {

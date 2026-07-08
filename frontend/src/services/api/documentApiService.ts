@@ -1,4 +1,5 @@
 import { apiDownload, apiRequest } from "./apiClient";
+import { invalidateCacheFamily } from "../cache";
 import type { DocumentMock } from "../../types";
 
 type ApiDocumentStatus = "PENDIENTE" | "VIGENTE" | "POR_VENCER" | "VENCIDO" | "RECHAZADO";
@@ -148,6 +149,10 @@ export const documentApiService = {
       },
     });
 
+    await Promise.all([
+      invalidateCacheFamily("dashboard", "employee document created"),
+      invalidateCacheFamily("employees", "employee document created"),
+    ]);
     return getEmployeeDocuments(input.employeeId);
   },
 

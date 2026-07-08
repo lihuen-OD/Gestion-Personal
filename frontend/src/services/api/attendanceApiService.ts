@@ -1,4 +1,4 @@
-import { apiRequest } from "./apiClient";
+import { apiDownload, apiRequest } from "./apiClient";
 
 export type AttendanceEmployee = {
   id: string;
@@ -47,8 +47,23 @@ export type AttendanceShift = {
   crossesMidnight: boolean;
   observation?: string | null;
   employee: AttendanceEmployee;
+  startPunch?: AttendancePunchEvidence | null;
+  endPunch?: AttendancePunchEvidence | null;
   timeSegments: AttendanceSegment[];
   timeEntries: AttendanceTimeEntry[];
+};
+
+export type AttendancePunchEvidence = {
+  id: string;
+  timestamp: string;
+  source: string;
+  status: string;
+  observation?: string | null;
+  photoStoragePath?: string | null;
+  photoUrl?: string | null;
+  faceDetected: boolean;
+  faceValidationStatus?: string | null;
+  faceDetectionScore?: number | null;
 };
 
 export type AttendancePunch = {
@@ -59,6 +74,11 @@ export type AttendancePunch = {
   source: string;
   status: string;
   observation?: string | null;
+  photoStoragePath?: string | null;
+  photoUrl?: string | null;
+  faceDetected: boolean;
+  faceValidationStatus?: string | null;
+  faceDetectionScore?: number | null;
   employee: AttendanceEmployee;
 };
 
@@ -108,5 +128,9 @@ export const attendanceApiService = {
       method: "POST",
       body: { reason },
     });
+  },
+
+  downloadPunchPhoto(id: string) {
+    return apiDownload(`/time-entries/attendance/punches/${id}/photo`);
   },
 };

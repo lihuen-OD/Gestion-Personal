@@ -11,6 +11,7 @@ import { Button } from "../components/ui/Button";
 import { Badge } from "../components/ui/Badge";
 import { useAuth } from "../context/AuthContext";
 import { orgStructureApiService } from "../services/api/orgStructureApiService";
+import { subscribeCacheEvent } from "../services/cache";
 import type { EmployeeAddress, Role } from "../types";
 import type { OrgArea, OrgBusinessUnit, OrgCompany, OrgCostCenter, OrgEstablishment, OrgSector, OrgStructureCatalog, OrgStructureEntityType, OrgStructureStatus } from "../types/orgStructure.types";
 import { useAsyncAction } from "../utils/useAsyncAction";
@@ -162,6 +163,12 @@ export function OrgStructurePage() {
   const [apiCatalog, setApiCatalog] = useState<OrgStructureCatalog | null>(null);
   const [isLoadingApi, setIsLoadingApi] = useState(true);
   const [apiWarning, setApiWarning] = useState("");
+
+  useEffect(() => subscribeCacheEvent("updated", (event) => {
+    if (event.family === "org-structure") {
+      setRefresh((value) => value + 1);
+    }
+  }), []);
 
   useEffect(() => {
     let alive = true;

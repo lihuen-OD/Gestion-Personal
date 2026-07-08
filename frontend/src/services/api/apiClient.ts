@@ -164,7 +164,7 @@ async function ensureFreshAccessToken(options: RequestOptions) {
 
 export async function apiRequest<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const method = (options.method || "GET").toUpperCase();
-  const canCache = method === "GET" && options.apiCache !== false;
+  const canCache = method === "GET" && options.apiCache === true;
   const key = canCache ? cacheKey(path, { ...options, method }) : "";
 
   if (canCache) {

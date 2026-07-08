@@ -56,7 +56,7 @@ export const timeEntriesExportQuerySchema = z.object({
   includeInReview: z.coerce.boolean().default(false),
 });
 
-export const workShiftSourceSchema = z.enum(["ADMIN", "PORTAL_DNI", "KIOSK", "BIOTIME", "FACIAL"]);
+export const workShiftSourceSchema = z.enum(["ADMIN", "PORTAL_DNI", "PUBLIC_CLOCK_PHOTO", "KIOSK", "BIOTIME", "FACIAL"]);
 
 const workShiftBaseSchema = z.object({
   employeeId: z.string().uuid().optional(),
@@ -92,6 +92,29 @@ export const clockByEmployeeSchema = z.object({
   employeeId: z.string().uuid(),
 });
 
+export const clockFaceValidationStatusSchema = z.enum([
+  "VALID",
+  "NO_FACE",
+  "MULTIPLE_FACES",
+  "LOW_LIGHT",
+  "FACE_TOO_SMALL",
+  "CAMERA_ERROR",
+]);
+
+export const clockPhotoPunchSchema = z.object({
+  employeeId: z.string().uuid(),
+  punchType: z.enum(["IN", "OUT"]),
+  photo: z.string().min(200).max(4_500_000),
+  faceValidationStatus: clockFaceValidationStatusSchema,
+  faceDetectionScore: z.coerce.number().min(0).max(1).optional(),
+  device: z.object({
+    userAgent: z.string().trim().max(600).optional(),
+    platform: z.string().trim().max(120).optional(),
+    language: z.string().trim().max(40).optional(),
+    cameraLabel: z.string().trim().max(180).optional(),
+  }).optional(),
+});
+
 export const adminCloseWorkShiftSchema = z.object({
   endAt: z.coerce.date(),
   reason: z.string().trim().min(2).max(800),
@@ -114,5 +137,6 @@ export type CreateWorkShiftInput = z.infer<typeof createWorkShiftSchema>;
 export type ClockByDniInput = z.infer<typeof clockByDniSchema>;
 export type ClockEmployeeSearchQuery = z.infer<typeof clockEmployeeSearchQuerySchema>;
 export type ClockByEmployeeInput = z.infer<typeof clockByEmployeeSchema>;
+export type ClockPhotoPunchInput = z.infer<typeof clockPhotoPunchSchema>;
 export type AdminCloseWorkShiftInput = z.infer<typeof adminCloseWorkShiftSchema>;
 export type AdminWorkShiftReasonInput = z.infer<typeof adminWorkShiftReasonSchema>;

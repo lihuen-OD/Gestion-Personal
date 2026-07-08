@@ -3,6 +3,7 @@ import { LogIn, LogOut, Search } from "lucide-react";
 import { ApiError } from "../services/api/apiClient";
 import { timeClockApiService } from "../services/api/timeClockApiService";
 import { Button } from "../components/ui/Button";
+import { FaceCaptureModal, type FaceCaptureResult } from "../components/time-clock/FaceCaptureModal";
 
 const MAX_CLOCK_SHIFT_MINUTES = 20 * 60;
 
@@ -27,6 +28,7 @@ export function TimeClockPage() {
   const [result, setResult] = useState<Awaited<ReturnType<typeof timeClockApiService.clockOut>> | Awaited<ReturnType<typeof timeClockApiService.clockIn>>>();
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [pendingPunch, setPendingPunch] = useState<"IN" | "OUT">();
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(new Date()), 1000);
@@ -111,28 +113,40 @@ export function TimeClockPage() {
   const clockIn = async () => {
     if (!canSubmit) return;
     setError("");
-    setLoading(true);
-    try {
-      const response = await timeClockApiService.clockIn(selected!.id);
-      setResult(response);
-      setStatus({ employee: response.employee, openShift: response.workShift });
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : "No se pudo registrar el ingreso. Verificá si ya tenés una jornada abierta.");
-    } finally {
-      setLoading(false);
-    }
+    setPendingPunch("IN");
   };
 
   const clockOut = async () => {
     if (!canSubmit) return;
     setError("");
+    setPendingPunch("OUT");
+  };
+
+  const confirmPhotoPunch = async (capture: FaceCaptureResult) => {
+    if (!selected || !pendingPunch) return;
+    setError("");
     setLoading(true);
     try {
-      const response = await timeClockApiService.clockOut(selected!.id);
+      const response = await timeClockApiService.photoPunch({
+        employeeId: selected.id,
+        punchType: pendingPunch,
+        photo: capture.photo,
+        faceValidationStatus: capture.faceValidationStatus,
+        faceDetectionScore: capture.faceDetectionScore,
+        device: capture.device,
+      });
       setResult(response);
-      setStatus({ employee: response.employee, openShift: null });
+      if ("totalHours" in response.workShift) {
+        setStatus({ employee: response.employee, openShift: null });
+      } else {
+        setStatus({ employee: response.employee, openShift: response.workShift });
+      }
+      setPendingPunch(undefined);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "No se pudo registrar la salida. Verificá que exista un ingreso abierto o avisá a RRHH.");
+      const fallback = pendingPunch === "IN"
+        ? "No se pudo registrar el ingreso. Verificá si ya tenés una jornada abierta."
+        : "No se pudo registrar la salida. Verificá que exista un ingreso abierto o avisá a RRHH.";
+      setError(err instanceof ApiError ? err.message : fallback);
     } finally {
       setLoading(false);
     }
@@ -227,6 +241,16 @@ export function TimeClockPage() {
 
         {error ? <p className="error">{error}</p> : null}
       </section>
+
+      {pendingPunch ? (
+        <FaceCaptureModal
+          punchType={pendingPunch}
+          onCancel={() => {
+            if (!loading) setPendingPunch(undefined);
+          }}
+          onConfirm={confirmPhotoPunch}
+        />
+      ) : null}
     </main>
   );
 }

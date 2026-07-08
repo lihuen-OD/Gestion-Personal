@@ -1,4 +1,5 @@
 import { apiRequest } from "./apiClient";
+import { cachePolicies, cachedData } from "../cache";
 import type { TimeStatus } from "../../types";
 
 type ApiApprovalStatus =
@@ -62,6 +63,10 @@ function mapItem(item: ApiPendingItem): PendingItem {
   };
 }
 
+function isPendingResult(value: PendingResult) {
+  return Boolean(value && typeof value.summary?.total === "number" && Array.isArray(value.data));
+}
+
 export const pendingApiService = {
   async getAll(filters: { kind?: PendingKind; period?: string; take?: number } = {}): Promise<PendingResult> {
     const params = new URLSearchParams();
@@ -69,10 +74,15 @@ export const pendingApiService = {
     params.set("take", String(filters.take || 200));
     if (filters.period) params.set("period", filters.period);
 
-    const response = await apiRequest<ApiPendingResponse>(`/pending?${params.toString()}`);
-    return {
-      summary: response.data.summary,
-      data: response.data.data.map(mapItem),
-    };
+    const key = `/pending?${params.toString()}`;
+    return cachedData({
+      requestKey: `GET:${key}`,
+      policy: cachePolicies.pendingQueue,
+      fetcher: () => apiRequest<ApiPendingResponse>(key, { apiCache: false }).then((response) => ({
+        summary: response.data.summary,
+        data: response.data.data.map(mapItem),
+      })),
+      validate: isPendingResult,
+    });
   },
 };

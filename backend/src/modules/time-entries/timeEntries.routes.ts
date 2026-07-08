@@ -15,6 +15,7 @@ import {
   clockByEmployeeSchema,
   clockByDniSchema,
   clockEmployeeSearchQuerySchema,
+  clockPhotoPunchSchema,
   listTimeEntriesQuerySchema,
   previewWorkShiftSchema,
   rejectTimeEntrySchema,
@@ -30,6 +31,7 @@ timeEntriesRouter.get("/clock/employees", validateQuery(clockEmployeeSearchQuery
 timeEntriesRouter.post("/clock/status", validateBody(clockByEmployeeSchema), asyncHandler(timeEntriesController.clockStatusByEmployee));
 timeEntriesRouter.post("/clock/in", validateBody(clockByEmployeeSchema), asyncHandler(timeEntriesController.clockInByEmployee));
 timeEntriesRouter.post("/clock/out", validateBody(clockByEmployeeSchema), asyncHandler(timeEntriesController.clockOutByEmployee));
+timeEntriesRouter.post("/clock/photo-punch", validateBody(clockPhotoPunchSchema), asyncHandler(timeEntriesController.clockPhotoPunch));
 timeEntriesRouter.post("/clock/status-by-dni", validateBody(clockByDniSchema), asyncHandler(timeEntriesController.clockStatus));
 timeEntriesRouter.post("/clock/in-by-dni", validateBody(clockByDniSchema), asyncHandler(timeEntriesController.clockIn));
 timeEntriesRouter.post("/clock/out-by-dni", validateBody(clockByDniSchema), asyncHandler(timeEntriesController.clockOut));
@@ -39,6 +41,7 @@ timeEntriesRouter.use(requireAuth);
 const operationalRoles = [roles.rrhh, roles.supervision, roles.cargaHoraria];
 
 timeEntriesRouter.get("/attendance", requireAnyRole(operationalRoles), validateQuery(attendanceSummaryQuerySchema), asyncHandler(timeEntriesController.attendanceSummary));
+timeEntriesRouter.get("/attendance/punches/:id/photo", requireAnyRole(operationalRoles), asyncHandler(timeEntriesController.attendancePunchPhoto));
 timeEntriesRouter.get("/", requireAnyRole(operationalRoles), validateQuery(listTimeEntriesQuerySchema), asyncHandler(timeEntriesController.list));
 timeEntriesRouter.get("/summary", requireAnyRole(operationalRoles), validateQuery(timeEntriesSummaryQuerySchema), asyncHandler(timeEntriesController.summary));
 timeEntriesRouter.get("/period-employees", requireAnyRole(operationalRoles), validateQuery(timeEntriesPeriodEmployeesQuerySchema), asyncHandler(timeEntriesController.periodEmployees));

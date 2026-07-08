@@ -75,6 +75,7 @@ enum WorkShiftStatus {
 enum WorkShiftSource {
   ADMIN
   PORTAL_DNI
+  PUBLIC_CLOCK_PHOTO
   KIOSK
   BIOTIME
   FACIAL
@@ -89,6 +90,15 @@ enum AttendancePunchStatus {
   VALIDA
   OBSERVADA
   RECHAZADA
+}
+
+enum FaceValidationStatus {
+  VALID
+  NO_FACE
+  MULTIPLE_FACES
+  LOW_LIGHT
+  FACE_TOO_SMALL
+  CAMERA_ERROR
 }
 
 enum HourConceptKind {
@@ -850,6 +860,11 @@ model AttendancePunch {
   userAgent         String?
   status            AttendancePunchStatus @default(VALIDA)
   observation       String?
+  photoUrl          String?
+  photoStoragePath  String?
+  faceDetected      Boolean               @default(false)
+  faceValidationStatus FaceValidationStatus?
+  faceDetectionScore Float?
   externalPunchId   String?
   rawPayload        Json?
   biometricProvider String?

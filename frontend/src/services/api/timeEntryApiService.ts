@@ -1,6 +1,7 @@
 import { apiRequest } from "./apiClient";
 import { mapEmployeeFromApi } from "./employeeApiService";
 import { hourConceptApiService } from "./hourConceptApiService";
+import { cachePolicies, cachedData, invalidateCacheFamily } from "../cache";
 import type { Employee, TimeEntry, TimeStatus, User } from "../../types";
 import type { HoursExportRow } from "../../utils/hoursExport";
 
@@ -154,6 +155,22 @@ const statusToApi: Partial<Record<TimeStatus, ApiApprovalStatus>> = {
   Cerrado: "CERRADO",
 };
 
+async function invalidateTimeEntryDependentCaches(reason: string) {
+  await Promise.all([
+    invalidateCacheFamily("dashboard", reason),
+    invalidateCacheFamily("pending", reason),
+    invalidateCacheFamily("time-entries", reason),
+  ]);
+}
+
+function isTimeEntriesSummary(value: ApiSummaryResponse["data"]) {
+  return Boolean(value && typeof value.activeEmployees === "number" && typeof value.pendingEmployees === "number" && typeof value.reviewEmployees === "number");
+}
+
+function isEmployeePeriodRowsResponse(value: { items: Array<{ employee: Employee; summary: unknown }>; meta?: unknown }) {
+  return Boolean(value && Array.isArray(value.items) && value.items.every((row) => typeof row.employee?.id === "string"));
+}
+
 function numberValue(value: string | number | null | undefined) {
   const parsed = Number(value || 0);
   return Number.isFinite(parsed) ? parsed : 0;
@@ -282,6 +299,7 @@ export const timeEntryApiService = {
       method: "POST",
       body: { ...input, source: "ADMIN", confirm: true },
     });
+    await invalidateTimeEntryDependentCaches("work shift created");
     return {
       workShift: response.data.workShift,
       preview: response.data.preview,
@@ -291,8 +309,13 @@ export const timeEntryApiService = {
 
   async getSummary(period: string) {
     const params = new URLSearchParams({ period });
-    const response = await apiRequest<ApiSummaryResponse>(`/time-entries/summary?${params.toString()}`);
-    return response.data;
+    const key = `/time-entries/summary?${params.toString()}`;
+    return cachedData({
+      requestKey: `GET:${key}`,
+      policy: cachePolicies.timeEntriesAggregates,
+      fetcher: () => apiRequest<ApiSummaryResponse>(key, { apiCache: false }).then((response) => response.data),
+      validate: isTimeEntriesSummary,
+    });
   },
 
   async getPeriodEmployees(filters: { period: string; search?: string; costCenterId?: string; page?: number; take?: number }) {
@@ -302,17 +325,22 @@ export const timeEntryApiService = {
     params.set("take", String(filters.take || 25));
     if (filters.search?.trim()) params.set("search", filters.search.trim());
     if (filters.costCenterId) params.set("costCenterId", filters.costCenterId);
-    const response = await apiRequest<ApiEmployeePeriodRowsResponse>(`/time-entries/period-employees?${params.toString()}`);
-    return {
-      items: response.data.map((row) => ({
-        employee: mapEmployeeFromApi(row.employee),
-        summary: {
-          total: row.summary.total,
-          status: statusFromApi[row.summary.status] || "Pendiente",
-        },
+    const key = `/time-entries/period-employees?${params.toString()}`;
+    return cachedData({
+      requestKey: `GET:${key}`,
+      policy: cachePolicies.timeEntriesAggregates,
+      fetcher: () => apiRequest<ApiEmployeePeriodRowsResponse>(key, { apiCache: false }).then((response) => ({
+        items: response.data.map((row) => ({
+          employee: mapEmployeeFromApi(row.employee),
+          summary: {
+            total: row.summary.total,
+            status: statusFromApi[row.summary.status] || "Pendiente",
+          },
+        })),
+        meta: response.meta,
       })),
-      meta: response.meta,
-    };
+      validate: isEmployeePeriodRowsResponse,
+    });
   },
 
   getByEmployee(employeeId: string, period: string) {
@@ -330,6 +358,7 @@ export const timeEntryApiService = {
         observation: entry.notes || null,
       },
     });
+    await invalidateTimeEntryDependentCaches("time entry created");
     return mapTimeEntryFromApi(response.data);
   },
 
@@ -340,6 +369,7 @@ export const timeEntryApiService = {
     if (entry.hours !== undefined) body.hours = entry.hours;
     if (entry.notes !== undefined) body.observation = entry.notes || null;
     const response = await apiRequest<ApiItemResponse>(`/time-entries/${id}`, { method: "PATCH", body });
+    await invalidateTimeEntryDependentCaches("time entry updated");
     return mapTimeEntryFromApi(response.data);
   },
 
@@ -356,11 +386,13 @@ export const timeEntryApiService = {
 
   async submit(id: string) {
     const response = await apiRequest<ApiItemResponse>(`/time-entries/${id}/submit`, { method: "POST" });
+    await invalidateTimeEntryDependentCaches("time entry submitted");
     return mapTimeEntryFromApi(response.data);
   },
 
   async approve(id: string) {
     const response = await apiRequest<ApiItemResponse>(`/time-entries/${id}/approve`, { method: "POST" });
+    await invalidateTimeEntryDependentCaches("time entry approved");
     return mapTimeEntryFromApi(response.data);
   },
 
@@ -369,6 +401,7 @@ export const timeEntryApiService = {
       method: "POST",
       body: { reason },
     });
+    await invalidateTimeEntryDependentCaches("time entry rejected");
     return mapTimeEntryFromApi(response.data);
   },
 
@@ -377,6 +410,7 @@ export const timeEntryApiService = {
       method: "POST",
       body: { reason },
     });
+    await invalidateTimeEntryDependentCaches("time entry returned");
     return mapTimeEntryFromApi(response.data);
   },
 

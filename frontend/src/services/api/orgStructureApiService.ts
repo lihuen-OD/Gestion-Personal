@@ -1,4 +1,5 @@
 import { apiRequest } from "./apiClient";
+import { cachePolicies, cachedData, invalidateCacheFamily } from "../cache";
 import type {
   OrgArea,
   OrgBusinessUnit,
@@ -87,8 +88,6 @@ type ApiOrgStructureResponse = {
     costCenters: ApiCostCenter[];
   };
 };
-
-let catalogCache: Promise<OrgStructureCatalog> | null = null;
 
 function compactIds(values: Array<string | null | undefined>) {
   return Array.from(new Set(values.filter(Boolean))) as string[];
@@ -180,25 +179,40 @@ function mapCatalog(response: ApiOrgStructureResponse): OrgStructureCatalog {
   };
 }
 
-function clearCatalogCache() {
-  catalogCache = null;
+function isOrgStructureCatalog(value: OrgStructureCatalog): boolean {
+  return Boolean(
+    value
+      && Array.isArray(value.companies)
+      && Array.isArray(value.businessUnits)
+      && Array.isArray(value.establishments)
+      && Array.isArray(value.areas)
+      && Array.isArray(value.sectors)
+      && Array.isArray(value.costCenters),
+  );
 }
 
 async function writeAndRefresh<T>(request: Promise<T>) {
   try {
     return await request;
   } finally {
-    clearCatalogCache();
+    await invalidateCacheFamily("org-structure", "org-structure mutation");
+    await invalidateCacheFamily("positions", "org-structure mutation");
+    await invalidateCacheFamily("employees", "org-structure mutation");
+    await invalidateCacheFamily("dashboard", "org-structure mutation");
   }
 }
 
 export const orgStructureApiService = {
   async getCatalog(): Promise<OrgStructureCatalog> {
-    catalogCache ??= apiRequest<ApiOrgStructureResponse>("/org-structure").then(mapCatalog);
-    return catalogCache;
+    return cachedData({
+      requestKey: "GET:/org-structure",
+      policy: cachePolicies.orgStructureCatalog,
+      fetcher: () => apiRequest<ApiOrgStructureResponse>("/org-structure", { apiCache: false }).then(mapCatalog),
+      validate: isOrgStructureCatalog,
+    });
   },
 
-  clearCache: clearCatalogCache,
+  clearCache: () => invalidateCacheFamily("org-structure", "manual clear"),
 
   createCompany: (item: OrgCompany) => writeAndRefresh(apiRequest("/org-structure/companies", { method: "POST", body: { code: item.code, name: item.name, status: item.status } })),
   updateCompany: (item: OrgCompany) => writeAndRefresh(apiRequest(`/org-structure/companies/${item.id}`, { method: "PATCH", body: { code: item.code, name: item.name, status: item.status } })),
