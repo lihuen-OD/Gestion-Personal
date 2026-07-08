@@ -184,6 +184,11 @@ export const listEmployeeHistoryQuerySchema = z.object({
   take: z.coerce.number().int().positive().max(100).default(50),
 });
 
+export const employeeTimeGridQuerySchema = z.object({
+  period: z.string().regex(/^\d{4}-\d{2}$/),
+  includeDetails: z.coerce.boolean().default(true),
+});
+
 export const createEmployeeFieldHistorySchema = z.object({
   section: employeeHistorySectionSchema,
   field: z.string().trim().min(1).max(120),
@@ -218,5 +223,6 @@ export type ReplaceEmployeeHourConceptsInput = z.infer<typeof replaceEmployeeHou
 export type CreateLaborMovementInput = z.infer<typeof createLaborMovementSchema>;
 export type CreateEmployeeDocumentInput = z.infer<typeof createEmployeeDocumentSchema>;
 export type ListEmployeeHistoryQuery = z.infer<typeof listEmployeeHistoryQuerySchema>;
+export type EmployeeTimeGridQuery = z.infer<typeof employeeTimeGridQuerySchema>;
 export type CreateEmployeeFieldHistoryInput = z.infer<typeof createEmployeeFieldHistorySchema>;
 export type CreateEmployeeBlockHistoryInput = z.infer<typeof createEmployeeBlockHistorySchema>;

@@ -1,16 +1,89 @@
-import { BriefcaseBusiness, CalendarDays, ClipboardList, Clock3, FileBarChart, FolderOpen, LayoutDashboard, Network, Settings, ShieldCheck, UserCog, Users } from "lucide-react";
+import {
+  BriefcaseBusiness,
+  CalendarDays,
+  ClipboardList,
+  Clock3,
+  FileBarChart,
+  FolderOpen,
+  LayoutDashboard,
+  Network,
+  Settings,
+  ShieldCheck,
+  TimerReset,
+  UserCog,
+  Users,
+} from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import type { Role } from "../types";
 import { roleLevel } from "../utils/roles";
 
-export const navByLevel = {
-  1: [["Dashboard", "/", LayoutDashboard], ["Legajos", "/legajos", Users], ["Carga de Horas", "/horas", Clock3], ["Mis Pendientes", "/pendientes", CalendarDays], ["Novedades", "/novedades", ClipboardList], ["Gestión Documental", "/documentacion", FolderOpen], ["Organigramas", "/organigramas", Network], ["Usuarios y Roles", "/usuarios", UserCog], ["Configuración", "/configuracion", Settings], ["Auditoría", "/auditoria", ShieldCheck]],
-  2: [["Dashboard", "/", LayoutDashboard], ["Carga de Horas", "/horas", Clock3], ["Mis Pendientes", "/pendientes", CalendarDays], ["Novedades", "/novedades", ClipboardList], ["Legajos de mi área", "/legajos", Users], ["Organigramas", "/organigramas", Network], ["Reportes de Gestión", "/reportes", FileBarChart]],
-  3: [["Carga de Horas", "/horas", Clock3], ["Novedades Horarias", "/novedades", ClipboardList], ["Mis Pendientes", "/pendientes", CalendarDays]],
-} as const;
+export type NavLinkItem = {
+  type: "link";
+  label: string;
+  href: string;
+  Icon: LucideIcon;
+};
+
+export type NavGroupItem = {
+  type: "group";
+  label: string;
+  Icon: LucideIcon;
+  items: NavLinkItem[];
+};
+
+export type NavItem = NavLinkItem | NavGroupItem;
+
+const link = (label: string, href: string, Icon: LucideIcon): NavLinkItem => ({
+  type: "link",
+  label,
+  href,
+  Icon,
+});
+
+const group = (label: string, Icon: LucideIcon, items: NavLinkItem[]): NavGroupItem => ({
+  type: "group",
+  label,
+  Icon,
+  items,
+});
+
+const hourlyManagement = (level: number) =>
+  group("Gestión horaria", Clock3, [
+    link("Asistencia", "/asistencia", TimerReset),
+    link("Carga de horas", "/horas", Clock3),
+    link("Mis pendientes", "/pendientes", CalendarDays),
+    link(level === 3 ? "Novedades horarias" : "Novedades", "/novedades", ClipboardList),
+    link("Fichador", "/fichador", Clock3),
+    ...(level === 1 ? [link("Exportación", "/configuracion/liquidacion", FileBarChart)] : []),
+  ]);
+
+export const navByLevel: Record<number, NavItem[]> = {
+  1: [
+    link("Dashboard", "/", LayoutDashboard),
+    link("Legajos", "/legajos", Users),
+    link("Puestos", "/puestos", BriefcaseBusiness),
+    hourlyManagement(1),
+    link("Gestión Documental", "/documentacion", FolderOpen),
+    link("Organigramas", "/organigramas", Network),
+    link("Usuarios y Roles", "/usuarios", UserCog),
+    link("Configuración", "/configuracion", Settings),
+    link("Auditoría", "/auditoria", ShieldCheck),
+  ],
+  2: [
+    link("Dashboard", "/", LayoutDashboard),
+    hourlyManagement(2),
+    link("Legajos de mi área", "/legajos", Users),
+    link("Puestos", "/puestos", BriefcaseBusiness),
+    link("Organigramas", "/organigramas", Network),
+    link("Reportes de Gestión", "/reportes", FileBarChart),
+  ],
+  3: [hourlyManagement(3)],
+};
+
+export function flattenNavigation(items: NavItem[]): NavLinkItem[] {
+  return items.flatMap((item) => (item.type === "group" ? item.items : [item]));
+}
 
 export function navigationForRole(role: Role) {
-  const level = roleLevel(role);
-  if (level === 1) return [...navByLevel[level].slice(0, 2), ["Puestos", "/puestos", BriefcaseBusiness] as const, ...navByLevel[level].slice(2)];
-  if (level === 2) return [...navByLevel[level].slice(0, 4), ["Puestos", "/puestos", BriefcaseBusiness] as const, ...navByLevel[level].slice(4)];
-  return navByLevel[level];
+  return navByLevel[roleLevel(role)];
 }

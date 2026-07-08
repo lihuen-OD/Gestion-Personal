@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { LogIn, LogOut, Search } from "lucide-react";
+import { ApiError } from "../services/api/apiClient";
 import { timeClockApiService } from "../services/api/timeClockApiService";
 import { Button } from "../components/ui/Button";
+
+const MAX_CLOCK_SHIFT_MINUTES = 20 * 60;
 
 function formatDateTime(value?: string) {
   if (!value) return "-";
@@ -57,6 +60,13 @@ export function TimeClockPage() {
 
   const canSubmit = Boolean(selected?.id) && !loading;
   const employeeLabel = useMemo(() => status?.employee || result?.employee, [result, status]);
+  const openShiftMinutes = useMemo(() => {
+    if (!status?.openShift?.startAt) return 0;
+    return Math.max(0, Math.round((now.getTime() - new Date(status.openShift.startAt).getTime()) / 60_000));
+  }, [now, status?.openShift?.startAt]);
+  const openShiftExceeded = openShiftMinutes > MAX_CLOCK_SHIFT_MINUTES;
+  const canClockIn = canSubmit && (!status?.openShift || openShiftExceeded);
+  const canClockOut = canSubmit && Boolean(status?.openShift) && !openShiftExceeded;
 
   const refreshStatus = async (employeeId = selected?.id) => {
     if (!employeeId || loading) return;
@@ -106,8 +116,8 @@ export function TimeClockPage() {
       const response = await timeClockApiService.clockIn(selected!.id);
       setResult(response);
       setStatus({ employee: response.employee, openShift: response.workShift });
-    } catch {
-      setError("No se pudo registrar el ingreso. Verificá si ya tenés una jornada abierta.");
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "No se pudo registrar el ingreso. Verificá si ya tenés una jornada abierta.");
     } finally {
       setLoading(false);
     }
@@ -121,8 +131,8 @@ export function TimeClockPage() {
       const response = await timeClockApiService.clockOut(selected!.id);
       setResult(response);
       setStatus({ employee: response.employee, openShift: null });
-    } catch {
-      setError("No se pudo registrar la salida. Verificá que exista un ingreso abierto o avisá a RRHH.");
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "No se pudo registrar la salida. Verificá que exista un ingreso abierto o avisá a RRHH.");
     } finally {
       setLoading(false);
     }
@@ -180,14 +190,15 @@ export function TimeClockPage() {
           <div className="clock-open">
             <b>Ingreso abierto</b>
             <span>Registrado: {formatDateTime(status.openShift.startAt)}</span>
+            {openShiftExceeded ? <span>Ese día quedó con olvido de salida. Podés marcar un nuevo ingreso; RRHH lo revisa desde Asistencia.</span> : null}
           </div>
         ) : null}
 
         <div className="clock-actions">
-          <Button variant="primary" icon={LogIn} disabled={!canSubmit || Boolean(status?.openShift)} onClick={clockIn}>
-            Marcar ingreso
+          <Button variant="primary" icon={LogIn} disabled={!canClockIn} onClick={clockIn}>
+            {openShiftExceeded ? "Marcar nuevo ingreso" : "Marcar ingreso"}
           </Button>
-          <Button variant="subtle" icon={LogOut} disabled={!canSubmit || !status?.openShift} onClick={clockOut}>
+          <Button variant="subtle" icon={LogOut} disabled={!canClockOut} onClick={clockOut}>
             Marcar salida
           </Button>
         </div>
@@ -204,7 +215,12 @@ export function TimeClockPage() {
                 ) : null}
               </>
             ) : (
-              <b>Ingreso registrado: {formatDateTime(result.workShift.startAt)}</b>
+              <>
+                {"previousOpenShift" in result && result.previousOpenShift ? (
+                  <span>El ingreso anterior del {formatDateTime(result.previousOpenShift.startAt)} quedó marcado como olvido de salida.</span>
+                ) : null}
+                <b>Ingreso registrado: {formatDateTime(result.workShift.startAt)}</b>
+              </>
             )}
           </div>
         ) : null}

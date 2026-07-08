@@ -65,6 +65,11 @@ enum WorkShiftStatus {
   PROCESADO
   OBSERVADO
   ANULADO
+  FALTA_SALIDA
+  FALTA_INGRESO
+  INVALIDO
+  REVISADO
+  CERRADO_MANUAL
 }
 
 enum WorkShiftSource {
@@ -72,6 +77,18 @@ enum WorkShiftSource {
   PORTAL_DNI
   KIOSK
   BIOTIME
+  FACIAL
+}
+
+enum AttendancePunchType {
+  INGRESO
+  SALIDA
+}
+
+enum AttendancePunchStatus {
+  VALIDA
+  OBSERVADA
+  RECHAZADA
 }
 
 enum HourConceptKind {
@@ -119,18 +136,18 @@ model User {
   createdAt    DateTime     @default(now())
   updatedAt    DateTime     @updatedAt
 
-  company            Company?           @relation(fields: [companyId], references: [id])
-  sector             Sector?            @relation(fields: [sectorId], references: [id])
-  employee           Employee?          @relation("EmployeeUserAccount", fields: [employeeId], references: [id])
-  createdEmployees   Employee[]         @relation("EmployeeCreatedBy")
+  company             Company?               @relation(fields: [companyId], references: [id])
+  sector              Sector?                @relation(fields: [sectorId], references: [id])
+  employee            Employee?              @relation("EmployeeUserAccount", fields: [employeeId], references: [id])
+  createdEmployees    Employee[]             @relation("EmployeeCreatedBy")
   employeeAssignments EmployeeAssignment[]
-  laborMovements     LaborMovement[]
+  laborMovements      LaborMovement[]
   fieldHistory        EmployeeFieldHistory[]
   blockHistory        EmployeeBlockHistory[]
-  noveltiesCreated   Novelty[]          @relation("NoveltyCreatedBy")
-  timeEntriesCreated TimeEntry[]        @relation("TimeEntryCreatedBy")
-  documentsUploaded  EmployeeDocument[]
-  auditLogs          AuditLog[]
+  noveltiesCreated    Novelty[]              @relation("NoveltyCreatedBy")
+  timeEntriesCreated  TimeEntry[]            @relation("TimeEntryCreatedBy")
+  documentsUploaded   EmployeeDocument[]
+  auditLogs           AuditLog[]
 
   @@index([role])
   @@index([status])
@@ -483,23 +500,25 @@ model Employee {
   createdAt         DateTime       @default(now())
   updatedAt         DateTime       @updatedAt
 
-  position       Position?             @relation(fields: [positionId], references: [id])
-  sector         Sector?               @relation(fields: [sectorId], references: [id])
-  costCenter     CostCenter?           @relation(fields: [costCenterId], references: [id])
-  createdBy      User?                 @relation("EmployeeCreatedBy", fields: [createdByUserId], references: [id])
-  address        EmployeeAddress?
-  companies      EmployeeCompany[]
-  laborMovements LaborMovement[]
-  assignments    EmployeeAssignment[]
-  hourConcepts   EmployeeHourConcept[]
-  transport      EmployeeTransport?
-  fieldHistory   EmployeeFieldHistory[]
-  blockHistory   EmployeeBlockHistory[]
-  novelties      Novelty[]
-  timeEntries    TimeEntry[]
-  workShifts     WorkShift[]
-  documents      EmployeeDocument[]
-  userAccount    User?                 @relation("EmployeeUserAccount")
+  position          Position?              @relation(fields: [positionId], references: [id])
+  sector            Sector?                @relation(fields: [sectorId], references: [id])
+  costCenter        CostCenter?            @relation(fields: [costCenterId], references: [id])
+  createdBy         User?                  @relation("EmployeeCreatedBy", fields: [createdByUserId], references: [id])
+  address           EmployeeAddress?
+  companies         EmployeeCompany[]
+  laborMovements    LaborMovement[]
+  assignments       EmployeeAssignment[]
+  hourConcepts      EmployeeHourConcept[]
+  transport         EmployeeTransport?
+  fieldHistory      EmployeeFieldHistory[]
+  blockHistory      EmployeeBlockHistory[]
+  novelties         Novelty[]
+  timeEntries       TimeEntry[]
+  workShifts        WorkShift[]
+  attendancePunches AttendancePunch[]
+  timeSegments      TimeSegment[]
+  documents         EmployeeDocument[]
+  userAccount       User?                  @relation("EmployeeUserAccount")
 
   @@index([lastName, firstName])
   @@index([status])
@@ -574,20 +593,21 @@ model LaborMovement {
 
   @@index([employeeId, effectiveFrom])
   @@index([employeeId, type])
+  @@index([type, effectiveFrom, employeeId])
 }
 
 model EmployeeAssignment {
-  id         String   @id @default(uuid())
-  employeeId String
-  userId     String?
-  personName String?
-  type       String
-  role       String?
+  id            String    @id @default(uuid())
+  employeeId    String
+  userId        String?
+  personName    String?
+  type          String
+  role          String?
   effectiveFrom DateTime?
   effectiveTo   DateTime?
-  status     String?
-  notes      String?
-  createdAt  DateTime @default(now())
+  status        String?
+  notes         String?
+  createdAt     DateTime  @default(now())
 
   employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
   user     User?    @relation(fields: [userId], references: [id])
@@ -606,9 +626,10 @@ model HourConcept {
   createdAt      DateTime        @default(now())
   updatedAt      DateTime        @updatedAt
 
-  employees   EmployeeHourConcept[]
-  timeEntries TimeEntry[]
-  novelties   Novelty[]
+  employees    EmployeeHourConcept[]
+  timeEntries  TimeEntry[]
+  novelties    Novelty[]
+  timeSegments TimeSegment[]
 
   @@index([status])
 }
@@ -742,62 +763,135 @@ model Novelty {
 }
 
 model TimeEntry {
-  id               String         @id @default(uuid())
+  id               String           @id @default(uuid())
   employeeId       String
   hourConceptId    String
   workShiftId      String?
+  timeSegmentId    String?
   date             DateTime
   period           String
   day              Int
-  hours            Decimal        @db.Decimal(8, 2)
+  hours            Decimal          @db.Decimal(8, 2)
   totalMinutes     Int
   segmentStartAt   DateTime?
   segmentEndAt     DateTime?
   source           WorkShiftSource?
-  status           ApprovalStatus @default(BORRADOR)
+  status           ApprovalStatus   @default(BORRADOR)
   observation      String?
   createdByUserId  String?
   approvedByUserId String?
   approvedAt       DateTime?
   rejectedAt       DateTime?
-  createdAt        DateTime       @default(now())
-  updatedAt        DateTime       @updatedAt
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
 
-  employee    Employee    @relation(fields: [employeeId], references: [id], onDelete: Cascade)
-  hourConcept HourConcept @relation(fields: [hourConceptId], references: [id])
-  workShift   WorkShift?  @relation(fields: [workShiftId], references: [id], onDelete: SetNull)
-  createdBy   User?       @relation("TimeEntryCreatedBy", fields: [createdByUserId], references: [id])
+  employee    Employee     @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  hourConcept HourConcept  @relation(fields: [hourConceptId], references: [id])
+  workShift   WorkShift?   @relation(fields: [workShiftId], references: [id], onDelete: SetNull)
+  timeSegment TimeSegment? @relation(fields: [timeSegmentId], references: [id], onDelete: SetNull)
+  createdBy   User?        @relation("TimeEntryCreatedBy", fields: [createdByUserId], references: [id])
 
   @@index([employeeId, period])
   @@index([employeeId, hourConceptId, date])
   @@index([workShiftId])
+  @@index([timeSegmentId])
   @@index([period, employeeId])
   @@index([period, status])
+  @@index([period, status, employeeId])
+  @@index([period, status, date, createdAt])
   @@index([date])
   @@index([status])
   @@index([status, period])
 }
 
 model WorkShift {
-  id              String          @id @default(uuid())
-  employeeId      String
-  source          WorkShiftSource @default(ADMIN)
-  status          WorkShiftStatus @default(PROCESADO)
-  startAt         DateTime
-  endAt           DateTime?
-  totalMinutes    Int?
-  observation     String?
-  createdByUserId String?
-  createdAt       DateTime        @default(now())
-  updatedAt       DateTime        @updatedAt
+  id                String          @id @default(uuid())
+  employeeId        String
+  startPunchId      String?
+  endPunchId        String?
+  source            WorkShiftSource @default(ADMIN)
+  status            WorkShiftStatus @default(PROCESADO)
+  startAt           DateTime
+  endAt             DateTime?
+  totalMinutes      Int?
+  crossesMidnight   Boolean         @default(false)
+  maxAllowedMinutes Int             @default(1200)
+  observation       String?
+  createdByUserId   String?
+  createdAt         DateTime        @default(now())
+  closedAt          DateTime?
+  updatedAt         DateTime        @updatedAt
 
-  employee    Employee    @relation(fields: [employeeId], references: [id], onDelete: Cascade)
-  timeEntries TimeEntry[]
+  employee     Employee         @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  startPunch   AttendancePunch? @relation("WorkShiftStartPunch", fields: [startPunchId], references: [id], onDelete: SetNull)
+  endPunch     AttendancePunch? @relation("WorkShiftEndPunch", fields: [endPunchId], references: [id], onDelete: SetNull)
+  timeEntries  TimeEntry[]
+  timeSegments TimeSegment[]
 
   @@index([employeeId, startAt])
   @@index([employeeId, endAt])
+  @@index([status, startAt])
+  @@index([startAt, endAt])
+  @@index([startPunchId])
+  @@index([endPunchId])
   @@index([status])
   @@index([source])
+}
+
+model AttendancePunch {
+  id                String                @id @default(uuid())
+  employeeId        String
+  type              AttendancePunchType
+  timestamp         DateTime
+  source            WorkShiftSource       @default(PORTAL_DNI)
+  deviceId          String?
+  kioskId           String?
+  ipAddress         String?
+  userAgent         String?
+  status            AttendancePunchStatus @default(VALIDA)
+  observation       String?
+  externalPunchId   String?
+  rawPayload        Json?
+  biometricProvider String?
+  importedAt        DateTime?
+  createdAt         DateTime              @default(now())
+
+  employee        Employee    @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  startWorkShifts WorkShift[] @relation("WorkShiftStartPunch")
+  endWorkShifts   WorkShift[] @relation("WorkShiftEndPunch")
+
+  @@index([employeeId, timestamp])
+  @@index([status, timestamp])
+  @@index([type, status])
+  @@index([source])
+  @@index([externalPunchId])
+}
+
+model TimeSegment {
+  id              String   @id @default(uuid())
+  workShiftId     String
+  employeeId      String
+  date            DateTime
+  fromDateTime    DateTime
+  toDateTime      DateTime
+  minutes         Int
+  hourConceptId   String
+  hourConceptName String
+  isHoliday       Boolean  @default(false)
+  isNight         Boolean  @default(false)
+  isSpecial       Boolean  @default(false)
+  source          String   @default("CALCULATED")
+  observation     String?
+  createdAt       DateTime @default(now())
+
+  workShift   WorkShift   @relation(fields: [workShiftId], references: [id], onDelete: Cascade)
+  employee    Employee    @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  hourConcept HourConcept @relation(fields: [hourConceptId], references: [id])
+  timeEntries TimeEntry[]
+
+  @@index([workShiftId])
+  @@index([employeeId, date])
+  @@index([hourConceptId])
 }
 
 model DocumentCategory {
@@ -879,6 +973,7 @@ model EmployeeDocument {
   @@index([categoryId])
   @@index([status])
   @@index([status, expiresAt])
+  @@index([status, createdAt])
   @@index([createdAt])
 }
 
@@ -900,5 +995,7 @@ model AuditLog {
   @@index([entity, entityId])
   @@index([entity, entityId, createdAt])
   @@index([userId])
+  @@index([userId, createdAt])
+  @@index([action, createdAt])
   @@index([createdAt])
 }

@@ -17,7 +17,7 @@ type ApiItemResponse = { data: ApiHourConcept };
 
 const listCache = new Map<string, Promise<HourConcept[]>>();
 
-function mapFromApi(item: ApiHourConcept): HourConcept {
+export function mapHourConceptFromApi(item: ApiHourConcept): HourConcept {
   return {
     id: item.id,
     code: item.code,
@@ -68,7 +68,7 @@ export const hourConceptApiService = {
     const query = toQuery(filters);
     const key = `/hour-concepts${query}`;
     if (!listCache.has(key)) {
-      listCache.set(key, apiRequest<ApiListResponse>(key).then((response) => response.data.map(mapFromApi)));
+      listCache.set(key, apiRequest<ApiListResponse>(key).then((response) => response.data.map(mapHourConceptFromApi)));
     }
     return listCache.get(key)!;
   },
@@ -79,7 +79,7 @@ export const hourConceptApiService = {
       body: mapToApi(item),
     });
     listCache.clear();
-    return mapFromApi(response.data);
+    return mapHourConceptFromApi(response.data);
   },
 
   async update(id: string, item: HourConcept) {
@@ -88,7 +88,7 @@ export const hourConceptApiService = {
       body: mapToApi(item),
     });
     listCache.clear();
-    return mapFromApi(response.data);
+    return mapHourConceptFromApi(response.data);
   },
 
   getNextCode: nextCode,

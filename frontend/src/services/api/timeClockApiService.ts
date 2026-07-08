@@ -22,6 +22,11 @@ type ClockStatusResponse = {
 type ClockInResponse = {
   data: {
     employee: ClockEmployee;
+    previousOpenShift?: {
+      id: string;
+      startAt: string;
+      status: "FALTA_SALIDA";
+    };
     workShift: {
       id: string;
       startAt: string;

@@ -3,10 +3,11 @@ import { requestAuditContext } from "../../shared/audit/requestAuditContext";
 import { createTtlCache } from "../../shared/cache/ttlCache";
 import { requireParam } from "../../shared/http/params";
 import { clearDocumentsReadCaches } from "../documents/documents.cache";
-import type { ListEmployeeHistoryQuery, ListEmployeeOptionsQuery, ListEmployeeOrgChartQuery, ListEmployeesQuery } from "./employees.schemas";
+import type { EmployeeTimeGridQuery, ListEmployeeHistoryQuery, ListEmployeeOptionsQuery, ListEmployeeOrgChartQuery, ListEmployeesQuery } from "./employees.schemas";
 import { employeesService } from "./employees.service";
 
 const employeeDetailCache = createTtlCache<unknown>(30_000);
+const employeeTimeGridCache = createTtlCache<unknown>(60_000);
 const employeeListCache = createTtlCache<Awaited<ReturnType<typeof employeesService.list>>>(20_000);
 const employeeSummaryCache = createTtlCache<Awaited<ReturnType<typeof employeesService.summary>>>(20_000);
 const employeeOrgChartCache = createTtlCache<Awaited<ReturnType<typeof employeesService.listOrgChart>>>(20_000);
@@ -26,6 +27,7 @@ function clearEmployeeReadCaches() {
   employeeSummaryCache.clear();
   employeeOrgChartCache.clear();
   employeeOptionsCache.clear();
+  employeeTimeGridCache.clear();
 }
 
 export const employeesController = {
@@ -81,6 +83,15 @@ export const employeesController = {
     const employee = await employeesService.getOverviewById(requireParam(req, "id"), req.user!);
     employeeDetailCache.set(key, employee);
     res.json({ data: employee });
+  }) satisfies RequestHandler,
+
+  getTimeGrid: (async (req, res) => {
+    const key = `${detailCacheKey(req)}:time-grid:${req.originalUrl}`;
+    const cached = employeeTimeGridCache.get(key);
+    if (cached) return res.json({ data: cached });
+    const result = await employeesService.getTimeGrid(requireParam(req, "id"), req.query as unknown as EmployeeTimeGridQuery, req.user!);
+    employeeTimeGridCache.set(key, result);
+    res.json({ data: result });
   }) satisfies RequestHandler,
 
   getPositionValidation: (async (req, res) => {

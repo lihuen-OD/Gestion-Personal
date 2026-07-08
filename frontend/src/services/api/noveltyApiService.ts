@@ -104,7 +104,7 @@ function quantityLabel(item: ApiNovelty) {
   return "1 día";
 }
 
-function mapFromApi(item: ApiNovelty): Novelty {
+export function mapNoveltyFromApi(item: ApiNovelty): Novelty {
   const activeLink = item.noveltyType.finnegansLinks?.find((link) => link.status === "ACTIVO");
   const hours = asNumber(item.quantityHours) || 0;
   const days = asNumber(item.quantityDays) || 1;
@@ -163,7 +163,7 @@ export const noveltyApiService = {
   async list(filters?: NoveltyListFilters) {
     const response = await apiRequest<ApiPaginatedListResponse>(`/novelties${toQuery(filters)}`);
     return {
-      items: response.data.map(mapFromApi),
+      items: response.data.map(mapNoveltyFromApi),
       meta: response.meta,
     };
   },
@@ -178,12 +178,12 @@ export const noveltyApiService = {
       method: "POST",
       body: input,
     });
-    return response.data.map(mapFromApi);
+    return response.data.map(mapNoveltyFromApi);
   },
 
   async approve(id: string) {
     const response = await apiRequest<ApiItemResponse>(`/novelties/${id}/approve`, { method: "POST" });
-    return mapFromApi(response.data);
+    return mapNoveltyFromApi(response.data);
   },
 
   async reject(id: string, reason = "Rechazo operativo") {
@@ -191,7 +191,7 @@ export const noveltyApiService = {
       method: "POST",
       body: { reason },
     });
-    return mapFromApi(response.data);
+    return mapNoveltyFromApi(response.data);
   },
 
   canApprove(novelty: Novelty, user: User) {

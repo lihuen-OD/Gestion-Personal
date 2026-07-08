@@ -3,7 +3,39 @@ import { useState, type ReactNode } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { resetDemoData } from "../services/storage";
-import { navigationForRole } from "./navigation";
+import { flattenNavigation, navigationForRole, type NavGroupItem, type NavLinkItem } from "./navigation";
+
+function isActivePath(pathname: string, href: string) {
+  return pathname === href || (href !== "/" && pathname.startsWith(href));
+}
+
+function NavLink({ item, pathname, onNavigate, nested = false }: { item: NavLinkItem; pathname: string; onNavigate: () => void; nested?: boolean }) {
+  const { Icon } = item;
+  return (
+    <Link className={`${isActivePath(pathname, item.href) ? "active" : ""} ${nested ? "nav-subitem" : ""}`} to={item.href} onClick={onNavigate}>
+      <Icon size={18} />
+      {item.label}
+    </Link>
+  );
+}
+
+function NavGroup({ item, pathname, onNavigate }: { item: NavGroupItem; pathname: string; onNavigate: () => void }) {
+  const { Icon } = item;
+  const active = item.items.some((child) => isActivePath(pathname, child.href));
+  return (
+    <div className={`nav-group ${active ? "active" : ""}`}>
+      <div className="nav-group-title">
+        <Icon size={18} />
+        <span>{item.label}</span>
+      </div>
+      <div className="nav-group-items">
+        {item.items.map((child) => (
+          <NavLink key={child.href} item={child} pathname={pathname} onNavigate={onNavigate} nested />
+        ))}
+      </div>
+    </div>
+  );
+}
 
 export function AppShell({ children }: { children: ReactNode }) {
   const { user, logout } = useAuth();
@@ -11,14 +43,23 @@ export function AppShell({ children }: { children: ReactNode }) {
   const location = useLocation();
   const navigate = useNavigate();
   const navItems = navigationForRole(user!.role);
-  const currentNav = navItems.find(([, href]) => location.pathname === href || (href !== "/" && location.pathname.startsWith(href)));
-  const topbarTitle = currentNav?.[0] || "Dashboard";
+  const flatNavItems = flattenNavigation(navItems);
+  const currentNav = flatNavItems.find((item) => isActivePath(location.pathname, item.href));
+  const topbarTitle = currentNav?.label || "Dashboard";
   const reset = () => { if (confirm("¿Restablecer todos los datos de la demo?")) { resetDemoData(); navigate("/"); window.location.reload(); } };
 
   return <div className="app-shell">
     <aside className={`sidebar ${open ? "open" : ""}`}>
       <div className="sidebar-brand"><div className="brand-mark small"><ShieldCheck size={15} /></div><div><b>Gestión Personal</b><small>Los O'Dwyer</small></div><button className="icon-button sidebar-close" onClick={() => setOpen(false)}><X /></button></div>
-      <nav>{navItems.map(([label, href, Icon]) => <Link className={location.pathname === href || (href !== "/" && location.pathname.startsWith(href)) ? "active" : ""} key={href} to={href} onClick={() => setOpen(false)}><Icon size={18} />{label}</Link>)}</nav>
+      <nav>
+        {navItems.map((item) =>
+          item.type === "group" ? (
+            <NavGroup key={item.label} item={item} pathname={location.pathname} onNavigate={() => setOpen(false)} />
+          ) : (
+            <NavLink key={item.href} item={item} pathname={location.pathname} onNavigate={() => setOpen(false)} />
+          ),
+        )}
+      </nav>
       <div className="sidebar-bottom"><button className="sidebar-user-card" onClick={logout} title="Cerrar sesión"><span className="sidebar-avatar">{user!.name.split(" ").map((x) => x[0]).join("").slice(0, 2)}</span><span className="sidebar-user-text"><b>{user!.name}</b><small>{user!.role}</small></span><ChevronRight size={14} /></button><button className="sidebar-reset-action" onClick={reset} title="Resetear datos demo"><RefreshCcw size={14} /><span>Resetear datos demo</span></button></div>
     </aside>
     <section className="workspace">

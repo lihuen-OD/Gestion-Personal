@@ -22,6 +22,7 @@ const NoveltyTypeCreatePage = lazy(() => import("./pages/NoveltyTypeCreatePage")
 const NoveltyTypeDetailPage = lazy(() => import("./pages/NoveltyTypeDetailPage").then((module) => ({ default: module.NoveltyTypeDetailPage })));
 const HoursPage = lazy(() => import("./pages/HoursPage").then((module) => ({ default: module.HoursPage })));
 const EmployeeHoursPage = lazy(() => import("./pages/EmployeeHoursPage").then((module) => ({ default: module.EmployeeHoursPage })));
+const AttendancePage = lazy(() => import("./pages/AttendancePage").then((module) => ({ default: module.AttendancePage })));
 const NoveltiesPage = lazy(() => import("./pages/NoveltiesPage").then((module) => ({ default: module.NoveltiesPage })));
 const DocumentsPage = lazy(() => import("./pages/DocumentsPage").then((module) => ({ default: module.DocumentsPage })));
 const OrganigramasPage = lazy(() => import("./pages/OrganigramasPage").then((module) => ({ default: module.OrganigramasPage })));
@@ -77,6 +78,7 @@ export function App() {
           <Route path="/configuracion/tipos-novedades/:id" element={<NoveltyTypeDetailPage />} />
           <Route path="/horas" element={<HoursPage />} />
           <Route path="/horas/:id" element={<EmployeeHoursPage />} />
+          <Route path="/asistencia" element={<AttendancePage />} />
           <Route path="/novedades" element={<NoveltiesPage />} />
           <Route path="/documentacion" element={<DocumentsPage />} />
           <Route path="/organigramas" element={<OrganigramasPage />} />

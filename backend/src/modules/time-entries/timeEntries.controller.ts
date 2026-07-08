@@ -1,7 +1,7 @@
 import type { RequestHandler } from "express";
 import { requestAuditContext } from "../../shared/audit/requestAuditContext";
 import { requireParam } from "../../shared/http/params";
-import type { ClockByDniInput, ClockByEmployeeInput, ClockEmployeeSearchQuery, CreateWorkShiftInput, ListTimeEntriesQuery, PreviewWorkShiftInput, TimeEntriesExportQuery, TimeEntriesPeriodEmployeesQuery, TimeEntriesSummaryQuery } from "./timeEntries.schemas";
+import type { AdminCloseWorkShiftInput, AdminWorkShiftReasonInput, AttendanceSummaryQuery, ClockByDniInput, ClockByEmployeeInput, ClockEmployeeSearchQuery, CreateWorkShiftInput, ListTimeEntriesQuery, PreviewWorkShiftInput, TimeEntriesExportQuery, TimeEntriesPeriodEmployeesQuery, TimeEntriesSummaryQuery } from "./timeEntries.schemas";
 import { clearTimeEntriesReadCaches, timeEntriesListCache, timeEntriesPeriodEmployeesCache, timeEntriesSummaryCache } from "./timeEntries.cache";
 import { timeEntriesExportToCsv, timeEntriesService } from "./timeEntries.service";
 
@@ -74,6 +74,11 @@ export const timeEntriesController = {
     res.json({ data: result.items, meta: result.meta });
   }) satisfies RequestHandler,
 
+  attendanceSummary: (async (req, res) => {
+    const result = await timeEntriesService.attendanceSummary(req.query as unknown as AttendanceSummaryQuery, req.user!);
+    res.json({ data: result });
+  }) satisfies RequestHandler,
+
   create: (async (req, res) => {
     const item = await timeEntriesService.create(req.body, req.user!, requestAuditContext(req));
     clearTimeEntriesReadCaches();
@@ -89,6 +94,24 @@ export const timeEntriesController = {
     const result = await timeEntriesService.createWorkShift(req.body as CreateWorkShiftInput, req.user!, requestAuditContext(req));
     clearTimeEntriesReadCaches();
     res.status(201).json({ data: result });
+  }) satisfies RequestHandler,
+
+  closeWorkShiftManually: (async (req, res) => {
+    const result = await timeEntriesService.closeWorkShiftManually(requireParam(req, "id"), req.body as AdminCloseWorkShiftInput, req.user!, requestAuditContext(req));
+    clearTimeEntriesReadCaches();
+    res.json({ data: result });
+  }) satisfies RequestHandler,
+
+  observeWorkShift: (async (req, res) => {
+    const result = await timeEntriesService.observeWorkShift(requireParam(req, "id"), req.body as AdminWorkShiftReasonInput, req.user!, requestAuditContext(req));
+    clearTimeEntriesReadCaches();
+    res.json({ data: result });
+  }) satisfies RequestHandler,
+
+  markMissingOut: (async (req, res) => {
+    const result = await timeEntriesService.markMissingOut(requireParam(req, "id"), req.body as AdminWorkShiftReasonInput, req.user!, requestAuditContext(req));
+    clearTimeEntriesReadCaches();
+    res.json({ data: result });
   }) satisfies RequestHandler,
 
   update: (async (req, res) => {

@@ -95,7 +95,7 @@ function mapLinkToApi(link: FinnegansNoveltyLink): ApiFinnegansNoveltyLink | nul
   };
 }
 
-function mapFromApi(item: ApiNoveltyType): NoveltyType {
+export function mapNoveltyTypeFromApi(item: ApiNoveltyType): NoveltyType {
   const allowedLoadRoles = normalizeRoles(item.allowedLoadRoles, fallbackAllowedLoadRoles);
   const approvalRoles = normalizeRoles(item.approvalRoles, fallbackApprovalRoles);
   return {
@@ -175,14 +175,14 @@ export const noveltyTypeApiService = {
     const query = toQuery(filters);
     const key = `/novelty-types${query}`;
     if (!listCache.has(key)) {
-      listCache.set(key, apiRequest<ApiListResponse>(key).then((response) => response.data.map(mapFromApi)));
+      listCache.set(key, apiRequest<ApiListResponse>(key).then((response) => response.data.map(mapNoveltyTypeFromApi)));
     }
     return listCache.get(key)!;
   },
 
   async getById(id: string) {
     const response = await apiRequest<ApiItemResponse>(`/novelty-types/${id}`);
-    return mapFromApi(response.data);
+    return mapNoveltyTypeFromApi(response.data);
   },
 
   async create(item: NoveltyType) {
@@ -191,7 +191,7 @@ export const noveltyTypeApiService = {
       body: mapToApi(item),
     });
     listCache.clear();
-    return mapFromApi(response.data);
+    return mapNoveltyTypeFromApi(response.data);
   },
 
   async update(id: string, item: NoveltyType) {
@@ -200,7 +200,7 @@ export const noveltyTypeApiService = {
       body: mapToApi(item),
     });
     listCache.clear();
-    return mapFromApi(response.data);
+    return mapNoveltyTypeFromApi(response.data);
   },
 
   getNextCode: nextCode,

@@ -12,6 +12,7 @@ import {
   createEmployeeFieldHistorySchema,
   createEmployeeSchema,
   createLaborMovementSchema,
+  employeeTimeGridQuerySchema,
   listEmployeeOptionsQuerySchema,
   listEmployeeOrgChartQuerySchema,
   listEmployeeHistoryQuerySchema,
@@ -65,6 +66,13 @@ employeesRouter.get(
   "/:id/overview",
   requireAnyRole([roles.rrhh, roles.supervision, roles.cargaHoraria]),
   asyncHandler(employeesController.getOverviewById),
+);
+
+employeesRouter.get(
+  "/:id/time-grid",
+  requireAnyRole([roles.rrhh, roles.supervision, roles.cargaHoraria]),
+  validateQuery(employeeTimeGridQuerySchema),
+  asyncHandler(employeesController.getTimeGrid),
 );
 
 employeesRouter.get(

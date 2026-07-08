@@ -7,6 +7,7 @@ import type {
   CreateLaborMovementInput,
   CreateEmployeeFieldHistoryInput,
   EmployeeAssignmentInput,
+  EmployeeTimeGridQuery,
   ListEmployeeHistoryQuery,
   ListEmployeeOrgChartQuery,
   ListEmployeeOptionsQuery,
@@ -195,6 +196,122 @@ const employeeOverviewSelect = {
   assignments: { take: 100, include: { user: { select: { id: true, name: true, employeeId: true } } } },
   hourConcepts: { select: { hourConcept: { select: { id: true, code: true, name: true } } } },
 } satisfies Prisma.EmployeeSelect;
+
+const timeGridEmployeeSelect = {
+  id: true,
+  legajo: true,
+  legajoFinnegans: true,
+  cuil: true,
+  dni: true,
+  firstName: true,
+  lastName: true,
+  status: true,
+  sector: {
+    select: {
+      id: true,
+      name: true,
+      area: {
+        select: {
+          establishment: {
+            select: {
+              name: true,
+              businessUnit: { select: { name: true } },
+            },
+          },
+        },
+      },
+    },
+  },
+  costCenter: { select: { id: true, name: true, code: true } },
+  position: { select: { id: true, name: true, code: true } },
+  companies: {
+    select: {
+      isPrimary: true,
+      company: { select: { id: true, name: true, code: true } },
+    },
+  },
+  hourConcepts: { select: { hourConcept: { select: { id: true, code: true, name: true } } } },
+} satisfies Prisma.EmployeeSelect;
+
+const timeGridCoreEmployeeSelect = {
+  id: true,
+  legajo: true,
+  legajoFinnegans: true,
+  cuil: true,
+  dni: true,
+  firstName: true,
+  lastName: true,
+  status: true,
+  hourConcepts: { select: { hourConcept: { select: { id: true, code: true, name: true } } } },
+} satisfies Prisma.EmployeeSelect;
+
+const timeGridTimeEntryInclude = {
+  employee: { select: { id: true, legajo: true, cuil: true, firstName: true, lastName: true, status: true } },
+  hourConcept: { select: { id: true, code: true, name: true, kind: true, status: true } },
+} satisfies Prisma.TimeEntryInclude;
+
+const timeGridNoveltyInclude = {
+  employee: { select: { id: true, legajo: true, firstName: true, lastName: true } },
+  noveltyType: {
+    select: {
+      id: true,
+      code: true,
+      name: true,
+      origin: true,
+      exportsToFinnegans: true,
+      allowsHours: true,
+      allowsDateTo: true,
+      hasValidity: true,
+      blocksTimeEntry: true,
+      setsWorkedHoursToZero: true,
+      timeImpact: true,
+      approvalRoles: true,
+      finnegansLinks: {
+        where: { status: "ACTIVO" },
+        orderBy: { priority: "asc" as const },
+        select: { code: true, name: true, hasValidity: true, status: true },
+      },
+    },
+  },
+  targetHourConcept: { select: { id: true, name: true } },
+  documents: { select: { fileName: true }, orderBy: { createdAt: "desc" as const }, take: 1 },
+} satisfies Prisma.NoveltyInclude;
+
+function periodRange(period: string) {
+  const year = Number(period.slice(0, 4));
+  const month = Number(period.slice(5, 7));
+  return {
+    start: new Date(Date.UTC(year, month - 1, 1)),
+    end: new Date(Date.UTC(year, month, 1)),
+  };
+}
+
+type TimeGridCatalogs = {
+  noveltyTypes: Awaited<ReturnType<typeof prisma.noveltyType.findMany>>;
+  hourConcepts: Awaited<ReturnType<typeof prisma.hourConcept.findMany>>;
+};
+let timeGridCatalogCache: { data: TimeGridCatalogs; expiresAt: number } | null = null;
+const TIME_GRID_CATALOG_CACHE_MS = 120_000;
+
+async function getTimeGridCatalogs() {
+  if (timeGridCatalogCache && Date.now() < timeGridCatalogCache.expiresAt) return timeGridCatalogCache.data;
+  const [noveltyTypes, hourConcepts] = await Promise.all([
+    prisma.noveltyType.findMany({
+      where: { status: "ACTIVO" },
+      include: { finnegansLinks: { orderBy: [{ priority: "asc" }, { code: "asc" }] } },
+      orderBy: [{ status: "asc" }, { name: "asc" }],
+      take: 500,
+    }),
+    prisma.hourConcept.findMany({
+      where: { status: "ACTIVO" },
+      orderBy: [{ kind: "asc" }, { name: "asc" }],
+      take: 100,
+    }),
+  ]);
+  const data = { noveltyTypes, hourConcepts };
+  timeGridCatalogCache = { data, expiresAt: Date.now() + TIME_GRID_CATALOG_CACHE_MS };
+  return data;
+}
 
 const employeeLaborAuditSelect = {
   id: true,
@@ -507,6 +624,43 @@ export const employeesRepository = {
 
   findOverviewById(id: string, accessWhere: Prisma.EmployeeWhereInput = {}) {
     return prisma.employee.findFirst({ where: { AND: [{ id }, accessWhere] }, select: employeeOverviewSelect });
+  },
+
+  async findTimeGrid(id: string, query: EmployeeTimeGridQuery, accessWhere: Prisma.EmployeeWhereInput) {
+    const { start, end } = periodRange(query.period);
+    const [employee, entries, novelties, catalogs] = await Promise.all([
+      prisma.employee.findFirst({
+        where: { AND: [{ id }, accessWhere] },
+        select: query.includeDetails ? timeGridEmployeeSelect : timeGridCoreEmployeeSelect,
+      }),
+      prisma.timeEntry.findMany({
+        where: { employeeId: id, period: query.period },
+        include: timeGridTimeEntryInclude,
+        orderBy: [{ date: "asc" }, { hourConcept: { name: "asc" } }],
+      }),
+      query.includeDetails
+        ? prisma.novelty.findMany({
+            where: {
+              employeeId: id,
+              fromDate: { lt: end },
+              OR: [{ toDate: null }, { toDate: { gte: start } }],
+            },
+            include: timeGridNoveltyInclude,
+            orderBy: [{ fromDate: "asc" }, { createdAt: "desc" }],
+            take: 200,
+          })
+        : Promise.resolve([]),
+      query.includeDetails ? getTimeGridCatalogs() : Promise.resolve(null),
+    ]);
+    if (!employee) return null;
+
+    return {
+      employee,
+      entries,
+      novelties,
+      noveltyTypes: catalogs?.noveltyTypes ?? [],
+      hourConcepts: catalogs?.hourConcepts ?? [],
+    };
   },
 
   findLaborAuditSnapshot(id: string) {

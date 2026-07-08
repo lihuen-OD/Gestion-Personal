@@ -102,26 +102,35 @@ export function EmployeeHoursPage() {
       setLoading(true);
       setLoadError("");
       try {
-        const [apiEmployee, apiEntries] = await Promise.all([
-          employeeApiService.getById(id),
-          timeEntryApiService.getByEmployee(id, period),
-        ]);
-        const [apiNovelties, apiNoveltyTypes, apiHourConcepts] = await Promise.all([
+        const grid = await employeeApiService.getTimeGrid(id, period, { includeDetails: false });
+        if (cancelled) return;
+        setEmployee(grid.employee);
+        setEntries(grid.entries);
+        setPeriodNovelties([]);
+        setNoveltyTypes([]);
+        setCatalog(grid.hourConcepts);
+        setLoading(false);
+
+        Promise.all([
+          hourConceptApiService.getAll({ status: "ACTIVO" }),
           noveltyApiService.getAll({ employeeId: id }),
           noveltyTypeApiService.getAll(),
-          hourConceptApiService.getAll({ status: "ACTIVO" }),
-        ]);
-        if (cancelled) return;
-        setEmployee(apiEmployee);
-        setEntries(apiEntries);
-        setPeriodNovelties(
-          apiNovelties.filter(
-            (novelty) =>
-              novelty.from.startsWith(period) || (novelty.to || novelty.from).startsWith(period),
-          ),
-        );
-        setNoveltyTypes(apiNoveltyTypes);
-        setCatalog(apiHourConcepts);
+        ]).then(([apiHourConcepts, apiNovelties, apiNoveltyTypes]) => {
+          if (cancelled) return;
+          setCatalog(apiHourConcepts);
+          setPeriodNovelties(
+            apiNovelties.filter(
+              (novelty) =>
+                novelty.from.startsWith(period) || (novelty.to || novelty.from).startsWith(period),
+            ),
+          );
+          setNoveltyTypes(apiNoveltyTypes);
+        }).catch(() => {
+          if (!cancelled) {
+            setPeriodNovelties([]);
+            setNoveltyTypes([]);
+          }
+        });
       } catch (loadError) {
         if (cancelled) return;
         setEmployee(null);

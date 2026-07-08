@@ -19,6 +19,10 @@ export const timeEntriesSummaryQuerySchema = z.object({
   period: z.string().regex(/^\d{4}-\d{2}$/).optional(),
 });
 
+export const attendanceSummaryQuerySchema = z.object({
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+});
+
 export const timeEntriesPeriodEmployeesQuerySchema = z.object({
   period: z.string().regex(/^\d{4}-\d{2}$/),
   search: z.string().trim().optional(),
@@ -52,7 +56,7 @@ export const timeEntriesExportQuerySchema = z.object({
   includeInReview: z.coerce.boolean().default(false),
 });
 
-export const workShiftSourceSchema = z.enum(["ADMIN", "PORTAL_DNI", "KIOSK", "BIOTIME"]);
+export const workShiftSourceSchema = z.enum(["ADMIN", "PORTAL_DNI", "KIOSK", "BIOTIME", "FACIAL"]);
 
 const workShiftBaseSchema = z.object({
   employeeId: z.string().uuid().optional(),
@@ -88,8 +92,18 @@ export const clockByEmployeeSchema = z.object({
   employeeId: z.string().uuid(),
 });
 
+export const adminCloseWorkShiftSchema = z.object({
+  endAt: z.coerce.date(),
+  reason: z.string().trim().min(2).max(800),
+});
+
+export const adminWorkShiftReasonSchema = z.object({
+  reason: z.string().trim().min(2).max(800),
+});
+
 export type ListTimeEntriesQuery = z.infer<typeof listTimeEntriesQuerySchema>;
 export type TimeEntriesSummaryQuery = z.infer<typeof timeEntriesSummaryQuerySchema>;
+export type AttendanceSummaryQuery = z.infer<typeof attendanceSummaryQuerySchema>;
 export type TimeEntriesPeriodEmployeesQuery = z.infer<typeof timeEntriesPeriodEmployeesQuerySchema>;
 export type CreateTimeEntryInput = z.infer<typeof createTimeEntrySchema>;
 export type UpdateTimeEntryInput = z.infer<typeof updateTimeEntrySchema>;
@@ -100,3 +114,5 @@ export type CreateWorkShiftInput = z.infer<typeof createWorkShiftSchema>;
 export type ClockByDniInput = z.infer<typeof clockByDniSchema>;
 export type ClockEmployeeSearchQuery = z.infer<typeof clockEmployeeSearchQuerySchema>;
 export type ClockByEmployeeInput = z.infer<typeof clockByEmployeeSchema>;
+export type AdminCloseWorkShiftInput = z.infer<typeof adminCloseWorkShiftSchema>;
+export type AdminWorkShiftReasonInput = z.infer<typeof adminWorkShiftReasonSchema>;

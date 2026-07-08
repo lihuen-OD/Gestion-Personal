@@ -11,6 +11,7 @@ import type {
   CreateEmployeeFieldHistoryInput,
   CreateEmployeeInput,
   CreateLaborMovementInput,
+  EmployeeTimeGridQuery,
   ListEmployeeHistoryQuery,
   ListEmployeeOrgChartQuery,
   ListEmployeeOptionsQuery,
@@ -189,6 +190,12 @@ export const employeesService = {
     const employee = await employeesRepository.findOverviewById(id, employeeAccessWhere(user));
     if (!employee) throw new AppError("Employee not found", 404, "EMPLOYEE_NOT_FOUND");
     return employee;
+  },
+
+  async getTimeGrid(id: string, query: EmployeeTimeGridQuery, user: Express.AuthUser) {
+    const grid = await employeesRepository.findTimeGrid(id, query, employeeAccessWhere(user));
+    if (!grid) throw new AppError("Employee not found", 404, "EMPLOYEE_NOT_FOUND");
+    return grid;
   },
 
   async getPositionValidation(id: string, user: Express.AuthUser) {

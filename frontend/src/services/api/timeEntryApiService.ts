@@ -13,7 +13,7 @@ type ApiApprovalStatus =
   | "DEVUELTO"
   | "CERRADO";
 
-type ApiTimeEntry = {
+export type ApiTimeEntry = {
   id: string;
   employeeId: string;
   hourConceptId: string;
@@ -171,7 +171,7 @@ function dateFromEntry(entry: Pick<TimeEntry, "period" | "day" | "date">) {
   return entry.date || `${entry.period}-${String(entry.day).padStart(2, "0")}`;
 }
 
-function mapFromApi(item: ApiTimeEntry): TimeEntry {
+export function mapTimeEntryFromApi(item: ApiTimeEntry): TimeEntry {
   const date = item.date.slice(0, 10);
   const hours = numberValue(item.hours);
   return {
@@ -255,7 +255,7 @@ export const timeEntryApiService = {
     const query = params.toString();
     const response = await apiRequest<ApiListResponse & { meta: ApiListMeta }>(`/time-entries${query ? `?${query}` : ""}`);
     return {
-      items: response.data.map(mapFromApi),
+      items: response.data.map(mapTimeEntryFromApi),
       meta: response.meta,
     };
   },
@@ -285,7 +285,7 @@ export const timeEntryApiService = {
     return {
       workShift: response.data.workShift,
       preview: response.data.preview,
-      entries: response.data.entries.map(mapFromApi),
+      entries: response.data.entries.map(mapTimeEntryFromApi),
     };
   },
 
@@ -330,7 +330,7 @@ export const timeEntryApiService = {
         observation: entry.notes || null,
       },
     });
-    return mapFromApi(response.data);
+    return mapTimeEntryFromApi(response.data);
   },
 
   async update(id: string, entry: Partial<TimeEntry>) {
@@ -340,7 +340,7 @@ export const timeEntryApiService = {
     if (entry.hours !== undefined) body.hours = entry.hours;
     if (entry.notes !== undefined) body.observation = entry.notes || null;
     const response = await apiRequest<ApiItemResponse>(`/time-entries/${id}`, { method: "PATCH", body });
-    return mapFromApi(response.data);
+    return mapTimeEntryFromApi(response.data);
   },
 
   async save(entry: Omit<TimeEntry, "id">) {
@@ -356,12 +356,12 @@ export const timeEntryApiService = {
 
   async submit(id: string) {
     const response = await apiRequest<ApiItemResponse>(`/time-entries/${id}/submit`, { method: "POST" });
-    return mapFromApi(response.data);
+    return mapTimeEntryFromApi(response.data);
   },
 
   async approve(id: string) {
     const response = await apiRequest<ApiItemResponse>(`/time-entries/${id}/approve`, { method: "POST" });
-    return mapFromApi(response.data);
+    return mapTimeEntryFromApi(response.data);
   },
 
   async reject(id: string, reason: string) {
@@ -369,7 +369,7 @@ export const timeEntryApiService = {
       method: "POST",
       body: { reason },
     });
-    return mapFromApi(response.data);
+    return mapTimeEntryFromApi(response.data);
   },
 
   async returnForCorrection(id: string, reason: string) {
@@ -377,7 +377,7 @@ export const timeEntryApiService = {
       method: "POST",
       body: { reason },
     });
-    return mapFromApi(response.data);
+    return mapTimeEntryFromApi(response.data);
   },
 
   async getPeriodExportRows(period: string, includeInReview = false) {

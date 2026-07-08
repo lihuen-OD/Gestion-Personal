@@ -269,6 +269,125 @@ export const timeEntriesRepository = {
     });
   },
 
+  attendanceSummary(input: { startAt: Date; endAt: Date; employeeAccessWhere: Prisma.EmployeeWhereInput }) {
+    const employeeSelect = {
+      id: true,
+      legajo: true,
+      dni: true,
+      firstName: true,
+      lastName: true,
+      status: true,
+      sector: { select: { id: true, name: true, code: true } },
+      position: { select: { id: true, name: true, code: true } },
+    } satisfies Prisma.EmployeeSelect;
+
+    return prisma.$transaction(async (tx) => {
+      const [workShifts, observedPunches] = await Promise.all([
+        tx.workShift.findMany({
+          where: {
+            employee: input.employeeAccessWhere,
+            startAt: { lt: input.endAt },
+            OR: [{ endAt: null }, { endAt: { gte: input.startAt } }],
+          },
+          select: {
+            id: true,
+            employeeId: true,
+            source: true,
+            status: true,
+            startAt: true,
+            endAt: true,
+            totalMinutes: true,
+            crossesMidnight: true,
+            observation: true,
+            employee: { select: employeeSelect },
+            startPunch: { select: { id: true, timestamp: true, source: true, status: true, observation: true } },
+            endPunch: { select: { id: true, timestamp: true, source: true, status: true, observation: true } },
+            timeSegments: {
+              select: {
+                id: true,
+                date: true,
+                fromDateTime: true,
+                toDateTime: true,
+                minutes: true,
+                hourConceptName: true,
+                isHoliday: true,
+                isNight: true,
+                isSpecial: true,
+                observation: true,
+              },
+              orderBy: { fromDateTime: "asc" },
+            },
+            timeEntries: {
+              select: {
+                id: true,
+                date: true,
+                hours: true,
+                totalMinutes: true,
+                status: true,
+                observation: true,
+                hourConcept: { select: { id: true, name: true, kind: true } },
+              },
+              orderBy: { date: "asc" },
+            },
+          },
+          orderBy: [{ status: "asc" }, { startAt: "desc" }],
+        }),
+        tx.attendancePunch.findMany({
+          where: {
+            employee: input.employeeAccessWhere,
+            status: "OBSERVADA",
+            timestamp: { gte: input.startAt, lt: input.endAt },
+          },
+          select: {
+            id: true,
+            employeeId: true,
+            type: true,
+            timestamp: true,
+            source: true,
+            status: true,
+            observation: true,
+            employee: { select: employeeSelect },
+          },
+          orderBy: { timestamp: "desc" },
+        }),
+      ]);
+
+      return { workShifts, observedPunches };
+    });
+  },
+
+  findWorkShiftForAdmin(id: string, employeeAccessWhere: Prisma.EmployeeWhereInput) {
+    return prisma.workShift.findFirst({
+      where: { id, employee: employeeAccessWhere },
+      include: {
+        employee: { select: { id: true, legajo: true, dni: true, firstName: true, lastName: true, status: true } },
+        timeEntries: { select: { id: true, status: true } },
+      },
+    });
+  },
+
+  observeWorkShift(id: string, reason: string) {
+    return prisma.workShift.update({
+      where: { id },
+      data: {
+        status: "OBSERVADO",
+        observation: reason,
+      },
+      include: { employee: { select: { id: true, legajo: true, firstName: true, lastName: true } } },
+    });
+  },
+
+  markMissingOut(id: string, reason: string) {
+    return prisma.workShift.update({
+      where: { id },
+      data: {
+        status: "FALTA_SALIDA",
+        observation: reason,
+      },
+      include: { employee: { select: { id: true, legajo: true, firstName: true, lastName: true } } },
+    });
+  },
+
   findEmployeeForShift(input: { employeeId?: string; dni?: string }, employeeAccessWhere: Prisma.EmployeeWhereInput) {
     return prisma.employee.findFirst({
       where: {
@@ -365,12 +484,71 @@ export const timeEntriesRepository = {
   },
 
   createOpenWorkShift(input: { employeeId: string; source: WorkShiftSource; startAt: Date }) {
-    return prisma.workShift.create({
+    return prisma.$transaction(async (tx) => {
+      const punch = await tx.attendancePunch.create({
+        data: {
+          employeeId: input.employeeId,
+          type: "INGRESO",
+          timestamp: input.startAt,
+          source: input.source,
+        },
+      });
+
+      return tx.workShift.create({
+        data: {
+          employeeId: input.employeeId,
+          startPunchId: punch.id,
+          source: input.source,
+          status: WorkShiftStatus.ABIERTO,
+          startAt: input.startAt,
+          maxAllowedMinutes: 20 * 60,
+        },
+      });
+    });
+  },
+
+  rolloverExpiredOpenWorkShift(input: { openWorkShiftId: string; employeeId: string; source: WorkShiftSource; startAt: Date; missingOutObservation: string }) {
+    return prisma.$transaction(async (tx) => {
+      await tx.workShift.update({
+        where: { id: input.openWorkShiftId },
+        data: {
+          status: WorkShiftStatus.FALTA_SALIDA,
+          observation: input.missingOutObservation,
+        },
+      });
+
+      const punch = await tx.attendancePunch.create({
+        data: {
+          employeeId: input.employeeId,
+          type: "INGRESO",
+          timestamp: input.startAt,
+          source: input.source,
+          observation: "Ingreso habilitado luego de marcar automaticamente la jornada anterior como olvido de salida.",
+        },
+      });
+
+      return tx.workShift.create({
+        data: {
+          employeeId: input.employeeId,
+          startPunchId: punch.id,
+          source: input.source,
+          status: WorkShiftStatus.ABIERTO,
+          startAt: input.startAt,
+          maxAllowedMinutes: 20 * 60,
+        },
+      });
+    });
+  },
+
+  createObservedPunch(input: { employeeId: string; type: "INGRESO" | "SALIDA"; source: WorkShiftSource; timestamp: Date; observation: string }) {
+    return prisma.attendancePunch.create({
       data: {
         employeeId: input.employeeId,
+        type: input.type,
+        timestamp: input.timestamp,
         source: input.source,
-        status: WorkShiftStatus.ABIERTO,
-        startAt: input.startAt,
+        status: "OBSERVADA",
+        observation: input.observation,
       },
     });
   },
@@ -469,6 +647,7 @@ export const timeEntriesRepository = {
   createFromWorkShift(input: {
     employeeId: string;
     hourConceptId: string;
+    hourConceptName: string;
     source: WorkShiftSource;
     startAt: Date;
     endAt: Date;
@@ -478,21 +657,63 @@ export const timeEntriesRepository = {
     createdByUserId?: string | null;
   }) {
     return prisma.$transaction(async (tx) => {
+      const startPunch = await tx.attendancePunch.create({
+        data: {
+          employeeId: input.employeeId,
+          type: "INGRESO",
+          timestamp: input.startAt,
+          source: input.source,
+          observation: input.observation || "Fichada manual registrada por administración.",
+        },
+      });
+
+      const endPunch = await tx.attendancePunch.create({
+        data: {
+          employeeId: input.employeeId,
+          type: "SALIDA",
+          timestamp: input.endAt,
+          source: input.source,
+          observation: input.observation || "Fichada manual registrada por administración.",
+        },
+      });
+
       const workShift = await tx.workShift.create({
         data: {
           employeeId: input.employeeId,
+          startPunchId: startPunch.id,
+          endPunchId: endPunch.id,
           source: input.source,
           status: "PROCESADO",
           startAt: input.startAt,
           endAt: input.endAt,
           totalMinutes: input.totalMinutes,
+          crossesMidnight: input.segments.length > 1,
+          maxAllowedMinutes: 20 * 60,
           observation: input.observation || null,
           createdByUserId: input.createdByUserId || null,
+          closedAt: input.endAt,
         },
       });
 
       const entries = [];
+      const timeSegments = [];
       for (const segment of input.segments) {
+        const timeSegment = await tx.timeSegment.create({
+          data: {
+            workShiftId: workShift.id,
+            employeeId: input.employeeId,
+            date: segment.date,
+            fromDateTime: segment.startAt,
+            toDateTime: segment.endAt,
+            minutes: segment.minutes,
+            hourConceptId: input.hourConceptId,
+            hourConceptName: input.hourConceptName,
+            isSpecial: false,
+            observation: input.observation || null,
+          },
+        });
+        timeSegments.push(timeSegment);
+
         const existing = await tx.timeEntry.findFirst({
           where: {
             employeeId: input.employeeId,
@@ -513,6 +734,7 @@ export const timeEntriesRepository = {
             where: { id: existing.id },
             data: {
               workShiftId: workShift.id,
+              timeSegmentId: timeSegment.id,
               hours: nextMinutes / 60,
               totalMinutes: nextMinutes,
               source: input.source,
@@ -528,6 +750,7 @@ export const timeEntriesRepository = {
               employeeId: input.employeeId,
               hourConceptId: input.hourConceptId,
               workShiftId: workShift.id,
+              timeSegmentId: timeSegment.id,
               date: segment.date,
               period: periodFromDate(segment.date),
               day: dayFromDate(segment.date),
@@ -545,7 +768,7 @@ export const timeEntriesRepository = {
         }
       }
 
-      return { workShift, entries };
+      return { workShift, entries, timeSegments };
     });
   },
 
@@ -553,23 +776,55 @@ export const timeEntriesRepository = {
     workShiftId: string;
     employeeId: string;
     hourConceptId: string;
+    hourConceptName: string;
     source: WorkShiftSource;
     endAt: Date;
     totalMinutes: number;
     segments: Array<{ date: Date; startAt: Date; endAt: Date; minutes: number; hours: number }>;
+    observation?: string | null;
   }) {
     return prisma.$transaction(async (tx) => {
+      const endPunch = await tx.attendancePunch.create({
+        data: {
+          employeeId: input.employeeId,
+          type: "SALIDA",
+          timestamp: input.endAt,
+          source: input.source,
+          observation: input.observation || null,
+        },
+      });
+
       const workShift = await tx.workShift.update({
         where: { id: input.workShiftId },
         data: {
           status: "PROCESADO",
+          endPunchId: endPunch.id,
           endAt: input.endAt,
           totalMinutes: input.totalMinutes,
+          crossesMidnight: input.segments.length > 1,
+          closedAt: input.endAt,
+          observation: input.observation || undefined,
         },
       });
 
       const entries = [];
+      const timeSegments = [];
       for (const segment of input.segments) {
+        const timeSegment = await tx.timeSegment.create({
+          data: {
+            workShiftId: workShift.id,
+            employeeId: input.employeeId,
+            date: segment.date,
+            fromDateTime: segment.startAt,
+            toDateTime: segment.endAt,
+            minutes: segment.minutes,
+            hourConceptId: input.hourConceptId,
+            hourConceptName: input.hourConceptName,
+            isSpecial: false,
+          },
+        });
+        timeSegments.push(timeSegment);
+
         const existing = await tx.timeEntry.findFirst({
           where: {
             employeeId: input.employeeId,
@@ -590,6 +845,7 @@ export const timeEntriesRepository = {
             where: { id: existing.id },
             data: {
               workShiftId: workShift.id,
+              timeSegmentId: timeSegment.id,
               hours: nextMinutes / 60,
               totalMinutes: nextMinutes,
               source: input.source,
@@ -605,6 +861,7 @@ export const timeEntriesRepository = {
               employeeId: input.employeeId,
               hourConceptId: input.hourConceptId,
               workShiftId: workShift.id,
+              timeSegmentId: timeSegment.id,
               date: segment.date,
               period: periodFromDate(segment.date),
               day: dayFromDate(segment.date),
@@ -621,7 +878,7 @@ export const timeEntriesRepository = {
         }
       }
 
-      return { workShift, entries };
+      return { workShift, entries, timeSegments };
     });
   },
 

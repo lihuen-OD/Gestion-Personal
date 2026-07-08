@@ -1,10 +1,15 @@
 import { apiRequest } from "./apiClient";
-import { hourConceptApiService } from "./hourConceptApiService";
+import { hourConceptApiService, mapHourConceptFromApi } from "./hourConceptApiService";
+import { mapNoveltyFromApi } from "./noveltyApiService";
+import { mapNoveltyTypeFromApi } from "./noveltyTypeApiService";
 import { orgStructureApiService } from "./orgStructureApiService";
 import { positionApiService } from "./positionApiService";
+import { mapTimeEntryFromApi, type ApiTimeEntry } from "./timeEntryApiService";
 import { userApiService } from "./userApiService";
 import { calculateLaborStatus } from "../employeeStatusService";
-import type { Employee, EmployeeStatus, LaborMovement } from "../../types";
+import type { Employee, EmployeeStatus, LaborMovement, Novelty, TimeEntry } from "../../types";
+import type { HourConcept } from "../../types/hourConcept.types";
+import type { NoveltyType } from "../../types/noveltyType.types";
 
 type ApiEmployeeStatus = "ACTIVO" | "INACTIVO";
 
@@ -101,6 +106,24 @@ type ApiEmployeeSummaryResponse = {
     missingTimeResponsible: number;
     pendingTimeLoads: number;
   };
+};
+
+type ApiTimeGridResponse = {
+  data: {
+    employee: ApiEmployee;
+    entries: ApiTimeEntry[];
+    novelties: Parameters<typeof mapNoveltyFromApi>[0][];
+    noveltyTypes: Parameters<typeof mapNoveltyTypeFromApi>[0][];
+    hourConcepts: Parameters<typeof mapHourConceptFromApi>[0][];
+  };
+};
+
+export type EmployeeTimeGrid = {
+  employee: Employee;
+  entries: TimeEntry[];
+  novelties: Novelty[];
+  noveltyTypes: NoveltyType[];
+  hourConcepts: HourConcept[];
 };
 
 export type EmployeeListFilters = {
@@ -520,6 +543,20 @@ export const employeeApiService = {
   async getOverviewById(id: string) {
     const response = await apiRequest<ApiEmployeeItemResponse>(`/employees/${id}/overview`);
     return mapEmployeeFromApi(response.data);
+  },
+  async getTimeGrid(id: string, period: string, options: { includeDetails?: boolean } = {}): Promise<EmployeeTimeGrid> {
+    const params = new URLSearchParams({ period });
+    if (options.includeDetails !== undefined) params.set("includeDetails", String(options.includeDetails));
+    const response = await apiRequest<ApiTimeGridResponse>(`/employees/${id}/time-grid?${params.toString()}`, {
+      cacheTtlMs: 60_000,
+    });
+    return {
+      employee: mapEmployeeFromApi(response.data.employee),
+      entries: response.data.entries.map(mapTimeEntryFromApi),
+      novelties: response.data.novelties.map(mapNoveltyFromApi),
+      noveltyTypes: response.data.noveltyTypes.map(mapNoveltyTypeFromApi),
+      hourConcepts: response.data.hourConcepts.map(mapHourConceptFromApi),
+    };
   },
   async getPositionValidation(id: string) {
     const response = await apiRequest<ApiEmployeePositionValidationResponse>(`/employees/${id}/position-validation`);
