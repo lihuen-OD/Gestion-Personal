@@ -5,6 +5,7 @@ import {
   Clock3,
   FileBarChart,
   FolderOpen,
+  Home,
   LayoutDashboard,
   Network,
   Settings,
@@ -49,9 +50,11 @@ const group = (label: string, Icon: LucideIcon, items: NavLinkItem[]): NavGroupI
 
 const hourlyManagement = (level: number) =>
   group("Gestión horaria", Clock3, [
+    link("Inicio", "/gestion-horaria", Home),
     link("Asistencia", "/asistencia", TimerReset),
     link("Carga de horas", "/horas", Clock3),
-    link("Mis pendientes", "/pendientes", CalendarDays),
+    // Bandeja de aprobación: quien no puede aprobar/rechazar/devolver (Nivel 3) no la ve en el menú.
+    ...(level === 3 ? [] : [link("Bandeja de revisión", "/pendientes", CalendarDays)]),
     link(level === 3 ? "Novedades horarias" : "Novedades", "/novedades", ClipboardList),
     link("Fichador", "/fichador", Clock3),
     ...(level === 1 ? [link("Exportación", "/configuracion/liquidacion", FileBarChart)] : []),

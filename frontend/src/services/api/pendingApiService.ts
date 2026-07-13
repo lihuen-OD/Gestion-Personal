@@ -51,7 +51,7 @@ const statusFromApi: Record<ApiApprovalStatus, TimeStatus> = {
   EN_REVISION: "En revisión",
   APROBADO: "Aprobado",
   RECHAZADO: "Rechazado",
-  DEVUELTO: "Pendiente",
+  DEVUELTO: "Devuelto",
   CERRADO: "Cerrado",
 };
 

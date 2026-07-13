@@ -80,6 +80,11 @@ export const timeEntriesController = {
     res.json({ data: result.items, meta: result.meta });
   }) satisfies RequestHandler,
 
+  homeSummary: (async (req, res) => {
+    const result = await timeEntriesService.homeSummary(req.user!);
+    res.json({ data: result });
+  }) satisfies RequestHandler,
+
   attendanceSummary: (async (req, res) => {
     const result = await timeEntriesService.attendanceSummary(req.query as unknown as AttendanceSummaryQuery, req.user!);
     res.json({ data: result });

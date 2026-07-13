@@ -20,6 +20,7 @@ const AuditParametersPage = lazy(() => import("./pages/AuditParametersPage").the
 const NoveltyTypesPage = lazy(() => import("./pages/NoveltyTypesPage").then((module) => ({ default: module.NoveltyTypesPage })));
 const NoveltyTypeCreatePage = lazy(() => import("./pages/NoveltyTypeCreatePage").then((module) => ({ default: module.NoveltyTypeCreatePage })));
 const NoveltyTypeDetailPage = lazy(() => import("./pages/NoveltyTypeDetailPage").then((module) => ({ default: module.NoveltyTypeDetailPage })));
+const HourlyManagementHomePage = lazy(() => import("./pages/HourlyManagementHomePage").then((module) => ({ default: module.HourlyManagementHomePage })));
 const HoursPage = lazy(() => import("./pages/HoursPage").then((module) => ({ default: module.HoursPage })));
 const EmployeeHoursPage = lazy(() => import("./pages/EmployeeHoursPage").then((module) => ({ default: module.EmployeeHoursPage })));
 const AttendancePage = lazy(() => import("./pages/AttendancePage").then((module) => ({ default: module.AttendancePage })));
@@ -61,7 +62,8 @@ export function App() {
       <Suspense fallback={<PageLoader />}>
         <Routes>
           <Route path="/fichador" element={<TimeClockPage />} />
-          <Route path="/" element={level === 3 ? <Navigate to="/horas" /> : <DashboardPage />} />
+          <Route path="/" element={level === 3 ? <Navigate to="/gestion-horaria" /> : <DashboardPage />} />
+          <Route path="/gestion-horaria" element={<HourlyManagementHomePage />} />
           <Route path="/legajos" element={<EmployeesPage />} />
           <Route path="/legajos/nuevo" element={<EmployeeCreatePage />} />
           <Route path="/legajos/:id" element={<EmployeeDetailPage />} />

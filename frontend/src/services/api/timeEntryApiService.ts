@@ -14,6 +14,10 @@ type ApiApprovalStatus =
   | "DEVUELTO"
   | "CERRADO";
 
+export type HomeSummary =
+  | { role: "carga"; period: string; paraCargar: number; devueltosParaCorregir: number; enviadoEsperandoRevision: number }
+  | { role: "revision"; period: string; paraRevisarHoy: number; novedadesPendientes: number; fichadasObservadas: number };
+
 export type ApiTimeEntry = {
   id: string;
   employeeId: string;
@@ -134,7 +138,7 @@ type ApiExportResponse = {
 const countableStatuses = new Set<TimeStatus>(["Aprobado", "En revisión"]);
 const exportableStatuses = new Set<TimeStatus>(["Aprobado"]);
 const lockedStatuses = new Set<TimeStatus>(["Aprobado", "Cerrado", "Exportado"]);
-const statusPriority: TimeStatus[] = ["En revisión", "Rechazado", "Pendiente", "Borrador", "Aprobado", "Cerrado", "Exportado"];
+const statusPriority: TimeStatus[] = ["Devuelto", "En revisión", "Rechazado", "Pendiente", "Borrador", "Aprobado", "Cerrado", "Exportado"];
 
 const statusFromApi: Record<ApiApprovalStatus, TimeStatus> = {
   BORRADOR: "Borrador",
@@ -142,7 +146,7 @@ const statusFromApi: Record<ApiApprovalStatus, TimeStatus> = {
   EN_REVISION: "En revisión",
   APROBADO: "Aprobado",
   RECHAZADO: "Rechazado",
-  DEVUELTO: "Pendiente",
+  DEVUELTO: "Devuelto",
   CERRADO: "Cerrado",
 };
 
@@ -150,6 +154,7 @@ const statusToApi: Partial<Record<TimeStatus, ApiApprovalStatus>> = {
   Borrador: "BORRADOR",
   Pendiente: "PENDIENTE",
   "En revisión": "EN_REVISION",
+  Devuelto: "DEVUELTO",
   Aprobado: "APROBADO",
   Rechazado: "RECHAZADO",
   Cerrado: "CERRADO",
@@ -277,6 +282,28 @@ export const timeEntryApiService = {
     };
   },
 
+  async listByEmployee(filters: { period?: string; status?: TimeStatus; search?: string; costCenterId?: string; page?: number; take?: number } = {}) {
+    const params = new URLSearchParams();
+    params.set("view", "byEmployee");
+    params.set("page", String(filters.page || 1));
+    params.set("take", String(filters.take || 25));
+    if (filters.period) params.set("period", filters.period);
+    if (filters.status && statusToApi[filters.status]) params.set("status", statusToApi[filters.status]!);
+    if (filters.search?.trim()) params.set("search", filters.search.trim());
+    if (filters.costCenterId) params.set("costCenterId", filters.costCenterId);
+    const response = await apiRequest<ApiEmployeePeriodRowsResponse>(`/time-entries?${params.toString()}`);
+    return {
+      items: response.data.map((row) => ({
+        employee: mapEmployeeFromApi(row.employee),
+        summary: {
+          total: row.summary.total,
+          status: statusFromApi[row.summary.status] || "Pendiente",
+        },
+      })),
+      meta: response.meta,
+    };
+  },
+
   async getAll(filters: { period?: string; employeeId?: string; status?: TimeStatus; take?: number } = {}) {
     const response = await this.list({ ...filters, take: filters.take || 500 });
     return response.items;
@@ -305,6 +332,11 @@ export const timeEntryApiService = {
       preview: response.data.preview,
       entries: response.data.entries.map(mapTimeEntryFromApi),
     };
+  },
+
+  async getHomeSummary() {
+    const response = await apiRequest<{ data: HomeSummary }>("/time-entries/home-summary", { apiCache: false });
+    return response.data;
   },
 
   async getSummary(period: string) {

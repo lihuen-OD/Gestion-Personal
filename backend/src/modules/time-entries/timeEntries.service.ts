@@ -446,6 +446,36 @@ export const timeEntriesService = {
     };
   },
 
+  async homeSummary(user: Express.AuthUser) {
+    const period = currentPeriod();
+    const access = employeeAccessWhere(user);
+    const counts = await timeEntriesRepository.homeCounts(period, access);
+
+    if (user.role === roles.cargaHoraria) {
+      return {
+        role: "carga" as const,
+        period,
+        paraCargar: counts.sinCargar,
+        devueltosParaCorregir: counts.devueltos,
+        enviadoEsperandoRevision: counts.enRevision,
+      };
+    }
+
+    const { startAt, endAt } = localDayRange(todayLocalDateKey());
+    const [novedadesPendientes, fichadasObservadas] = await Promise.all([
+      timeEntriesRepository.pendingNoveltiesCount(access),
+      timeEntriesRepository.attendanceObservedCount({ startAt, endAt, employeeAccessWhere: access }),
+    ]);
+
+    return {
+      role: "revision" as const,
+      period,
+      paraRevisarHoy: counts.enRevision,
+      novedadesPendientes,
+      fichadasObservadas,
+    };
+  },
+
   async attendancePunchPhoto(id: string, user: Express.AuthUser) {
     const punch = await timeEntriesRepository.findAttendancePunchEvidence(id, employeeAccessWhere(user));
     if (!punch) throw new AppError("Fichada no encontrada", 404, "ATTENDANCE_PUNCH_NOT_FOUND");

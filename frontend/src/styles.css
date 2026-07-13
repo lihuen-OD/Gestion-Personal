@@ -89,6 +89,9 @@
 .panel-body{min-width:0}
 .dashboard-grid+.dashboard-grid{margin-top:0}
 .stat-grid.kpi-grid{grid-template-columns:repeat(auto-fit,minmax(220px,1fr))}
+.stat-card-link{display:block;color:inherit;text-decoration:none;border-radius:var(--radius-lg, 14px);transition:box-shadow .15s,transform .15s}
+.stat-card-link:hover{box-shadow:0 10px 28px #1b355014;transform:translateY(-1px)}
+.stat-card-link:focus-visible{outline:2px solid var(--color-primary, #14767d);outline-offset:2px}
 .stat-card{min-width:0}
 .stat-card>div:last-child{min-width:0}
 .stat-card strong,.stat-card span{overflow-wrap:anywhere}

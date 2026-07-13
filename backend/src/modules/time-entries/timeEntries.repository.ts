@@ -22,7 +22,7 @@ const periodEmployeeSelect = {
   companies: { select: { isPrimary: true, company: { select: { id: true, name: true, code: true } } } },
 } satisfies Prisma.EmployeeSelect;
 
-const statusPriority = ["EN_REVISION", "RECHAZADO", "PENDIENTE", "BORRADOR", "APROBADO", "CERRADO"] as const;
+const statusPriority = ["DEVUELTO", "EN_REVISION", "RECHAZADO", "PENDIENTE", "BORRADOR", "APROBADO", "CERRADO"] as const;
 const editableStatuses: ApprovalStatus[] = [ApprovalStatus.BORRADOR, ApprovalStatus.PENDIENTE, ApprovalStatus.DEVUELTO, ApprovalStatus.RECHAZADO];
 
 type PunchEvidenceInput = {
@@ -64,26 +64,29 @@ function minutesFromHours(hours: number) {
   return Math.round(hours * 60);
 }
 
+function employeeSearchWhere(search?: string): Prisma.EmployeeWhereInput {
+  const trimmed = search?.trim();
+  if (!trimmed) return {};
+  return {
+    OR: [
+      { legajo: { contains: trimmed, mode: "insensitive" } },
+      { legajoFinnegans: { contains: trimmed, mode: "insensitive" } },
+      { cuil: { contains: trimmed, mode: "insensitive" } },
+      { dni: { contains: trimmed, mode: "insensitive" } },
+      { firstName: { contains: trimmed, mode: "insensitive" } },
+      { lastName: { contains: trimmed, mode: "insensitive" } },
+    ],
+  };
+}
+
 function buildWhere(query: ListTimeEntriesQuery, employeeAccessWhere: Prisma.EmployeeWhereInput): Prisma.TimeEntryWhereInput {
-  const search = query.search?.trim();
   return {
     employee: {
       AND: [
         employeeAccessWhere,
         {
           ...(query.costCenterId ? { costCenterId: query.costCenterId } : {}),
-          ...(search
-            ? {
-                OR: [
-                  { legajo: { contains: search, mode: "insensitive" } },
-                  { legajoFinnegans: { contains: search, mode: "insensitive" } },
-                  { cuil: { contains: search, mode: "insensitive" } },
-                  { dni: { contains: search, mode: "insensitive" } },
-                  { firstName: { contains: search, mode: "insensitive" } },
-                  { lastName: { contains: search, mode: "insensitive" } },
-                ],
-              }
-            : {}),
+          ...employeeSearchWhere(query.search),
         },
       ],
     },
@@ -102,26 +105,77 @@ function buildWhere(query: ListTimeEntriesQuery, employeeAccessWhere: Prisma.Emp
   };
 }
 
+function buildReviewByEmployeeWhere(query: ListTimeEntriesQuery, employeeAccessWhere: Prisma.EmployeeWhereInput): Prisma.EmployeeWhereInput {
+  return {
+    AND: [
+      employeeAccessWhere,
+      {
+        ...(query.costCenterId ? { costCenterId: query.costCenterId } : {}),
+        ...employeeSearchWhere(query.search),
+        timeEntries: {
+          some: {
+            ...(query.status ? { status: query.status } : {}),
+            ...(query.period ? { period: query.period } : {}),
+          },
+        },
+      },
+    ],
+  };
+}
+
+async function findManyByEmployeeGrouped(query: ListTimeEntriesQuery, employeeAccessWhere: Prisma.EmployeeWhereInput) {
+  const employeeWhere = buildReviewByEmployeeWhere(query, employeeAccessWhere);
+  const skip = (query.page - 1) * query.take;
+
+  return prisma.$transaction(async (tx) => {
+    const [employees, total] = await Promise.all([
+      tx.employee.findMany({
+        where: employeeWhere,
+        select: periodEmployeeSelect,
+        orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
+        skip,
+        take: query.take,
+      }),
+      tx.employee.count({ where: employeeWhere }),
+    ]);
+
+    const employeeIds = employees.map((employee) => employee.id);
+    const entries = employeeIds.length
+      ? await tx.timeEntry.findMany({
+          where: {
+            employeeId: { in: employeeIds },
+            ...(query.status ? { status: query.status } : {}),
+            ...(query.period ? { period: query.period } : {}),
+          },
+          select: { employeeId: true, hours: true },
+        })
+      : [];
+
+    const totalHoursByEmployee = new Map<string, number>();
+    for (const entry of entries) {
+      totalHoursByEmployee.set(entry.employeeId, (totalHoursByEmployee.get(entry.employeeId) || 0) + Number(entry.hours.toString()));
+    }
+
+    const items = employees.map((employee) => ({
+      employee,
+      summary: {
+        total: totalHoursByEmployee.get(employee.id) || 0,
+        status: query.status || ApprovalStatus.EN_REVISION,
+      },
+    }));
+
+    return [items, total] as const;
+  });
+}
+
 function buildPeriodEmployeeWhere(query: TimeEntriesPeriodEmployeesQuery, employeeAccessWhere: Prisma.EmployeeWhereInput): Prisma.EmployeeWhereInput {
-  const search = query.search?.trim();
   return {
     AND: [
       employeeAccessWhere,
       {
         status: EmployeeStatus.ACTIVO,
         ...(query.costCenterId ? { costCenterId: query.costCenterId } : {}),
-        ...(search
-          ? {
-              OR: [
-                { legajo: { contains: search, mode: "insensitive" } },
-                { legajoFinnegans: { contains: search, mode: "insensitive" } },
-                { cuil: { contains: search, mode: "insensitive" } },
-                { dni: { contains: search, mode: "insensitive" } },
-                { firstName: { contains: search, mode: "insensitive" } },
-                { lastName: { contains: search, mode: "insensitive" } },
-              ],
-            }
-          : {}),
+        ...employeeSearchWhere(query.search),
       },
     ],
   };
@@ -133,6 +187,7 @@ function resolvePeriodStatus(statuses: string[]) {
 
 export const timeEntriesRepository = {
   findMany(query: ListTimeEntriesQuery, employeeAccessWhere: Prisma.EmployeeWhereInput) {
+    if (query.view === "byEmployee") return findManyByEmployeeGrouped(query, employeeAccessWhere);
     const where = buildWhere(query, employeeAccessWhere);
     const skip = (query.page - 1) * query.take;
     return prisma.$transaction([
@@ -206,6 +261,57 @@ export const timeEntriesRepository = {
       countableHours,
       coverage: activeEmployees ? Math.round((employeesWithEntries / activeEmployees) * 100) : 0,
     };
+  },
+
+  async homeCounts(period: string, employeeAccessWhere: Prisma.EmployeeWhereInput) {
+    const [sinCargar, devueltos, enRevision] = await prisma.$transaction([
+      prisma.employee.count({
+        where: {
+          ...employeeAccessWhere,
+          status: EmployeeStatus.ACTIVO,
+          timeEntries: { none: { period } },
+        },
+      }),
+      prisma.timeEntry.count({
+        where: { period, employee: employeeAccessWhere, status: ApprovalStatus.DEVUELTO },
+      }),
+      prisma.timeEntry.count({
+        where: { period, employee: employeeAccessWhere, status: ApprovalStatus.EN_REVISION },
+      }),
+    ]);
+
+    return { sinCargar, devueltos, enRevision };
+  },
+
+  pendingNoveltiesCount(employeeAccessWhere: Prisma.EmployeeWhereInput) {
+    return prisma.novelty.count({
+      where: {
+        employee: employeeAccessWhere,
+        status: { in: [ApprovalStatus.PENDIENTE, ApprovalStatus.EN_REVISION] },
+      },
+    });
+  },
+
+  async attendanceObservedCount(input: { startAt: Date; endAt: Date; employeeAccessWhere: Prisma.EmployeeWhereInput }) {
+    const [observedShifts, observedPunches] = await prisma.$transaction([
+      prisma.workShift.count({
+        where: {
+          employee: input.employeeAccessWhere,
+          startAt: { lt: input.endAt },
+          OR: [{ endAt: null }, { endAt: { gte: input.startAt } }],
+          status: { in: [WorkShiftStatus.OBSERVADO, WorkShiftStatus.FALTA_SALIDA, WorkShiftStatus.FALTA_INGRESO, WorkShiftStatus.INVALIDO] },
+        },
+      }),
+      prisma.attendancePunch.count({
+        where: {
+          employee: input.employeeAccessWhere,
+          status: "OBSERVADA",
+          timestamp: { gte: input.startAt, lt: input.endAt },
+        },
+      }),
+    ]);
+
+    return observedShifts + observedPunches;
   },
 
   async findPeriodEmployees(query: TimeEntriesPeriodEmployeesQuery, employeeAccessWhere: Prisma.EmployeeWhereInput) {

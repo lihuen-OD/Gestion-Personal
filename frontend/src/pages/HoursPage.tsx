@@ -33,6 +33,7 @@ import { EmptyState } from "../components/ui/EmptyState";
 import { Button } from "../components/ui/Button";
 import { Badge } from "../components/ui/Badge";
 import { Pagination } from "../components/ui/Pagination";
+import { Tabs } from "../components/ui/Tabs";
 
 function uniqueOptions(values: string[]) {
   return Array.from(new Set(values.filter(Boolean))).sort((a, b) => a.localeCompare(b, "es"));
@@ -60,12 +61,13 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
   const [review, setReview] = useState<{ entry: TimeEntry; action: "reject" | "return" }>();
   const [noveltyReject, setNoveltyReject] = useState<PendingItem>();
   const [reviewReason, setReviewReason] = useState("");
-  const [baseEmployees, setBaseEmployees] = useState<Employee[]>([]);
+  const [groupByPerson, setGroupByPerson] = useState(false);
   const [periodRows, setPeriodRows] = useState<Array<{ employee: Employee; summary: { total: number; status: string } }>>([]);
   const [periodRowsMeta, setPeriodRowsMeta] = useState({ total: 0, page: 1, pageSize, hasMore: false });
   const [reviewPage, setReviewPage] = useState(1);
   const [reviewEntriesMeta, setReviewEntriesMeta] = useState({ total: 0, page: 1, pageSize, hasMore: false });
-  const [periodEntriesSource, setPeriodEntriesSource] = useState<TimeEntry[]>([]);
+  const [reviewEntries, setReviewEntries] = useState<TimeEntry[]>([]);
+  const [reviewByPerson, setReviewByPerson] = useState<Array<{ employee: Employee; summary: { total: number; status: string } }>>([]);
   const [costCenterOptions, setCostCenterOptions] = useState<Array<{ id: string; name: string }>>([]);
   const [hoursSummary, setHoursSummary] = useState(emptyHoursSummary);
   const [pendingItems, setPendingItems] = useState<PendingItem[]>([]);
@@ -83,27 +85,38 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
       setLoadError("");
       try {
         const costCenterId = costCenterOptions.find((item) => item.name === costCenter)?.id;
-        const [apiRows, apiSummary, apiReviewEntries, apiPending] = await Promise.all([
-          timeEntryApiService.getPeriodEmployees({ period, search: debouncedSearch, costCenterId, page, take: pageSize }),
+        const reviewFilters = { period, status: "En revisión" as const, search: debouncedSearch, costCenterId, page: reviewPage, take: pageSize };
+        const emptyRows = { items: [], meta: { total: 0, page: 1, pageSize, hasMore: false } };
+        async function loadReview() {
+          if (!pendingOnly) return { entries: [] as TimeEntry[], byPerson: [] as typeof reviewByPerson, meta: emptyRows.meta };
+          if (groupByPerson) {
+            const result = await timeEntryApiService.listByEmployee(reviewFilters);
+            return { entries: [] as TimeEntry[], byPerson: result.items, meta: result.meta };
+          }
+          const result = await timeEntryApiService.list(reviewFilters);
+          return { entries: result.items, byPerson: [] as typeof reviewByPerson, meta: result.meta };
+        }
+        const [apiRows, apiSummary, apiReview, apiPending] = await Promise.all([
+          pendingOnly ? Promise.resolve(emptyRows) : timeEntryApiService.getPeriodEmployees({ period, search: debouncedSearch, costCenterId, page, take: pageSize }),
           timeEntryApiService.getSummary(period).catch(() => emptyHoursSummary),
-          pendingOnly ? timeEntryApiService.list({ period, status: "En revisión", search: debouncedSearch, costCenterId, page: reviewPage, take: pageSize }) : Promise.resolve({ items: [], meta: { total: 0, page: 1, pageSize, hasMore: false } }),
+          loadReview(),
           pendingOnly ? pendingApiService.getAll({ period, kind: "all", take: 300 }).catch(() => undefined) : Promise.resolve(undefined),
         ]);
         if (cancelled) return;
-        setBaseEmployees([]);
         setPeriodRows(apiRows.items);
         setPeriodRowsMeta(apiRows.meta);
-        setPeriodEntriesSource(apiReviewEntries.items);
-        setReviewEntriesMeta(apiReviewEntries.meta);
+        setReviewEntries(apiReview.entries);
+        setReviewByPerson(apiReview.byPerson);
+        setReviewEntriesMeta(apiReview.meta);
         setHoursSummary(apiSummary);
         setPendingItems(apiPending?.data || []);
         setUsesBackend(true);
       } catch (error) {
         if (cancelled) return;
-        setBaseEmployees([]);
         setPeriodRows([]);
         setPeriodRowsMeta({ total: 0, page, pageSize, hasMore: false });
-        setPeriodEntriesSource([]);
+        setReviewEntries([]);
+        setReviewByPerson([]);
         setReviewEntriesMeta({ total: 0, page: reviewPage, pageSize, hasMore: false });
         setHoursSummary(emptyHoursSummary);
         setPendingItems([]);
@@ -117,7 +130,7 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
     return () => {
       cancelled = true;
     };
-  }, [costCenter, costCenterOptions, debouncedSearch, page, pendingOnly, period, refresh, reviewPage, user]);
+  }, [costCenter, costCenterOptions, debouncedSearch, groupByPerson, page, pendingOnly, period, refresh, reviewPage, user]);
 
   useEffect(() => {
     let mounted = true;
@@ -134,22 +147,12 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
 
   const costCenters = uniqueOptions(costCenterOptions.map((item) => item.name));
   const employees = periodRows.map((row) => row.employee);
-  const employeeIds = new Set(employees.map((employee) => employee.id));
-  const periodEntries = periodEntriesSource.filter((entry) => employeeIds.has(entry.employeeId));
-  const reviewEntries = periodEntries.filter((entry) => entry.status === "En revisión");
   const pendingNoveltyItems = pendingItems.filter((item) => item.kind === "novelty");
   const canReview = user ? timeEntryApiService.canReview(user) : false;
   const summary = (employeeId: string) =>
     periodRows.find((row) => row.employee.id === employeeId)?.summary ||
-    timeEntryApiService.getEmployeePeriodSummary(periodEntries, employeeId);
-  const shown = pendingOnly
-    ? employees.filter((employee) =>
-        reviewEntries.some((entry) => entry.employeeId === employee.id),
-      )
-    : employees;
-  const exportRows = timeEntryApiService.getPeriodExportRowsFromEntries(period, shown, periodEntries);
-  const employeeFor = (entry: TimeEntry) =>
-    baseEmployees.find((employee) => employee.id === entry.employeeId) || periodRows.find((row) => row.employee.id === entry.employeeId)?.employee;
+    timeEntryApiService.getEmployeePeriodSummary(reviewEntries, employeeId);
+  const exportRows = timeEntryApiService.getPeriodExportRowsFromEntries(period, employees, reviewEntries);
   const setPeriodValue = (value: string) => {
     setPage(1);
     setReviewPage(1);
@@ -335,7 +338,20 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
 
           <Section
             title="Horas enviadas a revisión"
-            subtitle={`${reviewEntries.length} registros pendientes de resolución`}
+            subtitle={groupByPerson ? `${reviewByPerson.length} personas con registros en revisión` : `${reviewEntries.length} registros pendientes de resolución`}
+            action={
+              <Tabs
+                tabs={[
+                  { key: "flat", label: "Por registro" },
+                  { key: "person", label: "Por persona" },
+                ]}
+                active={groupByPerson ? "person" : "flat"}
+                onChange={(key) => {
+                  setGroupByPerson(key === "person");
+                  setReviewPage(1);
+                }}
+              />
+            }
           >
           <div className="filters">
             <label>
@@ -353,7 +369,6 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
                 value={search}
                 onChange={(event) => {
                   setSearch(event.target.value);
-                  setPage(1);
                   setReviewPage(1);
                 }}
               />
@@ -362,7 +377,6 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
               value={costCenter}
               onChange={(event) => {
                 setCostCenter(event.target.value);
-                setPage(1);
                 setReviewPage(1);
               }}
             >
@@ -375,7 +389,73 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
             </select>
           </div>
 
-          {reviewEntries.length ? (
+          {groupByPerson ? (
+            reviewByPerson.length ? (
+              <TableShell minWidth={1120}>
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Legajo</th>
+                      <th>Empleado</th>
+                      <th>Empresa</th>
+                      <th>Centro de costo</th>
+                      <th>Responsable de carga</th>
+                      <th>Total en revisión</th>
+                      <th>Estado</th>
+                      <th>Acción</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {reviewByPerson.map(({ employee, summary: personSummary }) => (
+                      <tr key={employee.id}>
+                        <td>
+                          <b>{displayLegajo(employee)}</b>
+                        </td>
+                        <td>
+                          <OverflowCell value={fullName(employee)} />
+                        </td>
+                        <td>
+                          <OverflowCell value={employee.company} />
+                        </td>
+                        <td>
+                          <OverflowCell value={employee.costCenter} />
+                        </td>
+                        <td>
+                          <OverflowCell
+                            value={
+                              (employee.timeResponsibles?.length
+                                ? employee.timeResponsibles
+                                : [employee.timeResponsible]
+                              )
+                                .filter(Boolean)
+                                .join(", ") || "-"
+                            }
+                          />
+                        </td>
+                        <td>{personSummary.total} h</td>
+                        <td>
+                          <Badge tone={statusTone(personSummary.status)}>{personSummary.status}</Badge>
+                        </td>
+                        <td>
+                          <Link
+                            className="table-link table-icon-action"
+                            title="Ver detalle"
+                            aria-label="Ver detalle"
+                            to={`/horas/${employee.id}?period=${period}`}
+                          >
+                            <Eye size={14} />
+                            <span>Ver detalle</span>
+                          </Link>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </TableShell>
+            ) : (
+              <EmptyState text="No hay personas con registros en revisión para los filtros seleccionados." />
+            )
+          ) : reviewEntries.length ? (
             <TableShell minWidth={1080}>
               <table>
                 <thead>
@@ -391,82 +471,78 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {reviewEntries.map((entry) => {
-                    const employee = employeeFor(entry);
-                    const employeeLegajo = employee ? displayLegajo(employee) : entry.employeeLegajo || "-";
-                    const employeeName = employee ? fullName(employee) : entry.employeeName || "-";
-                    return (
-                      <tr key={entry.id}>
-                        <td>
-                          <b>{employeeLegajo}</b>
-                        </td>
-                        <td>
-                          <OverflowCell value={employeeName} />
-                        </td>
-                        <td>{formatPeriodDay(entry.period, entry.day)}</td>
-                        <td>
-                          <OverflowCell value={entry.type} />
-                        </td>
-                        <td>
-                          <b>{entry.hours} h</b>
-                        </td>
-                        <td className="observation-cell">
-                          <OverflowCell value={entry.notes || "-"} />
-                        </td>
-                        <td>
-                          <Badge tone={statusTone(entry.status)}>{entry.status}</Badge>
-                        </td>
-                        <td>
-                          {canReview ? (
-                            <div className="table-actions">
-                              <button
-                                className="table-link table-icon-action"
-                                title="Aprobar"
-                                aria-label="Aprobar"
-                                onClick={() => approve(entry)}
-                              >
-                                <CheckCircle2 size={14} />
-                                <span>Aprobar</span>
-                              </button>
-                              <button
-                                className="table-link table-icon-action danger-link"
-                                title="Rechazar"
-                                aria-label="Rechazar"
-                                onClick={() => openReview(entry, "reject")}
-                              >
-                                <X size={14} />
-                                <span>Rechazar</span>
-                              </button>
-                              <button
-                                className="table-link table-icon-action"
-                                title="Devolver"
-                                aria-label="Devolver"
-                                onClick={() => openReview(entry, "return")}
-                              >
-                                <RefreshCcw size={14} />
-                                <span>Devolver</span>
-                              </button>
-                            </div>
-                          ) : (
-                            <span className="table-sub">Solo lectura</span>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
+                  {reviewEntries.map((entry) => (
+                    <tr key={entry.id}>
+                      <td>
+                        <b>{entry.employeeLegajo || "-"}</b>
+                      </td>
+                      <td>
+                        <OverflowCell value={entry.employeeName || "-"} />
+                      </td>
+                      <td>{formatPeriodDay(entry.period, entry.day)}</td>
+                      <td>
+                        <OverflowCell value={entry.type} />
+                      </td>
+                      <td>
+                        <b>{entry.hours} h</b>
+                      </td>
+                      <td className="observation-cell">
+                        <OverflowCell value={entry.notes || "-"} />
+                      </td>
+                      <td>
+                        <Badge tone={statusTone(entry.status)}>{entry.status}</Badge>
+                      </td>
+                      <td>
+                        {canReview ? (
+                          <div className="table-actions">
+                            <button
+                              className="table-link table-icon-action"
+                              title="Aprobar"
+                              aria-label="Aprobar"
+                              onClick={() => approve(entry)}
+                            >
+                              <CheckCircle2 size={14} />
+                              <span>Aprobar</span>
+                            </button>
+                            <button
+                              className="table-link table-icon-action danger-link"
+                              title="Rechazar"
+                              aria-label="Rechazar"
+                              onClick={() => openReview(entry, "reject")}
+                            >
+                              <X size={14} />
+                              <span>Rechazar</span>
+                            </button>
+                            <button
+                              className="table-link table-icon-action"
+                              title="Devolver"
+                              aria-label="Devolver"
+                              onClick={() => openReview(entry, "return")}
+                            >
+                              <RefreshCcw size={14} />
+                              <span>Devolver</span>
+                            </button>
+                          </div>
+                        ) : (
+                          <span className="table-sub">Solo lectura</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </TableShell>
           ) : (
             <EmptyState text="No hay horas en revisión para los filtros seleccionados." />
           )}
-          <Pagination page={reviewEntriesMeta.page} pageSize={reviewEntriesMeta.pageSize} total={reviewEntriesMeta.total} hasMore={reviewEntriesMeta.hasMore} onPageChange={setReviewPage} itemLabel="registros" />
+          <Pagination page={reviewEntriesMeta.page} pageSize={reviewEntriesMeta.pageSize} total={reviewEntriesMeta.total} hasMore={reviewEntriesMeta.hasMore} onPageChange={setReviewPage} itemLabel={groupByPerson ? "personas" : "registros"} />
           </Section>
         </>
       ) : null}
 
+      {!pendingOnly ? (
       <Section
-        title={pendingOnly ? "Personas con registros en revisión" : "Personas habilitadas para carga"}
+        title="Personas habilitadas para carga"
         subtitle="La asignación del responsable y del encargado directo determina quién aparece en este listado."
       >
         <div className="filters">
@@ -486,7 +562,6 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
               onChange={(event) => {
                 setSearch(event.target.value);
                 setPage(1);
-                setReviewPage(1);
               }}
             />
           </label>
@@ -495,7 +570,6 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
             onChange={(event) => {
               setCostCenter(event.target.value);
               setPage(1);
-              setReviewPage(1);
             }}
           >
             <option value="">Todos los centros de costo</option>
@@ -522,7 +596,7 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
               </tr>
             </thead>
             <tbody>
-              {shown.map((employee) => {
+              {employees.map((employee) => {
                 const periodSummary = summary(employee.id);
                 return (
                   <tr key={employee.id}>
@@ -575,6 +649,7 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
         </TableShell>
         <Pagination page={periodRowsMeta.page} pageSize={periodRowsMeta.pageSize} total={periodRowsMeta.total} hasMore={periodRowsMeta.hasMore} onPageChange={setPage} itemLabel="legajos" />
       </Section>
+      ) : null}
 
       {review ? (
         <Modal
@@ -593,7 +668,7 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
               <p>
                 {review.action === "reject"
                   ? "El registro quedará rechazado y se conservará para auditoría."
-                  : "El registro vuelve a Pendiente para que pueda corregirse."}
+                  : "El registro queda en estado Devuelto para que puedas corregirlo y volver a enviarlo."}
               </p>
             </div>
             <label>

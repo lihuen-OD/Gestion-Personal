@@ -89,7 +89,7 @@ export function PuestosPage() {
     return () => { alive = false; };
   }, [refresh]);
 
-  if (level === 3) return <Navigate to="/horas" />;
+  if (level === 3) return <Navigate to="/gestion-horaria" />;
 
   const positions = useMemo(() => apiItems.filter((position) => matches(position, filters)), [apiItems, filters]);
 

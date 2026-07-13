@@ -1,6 +1,6 @@
 export type Role = "Nivel 1 - RRHH" | "Nivel 2 - Supervisión / Gestión" | "Nivel 3 - Administrativo de Carga Horaria";
 export type EmployeeStatus = "Activo" | "Inactivo";
-export type TimeStatus = "Pendiente" | "Borrador" | "En revisión" | "Aprobado" | "Rechazado" | "Cerrado" | "Exportado";
+export type TimeStatus = "Pendiente" | "Borrador" | "En revisión" | "Devuelto" | "Aprobado" | "Rechazado" | "Cerrado" | "Exportado";
 export type ChangeSection = "INFORMACION_GENERAL" | "CONTACTO_DOMICILIO" | "DATOS_LABORALES" | "RESPONSABLES" | "TRANSPORTE" | "CONFIGURACION_HORARIA" | "NOVEDADES" | "DOCUMENTACION";
 export type FieldHistorySection = "INFORMACION_GENERAL" | "CONTACTO_DOMICILIO" | "DATOS_LABORALES" | "RESPONSABLES_ASIGNACIONES" | "TRANSPORTE" | "CONFIGURACION_HORARIA_LIQUIDACION";
 export type LaborMovementType = "ALTA" | "BAJA";

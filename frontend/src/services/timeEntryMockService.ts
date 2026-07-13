@@ -5,7 +5,7 @@ import { readStore, writeStore } from "./storage";
 const countableStatuses = new Set<TimeStatus>(["Aprobado", "En revisión"]);
 const exportableStatuses = new Set<TimeStatus>(["Aprobado"]);
 const lockedStatuses = new Set<TimeStatus>(["Aprobado", "Cerrado", "Exportado"]);
-const statusPriority: TimeStatus[] = ["En revisión", "Rechazado", "Pendiente", "Borrador", "Aprobado", "Cerrado", "Exportado"];
+const statusPriority: TimeStatus[] = ["Devuelto", "En revisión", "Rechazado", "Pendiente", "Borrador", "Aprobado", "Cerrado", "Exportado"];
 
 function dateFromPeriodDay(period: string, day: number) {
   return `${period}-${String(day).padStart(2, "0")}`;

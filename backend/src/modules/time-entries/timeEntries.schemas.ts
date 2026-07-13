@@ -11,6 +11,7 @@ export const listTimeEntriesQuerySchema = z.object({
   costCenterId: z.string().uuid().optional(),
   from: z.coerce.date().optional(),
   to: z.coerce.date().optional(),
+  view: z.enum(["flat", "byEmployee"]).default("flat"),
   page: z.coerce.number().int().positive().max(10000).default(1),
   take: z.coerce.number().int().positive().max(500).default(200),
 });
