@@ -61,7 +61,7 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
   const [noveltyReject, setNoveltyReject] = useState<PendingItem>();
   const [reviewReason, setReviewReason] = useState("");
   const [groupByPerson, setGroupByPerson] = useState(false);
-  const [periodRows, setPeriodRows] = useState<Array<{ employee: Employee; summary: { total: number; status: string } }>>([]);
+  const [periodRows, setPeriodRows] = useState<Array<{ employee: Employee; summary: { total: number; normal: number; special: number; incidents: number; status: string } }>>([]);
   const [periodRowsMeta, setPeriodRowsMeta] = useState({ total: 0, page: 1, pageSize, hasMore: false });
   const [reviewPage, setReviewPage] = useState(1);
   const [reviewEntriesMeta, setReviewEntriesMeta] = useState({ total: 0, page: 1, pageSize, hasMore: false });
@@ -148,9 +148,12 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
   const employees = periodRows.map((row) => row.employee);
   const pendingNoveltyItems = pendingItems.filter((item) => item.kind === "novelty");
   const canReview = user ? timeEntryApiService.canReview(user) : false;
-  const summary = (employeeId: string) =>
-    periodRows.find((row) => row.employee.id === employeeId)?.summary ||
-    timeEntryApiService.getEmployeePeriodSummary(reviewEntries, employeeId);
+  const summary = (employeeId: string) => {
+    const backendSummary = periodRows.find((row) => row.employee.id === employeeId)?.summary;
+    if (backendSummary) return backendSummary;
+    const legacy = timeEntryApiService.getEmployeePeriodSummary(reviewEntries, employeeId);
+    return { ...legacy, normal: legacy.total, special: 0, incidents: 0 };
+  };
   const exportRows = timeEntryApiService.getPeriodExportRowsFromEntries(period, employees, reviewEntries);
   const setPeriodValue = (value: string) => {
     setPage(1);
@@ -221,7 +224,7 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
         description={
           pendingOnly
             ? "Revisá, aprobá, rechazá o devolvé las horas enviadas a revisión."
-            : "Seleccioná el período y buscá personas asignadas. Los totales visibles cuentan horas aprobadas y en revisión."
+            : "Las fichadas correctas se contabilizan automáticamente. Las horas especiales se muestran separadas y sólo las incidencias requieren revisión."
         }
         action={
           !pendingOnly ? (
@@ -591,8 +594,10 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
                 <th>Empresa</th>
                 <th>Centro de costo</th>
                 <th>Responsable de carga</th>
+                <th>Normales</th>
+                <th>Especiales</th>
                 <th>Total</th>
-                <th>Estado</th>
+                <th>Situación</th>
                 <th>Acción</th>
               </tr>
             </thead>
@@ -625,10 +630,12 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
                         }
                       />
                     </td>
+                    <td>{periodSummary.normal} h</td>
+                    <td>{periodSummary.special} h</td>
                     <td>{periodSummary.total} h</td>
                     <td>
-                      <Badge tone={statusTone(periodSummary.status)}>
-                        {periodSummary.status}
+                      <Badge tone={periodSummary.incidents > 0 ? "warning" : "success"}>
+                        {periodSummary.incidents > 0 ? `${periodSummary.incidents} para revisar` : "Registradas"}
                       </Badge>
                     </td>
                     <td>

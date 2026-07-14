@@ -50,6 +50,7 @@ export const documentsRepository = {
       },
       include: {
         category: true,
+        storageFile: true,
         employee: {
           select: {
             id: true,

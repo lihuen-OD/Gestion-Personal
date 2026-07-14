@@ -1,6 +1,7 @@
 import type { StorageObjectInput, StorageObjectResult, StorageProvider } from "./storage.types";
-import { mkdir, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { AppError } from "../errors/AppError";
 
 const uploadRoot = path.join(process.cwd(), "uploads");
 
@@ -62,5 +63,15 @@ export const localStorageProvider: StorageProvider = {
 
   getFilePath(storageKey: string) {
     return filePathFor(storageKey);
+  },
+
+  async download(storageKey: string) {
+    const target = filePathFor(storageKey);
+    if (!target) throw new AppError("Archivo no disponible en storage local", 404, "STORAGE_LOCAL_INVALID_KEY");
+    return {
+      buffer: await readFile(target).catch(() => {
+        throw new AppError("Archivo no encontrado en storage local", 404, "STORAGE_LOCAL_FILE_NOT_FOUND");
+      }),
+    };
   },
 };

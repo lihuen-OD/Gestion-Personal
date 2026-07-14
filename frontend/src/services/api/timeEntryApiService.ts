@@ -54,6 +54,9 @@ type ApiEmployeePeriodRow = {
   employee: Parameters<typeof mapEmployeeFromApi>[0];
   summary: {
     total: number;
+    normal: number;
+    special: number;
+    incidents: number;
     status: ApiApprovalStatus;
   };
 };
@@ -297,6 +300,9 @@ export const timeEntryApiService = {
         employee: mapEmployeeFromApi(row.employee),
         summary: {
           total: row.summary.total,
+          normal: row.summary.normal,
+          special: row.summary.special,
+          incidents: row.summary.incidents,
           status: statusFromApi[row.summary.status] || "Pendiente",
         },
       })),
@@ -366,6 +372,9 @@ export const timeEntryApiService = {
           employee: mapEmployeeFromApi(row.employee),
           summary: {
             total: row.summary.total,
+            normal: row.summary.normal,
+            special: row.summary.special,
+            incidents: row.summary.incidents,
             status: statusFromApi[row.summary.status] || "Pendiente",
           },
         })),
@@ -394,12 +403,13 @@ export const timeEntryApiService = {
     return mapTimeEntryFromApi(response.data);
   },
 
-  async update(id: string, entry: Partial<TimeEntry>) {
+  async update(id: string, entry: Partial<TimeEntry> & { correctionReason?: string }) {
     const body: Record<string, unknown> = {};
     if (entry.conceptId || entry.type) body.hourConceptId = await resolveHourConceptId({ conceptId: entry.conceptId, type: entry.type || "Hora normal" });
     if (entry.period && entry.day) body.date = dateFromEntry(entry as Pick<TimeEntry, "period" | "day" | "date">);
     if (entry.hours !== undefined) body.hours = entry.hours;
     if (entry.notes !== undefined) body.observation = entry.notes || null;
+    if (entry.correctionReason) body.correctionReason = entry.correctionReason;
     const response = await apiRequest<ApiItemResponse>(`/time-entries/${id}`, { method: "PATCH", body });
     await invalidateTimeEntryDependentCaches("time entry updated");
     return mapTimeEntryFromApi(response.data);

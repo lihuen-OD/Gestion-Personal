@@ -45,6 +45,7 @@ export const updateTimeEntrySchema = z.object({
   date: z.coerce.date().optional(),
   hours: z.coerce.number().min(0).max(24).optional(),
   observation: z.string().trim().max(800).optional().nullable(),
+  correctionReason: z.string().trim().min(2).max(600).optional(),
 });
 
 export const rejectTimeEntrySchema = z.object({
@@ -103,9 +104,12 @@ export const clockFaceValidationStatusSchema = z.enum([
 ]);
 
 export const clockPhotoPunchSchema = z.object({
+  requestId: z.string().uuid(),
   employeeId: z.string().uuid(),
   punchType: z.enum(["IN", "OUT"]),
+  hourConceptId: z.string().uuid().optional(),
   photo: z.string().min(200).max(4_500_000),
+  thumbnail: z.string().min(100).max(600_000).optional(),
   faceValidationStatus: clockFaceValidationStatusSchema,
   faceDetectionScore: z.coerce.number().min(0).max(1).optional(),
   device: z.object({
@@ -114,6 +118,14 @@ export const clockPhotoPunchSchema = z.object({
     language: z.string().trim().max(40).optional(),
     cameraLabel: z.string().trim().max(180).optional(),
   }).optional(),
+}).superRefine((input, context) => {
+  if (input.punchType === "IN" && !input.hourConceptId) {
+    context.addIssue({ code: "custom", path: ["hourConceptId"], message: "Seleccioná el tipo de jornada antes de registrar el ingreso." });
+  }
+});
+
+export const clockPunchAttemptParamsSchema = z.object({
+  requestId: z.string().uuid(),
 });
 
 export const adminCloseWorkShiftSchema = z.object({

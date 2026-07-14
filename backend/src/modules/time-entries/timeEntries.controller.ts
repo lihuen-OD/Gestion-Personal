@@ -1,5 +1,6 @@
 import type { RequestHandler } from "express";
 import { requestAuditContext } from "../../shared/audit/requestAuditContext";
+import { AppError } from "../../shared/errors/AppError";
 import { requireParam } from "../../shared/http/params";
 import type { AdminCloseWorkShiftInput, AdminWorkShiftReasonInput, AttendanceSummaryQuery, ClockByDniInput, ClockByEmployeeInput, ClockEmployeeSearchQuery, ClockPhotoPunchInput, CreateWorkShiftInput, ListTimeEntriesQuery, PreviewWorkShiftInput, TimeEntriesExportQuery, TimeEntriesPeriodEmployeesQuery, TimeEntriesSummaryQuery } from "./timeEntries.schemas";
 import { attendanceSummaryCache, clearTimeEntriesReadCaches, timeEntriesListCache, timeEntriesPeriodEmployeesCache, timeEntriesSummaryCache } from "./timeEntries.cache";
@@ -50,9 +51,16 @@ export const timeEntriesController = {
   }) satisfies RequestHandler,
 
   clockPhotoPunch: (async (req, res) => {
-    const result = await timeEntriesService.clockPhotoPunch(req.body as ClockPhotoPunchInput, requestAuditContext(req));
+    const result = await timeEntriesService.clockPhotoPunchIdempotent(req.body as ClockPhotoPunchInput, requestAuditContext(req));
     clearTimeEntriesReadCaches();
     res.status(201).json({ data: result });
+  }) satisfies RequestHandler,
+
+  clockPunchAttemptStatus: (async (req, res) => {
+    const employeeId = typeof req.query.employeeId === "string" ? req.query.employeeId : "";
+    if (!employeeId) throw new AppError("employeeId is required", 400, "CLOCK_ATTEMPT_EMPLOYEE_REQUIRED");
+    const result = await timeEntriesService.clockPunchAttemptStatus(requireParam(req, "requestId"), employeeId);
+    res.json({ data: result });
   }) satisfies RequestHandler,
 
   list: (async (req, res) => {
@@ -100,6 +108,12 @@ export const timeEntriesController = {
     const result = await timeEntriesService.attendancePunchPhoto(requireParam(req, "id"), req.user!);
     if (result.kind === "redirect") {
       res.redirect(result.url);
+      return;
+    }
+    if (result.kind === "buffer") {
+      res.setHeader("Content-Type", result.mimeType);
+      res.setHeader("Content-Disposition", `inline; filename*=UTF-8''${encodeURIComponent(result.fileName)}`);
+      res.send(result.buffer);
       return;
     }
     res.setHeader("Content-Type", result.mimeType);

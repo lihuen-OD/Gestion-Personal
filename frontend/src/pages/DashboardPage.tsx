@@ -147,7 +147,7 @@ export function DashboardPage() {
     </div>
     {level === 1 && <Section title="Actividad reciente" subtitle="Últimos movimientos registrados en la plataforma">
       <DataTable status={audit.length ? "ready" : "empty"} minWidth={860} emptyText="Todavía no hay actividad registrada.">
-        <table className="dashboard-activity-table"><thead><tr><th>Fecha</th><th>Usuario</th><th>Movimiento</th><th>Registro</th><th>Resumen</th></tr></thead><tbody>{audit.slice(0, 5).map((item) => <tr key={item.id}><td>{item.date} · {item.time}</td><td>{item.user}</td><td>{actionLabels[item.action] || item.action}</td><td><OverflowCell value={entityLabels[item.entity] || item.entity} /></td><td><span className="dashboard-activity-detail">{readableAuditDetail(item)}</span></td></tr>)}</tbody></table>
+        <table className="dashboard-activity-table"><thead><tr><th>Fecha</th><th>Registrado por</th><th>Movimiento</th><th>Registro</th><th>Resumen</th></tr></thead><tbody>{audit.slice(0, 5).map((item) => <tr key={item.id}><td>{item.date} · {item.time}</td><td>{item.user}</td><td>{actionLabels[item.action] || item.action}</td><td><OverflowCell value={entityLabels[item.entity] || item.entity} /></td><td><span className="dashboard-activity-detail">{readableAuditDetail(item)}</span></td></tr>)}</tbody></table>
       </DataTable>
     </Section>}
   </>;

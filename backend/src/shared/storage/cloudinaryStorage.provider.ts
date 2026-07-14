@@ -109,4 +109,17 @@ export const cloudinaryStorageProvider: StorageProvider = {
   getFilePath() {
     return undefined;
   },
+
+  async download(storageKey: string) {
+    const url = this.getPublicUrl(storageKey);
+    if (!url) throw new AppError("Cloudinary public URL is not available", 404, "STORAGE_CLOUDINARY_FILE_NOT_AVAILABLE");
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new AppError("Cloudinary download failed", 502, "STORAGE_CLOUDINARY_DOWNLOAD_FAILED");
+    }
+    return {
+      buffer: Buffer.from(await response.arrayBuffer()),
+      mimeType: response.headers.get("content-type") || undefined,
+    };
+  },
 };

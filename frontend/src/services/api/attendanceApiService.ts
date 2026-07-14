@@ -61,6 +61,8 @@ export type AttendancePunchEvidence = {
   observation?: string | null;
   photoStoragePath?: string | null;
   photoUrl?: string | null;
+  photoFileId?: string | null;
+  thumbnailFileId?: string | null;
   faceDetected: boolean;
   faceValidationStatus?: string | null;
   faceDetectionScore?: number | null;
@@ -76,6 +78,8 @@ export type AttendancePunch = {
   observation?: string | null;
   photoStoragePath?: string | null;
   photoUrl?: string | null;
+  photoFileId?: string | null;
+  thumbnailFileId?: string | null;
   faceDetected: boolean;
   faceValidationStatus?: string | null;
   faceDetectionScore?: number | null;

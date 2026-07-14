@@ -81,8 +81,8 @@ function faceStatusLabel(status?: string | null) {
   return status ? labels[status] || status : "Sin validación";
 }
 
-function hasPunchPhoto(punch?: { photoStoragePath?: string | null; photoUrl?: string | null } | null) {
-  return Boolean(punch?.photoStoragePath || punch?.photoUrl);
+function hasPunchPhoto(punch?: { photoStoragePath?: string | null; photoUrl?: string | null; photoFileId?: string | null; thumbnailFileId?: string | null } | null) {
+  return Boolean(punch?.photoFileId || punch?.thumbnailFileId || punch?.photoStoragePath || punch?.photoUrl);
 }
 
 function PunchEvidence({ punch, label, onViewPhoto }: { punch?: AttendanceShift["startPunch"] | AttendanceShift["endPunch"] | null; label: string; onViewPhoto: (id: string) => void }) {
@@ -249,6 +249,7 @@ export function AttendancePage() {
   const [summary, setSummary] = useState<Awaited<ReturnType<typeof attendanceApiService.getSummary>>>();
   const [photoPreview, setPhotoPreview] = useState<{ url: string; title: string }>();
   const [photoError, setPhotoError] = useState("");
+  const [photoLoading, setPhotoLoading] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -298,6 +299,7 @@ export function AttendancePage() {
 
   const openPunchPhoto = async (id: string) => {
     setPhotoError("");
+    setPhotoLoading(true);
     try {
       const result = await attendanceApiService.downloadPunchPhoto(id);
       closePhotoPreview();
@@ -307,6 +309,8 @@ export function AttendancePage() {
       });
     } catch (err) {
       setPhotoError(err instanceof Error ? err.message : "No se pudo abrir la foto de la fichada.");
+    } finally {
+      setPhotoLoading(false);
     }
   };
 
@@ -412,6 +416,12 @@ export function AttendancePage() {
           <div className="attendance-photo-preview">
             <img src={photoPreview.url} alt="Evidencia de fichada" />
           </div>
+        </Modal>
+      ) : null}
+
+      {photoLoading ? (
+        <Modal title="Evidencia de fichada" close={() => undefined} closeDisabled>
+          <EmptyState text="Cargando evidencia fotográfica..." icon={Camera} />
         </Modal>
       ) : null}
     </div>

@@ -34,6 +34,10 @@ export function TimeClockPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [pendingPunch, setPendingPunch] = useState<"IN" | "OUT">();
+  const [attemptId, setAttemptId] = useState("");
+  const [attemptLocked, setAttemptLocked] = useState(false);
+  const [submissionStage, setSubmissionStage] = useState<"registering" | "slow" | "checking">("registering");
+  const [hourConceptId, setHourConceptId] = useState("");
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(new Date()), 1000);
@@ -65,14 +69,14 @@ export function TimeClockPage() {
     };
   }, [search, selected]);
 
-  const canSubmit = Boolean(selected?.id) && !loading;
+  const canSubmit = Boolean(selected?.id) && !loading && !attemptLocked;
   const employeeLabel = useMemo(() => status?.employee || result?.employee, [result, status]);
   const openShiftMinutes = useMemo(() => {
     if (!status?.openShift?.startAt) return 0;
     return Math.max(0, Math.round((now.getTime() - new Date(status.openShift.startAt).getTime()) / 60_000));
   }, [now, status?.openShift?.startAt]);
   const openShiftExceeded = openShiftMinutes > MAX_CLOCK_SHIFT_MINUTES;
-  const canClockIn = canSubmit && (!status?.openShift || openShiftExceeded);
+  const canClockIn = canSubmit && Boolean(hourConceptId) && (!status?.openShift || openShiftExceeded);
   const canClockOut = canSubmit && Boolean(status?.openShift) && !openShiftExceeded;
 
   const refreshStatus = async (employeeId = selected?.id) => {
@@ -82,7 +86,9 @@ export function TimeClockPage() {
     setResult(undefined);
     setLoading(true);
     try {
-      setStatus(await timeClockApiService.status(employeeId));
+      const nextStatus = await timeClockApiService.status(employeeId);
+      setStatus(nextStatus);
+      setHourConceptId(nextStatus.openShift?.hourConcept?.id || nextStatus.hourConcepts.find((concept) => concept.kind === "NORMAL")?.id || nextStatus.hourConcepts[0]?.id || "");
     } catch {
       setStatus(undefined);
       setError("No pudimos consultar el estado del legajo seleccionado.");
@@ -98,7 +104,9 @@ export function TimeClockPage() {
     setError("");
     setLoading(true);
     try {
-      setStatus(await timeClockApiService.status(employee.id));
+      const nextStatus = await timeClockApiService.status(employee.id);
+      setStatus(nextStatus);
+      setHourConceptId(nextStatus.openShift?.hourConcept?.id || nextStatus.hourConcepts.find((concept) => concept.kind === "NORMAL")?.id || nextStatus.hourConcepts[0]?.id || "");
     } catch {
       setStatus(undefined);
       setError("No pudimos consultar el estado del legajo seleccionado.");
@@ -113,47 +121,100 @@ export function TimeClockPage() {
     setSearch("");
     setMatches([]);
     setError("");
+    setHourConceptId("");
   };
 
   const clockIn = async () => {
     if (!canSubmit) return;
     setError("");
+    setAttemptId(crypto.randomUUID());
     setPendingPunch("IN");
   };
 
   const clockOut = async () => {
     if (!canSubmit) return;
     setError("");
+    setAttemptId(crypto.randomUUID());
     setPendingPunch("OUT");
   };
 
+  const applyPunchResponse = (response: Awaited<ReturnType<typeof timeClockApiService.photoPunch>>) => {
+    setResult(response);
+    if ("totalHours" in response.workShift) {
+      setStatus((current) => ({ employee: response.employee, openShift: null, hourConcepts: current?.hourConcepts || [] }));
+    } else {
+      setStatus((current) => ({ employee: response.employee, openShift: { ...response.workShift, hourConcept: current?.hourConcepts.find((concept) => concept.id === hourConceptId) || null }, hourConcepts: current?.hourConcepts || [] }));
+    }
+    setPendingPunch(undefined);
+    setAttemptId("");
+  };
+
+  const verifyAttempt = async (requestId: string, employeeId: string) => {
+    for (let attempt = 0; attempt < 30; attempt += 1) {
+      try {
+        const state = await timeClockApiService.attemptStatus(requestId, employeeId);
+        if (state.status === "COMPLETED" && state.response) return state.response;
+        if (state.status === "FAILED" && state.error) throw new ApiError(state.error.message, state.error.code, state.error.httpStatus);
+      } catch (error) {
+        if (error instanceof ApiError && error.status !== 404) throw error;
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, 1_500));
+    }
+    return undefined;
+  };
+
   const confirmPhotoPunch = async (capture: FaceCaptureResult) => {
-    if (!selected || !pendingPunch) return;
+    if (!selected || !pendingPunch || !attemptId || loading) return;
     setError("");
     setLoading(true);
+    setAttemptLocked(true);
+    setSubmissionStage("registering");
+    const slowTimer = window.setTimeout(() => setSubmissionStage("slow"), 4_000);
+    let terminal = false;
     try {
       const response = await timeClockApiService.photoPunch({
+        requestId: attemptId,
         employeeId: selected.id,
         punchType: pendingPunch,
+        hourConceptId: pendingPunch === "IN" ? hourConceptId : status?.openShift?.hourConcept?.id || undefined,
         photo: capture.photo,
+        thumbnail: capture.thumbnail,
         faceValidationStatus: capture.faceValidationStatus,
         faceDetectionScore: capture.faceDetectionScore,
         device: capture.device,
       });
-      setResult(response);
-      if ("totalHours" in response.workShift) {
-        setStatus({ employee: response.employee, openShift: null });
-      } else {
-        setStatus({ employee: response.employee, openShift: response.workShift });
-      }
-      setPendingPunch(undefined);
+      terminal = true;
+      applyPunchResponse(response);
     } catch (err) {
+      window.clearTimeout(slowTimer);
+      setSubmissionStage("checking");
+      let verifiedTerminalError = false;
+      try {
+        const confirmed = await verifyAttempt(attemptId, selected.id);
+        if (confirmed) {
+          terminal = true;
+          applyPunchResponse(confirmed);
+          return;
+        }
+      } catch (verifiedError) {
+        err = verifiedError;
+        verifiedTerminalError = true;
+      }
       const fallback = pendingPunch === "IN"
-        ? "No se pudo registrar el ingreso. Verificá si ya tenés una jornada abierta."
-        : "No se pudo registrar la salida. Verificá que exista un ingreso abierto o avisá a RRHH.";
-      setError(err instanceof ApiError ? err.message : fallback);
+        ? "No pudimos determinar todavía si el ingreso terminó. No inicies otro intento y avisá a RRHH."
+        : "No pudimos determinar todavía si la salida terminó. No inicies otro intento y avisá a RRHH.";
+      if (verifiedTerminalError && err instanceof ApiError) {
+        terminal = true;
+        setError(err.message);
+        setPendingPunch(undefined);
+        setAttemptId("");
+      } else {
+        setError(fallback);
+      }
     } finally {
+      window.clearTimeout(slowTimer);
       setLoading(false);
+      if (terminal) setAttemptLocked(false);
     }
   };
 
@@ -209,9 +270,23 @@ export function TimeClockPage() {
           <div className="clock-open">
             <b>Ingreso abierto</b>
             <span>Registrado: {formatDateTime(status.openShift.startAt)}</span>
+            {status.openShift.hourConcept ? <span>Tipo de jornada: <b>{status.openShift.hourConcept.name}</b></span> : null}
             {openShiftExceeded ? <span>Ese día quedó con olvido de salida. Podés marcar un nuevo ingreso; RRHH lo revisa desde Asistencia.</span> : null}
           </div>
         ) : null}
+
+        {selected && !status?.openShift && status?.hourConcepts.length ? (
+          <fieldset className="clock-concepts" disabled={loading || attemptLocked}>
+            <legend>¿Qué tipo de jornada vas a registrar?</legend>
+            <div>{status.hourConcepts.map((concept) => (
+              <label key={concept.id} className={hourConceptId === concept.id ? "is-selected" : ""}>
+                <input type="radio" name="clock-hour-concept" checked={hourConceptId === concept.id} onChange={() => setHourConceptId(concept.id)} />
+                <span><b>{concept.name}</b><small>{concept.kind === "NORMAL" ? "Jornada habitual" : "Se contabiliza por separado"}</small></span>
+              </label>
+            ))}</div>
+          </fieldset>
+        ) : null}
+        {selected && !status?.openShift && status && !status.hourConcepts.length ? <p className="error">Este legajo no tiene tipos de jornada habilitados. RRHH debe configurarlo antes de fichar.</p> : null}
 
         <div className="clock-actions">
           <Button variant="primary" icon={LogIn} disabled={!canClockIn} onClick={clockIn}>
@@ -251,8 +326,10 @@ export function TimeClockPage() {
         <Suspense fallback={<LoadingState text="Preparando cámara..." />}>
           <FaceCaptureModal
             punchType={pendingPunch}
+            submitting={loading || attemptLocked}
+            submissionStage={submissionStage}
             onCancel={() => {
-              if (!loading) setPendingPunch(undefined);
+              if (!loading && !attemptLocked) setPendingPunch(undefined);
             }}
             onConfirm={confirmPhotoPunch}
           />

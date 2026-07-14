@@ -28,6 +28,8 @@ const editableStatuses: ApprovalStatus[] = [ApprovalStatus.BORRADOR, ApprovalSta
 type PunchEvidenceInput = {
   photoUrl?: string | null;
   photoStoragePath?: string | null;
+  photoFileId?: string | null;
+  thumbnailFileId?: string | null;
   faceDetected?: boolean;
   faceValidationStatus?: "VALID" | "NO_FACE" | "MULTIPLE_FACES" | "LOW_LIGHT" | "FACE_TOO_SMALL" | "CAMERA_ERROR" | null;
   faceDetectionScore?: number | null;
@@ -41,6 +43,8 @@ function punchEvidenceData(evidence?: PunchEvidenceInput) {
   return {
     photoUrl: evidence.photoUrl || null,
     photoStoragePath: evidence.photoStoragePath || null,
+    photoFileId: evidence.photoFileId || null,
+    thumbnailFileId: evidence.thumbnailFileId || null,
     faceDetected: Boolean(evidence.faceDetected),
     faceValidationStatus: evidence.faceValidationStatus || null,
     faceDetectionScore: evidence.faceDetectionScore ?? null,
@@ -186,6 +190,47 @@ function resolvePeriodStatus(statuses: string[]) {
 }
 
 export const timeEntriesRepository = {
+  createClockPunchAttempt(input: { requestId: string; employeeId: string; punchType: "INGRESO" | "SALIDA"; requestHash: string }) {
+    return prisma.clockPunchAttempt.create({ data: input });
+  },
+
+  findClockPunchAttempt(requestId: string) {
+    return prisma.clockPunchAttempt.findUnique({ where: { requestId } });
+  },
+
+  completeClockPunchAttempt(requestId: string, response: Prisma.InputJsonValue) {
+    return prisma.clockPunchAttempt.update({
+      where: { requestId },
+      data: { status: "COMPLETED", response, completedAt: new Date(), errorCode: null, errorMessage: null, httpStatus: 200 },
+    });
+  },
+
+  failClockPunchAttempt(requestId: string, error: { code: string; message: string; httpStatus: number }) {
+    return prisma.clockPunchAttempt.update({
+      where: { requestId },
+      data: { status: "FAILED", errorCode: error.code, errorMessage: error.message, httpStatus: error.httpStatus, completedAt: new Date() },
+    });
+  },
+
+  expireClockPunchAttempts(processingBefore: Date) {
+    return prisma.clockPunchAttempt.updateMany({
+      where: { status: "PROCESSING", startedAt: { lt: processingBefore } },
+      data: {
+        status: "FAILED",
+        errorCode: "CLOCK_ATTEMPT_TIMEOUT",
+        errorMessage: "La fichada excedió el tiempo máximo de procesamiento.",
+        httpStatus: 503,
+        completedAt: new Date(),
+      },
+    });
+  },
+
+  deleteClockPunchAttempts(completedBefore: Date) {
+    return prisma.clockPunchAttempt.deleteMany({
+      where: { status: { in: ["COMPLETED", "FAILED"] }, completedAt: { lt: completedBefore } },
+    });
+  },
+
   findMany(query: ListTimeEntriesQuery, employeeAccessWhere: Prisma.EmployeeWhereInput) {
     if (query.view === "byEmployee") return findManyByEmployeeGrouped(query, employeeAccessWhere);
     const where = buildWhere(query, employeeAccessWhere);
@@ -341,16 +386,22 @@ export const timeEntriesRepository = {
               employeeId: true,
               hours: true,
               status: true,
+              hourConcept: { select: { kind: true } },
+              workShift: { select: { status: true } },
             },
           })
         : [];
 
-      const grouped = new Map<string, { total: number; statuses: string[] }>();
+      const grouped = new Map<string, { total: number; normal: number; special: number; incidents: number; statuses: string[] }>();
       for (const entry of entries) {
-        const current = grouped.get(entry.employeeId) || { total: 0, statuses: [] };
+        const current = grouped.get(entry.employeeId) || { total: 0, normal: 0, special: 0, incidents: 0, statuses: [] };
         if (entry.status === ApprovalStatus.APROBADO || entry.status === ApprovalStatus.EN_REVISION) {
-          current.total += Number(entry.hours.toString());
+          const hours = Number(entry.hours.toString());
+          current.total += hours;
+          if (entry.hourConcept.kind === "NORMAL") current.normal += hours;
+          else current.special += hours;
         }
+        if (entry.workShift && ["FALTA_SALIDA", "FALTA_INGRESO", "OBSERVADO", "INVALIDO"].includes(entry.workShift.status)) current.incidents += 1;
         current.statuses.push(entry.status);
         grouped.set(entry.employeeId, current);
       }
@@ -362,6 +413,9 @@ export const timeEntriesRepository = {
             employee,
             summary: {
               total: summary?.total || 0,
+              normal: summary?.normal || 0,
+              special: summary?.special || 0,
+              incidents: summary?.incidents || 0,
               status: resolvePeriodStatus(summary?.statuses || []),
             },
           };
@@ -439,6 +493,8 @@ export const timeEntriesRepository = {
                 status: true,
                 observation: true,
                 photoStoragePath: true,
+                photoFileId: true,
+                thumbnailFileId: true,
                 photoUrl: true,
                 faceDetected: true,
                 faceValidationStatus: true,
@@ -453,6 +509,8 @@ export const timeEntriesRepository = {
                 status: true,
                 observation: true,
                 photoStoragePath: true,
+                photoFileId: true,
+                thumbnailFileId: true,
                 photoUrl: true,
                 faceDetected: true,
                 faceValidationStatus: true,
@@ -504,6 +562,8 @@ export const timeEntriesRepository = {
             status: true,
             observation: true,
             photoStoragePath: true,
+            photoFileId: true,
+            thumbnailFileId: true,
             photoUrl: true,
             faceDetected: true,
             faceValidationStatus: true,
@@ -539,6 +599,9 @@ export const timeEntriesRepository = {
         source: true,
         photoUrl: true,
         photoStoragePath: true,
+        photoFileId: true,
+        thumbnailFileId: true,
+        photoFile: { select: { id: true, storageKey: true, mimeType: true, driveWebViewLink: true } },
         employee: { select: { legajo: true, firstName: true, lastName: true } },
       },
     });
@@ -650,6 +713,38 @@ export const timeEntriesRepository = {
     });
   },
 
+  findClockValidationContext(employeeId: string) {
+    return prisma.employee.findUnique({
+      where: { id: employeeId },
+      select: {
+        id: true,
+        legajo: true,
+        dni: true,
+        cuil: true,
+        firstName: true,
+        lastName: true,
+        status: true,
+        workShifts: {
+          where: { status: WorkShiftStatus.ABIERTO, endAt: null },
+          orderBy: { startAt: "desc" },
+          take: 1,
+          include: { hourConcept: true },
+        },
+        hourConcepts: {
+          where: { hourConcept: { status: "ACTIVO", countsAsWorked: true } },
+          include: { hourConcept: true },
+        },
+      },
+    });
+  },
+
+  linkClockPunchThumbnail(attendancePunchId: string, thumbnailFileId: string) {
+    return prisma.$transaction([
+      prisma.attendancePunch.update({ where: { id: attendancePunchId }, data: { thumbnailFileId } }),
+      prisma.storageFile.update({ where: { id: thumbnailFileId }, data: { attendancePunchId } }),
+    ]);
+  },
+
   findOpenWorkShift(employeeId: string) {
     return prisma.workShift.findFirst({
       where: {
@@ -661,7 +756,52 @@ export const timeEntriesRepository = {
     });
   },
 
-  createOpenWorkShift(input: { employeeId: string; source: WorkShiftSource; startAt: Date; punchEvidence?: PunchEvidenceInput }) {
+  async expireOpenWorkShifts(now: Date) {
+    const candidates = await prisma.workShift.findMany({
+      where: { status: WorkShiftStatus.ABIERTO, endAt: null, startAt: { lt: now } },
+      orderBy: { startAt: "asc" },
+      take: 100,
+      include: { hourConcept: true },
+    });
+    const expired = candidates.filter((shift) => now.getTime() - shift.startAt.getTime() > shift.maxAllowedMinutes * 60_000);
+    let count = 0;
+    for (const shift of expired) {
+      const concept = shift.hourConcept || (await prisma.employeeHourConcept.findFirst({
+        where: { employeeId: shift.employeeId, hourConcept: { kind: "NORMAL", status: "ACTIVO" } },
+        include: { hourConcept: true },
+      }))?.hourConcept;
+      if (!concept) continue;
+      const observation = "0 h — Falta registrar la salida. La jornada venció y requiere revisión del encargado.";
+      const claimed = await prisma.$transaction(async (tx) => {
+        const updated = await tx.workShift.updateMany({
+          where: { id: shift.id, status: WorkShiftStatus.ABIERTO, endAt: null },
+          data: { status: WorkShiftStatus.FALTA_SALIDA, totalMinutes: 0, hourConceptId: concept.id, hourConceptName: concept.name, observation, closedAt: now },
+        });
+        if (updated.count !== 1) return false;
+        await tx.timeEntry.create({
+          data: {
+            employeeId: shift.employeeId,
+            hourConceptId: concept.id,
+            workShiftId: shift.id,
+            date: shift.startAt,
+            period: periodFromDate(shift.startAt),
+            day: dayFromDate(shift.startAt),
+            hours: 0,
+            totalMinutes: 0,
+            status: "APROBADO",
+            source: shift.source,
+            segmentStartAt: shift.startAt,
+            observation,
+          },
+        });
+        return true;
+      });
+      if (claimed) count += 1;
+    }
+    return { count };
+  },
+
+  createOpenWorkShift(input: { employeeId: string; hourConceptId?: string; hourConceptName?: string; source: WorkShiftSource; startAt: Date; punchEvidence?: PunchEvidenceInput }) {
     return prisma.$transaction(async (tx) => {
       const punch = await tx.attendancePunch.create({
         data: {
@@ -676,6 +816,8 @@ export const timeEntriesRepository = {
       return tx.workShift.create({
         data: {
           employeeId: input.employeeId,
+          hourConceptId: input.hourConceptId,
+          hourConceptName: input.hourConceptName,
           startPunchId: punch.id,
           source: input.source,
           status: WorkShiftStatus.ABIERTO,
@@ -686,15 +828,42 @@ export const timeEntriesRepository = {
     });
   },
 
-  rolloverExpiredOpenWorkShift(input: { openWorkShiftId: string; employeeId: string; source: WorkShiftSource; startAt: Date; missingOutObservation: string; punchEvidence?: PunchEvidenceInput }) {
+  rolloverExpiredOpenWorkShift(input: { openWorkShiftId: string; employeeId: string; hourConceptId?: string; hourConceptName?: string; source: WorkShiftSource; startAt: Date; missingOutObservation: string; punchEvidence?: PunchEvidenceInput }) {
     return prisma.$transaction(async (tx) => {
-      await tx.workShift.update({
-        where: { id: input.openWorkShiftId },
+      const previous = await tx.workShift.findFirst({
+        where: { id: input.openWorkShiftId, employeeId: input.employeeId, status: WorkShiftStatus.ABIERTO, endAt: null },
+        include: { hourConcept: true },
+      });
+      const previousConcept = previous?.hourConcept || (await tx.employeeHourConcept.findFirst({
+        where: { employeeId: input.employeeId, hourConcept: { kind: "NORMAL", status: "ACTIVO" } },
+        include: { hourConcept: true },
+      }))?.hourConcept;
+      const claimed = await tx.workShift.updateMany({
+        where: { id: input.openWorkShiftId, employeeId: input.employeeId, status: WorkShiftStatus.ABIERTO, endAt: null },
         data: {
           status: WorkShiftStatus.FALTA_SALIDA,
           observation: input.missingOutObservation,
         },
       });
+      if (claimed.count !== 1) throw new Error("WORK_SHIFT_ALREADY_CLOSED");
+      if (previous && previousConcept) {
+        await tx.timeEntry.create({
+          data: {
+            employeeId: input.employeeId,
+            hourConceptId: previousConcept.id,
+            workShiftId: previous.id,
+            date: previous.startAt,
+            period: periodFromDate(previous.startAt),
+            day: dayFromDate(previous.startAt),
+            hours: 0,
+            totalMinutes: 0,
+            status: "APROBADO",
+            source: previous.source,
+            segmentStartAt: previous.startAt,
+            observation: `0 h — ${input.missingOutObservation}`,
+          },
+        });
+      }
 
       const punch = await tx.attendancePunch.create({
         data: {
@@ -710,6 +879,8 @@ export const timeEntriesRepository = {
       return tx.workShift.create({
         data: {
           employeeId: input.employeeId,
+          hourConceptId: input.hourConceptId,
+          hourConceptName: input.hourConceptName,
           startPunchId: punch.id,
           source: input.source,
           status: WorkShiftStatus.ABIERTO,
@@ -773,6 +944,15 @@ export const timeEntriesRepository = {
         ...(exceptId ? { id: { not: exceptId } } : {}),
       },
       select: { id: true },
+    });
+  },
+
+  findLockedTimeEntry(employeeId: string, hourConceptId: string, date: Date) {
+    return prisma.timeEntry.findFirst({
+      // Una fichada automática APROBADA puede recibir otro tramo del mismo día.
+      // Sólo el cierre mensual impide que el fichador modifique el total.
+      where: { employeeId, hourConceptId, date, status: ApprovalStatus.CERRADO },
+      select: { id: true, status: true },
     });
   },
 
@@ -950,7 +1130,7 @@ export const timeEntriesRepository = {
       }
 
       return { workShift, entries, timeSegments };
-    });
+    }, { timeout: 20_000, maxWait: 5_000 });
   },
 
   closeOpenWorkShift(input: {
@@ -966,6 +1146,28 @@ export const timeEntriesRepository = {
     punchEvidence?: PunchEvidenceInput;
   }) {
     return prisma.$transaction(async (tx) => {
+      const claimed = await tx.workShift.updateMany({
+        where: {
+          id: input.workShiftId,
+          employeeId: input.employeeId,
+          status: "ABIERTO",
+          endAt: null,
+        },
+        data: {
+          status: "PROCESADO",
+          hourConceptId: input.hourConceptId,
+          hourConceptName: input.hourConceptName,
+          endAt: input.endAt,
+          totalMinutes: input.totalMinutes,
+          crossesMidnight: input.segments.length > 1,
+          closedAt: input.endAt,
+          observation: input.observation || undefined,
+        },
+      });
+      if (claimed.count !== 1) {
+        throw new Error("WORK_SHIFT_ALREADY_CLOSED");
+      }
+
       const endPunch = await tx.attendancePunch.create({
         data: {
           employeeId: input.employeeId,
@@ -980,13 +1182,7 @@ export const timeEntriesRepository = {
       const workShift = await tx.workShift.update({
         where: { id: input.workShiftId },
         data: {
-          status: "PROCESADO",
           endPunchId: endPunch.id,
-          endAt: input.endAt,
-          totalMinutes: input.totalMinutes,
-          crossesMidnight: input.segments.length > 1,
-          closedAt: input.endAt,
-          observation: input.observation || undefined,
         },
       });
 
@@ -1017,7 +1213,7 @@ export const timeEntriesRepository = {
           include: timeEntryInclude,
         });
 
-        if (existing && !editableStatuses.includes(existing.status)) {
+        if (existing && existing.status !== "APROBADO" && !editableStatuses.includes(existing.status)) {
           throw new Error(`TIME_ENTRY_LOCKED:${existing.id}`);
         }
 
@@ -1035,6 +1231,7 @@ export const timeEntriesRepository = {
               segmentStartAt: segment.startAt,
               segmentEndAt: segment.endAt,
               observation: `${currentObservation}Fichada ${workShift.id}: generado por ingreso/salida.`,
+              status: "APROBADO",
             },
             include: timeEntryInclude,
           }));
@@ -1050,7 +1247,7 @@ export const timeEntriesRepository = {
               day: dayFromDate(segment.date),
               hours: segment.hours,
               totalMinutes: segment.minutes,
-              status: "BORRADOR",
+              status: "APROBADO",
               segmentStartAt: segment.startAt,
               segmentEndAt: segment.endAt,
               source: input.source,

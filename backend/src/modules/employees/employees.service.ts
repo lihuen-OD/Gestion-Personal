@@ -3,6 +3,7 @@ import type { AuditContext } from "../audit/audit.service";
 import { auditService } from "../audit/audit.service";
 import { AppError } from "../../shared/errors/AppError";
 import { storageService } from "../../shared/storage/storage.service";
+import { storagePathBuilder } from "../../shared/storage/storagePathBuilder";
 import { employeeAccessWhere } from "./employeeAccess";
 import { employeesRepository } from "./employees.repository";
 import type {
@@ -386,18 +387,30 @@ export const employeesService = {
 
   async createDocument(id: string, input: CreateEmployeeDocumentInput, audit?: AuditContext) {
     const before = await employeesService.getById(id);
-    const storageKey =
-      input.storageKey ||
-      (
-        await storageService.upload({
-          buffer: bufferFromBase64(input.fileBase64),
-          fileName: input.fileName,
-          mimeType: input.fileMimeType,
-          folder: `employees/${id}/documents`,
-        })
-      ).storageKey;
+    const category = await employeesRepository.findDocumentCategory(input.categoryId);
+    const documentType = category?.code || category?.name || input.categoryId;
+    let storageKey = input.storageKey || "";
+    let storageFileId: string | null = null;
+    if (!storageKey) {
+      const storageFile = await storageService.uploadManaged({
+        buffer: bufferFromBase64(input.fileBase64),
+        fileName: input.fileName,
+        mimeType: input.fileMimeType,
+        folderSegments: storagePathBuilder.employeeDocument(before.legajo, documentType),
+        module: "LEGAJOS",
+        entityType: "EMPLOYEE_DOCUMENT",
+        entityId: id,
+        employeeId: id,
+        documentType,
+        visibility: "RRHH_ONLY",
+        uploadedByUserId: audit?.userId || null,
+        purpose: "general",
+      });
+      storageKey = storageFile.storageKey;
+      storageFileId = storageFile.id;
+    }
     const employee = await execute(() =>
-      employeesRepository.createDocument(id, { ...input, storageKey }, audit?.userId),
+      employeesRepository.createDocument(id, { ...input, storageKey, storageFileId }, audit?.userId),
     );
     const document = employee.documents[0];
     await auditService.register({

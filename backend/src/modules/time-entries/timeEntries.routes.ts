@@ -32,6 +32,7 @@ timeEntriesRouter.post("/clock/status", validateBody(clockByEmployeeSchema), asy
 timeEntriesRouter.post("/clock/in", validateBody(clockByEmployeeSchema), asyncHandler(timeEntriesController.clockInByEmployee));
 timeEntriesRouter.post("/clock/out", validateBody(clockByEmployeeSchema), asyncHandler(timeEntriesController.clockOutByEmployee));
 timeEntriesRouter.post("/clock/photo-punch", validateBody(clockPhotoPunchSchema), asyncHandler(timeEntriesController.clockPhotoPunch));
+timeEntriesRouter.get("/clock/attempts/:requestId", asyncHandler(timeEntriesController.clockPunchAttemptStatus));
 timeEntriesRouter.post("/clock/status-by-dni", validateBody(clockByDniSchema), asyncHandler(timeEntriesController.clockStatus));
 timeEntriesRouter.post("/clock/in-by-dni", validateBody(clockByDniSchema), asyncHandler(timeEntriesController.clockIn));
 timeEntriesRouter.post("/clock/out-by-dni", validateBody(clockByDniSchema), asyncHandler(timeEntriesController.clockOut));

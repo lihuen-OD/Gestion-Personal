@@ -888,7 +888,14 @@ export const employeesRepository = {
     });
   },
 
-  createDocument(employeeId: string, input: CreateEmployeeDocumentInput & { storageKey: string }, uploadedByUserId?: string | null) {
+  findDocumentCategory(categoryId: string) {
+    return prisma.documentCategory.findUnique({
+      where: { id: categoryId },
+      select: { id: true, code: true, name: true },
+    });
+  },
+
+  createDocument(employeeId: string, input: CreateEmployeeDocumentInput & { storageKey: string; storageFileId?: string | null }, uploadedByUserId?: string | null) {
     return prisma.$transaction(async (tx) => {
       await tx.employeeDocument.create({
         data: {
@@ -899,6 +906,7 @@ export const employeesRepository = {
           fileMimeType: input.fileMimeType,
           fileSizeBytes: input.fileSizeBytes,
           storageKey: input.storageKey,
+          storageFileId: input.storageFileId || null,
           status: input.status,
           notes: input.notes || null,
           issuedAt: input.issuedAt || null,

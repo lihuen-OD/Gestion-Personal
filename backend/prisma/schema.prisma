@@ -101,6 +101,51 @@ enum FaceValidationStatus {
   CAMERA_ERROR
 }
 
+enum ClockPunchAttemptStatus {
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+enum StorageProvider {
+  LOCAL
+  CLOUDINARY
+  GOOGLE_DRIVE
+}
+
+enum StorageModule {
+  FICHADAS
+  LEGAJOS
+  NOVEDADES
+  TRANSPORTE
+  AUDITORIA
+  DOCUMENTACION_GENERAL
+}
+
+enum StorageEntityType {
+  ATTENDANCE_PUNCH
+  EMPLOYEE
+  EMPLOYEE_DOCUMENT
+  ABSENCE
+  TRANSPORT
+  AUDIT_EVENT
+  GENERAL_DOCUMENT
+}
+
+enum StorageVisibility {
+  PRIVATE
+  RRHH_ONLY
+  SUPERVISOR_ALLOWED
+  SYSTEM_ONLY
+}
+
+enum StorageFileStatus {
+  ACTIVE
+  ARCHIVED
+  DELETED
+  ERROR
+}
+
 enum HourConceptKind {
   NORMAL
   EXTRA
@@ -157,6 +202,8 @@ model User {
   noveltiesCreated    Novelty[]              @relation("NoveltyCreatedBy")
   timeEntriesCreated  TimeEntry[]            @relation("TimeEntryCreatedBy")
   documentsUploaded   EmployeeDocument[]
+  storageFilesUploaded StorageFile[]          @relation("StorageFileUploadedBy")
+  storageFilesDeleted  StorageFile[]          @relation("StorageFileDeletedBy")
   auditLogs           AuditLog[]
 
   @@index([role])
@@ -526,8 +573,10 @@ model Employee {
   timeEntries       TimeEntry[]
   workShifts        WorkShift[]
   attendancePunches AttendancePunch[]
+  clockPunchAttempts ClockPunchAttempt[]
   timeSegments      TimeSegment[]
   documents         EmployeeDocument[]
+  storageFiles      StorageFile[]
   userAccount       User?                  @relation("EmployeeUserAccount")
 
   @@index([lastName, firstName])
@@ -640,6 +689,7 @@ model HourConcept {
   timeEntries  TimeEntry[]
   novelties    Novelty[]
   timeSegments TimeSegment[]
+  workShifts   WorkShift[]
 
   @@index([status])
 }
@@ -817,6 +867,8 @@ model TimeEntry {
 model WorkShift {
   id                String          @id @default(uuid())
   employeeId        String
+  hourConceptId     String?
+  hourConceptName   String?
   startPunchId      String?
   endPunchId        String?
   source            WorkShiftSource @default(ADMIN)
@@ -833,12 +885,14 @@ model WorkShift {
   updatedAt         DateTime        @updatedAt
 
   employee     Employee         @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  hourConcept  HourConcept?     @relation(fields: [hourConceptId], references: [id], onDelete: SetNull)
   startPunch   AttendancePunch? @relation("WorkShiftStartPunch", fields: [startPunchId], references: [id], onDelete: SetNull)
   endPunch     AttendancePunch? @relation("WorkShiftEndPunch", fields: [endPunchId], references: [id], onDelete: SetNull)
   timeEntries  TimeEntry[]
   timeSegments TimeSegment[]
 
   @@index([employeeId, startAt])
+  @@index([hourConceptId])
   @@index([employeeId, endAt])
   @@index([status, startAt])
   @@index([startAt, endAt])
@@ -862,6 +916,8 @@ model AttendancePunch {
   observation       String?
   photoUrl          String?
   photoStoragePath  String?
+  photoFileId       String?
+  thumbnailFileId   String?
   faceDetected      Boolean               @default(false)
   faceValidationStatus FaceValidationStatus?
   faceDetectionScore Float?
@@ -871,15 +927,40 @@ model AttendancePunch {
   importedAt        DateTime?
   createdAt         DateTime              @default(now())
 
-  employee        Employee    @relation(fields: [employeeId], references: [id], onDelete: Cascade)
-  startWorkShifts WorkShift[] @relation("WorkShiftStartPunch")
-  endWorkShifts   WorkShift[] @relation("WorkShiftEndPunch")
+  employee        Employee     @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  photoFile       StorageFile? @relation("AttendancePunchPhotoFile", fields: [photoFileId], references: [id], onDelete: SetNull)
+  thumbnailFile   StorageFile? @relation("AttendancePunchThumbnailFile", fields: [thumbnailFileId], references: [id], onDelete: SetNull)
+  startWorkShifts WorkShift[]  @relation("WorkShiftStartPunch")
+  endWorkShifts   WorkShift[]  @relation("WorkShiftEndPunch")
 
   @@index([employeeId, timestamp])
   @@index([status, timestamp])
   @@index([type, status])
   @@index([source])
   @@index([externalPunchId])
+  @@index([photoFileId])
+  @@index([thumbnailFileId])
+}
+
+model ClockPunchAttempt {
+  id             String                  @id @default(uuid())
+  requestId      String                  @unique
+  employeeId     String
+  punchType      AttendancePunchType
+  status         ClockPunchAttemptStatus @default(PROCESSING)
+  requestHash    String
+  response       Json?
+  errorCode      String?
+  errorMessage   String?
+  httpStatus     Int?
+  startedAt      DateTime                @default(now())
+  completedAt    DateTime?
+  updatedAt      DateTime                @updatedAt
+
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@index([employeeId, startedAt])
+  @@index([status, startedAt])
 }
 
 model TimeSegment {
@@ -970,6 +1051,7 @@ model EmployeeDocument {
   fileMimeType     String
   fileSizeBytes    Int
   storageKey       String
+  storageFileId    String?
   status           DocumentStatus @default(PENDIENTE)
   notes            String?
   issuedAt         DateTime?
@@ -982,6 +1064,7 @@ model EmployeeDocument {
   category   DocumentCategory @relation(fields: [categoryId], references: [id])
   novelty    Novelty?         @relation(fields: [noveltyId], references: [id])
   uploadedBy User?            @relation(fields: [uploadedByUserId], references: [id])
+  storageFile StorageFile?     @relation("EmployeeDocumentStorageFile", fields: [storageFileId], references: [id], onDelete: SetNull)
 
   @@index([employeeId])
   @@index([employeeId, createdAt])
@@ -990,6 +1073,56 @@ model EmployeeDocument {
   @@index([status, expiresAt])
   @@index([status, createdAt])
   @@index([createdAt])
+  @@index([storageFileId])
+}
+
+model StorageFile {
+  id                  String            @id @default(uuid())
+  storageProvider     StorageProvider
+  storageKey          String
+  driveFileId         String?
+  driveFolderId       String?
+  driveWebViewLink    String?
+  driveWebContentLink String?
+  fileName            String
+  originalFileName    String
+  mimeType            String
+  extension           String
+  sizeBytes           Int
+  module              StorageModule
+  entityType          StorageEntityType
+  entityId            String
+  employeeId          String?
+  attendancePunchId   String?
+  documentType        String?
+  isThumbnail         Boolean           @default(false)
+  thumbnailFileId     String?
+  originalFileId      String?
+  visibility          StorageVisibility  @default(PRIVATE)
+  status              StorageFileStatus  @default(ACTIVE)
+  uploadedByUserId    String?
+  uploadedAt          DateTime           @default(now())
+  deletedByUserId     String?
+  deletedAt           DateTime?
+  checksum            String?
+  metadata            Json               @default("{}")
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+
+  employee            Employee?          @relation(fields: [employeeId], references: [id], onDelete: SetNull)
+  uploadedBy          User?              @relation("StorageFileUploadedBy", fields: [uploadedByUserId], references: [id], onDelete: SetNull)
+  deletedBy           User?              @relation("StorageFileDeletedBy", fields: [deletedByUserId], references: [id], onDelete: SetNull)
+  employeeDocuments   EmployeeDocument[] @relation("EmployeeDocumentStorageFile")
+  attendancePunchPhotoLinks AttendancePunch[] @relation("AttendancePunchPhotoFile")
+  attendancePunchThumbnailLinks AttendancePunch[] @relation("AttendancePunchThumbnailFile")
+
+  @@index([storageProvider])
+  @@index([storageKey])
+  @@index([driveFileId])
+  @@index([module, entityType, entityId])
+  @@index([employeeId, module])
+  @@index([attendancePunchId])
+  @@index([status, uploadedAt])
 }
 
 model AuditLog {

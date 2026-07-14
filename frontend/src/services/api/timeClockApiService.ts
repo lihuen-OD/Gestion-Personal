@@ -9,13 +9,22 @@ type ClockEmployee = {
   name: string;
 };
 
+export type ClockHourConcept = {
+  id: string;
+  code: string;
+  name: string;
+  kind: "NORMAL" | "ESPECIAL" | "FERIADO" | "LICENCIA" | "AUSENCIA" | "OTRO";
+};
+
 type ClockStatusResponse = {
   data: {
     employee: ClockEmployee;
     openShift: {
       id: string;
       startAt: string;
+      hourConcept: ClockHourConcept | null;
     } | null;
+    hourConcepts: ClockHourConcept[];
   };
 };
 
@@ -58,9 +67,12 @@ type ClockOutResponse = {
 type ClockSearchResponse = { data: ClockEmployee[] };
 
 export type ClockPhotoPunchInput = {
+  requestId: string;
   employeeId: string;
   punchType: "IN" | "OUT";
+  hourConceptId?: string;
   photo: string;
+  thumbnail?: string;
   faceValidationStatus: "VALID" | "NO_FACE" | "MULTIPLE_FACES" | "LOW_LIGHT" | "FACE_TOO_SMALL" | "CAMERA_ERROR";
   faceDetectionScore?: number;
   device?: {
@@ -68,6 +80,16 @@ export type ClockPhotoPunchInput = {
     platform?: string;
     language?: string;
     cameraLabel?: string;
+  };
+};
+
+type ClockPunchResult = ClockInResponse["data"] | ClockOutResponse["data"];
+type ClockAttemptStatusResponse = {
+  data: {
+    requestId: string;
+    status: "PROCESSING" | "COMPLETED" | "FAILED";
+    response: ClockPunchResult | null;
+    error: { code: string; message: string; httpStatus: number } | null;
   };
 };
 
@@ -117,6 +139,16 @@ export const timeClockApiService = {
       method: "POST",
       auth: false,
       body: input,
+      signal: AbortSignal.timeout(20_000),
+    });
+    return response.data;
+  },
+
+  async attemptStatus(requestId: string, employeeId: string) {
+    const params = new URLSearchParams({ employeeId });
+    const response = await apiRequest<ClockAttemptStatusResponse>(`/time-entries/clock/attempts/${requestId}?${params.toString()}`, {
+      auth: false,
+      apiCache: false,
     });
     return response.data;
   },

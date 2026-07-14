@@ -26,6 +26,12 @@ export const documentsController = {
       res.redirect(result.url);
       return;
     }
+    if (result.kind === "buffer") {
+      res.setHeader("Content-Type", result.mimeType);
+      res.setHeader("Content-Disposition", `inline; filename*=UTF-8''${encodeURIComponent(result.fileName)}`);
+      res.send(result.buffer);
+      return;
+    }
 
     res.setHeader("Content-Type", result.mimeType);
     res.setHeader("Content-Disposition", `inline; filename*=UTF-8''${encodeURIComponent(result.fileName)}`);

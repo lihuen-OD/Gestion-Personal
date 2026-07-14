@@ -8,6 +8,7 @@ export type FaceValidationStatus = "VALID" | "NO_FACE" | "MULTIPLE_FACES" | "LOW
 
 export type FaceCaptureResult = {
   photo: string;
+  thumbnail: string;
   faceValidationStatus: FaceValidationStatus;
   faceDetectionScore?: number;
   device: {
@@ -81,8 +82,7 @@ function averageBrightness(video: HTMLVideoElement) {
   return total / (data.length / 4);
 }
 
-function captureCompressedPhoto(video: HTMLVideoElement) {
-  const maxWidth = 800;
+function captureCompressedPhoto(video: HTMLVideoElement, maxWidth = 800, quality = 0.82) {
   const ratio = video.videoWidth > maxWidth ? maxWidth / video.videoWidth : 1;
   const canvas = document.createElement("canvas");
   canvas.width = Math.round(video.videoWidth * ratio);
@@ -90,7 +90,7 @@ function captureCompressedPhoto(video: HTMLVideoElement) {
   const context = canvas.getContext("2d");
   if (!context) throw new Error("No se pudo capturar la imagen.");
   context.drawImage(video, 0, 0, canvas.width, canvas.height);
-  return canvas.toDataURL("image/jpeg", 0.82);
+  return canvas.toDataURL("image/jpeg", quality);
 }
 
 export function FaceDetectionStatus({ state }: { state: FaceState }) {
@@ -104,11 +104,12 @@ export function FaceDetectionStatus({ state }: { state: FaceState }) {
   );
 }
 
-export function FaceCaptureModal({ punchType, onCancel, onConfirm }: { punchType: "IN" | "OUT"; onCancel: () => void; onConfirm: (result: FaceCaptureResult) => void }) {
+export function FaceCaptureModal({ punchType, onCancel, onConfirm, submitting = false, submissionStage = "registering" }: { punchType: "IN" | "OUT"; onCancel: () => void; onConfirm: (result: FaceCaptureResult) => void; submitting?: boolean; submissionStage?: "registering" | "slow" | "checking" }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const detectorRef = useRef<FaceDetector | null>(null);
   const frameRef = useRef<number>();
+  const submitGuardRef = useRef(false);
   const [state, setState] = useState<FaceState>({ status: "LOADING", message: "Buscando rostro...", valid: false });
   const [cameraLabel, setCameraLabel] = useState<string>();
 
@@ -189,6 +190,7 @@ export function FaceCaptureModal({ punchType, onCancel, onConfirm }: { punchType
   }, []);
 
   const confirm = useCallback(() => {
+    if (submitting || submitGuardRef.current) return;
     const video = videoRef.current;
     if (!video || !state.valid) return;
     if (averageBrightness(video) < 42) {
@@ -196,8 +198,12 @@ export function FaceCaptureModal({ punchType, onCancel, onConfirm }: { punchType
       return;
     }
 
+    submitGuardRef.current = true;
+    streamRef.current?.getTracks().forEach((track) => track.stop());
+    detectorRef.current?.close();
     onConfirm({
-      photo: captureCompressedPhoto(video),
+      photo: captureCompressedPhoto(video, 800, 0.82),
+      thumbnail: captureCompressedPhoto(video, 180, 0.74),
       faceValidationStatus: "VALID",
       faceDetectionScore: state.score,
       device: {
@@ -207,10 +213,14 @@ export function FaceCaptureModal({ punchType, onCancel, onConfirm }: { punchType
         cameraLabel,
       },
     });
-  }, [cameraLabel, onConfirm, state.score, state.valid]);
+  }, [cameraLabel, onConfirm, state.score, state.valid, submitting]);
+
+  useEffect(() => {
+    if (!submitting) submitGuardRef.current = false;
+  }, [submitting]);
 
   return (
-    <Modal title="Confirmar fichada con foto" close={onCancel}>
+    <Modal title="Confirmar fichada con foto" close={onCancel} closeDisabled={submitting}>
       <div className="face-capture">
         <p className="face-subtitle">Ubicá tu rostro dentro del recuadro para registrar la {punchType === "IN" ? "entrada" : "salida"}.</p>
         <div className="face-video-shell">
@@ -218,10 +228,21 @@ export function FaceCaptureModal({ punchType, onCancel, onConfirm }: { punchType
           <div className="face-guide" aria-hidden="true" />
         </div>
         <FaceDetectionStatus state={state} />
+        {submitting ? (
+          <div className="face-status valid" role="status" aria-live="polite">
+            <Loader2 size={18} className="spin-icon" />
+            <span>
+              <b>{submissionStage === "checking" ? "Verificando la fichada..." : "Registrando fichada..."}</b><br />
+              Guardando evidencia fotográfica...<br />
+              No cierres esta pantalla.
+              {submissionStage === "slow" ? <><br />Esto puede demorar unos segundos porque estamos guardando la evidencia.</> : null}
+            </span>
+          </div>
+        ) : null}
         <div className="form-actions">
-          <Button variant="ghost" icon={X} onClick={onCancel}>Cancelar</Button>
-          <Button variant="primary" icon={Camera} disabled={!state.valid} onClick={confirm}>
-            {punchType === "IN" ? "Confirmar ingreso" : "Confirmar salida"}
+          <Button variant="ghost" icon={X} onClick={onCancel} disabled={submitting}>Cancelar</Button>
+          <Button variant="primary" icon={Camera} disabled={!state.valid} loading={submitting} onClick={confirm}>
+            {submitting ? "Registrando fichada..." : punchType === "IN" ? "Confirmar ingreso" : "Confirmar salida"}
           </Button>
         </div>
       </div>

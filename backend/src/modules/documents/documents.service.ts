@@ -23,7 +23,8 @@ export const documentsService = {
     const item = await documentsRepository.findById(id, employeeAccessWhere(user));
     if (!item) throw new AppError("Documento no encontrado", 404, "DOCUMENT_NOT_FOUND");
 
-    const publicUrl = storageService.getPublicUrl(item.storageKey);
+    const storageKey = item.storageFile?.storageKey || item.storageKey;
+    const publicUrl = item.storageFile?.driveWebViewLink ? undefined : storageService.getPublicUrl(storageKey);
     if (publicUrl) {
       return {
         kind: "redirect" as const,
@@ -31,7 +32,17 @@ export const documentsService = {
       };
     }
 
-    const filePath = storageService.getFilePath(item.storageKey);
+    const downloaded = await storageService.download(storageKey);
+    if (downloaded) {
+      return {
+        kind: "buffer" as const,
+        buffer: downloaded.buffer,
+        fileName: item.fileName,
+        mimeType: downloaded.mimeType || item.fileMimeType,
+      };
+    }
+
+    const filePath = storageService.getFilePath(storageKey);
     if (!filePath) throw new AppError("Archivo no disponible", 404, "DOCUMENT_FILE_NOT_AVAILABLE");
 
     await access(filePath).catch(() => {

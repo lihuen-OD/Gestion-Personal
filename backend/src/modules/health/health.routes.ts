@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { isProduction } from "../../config/env";
+import { env, isProduction } from "../../config/env";
 import { getSlowEndpointStats } from "../../middlewares/requestLogger";
 import { prisma } from "../../shared/prisma/client";
 
@@ -10,6 +10,8 @@ healthRouter.get("/", async (_req, res, next) => {
     await prisma.$queryRaw`SELECT 1`;
     res.json({
       status: "ok",
+      appEnv: env.APP_ENV,
+      nodeEnv: env.NODE_ENV,
       database: "ok",
       timestamp: new Date().toISOString(),
     });

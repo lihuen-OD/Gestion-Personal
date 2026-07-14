@@ -3,7 +3,16 @@ import { z } from "zod";
 
 dotenv.config();
 
+const envBoolean = z.preprocess((value) => {
+  if (typeof value !== "string") return value;
+  const normalized = value.trim().toLowerCase();
+  if (["true", "1", "yes", "on"].includes(normalized)) return true;
+  if (["false", "0", "no", "off", ""].includes(normalized)) return false;
+  return value;
+}, z.boolean());
+
 const envSchema = z.object({
+  APP_ENV: z.enum(["local", "staging", "production"]).default("local"),
   NODE_ENV: z.enum(["development", "test", "demo", "production"]).default("development"),
   PORT: z.coerce.number().int().positive().default(4001),
   API_PREFIX: z.string().default("/api"),
@@ -17,11 +26,21 @@ const envSchema = z.object({
   RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(15 * 60 * 1000),
   RATE_LIMIT_MAX: z.coerce.number().int().positive().default(300),
   JSON_BODY_LIMIT: z.string().default("40mb"),
-  STORAGE_PROVIDER: z.enum(["local", "cloudinary"]).default("local"),
+  STORAGE_PROVIDER: z.enum(["local", "cloudinary", "google_drive"]).default("local"),
   CLOUDINARY_CLOUD_NAME: z.string().optional(),
   CLOUDINARY_API_KEY: z.string().optional(),
   CLOUDINARY_API_SECRET: z.string().optional(),
   CLOUDINARY_FOLDER: z.string().default("gestion-personal"),
+  GOOGLE_DRIVE_ENABLED: envBoolean.default(false),
+  GOOGLE_DRIVE_ROOT_FOLDER_ID: z.string().optional(),
+  GOOGLE_DRIVE_SERVICE_ACCOUNT_EMAIL: z.string().optional(),
+  GOOGLE_DRIVE_PRIVATE_KEY: z.string().optional(),
+  GOOGLE_DRIVE_PROJECT_ID: z.string().optional(),
+  MAX_UPLOAD_SIZE_MB: z.coerce.number().positive().default(10),
+  MAX_PUNCH_PHOTO_SIZE_MB: z.coerce.number().positive().default(2),
+  CLOCK_ATTEMPT_PROCESSING_TTL_MS: z.coerce.number().int().positive().default(60_000),
+  CLOCK_ATTEMPT_RETENTION_DAYS: z.coerce.number().int().positive().default(30),
+  CLOCK_ATTEMPT_MAINTENANCE_INTERVAL_MS: z.coerce.number().int().positive().default(60_000),
 });
 
 const parsed = envSchema.safeParse(process.env);

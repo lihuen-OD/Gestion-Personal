@@ -73,6 +73,7 @@ export function EmployeeHoursPage() {
   const [selected, setSelected] = useState<{ day: number; concept: string }>();
   const [hours, setHours] = useState("8");
   const [notes, setNotes] = useState("");
+  const [correctionReason, setCorrectionReason] = useState("");
   const [refresh, setRefresh] = useState(0);
   const [noveltyTypes, setNoveltyTypes] = useState<NoveltyType[]>([]);
   const [catalog, setCatalog] = useState<HourConcept[]>([]);
@@ -211,6 +212,7 @@ export function EmployeeHoursPage() {
       ),
     );
     setNotes(entry?.notes || "");
+    setCorrectionReason("");
     setNoveltyTypeId("");
     setNoveltyFrom(date);
     setNoveltyTo(date);
@@ -220,7 +222,8 @@ export function EmployeeHoursPage() {
     setError("");
   };
   const selectedEntry = selected ? entryFor(selected.day, selected.concept) : undefined;
-  const selectedLocked = selectedEntry ? !timeEntryApiService.canEdit(selectedEntry) : false;
+  const canCorrectApproved = Boolean(selectedEntry?.status === "Aprobado" && user && timeEntryApiService.canReview(user));
+  const selectedLocked = selectedEntry ? !timeEntryApiService.canEdit(selectedEntry) && !canCorrectApproved : false;
   const noveltyRange = () => {
     const start = new Date(`${noveltyFrom}T00:00:00`);
     const end = new Date(
@@ -243,6 +246,9 @@ export function EmployeeHoursPage() {
       return setError(
         "La carga ya fue aprobada. Para modificarla primero hay que reabrirla.",
       );
+    }
+    if (canCorrectApproved && correctionReason.trim().length < 2) {
+      return setError("Indicá el motivo de la corrección. Quedará registrado en auditoría.");
     }
     if (selectedType?.rules.requiresDocumentation && !fileName) {
       return setError("Adjunta la documentacion requerida para guardar esta novedad.");
@@ -272,7 +278,9 @@ export function EmployeeHoursPage() {
     setSavingStatus(status);
     try {
       try {
-        savedEntry = await timeEntryApiService.save(payload);
+        savedEntry = canCorrectApproved && selectedEntry
+          ? await timeEntryApiService.update(selectedEntry.id, { ...payload, correctionReason })
+          : await timeEntryApiService.save(payload);
       } catch (saveError) {
         return setError(timeEntrySaveErrorMessage(saveError));
       }
@@ -493,6 +501,12 @@ export function EmployeeHoursPage() {
                 <p>Esta carga ya fue aprobada y quedo bloqueada para edicion directa.</p>
               </div>
             ) : null}
+            {canCorrectApproved ? (
+              <div className="info-note compact">
+                <b>Corrección administrativa</b>
+                <p>La hora seguirá registrada. El cambio y su motivo quedarán auditados.</p>
+              </div>
+            ) : null}
 
             <div className="form-grid">
               <label>
@@ -518,6 +532,12 @@ export function EmployeeHoursPage() {
                   onChange={(event) => setNotes(event.target.value)}
                 />
               </label>
+              {canCorrectApproved ? (
+                <label className="form-wide">
+                  Motivo obligatorio de la corrección
+                  <textarea value={correctionReason} onChange={(event) => setCorrectionReason(event.target.value)} placeholder="Ej.: el encargado confirmó el horario correcto con el empleado" />
+                </label>
+              ) : null}
             </div>
 
             <div className="context-novelty-card">
@@ -636,7 +656,11 @@ export function EmployeeHoursPage() {
               <Button variant="subtle" onClick={() => setSelected(undefined)}>
                 Cancelar
               </Button>
-              {!selectedLocked ? (
+              {canCorrectApproved ? (
+                <Button variant="primary" onClick={() => save("Aprobado")} disabled={isSaving}>
+                  {isSaving ? "Guardando corrección..." : "Guardar corrección"}
+                </Button>
+              ) : !selectedLocked ? (
                 <>
                   <Button variant="subtle" onClick={() => save("Borrador")} disabled={isSaving}>
                     {isSaving && savingStatus === "Borrador" ? "Guardando..." : "Guardar borrador"}
