@@ -16,7 +16,8 @@ type ApiAuditLog = {
   } | null;
 };
 
-type ApiAuditResponse = { data: ApiAuditLog[] };
+type ApiListMeta = { total: number; page: number; pageSize: number; hasMore: boolean };
+type ApiAuditResponse = { data: ApiAuditLog[]; meta: ApiListMeta };
 
 function dateParts(value: string) {
   const date = new Date(value);
@@ -199,12 +200,17 @@ function mapFromApi(item: ApiAuditLog): AuditEntry {
 }
 
 export const auditApiService = {
-  async getAll(filters?: { entity?: string; entityId?: string; take?: number }) {
+  async list(filters?: { entity?: string; entityId?: string; page?: number; take?: number }) {
     const params = new URLSearchParams();
-    params.set("take", String(filters?.take || 200));
+    params.set("page", String(filters?.page || 1));
+    params.set("take", String(filters?.take || 25));
     if (filters?.entity) params.set("entity", filters.entity);
     if (filters?.entityId) params.set("entityId", filters.entityId);
     const response = await apiRequest<ApiAuditResponse>(`/audit?${params.toString()}`);
-    return response.data.map(mapFromApi);
+    return { items: response.data.map(mapFromApi), meta: response.meta };
+  },
+  async getAll(filters?: { entity?: string; entityId?: string; take?: number }) {
+    const result = await auditApiService.list(filters);
+    return result.items;
   },
 };

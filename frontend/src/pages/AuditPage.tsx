@@ -3,6 +3,7 @@ import { OverflowCell } from "../components/ui/OverflowCell";
 import { PageHeader } from "../components/ui/PageHeader";
 import { Section } from "../components/ui/Section";
 import { DataTable } from "../components/ui/DataTable";
+import { Pagination } from "../components/ui/Pagination";
 import { auditApiService } from "../services/api/auditApiService";
 import type { AuditEntry } from "../types";
 import { formatPeriodLabel } from "../utils/period";
@@ -30,6 +31,7 @@ const actionLabels: Record<string, string> = {
   Exportacion: "Exportación",
   Ingreso: "Ingreso",
 };
+const pageSize = 25;
 
 function polishText(value: string) {
   return value
@@ -84,15 +86,18 @@ export function AuditPage() {
   const [audits, setAudits] = useState<AuditEntry[]>([]);
   const [status, setStatus] = useState<"loading" | "success" | "error">("loading");
   const [retry, setRetry] = useState(0);
+  const [page, setPage] = useState(1);
+  const [meta, setMeta] = useState({ total: 0, page: 1, pageSize, hasMore: false });
 
   useEffect(() => {
     let mounted = true;
     setStatus("loading");
     auditApiService
-      .getAll({ take: 200 })
-      .then((items) => {
+      .list({ page, take: pageSize })
+      .then((result) => {
         if (!mounted) return;
-        setAudits(items);
+        setAudits(result.items);
+        setMeta(result.meta);
         setStatus("success");
       })
       .catch(() => {
@@ -102,7 +107,7 @@ export function AuditPage() {
     return () => {
       mounted = false;
     };
-  }, [retry]);
+  }, [page, retry]);
 
   return (
     <>
@@ -112,7 +117,7 @@ export function AuditPage() {
         description="Registro central de movimientos generados por la operación del sistema."
       />
 
-      <Section title="Historial de actividad" subtitle={`${audits.length} eventos registrados`}>
+      <Section title="Historial de actividad" subtitle={`${meta.total} eventos registrados`}>
         <DataTable
           status={status === "loading" ? "loading" : status === "error" ? "error" : audits.length === 0 ? "empty" : "ready"}
           minWidth={1040}
@@ -159,6 +164,7 @@ export function AuditPage() {
             </tbody>
           </table>
         </DataTable>
+        {audits.length ? <Pagination page={meta.page} pageSize={meta.pageSize} total={meta.total} hasMore={meta.hasMore} onPageChange={setPage} itemLabel="eventos" /> : null}
       </Section>
     </>
   );

@@ -42,13 +42,13 @@ export function EmployeesPage() {
   const [structureCompanies, setStructureCompanies] = useState<Array<{ id: string; name: string }>>([]);
   const [summary, setSummary] = useState<EmployeeSummary>(emptySummary);
   const [meta, setMeta] = useState({ total: 0, page: 1, pageSize, hasMore: false });
+  const selectedCompanyId = structureCompanies.find((item) => item.name === company)?.id;
 
   useEffect(() => {
     let mounted = true;
     setListStatus("loading");
-    const companyId = structureCompanies.find((item) => item.name === company)?.id;
     employeeApiService
-      .list({ search: debouncedSearch, companyId, page, take: pageSize })
+      .list({ search: debouncedSearch, companyId: selectedCompanyId, page, take: pageSize })
       .then((result) => {
         if (!mounted) return;
         setAll(result.items);
@@ -64,7 +64,7 @@ export function EmployeesPage() {
     return () => {
       mounted = false;
     };
-  }, [company, debouncedSearch, page, refresh, structureCompanies]);
+  }, [debouncedSearch, page, refresh, selectedCompanyId]);
 
   useEffect(() => {
     let mounted = true;
