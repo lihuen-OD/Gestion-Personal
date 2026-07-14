@@ -2,7 +2,7 @@ import type { RequestHandler } from "express";
 import { requestAuditContext } from "../../shared/audit/requestAuditContext";
 import { requireParam } from "../../shared/http/params";
 import type { AdminCloseWorkShiftInput, AdminWorkShiftReasonInput, AttendanceSummaryQuery, ClockByDniInput, ClockByEmployeeInput, ClockEmployeeSearchQuery, ClockPhotoPunchInput, CreateWorkShiftInput, ListTimeEntriesQuery, PreviewWorkShiftInput, TimeEntriesExportQuery, TimeEntriesPeriodEmployeesQuery, TimeEntriesSummaryQuery } from "./timeEntries.schemas";
-import { clearTimeEntriesReadCaches, timeEntriesListCache, timeEntriesPeriodEmployeesCache, timeEntriesSummaryCache } from "./timeEntries.cache";
+import { attendanceSummaryCache, clearTimeEntriesReadCaches, timeEntriesListCache, timeEntriesPeriodEmployeesCache, timeEntriesSummaryCache } from "./timeEntries.cache";
 import { timeEntriesExportToCsv, timeEntriesService } from "./timeEntries.service";
 
 function userScopedCacheKey(req: Parameters<RequestHandler>[0]) {
@@ -27,11 +27,13 @@ export const timeEntriesController = {
 
   clockIn: (async (req, res) => {
     const result = await timeEntriesService.clockIn(req.body as ClockByDniInput);
+    clearTimeEntriesReadCaches();
     res.status(201).json({ data: result });
   }) satisfies RequestHandler,
 
   clockInByEmployee: (async (req, res) => {
     const result = await timeEntriesService.clockInByEmployee(req.body as ClockByEmployeeInput);
+    clearTimeEntriesReadCaches();
     res.status(201).json({ data: result });
   }) satisfies RequestHandler,
 
@@ -86,7 +88,11 @@ export const timeEntriesController = {
   }) satisfies RequestHandler,
 
   attendanceSummary: (async (req, res) => {
+    const key = userScopedCacheKey(req);
+    const cached = attendanceSummaryCache.get(key);
+    if (cached) return res.json({ data: cached });
     const result = await timeEntriesService.attendanceSummary(req.query as unknown as AttendanceSummaryQuery, req.user!);
+    attendanceSummaryCache.set(key, result);
     res.json({ data: result });
   }) satisfies RequestHandler,
 
