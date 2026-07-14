@@ -3,6 +3,7 @@ import { FileBarChart } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { employeeApiService } from "../services/api/employeeApiService";
 import { organizationChartMockService } from "../services/organizationChartMockService";
+import { demoMode } from "../config/runtimeMode";
 import type { Employee, Role } from "../types";
 import type { OrgChartFilters } from "../types/organizationChart.types";
 import { CategoryOrgChart } from "../components/organigramas/CategoryOrgChart";
@@ -49,6 +50,7 @@ export function OrganigramasPage() {
   const [toast, setToast] = useState("");
   const [sourceEmployees, setSourceEmployees] = useState<Employee[]>([]);
   const [usesBackend, setUsesBackend] = useState(false);
+  const [loadError, setLoadError] = useState("");
   useEffect(() => {
     let mounted = true;
     employeeApiService
@@ -66,10 +68,16 @@ export function OrganigramasPage() {
             setSourceEmployees(employees);
             setUsesBackend(true);
           })
-          .catch(() => {
+          .catch(async () => {
             if (!mounted) return;
-            setSourceEmployees(organizationChartMockService.getEmployees(user!.role, user!.sector));
-            setUsesBackend(false);
+            if (demoMode) {
+              const { employeeMockService } = await import("../services/employeeMockService");
+              setSourceEmployees(employeeMockService.getAll());
+              setUsesBackend(false);
+              return;
+            }
+            setSourceEmployees([]);
+            setLoadError("No se pudo cargar el organigrama desde el backend. Reintentá cuando la API esté disponible.");
           });
       });
     return () => {
@@ -93,7 +101,8 @@ export function OrganigramasPage() {
 
   if (level === 3) return <><PageHeader eyebrow="ACCESO RESTRINGIDO" title="Organigramas" description="Tu perfil de carga horaria no tiene acceso al módulo de estructura organizacional." /></>;
 
-  return <><PageHeader eyebrow="ESTRUCTURA ORGANIZACIONAL" title="Organigramas" description={usesBackend ? "Visualización alimentada desde legajos reales: categoría interna, encargado directo, sector, centro de costo y estado." : "Visualización alimentada desde Legajos en modo demo local."} action={<Button variant="subtle" icon={FileBarChart} onClick={exportView}>Exportar vista</Button>} />
+  return <><PageHeader eyebrow="ESTRUCTURA ORGANIZACIONAL" title="Organigramas" description={loadError ? "No hay datos disponibles hasta restablecer la conexión con la API." : usesBackend ? "Visualización alimentada desde legajos reales: categoría interna, encargado directo, sector, centro de costo y estado." : "Visualización alimentada desde Legajos en modo demo local."} action={<Button variant="subtle" icon={FileBarChart} onClick={exportView} disabled={Boolean(loadError)}>Exportar vista</Button>} />
+    {loadError ? <div className="form-error">{loadError}</div> : null}
     {toast && <div className="toast">{toast}</div>}
     <OrgChartTabs active={tab} onChange={setTab} />
     {filterControls}

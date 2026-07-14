@@ -2,9 +2,6 @@ import { mockOrgCategories } from "../data/mockOrgCategories";
 import type { Employee, Role } from "../types";
 import type { OrgCategory, OrgChartFilters, OrgChartModel, OrgEdge, OrgEmployeeNode } from "../types/organizationChart.types";
 import { calculateEmployeeStatus } from "./employeeStatusService";
-import { employeeMockService } from "./employeeMockService";
-import { orgStructureMockService } from "./orgStructureMockService";
-import { positionMockService } from "./positionMockService";
 
 const emptyFilters: OrgChartFilters = {
   company: "", businessUnit: "", establishment: "", costCenter: "", sector: "", position: "",
@@ -26,10 +23,6 @@ const employeeTimeResponsibles = (employee: Employee) => employee.timeResponsibl
 
 function scopedEmployeesFrom(employees: Employee[], role: Role, userSector?: string) {
   return role.startsWith("Nivel 2") ? employees.filter((employee) => employee.sector === userSector) : employees;
-}
-
-function scopedEmployees(role: Role, userSector?: string) {
-  return scopedEmployeesFrom(employeeMockService.getAll(), role, userSector);
 }
 
 function employeeMatches(employee: Employee, filters: OrgChartFilters) {
@@ -67,34 +60,16 @@ function categoryBaseY(category: OrgCategory) {
 export const organizationChartMockService = {
   getEmptyFilters: () => ({ ...emptyFilters }),
   getCategories: () => [...mockOrgCategories].sort((a, b) => a.order - b.order),
-  getEmployees: (role: Role, userSector?: string, filters: OrgChartFilters = emptyFilters) => scopedEmployees(role, userSector).filter((employee) => employeeMatches(employee, filters)),
   getEmployeesFrom: (employees: Employee[], role: Role, userSector?: string, filters: OrgChartFilters = emptyFilters) => scopedEmployeesFrom(employees, role, userSector).filter((employee) => employeeMatches(employee, filters)),
-  getFilterOptions: (role: Role, userSector?: string) => {
-    const employees = scopedEmployees(role, userSector);
-    const structure = orgStructureMockService.getOptions();
-    return {
-      company: unique([...structure.companies, ...employees.flatMap(employeeCompanies)]),
-      businessUnit: unique([...structure.businessUnits, ...employees.map((employee) => employee.businessUnit)]),
-      establishment: unique([...structure.establishments, ...employees.map((employee) => employee.establishment)]),
-      costCenter: unique([...structure.costCenters, ...employees.map((employee) => employee.costCenter)]),
-      sector: unique([...structure.sectors, ...employees.map((employee) => employee.sector)]),
-      position: unique([...positionMockService.getAll().map((position) => position.name), ...employees.map(employeePositionName)]),
-      internalCategory: unique(employees.map((employee) => employee.internalCategory)),
-      receiptCategory: unique(employees.map((employee) => employee.receiptCategory)),
-      directManager: unique(employees.flatMap(employeeManagers)),
-      timeResponsible: unique(employees.flatMap(employeeTimeResponsibles)),
-    };
-  },
   getFilterOptionsFrom: (employeesInput: Employee[], role: Role, userSector?: string) => {
     const employees = scopedEmployeesFrom(employeesInput, role, userSector);
-    const structure = orgStructureMockService.getOptions();
     return {
-      company: unique([...structure.companies, ...employees.flatMap(employeeCompanies)]),
-      businessUnit: unique([...structure.businessUnits, ...employees.map((employee) => employee.businessUnit)]),
-      establishment: unique([...structure.establishments, ...employees.map((employee) => employee.establishment)]),
-      costCenter: unique([...structure.costCenters, ...employees.map((employee) => employee.costCenter)]),
-      sector: unique([...structure.sectors, ...employees.map((employee) => employee.sector)]),
-      position: unique([...positionMockService.getAll().map((position) => position.name), ...employees.map(employeePositionName)]),
+      company: unique(employees.flatMap(employeeCompanies)),
+      businessUnit: unique(employees.map((employee) => employee.businessUnit)),
+      establishment: unique(employees.map((employee) => employee.establishment)),
+      costCenter: unique(employees.map((employee) => employee.costCenter)),
+      sector: unique(employees.map((employee) => employee.sector)),
+      position: unique(employees.map(employeePositionName)),
       internalCategory: unique(employees.map((employee) => employee.internalCategory)),
       receiptCategory: unique(employees.map((employee) => employee.receiptCategory)),
       directManager: unique(employees.flatMap(employeeManagers)),
