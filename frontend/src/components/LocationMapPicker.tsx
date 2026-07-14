@@ -1,6 +1,7 @@
 import L from "leaflet";
 import { useEffect, useState } from "react";
 import { MapContainer, Marker, TileLayer, useMap, useMapEvents } from "react-leaflet";
+import "leaflet/dist/leaflet.css";
 import type { EmployeeLocationMap } from "../types";
 
 interface LocationMapPickerProps {

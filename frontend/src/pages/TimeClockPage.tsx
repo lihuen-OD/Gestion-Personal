@@ -1,9 +1,14 @@
-import { useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { LogIn, LogOut, Search } from "lucide-react";
 import { ApiError } from "../services/api/apiClient";
 import { timeClockApiService } from "../services/api/timeClockApiService";
 import { Button } from "../components/ui/Button";
-import { FaceCaptureModal, type FaceCaptureResult } from "../components/time-clock/FaceCaptureModal";
+import { LoadingState } from "../components/ui/LoadingState";
+import type { FaceCaptureResult } from "../components/time-clock/FaceCaptureModal";
+
+const FaceCaptureModal = lazy(() =>
+  import("../components/time-clock/FaceCaptureModal").then((module) => ({ default: module.FaceCaptureModal })),
+);
 
 const MAX_CLOCK_SHIFT_MINUTES = 20 * 60;
 
@@ -243,13 +248,15 @@ export function TimeClockPage() {
       </section>
 
       {pendingPunch ? (
-        <FaceCaptureModal
-          punchType={pendingPunch}
-          onCancel={() => {
-            if (!loading) setPendingPunch(undefined);
-          }}
-          onConfirm={confirmPhotoPunch}
-        />
+        <Suspense fallback={<LoadingState text="Preparando cámara..." />}>
+          <FaceCaptureModal
+            punchType={pendingPunch}
+            onCancel={() => {
+              if (!loading) setPendingPunch(undefined);
+            }}
+            onConfirm={confirmPhotoPunch}
+          />
+        </Suspense>
       ) : null}
     </main>
   );

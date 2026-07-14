@@ -2,7 +2,6 @@ import { Bell, ChevronRight, Menu, RefreshCcw, Search, Settings, ShieldCheck, X 
 import { useState, type ReactNode } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
-import { resetDemoData } from "../services/storage";
 import { flattenNavigation, navigationForRole, type NavGroupItem, type NavLinkItem } from "./navigation";
 
 function isActivePath(pathname: string, href: string) {
@@ -46,7 +45,13 @@ export function AppShell({ children }: { children: ReactNode }) {
   const flatNavItems = flattenNavigation(navItems);
   const currentNav = flatNavItems.find((item) => isActivePath(location.pathname, item.href));
   const topbarTitle = currentNav?.label || "Dashboard";
-  const reset = () => { if (confirm("¿Restablecer todos los datos de la demo?")) { resetDemoData(); navigate("/"); window.location.reload(); } };
+  const reset = async () => {
+    if (!confirm("¿Restablecer todos los datos de la demo?")) return;
+    const { resetDemoData } = await import("../services/storage");
+    resetDemoData();
+    navigate("/");
+    window.location.reload();
+  };
 
   return <div className="app-shell">
     <aside className={`sidebar ${open ? "open" : ""}`}>

@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
 import { FileBarChart } from "lucide-react";
-import * as XLSX from "xlsx";
 import { useAuth } from "../context/AuthContext";
 import { employeeApiService } from "../services/api/employeeApiService";
 import { organizationChartMockService } from "../services/organizationChartMockService";
@@ -15,7 +14,8 @@ import { Button } from "../components/ui/Button";
 
 const roleLevel = (role: Role) => role.startsWith("Nivel 1") ? 1 : role.startsWith("Nivel 2") ? 2 : 3;
 
-function exportOrganigramWorkbook(employees: Employee[], tab: OrgChartTab) {
+async function exportOrganigramWorkbook(employees: Employee[], tab: OrgChartTab) {
+  const XLSX = await import("xlsx");
   const headers = ["Legajo", "CUIL", "Apellido", "Nombre", "Empresa", "Puesto", "Categoria", "Encargado directo", "Responsable carga", "Sector", "Centro de costo", "Estado"];
   const rows = employees.map((employee) => [
     employee.legajoInterno || employee.legajo,

@@ -18,7 +18,6 @@ import { pendingApiService, type PendingItem } from "../services/api/pendingApiS
 import { timeEntryApiService } from "../services/api/timeEntryApiService";
 import { noveltyApiService } from "../services/api/noveltyApiService";
 import type { Employee, TimeEntry } from "../types";
-import { buildHoursExportWorkbook } from "../utils/hoursExport";
 import { displayLegajo, fullName } from "../utils/employee";
 import { currentMonthPeriod, formatPeriodDay } from "../utils/period";
 import { statusTone } from "../utils/status";
@@ -167,12 +166,14 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
         setExportError("No hay horas aprobadas para exportar con los filtros actuales.");
         return;
       }
+      const { buildHoursExportWorkbook } = await import("../utils/hoursExport");
       buildHoursExportWorkbook(rows, period);
     } catch (error) {
       if (!exportRows.length) {
         setExportError("No se pudo preparar la exportación desde el backend.");
         return;
       }
+      const { buildHoursExportWorkbook } = await import("../utils/hoursExport");
       buildHoursExportWorkbook(exportRows, period);
       setExportError("Se exportó usando los datos visibles de la pantalla porque el backend no respondió.");
     } finally {

@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { Download, FileBarChart, Search } from "lucide-react";
-import * as XLSX from "xlsx";
 import { OverflowCell } from "../components/ui/OverflowCell";
 import { DataTable } from "../components/ui/DataTable";
 import { PageHeader } from "../components/ui/PageHeader";
@@ -20,7 +19,8 @@ const exportHeaders = [
   "Fecha hasta",
 ];
 
-function exportFinnegansExcel(rows: FinnegansExportRow[], period: string) {
+async function exportFinnegansExcel(rows: FinnegansExportRow[], period: string) {
+  const XLSX = await import("xlsx");
   const sheetRows = [
     exportHeaders,
     ...rows.map((row) => [
