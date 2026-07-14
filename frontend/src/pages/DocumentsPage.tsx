@@ -180,8 +180,15 @@ export function DocumentsPage() {
           employees={employees}
           user={user!}
           close={() => setOpen(false)}
-          saved={() => {
-            setRefresh((value) => value + 1);
+          saved={(employee, createdDocuments) => {
+            const created = createdDocuments?.[0];
+            if (created && employee && page === 1 && !debouncedSearch) {
+              setDocs((current) => [{ ...created, employeeLegajo: employee.legajoInterno || employee.legajo, employeeName: `${employee.lastName}, ${employee.firstName}` }, ...current].slice(0, pageSize));
+              setMeta((current) => ({ ...current, total: current.total + 1, hasMore: current.total + 1 > current.pageSize }));
+            } else {
+              setPage(1);
+              setRefresh((value) => value + 1);
+            }
             setOpen(false);
           }}
         />

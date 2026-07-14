@@ -101,7 +101,7 @@ export function NoveltiesPage() {
           rows={novelties}
           employees={employees}
           currentUser={user!}
-          onChanged={() => setRefresh((value) => value + 1)}
+          onChanged={(updated) => setNovelties((current) => current.map((item) => item.id === updated.id ? updated : item))}
         />
         {novelties.length > 0 && (
           <Pagination page={meta.page} pageSize={meta.pageSize} total={meta.total} hasMore={meta.hasMore} onPageChange={setPage} itemLabel="novedades" />
@@ -112,8 +112,14 @@ export function NoveltiesPage() {
         <NoveltyModal
           employees={employees}
           close={() => setOpen(false)}
-          saved={() => {
-            setRefresh((value) => value + 1);
+          saved={(created) => {
+            if (page === 1 && !debouncedSearch) {
+              setNovelties((current) => [...created, ...current].slice(0, pageSize));
+              setMeta((current) => ({ ...current, total: current.total + created.length, hasMore: current.total + created.length > current.pageSize }));
+            } else {
+              setPage(1);
+              setRefresh((value) => value + 1);
+            }
             setOpen(false);
           }}
         />

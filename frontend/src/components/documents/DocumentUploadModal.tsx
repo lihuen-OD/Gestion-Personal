@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { documentCategoryApiService } from "../../services/api/documentCategoryApiService";
 import { documentApiService } from "../../services/api/documentApiService";
 import { employeeApiService } from "../../services/api/employeeApiService";
-import type { Employee, User } from "../../types";
+import type { DocumentMock, Employee, User } from "../../types";
 import { defaultDocumentExpiration, documentStatusByExpiration } from "../../utils/documentStatus";
 import { displayLegajo, fullName } from "../../utils/employee";
 import { useAsyncAction } from "../../utils/useAsyncAction";
@@ -30,7 +30,7 @@ export function DocumentUploadModal({
   fixedEmployee?: Employee;
   user: User;
   close: () => void;
-  saved: (employee?: Employee) => void;
+  saved: (employee?: Employee, documents?: DocumentMock[]) => void;
 }) {
   const [categories, setCategories] = useState<DocumentCategory[]>([]);
   const [employeeId, setEmployeeId] = useState(fixedEmployee?.id || employees[0]?.id || "");
@@ -75,7 +75,7 @@ export function DocumentUploadModal({
 
     try {
       const fileBase64 = await fileToBase64(file);
-      await documentApiService.create({
+      const documents = await documentApiService.create({
         employeeId: employee.id,
         categoryId: selectedCategory.id,
         fileName: file.name,
@@ -87,10 +87,10 @@ export function DocumentUploadModal({
         notes: notes || undefined,
       });
       if (fixedEmployee) {
-        saved(await employeeApiService.getById(employee.id));
+        saved(await employeeApiService.getById(employee.id), documents);
         return;
       }
-      saved(employee);
+      saved(employee, documents);
     } catch {
       setError("No se pudo guardar el documento. Intentá nuevamente.");
     }

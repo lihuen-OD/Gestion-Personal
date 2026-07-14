@@ -153,7 +153,7 @@ export const documentApiService = {
       invalidateCacheFamily("dashboard", "employee document created"),
       invalidateCacheFamily("employees", "employee document created"),
     ]);
-    return getEmployeeDocuments(input.employeeId);
+    return (response.data.documents || []).map(mapFromApi);
   },
 
   async download(document: Pick<DocumentMock, "id" | "fileName">) {

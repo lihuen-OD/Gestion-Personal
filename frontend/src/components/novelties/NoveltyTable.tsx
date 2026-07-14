@@ -18,7 +18,7 @@ export function NoveltyTable({
   rows: Novelty[];
   employees: Employee[];
   currentUser: User;
-  onChanged: () => void;
+  onChanged: (updated: Novelty) => void;
 }) {
   const [rejecting, setRejecting] = useState<Novelty | null>(null);
   const [rejectReason, setRejectReason] = useState("");
@@ -26,9 +26,9 @@ export function NoveltyTable({
 
   const approve = async (id: string) => {
     try {
-      await noveltyApiService.approve(id);
+      const updated = await noveltyApiService.approve(id);
       setActionError("");
-      onChanged();
+      onChanged(updated);
     } catch (error) {
       setActionError("No se pudo aprobar la novedad en backend.");
     }
@@ -37,9 +37,9 @@ export function NoveltyTable({
   const reject = async () => {
     if (!rejecting || !rejectReason.trim()) return;
     try {
-      await noveltyApiService.reject(rejecting.id, rejectReason.trim());
+      const updated = await noveltyApiService.reject(rejecting.id, rejectReason.trim());
       setActionError("");
-      onChanged();
+      onChanged(updated);
     } catch (error) {
       setActionError("No se pudo rechazar la novedad en backend.");
     }

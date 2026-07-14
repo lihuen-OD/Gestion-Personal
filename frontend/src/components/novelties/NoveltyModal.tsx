@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { hourConceptApiService } from "../../services/api/hourConceptApiService";
 import { noveltyApiService } from "../../services/api/noveltyApiService";
 import { noveltyTypeApiService } from "../../services/api/noveltyTypeApiService";
-import type { Employee } from "../../types";
+import type { Employee, Novelty } from "../../types";
 import type { HourConcept } from "../../types/hourConcept.types";
 import type { NoveltyType } from "../../types/noveltyType.types";
 import { displayLegajo, fullName } from "../../utils/employee";
@@ -18,7 +18,7 @@ export function NoveltyModal({
 }: {
   employees: Employee[];
   close: () => void;
-  saved: () => void;
+  saved: (items: Novelty[]) => void;
 }) {
   const [activeTypes, setActiveTypes] = useState<NoveltyType[]>([]);
   const [hourConcepts, setHourConcepts] = useState<HourConcept[]>([]);
@@ -117,7 +117,7 @@ export function NoveltyModal({
     const targetConcept = hourConcepts.find((concept) => concept.name === normalizedTargetHour);
 
     try {
-      await noveltyApiService.create({
+      const created = await noveltyApiService.create({
         employeeIds,
         noveltyTypeId: selectedType.id,
         fromDate: from,
@@ -127,7 +127,7 @@ export function NoveltyModal({
         observation: docNotes || null,
         targetHourConceptId: requiresTargetHour ? targetConcept?.id || null : null,
       });
-      saved();
+      saved(created);
       return;
     } catch (apiError) {
       if (String((apiError as Error)?.message || "").includes("uuid")) {
