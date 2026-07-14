@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "performance:baseline": "node scripts/performance-baseline.mjs",
+    "performance:check": "node scripts/performance-check.mjs",
     "preview": "vite preview",
     "test": "vitest run"
   },

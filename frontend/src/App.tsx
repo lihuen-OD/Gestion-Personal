@@ -4,6 +4,7 @@ import { AppShell } from "./app/AppShell";
 import { useAuth } from "./context/AuthContext";
 import { LoginPage } from "./pages/LoginPage";
 import { roleLevel } from "./utils/roles";
+import { LoadingState } from "./components/ui/LoadingState";
 
 const DashboardPage = lazy(() => import("./pages/DashboardPage").then((module) => ({ default: module.DashboardPage })));
 const EmployeesPage = lazy(() => import("./pages/EmployeesPage").then((module) => ({ default: module.EmployeesPage })));
@@ -34,11 +35,7 @@ const ReportsPage = lazy(() => import("./pages/ReportsPage").then((module) => ({
 const TimeClockPage = lazy(() => import("./pages/TimeClockPage").then((module) => ({ default: module.TimeClockPage })));
 
 function PageLoader() {
-  return (
-    <div className="loading-state" role="status" aria-live="polite">
-      Cargando...
-    </div>
-  );
+  return <LoadingState text="Cargando módulo..." />;
 }
 
 export function App() {
