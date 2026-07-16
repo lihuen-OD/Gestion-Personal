@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
-import { AlertTriangle, Bell, CalendarDays, Clock3 } from "lucide-react";
+import { AlertTriangle, Bell, CalendarDays, CheckCircle2, Clock3, ClipboardList, RefreshCcw } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { employeeApiService } from "../services/api/employeeApiService";
 import { ApiError } from "../services/api/apiClient";
@@ -92,6 +92,7 @@ export function EmployeeHoursPage() {
   const [savingStatus, setSavingStatus] = useState<TimeStatus | null>(null);
   const [entries, setEntries] = useState<TimeEntry[]>([]);
   const [periodNovelties, setPeriodNovelties] = useState<Novelty[]>([]);
+  const [attendanceIssues, setAttendanceIssues] = useState(0);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const monthDays = getMonthDays(period);
@@ -110,6 +111,7 @@ export function EmployeeHoursPage() {
         setPeriodNovelties([]);
         setNoveltyTypes([]);
         setCatalog(grid.hourConcepts);
+        setAttendanceIssues(grid.attendanceIssues);
         setLoading(false);
 
         Promise.all([
@@ -139,6 +141,7 @@ export function EmployeeHoursPage() {
         setPeriodNovelties([]);
         setNoveltyTypes([]);
         setCatalog([]);
+        setAttendanceIssues(0);
         setLoadError("No se pudo cargar la grilla desde backend. Verifica que la API este levantada y que el legajo exista en la base.");
       } finally {
         if (!cancelled) setLoading(false);
@@ -362,6 +365,19 @@ export function EmployeeHoursPage() {
       novelty.status !== "Rechazado" &&
       (novelty.exportsToFinnegans || novelty.finnegansCode),
   ).length;
+  const approvedEntries = entries.filter((entry) => ["Aprobado", "Cerrado", "Exportado"].includes(entry.status)).length;
+  const reviewEntries = entries.filter((entry) => entry.status === "En revisión").length;
+  const correctionEntries = entries.filter((entry) => entry.status === "Devuelto" || entry.status === "Rechazado").length;
+  const draftEntries = entries.filter((entry) => entry.status === "Borrador" || entry.status === "Pendiente").length;
+  const entriesWithNovelties = entries.filter((entry) => conceptNovelties(entry.day, entry.type).length > 0).length;
+  const actionableCount = reviewEntries + entries.filter((entry) => entry.status === "Devuelto").length + attendanceIssues;
+  const periodState = actionableCount > 0
+    ? { label: "Con pendientes", tone: "warning" as const }
+    : draftEntries > 0
+      ? { label: "En preparación", tone: "neutral" as const }
+      : entries.length
+        ? { label: "Sin pendientes", tone: "success" as const }
+        : { label: "Sin cargas", tone: "neutral" as const };
 
   return (
     <>
@@ -387,7 +403,7 @@ export function EmployeeHoursPage() {
           </div>
         </div>
         <div className="hero-actions">
-          <Badge tone={statusTone(periodSummary.status)}>{periodSummary.status}</Badge>
+          <Badge tone={periodState.tone}>{periodState.label}</Badge>
         </div>
       </div>
 
@@ -412,6 +428,25 @@ export function EmployeeHoursPage() {
           tone="purple"
         />
       </div>
+
+      <Section
+        title="Estado del período"
+        subtitle="Resumen de cargas que requieren seguimiento para este legajo."
+        action={actionableCount > 0 ? <Badge tone="warning">{actionableCount} pendientes</Badge> : <Badge tone="success">Al día</Badge>}
+        className="employee-hours-status"
+      >
+        <div className="employee-hours-status-grid">
+          <div className="employee-hours-status-item success"><CheckCircle2 size={18} /><b>{approvedEntries}</b><span>Cargas aprobadas</span></div>
+          {user && timeEntryApiService.canReview(user) ? (
+            <Link className="employee-hours-status-item warning" to={`/pendientes?period=${period}`}><ClipboardList size={18} /><b>{reviewEntries}</b><span>En revisión</span></Link>
+          ) : (
+            <div className="employee-hours-status-item warning"><ClipboardList size={18} /><b>{reviewEntries}</b><span>En revisión</span></div>
+          )}
+          <div className="employee-hours-status-item danger"><RefreshCcw size={18} /><b>{correctionEntries}</b><span>Devueltas o rechazadas</span></div>
+          <div className="employee-hours-status-item purple"><Bell size={18} /><b>{entriesWithNovelties}</b><span>Cargas con novedades</span></div>
+          <Link className="employee-hours-status-item orange" to="/asistencia"><AlertTriangle size={18} /><b>{attendanceIssues}</b><span>Problemas de fichada</span></Link>
+        </div>
+      </Section>
 
       <Section
         title="Grilla mensual por concepto"

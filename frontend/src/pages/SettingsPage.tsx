@@ -4,9 +4,10 @@ import { PageHeader } from "../components/ui/PageHeader";
 
 export function SettingsPage() {
   const cards = [
+    { name: "Turnos y horas especiales", icon: <Clock3 />, path: "/configuracion/turnos-horas-especiales" },
     { name: "Empresas y estructura", icon: <Building2 />, path: "/configuracion/empresas-estructura" },
     { name: "Tipos de novedades", icon: <ClipboardList />, path: "/configuracion/tipos-novedades" },
-    { name: "Horas especiales", icon: <Clock3 />, path: "/configuracion/conceptos-horarios" },
+    { name: "Conceptos horarios", icon: <Clock3 />, path: "/configuracion/conceptos-horarios" },
     { name: "Exportación Finnegans", icon: <FileText />, path: "/configuracion/liquidacion" },
     { name: "Categorías documentales", icon: <FolderOpen />, path: "/configuracion/categorias-documentales" },
     { name: "Parámetros de auditoría", icon: <ShieldCheck />, path: "/configuracion/parametros-auditoria" },

@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { AlertTriangle, CalendarDays, Camera, CheckCircle2, Clock3, DoorOpen, Eye, RefreshCcw, TimerReset } from "lucide-react";
-import { attendanceApiService, type AttendancePunch, type AttendanceShift } from "../services/api/attendanceApiService";
+import { AlertTriangle, CalendarDays, Camera, CheckCircle2, Clock3, DoorOpen, Eye, RefreshCcw, Search, TimerReset, X } from "lucide-react";
+import { attendanceApiService, type AttendanceObservation, type AttendancePunch, type AttendanceShift } from "../services/api/attendanceApiService";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { EmptyState } from "../components/ui/EmptyState";
@@ -9,6 +9,9 @@ import { PageHeader } from "../components/ui/PageHeader";
 import { Section } from "../components/ui/Section";
 import { StatCard } from "../components/ui/StatCard";
 import { Modal } from "../components/ui/Modal";
+import { useDebouncedValue } from "../utils/useDebouncedValue";
+
+const OBSERVED_PAGE_SIZE = 10;
 
 function todayKey() {
   return new Date().toLocaleDateString("sv-SE", { timeZone: "America/Argentina/Cordoba" });
@@ -178,66 +181,48 @@ type ShiftAction = {
   type: ShiftActionType;
 };
 
-function PunchRows({ items, onViewPhoto }: { items: AttendancePunch[]; onViewPhoto: (id: string) => void }) {
-  if (!items.length) return <EmptyState text="No hay intentos observados para la fecha." icon={AlertTriangle} />;
-  return (
-    <table className="attendance-table">
-      <thead>
-        <tr>
-          <th>Empleado</th>
-          <th>Legajo</th>
-          <th>Tipo</th>
-          <th>Hora</th>
-          <th>Origen</th>
-          <th>Validación</th>
-          <th>Motivo</th>
-        </tr>
-      </thead>
-      <tbody>
-        {items.map((punch) => (
-          <tr key={punch.id}>
-            <td>
-              <strong>{employeeName(punch)}</strong>
-              <span className="muted-line">DNI {punch.employee.dni}</span>
-            </td>
-            <td>{punch.employee.legajo}</td>
-            <td>{punch.type === "INGRESO" ? "Ingreso" : "Salida"}</td>
-            <td>{formatDateTime(punch.timestamp)}</td>
-            <td>{sourceLabel(punch.source)}</td>
-            <td>
-              <div className="attendance-evidence">
-                <span>{faceStatusLabel(punch.faceValidationStatus)}</span>
-                {hasPunchPhoto(punch) ? (
-                  <button type="button" className="table-link" onClick={() => onViewPhoto(punch.id)}>
-                    <Camera size={14} />
-                    Ver foto
-                  </button>
-                ) : null}
-              </div>
-            </td>
-            <td>{punch.observation || "Intento observado"}</td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  );
-}
-
-function ObservedRows({ shifts, punches, onAction, onViewPhoto }: { shifts: AttendanceShift[]; punches: AttendancePunch[]; onAction: (shift: AttendanceShift, action: ShiftActionType) => void; onViewPhoto: (id: string) => void }) {
-  if (!shifts.length && !punches.length) {
-    return <EmptyState text="No hay marcaciones observadas para la fecha." icon={AlertTriangle} />;
+function ObservationRows({ items, onViewPhoto, onResolve }: { items: AttendanceObservation[]; onViewPhoto: (id: string) => void; onResolve: (kind: "SHIFT" | "PUNCH", id: string) => void }) {
+  if (!items.length) {
+    return <EmptyState text="No hay problemas de fichada para los filtros seleccionados." icon={AlertTriangle} />;
   }
-
   return (
-    <div className="attendance-observed-grid">
-      {shifts.length ? <ShiftRows items={shifts} emptyText="" showSegments onAction={onAction} onViewPhoto={onViewPhoto} /> : null}
-      {punches.length ? <PunchRows items={punches} onViewPhoto={onViewPhoto} /> : null}
-    </div>
+    <table className="attendance-table attendance-review-table">
+      <thead><tr><th>Empleado</th><th>Fecha y hora</th><th>Problema</th><th>Detalle</th><th>Origen</th><th>Acción</th></tr></thead>
+      <tbody>{items.map((item) => {
+        const record = item.kind === "SHIFT" ? item.shift : item.punch;
+        const isPending = record.reviewStatus === "PENDIENTE";
+        const problem = item.kind === "SHIFT" ? item.shift.status.replace(/_/g, " ") : item.punch.type === "INGRESO" ? "Intento de ingreso" : "Intento de salida";
+        const detail = item.kind === "SHIFT"
+          ? item.shift.observation || (item.shift.status === "FALTA_SALIDA" ? "No se registró la salida" : "Jornada con conflicto")
+          : item.punch.observation || faceStatusLabel(item.punch.faceValidationStatus);
+        return <tr key={`${item.kind}-${record.id}`}>
+          <td><strong>{employeeName(record)}</strong><span className="muted-line">Legajo {record.employee.legajo} · DNI {record.employee.dni}</span></td>
+          <td>{formatDateTime(item.occurredAt)}</td>
+          <td><Badge tone="danger">{problem}</Badge></td>
+          <td><span className="attendance-review-detail">{detail}</span>{item.kind === "PUNCH" && hasPunchPhoto(item.punch) ? <button type="button" className="table-link" onClick={() => onViewPhoto(item.punch.id)}><Camera size={14} />Ver foto</button> : null}</td>
+          <td>{sourceLabel(record.source)}</td>
+          <td>{isPending ? <button type="button" className="table-link" onClick={() => onResolve(item.kind, record.id)}>Resolver</button> : <Badge tone="success">Resuelta</Badge>}</td>
+        </tr>;
+      })}</tbody>
+    </table>
   );
 }
 
 export function AttendancePage() {
   const [date, setDate] = useState(todayKey());
+  const [observationDate, setObservationDate] = useState("");
+  const [observedQuery, setObservedQuery] = useState("");
+  const debouncedObservedQuery = useDebouncedValue(observedQuery, 300);
+  const [observedType, setObservedType] = useState<"ALL" | "SHIFT" | "PUNCH">("ALL");
+  const [observedStatus, setObservedStatus] = useState<"PENDIENTE" | "RESUELTA">("PENDIENTE");
+  const [observations, setObservations] = useState<AttendanceObservation[]>([]);
+  const [observationsMeta, setObservationsMeta] = useState({ total: 0, hasMore: false, nextBefore: null as string | null });
+  const [observationsLoading, setObservationsLoading] = useState(true);
+  const [observationsLoadingMore, setObservationsLoadingMore] = useState(false);
+  const [observationsError, setObservationsError] = useState("");
+  const [observationsRefresh, setObservationsRefresh] = useState(0);
+  const [reviewAction, setReviewAction] = useState<{ kind: "SHIFT" | "PUNCH"; id: string }>();
+  const [reviewReason, setReviewReason] = useState("");
   const [refreshKey, setRefreshKey] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -271,12 +256,57 @@ export function AttendancePage() {
   }, [date, refreshKey]);
 
   useEffect(() => {
+    let cancelled = false;
+    setObservationsLoading(true);
+    setObservationsError("");
+    attendanceApiService.getObservations({ date: observationDate || undefined, search: debouncedObservedQuery, type: observedType, reviewStatus: observedStatus, take: OBSERVED_PAGE_SIZE })
+      .then((result) => {
+        if (cancelled) return;
+        setObservations(result.data);
+        setObservationsMeta({ total: result.meta.total, hasMore: result.meta.hasMore, nextBefore: result.meta.nextBefore });
+      })
+      .catch(() => { if (!cancelled) setObservationsError("No se pudieron cargar los problemas de fichada."); })
+      .finally(() => { if (!cancelled) setObservationsLoading(false); });
+    return () => { cancelled = true; };
+  }, [observationDate, debouncedObservedQuery, observedType, observedStatus, observationsRefresh]);
+
+  useEffect(() => {
     return () => {
       if (photoPreview?.url) URL.revokeObjectURL(photoPreview.url);
     };
   }, [photoPreview?.url]);
 
-  const observedCount = useMemo(() => (summary?.observedShifts.length || 0) + (summary?.observedPunches.length || 0), [summary]);
+  const loadMoreObservations = async () => {
+    if (!observationsMeta.nextBefore || observationsLoadingMore) return;
+    setObservationsLoadingMore(true);
+    setObservationsError("");
+    try {
+      const result = await attendanceApiService.getObservations({ date: observationDate || undefined, search: debouncedObservedQuery, type: observedType, reviewStatus: observedStatus, before: observationsMeta.nextBefore, take: OBSERVED_PAGE_SIZE });
+      setObservations((current) => [...current, ...result.data.filter((next) => !current.some((item) => item.kind === next.kind && (item.kind === "SHIFT" ? item.shift.id : item.punch.id) === (next.kind === "SHIFT" ? next.shift.id : next.punch.id)))]);
+      setObservationsMeta({ total: result.meta.total, hasMore: result.meta.hasMore, nextBefore: result.meta.nextBefore });
+    } catch {
+      setObservationsError("No se pudieron cargar más problemas de fichada.");
+    } finally {
+      setObservationsLoadingMore(false);
+    }
+  };
+
+  const confirmReviewAction = async () => {
+    if (!reviewAction || !reviewReason.trim()) return;
+    setActionLoading(true);
+    setActionError("");
+    try {
+      await attendanceApiService.resolveObservation(reviewAction.kind, reviewAction.id, "RESUELTA", reviewReason.trim());
+      setReviewAction(undefined);
+      setReviewReason("");
+      setObservationsRefresh((value) => value + 1);
+      setRefreshKey((value) => value + 1);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "No se pudo resolver el problema de fichada.");
+    } finally {
+      setActionLoading(false);
+    }
+  };
 
   const openAction = (shift: AttendanceShift, type: ShiftActionType) => {
     setShiftAction({ shift, type });
@@ -348,10 +378,10 @@ export function AttendancePage() {
         description="Seguimiento diario de ingresos, salidas, jornadas abiertas y marcaciones observadas."
         action={(
           <>
-            <label className="date-filter">
-              <CalendarDays size={16} />
-              <input type="date" value={date} onChange={(event) => setDate(event.target.value)} />
-            </label>
+            <div className="attendance-journey-filter">
+              <span>Jornadas del día</span>
+              <label className="date-filter"><CalendarDays size={16} /><input type="date" value={date} onChange={(event) => setDate(event.target.value)} /></label>
+            </div>
             <Button icon={RefreshCcw} onClick={() => setRefreshKey((value) => value + 1)} loading={loading}>Actualizar</Button>
           </>
         )}
@@ -360,7 +390,7 @@ export function AttendancePage() {
       <div className="stat-grid">
         <StatCard label="Jornadas abiertas" value={summary?.totals.open || 0} detail="Ingresos sin salida" icon={DoorOpen} tone="orange" />
         <StatCard label="Jornadas cerradas" value={summary?.totals.closed || 0} detail="Con salida registrada" icon={CheckCircle2} tone="green" />
-        <StatCard label="Observadas" value={observedCount} detail="Requieren revisión" icon={AlertTriangle} tone="red" />
+        <StatCard label="Problemas del día" value={summary?.totals.observed || 0} detail="Detectados en la fecha de jornadas" icon={AlertTriangle} tone="red" />
         <StatCard label="Horas registradas" value={`${summary?.totals.workedHours || 0} h`} detail="Sobre jornadas cerradas" icon={TimerReset} tone="blue" />
       </div>
 
@@ -372,15 +402,69 @@ export function AttendancePage() {
 
       {photoError ? <div className="form-error">{photoError}</div> : null}
 
-      <Section title="Marcaciones observadas" subtitle="Intentos inválidos y jornadas con conflictos para revisar.">
-        {loading ? <EmptyState text="Cargando observaciones..." icon={AlertTriangle} /> : (
-          <ObservedRows shifts={summary?.observedShifts || []} punches={summary?.observedPunches || []} onAction={openAction} onViewPhoto={openPunchPhoto} />
-        )}
-      </Section>
-
       <Section title="Jornadas cerradas" subtitle="Jornadas procesadas con sus tramos calculados y carga horaria generada.">
         {loading ? <EmptyState text="Cargando jornadas cerradas..." icon={CheckCircle2} /> : <ShiftRows items={summary?.closedShifts || []} emptyText="No hay jornadas cerradas para esta fecha." showSegments onAction={openAction} onViewPhoto={openPunchPhoto} />}
       </Section>
+
+      <Section
+        title="Problemas de fichada"
+        subtitle="Casos que requieren revisión. Podés resolverlos o descartarlos dejando un motivo."
+        className="attendance-observed-panel"
+        action={<button type="button" className="table-link" onClick={() => setObservedStatus((current) => current === "PENDIENTE" ? "RESUELTA" : "PENDIENTE")}>{observedStatus === "PENDIENTE" ? "Ver resueltas" : "Volver a pendientes"}</button>}
+      >
+        <div className="attendance-observed-filters">
+          <label>
+            <span>Fecha de observaciones</span>
+            <div className="attendance-filter-control">
+              <CalendarDays size={16} />
+              <input type="date" value={observationDate} onChange={(event) => setObservationDate(event.target.value)} aria-label="Fecha de observaciones; vacío muestra todas" />
+            </div>
+            <small className="attendance-filter-help">Vacía: todas las fechas</small>
+          </label>
+          <label className="attendance-observed-search">
+            <span>Empleado</span>
+            <div className="attendance-filter-control">
+              <Search size={16} />
+              <input value={observedQuery} onChange={(event) => setObservedQuery(event.target.value)} placeholder="Nombre, legajo, DNI o sector" />
+            </div>
+          </label>
+          <label>
+            <span>Mostrar</span>
+            <select value={observedType} onChange={(event) => setObservedType(event.target.value as typeof observedType)}>
+              <option value="ALL">Todos los tipos</option>
+              <option value="SHIFT">Jornadas con conflicto</option>
+              <option value="PUNCH">Intentos inválidos</option>
+            </select>
+          </label>
+          {(observationDate || observedQuery || observedType !== "ALL") ? (
+            <button type="button" className="attendance-clear-filters" onClick={() => { setObservationDate(""); setObservedQuery(""); setObservedType("ALL"); }}>
+              <X size={15} /> Limpiar
+            </button>
+          ) : null}
+        </div>
+        <div className="attendance-results-bar">
+          <span><b>{observationsMeta.total}</b> {observedStatus === "PENDIENTE" ? "problemas pendientes" : "problemas resueltos"} · mostrando {observations.length}</span>
+          <small>El servidor carga únicamente {OBSERVED_PAGE_SIZE} por vez</small>
+        </div>
+        {observationsError ? <div className="form-error">{observationsError}</div> : null}
+        {observationsLoading ? <EmptyState text="Cargando problemas de fichada..." icon={AlertTriangle} /> : (
+          <>
+            <ObservationRows items={observations} onViewPhoto={openPunchPhoto} onResolve={(kind, id) => { setReviewAction({ kind, id }); setReviewReason(""); setActionError(""); }} />
+            {observationsMeta.hasMore ? <div className="attendance-load-more"><Button variant="subtle" onClick={loadMoreObservations} loading={observationsLoadingMore}>Cargar 10 más</Button></div> : null}
+          </>
+        )}
+      </Section>
+
+      {reviewAction ? (
+        <Modal title="Resolver problema de fichada" close={() => setReviewAction(undefined)}>
+          <div className="form-stack">
+            <div className="info-note compact"><b>Resolución con trazabilidad</b><p>El caso saldrá de pendientes y quedará disponible en el historial.</p></div>
+            <label>Cómo se resolvió<textarea value={reviewReason} onChange={(event) => setReviewReason(event.target.value)} placeholder="Ej.: se corrigió la salida según lo informado por el responsable" /></label>
+            {actionError ? <p className="error">{actionError}</p> : null}
+            <div className="form-actions"><Button variant="subtle" onClick={() => setReviewAction(undefined)}>Cancelar</Button><Button onClick={confirmReviewAction} loading={actionLoading} disabled={!reviewReason.trim()}>Confirmar resolución</Button></div>
+          </div>
+        </Modal>
+      ) : null}
 
       {shiftAction ? (
         <Modal title={actionTitle} close={closeAction}>

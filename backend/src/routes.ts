@@ -18,6 +18,7 @@ import { salaryCategoriesRouter } from "./modules/salary-categories/salaryCatego
 import { storageRouter } from "./modules/storage/storage.routes";
 import { timeEntriesRouter } from "./modules/time-entries/timeEntries.routes";
 import { usersRouter } from "./modules/users/users.routes";
+import { workforceRouter } from "./modules/workforce-management/workforce.routes";
 
 export const apiRouter = Router();
 
@@ -40,3 +41,4 @@ apiRouter.use("/salary-categories", salaryCategoriesRouter);
 apiRouter.use("/storage", storageRouter);
 apiRouter.use("/time-entries", timeEntriesRouter);
 apiRouter.use("/users", usersRouter);
+apiRouter.use("/workforce", workforceRouter);

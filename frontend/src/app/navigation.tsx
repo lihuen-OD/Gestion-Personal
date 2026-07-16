@@ -1,6 +1,7 @@
 import {
   BriefcaseBusiness,
   CalendarDays,
+  Bell,
   ClipboardList,
   Clock3,
   FileBarChart,
@@ -53,9 +54,10 @@ const hourlyManagement = (level: number) =>
     link("Inicio", "/gestion-horaria", Home),
     link("Asistencia", "/asistencia", TimerReset),
     link("Carga de horas", "/horas", Clock3),
-    // Bandeja de aprobación: quien no puede aprobar/rechazar/devolver (Nivel 3) no la ve en el menú.
+    link("Cierres mensuales", "/cierres", CalendarDays),
     ...(level === 3 ? [] : [link("Bandeja de revisión", "/pendientes", CalendarDays)]),
     link(level === 3 ? "Novedades horarias" : "Novedades", "/novedades", ClipboardList),
+    link("Notificaciones", "/notificaciones", Bell),
     link("Fichador", "/fichador", Clock3),
     ...(level === 1 ? [link("Exportación", "/configuracion/liquidacion", FileBarChart)] : []),
   ]);

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Plus, Search } from "lucide-react";
+import { CheckCheck, Plus, Search } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { employeeApiService } from "../services/api/employeeApiService";
 import { noveltyApiService } from "../services/api/noveltyApiService";
@@ -11,6 +11,7 @@ import { Section } from "../components/ui/Section";
 import { Button } from "../components/ui/Button";
 import { Pagination } from "../components/ui/Pagination";
 import { useDebouncedValue } from "../utils/useDebouncedValue";
+import { roleLevel } from "../utils/roles";
 
 const pageSize = 25;
 
@@ -26,6 +27,8 @@ export function NoveltiesPage() {
   const [meta, setMeta] = useState({ total: 0, page: 1, pageSize, hasMore: false });
   const [loadingEmployees, setLoadingEmployees] = useState(false);
   const [loadError, setLoadError] = useState("");
+  const [bulkApproving, setBulkApproving] = useState(false);
+  const pendingVisible = novelties.filter((item) => item.status === "Pendiente");
 
   useEffect(() => {
     let mounted = true;
@@ -84,6 +87,7 @@ export function NoveltiesPage() {
         title="Novedades registradas"
         subtitle={`${meta.total} registros visibles según tu perfil`}
       >
+        {roleLevel(user!.role) === 1 && pendingVisible.length ? <div className="bulk-toolbar"><span>{pendingVisible.length} novedades pendientes en esta vista</span><Button variant="primary" icon={CheckCheck} loading={bulkApproving} onClick={async () => { setBulkApproving(true); setLoadError(""); try { const updated = await noveltyApiService.approveMany(pendingVisible.map((item) => item.id)); const byId = new Map(updated.map((item) => [item.id, item])); setNovelties((current) => current.map((item) => byId.get(item.id) || item)); } catch { setLoadError("No se pudieron aprobar las novedades en lote."); } finally { setBulkApproving(false); } }}>Aprobar pendientes visibles</Button></div> : null}
         <div className="filters">
           <label className="search-field">
             <Search size={17} />

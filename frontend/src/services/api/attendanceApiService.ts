@@ -46,6 +46,9 @@ export type AttendanceShift = {
   workedHours: number;
   crossesMidnight: boolean;
   observation?: string | null;
+  reviewStatus?: "PENDIENTE" | "RESUELTA" | "DESCARTADA";
+  reviewNote?: string | null;
+  reviewedAt?: string | null;
   employee: AttendanceEmployee;
   startPunch?: AttendancePunchEvidence | null;
   endPunch?: AttendancePunchEvidence | null;
@@ -76,6 +79,9 @@ export type AttendancePunch = {
   source: string;
   status: string;
   observation?: string | null;
+  reviewStatus?: "PENDIENTE" | "RESUELTA" | "DESCARTADA";
+  reviewNote?: string | null;
+  reviewedAt?: string | null;
   photoStoragePath?: string | null;
   photoUrl?: string | null;
   photoFileId?: string | null;
@@ -101,6 +107,9 @@ export type AttendanceSummary = {
 };
 
 type AttendanceSummaryResponse = { data: AttendanceSummary };
+export type AttendanceObservation =
+  | { kind: "SHIFT"; occurredAt: string; shift: AttendanceShift }
+  | { kind: "PUNCH"; occurredAt: string; punch: AttendancePunch };
 
 export const attendanceApiService = {
   async getSummary(date?: string) {
@@ -111,6 +120,24 @@ export const attendanceApiService = {
       apiCache: false,
     });
     return response.data;
+  },
+
+  async getObservations(filters: { date?: string; search?: string; type?: "ALL" | "SHIFT" | "PUNCH"; reviewStatus?: "PENDIENTE" | "RESUELTA" | "DESCARTADA" | "ALL"; before?: string; take?: number } = {}) {
+    const params = new URLSearchParams();
+    if (filters.date) params.set("date", filters.date);
+    if (filters.search?.trim()) params.set("search", filters.search.trim());
+    if (filters.type) params.set("type", filters.type);
+    if (filters.reviewStatus) params.set("reviewStatus", filters.reviewStatus);
+    if (filters.before) params.set("before", filters.before);
+    params.set("take", String(filters.take || 10));
+    return apiRequest<{ data: AttendanceObservation[]; meta: { total: number; pageSize: number; hasMore: boolean; nextBefore: string | null } }>(`/time-entries/attendance/observations?${params.toString()}`, { apiCache: false });
+  },
+
+  resolveObservation(kind: "SHIFT" | "PUNCH", id: string, resolution: "RESUELTA" | "DESCARTADA", reason: string) {
+    return apiRequest<{ data: unknown }>(`/time-entries/attendance/observations/${kind}/${id}/resolve`, {
+      method: "POST",
+      body: { resolution, reason },
+    });
   },
 
   closeWorkShiftManually(id: string, input: { endAt: string; reason: string }) {

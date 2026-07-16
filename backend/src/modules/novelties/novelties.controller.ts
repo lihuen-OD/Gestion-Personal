@@ -34,6 +34,11 @@ export const noveltiesController = {
     res.json({ data: item });
   }) satisfies RequestHandler,
 
+  approveMany: (async (req, res) => {
+    const items = await noveltiesService.approveMany(req.body.ids, req.user!, requestAuditContext(req));
+    clearNoveltiesReadCaches(); clearTimeEntriesReadCaches(); res.json({ data: items });
+  }) satisfies RequestHandler,
+
   reject: (async (req, res) => {
     const item = await noveltiesService.reject(requireParam(req, "id"), req.body, req.user!, requestAuditContext(req));
     clearNoveltiesReadCaches();

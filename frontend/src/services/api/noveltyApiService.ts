@@ -196,6 +196,11 @@ export const noveltyApiService = {
     await invalidateNoveltyDependentCaches("novelty approved");
     return mapNoveltyFromApi(response.data);
   },
+  async approveMany(ids: string[]) {
+    const response = await apiRequest<{ data: ApiNovelty[] }>("/novelties/bulk-approve", { method: "POST", body: { ids } });
+    await invalidateNoveltyDependentCaches("novelties approved in bulk");
+    return response.data.map(mapNoveltyFromApi);
+  },
 
   async reject(id: string, reason = "Rechazo operativo") {
     const response = await apiRequest<ApiItemResponse>(`/novelties/${id}/reject`, {

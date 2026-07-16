@@ -24,6 +24,20 @@ export const attendanceSummaryQuerySchema = z.object({
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
 });
 
+export const attendanceObservationsQuerySchema = z.object({
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  search: z.string().trim().max(100).optional(),
+  type: z.enum(["ALL", "SHIFT", "PUNCH"]).default("ALL"),
+  reviewStatus: z.enum(["PENDIENTE", "RESUELTA", "DESCARTADA", "ALL"]).default("PENDIENTE"),
+  before: z.coerce.date().optional(),
+  take: z.coerce.number().int().min(1).max(50).default(10),
+});
+
+export const resolveAttendanceObservationSchema = z.object({
+  resolution: z.enum(["RESUELTA", "DESCARTADA"]),
+  reason: z.string().trim().min(2).max(800),
+});
+
 export const timeEntriesPeriodEmployeesQuerySchema = z.object({
   period: z.string().regex(/^\d{4}-\d{2}$/),
   search: z.string().trim().optional(),
@@ -140,6 +154,8 @@ export const adminWorkShiftReasonSchema = z.object({
 export type ListTimeEntriesQuery = z.infer<typeof listTimeEntriesQuerySchema>;
 export type TimeEntriesSummaryQuery = z.infer<typeof timeEntriesSummaryQuerySchema>;
 export type AttendanceSummaryQuery = z.infer<typeof attendanceSummaryQuerySchema>;
+export type AttendanceObservationsQuery = z.infer<typeof attendanceObservationsQuerySchema>;
+export type ResolveAttendanceObservationInput = z.infer<typeof resolveAttendanceObservationSchema>;
 export type TimeEntriesPeriodEmployeesQuery = z.infer<typeof timeEntriesPeriodEmployeesQuerySchema>;
 export type CreateTimeEntryInput = z.infer<typeof createTimeEntrySchema>;
 export type UpdateTimeEntryInput = z.infer<typeof updateTimeEntrySchema>;

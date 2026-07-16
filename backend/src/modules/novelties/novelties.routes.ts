@@ -6,7 +6,7 @@ import { roles } from "../../shared/security/roles";
 import { validateBody } from "../../shared/validation/validateRequest";
 import { validateQuery } from "../../shared/validation/validateQuery";
 import { noveltiesController } from "./novelties.controller";
-import { createNoveltySchema, listNoveltiesQuerySchema, rejectNoveltySchema } from "./novelties.schemas";
+import { bulkApproveNoveltiesSchema, createNoveltySchema, listNoveltiesQuerySchema, rejectNoveltySchema } from "./novelties.schemas";
 
 export const noveltiesRouter = Router();
 
@@ -16,5 +16,6 @@ const operationalRoles = [roles.rrhh, roles.supervision, roles.cargaHoraria];
 
 noveltiesRouter.get("/", requireAnyRole(operationalRoles), validateQuery(listNoveltiesQuerySchema), asyncHandler(noveltiesController.list));
 noveltiesRouter.post("/", requireAnyRole(operationalRoles), validateBody(createNoveltySchema), asyncHandler(noveltiesController.create));
+noveltiesRouter.post("/bulk-approve", requireAnyRole([roles.rrhh]), validateBody(bulkApproveNoveltiesSchema), asyncHandler(noveltiesController.approveMany));
 noveltiesRouter.post("/:id/approve", requireAnyRole(operationalRoles), asyncHandler(noveltiesController.approve));
 noveltiesRouter.post("/:id/reject", requireAnyRole(operationalRoles), validateBody(rejectNoveltySchema), asyncHandler(noveltiesController.reject));

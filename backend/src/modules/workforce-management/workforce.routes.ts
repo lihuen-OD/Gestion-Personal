@@ -1,0 +1,27 @@
+import { Router } from "express";
+import { requireAuth } from "../../middlewares/auth";
+import { requireAnyRole } from "../../middlewares/authorization";
+import { asyncHandler } from "../../shared/http/asyncHandler";
+import { validateBody } from "../../shared/validation/validateRequest";
+import { validateQuery } from "../../shared/validation/validateQuery";
+import { roles } from "../../shared/security/roles";
+import { workforceController as c } from "./workforce.controller";
+import { closureBulkSchema, closureSubmitSchema, correctionCreateSchema, correctionReviewSchema, doubleRuleSchema, periodQuerySchema, returnClosureSchema, shiftTemplateSchema } from "./workforce.schemas";
+
+export const workforceRouter=Router();
+workforceRouter.use(requireAuth);
+const all=[roles.rrhh,roles.supervision,roles.cargaHoraria];
+workforceRouter.get("/closures",requireAnyRole(all),validateQuery(periodQuerySchema),asyncHandler(c.closures));
+workforceRouter.post("/closures/submit",requireAnyRole([roles.supervision,roles.cargaHoraria]),validateBody(closureSubmitSchema),asyncHandler(c.submit));
+workforceRouter.post("/closures/approve",requireAnyRole([roles.rrhh]),validateBody(closureBulkSchema),asyncHandler(c.approve));
+workforceRouter.post("/closures/:id/return",requireAnyRole([roles.rrhh]),validateBody(returnClosureSchema),asyncHandler(c.returnClosure));
+workforceRouter.get("/corrections",requireAnyRole(all),asyncHandler(c.corrections));
+workforceRouter.post("/corrections",requireAnyRole([roles.supervision,roles.cargaHoraria]),validateBody(correctionCreateSchema),asyncHandler(c.createCorrection));
+workforceRouter.post("/corrections/:id/approve",requireAnyRole([roles.rrhh]),validateBody(correctionReviewSchema),asyncHandler(c.approveCorrection));
+workforceRouter.post("/corrections/:id/reject",requireAnyRole([roles.rrhh]),validateBody(correctionReviewSchema),asyncHandler(c.rejectCorrection));
+workforceRouter.get("/notifications",requireAnyRole(all),asyncHandler(c.notifications));
+workforceRouter.post("/notifications/:id/read",requireAnyRole(all),asyncHandler(c.readNotification));
+workforceRouter.get("/shift-templates",requireAnyRole(all),asyncHandler(c.shiftTemplates));
+workforceRouter.post("/shift-templates",requireAnyRole([roles.rrhh]),validateBody(shiftTemplateSchema),asyncHandler(c.createShiftTemplate));
+workforceRouter.get("/double-hour-rules",requireAnyRole(all),asyncHandler(c.doubleRules));
+workforceRouter.post("/double-hour-rules",requireAnyRole([roles.rrhh]),validateBody(doubleRuleSchema),asyncHandler(c.createDoubleRule));

@@ -6,6 +6,7 @@ import { employeeAccessWhere } from "../employees/employeeAccess";
 import { roles } from "../../shared/security/roles";
 import { noveltiesRepository } from "./novelties.repository";
 import type { CreateNoveltyInput, ListNoveltiesQuery, RejectNoveltyInput } from "./novelties.schemas";
+import { notifyRrhh } from "../workforce-management/workforce.service";
 
 function mapPrismaError(error: unknown) {
   if (error instanceof Prisma.PrismaClientKnownRequestError) {
@@ -113,7 +114,7 @@ export const noveltiesService = {
     const type = await ensureNoveltyTypeReady(input);
     const normalizedInput = normalizeCreateInput(input, type);
     assertCanLoad(type, user);
-    const status = type.requiresApproval ? "PENDIENTE" : "APROBADO";
+    const status = user.role === roles.rrhh ? "APROBADO" : "PENDIENTE";
     const items = await execute(() =>
       noveltiesRepository.createMany(normalizedInput, status, user.id, {
         createZeroTimeEntries: type.setsWorkedHoursToZero,
@@ -129,6 +130,10 @@ export const noveltiesService = {
       description: `Se cargaron ${items.length} novedades ${type.code} - ${type.name}.`,
       after: items as Prisma.InputJsonValue,
     });
+
+    if (user.role !== roles.rrhh) {
+      await notifyRrhh({ type: "NOVEDAD_PENDIENTE", title: "Nueva novedad pendiente", message: `${items.length} novedad(es) requieren aprobación de RH.`, entityType: "Novelty", entityId: items[0]?.id, link: "/pendientes", priority: "ALTA" });
+    }
 
     return items;
   },
@@ -152,6 +157,14 @@ export const noveltiesService = {
       after: item as Prisma.InputJsonValue,
     });
     return item;
+  },
+
+  async approveMany(ids: string[], user: Express.AuthUser, audit?: AuditContext) {
+    if (user.role !== roles.rrhh) throw new AppError("Solo RH puede aprobar novedades en lote", 403, "NOVELTY_BULK_APPROVAL_FORBIDDEN");
+    const uniqueIds = [...new Set(ids)];
+    const approved = [];
+    for (const id of uniqueIds) approved.push(await this.approve(id, user, audit));
+    return approved;
   },
 
   async reject(id: string, input: RejectNoveltyInput, user: Express.AuthUser, audit?: AuditContext) {

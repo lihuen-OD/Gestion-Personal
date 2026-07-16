@@ -21,7 +21,7 @@ function userScopedCacheKey(req: Parameters<RequestHandler>[0]) {
   return `${req.user?.id || "anon"}:${req.user?.role || "none"}:${req.originalUrl}`;
 }
 
-function clearEmployeeReadCaches() {
+export function clearEmployeeReadCaches() {
   employeeDetailCache.clear();
   employeeListCache.clear();
   employeeSummaryCache.clear();

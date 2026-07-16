@@ -5,15 +5,19 @@ import { env } from "../../config/env";
 import type { AuditContext } from "../audit/audit.service";
 import { auditService } from "../audit/audit.service";
 import { AppError } from "../../shared/errors/AppError";
+import { prisma } from "../../shared/prisma/client";
 import { employeeAccessWhere } from "../employees/employeeAccess";
 import { roles } from "../../shared/security/roles";
 import { storageService } from "../../shared/storage/storage.service";
 import { storagePathBuilder } from "../../shared/storage/storagePathBuilder";
 import { timeEntriesRepository } from "./timeEntries.repository";
+import { evaluateShiftEntry, evaluateShiftExit } from "../workforce-management/workforce.service";
 import type {
   AdminCloseWorkShiftInput,
   AdminWorkShiftReasonInput,
   AttendanceSummaryQuery,
+  AttendanceObservationsQuery,
+  ResolveAttendanceObservationInput,
   ClockPhotoPunchInput,
   CreateTimeEntryInput,
   CreateWorkShiftInput,
@@ -570,7 +574,7 @@ export const timeEntriesService = {
       totals: {
         open: openShifts.length,
         closed: closedShifts.length,
-        observed: observedShifts.length + result.observedPunches.length,
+        observed: observedShifts.filter((shift) => shift.reviewStatus === "PENDIENTE").length + result.observedPunches.length,
         workedHours: Number((totalWorkedMinutes / 60).toFixed(2)),
       },
       openShifts,
@@ -578,6 +582,47 @@ export const timeEntriesService = {
       observedShifts,
       observedPunches: result.observedPunches,
     };
+  },
+
+  async attendanceObservations(query: AttendanceObservationsQuery, user: Express.AuthUser) {
+    const range = query.date ? localDayRange(query.date) : {};
+    const result = await timeEntriesRepository.attendanceObservations({
+      ...range,
+      before: query.before,
+      search: query.search,
+      type: query.type,
+      reviewStatus: query.reviewStatus,
+      take: query.take,
+      employeeAccessWhere: employeeAccessWhere(user),
+    });
+    return {
+      items: result.items,
+      meta: {
+        total: result.total,
+        pageSize: query.take,
+        hasMore: result.hasMore,
+        nextBefore: result.hasMore && result.nextBefore ? result.nextBefore.toISOString() : null,
+      },
+    };
+  },
+
+  async resolveAttendanceObservation(kindValue: string, id: string, input: ResolveAttendanceObservationInput, user: Express.AuthUser, audit?: AuditContext) {
+    const kind = kindValue.toUpperCase();
+    if (kind !== "SHIFT" && kind !== "PUNCH") throw new AppError("Tipo de observación inválido", 400, "ATTENDANCE_REVIEW_KIND_INVALID");
+    const before = await timeEntriesRepository.findAttendanceObservation(kind, id, employeeAccessWhere(user));
+    if (!before) throw new AppError("Observación no encontrada", 404, "ATTENDANCE_REVIEW_NOT_FOUND");
+    if (before.reviewStatus !== "PENDIENTE") throw new AppError("La observación ya fue resuelta", 400, "ATTENDANCE_REVIEW_ALREADY_RESOLVED");
+    const item = await timeEntriesRepository.resolveAttendanceObservation(kind, id, input.resolution, input.reason, user.id);
+    await auditService.register({
+      ...audit,
+      action: "UPDATE",
+      entity: kind === "SHIFT" ? "WorkShift" : "AttendancePunch",
+      entityId: id,
+      description: `${input.resolution === "RESUELTA" ? "Se resolvió" : "Se descartó"} un problema de fichada. Motivo: ${input.reason}`,
+      before: before as Prisma.InputJsonValue,
+      after: item as Prisma.InputJsonValue,
+    });
+    return item;
   },
 
   async homeSummary(user: Express.AuthUser) {
@@ -676,6 +721,7 @@ export const timeEntriesService = {
       segments: calculation.segments,
       observation: `Cierre manual: ${input.reason}`,
     });
+    await evaluateShiftExit(before.employeeId, created.workShift.id, input.endAt);
 
     await auditService.register({
       ...audit,
@@ -1027,6 +1073,7 @@ export const timeEntriesService = {
             after: { workShiftId: workShift.id, employeeId: employee.id, source: "PUBLIC_CLOCK_PHOTO" } as Prisma.InputJsonValue,
           });
           if (workShift.startPunchId) scheduleClockThumbnail(input, deferredThumbnail, evidence, workShift.startPunchId);
+          await evaluateShiftEntry(employee.id, workShift.id, now);
           return {
             employee: publicEmployeeLabel(employee),
             previousOpenShift: {
@@ -1070,6 +1117,7 @@ export const timeEntriesService = {
         after: { workShiftId: workShift.id, employeeId: employee.id, source: "PUBLIC_CLOCK_PHOTO" } as Prisma.InputJsonValue,
       });
       if (workShift.startPunchId) scheduleClockThumbnail(input, deferredThumbnail, evidence, workShift.startPunchId);
+      await evaluateShiftEntry(employee.id, workShift.id, now);
       console.info("CLOCK_PHOTO_PUNCH_PHASE_TIMING", {
         requestId: input.requestId,
         punchType: input.punchType,
@@ -1121,6 +1169,7 @@ export const timeEntriesService = {
         after: { workShiftId: created.workShift.id, employeeId: employee.id, source: "PUBLIC_CLOCK_PHOTO" } as Prisma.InputJsonValue,
       });
       if (created.workShift.endPunchId) scheduleClockThumbnail(input, deferredThumbnail, evidence, created.workShift.endPunchId);
+      await evaluateShiftExit(employee.id, created.workShift.id, now);
       console.info("CLOCK_PHOTO_PUNCH_PHASE_TIMING", {
         requestId: input.requestId,
         punchType: input.punchType,
@@ -1178,6 +1227,7 @@ export const timeEntriesService = {
           startAt: now,
           missingOutObservation: "Olvido de salida marcado automaticamente al registrar un nuevo ingreso desde el fichador.",
         });
+        await evaluateShiftEntry(employee.id, workShift.id, now);
         return {
           employee: publicEmployeeLabel(employee),
           previousOpenShift: {
@@ -1205,6 +1255,7 @@ export const timeEntriesService = {
       source: "PORTAL_DNI",
       startAt: now,
     });
+    await evaluateShiftEntry(employee.id, workShift.id, now);
     return {
       employee: publicEmployeeLabel(employee),
       workShift: {
@@ -1228,6 +1279,7 @@ export const timeEntriesService = {
           startAt: now,
           missingOutObservation: "Olvido de salida marcado automaticamente al registrar un nuevo ingreso desde el fichador.",
         });
+        await evaluateShiftEntry(employee.id, workShift.id, now);
         return {
           employee: publicEmployeeLabel(employee),
           previousOpenShift: {
@@ -1255,6 +1307,7 @@ export const timeEntriesService = {
       source: "PORTAL_DNI",
       startAt: now,
     });
+    await evaluateShiftEntry(employee.id, workShift.id, now);
     return {
       employee: publicEmployeeLabel(employee),
       workShift: {
@@ -1295,6 +1348,7 @@ export const timeEntriesService = {
         totalMinutes: calculation.totalMinutes,
         segments: calculation.segments,
       });
+      await evaluateShiftExit(employee.id, created.workShift.id, endAt);
       return {
         employee: publicEmployeeLabel(employee),
         workShift: {
@@ -1354,6 +1408,7 @@ export const timeEntriesService = {
         totalMinutes: calculation.totalMinutes,
         segments: calculation.segments,
       });
+      await evaluateShiftExit(employee.id, created.workShift.id, endAt);
       return {
         employee: publicEmployeeLabel(employee),
         workShift: {
@@ -1386,8 +1441,20 @@ export const timeEntriesService = {
     const before = await timeEntriesRepository.findById(id, employeeAccessWhere(user));
     if (!before) throw new AppError("Time entry not found", 404, "TIME_ENTRY_NOT_FOUND");
     if (before.status === "CERRADO") assertEditable(before.status);
-    if (before.status === "APROBADO") {
-      assertCanReview(user);
+    const monthlyClosure = await prisma.monthlyTimeClosure.findUnique({
+      where: { employeeId_period: { employeeId: before.employeeId, period: before.period } },
+      select: { status: true },
+    });
+    const requiresCorrectionRequest = monthlyClosure
+      && ["ENVIADO", "APROBADO", "CORRECCION_PENDIENTE"].includes(monthlyClosure.status);
+    if (requiresCorrectionRequest && user.role !== roles.rrhh) {
+      throw new AppError(
+        "El período ya fue enviado a cierre. Solicitá la corrección para que RH la revise.",
+        409,
+        "PERIOD_CLOSED_REQUIRES_CORRECTION",
+      );
+    }
+    if (before.status === "APROBADO" || requiresCorrectionRequest) {
       if (!input.correctionReason) {
         throw new AppError("Indicá el motivo de la corrección de la hora registrada.", 400, "TIME_ENTRY_CORRECTION_REASON_REQUIRED");
       }

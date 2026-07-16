@@ -83,6 +83,9 @@ function averageBrightness(video: HTMLVideoElement) {
 }
 
 function captureCompressedPhoto(video: HTMLVideoElement, maxWidth = 800, quality = 0.82) {
+  if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || video.videoWidth < 320 || video.videoHeight < 240) {
+    throw new Error("La cámara todavía no entregó una imagen completa.");
+  }
   const ratio = video.videoWidth > maxWidth ? maxWidth / video.videoWidth : 1;
   const canvas = document.createElement("canvas");
   canvas.width = Math.round(video.videoWidth * ratio);
@@ -91,6 +94,11 @@ function captureCompressedPhoto(video: HTMLVideoElement, maxWidth = 800, quality
   if (!context) throw new Error("No se pudo capturar la imagen.");
   context.drawImage(video, 0, 0, canvas.width, canvas.height);
   return canvas.toDataURL("image/jpeg", quality);
+}
+
+function encodedImageBytes(dataUrl: string) {
+  const payload = dataUrl.split(",", 2)[1] || "";
+  return Math.floor(payload.length * 0.75);
 }
 
 export function FaceDetectionStatus({ state }: { state: FaceState }) {
@@ -198,12 +206,28 @@ export function FaceCaptureModal({ punchType, onCancel, onConfirm, submitting = 
       return;
     }
 
+    // La imagen debe copiarse mientras el stream sigue activo. Detener la pista
+    // antes de drawImage puede producir un JPEG vacío o casi vacío en algunos navegadores.
+    let photo: string;
+    let thumbnail: string;
+    try {
+      photo = captureCompressedPhoto(video, 800, 0.84);
+      thumbnail = captureCompressedPhoto(video, 240, 0.76);
+    } catch {
+      setState({ status: "CAMERA_ERROR", message: "La cámara no entregó una foto completa. Esperá un instante e intentá nuevamente.", valid: false });
+      return;
+    }
+    if (encodedImageBytes(photo) < 5_000 || encodedImageBytes(thumbnail) < 500) {
+      setState({ status: "CAMERA_ERROR", message: "La foto no se capturó correctamente. Mantené el rostro visible e intentá nuevamente.", valid: false });
+      return;
+    }
+
     submitGuardRef.current = true;
     streamRef.current?.getTracks().forEach((track) => track.stop());
     detectorRef.current?.close();
     onConfirm({
-      photo: captureCompressedPhoto(video, 800, 0.82),
-      thumbnail: captureCompressedPhoto(video, 180, 0.74),
+      photo,
+      thumbnail,
       faceValidationStatus: "VALID",
       faceDetectionScore: state.score,
       device: {

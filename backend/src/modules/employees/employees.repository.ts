@@ -628,7 +628,7 @@ export const employeesRepository = {
 
   async findTimeGrid(id: string, query: EmployeeTimeGridQuery, accessWhere: Prisma.EmployeeWhereInput) {
     const { start, end } = periodRange(query.period);
-    const [employee, entries, novelties, catalogs] = await Promise.all([
+    const [employee, entries, novelties, catalogs, observedShifts, observedPunches] = await Promise.all([
       prisma.employee.findFirst({
         where: { AND: [{ id }, accessWhere] },
         select: query.includeDetails ? timeGridEmployeeSelect : timeGridCoreEmployeeSelect,
@@ -651,6 +651,24 @@ export const employeesRepository = {
           })
         : Promise.resolve([]),
       query.includeDetails ? getTimeGridCatalogs() : Promise.resolve(null),
+      prisma.workShift.count({
+        where: {
+          employeeId: id,
+          startAt: { gte: start, lt: end },
+          status: { in: ["FALTA_SALIDA", "FALTA_INGRESO", "OBSERVADO", "INVALIDO"] },
+          reviewStatus: "PENDIENTE",
+        },
+      }),
+      prisma.attendancePunch.count({
+        where: {
+          employeeId: id,
+          timestamp: { gte: start, lt: end },
+          status: { in: ["OBSERVADA", "RECHAZADA"] },
+          reviewStatus: "PENDIENTE",
+          startWorkShifts: { none: {} },
+          endWorkShifts: { none: {} },
+        },
+      }),
     ]);
     if (!employee) return null;
 
@@ -660,6 +678,7 @@ export const employeesRepository = {
       novelties,
       noveltyTypes: catalogs?.noveltyTypes ?? [],
       hourConcepts: catalogs?.hourConcepts ?? [],
+      attendanceIssues: observedShifts + observedPunches,
     };
   },
 

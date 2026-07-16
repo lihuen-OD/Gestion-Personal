@@ -8,6 +8,8 @@ import { validateQuery } from "../../shared/validation/validateQuery";
 import { timeEntriesController } from "./timeEntries.controller";
 import {
   attendanceSummaryQuerySchema,
+  attendanceObservationsQuerySchema,
+  resolveAttendanceObservationSchema,
   adminCloseWorkShiftSchema,
   adminWorkShiftReasonSchema,
   createTimeEntrySchema,
@@ -43,6 +45,8 @@ const operationalRoles = [roles.rrhh, roles.supervision, roles.cargaHoraria];
 
 timeEntriesRouter.get("/home-summary", requireAnyRole(operationalRoles), asyncHandler(timeEntriesController.homeSummary));
 timeEntriesRouter.get("/attendance", requireAnyRole(operationalRoles), validateQuery(attendanceSummaryQuerySchema), asyncHandler(timeEntriesController.attendanceSummary));
+timeEntriesRouter.get("/attendance/observations", requireAnyRole(operationalRoles), validateQuery(attendanceObservationsQuerySchema), asyncHandler(timeEntriesController.attendanceObservations));
+timeEntriesRouter.post("/attendance/observations/:kind/:id/resolve", requireAnyRole([roles.rrhh, roles.supervision]), validateBody(resolveAttendanceObservationSchema), asyncHandler(timeEntriesController.resolveAttendanceObservation));
 timeEntriesRouter.get("/attendance/punches/:id/photo", requireAnyRole(operationalRoles), asyncHandler(timeEntriesController.attendancePunchPhoto));
 timeEntriesRouter.get("/", requireAnyRole(operationalRoles), validateQuery(listTimeEntriesQuerySchema), asyncHandler(timeEntriesController.list));
 timeEntriesRouter.get("/summary", requireAnyRole(operationalRoles), validateQuery(timeEntriesSummaryQuerySchema), asyncHandler(timeEntriesController.summary));

@@ -345,12 +345,16 @@ export const timeEntriesRepository = {
           startAt: { lt: input.endAt },
           OR: [{ endAt: null }, { endAt: { gte: input.startAt } }],
           status: { in: [WorkShiftStatus.OBSERVADO, WorkShiftStatus.FALTA_SALIDA, WorkShiftStatus.FALTA_INGRESO, WorkShiftStatus.INVALIDO] },
+          reviewStatus: "PENDIENTE",
         },
       }),
       prisma.attendancePunch.count({
         where: {
           employee: input.employeeAccessWhere,
           status: "OBSERVADA",
+          reviewStatus: "PENDIENTE",
+          startWorkShifts: { none: {} },
+          endWorkShifts: { none: {} },
           timestamp: { gte: input.startAt, lt: input.endAt },
         },
       }),
@@ -484,6 +488,7 @@ export const timeEntriesRepository = {
             totalMinutes: true,
             crossesMidnight: true,
             observation: true,
+            reviewStatus: true,
             employee: { select: employeeSelect },
             startPunch: {
               select: {
@@ -551,6 +556,9 @@ export const timeEntriesRepository = {
           where: {
             employee: input.employeeAccessWhere,
             status: "OBSERVADA",
+            reviewStatus: "PENDIENTE",
+            startWorkShifts: { none: {} },
+            endWorkShifts: { none: {} },
             timestamp: { gte: input.startAt, lt: input.endAt },
           },
           select: {
@@ -576,6 +584,105 @@ export const timeEntriesRepository = {
 
       return { workShifts, observedPunches };
     });
+  },
+
+  async attendanceObservations(input: {
+    startAt?: Date;
+    endAt?: Date;
+    before?: Date;
+    search?: string;
+    type: "ALL" | "SHIFT" | "PUNCH";
+    reviewStatus: "PENDIENTE" | "RESUELTA" | "DESCARTADA" | "ALL";
+    take: number;
+    employeeAccessWhere: Prisma.EmployeeWhereInput;
+  }) {
+    const employeeWhere: Prisma.EmployeeWhereInput = {
+      AND: [
+        input.employeeAccessWhere,
+        ...(input.search ? [{ OR: [
+          { firstName: { contains: input.search, mode: "insensitive" as const } },
+          { lastName: { contains: input.search, mode: "insensitive" as const } },
+          { legajo: { contains: input.search, mode: "insensitive" as const } },
+          { dni: { contains: input.search, mode: "insensitive" as const } },
+          { sector: { name: { contains: input.search, mode: "insensitive" as const } } },
+        ] }] : []),
+      ],
+    };
+    const reviewWhere = input.reviewStatus === "ALL" ? {} : { reviewStatus: input.reviewStatus };
+    const employeeSelect = {
+      id: true, legajo: true, dni: true, firstName: true, lastName: true, status: true,
+      sector: { select: { id: true, name: true, code: true } },
+      position: { select: { id: true, name: true, code: true } },
+    } satisfies Prisma.EmployeeSelect;
+    const shiftTotalWhere: Prisma.WorkShiftWhereInput = {
+      employee: employeeWhere,
+      status: { in: ["OBSERVADO", "FALTA_SALIDA", "FALTA_INGRESO", "INVALIDO"] },
+      ...reviewWhere,
+      ...(input.startAt && input.endAt ? { startAt: { gte: input.startAt, lt: input.endAt } } : {}),
+    };
+    const shiftWhere: Prisma.WorkShiftWhereInput = {
+      ...shiftTotalWhere,
+      ...(input.before ? { startAt: { ...(input.startAt ? { gte: input.startAt } : {}), lt: input.before } } : {}),
+    };
+    const punchTotalWhere: Prisma.AttendancePunchWhereInput = {
+      employee: employeeWhere,
+      status: { in: ["OBSERVADA", "RECHAZADA"] },
+      startWorkShifts: { none: {} },
+      endWorkShifts: { none: {} },
+      ...reviewWhere,
+      ...(input.startAt && input.endAt ? { timestamp: { gte: input.startAt, lt: input.endAt } } : {}),
+    };
+    const punchWhere: Prisma.AttendancePunchWhereInput = {
+      ...punchTotalWhere,
+      ...(input.before ? { timestamp: { ...(input.startAt ? { gte: input.startAt } : {}), lt: input.before } } : {}),
+    };
+    const includeShifts = input.type !== "PUNCH";
+    const includePunches = input.type !== "SHIFT";
+    const [shifts, punches, shiftTotal, punchTotal] = await prisma.$transaction([
+      includeShifts ? prisma.workShift.findMany({
+        where: shiftWhere,
+        include: {
+          employee: { select: employeeSelect },
+          startPunch: true,
+          endPunch: true,
+          timeSegments: { orderBy: { fromDateTime: "asc" } },
+          timeEntries: { include: { hourConcept: true }, orderBy: { date: "asc" } },
+        },
+        orderBy: [{ startAt: "desc" }, { id: "desc" }],
+        take: input.take + 1,
+      }) : prisma.workShift.findMany({ where: { id: "__none__" } }),
+      includePunches ? prisma.attendancePunch.findMany({
+        where: punchWhere,
+        include: { employee: { select: employeeSelect } },
+        orderBy: [{ timestamp: "desc" }, { id: "desc" }],
+        take: input.take + 1,
+      }) : prisma.attendancePunch.findMany({ where: { id: "__none__" } }),
+      prisma.workShift.count({ where: includeShifts ? shiftTotalWhere : { id: "__none__" } }),
+      prisma.attendancePunch.count({ where: includePunches ? punchTotalWhere : { id: "__none__" } }),
+    ]);
+    const items = [
+      ...shifts.map((shift) => ({ kind: "SHIFT" as const, occurredAt: shift.startAt, shift })),
+      ...punches.map((punch) => ({ kind: "PUNCH" as const, occurredAt: punch.timestamp, punch })),
+    ].sort((left, right) => right.occurredAt.getTime() - left.occurredAt.getTime()).slice(0, input.take);
+    return {
+      items,
+      total: shiftTotal + punchTotal,
+      hasMore: shifts.length + punches.length > items.length,
+      nextBefore: items.length ? items[items.length - 1]!.occurredAt : null,
+    };
+  },
+
+  resolveAttendanceObservation(kind: "SHIFT" | "PUNCH", id: string, resolution: "RESUELTA" | "DESCARTADA", reason: string, userId: string) {
+    const data = { reviewStatus: resolution, reviewNote: reason, reviewedAt: new Date(), reviewedByUserId: userId };
+    return kind === "SHIFT"
+      ? prisma.workShift.update({ where: { id }, data })
+      : prisma.attendancePunch.update({ where: { id }, data });
+  },
+
+  findAttendanceObservation(kind: "SHIFT" | "PUNCH", id: string, employeeAccessWhere: Prisma.EmployeeWhereInput) {
+    return kind === "SHIFT"
+      ? prisma.workShift.findFirst({ where: { id, employee: employeeAccessWhere } })
+      : prisma.attendancePunch.findFirst({ where: { id, employee: employeeAccessWhere } });
   },
 
   findWorkShiftForAdmin(id: string, employeeAccessWhere: Prisma.EmployeeWhereInput) {
@@ -1058,7 +1165,26 @@ export const timeEntriesRepository = {
 
       const entries = [];
       const timeSegments = [];
+      const doubleHourRules = await tx.doubleHourRule.findMany({
+        where: {
+          status: "ACTIVO",
+          fromDate: { lte: input.endAt },
+          OR: [{ toDate: null }, { toDate: { gte: input.segments[0]?.date } }],
+          employees: { some: { employeeId: input.employeeId } },
+        },
+      });
       for (const segment of input.segments) {
+        const segmentDay = segment.date.getUTCDay();
+        const segmentKey = segment.date.toISOString().slice(0, 10);
+        const doubleRule = doubleHourRules.find((rule) => {
+          const fromKey = rule.fromDate.toISOString().slice(0, 10);
+          const toKey = rule.toDate?.toISOString().slice(0, 10);
+          if (rule.recurrenceType === "FECHA") return segmentKey === fromKey;
+          if (rule.recurrenceType === "RANGO") return segmentKey >= fromKey && (!toKey || segmentKey <= toKey);
+          return segmentKey >= fromKey && (!toKey || segmentKey <= toKey) && rule.weekdays.includes(segmentDay);
+        });
+        const multiplier = doubleRule ? Number(doubleRule.multiplier) : 1;
+        const creditedMinutes = Math.round(segment.minutes * multiplier);
         const timeSegment = await tx.timeSegment.create({
           data: {
             workShiftId: workShift.id,
@@ -1089,7 +1215,8 @@ export const timeEntriesRepository = {
         }
 
         if (existing) {
-          const nextMinutes = existing.totalMinutes + segment.minutes;
+          const nextActualMinutes = (existing.actualMinutes ?? existing.totalMinutes) + segment.minutes;
+          const nextMinutes = existing.totalMinutes + creditedMinutes;
           const currentObservation = existing.observation ? `${existing.observation}\n` : "";
           entries.push(await tx.timeEntry.update({
             where: { id: existing.id },
@@ -1098,6 +1225,8 @@ export const timeEntriesRepository = {
               timeSegmentId: timeSegment.id,
               hours: nextMinutes / 60,
               totalMinutes: nextMinutes,
+              actualMinutes: nextActualMinutes,
+              appliedMultiplier: multiplier,
               source: input.source,
               segmentStartAt: segment.startAt,
               segmentEndAt: segment.endAt,
@@ -1115,8 +1244,10 @@ export const timeEntriesRepository = {
               date: segment.date,
               period: periodFromDate(segment.date),
               day: dayFromDate(segment.date),
-              hours: segment.hours,
-              totalMinutes: segment.minutes,
+              hours: creditedMinutes / 60,
+              totalMinutes: creditedMinutes,
+              actualMinutes: segment.minutes,
+              appliedMultiplier: multiplier,
               status: "BORRADOR",
               segmentStartAt: segment.startAt,
               segmentEndAt: segment.endAt,
@@ -1188,7 +1319,26 @@ export const timeEntriesRepository = {
 
       const entries = [];
       const timeSegments = [];
+      const doubleHourRules = await tx.doubleHourRule.findMany({
+        where: {
+          status: "ACTIVO",
+          fromDate: { lte: input.endAt },
+          OR: [{ toDate: null }, { toDate: { gte: input.segments[0]?.date } }],
+          employees: { some: { employeeId: input.employeeId } },
+        },
+      });
       for (const segment of input.segments) {
+        const segmentDay = segment.date.getUTCDay();
+        const segmentKey = segment.date.toISOString().slice(0, 10);
+        const doubleRule = doubleHourRules.find((rule) => {
+          const fromKey = rule.fromDate.toISOString().slice(0, 10);
+          const toKey = rule.toDate?.toISOString().slice(0, 10);
+          if (rule.recurrenceType === "FECHA") return segmentKey === fromKey;
+          if (rule.recurrenceType === "RANGO") return segmentKey >= fromKey && (!toKey || segmentKey <= toKey);
+          return segmentKey >= fromKey && (!toKey || segmentKey <= toKey) && rule.weekdays.includes(segmentDay);
+        });
+        const multiplier = doubleRule ? Number(doubleRule.multiplier) : 1;
+        const creditedMinutes = Math.round(segment.minutes * multiplier);
         const timeSegment = await tx.timeSegment.create({
           data: {
             workShiftId: workShift.id,
@@ -1218,7 +1368,8 @@ export const timeEntriesRepository = {
         }
 
         if (existing) {
-          const nextMinutes = existing.totalMinutes + segment.minutes;
+          const nextActualMinutes = (existing.actualMinutes ?? existing.totalMinutes) + segment.minutes;
+          const nextMinutes = existing.totalMinutes + creditedMinutes;
           const currentObservation = existing.observation ? `${existing.observation}\n` : "";
           entries.push(await tx.timeEntry.update({
             where: { id: existing.id },
@@ -1227,10 +1378,12 @@ export const timeEntriesRepository = {
               timeSegmentId: timeSegment.id,
               hours: nextMinutes / 60,
               totalMinutes: nextMinutes,
+              actualMinutes: nextActualMinutes,
+              appliedMultiplier: multiplier,
               source: input.source,
               segmentStartAt: segment.startAt,
               segmentEndAt: segment.endAt,
-              observation: `${currentObservation}Fichada ${workShift.id}: generado por ingreso/salida.`,
+              observation: `${currentObservation}Fichada ${workShift.id}: generado por ingreso/salida.${doubleRule ? ` Regla ${doubleRule.name}: ${segment.minutes} min reales computados x${multiplier}.` : ""}`,
               status: "APROBADO",
             },
             include: timeEntryInclude,
@@ -1245,13 +1398,15 @@ export const timeEntriesRepository = {
               date: segment.date,
               period: periodFromDate(segment.date),
               day: dayFromDate(segment.date),
-              hours: segment.hours,
-              totalMinutes: segment.minutes,
+              hours: creditedMinutes / 60,
+              totalMinutes: creditedMinutes,
+              actualMinutes: segment.minutes,
+              appliedMultiplier: multiplier,
               status: "APROBADO",
               segmentStartAt: segment.startAt,
               segmentEndAt: segment.endAt,
               source: input.source,
-              observation: "Generado por fichada de ingreso/salida.",
+              observation: `Generado por fichada de ingreso/salida.${doubleRule ? ` Regla ${doubleRule.name}: ${segment.minutes} min reales computados x${multiplier}.` : ""}`,
             },
             include: timeEntryInclude,
           }));

@@ -116,6 +116,7 @@ type ApiTimeGridResponse = {
     novelties: Parameters<typeof mapNoveltyFromApi>[0][];
     noveltyTypes: Parameters<typeof mapNoveltyTypeFromApi>[0][];
     hourConcepts: Parameters<typeof mapHourConceptFromApi>[0][];
+    attendanceIssues: number;
   };
 };
 
@@ -125,6 +126,7 @@ export type EmployeeTimeGrid = {
   novelties: Novelty[];
   noveltyTypes: NoveltyType[];
   hourConcepts: HourConcept[];
+  attendanceIssues: number;
 };
 
 export type EmployeeListFilters = {
@@ -588,6 +590,7 @@ export const employeeApiService = {
       novelties: response.data.novelties.map(mapNoveltyFromApi),
       noveltyTypes: response.data.noveltyTypes.map(mapNoveltyTypeFromApi),
       hourConcepts: response.data.hourConcepts.map(mapHourConceptFromApi),
+      attendanceIssues: response.data.attendanceIssues || 0,
     };
   },
   async getPositionValidation(id: string) {

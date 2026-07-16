@@ -597,7 +597,6 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
                 <th>Normales</th>
                 <th>Especiales</th>
                 <th>Total</th>
-                <th>Situación</th>
                 <th>Acción</th>
               </tr>
             </thead>
@@ -633,11 +632,6 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
                     <td>{periodSummary.normal} h</td>
                     <td>{periodSummary.special} h</td>
                     <td>{periodSummary.total} h</td>
-                    <td>
-                      <Badge tone={periodSummary.incidents > 0 ? "warning" : "success"}>
-                        {periodSummary.incidents > 0 ? `${periodSummary.incidents} para revisar` : "Registradas"}
-                      </Badge>
-                    </td>
                     <td>
                       <Link
                         className="table-link table-icon-action"

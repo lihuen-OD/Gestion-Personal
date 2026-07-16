@@ -92,6 +92,12 @@ enum AttendancePunchStatus {
   RECHAZADA
 }
 
+enum AttendanceReviewStatus {
+  PENDIENTE
+  RESUELTA
+  DESCARTADA
+}
+
 enum FaceValidationStatus {
   VALID
   NO_FACE
@@ -178,6 +184,43 @@ enum AuditAction {
   EXPORT
 }
 
+enum MonthlyClosureStatus {
+  ABIERTO
+  ENVIADO
+  APROBADO
+  DEVUELTO
+  CORRECCION_PENDIENTE
+}
+
+enum CorrectionRequestStatus {
+  PENDIENTE
+  APROBADA
+  RECHAZADA
+}
+
+enum NotificationStatus {
+  NO_LEIDA
+  LEIDA
+}
+
+enum ShiftAlertType {
+  INGRESO_TARDE
+  SALIDA_ANTICIPADA
+  SALIDA_TARDIA
+  TURNO_NO_IDENTIFICADO
+}
+
+enum ShiftAlertStatus {
+  PENDIENTE
+  RESUELTA
+}
+
+enum RecurrenceType {
+  FECHA
+  RANGO
+  SEMANAL
+}
+
 model User {
   id           String       @id @default(uuid())
   name         String
@@ -205,6 +248,11 @@ model User {
   storageFilesUploaded StorageFile[]          @relation("StorageFileUploadedBy")
   storageFilesDeleted  StorageFile[]          @relation("StorageFileDeletedBy")
   auditLogs           AuditLog[]
+  notifications       SystemNotification[] @relation("NotificationRecipient")
+  closuresSubmitted   MonthlyTimeClosure[] @relation("ClosureSubmittedBy")
+  closuresReviewed    MonthlyTimeClosure[] @relation("ClosureReviewedBy")
+  correctionsCreated  TimeCorrectionRequest[] @relation("CorrectionCreatedBy")
+  correctionsReviewed TimeCorrectionRequest[] @relation("CorrectionReviewedBy")
 
   @@index([role])
   @@index([status])
@@ -577,6 +625,10 @@ model Employee {
   timeSegments      TimeSegment[]
   documents         EmployeeDocument[]
   storageFiles      StorageFile[]
+  monthlyClosures   MonthlyTimeClosure[]
+  correctionRequests TimeCorrectionRequest[]
+  shiftAlerts       ShiftAlert[]
+  doubleHourAssignments DoubleHourRuleEmployee[]
   userAccount       User?                  @relation("EmployeeUserAccount")
 
   @@index([lastName, firstName])
@@ -833,6 +885,8 @@ model TimeEntry {
   day              Int
   hours            Decimal          @db.Decimal(8, 2)
   totalMinutes     Int
+  actualMinutes    Int?
+  appliedMultiplier Decimal        @default(1) @db.Decimal(4, 2)
   segmentStartAt   DateTime?
   segmentEndAt     DateTime?
   source           WorkShiftSource?
@@ -850,6 +904,7 @@ model TimeEntry {
   workShift   WorkShift?   @relation(fields: [workShiftId], references: [id], onDelete: SetNull)
   timeSegment TimeSegment? @relation(fields: [timeSegmentId], references: [id], onDelete: SetNull)
   createdBy   User?        @relation("TimeEntryCreatedBy", fields: [createdByUserId], references: [id])
+  correctionRequests TimeCorrectionRequest[]
 
   @@index([employeeId, period])
   @@index([employeeId, hourConceptId, date])
@@ -879,6 +934,11 @@ model WorkShift {
   crossesMidnight   Boolean         @default(false)
   maxAllowedMinutes Int             @default(1200)
   observation       String?
+  reviewStatus      AttendanceReviewStatus @default(PENDIENTE)
+  reviewedAt        DateTime?
+  reviewedByUserId  String?
+  reviewNote        String?
+  shiftTemplateId   String?
   createdByUserId   String?
   createdAt         DateTime        @default(now())
   closedAt          DateTime?
@@ -890,6 +950,8 @@ model WorkShift {
   endPunch     AttendancePunch? @relation("WorkShiftEndPunch", fields: [endPunchId], references: [id], onDelete: SetNull)
   timeEntries  TimeEntry[]
   timeSegments TimeSegment[]
+  shiftTemplate ShiftTemplate? @relation(fields: [shiftTemplateId], references: [id], onDelete: SetNull)
+  shiftAlerts ShiftAlert[]
 
   @@index([employeeId, startAt])
   @@index([hourConceptId])
@@ -899,7 +961,132 @@ model WorkShift {
   @@index([startPunchId])
   @@index([endPunchId])
   @@index([status])
+  @@index([reviewStatus, startAt])
   @@index([source])
+  @@index([shiftTemplateId])
+}
+
+model MonthlyTimeClosure {
+  id String @id @default(uuid())
+  employeeId String
+  period String
+  status MonthlyClosureStatus @default(ABIERTO)
+  snapshot Json?
+  submittedByUserId String?
+  submittedAt DateTime?
+  reviewedByUserId String?
+  reviewedAt DateTime?
+  reviewNote String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  submittedBy User? @relation("ClosureSubmittedBy", fields: [submittedByUserId], references: [id])
+  reviewedBy User? @relation("ClosureReviewedBy", fields: [reviewedByUserId], references: [id])
+  corrections TimeCorrectionRequest[]
+  @@unique([employeeId, period])
+  @@index([period, status])
+}
+
+model TimeCorrectionRequest {
+  id String @id @default(uuid())
+  employeeId String
+  timeEntryId String
+  closureId String?
+  previousHours Decimal @db.Decimal(8, 2)
+  proposedHours Decimal @db.Decimal(8, 2)
+  reason String
+  status CorrectionRequestStatus @default(PENDIENTE)
+  createdByUserId String
+  reviewedByUserId String?
+  reviewedAt DateTime?
+  reviewNote String?
+  createdAt DateTime @default(now())
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  timeEntry TimeEntry @relation(fields: [timeEntryId], references: [id], onDelete: Cascade)
+  closure MonthlyTimeClosure? @relation(fields: [closureId], references: [id], onDelete: SetNull)
+  createdBy User @relation("CorrectionCreatedBy", fields: [createdByUserId], references: [id])
+  reviewedBy User? @relation("CorrectionReviewedBy", fields: [reviewedByUserId], references: [id])
+  @@index([status, createdAt])
+  @@index([employeeId, status])
+}
+
+model SystemNotification {
+  id String @id @default(uuid())
+  recipientUserId String
+  type String
+  priority String @default("NORMAL")
+  title String
+  message String
+  entityType String?
+  entityId String?
+  link String?
+  status NotificationStatus @default(NO_LEIDA)
+  readAt DateTime?
+  createdAt DateTime @default(now())
+  recipient User @relation("NotificationRecipient", fields: [recipientUserId], references: [id], onDelete: Cascade)
+  @@index([recipientUserId, status, createdAt])
+}
+
+model ShiftTemplate {
+  id String @id @default(uuid())
+  code String @unique
+  name String
+  startTime String
+  endTime String
+  crossesMidnight Boolean @default(false)
+  entryToleranceMinutes Int @default(10)
+  exitToleranceMinutes Int @default(20)
+  detectionWindowMinutes Int @default(180)
+  status RecordStatus @default(ACTIVO)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  workShifts WorkShift[]
+  @@index([status])
+}
+
+model ShiftAlert {
+  id String @id @default(uuid())
+  employeeId String
+  workShiftId String
+  type ShiftAlertType
+  status ShiftAlertStatus @default(PENDIENTE)
+  scheduledAt DateTime?
+  actualAt DateTime
+  differenceMinutes Int?
+  resolvedAt DateTime?
+  resolvedByUserId String?
+  resolutionNote String?
+  createdAt DateTime @default(now())
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  workShift WorkShift @relation(fields: [workShiftId], references: [id], onDelete: Cascade)
+  @@unique([workShiftId, type])
+  @@index([employeeId, status, createdAt])
+}
+
+model DoubleHourRule {
+  id String @id @default(uuid())
+  name String
+  recurrenceType RecurrenceType
+  fromDate DateTime
+  toDate DateTime?
+  weekdays Int[] @default([])
+  multiplier Decimal @default(2) @db.Decimal(4, 2)
+  status RecordStatus @default(ACTIVO)
+  reason String
+  createdByUserId String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  employees DoubleHourRuleEmployee[]
+  @@index([status, fromDate, toDate])
+}
+
+model DoubleHourRuleEmployee {
+  ruleId String
+  employeeId String
+  rule DoubleHourRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  @@id([ruleId, employeeId])
+  @@index([employeeId])
 }
 
 model AttendancePunch {
@@ -914,6 +1101,10 @@ model AttendancePunch {
   userAgent         String?
   status            AttendancePunchStatus @default(VALIDA)
   observation       String?
+  reviewStatus      AttendanceReviewStatus @default(PENDIENTE)
+  reviewedAt        DateTime?
+  reviewedByUserId  String?
+  reviewNote        String?
   photoUrl          String?
   photoStoragePath  String?
   photoFileId       String?
@@ -935,6 +1126,7 @@ model AttendancePunch {
 
   @@index([employeeId, timestamp])
   @@index([status, timestamp])
+  @@index([reviewStatus, timestamp])
   @@index([type, status])
   @@index([source])
   @@index([externalPunchId])

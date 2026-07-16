@@ -2,9 +2,10 @@ import type { RequestHandler } from "express";
 import { requestAuditContext } from "../../shared/audit/requestAuditContext";
 import { AppError } from "../../shared/errors/AppError";
 import { requireParam } from "../../shared/http/params";
-import type { AdminCloseWorkShiftInput, AdminWorkShiftReasonInput, AttendanceSummaryQuery, ClockByDniInput, ClockByEmployeeInput, ClockEmployeeSearchQuery, ClockPhotoPunchInput, CreateWorkShiftInput, ListTimeEntriesQuery, PreviewWorkShiftInput, TimeEntriesExportQuery, TimeEntriesPeriodEmployeesQuery, TimeEntriesSummaryQuery } from "./timeEntries.schemas";
+import type { AdminCloseWorkShiftInput, AdminWorkShiftReasonInput, AttendanceObservationsQuery, AttendanceSummaryQuery, ClockByDniInput, ClockByEmployeeInput, ClockEmployeeSearchQuery, ClockPhotoPunchInput, CreateWorkShiftInput, ListTimeEntriesQuery, PreviewWorkShiftInput, ResolveAttendanceObservationInput, TimeEntriesExportQuery, TimeEntriesPeriodEmployeesQuery, TimeEntriesSummaryQuery } from "./timeEntries.schemas";
 import { attendanceSummaryCache, clearTimeEntriesReadCaches, timeEntriesListCache, timeEntriesPeriodEmployeesCache, timeEntriesSummaryCache } from "./timeEntries.cache";
 import { timeEntriesExportToCsv, timeEntriesService } from "./timeEntries.service";
+import { clearEmployeeReadCaches } from "../employees/employees.controller";
 
 function userScopedCacheKey(req: Parameters<RequestHandler>[0]) {
   return `${req.user?.id || "anon"}:${req.user?.role || "none"}:${req.originalUrl}`;
@@ -29,6 +30,7 @@ export const timeEntriesController = {
   clockIn: (async (req, res) => {
     const result = await timeEntriesService.clockIn(req.body as ClockByDniInput);
     clearTimeEntriesReadCaches();
+    clearEmployeeReadCaches();
     res.status(201).json({ data: result });
   }) satisfies RequestHandler,
 
@@ -101,6 +103,18 @@ export const timeEntriesController = {
     if (cached) return res.json({ data: cached });
     const result = await timeEntriesService.attendanceSummary(req.query as unknown as AttendanceSummaryQuery, req.user!);
     attendanceSummaryCache.set(key, result);
+    res.json({ data: result });
+  }) satisfies RequestHandler,
+
+  attendanceObservations: (async (req, res) => {
+    const result = await timeEntriesService.attendanceObservations(req.query as unknown as AttendanceObservationsQuery, req.user!);
+    res.json({ data: result.items, meta: result.meta });
+  }) satisfies RequestHandler,
+
+  resolveAttendanceObservation: (async (req, res) => {
+    const result = await timeEntriesService.resolveAttendanceObservation(requireParam(req, "kind"), requireParam(req, "id"), req.body as ResolveAttendanceObservationInput, req.user!, requestAuditContext(req));
+    clearTimeEntriesReadCaches();
+    clearEmployeeReadCaches();
     res.json({ data: result });
   }) satisfies RequestHandler,
 

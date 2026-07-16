@@ -33,6 +33,7 @@ export const createNoveltySchema = z
 export const rejectNoveltySchema = z.object({
   reason: z.string().trim().min(2).max(600),
 });
+export const bulkApproveNoveltiesSchema = z.object({ ids: z.array(z.string().uuid()).min(1).max(250) });
 
 export type ListNoveltiesQuery = z.infer<typeof listNoveltiesQuerySchema>;
 export type CreateNoveltyInput = z.infer<typeof createNoveltySchema>;

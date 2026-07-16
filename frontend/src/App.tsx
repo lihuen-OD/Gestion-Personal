@@ -33,6 +33,9 @@ const AuditPage = lazy(() => import("./pages/AuditPage").then((module) => ({ def
 const SettingsPage = lazy(() => import("./pages/SettingsPage").then((module) => ({ default: module.SettingsPage })));
 const ReportsPage = lazy(() => import("./pages/ReportsPage").then((module) => ({ default: module.ReportsPage })));
 const TimeClockPage = lazy(() => import("./pages/TimeClockPage").then((module) => ({ default: module.TimeClockPage })));
+const MonthlyClosuresPage = lazy(() => import("./pages/MonthlyClosuresPage").then((module) => ({ default: module.MonthlyClosuresPage })));
+const NotificationsPage = lazy(() => import("./pages/NotificationsPage").then((module) => ({ default: module.NotificationsPage })));
+const WorkScheduleSettingsPage = lazy(() => import("./pages/WorkScheduleSettingsPage").then((module) => ({ default: module.WorkScheduleSettingsPage })));
 
 function PageLoader() {
   return <LoadingState text="Cargando módulo..." />;
@@ -75,6 +78,7 @@ export function App() {
           <Route path="/configuracion/tipos-novedades" element={<NoveltyTypesPage />} />
           <Route path="/configuracion/tipos-novedades/nuevo" element={<NoveltyTypeCreatePage />} />
           <Route path="/configuracion/tipos-novedades/:id" element={<NoveltyTypeDetailPage />} />
+          <Route path="/configuracion/turnos-horas-especiales" element={<WorkScheduleSettingsPage />} />
           <Route path="/horas" element={<HoursPage />} />
           <Route path="/horas/:id" element={<EmployeeHoursPage />} />
           <Route path="/asistencia" element={<AttendancePage />} />
@@ -86,6 +90,8 @@ export function App() {
           <Route path="/configuracion" element={<SettingsPage />} />
           <Route path="/reportes" element={<ReportsPage />} />
           <Route path="/pendientes" element={<HoursPage pendingOnly />} />
+          <Route path="/cierres" element={<MonthlyClosuresPage />} />
+          <Route path="/notificaciones" element={<NotificationsPage />} />
           <Route path="*" element={<Navigate to="/" />} />
         </Routes>
       </Suspense>
