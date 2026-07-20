@@ -10,6 +10,7 @@ import { currentMonthPeriod } from "../../utils/period";
 import { useAsyncAction } from "../../utils/useAsyncAction";
 import { Field, Select } from "../ui/FormControls";
 import { Modal } from "../ui/Modal";
+import { EmployeeRemoteSelector } from "../employees/EmployeeRemoteSelector";
 
 export function NoveltyModal({
   employees,
@@ -25,9 +26,7 @@ export function NoveltyModal({
   const defaultPeriod = currentMonthPeriod();
   const defaultDate = `${defaultPeriod}-01`;
 
-  const [employeeIds, setEmployeeIds] = useState<string[]>(
-    employees[0]?.id ? [employees[0].id] : [],
-  );
+  const [selectedEmployees, setSelectedEmployees] = useState<Employee[]>(employees);
   const [typeId, setTypeId] = useState("");
   const [from, setFrom] = useState(defaultDate);
   const [to, setTo] = useState(defaultDate);
@@ -60,7 +59,7 @@ export function NoveltyModal({
 
   const selectedType = activeTypes.find((item) => item.id === typeId);
   const activeLink = selectedType?.finnegansLinks.find((link) => link.status === "ACTIVO");
-  const selectedEmployees = employees.filter((employee) => employeeIds.includes(employee.id));
+  const employeeIds = selectedEmployees.map((employee) => employee.id);
   const targetHourOptions = Array.from(
     new Set(
       selectedEmployees.flatMap((employee) => [
@@ -92,13 +91,6 @@ export function NoveltyModal({
     }
     return days;
   };
-
-  const toggleEmployee = (id: string) =>
-    setEmployeeIds((current) =>
-      current.includes(id)
-        ? current.filter((item) => item !== id)
-        : [...current, id],
-    );
 
   const { isRunning: isSaving, run: save } = useAsyncAction(async () => {
     if (!selectedType) return;
@@ -168,18 +160,11 @@ export function NoveltyModal({
                 Podes cargar la misma novedad para una o varias personas. Se genera
                 un registro individual por legajo.
               </p>
-              <div className="check-grid">
-                {employees.map((employee) => (
-                  <label className="mini-check" key={employee.id}>
-                    <input
-                      type="checkbox"
-                      checked={employeeIds.includes(employee.id)}
-                      onChange={() => toggleEmployee(employee.id)}
-                    />
-                    {displayLegajo(employee)} · {fullName(employee)}
-                  </label>
-                ))}
-              </div>
+              {employees.length === 1 ? (
+                <div className="selected-people"><span>{displayLegajo(employees[0])} · {fullName(employees[0])}</span></div>
+              ) : (
+                <EmployeeRemoteSelector selected={selectedEmployees} multiple onChange={setSelectedEmployees} />
+              )}
             </div>
 
             {selectedType ? (

@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { CheckCheck, Plus, Search } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
-import { employeeApiService } from "../services/api/employeeApiService";
 import { noveltyApiService } from "../services/api/noveltyApiService";
 import type { Employee, Novelty } from "../types";
 import { NoveltyModal } from "../components/novelties/NoveltyModal";
@@ -22,10 +21,9 @@ export function NoveltiesPage() {
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebouncedValue(search);
-  const [employees, setEmployees] = useState<Employee[]>([]);
+  const employees: Employee[] = [];
   const [novelties, setNovelties] = useState<Novelty[]>([]);
   const [meta, setMeta] = useState({ total: 0, page: 1, pageSize, hasMore: false });
-  const [loadingEmployees, setLoadingEmployees] = useState(false);
   const [loadError, setLoadError] = useState("");
   const [bulkApproving, setBulkApproving] = useState(false);
   const pendingVisible = novelties.filter((item) => item.status === "Pendiente");
@@ -52,20 +50,9 @@ export function NoveltiesPage() {
     };
   }, [debouncedSearch, page, refresh, user]);
 
-  const openCreate = async () => {
+  const openCreate = () => {
     setLoadError("");
-    setLoadingEmployees(true);
-    try {
-      if (!employees.length) {
-        const result = await employeeApiService.getOptions({ take: 1000 });
-        setEmployees(result.items);
-      }
-      setOpen(true);
-    } catch (error) {
-      setLoadError("No se pudieron cargar los legajos para crear novedades.");
-    } finally {
-      setLoadingEmployees(false);
-    }
+    setOpen(true);
   };
 
   return (
@@ -75,8 +62,8 @@ export function NoveltiesPage() {
         title="Novedades"
         description="Registro centralizado de ausencias, licencias y novedades horarias."
         action={
-          <Button variant="primary" icon={Plus} onClick={openCreate} disabled={loadingEmployees}>
-            {loadingEmployees ? "Cargando..." : "Nueva novedad"}
+          <Button variant="primary" icon={Plus} onClick={openCreate}>
+            Nueva novedad
           </Button>
         }
       />

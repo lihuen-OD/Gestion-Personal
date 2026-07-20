@@ -10,7 +10,6 @@ import { Button } from "../components/ui/Button";
 import { Badge } from "../components/ui/Badge";
 import { Pagination } from "../components/ui/Pagination";
 import { documentApiService } from "../services/api/documentApiService";
-import { employeeApiService } from "../services/api/employeeApiService";
 import type { DocumentMock, Employee } from "../types";
 import { statusTone } from "../utils/status";
 import { useDebouncedValue } from "../utils/useDebouncedValue";
@@ -25,9 +24,8 @@ export function DocumentsPage() {
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebouncedValue(search);
   const [docs, setDocs] = useState<DocumentMock[]>([]);
-  const [employees, setEmployees] = useState<Employee[]>([]);
+  const employees: Employee[] = [];
   const [meta, setMeta] = useState({ total: 0, page: 1, pageSize, hasMore: false });
-  const [loadingEmployees, setLoadingEmployees] = useState(false);
   const [error, setError] = useState("");
   const [listStatus, setListStatus] = useState<"loading" | "success" | "error">("loading");
 
@@ -53,20 +51,9 @@ export function DocumentsPage() {
     };
   }, [debouncedSearch, page, refresh]);
 
-  const openUpload = async () => {
+  const openUpload = () => {
     setError("");
-    setLoadingEmployees(true);
-    try {
-      if (!employees.length) {
-        const result = await employeeApiService.getOptions({ take: 1000 });
-        setEmployees(result.items);
-      }
-      setOpen(true);
-    } catch (loadError) {
-      setError("No se pudieron cargar los legajos para subir documentación.");
-    } finally {
-      setLoadingEmployees(false);
-    }
+    setOpen(true);
   };
 
   const download = async (doc: DocumentMock) => {
@@ -85,8 +72,8 @@ export function DocumentsPage() {
         title="Documentacion"
         description="Seguimiento de documentacion laboral, certificados y vencimientos."
         action={
-          <Button variant="primary" icon={Plus} onClick={openUpload} disabled={loadingEmployees}>
-            {loadingEmployees ? "Cargando..." : "Agregar documento"}
+          <Button variant="primary" icon={Plus} onClick={openUpload}>
+            Agregar documento
           </Button>
         }
       />

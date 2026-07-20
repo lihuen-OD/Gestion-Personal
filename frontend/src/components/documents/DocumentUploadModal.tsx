@@ -9,6 +9,7 @@ import { useAsyncAction } from "../../utils/useAsyncAction";
 import { Field, Select } from "../ui/FormControls";
 import { Modal } from "../ui/Modal";
 import type { DocumentCategory } from "../../types/documentCategory.types";
+import { EmployeeRemoteSelector } from "../employees/EmployeeRemoteSelector";
 
 function fileToBase64(file: File) {
   return new Promise<string>((resolve, reject) => {
@@ -33,7 +34,7 @@ export function DocumentUploadModal({
   saved: (employee?: Employee, documents?: DocumentMock[]) => void;
 }) {
   const [categories, setCategories] = useState<DocumentCategory[]>([]);
-  const [employeeId, setEmployeeId] = useState(fixedEmployee?.id || employees[0]?.id || "");
+  const [selectedEmployees, setSelectedEmployees] = useState<Employee[]>(fixedEmployee ? [fixedEmployee] : employees.slice(0, 1));
   const [categoryId, setCategoryId] = useState(categories[0]?.id || "");
   const selectedCategory = categories.find((item) => item.id === categoryId);
   const [file, setFile] = useState<File | null>(null);
@@ -68,7 +69,7 @@ export function DocumentUploadModal({
   }, [categoryId, selectedCategory]);
 
   const { isRunning: isSaving, run: save } = useAsyncAction(async () => {
-    const employee = employees.find((item) => item.id === employeeId) || fixedEmployee;
+    const employee = fixedEmployee || selectedEmployees[0];
     if (!employee) return setError("Seleccioná un legajo para asociar el documento.");
     if (!selectedCategory) return setError("Seleccioná una categoría documental.");
     if (!file) return setError("Adjuntá un archivo para guardar el documento.");
@@ -105,13 +106,7 @@ export function DocumentUploadModal({
               {!fixedEmployee ? (
                 <label>
                   Legajo asociado
-                  <select value={employeeId} onChange={(event) => setEmployeeId(event.target.value)}>
-                    {employees.map((employee) => (
-                      <option key={employee.id} value={employee.id}>
-                        {displayLegajo(employee)} · {fullName(employee)}
-                      </option>
-                    ))}
-                  </select>
+                  <EmployeeRemoteSelector selected={selectedEmployees} onChange={setSelectedEmployees} />
                 </label>
               ) : null}
               <label>
