@@ -1,6 +1,5 @@
-import { useState } from "react";
+import { lazy, Suspense, useState } from "react";
 import { GeoAddressFields } from "../GeoAddressFields";
-import { LocationMapPicker } from "../LocationMapPicker";
 import { employeeApiService } from "../../services/api/employeeApiService";
 import { employeeHistoryApiService } from "../../services/api/employeeHistoryApiService";
 import { locationService } from "../../services/locationService";
@@ -10,7 +9,11 @@ import { Field, Select } from "../ui/FormControls";
 import { Modal } from "../ui/Modal";
 import { BlockHistoryTimeline } from "./FieldHistoryControls";
 import { PeopleMultiSearch } from "./PeopleMultiSearch";
-import { useHourOptions, userRoleOptions } from "./employeeOptions";
+import { useHourOptions, userRoleOptions } from "./options/roleHourOptions";
+
+const LocationMapPicker = lazy(() =>
+  import("../LocationMapPicker").then((module) => ({ default: module.LocationMapPicker })),
+);
 
 type EmployeeBlockProps = {
   employee: Employee;
@@ -87,23 +90,25 @@ function AddressMapCard({
     ? locationService.getLocalityCenter(employee.domicilio.localidadId)
     : undefined;
   return (
-    <LocationMapPicker
-      provinceName={employee.domicilio.provinciaNombre}
-      departmentName={employee.domicilio.departamentoNombre}
-      localityName={employee.domicilio.localidadNombre}
-      addressStreet={employee.domicilio.calle}
-      addressNumber={employee.domicilio.numero}
-      initialCenter={localityCenter ? { ...localityCenter.center, zoom: localityCenter.zoom } : undefined}
-      value={employee.domicilio.ubicacionMapa}
-      readOnly={readOnly}
-      onChange={(ubicacionMapa) =>
-        onChange({
-          ...employee,
-          domicilio: { ...employee.domicilio, ubicacionMapa },
-          locationMap: ubicacionMapa,
-        })
-      }
-    />
+    <Suspense fallback={<div className="location-map-card">Cargando mapa...</div>}>
+      <LocationMapPicker
+        provinceName={employee.domicilio.provinciaNombre}
+        departmentName={employee.domicilio.departamentoNombre}
+        localityName={employee.domicilio.localidadNombre}
+        addressStreet={employee.domicilio.calle}
+        addressNumber={employee.domicilio.numero}
+        initialCenter={localityCenter ? { ...localityCenter.center, zoom: localityCenter.zoom } : undefined}
+        value={employee.domicilio.ubicacionMapa}
+        readOnly={readOnly}
+        onChange={(ubicacionMapa) =>
+          onChange({
+            ...employee,
+            domicilio: { ...employee.domicilio, ubicacionMapa },
+            locationMap: ubicacionMapa,
+          })
+        }
+      />
+    </Suspense>
   );
 }
 
@@ -215,15 +220,17 @@ export function AddressEditBlock({ employee, user, canEdit, onSaved }: EmployeeB
                 <b>Ubicación en mapa</b>
                 <span>Buscá la dirección, abrila en Google Maps si hace falta, o ajustá el marcador manualmente.</span>
               </div>
-              <LocationMapPicker
-                provinceName={draft.provinciaNombre}
-                departmentName={draft.departamentoNombre}
-                localityName={draft.localidadNombre}
-                addressStreet={draft.calle}
-                addressNumber={draft.numero}
-                value={draft.ubicacionMapa}
-                onChange={(ubicacionMapa) => setAddress({ ubicacionMapa })}
-              />
+              <Suspense fallback={<div className="location-map-card">Cargando mapa...</div>}>
+                <LocationMapPicker
+                  provinceName={draft.provinciaNombre}
+                  departmentName={draft.departamentoNombre}
+                  localityName={draft.localidadNombre}
+                  addressStreet={draft.calle}
+                  addressNumber={draft.numero}
+                  value={draft.ubicacionMapa}
+                  onChange={(ubicacionMapa) => setAddress({ ubicacionMapa })}
+                />
+              </Suspense>
             </div>
             <div className="address-edit-card change-card">
               <div>

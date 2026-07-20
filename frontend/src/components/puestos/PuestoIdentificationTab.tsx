@@ -1,5 +1,5 @@
 import type { Position } from "../../types/position.types";
-import { useStructureSelectOptions } from "../employees/employeeOptions";
+import { useStructureSelectOptions } from "../employees/options/structureOptions";
 import { PuestoField, PuestoSelect } from "./PuestoFields";
 
 export function PuestoIdentificationTab({ position, setPosition, disabled = false }: { position: Position; setPosition: (position: Position) => void; disabled?: boolean }) {

@@ -1,7 +1,11 @@
+import { lazy, Suspense } from "react";
 import type { Employee } from "../../types";
 import { GeoAddressFields } from "../GeoAddressFields";
-import { LocationMapPicker } from "../LocationMapPicker";
 import { Field } from "../ui/FormControls";
+
+const LocationMapPicker = lazy(() =>
+  import("../LocationMapPicker").then((module) => ({ default: module.LocationMapPicker })),
+);
 
 export function ContactAddressFields({
   value,
@@ -48,17 +52,18 @@ export function ContactAddressFields({
         <Field label="Parentesco" value={value.emergencyRelation} set={(next) => update("emergencyRelation", next)} />
         <Field label="Telefono de emergencia" value={value.emergencyPhone} set={(next) => update("emergencyPhone", next)} />
       </div>
-      <LocationMapPicker
-        provinceName={value.domicilio.provinciaNombre}
-        departmentName={value.domicilio.departamentoNombre}
-        localityName={value.domicilio.localidadNombre}
-        addressStreet={value.domicilio.calle}
-        addressNumber={value.domicilio.numero}
-        value={value.domicilio.ubicacionMapa}
-        readOnly={readOnly}
-        onChange={(ubicacionMapa) => setAddress({ ubicacionMapa })}
-      />
+      <Suspense fallback={<div className="location-map-card">Cargando mapa...</div>}>
+        <LocationMapPicker
+          provinceName={value.domicilio.provinciaNombre}
+          departmentName={value.domicilio.departamentoNombre}
+          localityName={value.domicilio.localidadNombre}
+          addressStreet={value.domicilio.calle}
+          addressNumber={value.domicilio.numero}
+          value={value.domicilio.ubicacionMapa}
+          readOnly={readOnly}
+          onChange={(ubicacionMapa) => setAddress({ ubicacionMapa })}
+        />
+      </Suspense>
     </>
   );
 }
-

@@ -31,7 +31,8 @@ import {
   TransportBlock,
 } from "../components/employees/EmployeeDetailBlocks";
 import { SalaryRangeValidationCard } from "../components/employees/EmployeeLaborFields";
-import { useLaborSelectOptions, useStructureSelectOptions } from "../components/employees/employeeOptions";
+import { useLaborSelectOptions } from "../components/employees/options/laborOptions";
+import { useStructureSelectOptions } from "../components/employees/options/structureOptions";
 import type { Employee, User } from "../types";
 import { displayLegajo } from "../utils/employee";
 import { useAsyncAction } from "../utils/useAsyncAction";

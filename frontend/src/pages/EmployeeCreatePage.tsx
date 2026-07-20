@@ -12,12 +12,9 @@ import {
 } from "../components/employees/EmployeeLaborFields";
 import { ContactAddressFields } from "../components/employees/ContactAddressFields";
 import { PeopleMultiSearch } from "../components/employees/PeopleMultiSearch";
-import {
-  useHourOptions,
-  useLaborSelectOptions,
-  useStructureSelectOptions,
-  userRoleOptions,
-} from "../components/employees/employeeOptions";
+import { useLaborSelectOptions } from "../components/employees/options/laborOptions";
+import { useHourOptions, userRoleOptions } from "../components/employees/options/roleHourOptions";
+import { useStructureSelectOptions } from "../components/employees/options/structureOptions";
 import { employeeApiService } from "../services/api/employeeApiService";
 import { ApiError } from "../services/api/apiClient";
 import { calculateEmployeeStatus } from "../services/employeeStatusService";
