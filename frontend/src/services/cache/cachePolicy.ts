@@ -72,6 +72,13 @@ export const cachePolicies = {
     sensitive: true,
     schemaVersion: CACHE_SCHEMA_VERSION,
   },
+  employeesList: {
+    family: "employees",
+    ttlMs: 30_000,
+    persist: false,
+    sensitive: true,
+    schemaVersion: CACHE_SCHEMA_VERSION,
+  },
   dashboardMetrics: {
     family: "dashboard",
     ttlMs: 30_000,

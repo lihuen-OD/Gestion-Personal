@@ -23,7 +23,7 @@ type CachedUserScope = {
   sector?: string;
 };
 
-function currentUserScope() {
+export function currentCacheScope() {
   try {
     const user = JSON.parse(sessionStorage.getItem("losod_user") || "null") as CachedUserScope | null;
     return JSON.stringify({
@@ -38,7 +38,7 @@ function currentUserScope() {
 }
 
 export async function currentUserHash() {
-  return sha256(currentUserScope());
+  return sha256(currentCacheScope());
 }
 
 export async function buildCacheKey(input: { family: string; schemaVersion: number; requestKey: string }) {

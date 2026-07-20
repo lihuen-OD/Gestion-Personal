@@ -37,16 +37,17 @@ export function EmployeesPage() {
   const [refresh, setRefresh] = useState(0);
   const [syncing, setSyncing] = useState(false);
   const [syncMessage, setSyncMessage] = useState("");
-  const [all, setAll] = useState<Employee[]>([]);
-  const [listStatus, setListStatus] = useState<"loading" | "success" | "error">("loading");
+  const initialList = employeeApiService.peekList({ page: 1, take: pageSize });
+  const [all, setAll] = useState<Employee[]>(initialList?.items || []);
+  const [listStatus, setListStatus] = useState<"loading" | "success" | "error">(initialList ? "success" : "loading");
   const [structureCompanies, setStructureCompanies] = useState<Array<{ id: string; name: string }>>([]);
   const [summary, setSummary] = useState<EmployeeSummary>(emptySummary);
-  const [meta, setMeta] = useState({ total: 0, page: 1, pageSize, hasMore: false });
+  const [meta, setMeta] = useState(initialList?.meta || { total: 0, page: 1, pageSize, hasMore: false });
   const selectedCompanyId = structureCompanies.find((item) => item.name === company)?.id;
 
   useEffect(() => {
     let mounted = true;
-    setListStatus("loading");
+    if (!all.length) setListStatus("loading");
     employeeApiService
       .list({ search: debouncedSearch, companyId: selectedCompanyId, page, take: pageSize })
       .then((result) => {

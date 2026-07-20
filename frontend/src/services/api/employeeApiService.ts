@@ -7,6 +7,7 @@ import { positionApiService } from "./positionApiService";
 import { mapTimeEntryFromApi, type ApiTimeEntry } from "./timeEntryApiService";
 import { userApiService } from "./userApiService";
 import { cachePolicies, cachedData, invalidateCacheFamily } from "../cache";
+import { currentCacheScope } from "../cache/cacheKey";
 import { calculateLaborStatus } from "../employeeStatusService";
 import type { Employee, EmployeeStatus, LaborMovement, Novelty, TimeEntry } from "../../types";
 import type { HourConcept } from "../../types/hourConcept.types";
@@ -501,11 +502,26 @@ async function syncEmployeeExtras(
 }
 
 async function invalidateEmployeeDependentCaches(reason: string) {
+  employeeListSnapshots.clear();
   await Promise.all([
     invalidateCacheFamily("employees", reason),
     invalidateCacheFamily("dashboard", reason),
     invalidateCacheFamily("positions", reason),
   ]);
+}
+
+type EmployeeListResult = { items: Employee[]; meta: ApiListMeta };
+const employeeListSnapshots = new Map<string, EmployeeListResult>();
+
+function employeeListRequest(filters: EmployeeListFilters = {}) {
+  const params = new URLSearchParams();
+  params.set("page", String(filters.page || 1));
+  params.set("take", String(filters.take || 25));
+  if (filters.search?.trim()) params.set("search", filters.search.trim());
+  if (filters.companyId) params.set("companyId", filters.companyId);
+  if (filters.status) params.set("status", filters.status);
+  const path = `/employees?${params.toString()}`;
+  return { path, snapshotKey: `${currentCacheScope()}:${path}` };
 }
 
 function isEmployeeOptionsResponse(value: { items: Employee[]; meta?: unknown }) {
@@ -522,17 +538,21 @@ function isEmployeeList(value: Employee[]) {
 
 export const employeeApiService = {
   async list(filters: EmployeeListFilters = {}) {
-    const params = new URLSearchParams();
-    params.set("page", String(filters.page || 1));
-    params.set("take", String(filters.take || 25));
-    if (filters.search?.trim()) params.set("search", filters.search.trim());
-    if (filters.companyId) params.set("companyId", filters.companyId);
-    if (filters.status) params.set("status", filters.status);
-    const response = await apiRequest<ApiEmployeePaginatedResponse>(`/employees?${params.toString()}`);
-    return {
-      items: response.data.map(mapEmployeeFromApi),
-      meta: response.meta,
-    };
+    const { path, snapshotKey } = employeeListRequest(filters);
+    const result = await cachedData({
+      requestKey: `GET:${path}`,
+      policy: cachePolicies.employeesList,
+      fetcher: () => apiRequest<ApiEmployeePaginatedResponse>(path, { apiCache: false }).then((response) => ({
+        items: response.data.map(mapEmployeeFromApi),
+        meta: response.meta,
+      })),
+      validate: isEmployeeOptionsResponse,
+    });
+    employeeListSnapshots.set(snapshotKey, result);
+    return result;
+  },
+  peekList(filters: EmployeeListFilters = {}) {
+    return employeeListSnapshots.get(employeeListRequest(filters).snapshotKey);
   },
   async getAll() {
     const response = await this.list({ take: 200 });
