@@ -125,7 +125,17 @@ export const workforceService = {
     });
   },
   rejectCorrection(id: string, note: string | undefined, user: Express.AuthUser) { return prisma.timeCorrectionRequest.update({ where: { id }, data: { status: "RECHAZADA", reviewedByUserId: user.id, reviewedAt: new Date(), reviewNote: note || null } }); },
-  notifications(user: Express.AuthUser) { return prisma.systemNotification.findMany({ where: { recipientUserId: user.id }, orderBy: { createdAt: "desc" }, take: 200 }); },
+  async notifications(user: Express.AuthUser) {
+    const notifications = await prisma.systemNotification.findMany({ where: { recipientUserId: user.id }, orderBy: { createdAt: "desc" }, take: 200 });
+    const shiftAlertIds = notifications.filter((item) => item.entityType === "ShiftAlert" && item.entityId).map((item) => item.entityId!);
+    if (!shiftAlertIds.length) return notifications;
+    const alerts = await prisma.shiftAlert.findMany({
+      where: { id: { in: shiftAlertIds } },
+      select: { id: true, employee: { select: { id: true, legajo: true, firstName: true, lastName: true } } },
+    });
+    const employeeByAlert = new Map(alerts.map((alert) => [alert.id, alert.employee]));
+    return notifications.map((item) => ({ ...item, employee: item.entityId ? employeeByAlert.get(item.entityId) : undefined }));
+  },
   unreadNotificationCount(user: Express.AuthUser) { return prisma.systemNotification.count({ where: { recipientUserId: user.id, status: "NO_LEIDA" } }); },
   markNotificationRead(id: string, user: Express.AuthUser) { return prisma.systemNotification.updateMany({ where: { id, recipientUserId: user.id }, data: { status: "LEIDA", readAt: new Date() } }); },
   shiftTemplates() { return prisma.shiftTemplate.findMany({ orderBy: { startTime: "asc" } }); },

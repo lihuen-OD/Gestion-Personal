@@ -32,7 +32,7 @@ export function NotificationsPage() {
         {status === "loading" ? <LoadingState text="Cargando notificaciones..." /> : null}
         {status === "error" ? <ErrorState message={error} onRetry={() => void load()} /> : null}
         {status === "success" ? items.map((item) => <article className={`notification-row ${item.status === "NO_LEIDA" ? "unread" : ""}`} key={item.id}>
-          <div className="notification-icon"><Bell size={17}/></div><div><b>{item.title}</b><p>{item.message}</p><small>{new Date(item.createdAt).toLocaleString("es-AR")}</small></div>
+          <div className="notification-icon"><Bell size={17}/></div><div><b>{item.title}</b>{item.employee ? <span className="notification-person">{item.employee.lastName}, {item.employee.firstName} · Legajo {item.employee.legajo}</span> : null}<p>{item.message}</p><small>{new Date(item.createdAt).toLocaleString("es-AR")}</small></div>
           <div className="notification-actions">{item.link ? <Link className="table-link" to={item.link} onClick={() => void markRead(item)}>Ver detalle</Link> : null}{item.status === "NO_LEIDA" ? <button className="table-link" onClick={() => void markRead(item)}><Check size={15}/> Marcar leída</button> : <span className="badge neutral">Leída</span>}</div>
         </article>) : null}
         {status === "success" && !items.length ? <div className="empty">No hay notificaciones todavía.</div> : null}

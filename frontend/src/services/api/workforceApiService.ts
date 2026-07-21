@@ -34,6 +34,7 @@ export type SystemNotification = {
   link?: string | null;
   status: "NO_LEIDA" | "LEIDA";
   createdAt: string;
+  employee?: { id: string; legajo: string; firstName: string; lastName: string };
 };
 export type ShiftTemplate = { id: string; code: string; name: string; startTime: string; endTime: string; entryToleranceMinutes: number; exitToleranceMinutes: number; detectionWindowMinutes: number; status: string };
 export type DoubleHourRule = { id: string; name: string; recurrenceType: "FECHA" | "RANGO" | "SEMANAL"; fromDate: string; toDate?: string | null; weekdays: number[]; multiplier: number | string; reason: string; status: string; employees: Array<{ employee: { id: string; legajo: string; firstName: string; lastName: string } }> };
