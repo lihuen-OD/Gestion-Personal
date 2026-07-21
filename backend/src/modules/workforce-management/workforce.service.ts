@@ -164,5 +164,38 @@ export const workforceService = {
     return { mode: "DELETED" as const, id, relatedWorkShifts: 0 };
   },
   doubleRules() { return prisma.doubleHourRule.findMany({ include: { employees: { include: { employee: { select: { id: true, legajo: true, firstName: true, lastName: true } } } } }, orderBy: { fromDate: "desc" } }); },
-  createDoubleRule(input: any, user: Express.AuthUser) { const { employeeIds, ...data } = input; return prisma.doubleHourRule.create({ data: { ...data, createdByUserId: user.id, employees: { create: employeeIds.map((employeeId: string) => ({ employeeId })) } }, include: { employees: true } }); },
+  async createDoubleRule(input: any, user: Express.AuthUser, audit?: AuditContext) {
+    const { employeeIds, ...data } = input;
+    const item = await prisma.doubleHourRule.create({ data: { ...data, createdByUserId: user.id, employees: { create: employeeIds.map((employeeId: string) => ({ employeeId })) } }, include: { employees: true } });
+    await auditService.register({ ...audit, action: "CREATE", entity: "DoubleHourRule", entityId: item.id, description: `Se creó la regla de horas especiales ${item.name}.`, after: item as Prisma.InputJsonValue });
+    return item;
+  },
+  async updateDoubleRule(id: string, input: any, audit?: AuditContext) {
+    const before = await prisma.doubleHourRule.findUnique({ where: { id }, include: { employees: true } });
+    if (!before) throw new AppError("No encontramos la regla solicitada", 404, "DOUBLE_HOUR_RULE_NOT_FOUND");
+    const { employeeIds, ...data } = input;
+    const item = await prisma.doubleHourRule.update({
+      where: { id },
+      data: {
+        ...data,
+        ...(employeeIds ? { employees: { deleteMany: {}, create: employeeIds.map((employeeId: string) => ({ employeeId })) } } : {}),
+      },
+      include: { employees: { include: { employee: { select: { id: true, legajo: true, firstName: true, lastName: true } } } } },
+    });
+    await auditService.register({ ...audit, action: "UPDATE", entity: "DoubleHourRule", entityId: id, description: `Se actualizó la regla de horas especiales ${item.name}.`, before: before as Prisma.InputJsonValue, after: item as Prisma.InputJsonValue });
+    return item;
+  },
+  async removeDoubleRule(id: string, audit?: AuditContext) {
+    const before = await prisma.doubleHourRule.findUnique({ where: { id }, include: { employees: true } });
+    if (!before) throw new AppError("No encontramos la regla solicitada", 404, "DOUBLE_HOUR_RULE_NOT_FOUND");
+    const hasStarted = before.fromDate <= new Date();
+    if (hasStarted) {
+      const item = await prisma.doubleHourRule.update({ where: { id }, data: { status: "INACTIVO" }, include: { employees: true } });
+      await auditService.register({ ...audit, action: "DEACTIVATE", entity: "DoubleHourRule", entityId: id, description: `Se inactivó la regla ${before.name} porque su vigencia ya había comenzado.`, before: before as Prisma.InputJsonValue, after: item as Prisma.InputJsonValue });
+      return { mode: "INACTIVATED" as const, item };
+    }
+    await prisma.doubleHourRule.delete({ where: { id } });
+    await auditService.register({ ...audit, action: "DELETE", entity: "DoubleHourRule", entityId: id, description: `Se eliminó la regla futura ${before.name}.`, before: before as Prisma.InputJsonValue });
+    return { mode: "DELETED" as const, id };
+  },
 };

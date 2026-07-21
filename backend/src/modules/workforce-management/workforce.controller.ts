@@ -20,5 +20,7 @@ export const workforceController = {
   updateShiftTemplate: (async (req,res)=>res.json({data:await workforceService.updateShiftTemplate(requireParam(req,"id"),req.body,requestAuditContext(req))})) satisfies RequestHandler,
   removeShiftTemplate: (async (req,res)=>res.json({data:await workforceService.removeShiftTemplate(requireParam(req,"id"),requestAuditContext(req))})) satisfies RequestHandler,
   doubleRules: (async (_req,res)=>res.json({data:await workforceService.doubleRules()})) satisfies RequestHandler,
-  createDoubleRule: (async (req,res)=>res.status(201).json({data:await workforceService.createDoubleRule(req.body,req.user!)})) satisfies RequestHandler,
+  createDoubleRule: (async (req,res)=>res.status(201).json({data:await workforceService.createDoubleRule(req.body,req.user!,requestAuditContext(req))})) satisfies RequestHandler,
+  updateDoubleRule: (async (req,res)=>res.json({data:await workforceService.updateDoubleRule(requireParam(req,"id"),req.body,requestAuditContext(req))})) satisfies RequestHandler,
+  removeDoubleRule: (async (req,res)=>res.json({data:await workforceService.removeDoubleRule(requireParam(req,"id"),requestAuditContext(req))})) satisfies RequestHandler,
 };

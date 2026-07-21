@@ -51,6 +51,7 @@
 .rule-people-field{display:grid;gap:8px;min-width:0}
 .rule-people-field>span{color:var(--color-text-secondary,#64778a);font-size:12px;font-weight:700}
 .rule-people-field>small{color:var(--color-text-secondary,#64778a);font-size:11px}
+.rule-form-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .assignment-create .people-search{grid-column:1/-1}
 .modal-body .people-search{padding:12px}
 .salary-range-tab{display:grid;gap:14px}

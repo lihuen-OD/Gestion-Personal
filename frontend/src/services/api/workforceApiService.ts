@@ -37,6 +37,7 @@ export type SystemNotification = {
 };
 export type ShiftTemplate = { id: string; code: string; name: string; startTime: string; endTime: string; entryToleranceMinutes: number; exitToleranceMinutes: number; detectionWindowMinutes: number; status: string };
 export type DoubleHourRule = { id: string; name: string; recurrenceType: "FECHA" | "RANGO" | "SEMANAL"; fromDate: string; toDate?: string | null; weekdays: number[]; multiplier: number | string; reason: string; status: string; employees: Array<{ employee: { id: string; legajo: string; firstName: string; lastName: string } }> };
+export type DoubleHourRuleInput = { name: string; recurrenceType: "FECHA" | "RANGO" | "SEMANAL"; fromDate: string; toDate?: string | null; weekdays: number[]; multiplier: number; employeeIds: string[]; reason: string; status?: "ACTIVO" | "INACTIVO" };
 
 export const workforceApiService = {
   closures(period: string) {
@@ -74,5 +75,7 @@ export const workforceApiService = {
   updateShiftTemplate(id: string, input: Partial<Omit<ShiftTemplate, "id">>) { return apiRequest<{ data: ShiftTemplate }>(`/workforce/shift-templates/${id}`, { method: "PATCH", body: input }).then((response) => response.data); },
   removeShiftTemplate(id: string) { return apiRequest<{ data: { mode: "DELETED" | "INACTIVATED"; id?: string; item?: ShiftTemplate; relatedWorkShifts: number } }>(`/workforce/shift-templates/${id}`, { method: "DELETE" }).then((response) => response.data); },
   doubleHourRules() { return apiRequest<{ data: DoubleHourRule[] }>("/workforce/double-hour-rules", { apiCache: false }).then((response) => response.data); },
-  createDoubleHourRule(input: { name: string; recurrenceType: "FECHA" | "RANGO" | "SEMANAL"; fromDate: string; toDate?: string | null; weekdays: number[]; multiplier: number; employeeIds: string[]; reason: string }) { return apiRequest<{ data: DoubleHourRule }>("/workforce/double-hour-rules", { method: "POST", body: input }).then((response) => response.data); },
+  createDoubleHourRule(input: DoubleHourRuleInput) { return apiRequest<{ data: DoubleHourRule }>("/workforce/double-hour-rules", { method: "POST", body: input }).then((response) => response.data); },
+  updateDoubleHourRule(id: string, input: Partial<DoubleHourRuleInput>) { return apiRequest<{ data: DoubleHourRule }>(`/workforce/double-hour-rules/${id}`, { method: "PATCH", body: input }).then((response) => response.data); },
+  removeDoubleHourRule(id: string) { return apiRequest<{ data: { mode: "DELETED" | "INACTIVATED"; id?: string; item?: DoubleHourRule } }>(`/workforce/double-hour-rules/${id}`, { method: "DELETE" }).then((response) => response.data); },
 };
