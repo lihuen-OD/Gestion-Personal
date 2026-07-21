@@ -1537,6 +1537,7 @@ a.employee-hours-status-item:hover{border-color:var(--ds-blue-300);background:va
 /* Fase 2: componentes compartidos (Button, LoadingState, ErrorState) */
 .button.danger{background:var(--color-danger);border-color:var(--color-danger);color:#fff}
 .button.danger:hover{background:#991b1b;border-color:#991b1b}
+.app-dialog-content{display:grid;gap:18px;max-width:560px}.app-dialog-content>p{color:var(--color-text-secondary);font-size:14px;line-height:1.6}.app-dialog-content textarea{width:100%;resize:vertical}.app-dialog-content .form-actions{position:static!important;margin:0!important;padding:14px 0 0!important}
 .button.ghost{background:transparent;border-color:transparent;color:var(--color-text-secondary)}
 .button.ghost:hover{background:var(--color-bg-subtle);color:var(--color-text-primary)}
 .empty-icon.danger{background:var(--color-danger-bg);color:var(--color-danger)}

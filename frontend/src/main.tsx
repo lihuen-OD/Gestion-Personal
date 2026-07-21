@@ -6,6 +6,7 @@ import { AuthProvider } from "./context/AuthContext";
 import { demoMode } from "./config/runtimeMode";
 import { cleanupLegacyDemoStorage } from "./services/legacyDemoStorage";
 import { ApiErrorNotice } from "./components/ui/ApiErrorNotice";
+import { AppDialogHost } from "./components/ui/AppDialogHost";
 import "./styles.css";
 
 if (!demoMode) cleanupLegacyDemoStorage();
@@ -15,6 +16,7 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
     <BrowserRouter>
       <AuthProvider>
         <ApiErrorNotice />
+        <AppDialogHost />
         <App />
       </AuthProvider>
     </BrowserRouter>

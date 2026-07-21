@@ -8,6 +8,7 @@ import { roleLevel } from "../utils/roles";
 import { PageHeader } from "../components/ui/PageHeader";
 import { Section } from "../components/ui/Section";
 import { Button } from "../components/ui/Button";
+import { requestText } from "../services/appDialog";
 
 const currentPeriod = () => new Date().toISOString().slice(0, 7);
 const statusText: Record<string, string> = {
@@ -83,7 +84,7 @@ export function MonthlyClosuresPage() {
             <td><b>{row.employee.legajo}</b></td><td>{row.employee.lastName}, {row.employee.firstName}</td>
             <td><span className={`badge ${statusTone(row.status)}`}>{statusText[row.status]}</span></td>
             <td>{row.submittedBy?.name || "—"}</td><td>{row.reviewNote || "—"}</td>
-            <td>{isRrhh && row.status === "ENVIADO" ? <button className="table-link" onClick={() => { const reason = window.prompt("Motivo de devolución"); if (reason?.trim()) void execute(() => workforceApiService.returnClosure(row.id, reason)); }}><RotateCcw size={15}/> Devolver</button> : "—"}</td>
+            <td>{isRrhh && row.status === "ENVIADO" ? <button className="table-link" onClick={async () => { const reason = await requestText("Indicá por qué se devuelve este cierre para que el responsable pueda corregirlo.", { title: "Devolver cierre mensual", inputLabel: "Motivo de devolución", confirmLabel: "Devolver", tone: "danger" }); if (reason) await execute(() => workforceApiService.returnClosure(row.id, reason)); }}><RotateCcw size={15}/> Devolver</button> : "—"}</td>
           </tr>; })}
         </tbody></table>
         {!rows.length ? <div className="empty">No hay cierres registrados para este período.</div> : null}

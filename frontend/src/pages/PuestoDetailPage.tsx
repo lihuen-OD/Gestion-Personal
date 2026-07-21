@@ -23,6 +23,7 @@ import { LoadingState } from "../components/ui/LoadingState";
 import { ErrorState } from "../components/ui/ErrorState";
 import { Tabs } from "../components/ui/Tabs";
 import { Button } from "../components/ui/Button";
+import { confirmAction } from "../services/appDialog";
 
 const tabs = ["Identificacion", "Proposito / Mision", "Rango Salarial", "Responsabilidades", "Relaciones", "Competencias", "Condiciones", "Indicadores", "Criterios", "Personas Asignadas", "Historial"];
 
@@ -93,7 +94,8 @@ export function PuestoDetailPage() {
   const canEdit = roleLevel(user!.role) === 1;
 
   const toggle = async () => {
-    if (!confirm(`Confirmar ${position.status === "ACTIVO" ? "inactivacion" : "activacion"} del puesto ${position.name}?`)) return;
+    const action = position.status === "ACTIVO" ? "inactivar" : "activar";
+    if (!await confirmAction(`¿Querés ${action} el puesto “${position.name}”?`, { title: `${action === "inactivar" ? "Inactivar" : "Activar"} puesto`, confirmLabel: action === "inactivar" ? "Inactivar" : "Activar", tone: action === "inactivar" ? "danger" : "primary" })) return;
     const next = { ...position, status: position.status === "ACTIVO" ? "INACTIVO" : "ACTIVO" } as Position;
     const saved = await positionApiService.update(next);
     if (saved) setPosition(saved);
@@ -101,7 +103,7 @@ export function PuestoDetailPage() {
 
   const remove = async () => {
     const message = assigned.length ? `Este puesto tiene ${assigned.length} persona(s) asignadas. No se borra para no romper legajos; se va a inactivar/ocultar. Confirmar?` : "Confirmar ocultar/eliminar este puesto?";
-    if (!confirm(message)) return;
+    if (!await confirmAction(message, { title: "Ocultar puesto", confirmLabel: "Ocultar", tone: "danger" })) return;
     const result = await positionApiService.removeOrHide(position.id);
     if (result) { setPosition(result); setNotice("Puesto inactivado para conservar trazabilidad."); }
     else navigate("/puestos");

@@ -16,6 +16,7 @@ import { ErrorState } from "../components/ui/ErrorState";
 import { Tabs } from "../components/ui/Tabs";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
+import { confirmAction } from "../services/appDialog";
 
 const tabs = ["Identificacion", "Reglas operativas", "Finnegans", "Historial"];
 const tabItems = tabs.map((label, index) => ({ key: String(index), label: `${index + 1}. ${label}` }));
@@ -65,8 +66,9 @@ export function NoveltyTypeDetailPage() {
   if (loadStatus === "error") return <Section title="Tipo de novedad"><ErrorState message="No se pudo cargar el tipo de novedad." onRetry={() => setLoadRetry((value) => value + 1)} /></Section>;
   if (!item) return <Navigate to="/configuracion/tipos-novedades" />;
 
-  const toggle = async () => {
-    if (!confirm(`Confirmar ${item.status === "ACTIVO" ? "inactivacion" : "activacion"} de ${item.name}?`)) return;
+  const toggle = async (alreadyConfirmed = false) => {
+    const action = item.status === "ACTIVO" ? "inactivar" : "activar";
+    if (!alreadyConfirmed && !await confirmAction(`¿Querés ${action} el tipo de novedad “${item.name}”?`, { title: `${action === "inactivar" ? "Inactivar" : "Activar"} tipo de novedad`, confirmLabel: action === "inactivar" ? "Inactivar" : "Activar", tone: action === "inactivar" ? "danger" : "primary" })) return;
     const next = { ...item, status: item.status === "ACTIVO" ? "INACTIVO" : "ACTIVO" } as NoveltyType;
     try {
       const saved = await noveltyTypeApiService.update(item.id, next);
@@ -97,8 +99,8 @@ export function NoveltyTypeDetailPage() {
         </div>
         <div className="hero-actions">
           <Badge tone={item.status === "ACTIVO" ? "success" : "neutral"}>{item.status}</Badge>
-          <button className="table-icon-action" title={item.status === "ACTIVO" ? "Inactivar" : "Activar"} aria-label={item.status === "ACTIVO" ? "Inactivar" : "Activar"} onClick={toggle}><Power size={14} /><span>{item.status === "ACTIVO" ? "Inactivar" : "Activar"}</span></button>
-          <button className="table-icon-action danger-link" title="Ocultar" aria-label="Ocultar" onClick={() => { if (confirm("No se elimina para conservar trazabilidad. Se va a inactivar el tipo.")) toggle(); }}><Trash2 size={14} /><span>Ocultar</span></button>
+          <button className="table-icon-action" title={item.status === "ACTIVO" ? "Inactivar" : "Activar"} aria-label={item.status === "ACTIVO" ? "Inactivar" : "Activar"} onClick={() => void toggle()}><Power size={14} /><span>{item.status === "ACTIVO" ? "Inactivar" : "Activar"}</span></button>
+          <button className="table-icon-action danger-link" title="Ocultar" aria-label="Ocultar" onClick={async () => { if (await confirmAction("El tipo de novedad no se eliminará: quedará inactivo para conservar su trazabilidad.", { title: "Ocultar tipo de novedad", confirmLabel: "Ocultar", tone: "danger" })) await toggle(true); }}><Trash2 size={14} /><span>Ocultar</span></button>
         </div>
       </div>
       {notice && <div className="toast">{notice}</div>}

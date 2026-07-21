@@ -12,6 +12,7 @@ import { useAuth } from "../context/AuthContext";
 import { noveltyTypeApiService } from "../services/api/noveltyTypeApiService";
 import type { NoveltyType, NoveltyTypeFilters as NoveltyTypeFiltersModel } from "../types/noveltyType.types";
 import { roleLevel } from "../utils/roles";
+import { confirmAction } from "../services/appDialog";
 
 function normalize(value: string) {
   return value.trim().toLowerCase();
@@ -72,7 +73,8 @@ export function NoveltyTypesPage() {
   const options = useMemo(() => getFilterOptions(all), [all]);
 
   const toggle = async (item: NoveltyType) => {
-    if (!confirm(`Confirmar ${item.status === "ACTIVO" ? "inactivacion" : "activacion"} de ${item.name}?`)) return;
+    const action = item.status === "ACTIVO" ? "inactivar" : "activar";
+    if (!await confirmAction(`¿Querés ${action} el tipo de novedad “${item.name}”?`, { title: `${action === "inactivar" ? "Inactivar" : "Activar"} tipo de novedad`, confirmLabel: action === "inactivar" ? "Inactivar" : "Activar", tone: action === "inactivar" ? "danger" : "primary" })) return;
     const nextStatus = item.status === "ACTIVO" ? "INACTIVO" : "ACTIVO";
     await noveltyTypeApiService.update(item.id, { ...item, status: nextStatus });
     setRefresh((value) => value + 1);

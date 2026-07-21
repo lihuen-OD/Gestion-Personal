@@ -4,6 +4,7 @@ import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { demoMode } from "../config/runtimeMode";
 import { flattenNavigation, navigationForRole, type NavGroupItem, type NavLinkItem } from "./navigation";
+import { confirmAction } from "../services/appDialog";
 
 function isActivePath(pathname: string, href: string) {
   return pathname === href || (href !== "/" && pathname.startsWith(href));
@@ -47,7 +48,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const currentNav = flatNavItems.find((item) => isActivePath(location.pathname, item.href));
   const topbarTitle = currentNav?.label || "Dashboard";
   const reset = async () => {
-    if (!confirm("¿Restablecer todos los datos de la demo?")) return;
+    if (!await confirmAction("Se eliminarán los cambios realizados en esta sesión de demostración.", { title: "Restablecer datos de demo", confirmLabel: "Restablecer", tone: "danger" })) return;
     const { resetDemoData } = await import("../services/storage");
     resetDemoData();
     navigate("/");

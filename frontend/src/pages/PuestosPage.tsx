@@ -12,6 +12,7 @@ import { useAuth } from "../context/AuthContext";
 import { positionApiService } from "../services/api/positionApiService";
 import type { Position, PositionFilters, PositionSummary } from "../types/position.types";
 import { roleLevel } from "../utils/roles";
+import { confirmAction } from "../services/appDialog";
 
 const norm = (value: unknown) => String(value || "").trim().toLowerCase();
 
@@ -99,7 +100,8 @@ export function PuestosPage() {
   const positions = useMemo(() => apiItems.filter((position) => matches(position, filters)), [apiItems, filters]);
 
   const toggle = async (position: Position) => {
-    if (!confirm(`Confirmar ${position.status === "ACTIVO" ? "inactivacion" : "activacion"} del puesto ${position.name}?`)) return;
+    const action = position.status === "ACTIVO" ? "inactivar" : "activar";
+    if (!await confirmAction(`¿Querés ${action} el puesto “${position.name}”?`, { title: `${action === "inactivar" ? "Inactivar" : "Activar"} puesto`, confirmLabel: action === "inactivar" ? "Inactivar" : "Activar", tone: action === "inactivar" ? "danger" : "primary" })) return;
     await positionApiService.update({ ...position, status: position.status === "ACTIVO" ? "INACTIVO" : "ACTIVO" });
     setRefresh((value) => value + 1);
   };
@@ -107,7 +109,7 @@ export function PuestosPage() {
   const remove = async (position: Position) => {
     const assigned = getAssignedCount(position);
     const message = assigned ? `El puesto ${position.name} tiene ${assigned} persona(s) asignadas. No se borra para no romper legajos; se va a inactivar/ocultar. Confirmar?` : `Confirmar ocultar/eliminar ${position.name}?`;
-    if (!confirm(message)) return;
+    if (!await confirmAction(message, { title: "Ocultar puesto", confirmLabel: "Ocultar", tone: "danger" })) return;
     await positionApiService.removeOrHide(position.id);
     setRefresh((value) => value + 1);
   };
