@@ -28,7 +28,7 @@
 .people-search{display:grid;gap:10px;position:relative;padding:14px;border:1px solid #dfe8ee;border-radius:10px;background:#fbfdfe}
 .people-search>small{margin:0;color:#31485a;font-weight:800;text-transform:uppercase;letter-spacing:.03em}
 .people-search .search-field{width:100%;flex:none}
-.people-search-toolbar{display:flex;align-items:end;gap:10px}
+.people-search-toolbar{display:grid;grid-template-columns:minmax(0,1fr) 140px;align-items:end;gap:10px;min-width:0}
 .people-status-filter{display:grid;gap:5px;min-width:140px;color:#31485a;font-size:12px;font-weight:700}
 .people-status-filter select{min-height:42px;padding:8px 10px;border:1px solid #dfe8ee;border-radius:9px;background:#fff;color:#243950}
 .people-search-results{display:grid;gap:6px;max-height:220px;overflow:auto;padding:8px;border:1px solid #dfe8ee;border-radius:9px;background:#fff;box-shadow:0 10px 24px #16304614}
@@ -42,6 +42,9 @@
 .selected-people em{color:#7c8b98;font-size:12px;font-style:normal}
 .people-selection-summary{display:flex;align-items:center;justify-content:space-between;gap:10px;color:#66788a;font-size:12px;font-weight:700}
 .people-selection-summary button{border:0;background:transparent;color:var(--color-primary);font:inherit;cursor:pointer}
+.rule-people-field{display:grid;gap:8px;min-width:0}
+.rule-people-field>span{color:var(--color-text-secondary,#64778a);font-size:12px;font-weight:700}
+.rule-people-field>small{color:var(--color-text-secondary,#64778a);font-size:11px}
 .assignment-create .people-search{grid-column:1/-1}
 .modal-body .people-search{padding:12px}
 .salary-range-tab{display:grid;gap:14px}

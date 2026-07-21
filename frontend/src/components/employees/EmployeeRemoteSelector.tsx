@@ -9,11 +9,13 @@ export function EmployeeRemoteSelector({
   selected,
   multiple = false,
   showStatusFilter = false,
+  wide = true,
   onChange,
 }: {
   selected: Employee[];
   multiple?: boolean;
   showStatusFilter?: boolean;
+  wide?: boolean;
   onChange: (employees: Employee[]) => void;
 }) {
   const [search, setSearch] = useState("");
@@ -24,7 +26,7 @@ export function EmployeeRemoteSelector({
 
   useEffect(() => {
     const query = debouncedSearch.trim();
-    if (query.length < 2) {
+    if (!showStatusFilter && query.length < 2) {
       setResults([]);
       setStatus("idle");
       return;
@@ -33,7 +35,7 @@ export function EmployeeRemoteSelector({
     let mounted = true;
     setStatus("loading");
     employeeApiService
-      .getOptions({ search: query, status: showStatusFilter ? statusFilter || undefined : undefined, take: 20 })
+      .getOptions({ search: query || undefined, status: showStatusFilter ? statusFilter || undefined : undefined, take: 20 })
       .then((response) => {
         if (!mounted) return;
         setResults(response.items);
@@ -58,7 +60,7 @@ export function EmployeeRemoteSelector({
   };
 
   return (
-    <div className="people-search form-wide">
+    <div className={`people-search${wide ? " form-wide" : ""}`}>
       <div className="people-search-toolbar">
         <label className="search-field">
           <Search size={17} />
@@ -70,7 +72,8 @@ export function EmployeeRemoteSelector({
         </label>
         {showStatusFilter ? <label className="people-status-filter"><span>Estado</span><select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as typeof statusFilter)}><option value="ACTIVO">Activos</option><option value="INACTIVO">Inactivos</option><option value="">Todos</option></select></label> : null}
       </div>
-      {search.trim().length < 2 ? <small>Ingresá al menos 2 caracteres para buscar.</small> : null}
+      {!showStatusFilter && search.trim().length < 2 ? <small>Ingresá al menos 2 caracteres para buscar.</small> : null}
+      {showStatusFilter && !search.trim() && status === "success" ? <small>Mostrando los primeros 20 legajos. Escribí para filtrar la lista.</small> : null}
       {status === "loading" ? <small>Buscando legajos...</small> : null}
       {status === "error" ? <small className="error">No se pudo completar la búsqueda.</small> : null}
       {status === "success" ? (
