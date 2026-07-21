@@ -1,4 +1,4 @@
-import { CheckCircle2, X } from "lucide-react";
+import { CheckCircle2, Trash2, X } from "lucide-react";
 import { useState } from "react";
 import { noveltyApiService } from "../../services/api/noveltyApiService";
 import type { Employee, Novelty, User } from "../../types";
@@ -8,17 +8,21 @@ import { Modal } from "../ui/Modal";
 import { OverflowCell } from "../ui/OverflowCell";
 import { TableShell } from "../ui/TableShell";
 import { EmptyState } from "../ui/EmptyState";
+import { confirmAction } from "../../services/appDialog";
+import { getUserErrorMessage } from "../../services/api/apiClient";
 
 export function NoveltyTable({
   rows,
   employees,
   currentUser,
   onChanged,
+  onDeleted,
 }: {
   rows: Novelty[];
   employees: Employee[];
   currentUser: User;
   onChanged: (updated: Novelty) => void;
+  onDeleted?: (id: string) => void;
 }) {
   const [rejecting, setRejecting] = useState<Novelty | null>(null);
   const [rejectReason, setRejectReason] = useState("");
@@ -45,6 +49,21 @@ export function NoveltyTable({
     }
     setRejecting(null);
     setRejectReason("");
+  };
+
+  const remove = async (novelty: Novelty) => {
+    const confirmed = await confirmAction(
+      `¿Querés eliminar la novedad “${novelty.type}” de ${novelty.employeeName || novelty.employeeLegajo || "este legajo"}? Esta acción quedará registrada en auditoría.`,
+      { title: "Eliminar novedad", confirmLabel: "Eliminar", tone: "danger" },
+    );
+    if (!confirmed) return;
+    try {
+      await noveltyApiService.remove(novelty.id);
+      setActionError("");
+      onDeleted?.(novelty.id);
+    } catch (error) {
+      setActionError(getUserErrorMessage(error, "No pudimos eliminar la novedad. Intentá nuevamente."));
+    }
   };
 
   if (!rows.length) {
@@ -149,9 +168,13 @@ export function NoveltyTable({
                         <span>Rechazar</span>
                       </button>
                     </div>
-                  ) : (
-                    "-"
-                  )}
+                  ) : null}
+                  {currentUser.role === "Nivel 1 - RRHH" ? (
+                    <button className="table-link table-icon-action danger-link" title="Eliminar" aria-label="Eliminar novedad" onClick={() => void remove(novelty)}>
+                      <Trash2 size={14} /><span>Eliminar</span>
+                    </button>
+                  ) : null}
+                  {!canApprove && currentUser.role !== "Nivel 1 - RRHH" ? "-" : null}
                 </td>
               </tr>
             );

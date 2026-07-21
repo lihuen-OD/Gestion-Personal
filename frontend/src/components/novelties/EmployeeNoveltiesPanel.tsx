@@ -73,7 +73,7 @@ export function EmployeeNoveltiesPanel({
       ) : loadStatus === "error" ? (
         <ErrorState message="No pudimos cargar las novedades." onRetry={() => setRefresh((value) => value + 1)} />
       ) : (
-        <NoveltyTable rows={rows} employees={[employee]} currentUser={user} onChanged={() => setRefresh((value) => value + 1)} />
+        <NoveltyTable rows={rows} employees={[employee]} currentUser={user} onChanged={() => setRefresh((value) => value + 1)} onDeleted={() => setRefresh((value) => value + 1)} />
       )}
 
       {open ? (

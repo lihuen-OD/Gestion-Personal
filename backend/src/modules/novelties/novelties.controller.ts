@@ -45,4 +45,11 @@ export const noveltiesController = {
     clearTimeEntriesReadCaches();
     res.json({ data: item });
   }) satisfies RequestHandler,
+
+  remove: (async (req, res) => {
+    const result = await noveltiesService.remove(requireParam(req, "id"), req.user!, requestAuditContext(req));
+    clearNoveltiesReadCaches();
+    clearTimeEntriesReadCaches();
+    res.json({ data: result });
+  }) satisfies RequestHandler,
 };

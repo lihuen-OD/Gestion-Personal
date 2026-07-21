@@ -211,6 +211,12 @@ export const noveltyApiService = {
     return mapNoveltyFromApi(response.data);
   },
 
+  async remove(id: string) {
+    await apiRequest<{ data: { id: string } }>(`/novelties/${id}`, { method: "DELETE" });
+    await invalidateNoveltyDependentCaches("novelty deleted");
+    return id;
+  },
+
   canApprove(novelty: Novelty, user: User) {
     return user.role === "Nivel 1 - RRHH" || Boolean(novelty.approvalRoles?.includes(user.role));
   },

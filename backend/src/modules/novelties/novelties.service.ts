@@ -187,4 +187,29 @@ export const noveltiesService = {
     });
     return item;
   },
+
+  async remove(id: string, user: Express.AuthUser, audit?: AuditContext) {
+    const before = await noveltiesRepository.findById(id, employeeAccessWhere(user));
+    if (!before) throw new AppError("Novelty not found", 404, "NOVELTY_NOT_FOUND");
+    if (before.documents.length) {
+      throw new AppError("Novelty has related documents", 409, "NOVELTY_DELETE_HAS_DOCUMENTS");
+    }
+    if (before.noveltyType.setsWorkedHoursToZero) {
+      throw new AppError("Novelty generated time entries", 409, "NOVELTY_DELETE_HAS_TIME_IMPACT");
+    }
+    if (before.status === "APROBADO" && before.noveltyType.exportsToFinnegans) {
+      throw new AppError("Approved exportable novelty cannot be deleted", 409, "NOVELTY_DELETE_EXPORTABLE_APPROVED");
+    }
+
+    await execute(() => noveltiesRepository.remove(id));
+    await auditService.register({
+      ...audit,
+      action: "DELETE",
+      entity: "Novelty",
+      entityId: id,
+      description: `Se elimino la novedad ${before.noveltyType.code} del legajo ${before.employee.legajo}.`,
+      before: before as Prisma.InputJsonValue,
+    });
+    return { id };
+  },
 };

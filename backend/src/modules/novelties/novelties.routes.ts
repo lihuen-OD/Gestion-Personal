@@ -19,3 +19,4 @@ noveltiesRouter.post("/", requireAnyRole(operationalRoles), validateBody(createN
 noveltiesRouter.post("/bulk-approve", requireAnyRole([roles.rrhh]), validateBody(bulkApproveNoveltiesSchema), asyncHandler(noveltiesController.approveMany));
 noveltiesRouter.post("/:id/approve", requireAnyRole(operationalRoles), asyncHandler(noveltiesController.approve));
 noveltiesRouter.post("/:id/reject", requireAnyRole(operationalRoles), validateBody(rejectNoveltySchema), asyncHandler(noveltiesController.reject));
+noveltiesRouter.delete("/:id", requireAnyRole([roles.rrhh]), asyncHandler(noveltiesController.remove));

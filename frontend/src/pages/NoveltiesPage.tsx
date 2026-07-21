@@ -93,6 +93,10 @@ export function NoveltiesPage() {
           employees={employees}
           currentUser={user!}
           onChanged={(updated) => setNovelties((current) => current.map((item) => item.id === updated.id ? updated : item))}
+          onDeleted={(id) => {
+            setNovelties((current) => current.filter((item) => item.id !== id));
+            setMeta((current) => ({ ...current, total: Math.max(0, current.total - 1) }));
+          }}
         />
         {novelties.length > 0 && (
           <Pagination page={meta.page} pageSize={meta.pageSize} total={meta.total} hasMore={meta.hasMore} onPageChange={setPage} itemLabel="novedades" />

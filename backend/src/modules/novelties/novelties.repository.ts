@@ -265,4 +265,8 @@ export const noveltiesRepository = {
       include: noveltyInclude,
     });
   },
+
+  remove(id: string) {
+    return prisma.novelty.delete({ where: { id } });
+  },
 };
