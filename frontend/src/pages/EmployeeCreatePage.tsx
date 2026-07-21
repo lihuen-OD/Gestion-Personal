@@ -97,6 +97,7 @@ const blankEmployee: Employee = {
   endDate: "",
   exitReason: "",
   transport: false,
+  transportLocality: "",
   transportRoute: "",
   transportNotes: "",
   mapLocation: "",
@@ -474,7 +475,7 @@ export function EmployeeCreatePage() {
                 options={["Sí", "No"]}
               />
               {value.transport ? (
-                <Field label="Ciudad de origen" value={value.city} set={(next) => upd("city", next)} />
+                <Field label="Ciudad de origen" value={value.transportLocality || ""} set={(next) => upd("transportLocality", next)} />
               ) : null}
               <Field
                 label="Observaciones de transporte"

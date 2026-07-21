@@ -16,7 +16,7 @@ export interface Employee {
   address: string; addressStreet: string; addressNumber: string; city: string; department: string; province: string; zip: string; domicilio: EmployeeAddress; emergencyContact: string; emergencyRelation: string; emergencyPhone: string;
   company: string; companies?: string[]; businessUnit: string; establishment: string; costCenter: string; sector: string; position: string; positionId?: string; puestoId?: string; puestoNombre?: string;
   receiptCategory: string; internalCategory: string; agreement: string; healthInsurance: string; directManager: string; directManagers?: string[]; timeResponsible: string; timeResponsibles?: string[];
-  startDate: string; endDate?: string; exitReason?: string; transport: boolean; transportRoute: string; transportNotes: string; enabledHours: string[];
+  startDate: string; endDate?: string; exitReason?: string; transport: boolean; transportLocality?: string; transportRoute: string; transportNotes: string; enabledHours: string[];
   status: EmployeeStatus;
   laborMovements?: LaborMovement[];
   createdAt?: string; updatedAt?: string;

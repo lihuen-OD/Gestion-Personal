@@ -32,7 +32,7 @@ const addressSummary = (employee: Employee) =>
 
 const transportSummary = (employee: Employee) =>
   employee.transport
-    ? `Utiliza transporte · ${employee.city || "-"}${
+    ? `Utiliza transporte · ${employee.transportLocality || employee.city || "-"}${
         employee.transportNotes ? ` · ${employee.transportNotes}` : ""
       }`
     : "No utiliza transporte";
@@ -427,9 +427,10 @@ export function AssignmentBlock({
 
 export function TransportBlock({ employee, user, canEdit, onSaved }: EmployeeBlockProps) {
   const [showHistory, setShowHistory] = useState(false);
+  const [historyVersion, setHistoryVersion] = useState(0);
   const [editing, setEditing] = useState(false);
   const [transport, setTransport] = useState(employee.transport ? "Sí" : "No");
-  const [city, setCity] = useState(employee.city);
+  const [city, setCity] = useState(employee.transportLocality || employee.city);
   const [notes, setNotes] = useState(employee.transportNotes);
   const [from, setFrom] = useState(new Date().toISOString().slice(0, 10));
   const [reason, setReason] = useState("");
@@ -441,7 +442,7 @@ export function TransportBlock({ employee, user, canEdit, onSaved }: EmployeeBlo
     const updated = {
       ...employee,
       transport: transport === "Sí",
-      city,
+      transportLocality: transport === "Sí" ? city : "",
       transportRoute: "",
       transportNotes: notes,
     };
@@ -461,6 +462,7 @@ export function TransportBlock({ employee, user, canEdit, onSaved }: EmployeeBlo
         user,
         `Legajo ${employee.legajoInterno || employee.legajo}`,
       );
+      setHistoryVersion((version) => version + 1);
     } catch (error) {
       setError(getUserErrorMessage(error, "No pudimos guardar los datos de transporte. Intentá nuevamente."));
       return;
@@ -481,7 +483,16 @@ export function TransportBlock({ employee, user, canEdit, onSaved }: EmployeeBlo
             Ver historial
           </button>
           {canEdit ? (
-            <button className="button primary" onClick={() => setEditing(true)}>
+            <button
+              className="button primary"
+              onClick={() => {
+                setTransport(employee.transport ? "Sí" : "No");
+                setCity(employee.transportLocality || employee.city);
+                setNotes(employee.transportNotes);
+                setError("");
+                setEditing(true);
+              }}
+            >
               Modificar transporte
             </button>
           ) : null}
@@ -492,6 +503,7 @@ export function TransportBlock({ employee, user, canEdit, onSaved }: EmployeeBlo
           employeeId={employee.id}
           section="TRANSPORTE"
           block="TRANSPORTE"
+          refreshKey={historyVersion}
           empty="Todavía no hay historial de transporte registrado."
         />
       ) : null}

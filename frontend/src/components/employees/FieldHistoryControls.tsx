@@ -181,6 +181,7 @@ type BlockHistoryTimelineProps = {
   section: FieldHistorySection;
   block: string;
   empty: string;
+  refreshKey?: number;
 };
 
 export function BlockHistoryTimeline({
@@ -188,6 +189,7 @@ export function BlockHistoryTimeline({
   section,
   block,
   empty,
+  refreshKey = 0,
 }: BlockHistoryTimelineProps) {
   const [rows, setRows] = useState<EmployeeBlockHistoryRecord[]>([]);
 
@@ -202,7 +204,7 @@ export function BlockHistoryTimeline({
     return () => {
       mounted = false;
     };
-  }, [employeeId, section, block]);
+  }, [employeeId, section, block, refreshKey]);
 
   return rows.length ? (
     <div className="timeline">

@@ -267,6 +267,7 @@ export function mapEmployeeFromApi(item: ApiEmployee): Employee {
     endDate: currentLaborPeriod.endDate,
     exitReason: currentLaborPeriod.exitReason,
     transport: Boolean(item.transport?.usesCompanyTransport),
+    transportLocality: item.transport?.locality || "",
     transportRoute: item.transport?.busLine || "",
     transportNotes: item.transport?.observation || item.transport?.pickupReference || "",
     enabledHours: (item.hourConcepts || []).map((link) => link.hourConcept.name),
@@ -396,7 +397,7 @@ function addressPayload(employee: Employee) {
 function transportPayload(employee: Employee) {
   return {
     usesCompanyTransport: Boolean(employee.transport),
-    locality: employee.city || null,
+    locality: employee.transportLocality || employee.city || null,
     pickupAddress: employee.addressStreet || null,
     pickupReference: null,
     busLine: employee.transportRoute || null,
