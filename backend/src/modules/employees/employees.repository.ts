@@ -132,6 +132,73 @@ const employeeDetailSelect = {
   documents: { include: { category: true }, orderBy: { createdAt: "desc" as const }, take: 20 },
 } satisfies Prisma.EmployeeSelect;
 
+// Snapshot mínimo pero completo para auditar PATCH /employees/:id.
+// Incluye todo lo que updateEmployeeSchema puede modificar y evita cargar
+// colecciones ajenas a este guardado (documentos, novedades, movimientos,
+// asignaciones y conceptos horarios).
+const employeeUpdateAuditSelect = {
+  id: true,
+  legajo: true,
+  legajoFinnegans: true,
+  cuil: true,
+  dni: true,
+  firstName: true,
+  lastName: true,
+  birthDate: true,
+  gender: true,
+  civilStatus: true,
+  nationality: true,
+  email: true,
+  phone: true,
+  mobile: true,
+  emergencyContact: true,
+  emergencyRelation: true,
+  emergencyPhone: true,
+  status: true,
+  positionId: true,
+  sectorId: true,
+  costCenterId: true,
+  healthInsurance: true,
+  agreement: true,
+  receiptCategory: true,
+  internalCategory: true,
+  address: true,
+  companies: {
+    select: {
+      companyId: true,
+      isPrimary: true,
+    },
+  },
+} satisfies Prisma.EmployeeSelect;
+
+const employeeUpdateWriteSelect = {
+  id: true,
+  legajo: true,
+  legajoFinnegans: true,
+  cuil: true,
+  dni: true,
+  firstName: true,
+  lastName: true,
+  birthDate: true,
+  gender: true,
+  civilStatus: true,
+  nationality: true,
+  email: true,
+  phone: true,
+  mobile: true,
+  emergencyContact: true,
+  emergencyRelation: true,
+  emergencyPhone: true,
+  status: true,
+  positionId: true,
+  sectorId: true,
+  costCenterId: true,
+  healthInsurance: true,
+  agreement: true,
+  receiptCategory: true,
+  internalCategory: true,
+} satisfies Prisma.EmployeeSelect;
+
 const employeeOverviewSelect = {
   id: true,
   legajo: true,
@@ -622,6 +689,10 @@ export const employeesRepository = {
     return prisma.employee.findFirst({ where: { AND: [{ id }, accessWhere] }, select: employeeDetailSelect });
   },
 
+  findUpdateAuditSnapshot(id: string) {
+    return prisma.employee.findUnique({ where: { id }, select: employeeUpdateAuditSelect });
+  },
+
   findOverviewById(id: string, accessWhere: Prisma.EmployeeWhereInput = {}) {
     return prisma.employee.findFirst({ where: { AND: [{ id }, accessWhere] }, select: employeeOverviewSelect });
   },
@@ -795,7 +866,10 @@ export const employeesRepository = {
             }
           : {}),
       },
-      select: employeeDetailSelect,
+      // La respuesta confirma los escalares escritos. Domicilio y empresas ya
+      // están disponibles en el snapshot previo y el payload validado, por lo
+      // que no hace falta volver a consultarlos para construir la auditoría.
+      select: employeeUpdateWriteSelect,
     });
   },
 

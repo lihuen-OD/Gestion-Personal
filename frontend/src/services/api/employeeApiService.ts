@@ -627,12 +627,15 @@ export const employeeApiService = {
     return mapEmployeeFromApi(response.data);
   },
   async update(employee: Employee) {
-    const response = await apiRequest<ApiEmployeeItemResponse>(`/employees/${employee.id}`, {
+    await apiRequest(`/employees/${employee.id}`, {
       method: "PATCH",
       body: await mapEmployeeToApi(employee, "update"),
     });
     await invalidateEmployeeDependentCaches("employee updated");
-    return mapEmployeeFromApi(response.data);
+    // El PATCH confirma y audita los campos modificables. La pantalla ya tiene
+    // el overview completo; conservarlo evita pedir o reconstruir relaciones
+    // que este guardado general no modifica.
+    return employee;
   },
   async updateAddress(employee: Employee) {
     const response = await apiRequest<ApiEmployeeItemResponse>(`/employees/${employee.id}/address`, {

@@ -137,6 +137,64 @@ async function ensureNoEmployeeConflict(id: string, input: UpdateEmployeeInput) 
   throw new AppError("Employee with same legajo, Legajo Finnegans, CUIL or DNI already exists", 409, "EMPLOYEE_ALREADY_EXISTS", existing);
 }
 
+function comparableValue(value: unknown) {
+  if (value === undefined) return undefined;
+  if (value === null || value === "") return null;
+  if (value instanceof Date) return value.toISOString();
+  if (typeof value === "object" && value && "toString" in value) return String(value);
+  return value;
+}
+
+function sameAddress(
+  input: NonNullable<UpdateEmployeeInput["address"]>,
+  current: Record<string, unknown> | null,
+) {
+  if (!current) return false;
+  return Object.entries(input).every(([key, value]) => {
+    const currentValue = current[key];
+    if (key === "latitude" || key === "longitude") {
+      const desiredCoordinate = value === undefined ? undefined : value === null ? null : Number(value);
+      const currentCoordinate = currentValue === undefined ? undefined : currentValue === null ? null : Number(currentValue);
+      return desiredCoordinate === currentCoordinate;
+    }
+    return comparableValue(value) === comparableValue(currentValue);
+  });
+}
+
+function sameCompanies(
+  input: UpdateEmployeeInput,
+  current: Array<{ companyId: string; isPrimary: boolean }>,
+) {
+  if (input.companyIds === undefined && input.primaryCompanyId === undefined) return false;
+  const desired = desiredCompanies(input);
+  const existing = [...current].sort((a, b) => a.companyId.localeCompare(b.companyId));
+  return desired.length === existing.length
+    && desired.every((item, index) => item.companyId === existing[index]?.companyId && item.isPrimary === existing[index]?.isPrimary);
+}
+
+function desiredCompanies(input: UpdateEmployeeInput) {
+  const uniqueIds = Array.from(new Set((input.companyIds || []).filter(Boolean)));
+  return uniqueIds
+    .map((companyId, index) => ({
+      companyId,
+      isPrimary: input.primaryCompanyId ? companyId === input.primaryCompanyId : index === 0,
+    }))
+    .sort((a, b) => a.companyId.localeCompare(b.companyId));
+}
+
+function omitUnchangedEmployeeRelations(
+  input: UpdateEmployeeInput,
+  before: { address: Record<string, unknown> | null; companies: Array<{ companyId: string; isPrimary: boolean }> },
+) {
+  const effectiveInput = { ...input };
+  if (input.address && sameAddress(input.address, before.address)) delete effectiveInput.address;
+  if (sameCompanies(input, before.companies)) {
+    delete effectiveInput.companyIds;
+    delete effectiveInput.primaryCompanyId;
+  }
+  return effectiveInput;
+}
+
 export const employeesService = {
   async list(query: ListEmployeesQuery, user: Express.AuthUser) {
     const [items, total] = await employeesRepository.findMany(query, employeeAccessWhere(user));
@@ -266,9 +324,22 @@ export const employeesService = {
   },
 
   async update(id: string, input: UpdateEmployeeInput, audit?: AuditContext) {
-    await ensureNoEmployeeConflict(id, input);
-    const before = await employeesService.getById(id);
-    const employee = await execute(() => employeesRepository.update(id, input));
+    const [, before] = await Promise.all([
+      ensureNoEmployeeConflict(id, input),
+      employeesRepository.findUpdateAuditSnapshot(id),
+    ]);
+    if (!before) throw new AppError("Employee not found", 404, "EMPLOYEE_NOT_FOUND");
+    const effectiveInput = omitUnchangedEmployeeRelations(input, before);
+    const employee = await execute(() => employeesRepository.update(id, effectiveInput));
+    const after = {
+      ...before,
+      ...employee,
+      address: input.address ? { ...(before.address || {}), ...input.address } : before.address,
+      companies:
+        input.companyIds !== undefined || input.primaryCompanyId !== undefined
+          ? desiredCompanies(input)
+          : before.companies,
+    };
     await auditService.register({
       ...audit,
       action: "UPDATE",
@@ -276,7 +347,7 @@ export const employeesService = {
       entityId: employee.id,
       description: `Se actualizo el legajo ${employee.legajo} - ${employee.lastName}, ${employee.firstName}.`,
       before: before as Prisma.InputJsonValue,
-      after: employee as Prisma.InputJsonValue,
+      after: after as Prisma.InputJsonValue,
     });
     return employee;
   },
