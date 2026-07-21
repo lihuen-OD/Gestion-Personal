@@ -53,6 +53,24 @@ const tabs = [
 ];
 
 const tabSections = employeeDetailTabSections;
+const tabsThatNeedOverviewDetails = new Set([1, 2, 3, 4, 5, 8]);
+
+function mergeOverviewDetails(current: Employee, details: Employee): Employee {
+  return {
+    ...details,
+    legajo: current.legajo,
+    legajoInterno: current.legajoInterno,
+    legajoFinnegans: current.legajoFinnegans,
+    firstName: current.firstName,
+    lastName: current.lastName,
+    dni: current.dni,
+    cuil: current.cuil,
+    birthDate: current.birthDate,
+    gender: current.gender,
+    civilStatus: current.civilStatus,
+    nationality: current.nationality,
+  };
+}
 
 export function EmployeeDetailPage() {
   const { id } = useParams();
@@ -65,6 +83,7 @@ export function EmployeeDetailPage() {
   const [auditLoaded, setAuditLoaded] = useState(false);
   const [notice, setNotice] = useState(location.state?.created ? "Legajo creado correctamente." : "");
   const [loadStatus, setLoadStatus] = useState<"loading" | "success" | "error">(id ? "loading" : "success");
+  const [detailsStatus, setDetailsStatus] = useState<"loading" | "success" | "error">(id ? "loading" : "success");
   const [loadRetry, setLoadRetry] = useState(0);
   const laborOptions = useLaborSelectOptions(employee || undefined);
   const structureOptions = useStructureSelectOptions({ costCenter: employee?.costCenter || "" });
@@ -73,12 +92,23 @@ export function EmployeeDetailPage() {
     if (!id) return;
     let mounted = true;
     setLoadStatus("loading");
+    setDetailsStatus("loading");
     employeeApiService
       .getOverviewById(id)
       .then((item) => {
         if (!mounted) return;
         setEmployee(item);
         setLoadStatus("success");
+        employeeApiService
+          .getOverviewDetailsById(id)
+          .then((details) => {
+            if (!mounted) return;
+            setEmployee((current) => current ? mergeOverviewDetails(current, details) : details);
+            setDetailsStatus("success");
+          })
+          .catch(() => {
+            if (mounted) setDetailsStatus("error");
+          });
       })
       .catch(() => {
         if (!mounted) return;
@@ -189,16 +219,14 @@ export function EmployeeDetailPage() {
             <h1>
               {currentEmployee.firstName} {currentEmployee.lastName}
             </h1>
-            <p>
-              {currentEmployee.cuil} · {currentEmployee.company} · {currentEmployee.costCenter}
-            </p>
+            <p>{[currentEmployee.cuil, currentEmployee.company, currentEmployee.costCenter].filter(Boolean).join(" · ")}</p>
           </div>
         </div>
         <div className="hero-actions">
           <Badge tone={statusTone(laborStatus)}>{laborStatus}</Badge>
           {editable ? (
-            <Button variant="primary" onClick={save} disabled={isSaving}>
-              {isSaving ? "Guardando..." : "Guardar cambios"}
+            <Button variant="primary" onClick={save} disabled={isSaving || detailsStatus !== "success"}>
+              {isSaving ? "Guardando..." : detailsStatus === "loading" ? "Cargando ficha..." : "Guardar cambios"}
             </Button>
           ) : null}
         </div>
@@ -219,7 +247,13 @@ export function EmployeeDetailPage() {
         }
       >
         <fieldset className="readonly-scope" disabled={!editable}>
-          {renderEmployeeTab(tab, currentEmployee, setEmployee, editable, user!, structureOptions, laborOptions, auditRows)}
+          {tabsThatNeedOverviewDetails.has(tab) && detailsStatus === "loading" ? (
+            <LoadingState text="Cargando información de esta sección..." />
+          ) : tabsThatNeedOverviewDetails.has(tab) && detailsStatus === "error" ? (
+            <ErrorState message="No se pudo cargar la información completa del legajo." onRetry={() => setLoadRetry((value) => value + 1)} />
+          ) : (
+            renderEmployeeTab(tab, currentEmployee, setEmployee, editable, user!, structureOptions, laborOptions, auditRows)
+          )}
         </fieldset>
       </Section>
       {![2, 3, 4, 5, 6, 7].includes(tab) && tabSections[tab] ? (

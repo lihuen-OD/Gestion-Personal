@@ -251,6 +251,12 @@ export const employeesService = {
     return employee;
   },
 
+  async getOverviewDetailsById(id: string, user: Express.AuthUser) {
+    const employee = await employeesRepository.findOverviewDetailsById(id, employeeAccessWhere(user));
+    if (!employee) throw new AppError("Employee not found", 404, "EMPLOYEE_NOT_FOUND");
+    return employee;
+  },
+
   async getTimeGrid(id: string, query: EmployeeTimeGridQuery, user: Express.AuthUser) {
     const grid = await employeesRepository.findTimeGrid(id, query, employeeAccessWhere(user));
     if (!grid) throw new AppError("Employee not found", 404, "EMPLOYEE_NOT_FOUND");

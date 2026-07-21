@@ -264,6 +264,34 @@ const employeeOverviewSelect = {
   hourConcepts: { select: { hourConcept: { select: { id: true, code: true, name: true } } } },
 } satisfies Prisma.EmployeeSelect;
 
+const employeeOverviewCoreSelect = {
+  id: true,
+  legajo: true,
+  legajoFinnegans: true,
+  cuil: true,
+  dni: true,
+  firstName: true,
+  lastName: true,
+  birthDate: true,
+  gender: true,
+  civilStatus: true,
+  nationality: true,
+  email: true,
+  phone: true,
+  mobile: true,
+  emergencyContact: true,
+  emergencyRelation: true,
+  emergencyPhone: true,
+  status: true,
+  healthInsurance: true,
+  agreement: true,
+  receiptCategory: true,
+  internalCategory: true,
+  createdAt: true,
+  updatedAt: true,
+  createdByUserId: true,
+} satisfies Prisma.EmployeeSelect;
+
 const timeGridEmployeeSelect = {
   id: true,
   legajo: true,
@@ -694,6 +722,10 @@ export const employeesRepository = {
   },
 
   findOverviewById(id: string, accessWhere: Prisma.EmployeeWhereInput = {}) {
+    return prisma.employee.findFirst({ where: { AND: [{ id }, accessWhere] }, select: employeeOverviewCoreSelect });
+  },
+
+  findOverviewDetailsById(id: string, accessWhere: Prisma.EmployeeWhereInput = {}) {
     return prisma.employee.findFirst({ where: { AND: [{ id }, accessWhere] }, select: employeeOverviewSelect });
   },
 

@@ -600,6 +600,10 @@ export const employeeApiService = {
     const response = await apiRequest<ApiEmployeeItemResponse>(`/employees/${id}/overview`);
     return mapEmployeeFromApi(response.data);
   },
+  async getOverviewDetailsById(id: string) {
+    const response = await apiRequest<ApiEmployeeItemResponse>(`/employees/${id}/overview-details`);
+    return mapEmployeeFromApi(response.data);
+  },
   async getTimeGrid(id: string, period: string, options: { includeDetails?: boolean } = {}): Promise<EmployeeTimeGrid> {
     const params = new URLSearchParams({ period });
     if (options.includeDetails !== undefined) params.set("includeDetails", String(options.includeDetails));

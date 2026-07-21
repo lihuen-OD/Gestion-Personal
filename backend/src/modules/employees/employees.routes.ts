@@ -69,6 +69,12 @@ employeesRouter.get(
 );
 
 employeesRouter.get(
+  "/:id/overview-details",
+  requireAnyRole([roles.rrhh, roles.supervision, roles.cargaHoraria]),
+  asyncHandler(employeesController.getOverviewDetailsById),
+);
+
+employeesRouter.get(
   "/:id/time-grid",
   requireAnyRole([roles.rrhh, roles.supervision, roles.cargaHoraria]),
   validateQuery(employeeTimeGridQuerySchema),

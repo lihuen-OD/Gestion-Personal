@@ -85,6 +85,15 @@ export const employeesController = {
     res.json({ data: employee });
   }) satisfies RequestHandler,
 
+  getOverviewDetailsById: (async (req, res) => {
+    const key = `${detailCacheKey(req)}:overview-details`;
+    const cached = employeeDetailCache.get(key);
+    if (cached) return res.json({ data: cached });
+    const employee = await employeesService.getOverviewDetailsById(requireParam(req, "id"), req.user!);
+    employeeDetailCache.set(key, employee);
+    res.json({ data: employee });
+  }) satisfies RequestHandler,
+
   getTimeGrid: (async (req, res) => {
     const key = `${detailCacheKey(req)}:time-grid:${req.originalUrl}`;
     const cached = employeeTimeGridCache.get(key);
