@@ -54,6 +54,13 @@ export const usersService = {
 
   async update(id: string, input: UpdateUserInput, audit?: AuditContext) {
     const before = await usersService.getById(id);
+    if (audit?.userId === id && input.status === "INACTIVO" && before.status !== "INACTIVO") {
+      throw new AppError(
+        "No podés inactivar tu propio usuario mientras tenés la sesión iniciada",
+        409,
+        "USER_SELF_DEACTIVATION_FORBIDDEN",
+      );
+    }
     const email = input.email?.toLowerCase().trim();
     if (email) await ensureUniqueEmail(email, id);
 
@@ -61,7 +68,9 @@ export const usersService = {
     invalidateCurrentUserCache(user.id);
     await auditService.register({
       ...audit,
-      action: "UPDATE",
+      action: input.status !== undefined && input.status !== before.status
+        ? input.status === "ACTIVO" ? "ACTIVATE" : "DEACTIVATE"
+        : "UPDATE",
       entity: "User",
       entityId: user.id,
       description: `Se actualizo el usuario ${user.email}.`,

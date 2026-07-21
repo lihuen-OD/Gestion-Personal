@@ -16,6 +16,8 @@ import { statusTone } from "../utils/status";
 import { roleOptions } from "../utils/roles";
 import { displayLegajo } from "../utils/employee";
 import { useAsyncAction } from "../utils/useAsyncAction";
+import { confirmAction } from "../services/appDialog";
+import { getUserErrorMessage } from "../services/api/apiClient";
 
 type UserDraft = Omit<User, "id">;
 
@@ -140,12 +142,24 @@ export function UsersPage() {
   });
 
   const toggleStatus = async (user: User) => {
+    const activating = user.status !== "Activo";
+    const confirmed = await confirmAction(
+      activating
+        ? `¿Querés habilitar nuevamente el acceso de ${user.name}?`
+        : `¿Querés inactivar el acceso de ${user.name}? No podrá ingresar hasta que vuelvas a activarlo.`,
+      {
+        title: activating ? "Activar usuario" : "Inactivar usuario",
+        confirmLabel: activating ? "Activar" : "Inactivar",
+        tone: activating ? "primary" : "danger",
+      },
+    );
+    if (!confirmed) return;
     const next: User = { ...user, password: "", status: user.status === "Activo" ? "Inactivo" : "Activo" };
     try {
       await userApiService.update(next);
       reload();
-    } catch {
-      setError("No se pudo cambiar el estado del usuario.");
+    } catch (statusError) {
+      setError(getUserErrorMessage(statusError, "No pudimos cambiar el estado del usuario. Intentá nuevamente."));
     }
   };
 

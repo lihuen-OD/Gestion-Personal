@@ -50,6 +50,7 @@ const errorMessagesByCode: Record<string, string> = {
   INVALID_TOKEN: "Tu sesión venció. Iniciá sesión nuevamente.",
   INVALID_REFRESH_TOKEN: "Tu sesión venció. Iniciá sesión nuevamente.",
   USER_INACTIVE: "Tu usuario está inactivo. Comunicate con un administrador.",
+  USER_SELF_DEACTIVATION_FORBIDDEN: "No podés inactivar tu propio usuario mientras tenés la sesión iniciada.",
   FORBIDDEN: "No tenés permisos para realizar esta acción.",
   EMPLOYEE_SCOPE_FORBIDDEN: "Uno o más legajos están fuera de tu alcance.",
   VALIDATION_ERROR: "Revisá los datos ingresados e intentá nuevamente.",
