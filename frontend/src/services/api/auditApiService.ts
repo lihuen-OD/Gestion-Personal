@@ -182,6 +182,46 @@ function actionLabel(action: string) {
   }[action] || action;
 }
 
+const employeeAuditFields: Array<{ field: string; label: string }> = [
+  { field: "legajo", label: "Legajo Interno" },
+  { field: "legajoFinnegans", label: "Legajo Finnegans" },
+  { field: "lastName", label: "Apellido" },
+  { field: "firstName", label: "Nombre" },
+  { field: "dni", label: "DNI" },
+  { field: "cuil", label: "CUIL" },
+  { field: "birthDate", label: "Fecha de nacimiento" },
+  { field: "gender", label: "Sexo" },
+  { field: "civilStatus", label: "Estado civil" },
+  { field: "nationality", label: "Nacionalidad" },
+  { field: "phone", label: "Teléfono" },
+  { field: "mobile", label: "Celular" },
+  { field: "email", label: "Email" },
+  { field: "emergencyContact", label: "Contacto de emergencia" },
+  { field: "emergencyRelation", label: "Parentesco" },
+  { field: "emergencyPhone", label: "Teléfono de emergencia" },
+  { field: "address.street", label: "Calle" },
+  { field: "address.streetNumber", label: "Número" },
+  { field: "address.province", label: "Provincia" },
+  { field: "address.department", label: "Departamento" },
+  { field: "address.city", label: "Localidad" },
+  { field: "address.postalCode", label: "Código postal" },
+];
+
+function valueAt(source: unknown, path: string) {
+  return path.split(".").reduce<unknown>((value, key) => (
+    value && typeof value === "object" ? (value as Record<string, unknown>)[key] : undefined
+  ), source);
+}
+
+export function auditFieldChanges(before: unknown, after: unknown) {
+  if (!before || !after || typeof before !== "object" || typeof after !== "object") return [];
+  return employeeAuditFields.flatMap(({ field, label }) => {
+    const previous = formatPrimitive(valueAt(before, field));
+    const next = formatPrimitive(valueAt(after, field));
+    return previous === next ? [] : [{ field, label, previous, next }];
+  });
+}
+
 function mapFromApi(item: ApiAuditLog): AuditEntry {
   const parts = dateParts(item.createdAt);
   return {
@@ -196,6 +236,7 @@ function mapFromApi(item: ApiAuditLog): AuditEntry {
     previous: summarizeChange(item.before),
     next: summarizeChange(item.after),
     reason: item.description,
+    changes: item.entity === "Employee" ? auditFieldChanges(item.before, item.after) : [],
   };
 }
 

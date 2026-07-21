@@ -71,6 +71,7 @@ export interface Novelty {
 
 export interface AuditEntry {
   id: string; date: string; time: string; user: string; role: string; action: string; entity: string; field?: string; previous: string; next: string; reason: string;
+  changes?: Array<{ field: string; label: string; previous: string; next: string }>;
 }
 
 export interface DocumentMock {

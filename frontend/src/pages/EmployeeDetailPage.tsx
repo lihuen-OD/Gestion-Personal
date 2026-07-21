@@ -16,6 +16,7 @@ import { Tabs } from "../components/ui/Tabs";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { DataTable } from "../components/ui/DataTable";
+import { EmptyState } from "../components/ui/EmptyState";
 import {
   employeeDetailTabSections,
   SectionChangeHistory,
@@ -53,7 +54,7 @@ const tabs = [
 ];
 
 const tabSections = employeeDetailTabSections;
-const tabsThatNeedOverviewDetails = new Set([1, 2, 3, 4, 5, 8]);
+const tabsThatNeedOverviewDetails = new Set([1, 2, 3, 4, 5]);
 
 function mergeOverviewDetails(current: Employee, details: Employee): Employee {
   return {
@@ -124,7 +125,7 @@ export function EmployeeDetailPage() {
   }, [id, loadRetry]);
 
   useEffect(() => {
-    if (!employee || tab !== 9 || auditLoaded) return;
+    if (!employee || ![0, 1, 8, 9].includes(tab) || auditLoaded) return;
     let mounted = true;
     auditApiService
       .getAll({ entityId: employee.id, take: 200 })
@@ -262,9 +263,11 @@ export function EmployeeDetailPage() {
       </Section>
       {![2, 3, 4, 5, 6, 7].includes(tab) && tabSections[tab] ? (
         <SectionChangeHistory
-          employeeId={currentEmployee.id}
           section={tabSections[tab]}
           title="Historial de cambios de esta sección"
+          audits={auditRows}
+          status={!auditLoaded ? "loading" : auditError ? "error" : "success"}
+          onRetry={() => { setAuditLoaded(false); setAuditRetry((value) => value + 1); }}
         />
       ) : null}
     </>
@@ -376,20 +379,22 @@ function renderEmployeeTab(
   if (tab === 6) return <EmployeeNoveltiesPanel employee={employee} user={user} onSaved={setEmployee} />;
   if (tab === 7) return <EmployeeDocumentsPanel employee={employee} user={user} onSaved={setEmployee} />;
   if (tab === 8) {
-    return (
+    if (!auditLoaded) return <LoadingState text="Cargando historial de eventos..." />;
+    if (auditError) return <ErrorState message="No pudimos cargar el historial de eventos." onRetry={retryAudit} />;
+    return auditRows.length ? (
       <div className="timeline">
-        {employee.historyEvents.map((event) => (
+        {auditRows.map((event) => (
           <div key={event.id}>
             <i />
-            <b>{event.type}</b>
-            <span>{event.date}</span>
+            <b>{event.action} · {event.entity}</b>
+            <span>{event.date} {event.time} · {event.user}</span>
             <p>
-              {event.description} · {event.user}
+              {event.reason}
             </p>
           </div>
         ))}
       </div>
-    );
+    ) : <EmptyState text="Todavía no hay eventos registrados para este legajo." />;
   }
 
   if (!auditLoaded) return <LoadingState text="Cargando auditoría..." />;
