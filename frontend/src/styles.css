@@ -595,6 +595,7 @@ label{color:var(--color-text-secondary);font-size:12px;font-weight:700}
 .info-note{border:1px solid var(--color-primary-soft);border-left:4px solid var(--color-primary);border-radius:var(--radius-lg);background:var(--color-primary-subtle);color:var(--color-text-secondary)}
 .error{border-color:#fecaca;background:#fef2f2;color:#b91c1c}
 .toast{background:var(--color-success);border-radius:var(--radius-lg);box-shadow:var(--shadow-popover)}
+.toast.api-error-toast{max-width:min(520px,calc(100vw - 32px));background:var(--color-danger);line-height:1.45}
 .check-card,.people-search,.document-upload-card,.catalog-check-block,.derived-relation-card,.address-edit-card,.salary-range-check,.impact-rule-panel,.novelty-impact-card,.context-hour-card,.context-novelty-card{border:1px solid var(--color-border-light);border-radius:var(--radius-lg);background:#fff}
 .check-card:hover{border-color:var(--color-border-strong);background:#f8fafc}
 .tracked-main small,.block-card small,.labor-status-card small,.timeline span{color:var(--color-text-muted)}

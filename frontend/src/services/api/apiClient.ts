@@ -14,6 +14,62 @@ export class ApiError extends Error {
   }
 }
 
+export const API_ERROR_EVENT = "app:api-error";
+
+const fieldLabels: Record<string, string> = {
+  gender: "Sexo",
+  nationality: "Nacionalidad",
+  birthDate: "Fecha de nacimiento",
+  firstName: "Nombre",
+  lastName: "Apellido",
+  legajo: "Legajo",
+  legajoFinnegans: "Legajo Finnegans",
+  dni: "DNI",
+  cuil: "CUIL",
+  email: "Email",
+  companyIds: "Empresa",
+  primaryCompanyId: "Empresa principal",
+  sectorId: "Sector",
+  costCenterId: "Centro de costo",
+  positionId: "Puesto",
+  employeeId: "Empleado",
+  fromDate: "Fecha desde",
+  toDate: "Fecha hasta",
+  reason: "Motivo",
+  fileName: "Archivo",
+  categoryId: "Categoría",
+};
+
+type ApiErrorPayload = {
+  error?: {
+    code?: string;
+    message?: string;
+    details?: {
+      formErrors?: string[];
+      fieldErrors?: Record<string, string[]>;
+    };
+  };
+};
+
+function humanizeField(field: string) {
+  return fieldLabels[field] || field.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/^./, (letter) => letter.toUpperCase());
+}
+
+export function formatApiErrorMessage(payload: ApiErrorPayload) {
+  const error = payload.error;
+  const fields = Object.entries(error?.details?.fieldErrors || {})
+    .filter(([, messages]) => messages?.length)
+    .map(([field]) => humanizeField(field));
+  if (fields.length) return `Revisá los campos obligatorios o inválidos: ${fields.join(", ")}.`;
+  const formError = error?.details?.formErrors?.find(Boolean);
+  return formError || error?.message || "No se pudo completar la solicitud.";
+}
+
+function notifyApiError(message: string, code: string, status: number) {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new CustomEvent(API_ERROR_EVENT, { detail: { message, code, status } }));
+}
+
 type RequestOptions = Omit<RequestInit, "body"> & {
   body?: unknown;
   auth?: boolean;
@@ -98,8 +154,14 @@ async function requestParsed<T>(path: string, options: RequestOptions) {
 
   const payload = await parseResponse(response);
   if (!response.ok) {
-    const error = typeof payload === "object" && payload && "error" in payload ? (payload as { error?: { code?: string; message?: string } }).error : undefined;
-    throw new ApiError(error?.message || "No se pudo completar la solicitud.", error?.code || "API_ERROR", response.status);
+    const parsed = typeof payload === "object" && payload ? payload as ApiErrorPayload : {};
+    const error = parsed.error;
+    const message = formatApiErrorMessage(parsed);
+    const code = error?.code || "API_ERROR";
+    if ((options.method || "GET").toUpperCase() !== "GET" && [400, 409, 422].includes(response.status)) {
+      notifyApiError(message, code, response.status);
+    }
+    throw new ApiError(message, code, response.status);
   }
 
   return payload as T;
