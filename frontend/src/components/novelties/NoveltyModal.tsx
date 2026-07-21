@@ -11,6 +11,7 @@ import { useAsyncAction } from "../../utils/useAsyncAction";
 import { Field, Select } from "../ui/FormControls";
 import { Modal } from "../ui/Modal";
 import { EmployeeRemoteSelector } from "../employees/EmployeeRemoteSelector";
+import { noveltyTimeImpactLabel } from "../novelty-types/NoveltyTypeFields";
 import { ErrorState } from "../ui/ErrorState";
 import { LoadingState } from "../ui/LoadingState";
 
@@ -183,7 +184,7 @@ export function NoveltyModal({
                 <p>{selectedType.description}</p>
                 <div>
                   <span>Origen: {selectedType.origin}</span>
-                  <span>Horas: {selectedType.rules.timeImpact}</span>
+                  <span>Horas: {noveltyTimeImpactLabel(selectedType.rules.timeImpact)}</span>
                   <span>
                     {selectedType.rules.blocksTimeEntry
                       ? "Bloquea carga diaria"

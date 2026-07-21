@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { OverflowCell } from "../ui/OverflowCell";
 import { TableShell } from "../ui/TableShell";
 import type { NoveltyType } from "../../types/noveltyType.types";
+import { noveltyTimeImpactLabel } from "./NoveltyTypeFields";
 
 function yes(value: boolean) { return value ? "Si" : "No"; }
 
@@ -12,7 +13,7 @@ export function NoveltyTypeTable({ items, canEdit, onToggleStatus }: { items: No
     <td><b>{item.name}</b><span className="table-sub">{item.description}</span></td>
     <td><span className="badge neutral">{item.origin || "INTERNA"}</span></td>
     <td>{item.kind}</td>
-    <td><OverflowCell value={`${item.rules.timeImpact || "NO_AFECTA_HORAS"}${item.rules.blocksTimeEntry ? "\nBloquea carga diaria" : ""}`} /></td>
+    <td><OverflowCell value={`${noveltyTimeImpactLabel(item.rules.timeImpact)}${item.rules.blocksTimeEntry ? "\nBloquea carga diaria" : ""}`} /></td>
     <td>{yes(item.rules.exportsToFinnegans)}</td>
     <td>{item.finnegansLinks.length ? <OverflowCell value={item.finnegansLinks.map((link) => link.code).join(", ")} /> : "-"}</td>
     <td>{yes(item.rules.requiresDocumentation)}</td>

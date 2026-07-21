@@ -9,6 +9,7 @@ import { OverflowCell } from "../ui/OverflowCell";
 import { TableShell } from "../ui/TableShell";
 import { EmptyState } from "../ui/EmptyState";
 import { confirmAction } from "../../services/appDialog";
+import { noveltyTimeImpactLabel } from "../novelty-types/NoveltyTypeFields";
 import { getUserErrorMessage } from "../../services/api/apiClient";
 
 export function NoveltyTable({
@@ -120,7 +121,7 @@ export function NoveltyTable({
                 <td>{novelty.quantity}</td>
                 <td>
                   <OverflowCell
-                    value={`${novelty.timeImpact || "NO_AFECTA_HORAS"}${
+                    value={`${noveltyTimeImpactLabel(novelty.timeImpact)}${
                       novelty.targetHourConceptName
                         ? `\nAplica sobre ${novelty.targetHourConceptName}`
                         : ""

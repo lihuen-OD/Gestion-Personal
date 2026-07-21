@@ -5,6 +5,20 @@ import { noveltyColorClass, noveltyUiColors } from "../../utils/noveltyColor";
 export const noveltyKinds: NoveltyTypeKind[] = ["AUSENCIA", "LICENCIA", "HORARIA", "ACCIDENTE", "VACACIONES", "SANCION", "OTRO"];
 export const noveltyOrigins: NoveltyTypeOrigin[] = ["INTERNA", "FINNEGANS", "MIXTA"];
 export const noveltyTimeImpacts: NoveltyTimeImpact[] = ["NO_AFECTA_HORAS", "REGISTRA_HORAS_NO_TRABAJADAS", "BLOQUEA_CARGA_DIA"];
+export const noveltyTimeImpactLabels: Record<NoveltyTimeImpact, string> = {
+  NO_AFECTA_HORAS: "No modifica las horas",
+  REGISTRA_HORAS_NO_TRABAJADAS: "Registra horas no trabajadas",
+  BLOQUEA_CARGA_DIA: "Bloquea el día completo",
+};
+export const noveltyTimeImpactDescriptions: Record<NoveltyTimeImpact, string> = {
+  NO_AFECTA_HORAS: "La novedad queda informada, pero permite cargar las horas habituales del día.",
+  REGISTRA_HORAS_NO_TRABAJADAS: "Registra una cantidad de horas no trabajadas sobre el concepto horario seleccionado.",
+  BLOQUEA_CARGA_DIA: "Marca el día con 0 horas trabajadas e impide cargar horas normales, salvo una corrección autorizada.",
+};
+
+export function noveltyTimeImpactLabel(value?: string) {
+  return noveltyTimeImpactLabels[value as NoveltyTimeImpact] || "No modifica las horas";
+}
 export const roleOptions = ["Nivel 1 - RRHH", "Nivel 2 - Supervisión / Gestión", "Nivel 3 - Administrativo de Carga Horaria"] as const;
 export const noveltyUiColorLabels: Record<NoveltyUiColor, string> = {
   blue: "Azul",

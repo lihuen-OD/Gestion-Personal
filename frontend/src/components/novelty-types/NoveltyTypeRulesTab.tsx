@@ -1,5 +1,5 @@
 import type { NoveltyType, NoveltyTypeRules } from "../../types/noveltyType.types";
-import { noveltyTimeImpacts, RoleChecklist, SelectField } from "./NoveltyTypeFields";
+import { noveltyTimeImpactDescriptions, noveltyTimeImpactLabels, noveltyTimeImpacts, RoleChecklist } from "./NoveltyTypeFields";
 
 type BooleanRuleKey = "exportsToFinnegans" | "requiresApproval" | "requiresDocumentation" | "allowsHours" | "allowsDateTo" | "hasValidity" | "blocksTimeEntry" | "setsWorkedHoursToZero";
 
@@ -21,7 +21,12 @@ export function NoveltyTypeRulesTab({ item, setItem, disabled }: { item: Novelty
     <div className="impact-rule-panel">
       <div><b>Impacto en carga horaria</b><span>La app no liquida sueldos. Solo registra horas, novedades y prepara datos exportables a Finnegans.</span></div>
       <div className="form-grid compact">
-        <SelectField label="Comportamiento horario" value={item.rules.timeImpact || "NO_AFECTA_HORAS"} disabled={disabled} options={noveltyTimeImpacts} onChange={(timeImpact) => patchRules({ timeImpact: timeImpact as NoveltyTypeRules["timeImpact"], blocksTimeEntry: timeImpact === "BLOQUEA_CARGA_DIA", setsWorkedHoursToZero: timeImpact === "BLOQUEA_CARGA_DIA" })} />
+        <label>Comportamiento horario
+          <select value={item.rules.timeImpact || "NO_AFECTA_HORAS"} disabled={disabled} onChange={(event) => { const timeImpact = event.target.value as NoveltyTypeRules["timeImpact"]; patchRules({ timeImpact, blocksTimeEntry: timeImpact === "BLOQUEA_CARGA_DIA", setsWorkedHoursToZero: timeImpact === "BLOQUEA_CARGA_DIA" }); }}>
+            {noveltyTimeImpacts.map((option) => <option key={option} value={option}>{noveltyTimeImpactLabels[option]}</option>)}
+          </select>
+          <small>{noveltyTimeImpactDescriptions[item.rules.timeImpact || "NO_AFECTA_HORAS"]}</small>
+        </label>
       </div>
     </div>
     <div className="catalog-rule-grid">{ruleLabels.map(([key, title, detail]) => <label className="catalog-rule-card" key={key}>
