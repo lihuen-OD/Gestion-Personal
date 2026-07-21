@@ -1,4 +1,4 @@
-import { calculateLaborStatus } from "../../services/employeeStatusService";
+import { calculateLaborStatus, resolveCurrentLaborPeriod } from "../../services/employeeStatusService";
 import type { Employee } from "../../types";
 import { statusClass } from "../../utils/status";
 
@@ -10,9 +10,9 @@ export function LaborStatusCard({ employee }: LaborStatusCardProps) {
   const status = calculateLaborStatus(employee.laborMovements || []);
   const movement = status.currentMovement;
   const visibleMovement = movement || status.scheduledMovement;
-  const movements = [...(employee.laborMovements || [])].sort((a, b) => b.effectiveFrom.localeCompare(a.effectiveFrom));
-  const latestStart = movements.find((item) => item.type === "ALTA")?.effectiveFrom || employee.startDate;
-  const latestEnd = movements.find((item) => item.type === "BAJA")?.effectiveFrom || employee.endDate;
+  const currentPeriod = resolveCurrentLaborPeriod(employee.laborMovements || []);
+  const latestStart = currentPeriod.startDate || employee.startDate;
+  const latestEnd = currentPeriod.endDate;
   const createdAt = employee.createdAt?.slice(0, 10);
 
   return (
@@ -34,7 +34,7 @@ export function LaborStatusCard({ employee }: LaborStatusCardProps) {
       </div>
       <div>
         <small>Fecha de baja / egreso</small>
-        <b>{latestEnd || "Sin baja registrada"}</b>
+        <b>{latestEnd || "Sin baja en el período actual"}</b>
       </div>
       <div>
         <small>Fecha de creación del legajo</small>

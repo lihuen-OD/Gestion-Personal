@@ -8,7 +8,7 @@ import { mapTimeEntryFromApi, type ApiTimeEntry } from "./timeEntryApiService";
 import { userApiService } from "./userApiService";
 import { cachePolicies, cachedData, invalidateCacheFamily } from "../cache";
 import { currentCacheScope } from "../cache/cacheKey";
-import { calculateLaborStatus } from "../employeeStatusService";
+import { calculateLaborStatus, resolveCurrentLaborPeriod } from "../employeeStatusService";
 import type { Employee, EmployeeStatus, LaborMovement, Novelty, TimeEntry } from "../../types";
 import type { HourConcept } from "../../types/hourConcept.types";
 import type { NoveltyType } from "../../types/noveltyType.types";
@@ -202,8 +202,7 @@ export function mapEmployeeFromApi(item: ApiEmployee): Employee {
     label: address?.mapLabel || [address?.street, address?.streetNumber, address?.city].filter(Boolean).join(" "),
   };
   const laborMovements = mapLaborMovements(item.laborMovements, item.id);
-  const startMovement = laborMovements.find((movement) => movement.type === "ALTA");
-  const endMovement = laborMovements.find((movement) => movement.type === "BAJA");
+  const currentLaborPeriod = resolveCurrentLaborPeriod(laborMovements);
   const status = laborMovements.length ? calculateLaborStatus(laborMovements).status : toFrontendStatus(item.status);
 
   return {
@@ -264,9 +263,9 @@ export function mapEmployeeFromApi(item: ApiEmployee): Employee {
     directManagers,
     timeResponsible: timeResponsibles[0] || "",
     timeResponsibles,
-    startDate: startMovement?.effectiveFrom || "",
-    endDate: endMovement?.effectiveFrom,
-    exitReason: endMovement?.reason,
+    startDate: currentLaborPeriod.startDate,
+    endDate: currentLaborPeriod.endDate,
+    exitReason: currentLaborPeriod.exitReason,
     transport: Boolean(item.transport?.usesCompanyTransport),
     transportRoute: item.transport?.busLine || "",
     transportNotes: item.transport?.observation || item.transport?.pickupReference || "",

@@ -35,7 +35,9 @@ export function LaborMovementPanel({
   onSaved,
 }: LaborMovementPanelProps) {
   const [open, setOpen] = useState(false);
-  const [type, setType] = useState<LaborMovementType>((employee.laborMovements || []).length ? "BAJA" : "ALTA");
+  const [type, setType] = useState<LaborMovementType>(() => (
+    calculateLaborStatus(employee.laborMovements || []).status === "Inactivo" ? "ALTA" : "BAJA"
+  ));
   const [effectiveFrom, setEffectiveFrom] = useState(new Date().toISOString().slice(0, 10));
   const [reason, setReason] = useState("");
   const [observation, setObservation] = useState("");
@@ -74,7 +76,8 @@ export function LaborMovementPanel({
             type="button"
             className="button primary"
             onClick={() => {
-              if (!(employee.laborMovements || []).length) setType("ALTA");
+              setType(status.status === "Inactivo" ? "ALTA" : "BAJA");
+              setReason("");
               setOpen(true);
             }}
           >

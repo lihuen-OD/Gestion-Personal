@@ -5,6 +5,20 @@ const today = () => {
   return new Date(now.getFullYear(), now.getMonth(), now.getDate());
 };
 
+export function resolveCurrentLaborPeriod(laborMovements: LaborMovement[] = []) {
+  const movements = [...laborMovements].sort((a, b) => b.effectiveFrom.localeCompare(a.effectiveFrom));
+  const startMovement = movements.find((movement) => movement.type === "ALTA");
+  const endMovement = startMovement
+    ? movements.find((movement) => movement.type === "BAJA" && movement.effectiveFrom >= startMovement.effectiveFrom)
+    : movements.find((movement) => movement.type === "BAJA");
+
+  return {
+    startDate: startMovement?.effectiveFrom || "",
+    endDate: endMovement?.effectiveFrom,
+    exitReason: endMovement?.reason,
+  };
+}
+
 export function calculateLaborStatus(laborMovements: LaborMovement[] = []): {
   status: EmployeeStatus;
   currentMovement?: LaborMovement;
