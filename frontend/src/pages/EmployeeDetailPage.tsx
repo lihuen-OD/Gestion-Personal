@@ -186,7 +186,7 @@ export function EmployeeDetailPage() {
       } else if (error instanceof ApiError) {
         setNotice(`No se pudo guardar: ${error.message} (${error.code}).`);
       } else {
-      setNotice("Error al guardar. Verifica que el backend esté activo.");
+      setNotice("No pudimos guardar los cambios. Intentá nuevamente.");
       }
       setTimeout(() => setNotice(""), 3000);
     }

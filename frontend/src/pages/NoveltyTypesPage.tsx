@@ -55,7 +55,7 @@ export function NoveltyTypesPage() {
       .catch(() => {
         if (!alive) return;
         setApiItems(null);
-        setApiWarning("Backend no disponible: usando tipos locales de respaldo.");
+        setApiWarning("No pudimos sincronizar el catálogo. Se muestran datos disponibles en esta sesión.");
       })
       .finally(() => {
         if (alive) setIsLoadingApi(false);
@@ -86,7 +86,7 @@ export function NoveltyTypesPage() {
       />
       {apiWarning && <div className="info-note compact"><b>Modo local</b><p>{apiWarning}</p></div>}
       <NoveltyTypeSummaryCards items={all} />
-      <Section title="Listado de tipos" subtitle={isLoadingApi ? "Cargando catalogo desde backend..." : `${items.length} resultados segun filtros aplicados.`}>
+      <Section title="Listado de tipos" subtitle={isLoadingApi ? "Cargando catálogo..." : `${items.length} resultados segun filtros aplicados.`}>
         <NoveltyTypeFilters filters={filters} options={options} onChange={setFilters} />
         <NoveltyTypeTable items={items} canEdit={canEdit} onToggleStatus={toggle} />
       </Section>

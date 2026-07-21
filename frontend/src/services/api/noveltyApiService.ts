@@ -128,7 +128,7 @@ export function mapNoveltyFromApi(item: ApiNovelty): Novelty {
     quantity: quantityLabel(item),
     affectsSettlement: item.noveltyType.exportsToFinnegans,
     status: toFrontendStatus(item.status),
-    createdBy: "Backend",
+    createdBy: "Sistema",
     employeeLegajo: item.employee?.legajo,
     employeeName: item.employee ? `${item.employee.lastName}, ${item.employee.firstName}` : undefined,
     documentationFileName: item.documents?.[0]?.fileName,

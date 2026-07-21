@@ -42,7 +42,7 @@ export function LoginPage() {
           <br />
           <span>en un solo lugar.</span>
         </h1>
-        <p>Prototipo funcional para validar legajos, responsabilidades, novedades y control horario antes de conectar el backend.</p>
+        <p>Gestión integral de legajos, responsabilidades, novedades y control horario.</p>
         <div className="login-feature">
           <ShieldCheck /> Accesos diferenciados por rol
         </div>
@@ -58,7 +58,7 @@ export function LoginPage() {
         <div>
           <p className="eyebrow">BIENVENIDO</p>
           <h2>Ingresar al sistema</h2>
-          <p className="muted">Usá tus credenciales reales del backend o elegí un perfil rápido para recorrer la demo.</p>
+          <p className="muted">Usá tus credenciales o elegí un perfil rápido para recorrer la demostración.</p>
         </div>
 
         <form onSubmit={submit} className="form-stack">
@@ -70,7 +70,7 @@ export function LoginPage() {
             Contraseña
             <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} />
           </label>
-          {error && <span className="error">No se pudo ingresar. Revisá credenciales o que el backend esté corriendo.</span>}
+          {error && <span className="error">No pudimos iniciar sesión. Revisá el email y la contraseña e intentá nuevamente.</span>}
           <Button variant="primary" type="submit" disabled={loading}>
             {loading ? "Ingresando..." : "Ingresar"} <ChevronRight size={17} />
           </Button>

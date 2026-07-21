@@ -83,8 +83,8 @@ function mapFromApi(item: ApiPosition): Position {
     history: [],
     createdAt: item.createdAt,
     updatedAt: item.updatedAt,
-    createdBy: "Backend",
-    updatedBy: "Backend",
+    createdBy: "Sistema",
+    updatedBy: "Sistema",
   };
 }
 

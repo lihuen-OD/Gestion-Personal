@@ -50,7 +50,7 @@ export function NoveltyModal({
         if (!mounted) return;
         setActiveTypes([]);
         setHourConcepts([]);
-        setError("No se pudieron cargar tipos de novedades desde backend.");
+        setError("No pudimos cargar los tipos de novedades. Intentá nuevamente.");
       });
     return () => {
       mounted = false;
@@ -123,9 +123,9 @@ export function NoveltyModal({
       return;
     } catch (apiError) {
       if (String((apiError as Error)?.message || "").includes("uuid")) {
-        return setError("Para guardar en backend, los legajos y tipos de novedad deben venir desde la base real.");
+        return setError("El legajo o el tipo de novedad seleccionado no es válido. Volvé a seleccionarlo.");
       }
-      return setError("No se pudo guardar la novedad en backend. Revisa los datos e intenta nuevamente.");
+      return setError("No pudimos guardar la novedad. Revisá los datos e intentá nuevamente.");
     }
 
   });

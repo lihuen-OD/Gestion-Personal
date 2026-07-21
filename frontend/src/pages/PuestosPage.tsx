@@ -116,7 +116,7 @@ export function PuestosPage() {
         action={canEdit ? <Link className="button primary" to="/puestos/nuevo"><Plus size={17} /> Crear puesto</Link> : undefined}
       />
       <PuestoSummaryCards summary={summary(apiItems)} />
-      <Section className="position-list-panel" title="Listado de puestos" subtitle={isLoadingApi ? "Cargando puestos desde backend..." : `${positions.length} resultados segun filtros aplicados.`}>
+      <Section className="position-list-panel" title="Listado de puestos" subtitle={isLoadingApi ? "Cargando puestos..." : `${positions.length} resultados segun filtros aplicados.`}>
         <div className="position-list-body">
           <PuestoFilters filters={filters} options={options(apiItems)} onChange={setFilters} />
           <PuestoTable positions={positions} assignedCount={(id) => getAssignedCount(positions.find((position) => position.id === id)!)} canEdit={canEdit} onRemove={remove} onToggleStatus={toggle} />

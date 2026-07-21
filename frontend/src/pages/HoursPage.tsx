@@ -120,7 +120,7 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
         setHoursSummary(emptyHoursSummary);
         setPendingItems([]);
         setUsesBackend(false);
-        setLoadError("No se pudo cargar carga horaria desde backend. Verifica que la API este levantada y que existan datos en la base.");
+        setLoadError("No pudimos cargar la información horaria. Intentá nuevamente.");
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -173,12 +173,12 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
       buildHoursExportWorkbook(rows, period);
     } catch (error) {
       if (!exportRows.length) {
-        setExportError("No se pudo preparar la exportación desde el backend.");
+        setExportError("No pudimos preparar la exportación. Intentá nuevamente.");
         return;
       }
       const { buildHoursExportWorkbook } = await import("../utils/hoursExport");
       buildHoursExportWorkbook(exportRows, period);
-      setExportError("Se exportó usando los datos visibles de la pantalla porque el backend no respondió.");
+      setExportError("La exportación se generó con los datos visibles porque no pudimos obtener información adicional.");
     } finally {
       setExporting(false);
     }
@@ -336,7 +336,7 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
                 </table>
               </TableShell>
             ) : (
-              <EmptyState text={usesBackend ? "No hay novedades pendientes para este período." : "Levantá el backend para ver novedades pendientes consolidadas."} />
+              <EmptyState text={usesBackend ? "No hay novedades pendientes para este período." : "Las novedades pendientes no están disponibles temporalmente."} />
             )}
           </Section>
 

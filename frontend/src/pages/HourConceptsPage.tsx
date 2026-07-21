@@ -156,7 +156,7 @@ export function HourConceptsPage() {
       setNotice("Hora especial guardada correctamente.");
       setTimeout(() => setNotice(""), 2200);
     } catch {
-      setNotice("No se pudo guardar en backend. Revisa la conexion e intenta nuevamente.");
+      setNotice("No pudimos guardar el concepto horario. Revisá los datos e intentá nuevamente.");
       setTimeout(() => setNotice(""), 3000);
     }
   });
@@ -182,7 +182,7 @@ export function HourConceptsPage() {
         ))}
       </div>
 
-      <Section title="Listado de horas especiales" subtitle={isLoadingApi ? "Cargando catalogo desde backend..." : `${items.length} resultados segun filtros aplicados.`}>
+      <Section title="Listado de horas especiales" subtitle={isLoadingApi ? "Cargando catálogo..." : `${items.length} resultados segun filtros aplicados.`}>
         <div className="filters catalog-filters">
           <label className="search-field">
             <input placeholder="Buscar por codigo, nombre o tipo" value={filters.search} onChange={(event) => setFilters({ ...filters, search: event.target.value })} />

@@ -45,7 +45,7 @@ export function PuestoCreatePage() {
       const created = await positionApiService.create(position);
       if (created) navigate(`/puestos/${created.id}`, { state: { created: true, usesApi } });
     } catch {
-      setError("No se pudo guardar el puesto en backend. Revisa codigo duplicado o conexion.");
+      setError("No pudimos guardar el puesto. Revisá si el código ya existe e intentá nuevamente.");
     }
   });
 

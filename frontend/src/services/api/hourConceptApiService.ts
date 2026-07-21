@@ -31,8 +31,8 @@ export function mapHourConceptFromApi(item: ApiHourConcept): HourConcept {
     notes: "",
     createdAt: item.createdAt,
     updatedAt: item.updatedAt,
-    createdBy: "Backend",
-    updatedBy: "Backend",
+    createdBy: "Sistema",
+    updatedBy: "Sistema",
     history: [],
   };
 }

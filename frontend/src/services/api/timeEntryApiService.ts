@@ -248,7 +248,7 @@ async function resolveHourConceptId(entry: Pick<TimeEntry, "conceptId" | "type">
   if (entry.conceptId && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(entry.conceptId)) return entry.conceptId;
   const concepts = await hourConceptApiService.getAll({ status: "ACTIVO" });
   const concept = concepts.find((item) => item.name === entry.type);
-  if (!concept) throw new Error(`No se encontró la hora especial "${entry.type}" en backend.`);
+  if (!concept) throw new Error(`No se encontró la hora especial "${entry.type}" entre los conceptos disponibles.`);
   return concept.id;
 }
 

@@ -40,7 +40,7 @@ export function NoveltyTypeCreatePage() {
       const created = await noveltyTypeApiService.create(item);
       navigate(`/configuracion/tipos-novedades/${created.id}`, { state: { created: true, usesApi: true } });
     } catch {
-      setError("No se pudo guardar en backend. Revisa la conexion o el codigo duplicado.");
+      setError("No pudimos guardar el tipo de novedad. Revisá si el código ya existe e intentá nuevamente.");
     }
   });
 

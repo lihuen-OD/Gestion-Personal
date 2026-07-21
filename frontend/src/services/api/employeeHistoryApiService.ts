@@ -29,7 +29,7 @@ function mapField(item: ApiFieldHistory): EmployeeFieldHistoryRecord {
     ...item,
     effectiveFrom: dateOnly(item.effectiveFrom),
     createdByUserId: item.createdByUserId || item.createdBy?.id || "",
-    createdByUserName: item.createdBy?.name || "Backend",
+    createdByUserName: item.createdBy?.name || "Sistema",
   };
 }
 
@@ -38,7 +38,7 @@ function mapBlock(item: ApiBlockHistory): EmployeeBlockHistoryRecord {
     ...item,
     effectiveFrom: dateOnly(item.effectiveFrom),
     createdByUserId: item.createdByUserId || item.createdBy?.id || "",
-    createdByUserName: item.createdBy?.name || "Backend",
+    createdByUserName: item.createdBy?.name || "Sistema",
   };
 }
 

@@ -182,7 +182,7 @@ export function OrgStructurePage() {
       .catch(() => {
         if (!alive) return;
         setApiCatalog(null);
-        setApiWarning("Backend no disponible: usando estructura local editable.");
+        setApiWarning("No pudimos actualizar la estructura compartida. Los cambios de esta sesión se mantendrán localmente.");
       })
       .finally(() => {
         if (alive) setIsLoadingApi(false);
@@ -232,10 +232,10 @@ export function OrgStructurePage() {
     <PageHeader eyebrow="CONFIGURACION" title="Empresas y estructura" description="Catalogo maestro de estructura organizacional para alimentar seleccionables, filtros, legajos, puestos y organigrama." action={<Button variant="primary" icon={Plus} onClick={() => setEditing(blank(tab, catalog))}>Nuevo registro</Button>} />
     {notice && <div className="toast">{notice}</div>}
     {apiWarning && <div className="info-note compact"><b>Modo local</b><p>{apiWarning}</p></div>}
-    {usesApiCatalog && <div className="info-note compact"><b>Datos reales</b><p>Lectura y escritura conectadas a backend con soporte de relaciones multiples.</p></div>}
+    {usesApiCatalog && <div className="info-note compact"><b>Información sincronizada</b><p>Los cambios se guardan y quedan disponibles para los usuarios autorizados.</p></div>}
     <div className="stat-grid org-structure-summary">{counts.map(([label, value]) => <div className="stat-card" key={label}><div><small>{label}</small><strong>{value}</strong><span>Catalogo maestro</span></div></div>)}</div>
     <Tabs tabs={tabs.map((item) => ({ key: item.id, label: item.label }))} active={tab} onChange={(key) => { setTab(key as Tab); setEditing(null); }} />
-    <Section title={tabs.find((item) => item.id === tab)?.label || ""} subtitle={isLoadingApi ? "Cargando estructura desde backend..." : "Administracion de relaciones y estados disponibles para operacion."}>
+    <Section title={tabs.find((item) => item.id === tab)?.label || ""} subtitle={isLoadingApi ? "Cargando estructura..." : "Administracion de relaciones y estados disponibles para operacion."}>
       <DataTable status={isLoadingApi ? "loading" : activeRows.length === 0 ? "empty" : "ready"} minWidth={940} emptyText="No hay registros cargados para esta categoria.">
         <table><thead><tr><th>Codigo</th><th>Nombre</th><th>Relacion principal</th><th>Relacion secundaria</th><th>Estado</th><th>Accion</th></tr></thead><Rows type={tab} catalog={catalog} readOnly={false} onEdit={setEditing} /></table>
       </DataTable>

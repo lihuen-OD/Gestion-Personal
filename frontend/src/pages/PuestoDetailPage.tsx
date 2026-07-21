@@ -81,7 +81,7 @@ export function PuestoDetailPage() {
       setNotice("Cambios guardados correctamente.");
       setTimeout(() => setNotice(""), 2200);
     } catch {
-      setNotice("No se pudo guardar el puesto en backend.");
+      setNotice("No pudimos guardar el puesto. Revisá los datos e intentá nuevamente.");
     }
   });
 

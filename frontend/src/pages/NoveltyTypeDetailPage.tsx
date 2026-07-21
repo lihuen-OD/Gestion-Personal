@@ -56,7 +56,7 @@ export function NoveltyTypeDetailPage() {
       setNotice("Cambios guardados correctamente.");
       setTimeout(() => setNotice(""), 2200);
     } catch {
-      setNotice("No se pudo guardar en backend. Revisa la conexion o el codigo duplicado.");
+      setNotice("No pudimos guardar el tipo de novedad. Revisá si el código ya existe e intentá nuevamente.");
     }
   });
 
@@ -72,7 +72,7 @@ export function NoveltyTypeDetailPage() {
       const saved = await noveltyTypeApiService.update(item.id, next);
       if (saved) setItem(saved);
     } catch {
-      setNotice("No se pudo cambiar el estado en backend.");
+      setNotice("No pudimos cambiar el estado. Intentá nuevamente.");
     }
   };
 

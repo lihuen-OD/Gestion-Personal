@@ -61,7 +61,7 @@ export function DocumentsPage() {
     try {
       await documentApiService.download(doc);
     } catch (downloadError) {
-      setError("No se pudo abrir el archivo. Verifica que exista en el backend o que Cloudinary este configurado.");
+      setError("No pudimos abrir el archivo. Verificá que siga disponible e intentá nuevamente.");
     }
   };
 

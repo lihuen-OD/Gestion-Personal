@@ -14,6 +14,10 @@ export class ApiError extends Error {
   }
 }
 
+export function getUserErrorMessage(error: unknown, fallback = "No pudimos completar la operación. Intentá nuevamente.") {
+  return error instanceof ApiError && error.message ? error.message : fallback;
+}
+
 export const API_ERROR_EVENT = "app:api-error";
 
 const fieldLabels: Record<string, string> = {
@@ -40,6 +44,74 @@ const fieldLabels: Record<string, string> = {
   categoryId: "Categoría",
 };
 
+const errorMessagesByCode: Record<string, string> = {
+  INVALID_CREDENTIALS: "El email o la contraseña no son correctos.",
+  AUTH_REQUIRED: "Tu sesión venció. Iniciá sesión nuevamente.",
+  INVALID_TOKEN: "Tu sesión venció. Iniciá sesión nuevamente.",
+  INVALID_REFRESH_TOKEN: "Tu sesión venció. Iniciá sesión nuevamente.",
+  USER_INACTIVE: "Tu usuario está inactivo. Comunicate con un administrador.",
+  FORBIDDEN: "No tenés permisos para realizar esta acción.",
+  EMPLOYEE_SCOPE_FORBIDDEN: "Uno o más legajos están fuera de tu alcance.",
+  VALIDATION_ERROR: "Revisá los datos ingresados e intentá nuevamente.",
+  EMPLOYEE_UNIQUE_CONSTRAINT: "Ya existe otro legajo con el mismo Legajo, Legajo Finnegans, CUIL o DNI.",
+  EMPLOYEE_ALREADY_EXISTS: "Ya existe otro legajo con el mismo Legajo, Legajo Finnegans, CUIL o DNI.",
+  EMPLOYEE_NOT_FOUND: "No encontramos el legajo solicitado.",
+  RELATION_CONSTRAINT: "Alguno de los datos relacionados ya no está disponible. Actualizá la página y volvé a seleccionarlo.",
+  UNIQUE_CONSTRAINT: "Ya existe un registro con los mismos datos únicos.",
+  RECORD_NOT_FOUND: "No encontramos el registro solicitado.",
+  POSITION_UNIQUE_CONSTRAINT: "Ya existe un puesto con ese código.",
+  POSITION_NOT_FOUND: "No encontramos el puesto solicitado.",
+  POSITION_RELATION_CONSTRAINT: "El área o sector seleccionado ya no está disponible.",
+  SALARY_CATEGORY_DUPLICATED: "Ya existe una categoría salarial con esos datos.",
+  SALARY_CATEGORY_NOT_FOUND: "No encontramos la categoría salarial solicitada.",
+  HOUR_CONCEPT_UNIQUE_CONSTRAINT: "Ya existe un concepto de horas con ese código.",
+  HOUR_CONCEPT_NOT_FOUND: "No encontramos el concepto de horas solicitado.",
+  DOCUMENT_CATEGORY_DUPLICATED: "Ya existe una categoría documental con ese código.",
+  DOCUMENT_CATEGORY_NOT_FOUND: "No encontramos la categoría documental solicitada.",
+  DOCUMENT_NOT_FOUND: "No encontramos el documento solicitado.",
+  DOCUMENT_FILE_NOT_AVAILABLE: "El archivo no está disponible.",
+  DOCUMENT_FILE_NOT_FOUND: "No encontramos el archivo solicitado.",
+  NOVELTY_NOT_FOUND: "No encontramos la novedad solicitada.",
+  NOVELTY_TYPE_NOT_FOUND: "No encontramos el tipo de novedad solicitado.",
+  NOVELTY_TYPE_NOT_AVAILABLE: "El tipo de novedad no está disponible.",
+  NOVELTY_TYPE_UNIQUE_CONSTRAINT: "Ya existe un tipo de novedad con ese código o vínculo.",
+  NOVELTY_APPROVAL_FORBIDDEN: "No tenés permisos para aprobar o rechazar este tipo de novedad.",
+  NOVELTY_LOAD_FORBIDDEN: "No tenés permisos para cargar este tipo de novedad.",
+  NOVELTY_HOURS_NOT_ALLOWED: "Este tipo de novedad no permite indicar una cantidad de horas.",
+  NOVELTY_TO_DATE_NOT_ALLOWED: "Este tipo de novedad no permite indicar una fecha hasta.",
+  NOVELTY_VALIDITY_REQUIRED: "Este tipo de novedad requiere fecha desde y fecha hasta.",
+  NOVELTY_STATUS_NOT_APPROVABLE: "Solo se pueden aprobar novedades pendientes.",
+  NOVELTY_STATUS_NOT_REJECTABLE: "Solo se pueden rechazar novedades pendientes.",
+  TIME_ENTRY_NOT_FOUND: "No encontramos la carga horaria solicitada.",
+  TIME_ENTRY_DUPLICATED: "Ya existe una carga para ese empleado, fecha y concepto de horas.",
+  TIME_ENTRY_LOCKED: "Las cargas aprobadas o cerradas no se pueden editar.",
+  TIME_ENTRY_STATUS_NOT_SUBMITTABLE: "Solo se pueden enviar cargas en borrador o devueltas.",
+  TIME_ENTRY_STATUS_NOT_APPROVABLE: "Solo se pueden aprobar cargas en revisión.",
+  TIME_ENTRY_STATUS_NOT_REJECTABLE: "Solo se pueden rechazar cargas en revisión.",
+  TIME_ENTRY_STATUS_NOT_RETURNABLE: "Solo se pueden devolver cargas en revisión.",
+  HOUR_CONCEPT_NOT_ENABLED: "El concepto de horas no está habilitado para este empleado.",
+  WORK_SHIFT_NOT_FOUND: "No encontramos la jornada solicitada.",
+  EMAIL_ALREADY_EXISTS: "El email ya está asociado a otro usuario.",
+  USER_NOT_FOUND: "No encontramos el usuario solicitado.",
+  AUDIT_PARAMETER_DUPLICATED: "Ya existe un parámetro de auditoría con ese código.",
+  AUDIT_PARAMETER_NOT_FOUND: "No encontramos el parámetro de auditoría solicitado.",
+  STORAGE_FILE_NOT_FOUND: "No encontramos el archivo solicitado.",
+  STORAGE_FILE_NOT_AVAILABLE: "El archivo no está disponible.",
+  STORAGE_FILE_BUFFER_REQUIRED: "No pudimos procesar el archivo seleccionado.",
+  STORAGE_GOOGLE_DRIVE_NOT_CONFIGURED: "El servicio de archivos no está disponible. Comunicate con el área de sistemas.",
+  STORAGE_GOOGLE_DRIVE_AUTH_FAILED: "No pudimos acceder al servicio de archivos. Intentá nuevamente.",
+  STORAGE_GOOGLE_DRIVE_API_ERROR: "No pudimos completar la operación con el archivo. Intentá nuevamente.",
+  STORAGE_GOOGLE_DRIVE_UPLOAD_FAILED: "No pudimos guardar el archivo. Intentá nuevamente.",
+  STORAGE_CLOUDINARY_DELETE_FAILED: "No pudimos eliminar el archivo. Intentá nuevamente.",
+  STORAGE_CLOUDINARY_FILE_NOT_AVAILABLE: "El archivo no está disponible.",
+  STORAGE_CLOUDINARY_DOWNLOAD_FAILED: "No pudimos descargar el archivo. Intentá nuevamente.",
+  STORAGE_LOCAL_INVALID_KEY: "El archivo no está disponible.",
+  STORAGE_LOCAL_FILE_NOT_FOUND: "No encontramos el archivo solicitado.",
+  INTERNAL_ERROR: "Ocurrió un problema inesperado. Intentá nuevamente.",
+  ROUTE_NOT_FOUND: "La operación solicitada no está disponible.",
+  MISSING_ROUTE_PARAM: "Falta información necesaria para completar la operación.",
+};
+
 type ApiErrorPayload = {
   error?: {
     code?: string;
@@ -55,6 +127,10 @@ function humanizeField(field: string) {
   return fieldLabels[field] || field.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/^./, (letter) => letter.toUpperCase());
 }
 
+function isInternalMessage(message: string) {
+  return /\b(backend|api|storage|cloudinary|google drive|not found|invalid|missing|required|already exists|unexpected server error|permission to|only (draft|entries|pending|rrhh|supervision))\b/i.test(message);
+}
+
 export function formatApiErrorMessage(payload: ApiErrorPayload) {
   const error = payload.error;
   const fields = Object.entries(error?.details?.fieldErrors || {})
@@ -62,7 +138,11 @@ export function formatApiErrorMessage(payload: ApiErrorPayload) {
     .map(([field]) => humanizeField(field));
   if (fields.length) return `Revisá los campos obligatorios o inválidos: ${fields.join(", ")}.`;
   const formError = error?.details?.formErrors?.find(Boolean);
-  return formError || error?.message || "No se pudo completar la solicitud.";
+  if (formError && !isInternalMessage(formError)) return formError;
+  const rawMessage = error?.message && !isInternalMessage(error.message) ? error.message : undefined;
+  return (error?.code && errorMessagesByCode[error.code])
+    || rawMessage
+    || "No pudimos completar la operación. Intentá nuevamente.";
 }
 
 function notifyApiError(message: string, code: string, status: number) {

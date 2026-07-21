@@ -2,6 +2,7 @@ import { lazy, Suspense, useState } from "react";
 import { GeoAddressFields } from "../GeoAddressFields";
 import { employeeApiService } from "../../services/api/employeeApiService";
 import { employeeHistoryApiService } from "../../services/api/employeeHistoryApiService";
+import { getUserErrorMessage } from "../../services/api/apiClient";
 import { locationService } from "../../services/locationService";
 import type { Employee, User } from "../../types";
 import { useAsyncAction } from "../../utils/useAsyncAction";
@@ -161,8 +162,8 @@ export function AddressEditBlock({ employee, user, canEdit, onSaved }: EmployeeB
         user,
         `Legajo ${employee.legajoInterno || employee.legajo}`,
       );
-    } catch {
-      setError("No se pudo guardar. Verifica que el backend esté activo.");
+    } catch (error) {
+      setError(getUserErrorMessage(error, "No pudimos guardar el domicilio. Intentá nuevamente."));
       return;
     }
     setEditing(false);
@@ -337,8 +338,8 @@ export function AssignmentBlock({
         user,
         `Legajo ${employee.legajoInterno || employee.legajo}`,
       );
-    } catch {
-      setError("No se pudo guardar. Verifica que el backend esté activo.");
+    } catch (error) {
+      setError(getUserErrorMessage(error, "No pudimos guardar las asignaciones. Intentá nuevamente."));
       return;
     }
     setEditing(false);
@@ -460,8 +461,8 @@ export function TransportBlock({ employee, user, canEdit, onSaved }: EmployeeBlo
         user,
         `Legajo ${employee.legajoInterno || employee.legajo}`,
       );
-    } catch {
-      setError("No se pudo guardar. Verifica que el backend esté activo.");
+    } catch (error) {
+      setError(getUserErrorMessage(error, "No pudimos guardar los datos de transporte. Intentá nuevamente."));
       return;
     }
     setEditing(false);
@@ -554,8 +555,8 @@ export function HoursSpecialBlock({ employee, user, canEdit, onSaved }: Employee
         user,
         `Legajo ${employee.legajoInterno || employee.legajo}`,
       );
-    } catch {
-      setError("No se pudo guardar. Verifica que el backend esté activo.");
+    } catch (error) {
+      setError(getUserErrorMessage(error, "No pudimos guardar la configuración horaria. Intentá nuevamente."));
       return;
     }
     setEditing(false);

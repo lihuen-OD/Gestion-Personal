@@ -3,6 +3,7 @@ import { employeeApiService } from "../../services/api/employeeApiService";
 import { employeeHistoryApiService } from "../../services/api/employeeHistoryApiService";
 import { orgStructureApiService } from "../../services/api/orgStructureApiService";
 import { positionApiService } from "../../services/api/positionApiService";
+import { getUserErrorMessage } from "../../services/api/apiClient";
 import type { Employee, EmployeeFieldHistoryRecord, FieldHistorySection, User } from "../../types";
 import type { Position } from "../../types/position.types";
 import { useAsyncAction } from "../../utils/useAsyncAction";
@@ -140,8 +141,8 @@ export function MultiCompanyField({ employee, canEdit, user, onSaved }: TrackedF
       setEditing(false);
       setOpen(true);
       setError("");
-    } catch {
-      setError("No se pudo guardar. Verifica que el backend esté activo.");
+    } catch (error) {
+      setError(getUserErrorMessage(error, "No pudimos guardar el cambio. Intentá nuevamente."));
       return;
     }
   });
@@ -270,8 +271,8 @@ export function EmployeePositionField({ employee, canEdit, user, onSaved }: Trac
       setEditing(false);
       setOpen(true);
       setError("");
-    } catch {
-      setError("No se pudo guardar. Verifica que el backend esté activo.");
+    } catch (error) {
+      setError(getUserErrorMessage(error, "No pudimos guardar el cambio. Intentá nuevamente."));
       return;
     }
   });

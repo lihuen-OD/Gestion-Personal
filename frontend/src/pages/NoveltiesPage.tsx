@@ -42,7 +42,7 @@ export function NoveltiesPage() {
         if (mounted) {
           setNovelties([]);
           setMeta({ total: 0, page, pageSize, hasMore: false });
-          setLoadError("No se pudieron cargar novedades desde backend. Verifica que la API este levantada y que existan datos en la base.");
+          setLoadError("No pudimos cargar las novedades. Intentá nuevamente.");
         }
       });
     return () => {

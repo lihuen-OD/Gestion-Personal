@@ -30,7 +30,7 @@ export function NoveltyTable({
       setActionError("");
       onChanged(updated);
     } catch (error) {
-      setActionError("No se pudo aprobar la novedad en backend.");
+      setActionError("No pudimos aprobar la novedad. Intentá nuevamente.");
     }
   };
 
@@ -41,7 +41,7 @@ export function NoveltyTable({
       setActionError("");
       onChanged(updated);
     } catch (error) {
-      setActionError("No se pudo rechazar la novedad en backend.");
+      setActionError("No pudimos rechazar la novedad. Intentá nuevamente.");
     }
     setRejecting(null);
     setRejectReason("");

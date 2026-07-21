@@ -114,7 +114,7 @@ export function DocumentCategoriesPage() {
       setNotice("Categoria documental guardada correctamente.");
       setTimeout(() => setNotice(""), 2200);
     } catch {
-      setNotice("No se pudo guardar en backend. Verifica que la API este activa.");
+      setNotice("No pudimos guardar la categoría documental. Intentá nuevamente.");
     }
   });
   if (roleLevel(user!.role) !== 1) return <Navigate to="/configuracion" />;

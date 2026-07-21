@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { employeeApiService } from "../../services/api/employeeApiService";
 import { employeeHistoryApiService } from "../../services/api/employeeHistoryApiService";
+import { getUserErrorMessage } from "../../services/api/apiClient";
 import type { Employee, EmployeeBlockHistoryRecord, EmployeeFieldHistoryRecord, FieldHistorySection, User } from "../../types";
 import { useAsyncAction } from "../../utils/useAsyncAction";
 import { EmptyState } from "../ui/EmptyState";
@@ -91,8 +92,8 @@ export function FieldWithHistory({
         setHistory((rows) => [historyRow, ...rows.filter((row) => row.id !== historyRow.id)]);
         return employeeFromApi;
       })
-      .catch(() => {
-        setError("No se pudo guardar el cambio. Verifica que el backend esté activo.");
+      .catch((error) => {
+        setError(getUserErrorMessage(error, "No pudimos guardar el cambio. Intentá nuevamente."));
         return;
       });
     if (!saved) return;

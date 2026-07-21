@@ -77,7 +77,7 @@ export function OrganigramasPage() {
               return;
             }
             setSourceEmployees([]);
-            setLoadError("No se pudo cargar el organigrama desde el backend. Reintentá cuando la API esté disponible.");
+            setLoadError("No pudimos cargar el organigrama. Intentá nuevamente en unos minutos.");
           });
       });
     return () => {
@@ -101,7 +101,7 @@ export function OrganigramasPage() {
 
   if (level === 3) return <><PageHeader eyebrow="ACCESO RESTRINGIDO" title="Organigramas" description="Tu perfil de carga horaria no tiene acceso al módulo de estructura organizacional." /></>;
 
-  return <><PageHeader eyebrow="ESTRUCTURA ORGANIZACIONAL" title="Organigramas" description={loadError ? "No hay datos disponibles hasta restablecer la conexión con la API." : usesBackend ? "Visualización alimentada desde legajos reales: categoría interna, encargado directo, sector, centro de costo y estado." : "Visualización alimentada desde Legajos en modo demo local."} action={<Button variant="subtle" icon={FileBarChart} onClick={exportView} disabled={Boolean(loadError)}>Exportar vista</Button>} />
+  return <><PageHeader eyebrow="ESTRUCTURA ORGANIZACIONAL" title="Organigramas" description={loadError ? "La información no está disponible temporalmente." : usesBackend ? "Visualización alimentada desde legajos reales: categoría interna, encargado directo, sector, centro de costo y estado." : "Visualización alimentada desde Legajos en modo demostración."} action={<Button variant="subtle" icon={FileBarChart} onClick={exportView} disabled={Boolean(loadError)}>Exportar vista</Button>} />
     {loadError ? <div className="form-error">{loadError}</div> : null}
     {toast && <div className="toast">{toast}</div>}
     <OrgChartTabs active={tab} onChange={setTab} />

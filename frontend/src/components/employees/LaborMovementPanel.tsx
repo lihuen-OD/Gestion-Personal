@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { employeeApiService } from "../../services/api/employeeApiService";
+import { getUserErrorMessage } from "../../services/api/apiClient";
 import { calculateLaborStatus } from "../../services/employeeStatusService";
 import type { Employee, LaborMovementType, User } from "../../types";
 import { useAsyncAction } from "../../utils/useAsyncAction";
@@ -53,8 +54,8 @@ export function LaborMovementPanel({
         observation: observation.trim() || null,
       });
       onSaved(updated);
-    } catch {
-      setError("No se pudo registrar el movimiento. Verifica que el backend esté activo.");
+    } catch (error) {
+      setError(getUserErrorMessage(error, "No pudimos registrar el movimiento. Intentá nuevamente."));
       return;
     }
     setOpen(false);

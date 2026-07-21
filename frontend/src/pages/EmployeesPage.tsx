@@ -107,7 +107,7 @@ export function EmployeesPage() {
       setSyncMessage(`Estados sincronizados: ${result.updated} actualizados sobre ${result.scanned} revisados.`);
       setRefresh((value) => value + 1);
     } catch (error) {
-      setSyncMessage("No se pudo sincronizar desde backend. Verifica que la API este levantada.");
+      setSyncMessage("No pudimos sincronizar los estados. Intentá nuevamente en unos minutos.");
     } finally {
       setSyncing(false);
     }

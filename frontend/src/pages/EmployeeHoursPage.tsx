@@ -142,7 +142,7 @@ export function EmployeeHoursPage() {
         setNoveltyTypes([]);
         setCatalog([]);
         setAttendanceIssues(0);
-        setLoadError("No se pudo cargar la grilla desde backend. Verifica que la API este levantada y que el legajo exista en la base.");
+        setLoadError("No pudimos cargar la grilla horaria. Verificá el legajo e intentá nuevamente.");
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -310,7 +310,7 @@ export function EmployeeHoursPage() {
           if (noveltyError instanceof ApiError) {
             return setError(`La hora se guardo, pero no se pudo guardar la novedad: ${noveltyError.message} (${noveltyError.code}).`);
           }
-          return setError("La hora se guardo, pero no se pudo guardar la novedad en backend. Revisa el tipo de novedad y volve a intentar.");
+          return setError("La hora se guardó, pero no pudimos registrar la novedad. Revisá el tipo seleccionado e intentá nuevamente.");
         }
         if (fileName) {
           try {
@@ -330,7 +330,7 @@ export function EmployeeHoursPage() {
               notes: docNotes,
             });
           } catch (documentError) {
-            return setError("La novedad se guardo, pero no se pudo asociar la documentacion en backend.");
+            return setError("La novedad se guardó, pero no pudimos asociar la documentación. Intentá adjuntarla nuevamente.");
           }
         }
       }
@@ -343,7 +343,7 @@ export function EmployeeHoursPage() {
 
   if (loading) {
     return (
-      <Section title="Carga de horas" subtitle="Cargando datos desde backend">
+      <Section title="Carga de horas" subtitle="Cargando información">
         <div className="empty">Preparando grilla horaria...</div>
       </Section>
     );
@@ -351,7 +351,7 @@ export function EmployeeHoursPage() {
 
   if (loadError || !employee) {
     return (
-      <Section title="Carga de horas" subtitle="No se pudo obtener el legajo desde backend">
+      <Section title="Carga de horas" subtitle="No pudimos obtener la información del legajo">
         <div className="empty">{loadError || "Legajo no encontrado."}</div>
       </Section>
     );

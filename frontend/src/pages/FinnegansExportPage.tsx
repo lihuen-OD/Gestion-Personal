@@ -159,7 +159,7 @@ export function FinnegansExportPage() {
           status={status === "loading" ? "loading" : status === "error" ? "error" : filtered.length === 0 ? "empty" : "ready"}
           minWidth={1120}
           emptyText="No hay registros para exportar en este periodo."
-          errorMessage="No se pudo cargar la exportacion desde backend. Verifica que la API este levantada."
+          errorMessage="No pudimos preparar la exportación. Intentá nuevamente."
           onRetry={() => setRetry((value) => value + 1)}
         >
           <table>
