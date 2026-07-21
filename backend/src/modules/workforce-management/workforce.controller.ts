@@ -1,4 +1,5 @@
 import type { RequestHandler } from "express";
+import { requestAuditContext } from "../../shared/audit/requestAuditContext";
 import { requireParam } from "../../shared/http/params";
 import { workforceService } from "./workforce.service";
 
@@ -15,7 +16,9 @@ export const workforceController = {
   unreadNotificationCount: (async (req,res)=>res.json({data:{count:await workforceService.unreadNotificationCount(req.user!)}})) satisfies RequestHandler,
   readNotification: (async (req,res)=>res.json({data:await workforceService.markNotificationRead(requireParam(req,"id"),req.user!)})) satisfies RequestHandler,
   shiftTemplates: (async (_req,res)=>res.json({data:await workforceService.shiftTemplates()})) satisfies RequestHandler,
-  createShiftTemplate: (async (req,res)=>res.status(201).json({data:await workforceService.createShiftTemplate(req.body)})) satisfies RequestHandler,
+  createShiftTemplate: (async (req,res)=>res.status(201).json({data:await workforceService.createShiftTemplate(req.body,requestAuditContext(req))})) satisfies RequestHandler,
+  updateShiftTemplate: (async (req,res)=>res.json({data:await workforceService.updateShiftTemplate(requireParam(req,"id"),req.body,requestAuditContext(req))})) satisfies RequestHandler,
+  removeShiftTemplate: (async (req,res)=>res.json({data:await workforceService.removeShiftTemplate(requireParam(req,"id"),requestAuditContext(req))})) satisfies RequestHandler,
   doubleRules: (async (_req,res)=>res.json({data:await workforceService.doubleRules()})) satisfies RequestHandler,
   createDoubleRule: (async (req,res)=>res.status(201).json({data:await workforceService.createDoubleRule(req.body,req.user!)})) satisfies RequestHandler,
 };

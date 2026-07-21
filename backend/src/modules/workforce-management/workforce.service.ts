@@ -3,6 +3,8 @@ import { prisma } from "../../shared/prisma/client";
 import { AppError } from "../../shared/errors/AppError";
 import { employeeAccessWhere } from "../employees/employeeAccess";
 import { roles } from "../../shared/security/roles";
+import type { AuditContext } from "../audit/audit.service";
+import { auditService } from "../audit/audit.service";
 
 async function ensureVisible(employeeIds: string[], user: Express.AuthUser) {
   const count = await prisma.employee.count({ where: { AND: [{ id: { in: employeeIds } }, employeeAccessWhere(user)] } });
@@ -127,7 +129,40 @@ export const workforceService = {
   unreadNotificationCount(user: Express.AuthUser) { return prisma.systemNotification.count({ where: { recipientUserId: user.id, status: "NO_LEIDA" } }); },
   markNotificationRead(id: string, user: Express.AuthUser) { return prisma.systemNotification.updateMany({ where: { id, recipientUserId: user.id }, data: { status: "LEIDA", readAt: new Date() } }); },
   shiftTemplates() { return prisma.shiftTemplate.findMany({ orderBy: { startTime: "asc" } }); },
-  createShiftTemplate(input: any) { return prisma.shiftTemplate.create({ data: { ...input, crossesMidnight: input.endTime <= input.startTime } }); },
+  async createShiftTemplate(input: any, audit?: AuditContext) {
+    const item = await prisma.shiftTemplate.create({ data: { ...input, crossesMidnight: input.endTime <= input.startTime } });
+    await auditService.register({ ...audit, action: "CREATE", entity: "ShiftTemplate", entityId: item.id, description: `Se creó el turno ${item.code} - ${item.name}.`, after: item as Prisma.InputJsonValue });
+    return item;
+  },
+  async updateShiftTemplate(id: string, input: any, audit?: AuditContext) {
+    const before = await prisma.shiftTemplate.findUnique({ where: { id } });
+    if (!before) throw new AppError("No encontramos el turno solicitado", 404, "SHIFT_TEMPLATE_NOT_FOUND");
+    const startTime = input.startTime ?? before.startTime;
+    const endTime = input.endTime ?? before.endTime;
+    const item = await prisma.shiftTemplate.update({ where: { id }, data: { ...input, crossesMidnight: endTime <= startTime } });
+    await auditService.register({
+      ...audit,
+      action: input.status && input.status !== before.status ? input.status === "ACTIVO" ? "ACTIVATE" : "DEACTIVATE" : "UPDATE",
+      entity: "ShiftTemplate",
+      entityId: id,
+      description: `Se actualizó el turno ${item.code} - ${item.name}.`,
+      before: before as Prisma.InputJsonValue,
+      after: item as Prisma.InputJsonValue,
+    });
+    return item;
+  },
+  async removeShiftTemplate(id: string, audit?: AuditContext) {
+    const before = await prisma.shiftTemplate.findUnique({ where: { id }, include: { _count: { select: { workShifts: true } } } });
+    if (!before) throw new AppError("No encontramos el turno solicitado", 404, "SHIFT_TEMPLATE_NOT_FOUND");
+    if (before._count.workShifts > 0) {
+      const item = await prisma.shiftTemplate.update({ where: { id }, data: { status: "INACTIVO" } });
+      await auditService.register({ ...audit, action: "DEACTIVATE", entity: "ShiftTemplate", entityId: id, description: `Se inactivó el turno ${before.code} porque tiene jornadas históricas asociadas.`, before: before as Prisma.InputJsonValue, after: item as Prisma.InputJsonValue });
+      return { mode: "INACTIVATED" as const, item, relatedWorkShifts: before._count.workShifts };
+    }
+    await prisma.shiftTemplate.delete({ where: { id } });
+    await auditService.register({ ...audit, action: "DELETE", entity: "ShiftTemplate", entityId: id, description: `Se eliminó el turno sin uso ${before.code} - ${before.name}.`, before: before as Prisma.InputJsonValue });
+    return { mode: "DELETED" as const, id, relatedWorkShifts: 0 };
+  },
   doubleRules() { return prisma.doubleHourRule.findMany({ include: { employees: { include: { employee: { select: { id: true, legajo: true, firstName: true, lastName: true } } } } }, orderBy: { fromDate: "desc" } }); },
   createDoubleRule(input: any, user: Express.AuthUser) { const { employeeIds, ...data } = input; return prisma.doubleHourRule.create({ data: { ...data, createdByUserId: user.id, employees: { create: employeeIds.map((employeeId: string) => ({ employeeId })) } }, include: { employees: true } }); },
 };
