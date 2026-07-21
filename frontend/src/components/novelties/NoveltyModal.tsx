@@ -11,6 +11,8 @@ import { useAsyncAction } from "../../utils/useAsyncAction";
 import { Field, Select } from "../ui/FormControls";
 import { Modal } from "../ui/Modal";
 import { EmployeeRemoteSelector } from "../employees/EmployeeRemoteSelector";
+import { ErrorState } from "../ui/ErrorState";
+import { LoadingState } from "../ui/LoadingState";
 
 export function NoveltyModal({
   employees,
@@ -35,9 +37,12 @@ export function NoveltyModal({
   const [fileName, setFileName] = useState("");
   const [docNotes, setDocNotes] = useState("");
   const [error, setError] = useState("");
+  const [catalogStatus, setCatalogStatus] = useState<"loading" | "success" | "error">("loading");
+  const [catalogRetry, setCatalogRetry] = useState(0);
 
   useEffect(() => {
     let mounted = true;
+    setCatalogStatus("loading");
     Promise.all([noveltyTypeApiService.getAll(), hourConceptApiService.getAll()])
       .then(([types, concepts]) => {
         if (!mounted) return;
@@ -45,17 +50,18 @@ export function NoveltyModal({
         setActiveTypes(active);
         setHourConcepts(concepts.filter((item) => item.status === "ACTIVO"));
         if (!active.some((item) => item.id === typeId)) setTypeId(active[0]?.id || "");
+        setCatalogStatus("success");
       })
       .catch(() => {
         if (!mounted) return;
         setActiveTypes([]);
         setHourConcepts([]);
-        setError("No pudimos cargar los tipos de novedades. Intentá nuevamente.");
+        setCatalogStatus("error");
       });
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [catalogRetry]);
 
   const selectedType = activeTypes.find((item) => item.id === typeId);
   const activeLink = selectedType?.finnegansLinks.find((link) => link.status === "ACTIVO");
@@ -133,7 +139,11 @@ export function NoveltyModal({
   return (
     <Modal title="Nueva novedad" close={close}>
       <div className="form-stack">
-        {activeTypes.length ? (
+        {catalogStatus === "loading" ? (
+          <LoadingState text="Cargando tipos de novedades..." />
+        ) : catalogStatus === "error" ? (
+          <ErrorState message="No pudimos cargar los tipos de novedades." onRetry={() => setCatalogRetry((value) => value + 1)} />
+        ) : activeTypes.length ? (
           <>
             <label>
               Tipo de novedad

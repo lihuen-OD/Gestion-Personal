@@ -6,6 +6,8 @@ import { NoveltyTypeSummaryCards } from "../components/novelty-types/NoveltyType
 import { NoveltyTypeTable } from "../components/novelty-types/NoveltyTypeTable";
 import { PageHeader } from "../components/ui/PageHeader";
 import { Section } from "../components/ui/Section";
+import { ErrorState } from "../components/ui/ErrorState";
+import { LoadingState } from "../components/ui/LoadingState";
 import { useAuth } from "../context/AuthContext";
 import { noveltyTypeApiService } from "../services/api/noveltyTypeApiService";
 import type { NoveltyType, NoveltyTypeFilters as NoveltyTypeFiltersModel } from "../types/noveltyType.types";
@@ -84,11 +86,10 @@ export function NoveltyTypesPage() {
         description="Catalogo maestro interno con reglas operativas y equivalencias Finnegans."
         action={canEdit ? <Link to="/configuracion/tipos-novedades/nuevo" className="button primary"><Plus size={17} /> Crear tipo</Link> : undefined}
       />
-      {apiWarning && <div className="info-note compact"><b>Modo local</b><p>{apiWarning}</p></div>}
-      <NoveltyTypeSummaryCards items={all} />
+      {!isLoadingApi && !apiWarning ? <NoveltyTypeSummaryCards items={all} /> : null}
       <Section title="Listado de tipos" subtitle={isLoadingApi ? "Cargando catálogo..." : `${items.length} resultados segun filtros aplicados.`}>
         <NoveltyTypeFilters filters={filters} options={options} onChange={setFilters} />
-        <NoveltyTypeTable items={items} canEdit={canEdit} onToggleStatus={toggle} />
+        {isLoadingApi ? <LoadingState text="Cargando tipos de novedades..." /> : apiWarning ? <ErrorState message="No pudimos cargar los tipos de novedades." onRetry={() => setRefresh((value) => value + 1)} /> : <NoveltyTypeTable items={items} canEdit={canEdit} onToggleStatus={toggle} />}
       </Section>
     </>
   );

@@ -4,6 +4,8 @@ import { noveltyApiService } from "../../services/api/noveltyApiService";
 import type { Employee, Novelty, User } from "../../types";
 import { NoveltyModal } from "./NoveltyModal";
 import { NoveltyTable } from "./NoveltyTable";
+import { ErrorState } from "../ui/ErrorState";
+import { LoadingState } from "../ui/LoadingState";
 
 export function EmployeeNoveltiesPanel({
   employee,
@@ -17,15 +19,22 @@ export function EmployeeNoveltiesPanel({
   const [open, setOpen] = useState(false);
   const [refresh, setRefresh] = useState(0);
   const [rows, setRows] = useState<Novelty[]>([]);
+  const [loadStatus, setLoadStatus] = useState<"loading" | "success" | "error">("loading");
 
   useEffect(() => {
     let mounted = true;
+    setLoadStatus("loading");
     noveltyApiService
       .getAll({ employeeId: employee.id })
       .then((items) => {
-        if (mounted) setRows(items);
+        if (mounted) {
+          setRows(items);
+          setLoadStatus("success");
+        }
       })
-      .catch(() => {});
+      .catch(() => {
+        if (mounted) setLoadStatus("error");
+      });
     return () => {
       mounted = false;
     };
@@ -59,12 +68,13 @@ export function EmployeeNoveltiesPanel({
         </button>
       </div>
 
-      <NoveltyTable
-        rows={rows}
-        employees={[employee]}
-        currentUser={user}
-        onChanged={() => setRefresh((value) => value + 1)}
-      />
+      {loadStatus === "loading" ? (
+        <LoadingState text="Cargando novedades..." />
+      ) : loadStatus === "error" ? (
+        <ErrorState message="No pudimos cargar las novedades." onRetry={() => setRefresh((value) => value + 1)} />
+      ) : (
+        <NoveltyTable rows={rows} employees={[employee]} currentUser={user} onChanged={() => setRefresh((value) => value + 1)} />
+      )}
 
       {open ? (
         <NoveltyModal

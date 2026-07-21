@@ -10,6 +10,8 @@ import { Field, Select } from "../ui/FormControls";
 import { Modal } from "../ui/Modal";
 import type { DocumentCategory } from "../../types/documentCategory.types";
 import { EmployeeRemoteSelector } from "../employees/EmployeeRemoteSelector";
+import { ErrorState } from "../ui/ErrorState";
+import { LoadingState } from "../ui/LoadingState";
 
 function fileToBase64(file: File) {
   return new Promise<string>((resolve, reject) => {
@@ -42,9 +44,12 @@ export function DocumentUploadModal({
   const [status, setStatus] = useState(documentStatusByExpiration(defaultDocumentExpiration(selectedCategory)));
   const [notes, setNotes] = useState("");
   const [error, setError] = useState("");
+  const [catalogStatus, setCatalogStatus] = useState<"loading" | "success" | "error">("loading");
+  const [catalogRetry, setCatalogRetry] = useState(0);
 
   useEffect(() => {
     let mounted = true;
+    setCatalogStatus("loading");
     documentCategoryApiService
       .getAll({ status: "ACTIVO" })
       .then((items) => {
@@ -54,12 +59,15 @@ export function DocumentUploadModal({
         if (!active.some((item) => item.id === categoryId)) {
           setCategoryId(active[0]?.id || "");
         }
+        setCatalogStatus("success");
       })
-      .catch(() => {});
+      .catch(() => {
+        if (mounted) setCatalogStatus("error");
+      });
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [catalogRetry]);
 
   useEffect(() => {
     const next = defaultDocumentExpiration(selectedCategory);
@@ -100,7 +108,11 @@ export function DocumentUploadModal({
   return (
     <Modal title="Agregar documento" close={close}>
       <div className="form-stack">
-        {categories.length ? (
+        {catalogStatus === "loading" ? (
+          <LoadingState text="Cargando categorías documentales..." />
+        ) : catalogStatus === "error" ? (
+          <ErrorState message="No pudimos cargar las categorías documentales." onRetry={() => setCatalogRetry((value) => value + 1)} />
+        ) : categories.length ? (
           <>
             <div className="form-grid">
               {!fixedEmployee ? (

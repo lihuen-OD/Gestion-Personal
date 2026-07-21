@@ -12,6 +12,8 @@ import { OrganigramFilters } from "../components/organigramas/OrganigramFilters"
 import { OrgChartTabs, type OrgChartTab } from "../components/organigramas/OrgChartTabs";
 import { PageHeader } from "../components/ui/PageHeader";
 import { Button } from "../components/ui/Button";
+import { ErrorState } from "../components/ui/ErrorState";
+import { LoadingState } from "../components/ui/LoadingState";
 
 const roleLevel = (role: Role) => role.startsWith("Nivel 1") ? 1 : role.startsWith("Nivel 2") ? 2 : 3;
 
@@ -51,14 +53,19 @@ export function OrganigramasPage() {
   const [sourceEmployees, setSourceEmployees] = useState<Employee[]>([]);
   const [usesBackend, setUsesBackend] = useState(false);
   const [loadError, setLoadError] = useState("");
+  const [loadStatus, setLoadStatus] = useState<"loading" | "success" | "error">("loading");
+  const [retry, setRetry] = useState(0);
   useEffect(() => {
     let mounted = true;
+    setLoadStatus("loading");
+    setLoadError("");
     employeeApiService
       .getOrgChart()
       .then((employees) => {
         if (!mounted) return;
         setSourceEmployees(employees);
         setUsesBackend(true);
+        setLoadStatus("success");
       })
       .catch(() => {
         employeeApiService
@@ -67,6 +74,7 @@ export function OrganigramasPage() {
             if (!mounted) return;
             setSourceEmployees(employees);
             setUsesBackend(true);
+            setLoadStatus("success");
           })
           .catch(async () => {
             if (!mounted) return;
@@ -74,16 +82,18 @@ export function OrganigramasPage() {
               const { employeeMockService } = await import("../services/employeeMockService");
               setSourceEmployees(employeeMockService.getAll());
               setUsesBackend(false);
+              setLoadStatus("success");
               return;
             }
             setSourceEmployees([]);
             setLoadError("No pudimos cargar el organigrama. Intentá nuevamente en unos minutos.");
+            setLoadStatus("error");
           });
       });
     return () => {
       mounted = false;
     };
-  }, [user]);
+  }, [user, retry]);
 
   const options = useMemo(
     () => organizationChartMockService.getFilterOptionsFrom(sourceEmployees, user!.role, user!.sector),
@@ -102,10 +112,11 @@ export function OrganigramasPage() {
   if (level === 3) return <><PageHeader eyebrow="ACCESO RESTRINGIDO" title="Organigramas" description="Tu perfil de carga horaria no tiene acceso al módulo de estructura organizacional." /></>;
 
   return <><PageHeader eyebrow="ESTRUCTURA ORGANIZACIONAL" title="Organigramas" description={loadError ? "La información no está disponible temporalmente." : usesBackend ? "Visualización alimentada desde legajos reales: categoría interna, encargado directo, sector, centro de costo y estado." : "Visualización alimentada desde Legajos en modo demostración."} action={<Button variant="subtle" icon={FileBarChart} onClick={exportView} disabled={Boolean(loadError)}>Exportar vista</Button>} />
-    {loadError ? <div className="form-error">{loadError}</div> : null}
+    {loadStatus === "loading" ? <LoadingState text="Cargando organigrama..." /> : null}
+    {loadStatus === "error" ? <ErrorState message={loadError} onRetry={() => setRetry((value) => value + 1)} /> : null}
     {toast && <div className="toast">{toast}</div>}
-    <OrgChartTabs active={tab} onChange={setTab} />
+    {loadStatus === "success" ? <><OrgChartTabs active={tab} onChange={setTab} />
     {filterControls}
-    {tab === "CATEGORIES" ? <CategoryOrgChart model={model} onExport={exportView} filterControls={filterControls} /> : <FunctionalOrgChart employees={employees} onExport={exportView} />}
+    {tab === "CATEGORIES" ? <CategoryOrgChart model={model} onExport={exportView} filterControls={filterControls} /> : <FunctionalOrgChart employees={employees} onExport={exportView} />}</> : null}
   </>;
 }

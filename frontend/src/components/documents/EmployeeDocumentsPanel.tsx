@@ -4,6 +4,8 @@ import { documentApiService } from "../../services/api/documentApiService";
 import type { DocumentMock, Employee, User } from "../../types";
 import { statusClass } from "../../utils/status";
 import { EmptyState } from "../ui/EmptyState";
+import { ErrorState } from "../ui/ErrorState";
+import { LoadingState } from "../ui/LoadingState";
 import { OverflowCell } from "../ui/OverflowCell";
 import { TableShell } from "../ui/TableShell";
 import { DocumentUploadModal } from "./DocumentUploadModal";
@@ -21,19 +23,27 @@ export function EmployeeDocumentsPanel({
   const [refresh, setRefresh] = useState(0);
   const [docs, setDocs] = useState<DocumentMock[]>([]);
   const [error, setError] = useState("");
+  const [loadStatus, setLoadStatus] = useState<"loading" | "success" | "error">("loading");
+  const [retry, setRetry] = useState(0);
 
   useEffect(() => {
     let mounted = true;
+    setLoadStatus("loading");
     documentApiService
       .getByEmployee(employee.id)
       .then((items) => {
-        if (mounted) setDocs(items);
+        if (mounted) {
+          setDocs(items);
+          setLoadStatus("success");
+        }
       })
-      .catch(() => {});
+      .catch(() => {
+        if (mounted) setLoadStatus("error");
+      });
     return () => {
       mounted = false;
     };
-  }, [employee.id, refresh]);
+  }, [employee.id, refresh, retry]);
 
   const saved = (updated?: Employee) => {
     if (updated) onSaved(updated);
@@ -58,7 +68,11 @@ export function EmployeeDocumentsPanel({
         </button>
       </div>
 
-      {docs.length ? (
+      {loadStatus === "loading" ? (
+        <LoadingState text="Cargando documentos..." />
+      ) : loadStatus === "error" ? (
+        <ErrorState message="No pudimos cargar los documentos." onRetry={() => setRetry((value) => value + 1)} />
+      ) : docs.length ? (
         <TableShell minWidth={1040}>
           <table>
             <thead>

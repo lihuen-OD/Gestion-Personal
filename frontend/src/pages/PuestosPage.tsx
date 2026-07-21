@@ -6,6 +6,8 @@ import { PuestoSummaryCards } from "../components/puestos/PuestoSummaryCards";
 import { PuestoTable } from "../components/puestos/PuestoTable";
 import { PageHeader } from "../components/ui/PageHeader";
 import { Section } from "../components/ui/Section";
+import { ErrorState } from "../components/ui/ErrorState";
+import { LoadingState } from "../components/ui/LoadingState";
 import { useAuth } from "../context/AuthContext";
 import { positionApiService } from "../services/api/positionApiService";
 import type { Position, PositionFilters, PositionSummary } from "../types/position.types";
@@ -70,10 +72,12 @@ export function PuestosPage() {
   const [refresh, setRefresh] = useState(0);
   const [apiItems, setApiItems] = useState<Position[]>([]);
   const [isLoadingApi, setIsLoadingApi] = useState(true);
+  const [loadError, setLoadError] = useState(false);
 
   useEffect(() => {
     let alive = true;
     setIsLoadingApi(true);
+    setLoadError(false);
     positionApiService.getAll()
       .then((items) => {
         if (!alive) return;
@@ -82,6 +86,7 @@ export function PuestosPage() {
       .catch(() => {
         if (!alive) return;
         setApiItems([]);
+        setLoadError(true);
       })
       .finally(() => {
         if (alive) setIsLoadingApi(false);
@@ -115,11 +120,11 @@ export function PuestosPage() {
         description="Administracion de descripciones de puesto y estructura funcional."
         action={canEdit ? <Link className="button primary" to="/puestos/nuevo"><Plus size={17} /> Crear puesto</Link> : undefined}
       />
-      <PuestoSummaryCards summary={summary(apiItems)} />
+      {!isLoadingApi && !loadError ? <PuestoSummaryCards summary={summary(apiItems)} /> : null}
       <Section className="position-list-panel" title="Listado de puestos" subtitle={isLoadingApi ? "Cargando puestos..." : `${positions.length} resultados segun filtros aplicados.`}>
         <div className="position-list-body">
           <PuestoFilters filters={filters} options={options(apiItems)} onChange={setFilters} />
-          <PuestoTable positions={positions} assignedCount={(id) => getAssignedCount(positions.find((position) => position.id === id)!)} canEdit={canEdit} onRemove={remove} onToggleStatus={toggle} />
+          {isLoadingApi ? <LoadingState text="Cargando puestos..." /> : loadError ? <ErrorState message="No pudimos cargar los puestos." onRetry={() => setRefresh((value) => value + 1)} /> : <PuestoTable positions={positions} assignedCount={(id) => getAssignedCount(positions.find((position) => position.id === id)!)} canEdit={canEdit} onRemove={remove} onToggleStatus={toggle} />}
         </div>
       </Section>
     </>

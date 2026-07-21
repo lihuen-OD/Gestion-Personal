@@ -81,6 +81,8 @@ export function EmployeeDetailPage() {
   const [employee, setEmployee] = useState<Employee | null>(null);
   const [auditRows, setAuditRows] = useState<Awaited<ReturnType<typeof auditApiService.getAll>>>([]);
   const [auditLoaded, setAuditLoaded] = useState(false);
+  const [auditError, setAuditError] = useState(false);
+  const [auditRetry, setAuditRetry] = useState(0);
   const [notice, setNotice] = useState(location.state?.created ? "Legajo creado correctamente." : "");
   const [loadStatus, setLoadStatus] = useState<"loading" | "success" | "error">(id ? "loading" : "success");
   const [detailsStatus, setDetailsStatus] = useState<"loading" | "success" | "error">(id ? "loading" : "success");
@@ -91,6 +93,7 @@ export function EmployeeDetailPage() {
   useEffect(() => {
     if (!id) return;
     let mounted = true;
+    setAuditError(false);
     setLoadStatus("loading");
     setDetailsStatus("loading");
     employeeApiService
@@ -135,12 +138,13 @@ export function EmployeeDetailPage() {
         if (mounted) {
           setAuditRows([]);
           setAuditLoaded(true);
+          setAuditError(true);
         }
       });
     return () => {
       mounted = false;
     };
-  }, [auditLoaded, employee, tab]);
+  }, [auditLoaded, employee, tab, auditRetry]);
 
   const { isRunning: isSaving, run: save } = useAsyncAction(async () => {
     if (!employee) return;
@@ -252,7 +256,7 @@ export function EmployeeDetailPage() {
           ) : tabsThatNeedOverviewDetails.has(tab) && detailsStatus === "error" ? (
             <ErrorState message="No se pudo cargar la información completa del legajo." onRetry={() => setLoadRetry((value) => value + 1)} />
           ) : (
-            renderEmployeeTab(tab, currentEmployee, setEmployee, editable, user!, structureOptions, laborOptions, auditRows)
+            renderEmployeeTab(tab, currentEmployee, setEmployee, editable, user!, structureOptions, laborOptions, auditRows, auditLoaded, auditError, () => { setAuditLoaded(false); setAuditRetry((value) => value + 1); })
           )}
         </fieldset>
       </Section>
@@ -276,6 +280,9 @@ function renderEmployeeTab(
   structureOptions: ReturnType<typeof useStructureSelectOptions>,
   laborOptions: ReturnType<typeof useLaborSelectOptions>,
   auditRows: Awaited<ReturnType<typeof auditApiService.getAll>>,
+  auditLoaded: boolean,
+  auditError: boolean,
+  retryAudit: () => void,
 ): ReactNode {
   const update = (field: keyof Employee, value: Employee[keyof Employee]) =>
     setEmployee({ ...employee, [field]: value });
@@ -385,6 +392,8 @@ function renderEmployeeTab(
     );
   }
 
+  if (!auditLoaded) return <LoadingState text="Cargando auditoría..." />;
+  if (auditError) return <ErrorState message="No pudimos cargar la auditoría del legajo." onRetry={retryAudit} />;
   return (
     <DataTable status={auditRows.length ? "ready" : "empty"} minWidth={960} emptyText="Todavía no hay eventos de auditoría para este legajo.">
       <table>
