@@ -32,8 +32,14 @@
 .people-status-filter{display:grid;gap:5px;min-width:140px;color:#31485a;font-size:12px;font-weight:700}
 .people-status-filter select{min-height:42px;padding:8px 10px;border:1px solid #dfe8ee;border-radius:9px;background:#fff;color:#243950}
 .people-search-results{display:grid;gap:6px;max-height:220px;overflow:auto;padding:8px;border:1px solid #dfe8ee;border-radius:9px;background:#fff;box-shadow:0 10px 24px #16304614}
-.people-search-results button{display:grid;gap:3px;width:100%;padding:10px 11px;border:1px solid #e4eaf0;border-radius:8px;background:#fff;text-align:left;color:#243950}
+.people-search-results>button{display:grid;grid-template-columns:22px minmax(0,1fr);align-items:center;gap:8px;width:100%;padding:10px 11px;border:1px solid #e4eaf0;border-radius:8px;background:#fff;text-align:left;color:#243950}
 .people-search-results button:hover{border-color:#14767d;background:#f0f8f8}
+.people-search-results>button.is-selected{border-color:var(--color-primary);background:var(--color-primary-subtle)}
+.people-search-results>button>span:last-child{display:grid;gap:3px;min-width:0}
+.people-result-check{display:grid;place-items:center;width:20px;height:20px;border:1px solid #b8c6d3;border-radius:5px;background:#fff;color:#fff}
+.people-search-results>button.is-selected .people-result-check{border-color:var(--color-primary);background:var(--color-primary)}
+.people-results-actions{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:2px 3px 7px;color:#66788a;font-size:11px;font-weight:700}
+.people-results-actions button{border:0;background:transparent;color:var(--color-primary);font:inherit;cursor:pointer}
 .people-search-results b{font-size:13px;color:#203648}
 .people-search-results small,.people-search-results span{color:#66788a;font-size:11px}
 .selected-people{display:flex;flex-wrap:wrap;gap:7px;min-height:32px;align-items:center}
