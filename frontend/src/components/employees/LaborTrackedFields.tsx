@@ -8,7 +8,9 @@ import type { Employee, EmployeeFieldHistoryRecord, FieldHistorySection, User } 
 import type { Position } from "../../types/position.types";
 import { useAsyncAction } from "../../utils/useAsyncAction";
 import { EmptyState } from "../ui/EmptyState";
+import { ErrorState } from "../ui/ErrorState";
 import { Field } from "../ui/FormControls";
+import { LoadingState } from "../ui/LoadingState";
 
 async function persistTrackedEmployee(updated: Employee, onSaved: (employee: Employee) => void) {
   try {
@@ -32,22 +34,29 @@ async function recordFieldHistory(
 
 function useBackendFieldHistory(employeeId: string, field: string) {
   const [history, setHistory] = useState<EmployeeFieldHistoryRecord[]>([]);
+  const [status, setStatus] = useState<"loading" | "success" | "error">("loading");
+  const [retry, setRetry] = useState(0);
 
   useEffect(() => {
     let mounted = true;
+    setStatus("loading");
     employeeHistoryApiService
       .getFieldHistory(employeeId, { section: "DATOS_LABORALES", field })
       .then((rows) => {
-        if (mounted) setHistory(rows);
+        if (mounted) {
+          setHistory(rows);
+          setStatus("success");
+        }
       })
       .catch(() => {
+        if (mounted) setStatus("error");
       });
     return () => {
       mounted = false;
     };
-  }, [employeeId, field]);
+  }, [employeeId, field, retry]);
 
-  return { history, setHistory };
+  return { history, setHistory, status, retry: () => setRetry((value) => value + 1), markLoaded: () => setStatus("success") };
 }
 
 function useCompanyOptions() {
@@ -106,7 +115,7 @@ export function MultiCompanyField({ employee, canEdit, user, onSaved }: TrackedF
   const [from, setFrom] = useState(new Date().toISOString().slice(0, 10));
   const [reason, setReason] = useState("");
   const [error, setError] = useState("");
-  const { history, setHistory } = useBackendFieldHistory(employee.id, "companies");
+  const { history, setHistory, status: historyStatus, retry: retryHistory, markLoaded: markHistoryLoaded } = useBackendFieldHistory(employee.id, "companies");
   const label = value.join(", ") || "Sin cargar";
 
   const toggle = (company: string) =>
@@ -138,6 +147,7 @@ export function MultiCompanyField({ employee, canEdit, user, onSaved }: TrackedF
         },
       );
       setHistory((rows) => [historyRow, ...rows.filter((row) => row.id !== historyRow.id)]);
+      markHistoryLoaded();
       setEditing(false);
       setOpen(true);
       setError("");
@@ -175,7 +185,11 @@ export function MultiCompanyField({ employee, canEdit, user, onSaved }: TrackedF
       {open ? (
         <div className="tracked-history">
           <h4>Historial de Empresa</h4>
-          {history.length ? (
+          {historyStatus === "loading" ? (
+            <LoadingState text="Cargando historial..." />
+          ) : historyStatus === "error" ? (
+            <ErrorState message="No pudimos cargar el historial." onRetry={retryHistory} />
+          ) : history.length ? (
             <div className="timeline">
               {history.map((item) => (
                 <div key={item.id}>
@@ -238,7 +252,7 @@ export function EmployeePositionField({ employee, canEdit, user, onSaved }: Trac
   const [from, setFrom] = useState(new Date().toISOString().slice(0, 10));
   const [reason, setReason] = useState("");
   const [error, setError] = useState("");
-  const { history, setHistory } = useBackendFieldHistory(employee.id, "positionId");
+  const { history, setHistory, status: historyStatus, retry: retryHistory, markLoaded: markHistoryLoaded } = useBackendFieldHistory(employee.id, "positionId");
   const selected = positions.find((position) => position.id === selectedId);
 
   const { isRunning: isSaving, run: save } = useAsyncAction(async () => {
@@ -268,6 +282,7 @@ export function EmployeePositionField({ employee, canEdit, user, onSaved }: Trac
         },
       );
       setHistory((rows) => [historyRow, ...rows.filter((row) => row.id !== historyRow.id)]);
+      markHistoryLoaded();
       setEditing(false);
       setOpen(true);
       setError("");
@@ -305,7 +320,11 @@ export function EmployeePositionField({ employee, canEdit, user, onSaved }: Trac
       {open ? (
         <div className="tracked-history">
           <h4>Historial de Puesto</h4>
-          {history.length ? (
+          {historyStatus === "loading" ? (
+            <LoadingState text="Cargando historial..." />
+          ) : historyStatus === "error" ? (
+            <ErrorState message="No pudimos cargar el historial." onRetry={retryHistory} />
+          ) : history.length ? (
             <div className="timeline">
               {history.map((item) => (
                 <div key={item.id}>

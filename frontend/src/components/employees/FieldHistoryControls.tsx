@@ -5,7 +5,9 @@ import { getUserErrorMessage } from "../../services/api/apiClient";
 import type { Employee, EmployeeBlockHistoryRecord, EmployeeFieldHistoryRecord, FieldHistorySection, User } from "../../types";
 import { useAsyncAction } from "../../utils/useAsyncAction";
 import { EmptyState } from "../ui/EmptyState";
+import { ErrorState } from "../ui/ErrorState";
 import { Field, Select } from "../ui/FormControls";
+import { LoadingState } from "../ui/LoadingState";
 
 type FieldWithHistoryProps = {
   employee: Employee;
@@ -51,19 +53,27 @@ export function FieldWithHistory({
   const [reason, setReason] = useState("");
   const [error, setError] = useState("");
   const [history, setHistory] = useState<EmployeeFieldHistoryRecord[]>([]);
+  const [historyStatus, setHistoryStatus] = useState<"loading" | "success" | "error">("loading");
+  const [historyRetry, setHistoryRetry] = useState(0);
 
   useEffect(() => {
     let mounted = true;
+    setHistoryStatus("loading");
     employeeHistoryApiService
       .getFieldHistory(employee.id, { section, field })
       .then((rows) => {
-        if (mounted) setHistory(rows);
+        if (mounted) {
+          setHistory(rows);
+          setHistoryStatus("success");
+        }
       })
-      .catch(() => {});
+      .catch(() => {
+        if (mounted) setHistoryStatus("error");
+      });
     return () => {
       mounted = false;
     };
-  }, [employee.id, section, field, open]);
+  }, [employee.id, section, field, historyRetry]);
 
   const currentFrom =
     history[0]?.effectiveFrom ||
@@ -90,6 +100,7 @@ export function FieldWithHistory({
       .then(async (employeeFromApi) => {
         const historyRow = await employeeHistoryApiService.createFieldHistory(record);
         setHistory((rows) => [historyRow, ...rows.filter((row) => row.id !== historyRow.id)]);
+        setHistoryStatus("success");
         return employeeFromApi;
       })
       .catch((error) => {
@@ -131,7 +142,11 @@ export function FieldWithHistory({
       {open ? (
         <div className="tracked-history">
           <h4>Historial de {label}</h4>
-          {history.length ? (
+          {historyStatus === "loading" ? (
+            <LoadingState text="Cargando historial..." />
+          ) : historyStatus === "error" ? (
+            <ErrorState message="No pudimos cargar el historial." onRetry={() => setHistoryRetry((value) => value + 1)} />
+          ) : history.length ? (
             <div className="timeline">
               {history.map((item) => (
                 <div key={item.id}>
@@ -192,21 +207,33 @@ export function BlockHistoryTimeline({
   refreshKey = 0,
 }: BlockHistoryTimelineProps) {
   const [rows, setRows] = useState<EmployeeBlockHistoryRecord[]>([]);
+  const [status, setStatus] = useState<"loading" | "success" | "error">("loading");
+  const [retry, setRetry] = useState(0);
 
   useEffect(() => {
     let mounted = true;
+    setStatus("loading");
     employeeHistoryApiService
       .getBlockHistory(employeeId, { section, block })
       .then((items) => {
-        if (mounted) setRows(items);
+        if (mounted) {
+          setRows(items);
+          setStatus("success");
+        }
       })
-      .catch(() => {});
+      .catch(() => {
+        if (mounted) setStatus("error");
+      });
     return () => {
       mounted = false;
     };
-  }, [employeeId, section, block, refreshKey]);
+  }, [employeeId, section, block, refreshKey, retry]);
 
-  return rows.length ? (
+  return status === "loading" ? (
+    <LoadingState text="Cargando historial..." />
+  ) : status === "error" ? (
+    <ErrorState message="No pudimos cargar el historial." onRetry={() => setRetry((value) => value + 1)} />
+  ) : rows.length ? (
     <div className="timeline">
       {rows.map((row) => (
         <div key={row.id}>
