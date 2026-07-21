@@ -253,6 +253,7 @@ model User {
   closuresReviewed    MonthlyTimeClosure[] @relation("ClosureReviewedBy")
   correctionsCreated  TimeCorrectionRequest[] @relation("CorrectionCreatedBy")
   correctionsReviewed TimeCorrectionRequest[] @relation("CorrectionReviewedBy")
+  inactivityIncidentsReviewed AttendanceInactivityIncident[] @relation("InactivityIncidentReviewedBy")
 
   @@index([role])
   @@index([status])
@@ -628,6 +629,7 @@ model Employee {
   monthlyClosures   MonthlyTimeClosure[]
   correctionRequests TimeCorrectionRequest[]
   shiftAlerts       ShiftAlert[]
+  inactivityIncidents AttendanceInactivityIncident[]
   doubleHourAssignments DoubleHourRuleEmployee[]
   userAccount       User?                  @relation("EmployeeUserAccount")
 
@@ -1061,6 +1063,26 @@ model ShiftAlert {
   workShift WorkShift @relation(fields: [workShiftId], references: [id], onDelete: Cascade)
   @@unique([workShiftId, type])
   @@index([employeeId, status, createdAt])
+}
+
+model AttendanceInactivityIncident {
+  id               String                 @id @default(uuid())
+  employeeId       String
+  operationalDate  DateTime               @db.Date
+  status           AttendanceReviewStatus @default(PENDIENTE)
+  observation      String
+  detectedAt       DateTime               @default(now())
+  notifiedAt       DateTime?
+  reviewedAt       DateTime?
+  reviewedByUserId String?
+  reviewNote       String?
+
+  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  reviewedBy User?    @relation("InactivityIncidentReviewedBy", fields: [reviewedByUserId], references: [id])
+
+  @@unique([employeeId, operationalDate])
+  @@index([status, operationalDate])
+  @@index([employeeId, status])
 }
 
 model DoubleHourRule {

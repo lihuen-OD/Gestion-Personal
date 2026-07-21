@@ -63,6 +63,9 @@ export const workforceApiService = {
   notifications() {
     return apiRequest<{ data: SystemNotification[] }>("/workforce/notifications", { apiCache: false }).then((response) => response.data);
   },
+  unreadNotificationCount() {
+    return apiRequest<{ data: { count: number } }>("/workforce/notifications-unread-count", { apiCache: false }).then((response) => response.data.count);
+  },
   readNotification(id: string) {
     return apiRequest(`/workforce/notifications/${id}/read`, { method: "POST" });
   },

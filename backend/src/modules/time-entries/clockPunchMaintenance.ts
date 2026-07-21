@@ -1,9 +1,11 @@
 import { env } from "../../config/env";
 import { timeEntriesRepository } from "./timeEntries.repository";
 import { storageFilesRepository } from "../../shared/storage/storageFiles.repository";
+import { detectAttendanceInactivity, isInactivityCheckDue, previousOperationalDateKey } from "./attendanceInactivity.service";
 
 let running = false;
 let lastOrphanCount: number | undefined;
+let lastInactivityDateKey: string | undefined;
 
 export async function maintainClockPunchAttempts() {
   if (running) return;
@@ -49,6 +51,17 @@ export async function maintainClockPunchAttempts() {
       });
     }
     lastOrphanCount = orphanCount;
+
+    const current = new Date();
+    const inactivityDateKey = previousOperationalDateKey(current);
+    if (
+      lastInactivityDateKey !== inactivityDateKey &&
+      isInactivityCheckDue(current, env.ATTENDANCE_INACTIVITY_CHECK_HOUR, env.ATTENDANCE_INACTIVITY_CHECK_MINUTE)
+    ) {
+      const result = await detectAttendanceInactivity(inactivityDateKey);
+      lastInactivityDateKey = inactivityDateKey;
+      if (result.detected > 0) console.info("ATTENDANCE_INACTIVITY_DETECTED", result);
+    }
   } catch (error) {
     console.error("CLOCK_ATTEMPT_MAINTENANCE_FAILED", {
       severity: "critical",

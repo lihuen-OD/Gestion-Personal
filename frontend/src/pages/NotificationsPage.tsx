@@ -22,6 +22,7 @@ export function NotificationsPage() {
     if (item.status === "LEIDA") return;
     await workforceApiService.readNotification(item.id);
     setItems((current) => current.map((row) => row.id === item.id ? { ...row, status: "LEIDA" } : row));
+    window.dispatchEvent(new Event("app:notifications-changed"));
   };
 
   return <>

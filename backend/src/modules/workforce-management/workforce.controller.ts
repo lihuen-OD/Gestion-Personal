@@ -12,6 +12,7 @@ export const workforceController = {
   approveCorrection: (async (req,res)=>res.json({data:await workforceService.approveCorrection(requireParam(req,"id"),req.user!)})) satisfies RequestHandler,
   rejectCorrection: (async (req,res)=>res.json({data:await workforceService.rejectCorrection(requireParam(req,"id"),req.body.note,req.user!)})) satisfies RequestHandler,
   notifications: (async (req,res)=>res.json({data:await workforceService.notifications(req.user!)})) satisfies RequestHandler,
+  unreadNotificationCount: (async (req,res)=>res.json({data:{count:await workforceService.unreadNotificationCount(req.user!)}})) satisfies RequestHandler,
   readNotification: (async (req,res)=>res.json({data:await workforceService.markNotificationRead(requireParam(req,"id"),req.user!)})) satisfies RequestHandler,
   shiftTemplates: (async (_req,res)=>res.json({data:await workforceService.shiftTemplates()})) satisfies RequestHandler,
   createShiftTemplate: (async (req,res)=>res.status(201).json({data:await workforceService.createShiftTemplate(req.body)})) satisfies RequestHandler,

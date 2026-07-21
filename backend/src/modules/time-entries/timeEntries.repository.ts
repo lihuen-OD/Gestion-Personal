@@ -338,7 +338,8 @@ export const timeEntriesRepository = {
   },
 
   async attendanceObservedCount(input: { startAt: Date; endAt: Date; employeeAccessWhere: Prisma.EmployeeWhereInput }) {
-    const [observedShifts, observedPunches] = await prisma.$transaction([
+    const operationalDate = new Date(input.startAt.toLocaleDateString("sv-SE", { timeZone: "America/Argentina/Cordoba" }) + "T00:00:00.000Z");
+    const [observedShifts, observedPunches, inactivityIncidents] = await prisma.$transaction([
       prisma.workShift.count({
         where: {
           employee: input.employeeAccessWhere,
@@ -358,9 +359,12 @@ export const timeEntriesRepository = {
           timestamp: { gte: input.startAt, lt: input.endAt },
         },
       }),
+      prisma.attendanceInactivityIncident.count({
+        where: { employee: input.employeeAccessWhere, operationalDate, status: "PENDIENTE" },
+      }),
     ]);
 
-    return observedShifts + observedPunches;
+    return observedShifts + observedPunches + inactivityIncidents;
   },
 
   async findPeriodEmployees(query: TimeEntriesPeriodEmployeesQuery, employeeAccessWhere: Prisma.EmployeeWhereInput) {
@@ -591,7 +595,8 @@ export const timeEntriesRepository = {
     endAt?: Date;
     before?: Date;
     search?: string;
-    type: "ALL" | "SHIFT" | "PUNCH";
+    operationalDate?: Date;
+    type: "ALL" | "SHIFT" | "PUNCH" | "INACTIVITY";
     reviewStatus: "PENDIENTE" | "RESUELTA" | "DESCARTADA" | "ALL";
     take: number;
     employeeAccessWhere: Prisma.EmployeeWhereInput;
@@ -637,9 +642,18 @@ export const timeEntriesRepository = {
       ...(input.before ? { timestamp: { ...(input.startAt ? { gte: input.startAt } : {}), lt: input.before } } : {}),
     };
     const includeShifts = input.type !== "PUNCH";
-    const includePunches = input.type !== "SHIFT";
-    const [shifts, punches, shiftTotal, punchTotal] = await prisma.$transaction([
-      includeShifts ? prisma.workShift.findMany({
+    const includePunches = input.type !== "SHIFT" && input.type !== "INACTIVITY";
+    const includeActualShifts = includeShifts && input.type !== "INACTIVITY";
+    const includeInactivity = input.type === "ALL" || input.type === "INACTIVITY";
+    const inactivityWhere: Prisma.AttendanceInactivityIncidentWhereInput = {
+      employee: employeeWhere,
+      ...(input.reviewStatus === "ALL" ? {} : { status: input.reviewStatus }),
+      ...(input.operationalDate ? { operationalDate: input.operationalDate } : {}),
+      ...(input.before ? { detectedAt: { lt: input.before } } : {}),
+    };
+    const inactivityTotalWhere = { ...inactivityWhere, ...(input.before ? { detectedAt: undefined } : {}) };
+    const [shifts, punches, inactivity, shiftTotal, punchTotal, inactivityTotal] = await prisma.$transaction([
+      includeActualShifts ? prisma.workShift.findMany({
         where: shiftWhere,
         include: {
           employee: { select: employeeSelect },
@@ -657,32 +671,40 @@ export const timeEntriesRepository = {
         orderBy: [{ timestamp: "desc" }, { id: "desc" }],
         take: input.take + 1,
       }) : prisma.attendancePunch.findMany({ where: { id: "__none__" } }),
-      prisma.workShift.count({ where: includeShifts ? shiftTotalWhere : { id: "__none__" } }),
+      includeInactivity ? prisma.attendanceInactivityIncident.findMany({
+        where: inactivityWhere,
+        include: { employee: { select: employeeSelect } },
+        orderBy: [{ detectedAt: "desc" }, { id: "desc" }],
+        take: input.take + 1,
+      }) : prisma.attendanceInactivityIncident.findMany({ where: { id: "__none__" } }),
+      prisma.workShift.count({ where: includeActualShifts ? shiftTotalWhere : { id: "__none__" } }),
       prisma.attendancePunch.count({ where: includePunches ? punchTotalWhere : { id: "__none__" } }),
+      prisma.attendanceInactivityIncident.count({ where: includeInactivity ? inactivityTotalWhere : { id: "__none__" } }),
     ]);
     const items = [
       ...shifts.map((shift) => ({ kind: "SHIFT" as const, occurredAt: shift.startAt, shift })),
       ...punches.map((punch) => ({ kind: "PUNCH" as const, occurredAt: punch.timestamp, punch })),
+      ...inactivity.map((incident) => ({ kind: "INACTIVITY" as const, occurredAt: incident.detectedAt, incident })),
     ].sort((left, right) => right.occurredAt.getTime() - left.occurredAt.getTime()).slice(0, input.take);
     return {
       items,
-      total: shiftTotal + punchTotal,
-      hasMore: shifts.length + punches.length > items.length,
+      total: shiftTotal + punchTotal + inactivityTotal,
+      hasMore: shifts.length + punches.length + inactivity.length > items.length,
       nextBefore: items.length ? items[items.length - 1]!.occurredAt : null,
     };
   },
 
-  resolveAttendanceObservation(kind: "SHIFT" | "PUNCH", id: string, resolution: "RESUELTA" | "DESCARTADA", reason: string, userId: string) {
+  resolveAttendanceObservation(kind: "SHIFT" | "PUNCH" | "INACTIVITY", id: string, resolution: "RESUELTA" | "DESCARTADA", reason: string, userId: string) {
     const data = { reviewStatus: resolution, reviewNote: reason, reviewedAt: new Date(), reviewedByUserId: userId };
-    return kind === "SHIFT"
-      ? prisma.workShift.update({ where: { id }, data })
-      : prisma.attendancePunch.update({ where: { id }, data });
+    if (kind === "SHIFT") return prisma.workShift.update({ where: { id }, data });
+    if (kind === "PUNCH") return prisma.attendancePunch.update({ where: { id }, data });
+    return prisma.attendanceInactivityIncident.update({ where: { id }, data: { status: resolution, reviewNote: reason, reviewedAt: new Date(), reviewedByUserId: userId } });
   },
 
-  findAttendanceObservation(kind: "SHIFT" | "PUNCH", id: string, employeeAccessWhere: Prisma.EmployeeWhereInput) {
-    return kind === "SHIFT"
-      ? prisma.workShift.findFirst({ where: { id, employee: employeeAccessWhere } })
-      : prisma.attendancePunch.findFirst({ where: { id, employee: employeeAccessWhere } });
+  findAttendanceObservation(kind: "SHIFT" | "PUNCH" | "INACTIVITY", id: string, employeeAccessWhere: Prisma.EmployeeWhereInput) {
+    if (kind === "SHIFT") return prisma.workShift.findFirst({ where: { id, employee: employeeAccessWhere } });
+    if (kind === "PUNCH") return prisma.attendancePunch.findFirst({ where: { id, employee: employeeAccessWhere } });
+    return prisma.attendanceInactivityIncident.findFirst({ where: { id, employee: employeeAccessWhere } });
   },
 
   findWorkShiftForAdmin(id: string, employeeAccessWhere: Prisma.EmployeeWhereInput) {

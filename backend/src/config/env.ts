@@ -41,6 +41,8 @@ const envSchema = z.object({
   CLOCK_ATTEMPT_PROCESSING_TTL_MS: z.coerce.number().int().positive().default(60_000),
   CLOCK_ATTEMPT_RETENTION_DAYS: z.coerce.number().int().positive().default(30),
   CLOCK_ATTEMPT_MAINTENANCE_INTERVAL_MS: z.coerce.number().int().positive().default(60_000),
+  ATTENDANCE_INACTIVITY_CHECK_HOUR: z.coerce.number().int().min(0).max(23).default(4),
+  ATTENDANCE_INACTIVITY_CHECK_MINUTE: z.coerce.number().int().min(0).max(59).default(0),
 });
 
 const parsed = envSchema.safeParse(process.env);

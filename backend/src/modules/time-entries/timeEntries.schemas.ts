@@ -27,7 +27,7 @@ export const attendanceSummaryQuerySchema = z.object({
 export const attendanceObservationsQuerySchema = z.object({
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   search: z.string().trim().max(100).optional(),
-  type: z.enum(["ALL", "SHIFT", "PUNCH"]).default("ALL"),
+  type: z.enum(["ALL", "SHIFT", "PUNCH", "INACTIVITY"]).default("ALL"),
   reviewStatus: z.enum(["PENDIENTE", "RESUELTA", "DESCARTADA", "ALL"]).default("PENDIENTE"),
   before: z.coerce.date().optional(),
   take: z.coerce.number().int().min(1).max(50).default(10),

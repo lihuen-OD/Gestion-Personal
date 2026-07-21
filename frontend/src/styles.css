@@ -756,7 +756,7 @@ body{background:var(--ds-slate-50)!important;color:var(--ds-slate-700)!important
 .topbar-actions{margin-left:auto!important;gap:4px!important}
 .topbar-actions .icon-button{position:relative!important;width:34px!important;height:34px!important;border-radius:8px!important;color:var(--ds-slate-500)!important}
 .topbar-actions .icon-button:hover{background:var(--ds-slate-100)!important;color:var(--ds-slate-700)!important}
-.notification-button:after{content:""!important;position:absolute!important;top:7px!important;right:8px!important;width:8px!important;height:8px!important;border-radius:999px!important;background:var(--ds-red-500)!important;border:1px solid #fff!important}
+.notification-button.has-unread:after{content:""!important;position:absolute!important;top:6px!important;right:6px!important;width:8px!important;height:8px!important;border-radius:999px!important;background:var(--ds-red-500)!important;border:1px solid #fff!important}.notification-count{position:absolute;top:-7px;right:-8px;min-width:18px;height:18px;padding:0 5px;display:grid;place-items:center;border-radius:999px;background:var(--ds-red-500);color:#fff;font-size:9px;font-weight:800;border:2px solid #fff}
 .user-chip span{width:32px!important;height:32px!important;background:var(--ds-blue-600)!important;color:#fff!important;font-size:12px!important;font-weight:600!important}
 
 .page-header{margin-bottom:24px!important}

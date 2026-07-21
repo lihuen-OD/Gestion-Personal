@@ -21,6 +21,7 @@ workforceRouter.post("/corrections/:id/approve",requireAnyRole([roles.rrhh]),val
 workforceRouter.post("/corrections/:id/reject",requireAnyRole([roles.rrhh]),validateBody(correctionReviewSchema),asyncHandler(c.rejectCorrection));
 workforceRouter.get("/notifications",requireAnyRole(all),asyncHandler(c.notifications));
 workforceRouter.post("/notifications/:id/read",requireAnyRole(all),asyncHandler(c.readNotification));
+workforceRouter.get("/notifications-unread-count",requireAnyRole(all),asyncHandler(c.unreadNotificationCount));
 workforceRouter.get("/shift-templates",requireAnyRole(all),asyncHandler(c.shiftTemplates));
 workforceRouter.post("/shift-templates",requireAnyRole([roles.rrhh]),validateBody(shiftTemplateSchema),asyncHandler(c.createShiftTemplate));
 workforceRouter.get("/double-hour-rules",requireAnyRole(all),asyncHandler(c.doubleRules));

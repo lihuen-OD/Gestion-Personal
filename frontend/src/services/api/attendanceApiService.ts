@@ -92,6 +92,18 @@ export type AttendancePunch = {
   employee: AttendanceEmployee;
 };
 
+export type AttendanceInactivityIncident = {
+  id: string;
+  employeeId: string;
+  operationalDate: string;
+  status: "PENDIENTE" | "RESUELTA" | "DESCARTADA";
+  observation: string;
+  detectedAt: string;
+  reviewNote?: string | null;
+  reviewedAt?: string | null;
+  employee: AttendanceEmployee;
+};
+
 export type AttendanceSummary = {
   date: string;
   totals: {
@@ -109,7 +121,8 @@ export type AttendanceSummary = {
 type AttendanceSummaryResponse = { data: AttendanceSummary };
 export type AttendanceObservation =
   | { kind: "SHIFT"; occurredAt: string; shift: AttendanceShift }
-  | { kind: "PUNCH"; occurredAt: string; punch: AttendancePunch };
+  | { kind: "PUNCH"; occurredAt: string; punch: AttendancePunch }
+  | { kind: "INACTIVITY"; occurredAt: string; incident: AttendanceInactivityIncident };
 
 export const attendanceApiService = {
   async getSummary(date?: string) {
@@ -122,7 +135,7 @@ export const attendanceApiService = {
     return response.data;
   },
 
-  async getObservations(filters: { date?: string; search?: string; type?: "ALL" | "SHIFT" | "PUNCH"; reviewStatus?: "PENDIENTE" | "RESUELTA" | "DESCARTADA" | "ALL"; before?: string; take?: number } = {}) {
+  async getObservations(filters: { date?: string; search?: string; type?: "ALL" | "SHIFT" | "PUNCH" | "INACTIVITY"; reviewStatus?: "PENDIENTE" | "RESUELTA" | "DESCARTADA" | "ALL"; before?: string; take?: number } = {}) {
     const params = new URLSearchParams();
     if (filters.date) params.set("date", filters.date);
     if (filters.search?.trim()) params.set("search", filters.search.trim());
@@ -133,7 +146,7 @@ export const attendanceApiService = {
     return apiRequest<{ data: AttendanceObservation[]; meta: { total: number; pageSize: number; hasMore: boolean; nextBefore: string | null } }>(`/time-entries/attendance/observations?${params.toString()}`, { apiCache: false });
   },
 
-  resolveObservation(kind: "SHIFT" | "PUNCH", id: string, resolution: "RESUELTA" | "DESCARTADA", reason: string) {
+  resolveObservation(kind: "SHIFT" | "PUNCH" | "INACTIVITY", id: string, resolution: "RESUELTA" | "DESCARTADA", reason: string) {
     return apiRequest<{ data: unknown }>(`/time-entries/attendance/observations/${kind}/${id}/resolve`, {
       method: "POST",
       body: { resolution, reason },

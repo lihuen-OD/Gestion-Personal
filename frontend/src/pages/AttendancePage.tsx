@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { AlertTriangle, CalendarDays, Camera, CheckCircle2, Clock3, DoorOpen, Eye, RefreshCcw, Search, TimerReset, X } from "lucide-react";
 import { attendanceApiService, type AttendanceObservation, type AttendancePunch, type AttendanceShift } from "../services/api/attendanceApiService";
 import { Badge } from "../components/ui/Badge";
@@ -12,6 +12,12 @@ import { Modal } from "../components/ui/Modal";
 import { useDebouncedValue } from "../utils/useDebouncedValue";
 
 const OBSERVED_PAGE_SIZE = 10;
+
+function observationId(item: AttendanceObservation) {
+  if (item.kind === "SHIFT") return `${item.kind}-${item.shift.id}`;
+  if (item.kind === "PUNCH") return `${item.kind}-${item.punch.id}`;
+  return `${item.kind}-${item.incident.id}`;
+}
 
 function todayKey() {
   return new Date().toLocaleDateString("sv-SE", { timeZone: "America/Argentina/Cordoba" });
@@ -181,7 +187,7 @@ type ShiftAction = {
   type: ShiftActionType;
 };
 
-function ObservationRows({ items, onViewPhoto, onResolve }: { items: AttendanceObservation[]; onViewPhoto: (id: string) => void; onResolve: (kind: "SHIFT" | "PUNCH", id: string) => void }) {
+function ObservationRows({ items, onViewPhoto, onResolve }: { items: AttendanceObservation[]; onViewPhoto: (id: string) => void; onResolve: (kind: "SHIFT" | "PUNCH" | "INACTIVITY", id: string) => void }) {
   if (!items.length) {
     return <EmptyState text="No hay problemas de fichada para los filtros seleccionados." icon={AlertTriangle} />;
   }
@@ -189,6 +195,18 @@ function ObservationRows({ items, onViewPhoto, onResolve }: { items: AttendanceO
     <table className="attendance-table attendance-review-table">
       <thead><tr><th>Empleado</th><th>Fecha y hora</th><th>Problema</th><th>Detalle</th><th>Origen</th><th>Acción</th></tr></thead>
       <tbody>{items.map((item) => {
+        if (item.kind === "INACTIVITY") {
+          const incident = item.incident;
+          const isPending = incident.status === "PENDIENTE";
+          return <tr key={`INACTIVITY-${incident.id}`}>
+            <td><strong>{employeeName(incident)}</strong><span className="muted-line">Legajo {incident.employee.legajo} · DNI {incident.employee.dni}</span></td>
+            <td>{new Date(incident.operationalDate).toLocaleDateString("es-AR", { timeZone: "UTC" })}</td>
+            <td><Badge tone="danger">Sin actividad registrada</Badge></td>
+            <td><span className="attendance-review-detail">{incident.observation}</span></td>
+            <td>Control automático</td>
+            <td>{isPending ? <button type="button" className="table-link" onClick={() => onResolve("INACTIVITY", incident.id)}>Resolver</button> : <Badge tone="success">Resuelta</Badge>}</td>
+          </tr>;
+        }
         const record = item.kind === "SHIFT" ? item.shift : item.punch;
         const isPending = record.reviewStatus === "PENDIENTE";
         const problem = item.kind === "SHIFT" ? item.shift.status.replace(/_/g, " ") : item.punch.type === "INGRESO" ? "Intento de ingreso" : "Intento de salida";
@@ -209,11 +227,12 @@ function ObservationRows({ items, onViewPhoto, onResolve }: { items: AttendanceO
 }
 
 export function AttendancePage() {
+  const [searchParams] = useSearchParams();
   const [date, setDate] = useState(todayKey());
-  const [observationDate, setObservationDate] = useState("");
+  const [observationDate, setObservationDate] = useState(() => searchParams.get("observationDate") || "");
   const [observedQuery, setObservedQuery] = useState("");
   const debouncedObservedQuery = useDebouncedValue(observedQuery, 300);
-  const [observedType, setObservedType] = useState<"ALL" | "SHIFT" | "PUNCH">("ALL");
+  const [observedType, setObservedType] = useState<"ALL" | "SHIFT" | "PUNCH" | "INACTIVITY">("ALL");
   const [observedStatus, setObservedStatus] = useState<"PENDIENTE" | "RESUELTA">("PENDIENTE");
   const [observations, setObservations] = useState<AttendanceObservation[]>([]);
   const [observationsMeta, setObservationsMeta] = useState({ total: 0, hasMore: false, nextBefore: null as string | null });
@@ -221,7 +240,7 @@ export function AttendancePage() {
   const [observationsLoadingMore, setObservationsLoadingMore] = useState(false);
   const [observationsError, setObservationsError] = useState("");
   const [observationsRefresh, setObservationsRefresh] = useState(0);
-  const [reviewAction, setReviewAction] = useState<{ kind: "SHIFT" | "PUNCH"; id: string }>();
+  const [reviewAction, setReviewAction] = useState<{ kind: "SHIFT" | "PUNCH" | "INACTIVITY"; id: string }>();
   const [reviewReason, setReviewReason] = useState("");
   const [refreshKey, setRefreshKey] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -282,7 +301,7 @@ export function AttendancePage() {
     setObservationsError("");
     try {
       const result = await attendanceApiService.getObservations({ date: observationDate || undefined, search: debouncedObservedQuery, type: observedType, reviewStatus: observedStatus, before: observationsMeta.nextBefore, take: OBSERVED_PAGE_SIZE });
-      setObservations((current) => [...current, ...result.data.filter((next) => !current.some((item) => item.kind === next.kind && (item.kind === "SHIFT" ? item.shift.id : item.punch.id) === (next.kind === "SHIFT" ? next.shift.id : next.punch.id)))]);
+      setObservations((current) => [...current, ...result.data.filter((next) => !current.some((item) => observationId(item) === observationId(next)))]);
       setObservationsMeta({ total: result.meta.total, hasMore: result.meta.hasMore, nextBefore: result.meta.nextBefore });
     } catch {
       setObservationsError("No se pudieron cargar más problemas de fichada.");
@@ -434,6 +453,7 @@ export function AttendancePage() {
               <option value="ALL">Todos los tipos</option>
               <option value="SHIFT">Jornadas con conflicto</option>
               <option value="PUNCH">Intentos inválidos</option>
+              <option value="INACTIVITY">Sin actividad registrada</option>
             </select>
           </label>
           {(observationDate || observedQuery || observedType !== "ALL") ? (

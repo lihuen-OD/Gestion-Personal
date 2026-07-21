@@ -588,6 +588,7 @@ export const timeEntriesService = {
     const range = query.date ? localDayRange(query.date) : {};
     const result = await timeEntriesRepository.attendanceObservations({
       ...range,
+      operationalDate: query.date ? dateAtUtcMidnight(query.date) : undefined,
       before: query.before,
       search: query.search,
       type: query.type,
@@ -608,15 +609,16 @@ export const timeEntriesService = {
 
   async resolveAttendanceObservation(kindValue: string, id: string, input: ResolveAttendanceObservationInput, user: Express.AuthUser, audit?: AuditContext) {
     const kind = kindValue.toUpperCase();
-    if (kind !== "SHIFT" && kind !== "PUNCH") throw new AppError("Tipo de observación inválido", 400, "ATTENDANCE_REVIEW_KIND_INVALID");
+    if (kind !== "SHIFT" && kind !== "PUNCH" && kind !== "INACTIVITY") throw new AppError("Tipo de observación inválido", 400, "ATTENDANCE_REVIEW_KIND_INVALID");
     const before = await timeEntriesRepository.findAttendanceObservation(kind, id, employeeAccessWhere(user));
     if (!before) throw new AppError("Observación no encontrada", 404, "ATTENDANCE_REVIEW_NOT_FOUND");
-    if (before.reviewStatus !== "PENDIENTE") throw new AppError("La observación ya fue resuelta", 400, "ATTENDANCE_REVIEW_ALREADY_RESOLVED");
+    const reviewStatus = kind === "INACTIVITY" && "status" in before ? before.status : "reviewStatus" in before ? before.reviewStatus : undefined;
+    if (reviewStatus !== "PENDIENTE") throw new AppError("La observación ya fue resuelta", 400, "ATTENDANCE_REVIEW_ALREADY_RESOLVED");
     const item = await timeEntriesRepository.resolveAttendanceObservation(kind, id, input.resolution, input.reason, user.id);
     await auditService.register({
       ...audit,
       action: "UPDATE",
-      entity: kind === "SHIFT" ? "WorkShift" : "AttendancePunch",
+      entity: kind === "SHIFT" ? "WorkShift" : kind === "PUNCH" ? "AttendancePunch" : "AttendanceInactivityIncident",
       entityId: id,
       description: `${input.resolution === "RESUELTA" ? "Se resolvió" : "Se descartó"} un problema de fichada. Motivo: ${input.reason}`,
       before: before as Prisma.InputJsonValue,
