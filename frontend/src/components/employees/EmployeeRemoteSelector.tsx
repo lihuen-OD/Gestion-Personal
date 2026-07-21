@@ -8,13 +8,16 @@ import { useDebouncedValue } from "../../utils/useDebouncedValue";
 export function EmployeeRemoteSelector({
   selected,
   multiple = false,
+  showStatusFilter = false,
   onChange,
 }: {
   selected: Employee[];
   multiple?: boolean;
+  showStatusFilter?: boolean;
   onChange: (employees: Employee[]) => void;
 }) {
   const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"" | "ACTIVO" | "INACTIVO">("ACTIVO");
   const [results, setResults] = useState<Employee[]>([]);
   const [status, setStatus] = useState<"idle" | "loading" | "success" | "error">("idle");
   const debouncedSearch = useDebouncedValue(search, 300);
@@ -30,7 +33,7 @@ export function EmployeeRemoteSelector({
     let mounted = true;
     setStatus("loading");
     employeeApiService
-      .getOptions({ search: query, take: 20 })
+      .getOptions({ search: query, status: showStatusFilter ? statusFilter || undefined : undefined, take: 20 })
       .then((response) => {
         if (!mounted) return;
         setResults(response.items);
@@ -44,7 +47,7 @@ export function EmployeeRemoteSelector({
     return () => {
       mounted = false;
     };
-  }, [debouncedSearch]);
+  }, [debouncedSearch, showStatusFilter, statusFilter]);
 
   const selectedIds = new Set(selected.map((employee) => employee.id));
   const choose = (employee: Employee) => {
@@ -56,14 +59,17 @@ export function EmployeeRemoteSelector({
 
   return (
     <div className="people-search form-wide">
-      <label className="search-field">
-        <Search size={17} />
-        <input
-          value={search}
-          onChange={(event) => setSearch(event.target.value)}
-          placeholder="Buscar por nombre, apellido, DNI, CUIL o legajo"
-        />
-      </label>
+      <div className="people-search-toolbar">
+        <label className="search-field">
+          <Search size={17} />
+          <input
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Buscar por nombre, apellido, DNI, CUIL o legajo"
+          />
+        </label>
+        {showStatusFilter ? <label className="people-status-filter"><span>Estado</span><select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as typeof statusFilter)}><option value="ACTIVO">Activos</option><option value="INACTIVO">Inactivos</option><option value="">Todos</option></select></label> : null}
+      </div>
       {search.trim().length < 2 ? <small>Ingresá al menos 2 caracteres para buscar.</small> : null}
       {status === "loading" ? <small>Buscando legajos...</small> : null}
       {status === "error" ? <small className="error">No se pudo completar la búsqueda.</small> : null}
@@ -85,6 +91,7 @@ export function EmployeeRemoteSelector({
           </span>
         )) : <em>Sin legajos seleccionados.</em>}
       </div>
+      {multiple && selected.length ? <div className="people-selection-summary"><span>{selected.length} persona{selected.length === 1 ? "" : "s"} seleccionada{selected.length === 1 ? "" : "s"}</span><button type="button" onClick={() => onChange([])}>Quitar todas</button></div> : null}
     </div>
   );
 }
