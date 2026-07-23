@@ -9,6 +9,7 @@ import { PageHeader } from "../components/ui/PageHeader";
 import { Section } from "../components/ui/Section";
 import { StatCard } from "../components/ui/StatCard";
 import { Modal } from "../components/ui/Modal";
+import { TableShell } from "../components/ui/TableShell";
 import { useDebouncedValue } from "../utils/useDebouncedValue";
 
 const OBSERVED_PAGE_SIZE = 10;
@@ -94,6 +95,18 @@ function hasPunchPhoto(punch?: { photoStoragePath?: string | null; photoUrl?: st
   return Boolean(punch?.photoFileId || punch?.thumbnailFileId || punch?.photoStoragePath || punch?.photoUrl);
 }
 
+const RISK_LABEL: Record<string, string> = {
+  NORMAL: "Normal",
+  MISSING_OUT: "Posible olvido de salida",
+  EXPIRED: "Jornada vencida",
+};
+
+const RISK_TONE: Record<string, "success" | "warning" | "danger"> = {
+  NORMAL: "success",
+  MISSING_OUT: "warning",
+  EXPIRED: "danger",
+};
+
 function PunchEvidence({ punch, label, onViewPhoto }: { punch?: AttendanceShift["startPunch"] | AttendanceShift["endPunch"] | null; label: string; onViewPhoto: (id: string) => void }) {
   if (!punch) return null;
   return (
@@ -109,9 +122,10 @@ function PunchEvidence({ punch, label, onViewPhoto }: { punch?: AttendanceShift[
   );
 }
 
-function ShiftRows({ items, emptyText, showSegments = false, onAction, onViewPhoto }: { items: AttendanceShift[]; emptyText: string; showSegments?: boolean; onAction?: (shift: AttendanceShift, action: ShiftActionType) => void; onViewPhoto: (id: string) => void }) {
+function ShiftRows({ items, emptyText, showSegments = false, showRisk = false, onAction, onViewPhoto }: { items: AttendanceShift[]; emptyText: string; showSegments?: boolean; showRisk?: boolean; onAction?: (shift: AttendanceShift, action: ShiftActionType) => void; onViewPhoto: (id: string) => void }) {
   if (!items.length) return <EmptyState text={emptyText} icon={Clock3} />;
   return (
+    <TableShell minWidth={showRisk ? 1420 : 1080}>
     <table className="attendance-table">
       <thead>
         <tr>
@@ -122,7 +136,10 @@ function ShiftRows({ items, emptyText, showSegments = false, onAction, onViewPho
           <th>Salida</th>
           <th>Total</th>
           <th>Origen</th>
+          {showRisk && <th>Turno</th>}
+          {showRisk && <th>Salida esperada</th>}
           <th>Estado</th>
+          {showRisk && <th>Riesgo</th>}
           {showSegments && <th>Tramos</th>}
           <th>Acción</th>
         </tr>
@@ -146,7 +163,10 @@ function ShiftRows({ items, emptyText, showSegments = false, onAction, onViewPho
             </td>
             <td>{formatDuration(shift.workedMinutes || shift.totalMinutes)}</td>
             <td>{sourceLabel(shift.source)}</td>
+            {showRisk && <td>{shift.shiftTemplate ? `${shift.shiftTemplate.code} · ${shift.shiftTemplate.name}` : <em>Sin turno</em>}</td>}
+            {showRisk && <td>{formatDateTime(shift.risk?.expectedExitAt)}</td>}
             <td><Badge tone={statusTone(shift.status)}>{shift.status.replace(/_/g, " ")}</Badge></td>
+            {showRisk && <td>{shift.risk ? <Badge tone={RISK_TONE[shift.risk.level]}>{RISK_LABEL[shift.risk.level]}</Badge> : "-"}</td>}
             {showSegments && (
               <td>
                 <div className="attendance-segments">
@@ -177,10 +197,20 @@ function ShiftRows({ items, emptyText, showSegments = false, onAction, onViewPho
         ))}
       </tbody>
     </table>
+    </TableShell>
   );
 }
 
 type ShiftActionType = "close" | "missing" | "observe";
+
+const MANUAL_CLOSE_REASONS = [
+  "Olvido de salida",
+  "Error de fichada",
+  "Corte de sistema",
+  "Corrección autorizada por supervisor",
+  "Jornada de campo/campaña",
+  "Otro",
+];
 
 type ShiftAction = {
   shift: AttendanceShift;
@@ -249,6 +279,7 @@ export function AttendancePage() {
   const [actionLoading, setActionLoading] = useState(false);
   const [shiftAction, setShiftAction] = useState<ShiftAction>();
   const [actionReason, setActionReason] = useState("");
+  const [closeReasonOption, setCloseReasonOption] = useState("");
   const [manualEndAt, setManualEndAt] = useState(toDateTimeLocalValue());
   const [summary, setSummary] = useState<Awaited<ReturnType<typeof attendanceApiService.getSummary>>>();
   const [photoPreview, setPhotoPreview] = useState<{ url: string; title: string }>();
@@ -330,6 +361,7 @@ export function AttendancePage() {
   const openAction = (shift: AttendanceShift, type: ShiftActionType) => {
     setShiftAction({ shift, type });
     setActionReason("");
+    setCloseReasonOption("");
     setActionError("");
     setManualEndAt(toDateTimeLocalValue());
   };
@@ -337,7 +369,13 @@ export function AttendancePage() {
   const closeAction = () => {
     setShiftAction(undefined);
     setActionReason("");
+    setCloseReasonOption("");
     setActionError("");
+  };
+
+  const selectCloseReason = (value: string) => {
+    setCloseReasonOption(value);
+    setActionReason(value === "Otro" ? "" : value);
   };
 
   const closePhotoPreview = () => {
@@ -415,8 +453,8 @@ export function AttendancePage() {
 
       {error && <div className="form-error">{error}</div>}
 
-      <Section title="Jornadas abiertas" subtitle="Empleados que marcaron ingreso y todavía no registraron salida.">
-        {loading ? <EmptyState text="Cargando jornadas abiertas..." icon={Clock3} /> : <ShiftRows items={summary?.openShifts || []} emptyText="No hay jornadas abiertas para esta fecha." onAction={openAction} onViewPhoto={openPunchPhoto} />}
+      <Section title="Jornadas abiertas" subtitle="Ordenadas por riesgo: vencidas y con posible olvido de salida primero, sin esperar siempre a las 20hs.">
+        {loading ? <EmptyState text="Cargando jornadas abiertas..." icon={Clock3} /> : <ShiftRows items={summary?.openShifts || []} emptyText="No hay jornadas abiertas para esta fecha." showRisk onAction={openAction} onViewPhoto={openPunchPhoto} />}
       </Section>
 
       {photoError ? <div className="form-error">{photoError}</div> : null}
@@ -494,15 +532,26 @@ export function AttendancePage() {
               <p>Ingreso: {formatDateTime(shiftAction.shift.startAt)} · Legajo {shiftAction.shift.employee.legajo}</p>
             </div>
             {shiftAction.type === "close" ? (
+              <>
+                <label>
+                  Hora de salida
+                  <input type="datetime-local" value={manualEndAt} onChange={(event) => setManualEndAt(event.target.value)} />
+                </label>
+                <label>
+                  Motivo
+                  <select value={closeReasonOption} onChange={(event) => selectCloseReason(event.target.value)}>
+                    <option value="">Seleccionar motivo...</option>
+                    {MANUAL_CLOSE_REASONS.map((option) => <option key={option} value={option}>{option}</option>)}
+                  </select>
+                </label>
+              </>
+            ) : null}
+            {shiftAction.type !== "close" || closeReasonOption === "Otro" ? (
               <label>
-                Hora de salida
-                <input type="datetime-local" value={manualEndAt} onChange={(event) => setManualEndAt(event.target.value)} />
+                {shiftAction.type === "close" ? "Detalle del motivo" : "Motivo obligatorio"}
+                <textarea value={actionReason} onChange={(event) => setActionReason(event.target.value)} placeholder="Indicá el motivo para dejar trazabilidad" />
               </label>
             ) : null}
-            <label>
-              Motivo obligatorio
-              <textarea value={actionReason} onChange={(event) => setActionReason(event.target.value)} placeholder="Indicá el motivo para dejar trazabilidad" />
-            </label>
             {!actionReason.trim() ? <p className="error">El motivo es obligatorio.</p> : null}
             {actionError ? <p className="error">{actionError}</p> : null}
             <div className="form-actions">

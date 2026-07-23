@@ -15,6 +15,7 @@ import { orgStructureRouter } from "./modules/org-structure/orgStructure.routes"
 import { pendingRouter } from "./modules/pending/pending.routes";
 import { positionsRouter } from "./modules/positions/positions.routes";
 import { salaryCategoriesRouter } from "./modules/salary-categories/salaryCategories.routes";
+import { shiftsRouter } from "./modules/shifts/shifts.routes";
 import { storageRouter } from "./modules/storage/storage.routes";
 import { timeEntriesRouter } from "./modules/time-entries/timeEntries.routes";
 import { usersRouter } from "./modules/users/users.routes";
@@ -38,6 +39,7 @@ apiRouter.use("/org-structure", orgStructureRouter);
 apiRouter.use("/pending", pendingRouter);
 apiRouter.use("/positions", positionsRouter);
 apiRouter.use("/salary-categories", salaryCategoriesRouter);
+apiRouter.use("/shifts", shiftsRouter);
 apiRouter.use("/storage", storageRouter);
 apiRouter.use("/time-entries", timeEntriesRouter);
 apiRouter.use("/users", usersRouter);

@@ -34,6 +34,16 @@ export type AttendanceTimeEntry = {
   hourConcept: { id: string; name: string; kind: string };
 };
 
+export type OpenShiftRiskLevel = "NORMAL" | "MISSING_OUT" | "EXPIRED";
+
+export type OpenShiftRisk = {
+  level: OpenShiftRiskLevel;
+  minutesOpen: number;
+  missingOutThresholdMinutes: number | null;
+  absoluteLimitMinutes: number;
+  expectedExitAt: string | null;
+};
+
 export type AttendanceShift = {
   id: string;
   employeeId: string;
@@ -54,6 +64,9 @@ export type AttendanceShift = {
   endPunch?: AttendancePunchEvidence | null;
   timeSegments: AttendanceSegment[];
   timeEntries: AttendanceTimeEntry[];
+  shiftTemplateId?: string | null;
+  shiftTemplate?: { id: string; code: string; name: string } | null;
+  risk?: OpenShiftRisk;
 };
 
 export type AttendancePunchEvidence = {

@@ -208,11 +208,29 @@ enum ShiftAlertType {
   SALIDA_ANTICIPADA
   SALIDA_TARDIA
   TURNO_NO_IDENTIFICADO
+  SHIFT_NOT_ENABLED_FOR_EMPLOYEE
+  POSSIBLE_SHIFT_CONFIGURATION_MISSING
+  JORNADA_INSUFICIENTE
+  JORNADA_EXTENDIDA
+  DESCANSO_INSUFICIENTE
+  POSIBLE_OLVIDO_SALIDA
 }
 
 enum ShiftAlertStatus {
   PENDIENTE
   RESUELTA
+  DESCARTADA
+}
+
+enum ShiftAlertSeverity {
+  INFO
+  ADVERTENCIA
+  CRITICA
+}
+
+enum ShiftAssignmentStatus {
+  HABILITADO
+  DESHABILITADO
 }
 
 enum RecurrenceType {
@@ -631,6 +649,7 @@ model Employee {
   shiftAlerts       ShiftAlert[]
   inactivityIncidents AttendanceInactivityIncident[]
   doubleHourAssignments DoubleHourRuleEmployee[]
+  shiftAssignments  ShiftAssignment[]
   userAccount       User?                  @relation("EmployeeUserAccount")
 
   @@index([lastName, firstName])
@@ -1033,17 +1052,50 @@ model ShiftTemplate {
   id String @id @default(uuid())
   code String @unique
   name String
+  description String?
+  categoryName String?
   startTime String
   endTime String
   crossesMidnight Boolean @default(false)
-  entryToleranceMinutes Int @default(10)
-  exitToleranceMinutes Int @default(20)
-  detectionWindowMinutes Int @default(180)
+  expectedMinutes Int?
+  entryToleranceBeforeMinutes Int @default(10)
+  entryToleranceAfterMinutes Int @default(10)
+  exitToleranceBeforeMinutes Int @default(20)
+  exitToleranceAfterMinutes Int @default(20)
+  minimumMinutesForCompliance Int?
+  maximumInformativeMinutes Int?
+  missingOutAlertAfterMinutes Int?
+  absoluteOpenShiftLimitMinutes Int @default(1200)
   status RecordStatus @default(ACTIVO)
+  createdByUserId String?
+  updatedByUserId String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   workShifts WorkShift[]
+  assignments ShiftAssignment[]
   @@index([status])
+  @@index([categoryName])
+}
+
+model ShiftAssignment {
+  id               String                @id @default(uuid())
+  employeeId       String
+  shiftTemplateId  String
+  status           ShiftAssignmentStatus @default(HABILITADO)
+  assignedAt       DateTime              @default(now())
+  assignedByUserId String?
+  disabledAt       DateTime?
+  disabledByUserId String?
+  observation      String?
+  createdAt        DateTime              @default(now())
+  updatedAt        DateTime              @updatedAt
+
+  employee      Employee      @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  shiftTemplate ShiftTemplate @relation(fields: [shiftTemplateId], references: [id], onDelete: Cascade)
+
+  @@unique([employeeId, shiftTemplateId])
+  @@index([employeeId, status])
+  @@index([shiftTemplateId, status])
 }
 
 model ShiftAlert {
@@ -1052,6 +1104,7 @@ model ShiftAlert {
   workShiftId String
   type ShiftAlertType
   status ShiftAlertStatus @default(PENDIENTE)
+  severity ShiftAlertSeverity @default(INFO)
   scheduledAt DateTime?
   actualAt DateTime
   differenceMinutes Int?
@@ -1063,6 +1116,7 @@ model ShiftAlert {
   workShift WorkShift @relation(fields: [workShiftId], references: [id], onDelete: Cascade)
   @@unique([workShiftId, type])
   @@index([employeeId, status, createdAt])
+  @@index([severity, status])
 }
 
 model AttendanceInactivityIncident {

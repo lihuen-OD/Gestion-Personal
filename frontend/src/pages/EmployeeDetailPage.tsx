@@ -7,6 +7,7 @@ import { ApiError } from "../services/api/apiClient";
 import { calculateEmployeeStatus } from "../services/employeeStatusService";
 import { EmployeeDocumentsPanel } from "../components/documents/EmployeeDocumentsPanel";
 import { EmployeeNoveltiesPanel } from "../components/novelties/EmployeeNoveltiesPanel";
+import { EmployeeShiftsPanel } from "../components/employees/EmployeeShiftsPanel";
 import { OverflowCell } from "../components/ui/OverflowCell";
 import { Field, Select } from "../components/ui/FormControls";
 import { Section } from "../components/ui/Section";
@@ -50,6 +51,7 @@ const tabs = [
   "Ausentismo / Novedades",
   "Gestión Documental",
   "Historial de Eventos",
+  "Turnos",
   "Auditoría",
 ];
 
@@ -125,7 +127,7 @@ export function EmployeeDetailPage() {
   }, [id, loadRetry]);
 
   useEffect(() => {
-    if (!employee || ![0, 1, 8, 9].includes(tab) || auditLoaded) return;
+    if (!employee || ![0, 1, 8, 10].includes(tab) || auditLoaded) return;
     let mounted = true;
     auditApiService
       .getAll({ entityId: employee.id, take: 200 })
@@ -239,7 +241,7 @@ export function EmployeeDetailPage() {
 
       {notice ? <div className="toast">{notice}</div> : null}
       <Tabs
-        tabs={tabs.filter((_, index) => index !== 9 || level === 1).map((tabName, index) => ({ key: String(index), label: tabName }))}
+        tabs={tabs.filter((_, index) => index !== 10 || level === 1).map((tabName, index) => ({ key: String(index), label: tabName }))}
         active={String(tab)}
         onChange={(key) => setTab(Number(key))}
       />
@@ -396,6 +398,7 @@ function renderEmployeeTab(
       </div>
     ) : <EmptyState text="Todavía no hay eventos registrados para este legajo." />;
   }
+  if (tab === 9) return <EmployeeShiftsPanel employee={employee} user={user} />;
 
   if (!auditLoaded) return <LoadingState text="Cargando auditoría..." />;
   if (auditError) return <ErrorState message="No pudimos cargar la auditoría del legajo." onRetry={retryAudit} />;

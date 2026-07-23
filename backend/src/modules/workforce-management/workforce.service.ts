@@ -22,7 +22,7 @@ export async function notifyRrhh(input: Parameters<typeof notifyUsers>[1]) {
   await notifyUsers(users.map((item) => item.id), input);
 }
 
-async function attendanceRecipients(employeeId: string) {
+export async function attendanceRecipients(employeeId: string) {
   const [rrhh, responsible] = await Promise.all([
     prisma.user.findMany({ where: { role: "NIVEL_1_RRHH", status: "ACTIVO" }, select: { id: true } }),
     prisma.employeeAssignment.findMany({
@@ -33,44 +33,15 @@ async function attendanceRecipients(employeeId: string) {
   return [...rrhh.map((item) => item.id), ...responsible.flatMap((item) => item.userId ? [item.userId] : [])];
 }
 
-function scheduledDate(actual: Date, time: string, addDay = false) {
+function minutesOfDay(time: string) {
   const [hours, minutes] = time.split(":").map(Number);
-  const result = new Date(actual);
-  result.setHours(hours || 0, minutes || 0, 0, 0);
-  if (addDay) result.setDate(result.getDate() + 1);
-  return result;
+  return (hours || 0) * 60 + (minutes || 0);
 }
 
-async function createShiftAlert(input: { employeeId: string; workShiftId: string; type: "INGRESO_TARDE" | "SALIDA_ANTICIPADA" | "SALIDA_TARDIA" | "TURNO_NO_IDENTIFICADO"; scheduledAt?: Date; actualAt: Date; differenceMinutes?: number }) {
-  const alert = await prisma.shiftAlert.upsert({
-    where: { workShiftId_type: { workShiftId: input.workShiftId, type: input.type } },
-    create: input,
-    update: { actualAt: input.actualAt, scheduledAt: input.scheduledAt, differenceMinutes: input.differenceMinutes, status: "PENDIENTE" },
-  });
-  const labels = { INGRESO_TARDE: "Ingreso fuera de tolerancia", SALIDA_ANTICIPADA: "Salida anticipada", SALIDA_TARDIA: "Salida fuera de tolerancia", TURNO_NO_IDENTIFICADO: "Turno no identificado" };
-  await notifyUsers(await attendanceRecipients(input.employeeId), { type: "ALERTA_FICHADA", title: labels[input.type], message: "La fichada requiere seguimiento. Las horas no fueron modificadas automáticamente.", entityType: "ShiftAlert", entityId: alert.id, link: "/asistencia", priority: "ALTA" });
-  return alert;
-}
-
-export async function evaluateShiftEntry(employeeId: string, workShiftId: string, actualAt: Date) {
-  const templates = await prisma.shiftTemplate.findMany({ where: { status: "ACTIVO" } });
-  const matches = templates.map((template) => {
-    const scheduledAt = scheduledDate(actualAt, template.startTime);
-    return { template, scheduledAt, difference: Math.round((actualAt.getTime() - scheduledAt.getTime()) / 60_000) };
-  }).filter((item) => Math.abs(item.difference) <= item.template.detectionWindowMinutes).sort((a, b) => Math.abs(a.difference) - Math.abs(b.difference));
-  const match = matches[0];
-  if (!match) return createShiftAlert({ employeeId, workShiftId, type: "TURNO_NO_IDENTIFICADO", actualAt });
-  await prisma.workShift.update({ where: { id: workShiftId }, data: { shiftTemplateId: match.template.id } });
-  if (match.difference > match.template.entryToleranceMinutes) await createShiftAlert({ employeeId, workShiftId, type: "INGRESO_TARDE", actualAt, scheduledAt: match.scheduledAt, differenceMinutes: match.difference });
-}
-
-export async function evaluateShiftExit(employeeId: string, workShiftId: string, actualAt: Date) {
-  const shift = await prisma.workShift.findUnique({ where: { id: workShiftId }, include: { shiftTemplate: true } });
-  if (!shift?.shiftTemplate) return;
-  const scheduledAt = scheduledDate(shift.startAt, shift.shiftTemplate.endTime, shift.shiftTemplate.crossesMidnight);
-  const difference = Math.round((actualAt.getTime() - scheduledAt.getTime()) / 60_000);
-  if (difference < -shift.shiftTemplate.exitToleranceMinutes) await createShiftAlert({ employeeId, workShiftId, type: "SALIDA_ANTICIPADA", actualAt, scheduledAt, differenceMinutes: difference });
-  if (difference > shift.shiftTemplate.exitToleranceMinutes) await createShiftAlert({ employeeId, workShiftId, type: "SALIDA_TARDIA", actualAt, scheduledAt, differenceMinutes: difference });
+function computeExpectedMinutes(startTime: string, endTime: string, crossesMidnight: boolean) {
+  const start = minutesOfDay(startTime);
+  const end = minutesOfDay(endTime);
+  return crossesMidnight ? 24 * 60 - start + end : end - start;
 }
 
 function periodRange(period: string) {
@@ -128,19 +99,40 @@ export const workforceService = {
   async notifications(user: Express.AuthUser) {
     const notifications = await prisma.systemNotification.findMany({ where: { recipientUserId: user.id }, orderBy: { createdAt: "desc" }, take: 200 });
     const shiftAlertIds = notifications.filter((item) => item.entityType === "ShiftAlert" && item.entityId).map((item) => item.entityId!);
-    if (!shiftAlertIds.length) return notifications;
-    const alerts = await prisma.shiftAlert.findMany({
-      where: { id: { in: shiftAlertIds } },
-      select: { id: true, employee: { select: { id: true, legajo: true, firstName: true, lastName: true } } },
-    });
+    const workShiftIds = notifications.filter((item) => item.entityType === "WorkShift" && item.entityId).map((item) => item.entityId!);
+    const employeeIds = notifications.filter((item) => item.entityType === "Employee" && item.entityId).map((item) => item.entityId!);
+    if (!shiftAlertIds.length && !workShiftIds.length && !employeeIds.length) return notifications;
+    const employeeSelect = { id: true, legajo: true, firstName: true, lastName: true } as const;
+    const [alerts, shifts, employees] = await Promise.all([
+      shiftAlertIds.length ? prisma.shiftAlert.findMany({ where: { id: { in: shiftAlertIds } }, select: { id: true, employee: { select: employeeSelect } } }) : Promise.resolve([]),
+      workShiftIds.length ? prisma.workShift.findMany({ where: { id: { in: workShiftIds } }, select: { id: true, employee: { select: employeeSelect } } }) : Promise.resolve([]),
+      employeeIds.length ? prisma.employee.findMany({ where: { id: { in: employeeIds } }, select: employeeSelect }) : Promise.resolve([]),
+    ]);
     const employeeByAlert = new Map(alerts.map((alert) => [alert.id, alert.employee]));
-    return notifications.map((item) => ({ ...item, employee: item.entityId ? employeeByAlert.get(item.entityId) : undefined }));
+    const employeeByShift = new Map(shifts.map((shift) => [shift.id, shift.employee]));
+    const employeeById = new Map(employees.map((employee) => [employee.id, employee]));
+    return notifications.map((item) => {
+      if (!item.entityId) return item;
+      if (item.entityType === "ShiftAlert") return { ...item, employee: employeeByAlert.get(item.entityId) };
+      if (item.entityType === "WorkShift") return { ...item, employee: employeeByShift.get(item.entityId) };
+      if (item.entityType === "Employee") return { ...item, employee: employeeById.get(item.entityId) };
+      return item;
+    });
   },
   unreadNotificationCount(user: Express.AuthUser) { return prisma.systemNotification.count({ where: { recipientUserId: user.id, status: "NO_LEIDA" } }); },
   markNotificationRead(id: string, user: Express.AuthUser) { return prisma.systemNotification.updateMany({ where: { id, recipientUserId: user.id }, data: { status: "LEIDA", readAt: new Date() } }); },
   shiftTemplates() { return prisma.shiftTemplate.findMany({ orderBy: { startTime: "asc" } }); },
   async createShiftTemplate(input: any, audit?: AuditContext) {
-    const item = await prisma.shiftTemplate.create({ data: { ...input, crossesMidnight: input.endTime <= input.startTime } });
+    const crossesMidnight = input.endTime <= input.startTime;
+    const item = await prisma.shiftTemplate.create({
+      data: {
+        ...input,
+        crossesMidnight,
+        expectedMinutes: computeExpectedMinutes(input.startTime, input.endTime, crossesMidnight),
+        createdByUserId: audit?.userId || null,
+        updatedByUserId: audit?.userId || null,
+      },
+    });
     await auditService.register({ ...audit, action: "CREATE", entity: "ShiftTemplate", entityId: item.id, description: `Se creó el turno ${item.code} - ${item.name}.`, after: item as Prisma.InputJsonValue });
     return item;
   },
@@ -149,7 +141,16 @@ export const workforceService = {
     if (!before) throw new AppError("No encontramos el turno solicitado", 404, "SHIFT_TEMPLATE_NOT_FOUND");
     const startTime = input.startTime ?? before.startTime;
     const endTime = input.endTime ?? before.endTime;
-    const item = await prisma.shiftTemplate.update({ where: { id }, data: { ...input, crossesMidnight: endTime <= startTime } });
+    const crossesMidnight = endTime <= startTime;
+    const item = await prisma.shiftTemplate.update({
+      where: { id },
+      data: {
+        ...input,
+        crossesMidnight,
+        expectedMinutes: computeExpectedMinutes(startTime, endTime, crossesMidnight),
+        updatedByUserId: audit?.userId || null,
+      },
+    });
     await auditService.register({
       ...audit,
       action: input.status && input.status !== before.status ? input.status === "ACTIVO" ? "ACTIVATE" : "DEACTIVATE" : "UPDATE",

@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Link, useSearchParams } from "react-router-dom";
 import {
   BarChart3,
@@ -19,7 +20,8 @@ import { timeEntryApiService } from "../services/api/timeEntryApiService";
 import { noveltyApiService } from "../services/api/noveltyApiService";
 import type { Employee, TimeEntry } from "../types";
 import { displayLegajo, fullName } from "../utils/employee";
-import { currentMonthPeriod, formatPeriodDay } from "../utils/period";
+import { currentMonthPeriod, formatPeriodDay, getMonthDays, getWeekdayAbbr } from "../utils/period";
+import { formatHours } from "../utils/hours";
 import { statusTone } from "../utils/status";
 import { useDebouncedValue } from "../utils/useDebouncedValue";
 import { OverflowCell } from "../components/ui/OverflowCell";
@@ -36,6 +38,102 @@ import { Tabs } from "../components/ui/Tabs";
 
 function uniqueOptions(values: string[]) {
   return Array.from(new Set(values.filter(Boolean))).sort((a, b) => a.localeCompare(b, "es"));
+}
+
+type DayBreakdown = { day: number; normal: number; special: number; total: number; novelty: { label: string } | null };
+
+const DAY_POPOVER_WIDTH = 260;
+const DAY_VIEWPORT_PADDING = 16;
+const DAY_POPOVER_GAP = 10;
+
+function DayCell({
+  label,
+  breakdown,
+  employeeId,
+  period,
+}: {
+  label: string;
+  breakdown?: DayBreakdown;
+  employeeId: string;
+  period: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [position, setPosition] = useState<{ left: number; top: number } | null>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
+
+  const updatePosition = () => {
+    if (!triggerRef.current) return;
+    const rect = triggerRef.current.getBoundingClientRect();
+    const left = Math.min(Math.max(DAY_VIEWPORT_PADDING, rect.left), window.innerWidth - DAY_POPOVER_WIDTH - DAY_VIEWPORT_PADDING);
+    const fitsBelow = window.innerHeight - rect.bottom > 160;
+    const top = fitsBelow ? rect.bottom + DAY_POPOVER_GAP : Math.max(DAY_VIEWPORT_PADDING, rect.top - 150);
+    setPosition({ left, top });
+  };
+
+  useEffect(() => {
+    if (!open) return undefined;
+    updatePosition();
+    const onScrollOrResize = () => updatePosition();
+    const onPointerDown = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (triggerRef.current?.contains(target)) return;
+      if (popoverRef.current?.contains(target)) return;
+      setOpen(false);
+    };
+    const onEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    window.addEventListener("resize", onScrollOrResize);
+    window.addEventListener("scroll", onScrollOrResize, true);
+    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("keydown", onEscape);
+    return () => {
+      window.removeEventListener("resize", onScrollOrResize);
+      window.removeEventListener("scroll", onScrollOrResize, true);
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("keydown", onEscape);
+    };
+  }, [open]);
+
+  return (
+    <td className="day-cell">
+      <button
+        ref={triggerRef}
+        type="button"
+        className="day-cell-trigger"
+        onClick={() => setOpen((current) => !current)}
+        aria-label={`Detalle del ${label}`}
+      >
+        <span className={breakdown?.novelty ? "day-cell-value has-novelty" : "day-cell-value"}>{breakdown ? formatHours(breakdown.total) : "-"}</span>
+        {breakdown?.novelty ? <span className="alert-dot purple" /> : null}
+      </button>
+      {open && position
+        ? createPortal(
+            <div
+              ref={popoverRef}
+              className="overflow-cell-popover day-cell-popover"
+              style={{ left: `${position.left}px`, top: `${position.top}px`, maxWidth: `${DAY_POPOVER_WIDTH}px` }}
+            >
+              <b>{label}</b>
+              {breakdown ? (
+                <>
+                  <span>Horas normales: {formatHours(breakdown.normal)} h</span>
+                  <span>Horas especiales: {formatHours(breakdown.special)} h</span>
+                  {breakdown.novelty ? <span>Novedad: {breakdown.novelty.label}</span> : null}
+                </>
+              ) : (
+                <span>Sin carga ni novedades registradas.</span>
+              )}
+              <Link className="table-link" to={`/horas/${employeeId}?period=${period}`} onClick={() => setOpen(false)}>
+                Ver detalle completo
+              </Link>
+            </div>,
+            document.body,
+          )
+        : null}
+    </td>
+  );
 }
 
 const emptyHoursSummary = {
@@ -61,7 +159,19 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
   const [noveltyReject, setNoveltyReject] = useState<PendingItem>();
   const [reviewReason, setReviewReason] = useState("");
   const [groupByPerson, setGroupByPerson] = useState(false);
-  const [periodRows, setPeriodRows] = useState<Array<{ employee: Employee; summary: { total: number; normal: number; special: number; incidents: number; status: string } }>>([]);
+  const [periodRows, setPeriodRows] = useState<
+    Array<{
+      employee: Employee;
+      summary: {
+        total: number;
+        normal: number;
+        special: number;
+        incidents: number;
+        status: string;
+        dailyBreakdown: Array<{ day: number; normal: number; special: number; total: number; novelty: { label: string } | null }>;
+      };
+    }>
+  >([]);
   const [periodRowsMeta, setPeriodRowsMeta] = useState({ total: 0, page: 1, pageSize, hasMore: false });
   const [reviewPage, setReviewPage] = useState(1);
   const [reviewEntriesMeta, setReviewEntriesMeta] = useState({ total: 0, page: 1, pageSize, hasMore: false });
@@ -152,7 +262,13 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
     const backendSummary = periodRows.find((row) => row.employee.id === employeeId)?.summary;
     if (backendSummary) return backendSummary;
     const legacy = timeEntryApiService.getEmployeePeriodSummary(reviewEntries, employeeId);
-    return { ...legacy, normal: legacy.total, special: 0, incidents: 0 };
+    return { ...legacy, normal: legacy.total, special: 0, incidents: 0, dailyBreakdown: [] as Array<{ day: number; normal: number; special: number; total: number; novelty: { label: string } | null }> };
+  };
+  const monthDays = getMonthDays(period);
+  const dailyFor = (employeeId: string) => {
+    const map = new Map<number, { day: number; normal: number; special: number; total: number; novelty: { label: string } | null }>();
+    for (const entry of summary(employeeId).dailyBreakdown) map.set(entry.day, entry);
+    return map;
   };
   const exportRows = timeEntryApiService.getPeriodExportRowsFromEntries(period, employees, reviewEntries);
   const setPeriodValue = (value: string) => {
@@ -258,7 +374,7 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
         />
         <StatCard
           label="Horas contables"
-          value={`${hoursSummary.countableHours} h`}
+          value={`${formatHours(hoursSummary.countableHours)} h`}
           icon={BarChart3}
           tone="green"
         />
@@ -436,7 +552,7 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
                             }
                           />
                         </td>
-                        <td>{personSummary.total} h</td>
+                        <td>{formatHours(personSummary.total)} h</td>
                         <td>
                           <Badge tone={statusTone(personSummary.status)}>{personSummary.status}</Badge>
                         </td>
@@ -585,8 +701,8 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
           </select>
         </div>
 
-        <TableShell minWidth={1120}>
-          <table>
+        <TableShell minWidth={1120 + monthDays.length * 64}>
+          <table className="people-hours-table">
             <thead>
               <tr>
                 <th>Legajo</th>
@@ -598,11 +714,17 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
                 <th>Especiales</th>
                 <th>Total</th>
                 <th>Acción</th>
+                {monthDays.map((day) => (
+                  <th key={day} className="day-col">
+                    {getWeekdayAbbr(period, day)} {day}
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody>
               {employees.map((employee) => {
                 const periodSummary = summary(employee.id);
+                const dayMap = dailyFor(employee.id);
                 return (
                   <tr key={employee.id}>
                     <td>
@@ -629,9 +751,9 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
                         }
                       />
                     </td>
-                    <td>{periodSummary.normal} h</td>
-                    <td>{periodSummary.special} h</td>
-                    <td>{periodSummary.total} h</td>
+                    <td>{formatHours(periodSummary.normal)} h</td>
+                    <td>{formatHours(periodSummary.special)} h</td>
+                    <td>{formatHours(periodSummary.total)} h</td>
                     <td>
                       <Link
                         className="table-link table-icon-action"
@@ -643,6 +765,15 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
                         <span>Cargar / Ver</span>
                       </Link>
                     </td>
+                    {monthDays.map((day) => (
+                      <DayCell
+                        key={day}
+                        label={`${getWeekdayAbbr(period, day)} ${day}`}
+                        breakdown={dayMap.get(day)}
+                        employeeId={employee.id}
+                        period={period}
+                      />
+                    ))}
                   </tr>
                 );
               })}

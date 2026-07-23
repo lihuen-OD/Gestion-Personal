@@ -25,6 +25,7 @@ const HourlyManagementHomePage = lazy(() => import("./pages/HourlyManagementHome
 const HoursPage = lazy(() => import("./pages/HoursPage").then((module) => ({ default: module.HoursPage })));
 const EmployeeHoursPage = lazy(() => import("./pages/EmployeeHoursPage").then((module) => ({ default: module.EmployeeHoursPage })));
 const AttendancePage = lazy(() => import("./pages/AttendancePage").then((module) => ({ default: module.AttendancePage })));
+const ShiftAlertsPage = lazy(() => import("./pages/ShiftAlertsPage").then((module) => ({ default: module.ShiftAlertsPage })));
 const NoveltiesPage = lazy(() => import("./pages/NoveltiesPage").then((module) => ({ default: module.NoveltiesPage })));
 const DocumentsPage = lazy(() => import("./pages/DocumentsPage").then((module) => ({ default: module.DocumentsPage })));
 const OrganigramasPage = lazy(() => import("./pages/OrganigramasPage").then((module) => ({ default: module.OrganigramasPage })));
@@ -36,6 +37,9 @@ const TimeClockPage = lazy(() => import("./pages/TimeClockPage").then((module) =
 const MonthlyClosuresPage = lazy(() => import("./pages/MonthlyClosuresPage").then((module) => ({ default: module.MonthlyClosuresPage })));
 const NotificationsPage = lazy(() => import("./pages/NotificationsPage").then((module) => ({ default: module.NotificationsPage })));
 const WorkScheduleSettingsPage = lazy(() => import("./pages/WorkScheduleSettingsPage").then((module) => ({ default: module.WorkScheduleSettingsPage })));
+const ShiftsPage = lazy(() => import("./pages/ShiftsPage").then((module) => ({ default: module.ShiftsPage })));
+const ShiftCreatePage = lazy(() => import("./pages/ShiftCreatePage").then((module) => ({ default: module.ShiftCreatePage })));
+const ShiftDetailPage = lazy(() => import("./pages/ShiftDetailPage").then((module) => ({ default: module.ShiftDetailPage })));
 
 function PageLoader() {
   return <LoadingState text="Cargando módulo..." />;
@@ -79,9 +83,13 @@ export function App() {
           <Route path="/configuracion/tipos-novedades/nuevo" element={<NoveltyTypeCreatePage />} />
           <Route path="/configuracion/tipos-novedades/:id" element={<NoveltyTypeDetailPage />} />
           <Route path="/configuracion/turnos-horas-especiales" element={<WorkScheduleSettingsPage />} />
+          <Route path="/configuracion/turnos" element={<ShiftsPage />} />
+          <Route path="/configuracion/turnos/nuevo" element={<ShiftCreatePage />} />
+          <Route path="/configuracion/turnos/:id" element={<ShiftDetailPage />} />
           <Route path="/horas" element={<HoursPage />} />
           <Route path="/horas/:id" element={<EmployeeHoursPage />} />
           <Route path="/asistencia" element={<AttendancePage />} />
+          <Route path="/asistencia/alertas" element={<ShiftAlertsPage />} />
           <Route path="/novedades" element={<NoveltiesPage />} />
           <Route path="/documentacion" element={<DocumentsPage />} />
           <Route path="/organigramas" element={<OrganigramasPage />} />

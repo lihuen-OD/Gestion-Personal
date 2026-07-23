@@ -1,4 +1,5 @@
 import {
+  AlertTriangle,
   BriefcaseBusiness,
   CalendarDays,
   Bell,
@@ -53,6 +54,7 @@ const hourlyManagement = (level: number) =>
   group("Gestión horaria", Clock3, [
     link("Inicio", "/gestion-horaria", Home),
     link("Asistencia", "/asistencia", TimerReset),
+    link("Alertas de turnos", "/asistencia/alertas", AlertTriangle),
     link("Carga de horas", "/horas", Clock3),
     link("Cierres mensuales", "/cierres", CalendarDays),
     ...(level === 3 ? [] : [link("Bandeja de revisión", "/pendientes", CalendarDays)]),

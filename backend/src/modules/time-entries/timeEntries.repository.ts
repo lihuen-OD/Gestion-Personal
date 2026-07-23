@@ -1,6 +1,16 @@
 import { ApprovalStatus, EmployeeStatus, Prisma, WorkShiftSource, WorkShiftStatus } from "@prisma/client";
 import { prisma } from "../../shared/prisma/client";
+import { noveltyCoversDay } from "../novelties/novelties.dateRange";
 import type { CreateTimeEntryInput, ListTimeEntriesQuery, TimeEntriesExportQuery, TimeEntriesPeriodEmployeesQuery, UpdateTimeEntryInput } from "./timeEntries.schemas";
+
+function periodRange(period: string) {
+  const year = Number(period.slice(0, 4));
+  const month = Number(period.slice(5, 7));
+  return {
+    start: new Date(Date.UTC(year, month - 1, 1)),
+    end: new Date(Date.UTC(year, month, 1)),
+  };
+}
 
 const timeEntryInclude = {
   employee: { select: { id: true, legajo: true, cuil: true, firstName: true, lastName: true, status: true } },
@@ -370,6 +380,7 @@ export const timeEntriesRepository = {
   async findPeriodEmployees(query: TimeEntriesPeriodEmployeesQuery, employeeAccessWhere: Prisma.EmployeeWhereInput) {
     const where = buildPeriodEmployeeWhere(query, employeeAccessWhere);
     const skip = (query.page - 1) * query.take;
+    const { start, end } = periodRange(query.period);
 
     return prisma.$transaction(async (tx) => {
       const [employees, total] = await Promise.all([
@@ -384,23 +395,43 @@ export const timeEntriesRepository = {
       ]);
 
       const employeeIds = employees.map((employee) => employee.id);
-      const entries = employeeIds.length
-        ? await tx.timeEntry.findMany({
-            where: {
-              period: query.period,
-              employeeId: { in: employeeIds },
-            },
-            select: {
-              employeeId: true,
-              hours: true,
-              status: true,
-              hourConcept: { select: { kind: true } },
-              workShift: { select: { status: true } },
-            },
-          })
-        : [];
+      const [entries, novelties] = await Promise.all([
+        employeeIds.length
+          ? tx.timeEntry.findMany({
+              where: {
+                period: query.period,
+                employeeId: { in: employeeIds },
+              },
+              select: {
+                employeeId: true,
+                day: true,
+                hours: true,
+                status: true,
+                hourConcept: { select: { kind: true } },
+                workShift: { select: { status: true } },
+              },
+            })
+          : Promise.resolve([]),
+        employeeIds.length
+          ? tx.novelty.findMany({
+              where: {
+                employeeId: { in: employeeIds },
+                status: { not: "RECHAZADO" },
+                fromDate: { lt: end },
+                OR: [{ toDate: null }, { toDate: { gte: start } }],
+              },
+              select: {
+                employeeId: true,
+                fromDate: true,
+                toDate: true,
+                noveltyType: { select: { name: true, allowsDateTo: true } },
+              },
+            })
+          : Promise.resolve([]),
+      ]);
 
       const grouped = new Map<string, { total: number; normal: number; special: number; incidents: number; statuses: string[] }>();
+      const dailyGrouped = new Map<string, Map<number, { normal: number; special: number; total: number }>>();
       for (const entry of entries) {
         const current = grouped.get(entry.employeeId) || { total: 0, normal: 0, special: 0, incidents: 0, statuses: [] };
         if (entry.status === ApprovalStatus.APROBADO || entry.status === ApprovalStatus.EN_REVISION) {
@@ -408,15 +439,47 @@ export const timeEntriesRepository = {
           current.total += hours;
           if (entry.hourConcept.kind === "NORMAL") current.normal += hours;
           else current.special += hours;
+
+          const dayMap = dailyGrouped.get(entry.employeeId) || new Map<number, { normal: number; special: number; total: number }>();
+          const dayCurrent = dayMap.get(entry.day) || { normal: 0, special: 0, total: 0 };
+          dayCurrent.total += hours;
+          if (entry.hourConcept.kind === "NORMAL") dayCurrent.normal += hours;
+          else dayCurrent.special += hours;
+          dayMap.set(entry.day, dayCurrent);
+          dailyGrouped.set(entry.employeeId, dayMap);
         }
         if (entry.workShift && ["FALTA_SALIDA", "FALTA_INGRESO", "OBSERVADO", "INVALIDO"].includes(entry.workShift.status)) current.incidents += 1;
         current.statuses.push(entry.status);
         grouped.set(entry.employeeId, current);
       }
 
+      const noveltiesByEmployee = new Map<string, typeof novelties>();
+      for (const novelty of novelties) {
+        const list = noveltiesByEmployee.get(novelty.employeeId) || [];
+        list.push(novelty);
+        noveltiesByEmployee.set(novelty.employeeId, list);
+      }
+      const dayCount = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth() + 1, 0)).getUTCDate();
+
       return {
         items: employees.map((employee) => {
           const summary = grouped.get(employee.id);
+          const dayMap = dailyGrouped.get(employee.id);
+          const employeeNovelties = noveltiesByEmployee.get(employee.id) || [];
+          const dailyBreakdown: Array<{ day: number; normal: number; special: number; total: number; novelty: { label: string } | null }> = [];
+          for (let day = 1; day <= dayCount; day++) {
+            const dayDate = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), day));
+            const hours = dayMap?.get(day);
+            const coveringNovelties = employeeNovelties.filter((novelty) => noveltyCoversDay(novelty, novelty.noveltyType, dayDate));
+            if (!hours && !coveringNovelties.length) continue;
+            dailyBreakdown.push({
+              day,
+              normal: hours?.normal || 0,
+              special: hours?.special || 0,
+              total: hours?.total || 0,
+              novelty: coveringNovelties.length ? { label: coveringNovelties.map((novelty) => novelty.noveltyType.name).join(", ") } : null,
+            });
+          }
           return {
             employee,
             summary: {
@@ -425,12 +488,13 @@ export const timeEntriesRepository = {
               special: summary?.special || 0,
               incidents: summary?.incidents || 0,
               status: resolvePeriodStatus(summary?.statuses || []),
+              dailyBreakdown,
             },
           };
         }),
         total,
       };
-    });
+    }, { timeout: 15_000 });
   },
 
   findForExport(query: TimeEntriesExportQuery, employeeAccessWhere: Prisma.EmployeeWhereInput) {
@@ -493,6 +557,25 @@ export const timeEntriesRepository = {
             crossesMidnight: true,
             observation: true,
             reviewStatus: true,
+            shiftTemplateId: true,
+            shiftTemplate: {
+              select: {
+                id: true,
+                code: true,
+                name: true,
+                startTime: true,
+                endTime: true,
+                crossesMidnight: true,
+                entryToleranceBeforeMinutes: true,
+                entryToleranceAfterMinutes: true,
+                exitToleranceBeforeMinutes: true,
+                exitToleranceAfterMinutes: true,
+                minimumMinutesForCompliance: true,
+                maximumInformativeMinutes: true,
+                missingOutAlertAfterMinutes: true,
+                absoluteOpenShiftLimitMinutes: true,
+              },
+            },
             employee: { select: employeeSelect },
             startPunch: {
               select: {
@@ -894,6 +977,7 @@ export const timeEntriesRepository = {
     });
     const expired = candidates.filter((shift) => now.getTime() - shift.startAt.getTime() > shift.maxAllowedMinutes * 60_000);
     let count = 0;
+    const items: Array<{ employeeId: string; workShiftId: string }> = [];
     for (const shift of expired) {
       const concept = shift.hourConcept || (await prisma.employeeHourConcept.findFirst({
         where: { employeeId: shift.employeeId, hourConcept: { kind: "NORMAL", status: "ACTIVO" } },
@@ -925,9 +1009,12 @@ export const timeEntriesRepository = {
         });
         return true;
       });
-      if (claimed) count += 1;
+      if (claimed) {
+        count += 1;
+        items.push({ employeeId: shift.employeeId, workShiftId: shift.id });
+      }
     }
-    return { count };
+    return { count, items };
   },
 
   createOpenWorkShift(input: { employeeId: string; hourConceptId?: string; hourConceptName?: string; source: WorkShiftSource; startAt: Date; punchEvidence?: PunchEvidenceInput }) {

@@ -418,6 +418,47 @@ async function main() {
     });
   }
 
+  const shiftTemplate = await prisma.shiftTemplate.upsert({
+    where: { code: "TURNO-MANIANA" },
+    update: {},
+    create: {
+      code: "TURNO-MANIANA",
+      name: "Turno Mañana",
+      categoryName: "Administrativo",
+      description: "Turno de referencia para jornada administrativa estandar.",
+      startTime: "08:00",
+      endTime: "16:00",
+      crossesMidnight: false,
+      expectedMinutes: 480,
+      entryToleranceBeforeMinutes: 10,
+      entryToleranceAfterMinutes: 10,
+      exitToleranceBeforeMinutes: 20,
+      exitToleranceAfterMinutes: 20,
+      minimumMinutesForCompliance: 420,
+      maximumInformativeMinutes: 540,
+      missingOutAlertAfterMinutes: 60,
+      absoluteOpenShiftLimitMinutes: 1200,
+      createdByUserId: admin.id,
+      updatedByUserId: admin.id,
+    },
+  });
+
+  const existingShiftAssignment = await prisma.shiftAssignment.findUnique({
+    where: { employeeId_shiftTemplateId: { employeeId: employee.id, shiftTemplateId: shiftTemplate.id } },
+  });
+
+  if (!existingShiftAssignment) {
+    await prisma.shiftAssignment.create({
+      data: {
+        employeeId: employee.id,
+        shiftTemplateId: shiftTemplate.id,
+        status: "HABILITADO",
+        assignedByUserId: admin.id,
+        observation: "Asignacion inicial demo.",
+      },
+    });
+  }
+
   console.info("Seed completed");
 }
 

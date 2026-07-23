@@ -11,7 +11,9 @@ import { roles } from "../../shared/security/roles";
 import { storageService } from "../../shared/storage/storage.service";
 import { storagePathBuilder } from "../../shared/storage/storagePathBuilder";
 import { timeEntriesRepository } from "./timeEntries.repository";
-import { evaluateShiftEntry, evaluateShiftExit } from "../workforce-management/workforce.service";
+import { attendanceRecipients, notifyUsers } from "../workforce-management/workforce.service";
+import { evaluateShiftEntry, evaluateShiftExit } from "../shifts/workShiftEvaluationRunner";
+import { compareOpenShiftRisk, computeOpenShiftRisk } from "../shifts/openShiftMonitor.service";
 import type {
   AdminCloseWorkShiftInput,
   AdminWorkShiftReasonInput,
@@ -500,6 +502,30 @@ function faceStatusObservation(status: ClockPhotoPunchInput["faceValidationStatu
   return labels[status];
 }
 
+export async function notifyMissingExit(employeeId: string, workShiftId: string) {
+  await notifyUsers(await attendanceRecipients(employeeId), {
+    type: "FALTA_SALIDA",
+    title: "Falta registrar la salida",
+    message: "La jornada venció sin salida registrada y requiere revisión.",
+    entityType: "WorkShift",
+    entityId: workShiftId,
+    link: "/asistencia",
+    priority: "ALTA",
+  });
+}
+
+async function notifyOpenShiftAttempt(employeeId: string) {
+  await notifyUsers(await attendanceRecipients(employeeId), {
+    type: "INTENTO_INGRESO_JORNADA_ABIERTA",
+    title: "Intento de ingreso con jornada abierta",
+    message: "Se intentó registrar un nuevo ingreso mientras ya había una jornada abierta.",
+    entityType: "Employee",
+    entityId: employeeId,
+    link: "/asistencia",
+    priority: "ALTA",
+  });
+}
+
 export function timeEntriesExportToCsv(rows: TimeEntriesExportRow[]) {
   const headers: (keyof TimeEntriesExportRow)[] = [
     "CUIL",
@@ -564,7 +590,11 @@ export const timeEntriesService = {
       };
     });
 
-    const openShifts = shifts.filter((shift) => shift.status === "ABIERTO");
+    const now = new Date();
+    const openShifts = shifts
+      .filter((shift) => shift.status === "ABIERTO")
+      .map((shift) => ({ ...shift, risk: computeOpenShiftRisk(shift.startAt, shift.shiftTemplate, now) }))
+      .sort((a, b) => compareOpenShiftRisk(a.risk, b.risk));
     const observedShifts = shifts.filter((shift) => shift.status === "OBSERVADO" || shift.status === "FALTA_SALIDA" || shift.status === "FALTA_INGRESO" || shift.status === "INVALIDO");
     const closedShifts = shifts.filter((shift) => shift.status !== "ABIERTO" && !observedShifts.some((observed) => observed.id === shift.id));
     const totalWorkedMinutes = closedShifts.reduce((sum, shift) => sum + shift.workedMinutes, 0);
@@ -1066,6 +1096,7 @@ export const timeEntriesService = {
             }
             throw error;
           }
+          await notifyMissingExit(employee.id, openShift.id);
           scheduleClockAudit({
             ...audit,
             action: "CREATE",
@@ -1229,6 +1260,7 @@ export const timeEntriesService = {
           startAt: now,
           missingOutObservation: "Olvido de salida marcado automaticamente al registrar un nuevo ingreso desde el fichador.",
         });
+        await notifyMissingExit(employee.id, openShift.id);
         await evaluateShiftEntry(employee.id, workShift.id, now);
         return {
           employee: publicEmployeeLabel(employee),
@@ -1250,6 +1282,7 @@ export const timeEntriesService = {
         timestamp: now,
         observation: "Intento de ingreso con una jornada abierta.",
       });
+      await notifyOpenShiftAttempt(employee.id);
       throw new AppError("Ya existe un ingreso abierto para este empleado.", 409, "CLOCK_ALREADY_OPEN");
     }
     const workShift = await timeEntriesRepository.createOpenWorkShift({
@@ -1281,6 +1314,7 @@ export const timeEntriesService = {
           startAt: now,
           missingOutObservation: "Olvido de salida marcado automaticamente al registrar un nuevo ingreso desde el fichador.",
         });
+        await notifyMissingExit(employee.id, openShift.id);
         await evaluateShiftEntry(employee.id, workShift.id, now);
         return {
           employee: publicEmployeeLabel(employee),
@@ -1302,6 +1336,7 @@ export const timeEntriesService = {
         timestamp: now,
         observation: "Intento de ingreso con una jornada abierta.",
       });
+      await notifyOpenShiftAttempt(employee.id);
       throw new AppError("Ya existe un ingreso abierto para este empleado.", 409, "CLOCK_ALREADY_OPEN");
     }
     const workShift = await timeEntriesRepository.createOpenWorkShift({

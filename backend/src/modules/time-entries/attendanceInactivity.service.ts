@@ -47,7 +47,11 @@ export async function detectAttendanceInactivity(dateKey: string) {
         none: {
           status: { not: "RECHAZADO" },
           fromDate: { lte: operationalDate },
-          OR: [{ toDate: null }, { toDate: { gte: operationalDate } }],
+          OR: [
+            { toDate: { gte: operationalDate } },
+            { toDate: null, noveltyType: { allowsDateTo: true } },
+            { toDate: null, noveltyType: { allowsDateTo: false }, fromDate: operationalDate },
+          ],
         },
       },
     },

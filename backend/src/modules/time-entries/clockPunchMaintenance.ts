@@ -1,7 +1,9 @@
 import { env } from "../../config/env";
 import { timeEntriesRepository } from "./timeEntries.repository";
+import { notifyMissingExit } from "./timeEntries.service";
 import { storageFilesRepository } from "../../shared/storage/storageFiles.repository";
 import { detectAttendanceInactivity, isInactivityCheckDue, previousOperationalDateKey } from "./attendanceInactivity.service";
+import { checkMissingOutRisk } from "../shifts/openShiftMonitor.service";
 
 let running = false;
 let lastOrphanCount: number | undefined;
@@ -19,7 +21,27 @@ export async function maintainClockPunchAttempts() {
         count: expiredShifts.count,
         rule: "ZERO_HOURS_REQUIRES_REVIEW",
       });
+      for (const item of expiredShifts.items) {
+        try {
+          await notifyMissingExit(item.employeeId, item.workShiftId);
+        } catch (error) {
+          console.error("CLOCK_WORK_SHIFT_NOTIFY_FAILED", {
+            severity: "critical",
+            workShiftId: item.workShiftId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
     }
+    try {
+      await checkMissingOutRisk(new Date(now));
+    } catch (error) {
+      console.error("CLOCK_MISSING_OUT_RISK_CHECK_FAILED", {
+        severity: "critical",
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+
     const expired = await timeEntriesRepository.expireClockPunchAttempts(
       new Date(now - env.CLOCK_ATTEMPT_PROCESSING_TTL_MS),
     );

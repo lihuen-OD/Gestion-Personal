@@ -50,6 +50,14 @@ export type ApiTimeEntry = {
   };
 };
 
+type ApiEmployeePeriodDailyBreakdown = {
+  day: number;
+  normal: number;
+  special: number;
+  total: number;
+  novelty: { label: string } | null;
+};
+
 type ApiEmployeePeriodRow = {
   employee: Parameters<typeof mapEmployeeFromApi>[0];
   summary: {
@@ -58,6 +66,7 @@ type ApiEmployeePeriodRow = {
     special: number;
     incidents: number;
     status: ApiApprovalStatus;
+    dailyBreakdown: ApiEmployeePeriodDailyBreakdown[];
   };
 };
 
@@ -376,6 +385,7 @@ export const timeEntryApiService = {
             special: row.summary.special,
             incidents: row.summary.incidents,
             status: statusFromApi[row.summary.status] || "Pendiente",
+            dailyBreakdown: row.summary.dailyBreakdown || [],
           },
         })),
         meta: response.meta,

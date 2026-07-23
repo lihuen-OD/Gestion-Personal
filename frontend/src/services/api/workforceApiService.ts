@@ -36,7 +36,45 @@ export type SystemNotification = {
   createdAt: string;
   employee?: { id: string; legajo: string; firstName: string; lastName: string };
 };
-export type ShiftTemplate = { id: string; code: string; name: string; startTime: string; endTime: string; entryToleranceMinutes: number; exitToleranceMinutes: number; detectionWindowMinutes: number; status: string };
+export type ShiftTemplate = {
+  id: string;
+  code: string;
+  name: string;
+  description?: string | null;
+  categoryName?: string | null;
+  startTime: string;
+  endTime: string;
+  crossesMidnight: boolean;
+  expectedMinutes?: number | null;
+  entryToleranceBeforeMinutes: number;
+  entryToleranceAfterMinutes: number;
+  exitToleranceBeforeMinutes: number;
+  exitToleranceAfterMinutes: number;
+  minimumMinutesForCompliance?: number | null;
+  maximumInformativeMinutes?: number | null;
+  missingOutAlertAfterMinutes?: number | null;
+  absoluteOpenShiftLimitMinutes: number;
+  status: string;
+  createdAt?: string;
+  updatedAt?: string;
+};
+export type ShiftTemplateInput = {
+  code: string;
+  name: string;
+  description?: string | null;
+  categoryName?: string | null;
+  startTime: string;
+  endTime: string;
+  entryToleranceBeforeMinutes: number;
+  entryToleranceAfterMinutes: number;
+  exitToleranceBeforeMinutes: number;
+  exitToleranceAfterMinutes: number;
+  minimumMinutesForCompliance?: number | null;
+  maximumInformativeMinutes?: number | null;
+  missingOutAlertAfterMinutes?: number | null;
+  absoluteOpenShiftLimitMinutes: number;
+  status?: "ACTIVO" | "INACTIVO";
+};
 export type DoubleHourRule = { id: string; name: string; recurrenceType: "FECHA" | "RANGO" | "SEMANAL"; fromDate: string; toDate?: string | null; weekdays: number[]; multiplier: number | string; reason: string; status: string; employees: Array<{ employee: { id: string; legajo: string; firstName: string; lastName: string } }> };
 export type DoubleHourRuleInput = { name: string; recurrenceType: "FECHA" | "RANGO" | "SEMANAL"; fromDate: string; toDate?: string | null; weekdays: number[]; multiplier: number; employeeIds: string[]; reason: string; status?: "ACTIVO" | "INACTIVO" };
 
@@ -72,8 +110,8 @@ export const workforceApiService = {
     return apiRequest(`/workforce/notifications/${id}/read`, { method: "POST" });
   },
   shiftTemplates() { return apiRequest<{ data: ShiftTemplate[] }>("/workforce/shift-templates", { apiCache: false }).then((response) => response.data); },
-  createShiftTemplate(input: Omit<ShiftTemplate, "id">) { return apiRequest<{ data: ShiftTemplate }>("/workforce/shift-templates", { method: "POST", body: input }).then((response) => response.data); },
-  updateShiftTemplate(id: string, input: Partial<Omit<ShiftTemplate, "id">>) { return apiRequest<{ data: ShiftTemplate }>(`/workforce/shift-templates/${id}`, { method: "PATCH", body: input }).then((response) => response.data); },
+  createShiftTemplate(input: ShiftTemplateInput) { return apiRequest<{ data: ShiftTemplate }>("/workforce/shift-templates", { method: "POST", body: input }).then((response) => response.data); },
+  updateShiftTemplate(id: string, input: Partial<ShiftTemplateInput>) { return apiRequest<{ data: ShiftTemplate }>(`/workforce/shift-templates/${id}`, { method: "PATCH", body: input }).then((response) => response.data); },
   removeShiftTemplate(id: string) { return apiRequest<{ data: { mode: "DELETED" | "INACTIVATED"; id?: string; item?: ShiftTemplate; relatedWorkShifts: number } }>(`/workforce/shift-templates/${id}`, { method: "DELETE" }).then((response) => response.data); },
   doubleHourRules() { return apiRequest<{ data: DoubleHourRule[] }>("/workforce/double-hour-rules", { apiCache: false }).then((response) => response.data); },
   createDoubleHourRule(input: DoubleHourRuleInput) { return apiRequest<{ data: DoubleHourRule }>("/workforce/double-hour-rules", { method: "POST", body: input }).then((response) => response.data); },

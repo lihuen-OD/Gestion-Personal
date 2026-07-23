@@ -27,3 +27,11 @@ export function formatPeriodDay(period: string, day: number) {
   if (!year || !month) return `${String(day).padStart(2, "0")}/${period}`;
   return new Date(year, month - 1, day, 12).toLocaleDateString("es-AR");
 }
+
+const WEEKDAY_ABBR = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"];
+
+export function getWeekdayAbbr(period: string, day: number) {
+  const [year, month] = period.split("-").map(Number);
+  if (!year || !month) return "";
+  return WEEKDAY_ABBR[new Date(year, month - 1, day, 12).getDay()];
+}

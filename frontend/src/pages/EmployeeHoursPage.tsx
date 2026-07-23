@@ -15,7 +15,8 @@ import type { HourConcept } from "../types/hourConcept.types";
 import type { NoveltyType } from "../types/noveltyType.types";
 import { noveltyColorClass } from "../utils/noveltyColor";
 import { displayLegajo, fullName } from "../utils/employee";
-import { currentMonthPeriod, formatPeriodDay, formatPeriodLabel, getMonthDays, monthDate } from "../utils/period";
+import { currentMonthPeriod, formatPeriodDay, formatPeriodLabel, getMonthDays, getWeekdayAbbr, monthDate } from "../utils/period";
+import { formatHours } from "../utils/hours";
 import { statusTone } from "../utils/status";
 import { useAsyncAction } from "../utils/useAsyncAction";
 import { Field } from "../components/ui/FormControls";
@@ -408,10 +409,10 @@ export function EmployeeHoursPage() {
       </div>
 
       <div className="stat-grid">
-        <StatCard label="Horas trabajadas" value={`${total} h`} icon={Clock3} />
+        <StatCard label="Horas trabajadas" value={`${formatHours(total)} h`} icon={Clock3} />
         <StatCard
           label="Horas especiales"
-          value={`${specialTotal} h`}
+          value={`${formatHours(specialTotal)} h`}
           icon={AlertTriangle}
           tone="orange"
         />
@@ -458,7 +459,7 @@ export function EmployeeHoursPage() {
               <tr>
                 <th>Concepto</th>
                 {monthDays.map((day) => (
-                  <th key={day}>{day}</th>
+                  <th key={day}>{getWeekdayAbbr(period, day)} {day}</th>
                 ))}
                 <th>Total</th>
               </tr>
@@ -501,7 +502,7 @@ export function EmployeeHoursPage() {
                     );
                   })}
                   <td>
-                    <b>{conceptTotal(concept.name)}</b>
+                    <b>{formatHours(conceptTotal(concept.name))}</b>
                   </td>
                 </tr>
               ))}
