@@ -73,24 +73,27 @@ export const auditParametersRepository = {
     return prisma.auditParameter.findUnique({ where: { code } });
   },
 
-  create(data: CreateAuditParameterInput, userName?: string) {
-    const mapped = mapData(data) as Prisma.AuditParameterCreateInput;
+  create(data: CreateAuditParameterInput, user?: { id: string; name: string }) {
+    const mapped = mapData(data) as Prisma.AuditParameterUncheckedCreateInput;
     return prisma.auditParameter.create({
       data: {
         ...mapped,
-        createdBy: userName,
-        updatedBy: userName,
+        createdByUserId: user?.id,
+        createdByUserName: user?.name,
+        updatedByUserId: user?.id,
+        updatedByUserName: user?.name,
       },
     });
   },
 
-  update(id: string, data: UpdateAuditParameterInput, userName?: string) {
-    const mapped = mapData(data) as Prisma.AuditParameterUpdateInput;
+  update(id: string, data: UpdateAuditParameterInput, user?: { id: string; name: string }) {
+    const mapped = mapData(data) as Prisma.AuditParameterUncheckedUpdateInput;
     return prisma.auditParameter.update({
       where: { id },
       data: {
         ...mapped,
-        updatedBy: userName,
+        updatedByUserId: user?.id,
+        updatedByUserName: user?.name,
       },
     });
   },

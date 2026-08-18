@@ -62,7 +62,7 @@ function mapPrismaError(error: unknown) {
       throw new AppError("Time entry not found", 404, "TIME_ENTRY_NOT_FOUND");
     }
     if (error.code === "P2003") {
-      throw new AppError("Related employee or hour concept not found", 400, "RELATION_CONSTRAINT");
+      throw new AppError("Related employee, hour concept or user not found", 400, "RELATION_CONSTRAINT");
     }
   }
   throw error;
@@ -610,7 +610,13 @@ export const timeEntriesService = {
     if (!before) throw new AppError("Observación no encontrada", 404, "ATTENDANCE_REVIEW_NOT_FOUND");
     const reviewStatus = kind === "INACTIVITY" && "status" in before ? before.status : "reviewStatus" in before ? before.reviewStatus : undefined;
     if (reviewStatus !== "PENDIENTE") throw new AppError("La observación ya fue resuelta", 400, "ATTENDANCE_REVIEW_ALREADY_RESOLVED");
-    const item = await timeEntriesRepository.resolveAttendanceObservation(kind, id, input.resolution, input.reason, user.id);
+    let item;
+    try {
+      item = await timeEntriesRepository.resolveAttendanceObservation(kind, id, input.resolution, input.reason, user.id);
+    } catch (error) {
+      mapPrismaError(error);
+      throw error;
+    }
     await auditService.register({
       ...audit,
       action: "UPDATE",
@@ -850,6 +856,7 @@ export const timeEntriesService = {
       if (error instanceof Error && error.message.startsWith("TIME_ENTRY_LOCKED:")) {
         throw new AppError("La jornada coincide con una carga horaria aprobada o cerrada. Debe corregirse manualmente.", 409, "WORK_SHIFT_LOCKED_TIME_ENTRY");
       }
+      mapPrismaError(error);
       throw error;
     }
   },

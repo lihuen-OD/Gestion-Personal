@@ -11,12 +11,12 @@ export const auditParametersController = {
   }) satisfies RequestHandler,
 
   create: (async (req, res) => {
-    const item = await auditParametersService.create(req.body, requestAuditContext(req));
+    const item = await auditParametersService.create(req.body, req.user!, requestAuditContext(req));
     res.status(201).json({ data: item });
   }) satisfies RequestHandler,
 
   update: (async (req, res) => {
-    const item = await auditParametersService.update(requireParam(req, "id"), req.body, requestAuditContext(req));
+    const item = await auditParametersService.update(requireParam(req, "id"), req.body, req.user!, requestAuditContext(req));
     res.json({ data: item });
   }) satisfies RequestHandler,
 };

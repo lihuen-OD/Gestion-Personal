@@ -294,8 +294,8 @@ async function main() {
       update: parameter,
       create: {
         ...parameter,
-        createdBy: "Sistema",
-        updatedBy: "Sistema",
+        createdByUserName: "Sistema",
+        updatedByUserName: "Sistema",
         history: [
           {
             id: `${parameter.code}-seed`,

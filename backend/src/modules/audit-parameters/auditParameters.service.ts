@@ -44,8 +44,8 @@ export const auditParametersService = {
     };
   },
 
-  async create(input: CreateAuditParameterInput, audit?: AuditContext) {
-    const item = await execute(() => auditParametersRepository.create(input, audit?.userId || undefined));
+  async create(input: CreateAuditParameterInput, user?: Express.AuthUser, audit?: AuditContext) {
+    const item = await execute(() => auditParametersRepository.create(input, user));
     await auditService.register({
       ...audit,
       action: "CREATE",
@@ -57,10 +57,10 @@ export const auditParametersService = {
     return item;
   },
 
-  async update(id: string, input: UpdateAuditParameterInput, audit?: AuditContext) {
+  async update(id: string, input: UpdateAuditParameterInput, user?: Express.AuthUser, audit?: AuditContext) {
     const before = await auditParametersRepository.findById(id);
     if (!before) throw new AppError("Audit parameter not found", 404, "AUDIT_PARAMETER_NOT_FOUND");
-    const item = await execute(() => auditParametersRepository.update(id, input, audit?.userId || undefined));
+    const item = await execute(() => auditParametersRepository.update(id, input, user));
     await auditService.register({
       ...audit,
       action: "UPDATE",

@@ -6,6 +6,24 @@ import { roles } from "../../shared/security/roles";
 import type { AuditContext } from "../audit/audit.service";
 import { auditService } from "../audit/audit.service";
 
+function mapPrismaError(error: unknown) {
+  if (error instanceof Prisma.PrismaClientKnownRequestError) {
+    if (error.code === "P2003") {
+      throw new AppError("Related employee, shift template, rule or user not found", 400, "RELATION_CONSTRAINT");
+    }
+  }
+  throw error;
+}
+
+async function execute<T>(operation: () => Promise<T>) {
+  try {
+    return await operation();
+  } catch (error) {
+    mapPrismaError(error);
+    throw error;
+  }
+}
+
 async function ensureVisible(employeeIds: string[], user: Express.AuthUser) {
   const count = await prisma.employee.count({ where: { AND: [{ id: { in: employeeIds } }, employeeAccessWhere(user)] } });
   if (count !== new Set(employeeIds).size) throw new AppError("Uno o más legajos están fuera de tu alcance", 403, "EMPLOYEE_SCOPE_FORBIDDEN");
@@ -53,49 +71,65 @@ export const workforceService = {
   async closures(period: string, user: Express.AuthUser) {
     return prisma.monthlyTimeClosure.findMany({ where: { period, employee: employeeAccessWhere(user) }, include: { employee: { select: { id: true, legajo: true, firstName: true, lastName: true } }, submittedBy: { select: { name: true } }, reviewedBy: { select: { name: true } } }, orderBy: { employee: { lastName: "asc" } } });
   },
-  async submitClosures(period: string, employeeIds: string[], user: Express.AuthUser) {
+  async submitClosures(period: string, employeeIds: string[], user: Express.AuthUser, audit?: AuditContext) {
     if (user.role === roles.rrhh) throw new AppError("RH no envía cierres para aprobación", 400, "CLOSURE_SUBMIT_ROLE_INVALID");
     await ensureVisible(employeeIds, user);
     const range = periodRange(period);
     const rows = await prisma.timeEntry.groupBy({ by: ["employeeId", "status"], where: { employeeId: { in: employeeIds }, period }, _sum: { hours: true }, _count: true });
     const snapshots = new Map(employeeIds.map((id) => [id, rows.filter((row) => row.employeeId === id).map((row) => ({ status: row.status, hours: Number(row._sum.hours || 0), records: row._count }))]));
-    const result = await prisma.$transaction(employeeIds.map((employeeId) => prisma.monthlyTimeClosure.upsert({ where: { employeeId_period: { employeeId, period } }, create: { employeeId, period, status: "ENVIADO", snapshot: { range, entries: snapshots.get(employeeId) } as Prisma.InputJsonValue, submittedByUserId: user.id, submittedAt: new Date() }, update: { status: "ENVIADO", snapshot: { range, entries: snapshots.get(employeeId) } as Prisma.InputJsonValue, submittedByUserId: user.id, submittedAt: new Date(), reviewedAt: null, reviewedByUserId: null, reviewNote: null } })));
+    const result = await execute(() => prisma.$transaction(employeeIds.map((employeeId) => prisma.monthlyTimeClosure.upsert({ where: { employeeId_period: { employeeId, period } }, create: { employeeId, period, status: "ENVIADO", snapshot: { range, entries: snapshots.get(employeeId) } as Prisma.InputJsonValue, submittedByUserId: user.id, submittedAt: new Date() }, update: { status: "ENVIADO", snapshot: { range, entries: snapshots.get(employeeId) } as Prisma.InputJsonValue, submittedByUserId: user.id, submittedAt: new Date(), reviewedAt: null, reviewedByUserId: null, reviewNote: null } }))));
+    await Promise.all(result.map((item) => auditService.register({ ...audit, action: "UPDATE", entity: "MonthlyTimeClosure", entityId: item.id, description: `Se envió a revisión el cierre de ${period} (legajo ${item.employeeId}).`, after: item as Prisma.InputJsonValue })));
     await notifyRrhh({ type: "CIERRE_MENSUAL", title: "Cierres mensuales recibidos", message: `${result.length} legajos de ${period} esperan aprobación.`, link: `/cierres?period=${period}`, priority: "ALTA" });
     return result;
   },
-  async approveClosures(ids: string[], note: string | undefined, user: Express.AuthUser) {
-    const result = await prisma.monthlyTimeClosure.updateMany({ where: { id: { in: ids }, status: "ENVIADO" }, data: { status: "APROBADO", reviewedByUserId: user.id, reviewedAt: new Date(), reviewNote: note || null } });
+  async approveClosures(ids: string[], note: string | undefined, user: Express.AuthUser, audit?: AuditContext) {
+    const before = await prisma.monthlyTimeClosure.findMany({ where: { id: { in: ids }, status: "ENVIADO" } });
+    const result = await execute(() => prisma.monthlyTimeClosure.updateMany({ where: { id: { in: ids }, status: "ENVIADO" }, data: { status: "APROBADO", reviewedByUserId: user.id, reviewedAt: new Date(), reviewNote: note || null } }));
+    await Promise.all(before.map((item) => auditService.register({ ...audit, action: "APPROVE", entity: "MonthlyTimeClosure", entityId: item.id, description: `Se aprobó el cierre de ${item.period} (legajo ${item.employeeId}).`, before: item as Prisma.InputJsonValue })));
     return result;
   },
-  returnClosure(id: string, reason: string, user: Express.AuthUser) {
-    return prisma.monthlyTimeClosure.update({ where: { id }, data: { status: "DEVUELTO", reviewedByUserId: user.id, reviewedAt: new Date(), reviewNote: reason } });
+  async returnClosure(id: string, reason: string, user: Express.AuthUser, audit?: AuditContext) {
+    const before = await prisma.monthlyTimeClosure.findUnique({ where: { id } });
+    if (!before) throw new AppError("No encontramos el cierre solicitado", 404, "MONTHLY_CLOSURE_NOT_FOUND");
+    const item = await execute(() => prisma.monthlyTimeClosure.update({ where: { id }, data: { status: "DEVUELTO", reviewedByUserId: user.id, reviewedAt: new Date(), reviewNote: reason } }));
+    await auditService.register({ ...audit, action: "RETURN", entity: "MonthlyTimeClosure", entityId: id, description: `Se devolvió el cierre de ${item.period} (legajo ${item.employeeId}) — motivo: ${reason}.`, before: before as Prisma.InputJsonValue, after: item as Prisma.InputJsonValue });
+    return item;
   },
-  async createCorrection(input: { timeEntryId: string; proposedHours: number; reason: string }, user: Express.AuthUser) {
+  async createCorrection(input: { timeEntryId: string; proposedHours: number; reason: string }, user: Express.AuthUser, audit?: AuditContext) {
     const entry = await prisma.timeEntry.findFirst({ where: { id: input.timeEntryId, employee: employeeAccessWhere(user) } });
     if (!entry) throw new AppError("Carga horaria no encontrada", 404, "TIME_ENTRY_NOT_FOUND");
     const closure = await prisma.monthlyTimeClosure.findUnique({ where: { employeeId_period: { employeeId: entry.employeeId, period: entry.period } } });
     if (!closure || !["ENVIADO", "APROBADO", "CORRECCION_PENDIENTE"].includes(closure.status)) throw new AppError("El período todavía permite edición directa", 400, "PERIOD_NOT_CLOSED");
-    const result = await prisma.$transaction(async (tx) => {
+    const result = await execute(() => prisma.$transaction(async (tx) => {
       const request = await tx.timeCorrectionRequest.create({ data: { employeeId: entry.employeeId, timeEntryId: entry.id, closureId: closure.id, previousHours: entry.hours, proposedHours: input.proposedHours, reason: input.reason, createdByUserId: user.id } });
       await tx.monthlyTimeClosure.update({ where: { id: closure.id }, data: { status: "CORRECCION_PENDIENTE" } });
       return request;
-    });
+    }));
+    await auditService.register({ ...audit, action: "CREATE", entity: "TimeCorrectionRequest", entityId: result.id, description: `Se solicitó una corrección de carga horaria de ${entry.period} (legajo ${entry.employeeId}, de ${entry.hours}h a ${input.proposedHours}h).`, after: result as Prisma.InputJsonValue });
     await notifyRrhh({ type: "CORRECCION_HORARIA", title: "Corrección posterior al cierre", message: `Se solicitó modificar una carga de ${entry.period}.`, entityType: "TimeCorrectionRequest", entityId: result.id, link: "/cierres", priority: "ALTA" });
     return result;
   },
   corrections(user: Express.AuthUser) { return prisma.timeCorrectionRequest.findMany({ where: { employee: employeeAccessWhere(user) }, include: { employee: { select: { legajo: true, firstName: true, lastName: true } }, timeEntry: { include: { hourConcept: true } }, createdBy: { select: { name: true } } }, orderBy: { createdAt: "desc" }, take: 500 }); },
-  async approveCorrection(id: string, user: Express.AuthUser) {
-    return prisma.$transaction(async (tx) => {
+  async approveCorrection(id: string, user: Express.AuthUser, audit?: AuditContext) {
+    const { before, after } = await execute(() => prisma.$transaction(async (tx) => {
       const request = await tx.timeCorrectionRequest.findUniqueOrThrow({ where: { id } });
       if (request.status !== "PENDIENTE") throw new AppError("La corrección ya fue revisada", 400, "CORRECTION_ALREADY_REVIEWED");
       const hours = Number(request.proposedHours);
       await tx.timeEntry.update({ where: { id: request.timeEntryId }, data: { hours, totalMinutes: Math.round(hours * 60), approvedByUserId: user.id, approvedAt: new Date() } });
       const updated = await tx.timeCorrectionRequest.update({ where: { id }, data: { status: "APROBADA", reviewedByUserId: user.id, reviewedAt: new Date() } });
       if (request.closureId) await tx.monthlyTimeClosure.update({ where: { id: request.closureId }, data: { status: "APROBADO", reviewedByUserId: user.id, reviewedAt: new Date() } });
-      return updated;
-    });
+      return { before: request, after: updated };
+    }));
+    await auditService.register({ ...audit, action: "APPROVE", entity: "TimeCorrectionRequest", entityId: id, description: `Se aprobó la corrección de carga horaria (legajo ${before.employeeId}, de ${before.previousHours}h a ${before.proposedHours}h).`, before: before as Prisma.InputJsonValue, after: after as Prisma.InputJsonValue });
+    return after;
   },
-  rejectCorrection(id: string, note: string | undefined, user: Express.AuthUser) { return prisma.timeCorrectionRequest.update({ where: { id }, data: { status: "RECHAZADA", reviewedByUserId: user.id, reviewedAt: new Date(), reviewNote: note || null } }); },
+  async rejectCorrection(id: string, note: string | undefined, user: Express.AuthUser, audit?: AuditContext) {
+    const before = await prisma.timeCorrectionRequest.findUnique({ where: { id } });
+    if (!before) throw new AppError("No encontramos la corrección solicitada", 404, "TIME_CORRECTION_NOT_FOUND");
+    const item = await execute(() => prisma.timeCorrectionRequest.update({ where: { id }, data: { status: "RECHAZADA", reviewedByUserId: user.id, reviewedAt: new Date(), reviewNote: note || null } }));
+    await auditService.register({ ...audit, action: "REJECT", entity: "TimeCorrectionRequest", entityId: id, description: `Se rechazó la corrección de carga horaria (legajo ${before.employeeId}).`, before: before as Prisma.InputJsonValue, after: item as Prisma.InputJsonValue });
+    return item;
+  },
   async notifications(user: Express.AuthUser) {
     const notifications = await prisma.systemNotification.findMany({ where: { recipientUserId: user.id }, orderBy: { createdAt: "desc" }, take: 200 });
     const shiftAlertIds = notifications.filter((item) => item.entityType === "ShiftAlert" && item.entityId).map((item) => item.entityId!);
@@ -124,7 +158,7 @@ export const workforceService = {
   shiftTemplates() { return prisma.shiftTemplate.findMany({ orderBy: { startTime: "asc" } }); },
   async createShiftTemplate(input: any, audit?: AuditContext) {
     const crossesMidnight = input.endTime <= input.startTime;
-    const item = await prisma.shiftTemplate.create({
+    const item = await execute(() => prisma.shiftTemplate.create({
       data: {
         ...input,
         crossesMidnight,
@@ -132,7 +166,7 @@ export const workforceService = {
         createdByUserId: audit?.userId || null,
         updatedByUserId: audit?.userId || null,
       },
-    });
+    }));
     await auditService.register({ ...audit, action: "CREATE", entity: "ShiftTemplate", entityId: item.id, description: `Se creó el turno ${item.code} - ${item.name}.`, after: item as Prisma.InputJsonValue });
     return item;
   },
@@ -142,7 +176,7 @@ export const workforceService = {
     const startTime = input.startTime ?? before.startTime;
     const endTime = input.endTime ?? before.endTime;
     const crossesMidnight = endTime <= startTime;
-    const item = await prisma.shiftTemplate.update({
+    const item = await execute(() => prisma.shiftTemplate.update({
       where: { id },
       data: {
         ...input,
@@ -150,7 +184,7 @@ export const workforceService = {
         expectedMinutes: computeExpectedMinutes(startTime, endTime, crossesMidnight),
         updatedByUserId: audit?.userId || null,
       },
-    });
+    }));
     await auditService.register({
       ...audit,
       action: input.status && input.status !== before.status ? input.status === "ACTIVO" ? "ACTIVATE" : "DEACTIVATE" : "UPDATE",
@@ -177,7 +211,7 @@ export const workforceService = {
   doubleRules() { return prisma.doubleHourRule.findMany({ include: { employees: { include: { employee: { select: { id: true, legajo: true, firstName: true, lastName: true } } } } }, orderBy: { fromDate: "desc" } }); },
   async createDoubleRule(input: any, user: Express.AuthUser, audit?: AuditContext) {
     const { employeeIds, ...data } = input;
-    const item = await prisma.doubleHourRule.create({ data: { ...data, createdByUserId: user.id, employees: { create: employeeIds.map((employeeId: string) => ({ employeeId })) } }, include: { employees: true } });
+    const item = await execute(() => prisma.doubleHourRule.create({ data: { ...data, createdByUserId: user.id, employees: { create: employeeIds.map((employeeId: string) => ({ employeeId })) } }, include: { employees: true } }));
     await auditService.register({ ...audit, action: "CREATE", entity: "DoubleHourRule", entityId: item.id, description: `Se creó la regla de horas especiales ${item.name}.`, after: item as Prisma.InputJsonValue });
     return item;
   },

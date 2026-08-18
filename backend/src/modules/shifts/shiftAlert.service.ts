@@ -1,10 +1,28 @@
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { AppError } from "../../shared/errors/AppError";
 import type { AuditContext } from "../audit/audit.service";
 import { auditService } from "../audit/audit.service";
 import { employeeAccessWhere } from "../employees/employeeAccess";
 import { shiftAlertRepository } from "./shiftAlert.repository";
 import type { ListShiftAlertsQuery, ResolveShiftAlertInput } from "./shiftAlert.schemas";
+
+function mapPrismaError(error: unknown) {
+  if (error instanceof Prisma.PrismaClientKnownRequestError) {
+    if (error.code === "P2003") {
+      throw new AppError("Related user not found", 400, "RELATION_CONSTRAINT");
+    }
+  }
+  throw error;
+}
+
+async function execute<T>(operation: () => Promise<T>) {
+  try {
+    return await operation();
+  } catch (error) {
+    mapPrismaError(error);
+    throw error;
+  }
+}
 
 export const shiftAlertService = {
   async list(query: ListShiftAlertsQuery, user: Express.AuthUser) {
@@ -26,7 +44,7 @@ export const shiftAlertService = {
     const before = await shiftAlertRepository.findById(id, employeeAccessWhere(user));
     if (!before) throw new AppError("No encontramos la alerta solicitada", 404, "SHIFT_ALERT_NOT_FOUND");
     if (before.status !== "PENDIENTE") throw new AppError("La alerta ya fue resuelta", 400, "SHIFT_ALERT_ALREADY_RESOLVED");
-    const item = await shiftAlertRepository.resolve(id, input.resolution, input.reason, user.id);
+    const item = await execute(() => shiftAlertRepository.resolve(id, input.resolution, input.reason, user.id));
     await auditService.register({
       ...audit,
       action: "UPDATE",

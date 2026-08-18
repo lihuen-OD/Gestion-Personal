@@ -1,4 +1,4 @@
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { prisma } from "../../shared/prisma/client";
 import { AppError } from "../../shared/errors/AppError";
 import type { AuditContext } from "../audit/audit.service";
@@ -9,6 +9,24 @@ import type { CreateShiftAssignmentInput, ListShiftAssignmentsQuery, UpdateShift
 
 function describeShift(template: { code: string; name: string }) {
   return `${template.code} - ${template.name}`;
+}
+
+function mapPrismaError(error: unknown) {
+  if (error instanceof Prisma.PrismaClientKnownRequestError) {
+    if (error.code === "P2003") {
+      throw new AppError("Related employee, shift template or user not found", 400, "RELATION_CONSTRAINT");
+    }
+  }
+  throw error;
+}
+
+async function execute<T>(operation: () => Promise<T>) {
+  try {
+    return await operation();
+  } catch (error) {
+    mapPrismaError(error);
+    throw error;
+  }
 }
 
 export const shiftAssignmentService = {
@@ -29,7 +47,7 @@ export const shiftAssignmentService = {
       const existing = await shiftAssignmentRepository.findExisting(employeeId, input.shiftTemplateId);
 
       if (!existing) {
-        const created = await shiftAssignmentRepository.create(employeeId, input.shiftTemplateId, input.observation, user.id);
+        const created = await execute(() => shiftAssignmentRepository.create(employeeId, input.shiftTemplateId, input.observation, user.id));
         await auditService.register({
           ...audit,
           action: "CREATE",
@@ -43,7 +61,7 @@ export const shiftAssignmentService = {
       }
 
       if (existing.status === "DESHABILITADO") {
-        const reenabled = await shiftAssignmentRepository.reEnable(existing.id, input.observation, user.id);
+        const reenabled = await execute(() => shiftAssignmentRepository.reEnable(existing.id, input.observation, user.id));
         await auditService.register({
           ...audit,
           action: "ACTIVATE",
@@ -67,7 +85,7 @@ export const shiftAssignmentService = {
     const before = await shiftAssignmentRepository.findById(id);
     if (!before) throw new AppError("No encontramos la asignación solicitada", 404, "SHIFT_ASSIGNMENT_NOT_FOUND");
 
-    const data: Prisma.ShiftAssignmentUpdateInput = {};
+    const data: Prisma.ShiftAssignmentUncheckedUpdateInput = {};
     if (input.observation !== undefined) data.observation = input.observation;
 
     let action: "UPDATE" | "ACTIVATE" | "DEACTIVATE" = "UPDATE";
@@ -86,7 +104,7 @@ export const shiftAssignmentService = {
       }
     }
 
-    const item = await shiftAssignmentRepository.update(id, data);
+    const item = await execute(() => shiftAssignmentRepository.update(id, data));
     await auditService.register({
       ...audit,
       action,

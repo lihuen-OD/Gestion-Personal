@@ -14,7 +14,7 @@ function mapPrismaError(error: unknown) {
       throw new AppError("Novelty not found", 404, "NOVELTY_NOT_FOUND");
     }
     if (error.code === "P2003") {
-      throw new AppError("Related employee, novelty type or hour concept not found", 400, "RELATION_CONSTRAINT");
+      throw new AppError("Related employee, novelty type, hour concept or user not found", 400, "RELATION_CONSTRAINT");
     }
   }
   throw error;

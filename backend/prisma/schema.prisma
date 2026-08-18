@@ -272,6 +272,19 @@ model User {
   correctionsCreated  TimeCorrectionRequest[] @relation("CorrectionCreatedBy")
   correctionsReviewed TimeCorrectionRequest[] @relation("CorrectionReviewedBy")
   inactivityIncidentsReviewed AttendanceInactivityIncident[] @relation("InactivityIncidentReviewedBy")
+  noveltiesApproved        Novelty[]         @relation("NoveltyApprovedBy")
+  timeEntriesApproved      TimeEntry[]       @relation("TimeEntryApprovedBy")
+  workShiftsCreated        WorkShift[]       @relation("WorkShiftCreatedBy")
+  workShiftsReviewed       WorkShift[]       @relation("WorkShiftReviewedBy")
+  shiftTemplatesCreated    ShiftTemplate[]   @relation("ShiftTemplateCreatedBy")
+  shiftTemplatesUpdated    ShiftTemplate[]   @relation("ShiftTemplateUpdatedBy")
+  shiftAssignmentsAssigned ShiftAssignment[] @relation("ShiftAssignmentAssignedBy")
+  shiftAssignmentsDisabled ShiftAssignment[] @relation("ShiftAssignmentDisabledBy")
+  shiftAlertsResolved      ShiftAlert[]
+  doubleHourRulesCreated   DoubleHourRule[]
+  attendancePunchesReviewed AttendancePunch[]
+  auditParametersCreated   AuditParameter[]  @relation("AuditParameterCreatedBy")
+  auditParametersUpdated   AuditParameter[]  @relation("AuditParameterUpdatedBy")
 
   @@index([role])
   @@index([status])
@@ -781,6 +794,7 @@ model Novelty {
   noveltyType       NoveltyType        @relation(fields: [noveltyTypeId], references: [id])
   targetHourConcept HourConcept?       @relation(fields: [targetHourConceptId], references: [id])
   createdBy         User?              @relation("NoveltyCreatedBy", fields: [createdByUserId], references: [id])
+  approvedBy        User?              @relation("NoveltyApprovedBy", fields: [approvedByUserId], references: [id], onDelete: SetNull)
   documents         EmployeeDocument[]
 
   @@index([employeeId, fromDate])
@@ -821,6 +835,7 @@ model TimeEntry {
   workShift   WorkShift?   @relation(fields: [workShiftId], references: [id], onDelete: SetNull)
   timeSegment TimeSegment? @relation(fields: [timeSegmentId], references: [id], onDelete: SetNull)
   createdBy   User?        @relation("TimeEntryCreatedBy", fields: [createdByUserId], references: [id])
+  approvedBy  User?        @relation("TimeEntryApprovedBy", fields: [approvedByUserId], references: [id], onDelete: SetNull)
   correctionRequests TimeCorrectionRequest[]
 
   @@index([employeeId, period])
@@ -869,6 +884,8 @@ model WorkShift {
   timeSegments TimeSegment[]
   shiftTemplate ShiftTemplate? @relation(fields: [shiftTemplateId], references: [id], onDelete: SetNull)
   shiftAlerts ShiftAlert[]
+  createdBy  User? @relation("WorkShiftCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  reviewedBy User? @relation("WorkShiftReviewedBy", fields: [reviewedByUserId], references: [id], onDelete: SetNull)
 
   @@index([employeeId, startAt])
   @@index([hourConceptId])
@@ -969,6 +986,8 @@ model ShiftTemplate {
   updatedAt DateTime @updatedAt @db.Timestamptz(3)
   workShifts WorkShift[]
   assignments ShiftAssignment[]
+  createdBy User? @relation("ShiftTemplateCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  updatedBy User? @relation("ShiftTemplateUpdatedBy", fields: [updatedByUserId], references: [id], onDelete: SetNull)
   @@index([status])
   @@index([categoryName])
 }
@@ -988,6 +1007,8 @@ model ShiftAssignment {
 
   employee      Employee      @relation(fields: [employeeId], references: [id], onDelete: Restrict)
   shiftTemplate ShiftTemplate @relation(fields: [shiftTemplateId], references: [id], onDelete: Cascade)
+  assignedBy    User?         @relation("ShiftAssignmentAssignedBy", fields: [assignedByUserId], references: [id], onDelete: SetNull)
+  disabledBy    User?         @relation("ShiftAssignmentDisabledBy", fields: [disabledByUserId], references: [id], onDelete: SetNull)
 
   @@unique([employeeId, shiftTemplateId])
   @@index([employeeId, status])
@@ -1010,6 +1031,7 @@ model ShiftAlert {
   createdAt DateTime @default(now()) @db.Timestamptz(3)
   employee Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
   workShift WorkShift @relation(fields: [workShiftId], references: [id], onDelete: Cascade)
+  resolvedBy User? @relation(fields: [resolvedByUserId], references: [id], onDelete: SetNull)
   @@unique([workShiftId, type])
   @@index([employeeId, status, createdAt])
   @@index([severity, status])
@@ -1049,6 +1071,7 @@ model DoubleHourRule {
   createdAt DateTime @default(now()) @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @db.Timestamptz(3)
   employees DoubleHourRuleEmployee[]
+  createdBy User? @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
   @@index([status, fromDate, toDate])
 }
 
@@ -1095,6 +1118,7 @@ model AttendancePunch {
   thumbnailFile   StorageFile? @relation("AttendancePunchThumbnailFile", fields: [thumbnailFileId], references: [id], onDelete: SetNull)
   startWorkShifts WorkShift[]  @relation("WorkShiftStartPunch")
   endWorkShifts   WorkShift[]  @relation("WorkShiftEndPunch")
+  reviewedBy      User?        @relation(fields: [reviewedByUserId], references: [id], onDelete: SetNull)
 
   @@index([employeeId, timestamp])
   @@index([status, timestamp])
@@ -1195,11 +1219,16 @@ model AuditParameter {
   notification            Json         @default("{}")
   retention               Json         @default("{}")
   notes                   String?
-  createdBy               String?
-  updatedBy               String?
+  createdByUserId         String?
+  createdByUserName       String?
+  updatedByUserId         String?
+  updatedByUserName       String?
   history                 Json         @default("[]")
   createdAt               DateTime @default(now()) @db.Timestamptz(3)
   updatedAt               DateTime @updatedAt @db.Timestamptz(3)
+
+  createdBy User? @relation("AuditParameterCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  updatedBy User? @relation("AuditParameterUpdatedBy", fields: [updatedByUserId], references: [id], onDelete: SetNull)
 
   @@index([scope])
   @@index([severity])
