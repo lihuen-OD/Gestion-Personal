@@ -1,6 +1,7 @@
 import { prisma } from "../../shared/prisma/client";
 import type { ShiftTemplateLike } from "./shiftTemplateRef.types";
 import { attendanceRecipients, notifyUsers } from "../workforce-management/workforce.service";
+import { resolveActiveWorkRegime } from "../work-regimes/workRegimes.service";
 import {
   evaluateEntryPunctuality,
   evaluateExitPunctuality,
@@ -107,6 +108,23 @@ function alertTypeForMatch(match: ShiftMatchResult): ShiftAlertTypeValue | null 
   return null;
 }
 
+// Las únicas dos alertas que un régimen con alertOnOutOfShift = false puede
+// suprimir: "no tiene turno compatible" y "el turno existe pero no está
+// habilitado para este empleado". POSSIBLE_SHIFT_CONFIGURATION_MISSING
+// (turno general de otro empleado que matcheó por coincidencia) no está en
+// esta lista a propósito — no es lo mismo que "este empleado no necesita
+// turno", sigue siendo una señal de configuración a revisar.
+const SUPPRESSIBLE_OUT_OF_SHIFT_ALERTS: ReadonlySet<ShiftAlertTypeValue> = new Set(["TURNO_NO_IDENTIFICADO", "SHIFT_NOT_ENABLED_FOR_EMPLOYEE"]);
+
+// Si el empleado no tiene régimen vigente, o el régimen vigente exige alertar
+// fuera de turno (alertOnOutOfShift = true), el comportamiento es exactamente
+// el de siempre: no se suprime nada.
+async function isOutOfShiftAlertSuppressed(employeeId: string, actualAt: Date, alertType: ShiftAlertTypeValue): Promise<boolean> {
+  if (!SUPPRESSIBLE_OUT_OF_SHIFT_ALERTS.has(alertType)) return false;
+  const regime = await resolveActiveWorkRegime(employeeId, actualAt);
+  return regime !== null && !regime.alertOnOutOfShift;
+}
+
 export async function evaluateShiftEntry(employeeId: string, workShiftId: string, actualAt: Date) {
   const { employeeAssignments, activeTemplates } = await loadMatchingContext(employeeId);
   const match = matchShiftForEmployee({ actualAt, employeeAssignments, activeTemplates });
@@ -119,7 +137,7 @@ export async function evaluateShiftEntry(employeeId: string, workShiftId: string
   }
 
   const configurationAlertType = alertTypeForMatch(match);
-  if (configurationAlertType) {
+  if (configurationAlertType && !(await isOutOfShiftAlertSuppressed(employeeId, actualAt, configurationAlertType))) {
     await createShiftAlert({ employeeId, workShiftId, type: configurationAlertType, actualAt, differenceMinutes: match.differenceMinutes });
   }
 
