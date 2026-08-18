@@ -214,6 +214,8 @@ enum ShiftAlertType {
   JORNADA_EXTENDIDA
   DESCANSO_INSUFICIENTE
   POSIBLE_OLVIDO_SALIDA
+  CONCEPTO_NO_HABILITADO
+  SEGMENTO_SIN_CLASIFICAR
 }
 
 enum ShiftAlertStatus {
@@ -239,6 +241,22 @@ enum RecurrenceType {
   SEMANAL
 }
 
+// Comportamientos genéricos, no nombres de cliente. Instancias concretas
+// (Cosecha, Riego, Campaña, Jornada libre controlada, etc.) son datos
+// configurables de WorkRegime, nunca valores de este enum.
+enum WorkRegimeKind {
+  TURNO_OBLIGATORIO
+  TURNO_FLEXIBLE
+  SIN_TURNO
+}
+
+enum SegmentConceptStatus {
+  SUGERIDO
+  MANUAL
+  SIN_CONCEPTO_COMPATIBLE
+  CONCEPTO_NO_HABILITADO
+}
+
 model User {
   id           String       @id @default(uuid())
   name         String
@@ -249,42 +267,45 @@ model User {
   companyId    String?
   sectorId     String?
   employeeId   String?      @unique
-  createdAt    DateTime @default(now()) @db.Timestamptz(3)
-  updatedAt    DateTime @updatedAt @db.Timestamptz(3)
+  createdAt    DateTime     @default(now()) @db.Timestamptz(3)
+  updatedAt    DateTime     @updatedAt @db.Timestamptz(3)
 
-  company             Company?               @relation(fields: [companyId], references: [id])
-  sector              Sector?                @relation(fields: [sectorId], references: [id])
-  employee            Employee?              @relation("EmployeeUserAccount", fields: [employeeId], references: [id])
-  createdEmployees    Employee[]             @relation("EmployeeCreatedBy")
-  employeeAssignments EmployeeAssignment[]
-  laborMovements      LaborMovement[]
-  fieldHistory        EmployeeFieldHistory[]
-  blockHistory        EmployeeBlockHistory[]
-  noveltiesCreated    Novelty[]              @relation("NoveltyCreatedBy")
-  timeEntriesCreated  TimeEntry[]            @relation("TimeEntryCreatedBy")
-  documentsUploaded   EmployeeDocument[]
-  storageFilesUploaded StorageFile[]          @relation("StorageFileUploadedBy")
-  storageFilesDeleted  StorageFile[]          @relation("StorageFileDeletedBy")
-  auditLogs           AuditLog[]
-  notifications       SystemNotification[] @relation("NotificationRecipient")
-  closuresSubmitted   MonthlyTimeClosure[] @relation("ClosureSubmittedBy")
-  closuresReviewed    MonthlyTimeClosure[] @relation("ClosureReviewedBy")
-  correctionsCreated  TimeCorrectionRequest[] @relation("CorrectionCreatedBy")
-  correctionsReviewed TimeCorrectionRequest[] @relation("CorrectionReviewedBy")
+  company                     Company?                       @relation(fields: [companyId], references: [id])
+  sector                      Sector?                        @relation(fields: [sectorId], references: [id])
+  employee                    Employee?                      @relation("EmployeeUserAccount", fields: [employeeId], references: [id])
+  createdEmployees            Employee[]                     @relation("EmployeeCreatedBy")
+  employeeAssignments         EmployeeAssignment[]
+  laborMovements              LaborMovement[]
+  fieldHistory                EmployeeFieldHistory[]
+  blockHistory                EmployeeBlockHistory[]
+  noveltiesCreated            Novelty[]                      @relation("NoveltyCreatedBy")
+  timeEntriesCreated          TimeEntry[]                    @relation("TimeEntryCreatedBy")
+  documentsUploaded           EmployeeDocument[]
+  storageFilesUploaded        StorageFile[]                  @relation("StorageFileUploadedBy")
+  storageFilesDeleted         StorageFile[]                  @relation("StorageFileDeletedBy")
+  auditLogs                   AuditLog[]
+  notifications               SystemNotification[]           @relation("NotificationRecipient")
+  closuresSubmitted           MonthlyTimeClosure[]           @relation("ClosureSubmittedBy")
+  closuresReviewed            MonthlyTimeClosure[]           @relation("ClosureReviewedBy")
+  correctionsCreated          TimeCorrectionRequest[]        @relation("CorrectionCreatedBy")
+  correctionsReviewed         TimeCorrectionRequest[]        @relation("CorrectionReviewedBy")
   inactivityIncidentsReviewed AttendanceInactivityIncident[] @relation("InactivityIncidentReviewedBy")
-  noveltiesApproved        Novelty[]         @relation("NoveltyApprovedBy")
-  timeEntriesApproved      TimeEntry[]       @relation("TimeEntryApprovedBy")
-  workShiftsCreated        WorkShift[]       @relation("WorkShiftCreatedBy")
-  workShiftsReviewed       WorkShift[]       @relation("WorkShiftReviewedBy")
-  shiftTemplatesCreated    ShiftTemplate[]   @relation("ShiftTemplateCreatedBy")
-  shiftTemplatesUpdated    ShiftTemplate[]   @relation("ShiftTemplateUpdatedBy")
-  shiftAssignmentsAssigned ShiftAssignment[] @relation("ShiftAssignmentAssignedBy")
-  shiftAssignmentsDisabled ShiftAssignment[] @relation("ShiftAssignmentDisabledBy")
-  shiftAlertsResolved      ShiftAlert[]
-  doubleHourRulesCreated   DoubleHourRule[]
-  attendancePunchesReviewed AttendancePunch[]
-  auditParametersCreated   AuditParameter[]  @relation("AuditParameterCreatedBy")
-  auditParametersUpdated   AuditParameter[]  @relation("AuditParameterUpdatedBy")
+  noveltiesApproved           Novelty[]                      @relation("NoveltyApprovedBy")
+  timeEntriesApproved         TimeEntry[]                    @relation("TimeEntryApprovedBy")
+  workShiftsCreated           WorkShift[]                    @relation("WorkShiftCreatedBy")
+  workShiftsReviewed          WorkShift[]                    @relation("WorkShiftReviewedBy")
+  shiftTemplatesCreated       ShiftTemplate[]                @relation("ShiftTemplateCreatedBy")
+  shiftTemplatesUpdated       ShiftTemplate[]                @relation("ShiftTemplateUpdatedBy")
+  shiftAssignmentsAssigned    ShiftAssignment[]              @relation("ShiftAssignmentAssignedBy")
+  shiftAssignmentsDisabled    ShiftAssignment[]              @relation("ShiftAssignmentDisabledBy")
+  shiftAlertsResolved         ShiftAlert[]
+  doubleHourRulesCreated      DoubleHourRule[]
+  attendancePunchesReviewed   AttendancePunch[]
+  auditParametersCreated      AuditParameter[]               @relation("AuditParameterCreatedBy")
+  auditParametersUpdated      AuditParameter[]               @relation("AuditParameterUpdatedBy")
+  workRegimesCreated          WorkRegime[]                   @relation("WorkRegimeCreatedBy")
+  workRegimesUpdated          WorkRegime[]                   @relation("WorkRegimeUpdatedBy")
+  workRegimesAssigned         EmployeeWorkRegime[]
 
   @@index([role])
   @@index([status])
@@ -295,14 +316,14 @@ model Company {
   name      String       @unique
   code      String       @unique
   status    RecordStatus @default(ACTIVO)
-  createdAt DateTime @default(now()) @db.Timestamptz(3)
-  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+  createdAt DateTime     @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime     @updatedAt @db.Timestamptz(3)
 
-  users              User[]
-  businessUnits      BusinessUnit[]
-  establishments     Establishment[]
-  employees          EmployeeCompany[]
-  costCenterLinks    CostCenterCompany[]
+  users           User[]
+  businessUnits   BusinessUnit[]
+  establishments  Establishment[]
+  employees       EmployeeCompany[]
+  costCenterLinks CostCenterCompany[]
 }
 
 model BusinessUnit {
@@ -311,12 +332,12 @@ model BusinessUnit {
   code      String
   status    RecordStatus @default(ACTIVO)
   companyId String
-  createdAt DateTime @default(now()) @db.Timestamptz(3)
-  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+  createdAt DateTime     @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime     @updatedAt @db.Timestamptz(3)
 
-  company            Company                     @relation(fields: [companyId], references: [id])
-  establishments     Establishment[]
-  costCenterLinks    CostCenterBusinessUnit[]
+  company         Company                  @relation(fields: [companyId], references: [id])
+  establishments  Establishment[]
+  costCenterLinks CostCenterBusinessUnit[]
 
   @@unique([companyId, code])
   @@index([companyId])
@@ -335,11 +356,11 @@ model Establishment {
   street         String?
   streetNumber   String?
   postalCode     String?
-  createdAt      DateTime @default(now()) @db.Timestamptz(3)
-  updatedAt      DateTime @updatedAt @db.Timestamptz(3)
+  createdAt      DateTime     @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime     @updatedAt @db.Timestamptz(3)
 
-  company         Company                     @relation(fields: [companyId], references: [id])
-  businessUnit    BusinessUnit?               @relation(fields: [businessUnitId], references: [id])
+  company         Company                   @relation(fields: [companyId], references: [id])
+  businessUnit    BusinessUnit?             @relation(fields: [businessUnitId], references: [id])
   areas           Area[]
   costCenterLinks CostCenterEstablishment[]
 
@@ -353,10 +374,10 @@ model Area {
   code            String       @unique
   status          RecordStatus @default(ACTIVO)
   establishmentId String?
-  createdAt       DateTime @default(now()) @db.Timestamptz(3)
-  updatedAt       DateTime @updatedAt @db.Timestamptz(3)
+  createdAt       DateTime     @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime     @updatedAt @db.Timestamptz(3)
 
-  establishment   Establishment?      @relation(fields: [establishmentId], references: [id])
+  establishment   Establishment?   @relation(fields: [establishmentId], references: [id])
   sectors         Sector[]
   costCenterLinks CostCenterArea[]
 
@@ -369,10 +390,10 @@ model Sector {
   code      String       @unique
   status    RecordStatus @default(ACTIVO)
   areaId    String?
-  createdAt DateTime @default(now()) @db.Timestamptz(3)
-  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+  createdAt DateTime     @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime     @updatedAt @db.Timestamptz(3)
 
-  area            Area?                 @relation(fields: [areaId], references: [id])
+  area            Area?              @relation(fields: [areaId], references: [id])
   users           User[]
   employees       Employee[]
   positions       Position[]
@@ -386,8 +407,8 @@ model CostCenter {
   name      String
   code      String       @unique
   status    RecordStatus @default(ACTIVO)
-  createdAt DateTime @default(now()) @db.Timestamptz(3)
-  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+  createdAt DateTime     @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime     @updatedAt @db.Timestamptz(3)
 
   employees      Employee[]
   companies      CostCenterCompany[]
@@ -458,8 +479,8 @@ model SalaryCategory {
   family    String?
   order     Int
   status    RecordStatus @default(ACTIVO)
-  createdAt DateTime @default(now()) @db.Timestamptz(3)
-  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+  createdAt DateTime     @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime     @updatedAt @db.Timestamptz(3)
 
   positions PositionSalaryCategory[]
 
@@ -473,7 +494,7 @@ model Position {
   status                RecordStatus @default(ACTIVO)
   mission               String?
   description           String?
-  lastUpdatedAt         DateTime? @db.Timestamptz(3)
+  lastUpdatedAt         DateTime?    @db.Timestamptz(3)
   responsibilities      Json?
   internalRelations     Json?
   externalRelations     Json?
@@ -482,8 +503,8 @@ model Position {
   performanceIndicators Json?
   evaluationCriteria    Json?
   sectorId              String?
-  createdAt             DateTime @default(now()) @db.Timestamptz(3)
-  updatedAt             DateTime @updatedAt @db.Timestamptz(3)
+  createdAt             DateTime     @default(now()) @db.Timestamptz(3)
+  updatedAt             DateTime     @updatedAt @db.Timestamptz(3)
 
   sector           Sector?                  @relation(fields: [sectorId], references: [id])
   employees        Employee[]
@@ -511,7 +532,7 @@ model Employee {
   dni               String         @unique
   firstName         String
   lastName          String
-  birthDate         DateTime? @db.Date
+  birthDate         DateTime?      @db.Date
   gender            String?
   civilStatus       String?
   nationality       String?
@@ -530,36 +551,37 @@ model Employee {
   receiptCategory   String?
   internalCategory  String?
   createdByUserId   String?
-  createdAt         DateTime @default(now()) @db.Timestamptz(3)
-  updatedAt         DateTime @updatedAt @db.Timestamptz(3)
+  createdAt         DateTime       @default(now()) @db.Timestamptz(3)
+  updatedAt         DateTime       @updatedAt @db.Timestamptz(3)
 
-  position          Position?              @relation(fields: [positionId], references: [id])
-  sector            Sector?                @relation(fields: [sectorId], references: [id])
-  costCenter        CostCenter?            @relation(fields: [costCenterId], references: [id])
-  createdBy         User?                  @relation("EmployeeCreatedBy", fields: [createdByUserId], references: [id])
-  address           EmployeeAddress?
-  companies         EmployeeCompany[]
-  laborMovements    LaborMovement[]
-  assignments       EmployeeAssignment[]
-  hourConcepts      EmployeeHourConcept[]
-  transport         EmployeeTransport?
-  fieldHistory      EmployeeFieldHistory[]
-  blockHistory      EmployeeBlockHistory[]
-  novelties         Novelty[]
-  timeEntries       TimeEntry[]
-  workShifts        WorkShift[]
-  attendancePunches AttendancePunch[]
-  clockPunchAttempts ClockPunchAttempt[]
-  timeSegments      TimeSegment[]
-  documents         EmployeeDocument[]
-  storageFiles      StorageFile[]
-  monthlyClosures   MonthlyTimeClosure[]
-  correctionRequests TimeCorrectionRequest[]
-  shiftAlerts       ShiftAlert[]
-  inactivityIncidents AttendanceInactivityIncident[]
+  position              Position?                      @relation(fields: [positionId], references: [id])
+  sector                Sector?                        @relation(fields: [sectorId], references: [id])
+  costCenter            CostCenter?                    @relation(fields: [costCenterId], references: [id])
+  createdBy             User?                          @relation("EmployeeCreatedBy", fields: [createdByUserId], references: [id])
+  address               EmployeeAddress?
+  companies             EmployeeCompany[]
+  laborMovements        LaborMovement[]
+  assignments           EmployeeAssignment[]
+  hourConcepts          EmployeeHourConcept[]
+  transport             EmployeeTransport?
+  fieldHistory          EmployeeFieldHistory[]
+  blockHistory          EmployeeBlockHistory[]
+  novelties             Novelty[]
+  timeEntries           TimeEntry[]
+  workShifts            WorkShift[]
+  attendancePunches     AttendancePunch[]
+  clockPunchAttempts    ClockPunchAttempt[]
+  timeSegments          TimeSegment[]
+  documents             EmployeeDocument[]
+  storageFiles          StorageFile[]
+  monthlyClosures       MonthlyTimeClosure[]
+  correctionRequests    TimeCorrectionRequest[]
+  shiftAlerts           ShiftAlert[]
+  inactivityIncidents   AttendanceInactivityIncident[]
   doubleHourAssignments DoubleHourRuleEmployee[]
-  shiftAssignments  ShiftAssignment[]
-  userAccount       User?                  @relation("EmployeeUserAccount")
+  shiftAssignments      ShiftAssignment[]
+  workRegimeAssignments EmployeeWorkRegime[]
+  userAccount           User?                          @relation("EmployeeUserAccount")
 
   @@index([lastName, firstName])
   @@index([status])
@@ -623,11 +645,11 @@ model LaborMovement {
   id              String            @id @default(uuid())
   employeeId      String
   type            LaborMovementType
-  effectiveFrom   DateTime @db.Date
+  effectiveFrom   DateTime          @db.Date
   reason          String
   observation     String?
   createdByUserId String?
-  createdAt       DateTime @default(now()) @db.Timestamptz(3)
+  createdAt       DateTime          @default(now()) @db.Timestamptz(3)
 
   employee  Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
   createdBy User?    @relation(fields: [createdByUserId], references: [id])
@@ -648,7 +670,7 @@ model EmployeeAssignment {
   effectiveTo   DateTime? @db.Date
   status        String?
   notes         String?
-  createdAt     DateTime @default(now()) @db.Timestamptz(3)
+  createdAt     DateTime  @default(now()) @db.Timestamptz(3)
 
   employee Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
   user     User?    @relation(fields: [userId], references: [id])
@@ -664,14 +686,15 @@ model HourConcept {
   kind           HourConceptKind
   status         RecordStatus    @default(ACTIVO)
   countsAsWorked Boolean         @default(true)
-  createdAt      DateTime @default(now()) @db.Timestamptz(3)
-  updatedAt      DateTime @updatedAt @db.Timestamptz(3)
+  createdAt      DateTime        @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime        @updatedAt @db.Timestamptz(3)
 
   employees    EmployeeHourConcept[]
   timeEntries  TimeEntry[]
   novelties    Novelty[]
   timeSegments TimeSegment[]
   workShifts   WorkShift[]
+  rules        HourConceptRule[]
 
   @@index([status])
 }
@@ -684,6 +707,29 @@ model EmployeeHourConcept {
   hourConcept HourConcept @relation(fields: [hourConceptId], references: [id], onDelete: Cascade)
 
   @@id([employeeId, hourConceptId])
+}
+
+// Regla de sugerencia (no de bloqueo): en qué rango horario un HourConcept
+// aplica por defecto, para partir automáticamente una jornada real en
+// segmentos (ej. Guardia 21:00-04:00). Si un tramo no matchea ninguna regla,
+// el segmento queda con conceptStatus = SIN_CONCEPTO_COMPATIBLE, nunca bloquea
+// la fichada. Los horarios reales del cliente son datos de instancia
+// (seed/demo/testing), nunca valores fijos en el backend.
+model HourConceptRule {
+  id              String       @id @default(uuid())
+  hourConceptId   String
+  startTime       String
+  endTime         String
+  crossesMidnight Boolean      @default(false)
+  priority        Int          @default(0)
+  status          RecordStatus @default(ACTIVO)
+  createdAt       DateTime     @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime     @updatedAt @db.Timestamptz(3)
+
+  hourConcept  HourConcept   @relation(fields: [hourConceptId], references: [id], onDelete: Cascade)
+  timeSegments TimeSegment[]
+
+  @@index([hourConceptId, status])
 }
 
 model EmployeeFieldHistory {
@@ -746,8 +792,8 @@ model NoveltyType {
   timeImpact            NoveltyTimeImpact @default(NO_AFECTA_HORAS)
   allowedLoadRoles      Json              @default("[]")
   approvalRoles         Json              @default("[]")
-  createdAt             DateTime @default(now()) @db.Timestamptz(3)
-  updatedAt             DateTime @updatedAt @db.Timestamptz(3)
+  createdAt             DateTime          @default(now()) @db.Timestamptz(3)
+  updatedAt             DateTime          @updatedAt @db.Timestamptz(3)
 
   finnegansLinks FinnegansNoveltyLink[]
   novelties      Novelty[]
@@ -777,18 +823,18 @@ model Novelty {
   employeeId          String
   noveltyTypeId       String
   status              ApprovalStatus @default(PENDIENTE)
-  fromDate            DateTime @db.Date
-  toDate              DateTime? @db.Date
+  fromDate            DateTime       @db.Date
+  toDate              DateTime?      @db.Date
   quantityHours       Decimal?       @db.Decimal(8, 2)
   quantityDays        Decimal?       @db.Decimal(8, 2)
   observation         String?
   targetHourConceptId String?
   createdByUserId     String?
   approvedByUserId    String?
-  approvedAt          DateTime? @db.Timestamptz(3)
-  rejectedAt          DateTime? @db.Timestamptz(3)
-  createdAt           DateTime @default(now()) @db.Timestamptz(3)
-  updatedAt           DateTime @updatedAt @db.Timestamptz(3)
+  approvedAt          DateTime?      @db.Timestamptz(3)
+  rejectedAt          DateTime?      @db.Timestamptz(3)
+  createdAt           DateTime       @default(now()) @db.Timestamptz(3)
+  updatedAt           DateTime       @updatedAt @db.Timestamptz(3)
 
   employee          Employee           @relation(fields: [employeeId], references: [id], onDelete: Restrict)
   noveltyType       NoveltyType        @relation(fields: [noveltyTypeId], references: [id])
@@ -806,36 +852,36 @@ model Novelty {
 }
 
 model TimeEntry {
-  id               String           @id @default(uuid())
-  employeeId       String
-  hourConceptId    String
-  workShiftId      String?
-  timeSegmentId    String?
-  date             DateTime @db.Date
-  period           String
-  day              Int
-  hours            Decimal          @db.Decimal(8, 2)
-  totalMinutes     Int
-  actualMinutes    Int?
-  appliedMultiplier Decimal        @default(1) @db.Decimal(4, 2)
-  segmentStartAt   DateTime? @db.Timestamptz(3)
-  segmentEndAt     DateTime? @db.Timestamptz(3)
-  source           WorkShiftSource?
-  status           ApprovalStatus   @default(BORRADOR)
-  observation      String?
-  createdByUserId  String?
-  approvedByUserId String?
-  approvedAt       DateTime? @db.Timestamptz(3)
-  rejectedAt       DateTime? @db.Timestamptz(3)
-  createdAt        DateTime @default(now()) @db.Timestamptz(3)
-  updatedAt        DateTime @updatedAt @db.Timestamptz(3)
+  id                String           @id @default(uuid())
+  employeeId        String
+  hourConceptId     String
+  workShiftId       String?
+  timeSegmentId     String?
+  date              DateTime         @db.Date
+  period            String
+  day               Int
+  hours             Decimal          @db.Decimal(8, 2)
+  totalMinutes      Int
+  actualMinutes     Int?
+  appliedMultiplier Decimal          @default(1) @db.Decimal(4, 2)
+  segmentStartAt    DateTime?        @db.Timestamptz(3)
+  segmentEndAt      DateTime?        @db.Timestamptz(3)
+  source            WorkShiftSource?
+  status            ApprovalStatus   @default(BORRADOR)
+  observation       String?
+  createdByUserId   String?
+  approvedByUserId  String?
+  approvedAt        DateTime?        @db.Timestamptz(3)
+  rejectedAt        DateTime?        @db.Timestamptz(3)
+  createdAt         DateTime         @default(now()) @db.Timestamptz(3)
+  updatedAt         DateTime         @updatedAt @db.Timestamptz(3)
 
-  employee    Employee     @relation(fields: [employeeId], references: [id], onDelete: Restrict)
-  hourConcept HourConcept  @relation(fields: [hourConceptId], references: [id])
-  workShift   WorkShift?   @relation(fields: [workShiftId], references: [id], onDelete: SetNull)
-  timeSegment TimeSegment? @relation(fields: [timeSegmentId], references: [id], onDelete: SetNull)
-  createdBy   User?        @relation("TimeEntryCreatedBy", fields: [createdByUserId], references: [id])
-  approvedBy  User?        @relation("TimeEntryApprovedBy", fields: [approvedByUserId], references: [id], onDelete: SetNull)
+  employee           Employee                @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  hourConcept        HourConcept             @relation(fields: [hourConceptId], references: [id])
+  workShift          WorkShift?              @relation(fields: [workShiftId], references: [id], onDelete: SetNull)
+  timeSegment        TimeSegment?            @relation(fields: [timeSegmentId], references: [id], onDelete: SetNull)
+  createdBy          User?                   @relation("TimeEntryCreatedBy", fields: [createdByUserId], references: [id])
+  approvedBy         User?                   @relation("TimeEntryApprovedBy", fields: [approvedByUserId], references: [id], onDelete: SetNull)
   correctionRequests TimeCorrectionRequest[]
 
   @@index([employeeId, period])
@@ -852,40 +898,40 @@ model TimeEntry {
 }
 
 model WorkShift {
-  id                String          @id @default(uuid())
+  id                String                 @id @default(uuid())
   employeeId        String
   hourConceptId     String?
   hourConceptName   String?
   startPunchId      String?
   endPunchId        String?
-  source            WorkShiftSource @default(ADMIN)
-  status            WorkShiftStatus @default(PROCESADO)
-  startAt           DateTime @db.Timestamptz(3)
-  endAt             DateTime? @db.Timestamptz(3)
+  source            WorkShiftSource        @default(ADMIN)
+  status            WorkShiftStatus        @default(PROCESADO)
+  startAt           DateTime               @db.Timestamptz(3)
+  endAt             DateTime?              @db.Timestamptz(3)
   totalMinutes      Int?
-  crossesMidnight   Boolean         @default(false)
-  maxAllowedMinutes Int             @default(1200)
+  crossesMidnight   Boolean                @default(false)
+  maxAllowedMinutes Int                    @default(1200)
   observation       String?
   reviewStatus      AttendanceReviewStatus @default(PENDIENTE)
-  reviewedAt        DateTime? @db.Timestamptz(3)
+  reviewedAt        DateTime?              @db.Timestamptz(3)
   reviewedByUserId  String?
   reviewNote        String?
   shiftTemplateId   String?
   createdByUserId   String?
-  createdAt         DateTime @default(now()) @db.Timestamptz(3)
-  closedAt          DateTime? @db.Timestamptz(3)
-  updatedAt         DateTime @updatedAt @db.Timestamptz(3)
+  createdAt         DateTime               @default(now()) @db.Timestamptz(3)
+  closedAt          DateTime?              @db.Timestamptz(3)
+  updatedAt         DateTime               @updatedAt @db.Timestamptz(3)
 
-  employee     Employee         @relation(fields: [employeeId], references: [id], onDelete: Restrict)
-  hourConcept  HourConcept?     @relation(fields: [hourConceptId], references: [id], onDelete: SetNull)
-  startPunch   AttendancePunch? @relation("WorkShiftStartPunch", fields: [startPunchId], references: [id], onDelete: SetNull)
-  endPunch     AttendancePunch? @relation("WorkShiftEndPunch", fields: [endPunchId], references: [id], onDelete: SetNull)
-  timeEntries  TimeEntry[]
-  timeSegments TimeSegment[]
-  shiftTemplate ShiftTemplate? @relation(fields: [shiftTemplateId], references: [id], onDelete: SetNull)
-  shiftAlerts ShiftAlert[]
-  createdBy  User? @relation("WorkShiftCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
-  reviewedBy User? @relation("WorkShiftReviewedBy", fields: [reviewedByUserId], references: [id], onDelete: SetNull)
+  employee      Employee         @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  hourConcept   HourConcept?     @relation(fields: [hourConceptId], references: [id], onDelete: SetNull)
+  startPunch    AttendancePunch? @relation("WorkShiftStartPunch", fields: [startPunchId], references: [id], onDelete: SetNull)
+  endPunch      AttendancePunch? @relation("WorkShiftEndPunch", fields: [endPunchId], references: [id], onDelete: SetNull)
+  timeEntries   TimeEntry[]
+  timeSegments  TimeSegment[]
+  shiftTemplate ShiftTemplate?   @relation(fields: [shiftTemplateId], references: [id], onDelete: SetNull)
+  shiftAlerts   ShiftAlert[]
+  createdBy     User?            @relation("WorkShiftCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  reviewedBy    User?            @relation("WorkShiftReviewedBy", fields: [reviewedByUserId], references: [id], onDelete: SetNull)
 
   @@index([employeeId, startAt])
   @@index([hourConceptId])
@@ -901,93 +947,104 @@ model WorkShift {
 }
 
 model MonthlyTimeClosure {
-  id String @id @default(uuid())
-  employeeId String
-  period String
-  status MonthlyClosureStatus @default(ABIERTO)
-  snapshot Json?
+  id                String                  @id @default(uuid())
+  employeeId        String
+  period            String
+  status            MonthlyClosureStatus    @default(ABIERTO)
+  snapshot          Json?
   submittedByUserId String?
-  submittedAt DateTime? @db.Timestamptz(3)
-  reviewedByUserId String?
-  reviewedAt DateTime? @db.Timestamptz(3)
-  reviewNote String?
-  createdAt DateTime @default(now()) @db.Timestamptz(3)
-  updatedAt DateTime @updatedAt @db.Timestamptz(3)
-  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
-  submittedBy User? @relation("ClosureSubmittedBy", fields: [submittedByUserId], references: [id])
-  reviewedBy User? @relation("ClosureReviewedBy", fields: [reviewedByUserId], references: [id])
-  corrections TimeCorrectionRequest[]
+  submittedAt       DateTime?               @db.Timestamptz(3)
+  reviewedByUserId  String?
+  reviewedAt        DateTime?               @db.Timestamptz(3)
+  reviewNote        String?
+  createdAt         DateTime                @default(now()) @db.Timestamptz(3)
+  updatedAt         DateTime                @updatedAt @db.Timestamptz(3)
+  employee          Employee                @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  submittedBy       User?                   @relation("ClosureSubmittedBy", fields: [submittedByUserId], references: [id])
+  reviewedBy        User?                   @relation("ClosureReviewedBy", fields: [reviewedByUserId], references: [id])
+  corrections       TimeCorrectionRequest[]
+
   @@unique([employeeId, period])
   @@index([period, status])
 }
 
 model TimeCorrectionRequest {
-  id String @id @default(uuid())
-  employeeId String
-  timeEntryId String
-  closureId String?
-  previousHours Decimal @db.Decimal(8, 2)
-  proposedHours Decimal @db.Decimal(8, 2)
-  reason String
-  status CorrectionRequestStatus @default(PENDIENTE)
-  createdByUserId String
+  id               String                  @id @default(uuid())
+  employeeId       String
+  timeEntryId      String
+  closureId        String?
+  previousHours    Decimal                 @db.Decimal(8, 2)
+  proposedHours    Decimal                 @db.Decimal(8, 2)
+  reason           String
+  status           CorrectionRequestStatus @default(PENDIENTE)
+  createdByUserId  String
   reviewedByUserId String?
-  reviewedAt DateTime? @db.Timestamptz(3)
-  reviewNote String?
-  createdAt DateTime @default(now()) @db.Timestamptz(3)
-  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
-  timeEntry TimeEntry @relation(fields: [timeEntryId], references: [id], onDelete: Cascade)
-  closure MonthlyTimeClosure? @relation(fields: [closureId], references: [id], onDelete: SetNull)
-  createdBy User @relation("CorrectionCreatedBy", fields: [createdByUserId], references: [id])
-  reviewedBy User? @relation("CorrectionReviewedBy", fields: [reviewedByUserId], references: [id])
+  reviewedAt       DateTime?               @db.Timestamptz(3)
+  reviewNote       String?
+  createdAt        DateTime                @default(now()) @db.Timestamptz(3)
+  employee         Employee                @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  timeEntry        TimeEntry               @relation(fields: [timeEntryId], references: [id], onDelete: Cascade)
+  closure          MonthlyTimeClosure?     @relation(fields: [closureId], references: [id], onDelete: SetNull)
+  createdBy        User                    @relation("CorrectionCreatedBy", fields: [createdByUserId], references: [id])
+  reviewedBy       User?                   @relation("CorrectionReviewedBy", fields: [reviewedByUserId], references: [id])
+
   @@index([status, createdAt])
   @@index([employeeId, status])
 }
 
 model SystemNotification {
-  id String @id @default(uuid())
+  id              String             @id @default(uuid())
   recipientUserId String
-  type String
-  priority String @default("NORMAL")
-  title String
-  message String
-  entityType String?
-  entityId String?
-  link String?
-  status NotificationStatus @default(NO_LEIDA)
-  readAt DateTime? @db.Timestamptz(3)
-  createdAt DateTime @default(now()) @db.Timestamptz(3)
-  recipient User @relation("NotificationRecipient", fields: [recipientUserId], references: [id], onDelete: Cascade)
+  type            String
+  priority        String             @default("NORMAL")
+  title           String
+  message         String
+  entityType      String?
+  entityId        String?
+  link            String?
+  status          NotificationStatus @default(NO_LEIDA)
+  readAt          DateTime?          @db.Timestamptz(3)
+  createdAt       DateTime           @default(now()) @db.Timestamptz(3)
+  recipient       User               @relation("NotificationRecipient", fields: [recipientUserId], references: [id], onDelete: Cascade)
+
   @@index([recipientUserId, status, createdAt])
 }
 
 model ShiftTemplate {
-  id String @id @default(uuid())
-  code String @unique
-  name String
-  description String?
-  categoryName String?
-  startTime String
-  endTime String
-  crossesMidnight Boolean @default(false)
-  expectedMinutes Int?
-  entryToleranceBeforeMinutes Int @default(10)
-  entryToleranceAfterMinutes Int @default(10)
-  exitToleranceBeforeMinutes Int @default(20)
-  exitToleranceAfterMinutes Int @default(20)
-  minimumMinutesForCompliance Int?
-  maximumInformativeMinutes Int?
-  missingOutAlertAfterMinutes Int?
-  absoluteOpenShiftLimitMinutes Int @default(1200)
-  status RecordStatus @default(ACTIVO)
-  createdByUserId String?
-  updatedByUserId String?
-  createdAt DateTime @default(now()) @db.Timestamptz(3)
-  updatedAt DateTime @updatedAt @db.Timestamptz(3)
-  workShifts WorkShift[]
-  assignments ShiftAssignment[]
-  createdBy User? @relation("ShiftTemplateCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
-  updatedBy User? @relation("ShiftTemplateUpdatedBy", fields: [updatedByUserId], references: [id], onDelete: SetNull)
+  id                            String            @id @default(uuid())
+  code                          String            @unique
+  name                          String
+  description                   String?
+  categoryName                  String?
+  startTime                     String
+  endTime                       String
+  crossesMidnight               Boolean           @default(false)
+  expectedMinutes               Int?
+  entryToleranceBeforeMinutes   Int               @default(10)
+  entryToleranceAfterMinutes    Int               @default(10)
+  exitToleranceBeforeMinutes    Int               @default(20)
+  exitToleranceAfterMinutes     Int               @default(20)
+  minimumMinutesForCompliance   Int?
+  maximumInformativeMinutes     Int?
+  missingOutAlertAfterMinutes   Int?
+  absoluteOpenShiftLimitMinutes Int               @default(1200)
+  // Umbrales informativos de jornada extendida (severidad graduada). No
+  // reemplazan absoluteOpenShiftLimitMinutes (que sigue gobernando el
+  // rollover actual sin cambios en esta etapa) — se usan para graduar la
+  // alerta JORNADA_EXTENDIDA entre ADVERTENCIA y CRITICA.
+  warningThresholdMinutes       Int               @default(720)
+  reviewThresholdMinutes        Int               @default(960)
+  criticalThresholdMinutes      Int?
+  status                        RecordStatus      @default(ACTIVO)
+  createdByUserId               String?
+  updatedByUserId               String?
+  createdAt                     DateTime          @default(now()) @db.Timestamptz(3)
+  updatedAt                     DateTime          @updatedAt @db.Timestamptz(3)
+  workShifts                    WorkShift[]
+  assignments                   ShiftAssignment[]
+  createdBy                     User?             @relation("ShiftTemplateCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  updatedBy                     User?             @relation("ShiftTemplateUpdatedBy", fields: [updatedByUserId], references: [id], onDelete: SetNull)
+
   @@index([status])
   @@index([categoryName])
 }
@@ -997,13 +1054,20 @@ model ShiftAssignment {
   employeeId       String
   shiftTemplateId  String
   status           ShiftAssignmentStatus @default(HABILITADO)
-  assignedAt       DateTime @default(now()) @db.Timestamptz(3)
+  // Vigencia + días de la semana en los que aplica esta asignación (rotativos
+  // versión simple V1: RRHH crea 2 asignaciones con vigencias que se alternan
+  // manualmente; sin automatización de alternancia todavía). weekdays vacío
+  // significa todos los días.
+  effectiveFrom    DateTime              @default(now()) @db.Date
+  effectiveTo      DateTime?             @db.Date
+  weekdays         Int[]                 @default([])
+  assignedAt       DateTime              @default(now()) @db.Timestamptz(3)
   assignedByUserId String?
-  disabledAt       DateTime? @db.Timestamptz(3)
+  disabledAt       DateTime?             @db.Timestamptz(3)
   disabledByUserId String?
   observation      String?
-  createdAt        DateTime @default(now()) @db.Timestamptz(3)
-  updatedAt        DateTime @updatedAt @db.Timestamptz(3)
+  createdAt        DateTime              @default(now()) @db.Timestamptz(3)
+  updatedAt        DateTime              @updatedAt @db.Timestamptz(3)
 
   employee      Employee      @relation(fields: [employeeId], references: [id], onDelete: Restrict)
   shiftTemplate ShiftTemplate @relation(fields: [shiftTemplateId], references: [id], onDelete: Cascade)
@@ -1015,23 +1079,71 @@ model ShiftAssignment {
   @@index([shiftTemplateId, status])
 }
 
+// Régimen de trabajo: comportamiento genérico (3 kinds fijos). Los nombres
+// concretos (Cosecha, Riego, Campaña, Jornada libre controlada, etc.) son
+// instancias configurables por RRHH, nunca valores de enum ni lógica
+// hardcodeada. alertOnOutOfShift decide si "fuera de turno"/"sin turno" debe
+// alertar para este régimen (ver EmployeeWorkRegime para la asignación).
+model WorkRegime {
+  id                String         @id @default(uuid())
+  code              String         @unique
+  name              String
+  kind              WorkRegimeKind
+  alertOnOutOfShift Boolean        @default(true)
+  description       String?
+  status            RecordStatus   @default(ACTIVO)
+  createdByUserId   String?
+  updatedByUserId   String?
+  createdAt         DateTime       @default(now()) @db.Timestamptz(3)
+  updatedAt         DateTime       @updatedAt @db.Timestamptz(3)
+
+  createdBy           User?                @relation("WorkRegimeCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  updatedBy           User?                @relation("WorkRegimeUpdatedBy", fields: [updatedByUserId], references: [id], onDelete: SetNull)
+  employeeAssignments EmployeeWorkRegime[]
+
+  @@index([status])
+  @@index([kind])
+}
+
+// Régimen vigente de un empleado, resuelto por fecha (mismo patrón que
+// Employee.status se deriva de LaborMovement) — no un booleano simple, para
+// que un empleado pueda pasar de un régimen a otro estacionalmente sin perder
+// historial. Restrict en ambas FK: no perder trazabilidad si se intenta
+// inactivar/borrar un Employee o un WorkRegime con asignaciones existentes.
+model EmployeeWorkRegime {
+  id               String    @id @default(uuid())
+  employeeId       String
+  workRegimeId     String
+  effectiveFrom    DateTime  @db.Date
+  effectiveTo      DateTime? @db.Date
+  assignedByUserId String?
+  createdAt        DateTime  @default(now()) @db.Timestamptz(3)
+
+  employee   Employee   @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  workRegime WorkRegime @relation(fields: [workRegimeId], references: [id], onDelete: Restrict)
+  assignedBy User?      @relation(fields: [assignedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([employeeId, effectiveFrom])
+}
+
 model ShiftAlert {
-  id String @id @default(uuid())
-  employeeId String
-  workShiftId String
-  type ShiftAlertType
-  status ShiftAlertStatus @default(PENDIENTE)
-  severity ShiftAlertSeverity @default(INFO)
-  scheduledAt DateTime? @db.Timestamptz(3)
-  actualAt DateTime @db.Timestamptz(3)
+  id                String             @id @default(uuid())
+  employeeId        String
+  workShiftId       String
+  type              ShiftAlertType
+  status            ShiftAlertStatus   @default(PENDIENTE)
+  severity          ShiftAlertSeverity @default(INFO)
+  scheduledAt       DateTime?          @db.Timestamptz(3)
+  actualAt          DateTime           @db.Timestamptz(3)
   differenceMinutes Int?
-  resolvedAt DateTime? @db.Timestamptz(3)
-  resolvedByUserId String?
-  resolutionNote String?
-  createdAt DateTime @default(now()) @db.Timestamptz(3)
-  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
-  workShift WorkShift @relation(fields: [workShiftId], references: [id], onDelete: Cascade)
-  resolvedBy User? @relation(fields: [resolvedByUserId], references: [id], onDelete: SetNull)
+  resolvedAt        DateTime?          @db.Timestamptz(3)
+  resolvedByUserId  String?
+  resolutionNote    String?
+  createdAt         DateTime           @default(now()) @db.Timestamptz(3)
+  employee          Employee           @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  workShift         WorkShift          @relation(fields: [workShiftId], references: [id], onDelete: Cascade)
+  resolvedBy        User?              @relation(fields: [resolvedByUserId], references: [id], onDelete: SetNull)
+
   @@unique([workShiftId, type])
   @@index([employeeId, status, createdAt])
   @@index([severity, status])
@@ -1043,9 +1155,9 @@ model AttendanceInactivityIncident {
   operationalDate  DateTime               @db.Date
   status           AttendanceReviewStatus @default(PENDIENTE)
   observation      String
-  detectedAt       DateTime @default(now()) @db.Timestamptz(3)
-  notifiedAt       DateTime? @db.Timestamptz(3)
-  reviewedAt       DateTime? @db.Timestamptz(3)
+  detectedAt       DateTime               @default(now()) @db.Timestamptz(3)
+  notifiedAt       DateTime?              @db.Timestamptz(3)
+  reviewedAt       DateTime?              @db.Timestamptz(3)
   reviewedByUserId String?
   reviewNote       String?
 
@@ -1058,60 +1170,82 @@ model AttendanceInactivityIncident {
 }
 
 model DoubleHourRule {
-  id String @id @default(uuid())
-  name String
-  recurrenceType RecurrenceType
-  fromDate DateTime @db.Date
-  toDate DateTime? @db.Date
-  weekdays Int[] @default([])
-  multiplier Decimal @default(2) @db.Decimal(4, 2)
-  status RecordStatus @default(ACTIVO)
-  reason String
-  createdByUserId String?
-  createdAt DateTime @default(now()) @db.Timestamptz(3)
-  updatedAt DateTime @updatedAt @db.Timestamptz(3)
-  employees DoubleHourRuleEmployee[]
-  createdBy User? @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
+  id                          String                       @id @default(uuid())
+  name                        String
+  recurrenceType              RecurrenceType
+  fromDate                    DateTime                     @db.Date
+  toDate                      DateTime?                    @db.Date
+  weekdays                    Int[]                        @default([])
+  multiplier                  Decimal                      @default(2) @db.Decimal(4, 2)
+  status                      RecordStatus                 @default(ACTIVO)
+  reason                      String
+  createdByUserId             String?
+  createdAt                   DateTime                     @default(now()) @db.Timestamptz(3)
+  updatedAt                   DateTime                     @updatedAt @db.Timestamptz(3)
+  employees                   DoubleHourRuleEmployee[]
+  createdBy                   User?                        @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
+  specialHourRuleApplications SpecialHourRuleApplication[]
+
   @@index([status, fromDate, toDate])
 }
 
 model DoubleHourRuleEmployee {
-  ruleId String
+  ruleId     String
   employeeId String
-  rule DoubleHourRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
-  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  rule       DoubleHourRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+  employee   Employee       @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+
   @@id([ruleId, employeeId])
   @@index([employeeId])
 }
 
-model AttendancePunch {
-  id                String                @id @default(uuid())
-  employeeId        String
-  type              AttendancePunchType
-  timestamp         DateTime @db.Timestamptz(3)
-  source            WorkShiftSource       @default(PORTAL_DNI)
-  deviceId          String?
-  kioskId           String?
-  ipAddress         String?
-  userAgent         String?
-  status            AttendancePunchStatus @default(VALIDA)
-  observation       String?
-  reviewStatus      AttendanceReviewStatus @default(PENDIENTE)
-  reviewedAt        DateTime? @db.Timestamptz(3)
-  reviewedByUserId  String?
-  reviewNote        String?
-  photoUrl          String?
-  photoStoragePath  String?
-  photoFileId       String?
-  thumbnailFileId   String?
-  faceDetected      Boolean               @default(false)
-  faceValidationStatus FaceValidationStatus?
-  faceDetectionScore Float?
-  externalPunchId   String?
-  rawPayload        Json?
-  biometricProvider String?
-  importedAt        DateTime? @db.Timestamptz(3)
+// Trazabilidad de qué DoubleHourRule aplicó a qué TimeSegment. No reemplaza
+// a DoubleHourRule (que sigue siendo el motor de reglas especiales) — registra
+// TODAS las reglas que matchearon un segmento, aunque en V1 el multiplicador
+// efectivo que se lleva a TimeEntry.appliedMultiplier sea el máximo entre
+// ellas (nunca se acumulan/multiplican entre sí todavía; esa selección es
+// lógica de servicio de la próxima etapa, no de este modelo).
+model SpecialHourRuleApplication {
+  id                String   @id @default(uuid())
+  timeSegmentId     String
+  doubleHourRuleId  String
+  multiplierApplied Decimal  @db.Decimal(4, 2)
   createdAt         DateTime @default(now()) @db.Timestamptz(3)
+
+  timeSegment    TimeSegment    @relation(fields: [timeSegmentId], references: [id], onDelete: Cascade)
+  doubleHourRule DoubleHourRule @relation(fields: [doubleHourRuleId], references: [id], onDelete: Restrict)
+
+  @@index([timeSegmentId])
+}
+
+model AttendancePunch {
+  id                   String                 @id @default(uuid())
+  employeeId           String
+  type                 AttendancePunchType
+  timestamp            DateTime               @db.Timestamptz(3)
+  source               WorkShiftSource        @default(PORTAL_DNI)
+  deviceId             String?
+  kioskId              String?
+  ipAddress            String?
+  userAgent            String?
+  status               AttendancePunchStatus  @default(VALIDA)
+  observation          String?
+  reviewStatus         AttendanceReviewStatus @default(PENDIENTE)
+  reviewedAt           DateTime?              @db.Timestamptz(3)
+  reviewedByUserId     String?
+  reviewNote           String?
+  photoUrl             String?
+  photoStoragePath     String?
+  photoFileId          String?
+  thumbnailFileId      String?
+  faceDetected         Boolean                @default(false)
+  faceValidationStatus FaceValidationStatus?
+  faceDetectionScore   Float?
+  externalPunchId      String?
+  rawPayload           Json?
+  biometricProvider    String?
+  importedAt           DateTime?              @db.Timestamptz(3)
+  createdAt            DateTime               @default(now()) @db.Timestamptz(3)
 
   employee        Employee     @relation(fields: [employeeId], references: [id], onDelete: Restrict)
   photoFile       StorageFile? @relation("AttendancePunchPhotoFile", fields: [photoFileId], references: [id], onDelete: SetNull)
@@ -1131,19 +1265,19 @@ model AttendancePunch {
 }
 
 model ClockPunchAttempt {
-  id             String                  @id @default(uuid())
-  requestId      String                  @unique
-  employeeId     String
-  punchType      AttendancePunchType
-  status         ClockPunchAttemptStatus @default(PROCESSING)
-  requestHash    String
-  response       Json?
-  errorCode      String?
-  errorMessage   String?
-  httpStatus     Int?
-  startedAt      DateTime @default(now()) @db.Timestamptz(3)
-  completedAt    DateTime? @db.Timestamptz(3)
-  updatedAt      DateTime @updatedAt @db.Timestamptz(3)
+  id           String                  @id @default(uuid())
+  requestId    String                  @unique
+  employeeId   String
+  punchType    AttendancePunchType
+  status       ClockPunchAttemptStatus @default(PROCESSING)
+  requestHash  String
+  response     Json?
+  errorCode    String?
+  errorMessage String?
+  httpStatus   Int?
+  startedAt    DateTime                @default(now()) @db.Timestamptz(3)
+  completedAt  DateTime?               @db.Timestamptz(3)
+  updatedAt    DateTime                @updatedAt @db.Timestamptz(3)
 
   employee Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
 
@@ -1152,26 +1286,33 @@ model ClockPunchAttempt {
 }
 
 model TimeSegment {
-  id              String   @id @default(uuid())
-  workShiftId     String
-  employeeId      String
-  date            DateTime @db.Date
-  fromDateTime    DateTime @db.Timestamptz(3)
-  toDateTime      DateTime @db.Timestamptz(3)
-  minutes         Int
-  hourConceptId   String
-  hourConceptName String
-  isHoliday       Boolean  @default(false)
-  isNight         Boolean  @default(false)
-  isSpecial       Boolean  @default(false)
-  source          String   @default("CALCULATED")
-  observation     String?
-  createdAt       DateTime @default(now()) @db.Timestamptz(3)
+  id                String               @id @default(uuid())
+  workShiftId       String
+  employeeId        String
+  date              DateTime             @db.Date
+  fromDateTime      DateTime             @db.Timestamptz(3)
+  toDateTime        DateTime             @db.Timestamptz(3)
+  minutes           Int
+  hourConceptId     String
+  hourConceptName   String
+  isHoliday         Boolean              @default(false)
+  isNight           Boolean              @default(false)
+  isSpecial         Boolean              @default(false)
+  // De qué HourConceptRule salió el concepto sugerido (null si fue manual o
+  // si no hubo ninguna regla que matcheara el tramo) y qué pasó con esa
+  // sugerencia — nunca bloquea la fichada, solo deja trazabilidad para RRHH.
+  hourConceptRuleId String?
+  conceptStatus     SegmentConceptStatus @default(MANUAL)
+  source            String               @default("CALCULATED")
+  observation       String?
+  createdAt         DateTime             @default(now()) @db.Timestamptz(3)
 
-  workShift   WorkShift   @relation(fields: [workShiftId], references: [id], onDelete: Cascade)
-  employee    Employee    @relation(fields: [employeeId], references: [id], onDelete: Restrict)
-  hourConcept HourConcept @relation(fields: [hourConceptId], references: [id])
-  timeEntries TimeEntry[]
+  workShift                   WorkShift                    @relation(fields: [workShiftId], references: [id], onDelete: Cascade)
+  employee                    Employee                     @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  hourConcept                 HourConcept                  @relation(fields: [hourConceptId], references: [id])
+  hourConceptRule             HourConceptRule?             @relation(fields: [hourConceptRuleId], references: [id], onDelete: SetNull)
+  timeEntries                 TimeEntry[]
+  specialHourRuleApplications SpecialHourRuleApplication[]
 
   @@index([workShiftId])
   @@index([employeeId, date])
@@ -1192,8 +1333,8 @@ model DocumentCategory {
   approvalRoles Json         @default("[]")
   externalLinks Json         @default("[]")
   notes         String?
-  createdAt     DateTime @default(now()) @db.Timestamptz(3)
-  updatedAt     DateTime @updatedAt @db.Timestamptz(3)
+  createdAt     DateTime     @default(now()) @db.Timestamptz(3)
+  updatedAt     DateTime     @updatedAt @db.Timestamptz(3)
 
   documents EmployeeDocument[]
 
@@ -1224,8 +1365,8 @@ model AuditParameter {
   updatedByUserId         String?
   updatedByUserName       String?
   history                 Json         @default("[]")
-  createdAt               DateTime @default(now()) @db.Timestamptz(3)
-  updatedAt               DateTime @updatedAt @db.Timestamptz(3)
+  createdAt               DateTime     @default(now()) @db.Timestamptz(3)
+  updatedAt               DateTime     @updatedAt @db.Timestamptz(3)
 
   createdBy User? @relation("AuditParameterCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
   updatedBy User? @relation("AuditParameterUpdatedBy", fields: [updatedByUserId], references: [id], onDelete: SetNull)
@@ -1247,16 +1388,16 @@ model EmployeeDocument {
   storageFileId    String?
   status           DocumentStatus @default(PENDIENTE)
   notes            String?
-  issuedAt         DateTime? @db.Date
-  expiresAt        DateTime? @db.Date
+  issuedAt         DateTime?      @db.Date
+  expiresAt        DateTime?      @db.Date
   uploadedByUserId String?
-  createdAt        DateTime @default(now()) @db.Timestamptz(3)
-  updatedAt        DateTime @updatedAt @db.Timestamptz(3)
+  createdAt        DateTime       @default(now()) @db.Timestamptz(3)
+  updatedAt        DateTime       @updatedAt @db.Timestamptz(3)
 
-  employee   Employee         @relation(fields: [employeeId], references: [id], onDelete: Restrict)
-  category   DocumentCategory @relation(fields: [categoryId], references: [id])
-  novelty    Novelty?         @relation(fields: [noveltyId], references: [id])
-  uploadedBy User?            @relation(fields: [uploadedByUserId], references: [id])
+  employee    Employee         @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  category    DocumentCategory @relation(fields: [categoryId], references: [id])
+  novelty     Novelty?         @relation(fields: [noveltyId], references: [id])
+  uploadedBy  User?            @relation(fields: [uploadedByUserId], references: [id])
   storageFile StorageFile?     @relation("EmployeeDocumentStorageFile", fields: [storageFileId], references: [id], onDelete: SetNull)
 
   @@index([employeeId])
@@ -1291,23 +1432,23 @@ model StorageFile {
   isThumbnail         Boolean           @default(false)
   thumbnailFileId     String?
   originalFileId      String?
-  visibility          StorageVisibility  @default(PRIVATE)
-  status              StorageFileStatus  @default(ACTIVE)
+  visibility          StorageVisibility @default(PRIVATE)
+  status              StorageFileStatus @default(ACTIVE)
   uploadedByUserId    String?
-  uploadedAt          DateTime @default(now()) @db.Timestamptz(3)
+  uploadedAt          DateTime          @default(now()) @db.Timestamptz(3)
   deletedByUserId     String?
-  deletedAt           DateTime? @db.Timestamptz(3)
+  deletedAt           DateTime?         @db.Timestamptz(3)
   checksum            String?
-  metadata            Json               @default("{}")
-  createdAt           DateTime @default(now()) @db.Timestamptz(3)
-  updatedAt           DateTime @updatedAt @db.Timestamptz(3)
+  metadata            Json              @default("{}")
+  createdAt           DateTime          @default(now()) @db.Timestamptz(3)
+  updatedAt           DateTime          @updatedAt @db.Timestamptz(3)
 
-  employee            Employee?          @relation(fields: [employeeId], references: [id], onDelete: SetNull)
-  uploadedBy          User?              @relation("StorageFileUploadedBy", fields: [uploadedByUserId], references: [id], onDelete: SetNull)
-  deletedBy           User?              @relation("StorageFileDeletedBy", fields: [deletedByUserId], references: [id], onDelete: SetNull)
-  employeeDocuments   EmployeeDocument[] @relation("EmployeeDocumentStorageFile")
-  attendancePunchPhotoLinks AttendancePunch[] @relation("AttendancePunchPhotoFile")
-  attendancePunchThumbnailLinks AttendancePunch[] @relation("AttendancePunchThumbnailFile")
+  employee                      Employee?          @relation(fields: [employeeId], references: [id], onDelete: SetNull)
+  uploadedBy                    User?              @relation("StorageFileUploadedBy", fields: [uploadedByUserId], references: [id], onDelete: SetNull)
+  deletedBy                     User?              @relation("StorageFileDeletedBy", fields: [deletedByUserId], references: [id], onDelete: SetNull)
+  employeeDocuments             EmployeeDocument[] @relation("EmployeeDocumentStorageFile")
+  attendancePunchPhotoLinks     AttendancePunch[]  @relation("AttendancePunchPhotoFile")
+  attendancePunchThumbnailLinks AttendancePunch[]  @relation("AttendancePunchThumbnailFile")
 
   @@index([storageProvider])
   @@index([storageKey])
@@ -1329,7 +1470,7 @@ model AuditLog {
   userId      String?
   ipAddress   String?
   userAgent   String?
-  createdAt   DateTime @default(now()) @db.Timestamptz(3)
+  createdAt   DateTime    @default(now()) @db.Timestamptz(3)
 
   user User? @relation(fields: [userId], references: [id])
 
