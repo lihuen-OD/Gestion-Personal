@@ -15,7 +15,7 @@ export interface OrgBusinessUnit {
   id: string;
   code: string;
   name: string;
-  companyIds: string[];
+  companyId: string;
   status: OrgStructureStatus;
   notes?: string;
 }
@@ -24,8 +24,8 @@ export interface OrgEstablishment {
   id: string;
   code: string;
   name: string;
-  companyIds: string[];
-  businessUnitIds: string[];
+  companyId: string;
+  businessUnitId?: string;
   province: string;
   department: string;
   locality: string;
@@ -40,8 +40,7 @@ export interface OrgArea {
   id: string;
   code: string;
   name: string;
-  businessUnitIds: string[];
-  establishmentIds: string[];
+  establishmentId?: string;
   status: OrgStructureStatus;
   notes?: string;
 }
@@ -50,8 +49,7 @@ export interface OrgSector {
   id: string;
   code: string;
   name: string;
-  areaIds: string[];
-  establishmentIds: string[];
+  areaId?: string;
   status: OrgStructureStatus;
   notes?: string;
 }

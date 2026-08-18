@@ -30,7 +30,6 @@ const tabs: Array<{ id: Tab; label: string }> = [
 
 const roleLevel = (role: Role) => role.startsWith("Nivel 1") ? 1 : role.startsWith("Nivel 2") ? 2 : 3;
 const uid = () => crypto.randomUUID();
-const uniqueIds = (values: string[]) => Array.from(new Set(values.filter(Boolean)));
 
 function nextCodeFromCatalog(type: Tab, catalog: OrgStructureCatalog) {
   const list = type === "COMPANY" ? catalog.companies : type === "BUSINESS_UNIT" ? catalog.businessUnits : type === "ESTABLISHMENT" ? catalog.establishments : type === "AREA" ? catalog.areas : type === "SECTOR" ? catalog.sectors : catalog.costCenters;
@@ -42,10 +41,10 @@ function nextCodeFromCatalog(type: Tab, catalog: OrgStructureCatalog) {
 function blank(type: Tab, catalog: OrgStructureCatalog): Editable {
   const code = nextCodeFromCatalog(type, catalog);
   if (type === "COMPANY") return { id: uid(), code, name: "", legalName: "", cuit: "", status: "ACTIVO" };
-  if (type === "BUSINESS_UNIT") return { id: uid(), code, name: "", companyIds: [], status: "ACTIVO" };
-  if (type === "ESTABLISHMENT") return { id: uid(), code, name: "", companyIds: [], businessUnitIds: [], province: "", department: "", locality: "", address: "", streetNumber: "", postalCode: "", status: "ACTIVO" };
-  if (type === "AREA") return { id: uid(), code, name: "", businessUnitIds: [], establishmentIds: [], status: "ACTIVO" };
-  if (type === "SECTOR") return { id: uid(), code, name: "", areaIds: [], establishmentIds: [], status: "ACTIVO" };
+  if (type === "BUSINESS_UNIT") return { id: uid(), code, name: "", companyId: "", status: "ACTIVO" };
+  if (type === "ESTABLISHMENT") return { id: uid(), code, name: "", companyId: "", businessUnitId: undefined, province: "", department: "", locality: "", address: "", streetNumber: "", postalCode: "", status: "ACTIVO" };
+  if (type === "AREA") return { id: uid(), code, name: "", establishmentId: undefined, status: "ACTIVO" };
+  if (type === "SECTOR") return { id: uid(), code, name: "", areaId: undefined, status: "ACTIVO" };
   return { id: uid(), code, name: "", companyIds: [], businessUnitIds: [], establishmentIds: [], areaIds: [], sectorIds: [], finnegansCode: "", status: "ACTIVO" };
 }
 
@@ -53,13 +52,34 @@ function nameById(items: { id: string; name: string }[], ids: string[] = []) {
   return ids.map((id) => items.find((item) => item.id === id)?.name).filter(Boolean).join(", ") || "-";
 }
 
-function deriveCompanyIds(catalog: OrgStructureCatalog, businessUnitIds: string[] = []) {
-  return uniqueIds(catalog.businessUnits.filter((item) => businessUnitIds.includes(item.id)).flatMap((item) => item.companyIds));
+function nameByOne(items: { id: string; name: string }[], id: string | undefined) {
+  return nameById(items, id ? [id] : []);
+}
+
+function deriveCompanyId(catalog: OrgStructureCatalog, businessUnitId: string | undefined) {
+  return catalog.businessUnits.find((item) => item.id === businessUnitId)?.companyId;
+}
+
+function deriveAreaBusinessUnitId(catalog: OrgStructureCatalog, establishmentId: string | undefined) {
+  const establishment = catalog.establishments.find((item) => item.id === establishmentId);
+  return establishment?.businessUnitId;
+}
+
+function deriveSectorEstablishmentId(catalog: OrgStructureCatalog, areaId: string | undefined) {
+  const area = catalog.areas.find((item) => item.id === areaId);
+  return area?.establishmentId;
 }
 
 function normalizeDerivedRelations(type: Tab, item: Editable, catalog: OrgStructureCatalog): Editable {
-  if (type === "ESTABLISHMENT" && "businessUnitIds" in item) return { ...item, companyIds: deriveCompanyIds(catalog, item.businessUnitIds) } as Editable;
+  if (type === "ESTABLISHMENT" && "businessUnitId" in item) return { ...item, companyId: deriveCompanyId(catalog, item.businessUnitId) || "" } as Editable;
   return item;
+}
+
+function SingleRelation({ label, options, value, onChange }: { label: string; options: { id: string; name: string }[]; value: string | undefined; onChange: (value: string | undefined) => void }) {
+  return <label>{label}<select value={value || ""} onChange={(event) => onChange(event.target.value || undefined)}>
+    <option value="">-- Sin asignar --</option>
+    {options.map((option) => <option key={option.id} value={option.id}>{option.name}</option>)}
+  </select></label>;
 }
 
 function MultiRelation({ label, options, value, onChange }: { label: string; options: { id: string; name: string }[]; value: string[]; onChange: (value: string[]) => void }) {
@@ -115,16 +135,16 @@ function Editor({ type, item, catalog, onChange }: { type: Tab; item: Editable; 
     </div>
     {establishmentAddress && <div className="form-wide org-geo-panel"><GeoAddressFields value={establishmentAddress} onChange={setEstablishmentAddress} showGeoActions={false} /></div>}
 
-    {"companyIds" in item && type === "BUSINESS_UNIT" && <MultiRelation label="Empresas asociadas" options={catalog.companies} value={item.companyIds} onChange={(companyIds) => set({ companyIds } as Partial<Editable>)} />}
+    {"companyId" in item && type === "BUSINESS_UNIT" && <SingleRelation label="Empresa asociada" options={catalog.companies} value={item.companyId} onChange={(companyId) => set({ companyId: companyId || "" } as Partial<Editable>)} />}
 
-    {type === "ESTABLISHMENT" && "companyIds" in normalizedItem && <DerivedRelation label="Empresas asociadas" value={nameById(catalog.companies, normalizedItem.companyIds)} />}
-    {"businessUnitIds" in item && type === "ESTABLISHMENT" && <MultiRelation label="Unidades de negocio asociadas" options={catalog.businessUnits} value={item.businessUnitIds} onChange={(businessUnitIds) => set({ businessUnitIds } as Partial<Editable>)} />}
+    {type === "ESTABLISHMENT" && "companyId" in normalizedItem && <DerivedRelation label="Empresa asociada" value={nameByOne(catalog.companies, normalizedItem.companyId)} />}
+    {"businessUnitId" in item && type === "ESTABLISHMENT" && <SingleRelation label="Unidad de negocio asociada" options={catalog.businessUnits} value={item.businessUnitId} onChange={(businessUnitId) => set({ businessUnitId } as Partial<Editable>)} />}
 
-    {"businessUnitIds" in item && type === "AREA" && <MultiRelation label="Unidades de negocio asociadas" options={catalog.businessUnits} value={item.businessUnitIds} onChange={(businessUnitIds) => set({ businessUnitIds } as Partial<Editable>)} />}
-    {"establishmentIds" in item && type === "AREA" && <MultiRelation label="Establecimientos asociados" options={catalog.establishments} value={item.establishmentIds} onChange={(establishmentIds) => set({ establishmentIds } as Partial<Editable>)} />}
+    {"establishmentId" in item && type === "AREA" && <SingleRelation label="Establecimiento asociado" options={catalog.establishments} value={item.establishmentId} onChange={(establishmentId) => set({ establishmentId } as Partial<Editable>)} />}
+    {type === "AREA" && "establishmentId" in item && <DerivedRelation label="Unidad de negocio (segun establecimiento)" value={nameByOne(catalog.businessUnits, deriveAreaBusinessUnitId(catalog, item.establishmentId))} />}
 
-    {"establishmentIds" in item && type === "SECTOR" && <MultiRelation label="Establecimientos asociados" options={catalog.establishments} value={item.establishmentIds} onChange={(establishmentIds) => set({ establishmentIds } as Partial<Editable>)} />}
-    {"areaIds" in item && type === "SECTOR" && <MultiRelation label="Areas / Departamentos asociados" options={catalog.areas} value={item.areaIds} onChange={(areaIds) => set({ areaIds } as Partial<Editable>)} />}
+    {"areaId" in item && type === "SECTOR" && <SingleRelation label="Area / Departamento asociado" options={catalog.areas} value={item.areaId} onChange={(areaId) => set({ areaId } as Partial<Editable>)} />}
+    {type === "SECTOR" && "areaId" in item && <DerivedRelation label="Establecimiento (segun area)" value={nameByOne(catalog.establishments, deriveSectorEstablishmentId(catalog, item.areaId))} />}
 
     {"companyIds" in item && type === "COST_CENTER" && <MultiRelation label="Empresas asociadas" options={catalog.companies} value={item.companyIds} onChange={(companyIds) => set({ companyIds } as Partial<Editable>)} />}
     {"businessUnitIds" in item && type === "COST_CENTER" && <MultiRelation label="Unidades de negocio asociadas" options={catalog.businessUnits} value={item.businessUnitIds} onChange={(businessUnitIds) => set({ businessUnitIds } as Partial<Editable>)} />}
@@ -147,10 +167,10 @@ function StatusBadge({ status }: { status: OrgStructureStatus }) {
 
 function Rows({ type, catalog, readOnly, onEdit }: { type: Tab; catalog: OrgStructureCatalog; readOnly: boolean; onEdit: (item: Editable) => void }) {
   if (type === "COMPANY") return <tbody>{catalog.companies.map((item) => <tr key={item.id}><td><b>{item.code}</b></td><td><OverflowCell value={item.name} /><span className="table-sub">{item.legalName}</span></td><td>{item.cuit || "-"}</td><td>-</td><td><StatusBadge status={item.status} /></td><td><EditAction item={item} readOnly={readOnly} onEdit={onEdit} /></td></tr>)}</tbody>;
-  if (type === "BUSINESS_UNIT") return <tbody>{catalog.businessUnits.map((item) => <tr key={item.id}><td><b>{item.code}</b></td><td><OverflowCell value={item.name} /></td><td><OverflowCell value={nameById(catalog.companies, item.companyIds)} /></td><td>-</td><td><StatusBadge status={item.status} /></td><td><EditAction item={item} readOnly={readOnly} onEdit={onEdit} /></td></tr>)}</tbody>;
-  if (type === "ESTABLISHMENT") return <tbody>{catalog.establishments.map((item) => <tr key={item.id}><td><b>{item.code}</b></td><td><OverflowCell value={item.name} /><span className="table-sub">{item.locality}, {item.department}</span></td><td><OverflowCell value={nameById(catalog.companies, deriveCompanyIds(catalog, item.businessUnitIds))} /></td><td><OverflowCell value={nameById(catalog.businessUnits, item.businessUnitIds)} /></td><td><StatusBadge status={item.status} /></td><td><EditAction item={item} readOnly={readOnly} onEdit={onEdit} /></td></tr>)}</tbody>;
-  if (type === "AREA") return <tbody>{catalog.areas.map((item) => <tr key={item.id}><td><b>{item.code}</b></td><td><OverflowCell value={item.name} /></td><td><OverflowCell value={nameById(catalog.businessUnits, item.businessUnitIds)} /></td><td><OverflowCell value={nameById(catalog.establishments, item.establishmentIds)} /></td><td><StatusBadge status={item.status} /></td><td><EditAction item={item} readOnly={readOnly} onEdit={onEdit} /></td></tr>)}</tbody>;
-  if (type === "SECTOR") return <tbody>{catalog.sectors.map((item) => <tr key={item.id}><td><b>{item.code}</b></td><td><OverflowCell value={item.name} /></td><td><OverflowCell value={nameById(catalog.areas, item.areaIds)} /></td><td><OverflowCell value={nameById(catalog.establishments, item.establishmentIds)} /></td><td><StatusBadge status={item.status} /></td><td><EditAction item={item} readOnly={readOnly} onEdit={onEdit} /></td></tr>)}</tbody>;
+  if (type === "BUSINESS_UNIT") return <tbody>{catalog.businessUnits.map((item) => <tr key={item.id}><td><b>{item.code}</b></td><td><OverflowCell value={item.name} /></td><td><OverflowCell value={nameByOne(catalog.companies, item.companyId)} /></td><td>-</td><td><StatusBadge status={item.status} /></td><td><EditAction item={item} readOnly={readOnly} onEdit={onEdit} /></td></tr>)}</tbody>;
+  if (type === "ESTABLISHMENT") return <tbody>{catalog.establishments.map((item) => <tr key={item.id}><td><b>{item.code}</b></td><td><OverflowCell value={item.name} /><span className="table-sub">{item.locality}, {item.department}</span></td><td><OverflowCell value={nameByOne(catalog.companies, item.companyId)} /></td><td><OverflowCell value={nameByOne(catalog.businessUnits, item.businessUnitId)} /></td><td><StatusBadge status={item.status} /></td><td><EditAction item={item} readOnly={readOnly} onEdit={onEdit} /></td></tr>)}</tbody>;
+  if (type === "AREA") return <tbody>{catalog.areas.map((item) => <tr key={item.id}><td><b>{item.code}</b></td><td><OverflowCell value={item.name} /></td><td><OverflowCell value={nameByOne(catalog.establishments, item.establishmentId)} /></td><td><OverflowCell value={nameByOne(catalog.businessUnits, deriveAreaBusinessUnitId(catalog, item.establishmentId))} /></td><td><StatusBadge status={item.status} /></td><td><EditAction item={item} readOnly={readOnly} onEdit={onEdit} /></td></tr>)}</tbody>;
+  if (type === "SECTOR") return <tbody>{catalog.sectors.map((item) => <tr key={item.id}><td><b>{item.code}</b></td><td><OverflowCell value={item.name} /></td><td><OverflowCell value={nameByOne(catalog.areas, item.areaId)} /></td><td><OverflowCell value={nameByOne(catalog.establishments, deriveSectorEstablishmentId(catalog, item.areaId))} /></td><td><StatusBadge status={item.status} /></td><td><EditAction item={item} readOnly={readOnly} onEdit={onEdit} /></td></tr>)}</tbody>;
   return <tbody>{catalog.costCenters.map((item) => <tr key={item.id}><td><b>{item.code}</b></td><td><OverflowCell value={item.name} /><span className="table-sub">{item.finnegansCode || "Sin codigo Finnegans"}</span></td><td><OverflowCell value={nameById(catalog.companies, item.companyIds)} /></td><td><OverflowCell value={nameById(catalog.sectors, item.sectorIds)} /></td><td><StatusBadge status={item.status} /></td><td><EditAction item={item} readOnly={readOnly} onEdit={onEdit} /></td></tr>)}</tbody>;
 }
 

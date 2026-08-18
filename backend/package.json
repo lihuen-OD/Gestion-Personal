@@ -12,7 +12,6 @@
     "prisma:migrate:dev": "prisma migrate dev",
     "prisma:studio": "prisma studio",
     "prisma:seed": "tsx prisma/seed.ts",
-    "prisma:backfill:org-structure": "tsx prisma/backfill-org-structure-links.ts",
     "prisma:backfill:document-categories": "tsx prisma/backfill-document-categories.ts",
     "staging:clock:orphans": "tsx scripts/reconcile-clock-orphans.ts",
     "staging:clock:orphans:apply": "tsx scripts/reconcile-clock-orphans.ts --apply",

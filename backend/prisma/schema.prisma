@@ -289,8 +289,6 @@ model Company {
   businessUnits      BusinessUnit[]
   establishments     Establishment[]
   employees          EmployeeCompany[]
-  businessUnitLinks  BusinessUnitCompany[]
-  establishmentLinks EstablishmentCompany[]
   costCenterLinks    CostCenterCompany[]
 }
 
@@ -305,23 +303,9 @@ model BusinessUnit {
 
   company            Company                     @relation(fields: [companyId], references: [id])
   establishments     Establishment[]
-  companies          BusinessUnitCompany[]
-  establishmentLinks EstablishmentBusinessUnit[]
-  areaLinks          AreaBusinessUnit[]
   costCenterLinks    CostCenterBusinessUnit[]
 
   @@unique([companyId, code])
-  @@index([companyId])
-}
-
-model BusinessUnitCompany {
-  businessUnitId String
-  companyId      String
-
-  businessUnit BusinessUnit @relation(fields: [businessUnitId], references: [id], onDelete: Cascade)
-  company      Company      @relation(fields: [companyId], references: [id], onDelete: Cascade)
-
-  @@id([businessUnitId, companyId])
   @@index([companyId])
 }
 
@@ -344,35 +328,9 @@ model Establishment {
   company         Company                     @relation(fields: [companyId], references: [id])
   businessUnit    BusinessUnit?               @relation(fields: [businessUnitId], references: [id])
   areas           Area[]
-  companies       EstablishmentCompany[]
-  businessUnits   EstablishmentBusinessUnit[]
-  areaLinks       AreaEstablishment[]
-  sectorLinks     SectorEstablishment[]
   costCenterLinks CostCenterEstablishment[]
 
   @@unique([companyId, code])
-  @@index([businessUnitId])
-}
-
-model EstablishmentCompany {
-  establishmentId String
-  companyId       String
-
-  establishment Establishment @relation(fields: [establishmentId], references: [id], onDelete: Cascade)
-  company       Company       @relation(fields: [companyId], references: [id], onDelete: Cascade)
-
-  @@id([establishmentId, companyId])
-  @@index([companyId])
-}
-
-model EstablishmentBusinessUnit {
-  establishmentId String
-  businessUnitId  String
-
-  establishment Establishment @relation(fields: [establishmentId], references: [id], onDelete: Cascade)
-  businessUnit  BusinessUnit  @relation(fields: [businessUnitId], references: [id], onDelete: Cascade)
-
-  @@id([establishmentId, businessUnitId])
   @@index([businessUnitId])
 }
 
@@ -388,33 +346,8 @@ model Area {
   establishment   Establishment?      @relation(fields: [establishmentId], references: [id])
   sectors         Sector[]
   positions       Position[]
-  businessUnits   AreaBusinessUnit[]
-  establishments  AreaEstablishment[]
-  sectorLinks     SectorArea[]
   costCenterLinks CostCenterArea[]
 
-  @@index([establishmentId])
-}
-
-model AreaBusinessUnit {
-  areaId         String
-  businessUnitId String
-
-  area         Area         @relation(fields: [areaId], references: [id], onDelete: Cascade)
-  businessUnit BusinessUnit @relation(fields: [businessUnitId], references: [id], onDelete: Cascade)
-
-  @@id([areaId, businessUnitId])
-  @@index([businessUnitId])
-}
-
-model AreaEstablishment {
-  areaId          String
-  establishmentId String
-
-  area          Area          @relation(fields: [areaId], references: [id], onDelete: Cascade)
-  establishment Establishment @relation(fields: [establishmentId], references: [id], onDelete: Cascade)
-
-  @@id([areaId, establishmentId])
   @@index([establishmentId])
 }
 
@@ -431,33 +364,9 @@ model Sector {
   users           User[]
   employees       Employee[]
   positions       Position[]
-  areas           SectorArea[]
-  establishments  SectorEstablishment[]
   costCenterLinks CostCenterSector[]
 
   @@index([areaId])
-}
-
-model SectorArea {
-  sectorId String
-  areaId   String
-
-  sector Sector @relation(fields: [sectorId], references: [id], onDelete: Cascade)
-  area   Area   @relation(fields: [areaId], references: [id], onDelete: Cascade)
-
-  @@id([sectorId, areaId])
-  @@index([areaId])
-}
-
-model SectorEstablishment {
-  sectorId        String
-  establishmentId String
-
-  sector        Sector        @relation(fields: [sectorId], references: [id], onDelete: Cascade)
-  establishment Establishment @relation(fields: [establishmentId], references: [id], onDelete: Cascade)
-
-  @@id([sectorId, establishmentId])
-  @@index([establishmentId])
 }
 
 model CostCenter {
