@@ -1,0 +1,88 @@
+name: CI
+
+# CI de validacion (no de despliegue): no hace deploy, no corre migraciones
+# contra ninguna base real, y no usa secretos reales. Ver
+# docs/DEVOPS_DEPLOYMENT_STANDARDS.md para el detalle de que valida cada job,
+# cuando corre, y que correr localmente antes de subir cambios.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: Backend (validate, typecheck, test, build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      # Valores ficticios, solo para que Prisma pueda resolver el schema y
+      # para que los modulos que leen la configuracion no fallen al importarse
+      # en los tests. Ninguno de estos valores conecta a una base real ni
+      # habilita nada en produccion. Los tests de este proyecto mockean Prisma
+      # (vi.mock) y no abren conexion real a ninguna base de datos.
+      DATABASE_URL: "postgresql://ci:ci@localhost:5432/ci_dummy?schema=public"
+      JWT_ACCESS_SECRET: "ci-placeholder-access-secret-not-real"
+      JWT_REFRESH_SECRET: "ci-placeholder-refresh-secret-not-real"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Prisma validate
+        run: npx prisma validate
+
+      - name: Prisma generate
+        run: npx prisma generate
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm run test
+
+      - name: Build
+        run: npm run build
+
+  frontend:
+    name: Frontend (test, build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Test
+        run: npm run test
+
+      # No hay script "typecheck" separado en el frontend: el build ya corre
+      # "tsc -b" antes de "vite build", asi que el chequeo de tipos queda
+      # cubierto por este mismo paso.
+      - name: Build (incluye typecheck via tsc -b)
+        run: npm run build
