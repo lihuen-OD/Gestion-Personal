@@ -1,4 +1,26 @@
 # Enterprise UI Design System
+
+## This project's real screens (added 2026-08, do not remove)
+
+The sections below are a generic design-system template shared across projects and still contain generic examples (insurance, asset management, etc.) — treat those as illustrations of the *pattern*, not as this project's actual content. This project's real screens, under `frontend/src/pages`, are:
+
+* **Dashboard** — home KPIs and indicators (`DashboardPage.tsx`).
+* **Legajos** — employee list/detail/create, with tabs for contact, address, transport, labor data, assignments, documents, field history (`EmployeesPage.tsx`, `EmployeeDetailPage.tsx`, `EmployeeCreatePage.tsx`).
+* **Carga Horaria / Horas** — period review, approval, export (`HoursPage.tsx`, `EmployeeHoursPage.tsx`).
+* **Asistencia** — attendance summary and observations (`AttendancePage.tsx`).
+* **Fichador** — public, unauthenticated time-clock kiosk UI, by name search + photo/DNI (`TimeClockPage.tsx`).
+* **Turnos** — shift templates, assignment, alerts (`ShiftsPage.tsx`, `ShiftDetailPage.tsx`, `ShiftAlertsPage.tsx`, `ShiftCreatePage.tsx`).
+* **Novedades** — novelty create/approve/reject workflow, novelty types config (`NoveltiesPage.tsx`, `NoveltyTypesPage.tsx`, `NoveltyTypeDetailPage.tsx`).
+* **Documentación** — document list/upload/category config (`DocumentsPage.tsx`, `DocumentCategoriesPage.tsx`).
+* **Puestos** — positions, salary ranges, work conditions (`PuestosPage.tsx`, `PuestoDetailPage.tsx`, `PuestoCreatePage.tsx`).
+* **Organigramas** — org chart (`OrganigramasPage.tsx`).
+* **Auditoría** — audit log viewer, RRHH-only (`AuditPage.tsx`, `AuditParametersPage.tsx`).
+* **Usuarios** — user/role admin (`UsersPage.tsx`).
+* **Estructura Organizacional** — company/business-unit/establishment/area/sector/cost-center (`OrgStructurePage.tsx`).
+* **Horas especiales / Conceptos horarios**, **Cierres mensuales**, **Exportación Finnegans**, **Notificaciones**, **Reportes**, **Configuración** — see `frontend/src/pages` for the corresponding file.
+
+Match the reference UI system below for all of these — same sidebar/topbar/card/table/form/badge/spacing conventions — not a new visual identity per screen.
+
 ## Mandatory visual reference
 
 This project must follow the reference UI images located in:
@@ -1124,6 +1146,8 @@ A table in the asset system must look like a table in the employee system.
 ---
 
 ## 24. Frontend Development Rules
+
+**Note (added 2026-08-18): this section is generic template guidance for a frontend-only/mock starting phase. It does not describe this project.** This project already has a real backend (Express/Prisma/PostgreSQL, 21 modules) and the frontend already consumes it through real `*ApiService` clients — see `docs/PROJECT_CONTEXT.md` and `docs/BACKEND_API_CONTRACTS.md`. Do not use this section to justify adding a backend, a database, or mock services to this project; it only applies verbatim when this doc kit is reused to bootstrap a new, genuinely frontend-only project.
 
 When building frontend-only projects:
 

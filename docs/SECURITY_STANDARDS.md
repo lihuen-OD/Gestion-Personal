@@ -49,6 +49,14 @@ Check:
 - ownership is validated
 - permissions are not only hidden in the UI
 
+## Public clock endpoints (fichador)
+
+`POST /time-entries/clock/*` and `GET /time-entries/clock/employees` are intentionally unauthenticated (public kiosk flow). Because of that:
+- they carry their own rate limiter (`CLOCK_RATE_LIMIT_*` env vars), separate from the global API limiter
+- `GET /clock/employees` only returns `ACTIVO` employees, never inactive/terminated ones
+- **`faceValidationStatus` on the photo-punch endpoint is a client-reported result (MediaPipe running in the browser), not a server-side biometric verification.** The backend only checks that the client claims a valid detection — it never re-validates the uploaded photo against the employee's identity. Treat it as an anti-mistake UX signal, not a security control, until real server-side face matching is implemented.
+- idempotency for the photo-punch path is enforced via `ClockPunchAttempt.requestId` (unique); the legacy DNI/employee-id clock-in/out paths have no request-level idempotency key, but concurrent double-submits are still blocked at the database level by the partial unique index `WorkShift_one_open_per_employee` (mapped to a clean 409, not a 500)
+
 ## Input validation
 
 Validate:

@@ -62,6 +62,22 @@ If a document does not exist, continue with the best available context and menti
 - Do not ignore build, types, tests or lint errors.
 - Do not create overengineered solutions.
 
+## Rules added after the 2026-08 technical audit and subsequent sanitization stages
+
+- `docs/PROJECT_CONTEXT.md` and `docs/PROJECT_UI_CONTEXT.md` have gone stale before (they described a frontend-only/mock system after a real backend already existed). Verify their claims against `ls backend/src/modules` / `ls frontend/src` before following them; if they contradict the code, follow the code and flag the doc as stale.
+- A new `backend/src/modules/<name>` must be documented in `docs/BACKEND_API_CONTRACTS.md` and `docs/ARCHITECTURE_STANDARDS.md` in the same change.
+- Changes to `employees`, `time-entries`, `novelties` or `auth` business logic require an accompanying test (mock the repository layer with `vi.mock`, follow the existing `*.service.test.ts` files as a pattern).
+- Before creating a new frontend `*MockService.ts`, check whether a real `*ApiService` already covers it, and whether any existing mock with the same purpose has zero real importers.
+- Do not bypass a module's repository layer with direct `prisma.*` calls from its service.
+- Do not add a new cache mechanism without checking the existing frontend (`services/cache`) and backend (`shared/cache`) systems first.
+- Every public/unauthenticated endpoint needs its own rate limiting, not just the global API limiter.
+- Do not reimplement date/time/timezone math per module — `backend/src/shared/datetime/argentinaTime.ts` is the single shared helper; reuse it. Real instants are stored as `TIMESTAMPTZ`, calendar-only fields as `@db.Date` (see `docs/DATABASE_STANDARDS.md`).
+- The organizational hierarchy (`Company → BusinessUnit → Establishment → Area → Sector`) is a singular-FK chain; never add a second parent FK to any of those five models. `CostCenter`'s many-to-many join tables against that chain are the sole approved exception (see `docs/DATABASE_STANDARDS.md`).
+- `Position.sectorId` is the only source of a position's location and `PositionSalaryCategory` is the only source of its salary category/categories — do not reintroduce a denormalized location field or a single "suggested category" field on `Position`.
+- Authorship fields (`createdByUserId`, `approvedByUserId`, `uploadedByUserId`, etc.) are real FKs to `User` with `onDelete: SetNull`. Never `Cascade` from `User` to a historical record, and never delete a `User` row that has related history.
+- `.github/workflows/ci.yml` validates backend/frontend (typecheck, test, build) on every push to `main` and every pull request — see `docs/DEVOPS_DEPLOYMENT_STANDARDS.md`. Run the same commands locally before pushing; a failing run must be fixed, not bypassed.
+- Before starting a large feature (a new module, or anything touching `schema.prisma`), produce analysis and a plan first; implement only after that plan is agreed, and close the feature with tests plus a green `typecheck`/`test`/`build` and a validation summary.
+
 ## Non-negotiable design rules
 
 Frontend work is not complete if it only compiles.

@@ -4,7 +4,7 @@
 
 Este documento resume los contratos HTTP actuales del backend real.
 
-El objetivo es que el frontend pueda empezar a reemplazar mocks por servicios API de forma incremental, sin cambiar flujos de negocio de golpe.
+El frontend ya consume estos contratos de forma real a través de sus `*ApiService`; la migración de mocks a backend real está cerrada. Este documento existe para que cualquier cambio de contrato (nuevo endpoint, campo agregado/removido, query param nuevo) se documente en el mismo cambio que lo introduce, antes de que el código y el documento diverjan.
 
 ## Base local
 
@@ -680,14 +680,13 @@ Query de listado:
 ```txt
 search
 status
-businessUnitName
-establishmentName
-areaDepartment
-sector
+sectorId
 salaryRangeCategory
 take
 page
 ```
+
+`sectorId` es la única fuente de ubicación de un puesto (no existen `businessUnitName`/`establishmentName`/`areaDepartment`/`sector` como query params ni como columnas de `Position` — fueron eliminados en la limpieza final de Position, ver `docs/DATABASE_STANDARDS.md`). El body de creación/edición usa `sectorId` y `salaryCategoryIds` (array de IDs contra `PositionSalaryCategory`), no un único "suggested category".
 
 `GET /api/positions/:id/employees` devuelve los legajos activos asignados al puesto para la solapa de personas asignadas, incluyendo legajo, nombre, empresas, sector, centro de costo, categoria interna y estado.
 
@@ -758,7 +757,7 @@ Rechazo:
 }
 ```
 
-## Carga horaria
+## Carga horaria — CRUD y flujo de aprobación
 
 ### Listar
 
@@ -885,7 +884,7 @@ Reglas:
 - Las pantallas de listado no deben pedir `/api/employees` solo para mostrar legajo/persona.
 - El listado debe mantenerse paginado; las subidas de documentos pueden cargar legajos bajo demanda al abrir el modal.
 
-## Carga horaria
+## Carga horaria — listados y resúmenes
 
 ### Listar cargas
 
@@ -1082,18 +1081,70 @@ Acciones críticas ya auditadas:
 - contacto;
 - domicilio;
 - transporte;
-- documentos;
+- documentos (incluye descarga/visualización, acción `EXPORT`);
 - movimientos laborales;
 - asignaciones;
 - horas habilitadas;
-- novedades;
+- novedades (incluye aprobación/rechazo);
 - carga horaria;
+- cierres mensuales (envío, aprobación, devolución) y correcciones de horas (creación, aprobación, rechazo) — `workforceService`;
+- login (éxito y fallo, acción `LOGIN`) y accesos denegados/403 (acción `REJECT`);
 - exportaciones;
 - catálogos principales.
 
+## Módulos agregados (2026-08)
+
+Estos 5 módulos existen y están en uso real, pero no tenían sección en este documento. Rutas confirmadas contra `backend/src/modules/*/*.routes.ts` — ver el código fuente de cada uno para el detalle exacto de payloads/respuestas.
+
+### Turnos (`shifts`, montado en `/api/shifts`)
+
+Todas las rutas requieren `requireAuth`.
+
+| Método | Ruta | Rol | Descripción |
+|---|---|---|---|
+| GET | `/assignments` | RRHH/Supervisión/Carga Horaria | Listar asignaciones de turno |
+| POST | `/assignments` | RRHH | Asignar turno a un empleado |
+| PATCH | `/assignments/:id` | RRHH | Editar una asignación |
+| DELETE | `/assignments/:id` | RRHH | Quitar una asignación |
+| GET | `/alerts` | RRHH/Supervisión/Carga Horaria | Listar alertas de jornada abierta/vencida |
+| POST | `/alerts/:id/resolve` | RRHH/Supervisión | Resolver una alerta |
+
+### Gestión de fuerza laboral (`workforce-management`, montado en `/api/workforce`)
+
+Todas las rutas requieren `requireAuth`.
+
+| Método | Ruta | Rol | Descripción |
+|---|---|---|---|
+| GET | `/closures` | todos los operativos | Cierres mensuales por período |
+| POST | `/closures/submit` | Supervisión/Carga Horaria | Enviar cierre a aprobación |
+| POST | `/closures/approve` | RRHH | Aprobar cierres en lote |
+| POST | `/closures/:id/return` | RRHH | Devolver un cierre |
+| GET / POST | `/corrections`, `/corrections/:id/approve`, `/corrections/:id/reject` | según rol | Solicitudes de corrección de horas |
+| GET / POST | `/notifications`, `/notifications/:id/read`, `/notifications-unread-count` | todos | Notificaciones internas del sistema |
+| GET / POST / PATCH / DELETE | `/shift-templates*` | RRHH (escritura) | Plantillas de turno |
+| GET / POST / PATCH / DELETE | `/double-hour-rules*` | RRHH (escritura) | Reglas de horas dobles |
+
+### Dashboard (`dashboard`, montado en `/api/dashboard`)
+
+`GET /` (requiere auth) — métricas agregadas del home (empleados, altas/bajas, novedades, pendientes de carga horaria, alertas documentales, etc.). Cacheado ~30s en backend, ver `backend/src/modules/dashboard/dashboard.cache.ts`.
+
+### Storage (`storage`, montado en `/api/storage`)
+
+Capa compartida de archivos (documentos, evidencia fotográfica del fichador). Todas las rutas requieren `requireAuth`.
+
+| Método | Ruta | Rol | Descripción |
+|---|---|---|---|
+| GET | `/files/:id` | RRHH/Supervisión/Carga Horaria | Metadata del archivo (audita `EXPORT`) |
+| GET | `/files/:id/preview` | idem | Preview inline (mismo handler que download) |
+| GET | `/files/:id/download` | idem | Descarga (audita `EXPORT`) |
+| DELETE | `/files/:id` | RRHH | Archivar/eliminar (audita `DELETE`) |
+
+### Health (`health`, montado en `/api/health`)
+
+`GET /` — healthcheck (sin auth). `GET /performance` — métricas de performance del proceso (sin auth). Uso operativo/monitoreo, no de negocio.
+
 ## Pendientes técnicos de contrato
 
-- Document upload real: falta storage privado y endpoint multipart/presigned URL.
 - Paginación avanzada: varios listados críticos ya soportan `page`, `take` y `meta`; falta extenderlo al resto de catálogos y evaluar cursor pagination para volúmenes muy altos.
-- Refresh tokens: el backend tiene configuración preparada, pero el flujo expuesto actual usa access token.
 - XLSX backend: hoy exportaciones CSV/JSON; el frontend puede generar XLSX o se puede sumar streaming XLSX después.
+- Nota (2026-08): los ítems "document upload real" y "refresh tokens" que estaban listados aquí ya están implementados (`POST /employees/:id/documents` vía storage managed upload; `POST /auth/refresh`) — se removieron de esta lista porque ya no son pendientes.

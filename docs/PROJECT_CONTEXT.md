@@ -12,7 +12,7 @@ The objective of this project is to build an internal enterprise system to centr
 
 The system is intended to replace fragmented Excel/Google Sheets workflows with a structured, scalable and auditable application.
 
-The current phase focuses only on the frontend experience, using mock data and localStorage. The goal is to validate the visual design, business flows, relationships between modules and user experience before implementing a real backend or database.
+**Current state (updated after the 2026-08 technical audit): the system is no longer a frontend-only/mock prototype.** There is a real, production backend (Node/Express + TypeScript + Prisma + PostgreSQL, 21 modules under `backend/src/modules`) that the frontend consumes over HTTP. It includes JWT auth, backend-enforced role/employee-scope permissions, a real audit log, file storage (Google Drive/Cloudinary/local), and a public unauthenticated fichador (time clock) flow. A handful of `*MockService.ts` files remain in `frontend/src/services` as leftovers from the original mock-only phase — they are legacy, not the current data source, and most have already been removed once confirmed unused (see `docs/BACKEND_API_CONTRACTS.md` for the real endpoints). Before assuming any part of the system is "mock only", check `backend/src/modules` and `frontend/src/services/api` first.
 
 ## Users and roles
 
@@ -32,7 +32,7 @@ Can:
 * View dashboards and global indicators.
 * Access audit and event history.
 * Review, approve and correct working hour records.
-* Configure system mock data and administrative catalogs.
+* Configure administrative catalogs (org structure, positions, salary categories, hour concepts, novelty types, document categories, audit parameters).
 
 ### Nivel 2 - Supervisión / Gestión
 
@@ -93,7 +93,7 @@ Must show:
 * Transport indicators.
 * Distribution by company, establishment, cost center, sector, category and position.
 
-Dashboard data must come from mock/localStorage services, not from isolated hardcoded numbers.
+Dashboard data must come from the real backend (`GET /dashboard`, backend-computed from Prisma queries — see "Main business rules" below), not from isolated hardcoded numbers or mock/localStorage services.
 
 ### 2. Legajos / Personas
 
@@ -142,7 +142,7 @@ Must include:
 * Jornada laboral
 * Turno habitual
 
-These fields must not be plain text if the value exists in a main catalog or module. They must be selected from centralized mock services.
+These fields must not be plain text if the value exists in a main catalog or module. They must be selected from the real backend catalogs (`org-structure`, `positions`, `salary-categories` — see `docs/BACKEND_API_CONTRACTS.md`), not typed as free text or sourced from a mock service.
 
 Alta/Baja laboral must be handled as a single block, not as independent fields.
 
@@ -169,12 +169,9 @@ A position is not free text. It is an entity selected from the employee file.
 
 The position module must include:
 
-* Position name
-* Area/department
-* Sector
-* Reports to
-* Supervises
-* Suggested category
+* Position name / code / status
+* Sector (`sectorId`) — this is the official source of a position's location; area, establishment, business unit and company are derived from the sector's hierarchy, not stored redundantly on Position (see `docs/DATABASE_STANDARDS.md`)
+* Salary categories, via `PositionSalaryCategory` (a position can have more than one associated category; there is no single "suggested category" field)
 * Mission/purpose
 * Responsibilities
 * Internal/external relations
@@ -183,6 +180,8 @@ The position module must include:
 * Performance indicators
 * Evaluation criteria
 * Assigned people
+
+There is no `reportsTo`/"supervises" field on Position today — organizational reporting lines are not modeled at the position level.
 
 The “Assigned people” tab must read employees from the Legajos module.
 
@@ -199,7 +198,7 @@ The organizational structure must support:
 * Categoría de recibo
 * Categoría interna
 
-These values must be managed as selectable data through centralized mocks/services.
+These values must be managed as selectable data through the real `org-structure` backend module (`GET/POST/PATCH /api/org-structure/*`), not mocks. Company → BusinessUnit → Establishment → Area → Sector is a singular-FK chain (each level references exactly one parent); only CostCenter uses real many-to-many join tables against the other five, because it is a genuine cross-cutting tag, not a duplicate of an existing FK (see `docs/DATABASE_STANDARDS.md`).
 
 They must feed:
 
@@ -339,7 +338,7 @@ Must support:
 
 * Document type
 * Document name
-* Upload/mock file
+* Upload file (real storage backend: Google Drive/Cloudinary/local — see `docs/BACKEND_API_CONTRACTS.md` → Documentos/Storage)
 * Expiration date if applicable
 * Status
 * Observations
@@ -394,6 +393,20 @@ Must support:
 
 Domicilio must be handled as a single block history, not field-by-field.
 
+### Modules implemented since this list was written
+
+The backend has 21 modules under `backend/src/modules`. The following exist and are in production use but were missing from the numbered list above — check `backend/src/modules/<name>` and `docs/BACKEND_API_CONTRACTS.md` before assuming a module doesn't exist:
+
+* **shifts** (`shiftTemplate`, `shiftAssignment`, `shiftAlert`) — turnos: plantillas de turno, asignación a empleados, alertas de jornada abierta/vencida. Added 2026-07-23.
+* **workforce-management** — reglas de horas dobles, cierres mensuales, notificaciones internas del sistema.
+* **finnegans-export** — exportación de novedades/horas al sistema externo de liquidación de sueldos (Finnegans).
+* **audit-parameters** — configuración de qué se audita/notifica/retiene (nota: hoy es solo configuración, no controla aún el pipeline real de auditoría).
+* **salary-categories**, **hour-concepts**, **novelty-types**, **document-categories** — catálogos configurables reales (tablas, no enums) que alimentan Legajos/Novedades/Documentación.
+* **pending** — bandeja de pendientes ("Mis Pendientes") por usuario.
+* **storage** — capa de almacenamiento de archivos (Google Drive/Cloudinary/local) compartida por documentos y evidencia fotográfica del fichador.
+* **health** — endpoint de healthcheck.
+* **dashboard** — métricas agregadas del home.
+
 ## Main business rules
 
 * Legajos/Personas is the central module of the system.
@@ -407,42 +420,35 @@ Domicilio must be handled as a single block history, not field-by-field.
 * Encargado directo and Responsable de carga horaria are different concepts.
 * Carga horaria is employee-based, not cost-center-based.
 * Centro de costo is structural/reporting information, not the main access rule for time entry.
-* Dashboard indicators must be calculated from existing mock/localStorage data.
-* The system must be designed to support future backend/API integration.
-* The current phase must not create real backend, database or production APIs.
+* Dashboard indicators are calculated by the backend (`GET /dashboard`) from real Prisma queries, cached briefly (see `docs/CACHING_STRATEGY.md`).
+* The system already has a real backend/API; do not build new frontend-only mock flows for functionality the backend already implements.
+* Do not add a new `*MockService.ts` without first checking whether a real `*ApiService.ts` under `frontend/src/services/api` already covers it.
 
 ## Tech stack
 
 Frontend:
 
-* Current focus only.
-* Use the existing frontend framework of the project.
-* Use TypeScript.
-* Use reusable components.
-* Use centralized mock services.
-* Use localStorage where persistence is needed.
-* Use clean state management appropriate to the existing stack.
-* Keep architecture ready for future API replacement.
+* React 18 + TypeScript + Vite + react-router-dom.
+* No global state library — a single `AuthContext` plus page-local state.
+* `frontend/src/services/api/*ApiService.ts` are the real data layer (calls the backend over HTTP).
+* `frontend/src/services/cache` implements a stale-while-revalidate cache (LRU memory + IndexedDB) used by most API services.
+* Route-level code splitting (`React.lazy`) for every page; heavy libs (`xlsx`, `leaflet`/`react-leaflet`, `@mediapipe/tasks-vision`) are dynamically imported only where used.
 
 Backend:
 
-* Not implemented in the current phase.
-* Do not create a real backend yet.
-* Do not create real endpoints.
-* Do not introduce backend frameworks unless explicitly requested later.
+* Node.js + Express + TypeScript, under `backend/src`.
+* Modular monolith: 21 modules under `backend/src/modules`, each generally following controller → service → repository → schemas (zod) → routes.
+* JWT auth (`backend/src/modules/auth`), role/employee-scope authorization enforced server-side (`backend/src/middlewares/authorization.ts` + per-module `employeeAccessWhere`), a generic audit-log helper (`backend/src/modules/audit`), and a shared TTL cache (`backend/src/shared/cache`).
 
 Database:
 
-* Not implemented in the current phase.
-* Do not create a real database yet.
-* Do not create Prisma/Sequelize/Supabase models yet.
-* Model data in TypeScript interfaces and mock services only.
+* PostgreSQL, accessed via Prisma (`backend/prisma/schema.prisma`, 54+ models, 31+ enums).
+* Migrations live in `backend/prisma/migrations`; run `npm run prisma:migrate:dev` from `backend/` to apply new ones locally.
+* Do not model new persistent business data in frontend TypeScript interfaces/mocks — add it to the Prisma schema and a backend module instead.
 
 Deployment:
 
-* Pending.
-* Current priority is frontend validation.
-* Do not add production deployment configuration unless explicitly requested.
+* See `docs/DEVOPS_DEPLOYMENT_STANDARDS.md` and `docs/LOCAL_DEVELOPMENT.md` for the current setup.
 
 External services:
 
@@ -457,143 +463,51 @@ External services:
 
 ## Architecture notes
 
-The current architecture must prioritize frontend validation with future scalability.
-
 Required principles:
 
-* Components should not own business data directly.
-* Mock data must be centralized in services.
-* Services should be designed so they can later be replaced by API services.
+* Components should not own business data directly — fetch through the relevant `*ApiService`.
+* Business logic that must always be enforced (validation, permissions, calculations that affect payroll) belongs in the backend; frontend checks are UX-only.
 * Types/interfaces must be explicit and reusable.
 * Use IDs to connect modules.
 * Avoid hardcoded business data inside components.
-* Keep compatibility with existing localStorage data.
 * Avoid overengineering.
-* Do not build backend prematurely.
+* Reuse an existing shared service/util before writing a new one — grep for the concept first.
 
-Recommended services:
+Real data services (current, under `frontend/src/services/api`):
 
-* employeeMockService
-* positionMockService
-* organizationMockService
-* timeEntryMockService
-* noveltyMockService
-* transportMockService
-* documentMockService
-* userMockService
-* auditMockService
+* employeeApiService
+* positionApiService
+* timeEntryApiService
+* noveltyApiService
+* documentApiService / documentCategoryApiService
+* userApiService
+* auditApiService
+* orgStructureApiService, salaryCategoryApiService, hourConceptApiService, noveltyTypeApiService, shiftAssignmentApiService, and others — one per backend module, see `docs/BACKEND_API_CONTRACTS.md`.
+
+A small number of `*MockService.ts` files remain under `frontend/src/services` (legacy, pre-backend). Before adding a new one, confirm no real `*ApiService` already exists for that data, and confirm the mock you're about to touch isn't dead code (check for real importers first).
 
 ## Data model notes
 
-Important relationship fields:
+Field-level model shapes are not duplicated here — they drift from the real schema every time it changes (this section previously listed field names that had not matched the real models for several stages). For the authoritative field list of any model (`Employee`, `Position`, `TimeEntry`, `Novelty`, `EmployeeDocument`, `AuditLog`, etc.), read `backend/prisma/schema.prisma` directly; for the request/response shapes exposed over the API, read `docs/BACKEND_API_CONTRACTS.md`. Do not guess a field name from memory or from this file — grep the schema.
 
-Employee:
+A few structural decisions worth knowing before you read the schema:
 
-* employeeId
-* legajoInterno
-* legajoFinnegans
-* cuil
-* dni
-* firstName
-* lastName
-* status
-* companyId
-* businessUnitId
-* establishmentId
-* costCenterId
-* sectorId
-* positionId
-* categoryReceiptId
-* categoryInternalId
-* directManagerId
-* timeResponsibleUserId
-* address
-* transport
-* laborMovements
-* hourlyConfiguration
-* liquidationConfiguration
-
-Position:
-
-* positionId
-* positionName
-* areaDepartment
-* sectorId
-* reportsToPositionId
-* suggestedCategoryId
-* mission
-* responsibilities
-* competencies
-* indicators
-
-TimeEntry:
-
-* timeEntryId
-* employeeId
-* date
-* startTime
-* endTime
-* totalMinutes
-* hourType
-* source
-* status
-* observation
-* createdByUserId
-* updatedByUserId
-
-Novelty:
-
-* noveltyId
-* employeeId
-* type
-* dateFrom
-* dateTo
-* quantity
-* reason
-* observation
-* affectsLiquidation
-* status
-
-Document:
-
-* documentId
-* employeeId
-* documentType
-* name
-* status
-* expirationDate
-
-Audit:
-
-* auditId
-* entityType
-* entityId
-* employeeId
-* action
-* oldValue
-* newValue
-* createdAt
-* createdByUserId
+* Employee's location comes from a single `sectorId` FK; company/business unit/establishment/area are derived by walking the sector's parent chain, not stored redundantly on Employee.
+* Position's location works the same way — `sectorId` is the official source, see `docs/DATABASE_STANDARDS.md`.
+* Position's salary category is a many-to-many via `PositionSalaryCategory`, not a single field.
+* Authorship fields (`createdByUserId`, `approvedByUserId`, `uploadedByUserId`, etc.) are real optional FKs to `User` with `onDelete: SetNull` — see `docs/DATABASE_STANDARDS.md`.
 
 ## Security rules specific to this project
 
-Current phase:
+Current state (backend already enforces this — see `docs/SECURITY_STANDARDS.md`):
 
-* Security is simulated at frontend level.
-* Roles and permissions may be mocked.
-* Do not expose sensitive employee data unnecessarily in UI.
-* Respect role visibility in mock flows.
-* Audit-sensitive actions must be tracked conceptually.
-
-Future phase:
-
-* Backend must enforce permissions.
-* Frontend restrictions alone are not enough.
-* Employee personal data must be protected.
-* Biometric data must not be stored in this system.
-* If biometric integration is implemented, store only external biometric IDs and attendance events.
-* Do not store raw face images, fingerprints or biometric templates.
-* Sensitive changes must be auditable.
+* Roles and employee-scope access are enforced server-side (`backend/src/middlewares/authorization.ts` + `employeeAccessWhere` per module), not only hidden in the UI.
+* Do not expose sensitive employee data unnecessarily in UI, even though the backend already scopes it.
+* The public fichador endpoints (`/time-entries/clock/*`) are intentionally unauthenticated but carry their own rate limiter and only expose active employees — see `docs/SECURITY_STANDARDS.md` → "Public clock endpoints".
+* Face-liveness validation on the photo-punch flow is client-reported (MediaPipe in the browser), not a server-side biometric verification — do not treat it as a security control.
+* Sensitive changes (employee edits, time-entry corrections, novelty approvals, monthly closures, correction requests, login, permission-denied attempts, document access) go through `auditService.register` — see `backend/src/modules/audit`.
+* Employee documents/photos are stored via the storage module (Google Drive/Cloudinary/local) with server-side mime/extension/size validation; do not bypass it with ad-hoc upload handling.
+* Biometric data: only face-detection metadata (status/score) and the punch photo evidence itself are stored; no raw biometric templates.
 
 ## Important flows
 
@@ -612,6 +526,8 @@ Future phase:
 2. System stores movement with effective date and reason.
 3. Employee status is calculated from movements.
 4. History and audit are updated.
+
+**Employee must never be physically deleted** (see `docs/DATABASE_STANDARDS.md` for the full rationale). "Baja" is always this status-change flow, never a `DELETE`/`prisma.employee.delete()`. Since 2026-08-14 the database enforces this too: every FK pointing at `Employee` is `onDelete: Restrict`, not `Cascade` — a physical delete would be rejected by Postgres while any related record (time entries, documents, novelties, history, etc.) exists.
 
 ### Address update
 
@@ -658,68 +574,49 @@ Future phase:
 
 ## Environment variables
 
-Current phase:
-
-```bash
-# No production environment variables required for frontend mock phase.
-```
-
-Future possible variables:
-
-```bash
-API_BASE_URL=
-BIOTIME_API_URL=
-BIOTIME_API_USERNAME=
-BIOTIME_API_PASSWORD=
-MAPS_API_KEY=
-```
+See `backend/.env.example` and `frontend/.env.example` for the real, current list (DB connection, JWT secrets, storage provider credentials, rate-limit tuning, `VITE_API_URL`, etc.). Both `.env` files are gitignored; never commit real secrets.
 
 ## Commands
 
-Install:
+Backend (`backend/`):
 
 ```bash
 npm install
-```
-
-Development:
-
-```bash
-npm run dev
-```
-
-Build:
-
-```bash
+npm run dev              # tsx watch
+npm run typecheck
+npm run test             # vitest run
 npm run build
+npm run prisma:migrate:dev
+npm run prisma:studio
 ```
 
-Test:
+Frontend (`frontend/`):
 
 ```bash
-npm test
-```
-
-Migrations:
-
-```bash
-# Not applicable in the current frontend-only phase.
+npm install
+npm run dev              # vite
+npm run test             # vitest run
+npm run build            # tsc -b && vite build
 ```
 
 ## AI-specific instructions for this project
 
-* Always read this file before making structural or functional changes.
-* Do not invent business rules.
-* Do not modify core flows without checking this file.
-* Do not create backend, database, Prisma, Sequelize, Supabase or production APIs in the current phase.
+* Always read this file before making structural or functional changes — and cross-check it against `ls backend/src/modules` / `ls frontend/src` first, since this file has previously gone stale relative to the real code.
+* Do not invent business rules, endpoints, tables or env vars without checking the codebase.
+* This system has a real backend/database/production APIs already — do not propose building them "from scratch" or treat the system as frontend-only/mock.
+* Any new `backend/src/modules/<name>` must be added, in the same change, to `docs/BACKEND_API_CONTRACTS.md` and to the module list in this file and in `docs/ARCHITECTURE_STANDARDS.md`.
 * Do not change API contracts without reviewing frontend/backend impact.
-* Do not modify future database schema without documenting migration impact.
+* Do not modify the database schema without documenting the migration and its impact; avoid schema changes that aren't strictly necessary for the task at hand.
+* No change to `employees`, `time-entries`, `novelties`, or `auth` business logic is complete without an accompanying test (see the patterns in each module's `*.service.test.ts`).
+* Before adding a new `*MockService.ts`, check whether a real `*ApiService.ts` already covers it, and whether an existing mock with the same purpose has zero real importers (in which case delete it instead of adding a parallel one).
+* Do not reimplement date/time/timezone math per module — `backend/src/shared/datetime/argentinaTime.ts` is the single shared helper for Argentina-aware date/time handling; reuse it instead of writing a new implementation. Real instants (things that happened at a point in time, e.g. clock punches) are stored as `TIMESTAMPTZ`; calendar-only fields (e.g. a novelty's `fromDate`/`toDate`) are stored as `@db.Date`. See `docs/DATABASE_STANDARDS.md`.
+* Company → BusinessUnit → Establishment → Area → Sector is a singular-FK chain (each level has exactly one parent); do not add a second parent FK to any of these models. `CostCenter` is the one deliberate exception and uses real many-to-many join tables against the other five, because it is a cross-cutting tag, not a duplicate of an existing FK. See `docs/DATABASE_STANDARDS.md`.
+* `Position.sectorId` is the official source of a position's location, and `PositionSalaryCategory` is the official source of its salary category/categories — do not reintroduce a denormalized area/establishment/business-unit/company name or a single "suggested category" field on `Position`. See `docs/DATABASE_STANDARDS.md`.
+* Authorship fields (`createdByUserId`, `approvedByUserId`, `uploadedByUserId`, etc.) are real optional FKs to `User` with `onDelete: SetNull` — never `Cascade` from `User` to a historical record, and never delete a `User` row that has related history. See `docs/DATABASE_STANDARDS.md`.
+* Do not add a new frontend caching mechanism without checking `frontend/src/services/cache` (SWR) and `backend/src/shared/cache` (TTL) first.
+* Any public (unauthenticated) endpoint must declare its own abuse protection (rate limiting at minimum) — the global API rate limiter is not sufficient on its own.
+* CI (`.github/workflows/ci.yml`) runs backend/frontend typecheck+test+build on every push to `main` and every pull request — see `docs/DEVOPS_DEPLOYMENT_STANDARDS.md`. It never deploys and never touches a real database; a failing run must be fixed before merging.
+* Before starting any large feature (e.g. a new module like Turnos, or a schema-affecting change), do analysis + a written plan first, and only then implement; close the feature with tests, a successful `typecheck`/`test`/`build`, and a validation summary — do not skip straight to code on multi-step work.
 * Document every assumption.
-* Keep the current phase frontend-only unless explicitly instructed otherwise.
-* Use mock services and localStorage for current data persistence.
-* Centralize mocks in services.
-* Do not hardcode business data inside components.
-* Use selectors/autocomplete when a field depends on another module.
 * Preserve compatibility with existing data.
-* Prioritize professional enterprise UX.
-* The system must feel integrated, not like isolated screens.
+* Prioritize professional enterprise UX; the system must feel integrated, not like isolated screens.
