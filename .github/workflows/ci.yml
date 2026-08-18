@@ -29,6 +29,13 @@ jobs:
       DATABASE_URL: "postgresql://ci:ci@localhost:5432/ci_dummy?schema=public"
       JWT_ACCESS_SECRET: "ci-placeholder-access-secret-not-real"
       JWT_REFRESH_SECRET: "ci-placeholder-refresh-secret-not-real"
+      # Ubuntu-latest corre en UTC por defecto. Sin esto, cualquier código
+      # (o test) que use Date local en vez del helper Argentina-aware da
+      # resultados distintos que en una máquina local configurada en
+      # Argentina. Ver backend/vitest.config.ts para el mismo fix a nivel
+      # de test runner, y backend/.env.example para el mismo valor recomendado
+      # en todo entorno (local/CI/staging/producción).
+      TZ: "America/Argentina/Cordoba"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
