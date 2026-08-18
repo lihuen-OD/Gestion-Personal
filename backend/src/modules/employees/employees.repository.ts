@@ -721,6 +721,58 @@ export const employeesRepository = {
     return prisma.employee.findUnique({ where: { id }, select: employeeUpdateAuditSelect });
   },
 
+  findAssignmentsAuditSnapshot(id: string) {
+    return prisma.employee.findUniqueOrThrow({
+      where: { id },
+      select: {
+        id: true,
+        legajo: true,
+        assignments: { take: 100, include: { user: { select: { id: true, name: true, employeeId: true } } } },
+      },
+    });
+  },
+
+  findContactAuditSnapshot(id: string) {
+    return prisma.employee.findUniqueOrThrow({
+      where: { id },
+      select: {
+        id: true,
+        legajo: true,
+        email: true,
+        phone: true,
+        mobile: true,
+        emergencyContact: true,
+        emergencyRelation: true,
+        emergencyPhone: true,
+      },
+    });
+  },
+
+  findAddressAuditSnapshot(id: string) {
+    return prisma.employee.findUniqueOrThrow({
+      where: { id },
+      select: { id: true, legajo: true, address: true },
+    });
+  },
+
+  findTransportAuditSnapshot(id: string) {
+    return prisma.employee.findUniqueOrThrow({
+      where: { id },
+      select: { id: true, legajo: true, transport: true },
+    });
+  },
+
+  findHourConceptsAuditSnapshot(id: string) {
+    return prisma.employee.findUniqueOrThrow({
+      where: { id },
+      select: {
+        id: true,
+        legajo: true,
+        hourConcepts: { select: { hourConcept: { select: { id: true, code: true, name: true } } } },
+      },
+    });
+  },
+
   findOverviewById(id: string, accessWhere: Prisma.EmployeeWhereInput = {}) {
     return prisma.employee.findFirst({ where: { AND: [{ id }, accessWhere] }, select: employeeOverviewCoreSelect });
   },

@@ -359,7 +359,7 @@ export const employeesService = {
   },
 
   async replaceAssignments(id: string, input: ReplaceEmployeeAssignmentsInput, audit?: AuditContext) {
-    const before = await employeesService.getById(id);
+    const before = await execute(() => employeesRepository.findAssignmentsAuditSnapshot(id));
     const employee = await execute(() => employeesRepository.replaceAssignments(id, input.assignments));
     await auditService.register({
       ...audit,
@@ -374,7 +374,7 @@ export const employeesService = {
   },
 
   async updateContact(id: string, input: UpdateEmployeeContactInput, audit?: AuditContext) {
-    const before = await employeesService.getById(id);
+    const before = await execute(() => employeesRepository.findContactAuditSnapshot(id));
     const employee = await execute(() => employeesRepository.updateContact(id, input));
     await auditService.register({
       ...audit,
@@ -403,7 +403,7 @@ export const employeesService = {
   },
 
   async upsertAddress(id: string, input: UpsertEmployeeAddressInput, audit?: AuditContext) {
-    const before = await employeesService.getById(id);
+    const before = await execute(() => employeesRepository.findAddressAuditSnapshot(id));
     const employee = await execute(() => employeesRepository.upsertAddress(id, input));
     await auditService.register({
       ...audit,
@@ -418,7 +418,7 @@ export const employeesService = {
   },
 
   async upsertTransport(id: string, input: UpsertEmployeeTransportInput, audit?: AuditContext) {
-    const before = await employeesService.getById(id);
+    const before = await execute(() => employeesRepository.findTransportAuditSnapshot(id));
     const employee = await execute(() => employeesRepository.upsertTransport(id, input));
     await auditService.register({
       ...audit,
@@ -433,7 +433,7 @@ export const employeesService = {
   },
 
   async replaceHourConcepts(id: string, input: ReplaceEmployeeHourConceptsInput, audit?: AuditContext) {
-    const before = await employeesService.getById(id);
+    const before = await execute(() => employeesRepository.findHourConceptsAuditSnapshot(id));
     const employee = await execute(() => employeesRepository.replaceHourConcepts(id, input.hourConceptIds));
     await auditService.register({
       ...audit,

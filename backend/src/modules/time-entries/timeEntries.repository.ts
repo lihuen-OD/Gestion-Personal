@@ -72,16 +72,6 @@ function punchEvidenceData(evidence?: PunchEvidenceInput) {
   };
 }
 
-function periodFromDate(date: Date) {
-  const year = date.getUTCFullYear();
-  const month = String(date.getUTCMonth() + 1).padStart(2, "0");
-  return `${year}-${month}`;
-}
-
-function dayFromDate(date: Date) {
-  return date.getUTCDate();
-}
-
 function minutesFromHours(hours: number) {
   return Math.round(hours * 60);
 }
@@ -985,29 +975,41 @@ export const timeEntriesRepository = {
       include: { hourConcept: true },
     });
     const expired = candidates.filter((shift) => now.getTime() - shift.startAt.getTime() > shift.maxAllowedMinutes * 60_000);
+
+    const resolvedConcepts = await Promise.all(
+      expired.map((shift) =>
+        shift.hourConcept
+          ? Promise.resolve(shift.hourConcept)
+          : prisma.employeeHourConcept
+              .findFirst({
+                where: { employeeId: shift.employeeId, hourConcept: { kind: "NORMAL", status: "ACTIVO" } },
+                include: { hourConcept: true },
+              })
+              .then((row) => row?.hourConcept ?? null),
+      ),
+    );
+
+    const observation = "0 h — Falta registrar la salida. La jornada venció y requiere revisión del encargado.";
     let count = 0;
     const items: Array<{ employeeId: string; workShiftId: string }> = [];
-    for (const shift of expired) {
-      const concept = shift.hourConcept || (await prisma.employeeHourConcept.findFirst({
-        where: { employeeId: shift.employeeId, hourConcept: { kind: "NORMAL", status: "ACTIVO" } },
-        include: { hourConcept: true },
-      }))?.hourConcept;
-      if (!concept) continue;
-      const observation = "0 h — Falta registrar la salida. La jornada venció y requiere revisión del encargado.";
-      const claimed = await prisma.$transaction(async (tx) => {
+
+    await prisma.$transaction(async (tx) => {
+      for (const [index, shift] of expired.entries()) {
+        const concept = resolvedConcepts[index];
+        if (!concept) continue;
         const updated = await tx.workShift.updateMany({
           where: { id: shift.id, status: WorkShiftStatus.ABIERTO, endAt: null },
           data: { status: WorkShiftStatus.FALTA_SALIDA, totalMinutes: 0, hourConceptId: concept.id, hourConceptName: concept.name, observation, closedAt: now },
         });
-        if (updated.count !== 1) return false;
+        if (updated.count !== 1) continue;
         await tx.timeEntry.create({
           data: {
             employeeId: shift.employeeId,
             hourConceptId: concept.id,
             workShiftId: shift.id,
             date: shift.startAt,
-            period: periodFromDate(shift.startAt),
-            day: dayFromDate(shift.startAt),
+            period: periodFromInstant(shift.startAt),
+            day: dayOfMonthFromInstant(shift.startAt),
             hours: 0,
             totalMinutes: 0,
             status: "APROBADO",
@@ -1016,13 +1018,11 @@ export const timeEntriesRepository = {
             observation,
           },
         });
-        return true;
-      });
-      if (claimed) {
         count += 1;
         items.push({ employeeId: shift.employeeId, workShiftId: shift.id });
       }
-    }
+    });
+
     return { count, items };
   },
 

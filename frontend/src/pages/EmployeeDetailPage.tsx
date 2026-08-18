@@ -166,18 +166,22 @@ export function EmployeeDetailPage() {
       return setNotice("Si cargás fecha de baja / egreso, debés indicar el motivo.");
     }
     try {
-      const duplicateCandidates = await employeeApiService
-        .list({ search: currentEmployee.legajoInterno, take: 10 })
-        .then((result) => result.items.filter((item) => item.id !== currentEmployee.id))
-        .catch(() => []);
+      const [duplicateCandidates, finnegansCandidates] = await Promise.all([
+        employeeApiService
+          .list({ search: currentEmployee.legajoInterno, take: 10 })
+          .then((result) => result.items.filter((item) => item.id !== currentEmployee.id))
+          .catch(() => []),
+        currentEmployee.legajoFinnegans
+          ? employeeApiService
+              .list({ search: currentEmployee.legajoFinnegans, take: 10 })
+              .then((result) => result.items.filter((item) => item.id !== currentEmployee.id))
+              .catch(() => [])
+          : Promise.resolve([]),
+      ]);
       if (duplicateCandidates.some((item) => item.legajoInterno === currentEmployee.legajoInterno)) {
         return setNotice("Ya existe un colaborador con este Legajo Interno.");
       }
       if (currentEmployee.legajoFinnegans) {
-        const finnegansCandidates = await employeeApiService
-          .list({ search: currentEmployee.legajoFinnegans, take: 10 })
-          .then((result) => result.items.filter((item) => item.id !== currentEmployee.id))
-          .catch(() => []);
         if (finnegansCandidates.some((item) => item.legajoFinnegans === currentEmployee.legajoFinnegans)) {
           return setNotice("Ya existe un colaborador con este Legajo Finnegans.");
         }
