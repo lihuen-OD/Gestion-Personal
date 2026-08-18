@@ -2,6 +2,8 @@ import { access } from "node:fs/promises";
 import { employeeAccessWhere } from "../employees/employeeAccess";
 import { AppError } from "../../shared/errors/AppError";
 import { storageService } from "../../shared/storage/storage.service";
+import type { AuditContext } from "../audit/audit.service";
+import { auditService } from "../audit/audit.service";
 import { documentsRepository } from "./documents.repository";
 import type { ListDocumentsQuery } from "./documents.schemas";
 
@@ -19,9 +21,17 @@ export const documentsService = {
     };
   },
 
-  async download(id: string, user: Express.AuthUser) {
+  async download(id: string, user: Express.AuthUser, audit?: AuditContext) {
     const item = await documentsRepository.findById(id, employeeAccessWhere(user));
     if (!item) throw new AppError("Documento no encontrado", 404, "DOCUMENT_NOT_FOUND");
+
+    await auditService.register({
+      ...audit,
+      action: "EXPORT",
+      entity: "EmployeeDocument",
+      entityId: item.id,
+      description: `Se descargo/visualizo el documento ${item.fileName} del legajo ${item.employee.legajo}.`,
+    });
 
     const storageKey = item.storageFile?.storageKey || item.storageKey;
     const publicUrl = item.storageFile?.driveWebViewLink ? undefined : storageService.getPublicUrl(storageKey);

@@ -1,5 +1,6 @@
 import type { RequestHandler } from "express";
 import { AppError } from "../../shared/errors/AppError";
+import { requestAuditContext } from "../../shared/audit/requestAuditContext";
 import { documentsListCache } from "./documents.cache";
 import { documentsService } from "./documents.service";
 import type { ListDocumentsQuery } from "./documents.schemas";
@@ -21,7 +22,7 @@ export const documentsController = {
   download: (async (req, res) => {
     const id = req.params.id;
     if (!id) throw new AppError("Documento no encontrado", 404, "DOCUMENT_NOT_FOUND");
-    const result = await documentsService.download(id, req.user!);
+    const result = await documentsService.download(id, req.user!, requestAuditContext(req));
     if (result.kind === "redirect") {
       res.redirect(result.url);
       return;

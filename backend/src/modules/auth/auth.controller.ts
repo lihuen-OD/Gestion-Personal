@@ -1,9 +1,10 @@
 import type { RequestHandler } from "express";
+import { requestAuditContext } from "../../shared/audit/requestAuditContext";
 import { authService } from "./auth.service";
 
 export const authController = {
   login: (async (req, res) => {
-    const result = await authService.login(req.body);
+    const result = await authService.login(req.body, requestAuditContext(req));
     res.json(result);
   }) satisfies RequestHandler,
 

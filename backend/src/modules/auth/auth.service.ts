@@ -5,6 +5,8 @@ import { env } from "../../config/env";
 import { AppError } from "../../shared/errors/AppError";
 import type { LoginInput, RefreshTokenInput } from "./auth.schemas";
 import { authRepository } from "./auth.repository";
+import type { AuditContext } from "../audit/audit.service";
+import { auditService } from "../audit/audit.service";
 
 function signAccessToken(payload: { sub: string; email: string; role: string }) {
   const options: SignOptions = { expiresIn: env.JWT_ACCESS_EXPIRES_IN as SignOptions["expiresIn"] };
@@ -36,20 +38,46 @@ export function invalidateCurrentUserCache(userId?: string | null) {
 }
 
 export const authService = {
-  async login(input: LoginInput) {
-    const user = await authRepository.findByEmailWithPassword(input.email.toLowerCase().trim());
+  async login(input: LoginInput, audit?: AuditContext) {
+    const email = input.email.toLowerCase().trim();
+    const user = await authRepository.findByEmailWithPassword(email);
 
     if (!user || user.status !== "ACTIVO") {
+      await auditService.register({
+        ...audit,
+        userId: null,
+        action: "LOGIN",
+        entity: "User",
+        entityId: null,
+        description: `Intento de inicio de sesion fallido para ${email}.`,
+      });
       throw new AppError("Invalid email or password", 401, "INVALID_CREDENTIALS");
     }
 
     const validPassword = await bcrypt.compare(input.password, user.passwordHash);
     if (!validPassword) {
+      await auditService.register({
+        ...audit,
+        userId: null,
+        action: "LOGIN",
+        entity: "User",
+        entityId: user.id,
+        description: `Intento de inicio de sesion fallido para ${email}.`,
+      });
       throw new AppError("Invalid email or password", 401, "INVALID_CREDENTIALS");
     }
 
     const tokens = issueTokens(user);
     const { passwordHash: _passwordHash, ...safeUser } = user;
+
+    await auditService.register({
+      ...audit,
+      userId: user.id,
+      action: "LOGIN",
+      entity: "User",
+      entityId: user.id,
+      description: "Inicio de sesion exitoso.",
+    });
 
     return { user: safeUser, ...tokens };
   },
