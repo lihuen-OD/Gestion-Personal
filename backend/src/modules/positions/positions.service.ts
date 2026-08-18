@@ -9,7 +9,7 @@ function mapPrismaError(error: unknown) {
   if (error instanceof Prisma.PrismaClientKnownRequestError) {
     if (error.code === "P2002") throw new AppError("Position code already exists", 409, "POSITION_UNIQUE_CONSTRAINT");
     if (error.code === "P2025") throw new AppError("Position not found", 404, "POSITION_NOT_FOUND");
-    if (error.code === "P2003") throw new AppError("Related area or sector not found", 400, "POSITION_RELATION_CONSTRAINT");
+    if (error.code === "P2003") throw new AppError("Related sector or salary category not found", 400, "POSITION_RELATION_CONSTRAINT");
   }
   throw error;
 }

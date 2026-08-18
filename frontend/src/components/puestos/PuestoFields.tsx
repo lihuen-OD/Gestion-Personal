@@ -12,23 +12,34 @@ export function PuestoSelect({ label, value, onChange, options, disabled = false
   return <label>{label}<select disabled={disabled} value={value} onChange={(event) => onChange(event.target.value)}><option value="">Seleccionar</option>{options.map((option) => <option key={option}>{option}</option>)}</select></label>;
 }
 
+export function PuestoIdSelect({ label, value, onChange, options, disabled = false, placeholder = "Sin asignar" }: { label: string; value: string | undefined; onChange: (id: string | undefined) => void; options: Array<{ id: string; name: string }>; disabled?: boolean; placeholder?: string }) {
+  return <label>{label}<select disabled={disabled} value={value || ""} onChange={(event) => onChange(event.target.value || undefined)}>
+    <option value="">{placeholder}</option>
+    {options.map((option) => <option key={option.id} value={option.id}>{option.name}</option>)}
+  </select></label>;
+}
+
+export function PuestoDerivedField({ label, value }: { label: string; value: string }) {
+  return <label>{label}<input disabled value={value || "Se completa segun el sector"} /></label>;
+}
+
 export function emptyPosition(): Omit<Position, "id" | "history" | "createdAt" | "updatedAt"> {
   return {
     code: "",
     name: "",
-    areaDepartment: "",
-    sector: "",
     reportsTo: "",
     supervises: "",
     location: "",
     lastUpdatedAt: new Date().toISOString().slice(0, 10),
     status: "ACTIVO",
-    businessUnitName: "",
-    businessUnitNames: [],
-    establishmentName: "",
-    establishmentNames: [],
-    sectorNames: [],
-    salaryRangeCategories: [],
+    sectorId: undefined,
+    derivedSectorName: "",
+    derivedAreaName: "",
+    derivedEstablishmentName: "",
+    derivedBusinessUnitName: "",
+    derivedCompanyName: "",
+    salaryCategoryIds: [],
+    salaryCategoryNames: [],
     mission: "",
     responsibilities: [],
     internalRelations: [],

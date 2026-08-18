@@ -297,7 +297,7 @@ export function EmployeePositionField({ employee, canEdit, user, onSaved }: Trac
       <div className="tracked-main" onClick={() => setOpen(!open)}>
         <small>Puesto</small>
         <b>{current?.name || employee.puestoNombre || employee.position || "Sin cargar"}</b>
-        <span>{current ? `${current.areaDepartment} · ${current.sector}` : "Texto anterior sin vinculo"}</span>
+        <span>{current ? `${current.derivedAreaName || "Sin area"} · ${current.derivedSectorName || "Sin sector"}` : "Texto anterior sin vinculo"}</span>
       </div>
       <div className="tracked-actions">
         <button type="button" className="button subtle" onClick={() => setOpen(!open)}>

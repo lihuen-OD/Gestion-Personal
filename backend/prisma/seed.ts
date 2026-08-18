@@ -316,7 +316,6 @@ async function main() {
     create: {
       code: "PUESTO-RRHH-ADMIN",
       name: "Administrativo RRHH",
-      areaId: area.id,
       sectorId: sector.id,
       mission: "Gestionar informacion administrativa del personal.",
     },

@@ -98,10 +98,8 @@ function normalizeEmployee(employee: Partial<Employee> & Record<string, unknown>
 function normalizePosition(position: Partial<Position> & Record<string, unknown>): Position {
   return {
     ...position,
-    businessUnitNames: Array.isArray(position.businessUnitNames) ? position.businessUnitNames.map(String) : [String(position.businessUnitName || "")].filter(Boolean),
-    establishmentNames: Array.isArray(position.establishmentNames) ? position.establishmentNames.map(String) : [String(position.establishmentName || "")].filter(Boolean),
-    sectorNames: Array.isArray(position.sectorNames) ? position.sectorNames.map(String) : [String(position.sector || "")].filter(Boolean),
-    salaryRangeCategories: Array.isArray(position.salaryRangeCategories) ? position.salaryRangeCategories.map(String) : [],
+    salaryCategoryIds: Array.isArray(position.salaryCategoryIds) ? position.salaryCategoryIds.map(String) : [],
+    salaryCategoryNames: Array.isArray(position.salaryCategoryNames) ? position.salaryCategoryNames.map(String) : [],
   } as Position;
 }
 

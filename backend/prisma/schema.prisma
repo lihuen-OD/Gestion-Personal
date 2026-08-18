@@ -345,7 +345,6 @@ model Area {
 
   establishment   Establishment?      @relation(fields: [establishmentId], references: [id])
   sectors         Sector[]
-  positions       Position[]
   costCenterLinks CostCenterArea[]
 
   @@index([establishmentId])
@@ -461,15 +460,7 @@ model Position {
   status                RecordStatus @default(ACTIVO)
   mission               String?
   description           String?
-  areaDepartment        String?
-  sectorName            String?
-  businessUnitName      String?
-  establishmentName     String?
   lastUpdatedAt         DateTime? @db.Timestamptz(3)
-  businessUnitNames     Json?
-  establishmentNames    Json?
-  sectorNames           Json?
-  salaryRangeCategories Json?
   responsibilities      Json?
   internalRelations     Json?
   externalRelations     Json?
@@ -477,20 +468,16 @@ model Position {
   workConditions        Json?
   performanceIndicators Json?
   evaluationCriteria    Json?
-  areaId                String?
   sectorId              String?
   createdAt             DateTime @default(now()) @db.Timestamptz(3)
   updatedAt             DateTime @updatedAt @db.Timestamptz(3)
 
-  area             Area?                    @relation(fields: [areaId], references: [id])
   sector           Sector?                  @relation(fields: [sectorId], references: [id])
   employees        Employee[]
   salaryCategories PositionSalaryCategory[]
 
-  @@index([areaId])
   @@index([sectorId])
   @@index([status])
-  @@index([areaId, sectorId])
 }
 
 model PositionSalaryCategory {

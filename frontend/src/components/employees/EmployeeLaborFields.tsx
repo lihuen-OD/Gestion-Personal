@@ -51,22 +51,19 @@ function selectedEmployeePosition(employee: Employee, positions: Position[]) {
   );
 }
 
-function positionAllowedValues(
+/**
+ * Fuente oficial desde el saneamiento de Puestos (2026-08-18): la cadena real
+ * derivada de Position.sectorId (derivedBusinessUnitName/derivedEstablishmentName/
+ * derivedSectorName), no los strings/JSON legado ya eliminados del esquema.
+ */
+export function positionAllowedValues(
   position: ReturnType<typeof selectedEmployeePosition>,
   field: "businessUnit" | "establishment" | "sector",
 ) {
   if (!position) return [];
-  if (field === "businessUnit") {
-    return position.businessUnitNames?.length
-      ? position.businessUnitNames
-      : ([position.businessUnitName].filter(Boolean) as string[]);
-  }
-  if (field === "establishment") {
-    return position.establishmentNames?.length
-      ? position.establishmentNames
-      : ([position.establishmentName].filter(Boolean) as string[]);
-  }
-  return position.sectorNames?.length ? position.sectorNames : ([position.sector].filter(Boolean) as string[]);
+  if (field === "businessUnit") return position.derivedBusinessUnitName ? [position.derivedBusinessUnitName] : [];
+  if (field === "establishment") return position.derivedEstablishmentName ? [position.derivedEstablishmentName] : [];
+  return position.derivedSectorName ? [position.derivedSectorName] : [];
 }
 
 export function CompanyMultiCreateField({

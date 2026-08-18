@@ -3,6 +3,21 @@ import { cachePolicies, cachedData, invalidateCacheFamily } from "../cache";
 import type { Employee } from "../../types";
 import type { Position, PositionFilters, PositionStatus } from "../../types/position.types";
 
+type ApiSectorChain = {
+  id: string;
+  name: string;
+  area?: {
+    id: string;
+    name: string;
+    establishment?: {
+      id: string;
+      name: string;
+      businessUnit?: { id: string; name: string } | null;
+      company?: { id: string; name: string } | null;
+    } | null;
+  } | null;
+};
+
 type ApiPosition = {
   id: string;
   code: string;
@@ -10,15 +25,7 @@ type ApiPosition = {
   status: PositionStatus;
   mission?: string | null;
   description?: string | null;
-  areaDepartment?: string | null;
-  sectorName?: string | null;
-  businessUnitName?: string | null;
-  establishmentName?: string | null;
   lastUpdatedAt?: string | null;
-  businessUnitNames?: unknown;
-  establishmentNames?: unknown;
-  sectorNames?: unknown;
-  salaryRangeCategories?: unknown;
   responsibilities?: unknown;
   internalRelations?: unknown;
   externalRelations?: unknown;
@@ -26,6 +33,9 @@ type ApiPosition = {
   workConditions?: unknown;
   performanceIndicators?: unknown;
   evaluationCriteria?: unknown;
+  sectorId?: string | null;
+  sector?: ApiSectorChain | null;
+  salaryCategories?: Array<{ salaryCategory: { id: string; name: string; order: number } }>;
   createdAt: string;
   updatedAt: string;
   _count?: { employees?: number };
@@ -53,25 +63,31 @@ type ApiAssignedEmployee = {
 
 type ApiAssignedEmployeesResponse = { data: ApiAssignedEmployee[] };
 
-const asStringArray = (value: unknown): string[] => Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 const asArray = <T>(value: unknown): T[] => Array.isArray(value) ? value as T[] : [];
 
 function mapFromApi(item: ApiPosition): Position {
+  const salaryCategories = [...(item.salaryCategories || [])]
+    .map((link) => link.salaryCategory)
+    .sort((a, b) => a.order - b.order);
   return {
     id: item.id,
     code: item.code,
     name: item.name,
     assignedCount: item._count?.employees || 0,
-    areaDepartment: item.areaDepartment || "",
-    sector: item.sectorName || "",
     lastUpdatedAt: item.lastUpdatedAt ? item.lastUpdatedAt.slice(0, 10) : item.updatedAt.slice(0, 10),
     status: item.status,
-    businessUnitName: item.businessUnitName || "",
-    businessUnitNames: asStringArray(item.businessUnitNames),
-    establishmentName: item.establishmentName || "",
-    establishmentNames: asStringArray(item.establishmentNames),
-    sectorNames: asStringArray(item.sectorNames),
-    salaryRangeCategories: asStringArray(item.salaryRangeCategories),
+    sectorId: item.sectorId || undefined,
+    derivedSectorName: item.sector?.name || "",
+    derivedAreaId: item.sector?.area?.id || undefined,
+    derivedAreaName: item.sector?.area?.name || "",
+    derivedEstablishmentId: item.sector?.area?.establishment?.id || undefined,
+    derivedEstablishmentName: item.sector?.area?.establishment?.name || "",
+    derivedBusinessUnitId: item.sector?.area?.establishment?.businessUnit?.id || undefined,
+    derivedBusinessUnitName: item.sector?.area?.establishment?.businessUnit?.name || "",
+    derivedCompanyId: item.sector?.area?.establishment?.company?.id || undefined,
+    derivedCompanyName: item.sector?.area?.establishment?.company?.name || "",
+    salaryCategoryIds: salaryCategories.map((category) => category.id),
+    salaryCategoryNames: salaryCategories.map((category) => category.name),
     mission: item.mission || "",
     responsibilities: asArray(item.responsibilities),
     internalRelations: asArray(item.internalRelations),
@@ -120,15 +136,11 @@ function mapToApi(position: Position) {
     name: position.name,
     status: position.status,
     mission: position.mission || null,
-    areaDepartment: position.areaDepartment || null,
-    sector: position.sector || null,
-    businessUnitName: position.businessUnitName || position.businessUnitNames?.[0] || null,
-    establishmentName: position.establishmentName || position.establishmentNames?.[0] || null,
     lastUpdatedAt: position.lastUpdatedAt || null,
-    businessUnitNames: position.businessUnitNames || [],
-    establishmentNames: position.establishmentNames || [],
-    sectorNames: position.sectorNames || [],
-    salaryRangeCategories: position.salaryRangeCategories || [],
+    // Fuente oficial de ubicacion: sectorId (limpieza final de Position, 2026-08-18).
+    sectorId: position.sectorId || null,
+    // Fuente oficial de categoria salarial: relacion real PositionSalaryCategory.
+    salaryCategoryIds: position.salaryCategoryIds || [],
     responsibilities: position.responsibilities || [],
     internalRelations: position.internalRelations || [],
     externalRelations: position.externalRelations || [],
@@ -144,10 +156,10 @@ function toQuery(filters?: Partial<PositionFilters>) {
   params.set("take", "300");
   if (filters?.search?.trim()) params.set("search", filters.search.trim());
   if (filters?.status) params.set("status", filters.status);
-  if (filters?.businessUnitName) params.set("businessUnitName", filters.businessUnitName);
-  if (filters?.establishmentName) params.set("establishmentName", filters.establishmentName);
-  if (filters?.areaDepartment) params.set("areaDepartment", filters.areaDepartment);
-  if (filters?.sector) params.set("sector", filters.sector);
+  // businessUnitId/establishmentId/areaId todavia no tienen filtro server-side
+  // real (el backend solo resuelve sectorId); el filtrado de esos 3 niveles
+  // se hace client-side en PuestosPage contra los derivados del catalogo.
+  if (filters?.sectorId) params.set("sectorId", filters.sectorId);
   if (filters?.salaryRangeCategory) params.set("salaryRangeCategory", filters.salaryRangeCategory);
   const query = params.toString();
   return query ? `?${query}` : "";

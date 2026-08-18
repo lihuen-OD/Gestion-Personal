@@ -8,10 +8,7 @@ const nullableText = z.string().trim().max(1000).optional().nullable();
 export const listPositionsQuerySchema = z.object({
   search: z.string().trim().optional(),
   status: recordStatusSchema.optional(),
-  businessUnitName: z.string().trim().optional(),
-  establishmentName: z.string().trim().optional(),
-  areaDepartment: z.string().trim().optional(),
-  sector: z.string().trim().optional(),
+  sectorId: z.string().uuid().optional(),
   salaryRangeCategory: z.string().trim().optional(),
   page: z.coerce.number().int().positive().max(10000).default(1),
   take: z.coerce.number().int().positive().max(300).default(200),
@@ -31,15 +28,7 @@ export const createPositionSchema = z.object({
   status: recordStatusSchema.default("ACTIVO"),
   mission: nullableText,
   description: nullableText,
-  areaDepartment: z.string().trim().max(160).optional().nullable(),
-  sector: z.string().trim().max(160).optional().nullable(),
-  businessUnitName: z.string().trim().max(160).optional().nullable(),
-  establishmentName: z.string().trim().max(160).optional().nullable(),
   lastUpdatedAt: z.coerce.date().optional().nullable(),
-  businessUnitNames: z.array(z.string()).default([]),
-  establishmentNames: z.array(z.string()).default([]),
-  sectorNames: z.array(z.string()).default([]),
-  salaryRangeCategories: z.array(z.string()).default([]),
   responsibilities: jsonArraySchema,
   internalRelations: jsonArraySchema,
   externalRelations: jsonArraySchema,
@@ -47,8 +36,8 @@ export const createPositionSchema = z.object({
   workConditions: positionWorkConditionsSchema.default({ modality: "PRESENCIAL", workload: "", workplace: "", relationType: "", observations: "" }),
   performanceIndicators: jsonArraySchema,
   evaluationCriteria: jsonArraySchema,
-  areaId: z.string().uuid().optional().nullable(),
   sectorId: z.string().uuid().optional().nullable(),
+  salaryCategoryIds: z.array(z.string().uuid()).default([]),
 });
 
 export const updatePositionSchema = createPositionSchema.partial();

@@ -3,8 +3,20 @@ import { prisma } from "../../shared/prisma/client";
 import type { CreatePositionInput, ListPositionsQuery, UpdatePositionInput } from "./positions.schemas";
 
 const positionInclude = {
-  area: true,
-  sector: true,
+  sector: {
+    include: {
+      area: {
+        include: {
+          establishment: {
+            include: {
+              businessUnit: true,
+              company: true,
+            },
+          },
+        },
+      },
+    },
+  },
   salaryCategories: { include: { salaryCategory: true } },
   _count: { select: { employees: true } },
 } satisfies Prisma.PositionInclude;
@@ -22,18 +34,14 @@ function buildWhere(query: ListPositionsQuery): Prisma.PositionWhereInput {
   const search = query.search?.trim();
   return {
     ...(query.status ? { status: query.status } : {}),
-    ...(query.businessUnitName ? { businessUnitName: query.businessUnitName } : {}),
-    ...(query.establishmentName ? { establishmentName: query.establishmentName } : {}),
-    ...(query.areaDepartment ? { areaDepartment: query.areaDepartment } : {}),
-    ...(query.sector ? { sectorName: query.sector } : {}),
+    ...(query.sectorId ? { sectorId: query.sectorId } : {}),
     ...(search
       ? {
           OR: [
             { code: { contains: search, mode: "insensitive" } },
             { name: { contains: search, mode: "insensitive" } },
             { mission: { contains: search, mode: "insensitive" } },
-            { areaDepartment: { contains: search, mode: "insensitive" } },
-            { sectorName: { contains: search, mode: "insensitive" } },
+            { sector: { name: { contains: search, mode: "insensitive" } } },
           ],
         }
       : {}),
@@ -42,11 +50,7 @@ function buildWhere(query: ListPositionsQuery): Prisma.PositionWhereInput {
 
 function dataFromInput(input: CreatePositionInput | UpdatePositionInput): Prisma.PositionUncheckedCreateInput | Prisma.PositionUncheckedUpdateInput {
   const {
-    sector,
-    businessUnitNames,
-    establishmentNames,
-    sectorNames,
-    salaryRangeCategories,
+    salaryCategoryIds: _salaryCategoryIds,
     responsibilities,
     internalRelations,
     externalRelations,
@@ -58,11 +62,6 @@ function dataFromInput(input: CreatePositionInput | UpdatePositionInput): Prisma
   } = input;
   return {
     ...data,
-    ...(sector !== undefined ? { sectorName: sector } : {}),
-    ...(businessUnitNames !== undefined ? { businessUnitNames: json(businessUnitNames) } : {}),
-    ...(establishmentNames !== undefined ? { establishmentNames: json(establishmentNames) } : {}),
-    ...(sectorNames !== undefined ? { sectorNames: json(sectorNames) } : {}),
-    ...(salaryRangeCategories !== undefined ? { salaryRangeCategories: json(salaryRangeCategories) } : {}),
     ...(responsibilities !== undefined ? { responsibilities: json(responsibilities) } : {}),
     ...(internalRelations !== undefined ? { internalRelations: json(internalRelations) } : {}),
     ...(externalRelations !== undefined ? { externalRelations: json(externalRelations) } : {}),
@@ -79,10 +78,7 @@ export const positionsRepository = {
     const skip = (query.page - 1) * query.take;
     const hasFilters = Boolean(
       query.status ||
-        query.businessUnitName ||
-        query.establishmentName ||
-        query.areaDepartment ||
-        query.sector ||
+        query.sectorId ||
         query.salaryRangeCategory ||
         query.search?.trim(),
     );
@@ -147,11 +143,32 @@ export const positionsRepository = {
   },
 
   create(input: CreatePositionInput) {
-    return prisma.position.create({ data: dataFromInput(input) as Prisma.PositionUncheckedCreateInput });
+    return prisma.$transaction(async (tx) => {
+      const item = await tx.position.create({ data: dataFromInput(input) as Prisma.PositionUncheckedCreateInput });
+      if (input.salaryCategoryIds.length) {
+        await tx.positionSalaryCategory.createMany({
+          data: input.salaryCategoryIds.map((salaryCategoryId) => ({ positionId: item.id, salaryCategoryId })),
+          skipDuplicates: true,
+        });
+      }
+      return item;
+    });
   },
 
   update(id: string, input: UpdatePositionInput) {
-    return prisma.position.update({ where: { id }, data: dataFromInput(input) as Prisma.PositionUncheckedUpdateInput });
+    return prisma.$transaction(async (tx) => {
+      const item = await tx.position.update({ where: { id }, data: dataFromInput(input) as Prisma.PositionUncheckedUpdateInput });
+      if (input.salaryCategoryIds !== undefined) {
+        await tx.positionSalaryCategory.deleteMany({ where: { positionId: id } });
+        if (input.salaryCategoryIds.length) {
+          await tx.positionSalaryCategory.createMany({
+            data: input.salaryCategoryIds.map((salaryCategoryId) => ({ positionId: id, salaryCategoryId })),
+            skipDuplicates: true,
+          });
+        }
+      }
+      return item;
+    });
   },
 
   delete(id: string) {

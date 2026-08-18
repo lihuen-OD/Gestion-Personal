@@ -9,33 +9,51 @@ import { Section } from "../components/ui/Section";
 import { ErrorState } from "../components/ui/ErrorState";
 import { LoadingState } from "../components/ui/LoadingState";
 import { useAuth } from "../context/AuthContext";
+import { orgStructureApiService } from "../services/api/orgStructureApiService";
 import { positionApiService } from "../services/api/positionApiService";
+import type { OrgStructureCatalog } from "../types/orgStructure.types";
 import type { Position, PositionFilters, PositionSummary } from "../types/position.types";
 import { roleLevel } from "../utils/roles";
 import { confirmAction } from "../services/appDialog";
 
 const norm = (value: unknown) => String(value || "").trim().toLowerCase();
 
-function matches(position: Position, filters: PositionFilters) {
+/**
+ * Filtra por sectorId real y por los ids derivados via la cadena
+ * sector -> area -> establishment -> businessUnit (limpieza final de
+ * Position, 2026-08-18). Los strings legado ya no existen en el esquema —
+ * el texto de busqueda libre usa unicamente los derivados y, para categoria
+ * salarial, la relacion real PositionSalaryCategory.
+ */
+export function matches(position: Position, filters: PositionFilters) {
   const query = norm(filters.search);
-  const text = norm(`${position.code} ${position.name} ${position.businessUnitName} ${position.establishmentName} ${position.areaDepartment} ${position.sector} ${(position.salaryRangeCategories || []).join(" ")}`);
+  const text = norm(`${position.code} ${position.name} ${position.derivedBusinessUnitName || ""} ${position.derivedEstablishmentName || ""} ${position.derivedAreaName || ""} ${position.derivedSectorName || ""} ${(position.salaryCategoryNames || []).join(" ")}`);
   return (!query || text.includes(query))
-    && (!filters.businessUnitName || position.businessUnitName === filters.businessUnitName)
-    && (!filters.establishmentName || position.establishmentName === filters.establishmentName)
-    && (!filters.areaDepartment || position.areaDepartment === filters.areaDepartment)
-    && (!filters.sector || position.sector === filters.sector)
-    && (!filters.salaryRangeCategory || position.salaryRangeCategories?.includes(filters.salaryRangeCategory))
+    && (!filters.businessUnitId || position.derivedBusinessUnitId === filters.businessUnitId)
+    && (!filters.establishmentId || position.derivedEstablishmentId === filters.establishmentId)
+    && (!filters.areaId || position.derivedAreaId === filters.areaId)
+    && (!filters.sectorId || position.sectorId === filters.sectorId)
+    && (!filters.salaryRangeCategory || position.salaryCategoryNames?.includes(filters.salaryRangeCategory))
     && (!filters.status || position.status === filters.status);
 }
 
-function options(items: Position[]) {
-  const unique = (values: (string | undefined)[]) => Array.from(new Set(values.filter(Boolean) as string[])).sort((a, b) => a.localeCompare(b, "es"));
+/**
+ * Las opciones de Unidad de negocio/Establecimiento/Area/Sector vienen del
+ * catalogo REAL de Estructura Organizacional (no de strings sueltos) para
+ * que el filtro muestre siempre el universo real, incluidos nodos sin
+ * ningun puesto todavia. La opcion de rango salarial viene de las
+ * categorias reales ya vinculadas a los puestos cargados.
+ */
+export function options(items: Position[], catalog: OrgStructureCatalog | undefined) {
+  const activeIdName = (entries: Array<{ id: string; name: string; status: string }>) =>
+    entries.filter((entry) => entry.status === "ACTIVO").map((entry) => ({ id: entry.id, name: entry.name })).sort((a, b) => a.name.localeCompare(b.name, "es"));
+  const uniqueStrings = (values: (string | undefined)[]) => Array.from(new Set(values.filter(Boolean) as string[])).sort((a, b) => a.localeCompare(b, "es"));
   return {
-    businessUnitName: unique(items.map((position) => position.businessUnitName)),
-    establishmentName: unique(items.map((position) => position.establishmentName)),
-    areaDepartment: unique(items.map((position) => position.areaDepartment)),
-    sector: unique(items.map((position) => position.sector)),
-    salaryRangeCategory: unique(items.flatMap((position) => position.salaryRangeCategories || [])),
+    businessUnitId: activeIdName(catalog?.businessUnits || []),
+    establishmentId: activeIdName(catalog?.establishments || []),
+    areaId: activeIdName(catalog?.areas || []),
+    sectorId: activeIdName(catalog?.sectors || []),
+    salaryRangeCategory: uniqueStrings(items.flatMap((position) => position.salaryCategoryNames || [])),
   };
 }
 
@@ -57,10 +75,10 @@ function getAssignedCount(position: Position) {
 
 const emptyFilters: PositionFilters = {
   search: "",
-  businessUnitName: "",
-  establishmentName: "",
-  areaDepartment: "",
-  sector: "",
+  businessUnitId: "",
+  establishmentId: "",
+  areaId: "",
+  sectorId: "",
   salaryRangeCategory: "",
   status: "",
 };
@@ -74,6 +92,15 @@ export function PuestosPage() {
   const [apiItems, setApiItems] = useState<Position[]>([]);
   const [isLoadingApi, setIsLoadingApi] = useState(true);
   const [loadError, setLoadError] = useState(false);
+  const [catalog, setCatalog] = useState<OrgStructureCatalog | undefined>(undefined);
+
+  useEffect(() => {
+    let alive = true;
+    orgStructureApiService.getCatalog()
+      .then((data) => { if (alive) setCatalog(data); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, []);
 
   useEffect(() => {
     let alive = true;
@@ -125,7 +152,7 @@ export function PuestosPage() {
       {!isLoadingApi && !loadError ? <PuestoSummaryCards summary={summary(apiItems)} /> : null}
       <Section className="position-list-panel" title="Listado de puestos" subtitle={isLoadingApi ? "Cargando puestos..." : `${positions.length} resultados segun filtros aplicados.`}>
         <div className="position-list-body">
-          <PuestoFilters filters={filters} options={options(apiItems)} onChange={setFilters} />
+          <PuestoFilters filters={filters} options={options(apiItems, catalog)} onChange={setFilters} />
           {isLoadingApi ? <LoadingState text="Cargando puestos..." /> : loadError ? <ErrorState message="No pudimos cargar los puestos." onRetry={() => setRefresh((value) => value + 1)} /> : <PuestoTable positions={positions} assignedCount={(id) => getAssignedCount(positions.find((position) => position.id === id)!)} canEdit={canEdit} onRemove={remove} onToggleStatus={toggle} />}
         </div>
       </Section>

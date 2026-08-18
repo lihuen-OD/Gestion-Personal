@@ -40,7 +40,7 @@ export function PuestoCreatePage() {
 
   const { isRunning: isSaving, run: save } = useAsyncAction(async (event: FormEvent) => {
     event.preventDefault();
-    if (!position.name.trim() || !position.areaDepartment.trim() || !position.sector.trim() || !position.status || !position.mission.trim() || !position.lastUpdatedAt) return setError("Completa nombre, area/departamento, sector, estado, mision y fecha de actualizacion.");
+    if (!position.name.trim() || !position.sectorId || !position.status || !position.mission.trim() || !position.lastUpdatedAt) return setError("Completa nombre, sector, estado, mision y fecha de actualizacion.");
     try {
       const created = await positionApiService.create(position);
       if (created) navigate(`/puestos/${created.id}`, { state: { created: true, usesApi } });

@@ -54,14 +54,14 @@ const salaryOrder = [
   "Especialista",
 ];
 
-function asStringArray(value: unknown): string[] {
-  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && item.trim().length > 0) : [];
-}
+type PositionSalaryCategoryLink = { salaryCategory: { name: string; order: number } };
 
-function allowedValues(primary: string | null | undefined, values: unknown): string[] {
-  const list = asStringArray(values);
-  const fallback = primary?.trim() ? [primary.trim()] : [];
-  return list.length ? list : fallback;
+function categoryRangeFromPosition(position: { salaryCategories: PositionSalaryCategoryLink[] } | null | undefined): string[] {
+  if (!position) return [];
+  return [...position.salaryCategories]
+    .map((link) => link.salaryCategory)
+    .sort((a, b) => a.order - b.order)
+    .map((category) => category.name);
 }
 
 function compareCategory(range: string[], category?: string | null) {
@@ -269,21 +269,31 @@ export const employeesService = {
     const businessUnit = employee.sector?.area?.establishment?.businessUnit?.name || "";
     const establishment = employee.sector?.area?.establishment?.name || "";
     const sector = employee.sector?.name || "";
-    const range = position ? allowedValues(null, position.salaryRangeCategories) : [];
+    // Fuente de verdad desde el saneamiento de Puestos (2026-08-18):
+    // sectorId es el unico origen oficial de ubicacion del puesto. Area,
+    // establecimiento y unidad de negocio se derivan de esa cadena real
+    // (position.sector.area.establishment.businessUnit) en vez de los
+    // strings/JSON legado (areaDepartment, sectorName, businessUnitNames...).
+    const positionHasSector = Boolean(position?.sector);
+    const positionBusinessUnit = position?.sector?.area?.establishment?.businessUnit?.name || "";
+    const positionEstablishment = position?.sector?.area?.establishment?.name || "";
+    const positionSector = position?.sector?.name || "";
+    const range = categoryRangeFromPosition(position);
     const categoryResult = position ? compareCategory(range, employee.internalCategory) : { status: "NO_POSITION", range: [] };
     const checks = [
-      structureCheck("Unidad de negocio", businessUnit, position ? allowedValues(position.businessUnitName, position.businessUnitNames) : [], Boolean(position)),
-      structureCheck("Establecimiento", establishment, position ? allowedValues(position.establishmentName, position.establishmentNames) : [], Boolean(position)),
-      structureCheck("Sector", sector, position ? allowedValues(position.sectorName, position.sectorNames) : [], Boolean(position)),
+      structureCheck("Unidad de negocio", businessUnit, positionBusinessUnit ? [positionBusinessUnit] : [], Boolean(position)),
+      structureCheck("Establecimiento", establishment, positionEstablishment ? [positionEstablishment] : [], Boolean(position)),
+      structureCheck("Sector", sector, positionSector ? [positionSector] : [], Boolean(position)),
     ];
     const structuralMismatch = checks.some((row) => position && row.allowed.length && !row.ok && !row.missing);
     const categoryMismatch = ["BELOW_RANGE", "ABOVE_RANGE", "UNKNOWN_CATEGORY"].includes(categoryResult.status);
     const categoryPending = ["NO_POSITION", "NO_RANGE"].includes(categoryResult.status) || !employee.internalCategory;
+    const positionPendingSector = Boolean(position) && !positionHasSector;
     const tone = !position
       ? "neutral"
       : structuralMismatch || categoryMismatch
         ? "danger"
-        : categoryPending || checks.some((row) => row.missing)
+        : categoryPending || positionPendingSector || checks.some((row) => row.missing)
           ? "warning"
           : "success";
     const title = !position

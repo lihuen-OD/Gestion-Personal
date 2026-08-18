@@ -7,11 +7,24 @@ function uniqueSorted(values: string[]) {
   return Array.from(new Set(values.filter(Boolean))).sort((a, b) => a.localeCompare(b, "es"));
 }
 
+/**
+ * Edita la relacion real PositionSalaryCategory (fuente oficial desde el
+ * saneamiento de Puestos, 2026-08-18). La UI sigue trabajando con nombres
+ * (agrupados por familia, con relleno de rango entre dos puntas) porque
+ * SalaryCategory.name es unico en la base real; la conversion nombre<->id
+ * pasa por el catalogo real cargado abajo, nunca por salaryRangeCategories.
+ */
 export function PuestoSalaryRangeTab({ position, setPosition, disabled = false }: { position: Position; setPosition: (position: Position) => void; disabled?: boolean }) {
-  const selected = position.salaryRangeCategories || [];
   const [groups, setGroups] = useState<SalaryGroup[]>([]);
+  const [catalog, setCatalog] = useState<Array<{ id: string; name: string }>>([]);
   useEffect(() => {
     let mounted = true;
+    salaryCategoryApiService.getAll()
+      .then((items) => {
+        if (!mounted) return;
+        setCatalog(items.map((item) => ({ id: item.id, name: item.name })));
+      })
+      .catch(() => {});
     salaryCategoryApiService.getGroups()
       .then((apiGroups) => {
         if (mounted && apiGroups.length) {
@@ -24,7 +37,16 @@ export function PuestoSalaryRangeTab({ position, setPosition, disabled = false }
       mounted = false;
     };
   }, []);
-  const setSelected = (salaryRangeCategories: string[]) => setPosition({ ...position, salaryRangeCategories });
+
+  const idByName = new Map(catalog.map((item) => [item.name, item.id] as const));
+  const nameById = new Map(catalog.map((item) => [item.id, item.name] as const));
+  const selectedIds = position.salaryCategoryIds || [];
+  const selected = uniqueSorted(selectedIds.map((id) => nameById.get(id)).filter((name): name is string => Boolean(name)));
+
+  const setSelected = (names: string[]) => {
+    const salaryCategoryIds = uniqueSorted(names).map((name) => idByName.get(name)).filter((id): id is string => Boolean(id));
+    setPosition({ ...position, salaryCategoryIds });
+  };
   const clear = () => setSelected([]);
   const selectGroup = (group: SalaryGroup) => setSelected(uniqueSorted([...selected, ...group.categories]));
   const clearGroup = (group: SalaryGroup) => setSelected(selected.filter((category) => !group.categories.includes(category)));

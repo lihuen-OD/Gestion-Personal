@@ -26,8 +26,6 @@ export type Position = {
   code?: string;
   name: string;
   assignedCount?: number;
-  areaDepartment: string;
-  sector: string;
   reportsTo?: string;
   supervises?: string;
   location?: string;
@@ -36,19 +34,28 @@ export type Position = {
   companyId?: string;
   companyName?: string;
   businessUnitId?: string;
-  businessUnitName?: string;
-  businessUnitNames?: string[];
   establishmentId?: string;
-  establishmentName?: string;
-  establishmentNames?: string[];
-  sectorNames?: string[];
   suggestedCostCenterId?: string;
   suggestedCostCenterName?: string;
   suggestedReceiptCategoryId?: string;
   suggestedReceiptCategoryName?: string;
   suggestedInternalCategoryId?: string;
   suggestedInternalCategoryName?: string;
-  salaryRangeCategories?: string[];
+  /** Fuente oficial de ubicacion (limpieza final de Position, 2026-08-18). */
+  sectorId?: string;
+  /** Derivados de solo lectura via sectorId -> area -> establishment -> businessUnit -> company. */
+  derivedSectorName?: string;
+  derivedAreaId?: string;
+  derivedAreaName?: string;
+  derivedEstablishmentId?: string;
+  derivedEstablishmentName?: string;
+  derivedBusinessUnitId?: string;
+  derivedBusinessUnitName?: string;
+  derivedCompanyId?: string;
+  derivedCompanyName?: string;
+  /** Fuente oficial de categoria salarial (relacion real PositionSalaryCategory). */
+  salaryCategoryIds?: string[];
+  salaryCategoryNames?: string[];
   mission: string;
   responsibilities: PositionResponsibility[];
   internalRelations: PositionRelation[];
@@ -72,10 +79,11 @@ export type Position = {
 
 export type PositionFilters = {
   search: string;
-  businessUnitName: string;
-  establishmentName: string;
-  areaDepartment: string;
-  sector: string;
+  /** Filtran por id real (catalogo de Estructura Organizacional), no por string legado. */
+  businessUnitId: string;
+  establishmentId: string;
+  areaId: string;
+  sectorId: string;
   salaryRangeCategory: string;
   status: "" | PositionStatus;
 };

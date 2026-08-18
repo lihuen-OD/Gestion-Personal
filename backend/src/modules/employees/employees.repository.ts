@@ -114,7 +114,52 @@ const employeeDetailSelect = {
     },
   },
   costCenter: { select: { id: true, name: true, code: true } },
-  position: true,
+  position: {
+    select: {
+      id: true,
+      code: true,
+      name: true,
+      status: true,
+      mission: true,
+      description: true,
+      lastUpdatedAt: true,
+      responsibilities: true,
+      internalRelations: true,
+      externalRelations: true,
+      competencies: true,
+      workConditions: true,
+      performanceIndicators: true,
+      evaluationCriteria: true,
+      sectorId: true,
+      createdAt: true,
+      updatedAt: true,
+      // Cadena real (sectorId -> area -> establishment -> businessUnit), unica
+      // fuente de verdad para getPositionValidation desde el saneamiento de
+      // Puestos (2026-08-18).
+      sector: {
+        select: {
+          id: true,
+          name: true,
+          area: {
+            select: {
+              id: true,
+              name: true,
+              establishment: {
+                select: {
+                  id: true,
+                  name: true,
+                  businessUnit: { select: { id: true, name: true } },
+                },
+              },
+            },
+          },
+        },
+      },
+      salaryCategories: {
+        select: { salaryCategory: { select: { id: true, name: true, order: true } } },
+      },
+    },
+  },
   companies: {
     select: {
       isPrimary: true,

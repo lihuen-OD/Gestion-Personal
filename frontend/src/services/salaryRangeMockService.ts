@@ -53,7 +53,10 @@ export const salaryRangeMockService = {
   },
   compareCategoryToPosition: (position: Position | undefined, category: string) => {
     if (!position) return { status: "NO_POSITION" as SalaryRangeStatus, range: [] as string[], categoryIndex: -1, minIndex: -1, maxIndex: -1 };
-    const range = position.salaryRangeCategories || [];
+    // Fuente oficial desde el saneamiento de Puestos: la relacion real
+    // PositionSalaryCategory (expuesta como salaryCategoryNames, ya ordenada
+    // por SalaryCategory.order), no el JSON salaryRangeCategories.
+    const range = position.salaryCategoryNames || [];
     if (!range.length) return { status: "NO_RANGE" as SalaryRangeStatus, range, categoryIndex: -1, minIndex: -1, maxIndex: -1 };
     if (!category.trim()) return { status: "UNKNOWN_CATEGORY" as SalaryRangeStatus, range, categoryIndex: -1, minIndex: -1, maxIndex: -1 };
     const ordered = salaryRangeMockService.getOrderedCategories();
