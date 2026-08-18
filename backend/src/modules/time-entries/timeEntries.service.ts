@@ -454,7 +454,7 @@ function scheduleClockAudit(input: Parameters<typeof auditService.register>[0]) 
   timer.unref();
 }
 
-function clockAttemptHash(input: ClockPhotoPunchInput) {
+export function clockAttemptHash(input: ClockPhotoPunchInput) {
   return createHash("sha256")
     .update(input.employeeId)
     .update("\0")
@@ -1016,6 +1016,9 @@ export const timeEntriesService = {
     const employee = context;
     const punchType = input.punchType === "IN" ? "INGRESO" : "SALIDA";
     const now = new Date();
+    // faceValidationStatus es un resultado calculado en el navegador (MediaPipe) y reportado por el
+    // cliente: es una señal de UX/deterrencia contra fichadas accidentales, NO una verificación
+    // biométrica server-side. Nada en el backend re-valida la foto contra el rostro del empleado.
     if (input.faceValidationStatus !== "VALID") {
       throw new AppError("No se pudo validar el rostro para registrar la fichada.", 422, "CLOCK_FACE_VALIDATION_FAILED");
     }
@@ -1248,72 +1251,38 @@ export const timeEntriesService = {
 
   async clockIn(input: ClockByDniInput) {
     const employee = await resolveClockEmployee(input.dni);
-    await ensureClockEmployeeActive(employee, "INGRESO");
-    const openShift = await timeEntriesRepository.findOpenWorkShift(employee.id);
-    const now = new Date();
-    if (openShift) {
-      if (shiftMinutes(openShift.startAt, now) > MAX_SHIFT_MINUTES) {
-        const workShift = await timeEntriesRepository.rolloverExpiredOpenWorkShift({
-          openWorkShiftId: openShift.id,
-          employeeId: employee.id,
-          source: "PORTAL_DNI",
-          startAt: now,
-          missingOutObservation: "Olvido de salida marcado automaticamente al registrar un nuevo ingreso desde el fichador.",
-        });
-        await notifyMissingExit(employee.id, openShift.id);
-        await evaluateShiftEntry(employee.id, workShift.id, now);
-        return {
-          employee: publicEmployeeLabel(employee),
-          previousOpenShift: {
-            id: openShift.id,
-            startAt: openShift.startAt,
-            status: "FALTA_SALIDA",
-          },
-          workShift: {
-            id: workShift.id,
-            startAt: workShift.startAt,
-          },
-        };
-      }
-      await timeEntriesRepository.createObservedPunch({
-        employeeId: employee.id,
-        type: "INGRESO",
-        source: "PORTAL_DNI",
-        timestamp: now,
-        observation: "Intento de ingreso con una jornada abierta.",
-      });
-      await notifyOpenShiftAttempt(employee.id);
-      throw new AppError("Ya existe un ingreso abierto para este empleado.", 409, "CLOCK_ALREADY_OPEN");
-    }
-    const workShift = await timeEntriesRepository.createOpenWorkShift({
-      employeeId: employee.id,
-      source: "PORTAL_DNI",
-      startAt: now,
-    });
-    await evaluateShiftEntry(employee.id, workShift.id, now);
-    return {
-      employee: publicEmployeeLabel(employee),
-      workShift: {
-        id: workShift.id,
-        startAt: workShift.startAt,
-      },
-    };
+    return timeEntriesService.clockInResolved(employee, "PORTAL_DNI");
   },
 
   async clockInByEmployee(input: ClockByEmployeeInput) {
     const employee = await resolveClockEmployeeById(input.employeeId);
+    return timeEntriesService.clockInResolved(employee, "PORTAL_DNI");
+  },
+
+  async clockInResolved(employee: Awaited<ReturnType<typeof resolveClockEmployee>>, source: "PORTAL_DNI") {
     await ensureClockEmployeeActive(employee, "INGRESO");
     const openShift = await timeEntriesRepository.findOpenWorkShift(employee.id);
     const now = new Date();
     if (openShift) {
       if (shiftMinutes(openShift.startAt, now) > MAX_SHIFT_MINUTES) {
-        const workShift = await timeEntriesRepository.rolloverExpiredOpenWorkShift({
-          openWorkShiftId: openShift.id,
-          employeeId: employee.id,
-          source: "PORTAL_DNI",
-          startAt: now,
-          missingOutObservation: "Olvido de salida marcado automaticamente al registrar un nuevo ingreso desde el fichador.",
-        });
+        let workShift;
+        try {
+          workShift = await timeEntriesRepository.rolloverExpiredOpenWorkShift({
+            openWorkShiftId: openShift.id,
+            employeeId: employee.id,
+            source,
+            startAt: now,
+            missingOutObservation: "Olvido de salida marcado automaticamente al registrar un nuevo ingreso desde el fichador.",
+          });
+        } catch (error) {
+          if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+            throw new AppError("El ingreso ya fue registrado por otro intento.", 409, "CLOCK_ALREADY_OPEN");
+          }
+          if (error instanceof Error && error.message === "WORK_SHIFT_ALREADY_CLOSED") {
+            throw new AppError("La jornada anterior fue actualizada por otro intento.", 409, "CLOCK_SHIFT_CHANGED");
+          }
+          throw error;
+        }
         await notifyMissingExit(employee.id, openShift.id);
         await evaluateShiftEntry(employee.id, workShift.id, now);
         return {
@@ -1332,18 +1301,26 @@ export const timeEntriesService = {
       await timeEntriesRepository.createObservedPunch({
         employeeId: employee.id,
         type: "INGRESO",
-        source: "PORTAL_DNI",
+        source,
         timestamp: now,
         observation: "Intento de ingreso con una jornada abierta.",
       });
       await notifyOpenShiftAttempt(employee.id);
       throw new AppError("Ya existe un ingreso abierto para este empleado.", 409, "CLOCK_ALREADY_OPEN");
     }
-    const workShift = await timeEntriesRepository.createOpenWorkShift({
-      employeeId: employee.id,
-      source: "PORTAL_DNI",
-      startAt: now,
-    });
+    let workShift;
+    try {
+      workShift = await timeEntriesRepository.createOpenWorkShift({
+        employeeId: employee.id,
+        source,
+        startAt: now,
+      });
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+        throw new AppError("El ingreso ya fue registrado por otro intento.", 409, "CLOCK_ALREADY_OPEN");
+      }
+      throw error;
+    }
     await evaluateShiftEntry(employee.id, workShift.id, now);
     return {
       employee: publicEmployeeLabel(employee),
@@ -1356,13 +1333,22 @@ export const timeEntriesService = {
 
   async clockOut(input: ClockByDniInput) {
     const employee = await resolveClockEmployee(input.dni);
+    return timeEntriesService.clockOutResolved(employee, "PORTAL_DNI");
+  },
+
+  async clockOutByEmployee(input: ClockByEmployeeInput) {
+    const employee = await resolveClockEmployeeById(input.employeeId);
+    return timeEntriesService.clockOutResolved(employee, "PORTAL_DNI");
+  },
+
+  async clockOutResolved(employee: Awaited<ReturnType<typeof resolveClockEmployee>>, source: "PORTAL_DNI") {
     await ensureClockEmployeeActive(employee, "SALIDA");
     const openShift = await timeEntriesRepository.findOpenWorkShift(employee.id);
     if (!openShift) {
       await timeEntriesRepository.createObservedPunch({
         employeeId: employee.id,
         type: "SALIDA",
-        source: "PORTAL_DNI",
+        source,
         timestamp: new Date(),
         observation: "Intento de salida sin ingreso abierto.",
       });
@@ -1380,7 +1366,7 @@ export const timeEntriesService = {
         employeeId: employee.id,
         hourConceptId: hourConcept.id,
         hourConceptName: hourConcept.name,
-        source: "PORTAL_DNI",
+        source,
         endAt,
         totalMinutes: calculation.totalMinutes,
         segments: calculation.segments,
@@ -1410,65 +1396,8 @@ export const timeEntriesService = {
       if (error instanceof Error && error.message.startsWith("TIME_ENTRY_LOCKED:")) {
         throw new AppError("La salida coincide con una carga horaria aprobada o cerrada. Avisá a RRHH para corregirla.", 409, "CLOCK_LOCKED_TIME_ENTRY");
       }
-      throw error;
-    }
-  },
-
-  async clockOutByEmployee(input: ClockByEmployeeInput) {
-    const employee = await resolveClockEmployeeById(input.employeeId);
-    await ensureClockEmployeeActive(employee, "SALIDA");
-    const openShift = await timeEntriesRepository.findOpenWorkShift(employee.id);
-    if (!openShift) {
-      await timeEntriesRepository.createObservedPunch({
-        employeeId: employee.id,
-        type: "SALIDA",
-        source: "PORTAL_DNI",
-        timestamp: new Date(),
-        observation: "Intento de salida sin ingreso abierto.",
-      });
-      throw new AppError("No hay un ingreso abierto para este empleado.", 409, "CLOCK_NO_OPEN_SHIFT");
-    }
-    const hourConcept = await resolveShiftConcept(employee.id);
-    const endAt = new Date();
-    const calculation = buildShiftSegments(openShift.startAt, endAt);
-    for (const segment of calculation.segments) {
-      await ensureDayIsNotBlocked(employee.id, segment.date, segment.hours);
-    }
-    try {
-      const created = await timeEntriesRepository.closeOpenWorkShift({
-        workShiftId: openShift.id,
-        employeeId: employee.id,
-        hourConceptId: hourConcept.id,
-        hourConceptName: hourConcept.name,
-        source: "PORTAL_DNI",
-        endAt,
-        totalMinutes: calculation.totalMinutes,
-        segments: calculation.segments,
-      });
-      await evaluateShiftExit(employee.id, created.workShift.id, endAt);
-      return {
-        employee: publicEmployeeLabel(employee),
-        workShift: {
-          id: created.workShift.id,
-          startAt: created.workShift.startAt,
-          endAt: created.workShift.endAt,
-          totalMinutes: created.workShift.totalMinutes,
-          totalHours: Number((calculation.totalMinutes / 60).toFixed(2)),
-        },
-        segments: calculation.segments.map((segment) => ({
-          date: segment.date,
-          startAt: segment.startAt,
-          endAt: segment.endAt,
-          minutes: segment.minutes,
-          hours: segment.hours,
-          label: segment.label,
-        })),
-        entries: created.entries,
-        timeSegments: created.timeSegments,
-      };
-    } catch (error) {
-      if (error instanceof Error && error.message.startsWith("TIME_ENTRY_LOCKED:")) {
-        throw new AppError("La salida coincide con una carga horaria aprobada o cerrada. Avisá a RRHH para corregirla.", 409, "CLOCK_LOCKED_TIME_ENTRY");
+      if (error instanceof Error && error.message === "WORK_SHIFT_ALREADY_CLOSED") {
+        throw new AppError("La salida ya fue registrada por otro intento.", 409, "CLOCK_ALREADY_CLOSED");
       }
       throw error;
     }

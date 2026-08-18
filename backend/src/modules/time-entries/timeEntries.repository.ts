@@ -880,6 +880,7 @@ export const timeEntriesRepository = {
     const words = search.split(/\s+/).filter(Boolean);
     return prisma.employee.findMany({
       where: {
+        status: "ACTIVO",
         OR: [
           { firstName: { contains: search, mode: "insensitive" } },
           { lastName: { contains: search, mode: "insensitive" } },

@@ -1,7 +1,9 @@
 import { Router } from "express";
 import { requireAuth } from "../../middlewares/auth";
 import { requireAnyRole } from "../../middlewares/authorization";
+import { createRateLimiter } from "../../middlewares/rateLimiter";
 import { asyncHandler } from "../../shared/http/asyncHandler";
+import { env } from "../../config/env";
 import { roles } from "../../shared/security/roles";
 import { validateBody } from "../../shared/validation/validateRequest";
 import { validateQuery } from "../../shared/validation/validateQuery";
@@ -28,6 +30,13 @@ import {
 } from "./timeEntries.schemas";
 
 export const timeEntriesRouter = Router();
+
+const clockRateLimiter = createRateLimiter({
+  windowMs: env.CLOCK_RATE_LIMIT_WINDOW_MS,
+  max: env.CLOCK_RATE_LIMIT_MAX,
+});
+
+timeEntriesRouter.use("/clock", clockRateLimiter);
 
 timeEntriesRouter.get("/clock/employees", validateQuery(clockEmployeeSearchQuerySchema), asyncHandler(timeEntriesController.clockSearch));
 timeEntriesRouter.post("/clock/status", validateBody(clockByEmployeeSchema), asyncHandler(timeEntriesController.clockStatusByEmployee));
