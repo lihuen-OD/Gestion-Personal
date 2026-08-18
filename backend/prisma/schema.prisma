@@ -666,7 +666,7 @@ model EmployeeCompany {
   companyId  String
   isPrimary  Boolean @default(false)
 
-  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
   company  Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
 
   @@id([employeeId, companyId])
@@ -689,7 +689,7 @@ model EmployeeAddress {
   createdAt    DateTime @default(now()) @db.Timestamptz(3)
   updatedAt    DateTime @updatedAt @db.Timestamptz(3)
 
-  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
 }
 
 model EmployeeTransport {
@@ -705,7 +705,7 @@ model EmployeeTransport {
   createdAt            DateTime @default(now()) @db.Timestamptz(3)
   updatedAt            DateTime @updatedAt @db.Timestamptz(3)
 
-  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
 
   @@index([usesCompanyTransport])
 }
@@ -720,7 +720,7 @@ model LaborMovement {
   createdByUserId String?
   createdAt       DateTime @default(now()) @db.Timestamptz(3)
 
-  employee  Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  employee  Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
   createdBy User?    @relation(fields: [createdByUserId], references: [id])
 
   @@index([employeeId, effectiveFrom])
@@ -741,7 +741,7 @@ model EmployeeAssignment {
   notes         String?
   createdAt     DateTime @default(now()) @db.Timestamptz(3)
 
-  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
   user     User?    @relation(fields: [userId], references: [id])
 
   @@index([employeeId, type])
@@ -771,7 +771,7 @@ model EmployeeHourConcept {
   employeeId    String
   hourConceptId String
 
-  employee    Employee    @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  employee    Employee    @relation(fields: [employeeId], references: [id], onDelete: Restrict)
   hourConcept HourConcept @relation(fields: [hourConceptId], references: [id], onDelete: Cascade)
 
   @@id([employeeId, hourConceptId])
@@ -790,7 +790,7 @@ model EmployeeFieldHistory {
   createdByUserId String?
   createdAt       DateTime @default(now()) @db.Timestamptz(3)
 
-  employee  Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  employee  Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
   createdBy User?    @relation(fields: [createdByUserId], references: [id])
 
   @@index([employeeId, section, field])
@@ -810,7 +810,7 @@ model EmployeeBlockHistory {
   createdByUserId String?
   createdAt       DateTime @default(now()) @db.Timestamptz(3)
 
-  employee  Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  employee  Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
   createdBy User?    @relation(fields: [createdByUserId], references: [id])
 
   @@index([employeeId, section, block])
@@ -881,7 +881,7 @@ model Novelty {
   createdAt           DateTime @default(now()) @db.Timestamptz(3)
   updatedAt           DateTime @updatedAt @db.Timestamptz(3)
 
-  employee          Employee           @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  employee          Employee           @relation(fields: [employeeId], references: [id], onDelete: Restrict)
   noveltyType       NoveltyType        @relation(fields: [noveltyTypeId], references: [id])
   targetHourConcept HourConcept?       @relation(fields: [targetHourConceptId], references: [id])
   createdBy         User?              @relation("NoveltyCreatedBy", fields: [createdByUserId], references: [id])
@@ -920,7 +920,7 @@ model TimeEntry {
   createdAt        DateTime @default(now()) @db.Timestamptz(3)
   updatedAt        DateTime @updatedAt @db.Timestamptz(3)
 
-  employee    Employee     @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  employee    Employee     @relation(fields: [employeeId], references: [id], onDelete: Restrict)
   hourConcept HourConcept  @relation(fields: [hourConceptId], references: [id])
   workShift   WorkShift?   @relation(fields: [workShiftId], references: [id], onDelete: SetNull)
   timeSegment TimeSegment? @relation(fields: [timeSegmentId], references: [id], onDelete: SetNull)
@@ -965,7 +965,7 @@ model WorkShift {
   closedAt          DateTime? @db.Timestamptz(3)
   updatedAt         DateTime @updatedAt @db.Timestamptz(3)
 
-  employee     Employee         @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  employee     Employee         @relation(fields: [employeeId], references: [id], onDelete: Restrict)
   hourConcept  HourConcept?     @relation(fields: [hourConceptId], references: [id], onDelete: SetNull)
   startPunch   AttendancePunch? @relation("WorkShiftStartPunch", fields: [startPunchId], references: [id], onDelete: SetNull)
   endPunch     AttendancePunch? @relation("WorkShiftEndPunch", fields: [endPunchId], references: [id], onDelete: SetNull)
@@ -1000,7 +1000,7 @@ model MonthlyTimeClosure {
   reviewNote String?
   createdAt DateTime @default(now()) @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @db.Timestamptz(3)
-  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
   submittedBy User? @relation("ClosureSubmittedBy", fields: [submittedByUserId], references: [id])
   reviewedBy User? @relation("ClosureReviewedBy", fields: [reviewedByUserId], references: [id])
   corrections TimeCorrectionRequest[]
@@ -1022,7 +1022,7 @@ model TimeCorrectionRequest {
   reviewedAt DateTime? @db.Timestamptz(3)
   reviewNote String?
   createdAt DateTime @default(now()) @db.Timestamptz(3)
-  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
   timeEntry TimeEntry @relation(fields: [timeEntryId], references: [id], onDelete: Cascade)
   closure MonthlyTimeClosure? @relation(fields: [closureId], references: [id], onDelete: SetNull)
   createdBy User @relation("CorrectionCreatedBy", fields: [createdByUserId], references: [id])
@@ -1090,7 +1090,7 @@ model ShiftAssignment {
   createdAt        DateTime @default(now()) @db.Timestamptz(3)
   updatedAt        DateTime @updatedAt @db.Timestamptz(3)
 
-  employee      Employee      @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  employee      Employee      @relation(fields: [employeeId], references: [id], onDelete: Restrict)
   shiftTemplate ShiftTemplate @relation(fields: [shiftTemplateId], references: [id], onDelete: Cascade)
 
   @@unique([employeeId, shiftTemplateId])
@@ -1112,7 +1112,7 @@ model ShiftAlert {
   resolvedByUserId String?
   resolutionNote String?
   createdAt DateTime @default(now()) @db.Timestamptz(3)
-  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
   workShift WorkShift @relation(fields: [workShiftId], references: [id], onDelete: Cascade)
   @@unique([workShiftId, type])
   @@index([employeeId, status, createdAt])
@@ -1131,7 +1131,7 @@ model AttendanceInactivityIncident {
   reviewedByUserId String?
   reviewNote       String?
 
-  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
   reviewedBy User?    @relation("InactivityIncidentReviewedBy", fields: [reviewedByUserId], references: [id])
 
   @@unique([employeeId, operationalDate])
@@ -1160,7 +1160,7 @@ model DoubleHourRuleEmployee {
   ruleId String
   employeeId String
   rule DoubleHourRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
-  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
   @@id([ruleId, employeeId])
   @@index([employeeId])
 }
@@ -1194,7 +1194,7 @@ model AttendancePunch {
   importedAt        DateTime? @db.Timestamptz(3)
   createdAt         DateTime @default(now()) @db.Timestamptz(3)
 
-  employee        Employee     @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  employee        Employee     @relation(fields: [employeeId], references: [id], onDelete: Restrict)
   photoFile       StorageFile? @relation("AttendancePunchPhotoFile", fields: [photoFileId], references: [id], onDelete: SetNull)
   thumbnailFile   StorageFile? @relation("AttendancePunchThumbnailFile", fields: [thumbnailFileId], references: [id], onDelete: SetNull)
   startWorkShifts WorkShift[]  @relation("WorkShiftStartPunch")
@@ -1225,7 +1225,7 @@ model ClockPunchAttempt {
   completedAt    DateTime? @db.Timestamptz(3)
   updatedAt      DateTime @updatedAt @db.Timestamptz(3)
 
-  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
 
   @@index([employeeId, startedAt])
   @@index([status, startedAt])
@@ -1249,7 +1249,7 @@ model TimeSegment {
   createdAt       DateTime @default(now()) @db.Timestamptz(3)
 
   workShift   WorkShift   @relation(fields: [workShiftId], references: [id], onDelete: Cascade)
-  employee    Employee    @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  employee    Employee    @relation(fields: [employeeId], references: [id], onDelete: Restrict)
   hourConcept HourConcept @relation(fields: [hourConceptId], references: [id])
   timeEntries TimeEntry[]
 
@@ -1328,7 +1328,7 @@ model EmployeeDocument {
   createdAt        DateTime @default(now()) @db.Timestamptz(3)
   updatedAt        DateTime @updatedAt @db.Timestamptz(3)
 
-  employee   Employee         @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  employee   Employee         @relation(fields: [employeeId], references: [id], onDelete: Restrict)
   category   DocumentCategory @relation(fields: [categoryId], references: [id])
   novelty    Novelty?         @relation(fields: [noveltyId], references: [id])
   uploadedBy User?            @relation(fields: [uploadedByUserId], references: [id])
