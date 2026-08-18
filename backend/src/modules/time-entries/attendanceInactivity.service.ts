@@ -1,37 +1,21 @@
 import { EmployeeStatus } from "@prisma/client";
 import { prisma } from "../../shared/prisma/client";
-
-const argentinaTimeZone = "America/Argentina/Cordoba";
-
-function localParts(value: Date) {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: argentinaTimeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23",
-  }).formatToParts(value);
-  const read = (type: Intl.DateTimeFormatPartTypes) => Number(parts.find((part) => part.type === type)?.value || 0);
-  return { year: read("year"), month: read("month"), day: read("day"), hour: read("hour"), minute: read("minute") };
-}
+import { argentinaCalendarDate, argentinaDateParts, argentinaDayRange } from "../../shared/datetime/argentinaTime";
 
 export function previousOperationalDateKey(value = new Date()) {
-  const { year, month, day } = localParts(value);
+  const { year, month, day } = argentinaDateParts(value);
   return new Date(Date.UTC(year, month - 1, day - 1)).toISOString().slice(0, 10);
 }
 
 export function isInactivityCheckDue(value: Date, hour: number, minute: number) {
-  const local = localParts(value);
+  const local = argentinaDateParts(value);
   return local.hour > hour || (local.hour === hour && local.minute >= minute);
 }
 
 function ranges(dateKey: string) {
-  const operationalDate = new Date(`${dateKey}T00:00:00.000Z`);
+  const operationalDate = argentinaCalendarDate(dateKey);
   const nextOperationalDate = new Date(operationalDate.getTime() + 24 * 60 * 60 * 1000);
-  const localStart = new Date(`${dateKey}T00:00:00.000-03:00`);
-  const localEnd = new Date(localStart.getTime() + 24 * 60 * 60 * 1000);
+  const { startAt: localStart, endAt: localEnd } = argentinaDayRange(dateKey);
   return { operationalDate, nextOperationalDate, localStart, localEnd };
 }
 

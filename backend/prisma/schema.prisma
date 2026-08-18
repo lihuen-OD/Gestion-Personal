@@ -249,8 +249,8 @@ model User {
   companyId    String?
   sectorId     String?
   employeeId   String?      @unique
-  createdAt    DateTime     @default(now())
-  updatedAt    DateTime     @updatedAt
+  createdAt    DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt    DateTime @updatedAt @db.Timestamptz(3)
 
   company             Company?               @relation(fields: [companyId], references: [id])
   sector              Sector?                @relation(fields: [sectorId], references: [id])
@@ -282,8 +282,8 @@ model Company {
   name      String       @unique
   code      String       @unique
   status    RecordStatus @default(ACTIVO)
-  createdAt DateTime     @default(now())
-  updatedAt DateTime     @updatedAt
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
 
   users              User[]
   businessUnits      BusinessUnit[]
@@ -300,8 +300,8 @@ model BusinessUnit {
   code      String
   status    RecordStatus @default(ACTIVO)
   companyId String
-  createdAt DateTime     @default(now())
-  updatedAt DateTime     @updatedAt
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
 
   company            Company                     @relation(fields: [companyId], references: [id])
   establishments     Establishment[]
@@ -338,8 +338,8 @@ model Establishment {
   street         String?
   streetNumber   String?
   postalCode     String?
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
+  createdAt      DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime @updatedAt @db.Timestamptz(3)
 
   company         Company                     @relation(fields: [companyId], references: [id])
   businessUnit    BusinessUnit?               @relation(fields: [businessUnitId], references: [id])
@@ -382,8 +382,8 @@ model Area {
   code            String       @unique
   status          RecordStatus @default(ACTIVO)
   establishmentId String?
-  createdAt       DateTime     @default(now())
-  updatedAt       DateTime     @updatedAt
+  createdAt       DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime @updatedAt @db.Timestamptz(3)
 
   establishment   Establishment?      @relation(fields: [establishmentId], references: [id])
   sectors         Sector[]
@@ -424,8 +424,8 @@ model Sector {
   code      String       @unique
   status    RecordStatus @default(ACTIVO)
   areaId    String?
-  createdAt DateTime     @default(now())
-  updatedAt DateTime     @updatedAt
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
 
   area            Area?                 @relation(fields: [areaId], references: [id])
   users           User[]
@@ -465,8 +465,8 @@ model CostCenter {
   name      String
   code      String       @unique
   status    RecordStatus @default(ACTIVO)
-  createdAt DateTime     @default(now())
-  updatedAt DateTime     @updatedAt
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
 
   employees      Employee[]
   companies      CostCenterCompany[]
@@ -537,8 +537,8 @@ model SalaryCategory {
   family    String?
   order     Int
   status    RecordStatus @default(ACTIVO)
-  createdAt DateTime     @default(now())
-  updatedAt DateTime     @updatedAt
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
 
   positions PositionSalaryCategory[]
 
@@ -556,7 +556,7 @@ model Position {
   sectorName            String?
   businessUnitName      String?
   establishmentName     String?
-  lastUpdatedAt         DateTime?
+  lastUpdatedAt         DateTime? @db.Timestamptz(3)
   businessUnitNames     Json?
   establishmentNames    Json?
   sectorNames           Json?
@@ -570,8 +570,8 @@ model Position {
   evaluationCriteria    Json?
   areaId                String?
   sectorId              String?
-  createdAt             DateTime     @default(now())
-  updatedAt             DateTime     @updatedAt
+  createdAt             DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt             DateTime @updatedAt @db.Timestamptz(3)
 
   area             Area?                    @relation(fields: [areaId], references: [id])
   sector           Sector?                  @relation(fields: [sectorId], references: [id])
@@ -602,7 +602,7 @@ model Employee {
   dni               String         @unique
   firstName         String
   lastName          String
-  birthDate         DateTime?
+  birthDate         DateTime? @db.Date
   gender            String?
   civilStatus       String?
   nationality       String?
@@ -621,8 +621,8 @@ model Employee {
   receiptCategory   String?
   internalCategory  String?
   createdByUserId   String?
-  createdAt         DateTime       @default(now())
-  updatedAt         DateTime       @updatedAt
+  createdAt         DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt         DateTime @updatedAt @db.Timestamptz(3)
 
   position          Position?              @relation(fields: [positionId], references: [id])
   sector            Sector?                @relation(fields: [sectorId], references: [id])
@@ -686,8 +686,8 @@ model EmployeeAddress {
   latitude     Decimal? @db.Decimal(10, 7)
   longitude    Decimal? @db.Decimal(10, 7)
   mapLabel     String?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  createdAt    DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt    DateTime @updatedAt @db.Timestamptz(3)
 
   employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 }
@@ -702,8 +702,8 @@ model EmployeeTransport {
   busLine              String?
   schedule             String?
   observation          String?
-  createdAt            DateTime @default(now())
-  updatedAt            DateTime @updatedAt
+  createdAt            DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt            DateTime @updatedAt @db.Timestamptz(3)
 
   employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 
@@ -714,11 +714,11 @@ model LaborMovement {
   id              String            @id @default(uuid())
   employeeId      String
   type            LaborMovementType
-  effectiveFrom   DateTime
+  effectiveFrom   DateTime @db.Date
   reason          String
   observation     String?
   createdByUserId String?
-  createdAt       DateTime          @default(now())
+  createdAt       DateTime @default(now()) @db.Timestamptz(3)
 
   employee  Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
   createdBy User?    @relation(fields: [createdByUserId], references: [id])
@@ -735,11 +735,11 @@ model EmployeeAssignment {
   personName    String?
   type          String
   role          String?
-  effectiveFrom DateTime?
-  effectiveTo   DateTime?
+  effectiveFrom DateTime? @db.Date
+  effectiveTo   DateTime? @db.Date
   status        String?
   notes         String?
-  createdAt     DateTime  @default(now())
+  createdAt     DateTime @default(now()) @db.Timestamptz(3)
 
   employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
   user     User?    @relation(fields: [userId], references: [id])
@@ -755,8 +755,8 @@ model HourConcept {
   kind           HourConceptKind
   status         RecordStatus    @default(ACTIVO)
   countsAsWorked Boolean         @default(true)
-  createdAt      DateTime        @default(now())
-  updatedAt      DateTime        @updatedAt
+  createdAt      DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime @updatedAt @db.Timestamptz(3)
 
   employees    EmployeeHourConcept[]
   timeEntries  TimeEntry[]
@@ -785,10 +785,10 @@ model EmployeeFieldHistory {
   fieldLabel      String
   oldValue        String?
   newValue        String
-  effectiveFrom   DateTime
+  effectiveFrom   DateTime @db.Date
   reason          String
   createdByUserId String?
-  createdAt       DateTime @default(now())
+  createdAt       DateTime @default(now()) @db.Timestamptz(3)
 
   employee  Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
   createdBy User?    @relation(fields: [createdByUserId], references: [id])
@@ -805,10 +805,10 @@ model EmployeeBlockHistory {
   blockLabel      String
   oldValue        String?
   newValue        String
-  effectiveFrom   DateTime
+  effectiveFrom   DateTime @db.Date
   reason          String
   createdByUserId String?
-  createdAt       DateTime @default(now())
+  createdAt       DateTime @default(now()) @db.Timestamptz(3)
 
   employee  Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
   createdBy User?    @relation(fields: [createdByUserId], references: [id])
@@ -837,8 +837,8 @@ model NoveltyType {
   timeImpact            NoveltyTimeImpact @default(NO_AFECTA_HORAS)
   allowedLoadRoles      Json              @default("[]")
   approvalRoles         Json              @default("[]")
-  createdAt             DateTime          @default(now())
-  updatedAt             DateTime          @updatedAt
+  createdAt             DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt             DateTime @updatedAt @db.Timestamptz(3)
 
   finnegansLinks FinnegansNoveltyLink[]
   novelties      Novelty[]
@@ -868,18 +868,18 @@ model Novelty {
   employeeId          String
   noveltyTypeId       String
   status              ApprovalStatus @default(PENDIENTE)
-  fromDate            DateTime
-  toDate              DateTime?
+  fromDate            DateTime @db.Date
+  toDate              DateTime? @db.Date
   quantityHours       Decimal?       @db.Decimal(8, 2)
   quantityDays        Decimal?       @db.Decimal(8, 2)
   observation         String?
   targetHourConceptId String?
   createdByUserId     String?
   approvedByUserId    String?
-  approvedAt          DateTime?
-  rejectedAt          DateTime?
-  createdAt           DateTime       @default(now())
-  updatedAt           DateTime       @updatedAt
+  approvedAt          DateTime? @db.Timestamptz(3)
+  rejectedAt          DateTime? @db.Timestamptz(3)
+  createdAt           DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt           DateTime @updatedAt @db.Timestamptz(3)
 
   employee          Employee           @relation(fields: [employeeId], references: [id], onDelete: Cascade)
   noveltyType       NoveltyType        @relation(fields: [noveltyTypeId], references: [id])
@@ -901,24 +901,24 @@ model TimeEntry {
   hourConceptId    String
   workShiftId      String?
   timeSegmentId    String?
-  date             DateTime
+  date             DateTime @db.Date
   period           String
   day              Int
   hours            Decimal          @db.Decimal(8, 2)
   totalMinutes     Int
   actualMinutes    Int?
   appliedMultiplier Decimal        @default(1) @db.Decimal(4, 2)
-  segmentStartAt   DateTime?
-  segmentEndAt     DateTime?
+  segmentStartAt   DateTime? @db.Timestamptz(3)
+  segmentEndAt     DateTime? @db.Timestamptz(3)
   source           WorkShiftSource?
   status           ApprovalStatus   @default(BORRADOR)
   observation      String?
   createdByUserId  String?
   approvedByUserId String?
-  approvedAt       DateTime?
-  rejectedAt       DateTime?
-  createdAt        DateTime         @default(now())
-  updatedAt        DateTime         @updatedAt
+  approvedAt       DateTime? @db.Timestamptz(3)
+  rejectedAt       DateTime? @db.Timestamptz(3)
+  createdAt        DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt        DateTime @updatedAt @db.Timestamptz(3)
 
   employee    Employee     @relation(fields: [employeeId], references: [id], onDelete: Cascade)
   hourConcept HourConcept  @relation(fields: [hourConceptId], references: [id])
@@ -949,21 +949,21 @@ model WorkShift {
   endPunchId        String?
   source            WorkShiftSource @default(ADMIN)
   status            WorkShiftStatus @default(PROCESADO)
-  startAt           DateTime
-  endAt             DateTime?
+  startAt           DateTime @db.Timestamptz(3)
+  endAt             DateTime? @db.Timestamptz(3)
   totalMinutes      Int?
   crossesMidnight   Boolean         @default(false)
   maxAllowedMinutes Int             @default(1200)
   observation       String?
   reviewStatus      AttendanceReviewStatus @default(PENDIENTE)
-  reviewedAt        DateTime?
+  reviewedAt        DateTime? @db.Timestamptz(3)
   reviewedByUserId  String?
   reviewNote        String?
   shiftTemplateId   String?
   createdByUserId   String?
-  createdAt         DateTime        @default(now())
-  closedAt          DateTime?
-  updatedAt         DateTime        @updatedAt
+  createdAt         DateTime @default(now()) @db.Timestamptz(3)
+  closedAt          DateTime? @db.Timestamptz(3)
+  updatedAt         DateTime @updatedAt @db.Timestamptz(3)
 
   employee     Employee         @relation(fields: [employeeId], references: [id], onDelete: Cascade)
   hourConcept  HourConcept?     @relation(fields: [hourConceptId], references: [id], onDelete: SetNull)
@@ -994,12 +994,12 @@ model MonthlyTimeClosure {
   status MonthlyClosureStatus @default(ABIERTO)
   snapshot Json?
   submittedByUserId String?
-  submittedAt DateTime?
+  submittedAt DateTime? @db.Timestamptz(3)
   reviewedByUserId String?
-  reviewedAt DateTime?
+  reviewedAt DateTime? @db.Timestamptz(3)
   reviewNote String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
   employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
   submittedBy User? @relation("ClosureSubmittedBy", fields: [submittedByUserId], references: [id])
   reviewedBy User? @relation("ClosureReviewedBy", fields: [reviewedByUserId], references: [id])
@@ -1019,9 +1019,9 @@ model TimeCorrectionRequest {
   status CorrectionRequestStatus @default(PENDIENTE)
   createdByUserId String
   reviewedByUserId String?
-  reviewedAt DateTime?
+  reviewedAt DateTime? @db.Timestamptz(3)
   reviewNote String?
-  createdAt DateTime @default(now())
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
   employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
   timeEntry TimeEntry @relation(fields: [timeEntryId], references: [id], onDelete: Cascade)
   closure MonthlyTimeClosure? @relation(fields: [closureId], references: [id], onDelete: SetNull)
@@ -1042,8 +1042,8 @@ model SystemNotification {
   entityId String?
   link String?
   status NotificationStatus @default(NO_LEIDA)
-  readAt DateTime?
-  createdAt DateTime @default(now())
+  readAt DateTime? @db.Timestamptz(3)
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
   recipient User @relation("NotificationRecipient", fields: [recipientUserId], references: [id], onDelete: Cascade)
   @@index([recipientUserId, status, createdAt])
 }
@@ -1069,8 +1069,8 @@ model ShiftTemplate {
   status RecordStatus @default(ACTIVO)
   createdByUserId String?
   updatedByUserId String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
   workShifts WorkShift[]
   assignments ShiftAssignment[]
   @@index([status])
@@ -1082,13 +1082,13 @@ model ShiftAssignment {
   employeeId       String
   shiftTemplateId  String
   status           ShiftAssignmentStatus @default(HABILITADO)
-  assignedAt       DateTime              @default(now())
+  assignedAt       DateTime @default(now()) @db.Timestamptz(3)
   assignedByUserId String?
-  disabledAt       DateTime?
+  disabledAt       DateTime? @db.Timestamptz(3)
   disabledByUserId String?
   observation      String?
-  createdAt        DateTime              @default(now())
-  updatedAt        DateTime              @updatedAt
+  createdAt        DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt        DateTime @updatedAt @db.Timestamptz(3)
 
   employee      Employee      @relation(fields: [employeeId], references: [id], onDelete: Cascade)
   shiftTemplate ShiftTemplate @relation(fields: [shiftTemplateId], references: [id], onDelete: Cascade)
@@ -1105,13 +1105,13 @@ model ShiftAlert {
   type ShiftAlertType
   status ShiftAlertStatus @default(PENDIENTE)
   severity ShiftAlertSeverity @default(INFO)
-  scheduledAt DateTime?
-  actualAt DateTime
+  scheduledAt DateTime? @db.Timestamptz(3)
+  actualAt DateTime @db.Timestamptz(3)
   differenceMinutes Int?
-  resolvedAt DateTime?
+  resolvedAt DateTime? @db.Timestamptz(3)
   resolvedByUserId String?
   resolutionNote String?
-  createdAt DateTime @default(now())
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
   employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
   workShift WorkShift @relation(fields: [workShiftId], references: [id], onDelete: Cascade)
   @@unique([workShiftId, type])
@@ -1125,9 +1125,9 @@ model AttendanceInactivityIncident {
   operationalDate  DateTime               @db.Date
   status           AttendanceReviewStatus @default(PENDIENTE)
   observation      String
-  detectedAt       DateTime               @default(now())
-  notifiedAt       DateTime?
-  reviewedAt       DateTime?
+  detectedAt       DateTime @default(now()) @db.Timestamptz(3)
+  notifiedAt       DateTime? @db.Timestamptz(3)
+  reviewedAt       DateTime? @db.Timestamptz(3)
   reviewedByUserId String?
   reviewNote       String?
 
@@ -1143,15 +1143,15 @@ model DoubleHourRule {
   id String @id @default(uuid())
   name String
   recurrenceType RecurrenceType
-  fromDate DateTime
-  toDate DateTime?
+  fromDate DateTime @db.Date
+  toDate DateTime? @db.Date
   weekdays Int[] @default([])
   multiplier Decimal @default(2) @db.Decimal(4, 2)
   status RecordStatus @default(ACTIVO)
   reason String
   createdByUserId String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
   employees DoubleHourRuleEmployee[]
   @@index([status, fromDate, toDate])
 }
@@ -1169,7 +1169,7 @@ model AttendancePunch {
   id                String                @id @default(uuid())
   employeeId        String
   type              AttendancePunchType
-  timestamp         DateTime
+  timestamp         DateTime @db.Timestamptz(3)
   source            WorkShiftSource       @default(PORTAL_DNI)
   deviceId          String?
   kioskId           String?
@@ -1178,7 +1178,7 @@ model AttendancePunch {
   status            AttendancePunchStatus @default(VALIDA)
   observation       String?
   reviewStatus      AttendanceReviewStatus @default(PENDIENTE)
-  reviewedAt        DateTime?
+  reviewedAt        DateTime? @db.Timestamptz(3)
   reviewedByUserId  String?
   reviewNote        String?
   photoUrl          String?
@@ -1191,8 +1191,8 @@ model AttendancePunch {
   externalPunchId   String?
   rawPayload        Json?
   biometricProvider String?
-  importedAt        DateTime?
-  createdAt         DateTime              @default(now())
+  importedAt        DateTime? @db.Timestamptz(3)
+  createdAt         DateTime @default(now()) @db.Timestamptz(3)
 
   employee        Employee     @relation(fields: [employeeId], references: [id], onDelete: Cascade)
   photoFile       StorageFile? @relation("AttendancePunchPhotoFile", fields: [photoFileId], references: [id], onDelete: SetNull)
@@ -1221,9 +1221,9 @@ model ClockPunchAttempt {
   errorCode      String?
   errorMessage   String?
   httpStatus     Int?
-  startedAt      DateTime                @default(now())
-  completedAt    DateTime?
-  updatedAt      DateTime                @updatedAt
+  startedAt      DateTime @default(now()) @db.Timestamptz(3)
+  completedAt    DateTime? @db.Timestamptz(3)
+  updatedAt      DateTime @updatedAt @db.Timestamptz(3)
 
   employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 
@@ -1235,9 +1235,9 @@ model TimeSegment {
   id              String   @id @default(uuid())
   workShiftId     String
   employeeId      String
-  date            DateTime
-  fromDateTime    DateTime
-  toDateTime      DateTime
+  date            DateTime @db.Date
+  fromDateTime    DateTime @db.Timestamptz(3)
+  toDateTime      DateTime @db.Timestamptz(3)
   minutes         Int
   hourConceptId   String
   hourConceptName String
@@ -1246,7 +1246,7 @@ model TimeSegment {
   isSpecial       Boolean  @default(false)
   source          String   @default("CALCULATED")
   observation     String?
-  createdAt       DateTime @default(now())
+  createdAt       DateTime @default(now()) @db.Timestamptz(3)
 
   workShift   WorkShift   @relation(fields: [workShiftId], references: [id], onDelete: Cascade)
   employee    Employee    @relation(fields: [employeeId], references: [id], onDelete: Cascade)
@@ -1272,8 +1272,8 @@ model DocumentCategory {
   approvalRoles Json         @default("[]")
   externalLinks Json         @default("[]")
   notes         String?
-  createdAt     DateTime     @default(now())
-  updatedAt     DateTime     @updatedAt
+  createdAt     DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt     DateTime @updatedAt @db.Timestamptz(3)
 
   documents EmployeeDocument[]
 
@@ -1302,8 +1302,8 @@ model AuditParameter {
   createdBy               String?
   updatedBy               String?
   history                 Json         @default("[]")
-  createdAt               DateTime     @default(now())
-  updatedAt               DateTime     @updatedAt
+  createdAt               DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt               DateTime @updatedAt @db.Timestamptz(3)
 
   @@index([scope])
   @@index([severity])
@@ -1322,11 +1322,11 @@ model EmployeeDocument {
   storageFileId    String?
   status           DocumentStatus @default(PENDIENTE)
   notes            String?
-  issuedAt         DateTime?
-  expiresAt        DateTime?
+  issuedAt         DateTime? @db.Date
+  expiresAt        DateTime? @db.Date
   uploadedByUserId String?
-  createdAt        DateTime       @default(now())
-  updatedAt        DateTime       @updatedAt
+  createdAt        DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt        DateTime @updatedAt @db.Timestamptz(3)
 
   employee   Employee         @relation(fields: [employeeId], references: [id], onDelete: Cascade)
   category   DocumentCategory @relation(fields: [categoryId], references: [id])
@@ -1369,13 +1369,13 @@ model StorageFile {
   visibility          StorageVisibility  @default(PRIVATE)
   status              StorageFileStatus  @default(ACTIVE)
   uploadedByUserId    String?
-  uploadedAt          DateTime           @default(now())
+  uploadedAt          DateTime @default(now()) @db.Timestamptz(3)
   deletedByUserId     String?
-  deletedAt           DateTime?
+  deletedAt           DateTime? @db.Timestamptz(3)
   checksum            String?
   metadata            Json               @default("{}")
-  createdAt           DateTime           @default(now())
-  updatedAt           DateTime           @updatedAt
+  createdAt           DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt           DateTime @updatedAt @db.Timestamptz(3)
 
   employee            Employee?          @relation(fields: [employeeId], references: [id], onDelete: SetNull)
   uploadedBy          User?              @relation("StorageFileUploadedBy", fields: [uploadedByUserId], references: [id], onDelete: SetNull)
@@ -1404,7 +1404,7 @@ model AuditLog {
   userId      String?
   ipAddress   String?
   userAgent   String?
-  createdAt   DateTime    @default(now())
+  createdAt   DateTime @default(now()) @db.Timestamptz(3)
 
   user User? @relation(fields: [userId], references: [id])
 

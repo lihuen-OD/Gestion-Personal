@@ -1,6 +1,7 @@
+import { ARGENTINA_OFFSET_MINUTES, scheduledInstantForShiftTime } from "../../shared/datetime/argentinaTime";
+
 export const DEFAULT_ABSOLUTE_OPEN_SHIFT_LIMIT_MINUTES = 1200;
 export const DEFAULT_MAXIMUM_INFORMATIVE_MINUTES = 600;
-const ARGENTINA_OFFSET_MINUTES = -180;
 
 export type ShiftAssignmentStatusRef = "HABILITADO" | "DESHABILITADO";
 
@@ -33,21 +34,13 @@ export interface ShiftMatchResult {
   differenceMinutes: number | null;
 }
 
-function scheduledDateFor(reference: Date, time: string, addDay = false) {
-  const [hours, minutes] = time.split(":").map(Number);
-  const result = new Date(reference);
-  result.setHours(hours || 0, minutes || 0, 0, 0);
-  if (addDay) result.setDate(result.getDate() + 1);
-  return result;
-}
-
 function differenceInMinutes(actual: Date, scheduled: Date) {
   return Math.round((actual.getTime() - scheduled.getTime()) / 60_000);
 }
 
 // Busca la ocurrencia (hoy, ayer o mañana) del horario de inicio más cercana a `actualAt`, para no fallar cerca de la medianoche.
 function closestOccurrence(actualAt: Date, startTime: string) {
-  const today = scheduledDateFor(actualAt, startTime);
+  const today = scheduledInstantForShiftTime(actualAt, startTime);
   const candidates = [today, new Date(today.getTime() - 24 * 60 * 60_000), new Date(today.getTime() + 24 * 60 * 60_000)]
     .map((scheduledAt) => ({ scheduledAt, differenceMinutes: differenceInMinutes(actualAt, scheduledAt) }))
     .sort((a, b) => Math.abs(a.differenceMinutes) - Math.abs(b.differenceMinutes));
@@ -131,7 +124,7 @@ export function evaluateExitPunctuality(input: { match: ShiftMatchResult; startA
     return { evaluated: false, earlyLeave: false, lateLeave: false, differenceMinutes: null, scheduledExitAt: null };
   }
   const template = input.match.template;
-  const scheduledExitAt = scheduledDateFor(input.startAt, template.endTime, template.crossesMidnight);
+  const scheduledExitAt = scheduledInstantForShiftTime(input.startAt, template.endTime, template.crossesMidnight);
   const differenceMinutes = differenceInMinutes(input.actualExitAt, scheduledExitAt);
   return {
     evaluated: true,
@@ -176,7 +169,7 @@ export function evaluateOpenShiftRisk(input: { startAt: Date; now: Date; templat
   const minutesOpen = differenceInMinutes(input.now, input.startAt);
   const absoluteLimitMinutes = input.template?.absoluteOpenShiftLimitMinutes ?? DEFAULT_ABSOLUTE_OPEN_SHIFT_LIMIT_MINUTES;
 
-  const expectedExitAt = input.template ? scheduledDateFor(input.startAt, input.template.endTime, input.template.crossesMidnight) : null;
+  const expectedExitAt = input.template ? scheduledInstantForShiftTime(input.startAt, input.template.endTime, input.template.crossesMidnight) : null;
 
   let missingOutThresholdMinutes: number | null = null;
   if (input.template && input.template.missingOutAlertAfterMinutes !== null && expectedExitAt) {
@@ -192,7 +185,11 @@ export function evaluateOpenShiftRisk(input: { startAt: Date; now: Date; templat
 
 export type NewEntryDecision = "BLOCK_SAME_DAY_OPEN" | "ALLOW_OBSERVED";
 
-function localDayKey(date: Date, offsetMinutes: number) {
+// Genérica (no hardcodea Argentina): solo se usa para permitir, en tests, evaluar
+// con un offset distinto al default. El uso real siempre pasa por el default
+// (ARGENTINA_OFFSET_MINUTES, importado del helper único), nunca reimplementa el
+// offset de Argentina.
+function offsetDateKey(date: Date, offsetMinutes: number) {
   const shifted = new Date(date.getTime() + offsetMinutes * 60_000);
   return `${shifted.getUTCFullYear()}-${shifted.getUTCMonth()}-${shifted.getUTCDate()}`;
 }
@@ -200,7 +197,7 @@ function localDayKey(date: Date, offsetMinutes: number) {
 // Solo se bloquea el nuevo ingreso si la jornada previa es del mismo día y todavía está en rango normal; si no, se permite observado (nunca se inventa una salida).
 export function evaluateNewEntryWithOpenShift(input: { previousOpenShiftStartAt: Date; now: Date; previousShiftRisk: OpenShiftRiskLevel; timezoneOffsetMinutes?: number }): NewEntryDecision {
   const offset = input.timezoneOffsetMinutes ?? ARGENTINA_OFFSET_MINUTES;
-  const sameDay = localDayKey(input.previousOpenShiftStartAt, offset) === localDayKey(input.now, offset);
+  const sameDay = offsetDateKey(input.previousOpenShiftStartAt, offset) === offsetDateKey(input.now, offset);
   if (sameDay && input.previousShiftRisk === "NORMAL") return "BLOCK_SAME_DAY_OPEN";
   return "ALLOW_OBSERVED";
 }

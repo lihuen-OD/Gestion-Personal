@@ -1,6 +1,14 @@
 import { ApprovalStatus, EmployeeStatus, Prisma, WorkShiftSource, WorkShiftStatus } from "@prisma/client";
 import { prisma } from "../../shared/prisma/client";
 import { noveltyCoversDay } from "../novelties/novelties.dateRange";
+import {
+  argentinaCalendarDate,
+  argentinaDateKey,
+  dayOfMonthFromCalendarDate,
+  dayOfMonthFromInstant,
+  periodFromCalendarDate,
+  periodFromInstant,
+} from "../../shared/datetime/argentinaTime";
 import type { CreateTimeEntryInput, ListTimeEntriesQuery, TimeEntriesExportQuery, TimeEntriesPeriodEmployeesQuery, UpdateTimeEntryInput } from "./timeEntries.schemas";
 
 function periodRange(period: string) {
@@ -348,7 +356,7 @@ export const timeEntriesRepository = {
   },
 
   async attendanceObservedCount(input: { startAt: Date; endAt: Date; employeeAccessWhere: Prisma.EmployeeWhereInput }) {
-    const operationalDate = new Date(input.startAt.toLocaleDateString("sv-SE", { timeZone: "America/Argentina/Cordoba" }) + "T00:00:00.000Z");
+    const operationalDate = argentinaCalendarDate(argentinaDateKey(input.startAt));
     const [observedShifts, observedPunches, inactivityIncidents] = await prisma.$transaction([
       prisma.workShift.count({
         where: {
@@ -1070,8 +1078,8 @@ export const timeEntriesRepository = {
             hourConceptId: previousConcept.id,
             workShiftId: previous.id,
             date: previous.startAt,
-            period: periodFromDate(previous.startAt),
-            day: dayFromDate(previous.startAt),
+            period: periodFromInstant(previous.startAt),
+            day: dayOfMonthFromInstant(previous.startAt),
             hours: 0,
             totalMinutes: 0,
             status: "APROBADO",
@@ -1210,8 +1218,8 @@ export const timeEntriesRepository = {
         employeeId: input.employeeId,
         hourConceptId: input.hourConceptId,
         date: input.date,
-        period: periodFromDate(input.date),
-        day: dayFromDate(input.date),
+        period: periodFromCalendarDate(input.date),
+        day: dayOfMonthFromCalendarDate(input.date),
         hours: input.hours,
         totalMinutes: minutesFromHours(input.hours),
         status: "BORRADOR",
@@ -1352,8 +1360,8 @@ export const timeEntriesRepository = {
               workShiftId: workShift.id,
               timeSegmentId: timeSegment.id,
               date: segment.date,
-              period: periodFromDate(segment.date),
-              day: dayFromDate(segment.date),
+              period: periodFromCalendarDate(segment.date),
+              day: dayOfMonthFromCalendarDate(segment.date),
               hours: creditedMinutes / 60,
               totalMinutes: creditedMinutes,
               actualMinutes: segment.minutes,
@@ -1506,8 +1514,8 @@ export const timeEntriesRepository = {
               workShiftId: workShift.id,
               timeSegmentId: timeSegment.id,
               date: segment.date,
-              period: periodFromDate(segment.date),
-              day: dayFromDate(segment.date),
+              period: periodFromCalendarDate(segment.date),
+              day: dayOfMonthFromCalendarDate(segment.date),
               hours: creditedMinutes / 60,
               totalMinutes: creditedMinutes,
               actualMinutes: segment.minutes,
@@ -1534,7 +1542,7 @@ export const timeEntriesRepository = {
       where: { id },
       data: {
         ...(input.hourConceptId !== undefined ? { hourConceptId: input.hourConceptId } : {}),
-        ...(input.date !== undefined ? { date, period: periodFromDate(date), day: dayFromDate(date) } : {}),
+        ...(input.date !== undefined ? { date, period: periodFromCalendarDate(date), day: dayOfMonthFromCalendarDate(date) } : {}),
         ...(hours !== undefined ? { hours, totalMinutes: minutesFromHours(hours) } : {}),
         ...(input.observation !== undefined ? { observation: input.observation || null } : {}),
       },

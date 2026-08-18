@@ -14,6 +14,14 @@ import { timeEntriesRepository } from "./timeEntries.repository";
 import { attendanceRecipients, notifyUsers } from "../workforce-management/workforce.service";
 import { evaluateShiftEntry, evaluateShiftExit } from "../shifts/workShiftEvaluationRunner";
 import { compareOpenShiftRisk, computeOpenShiftRisk } from "../shifts/openShiftMonitor.service";
+import {
+  argentinaCalendarDate,
+  argentinaDateParts,
+  argentinaDayRange,
+  formatArgentinaTime,
+  nextArgentinaMidnightUtc,
+  todayArgentinaDateKey,
+} from "../../shared/datetime/argentinaTime";
 import type {
   AdminCloseWorkShiftInput,
   AdminWorkShiftReasonInput,
@@ -135,49 +143,7 @@ function currentPeriod() {
   return new Date().toISOString().slice(0, 7);
 }
 
-const ARGENTINA_OFFSET_MINUTES = -180;
 const MAX_SHIFT_MINUTES = 20 * 60;
-
-function offsetMs() {
-  return ARGENTINA_OFFSET_MINUTES * 60_000;
-}
-
-function localDateParts(value: Date) {
-  const shifted = new Date(value.getTime() + offsetMs());
-  return {
-    year: shifted.getUTCFullYear(),
-    month: shifted.getUTCMonth() + 1,
-    day: shifted.getUTCDate(),
-    key: shifted.toISOString().slice(0, 10),
-  };
-}
-
-function dateAtUtcMidnight(localDateKey: string) {
-  return new Date(`${localDateKey}T00:00:00.000Z`);
-}
-
-function todayLocalDateKey() {
-  return localDateParts(new Date()).key;
-}
-
-function localDayRange(dateKey: string) {
-  const startAt = new Date(`${dateKey}T00:00:00.000-03:00`);
-  const endAt = new Date(startAt.getTime() + 24 * 60 * 60 * 1000);
-  return { startAt, endAt };
-}
-
-function nextLocalMidnightUtc(value: Date) {
-  const parts = localDateParts(value);
-  return new Date(Date.UTC(parts.year, parts.month - 1, parts.day + 1) - offsetMs());
-}
-
-function formatLocalTime(value: Date) {
-  return new Intl.DateTimeFormat("es-AR", {
-    timeZone: "America/Argentina/Cordoba",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(value);
-}
 
 function buildShiftSegments(startAt: Date, endAt: Date) {
   if (endAt <= startAt) {
@@ -191,17 +157,17 @@ function buildShiftSegments(startAt: Date, endAt: Date) {
   const segments: Array<{ date: Date; startAt: Date; endAt: Date; minutes: number; hours: number; label: string }> = [];
   let cursor = startAt;
   while (cursor < endAt) {
-    const segmentEnd = new Date(Math.min(endAt.getTime(), nextLocalMidnightUtc(cursor).getTime()));
+    const segmentEnd = new Date(Math.min(endAt.getTime(), nextArgentinaMidnightUtc(cursor).getTime()));
     const minutes = Math.round((segmentEnd.getTime() - cursor.getTime()) / 60_000);
-    const localDate = localDateParts(cursor).key;
+    const localDate = argentinaDateParts(cursor).key;
     if (minutes > 0) {
       segments.push({
-        date: dateAtUtcMidnight(localDate),
+        date: argentinaCalendarDate(localDate),
         startAt: cursor,
         endAt: segmentEnd,
         minutes,
         hours: Number((minutes / 60).toFixed(2)),
-        label: `${localDate} ${formatLocalTime(cursor)}-${formatLocalTime(segmentEnd)} (${formatNumber(minutes / 60)} h)`,
+        label: `${localDate} ${formatArgentinaTime(cursor)}-${formatArgentinaTime(segmentEnd)} (${formatNumber(minutes / 60)} h)`,
       });
     }
     cursor = segmentEnd;
@@ -574,8 +540,8 @@ export const timeEntriesService = {
   },
 
   async attendanceSummary(query: AttendanceSummaryQuery, user: Express.AuthUser) {
-    const date = query.date || todayLocalDateKey();
-    const range = localDayRange(date);
+    const date = query.date || todayArgentinaDateKey();
+    const range = argentinaDayRange(date);
     const result = await timeEntriesRepository.attendanceSummary({
       ...range,
       employeeAccessWhere: employeeAccessWhere(user),
@@ -615,10 +581,10 @@ export const timeEntriesService = {
   },
 
   async attendanceObservations(query: AttendanceObservationsQuery, user: Express.AuthUser) {
-    const range = query.date ? localDayRange(query.date) : {};
+    const range = query.date ? argentinaDayRange(query.date) : {};
     const result = await timeEntriesRepository.attendanceObservations({
       ...range,
-      operationalDate: query.date ? dateAtUtcMidnight(query.date) : undefined,
+      operationalDate: query.date ? argentinaCalendarDate(query.date) : undefined,
       before: query.before,
       search: query.search,
       type: query.type,
@@ -672,7 +638,7 @@ export const timeEntriesService = {
       };
     }
 
-    const { startAt, endAt } = localDayRange(todayLocalDateKey());
+    const { startAt, endAt } = argentinaDayRange(todayArgentinaDateKey());
     const [novedadesPendientes, fichadasObservadas] = await Promise.all([
       timeEntriesRepository.pendingNoveltiesCount(access),
       timeEntriesRepository.attendanceObservedCount({ startAt, endAt, employeeAccessWhere: access }),

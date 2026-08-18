@@ -1,5 +1,6 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "../../shared/prisma/client";
+import { dayOfMonthFromCalendarDate, periodFromCalendarDate } from "../../shared/datetime/argentinaTime";
 import type { CreateNoveltyInput, ListNoveltiesQuery } from "./novelties.schemas";
 
 const noveltyInclude = {
@@ -68,16 +69,6 @@ function buildWhere(query: ListNoveltiesQuery, employeeAccessWhere: Prisma.Emplo
         }
       : {}),
   };
-}
-
-function periodFromDate(date: Date) {
-  const year = date.getUTCFullYear();
-  const month = String(date.getUTCMonth() + 1).padStart(2, "0");
-  return `${year}-${month}`;
-}
-
-function dayFromDate(date: Date) {
-  return date.getUTCDate();
 }
 
 function dateRange(from: Date, to?: Date | null) {
@@ -155,8 +146,8 @@ async function syncZeroTimeEntries(
           employeeId,
           hourConceptId: enabledConcept.hourConceptId,
           date,
-          period: periodFromDate(date),
-          day: dayFromDate(date),
+          period: periodFromCalendarDate(date),
+          day: dayOfMonthFromCalendarDate(date),
           hours: 0,
           totalMinutes: 0,
           status: "EN_REVISION",
