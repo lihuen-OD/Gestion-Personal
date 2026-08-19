@@ -33,10 +33,21 @@ vi.mock("../workforce-management/workforce.service", () => ({
 vi.mock("../shifts/workShiftEvaluationRunner", () => ({
   evaluateShiftEntry: vi.fn().mockResolvedValue(undefined),
   evaluateShiftExit: vi.fn().mockResolvedValue(undefined),
+  notifyClassificationAlerts: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("../audit/audit.service", () => ({
   auditService: { register: vi.fn().mockResolvedValue(null) },
+}));
+
+// Sin reglas activas ni conceptos habilitados: ejercita a proposito el modo
+// de compatibilidad hacia atras de la clasificacion (etapa de Turnos V1) en
+// vez de pegarle a una base real — este archivo no mockea prisma directo.
+vi.mock("../hour-concepts/hourConcepts.repository", () => ({
+  hourConceptsRepository: {
+    findActiveRules: vi.fn().mockResolvedValue([]),
+    findEnabledConceptIds: vi.fn().mockResolvedValue(new Set()),
+  },
 }));
 
 type RepoMock = {

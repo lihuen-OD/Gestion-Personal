@@ -23,7 +23,9 @@ export type ShiftAlertTypeValue =
   | "JORNADA_INSUFICIENTE"
   | "JORNADA_EXTENDIDA"
   | "DESCANSO_INSUFICIENTE"
-  | "POSIBLE_OLVIDO_SALIDA";
+  | "POSIBLE_OLVIDO_SALIDA"
+  | "CONCEPTO_NO_HABILITADO"
+  | "SEGMENTO_SIN_CLASIFICAR";
 type ShiftAlertSeverityValue = "INFO" | "ADVERTENCIA" | "CRITICA";
 
 const DEFAULT_MINIMUM_REST_MINUTES = 480;
@@ -39,6 +41,8 @@ const severityByAlertType: Record<ShiftAlertTypeValue, ShiftAlertSeverityValue> 
   JORNADA_EXTENDIDA: "INFO",
   DESCANSO_INSUFICIENTE: "ADVERTENCIA",
   POSIBLE_OLVIDO_SALIDA: "ADVERTENCIA",
+  CONCEPTO_NO_HABILITADO: "ADVERTENCIA",
+  SEGMENTO_SIN_CLASIFICAR: "ADVERTENCIA",
 };
 
 const labelByAlertType: Record<ShiftAlertTypeValue, string> = {
@@ -52,6 +56,8 @@ const labelByAlertType: Record<ShiftAlertTypeValue, string> = {
   JORNADA_EXTENDIDA: "Jornada extendida",
   DESCANSO_INSUFICIENTE: "Descanso insuficiente entre jornadas",
   POSIBLE_OLVIDO_SALIDA: "Posible olvido de salida",
+  CONCEPTO_NO_HABILITADO: "Concepto horario detectado pero no habilitado para el empleado",
+  SEGMENTO_SIN_CLASIFICAR: "Tramo de jornada sin concepto horario compatible",
 };
 
 export function toTemplateRef(template: ShiftTemplateLike): ShiftTemplateRef {
@@ -189,5 +195,43 @@ export async function evaluateShiftExit(employeeId: string, workShiftId: string,
   }
   if (duration.extendedShift) {
     await createShiftAlert({ employeeId, workShiftId, type: "JORNADA_EXTENDIDA", actualAt, differenceMinutes: shift.totalMinutes });
+  }
+}
+
+export interface ClassifiedSegmentAlertInput {
+  startAt: Date;
+  minutes: number;
+  conceptStatus: "SUGERIDO" | "MANUAL" | "SIN_CONCEPTO_COMPATIBLE" | "CONCEPTO_NO_HABILITADO";
+}
+
+// Una sola alerta por tipo por jornada, aunque varios segmentos compartan el
+// mismo problema (createShiftAlert ya upsertea por [workShiftId, type], pero
+// llamarlo una vez por segmento igual dispararia una notificacion por
+// llamada — se agrega antes de notificar, para cumplir "no generar alertas
+// duplicadas por el mismo problema"). No genera nada si todos los segmentos
+// quedaron SUGERIDO/MANUAL.
+export async function notifyClassificationAlerts(employeeId: string, workShiftId: string, segments: ClassifiedSegmentAlertInput[]) {
+  const byStatus = (status: ClassifiedSegmentAlertInput["conceptStatus"]) => segments.filter((segment) => segment.conceptStatus === status);
+
+  const noHabilitado = byStatus("CONCEPTO_NO_HABILITADO");
+  if (noHabilitado.length > 0) {
+    await createShiftAlert({
+      employeeId,
+      workShiftId,
+      type: "CONCEPTO_NO_HABILITADO",
+      actualAt: noHabilitado[0]!.startAt,
+      differenceMinutes: noHabilitado.reduce((sum, segment) => sum + segment.minutes, 0),
+    });
+  }
+
+  const sinClasificar = byStatus("SIN_CONCEPTO_COMPATIBLE");
+  if (sinClasificar.length > 0) {
+    await createShiftAlert({
+      employeeId,
+      workShiftId,
+      type: "SEGMENTO_SIN_CLASIFICAR",
+      actualAt: sinClasificar[0]!.startAt,
+      differenceMinutes: sinClasificar.reduce((sum, segment) => sum + segment.minutes, 0),
+    });
   }
 }

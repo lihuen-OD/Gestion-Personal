@@ -56,6 +56,23 @@ type PunchEvidenceInput = {
   rawPayload?: Prisma.InputJsonValue;
 };
 
+// Segmento ya clasificado (etapa de Turnos V1 — clasificación multi-concepto):
+// cada tramo trae su propio concepto detectado, no uno uniforme para toda la
+// jornada. conceptStatus/hourConceptRuleId son opcionales para no romper los
+// llamadores que todavía no clasifican (quedan en el default del schema:
+// MANUAL / null).
+export type ClassifiedSegmentForPersistence = {
+  date: Date;
+  startAt: Date;
+  endAt: Date;
+  minutes: number;
+  hours: number;
+  hourConceptId: string;
+  hourConceptName: string;
+  conceptStatus?: "SUGERIDO" | "MANUAL" | "SIN_CONCEPTO_COMPATIBLE" | "CONCEPTO_NO_HABILITADO";
+  hourConceptRuleId?: string | null;
+};
+
 function punchEvidenceData(evidence?: PunchEvidenceInput) {
   if (!evidence) return {};
   return {
@@ -1239,7 +1256,7 @@ export const timeEntriesRepository = {
     endAt: Date;
     totalMinutes: number;
     observation?: string | null;
-    segments: Array<{ date: Date; startAt: Date; endAt: Date; minutes: number; hours: number }>;
+    segments: Array<ClassifiedSegmentForPersistence>;
     createdByUserId?: string | null;
   }) {
     return prisma.$transaction(async (tx) => {
@@ -1273,7 +1290,7 @@ export const timeEntriesRepository = {
           startAt: input.startAt,
           endAt: input.endAt,
           totalMinutes: input.totalMinutes,
-          crossesMidnight: input.segments.length > 1,
+          crossesMidnight: new Set(input.segments.map((segment) => segment.date.getTime())).size > 1,
           maxAllowedMinutes: 20 * 60,
           observation: input.observation || null,
           createdByUserId: input.createdByUserId || null,
@@ -1311,8 +1328,10 @@ export const timeEntriesRepository = {
             fromDateTime: segment.startAt,
             toDateTime: segment.endAt,
             minutes: segment.minutes,
-            hourConceptId: input.hourConceptId,
-            hourConceptName: input.hourConceptName,
+            hourConceptId: segment.hourConceptId,
+            hourConceptName: segment.hourConceptName,
+            hourConceptRuleId: segment.hourConceptRuleId || null,
+            ...(segment.conceptStatus ? { conceptStatus: segment.conceptStatus } : {}),
             isSpecial: false,
             observation: input.observation || null,
           },
@@ -1322,7 +1341,7 @@ export const timeEntriesRepository = {
         const existing = await tx.timeEntry.findFirst({
           where: {
             employeeId: input.employeeId,
-            hourConceptId: input.hourConceptId,
+            hourConceptId: segment.hourConceptId,
             date: segment.date,
           },
           include: timeEntryInclude,
@@ -1356,7 +1375,7 @@ export const timeEntriesRepository = {
           entries.push(await tx.timeEntry.create({
             data: {
               employeeId: input.employeeId,
-              hourConceptId: input.hourConceptId,
+              hourConceptId: segment.hourConceptId,
               workShiftId: workShift.id,
               timeSegmentId: timeSegment.id,
               date: segment.date,
@@ -1390,7 +1409,7 @@ export const timeEntriesRepository = {
     source: WorkShiftSource;
     endAt: Date;
     totalMinutes: number;
-    segments: Array<{ date: Date; startAt: Date; endAt: Date; minutes: number; hours: number }>;
+    segments: Array<ClassifiedSegmentForPersistence>;
     observation?: string | null;
     punchEvidence?: PunchEvidenceInput;
   }) {
@@ -1408,7 +1427,7 @@ export const timeEntriesRepository = {
           hourConceptName: input.hourConceptName,
           endAt: input.endAt,
           totalMinutes: input.totalMinutes,
-          crossesMidnight: input.segments.length > 1,
+          crossesMidnight: new Set(input.segments.map((segment) => segment.date.getTime())).size > 1,
           closedAt: input.endAt,
           observation: input.observation || undefined,
         },
@@ -1465,8 +1484,10 @@ export const timeEntriesRepository = {
             fromDateTime: segment.startAt,
             toDateTime: segment.endAt,
             minutes: segment.minutes,
-            hourConceptId: input.hourConceptId,
-            hourConceptName: input.hourConceptName,
+            hourConceptId: segment.hourConceptId,
+            hourConceptName: segment.hourConceptName,
+            hourConceptRuleId: segment.hourConceptRuleId || null,
+            ...(segment.conceptStatus ? { conceptStatus: segment.conceptStatus } : {}),
             isSpecial: false,
           },
         });
@@ -1475,7 +1496,7 @@ export const timeEntriesRepository = {
         const existing = await tx.timeEntry.findFirst({
           where: {
             employeeId: input.employeeId,
-            hourConceptId: input.hourConceptId,
+            hourConceptId: segment.hourConceptId,
             date: segment.date,
           },
           include: timeEntryInclude,
@@ -1510,7 +1531,7 @@ export const timeEntriesRepository = {
           entries.push(await tx.timeEntry.create({
             data: {
               employeeId: input.employeeId,
-              hourConceptId: input.hourConceptId,
+              hourConceptId: segment.hourConceptId,
               workShiftId: workShift.id,
               timeSegmentId: timeSegment.id,
               date: segment.date,

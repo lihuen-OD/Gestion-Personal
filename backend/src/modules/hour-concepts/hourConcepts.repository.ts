@@ -67,4 +67,31 @@ export const hourConceptsRepository = {
   update(id: string, data: UpdateHourConceptInput) {
     return prisma.hourConcept.update({ where: { id }, data });
   },
+
+  // Clasificación automática de jornadas (etapa de Turnos V1): reglas de
+  // aplicación de concepto activas, con el nombre del concepto ya
+  // denormalizado para no repetir el join en cada segmento clasificado.
+  async findActiveRules() {
+    const rules = await prisma.hourConceptRule.findMany({
+      where: { status: "ACTIVO", hourConcept: { status: "ACTIVO" } },
+      include: { hourConcept: { select: { name: true } } },
+    });
+    return rules.map((rule) => ({
+      id: rule.id,
+      hourConceptId: rule.hourConceptId,
+      hourConceptName: rule.hourConcept.name,
+      startTime: rule.startTime,
+      endTime: rule.endTime,
+      crossesMidnight: rule.crossesMidnight,
+      priority: rule.priority,
+    }));
+  },
+
+  async findEnabledConceptIds(employeeId: string): Promise<Set<string>> {
+    const enabled = await prisma.employeeHourConcept.findMany({
+      where: { employeeId, hourConcept: { status: "ACTIVO" } },
+      select: { hourConceptId: true },
+    });
+    return new Set(enabled.map((row) => row.hourConceptId));
+  },
 };

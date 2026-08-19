@@ -11,9 +11,12 @@ import { roles } from "../../shared/security/roles";
 import { storageService } from "../../shared/storage/storage.service";
 import { storagePathBuilder } from "../../shared/storage/storagePathBuilder";
 import { timeEntriesRepository } from "./timeEntries.repository";
+import type { ClassifiedSegmentForPersistence } from "./timeEntries.repository";
 import { attendanceRecipients, notifyUsers } from "../workforce-management/workforce.service";
-import { evaluateShiftEntry, evaluateShiftExit } from "../shifts/workShiftEvaluationRunner";
+import { evaluateShiftEntry, evaluateShiftExit, notifyClassificationAlerts } from "../shifts/workShiftEvaluationRunner";
 import { compareOpenShiftRisk, computeOpenShiftRisk } from "../shifts/openShiftMonitor.service";
+import { hourConceptsRepository } from "../hour-concepts/hourConcepts.repository";
+import { classifyWorkShiftSegments } from "../hour-concepts/hourConceptClassification";
 import {
   argentinaCalendarDate,
   argentinaDateParts,
@@ -177,6 +180,45 @@ function buildShiftSegments(startAt: Date, endAt: Date) {
 
 function shiftMinutes(startAt: Date, endAt: Date) {
   return Math.round((endAt.getTime() - startAt.getTime()) / 60_000);
+}
+
+// Clasificación automática multi-concepto (etapa de Turnos V1): parte cada
+// tramo de día (ya resuelto por buildShiftSegments, sin duplicar esa lógica)
+// por HourConceptRule activas. Compatibilidad hacia atrás: si no hay ninguna
+// regla activa en el sistema, classifyWorkShiftSegments devuelve exactamente
+// el mismo tramo con conceptStatus "MANUAL" y el concepto por defecto — el
+// comportamiento es idéntico al de antes de esta etapa.
+type ClassifiedSegment = ClassifiedSegmentForPersistence & {
+  conceptStatus: "SUGERIDO" | "MANUAL" | "SIN_CONCEPTO_COMPATIBLE" | "CONCEPTO_NO_HABILITADO";
+  hourConceptRuleId: string | null;
+};
+
+async function classifySegmentsForEmployee(
+  employeeId: string,
+  daySegments: Array<{ date: Date; startAt: Date; endAt: Date; minutes: number; hours: number }>,
+  fallbackHourConcept: { id: string; name: string },
+): Promise<ClassifiedSegment[]> {
+  const [activeRules, enabledHourConceptIds] = await Promise.all([
+    hourConceptsRepository.findActiveRules(),
+    hourConceptsRepository.findEnabledConceptIds(employeeId),
+  ]);
+  const classified = classifyWorkShiftSegments({
+    daySegments,
+    activeRules,
+    enabledHourConceptIds,
+    fallbackHourConcept,
+  });
+  return classified.map((segment) => ({
+    date: segment.date,
+    startAt: segment.startAt,
+    endAt: segment.endAt,
+    minutes: segment.minutes,
+    hours: Number((segment.minutes / 60).toFixed(2)),
+    hourConceptId: segment.hourConceptId,
+    hourConceptName: segment.hourConceptName,
+    conceptStatus: segment.conceptStatus,
+    hourConceptRuleId: segment.hourConceptRuleId,
+  }));
 }
 
 async function resolveShiftEmployee(input: Pick<PreviewWorkShiftInput, "employeeId" | "dni">, user: Express.AuthUser) {
@@ -713,6 +755,7 @@ export const timeEntriesService = {
     for (const segment of calculation.segments) {
       await ensureDayIsNotBlocked(before.employeeId, segment.date, segment.hours);
     }
+    const classifiedSegments = await classifySegmentsForEmployee(before.employeeId, calculation.segments, hourConcept);
 
     const created = await timeEntriesRepository.closeOpenWorkShift({
       workShiftId: before.id,
@@ -722,10 +765,11 @@ export const timeEntriesService = {
       source: "ADMIN",
       endAt: input.endAt,
       totalMinutes: calculation.totalMinutes,
-      segments: calculation.segments,
+      segments: classifiedSegments,
       observation: `Cierre manual: ${input.reason}`,
     });
     await evaluateShiftExit(before.employeeId, created.workShift.id, input.endAt);
+    await notifyClassificationAlerts(before.employeeId, created.workShift.id, classifiedSegments);
 
     await auditService.register({
       ...audit,
@@ -816,6 +860,7 @@ export const timeEntriesService = {
   async createWorkShift(input: CreateWorkShiftInput, user: Express.AuthUser, audit?: AuditContext) {
     const result = await validateShift(input, user);
     try {
+      const classifiedSegments = await classifySegmentsForEmployee(result.employee.id, result.segments, result.hourConcept);
       const created = await timeEntriesRepository.createFromWorkShift({
         employeeId: result.employee.id,
         hourConceptId: result.hourConcept.id,
@@ -825,9 +870,10 @@ export const timeEntriesService = {
         endAt: input.endAt,
         totalMinutes: result.totalMinutes,
         observation: input.observation,
-        segments: result.segments,
+        segments: classifiedSegments,
         createdByUserId: user.id,
       });
+      await notifyClassificationAlerts(result.employee.id, created.workShift.id, classifiedSegments);
 
       await auditService.register({
         ...audit,
@@ -1158,6 +1204,7 @@ export const timeEntriesService = {
     const { hourConcept, calculation } = exitPreparation;
 
     try {
+      const classifiedSegments = await classifySegmentsForEmployee(employee.id, calculation.segments, hourConcept);
       const created = await timeEntriesRepository.closeOpenWorkShift({
         workShiftId: openShift.id,
         employeeId: employee.id,
@@ -1166,7 +1213,7 @@ export const timeEntriesService = {
         source: "PUBLIC_CLOCK_PHOTO",
         endAt: now,
         totalMinutes: calculation.totalMinutes,
-        segments: calculation.segments,
+        segments: classifiedSegments,
         punchEvidence: evidence,
       });
       scheduleClockAudit({
@@ -1179,6 +1226,7 @@ export const timeEntriesService = {
       });
       if (created.workShift.endPunchId) scheduleClockThumbnail(input, deferredThumbnail, evidence, created.workShift.endPunchId);
       await evaluateShiftExit(employee.id, created.workShift.id, now);
+      await notifyClassificationAlerts(employee.id, created.workShift.id, classifiedSegments);
       console.info("CLOCK_PHOTO_PUNCH_PHASE_TIMING", {
         requestId: input.requestId,
         punchType: input.punchType,
@@ -1334,6 +1382,7 @@ export const timeEntriesService = {
       await ensureDayIsNotBlocked(employee.id, segment.date, segment.hours);
     }
     try {
+      const classifiedSegments = await classifySegmentsForEmployee(employee.id, calculation.segments, hourConcept);
       const created = await timeEntriesRepository.closeOpenWorkShift({
         workShiftId: openShift.id,
         employeeId: employee.id,
@@ -1342,9 +1391,10 @@ export const timeEntriesService = {
         source,
         endAt,
         totalMinutes: calculation.totalMinutes,
-        segments: calculation.segments,
+        segments: classifiedSegments,
       });
       await evaluateShiftExit(employee.id, created.workShift.id, endAt);
+      await notifyClassificationAlerts(employee.id, created.workShift.id, classifiedSegments);
       return {
         employee: publicEmployeeLabel(employee),
         workShift: {

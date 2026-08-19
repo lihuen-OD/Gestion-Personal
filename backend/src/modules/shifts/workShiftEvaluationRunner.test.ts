@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import type { Mock } from "vitest";
 import { prisma } from "../../shared/prisma/client";
-import { evaluateShiftEntry, evaluateShiftExit } from "./workShiftEvaluationRunner";
+import { evaluateShiftEntry, evaluateShiftExit, notifyClassificationAlerts } from "./workShiftEvaluationRunner";
 
 /**
  * Etapa de logica de Regimen de Trabajo (2026-08-18): un empleado sin
@@ -128,5 +128,38 @@ describe("Caso D — regimen TURNO_FLEXIBLE con alertOnOutOfShift = false", () =
     await evaluateShiftExit("employee-1", "shift-1", new Date("2026-08-18T18:30:00.000Z"));
 
     expect(upsertedAlertTypes()).toContain("JORNADA_EXTENDIDA");
+  });
+});
+
+describe("Caso E — notifyClassificationAlerts: una sola alerta por tipo por jornada, nunca por segmento", () => {
+  it("varios segmentos CONCEPTO_NO_HABILITADO generan una sola alerta de ese tipo, con los minutos sumados", async () => {
+    await notifyClassificationAlerts("employee-1", "shift-1", [
+      { startAt: new Date("2026-08-18T00:00:00.000Z"), minutes: 180, conceptStatus: "CONCEPTO_NO_HABILITADO" },
+      { startAt: new Date("2026-08-18T03:00:00.000Z"), minutes: 240, conceptStatus: "CONCEPTO_NO_HABILITADO" },
+    ]);
+
+    const calls = mockedPrisma.shiftAlert.upsert.mock.calls.filter((call) => call[0]?.create?.type === "CONCEPTO_NO_HABILITADO");
+    expect(calls).toHaveLength(1);
+    expect(calls[0]![0]?.create?.differenceMinutes).toBe(420);
+  });
+
+  it("segmentos con distintos problemas generan una alerta por tipo, no una combinada ni una por segmento", async () => {
+    await notifyClassificationAlerts("employee-1", "shift-1", [
+      { startAt: new Date("2026-08-18T00:00:00.000Z"), minutes: 60, conceptStatus: "CONCEPTO_NO_HABILITADO" },
+      { startAt: new Date("2026-08-18T01:00:00.000Z"), minutes: 60, conceptStatus: "SIN_CONCEPTO_COMPATIBLE" },
+      { startAt: new Date("2026-08-18T02:00:00.000Z"), minutes: 60, conceptStatus: "SIN_CONCEPTO_COMPATIBLE" },
+    ]);
+
+    expect(upsertedAlertTypes().filter((type) => type === "CONCEPTO_NO_HABILITADO")).toHaveLength(1);
+    expect(upsertedAlertTypes().filter((type) => type === "SEGMENTO_SIN_CLASIFICAR")).toHaveLength(1);
+  });
+
+  it("si todos los segmentos quedaron SUGERIDO/MANUAL, no genera ninguna alerta", async () => {
+    await notifyClassificationAlerts("employee-1", "shift-1", [
+      { startAt: new Date("2026-08-18T00:00:00.000Z"), minutes: 240, conceptStatus: "SUGERIDO" },
+      { startAt: new Date("2026-08-18T04:00:00.000Z"), minutes: 240, conceptStatus: "MANUAL" },
+    ]);
+
+    expect(mockedPrisma.shiftAlert.upsert).not.toHaveBeenCalled();
   });
 });
