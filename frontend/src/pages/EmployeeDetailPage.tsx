@@ -406,7 +406,7 @@ function renderEmployeeTab(
       </div>
     ) : <EmptyState text="Todavía no hay eventos registrados para este legajo." />;
   }
-  if (tab === 9) return <EmployeeShiftsPanel employee={employee} user={user} />;
+  if (tab === 9) return <EmployeeShiftsPanel employee={employee} user={user} canEdit={editable} />;
   if (tab === 11) return <EmployeeWorkRegimePanel employee={employee} user={user} canEdit={editable} onSaved={setEmployee} />;
 
   if (!auditLoaded) return <LoadingState text="Cargando auditoría..." />;

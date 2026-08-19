@@ -44,6 +44,7 @@ function prismaKnownError(code: string) {
 
 const user = { id: "user-1", role: roles.rrhh } as unknown as Express.AuthUser;
 const template = { id: "template-1", code: "T-1", name: "Turno mañana" };
+const baseAssignInput = { shiftTemplateId: template.id, effectiveFrom: new Date("2026-01-01"), weekdays: [] as number[] };
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -56,17 +57,22 @@ describe("shiftAssignmentService.assign", () => {
     repo.findExisting.mockResolvedValue(null);
     repo.create.mockResolvedValue({ id: "assign-1", employee: { legajo: "100" } });
 
-    const result = await shiftAssignmentService.assign({ employeeIds: ["emp-1"], shiftTemplateId: template.id }, user);
+    const result = await shiftAssignmentService.assign({ employeeIds: ["emp-1"], ...baseAssignInput }, user);
 
     expect(result).toHaveLength(1);
-    expect(repo.create).toHaveBeenCalledWith("emp-1", template.id, undefined, "user-1");
+    expect(repo.create).toHaveBeenCalledWith(
+      "emp-1",
+      template.id,
+      { observation: undefined, effectiveFrom: baseAssignInput.effectiveFrom, effectiveTo: undefined, weekdays: [] },
+      "user-1",
+    );
   });
 
   it("mapea un userId inexistente (P2003) a un 400 prolijo, no a un 500", async () => {
     repo.findExisting.mockResolvedValue(null);
     repo.create.mockRejectedValue(prismaKnownError("P2003"));
 
-    await expect(shiftAssignmentService.assign({ employeeIds: ["emp-1"], shiftTemplateId: template.id }, user)).rejects.toMatchObject({
+    await expect(shiftAssignmentService.assign({ employeeIds: ["emp-1"], ...baseAssignInput }, user)).rejects.toMatchObject({
       statusCode: 400,
       code: "RELATION_CONSTRAINT",
     });
@@ -78,7 +84,7 @@ describe("shiftAssignmentService.assign", () => {
 
     let caught: unknown;
     try {
-      await shiftAssignmentService.assign({ employeeIds: ["emp-1"], shiftTemplateId: template.id }, user);
+      await shiftAssignmentService.assign({ employeeIds: ["emp-1"], ...baseAssignInput }, user);
     } catch (error) {
       caught = error;
     }
@@ -105,5 +111,75 @@ describe("shiftAssignmentService.update", () => {
       statusCode: 400,
       code: "RELATION_CONSTRAINT",
     });
+  });
+});
+
+describe("shiftAssignmentService.assign — reactivación (reEnable) con vigencia nueva (Etapa 8I)", () => {
+  it("si la asignación existente está DESHABILITADO, la reactiva con la vigencia/weekdays del payload nuevo, no con los viejos", async () => {
+    repo.findExisting.mockResolvedValue({ id: "assign-1", status: "DESHABILITADO", effectiveFrom: new Date("2025-01-01"), effectiveTo: new Date("2025-06-30"), weekdays: [1] });
+    repo.reEnable.mockResolvedValue({ id: "assign-1", employee: { legajo: "100" } });
+
+    await shiftAssignmentService.assign(
+      { employeeIds: ["emp-1"], shiftTemplateId: template.id, effectiveFrom: new Date("2026-07-01"), effectiveTo: null, weekdays: [0, 6] },
+      user,
+    );
+
+    expect(repo.reEnable).toHaveBeenCalledWith(
+      "assign-1",
+      { observation: undefined, effectiveFrom: new Date("2026-07-01"), effectiveTo: null, weekdays: [0, 6] },
+      "user-1",
+    );
+  });
+
+  it("si la asignación existente ya está HABILITADO, no la toca (no reEnable, no create) — comportamiento de no-op preservado", async () => {
+    repo.findExisting.mockResolvedValue({ id: "assign-1", status: "HABILITADO" });
+    repo.findById.mockResolvedValue({ id: "assign-1", employee: { legajo: "100" } });
+
+    await shiftAssignmentService.assign({ employeeIds: ["emp-1"], ...baseAssignInput }, user);
+
+    expect(repo.reEnable).not.toHaveBeenCalled();
+    expect(repo.create).not.toHaveBeenCalled();
+  });
+});
+
+describe("shiftAssignmentService.update — vigencia (Etapa 8I)", () => {
+  const baseBefore = { id: "assign-1", status: "HABILITADO", effectiveFrom: new Date("2026-01-01"), effectiveTo: null, weekdays: [], employee: { legajo: "100" }, shiftTemplate: template };
+
+  it("actualiza weekdays sin tocar status", async () => {
+    repo.findById.mockResolvedValue(baseBefore);
+    repo.update.mockResolvedValue({ ...baseBefore, weekdays: [1, 2, 3] });
+
+    await shiftAssignmentService.update("assign-1", { weekdays: [1, 2, 3] }, user);
+
+    expect(repo.update).toHaveBeenCalledWith("assign-1", expect.objectContaining({ weekdays: [1, 2, 3] }));
+  });
+
+  it("actualiza solo effectiveTo (cerrar vigencia) validando contra el effectiveFrom ya guardado", async () => {
+    repo.findById.mockResolvedValue(baseBefore); // effectiveFrom: 2026-01-01
+    repo.update.mockResolvedValue({ ...baseBefore, effectiveTo: new Date("2026-12-31") });
+
+    await shiftAssignmentService.update("assign-1", { effectiveTo: new Date("2026-12-31") }, user);
+
+    expect(repo.update).toHaveBeenCalledWith("assign-1", expect.objectContaining({ effectiveTo: new Date("2026-12-31") }));
+  });
+
+  it("rechaza effectiveTo anterior al effectiveFrom ya guardado, aunque el payload solo mande effectiveTo", async () => {
+    repo.findById.mockResolvedValue(baseBefore); // effectiveFrom: 2026-01-01
+
+    await expect(shiftAssignmentService.update("assign-1", { effectiveTo: new Date("2025-12-31") }, user)).rejects.toMatchObject({
+      statusCode: 400,
+      code: "SHIFT_ASSIGNMENT_INVALID_RANGE",
+    });
+    expect(repo.update).not.toHaveBeenCalled();
+  });
+
+  it("rechaza effectiveFrom posterior al effectiveTo ya guardado", async () => {
+    repo.findById.mockResolvedValue({ ...baseBefore, effectiveTo: new Date("2026-06-30") });
+
+    await expect(shiftAssignmentService.update("assign-1", { effectiveFrom: new Date("2026-07-01") }, user)).rejects.toMatchObject({
+      statusCode: 400,
+      code: "SHIFT_ASSIGNMENT_INVALID_RANGE",
+    });
+    expect(repo.update).not.toHaveBeenCalled();
   });
 });

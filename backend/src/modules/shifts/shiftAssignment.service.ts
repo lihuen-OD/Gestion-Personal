@@ -47,7 +47,14 @@ export const shiftAssignmentService = {
       const existing = await shiftAssignmentRepository.findExisting(employeeId, input.shiftTemplateId);
 
       if (!existing) {
-        const created = await execute(() => shiftAssignmentRepository.create(employeeId, input.shiftTemplateId, input.observation, user.id));
+        const created = await execute(() =>
+          shiftAssignmentRepository.create(
+            employeeId,
+            input.shiftTemplateId,
+            { observation: input.observation, effectiveFrom: input.effectiveFrom, effectiveTo: input.effectiveTo, weekdays: input.weekdays },
+            user.id,
+          ),
+        );
         await auditService.register({
           ...audit,
           action: "CREATE",
@@ -61,7 +68,13 @@ export const shiftAssignmentService = {
       }
 
       if (existing.status === "DESHABILITADO") {
-        const reenabled = await execute(() => shiftAssignmentRepository.reEnable(existing.id, input.observation, user.id));
+        const reenabled = await execute(() =>
+          shiftAssignmentRepository.reEnable(
+            existing.id,
+            { observation: input.observation, effectiveFrom: input.effectiveFrom, effectiveTo: input.effectiveTo, weekdays: input.weekdays },
+            user.id,
+          ),
+        );
         await auditService.register({
           ...audit,
           action: "ACTIVATE",
@@ -87,6 +100,18 @@ export const shiftAssignmentService = {
 
     const data: Prisma.ShiftAssignmentUncheckedUpdateInput = {};
     if (input.observation !== undefined) data.observation = input.observation;
+    if (input.effectiveFrom !== undefined) data.effectiveFrom = input.effectiveFrom;
+    if (input.effectiveTo !== undefined) data.effectiveTo = input.effectiveTo;
+    if (input.weekdays !== undefined) data.weekdays = input.weekdays;
+
+    // Mismo chequeo que workRegimesService.closeAssignment: si solo se envía
+    // uno de los dos campos, se valida contra el valor ya guardado, no solo
+    // contra lo que vino en este payload.
+    const effectiveFrom = input.effectiveFrom ?? before.effectiveFrom;
+    const effectiveTo = input.effectiveTo !== undefined ? input.effectiveTo : before.effectiveTo;
+    if (effectiveTo && effectiveTo < effectiveFrom) {
+      throw new AppError("effectiveTo no puede ser anterior a effectiveFrom", 400, "SHIFT_ASSIGNMENT_INVALID_RANGE");
+    }
 
     let action: "UPDATE" | "ACTIVATE" | "DEACTIVATE" = "UPDATE";
     if (input.status && input.status !== before.status) {

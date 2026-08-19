@@ -5,23 +5,33 @@ import { shiftAssignmentApiService, type ShiftAssignment } from "../../services/
 import { workforceApiService, type ShiftTemplate } from "../../services/api/workforceApiService";
 import type { Employee, User } from "../../types";
 import { useAsyncAction } from "../../utils/useAsyncAction";
+import { assignmentVigencyLabel, assignmentVigencyStatus, assignmentVigencyTone, buildShiftAssignmentVigencyPayload, formatAssignmentDate, formatWeekdays } from "../../utils/shiftAssignment";
+import { Badge } from "../ui/Badge";
 import { EmptyState } from "../ui/EmptyState";
 import { ErrorState } from "../ui/ErrorState";
 import { LoadingState } from "../ui/LoadingState";
 import { TableShell } from "../ui/TableShell";
+import { ShiftAssignmentVigencyFields } from "../shared/ShiftAssignmentVigencyFields";
 
-function ShiftAssignmentTable({ rows, onToggle, onRemove }: { rows: ShiftAssignment[]; onToggle: (assignment: ShiftAssignment) => void; onRemove: (assignment: ShiftAssignment) => void }) {
+function todayDateInput() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function ShiftAssignmentTable({ rows, canEdit, onToggle, onRemove }: { rows: ShiftAssignment[]; canEdit: boolean; onToggle: (assignment: ShiftAssignment) => void; onRemove: (assignment: ShiftAssignment) => void }) {
   return (
-    <TableShell minWidth={780}>
+    <TableShell minWidth={960}>
       <table>
         <thead>
           <tr>
             <th>Turno</th>
             <th>Categoría</th>
             <th>Horario</th>
-            <th>Fecha</th>
+            <th>Desde</th>
+            <th>Hasta</th>
+            <th>Días</th>
+            <th>Vigencia</th>
             <th>Observación</th>
-            <th>Acciones</th>
+            {canEdit ? <th>Acciones</th> : null}
           </tr>
         </thead>
         <tbody>
@@ -30,18 +40,23 @@ function ShiftAssignmentTable({ rows, onToggle, onRemove }: { rows: ShiftAssignm
               <td><b>{assignment.shiftTemplate.code}</b> · {assignment.shiftTemplate.name}</td>
               <td>{assignment.shiftTemplate.categoryName || <em>Sin categoría</em>}</td>
               <td>{assignment.shiftTemplate.startTime}–{assignment.shiftTemplate.endTime}</td>
-              <td>{new Date(assignment.status === "HABILITADO" ? assignment.assignedAt : assignment.disabledAt || assignment.assignedAt).toLocaleDateString("es-AR")}</td>
+              <td>{formatAssignmentDate(assignment.effectiveFrom)}</td>
+              <td>{formatAssignmentDate(assignment.effectiveTo)}</td>
+              <td>{formatWeekdays(assignment.weekdays)}</td>
+              <td><Badge tone={assignmentVigencyTone(assignmentVigencyStatus(assignment.effectiveFrom, assignment.effectiveTo))}>{assignmentVigencyLabel(assignmentVigencyStatus(assignment.effectiveFrom, assignment.effectiveTo))}</Badge></td>
               <td>{assignment.observation || <em>Sin observación</em>}</td>
-              <td>
-                <div className="table-actions">
-                  <button type="button" className="table-icon-action" title={assignment.status === "HABILITADO" ? "Deshabilitar" : "Habilitar"} aria-label={assignment.status === "HABILITADO" ? "Deshabilitar" : "Habilitar"} onClick={() => onToggle(assignment)}>
-                    <Power size={14} /><span>{assignment.status === "HABILITADO" ? "Deshabilitar" : "Habilitar"}</span>
-                  </button>
-                  <button type="button" className="table-icon-action danger-link" title="Quitar" aria-label="Quitar" onClick={() => onRemove(assignment)}>
-                    <X size={14} /><span>Quitar</span>
-                  </button>
-                </div>
-              </td>
+              {canEdit ? (
+                <td>
+                  <div className="table-actions">
+                    <button type="button" className="table-icon-action" title={assignment.status === "HABILITADO" ? "Deshabilitar" : "Habilitar"} aria-label={assignment.status === "HABILITADO" ? "Deshabilitar" : "Habilitar"} onClick={() => onToggle(assignment)}>
+                      <Power size={14} /><span>{assignment.status === "HABILITADO" ? "Deshabilitar" : "Habilitar"}</span>
+                    </button>
+                    <button type="button" className="table-icon-action danger-link" title="Quitar" aria-label="Quitar" onClick={() => onRemove(assignment)}>
+                      <X size={14} /><span>Quitar</span>
+                    </button>
+                  </div>
+                </td>
+              ) : null}
             </tr>
           ))}
         </tbody>
@@ -50,12 +65,15 @@ function ShiftAssignmentTable({ rows, onToggle, onRemove }: { rows: ShiftAssignm
   );
 }
 
-export function EmployeeShiftsPanel({ employee }: { employee: Employee; user: User }) {
+export function EmployeeShiftsPanel({ employee, canEdit = false }: { employee: Employee; user: User; canEdit?: boolean }) {
   const [assignments, setAssignments] = useState<ShiftAssignment[]>([]);
   const [templates, setTemplates] = useState<ShiftTemplate[]>([]);
   const [loadStatus, setLoadStatus] = useState<"loading" | "success" | "error">("loading");
   const [refresh, setRefresh] = useState(0);
   const [selectedTemplateId, setSelectedTemplateId] = useState("");
+  const [effectiveFrom, setEffectiveFrom] = useState(todayDateInput());
+  const [effectiveTo, setEffectiveTo] = useState("");
+  const [weekdays, setWeekdays] = useState<number[]>([]);
   const [observation, setObservation] = useState("");
   const [notice, setNotice] = useState("");
 
@@ -78,10 +96,18 @@ export function EmployeeShiftsPanel({ employee }: { employee: Employee; user: Us
   }, [employee.id, refresh]);
 
   const { isRunning: isAssigning, run: assign } = useAsyncAction(async () => {
-    if (!selectedTemplateId) return;
+    if (!selectedTemplateId || !effectiveFrom) return;
     try {
-      await shiftAssignmentApiService.assign({ employeeIds: [employee.id], shiftTemplateId: selectedTemplateId, observation: observation.trim() || null });
+      await shiftAssignmentApiService.assign({
+        employeeIds: [employee.id],
+        shiftTemplateId: selectedTemplateId,
+        observation: observation.trim() || null,
+        ...buildShiftAssignmentVigencyPayload({ effectiveFrom, effectiveTo, weekdays }),
+      });
       setSelectedTemplateId("");
+      setEffectiveFrom(todayDateInput());
+      setEffectiveTo("");
+      setWeekdays([]);
       setObservation("");
       setNotice("Turno asignado correctamente.");
       setRefresh((value) => value + 1);
@@ -123,34 +149,46 @@ export function EmployeeShiftsPanel({ employee }: { employee: Employee; user: Us
   return (
     <>
       {notice ? <div className="toast">{notice}</div> : null}
-      <div className="form-grid">
-        <label className="field">
-          <span>Agregar turno</span>
-          <select value={selectedTemplateId} onChange={(e) => setSelectedTemplateId(e.target.value)}>
-            <option value="">Seleccionar turno...</option>
-            {availableTemplates.map((template) => (
-              <option key={template.id} value={template.id}>
-                {template.code} · {template.name}{template.categoryName ? ` (${template.categoryName})` : ""}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="field"><span>Observación (opcional)</span><input value={observation} onChange={(e) => setObservation(e.target.value)} placeholder="Ej: rota semana por medio con turno tarde" /></label>
-      </div>
-      <div className="form-actions">
-        <button className="button primary" disabled={isAssigning || !selectedTemplateId} onClick={assign}>
-          <Plus size={15} /> Agregar turno
-        </button>
-      </div>
+      {canEdit ? (
+        <>
+          <div className="form-grid">
+            <label className="field">
+              <span>Agregar turno</span>
+              <select value={selectedTemplateId} onChange={(e) => setSelectedTemplateId(e.target.value)}>
+                <option value="">Seleccionar turno...</option>
+                {availableTemplates.map((template) => (
+                  <option key={template.id} value={template.id}>
+                    {template.code} · {template.name}{template.categoryName ? ` (${template.categoryName})` : ""}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <ShiftAssignmentVigencyFields
+              effectiveFrom={effectiveFrom}
+              effectiveTo={effectiveTo}
+              weekdays={weekdays}
+              onEffectiveFromChange={setEffectiveFrom}
+              onEffectiveToChange={setEffectiveTo}
+              onWeekdaysChange={setWeekdays}
+            />
+            <label className="field"><span>Observación (opcional)</span><input value={observation} onChange={(e) => setObservation(e.target.value)} placeholder="Ej: rota semana por medio con turno tarde" /></label>
+          </div>
+          <div className="form-actions">
+            <button className="button primary" disabled={isAssigning || !selectedTemplateId || !effectiveFrom} onClick={assign}>
+              <Plus size={15} /> {isAssigning ? "Asignando..." : "Agregar turno"}
+            </button>
+          </div>
+        </>
+      ) : null}
 
       {!assignments.length ? (
         <EmptyState text="El empleado no tiene turnos asociados. Sus fichadas se evaluarán por horas trabajadas, duración máxima y observaciones, sin control de llegada tarde o salida anticipada." />
       ) : (
         <>
           <h4>Turnos habilitados ({enabled.length})</h4>
-          {enabled.length ? <ShiftAssignmentTable rows={enabled} onToggle={toggle} onRemove={remove} /> : <div className="empty">Ningún turno habilitado.</div>}
+          {enabled.length ? <ShiftAssignmentTable rows={enabled} canEdit={canEdit} onToggle={toggle} onRemove={remove} /> : <div className="empty">Ningún turno habilitado.</div>}
           <h4>Turnos deshabilitados ({disabled.length})</h4>
-          {disabled.length ? <ShiftAssignmentTable rows={disabled} onToggle={toggle} onRemove={remove} /> : <div className="empty">Ningún turno deshabilitado.</div>}
+          {disabled.length ? <ShiftAssignmentTable rows={disabled} canEdit={canEdit} onToggle={toggle} onRemove={remove} /> : <div className="empty">Ningún turno deshabilitado.</div>}
         </>
       )}
     </>

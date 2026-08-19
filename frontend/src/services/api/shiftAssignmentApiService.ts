@@ -7,6 +7,9 @@ export type ShiftAssignment = {
   employeeId: string;
   shiftTemplateId: string;
   status: ShiftAssignmentStatus;
+  effectiveFrom: string;
+  effectiveTo: string | null;
+  weekdays: number[];
   assignedAt: string;
   assignedByUserId?: string | null;
   disabledAt?: string | null;
@@ -19,6 +22,8 @@ export type ShiftAssignment = {
 };
 
 export type ShiftAssignmentFilters = { employeeId?: string; shiftTemplateId?: string; status?: ShiftAssignmentStatus };
+
+export type ShiftAssignmentVigencyInput = { effectiveFrom: string; effectiveTo?: string | null; weekdays?: number[] };
 
 function toQuery(filters?: ShiftAssignmentFilters) {
   if (!filters) return "";
@@ -34,10 +39,10 @@ export const shiftAssignmentApiService = {
   getAll(filters?: ShiftAssignmentFilters) {
     return apiRequest<{ data: ShiftAssignment[] }>(`/shifts/assignments${toQuery(filters)}`, { apiCache: false }).then((response) => response.data);
   },
-  assign(input: { employeeIds: string[]; shiftTemplateId: string; observation?: string | null }) {
+  assign(input: { employeeIds: string[]; shiftTemplateId: string; observation?: string | null } & ShiftAssignmentVigencyInput) {
     return apiRequest<{ data: ShiftAssignment[] }>("/shifts/assignments", { method: "POST", body: input }).then((response) => response.data);
   },
-  update(id: string, input: { status?: ShiftAssignmentStatus; observation?: string | null }) {
+  update(id: string, input: { status?: ShiftAssignmentStatus; observation?: string | null } & Partial<ShiftAssignmentVigencyInput>) {
     return apiRequest<{ data: ShiftAssignment }>(`/shifts/assignments/${id}`, { method: "PATCH", body: input }).then((response) => response.data);
   },
   remove(id: string) {

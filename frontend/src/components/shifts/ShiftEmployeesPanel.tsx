@@ -5,16 +5,26 @@ import { LoadingState } from "../ui/LoadingState";
 import { ErrorState } from "../ui/ErrorState";
 import { TableShell } from "../ui/TableShell";
 import { Button } from "../ui/Button";
+import { Badge } from "../ui/Badge";
 import { confirmAction } from "../../services/appDialog";
 import { shiftAssignmentApiService, type ShiftAssignment } from "../../services/api/shiftAssignmentApiService";
 import type { Employee } from "../../types";
 import { useAsyncAction } from "../../utils/useAsyncAction";
+import { assignmentVigencyLabel, assignmentVigencyStatus, assignmentVigencyTone, buildShiftAssignmentVigencyPayload, formatAssignmentDate, formatWeekdays } from "../../utils/shiftAssignment";
+import { ShiftAssignmentVigencyFields } from "../shared/ShiftAssignmentVigencyFields";
+
+function todayDateInput() {
+  return new Date().toISOString().slice(0, 10);
+}
 
 export function ShiftEmployeesPanel({ shiftTemplateId, canEdit }: { shiftTemplateId: string; canEdit: boolean }) {
   const [assignments, setAssignments] = useState<ShiftAssignment[] | null>(null);
   const [loadStatus, setLoadStatus] = useState<"loading" | "success" | "error">("loading");
   const [loadRetry, setLoadRetry] = useState(0);
   const [selected, setSelected] = useState<Employee[]>([]);
+  const [effectiveFrom, setEffectiveFrom] = useState(todayDateInput());
+  const [effectiveTo, setEffectiveTo] = useState("");
+  const [weekdays, setWeekdays] = useState<number[]>([]);
   const [observation, setObservation] = useState("");
   const [notice, setNotice] = useState("");
 
@@ -37,10 +47,18 @@ export function ShiftEmployeesPanel({ shiftTemplateId, canEdit }: { shiftTemplat
   }, [shiftTemplateId, loadRetry]);
 
   const { isRunning: isAssigning, run: assignSelected } = useAsyncAction(async () => {
-    if (!selected.length) return;
+    if (!selected.length || !effectiveFrom) return;
     try {
-      await shiftAssignmentApiService.assign({ employeeIds: selected.map((employee) => employee.id), shiftTemplateId, observation: observation.trim() || null });
+      await shiftAssignmentApiService.assign({
+        employeeIds: selected.map((employee) => employee.id),
+        shiftTemplateId,
+        observation: observation.trim() || null,
+        ...buildShiftAssignmentVigencyPayload({ effectiveFrom, effectiveTo, weekdays }),
+      });
       setSelected([]);
+      setEffectiveFrom(todayDateInput());
+      setEffectiveTo("");
+      setWeekdays([]);
       setObservation("");
       setNotice("Empleados asignados correctamente.");
       setLoadRetry((value) => value + 1);
@@ -81,7 +99,8 @@ export function ShiftEmployeesPanel({ shiftTemplateId, canEdit }: { shiftTemplat
   // Excluye solo a quienes ya tienen el turno HABILITADO: seleccionarlos de
   // nuevo hoy es un no-op silencioso en el backend (shiftAssignment.service.ts).
   // Un empleado con la asignación DESHABILITADO sigue apareciendo a propósito:
-  // volver a elegirlo la rehabilita (mismo backend, rama reEnable).
+  // volver a elegirlo la rehabilita (mismo backend, rama reEnable) con la
+  // vigencia/días nuevos del formulario.
   const enabledEmployeeIds = new Set(enabled.map((item) => item.employee.id));
 
   return (
@@ -91,24 +110,37 @@ export function ShiftEmployeesPanel({ shiftTemplateId, canEdit }: { shiftTemplat
         <div className="rule-people-field">
           <span>Asignar empleados a este turno</span>
           <EmployeeRemoteSelector selected={selected} multiple showStatusFilter wide={false} excludeIds={enabledEmployeeIds} onChange={setSelected} />
+          <div className="form-grid">
+            <ShiftAssignmentVigencyFields
+              effectiveFrom={effectiveFrom}
+              effectiveTo={effectiveTo}
+              weekdays={weekdays}
+              onEffectiveFromChange={setEffectiveFrom}
+              onEffectiveToChange={setEffectiveTo}
+              onWeekdaysChange={setWeekdays}
+            />
+          </div>
           <label className="field"><span>Observación (opcional)</span><input value={observation} onChange={(e) => setObservation(e.target.value)} placeholder="Ej: rota semana por medio con turno tarde" /></label>
           <div className="rule-form-actions">
-            <Button variant="primary" disabled={isAssigning || !selected.length} onClick={assignSelected}>{isAssigning ? "Asignando..." : "Asignar seleccionados"}</Button>
+            <Button variant="primary" disabled={isAssigning || !selected.length || !effectiveFrom} onClick={assignSelected}>{isAssigning ? "Asignando..." : "Asignar seleccionados"}</Button>
           </div>
         </div>
       ) : null}
 
       <h4>Empleados habilitados ({enabled.length})</h4>
       {enabled.length ? (
-        <TableShell minWidth={720}>
+        <TableShell minWidth={920}>
           <table>
-            <thead><tr><th>Legajo</th><th>Empleado</th><th>Asignado</th><th>Observación</th><th>Acciones</th></tr></thead>
+            <thead><tr><th>Legajo</th><th>Empleado</th><th>Desde</th><th>Hasta</th><th>Días</th><th>Vigencia</th><th>Observación</th><th>Acciones</th></tr></thead>
             <tbody>
               {enabled.map((assignment) => (
                 <tr key={assignment.id}>
                   <td>{assignment.employee.legajo}</td>
                   <td>{assignment.employee.lastName}, {assignment.employee.firstName}</td>
-                  <td>{new Date(assignment.assignedAt).toLocaleDateString("es-AR")}</td>
+                  <td>{formatAssignmentDate(assignment.effectiveFrom)}</td>
+                  <td>{formatAssignmentDate(assignment.effectiveTo)}</td>
+                  <td>{formatWeekdays(assignment.weekdays)}</td>
+                  <td><Badge tone={assignmentVigencyTone(assignmentVigencyStatus(assignment.effectiveFrom, assignment.effectiveTo))}>{assignmentVigencyLabel(assignmentVigencyStatus(assignment.effectiveFrom, assignment.effectiveTo))}</Badge></td>
                   <td>{assignment.observation || <em>Sin observación</em>}</td>
                   <td>
                     {canEdit ? (
@@ -127,14 +159,17 @@ export function ShiftEmployeesPanel({ shiftTemplateId, canEdit }: { shiftTemplat
 
       <h4>Empleados deshabilitados ({disabled.length})</h4>
       {disabled.length ? (
-        <TableShell minWidth={720}>
+        <TableShell minWidth={920}>
           <table>
-            <thead><tr><th>Legajo</th><th>Empleado</th><th>Deshabilitado</th><th>Observación</th><th>Acciones</th></tr></thead>
+            <thead><tr><th>Legajo</th><th>Empleado</th><th>Desde</th><th>Hasta</th><th>Días</th><th>Deshabilitado</th><th>Observación</th><th>Acciones</th></tr></thead>
             <tbody>
               {disabled.map((assignment) => (
                 <tr key={assignment.id}>
                   <td>{assignment.employee.legajo}</td>
                   <td>{assignment.employee.lastName}, {assignment.employee.firstName}</td>
+                  <td>{formatAssignmentDate(assignment.effectiveFrom)}</td>
+                  <td>{formatAssignmentDate(assignment.effectiveTo)}</td>
+                  <td>{formatWeekdays(assignment.weekdays)}</td>
                   <td>{assignment.disabledAt ? new Date(assignment.disabledAt).toLocaleDateString("es-AR") : "-"}</td>
                   <td>{assignment.observation || <em>Sin observación</em>}</td>
                   <td>
