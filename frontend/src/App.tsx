@@ -15,6 +15,7 @@ const PuestoCreatePage = lazy(() => import("./pages/PuestoCreatePage").then((mod
 const PuestoDetailPage = lazy(() => import("./pages/PuestoDetailPage").then((module) => ({ default: module.PuestoDetailPage })));
 const OrgStructurePage = lazy(() => import("./pages/OrgStructurePage").then((module) => ({ default: module.OrgStructurePage })));
 const HourConceptsPage = lazy(() => import("./pages/HourConceptsPage").then((module) => ({ default: module.HourConceptsPage })));
+const WorkRegimesPage = lazy(() => import("./pages/WorkRegimesPage").then((module) => ({ default: module.WorkRegimesPage })));
 const FinnegansExportPage = lazy(() => import("./pages/FinnegansExportPage").then((module) => ({ default: module.FinnegansExportPage })));
 const DocumentCategoriesPage = lazy(() => import("./pages/DocumentCategoriesPage").then((module) => ({ default: module.DocumentCategoriesPage })));
 const AuditParametersPage = lazy(() => import("./pages/AuditParametersPage").then((module) => ({ default: module.AuditParametersPage })));
@@ -76,6 +77,7 @@ export function App() {
           <Route path="/puestos/:id" element={<PuestoDetailPage />} />
           <Route path="/configuracion/empresas-estructura" element={<OrgStructurePage />} />
           <Route path="/configuracion/conceptos-horarios" element={<HourConceptsPage />} />
+          <Route path="/configuracion/regimenes-laborales" element={<WorkRegimesPage />} />
           <Route path="/configuracion/liquidacion" element={<FinnegansExportPage />} />
           <Route path="/configuracion/categorias-documentales" element={<DocumentCategoriesPage />} />
           <Route path="/configuracion/parametros-auditoria" element={<AuditParametersPage />} />

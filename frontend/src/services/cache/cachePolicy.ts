@@ -10,7 +10,8 @@ export type CacheFamily =
   | "employees"
   | "time-entries"
   | "novelties"
-  | "pending";
+  | "pending"
+  | "work-regimes";
 
 export type CachePolicy = {
   family: CacheFamily;
@@ -119,6 +120,13 @@ export const cachePolicies = {
     ttlMs: 60_000,
     persist: false,
     sensitive: true,
+    schemaVersion: CACHE_SCHEMA_VERSION,
+  },
+  workRegimesCatalog: {
+    family: "work-regimes",
+    ttlMs: 10 * 60_000,
+    persist: true,
+    sensitive: false,
     schemaVersion: CACHE_SCHEMA_VERSION,
   },
 } satisfies Record<string, CachePolicy>;

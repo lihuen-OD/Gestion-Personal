@@ -8,6 +8,7 @@ import { calculateEmployeeStatus } from "../services/employeeStatusService";
 import { EmployeeDocumentsPanel } from "../components/documents/EmployeeDocumentsPanel";
 import { EmployeeNoveltiesPanel } from "../components/novelties/EmployeeNoveltiesPanel";
 import { EmployeeShiftsPanel } from "../components/employees/EmployeeShiftsPanel";
+import { EmployeeWorkRegimePanel } from "../components/employees/EmployeeWorkRegimePanel";
 import { OverflowCell } from "../components/ui/OverflowCell";
 import { Field, Select } from "../components/ui/FormControls";
 import { Section } from "../components/ui/Section";
@@ -53,6 +54,7 @@ const tabs = [
   "Historial de Eventos",
   "Turnos",
   "Auditoría",
+  "Régimen Laboral",
 ];
 
 const tabSections = employeeDetailTabSections;
@@ -245,7 +247,9 @@ export function EmployeeDetailPage() {
 
       {notice ? <div className="toast">{notice}</div> : null}
       <Tabs
-        tabs={tabs.filter((_, index) => index !== 10 || level === 1).map((tabName, index) => ({ key: String(index), label: tabName }))}
+        tabs={tabs
+          .map((tabName, index) => ({ key: String(index), label: tabName }))
+          .filter((item) => item.key !== "10" || level === 1)}
         active={String(tab)}
         onChange={(key) => setTab(Number(key))}
       />
@@ -403,6 +407,7 @@ function renderEmployeeTab(
     ) : <EmptyState text="Todavía no hay eventos registrados para este legajo." />;
   }
   if (tab === 9) return <EmployeeShiftsPanel employee={employee} user={user} />;
+  if (tab === 11) return <EmployeeWorkRegimePanel employee={employee} user={user} canEdit={editable} onSaved={setEmployee} />;
 
   if (!auditLoaded) return <LoadingState text="Cargando auditoría..." />;
   if (auditError) return <ErrorState message="No pudimos cargar la auditoría del legajo." onRetry={retryAudit} />;

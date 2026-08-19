@@ -1,4 +1,4 @@
-import { Building2, CalendarClock, ChevronRight, ClipboardList, Clock3, FileText, FolderOpen, ShieldCheck } from "lucide-react";
+import { Building2, CalendarClock, ChevronRight, ClipboardList, Clock3, FileText, FolderOpen, ShieldCheck, Workflow } from "lucide-react";
 import { Link } from "react-router-dom";
 import { PageHeader } from "../components/ui/PageHeader";
 
@@ -6,6 +6,7 @@ export function SettingsPage() {
   const cards = [
     { name: "Turnos", icon: <CalendarClock />, path: "/configuracion/turnos" },
     { name: "Horas especiales", icon: <Clock3 />, path: "/configuracion/turnos-horas-especiales" },
+    { name: "Regímenes laborales", icon: <Workflow />, path: "/configuracion/regimenes-laborales" },
     { name: "Empresas y estructura", icon: <Building2 />, path: "/configuracion/empresas-estructura" },
     { name: "Tipos de novedades", icon: <ClipboardList />, path: "/configuracion/tipos-novedades" },
     { name: "Conceptos horarios", icon: <Clock3 />, path: "/configuracion/conceptos-horarios" },
