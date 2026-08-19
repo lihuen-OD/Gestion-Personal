@@ -1,4 +1,5 @@
 import { ApprovalStatus, EmployeeStatus, Prisma, WorkShiftSource, WorkShiftStatus } from "@prisma/client";
+import type { DoubleHourRule } from "@prisma/client";
 import { prisma } from "../../shared/prisma/client";
 import { noveltyCoversDay } from "../novelties/novelties.dateRange";
 import {
@@ -91,6 +92,39 @@ function punchEvidenceData(evidence?: PunchEvidenceInput) {
 
 function minutesFromHours(hours: number) {
   return Math.round(hours * 60);
+}
+
+// HourConceptKind es un enum genérico del schema (RRHH elige el kind al
+// configurar cada HourConcept; el nombre del concepto sigue siendo 100%
+// configurable) — no un nombre de cliente. Usarlo para derivar isNight no
+// viola "no hardcodear conceptos": no se compara ningún string de nombre.
+const NIGHT_HOUR_CONCEPT_KINDS = new Set(["NOCTURNA", "GUARDIA", "SERENO"]);
+
+// Todas las DoubleHourRule activas del empleado que matchean el día del
+// segmento (etapa de SpecialHourRuleApplication) — a diferencia del
+// comportamiento anterior a esta etapa, ya no se queda con la primera regla
+// que matchea: se registran todas, y el multiplicador efectivo se resuelve
+// aparte (ver effectiveMultiplier).
+function matchingDoubleHourRules(rules: DoubleHourRule[], segmentDate: Date): DoubleHourRule[] {
+  const segmentDay = segmentDate.getUTCDay();
+  const segmentKey = segmentDate.toISOString().slice(0, 10);
+  return rules.filter((rule) => {
+    const fromKey = rule.fromDate.toISOString().slice(0, 10);
+    const toKey = rule.toDate?.toISOString().slice(0, 10);
+    if (rule.recurrenceType === "FECHA") return segmentKey === fromKey;
+    if (rule.recurrenceType === "RANGO") return segmentKey >= fromKey && (!toKey || segmentKey <= toKey);
+    return segmentKey >= fromKey && (!toKey || segmentKey <= toKey) && rule.weekdays.includes(segmentDay);
+  });
+}
+
+// V1 (decisión cerrada): si aplican varias reglas especiales al mismo
+// segmento, se usa la de mayor multiplicador — nunca se multiplican ni se
+// suman entre sí. Todas quedan igual registradas como
+// SpecialHourRuleApplication, aunque solo la de mayor multiplier determine
+// TimeEntry.appliedMultiplier.
+function effectiveMultiplier(rules: DoubleHourRule[]): number {
+  if (rules.length === 0) return 1;
+  return Math.max(...rules.map((rule) => Number(rule.multiplier)));
 }
 
 function employeeSearchWhere(search?: string): Prisma.EmployeeWhereInput {
@@ -1308,17 +1342,14 @@ export const timeEntriesRepository = {
           employees: { some: { employeeId: input.employeeId } },
         },
       });
+      const nightHourConcepts = await tx.hourConcept.findMany({
+        where: { id: { in: [...new Set(input.segments.map((segment) => segment.hourConceptId))] } },
+        select: { id: true, kind: true },
+      });
+      const nightHourConceptIds = new Set(nightHourConcepts.filter((concept) => NIGHT_HOUR_CONCEPT_KINDS.has(concept.kind)).map((concept) => concept.id));
       for (const segment of input.segments) {
-        const segmentDay = segment.date.getUTCDay();
-        const segmentKey = segment.date.toISOString().slice(0, 10);
-        const doubleRule = doubleHourRules.find((rule) => {
-          const fromKey = rule.fromDate.toISOString().slice(0, 10);
-          const toKey = rule.toDate?.toISOString().slice(0, 10);
-          if (rule.recurrenceType === "FECHA") return segmentKey === fromKey;
-          if (rule.recurrenceType === "RANGO") return segmentKey >= fromKey && (!toKey || segmentKey <= toKey);
-          return segmentKey >= fromKey && (!toKey || segmentKey <= toKey) && rule.weekdays.includes(segmentDay);
-        });
-        const multiplier = doubleRule ? Number(doubleRule.multiplier) : 1;
+        const matchedRules = matchingDoubleHourRules(doubleHourRules, segment.date);
+        const multiplier = effectiveMultiplier(matchedRules);
         const creditedMinutes = Math.round(segment.minutes * multiplier);
         const timeSegment = await tx.timeSegment.create({
           data: {
@@ -1332,11 +1363,18 @@ export const timeEntriesRepository = {
             hourConceptName: segment.hourConceptName,
             hourConceptRuleId: segment.hourConceptRuleId || null,
             ...(segment.conceptStatus ? { conceptStatus: segment.conceptStatus } : {}),
-            isSpecial: false,
+            isSpecial: matchedRules.length > 0,
+            isNight: nightHourConceptIds.has(segment.hourConceptId),
             observation: input.observation || null,
           },
         });
         timeSegments.push(timeSegment);
+
+        for (const rule of matchedRules) {
+          await tx.specialHourRuleApplication.create({
+            data: { timeSegmentId: timeSegment.id, doubleHourRuleId: rule.id, multiplierApplied: rule.multiplier },
+          });
+        }
 
         const existing = await tx.timeEntry.findFirst({
           where: {
@@ -1464,17 +1502,14 @@ export const timeEntriesRepository = {
           employees: { some: { employeeId: input.employeeId } },
         },
       });
+      const nightHourConcepts = await tx.hourConcept.findMany({
+        where: { id: { in: [...new Set(input.segments.map((segment) => segment.hourConceptId))] } },
+        select: { id: true, kind: true },
+      });
+      const nightHourConceptIds = new Set(nightHourConcepts.filter((concept) => NIGHT_HOUR_CONCEPT_KINDS.has(concept.kind)).map((concept) => concept.id));
       for (const segment of input.segments) {
-        const segmentDay = segment.date.getUTCDay();
-        const segmentKey = segment.date.toISOString().slice(0, 10);
-        const doubleRule = doubleHourRules.find((rule) => {
-          const fromKey = rule.fromDate.toISOString().slice(0, 10);
-          const toKey = rule.toDate?.toISOString().slice(0, 10);
-          if (rule.recurrenceType === "FECHA") return segmentKey === fromKey;
-          if (rule.recurrenceType === "RANGO") return segmentKey >= fromKey && (!toKey || segmentKey <= toKey);
-          return segmentKey >= fromKey && (!toKey || segmentKey <= toKey) && rule.weekdays.includes(segmentDay);
-        });
-        const multiplier = doubleRule ? Number(doubleRule.multiplier) : 1;
+        const matchedRules = matchingDoubleHourRules(doubleHourRules, segment.date);
+        const multiplier = effectiveMultiplier(matchedRules);
         const creditedMinutes = Math.round(segment.minutes * multiplier);
         const timeSegment = await tx.timeSegment.create({
           data: {
@@ -1488,10 +1523,21 @@ export const timeEntriesRepository = {
             hourConceptName: segment.hourConceptName,
             hourConceptRuleId: segment.hourConceptRuleId || null,
             ...(segment.conceptStatus ? { conceptStatus: segment.conceptStatus } : {}),
-            isSpecial: false,
+            isSpecial: matchedRules.length > 0,
+            isNight: nightHourConceptIds.has(segment.hourConceptId),
           },
         });
         timeSegments.push(timeSegment);
+
+        for (const rule of matchedRules) {
+          await tx.specialHourRuleApplication.create({
+            data: { timeSegmentId: timeSegment.id, doubleHourRuleId: rule.id, multiplierApplied: rule.multiplier },
+          });
+        }
+
+        const rulesNote = matchedRules.length > 0
+          ? ` Reglas aplicadas: ${matchedRules.map((rule) => rule.name).join(", ")}. Multiplicador efectivo x${multiplier} (${segment.minutes} min reales).`
+          : "";
 
         const existing = await tx.timeEntry.findFirst({
           where: {
@@ -1522,7 +1568,7 @@ export const timeEntriesRepository = {
               source: input.source,
               segmentStartAt: segment.startAt,
               segmentEndAt: segment.endAt,
-              observation: `${currentObservation}Fichada ${workShift.id}: generado por ingreso/salida.${doubleRule ? ` Regla ${doubleRule.name}: ${segment.minutes} min reales computados x${multiplier}.` : ""}`,
+              observation: `${currentObservation}Fichada ${workShift.id}: generado por ingreso/salida.${rulesNote}`,
               status: "APROBADO",
             },
             include: timeEntryInclude,
@@ -1545,7 +1591,7 @@ export const timeEntriesRepository = {
               segmentStartAt: segment.startAt,
               segmentEndAt: segment.endAt,
               source: input.source,
-              observation: `Generado por fichada de ingreso/salida.${doubleRule ? ` Regla ${doubleRule.name}: ${segment.minutes} min reales computados x${multiplier}.` : ""}`,
+              observation: `Generado por fichada de ingreso/salida.${rulesNote}`,
             },
             include: timeEntryInclude,
           }));
