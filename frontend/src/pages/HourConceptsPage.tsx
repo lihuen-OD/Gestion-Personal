@@ -1,6 +1,7 @@
 import { Pencil, Plus } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Navigate } from "react-router-dom";
+import { HourConceptRulesPanel } from "../components/hour-concepts/HourConceptRulesPanel";
 import { OverflowCell } from "../components/ui/OverflowCell";
 import { DataTable } from "../components/ui/DataTable";
 import { PageHeader } from "../components/ui/PageHeader";
@@ -137,6 +138,7 @@ export function HourConceptsPage() {
   const summary = useMemo(() => [
     ["Activas", all.filter((item) => item.status === "ACTIVO").length],
   ], [all]);
+  const isExistingConcept = Boolean(editing && apiItems?.some((item) => item.id === editing.id));
 
   const { isRunning: isSaving, run: save } = useAsyncAction(async () => {
     if (!editing) return;
@@ -221,6 +223,13 @@ export function HourConceptsPage() {
           action={<div className="hero-actions"><Button variant="subtle" onClick={() => setEditing(null)}>Cerrar</Button><Button variant="primary" onClick={save} disabled={isSaving}>{isSaving ? "Guardando..." : "Guardar hora especial"}</Button></div>}
         >
           <ConceptEditor item={editing} setItem={setEditing} />
+          {isExistingConcept ? (
+            <HourConceptRulesPanel hourConceptId={editing.id} canEdit />
+          ) : (
+            <div className="info-note compact">
+              <p>Guardá la hora especial antes de configurar sus reglas horarias.</p>
+            </div>
+          )}
         </Section>
       )}
     </>

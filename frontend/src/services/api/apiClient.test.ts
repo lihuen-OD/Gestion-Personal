@@ -44,4 +44,20 @@ describe("formatApiErrorMessage", () => {
       error: { code: "NEW_INTERNAL_CODE", message: "Backend service not found" },
     })).toBe("No pudimos completar la operación. Intentá nuevamente.");
   });
+
+  it("maps HOUR_CONCEPT_RULE_NOT_FOUND and HOUR_CONCEPT_RULE_INVALID_RANGE to friendly Spanish copy", () => {
+    expect(formatApiErrorMessage({
+      error: { code: "HOUR_CONCEPT_RULE_NOT_FOUND", message: "No encontramos la regla de concepto horario solicitada" },
+    })).toBe("No encontramos la regla horaria solicitada.");
+    expect(formatApiErrorMessage({
+      error: { code: "HOUR_CONCEPT_RULE_INVALID_RANGE", message: "startTime y endTime no pueden ser iguales" },
+    })).toBe("La hora desde y la hora hasta no pueden ser iguales.");
+  });
+
+  it("keeps the backend's specific overlap message for HOUR_CONCEPT_RULE_AMBIGUOUS_OVERLAP (409) instead of a generic fallback — it already names the conflicting rule", () => {
+    const specificMessage = "La regla se superpone con otra activa de igual prioridad (21:00-04:00, priority 1) — la clasificación quedaría ambigua. Cambiá la prioridad o el horario.";
+    expect(formatApiErrorMessage({
+      error: { code: "HOUR_CONCEPT_RULE_AMBIGUOUS_OVERLAP", message: specificMessage },
+    })).toBe(specificMessage);
+  });
 });
