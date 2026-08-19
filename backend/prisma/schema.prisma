@@ -718,6 +718,10 @@ model EmployeeHourConcept {
   hourConcept HourConcept @relation(fields: [hourConceptId], references: [id], onDelete: Cascade)
 
   @@id([employeeId, hourConceptId])
+  // La PK compuesta (employeeId, hourConceptId) no cubre eficientemente una
+  // búsqueda por hourConceptId solo (regla del prefijo izquierdo de btree) —
+  // este índice es lo que usa GET /hour-concepts/:id/employees (Etapa 8G/8H).
+  @@index([hourConceptId])
 }
 
 // Regla de sugerencia (no de bloqueo): en qué rango horario un HourConcept
@@ -1136,6 +1140,13 @@ model EmployeeWorkRegime {
   assignedBy User?      @relation(fields: [assignedByUserId], references: [id], onDelete: SetNull)
 
   @@index([employeeId, effectiveFrom])
+  // Usado por GET /work-regimes/:id/employees (Etapa 8G/8H): filtra por
+  // workRegimeId (igualdad) y por vigencia (rango sobre effectiveFrom). No se
+  // agrega effectiveTo a este índice — con workRegimeId como igualdad líder,
+  // una tercera columna después de un rango sobre effectiveFrom no reduce el
+  // escaneo del índice, solo evitaría un fetch a la fila para ese filtro
+  // puntual; no se justifica sobreindexar por esa ganancia marginal.
+  @@index([workRegimeId, effectiveFrom])
 }
 
 model ShiftAlert {
