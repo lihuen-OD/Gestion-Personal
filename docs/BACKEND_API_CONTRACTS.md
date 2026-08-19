@@ -613,6 +613,36 @@ Campos principales:
 }
 ```
 
+### Reglas de conceptos horarios (`HourConceptRule`)
+
+Define CUÁNDO aplica un concepto horario (franja diaria recurrente), no su nombre — eso lo define RRHH en `HourConcept`. Usado por la clasificación automática de jornadas (`classifyWorkShiftSegments`). Lectura para cualquier autenticado; escritura solo RRHH. No hay `DELETE`: una regla histórica se inactiva (`status: INACTIVO`), nunca se borra.
+
+```txt
+GET /api/hour-concept-rules
+GET /api/hour-concept-rules/:id
+POST /api/hour-concept-rules
+PATCH /api/hour-concept-rules/:id
+PATCH /api/hour-concept-rules/:id/status
+GET /api/hour-concepts/:hourConceptId/rules
+```
+
+Query de listado (`GET /api/hour-concept-rules`): `hourConceptId`, `status`, `crossesMidnight`, `page`, `take`. Orden de respuesta siempre `priority desc, startTime asc`.
+
+Campos principales:
+
+```json
+{
+  "hourConceptId": "uuid",
+  "startTime": "21:00",
+  "endTime": "04:00",
+  "crossesMidnight": true,
+  "priority": 1,
+  "status": "ACTIVO"
+}
+```
+
+Validación de solapamiento (409 `HOUR_CONCEPT_RULE_AMBIGUOUS_OVERLAP`): dos reglas **activas** con **la misma priority** no pueden superponerse en horario — la clasificación no podría desambiguar cuál gana. Con prioridades distintas, sí pueden superponerse (gana la de mayor priority). El chequeo es **global** (compara contra reglas de todos los conceptos, no solo el mismo `hourConceptId`), porque así compara la clasificación real. Reglas `INACTIVO` nunca participan del chequeo ni de la clasificación.
+
 ### Tipos de novedades
 
 ```txt
