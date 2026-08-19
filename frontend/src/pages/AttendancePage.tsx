@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { AlertTriangle, CalendarDays, Camera, CheckCircle2, Clock3, DoorOpen, Eye, RefreshCcw, Search, TimerReset, X } from "lucide-react";
 import { attendanceApiService, type AttendanceObservation, type AttendancePunch, type AttendanceShift } from "../services/api/attendanceApiService";
+import { WorkShiftSegmentsPanel } from "../components/attendance/WorkShiftSegmentsPanel";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { EmptyState } from "../components/ui/EmptyState";
@@ -122,7 +123,7 @@ function PunchEvidence({ punch, label, onViewPhoto }: { punch?: AttendanceShift[
   );
 }
 
-function ShiftRows({ items, emptyText, showSegments = false, showRisk = false, onAction, onViewPhoto }: { items: AttendanceShift[]; emptyText: string; showSegments?: boolean; showRisk?: boolean; onAction?: (shift: AttendanceShift, action: ShiftActionType) => void; onViewPhoto: (id: string) => void }) {
+function ShiftRows({ items, emptyText, showSegments = false, showRisk = false, onAction, onViewPhoto, onViewSegments }: { items: AttendanceShift[]; emptyText: string; showSegments?: boolean; showRisk?: boolean; onAction?: (shift: AttendanceShift, action: ShiftActionType) => void; onViewPhoto: (id: string) => void; onViewSegments?: (shift: AttendanceShift) => void }) {
   if (!items.length) return <EmptyState text={emptyText} icon={Clock3} />;
   return (
     <TableShell minWidth={showRisk ? 1420 : 1080}>
@@ -174,6 +175,12 @@ function ShiftRows({ items, emptyText, showSegments = false, showRisk = false, o
                     <span key={segment.id}>{formatTime(segment.fromDateTime)} a {formatTime(segment.toDateTime)} · {formatDuration(segment.minutes)}</span>
                   )) : <span>Sin tramos</span>}
                 </div>
+                {onViewSegments ? (
+                  <button type="button" className="table-link" onClick={() => onViewSegments(shift)}>
+                    <Eye size={14} />
+                    Ver detalle
+                  </button>
+                ) : null}
               </td>
             )}
             <td>
@@ -217,7 +224,7 @@ type ShiftAction = {
   type: ShiftActionType;
 };
 
-function ObservationRows({ items, onViewPhoto, onResolve }: { items: AttendanceObservation[]; onViewPhoto: (id: string) => void; onResolve: (kind: "SHIFT" | "PUNCH" | "INACTIVITY", id: string) => void }) {
+function ObservationRows({ items, onViewPhoto, onResolve, onViewSegments }: { items: AttendanceObservation[]; onViewPhoto: (id: string) => void; onResolve: (kind: "SHIFT" | "PUNCH" | "INACTIVITY", id: string) => void; onViewSegments: (shift: AttendanceShift) => void }) {
   if (!items.length) {
     return <EmptyState text="No hay problemas de fichada para los filtros seleccionados." icon={AlertTriangle} />;
   }
@@ -247,7 +254,11 @@ function ObservationRows({ items, onViewPhoto, onResolve }: { items: AttendanceO
           <td><strong>{employeeName(record)}</strong><span className="muted-line">Legajo {record.employee.legajo} · DNI {record.employee.dni}</span></td>
           <td>{formatDateTime(item.occurredAt)}</td>
           <td><Badge tone="danger">{problem}</Badge></td>
-          <td><span className="attendance-review-detail">{detail}</span>{item.kind === "PUNCH" && hasPunchPhoto(item.punch) ? <button type="button" className="table-link" onClick={() => onViewPhoto(item.punch.id)}><Camera size={14} />Ver foto</button> : null}</td>
+          <td>
+            <span className="attendance-review-detail">{detail}</span>
+            {item.kind === "PUNCH" && hasPunchPhoto(item.punch) ? <button type="button" className="table-link" onClick={() => onViewPhoto(item.punch.id)}><Camera size={14} />Ver foto</button> : null}
+            {item.kind === "SHIFT" ? <button type="button" className="table-link" onClick={() => onViewSegments(item.shift)}><Eye size={14} />Ver tramos</button> : null}
+          </td>
           <td>{sourceLabel(record.source)}</td>
           <td>{isPending ? <button type="button" className="table-link" onClick={() => onResolve(item.kind, record.id)}>Resolver</button> : <Badge tone="success">Resuelta</Badge>}</td>
         </tr>;
@@ -285,6 +296,7 @@ export function AttendancePage() {
   const [photoPreview, setPhotoPreview] = useState<{ url: string; title: string }>();
   const [photoError, setPhotoError] = useState("");
   const [photoLoading, setPhotoLoading] = useState(false);
+  const [segmentsShift, setSegmentsShift] = useState<AttendanceShift>();
 
   useEffect(() => {
     let cancelled = false;
@@ -460,7 +472,7 @@ export function AttendancePage() {
       {photoError ? <div className="form-error">{photoError}</div> : null}
 
       <Section title="Jornadas cerradas" subtitle="Jornadas procesadas con sus tramos calculados y carga horaria generada.">
-        {loading ? <EmptyState text="Cargando jornadas cerradas..." icon={CheckCircle2} /> : <ShiftRows items={summary?.closedShifts || []} emptyText="No hay jornadas cerradas para esta fecha." showSegments onAction={openAction} onViewPhoto={openPunchPhoto} />}
+        {loading ? <EmptyState text="Cargando jornadas cerradas..." icon={CheckCircle2} /> : <ShiftRows items={summary?.closedShifts || []} emptyText="No hay jornadas cerradas para esta fecha." showSegments onAction={openAction} onViewPhoto={openPunchPhoto} onViewSegments={setSegmentsShift} />}
       </Section>
 
       <Section
@@ -507,7 +519,7 @@ export function AttendancePage() {
         {observationsError ? <div className="form-error">{observationsError}</div> : null}
         {observationsLoading ? <EmptyState text="Cargando problemas de fichada..." icon={AlertTriangle} /> : (
           <>
-            <ObservationRows items={observations} onViewPhoto={openPunchPhoto} onResolve={(kind, id) => { setReviewAction({ kind, id }); setReviewReason(""); setActionError(""); }} />
+            <ObservationRows items={observations} onViewPhoto={openPunchPhoto} onResolve={(kind, id) => { setReviewAction({ kind, id }); setReviewReason(""); setActionError(""); }} onViewSegments={setSegmentsShift} />
             {observationsMeta.hasMore ? <div className="attendance-load-more"><Button variant="subtle" onClick={loadMoreObservations} loading={observationsLoadingMore}>Cargar 10 más</Button></div> : null}
           </>
         )}
@@ -561,6 +573,16 @@ export function AttendancePage() {
               </Button>
             </div>
           </div>
+        </Modal>
+      ) : null}
+
+      {segmentsShift ? (
+        <Modal title="Segmentos de la jornada" close={() => setSegmentsShift(undefined)}>
+          <div className="info-note compact">
+            <b>{employeeName(segmentsShift)}</b>
+            <p>Legajo {segmentsShift.employee.legajo} · Ingreso {formatDateTime(segmentsShift.startAt)} · Salida {formatDateTime(segmentsShift.endAt)}</p>
+          </div>
+          <WorkShiftSegmentsPanel segments={segmentsShift.timeSegments} entries={segmentsShift.timeEntries} />
         </Modal>
       ) : null}
 

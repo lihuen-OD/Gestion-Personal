@@ -11,6 +11,14 @@ export type AttendanceEmployee = {
   position?: { id: string; name: string; code: string } | null;
 };
 
+// SUGERIDO/MANUAL/SIN_CONCEPTO_COMPATIBLE/CONCEPTO_NO_HABILITADO (ver
+// SegmentConceptStatus en el backend). Solo viene poblado por
+// /time-entries/attendance/observations hoy (bare include de Prisma) — el
+// resumen de /time-entries/attendance todavía no lo selecciona (ver
+// hourConceptRuleId/conceptStatus abajo). No hardcodeamos nada acá: el
+// nombre real del concepto sigue viniendo de hourConceptName.
+export type SegmentConceptStatus = "SUGERIDO" | "MANUAL" | "SIN_CONCEPTO_COMPATIBLE" | "CONCEPTO_NO_HABILITADO";
+
 export type AttendanceSegment = {
   id: string;
   date: string;
@@ -22,6 +30,13 @@ export type AttendanceSegment = {
   isNight: boolean;
   isSpecial: boolean;
   observation?: string | null;
+  // Opcionales a propósito: hoy solo llegan poblados cuando el shift viene
+  // de attendanceApiService.getObservations() (el backend ahí no recorta el
+  // select de TimeSegment). Si viene de getSummary(), quedan undefined —
+  // WorkShiftSegmentsPanel debe mostrar "no disponible", nunca inventarlos.
+  hourConceptId?: string;
+  hourConceptRuleId?: string | null;
+  conceptStatus?: SegmentConceptStatus;
 };
 
 export type AttendanceTimeEntry = {
@@ -32,6 +47,10 @@ export type AttendanceTimeEntry = {
   status: string;
   observation?: string | null;
   hourConcept: { id: string; name: string; kind: string };
+  // Mismo caso que arriba: solo poblados para shifts de getObservations().
+  appliedMultiplier?: string | number;
+  actualMinutes?: number | null;
+  timeSegmentId?: string | null;
 };
 
 export type OpenShiftRiskLevel = "NORMAL" | "MISSING_OUT" | "EXPIRED";
