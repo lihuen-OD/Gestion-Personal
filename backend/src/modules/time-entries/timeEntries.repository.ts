@@ -28,6 +28,53 @@ const timeEntryInclude = {
   hourConcept: true,
 } satisfies Prisma.TimeEntryInclude;
 
+// Contrato compartido entre attendanceSummary y attendanceObservations (ver
+// auditoría 8E): antes cada uno seleccionaba un subconjunto distinto de
+// TimeSegment/TimeEntry sin ninguna razón de negocio — attendanceSummary
+// recortaba hourConceptId/hourConceptRuleId/conceptStatus/appliedMultiplier/
+// actualMinutes, attendanceObservations los traía por default de Prisma.
+// Un solo select para los dos evita que la diferencia sea un accidente de
+// implementación en vez de una decisión.
+const attendanceTimeSegmentSelect = {
+  id: true,
+  date: true,
+  fromDateTime: true,
+  toDateTime: true,
+  minutes: true,
+  hourConceptId: true,
+  hourConceptName: true,
+  hourConceptRuleId: true,
+  conceptStatus: true,
+  isHoliday: true,
+  isNight: true,
+  isSpecial: true,
+  observation: true,
+  // SpecialHourRuleApplication nunca se leía en ningún endpoint (ver
+  // auditoría 8E) — se agrega acá porque es un select anidado más, sin
+  // migración ni endpoint nuevo. doubleHourRule.name es la única forma hoy
+  // de saber CUÁL regla especial se aplicó, no solo que "isSpecial=true".
+  specialHourRuleApplications: {
+    select: {
+      id: true,
+      multiplierApplied: true,
+      doubleHourRule: { select: { id: true, name: true } },
+    },
+  },
+} satisfies Prisma.TimeSegmentSelect;
+
+const attendanceTimeEntrySelect = {
+  id: true,
+  date: true,
+  hours: true,
+  totalMinutes: true,
+  actualMinutes: true,
+  appliedMultiplier: true,
+  timeSegmentId: true,
+  status: true,
+  observation: true,
+  hourConcept: { select: { id: true, name: true, kind: true } },
+} satisfies Prisma.TimeEntrySelect;
+
 const periodEmployeeSelect = {
   id: true,
   legajo: true,
@@ -661,30 +708,11 @@ export const timeEntriesRepository = {
               },
             },
             timeSegments: {
-              select: {
-                id: true,
-                date: true,
-                fromDateTime: true,
-                toDateTime: true,
-                minutes: true,
-                hourConceptName: true,
-                isHoliday: true,
-                isNight: true,
-                isSpecial: true,
-                observation: true,
-              },
+              select: attendanceTimeSegmentSelect,
               orderBy: { fromDateTime: "asc" },
             },
             timeEntries: {
-              select: {
-                id: true,
-                date: true,
-                hours: true,
-                totalMinutes: true,
-                status: true,
-                observation: true,
-                hourConcept: { select: { id: true, name: true, kind: true } },
-              },
+              select: attendanceTimeEntrySelect,
               orderBy: { date: "asc" },
             },
           },
@@ -793,8 +821,8 @@ export const timeEntriesRepository = {
           employee: { select: employeeSelect },
           startPunch: true,
           endPunch: true,
-          timeSegments: { orderBy: { fromDateTime: "asc" } },
-          timeEntries: { include: { hourConcept: true }, orderBy: { date: "asc" } },
+          timeSegments: { select: attendanceTimeSegmentSelect, orderBy: { fromDateTime: "asc" } },
+          timeEntries: { select: attendanceTimeEntrySelect, orderBy: { date: "asc" } },
         },
         orderBy: [{ startAt: "desc" }, { id: "desc" }],
         take: input.take + 1,

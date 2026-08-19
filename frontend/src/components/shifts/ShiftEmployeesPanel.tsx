@@ -78,6 +78,11 @@ export function ShiftEmployeesPanel({ shiftTemplateId, canEdit }: { shiftTemplat
 
   const enabled = (assignments || []).filter((item) => item.status === "HABILITADO");
   const disabled = (assignments || []).filter((item) => item.status === "DESHABILITADO");
+  // Excluye solo a quienes ya tienen el turno HABILITADO: seleccionarlos de
+  // nuevo hoy es un no-op silencioso en el backend (shiftAssignment.service.ts).
+  // Un empleado con la asignación DESHABILITADO sigue apareciendo a propósito:
+  // volver a elegirlo la rehabilita (mismo backend, rama reEnable).
+  const enabledEmployeeIds = new Set(enabled.map((item) => item.employee.id));
 
   return (
     <div className="shift-employees-panel">
@@ -85,7 +90,7 @@ export function ShiftEmployeesPanel({ shiftTemplateId, canEdit }: { shiftTemplat
       {canEdit ? (
         <div className="rule-people-field">
           <span>Asignar empleados a este turno</span>
-          <EmployeeRemoteSelector selected={selected} multiple showStatusFilter wide={false} onChange={setSelected} />
+          <EmployeeRemoteSelector selected={selected} multiple showStatusFilter wide={false} excludeIds={enabledEmployeeIds} onChange={setSelected} />
           <label className="field"><span>Observación (opcional)</span><input value={observation} onChange={(e) => setObservation(e.target.value)} placeholder="Ej: rota semana por medio con turno tarde" /></label>
           <div className="rule-form-actions">
             <Button variant="primary" disabled={isAssigning || !selected.length} onClick={assignSelected}>{isAssigning ? "Asignando..." : "Asignar seleccionados"}</Button>

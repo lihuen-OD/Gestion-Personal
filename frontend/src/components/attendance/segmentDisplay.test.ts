@@ -115,9 +115,28 @@ describe("C. Mappers/descripciones", () => {
     expect(describeSpecialRuleApplication(false)).toBe("Sin reglas especiales");
   });
 
-  it("mapea reglas especiales presentes sin inventar cuál regla ni su multiplicador individual (SpecialHourRuleApplication no llega desde ningún endpoint)", () => {
+  it("sin specialHourRuleApplications (isSpecial=true pero sin detalle), no inventa cuál regla ni su multiplicador", () => {
     expect(describeSpecialRuleApplication(true)).toMatch(/no disponible/i);
     expect(describeSpecialRuleApplication(true)).not.toMatch(/Cosecha|Riego|Campaña|Feriado x2/i);
+  });
+
+  it("con specialHourRuleApplications presente (Etapa 8F), muestra el nombre real de la regla y su multiplicador — nunca hardcodeado", () => {
+    const described = describeSpecialRuleApplication(true, [
+      { id: "app-1", multiplierApplied: 2, doubleHourRule: { id: "rule-1", name: "Domingo" } },
+    ]);
+    expect(described).toBe("Domingo (x2)");
+  });
+
+  it("con varias specialHourRuleApplications, lista todas sin quedarse solo con una", () => {
+    const described = describeSpecialRuleApplication(true, [
+      { id: "app-1", multiplierApplied: 2, doubleHourRule: { id: "rule-1", name: "Feriado" } },
+      { id: "app-2", multiplierApplied: 1.5, doubleHourRule: { id: "rule-2", name: "Nocturno" } },
+    ]);
+    expect(described).toBe("Feriado (x2), Nocturno (x1.5)");
+  });
+
+  it("specialHourRuleApplications vacío (array presente pero sin filas) cae al mismo mensaje que 'sin dato' — no lo confunde con 'sin reglas'", () => {
+    expect(describeSpecialRuleApplication(true, [])).toMatch(/no disponible/i);
   });
 
   it("varios segmentos con isSpecial mixto se describen independientemente, sin contaminarse entre sí", () => {

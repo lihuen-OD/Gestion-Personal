@@ -10,10 +10,10 @@ vi.mock("../shifts/workShiftEvaluationRunner", () => ({
 
 vi.mock("../../shared/prisma/client", () => {
   const tx = {
-    workShift: { findFirst: vi.fn(), updateMany: vi.fn(), create: vi.fn(), update: vi.fn() },
+    workShift: { findFirst: vi.fn(), findMany: vi.fn(), updateMany: vi.fn(), create: vi.fn(), update: vi.fn() },
     employeeHourConcept: { findFirst: vi.fn() },
     timeEntry: { create: vi.fn(), findFirst: vi.fn(), update: vi.fn() },
-    attendancePunch: { create: vi.fn() },
+    attendancePunch: { create: vi.fn(), findMany: vi.fn() },
     timeSegment: { create: vi.fn() },
     doubleHourRule: { findMany: vi.fn() },
     hourConcept: { findMany: vi.fn() },
@@ -21,20 +21,27 @@ vi.mock("../../shared/prisma/client", () => {
   };
   return {
     prisma: {
-      workShift: { findMany: vi.fn() },
+      workShift: { findMany: vi.fn(), count: vi.fn() },
       employeeHourConcept: { findFirst: vi.fn() },
       employeeWorkRegime: { findFirst: vi.fn() },
-      $transaction: vi.fn((callback: (tx: unknown) => unknown) => callback(tx)),
+      attendancePunch: { findMany: vi.fn(), count: vi.fn() },
+      attendanceInactivityIncident: { findMany: vi.fn(), count: vi.fn() },
+      // $transaction real acepta un callback (uso transaccional clásico) o un
+      // array de promesas (uso de "varias queries en paralelo" tipo
+      // attendanceObservations) — el mock soporta ambas formas.
+      $transaction: vi.fn((arg: ((tx: unknown) => unknown) | Promise<unknown>[]) =>
+        Array.isArray(arg) ? Promise.all(arg) : arg(tx),
+      ),
       __tx: tx,
     },
   };
 });
 
 type TxMocks = {
-  workShift: { findFirst: Mock; updateMany: Mock; create: Mock; update: Mock };
+  workShift: { findFirst: Mock; findMany: Mock; updateMany: Mock; create: Mock; update: Mock };
   employeeHourConcept: { findFirst: Mock };
   timeEntry: { create: Mock; findFirst: Mock; update: Mock };
-  attendancePunch: { create: Mock };
+  attendancePunch: { create: Mock; findMany: Mock };
   timeSegment: { create: Mock };
   doubleHourRule: { findMany: Mock };
   hourConcept: { findMany: Mock };
@@ -42,9 +49,11 @@ type TxMocks = {
 };
 
 const mockedPrisma = prisma as unknown as {
-  workShift: { findMany: Mock };
+  workShift: { findMany: Mock; count: Mock };
   employeeHourConcept: { findFirst: Mock };
   employeeWorkRegime: { findFirst: Mock };
+  attendancePunch: { findMany: Mock; count: Mock };
+  attendanceInactivityIncident: { findMany: Mock; count: Mock };
   $transaction: Mock;
   __tx: TxMocks;
 };
@@ -168,6 +177,103 @@ describe("expireOpenWorkShifts — política de rollover por régimen (Etapa 5)"
     // workShiftEvaluationRunner.test.ts para esa garantía de fondo.
     expect(mockedFlagOpenShiftOverflowForReview.mock.calls[0]![1]).toBe("shift-overflow");
     expect(mockedFlagOpenShiftOverflowForReview.mock.calls[1]![1]).toBe("shift-overflow");
+  });
+});
+
+describe("attendanceSummary / attendanceObservations — select unificado de TimeSegment/TimeEntry (Etapa 8F)", () => {
+  const baseInput = { startAt: new Date("2026-08-18T00:00:00.000Z"), endAt: new Date("2026-08-19T00:00:00.000Z"), employeeAccessWhere: {} };
+
+  it("attendanceSummary pide hourConceptId, hourConceptRuleId y conceptStatus en el select de timeSegments", async () => {
+    mockedPrisma.__tx.workShift.findMany.mockResolvedValue([]);
+    mockedPrisma.__tx.attendancePunch.findMany.mockResolvedValue([]);
+
+    await timeEntriesRepository.attendanceSummary(baseInput);
+
+    const call = mockedPrisma.__tx.workShift.findMany.mock.calls[0]![0] as { select: { timeSegments: { select: Record<string, unknown> } } };
+    expect(call.select.timeSegments.select).toMatchObject({ hourConceptId: true, hourConceptRuleId: true, conceptStatus: true });
+  });
+
+  it("attendanceSummary pide appliedMultiplier y actualMinutes en el select de timeEntries", async () => {
+    mockedPrisma.__tx.workShift.findMany.mockResolvedValue([]);
+    mockedPrisma.__tx.attendancePunch.findMany.mockResolvedValue([]);
+
+    await timeEntriesRepository.attendanceSummary(baseInput);
+
+    const call = mockedPrisma.__tx.workShift.findMany.mock.calls[0]![0] as { select: { timeEntries: { select: Record<string, unknown> } } };
+    expect(call.select.timeEntries.select).toMatchObject({ appliedMultiplier: true, actualMinutes: true });
+  });
+
+  it("attendanceSummary pide specialHourRuleApplications con doubleHourRule.name", async () => {
+    mockedPrisma.__tx.workShift.findMany.mockResolvedValue([]);
+    mockedPrisma.__tx.attendancePunch.findMany.mockResolvedValue([]);
+
+    await timeEntriesRepository.attendanceSummary(baseInput);
+
+    const call = mockedPrisma.__tx.workShift.findMany.mock.calls[0]![0] as {
+      select: { timeSegments: { select: { specialHourRuleApplications: { select: { doubleHourRule: { select: Record<string, unknown> } } } } } };
+    };
+    expect(call.select.timeSegments.select.specialHourRuleApplications.select.doubleHourRule.select).toMatchObject({ name: true });
+  });
+
+  it("attendanceSummary devuelve conceptStatus/hourConceptRuleId/appliedMultiplier/actualMinutes tal como los trae la base, sin recortarlos en código", async () => {
+    mockedPrisma.__tx.workShift.findMany.mockResolvedValue([
+      {
+        id: "shift-1",
+        employeeId: "employee-1",
+        timeSegments: [
+          { id: "segment-1", conceptStatus: "SIN_CONCEPTO_COMPATIBLE", hourConceptId: "concept-1", hourConceptRuleId: null, specialHourRuleApplications: [] },
+        ],
+        timeEntries: [{ id: "entry-1", appliedMultiplier: 2, actualMinutes: 180, totalMinutes: 360 }],
+      },
+    ]);
+    mockedPrisma.__tx.attendancePunch.findMany.mockResolvedValue([]);
+
+    const result = await timeEntriesRepository.attendanceSummary(baseInput);
+
+    expect(result.workShifts[0]!.timeSegments[0]).toMatchObject({ conceptStatus: "SIN_CONCEPTO_COMPATIBLE", hourConceptId: "concept-1" });
+    expect(result.workShifts[0]!.timeEntries[0]).toMatchObject({ appliedMultiplier: 2, actualMinutes: 180 });
+  });
+
+  it("attendanceObservations sigue funcionando y ahora pide el mismo select unificado (antes traía todo por default de Prisma)", async () => {
+    mockedPrisma.workShift.findMany.mockResolvedValue([]);
+    mockedPrisma.attendancePunch.findMany.mockResolvedValue([]);
+    mockedPrisma.attendanceInactivityIncident.findMany.mockResolvedValue([]);
+    mockedPrisma.workShift.count.mockResolvedValue(0);
+    mockedPrisma.attendancePunch.count.mockResolvedValue(0);
+    mockedPrisma.attendanceInactivityIncident.count.mockResolvedValue(0);
+
+    const result = await timeEntriesRepository.attendanceObservations({ type: "ALL", reviewStatus: "PENDIENTE", take: 10, employeeAccessWhere: {} });
+
+    expect(result.items).toEqual([]);
+    expect(result.total).toBe(0);
+    const call = mockedPrisma.workShift.findMany.mock.calls[0]![0] as {
+      include: { timeSegments: { select: Record<string, unknown> }; timeEntries: { select: Record<string, unknown> } };
+    };
+    expect(call.include.timeSegments.select).toMatchObject({ hourConceptId: true, hourConceptRuleId: true, conceptStatus: true });
+    expect(call.include.timeEntries.select).toMatchObject({ appliedMultiplier: true, actualMinutes: true });
+  });
+
+  it("attendanceObservations devuelve el segmento SHIFT con conceptStatus/appliedMultiplier intactos (misma calidad de datos que attendanceSummary)", async () => {
+    mockedPrisma.workShift.findMany.mockResolvedValue([
+      {
+        id: "shift-2",
+        startAt: new Date("2026-08-18T10:00:00.000Z"),
+        timeSegments: [{ id: "segment-2", conceptStatus: "CONCEPTO_NO_HABILITADO", hourConceptRuleId: "rule-1", specialHourRuleApplications: [] }],
+        timeEntries: [{ id: "entry-2", appliedMultiplier: 1.5, actualMinutes: 60 }],
+      },
+    ]);
+    mockedPrisma.attendancePunch.findMany.mockResolvedValue([]);
+    mockedPrisma.attendanceInactivityIncident.findMany.mockResolvedValue([]);
+    mockedPrisma.workShift.count.mockResolvedValue(1);
+    mockedPrisma.attendancePunch.count.mockResolvedValue(0);
+    mockedPrisma.attendanceInactivityIncident.count.mockResolvedValue(0);
+
+    const result = await timeEntriesRepository.attendanceObservations({ type: "SHIFT", reviewStatus: "PENDIENTE", take: 10, employeeAccessWhere: {} });
+
+    expect(result.items).toHaveLength(1);
+    const item = result.items[0]! as unknown as { kind: "SHIFT"; shift: { timeSegments: Array<{ conceptStatus: string }>; timeEntries: Array<{ appliedMultiplier: number }> } };
+    expect(item.shift.timeSegments[0]!.conceptStatus).toBe("CONCEPTO_NO_HABILITADO");
+    expect(item.shift.timeEntries[0]!.appliedMultiplier).toBe(1.5);
   });
 });
 

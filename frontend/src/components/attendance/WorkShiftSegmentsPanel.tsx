@@ -48,7 +48,7 @@ function SegmentRow({ segment }: { segment: AttendanceSegment }) {
           {!segment.isNight && !segment.isHoliday ? <span className="table-sub">-</span> : null}
         </div>
       </td>
-      <td>{describeSpecialRuleApplication(segment.isSpecial)}</td>
+      <td>{describeSpecialRuleApplication(segment.isSpecial, segment.specialHourRuleApplications)}</td>
       <td>
         {reviewState === "REQUIRES_REVIEW" ? (
           <Badge tone="warning">Requiere revisión</Badge>

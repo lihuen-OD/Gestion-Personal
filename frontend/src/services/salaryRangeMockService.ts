@@ -1,4 +1,5 @@
 import { mockOrgCategories } from "../data/mockOrgCategories";
+import { demoMode } from "../config/runtimeMode";
 import type { Employee } from "../types";
 import type { Position } from "../types/position.types";
 import { employeeMockService } from "./employeeMockService";
@@ -18,11 +19,28 @@ const normalize = (value: string) => value.normalize("NFD").replace(/[\u0300-\u0
 const uniqueSorted = (values: string[]) => Array.from(new Set(values.filter(Boolean))).sort((a, b) => a.localeCompare(b, "es"));
 let apiGroupsCache: SalaryGroup[] | null = null;
 
-function allCategories(employees: Employee[] = employeeMockService.getAll()) {
+// Pura y testeable a propósito: no toca import.meta.env directamente, para
+// no depender de mockear variables de entorno en los tests. allowDemoFallback
+// se recibe explícito; quien llama en serio (allCategories, abajo) le pasa el
+// demoMode real del proyecto (config/runtimeMode.ts).
+//
+// Antes, sin employees explícitos, esto llamaba siempre a
+// employeeMockService.getAll() — un mock silencioso corriendo en producción
+// cada vez que salaryCategoryApiService.getGroups() fallaba o devolvía vacío,
+// aunque ya existiera el endpoint real /salary-categories. Ahora: fuera de
+// demoMode, sin employees explícitos, no hay ningún dato inventado — queda
+// un catálogo vacío (empty state controlado), nunca datos de mentira.
+export function resolveCategorySourceEmployees(employees: Employee[] | undefined, allowDemoFallback: boolean): Employee[] {
+  if (employees) return employees;
+  return allowDemoFallback ? employeeMockService.getAll() : [];
+}
+
+function allCategories(employees?: Employee[]) {
+  const source = resolveCategorySourceEmployees(employees, demoMode);
   return uniqueSorted([
     ...mockOrgCategories.map((category) => category.label),
-    ...employees.map((employee) => employee.internalCategory),
-    ...employees.map((employee) => employee.receiptCategory),
+    ...source.map((employee) => employee.internalCategory),
+    ...source.map((employee) => employee.receiptCategory),
   ]).filter((value) => normalize(value) !== "sin categoria");
 }
 

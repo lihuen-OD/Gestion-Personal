@@ -19,6 +19,15 @@ export type AttendanceEmployee = {
 // nombre real del concepto sigue viniendo de hourConceptName.
 export type SegmentConceptStatus = "SUGERIDO" | "MANUAL" | "SIN_CONCEPTO_COMPATIBLE" | "CONCEPTO_NO_HABILITADO";
 
+// Ahora sí llega desde /time-entries/attendance y /attendance/observations
+// (Etapa 8F unificó el select) — doubleHourRule.name es la única forma de
+// saber CUÁL regla especial se aplicó, no solo que isSpecial=true.
+export type AttendanceSegmentSpecialRuleApplication = {
+  id: string;
+  multiplierApplied: number | string;
+  doubleHourRule: { id: string; name: string };
+};
+
 export type AttendanceSegment = {
   id: string;
   date: string;
@@ -37,6 +46,7 @@ export type AttendanceSegment = {
   hourConceptId?: string;
   hourConceptRuleId?: string | null;
   conceptStatus?: SegmentConceptStatus;
+  specialHourRuleApplications?: AttendanceSegmentSpecialRuleApplication[];
 };
 
 export type AttendanceTimeEntry = {

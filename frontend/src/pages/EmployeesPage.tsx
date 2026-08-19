@@ -33,6 +33,8 @@ export function EmployeesPage() {
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebouncedValue(search);
   const [company, setCompany] = useState("");
+  const [sector, setSector] = useState("");
+  const [costCenter, setCostCenter] = useState("");
   const [page, setPage] = useState(1);
   const [refresh, setRefresh] = useState(0);
   const [syncing, setSyncing] = useState(false);
@@ -41,15 +43,19 @@ export function EmployeesPage() {
   const [all, setAll] = useState<Employee[]>(initialList?.items || []);
   const [listStatus, setListStatus] = useState<"loading" | "success" | "error">(initialList ? "success" : "loading");
   const [structureCompanies, setStructureCompanies] = useState<Array<{ id: string; name: string }>>([]);
+  const [structureSectors, setStructureSectors] = useState<Array<{ id: string; name: string }>>([]);
+  const [structureCostCenters, setStructureCostCenters] = useState<Array<{ id: string; name: string }>>([]);
   const [summary, setSummary] = useState<EmployeeSummary>(emptySummary);
   const [meta, setMeta] = useState(initialList?.meta || { total: 0, page: 1, pageSize, hasMore: false });
   const selectedCompanyId = structureCompanies.find((item) => item.name === company)?.id;
+  const selectedSectorId = structureSectors.find((item) => item.name === sector)?.id;
+  const selectedCostCenterId = structureCostCenters.find((item) => item.name === costCenter)?.id;
 
   useEffect(() => {
     let mounted = true;
     if (!all.length) setListStatus("loading");
     employeeApiService
-      .list({ search: debouncedSearch, companyId: selectedCompanyId, page, take: pageSize })
+      .list({ search: debouncedSearch, companyId: selectedCompanyId, sectorId: selectedSectorId, costCenterId: selectedCostCenterId, page, take: pageSize })
       .then((result) => {
         if (!mounted) return;
         setAll(result.items);
@@ -65,7 +71,7 @@ export function EmployeesPage() {
     return () => {
       mounted = false;
     };
-  }, [debouncedSearch, page, refresh, selectedCompanyId]);
+  }, [debouncedSearch, page, refresh, selectedCompanyId, selectedSectorId, selectedCostCenterId]);
 
   useEffect(() => {
     let mounted = true;
@@ -88,7 +94,10 @@ export function EmployeesPage() {
     orgStructureApiService
       .getCatalog()
       .then((catalog) => {
-        if (mounted) setStructureCompanies(catalog.companies.filter((item) => item.status === "ACTIVO").map((item) => ({ id: item.id, name: item.name })));
+        if (!mounted) return;
+        setStructureCompanies(catalog.companies.filter((item) => item.status === "ACTIVO").map((item) => ({ id: item.id, name: item.name })));
+        setStructureSectors(catalog.sectors.filter((item) => item.status === "ACTIVO").map((item) => ({ id: item.id, name: item.name })));
+        setStructureCostCenters(catalog.costCenters.filter((item) => item.status === "ACTIVO").map((item) => ({ id: item.id, name: item.name })));
       })
       .catch(() => {});
     return () => {
@@ -169,6 +178,30 @@ export function EmployeesPage() {
             <option value="">Todas las empresas</option>
             {companyOptions.map((item) => (
               <option key={item}>{item}</option>
+            ))}
+          </select>
+          <select
+            value={sector}
+            onChange={(event) => {
+              setSector(event.target.value);
+              setPage(1);
+            }}
+          >
+            <option value="">Todos los sectores</option>
+            {structureSectors.map((item) => (
+              <option key={item.id}>{item.name}</option>
+            ))}
+          </select>
+          <select
+            value={costCenter}
+            onChange={(event) => {
+              setCostCenter(event.target.value);
+              setPage(1);
+            }}
+          >
+            <option value="">Todos los centros de costo</option>
+            {structureCostCenters.map((item) => (
+              <option key={item.id}>{item.name}</option>
             ))}
           </select>
         </div>

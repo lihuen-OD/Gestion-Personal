@@ -1,4 +1,4 @@
-import type { AttendanceSegment, SegmentConceptStatus } from "../../services/api/attendanceApiService";
+import type { AttendanceSegment, AttendanceSegmentSpecialRuleApplication, SegmentConceptStatus } from "../../services/api/attendanceApiService";
 
 export const segmentConceptStatusLabels: Record<SegmentConceptStatus, string> = {
   SUGERIDO: "Sugerido por sistema",
@@ -82,10 +82,16 @@ export function describeHourConceptRule(hourConceptRuleId: string | null | undef
   return hourConceptRuleId ? "Regla horaria aplicada" : "Sin regla horaria (manual)";
 }
 
-// SpecialHourRuleApplication nunca llega desde ningún endpoint hoy (ver
-// riesgos de la Etapa 8D) — isSpecial es la única señal disponible. No se
-// inventa cuál regla ni su multiplicador individual.
-export function describeSpecialRuleApplication(isSpecial: boolean): string {
+// Desde la Etapa 8F, specialHourRuleApplications sí llega (select unificado
+// en el backend) — si está presente y no vacío, se muestra CUÁL regla se
+// aplicó y su multiplicador, en vez del mensaje genérico "detalle no
+// disponible". applications ausente/vacío con isSpecial=true igual puede
+// pasar (ej. datos viejos ya cerrados antes de esta etapa) — ahí se cae al
+// mensaje anterior, nunca se inventa una regla.
+export function describeSpecialRuleApplication(isSpecial: boolean, applications?: AttendanceSegmentSpecialRuleApplication[]): string {
+  if (applications?.length) {
+    return applications.map((application) => `${application.doubleHourRule.name} (${formatMultiplier(application.multiplierApplied)})`).join(", ");
+  }
   return isSpecial ? "Sí — detalle de la regla no disponible en esta vista (requiere extender la API)" : "Sin reglas especiales";
 }
 

@@ -133,6 +133,11 @@ export type EmployeeTimeGrid = {
 export type EmployeeListFilters = {
   search?: string;
   companyId?: string;
+  // El backend ya soporta estos dos con WHERE indexado (ver auditoría 8E) —
+  // antes no estaban conectados acá, así que ningún filtro de sector/centro
+  // de costo llegaba nunca a /employees.
+  sectorId?: string;
+  costCenterId?: string;
   status?: "ACTIVO" | "INACTIVO";
   page?: number;
   take?: number;
@@ -513,12 +518,14 @@ async function invalidateEmployeeDependentCaches(reason: string) {
 type EmployeeListResult = { items: Employee[]; meta: ApiListMeta };
 const employeeListSnapshots = new Map<string, EmployeeListResult>();
 
-function employeeListRequest(filters: EmployeeListFilters = {}) {
+export function employeeListRequest(filters: EmployeeListFilters = {}) {
   const params = new URLSearchParams();
   params.set("page", String(filters.page || 1));
   params.set("take", String(filters.take || 25));
   if (filters.search?.trim()) params.set("search", filters.search.trim());
   if (filters.companyId) params.set("companyId", filters.companyId);
+  if (filters.sectorId) params.set("sectorId", filters.sectorId);
+  if (filters.costCenterId) params.set("costCenterId", filters.costCenterId);
   if (filters.status) params.set("status", filters.status);
   const path = `/employees?${params.toString()}`;
   return { path, snapshotKey: `${currentCacheScope()}:${path}` };

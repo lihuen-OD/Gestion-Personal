@@ -5,17 +5,23 @@ import type { Employee } from "../../types";
 import { displayLegajo, fullName } from "../../utils/employee";
 import { useDebouncedValue } from "../../utils/useDebouncedValue";
 
+export function visibleEmployeeResults(results: Employee[], excludeIds?: Set<string>): Employee[] {
+  return excludeIds ? results.filter((employee) => !excludeIds.has(employee.id)) : results;
+}
+
 export function EmployeeRemoteSelector({
   selected,
   multiple = false,
   showStatusFilter = false,
   wide = true,
+  excludeIds,
   onChange,
 }: {
   selected: Employee[];
   multiple?: boolean;
   showStatusFilter?: boolean;
   wide?: boolean;
+  excludeIds?: Set<string>;
   onChange: (employees: Employee[]) => void;
 }) {
   const [search, setSearch] = useState("");
@@ -60,7 +66,8 @@ export function EmployeeRemoteSelector({
     onChange([employee]);
     setSearch(""); setResults([]); setStatus("idle");
   };
-  const selectableResults = results.filter((employee) => !selectedIds.has(employee.id));
+  const visibleResults = visibleEmployeeResults(results, excludeIds);
+  const selectableResults = visibleResults.filter((employee) => !selectedIds.has(employee.id));
   const selectVisible = () => onChange([...selected, ...selectableResults]);
 
   return (
@@ -82,8 +89,8 @@ export function EmployeeRemoteSelector({
       {status === "error" ? <small className="error">No se pudo completar la búsqueda.</small> : null}
       {status === "success" ? (
         <div className="people-search-results">
-          {multiple && results.length ? <div className="people-results-actions"><span>{results.length} resultado{results.length === 1 ? "" : "s"}</span>{selectableResults.length ? <button type="button" onClick={selectVisible}>Seleccionar resultados</button> : <span>Todos seleccionados</span>}</div> : null}
-          {results.length ? results.map((employee) => (
+          {multiple && visibleResults.length ? <div className="people-results-actions"><span>{visibleResults.length} resultado{visibleResults.length === 1 ? "" : "s"}</span>{selectableResults.length ? <button type="button" onClick={selectVisible}>Seleccionar resultados</button> : <span>Todos seleccionados</span>}</div> : null}
+          {visibleResults.length ? visibleResults.map((employee) => (
             <button key={employee.id} type="button" className={selectedIds.has(employee.id) ? "is-selected" : ""} aria-pressed={selectedIds.has(employee.id)} onClick={() => choose(employee)}>
               <span className="people-result-check">{selectedIds.has(employee.id) ? <Check size={14}/> : null}</span>
               <span><b>{fullName(employee)}</b><small>{displayLegajo(employee)} · DNI {employee.dni} · CUIL {employee.cuil}</small></span>
