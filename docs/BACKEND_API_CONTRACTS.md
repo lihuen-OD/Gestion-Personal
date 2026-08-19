@@ -1094,7 +1094,24 @@ Acciones críticas ya auditadas:
 
 ## Módulos agregados (2026-08)
 
-Estos 5 módulos existen y están en uso real, pero no tenían sección en este documento. Rutas confirmadas contra `backend/src/modules/*/*.routes.ts` — ver el código fuente de cada uno para el detalle exacto de payloads/respuestas.
+Estos módulos existen y están en uso real, pero no tenían sección en este documento. Rutas confirmadas contra `backend/src/modules/*/*.routes.ts` — ver el código fuente de cada uno para el detalle exacto de payloads/respuestas.
+
+### Régimen laboral (`work-regimes`, montado en `/api/work-regimes` y `/api/employees/:employeeId/work-regimes`)
+
+WorkRegime es 100% configurable por RRHH — `kind` (`TURNO_OBLIGATORIO`/`TURNO_FLEXIBLE`/`SIN_TURNO`) y `openShiftOverflowAction` (`ROLLOVER`/`ALERT_ONLY`) son comportamientos genéricos; instancias concretas (Cosecha, Riego, Campaña, Oficina flexible, etc.) son datos, nunca valores hardcodeados. `EmployeeWorkRegime` asigna un régimen a un empleado con vigencia (`effectiveFrom`/`effectiveTo`); no se permiten dos asignaciones vigentes solapadas para el mismo empleado (409 `WORK_REGIME_ASSIGNMENT_OVERLAP`). Todas las rutas requieren `requireAuth`; lectura abierta a cualquier rol autenticado, escritura solo RRHH.
+
+| Método | Ruta | Rol | Descripción |
+|---|---|---|---|
+| GET | `/work-regimes` | cualquiera autenticado | Listar regímenes (filtros `status`, `kind`, `search`) |
+| GET | `/work-regimes/:id` | cualquiera autenticado | Detalle de un régimen |
+| POST | `/work-regimes` | RRHH | Crear régimen (409 si `code` ya existe) |
+| PATCH | `/work-regimes/:id` | RRHH | Editar régimen (parcial) |
+| PATCH | `/work-regimes/:id/status` | RRHH | Activar/inactivar (audita `ACTIVATE`/`DEACTIVATE`) |
+| GET | `/employees/:employeeId/work-regimes` | cualquiera autenticado | Historial de asignaciones, orden `effectiveFrom desc` |
+| GET | `/employees/:employeeId/work-regimes/current?date=YYYY-MM-DD` | cualquiera autenticado | Régimen vigente a esa fecha (`data: null` si no hay ninguno) |
+| POST | `/employees/:employeeId/work-regimes` | RRHH | Asignar régimen con vigencia (404 si `employeeId`/`workRegimeId` no existen; 409 si se solapa) |
+| PATCH | `/employees/:employeeId/work-regimes/:assignmentId` | RRHH | Editar una asignación (re-chequea solapamiento) |
+| PATCH | `/employees/:employeeId/work-regimes/:assignmentId/close` | RRHH | Cerrar vigencia (`effectiveTo`) |
 
 ### Turnos (`shifts`, montado en `/api/shifts`)
 

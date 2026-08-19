@@ -395,9 +395,10 @@ Domicilio must be handled as a single block history, not field-by-field.
 
 ### Modules implemented since this list was written
 
-The backend has 21 modules under `backend/src/modules`. The following exist and are in production use but were missing from the numbered list above — check `backend/src/modules/<name>` and `docs/BACKEND_API_CONTRACTS.md` before assuming a module doesn't exist:
+The backend has 22 modules under `backend/src/modules`. The following exist and are in production use but were missing from the numbered list above — check `backend/src/modules/<name>` and `docs/BACKEND_API_CONTRACTS.md` before assuming a module doesn't exist:
 
 * **shifts** (`shiftTemplate`, `shiftAssignment`, `shiftAlert`) — turnos: plantillas de turno, asignación a empleados, alertas de jornada abierta/vencida. Added 2026-07-23.
+* **work-regimes** (`WorkRegime`, `EmployeeWorkRegime`) — régimen laboral configurable por RRHH (turno obligatorio/flexible/sin turno; rollover automático o alerta crítica ante jornada abierta excedida) y su asignación a empleados con vigencia histórica. Instancias como Cosecha/Riego/Campaña son datos, no código. Added 2026-08-19.
 * **workforce-management** — reglas de horas dobles, cierres mensuales, notificaciones internas del sistema.
 * **finnegans-export** — exportación de novedades/horas al sistema externo de liquidación de sueldos (Finnegans).
 * **audit-parameters** — configuración de qué se audita/notifica/retiene (nota: hoy es solo configuración, no controla aún el pipeline real de auditoría).

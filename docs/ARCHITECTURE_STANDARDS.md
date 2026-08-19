@@ -60,7 +60,7 @@ Suggested separation:
 
 Each module generally follows `*.routes.ts` → `*.controller.ts` → `*.service.ts` → `*.repository.ts` + `*.schemas.ts`. When adding a new module, add it here and to `docs/BACKEND_API_CONTRACTS.md` in the same change.
 
-audit, audit-parameters, auth, dashboard, document-categories, documents, employees, finnegans-export, health, hour-concepts, novelties, novelty-types, org-structure, pending, positions, salary-categories, shifts, storage, time-entries, users, workforce-management.
+audit, audit-parameters, auth, dashboard, document-categories, documents, employees, finnegans-export, health, hour-concepts, novelties, novelty-types, org-structure, pending, positions, salary-categories, shifts, storage, time-entries, users, work-regimes, workforce-management.
 
 Known deviation: `workforce-management` does not have its own repository layer yet (calls Prisma directly from the service) — do not copy that pattern for new modules.
 

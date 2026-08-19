@@ -19,6 +19,7 @@ import { shiftsRouter } from "./modules/shifts/shifts.routes";
 import { storageRouter } from "./modules/storage/storage.routes";
 import { timeEntriesRouter } from "./modules/time-entries/timeEntries.routes";
 import { usersRouter } from "./modules/users/users.routes";
+import { employeeWorkRegimesRouter, workRegimesRouter } from "./modules/work-regimes/workRegimes.routes";
 import { workforceRouter } from "./modules/workforce-management/workforce.routes";
 
 export const apiRouter = Router();
@@ -43,4 +44,6 @@ apiRouter.use("/shifts", shiftsRouter);
 apiRouter.use("/storage", storageRouter);
 apiRouter.use("/time-entries", timeEntriesRouter);
 apiRouter.use("/users", usersRouter);
+apiRouter.use("/work-regimes", workRegimesRouter);
+apiRouter.use("/employees/:employeeId/work-regimes", employeeWorkRegimesRouter);
 apiRouter.use("/workforce", workforceRouter);
