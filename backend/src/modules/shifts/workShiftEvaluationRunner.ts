@@ -83,7 +83,13 @@ async function loadMatchingContext(employeeId: string) {
     prisma.shiftAssignment.findMany({ where: { employeeId } }),
     prisma.shiftTemplate.findMany({ where: { status: "ACTIVO" } }),
   ]);
-  const employeeAssignments: EmployeeShiftAssignmentRef[] = assignments.map((a) => ({ shiftTemplateId: a.shiftTemplateId, status: a.status }));
+  const employeeAssignments: EmployeeShiftAssignmentRef[] = assignments.map((a) => ({
+    shiftTemplateId: a.shiftTemplateId,
+    status: a.status,
+    effectiveFrom: a.effectiveFrom,
+    effectiveTo: a.effectiveTo,
+    weekdays: a.weekdays,
+  }));
   const activeTemplates = templates.map(toTemplateRef);
   return { employeeAssignments, activeTemplates };
 }

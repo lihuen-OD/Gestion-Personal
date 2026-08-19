@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { argentinaCalendarDate } from "../../shared/datetime/argentinaTime";
 import {
   DEFAULT_ABSOLUTE_OPEN_SHIFT_LIMIT_MINUTES,
   evaluateEntryPunctuality,
@@ -8,6 +9,9 @@ import {
   evaluateRestPeriod,
   evaluateWorkedDuration,
   hasNoShiftAssignments,
+  isShiftAssignmentActiveOnDate,
+  isShiftAssignmentApplicableForInstant,
+  isShiftAssignmentApplicableOnWeekday,
   matchShiftForEmployee,
   type ShiftTemplateRef,
 } from "./workShiftEvaluation.service";
@@ -342,5 +346,188 @@ describe("evaluateRestPeriod", () => {
   it("no marca descanso insuficiente si el intervalo alcanza el mínimo", () => {
     const result = evaluateRestPeriod({ previousShiftEndAt: at(20, 0, 9), currentShiftStartAt: at(7, 0, 10), minimumRestMinutes: 480 });
     expect(result.insufficientRest).toBe(false);
+  });
+});
+
+// Etapa 8J: el motor de matching ahora respeta status/effectiveFrom/
+// effectiveTo/weekdays de ShiftAssignment. 2026-07-06 es lunes, 2026-07-11
+// sábado, 2026-07-12 domingo, 2026-07-13 lunes (confirmado con Intl bajo
+// TZ=America/Argentina/Cordoba, que es el TZ fijado por vitest.config.ts).
+
+describe("isShiftAssignmentActiveOnDate — vigencia (Etapa 8J)", () => {
+  const referenceDate = argentinaCalendarDate("2026-07-10");
+
+  it("effectiveFrom pasado y effectiveTo null aplica", () => {
+    expect(isShiftAssignmentActiveOnDate({ effectiveFrom: argentinaCalendarDate("2026-01-01"), effectiveTo: null }, referenceDate)).toBe(true);
+  });
+
+  it("effectiveFrom futuro no aplica", () => {
+    expect(isShiftAssignmentActiveOnDate({ effectiveFrom: argentinaCalendarDate("2026-08-01"), effectiveTo: null }, referenceDate)).toBe(false);
+  });
+
+  it("effectiveTo anterior a la fecha operativa no aplica", () => {
+    expect(
+      isShiftAssignmentActiveOnDate({ effectiveFrom: argentinaCalendarDate("2026-01-01"), effectiveTo: argentinaCalendarDate("2026-07-09") }, referenceDate),
+    ).toBe(false);
+  });
+
+  it("effectiveTo igual a la fecha operativa aplica", () => {
+    expect(
+      isShiftAssignmentActiveOnDate({ effectiveFrom: argentinaCalendarDate("2026-01-01"), effectiveTo: argentinaCalendarDate("2026-07-10") }, referenceDate),
+    ).toBe(true);
+  });
+
+  it("effectiveFrom igual a la fecha operativa aplica", () => {
+    expect(isShiftAssignmentActiveOnDate({ effectiveFrom: referenceDate, effectiveTo: null }, referenceDate)).toBe(true);
+  });
+
+  it("sin effectiveFrom/effectiveTo (ausentes), aplica siempre — compatibilidad con fixtures previos a la Etapa 8I/8J", () => {
+    expect(isShiftAssignmentActiveOnDate({}, referenceDate)).toBe(true);
+  });
+});
+
+describe("isShiftAssignmentApplicableOnWeekday — weekdays (Etapa 8J)", () => {
+  const monday = argentinaCalendarDate("2026-07-06");
+  const saturday = argentinaCalendarDate("2026-07-11");
+  const sunday = argentinaCalendarDate("2026-07-12");
+
+  it("weekdays vacío aplica todos los días", () => {
+    expect(isShiftAssignmentApplicableOnWeekday({ weekdays: [] }, monday)).toBe(true);
+    expect(isShiftAssignmentApplicableOnWeekday({ weekdays: [] }, saturday)).toBe(true);
+  });
+
+  it("weekdays ausente (compatibilidad) aplica todos los días", () => {
+    expect(isShiftAssignmentApplicableOnWeekday({}, saturday)).toBe(true);
+  });
+
+  it("[1,2,3,4,5] aplica lunes a viernes", () => {
+    expect(isShiftAssignmentApplicableOnWeekday({ weekdays: [1, 2, 3, 4, 5] }, monday)).toBe(true);
+  });
+
+  it("[1,2,3,4,5] no aplica sábado", () => {
+    expect(isShiftAssignmentApplicableOnWeekday({ weekdays: [1, 2, 3, 4, 5] }, saturday)).toBe(false);
+  });
+
+  it("[0] aplica domingo", () => {
+    expect(isShiftAssignmentApplicableOnWeekday({ weekdays: [0] }, sunday)).toBe(true);
+  });
+
+  it("[6] aplica sábado", () => {
+    expect(isShiftAssignmentApplicableOnWeekday({ weekdays: [6] }, saturday)).toBe(true);
+  });
+});
+
+describe("isShiftAssignmentApplicableForInstant — status (Etapa 8J)", () => {
+  const mondayMorning = at(9, 30, 6); // lunes 2026-07-06, 09:30
+  const vigencyAbierta = { effectiveFrom: argentinaCalendarDate("2026-01-01"), effectiveTo: null, weekdays: [1] };
+
+  it("HABILITADO aplica si fecha/día coinciden", () => {
+    expect(isShiftAssignmentApplicableForInstant({ shiftTemplateId: "t", status: "HABILITADO", ...vigencyAbierta }, mondayMorning)).toBe(true);
+  });
+
+  it("DESHABILITADO no aplica aunque fecha/día coincidan", () => {
+    expect(isShiftAssignmentApplicableForInstant({ shiftTemplateId: "t", status: "DESHABILITADO", ...vigencyAbierta }, mondayMorning)).toBe(false);
+  });
+});
+
+describe("matchShiftForEmployee — vigencia/weekdays reales (Etapa 8J, sección D)", () => {
+  const mondayToFriday = { effectiveFrom: argentinaCalendarDate("2026-01-01"), effectiveTo: null, weekdays: [1, 2, 3, 4, 5] };
+
+  it("empleado con turno lunes-viernes no matchea sábado (no queda ENABLED)", () => {
+    const match = matchShiftForEmployee({
+      actualAt: at(6, 35, 11), // sábado 06:35
+      employeeAssignments: [{ shiftTemplateId: "morning", status: "HABILITADO", ...mondayToFriday }],
+      activeTemplates: [morningShift],
+    });
+    expect(match.case).not.toBe("ENABLED");
+  });
+
+  it("empleado con turno lunes-viernes sí matchea lunes", () => {
+    const match = matchShiftForEmployee({
+      actualAt: at(6, 35, 6), // lunes 06:35
+      employeeAssignments: [{ shiftTemplateId: "morning", status: "HABILITADO", ...mondayToFriday }],
+      activeTemplates: [morningShift],
+    });
+    expect(match.case).toBe("ENABLED");
+    expect(match.template?.id).toBe("morning");
+  });
+
+  it("empleado con asignación futura (effectiveFrom por venir) no matchea hoy", () => {
+    const match = matchShiftForEmployee({
+      actualAt: at(6, 35, 6), // lunes 2026-07-06
+      employeeAssignments: [{ shiftTemplateId: "morning", status: "HABILITADO", effectiveFrom: argentinaCalendarDate("2026-08-01"), effectiveTo: null, weekdays: [] }],
+      activeTemplates: [morningShift],
+    });
+    expect(match.case).not.toBe("ENABLED");
+  });
+
+  it("empleado con asignación vencida (effectiveTo pasado) no matchea hoy", () => {
+    const match = matchShiftForEmployee({
+      actualAt: at(6, 35, 6), // lunes 2026-07-06
+      employeeAssignments: [
+        { shiftTemplateId: "morning", status: "HABILITADO", effectiveFrom: argentinaCalendarDate("2026-01-01"), effectiveTo: argentinaCalendarDate("2026-06-30"), weekdays: [] },
+      ],
+      activeTemplates: [morningShift],
+    });
+    expect(match.case).not.toBe("ENABLED");
+  });
+
+  it("empleado con weekdays vacío conserva comportamiento anterior (matchea cualquier día)", () => {
+    const match = matchShiftForEmployee({
+      actualAt: at(6, 35, 11), // sábado
+      employeeAssignments: [{ shiftTemplateId: "morning", status: "HABILITADO", effectiveFrom: argentinaCalendarDate("2026-01-01"), effectiveTo: null, weekdays: [] }],
+      activeTemplates: [morningShift],
+    });
+    expect(match.case).toBe("ENABLED");
+  });
+});
+
+describe("matchShiftForEmployee — turno nocturno con weekdays (Etapa 8J, sección E)", () => {
+  const mondayOnly = { effectiveFrom: argentinaCalendarDate("2026-01-01"), effectiveTo: null, weekdays: [1] };
+
+  it("turno 23:00 asignado (lunes en weekdays) aplica para la entrada del lunes 23:00", () => {
+    const match = matchShiftForEmployee({
+      actualAt: at(23, 0, 6), // lunes 2026-07-06 23:00
+      employeeAssignments: [{ shiftTemplateId: "sereno", status: "HABILITADO", ...mondayOnly }],
+      activeTemplates: [nightShift],
+    });
+    expect(match.case).toBe("ENABLED");
+    expect(match.template?.id).toBe("sereno");
+  });
+
+  it("la salida del martes (fin del turno, cruzando medianoche) no invalida la asignación del lunes: evaluateExitPunctuality usa startAt real, nunca re-evalúa vigencia contra la fecha de salida", () => {
+    const entryMatch = matchShiftForEmployee({
+      actualAt: at(23, 0, 6), // entra lunes 23:00
+      employeeAssignments: [{ shiftTemplateId: "sereno", status: "HABILITADO", ...mondayOnly }],
+      activeTemplates: [nightShift],
+    });
+    expect(entryMatch.case).toBe("ENABLED");
+
+    // nightShift termina 04:00 (crossesMidnight) -> la salida esperada cae el martes 04:00.
+    const exit = evaluateExitPunctuality({ match: entryMatch, startAt: at(23, 0, 6), actualExitAt: at(4, 0, 7) }); // sale martes 04:00, en horario
+    expect(exit.evaluated).toBe(true);
+    expect(exit.earlyLeave).toBe(false);
+    expect(exit.lateLeave).toBe(false);
+  });
+
+  it("si la entrada es sábado 23:00 y weekdays no incluye sábado, no aplica (no queda ENABLED)", () => {
+    const match = matchShiftForEmployee({
+      actualAt: at(23, 0, 11), // sábado 2026-07-11 23:00
+      employeeAssignments: [{ shiftTemplateId: "sereno", status: "HABILITADO", ...mondayOnly }],
+      activeTemplates: [nightShift],
+    });
+    expect(match.case).not.toBe("ENABLED");
+  });
+});
+
+describe("matchShiftForEmployee — compatibilidad hacia atrás (Etapa 8J, sección G)", () => {
+  it("asignación sin effectiveFrom/effectiveTo/weekdays (forma previa a la Etapa 8I) se comporta exactamente igual que antes", () => {
+    const match = matchShiftForEmployee({
+      actualAt: at(6, 35),
+      employeeAssignments: [{ shiftTemplateId: "morning", status: "HABILITADO" }],
+      activeTemplates: [morningShift],
+    });
+    expect(match.case).toBe("ENABLED");
+    expect(match.differenceMinutes).toBe(5);
   });
 });
