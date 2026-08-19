@@ -2,6 +2,8 @@ import { ApprovalStatus, EmployeeStatus, Prisma, WorkShiftSource, WorkShiftStatu
 import type { DoubleHourRule } from "@prisma/client";
 import { prisma } from "../../shared/prisma/client";
 import { noveltyCoversDay } from "../novelties/novelties.dateRange";
+import { resolveActiveWorkRegime } from "../work-regimes/workRegimes.service";
+import { flagOpenShiftOverflowForReview } from "../shifts/workShiftEvaluationRunner";
 import {
   argentinaCalendarDate,
   argentinaDateKey,
@@ -1025,7 +1027,23 @@ export const timeEntriesRepository = {
       take: 100,
       include: { hourConcept: true },
     });
-    const expired = candidates.filter((shift) => now.getTime() - shift.startAt.getTime() > shift.maxAllowedMinutes * 60_000);
+    const overLimit = candidates.filter((shift) => now.getTime() - shift.startAt.getTime() > shift.maxAllowedMinutes * 60_000);
+
+    // Régimen laboral ALERT_ONLY (política de rollover por régimen): una
+    // jornada abierta excedida de un empleado en ese régimen nunca se cierra
+    // automáticamente acá — se marca para revisión de RRHH con una alerta
+    // crítica. Sin régimen vigente o con ROLLOVER, sigue exactamente el
+    // comportamiento histórico (cierre automático como FALTA_SALIDA, abajo).
+    const regimes = await Promise.all(overLimit.map((shift) => resolveActiveWorkRegime(shift.employeeId, now)));
+    const expired: typeof overLimit = [];
+    for (const [index, shift] of overLimit.entries()) {
+      if (regimes[index]?.openShiftOverflowAction === "ALERT_ONLY") {
+        const minutesOpen = Math.round((now.getTime() - shift.startAt.getTime()) / 60_000);
+        await flagOpenShiftOverflowForReview(shift.employeeId, shift.id, minutesOpen, now);
+      } else {
+        expired.push(shift);
+      }
+    }
 
     const resolvedConcepts = await Promise.all(
       expired.map((shift) =>

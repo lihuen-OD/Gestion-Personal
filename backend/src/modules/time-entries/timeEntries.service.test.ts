@@ -4,6 +4,8 @@ import { Prisma } from "@prisma/client";
 import { AppError } from "../../shared/errors/AppError";
 import { timeEntriesRepository } from "./timeEntries.repository";
 import { timeEntriesService, clockAttemptHash } from "./timeEntries.service";
+import { flagOpenShiftOverflowForReview } from "../shifts/workShiftEvaluationRunner";
+import { resolveActiveWorkRegime } from "../work-regimes/workRegimes.service";
 
 vi.mock("./timeEntries.repository", () => ({
   timeEntriesRepository: {
@@ -34,6 +36,15 @@ vi.mock("../shifts/workShiftEvaluationRunner", () => ({
   evaluateShiftEntry: vi.fn().mockResolvedValue(undefined),
   evaluateShiftExit: vi.fn().mockResolvedValue(undefined),
   notifyClassificationAlerts: vi.fn().mockResolvedValue(undefined),
+  flagOpenShiftOverflowForReview: vi.fn().mockResolvedValue(undefined),
+}));
+
+// Por defecto sin régimen vigente: comportamiento igual que antes de esta
+// etapa (ver política de rollover por régimen). Este archivo no mockea
+// prisma directo — si no se mockeara este módulo, resolveActiveWorkRegime
+// pegaría contra la base real.
+vi.mock("../work-regimes/workRegimes.service", () => ({
+  resolveActiveWorkRegime: vi.fn().mockResolvedValue(null),
 }));
 
 vi.mock("../audit/audit.service", () => ({
@@ -68,6 +79,8 @@ type RepoMock = {
 };
 
 const repo = timeEntriesRepository as unknown as RepoMock;
+const mockedResolveActiveWorkRegime = resolveActiveWorkRegime as unknown as Mock;
+const mockedFlagOpenShiftOverflowForReview = flagOpenShiftOverflowForReview as unknown as Mock;
 
 function prismaKnownError(code: string) {
   return new Prisma.PrismaClientKnownRequestError("mock prisma error", { code, clientVersion: "0.0.0" });
@@ -135,6 +148,66 @@ describe("clockInByEmployee", () => {
     }
     expect(caught).toBeInstanceOf(Prisma.PrismaClientKnownRequestError);
     expect(caught).not.toBeInstanceOf(AppError);
+  });
+});
+
+describe("clockInByEmployee — política de rollover por régimen (jornada abierta excedida)", () => {
+  const excedidaShift = { id: "shift-excedida", startAt: new Date(Date.now() - 21 * 60 * 60 * 1000) };
+
+  it("Caso A — sin régimen vigente: conserva el rollover automático (comportamiento actual)", async () => {
+    repo.findEmployeeByIdForClock.mockResolvedValue(activeEmployee);
+    repo.findOpenWorkShift.mockResolvedValue(excedidaShift);
+    mockedResolveActiveWorkRegime.mockResolvedValueOnce(null);
+    repo.rolloverExpiredOpenWorkShift.mockResolvedValue({ id: "shift-new", startAt: new Date() });
+
+    const result = await timeEntriesService.clockInByEmployee({ employeeId: activeEmployee.id });
+
+    expect(repo.rolloverExpiredOpenWorkShift).toHaveBeenCalledTimes(1);
+    expect(repo.createObservedPunch).not.toHaveBeenCalled();
+    expect(result.previousOpenShift?.status).toBe("FALTA_SALIDA");
+  });
+
+  it("Caso E — régimen ROLLOVER: conserva el rollover automático (comportamiento actual)", async () => {
+    repo.findEmployeeByIdForClock.mockResolvedValue(activeEmployee);
+    repo.findOpenWorkShift.mockResolvedValue(excedidaShift);
+    mockedResolveActiveWorkRegime.mockResolvedValueOnce({ kind: "TURNO_OBLIGATORIO", alertOnOutOfShift: true, openShiftOverflowAction: "ROLLOVER" });
+    repo.rolloverExpiredOpenWorkShift.mockResolvedValue({ id: "shift-new", startAt: new Date() });
+
+    const result = await timeEntriesService.clockInByEmployee({ employeeId: activeEmployee.id });
+
+    expect(repo.rolloverExpiredOpenWorkShift).toHaveBeenCalledTimes(1);
+    expect(mockedFlagOpenShiftOverflowForReview).not.toHaveBeenCalled();
+    expect(result.previousOpenShift?.status).toBe("FALTA_SALIDA");
+  });
+
+  it("Caso D — régimen ALERT_ONLY: no hace rollover, no crea una segunda jornada, responde 409 compatible y marca para revisión", async () => {
+    repo.findEmployeeByIdForClock.mockResolvedValue(activeEmployee);
+    repo.findOpenWorkShift.mockResolvedValue(excedidaShift);
+    mockedResolveActiveWorkRegime.mockResolvedValueOnce({ kind: "TURNO_FLEXIBLE", alertOnOutOfShift: false, openShiftOverflowAction: "ALERT_ONLY" });
+
+    await expect(timeEntriesService.clockInByEmployee({ employeeId: activeEmployee.id })).rejects.toMatchObject({
+      statusCode: 409,
+      code: "CLOCK_ALREADY_OPEN",
+    });
+
+    expect(repo.rolloverExpiredOpenWorkShift).not.toHaveBeenCalled();
+    expect(repo.createOpenWorkShift).not.toHaveBeenCalled();
+    expect(repo.createObservedPunch).toHaveBeenCalledTimes(1);
+    expect(mockedFlagOpenShiftOverflowForReview).toHaveBeenCalledTimes(1);
+    expect(mockedFlagOpenShiftOverflowForReview).toHaveBeenCalledWith(activeEmployee.id, excedidaShift.id, expect.any(Number), expect.any(Date));
+  });
+
+  it("Caso G — idempotencia: dos intentos de ingreso seguidos bajo ALERT_ONLY nunca hacen rollover ni crean una segunda jornada", async () => {
+    repo.findEmployeeByIdForClock.mockResolvedValue(activeEmployee);
+    repo.findOpenWorkShift.mockResolvedValue(excedidaShift);
+    mockedResolveActiveWorkRegime.mockResolvedValue({ kind: "TURNO_FLEXIBLE", alertOnOutOfShift: false, openShiftOverflowAction: "ALERT_ONLY" });
+
+    await expect(timeEntriesService.clockInByEmployee({ employeeId: activeEmployee.id })).rejects.toMatchObject({ code: "CLOCK_ALREADY_OPEN" });
+    await expect(timeEntriesService.clockInByEmployee({ employeeId: activeEmployee.id })).rejects.toMatchObject({ code: "CLOCK_ALREADY_OPEN" });
+
+    expect(repo.rolloverExpiredOpenWorkShift).not.toHaveBeenCalled();
+    expect(repo.createOpenWorkShift).not.toHaveBeenCalled();
+    expect(mockedFlagOpenShiftOverflowForReview).toHaveBeenCalledTimes(2); // createShiftAlert (mockeado acá) es quien deduplica por upsert
   });
 });
 

@@ -250,6 +250,17 @@ enum WorkRegimeKind {
   SIN_TURNO
 }
 
+// Qué hacer cuando una WorkShift abierta supera el límite operativo
+// (WorkShift.maxAllowedMinutes). ROLLOVER conserva el comportamiento
+// histórico (cierra la jornada como FALTA_SALIDA y habilita una nueva).
+// ALERT_ONLY no corta nada automáticamente: genera alerta crítica y deja la
+// jornada para revisión de RRHH. Cosecha/Riego/Campaña, etc. siguen siendo
+// instancias configurables de WorkRegime — este enum no las nombra.
+enum OpenShiftOverflowAction {
+  ROLLOVER
+  ALERT_ONLY
+}
+
 enum SegmentConceptStatus {
   SUGERIDO
   MANUAL
@@ -1085,17 +1096,18 @@ model ShiftAssignment {
 // hardcodeada. alertOnOutOfShift decide si "fuera de turno"/"sin turno" debe
 // alertar para este régimen (ver EmployeeWorkRegime para la asignación).
 model WorkRegime {
-  id                String         @id @default(uuid())
-  code              String         @unique
-  name              String
-  kind              WorkRegimeKind
-  alertOnOutOfShift Boolean        @default(true)
-  description       String?
-  status            RecordStatus   @default(ACTIVO)
-  createdByUserId   String?
-  updatedByUserId   String?
-  createdAt         DateTime       @default(now()) @db.Timestamptz(3)
-  updatedAt         DateTime       @updatedAt @db.Timestamptz(3)
+  id                      String                  @id @default(uuid())
+  code                    String                  @unique
+  name                    String
+  kind                    WorkRegimeKind
+  alertOnOutOfShift       Boolean                 @default(true)
+  openShiftOverflowAction OpenShiftOverflowAction @default(ROLLOVER)
+  description             String?
+  status                  RecordStatus            @default(ACTIVO)
+  createdByUserId         String?
+  updatedByUserId         String?
+  createdAt               DateTime                @default(now()) @db.Timestamptz(3)
+  updatedAt               DateTime                @updatedAt @db.Timestamptz(3)
 
   createdBy           User?                @relation("WorkRegimeCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
   updatedBy           User?                @relation("WorkRegimeUpdatedBy", fields: [updatedByUserId], references: [id], onDelete: SetNull)

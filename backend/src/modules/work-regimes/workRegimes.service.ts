@@ -1,10 +1,11 @@
-import type { WorkRegimeKind } from "@prisma/client";
+import type { OpenShiftOverflowAction, WorkRegimeKind } from "@prisma/client";
 import { argentinaCalendarDate, argentinaDateKey } from "../../shared/datetime/argentinaTime";
 import { findActiveEmployeeWorkRegime } from "./workRegimes.repository";
 
 export interface ActiveWorkRegime {
   kind: WorkRegimeKind;
   alertOnOutOfShift: boolean;
+  openShiftOverflowAction: OpenShiftOverflowAction;
 }
 
 // Resuelve el régimen vigente de un empleado para la fecha calendario
@@ -15,5 +16,9 @@ export async function resolveActiveWorkRegime(employeeId: string, instant: Date)
   const referenceDate = argentinaCalendarDate(argentinaDateKey(instant));
   const assignment = await findActiveEmployeeWorkRegime(employeeId, referenceDate);
   if (!assignment) return null;
-  return { kind: assignment.workRegime.kind, alertOnOutOfShift: assignment.workRegime.alertOnOutOfShift };
+  return {
+    kind: assignment.workRegime.kind,
+    alertOnOutOfShift: assignment.workRegime.alertOnOutOfShift,
+    openShiftOverflowAction: assignment.workRegime.openShiftOverflowAction,
+  };
 }

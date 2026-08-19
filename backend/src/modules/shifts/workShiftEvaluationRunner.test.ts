@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import type { Mock } from "vitest";
 import { prisma } from "../../shared/prisma/client";
-import { evaluateShiftEntry, evaluateShiftExit, notifyClassificationAlerts } from "./workShiftEvaluationRunner";
+import { evaluateShiftEntry, evaluateShiftExit, notifyClassificationAlerts, flagOpenShiftOverflowForReview } from "./workShiftEvaluationRunner";
 
 /**
  * Etapa de logica de Regimen de Trabajo (2026-08-18): un empleado sin
@@ -161,5 +161,47 @@ describe("Caso E — notifyClassificationAlerts: una sola alerta por tipo por jo
     ]);
 
     expect(mockedPrisma.shiftAlert.upsert).not.toHaveBeenCalled();
+  });
+});
+
+describe("flagOpenShiftOverflowForReview — política de rollover por régimen (Etapa 5)", () => {
+  it("crea la alerta con severity CRITICA (override), reutilizando POSIBLE_OLVIDO_SALIDA en vez de un tipo nuevo", async () => {
+    mockedPrisma.shiftAlert.upsert.mockResolvedValue({ id: "alert-1" });
+
+    await flagOpenShiftOverflowForReview("employee-1", "shift-1", 1500, new Date("2026-08-18T05:00:00.000Z"));
+
+    expect(mockedPrisma.shiftAlert.upsert).toHaveBeenCalledTimes(1);
+    const call = mockedPrisma.shiftAlert.upsert.mock.calls[0]![0];
+    expect(call.create).toMatchObject({ type: "POSIBLE_OLVIDO_SALIDA", severity: "CRITICA", differenceMinutes: 1500 });
+    expect(call.where).toEqual({ workShiftId_type: { workShiftId: "shift-1", type: "POSIBLE_OLVIDO_SALIDA" } });
+  });
+
+  it("idempotencia: evaluar la misma jornada dos veces upsertea la misma fila (mismo workShiftId+type), no crea una segunda — y conserva severity CRITICA en el update", async () => {
+    mockedPrisma.shiftAlert.upsert.mockResolvedValue({ id: "alert-1" });
+
+    await flagOpenShiftOverflowForReview("employee-1", "shift-1", 1500, new Date("2026-08-18T05:00:00.000Z"));
+    await flagOpenShiftOverflowForReview("employee-1", "shift-1", 1560, new Date("2026-08-18T06:00:00.000Z"));
+
+    expect(mockedPrisma.shiftAlert.upsert).toHaveBeenCalledTimes(2);
+    const [first, second] = mockedPrisma.shiftAlert.upsert.mock.calls.map((call) => call[0]!);
+    expect(first.where).toEqual(second.where); // misma clave [workShiftId, type] en ambos llamados -> upsert, no create duplicado
+    expect(second.update).toMatchObject({ severity: "CRITICA", differenceMinutes: 1560 });
+  });
+
+  it("no pisa la severity por defecto de otros tipos de alerta (ej. JORNADA_EXTENDIDA sigue en INFO)", async () => {
+    mockedPrisma.shiftAlert.upsert.mockResolvedValue({ id: "alert-2" });
+    mockedPrisma.workShift.findUnique.mockResolvedValue({
+      id: "shift-2",
+      startAt: new Date("2026-08-18T10:00:00.000Z"),
+      shiftTemplateId: "t1",
+      totalMinutes: 500,
+    });
+    mockedPrisma.shiftTemplate.findUnique.mockResolvedValue(disabledTemplate);
+    mockedPrisma.shiftAssignment.findUnique.mockResolvedValue({ status: "DESHABILITADO" });
+
+    await evaluateShiftExit("employee-1", "shift-2", new Date("2026-08-18T18:30:00.000Z"));
+
+    const call = mockedPrisma.shiftAlert.upsert.mock.calls.find((c) => c[0]?.create?.type === "JORNADA_EXTENDIDA")![0]!;
+    expect(call.create.severity).toBe("INFO");
   });
 });

@@ -33,6 +33,17 @@ describe("resolveActiveWorkRegime", () => {
     expect(result).toEqual({ kind: "SIN_TURNO", alertOnOutOfShift: false });
   });
 
+  it("devuelve openShiftOverflowAction del regimen vigente (política de rollover por régimen)", async () => {
+    mockedFind.mockResolvedValue({
+      id: "assignment-1",
+      workRegime: { kind: "TURNO_FLEXIBLE", alertOnOutOfShift: false, openShiftOverflowAction: "ALERT_ONLY" },
+    });
+
+    const result = await resolveActiveWorkRegime("employee-1", new Date("2026-08-18T15:00:00.000Z"));
+
+    expect(result).toEqual({ kind: "TURNO_FLEXIBLE", alertOnOutOfShift: false, openShiftOverflowAction: "ALERT_ONLY" });
+  });
+
   it("resuelve la fecha calendario Argentina del instante, no la fecha UTC (23:15 ART no es el dia siguiente)", async () => {
     mockedFind.mockResolvedValue(null);
     // 2026-08-18 23:15 ART = 2026-08-19 02:15 UTC.

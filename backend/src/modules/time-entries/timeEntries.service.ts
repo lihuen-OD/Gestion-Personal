@@ -13,8 +13,9 @@ import { storagePathBuilder } from "../../shared/storage/storagePathBuilder";
 import { timeEntriesRepository } from "./timeEntries.repository";
 import type { ClassifiedSegmentForPersistence } from "./timeEntries.repository";
 import { attendanceRecipients, notifyUsers } from "../workforce-management/workforce.service";
-import { evaluateShiftEntry, evaluateShiftExit, notifyClassificationAlerts } from "../shifts/workShiftEvaluationRunner";
+import { evaluateShiftEntry, evaluateShiftExit, notifyClassificationAlerts, flagOpenShiftOverflowForReview } from "../shifts/workShiftEvaluationRunner";
 import { compareOpenShiftRisk, computeOpenShiftRisk } from "../shifts/openShiftMonitor.service";
+import { resolveActiveWorkRegime } from "../work-regimes/workRegimes.service";
 import { hourConceptsRepository } from "../hour-concepts/hourConcepts.repository";
 import { classifyWorkShiftSegments } from "../hour-concepts/hourConceptClassification";
 import {
@@ -1095,7 +1096,13 @@ export const timeEntriesService = {
     if (input.punchType === "IN") {
       const openShift = currentOpenShift;
       if (openShift) {
-        if (shiftMinutes(openShift.startAt, now) > MAX_SHIFT_MINUTES) {
+        const exceededMinutes = shiftMinutes(openShift.startAt, now);
+        // Régimen ALERT_ONLY: nunca hace rollover automático de la jornada
+        // excedida, aunque supere MAX_SHIFT_MINUTES — cae al mismo "ya existe
+        // un ingreso abierto" que un turno todavía no excedido, marcando la
+        // jornada para revisión en vez de reemplazarla.
+        const regime = exceededMinutes > MAX_SHIFT_MINUTES ? await resolveActiveWorkRegime(employee.id, now) : null;
+        if (exceededMinutes > MAX_SHIFT_MINUTES && regime?.openShiftOverflowAction !== "ALERT_ONLY") {
           let workShift;
           try {
             workShift = await timeEntriesRepository.rolloverExpiredOpenWorkShift({
@@ -1141,6 +1148,9 @@ export const timeEntriesService = {
               startAt: workShift.startAt,
             },
           };
+        }
+        if (exceededMinutes > MAX_SHIFT_MINUTES) {
+          await flagOpenShiftOverflowForReview(employee.id, openShift.id, exceededMinutes, now);
         }
         await cleanupClockEvidence(evidence);
         throw new AppError("Ya existe un ingreso abierto para este empleado.", 409, "CLOCK_ALREADY_OPEN");
@@ -1285,7 +1295,13 @@ export const timeEntriesService = {
     const openShift = await timeEntriesRepository.findOpenWorkShift(employee.id);
     const now = new Date();
     if (openShift) {
-      if (shiftMinutes(openShift.startAt, now) > MAX_SHIFT_MINUTES) {
+      const exceededMinutes = shiftMinutes(openShift.startAt, now);
+      // Régimen ALERT_ONLY: nunca hace rollover automático de la jornada
+      // excedida — cae al mismo "ya existe un ingreso abierto" que un turno
+      // todavía no excedido, marcando la jornada para revisión en vez de
+      // reemplazarla.
+      const regime = exceededMinutes > MAX_SHIFT_MINUTES ? await resolveActiveWorkRegime(employee.id, now) : null;
+      if (exceededMinutes > MAX_SHIFT_MINUTES && regime?.openShiftOverflowAction !== "ALERT_ONLY") {
         let workShift;
         try {
           workShift = await timeEntriesRepository.rolloverExpiredOpenWorkShift({
@@ -1318,6 +1334,9 @@ export const timeEntriesService = {
             startAt: workShift.startAt,
           },
         };
+      }
+      if (exceededMinutes > MAX_SHIFT_MINUTES) {
+        await flagOpenShiftOverflowForReview(employee.id, openShift.id, exceededMinutes, now);
       }
       await timeEntriesRepository.createObservedPunch({
         employeeId: employee.id,

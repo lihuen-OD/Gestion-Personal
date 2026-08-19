@@ -88,8 +88,11 @@ async function loadMatchingContext(employeeId: string) {
   return { employeeAssignments, activeTemplates };
 }
 
-export async function createShiftAlert(input: { employeeId: string; workShiftId: string; type: ShiftAlertTypeValue; scheduledAt?: Date; actualAt: Date; differenceMinutes?: number | null }) {
-  const severity = severityByAlertType[input.type];
+export async function createShiftAlert(input: { employeeId: string; workShiftId: string; type: ShiftAlertTypeValue; scheduledAt?: Date; actualAt: Date; differenceMinutes?: number | null; severity?: ShiftAlertSeverityValue }) {
+  // El override solo existe para casos puntuales que ya tienen su propia
+  // severidad de negocio explícita (ej. jornada abierta excedida bajo
+  // régimen ALERT_ONLY) — no reemplaza la severidad por defecto del tipo.
+  const severity = input.severity ?? severityByAlertType[input.type];
   const alert = await prisma.shiftAlert.upsert({
     where: { workShiftId_type: { workShiftId: input.workShiftId, type: input.type } },
     create: { employeeId: input.employeeId, workShiftId: input.workShiftId, type: input.type, severity, scheduledAt: input.scheduledAt, actualAt: input.actualAt, differenceMinutes: input.differenceMinutes ?? undefined },
@@ -234,4 +237,22 @@ export async function notifyClassificationAlerts(employeeId: string, workShiftId
       differenceMinutes: sinClasificar.reduce((sum, segment) => sum + segment.minutes, 0),
     });
   }
+}
+
+// Política de rollover por régimen (etapa de Turnos V1): una WorkShift
+// abierta que superó el límite operativo, para un empleado en régimen
+// ALERT_ONLY, nunca se cierra ni se reemplaza automáticamente. En su lugar
+// se marca para revisión de RRHH con una alerta crítica — se reutiliza
+// POSIBLE_OLVIDO_SALIDA (createShiftAlert ya deduplica por
+// [workShiftId, type]: evaluar la misma jornada más de una vez actualiza la
+// misma fila, no crea una nueva).
+export async function flagOpenShiftOverflowForReview(employeeId: string, workShiftId: string, minutesOpen: number, now: Date) {
+  await createShiftAlert({
+    employeeId,
+    workShiftId,
+    type: "POSIBLE_OLVIDO_SALIDA",
+    actualAt: now,
+    differenceMinutes: minutesOpen,
+    severity: "CRITICA",
+  });
 }
