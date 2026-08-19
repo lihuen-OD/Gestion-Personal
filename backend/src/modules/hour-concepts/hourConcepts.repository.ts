@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "../../shared/prisma/client";
-import type { CreateHourConceptInput, ListHourConceptsQuery, UpdateHourConceptInput } from "./hourConcepts.schemas";
+import { associatedEmployeeSelect, buildEmployeeAssociationWhere } from "../../shared/prisma/employeeAssociationQuery";
+import type { CreateHourConceptInput, ListHourConceptEmployeesQuery, ListHourConceptsQuery, UpdateHourConceptInput } from "./hourConcepts.schemas";
 
 // Cache en memoria para listados sin filtros
 type HourConceptRow = Awaited<ReturnType<typeof prisma.hourConcept.findMany>>[number];
@@ -60,6 +61,10 @@ export const hourConceptsRepository = {
     return [page, listCache.data.length];
   },
 
+  findById(id: string) {
+    return prisma.hourConcept.findUniqueOrThrow({ where: { id } });
+  },
+
   create(data: CreateHourConceptInput) {
     return prisma.hourConcept.create({ data });
   },
@@ -93,5 +98,31 @@ export const hourConceptsRepository = {
       select: { hourConceptId: true },
     });
     return new Set(enabled.map((row) => row.hourConceptId));
+  },
+
+  // Empleados habilitados para un concepto (Etapa 8G) — EmployeeHourConcept es
+  // un simple on/off (sin effectiveFrom/effectiveTo, sin status propio); no se
+  // infiere nada desde TimeSegment. Sin índice sobre hourConceptId hoy (la PK
+  // compuesta [employeeId, hourConceptId] no lo cubre); documentado como
+  // riesgo pendiente, no se agrega migración en esta etapa.
+  async findEmployees(hourConceptId: string, query: ListHourConceptEmployeesQuery, accessWhere: Prisma.EmployeeWhereInput) {
+    const where: Prisma.EmployeeHourConceptWhereInput = {
+      hourConceptId,
+      employee: {
+        AND: [buildEmployeeAssociationWhere(query), accessWhere, ...(query.status ? [{ status: query.status }] : [])],
+      },
+    };
+    const skip = (query.page - 1) * query.take;
+    const [items, total] = await prisma.$transaction([
+      prisma.employeeHourConcept.findMany({
+        where,
+        select: { employeeId: true, employee: { select: associatedEmployeeSelect } },
+        orderBy: [{ employee: { lastName: "asc" } }, { employee: { firstName: "asc" } }, { employeeId: "asc" }],
+        skip,
+        take: query.take,
+      }),
+      prisma.employeeHourConcept.count({ where }),
+    ]);
+    return [items, total] as const;
   },
 };

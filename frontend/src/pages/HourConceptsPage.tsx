@@ -2,6 +2,7 @@ import { Pencil, Plus } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Navigate } from "react-router-dom";
 import { HourConceptRulesPanel } from "../components/hour-concepts/HourConceptRulesPanel";
+import { AssociatedEmployeesPanel } from "../components/shared/AssociatedEmployeesPanel";
 import { OverflowCell } from "../components/ui/OverflowCell";
 import { DataTable } from "../components/ui/DataTable";
 import { PageHeader } from "../components/ui/PageHeader";
@@ -11,6 +12,7 @@ import { Badge } from "../components/ui/Badge";
 import { useAuth } from "../context/AuthContext";
 import { hourConceptApiService } from "../services/api/hourConceptApiService";
 import type { Role } from "../types";
+import type { AssociatedEmployeeFilters } from "../types/associatedEmployee.types";
 import type { HourConcept, HourConceptFilters, HourConceptKind } from "../types/hourConcept.types";
 import { roleLevel } from "../utils/roles";
 import { useAsyncAction } from "../utils/useAsyncAction";
@@ -224,7 +226,15 @@ export function HourConceptsPage() {
         >
           <ConceptEditor item={editing} setItem={setEditing} />
           {isExistingConcept ? (
-            <HourConceptRulesPanel hourConceptId={editing.id} canEdit />
+            <>
+              <HourConceptRulesPanel hourConceptId={editing.id} canEdit />
+              <h4>Empleados habilitados</h4>
+              <AssociatedEmployeesPanel
+                key={editing.id}
+                emptyText="Este concepto todavía no está habilitado para ningún empleado."
+                fetcher={(filters: AssociatedEmployeeFilters) => hourConceptApiService.getHourConceptEmployees(editing.id, filters)}
+              />
+            </>
           ) : (
             <div className="info-note compact">
               <p>Guardá la hora especial antes de configurar sus reglas horarias.</p>

@@ -2,7 +2,7 @@ import { Router } from "express";
 import { requireAuth } from "../../middlewares/auth";
 import { requireAnyRole } from "../../middlewares/authorization";
 import { asyncHandler } from "../../shared/http/asyncHandler";
-import { adminRoles } from "../../shared/security/roles";
+import { adminRoles, roles } from "../../shared/security/roles";
 import { validateBody } from "../../shared/validation/validateRequest";
 import { validateQuery } from "../../shared/validation/validateQuery";
 import { workRegimesController } from "./workRegimes.controller";
@@ -11,6 +11,7 @@ import {
   closeWorkRegimeAssignmentSchema,
   createWorkRegimeSchema,
   currentWorkRegimeQuerySchema,
+  listWorkRegimeEmployeesQuerySchema,
   listWorkRegimesQuerySchema,
   updateWorkRegimeAssignmentSchema,
   updateWorkRegimeSchema,
@@ -24,6 +25,14 @@ workRegimesRouter.use(requireAuth);
 
 workRegimesRouter.get("/", validateQuery(listWorkRegimesQuerySchema), asyncHandler(workRegimesController.list));
 workRegimesRouter.get("/:id", asyncHandler(workRegimesController.getById));
+// Empleados asociados al régimen (Etapa 8G) — mismo criterio de lectura
+// cruzada que /employees: RRHH/supervisión/carga horaria, no cualquier rol.
+workRegimesRouter.get(
+  "/:id/employees",
+  requireAnyRole([roles.rrhh, roles.supervision, roles.cargaHoraria]),
+  validateQuery(listWorkRegimeEmployeesQuerySchema),
+  asyncHandler(workRegimesController.listEmployees),
+);
 workRegimesRouter.post("/", requireAnyRole(adminRoles), validateBody(createWorkRegimeSchema), asyncHandler(workRegimesController.create));
 workRegimesRouter.patch("/:id", requireAnyRole(adminRoles), validateBody(updateWorkRegimeSchema), asyncHandler(workRegimesController.update));
 workRegimesRouter.patch("/:id/status", requireAnyRole(adminRoles), validateBody(updateWorkRegimeStatusSchema), asyncHandler(workRegimesController.updateStatus));

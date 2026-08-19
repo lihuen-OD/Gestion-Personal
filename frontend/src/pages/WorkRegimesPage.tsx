@@ -1,4 +1,4 @@
-import { Pencil, Plus, Power } from "lucide-react";
+import { Pencil, Plus, Power, Users } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Navigate } from "react-router-dom";
 import {
@@ -8,6 +8,7 @@ import {
   workRegimeKindOptions,
   workRegimeStatusTone,
 } from "../components/work-regimes/workRegimeLabels";
+import { AssociatedEmployeesPanel } from "../components/shared/AssociatedEmployeesPanel";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { DataTable } from "../components/ui/DataTable";
@@ -20,7 +21,9 @@ import { useAuth } from "../context/AuthContext";
 import { confirmAction } from "../services/appDialog";
 import { getUserErrorMessage } from "../services/api/apiClient";
 import { workRegimeApiService } from "../services/api/workRegimeApiService";
+import type { AssociatedEmployeeFilters } from "../types/associatedEmployee.types";
 import type { OpenShiftOverflowAction, WorkRegime, WorkRegimeFilters, WorkRegimeKind } from "../types/workRegime.types";
+import { formatVigencyDate, vigencyLabel, vigencyTone } from "../components/shared/AssociatedEmployeesPanel.helpers";
 import { roleLevel } from "../utils/roles";
 import { useAsyncAction } from "../utils/useAsyncAction";
 
@@ -64,6 +67,7 @@ export function WorkRegimesPage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<WorkRegimeDraft>(emptyDraft());
   const [error, setError] = useState("");
+  const [viewingEmployeesFor, setViewingEmployeesFor] = useState<WorkRegime | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -240,6 +244,7 @@ export function WorkRegimesPage() {
                   <td><Badge tone={workRegimeStatusTone(item.status)}>{item.status === "ACTIVO" ? "Activo" : "Inactivo"}</Badge></td>
                   <td>
                     <div className="table-actions">
+                      <button className="icon-button" title="Ver empleados asociados" aria-label="Ver empleados asociados" onClick={() => setViewingEmployeesFor(item)}><Users size={15} /></button>
                       <button className="icon-button" title="Editar régimen" aria-label="Editar régimen" onClick={() => openEdit(item)}><Pencil size={15} /></button>
                       <button className="icon-button" title={item.status === "ACTIVO" ? "Inactivar régimen" : "Activar régimen"} aria-label={item.status === "ACTIVO" ? "Inactivar régimen" : "Activar régimen"} onClick={() => toggleStatus(item)}><Power size={15} /></button>
                     </div>
@@ -291,6 +296,28 @@ export function WorkRegimesPage() {
               <Button variant="primary" onClick={save} disabled={isSaving}>{isSaving ? "Guardando..." : editingId ? "Guardar cambios" : "Guardar régimen"}</Button>
             </div>
           </div>
+        </Modal>
+      )}
+
+      {viewingEmployeesFor && (
+        <Modal title={`Empleados asociados a ${viewingEmployeesFor.code} - ${viewingEmployeesFor.name}`} close={() => setViewingEmployeesFor(null)}>
+          <AssociatedEmployeesPanel
+            key={viewingEmployeesFor.id}
+            description="Empleados con este régimen laboral asignado, con su vigencia."
+            emptyText="Este régimen todavía no tiene empleados asociados."
+            fetcher={(filters: AssociatedEmployeeFilters) => workRegimeApiService.getWorkRegimeEmployees(viewingEmployeesFor.id, filters)}
+            extraColumns={[
+              {
+                header: "Vigencia",
+                render: (item) => (
+                  <div>
+                    <Badge tone={vigencyTone(item.vigencyStatus)}>{vigencyLabel(item.vigencyStatus)}</Badge>
+                    <div className="table-sub">{formatVigencyDate(item.effectiveFrom)} — {formatVigencyDate(item.effectiveTo)}</div>
+                  </div>
+                ),
+              },
+            ]}
+          />
         </Modal>
       )}
     </>

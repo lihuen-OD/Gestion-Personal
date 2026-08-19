@@ -4,10 +4,13 @@ import type { AuditContext } from "../audit/audit.service";
 import { auditService } from "../audit/audit.service";
 import { AppError } from "../../shared/errors/AppError";
 import { argentinaCalendarDate, argentinaDateKey } from "../../shared/datetime/argentinaTime";
-import { findActiveEmployeeWorkRegime, workRegimesRepository } from "./workRegimes.repository";
+import { mapAssociatedEmployee } from "../../shared/prisma/employeeAssociationQuery";
+import { employeeAccessWhere } from "../employees/employeeAccess";
+import { classifyWorkRegimeVigency, findActiveEmployeeWorkRegime, workRegimesRepository } from "./workRegimes.repository";
 import type {
   AssignWorkRegimeInput,
   CreateWorkRegimeInput,
+  ListWorkRegimeEmployeesQuery,
   ListWorkRegimesQuery,
   UpdateWorkRegimeAssignmentInput,
   UpdateWorkRegimeInput,
@@ -201,5 +204,23 @@ export const workRegimesService = {
       after: item as Prisma.InputJsonValue,
     });
     return item;
+  },
+
+  async listEmployees(workRegimeId: string, query: ListWorkRegimeEmployeesQuery, user: Express.AuthUser) {
+    await execute(() => workRegimesRepository.findById(workRegimeId));
+    const referenceDate = argentinaCalendarDate(argentinaDateKey(query.date ?? new Date()));
+    const [rows, total] = await workRegimesRepository.findEmployees(workRegimeId, query, referenceDate, employeeAccessWhere(user));
+    const items = rows.map((row) => ({
+      id: row.id,
+      employeeId: row.employee.id,
+      effectiveFrom: row.effectiveFrom,
+      effectiveTo: row.effectiveTo,
+      vigencyStatus: classifyWorkRegimeVigency(row.effectiveFrom, row.effectiveTo, referenceDate),
+      employee: mapAssociatedEmployee(row.employee),
+    }));
+    return {
+      items,
+      meta: { total, page: query.page, pageSize: query.take, hasMore: query.page * query.take < total },
+    };
   },
 };

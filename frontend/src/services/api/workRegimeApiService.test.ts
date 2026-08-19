@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mapAssignmentFromApi, mapWorkRegimeFromApi } from "./workRegimeApiService";
+import { mapAssignmentFromApi, mapWorkRegimeEmployeeAssociationFromApi, mapWorkRegimeFromApi } from "./workRegimeApiService";
 
 const apiRegime = {
   id: "regime-1",
@@ -67,5 +67,39 @@ describe("mapAssignmentFromApi", () => {
 
     expect(assignment.effectiveTo).toBeNull();
     expect(assignment.assignedByUserId).toBeNull();
+  });
+});
+
+describe("mapWorkRegimeEmployeeAssociationFromApi — empleados asociados al régimen (Etapa 8G)", () => {
+  const apiAssociation = {
+    id: "assignment-1",
+    employeeId: "employee-1",
+    effectiveFrom: "2026-01-01T00:00:00.000Z",
+    effectiveTo: null,
+    vigencyStatus: "current" as const,
+    employee: {
+      id: "employee-1",
+      legajo: "100",
+      cuil: "20-12345678-9",
+      firstName: "Ana",
+      lastName: "Prueba",
+      status: "ACTIVO" as const,
+      sector: { id: "sector-1", name: "Campo" },
+      costCenter: null,
+      companies: [],
+    },
+  };
+
+  it("mapea vigencyStatus y los datos del empleado asociado sin inventar nada", () => {
+    const association = mapWorkRegimeEmployeeAssociationFromApi(apiAssociation);
+    expect(association.vigencyStatus).toBe("current");
+    expect(association.employee.legajo).toBe("100");
+    expect(association.employee.sector).toEqual({ id: "sector-1", name: "Campo" });
+  });
+
+  it("effectiveTo ausente se normaliza a null, no a undefined", () => {
+    const { effectiveTo: _omitted, ...withoutEffectiveTo } = apiAssociation;
+    const association = mapWorkRegimeEmployeeAssociationFromApi(withoutEffectiveTo as typeof apiAssociation);
+    expect(association.effectiveTo).toBeNull();
   });
 });

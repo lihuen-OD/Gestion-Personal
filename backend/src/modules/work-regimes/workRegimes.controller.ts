@@ -1,7 +1,7 @@
 import type { RequestHandler } from "express";
 import { requestAuditContext } from "../../shared/audit/requestAuditContext";
 import { requireParam } from "../../shared/http/params";
-import type { ListWorkRegimesQuery, CurrentWorkRegimeQuery } from "./workRegimes.schemas";
+import type { ListWorkRegimeEmployeesQuery, ListWorkRegimesQuery, CurrentWorkRegimeQuery } from "./workRegimes.schemas";
 import { workRegimesService } from "./workRegimes.service";
 
 export const workRegimesController = {
@@ -13,6 +13,11 @@ export const workRegimesController = {
   getById: (async (req, res) => {
     const item = await workRegimesService.getById(requireParam(req, "id"));
     res.json({ data: item });
+  }) satisfies RequestHandler,
+
+  listEmployees: (async (req, res) => {
+    const result = await workRegimesService.listEmployees(requireParam(req, "id"), req.query as unknown as ListWorkRegimeEmployeesQuery, req.user!);
+    res.json({ data: result.items, meta: result.meta });
   }) satisfies RequestHandler,
 
   create: (async (req, res) => {

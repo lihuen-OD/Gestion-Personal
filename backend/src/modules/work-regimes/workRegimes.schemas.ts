@@ -61,6 +61,19 @@ export const currentWorkRegimeQuerySchema = z.object({
   date: z.coerce.date().optional(),
 });
 
+export const workRegimeEmployeesVigencyStatusSchema = z.enum(["current", "historical", "future", "all"]);
+
+export const listWorkRegimeEmployeesQuerySchema = z.object({
+  status: workRegimeEmployeesVigencyStatusSchema.default("all"),
+  search: z.string().trim().optional(),
+  sectorId: z.string().uuid().optional(),
+  costCenterId: z.string().uuid().optional(),
+  companyId: z.string().uuid().optional(),
+  date: z.coerce.date().optional(),
+  page: z.coerce.number().int().positive().max(10000).default(1),
+  take: z.coerce.number().int().positive().max(200).default(50),
+});
+
 export type ListWorkRegimesQuery = z.infer<typeof listWorkRegimesQuerySchema>;
 export type CreateWorkRegimeInput = z.infer<typeof createWorkRegimeSchema>;
 export type UpdateWorkRegimeInput = z.infer<typeof updateWorkRegimeSchema>;
@@ -69,3 +82,5 @@ export type AssignWorkRegimeInput = z.infer<typeof assignWorkRegimeSchema>;
 export type UpdateWorkRegimeAssignmentInput = z.infer<typeof updateWorkRegimeAssignmentSchema>;
 export type CloseWorkRegimeAssignmentInput = z.infer<typeof closeWorkRegimeAssignmentSchema>;
 export type CurrentWorkRegimeQuery = z.infer<typeof currentWorkRegimeQuerySchema>;
+export type WorkRegimeEmployeesVigencyStatus = z.infer<typeof workRegimeEmployeesVigencyStatusSchema>;
+export type ListWorkRegimeEmployeesQuery = z.infer<typeof listWorkRegimeEmployeesQuerySchema>;

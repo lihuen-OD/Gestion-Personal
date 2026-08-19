@@ -1,5 +1,6 @@
 import { apiRequest } from "./apiClient";
 import { cachePolicies, cachedData, invalidateCacheFamily } from "../cache";
+import { associatedEmployeesQuery, mapAssociatedEmployeeFromApi, type ApiAssociatedEmployee } from "./associatedEmployeeMapper";
 import type {
   EmployeeWorkRegimeAssignment,
   OpenShiftOverflowAction,
@@ -8,6 +9,7 @@ import type {
   WorkRegimeKind,
   WorkRegimeStatus,
 } from "../../types/workRegime.types";
+import type { AssociatedEmployeeFilters, AssociatedEmployeesResult, WorkRegimeEmployeeAssociation, WorkRegimeEmployeesStatusFilter } from "../../types/associatedEmployee.types";
 
 type ApiWorkRegime = {
   id: string;
@@ -52,6 +54,27 @@ export function mapWorkRegimeFromApi(item: ApiWorkRegime): WorkRegime {
     status: item.status,
     createdAt: item.createdAt,
     updatedAt: item.updatedAt,
+  };
+}
+
+type ApiWorkRegimeEmployeeAssociation = {
+  id: string;
+  employeeId: string;
+  effectiveFrom: string;
+  effectiveTo: string | null;
+  vigencyStatus: "current" | "historical" | "future";
+  employee: ApiAssociatedEmployee;
+};
+type ApiWorkRegimeEmployeesResponse = { data: ApiWorkRegimeEmployeeAssociation[]; meta: ApiListMeta };
+
+export function mapWorkRegimeEmployeeAssociationFromApi(item: ApiWorkRegimeEmployeeAssociation): WorkRegimeEmployeeAssociation {
+  return {
+    id: item.id,
+    employeeId: item.employeeId,
+    effectiveFrom: item.effectiveFrom,
+    effectiveTo: item.effectiveTo ?? null,
+    vigencyStatus: item.vigencyStatus,
+    employee: mapAssociatedEmployeeFromApi(item.employee),
   };
 }
 
@@ -155,5 +178,18 @@ export const workRegimeApiService = {
   async closeAssignment(employeeId: string, assignmentId: string, effectiveTo: string) {
     const response = await apiRequest<ApiAssignmentItemResponse>(`/employees/${employeeId}/work-regimes/${assignmentId}/close`, { method: "PATCH", body: { effectiveTo } });
     return mapAssignmentFromApi(response.data);
+  },
+
+  // Empleados asociados al régimen, vistos desde el régimen (Etapa 8G) — sin
+  // cachedData, mismo criterio que el resto de los métodos de relación de
+  // este servicio (getAssignmentHistory/getCurrentAssignment), que tampoco
+  // cachean.
+  async getWorkRegimeEmployees(
+    workRegimeId: string,
+    filters?: AssociatedEmployeeFilters & { status?: WorkRegimeEmployeesStatusFilter; date?: string },
+  ): Promise<AssociatedEmployeesResult<WorkRegimeEmployeeAssociation>> {
+    const query = associatedEmployeesQuery(filters, { status: filters?.status, date: filters?.date });
+    const response = await apiRequest<ApiWorkRegimeEmployeesResponse>(`/work-regimes/${workRegimeId}/employees${query}`, { apiCache: false });
+    return { items: response.data.map(mapWorkRegimeEmployeeAssociationFromApi), meta: response.meta };
   },
 };

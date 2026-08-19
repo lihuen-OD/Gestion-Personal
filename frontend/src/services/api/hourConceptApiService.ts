@@ -1,6 +1,8 @@
 import { apiRequest } from "./apiClient";
 import { cachePolicies, cachedData, invalidateCacheFamily } from "../cache";
+import { associatedEmployeesQuery, mapAssociatedEmployeeFromApi, type ApiAssociatedEmployee } from "./associatedEmployeeMapper";
 import type { HourConcept, HourConceptFilters, HourConceptKind, HourConceptStatus } from "../../types/hourConcept.types";
+import type { AssociatedEmployeeFilters, AssociatedEmployeeStatus, AssociatedEmployeesResult, HourConceptEmployeeAssociation } from "../../types/associatedEmployee.types";
 
 type ApiHourConcept = {
   id: string;
@@ -15,6 +17,17 @@ type ApiHourConcept = {
 
 type ApiListResponse = { data: ApiHourConcept[] };
 type ApiItemResponse = { data: ApiHourConcept };
+type ApiListMeta = { total: number; page: number; pageSize: number; hasMore: boolean };
+
+type ApiHourConceptEmployeeAssociation = { employeeId: string; employee: ApiAssociatedEmployee };
+type ApiHourConceptEmployeesResponse = { data: ApiHourConceptEmployeeAssociation[]; meta: ApiListMeta };
+
+export function mapHourConceptEmployeeAssociationFromApi(item: ApiHourConceptEmployeeAssociation): HourConceptEmployeeAssociation {
+  return {
+    employeeId: item.employeeId,
+    employee: mapAssociatedEmployeeFromApi(item.employee),
+  };
+}
 
 export function mapHourConceptFromApi(item: ApiHourConcept): HourConcept {
   return {
@@ -97,4 +110,16 @@ export const hourConceptApiService = {
   },
 
   getNextCode: nextCode,
+
+  // Empleados habilitados para el concepto, vistos desde el concepto (Etapa
+  // 8G) — sin cachedData, mismo criterio que el resto de los métodos de
+  // relación de estos servicios (ver workRegimeApiService.getWorkRegimeEmployees).
+  async getHourConceptEmployees(
+    hourConceptId: string,
+    filters?: AssociatedEmployeeFilters & { status?: AssociatedEmployeeStatus },
+  ): Promise<AssociatedEmployeesResult<HourConceptEmployeeAssociation>> {
+    const query = associatedEmployeesQuery(filters, { status: filters?.status });
+    const response = await apiRequest<ApiHourConceptEmployeesResponse>(`/hour-concepts/${hourConceptId}/employees${query}`, { apiCache: false });
+    return { items: response.data.map(mapHourConceptEmployeeAssociationFromApi), meta: response.meta };
+  },
 };

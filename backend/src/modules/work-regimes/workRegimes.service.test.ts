@@ -2,11 +2,13 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import type { Mock } from "vitest";
 import { Prisma } from "@prisma/client";
 import { workRegimesService, resolveActiveWorkRegime } from "./workRegimes.service";
-import { findActiveEmployeeWorkRegime, workRegimesRepository } from "./workRegimes.repository";
+import { classifyWorkRegimeVigency, findActiveEmployeeWorkRegime, workRegimesRepository } from "./workRegimes.repository";
 import { auditService } from "../audit/audit.service";
+import { roles } from "../../shared/security/roles";
 
 vi.mock("./workRegimes.repository", () => ({
   findActiveEmployeeWorkRegime: vi.fn(),
+  classifyWorkRegimeVigency: vi.fn(() => "current"),
   workRegimesRepository: {
     findMany: vi.fn(),
     findById: vi.fn(),
@@ -18,6 +20,7 @@ vi.mock("./workRegimes.repository", () => ({
     findOverlappingAssignment: vi.fn(),
     createAssignment: vi.fn(),
     updateAssignment: vi.fn(),
+    findEmployees: vi.fn(),
   },
 }));
 
@@ -26,6 +29,7 @@ vi.mock("../audit/audit.service", () => ({
 }));
 
 const mockedFind = findActiveEmployeeWorkRegime as unknown as Mock;
+const mockedClassify = classifyWorkRegimeVigency as unknown as Mock;
 const repo = workRegimesRepository as unknown as {
   findMany: Mock;
   findById: Mock;
@@ -37,6 +41,7 @@ const repo = workRegimesRepository as unknown as {
   findOverlappingAssignment: Mock;
   createAssignment: Mock;
   updateAssignment: Mock;
+  findEmployees: Mock;
 };
 const mockedAudit = auditService.register as unknown as Mock;
 
@@ -255,5 +260,111 @@ describe("EmployeeWorkRegime — asignación con vigencia", () => {
       code: "WORK_REGIME_ASSIGNMENT_INVALID_RANGE",
     });
     expect(repo.updateAssignment).not.toHaveBeenCalled();
+  });
+});
+
+describe("WorkRegime.listEmployees — empleados asociados (Etapa 8G)", () => {
+  const rrhhUser = { id: "user-rrhh", role: roles.rrhh } as Express.AuthUser;
+  const row = {
+    id: "assignment-1",
+    effectiveFrom: new Date("2026-01-01"),
+    effectiveTo: null,
+    employee: {
+      id: "employee-1",
+      legajo: "100",
+      cuil: "20-12345678-9",
+      firstName: "Ana",
+      lastName: "Prueba",
+      status: "ACTIVO",
+      sector: null,
+      costCenter: null,
+      companies: [],
+    },
+  };
+
+  it("rechaza régimen inexistente (404), sin llegar a consultar empleados", async () => {
+    repo.findById.mockRejectedValue(prismaKnownError("P2025"));
+
+    await expect(
+      workRegimesService.listEmployees("regime-inexistente", { status: "all", page: 1, take: 50 } as never, rrhhUser),
+    ).rejects.toMatchObject({ statusCode: 404, code: "WORK_REGIME_NOT_FOUND" });
+    expect(repo.findEmployees).not.toHaveBeenCalled();
+  });
+
+  it("lista empleados asociados, mapeando cada fila con id/employeeId/vigencia/datos del empleado", async () => {
+    repo.findById.mockResolvedValue(baseRegime);
+    repo.findEmployees.mockResolvedValue([[row], 1]);
+    mockedClassify.mockReturnValue("current");
+
+    const result = await workRegimesService.listEmployees("regime-1", { status: "all", page: 1, take: 50 } as never, rrhhUser);
+
+    expect(result.items).toEqual([
+      {
+        id: "assignment-1",
+        employeeId: "employee-1",
+        effectiveFrom: row.effectiveFrom,
+        effectiveTo: null,
+        vigencyStatus: "current",
+        employee: {
+          id: "employee-1",
+          legajo: "100",
+          cuil: "20-12345678-9",
+          firstName: "Ana",
+          lastName: "Prueba",
+          status: "ACTIVO",
+          sector: null,
+          costCenter: null,
+          companies: [],
+        },
+      },
+    ]);
+    expect(result.meta).toMatchObject({ total: 1, page: 1, pageSize: 50 });
+  });
+
+  it("distingue vigente/histórica/futura delegando en classifyWorkRegimeVigency por fila (no inventa el estado)", async () => {
+    repo.findById.mockResolvedValue(baseRegime);
+    const rows = [
+      { ...row, id: "a1" },
+      { ...row, id: "a2" },
+      { ...row, id: "a3" },
+    ];
+    repo.findEmployees.mockResolvedValue([rows, 3]);
+    mockedClassify.mockReturnValueOnce("future").mockReturnValueOnce("current").mockReturnValueOnce("historical");
+
+    const result = await workRegimesService.listEmployees("regime-1", { status: "all", page: 1, take: 50 } as never, rrhhUser);
+
+    expect(result.items.map((item) => item.vigencyStatus)).toEqual(["future", "current", "historical"]);
+  });
+
+  it("pasa los filtros (status/search/sectorId/costCenterId/companyId/page/take) al repository sin transformarlos", async () => {
+    repo.findById.mockResolvedValue(baseRegime);
+    repo.findEmployees.mockResolvedValue([[], 0]);
+
+    const query = { status: "future", search: "perez", sectorId: "sector-1", costCenterId: "cc-1", companyId: "company-1", page: 2, take: 25 } as never;
+    await workRegimesService.listEmployees("regime-1", query, rrhhUser);
+
+    expect(repo.findEmployees).toHaveBeenCalledWith("regime-1", query, expect.any(Date), {});
+  });
+
+  it("respeta el patrón de permisos por área: un usuario de supervisión no recibe accessWhere vacío como RRHH", async () => {
+    repo.findById.mockResolvedValue(baseRegime);
+    repo.findEmployees.mockResolvedValue([[], 0]);
+    const supervisionUser = { id: "user-sup", role: roles.supervision } as Express.AuthUser;
+
+    await workRegimesService.listEmployees("regime-1", { status: "all", page: 1, take: 50 } as never, supervisionUser);
+
+    const accessWhereUsed = repo.findEmployees.mock.calls.at(0)?.[3];
+    expect(accessWhereUsed).not.toEqual({});
+    expect(accessWhereUsed).toMatchObject({ assignments: { some: expect.objectContaining({ type: "TIME_RESPONSIBLE", userId: "user-sup" }) } });
+  });
+
+  it("usa hoy en calendario Argentina como fecha de referencia por defecto cuando no se pasa date", async () => {
+    repo.findById.mockResolvedValue(baseRegime);
+    repo.findEmployees.mockResolvedValue([[], 0]);
+
+    await workRegimesService.listEmployees("regime-1", { status: "all", page: 1, take: 50 } as never, rrhhUser);
+
+    const referenceDateUsed = repo.findEmployees.mock.calls.at(0)?.[2] as Date;
+    expect(referenceDateUsed).toBeInstanceOf(Date);
   });
 });

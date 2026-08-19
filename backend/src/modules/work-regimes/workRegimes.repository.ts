@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "../../shared/prisma/client";
-import type { CreateWorkRegimeInput, ListWorkRegimesQuery, UpdateWorkRegimeInput } from "./workRegimes.schemas";
+import { associatedEmployeeSelect, buildEmployeeAssociationWhere } from "../../shared/prisma/employeeAssociationQuery";
+import type { CreateWorkRegimeInput, ListWorkRegimeEmployeesQuery, ListWorkRegimesQuery, UpdateWorkRegimeInput, WorkRegimeEmployeesVigencyStatus } from "./workRegimes.schemas";
 
 // Régimen vigente de un empleado en una fecha calendario dada: vigente si
 // effectiveFrom <= fecha y (effectiveTo es null o effectiveTo >= fecha). Si
@@ -50,6 +51,29 @@ function findOverlappingAssignment(employeeId: string, effectiveFrom: Date, effe
     },
     include: { workRegime: { select: { code: true, name: true } } },
   });
+}
+
+// Partición mutuamente excluyente y exhaustiva de EmployeeWorkRegime contra
+// una fecha de referencia: exactamente una de las tres ramas aplica a cada
+// fila (dado effectiveFrom <= effectiveTo siempre que ambos existan). "all"
+// no agrega condición — es la unión de las tres.
+function vigencyWhere(status: WorkRegimeEmployeesVigencyStatus, referenceDate: Date): Prisma.EmployeeWorkRegimeWhereInput {
+  if (status === "current") {
+    return { effectiveFrom: { lte: referenceDate }, OR: [{ effectiveTo: null }, { effectiveTo: { gte: referenceDate } }] };
+  }
+  if (status === "future") {
+    return { effectiveFrom: { gt: referenceDate } };
+  }
+  if (status === "historical") {
+    return { effectiveTo: { lt: referenceDate } };
+  }
+  return {};
+}
+
+export function classifyWorkRegimeVigency(effectiveFrom: Date, effectiveTo: Date | null, referenceDate: Date): "current" | "historical" | "future" {
+  if (effectiveFrom > referenceDate) return "future";
+  if (effectiveTo && effectiveTo < referenceDate) return "historical";
+  return "current";
 }
 
 export const workRegimesRepository = {
@@ -125,5 +149,35 @@ export const workRegimesRepository = {
       data,
       include: { workRegime: true },
     });
+  },
+
+  // Empleados asociados a un régimen (Etapa 8G) — WHERE real en base (vigencia
+  // + filtros de empleado), nunca trae todo para filtrar en memoria. No hay
+  // índice sobre workRegimeId en EmployeeWorkRegime hoy (solo
+  // [employeeId, effectiveFrom]); documentado como riesgo pendiente, no se
+  // agrega una migración en esta etapa.
+  async findEmployees(workRegimeId: string, query: ListWorkRegimeEmployeesQuery, referenceDate: Date, accessWhere: Prisma.EmployeeWhereInput) {
+    const where: Prisma.EmployeeWorkRegimeWhereInput = {
+      workRegimeId,
+      ...vigencyWhere(query.status, referenceDate),
+      employee: { AND: [buildEmployeeAssociationWhere(query), accessWhere] },
+    };
+    const skip = (query.page - 1) * query.take;
+    const [items, total] = await prisma.$transaction([
+      prisma.employeeWorkRegime.findMany({
+        where,
+        select: {
+          id: true,
+          effectiveFrom: true,
+          effectiveTo: true,
+          employee: { select: associatedEmployeeSelect },
+        },
+        orderBy: [{ employee: { lastName: "asc" } }, { employee: { firstName: "asc" } }, { effectiveFrom: "desc" }, { id: "asc" }],
+        skip,
+        take: query.take,
+      }),
+      prisma.employeeWorkRegime.count({ where }),
+    ]);
+    return [items, total] as const;
   },
 };

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import type { Mock } from "vitest";
 import { prisma } from "../../shared/prisma/client";
-import { findActiveEmployeeWorkRegime, workRegimesRepository } from "./workRegimes.repository";
+import { classifyWorkRegimeVigency, findActiveEmployeeWorkRegime, workRegimesRepository } from "./workRegimes.repository";
 
 /**
  * Regla de vigencia (etapa de logica de Regimen de Trabajo, 2026-08-18):
@@ -13,14 +13,14 @@ import { findActiveEmployeeWorkRegime, workRegimesRepository } from "./workRegim
  */
 vi.mock("../../shared/prisma/client", () => ({
   prisma: {
-    employeeWorkRegime: { findFirst: vi.fn() },
+    employeeWorkRegime: { findFirst: vi.fn(), findMany: vi.fn(), count: vi.fn() },
     workRegime: { findMany: vi.fn(), count: vi.fn() },
     $transaction: vi.fn((ops: Promise<unknown>[]) => Promise.all(ops)),
   },
 }));
 
 const mockedPrisma = prisma as unknown as {
-  employeeWorkRegime: { findFirst: Mock };
+  employeeWorkRegime: { findFirst: Mock; findMany: Mock; count: Mock };
   workRegime: { findMany: Mock; count: Mock };
   $transaction: Mock;
 };
@@ -134,5 +134,112 @@ describe("WorkRegime.findMany — filtros por status/kind/search", () => {
     await workRegimesRepository.findMany({ page: 1, take: 100 } as never);
 
     expect(mockedPrisma.workRegime.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: {} }));
+  });
+});
+
+describe("classifyWorkRegimeVigency (Etapa 8G)", () => {
+  const referenceDate = new Date("2026-08-18T00:00:00.000Z");
+
+  it("effectiveFrom en el futuro -> future, sin importar effectiveTo", () => {
+    expect(classifyWorkRegimeVigency(new Date("2026-09-01"), null, referenceDate)).toBe("future");
+    expect(classifyWorkRegimeVigency(new Date("2026-09-01"), new Date("2026-12-01"), referenceDate)).toBe("future");
+  });
+
+  it("effectiveTo pasado (antes de la fecha de referencia) -> historical", () => {
+    expect(classifyWorkRegimeVigency(new Date("2026-01-01"), new Date("2026-06-30"), referenceDate)).toBe("historical");
+  });
+
+  it("effectiveFrom <= referencia y effectiveTo null (sin fin) -> current", () => {
+    expect(classifyWorkRegimeVigency(new Date("2026-01-01"), null, referenceDate)).toBe("current");
+  });
+
+  it("effectiveFrom <= referencia y effectiveTo >= referencia -> current", () => {
+    expect(classifyWorkRegimeVigency(new Date("2026-01-01"), new Date("2026-12-31"), referenceDate)).toBe("current");
+  });
+
+  it("effectiveFrom == referencia exacta -> current, no future", () => {
+    expect(classifyWorkRegimeVigency(referenceDate, null, referenceDate)).toBe("current");
+  });
+});
+
+describe("WorkRegime.findEmployees — empleados asociados al régimen (Etapa 8G)", () => {
+  beforeEach(() => {
+    mockedPrisma.employeeWorkRegime.findMany.mockResolvedValue([]);
+    mockedPrisma.employeeWorkRegime.count.mockResolvedValue(0);
+  });
+
+  const referenceDate = new Date("2026-08-18T00:00:00.000Z");
+
+  it("filtra por workRegimeId y pagina con $transaction([findMany, count])", async () => {
+    await workRegimesRepository.findEmployees("regime-1", { status: "all", page: 2, take: 10 } as never, referenceDate, {});
+
+    expect(mockedPrisma.$transaction).toHaveBeenCalledTimes(1);
+    const call = mockedPrisma.employeeWorkRegime.findMany.mock.calls.at(0)?.[0];
+    expect(call.where.workRegimeId).toBe("regime-1");
+    expect(call.skip).toBe(10);
+    expect(call.take).toBe(10);
+  });
+
+  it("status=current arma el where de vigencia (effectiveFrom <= fecha, effectiveTo null o >= fecha)", async () => {
+    await workRegimesRepository.findEmployees("regime-1", { status: "current", page: 1, take: 50 } as never, referenceDate, {});
+
+    const call = mockedPrisma.employeeWorkRegime.findMany.mock.calls.at(0)?.[0];
+    expect(call.where.effectiveFrom).toEqual({ lte: referenceDate });
+    expect(call.where.OR).toEqual([{ effectiveTo: null }, { effectiveTo: { gte: referenceDate } }]);
+  });
+
+  it("status=future arma el where effectiveFrom > fecha", async () => {
+    await workRegimesRepository.findEmployees("regime-1", { status: "future", page: 1, take: 50 } as never, referenceDate, {});
+
+    const call = mockedPrisma.employeeWorkRegime.findMany.mock.calls.at(0)?.[0];
+    expect(call.where.effectiveFrom).toEqual({ gt: referenceDate });
+  });
+
+  it("status=historical arma el where effectiveTo < fecha", async () => {
+    await workRegimesRepository.findEmployees("regime-1", { status: "historical", page: 1, take: 50 } as never, referenceDate, {});
+
+    const call = mockedPrisma.employeeWorkRegime.findMany.mock.calls.at(0)?.[0];
+    expect(call.where.effectiveTo).toEqual({ lt: referenceDate });
+  });
+
+  it("status=all no agrega ninguna condición de vigencia adicional", async () => {
+    await workRegimesRepository.findEmployees("regime-1", { status: "all", page: 1, take: 50 } as never, referenceDate, {});
+
+    const call = mockedPrisma.employeeWorkRegime.findMany.mock.calls.at(0)?.[0];
+    expect(call.where.effectiveFrom).toBeUndefined();
+    expect(call.where.effectiveTo).toBeUndefined();
+    expect(call.where.OR).toBeUndefined();
+  });
+
+  it("combina filtros de empleado (sectorId/costCenterId/companyId/search) y accessWhere bajo employee.AND", async () => {
+    const accessWhere = { id: "__NO_ACCESS__" };
+    await workRegimesRepository.findEmployees(
+      "regime-1",
+      { status: "all", sectorId: "sector-1", costCenterId: "cc-1", companyId: "company-1", search: "perez", page: 1, take: 50 } as never,
+      referenceDate,
+      accessWhere,
+    );
+
+    const call = mockedPrisma.employeeWorkRegime.findMany.mock.calls.at(0)?.[0];
+    expect(call.where.employee.AND[1]).toBe(accessWhere);
+    expect(call.where.employee.AND[0]).toEqual(
+      expect.objectContaining({
+        sectorId: "sector-1",
+        costCenterId: "cc-1",
+        companies: { some: { companyId: "company-1" } },
+      }),
+    );
+  });
+
+  it("ordena de forma estable: apellido, nombre, effectiveFrom desc, id como desempate final", async () => {
+    await workRegimesRepository.findEmployees("regime-1", { status: "all", page: 1, take: 50 } as never, referenceDate, {});
+
+    const call = mockedPrisma.employeeWorkRegime.findMany.mock.calls.at(0)?.[0];
+    expect(call.orderBy).toEqual([
+      { employee: { lastName: "asc" } },
+      { employee: { firstName: "asc" } },
+      { effectiveFrom: "desc" },
+      { id: "asc" },
+    ]);
   });
 });

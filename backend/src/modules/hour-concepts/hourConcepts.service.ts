@@ -2,8 +2,10 @@ import { Prisma } from "@prisma/client";
 import type { AuditContext } from "../audit/audit.service";
 import { auditService } from "../audit/audit.service";
 import { AppError } from "../../shared/errors/AppError";
+import { mapAssociatedEmployee } from "../../shared/prisma/employeeAssociationQuery";
+import { employeeAccessWhere } from "../employees/employeeAccess";
 import { hourConceptsRepository, invalidateHourConceptsCache } from "./hourConcepts.repository";
-import type { CreateHourConceptInput, ListHourConceptsQuery, UpdateHourConceptInput } from "./hourConcepts.schemas";
+import type { CreateHourConceptInput, ListHourConceptEmployeesQuery, ListHourConceptsQuery, UpdateHourConceptInput } from "./hourConcepts.schemas";
 
 function mapPrismaError(error: unknown) {
   if (error instanceof Prisma.PrismaClientKnownRequestError) {
@@ -63,5 +65,18 @@ export const hourConceptsService = {
     invalidateHourConceptsCache();
     await auditChange("UPDATE", item, audit);
     return item;
+  },
+
+  async listEmployees(hourConceptId: string, query: ListHourConceptEmployeesQuery, user: Express.AuthUser) {
+    await execute(() => hourConceptsRepository.findById(hourConceptId));
+    const [rows, total] = await hourConceptsRepository.findEmployees(hourConceptId, query, employeeAccessWhere(user));
+    const items = rows.map((row) => ({
+      employeeId: row.employeeId,
+      employee: mapAssociatedEmployee(row.employee),
+    }));
+    return {
+      items,
+      meta: { total, page: query.page, pageSize: query.take, hasMore: query.page * query.take < total },
+    };
   },
 };
