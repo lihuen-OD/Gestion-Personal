@@ -35,22 +35,13 @@ export function mapHourConceptFromApi(item: ApiHourConcept): HourConcept {
     code: item.code,
     name: item.name,
     kind: item.kind,
-    description: item.name,
     status: item.status,
-    rules: { defaultUnit: "HORAS" },
-    allowedLoadRoles: ["Nivel 1 - RRHH", "Nivel 3 - Administrativo de Carga Horaria"],
-    approvalRoles: ["Nivel 1 - RRHH"],
-    finnegansLinks: [],
-    notes: "",
     createdAt: item.createdAt,
     updatedAt: item.updatedAt,
-    createdBy: "Sistema",
-    updatedBy: "Sistema",
-    history: [],
   };
 }
 
-function mapToApi(item: HourConcept) {
+export function mapToApi(item: HourConcept) {
   return {
     code: item.code,
     name: item.name,

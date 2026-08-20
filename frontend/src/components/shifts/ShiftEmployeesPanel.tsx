@@ -161,7 +161,7 @@ export function ShiftEmployeesPanel({ shiftTemplateId, canEdit }: { shiftTemplat
       {disabled.length ? (
         <TableShell minWidth={920}>
           <table>
-            <thead><tr><th>Legajo</th><th>Empleado</th><th>Desde</th><th>Hasta</th><th>Días</th><th>Deshabilitado</th><th>Observación</th><th>Acciones</th></tr></thead>
+            <thead><tr><th>Legajo</th><th>Empleado</th><th>Desde</th><th>Hasta</th><th>Días</th><th>Vigencia</th><th>Deshabilitado</th><th>Observación</th><th>Acciones</th></tr></thead>
             <tbody>
               {disabled.map((assignment) => (
                 <tr key={assignment.id}>
@@ -170,6 +170,7 @@ export function ShiftEmployeesPanel({ shiftTemplateId, canEdit }: { shiftTemplat
                   <td>{formatAssignmentDate(assignment.effectiveFrom)}</td>
                   <td>{formatAssignmentDate(assignment.effectiveTo)}</td>
                   <td>{formatWeekdays(assignment.weekdays)}</td>
+                  <td><Badge tone={assignmentVigencyTone(assignmentVigencyStatus(assignment.effectiveFrom, assignment.effectiveTo))}>{assignmentVigencyLabel(assignmentVigencyStatus(assignment.effectiveFrom, assignment.effectiveTo))}</Badge></td>
                   <td>{assignment.disabledAt ? new Date(assignment.disabledAt).toLocaleDateString("es-AR") : "-"}</td>
                   <td>{assignment.observation || <em>Sin observación</em>}</td>
                   <td>

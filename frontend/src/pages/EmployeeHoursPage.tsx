@@ -34,17 +34,9 @@ const normalHourConcept: HourConcept = {
   code: "HN",
   name: "Hora normal",
   kind: "NORMAL",
-  description: "Hora trabajada base",
   status: "ACTIVO",
-  rules: { defaultUnit: "HORAS" },
-  allowedLoadRoles: [],
-  approvalRoles: [],
-  finnegansLinks: [],
   createdAt: "",
   updatedAt: "",
-  createdBy: "",
-  updatedBy: "",
-  history: [],
 };
 
 function timeEntrySaveErrorMessage(error: unknown) {

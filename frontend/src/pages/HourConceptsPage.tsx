@@ -1,6 +1,5 @@
 import { Pencil, Plus } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { Navigate } from "react-router-dom";
 import { HourConceptRulesPanel } from "../components/hour-concepts/HourConceptRulesPanel";
 import { AssociatedEmployeesPanel } from "../components/shared/AssociatedEmployeesPanel";
 import { OverflowCell } from "../components/ui/OverflowCell";
@@ -10,14 +9,13 @@ import { Section } from "../components/ui/Section";
 import { Button } from "../components/ui/Button";
 import { Badge } from "../components/ui/Badge";
 import { useAuth } from "../context/AuthContext";
+import { getUserErrorMessage } from "../services/api/apiClient";
 import { hourConceptApiService } from "../services/api/hourConceptApiService";
-import type { Role } from "../types";
 import type { AssociatedEmployeeFilters } from "../types/associatedEmployee.types";
 import type { HourConcept, HourConceptFilters, HourConceptKind } from "../types/hourConcept.types";
 import { roleLevel } from "../utils/roles";
 import { useAsyncAction } from "../utils/useAsyncAction";
 
-const roles: Role[] = ["Nivel 1 - RRHH", "Nivel 2 - Supervisión / Gestión", "Nivel 3 - Administrativo de Carga Horaria"];
 const kinds: HourConceptKind[] = ["NORMAL", "EXTRA", "FERIADO", "NOCTURNA", "GUARDIA", "SERENO", "TRANSPORTE", "OTRO"];
 
 function emptyConcept(code: string): HourConcept {
@@ -26,22 +24,10 @@ function emptyConcept(code: string): HourConcept {
     code,
     name: "",
     kind: "NORMAL",
-    description: "",
     status: "ACTIVO",
-    rules: { defaultUnit: "HORAS" },
-    allowedLoadRoles: ["Nivel 1 - RRHH", "Nivel 3 - Administrativo de Carga Horaria"],
-    approvalRoles: ["Nivel 1 - RRHH"],
-    finnegansLinks: [],
     createdAt: "",
     updatedAt: "",
-    createdBy: "",
-    updatedBy: "",
-    history: [],
   };
-}
-
-function toggleValue<T extends string>(values: T[], value: T) {
-  return values.includes(value) ? values.filter((item) => item !== value) : [...values, value];
 }
 
 function normalize(value: string) {
@@ -50,7 +36,7 @@ function normalize(value: string) {
 
 function matchesFilters(item: HourConcept, filters: HourConceptFilters) {
   const search = normalize(filters.search);
-  const text = normalize(`${item.code} ${item.name} ${item.description} ${item.kind}`);
+  const text = normalize(`${item.code} ${item.name} ${item.kind}`);
   if (search && !text.includes(search)) return false;
   if (filters.kind && item.kind !== filters.kind) return false;
   if (filters.status && item.status !== filters.status) return false;
@@ -64,25 +50,7 @@ function getFilterOptions(items: HourConcept[]) {
   };
 }
 
-function RoleChecks({ label, value, onChange }: { label: string; value: Role[]; onChange: (value: Role[]) => void }) {
-  return (
-    <div className="catalog-check-block">
-      <small>{label}</small>
-      <div className="check-grid inline">
-        {roles.map((role) => (
-          <label className="check-card" key={role}>
-            <input type="checkbox" checked={value.includes(role)} onChange={() => onChange(toggleValue(value, role))} />
-            {role}
-          </label>
-        ))}
-      </div>
-    </div>
-  );
-}
-
 function ConceptEditor({ item, setItem }: { item: HourConcept; setItem: (item: HourConcept) => void }) {
-  const setRule = (patch: Partial<HourConcept["rules"]>) => setItem({ ...item, rules: { ...item.rules, ...patch } });
-
   return (
     <div className="hour-concept-editor">
       <div className="info-note">
@@ -94,12 +62,7 @@ function ConceptEditor({ item, setItem }: { item: HourConcept; setItem: (item: H
         <label>Nombre *<input value={item.name} onChange={(event) => setItem({ ...item, name: event.target.value })} /></label>
         <label>Tipo<select value={item.kind} onChange={(event) => setItem({ ...item, kind: event.target.value as HourConceptKind })}>{kinds.map((kind) => <option key={kind}>{kind}</option>)}</select></label>
         <label>Estado<select value={item.status} onChange={(event) => setItem({ ...item, status: event.target.value as "ACTIVO" | "INACTIVO" })}><option>ACTIVO</option><option>INACTIVO</option></select></label>
-        <label>Unidad<input value="HORAS" disabled /></label>
-        <div className="form-wide"><label>Descripcion funcional *<textarea value={item.description} onChange={(event) => setItem({ ...item, description: event.target.value })} /></label></div>
-        <div className="form-wide"><label>Notas internas<textarea value={item.notes || ""} onChange={(event) => setItem({ ...item, notes: event.target.value })} /></label></div>
       </div>
-      <RoleChecks label="Roles que pueden cargar" value={item.allowedLoadRoles} onChange={(value) => setItem({ ...item, allowedLoadRoles: value })} />
-      <RoleChecks label="Roles que pueden aprobar" value={item.approvalRoles} onChange={(value) => setItem({ ...item, approvalRoles: value })} />
     </div>
   );
 }
@@ -144,8 +107,8 @@ export function HourConceptsPage() {
 
   const { isRunning: isSaving, run: save } = useAsyncAction(async () => {
     if (!editing) return;
-    if (!editing.name.trim() || !editing.description.trim()) {
-      setNotice("Completa nombre y descripcion funcional.");
+    if (!editing.name.trim()) {
+      setNotice("Completa el nombre.");
       return;
     }
 
@@ -159,13 +122,13 @@ export function HourConceptsPage() {
       setRefresh((value) => value + 1);
       setNotice("Hora especial guardada correctamente.");
       setTimeout(() => setNotice(""), 2200);
-    } catch {
-      setNotice("No pudimos guardar el concepto horario. Revisá los datos e intentá nuevamente.");
+    } catch (saveError) {
+      setNotice(getUserErrorMessage(saveError, "No pudimos guardar el concepto horario. Revisá los datos e intentá nuevamente."));
       setTimeout(() => setNotice(""), 3000);
     }
   });
 
-  if (roleLevel(user!.role) !== 1) return <Navigate to="/configuracion" />;
+  const editable = roleLevel(user!.role) === 1;
 
   return (
     <>
@@ -173,7 +136,7 @@ export function HourConceptsPage() {
         eyebrow="CONFIGURACION"
         title="Horas especiales"
         description="Catalogo de horas trabajadas clasificadas. Sereno, guardia, manejo de colectivo, nocturna, feriados y extras se cargan aca, no como novedades."
-        action={<Button variant="primary" icon={Plus} onClick={() => setEditing(emptyConcept(hourConceptApiService.getNextCode(all)))}>Crear hora especial</Button>}
+        action={editable ? <Button variant="primary" icon={Plus} onClick={() => setEditing(emptyConcept(hourConceptApiService.getNextCode(all)))}>Crear hora especial</Button> : undefined}
       />
 
       {notice && <div className="toast">{notice}</div>}
@@ -207,10 +170,10 @@ export function HourConceptsPage() {
               {items.map((item) => (
                 <tr key={item.id}>
                   <td><b>{item.code}</b></td>
-                  <td><OverflowCell value={item.name} /><span className="table-sub">{item.description}</span></td>
+                  <td><OverflowCell value={item.name} /></td>
                   <td>{item.kind}</td>
                   <td><Badge tone={item.status === "ACTIVO" ? "success" : "neutral"}>{item.status}</Badge></td>
-                  <td><button className="table-link table-icon-action" title="Editar" aria-label="Editar" onClick={() => setEditing(item)}><Pencil size={14}/><span>Editar</span></button></td>
+                  <td>{editable ? <button className="table-link table-icon-action" title="Editar" aria-label="Editar" onClick={() => setEditing(item)}><Pencil size={14}/><span>Editar</span></button> : null}</td>
                 </tr>
               ))}
             </tbody>

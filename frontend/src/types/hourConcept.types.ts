@@ -1,39 +1,19 @@
-import type { Role } from "./index";
-
 export type HourConceptStatus = "ACTIVO" | "INACTIVO";
 export type HourConceptKind = "NORMAL" | "EXTRA" | "FERIADO" | "NOCTURNA" | "GUARDIA" | "SERENO" | "TRANSPORTE" | "OTRO";
-export type HourConceptUnit = "HORAS";
 
-export interface HourConceptRules {
-  defaultUnit: HourConceptUnit;
-}
-
-export interface HourConceptHistoryRecord {
-  id: string;
-  action: string;
-  description: string;
-  createdAt: string;
-  createdByUserId: string;
-  createdByUserName: string;
-}
-
+// Solo campos reales, persistidos por el backend (HourConcept en schema.prisma:
+// id, code, name, kind, status, countsAsWorked, createdAt, updatedAt).
+// countsAsWorked existe en el modelo pero todavía no se expone acá — no se
+// agregó en la limpieza de la Etapa 8L para no introducir una funcionalidad
+// nueva; queda documentado como pendiente.
 export interface HourConcept {
   id: string;
   code: string;
   name: string;
   kind: HourConceptKind;
-  description: string;
   status: HourConceptStatus;
-  rules: HourConceptRules;
-  allowedLoadRoles: Role[];
-  approvalRoles: Role[];
-  finnegansLinks?: never[];
-  notes?: string;
   createdAt: string;
   updatedAt: string;
-  createdBy: string;
-  updatedBy: string;
-  history: HourConceptHistoryRecord[];
 }
 
 export interface HourConceptFilters {

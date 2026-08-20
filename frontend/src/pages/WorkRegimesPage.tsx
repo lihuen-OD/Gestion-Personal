@@ -1,6 +1,5 @@
 import { Pencil, Plus, Power, Users } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { Navigate } from "react-router-dom";
 import {
   openShiftOverflowActionLabel,
   openShiftOverflowActionOptions,
@@ -167,7 +166,7 @@ export function WorkRegimesPage() {
     }
   };
 
-  if (roleLevel(user!.role) !== 1) return <Navigate to="/configuracion" />;
+  const editable = roleLevel(user!.role) === 1;
 
   return (
     <>
@@ -175,7 +174,7 @@ export function WorkRegimesPage() {
         eyebrow="CONFIGURACION"
         title="Regímenes laborales"
         description="Catálogo de regímenes de trabajo (Cosecha, Riego, Oficina flexible, etc.) y cómo se comporta el sistema frente a cada uno."
-        action={<Button variant="primary" icon={Plus} onClick={openCreate}>Crear régimen</Button>}
+        action={editable ? <Button variant="primary" icon={Plus} onClick={openCreate}>Crear régimen</Button> : undefined}
       />
 
       {notice && <div className="toast">{notice}</div>}
@@ -245,8 +244,12 @@ export function WorkRegimesPage() {
                   <td>
                     <div className="table-actions">
                       <button className="icon-button" title="Ver empleados asociados" aria-label="Ver empleados asociados" onClick={() => setViewingEmployeesFor(item)}><Users size={15} /></button>
-                      <button className="icon-button" title="Editar régimen" aria-label="Editar régimen" onClick={() => openEdit(item)}><Pencil size={15} /></button>
-                      <button className="icon-button" title={item.status === "ACTIVO" ? "Inactivar régimen" : "Activar régimen"} aria-label={item.status === "ACTIVO" ? "Inactivar régimen" : "Activar régimen"} onClick={() => toggleStatus(item)}><Power size={15} /></button>
+                      {editable ? (
+                        <>
+                          <button className="icon-button" title="Editar régimen" aria-label="Editar régimen" onClick={() => openEdit(item)}><Pencil size={15} /></button>
+                          <button className="icon-button" title={item.status === "ACTIVO" ? "Inactivar régimen" : "Activar régimen"} aria-label={item.status === "ACTIVO" ? "Inactivar régimen" : "Activar régimen"} onClick={() => toggleStatus(item)}><Power size={15} /></button>
+                        </>
+                      ) : null}
                     </div>
                   </td>
                 </tr>
