@@ -38,7 +38,7 @@ const transportSummary = (employee: Employee) =>
     : "No utiliza transporte";
 
 const hoursSummary = (employee: Employee) =>
-  employee.enabledHours.length ? employee.enabledHours.join(", ") : "Sin horas especiales";
+  employee.enabledHours.length ? employee.enabledHours.join(", ") : "Sin conceptos horarios habilitados";
 
 type EmployeeBlockPersistKind = "general" | "address" | "transport" | "assignments" | "hourConcepts";
 type CreateBlockHistoryInput = { employeeId: string; section: string; block: string; blockLabel: string; oldValue: string | null; newValue: string; effectiveFrom: string; reason: string; };
@@ -558,7 +558,7 @@ export function HoursSpecialBlock({ employee, user, canEdit, onSaved }: Employee
           employeeId: employee.id,
           section: "CONFIGURACION_HORARIA_LIQUIDACION",
           block: "HORAS_ESPECIALES",
-          blockLabel: "Horas especiales habilitadas",
+          blockLabel: "Conceptos horarios habilitados",
           oldValue: hoursSummary(employee),
           newValue: hoursSummary(updated),
           effectiveFrom: from,
@@ -579,7 +579,7 @@ export function HoursSpecialBlock({ employee, user, canEdit, onSaved }: Employee
     <div className="block-card">
       <div className="block-card-head">
         <div>
-          <h3>Horas especiales habilitadas</h3>
+          <h3>Conceptos horarios habilitados</h3>
           <p>{hoursSummary(employee)}</p>
         </div>
         <div className="tracked-actions">

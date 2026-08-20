@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { mapHourConceptEmployeeAssociationFromApi, mapHourConceptFromApi, mapToApi } from "./hourConceptApiService";
+import {
+  buildHourConceptEmployeePath,
+  buildHourConceptEmployeesPath,
+  buildHourConceptPath,
+  buildHourConceptRemovePath,
+  mapHourConceptEmployeeAssociationFromApi,
+  mapHourConceptFromApi,
+  mapToApi,
+} from "./hourConceptApiService";
 import type { HourConcept } from "../../types/hourConcept.types";
 
 describe("mapHourConceptEmployeeAssociationFromApi — empleados habilitados para el concepto (Etapa 8G)", () => {
@@ -39,11 +47,13 @@ describe("mapHourConceptEmployeeAssociationFromApi — empleados habilitados par
 // Etapa 8L: HourConcept perdió los campos decorativos (description, notes,
 // allowedLoadRoles, approvalRoles, finnegansLinks, createdBy, updatedBy,
 // history, rules) porque no existían en schema.prisma y se perdían
-// silenciosamente al guardar. Estos tests confirman que el mapper ya no los
-// reconstruye con valores inventados, y que el payload de create/update solo
-// manda campos reales.
-describe("mapHourConceptFromApi — solo campos reales (Etapa 8L)", () => {
-  it("mapea únicamente los campos que persiste el backend, sin inventar ninguno", () => {
+// silenciosamente al guardar. Etapa 8N: además, countsAsWorked (que SÍ
+// existe en schema.prisma y SÍ se usa en backend) se sacó del frontend por
+// decisión de producto — todo concepto horario cuenta como trabajado, así
+// que deja de ser configurable desde esta pantalla. mapHourConceptFromApi ya
+// no lo mapea, aunque la API lo siga devolviendo.
+describe("mapHourConceptFromApi — solo campos reales y expuestos en esta pantalla (Etapa 8L/8N)", () => {
+  it("mapea únicamente los campos que persiste el backend y se muestran en pantalla, sin inventar ninguno", () => {
     const concept = mapHourConceptFromApi({
       id: "concept-1",
       code: "HOR-001",
@@ -51,6 +61,7 @@ describe("mapHourConceptFromApi — solo campos reales (Etapa 8L)", () => {
       kind: "GUARDIA",
       status: "ACTIVO",
       countsAsWorked: true,
+      deletedAt: null,
       createdAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-01-02T00:00:00.000Z",
     });
@@ -61,28 +72,44 @@ describe("mapHourConceptFromApi — solo campos reales (Etapa 8L)", () => {
       name: "Guardia",
       kind: "GUARDIA",
       status: "ACTIVO",
-      countsAsWorked: true,
       createdAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-01-02T00:00:00.000Z",
     });
   });
 
-  // Etapa 8L.2: countsAsWorked es un campo real (existe en schema.prisma y se
-  // usa en timeEntries.repository.ts) — el mapper debe reflejar el valor real
-  // de la API, no forzarlo a true.
-  it("mapea countsAsWorked: false tal cual viene de la API (no lo fuerza a true)", () => {
+  it("no mapea countsAsWorked aunque la API lo devuelva (Etapa 8N: no debe aparecer en frontend)", () => {
     const concept = mapHourConceptFromApi({
       id: "concept-2",
       code: "HOR-002",
-      name: "Concepto informativo",
-      kind: "OTRO",
+      name: "Sereno",
+      kind: "SERENO",
       status: "ACTIVO",
       countsAsWorked: false,
+      deletedAt: null,
       createdAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-01-01T00:00:00.000Z",
     });
 
-    expect(concept.countsAsWorked).toBe(false);
+    expect(concept).not.toHaveProperty("countsAsWorked");
+  });
+
+  // Etapa 8Q (auditoría UI/UX): igual que countsAsWorked — la API lo sigue
+  // devolviendo (existe en schema.prisma desde la Etapa 8P), pero esta
+  // pantalla ya no ofrece "ver eliminados", así que no se mapea al frontend.
+  it("no mapea deletedAt aunque la API lo devuelva", () => {
+    const concept = mapHourConceptFromApi({
+      id: "concept-3",
+      code: "HOR-003",
+      name: "Guardia",
+      kind: "GUARDIA",
+      status: "INACTIVO",
+      countsAsWorked: true,
+      deletedAt: "2026-08-20T12:00:00.000Z",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-08-20T12:00:00.000Z",
+    });
+
+    expect(concept).not.toHaveProperty("deletedAt");
   });
 
   it("no reconstruye description/notes/roles/history con valores hardcodeados", () => {
@@ -93,6 +120,7 @@ describe("mapHourConceptFromApi — solo campos reales (Etapa 8L)", () => {
       kind: "GUARDIA",
       status: "ACTIVO",
       countsAsWorked: true,
+      deletedAt: null,
       createdAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-01-01T00:00:00.000Z",
     });
@@ -109,25 +137,23 @@ describe("mapHourConceptFromApi — solo campos reales (Etapa 8L)", () => {
   });
 });
 
-describe("mapToApi — el payload de create/update solo envía campos reales (Etapa 8L)", () => {
+describe("mapToApi — el payload de create/update solo envía campos reales y editables en esta pantalla (Etapa 8L/8N)", () => {
   const concept: HourConcept = {
     id: "concept-1",
     code: "HOR-001",
     name: "Guardia",
     kind: "GUARDIA",
     status: "ACTIVO",
-    countsAsWorked: true,
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
   };
 
-  it("envía exactamente code/name/kind/status/countsAsWorked, nada más", () => {
+  it("envía exactamente code/name/kind/status, nada más", () => {
     expect(mapToApi(concept)).toEqual({
       code: "HOR-001",
       name: "Guardia",
       kind: "GUARDIA",
       status: "ACTIVO",
-      countsAsWorked: true,
     });
   });
 
@@ -139,12 +165,54 @@ describe("mapToApi — el payload de create/update solo envía campos reales (Et
     expect(payload).not.toHaveProperty("notes");
   });
 
-  // Etapa 8L.2: antes mapToApi forzaba countsAsWorked: true siempre, sin
-  // importar lo que trajera el concepto. mapToApi es la misma función que
-  // usan tanto create() como update() (hourConceptApiService.ts) — probarla
-  // una vez con false cubre ambos casos, no hay una rama separada por método.
-  it("countsAsWorked: false en el concepto se envía como false, no se fuerza a true", () => {
-    const payload = mapToApi({ ...concept, countsAsWorked: false });
-    expect(payload.countsAsWorked).toBe(false);
+  // Etapa 8N: countsAsWorked ya no existe en HourConcept (frontend) y
+  // mapToApi no lo envía nunca — ni hardcodeado a true, ni desde el
+  // concepto. Omitir la clave (en vez de forzar true) evita pisar en
+  // silencio un valor real que el concepto ya tuviera en la base al editar.
+  it("nunca envía countsAsWorked, ni hardcodeado ni de ninguna otra forma", () => {
+    const payload = mapToApi(concept);
+    expect(payload).not.toHaveProperty("countsAsWorked");
+  });
+});
+
+describe("buildHourConceptPath — endpoint real de update/updateStatus/remove (Etapa 8O)", () => {
+  it("arma /hour-concepts/:id", () => {
+    expect(buildHourConceptPath("concept-abc")).toBe("/hour-concepts/concept-abc");
+  });
+
+  it("usa el id real pasado, no un valor fijo", () => {
+    expect(buildHourConceptPath("otro-concepto")).toBe("/hour-concepts/otro-concepto");
+  });
+});
+
+// Etapa 8P: el primer intento de eliminar nunca manda force — si el backend
+// tiene uso histórico responde 409 y recién ahí, tras una segunda
+// confirmación explícita del usuario, se reintenta con force=true.
+describe("buildHourConceptRemovePath — delete sin uso vs eliminación forzada con uso histórico (Etapa 8P)", () => {
+  it("sin force: solo /hour-concepts/:id (primer intento, sin uso => delete físico directo)", () => {
+    expect(buildHourConceptRemovePath("concept-1")).toBe("/hour-concepts/concept-1");
+  });
+
+  it("force=false explícito se comporta igual que ausente", () => {
+    expect(buildHourConceptRemovePath("concept-1", false)).toBe("/hour-concepts/concept-1");
+  });
+
+  it("force=true: agrega ?force=true (segunda confirmación tras 409 HOUR_CONCEPT_IN_USE)", () => {
+    expect(buildHourConceptRemovePath("concept-1", true)).toBe("/hour-concepts/concept-1?force=true");
+  });
+});
+
+describe("buildHourConceptEmployeesPath / buildHourConceptEmployeePath — endpoints reales de agregar/quitar (Etapa 8N)", () => {
+  it("arma /hour-concepts/:id/employees para habilitar (POST)", () => {
+    expect(buildHourConceptEmployeesPath("concept-abc")).toBe("/hour-concepts/concept-abc/employees");
+  });
+
+  it("arma /hour-concepts/:id/employees/:employeeId para quitar (DELETE)", () => {
+    expect(buildHourConceptEmployeePath("concept-abc", "employee-1")).toBe("/hour-concepts/concept-abc/employees/employee-1");
+  });
+
+  it("usa los ids reales pasados, no valores fijos", () => {
+    expect(buildHourConceptEmployeesPath("otro-concepto")).toBe("/hour-concepts/otro-concepto/employees");
+    expect(buildHourConceptEmployeePath("otro-concepto", "otro-empleado")).toBe("/hour-concepts/otro-concepto/employees/otro-empleado");
   });
 });

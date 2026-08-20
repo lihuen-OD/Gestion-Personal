@@ -31,7 +31,18 @@ hourConceptRulesRouter.patch(
 
 // B. Reglas por concepto — /hour-concepts/:hourConceptId/rules (montado
 // aparte en routes.ts, mismo patrón que /employees/:employeeId/work-regimes).
-export const hourConceptRulesByConceptRouter = Router();
+//
+// mergeParams: true es obligatorio acá. routes.ts monta primero
+// apiRouter.use("/hour-concepts", hourConceptsRouter) y recién después
+// apiRouter.use("/hour-concepts/:hourConceptId/rules", hourConceptRulesByConceptRouter).
+// Como hourConceptsRouter no tiene ninguna ruta que matchee "/:id/rules",
+// Express cae al segundo mount — pero sin mergeParams, el router hijo
+// resetea req.params y pierde :hourConceptId (confirmado corriendo el mount
+// real de Express: req.params llega {} adentro del router hijo). Sin este
+// flag, requireParam(req, "hourConceptId") siempre tira 400
+// MISSING_ROUTE_PARAM, y el frontend lo muestra como "no pudimos cargar las
+// reglas horarias" incluso cuando el concepto sí tiene reglas.
+export const hourConceptRulesByConceptRouter = Router({ mergeParams: true });
 
 hourConceptRulesByConceptRouter.use(requireAuth);
 

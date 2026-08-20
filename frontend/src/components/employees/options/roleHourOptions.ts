@@ -7,8 +7,6 @@ export function userRoleOptions(current = "") {
   return uniqueOptions([current, ...roleOptions]);
 }
 
-export const hourOptions = () => [];
-
 export function useHourOptions() {
   const [options, setOptions] = useState<string[]>([]);
 

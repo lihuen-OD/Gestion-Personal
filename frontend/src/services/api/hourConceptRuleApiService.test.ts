@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mapHourConceptRuleFromApi } from "./hourConceptRuleApiService";
+import { buildRulesByConceptPath, mapHourConceptRuleFromApi } from "./hourConceptRuleApiService";
 
 describe("mapHourConceptRuleFromApi", () => {
   it("mapea una regla que no cruza medianoche, incluyendo el concepto anidado (id/code/name, nunca el nombre hardcodeado)", () => {
@@ -64,5 +64,24 @@ describe("mapHourConceptRuleFromApi", () => {
     });
 
     expect(rule.status).toBe("INACTIVO");
+  });
+
+  // Etapa 8M: response.data vacío ([]) es un concepto real sin reglas
+  // todavía — .map nunca lanza sobre un array vacío, así que esto nunca
+  // puede confundirse con un error real (eso lo decide el service según si
+  // la promesa de apiRequest resuelve o rechaza, no el largo del array).
+  it("un array vacío se mapea a un array vacío, nunca lanza ni se confunde con un error", () => {
+    const rules = ([] as Parameters<typeof mapHourConceptRuleFromApi>[0][]).map(mapHourConceptRuleFromApi);
+    expect(rules).toEqual([]);
+  });
+});
+
+describe("buildRulesByConceptPath — endpoint real que llama listByConcept (Etapa 8M)", () => {
+  it("arma exactamente /hour-concepts/:hourConceptId/rules, igual que la ruta montada en el backend", () => {
+    expect(buildRulesByConceptPath("concept-abc")).toBe("/hour-concepts/concept-abc/rules");
+  });
+
+  it("usa el id real del concepto que se está editando, no uno fijo", () => {
+    expect(buildRulesByConceptPath("otro-concepto-id")).toBe("/hour-concepts/otro-concepto-id/rules");
   });
 });

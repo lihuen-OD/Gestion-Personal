@@ -40,6 +40,14 @@ export function mapHourConceptRuleFromApi(item: ApiHourConceptRule): HourConcept
   };
 }
 
+// Etapa 8M: el bug real de "no pudimos cargar las reglas horarias" estaba en
+// el backend (mergeParams, ver hourConceptRules.routes.ts) — este endpoint
+// ya estaba bien armado del lado del frontend. Se extrae igual como función
+// pura para poder confirmarlo con un test directo, sin mockear la red.
+export function buildRulesByConceptPath(hourConceptId: string) {
+  return `/hour-concepts/${hourConceptId}/rules`;
+}
+
 function toQuery(filters?: Partial<HourConceptRuleFilters> & { page?: number; take?: number }) {
   const params = new URLSearchParams();
   params.set("page", String(filters?.page || 1));
@@ -62,7 +70,11 @@ export const hourConceptRuleApiService = {
   },
 
   async listByConcept(hourConceptId: string) {
-    const response = await apiRequest<ApiListResponse>(`/hour-concepts/${hourConceptId}/rules`, { apiCache: false });
+    const response = await apiRequest<ApiListResponse>(buildRulesByConceptPath(hourConceptId), { apiCache: false });
+    // response.data vacío es un catálogo real sin reglas todavía, no un error
+    // — .map sobre [] simplemente devuelve [], nunca lanza. El panel decide
+    // "empty state" vs. "error" según si esta promesa resuelve o rechaza,
+    // no según el largo del array (ver HourConceptRulesPanel.tsx).
     return response.data.map(mapHourConceptRuleFromApi);
   },
 

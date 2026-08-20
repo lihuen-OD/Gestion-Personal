@@ -40,7 +40,16 @@ workRegimesRouter.patch("/:id/status", requireAnyRole(adminRoles), validateBody(
 // B. Asignación de régimen a empleado — /employees/:employeeId/work-regimes
 // (router aparte para no mezclar el path param del catálogo con el del
 // empleado; se monta bajo /employees/:employeeId/work-regimes en routes.ts).
-export const employeeWorkRegimesRouter = Router();
+//
+// mergeParams: true es obligatorio (mismo bug confirmado y corregido en
+// hourConceptRules.routes.ts, Etapa 8M): routes.ts monta primero
+// apiRouter.use("/employees", employeesRouter), que no tiene ninguna ruta que
+// matchee "/:id/work-regimes", así que Express cae al segundo mount
+// (apiRouter.use("/employees/:employeeId/work-regimes", employeeWorkRegimesRouter))
+// — pero sin mergeParams ese router hijo pierde :employeeId por completo.
+// Sin este flag, requireParam(req, "employeeId") siempre tira 400
+// MISSING_ROUTE_PARAM (confirmado corriendo el mount real de Express).
+export const employeeWorkRegimesRouter = Router({ mergeParams: true });
 
 employeeWorkRegimesRouter.use(requireAuth);
 

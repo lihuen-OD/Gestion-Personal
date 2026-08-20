@@ -2,7 +2,7 @@ import type { RequestHandler } from "express";
 import { requestAuditContext } from "../../shared/audit/requestAuditContext";
 import { createTtlCache } from "../../shared/cache/ttlCache";
 import { requireParam } from "../../shared/http/params";
-import type { ListHourConceptEmployeesQuery, ListHourConceptsQuery } from "./hourConcepts.schemas";
+import type { EnableHourConceptEmployeesInput, ListHourConceptEmployeesQuery, ListHourConceptsQuery, RemoveHourConceptQuery } from "./hourConcepts.schemas";
 import { hourConceptsService } from "./hourConcepts.service";
 
 const hourConceptsReadCache = createTtlCache<Awaited<ReturnType<typeof hourConceptsService.list>>>(60_000);
@@ -31,5 +31,22 @@ export const hourConceptsController = {
   listEmployees: (async (req, res) => {
     const result = await hourConceptsService.listEmployees(requireParam(req, "id"), req.query as unknown as ListHourConceptEmployeesQuery, req.user!);
     res.json({ data: result.items, meta: result.meta });
+  }) satisfies RequestHandler,
+
+  enableEmployees: (async (req, res) => {
+    const result = await hourConceptsService.enableEmployees(requireParam(req, "id"), req.body as EnableHourConceptEmployeesInput, requestAuditContext(req));
+    res.status(201).json({ data: result });
+  }) satisfies RequestHandler,
+
+  disableEmployee: (async (req, res) => {
+    const result = await hourConceptsService.disableEmployee(requireParam(req, "id"), requireParam(req, "employeeId"), requestAuditContext(req));
+    res.json({ data: result });
+  }) satisfies RequestHandler,
+
+  remove: (async (req, res) => {
+    const { force } = req.query as unknown as RemoveHourConceptQuery;
+    const result = await hourConceptsService.remove(requireParam(req, "id"), force, requestAuditContext(req));
+    hourConceptsReadCache.clear();
+    res.json({ data: result });
   }) satisfies RequestHandler,
 };

@@ -1,5 +1,5 @@
-import { Pencil, Plus } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { Pencil, Plus, Power, Trash2 } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { HourConceptRulesPanel } from "../components/hour-concepts/HourConceptRulesPanel";
 import { AssociatedEmployeesPanel } from "../components/shared/AssociatedEmployeesPanel";
 import { OverflowCell } from "../components/ui/OverflowCell";
@@ -9,7 +9,8 @@ import { Section } from "../components/ui/Section";
 import { Button } from "../components/ui/Button";
 import { Badge } from "../components/ui/Badge";
 import { useAuth } from "../context/AuthContext";
-import { getUserErrorMessage } from "../services/api/apiClient";
+import { confirmAction } from "../services/appDialog";
+import { ApiError, getUserErrorMessage } from "../services/api/apiClient";
 import { hourConceptApiService } from "../services/api/hourConceptApiService";
 import type { AssociatedEmployeeFilters } from "../types/associatedEmployee.types";
 import type { HourConcept, HourConceptFilters, HourConceptKind } from "../types/hourConcept.types";
@@ -25,10 +26,6 @@ export function emptyConcept(code: string): HourConcept {
     name: "",
     kind: "NORMAL",
     status: "ACTIVO",
-    // Default solo para un concepto nuevo, todavía sin guardar — RRHH puede
-    // desmarcarlo antes de guardar. countsAsWorked real siempre viene de la
-    // API una vez persistido (nunca se fuerza en mapToApi).
-    countsAsWorked: true,
     createdAt: "",
     updatedAt: "",
   };
@@ -54,24 +51,17 @@ function getFilterOptions(items: HourConcept[]) {
   };
 }
 
-function ConceptEditor({ item, setItem }: { item: HourConcept; setItem: (item: HourConcept) => void }) {
+// Sección 1 — Datos del concepto. Solo los campos: el título/descripción y
+// los botones Guardar/Cancelar ya los da el <Section> que la envuelve, así
+// que esta función no repite ningún encabezado propio (evita la "card
+// dentro de card" que tenía la versión anterior de esta pantalla).
+function ConceptDataFields({ item, setItem }: { item: HourConcept; setItem: (item: HourConcept) => void }) {
   return (
-    <div className="hour-concept-editor">
-      <div className="info-note">
-        <b>Hora especial, no novedad</b>
-        <p>Sereno, guardia, manejo de colectivo, nocturna, feriado trabajado y horas extra son horas trabajadas clasificadas. No se cargan como novedades.</p>
-      </div>
-      <div className="form-grid">
-        <label>Codigo<input value={item.code} disabled /></label>
-        <label>Nombre *<input value={item.name} onChange={(event) => setItem({ ...item, name: event.target.value })} /></label>
-        <label>Tipo<select value={item.kind} onChange={(event) => setItem({ ...item, kind: event.target.value as HourConceptKind })}>{kinds.map((kind) => <option key={kind}>{kind}</option>)}</select></label>
-        <label>Estado<select value={item.status} onChange={(event) => setItem({ ...item, status: event.target.value as "ACTIVO" | "INACTIVO" })}><option>ACTIVO</option><option>INACTIVO</option></select></label>
-      </div>
-      <label className="check-card">
-        <input type="checkbox" checked={item.countsAsWorked} onChange={(event) => setItem({ ...item, countsAsWorked: event.target.checked })} />
-        Cuenta como trabajado
-      </label>
-      <small>Define si las horas clasificadas con este concepto se computan como tiempo trabajado.</small>
+    <div className="form-grid">
+      <label>Codigo<input value={item.code} disabled /></label>
+      <label>Nombre *<input value={item.name} onChange={(event) => setItem({ ...item, name: event.target.value })} /></label>
+      <label>Tipo<select value={item.kind} onChange={(event) => setItem({ ...item, kind: event.target.value as HourConceptKind })}>{kinds.map((kind) => <option key={kind}>{kind}</option>)}</select></label>
+      <label>Estado<select value={item.status} onChange={(event) => setItem({ ...item, status: event.target.value as "ACTIVO" | "INACTIVO" })}><option>ACTIVO</option><option>INACTIVO</option></select></label>
     </div>
   );
 }
@@ -85,6 +75,7 @@ export function HourConceptsPage() {
   const [apiItems, setApiItems] = useState<HourConcept[] | null>(null);
   const [isLoadingApi, setIsLoadingApi] = useState(true);
   const [loadFailed, setLoadFailed] = useState(false);
+  const editorRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -106,12 +97,19 @@ export function HourConceptsPage() {
     return () => { alive = false; };
   }, [refresh]);
 
+  // Al abrir "Editar"/"Crear", el detalle puede quedar bastante más abajo que
+  // la tabla — sin esto, el usuario tiene que buscarlo scrolleando a mano.
+  useEffect(() => {
+    if (editing) editorRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [editing]);
+
   const all = apiItems ?? [];
   const items = all.filter((item) => matchesFilters(item, filters));
   const options = getFilterOptions(all);
   const summary = useMemo(() => [
     ["Activas", all.filter((item) => item.status === "ACTIVO").length],
-  ], [all]);
+    ["Total configurados", all.length],
+  ] as const, [all]);
   const isExistingConcept = Boolean(editing && apiItems?.some((item) => item.id === editing.id));
 
   const { isRunning: isSaving, run: save } = useAsyncAction(async () => {
@@ -129,7 +127,7 @@ export function HourConceptsPage() {
 
       setEditing(saved || null);
       setRefresh((value) => value + 1);
-      setNotice("Hora especial guardada correctamente.");
+      setNotice("Concepto horario guardado correctamente.");
       setTimeout(() => setNotice(""), 2200);
     } catch (saveError) {
       setNotice(getUserErrorMessage(saveError, "No pudimos guardar el concepto horario. Revisá los datos e intentá nuevamente."));
@@ -137,15 +135,82 @@ export function HourConceptsPage() {
     }
   });
 
+  const toggleStatus = async (item: HourConcept) => {
+    const activating = item.status !== "ACTIVO";
+    const confirmed = await confirmAction(
+      activating
+        ? `¿Querés habilitar el concepto horario "${item.name}"?`
+        : `¿Querés deshabilitar el concepto horario "${item.name}"? Deja de aplicarse en la clasificación automática y en el fichador; no se borra su historial.`,
+      {
+        title: activating ? "Habilitar concepto horario" : "Deshabilitar concepto horario",
+        confirmLabel: activating ? "Habilitar" : "Deshabilitar",
+        tone: activating ? "primary" : "danger",
+      },
+    );
+    if (!confirmed) return;
+    try {
+      await hourConceptApiService.updateStatus(item.id, activating ? "ACTIVO" : "INACTIVO");
+      setRefresh((value) => value + 1);
+    } catch (statusError) {
+      setNotice(getUserErrorMessage(statusError, "No pudimos cambiar el estado del concepto horario. Intentá nuevamente."));
+      setTimeout(() => setNotice(""), 3000);
+    }
+  };
+
+  // Eliminación (Etapa 8P): primero se confirma sin saber todavía si tiene
+  // uso histórico. Si el backend responde 409 HOUR_CONCEPT_IN_USE, se pide
+  // una segunda confirmación explícita con el texto exacto de la regla de
+  // negocio, y recién ahí se reintenta con force=true (baja lógica, conserva
+  // el historial). Si no tiene uso, la primera llamada ya lo elimina del todo.
+  const removeConcept = async (item: HourConcept) => {
+    const confirmed = await confirmAction(
+      `¿Querés eliminar el concepto horario "${item.name}"? Esta acción no se puede deshacer.`,
+      { title: "Eliminar concepto horario", confirmLabel: "Eliminar", tone: "danger" },
+    );
+    if (!confirmed) return;
+
+    try {
+      await hourConceptApiService.remove(item.id);
+      if (editing?.id === item.id) setEditing(null);
+      setNotice("Este concepto fue eliminado definitivamente.");
+      setRefresh((value) => value + 1);
+      setTimeout(() => setNotice(""), 2500);
+      return;
+    } catch (removeError) {
+      if (!(removeError instanceof ApiError) || removeError.code !== "HOUR_CONCEPT_IN_USE") {
+        setNotice(getUserErrorMessage(removeError, "No pudimos eliminar el concepto horario."));
+        setTimeout(() => setNotice(""), 3500);
+        return;
+      }
+    }
+
+    const confirmedForced = await confirmAction(
+      "Este concepto tiene uso histórico. Si lo eliminás, dejará de estar disponible para nuevas cargas/asignaciones, pero el sistema conserva la trazabilidad de lo ya cargado. ¿Confirmás la eliminación?",
+      { title: "Eliminar concepto con uso histórico", confirmLabel: "Eliminar de todas formas", tone: "danger" },
+    );
+    if (!confirmedForced) return;
+
+    try {
+      await hourConceptApiService.remove(item.id, { force: true });
+      if (editing?.id === item.id) setEditing(null);
+      setNotice("Concepto horario eliminado. Se conserva el historial de lo ya cargado.");
+      setRefresh((value) => value + 1);
+      setTimeout(() => setNotice(""), 3000);
+    } catch (forceError) {
+      setNotice(getUserErrorMessage(forceError, "No pudimos eliminar el concepto horario."));
+      setTimeout(() => setNotice(""), 3500);
+    }
+  };
+
   const editable = roleLevel(user!.role) === 1;
 
   return (
     <>
       <PageHeader
         eyebrow="CONFIGURACION"
-        title="Horas especiales"
-        description="Catalogo de horas trabajadas clasificadas. Sereno, guardia, manejo de colectivo, nocturna, feriados y extras se cargan aca, no como novedades."
-        action={editable ? <Button variant="primary" icon={Plus} onClick={() => setEditing(emptyConcept(hourConceptApiService.getNextCode(all)))}>Crear hora especial</Button> : undefined}
+        title="Conceptos horarios"
+        description="Los conceptos horarios clasifican las horas trabajadas de cada jornada. Las reglas horarias definen en qué franjas aplica cada concepto."
+        action={editable ? <Button variant="primary" icon={Plus} onClick={() => setEditing(emptyConcept(hourConceptApiService.getNextCode(all)))}>Crear concepto horario</Button> : undefined}
       />
 
       {notice && <div className="toast">{notice}</div>}
@@ -153,12 +218,12 @@ export function HourConceptsPage() {
       <div className="stat-grid novelty-type-summary">
         {summary.map(([label, value]) => (
           <div className="stat-card" key={label}>
-            <div><small>{label}</small><strong>{value}</strong><span>Horas especiales</span></div>
+            <div><small>{label}</small><strong>{value}</strong><span>Conceptos horarios</span></div>
           </div>
         ))}
       </div>
 
-      <Section title="Listado de horas especiales" subtitle={isLoadingApi ? "Cargando catálogo..." : `${items.length} resultados segun filtros aplicados.`}>
+      <Section title="Listado de conceptos horarios" subtitle={isLoadingApi ? "Cargando catálogo..." : `${items.length} resultados segun filtros aplicados.`}>
         <div className="filters catalog-filters">
           <label className="search-field">
             <input placeholder="Buscar por codigo, nombre o tipo" value={filters.search} onChange={(event) => setFilters({ ...filters, search: event.target.value })} />
@@ -169,12 +234,12 @@ export function HourConceptsPage() {
         <DataTable
           status={isLoadingApi ? "loading" : loadFailed ? "error" : items.length === 0 ? "empty" : "ready"}
           minWidth={900}
-          emptyText="No hay horas especiales con los filtros aplicados."
-          errorMessage="No se pudo cargar el catalogo de horas especiales."
+          emptyText="No hay conceptos horarios con los filtros aplicados."
+          errorMessage="No se pudo cargar el catálogo de conceptos horarios."
           onRetry={() => setRefresh((value) => value + 1)}
         >
           <table>
-            <thead><tr><th>Codigo</th><th>Hora especial</th><th>Tipo</th><th>Estado</th><th>Computa</th><th>Accion</th></tr></thead>
+            <thead><tr><th>Codigo</th><th>Concepto horario</th><th>Tipo</th><th>Estado</th><th>Accion</th></tr></thead>
             <tbody>
               {items.map((item) => (
                 <tr key={item.id}>
@@ -182,8 +247,26 @@ export function HourConceptsPage() {
                   <td><OverflowCell value={item.name} /></td>
                   <td>{item.kind}</td>
                   <td><Badge tone={item.status === "ACTIVO" ? "success" : "neutral"}>{item.status}</Badge></td>
-                  <td><Badge tone={item.countsAsWorked ? "success" : "neutral"}>{item.countsAsWorked ? "Computa" : "No computa"}</Badge></td>
-                  <td>{editable ? <button className="table-link table-icon-action" title="Editar" aria-label="Editar" onClick={() => setEditing(item)}><Pencil size={14}/><span>Editar</span></button> : null}</td>
+                  <td>
+                    {editable ? (
+                      <div className="table-actions">
+                        <button className="table-icon-action" title="Editar" aria-label="Editar" onClick={() => setEditing(item)}>
+                          <Pencil size={14} /><span>Editar</span>
+                        </button>
+                        <button
+                          className="table-icon-action"
+                          title={item.status === "ACTIVO" ? "Deshabilitar" : "Habilitar"}
+                          aria-label={item.status === "ACTIVO" ? "Deshabilitar" : "Habilitar"}
+                          onClick={() => void toggleStatus(item)}
+                        >
+                          <Power size={14} /><span>{item.status === "ACTIVO" ? "Deshabilitar" : "Habilitar"}</span>
+                        </button>
+                        <button className="table-icon-action danger-link" title="Eliminar" aria-label="Eliminar" onClick={() => void removeConcept(item)}>
+                          <Trash2 size={14} /><span>Eliminar</span>
+                        </button>
+                      </div>
+                    ) : null}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -192,28 +275,37 @@ export function HourConceptsPage() {
       </Section>
 
       {editing && (
-        <Section
-          title={editing.name || "Nueva hora especial"}
-          subtitle="Definicion operativa interna para carga horaria. No se exporta a Finnegans."
-          action={<div className="hero-actions"><Button variant="subtle" onClick={() => setEditing(null)}>Cerrar</Button><Button variant="primary" onClick={save} disabled={isSaving}>{isSaving ? "Guardando..." : "Guardar hora especial"}</Button></div>}
-        >
-          <ConceptEditor item={editing} setItem={setEditing} />
+        <div ref={editorRef} className="detail-section-stack">
+          <Section
+            title={isExistingConcept ? "Editar concepto horario" : "Nuevo concepto horario"}
+            subtitle="Clasifica horas trabajadas. Las reglas horarias definen en qué franjas aplica."
+            action={<div className="hero-actions"><Button variant="subtle" onClick={() => setEditing(null)}>Cancelar</Button><Button variant="primary" onClick={save} disabled={isSaving}>{isSaving ? "Guardando..." : "Guardar"}</Button></div>}
+          >
+            <ConceptDataFields item={editing} setItem={setEditing} />
+          </Section>
+
           {isExistingConcept ? (
             <>
-              <HourConceptRulesPanel hourConceptId={editing.id} canEdit />
-              <h4>Empleados habilitados</h4>
+              <HourConceptRulesPanel hourConceptId={editing.id} canEdit={editable} />
               <AssociatedEmployeesPanel
                 key={editing.id}
+                variant="embedded"
+                title="Empleados habilitados"
+                description="Empleados con este concepto horario habilitado."
                 emptyText="Este concepto todavía no está habilitado para ningún empleado."
                 fetcher={(filters: AssociatedEmployeeFilters) => hourConceptApiService.getHourConceptEmployees(editing.id, filters)}
+                canEdit={editable}
+                onAddEmployees={(employeeIds) => hourConceptApiService.enableEmployees(editing.id, employeeIds)}
+                onRemoveEmployee={(item) => hourConceptApiService.disableEmployee(editing.id, item.employeeId)}
+                removeConfirmText={(item) => `¿Querés quitar el concepto horario "${editing.name}" para ${item.employee.lastName}, ${item.employee.firstName}?`}
               />
             </>
           ) : (
             <div className="info-note compact">
-              <p>Guardá la hora especial antes de configurar sus reglas horarias.</p>
+              <p>Guardá el concepto horario antes de configurar sus reglas horarias.</p>
             </div>
           )}
-        </Section>
+        </div>
       )}
     </>
   );

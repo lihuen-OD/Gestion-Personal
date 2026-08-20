@@ -697,6 +697,17 @@ model HourConcept {
   kind           HourConceptKind
   status         RecordStatus    @default(ACTIVO)
   countsAsWorked Boolean         @default(true)
+  // Eliminación lógica (Etapa 8P): se usa SOLO cuando el concepto tiene uso
+  // histórico real (TimeEntry/TimeSegment tienen FK obligatoria — Postgres
+  // rechaza el delete físico mientras existan filas, y aunque no las
+  // hubiera, Novelty.targetHourConceptId no tiene snapshot de nombre y
+  // perdería la trazabilidad). No se toca TimeEntry/TimeSegment/WorkShift/
+  // Novelty nunca: la fila de HourConcept sigue existiendo físicamente, así
+  // que todos sus joins históricos siguen resolviendo igual. deletedAt
+  // != null es lo que la UI usa para ocultarlo del catálogo activo; status
+  // ya vuelve a INACTIVO al mismo tiempo (misma semántica que "deshabilitado"
+  // para el fichador/clasificación, que ya filtran por status ACTIVO).
+  deletedAt      DateTime?       @db.Timestamptz(3)
   createdAt      DateTime        @default(now()) @db.Timestamptz(3)
   updatedAt      DateTime        @updatedAt @db.Timestamptz(3)
 

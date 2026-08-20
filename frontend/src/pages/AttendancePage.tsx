@@ -6,6 +6,7 @@ import { WorkShiftSegmentsPanel } from "../components/attendance/WorkShiftSegmen
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { EmptyState } from "../components/ui/EmptyState";
+import { LoadingState } from "../components/ui/LoadingState";
 import { PageHeader } from "../components/ui/PageHeader";
 import { Section } from "../components/ui/Section";
 import { StatCard } from "../components/ui/StatCard";
@@ -466,13 +467,13 @@ export function AttendancePage() {
       {error && <div className="form-error">{error}</div>}
 
       <Section title="Jornadas abiertas" subtitle="Ordenadas por riesgo: vencidas y con posible olvido de salida primero, sin esperar siempre a las 20hs.">
-        {loading ? <EmptyState text="Cargando jornadas abiertas..." icon={Clock3} /> : <ShiftRows items={summary?.openShifts || []} emptyText="No hay jornadas abiertas para esta fecha." showRisk onAction={openAction} onViewPhoto={openPunchPhoto} />}
+        {loading ? <LoadingState variant="table" columns={12} /> : <ShiftRows items={summary?.openShifts || []} emptyText="No hay jornadas abiertas para esta fecha." showRisk onAction={openAction} onViewPhoto={openPunchPhoto} />}
       </Section>
 
       {photoError ? <div className="form-error">{photoError}</div> : null}
 
       <Section title="Jornadas cerradas" subtitle="Jornadas procesadas con sus tramos calculados y carga horaria generada.">
-        {loading ? <EmptyState text="Cargando jornadas cerradas..." icon={CheckCircle2} /> : <ShiftRows items={summary?.closedShifts || []} emptyText="No hay jornadas cerradas para esta fecha." showSegments onAction={openAction} onViewPhoto={openPunchPhoto} onViewSegments={setSegmentsShift} />}
+        {loading ? <LoadingState variant="table" columns={10} /> : <ShiftRows items={summary?.closedShifts || []} emptyText="No hay jornadas cerradas para esta fecha." showSegments onAction={openAction} onViewPhoto={openPunchPhoto} onViewSegments={setSegmentsShift} />}
       </Section>
 
       <Section
@@ -517,7 +518,7 @@ export function AttendancePage() {
           <small>El servidor carga únicamente {OBSERVED_PAGE_SIZE} por vez</small>
         </div>
         {observationsError ? <div className="form-error">{observationsError}</div> : null}
-        {observationsLoading ? <EmptyState text="Cargando problemas de fichada..." icon={AlertTriangle} /> : (
+        {observationsLoading ? <LoadingState variant="table" columns={6} rows={4} /> : (
           <>
             <ObservationRows items={observations} onViewPhoto={openPunchPhoto} onResolve={(kind, id) => { setReviewAction({ kind, id }); setReviewReason(""); setActionError(""); }} onViewSegments={setSegmentsShift} />
             {observationsMeta.hasMore ? <div className="attendance-load-more"><Button variant="subtle" onClick={loadMoreObservations} loading={observationsLoadingMore}>Cargar 10 más</Button></div> : null}
@@ -596,7 +597,7 @@ export function AttendancePage() {
 
       {photoLoading ? (
         <Modal title="Evidencia de fichada" close={() => undefined} closeDisabled>
-          <EmptyState text="Cargando evidencia fotográfica..." icon={Camera} />
+          <LoadingState text="Cargando evidencia fotográfica..." />
         </Modal>
       ) : null}
     </div>

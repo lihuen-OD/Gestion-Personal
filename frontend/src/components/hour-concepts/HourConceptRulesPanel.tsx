@@ -141,8 +141,8 @@ export function HourConceptRulesPanel({ hourConceptId, canEdit }: { hourConceptI
       <div className="block-card-head">
         <div>
           <h4>Reglas horarias</h4>
-          <p>Definen cuándo aplica este concepto (franja horaria), no su nombre.</p>
-          <small>Si dos reglas se superponen, el sistema usa la de mayor prioridad. Dos reglas superpuestas con la misma prioridad no están permitidas.</small>
+          <p>Franjas horarias en las que aplica este concepto.</p>
+          <small>Si se superponen, gana la de mayor prioridad.</small>
         </div>
         {canEdit ? (
           <div className="tracked-actions">

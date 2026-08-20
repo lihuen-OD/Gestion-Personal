@@ -136,9 +136,6 @@
 .catalog-link-list{display:grid;gap:10px}
 .catalog-link-row{display:grid;grid-template-columns:130px 1.2fr 1.2fr 86px 110px 1fr 34px;gap:9px;align-items:end;padding:12px;border:1px solid #e1e8ee;border-radius:10px;background:#fbfdfe}
 .catalog-link-row input,.catalog-link-row select{width:100%}
-.hour-concept-editor{display:grid;gap:16px}
-.hour-concept-editor .catalog-check-block{margin:0 18px}
-.hour-concept-editor>.catalog-finnegans{padding-top:0}
 .document-category-editor,.audit-parameter-editor{display:grid;gap:16px}
 .document-category-editor .catalog-check-block,.audit-parameter-editor .catalog-check-block{margin:0 18px}
 @media(max-width:1180px){.catalog-filters,.catalog-link-row,.novelty-type-summary,.novelty-color-grid{grid-template-columns:1fr 1fr}.novelty-type-summary{grid-template-columns:repeat(2,1fr)}}
@@ -1317,7 +1314,10 @@ html,body,#root,.app-shell{
 /* Attendance review inbox */
 .attendance-observed-panel{border-color:#f0d8d8!important}
 .attendance-observed-panel .panel-head{background:linear-gradient(180deg,#fff,#fffafa)!important}
-.attendance-observed-filters{display:grid;grid-template-columns:minmax(180px,.7fr) minmax(300px,1.5fr) minmax(190px,.8fr) auto;gap:12px;align-items:end;padding:16px;border:1px solid var(--ds-slate-200);border-radius:10px;background:var(--ds-slate-50)}
+/* Etapa 8R: sin card propia — ya vive dentro de la card de la Section
+   "Problemas de fichada"; antes tenía su propio borde+fondo+radio, lo que
+   producía "card dentro de card". Se mantiene el grid de columnas. */
+.attendance-observed-filters{display:grid;grid-template-columns:minmax(180px,.7fr) minmax(300px,1.5fr) minmax(190px,.8fr) auto;gap:12px;align-items:end;padding:0 0 16px;border-bottom:1px solid var(--ds-slate-100)}
 .attendance-observed-filters label>span{display:block;margin-bottom:6px;color:var(--ds-slate-600);font-size:11px;font-weight:600}
 .attendance-observed-filters input,.attendance-observed-filters select{width:100%;height:40px;min-height:40px}
 .attendance-filter-control{position:relative}
@@ -1992,3 +1992,35 @@ a.employee-hours-status-item:hover{border-color:var(--ds-blue-300);background:va
 @media(max-width:1200px){.settings-inline-form{grid-template-columns:repeat(3,1fr)}.special-rule-form .form-grid{grid-template-columns:repeat(2,1fr)}}
 @media(max-width:1500px){.settings-inline-form.shift-template-form{grid-template-columns:repeat(4,1fr)}}
 @media(max-width:700px){.settings-inline-form,.special-rule-form .form-grid{grid-template-columns:1fr}.people-search-toolbar{align-items:stretch;flex-direction:column}.people-status-filter{min-width:0}}
+
+/* Auditoría UI/UX — variantes reutilizables (compact/embedded) para que un
+   componente pesado (Section/AssociatedEmployeesPanel/EmptyState) pueda
+   vivir DENTRO de otra card sin duplicar borde/sombra/padding. Selectores
+   compuestos + !important porque .panel/.panel-head/.panel-body/.empty/
+   .filters ya tienen reglas !important más arriba en este archivo — un
+   selector compuesto (dos clases) gana por especificidad sobre esas reglas
+   de una sola clase, sin importar el orden en el archivo. */
+.panel.panel-embedded{border:0!important;box-shadow:none!important;background:transparent!important;border-radius:0!important;margin-bottom:0!important;overflow:visible!important}
+.panel-embedded>.panel-head{padding:0 0 12px!important;border-bottom:0!important;min-height:auto!important;background:transparent!important}
+.panel-embedded>.panel-head h3{font-size:14px!important}
+.panel-embedded>.panel-body{padding:0!important;background:transparent!important}
+.panel.panel-compact{margin-bottom:12px!important}
+.panel-compact>.panel-head{padding:12px 16px!important;min-height:auto!important}
+.panel-compact>.panel-body{padding:14px 16px!important}
+
+.empty.empty-compact{min-height:auto!important;padding:10px 0!important;display:flex!important;align-items:center;justify-content:flex-start;gap:10px;color:var(--color-text-secondary,#64778a);font-size:13px;text-align:left}
+
+.filters.filters-embedded{border:0!important;box-shadow:none!important;background:transparent!important;padding:0 0 14px!important;margin:0!important;border-radius:0!important}
+
+.associated-employees-panel.embedded .block-card-head{padding-top:0}
+
+/* Pila de secciones de un editor (piloto: HourConceptsPage) — separación
+   vertical consistente entre bloques hermanos sin envolverlos en otra card. */
+.detail-section-stack{display:grid;gap:20px}
+
+/* Botones/acciones: nunca se cortan ni se dejan comprimir por un texto largo
+   al lado (regla B de la auditoría). Ninguna de estas propiedades estaba
+   declarada antes en .button/.panel-actions/.tracked-actions/.hero-actions,
+   así que no compite con ningún !important existente. */
+.button{white-space:nowrap}
+.panel-actions,.tracked-actions,.hero-actions,.page-actions{flex-shrink:0}
