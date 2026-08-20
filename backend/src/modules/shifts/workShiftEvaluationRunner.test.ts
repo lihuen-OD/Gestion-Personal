@@ -259,6 +259,24 @@ describe("Caso F — régimen laboral + vigencia/weekdays de la asignación (Eta
     expect(upsertedAlertTypes()).toContain("TURNO_NO_IDENTIFICADO");
   });
 
+  it("Etapa 8K — asignación DESHABILITADO que no aplica hoy por weekday, con la fichada cerca del horario general del mismo turno, bajo régimen alertOnOutOfShift=false: no genera ruido (POSSIBLE_SHIFT_CONFIGURATION_MISSING ahora también es suprimible)", async () => {
+    mockedPrisma.shiftAssignment.findMany.mockResolvedValue([{ ...mondayOnlyAssignment, status: "DESHABILITADO" }]);
+    mockedPrisma.shiftTemplate.findMany.mockResolvedValue([disabledTemplate]);
+    mockedPrisma.employeeWorkRegime.findFirst.mockResolvedValue({
+      workRegime: { kind: "TURNO_FLEXIBLE", alertOnOutOfShift: false },
+    });
+
+    // 07:05 hora Argentina = 10:05 UTC, dentro de la tolerancia general de
+    // disabledTemplate (07:00 ± 10min) — la asignación DESHABILITADO no
+    // aplica un martes (weekdays: [1]), así que esto cae en GENERAL_UNASSIGNED.
+    // Antes de la corrección de la Etapa 8K, este caso SÍ generaba la alerta
+    // (confirmado corriendo este mismo test contra el código previo) — era
+    // exactamente el ruido documentado como riesgo pendiente en la Etapa 8J.
+    await evaluateShiftEntry("employee-1", "shift-1", new Date("2026-08-18T10:05:00.000Z"));
+
+    expect(upsertedAlertTypes()).not.toContain("POSSIBLE_SHIFT_CONFIGURATION_MISSING");
+  });
+
   it("weekdays vacío en la asignación (comportamiento anterior): matchea igual un martes, sin generar TURNO_NO_IDENTIFICADO ni SHIFT_NOT_ENABLED_FOR_EMPLOYEE", async () => {
     mockedPrisma.shiftAssignment.findMany.mockResolvedValue([
       { shiftTemplateId: "t1", status: "HABILITADO", effectiveFrom: new Date("2026-01-01T00:00:00.000Z"), effectiveTo: null, weekdays: [] },
@@ -271,5 +289,218 @@ describe("Caso F — régimen laboral + vigencia/weekdays de la asignación (Eta
 
     expect(upsertedAlertTypes()).not.toContain("TURNO_NO_IDENTIFICADO");
     expect(upsertedAlertTypes()).not.toContain("SHIFT_NOT_ENABLED_FOR_EMPLOYEE");
+  });
+});
+
+// Etapa 8K: diagnóstico + corrección puntual sobre el ruido documentado en la
+// Etapa 8J. Único cambio de comportamiento: POSSIBLE_SHIFT_CONFIGURATION_MISSING
+// pasa a ser suprimible por alertOnOutOfShift=false (ver SUPPRESSIBLE_OUT_OF_SHIFT_ALERTS
+// en workShiftEvaluationRunner.ts). Todo lo demás en este bloque documenta
+// comportamiento que ya era correcto y no cambió.
+describe("Etapa 8K — régimen laboral y las 3 alertas de falta/configuración de turno", () => {
+  // 07:05 ART = 10:05 UTC, dentro de la tolerancia general de disabledTemplate (07:00 ±10min).
+  const withinGeneralTolerance = new Date("2026-08-18T10:05:00.000Z");
+  // 20:00 ART = 23:00 UTC del mismo martes, lejos de cualquier tolerancia -> NO_MATCH real.
+  const farFromAnyShift = new Date("2026-08-18T23:00:00.000Z");
+
+  describe("A. Régimen laboral y supresión", () => {
+    it("alertOnOutOfShift=false suprime TURNO_NO_IDENTIFICADO (sin ningún turno ni asignación)", async () => {
+      mockedPrisma.shiftAssignment.findMany.mockResolvedValue([]);
+      mockedPrisma.shiftTemplate.findMany.mockResolvedValue([]);
+      mockedPrisma.employeeWorkRegime.findFirst.mockResolvedValue({ workRegime: { kind: "SIN_TURNO", alertOnOutOfShift: false } });
+
+      await evaluateShiftEntry("employee-1", "shift-1", farFromAnyShift);
+
+      expect(upsertedAlertTypes()).not.toContain("TURNO_NO_IDENTIFICADO");
+    });
+
+    it("alertOnOutOfShift=false suprime SHIFT_NOT_ENABLED_FOR_EMPLOYEE (asignación deshabilitada aplicable)", async () => {
+      mockedPrisma.shiftAssignment.findMany.mockResolvedValue([{ shiftTemplateId: "t1", status: "DESHABILITADO" }]);
+      mockedPrisma.shiftTemplate.findMany.mockResolvedValue([disabledTemplate]);
+      mockedPrisma.employeeWorkRegime.findFirst.mockResolvedValue({ workRegime: { kind: "TURNO_FLEXIBLE", alertOnOutOfShift: false } });
+
+      await evaluateShiftEntry("employee-1", "shift-1", withinGeneralTolerance);
+
+      expect(upsertedAlertTypes()).not.toContain("SHIFT_NOT_ENABLED_FOR_EMPLOYEE");
+    });
+
+    it("alertOnOutOfShift=false suprime POSSIBLE_SHIFT_CONFIGURATION_MISSING (turno general, sin asignación)", async () => {
+      mockedPrisma.shiftAssignment.findMany.mockResolvedValue([]);
+      mockedPrisma.shiftTemplate.findMany.mockResolvedValue([disabledTemplate]);
+      mockedPrisma.employeeWorkRegime.findFirst.mockResolvedValue({ workRegime: { kind: "TURNO_FLEXIBLE", alertOnOutOfShift: false } });
+
+      await evaluateShiftEntry("employee-1", "shift-1", withinGeneralTolerance);
+
+      expect(upsertedAlertTypes()).not.toContain("POSSIBLE_SHIFT_CONFIGURATION_MISSING");
+    });
+
+    it("alertOnOutOfShift=true permite las 3 alertas de falta/configuración de turno cuando corresponden", async () => {
+      mockedPrisma.shiftAssignment.findMany.mockResolvedValue([]);
+      mockedPrisma.shiftTemplate.findMany.mockResolvedValue([disabledTemplate]);
+      mockedPrisma.employeeWorkRegime.findFirst.mockResolvedValue({ workRegime: { kind: "TURNO_OBLIGATORIO", alertOnOutOfShift: true } });
+
+      await evaluateShiftEntry("employee-1", "shift-1", withinGeneralTolerance);
+
+      expect(upsertedAlertTypes()).toContain("POSSIBLE_SHIFT_CONFIGURATION_MISSING");
+    });
+
+    it("sin régimen laboral vigente, ninguna de las 3 se suprime (comportamiento por defecto, sin cambios)", async () => {
+      mockedPrisma.shiftAssignment.findMany.mockResolvedValue([]);
+      mockedPrisma.shiftTemplate.findMany.mockResolvedValue([disabledTemplate]);
+      mockedPrisma.employeeWorkRegime.findFirst.mockResolvedValue(null);
+
+      await evaluateShiftEntry("employee-1", "shift-1", withinGeneralTolerance);
+
+      expect(upsertedAlertTypes()).toContain("POSSIBLE_SHIFT_CONFIGURATION_MISSING");
+    });
+  });
+
+  describe("B. POSSIBLE_SHIFT_CONFIGURATION_MISSING", () => {
+    it("se genera si hay un turno general compatible sin ninguna asignación y el régimen exige alerta", async () => {
+      mockedPrisma.shiftAssignment.findMany.mockResolvedValue([]);
+      mockedPrisma.shiftTemplate.findMany.mockResolvedValue([disabledTemplate]);
+      mockedPrisma.employeeWorkRegime.findFirst.mockResolvedValue({ workRegime: { kind: "TURNO_OBLIGATORIO", alertOnOutOfShift: true } });
+
+      await evaluateShiftEntry("employee-1", "shift-1", withinGeneralTolerance);
+
+      expect(upsertedAlertTypes()).toContain("POSSIBLE_SHIFT_CONFIGURATION_MISSING");
+    });
+
+    it("no se duplica si ya existe una alerta activa para la misma jornada (mismo upsert key [workShiftId, type])", async () => {
+      mockedPrisma.shiftAssignment.findMany.mockResolvedValue([]);
+      mockedPrisma.shiftTemplate.findMany.mockResolvedValue([disabledTemplate]);
+      mockedPrisma.employeeWorkRegime.findFirst.mockResolvedValue(null);
+
+      await evaluateShiftEntry("employee-1", "shift-1", withinGeneralTolerance);
+      await evaluateShiftEntry("employee-1", "shift-1", withinGeneralTolerance);
+
+      const calls = mockedPrisma.shiftAlert.upsert.mock.calls.filter((call) => call[0]?.create?.type === "POSSIBLE_SHIFT_CONFIGURATION_MISSING");
+      expect(calls).toHaveLength(2); // dos evaluaciones -> dos upserts...
+      expect(calls[0]![0].where).toEqual(calls[1]![0].where); // ...pero contra la misma fila (mismo where), no una nueva cada vez
+    });
+  });
+
+  describe("C. SHIFT_NOT_ENABLED_FOR_EMPLOYEE", () => {
+    it("se genera si hay una asignación deshabilitada que sí aplica hoy, y el régimen exige alerta", async () => {
+      mockedPrisma.shiftAssignment.findMany.mockResolvedValue([{ shiftTemplateId: "t1", status: "DESHABILITADO" }]); // sin weekdays -> aplica siempre
+      mockedPrisma.shiftTemplate.findMany.mockResolvedValue([disabledTemplate]);
+      mockedPrisma.employeeWorkRegime.findFirst.mockResolvedValue({ workRegime: { kind: "TURNO_OBLIGATORIO", alertOnOutOfShift: true } });
+
+      await evaluateShiftEntry("employee-1", "shift-1", withinGeneralTolerance);
+
+      expect(upsertedAlertTypes()).toContain("SHIFT_NOT_ENABLED_FOR_EMPLOYEE");
+    });
+
+    it("no se genera si la asignación deshabilitada no aplica hoy por weekday (cae fuera de todo turno propio)", async () => {
+      mockedPrisma.shiftAssignment.findMany.mockResolvedValue([
+        { shiftTemplateId: "t1", status: "DESHABILITADO", effectiveFrom: new Date("2026-01-01T00:00:00.000Z"), effectiveTo: null, weekdays: [1] },
+      ]);
+      mockedPrisma.shiftTemplate.findMany.mockResolvedValue([disabledTemplate]);
+      mockedPrisma.employeeWorkRegime.findFirst.mockResolvedValue({ workRegime: { kind: "TURNO_OBLIGATORIO", alertOnOutOfShift: true } });
+
+      await evaluateShiftEntry("employee-1", "shift-1", farFromAnyShift); // martes, lejos de todo horario
+
+      expect(upsertedAlertTypes()).not.toContain("SHIFT_NOT_ENABLED_FOR_EMPLOYEE");
+    });
+
+    it("no se genera si la asignación deshabilitada está vencida (effectiveTo pasado)", async () => {
+      mockedPrisma.shiftAssignment.findMany.mockResolvedValue([
+        { shiftTemplateId: "t1", status: "DESHABILITADO", effectiveFrom: new Date("2026-01-01T00:00:00.000Z"), effectiveTo: new Date("2026-06-30T00:00:00.000Z"), weekdays: [] },
+      ]);
+      mockedPrisma.shiftTemplate.findMany.mockResolvedValue([disabledTemplate]);
+      mockedPrisma.employeeWorkRegime.findFirst.mockResolvedValue({ workRegime: { kind: "TURNO_OBLIGATORIO", alertOnOutOfShift: true } });
+
+      await evaluateShiftEntry("employee-1", "shift-1", withinGeneralTolerance); // 2026-08-18, posterior a effectiveTo
+
+      expect(upsertedAlertTypes()).not.toContain("SHIFT_NOT_ENABLED_FOR_EMPLOYEE");
+      // al no contar como "propia", cae en el camino general (POSSIBLE_SHIFT_CONFIGURATION_MISSING), no en NO_MATCH.
+      expect(upsertedAlertTypes()).toContain("POSSIBLE_SHIFT_CONFIGURATION_MISSING");
+    });
+
+    it("no se genera si la asignación deshabilitada todavía no comenzó (effectiveFrom futuro)", async () => {
+      mockedPrisma.shiftAssignment.findMany.mockResolvedValue([
+        { shiftTemplateId: "t1", status: "DESHABILITADO", effectiveFrom: new Date("2026-09-01T00:00:00.000Z"), effectiveTo: null, weekdays: [] },
+      ]);
+      mockedPrisma.shiftTemplate.findMany.mockResolvedValue([disabledTemplate]);
+      mockedPrisma.employeeWorkRegime.findFirst.mockResolvedValue({ workRegime: { kind: "TURNO_OBLIGATORIO", alertOnOutOfShift: true } });
+
+      await evaluateShiftEntry("employee-1", "shift-1", withinGeneralTolerance); // 2026-08-18, anterior a effectiveFrom
+
+      expect(upsertedAlertTypes()).not.toContain("SHIFT_NOT_ENABLED_FOR_EMPLOYEE");
+    });
+  });
+
+  describe("D. TURNO_NO_IDENTIFICADO", () => {
+    it("se genera cuando no hay ningún turno compatible y el régimen exige alerta", async () => {
+      mockedPrisma.shiftAssignment.findMany.mockResolvedValue([]);
+      mockedPrisma.shiftTemplate.findMany.mockResolvedValue([]);
+      mockedPrisma.employeeWorkRegime.findFirst.mockResolvedValue({ workRegime: { kind: "TURNO_OBLIGATORIO", alertOnOutOfShift: true } });
+
+      await evaluateShiftEntry("employee-1", "shift-1", farFromAnyShift);
+
+      expect(upsertedAlertTypes()).toContain("TURNO_NO_IDENTIFICADO");
+    });
+
+    it("se suprime cuando el régimen no alerta fuera de turno", async () => {
+      mockedPrisma.shiftAssignment.findMany.mockResolvedValue([]);
+      mockedPrisma.shiftTemplate.findMany.mockResolvedValue([]);
+      mockedPrisma.employeeWorkRegime.findFirst.mockResolvedValue({ workRegime: { kind: "SIN_TURNO", alertOnOutOfShift: false } });
+
+      await evaluateShiftEntry("employee-1", "shift-1", farFromAnyShift);
+
+      expect(upsertedAlertTypes()).not.toContain("TURNO_NO_IDENTIFICADO");
+    });
+  });
+
+  describe("E. Backward compatibility", () => {
+    it("sin régimen laboral, el caso histórico (sin turno compatible) sigue generando TURNO_NO_IDENTIFICADO", async () => {
+      mockedPrisma.shiftAssignment.findMany.mockResolvedValue([]);
+      mockedPrisma.shiftTemplate.findMany.mockResolvedValue([]);
+      mockedPrisma.employeeWorkRegime.findFirst.mockResolvedValue(null);
+
+      await evaluateShiftEntry("employee-1", "shift-1", farFromAnyShift);
+
+      expect(upsertedAlertTypes()).toContain("TURNO_NO_IDENTIFICADO");
+    });
+
+    it("weekdays vacío en una asignación habilitada conserva el comportamiento anterior a la Etapa 8J/8K (matchea cualquier día)", async () => {
+      mockedPrisma.shiftAssignment.findMany.mockResolvedValue([
+        { shiftTemplateId: "t1", status: "HABILITADO", effectiveFrom: new Date("2026-01-01T00:00:00.000Z"), effectiveTo: null, weekdays: [] },
+      ]);
+      mockedPrisma.shiftTemplate.findMany.mockResolvedValue([disabledTemplate]);
+      mockedPrisma.employeeWorkRegime.findFirst.mockResolvedValue(null);
+
+      await evaluateShiftEntry("employee-1", "shift-1", withinGeneralTolerance);
+
+      expect(upsertedAlertTypes()).not.toContain("TURNO_NO_IDENTIFICADO");
+      expect(upsertedAlertTypes()).not.toContain("SHIFT_NOT_ENABLED_FOR_EMPLOYEE");
+      expect(upsertedAlertTypes()).not.toContain("POSSIBLE_SHIFT_CONFIGURATION_MISSING");
+    });
+  });
+
+  describe("F. No regresión", () => {
+    it("alertOnOutOfShift=false no suprime SALIDA_ANTICIPADA/JORNADA_EXTENDIDA (alertas críticas ortogonales al turno)", async () => {
+      mockedPrisma.workShift.findUnique.mockResolvedValue({
+        id: "shift-1",
+        startAt: new Date("2026-08-18T10:00:00.000Z"),
+        shiftTemplateId: "t1",
+        totalMinutes: 500,
+      });
+      mockedPrisma.shiftTemplate.findUnique.mockResolvedValue(disabledTemplate);
+      mockedPrisma.shiftAssignment.findUnique.mockResolvedValue({ status: "HABILITADO" });
+
+      await evaluateShiftExit("employee-1", "shift-1", new Date("2026-08-18T18:30:00.000Z"));
+
+      expect(upsertedAlertTypes()).toContain("JORNADA_EXTENDIDA");
+    });
+
+    it("las alertas de clasificación de conceptos horarios no dependen del régimen ni de isOutOfShiftAlertSuppressed (no reciben régimen como parámetro)", async () => {
+      await notifyClassificationAlerts("employee-1", "shift-1", [
+        { startAt: new Date("2026-08-18T00:00:00.000Z"), minutes: 180, conceptStatus: "CONCEPTO_NO_HABILITADO" },
+      ]);
+
+      expect(upsertedAlertTypes()).toContain("CONCEPTO_NO_HABILITADO");
+      expect(mockedPrisma.employeeWorkRegime.findFirst).not.toHaveBeenCalled();
+    });
   });
 });

@@ -123,13 +123,32 @@ function alertTypeForMatch(match: ShiftMatchResult): ShiftAlertTypeValue | null 
   return null;
 }
 
-// Las únicas dos alertas que un régimen con alertOnOutOfShift = false puede
-// suprimir: "no tiene turno compatible" y "el turno existe pero no está
-// habilitado para este empleado". POSSIBLE_SHIFT_CONFIGURATION_MISSING
-// (turno general de otro empleado que matcheó por coincidencia) no está en
-// esta lista a propósito — no es lo mismo que "este empleado no necesita
-// turno", sigue siendo una señal de configuración a revisar.
-const SUPPRESSIBLE_OUT_OF_SHIFT_ALERTS: ReadonlySet<ShiftAlertTypeValue> = new Set(["TURNO_NO_IDENTIFICADO", "SHIFT_NOT_ENABLED_FOR_EMPLOYEE"]);
+// Las tres alertas que un régimen con alertOnOutOfShift = false puede
+// suprimir: "no tiene turno compatible", "el turno existe pero no está
+// habilitado para este empleado" y "posible falta de configuración de
+// turno". Las tres son, en esencia, variantes de "este empleado no matcheó
+// contra un turno propio válido" — exactamente lo que alertOnOutOfShift=false
+// dice que no interesa vigilar para este régimen.
+//
+// Historial (Etapa 8K): hasta la Etapa 8J, POSSIBLE_SHIFT_CONFIGURATION_MISSING
+// quedaba fuera de esta lista a propósito, porque antes solo se generaba
+// cuando el empleado no tenía ninguna relación con el turno general que
+// matcheó por coincidencia — una señal de configuración real, independiente
+// del régimen. Pero desde que matchShiftForEmployee (Etapa 8J) empezó a
+// filtrar los turnos "propios" por vigencia/weekday, una asignación
+// HABILITADO o DESHABILITADO que no aplica ese día también cae en
+// GENERAL_UNASSIGNED si la fichada coincide con la tolerancia general del
+// mismo turno — y ese caso SÍ es "este empleado está fuera de su propio
+// turno hoy", el escenario exacto que alertOnOutOfShift=false existe para
+// silenciar. Se decidió sumarla a la lista en vez de distinguir el origen
+// exacto del GENERAL_UNASSIGNED (turno ajeno vs. turno propio no aplicable
+// hoy), que hubiera requerido un campo/lógica nueva en ShiftMatchResult sin
+// necesidad real.
+const SUPPRESSIBLE_OUT_OF_SHIFT_ALERTS: ReadonlySet<ShiftAlertTypeValue> = new Set([
+  "TURNO_NO_IDENTIFICADO",
+  "SHIFT_NOT_ENABLED_FOR_EMPLOYEE",
+  "POSSIBLE_SHIFT_CONFIGURATION_MISSING",
+]);
 
 // Si el empleado no tiene régimen vigente, o el régimen vigente exige alertar
 // fuera de turno (alertOnOutOfShift = true), el comportamiento es exactamente
