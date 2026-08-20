@@ -1,8 +1,10 @@
-import { Power, X } from "lucide-react";
+import { Power, UserPlus, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { EmployeeRemoteSelector } from "../employees/EmployeeRemoteSelector";
+import { EmptyState } from "../ui/EmptyState";
 import { LoadingState } from "../ui/LoadingState";
 import { ErrorState } from "../ui/ErrorState";
+import { Modal } from "../ui/Modal";
 import { TableShell } from "../ui/TableShell";
 import { Button } from "../ui/Button";
 import { Badge } from "../ui/Badge";
@@ -27,6 +29,10 @@ export function ShiftEmployeesPanel({ shiftTemplateId, canEdit }: { shiftTemplat
   const [weekdays, setWeekdays] = useState<number[]>([]);
   const [observation, setObservation] = useState("");
   const [notice, setNotice] = useState("");
+  // El formulario de asignar (selector remoto + vigencia) vive en un modal
+  // (mismo patrón que AssociatedEmployeesPanel) — antes quedaba incrustado
+  // inline, ocupando un bloque pesado arriba de las dos tablas.
+  const [addOpen, setAddOpen] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -60,6 +66,7 @@ export function ShiftEmployeesPanel({ shiftTemplateId, canEdit }: { shiftTemplat
       setEffectiveTo("");
       setWeekdays([]);
       setObservation("");
+      setAddOpen(false);
       setNotice("Empleados asignados correctamente.");
       setLoadRetry((value) => value + 1);
       setTimeout(() => setNotice(""), 2200);
@@ -67,6 +74,11 @@ export function ShiftEmployeesPanel({ shiftTemplateId, canEdit }: { shiftTemplat
       setNotice(reason instanceof Error ? reason.message : "No pudimos asignar el turno.");
     }
   });
+
+  const closeAddModal = () => {
+    setAddOpen(false);
+    setSelected([]);
+  };
 
   const toggle = async (assignment: ShiftAssignment) => {
     const activating = assignment.status === "DESHABILITADO";
@@ -106,23 +118,15 @@ export function ShiftEmployeesPanel({ shiftTemplateId, canEdit }: { shiftTemplat
   return (
     <div className="shift-employees-panel">
       {notice ? <div className="toast">{notice}</div> : null}
+
       {canEdit ? (
-        <div className="rule-people-field">
-          <span>Asignar empleados a este turno</span>
-          <EmployeeRemoteSelector selected={selected} multiple showStatusFilter wide={false} excludeIds={enabledEmployeeIds} onChange={setSelected} />
-          <div className="form-grid">
-            <ShiftAssignmentVigencyFields
-              effectiveFrom={effectiveFrom}
-              effectiveTo={effectiveTo}
-              weekdays={weekdays}
-              onEffectiveFromChange={setEffectiveFrom}
-              onEffectiveToChange={setEffectiveTo}
-              onWeekdaysChange={setWeekdays}
-            />
+        <div className="block-card-head">
+          <div>
+            <h4>Empleados asignados</h4>
+            <p>Empleados habilitados y deshabilitados para este turno.</p>
           </div>
-          <label className="field"><span>Observación (opcional)</span><input value={observation} onChange={(e) => setObservation(e.target.value)} placeholder="Ej: rota semana por medio con turno tarde" /></label>
-          <div className="rule-form-actions">
-            <Button variant="primary" disabled={isAssigning || !selected.length || !effectiveFrom} onClick={assignSelected}>{isAssigning ? "Asignando..." : "Asignar seleccionados"}</Button>
+          <div className="tracked-actions">
+            <Button variant="primary" icon={UserPlus} onClick={() => setAddOpen(true)}>Asignar empleados</Button>
           </div>
         </div>
       ) : null}
@@ -155,7 +159,7 @@ export function ShiftEmployeesPanel({ shiftTemplateId, canEdit }: { shiftTemplat
             </tbody>
           </table>
         </TableShell>
-      ) : <div className="empty">Ningún empleado tiene este turno habilitado.</div>}
+      ) : <EmptyState text="Ningún empleado tiene este turno habilitado." size="compact" />}
 
       <h4>Empleados deshabilitados ({disabled.length})</h4>
       {disabled.length ? (
@@ -186,7 +190,30 @@ export function ShiftEmployeesPanel({ shiftTemplateId, canEdit }: { shiftTemplat
             </tbody>
           </table>
         </TableShell>
-      ) : <div className="empty">No hay empleados deshabilitados para este turno.</div>}
+      ) : <EmptyState text="No hay empleados deshabilitados para este turno." size="compact" />}
+
+      {addOpen && canEdit ? (
+        <Modal title="Asignar empleados a este turno" close={closeAddModal}>
+          <div className="form-stack">
+            <EmployeeRemoteSelector selected={selected} multiple showStatusFilter excludeIds={enabledEmployeeIds} onChange={setSelected} />
+            <div className="form-grid">
+              <ShiftAssignmentVigencyFields
+                effectiveFrom={effectiveFrom}
+                effectiveTo={effectiveTo}
+                weekdays={weekdays}
+                onEffectiveFromChange={setEffectiveFrom}
+                onEffectiveToChange={setEffectiveTo}
+                onWeekdaysChange={setWeekdays}
+              />
+            </div>
+            <label className="field"><span>Observación (opcional)</span><input value={observation} onChange={(e) => setObservation(e.target.value)} placeholder="Ej: rota semana por medio con turno tarde" /></label>
+            <div className="form-actions">
+              <Button variant="subtle" onClick={closeAddModal}>Cancelar</Button>
+              <Button variant="primary" disabled={isAssigning || !selected.length || !effectiveFrom} onClick={assignSelected}>{isAssigning ? "Asignando..." : "Asignar seleccionados"}</Button>
+            </div>
+          </div>
+        </Modal>
+      ) : null}
     </div>
   );
 }

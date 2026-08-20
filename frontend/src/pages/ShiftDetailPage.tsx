@@ -111,18 +111,13 @@ export function ShiftDetailPage() {
       </div>
       {notice ? <div className="toast">{notice}</div> : null}
       <Tabs tabs={tabItems} active={String(tab)} onChange={(key) => setTab(Number(key))} />
-      <section className="panel">
-        <div className="panel-head">
-          <div>
-            <h3>{tabItems[tab]!.label}</h3>
-            <p>{tab === 0 ? "Horario, tolerancias y reglas de control del turno." : "Empleados con este turno habilitado o deshabilitado."}</p>
-          </div>
-          {tab === 0 && canEdit ? <Button variant="primary" onClick={save} disabled={isSaving}>{isSaving ? "Guardando..." : "Guardar cambios"}</Button> : null}
-        </div>
-        <div className="panel-body">
-          {tab === 0 ? <ShiftTemplateFormFields value={value} onChange={setValue} disabled={!canEdit} /> : <ShiftEmployeesPanel shiftTemplateId={source.id} canEdit={canEdit} />}
-        </div>
-      </section>
+      <Section
+        title={tabItems[tab]!.label}
+        subtitle={tab === 0 ? "Horario, tolerancias y reglas de control del turno." : "Empleados con este turno habilitado o deshabilitado."}
+        action={tab === 0 && canEdit ? <Button variant="primary" onClick={save} disabled={isSaving}>{isSaving ? "Guardando..." : "Guardar cambios"}</Button> : undefined}
+      >
+        {tab === 0 ? <ShiftTemplateFormFields value={value} onChange={setValue} disabled={!canEdit} /> : <ShiftEmployeesPanel shiftTemplateId={source.id} canEdit={canEdit} />}
+      </Section>
     </>
   );
 }
