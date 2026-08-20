@@ -36,6 +36,7 @@ export function mapHourConceptFromApi(item: ApiHourConcept): HourConcept {
     name: item.name,
     kind: item.kind,
     status: item.status,
+    countsAsWorked: item.countsAsWorked,
     createdAt: item.createdAt,
     updatedAt: item.updatedAt,
   };
@@ -47,7 +48,7 @@ export function mapToApi(item: HourConcept) {
     name: item.name,
     kind: item.kind,
     status: item.status,
-    countsAsWorked: true,
+    countsAsWorked: item.countsAsWorked,
   };
 }
 

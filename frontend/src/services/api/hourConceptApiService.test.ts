@@ -61,9 +61,28 @@ describe("mapHourConceptFromApi — solo campos reales (Etapa 8L)", () => {
       name: "Guardia",
       kind: "GUARDIA",
       status: "ACTIVO",
+      countsAsWorked: true,
       createdAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-01-02T00:00:00.000Z",
     });
+  });
+
+  // Etapa 8L.2: countsAsWorked es un campo real (existe en schema.prisma y se
+  // usa en timeEntries.repository.ts) — el mapper debe reflejar el valor real
+  // de la API, no forzarlo a true.
+  it("mapea countsAsWorked: false tal cual viene de la API (no lo fuerza a true)", () => {
+    const concept = mapHourConceptFromApi({
+      id: "concept-2",
+      code: "HOR-002",
+      name: "Concepto informativo",
+      kind: "OTRO",
+      status: "ACTIVO",
+      countsAsWorked: false,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    expect(concept.countsAsWorked).toBe(false);
   });
 
   it("no reconstruye description/notes/roles/history con valores hardcodeados", () => {
@@ -97,6 +116,7 @@ describe("mapToApi — el payload de create/update solo envía campos reales (Et
     name: "Guardia",
     kind: "GUARDIA",
     status: "ACTIVO",
+    countsAsWorked: true,
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
   };
@@ -117,5 +137,14 @@ describe("mapToApi — el payload de create/update solo envía campos reales (Et
     expect(payload).not.toHaveProperty("updatedAt");
     expect(payload).not.toHaveProperty("description");
     expect(payload).not.toHaveProperty("notes");
+  });
+
+  // Etapa 8L.2: antes mapToApi forzaba countsAsWorked: true siempre, sin
+  // importar lo que trajera el concepto. mapToApi es la misma función que
+  // usan tanto create() como update() (hourConceptApiService.ts) — probarla
+  // una vez con false cubre ambos casos, no hay una rama separada por método.
+  it("countsAsWorked: false en el concepto se envía como false, no se fuerza a true", () => {
+    const payload = mapToApi({ ...concept, countsAsWorked: false });
+    expect(payload.countsAsWorked).toBe(false);
   });
 });

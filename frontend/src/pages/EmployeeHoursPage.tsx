@@ -35,6 +35,7 @@ const normalHourConcept: HourConcept = {
   name: "Hora normal",
   kind: "NORMAL",
   status: "ACTIVO",
+  countsAsWorked: true,
   createdAt: "",
   updatedAt: "",
 };

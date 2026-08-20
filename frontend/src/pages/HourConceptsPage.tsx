@@ -18,13 +18,17 @@ import { useAsyncAction } from "../utils/useAsyncAction";
 
 const kinds: HourConceptKind[] = ["NORMAL", "EXTRA", "FERIADO", "NOCTURNA", "GUARDIA", "SERENO", "TRANSPORTE", "OTRO"];
 
-function emptyConcept(code: string): HourConcept {
+export function emptyConcept(code: string): HourConcept {
   return {
     id: crypto.randomUUID(),
     code,
     name: "",
     kind: "NORMAL",
     status: "ACTIVO",
+    // Default solo para un concepto nuevo, todavía sin guardar — RRHH puede
+    // desmarcarlo antes de guardar. countsAsWorked real siempre viene de la
+    // API una vez persistido (nunca se fuerza en mapToApi).
+    countsAsWorked: true,
     createdAt: "",
     updatedAt: "",
   };
@@ -63,6 +67,11 @@ function ConceptEditor({ item, setItem }: { item: HourConcept; setItem: (item: H
         <label>Tipo<select value={item.kind} onChange={(event) => setItem({ ...item, kind: event.target.value as HourConceptKind })}>{kinds.map((kind) => <option key={kind}>{kind}</option>)}</select></label>
         <label>Estado<select value={item.status} onChange={(event) => setItem({ ...item, status: event.target.value as "ACTIVO" | "INACTIVO" })}><option>ACTIVO</option><option>INACTIVO</option></select></label>
       </div>
+      <label className="check-card">
+        <input type="checkbox" checked={item.countsAsWorked} onChange={(event) => setItem({ ...item, countsAsWorked: event.target.checked })} />
+        Cuenta como trabajado
+      </label>
+      <small>Define si las horas clasificadas con este concepto se computan como tiempo trabajado.</small>
     </div>
   );
 }
@@ -165,7 +174,7 @@ export function HourConceptsPage() {
           onRetry={() => setRefresh((value) => value + 1)}
         >
           <table>
-            <thead><tr><th>Codigo</th><th>Hora especial</th><th>Tipo</th><th>Estado</th><th>Accion</th></tr></thead>
+            <thead><tr><th>Codigo</th><th>Hora especial</th><th>Tipo</th><th>Estado</th><th>Computa</th><th>Accion</th></tr></thead>
             <tbody>
               {items.map((item) => (
                 <tr key={item.id}>
@@ -173,6 +182,7 @@ export function HourConceptsPage() {
                   <td><OverflowCell value={item.name} /></td>
                   <td>{item.kind}</td>
                   <td><Badge tone={item.status === "ACTIVO" ? "success" : "neutral"}>{item.status}</Badge></td>
+                  <td><Badge tone={item.countsAsWorked ? "success" : "neutral"}>{item.countsAsWorked ? "Computa" : "No computa"}</Badge></td>
                   <td>{editable ? <button className="table-link table-icon-action" title="Editar" aria-label="Editar" onClick={() => setEditing(item)}><Pencil size={14}/><span>Editar</span></button> : null}</td>
                 </tr>
               ))}
