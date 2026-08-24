@@ -297,6 +297,8 @@ La operación toma exclusivamente intervalos reales de `WorkShift` completos con
 
 El recálculo reemplaza en una transacción serializable todas las filas `source = AUTOMATIC` del empleado y período solicitados, crea el resultado con estado `BORRADOR` y conserva intactas las filas `MANUAL`. Este alcance amplio es aceptable temporalmente porque 6I es el único generador automático actual; si se incorporan otros generadores, deberán separar explícitamente su identidad antes de compartir el mismo empleado/período. No se eliminan datos de otros empleados ni períodos. Así se eliminan resultados obsoletos y la operación es idempotente. No lee `priority`, `countsAsWorked`, `TimeSegment` ni `TimeEntry`, y nunca modifica Horas normales ni `totalWorkedMinutes`. Un cierre `ENVIADO`, `APROBADO` o `CORRECCION_PENDIENTE` responde `409 PERIOD_CLOSED`; una carrera serializable se reintenta una vez y luego responde `409 AUTOMATIC_BREAKDOWN_CONCURRENT_CONFLICT`.
 
+Consumido desde la acción "Recalcular automáticos" de `EmployeeHoursPage` (Etapa 6J), con el `employeeId` y el período visibles en la grilla. El frontend no agrega lógica de permisos propia: usa los mismos tres roles ya habilitados en el backend.
+
 ### Crear legajo
 
 ```txt

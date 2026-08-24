@@ -3,7 +3,7 @@ import { Link, useParams, useSearchParams } from "react-router-dom";
 import { AlertTriangle, Bell, CalendarDays, CheckCircle2, Clock3, ClipboardList, RefreshCcw } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { employeeApiService } from "../services/api/employeeApiService";
-import { ApiError } from "../services/api/apiClient";
+import { ApiError, getUserErrorMessage } from "../services/api/apiClient";
 import { documentApiService } from "../services/api/documentApiService";
 import { documentCategoryApiService } from "../services/api/documentCategoryApiService";
 import { noveltyApiService } from "../services/api/noveltyApiService";
@@ -83,7 +83,14 @@ export function EmployeeHoursPage() {
   const [attendanceIssues, setAttendanceIssues] = useState(0);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
+  const [notice, setNotice] = useState<{ text: string; durationMs: number } | null>(null);
   const monthDays = getMonthDays(period);
+
+  useEffect(() => {
+    if (!notice || loading) return;
+    const timeout = setTimeout(() => setNotice(null), notice.durationMs);
+    return () => clearTimeout(timeout);
+  }, [notice, loading]);
 
   useEffect(() => {
     let cancelled = false;
@@ -223,6 +230,22 @@ export function EmployeeHoursPage() {
       }
       if (saveError instanceof ApiError) return setManualError(saveError.message);
       setManualError("No pudimos guardar el desglose manual. Intentá nuevamente.");
+    }
+  });
+  const { isRunning: isRecalculating, run: recalculateAutomatic } = useAsyncAction(async () => {
+    if (!id) return;
+    try {
+      await employeeApiService.recalculateAutomaticHourConceptBreakdowns(id, period);
+      setNotice({ text: "Conceptos automáticos recalculados correctamente.", durationMs: 3000 });
+      setRefresh((value) => value + 1);
+    } catch (recalculateError) {
+      const message =
+        recalculateError instanceof ApiError && recalculateError.code === "PERIOD_CLOSED"
+          ? "El período está cerrado y no admite recálculo de automáticos."
+          : recalculateError instanceof ApiError && recalculateError.code === "AUTOMATIC_BREAKDOWN_CONCURRENT_CONFLICT"
+            ? "Hubo un conflicto al recalcular los automáticos. Intentá nuevamente."
+            : getUserErrorMessage(recalculateError, "No pudimos recalcular los conceptos automáticos. Intentá nuevamente.");
+      setNotice({ text: message, durationMs: 4000 });
     }
   });
   const noveltyRange = () => {
@@ -448,7 +471,12 @@ export function EmployeeHoursPage() {
 
       <Section
         title="Grilla mensual por concepto"
-        subtitle={`Horas normales contiene el total real. Los conceptos adicionales son desgloses y no se suman al total (${formatPeriodLabel(period)}).`}
+        subtitle={`Horas normales contiene el total real. Los conceptos adicionales son desgloses y no se suman al total (${formatPeriodLabel(period)}). Recalcula los desgloses automáticos del período usando turnos procesados. No modifica las horas normales ni el total trabajado.`}
+        action={
+          <Button variant="subtle" icon={RefreshCcw} onClick={() => recalculateAutomatic()} disabled={isRecalculating}>
+            {isRecalculating ? "Recalculando..." : "Recalcular automáticos"}
+          </Button>
+        }
       >
         <div className="hours-grid">
           <table>
@@ -760,6 +788,8 @@ export function EmployeeHoursPage() {
           </div>
         </Modal>
       ) : null}
+
+      {notice ? <div className="toast">{notice.text}</div> : null}
     </>
   );
 }

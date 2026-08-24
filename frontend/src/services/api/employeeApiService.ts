@@ -156,6 +156,15 @@ export type ManualHourConceptBreakdownInput = {
   observation?: string | null;
 };
 
+export type RecalculateAutomaticHourConceptBreakdownsResult = {
+  employeeId: string;
+  period: string;
+  processedShifts: number;
+  eligibleConcepts: number;
+  generated: number;
+  removed: number;
+};
+
 export type EmployeeListFilters = {
   search?: string;
   companyId?: string;
@@ -671,6 +680,13 @@ export const employeeApiService = {
       method: "PUT",
       body: input,
     });
+    return response.data;
+  },
+  async recalculateAutomaticHourConceptBreakdowns(employeeId: string, period: string) {
+    const response = await apiRequest<{ data: RecalculateAutomaticHourConceptBreakdownsResult }>(
+      `/employees/${employeeId}/hour-concept-breakdowns/recalculate-automatic`,
+      { method: "POST", body: { period } },
+    );
     return response.data;
   },
   async getPositionValidation(id: string) {

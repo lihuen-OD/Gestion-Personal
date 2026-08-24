@@ -87,6 +87,20 @@ describe("employeeApiService manual breakdowns — 6H", () => {
   });
 });
 
+describe("employeeApiService recalculateAutomaticHourConceptBreakdowns — 6J", () => {
+  it("llama al endpoint explícito de 6I por employeeId y período, sin transformar el body", async () => {
+    vi.mocked(apiRequest).mockResolvedValue({
+      data: { employeeId: "employee-1", period: "2026-08", processedShifts: 3, eligibleConcepts: 2, generated: 3, removed: 1 },
+    });
+    const result = await employeeApiService.recalculateAutomaticHourConceptBreakdowns("employee-1", "2026-08");
+    expect(apiRequest).toHaveBeenCalledWith("/employees/employee-1/hour-concept-breakdowns/recalculate-automatic", {
+      method: "POST",
+      body: { period: "2026-08" },
+    });
+    expect(result).toEqual({ employeeId: "employee-1", period: "2026-08", processedShifts: 3, eligibleConcepts: 2, generated: 3, removed: 1 });
+  });
+});
+
 describe("employeeListRequest filtros sectorId/costCenterId (Etapa 8F)", () => {
   it("envía sectorId como query param cuando se filtra por sector", () => {
     const { path } = employeeListRequest({ sectorId: "sector-1" });
