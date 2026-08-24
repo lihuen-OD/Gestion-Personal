@@ -30,15 +30,12 @@ export function ShiftsPage() {
   useEffect(() => {
     let alive = true;
     setLoadStatus("loading");
-    Promise.all([workforceApiService.shiftTemplates(), shiftAssignmentApiService.getAll()])
-      .then(([shiftTemplates, assignments]) => {
+    Promise.all([workforceApiService.shiftTemplates(), shiftAssignmentApiService.getSummary()])
+      .then(([shiftTemplates, summaries]) => {
         if (!alive) return;
         const nextCounts: Record<string, ShiftAssignmentCounts> = {};
-        for (const assignment of assignments) {
-          const bucket = nextCounts[assignment.shiftTemplateId] || { enabled: 0, disabled: 0 };
-          if (assignment.status === "HABILITADO") bucket.enabled += 1;
-          else bucket.disabled += 1;
-          nextCounts[assignment.shiftTemplateId] = bucket;
+        for (const summary of summaries) {
+          nextCounts[summary.shiftTemplateId] = { enabled: summary.enabled, disabled: summary.disabled };
         }
         setTemplates(shiftTemplates);
         setCounts(nextCounts);

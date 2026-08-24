@@ -5,16 +5,31 @@ import { shiftAssignmentRepository } from "./shiftAssignment.repository";
 
 vi.mock("../../shared/prisma/client", () => ({
   prisma: {
-    shiftAssignment: { findMany: vi.fn(), findUnique: vi.fn(), create: vi.fn(), update: vi.fn(), delete: vi.fn() },
+    shiftAssignment: { groupBy: vi.fn(), findMany: vi.fn(), findUnique: vi.fn(), create: vi.fn(), update: vi.fn(), delete: vi.fn() },
   },
 }));
 
 const mockedPrisma = prisma as unknown as {
-  shiftAssignment: { findMany: Mock; findUnique: Mock; create: Mock; update: Mock; delete: Mock };
+  shiftAssignment: { groupBy: Mock; findMany: Mock; findUnique: Mock; create: Mock; update: Mock; delete: Mock };
 };
 
 beforeEach(() => {
   vi.clearAllMocks();
+});
+
+describe("countByTemplateAndStatus", () => {
+  it("cuenta en base de datos por turno y estado respetando el alcance del empleado", async () => {
+    mockedPrisma.shiftAssignment.groupBy.mockResolvedValue([]);
+    const employeeScope = { assignments: { some: { userId: "user-1" } } };
+
+    await shiftAssignmentRepository.countByTemplateAndStatus(employeeScope);
+
+    expect(mockedPrisma.shiftAssignment.groupBy).toHaveBeenCalledWith({
+      by: ["shiftTemplateId", "status"],
+      where: { employee: employeeScope },
+      _count: { _all: true },
+    });
+  });
 });
 
 describe("create — persiste effectiveFrom/effectiveTo/weekdays (Etapa 8I)", () => {

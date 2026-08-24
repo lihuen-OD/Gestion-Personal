@@ -5,6 +5,11 @@ import type { ListShiftAssignmentsQuery } from "./shiftAssignment.schemas";
 import { shiftAssignmentService } from "./shiftAssignment.service";
 
 export const shiftAssignmentController = {
+  summary: (async (req, res) => {
+    const data = await shiftAssignmentService.summary(req.user!);
+    res.json({ data });
+  }) satisfies RequestHandler,
+
   list: (async (req, res) => {
     const data = await shiftAssignmentService.list(req.query as unknown as ListShiftAssignmentsQuery, req.user!);
     res.json({ data });

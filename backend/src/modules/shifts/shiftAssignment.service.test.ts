@@ -16,6 +16,7 @@ import { roles } from "../../shared/security/roles";
  */
 vi.mock("./shiftAssignment.repository", () => ({
   shiftAssignmentRepository: {
+    countByTemplateAndStatus: vi.fn(),
     findExisting: vi.fn(),
     create: vi.fn(),
     reEnable: vi.fn(),
@@ -35,7 +36,7 @@ vi.mock("../audit/audit.service", () => ({
   auditService: { register: vi.fn().mockResolvedValue(null) },
 }));
 
-const repo = shiftAssignmentRepository as unknown as { findExisting: Mock; create: Mock; reEnable: Mock; findById: Mock; update: Mock };
+const repo = shiftAssignmentRepository as unknown as { countByTemplateAndStatus: Mock; findExisting: Mock; create: Mock; reEnable: Mock; findById: Mock; update: Mock };
 const mockedPrisma = prisma as unknown as { shiftTemplate: { findUnique: Mock }; employee: { count: Mock } };
 
 function prismaKnownError(code: string) {
@@ -43,6 +44,7 @@ function prismaKnownError(code: string) {
 }
 
 const user = { id: "user-1", role: roles.rrhh } as unknown as Express.AuthUser;
+const supervisor = { id: "supervisor-1", role: roles.supervision } as unknown as Express.AuthUser;
 const template = { id: "template-1", code: "T-1", name: "Turno mañana" };
 const baseAssignInput = { shiftTemplateId: template.id, effectiveFrom: new Date("2026-01-01"), weekdays: [] as number[] };
 
@@ -50,6 +52,33 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockedPrisma.shiftTemplate.findUnique.mockResolvedValue(template);
   mockedPrisma.employee.count.mockResolvedValue(1);
+});
+
+describe("shiftAssignmentService.summary", () => {
+  it("agrupa total, habilitados, deshabilitados y estados futuros por turno", async () => {
+    repo.countByTemplateAndStatus.mockResolvedValue([
+      { shiftTemplateId: "template-1", status: "HABILITADO", _count: { _all: 3 } },
+      { shiftTemplateId: "template-1", status: "DESHABILITADO", _count: { _all: 2 } },
+      { shiftTemplateId: "template-2", status: "OTRO", _count: { _all: 4 } },
+    ]);
+
+    await expect(shiftAssignmentService.summary(user)).resolves.toEqual([
+      { shiftTemplateId: "template-1", total: 5, enabled: 3, disabled: 2, other: 0 },
+      { shiftTemplateId: "template-2", total: 4, enabled: 0, disabled: 0, other: 4 },
+    ]);
+  });
+
+  it("aplica al resumen el alcance TIME_RESPONSIBLE del usuario de Supervisión", async () => {
+    repo.countByTemplateAndStatus.mockResolvedValue([]);
+
+    await shiftAssignmentService.summary(supervisor);
+
+    expect(repo.countByTemplateAndStatus).toHaveBeenCalledWith(expect.objectContaining({
+      assignments: {
+        some: expect.objectContaining({ type: "TIME_RESPONSIBLE", userId: "supervisor-1" }),
+      },
+    }));
+  });
 });
 
 describe("shiftAssignmentService.assign", () => {

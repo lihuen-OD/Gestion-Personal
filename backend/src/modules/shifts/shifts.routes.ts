@@ -15,6 +15,7 @@ shiftsRouter.use(requireAuth);
 
 const all = [roles.rrhh, roles.supervision, roles.cargaHoraria];
 
+shiftsRouter.get("/assignments/summary", requireAnyRole(all), asyncHandler(c.summary));
 shiftsRouter.get("/assignments", requireAnyRole(all), validateQuery(listShiftAssignmentsQuerySchema), asyncHandler(c.list));
 shiftsRouter.post("/assignments", requireAnyRole([roles.rrhh]), validateBody(createShiftAssignmentSchema), asyncHandler(c.assign));
 shiftsRouter.patch("/assignments/:id", requireAnyRole([roles.rrhh]), validateBody(updateShiftAssignmentSchema), asyncHandler(c.update));

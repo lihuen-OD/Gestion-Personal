@@ -177,6 +177,7 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
   const [reviewEntries, setReviewEntries] = useState<TimeEntry[]>([]);
   const [reviewByPerson, setReviewByPerson] = useState<Array<{ employee: Employee; summary: { total: number; status: string } }>>([]);
   const [costCenterOptions, setCostCenterOptions] = useState<Array<{ id: string; name: string }>>([]);
+  const [costCenterOptionsReady, setCostCenterOptionsReady] = useState(false);
   const [hoursSummary, setHoursSummary] = useState(emptyHoursSummary);
   const [pendingItems, setPendingItems] = useState<PendingItem[]>([]);
   const [usesBackend, setUsesBackend] = useState(false);
@@ -188,7 +189,7 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
   useEffect(() => {
     let cancelled = false;
     async function load() {
-      if (!user) return;
+      if (!user || !costCenterOptionsReady) return;
       setLoading(true);
       setLoadError("");
       try {
@@ -238,16 +239,21 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
     return () => {
       cancelled = true;
     };
-  }, [costCenter, costCenterOptions, debouncedSearch, groupByPerson, page, pendingOnly, period, refresh, reviewPage, user]);
+  }, [costCenter, costCenterOptionsReady, debouncedSearch, groupByPerson, page, pendingOnly, period, refresh, reviewPage, user]);
 
   useEffect(() => {
     let mounted = true;
     orgStructureApiService
       .getCatalog()
       .then((catalog) => {
-        if (mounted) setCostCenterOptions(catalog.costCenters.filter((item) => item.status === "ACTIVO").map((item) => ({ id: item.id, name: item.name })));
+        if (mounted) {
+          setCostCenterOptions(catalog.costCenters.filter((item) => item.status === "ACTIVO").map((item) => ({ id: item.id, name: item.name })));
+          setCostCenterOptionsReady(true);
+        }
       })
-      .catch(() => {});
+      .catch(() => {
+        if (mounted) setCostCenterOptionsReady(true);
+      });
     return () => {
       mounted = false;
     };

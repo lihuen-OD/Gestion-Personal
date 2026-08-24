@@ -22,6 +22,7 @@ export type ShiftAssignment = {
 };
 
 export type ShiftAssignmentFilters = { employeeId?: string; shiftTemplateId?: string; status?: ShiftAssignmentStatus };
+export type ShiftAssignmentSummary = { shiftTemplateId: string; total: number; enabled: number; disabled: number; other: number };
 
 export type ShiftAssignmentVigencyInput = { effectiveFrom: string; effectiveTo?: string | null; weekdays?: number[] };
 
@@ -36,6 +37,9 @@ function toQuery(filters?: ShiftAssignmentFilters) {
 }
 
 export const shiftAssignmentApiService = {
+  getSummary() {
+    return apiRequest<{ data: ShiftAssignmentSummary[] }>("/shifts/assignments/summary", { apiCache: false }).then((response) => response.data);
+  },
   getAll(filters?: ShiftAssignmentFilters) {
     return apiRequest<{ data: ShiftAssignment[] }>(`/shifts/assignments${toQuery(filters)}`, { apiCache: false }).then((response) => response.data);
   },

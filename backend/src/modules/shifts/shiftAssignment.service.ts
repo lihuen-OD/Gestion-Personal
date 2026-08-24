@@ -30,6 +30,21 @@ async function execute<T>(operation: () => Promise<T>) {
 }
 
 export const shiftAssignmentService = {
+  async summary(user: Express.AuthUser) {
+    const rows = await shiftAssignmentRepository.countByTemplateAndStatus(employeeAccessWhere(user));
+    const byTemplate = new Map<string, { shiftTemplateId: string; total: number; enabled: number; disabled: number; other: number }>();
+    for (const row of rows) {
+      const count = row._count._all;
+      const summary = byTemplate.get(row.shiftTemplateId) || { shiftTemplateId: row.shiftTemplateId, total: 0, enabled: 0, disabled: 0, other: 0 };
+      summary.total += count;
+      if (row.status === "HABILITADO") summary.enabled += count;
+      else if (row.status === "DESHABILITADO") summary.disabled += count;
+      else summary.other += count;
+      byTemplate.set(row.shiftTemplateId, summary);
+    }
+    return Array.from(byTemplate.values());
+  },
+
   list(query: ListShiftAssignmentsQuery, user: Express.AuthUser) {
     return shiftAssignmentRepository.findMany(query, employeeAccessWhere(user));
   },

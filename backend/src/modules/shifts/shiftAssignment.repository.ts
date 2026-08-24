@@ -13,6 +13,14 @@ export type ShiftAssignmentVigencyData = {
 };
 
 export const shiftAssignmentRepository = {
+  countByTemplateAndStatus(employeeScope: Prisma.EmployeeWhereInput) {
+    return prisma.shiftAssignment.groupBy({
+      by: ["shiftTemplateId", "status"],
+      where: { employee: employeeScope },
+      _count: { _all: true },
+    });
+  },
+
   findMany(query: ListShiftAssignmentsQuery, employeeScope: Prisma.EmployeeWhereInput) {
     return prisma.shiftAssignment.findMany({
       where: {
