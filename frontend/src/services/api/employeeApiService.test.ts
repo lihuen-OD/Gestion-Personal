@@ -66,6 +66,27 @@ describe("employeeApiService.getTimeGrid — grilla aditiva 6G", () => {
   });
 });
 
+describe("employeeApiService manual breakdowns — 6H", () => {
+  it("guarda por employeeId, hourConceptId y fecha sin usar el nombre", async () => {
+    vi.mocked(apiRequest).mockResolvedValue({ data: { id: "breakdown-1" } });
+    await employeeApiService.saveManualHourConceptBreakdown("employee-1", {
+      date: "2026-08-12", hourConceptId: "colectivo-id", minutes: 120, observation: "Traslado",
+    });
+    expect(apiRequest).toHaveBeenCalledWith("/employees/employee-1/hour-concept-breakdowns/manual", {
+      method: "PUT",
+      body: { date: "2026-08-12", hourConceptId: "colectivo-id", minutes: 120, observation: "Traslado" },
+    });
+  });
+
+  it("borra mediante el mismo PUT enviando minutes cero", async () => {
+    vi.mocked(apiRequest).mockResolvedValue({ data: null });
+    await employeeApiService.saveManualHourConceptBreakdown("employee-1", { date: "2026-08-12", hourConceptId: "colectivo-id", minutes: 0 });
+    expect(apiRequest).toHaveBeenCalledWith("/employees/employee-1/hour-concept-breakdowns/manual", {
+      method: "PUT", body: { date: "2026-08-12", hourConceptId: "colectivo-id", minutes: 0 },
+    });
+  });
+});
+
 describe("employeeListRequest filtros sectorId/costCenterId (Etapa 8F)", () => {
   it("envía sectorId como query param cuando se filtra por sector", () => {
     const { path } = employeeListRequest({ sectorId: "sector-1" });

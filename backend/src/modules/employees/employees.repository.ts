@@ -915,6 +915,82 @@ export const employeesRepository = {
     };
   },
 
+  findEmployeeForManualBreakdown(id: string, accessWhere: Prisma.EmployeeWhereInput) {
+    return prisma.employee.findFirst({ where: { AND: [{ id }, accessWhere] }, select: { id: true } });
+  },
+
+  findHourConceptForManualBreakdown(id: string) {
+    return prisma.hourConcept.findUnique({
+      where: { id },
+      select: { id: true, code: true, name: true, status: true, deletedAt: true, loadMode: true, systemRole: true },
+    });
+  },
+
+  async isHourConceptEnabled(employeeId: string, hourConceptId: string) {
+    return Boolean(await prisma.employeeHourConcept.findUnique({
+      where: { employeeId_hourConceptId: { employeeId, hourConceptId } },
+      select: { employeeId: true },
+    }));
+  },
+
+  findMonthlyClosure(employeeId: string, period: string) {
+    return prisma.monthlyTimeClosure.findUnique({
+      where: { employeeId_period: { employeeId, period } },
+      select: { id: true, status: true },
+    });
+  },
+
+  saveManualHourConceptBreakdown(input: {
+    employeeId: string;
+    hourConceptId: string;
+    date: Date;
+    period: string;
+    day: number;
+    minutes: number;
+    observation?: string | null;
+    createdByUserId?: string | null;
+  }) {
+    return prisma.$transaction(async (tx) => {
+      const where = { employeeId: input.employeeId, hourConceptId: input.hourConceptId, date: input.date, source: "MANUAL" as const };
+      if (input.minutes === 0) {
+        const deleted = await tx.hourConceptBreakdown.deleteMany({ where });
+        return { item: null, deleted: deleted.count, operation: "DELETE" as const };
+      }
+      const existing = await tx.hourConceptBreakdown.findFirst({ where, orderBy: { createdAt: "asc" } });
+      if (existing) {
+        const item = await tx.hourConceptBreakdown.update({
+          where: { id: existing.id },
+          data: {
+            minutes: input.minutes,
+            observation: input.observation || null,
+            period: input.period,
+            day: input.day,
+            status: "BORRADOR",
+            approvedByUserId: null,
+            approvedAt: null,
+          },
+        });
+        await tx.hourConceptBreakdown.deleteMany({ where: { ...where, id: { not: existing.id } } });
+        return { item, deleted: 0, operation: "UPDATE" as const };
+      }
+      const item = await tx.hourConceptBreakdown.create({
+        data: {
+          employeeId: input.employeeId,
+          hourConceptId: input.hourConceptId,
+          date: input.date,
+          period: input.period,
+          day: input.day,
+          minutes: input.minutes,
+          observation: input.observation || null,
+          source: "MANUAL",
+          status: "BORRADOR",
+          createdByUserId: input.createdByUserId || null,
+        },
+      });
+      return { item, deleted: 0, operation: "CREATE" as const };
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+  },
+
   findLaborAuditSnapshot(id: string) {
     return prisma.employee.findUniqueOrThrow({ where: { id }, select: employeeLaborAuditSelect });
   },

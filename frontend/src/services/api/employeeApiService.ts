@@ -149,6 +149,13 @@ export type EmployeeTimeGrid = {
   attendanceIssues: number;
 };
 
+export type ManualHourConceptBreakdownInput = {
+  date: string;
+  hourConceptId: string;
+  minutes: number;
+  observation?: string | null;
+};
+
 export type EmployeeListFilters = {
   search?: string;
   companyId?: string;
@@ -658,6 +665,13 @@ export const employeeApiService = {
       totalWorkedMinutes: response.data.totalWorkedMinutes,
       attendanceIssues: response.data.attendanceIssues || 0,
     };
+  },
+  async saveManualHourConceptBreakdown(employeeId: string, input: ManualHourConceptBreakdownInput) {
+    const response = await apiRequest<{ data: unknown }>(`/employees/${employeeId}/hour-concept-breakdowns/manual`, {
+      method: "PUT",
+      body: input,
+    });
+    return response.data;
   },
   async getPositionValidation(id: string) {
     const response = await apiRequest<ApiEmployeePositionValidationResponse>(`/employees/${id}/position-validation`);

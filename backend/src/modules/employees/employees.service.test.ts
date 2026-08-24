@@ -18,14 +18,26 @@ vi.mock("./employees.repository", () => ({
     findAssignableHourConceptIds: vi.fn(),
     findHourConceptsAuditSnapshot: vi.fn(),
     replaceHourConcepts: vi.fn(),
+    findEmployeeForManualBreakdown: vi.fn(),
+    findHourConceptForManualBreakdown: vi.fn(),
+    isHourConceptEnabled: vi.fn(),
+    findMonthlyClosure: vi.fn(),
+    saveManualHourConceptBreakdown: vi.fn(),
   },
 }));
+
+vi.mock("../audit/audit.service", () => ({ auditService: { register: vi.fn() } }));
 
 const repo = employeesRepository as unknown as {
   findById: Mock;
   findAssignableHourConceptIds: Mock;
   findHourConceptsAuditSnapshot: Mock;
   replaceHourConcepts: Mock;
+  findEmployeeForManualBreakdown: Mock;
+  findHourConceptForManualBreakdown: Mock;
+  isHourConceptEnabled: Mock;
+  findMonthlyClosure: Mock;
+  saveManualHourConceptBreakdown: Mock;
 };
 const rrhhUser = { id: "user-rrhh", role: roles.rrhh } as unknown as Express.AuthUser;
 
@@ -85,6 +97,62 @@ describe("buildAdditiveTimeGrid", () => {
     ]);
     expect(result.rows).toHaveLength(2);
     expect(result.rows[1]).toMatchObject({ minutesByDay: { "2": 180 }, totalMinutes: 180 });
+  });
+});
+
+describe("employeesService manual hour concept breakdowns", () => {
+  const input = { date: "2026-08-12", hourConceptId: "11111111-1111-4111-8111-111111111111", minutes: 120, observation: "Traslado" };
+  const concept = { id: input.hourConceptId, code: "COLECTIVO", name: "Colectivo", status: "ACTIVO", deletedAt: null, loadMode: "MANUAL", systemRole: null };
+
+  beforeEach(() => {
+    repo.findEmployeeForManualBreakdown.mockResolvedValue({ id: "emp-1" });
+    repo.findHourConceptForManualBreakdown.mockResolvedValue(concept);
+    repo.isHourConceptEnabled.mockResolvedValue(true);
+    repo.findMonthlyClosure.mockResolvedValue(null);
+    repo.saveManualHourConceptBreakdown.mockResolvedValue({ item: { id: "breakdown-1", minutes: 120, status: "BORRADOR", source: "MANUAL" }, deleted: 0, operation: "CREATE" });
+  });
+
+  it.each(["MANUAL", "BOTH"])("guarda un concepto %s habilitado como breakdown MANUAL BORRADOR", async (loadMode) => {
+    repo.findHourConceptForManualBreakdown.mockResolvedValue({ ...concept, loadMode });
+    const result = await employeesService.upsertManualHourConceptBreakdown("emp-1", input, rrhhUser);
+    expect(result).toMatchObject({ source: "MANUAL", status: "BORRADOR", minutes: 120 });
+    expect(repo.saveManualHourConceptBreakdown).toHaveBeenCalledWith(expect.objectContaining({
+      employeeId: "emp-1", hourConceptId: input.hourConceptId, period: "2026-08", day: 12, minutes: 120,
+    }));
+  });
+
+  it.each([
+    ["Normal", { systemRole: "NORMAL_BASE", loadMode: null }, "NORMAL_BREAKDOWN_NOT_ALLOWED"],
+    ["Automático", { loadMode: "AUTOMATIC" }, "MANUAL_BREAKDOWN_NOT_ALLOWED"],
+    ["Inactivo", { status: "INACTIVO" }, "HOUR_CONCEPT_INACTIVE"],
+    ["Eliminado", { deletedAt: new Date() }, "HOUR_CONCEPT_DELETED"],
+    ["Sin modo", { loadMode: null }, "HOUR_CONCEPT_LOAD_MODE_REQUIRED"],
+  ])("rechaza %s", async (_label, overrides, code) => {
+    repo.findHourConceptForManualBreakdown.mockResolvedValue({ ...concept, ...overrides });
+    await expect(employeesService.upsertManualHourConceptBreakdown("emp-1", input, rrhhUser)).rejects.toMatchObject({ code });
+    expect(repo.saveManualHourConceptBreakdown).not.toHaveBeenCalled();
+  });
+
+  it("rechaza conceptos no habilitados", async () => {
+    repo.isHourConceptEnabled.mockResolvedValue(false);
+    await expect(employeesService.upsertManualHourConceptBreakdown("emp-1", input, rrhhUser)).rejects.toMatchObject({ code: "HOUR_CONCEPT_NOT_ENABLED" });
+  });
+
+  it("respeta scope operativo y no revela empleados fuera de alcance", async () => {
+    repo.findEmployeeForManualBreakdown.mockResolvedValue(null);
+    await expect(employeesService.upsertManualHourConceptBreakdown("emp-1", input, rrhhUser)).rejects.toMatchObject({ code: "EMPLOYEE_NOT_FOUND" });
+    expect(repo.findEmployeeForManualBreakdown).toHaveBeenCalledWith("emp-1", expect.any(Object));
+  });
+
+  it("bloquea edición directa de un período cerrado", async () => {
+    repo.findMonthlyClosure.mockResolvedValue({ id: "closure-1", status: "APROBADO" });
+    await expect(employeesService.upsertManualHourConceptBreakdown("emp-1", input, rrhhUser)).rejects.toMatchObject({ code: "PERIOD_CLOSED" });
+  });
+
+  it("minutes cero usa el mismo comando idempotente para eliminar", async () => {
+    repo.saveManualHourConceptBreakdown.mockResolvedValue({ item: null, deleted: 1, operation: "DELETE" });
+    await expect(employeesService.upsertManualHourConceptBreakdown("emp-1", { ...input, minutes: 0 }, rrhhUser)).resolves.toBeNull();
+    expect(repo.saveManualHourConceptBreakdown).toHaveBeenCalledWith(expect.objectContaining({ minutes: 0 }));
   });
 });
 

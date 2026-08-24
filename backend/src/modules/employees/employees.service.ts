@@ -23,6 +23,7 @@ import type {
   UpdateEmployeeContactInput,
   UpdateEmployeeInput,
   UpsertEmployeeAddressInput,
+  UpsertManualHourConceptBreakdownInput,
   UpsertEmployeeTransportInput,
 } from "./employees.schemas";
 
@@ -144,6 +145,33 @@ export function buildAdditiveTimeGrid(
     rows: [normalRow, ...additionalRows],
     totalWorkedMinutes: normalRow.totalMinutes,
   };
+}
+
+async function validateManualBreakdownContext(
+  employeeId: string,
+  hourConceptId: string,
+  period: string,
+  user: Express.AuthUser,
+) {
+  const employee = await employeesRepository.findEmployeeForManualBreakdown(employeeId, employeeAccessWhere(user));
+  if (!employee) throw new AppError("Employee not found", 404, "EMPLOYEE_NOT_FOUND");
+
+  const concept = await employeesRepository.findHourConceptForManualBreakdown(hourConceptId);
+  if (!concept) throw new AppError("Hour concept not found", 404, "HOUR_CONCEPT_NOT_FOUND");
+  if (concept.systemRole === "NORMAL_BASE") throw new AppError("Normal cannot be loaded as a breakdown", 409, "NORMAL_BREAKDOWN_NOT_ALLOWED");
+  if (concept.status !== "ACTIVO") throw new AppError("Hour concept is inactive", 409, "HOUR_CONCEPT_INACTIVE");
+  if (concept.deletedAt) throw new AppError("Hour concept is deleted", 409, "HOUR_CONCEPT_DELETED");
+  if (!concept.loadMode) throw new AppError("Hour concept has no load mode", 409, "HOUR_CONCEPT_LOAD_MODE_REQUIRED");
+  if (concept.loadMode === "AUTOMATIC") throw new AppError("Automatic concepts are read-only", 409, "MANUAL_BREAKDOWN_NOT_ALLOWED");
+  if (!await employeesRepository.isHourConceptEnabled(employeeId, hourConceptId)) {
+    throw new AppError("Hour concept is not enabled for this employee", 409, "HOUR_CONCEPT_NOT_ENABLED");
+  }
+
+  const closure = await employeesRepository.findMonthlyClosure(employeeId, period);
+  if (closure && ["ENVIADO", "APROBADO", "CORRECCION_PENDIENTE"].includes(closure.status)) {
+    throw new AppError("The period is closed for direct editing", 409, "PERIOD_CLOSED");
+  }
+  return concept;
 }
 
 function structureCheck(label: string, value: string, allowed: string[], hasPosition: boolean) {
@@ -344,6 +372,38 @@ export const employeesService = {
     );
     return redactPiiForRole({ ...grid, ...additiveGrid }, user);
   },
+
+  async upsertManualHourConceptBreakdown(
+    employeeId: string,
+    input: UpsertManualHourConceptBreakdownInput,
+    user: Express.AuthUser,
+    audit?: AuditContext,
+  ) {
+    const period = input.date.slice(0, 7);
+    const date = new Date(`${input.date}T00:00:00.000Z`);
+    const day = Number(input.date.slice(8, 10));
+    const concept = await validateManualBreakdownContext(employeeId, input.hourConceptId, period, user);
+    const result = await employeesRepository.saveManualHourConceptBreakdown({
+      employeeId,
+      hourConceptId: input.hourConceptId,
+      date,
+      period,
+      day,
+      minutes: input.minutes,
+      observation: input.observation,
+      createdByUserId: user.id,
+    });
+    await auditService.register({
+      ...audit,
+      action: result.operation,
+      entity: "HourConceptBreakdown",
+      entityId: result.item?.id || null,
+      description: `${result.operation === "DELETE" ? "Se eliminó" : "Se guardó"} el desglose manual ${concept.name} de ${input.date} para el legajo ${employeeId}.`,
+      after: result.item as Prisma.InputJsonValue | undefined,
+    });
+    return result.item;
+  },
+
 
   async getPositionValidation(id: string, user: Express.AuthUser) {
     const employee = await employeesService.getById(id, user);

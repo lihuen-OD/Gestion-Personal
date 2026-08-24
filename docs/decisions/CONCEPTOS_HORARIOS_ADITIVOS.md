@@ -126,6 +126,17 @@ La inspección de la base de desarrollo al crear 6C encontró `HC-NORMAL` con hi
 * La pantalla mensual muestra Normal siempre primera y mantiene su edición manual existente. Los adicionales son de sólo lectura en esta etapa, muestran su modo de carga y no incorporan acciones manuales ni generación automática.
 * Esta etapa es de presentación aditiva. No modifica schema, migraciones, fichador, `TimeSegment`, cálculo/clasificador operativo, cierres, dashboard ni exportaciones. La generación y carga funcional de `HourConceptBreakdown` quedan para etapas separadas.
 
+### Etapa 6H — carga manual de desgloses adicionales
+
+* La carga manual escribe exclusivamente `HourConceptBreakdown` con `source = MANUAL` y estado inicial `BORRADOR`. Nunca crea un `TimeEntry` especial ni modifica Horas normales o `totalWorkedMinutes`.
+* Sólo se permite para conceptos adicionales habilitados en el legajo, activos, no eliminados y con `loadMode = MANUAL` o `BOTH`. Normal y los conceptos `AUTOMATIC` son rechazados por backend; la UI mantiene estos últimos en modo de sólo lectura.
+* La identidad funcional es empleado + fecha + concepto + `source = MANUAL`. El repositorio usa una transacción serializable, actualiza el registro existente y elimina duplicados legacy defensivamente. No se agregó schema ni migración en esta etapa.
+* Hardening pendiente: garantizar esa identidad con un índice único parcial PostgreSQL sobre `(employeeId, date, hourConceptId) WHERE source = 'MANUAL'`, precedido por una comprobación/saneamiento de duplicados. No corresponde usar un `@@unique([employeeId, date, hourConceptId, source])` global porque también limitaría los futuros breakdowns `AUTOMATIC` a una sola fila por día y concepto, aunque provengan de turnos o segmentos distintos. Prisma no expresa actualmente este índice parcial en `schema.prisma`, por lo que debe incorporarse en una migración SQL dedicada y verificable.
+* Guardar cero mediante el mismo PUT elimina físicamente el desglose manual de esa celda. No se agregó una ruta HTTP DELETE porque `/employees` protege explícitamente esa convención. Se eligió delete físico interno porque `HourConceptBreakdown` no tiene baja lógica y el registro manual es un dato editable, no una fuente histórica externa; la acción queda auditada.
+* Si un concepto se deshabilita del legajo, sus breakdowns existentes se conservan como historia persistida pero dejan de aparecer en la grilla activa. Debe volver a habilitarse para admitir edición manual directa.
+* Los períodos `ENVIADO`, `APROBADO` o `CORRECCION_PENDIENTE` bloquean edición directa, reutilizando el cierre mensual existente. `ABIERTO`, ausencia de cierre y un cierre `DEVUELTO` permiten corrección.
+* La grilla continúa mostrando únicamente breakdowns habilitados y estados visibles. Normal conserva su flujo actual; generación automática, fichador, cierres/exportaciones como consumidores y dashboard siguen pendientes de etapas separadas.
+
 ## Plan de implementación futura
 
 1. Auditar datos y comportamiento actual: fichadas, `TimeSegment`, `TimeEntry`, cierres, exportaciones y asignaciones por legajo.

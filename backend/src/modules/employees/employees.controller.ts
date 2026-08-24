@@ -103,6 +103,12 @@ export const employeesController = {
     res.json({ data: result });
   }) satisfies RequestHandler,
 
+  upsertManualHourConceptBreakdown: (async (req, res) => {
+    const result = await employeesService.upsertManualHourConceptBreakdown(requireParam(req, "id"), req.body, req.user!, requestAuditContext(req));
+    clearEmployeeReadCaches();
+    res.json({ data: result });
+  }) satisfies RequestHandler,
+
   getPositionValidation: (async (req, res) => {
     const result = await employeesService.getPositionValidation(requireParam(req, "id"), req.user!);
     res.json({ data: result });

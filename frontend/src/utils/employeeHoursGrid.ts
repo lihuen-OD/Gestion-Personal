@@ -8,3 +8,6 @@ export const additionalBreakdownHours = (rows: EmployeeTimeGridRow[]) =>
 
 export const normalWorkedDays = (rows: EmployeeTimeGridRow[]) =>
   Object.values(rows.find((row) => row.role === "NORMAL_BASE")?.minutesByDay ?? {}).filter((minutes) => minutes > 0).length;
+
+export const isManualBreakdownEditable = (row: EmployeeTimeGridRow) =>
+  row.role === "ADDITIONAL" && (row.concept.loadMode === "MANUAL" || row.concept.loadMode === "BOTH");

@@ -16,7 +16,7 @@ import { noveltyColorClass } from "../utils/noveltyColor";
 import { displayLegajo, fullName } from "../utils/employee";
 import { currentMonthPeriod, formatPeriodDay, formatPeriodLabel, getMonthDays, getWeekdayAbbr, monthDate } from "../utils/period";
 import { formatHours } from "../utils/hours";
-import { additionalBreakdownHours, hourConceptLoadModeLabel, normalWorkedDays } from "../utils/employeeHoursGrid";
+import { additionalBreakdownHours, hourConceptLoadModeLabel, isManualBreakdownEditable, normalWorkedDays } from "../utils/employeeHoursGrid";
 import { statusTone } from "../utils/status";
 import { useAsyncAction } from "../utils/useAsyncAction";
 import { Field } from "../components/ui/FormControls";
@@ -54,6 +54,10 @@ export function EmployeeHoursPage() {
   const [employee, setEmployee] = useState<Employee | null>(null);
   const period = searchParams.get("period") || currentMonthPeriod();
   const [selected, setSelected] = useState<{ day: number; conceptId: string }>();
+  const [manualSelected, setManualSelected] = useState<{ day: number; conceptId: string }>();
+  const [manualHours, setManualHours] = useState("0");
+  const [manualObservation, setManualObservation] = useState("");
+  const [manualError, setManualError] = useState("");
   const [hours, setHours] = useState("8");
   const [notes, setNotes] = useState("");
   const [correctionReason, setCorrectionReason] = useState("");
@@ -197,6 +201,30 @@ export function EmployeeHoursPage() {
   const selectedEntry = selectedRow && selected ? entryFor(selected.day, selectedRow.concept.id, selectedRow.concept.name) : undefined;
   const canCorrectApproved = Boolean(selectedEntry?.status === "Aprobado" && user && timeEntryApiService.canReview(user));
   const selectedLocked = selectedEntry ? !timeEntryApiService.canEdit(selectedEntry) && !canCorrectApproved : false;
+  const manualRow = manualSelected ? rows.find((row) => row.concept.id === manualSelected.conceptId) : undefined;
+  const { isRunning: isSavingManual, run: saveManualBreakdown } = useAsyncAction(async () => {
+    if (!id || !manualSelected || !manualRow || !isManualBreakdownEditable(manualRow)) return;
+    const numericHours = Number(manualHours);
+    if (!Number.isFinite(numericHours) || numericHours < 0 || numericHours > 24) {
+      return setManualError("Ingresá una cantidad entre 0 y 24 horas.");
+    }
+    try {
+      const input = { date: monthDate(period, manualSelected.day), hourConceptId: manualRow.concept.id };
+      await employeeApiService.saveManualHourConceptBreakdown(id, {
+        ...input,
+        minutes: Math.round(numericHours * 60),
+        observation: manualObservation || null,
+      });
+      setManualSelected(undefined);
+      setRefresh((value) => value + 1);
+    } catch (saveError) {
+      if (saveError instanceof ApiError && saveError.code === "PERIOD_CLOSED") {
+        return setManualError("El período está cerrado y no admite edición directa.");
+      }
+      if (saveError instanceof ApiError) return setManualError(saveError.message);
+      setManualError("No pudimos guardar el desglose manual. Intentá nuevamente.");
+    }
+  });
   const noveltyRange = () => {
     const start = new Date(`${noveltyFrom}T00:00:00`);
     const end = new Date(
@@ -466,6 +494,19 @@ export function EmployeeHoursPage() {
                             <span>{entry?.hours ?? (isBlocked(day) ? "0" : "+")}</span>
                             {mainNovelty ? <small>{mainNovelty.type.slice(0, 3)}</small> : null}
                           </button>
+                        ) : isManualBreakdownEditable(row) ? (
+                          <button
+                            className={cellClass}
+                            title={`${hourConceptLoadModeLabel(row.concept.loadMode)} · editar desglose`}
+                            onClick={() => {
+                              setManualSelected({ day, conceptId: row.concept.id });
+                              setManualHours(String(breakdownMinutes / 60));
+                              setManualObservation("");
+                              setManualError("");
+                            }}
+                          >
+                            {breakdownMinutes ? formatHours(breakdownMinutes / 60) : "+"}
+                          </button>
                         ) : (
                           <span className={cellClass} title={`${hourConceptLoadModeLabel(row.concept.loadMode)} · solo lectura`}>
                             {breakdownMinutes ? formatHours(breakdownMinutes / 60) : "—"}
@@ -483,6 +524,42 @@ export function EmployeeHoursPage() {
           </table>
         </div>
       </Section>
+
+      {manualSelected && manualRow ? (
+        <Modal
+          title={`Cargar desglose ${manualRow.concept.name} · ${formatPeriodDay(period, manualSelected.day)}`}
+          close={() => setManualSelected(undefined)}
+        >
+          <div className="form-stack">
+            <div className="info-note compact">
+              <b>Desglose adicional · {hourConceptLoadModeLabel(manualRow.concept.loadMode)}</b>
+              <p>Esta carga no modifica Horas normales ni el total trabajado.</p>
+            </div>
+            <div className="form-grid">
+              <label>
+                Fecha
+                <input value={formatPeriodDay(period, manualSelected.day)} disabled />
+              </label>
+              <label>
+                Cantidad de horas
+                <input type="number" min="0" max="24" step="0.5" value={manualHours} onChange={(event) => setManualHours(event.target.value)} />
+              </label>
+              <label className="form-wide">
+                Observaciones
+                <textarea value={manualObservation} onChange={(event) => setManualObservation(event.target.value)} />
+              </label>
+            </div>
+            <p className="table-sub">Guardar 0 horas elimina el desglose manual de ese día.</p>
+            {manualError ? <p className="error">{manualError}</p> : null}
+            <div className="form-actions">
+              <Button variant="subtle" onClick={() => setManualSelected(undefined)}>Cancelar</Button>
+              <Button variant="primary" onClick={saveManualBreakdown} disabled={isSavingManual}>
+                {isSavingManual ? "Guardando..." : Number(manualHours) === 0 ? "Eliminar desglose" : "Guardar desglose"}
+              </Button>
+            </div>
+          </div>
+        </Modal>
+      ) : null}
 
       {selected ? (
         <Modal

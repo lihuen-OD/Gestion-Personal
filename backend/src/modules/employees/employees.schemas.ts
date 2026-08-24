@@ -189,6 +189,19 @@ export const employeeTimeGridQuerySchema = z.object({
   includeDetails: z.coerce.boolean().default(true),
 });
 
+const manualBreakdownDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((value) => {
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}, "Fecha inválida");
+
+export const upsertManualHourConceptBreakdownSchema = z.object({
+  date: manualBreakdownDateSchema,
+  hourConceptId: z.string().uuid(),
+  minutes: z.number().int().min(0).max(1440),
+  observation: z.string().trim().max(600).optional().nullable(),
+});
+
+
 export const createEmployeeFieldHistorySchema = z.object({
   section: employeeHistorySectionSchema,
   field: z.string().trim().min(1).max(120),
@@ -224,5 +237,6 @@ export type CreateLaborMovementInput = z.infer<typeof createLaborMovementSchema>
 export type CreateEmployeeDocumentInput = z.infer<typeof createEmployeeDocumentSchema>;
 export type ListEmployeeHistoryQuery = z.infer<typeof listEmployeeHistoryQuerySchema>;
 export type EmployeeTimeGridQuery = z.infer<typeof employeeTimeGridQuerySchema>;
+export type UpsertManualHourConceptBreakdownInput = z.infer<typeof upsertManualHourConceptBreakdownSchema>;
 export type CreateEmployeeFieldHistoryInput = z.infer<typeof createEmployeeFieldHistorySchema>;
 export type CreateEmployeeBlockHistoryInput = z.infer<typeof createEmployeeBlockHistorySchema>;

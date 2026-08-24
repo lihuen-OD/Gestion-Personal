@@ -23,6 +23,7 @@ import {
   updateEmployeeSchema,
   upsertEmployeeAddressSchema,
   upsertEmployeeTransportSchema,
+  upsertManualHourConceptBreakdownSchema,
 } from "./employees.schemas";
 
 export const employeesRouter = Router();
@@ -34,6 +35,13 @@ employeesRouter.get(
   requireAnyRole([roles.rrhh, roles.supervision]),
   validateQuery(listEmployeesQuerySchema),
   asyncHandler(employeesController.list),
+);
+
+employeesRouter.put(
+  "/:id/hour-concept-breakdowns/manual",
+  requireAnyRole([roles.rrhh, roles.supervision, roles.cargaHoraria]),
+  validateBody(upsertManualHourConceptBreakdownSchema),
+  asyncHandler(employeesController.upsertManualHourConceptBreakdown),
 );
 
 employeesRouter.get(

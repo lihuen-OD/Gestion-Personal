@@ -258,7 +258,28 @@ Además del contrato operativo histórico (`employee`, `entries`, novedades y ca
 - `rows[].minutesByDay` y `rows[].totalMinutes`: minutos presentados por fila;
 - `totalWorkedMinutes`: total real derivado exclusivamente de la fila `NORMAL_BASE`.
 
-Las filas adicionales leen `HourConceptBreakdown` no rechazados y no se suman a `totalWorkedMinutes`. En esta etapa son de sólo lectura: el endpoint no genera desgloses ni agrega una operación manual nueva.
+Las filas adicionales leen `HourConceptBreakdown` visibles y no se suman a `totalWorkedMinutes`. Los conceptos `AUTOMATIC` son de sólo lectura; desde 6H los conceptos `MANUAL` y `BOTH` admiten la operación manual documentada a continuación.
+
+#### Carga manual de desgloses adicionales
+
+```txt
+PUT /api/employees/:id/hour-concept-breakdowns/manual
+```
+
+Body de alta/actualización:
+
+```json
+{
+  "date": "2026-08-12",
+  "hourConceptId": "uuid-del-concepto",
+  "minutes": 120,
+  "observation": "Traslado autorizado"
+}
+```
+
+PUT con `minutes = 0` elimina el registro manual. No se expone DELETE porque el módulo `/employees` protege por contrato la ausencia de rutas de borrado HTTP. La API fija `source = MANUAL` y estado inicial `BORRADOR`; no acepta `source`, `status`, `priority` ni `countsAsWorked` desde el cliente.
+
+Sólo admite conceptos adicionales habilitados, activos, no eliminados y con modo `MANUAL` o `BOTH`. Rechaza Normal, `AUTOMATIC`, conceptos fuera del legajo y períodos cerrados. Nivel 2/Nivel 3 conservan el alcance operativo por responsable de horas.
 
 ### Crear legajo
 
