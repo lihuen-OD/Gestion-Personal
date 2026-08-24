@@ -152,7 +152,29 @@ describe("mockedAudit/invalidateHourConceptsCache no se disparan por listEmploye
   });
 });
 
+describe("update — concepto administrado por el sistema", () => {
+  it("no permite desactivar ni editar NORMAL_BASE desde el CRUD genérico", async () => {
+    repo.findById.mockResolvedValue({ id: "normal-1", systemRole: "NORMAL_BASE" });
+
+    await expect(hourConceptsService.update("normal-1", { status: "INACTIVO" }, { userId: "user-1" })).rejects.toMatchObject({
+      statusCode: 409,
+      code: "HOUR_CONCEPT_SYSTEM_MANAGED",
+    });
+    expect(repo.update).not.toHaveBeenCalled();
+  });
+});
+
 describe("enableEmployees — habilitar desde el concepto (Etapa 8N)", () => {
+  it("rechaza asignar NORMAL_BASE porque Horas normales existe para todo legajo", async () => {
+    repo.findById.mockResolvedValue({ id: "normal-1", systemRole: "NORMAL_BASE" });
+
+    await expect(
+      hourConceptsService.enableEmployees("normal-1", { employeeIds: ["employee-1"] }, { userId: "user-1" }),
+    ).rejects.toMatchObject({ statusCode: 409, code: "HOUR_CONCEPT_BASE_NOT_ASSIGNABLE" });
+    expect(repo.countExistingEmployees).not.toHaveBeenCalled();
+    expect(repo.enableForEmployees).not.toHaveBeenCalled();
+  });
+
   it("rechaza concepto inexistente (404), sin llegar a habilitar nada", async () => {
     repo.findById.mockRejectedValue(prismaKnownError("P2025"));
 
@@ -226,6 +248,23 @@ const zeroUsage = { employees: 0, timeEntries: 0, novelties: 0, timeSegments: 0,
 const realUsage = { employees: 2, timeEntries: 5, novelties: 1, timeSegments: 8, workShifts: 3, rules: 1 };
 
 describe("remove — sin uso: delete físico (Etapa 8O)", () => {
+  it("no permite eliminar ni desactivar el NORMAL_BASE administrado por el sistema", async () => {
+    repo.findWithUsage.mockResolvedValue({
+      id: "normal-1",
+      code: "HC-NORMAL",
+      name: "Hora normal",
+      systemRole: "NORMAL_BASE",
+      _count: zeroUsage,
+    });
+
+    await expect(hourConceptsService.remove("normal-1", true, { userId: "user-1" })).rejects.toMatchObject({
+      statusCode: 409,
+      code: "HOUR_CONCEPT_SYSTEM_MANAGED",
+    });
+    expect(repo.delete).not.toHaveBeenCalled();
+    expect(repo.softDelete).not.toHaveBeenCalled();
+  });
+
   it("rechaza concepto inexistente (404), sin llegar a borrar nada", async () => {
     repo.findWithUsage.mockRejectedValue(prismaKnownError("P2025"));
 

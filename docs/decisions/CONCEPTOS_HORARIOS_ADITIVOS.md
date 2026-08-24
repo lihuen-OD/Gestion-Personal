@@ -72,9 +72,9 @@ Los conceptos adicionales pueden alimentar reglas de liquidación o exportación
 * `countsAsWorked`: no debe decidir si un concepto adicional incrementa el total; queda deprecado para ese cálculo.
 * Uso exclusivo de `hourConceptId` en una jornada o `TimeSegment`: puede mantenerse temporalmente por compatibilidad, pero no debe imponer exclusividad funcional.
 
-## Estado actual y compatibilidad
+## Estado actual y transición
 
-La aplicación puede no cumplir todavía esta decisión. Backend, frontend, `schema.prisma`, migraciones, datos existentes y contratos pueden reflejar el modelo anterior. Esta decisión no cambia retroactivamente esos artefactos ni autoriza una migración inmediata. Describe el objetivo obligatorio para las siguientes etapas.
+La aplicación puede no cumplir todavía esta decisión en todos sus consumidores. El sistema no está en producción, por lo que no se conservarán campos, datos ni comportamientos legacy incorrectos sólo por compatibilidad. La corrección se realiza por etapas separadas, cada una con pruebas, sin mezclar schema, frontend, grilla, fichador, cierres y exportaciones en un mismo cambio.
 
 ### Etapa 6C — base persistente agregada
 
@@ -88,6 +88,16 @@ La migración `add_hour_concept_breakdowns` incorpora únicamente estructura com
 * No se realizó backfill: los registros existentes conservan `loadMode = null` y no se crearon desgloses históricos.
 
 La inspección de la base de desarrollo al crear 6C encontró `HC-NORMAL` con historial, pero inactivo y eliminado lógicamente, y otro concepto (`Colectivo`) clasificado como `kind = NORMAL`. Por eso `kind` no identifica hoy de forma segura una única base. 6C no modifica esos datos ni el seed. Antes de hacer obligatoria la base debe decidirse la reactivación/normalización del concepto canónico y evaluar un rol estable del sistema (por ejemplo `baseRole`/`isSystem`) en lugar de depender del nombre o de `kind` solamente.
+
+### Etapa 6D — concepto Normal canónico y catálogo normalizado
+
+* `HourConcept.systemRole = NORMAL_BASE` identifica de forma estable y única la base del sistema, sin depender de `code`, nombre o `kind`. El único canónico recuperado es la fila histórica `HC-NORMAL`.
+* `HC-NORMAL` queda activo, sin baja lógica, con `kind = NORMAL`, sin `loadMode` y fuera de `EmployeeHourConcept`: existe siempre y no se habilita por legajo.
+* Los conceptos adicionales requieren `loadMode`. El contrato genérico no permite crear otro `kind = NORMAL`, y las operaciones de edición, eliminación o asignación rechazan el concepto administrado por el sistema.
+* El catálogo demo queda corregido como `Sereno = AUTOMATIC`, `Colectivo = TRANSPORTE/MANUAL` y `Guardia = AUTOMATIC`. No se crea Camioneta porque no existía en los datos auditados.
+* La migración normaliza cualquier concepto legacy restante: los `kind = NORMAL` no canónicos pasan a `OTRO` y los que no tienen modo reciben `AUTOMATIC` sólo si son Nocturna, Guardia o Sereno; en los demás casos reciben `MANUAL`.
+* Un constraint de base preserva la separación: Normal debe estar activo y sin modo; todo adicional debe tener modo y no puede usar `kind = NORMAL`.
+* Esta etapa no cambia todavía grilla, fichador, generación de desgloses, cierres, dashboard ni exportaciones. Esos consumidores continúan como deuda explícita para etapas posteriores.
 
 ## Plan de implementación futura
 

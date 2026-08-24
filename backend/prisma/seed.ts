@@ -145,22 +145,45 @@ async function main() {
 
   const hourNormal = await prisma.hourConcept.upsert({
     where: { code: "HC-NORMAL" },
-    update: {},
+    update: {
+      name: "Hora normal",
+      kind: "NORMAL",
+      status: "ACTIVO",
+      deletedAt: null,
+      loadMode: null,
+      systemRole: "NORMAL_BASE",
+    },
     create: {
       code: "HC-NORMAL",
       name: "Hora normal",
       kind: "NORMAL",
+      status: "ACTIVO",
+      loadMode: null,
+      systemRole: "NORMAL_BASE",
     },
   });
 
   await prisma.hourConcept.upsert({
     where: { code: "HC-GUARDIA" },
-    update: {},
+    update: { name: "Guardia", kind: "GUARDIA", status: "ACTIVO", deletedAt: null, loadMode: "AUTOMATIC", systemRole: null },
     create: {
       code: "HC-GUARDIA",
       name: "Guardia",
       kind: "GUARDIA",
+      loadMode: "AUTOMATIC",
     },
+  });
+
+  await prisma.hourConcept.upsert({
+    where: { code: "HOR-001" },
+    update: { name: "Sereno", kind: "SERENO", status: "ACTIVO", deletedAt: null, loadMode: "AUTOMATIC", systemRole: null },
+    create: { code: "HOR-001", name: "Sereno", kind: "SERENO", loadMode: "AUTOMATIC" },
+  });
+
+  await prisma.hourConcept.upsert({
+    where: { code: "HOR-002" },
+    update: { name: "Colectivo", kind: "TRANSPORTE", status: "ACTIVO", deletedAt: null, loadMode: "MANUAL", systemRole: null },
+    create: { code: "HOR-002", name: "Colectivo", kind: "TRANSPORTE", loadMode: "MANUAL" },
   });
 
   const noveltyType = await prisma.noveltyType.upsert({
@@ -341,11 +364,6 @@ async function main() {
         create: {
           companyId: company.id,
           isPrimary: true,
-        },
-      },
-      hourConcepts: {
-        create: {
-          hourConceptId: hourNormal.id,
         },
       },
       address: {

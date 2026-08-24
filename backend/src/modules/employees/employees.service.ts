@@ -444,8 +444,13 @@ export const employeesService = {
   },
 
   async replaceHourConcepts(id: string, input: ReplaceEmployeeHourConceptsInput, audit?: AuditContext) {
+    const uniqueIds = Array.from(new Set(input.hourConceptIds.filter(Boolean)));
+    const baseConcepts = await employeesRepository.countBaseHourConcepts(uniqueIds);
+    if (baseConcepts > 0) {
+      throw new AppError("Horas normales es la grilla base y no se asigna por legajo", 409, "HOUR_CONCEPT_BASE_NOT_ASSIGNABLE");
+    }
     const before = await execute(() => employeesRepository.findHourConceptsAuditSnapshot(id));
-    const employee = await execute(() => employeesRepository.replaceHourConcepts(id, input.hourConceptIds));
+    const employee = await execute(() => employeesRepository.replaceHourConcepts(id, uniqueIds));
     await auditService.register({
       ...audit,
       action: "UPDATE",

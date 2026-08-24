@@ -48,6 +48,18 @@ async function auditChange(action: "CREATE" | "UPDATE", item: { id: string; code
   });
 }
 
+function assertAssignableAdditionalConcept(item: { systemRole?: string | null }) {
+  if (item.systemRole === "NORMAL_BASE") {
+    throw new AppError("Horas normales es la grilla base y no se asigna por legajo", 409, "HOUR_CONCEPT_BASE_NOT_ASSIGNABLE");
+  }
+}
+
+function assertNotSystemManaged(item: { systemRole?: string | null }) {
+  if (item.systemRole === "NORMAL_BASE") {
+    throw new AppError("El concepto base Horas normales es administrado por el sistema", 409, "HOUR_CONCEPT_SYSTEM_MANAGED");
+  }
+}
+
 export const hourConceptsService = {
   async list(query: ListHourConceptsQuery) {
     const [items, total] = await hourConceptsRepository.findMany(query);
@@ -70,6 +82,8 @@ export const hourConceptsService = {
   },
 
   async update(id: string, data: UpdateHourConceptInput, audit?: AuditContext) {
+    const current = await execute(() => hourConceptsRepository.findById(id));
+    assertNotSystemManaged(current);
     const item = await execute(() => hourConceptsRepository.update(id, data));
     invalidateHourConceptsCache();
     await auditChange("UPDATE", item, audit);
@@ -94,7 +108,8 @@ export const hourConceptsService = {
   // desde el legajo (reutiliza el repository, no duplica la escritura), pero
   // agrega/quita puntualmente en vez de reemplazar todo el set del empleado.
   async enableEmployees(hourConceptId: string, input: EnableHourConceptEmployeesInput, audit?: AuditContext) {
-    await execute(() => hourConceptsRepository.findById(hourConceptId));
+    const concept = await execute(() => hourConceptsRepository.findById(hourConceptId));
+    assertAssignableAdditionalConcept(concept);
     const employeeIds = Array.from(new Set(input.employeeIds));
     const existingEmployees = await hourConceptsRepository.countExistingEmployees(employeeIds);
     if (existingEmployees !== employeeIds.length) throw new AppError("Uno o más empleados no existen", 404, "EMPLOYEE_NOT_FOUND");
@@ -112,7 +127,8 @@ export const hourConceptsService = {
   },
 
   async disableEmployee(hourConceptId: string, employeeId: string, audit?: AuditContext) {
-    await execute(() => hourConceptsRepository.findById(hourConceptId));
+    const concept = await execute(() => hourConceptsRepository.findById(hourConceptId));
+    assertAssignableAdditionalConcept(concept);
     const existing = await hourConceptsRepository.findEmployeeHourConcept(hourConceptId, employeeId);
     if (!existing) throw new AppError("El empleado no tiene este concepto habilitado", 404, "EMPLOYEE_HOUR_CONCEPT_NOT_FOUND");
 
@@ -142,6 +158,7 @@ export const hourConceptsService = {
   //   horarias (desactivadas, no borradas).
   async remove(id: string, force: boolean, audit?: AuditContext) {
     const item = await execute(() => hourConceptsRepository.findWithUsage(id));
+    assertNotSystemManaged(item);
     const usageCount =
       item._count.employees +
       item._count.timeEntries +

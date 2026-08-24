@@ -165,6 +165,7 @@ export const hourConceptsRepository = {
         id: true,
         code: true,
         name: true,
+        systemRole: true,
         _count: {
           select: {
             employees: true,

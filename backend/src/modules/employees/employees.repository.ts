@@ -1070,14 +1070,20 @@ export const employeesRepository = {
 
   replaceHourConcepts(employeeId: string, hourConceptIds: string[]) {
     return prisma.$transaction(async (tx) => {
-      await tx.employeeHourConcept.deleteMany({ where: { employeeId } });
       const uniqueIds = Array.from(new Set(hourConceptIds.filter(Boolean)));
+      await tx.employeeHourConcept.deleteMany({ where: { employeeId } });
       if (uniqueIds.length) {
         await tx.employeeHourConcept.createMany({
           data: uniqueIds.map((hourConceptId) => ({ employeeId, hourConceptId })),
         });
       }
       return tx.employee.findUniqueOrThrow({ where: { id: employeeId }, select: employeeDetailSelect });
+    });
+  },
+
+  countBaseHourConcepts(hourConceptIds: string[]) {
+    return prisma.hourConcept.count({
+      where: { id: { in: hourConceptIds }, systemRole: "NORMAL_BASE" },
     });
   },
 

@@ -1,6 +1,8 @@
 import { z } from "zod";
 
 export const hourConceptKindSchema = z.enum(["NORMAL", "EXTRA", "NOCTURNA", "GUARDIA", "SERENO", "TRANSPORTE", "FERIADO", "OTRO"]);
+export const additionalHourConceptKindSchema = z.enum(["EXTRA", "NOCTURNA", "GUARDIA", "SERENO", "TRANSPORTE", "FERIADO", "OTRO"]);
+export const hourConceptLoadModeSchema = z.enum(["MANUAL", "AUTOMATIC", "BOTH"]);
 export const recordStatusSchema = z.enum(["ACTIVO", "INACTIVO"]);
 
 export const listHourConceptsQuerySchema = z.object({
@@ -24,9 +26,10 @@ export const removeHourConceptQuerySchema = z.object({
 export const createHourConceptSchema = z.object({
   code: z.string().trim().min(2).max(40),
   name: z.string().trim().min(2).max(160),
-  kind: hourConceptKindSchema,
+  kind: additionalHourConceptKindSchema,
   status: recordStatusSchema.default("ACTIVO"),
   countsAsWorked: z.boolean().default(true),
+  loadMode: hourConceptLoadModeSchema,
 });
 
 export const updateHourConceptSchema = createHourConceptSchema.partial();

@@ -169,6 +169,10 @@ enum HourConceptLoadMode {
   BOTH
 }
 
+enum HourConceptSystemRole {
+  NORMAL_BASE
+}
+
 enum HourConceptBreakdownSource {
   MANUAL
   AUTOMATIC
@@ -706,16 +710,20 @@ model EmployeeAssignment {
 }
 
 model HourConcept {
-  id             String               @id @default(uuid())
-  code           String               @unique
+  id             String                 @id @default(uuid())
+  code           String                 @unique
   name           String
   kind           HourConceptKind
-  status         RecordStatus         @default(ACTIVO)
-  countsAsWorked Boolean              @default(true)
+  status         RecordStatus           @default(ACTIVO)
+  countsAsWorked Boolean                @default(true)
   // Etapa 6C: nullable para no asignar semántica nueva a conceptos legacy.
   // En etapas posteriores será obligatorio para conceptos adicionales;
   // Horas normales no usa HourConceptBreakdown.
   loadMode       HourConceptLoadMode?
+  // Rol estable reservado al concepto base del sistema. Es nullable porque
+  // todos los demás conceptos son adicionales; @unique garantiza que exista
+  // como máximo un NORMAL_BASE sin depender de code/name/kind mutables.
+  systemRole     HourConceptSystemRole? @unique
   // Eliminación lógica (Etapa 8P): se usa SOLO cuando el concepto tiene uso
   // histórico real (TimeEntry/TimeSegment tienen FK obligatoria — Postgres
   // rechaza el delete físico mientras existan filas, y aunque no las
@@ -726,9 +734,9 @@ model HourConcept {
   // != null es lo que la UI usa para ocultarlo del catálogo activo; status
   // ya vuelve a INACTIVO al mismo tiempo (misma semántica que "deshabilitado"
   // para el fichador/clasificación, que ya filtran por status ACTIVO).
-  deletedAt      DateTime?            @db.Timestamptz(3)
-  createdAt      DateTime             @default(now()) @db.Timestamptz(3)
-  updatedAt      DateTime             @updatedAt @db.Timestamptz(3)
+  deletedAt      DateTime?              @db.Timestamptz(3)
+  createdAt      DateTime               @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime               @updatedAt @db.Timestamptz(3)
 
   employees    EmployeeHourConcept[]
   timeEntries  TimeEntry[]

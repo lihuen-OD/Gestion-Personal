@@ -15,10 +15,18 @@ import { roles } from "../../shared/security/roles";
 vi.mock("./employees.repository", () => ({
   employeesRepository: {
     findById: vi.fn(),
+    countBaseHourConcepts: vi.fn(),
+    findHourConceptsAuditSnapshot: vi.fn(),
+    replaceHourConcepts: vi.fn(),
   },
 }));
 
-const repo = employeesRepository as unknown as { findById: Mock };
+const repo = employeesRepository as unknown as {
+  findById: Mock;
+  countBaseHourConcepts: Mock;
+  findHourConceptsAuditSnapshot: Mock;
+  replaceHourConcepts: Mock;
+};
 const rrhhUser = { id: "user-rrhh", role: roles.rrhh } as unknown as Express.AuthUser;
 
 function sectorChain(overrides: Partial<{ sector: string; area: string; establishment: string; businessUnit: string }> = {}) {
@@ -42,6 +50,19 @@ function employeeFixture(overrides: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+});
+
+describe("employeesService.replaceHourConcepts", () => {
+  it("rechaza NORMAL_BASE antes de modificar las asignaciones del legajo", async () => {
+    repo.countBaseHourConcepts.mockResolvedValue(1);
+
+    await expect(
+      employeesService.replaceHourConcepts("emp-1", { hourConceptIds: ["normal-1"] }),
+    ).rejects.toMatchObject({ statusCode: 409, code: "HOUR_CONCEPT_BASE_NOT_ASSIGNABLE" });
+
+    expect(repo.findHourConceptsAuditSnapshot).not.toHaveBeenCalled();
+    expect(repo.replaceHourConcepts).not.toHaveBeenCalled();
+  });
 });
 
 describe("employeesService.getPositionValidation", () => {

@@ -154,6 +154,7 @@ describe("findWithUsage — conteo de uso real antes de eliminar (Etapa 8O)", ()
         id: true,
         code: true,
         name: true,
+        systemRole: true,
         _count: { select: { employees: true, timeEntries: true, novelties: true, timeSegments: true, workShifts: true, rules: true } },
       },
     });
