@@ -19,8 +19,8 @@ type ApiEmployee = {
   id: string;
   legajo: string;
   legajoFinnegans?: string | null;
-  cuil: string;
-  dni: string;
+  cuil?: string;
+  dni?: string;
   firstName: string;
   lastName: string;
   birthDate?: string | null;
@@ -217,8 +217,8 @@ export function mapEmployeeFromApi(item: ApiEmployee): Employee {
     legajoFinnegans: item.legajoFinnegans || "",
     firstName: item.firstName,
     lastName: item.lastName,
-    dni: item.dni,
-    cuil: item.cuil,
+    dni: item.dni || "",
+    cuil: item.cuil || "",
     birthDate: dateOnly(item.birthDate),
     gender: item.gender || "",
     civilStatus: item.civilStatus || "",

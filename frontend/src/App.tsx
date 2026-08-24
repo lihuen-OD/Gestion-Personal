@@ -5,6 +5,7 @@ import { useAuth } from "./context/AuthContext";
 import { LoginPage } from "./pages/LoginPage";
 import { roleLevel } from "./utils/roles";
 import { LoadingState } from "./components/ui/LoadingState";
+import { RoleRoute } from "./app/RoleRoute";
 
 const DashboardPage = lazy(() => import("./pages/DashboardPage").then((module) => ({ default: module.DashboardPage })));
 const EmployeesPage = lazy(() => import("./pages/EmployeesPage").then((module) => ({ default: module.EmployeesPage })));
@@ -69,9 +70,9 @@ export function App() {
           <Route path="/fichador" element={<TimeClockPage />} />
           <Route path="/" element={level === 3 ? <Navigate to="/gestion-horaria" /> : <DashboardPage />} />
           <Route path="/gestion-horaria" element={<HourlyManagementHomePage />} />
-          <Route path="/legajos" element={<EmployeesPage />} />
-          <Route path="/legajos/nuevo" element={<EmployeeCreatePage />} />
-          <Route path="/legajos/:id" element={<EmployeeDetailPage />} />
+          <Route path="/legajos" element={<RoleRoute allowedLevels={[1, 2]}><EmployeesPage /></RoleRoute>} />
+          <Route path="/legajos/nuevo" element={<RoleRoute allowedLevels={[1]}><EmployeeCreatePage /></RoleRoute>} />
+          <Route path="/legajos/:id" element={<RoleRoute allowedLevels={[1, 2]}><EmployeeDetailPage /></RoleRoute>} />
           <Route path="/puestos" element={<PuestosPage />} />
           <Route path="/puestos/nuevo" element={<PuestoCreatePage />} />
           <Route path="/puestos/:id" element={<PuestoDetailPage />} />
@@ -93,7 +94,7 @@ export function App() {
           <Route path="/asistencia" element={<AttendancePage />} />
           <Route path="/asistencia/alertas" element={<ShiftAlertsPage />} />
           <Route path="/novedades" element={<NoveltiesPage />} />
-          <Route path="/documentacion" element={<DocumentsPage />} />
+          <Route path="/documentacion" element={<RoleRoute allowedLevels={[1, 2]}><DocumentsPage /></RoleRoute>} />
           <Route path="/organigramas" element={<OrganigramasPage />} />
           <Route path="/usuarios" element={<UsersPage />} />
           <Route path="/auditoria" element={<AuditPage />} />

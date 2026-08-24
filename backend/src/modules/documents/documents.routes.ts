@@ -12,13 +12,13 @@ export const documentsRouter = Router();
 documentsRouter.use(requireAuth);
 documentsRouter.get(
   "/",
-  requireAnyRole([roles.rrhh, roles.supervision, roles.cargaHoraria]),
+  requireAnyRole([roles.rrhh, roles.supervision]),
   validateQuery(listDocumentsQuerySchema),
   asyncHandler(documentsController.list),
 );
 
 documentsRouter.get(
   "/:id/download",
-  requireAnyRole([roles.rrhh, roles.supervision, roles.cargaHoraria]),
+  requireAnyRole([roles.rrhh, roles.supervision]),
   asyncHandler(documentsController.download),
 );

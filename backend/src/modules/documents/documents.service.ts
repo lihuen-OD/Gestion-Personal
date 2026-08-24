@@ -6,9 +6,17 @@ import type { AuditContext } from "../audit/audit.service";
 import { auditService } from "../audit/audit.service";
 import { documentsRepository } from "./documents.repository";
 import type { ListDocumentsQuery } from "./documents.schemas";
+import { roles } from "../../shared/security/roles";
+
+function assertCanAccessDocuments(user: Express.AuthUser) {
+  if (user.role === roles.cargaHoraria) {
+    throw new AppError("No tenés permiso para acceder a documentación.", 403, "DOCUMENT_ACCESS_FORBIDDEN");
+  }
+}
 
 export const documentsService = {
   async list(query: ListDocumentsQuery, user: Express.AuthUser) {
+    assertCanAccessDocuments(user);
     const [items, total] = await documentsRepository.findMany(query, employeeAccessWhere(user));
     return {
       items,
@@ -22,6 +30,7 @@ export const documentsService = {
   },
 
   async download(id: string, user: Express.AuthUser, audit?: AuditContext) {
+    assertCanAccessDocuments(user);
     const item = await documentsRepository.findById(id, employeeAccessWhere(user));
     if (!item) throw new AppError("Documento no encontrado", 404, "DOCUMENT_NOT_FOUND");
 

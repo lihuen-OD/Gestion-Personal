@@ -70,8 +70,8 @@ timeEntriesRouter.post("/work-shifts/:id/close-manual", requireAnyRole([roles.rr
 timeEntriesRouter.post("/work-shifts/:id/missing-out", requireAnyRole([roles.rrhh, roles.supervision]), validateBody(adminWorkShiftReasonSchema), asyncHandler(timeEntriesController.markMissingOut));
 timeEntriesRouter.post("/work-shifts/:id/observe", requireAnyRole([roles.rrhh, roles.supervision]), validateBody(adminWorkShiftReasonSchema), asyncHandler(timeEntriesController.observeWorkShift));
 timeEntriesRouter.post("/", requireAnyRole(operationalRoles), validateBody(createTimeEntrySchema), asyncHandler(timeEntriesController.create));
-timeEntriesRouter.get("/export", requireAnyRole(operationalRoles), validateQuery(timeEntriesExportQuerySchema), asyncHandler(timeEntriesController.exportJson));
-timeEntriesRouter.get("/export.csv", requireAnyRole(operationalRoles), validateQuery(timeEntriesExportQuerySchema), asyncHandler(timeEntriesController.exportCsv));
+timeEntriesRouter.get("/export", requireAnyRole([roles.rrhh, roles.supervision]), validateQuery(timeEntriesExportQuerySchema), asyncHandler(timeEntriesController.exportJson));
+timeEntriesRouter.get("/export.csv", requireAnyRole([roles.rrhh, roles.supervision]), validateQuery(timeEntriesExportQuerySchema), asyncHandler(timeEntriesController.exportCsv));
 timeEntriesRouter.patch("/:id", requireAnyRole(operationalRoles), validateBody(updateTimeEntrySchema), asyncHandler(timeEntriesController.update));
 timeEntriesRouter.post("/:id/submit", requireAnyRole(operationalRoles), asyncHandler(timeEntriesController.submit));
 timeEntriesRouter.post("/:id/approve", requireAnyRole([roles.rrhh, roles.supervision]), asyncHandler(timeEntriesController.approve));

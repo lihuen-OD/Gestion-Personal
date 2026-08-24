@@ -151,7 +151,7 @@ function ShiftRows({ items, emptyText, showSegments = false, showRisk = false, o
           <tr key={shift.id}>
             <td>
               <strong>{employeeName(shift)}</strong>
-              <span className="muted-line">DNI {shift.employee.dni}</span>
+              <span className="muted-line">Legajo {shift.employee.legajo}</span>
             </td>
             <td>{shift.employee.legajo}</td>
             <td>{shift.employee.sector?.name || "-"}</td>
@@ -238,7 +238,7 @@ function ObservationRows({ items, onViewPhoto, onResolve, onViewSegments }: { it
           const incident = item.incident;
           const isPending = incident.status === "PENDIENTE";
           return <tr key={`INACTIVITY-${incident.id}`}>
-            <td><strong>{employeeName(incident)}</strong><span className="muted-line">Legajo {incident.employee.legajo} · DNI {incident.employee.dni}</span></td>
+            <td><strong>{employeeName(incident)}</strong><span className="muted-line">Legajo {incident.employee.legajo}</span></td>
             <td>{new Date(incident.operationalDate).toLocaleDateString("es-AR", { timeZone: "UTC" })}</td>
             <td><Badge tone="danger">Sin actividad registrada</Badge></td>
             <td><span className="attendance-review-detail">{incident.observation}</span></td>
@@ -253,7 +253,7 @@ function ObservationRows({ items, onViewPhoto, onResolve, onViewSegments }: { it
           ? item.shift.observation || (item.shift.status === "FALTA_SALIDA" ? "No se registró la salida" : "Jornada con conflicto")
           : item.punch.observation || faceStatusLabel(item.punch.faceValidationStatus);
         return <tr key={`${item.kind}-${record.id}`}>
-          <td><strong>{employeeName(record)}</strong><span className="muted-line">Legajo {record.employee.legajo} · DNI {record.employee.dni}</span></td>
+          <td><strong>{employeeName(record)}</strong><span className="muted-line">Legajo {record.employee.legajo}</span></td>
           <td>{formatDateTime(item.occurredAt)}</td>
           <td><Badge tone="danger">{problem}</Badge></td>
           <td>
@@ -499,7 +499,7 @@ export function AttendancePage() {
             <span>Empleado</span>
             <div className="attendance-filter-control">
               <Search size={16} />
-              <input value={observedQuery} onChange={(event) => setObservedQuery(event.target.value)} placeholder="Nombre, legajo, DNI o sector" />
+              <input value={observedQuery} onChange={(event) => setObservedQuery(event.target.value)} placeholder="Nombre, legajo o sector" />
             </div>
           </label>
           <label>

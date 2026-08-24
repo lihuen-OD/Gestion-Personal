@@ -29,6 +29,7 @@ const storage = storageService as unknown as { getPublicUrl: Mock; getFilePath: 
 const audit = auditService as unknown as { register: Mock };
 
 const fakeUser = { id: "user-1", role: "NIVEL_1_RRHH" } as unknown as Express.AuthUser;
+const cargaUser = { id: "user-3", role: "NIVEL_3_CARGA_HORARIA" } as unknown as Express.AuthUser;
 
 const document = {
   id: "doc-1",
@@ -69,5 +70,23 @@ describe("documentsService.download", () => {
       code: "DOCUMENT_NOT_FOUND",
     });
     expect(audit.register).not.toHaveBeenCalled();
+  });
+});
+
+describe("documentsService permisos Nivel 3", () => {
+  it("no permite listar documentos", async () => {
+    await expect(documentsService.list({ page: 1, take: 25 } as never, cargaUser)).rejects.toMatchObject({
+      statusCode: 403,
+      code: "DOCUMENT_ACCESS_FORBIDDEN",
+    });
+    expect(repo.findMany).not.toHaveBeenCalled();
+  });
+
+  it("no permite descargar documentos", async () => {
+    await expect(documentsService.download("doc-1", cargaUser)).rejects.toMatchObject({
+      statusCode: 403,
+      code: "DOCUMENT_ACCESS_FORBIDDEN",
+    });
+    expect(repo.findById).not.toHaveBeenCalled();
   });
 });

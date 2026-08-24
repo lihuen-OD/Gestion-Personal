@@ -7,6 +7,7 @@ import { roles } from "../../shared/security/roles";
 import { noveltiesRepository } from "./novelties.repository";
 import type { CreateNoveltyInput, ListNoveltiesQuery, RejectNoveltyInput } from "./novelties.schemas";
 import { notifyRrhh } from "../workforce-management/workforce.service";
+import { redactPiiForRole } from "../../shared/security/piiRedaction";
 
 function mapPrismaError(error: unknown) {
   if (error instanceof Prisma.PrismaClientKnownRequestError) {
@@ -99,7 +100,7 @@ export const noveltiesService = {
   async list(query: ListNoveltiesQuery, user: Express.AuthUser) {
     const [items, total] = await noveltiesRepository.findMany(query, employeeAccessWhere(user));
     return {
-      items,
+      items: redactPiiForRole(items, user),
       meta: {
         total,
         page: query.page,
@@ -135,7 +136,7 @@ export const noveltiesService = {
       await notifyRrhh({ type: "NOVEDAD_PENDIENTE", title: "Nueva novedad pendiente", message: `${items.length} novedad(es) requieren aprobación de RH.`, entityType: "Novelty", entityId: items[0]?.id, link: "/pendientes", priority: "ALTA" });
     }
 
-    return items;
+    return redactPiiForRole(items, user);
   },
 
   async approve(id: string, user: Express.AuthUser, audit?: AuditContext) {
@@ -156,7 +157,7 @@ export const noveltiesService = {
       before: before as Prisma.InputJsonValue,
       after: item as Prisma.InputJsonValue,
     });
-    return item;
+    return redactPiiForRole(item, user);
   },
 
   async approveMany(ids: string[], user: Express.AuthUser, audit?: AuditContext) {
@@ -185,7 +186,7 @@ export const noveltiesService = {
       before: before as Prisma.InputJsonValue,
       after: { item, reason: input.reason } as Prisma.InputJsonValue,
     });
-    return item;
+    return redactPiiForRole(item, user);
   },
 
   async remove(id: string, user: Express.AuthUser, audit?: AuditContext) {

@@ -4,6 +4,7 @@ import { auditService } from "../audit/audit.service";
 import { AppError } from "../../shared/errors/AppError";
 import { storageService } from "../../shared/storage/storage.service";
 import { storagePathBuilder } from "../../shared/storage/storagePathBuilder";
+import { redactPiiForRole } from "../../shared/security/piiRedaction";
 import { employeeAccessWhere } from "./employeeAccess";
 import { employeesRepository } from "./employees.repository";
 import type {
@@ -229,7 +230,7 @@ export const employeesService = {
   async listOptions(query: ListEmployeeOptionsQuery, user: Express.AuthUser) {
     const [items, total] = await employeesRepository.findOptions(query, employeeAccessWhere(user));
     return {
-      items,
+      items: redactPiiForRole(items, user),
       meta: {
         total,
         page: query.page,
@@ -260,7 +261,7 @@ export const employeesService = {
   async getTimeGrid(id: string, query: EmployeeTimeGridQuery, user: Express.AuthUser) {
     const grid = await employeesRepository.findTimeGrid(id, query, employeeAccessWhere(user));
     if (!grid) throw new AppError("Employee not found", 404, "EMPLOYEE_NOT_FOUND");
-    return grid;
+    return redactPiiForRole(grid, user);
   },
 
   async getPositionValidation(id: string, user: Express.AuthUser) {

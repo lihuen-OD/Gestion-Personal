@@ -31,7 +31,7 @@ employeesRouter.use(requireAuth);
 
 employeesRouter.get(
   "/",
-  requireAnyRole([roles.rrhh, roles.supervision, roles.cargaHoraria]),
+  requireAnyRole([roles.rrhh, roles.supervision]),
   validateQuery(listEmployeesQuerySchema),
   asyncHandler(employeesController.list),
 );
@@ -64,13 +64,13 @@ employeesRouter.get(
 
 employeesRouter.get(
   "/:id/overview",
-  requireAnyRole([roles.rrhh, roles.supervision, roles.cargaHoraria]),
+  requireAnyRole([roles.rrhh, roles.supervision]),
   asyncHandler(employeesController.getOverviewById),
 );
 
 employeesRouter.get(
   "/:id/overview-details",
-  requireAnyRole([roles.rrhh, roles.supervision, roles.cargaHoraria]),
+  requireAnyRole([roles.rrhh, roles.supervision]),
   asyncHandler(employeesController.getOverviewDetailsById),
 );
 
@@ -83,7 +83,7 @@ employeesRouter.get(
 
 employeesRouter.get(
   "/:id",
-  requireAnyRole([roles.rrhh, roles.supervision, roles.cargaHoraria]),
+  requireAnyRole([roles.rrhh, roles.supervision]),
   asyncHandler(employeesController.getById),
 );
 
@@ -158,7 +158,7 @@ employeesRouter.post(
 
 employeesRouter.get(
   "/:id/field-history",
-  requireAnyRole([roles.rrhh, roles.supervision, roles.cargaHoraria]),
+  requireAnyRole([roles.rrhh, roles.supervision]),
   validateQuery(listEmployeeHistoryQuerySchema),
   asyncHandler(employeesController.listFieldHistory),
 );
@@ -172,7 +172,7 @@ employeesRouter.post(
 
 employeesRouter.get(
   "/:id/block-history",
-  requireAnyRole([roles.rrhh, roles.supervision, roles.cargaHoraria]),
+  requireAnyRole([roles.rrhh, roles.supervision]),
   validateQuery(listEmployeeHistoryQuerySchema),
   asyncHandler(employeesController.listBlockHistory),
 );

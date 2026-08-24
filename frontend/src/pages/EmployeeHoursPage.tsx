@@ -391,7 +391,7 @@ export function EmployeeHoursPage() {
               {employee.firstName} {employee.lastName}
             </h1>
             <p>
-              {employee.company} · {employee.costCenter} · {employee.cuil}
+              {[employee.company, employee.costCenter, employee.sector, employee.position].filter(Boolean).join(" · ")}
             </p>
           </div>
         </div>

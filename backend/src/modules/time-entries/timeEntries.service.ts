@@ -8,6 +8,7 @@ import { AppError } from "../../shared/errors/AppError";
 import { prisma } from "../../shared/prisma/client";
 import { employeeAccessWhere } from "../employees/employeeAccess";
 import { roles } from "../../shared/security/roles";
+import { redactPiiForRole } from "../../shared/security/piiRedaction";
 import { storageService } from "../../shared/storage/storage.service";
 import { storagePathBuilder } from "../../shared/storage/storagePathBuilder";
 import { timeEntriesRepository } from "./timeEntries.repository";
@@ -555,7 +556,7 @@ export const timeEntriesService = {
   async list(query: ListTimeEntriesQuery, user: Express.AuthUser) {
     const [items, total] = await timeEntriesRepository.findMany(query, employeeAccessWhere(user));
     return {
-      items,
+      items: redactPiiForRole(items, user),
       meta: {
         total,
         page: query.page,
@@ -572,7 +573,7 @@ export const timeEntriesService = {
   async periodEmployees(query: TimeEntriesPeriodEmployeesQuery, user: Express.AuthUser) {
     const result = await timeEntriesRepository.findPeriodEmployees(query, employeeAccessWhere(user));
     return {
-      items: result.items,
+      items: redactPiiForRole(result.items, user),
       meta: {
         total: result.total,
         page: query.page,
@@ -608,7 +609,7 @@ export const timeEntriesService = {
     const closedShifts = shifts.filter((shift) => shift.status !== "ABIERTO" && !observedShifts.some((observed) => observed.id === shift.id));
     const totalWorkedMinutes = closedShifts.reduce((sum, shift) => sum + shift.workedMinutes, 0);
 
-    return {
+    return redactPiiForRole({
       date,
       totals: {
         open: openShifts.length,
@@ -620,7 +621,7 @@ export const timeEntriesService = {
       closedShifts,
       observedShifts,
       observedPunches: result.observedPunches,
-    };
+    }, user);
   },
 
   async attendanceObservations(query: AttendanceObservationsQuery, user: Express.AuthUser) {
@@ -636,7 +637,7 @@ export const timeEntriesService = {
       employeeAccessWhere: employeeAccessWhere(user),
     });
     return {
-      items: result.items,
+      items: redactPiiForRole(result.items, user),
       meta: {
         total: result.total,
         pageSize: query.take,
@@ -837,12 +838,12 @@ export const timeEntriesService = {
       description: `Se cargo ${item.hours.toString()} hs para el legajo ${item.employee.legajo}.`,
       after: item as Prisma.InputJsonValue,
     });
-    return item;
+    return redactPiiForRole(item, user);
   },
 
   async previewWorkShift(input: PreviewWorkShiftInput, user: Express.AuthUser) {
     const result = await validateShift(input, user);
-    return {
+    return redactPiiForRole({
       employee: result.employee,
       hourConcept: result.hourConcept,
       totalMinutes: result.totalMinutes,
@@ -855,7 +856,7 @@ export const timeEntriesService = {
         hours: segment.hours,
         label: segment.label,
       })),
-    };
+    }, user);
   },
 
   async createWorkShift(input: CreateWorkShiftInput, user: Express.AuthUser, audit?: AuditContext) {
@@ -889,7 +890,7 @@ export const timeEntriesService = {
         } as Prisma.InputJsonValue,
       });
 
-      return {
+      return redactPiiForRole({
         ...created,
         preview: {
           employee: result.employee,
@@ -898,7 +899,7 @@ export const timeEntriesService = {
           totalHours: Number((result.totalMinutes / 60).toFixed(2)),
           segments: result.segments,
         },
-      };
+      }, user);
     } catch (error) {
       if (error instanceof Error && error.message.startsWith("TIME_ENTRY_LOCKED:")) {
         throw new AppError("La jornada coincide con una carga horaria aprobada o cerrada. Debe corregirse manualmente.", 409, "WORK_SHIFT_LOCKED_TIME_ENTRY");
@@ -1485,7 +1486,7 @@ export const timeEntriesService = {
       before: before as Prisma.InputJsonValue,
       after: item as Prisma.InputJsonValue,
     });
-    return item;
+    return redactPiiForRole(item, user);
   },
 
   async submit(id: string, user: Express.AuthUser, audit?: AuditContext) {
@@ -1504,7 +1505,7 @@ export const timeEntriesService = {
       before: before as Prisma.InputJsonValue,
       after: item as Prisma.InputJsonValue,
     });
-    return item;
+    return redactPiiForRole(item, user);
   },
 
   async approve(id: string, user: Express.AuthUser, audit?: AuditContext) {
@@ -1524,7 +1525,7 @@ export const timeEntriesService = {
       before: before as Prisma.InputJsonValue,
       after: item as Prisma.InputJsonValue,
     });
-    return item;
+    return redactPiiForRole(item, user);
   },
 
   async reject(id: string, input: RejectTimeEntryInput, user: Express.AuthUser, audit?: AuditContext) {
@@ -1544,7 +1545,7 @@ export const timeEntriesService = {
       before: before as Prisma.InputJsonValue,
       after: { item, reason: input.reason } as Prisma.InputJsonValue,
     });
-    return item;
+    return redactPiiForRole(item, user);
   },
 
   async returnForCorrection(id: string, input: RejectTimeEntryInput, user: Express.AuthUser, audit?: AuditContext) {
@@ -1564,7 +1565,7 @@ export const timeEntriesService = {
       before: before as Prisma.InputJsonValue,
       after: { item, reason: input.reason } as Prisma.InputJsonValue,
     });
-    return item;
+    return redactPiiForRole(item, user);
   },
 
   async exportByPerson(query: TimeEntriesExportQuery, user: Express.AuthUser, audit?: AuditContext) {

@@ -23,6 +23,8 @@ vi.mock("./timeEntries.repository", () => ({
     findClockPunchAttempt: vi.fn(),
     completeClockPunchAttempt: vi.fn(),
     failClockPunchAttempt: vi.fn(),
+    findMany: vi.fn(),
+    findPeriodEmployees: vi.fn(),
   },
 }));
 
@@ -76,6 +78,8 @@ type RepoMock = {
   findClockPunchAttempt: Mock;
   completeClockPunchAttempt: Mock;
   failClockPunchAttempt: Mock;
+  findMany: Mock;
+  findPeriodEmployees: Mock;
 };
 
 const repo = timeEntriesRepository as unknown as RepoMock;
@@ -98,6 +102,50 @@ const activeEmployee = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+});
+
+describe("timeEntriesService DTO operativo Nivel 3", () => {
+  const cargaUser = { id: "user-carga", role: "NIVEL_3_CARGA_HORARIA" } as Express.AuthUser;
+  const operationalEmployee = {
+    id: "employee-1",
+    legajo: "100",
+    firstName: "Ana",
+    lastName: "Gomez",
+    status: "ACTIVO",
+    dni: "30000000",
+    cuil: "20300000001",
+    sector: { name: "Administración" },
+    costCenter: { name: "Central" },
+    position: { name: "Administrativa" },
+  };
+
+  it("GET lógico de time entries no devuelve DNI/CUIL", async () => {
+    repo.findMany.mockResolvedValue([[{ id: "entry-1", employee: operationalEmployee }], 1]);
+
+    const result = await timeEntriesService.list({ page: 1, take: 25 } as never, cargaUser);
+
+    expect(result.items[0]?.employee).toMatchObject({ legajo: "100", firstName: "Ana", lastName: "Gomez" });
+    expect(result.items[0]?.employee).not.toHaveProperty("dni");
+    expect(result.items[0]?.employee).not.toHaveProperty("cuil");
+  });
+
+  it("period-employees mantiene estructura operativa sin DNI/CUIL", async () => {
+    repo.findPeriodEmployees.mockResolvedValue({
+      items: [{ employee: operationalEmployee, summary: { total: 8 } }],
+      total: 1,
+    });
+
+    const result = await timeEntriesService.periodEmployees({ period: "2026-08", page: 1, take: 25 } as never, cargaUser);
+
+    expect(result.items[0]?.employee).toMatchObject({
+      legajo: "100",
+      sector: { name: "Administración" },
+      costCenter: { name: "Central" },
+      position: { name: "Administrativa" },
+    });
+    expect(result.items[0]?.employee).not.toHaveProperty("dni");
+    expect(result.items[0]?.employee).not.toHaveProperty("cuil");
+  });
 });
 
 describe("clockInByEmployee", () => {

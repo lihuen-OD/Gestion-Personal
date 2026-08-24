@@ -13,6 +13,7 @@ vi.mock("./novelties.repository", () => ({
     countEmployees: vi.fn(),
     findNoveltyType: vi.fn(),
     createMany: vi.fn(),
+    findMany: vi.fn(),
   },
 }));
 
@@ -31,10 +32,30 @@ const repo = noveltiesRepository as unknown as {
   countEmployees: Mock;
   findNoveltyType: Mock;
   createMany: Mock;
+  findMany: Mock;
 };
 
 const rrhhUser = { id: "user-rrhh", role: roles.rrhh } as unknown as Express.AuthUser;
 const supervisionUser = { id: "user-sup", role: roles.supervision } as unknown as Express.AuthUser;
+const cargaUser = { id: "user-carga", role: roles.cargaHoraria } as unknown as Express.AuthUser;
+
+describe("noveltiesService.list PII", () => {
+  it("Nivel 3 recibe la novedad operativa sin DNI, CUIL ni documentos", async () => {
+    repo.findMany.mockResolvedValue([[
+      novelty({
+        employee: { id: "employee-1", legajo: "100", firstName: "Ana", lastName: "Gomez", dni: "30000000", cuil: "20300000001" },
+        documents: [{ fileName: "certificado-medico.pdf" }],
+      }),
+    ], 1]);
+
+    const result = await noveltiesService.list({ page: 1, take: 25 } as never, cargaUser);
+
+    expect(result.items[0]?.employee).toMatchObject({ id: "employee-1", legajo: "100", firstName: "Ana", lastName: "Gomez" });
+    expect(result.items[0]?.employee).not.toHaveProperty("dni");
+    expect(result.items[0]?.employee).not.toHaveProperty("cuil");
+    expect(result.items[0]).not.toHaveProperty("documents");
+  });
+});
 
 function novelty(overrides: Partial<Record<string, unknown>> = {}) {
   return {
