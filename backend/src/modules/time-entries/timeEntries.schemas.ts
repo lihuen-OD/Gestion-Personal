@@ -117,6 +117,12 @@ export const clockFaceValidationStatusSchema = z.enum([
   "CAMERA_ERROR",
 ]);
 
+// Etapa 6K: el fichador ya no pide tipo de jornada — sólo registra Horas
+// normales (HC-NORMAL / systemRole NORMAL_BASE), resuelto internamente por el
+// backend. `hourConceptId` queda opcional únicamente por compatibilidad con
+// clientes viejos; si llega, el servicio exige que resuelva al concepto
+// canónico (ver `resolveShiftConcept` en timeEntries.service.ts) y rechaza
+// explícitamente cualquier otro concepto adicional.
 export const clockPhotoPunchSchema = z.object({
   requestId: z.string().uuid(),
   employeeId: z.string().uuid(),
@@ -132,10 +138,6 @@ export const clockPhotoPunchSchema = z.object({
     language: z.string().trim().max(40).optional(),
     cameraLabel: z.string().trim().max(180).optional(),
   }).optional(),
-}).superRefine((input, context) => {
-  if (input.punchType === "IN" && !input.hourConceptId) {
-    context.addIssue({ code: "custom", path: ["hourConceptId"], message: "Seleccioná el tipo de jornada antes de registrar el ingreso." });
-  }
 });
 
 export const clockPunchAttemptParamsSchema = z.object({

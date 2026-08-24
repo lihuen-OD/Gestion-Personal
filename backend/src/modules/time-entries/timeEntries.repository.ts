@@ -1231,23 +1231,24 @@ export const timeEntriesRepository = {
     return prisma.employee.count({ where: { AND: [{ id: employeeId }, employeeAccessWhere] } });
   },
 
-  findDefaultHourConcept(employeeId: string, hourConceptId?: string) {
+  async findDefaultHourConcept(employeeId: string, hourConceptId?: string) {
     if (hourConceptId) {
       return prisma.employeeHourConcept.findUnique({
         where: { employeeId_hourConceptId: { employeeId, hourConceptId } },
         include: { hourConcept: true },
       });
     }
-    return prisma.employeeHourConcept.findFirst({
-      where: {
-        employeeId,
-        hourConcept: {
-          kind: "NORMAL",
-          status: "ACTIVO",
-        },
-      },
-      include: { hourConcept: true },
+    // Etapa 6K: Hora normal es la base universal, no un concepto adicional
+    // habilitado por legajo — se resuelve directo por systemRole (único en
+    // toda la tabla), igual que ya hace la grilla aditiva (ver
+    // employees.repository.ts findTimeGrid), sin exigir un vínculo
+    // EmployeeHourConcept por empleado. kind = "NORMAL" es la etiqueta
+    // legacy que este lookup reemplaza; podía desalinearse o no alcanzar
+    // para identificar la base de forma única.
+    const hourConcept = await prisma.hourConcept.findFirst({
+      where: { systemRole: "NORMAL_BASE", status: "ACTIVO", deletedAt: null },
     });
+    return hourConcept ? { hourConcept } : null;
   },
 
   findEnabledHourConcept(employeeId: string, hourConceptId: string) {

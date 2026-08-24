@@ -81,7 +81,6 @@ export type ClockPhotoPunchInput = {
   requestId: string;
   employeeId: string;
   punchType: "IN" | "OUT";
-  hourConceptId?: string;
   photo: string;
   thumbnail?: string;
   faceValidationStatus: "VALID" | "NO_FACE" | "MULTIPLE_FACES" | "LOW_LIGHT" | "FACE_TOO_SMALL" | "CAMERA_ERROR";

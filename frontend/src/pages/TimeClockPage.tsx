@@ -37,7 +37,6 @@ export function TimeClockPage() {
   const [attemptId, setAttemptId] = useState("");
   const [attemptLocked, setAttemptLocked] = useState(false);
   const [submissionStage, setSubmissionStage] = useState<"registering" | "slow" | "checking">("registering");
-  const [hourConceptId, setHourConceptId] = useState("");
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(new Date()), 1000);
@@ -76,7 +75,7 @@ export function TimeClockPage() {
     return Math.max(0, Math.round((now.getTime() - new Date(status.openShift.startAt).getTime()) / 60_000));
   }, [now, status?.openShift?.startAt]);
   const openShiftExceeded = openShiftMinutes > MAX_CLOCK_SHIFT_MINUTES;
-  const canClockIn = canSubmit && Boolean(hourConceptId) && (!status?.openShift || openShiftExceeded);
+  const canClockIn = canSubmit && (!status?.openShift || openShiftExceeded);
   const canClockOut = canSubmit && Boolean(status?.openShift) && !openShiftExceeded;
 
   const refreshStatus = async (employeeId = selected?.id) => {
@@ -88,7 +87,6 @@ export function TimeClockPage() {
     try {
       const nextStatus = await timeClockApiService.status(employeeId);
       setStatus(nextStatus);
-      setHourConceptId(nextStatus.openShift?.hourConcept?.id || nextStatus.hourConcepts.find((concept) => concept.kind === "NORMAL")?.id || nextStatus.hourConcepts[0]?.id || "");
     } catch {
       setStatus(undefined);
       setError("No pudimos consultar el estado del legajo seleccionado.");
@@ -106,7 +104,6 @@ export function TimeClockPage() {
     try {
       const nextStatus = await timeClockApiService.status(employee.id);
       setStatus(nextStatus);
-      setHourConceptId(nextStatus.openShift?.hourConcept?.id || nextStatus.hourConcepts.find((concept) => concept.kind === "NORMAL")?.id || nextStatus.hourConcepts[0]?.id || "");
     } catch {
       setStatus(undefined);
       setError("No pudimos consultar el estado del legajo seleccionado.");
@@ -121,7 +118,6 @@ export function TimeClockPage() {
     setSearch("");
     setMatches([]);
     setError("");
-    setHourConceptId("");
   };
 
   const clockIn = async () => {
@@ -143,7 +139,7 @@ export function TimeClockPage() {
     if ("totalHours" in response.workShift) {
       setStatus((current) => ({ employee: response.employee, openShift: null, hourConcepts: current?.hourConcepts || [] }));
     } else {
-      setStatus((current) => ({ employee: response.employee, openShift: { ...response.workShift, hourConcept: current?.hourConcepts.find((concept) => concept.id === hourConceptId) || null }, hourConcepts: current?.hourConcepts || [] }));
+      setStatus((current) => ({ employee: response.employee, openShift: { ...response.workShift, hourConcept: null }, hourConcepts: current?.hourConcepts || [] }));
     }
     setPendingPunch(undefined);
     setAttemptId("");
@@ -176,7 +172,6 @@ export function TimeClockPage() {
         requestId: attemptId,
         employeeId: selected.id,
         punchType: pendingPunch,
-        hourConceptId: pendingPunch === "IN" ? hourConceptId : status?.openShift?.hourConcept?.id || undefined,
         photo: capture.photo,
         thumbnail: capture.thumbnail,
         faceValidationStatus: capture.faceValidationStatus,
@@ -270,23 +265,13 @@ export function TimeClockPage() {
           <div className="clock-open">
             <b>Ingreso abierto</b>
             <span>Registrado: {formatDateTime(status.openShift.startAt)}</span>
-            {status.openShift.hourConcept ? <span>Tipo de jornada: <b>{status.openShift.hourConcept.name}</b></span> : null}
             {openShiftExceeded ? <span>Ese día quedó con olvido de salida. Podés marcar un nuevo ingreso; RRHH lo revisa desde Asistencia.</span> : null}
           </div>
         ) : null}
 
-        {selected && !status?.openShift && status?.hourConcepts.length ? (
-          <fieldset className="clock-concepts" disabled={loading || attemptLocked}>
-            <legend>¿Qué tipo de jornada vas a registrar?</legend>
-            <div>{status.hourConcepts.map((concept) => (
-              <label key={concept.id} className={hourConceptId === concept.id ? "is-selected" : ""}>
-                <input type="radio" name="clock-hour-concept" checked={hourConceptId === concept.id} onChange={() => setHourConceptId(concept.id)} />
-                <span><b>{concept.name}</b><small>{concept.kind === "NORMAL" ? "Jornada habitual" : "Se contabiliza por separado"}</small></span>
-              </label>
-            ))}</div>
-          </fieldset>
+        {selected ? (
+          <p className="muted">El fichador registra únicamente entrada y salida. Los conceptos horarios se calculan o cargan luego desde la gestión horaria.</p>
         ) : null}
-        {selected && !status?.openShift && status && !status.hourConcepts.length ? <p className="error">Este legajo no tiene tipos de jornada habilitados. RRHH debe configurarlo antes de fichar.</p> : null}
 
         <div className="clock-actions">
           <Button variant="primary" icon={LogIn} disabled={!canClockIn} onClick={clockIn}>

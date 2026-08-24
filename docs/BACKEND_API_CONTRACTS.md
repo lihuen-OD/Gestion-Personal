@@ -849,6 +849,34 @@ Rechazo:
 }
 ```
 
+### Fichador público (clock)
+
+```txt
+POST /api/time-entries/clock/photo-punch
+```
+
+Kiosco público sin sesión de usuario: protegido por `x-clock-device-token` (`requireClockDeviceToken`) y rate limit (`clockRateLimiter`), montados sobre todo el sub-router `/clock`. No requiere `requireAuth`.
+
+```json
+{
+  "requestId": "uuid",
+  "employeeId": "uuid",
+  "punchType": "IN",
+  "photo": "data:image/jpeg;base64,...",
+  "thumbnail": "data:image/jpeg;base64,...",
+  "faceValidationStatus": "VALID",
+  "faceDetectionScore": 0.94,
+  "device": { "userAgent": "...", "platform": "...", "language": "...", "cameraLabel": "..." }
+}
+```
+
+Etapa 6K — el fichador registra únicamente entrada/salida, nunca un tipo de jornada:
+
+- `hourConceptId` ya no se pide ni se manda desde la UI. El campo sigue existiendo en el schema como opcional, sólo por compatibilidad con clientes viejos; ya no hay `superRefine` que lo exija en `IN`.
+- El backend resuelve internamente la Hora normal canónica por `HourConcept.systemRole = NORMAL_BASE` (no por `kind = "NORMAL"`, que es la etiqueta legacy) — ver `findDefaultHourConcept` en `timeEntries.repository.ts`. La resolución es directa contra `HourConcept` (igual que la grilla aditiva), sin exigir un vínculo `EmployeeHourConcept` por legajo: Normal es la base universal, no un concepto adicional habilitado por legajo.
+- Si un cliente viejo todavía manda `hourConceptId` en `IN` y ese id resuelve a un concepto que **no** es la base canónica (por ejemplo Sereno, Colectivo o Guardia), el backend lo rechaza explícitamente con `409 CLOCK_HOUR_CONCEPT_NOT_ALLOWED` — no se acepta silenciosamente ni se ignora. Esta restricción es específica del fichador (`resolveShiftConcept(..., { restrictToNormalBase: true })`); el alta manual de jornadas por RRHH (`POST /time-entries/work-shifts`) sigue pudiendo asociar cualquier concepto habilitado, sin este límite.
+- El fichador no crea `HourConceptBreakdown` ni dispara el recálculo automático (Etapa 6I/6J); sólo abre/cierra `WorkShift` y, al cerrar, sigue generando `TimeEntry`/`TimeSegment` de Horas normales como antes. El clasificador legacy por `HourConceptRule`/`priority` no se tocó en esta etapa — ver `docs/decisions/CONCEPTOS_HORARIOS_ADITIVOS.md`.
+
 ## Carga horaria — CRUD y flujo de aprobación
 
 > Estado de transición: el CRUD actual exige `hourConceptId` por registro y valida conceptos habilitados. El rediseño deberá garantizar Horas normales para todos los empleados sin asignación y tratar los demás `hourConceptId` como desgloses habilitados desde el legajo. Hasta entonces, esta sección es contrato técnico vigente, no fuente de verdad del cálculo funcional.

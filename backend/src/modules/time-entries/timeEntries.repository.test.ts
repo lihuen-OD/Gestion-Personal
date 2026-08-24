@@ -23,6 +23,7 @@ vi.mock("../../shared/prisma/client", () => {
     prisma: {
       workShift: { findMany: vi.fn(), count: vi.fn() },
       employeeHourConcept: { findFirst: vi.fn() },
+      hourConcept: { findFirst: vi.fn() },
       employeeWorkRegime: { findFirst: vi.fn() },
       attendancePunch: { findMany: vi.fn(), count: vi.fn() },
       attendanceInactivityIncident: { findMany: vi.fn(), count: vi.fn() },
@@ -51,6 +52,7 @@ type TxMocks = {
 const mockedPrisma = prisma as unknown as {
   workShift: { findMany: Mock; count: Mock };
   employeeHourConcept: { findFirst: Mock };
+  hourConcept: { findFirst: Mock };
   employeeWorkRegime: { findFirst: Mock };
   attendancePunch: { findMany: Mock; count: Mock };
   attendanceInactivityIncident: { findMany: Mock; count: Mock };
@@ -71,6 +73,40 @@ beforeEach(() => {
   mockedPrisma.__tx.timeSegment.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: `segment-${++segmentCounter}`, ...data }));
   mockedPrisma.__tx.timeEntry.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: `entry-${segmentCounter}`, ...data }));
   mockedPrisma.__tx.specialHourRuleApplication.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: `special-application-${++specialApplicationCounter}`, ...data }));
+});
+
+describe("findDefaultHourConcept — Hora normal es base universal, resuelta por systemRole (Etapa 6K)", () => {
+  it("sin hourConceptId, resuelve HourConcept directo por systemRole = NORMAL_BASE, sin exigir un vínculo EmployeeHourConcept por empleado", async () => {
+    mockedPrisma.hourConcept.findFirst.mockResolvedValue({ id: "concept-normal", systemRole: "NORMAL_BASE" });
+
+    const result = await timeEntriesRepository.findDefaultHourConcept("employee-1");
+
+    expect(mockedPrisma.hourConcept.findFirst).toHaveBeenCalledWith({
+      where: { systemRole: "NORMAL_BASE", status: "ACTIVO", deletedAt: null },
+    });
+    expect(mockedPrisma.employeeHourConcept.findFirst).not.toHaveBeenCalled();
+    expect(result).toEqual({ hourConcept: { id: "concept-normal", systemRole: "NORMAL_BASE" } });
+  });
+
+  it("sin hourConceptId, si no existe ningún HourConcept con systemRole NORMAL_BASE activo, devuelve null (no lanza)", async () => {
+    mockedPrisma.hourConcept.findFirst.mockResolvedValue(null);
+
+    const result = await timeEntriesRepository.findDefaultHourConcept("employee-1");
+
+    expect(result).toBeNull();
+  });
+
+  it("con hourConceptId, sigue resolviendo por la clave compuesta de EmployeeHourConcept (sin cambios)", async () => {
+    const employeeHourConcept = mockedPrisma.employeeHourConcept as unknown as { findFirst: Mock; findUnique: Mock };
+    employeeHourConcept.findUnique = vi.fn().mockResolvedValue({ hourConcept: { id: "concept-sereno", systemRole: null } });
+
+    await timeEntriesRepository.findDefaultHourConcept("employee-1", "concept-sereno");
+
+    expect(employeeHourConcept.findUnique).toHaveBeenCalledWith({
+      where: { employeeId_hourConceptId: { employeeId: "employee-1", hourConceptId: "concept-sereno" } },
+      include: { hourConcept: true },
+    });
+  });
 });
 
 describe("expireOpenWorkShifts — regresión de atribución de día/período (Etapa 2)", () => {

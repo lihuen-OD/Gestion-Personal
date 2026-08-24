@@ -3,7 +3,7 @@ import type { Mock } from "vitest";
 import { Prisma } from "@prisma/client";
 import { AppError } from "../../shared/errors/AppError";
 import { timeEntriesRepository } from "./timeEntries.repository";
-import { timeEntriesService, clockAttemptHash } from "./timeEntries.service";
+import { timeEntriesService, clockAttemptHash, resolveShiftConcept } from "./timeEntries.service";
 import { flagOpenShiftOverflowForReview } from "../shifts/workShiftEvaluationRunner";
 import { resolveActiveWorkRegime } from "../work-regimes/workRegimes.service";
 
@@ -300,6 +300,54 @@ describe("clockOutByEmployee", () => {
     await expect(timeEntriesService.clockOutByEmployee({ employeeId: activeEmployee.id })).rejects.toMatchObject({
       statusCode: 409,
       code: "CLOCK_ALREADY_CLOSED",
+    });
+  });
+});
+
+describe("resolveShiftConcept — Etapa 6K (fichador resuelve Normal canónico, sin conceptos adicionales)", () => {
+  const normalConcept = { id: "concept-normal", name: "Hora normal", status: "ACTIVO", systemRole: "NORMAL_BASE" };
+  const serenoConcept = { id: "concept-sereno", name: "Sereno", status: "ACTIVO", systemRole: null };
+
+  it("sin hourConceptId, resuelve el concepto que devuelva findDefaultHourConcept (ya filtra por systemRole NORMAL_BASE en el repositorio)", async () => {
+    repo.findDefaultHourConcept.mockResolvedValue({ hourConcept: normalConcept });
+
+    const result = await resolveShiftConcept(activeEmployee.id);
+
+    expect(result).toEqual(normalConcept);
+    expect(repo.findDefaultHourConcept).toHaveBeenCalledWith(activeEmployee.id, undefined);
+  });
+
+  it("con hourConceptId apuntando a Normal y restrictToNormalBase, lo acepta (mismo resultado que no mandar nada)", async () => {
+    repo.findDefaultHourConcept.mockResolvedValue({ hourConcept: normalConcept });
+
+    const result = await resolveShiftConcept(activeEmployee.id, normalConcept.id, { restrictToNormalBase: true });
+
+    expect(result).toEqual(normalConcept);
+  });
+
+  it("con hourConceptId apuntando a un concepto adicional (Sereno) y restrictToNormalBase, lo rechaza explícitamente — no permite fichar como Sereno/Colectivo/Guardia", async () => {
+    repo.findDefaultHourConcept.mockResolvedValue({ hourConcept: serenoConcept });
+
+    await expect(resolveShiftConcept(activeEmployee.id, serenoConcept.id, { restrictToNormalBase: true })).rejects.toMatchObject({
+      statusCode: 409,
+      code: "CLOCK_HOUR_CONCEPT_NOT_ALLOWED",
+    });
+  });
+
+  it("con hourConceptId apuntando a un concepto adicional pero SIN restrictToNormalBase (alta manual de RRHH), lo sigue permitiendo", async () => {
+    repo.findDefaultHourConcept.mockResolvedValue({ hourConcept: serenoConcept });
+
+    const result = await resolveShiftConcept(activeEmployee.id, serenoConcept.id);
+
+    expect(result).toEqual(serenoConcept);
+  });
+
+  it("si el concepto no está habilitado para el empleado, sigue respondiendo WORK_SHIFT_HOUR_CONCEPT_NOT_ENABLED (comportamiento previo intacto)", async () => {
+    repo.findDefaultHourConcept.mockResolvedValue(null);
+
+    await expect(resolveShiftConcept(activeEmployee.id, "concept-inexistente", { restrictToNormalBase: true })).rejects.toMatchObject({
+      statusCode: 400,
+      code: "WORK_SHIFT_HOUR_CONCEPT_NOT_ENABLED",
     });
   });
 });

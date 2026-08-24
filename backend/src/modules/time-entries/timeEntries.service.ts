@@ -229,10 +229,19 @@ async function resolveShiftEmployee(input: Pick<PreviewWorkShiftInput, "employee
   return employee;
 }
 
-async function resolveShiftConcept(employeeId: string, hourConceptId?: string) {
+export async function resolveShiftConcept(employeeId: string, hourConceptId?: string, options?: { restrictToNormalBase?: boolean }) {
   const enabled = await timeEntriesRepository.findDefaultHourConcept(employeeId, hourConceptId);
   if (!enabled || enabled.hourConcept.status !== "ACTIVO") {
     throw new AppError("El empleado no tiene una hora normal habilitada para generar la carga.", 400, "WORK_SHIFT_HOUR_CONCEPT_NOT_ENABLED");
+  }
+  // Etapa 6K: sólo el fichador público pide esta restricción (restrictToNormalBase).
+  // El alta manual de jornadas (RRHH) sigue pudiendo asociar cualquier concepto habilitado.
+  if (options?.restrictToNormalBase && hourConceptId && enabled.hourConcept.systemRole !== "NORMAL_BASE") {
+    throw new AppError(
+      "El fichador sólo registra Horas normales. Los conceptos adicionales se cargan o calculan desde la gestión horaria.",
+      409,
+      "CLOCK_HOUR_CONCEPT_NOT_ALLOWED",
+    );
   }
   return enabled.hourConcept;
 }
@@ -1046,7 +1055,7 @@ export const timeEntriesService = {
     await ensureClockEmployeeActive(employee, punchType);
     const currentOpenShift = context.workShifts[0] || null;
     const selectedConcept = input.punchType === "IN"
-      ? await resolveShiftConcept(employee.id, input.hourConceptId)
+      ? await resolveShiftConcept(employee.id, input.hourConceptId, { restrictToNormalBase: true })
       : currentOpenShift?.hourConcept || await resolveShiftConcept(employee.id);
     if (input.punchType === "OUT" && input.hourConceptId && input.hourConceptId !== selectedConcept.id) {
       throw new AppError("La salida debe conservar el tipo de jornada elegido en el ingreso.", 409, "CLOCK_SHIFT_CONCEPT_MISMATCH");
