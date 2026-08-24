@@ -13,6 +13,11 @@ export const authController = {
     res.json(result);
   }) satisfies RequestHandler,
 
+  logout: (async (req, res) => {
+    const result = await authService.logout(req.user!.id, requestAuditContext(req));
+    res.json(result);
+  }) satisfies RequestHandler,
+
   me: (async (req, res) => {
     res.json({ data: req.user });
   }) satisfies RequestHandler,

@@ -13,15 +13,21 @@ function signAccessToken(payload: { sub: string; email: string; role: string }) 
   return jwt.sign(payload, env.JWT_ACCESS_SECRET, options);
 }
 
-function signRefreshToken(payload: { sub: string; email: string; role: string; tokenUse: "refresh" }) {
+function signRefreshToken(payload: { sub: string; email: string; role: string; tokenUse: "refresh"; refreshTokenVersion: number }) {
   const options: SignOptions = { expiresIn: env.JWT_REFRESH_EXPIRES_IN as SignOptions["expiresIn"] };
   return jwt.sign(payload, env.JWT_REFRESH_SECRET, options);
 }
 
-function issueTokens(user: { id: string; email: string; role: string }) {
+function issueTokens(user: { id: string; email: string; role: string; refreshTokenVersion: number }) {
   return {
     accessToken: signAccessToken({ sub: user.id, email: user.email, role: user.role }),
-    refreshToken: signRefreshToken({ sub: user.id, email: user.email, role: user.role, tokenUse: "refresh" }),
+    refreshToken: signRefreshToken({
+      sub: user.id,
+      email: user.email,
+      role: user.role,
+      tokenUse: "refresh",
+      refreshTokenVersion: user.refreshTokenVersion,
+    }),
   };
 }
 
@@ -68,7 +74,7 @@ export const authService = {
     }
 
     const tokens = issueTokens(user);
-    const { passwordHash: _passwordHash, ...safeUser } = user;
+    const { passwordHash: _passwordHash, refreshTokenVersion: _refreshTokenVersion, ...safeUser } = user;
 
     await auditService.register({
       ...audit,
@@ -89,22 +95,44 @@ export const authService = {
         email?: string;
         role?: string;
         tokenUse?: string;
+        refreshTokenVersion?: number;
       };
 
       if (!payload.sub || payload.tokenUse !== "refresh") {
         throw new AppError("Invalid refresh token", 401, "INVALID_REFRESH_TOKEN");
       }
 
-      const user = await authRepository.findActivePublicById(payload.sub);
+      const user = await authRepository.findActiveWithRefreshVersionById(payload.sub);
       if (!user || user.status !== "ACTIVO") {
         throw new AppError("Authenticated user is no longer active", 401, "USER_INACTIVE");
       }
+      if (
+        typeof payload.refreshTokenVersion !== "number"
+        || payload.refreshTokenVersion !== user.refreshTokenVersion
+      ) {
+        throw new AppError("Invalid refresh token", 401, "INVALID_REFRESH_TOKEN");
+      }
 
-      return { user, ...issueTokens(user) };
+      const { refreshTokenVersion: _refreshTokenVersion, ...safeUser } = user;
+      return { user: safeUser, ...issueTokens(user) };
     } catch (error) {
       if (error instanceof AppError) throw error;
       throw new AppError("Invalid refresh token", 401, "INVALID_REFRESH_TOKEN");
     }
+  },
+
+  async logout(userId: string, audit?: AuditContext) {
+    await authRepository.incrementRefreshTokenVersion(userId);
+    invalidateCurrentUserCache(userId);
+    await auditService.register({
+      ...audit,
+      userId,
+      action: "UPDATE",
+      entity: "User",
+      entityId: userId,
+      description: "Cierre de sesion exitoso.",
+    });
+    return { success: true };
   },
 
   async getCurrentUser(id: string) {

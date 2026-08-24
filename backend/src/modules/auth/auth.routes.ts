@@ -32,6 +32,12 @@ authRouter.post(
   asyncHandler(authController.refresh),
 );
 
+authRouter.post(
+  "/logout",
+  requireAuth,
+  asyncHandler(authController.logout),
+);
+
 authRouter.get(
   "/me",
   requireAuth,

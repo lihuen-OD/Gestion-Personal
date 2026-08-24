@@ -15,7 +15,7 @@ export const authRepository = {
   findByEmailWithPassword(email: string) {
     return prisma.user.findUnique({
       where: { email },
-      select: { ...publicUserSelect, passwordHash: true },
+      select: { ...publicUserSelect, passwordHash: true, refreshTokenVersion: true },
     });
   },
 
@@ -23,6 +23,21 @@ export const authRepository = {
     return prisma.user.findUnique({
       where: { id },
       select: publicUserSelect,
+    });
+  },
+
+  findActiveWithRefreshVersionById(id: string) {
+    return prisma.user.findUnique({
+      where: { id },
+      select: { ...publicUserSelect, refreshTokenVersion: true },
+    });
+  },
+
+  incrementRefreshTokenVersion(id: string) {
+    return prisma.user.update({
+      where: { id },
+      data: { refreshTokenVersion: { increment: 1 } },
+      select: { id: true, refreshTokenVersion: true },
     });
   },
 };

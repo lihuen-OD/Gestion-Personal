@@ -8,7 +8,7 @@ interface AuthValue {
   user?: User;
   login: (email: string, password: string) => Promise<boolean>;
   loginAs: (role: Role) => Promise<boolean>;
-  logout: () => void;
+  logout: () => Promise<void>;
 }
 const AuthContext = createContext<AuthValue | undefined>(undefined);
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -47,11 +47,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return login(credentials.email, credentials.password);
   };
 
-  const logout = () => {
-    void clearAllAppCaches("logout");
-    tokenStorage.clear();
-    refreshTokenStorage.clear();
-    save();
+  const logout = async () => {
+    try {
+      await authApiService.logout();
+    } catch {
+      // El cierre local no depende de que el backend esté disponible.
+    } finally {
+      void clearAllAppCaches("logout");
+      tokenStorage.clear();
+      refreshTokenStorage.clear();
+      save();
+    }
   };
 
   return <AuthContext.Provider value={{ user, login, loginAs, logout }}>{children}</AuthContext.Provider>;

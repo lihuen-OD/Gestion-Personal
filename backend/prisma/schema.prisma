@@ -273,6 +273,7 @@ model User {
   name         String
   email        String       @unique
   passwordHash String
+  refreshTokenVersion Int          @default(0)
   role         RoleName
   status       RecordStatus @default(ACTIVO)
   companyId    String?

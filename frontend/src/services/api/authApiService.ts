@@ -63,4 +63,8 @@ export const authApiService = {
     const response = await apiRequest<{ data: BackendUser }>("/auth/me", { apiCache: false });
     return mapUser(response.data);
   },
+
+  async logout() {
+    await apiRequest<{ success: boolean }>("/auth/logout", { method: "POST" });
+  },
 };
