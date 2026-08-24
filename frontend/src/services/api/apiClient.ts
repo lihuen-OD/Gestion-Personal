@@ -182,36 +182,21 @@ function notifyApiError(message: string, code: string, status: number) {
 type RequestOptions = Omit<RequestInit, "body"> & {
   body?: unknown;
   auth?: boolean;
+  /** @deprecated Compatibilidad temporal: apiClient ya no implementa cache propia. */
   apiCache?: boolean;
+  /** @deprecated Compatibilidad temporal: usar services/cache para políticas TTL. */
   cacheTtlMs?: number;
 };
 
-type CacheEntry = {
-  expiresAt: number;
-  value: unknown;
-};
-
-const DEFAULT_GET_CACHE_TTL_MS = 15_000;
-const responseCache = new Map<string, CacheEntry>();
-const pendingGetRequests = new Map<string, Promise<unknown>>();
-let cacheGeneration = 0;
 let refreshPromise: Promise<boolean> | null = null;
-
-function clearApiCache() {
-  cacheGeneration += 1;
-  responseCache.clear();
-  pendingGetRequests.clear();
-}
 
 export const tokenStorage = {
   get: () => sessionStorage.getItem(TOKEN_KEY),
   set: (token: string) => {
     sessionStorage.setItem(TOKEN_KEY, token);
-    clearApiCache();
   },
   clear: () => {
     sessionStorage.removeItem(TOKEN_KEY);
-    clearApiCache();
   },
 };
 
@@ -245,11 +230,6 @@ async function requestRaw(path: string, options: RequestOptions = {}) {
     headers,
     body: hasBody ? JSON.stringify(options.body) : undefined,
   });
-}
-
-function cacheKey(path: string, options: RequestOptions) {
-  const token = options.auth === false ? "public" : tokenStorage.get() || "anon";
-  return `${options.method || "GET"}:${path}:${token}`;
 }
 
 async function requestParsed<T>(path: string, options: RequestOptions) {
@@ -335,42 +315,7 @@ async function ensureFreshAccessToken(options: RequestOptions) {
 
 export async function apiRequest<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const method = (options.method || "GET").toUpperCase();
-  const canCache = method === "GET" && options.apiCache === true;
-  const key = canCache ? cacheKey(path, { ...options, method }) : "";
-
-  if (canCache) {
-    const cached = responseCache.get(key);
-    if (cached && cached.expiresAt > Date.now()) return cached.value as T;
-    responseCache.delete(key);
-
-    const pending = pendingGetRequests.get(key);
-    if (pending) return pending as Promise<T>;
-  }
-
-  const startedGeneration = cacheGeneration;
-  const request = requestParsed<T>(path, { ...options, method });
-
-  if (canCache) {
-    pendingGetRequests.set(key, request);
-    try {
-      const payload = await request;
-      if (startedGeneration === cacheGeneration) {
-        responseCache.set(key, {
-          value: payload,
-          expiresAt: Date.now() + (options.cacheTtlMs || DEFAULT_GET_CACHE_TTL_MS),
-        });
-      }
-      return payload;
-    } finally {
-      pendingGetRequests.delete(key);
-    }
-  }
-
-  try {
-    return await request;
-  } finally {
-    if (method !== "GET") clearApiCache();
-  }
+  return requestParsed<T>(path, { ...options, method });
 }
 
 function fileNameFromContentDisposition(value: string | null) {

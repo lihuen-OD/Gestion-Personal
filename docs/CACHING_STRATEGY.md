@@ -22,6 +22,8 @@ Se cachea:
 
 No se cachean en IndexedDB datos personales, documentos, auditoría, usuarios, fichadas, novedades, cargas horarias ni tokens.
 
+`services/api/apiClient.ts` no implementa una segunda cache de respuestas. Las políticas TTL, deduplicación e invalidación viven únicamente en `services/cache`; las opciones legadas `apiCache`/`cacheTtlMs` se aceptan temporalmente como no-op para mantener compatibilidad mientras se retiran de los clientes API al tocar cada módulo por motivos funcionales.
+
 `GET /positions/:id/employees` no se cachea porque contiene datos identificatorios de empleados asignados.
 
 ## Arquitectura

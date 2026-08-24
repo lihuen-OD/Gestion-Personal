@@ -99,6 +99,12 @@ Never expose:
 - internal stack traces
 - private environment variables
 
+### PII por rol — estado y decisiones pendientes
+
+- Nivel 3 no accede al legajo integral ni a documentación; los endpoints operativos que necesita devuelven datos redactados.
+- Supervisión conserva PII completa por decisión actual. Un recorte posterior debe validar primero sus pantallas de gestión.
+- La evidencia fotográfica de asistencia continúa disponible para Nivel 3 y queda pendiente de una decisión específica de producto y seguridad.
+
 ## CORS
 
 Production CORS must:

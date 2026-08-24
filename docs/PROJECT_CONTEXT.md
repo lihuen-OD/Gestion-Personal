@@ -510,6 +510,15 @@ Current state (backend already enforces this — see `docs/SECURITY_STANDARDS.md
 * Employee documents/photos are stored via the storage module (Google Drive/Cloudinary/local) with server-side mime/extension/size validation; do not bypass it with ad-hoc upload handling.
 * Biometric data: only face-detection metadata (status/score) and the punch photo evidence itself are stored; no raw biometric templates.
 
+### Deudas deliberadamente pendientes después del saneamiento 2026-08
+
+* Supervisión conserva PII completa por decisión actual; cualquier recorte requiere validar sus pantallas de gestión.
+* La evidencia fotográfica de asistencia sigue disponible para Nivel 3 y requiere una decisión específica de producto/seguridad.
+* El fichador mantiene una mitigación temporal mediante token de dispositivo; no constituye seguridad final de producción.
+* El organigrama advierte cuando alcanza el límite de 1000 empleados, pero todavía no implementa paginación completa.
+* Los conceptos horarios aditivos continúan pendientes y no se modificaron durante el saneamiento técnico.
+* El tratamiento de solapamientos de novedades continúa pendiente de definición de negocio.
+
 ## Important flows
 
 ### Employee creation

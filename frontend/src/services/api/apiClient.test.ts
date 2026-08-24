@@ -1,5 +1,7 @@
-import { describe, expect, it } from "vitest";
-import { formatApiErrorMessage } from "./apiClient";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { apiRequest, formatApiErrorMessage } from "./apiClient";
+
+afterEach(() => vi.unstubAllGlobals());
 
 describe("formatApiErrorMessage", () => {
   it("lists required or invalid fields using user-facing labels", () => {
@@ -59,5 +61,18 @@ describe("formatApiErrorMessage", () => {
     expect(formatApiErrorMessage({
       error: { code: "HOUR_CONCEPT_RULE_AMBIGUOUS_OVERLAP", message: specificMessage },
     })).toBe(specificMessage);
+  });
+});
+
+describe("apiRequest sin cache propia", () => {
+  it("ejecuta dos GET reales aunque un llamador legado envíe apiCache=true", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ value: 1 }), { headers: { "content-type": "application/json" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ value: 2 }), { headers: { "content-type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(apiRequest<{ value: number }>("/cache-test", { auth: false, apiCache: true })).resolves.toEqual({ value: 1 });
+    await expect(apiRequest<{ value: number }>("/cache-test", { auth: false, apiCache: true })).resolves.toEqual({ value: 2 });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });

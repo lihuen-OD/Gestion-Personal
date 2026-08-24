@@ -2,6 +2,7 @@ import { mockOrgCategories } from "../data/mockOrgCategories";
 import type { Employee, Role } from "../types";
 import type { OrgCategory, OrgChartFilters, OrgChartModel, OrgEdge, OrgEmployeeNode } from "../types/organizationChart.types";
 import { calculateEmployeeStatus } from "./employeeStatusService";
+import { fullName } from "../utils/employee";
 
 const emptyFilters: OrgChartFilters = {
   company: "", businessUnit: "", establishment: "", costCenter: "", sector: "", position: "",
@@ -11,7 +12,6 @@ const emptyFilters: OrgChartFilters = {
 const normalize = (value: string) => value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_|_$/g, "");
 const text = (value: unknown) => String(value || "").toLowerCase();
 const unique = (items: string[]) => Array.from(new Set(items.filter(Boolean))).sort((a, b) => a.localeCompare(b, "es"));
-const fullName = (employee: Employee) => `${employee.lastName}, ${employee.firstName}`;
 const employeePositionName = (employee: Employee) => employee.puestoNombre || employee.position || "";
 const employeeStatus = (employee: Employee) => employee.status || calculateEmployeeStatus(employee);
 const categoryKey = (employee: Employee) => normalize(employee.internalCategory || employee.receiptCategory || "");

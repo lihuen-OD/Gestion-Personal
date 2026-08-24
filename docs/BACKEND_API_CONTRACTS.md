@@ -1150,6 +1150,7 @@ Todas las rutas requieren `requireAuth`.
 | Método | Ruta | Rol | Descripción |
 |---|---|---|---|
 | GET | `/assignments` | RRHH/Supervisión/Carga Horaria | Listar asignaciones de turno |
+| GET | `/assignments/summary` | RRHH/Supervisión/Carga Horaria | Conteos agregados por turno (`total`, `enabled`, `disabled`, `other`), respetando alcance por empleado |
 | POST | `/assignments` | RRHH | Asignar turno a un empleado |
 | PATCH | `/assignments/:id` | RRHH | Editar una asignación |
 | DELETE | `/assignments/:id` | RRHH | Quitar una asignación |
