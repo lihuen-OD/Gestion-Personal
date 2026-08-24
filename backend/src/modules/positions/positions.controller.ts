@@ -16,7 +16,7 @@ export const positionsController = {
   }) satisfies RequestHandler,
 
   assignedEmployees: (async (req, res) => {
-    const items = await positionsService.listAssignedEmployees(requireParam(req, "id"));
+    const items = await positionsService.listAssignedEmployees(requireParam(req, "id"), req.user!);
     res.json({ data: items });
   }) satisfies RequestHandler,
 

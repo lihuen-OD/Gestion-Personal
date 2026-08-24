@@ -57,6 +57,21 @@ Check:
 - **`faceValidationStatus` on the photo-punch endpoint is a client-reported result (MediaPipe running in the browser), not a server-side biometric verification.** The backend only checks that the client claims a valid detection — it never re-validates the uploaded photo against the employee's identity. Treat it as an anti-mistake UX signal, not a security control, until real server-side face matching is implemented.
 - idempotency for the photo-punch path is enforced via `ClockPunchAttempt.requestId` (unique); the legacy DNI/employee-id clock-in/out paths have no request-level idempotency key, but concurrent double-submits are still blocked at the database level by the partial unique index `WorkShift_one_open_per_employee` (mapped to a clean 409, not a 500)
 
+### Device token (`x-clock-device-token`) — status and pending risks
+
+Product decision (2026-08): the fichador does not need a final production security solution at this stage. It stays functional for **demo / controlled internal use**; whether it later becomes a separate kiosk app consuming the legajos/fichadas API is a future decision, not implemented now. Do not build biometrics, VPN, IP allowlisting, or a separate kiosk app for this until that decision is made.
+
+What exists today (`backend/src/middlewares/clockDeviceAuth.ts`): all `/clock/*` routes require a shared secret in the `x-clock-device-token` header (`CLOCK_DEVICE_TOKEN` / `VITE_CLOCK_DEVICE_TOKEN`), compared with `crypto.timingSafeEqual`. **This is an explicitly temporary mitigation, not final production security.**
+
+- If `CLOCK_DEVICE_TOKEN` is unset in `NODE_ENV=production`, the middleware **fails closed**: every `/clock/*` request is rejected (`503 CLOCK_DEVICE_NOT_CONFIGURED`) instead of silently running the fichador with no device control.
+- If unset in development/test/demo, requests are still allowed through (logged once as a warning) so local/demo setup isn't blocked.
+- Legacy `POST /clock/in` and `/clock/out` remain in place alongside `/clock/in-by-dni` and `/clock/out-by-dni` — not retired yet.
+
+Pending risks, left open on purpose for this stage:
+- The fichador may migrate to a separate kiosk app later — this token scheme is not meant to survive that migration as-is.
+- The token embedded in the frontend bundle is **not a strong secret**: anyone with access to the kiosk's served bundle or network traffic can read it.
+- For real production use, device authentication, network restriction (VPN/IP allowlist), or a separate kiosk architecture still needs to be defined — none of that is implemented yet.
+
 ## Input validation
 
 Validate:

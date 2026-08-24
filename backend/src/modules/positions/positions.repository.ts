@@ -115,9 +115,9 @@ export const positionsRepository = {
     });
   },
 
-  findAssignedEmployees(positionId: string) {
+  findAssignedEmployees(positionId: string, accessWhere: Prisma.EmployeeWhereInput) {
     return prisma.employee.findMany({
-      where: { positionId, status: "ACTIVO" },
+      where: { AND: [{ positionId, status: "ACTIVO" }, accessWhere] },
       select: {
         id: true,
         legajo: true,

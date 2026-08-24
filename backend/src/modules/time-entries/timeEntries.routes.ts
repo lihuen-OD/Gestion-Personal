@@ -2,6 +2,7 @@ import { Router } from "express";
 import { requireAuth } from "../../middlewares/auth";
 import { requireAnyRole } from "../../middlewares/authorization";
 import { createRateLimiter } from "../../middlewares/rateLimiter";
+import { requireClockDeviceToken } from "../../middlewares/clockDeviceAuth";
 import { asyncHandler } from "../../shared/http/asyncHandler";
 import { env } from "../../config/env";
 import { roles } from "../../shared/security/roles";
@@ -36,7 +37,10 @@ const clockRateLimiter = createRateLimiter({
   max: env.CLOCK_RATE_LIMIT_MAX,
 });
 
-timeEntriesRouter.use("/clock", clockRateLimiter);
+// Los endpoints /clock/* no tienen sesion de usuario (kiosco/fichador
+// publico), asi que en vez de requireAuth exigen un secreto por dispositivo.
+// Ver middlewares/clockDeviceAuth.ts para el detalle y sus limites reales.
+timeEntriesRouter.use("/clock", clockRateLimiter, requireClockDeviceToken);
 
 timeEntriesRouter.get("/clock/employees", validateQuery(clockEmployeeSearchQuerySchema), asyncHandler(timeEntriesController.clockSearch));
 timeEntriesRouter.post("/clock/status", validateBody(clockByEmployeeSchema), asyncHandler(timeEntriesController.clockStatusByEmployee));

@@ -4,6 +4,7 @@ import { auditService } from "../audit/audit.service";
 import { AppError } from "../../shared/errors/AppError";
 import { invalidatePositionsCache, positionsRepository } from "./positions.repository";
 import type { CreatePositionInput, ListPositionsQuery, UpdatePositionInput } from "./positions.schemas";
+import { employeeAccessWhere } from "../employees/employeeAccess";
 
 function mapPrismaError(error: unknown) {
   if (error instanceof Prisma.PrismaClientKnownRequestError) {
@@ -52,9 +53,9 @@ export const positionsService = {
     return execute(() => positionsRepository.findById(id));
   },
 
-  async listAssignedEmployees(id: string) {
+  async listAssignedEmployees(id: string, user: Express.AuthUser) {
     await execute(() => positionsRepository.findById(id));
-    return positionsRepository.findAssignedEmployees(id);
+    return positionsRepository.findAssignedEmployees(id, employeeAccessWhere(user));
   },
 
   async create(data: CreatePositionInput, audit?: AuditContext) {

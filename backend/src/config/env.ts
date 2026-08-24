@@ -27,6 +27,7 @@ const envSchema = z.object({
   RATE_LIMIT_MAX: z.coerce.number().int().positive().default(300),
   CLOCK_RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(5 * 60 * 1000),
   CLOCK_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(30),
+  CLOCK_DEVICE_TOKEN: z.string().min(16).optional(),
   LOGIN_RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(15 * 60 * 1000),
   LOGIN_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(10),
   JSON_BODY_LIMIT: z.string().default("40mb"),

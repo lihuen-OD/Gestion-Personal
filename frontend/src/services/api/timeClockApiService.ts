@@ -1,5 +1,16 @@
 import { apiRequest } from "./apiClient";
 
+// El fichador no tiene sesion de usuario (kiosco publico), asi que en vez de
+// un Bearer token manda un secreto por dispositivo — ver
+// backend/src/middlewares/clockDeviceAuth.ts. Es una proteccion minima
+// contra abuso anonimo de la API: al quedar embebido en el bundle publico
+// del kiosco no es un secreto realmente inaccesible, no reemplaza una
+// restriccion de red real.
+function clockDeviceHeaders(): HeadersInit {
+  const token = import.meta.env.VITE_CLOCK_DEVICE_TOKEN;
+  return token ? { "x-clock-device-token": token } : {};
+}
+
 type ClockEmployee = {
   id: string;
   legajo: string;
@@ -103,6 +114,7 @@ export const timeClockApiService = {
     const response = await apiRequest<ClockSearchResponse>(`/time-entries/clock/employees?${params.toString()}`, {
       auth: false,
       apiCache: false,
+      headers: clockDeviceHeaders(),
     });
     return response.data;
   },
@@ -112,6 +124,7 @@ export const timeClockApiService = {
       method: "POST",
       auth: false,
       body: body(employeeId),
+      headers: clockDeviceHeaders(),
     });
     return response.data;
   },
@@ -121,6 +134,7 @@ export const timeClockApiService = {
       method: "POST",
       auth: false,
       body: body(employeeId),
+      headers: clockDeviceHeaders(),
     });
     return response.data;
   },
@@ -130,6 +144,7 @@ export const timeClockApiService = {
       method: "POST",
       auth: false,
       body: body(employeeId),
+      headers: clockDeviceHeaders(),
     });
     return response.data;
   },
@@ -140,6 +155,7 @@ export const timeClockApiService = {
       auth: false,
       body: input,
       signal: AbortSignal.timeout(20_000),
+      headers: clockDeviceHeaders(),
     });
     return response.data;
   },
@@ -149,6 +165,7 @@ export const timeClockApiService = {
     const response = await apiRequest<ClockAttemptStatusResponse>(`/time-entries/clock/attempts/${requestId}?${params.toString()}`, {
       auth: false,
       apiCache: false,
+      headers: clockDeviceHeaders(),
     });
     return response.data;
   },
