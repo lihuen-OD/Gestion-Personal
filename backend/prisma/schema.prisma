@@ -163,6 +163,17 @@ enum HourConceptKind {
   OTRO
 }
 
+enum HourConceptLoadMode {
+  MANUAL
+  AUTOMATIC
+  BOTH
+}
+
+enum HourConceptBreakdownSource {
+  MANUAL
+  AUTOMATIC
+}
+
 enum DocumentStatus {
   PENDIENTE
   VIGENTE
@@ -269,55 +280,57 @@ enum SegmentConceptStatus {
 }
 
 model User {
-  id           String       @id @default(uuid())
-  name         String
-  email        String       @unique
-  passwordHash String
+  id                  String       @id @default(uuid())
+  name                String
+  email               String       @unique
+  passwordHash        String
   refreshTokenVersion Int          @default(0)
-  role         RoleName
-  status       RecordStatus @default(ACTIVO)
-  companyId    String?
-  sectorId     String?
-  employeeId   String?      @unique
-  createdAt    DateTime     @default(now()) @db.Timestamptz(3)
-  updatedAt    DateTime     @updatedAt @db.Timestamptz(3)
+  role                RoleName
+  status              RecordStatus @default(ACTIVO)
+  companyId           String?
+  sectorId            String?
+  employeeId          String?      @unique
+  createdAt           DateTime     @default(now()) @db.Timestamptz(3)
+  updatedAt           DateTime     @updatedAt @db.Timestamptz(3)
 
-  company                     Company?                       @relation(fields: [companyId], references: [id])
-  sector                      Sector?                        @relation(fields: [sectorId], references: [id])
-  employee                    Employee?                      @relation("EmployeeUserAccount", fields: [employeeId], references: [id])
-  createdEmployees            Employee[]                     @relation("EmployeeCreatedBy")
-  employeeAssignments         EmployeeAssignment[]
-  laborMovements              LaborMovement[]
-  fieldHistory                EmployeeFieldHistory[]
-  blockHistory                EmployeeBlockHistory[]
-  noveltiesCreated            Novelty[]                      @relation("NoveltyCreatedBy")
-  timeEntriesCreated          TimeEntry[]                    @relation("TimeEntryCreatedBy")
-  documentsUploaded           EmployeeDocument[]
-  storageFilesUploaded        StorageFile[]                  @relation("StorageFileUploadedBy")
-  storageFilesDeleted         StorageFile[]                  @relation("StorageFileDeletedBy")
-  auditLogs                   AuditLog[]
-  notifications               SystemNotification[]           @relation("NotificationRecipient")
-  closuresSubmitted           MonthlyTimeClosure[]           @relation("ClosureSubmittedBy")
-  closuresReviewed            MonthlyTimeClosure[]           @relation("ClosureReviewedBy")
-  correctionsCreated          TimeCorrectionRequest[]        @relation("CorrectionCreatedBy")
-  correctionsReviewed         TimeCorrectionRequest[]        @relation("CorrectionReviewedBy")
-  inactivityIncidentsReviewed AttendanceInactivityIncident[] @relation("InactivityIncidentReviewedBy")
-  noveltiesApproved           Novelty[]                      @relation("NoveltyApprovedBy")
-  timeEntriesApproved         TimeEntry[]                    @relation("TimeEntryApprovedBy")
-  workShiftsCreated           WorkShift[]                    @relation("WorkShiftCreatedBy")
-  workShiftsReviewed          WorkShift[]                    @relation("WorkShiftReviewedBy")
-  shiftTemplatesCreated       ShiftTemplate[]                @relation("ShiftTemplateCreatedBy")
-  shiftTemplatesUpdated       ShiftTemplate[]                @relation("ShiftTemplateUpdatedBy")
-  shiftAssignmentsAssigned    ShiftAssignment[]              @relation("ShiftAssignmentAssignedBy")
-  shiftAssignmentsDisabled    ShiftAssignment[]              @relation("ShiftAssignmentDisabledBy")
-  shiftAlertsResolved         ShiftAlert[]
-  doubleHourRulesCreated      DoubleHourRule[]
-  attendancePunchesReviewed   AttendancePunch[]
-  auditParametersCreated      AuditParameter[]               @relation("AuditParameterCreatedBy")
-  auditParametersUpdated      AuditParameter[]               @relation("AuditParameterUpdatedBy")
-  workRegimesCreated          WorkRegime[]                   @relation("WorkRegimeCreatedBy")
-  workRegimesUpdated          WorkRegime[]                   @relation("WorkRegimeUpdatedBy")
-  workRegimesAssigned         EmployeeWorkRegime[]
+  company                       Company?                       @relation(fields: [companyId], references: [id])
+  sector                        Sector?                        @relation(fields: [sectorId], references: [id])
+  employee                      Employee?                      @relation("EmployeeUserAccount", fields: [employeeId], references: [id])
+  createdEmployees              Employee[]                     @relation("EmployeeCreatedBy")
+  employeeAssignments           EmployeeAssignment[]
+  laborMovements                LaborMovement[]
+  fieldHistory                  EmployeeFieldHistory[]
+  blockHistory                  EmployeeBlockHistory[]
+  noveltiesCreated              Novelty[]                      @relation("NoveltyCreatedBy")
+  timeEntriesCreated            TimeEntry[]                    @relation("TimeEntryCreatedBy")
+  hourConceptBreakdownsCreated  HourConceptBreakdown[]         @relation("HourConceptBreakdownCreatedBy")
+  documentsUploaded             EmployeeDocument[]
+  storageFilesUploaded          StorageFile[]                  @relation("StorageFileUploadedBy")
+  storageFilesDeleted           StorageFile[]                  @relation("StorageFileDeletedBy")
+  auditLogs                     AuditLog[]
+  notifications                 SystemNotification[]           @relation("NotificationRecipient")
+  closuresSubmitted             MonthlyTimeClosure[]           @relation("ClosureSubmittedBy")
+  closuresReviewed              MonthlyTimeClosure[]           @relation("ClosureReviewedBy")
+  correctionsCreated            TimeCorrectionRequest[]        @relation("CorrectionCreatedBy")
+  correctionsReviewed           TimeCorrectionRequest[]        @relation("CorrectionReviewedBy")
+  inactivityIncidentsReviewed   AttendanceInactivityIncident[] @relation("InactivityIncidentReviewedBy")
+  noveltiesApproved             Novelty[]                      @relation("NoveltyApprovedBy")
+  timeEntriesApproved           TimeEntry[]                    @relation("TimeEntryApprovedBy")
+  hourConceptBreakdownsApproved HourConceptBreakdown[]         @relation("HourConceptBreakdownApprovedBy")
+  workShiftsCreated             WorkShift[]                    @relation("WorkShiftCreatedBy")
+  workShiftsReviewed            WorkShift[]                    @relation("WorkShiftReviewedBy")
+  shiftTemplatesCreated         ShiftTemplate[]                @relation("ShiftTemplateCreatedBy")
+  shiftTemplatesUpdated         ShiftTemplate[]                @relation("ShiftTemplateUpdatedBy")
+  shiftAssignmentsAssigned      ShiftAssignment[]              @relation("ShiftAssignmentAssignedBy")
+  shiftAssignmentsDisabled      ShiftAssignment[]              @relation("ShiftAssignmentDisabledBy")
+  shiftAlertsResolved           ShiftAlert[]
+  doubleHourRulesCreated        DoubleHourRule[]
+  attendancePunchesReviewed     AttendancePunch[]
+  auditParametersCreated        AuditParameter[]               @relation("AuditParameterCreatedBy")
+  auditParametersUpdated        AuditParameter[]               @relation("AuditParameterUpdatedBy")
+  workRegimesCreated            WorkRegime[]                   @relation("WorkRegimeCreatedBy")
+  workRegimesUpdated            WorkRegime[]                   @relation("WorkRegimeUpdatedBy")
+  workRegimesAssigned           EmployeeWorkRegime[]
 
   @@index([role])
   @@index([status])
@@ -580,6 +593,7 @@ model Employee {
   blockHistory          EmployeeBlockHistory[]
   novelties             Novelty[]
   timeEntries           TimeEntry[]
+  hourConceptBreakdowns HourConceptBreakdown[]
   workShifts            WorkShift[]
   attendancePunches     AttendancePunch[]
   clockPunchAttempts    ClockPunchAttempt[]
@@ -692,12 +706,16 @@ model EmployeeAssignment {
 }
 
 model HourConcept {
-  id             String          @id @default(uuid())
-  code           String          @unique
+  id             String               @id @default(uuid())
+  code           String               @unique
   name           String
   kind           HourConceptKind
-  status         RecordStatus    @default(ACTIVO)
-  countsAsWorked Boolean         @default(true)
+  status         RecordStatus         @default(ACTIVO)
+  countsAsWorked Boolean              @default(true)
+  // Etapa 6C: nullable para no asignar semántica nueva a conceptos legacy.
+  // En etapas posteriores será obligatorio para conceptos adicionales;
+  // Horas normales no usa HourConceptBreakdown.
+  loadMode       HourConceptLoadMode?
   // Eliminación lógica (Etapa 8P): se usa SOLO cuando el concepto tiene uso
   // histórico real (TimeEntry/TimeSegment tienen FK obligatoria — Postgres
   // rechaza el delete físico mientras existan filas, y aunque no las
@@ -708,9 +726,9 @@ model HourConcept {
   // != null es lo que la UI usa para ocultarlo del catálogo activo; status
   // ya vuelve a INACTIVO al mismo tiempo (misma semántica que "deshabilitado"
   // para el fichador/clasificación, que ya filtran por status ACTIVO).
-  deletedAt      DateTime?       @db.Timestamptz(3)
-  createdAt      DateTime        @default(now()) @db.Timestamptz(3)
-  updatedAt      DateTime        @updatedAt @db.Timestamptz(3)
+  deletedAt      DateTime?            @db.Timestamptz(3)
+  createdAt      DateTime             @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime             @updatedAt @db.Timestamptz(3)
 
   employees    EmployeeHourConcept[]
   timeEntries  TimeEntry[]
@@ -718,6 +736,7 @@ model HourConcept {
   timeSegments TimeSegment[]
   workShifts   WorkShift[]
   rules        HourConceptRule[]
+  breakdowns   HourConceptBreakdown[]
 
   @@index([status])
 }
@@ -753,8 +772,9 @@ model HourConceptRule {
   createdAt       DateTime     @default(now()) @db.Timestamptz(3)
   updatedAt       DateTime     @updatedAt @db.Timestamptz(3)
 
-  hourConcept  HourConcept   @relation(fields: [hourConceptId], references: [id], onDelete: Cascade)
+  hourConcept  HourConcept            @relation(fields: [hourConceptId], references: [id], onDelete: Cascade)
   timeSegments TimeSegment[]
+  breakdowns   HourConceptBreakdown[]
 
   @@index([hourConceptId, status])
 }
@@ -949,16 +969,17 @@ model WorkShift {
   closedAt          DateTime?              @db.Timestamptz(3)
   updatedAt         DateTime               @updatedAt @db.Timestamptz(3)
 
-  employee      Employee         @relation(fields: [employeeId], references: [id], onDelete: Restrict)
-  hourConcept   HourConcept?     @relation(fields: [hourConceptId], references: [id], onDelete: SetNull)
-  startPunch    AttendancePunch? @relation("WorkShiftStartPunch", fields: [startPunchId], references: [id], onDelete: SetNull)
-  endPunch      AttendancePunch? @relation("WorkShiftEndPunch", fields: [endPunchId], references: [id], onDelete: SetNull)
-  timeEntries   TimeEntry[]
-  timeSegments  TimeSegment[]
-  shiftTemplate ShiftTemplate?   @relation(fields: [shiftTemplateId], references: [id], onDelete: SetNull)
-  shiftAlerts   ShiftAlert[]
-  createdBy     User?            @relation("WorkShiftCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
-  reviewedBy    User?            @relation("WorkShiftReviewedBy", fields: [reviewedByUserId], references: [id], onDelete: SetNull)
+  employee              Employee               @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  hourConcept           HourConcept?           @relation(fields: [hourConceptId], references: [id], onDelete: SetNull)
+  startPunch            AttendancePunch?       @relation("WorkShiftStartPunch", fields: [startPunchId], references: [id], onDelete: SetNull)
+  endPunch              AttendancePunch?       @relation("WorkShiftEndPunch", fields: [endPunchId], references: [id], onDelete: SetNull)
+  timeEntries           TimeEntry[]
+  timeSegments          TimeSegment[]
+  hourConceptBreakdowns HourConceptBreakdown[]
+  shiftTemplate         ShiftTemplate?         @relation(fields: [shiftTemplateId], references: [id], onDelete: SetNull)
+  shiftAlerts           ShiftAlert[]
+  createdBy             User?                  @relation("WorkShiftCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  reviewedBy            User?                  @relation("WorkShiftReviewedBy", fields: [reviewedByUserId], references: [id], onDelete: SetNull)
 
   @@index([employeeId, startAt])
   @@index([hourConceptId])
@@ -1348,10 +1369,58 @@ model TimeSegment {
   hourConceptRule             HourConceptRule?             @relation(fields: [hourConceptRuleId], references: [id], onDelete: SetNull)
   timeEntries                 TimeEntry[]
   specialHourRuleApplications SpecialHourRuleApplication[]
+  hourConceptBreakdowns       HourConceptBreakdown[]
 
   @@index([workShiftId])
   @@index([employeeId, date])
   @@index([hourConceptId])
+}
+
+// Desglose aditivo de un concepto horario adicional. Nunca representa Horas
+// normales ni incrementa el total real trabajado. La lógica funcional que
+// valida esa invariante y genera/carga desgloses se incorpora en etapas
+// posteriores; Etapa 6C agrega únicamente la base persistente compatible.
+model HourConceptBreakdown {
+  id                String                     @id @default(uuid())
+  employeeId        String
+  date              DateTime                   @db.Date
+  period            String
+  day               Int
+  hourConceptId     String
+  minutes           Int
+  source            HourConceptBreakdownSource
+  status            ApprovalStatus             @default(BORRADOR)
+  workShiftId       String?
+  timeSegmentId     String?
+  hourConceptRuleId String?
+  observation       String?
+  createdByUserId   String?
+  approvedByUserId  String?
+  approvedAt        DateTime?                  @db.Timestamptz(3)
+  createdAt         DateTime                   @default(now()) @db.Timestamptz(3)
+  updatedAt         DateTime                   @updatedAt @db.Timestamptz(3)
+
+  employee        Employee         @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  hourConcept     HourConcept      @relation(fields: [hourConceptId], references: [id], onDelete: Restrict)
+  workShift       WorkShift?       @relation(fields: [workShiftId], references: [id], onDelete: SetNull)
+  timeSegment     TimeSegment?     @relation(fields: [timeSegmentId], references: [id], onDelete: SetNull)
+  hourConceptRule HourConceptRule? @relation(fields: [hourConceptRuleId], references: [id], onDelete: SetNull)
+  createdBy       User?            @relation("HourConceptBreakdownCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  approvedBy      User?            @relation("HourConceptBreakdownApprovedBy", fields: [approvedByUserId], references: [id], onDelete: SetNull)
+
+  // Los vínculos son opcionales para permitir cargas MANUAL. Cuando una fila
+  // AUTOMATIC tenga segmento y regla, esta clave evita regenerar el mismo
+  // desglose. La etapa funcional deberá exigir ambos vínculos para AUTOMATIC.
+  @@unique([timeSegmentId, hourConceptRuleId, hourConceptId, source])
+  @@index([employeeId, period])
+  @@index([employeeId, date])
+  @@index([hourConceptId, period])
+  @@index([workShiftId])
+  @@index([timeSegmentId])
+  @@index([hourConceptRuleId])
+  @@index([createdByUserId])
+  @@index([approvedByUserId])
+  @@index([period, status])
 }
 
 model DocumentCategory {

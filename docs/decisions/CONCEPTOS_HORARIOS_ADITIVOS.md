@@ -76,6 +76,19 @@ Los conceptos adicionales pueden alimentar reglas de liquidación o exportación
 
 La aplicación puede no cumplir todavía esta decisión. Backend, frontend, `schema.prisma`, migraciones, datos existentes y contratos pueden reflejar el modelo anterior. Esta decisión no cambia retroactivamente esos artefactos ni autoriza una migración inmediata. Describe el objetivo obligatorio para las siguientes etapas.
 
+### Etapa 6C — base persistente agregada
+
+La migración `add_hour_concept_breakdowns` incorpora únicamente estructura compatible, sin activar todavía el modelo aditivo:
+
+* `HourConcept.loadMode` acepta `MANUAL`, `AUTOMATIC` o `BOTH` y permanece nullable para no atribuir una modalidad a conceptos existentes sin revisión.
+* `HourConceptBreakdown` almacena exclusivamente desgloses adicionales por empleado, fecha y concepto. Reutiliza `ApprovalStatus` y admite origen `MANUAL` o `AUTOMATIC`.
+* Los vínculos opcionales a `WorkShift`, `TimeSegment` y `HourConceptRule` permiten trazabilidad automática futura; las cargas manuales pueden existir sin esos vínculos.
+* La clave única `timeSegmentId + hourConceptRuleId + hourConceptId + source` evita regenerar el mismo desglose cuando una fila automática tenga segmento y regla. Como PostgreSQL permite múltiples `NULL` en una clave única, la etapa funcional deberá exigir ambos vínculos para origen `AUTOMATIC`.
+* `priority`, `countsAsWorked`, `TimeEntry`, `TimeSegment` y el comportamiento actual se conservan sin cambios. La tabla nueva todavía no tiene servicios, endpoints, carga manual ni generación automática.
+* No se realizó backfill: los registros existentes conservan `loadMode = null` y no se crearon desgloses históricos.
+
+La inspección de la base de desarrollo al crear 6C encontró `HC-NORMAL` con historial, pero inactivo y eliminado lógicamente, y otro concepto (`Colectivo`) clasificado como `kind = NORMAL`. Por eso `kind` no identifica hoy de forma segura una única base. 6C no modifica esos datos ni el seed. Antes de hacer obligatoria la base debe decidirse la reactivación/normalización del concepto canónico y evaluar un rol estable del sistema (por ejemplo `baseRole`/`isSystem`) en lugar de depender del nombre o de `kind` solamente.
+
 ## Plan de implementación futura
 
 1. Auditar datos y comportamiento actual: fichadas, `TimeSegment`, `TimeEntry`, cierres, exportaciones y asignaciones por legajo.
