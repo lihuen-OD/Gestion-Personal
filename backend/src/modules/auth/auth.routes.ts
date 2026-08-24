@@ -13,6 +13,10 @@ const loginRateLimiter = createRateLimiter({
   windowMs: env.LOGIN_RATE_LIMIT_WINDOW_MS,
   max: env.LOGIN_RATE_LIMIT_MAX,
 });
+const refreshRateLimiter = createRateLimiter({
+  windowMs: env.REFRESH_RATE_LIMIT_WINDOW_MS,
+  max: env.REFRESH_RATE_LIMIT_MAX,
+});
 
 authRouter.post(
   "/login",
@@ -23,6 +27,7 @@ authRouter.post(
 
 authRouter.post(
   "/refresh",
+  refreshRateLimiter,
   validateBody(refreshTokenSchema),
   asyncHandler(authController.refresh),
 );

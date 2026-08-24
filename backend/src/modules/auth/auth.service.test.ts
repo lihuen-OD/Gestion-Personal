@@ -20,7 +20,7 @@ vi.mock("bcryptjs", () => ({
 }));
 
 vi.mock("jsonwebtoken", () => ({
-  default: { sign: vi.fn().mockReturnValue("signed-token") },
+  default: { sign: vi.fn().mockReturnValue("signed-token"), verify: vi.fn() },
 }));
 
 const repo = authRepository as unknown as { findByEmailWithPassword: Mock; findActivePublicById: Mock };
@@ -87,5 +87,31 @@ describe("authService.login", () => {
     expect(audit.register).toHaveBeenCalledWith(
       expect.objectContaining({ action: "LOGIN", userId: null, entityId: storedUser.id }),
     );
+  });
+});
+
+describe("authService.refresh", () => {
+  it("valida el refresh token, exige usuario activo y rota ambos tokens", async () => {
+    const jwt = await import("jsonwebtoken");
+    (jwt.default.verify as Mock).mockReturnValue({ sub: storedUser.id, tokenUse: "refresh" });
+    const { passwordHash: _passwordHash, ...safeStoredUser } = storedUser;
+    repo.findActivePublicById.mockResolvedValue(safeStoredUser);
+
+    const result = await authService.refresh({ refreshToken: "refresh-token-valid" });
+
+    expect(repo.findActivePublicById).toHaveBeenCalledWith(storedUser.id);
+    expect(result).toMatchObject({ accessToken: "signed-token", refreshToken: "signed-token" });
+    expect(jwt.default.sign).toHaveBeenCalledTimes(2);
+  });
+
+  it("rechaza tokens que no sean refresh", async () => {
+    const jwt = await import("jsonwebtoken");
+    (jwt.default.verify as Mock).mockReturnValue({ sub: storedUser.id, tokenUse: "access" });
+
+    await expect(authService.refresh({ refreshToken: "access-token-invalid" })).rejects.toMatchObject({
+      statusCode: 401,
+      code: "INVALID_REFRESH_TOKEN",
+    });
+    expect(repo.findActivePublicById).not.toHaveBeenCalled();
   });
 });

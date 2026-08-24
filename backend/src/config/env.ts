@@ -30,6 +30,8 @@ const envSchema = z.object({
   CLOCK_DEVICE_TOKEN: z.string().min(16).optional(),
   LOGIN_RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(15 * 60 * 1000),
   LOGIN_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(10),
+  REFRESH_RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(15 * 60 * 1000),
+  REFRESH_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(30),
   JSON_BODY_LIMIT: z.string().default("40mb"),
   STORAGE_PROVIDER: z.enum(["local", "cloudinary", "google_drive"]).default("local"),
   CLOUDINARY_CLOUD_NAME: z.string().optional(),

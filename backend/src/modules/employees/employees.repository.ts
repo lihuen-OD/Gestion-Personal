@@ -1117,7 +1117,11 @@ export const employeesRepository = {
     });
   },
 
-  createDocument(employeeId: string, input: CreateEmployeeDocumentInput & { storageKey: string; storageFileId?: string | null }, uploadedByUserId?: string | null) {
+  createDocument(
+    employeeId: string,
+    input: Omit<CreateEmployeeDocumentInput, "storageKey"> & { storageKey: string; storageFileId?: string | null },
+    uploadedByUserId?: string | null,
+  ) {
     return prisma.$transaction(async (tx) => {
       await tx.employeeDocument.create({
         data: {

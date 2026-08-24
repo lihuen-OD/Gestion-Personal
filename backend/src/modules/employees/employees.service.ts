@@ -476,28 +476,27 @@ export const employeesService = {
     const before = await employeesService.getById(id);
     const category = await employeesRepository.findDocumentCategory(input.categoryId);
     const documentType = category?.code || category?.name || input.categoryId;
-    let storageKey = input.storageKey || "";
-    let storageFileId: string | null = null;
-    if (!storageKey) {
-      const storageFile = await storageService.uploadManaged({
-        buffer: bufferFromBase64(input.fileBase64),
-        fileName: input.fileName,
-        mimeType: input.fileMimeType,
-        folderSegments: storagePathBuilder.employeeDocument(before.legajo, documentType),
-        module: "LEGAJOS",
-        entityType: "EMPLOYEE_DOCUMENT",
-        entityId: id,
-        employeeId: id,
-        documentType,
-        visibility: "RRHH_ONLY",
-        uploadedByUserId: audit?.userId || null,
-        purpose: "general",
-      });
-      storageKey = storageFile.storageKey;
-      storageFileId = storageFile.id;
-    }
+    const storageFile = await storageService.uploadManaged({
+      buffer: bufferFromBase64(input.fileBase64),
+      fileName: input.fileName,
+      mimeType: input.fileMimeType,
+      folderSegments: storagePathBuilder.employeeDocument(before.legajo, documentType),
+      module: "LEGAJOS",
+      entityType: "EMPLOYEE_DOCUMENT",
+      entityId: id,
+      employeeId: id,
+      documentType,
+      visibility: "RRHH_ONLY",
+      uploadedByUserId: audit?.userId || null,
+      purpose: "general",
+    });
+    const { storageKey: _clientStorageKey, ...documentInput } = input;
     const employee = await execute(() =>
-      employeesRepository.createDocument(id, { ...input, storageKey, storageFileId }, audit?.userId),
+      employeesRepository.createDocument(
+        id,
+        { ...documentInput, storageKey: storageFile.storageKey, storageFileId: storageFile.id },
+        audit?.userId,
+      ),
     );
     const document = employee.documents[0];
     await auditService.register({
