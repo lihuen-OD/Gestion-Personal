@@ -118,6 +118,14 @@ La inspección de la base de desarrollo al crear 6C encontró `HC-NORMAL` con hi
 * La sección pasa a llamarse “Conceptos horarios adicionales”, explica que Horas normales se aplica siempre y muestra nombre, modo y estado. La selección y persistencia usan IDs; no exponen `priority` ni `countsAsWorked`.
 * Estos conceptos habilitados serán la fuente de verdad para decidir qué filas o desgloses adicionales verá el empleado. La grilla aditiva y la generación manual/automática continúan pendientes y no forman parte de 6F.
 
+### Etapa 6G — grilla aditiva base
+
+* `GET /employees/:id/time-grid` presenta una colección `rows` ordenada: primero el concepto canónico con `systemRole = NORMAL_BASE` y luego sólo los conceptos adicionales habilitados en `EmployeeHourConcept`. Cada fila conserva el ID estable, `loadMode` y `systemRole`; los nombres son exclusivamente de presentación.
+* La fila Normal se alimenta de los `TimeEntry` normales ya existentes. `totalWorkedMinutes` se deriva exclusivamente de esa fila y nunca suma conceptos adicionales.
+* Las filas adicionales se alimentan únicamente de `HourConceptBreakdown` no rechazados del período. Un concepto habilitado aparece con total cero aunque todavía no tenga desgloses. Los `TimeEntry` especiales legacy no se reinterpretan como desgloses ni aumentan el total.
+* La pantalla mensual muestra Normal siempre primera y mantiene su edición manual existente. Los adicionales son de sólo lectura en esta etapa, muestran su modo de carga y no incorporan acciones manuales ni generación automática.
+* Esta etapa es de presentación aditiva. No modifica schema, migraciones, fichador, `TimeSegment`, cálculo/clasificador operativo, cierres, dashboard ni exportaciones. La generación y carga funcional de `HourConceptBreakdown` quedan para etapas separadas.
+
 ## Plan de implementación futura
 
 1. Auditar datos y comportamiento actual: fichadas, `TimeSegment`, `TimeEntry`, cierres, exportaciones y asignaciones por legajo.

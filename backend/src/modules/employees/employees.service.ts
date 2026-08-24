@@ -85,6 +85,67 @@ function compareCategory(range: string[], category?: string | null) {
   return { status: "IN_RANGE", range };
 }
 
+type TimeGridConcept = {
+  id: string;
+  code: string;
+  name: string;
+  kind: string;
+  loadMode: string | null;
+  status: string;
+  systemRole: string | null;
+};
+
+type TimeGridEntry = {
+  day: number;
+  hours: Prisma.Decimal;
+  status: string;
+  hourConcept: TimeGridConcept;
+};
+
+type TimeGridBreakdown = { day: number; hourConceptId: string; minutes: number };
+
+export function buildAdditiveTimeGrid(
+  normalConcept: TimeGridConcept | null,
+  enabledConcepts: TimeGridConcept[],
+  entries: TimeGridEntry[],
+  breakdowns: TimeGridBreakdown[],
+) {
+  if (!normalConcept) {
+    throw new AppError("Canonical normal hour concept not found", 500, "NORMAL_HOUR_CONCEPT_NOT_FOUND");
+  }
+
+  const normalMinutesByDay: Record<string, number> = {};
+  for (const entry of entries) {
+    if (entry.hourConcept.systemRole !== "NORMAL_BASE" || !["APROBADO", "EN_REVISION"].includes(entry.status)) continue;
+    const key = String(entry.day);
+    normalMinutesByDay[key] = (normalMinutesByDay[key] ?? 0) + Math.round(Number(entry.hours) * 60);
+  }
+
+  const additionalMinutes = new Map<string, Record<string, number>>();
+  for (const breakdown of breakdowns) {
+    const byDay = additionalMinutes.get(breakdown.hourConceptId) ?? {};
+    const key = String(breakdown.day);
+    byDay[key] = (byDay[key] ?? 0) + breakdown.minutes;
+    additionalMinutes.set(breakdown.hourConceptId, byDay);
+  }
+
+  const toRow = (concept: TimeGridConcept, role: "NORMAL_BASE" | "ADDITIONAL", minutesByDay: Record<string, number>) => ({
+    concept,
+    role,
+    minutesByDay,
+    totalMinutes: Object.values(minutesByDay).reduce((sum, minutes) => sum + minutes, 0),
+  });
+  const normalRow = toRow(normalConcept, "NORMAL_BASE", normalMinutesByDay);
+  const additionalRows = enabledConcepts
+    .filter((concept) => concept.systemRole === null && concept.loadMode !== null)
+    .map((concept) => toRow(concept, "ADDITIONAL", additionalMinutes.get(concept.id) ?? {}));
+
+  return {
+    rows: [normalRow, ...additionalRows],
+    totalWorkedMinutes: normalRow.totalMinutes,
+  };
+}
+
 function structureCheck(label: string, value: string, allowed: string[], hasPosition: boolean) {
   return {
     label,
@@ -275,7 +336,13 @@ export const employeesService = {
   async getTimeGrid(id: string, query: EmployeeTimeGridQuery, user: Express.AuthUser) {
     const grid = await employeesRepository.findTimeGrid(id, query, employeeAccessWhere(user));
     if (!grid) throw new AppError("Employee not found", 404, "EMPLOYEE_NOT_FOUND");
-    return redactPiiForRole(grid, user);
+    const additiveGrid = buildAdditiveTimeGrid(
+      grid.normalConcept,
+      grid.employee.hourConcepts.map((link) => link.hourConcept),
+      grid.entries,
+      grid.breakdowns,
+    );
+    return redactPiiForRole({ ...grid, ...additiveGrid }, user);
   },
 
   async getPositionValidation(id: string, user: Express.AuthUser) {

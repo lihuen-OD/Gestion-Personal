@@ -6,17 +6,17 @@ import { employeeApiService } from "../services/api/employeeApiService";
 import { ApiError } from "../services/api/apiClient";
 import { documentApiService } from "../services/api/documentApiService";
 import { documentCategoryApiService } from "../services/api/documentCategoryApiService";
-import { hourConceptApiService } from "../services/api/hourConceptApiService";
 import { noveltyApiService } from "../services/api/noveltyApiService";
 import { noveltyTypeApiService } from "../services/api/noveltyTypeApiService";
 import { timeEntryApiService } from "../services/api/timeEntryApiService";
 import type { Employee, Novelty, TimeEntry, TimeStatus } from "../types";
-import type { HourConcept } from "../types/hourConcept.types";
+import type { EmployeeTimeGridRow } from "../services/api/employeeApiService";
 import type { NoveltyType } from "../types/noveltyType.types";
 import { noveltyColorClass } from "../utils/noveltyColor";
 import { displayLegajo, fullName } from "../utils/employee";
 import { currentMonthPeriod, formatPeriodDay, formatPeriodLabel, getMonthDays, getWeekdayAbbr, monthDate } from "../utils/period";
 import { formatHours } from "../utils/hours";
+import { additionalBreakdownHours, hourConceptLoadModeLabel, normalWorkedDays } from "../utils/employeeHoursGrid";
 import { statusTone } from "../utils/status";
 import { useAsyncAction } from "../utils/useAsyncAction";
 import { Field } from "../components/ui/FormControls";
@@ -28,16 +28,6 @@ import { Badge } from "../components/ui/Badge";
 
 const noveltyTone = (novelty?: Novelty, uiColor?: string) =>
   novelty ? noveltyColorClass(uiColor, novelty.noveltyTypeId || novelty.type) : "";
-
-const normalHourConcept: HourConcept = {
-  id: "normal-hour-fallback",
-  code: "HN",
-  name: "Hora normal",
-  kind: "NORMAL",
-  status: "ACTIVO",
-  createdAt: "",
-  updatedAt: "",
-};
 
 function timeEntrySaveErrorMessage(error: unknown) {
   if (error instanceof ApiError) {
@@ -63,13 +53,14 @@ export function EmployeeHoursPage() {
   const [searchParams] = useSearchParams();
   const [employee, setEmployee] = useState<Employee | null>(null);
   const period = searchParams.get("period") || currentMonthPeriod();
-  const [selected, setSelected] = useState<{ day: number; concept: string }>();
+  const [selected, setSelected] = useState<{ day: number; conceptId: string }>();
   const [hours, setHours] = useState("8");
   const [notes, setNotes] = useState("");
   const [correctionReason, setCorrectionReason] = useState("");
   const [refresh, setRefresh] = useState(0);
   const [noveltyTypes, setNoveltyTypes] = useState<NoveltyType[]>([]);
-  const [catalog, setCatalog] = useState<HourConcept[]>([]);
+  const [rows, setRows] = useState<EmployeeTimeGridRow[]>([]);
+  const [totalWorkedMinutes, setTotalWorkedMinutes] = useState(0);
   const activeTypes = noveltyTypes.filter((item) => item.status === "ACTIVO");
   const noveltyTypesById = new Map(noveltyTypes.map((item) => [item.id, item]));
   const noveltyTypesByName = new Map(
@@ -103,17 +94,16 @@ export function EmployeeHoursPage() {
         setEntries(grid.entries);
         setPeriodNovelties([]);
         setNoveltyTypes([]);
-        setCatalog(grid.hourConcepts);
+        setRows(grid.rows);
+        setTotalWorkedMinutes(grid.totalWorkedMinutes);
         setAttendanceIssues(grid.attendanceIssues);
         setLoading(false);
 
         Promise.all([
-          hourConceptApiService.getAll({ status: "ACTIVO" }),
           noveltyApiService.getAll({ employeeId: id }),
           noveltyTypeApiService.getAll(),
-        ]).then(([apiHourConcepts, apiNovelties, apiNoveltyTypes]) => {
+        ]).then(([apiNovelties, apiNoveltyTypes]) => {
           if (cancelled) return;
-          setCatalog(apiHourConcepts);
           setPeriodNovelties(
             apiNovelties.filter(
               (novelty) =>
@@ -133,7 +123,8 @@ export function EmployeeHoursPage() {
         setEntries([]);
         setPeriodNovelties([]);
         setNoveltyTypes([]);
-        setCatalog([]);
+        setRows([]);
+        setTotalWorkedMinutes(0);
         setAttendanceIssues(0);
         setLoadError("No pudimos cargar la grilla horaria. Verificá el legajo e intentá nuevamente.");
       } finally {
@@ -146,15 +137,6 @@ export function EmployeeHoursPage() {
     };
   }, [id, period, refresh]);
 
-  const enabledNames = new Set(
-    employee?.enabledHours?.length ? employee.enabledHours : ["Hora normal"],
-  );
-  const conceptsFromCatalog = catalog.filter(
-    (concept) => enabledNames.has(concept.name) || concept.name === "Hora normal",
-  );
-  const concepts = conceptsFromCatalog.length
-    ? conceptsFromCatalog
-    : [normalHourConcept];
   const selectedType = activeTypes.find((item) => item.id === noveltyTypeId);
   const noveltyVisualClass = (novelty?: Novelty) => {
     if (!novelty) return "";
@@ -180,29 +162,22 @@ export function EmployeeHoursPage() {
             ? conceptName === "Hora normal"
             : false,
     );
-  const entryFor = (day: number, conceptName: string) =>
-    entries.find((entry) => entry.day === day && entry.type === conceptName);
-  const conceptTotal = (conceptName: string) =>
-    entries
-      .filter(
-        (entry) =>
-          entry.type === conceptName && timeEntryApiService.isCountableStatus(entry.status),
-      )
-      .reduce((sum, entry) => sum + entry.hours, 0);
+  const entryFor = (day: number, conceptId: string, conceptName: string) =>
+    entries.find((entry) => entry.day === day && (entry.conceptId === conceptId || entry.type === conceptName));
   const isBlocked = (day: number) =>
     dayNovelties(day).some(
       (novelty) =>
         novelty.blocksTimeEntry || novelty.timeImpact === "BLOQUEA_CARGA_DIA",
     );
-  const openCell = (day: number, concept: string, entry?: TimeEntry) => {
+  const openCell = (day: number, conceptId: string, conceptName: string, entry?: TimeEntry) => {
     const date = monthDate(period, day);
-    setSelected({ day, concept });
+    setSelected({ day, conceptId });
     setHours(
       String(
         entry?.hours ??
-          (isBlocked(day) && concept === "Hora normal"
+          (isBlocked(day) && conceptName === "Hora normal"
             ? 0
-            : concept === "Hora normal"
+            : conceptName === "Hora normal"
               ? 8
               : 1),
       ),
@@ -217,7 +192,9 @@ export function EmployeeHoursPage() {
     setDocNotes("");
     setError("");
   };
-  const selectedEntry = selected ? entryFor(selected.day, selected.concept) : undefined;
+  const selectedRow = selected ? rows.find((row) => row.concept.id === selected.conceptId) : undefined;
+  const selectedConceptName = selectedRow?.concept.name ?? "Hora normal";
+  const selectedEntry = selectedRow && selected ? entryFor(selected.day, selectedRow.concept.id, selectedRow.concept.name) : undefined;
   const canCorrectApproved = Boolean(selectedEntry?.status === "Aprobado" && user && timeEntryApiService.canReview(user));
   const selectedLocked = selectedEntry ? !timeEntryApiService.canEdit(selectedEntry) && !canCorrectApproved : false;
   const noveltyRange = () => {
@@ -238,6 +215,7 @@ export function EmployeeHoursPage() {
   const { isRunning: isSaving, run: save } = useAsyncAction(async (status: TimeStatus) => {
     if (!selected || !employee) return;
     if (!user || !id) return;
+    if (selectedRow?.role !== "NORMAL_BASE") return;
     if (selectedLocked) {
       return setError(
         "La carga ya fue aprobada. Para modificarla primero hay que reabrirla.",
@@ -256,18 +234,18 @@ export function EmployeeHoursPage() {
     ) {
       return setError("La fecha hasta no puede ser anterior a la fecha desde.");
     }
-    const concept = catalog.find((item) => item.name === selected.concept);
+    const concept = selectedRow?.concept;
     const nextHours = Number(hours) || 0;
     const payload = {
         employeeId: id!,
         period,
         day: selected.day,
-        type: selected.concept,
+        type: selectedConceptName,
         hours: nextHours,
         notes,
         status,
         conceptId: concept?.id,
-        isSpecial: selected.concept !== "Hora normal",
+        isSpecial: false,
         origin: "MANUAL",
       } satisfies Omit<TimeEntry, "id">;
     let savedEntry: TimeEntry | undefined;
@@ -349,10 +327,9 @@ export function EmployeeHoursPage() {
       </Section>
     );
   }
-  const periodSummary = timeEntryApiService.getEmployeePeriodSummary(entries, id!);
-  const total = periodSummary.total;
-  const specialTotal = periodSummary.specialHours;
-  const blockedDays = monthDays.filter((day) => isBlocked(day)).length;
+  const total = totalWorkedMinutes / 60;
+  const additionalTotal = additionalBreakdownHours(rows);
+  const daysWithNormalHours = normalWorkedDays(rows);
   const exportableNovelties = periodNovelties.filter(
     (novelty) =>
       novelty.status !== "Rechazado" &&
@@ -403,14 +380,14 @@ export function EmployeeHoursPage() {
       <div className="stat-grid">
         <StatCard label="Horas trabajadas" value={`${formatHours(total)} h`} icon={Clock3} />
         <StatCard
-          label="Horas especiales"
-          value={`${formatHours(specialTotal)} h`}
+          label="Desgloses adicionales"
+          value={`${formatHours(additionalTotal)} h`}
           icon={AlertTriangle}
           tone="orange"
         />
         <StatCard
           label="Dias con carga"
-          value={periodSummary.daysWithEntries}
+          value={daysWithNormalHours}
           icon={CalendarDays}
           tone="blue"
         />
@@ -443,7 +420,7 @@ export function EmployeeHoursPage() {
 
       <Section
         title="Grilla mensual por concepto"
-        subtitle={`Cada celda permite cargar horas y, si corresponde, una novedad asociada a esa misma hora para ${formatPeriodLabel(period)}.`}
+        subtitle={`Horas normales contiene el total real. Los conceptos adicionales son desgloses y no se suman al total (${formatPeriodLabel(period)}).`}
       >
         <div className="hours-grid">
           <table>
@@ -457,44 +434,48 @@ export function EmployeeHoursPage() {
               </tr>
             </thead>
             <tbody>
-              {concepts.map((concept) => (
-                <tr key={concept.id}>
+              {rows.map((row) => (
+                <tr key={row.concept.id}>
                   <td>
-                    <b>{concept.name}</b>
+                    <b>{row.concept.name}</b>
                     <span className="table-sub">
-                      {concept.name === "Hora normal" ? "Hora trabajada base" : "Hora especial"}
+                      {row.role === "NORMAL_BASE" ? "Total trabajado · Base del sistema" : `Desglose · ${hourConceptLoadModeLabel(row.concept.loadMode)}`}
                     </span>
                   </td>
                   {monthDays.map((day) => {
-                    const entry = entryFor(day, concept.name);
-                    const novelties = conceptNovelties(day, concept.name);
+                    const entry = row.role === "NORMAL_BASE" ? entryFor(day, row.concept.id, row.concept.name) : undefined;
+                    const novelties = row.role === "NORMAL_BASE" ? conceptNovelties(day, row.concept.name) : [];
                     const mainNovelty = novelties[0];
+                    const breakdownMinutes = row.minutesByDay[String(day)] ?? 0;
                     const cellClass = [
                       "hour-cell",
-                      entry ? "filled" : "",
-                      isBlocked(day) ? "blocked" : "",
+                      entry || breakdownMinutes ? "filled" : "",
+                      row.role === "NORMAL_BASE" && isBlocked(day) ? "blocked" : "",
                       noveltyVisualClass(mainNovelty),
                     ]
                       .filter(Boolean)
                       .join(" ");
                     return (
-                      <td key={`${concept.id}-${day}`}>
-                        <button
-                          className={cellClass}
-                          title={novelties.map((novelty) => novelty.type).join(", ")}
-                          onClick={() => openCell(day, concept.name, entry)}
-                        >
-                          <span>
-                            {entry?.hours ??
-                              (isBlocked(day) && concept.name === "Hora normal" ? "0" : "+")}
+                      <td key={`${row.concept.id}-${day}`}>
+                        {row.role === "NORMAL_BASE" ? (
+                          <button
+                            className={cellClass}
+                            title={novelties.map((novelty) => novelty.type).join(", ")}
+                            onClick={() => openCell(day, row.concept.id, row.concept.name, entry)}
+                          >
+                            <span>{entry?.hours ?? (isBlocked(day) ? "0" : "+")}</span>
+                            {mainNovelty ? <small>{mainNovelty.type.slice(0, 3)}</small> : null}
+                          </button>
+                        ) : (
+                          <span className={cellClass} title={`${hourConceptLoadModeLabel(row.concept.loadMode)} · solo lectura`}>
+                            {breakdownMinutes ? formatHours(breakdownMinutes / 60) : "—"}
                           </span>
-                          {mainNovelty ? <small>{mainNovelty.type.slice(0, 3)}</small> : null}
-                        </button>
+                        )}
                       </td>
                     );
                   })}
                   <td>
-                    <b>{formatHours(conceptTotal(concept.name))}</b>
+                    <b>{formatHours(row.totalMinutes / 60)}</b>
                   </td>
                 </tr>
               ))}
@@ -505,20 +486,20 @@ export function EmployeeHoursPage() {
 
       {selected ? (
         <Modal
-          title={`Cargar ${selected.concept} · ${formatPeriodDay(period, selected.day)}`}
+          title={`Cargar ${selectedConceptName} · ${formatPeriodDay(period, selected.day)}`}
           close={() => setSelected(undefined)}
         >
           <div className="form-stack">
             <div className="context-hour-card">
               <div>
-                <b>{selected.concept}</b>
+                <b>{selectedConceptName}</b>
                 <span>
                   {fullName(employee)} · {monthDate(period, selected.day)}
                 </span>
               </div>
               <Badge tone="neutral">
-                {conceptNovelties(selected.day, selected.concept).length
-                  ? `${conceptNovelties(selected.day, selected.concept).length} novedad(es)`
+                {conceptNovelties(selected.day, selectedConceptName).length
+                  ? `${conceptNovelties(selected.day, selectedConceptName).length} novedad(es)`
                   : "Sin novedad cargada"}
               </Badge>
             </div>
@@ -664,9 +645,9 @@ export function EmployeeHoursPage() {
                 </div>
               ) : null}
 
-              {conceptNovelties(selected.day, selected.concept).length ? (
+              {conceptNovelties(selected.day, selectedConceptName).length ? (
                 <div className="cell-novelty-list">
-                  {conceptNovelties(selected.day, selected.concept).map((novelty) => (
+                  {conceptNovelties(selected.day, selectedConceptName).map((novelty) => (
                     <span
                       className={`cell-novelty-pill ${noveltyVisualClass(novelty)}`}
                       key={novelty.id}

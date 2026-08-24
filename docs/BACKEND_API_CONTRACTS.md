@@ -245,6 +245,21 @@ Incluye:
 - documentos;
 - novedades recientes.
 
+### Grilla horaria de un legajo
+
+```txt
+GET /api/employees/:id/time-grid?period=YYYY-MM&includeDetails=false
+```
+
+Además del contrato operativo histórico (`employee`, `entries`, novedades y catálogos opcionales), devuelve la presentación aditiva oficial:
+
+- `rows`: Normal canónica siempre primera y luego sólo conceptos adicionales habilitados para el legajo;
+- `rows[].concept`: identidad estable (`id`, `code`, `systemRole`) y datos de presentación (`name`, `kind`, `loadMode`, `status`);
+- `rows[].minutesByDay` y `rows[].totalMinutes`: minutos presentados por fila;
+- `totalWorkedMinutes`: total real derivado exclusivamente de la fila `NORMAL_BASE`.
+
+Las filas adicionales leen `HourConceptBreakdown` no rechazados y no se suman a `totalWorkedMinutes`. En esta etapa son de sólo lectura: el endpoint no genera desgloses ni agrega una operación manual nueva.
+
 ### Crear legajo
 
 ```txt

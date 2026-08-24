@@ -42,9 +42,11 @@ describe("employees operational DTO", () => {
 
   it("time-grid conserva datos operativos y elimina PII anidada para Nivel 3", async () => {
     repo.findTimeGrid.mockResolvedValue({
-      employee: { ...employee, address: { street: "Privada" }, emergencyContact: "Familiar" },
-      entries: [{ id: "entry-1", employee }],
+      employee: { ...employee, address: { street: "Privada" }, emergencyContact: "Familiar", hourConcepts: [] },
+      entries: [{ id: "entry-1", employee, day: 1, hours: 8, status: "APROBADO", hourConcept: { systemRole: "NORMAL_BASE" } }],
       novelties: [],
+      normalConcept: { id: "normal", code: "HC-NORMAL", name: "Hora normal", kind: "NORMAL", loadMode: null, status: "ACTIVO", systemRole: "NORMAL_BASE" },
+      breakdowns: [],
       documents: [{ fileName: "dni.pdf" }],
     });
 

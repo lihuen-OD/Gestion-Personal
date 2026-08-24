@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import type { Mock } from "vitest";
 import { employeesRepository } from "./employees.repository";
-import { employeesService } from "./employees.service";
+import { buildAdditiveTimeGrid, employeesService } from "./employees.service";
 import { roles } from "../../shared/security/roles";
 
 /**
@@ -50,6 +50,42 @@ function employeeFixture(overrides: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+});
+
+describe("buildAdditiveTimeGrid", () => {
+  const normal = { id: "normal", code: "HC-NORMAL", name: "Hora normal", kind: "NORMAL", loadMode: null, status: "ACTIVO", systemRole: "NORMAL_BASE" } as const;
+  const sereno = { id: "sereno", code: "HC-SERENO", name: "Sereno", kind: "SERENO", loadMode: "AUTOMATIC", status: "ACTIVO", systemRole: null } as const;
+
+  it("presenta Normal primero y calcula el total trabajado sólo desde Normal", () => {
+    const result = buildAdditiveTimeGrid(
+      normal,
+      [sereno],
+      [
+        { day: 1, hours: 10 as never, status: "APROBADO", hourConcept: normal },
+        { day: 1, hours: 6 as never, status: "APROBADO", hourConcept: sereno },
+      ],
+      [{ day: 1, hourConceptId: "sereno", minutes: 360 }],
+    );
+
+    expect(result.totalWorkedMinutes).toBe(600);
+    expect(result.rows.map((row) => row.concept.id)).toEqual(["normal", "sereno"]);
+    expect(result.rows[1]).toMatchObject({ role: "ADDITIONAL", minutesByDay: { "1": 360 }, totalMinutes: 360 });
+  });
+
+  it("muestra adicionales habilitados sin desglose con total cero", () => {
+    const result = buildAdditiveTimeGrid(normal, [sereno], [], []);
+    expect(result.rows[1]).toMatchObject({ concept: sereno, minutesByDay: {}, totalMinutes: 0 });
+  });
+
+  it("ignora desgloses de conceptos no habilitados y agrega los existentes por día", () => {
+    const result = buildAdditiveTimeGrid(normal, [sereno], [], [
+      { day: 2, hourConceptId: "sereno", minutes: 120 },
+      { day: 2, hourConceptId: "sereno", minutes: 60 },
+      { day: 2, hourConceptId: "colectivo-no-habilitado", minutes: 90 },
+    ]);
+    expect(result.rows).toHaveLength(2);
+    expect(result.rows[1]).toMatchObject({ minutesByDay: { "2": 180 }, totalMinutes: 180 });
+  });
 });
 
 describe("employeesService.replaceHourConcepts", () => {

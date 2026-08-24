@@ -120,8 +120,22 @@ type ApiTimeGridResponse = {
     novelties: Parameters<typeof mapNoveltyFromApi>[0][];
     noveltyTypes: Parameters<typeof mapNoveltyTypeFromApi>[0][];
     hourConcepts: Parameters<typeof mapHourConceptFromApi>[0][];
+    rows: Array<{
+      concept: Parameters<typeof mapHourConceptFromApi>[0];
+      role: "NORMAL_BASE" | "ADDITIONAL";
+      minutesByDay: Record<string, number>;
+      totalMinutes: number;
+    }>;
+    totalWorkedMinutes: number;
     attendanceIssues: number;
   };
+};
+
+export type EmployeeTimeGridRow = {
+  concept: HourConcept;
+  role: "NORMAL_BASE" | "ADDITIONAL";
+  minutesByDay: Record<string, number>;
+  totalMinutes: number;
 };
 
 export type EmployeeTimeGrid = {
@@ -130,6 +144,8 @@ export type EmployeeTimeGrid = {
   novelties: Novelty[];
   noveltyTypes: NoveltyType[];
   hourConcepts: HourConcept[];
+  rows: EmployeeTimeGridRow[];
+  totalWorkedMinutes: number;
   attendanceIssues: number;
 };
 
@@ -638,6 +654,8 @@ export const employeeApiService = {
       novelties: response.data.novelties.map(mapNoveltyFromApi),
       noveltyTypes: response.data.noveltyTypes.map(mapNoveltyTypeFromApi),
       hourConcepts: response.data.hourConcepts.map(mapHourConceptFromApi),
+      rows: response.data.rows.map((row) => ({ ...row, concept: mapHourConceptFromApi(row.concept) })),
+      totalWorkedMinutes: response.data.totalWorkedMinutes,
       attendanceIssues: response.data.attendanceIssues || 0,
     };
   },

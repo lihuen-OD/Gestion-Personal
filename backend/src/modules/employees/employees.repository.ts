@@ -384,7 +384,10 @@ const timeGridEmployeeSelect = {
       company: { select: { id: true, name: true, code: true } },
     },
   },
-  hourConcepts: { select: { hourConcept: { select: { id: true, code: true, name: true } } } },
+  hourConcepts: {
+    where: { hourConcept: { systemRole: null, status: "ACTIVO", deletedAt: null, loadMode: { not: null } } },
+    select: { hourConcept: { select: { id: true, code: true, name: true, kind: true, loadMode: true, status: true, systemRole: true } } },
+  },
 } satisfies Prisma.EmployeeSelect;
 
 const timeGridCoreEmployeeSelect = {
@@ -396,12 +399,15 @@ const timeGridCoreEmployeeSelect = {
   firstName: true,
   lastName: true,
   status: true,
-  hourConcepts: { select: { hourConcept: { select: { id: true, code: true, name: true } } } },
+  hourConcepts: {
+    where: { hourConcept: { systemRole: null, status: "ACTIVO", deletedAt: null, loadMode: { not: null } } },
+    select: { hourConcept: { select: { id: true, code: true, name: true, kind: true, loadMode: true, status: true, systemRole: true } } },
+  },
 } satisfies Prisma.EmployeeSelect;
 
 const timeGridTimeEntryInclude = {
   employee: { select: { id: true, legajo: true, cuil: true, firstName: true, lastName: true, status: true } },
-  hourConcept: { select: { id: true, code: true, name: true, kind: true, status: true } },
+  hourConcept: { select: { id: true, code: true, name: true, kind: true, loadMode: true, status: true, systemRole: true } },
 } satisfies Prisma.TimeEntryInclude;
 
 const timeGridNoveltyInclude = {
@@ -840,7 +846,7 @@ export const employeesRepository = {
 
   async findTimeGrid(id: string, query: EmployeeTimeGridQuery, accessWhere: Prisma.EmployeeWhereInput) {
     const { start, end } = periodRange(query.period);
-    const [employee, entries, novelties, catalogs, observedShifts, observedPunches] = await Promise.all([
+    const [employee, entries, novelties, catalogs, observedShifts, observedPunches, normalConcept, breakdowns] = await Promise.all([
       prisma.employee.findFirst({
         where: { AND: [{ id }, accessWhere] },
         select: query.includeDetails ? timeGridEmployeeSelect : timeGridCoreEmployeeSelect,
@@ -881,6 +887,19 @@ export const employeesRepository = {
           endWorkShifts: { none: {} },
         },
       }),
+      prisma.hourConcept.findFirst({
+        where: { systemRole: "NORMAL_BASE", status: "ACTIVO", deletedAt: null },
+        select: { id: true, code: true, name: true, kind: true, loadMode: true, status: true, systemRole: true },
+      }),
+      prisma.hourConceptBreakdown.findMany({
+        where: {
+          employeeId: id,
+          period: query.period,
+          status: { in: ["BORRADOR", "PENDIENTE", "EN_REVISION", "APROBADO", "DEVUELTO", "CERRADO"] },
+        },
+        select: { date: true, day: true, hourConceptId: true, minutes: true, status: true },
+        orderBy: [{ date: "asc" }, { createdAt: "asc" }],
+      }),
     ]);
     if (!employee) return null;
 
@@ -890,6 +909,8 @@ export const employeesRepository = {
       novelties,
       noveltyTypes: catalogs?.noveltyTypes ?? [],
       hourConcepts: catalogs?.hourConcepts ?? [],
+      normalConcept,
+      breakdowns,
       attendanceIssues: observedShifts + observedPunches,
     };
   },

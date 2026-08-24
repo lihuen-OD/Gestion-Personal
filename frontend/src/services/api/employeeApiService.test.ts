@@ -1,5 +1,8 @@
-import { describe, expect, it } from "vitest";
-import { employeeListRequest, mapEmployeeFromApi, orgChartReachedLimit } from "./employeeApiService";
+import { describe, expect, it, vi } from "vitest";
+import { apiRequest } from "./apiClient";
+import { employeeApiService, employeeListRequest, mapEmployeeFromApi, orgChartReachedLimit } from "./employeeApiService";
+
+vi.mock("./apiClient", () => ({ apiRequest: vi.fn() }));
 
 describe("mapEmployeeFromApi transport", () => {
   it("keeps transport locality separate from the home address city", () => {
@@ -39,6 +42,27 @@ describe("mapEmployeeFromApi — conceptos horarios adicionales 6F", () => {
     expect(employee.enabledHourConcepts).toEqual([
       expect.objectContaining({ id: "colectivo", name: "Colectivo", kind: "TRANSPORTE", loadMode: "MANUAL", status: "ACTIVO", systemRole: null, enabled: true }),
     ]);
+  });
+});
+
+describe("employeeApiService.getTimeGrid — grilla aditiva 6G", () => {
+  it("preserva filas por id, modo y total trabajado explícito del backend", async () => {
+    const base = { deletedAt: null, createdAt: "2026-01-01", updatedAt: "2026-01-01", status: "ACTIVO" };
+    vi.mocked(apiRequest).mockResolvedValue({
+      data: {
+        employee: { id: "employee-1", legajo: "100", firstName: "Ana", lastName: "Prueba", status: "ACTIVO" },
+        entries: [], novelties: [], noveltyTypes: [], hourConcepts: [], attendanceIssues: 0,
+        rows: [
+          { concept: { ...base, id: "normal", code: "HC-NORMAL", name: "Hora normal", kind: "NORMAL", loadMode: null, systemRole: "NORMAL_BASE" }, role: "NORMAL_BASE", minutesByDay: { "1": 600 }, totalMinutes: 600 },
+          { concept: { ...base, id: "sereno", code: "HC-SERENO", name: "Sereno", kind: "SERENO", loadMode: "AUTOMATIC", systemRole: null }, role: "ADDITIONAL", minutesByDay: { "1": 360 }, totalMinutes: 360 },
+        ],
+        totalWorkedMinutes: 600,
+      },
+    } as never);
+
+    const result = await employeeApiService.getTimeGrid("employee-1", "2026-08", { includeDetails: false });
+    expect(result.totalWorkedMinutes).toBe(600);
+    expect(result.rows.map((row) => [row.concept.id, row.concept.loadMode])).toEqual([["normal", null], ["sereno", "AUTOMATIC"]]);
   });
 });
 
