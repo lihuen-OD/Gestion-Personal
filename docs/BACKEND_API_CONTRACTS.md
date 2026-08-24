@@ -283,6 +283,20 @@ Sólo admite conceptos adicionales habilitados, activos, no eliminados y con mod
 
 La base garantiza la idempotencia manual mediante el índice único parcial `HourConceptBreakdown_manual_unique` sobre empleado, fecha y concepto con `source = 'MANUAL'`. El índice no aplica a `AUTOMATIC`. Una carrera concurrente se reintenta una vez y, si persiste, responde `409` con código `MANUAL_BREAKDOWN_CONCURRENT_CONFLICT`.
 
+#### Recálculo de desgloses automáticos
+
+```txt
+POST /api/employees/:id/hour-concept-breakdowns/recalculate-automatic
+```
+
+```json
+{ "period": "2026-08" }
+```
+
+La operación toma exclusivamente intervalos reales de `WorkShift` completos con estado `PROCESADO`. Evalúa las reglas activas de conceptos adicionales `AUTOMATIC` o `BOTH` habilitados en el legajo, intersecta cada franja con el intervalo trabajado y parte el resultado por día calendario Argentina. Las reglas que cruzan medianoche se evalúan como una sola franja; las reglas solapadas de un mismo concepto se fusionan para no duplicar minutos, mientras conceptos distintos sí pueden superponerse.
+
+El recálculo reemplaza en una transacción serializable todas las filas `source = AUTOMATIC` del empleado y período solicitados, crea el resultado con estado `BORRADOR` y conserva intactas las filas `MANUAL`. Este alcance amplio es aceptable temporalmente porque 6I es el único generador automático actual; si se incorporan otros generadores, deberán separar explícitamente su identidad antes de compartir el mismo empleado/período. No se eliminan datos de otros empleados ni períodos. Así se eliminan resultados obsoletos y la operación es idempotente. No lee `priority`, `countsAsWorked`, `TimeSegment` ni `TimeEntry`, y nunca modifica Horas normales ni `totalWorkedMinutes`. Un cierre `ENVIADO`, `APROBADO` o `CORRECCION_PENDIENTE` responde `409 PERIOD_CLOSED`; una carrera serializable se reintenta una vez y luego responde `409 AUTOMATIC_BREAKDOWN_CONCURRENT_CONFLICT`.
+
 ### Crear legajo
 
 ```txt

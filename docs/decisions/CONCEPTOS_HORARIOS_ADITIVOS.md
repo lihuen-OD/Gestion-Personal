@@ -143,6 +143,16 @@ La inspección de la base de desarrollo al crear 6C encontró `HC-NORMAL` con hi
 * El índice único parcial `HourConceptBreakdown_manual_unique` garantiza físicamente una sola fila por `(employeeId, date, hourConceptId)` únicamente cuando `source = 'MANUAL'`. No restringe `AUTOMATIC`, que podrá generar varias filas diarias asociadas a distintos turnos, segmentos o reglas.
 * El endpoint conserva la transacción serializable y la limpieza defensiva. Ante `P2002` o `P2034` reintenta una vez para convertir la carrera en actualización idempotente; si el conflicto persiste responde `409 MANUAL_BREAKDOWN_CONCURRENT_CONFLICT`.
 
+### Etapa 6I — generación automática aditiva
+
+* El recálculo explícito por empleado y período usa `WorkShift` como fuente del intervalo real trabajado. Sólo considera turnos `PROCESADO` con `endAt`; ignora turnos abiertos, incompletos o anulados. No reutiliza `TimeSegment` ni `TimeEntry`, porque ambos pertenecen todavía al clasificador exclusivo legacy basado en `priority`.
+* Únicamente participan conceptos adicionales habilitados en `EmployeeHourConcept`, activos, no eliminados, con modo `AUTOMATIC` o `BOTH` y reglas activas. Normal nunca genera `HourConceptBreakdown`.
+* Cada regla se intersecta matemáticamente con el turno real y puede cruzar medianoche. El resultado se parte por día Argentina. Reglas solapadas del mismo concepto se fusionan para que un minuto trabajado no se duplique dentro de esa clasificación; conceptos diferentes pueden superponerse porque son desgloses independientes.
+* La persistencia reemplaza atómicamente todas las filas `AUTOMATIC` del empleado/período solicitado con estado `BORRADOR`. No limita el borrado a los conceptos o reglas que continúan elegibles: esa amplitud permite retirar resultados obsoletos. Es aceptable temporalmente porque 6I es el único generador automático actual; antes de sumar otro generador deberá definirse una identidad/origen que separe ambos conjuntos. Nunca alcanza otros empleados, otros períodos ni filas `MANUAL`. Así una segunda ejecución produce el mismo estado final y actualiza reglas o turnos modificados.
+* Se conserva trazabilidad por `workShiftId`; `hourConceptRuleId` se informa cuando el tramo proviene de una única regla y queda nulo cuando fue necesario fusionar reglas distintas. No se agregó índice ni migración: la identidad del conjunto automático está gobernada por el reemplazo serializable del período, no por la unicidad manual parcial.
+* Los cierres `ENVIADO`, `APROBADO` y `CORRECCION_PENDIENTE` bloquean el recálculo. Se aplica el alcance de empleados del usuario, se audita la operación y se reintenta una vez ante conflicto serializable.
+* Esta etapa no modifica fichador, `TimeEntry`, `TimeSegment`, clasificador operativo legacy, frontend, grilla, dashboard, cierres como módulo, exportaciones ni schema. Esos consumidores y el retiro físico de `priority`/`countsAsWorked` permanecen separados.
+
 ## Plan de implementación futura
 
 1. Auditar datos y comportamiento actual: fichadas, `TimeSegment`, `TimeEntry`, cierres, exportaciones y asignaciones por legajo.

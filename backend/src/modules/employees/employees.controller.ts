@@ -5,6 +5,7 @@ import { requireParam } from "../../shared/http/params";
 import { clearDocumentsReadCaches } from "../documents/documents.cache";
 import type { EmployeeTimeGridQuery, ListEmployeeHistoryQuery, ListEmployeeOptionsQuery, ListEmployeeOrgChartQuery, ListEmployeesQuery } from "./employees.schemas";
 import { employeesService } from "./employees.service";
+import { automaticHourConceptBreakdownsService } from "./automaticHourConceptBreakdowns.service";
 
 const employeeDetailCache = createTtlCache<unknown>(30_000);
 const employeeTimeGridCache = createTtlCache<unknown>(60_000);
@@ -105,6 +106,17 @@ export const employeesController = {
 
   upsertManualHourConceptBreakdown: (async (req, res) => {
     const result = await employeesService.upsertManualHourConceptBreakdown(requireParam(req, "id"), req.body, req.user!, requestAuditContext(req));
+    clearEmployeeReadCaches();
+    res.json({ data: result });
+  }) satisfies RequestHandler,
+
+  recalculateAutomaticHourConceptBreakdowns: (async (req, res) => {
+    const result = await automaticHourConceptBreakdownsService.recalculate(
+      requireParam(req, "id"),
+      req.body.period,
+      req.user!,
+      requestAuditContext(req),
+    );
     clearEmployeeReadCaches();
     res.json({ data: result });
   }) satisfies RequestHandler,

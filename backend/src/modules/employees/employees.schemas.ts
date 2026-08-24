@@ -201,6 +201,10 @@ export const upsertManualHourConceptBreakdownSchema = z.object({
   observation: z.string().trim().max(600).optional().nullable(),
 });
 
+export const recalculateAutomaticHourConceptBreakdownsSchema = z.object({
+  period: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/),
+});
+
 
 export const createEmployeeFieldHistorySchema = z.object({
   section: employeeHistorySectionSchema,

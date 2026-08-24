@@ -19,6 +19,7 @@ import {
   listEmployeesQuerySchema,
   replaceEmployeeAssignmentsSchema,
   replaceEmployeeHourConceptsSchema,
+  recalculateAutomaticHourConceptBreakdownsSchema,
   updateEmployeeContactSchema,
   updateEmployeeSchema,
   upsertEmployeeAddressSchema,
@@ -42,6 +43,13 @@ employeesRouter.put(
   requireAnyRole([roles.rrhh, roles.supervision, roles.cargaHoraria]),
   validateBody(upsertManualHourConceptBreakdownSchema),
   asyncHandler(employeesController.upsertManualHourConceptBreakdown),
+);
+
+employeesRouter.post(
+  "/:id/hour-concept-breakdowns/recalculate-automatic",
+  requireAnyRole([roles.rrhh, roles.supervision, roles.cargaHoraria]),
+  validateBody(recalculateAutomaticHourConceptBreakdownsSchema),
+  asyncHandler(employeesController.recalculateAutomaticHourConceptBreakdowns),
 );
 
 employeesRouter.get(

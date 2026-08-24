@@ -32,4 +32,8 @@ describe("employee detail route security", () => {
   it("Nivel 3 puede operar breakdowns manuales sujeto al scope del servicio", () => {
     expect(invoke(authorizationFor(employeesRouter, "/:id/hour-concept-breakdowns/manual"), roles.cargaHoraria)).toBeUndefined();
   });
+
+  it("Nivel 3 puede recalcular breakdowns automáticos sujeto al scope del servicio", () => {
+    expect(invoke(authorizationFor(employeesRouter, "/:id/hour-concept-breakdowns/recalculate-automatic"), roles.cargaHoraria)).toBeUndefined();
+  });
 });
