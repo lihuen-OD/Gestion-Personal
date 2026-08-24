@@ -131,11 +131,17 @@ La inspección de la base de desarrollo al crear 6C encontró `HC-NORMAL` con hi
 * La carga manual escribe exclusivamente `HourConceptBreakdown` con `source = MANUAL` y estado inicial `BORRADOR`. Nunca crea un `TimeEntry` especial ni modifica Horas normales o `totalWorkedMinutes`.
 * Sólo se permite para conceptos adicionales habilitados en el legajo, activos, no eliminados y con `loadMode = MANUAL` o `BOTH`. Normal y los conceptos `AUTOMATIC` son rechazados por backend; la UI mantiene estos últimos en modo de sólo lectura.
 * La identidad funcional es empleado + fecha + concepto + `source = MANUAL`. El repositorio usa una transacción serializable, actualiza el registro existente y elimina duplicados legacy defensivamente. No se agregó schema ni migración en esta etapa.
-* Hardening pendiente: garantizar esa identidad con un índice único parcial PostgreSQL sobre `(employeeId, date, hourConceptId) WHERE source = 'MANUAL'`, precedido por una comprobación/saneamiento de duplicados. No corresponde usar un `@@unique([employeeId, date, hourConceptId, source])` global porque también limitaría los futuros breakdowns `AUTOMATIC` a una sola fila por día y concepto, aunque provengan de turnos o segmentos distintos. Prisma no expresa actualmente este índice parcial en `schema.prisma`, por lo que debe incorporarse en una migración SQL dedicada y verificable.
+* El hardening físico de esa identidad se incorporó en 6H.1 mediante un índice único parcial PostgreSQL. No se usó un `@@unique([employeeId, date, hourConceptId, source])` global porque también limitaría los futuros breakdowns `AUTOMATIC` a una sola fila por día y concepto, aunque provengan de turnos o segmentos distintos.
 * Guardar cero mediante el mismo PUT elimina físicamente el desglose manual de esa celda. No se agregó una ruta HTTP DELETE porque `/employees` protege explícitamente esa convención. Se eligió delete físico interno porque `HourConceptBreakdown` no tiene baja lógica y el registro manual es un dato editable, no una fuente histórica externa; la acción queda auditada.
 * Si un concepto se deshabilita del legajo, sus breakdowns existentes se conservan como historia persistida pero dejan de aparecer en la grilla activa. Debe volver a habilitarse para admitir edición manual directa.
 * Los períodos `ENVIADO`, `APROBADO` o `CORRECCION_PENDIENTE` bloquean edición directa, reutilizando el cierre mensual existente. `ABIERTO`, ausencia de cierre y un cierre `DEVUELTO` permiten corrección.
 * La grilla continúa mostrando únicamente breakdowns habilitados y estados visibles. Normal conserva su flujo actual; generación automática, fichador, cierres/exportaciones como consumidores y dashboard siguen pendientes de etapas separadas.
+
+### Etapa 6H.1 — hardening de unicidad manual
+
+* La migración `20260824183000_manual_breakdown_unique_index` sanea duplicados `MANUAL`, conservando por cada empleado, fecha y concepto la fila con mayor `updatedAt`, luego `createdAt` e ID como desempate estable.
+* El índice único parcial `HourConceptBreakdown_manual_unique` garantiza físicamente una sola fila por `(employeeId, date, hourConceptId)` únicamente cuando `source = 'MANUAL'`. No restringe `AUTOMATIC`, que podrá generar varias filas diarias asociadas a distintos turnos, segmentos o reglas.
+* El endpoint conserva la transacción serializable y la limpieza defensiva. Ante `P2002` o `P2034` reintenta una vez para convertir la carrera en actualización idempotente; si el conflicto persiste responde `409 MANUAL_BREAKDOWN_CONCURRENT_CONFLICT`.
 
 ## Plan de implementación futura
 

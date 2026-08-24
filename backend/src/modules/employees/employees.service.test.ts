@@ -3,6 +3,7 @@ import type { Mock } from "vitest";
 import { employeesRepository } from "./employees.repository";
 import { buildAdditiveTimeGrid, employeesService } from "./employees.service";
 import { roles } from "../../shared/security/roles";
+import { Prisma } from "@prisma/client";
 
 /**
  * Regresion de la limpieza final de Position (2026-08-18): getPositionValidation
@@ -153,6 +154,25 @@ describe("employeesService manual hour concept breakdowns", () => {
     repo.saveManualHourConceptBreakdown.mockResolvedValue({ item: null, deleted: 1, operation: "DELETE" });
     await expect(employeesService.upsertManualHourConceptBreakdown("emp-1", { ...input, minutes: 0 }, rrhhUser)).resolves.toBeNull();
     expect(repo.saveManualHourConceptBreakdown).toHaveBeenCalledWith(expect.objectContaining({ minutes: 0 }));
+  });
+
+  it.each(["P2002", "P2034"])("reintenta una carrera concurrente %s y actualiza sin duplicar", async (code) => {
+    const conflict = new Prisma.PrismaClientKnownRequestError("concurrent conflict", { code, clientVersion: "0.0.0" });
+    repo.saveManualHourConceptBreakdown
+      .mockRejectedValueOnce(conflict)
+      .mockResolvedValueOnce({ item: { id: "breakdown-1", minutes: 120, source: "MANUAL", status: "BORRADOR" }, deleted: 0, operation: "UPDATE" });
+
+    await expect(employeesService.upsertManualHourConceptBreakdown("emp-1", input, rrhhUser)).resolves.toMatchObject({ id: "breakdown-1" });
+    expect(repo.saveManualHourConceptBreakdown).toHaveBeenCalledTimes(2);
+  });
+
+  it("responde 409 controlado si el conflicto concurrente persiste", async () => {
+    const conflict = new Prisma.PrismaClientKnownRequestError("unique conflict", { code: "P2002", clientVersion: "0.0.0" });
+    repo.saveManualHourConceptBreakdown.mockRejectedValue(conflict);
+    await expect(employeesService.upsertManualHourConceptBreakdown("emp-1", input, rrhhUser)).rejects.toMatchObject({
+      statusCode: 409,
+      code: "MANUAL_BREAKDOWN_CONCURRENT_CONFLICT",
+    });
   });
 });
 

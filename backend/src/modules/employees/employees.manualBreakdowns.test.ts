@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Mock } from "vitest";
+import { readFileSync } from "node:fs";
 import { prisma } from "../../shared/prisma/client";
 import { employeesRepository } from "./employees.repository";
 import { upsertManualHourConceptBreakdownSchema } from "./employees.schemas";
@@ -64,5 +65,20 @@ describe("manual HourConceptBreakdown persistence", () => {
     expect(upsertManualHourConceptBreakdownSchema.safeParse({ date: "2026-08-12", hourConceptId: base.hourConceptId, minutes: -1 }).success).toBe(false);
     expect(upsertManualHourConceptBreakdownSchema.safeParse({ date: "2026-08-12", hourConceptId: base.hourConceptId, minutes: 1441 }).success).toBe(false);
     expect(upsertManualHourConceptBreakdownSchema.safeParse({ date: "2026-08-12", hourConceptId: base.hourConceptId, minutes: 1440 }).success).toBe(true);
+  });
+});
+
+describe("manual breakdown partial unique migration", () => {
+  const sql = readFileSync("prisma/migrations/20260824183000_manual_breakdown_unique_index/migration.sql", "utf8");
+
+  it("sanea y restringe exclusivamente source MANUAL", () => {
+    expect(sql).toContain('WHERE "source" = \'MANUAL\'');
+    expect(sql).toContain('CREATE UNIQUE INDEX IF NOT EXISTS "HourConceptBreakdown_manual_unique"');
+    expect(sql).toContain('ON "HourConceptBreakdown" ("employeeId", "date", "hourConceptId")');
+  });
+
+  it("no crea una constraint global que limite AUTOMATIC", () => {
+    expect(sql).not.toMatch(/UNIQUE\s*\([^)]*"source"/i);
+    expect(sql).not.toContain('WHERE "source" = \'AUTOMATIC\'');
   });
 });

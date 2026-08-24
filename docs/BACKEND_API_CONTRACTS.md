@@ -281,6 +281,8 @@ PUT con `minutes = 0` elimina el registro manual. No se expone DELETE porque el 
 
 Sólo admite conceptos adicionales habilitados, activos, no eliminados y con modo `MANUAL` o `BOTH`. Rechaza Normal, `AUTOMATIC`, conceptos fuera del legajo y períodos cerrados. Nivel 2/Nivel 3 conservan el alcance operativo por responsable de horas.
 
+La base garantiza la idempotencia manual mediante el índice único parcial `HourConceptBreakdown_manual_unique` sobre empleado, fecha y concepto con `source = 'MANUAL'`. El índice no aplica a `AUTOMATIC`. Una carrera concurrente se reintenta una vez y, si persiste, responde `409` con código `MANUAL_BREAKDOWN_CONCURRENT_CONFLICT`.
+
 ### Crear legajo
 
 ```txt

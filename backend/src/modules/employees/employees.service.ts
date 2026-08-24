@@ -174,6 +174,26 @@ async function validateManualBreakdownContext(
   return concept;
 }
 
+function isManualBreakdownConcurrencyError(error: unknown) {
+  return error instanceof Prisma.PrismaClientKnownRequestError && ["P2002", "P2034"].includes(error.code);
+}
+
+async function saveManualBreakdownWithRetry(input: Parameters<typeof employeesRepository.saveManualHourConceptBreakdown>[0]) {
+  try {
+    return await employeesRepository.saveManualHourConceptBreakdown(input);
+  } catch (error) {
+    if (!isManualBreakdownConcurrencyError(error)) throw error;
+    try {
+      return await employeesRepository.saveManualHourConceptBreakdown(input);
+    } catch (retryError) {
+      if (isManualBreakdownConcurrencyError(retryError)) {
+        throw new AppError("Concurrent manual breakdown update; retry the operation", 409, "MANUAL_BREAKDOWN_CONCURRENT_CONFLICT");
+      }
+      throw retryError;
+    }
+  }
+}
+
 function structureCheck(label: string, value: string, allowed: string[], hasPosition: boolean) {
   return {
     label,
@@ -383,7 +403,7 @@ export const employeesService = {
     const date = new Date(`${input.date}T00:00:00.000Z`);
     const day = Number(input.date.slice(8, 10));
     const concept = await validateManualBreakdownContext(employeeId, input.hourConceptId, period, user);
-    const result = await employeesRepository.saveManualHourConceptBreakdown({
+    const result = await saveManualBreakdownWithRetry({
       employeeId,
       hourConceptId: input.hourConceptId,
       date,
