@@ -1,0 +1,88 @@
+# Decisión: Conceptos Horarios Aditivos
+
+Fecha: 2026-08-24  
+Estado: aceptada; implementación pendiente por etapas
+
+## Problema
+
+La documentación y la implementación actuales mezclan dos modelos incompatibles. El modelo anterior clasifica cada tramo en un único concepto, resuelve solapamientos por `priority` y puede calcular el total sumando horas normales y especiales. Esto permite resultados funcionalmente incorrectos, como registrar 4 horas normales y 6 horas de Sereno para una jornada real de 10 horas.
+
+## Auditoría documental
+
+| Documento | Qué decía | Contradicción | Corrección adoptada |
+| --- | --- | --- | --- |
+| `docs/PROJECT_CONTEXT.md` | La carga se describía genéricamente por `hourType`, sin fijar la base ni el cálculo del total. | Permitía interpretar que Normal era opcional o intercambiable con otro concepto. | Se incorporó el modelo oficial completo como fuente principal de verdad. |
+| `docs/NOVEDADES_HORAS_FINNEGANS.md` | Las horas especiales eran “horas trabajadas con clasificación especial”, tenían “si suma como hora trabajada” y el ejemplo repartía 7 normales + 2 especiales. | Convertía los desgloses en componentes sumables o sustitutivos del total. | Se definió Horas normales como total y los conceptos adicionales como desgloses no sumables, con modos de carga. |
+| `docs/plan-redisenio-novedades-horas-liquidacion.md` | Incluía Hora normal en el catálogo asignable y calculaba 8 normales + 2 Colectivo = 10 trabajadas. | Hacía competir a Normal con los conceptos habilitados y repartía el total. | Se marcó como histórico parcialmente reemplazado y se corrigieron los ejemplos centrales. |
+| `docs/BACKEND_API_CONTRACTS.md` | Documentaba `countsAsWorked`, orden por `priority`, concepto ganador, exclusión global de solapamientos y `hourConceptId` obligatorio. | Es el contrato técnico del modelo exclusivo actual, no el objetivo aditivo. | Se preservó la descripción del endpoint, pero se rotuló como deuda/deprecación y se aclaró el cálculo objetivo. |
+| `docs/performance/hour-management-automation-2026-07-14.md` | Registraba selector Normal/Sereno y tramos clasificados por separado. | Puede confundirse con una regla vigente aunque es evidencia histórica de la implementación anterior. | Se agregó una advertencia de documento histórico y enlace a la decisión vigente. |
+
+Las referencias encontradas en `PROJECT_UI_CONTEXT.md`, `FRONTEND_BACKEND_READINESS.md`, `ENTERPRISE_TABLE_SYSTEM.md`, `SECURITY_STANDARDS.md`, `LOCAL_DEVELOPMENT.md`, `backend/README.md` y los restantes informes de performance son inventarios, navegación, seguridad, operación o métricas. No definen cómo se calcula el total ni una exclusividad entre conceptos, por lo que no requirieron cambios.
+
+## Decisión
+
+Horas normales es la grilla base obligatoria de todo empleado y representa el total real trabajado. Puede originarse en el fichador o en una carga manual por fallas o ajustes autorizados. No depende de una asignación en el legajo.
+
+Los demás conceptos horarios son grillas adicionales y desgloses de Horas normales. Se habilitan por empleado, no reemplazan Horas normales, no compiten entre sí y no se suman para obtener el total trabajado. Sirven para liquidación/exportación, análisis y control.
+
+Cada concepto adicional admite modo de carga `MANUAL`, `AUTOMATICO` o `MANUAL_Y_AUTOMATICO`. Un concepto automático usa una regla activa con hora desde, hora hasta y cruza medianoche. Varias reglas pueden producir desgloses superpuestos de la misma jornada.
+
+## Ejemplos
+
+Empleado trabaja 10 horas reales, de las cuales 6 corresponden a Sereno:
+
+```txt
+Horas normales: 10
+Sereno:          6
+Total trabajado: 10
+```
+
+Es incorrecto guardar `Horas normales: 4` y `Sereno: 6`, porque Sereno no sustituye una parte de la base.
+
+Colectivo manual durante una jornada de 8 horas:
+
+```txt
+Horas normales: 8
+Colectivo:       2
+Total trabajado: 8
+```
+
+La carga de Colectivo no crea, completa ni incrementa automáticamente Horas normales.
+
+## Impacto en grilla
+
+La grilla siempre muestra Horas normales. Además muestra únicamente los conceptos adicionales habilitados en el legajo. Resúmenes, indicadores y cierres calculan el total trabajado desde Horas normales; los desgloses se presentan en columnas o grillas separadas sin sumarlos al total.
+
+## Impacto en fichador
+
+Las fichadas determinan el intervalo real trabajado y alimentan Horas normales. Después, las reglas automáticas evalúan ese mismo intervalo para generar desgloses adicionales. Una regla de Sereno puede cruzar medianoche. El empleado no debe elegir un concepto que reemplace Horas normales al fichar.
+
+## Impacto en legajo
+
+El legajo habilita conceptos adicionales por empleado. Horas normales no se asigna: existe siempre. Por ejemplo, si Juan Pérez tiene Sereno y Colectivo habilitados pero Camioneta no, su grilla muestra Horas normales, Sereno y Colectivo.
+
+## Impacto en liquidación, novedades y cierres
+
+Los conceptos adicionales pueden alimentar reglas de liquidación o exportación, análisis y control, pero no alteran el total real trabajado. Las novedades continúan siendo eventos separados por persona y día o rango. El cierre mensual debe preservar tanto la base normal como sus desgloses sin doble contabilización.
+
+## Campos y comportamientos a deprecar
+
+* `priority`: no corresponde porque los conceptos no compiten. Queda deprecado y pendiente de eliminación futura.
+* Selección de un concepto “ganador” y rechazo global de solapamientos: quedan deprecados.
+* `countsAsWorked`: no debe decidir si un concepto adicional incrementa el total; queda deprecado para ese cálculo.
+* Uso exclusivo de `hourConceptId` en una jornada o `TimeSegment`: puede mantenerse temporalmente por compatibilidad, pero no debe imponer exclusividad funcional.
+
+## Estado actual y compatibilidad
+
+La aplicación puede no cumplir todavía esta decisión. Backend, frontend, `schema.prisma`, migraciones, datos existentes y contratos pueden reflejar el modelo anterior. Esta decisión no cambia retroactivamente esos artefactos ni autoriza una migración inmediata. Describe el objetivo obligatorio para las siguientes etapas.
+
+## Plan de implementación futura
+
+1. Auditar datos y comportamiento actual: fichadas, `TimeSegment`, `TimeEntry`, cierres, exportaciones y asignaciones por legajo.
+2. Diseñar compatibilidad y migración de datos sin perder historial ni duplicar totales.
+3. Adaptar el modelo para garantizar Horas normales y modos de carga por concepto adicional.
+4. Reemplazar clasificación exclusiva por derivación aditiva de desgloses automáticos, incluido cruce de medianoche.
+5. Rediseñar legajo y grilla: base siempre visible y conceptos adicionales habilitados.
+6. Corregir resúmenes, liquidación/exportaciones y cierres para tomar el total solo de Horas normales.
+7. Deprecar y luego retirar `priority` y cualquier uso contable incompatible de `countsAsWorked`, con migraciones y contratos versionados si corresponde.
+8. Agregar pruebas de carga manual, fichador, solapamientos, medianoche, cierres y ausencia de doble contabilización antes de activar el nuevo modelo.

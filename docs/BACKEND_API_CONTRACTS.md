@@ -585,6 +585,8 @@ page
 
 ### Horas especiales
 
+> Estado de transición: esta sección describe el contrato que expone hoy la implementación. La regla de negocio objetivo es el modelo aditivo definido en `PROJECT_CONTEXT.md` y `decisions/CONCEPTOS_HORARIOS_ADITIVOS.md`: Horas normales es obligatoria y contiene el total real; los conceptos adicionales son desgloses que no lo reemplazan ni se suman a él. Los campos actuales todavía no representan por completo ese modelo.
+
 ```txt
 GET /api/hour-concepts
 POST /api/hour-concepts
@@ -613,7 +615,11 @@ Campos principales:
 }
 ```
 
+`countsAsWorked` queda deprecado como criterio para calcular el total trabajado. Mientras continúe en el contrato por compatibilidad, no debe interpretarse como autorización para sumar un concepto adicional a Horas normales.
+
 ### Reglas de conceptos horarios (`HourConceptRule`)
+
+> Contrato actual/deuda conocida: la clasificación exclusiva documentada debajo todavía existe en la implementación, pero contradice el modelo aditivo objetivo. `priority`, el concepto “ganador” y la exclusión global por solapamiento quedan deprecados y pendientes de rediseño. En el modelo oficial, reglas activas pueden derivar desgloses independientes y superpuestos a partir de la misma fichada.
 
 Define CUÁNDO aplica un concepto horario (franja diaria recurrente), no su nombre — eso lo define RRHH en `HourConcept`. Usado por la clasificación automática de jornadas (`classifyWorkShiftSegments`). Lectura para cualquier autenticado; escritura solo RRHH. No hay `DELETE`: una regla histórica se inactiva (`status: INACTIVO`), nunca se borra.
 
@@ -642,6 +648,8 @@ Campos principales:
 ```
 
 Validación de solapamiento (409 `HOUR_CONCEPT_RULE_AMBIGUOUS_OVERLAP`): dos reglas **activas** con **la misma priority** no pueden superponerse en horario — la clasificación no podría desambiguar cuál gana. Con prioridades distintas, sí pueden superponerse (gana la de mayor priority). El chequeo es **global** (compara contra reglas de todos los conceptos, no solo el mismo `hourConceptId`), porque así compara la clasificación real. Reglas `INACTIVO` nunca participan del chequeo ni de la clasificación.
+
+La regla anterior se conserva aquí solamente para describir fielmente el comportamiento actual del endpoint. No debe reutilizarse como requisito del rediseño.
 
 ### Tipos de novedades
 
@@ -788,6 +796,8 @@ Rechazo:
 ```
 
 ## Carga horaria — CRUD y flujo de aprobación
+
+> Estado de transición: el CRUD actual exige `hourConceptId` por registro y valida conceptos habilitados. El rediseño deberá garantizar Horas normales para todos los empleados sin asignación y tratar los demás `hourConceptId` como desgloses habilitados desde el legajo. Hasta entonces, esta sección es contrato técnico vigente, no fuente de verdad del cálculo funcional.
 
 ### Listar
 
@@ -1087,6 +1097,8 @@ Horas especiales
 Horas trabajadas totales
 Estado
 ```
+
+En el modelo objetivo, `Horas trabajadas totales` debe ser igual a Horas normales. `Horas especiales` se informa aparte y no se suma. Si el export actual calcula otra cosa, es deuda de implementación a corregir por etapas.
 
 ## Auditoría
 

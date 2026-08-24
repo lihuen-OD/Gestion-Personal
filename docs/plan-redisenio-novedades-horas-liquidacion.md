@@ -1,5 +1,7 @@
 # Plan de redisenio: Novedades, horas especiales, carga horaria y exportacion a Finnegans
 
+> **Documento histórico parcialmente reemplazado.** La decisión oficial vigente sobre conceptos horarios es aditiva y está en `PROJECT_CONTEXT.md` y `decisions/CONCEPTOS_HORARIOS_ADITIVOS.md`. Toda afirmación de este plan que reparta el total entre horas normales y especiales, que sume ambos grupos como total trabajado o que trate Hora normal como un concepto asignable queda reemplazada por esa decisión.
+
 ## 1. Objetivo
 
 Redefinir desde cero el funcionamiento de novedades, conceptos horarios y liquidacion para que la app sea mas clara y mas facil de conectar luego con backend y Finnegans.
@@ -144,7 +146,7 @@ Este modulo no deberia manejar ausencias ni licencias. Solo deberia definir tipo
 
 Ejemplos:
 
-- Hora normal.
+- Horas normales (base obligatoria; no es una hora especial ni requiere habilitación por legajo).
 - Hora extra 50%.
 - Hora extra 100%.
 - Feriado trabajado.
@@ -166,7 +168,7 @@ Cada hora especial debe tener:
   - Transporte.
   - Feriado.
   - Otro.
-- Si suma como hora trabajada.
+- Modo de carga: manual, automático o manual y automático.
 - Si impacta liquidacion.
 - Si tiene equivalencia Finnegans.
 - Codigo Finnegans, si aplica.
@@ -180,7 +182,7 @@ Este catalogo alimenta:
 
 Importante:
 
-Una hora especial no es una novedad. Es una hora trabajada clasificada con un concepto distinto.
+Una hora especial no es una novedad. Es un desglose adicional de tiempo ya incluido en Horas normales.
 
 Una persona puede tener en el mismo dia:
 
@@ -190,8 +192,8 @@ Una persona puede tener en el mismo dia:
 
 Ejemplo:
 
-- 8 hs normales.
-- 2 hs manejo de colectivo.
+- 10 hs normales.
+- 2 hs manejo de colectivo, incluidas dentro de esas 10 hs.
 - Novedad: llegada tarde, si corresponde.
 
 Cada cosa se registra separada para que despues liquidacion pueda leer correctamente el detalle.
@@ -206,11 +208,10 @@ Ejemplo:
 
 Legajo Juan Perez:
 
-- Hora normal.
 - Manejo de colectivo.
 - Guardia.
 
-Entonces, al cargar horas para Juan Perez, solo deberian aparecer esas opciones.
+Entonces, al cargar horas para Juan Perez siempre debe aparecer Horas normales y, además, solo deben aparecer Manejo de colectivo y Guardia como conceptos habilitados.
 
 Esto evita que cualquier persona cargue cualquier concepto.
 
@@ -240,14 +241,14 @@ Dia: 10/06/2026.
 
 Carga:
 
-- Hora normal: 8 hs.
+- Horas normales: 10 hs.
 - Manejo de colectivo: 2 hs.
 
 Resultado:
 
-- Horas trabajadas: 10 hs.
-- Horas normales: 8 hs.
-- Horas especiales: 2 hs.
+- Horas trabajadas: 10 hs (sale únicamente de Horas normales).
+- Horas normales: 10 hs.
+- Horas especiales: 2 hs de desglose, no sumables al total.
 - Liquidacion: se exporta o liquida segun regla del concepto Manejo de colectivo.
 - No se genera novedad, salvo que ademas exista una novedad real ese dia.
 
@@ -469,6 +470,7 @@ Formato futuro:
   - Novedades.
   - Total a liquidar.
 - No tratar horas especiales como novedades.
+- Calcular el total trabajado solo desde Horas normales; no sumar las horas especiales.
 
 ### Etapa 4: Redisenar modulo Novedades operativo
 

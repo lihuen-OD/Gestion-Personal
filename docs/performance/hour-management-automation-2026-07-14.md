@@ -1,5 +1,7 @@
 # Automatización de gestión de horas — staging/demo
 
+> **Registro histórico de la implementación anterior.** Las reglas de concepto elegido al ingresar, tramos exclusivos Normal/Sereno y agregación separada describen lo validado en 2026-07-14, no el modelo funcional objetivo. La decisión vigente es aditiva: toda jornada alimenta Horas normales como total real y los conceptos automáticos generan desgloses adicionales, potencialmente superpuestos. Véanse `../PROJECT_CONTEXT.md` y `../decisions/CONCEPTOS_HORARIOS_ADITIVOS.md`.
+
 ## Alcance y reglas implementadas
 
 - El entorno actual es `staging/demo`: Neon y Google Drive contienen exclusivamente datos y archivos de prueba.

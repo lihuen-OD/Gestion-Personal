@@ -246,14 +246,14 @@ Correct flow:
 1. Select period.
 2. Search employee by legajo, DNI, CUIL, first name or last name.
 3. Show employee data.
-4. Load working hours and/or novelties.
+4. Load the employee's real worked time in Horas normales and, when applicable, its additional concept breakdowns and/or novelties.
 5. Save records linked to employeeId.
 
 The responsible user must only see employees assigned to them as responsible for working hour entry.
 
 Centro de costo can be displayed as information or secondary filter, but it must not be the main axis of the loading process.
 
-Working hour records must be prepared for future BioTime integration.
+Working hour records must be prepared for future BioTime integration. The official functional model is additive: Horas normales is always the base grid and the only source for the real worked total; additional hour concepts are overlapping breakdowns and must never replace or increase that total.
 
 Each time entry should support:
 
@@ -269,6 +269,8 @@ Each time entry should support:
 * createdBy
 * updatedBy
 * sourceEventIds if applicable in the future
+
+The current persisted/API shape may still express the previous per-concept classification model. That is implementation debt, not the business rule to preserve. See "Modelo oficial de Conceptos Horarios" below and `docs/decisions/CONCEPTOS_HORARIOS_ADITIVOS.md`.
 
 ### 8. Control de Asistencia / Future BioTime Integration
 
@@ -425,6 +427,51 @@ The backend has 22 modules under `backend/src/modules`. The following exist and 
 * The system already has a real backend/API; do not build new frontend-only mock flows for functionality the backend already implements.
 * Do not add a new `*MockService.ts` without first checking whether a real `*ApiService.ts` under `frontend/src/services/api` already covers it.
 
+## Modelo oficial de Conceptos Horarios
+
+This section is the primary source of truth for working-hour concepts. If another document, an API contract, the current UI, or the current persistence model conflicts with it, this business decision prevails for future design and implementation. Existing behavior will be corrected incrementally; this documentation update does not claim that the application already complies.
+
+### Horas normales: base obligatoria
+
+* Every employee always has Horas normales; it is not optional and is not enabled through the employee file.
+* Horas normales is the base grid and represents the employee's full real worked time.
+* It may come from the fichador or be entered manually for clock failures or authorized adjustments.
+* The worked total is calculated exclusively from Horas normales.
+
+### Conceptos horarios adicionales: desgloses aditivos
+
+* Sereno, Colectivo, Camioneta, Guardia and similar concepts are additional grids or breakdowns of time already included in Horas normales.
+* They do not replace or compete with Horas normales and are not added to calculate the worked total.
+* They are used for payroll/export preparation, analysis and control.
+* Each additional concept is enabled per employee from the legajo. Only enabled concepts appear or can be loaded for that employee.
+
+Example: if an employee worked 10 real hours and 6 of them were Sereno, the correct result is `Horas normales: 10` and `Sereno: 6`. `Horas normales: 4` plus `Sereno: 6` is incorrect.
+
+### Modos de carga y reglas automáticas
+
+Every additional concept must support one of these loading modes:
+
+* Manual.
+* Automático.
+* Manual y automático.
+
+Automatic concepts are derived from fichadas using an active/inactive time rule with hora desde, hora hasta and cruza medianoche. Sereno is a typical automatic case. Colectivo and Camioneta are typical manual cases: RRHH loads their breakdown in the grid, and doing so neither creates nor increases Horas normales.
+
+The fichador records the real worked interval in Horas normales. Active automatic rules may additionally derive one or more overlapping concept breakdowns from that same interval. Additional concepts may overlap each other because they are independent classifications, not exclusive segments.
+
+### Impacto en legajo, grilla, liquidación y cierres
+
+* Legajo enables only additional concepts; Horas normales is always available by default.
+* The grid always displays Horas normales plus the additional concepts enabled for that employee.
+* Grid, summaries, exports and monthly closures must calculate the real worked total only from Horas normales. Additional concepts are shown separately and may feed payroll/export rules without increasing that total.
+* Novedades remain separate employee/day-or-period events; they are not hour concepts.
+
+### Modelo anterior de prioridad/exclusividad queda deprecado
+
+The existing `priority` field and any rule where one concept “wins” a time overlap belong to the previous exclusive-classification model. They are deprecated and pending future removal. `countsAsWorked` must not be used to add additional concepts to the real worked total; under the official model that total comes from Horas normales. `hourConceptId` and `TimeSegment` may remain as current implementation details, but must not be interpreted as proof that a work interval can belong to only one concept.
+
+Until the staged redesign is implemented, current backend, frontend, schema, migrations and historical technical documents may still reflect exclusive classification. Do not extend that behavior as if it were the target model. The migration path and compatibility decisions are recorded in `docs/decisions/CONCEPTOS_HORARIOS_ADITIVOS.md`.
+
 ## Tech stack
 
 Frontend:
@@ -516,7 +563,7 @@ Current state (backend already enforces this — see `docs/SECURITY_STANDARDS.md
 * La evidencia fotográfica de asistencia sigue disponible para Nivel 3 y requiere una decisión específica de producto/seguridad.
 * El fichador mantiene una mitigación temporal mediante token de dispositivo; no constituye seguridad final de producción.
 * El organigrama advierte cuando alcanza el límite de 1000 empleados, pero todavía no implementa paginación completa.
-* Los conceptos horarios aditivos continúan pendientes y no se modificaron durante el saneamiento técnico.
+* La regla de conceptos horarios aditivos ya está definida, pero su implementación continúa pendiente y puede no coincidir con backend, frontend o esquema actuales.
 * El tratamiento de solapamientos de novedades continúa pendiente de definición de negocio.
 
 ## Important flows
