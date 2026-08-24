@@ -72,6 +72,20 @@ const employeeRow = {
   },
 };
 
+describe("list — contrato 6E", () => {
+  it("conserva loadMode y systemRole para distinguir base y adicionales", async () => {
+    repo.findMany.mockResolvedValue([[
+      { id: "normal-1", code: "HC-NORMAL", systemRole: "NORMAL_BASE", loadMode: null },
+      { id: "sereno-1", code: "HOR-001", systemRole: null, loadMode: "AUTOMATIC" },
+    ], 2]);
+    const result = await hourConceptsService.list({ page: 1, take: 100 } as never);
+    expect(result.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ systemRole: "NORMAL_BASE", loadMode: null }),
+      expect.objectContaining({ systemRole: null, loadMode: "AUTOMATIC" }),
+    ]));
+  });
+});
+
 describe("listEmployees — empleados habilitados (Etapa 8G)", () => {
   it("rechaza concepto inexistente (404), sin llegar a consultar empleados", async () => {
     repo.findById.mockRejectedValue(prismaKnownError("P2025"));
@@ -83,7 +97,7 @@ describe("listEmployees — empleados habilitados (Etapa 8G)", () => {
   });
 
   it("lista empleados habilitados, mapeando employeeId y los datos del empleado", async () => {
-    repo.findById.mockResolvedValue({ id: "concept-1" });
+    repo.findById.mockResolvedValue({ id: "concept-1", status: "ACTIVO", deletedAt: null, systemRole: null });
     repo.findEmployees.mockResolvedValue([[employeeRow], 1]);
 
     const result = await hourConceptsService.listEmployees("concept-1", { page: 1, take: 50 } as never, rrhhUser);
@@ -108,7 +122,7 @@ describe("listEmployees — empleados habilitados (Etapa 8G)", () => {
   });
 
   it("no devuelve empleados no habilitados: si el repository no los trae, la lista queda vacía sin inventar filas", async () => {
-    repo.findById.mockResolvedValue({ id: "concept-1" });
+    repo.findById.mockResolvedValue({ id: "concept-1", status: "ACTIVO", deletedAt: null, systemRole: null });
     repo.findEmployees.mockResolvedValue([[], 0]);
 
     const result = await hourConceptsService.listEmployees("concept-1", { page: 1, take: 50 } as never, rrhhUser);
@@ -185,7 +199,7 @@ describe("enableEmployees — habilitar desde el concepto (Etapa 8N)", () => {
   });
 
   it("rechaza si algún empleado no existe (404), sin llegar a habilitar nada", async () => {
-    repo.findById.mockResolvedValue({ id: "concept-1" });
+    repo.findById.mockResolvedValue({ id: "concept-1", status: "ACTIVO", deletedAt: null, systemRole: null });
     repo.countExistingEmployees.mockResolvedValue(1); // pidieron 2, solo existe 1
 
     await expect(
@@ -195,7 +209,7 @@ describe("enableEmployees — habilitar desde el concepto (Etapa 8N)", () => {
   });
 
   it("habilita a los empleados reales, deduplicando ids repetidos, y audita CREATE", async () => {
-    repo.findById.mockResolvedValue({ id: "concept-1" });
+    repo.findById.mockResolvedValue({ id: "concept-1", status: "ACTIVO", deletedAt: null, systemRole: null });
     repo.countExistingEmployees.mockResolvedValue(2);
     repo.enableForEmployees.mockResolvedValue({ count: 2 });
 
@@ -208,6 +222,14 @@ describe("enableEmployees — habilitar desde el concepto (Etapa 8N)", () => {
     expect(repo.enableForEmployees).toHaveBeenCalledWith("concept-1", ["employee-1", "employee-2"]);
     expect(result).toEqual({ hourConceptId: "concept-1", employeeIds: ["employee-1", "employee-2"] });
     expect(mockedAudit).toHaveBeenCalledWith(expect.objectContaining({ action: "CREATE", entity: "EmployeeHourConcept", entityId: "concept-1" }));
+  });
+
+  it("rechaza asignar un concepto adicional inactivo", async () => {
+    repo.findById.mockResolvedValue({ id: "concept-1", status: "INACTIVO", deletedAt: null, systemRole: null });
+    await expect(
+      hourConceptsService.enableEmployees("concept-1", { employeeIds: ["employee-1"] }),
+    ).rejects.toMatchObject({ statusCode: 409, code: "HOUR_CONCEPT_NOT_ASSIGNABLE" });
+    expect(repo.enableForEmployees).not.toHaveBeenCalled();
   });
 });
 

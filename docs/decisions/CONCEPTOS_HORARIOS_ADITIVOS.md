@@ -99,6 +99,16 @@ La inspección de la base de desarrollo al crear 6C encontró `HC-NORMAL` con hi
 * Un constraint de base preserva la separación: Normal debe estar activo y sin modo; todo adicional debe tener modo y no puede usar `kind = NORMAL`.
 * Esta etapa no cambia todavía grilla, fichador, generación de desgloses, cierres, dashboard ni exportaciones. Esos consumidores continúan como deuda explícita para etapas posteriores.
 
+### Etapa 6E — configuración alineada al modelo aditivo
+
+* El CRUD genérico configura únicamente conceptos adicionales: exige `loadMode`, no acepta `kind = NORMAL` ni `countsAsWorked`, y mantiene `NORMAL_BASE` visible pero protegido de edición, cambio de estado, eliminación y asignación.
+* Las respuestas del catálogo incluyen `loadMode` y `systemRole`. La pantalla distingue “Base del sistema” de “Adicional” y muestra los modos Manual, Automático y Manual y automático.
+* Las reglas horarias sólo se consultan o modifican para conceptos adicionales activos con modo `AUTOMATIC` o `BOTH`. Normal, los conceptos manuales y los conceptos inactivos/eliminados son rechazados por backend; la UI explica el modo manual sin abrir el editor de reglas.
+* `priority` continúa físicamente en la base y en el clasificador legacy, que todavía no se modifica. Sale del contrato de escritura, de las respuestas públicas del módulo y de la UI; las reglas nuevas persisten temporalmente `priority = 0` como detalle interno. También se retiró el rechazo de solapamientos basado en prioridad porque los desgloses no compiten.
+* `countsAsWorked` continúa físicamente por deuda legacy, pero queda fuera del contrato editable y de la UI. No gobierna el total trabajado en el modelo nuevo.
+* Las asignaciones aceptan únicamente conceptos adicionales activos, no eliminados y con modo definido. Las respuestas de legajo que exponen conceptos asignados incluyen `loadMode` y `systemRole`.
+* Continúan pendientes la generación aditiva real, la grilla mensual, el fichador, `TimeEntry`, `TimeSegment`, cierres, dashboard y exportaciones; 6E no modifica ninguno de esos consumidores.
+
 ## Plan de implementación futura
 
 1. Auditar datos y comportamiento actual: fichadas, `TimeSegment`, `TimeEntry`, cierres, exportaciones y asignaciones por legajo.

@@ -10,7 +10,6 @@ export type HourConceptRuleDraftInput = {
   startTime: string;
   endTime: string;
   crossesMidnight: boolean;
-  priority: string;
 };
 
 function timeToMinutes(value: string): number {
@@ -37,7 +36,5 @@ export function validateHourConceptRuleDraft(draft: HourConceptRuleDraftInput): 
   if (draft.crossesMidnight && timeToMinutes(draft.startTime) < timeToMinutes(draft.endTime)) {
     return "Este rango no cruza medianoche (la hora hasta ya es posterior a la hora desde) — destildá esa opción.";
   }
-  if (draft.priority.trim() === "") return "La prioridad es obligatoria.";
-  if (!/^\d+$/.test(draft.priority.trim())) return "La prioridad debe ser un número entero.";
   return null;
 }

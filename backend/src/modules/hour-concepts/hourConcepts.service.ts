@@ -54,6 +54,13 @@ function assertAssignableAdditionalConcept(item: { systemRole?: string | null })
   }
 }
 
+function assertActiveAssignableAdditionalConcept(item: { systemRole?: string | null; status?: string; deletedAt?: Date | null }) {
+  assertAssignableAdditionalConcept(item);
+  if (item.status !== "ACTIVO" || item.deletedAt) {
+    throw new AppError("Sólo se pueden asignar conceptos adicionales activos", 409, "HOUR_CONCEPT_NOT_ASSIGNABLE");
+  }
+}
+
 function assertNotSystemManaged(item: { systemRole?: string | null }) {
   if (item.systemRole === "NORMAL_BASE") {
     throw new AppError("El concepto base Horas normales es administrado por el sistema", 409, "HOUR_CONCEPT_SYSTEM_MANAGED");
@@ -109,7 +116,7 @@ export const hourConceptsService = {
   // agrega/quita puntualmente en vez de reemplazar todo el set del empleado.
   async enableEmployees(hourConceptId: string, input: EnableHourConceptEmployeesInput, audit?: AuditContext) {
     const concept = await execute(() => hourConceptsRepository.findById(hourConceptId));
-    assertAssignableAdditionalConcept(concept);
+    assertActiveAssignableAdditionalConcept(concept);
     const employeeIds = Array.from(new Set(input.employeeIds));
     const existingEmployees = await hourConceptsRepository.countExistingEmployees(employeeIds);
     if (existingEmployees !== employeeIds.length) throw new AppError("Uno o más empleados no existen", 404, "EMPLOYEE_NOT_FOUND");

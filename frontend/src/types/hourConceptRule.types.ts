@@ -7,7 +7,6 @@ export type HourConceptRule = {
   startTime: string;
   endTime: string;
   crossesMidnight: boolean;
-  priority: number;
   status: HourConceptRuleStatus;
   createdAt: string;
   updatedAt: string;
@@ -24,7 +23,6 @@ export type CreateHourConceptRulePayload = {
   startTime: string;
   endTime: string;
   crossesMidnight: boolean;
-  priority: number;
   status: HourConceptRuleStatus;
 };
 

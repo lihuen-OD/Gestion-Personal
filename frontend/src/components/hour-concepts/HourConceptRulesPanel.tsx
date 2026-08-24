@@ -12,6 +12,7 @@ import { confirmAction } from "../../services/appDialog";
 import { getUserErrorMessage } from "../../services/api/apiClient";
 import { hourConceptRuleApiService } from "../../services/api/hourConceptRuleApiService";
 import type { HourConceptRule } from "../../types/hourConceptRule.types";
+import type { HourConceptLoadMode } from "../../types/hourConcept.types";
 import { useAsyncAction } from "../../utils/useAsyncAction";
 import { crossesMidnightLabel, hourConceptRuleStatusLabel, hourConceptRuleStatusTone, sortHourConceptRules } from "./hourConceptRuleLabels";
 import { validateHourConceptRuleDraft } from "./hourConceptRuleValidation";
@@ -20,15 +21,14 @@ type HourConceptRuleDraft = {
   startTime: string;
   endTime: string;
   crossesMidnight: boolean;
-  priority: string;
   status: HourConceptRule["status"];
 };
 
 function emptyDraft(): HourConceptRuleDraft {
-  return { startTime: "", endTime: "", crossesMidnight: false, priority: "0", status: "ACTIVO" };
+  return { startTime: "", endTime: "", crossesMidnight: false, status: "ACTIVO" };
 }
 
-export function HourConceptRulesPanel({ hourConceptId, canEdit }: { hourConceptId: string; canEdit: boolean }) {
+export function HourConceptRulesPanel({ hourConceptId, loadMode, canEdit }: { hourConceptId: string; loadMode: HourConceptLoadMode; canEdit: boolean }) {
   const [rules, setRules] = useState<HourConceptRule[]>([]);
   const [loadStatus, setLoadStatus] = useState<"loading" | "success" | "error">("loading");
   const [refresh, setRefresh] = useState(0);
@@ -41,6 +41,11 @@ export function HourConceptRulesPanel({ hourConceptId, canEdit }: { hourConceptI
 
   useEffect(() => {
     let mounted = true;
+    if (loadMode === "MANUAL") {
+      setRules([]);
+      setLoadStatus("success");
+      return () => { mounted = false; };
+    }
     setLoadStatus("loading");
     hourConceptRuleApiService.listByConcept(hourConceptId)
       .then((items) => {
@@ -52,7 +57,7 @@ export function HourConceptRulesPanel({ hourConceptId, canEdit }: { hourConceptI
         if (mounted) setLoadStatus("error");
       });
     return () => { mounted = false; };
-  }, [hourConceptId, refresh]);
+  }, [hourConceptId, loadMode, refresh]);
 
   const reload = () => setRefresh((value) => value + 1);
 
@@ -76,7 +81,6 @@ export function HourConceptRulesPanel({ hourConceptId, canEdit }: { hourConceptI
       startTime: rule.startTime,
       endTime: rule.endTime,
       crossesMidnight: rule.crossesMidnight,
-      priority: String(rule.priority),
       status: rule.status,
     });
     setError("");
@@ -92,7 +96,6 @@ export function HourConceptRulesPanel({ hourConceptId, canEdit }: { hourConceptI
       startTime: draft.startTime,
       endTime: draft.endTime,
       crossesMidnight: draft.crossesMidnight,
-      priority: Number(draft.priority),
       status: draft.status,
     };
     try {
@@ -129,6 +132,13 @@ export function HourConceptRulesPanel({ hourConceptId, canEdit }: { hourConceptI
     }
   };
 
+  if (loadMode === "MANUAL") {
+    return (
+      <div className="info-note compact">
+        <p>Este concepto se carga manualmente desde la grilla futura y no utiliza reglas automáticas.</p>
+      </div>
+    );
+  }
   if (loadStatus === "loading") return <LoadingState text="Cargando reglas horarias..." />;
   if (loadStatus === "error") return <ErrorState message="No pudimos cargar las reglas horarias de este concepto." onRetry={reload} />;
 
@@ -141,8 +151,7 @@ export function HourConceptRulesPanel({ hourConceptId, canEdit }: { hourConceptI
       <div className="block-card-head">
         <div>
           <h4>Reglas horarias</h4>
-          <p>Franjas horarias en las que aplica este concepto.</p>
-          <small>Si se superponen, gana la de mayor prioridad.</small>
+          <p>Franjas utilizadas para generar automáticamente este desglose.</p>
         </div>
         {canEdit ? (
           <div className="tracked-actions">
@@ -161,7 +170,6 @@ export function HourConceptRulesPanel({ hourConceptId, canEdit }: { hourConceptI
                 <th>Desde</th>
                 <th>Hasta</th>
                 <th>Cruza medianoche</th>
-                <th>Prioridad</th>
                 <th>Estado</th>
                 {canEdit ? <th>Acciones</th> : null}
               </tr>
@@ -172,7 +180,6 @@ export function HourConceptRulesPanel({ hourConceptId, canEdit }: { hourConceptI
                   <td>{rule.startTime}</td>
                   <td>{rule.endTime}</td>
                   <td>{crossesMidnightLabel(rule.crossesMidnight)}</td>
-                  <td>{rule.priority}</td>
                   <td><Badge tone={hourConceptRuleStatusTone(rule.status)}>{hourConceptRuleStatusLabel(rule.status)}</Badge></td>
                   {canEdit ? (
                     <td>
@@ -207,7 +214,6 @@ export function HourConceptRulesPanel({ hourConceptId, canEdit }: { hourConceptI
                 <p>Ejemplo: 21:00 a 04:00 cubre desde la noche hasta la madrugada del día siguiente.</p>
               </div>
             ) : null}
-            <Field label="Prioridad *" type="number" value={draft.priority} set={(priority) => setDraft({ ...draft, priority })} />
             <label>
               Estado
               <select value={draft.status} onChange={(event) => setDraft({ ...draft, status: event.target.value as HourConceptRule["status"] })}>

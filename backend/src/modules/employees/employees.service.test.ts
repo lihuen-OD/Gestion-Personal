@@ -15,7 +15,7 @@ import { roles } from "../../shared/security/roles";
 vi.mock("./employees.repository", () => ({
   employeesRepository: {
     findById: vi.fn(),
-    countBaseHourConcepts: vi.fn(),
+    findAssignableHourConceptIds: vi.fn(),
     findHourConceptsAuditSnapshot: vi.fn(),
     replaceHourConcepts: vi.fn(),
   },
@@ -23,7 +23,7 @@ vi.mock("./employees.repository", () => ({
 
 const repo = employeesRepository as unknown as {
   findById: Mock;
-  countBaseHourConcepts: Mock;
+  findAssignableHourConceptIds: Mock;
   findHourConceptsAuditSnapshot: Mock;
   replaceHourConcepts: Mock;
 };
@@ -54,14 +54,23 @@ beforeEach(() => {
 
 describe("employeesService.replaceHourConcepts", () => {
   it("rechaza NORMAL_BASE antes de modificar las asignaciones del legajo", async () => {
-    repo.countBaseHourConcepts.mockResolvedValue(1);
+    repo.findAssignableHourConceptIds.mockResolvedValue([]);
 
     await expect(
       employeesService.replaceHourConcepts("emp-1", { hourConceptIds: ["normal-1"] }),
-    ).rejects.toMatchObject({ statusCode: 409, code: "HOUR_CONCEPT_BASE_NOT_ASSIGNABLE" });
+    ).rejects.toMatchObject({ statusCode: 409, code: "HOUR_CONCEPT_NOT_ASSIGNABLE" });
 
     expect(repo.findHourConceptsAuditSnapshot).not.toHaveBeenCalled();
     expect(repo.replaceHourConcepts).not.toHaveBeenCalled();
+  });
+
+  it("acepta sólo conceptos adicionales activos y deduplica ids", async () => {
+    repo.findAssignableHourConceptIds.mockResolvedValue([{ id: "additional-1" }]);
+    repo.findHourConceptsAuditSnapshot.mockResolvedValue({ hourConcepts: [] });
+    repo.replaceHourConcepts.mockResolvedValue({ id: "emp-1", legajo: "1", hourConcepts: [] });
+
+    await employeesService.replaceHourConcepts("emp-1", { hourConceptIds: ["additional-1", "additional-1"] });
+    expect(repo.replaceHourConcepts).toHaveBeenCalledWith("emp-1", ["additional-1"]);
   });
 });
 

@@ -15,19 +15,22 @@ import { confirmAction } from "../services/appDialog";
 import { ApiError, getUserErrorMessage } from "../services/api/apiClient";
 import { hourConceptApiService } from "../services/api/hourConceptApiService";
 import type { AssociatedEmployeeFilters } from "../types/associatedEmployee.types";
-import type { HourConcept, HourConceptFilters, HourConceptKind } from "../types/hourConcept.types";
+import type { HourConcept, HourConceptFilters, HourConceptKind, HourConceptLoadMode } from "../types/hourConcept.types";
 import { roleLevel } from "../utils/roles";
 import { useAsyncAction } from "../utils/useAsyncAction";
 
-const kinds: HourConceptKind[] = ["NORMAL", "EXTRA", "FERIADO", "NOCTURNA", "GUARDIA", "SERENO", "TRANSPORTE", "OTRO"];
+const additionalKinds: HourConceptKind[] = ["EXTRA", "FERIADO", "NOCTURNA", "GUARDIA", "SERENO", "TRANSPORTE", "OTRO"];
+const loadModeLabels: Record<HourConceptLoadMode, string> = { MANUAL: "Manual", AUTOMATIC: "Automático", BOTH: "Manual y automático" };
 
 export function emptyConcept(code: string): HourConcept {
   return {
     id: crypto.randomUUID(),
     code,
     name: "",
-    kind: "NORMAL",
+    kind: "OTRO",
     status: "ACTIVO",
+    loadMode: "MANUAL",
+    systemRole: null,
     createdAt: "",
     updatedAt: "",
   };
@@ -62,7 +65,8 @@ function ConceptDataFields({ item, setItem }: { item: HourConcept; setItem: (ite
     <div className="form-grid">
       <label>Codigo<input value={item.code} disabled /></label>
       <label>Nombre *<input value={item.name} onChange={(event) => setItem({ ...item, name: event.target.value })} /></label>
-      <label>Tipo<select value={item.kind} onChange={(event) => setItem({ ...item, kind: event.target.value as HourConceptKind })}>{kinds.map((kind) => <option key={kind}>{kind}</option>)}</select></label>
+      <label>Tipo<select value={item.kind} onChange={(event) => setItem({ ...item, kind: event.target.value as HourConceptKind })}>{additionalKinds.map((kind) => <option key={kind}>{kind}</option>)}</select></label>
+      <label>Modo de carga *<select value={item.loadMode ?? "MANUAL"} onChange={(event) => setItem({ ...item, loadMode: event.target.value as HourConceptLoadMode })}>{Object.entries(loadModeLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
       <label>Estado<select value={item.status} onChange={(event) => setItem({ ...item, status: event.target.value as "ACTIVO" | "INACTIVO" })}><option>ACTIVO</option><option>INACTIVO</option></select></label>
     </div>
   );
@@ -211,7 +215,7 @@ export function HourConceptsPage() {
       <PageHeader
         eyebrow="CONFIGURACION"
         title="Conceptos horarios"
-        description="Los conceptos horarios clasifican las horas trabajadas de cada jornada. Las reglas horarias definen en qué franjas aplica cada concepto."
+        description="Horas normales representa el total trabajado. Los conceptos adicionales son desgloses para liquidación, análisis y control."
         action={editable ? <Button variant="primary" icon={Plus} onClick={() => setEditing(emptyConcept(hourConceptApiService.getNextCode(all)))}>Crear concepto horario</Button> : undefined}
       />
 
@@ -236,16 +240,18 @@ export function HourConceptsPage() {
           onRetry={() => setRefresh((value) => value + 1)}
         >
           <table>
-            <thead><tr><th>Codigo</th><th>Concepto horario</th><th>Tipo</th><th>Estado</th><th>Accion</th></tr></thead>
+            <thead><tr><th>Codigo</th><th>Concepto horario</th><th>Rol</th><th>Tipo</th><th>Modo de carga</th><th>Estado</th><th>Acción</th></tr></thead>
             <tbody>
               {items.map((item) => (
                 <tr key={item.id}>
                   <td><b>{item.code}</b></td>
                   <td><OverflowCell value={item.name} /></td>
+                  <td>{item.systemRole === "NORMAL_BASE" ? <Badge tone="neutral">Base del sistema</Badge> : "Adicional"}</td>
                   <td>{item.kind}</td>
+                  <td>{item.loadMode ? loadModeLabels[item.loadMode] : "No aplica"}</td>
                   <td><Badge tone={item.status === "ACTIVO" ? "success" : "neutral"}>{item.status}</Badge></td>
                   <td>
-                    {editable ? (
+                    {item.systemRole === "NORMAL_BASE" ? <Badge tone="neutral">Protegido</Badge> : editable ? (
                       <div className="table-actions">
                         <button className="table-icon-action" title="Editar" aria-label="Editar" onClick={() => setEditing(item)}>
                           <Pencil size={14} /><span>Editar</span>
@@ -275,7 +281,7 @@ export function HourConceptsPage() {
         <div ref={editorRef} className="detail-section-stack">
           <Section
             title={isExistingConcept ? "Editar concepto horario" : "Nuevo concepto horario"}
-            subtitle="Clasifica horas trabajadas. Las reglas horarias definen en qué franjas aplica."
+            subtitle="Configura un desglose adicional. No reemplaza ni incrementa Horas normales."
             action={<div className="hero-actions"><Button variant="subtle" onClick={() => setEditing(null)}>Cancelar</Button><Button variant="primary" onClick={save} disabled={isSaving}>{isSaving ? "Guardando..." : "Guardar"}</Button></div>}
           >
             <ConceptDataFields item={editing} setItem={setEditing} />
@@ -283,7 +289,7 @@ export function HourConceptsPage() {
 
           {isExistingConcept ? (
             <>
-              <HourConceptRulesPanel hourConceptId={editing.id} canEdit={editable} />
+              <HourConceptRulesPanel hourConceptId={editing.id} loadMode={editing.loadMode!} canEdit={editable} />
               <AssociatedEmployeesPanel
                 key={editing.id}
                 variant="embedded"

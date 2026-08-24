@@ -28,7 +28,6 @@ export const createHourConceptSchema = z.object({
   name: z.string().trim().min(2).max(160),
   kind: additionalHourConceptKindSchema,
   status: recordStatusSchema.default("ACTIVO"),
-  countsAsWorked: z.boolean().default(true),
   loadMode: hourConceptLoadModeSchema,
 });
 

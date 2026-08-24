@@ -61,6 +61,8 @@ describe("mapHourConceptFromApi — solo campos reales y expuestos en esta panta
       kind: "GUARDIA",
       status: "ACTIVO",
       countsAsWorked: true,
+      loadMode: "AUTOMATIC",
+      systemRole: null,
       deletedAt: null,
       createdAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-01-02T00:00:00.000Z",
@@ -72,6 +74,8 @@ describe("mapHourConceptFromApi — solo campos reales y expuestos en esta panta
       name: "Guardia",
       kind: "GUARDIA",
       status: "ACTIVO",
+      loadMode: "AUTOMATIC",
+      systemRole: null,
       createdAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-01-02T00:00:00.000Z",
     });
@@ -85,6 +89,8 @@ describe("mapHourConceptFromApi — solo campos reales y expuestos en esta panta
       kind: "SERENO",
       status: "ACTIVO",
       countsAsWorked: false,
+      loadMode: "AUTOMATIC",
+      systemRole: null,
       deletedAt: null,
       createdAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-01-01T00:00:00.000Z",
@@ -104,6 +110,8 @@ describe("mapHourConceptFromApi — solo campos reales y expuestos en esta panta
       kind: "GUARDIA",
       status: "INACTIVO",
       countsAsWorked: true,
+      loadMode: "AUTOMATIC",
+      systemRole: null,
       deletedAt: "2026-08-20T12:00:00.000Z",
       createdAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-08-20T12:00:00.000Z",
@@ -120,6 +128,8 @@ describe("mapHourConceptFromApi — solo campos reales y expuestos en esta panta
       kind: "GUARDIA",
       status: "ACTIVO",
       countsAsWorked: true,
+      loadMode: "AUTOMATIC",
+      systemRole: null,
       deletedAt: null,
       createdAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-01-01T00:00:00.000Z",
@@ -144,16 +154,19 @@ describe("mapToApi — el payload de create/update solo envía campos reales y e
     name: "Guardia",
     kind: "GUARDIA",
     status: "ACTIVO",
+    loadMode: "AUTOMATIC",
+    systemRole: null,
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
   };
 
-  it("envía exactamente code/name/kind/status, nada más", () => {
+  it("envía los campos editables del concepto adicional", () => {
     expect(mapToApi(concept)).toEqual({
       code: "HOR-001",
       name: "Guardia",
       kind: "GUARDIA",
       status: "ACTIVO",
+      loadMode: "AUTOMATIC",
     });
   });
 

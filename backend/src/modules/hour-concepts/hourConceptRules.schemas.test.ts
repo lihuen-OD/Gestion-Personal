@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createHourConceptRuleSchema, timeOfDaySchema, updateHourConceptRuleSchema } from "./hourConceptRules.schemas";
 
-const validBase = { hourConceptId: "11111111-1111-1111-1111-111111111111", startTime: "07:00", endTime: "21:00", crossesMidnight: false, priority: 1 };
+const validBase = { hourConceptId: "11111111-1111-1111-1111-111111111111", startTime: "07:00", endTime: "21:00", crossesMidnight: false };
 
 describe("timeOfDaySchema — validación HH:MM", () => {
   it("acepta 00:00 (límite inferior)", () => {
@@ -42,8 +42,9 @@ describe("createHourConceptRuleSchema", () => {
     expect(createHourConceptRuleSchema.safeParse({ ...validBase, hourConceptId: "no-es-un-uuid" }).success).toBe(false);
   });
 
-  it("rechaza priority no entero", () => {
-    expect(createHourConceptRuleSchema.safeParse({ ...validBase, priority: 1.5 }).success).toBe(false);
+  it("elimina priority del contrato aunque un cliente legacy lo envíe", () => {
+    const result = createHourConceptRuleSchema.parse({ ...validBase, priority: 8 });
+    expect(result).not.toHaveProperty("priority");
   });
 
   it("status por defecto es ACTIVO si no se envía", () => {
@@ -62,7 +63,7 @@ describe("updateHourConceptRuleSchema", () => {
   });
 
   it("permite actualizar un solo campo", () => {
-    expect(updateHourConceptRuleSchema.safeParse({ priority: 5 }).success).toBe(true);
+    expect(updateHourConceptRuleSchema.safeParse({ status: "INACTIVO" }).success).toBe(true);
   });
 
   it("rechaza startTime == endTime cuando se envían ambos juntos", () => {

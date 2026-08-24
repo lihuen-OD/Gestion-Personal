@@ -14,7 +14,6 @@ type ApiHourConceptRule = {
   startTime: string;
   endTime: string;
   crossesMidnight: boolean;
-  priority: number;
   status: HourConceptRuleStatus;
   createdAt: string;
   updatedAt: string;
@@ -33,7 +32,6 @@ export function mapHourConceptRuleFromApi(item: ApiHourConceptRule): HourConcept
     startTime: item.startTime,
     endTime: item.endTime,
     crossesMidnight: item.crossesMidnight,
-    priority: item.priority,
     status: item.status,
     createdAt: item.createdAt,
     updatedAt: item.updatedAt,

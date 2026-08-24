@@ -50,6 +50,25 @@ describe("HourConceptsPage — nomenclatura correcta (Etapa 8M)", () => {
     expect(source).not.toContain("countsAsWorked");
   });
 
+  describe("Etapa 6E — modelo aditivo", () => {
+    it("distingue la base protegida de los conceptos adicionales", () => {
+      expect(source).toContain("Base del sistema");
+      expect(source).toContain("Protegido");
+      expect(source).toContain("Adicional");
+    });
+
+    it("ofrece los tres modos de carga", () => {
+      expect(source).toContain("Manual y automático");
+      expect(source).toContain("Automático");
+      expect(source).toContain("Manual");
+    });
+
+    it("explica que Normal es el total y los adicionales son desgloses", () => {
+      expect(source).toContain("Horas normales representa el total trabajado");
+      expect(source).toContain("conceptos adicionales son desgloses");
+    });
+  });
+
   describe("Etapa 8O/8P — acciones de fila (habilitar/deshabilitar/eliminar)", () => {
     it('el KPI ya no queda huérfano: agrega "Total configurados" junto a "Activas"', () => {
       expect(source).toContain("Total configurados");

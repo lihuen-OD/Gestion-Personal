@@ -1,5 +1,7 @@
 export type HourConceptStatus = "ACTIVO" | "INACTIVO";
 export type HourConceptKind = "NORMAL" | "EXTRA" | "FERIADO" | "NOCTURNA" | "GUARDIA" | "SERENO" | "TRANSPORTE" | "OTRO";
+export type HourConceptLoadMode = "MANUAL" | "AUTOMATIC" | "BOTH";
+export type HourConceptSystemRole = "NORMAL_BASE";
 
 // Campos reales, persistidos por el backend, que además tiene sentido
 // mostrar/editar en esta pantalla. HourConcept en schema.prisma también
@@ -18,6 +20,8 @@ export interface HourConcept {
   name: string;
   kind: HourConceptKind;
   status: HourConceptStatus;
+  loadMode?: HourConceptLoadMode | null;
+  systemRole?: HourConceptSystemRole | null;
   createdAt: string;
   updatedAt: string;
 }

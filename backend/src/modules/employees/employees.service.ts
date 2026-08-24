@@ -138,6 +138,20 @@ async function ensureNoEmployeeConflict(id: string, input: UpdateEmployeeInput) 
   throw new AppError("Employee with same legajo, Legajo Finnegans, CUIL or DNI already exists", 409, "EMPLOYEE_ALREADY_EXISTS", existing);
 }
 
+async function assertAssignableHourConceptIds(hourConceptIds: string[]) {
+  const uniqueIds = Array.from(new Set(hourConceptIds.filter(Boolean)));
+  if (!uniqueIds.length) return uniqueIds;
+  const assignable = await employeesRepository.findAssignableHourConceptIds(uniqueIds);
+  if (assignable.length !== uniqueIds.length) {
+    throw new AppError(
+      "Sólo se pueden asignar conceptos horarios adicionales activos",
+      409,
+      "HOUR_CONCEPT_NOT_ASSIGNABLE",
+    );
+  }
+  return uniqueIds;
+}
+
 function comparableValue(value: unknown) {
   if (value === undefined) return undefined;
   if (value === null || value === "") return null;
@@ -328,7 +342,8 @@ export const employeesService = {
 
   async create(input: CreateEmployeeInput, audit?: AuditContext) {
     await ensureUniqueEmployee(input);
-    const employee = await execute(() => employeesRepository.create(input, audit?.userId));
+    const hourConceptIds = await assertAssignableHourConceptIds(input.hourConceptIds ?? []);
+    const employee = await execute(() => employeesRepository.create({ ...input, hourConceptIds }, audit?.userId));
     await auditService.register({
       ...audit,
       action: "CREATE",
@@ -444,11 +459,7 @@ export const employeesService = {
   },
 
   async replaceHourConcepts(id: string, input: ReplaceEmployeeHourConceptsInput, audit?: AuditContext) {
-    const uniqueIds = Array.from(new Set(input.hourConceptIds.filter(Boolean)));
-    const baseConcepts = await employeesRepository.countBaseHourConcepts(uniqueIds);
-    if (baseConcepts > 0) {
-      throw new AppError("Horas normales es la grilla base y no se asigna por legajo", 409, "HOUR_CONCEPT_BASE_NOT_ASSIGNABLE");
-    }
+    const uniqueIds = await assertAssignableHourConceptIds(input.hourConceptIds);
     const before = await execute(() => employeesRepository.findHourConceptsAuditSnapshot(id));
     const employee = await execute(() => employeesRepository.replaceHourConcepts(id, uniqueIds));
     await auditService.register({

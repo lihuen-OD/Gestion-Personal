@@ -5,6 +5,8 @@ const now = "2026-06-01T09:00:00.000Z";
 function hourConcept(data: Partial<HourConcept> & Pick<HourConcept, "id" | "code" | "name" | "kind">): HourConcept {
   return {
     status: "ACTIVO",
+    loadMode: data.kind === "NORMAL" ? null : "MANUAL",
+    systemRole: data.kind === "NORMAL" ? "NORMAL_BASE" : null,
     createdAt: now,
     updatedAt: now,
     ...data,

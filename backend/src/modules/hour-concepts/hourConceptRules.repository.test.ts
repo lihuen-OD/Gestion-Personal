@@ -22,7 +22,7 @@ beforeEach(() => {
 });
 
 describe("findMany — filtros y orden de respuesta", () => {
-  it("arma el where con hourConceptId/status/crossesMidnight y ordena priority desc, startTime asc", async () => {
+  it("arma filtros y orden estable sin usar priority", async () => {
     mockedPrisma.hourConceptRule.findMany.mockResolvedValue([]);
     mockedPrisma.hourConceptRule.count.mockResolvedValue(0);
 
@@ -31,7 +31,7 @@ describe("findMany — filtros y orden de respuesta", () => {
     expect(mockedPrisma.hourConceptRule.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { hourConceptId: "concept-1", status: "ACTIVO", crossesMidnight: true },
-        orderBy: [{ priority: "desc" }, { startTime: "asc" }],
+        orderBy: [{ startTime: "asc" }, { id: "asc" }],
       }),
     );
   });
@@ -46,43 +46,32 @@ describe("findMany — filtros y orden de respuesta", () => {
   });
 });
 
-describe("findByConceptId — reglas de un concepto ordenadas por priority desc, startTime asc", () => {
+describe("findByConceptId — reglas de un concepto en orden horario", () => {
   it("filtra por hourConceptId y aplica el mismo orden que findMany", async () => {
     mockedPrisma.hourConceptRule.findMany.mockResolvedValue([]);
 
     await hourConceptRulesRepository.findByConceptId("concept-1");
 
     expect(mockedPrisma.hourConceptRule.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { hourConceptId: "concept-1" }, orderBy: [{ priority: "desc" }, { startTime: "asc" }] }),
+      expect.objectContaining({ where: { hourConceptId: "concept-1" }, orderBy: [{ startTime: "asc" }, { id: "asc" }] }),
     );
   });
 });
 
-describe("findActiveExcept — universo de conflicto para solapamiento ambiguo (global, no por concepto)", () => {
-  it("solo pide reglas con status ACTIVO, sin filtrar por hourConceptId", async () => {
-    mockedPrisma.hourConceptRule.findMany.mockResolvedValue([]);
-
-    await hourConceptRulesRepository.findActiveExcept();
-
-    expect(mockedPrisma.hourConceptRule.findMany).toHaveBeenCalledWith({ where: { status: "ACTIVO" } });
-  });
-
-  it("con excludeId, no compara la regla contra sí misma", async () => {
-    mockedPrisma.hourConceptRule.findMany.mockResolvedValue([]);
-
-    await hourConceptRulesRepository.findActiveExcept("rule-1");
-
-    expect(mockedPrisma.hourConceptRule.findMany).toHaveBeenCalledWith({ where: { status: "ACTIVO", id: { not: "rule-1" } } });
-  });
-});
-
-describe("hourConceptExists", () => {
-  it("consulta HourConcept por id con select mínimo", async () => {
+describe("findHourConceptConfiguration", () => {
+  it("consulta los campos necesarios para decidir si admite reglas", async () => {
     mockedPrisma.hourConcept.findUnique.mockResolvedValue({ id: "concept-1" });
 
-    const result = await hourConceptRulesRepository.hourConceptExists("concept-1");
+    await hourConceptRulesRepository.findHourConceptConfiguration("concept-1");
+    expect(mockedPrisma.hourConcept.findUnique).toHaveBeenCalledWith({
+      where: { id: "concept-1" },
+      select: { id: true, status: true, deletedAt: true, loadMode: true, systemRole: true },
+    });
+  });
 
-    expect(result).toEqual({ id: "concept-1" });
-    expect(mockedPrisma.hourConcept.findUnique).toHaveBeenCalledWith({ where: { id: "concept-1" }, select: { id: true } });
+  it("create fija priority=0 internamente", async () => {
+    mockedPrisma.hourConceptRule.create.mockResolvedValue({});
+    await hourConceptRulesRepository.create({ hourConceptId: "concept-1", startTime: "08:00", endTime: "09:00", crossesMidnight: false, status: "ACTIVO" });
+    expect(mockedPrisma.hourConceptRule.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ priority: 0 }) }));
   });
 });

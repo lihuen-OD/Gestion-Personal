@@ -19,7 +19,6 @@ export const createHourConceptRuleSchema = z
     startTime: timeOfDaySchema,
     endTime: timeOfDaySchema,
     crossesMidnight: z.boolean().default(false),
-    priority: z.number().int().min(0).max(999).default(0),
     status: recordStatusSchema.default("ACTIVO"),
   })
   .refine((value) => value.startTime !== value.endTime, {
@@ -32,7 +31,6 @@ export const updateHourConceptRuleSchema = z
     startTime: timeOfDaySchema.optional(),
     endTime: timeOfDaySchema.optional(),
     crossesMidnight: z.boolean().optional(),
-    priority: z.number().int().min(0).max(999).optional(),
     status: recordStatusSchema.optional(),
   })
   .refine((value) => Object.keys(value).length > 0, { message: "Indicá al menos un dato para actualizar" })

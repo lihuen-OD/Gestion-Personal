@@ -1,7 +1,7 @@
 import { apiRequest } from "./apiClient";
 import { cachePolicies, cachedData, invalidateCacheFamily } from "../cache";
 import { associatedEmployeesQuery, mapAssociatedEmployeeFromApi, type ApiAssociatedEmployee } from "./associatedEmployeeMapper";
-import type { HourConcept, HourConceptFilters, HourConceptKind, HourConceptStatus } from "../../types/hourConcept.types";
+import type { HourConcept, HourConceptFilters, HourConceptKind, HourConceptLoadMode, HourConceptStatus, HourConceptSystemRole } from "../../types/hourConcept.types";
 import type { AssociatedEmployeeFilters, AssociatedEmployeeStatus, AssociatedEmployeesResult, HourConceptEmployeeAssociation } from "../../types/associatedEmployee.types";
 
 type ApiHourConcept = {
@@ -10,7 +10,9 @@ type ApiHourConcept = {
   name: string;
   kind: HourConceptKind;
   status: HourConceptStatus;
-  countsAsWorked: boolean;
+  loadMode: HourConceptLoadMode | null;
+  systemRole: HourConceptSystemRole | null;
+  countsAsWorked?: boolean;
   deletedAt: string | null;
   createdAt: string;
   updatedAt: string;
@@ -37,6 +39,8 @@ export function mapHourConceptFromApi(item: ApiHourConcept): HourConcept {
     name: item.name,
     kind: item.kind,
     status: item.status,
+    loadMode: item.loadMode,
+    systemRole: item.systemRole,
     createdAt: item.createdAt,
     updatedAt: item.updatedAt,
   };
@@ -55,6 +59,7 @@ export function mapToApi(item: HourConcept) {
     name: item.name,
     kind: item.kind,
     status: item.status,
+    loadMode: item.loadMode,
   };
 }
 

@@ -173,7 +173,7 @@ const employeeDetailSelect = {
     take: 50,
   },
   assignments: { take: 100, include: { user: { select: { id: true, name: true, employeeId: true } } } },
-  hourConcepts: { select: { hourConcept: { select: { id: true, code: true, name: true } } } },
+  hourConcepts: { select: { hourConcept: { select: { id: true, code: true, name: true, loadMode: true, systemRole: true } } } },
   novelties: { include: { noveltyType: true }, orderBy: { fromDate: "desc" as const }, take: 20 },
   documents: { include: { category: true }, orderBy: { createdAt: "desc" as const }, take: 20 },
 } satisfies Prisma.EmployeeSelect;
@@ -1081,9 +1081,16 @@ export const employeesRepository = {
     });
   },
 
-  countBaseHourConcepts(hourConceptIds: string[]) {
-    return prisma.hourConcept.count({
-      where: { id: { in: hourConceptIds }, systemRole: "NORMAL_BASE" },
+  findAssignableHourConceptIds(hourConceptIds: string[]) {
+    return prisma.hourConcept.findMany({
+      where: {
+        id: { in: hourConceptIds },
+        systemRole: null,
+        status: "ACTIVO",
+        deletedAt: null,
+        loadMode: { not: null },
+      },
+      select: { id: true },
     });
   },
 

@@ -6,9 +6,7 @@ const ruleInclude = {
   hourConcept: { select: { id: true, code: true, name: true } },
 } satisfies Prisma.HourConceptRuleInclude;
 
-// Orden de respuesta pedido (RRHH necesita ver primero lo que la
-// clasificación va a preferir): priority desc, luego startTime asc.
-const ruleOrderBy = [{ priority: "desc" }, { startTime: "asc" }] satisfies Prisma.HourConceptRuleOrderByWithRelationInput[];
+const ruleOrderBy = [{ startTime: "asc" }, { id: "asc" }] satisfies Prisma.HourConceptRuleOrderByWithRelationInput[];
 
 function buildWhere(query: Pick<ListHourConceptRulesQuery, "hourConceptId" | "status" | "crossesMidnight">): Prisma.HourConceptRuleWhereInput {
   return {
@@ -37,22 +35,17 @@ export const hourConceptRulesRepository = {
     return prisma.hourConceptRule.findMany({ where: { hourConceptId }, include: ruleInclude, orderBy: ruleOrderBy });
   },
 
-  // Universo de conflicto para la validación de solapamiento ambiguo (ver
-  // hourConceptRules.service.ts): global, no por concepto — la clasificación
-  // (classifyShiftInterval) compara reglas de TODOS los conceptos habilitados
-  // del empleado entre sí, no solo las de un mismo concepto.
-  findActiveExcept(excludeId?: string) {
-    return prisma.hourConceptRule.findMany({
-      where: { status: "ACTIVO", ...(excludeId ? { id: { not: excludeId } } : {}) },
+  findHourConceptConfiguration(hourConceptId: string) {
+    return prisma.hourConcept.findUnique({
+      where: { id: hourConceptId },
+      select: { id: true, status: true, deletedAt: true, loadMode: true, systemRole: true },
     });
   },
 
-  hourConceptExists(hourConceptId: string) {
-    return prisma.hourConcept.findUnique({ where: { id: hourConceptId }, select: { id: true } });
-  },
-
   create(data: CreateHourConceptRuleInput) {
-    return prisma.hourConceptRule.create({ data, include: ruleInclude });
+    // priority queda sólo como detalle legacy del clasificador actual. El
+    // contrato 6E no lo acepta: toda regla nueva usa el valor neutro fijo 0.
+    return prisma.hourConceptRule.create({ data: { ...data, priority: 0 }, include: ruleInclude });
   },
 
   update(id: string, data: UpdateHourConceptRuleInput) {

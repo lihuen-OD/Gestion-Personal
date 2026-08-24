@@ -26,4 +26,11 @@ describe("schemas de conceptos horarios adicionales", () => {
     ).toBe(false);
     expect(updateHourConceptSchema.safeParse({ kind: "NORMAL" }).success).toBe(false);
   });
+
+  it("countsAsWorked queda fuera del contrato editable", () => {
+    const result = createHourConceptSchema.parse({
+      code: "HOR-010", name: "Adicional", kind: "OTRO", loadMode: "MANUAL", countsAsWorked: false,
+    });
+    expect(result).not.toHaveProperty("countsAsWorked");
+  });
 });
