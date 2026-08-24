@@ -5,6 +5,7 @@ import { employeeAccessWhere } from "../employees/employeeAccess";
 import { roles } from "../../shared/security/roles";
 import type { AuditContext } from "../audit/audit.service";
 import { auditService } from "../audit/audit.service";
+import { argentinaCalendarDate, todayArgentinaDateKey } from "../../shared/datetime/argentinaTime";
 
 function mapPrismaError(error: unknown) {
   if (error instanceof Prisma.PrismaClientKnownRequestError) {
@@ -197,12 +198,15 @@ export const workforceService = {
     return item;
   },
   async removeShiftTemplate(id: string, audit?: AuditContext) {
-    const before = await prisma.shiftTemplate.findUnique({ where: { id }, include: { _count: { select: { workShifts: true } } } });
+    const before = await prisma.shiftTemplate.findUnique({ where: { id }, include: { _count: { select: { workShifts: true, assignments: true } } } });
     if (!before) throw new AppError("No encontramos el turno solicitado", 404, "SHIFT_TEMPLATE_NOT_FOUND");
     if (before._count.workShifts > 0) {
       const item = await prisma.shiftTemplate.update({ where: { id }, data: { status: "INACTIVO" } });
       await auditService.register({ ...audit, action: "DEACTIVATE", entity: "ShiftTemplate", entityId: id, description: `Se inactivó el turno ${before.code} porque tiene jornadas históricas asociadas.`, before: before as Prisma.InputJsonValue, after: item as Prisma.InputJsonValue });
       return { mode: "INACTIVATED" as const, item, relatedWorkShifts: before._count.workShifts };
+    }
+    if (before._count.assignments > 0) {
+      throw new AppError("No se puede eliminar el turno porque tiene asignaciones de empleados asociadas", 409, "SHIFT_TEMPLATE_HAS_ASSIGNMENTS");
     }
     await prisma.shiftTemplate.delete({ where: { id } });
     await auditService.register({ ...audit, action: "DELETE", entity: "ShiftTemplate", entityId: id, description: `Se eliminó el turno sin uso ${before.code} - ${before.name}.`, before: before as Prisma.InputJsonValue });
@@ -233,7 +237,8 @@ export const workforceService = {
   async removeDoubleRule(id: string, audit?: AuditContext) {
     const before = await prisma.doubleHourRule.findUnique({ where: { id }, include: { employees: true } });
     if (!before) throw new AppError("No encontramos la regla solicitada", 404, "DOUBLE_HOUR_RULE_NOT_FOUND");
-    const hasStarted = before.fromDate <= new Date();
+    const today = argentinaCalendarDate(todayArgentinaDateKey());
+    const hasStarted = before.fromDate <= today;
     if (hasStarted) {
       const item = await prisma.doubleHourRule.update({ where: { id }, data: { status: "INACTIVO" }, include: { employees: true } });
       await auditService.register({ ...audit, action: "DEACTIVATE", entity: "DoubleHourRule", entityId: id, description: `Se inactivó la regla ${before.name} porque su vigencia ya había comenzado.`, before: before as Prisma.InputJsonValue, after: item as Prisma.InputJsonValue });

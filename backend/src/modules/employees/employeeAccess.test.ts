@@ -66,6 +66,18 @@ describe("employeeAccessWhere", () => {
     expect(where.assignments.some.AND).toHaveLength(3);
   });
 
+  it("evalúa la vigencia con el día calendario Argentina cerca del cambio de día UTC", () => {
+    const reference = new Date("2026-08-15T01:30:00.000Z"); // 14/08 22:30 en Argentina
+    const where = employeeAccessWhere(user(roles.supervision), reference) as {
+      assignments: { some: { AND: Array<{ OR?: Array<{ effectiveFrom?: { lte: Date }; effectiveTo?: { gte: Date } | null }> }> } };
+    };
+    const effectiveFrom = where.assignments.some.AND.find((clause) => clause.OR?.some((option) => "effectiveFrom" in option));
+    const effectiveTo = where.assignments.some.AND.find((clause) => clause.OR?.some((option) => "effectiveTo" in option));
+
+    expect(effectiveFrom?.OR?.find((option) => option.effectiveFrom)?.effectiveFrom?.lte.toISOString()).toBe("2026-08-14T00:00:00.000Z");
+    expect(effectiveTo?.OR?.find((option) => option.effectiveTo)?.effectiveTo?.gte.toISOString()).toBe("2026-08-14T00:00:00.000Z");
+  });
+
   it("roles desconocidos deniegan por defecto (deny-by-default): where imposible de cumplir, no un where vacio", () => {
     const where = employeeAccessWhere(user("ROL_INEXISTENTE"));
     expect(where).toEqual({ id: "__NO_ACCESS__" });

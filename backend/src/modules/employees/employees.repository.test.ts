@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Mock } from "vitest";
 import { prisma } from "../../shared/prisma/client";
-import { employeesRepository } from "./employees.repository";
+import { employeesRepository, resolveLaborStatus } from "./employees.repository";
+import { EmployeeStatus } from "@prisma/client";
 
 /**
  * Regresion de la simplificacion de jerarquia organizacional (2026-08-14):
@@ -60,5 +61,24 @@ describe("employeesRepository.findById", () => {
     expect(prisma.employee.findFirst as Mock).toHaveBeenCalledWith(
       expect.objectContaining({ where: { AND: [{ id: "emp-2" }, { sectorId: { in: ["sec-1"] } }] } }),
     );
+  });
+});
+
+describe("resolveLaborStatus", () => {
+  it("no adelanta una baja del día UTC siguiente mientras todavía es el día anterior en Argentina", () => {
+    const reference = new Date("2026-08-15T01:30:00.000Z"); // 14/08 22:30 en Argentina
+    const movements = [
+      { type: "ALTA" as const, effectiveFrom: new Date("2026-01-01T00:00:00.000Z") },
+      { type: "BAJA" as const, effectiveFrom: new Date("2026-08-15T00:00:00.000Z") },
+    ];
+
+    expect(resolveLaborStatus(movements, reference)).toBe(EmployeeStatus.ACTIVO);
+  });
+
+  it("mantiene inactiva un alta futura hasta que comienza el día calendario Argentina", () => {
+    const reference = new Date("2026-08-15T01:30:00.000Z"); // 14/08 22:30 en Argentina
+    const movements = [{ type: "ALTA" as const, effectiveFrom: new Date("2026-08-15T00:00:00.000Z") }];
+
+    expect(resolveLaborStatus(movements, reference)).toBe(EmployeeStatus.INACTIVO);
   });
 });

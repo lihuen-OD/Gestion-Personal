@@ -1,5 +1,6 @@
 import { ApprovalStatus, EmployeeStatus, Prisma } from "@prisma/client";
 import { prisma } from "../../shared/prisma/client";
+import { argentinaCalendarDate, todayArgentinaDateKey } from "../../shared/datetime/argentinaTime";
 import type {
   CreateEmployeeDocumentInput,
   CreateEmployeeInput,
@@ -500,13 +501,11 @@ const employeeOrgChartSelect = {
   assignments: { select: { type: true, personName: true } },
 } satisfies Prisma.EmployeeSelect;
 
-function startOfTodayUtc() {
-  const now = new Date();
-  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-}
-
-function resolveLaborStatus(movements: Array<{ type: "ALTA" | "BAJA"; effectiveFrom: Date }>): EmployeeStatus {
-  const today = startOfTodayUtc();
+export function resolveLaborStatus(
+  movements: Array<{ type: "ALTA" | "BAJA"; effectiveFrom: Date }>,
+  reference: Date = new Date(),
+): EmployeeStatus {
+  const today = argentinaCalendarDate(todayArgentinaDateKey(reference));
   const sorted = [...movements].sort((a, b) => a.effectiveFrom.getTime() - b.effectiveFrom.getTime());
   const effective = sorted.filter((movement) => movement.effectiveFrom <= today);
   const current = effective[effective.length - 1];

@@ -19,8 +19,8 @@ vi.mock("../../shared/prisma/client", () => ({
     timeEntry: { groupBy: vi.fn(), findFirst: vi.fn(), update: vi.fn() },
     monthlyTimeClosure: { findMany: vi.fn(), findUnique: vi.fn(), update: vi.fn(), updateMany: vi.fn(), upsert: vi.fn() },
     timeCorrectionRequest: { findUnique: vi.fn(), findUniqueOrThrow: vi.fn(), update: vi.fn(), create: vi.fn() },
-    shiftTemplate: { create: vi.fn(), findUnique: vi.fn(), update: vi.fn() },
-    doubleHourRule: { create: vi.fn() },
+    shiftTemplate: { create: vi.fn(), findUnique: vi.fn(), update: vi.fn(), delete: vi.fn() },
+    doubleHourRule: { create: vi.fn(), findUnique: vi.fn(), update: vi.fn(), delete: vi.fn() },
     user: { findMany: vi.fn().mockResolvedValue([]) },
     $transaction: vi.fn(),
   },
@@ -35,8 +35,8 @@ const mockedPrisma = prisma as unknown as {
   timeEntry: { groupBy: Mock; findFirst: Mock; update: Mock };
   monthlyTimeClosure: { findMany: Mock; findUnique: Mock; update: Mock; updateMany: Mock; upsert: Mock };
   timeCorrectionRequest: { findUnique: Mock; findUniqueOrThrow: Mock; update: Mock; create: Mock };
-  shiftTemplate: { create: Mock; findUnique: Mock; update: Mock };
-  doubleHourRule: { create: Mock };
+  shiftTemplate: { create: Mock; findUnique: Mock; update: Mock; delete: Mock };
+  doubleHourRule: { create: Mock; findUnique: Mock; update: Mock; delete: Mock };
   $transaction: Mock;
 };
 
@@ -138,6 +138,67 @@ describe("workforceService — FK reales sobre ShiftTemplate/DoubleHourRule", ()
 
     expect(item.id).toBe("template-1");
     expect(auditService.register).toHaveBeenCalledWith(expect.objectContaining({ action: "CREATE", entity: "ShiftTemplate" }));
+  });
+
+  it("no permite borrar un turno con asignaciones aunque no tenga jornadas", async () => {
+    mockedPrisma.shiftTemplate.findUnique.mockResolvedValue({
+      id: "template-1",
+      code: "T-1",
+      name: "Turno",
+      _count: { workShifts: 0, assignments: 1 },
+    });
+
+    await expect(workforceService.removeShiftTemplate("template-1")).rejects.toMatchObject({
+      statusCode: 409,
+      code: "SHIFT_TEMPLATE_HAS_ASSIGNMENTS",
+      message: "No se puede eliminar el turno porque tiene asignaciones de empleados asociadas",
+    });
+    expect(mockedPrisma.shiftTemplate.delete).not.toHaveBeenCalled();
+  });
+
+  it("inactiva un turno con jornadas históricas y no lo borra", async () => {
+    mockedPrisma.shiftTemplate.findUnique.mockResolvedValue({
+      id: "template-1",
+      code: "T-1",
+      name: "Turno",
+      _count: { workShifts: 2, assignments: 0 },
+    });
+    mockedPrisma.shiftTemplate.update.mockResolvedValue({ id: "template-1", code: "T-1", status: "INACTIVO" });
+
+    await expect(workforceService.removeShiftTemplate("template-1")).resolves.toMatchObject({ mode: "INACTIVATED", relatedWorkShifts: 2 });
+    expect(mockedPrisma.shiftTemplate.delete).not.toHaveBeenCalled();
+  });
+
+  it("borra un turno sin asignaciones ni jornadas", async () => {
+    mockedPrisma.shiftTemplate.findUnique.mockResolvedValue({
+      id: "template-1",
+      code: "T-1",
+      name: "Turno",
+      _count: { workShifts: 0, assignments: 0 },
+    });
+    mockedPrisma.shiftTemplate.delete.mockResolvedValue({ id: "template-1" });
+
+    await expect(workforceService.removeShiftTemplate("template-1")).resolves.toEqual({ mode: "DELETED", id: "template-1", relatedWorkShifts: 0 });
+    expect(mockedPrisma.shiftTemplate.delete).toHaveBeenCalledWith({ where: { id: "template-1" } });
+  });
+
+  it("considera futura una regla del día UTC siguiente mientras en Argentina todavía es el día anterior", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-15T01:30:00.000Z")); // 14/08 22:30 en Argentina
+    mockedPrisma.doubleHourRule.findUnique.mockResolvedValue({
+      id: "rule-1",
+      name: "Regla futura",
+      fromDate: new Date("2026-08-15T00:00:00.000Z"),
+      employees: [],
+    });
+    mockedPrisma.doubleHourRule.delete.mockResolvedValue({ id: "rule-1" });
+
+    try {
+      await expect(workforceService.removeDoubleRule("rule-1")).resolves.toEqual({ mode: "DELETED", id: "rule-1" });
+      expect(mockedPrisma.doubleHourRule.update).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("createDoubleRule mapea un userId inexistente (P2003) a un 400 prolijo", async () => {
