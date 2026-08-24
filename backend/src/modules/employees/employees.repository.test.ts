@@ -14,6 +14,7 @@ import { EmployeeStatus } from "@prisma/client";
 vi.mock("../../shared/prisma/client", () => ({
   prisma: {
     employee: { findFirst: vi.fn() },
+    hourConcept: { findMany: vi.fn() },
   },
 }));
 
@@ -51,6 +52,13 @@ describe("employeesRepository.findById", () => {
     expect(call?.select?.sector?.select?.area?.select?.establishment?.select?.businessUnit).toEqual({
       select: { id: true, name: true },
     });
+    expect(call?.select?.hourConcepts).toEqual({
+      where: { hourConcept: { systemRole: null, status: "ACTIVO", deletedAt: null, loadMode: { not: null } } },
+      select: {
+        hourConceptId: true,
+        hourConcept: { select: { id: true, code: true, name: true, kind: true, loadMode: true, status: true, systemRole: true } },
+      },
+    });
   });
 
   it("respeta el accessWhere adicional sin alterar la forma de la cadena", async () => {
@@ -61,6 +69,23 @@ describe("employeesRepository.findById", () => {
     expect(prisma.employee.findFirst as Mock).toHaveBeenCalledWith(
       expect.objectContaining({ where: { AND: [{ id: "emp-2" }, { sectorId: { in: ["sec-1"] } }] } }),
     );
+  });
+});
+
+describe("employeesRepository.findAssignableHourConceptIds", () => {
+  it("filtra por identidad estable, estado, baja lógica y loadMode", async () => {
+    (prisma.hourConcept.findMany as Mock).mockResolvedValue([{ id: "colectivo" }]);
+    await employeesRepository.findAssignableHourConceptIds(["colectivo", "normal"]);
+    expect(prisma.hourConcept.findMany).toHaveBeenCalledWith({
+      where: {
+        id: { in: ["colectivo", "normal"] },
+        systemRole: null,
+        status: "ACTIVO",
+        deletedAt: null,
+        loadMode: { not: null },
+      },
+      select: { id: true },
+    });
   });
 });
 

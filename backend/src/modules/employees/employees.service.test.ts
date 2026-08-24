@@ -64,6 +64,20 @@ describe("employeesService.replaceHourConcepts", () => {
     expect(repo.replaceHourConcepts).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ["Normal", "normal-1"],
+    ["inactivo", "inactive-1"],
+    ["eliminado", "deleted-1"],
+    ["sin loadMode", "legacy-1"],
+  ])("rechaza concepto %s cuando el catálogo asignable no devuelve su id", async (_case, conceptId) => {
+    repo.findAssignableHourConceptIds.mockResolvedValue([]);
+    await expect(employeesService.replaceHourConcepts("emp-1", { hourConceptIds: [conceptId] })).rejects.toMatchObject({
+      statusCode: 409,
+      code: "HOUR_CONCEPT_NOT_ASSIGNABLE",
+    });
+    expect(repo.replaceHourConcepts).not.toHaveBeenCalled();
+  });
+
   it("acepta sólo conceptos adicionales activos y deduplica ids", async () => {
     repo.findAssignableHourConceptIds.mockResolvedValue([{ id: "additional-1" }]);
     repo.findHourConceptsAuditSnapshot.mockResolvedValue({ hourConcepts: [] });
@@ -71,6 +85,26 @@ describe("employeesService.replaceHourConcepts", () => {
 
     await employeesService.replaceHourConcepts("emp-1", { hourConceptIds: ["additional-1", "additional-1"] });
     expect(repo.replaceHourConcepts).toHaveBeenCalledWith("emp-1", ["additional-1"]);
+  });
+
+  it.each([
+    ["Colectivo MANUAL", "colectivo"],
+    ["Sereno AUTOMATIC", "sereno"],
+    ["concepto BOTH", "both"],
+  ])("asigna %s cuando el id está en el catálogo asignable", async (_case, conceptId) => {
+    repo.findAssignableHourConceptIds.mockResolvedValue([{ id: conceptId }]);
+    repo.findHourConceptsAuditSnapshot.mockResolvedValue({ hourConcepts: [] });
+    repo.replaceHourConcepts.mockResolvedValue({ id: "emp-1", legajo: "1", hourConcepts: [] });
+    await employeesService.replaceHourConcepts("emp-1", { hourConceptIds: [conceptId] });
+    expect(repo.replaceHourConcepts).toHaveBeenCalledWith("emp-1", [conceptId]);
+  });
+
+  it("permite quitar todos los conceptos adicionales", async () => {
+    repo.findHourConceptsAuditSnapshot.mockResolvedValue({ hourConcepts: [{ hourConceptId: "colectivo" }] });
+    repo.replaceHourConcepts.mockResolvedValue({ id: "emp-1", legajo: "1", hourConcepts: [] });
+    await employeesService.replaceHourConcepts("emp-1", { hourConceptIds: [] });
+    expect(repo.findAssignableHourConceptIds).not.toHaveBeenCalled();
+    expect(repo.replaceHourConcepts).toHaveBeenCalledWith("emp-1", []);
   });
 });
 

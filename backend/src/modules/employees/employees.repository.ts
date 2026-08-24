@@ -173,7 +173,20 @@ const employeeDetailSelect = {
     take: 50,
   },
   assignments: { take: 100, include: { user: { select: { id: true, name: true, employeeId: true } } } },
-  hourConcepts: { select: { hourConcept: { select: { id: true, code: true, name: true, loadMode: true, systemRole: true } } } },
+  hourConcepts: {
+    // La presencia de la fila representa enabled=true. Se ignora de forma
+    // defensiva cualquier vínculo legacy con Normal o con un concepto que ya
+    // no sea asignable, aunque 6D haya limpiado esos datos.
+    where: {
+      hourConcept: { systemRole: null, status: "ACTIVO", deletedAt: null, loadMode: { not: null } },
+    },
+    select: {
+      hourConceptId: true,
+      hourConcept: {
+        select: { id: true, code: true, name: true, kind: true, loadMode: true, status: true, systemRole: true },
+      },
+    },
+  },
   novelties: { include: { noveltyType: true }, orderBy: { fromDate: "desc" as const }, take: 20 },
   documents: { include: { category: true }, orderBy: { createdAt: "desc" as const }, take: 20 },
 } satisfies Prisma.EmployeeSelect;

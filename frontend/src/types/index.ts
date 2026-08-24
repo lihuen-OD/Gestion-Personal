@@ -17,6 +17,7 @@ export interface Employee {
   company: string; companies?: string[]; businessUnit: string; establishment: string; costCenter: string; sector: string; position: string; positionId?: string; puestoId?: string; puestoNombre?: string;
   receiptCategory: string; internalCategory: string; agreement: string; healthInsurance: string; directManager: string; directManagers?: string[]; timeResponsible: string; timeResponsibles?: string[];
   startDate: string; endDate?: string; exitReason?: string; transport: boolean; transportLocality?: string; transportRoute: string; transportNotes: string; enabledHours: string[];
+  enabledHourConcepts?: Array<HourConcept & { enabled: true }>;
   status: EmployeeStatus;
   laborMovements?: LaborMovement[];
   createdAt?: string; updatedAt?: string;
@@ -84,3 +85,4 @@ export interface EmployeeChangeLog {
   action: "CREATE" | "UPDATE" | "STATUS_CHANGE" | "ASSIGNMENT_CHANGE" | "DOCUMENT_UPLOAD" | "NOVELTY_CREATE";
   category?: "ALTA" | "BAJA" | "CAMBIO_LABORAL"; description?: string; reason?: string; userId: string; userName: string; createdAt: string;
 }
+import type { HourConcept } from "./hourConcept.types";

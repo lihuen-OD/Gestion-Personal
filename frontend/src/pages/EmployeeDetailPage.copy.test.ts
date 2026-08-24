@@ -27,10 +27,17 @@ describe("EmployeeDetailPage — Datos Laborales agrupado (Etapa UI-3)", () => {
   });
 });
 
-describe("EmployeeDetailBlocks — nomenclatura de Conceptos Horarios ya correcta (confirmación, no cambio)", () => {
-  it('HoursSpecialBlock muestra "Conceptos horarios habilitados", no "Horas especiales"', () => {
-    expect(blocksSource).toContain("Conceptos horarios habilitados");
+describe("EmployeeDetailBlocks — conceptos adicionales 6F", () => {
+  it('HoursSpecialBlock muestra "Conceptos horarios adicionales", no "Horas especiales"', () => {
+    expect(blocksSource).toContain("Conceptos horarios adicionales");
     expect(blocksSource.toLowerCase()).not.toContain("horas especiales");
+  });
+
+  it("explica que Horas normales son universales y muestra el modo de carga", () => {
+    expect(blocksSource).toContain("Horas normales se aplican siempre a todos los empleados");
+    expect(blocksSource).toContain("hourConceptLoadModeLabels");
+    expect(blocksSource).not.toContain("priority");
+    expect(blocksSource).not.toContain("countsAsWorked");
   });
 
   it('el identificador interno histórico "HORAS_ESPECIALES" se mantiene (no se rompe trazabilidad)', () => {

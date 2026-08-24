@@ -5,6 +5,7 @@ import { employeeHistoryApiService } from "../../services/api/employeeHistoryApi
 import { getUserErrorMessage } from "../../services/api/apiClient";
 import { locationService } from "../../services/locationService";
 import type { Employee, User } from "../../types";
+import type { HourConcept, HourConceptLoadMode } from "../../types/hourConcept.types";
 import { useAsyncAction } from "../../utils/useAsyncAction";
 import { requiredLaborChangeError } from "../../utils/laborFieldValidation";
 import { Button } from "../ui/Button";
@@ -12,7 +13,7 @@ import { Field, Select } from "../ui/FormControls";
 import { Modal } from "../ui/Modal";
 import { BlockHistoryTimeline } from "./FieldHistoryControls";
 import { PeopleMultiSearch } from "./PeopleMultiSearch";
-import { useHourOptions, userRoleOptions } from "./options/roleHourOptions";
+import { useHourConceptOptions, userRoleOptions } from "./options/roleHourOptions";
 
 const LocationMapPicker = lazy(() =>
   import("../LocationMapPicker").then((module) => ({ default: module.LocationMapPicker })),
@@ -41,6 +42,12 @@ const transportSummary = (employee: Employee) =>
 
 const hoursSummary = (employee: Employee) =>
   employee.enabledHours.length ? employee.enabledHours.join(", ") : "Sin conceptos horarios habilitados";
+
+const hourConceptLoadModeLabels: Record<HourConceptLoadMode, string> = {
+  MANUAL: "Manual",
+  AUTOMATIC: "Automático",
+  BOTH: "Manual y automático",
+};
 
 type EmployeeBlockPersistKind = "general" | "address" | "transport" | "assignments" | "hourConcepts";
 type CreateBlockHistoryInput = { employeeId: string; section: string; block: string; blockLabel: string; oldValue: string | null; newValue: string; effectiveFrom: string; reason: string; };
@@ -543,8 +550,8 @@ export function TransportBlock({ employee, user, canEdit, onSaved }: EmployeeBlo
 export function HoursSpecialBlock({ employee, user, canEdit, onSaved }: EmployeeBlockProps) {
   const [showHistory, setShowHistory] = useState(false);
   const [editing, setEditing] = useState(false);
-  const [hours, setHours] = useState(employee.enabledHours);
-  const enabledHourOptions = useHourOptions();
+  const [concepts, setConcepts] = useState<Array<HourConcept & { enabled: true }>>(employee.enabledHourConcepts ?? []);
+  const enabledHourOptions = useHourConceptOptions();
   const [from, setFrom] = useState(new Date().toISOString().slice(0, 10));
   const [reason, setReason] = useState("");
   const [error, setError] = useState("");
@@ -552,7 +559,11 @@ export function HoursSpecialBlock({ employee, user, canEdit, onSaved }: Employee
   const { isRunning: isSaving, run: save } = useAsyncAction(async () => {
     const validationError = requiredLaborChangeError(from, reason);
     if (validationError) return setError(validationError);
-    const updated = { ...employee, enabledHours: hours };
+    const updated = {
+      ...employee,
+      enabledHours: concepts.map((concept) => concept.name),
+      enabledHourConcepts: concepts,
+    };
     try {
       await persistEmployeeBlock(updated, user, onSaved, "hourConcepts");
       await recordBlockHistory(
@@ -581,7 +592,8 @@ export function HoursSpecialBlock({ employee, user, canEdit, onSaved }: Employee
     <div className="block-card">
       <div className="block-card-head">
         <div>
-          <h3>Conceptos horarios habilitados</h3>
+          <h3>Conceptos horarios adicionales</h3>
+          <p>Horas normales se aplican siempre a todos los empleados. Los conceptos adicionales habilitan desgloses como Sereno, Colectivo o Camioneta.</p>
           <p>{hoursSummary(employee)}</p>
         </div>
         <div className="tracked-actions">
@@ -595,6 +607,15 @@ export function HoursSpecialBlock({ employee, user, canEdit, onSaved }: Employee
           ) : null}
         </div>
       </div>
+      {employee.enabledHourConcepts?.length ? (
+        <div className="check-grid">
+          {employee.enabledHourConcepts.map((concept) => (
+            <div className="check-card" key={concept.id}>
+              <span><b>{concept.name}</b><small>{concept.loadMode ? hourConceptLoadModeLabels[concept.loadMode] : "Sin modo"} · {concept.status}</small></span>
+            </div>
+          ))}
+        </div>
+      ) : null}
       {showHistory ? (
         <BlockHistoryTimeline
           employeeId={employee.id}
@@ -607,20 +628,20 @@ export function HoursSpecialBlock({ employee, user, canEdit, onSaved }: Employee
         <Modal title="Modificar configuración horaria" close={() => setEditing(false)}>
           <div className="form-stack">
             <div className="check-grid">
-              {enabledHourOptions.map((hour) => (
-                <label className="check-card" key={hour}>
+              {enabledHourOptions.map((concept) => (
+                <label className="check-card" key={concept.id}>
                   <input
                     type="checkbox"
-                    checked={hours.includes(hour)}
+                    checked={concepts.some((item) => item.id === concept.id)}
                     onChange={(event) =>
-                      setHours(
+                      setConcepts(
                         event.target.checked
-                          ? [...hours, hour]
-                          : hours.filter((item) => item !== hour),
+                          ? [...concepts.filter((item) => item.id !== concept.id), { ...concept, enabled: true }]
+                          : concepts.filter((item) => item.id !== concept.id),
                       )
                     }
                   />
-                  {hour}
+                  <span><b>{concept.name}</b><small>{concept.loadMode ? hourConceptLoadModeLabels[concept.loadMode] : "Sin modo"} · {concept.status}</small></span>
                 </label>
               ))}
             </div>

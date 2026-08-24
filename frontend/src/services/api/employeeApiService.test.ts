@@ -25,6 +25,23 @@ describe("mapEmployeeFromApi transport", () => {
   });
 });
 
+describe("mapEmployeeFromApi — conceptos horarios adicionales 6F", () => {
+  it("incluye datos de conceptos habilitados e ignora cualquier Normal legacy", () => {
+    const base = { deletedAt: null, createdAt: "2026-01-01", updatedAt: "2026-01-01" };
+    const employee = mapEmployeeFromApi({
+      id: "employee-1", legajo: "100", firstName: "Ana", lastName: "Prueba", status: "ACTIVO",
+      hourConcepts: [
+        { hourConceptId: "normal", hourConcept: { ...base, id: "normal", code: "HC-NORMAL", name: "Hora normal", kind: "NORMAL", status: "ACTIVO", loadMode: null, systemRole: "NORMAL_BASE" } },
+        { hourConceptId: "colectivo", hourConcept: { ...base, id: "colectivo", code: "HOR-002", name: "Colectivo", kind: "TRANSPORTE", status: "ACTIVO", loadMode: "MANUAL", systemRole: null } },
+      ],
+    });
+    expect(employee.enabledHours).toEqual(["Colectivo"]);
+    expect(employee.enabledHourConcepts).toEqual([
+      expect.objectContaining({ id: "colectivo", name: "Colectivo", kind: "TRANSPORTE", loadMode: "MANUAL", status: "ACTIVO", systemRole: null, enabled: true }),
+    ]);
+  });
+});
+
 describe("employeeListRequest filtros sectorId/costCenterId (Etapa 8F)", () => {
   it("envía sectorId como query param cuando se filtra por sector", () => {
     const { path } = employeeListRequest({ sectorId: "sector-1" });

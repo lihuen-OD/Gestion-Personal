@@ -109,6 +109,15 @@ La inspección de la base de desarrollo al crear 6C encontró `HC-NORMAL` con hi
 * Las asignaciones aceptan únicamente conceptos adicionales activos, no eliminados y con modo definido. Las respuestas de legajo que exponen conceptos asignados incluyen `loadMode` y `systemRole`.
 * Continúan pendientes la generación aditiva real, la grilla mensual, el fichador, `TimeEntry`, `TimeSegment`, cierres, dashboard y exportaciones; 6E no modifica ninguno de esos consumidores.
 
+### Etapa 6F — habilitación por legajo
+
+* `EmployeeHourConcept` representa exclusivamente conceptos adicionales habilitados. Horas normales sigue siendo universal y no se almacena ni se muestra como opción del legajo.
+* La asignación valida por ID que cada concepto tenga `systemRole = null`, estado activo, `deletedAt = null` y `loadMode` definido. La misma regla se aplica al alta del empleado y al reemplazo posterior de sus conceptos; los IDs se deduplican antes de persistir.
+* El catálogo asignable reutiliza `GET /hour-concepts?status=ACTIVO` y se filtra por identidad estable y modo de carga. No se creó otro endpoint, schema ni migración.
+* La respuesta del legajo incluye por cada vínculo `id`, `code`, `name`, `kind`, `loadMode`, `status` y `systemRole`. La presencia de `EmployeeHourConcept` significa `enabled = true`; cualquier vínculo legacy con Normal o con un concepto que ya no sea asignable se ignora defensivamente al leer y se elimina en el siguiente reemplazo.
+* La sección pasa a llamarse “Conceptos horarios adicionales”, explica que Horas normales se aplica siempre y muestra nombre, modo y estado. La selección y persistencia usan IDs; no exponen `priority` ni `countsAsWorked`.
+* Estos conceptos habilitados serán la fuente de verdad para decidir qué filas o desgloses adicionales verá el empleado. La grilla aditiva y la generación manual/automática continúan pendientes y no forman parte de 6F.
+
 ## Plan de implementación futura
 
 1. Auditar datos y comportamiento actual: fichadas, `TimeSegment`, `TimeEntry`, cierres, exportaciones y asignaciones por legajo.

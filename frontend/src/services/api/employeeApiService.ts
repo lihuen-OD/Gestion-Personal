@@ -79,7 +79,10 @@ type ApiEmployee = {
     status?: string | null;
     notes?: string | null;
   }>;
-  hourConcepts?: Array<{ hourConcept: { id: string; name: string } }>;
+  hourConcepts?: Array<{
+    hourConceptId: string;
+    hourConcept: Parameters<typeof mapHourConceptFromApi>[0];
+  }>;
   laborMovements?: Array<{
     id: string;
     employeeId?: string;
@@ -275,7 +278,12 @@ export function mapEmployeeFromApi(item: ApiEmployee): Employee {
     transportLocality: item.transport?.locality || "",
     transportRoute: item.transport?.busLine || "",
     transportNotes: item.transport?.observation || item.transport?.pickupReference || "",
-    enabledHours: (item.hourConcepts || []).map((link) => link.hourConcept.name),
+    enabledHours: (item.hourConcepts || [])
+      .filter((link) => link.hourConcept.systemRole !== "NORMAL_BASE")
+      .map((link) => link.hourConcept.name),
+    enabledHourConcepts: (item.hourConcepts || [])
+      .filter((link) => link.hourConcept.systemRole !== "NORMAL_BASE" && Boolean(link.hourConcept.loadMode))
+      .map((link) => ({ ...mapHourConceptFromApi(link.hourConcept), enabled: true as const })),
     status,
     laborMovements,
     createdAt: item.createdAt,
@@ -446,8 +454,12 @@ async function assignmentsPayload(employee: Employee) {
 }
 
 async function hourConceptsPayload(employee: Employee) {
+  if (employee.enabledHourConcepts) {
+    return { hourConceptIds: Array.from(new Set(employee.enabledHourConcepts.map((concept) => concept.id))) };
+  }
   const concepts = await hourConceptApiService.getAll().catch(() => []);
-  const hourConceptIds = compact(employee.enabledHours.map((name) => concepts.find((item) => item.name === name)?.id));
+  const assignable = concepts.filter((item) => item.systemRole !== "NORMAL_BASE" && item.status === "ACTIVO" && Boolean(item.loadMode));
+  const hourConceptIds = compact(employee.enabledHours.map((name) => assignable.find((item) => item.name === name)?.id));
   return { hourConceptIds };
 }
 
