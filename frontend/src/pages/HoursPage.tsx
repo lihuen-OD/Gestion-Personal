@@ -385,7 +385,9 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
             title="Novedades pendientes"
             subtitle={`${pendingNoveltyItems.length} novedades requieren revisión o aprobación`}
           >
-            {pendingNoveltyItems.length ? (
+            {loading ? (
+              <LoadingState variant="table" rows={4} columns={7} />
+            ) : pendingNoveltyItems.length ? (
               <TableShell minWidth={980}>
                 <table>
                   <thead>
@@ -506,7 +508,9 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
             </select>
           </FilterPanel>
 
-          {groupByPerson ? (
+          {loading ? (
+            <LoadingState variant="table" rows={5} columns={8} />
+          ) : groupByPerson ? (
             reviewByPerson.length ? (
               <TableShell minWidth={1120}>
                 <table>
