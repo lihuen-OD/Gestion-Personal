@@ -9,6 +9,7 @@ import { displayLegajo, fullName } from "../../utils/employee";
 import { currentMonthPeriod } from "../../utils/period";
 import { useAsyncAction } from "../../utils/useAsyncAction";
 import { Field, Select } from "../ui/FormControls";
+import { Button } from "../ui/Button";
 import { Modal } from "../ui/Modal";
 import { EmployeeRemoteSelector } from "../employees/EmployeeRemoteSelector";
 import { noveltyTimeImpactLabel } from "../novelty-types/NoveltyTypeFields";
@@ -249,12 +250,12 @@ export function NoveltyModal({
             {error ? <p className="error">{error}</p> : null}
 
             <div className="form-actions">
-              <button className="button subtle" onClick={close}>
+              <Button variant="subtle" onClick={close}>
                 Cancelar
-              </button>
-              <button className="button primary" onClick={save} disabled={isSaving}>
+              </Button>
+              <Button variant="primary" onClick={save} disabled={isSaving}>
                 {isSaving ? "Guardando..." : "Guardar novedad"}
-              </button>
+              </Button>
             </div>
           </>
         ) : (

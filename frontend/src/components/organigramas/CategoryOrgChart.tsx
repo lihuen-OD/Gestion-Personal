@@ -4,6 +4,7 @@ import type { OrgChartModel } from "../../types/organizationChart.types";
 import { EmployeeOrgNode } from "./EmployeeOrgNode";
 import { EmployeeOrgPopover } from "./EmployeeOrgPopover";
 import { OrgChartLegend } from "./OrgChartLegend";
+import { Button } from "../ui/Button";
 
 export function CategoryOrgChart({ model, onExport, filterControls }: { model: OrgChartModel; onExport: () => void; filterControls?: ReactNode }) {
   const [zoom, setZoom] = useState(0.9);
@@ -38,8 +39,8 @@ export function CategoryOrgChart({ model, onExport, filterControls }: { model: O
     });
   };
   return <section className={`org-module-card ${fullscreen ? "fullscreen" : ""} ${zoom < 0.58 ? "compact-map" : ""}`}>
-    <div className="org-toolbar"><b>{model.nodes.length} empleados activos visibles</b><button className="button subtle" onClick={() => setZoom((value) => Math.max(0.38, value - 0.1))}>Zoom -</button><button className="button subtle" onClick={() => setZoom((value) => Math.min(1.4, value + 0.1))}>Zoom +</button><button className="button subtle" onClick={fit}>Ver completo</button><button className="button subtle" onClick={readable}>Vista legible</button><button className="button subtle" onClick={center}>Centrar</button><button className="button subtle" onClick={() => setFullscreen(!fullscreen)}>{fullscreen ? "Salir pantalla completa" : "Pantalla completa"}</button><button className="button subtle" onClick={onExport}>Exportar datos</button></div>
-    {fullscreen && <div className="org-floating-toolbar"><button className="button subtle" onClick={() => setFiltersOpen(!filtersOpen)}>{filtersOpen ? "Ocultar filtros" : "Mostrar filtros"}</button><button className="button subtle" onClick={fit}>Ver completo</button><button className="button subtle" onClick={readable}>Vista legible</button><button className="button primary" onClick={() => setFullscreen(false)}>Salir</button></div>}
+    <div className="org-toolbar"><b>{model.nodes.length} empleados activos visibles</b><Button variant="subtle" onClick={() => setZoom((value) => Math.max(0.38, value - 0.1))}>Zoom -</Button><Button variant="subtle" onClick={() => setZoom((value) => Math.min(1.4, value + 0.1))}>Zoom +</Button><Button variant="subtle" onClick={fit}>Ver completo</Button><Button variant="subtle" onClick={readable}>Vista legible</Button><Button variant="subtle" onClick={center}>Centrar</Button><Button variant="subtle" onClick={() => setFullscreen(!fullscreen)}>{fullscreen ? "Salir pantalla completa" : "Pantalla completa"}</Button><Button variant="subtle" onClick={onExport}>Exportar datos</Button></div>
+    {fullscreen && <div className="org-floating-toolbar"><Button variant="subtle" onClick={() => setFiltersOpen(!filtersOpen)}>{filtersOpen ? "Ocultar filtros" : "Mostrar filtros"}</Button><Button variant="subtle" onClick={fit}>Ver completo</Button><Button variant="subtle" onClick={readable}>Vista legible</Button><Button variant="primary" onClick={() => setFullscreen(false)}>Salir</Button></div>}
     {fullscreen && filtersOpen && filterControls && <div className="org-fullscreen-filters">{filterControls}</div>}
     <OrgChartLegend categories={model.categories} />
     {model.nodes.length ? <div ref={viewportRef} className="org-viewport" onWheel={handleWheel} onMouseDown={startPan} onMouseMove={pan} onMouseUp={stopPan} onMouseLeave={stopPan}><div className="org-category-canvas" style={{ width: model.width * zoom, height: model.height * zoom }}><div className="org-canvas-scale" style={{ width: model.width, height: model.height, transform: `scale(${zoom})` }}>

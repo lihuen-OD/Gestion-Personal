@@ -146,7 +146,7 @@ export function HourConceptRulesPanel({ hourConceptId, canEdit }: { hourConceptI
         </div>
         {canEdit ? (
           <div className="tracked-actions">
-            <button className="button primary" onClick={openCreate}><Plus size={15} /> Nueva regla</button>
+            <Button variant="primary" onClick={openCreate}><Plus size={15} /> Nueva regla</Button>
           </div>
         ) : null}
       </div>

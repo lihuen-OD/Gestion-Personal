@@ -1,6 +1,8 @@
 import { Eye, Power } from "lucide-react";
 import { Link } from "react-router-dom";
 import { TableShell } from "../ui/TableShell";
+import { Badge } from "../ui/Badge";
+import { EmptyState } from "../ui/EmptyState";
 import type { ShiftTemplate } from "../../services/api/workforceApiService";
 
 export type ShiftAssignmentCounts = { enabled: number; disabled: number };
@@ -16,7 +18,7 @@ export function ShiftTable({
   canEdit: boolean;
   onToggleStatus: (item: ShiftTemplate) => void;
 }) {
-  if (!items.length) return <div className="empty">Todavía no hay turnos configurados.</div>;
+  if (!items.length) return <EmptyState text="Todavía no hay turnos configurados." />;
 
   return (
     <TableShell minWidth={1180}>
@@ -46,10 +48,10 @@ export function ShiftTable({
                 <td>{item.crossesMidnight ? "Sí" : "No"}</td>
                 <td>{count.enabled}</td>
                 <td>{count.disabled}</td>
-                <td><span className={`badge ${item.status === "ACTIVO" ? "success" : "neutral"}`}>{item.status === "ACTIVO" ? "Activo" : "Inactivo"}</span></td>
+                <td><Badge tone={item.status === "ACTIVO" ? "success" : "neutral"}>{item.status === "ACTIVO" ? "Activo" : "Inactivo"}</Badge></td>
                 <td>
                   <div className="table-actions">
-                    <Link className="table-link table-icon-action" title="Ver detalle" aria-label={`Ver detalle de ${item.name}`} to={`/configuracion/turnos/${item.id}`}>
+                    <Link className="table-icon-action" title="Ver detalle" aria-label={`Ver detalle de ${item.name}`} to={`/configuracion/turnos/${item.id}`}>
                       <Eye size={14} /><span>Ver detalle</span>
                     </Link>
                     {canEdit ? (

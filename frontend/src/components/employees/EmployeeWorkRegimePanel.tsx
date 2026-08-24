@@ -14,6 +14,8 @@ import { workRegimeApiService } from "../../services/api/workRegimeApiService";
 import type { EmployeeWorkRegimeAssignment, WorkRegime } from "../../types/workRegime.types";
 import type { Employee, User } from "../../types";
 import { useAsyncAction } from "../../utils/useAsyncAction";
+import { formatCalendarDate } from "../../utils/date";
+import { requiredLaborChangeError } from "../../utils/laborFieldValidation";
 import { openShiftOverflowActionLabel, workRegimeKindLabel } from "../work-regimes/workRegimeLabels";
 
 type EmployeeWorkRegimePanelProps = {
@@ -38,7 +40,7 @@ function dateKey(value: string) {
 }
 
 function formatDate(value: string) {
-  return dateKey(value).split("-").reverse().join("/");
+  return formatCalendarDate(dateKey(value));
 }
 
 export function assignmentRowStatus(assignment: EmployeeWorkRegimeAssignment, currentId: string | null, today: string): "vigente" | "futuro" | "histórico" {
@@ -124,7 +126,8 @@ export function EmployeeWorkRegimePanel({ employee, canEdit }: EmployeeWorkRegim
 
   const { isRunning: isSaving, run: save } = useAsyncAction(async () => {
     if (!draft.workRegimeId) return setError("Seleccioná un régimen laboral.");
-    if (!draft.effectiveFrom) return setError("La fecha desde es obligatoria.");
+    const fromError = requiredLaborChangeError(draft.effectiveFrom);
+    if (fromError) return setError(fromError);
     if (draft.effectiveTo && draft.effectiveTo < draft.effectiveFrom) return setError("La fecha hasta no puede ser anterior a la fecha desde.");
 
     const payload = {
@@ -207,7 +210,7 @@ export function EmployeeWorkRegimePanel({ employee, canEdit }: EmployeeWorkRegim
           </div>
           {canEdit ? (
             <div className="tracked-actions">
-              <button className="button primary" onClick={openAssign}><Plus size={15} /> Asignar régimen</button>
+              <Button variant="primary" onClick={openAssign}><Plus size={15} /> Asignar régimen</Button>
             </div>
           ) : null}
         </div>

@@ -3,7 +3,9 @@ import { useState } from "react";
 import { noveltyApiService } from "../../services/api/noveltyApiService";
 import type { Employee, Novelty, User } from "../../types";
 import { displayLegajo, fullName } from "../../utils/employee";
-import { statusClass } from "../../utils/status";
+import { statusTone } from "../../utils/status";
+import { Badge } from "../ui/Badge";
+import { Button } from "../ui/Button";
 import { Modal } from "../ui/Modal";
 import { OverflowCell } from "../ui/OverflowCell";
 import { TableShell } from "../ui/TableShell";
@@ -110,7 +112,7 @@ export function NoveltyTable({
                   <b>{novelty.type}</b>
                 </td>
                 <td>
-                  <span className="badge neutral">{novelty.origin || "INTERNA"}</span>
+                  <Badge tone="neutral">{novelty.origin || "INTERNA"}</Badge>
                 </td>
                 <td>
                   {novelty.from}
@@ -142,13 +144,13 @@ export function NoveltyTable({
                   <OverflowCell value={novelty.documentationFileName || "-"} />
                 </td>
                 <td>
-                  <span className={statusClass(novelty.status)}>{novelty.status}</span>
+                  <Badge tone={statusTone(novelty.status)}>{novelty.status}</Badge>
                 </td>
                 <td>
                   {canApprove ? (
                     <div className="table-actions">
                       <button
-                        className="table-link table-icon-action"
+                        className="table-icon-action"
                         title="Aprobar"
                         aria-label="Aprobar"
                         onClick={() => approve(novelty.id)}
@@ -157,7 +159,7 @@ export function NoveltyTable({
                         <span>Aprobar</span>
                       </button>
                       <button
-                        className="table-link table-icon-action danger-link"
+                        className="table-icon-action danger-link"
                         title="Rechazar"
                         aria-label="Rechazar"
                         onClick={() => {
@@ -171,7 +173,7 @@ export function NoveltyTable({
                     </div>
                   ) : null}
                   {currentUser.role === "Nivel 1 - RRHH" ? (
-                    <button className="table-link table-icon-action danger-link" title="Eliminar" aria-label="Eliminar novedad" onClick={() => void remove(novelty)}>
+                    <button className="table-icon-action danger-link" title="Eliminar" aria-label="Eliminar novedad" onClick={() => void remove(novelty)}>
                       <Trash2 size={14} /><span>Eliminar</span>
                     </button>
                   ) : null}
@@ -201,12 +203,12 @@ export function NoveltyTable({
             </label>
             {!rejectReason.trim() ? <p className="error">El motivo es obligatorio.</p> : null}
             <div className="form-actions">
-              <button className="button subtle" onClick={() => setRejecting(null)}>
+              <Button variant="subtle" onClick={() => setRejecting(null)}>
                 Cancelar
-              </button>
-              <button className="button danger-button" disabled={!rejectReason.trim()} onClick={reject}>
+              </Button>
+              <Button variant="danger" disabled={!rejectReason.trim()} onClick={reject}>
                 Rechazar novedad
-              </button>
+              </Button>
             </div>
           </div>
         </Modal>

@@ -4,6 +4,8 @@ import { employeeHistoryApiService } from "../../services/api/employeeHistoryApi
 import { getUserErrorMessage } from "../../services/api/apiClient";
 import type { Employee, EmployeeBlockHistoryRecord, EmployeeFieldHistoryRecord, FieldHistorySection, User } from "../../types";
 import { useAsyncAction } from "../../utils/useAsyncAction";
+import { requiredLaborChangeError } from "../../utils/laborFieldValidation";
+import { Button } from "../ui/Button";
 import { EmptyState } from "../ui/EmptyState";
 import { ErrorState } from "../ui/ErrorState";
 import { Field, Select } from "../ui/FormControls";
@@ -82,8 +84,8 @@ export function FieldWithHistory({
     "Sin cargar";
 
   const { isRunning: isSaving, run: save } = useAsyncAction(async () => {
-    if (!from) return setError("La fecha desde es obligatoria.");
-    if (!reason.trim()) return setError("El motivo del cambio es obligatorio.");
+    const validationError = requiredLaborChangeError(from, reason);
+    if (validationError) return setError(validationError);
     const updated = setValueByPath(employee, field, next);
     const record = {
       employeeId: employee.id,
@@ -122,13 +124,13 @@ export function FieldWithHistory({
         <span>Desde: {currentFrom}</span>
       </div>
       <div className="tracked-actions">
-        <button type="button" className="button subtle" onClick={() => setOpen(!open)}>
+        <Button type="button" variant="subtle" onClick={() => setOpen(!open)}>
           Historial
-        </button>
+        </Button>
         {canEdit ? (
-          <button
+          <Button
             type="button"
-            className="button subtle"
+            variant="subtle"
             onClick={() => {
               setEditing(true);
               setOpen(true);
@@ -136,7 +138,7 @@ export function FieldWithHistory({
             }}
           >
             Modificar
-          </button>
+          </Button>
         ) : null}
       </div>
       {open ? (
@@ -145,7 +147,7 @@ export function FieldWithHistory({
           {historyStatus === "loading" ? (
             <LoadingState text="Cargando historial..." />
           ) : historyStatus === "error" ? (
-            <ErrorState message="No pudimos cargar el historial." onRetry={() => setHistoryRetry((value) => value + 1)} />
+            <ErrorState message="No pudimos cargar el historial." onRetry={() => setHistoryRetry((value) => value + 1)} size="compact" />
           ) : history.length ? (
             <div className="timeline">
               {history.map((item) => (
@@ -163,7 +165,7 @@ export function FieldWithHistory({
               ))}
             </div>
           ) : (
-            <EmptyState text="No hay historial registrado para este campo." />
+            <EmptyState text="No hay historial registrado para este campo." size="compact" />
           )}
           {editing ? (
             <div className="tracked-edit">
@@ -176,12 +178,12 @@ export function FieldWithHistory({
               <Field label="Motivo del cambio" value={reason} set={setReason} />
               {error ? <p className="error">{error}</p> : null}
               <div className="form-actions">
-                <button type="button" className="button subtle" onClick={() => setEditing(false)}>
+                <Button type="button" variant="subtle" onClick={() => setEditing(false)}>
                   Cancelar
-                </button>
-                <button type="button" className="button primary" onClick={save} disabled={isSaving}>
+                </Button>
+                <Button type="button" variant="primary" onClick={save} disabled={isSaving}>
                   {isSaving ? "Guardando..." : "Guardar modificación"}
-                </button>
+                </Button>
               </div>
             </div>
           ) : null}
@@ -232,7 +234,7 @@ export function BlockHistoryTimeline({
   return status === "loading" ? (
     <LoadingState text="Cargando historial..." />
   ) : status === "error" ? (
-    <ErrorState message="No pudimos cargar el historial." onRetry={() => setRetry((value) => value + 1)} />
+    <ErrorState message="No pudimos cargar el historial." onRetry={() => setRetry((value) => value + 1)} size="compact" />
   ) : rows.length ? (
     <div className="timeline">
       {rows.map((row) => (
@@ -250,6 +252,6 @@ export function BlockHistoryTimeline({
       ))}
     </div>
   ) : (
-    <EmptyState text={empty} />
+    <EmptyState text={empty} size="compact" />
   );
 }

@@ -1,5 +1,8 @@
 import { useEffect, useState } from "react";
+import { Navigate } from "react-router-dom";
 import { KeyRound, Pencil, Plus, Power } from "lucide-react";
+import { useAuth } from "../context/AuthContext";
+import { roleLevel } from "../utils/roles";
 import type { Employee, Role, User } from "../types";
 import { orgStructureApiService } from "../services/api/orgStructureApiService";
 import { userApiService } from "../services/api/userApiService";
@@ -18,12 +21,9 @@ import { displayLegajo } from "../utils/employee";
 import { useAsyncAction } from "../utils/useAsyncAction";
 import { confirmAction } from "../services/appDialog";
 import { getUserErrorMessage } from "../services/api/apiClient";
+import { uniqueOptions } from "../components/employees/options/sharedOptions";
 
 type UserDraft = Omit<User, "id">;
-
-function uniqueOptions(values: string[]) {
-  return Array.from(new Set(values.filter(Boolean)));
-}
 
 function userRoleOptions(current = "") {
   return uniqueOptions([current, ...roleOptions]);
@@ -44,6 +44,7 @@ function emptyUserDraft(): UserDraft {
 }
 
 export function UsersPage() {
+  const { user: currentUser } = useAuth();
   const [users, setUsers] = useState<User[]>([]);
   const [companyOptions, setCompanyOptions] = useState<string[]>([]);
   const [sectorOptions, setSectorOptions] = useState<string[]>([]);
@@ -163,6 +164,8 @@ export function UsersPage() {
     }
   };
 
+  if (roleLevel(currentUser!.role) !== 1) return <Navigate to="/" />;
+
   return <>
     <PageHeader
       eyebrow="SEGURIDAD Y ACCESOS"
@@ -202,9 +205,9 @@ export function UsersPage() {
                 <td><OverflowCell value={user.employeeName || "-"} /></td>
                 <td>
                   <div className="table-actions">
-                    <button className="icon-button" title="Editar usuario" onClick={() => openEdit(user)}><Pencil size={15} /></button>
-                    <button className="icon-button" title="Resetear contrasena" onClick={() => openEdit(user, true)}><KeyRound size={15} /></button>
-                    <button className="icon-button" title={user.status === "Activo" ? "Inactivar usuario" : "Activar usuario"} onClick={() => toggleStatus(user)}><Power size={15} /></button>
+                    <button className="table-icon-action" title="Editar usuario" onClick={() => openEdit(user)}><Pencil size={15} /></button>
+                    <button className="table-icon-action" title="Resetear contrasena" onClick={() => openEdit(user, true)}><KeyRound size={15} /></button>
+                    <button className="table-icon-action" title={user.status === "Activo" ? "Inactivar usuario" : "Activar usuario"} onClick={() => toggleStatus(user)}><Power size={15} /></button>
                   </div>
                 </td>
               </tr>

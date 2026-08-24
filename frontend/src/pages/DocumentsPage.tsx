@@ -1,8 +1,11 @@
 import { useEffect, useState } from "react";
-import { Download, Plus, Search } from "lucide-react";
+import { Navigate } from "react-router-dom";
+import { Download, Plus } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
+import { roleLevel } from "../utils/roles";
 import { DocumentUploadModal } from "../components/documents/DocumentUploadModal";
 import { OverflowCell } from "../components/ui/OverflowCell";
+import { FilterPanel } from "../components/ui/FilterPanel";
 import { PageHeader } from "../components/ui/PageHeader";
 import { Section } from "../components/ui/Section";
 import { DataTable } from "../components/ui/DataTable";
@@ -65,6 +68,8 @@ export function DocumentsPage() {
     }
   };
 
+  if (roleLevel(user!.role) !== 1) return <Navigate to="/" />;
+
   return (
     <>
       <PageHeader
@@ -81,19 +86,16 @@ export function DocumentsPage() {
       {error ? <div className="form-error">{error}</div> : null}
 
       <Section title="Documentos del personal" subtitle={`${meta.total} documentos registrados`}>
-        <div className="filters">
-          <label className="search-field">
-            <Search size={17} />
-            <input
-              placeholder="Buscar por legajo, CUIL, DNI, empleado, categoria o archivo"
-              value={search}
-              onChange={(event) => {
-                setSearch(event.target.value);
-                setPage(1);
-              }}
-            />
-          </label>
-        </div>
+        <FilterPanel
+          search={{
+            placeholder: "Buscar por legajo, CUIL, DNI, empleado, categoria o archivo",
+            value: search,
+            onChange: (value) => {
+              setSearch(value);
+              setPage(1);
+            },
+          }}
+        />
         <DataTable
           status={listStatus === "loading" ? "loading" : listStatus === "error" ? "error" : docs.length === 0 ? "empty" : "ready"}
           minWidth={1200}
@@ -141,7 +143,7 @@ export function DocumentsPage() {
                     </td>
                     <td>
                       <button
-                        className="table-link table-icon-action"
+                        className="table-icon-action"
                         type="button"
                         title="Abrir archivo"
                         aria-label="Abrir archivo"

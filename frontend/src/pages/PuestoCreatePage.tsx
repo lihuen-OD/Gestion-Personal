@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { Link, Navigate, useNavigate } from "react-router-dom";
+import { Navigate, useNavigate } from "react-router-dom";
 import { PuestoCompetenciesTab } from "../components/puestos/PuestoCompetenciesTab";
 import { PuestoEvaluationCriteriaTab } from "../components/puestos/PuestoEvaluationCriteriaTab";
 import { emptyPosition } from "../components/puestos/PuestoFields";
@@ -64,7 +64,7 @@ export function PuestoCreatePage() {
     <Section title="9. Criterios de evaluacion"><PuestoEvaluationCriteriaTab position={position} setPosition={setPosition} /></Section>
     {error && <p className="error create-error">{error}</p>}
     <div className="form-actions create-actions">
-      <Link to="/puestos" className="button subtle">Cancelar</Link>
+      <Button to="/puestos" variant="subtle">Cancelar</Button>
       <Button variant="primary" disabled={isSaving}>{isSaving ? "Guardando..." : "Guardar puesto"}</Button>
     </div>
   </form>;

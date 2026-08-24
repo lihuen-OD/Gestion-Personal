@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { MapContainer, Marker, TileLayer, useMap, useMapEvents } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 import type { EmployeeLocationMap } from "../types";
+import { Button } from "./ui/Button";
 
 interface LocationMapPickerProps {
   provinceName: string;
@@ -94,7 +95,7 @@ export function LocationMapPicker(props: LocationMapPickerProps) {
       <label>URL de Google Maps
         <input value={mapsUrl} placeholder="Pegá el link de Google Maps para tomar sus coordenadas" onChange={(event) => { setMapsUrl(event.target.value); setMapsUrlError(""); }} />
       </label>
-      <button type="button" className="button subtle" disabled={!mapsUrl.trim()} onClick={applyGoogleMapsUrl}>Usar coordenadas del link</button>
+      <Button type="button" variant="subtle" disabled={!mapsUrl.trim()} onClick={applyGoogleMapsUrl}>Usar coordenadas del link</Button>
       {mapsUrlError && <small>{mapsUrlError}</small>}
     </div>}
     <MapContainer center={[mapCenter.lat, mapCenter.lng]} zoom={zoom} scrollWheelZoom className="leaflet-map">

@@ -9,7 +9,6 @@ import {
   Eye,
   FileBarChart,
   RefreshCcw,
-  Search,
   Users,
   X,
 } from "lucide-react";
@@ -24,21 +23,21 @@ import { currentMonthPeriod, formatPeriodDay, getMonthDays, getWeekdayAbbr } fro
 import { formatHours } from "../utils/hours";
 import { statusTone } from "../utils/status";
 import { useDebouncedValue } from "../utils/useDebouncedValue";
+import { uniqueOptions } from "../components/employees/options/sharedOptions";
 import { OverflowCell } from "../components/ui/OverflowCell";
+import { FilterPanel } from "../components/ui/FilterPanel";
 import { TableShell } from "../components/ui/TableShell";
 import { Modal } from "../components/ui/Modal";
 import { PageHeader } from "../components/ui/PageHeader";
 import { Section } from "../components/ui/Section";
 import { StatCard } from "../components/ui/StatCard";
 import { EmptyState } from "../components/ui/EmptyState";
+import { LoadingState } from "../components/ui/LoadingState";
+import { ErrorState } from "../components/ui/ErrorState";
 import { Button } from "../components/ui/Button";
 import { Badge } from "../components/ui/Badge";
 import { Pagination } from "../components/ui/Pagination";
 import { Tabs } from "../components/ui/Tabs";
-
-function uniqueOptions(values: string[]) {
-  return Array.from(new Set(values.filter(Boolean))).sort((a, b) => a.localeCompare(b, "es"));
-}
 
 type DayBreakdown = { day: number; normal: number; special: number; total: number; novelty: { label: string } | null };
 
@@ -421,7 +420,7 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
                           {canReview ? (
                             <div className="table-actions">
                               <button
-                                className="table-link table-icon-action"
+                                className="table-icon-action"
                                 title="Aprobar novedad"
                                 aria-label="Aprobar novedad"
                                 onClick={() => approveNovelty(item)}
@@ -430,7 +429,7 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
                                 <span>Aprobar</span>
                               </button>
                               <button
-                                className="table-link table-icon-action danger-link"
+                                className="table-icon-action danger-link"
                                 title="Rechazar novedad"
                                 aria-label="Rechazar novedad"
                                 onClick={() => {
@@ -473,24 +472,22 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
               />
             }
           >
-          <div className="filters">
+          <FilterPanel
+            search={{
+              placeholder: "Buscar por legajo, DNI, CUIL, apellido o nombre",
+              value: search,
+              onChange: (value) => {
+                setSearch(value);
+                setReviewPage(1);
+              },
+            }}
+          >
             <label>
               Período
               <input
                 type="month"
                 value={period}
                 onChange={(event) => setPeriodValue(event.target.value)}
-              />
-            </label>
-            <label className="search-field">
-              <Search size={17} />
-              <input
-                placeholder="Buscar por legajo, DNI, CUIL, apellido o nombre"
-                value={search}
-                onChange={(event) => {
-                  setSearch(event.target.value);
-                  setReviewPage(1);
-                }}
               />
             </label>
             <select
@@ -507,7 +504,7 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
                 </option>
               ))}
             </select>
-          </div>
+          </FilterPanel>
 
           {groupByPerson ? (
             reviewByPerson.length ? (
@@ -558,7 +555,7 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
                         </td>
                         <td>
                           <Link
-                            className="table-link table-icon-action"
+                            className="table-icon-action"
                             title="Ver detalle"
                             aria-label="Ver detalle"
                             to={`/horas/${employee.id}?period=${period}`}
@@ -616,7 +613,7 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
                         {canReview ? (
                           <div className="table-actions">
                             <button
-                              className="table-link table-icon-action"
+                              className="table-icon-action"
                               title="Aprobar"
                               aria-label="Aprobar"
                               onClick={() => approve(entry)}
@@ -625,7 +622,7 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
                               <span>Aprobar</span>
                             </button>
                             <button
-                              className="table-link table-icon-action danger-link"
+                              className="table-icon-action danger-link"
                               title="Rechazar"
                               aria-label="Rechazar"
                               onClick={() => openReview(entry, "reject")}
@@ -634,7 +631,7 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
                               <span>Rechazar</span>
                             </button>
                             <button
-                              className="table-link table-icon-action"
+                              className="table-icon-action"
                               title="Devolver"
                               aria-label="Devolver"
                               onClick={() => openReview(entry, "return")}
@@ -665,24 +662,22 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
         title="Personas habilitadas para carga"
         subtitle="La asignación del responsable y del encargado directo determina quién aparece en este listado."
       >
-        <div className="filters">
+        <FilterPanel
+          search={{
+            placeholder: "Buscar persona por legajo, DNI, CUIL, apellido o nombre",
+            value: search,
+            onChange: (value) => {
+              setSearch(value);
+              setPage(1);
+            },
+          }}
+        >
           <label>
             Período
             <input
               type="month"
               value={period}
               onChange={(event) => setPeriodValue(event.target.value)}
-            />
-          </label>
-          <label className="search-field">
-            <Search size={17} />
-            <input
-              placeholder="Buscar persona por legajo, DNI, CUIL, apellido o nombre"
-              value={search}
-              onChange={(event) => {
-                setSearch(event.target.value);
-                setPage(1);
-              }}
             />
           </label>
           <select
@@ -699,8 +694,15 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
               </option>
             ))}
           </select>
-        </div>
+        </FilterPanel>
 
+        {loading ? (
+          <LoadingState variant="table" rows={5} columns={9} />
+        ) : loadError ? (
+          <ErrorState message={loadError} onRetry={() => setRefresh((value) => value + 1)} />
+        ) : !employees.length ? (
+          <EmptyState text="No hay personas habilitadas para carga con los filtros aplicados." />
+        ) : (
         <TableShell minWidth={1120 + monthDays.length * 64}>
           <table className="people-hours-table">
             <thead>
@@ -756,7 +758,7 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
                     <td>{formatHours(periodSummary.total)} h</td>
                     <td>
                       <Link
-                        className="table-link table-icon-action"
+                        className="table-icon-action"
                         title="Cargar / Ver"
                         aria-label="Cargar / Ver"
                         to={`/horas/${employee.id}?period=${period}`}
@@ -780,6 +782,7 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
             </tbody>
           </table>
         </TableShell>
+        )}
         <Pagination page={periodRowsMeta.page} pageSize={periodRowsMeta.pageSize} total={periodRowsMeta.total} hasMore={periodRowsMeta.hasMore} onPageChange={setPage} itemLabel="legajos" />
       </Section>
       ) : null}

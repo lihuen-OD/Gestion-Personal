@@ -1,11 +1,12 @@
 import { Plus } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { Link, Navigate } from "react-router-dom";
+import { Navigate } from "react-router-dom";
 import { NoveltyTypeFilters } from "../components/novelty-types/NoveltyTypeFilters";
 import { NoveltyTypeSummaryCards } from "../components/novelty-types/NoveltyTypeSummaryCards";
 import { NoveltyTypeTable } from "../components/novelty-types/NoveltyTypeTable";
 import { PageHeader } from "../components/ui/PageHeader";
 import { Section } from "../components/ui/Section";
+import { Button } from "../components/ui/Button";
 import { ErrorState } from "../components/ui/ErrorState";
 import { LoadingState } from "../components/ui/LoadingState";
 import { useAuth } from "../context/AuthContext";
@@ -86,7 +87,7 @@ export function NoveltyTypesPage() {
         eyebrow="CONFIGURACION"
         title="Tipos de novedades"
         description="Catalogo maestro interno con reglas operativas y equivalencias Finnegans."
-        action={canEdit ? <Link to="/configuracion/tipos-novedades/nuevo" className="button primary"><Plus size={17} /> Crear tipo</Link> : undefined}
+        action={canEdit ? <Button to="/configuracion/tipos-novedades/nuevo" variant="primary"><Plus size={17} /> Crear tipo</Button> : undefined}
       />
       {!isLoadingApi && !apiWarning ? <NoveltyTypeSummaryCards items={all} /> : null}
       <Section title="Listado de tipos" subtitle={isLoadingApi ? "Cargando catálogo..." : `${items.length} resultados segun filtros aplicados.`}>

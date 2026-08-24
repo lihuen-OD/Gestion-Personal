@@ -1,8 +1,12 @@
 import { Building2, CalendarClock, ChevronRight, ClipboardList, Clock3, FileText, FolderOpen, ShieldCheck, Workflow } from "lucide-react";
-import { Link } from "react-router-dom";
+import { Link, Navigate } from "react-router-dom";
+import { useAuth } from "../context/AuthContext";
+import { roleLevel } from "../utils/roles";
 import { PageHeader } from "../components/ui/PageHeader";
 
 export function SettingsPage() {
+  const { user } = useAuth();
+  if (roleLevel(user!.role) !== 1) return <Navigate to="/" />;
   const cards = [
     { name: "Turnos", icon: <CalendarClock />, path: "/configuracion/turnos" },
     { name: "Horas especiales", icon: <Clock3 />, path: "/configuracion/turnos-horas-especiales" },

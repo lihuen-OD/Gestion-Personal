@@ -1,8 +1,9 @@
-import { Plus, Search } from "lucide-react";
+import { Plus } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
 import { PageHeader } from "../components/ui/PageHeader";
+import { FilterPanel } from "../components/ui/FilterPanel";
 import { Section } from "../components/ui/Section";
+import { Button } from "../components/ui/Button";
 import { LoadingState } from "../components/ui/LoadingState";
 import { ErrorState } from "../components/ui/ErrorState";
 import { ShiftTable, type ShiftAssignmentCounts } from "../components/shifts/ShiftTable";
@@ -75,14 +76,12 @@ export function ShiftsPage() {
         eyebrow="CONFIGURACIÓN"
         title="Turnos"
         description="Horarios de referencia por turno, tolerancias, reglas de control y empleados asociados."
-        action={canEdit ? <Link to="/configuracion/turnos/nuevo" className="button primary"><Plus size={17} /> Crear turno</Link> : undefined}
+        action={canEdit ? <Button to="/configuracion/turnos/nuevo" variant="primary"><Plus size={17} /> Crear turno</Button> : undefined}
       />
       <Section title="Listado de turnos" subtitle={loadStatus === "loading" ? "Cargando turnos..." : `${items.length} turno(s) según filtros aplicados.`}>
-        <div className="position-filters catalog-filters">
-          <div className="position-filter-title"><Search size={16} /><b>Filtros</b></div>
-          <label>Buscar<input value={search} placeholder="Código, nombre o categoría" onChange={(e) => setSearch(e.target.value)} /></label>
+        <FilterPanel title="Filtros" search={{ value: search, onChange: setSearch, placeholder: "Código, nombre o categoría" }}>
           <label>Estado<select value={status} onChange={(e) => setStatus(e.target.value)}><option value="">Todos</option><option value="ACTIVO">Activo</option><option value="INACTIVO">Inactivo</option></select></label>
-        </div>
+        </FilterPanel>
         {loadStatus === "loading" ? <LoadingState text="Cargando turnos..." /> : loadStatus === "error" ? <ErrorState message="No pudimos cargar los turnos." onRetry={() => setRefresh((value) => value + 1)} /> : <ShiftTable items={items} counts={counts} canEdit={canEdit} onToggleStatus={toggle} />}
       </Section>
     </>

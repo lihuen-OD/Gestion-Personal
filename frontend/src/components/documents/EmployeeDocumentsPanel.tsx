@@ -2,7 +2,9 @@ import { useEffect, useState } from "react";
 import { Download, Plus } from "lucide-react";
 import { documentApiService } from "../../services/api/documentApiService";
 import type { DocumentMock, Employee, User } from "../../types";
-import { statusClass } from "../../utils/status";
+import { statusTone } from "../../utils/status";
+import { Badge } from "../ui/Badge";
+import { Button } from "../ui/Button";
 import { EmptyState } from "../ui/EmptyState";
 import { ErrorState } from "../ui/ErrorState";
 import { LoadingState } from "../ui/LoadingState";
@@ -63,9 +65,9 @@ export function EmployeeDocumentsPanel({
   return (
     <>
       <div className="form-actions">
-        <button className="button primary" onClick={() => setOpen(true)}>
+        <Button variant="primary" onClick={() => setOpen(true)}>
           <Plus size={15} /> Agregar documento
-        </button>
+        </Button>
       </div>
 
       {loadStatus === "loading" ? (
@@ -98,14 +100,14 @@ export function EmployeeDocumentsPanel({
                   <td>{doc.uploadedAt}</td>
                   <td>{doc.expiresAt || "-"}</td>
                   <td>
-                    <span className={statusClass(doc.status)}>{doc.status}</span>
+                    <Badge tone={statusTone(doc.status)}>{doc.status}</Badge>
                   </td>
                   <td>
                     <OverflowCell value={doc.notes || "-"} />
                   </td>
                   <td>
                     <button
-                      className="table-link table-icon-action"
+                      className="table-icon-action"
                       type="button"
                       title="Abrir archivo"
                       aria-label="Abrir archivo"

@@ -1,6 +1,7 @@
 import { calculateLaborStatus, resolveCurrentLaborPeriod } from "../../services/employeeStatusService";
 import type { Employee } from "../../types";
-import { statusClass } from "../../utils/status";
+import { statusTone } from "../../utils/status";
+import { Badge } from "../ui/Badge";
 
 type LaborStatusCardProps = {
   employee: Employee;
@@ -20,7 +21,7 @@ export function LaborStatusCard({ employee }: LaborStatusCardProps) {
       <div>
         <p className="eyebrow">ESTADO LABORAL</p>
         <h3>
-          <span className={statusClass(status.status)}>{status.status}</span>
+          <Badge tone={statusTone(status.status)}>{status.status}</Badge>
         </h3>
         <p>{status.message}</p>
         {!latestStart ? (

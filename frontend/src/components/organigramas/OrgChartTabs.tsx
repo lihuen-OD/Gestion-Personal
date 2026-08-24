@@ -1,8 +1,12 @@
+import { Tabs } from "../ui/Tabs";
+
 export type OrgChartTab = "FUNCTIONAL" | "CATEGORIES";
 
+const TAB_ITEMS = [
+  { key: "FUNCTIONAL", label: "Organigrama funcional" },
+  { key: "CATEGORIES", label: "Organigrama por categorías" },
+];
+
 export function OrgChartTabs({ active, onChange }: { active: OrgChartTab; onChange: (tab: OrgChartTab) => void }) {
-  return <div className="tabs org-tabs">
-    <button className={active === "FUNCTIONAL" ? "active" : ""} onClick={() => onChange("FUNCTIONAL")}>Organigrama funcional</button>
-    <button className={active === "CATEGORIES" ? "active" : ""} onClick={() => onChange("CATEGORIES")}>Organigrama por categorías</button>
-  </div>;
+  return <Tabs tabs={TAB_ITEMS} active={active} onChange={(key) => onChange(key as OrgChartTab)} className="org-tabs" />;
 }

@@ -6,12 +6,25 @@ import type { DocumentMock, Employee, User } from "../../types";
 import { defaultDocumentExpiration, documentStatusByExpiration } from "../../utils/documentStatus";
 import { displayLegajo, fullName } from "../../utils/employee";
 import { useAsyncAction } from "../../utils/useAsyncAction";
+import { Button } from "../ui/Button";
 import { Field, Select } from "../ui/FormControls";
 import { Modal } from "../ui/Modal";
 import type { DocumentCategory } from "../../types/documentCategory.types";
 import { EmployeeRemoteSelector } from "../employees/EmployeeRemoteSelector";
 import { ErrorState } from "../ui/ErrorState";
 import { LoadingState } from "../ui/LoadingState";
+
+const ALLOWED_DOCUMENT_MIME_TYPES = new Set([
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "application/pdf",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.ms-excel",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+]);
+const MAX_DOCUMENT_SIZE_MB = 10;
 
 function fileToBase64(file: File) {
   return new Promise<string>((resolve, reject) => {
@@ -152,8 +165,22 @@ export function DocumentUploadModal({
                 Adjuntar documento
                 <input
                   type="file"
+                  accept=".jpg,.jpeg,.png,.webp,.pdf,.doc,.docx,.xls,.xlsx"
                   onChange={(event) => {
-                    setFile(event.target.files?.[0] || null);
+                    const picked = event.target.files?.[0] || null;
+                    if (picked && !ALLOWED_DOCUMENT_MIME_TYPES.has(picked.type)) {
+                      setFile(null);
+                      event.target.value = "";
+                      setError("Formato de archivo no permitido. Usá imagen, PDF, Word o Excel.");
+                      return;
+                    }
+                    if (picked && picked.size > MAX_DOCUMENT_SIZE_MB * 1024 * 1024) {
+                      setFile(null);
+                      event.target.value = "";
+                      setError(`El archivo supera el máximo permitido de ${MAX_DOCUMENT_SIZE_MB} MB.`);
+                      return;
+                    }
+                    setFile(picked);
                     setError("");
                   }}
                 />
@@ -186,12 +213,12 @@ export function DocumentUploadModal({
             {error ? <p className="error">{error}</p> : null}
 
             <div className="form-actions">
-              <button className="button subtle" onClick={close}>
+              <Button variant="subtle" onClick={close}>
                 Cancelar
-              </button>
-              <button className="button primary" onClick={save} disabled={isSaving}>
+              </Button>
+              <Button variant="primary" onClick={save} disabled={isSaving}>
                 {isSaving ? "Guardando..." : "Guardar documento"}
-              </button>
+              </Button>
             </div>
           </>
         ) : (

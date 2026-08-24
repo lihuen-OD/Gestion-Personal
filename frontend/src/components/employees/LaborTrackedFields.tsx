@@ -7,6 +7,8 @@ import { getUserErrorMessage } from "../../services/api/apiClient";
 import type { Employee, EmployeeFieldHistoryRecord, FieldHistorySection, User } from "../../types";
 import type { Position } from "../../types/position.types";
 import { useAsyncAction } from "../../utils/useAsyncAction";
+import { requiredLaborChangeError } from "../../utils/laborFieldValidation";
+import { Button } from "../ui/Button";
 import { EmptyState } from "../ui/EmptyState";
 import { ErrorState } from "../ui/ErrorState";
 import { Field } from "../ui/FormControls";
@@ -125,8 +127,8 @@ export function MultiCompanyField({ employee, canEdit, user, onSaved }: TrackedF
 
   const { isRunning: isSaving, run: save } = useAsyncAction(async () => {
     if (!selected.length) return setError("Seleccioná al menos una empresa.");
-    if (!from) return setError("La fecha desde es obligatoria.");
-    if (!reason.trim()) return setError("El motivo del cambio es obligatorio.");
+    const validationError = requiredLaborChangeError(from, reason);
+    if (validationError) return setError(validationError);
     const updated = {
       ...employee,
       companies: selected,
@@ -165,13 +167,13 @@ export function MultiCompanyField({ employee, canEdit, user, onSaved }: TrackedF
         <span>Puede pertenecer a una o varias empresas</span>
       </div>
       <div className="tracked-actions">
-        <button type="button" className="button subtle" onClick={() => setOpen(!open)}>
+        <Button type="button" variant="subtle" onClick={() => setOpen(!open)}>
           Historial
-        </button>
+        </Button>
         {canEdit ? (
-          <button
+          <Button
             type="button"
-            className="button subtle"
+            variant="subtle"
             onClick={() => {
               setEditing(true);
               setOpen(true);
@@ -179,7 +181,7 @@ export function MultiCompanyField({ employee, canEdit, user, onSaved }: TrackedF
             }}
           >
             Modificar
-          </button>
+          </Button>
         ) : null}
       </div>
       {open ? (
@@ -188,7 +190,7 @@ export function MultiCompanyField({ employee, canEdit, user, onSaved }: TrackedF
           {historyStatus === "loading" ? (
             <LoadingState text="Cargando historial..." />
           ) : historyStatus === "error" ? (
-            <ErrorState message="No pudimos cargar el historial." onRetry={retryHistory} />
+            <ErrorState message="No pudimos cargar el historial." onRetry={retryHistory} size="compact" />
           ) : history.length ? (
             <div className="timeline">
               {history.map((item) => (
@@ -206,7 +208,7 @@ export function MultiCompanyField({ employee, canEdit, user, onSaved }: TrackedF
               ))}
             </div>
           ) : (
-            <EmptyState text="No hay historial registrado para este campo." />
+            <EmptyState text="No hay historial registrado para este campo." size="compact" />
           )}
           {editing ? (
             <div className="tracked-edit">
@@ -226,12 +228,12 @@ export function MultiCompanyField({ employee, canEdit, user, onSaved }: TrackedF
               <Field label="Motivo del cambio" value={reason} set={setReason} />
               {error ? <p className="error">{error}</p> : null}
               <div className="form-actions">
-                <button type="button" className="button subtle" onClick={() => setEditing(false)}>
+                <Button type="button" variant="subtle" onClick={() => setEditing(false)}>
                   Cancelar
-                </button>
-                <button type="button" className="button primary" onClick={save} disabled={isSaving}>
+                </Button>
+                <Button type="button" variant="primary" onClick={save} disabled={isSaving}>
                   {isSaving ? "Guardando..." : "Guardar modificación"}
-                </button>
+                </Button>
               </div>
             </div>
           ) : null}
@@ -256,8 +258,8 @@ export function EmployeePositionField({ employee, canEdit, user, onSaved }: Trac
   const selected = positions.find((position) => position.id === selectedId);
 
   const { isRunning: isSaving, run: save } = useAsyncAction(async () => {
-    if (!from) return setError("La fecha desde es obligatoria.");
-    if (!reason.trim()) return setError("El motivo del cambio es obligatorio.");
+    const validationError = requiredLaborChangeError(from, reason);
+    if (validationError) return setError(validationError);
     const updated = selected
       ? {
           ...employee,
@@ -300,13 +302,13 @@ export function EmployeePositionField({ employee, canEdit, user, onSaved }: Trac
         <span>{current ? `${current.derivedAreaName || "Sin area"} · ${current.derivedSectorName || "Sin sector"}` : "Texto anterior sin vinculo"}</span>
       </div>
       <div className="tracked-actions">
-        <button type="button" className="button subtle" onClick={() => setOpen(!open)}>
+        <Button type="button" variant="subtle" onClick={() => setOpen(!open)}>
           Historial
-        </button>
+        </Button>
         {canEdit ? (
-          <button
+          <Button
             type="button"
-            className="button subtle"
+            variant="subtle"
             onClick={() => {
               setEditing(true);
               setOpen(true);
@@ -314,7 +316,7 @@ export function EmployeePositionField({ employee, canEdit, user, onSaved }: Trac
             }}
           >
             Modificar
-          </button>
+          </Button>
         ) : null}
       </div>
       {open ? (
@@ -323,7 +325,7 @@ export function EmployeePositionField({ employee, canEdit, user, onSaved }: Trac
           {historyStatus === "loading" ? (
             <LoadingState text="Cargando historial..." />
           ) : historyStatus === "error" ? (
-            <ErrorState message="No pudimos cargar el historial." onRetry={retryHistory} />
+            <ErrorState message="No pudimos cargar el historial." onRetry={retryHistory} size="compact" />
           ) : history.length ? (
             <div className="timeline">
               {history.map((item) => (
@@ -338,7 +340,7 @@ export function EmployeePositionField({ employee, canEdit, user, onSaved }: Trac
               ))}
             </div>
           ) : (
-            <EmptyState text="No hay historial registrado para este campo." />
+            <EmptyState text="No hay historial registrado para este campo." size="compact" />
           )}
           {editing ? (
             <div className="tracked-edit">
@@ -357,12 +359,12 @@ export function EmployeePositionField({ employee, canEdit, user, onSaved }: Trac
               <Field label="Motivo del cambio" value={reason} set={setReason} />
               {error ? <p className="error">{error}</p> : null}
               <div className="form-actions">
-                <button type="button" className="button subtle" onClick={() => setEditing(false)}>
+                <Button type="button" variant="subtle" onClick={() => setEditing(false)}>
                   Cancelar
-                </button>
-                <button type="button" className="button primary" onClick={save} disabled={isSaving}>
+                </Button>
+                <Button type="button" variant="primary" onClick={save} disabled={isSaving}>
                   {isSaving ? "Guardando..." : "Guardar puesto"}
-                </button>
+                </Button>
               </div>
             </div>
           ) : null}

@@ -1,4 +1,6 @@
 import type { OrgChartFilters } from "../../types/organizationChart.types";
+import { Button } from "../ui/Button";
+import { FilterPanel } from "../ui/FilterPanel";
 
 type Options = Record<Exclude<keyof OrgChartFilters, "search" | "status">, string[]>;
 
@@ -17,9 +19,8 @@ const labels: Record<keyof Options, string> = {
 
 export function OrganigramFilters({ filters, options, onChange, onClear }: { filters: OrgChartFilters; options: Options; onChange: (filters: OrgChartFilters) => void; onClear: () => void }) {
   const set = (field: keyof OrgChartFilters, value: string) => onChange({ ...filters, [field]: value });
-  return <section className="org-filters">
-    <label className="search-field"><input placeholder="Buscar por nombre, apellido, legajo, CUIL o DNI" value={filters.search} onChange={(event) => set("search", event.target.value)} /></label>
+  return <FilterPanel search={{ value: filters.search, onChange: (value) => set("search", value), placeholder: "Buscar por nombre, apellido, legajo, CUIL o DNI" }}>
     {(Object.keys(labels) as (keyof Options)[]).map((field) => <label key={field}>{labels[field]}<select value={filters[field]} onChange={(event) => set(field, event.target.value)}><option value="">Todos</option>{options[field].map((option) => <option key={option}>{option}</option>)}</select></label>)}
-    <button className="button subtle" type="button" onClick={onClear}>Limpiar filtros</button>
-  </section>;
+    <Button variant="subtle" type="button" onClick={onClear}>Limpiar filtros</Button>
+  </FilterPanel>;
 }

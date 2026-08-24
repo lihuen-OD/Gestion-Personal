@@ -1,4 +1,4 @@
-import { Eye, Search, UserPlus, X } from "lucide-react";
+import { Eye, UserPlus, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
@@ -12,6 +12,7 @@ import { useAsyncAction } from "../../utils/useAsyncAction";
 import { Badge } from "../ui/Badge";
 import { Button } from "../ui/Button";
 import { EmptyState } from "../ui/EmptyState";
+import { SearchInput } from "../ui/SearchInput";
 import { ErrorState } from "../ui/ErrorState";
 import { LoadingState } from "../ui/LoadingState";
 import { Modal } from "../ui/Modal";
@@ -217,17 +218,14 @@ export function AssociatedEmployeesPanel<T extends { employeeId: string; employe
       {notice ? <div className="toast">{notice}</div> : null}
 
       <div className={`filters${variant === "embedded" ? " filters-embedded" : ""}`}>
-        <label className="search-field">
-          <Search size={17} />
-          <input
-            placeholder="Buscar por legajo, CUIL, apellido o nombre"
-            value={search}
-            onChange={(event) => {
-              setSearch(event.target.value);
-              resetPage();
-            }}
-          />
-        </label>
+        <SearchInput
+          placeholder="Buscar por legajo, CUIL, apellido o nombre"
+          value={search}
+          onChange={(event) => {
+            setSearch(event.target.value);
+            resetPage();
+          }}
+        />
         <select value={sector} onChange={(event) => { setSector(event.target.value); resetPage(); }}>
           <option value="">Todos los sectores</option>
           {structureSectors.map((item) => (
@@ -290,7 +288,7 @@ export function AssociatedEmployeesPanel<T extends { employeeId: string; employe
                     ))}
                     <td>
                       <div className="table-actions">
-                        <Link className="table-link table-icon-action" title="Ir al legajo" aria-label="Ir al legajo" to={`/legajos/${item.employee.id}`}>
+                        <Link className="table-icon-action" title="Ir al legajo" aria-label="Ir al legajo" to={`/legajos/${item.employee.id}`}>
                           <Eye size={14} />
                           <span>Ver legajo</span>
                         </Link>

@@ -1,5 +1,5 @@
-import { Link } from "react-router-dom";
 import type { Employee } from "../../types";
+import { Button } from "../ui/Button";
 
 const displayLegajo = (employee: Employee) => employee.legajoInterno || employee.legajoFinnegans || employee.legajo || "Sin cargar";
 
@@ -14,6 +14,6 @@ export function EmployeeOrgPopover({ employee, onClose }: { employee: Employee; 
     <button className="icon-button" onClick={onClose}>×</button>
     <p className="eyebrow">RESUMEN DEL LEGAJO</p><h3>{employee.lastName}, {employee.firstName}</h3>
     <dl>{rows.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>
-    <div className="form-actions"><Link className="button primary" to={`/legajos/${employee.id}`}>Ver legajo</Link></div>
+    <div className="form-actions"><Button variant="primary" to={`/legajos/${employee.id}`}>Ver legajo</Button></div>
   </article></div>;
 }

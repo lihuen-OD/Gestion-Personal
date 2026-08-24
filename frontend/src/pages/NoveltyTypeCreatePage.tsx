@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { Link, Navigate, useNavigate } from "react-router-dom";
+import { Navigate, useNavigate } from "react-router-dom";
 import { emptyNoveltyType } from "../components/novelty-types/NoveltyTypeFields";
 import { NoveltyTypeFinnegansTab } from "../components/novelty-types/NoveltyTypeFinnegansTab";
 import { NoveltyTypeIdentificationTab } from "../components/novelty-types/NoveltyTypeIdentificationTab";
@@ -54,7 +54,7 @@ export function NoveltyTypeCreatePage() {
       <Section title="3. Vinculacion Finnegans" subtitle="Equivalencias externas para exportacion e integracion futura."><NoveltyTypeFinnegansTab item={item} setItem={setItem} /></Section>
       {error && <p className="error create-error">{error}</p>}
       <div className="form-actions create-actions">
-        <Link to="/configuracion/tipos-novedades" className="button subtle">Cancelar</Link>
+        <Button to="/configuracion/tipos-novedades" variant="subtle">Cancelar</Button>
         <Button variant="primary" disabled={isSaving}>{isSaving ? "Guardando..." : "Guardar tipo"}</Button>
       </div>
     </form>

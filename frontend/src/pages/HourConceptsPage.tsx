@@ -3,11 +3,13 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { HourConceptRulesPanel } from "../components/hour-concepts/HourConceptRulesPanel";
 import { AssociatedEmployeesPanel } from "../components/shared/AssociatedEmployeesPanel";
 import { OverflowCell } from "../components/ui/OverflowCell";
+import { FilterPanel } from "../components/ui/FilterPanel";
 import { DataTable } from "../components/ui/DataTable";
 import { PageHeader } from "../components/ui/PageHeader";
 import { Section } from "../components/ui/Section";
 import { Button } from "../components/ui/Button";
 import { Badge } from "../components/ui/Badge";
+import { StatCard } from "../components/ui/StatCard";
 import { useAuth } from "../context/AuthContext";
 import { confirmAction } from "../services/appDialog";
 import { ApiError, getUserErrorMessage } from "../services/api/apiClient";
@@ -217,20 +219,15 @@ export function HourConceptsPage() {
 
       <div className="stat-grid novelty-type-summary">
         {summary.map(([label, value]) => (
-          <div className="stat-card" key={label}>
-            <div><small>{label}</small><strong>{value}</strong><span>Conceptos horarios</span></div>
-          </div>
+          <StatCard key={label} label={label} value={value} detail="Conceptos horarios" />
         ))}
       </div>
 
       <Section title="Listado de conceptos horarios" subtitle={isLoadingApi ? "Cargando catálogo..." : `${items.length} resultados segun filtros aplicados.`}>
-        <div className="filters catalog-filters">
-          <label className="search-field">
-            <input placeholder="Buscar por codigo, nombre o tipo" value={filters.search} onChange={(event) => setFilters({ ...filters, search: event.target.value })} />
-          </label>
+        <FilterPanel search={{ value: filters.search, onChange: (value) => setFilters({ ...filters, search: value }), placeholder: "Buscar por codigo, nombre o tipo" }}>
           <label>Tipo<select value={filters.kind} onChange={(event) => setFilters({ ...filters, kind: event.target.value })}><option value="">Todos</option>{options.kinds.map((kind) => <option key={kind}>{kind}</option>)}</select></label>
           <label>Estado<select value={filters.status} onChange={(event) => setFilters({ ...filters, status: event.target.value })}><option value="">Todos</option>{options.statuses.map((status) => <option key={status}>{status}</option>)}</select></label>
-        </div>
+        </FilterPanel>
         <DataTable
           status={isLoadingApi ? "loading" : loadFailed ? "error" : items.length === 0 ? "empty" : "ready"}
           minWidth={900}

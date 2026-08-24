@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
-import { Search } from "lucide-react";
 import { employeeApiService } from "../../services/api/employeeApiService";
 import type { Employee } from "../../types";
 import { displayLegajo } from "../../utils/employee";
 import { useDebouncedValue } from "../../utils/useDebouncedValue";
+import { SearchInput } from "../ui/SearchInput";
 
 function employeeSearchLabel(employee: Employee) {
   return `${employee.lastName}, ${employee.firstName} · Legajo ${displayLegajo(employee)} · DNI ${employee.dni} · CUIL ${employee.cuil}`;
@@ -72,14 +72,11 @@ export function PeopleMultiSearch({
   return (
     <div className="people-search form-wide">
       <small>{label}</small>
-      <div className="search-field">
-        <Search size={17} />
-        <input
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          placeholder="Buscar por nombre, apellido, DNI, CUIL o legajo"
-        />
-      </div>
+      <SearchInput
+        value={query}
+        onChange={(event) => setQuery(event.target.value)}
+        placeholder="Buscar por nombre, apellido, DNI, CUIL o legajo"
+      />
       {query.trim().length > 0 ? (
         <div className="people-search-results">
           {options.length ? (

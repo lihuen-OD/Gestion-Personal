@@ -11,19 +11,25 @@ function isActivePath(pathname: string, href: string) {
   return pathname === href || (href !== "/" && pathname.startsWith(href));
 }
 
-function NavLink({ item, pathname, onNavigate, nested = false }: { item: NavLinkItem; pathname: string; onNavigate: () => void; nested?: boolean }) {
+function findActiveHref(pathname: string, hrefs: string[]): string | undefined {
+  return hrefs
+    .filter((href) => isActivePath(pathname, href))
+    .reduce<string | undefined>((best, href) => (!best || href.length > best.length ? href : best), undefined);
+}
+
+function NavLink({ item, activeHref, onNavigate, nested = false }: { item: NavLinkItem; activeHref: string | undefined; onNavigate: () => void; nested?: boolean }) {
   const { Icon } = item;
   return (
-    <Link className={`${isActivePath(pathname, item.href) ? "active" : ""} ${nested ? "nav-subitem" : ""}`} to={item.href} onClick={onNavigate}>
+    <Link className={`${item.href === activeHref ? "active" : ""} ${nested ? "nav-subitem" : ""}`} to={item.href} onClick={onNavigate}>
       <Icon size={18} />
       {item.label}
     </Link>
   );
 }
 
-function NavGroup({ item, pathname, onNavigate }: { item: NavGroupItem; pathname: string; onNavigate: () => void }) {
+function NavGroup({ item, activeHref, onNavigate }: { item: NavGroupItem; activeHref: string | undefined; onNavigate: () => void }) {
   const { Icon } = item;
-  const active = item.items.some((child) => isActivePath(pathname, child.href));
+  const active = item.items.some((child) => child.href === activeHref);
   return (
     <div className={`nav-group ${active ? "active" : ""}`}>
       <div className="nav-group-title">
@@ -32,7 +38,7 @@ function NavGroup({ item, pathname, onNavigate }: { item: NavGroupItem; pathname
       </div>
       <div className="nav-group-items">
         {item.items.map((child) => (
-          <NavLink key={child.href} item={child} pathname={pathname} onNavigate={onNavigate} nested />
+          <NavLink key={child.href} item={child} activeHref={activeHref} onNavigate={onNavigate} nested />
         ))}
       </div>
     </div>
@@ -47,7 +53,8 @@ export function AppShell({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
   const navItems = navigationForRole(user!.role);
   const flatNavItems = flattenNavigation(navItems);
-  const currentNav = flatNavItems.find((item) => isActivePath(location.pathname, item.href));
+  const activeHref = findActiveHref(location.pathname, flatNavItems.map((item) => item.href));
+  const currentNav = flatNavItems.find((item) => item.href === activeHref);
   const topbarTitle = currentNav?.label || "Dashboard";
   useEffect(() => {
     let mounted = true;
@@ -71,9 +78,9 @@ export function AppShell({ children }: { children: ReactNode }) {
       <nav>
         {navItems.map((item) =>
           item.type === "group" ? (
-            <NavGroup key={item.label} item={item} pathname={location.pathname} onNavigate={() => setOpen(false)} />
+            <NavGroup key={item.label} item={item} activeHref={activeHref} onNavigate={() => setOpen(false)} />
           ) : (
-            <NavLink key={item.href} item={item} pathname={location.pathname} onNavigate={() => setOpen(false)} />
+            <NavLink key={item.href} item={item} activeHref={activeHref} onNavigate={() => setOpen(false)} />
           ),
         )}
       </nav>

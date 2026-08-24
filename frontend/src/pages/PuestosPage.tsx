@@ -1,11 +1,12 @@
-import { Plus } from "lucide-react";
+import { AlertTriangle, Archive, CheckCircle2, Link2, Plus } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { Link, Navigate } from "react-router-dom";
+import { Navigate } from "react-router-dom";
 import { PuestoFilters } from "../components/puestos/PuestoFilters";
-import { PuestoSummaryCards } from "../components/puestos/PuestoSummaryCards";
 import { PuestoTable } from "../components/puestos/PuestoTable";
 import { PageHeader } from "../components/ui/PageHeader";
 import { Section } from "../components/ui/Section";
+import { Button } from "../components/ui/Button";
+import { StatCard } from "../components/ui/StatCard";
 import { ErrorState } from "../components/ui/ErrorState";
 import { LoadingState } from "../components/ui/LoadingState";
 import { useAuth } from "../context/AuthContext";
@@ -125,6 +126,7 @@ export function PuestosPage() {
   if (level === 3) return <Navigate to="/gestion-horaria" />;
 
   const positions = useMemo(() => apiItems.filter((position) => matches(position, filters)), [apiItems, filters]);
+  const positionSummary = useMemo(() => summary(apiItems), [apiItems]);
 
   const toggle = async (position: Position) => {
     const action = position.status === "ACTIVO" ? "inactivar" : "activar";
@@ -147,9 +149,18 @@ export function PuestosPage() {
         eyebrow="PUESTOS"
         title="Puestos"
         description="Administracion de descripciones de puesto y estructura funcional."
-        action={canEdit ? <Link className="button primary" to="/puestos/nuevo"><Plus size={17} /> Crear puesto</Link> : undefined}
+        action={canEdit ? <Button variant="primary" to="/puestos/nuevo"><Plus size={17} /> Crear puesto</Button> : undefined}
       />
-      {!isLoadingApi && !loadError ? <PuestoSummaryCards summary={summary(apiItems)} /> : null}
+      {!isLoadingApi && !loadError ? (
+        <div className="stat-grid puestos-summary">
+          <StatCard label="Total de puestos" value={positionSummary.total} detail="Descripciones creadas" icon={Archive} />
+          <StatCard label="Puestos activos" value={positionSummary.active} detail="Disponibles para vincular" tone="green" icon={CheckCircle2} />
+          <StatCard label="Puestos inactivos" value={positionSummary.inactive} detail="Conservan historial" tone="red" icon={Archive} />
+          <StatCard label="Sin personas asignadas" value={positionSummary.withoutPeople} detail="Calculado desde legajos" tone="orange" icon={AlertTriangle} />
+          <StatCard label="Actualizacion pendiente" value={positionSummary.pendingUpdate} detail="Mas de 12 meses" tone="purple" icon={AlertTriangle} />
+          <StatCard label="Vinculados a legajos" value={positionSummary.linkedToEmployees} detail="Con personas activas" tone="green" icon={Link2} />
+        </div>
+      ) : null}
       <Section className="position-list-panel" title="Listado de puestos" subtitle={isLoadingApi ? "Cargando puestos..." : `${positions.length} resultados segun filtros aplicados.`}>
         <div className="position-list-body">
           <PuestoFilters filters={filters} options={options(apiItems, catalog)} onChange={setFilters} />

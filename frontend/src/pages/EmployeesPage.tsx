@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { AlertTriangle, Archive, CheckCircle2, Clock3, Eye, Plus, RefreshCcw, Search, SlidersHorizontal, Users } from "lucide-react";
+import { AlertTriangle, Archive, CheckCircle2, Clock3, Eye, Plus, RefreshCcw, SlidersHorizontal, Users } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useAuth } from "../context/AuthContext";
 import { employeeApiService, type EmployeeSummary } from "../services/api/employeeApiService";
@@ -10,6 +10,7 @@ import { roleLevel } from "../utils/roles";
 import { statusTone } from "../utils/status";
 import { useDebouncedValue } from "../utils/useDebouncedValue";
 import { OverflowCell } from "../components/ui/OverflowCell";
+import { FilterPanel } from "../components/ui/FilterPanel";
 import { PageHeader } from "../components/ui/PageHeader";
 import { Section } from "../components/ui/Section";
 import { StatCard } from "../components/ui/StatCard";
@@ -130,14 +131,14 @@ export function EmployeesPage() {
         description="Busca, consulta y gestiona la informacion integral de cada colaborador."
         action={
           level === 1 ? (
-            <div className="form-actions inline-actions">
+            <>
               <Button variant="subtle" icon={RefreshCcw} onClick={syncLaborStatuses} disabled={syncing}>
                 {syncing ? "Sincronizando..." : "Sincronizar estados"}
               </Button>
-              <Link to="/legajos/nuevo" className="button primary">
+              <Button to="/legajos/nuevo" variant="primary">
                 <Plus size={17} /> Nuevo legajo
-              </Link>
-            </div>
+              </Button>
+            </>
           ) : undefined
         }
       />
@@ -156,18 +157,16 @@ export function EmployeesPage() {
         subtitle={`${meta.total} resultados`}
         action={<Button variant="subtle" icon={SlidersHorizontal}>Mas filtros</Button>}
       >
-        <div className="filters">
-          <label className="search-field">
-            <Search size={17} />
-            <input
-              placeholder="Buscar por legajo, DNI, CUIL, apellido o nombre"
-              value={search}
-              onChange={(event) => {
-                setSearch(event.target.value);
-                setPage(1);
-              }}
-            />
-          </label>
+        <FilterPanel
+          search={{
+            placeholder: "Buscar por legajo, DNI, CUIL, apellido o nombre",
+            value: search,
+            onChange: (value) => {
+              setSearch(value);
+              setPage(1);
+            },
+          }}
+        >
           <select
             value={company}
             onChange={(event) => {
@@ -204,7 +203,7 @@ export function EmployeesPage() {
               <option key={item.id}>{item.name}</option>
             ))}
           </select>
-        </div>
+        </FilterPanel>
 
         <DataTable
           status={listStatus === "loading" ? "loading" : listStatus === "error" ? "error" : employees.length === 0 ? "empty" : "ready"}
@@ -242,7 +241,7 @@ export function EmployeesPage() {
                   </td>
                   <td>
                     <Link
-                      className="table-link table-icon-action"
+                      className="table-icon-action"
                       title="Ver detalle"
                       aria-label="Ver detalle"
                       to={`/legajos/${employee.id}`}

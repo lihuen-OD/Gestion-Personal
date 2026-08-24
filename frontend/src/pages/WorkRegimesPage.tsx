@@ -11,11 +11,13 @@ import { AssociatedEmployeesPanel } from "../components/shared/AssociatedEmploye
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { DataTable } from "../components/ui/DataTable";
+import { FilterPanel } from "../components/ui/FilterPanel";
 import { Field } from "../components/ui/FormControls";
 import { Modal } from "../components/ui/Modal";
 import { OverflowCell } from "../components/ui/OverflowCell";
 import { PageHeader } from "../components/ui/PageHeader";
 import { Section } from "../components/ui/Section";
+import { StatCard } from "../components/ui/StatCard";
 import { useAuth } from "../context/AuthContext";
 import { confirmAction } from "../services/appDialog";
 import { getUserErrorMessage } from "../services/api/apiClient";
@@ -186,17 +188,12 @@ export function WorkRegimesPage() {
 
       <div className="stat-grid novelty-type-summary">
         {summary.map(([label, value]) => (
-          <div className="stat-card" key={label}>
-            <div><small>{label}</small><strong>{value}</strong><span>Regímenes laborales</span></div>
-          </div>
+          <StatCard key={label} label={label} value={value} detail="Regímenes laborales" />
         ))}
       </div>
 
       <Section title="Listado de regímenes laborales" subtitle={isLoadingApi ? "Cargando catálogo..." : `${items.length} resultados según filtros aplicados.`}>
-        <div className="filters catalog-filters">
-          <label className="search-field">
-            <input placeholder="Buscar por código o nombre" value={filters.search} onChange={(event) => setFilters({ ...filters, search: event.target.value })} />
-          </label>
+        <FilterPanel search={{ value: filters.search, onChange: (value) => setFilters({ ...filters, search: value }), placeholder: "Buscar por código o nombre" }}>
           <label>
             Tipo
             <select value={filters.kind} onChange={(event) => setFilters({ ...filters, kind: event.target.value })}>
@@ -212,7 +209,7 @@ export function WorkRegimesPage() {
               <option value="INACTIVO">Inactivo</option>
             </select>
           </label>
-        </div>
+        </FilterPanel>
         <DataTable
           status={isLoadingApi ? "loading" : loadFailed ? "error" : items.length === 0 ? "empty" : "ready"}
           minWidth={1000}
@@ -243,11 +240,11 @@ export function WorkRegimesPage() {
                   <td><Badge tone={workRegimeStatusTone(item.status)}>{item.status === "ACTIVO" ? "Activo" : "Inactivo"}</Badge></td>
                   <td>
                     <div className="table-actions">
-                      <button className="icon-button" title="Ver empleados asociados" aria-label="Ver empleados asociados" onClick={() => setViewingEmployeesFor(item)}><Users size={15} /></button>
+                      <button className="table-icon-action" title="Ver empleados asociados" aria-label="Ver empleados asociados" onClick={() => setViewingEmployeesFor(item)}><Users size={15} /></button>
                       {editable ? (
                         <>
-                          <button className="icon-button" title="Editar régimen" aria-label="Editar régimen" onClick={() => openEdit(item)}><Pencil size={15} /></button>
-                          <button className="icon-button" title={item.status === "ACTIVO" ? "Inactivar régimen" : "Activar régimen"} aria-label={item.status === "ACTIVO" ? "Inactivar régimen" : "Activar régimen"} onClick={() => toggleStatus(item)}><Power size={15} /></button>
+                          <button className="table-icon-action" title="Editar régimen" aria-label="Editar régimen" onClick={() => openEdit(item)}><Pencil size={15} /></button>
+                          <button className="table-icon-action" title={item.status === "ACTIVO" ? "Inactivar régimen" : "Activar régimen"} aria-label={item.status === "ACTIVO" ? "Inactivar régimen" : "Activar régimen"} onClick={() => toggleStatus(item)}><Power size={15} /></button>
                         </>
                       ) : null}
                     </div>

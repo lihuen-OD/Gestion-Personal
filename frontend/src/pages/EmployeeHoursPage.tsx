@@ -516,11 +516,11 @@ export function EmployeeHoursPage() {
                   {fullName(employee)} · {monthDate(period, selected.day)}
                 </span>
               </div>
-              <span className="badge neutral">
+              <Badge tone="neutral">
                 {conceptNovelties(selected.day, selected.concept).length
                   ? `${conceptNovelties(selected.day, selected.concept).length} novedad(es)`
                   : "Sin novedad cargada"}
-              </span>
+              </Badge>
             </div>
 
             {selectedLocked ? (

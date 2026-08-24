@@ -4,6 +4,9 @@ import { getUserErrorMessage } from "../../services/api/apiClient";
 import { calculateLaborStatus } from "../../services/employeeStatusService";
 import type { Employee, LaborMovementType, User } from "../../types";
 import { useAsyncAction } from "../../utils/useAsyncAction";
+import { requiredLaborChangeError } from "../../utils/laborFieldValidation";
+import { Badge } from "../ui/Badge";
+import { Button } from "../ui/Button";
 import { EmptyState } from "../ui/EmptyState";
 import { Field, Select } from "../ui/FormControls";
 import { Modal } from "../ui/Modal";
@@ -46,8 +49,8 @@ export function LaborMovementPanel({
 
   const { isRunning: isSaving, run: save } = useAsyncAction(async () => {
     if (!type) return setError("El tipo de movimiento es obligatorio.");
-    if (!effectiveFrom) return setError("La fecha desde es obligatoria.");
-    if (!reason.trim()) return setError("El motivo del cambio es obligatorio.");
+    const validationError = requiredLaborChangeError(effectiveFrom, reason);
+    if (validationError) return setError(validationError);
     try {
       const updated = await employeeApiService.createLaborMovement(employee.id, {
         type,
@@ -68,13 +71,14 @@ export function LaborMovementPanel({
 
   return (
     <Section
+      variant="embedded"
       title="Alta / Baja laboral"
       subtitle={`Movimientos laborales registrados solo para ${employee.firstName} ${employee.lastName}`}
       action={
         canEdit ? (
-          <button
+          <Button
             type="button"
-            className="button primary"
+            variant="primary"
             onClick={() => {
               setType(status.status === "Inactivo" ? "ALTA" : "BAJA");
               setReason("");
@@ -82,7 +86,7 @@ export function LaborMovementPanel({
             }}
           >
             Registrar movimiento laboral
-          </button>
+          </Button>
         ) : undefined
       }
     >
@@ -106,9 +110,7 @@ export function LaborMovementPanel({
                 return (
                   <tr key={movement.id}>
                     <td>
-                      <span className={movement.type === "ALTA" ? "badge success" : "badge danger"}>
-                        {movement.type}
-                      </span>
+                      <Badge tone={movement.type === "ALTA" ? "success" : "danger"}>{movement.type}</Badge>
                     </td>
                     <td>{movement.effectiveFrom}</td>
                     <td>
@@ -158,12 +160,12 @@ export function LaborMovementPanel({
               Estado resultante actual: {status.status}. El estado laboral no se edita manualmente.
             </p>
             <div className="form-actions">
-              <button className="button subtle" onClick={() => setOpen(false)}>
+              <Button variant="subtle" onClick={() => setOpen(false)}>
                 Cancelar
-              </button>
-              <button className="button primary" onClick={save} disabled={isSaving}>
+              </Button>
+              <Button variant="primary" onClick={save} disabled={isSaving}>
                 {isSaving ? "Guardando..." : "Guardar movimiento"}
-              </button>
+              </Button>
             </div>
           </div>
         </Modal>

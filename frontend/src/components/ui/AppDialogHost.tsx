@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { APP_DIALOG_EVENT, type AppDialogRequest } from "../../services/appDialog";
+import { Button } from "./Button";
 import { Modal } from "./Modal";
 
 export function AppDialogHost() {
@@ -45,12 +46,12 @@ export function AppDialogHost() {
           </label>
         ) : null}
         <div className="form-actions">
-          <button type="button" className="button subtle" onClick={() => finish(request.kind === "confirm" ? false : null)}>
+          <Button type="button" variant="subtle" onClick={() => finish(request.kind === "confirm" ? false : null)}>
             {request.cancelLabel}
-          </button>
-          <button type="button" className={`button ${request.tone}`} onClick={confirm} disabled={request.kind === "prompt" && !value.trim()}>
+          </Button>
+          <Button type="button" variant={request.tone} onClick={confirm} disabled={request.kind === "prompt" && !value.trim()}>
             {request.confirmLabel}
-          </button>
+          </Button>
         </div>
       </div>
     </Modal>

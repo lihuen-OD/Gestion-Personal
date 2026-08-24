@@ -1,8 +1,9 @@
 import { useState, type FormEvent } from "react";
-import { Link, Navigate, useNavigate } from "react-router-dom";
+import { Navigate, useNavigate } from "react-router-dom";
 import { PageHeader } from "../components/ui/PageHeader";
 import { Section } from "../components/ui/Section";
 import { Button } from "../components/ui/Button";
+import { FormActions } from "../components/ui/FormControls";
 import { emptyShiftTemplate, shiftTemplateFormToInput, ShiftTemplateFormFields } from "../components/shifts/ShiftTemplateFormFields";
 import { useAuth } from "../context/AuthContext";
 import { workforceApiService } from "../services/api/workforceApiService";
@@ -36,10 +37,10 @@ export function ShiftCreatePage() {
         <ShiftTemplateFormFields value={value} onChange={setValue} />
       </Section>
       {error ? <p className="error create-error">{error}</p> : null}
-      <div className="form-actions create-actions">
-        <Link to="/configuracion/turnos" className="button subtle">Cancelar</Link>
+      <FormActions className="create-actions">
+        <Button to="/configuracion/turnos" variant="subtle">Cancelar</Button>
         <Button variant="primary" disabled={isSaving}>{isSaving ? "Guardando..." : "Guardar turno"}</Button>
-      </div>
+      </FormActions>
     </form>
   );
 }

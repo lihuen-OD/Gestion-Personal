@@ -105,16 +105,13 @@ export function NoveltyTypeDetailPage() {
       </div>
       {notice && <div className="toast">{notice}</div>}
       <Tabs tabs={tabItems} active={String(tab)} onChange={(key) => setTab(Number(key))} />
-      <section className="panel">
-        <div className="panel-head">
-          <div>
-            <h3>{tabs[tab]}</h3>
-            <p>{tab === 2 ? "Equivalencias entre la novedad interna y conceptos externos." : tab === 3 ? "Trazabilidad del catalogo." : "Configuracion editable del tipo de novedad."}</p>
-          </div>
-          {tab < 3 && <Button variant="primary" onClick={save} disabled={isSaving}>{isSaving ? "Guardando..." : "Guardar cambios"}</Button>}
-        </div>
-        <div className="panel-body">{render()}</div>
-      </section>
+      <Section
+        title={tabs[tab]}
+        subtitle={tab === 2 ? "Equivalencias entre la novedad interna y conceptos externos." : tab === 3 ? "Trazabilidad del catalogo." : "Configuracion editable del tipo de novedad."}
+        action={tab < 3 ? <Button variant="primary" onClick={save} disabled={isSaving}>{isSaving ? "Guardando..." : "Guardar cambios"}</Button> : undefined}
+      >
+        {render()}
+      </Section>
     </>
   );
 }

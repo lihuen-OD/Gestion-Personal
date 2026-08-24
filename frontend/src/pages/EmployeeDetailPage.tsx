@@ -98,6 +98,7 @@ export function EmployeeDetailPage() {
   useEffect(() => {
     if (!id) return;
     let mounted = true;
+    let overviewFailed = false;
     setAuditError(false);
     setLoadStatus("loading");
     setDetailsStatus("loading");
@@ -105,23 +106,24 @@ export function EmployeeDetailPage() {
       .getOverviewById(id)
       .then((item) => {
         if (!mounted) return;
-        setEmployee(item);
+        setEmployee((current) => current ? mergeOverviewDetails(item, current) : item);
         setLoadStatus("success");
-        employeeApiService
-          .getOverviewDetailsById(id)
-          .then((details) => {
-            if (!mounted) return;
-            setEmployee((current) => current ? mergeOverviewDetails(current, details) : details);
-            setDetailsStatus("success");
-          })
-          .catch(() => {
-            if (mounted) setDetailsStatus("error");
-          });
       })
       .catch(() => {
         if (!mounted) return;
+        overviewFailed = true;
         setEmployee(null);
         setLoadStatus("error");
+      });
+    employeeApiService
+      .getOverviewDetailsById(id)
+      .then((details) => {
+        if (!mounted || overviewFailed) return;
+        setEmployee((current) => current ? mergeOverviewDetails(current, details) : details);
+        setDetailsStatus("success");
+      })
+      .catch(() => {
+        if (mounted) setDetailsStatus("error");
       });
     return () => {
       mounted = false;
@@ -323,7 +325,7 @@ function renderEmployeeTab(
 
   if (tab === 1) {
     return (
-      <>
+      <div className="detail-section-stack">
         <div className="form-grid">
           <Field label="Teléfono" value={employee.phone} set={(value) => update("phone", value)} />
           <Field label="Celular" value={employee.mobile} set={(value) => update("mobile", value)} />
@@ -332,10 +334,8 @@ function renderEmployeeTab(
           <Field label="Parentesco" value={employee.emergencyRelation} set={(value) => update("emergencyRelation", value)} />
           <Field label="Teléfono de emergencia" value={employee.emergencyPhone} set={(value) => update("emergencyPhone", value)} />
         </div>
-        <div className="block-wrap">
-          <AddressEditBlock employee={employee} user={user} canEdit={editable} onSaved={setEmployee} />
-        </div>
-      </>
+        <AddressEditBlock employee={employee} user={user} canEdit={editable} onSaved={setEmployee} />
+      </div>
     );
   }
 
@@ -343,13 +343,19 @@ function renderEmployeeTab(
     return (
       <>
         <LaborStatusCard employee={employee} />
-          <LaborMovementPanel employee={employee} user={user} canEdit={editable} onSaved={setEmployee} />
+        <LaborMovementPanel employee={employee} user={user} canEdit={editable} onSaved={setEmployee} />
+
+        <p className="eyebrow tracked-grid-label">EMPRESA / ESTRUCTURA</p>
         <div className="tracked-grid">
           <MultiCompanyField employee={employee} canEdit={editable} user={user} onSaved={setEmployee} />
           <DerivedLaborField label="Unidad de negocio" value={employee.businessUnit} />
           <DerivedLaborField label="Establecimiento" value={employee.establishment} />
           <FieldWithHistory employee={employee} section="DATOS_LABORALES" field="costCenter" label="Centro de costo" value={employee.costCenter} canEdit={editable} user={user} options={structureOptions.costCenter} onSaved={setEmployee} />
           <FieldWithHistory employee={employee} section="DATOS_LABORALES" field="sector" label="Sector" value={employee.sector} canEdit={editable} user={user} options={laborOptions.sector} onSaved={setEmployee} />
+        </div>
+
+        <p className="eyebrow tracked-grid-label">PUESTO / CATEGORÍA</p>
+        <div className="tracked-grid">
           <EmployeePositionField employee={employee} canEdit={editable} user={user} onSaved={setEmployee} />
           <FieldWithHistory employee={employee} section="DATOS_LABORALES" field="receiptCategory" label="Categoría de recibo" value={employee.receiptCategory} canEdit={editable} user={user} options={laborOptions.receiptCategory} onSaved={setEmployee} />
           <FieldWithHistory employee={employee} section="DATOS_LABORALES" field="internalCategory" label="Categoría interna" value={employee.internalCategory} canEdit={editable} user={user} options={laborOptions.internalCategory} onSaved={setEmployee} />
@@ -371,19 +377,11 @@ function renderEmployeeTab(
   }
 
   if (tab === 4) {
-    return (
-      <div className="block-wrap">
-        <TransportBlock employee={employee} user={user} canEdit={editable} onSaved={setEmployee} />
-      </div>
-    );
+    return <TransportBlock employee={employee} user={user} canEdit={editable} onSaved={setEmployee} />;
   }
 
   if (tab === 5) {
-    return (
-      <div className="block-wrap">
-        <HoursSpecialBlock employee={employee} user={user} canEdit={editable} onSaved={setEmployee} />
-      </div>
-    );
+    return <HoursSpecialBlock employee={employee} user={user} canEdit={editable} onSaved={setEmployee} />;
   }
 
   if (tab === 6) return <EmployeeNoveltiesPanel employee={employee} user={user} onSaved={setEmployee} />;
@@ -409,10 +407,15 @@ function renderEmployeeTab(
   if (tab === 9) return <EmployeeShiftsPanel employee={employee} user={user} canEdit={editable} />;
   if (tab === 11) return <EmployeeWorkRegimePanel employee={employee} user={user} canEdit={editable} onSaved={setEmployee} />;
 
-  if (!auditLoaded) return <LoadingState text="Cargando auditoría..." />;
-  if (auditError) return <ErrorState message="No pudimos cargar la auditoría del legajo." onRetry={retryAudit} />;
   return (
-    <DataTable status={auditRows.length ? "ready" : "empty"} minWidth={960} emptyText="Todavía no hay eventos de auditoría para este legajo.">
+    <DataTable
+      status={!auditLoaded ? "loading" : auditError ? "error" : auditRows.length ? "ready" : "empty"}
+      minWidth={960}
+      loadingColumns={5}
+      errorMessage="No pudimos cargar la auditoría del legajo."
+      onRetry={retryAudit}
+      emptyText="Todavía no hay eventos de auditoría para este legajo."
+    >
       <table>
         <thead>
           <tr>

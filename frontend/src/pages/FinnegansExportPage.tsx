@@ -1,11 +1,16 @@
 import { useEffect, useState } from "react";
-import { Download, FileBarChart, Search } from "lucide-react";
+import { Navigate } from "react-router-dom";
+import { Download, FileBarChart } from "lucide-react";
+import { useAuth } from "../context/AuthContext";
+import { roleLevel } from "../utils/roles";
 import { OverflowCell } from "../components/ui/OverflowCell";
+import { FilterPanel } from "../components/ui/FilterPanel";
 import { DataTable } from "../components/ui/DataTable";
 import { PageHeader } from "../components/ui/PageHeader";
 import { Section } from "../components/ui/Section";
 import { Button } from "../components/ui/Button";
 import { Badge } from "../components/ui/Badge";
+import { StatCard } from "../components/ui/StatCard";
 import { finnegansExportApiService, type FinnegansExportRow } from "../services/api/finnegansExportApiService";
 import { currentMonthPeriod } from "../utils/period";
 
@@ -58,6 +63,7 @@ async function exportFinnegansExcel(rows: FinnegansExportRow[], period: string) 
 }
 
 export function FinnegansExportPage() {
+  const { user } = useAuth();
   const [period, setPeriod] = useState(currentMonthPeriod());
   const [search, setSearch] = useState("");
   const [rows, setRows] = useState<FinnegansExportRow[]>([]);
@@ -95,6 +101,8 @@ export function FinnegansExportPage() {
   const exportableNovelties = filtered.filter((row) => row.source === "Novedad").length;
   const canExport = filtered.length > 0;
 
+  if (roleLevel(user!.role) !== 1) return <Navigate to="/" />;
+
   return (
     <>
       <PageHeader
@@ -105,38 +113,14 @@ export function FinnegansExportPage() {
       />
 
       <div className="stat-grid novelty-type-summary">
-        <div className="stat-card">
-          <div>
-            <small>Registros exportables</small>
-            <strong>{filtered.length}</strong>
-            <span>Periodo seleccionado</span>
-          </div>
-        </div>
-        <div className="stat-card">
-          <div>
-            <small>Novedades</small>
-            <strong>{exportableNovelties}</strong>
-            <span>Con codigo Finnegans</span>
-          </div>
-        </div>
-        <div className="stat-card">
-          <div>
-            <small>Horas especiales</small>
-            <strong>0</strong>
-            <span>No exportan a Finnegans</span>
-          </div>
-        </div>
-        <div className="stat-card">
-          <div>
-            <small>Legajos</small>
-            <strong>{new Set(filtered.map((row) => row.legajo)).size}</strong>
-            <span>Formato texto</span>
-          </div>
-        </div>
+        <StatCard label="Registros exportables" value={filtered.length} detail="Periodo seleccionado" />
+        <StatCard label="Novedades" value={exportableNovelties} detail="Con codigo Finnegans" />
+        <StatCard label="Horas especiales" value={0} detail="No exportan a Finnegans" />
+        <StatCard label="Legajos" value={new Set(filtered.map((row) => row.legajo)).size} detail="Formato texto" />
       </div>
 
       <Section title="Registros preparados para importar" subtitle="El archivo respeta el formato Finnegans. Centro de costo se incluye como columna vacia." action={<FileBarChart size={22} />}>
-        <div className="filters catalog-filters">
+        <FilterPanel search={{ value: search, onChange: setSearch, placeholder: "Buscar por legajo, persona, codigo o detalle" }}>
           <label>
             Periodo
             <input
@@ -145,15 +129,7 @@ export function FinnegansExportPage() {
               onChange={(event) => setPeriod(event.target.value)}
             />
           </label>
-          <label className="search-field">
-            <Search size={17} />
-            <input
-              placeholder="Buscar por legajo, persona, codigo o detalle"
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-            />
-          </label>
-        </div>
+        </FilterPanel>
 
         <DataTable
           status={status === "loading" ? "loading" : status === "error" ? "error" : filtered.length === 0 ? "empty" : "ready"}

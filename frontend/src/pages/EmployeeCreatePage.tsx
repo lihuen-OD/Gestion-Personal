@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { PageHeader } from "../components/ui/PageHeader";
 import { Section } from "../components/ui/Section";
@@ -516,9 +516,9 @@ export function EmployeeCreatePage() {
           {error ? <p className="error create-error">{error}</p> : null}
 
           <div className="form-actions create-actions">
-            <Link to="/legajos" className="button subtle">
+            <Button to="/legajos" variant="subtle">
               Cancelar
-            </Link>
+            </Button>
             {tab > 0 ? (
               <Button type="button" variant="subtle" onClick={() => setTab(tab - 1)}>
                 Anterior

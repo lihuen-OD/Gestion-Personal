@@ -1,9 +1,10 @@
-import { Check, Search } from "lucide-react";
+import { Check } from "lucide-react";
 import { useEffect, useState } from "react";
 import { employeeApiService } from "../../services/api/employeeApiService";
 import type { Employee } from "../../types";
 import { displayLegajo, fullName } from "../../utils/employee";
 import { useDebouncedValue } from "../../utils/useDebouncedValue";
+import { SearchInput } from "../ui/SearchInput";
 
 export function visibleEmployeeResults(results: Employee[], excludeIds?: Set<string>): Employee[] {
   return excludeIds ? results.filter((employee) => !excludeIds.has(employee.id)) : results;
@@ -73,14 +74,11 @@ export function EmployeeRemoteSelector({
   return (
     <div className={`people-search${wide ? " form-wide" : ""}`}>
       <div className="people-search-toolbar">
-        <label className="search-field">
-          <Search size={17} />
-          <input
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder="Buscar por nombre, apellido, DNI, CUIL o legajo"
-          />
-        </label>
+        <SearchInput
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+          placeholder="Buscar por nombre, apellido, DNI, CUIL o legajo"
+        />
         {showStatusFilter ? <label className="people-status-filter"><span>Estado</span><select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as typeof statusFilter)}><option value="ACTIVO">Activos</option><option value="INACTIVO">Inactivos</option><option value="">Todos</option></select></label> : null}
       </div>
       {!showStatusFilter && search.trim().length < 2 ? <small>Ingresá al menos 2 caracteres para buscar.</small> : null}

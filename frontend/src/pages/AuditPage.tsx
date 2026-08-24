@@ -1,4 +1,7 @@
 import { useEffect, useState } from "react";
+import { Navigate } from "react-router-dom";
+import { useAuth } from "../context/AuthContext";
+import { roleLevel } from "../utils/roles";
 import { OverflowCell } from "../components/ui/OverflowCell";
 import { PageHeader } from "../components/ui/PageHeader";
 import { Section } from "../components/ui/Section";
@@ -83,6 +86,7 @@ function auditChange(audit: AuditEntry) {
 }
 
 export function AuditPage() {
+  const { user } = useAuth();
   const [audits, setAudits] = useState<AuditEntry[]>([]);
   const [status, setStatus] = useState<"loading" | "success" | "error">("loading");
   const [retry, setRetry] = useState(0);
@@ -108,6 +112,8 @@ export function AuditPage() {
       mounted = false;
     };
   }, [page, retry]);
+
+  if (roleLevel(user!.role) !== 1) return <Navigate to="/" />;
 
   return (
     <>

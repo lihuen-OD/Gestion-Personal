@@ -4,6 +4,7 @@ import { noveltyApiService } from "../../services/api/noveltyApiService";
 import type { Employee, Novelty, User } from "../../types";
 import { NoveltyModal } from "./NoveltyModal";
 import { NoveltyTable } from "./NoveltyTable";
+import { Button } from "../ui/Button";
 import { ErrorState } from "../ui/ErrorState";
 import { LoadingState } from "../ui/LoadingState";
 
@@ -63,9 +64,9 @@ export function EmployeeNoveltiesPanel({
   return (
     <>
       <div className="form-actions">
-        <button className="button primary" onClick={() => setOpen(true)}>
+        <Button variant="primary" onClick={() => setOpen(true)}>
           <Plus size={15} /> Nueva novedad
-        </button>
+        </Button>
       </div>
 
       {loadStatus === "loading" ? (

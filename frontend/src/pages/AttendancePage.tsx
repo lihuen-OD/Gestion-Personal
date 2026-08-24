@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { AlertTriangle, CalendarDays, Camera, CheckCircle2, Clock3, DoorOpen, Eye, RefreshCcw, Search, TimerReset, X } from "lucide-react";
+import { AlertTriangle, CalendarDays, Camera, CheckCircle2, Clock3, DoorOpen, Eye, Search, TimerReset, X } from "lucide-react";
 import { attendanceApiService, type AttendanceObservation, type AttendancePunch, type AttendanceShift } from "../services/api/attendanceApiService";
 import { WorkShiftSegmentsPanel } from "../components/attendance/WorkShiftSegmentsPanel";
 import { Badge } from "../components/ui/Badge";
@@ -115,9 +115,9 @@ function PunchEvidence({ punch, label, onViewPhoto }: { punch?: AttendanceShift[
     <div className="attendance-evidence">
       <span>{faceStatusLabel(punch.faceValidationStatus)}</span>
       {hasPunchPhoto(punch) ? (
-        <button type="button" className="table-link" onClick={() => onViewPhoto(punch.id)}>
+        <button type="button" className="table-icon-action" title={label} aria-label={label} onClick={() => onViewPhoto(punch.id)}>
           <Camera size={14} />
-          {label}
+          <span>{label}</span>
         </button>
       ) : null}
     </div>
@@ -177,27 +177,27 @@ function ShiftRows({ items, emptyText, showSegments = false, showRisk = false, o
                   )) : <span>Sin tramos</span>}
                 </div>
                 {onViewSegments ? (
-                  <button type="button" className="table-link" onClick={() => onViewSegments(shift)}>
+                  <button type="button" className="table-icon-action" title="Ver detalle de tramos" aria-label="Ver detalle de tramos" onClick={() => onViewSegments(shift)}>
                     <Eye size={14} />
-                    Ver detalle
+                    <span>Ver detalle</span>
                   </button>
                 ) : null}
               </td>
             )}
             <td>
               <div className="attendance-actions">
-                <Link className="table-link" to={`/horas/${shift.employeeId}?period=${shift.startAt.slice(0, 7)}`}>
+                <Link className="table-icon-action" title="Ver carga de horas" aria-label="Ver carga de horas" to={`/horas/${shift.employeeId}?period=${shift.startAt.slice(0, 7)}`}>
                   <Eye size={14} />
-                  Ver carga
+                  <span>Ver carga</span>
                 </Link>
                 {onAction && shift.status === "ABIERTO" ? (
                   <>
-                    <button type="button" className="table-link" onClick={() => onAction(shift, "close")}>Cerrar</button>
-                    <button type="button" className="table-link" onClick={() => onAction(shift, "missing")}>Olvido salida</button>
+                    <button type="button" className="table-icon-action" title="Cerrar jornada" aria-label="Cerrar jornada" onClick={() => onAction(shift, "close")}><CheckCircle2 size={14} /><span>Cerrar</span></button>
+                    <button type="button" className="table-icon-action" title="Registrar olvido de salida" aria-label="Registrar olvido de salida" onClick={() => onAction(shift, "missing")}><DoorOpen size={14} /><span>Olvido salida</span></button>
                   </>
                 ) : null}
                 {onAction && shift.status !== "OBSERVADO" ? (
-                  <button type="button" className="table-link" onClick={() => onAction(shift, "observe")}>Observar</button>
+                  <button type="button" className="table-icon-action" title="Marcar como observada" aria-label="Marcar como observada" onClick={() => onAction(shift, "observe")}><AlertTriangle size={14} /><span>Observar</span></button>
                 ) : null}
               </div>
             </td>
@@ -230,6 +230,7 @@ function ObservationRows({ items, onViewPhoto, onResolve, onViewSegments }: { it
     return <EmptyState text="No hay problemas de fichada para los filtros seleccionados." icon={AlertTriangle} />;
   }
   return (
+    <TableShell minWidth={1080}>
     <table className="attendance-table attendance-review-table">
       <thead><tr><th>Empleado</th><th>Fecha y hora</th><th>Problema</th><th>Detalle</th><th>Origen</th><th>Acción</th></tr></thead>
       <tbody>{items.map((item) => {
@@ -242,7 +243,7 @@ function ObservationRows({ items, onViewPhoto, onResolve, onViewSegments }: { it
             <td><Badge tone="danger">Sin actividad registrada</Badge></td>
             <td><span className="attendance-review-detail">{incident.observation}</span></td>
             <td>Control automático</td>
-            <td>{isPending ? <button type="button" className="table-link" onClick={() => onResolve("INACTIVITY", incident.id)}>Resolver</button> : <Badge tone="success">Resuelta</Badge>}</td>
+            <td>{isPending ? <button type="button" className="table-icon-action" title="Resolver" aria-label="Resolver" onClick={() => onResolve("INACTIVITY", incident.id)}><CheckCircle2 size={14} /><span>Resolver</span></button> : <Badge tone="success">Resuelta</Badge>}</td>
           </tr>;
         }
         const record = item.kind === "SHIFT" ? item.shift : item.punch;
@@ -257,14 +258,15 @@ function ObservationRows({ items, onViewPhoto, onResolve, onViewSegments }: { it
           <td><Badge tone="danger">{problem}</Badge></td>
           <td>
             <span className="attendance-review-detail">{detail}</span>
-            {item.kind === "PUNCH" && hasPunchPhoto(item.punch) ? <button type="button" className="table-link" onClick={() => onViewPhoto(item.punch.id)}><Camera size={14} />Ver foto</button> : null}
-            {item.kind === "SHIFT" ? <button type="button" className="table-link" onClick={() => onViewSegments(item.shift)}><Eye size={14} />Ver tramos</button> : null}
+            {item.kind === "PUNCH" && hasPunchPhoto(item.punch) ? <button type="button" className="table-icon-action" title="Ver foto" aria-label="Ver foto" onClick={() => onViewPhoto(item.punch.id)}><Camera size={14} /><span>Ver foto</span></button> : null}
+            {item.kind === "SHIFT" ? <button type="button" className="table-icon-action" title="Ver tramos" aria-label="Ver tramos" onClick={() => onViewSegments(item.shift)}><Eye size={14} /><span>Ver tramos</span></button> : null}
           </td>
           <td>{sourceLabel(record.source)}</td>
-          <td>{isPending ? <button type="button" className="table-link" onClick={() => onResolve(item.kind, record.id)}>Resolver</button> : <Badge tone="success">Resuelta</Badge>}</td>
+          <td>{isPending ? <button type="button" className="table-icon-action" title="Resolver" aria-label="Resolver" onClick={() => onResolve(item.kind, record.id)}><CheckCircle2 size={14} /><span>Resolver</span></button> : <Badge tone="success">Resuelta</Badge>}</td>
         </tr>;
       })}</tbody>
     </table>
+    </TableShell>
   );
 }
 
@@ -317,6 +319,11 @@ export function AttendancePage() {
       cancelled = true;
     };
   }, [date, refreshKey]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setRefreshKey((value) => value + 1), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -447,13 +454,10 @@ export function AttendancePage() {
         title="Control de fichadas"
         description="Seguimiento diario de ingresos, salidas, jornadas abiertas y marcaciones observadas."
         action={(
-          <>
-            <div className="attendance-journey-filter">
-              <span>Jornadas del día</span>
-              <label className="date-filter"><CalendarDays size={16} /><input type="date" value={date} onChange={(event) => setDate(event.target.value)} /></label>
-            </div>
-            <Button icon={RefreshCcw} onClick={() => setRefreshKey((value) => value + 1)} loading={loading}>Actualizar</Button>
-          </>
+          <div className="attendance-journey-filter">
+            <span>Jornadas del día</span>
+            <label className="date-filter"><CalendarDays size={16} /><input type="date" value={date} onChange={(event) => setDate(event.target.value)} /></label>
+          </div>
         )}
       />
 
@@ -508,9 +512,12 @@ export function AttendancePage() {
             </select>
           </label>
           {(observationDate || observedQuery || observedType !== "ALL") ? (
-            <button type="button" className="attendance-clear-filters" onClick={() => { setObservationDate(""); setObservedQuery(""); setObservedType("ALL"); }}>
-              <X size={15} /> Limpiar
-            </button>
+            <div className="attendance-clear-filters-slot">
+              <span className="attendance-filter-spacer" aria-hidden="true">&nbsp;</span>
+              <button type="button" className="attendance-clear-filters" onClick={() => { setObservationDate(""); setObservedQuery(""); setObservedType("ALL"); }}>
+                <X size={15} /> Limpiar
+              </button>
+            </div>
           ) : null}
         </div>
         <div className="attendance-results-bar">

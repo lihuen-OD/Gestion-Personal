@@ -1,4 +1,5 @@
 import type { AssociatedEmployee, AssociatedEmployeeFilters, AssociatedEmployeeVigencyStatus } from "../../types/associatedEmployee.types";
+import { formatCalendarDate } from "../../utils/date";
 
 export function vigencyLabel(status: AssociatedEmployeeVigencyStatus): string {
   if (status === "current") return "Vigente";
@@ -12,12 +13,9 @@ export function vigencyTone(status: AssociatedEmployeeVigencyStatus): "success" 
   return "neutral";
 }
 
-// effectiveFrom/effectiveTo llegan como fecha calendario ("YYYY-MM-DD..."),
-// mismo criterio que EmployeeWorkRegimePanel.tsx (dateKey/formatDate): no se
-// re-parsea como instante para evitar corrimientos de huso horario.
 export function formatVigencyDate(value: string | null): string {
   if (!value) return "-";
-  return value.slice(0, 10).split("-").reverse().join("/");
+  return formatCalendarDate(value);
 }
 
 export function employeeStatusLabel(status: AssociatedEmployee["status"]): string {

@@ -6,6 +6,8 @@ import { getUserErrorMessage } from "../../services/api/apiClient";
 import { locationService } from "../../services/locationService";
 import type { Employee, User } from "../../types";
 import { useAsyncAction } from "../../utils/useAsyncAction";
+import { requiredLaborChangeError } from "../../utils/laborFieldValidation";
+import { Button } from "../ui/Button";
 import { Field, Select } from "../ui/FormControls";
 import { Modal } from "../ui/Modal";
 import { BlockHistoryTimeline } from "./FieldHistoryControls";
@@ -131,8 +133,8 @@ export function AddressEditBlock({ employee, user, canEdit, onSaved }: EmployeeB
     });
 
   const { isRunning: isSaving, run: save } = useAsyncAction(async () => {
-    if (!from) return setError("La fecha desde es obligatoria.");
-    if (!reason.trim()) return setError("El motivo del cambio es obligatorio.");
+    const validationError = requiredLaborChangeError(from, reason);
+    if (validationError) return setError(validationError);
     const oldValue = addressSummary(employee);
     const updated = {
       ...employee,
@@ -181,19 +183,19 @@ export function AddressEditBlock({ employee, user, canEdit, onSaved }: EmployeeB
           </small>
         </div>
         <div className="tracked-actions">
-          <button className="button subtle" onClick={() => setShowHistory(!showHistory)}>
+          <Button variant="subtle" onClick={() => setShowHistory(!showHistory)}>
             Ver historial
-          </button>
+          </Button>
           {canEdit ? (
-            <button
-              className="button primary"
+            <Button
+              variant="primary"
               onClick={() => {
                 setDraft(employee.domicilio);
                 setEditing(true);
               }}
             >
               Modificar domicilio
-            </button>
+            </Button>
           ) : null}
         </div>
       </div>
@@ -245,12 +247,12 @@ export function AddressEditBlock({ employee, user, canEdit, onSaved }: EmployeeB
               {error ? <p className="error">{error}</p> : null}
             </div>
             <div className="form-actions">
-              <button className="button subtle" onClick={() => setEditing(false)}>
+              <Button variant="subtle" onClick={() => setEditing(false)}>
                 Cancelar
-              </button>
-              <button className="button primary" onClick={save} disabled={isSaving}>
+              </Button>
+              <Button variant="primary" onClick={save} disabled={isSaving}>
                 {isSaving ? "Guardando..." : "Guardar domicilio"}
-              </button>
+              </Button>
             </div>
           </div>
         </Modal>
@@ -296,8 +298,8 @@ export function AssignmentBlock({
         }`;
 
   const { isRunning: isSaving, run: save } = useAsyncAction(async () => {
-    if (!from) return setError("La fecha desde es obligatoria.");
-    if (!reason.trim()) return setError("El motivo del cambio es obligatorio.");
+    const validationError = requiredLaborChangeError(from, reason);
+    if (validationError) return setError(validationError);
     const clean = names.filter(Boolean);
     const updated = isManager
       ? {
@@ -359,12 +361,12 @@ export function AssignmentBlock({
           </small>
         </div>
         <div className="tracked-actions">
-          <button className="button subtle" onClick={() => setShowHistory(!showHistory)}>
+          <Button variant="subtle" onClick={() => setShowHistory(!showHistory)}>
             Ver historial
-          </button>
+          </Button>
           {canEdit ? (
-            <button
-              className="button primary"
+            <Button
+              variant="primary"
               onClick={() => {
                 setNames(currentList);
                 setEditing(true);
@@ -377,7 +379,7 @@ export function AssignmentBlock({
                 : isManager
                   ? "Agregar encargado"
                   : "Agregar responsable"}
-            </button>
+            </Button>
           ) : null}
         </div>
       </div>
@@ -411,12 +413,12 @@ export function AssignmentBlock({
             <Field label="Motivo del cambio" value={reason} set={setReason} />
             {error ? <p className="error">{error}</p> : null}
             <div className="form-actions">
-              <button className="button subtle" onClick={() => setEditing(false)}>
+              <Button variant="subtle" onClick={() => setEditing(false)}>
                 Cancelar
-              </button>
-              <button className="button primary" onClick={save} disabled={isSaving}>
+              </Button>
+              <Button variant="primary" onClick={save} disabled={isSaving}>
                 {isSaving ? "Guardando..." : "Guardar asignacion"}
-              </button>
+              </Button>
             </div>
           </div>
         </Modal>
@@ -437,8 +439,8 @@ export function TransportBlock({ employee, user, canEdit, onSaved }: EmployeeBlo
   const [error, setError] = useState("");
 
   const { isRunning: isSaving, run: save } = useAsyncAction(async () => {
-    if (!from) return setError("La fecha desde es obligatoria.");
-    if (!reason.trim()) return setError("El motivo del cambio es obligatorio.");
+    const validationError = requiredLaborChangeError(from, reason);
+    if (validationError) return setError(validationError);
     const updated = {
       ...employee,
       transport: transport === "Sí",
@@ -479,12 +481,12 @@ export function TransportBlock({ employee, user, canEdit, onSaved }: EmployeeBlo
           <p>{transportSummary(employee)}</p>
         </div>
         <div className="tracked-actions">
-          <button className="button subtle" onClick={() => setShowHistory(!showHistory)}>
+          <Button variant="subtle" onClick={() => setShowHistory(!showHistory)}>
             Ver historial
-          </button>
+          </Button>
           {canEdit ? (
-            <button
-              className="button primary"
+            <Button
+              variant="primary"
               onClick={() => {
                 setTransport(employee.transport ? "Sí" : "No");
                 setCity(employee.transportLocality || employee.city);
@@ -494,7 +496,7 @@ export function TransportBlock({ employee, user, canEdit, onSaved }: EmployeeBlo
               }}
             >
               Modificar transporte
-            </button>
+            </Button>
           ) : null}
         </div>
       </div>
@@ -524,12 +526,12 @@ export function TransportBlock({ employee, user, canEdit, onSaved }: EmployeeBlo
             <Field label="Motivo del cambio" value={reason} set={setReason} />
             {error ? <p className="error">{error}</p> : null}
             <div className="form-actions">
-              <button className="button subtle" onClick={() => setEditing(false)}>
+              <Button variant="subtle" onClick={() => setEditing(false)}>
                 Cancelar
-              </button>
-              <button className="button primary" onClick={save} disabled={isSaving}>
+              </Button>
+              <Button variant="primary" onClick={save} disabled={isSaving}>
                 {isSaving ? "Guardando..." : "Guardar transporte"}
-              </button>
+              </Button>
             </div>
           </div>
         </Modal>
@@ -548,8 +550,8 @@ export function HoursSpecialBlock({ employee, user, canEdit, onSaved }: Employee
   const [error, setError] = useState("");
 
   const { isRunning: isSaving, run: save } = useAsyncAction(async () => {
-    if (!from) return setError("La fecha desde es obligatoria.");
-    if (!reason.trim()) return setError("El motivo del cambio es obligatorio.");
+    const validationError = requiredLaborChangeError(from, reason);
+    if (validationError) return setError(validationError);
     const updated = { ...employee, enabledHours: hours };
     try {
       await persistEmployeeBlock(updated, user, onSaved, "hourConcepts");
@@ -583,13 +585,13 @@ export function HoursSpecialBlock({ employee, user, canEdit, onSaved }: Employee
           <p>{hoursSummary(employee)}</p>
         </div>
         <div className="tracked-actions">
-          <button className="button subtle" onClick={() => setShowHistory(!showHistory)}>
+          <Button variant="subtle" onClick={() => setShowHistory(!showHistory)}>
             Ver historial
-          </button>
+          </Button>
           {canEdit ? (
-            <button className="button primary" onClick={() => setEditing(true)}>
+            <Button variant="primary" onClick={() => setEditing(true)}>
               Modificar configuración horaria
-            </button>
+            </Button>
           ) : null}
         </div>
       </div>
@@ -626,12 +628,12 @@ export function HoursSpecialBlock({ employee, user, canEdit, onSaved }: Employee
             <Field label="Motivo del cambio" value={reason} set={setReason} />
             {error ? <p className="error">{error}</p> : null}
             <div className="form-actions">
-              <button className="button subtle" onClick={() => setEditing(false)}>
+              <Button variant="subtle" onClick={() => setEditing(false)}>
                 Cancelar
-              </button>
-              <button className="button primary" onClick={save} disabled={isSaving}>
+              </Button>
+              <Button variant="primary" onClick={save} disabled={isSaving}>
                 {isSaving ? "Guardando..." : "Guardar horas"}
-              </button>
+              </Button>
             </div>
           </div>
         </Modal>

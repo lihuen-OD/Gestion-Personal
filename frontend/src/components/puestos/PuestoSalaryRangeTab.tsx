@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { salaryCategoryApiService } from "../../services/api/salaryCategoryApiService";
 import { salaryRangeMockService, type SalaryGroup } from "../../services/salaryRangeMockService";
 import type { Position } from "../../types/position.types";
+import { Button } from "../ui/Button";
 
 function uniqueSorted(values: string[]) {
   return Array.from(new Set(values.filter(Boolean))).sort((a, b) => a.localeCompare(b, "es"));
@@ -55,7 +56,7 @@ export function PuestoSalaryRangeTab({ position, setPosition, disabled = false }
   return <div className="position-tab-pad salary-range-tab">
     <div className="salary-range-head">
       <div><h3>Rango salarial</h3><p>Selecciona una familia para traer todos sus niveles, o marca dos puntas para completar automaticamente el rango intermedio. Despues podes desmarcar cualquier categoria puntual.</p></div>
-      {!disabled && <div className="table-actions"><button type="button" className="button subtle" onClick={clear}>Limpiar todo</button></div>}
+      {!disabled && <div className="table-actions"><Button type="button" variant="subtle" onClick={clear}>Limpiar todo</Button></div>}
     </div>
     <div className="salary-range-layout">
       {groups.map((group) => {

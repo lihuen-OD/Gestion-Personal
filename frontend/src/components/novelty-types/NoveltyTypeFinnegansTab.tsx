@@ -1,11 +1,12 @@
 import { Plus, Trash2 } from "lucide-react";
 import type { FinnegansNoveltyLink, NoveltyType } from "../../types/noveltyType.types";
+import { Button } from "../ui/Button";
 
 export function NoveltyTypeFinnegansTab({ item, setItem, disabled }: { item: NoveltyType; setItem: (item: NoveltyType) => void; disabled?: boolean }) {
   const update = (linkId: string, patch: Partial<FinnegansNoveltyLink>) => setItem({ ...item, finnegansLinks: item.finnegansLinks.map((link) => link.id === linkId ? { ...link, ...patch } : link) });
   return <div className="catalog-finnegans">
     <div className="info-note"><b>Vinculacion Finnegans</b><p>Se exporta el codigo de novedad Finnegans, no el nombre interno. Si tiene vigencia, la exportacion exige fecha desde y fecha hasta.</p></div>
-    <div className="form-actions inline-actions">{!disabled && <button type="button" className="button primary" onClick={() => setItem({ ...item, finnegansLinks: [...item.finnegansLinks, { id: crypto.randomUUID(), code: "", name: "", exportConcept: "", priority: item.finnegansLinks.length + 1, status: "ACTIVO", hasValidity: false, notes: "" }] })}><Plus size={15} /> Agregar vinculo Finnegans</button>}</div>
+    <div className="form-actions inline-actions">{!disabled && <Button type="button" variant="primary" onClick={() => setItem({ ...item, finnegansLinks: [...item.finnegansLinks, { id: crypto.randomUUID(), code: "", name: "", exportConcept: "", priority: item.finnegansLinks.length + 1, status: "ACTIVO", hasValidity: false, notes: "" }] })}><Plus size={15} /> Agregar vinculo Finnegans</Button>}</div>
     {item.finnegansLinks.length ? <div className="catalog-link-list">{item.finnegansLinks.map((link) => <div className="catalog-link-row novelty-finnegans-row" key={link.id}>
       <label>Codigo Finnegans<input disabled={disabled} value={link.code} onChange={(event) => update(link.id, { code: event.target.value })} /></label>
       <label>Nombre Finnegans<input disabled={disabled} value={link.name} onChange={(event) => update(link.id, { name: event.target.value })} /></label>

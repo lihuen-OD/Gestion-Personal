@@ -1,12 +1,15 @@
-import { AlertTriangle, Search, X } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Eye } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { PageHeader } from "../components/ui/PageHeader";
+import { FilterPanel } from "../components/ui/FilterPanel";
 import { Section } from "../components/ui/Section";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { Modal } from "../components/ui/Modal";
 import { EmptyState } from "../components/ui/EmptyState";
+import { LoadingState } from "../components/ui/LoadingState";
+import { ErrorState } from "../components/ui/ErrorState";
 import { TableShell } from "../components/ui/TableShell";
 import { shiftAlertApiService, type ShiftAlert, type ShiftAlertSeverity, type ShiftAlertStatus, type ShiftAlertType } from "../services/api/shiftAlertApiService";
 import { useDebouncedValue } from "../utils/useDebouncedValue";
@@ -128,27 +131,26 @@ export function ShiftAlertsPage() {
     }
   };
 
-  const hasFilters = Boolean(search || type || severity || status !== "PENDIENTE");
-
   return (
     <>
       <PageHeader eyebrow="GESTIÓN HORARIA" title="Alertas de turnos" description="Fichadas que requieren revisión: tardanzas, salidas fuera de margen y turnos que no coinciden con lo habilitado." />
       <Section title="Alertas" subtitle={`${meta.total} alerta(s) según filtros aplicados.`}>
-        <div className="position-filters catalog-filters">
-          <div className="position-filter-title"><Search size={16} /><b>Filtros</b></div>
-          <label>Buscar<input value={search} placeholder="Nombre, legajo o DNI" onChange={(e) => setSearch(e.target.value)} /></label>
+        <FilterPanel
+          title="Filtros"
+          search={{ value: search, onChange: setSearch, placeholder: "Nombre, legajo o DNI" }}
+          onClear={() => { setSearch(""); setType(""); setSeverity(""); setStatus("PENDIENTE"); }}
+        >
           <label>Tipo<select value={type} onChange={(e) => setType(e.target.value as ShiftAlertType | "")}><option value="">Todos</option>{Object.entries(TYPE_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
           <label>Severidad<select value={severity} onChange={(e) => setSeverity(e.target.value as ShiftAlertSeverity | "")}><option value="">Todas</option><option value="INFO">Informativa</option><option value="ADVERTENCIA">Advertencia</option><option value="CRITICA">Crítica</option></select></label>
           <label>Estado<select value={status} onChange={(e) => setStatus(e.target.value as ShiftAlertStatus | "ALL")}><option value="PENDIENTE">Pendientes</option><option value="RESUELTA">Resueltas</option><option value="DESCARTADA">Descartadas</option><option value="ALL">Todas</option></select></label>
-          {hasFilters ? <button type="button" className="attendance-clear-filters" onClick={() => { setSearch(""); setType(""); setSeverity(""); setStatus("PENDIENTE"); }}><X size={15} /> Limpiar</button> : null}
-        </div>
+        </FilterPanel>
 
         {actionError ? <div className="form-error">{actionError}</div> : null}
 
         {loadStatus === "loading" ? (
-          <EmptyState text="Cargando alertas..." icon={AlertTriangle} />
+          <LoadingState variant="table" rows={5} columns={8} />
         ) : loadStatus === "error" ? (
-          <EmptyState text="No pudimos cargar las alertas." icon={AlertTriangle} />
+          <ErrorState message="No pudimos cargar las alertas." onRetry={() => setRefresh((value) => value + 1)} />
         ) : !alerts.length ? (
           <EmptyState text="No hay alertas para los filtros seleccionados." icon={AlertTriangle} />
         ) : (
@@ -179,9 +181,9 @@ export function ShiftAlertsPage() {
                       <td><Badge tone={STATUS_TONE[alert.status]}>{STATUS_LABELS[alert.status]}</Badge></td>
                       <td>
                         <div className="table-actions">
-                          <Link className="table-link" to={`/legajos/${alert.employeeId}`}>Ver legajo</Link>
-                          {alert.workShift.shiftTemplate ? <Link className="table-link" to={`/configuracion/turnos/${alert.workShift.shiftTemplate.id}`}>Ver turno</Link> : null}
-                          {alert.status === "PENDIENTE" ? <button type="button" className="table-link" onClick={() => openResolve(alert)}>Resolver</button> : null}
+                          <Link className="table-icon-action" title="Ver legajo" aria-label={`Ver legajo de ${alert.employee.firstName} ${alert.employee.lastName}`} to={`/legajos/${alert.employeeId}`}><Eye size={14} /><span>Ver legajo</span></Link>
+                          {alert.workShift.shiftTemplate ? <Link className="table-icon-action" title="Ver turno" aria-label="Ver turno" to={`/configuracion/turnos/${alert.workShift.shiftTemplate.id}`}><Eye size={14} /><span>Ver turno</span></Link> : null}
+                          {alert.status === "PENDIENTE" ? <button type="button" className="table-icon-action" title="Resolver alerta" aria-label="Resolver alerta" onClick={() => openResolve(alert)}><CheckCircle2 size={14} /><span>Resolver</span></button> : null}
                         </div>
                       </td>
                     </tr>

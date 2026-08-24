@@ -10,6 +10,7 @@ import { Badge } from "../ui/Badge";
 import { EmptyState } from "../ui/EmptyState";
 import { ErrorState } from "../ui/ErrorState";
 import { LoadingState } from "../ui/LoadingState";
+import { Button } from "../ui/Button";
 import { TableShell } from "../ui/TableShell";
 import { ShiftAssignmentVigencyFields } from "../shared/ShiftAssignmentVigencyFields";
 
@@ -174,9 +175,9 @@ export function EmployeeShiftsPanel({ employee, canEdit = false }: { employee: E
             <label className="field"><span>Observación (opcional)</span><input value={observation} onChange={(e) => setObservation(e.target.value)} placeholder="Ej: rota semana por medio con turno tarde" /></label>
           </div>
           <div className="form-actions">
-            <button className="button primary" disabled={isAssigning || !selectedTemplateId || !effectiveFrom} onClick={assign}>
+            <Button variant="primary" disabled={isAssigning || !selectedTemplateId || !effectiveFrom} onClick={assign}>
               <Plus size={15} /> {isAssigning ? "Asignando..." : "Agregar turno"}
-            </button>
+            </Button>
           </div>
         </>
       ) : null}
@@ -186,9 +187,9 @@ export function EmployeeShiftsPanel({ employee, canEdit = false }: { employee: E
       ) : (
         <>
           <h4>Turnos habilitados ({enabled.length})</h4>
-          {enabled.length ? <ShiftAssignmentTable rows={enabled} canEdit={canEdit} onToggle={toggle} onRemove={remove} /> : <div className="empty">Ningún turno habilitado.</div>}
+          {enabled.length ? <ShiftAssignmentTable rows={enabled} canEdit={canEdit} onToggle={toggle} onRemove={remove} /> : <EmptyState size="compact" text="Ningún turno habilitado." />}
           <h4>Turnos deshabilitados ({disabled.length})</h4>
-          {disabled.length ? <ShiftAssignmentTable rows={disabled} canEdit={canEdit} onToggle={toggle} onRemove={remove} /> : <div className="empty">Ningún turno deshabilitado.</div>}
+          {disabled.length ? <ShiftAssignmentTable rows={disabled} canEdit={canEdit} onToggle={toggle} onRemove={remove} /> : <EmptyState size="compact" text="Ningún turno deshabilitado." />}
         </>
       )}
     </>

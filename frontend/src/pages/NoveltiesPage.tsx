@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { CheckCheck, Plus, Search } from "lucide-react";
+import { CheckCheck, Plus } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { noveltyApiService } from "../services/api/noveltyApiService";
 import type { Employee, Novelty } from "../types";
@@ -9,6 +9,8 @@ import { PageHeader } from "../components/ui/PageHeader";
 import { Section } from "../components/ui/Section";
 import { Button } from "../components/ui/Button";
 import { Pagination } from "../components/ui/Pagination";
+import { FilterPanel } from "../components/ui/FilterPanel";
+import { LoadingState } from "../components/ui/LoadingState";
 import { useDebouncedValue } from "../utils/useDebouncedValue";
 import { roleLevel } from "../utils/roles";
 
@@ -24,12 +26,14 @@ export function NoveltiesPage() {
   const employees: Employee[] = [];
   const [novelties, setNovelties] = useState<Novelty[]>([]);
   const [meta, setMeta] = useState({ total: 0, page: 1, pageSize, hasMore: false });
+  const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [bulkApproving, setBulkApproving] = useState(false);
   const pendingVisible = novelties.filter((item) => item.status === "Pendiente");
 
   useEffect(() => {
     let mounted = true;
+    setLoading(true);
     setLoadError("");
     noveltyApiService
       .list({ page, take: pageSize, search: debouncedSearch })
@@ -44,6 +48,9 @@ export function NoveltiesPage() {
           setMeta({ total: 0, page, pageSize, hasMore: false });
           setLoadError("No pudimos cargar las novedades. Intentá nuevamente.");
         }
+      })
+      .finally(() => {
+        if (mounted) setLoading(false);
       });
     return () => {
       mounted = false;
@@ -75,29 +82,30 @@ export function NoveltiesPage() {
         subtitle={`${meta.total} registros visibles según tu perfil`}
       >
         {roleLevel(user!.role) === 1 && pendingVisible.length ? <div className="bulk-toolbar"><span>{pendingVisible.length} novedades pendientes en esta vista</span><Button variant="primary" icon={CheckCheck} loading={bulkApproving} onClick={async () => { setBulkApproving(true); setLoadError(""); try { const updated = await noveltyApiService.approveMany(pendingVisible.map((item) => item.id)); const byId = new Map(updated.map((item) => [item.id, item])); setNovelties((current) => current.map((item) => byId.get(item.id) || item)); } catch { setLoadError("No se pudieron aprobar las novedades en lote."); } finally { setBulkApproving(false); } }}>Aprobar pendientes visibles</Button></div> : null}
-        <div className="filters">
-          <label className="search-field">
-            <Search size={17} />
-            <input
-              placeholder="Buscar por legajo, DNI, empleado o tipo de novedad"
-              value={search}
-              onChange={(event) => {
-                setSearch(event.target.value);
-                setPage(1);
-              }}
-            />
-          </label>
-        </div>
-        <NoveltyTable
-          rows={novelties}
-          employees={employees}
-          currentUser={user!}
-          onChanged={(updated) => setNovelties((current) => current.map((item) => item.id === updated.id ? updated : item))}
-          onDeleted={(id) => {
-            setNovelties((current) => current.filter((item) => item.id !== id));
-            setMeta((current) => ({ ...current, total: Math.max(0, current.total - 1) }));
+        <FilterPanel
+          search={{
+            placeholder: "Buscar por legajo, DNI, empleado o tipo de novedad",
+            value: search,
+            onChange: (value) => {
+              setSearch(value);
+              setPage(1);
+            },
           }}
         />
+        {loading ? (
+          <LoadingState variant="table" rows={5} columns={9} />
+        ) : (
+          <NoveltyTable
+            rows={novelties}
+            employees={employees}
+            currentUser={user!}
+            onChanged={(updated) => setNovelties((current) => current.map((item) => item.id === updated.id ? updated : item))}
+            onDeleted={(id) => {
+              setNovelties((current) => current.filter((item) => item.id !== id));
+              setMeta((current) => ({ ...current, total: Math.max(0, current.total - 1) }));
+            }}
+          />
+        )}
         {novelties.length > 0 && (
           <Pagination page={meta.page} pageSize={meta.pageSize} total={meta.total} hasMore={meta.hasMore} onPageChange={setPage} itemLabel="novedades" />
         )}

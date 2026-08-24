@@ -6,6 +6,7 @@ import { OverflowCell } from "../components/ui/OverflowCell";
 import { DataTable } from "../components/ui/DataTable";
 import { PageHeader } from "../components/ui/PageHeader";
 import { Section } from "../components/ui/Section";
+import { StatCard } from "../components/ui/StatCard";
 import { Tabs } from "../components/ui/Tabs";
 import { Button } from "../components/ui/Button";
 import { Badge } from "../components/ui/Badge";
@@ -158,7 +159,7 @@ function Editor({ type, item, catalog, onChange }: { type: Tab; item: Editable; 
 
 function EditAction({ item, readOnly, onEdit }: { item: Editable; readOnly: boolean; onEdit: (item: Editable) => void }) {
   if (readOnly) return <Badge tone="neutral">Solo lectura</Badge>;
-  return <button className="table-link table-icon-action" title="Editar" aria-label="Editar" onClick={() => onEdit(item)}><Pencil size={14}/><span>Editar</span></button>;
+  return <button className="table-icon-action" title="Editar" aria-label="Editar" onClick={() => onEdit(item)}><Pencil size={14}/><span>Editar</span></button>;
 }
 
 function StatusBadge({ status }: { status: OrgStructureStatus }) {
@@ -217,7 +218,7 @@ export function OrgStructurePage() {
     ["Unidades", catalog.businessUnits.length],
     ["Establecimientos", catalog.establishments.length],
     ["Sectores", catalog.sectors.length],
-  ], [catalog]);
+  ] as const, [catalog]);
   const { isRunning: isSaving, run: save } = useAsyncAction(async () => {
     if (!editing?.name.trim()) return setNotice("Completa el nombre antes de guardar.");
     const normalized = normalizeDerivedRelations(tab, editing, catalog);
@@ -253,7 +254,7 @@ export function OrgStructurePage() {
     {notice && <div className="toast">{notice}</div>}
     {apiWarning && <div className="info-note compact"><b>Modo local</b><p>{apiWarning}</p></div>}
     {usesApiCatalog && <div className="info-note compact"><b>Información sincronizada</b><p>Los cambios se guardan y quedan disponibles para los usuarios autorizados.</p></div>}
-    <div className="stat-grid org-structure-summary">{counts.map(([label, value]) => <div className="stat-card" key={label}><div><small>{label}</small><strong>{value}</strong><span>Catalogo maestro</span></div></div>)}</div>
+    <div className="stat-grid org-structure-summary">{counts.map(([label, value]) => <StatCard key={label} label={label} value={value} detail="Catalogo maestro" />)}</div>
     <Tabs tabs={tabs.map((item) => ({ key: item.id, label: item.label }))} active={tab} onChange={(key) => { setTab(key as Tab); setEditing(null); }} />
     <Section title={tabs.find((item) => item.id === tab)?.label || ""} subtitle={isLoadingApi ? "Cargando estructura..." : "Administracion de relaciones y estados disponibles para operacion."}>
       <DataTable status={isLoadingApi ? "loading" : activeRows.length === 0 ? "empty" : "ready"} minWidth={940} emptyText="No hay registros cargados para esta categoria.">
