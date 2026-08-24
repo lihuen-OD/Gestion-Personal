@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { FileBarChart } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
-import { employeeApiService } from "../services/api/employeeApiService";
+import { employeeApiService, orgChartReachedLimit } from "../services/api/employeeApiService";
 import { organizationChartMockService } from "../services/organizationChartMockService";
 import { demoMode } from "../config/runtimeMode";
 import type { Employee, Role } from "../types";
@@ -52,6 +52,7 @@ export function OrganigramasPage() {
   const [toast, setToast] = useState("");
   const [sourceEmployees, setSourceEmployees] = useState<Employee[]>([]);
   const [usesBackend, setUsesBackend] = useState(false);
+  const [reachedEmployeeLimit, setReachedEmployeeLimit] = useState(false);
   const [loadError, setLoadError] = useState("");
   const [loadStatus, setLoadStatus] = useState<"loading" | "success" | "error">("loading");
   const [retry, setRetry] = useState(0);
@@ -61,9 +62,10 @@ export function OrganigramasPage() {
     setLoadError("");
     employeeApiService
       .getOrgChart()
-      .then((employees) => {
+      .then((result) => {
         if (!mounted) return;
-        setSourceEmployees(employees);
+        setSourceEmployees(result.items);
+        setReachedEmployeeLimit(orgChartReachedLimit(result));
         setUsesBackend(true);
         setLoadStatus("success");
       })
@@ -73,6 +75,7 @@ export function OrganigramasPage() {
           .then((employees) => {
             if (!mounted) return;
             setSourceEmployees(employees);
+            setReachedEmployeeLimit(false);
             setUsesBackend(true);
             setLoadStatus("success");
           })
@@ -81,11 +84,13 @@ export function OrganigramasPage() {
             if (demoMode) {
               const { employeeMockService } = await import("../services/employeeMockService");
               setSourceEmployees(employeeMockService.getAll());
+              setReachedEmployeeLimit(false);
               setUsesBackend(false);
               setLoadStatus("success");
               return;
             }
             setSourceEmployees([]);
+            setReachedEmployeeLimit(false);
             setLoadError("No pudimos cargar el organigrama. Intentá nuevamente en unos minutos.");
             setLoadStatus("error");
           });
@@ -100,8 +105,11 @@ export function OrganigramasPage() {
     [sourceEmployees, user],
   );
   const categories = useMemo(() => organizationChartMockService.getCategories(), []);
-  const employees = organizationChartMockService.getEmployeesFrom(sourceEmployees, user!.role, user!.sector, filters);
-  const model = organizationChartMockService.buildCategoryModel(employees, categories);
+  const employees = useMemo(
+    () => organizationChartMockService.getEmployeesFrom(sourceEmployees, user!.role, user!.sector, filters),
+    [filters, sourceEmployees, user],
+  );
+  const model = useMemo(() => organizationChartMockService.buildCategoryModel(employees, categories), [categories, employees]);
   const exportView = () => {
     exportOrganigramWorkbook(employees, tab);
     setToast(`Se exportaron ${employees.length} personas visibles del organigrama.`);
@@ -114,6 +122,7 @@ export function OrganigramasPage() {
   return <><PageHeader eyebrow="ESTRUCTURA ORGANIZACIONAL" title="Organigramas" description={loadError ? "La información no está disponible temporalmente." : usesBackend ? "Visualización alimentada desde legajos reales: categoría interna, encargado directo, sector, centro de costo y estado." : "Visualización alimentada desde Legajos en modo demostración."} action={<Button variant="subtle" icon={FileBarChart} onClick={exportView} disabled={Boolean(loadError)}>Exportar vista</Button>} />
     {loadStatus === "loading" ? <LoadingState text="Cargando organigrama..." /> : null}
     {loadStatus === "error" ? <ErrorState message={loadError} onRetry={() => setRetry((value) => value + 1)} /> : null}
+    {loadStatus === "success" && reachedEmployeeLimit ? <div className="info-note compact">Se alcanzó el límite de 1000 empleados. El organigrama puede estar incompleto.</div> : null}
     {toast && <div className="toast">{toast}</div>}
     {loadStatus === "success" ? <><OrgChartTabs active={tab} onChange={setTab} />
     {filterControls}

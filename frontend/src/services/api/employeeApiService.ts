@@ -516,6 +516,12 @@ async function invalidateEmployeeDependentCaches(reason: string) {
 }
 
 type EmployeeListResult = { items: Employee[]; meta: ApiListMeta };
+export const ORG_CHART_EMPLOYEE_LIMIT = 1000;
+
+export function orgChartReachedLimit(result: EmployeeListResult): boolean {
+  return result.meta.hasMore || result.items.length >= ORG_CHART_EMPLOYEE_LIMIT;
+}
+
 const employeeListSnapshots = new Map<string, EmployeeListResult>();
 
 export function employeeListRequest(filters: EmployeeListFilters = {}) {
@@ -537,10 +543,6 @@ function isEmployeeOptionsResponse(value: { items: Employee[]; meta?: unknown })
 
 function isEmployeeSummary(value: EmployeeSummary) {
   return Boolean(value && typeof value.total === "number" && typeof value.active === "number" && typeof value.inactive === "number");
-}
-
-function isEmployeeList(value: Employee[]) {
-  return Array.isArray(value) && value.every((item) => typeof item.id === "string" && typeof item.firstName === "string" && typeof item.lastName === "string");
 }
 
 export const employeeApiService = {
@@ -593,10 +595,13 @@ export const employeeApiService = {
   },
   async getOrgChart() {
     return cachedData({
-      requestKey: "GET:/employees/org-chart?take=1000",
+      requestKey: `GET:/employees/org-chart?take=${ORG_CHART_EMPLOYEE_LIMIT}`,
       policy: cachePolicies.employeesOrgChart,
-      fetcher: () => apiRequest<ApiEmployeeListResponse>("/employees/org-chart?take=1000", { apiCache: false }).then((response) => response.data.map(mapEmployeeFromApi)),
-      validate: isEmployeeList,
+      fetcher: () => apiRequest<ApiEmployeePaginatedResponse>(`/employees/org-chart?take=${ORG_CHART_EMPLOYEE_LIMIT}`, { apiCache: false }).then((response) => ({
+        items: response.data.map(mapEmployeeFromApi),
+        meta: response.meta,
+      })),
+      validate: isEmployeeOptionsResponse,
     });
   },
   async getById(id: string) {

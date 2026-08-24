@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { employeeListRequest, mapEmployeeFromApi } from "./employeeApiService";
+import { employeeListRequest, mapEmployeeFromApi, orgChartReachedLimit } from "./employeeApiService";
 
 describe("mapEmployeeFromApi transport", () => {
   it("keeps transport locality separate from the home address city", () => {
@@ -52,5 +52,17 @@ describe("employeeListRequest filtros sectorId/costCenterId (Etapa 8F)", () => {
     const { path } = employeeListRequest({ sectorId: "", costCenterId: "" });
     expect(path).not.toContain("sectorId=");
     expect(path).not.toContain("costCenterId=");
+  });
+});
+
+describe("orgChartReachedLimit", () => {
+  const employee = mapEmployeeFromApi({ id: "employee-1", legajo: "1", firstName: "Ana", lastName: "Test", status: "ACTIVO" });
+
+  it("advierte cuando backend informa que existen más páginas", () => {
+    expect(orgChartReachedLimit({ items: [employee], meta: { total: 1001, page: 1, pageSize: 1000, hasMore: true } })).toBe(true);
+  });
+
+  it("no advierte para una respuesta completa por debajo del límite", () => {
+    expect(orgChartReachedLimit({ items: [employee], meta: { total: 1, page: 1, pageSize: 1000, hasMore: false } })).toBe(false);
   });
 });
