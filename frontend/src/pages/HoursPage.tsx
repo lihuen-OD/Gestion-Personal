@@ -498,20 +498,23 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
                 onChange={(event) => setPeriodValue(event.target.value)}
               />
             </label>
-            <select
-              value={costCenter}
-              onChange={(event) => {
-                setCostCenter(event.target.value);
-                setReviewPage(1);
-              }}
-            >
-              <option value="">Todos los centros de costo</option>
-              {costCenters.map((center) => (
-                <option key={center} value={center}>
-                  {center}
-                </option>
-              ))}
-            </select>
+            <label>
+              Centro de costo
+              <select
+                value={costCenter}
+                onChange={(event) => {
+                  setCostCenter(event.target.value);
+                  setReviewPage(1);
+                }}
+              >
+                <option value="">Todos los centros de costo</option>
+                {costCenters.map((center) => (
+                  <option key={center} value={center}>
+                    {center}
+                  </option>
+                ))}
+              </select>
+            </label>
           </FilterPanel>
 
           {loading ? (
@@ -690,20 +693,23 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
               onChange={(event) => setPeriodValue(event.target.value)}
             />
           </label>
-          <select
-            value={costCenter}
-            onChange={(event) => {
-              setCostCenter(event.target.value);
-              setPage(1);
-            }}
-          >
-            <option value="">Todos los centros de costo</option>
-            {costCenters.map((center) => (
-              <option key={center} value={center}>
-                {center}
-              </option>
-            ))}
-          </select>
+          <label>
+            Centro de costo
+            <select
+              value={costCenter}
+              onChange={(event) => {
+                setCostCenter(event.target.value);
+                setPage(1);
+              }}
+            >
+              <option value="">Todos los centros de costo</option>
+              {costCenters.map((center) => (
+                <option key={center} value={center}>
+                  {center}
+                </option>
+              ))}
+            </select>
+          </label>
         </FilterPanel>
 
         {loading ? (
