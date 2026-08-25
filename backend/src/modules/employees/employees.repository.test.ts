@@ -13,8 +13,11 @@ import { EmployeeStatus } from "@prisma/client";
  */
 vi.mock("../../shared/prisma/client", () => ({
   prisma: {
-    employee: { findFirst: vi.fn() },
+    employee: { findFirst: vi.fn(), findUniqueOrThrow: vi.fn() },
     hourConcept: { findMany: vi.fn() },
+    employeeAssignment: { deleteMany: vi.fn(), createMany: vi.fn() },
+    employeeHourConcept: { deleteMany: vi.fn(), createMany: vi.fn() },
+    $transaction: vi.fn(),
   },
 }));
 
@@ -115,6 +118,58 @@ describe("employeesRepository.findAssignableHourConceptIds", () => {
       },
       select: { id: true },
     });
+  });
+});
+
+// Etapa 6Q (QA): replaceAssignments/replaceHourConcepts hacían el re-fetch con
+// employeeDetailSelect (relaciones anidadas pesadas) DENTRO de la misma
+// transacción interactiva que el delete+create. En vivo, contra Neon con
+// latencia elevada, eso hizo expirar el timeout de 5s de Prisma (500
+// INTERNAL_ERROR) aunque el delete+create en sí era liviano y rápido. El
+// fix saca ese re-fetch de la transacción — sigue siendo la única lectura
+// que da forma a la respuesta, pero ya no arriesga el timeout de la
+// transacción. Estos tests fijan que el delete+create quede dentro de
+// $transaction y el re-fetch pesado se haga después, sobre `prisma` directo.
+describe("employeesRepository.replaceAssignments / replaceHourConcepts — Etapa 6Q", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("replaceAssignments: hace el delete+create dentro de $transaction y el re-fetch fuera", async () => {
+    const tx = { employeeAssignment: { deleteMany: vi.fn(), createMany: vi.fn() } };
+    (prisma.$transaction as Mock).mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) => cb(tx));
+    (prisma.employee.findUniqueOrThrow as Mock).mockResolvedValue({ id: "emp-1" });
+
+    const result = await employeesRepository.replaceAssignments("emp-1", [
+      { type: "TIME_RESPONSIBLE", userId: "user-1" },
+    ]);
+
+    expect(tx.employeeAssignment.deleteMany).toHaveBeenCalledWith({ where: { employeeId: "emp-1" } });
+    expect(tx.employeeAssignment.createMany).toHaveBeenCalled();
+    expect(prisma.employee.findUniqueOrThrow).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "emp-1" } }),
+    );
+    // el re-fetch corre sobre prisma, no sobre `tx` — es decir, después de que la transacción cerró
+    expect((tx as Record<string, unknown>).employee).toBeUndefined();
+    expect(result).toEqual({ id: "emp-1" });
+  });
+
+  it("replaceHourConcepts: hace el delete+create dentro de $transaction y el re-fetch fuera", async () => {
+    const tx = { employeeHourConcept: { deleteMany: vi.fn(), createMany: vi.fn() } };
+    (prisma.$transaction as Mock).mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) => cb(tx));
+    (prisma.employee.findUniqueOrThrow as Mock).mockResolvedValue({ id: "emp-1" });
+
+    const result = await employeesRepository.replaceHourConcepts("emp-1", ["colectivo"]);
+
+    expect(tx.employeeHourConcept.deleteMany).toHaveBeenCalledWith({ where: { employeeId: "emp-1" } });
+    expect(tx.employeeHourConcept.createMany).toHaveBeenCalledWith({
+      data: [{ employeeId: "emp-1", hourConceptId: "colectivo" }],
+    });
+    expect(prisma.employee.findUniqueOrThrow).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "emp-1" } }),
+    );
+    expect((tx as Record<string, unknown>).employee).toBeUndefined();
+    expect(result).toEqual({ id: "emp-1" });
   });
 });
 

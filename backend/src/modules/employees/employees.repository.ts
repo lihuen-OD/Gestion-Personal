@@ -1218,8 +1218,13 @@ export const employeesRepository = {
     });
   },
 
-  replaceAssignments(employeeId: string, assignments: EmployeeAssignmentInput[]) {
-    return prisma.$transaction(async (tx) => {
+  async replaceAssignments(employeeId: string, assignments: EmployeeAssignmentInput[]) {
+    // Etapa 6Q: el re-fetch con employeeDetailSelect (relaciones anidadas
+    // pesadas) se saca de la transacción interactiva — es sólo lectura para
+    // dar forma a la respuesta, no hace falta que sea atómico con el
+    // delete+create, y mantenerlo afuera evita expirar el timeout de 5s de
+    // Prisma bajo latencia alta de Neon (visto en QA de Etapa 6Q).
+    await prisma.$transaction(async (tx) => {
       await tx.employeeAssignment.deleteMany({ where: { employeeId } });
       if (assignments.length) {
         await tx.employeeAssignment.createMany({
@@ -1236,21 +1241,23 @@ export const employeesRepository = {
           })),
         });
       }
-      return tx.employee.findUniqueOrThrow({ where: { id: employeeId }, select: employeeDetailSelect });
     });
+    return prisma.employee.findUniqueOrThrow({ where: { id: employeeId }, select: employeeDetailSelect });
   },
 
-  replaceHourConcepts(employeeId: string, hourConceptIds: string[]) {
-    return prisma.$transaction(async (tx) => {
-      const uniqueIds = Array.from(new Set(hourConceptIds.filter(Boolean)));
+  async replaceHourConcepts(employeeId: string, hourConceptIds: string[]) {
+    // Etapa 6Q: mismo criterio que replaceAssignments — el re-fetch pesado
+    // se hace fuera de la transacción interactiva.
+    const uniqueIds = Array.from(new Set(hourConceptIds.filter(Boolean)));
+    await prisma.$transaction(async (tx) => {
       await tx.employeeHourConcept.deleteMany({ where: { employeeId } });
       if (uniqueIds.length) {
         await tx.employeeHourConcept.createMany({
           data: uniqueIds.map((hourConceptId) => ({ employeeId, hourConceptId })),
         });
       }
-      return tx.employee.findUniqueOrThrow({ where: { id: employeeId }, select: employeeDetailSelect });
     });
+    return prisma.employee.findUniqueOrThrow({ where: { id: employeeId }, select: employeeDetailSelect });
   },
 
   findAssignableHourConceptIds(hourConceptIds: string[]) {
