@@ -5,6 +5,7 @@ import { AppError } from "../../shared/errors/AppError";
 import { storageService } from "../../shared/storage/storage.service";
 import { storagePathBuilder } from "../../shared/storage/storagePathBuilder";
 import { redactPiiForRole } from "../../shared/security/piiRedaction";
+import { roles } from "../../shared/security/roles";
 import { employeeAccessWhere } from "./employeeAccess";
 import { employeesRepository } from "./employees.repository";
 import type {
@@ -20,6 +21,7 @@ import type {
   ListEmployeesQuery,
   ReplaceEmployeeAssignmentsInput,
   ReplaceEmployeeHourConceptsInput,
+  ResolveManualHourConceptBreakdownInput,
   UpdateEmployeeContactInput,
   UpdateEmployeeInput,
   UpsertEmployeeAddressInput,
@@ -172,6 +174,26 @@ async function validateManualBreakdownContext(
     throw new AppError("The period is closed for direct editing", 409, "PERIOD_CLOSED");
   }
   return concept;
+}
+
+// Etapa 6L.3 (ajuste): igual que TimeEntry, la aprobación final de un
+// desglose manual es exclusiva de RRHH — Nivel 2/3 pueden cargarlo pero no
+// resolverlo (aprobar/rechazar/devolver), ni propio ni ajeno.
+function assertCanResolveManualBreakdown(user: Express.AuthUser) {
+  if (user.role !== roles.rrhh) {
+    throw new AppError("Sólo RRHH puede aprobar, rechazar o devolver desgloses manuales.", 403, "FORBIDDEN");
+  }
+}
+
+async function findResolvableManualBreakdown(employeeId: string, breakdownId: string, user: Express.AuthUser) {
+  const before = await employeesRepository.findManualBreakdownById(breakdownId, employeeAccessWhere(user));
+  if (!before || before.employeeId !== employeeId) {
+    throw new AppError("Desglose manual no encontrado", 404, "HOUR_CONCEPT_BREAKDOWN_NOT_FOUND");
+  }
+  if (before.status !== "EN_REVISION") {
+    throw new AppError("Sólo se pueden resolver desgloses manuales en revisión.", 400, "HOUR_CONCEPT_BREAKDOWN_STATUS_NOT_RESOLVABLE");
+  }
+  return before;
 }
 
 function isManualBreakdownConcurrencyError(error: unknown) {
@@ -403,6 +425,9 @@ export const employeesService = {
     const date = new Date(`${input.date}T00:00:00.000Z`);
     const day = Number(input.date.slice(8, 10));
     const concept = await validateManualBreakdownContext(employeeId, input.hourConceptId, period, user);
+    // Etapa 6L.3: mismo criterio que TimeEntry — RRHH aplica el desglose
+    // directo (APROBADO); Nivel 2/3 lo dejan pendiente de revisión.
+    const autoApprovedByUserId = user.role === roles.rrhh ? user.id : null;
     const result = await saveManualBreakdownWithRetry({
       employeeId,
       hourConceptId: input.hourConceptId,
@@ -412,18 +437,73 @@ export const employeesService = {
       minutes: input.minutes,
       observation: input.observation,
       createdByUserId: user.id,
+      approvedByUserId: autoApprovedByUserId,
     });
     await auditService.register({
       ...audit,
       action: result.operation,
       entity: "HourConceptBreakdown",
       entityId: result.item?.id || null,
-      description: `${result.operation === "DELETE" ? "Se eliminó" : "Se guardó"} el desglose manual ${concept.name} de ${input.date} para el legajo ${employeeId}.`,
+      description: result.operation === "DELETE"
+        ? `Se eliminó el desglose manual ${concept.name} de ${input.date} para el legajo ${employeeId}.`
+        : autoApprovedByUserId
+          ? `Se guardó y aplicó (RRHH) el desglose manual ${concept.name} de ${input.date} para el legajo ${employeeId}.`
+          : `Se guardó el desglose manual ${concept.name} de ${input.date} para el legajo ${employeeId}.`,
       after: result.item as Prisma.InputJsonValue | undefined,
     });
     return result.item;
   },
 
+  // Etapa 6L.3 (ajuste): approve/reject/return para HourConceptBreakdown
+  // manual EN_REVISION — mismo patrón que timeEntriesService.approve/reject/
+  // returnForCorrection, exclusivo de RRHH.
+  async approveManualHourConceptBreakdown(employeeId: string, breakdownId: string, user: Express.AuthUser, audit?: AuditContext) {
+    assertCanResolveManualBreakdown(user);
+    const before = await findResolvableManualBreakdown(employeeId, breakdownId, user);
+    const item = await employeesRepository.approveManualHourConceptBreakdown(breakdownId, user.id);
+    await auditService.register({
+      ...audit,
+      action: "APPROVE",
+      entity: "HourConceptBreakdown",
+      entityId: item.id,
+      description: `Se aprobó el desglose manual ${item.hourConcept.name} del legajo ${item.employee.legajo}.`,
+      before: before as Prisma.InputJsonValue,
+      after: item as Prisma.InputJsonValue,
+    });
+    return item;
+  },
+
+  async rejectManualHourConceptBreakdown(employeeId: string, breakdownId: string, input: ResolveManualHourConceptBreakdownInput, user: Express.AuthUser, audit?: AuditContext) {
+    assertCanResolveManualBreakdown(user);
+    const before = await findResolvableManualBreakdown(employeeId, breakdownId, user);
+    const item = await employeesRepository.rejectManualHourConceptBreakdown(breakdownId);
+    await auditService.register({
+      ...audit,
+      action: "REJECT",
+      entity: "HourConceptBreakdown",
+      entityId: item.id,
+      description: `Se rechazó el desglose manual ${item.hourConcept.name} del legajo ${item.employee.legajo}. Motivo: ${input.reason}`,
+      before: before as Prisma.InputJsonValue,
+      after: { item, reason: input.reason } as Prisma.InputJsonValue,
+    });
+    return item;
+  },
+
+  async returnManualHourConceptBreakdown(employeeId: string, breakdownId: string, input: ResolveManualHourConceptBreakdownInput, user: Express.AuthUser, audit?: AuditContext) {
+    assertCanResolveManualBreakdown(user);
+    const before = await findResolvableManualBreakdown(employeeId, breakdownId, user);
+    const item = await employeesRepository.returnManualHourConceptBreakdown(breakdownId);
+    await auditService.register({
+      ...audit,
+      action: "RETURN",
+      entity: "HourConceptBreakdown",
+      entityId: item.id,
+      description: `Se devolvió el desglose manual ${item.hourConcept.name} del legajo ${item.employee.legajo}. Motivo: ${input.reason}`,
+      before: before as Prisma.InputJsonValue,
+      after: { item, reason: input.reason } as Prisma.InputJsonValue,
+    });
+    return item;
+  },
 
   async getPositionValidation(id: string, user: Express.AuthUser) {
     const employee = await employeesService.getById(id, user);

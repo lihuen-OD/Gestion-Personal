@@ -14,7 +14,7 @@ type ApiApprovalStatus =
 export type PendingKind = "all" | "novelties" | "timeEntries";
 
 type ApiPendingItem = {
-  kind: "novelty" | "timeEntry";
+  kind: "novelty" | "timeEntry" | "hourConceptBreakdown";
   sourceId: string;
   status: ApiApprovalStatus;
   date: string;
@@ -31,6 +31,7 @@ type ApiPendingResponse = {
       total: number;
       novelties: number;
       timeEntries: number;
+      hourConceptBreakdowns: number;
     };
     data: ApiPendingItem[];
   };

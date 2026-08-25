@@ -12,14 +12,19 @@ import { ApiError } from "../services/api/apiClient";
 import type { Employee } from "../types";
 import type { EmployeeTimeGrid, EmployeeTimeGridRow } from "../services/api/employeeApiService";
 
+const mockUseAuth = vi.fn();
 vi.mock("../context/AuthContext", () => ({
-  useAuth: () => ({
-    user: { id: "user-1", name: "Ana Test", email: "ana@test.com", password: "", role: "Nivel 1 - RRHH", status: "Activo" },
+  useAuth: () => mockUseAuth(),
+}));
+
+function authAs(role: string, overrides: Partial<{ id: string; name: string }> = {}) {
+  mockUseAuth.mockReturnValue({
+    user: { id: overrides.id || "user-1", name: overrides.name || "Ana Test", email: "ana@test.com", password: "", role, status: "Activo" },
     login: vi.fn(),
     loginAs: vi.fn(),
     logout: vi.fn(),
-  }),
-}));
+  });
+}
 
 vi.mock("../services/api/employeeApiService", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../services/api/employeeApiService")>();
@@ -209,6 +214,7 @@ beforeEach(() => {
   vi.mocked(documentCategoryApiService.getAll).mockResolvedValue([]);
   vi.mocked(timeEntryApiService.save).mockReset();
   vi.mocked(timeEntryApiService.update).mockReset();
+  authAs("Nivel 1 - RRHH");
 });
 
 function buildNormalOnlyGrid(): EmployeeTimeGrid {
@@ -237,7 +243,7 @@ describe("EmployeeHoursPage — Hora normal es universal (bug: HOUR_CONCEPT_NOT_
     const user = userEvent.setup();
     vi.mocked(employeeApiService.getTimeGrid).mockResolvedValue(buildNormalOnlyGrid());
     vi.mocked(timeEntryApiService.save).mockResolvedValueOnce({
-      id: "entry-1", employeeId: "employee-1", period: "2026-08", day: 1, type: "Hora normal", hours: 8, status: "Borrador", conceptId: "normal",
+      id: "entry-1", employeeId: "employee-1", period: "2026-08", day: 1, type: "Hora normal", hours: 8, status: "Aprobado", conceptId: "normal",
     });
     renderPage();
     await screen.findByRole("button", { name: /Recalcular automáticos/i });
@@ -246,25 +252,25 @@ describe("EmployeeHoursPage — Hora normal es universal (bug: HOUR_CONCEPT_NOT_
     await user.click(normalDay1);
     expect(await screen.findByText(/Cargar Hora normal/i)).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: /Guardar borrador/i }));
+    await user.click(screen.getByRole("button", { name: "Guardar" }));
 
     await waitFor(() => expect(timeEntryApiService.save).toHaveBeenCalledTimes(1));
     expect(timeEntryApiService.save).toHaveBeenCalledWith(expect.objectContaining({ conceptId: "normal", hours: 8 }));
     await waitFor(() => expect(screen.queryByText(/Cargar Hora normal/i)).not.toBeInTheDocument());
   });
 
-  it("no muestra 'Ese tipo de hora no esta habilitado para este legajo' al enviar Hora normal a revisión sin conceptos adicionales", async () => {
+  it("no muestra 'Ese tipo de hora no esta habilitado para este legajo' al guardar Hora normal sin conceptos adicionales", async () => {
     const user = userEvent.setup();
     vi.mocked(employeeApiService.getTimeGrid).mockResolvedValue(buildNormalOnlyGrid());
     vi.mocked(timeEntryApiService.save).mockResolvedValueOnce({
-      id: "entry-1", employeeId: "employee-1", period: "2026-08", day: 1, type: "Hora normal", hours: 8, status: "En revisión", conceptId: "normal",
+      id: "entry-1", employeeId: "employee-1", period: "2026-08", day: 1, type: "Hora normal", hours: 8, status: "Aprobado", conceptId: "normal",
     });
     renderPage();
     await screen.findByRole("button", { name: /Recalcular automáticos/i });
 
     const normalDay1 = within(rowFor("Hora normal")).getAllByRole("button")[0]!;
     await user.click(normalDay1);
-    await user.click(screen.getByRole("button", { name: /Enviar a revisión/i }));
+    await user.click(screen.getByRole("button", { name: "Guardar" }));
 
     await waitFor(() => expect(timeEntryApiService.save).toHaveBeenCalledTimes(1));
     expect(screen.queryByText("Ese tipo de hora no esta habilitado para este legajo.")).not.toBeInTheDocument();
@@ -279,9 +285,80 @@ describe("EmployeeHoursPage — Hora normal es universal (bug: HOUR_CONCEPT_NOT_
 
     const normalDay1 = within(rowFor("Hora normal")).getAllByRole("button")[0]!;
     await user.click(normalDay1);
-    await user.click(screen.getByRole("button", { name: /Guardar borrador/i }));
+    await user.click(screen.getByRole("button", { name: "Guardar" }));
 
     expect(await screen.findByText("Ese dia esta bloqueado por una novedad. Solo se permiten 0 hs salvo que se modifique la novedad.")).toBeInTheDocument();
+  });
+});
+
+describe("EmployeeHoursPage — flujo de aprobación por rol en carga manual (Etapa 6L.3)", () => {
+  it("RRHH ve una única acción 'Guardar' y no 'Enviar a revisión' en el modal de Hora normal", async () => {
+    const user = userEvent.setup();
+    authAs("Nivel 1 - RRHH");
+    vi.mocked(employeeApiService.getTimeGrid).mockResolvedValue(buildNormalOnlyGrid());
+    renderPage();
+    await screen.findByRole("button", { name: /Recalcular automáticos/i });
+
+    const normalDay1 = within(rowFor("Hora normal")).getAllByRole("button")[0]!;
+    await user.click(normalDay1);
+
+    expect(screen.getByRole("button", { name: "Guardar" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Guardar borrador/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Enviar a revisión/i })).not.toBeInTheDocument();
+  });
+
+  it("RRHH al guardar Hora normal llama a timeEntryApiService.save con estado 'Aprobado', sin encadenar un envío a revisión", async () => {
+    const user = userEvent.setup();
+    authAs("Nivel 1 - RRHH");
+    vi.mocked(employeeApiService.getTimeGrid).mockResolvedValue(buildNormalOnlyGrid());
+    vi.mocked(timeEntryApiService.save).mockResolvedValueOnce({
+      id: "entry-1", employeeId: "employee-1", period: "2026-08", day: 1, type: "Hora normal", hours: 8, status: "Aprobado", conceptId: "normal",
+    });
+    renderPage();
+    await screen.findByRole("button", { name: /Recalcular automáticos/i });
+
+    const normalDay1 = within(rowFor("Hora normal")).getAllByRole("button")[0]!;
+    await user.click(normalDay1);
+    await user.click(screen.getByRole("button", { name: "Guardar" }));
+
+    await waitFor(() => expect(timeEntryApiService.save).toHaveBeenCalledTimes(1));
+    expect(timeEntryApiService.save).toHaveBeenCalledWith(expect.objectContaining({ status: "Aprobado" }));
+  });
+
+  it.each(["Nivel 2 - Supervisión / Gestión", "Nivel 3 - Administrativo de Carga Horaria"])(
+    "%s sigue viendo 'Guardar borrador' y 'Enviar a revisión' en el modal de Hora normal",
+    async (role) => {
+      const user = userEvent.setup();
+      authAs(role);
+      vi.mocked(employeeApiService.getTimeGrid).mockResolvedValue(buildNormalOnlyGrid());
+      renderPage();
+      await screen.findByRole("button", { name: /Recalcular automáticos/i });
+
+      const normalDay1 = within(rowFor("Hora normal")).getAllByRole("button")[0]!;
+      await user.click(normalDay1);
+
+      expect(screen.getByRole("button", { name: /Guardar borrador/i })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /Enviar a revisión/i })).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Guardar" })).not.toBeInTheDocument();
+    },
+  );
+
+  it("Nivel 2/3 al enviar Hora normal a revisión sigue mandando status 'En revisión' (flujo sin cambios)", async () => {
+    const user = userEvent.setup();
+    authAs("Nivel 2 - Supervisión / Gestión");
+    vi.mocked(employeeApiService.getTimeGrid).mockResolvedValue(buildNormalOnlyGrid());
+    vi.mocked(timeEntryApiService.save).mockResolvedValueOnce({
+      id: "entry-1", employeeId: "employee-1", period: "2026-08", day: 1, type: "Hora normal", hours: 8, status: "En revisión", conceptId: "normal",
+    });
+    renderPage();
+    await screen.findByRole("button", { name: /Recalcular automáticos/i });
+
+    const normalDay1 = within(rowFor("Hora normal")).getAllByRole("button")[0]!;
+    await user.click(normalDay1);
+    await user.click(screen.getByRole("button", { name: /Enviar a revisión/i }));
+
+    await waitFor(() => expect(timeEntryApiService.save).toHaveBeenCalledTimes(1));
+    expect(timeEntryApiService.save).toHaveBeenCalledWith(expect.objectContaining({ status: "En revisión" }));
   });
 });
 

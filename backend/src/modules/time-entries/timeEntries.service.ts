@@ -125,9 +125,14 @@ async function ensureDayIsNotBlocked(employeeId: string, date: Date, hours?: num
   }
 }
 
-function assertCanReview(user: Express.AuthUser) {
-  if (user.role !== roles.rrhh && user.role !== roles.supervision) {
-    throw new AppError("Only RRHH or supervision can review time entries", 403, "FORBIDDEN");
+// Etapa 6L.3 (ajuste): la aprobación final de una carga horaria es
+// exclusiva de RRHH — Supervisión ya no puede aprobar/rechazar/devolver
+// cargas de terceros, aunque siga pudiendo revisarlas visualmente. Esto es
+// más estricto que el guard de autoaprobación de abajo: antes bloqueaba sólo
+// que alguien se aprobara a sí mismo, ahora Nivel 2 queda afuera del todo.
+function assertCanApprove(user: Express.AuthUser) {
+  if (user.role !== roles.rrhh) {
+    throw new AppError("Only RRHH can approve, reject or return time entries", 403, "FORBIDDEN");
   }
 }
 
@@ -847,14 +852,20 @@ export const timeEntriesService = {
     await ensureHourConceptEnabled(input.employeeId, input.hourConceptId);
     await ensureDayIsNotBlocked(input.employeeId, input.date, input.hours);
     await ensureNoDuplicate(input.employeeId, input.hourConceptId, input.date);
-    const item = await execute(() => timeEntriesRepository.create(input, user.id));
+    // Etapa 6L.3: RRHH ya es quien aprueba, así que su propia carga manual no
+    // pasa por BORRADOR/EN_REVISION — queda aplicada/aprobada de una. Nivel
+    // 2/3 mantienen el flujo previo (BORRADOR, luego "Enviar a revisión").
+    const autoApprovedByUserId = user.role === roles.rrhh ? user.id : null;
+    const item = await execute(() => timeEntriesRepository.create(input, user.id, autoApprovedByUserId));
 
     await auditService.register({
       ...audit,
       action: "CREATE",
       entity: "TimeEntry",
       entityId: item.id,
-      description: `Se cargo ${item.hours.toString()} hs para el legajo ${item.employee.legajo}.`,
+      description: autoApprovedByUserId
+        ? `Se cargo y aplico ${item.hours.toString()} hs (RRHH) para el legajo ${item.employee.legajo}.`
+        : `Se cargo ${item.hours.toString()} hs para el legajo ${item.employee.legajo}.`,
       after: item as Prisma.InputJsonValue,
     });
     return redactPiiForRole(item, user);
@@ -1506,7 +1517,14 @@ export const timeEntriesService = {
     await ensureDayIsNotBlocked(employeeId, date, input.hours);
     await ensureNoDuplicate(employeeId, hourConceptId, date, id);
 
-    const item = await execute(() => timeEntriesRepository.update(id, before, input));
+    // Etapa 6L.3: toda edición hecha por RRHH aplica/aprueba directamente,
+    // sea que esté corrigiendo una carga ya aprobada (arriba, con
+    // correctionReason) o editando una que seguía en BORRADOR/EN_REVISION/
+    // DEVUELTO — RRHH nunca necesita mandarse una carga propia a revisión.
+    // Nivel 2/3 no reciben este parámetro, así que el status no se toca acá,
+    // igual que antes de esta etapa.
+    const autoApprovedByUserId = user.role === roles.rrhh ? user.id : null;
+    const item = await execute(() => timeEntriesRepository.update(id, before, input, autoApprovedByUserId));
     await auditService.register({
       ...audit,
       action: "UPDATE",
@@ -1539,7 +1557,7 @@ export const timeEntriesService = {
   },
 
   async approve(id: string, user: Express.AuthUser, audit?: AuditContext) {
-    assertCanReview(user);
+    assertCanApprove(user);
     const before = await timeEntriesRepository.findById(id, employeeAccessWhere(user));
     if (!before) throw new AppError("Time entry not found", 404, "TIME_ENTRY_NOT_FOUND");
     if (before.status !== "EN_REVISION") {
@@ -1559,7 +1577,7 @@ export const timeEntriesService = {
   },
 
   async reject(id: string, input: RejectTimeEntryInput, user: Express.AuthUser, audit?: AuditContext) {
-    assertCanReview(user);
+    assertCanApprove(user);
     const before = await timeEntriesRepository.findById(id, employeeAccessWhere(user));
     if (!before) throw new AppError("Time entry not found", 404, "TIME_ENTRY_NOT_FOUND");
     if (before.status !== "EN_REVISION") {
@@ -1579,7 +1597,7 @@ export const timeEntriesService = {
   },
 
   async returnForCorrection(id: string, input: RejectTimeEntryInput, user: Express.AuthUser, audit?: AuditContext) {
-    assertCanReview(user);
+    assertCanApprove(user);
     const before = await timeEntriesRepository.findById(id, employeeAccessWhere(user));
     if (!before) throw new AppError("Time entry not found", 404, "TIME_ENTRY_NOT_FOUND");
     if (before.status !== "EN_REVISION") {

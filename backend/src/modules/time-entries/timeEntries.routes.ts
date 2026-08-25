@@ -74,6 +74,8 @@ timeEntriesRouter.get("/export", requireAnyRole([roles.rrhh, roles.supervision])
 timeEntriesRouter.get("/export.csv", requireAnyRole([roles.rrhh, roles.supervision]), validateQuery(timeEntriesExportQuerySchema), asyncHandler(timeEntriesController.exportCsv));
 timeEntriesRouter.patch("/:id", requireAnyRole(operationalRoles), validateBody(updateTimeEntrySchema), asyncHandler(timeEntriesController.update));
 timeEntriesRouter.post("/:id/submit", requireAnyRole(operationalRoles), asyncHandler(timeEntriesController.submit));
-timeEntriesRouter.post("/:id/approve", requireAnyRole([roles.rrhh, roles.supervision]), asyncHandler(timeEntriesController.approve));
-timeEntriesRouter.post("/:id/reject", requireAnyRole([roles.rrhh, roles.supervision]), validateBody(rejectTimeEntrySchema), asyncHandler(timeEntriesController.reject));
-timeEntriesRouter.post("/:id/return", requireAnyRole([roles.rrhh, roles.supervision]), validateBody(rejectTimeEntrySchema), asyncHandler(timeEntriesController.returnForCorrection));
+// Etapa 6L.3 (ajuste): la aprobación final es exclusiva de RRHH — Supervisión
+// ya no integra este guard (antes sí, ver timeEntriesService.assertCanApprove).
+timeEntriesRouter.post("/:id/approve", requireAnyRole([roles.rrhh]), asyncHandler(timeEntriesController.approve));
+timeEntriesRouter.post("/:id/reject", requireAnyRole([roles.rrhh]), validateBody(rejectTimeEntrySchema), asyncHandler(timeEntriesController.reject));
+timeEntriesRouter.post("/:id/return", requireAnyRole([roles.rrhh]), validateBody(rejectTimeEntrySchema), asyncHandler(timeEntriesController.returnForCorrection));

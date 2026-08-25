@@ -110,6 +110,24 @@ export const employeesController = {
     res.json({ data: result });
   }) satisfies RequestHandler,
 
+  approveManualHourConceptBreakdown: (async (req, res) => {
+    const result = await employeesService.approveManualHourConceptBreakdown(requireParam(req, "id"), requireParam(req, "breakdownId"), req.user!, requestAuditContext(req));
+    clearEmployeeReadCaches();
+    res.json({ data: result });
+  }) satisfies RequestHandler,
+
+  rejectManualHourConceptBreakdown: (async (req, res) => {
+    const result = await employeesService.rejectManualHourConceptBreakdown(requireParam(req, "id"), requireParam(req, "breakdownId"), req.body, req.user!, requestAuditContext(req));
+    clearEmployeeReadCaches();
+    res.json({ data: result });
+  }) satisfies RequestHandler,
+
+  returnManualHourConceptBreakdown: (async (req, res) => {
+    const result = await employeesService.returnManualHourConceptBreakdown(requireParam(req, "id"), requireParam(req, "breakdownId"), req.body, req.user!, requestAuditContext(req));
+    clearEmployeeReadCaches();
+    res.json({ data: result });
+  }) satisfies RequestHandler,
+
   recalculateAutomaticHourConceptBreakdowns: (async (req, res) => {
     const result = await automaticHourConceptBreakdownsService.recalculate(
       requireParam(req, "id"),

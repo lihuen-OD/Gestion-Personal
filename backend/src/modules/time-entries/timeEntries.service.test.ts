@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import type { Mock } from "vitest";
 import { Prisma } from "@prisma/client";
 import { AppError } from "../../shared/errors/AppError";
+import { prisma } from "../../shared/prisma/client";
 import { timeEntriesRepository } from "./timeEntries.repository";
 import { timeEntriesService, clockAttemptHash, resolveShiftConcept } from "./timeEntries.service";
 import { flagOpenShiftOverflowForReview } from "../shifts/workShiftEvaluationRunner";
@@ -35,6 +36,22 @@ vi.mock("./timeEntries.repository", () => ({
     findEnabledHourConcept: vi.fn(),
     findDuplicate: vi.fn(),
     create: vi.fn(),
+    findById: vi.fn(),
+    update: vi.fn(),
+    approve: vi.fn(),
+    reject: vi.fn(),
+    returnForCorrection: vi.fn(),
+  },
+}));
+
+// update()/approve() leen prisma.monthlyTimeClosure directo (no hay
+// repositorio intermedio para esa única consulta) — se mockea sólo ese
+// método; el resto de este archivo sigue sin pegarle a una base real porque
+// todo lo demás pasa por timeEntriesRepository (mockeado arriba) o por
+// resolveActiveWorkRegime (mockeado abajo).
+vi.mock("../../shared/prisma/client", () => ({
+  prisma: {
+    monthlyTimeClosure: { findUnique: vi.fn().mockResolvedValue(null) },
   },
 }));
 
@@ -100,9 +117,15 @@ type RepoMock = {
   findEnabledHourConcept: Mock;
   findDuplicate: Mock;
   create: Mock;
+  findById: Mock;
+  update: Mock;
+  approve: Mock;
+  reject: Mock;
+  returnForCorrection: Mock;
 };
 
 const repo = timeEntriesRepository as unknown as RepoMock;
+const mockedMonthlyClosureFindUnique = prisma.monthlyTimeClosure.findUnique as unknown as Mock;
 const mockedResolveActiveWorkRegime = resolveActiveWorkRegime as unknown as Mock;
 const mockedFlagOpenShiftOverflowForReview = flagOpenShiftOverflowForReview as unknown as Mock;
 
@@ -200,7 +223,7 @@ describe("create — carga manual de la grilla: Hora normal es universal (bug fi
     const result = await timeEntriesService.create(createInput, rrhhUser);
 
     expect(result).toBe(createdEntry);
-    expect(repo.create).toHaveBeenCalledWith(createInput, rrhhUser.id);
+    expect(repo.create).toHaveBeenCalledWith(createInput, rrhhUser.id, rrhhUser.id);
   });
 
   it("cargar Hora normal no consulta ni requiere EmployeeHourConcept", async () => {
@@ -217,7 +240,7 @@ describe("create — carga manual de la grilla: Hora normal es universal (bug fi
     await timeEntriesService.create(createInput, rrhhUser);
 
     expect(repo.create).toHaveBeenCalledTimes(1);
-    expect(repo.create).toHaveBeenCalledWith(expect.objectContaining({ hourConceptId: normalConcept.id, hours: 8 }), rrhhUser.id);
+    expect(repo.create).toHaveBeenCalledWith(expect.objectContaining({ hourConceptId: normalConcept.id, hours: 8 }), rrhhUser.id, rrhhUser.id);
   });
 
   it("cargar Hora normal no crea ningún HourConceptBreakdown", async () => {
@@ -270,6 +293,159 @@ describe("create — carga manual de la grilla: Hora normal es universal (bug fi
     repo.findEnabledHourConcept.mockResolvedValue(null);
 
     await expect(timeEntriesService.create(createInput, rrhhUser)).resolves.toBe(createdEntry);
+  });
+});
+
+describe("create — flujo de aprobación por rol (Etapa 6L.3)", () => {
+  const nivel2User = { id: "user-n2", role: "NIVEL_2_SUPERVISION" } as Express.AuthUser;
+  const nivel3User = { id: "user-n3", role: "NIVEL_3_CARGA_HORARIA" } as Express.AuthUser;
+  const normalConcept = { id: "hour-concept-normal", code: "HC-NORMAL", name: "Hora normal", status: "ACTIVO", systemRole: "NORMAL_BASE" };
+  const createInput = { employeeId: "employee-1", hourConceptId: normalConcept.id, date: new Date("2026-08-10T00:00:00Z"), hours: 8 };
+  const createdEntry = { id: "entry-1", hours: 8, employee: { legajo: "100" } };
+
+  beforeEach(() => {
+    repo.countEmployeeInScope.mockResolvedValue(1);
+    repo.findHourConceptById.mockResolvedValue(normalConcept);
+    repo.findBlockingNovelty.mockResolvedValue(null);
+    repo.findDuplicate.mockResolvedValue(null);
+    repo.create.mockResolvedValue(createdEntry);
+  });
+
+  it("RRHH crea Hora normal y queda aprobada/aplicada directamente: pasa su propio id como autoApprovedByUserId", async () => {
+    const rrhhUser = { id: "user-rrhh", role: "NIVEL_1_RRHH" } as Express.AuthUser;
+
+    await timeEntriesService.create(createInput, rrhhUser);
+
+    expect(repo.create).toHaveBeenCalledWith(createInput, rrhhUser.id, rrhhUser.id);
+  });
+
+  it("Nivel 2 crea Hora normal y queda pendiente/en revisión: no se pasa autoApprovedByUserId", async () => {
+    await timeEntriesService.create(createInput, nivel2User);
+
+    expect(repo.create).toHaveBeenCalledWith(createInput, nivel2User.id, null);
+  });
+
+  it("Nivel 3 crea Hora normal y queda pendiente/en revisión: no se pasa autoApprovedByUserId", async () => {
+    await timeEntriesService.create(createInput, nivel3User);
+
+    expect(repo.create).toHaveBeenCalledWith(createInput, nivel3User.id, null);
+  });
+});
+
+describe("update — flujo de aprobación por rol (Etapa 6L.3)", () => {
+  const rrhhUser = { id: "user-rrhh", role: "NIVEL_1_RRHH" } as Express.AuthUser;
+  const nivel3User = { id: "user-n3", role: "NIVEL_3_CARGA_HORARIA" } as Express.AuthUser;
+  const existingEntry = {
+    id: "entry-1",
+    employeeId: "employee-1",
+    hourConceptId: "hour-concept-normal",
+    date: new Date("2026-08-10T00:00:00Z"),
+    period: "2026-08",
+    status: "BORRADOR",
+    createdByUserId: "user-n3",
+    employee: { legajo: "100" },
+  };
+  const updatedEntry = { id: "entry-1", hours: 6, employee: { legajo: "100" } };
+
+  beforeEach(() => {
+    repo.findById.mockResolvedValue(existingEntry);
+    repo.findHourConceptById.mockResolvedValue({ id: "hour-concept-normal", status: "ACTIVO", systemRole: "NORMAL_BASE" });
+    repo.findBlockingNovelty.mockResolvedValue(null);
+    repo.findDuplicate.mockResolvedValue(null);
+    repo.update.mockResolvedValue(updatedEntry);
+    mockedMonthlyClosureFindUnique.mockResolvedValue(null);
+  });
+
+  it("RRHH actualiza Hora normal y no queda en revisión: pasa su propio id como autoApprovedByUserId", async () => {
+    const result = await timeEntriesService.update("entry-1", { hours: 6 }, rrhhUser);
+
+    expect(result).toBe(updatedEntry);
+    expect(repo.update).toHaveBeenCalledWith("entry-1", existingEntry, { hours: 6 }, rrhhUser.id);
+  });
+
+  it("Nivel 3 actualiza Hora normal y el status queda intacto (sin autoaprobación)", async () => {
+    await timeEntriesService.update("entry-1", { hours: 6 }, nivel3User);
+
+    expect(repo.update).toHaveBeenCalledWith("entry-1", existingEntry, { hours: 6 }, null);
+  });
+
+  it("un período cerrado sigue bloqueando la edición de Nivel 2/3 aunque RRHH edite libre (no se rompe el bloqueo de cierre)", async () => {
+    mockedMonthlyClosureFindUnique.mockResolvedValue({ status: "APROBADO" });
+
+    await expect(timeEntriesService.update("entry-1", { hours: 6 }, nivel3User)).rejects.toMatchObject({
+      code: "PERIOD_CLOSED_REQUIRES_CORRECTION",
+    });
+    expect(repo.update).not.toHaveBeenCalled();
+  });
+});
+
+describe("approve/reject/return — la aprobación final es exclusiva de RRHH (Etapa 6L.3, ajuste)", () => {
+  const rrhhUser = { id: "user-rrhh", role: "NIVEL_1_RRHH" } as Express.AuthUser;
+  const supervisionUser = { id: "user-sup", role: "NIVEL_2_SUPERVISION" } as Express.AuthUser;
+  const nivel3User = { id: "user-n3", role: "NIVEL_3_CARGA_HORARIA" } as Express.AuthUser;
+  const ownEntryInReview = { id: "entry-1", status: "EN_REVISION", createdByUserId: "user-sup", employee: { legajo: "100" } };
+  const nivel2EntryInReview = { id: "entry-2", status: "EN_REVISION", createdByUserId: "user-sup", employee: { legajo: "101" } };
+  const nivel3EntryInReview = { id: "entry-3", status: "EN_REVISION", createdByUserId: "user-n3", employee: { legajo: "102" } };
+
+  it("RRHH aprueba una carga de Nivel 2", async () => {
+    repo.findById.mockResolvedValue(nivel2EntryInReview);
+    repo.approve.mockResolvedValue({ id: "entry-2", status: "APROBADO", employee: { legajo: "101" } });
+
+    await expect(timeEntriesService.approve("entry-2", rrhhUser)).resolves.toMatchObject({ status: "APROBADO" });
+    expect(repo.approve).toHaveBeenCalledWith("entry-2", rrhhUser.id);
+  });
+
+  it("RRHH aprueba una carga de Nivel 3", async () => {
+    repo.findById.mockResolvedValue(nivel3EntryInReview);
+    repo.approve.mockResolvedValue({ id: "entry-3", status: "APROBADO", employee: { legajo: "102" } });
+
+    await expect(timeEntriesService.approve("entry-3", rrhhUser)).resolves.toMatchObject({ status: "APROBADO" });
+    expect(repo.approve).toHaveBeenCalledWith("entry-3", rrhhUser.id);
+  });
+
+  it("Nivel 2 no puede aprobar una carga propia", async () => {
+    repo.findById.mockResolvedValue(ownEntryInReview);
+
+    await expect(timeEntriesService.approve("entry-1", supervisionUser)).rejects.toMatchObject({ code: "FORBIDDEN", statusCode: 403 });
+    expect(repo.approve).not.toHaveBeenCalled();
+  });
+
+  it("Nivel 2 no puede aprobar una carga ajena (ni siquiera de Nivel 3): el rol se valida antes de buscar la carga", async () => {
+    repo.findById.mockResolvedValue(nivel3EntryInReview);
+
+    await expect(timeEntriesService.approve("entry-3", supervisionUser)).rejects.toMatchObject({ code: "FORBIDDEN", statusCode: 403 });
+    expect(repo.approve).not.toHaveBeenCalled();
+    expect(repo.findById).not.toHaveBeenCalled();
+  });
+
+  it("Nivel 3 no puede aprobar ninguna carga (ni propia ni ajena)", async () => {
+    repo.findById.mockResolvedValue(nivel2EntryInReview);
+
+    await expect(timeEntriesService.approve("entry-2", nivel3User)).rejects.toMatchObject({ code: "FORBIDDEN", statusCode: 403 });
+    expect(repo.approve).not.toHaveBeenCalled();
+  });
+
+  it("RRHH sigue pudiendo rechazar una carga de Nivel 2/3", async () => {
+    repo.findById.mockResolvedValue(nivel2EntryInReview);
+    repo.reject.mockResolvedValue({ id: "entry-2", status: "RECHAZADO", employee: { legajo: "101" } });
+
+    await expect(timeEntriesService.reject("entry-2", { reason: "Datos incorrectos" }, rrhhUser)).resolves.toMatchObject({ status: "RECHAZADO" });
+  });
+
+  it("RRHH sigue pudiendo devolver una carga de Nivel 2/3", async () => {
+    repo.findById.mockResolvedValue(nivel2EntryInReview);
+    repo.returnForCorrection.mockResolvedValue({ id: "entry-2", status: "DEVUELTO", employee: { legajo: "101" } });
+
+    await expect(timeEntriesService.returnForCorrection("entry-2", { reason: "Falta observación" }, rrhhUser)).resolves.toMatchObject({ status: "DEVUELTO" });
+  });
+
+  it("Nivel 2 no puede rechazar ni devolver cargas ajenas", async () => {
+    repo.findById.mockResolvedValue(nivel3EntryInReview);
+
+    await expect(timeEntriesService.reject("entry-3", { reason: "x" }, supervisionUser)).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(timeEntriesService.returnForCorrection("entry-3", { reason: "x" }, supervisionUser)).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(repo.reject).not.toHaveBeenCalled();
+    expect(repo.returnForCorrection).not.toHaveBeenCalled();
   });
 });
 

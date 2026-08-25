@@ -263,6 +263,9 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
   const employees = periodRows.map((row) => row.employee);
   const pendingNoveltyItems = pendingItems.filter((item) => item.kind === "novelty");
   const canReview = user ? timeEntryApiService.canReview(user) : false;
+  // Etapa 6L.3 (ajuste): aprobar/rechazar/devolver cargas horarias es
+  // exclusivo de RRHH. canReview sigue igual para novedades (sin cambios).
+  const canApprove = user ? timeEntryApiService.canApprove(user) : false;
   const summary = (employeeId: string) => {
     const backendSummary = periodRows.find((row) => row.employee.id === employeeId)?.summary;
     if (backendSummary) return backendSummary;
@@ -623,7 +626,7 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
                         <Badge tone={statusTone(entry.status)}>{entry.status}</Badge>
                       </td>
                       <td>
-                        {canReview ? (
+                        {canApprove ? (
                           <div className="table-actions">
                             <button
                               className="table-icon-action"

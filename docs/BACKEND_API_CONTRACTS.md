@@ -277,11 +277,23 @@ Body de alta/actualización:
 }
 ```
 
-PUT con `minutes = 0` elimina el registro manual. No se expone DELETE porque el módulo `/employees` protege por contrato la ausencia de rutas de borrado HTTP. La API fija `source = MANUAL` y estado inicial `BORRADOR`; no acepta `source`, `status`, `priority` ni `countsAsWorked` desde el cliente.
+PUT con `minutes = 0` elimina el registro manual. No se expone DELETE porque el módulo `/employees` protege por contrato la ausencia de rutas de borrado HTTP. La API fija `source = MANUAL`; no acepta `source`, `status`, `priority` ni `countsAsWorked` desde el cliente.
+
+Estado inicial (o resultante de sobrescribir un registro existente) según el rol de quien carga (Etapa 6L.3): **RRHH** deja el desglose `APROBADO` directo, con `approvedByUserId`/`approvedAt` propios. **Nivel 2/3** dejan el desglose `EN_REVISION` — a diferencia de `TimeEntry`, el desglose manual no tiene una acción separada de "enviar a revisión"; el único `PUT` ya es la carga completa, así que queda pendiente de una. RRHH ve esos desgloses `EN_REVISION` de Nivel 2/3 en `GET /pending` (ver más abajo) y los resuelve con los endpoints de abajo.
 
 Sólo admite conceptos adicionales habilitados, activos, no eliminados y con modo `MANUAL` o `BOTH`. Rechaza Normal, `AUTOMATIC`, conceptos fuera del legajo y períodos cerrados. Nivel 2/Nivel 3 conservan el alcance operativo por responsable de horas.
 
 La base garantiza la idempotencia manual mediante el índice único parcial `HourConceptBreakdown_manual_unique` sobre empleado, fecha y concepto con `source = 'MANUAL'`. El índice no aplica a `AUTOMATIC`. Una carrera concurrente se reintenta una vez y, si persiste, responde `409` con código `MANUAL_BREAKDOWN_CONCURRENT_CONFLICT`.
+
+#### Aprobar / rechazar / devolver un desglose manual (Etapa 6L.3, ajuste)
+
+```txt
+POST /api/employees/:id/hour-concept-breakdowns/manual/:breakdownId/approve
+POST /api/employees/:id/hour-concept-breakdowns/manual/:breakdownId/reject
+POST /api/employees/:id/hour-concept-breakdowns/manual/:breakdownId/return
+```
+
+Exclusivos de RRHH (`403 FORBIDDEN` para cualquier otro rol). `reject`/`return` requieren body `{ "reason": "..." }` (2-600 caracteres). Los tres exigen que el desglose esté `EN_REVISION` (`400 HOUR_CONCEPT_BREAKDOWN_STATUS_NOT_RESOLVABLE` si no) y respetan el scope operativo del usuario y el `:id` del legajo (`404 HOUR_CONCEPT_BREAKDOWN_NOT_FOUND` si no matchea). `approve` deja `status = APROBADO` con `approvedByUserId`/`approvedAt`; `reject` deja `status = RECHAZADO`; `return` deja `status = DEVUELTO` — ambos limpian `approvedByUserId`/`approvedAt`. Mismo patrón que `/time-entries/:id/approve|reject|return`. No hay todavía una UI que dispare estos endpoints (ver Etapa 6L.3 en `docs/decisions/CONCEPTOS_HORARIOS_ADITIVOS.md`) — quedan disponibles para conectar en una subetapa inmediata.
 
 #### Recálculo de desgloses automáticos
 
@@ -926,7 +938,7 @@ Body:
 
 Reglas:
 
-- Crea en `BORRADOR`.
+- Crea en `BORRADOR` — **excepto si quien carga es RRHH** (Etapa 6L.3): en ese caso queda `APROBADO` directo, con `approvedByUserId`/`approvedAt` propios, sin pasar por `BORRADOR`/`EN_REVISION`. Nivel 2/3 mantienen `BORRADOR`. La decisión es por rol del usuario autenticado (`req.user.role`), nunca por un campo del body — el cliente no puede pedir el estado.
 - Valida que la hora especial esté habilitada para el legajo.
 - Evita duplicado por empleado + fecha + concepto.
 - Permite `0` horas para registros generados o asociados a novedades bloqueantes.
@@ -938,15 +950,18 @@ Reglas:
 PATCH /api/time-entries/:id
 ```
 
-No permite editar `APROBADO` ni `CERRADO`.
+No permite editar `CERRADO`. Editar una fila `APROBADO` (o con el período en `ENVIADO`/`APROBADO`/`CORRECCION_PENDIENTE`) exige `correctionReason` en el body. Si quien edita es RRHH (Etapa 6L.3), la fila queda (o se mantiene) `APROBADO` con `approvedByUserId`/`approvedAt` propios sin importar el estado anterior (`BORRADOR`, `EN_REVISION`, `DEVUELTO` o ya `APROBADO`); Nivel 2/3 no tocan el `status` al editar, igual que antes de esta etapa.
 
-### Enviar / aprobar / rechazar
+### Enviar / aprobar / rechazar / devolver
 
 ```txt
 POST /api/time-entries/:id/submit
 POST /api/time-entries/:id/approve
 POST /api/time-entries/:id/reject
+POST /api/time-entries/:id/return
 ```
+
+`submit` sigue disponible para RRHH/Supervisión/Nivel 3 (`operationalRoles`). `approve`/`reject`/`return` son **exclusivos de RRHH** (Etapa 6L.3, ajuste posterior): el guard de ruta acepta sólo `NIVEL_1_RRHH` y el servicio responde `403 FORBIDDEN` para cualquier otro rol, sea o no el creador de la carga — Supervisión (Nivel 2) ya no puede aprobar/rechazar/devolver ninguna carga horaria, ni propia ni ajena. RRHH nunca necesita resolver una carga propia por esta vía porque `create`/`update` ya la dejan `APROBADO` directo.
 
 ## Mis Pendientes
 
@@ -970,7 +985,8 @@ Devuelve:
     "summary": {
       "total": 1,
       "novelties": 1,
-      "timeEntries": 0
+      "timeEntries": 0,
+      "hourConceptBreakdowns": 0
     },
     "data": [
       {
@@ -986,6 +1002,8 @@ Devuelve:
   }
 }
 ```
+
+Desde la Etapa 6L.3, `kind` también puede ser `"hourConceptBreakdown"` (desgloses manuales `EN_REVISION` de Nivel 2/3, filtrados por `kind=all|timeEntries` igual que `timeEntry` — `kind=novelties` los excluye) y `summary` suma el campo `hourConceptBreakdowns` con su conteo. Es un campo aditivo: un consumidor que ya leía `summary.total`/`summary.novelties`/`summary.timeEntries` sigue funcionando sin cambios.
 
 ## Documentos
 

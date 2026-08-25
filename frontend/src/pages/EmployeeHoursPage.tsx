@@ -18,6 +18,7 @@ import { currentMonthPeriod, formatPeriodDay, formatPeriodLabel, getMonthDays, g
 import { formatHours } from "../utils/hours";
 import { additionalBreakdownHours, hourConceptLoadModeLabel, isManualBreakdownEditable, normalWorkedDays } from "../utils/employeeHoursGrid";
 import { statusTone } from "../utils/status";
+import { roleLevel } from "../utils/roles";
 import { useAsyncAction } from "../utils/useAsyncAction";
 import { Field } from "../components/ui/FormControls";
 import { Modal } from "../components/ui/Modal";
@@ -208,6 +209,9 @@ export function EmployeeHoursPage() {
   const selectedEntry = selectedRow && selected ? entryFor(selected.day, selectedRow.concept.id, selectedRow.concept.name) : undefined;
   const canCorrectApproved = Boolean(selectedEntry?.status === "Aprobado" && user && timeEntryApiService.canReview(user));
   const selectedLocked = selectedEntry ? !timeEntryApiService.canEdit(selectedEntry) && !canCorrectApproved : false;
+  // Etapa 6L.3: RRHH ya es quien aprueba, así que su carga manual se aplica
+  // directo — no tiene sentido mostrarle "Enviar a revisión" a sí mismo.
+  const isRrhh = Boolean(user && roleLevel(user.role) === 1);
   const manualRow = manualSelected ? rows.find((row) => row.concept.id === manualSelected.conceptId) : undefined;
   const { isRunning: isSavingManual, run: saveManualBreakdown } = useAsyncAction(async () => {
     if (!id || !manualSelected || !manualRow || !isManualBreakdownEditable(manualRow)) return;
@@ -775,14 +779,20 @@ export function EmployeeHoursPage() {
                   {isSaving ? "Guardando corrección..." : "Guardar corrección"}
                 </Button>
               ) : !selectedLocked ? (
-                <>
-                  <Button variant="subtle" onClick={() => save("Borrador")} disabled={isSaving}>
-                    {isSaving && savingStatus === "Borrador" ? "Guardando..." : "Guardar borrador"}
+                isRrhh ? (
+                  <Button variant="primary" onClick={() => save("Aprobado")} disabled={isSaving}>
+                    {isSaving ? "Guardando..." : "Guardar"}
                   </Button>
-                  <Button variant="primary" onClick={() => save("En revisión")} disabled={isSaving}>
-                    {isSaving && savingStatus === "En revisión" ? "Enviando..." : "Enviar a revisión"}
-                  </Button>
-                </>
+                ) : (
+                  <>
+                    <Button variant="subtle" onClick={() => save("Borrador")} disabled={isSaving}>
+                      {isSaving && savingStatus === "Borrador" ? "Guardando..." : "Guardar borrador"}
+                    </Button>
+                    <Button variant="primary" onClick={() => save("En revisión")} disabled={isSaving}>
+                      {isSaving && savingStatus === "En revisión" ? "Enviando..." : "Enviar a revisión"}
+                    </Button>
+                  </>
+                )
               ) : null}
             </div>
           </div>

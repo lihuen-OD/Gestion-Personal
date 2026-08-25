@@ -20,6 +20,7 @@ import {
   replaceEmployeeAssignmentsSchema,
   replaceEmployeeHourConceptsSchema,
   recalculateAutomaticHourConceptBreakdownsSchema,
+  resolveManualHourConceptBreakdownSchema,
   updateEmployeeContactSchema,
   updateEmployeeSchema,
   upsertEmployeeAddressSchema,
@@ -43,6 +44,26 @@ employeesRouter.put(
   requireAnyRole([roles.rrhh, roles.supervision, roles.cargaHoraria]),
   validateBody(upsertManualHourConceptBreakdownSchema),
   asyncHandler(employeesController.upsertManualHourConceptBreakdown),
+);
+
+// Etapa 6L.3 (ajuste): resolución de un desglose manual EN_REVISION —
+// exclusiva de RRHH, igual que /time-entries/:id/approve|reject|return.
+employeesRouter.post(
+  "/:id/hour-concept-breakdowns/manual/:breakdownId/approve",
+  requireAnyRole([roles.rrhh]),
+  asyncHandler(employeesController.approveManualHourConceptBreakdown),
+);
+employeesRouter.post(
+  "/:id/hour-concept-breakdowns/manual/:breakdownId/reject",
+  requireAnyRole([roles.rrhh]),
+  validateBody(resolveManualHourConceptBreakdownSchema),
+  asyncHandler(employeesController.rejectManualHourConceptBreakdown),
+);
+employeesRouter.post(
+  "/:id/hour-concept-breakdowns/manual/:breakdownId/return",
+  requireAnyRole([roles.rrhh]),
+  validateBody(resolveManualHourConceptBreakdownSchema),
+  asyncHandler(employeesController.returnManualHourConceptBreakdown),
 );
 
 employeesRouter.post(

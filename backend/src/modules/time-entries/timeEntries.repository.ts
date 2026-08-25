@@ -1369,7 +1369,9 @@ export const timeEntriesRepository = {
     });
   },
 
-  create(input: CreateTimeEntryInput, createdByUserId?: string | null) {
+  // autoApprovedByUserId != null => quien carga (RRHH, Etapa 6L.3) aplica la
+  // hora directo en APROBADO, sin pasar por BORRADOR/EN_REVISION.
+  create(input: CreateTimeEntryInput, createdByUserId?: string | null, autoApprovedByUserId?: string | null) {
     return prisma.timeEntry.create({
       data: {
         employeeId: input.employeeId,
@@ -1379,9 +1381,10 @@ export const timeEntriesRepository = {
         day: dayOfMonthFromCalendarDate(input.date),
         hours: input.hours,
         totalMinutes: minutesFromHours(input.hours),
-        status: "BORRADOR",
+        status: autoApprovedByUserId ? "APROBADO" : "BORRADOR",
         observation: input.observation || null,
         createdByUserId: createdByUserId || null,
+        ...(autoApprovedByUserId ? { approvedByUserId: autoApprovedByUserId, approvedAt: new Date() } : {}),
       },
       include: timeEntryInclude,
     });
@@ -1718,7 +1721,11 @@ export const timeEntriesRepository = {
     });
   },
 
-  update(id: string, before: { employeeId: string; hourConceptId: string; date: Date }, input: UpdateTimeEntryInput) {
+  // autoApprovedByUserId != null => la edición la hizo RRHH (Etapa 6L.3):
+  // aplica/aprueba directo sin importar el status anterior (BORRADOR,
+  // EN_REVISION, DEVUELTO o ya APROBADO). Nivel 2/3 no mandan este
+  // parámetro, así que el status queda intacto, igual que antes de 6L.3.
+  update(id: string, before: { employeeId: string; hourConceptId: string; date: Date }, input: UpdateTimeEntryInput, autoApprovedByUserId?: string | null) {
     const date = input.date || before.date;
     const hours = input.hours;
     return prisma.timeEntry.update({
@@ -1728,6 +1735,7 @@ export const timeEntriesRepository = {
         ...(input.date !== undefined ? { date, period: periodFromCalendarDate(date), day: dayOfMonthFromCalendarDate(date) } : {}),
         ...(hours !== undefined ? { hours, totalMinutes: minutesFromHours(hours) } : {}),
         ...(input.observation !== undefined ? { observation: input.observation || null } : {}),
+        ...(autoApprovedByUserId ? { status: "APROBADO", approvedByUserId: autoApprovedByUserId, approvedAt: new Date(), rejectedAt: null } : {}),
       },
       include: timeEntryInclude,
     });

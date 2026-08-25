@@ -31,7 +31,7 @@ vi.mock("../../shared/prisma/client", () => {
       attendancePunch: { findMany: vi.fn(), count: vi.fn() },
       attendanceInactivityIncident: { findMany: vi.fn(), count: vi.fn() },
       employee: { count: vi.fn(), findMany: vi.fn() },
-      timeEntry: { aggregate: vi.fn(), groupBy: vi.fn(), findMany: vi.fn() },
+      timeEntry: { aggregate: vi.fn(), groupBy: vi.fn(), findMany: vi.fn(), create: vi.fn(), update: vi.fn() },
       hourConceptBreakdown: { findMany: vi.fn() },
       // $transaction real acepta un callback (uso transaccional clásico) o un
       // array de promesas (uso de "varias queries en paralelo" tipo
@@ -66,7 +66,7 @@ const mockedPrisma = prisma as unknown as {
   attendancePunch: { findMany: Mock; count: Mock };
   attendanceInactivityIncident: { findMany: Mock; count: Mock };
   employee: { count: Mock; findMany: Mock };
-  timeEntry: { aggregate: Mock; groupBy: Mock; findMany: Mock };
+  timeEntry: { aggregate: Mock; groupBy: Mock; findMany: Mock; create: Mock; update: Mock };
   hourConceptBreakdown: { findMany: Mock };
   $transaction: Mock;
   __tx: TxMocks;
@@ -118,6 +118,52 @@ describe("findDefaultHourConcept — Hora normal es base universal, resuelta por
       where: { employeeId_hourConceptId: { employeeId: "employee-1", hourConceptId: "concept-sereno" } },
       include: { hourConcept: true },
     });
+  });
+});
+
+describe("create/update TimeEntry — aplicación directa por rol (Etapa 6L.3)", () => {
+  const date = new Date("2026-08-10T00:00:00Z");
+  const input = { employeeId: "employee-1", hourConceptId: "concept-normal", date, hours: 8 } as never;
+
+  it("create sin autoApprovedByUserId (Nivel 2/3) crea en BORRADOR sin approvedByUserId/approvedAt", async () => {
+    mockedPrisma.timeEntry.create.mockResolvedValue({ id: "entry-1" });
+
+    await timeEntriesRepository.create(input, "user-nivel3");
+
+    const call = mockedPrisma.timeEntry.create.mock.calls[0]![0] as { data: Record<string, unknown> };
+    expect(call.data).toMatchObject({ status: "BORRADOR", createdByUserId: "user-nivel3" });
+    expect(call.data).not.toHaveProperty("approvedByUserId");
+    expect(call.data).not.toHaveProperty("approvedAt");
+  });
+
+  it("create con autoApprovedByUserId (RRHH) crea en APROBADO con approvedByUserId/approvedAt", async () => {
+    mockedPrisma.timeEntry.create.mockResolvedValue({ id: "entry-1" });
+
+    await timeEntriesRepository.create(input, "user-rrhh", "user-rrhh");
+
+    const call = mockedPrisma.timeEntry.create.mock.calls[0]![0] as { data: Record<string, unknown> };
+    expect(call.data).toMatchObject({ status: "APROBADO", approvedByUserId: "user-rrhh" });
+    expect(call.data.approvedAt).toBeInstanceOf(Date);
+  });
+
+  it("update sin autoApprovedByUserId (Nivel 2/3) no toca el status ni el aprobador", async () => {
+    mockedPrisma.timeEntry.update.mockResolvedValue({ id: "entry-1" });
+
+    await timeEntriesRepository.update("entry-1", { employeeId: "employee-1", hourConceptId: "concept-normal", date }, { hours: 6 } as never);
+
+    const call = mockedPrisma.timeEntry.update.mock.calls[0]![0] as { data: Record<string, unknown> };
+    expect(call.data).not.toHaveProperty("status");
+    expect(call.data).not.toHaveProperty("approvedByUserId");
+  });
+
+  it("update con autoApprovedByUserId (RRHH) fuerza APROBADO sin importar el status anterior", async () => {
+    mockedPrisma.timeEntry.update.mockResolvedValue({ id: "entry-1" });
+
+    await timeEntriesRepository.update("entry-1", { employeeId: "employee-1", hourConceptId: "concept-normal", date }, { hours: 6 } as never, "user-rrhh");
+
+    const call = mockedPrisma.timeEntry.update.mock.calls[0]![0] as { data: Record<string, unknown> };
+    expect(call.data).toMatchObject({ status: "APROBADO", approvedByUserId: "user-rrhh", rejectedAt: null });
+    expect(call.data.approvedAt).toBeInstanceOf(Date);
   });
 });
 

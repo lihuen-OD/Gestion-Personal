@@ -47,4 +47,25 @@ export const pendingRepository = {
       take: query.take,
     });
   },
+
+  // Etapa 6L.3: desgloses manuales cargados por Nivel 2/3 quedan EN_REVISION
+  // (ver employees.repository.ts saveManualHourConceptBreakdown) y no tienen
+  // una acción de aprobación propia todavía — por ahora esta consulta es lo
+  // que asegura que RRHH al menos los vea en la bandeja de pendientes.
+  findPendingHourConceptBreakdowns(query: PendingQuery, employeeAccessWhere: Prisma.EmployeeWhereInput) {
+    return prisma.hourConceptBreakdown.findMany({
+      where: {
+        employee: employeeAccessWhere,
+        source: "MANUAL",
+        status: "EN_REVISION",
+        ...(query.period ? { period: query.period } : {}),
+      },
+      include: {
+        employee: { select: { id: true, legajo: true, firstName: true, lastName: true, sectorId: true } },
+        hourConcept: { select: { id: true, code: true, name: true } },
+      },
+      orderBy: [{ date: "asc" }, { createdAt: "asc" }],
+      take: query.take,
+    });
+  },
 };

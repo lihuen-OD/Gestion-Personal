@@ -948,6 +948,11 @@ export const employeesRepository = {
     });
   },
 
+  // Etapa 6L.3: approvedByUserId != null => lo cargó RRHH, aplica directo en
+  // APROBADO. Sin ese id (Nivel 2/3) el desglose manual queda EN_REVISION —
+  // no hay una acción separada de "enviar a revisión" para desgloses (a
+  // diferencia de TimeEntry), así que el único guardado ya deja la fila
+  // pendiente para que RRHH la vea en la bandeja.
   saveManualHourConceptBreakdown(input: {
     employeeId: string;
     hourConceptId: string;
@@ -957,6 +962,7 @@ export const employeesRepository = {
     minutes: number;
     observation?: string | null;
     createdByUserId?: string | null;
+    approvedByUserId?: string | null;
   }) {
     return prisma.$transaction(async (tx) => {
       const where = { employeeId: input.employeeId, hourConceptId: input.hourConceptId, date: input.date, source: "MANUAL" as const };
@@ -964,6 +970,8 @@ export const employeesRepository = {
         const deleted = await tx.hourConceptBreakdown.deleteMany({ where });
         return { item: null, deleted: deleted.count, operation: "DELETE" as const };
       }
+      const status = input.approvedByUserId ? "APROBADO" : "EN_REVISION";
+      const approvedAt = input.approvedByUserId ? new Date() : null;
       const existing = await tx.hourConceptBreakdown.findFirst({ where, orderBy: { createdAt: "asc" } });
       if (existing) {
         const item = await tx.hourConceptBreakdown.update({
@@ -973,9 +981,9 @@ export const employeesRepository = {
             observation: input.observation || null,
             period: input.period,
             day: input.day,
-            status: "BORRADOR",
-            approvedByUserId: null,
-            approvedAt: null,
+            status,
+            approvedByUserId: input.approvedByUserId || null,
+            approvedAt,
           },
         });
         await tx.hourConceptBreakdown.deleteMany({ where: { ...where, id: { not: existing.id } } });
@@ -991,12 +999,58 @@ export const employeesRepository = {
           minutes: input.minutes,
           observation: input.observation || null,
           source: "MANUAL",
-          status: "BORRADOR",
+          status,
           createdByUserId: input.createdByUserId || null,
+          ...(input.approvedByUserId ? { approvedByUserId: input.approvedByUserId, approvedAt } : {}),
         },
       });
       return { item, deleted: 0, operation: "CREATE" as const };
     }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+  },
+
+  // Etapa 6L.3 (ajuste): resolución RRHH de un desglose manual EN_REVISION
+  // cargado por Nivel 2/3 — mismo criterio de scope que el resto del módulo.
+  findManualBreakdownById(id: string, accessWhere: Prisma.EmployeeWhereInput) {
+    return prisma.hourConceptBreakdown.findFirst({
+      where: { id, source: "MANUAL", employee: accessWhere },
+      include: {
+        employee: { select: { id: true, legajo: true } },
+        hourConcept: { select: { id: true, name: true } },
+      },
+    });
+  },
+
+  approveManualHourConceptBreakdown(id: string, approvedByUserId: string) {
+    return prisma.hourConceptBreakdown.update({
+      where: { id },
+      data: { status: "APROBADO", approvedByUserId, approvedAt: new Date() },
+      include: {
+        employee: { select: { id: true, legajo: true } },
+        hourConcept: { select: { id: true, name: true } },
+      },
+    });
+  },
+
+  rejectManualHourConceptBreakdown(id: string) {
+    return prisma.hourConceptBreakdown.update({
+      where: { id },
+      data: { status: "RECHAZADO", approvedByUserId: null, approvedAt: null },
+      include: {
+        employee: { select: { id: true, legajo: true } },
+        hourConcept: { select: { id: true, name: true } },
+      },
+    });
+  },
+
+  returnManualHourConceptBreakdown(id: string) {
+    return prisma.hourConceptBreakdown.update({
+      where: { id },
+      data: { status: "DEVUELTO", approvedByUserId: null, approvedAt: null },
+      include: {
+        employee: { select: { id: true, legajo: true } },
+        hourConcept: { select: { id: true, name: true } },
+      },
+    });
   },
 
   findLaborAuditSnapshot(id: string) {

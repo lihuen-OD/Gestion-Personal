@@ -24,6 +24,10 @@ vi.mock("./employees.repository", () => ({
     isHourConceptEnabled: vi.fn(),
     findMonthlyClosure: vi.fn(),
     saveManualHourConceptBreakdown: vi.fn(),
+    findManualBreakdownById: vi.fn(),
+    approveManualHourConceptBreakdown: vi.fn(),
+    rejectManualHourConceptBreakdown: vi.fn(),
+    returnManualHourConceptBreakdown: vi.fn(),
   },
 }));
 
@@ -39,6 +43,10 @@ const repo = employeesRepository as unknown as {
   isHourConceptEnabled: Mock;
   findMonthlyClosure: Mock;
   saveManualHourConceptBreakdown: Mock;
+  findManualBreakdownById: Mock;
+  approveManualHourConceptBreakdown: Mock;
+  rejectManualHourConceptBreakdown: Mock;
+  returnManualHourConceptBreakdown: Mock;
 };
 const rrhhUser = { id: "user-rrhh", role: roles.rrhh } as unknown as Express.AuthUser;
 
@@ -172,6 +180,130 @@ describe("employeesService manual hour concept breakdowns", () => {
     await expect(employeesService.upsertManualHourConceptBreakdown("emp-1", input, rrhhUser)).rejects.toMatchObject({
       statusCode: 409,
       code: "MANUAL_BREAKDOWN_CONCURRENT_CONFLICT",
+    });
+  });
+});
+
+describe("employeesService manual hour concept breakdowns — flujo de aprobación por rol (Etapa 6L.3)", () => {
+  const input = { date: "2026-08-12", hourConceptId: "11111111-1111-4111-8111-111111111111", minutes: 120, observation: "Traslado" };
+  const concept = { id: input.hourConceptId, code: "COLECTIVO", name: "Colectivo", status: "ACTIVO", deletedAt: null, loadMode: "MANUAL", systemRole: null };
+  const nivel2User = { id: "user-n2", role: roles.supervision } as unknown as Express.AuthUser;
+  const nivel3User = { id: "user-n3", role: roles.cargaHoraria } as unknown as Express.AuthUser;
+
+  beforeEach(() => {
+    repo.findEmployeeForManualBreakdown.mockResolvedValue({ id: "emp-1" });
+    repo.findHourConceptForManualBreakdown.mockResolvedValue(concept);
+    repo.isHourConceptEnabled.mockResolvedValue(true);
+    repo.findMonthlyClosure.mockResolvedValue(null);
+    repo.saveManualHourConceptBreakdown.mockResolvedValue({ item: { id: "breakdown-1", minutes: 120, status: "APROBADO", source: "MANUAL" }, deleted: 0, operation: "CREATE" });
+  });
+
+  it("RRHH carga un desglose manual y no queda pendiente para sí mismo: pasa su propio id como approvedByUserId", async () => {
+    await employeesService.upsertManualHourConceptBreakdown("emp-1", input, rrhhUser);
+
+    expect(repo.saveManualHourConceptBreakdown).toHaveBeenCalledWith(expect.objectContaining({ approvedByUserId: rrhhUser.id }));
+  });
+
+  it("Nivel 2 carga un desglose manual y queda pendiente/en revisión: no pasa approvedByUserId", async () => {
+    await employeesService.upsertManualHourConceptBreakdown("emp-1", input, nivel2User);
+
+    expect(repo.saveManualHourConceptBreakdown).toHaveBeenCalledWith(expect.objectContaining({ approvedByUserId: null }));
+  });
+
+  it("Nivel 3 carga un desglose manual y queda pendiente/en revisión: no pasa approvedByUserId", async () => {
+    await employeesService.upsertManualHourConceptBreakdown("emp-1", input, nivel3User);
+
+    expect(repo.saveManualHourConceptBreakdown).toHaveBeenCalledWith(expect.objectContaining({ approvedByUserId: null }));
+  });
+
+  it("un período cerrado sigue bloqueando la carga de Nivel 2/3 (no se rompe el bloqueo de cierre)", async () => {
+    repo.findMonthlyClosure.mockResolvedValue({ id: "closure-1", status: "APROBADO" });
+
+    await expect(employeesService.upsertManualHourConceptBreakdown("emp-1", input, nivel2User)).rejects.toMatchObject({ code: "PERIOD_CLOSED" });
+    expect(repo.saveManualHourConceptBreakdown).not.toHaveBeenCalled();
+  });
+
+  it("un concepto no habilitado sigue rechazado para Nivel 2/3 (el scope/permiso no cambia)", async () => {
+    repo.isHourConceptEnabled.mockResolvedValue(false);
+
+    await expect(employeesService.upsertManualHourConceptBreakdown("emp-1", input, nivel3User)).rejects.toMatchObject({ code: "HOUR_CONCEPT_NOT_ENABLED" });
+  });
+});
+
+describe("employeesService — approve/reject/return de HourConceptBreakdown manual (Etapa 6L.3, ajuste)", () => {
+  const nivel2User = { id: "user-n2", role: roles.supervision } as unknown as Express.AuthUser;
+  const nivel3User = { id: "user-n3", role: roles.cargaHoraria } as unknown as Express.AuthUser;
+  const breakdownInReview = {
+    id: "breakdown-1",
+    employeeId: "emp-1",
+    status: "EN_REVISION",
+    createdByUserId: "user-n2",
+    employee: { id: "emp-1", legajo: "100" },
+    hourConcept: { id: "colectivo", name: "Colectivo" },
+  };
+
+  beforeEach(() => {
+    repo.findManualBreakdownById.mockResolvedValue(breakdownInReview);
+  });
+
+  it("RRHH aprueba un desglose manual EN_REVISION de Nivel 2/3", async () => {
+    repo.approveManualHourConceptBreakdown.mockResolvedValue({ ...breakdownInReview, status: "APROBADO", approvedByUserId: rrhhUser.id });
+
+    const result = await employeesService.approveManualHourConceptBreakdown("emp-1", "breakdown-1", rrhhUser);
+
+    expect(result).toMatchObject({ status: "APROBADO" });
+    expect(repo.approveManualHourConceptBreakdown).toHaveBeenCalledWith("breakdown-1", rrhhUser.id);
+  });
+
+  it("RRHH rechaza un desglose manual EN_REVISION", async () => {
+    repo.rejectManualHourConceptBreakdown.mockResolvedValue({ ...breakdownInReview, status: "RECHAZADO" });
+
+    const result = await employeesService.rejectManualHourConceptBreakdown("emp-1", "breakdown-1", { reason: "Sin comprobante" }, rrhhUser);
+
+    expect(result).toMatchObject({ status: "RECHAZADO" });
+    expect(repo.rejectManualHourConceptBreakdown).toHaveBeenCalledWith("breakdown-1");
+  });
+
+  it("RRHH devuelve un desglose manual EN_REVISION", async () => {
+    repo.returnManualHourConceptBreakdown.mockResolvedValue({ ...breakdownInReview, status: "DEVUELTO" });
+
+    const result = await employeesService.returnManualHourConceptBreakdown("emp-1", "breakdown-1", { reason: "Falta el destino" }, rrhhUser);
+
+    expect(result).toMatchObject({ status: "DEVUELTO" });
+    expect(repo.returnManualHourConceptBreakdown).toHaveBeenCalledWith("breakdown-1");
+  });
+
+  it("Nivel 2 no puede aprobar un desglose manual (ni propio ni ajeno)", async () => {
+    await expect(employeesService.approveManualHourConceptBreakdown("emp-1", "breakdown-1", nivel2User)).rejects.toMatchObject({ code: "FORBIDDEN", statusCode: 403 });
+    expect(repo.approveManualHourConceptBreakdown).not.toHaveBeenCalled();
+    expect(repo.findManualBreakdownById).not.toHaveBeenCalled();
+  });
+
+  it("Nivel 3 no puede aprobar/rechazar/devolver un desglose manual", async () => {
+    await expect(employeesService.approveManualHourConceptBreakdown("emp-1", "breakdown-1", nivel3User)).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(employeesService.rejectManualHourConceptBreakdown("emp-1", "breakdown-1", { reason: "x" }, nivel3User)).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(employeesService.returnManualHourConceptBreakdown("emp-1", "breakdown-1", { reason: "x" }, nivel3User)).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(repo.approveManualHourConceptBreakdown).not.toHaveBeenCalled();
+    expect(repo.rejectManualHourConceptBreakdown).not.toHaveBeenCalled();
+    expect(repo.returnManualHourConceptBreakdown).not.toHaveBeenCalled();
+  });
+
+  it("no permite aprobar un desglose que ya no está EN_REVISION", async () => {
+    repo.findManualBreakdownById.mockResolvedValue({ ...breakdownInReview, status: "APROBADO" });
+
+    await expect(employeesService.approveManualHourConceptBreakdown("emp-1", "breakdown-1", rrhhUser)).rejects.toMatchObject({
+      code: "HOUR_CONCEPT_BREAKDOWN_STATUS_NOT_RESOLVABLE",
+      statusCode: 400,
+    });
+    expect(repo.approveManualHourConceptBreakdown).not.toHaveBeenCalled();
+  });
+
+  it("responde 404 si el desglose no existe o está fuera de scope", async () => {
+    repo.findManualBreakdownById.mockResolvedValue(null);
+
+    await expect(employeesService.approveManualHourConceptBreakdown("emp-1", "breakdown-404", rrhhUser)).rejects.toMatchObject({
+      code: "HOUR_CONCEPT_BREAKDOWN_NOT_FOUND",
+      statusCode: 404,
     });
   });
 });

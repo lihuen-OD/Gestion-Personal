@@ -474,6 +474,10 @@ export const timeEntryApiService = {
 
   canEdit: (entry?: TimeEntry) => !entry || !lockedStatuses.has(entry.status),
   canReview: (user: User) => user.role === "Nivel 1 - RRHH" || user.role.startsWith("Nivel 2"),
+  // Etapa 6L.3 (ajuste): aprobar/rechazar/devolver una carga horaria es
+  // exclusivo de RRHH — a diferencia de canReview (que también habilita la
+  // corrección administrativa de una carga ya aprobada, sin cambios acá).
+  canApprove: (user: User) => user.role === "Nivel 1 - RRHH",
   isCountableStatus: (status: TimeStatus) => countableStatuses.has(status),
   isExportableStatus: (status: TimeStatus) => exportableStatuses.has(status),
   getEmployeePeriodSummary: (entries: TimeEntry[], employeeId: string) => summarizePeriodEntries(entries.filter((entry) => entry.employeeId === employeeId)),
