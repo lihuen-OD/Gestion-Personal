@@ -1309,6 +1309,14 @@ export const timeEntriesRepository = {
     });
   },
 
+  // Carga manual (grilla): Hora normal (systemRole NORMAL_BASE) es la base
+  // universal del sistema y nunca vive en EmployeeHourConcept, así que su
+  // habilitación no puede resolverse con findEnabledHourConcept — se
+  // necesita el concepto en sí para distinguirla de un adicional.
+  findHourConceptById(hourConceptId: string) {
+    return prisma.hourConcept.findUnique({ where: { id: hourConceptId } });
+  },
+
   findDuplicate(employeeId: string, hourConceptId: string, date: Date, exceptId?: string) {
     return prisma.timeEntry.findFirst({
       where: {

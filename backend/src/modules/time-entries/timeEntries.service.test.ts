@@ -30,6 +30,11 @@ vi.mock("./timeEntries.repository", () => ({
     createFromWorkShift: vi.fn(),
     findForExport: vi.fn(),
     findBreakdownHoursForExport: vi.fn(),
+    countEmployeeInScope: vi.fn(),
+    findHourConceptById: vi.fn(),
+    findEnabledHourConcept: vi.fn(),
+    findDuplicate: vi.fn(),
+    create: vi.fn(),
   },
 }));
 
@@ -90,6 +95,11 @@ type RepoMock = {
   createFromWorkShift: Mock;
   findForExport: Mock;
   findBreakdownHoursForExport: Mock;
+  countEmployeeInScope: Mock;
+  findHourConceptById: Mock;
+  findEnabledHourConcept: Mock;
+  findDuplicate: Mock;
+  create: Mock;
 };
 
 const repo = timeEntriesRepository as unknown as RepoMock;
@@ -155,6 +165,111 @@ describe("timeEntriesService DTO operativo Nivel 3", () => {
     });
     expect(result.items[0]?.employee).not.toHaveProperty("dni");
     expect(result.items[0]?.employee).not.toHaveProperty("cuil");
+  });
+});
+
+describe("create — carga manual de la grilla: Hora normal es universal (bug fichador/grilla)", () => {
+  const rrhhUser = { id: "user-rrhh", role: "NIVEL_1_RRHH" } as Express.AuthUser;
+  const normalConcept = {
+    id: "hour-concept-normal",
+    code: "HC-NORMAL",
+    name: "Hora normal",
+    status: "ACTIVO",
+    systemRole: "NORMAL_BASE",
+  };
+  const overtimeConcept = {
+    id: "hour-concept-overtime",
+    code: "HC-EXTRA",
+    name: "Hora extra",
+    status: "ACTIVO",
+    systemRole: null,
+  };
+  const createInput = { employeeId: "employee-1", hourConceptId: normalConcept.id, date: new Date("2026-08-10T00:00:00Z"), hours: 8 };
+  const createdEntry = { id: "entry-1", hours: 8, employee: { legajo: "100" } };
+
+  beforeEach(() => {
+    repo.countEmployeeInScope.mockResolvedValue(1);
+    repo.findBlockingNovelty.mockResolvedValue(null);
+    repo.findDuplicate.mockResolvedValue(null);
+    repo.create.mockResolvedValue(createdEntry);
+  });
+
+  it("un empleado sin ningún EmployeeHourConcept asignado puede cargar Hora normal manualmente", async () => {
+    repo.findHourConceptById.mockResolvedValue(normalConcept);
+
+    const result = await timeEntriesService.create(createInput, rrhhUser);
+
+    expect(result).toBe(createdEntry);
+    expect(repo.create).toHaveBeenCalledWith(createInput, rrhhUser.id);
+  });
+
+  it("cargar Hora normal no consulta ni requiere EmployeeHourConcept", async () => {
+    repo.findHourConceptById.mockResolvedValue(normalConcept);
+
+    await timeEntriesService.create(createInput, rrhhUser);
+
+    expect(repo.findEnabledHourConcept).not.toHaveBeenCalled();
+  });
+
+  it("cargar Hora normal crea el TimeEntry correspondiente", async () => {
+    repo.findHourConceptById.mockResolvedValue(normalConcept);
+
+    await timeEntriesService.create(createInput, rrhhUser);
+
+    expect(repo.create).toHaveBeenCalledTimes(1);
+    expect(repo.create).toHaveBeenCalledWith(expect.objectContaining({ hourConceptId: normalConcept.id, hours: 8 }), rrhhUser.id);
+  });
+
+  it("cargar Hora normal no crea ningún HourConceptBreakdown", async () => {
+    repo.findHourConceptById.mockResolvedValue(normalConcept);
+
+    await timeEntriesService.create(createInput, rrhhUser);
+
+    // El repositorio de time-entries no expone ninguna operación de breakdown:
+    // sólo se invoca timeEntriesRepository.create (TimeEntry), nada más.
+    const calledMethods = Object.entries(repo)
+      .filter(([, mock]) => (mock as Mock).mock.calls.length > 0)
+      .map(([name]) => name);
+    expect(calledMethods).not.toContain("createManualHourConceptBreakdown");
+    expect(calledMethods.sort()).toEqual(["countEmployeeInScope", "create", "findBlockingNovelty", "findDuplicate", "findHourConceptById"]);
+  });
+
+  it("un concepto adicional NO habilitado para el legajo sigue rechazado", async () => {
+    repo.findHourConceptById.mockResolvedValue(overtimeConcept);
+    repo.findEnabledHourConcept.mockResolvedValue(null);
+
+    await expect(
+      timeEntriesService.create({ ...createInput, hourConceptId: overtimeConcept.id }, rrhhUser),
+    ).rejects.toMatchObject({ code: "HOUR_CONCEPT_NOT_ENABLED", statusCode: 400 });
+    expect(repo.create).not.toHaveBeenCalled();
+  });
+
+  it("un concepto adicional habilitado para el legajo sigue funcionando", async () => {
+    repo.findHourConceptById.mockResolvedValue(overtimeConcept);
+    repo.findEnabledHourConcept.mockResolvedValue({ hourConcept: overtimeConcept });
+
+    const result = await timeEntriesService.create({ ...createInput, hourConceptId: overtimeConcept.id }, rrhhUser);
+
+    expect(result).toBe(createdEntry);
+    expect(repo.findEnabledHourConcept).toHaveBeenCalledWith(createInput.employeeId, overtimeConcept.id);
+  });
+
+  it("Hora normal se identifica por systemRole=NORMAL_BASE, no por el nombre visible del concepto", async () => {
+    // Mismo systemRole, nombre distinto al literal "Hora normal": igual debe
+    // saltear la validación de EmployeeHourConcept.
+    repo.findHourConceptById.mockResolvedValue({ ...normalConcept, name: "Jornada base" });
+
+    await timeEntriesService.create(createInput, rrhhUser);
+
+    expect(repo.findEnabledHourConcept).not.toHaveBeenCalled();
+    expect(repo.create).toHaveBeenCalledTimes(1);
+  });
+
+  it("el error 'tipo de hora no habilitado' no aplica a Hora normal aunque el empleado no tenga conceptos adicionales", async () => {
+    repo.findHourConceptById.mockResolvedValue(normalConcept);
+    repo.findEnabledHourConcept.mockResolvedValue(null);
+
+    await expect(timeEntriesService.create(createInput, rrhhUser)).resolves.toBe(createdEntry);
   });
 });
 

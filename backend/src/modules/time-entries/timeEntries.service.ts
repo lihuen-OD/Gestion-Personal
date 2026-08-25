@@ -90,6 +90,16 @@ async function ensureEmployeeScope(employeeId: string, user: Express.AuthUser) {
 }
 
 async function ensureHourConceptEnabled(employeeId: string, hourConceptId: string) {
+  const hourConcept = await timeEntriesRepository.findHourConceptById(hourConceptId);
+  if (!hourConcept || hourConcept.status !== "ACTIVO") {
+    throw new AppError("Hour concept is not enabled for this employee", 400, "HOUR_CONCEPT_NOT_ENABLED");
+  }
+  // Hora normal (systemRole NORMAL_BASE) es la base universal del sistema:
+  // no se asigna por legajo ni se guarda en EmployeeHourConcept, así que la
+  // carga manual de la grilla no debe exigir una habilitación que por
+  // diseño nunca va a existir. Sólo los conceptos adicionales pasan por
+  // EmployeeHourConcept.
+  if (hourConcept.systemRole === "NORMAL_BASE") return;
   const enabled = await timeEntriesRepository.findEnabledHourConcept(employeeId, hourConceptId);
   if (!enabled || enabled.hourConcept.status !== "ACTIVO") {
     throw new AppError("Hour concept is not enabled for this employee", 400, "HOUR_CONCEPT_NOT_ENABLED");

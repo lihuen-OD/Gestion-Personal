@@ -7,6 +7,7 @@ import { employeeApiService } from "../services/api/employeeApiService";
 import { noveltyApiService } from "../services/api/noveltyApiService";
 import { noveltyTypeApiService } from "../services/api/noveltyTypeApiService";
 import { documentCategoryApiService } from "../services/api/documentCategoryApiService";
+import { timeEntryApiService } from "../services/api/timeEntryApiService";
 import { ApiError } from "../services/api/apiClient";
 import type { Employee } from "../types";
 import type { EmployeeTimeGrid, EmployeeTimeGridRow } from "../services/api/employeeApiService";
@@ -206,6 +207,82 @@ beforeEach(() => {
   vi.mocked(noveltyApiService.getAll).mockResolvedValue([]);
   vi.mocked(noveltyTypeApiService.getAll).mockResolvedValue([]);
   vi.mocked(documentCategoryApiService.getAll).mockResolvedValue([]);
+  vi.mocked(timeEntryApiService.save).mockReset();
+  vi.mocked(timeEntryApiService.update).mockReset();
+});
+
+function buildNormalOnlyGrid(): EmployeeTimeGrid {
+  const base = { createdAt: "2026-01-01", updatedAt: "2026-01-01" };
+  return {
+    employee: buildEmployee(),
+    entries: [],
+    novelties: [],
+    noveltyTypes: [],
+    hourConcepts: [],
+    rows: [
+      {
+        concept: { ...base, id: "normal", code: "HC-NORMAL", name: "Hora normal", kind: "NORMAL", status: "ACTIVO", loadMode: null, systemRole: "NORMAL_BASE" },
+        role: "NORMAL_BASE",
+        minutesByDay: {},
+        totalMinutes: 0,
+      },
+    ],
+    totalWorkedMinutes: 0,
+    attendanceIssues: 0,
+  };
+}
+
+describe("EmployeeHoursPage — Hora normal es universal (bug: HOUR_CONCEPT_NOT_ENABLED sin conceptos adicionales)", () => {
+  it("el modal 'Cargar Hora normal' permite guardar aunque el legajo no tenga ningún concepto adicional asignado", async () => {
+    const user = userEvent.setup();
+    vi.mocked(employeeApiService.getTimeGrid).mockResolvedValue(buildNormalOnlyGrid());
+    vi.mocked(timeEntryApiService.save).mockResolvedValueOnce({
+      id: "entry-1", employeeId: "employee-1", period: "2026-08", day: 1, type: "Hora normal", hours: 8, status: "Borrador", conceptId: "normal",
+    });
+    renderPage();
+    await screen.findByRole("button", { name: /Recalcular automáticos/i });
+
+    const normalDay1 = within(rowFor("Hora normal")).getAllByRole("button")[0]!;
+    await user.click(normalDay1);
+    expect(await screen.findByText(/Cargar Hora normal/i)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /Guardar borrador/i }));
+
+    await waitFor(() => expect(timeEntryApiService.save).toHaveBeenCalledTimes(1));
+    expect(timeEntryApiService.save).toHaveBeenCalledWith(expect.objectContaining({ conceptId: "normal", hours: 8 }));
+    await waitFor(() => expect(screen.queryByText(/Cargar Hora normal/i)).not.toBeInTheDocument());
+  });
+
+  it("no muestra 'Ese tipo de hora no esta habilitado para este legajo' al enviar Hora normal a revisión sin conceptos adicionales", async () => {
+    const user = userEvent.setup();
+    vi.mocked(employeeApiService.getTimeGrid).mockResolvedValue(buildNormalOnlyGrid());
+    vi.mocked(timeEntryApiService.save).mockResolvedValueOnce({
+      id: "entry-1", employeeId: "employee-1", period: "2026-08", day: 1, type: "Hora normal", hours: 8, status: "En revisión", conceptId: "normal",
+    });
+    renderPage();
+    await screen.findByRole("button", { name: /Recalcular automáticos/i });
+
+    const normalDay1 = within(rowFor("Hora normal")).getAllByRole("button")[0]!;
+    await user.click(normalDay1);
+    await user.click(screen.getByRole("button", { name: /Enviar a revisión/i }));
+
+    await waitFor(() => expect(timeEntryApiService.save).toHaveBeenCalledTimes(1));
+    expect(screen.queryByText("Ese tipo de hora no esta habilitado para este legajo.")).not.toBeInTheDocument();
+  });
+
+  it("si el backend igual rechazara la carga por otro motivo, sigue mostrando ese error tal cual (la corrección no oculta errores reales)", async () => {
+    const user = userEvent.setup();
+    vi.mocked(employeeApiService.getTimeGrid).mockResolvedValue(buildNormalOnlyGrid());
+    vi.mocked(timeEntryApiService.save).mockRejectedValueOnce(new ApiError("blocked", "TIME_ENTRY_DAY_BLOCKED_BY_NOVELTY", 409));
+    renderPage();
+    await screen.findByRole("button", { name: /Recalcular automáticos/i });
+
+    const normalDay1 = within(rowFor("Hora normal")).getAllByRole("button")[0]!;
+    await user.click(normalDay1);
+    await user.click(screen.getByRole("button", { name: /Guardar borrador/i }));
+
+    expect(await screen.findByText("Ese dia esta bloqueado por una novedad. Solo se permiten 0 hs salvo que se modifique la novedad.")).toBeInTheDocument();
+  });
 });
 
 describe("EmployeeHoursPage — recálculo de automáticos (Etapa 6J)", () => {
