@@ -995,6 +995,7 @@ Devuelve:
         "kind": "novelty",
         "sourceId": "uuid",
         "status": "PENDIENTE",
+        "employeeId": "uuid-del-legajo",
         "employeeLabel": "000001 - Apellido, Nombre",
         "title": "Vacaciones",
         "subtitle": "NOV-VAC",
@@ -1006,6 +1007,8 @@ Devuelve:
 ```
 
 Desde la Etapa 6L.3, `kind` también puede ser `"hourConceptBreakdown"` (desgloses manuales `EN_REVISION` de Nivel 2/3, filtrados por `kind=all|timeEntries` igual que `timeEntry` — `kind=novelties` los excluye) y `summary` suma el campo `hourConceptBreakdowns` con su conteo. Es un campo aditivo: un consumidor que ya leía `summary.total`/`summary.novelties`/`summary.timeEntries` sigue funcionando sin cambios.
+
+**Etapa 6L.5 (aclaración de contrato):** todo ítem expone `employeeId` (antes iba embebido sin tipar en un objeto `employee` que ningún consumidor leía) — es el `:id` que pide `POST /employees/:id/hour-concept-breakdowns/manual/:breakdownId/approve|reject|return` para resolver un ítem `kind: "hourConceptBreakdown"` desde la bandeja de revisión. `sourceId` es el `:breakdownId` en ese caso (o el `:id` de `POST /time-entries/:id/approve|reject|return` cuando `kind: "timeEntry"`).
 
 ## Documentos
 

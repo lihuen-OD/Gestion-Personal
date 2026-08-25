@@ -682,6 +682,28 @@ export const employeeApiService = {
     });
     return response.data;
   },
+  // Etapa 6L.5: resolución RRHH de un desglose manual EN_REVISION desde la
+  // bandeja — mismos endpoints agregados en 6L.3, sin UI hasta ahora.
+  async approveManualHourConceptBreakdown(employeeId: string, breakdownId: string) {
+    const response = await apiRequest<{ data: unknown }>(`/employees/${employeeId}/hour-concept-breakdowns/manual/${breakdownId}/approve`, {
+      method: "POST",
+    });
+    return response.data;
+  },
+  async rejectManualHourConceptBreakdown(employeeId: string, breakdownId: string, reason: string) {
+    const response = await apiRequest<{ data: unknown }>(`/employees/${employeeId}/hour-concept-breakdowns/manual/${breakdownId}/reject`, {
+      method: "POST",
+      body: { reason },
+    });
+    return response.data;
+  },
+  async returnManualHourConceptBreakdown(employeeId: string, breakdownId: string, reason: string) {
+    const response = await apiRequest<{ data: unknown }>(`/employees/${employeeId}/hour-concept-breakdowns/manual/${breakdownId}/return`, {
+      method: "POST",
+      body: { reason },
+    });
+    return response.data;
+  },
   async recalculateAutomaticHourConceptBreakdowns(employeeId: string, period: string) {
     const response = await apiRequest<{ data: RecalculateAutomaticHourConceptBreakdownsResult }>(
       `/employees/${employeeId}/hour-concept-breakdowns/recalculate-automatic`,

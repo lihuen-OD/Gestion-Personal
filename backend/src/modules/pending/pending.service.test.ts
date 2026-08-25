@@ -89,4 +89,20 @@ describe("pendingService.list — bandeja de revisión incluye desgloses manuale
     expect(result.summary).toMatchObject({ total: 3, novelties: 1, timeEntries: 1, hourConceptBreakdowns: 1 });
     expect(result.data.map((item) => item.kind)).toEqual(["timeEntry", "hourConceptBreakdown", "novelty"]);
   });
+
+  it("cada ítem expone employeeId (Etapa 6L.5): el frontend lo necesita para armar la URL de aprobar/rechazar/devolver un desglose manual", async () => {
+    repo.findPendingTimeEntries.mockResolvedValue([{
+      id: "entry-1", status: "EN_REVISION", date: new Date("2026-08-10T00:00:00Z"), createdAt: new Date("2026-08-10T00:00:00Z"),
+      employee, hourConcept: { id: "normal", code: "HC-NORMAL", name: "Hora normal" }, hours: { toString: () => "8" },
+    }]);
+    repo.findPendingHourConceptBreakdowns.mockResolvedValue([{
+      id: "breakdown-1", status: "EN_REVISION", date: new Date("2026-08-12T00:00:00Z"), createdAt: new Date("2026-08-12T00:00:00Z"),
+      minutes: 120, employee, hourConcept: { id: "colectivo", code: "HC-COLECTIVO", name: "Colectivo" },
+    }]);
+
+    const result = await pendingService.list({ kind: "all", take: 100 } as never, rrhhUser);
+
+    expect(result.data.every((item) => item.employeeId === "emp-1")).toBe(true);
+    expect(result.data[0]).not.toHaveProperty("employee");
+  });
 });

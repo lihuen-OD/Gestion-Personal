@@ -13,6 +13,8 @@ import {
   X,
 } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
+import { ApiError } from "../services/api/apiClient";
+import { employeeApiService } from "../services/api/employeeApiService";
 import { orgStructureApiService } from "../services/api/orgStructureApiService";
 import { pendingApiService, type PendingItem } from "../services/api/pendingApiService";
 import { timeEntryApiService } from "../services/api/timeEntryApiService";
@@ -143,6 +145,29 @@ const emptyHoursSummary = {
   countableHours: 0,
   coverage: 0,
 };
+
+// Etapa 6L.5: PendingItem.date ya viene recortado a "YYYY-MM-DD"
+// (pendingApiService.mapItem) — se reusa formatPeriodDay para mostrarlo
+// igual que la tabla de Horas en revisión (mismo formato en toda la bandeja).
+function pendingItemDayLabel(item: PendingItem) {
+  return formatPeriodDay(item.date.slice(0, 7), Number(item.date.slice(8, 10)));
+}
+
+function breakdownResolveErrorMessage(error: unknown) {
+  if (error instanceof ApiError) {
+    if (error.code === "HOUR_CONCEPT_BREAKDOWN_STATUS_NOT_RESOLVABLE") {
+      return "Este desglose ya fue resuelto por otra persona. Actualizá la bandeja e intentá de nuevo.";
+    }
+    if (error.code === "HOUR_CONCEPT_BREAKDOWN_NOT_FOUND") {
+      return "No encontramos este desglose. Puede que ya no exista o esté fuera de tu alcance.";
+    }
+    if (error.code === "FORBIDDEN") {
+      return "No tenés permiso para resolver este desglose.";
+    }
+    return error.message;
+  }
+  return "No pudimos resolver el desglose manual. Intentá nuevamente.";
+}
 const pageSize = 25;
 
 export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
@@ -156,6 +181,10 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
   const [refresh, setRefresh] = useState(0);
   const [review, setReview] = useState<{ entry: TimeEntry; action: "reject" | "return" }>();
   const [noveltyReject, setNoveltyReject] = useState<PendingItem>();
+  // Etapa 6L.5: mismo patrón que review/noveltyReject, para desgloses manuales.
+  const [breakdownReview, setBreakdownReview] = useState<{ item: PendingItem; action: "reject" | "return" }>();
+  const [resolvingBreakdownId, setResolvingBreakdownId] = useState<string | null>(null);
+  const [breakdownActionError, setBreakdownActionError] = useState("");
   const [reviewReason, setReviewReason] = useState("");
   const [groupByPerson, setGroupByPerson] = useState(false);
   const [periodRows, setPeriodRows] = useState<
@@ -262,6 +291,9 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
   const costCenters = uniqueOptions(costCenterOptions.map((item) => item.name));
   const employees = periodRows.map((row) => row.employee);
   const pendingNoveltyItems = pendingItems.filter((item) => item.kind === "novelty");
+  // Etapa 6L.5: desgloses manuales EN_REVISION — ya llegaban en pendingItems
+  // desde 6L.3 (kind: "hourConceptBreakdown"), pero no se mostraban en ningún lado.
+  const pendingBreakdownItems = pendingItems.filter((item) => item.kind === "hourConceptBreakdown");
   const canReview = user ? timeEntryApiService.canReview(user) : false;
   // Etapa 6L.3 (ajuste): aprobar/rechazar/devolver cargas horarias es
   // exclusivo de RRHH. canReview sigue igual para novedades (sin cambios).
@@ -339,6 +371,47 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
     setNoveltyReject(undefined);
     setReviewReason("");
     setRefresh((value) => value + 1);
+  };
+  // Etapa 6L.5: aprobar/rechazar/devolver un desglose manual pendiente
+  // (HourConceptBreakdown) desde la bandeja — mismo patrón que TimeEntry
+  // arriba, pero contra los endpoints de employeeApiService agregados en 6L.3.
+  const approveBreakdown = async (item: PendingItem) => {
+    if (!user) return;
+    setBreakdownActionError("");
+    setResolvingBreakdownId(item.sourceId);
+    try {
+      await employeeApiService.approveManualHourConceptBreakdown(item.employeeId, item.sourceId);
+      setRefresh((value) => value + 1);
+    } catch (error) {
+      setBreakdownActionError(breakdownResolveErrorMessage(error));
+    } finally {
+      setResolvingBreakdownId(null);
+    }
+  };
+  const openBreakdownReview = (item: PendingItem, action: "reject" | "return") => {
+    setBreakdownReview({ item, action });
+    setBreakdownActionError("");
+    setReviewReason("");
+  };
+  const confirmBreakdownReview = async () => {
+    if (!reviewReason.trim() || !breakdownReview) return;
+    if (!user) return;
+    setBreakdownActionError("");
+    setResolvingBreakdownId(breakdownReview.item.sourceId);
+    try {
+      if (breakdownReview.action === "reject") {
+        await employeeApiService.rejectManualHourConceptBreakdown(breakdownReview.item.employeeId, breakdownReview.item.sourceId, reviewReason.trim());
+      } else {
+        await employeeApiService.returnManualHourConceptBreakdown(breakdownReview.item.employeeId, breakdownReview.item.sourceId, reviewReason.trim());
+      }
+      setBreakdownReview(undefined);
+      setReviewReason("");
+      setRefresh((value) => value + 1);
+    } catch (error) {
+      setBreakdownActionError(breakdownResolveErrorMessage(error));
+    } finally {
+      setResolvingBreakdownId(null);
+    }
   };
   return (
     <>
@@ -468,7 +541,7 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
 
           <Section
             title="Horas enviadas a revisión"
-            subtitle={groupByPerson ? `${reviewByPerson.length} personas con registros en revisión` : `${reviewEntries.length} registros pendientes de resolución`}
+            subtitle={groupByPerson ? `${reviewByPerson.length} personas con registros en revisión` : `${reviewEntries.length} registros de Hora normal pendientes de resolución — afectan el total trabajado.`}
             action={
               <Tabs
                 tabs={[
@@ -670,6 +743,95 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
           )}
           <Pagination page={reviewEntriesMeta.page} pageSize={reviewEntriesMeta.pageSize} total={reviewEntriesMeta.total} hasMore={reviewEntriesMeta.hasMore} onPageChange={setReviewPage} itemLabel={groupByPerson ? "personas" : "registros"} />
           </Section>
+
+          <Section
+            title="Desgloses manuales pendientes"
+            subtitle={`${pendingBreakdownItems.length} conceptos adicionales pendientes de resolución — son desgloses para liquidación/análisis y no modifican Hora normal ni el total trabajado.`}
+          >
+            {breakdownActionError ? <div className="form-error">{breakdownActionError}</div> : null}
+            {loading ? (
+              <LoadingState variant="table" rows={3} columns={7} />
+            ) : pendingBreakdownItems.length ? (
+              <TableShell minWidth={980}>
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Fecha</th>
+                      <th>Legajo / Persona</th>
+                      <th>Concepto adicional</th>
+                      <th>Observación</th>
+                      <th>Horas</th>
+                      <th>Estado</th>
+                      <th>Acción</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pendingBreakdownItems.map((item) => {
+                      const isResolving = resolvingBreakdownId === item.sourceId;
+                      return (
+                        <tr key={`${item.kind}-${item.sourceId}`}>
+                          <td>{pendingItemDayLabel(item)}</td>
+                          <td>
+                            <OverflowCell value={item.employeeLabel} />
+                          </td>
+                          <td>
+                            <OverflowCell value={item.title} />
+                          </td>
+                          <td className="observation-cell">
+                            <OverflowCell value={item.subtitle || "-"} />
+                          </td>
+                          <td>{item.quantity ? `${item.quantity} h` : "-"}</td>
+                          <td>
+                            <Badge tone={statusTone(item.status)}>{item.status}</Badge>
+                          </td>
+                          <td>
+                            {canApprove ? (
+                              <div className="table-actions">
+                                <button
+                                  className="table-icon-action"
+                                  title="Aprobar desglose"
+                                  aria-label="Aprobar desglose"
+                                  disabled={isResolving}
+                                  onClick={() => approveBreakdown(item)}
+                                >
+                                  <CheckCircle2 size={14} />
+                                  <span>{isResolving ? "Aprobando..." : "Aprobar"}</span>
+                                </button>
+                                <button
+                                  className="table-icon-action danger-link"
+                                  title="Rechazar desglose"
+                                  aria-label="Rechazar desglose"
+                                  disabled={isResolving}
+                                  onClick={() => openBreakdownReview(item, "reject")}
+                                >
+                                  <X size={14} />
+                                  <span>Rechazar</span>
+                                </button>
+                                <button
+                                  className="table-icon-action"
+                                  title="Devolver desglose"
+                                  aria-label="Devolver desglose"
+                                  disabled={isResolving}
+                                  onClick={() => openBreakdownReview(item, "return")}
+                                >
+                                  <RefreshCcw size={14} />
+                                  <span>Devolver</span>
+                                </button>
+                              </div>
+                            ) : (
+                              <span className="table-sub">Solo lectura</span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </TableShell>
+            ) : (
+              <EmptyState text="No hay desgloses manuales pendientes de revisión." />
+            )}
+          </Section>
         </>
       ) : null}
 
@@ -846,6 +1008,58 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
                 onClick={confirmReview}
               >
                 {review.action === "reject" ? "Rechazar" : "Devolver"}
+              </Button>
+            </div>
+          </div>
+        </Modal>
+      ) : null}
+
+      {breakdownReview ? (
+        <Modal
+          title={
+            breakdownReview.action === "reject"
+              ? "Rechazar desglose manual"
+              : "Devolver desglose manual"
+          }
+          close={() => setBreakdownReview(undefined)}
+        >
+          <div className="form-stack">
+            <div className="info-note compact">
+              <b>
+                {breakdownReview.item.title} · {pendingItemDayLabel(breakdownReview.item)}
+              </b>
+              <p>
+                {breakdownReview.action === "reject"
+                  ? "El desglose quedará rechazado y se conservará para auditoría. No afecta Hora normal ni el total trabajado."
+                  : "El desglose queda en estado Devuelto para que Nivel 2/3 lo corrija y lo vuelva a enviar. No afecta Hora normal ni el total trabajado."}
+              </p>
+            </div>
+            <label>
+              Observación obligatoria
+              <textarea
+                value={reviewReason}
+                onChange={(event) => setReviewReason(event.target.value)}
+                placeholder="Indicá el motivo para dejar trazabilidad"
+              />
+            </label>
+            {!reviewReason.trim() ? (
+              <p className="error">La observación es obligatoria.</p>
+            ) : null}
+            {breakdownActionError ? <p className="error">{breakdownActionError}</p> : null}
+            <div className="form-actions">
+              <Button variant="subtle" onClick={() => setBreakdownReview(undefined)}>
+                Cancelar
+              </Button>
+              <Button
+                variant={breakdownReview.action === "reject" ? "danger" : "primary"}
+                disabled={resolvingBreakdownId === breakdownReview.item.sourceId}
+                onClick={confirmBreakdownReview}
+              >
+                {resolvingBreakdownId === breakdownReview.item.sourceId
+                  ? "Guardando..."
+                  : breakdownReview.action === "reject"
+                    ? "Rechazar"
+                    : "Devolver"}
               </Button>
             </div>
           </div>

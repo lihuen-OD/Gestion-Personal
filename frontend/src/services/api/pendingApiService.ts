@@ -18,6 +18,7 @@ type ApiPendingItem = {
   sourceId: string;
   status: ApiApprovalStatus;
   date: string;
+  employeeId: string;
   employeeLabel: string;
   title: string;
   subtitle?: string | null;
