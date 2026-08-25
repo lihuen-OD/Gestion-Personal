@@ -1074,6 +1074,14 @@ export const timeEntriesRepository = {
           include: { hourConcept: true },
         },
         hourConcepts: {
+          // countsAsWorked: legacy del modelo exclusivo anterior (Etapa 6R).
+          // Ningún endpoint permite crear/editar un HourConcept con
+          // countsAsWorked=false (createHourConceptSchema/updateHourConceptSchema
+          // no lo aceptan), así que este filtro es hoy un no-op para todo
+          // concepto creado vía API. Se conserva el filtro (en vez de
+          // quitarlo) por si existen registros legacy con el valor en false
+          // cargados antes de esa restricción; confirmar contra la base
+          // antes de eliminarlo.
           where: { hourConcept: { status: "ACTIVO", countsAsWorked: true } },
           include: { hourConcept: true },
         },

@@ -43,7 +43,9 @@ export type AttendanceSegment = {
   // de attendanceApiService.getObservations() (el backend ahí no recorta el
   // select de TimeSegment). Si viene de getSummary(), quedan undefined —
   // WorkShiftSegmentsPanel debe mostrar "no disponible", nunca inventarlos.
-  hourConceptId?: string;
+  // (hourConceptId del segmento — el "ganador" del clasificador legacy — se
+  // eliminó de este tipo en la Etapa 6R: nunca se leía en el frontend; el
+  // total trabajado siempre sale de TimeEntry/Hora normal, no de acá.)
   hourConceptRuleId?: string | null;
   conceptStatus?: SegmentConceptStatus;
   specialHourRuleApplications?: AttendanceSegmentSpecialRuleApplication[];

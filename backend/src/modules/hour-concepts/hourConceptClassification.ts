@@ -3,7 +3,14 @@ import { scheduledInstantForShiftTime } from "../../shared/datetime/argentinaTim
 /**
  * Clasificación automática multi-concepto de una jornada real (etapa de
  * Turnos V1). Ningún nombre de concepto está hardcodeado acá: los rangos
- * horarios y prioridades vienen 100% de HourConceptRule, cargada por RRHH.
+ * horarios vienen 100% de HourConceptRule, cargada por RRHH.
+ *
+ * Genera exclusivamente evidencia técnica sobre TimeSegment (con fines de
+ * trazabilidad/alertas para RRHH) — nunca decide Hora normal ni
+ * totalWorkedMinutes, que desde la Etapa 6L siempre salen de TimeEntry con
+ * el concepto Normal canónico. `priority` (ver pickWinner) es un residuo del
+ * modelo exclusivo anterior a los Conceptos Horarios aditivos: quedó
+ * congelado en 0 para toda regla nueva (Etapa 6E) y ya no lo carga RRHH.
  *
  * Regla de oro: nunca se pierden, inventan ni duplican minutos. Toda función
  * de este archivo es pura (sin acceso a datos) — quien la llama resuelve
@@ -66,6 +73,12 @@ function ruleOccurrencesOverlapping(rule: HourConceptRuleRef, rangeStart: Date, 
 // startTime más temprano; todavía empatada, gana el id (orden estable,
 // arbitrario pero 100% determinístico — nunca dos corridas con los mismos
 // datos de entrada eligen ganadores distintos).
+// Nota (Etapa 6R): priority es legacy congelado en 0 para toda regla nueva
+// (hourConceptRules.repository.ts), así que hoy esta rama es siempre un
+// empate y el desempate real ocurre por startTime/id. Se conserva la
+// comparación (en vez de eliminarla) porque reglas creadas antes de esa
+// restricción podrían tener priority != 0 en la base, y este resultado solo
+// afecta metadata de TimeSegment (evidencia), nunca totalWorkedMinutes.
 function pickWinner(rules: HourConceptRuleRef[]): HourConceptRuleRef | null {
   if (rules.length === 0) return null;
   return [...rules].sort((a, b) => {

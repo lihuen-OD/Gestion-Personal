@@ -103,7 +103,7 @@ export function WorkShiftSegmentsPanel({ segments: unsortedSegments, entries }: 
   return (
     <div className="work-shift-segments-panel">
       <div className="info-note compact">
-        <p>Si dos tramos se superponen, el sistema usa el de mayor prioridad. Un tramo puede quedar &quot;sin concepto compatible&quot; o &quot;no habilitado&quot; y requerir revisión de RRHH.</p>
+        <p>Estos tramos son evidencia técnica de cómo se clasificó la jornada; no modifican Hora normal ni el total trabajado. Un tramo puede quedar &quot;sin concepto compatible&quot; o &quot;no habilitado&quot; y requerir revisión de RRHH.</p>
         {!hasFullConceptData ? (
           <p><em>El estado de clasificación y la regla horaria de este listado no están disponibles todavía para jornadas cerradas de forma rutinaria — hoy solo se exponen para jornadas que llegaron a &quot;Problemas de fichada&quot;. Requiere extender la API de asistencia.</em></p>
         ) : null}
