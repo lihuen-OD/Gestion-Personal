@@ -317,7 +317,7 @@ describe("createFromWorkShift — persistencia de segmentos clasificados (Turnos
   const employeeId = "employee-1";
   const day = new Date("2026-08-18T00:00:00.000Z");
 
-  it("crea un TimeSegment/TimeEntry por cada segmento clasificado, con su propio hourConceptId y conceptStatus — no se pierden ni duplican minutos", async () => {
+  it("Etapa 6L — TimeSegment conserva el hourConceptId clasificado (evidencia técnica) pero todo TimeEntry usa la Hora normal canónica, nunca el concepto especial del segmento", async () => {
     mockedPrisma.__tx.attendancePunch.create.mockResolvedValueOnce({ id: "punch-in" }).mockResolvedValueOnce({ id: "punch-out" });
     mockedPrisma.__tx.workShift.create.mockResolvedValue({ id: "shift-1" });
 
@@ -327,8 +327,8 @@ describe("createFromWorkShift — persistencia de segmentos clasificados (Turnos
 
     const result = await timeEntriesRepository.createFromWorkShift({
       employeeId,
-      hourConceptId: "concept-normal",
-      hourConceptName: "Hora normal",
+      normalHourConceptId: "concept-normal",
+      normalHourConceptName: "Hora normal",
       source: "ADMIN" as never,
       startAt,
       endAt,
@@ -339,6 +339,7 @@ describe("createFromWorkShift — persistencia de segmentos clasificados (Turnos
       ],
     });
 
+    // TimeSegment sigue reflejando el clasificador legacy tal cual (evidencia técnica, sin cambios).
     expect(mockedPrisma.__tx.timeSegment.create).toHaveBeenCalledTimes(2);
     expect(mockedPrisma.__tx.timeSegment.create).toHaveBeenNthCalledWith(1, expect.objectContaining({
       data: expect.objectContaining({ hourConceptId: "concept-normal", hourConceptRuleId: "rule-normal", conceptStatus: "SUGERIDO", minutes: 240 }),
@@ -346,12 +347,50 @@ describe("createFromWorkShift — persistencia de segmentos clasificados (Turnos
     expect(mockedPrisma.__tx.timeSegment.create).toHaveBeenNthCalledWith(2, expect.objectContaining({
       data: expect.objectContaining({ hourConceptId: "concept-guardia", hourConceptRuleId: "rule-guardia", conceptStatus: "SUGERIDO", minutes: 420 }),
     }));
+    // TimeEntry, en cambio, siempre usa normalHourConceptId — nunca "concept-guardia" del segundo segmento.
     expect(mockedPrisma.__tx.timeEntry.create).toHaveBeenCalledTimes(2);
     expect(mockedPrisma.__tx.timeEntry.create).toHaveBeenNthCalledWith(1, expect.objectContaining({ data: expect.objectContaining({ hourConceptId: "concept-normal", totalMinutes: 240 }) }));
-    expect(mockedPrisma.__tx.timeEntry.create).toHaveBeenNthCalledWith(2, expect.objectContaining({ data: expect.objectContaining({ hourConceptId: "concept-guardia", totalMinutes: 420 }) }));
+    expect(mockedPrisma.__tx.timeEntry.create).toHaveBeenNthCalledWith(2, expect.objectContaining({ data: expect.objectContaining({ hourConceptId: "concept-normal", totalMinutes: 420 }) }));
 
     const totalPersistedMinutes = result.entries.reduce((sum, entry) => sum + (entry as { totalMinutes: number }).totalMinutes, 0);
-    expect(totalPersistedMinutes).toBe(660); // == minutos reales entre startAt y endAt (17:00 a 04:00)
+    expect(totalPersistedMinutes).toBe(660); // == minutos reales entre startAt y endAt (17:00 a 04:00), sólo repartidos ahora en filas todas de Normal
+  });
+
+  it("Etapa 6L — si dos segmentos clasificados del mismo día ya no compiten por concepto, el segundo se fusiona en el TimeEntry Normal recién creado por el primero (misma fecha + mismo hourConceptId)", async () => {
+    mockedPrisma.__tx.attendancePunch.create.mockResolvedValueOnce({ id: "punch-in" }).mockResolvedValueOnce({ id: "punch-out" });
+    mockedPrisma.__tx.workShift.create.mockResolvedValue({ id: "shift-1b" });
+
+    const startAt = new Date("2026-08-18T13:00:00.000Z"); // 10:00 ART
+    const midpoint = new Date("2026-08-18T18:00:00.000Z"); // 15:00 ART
+    const endAt = new Date("2026-08-18T21:00:00.000Z"); // 18:00 ART
+
+    const createdEntryOne = { id: "entry-1", totalMinutes: 300, actualMinutes: 300, status: "BORRADOR", observation: null };
+    mockedPrisma.__tx.timeEntry.findFirst
+      .mockResolvedValueOnce(null) // primer segmento: todavía no hay TimeEntry ese día para Normal
+      .mockResolvedValueOnce(createdEntryOne); // segundo segmento: ya existe el de Normal creado por el primero
+    mockedPrisma.__tx.timeEntry.create.mockResolvedValueOnce(createdEntryOne);
+    mockedPrisma.__tx.timeEntry.update.mockResolvedValueOnce({ ...createdEntryOne, totalMinutes: 480 });
+
+    await timeEntriesRepository.createFromWorkShift({
+      employeeId,
+      normalHourConceptId: "concept-normal",
+      normalHourConceptName: "Hora normal",
+      source: "ADMIN" as never,
+      startAt,
+      endAt,
+      totalMinutes: 480,
+      segments: [
+        { date: day, startAt, endAt: midpoint, minutes: 300, hours: 5, hourConceptId: "concept-normal", hourConceptName: "Hora normal", conceptStatus: "SUGERIDO", hourConceptRuleId: "rule-normal" },
+        { date: day, startAt: midpoint, endAt, minutes: 180, hours: 3, hourConceptId: "concept-guardia", hourConceptName: "Guardia", conceptStatus: "SUGERIDO", hourConceptRuleId: "rule-guardia" },
+      ],
+    });
+
+    expect(mockedPrisma.__tx.timeEntry.create).toHaveBeenCalledTimes(1);
+    expect(mockedPrisma.__tx.timeEntry.update).toHaveBeenCalledTimes(1);
+    expect(mockedPrisma.__tx.timeEntry.update).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "entry-1" },
+      data: expect.objectContaining({ totalMinutes: 480 }), // 300 (ya existente) + 180 (segundo segmento), ambos Normal
+    }));
   });
 
   it("marca conceptStatus SIN_CONCEPTO_COMPATIBLE / CONCEPTO_NO_HABILITADO cuando corresponde, sin bloquear la creación", async () => {
@@ -360,8 +399,8 @@ describe("createFromWorkShift — persistencia de segmentos clasificados (Turnos
 
     await timeEntriesRepository.createFromWorkShift({
       employeeId,
-      hourConceptId: "concept-normal",
-      hourConceptName: "Hora normal",
+      normalHourConceptId: "concept-normal",
+      normalHourConceptName: "Hora normal",
       source: "ADMIN" as never,
       startAt: day,
       endAt: new Date(day.getTime() + 4 * 60 * 60_000),
@@ -382,8 +421,8 @@ describe("createFromWorkShift — persistencia de segmentos clasificados (Turnos
 
     await timeEntriesRepository.createFromWorkShift({
       employeeId,
-      hourConceptId: "concept-normal",
-      hourConceptName: "Hora normal",
+      normalHourConceptId: "concept-normal",
+      normalHourConceptName: "Hora normal",
       source: "ADMIN" as never,
       startAt: day,
       endAt: new Date(day.getTime() + 4 * 60 * 60_000),
@@ -423,8 +462,8 @@ describe("SpecialHourRuleApplication y multiplicador efectivo (Etapa 3)", () => 
     const endAt = new Date(date.getTime() + 4 * 60 * 60_000);
     return {
       employeeId,
-      hourConceptId: overrides.hourConceptId ?? "concept-normal",
-      hourConceptName: "Hora normal",
+      normalHourConceptId: "concept-normal",
+      normalHourConceptName: "Hora normal",
       source: "ADMIN" as never,
       startAt,
       endAt,
@@ -488,8 +527,8 @@ describe("SpecialHourRuleApplication y multiplicador efectivo (Etapa 3)", () => 
 
     await timeEntriesRepository.createFromWorkShift({
       employeeId,
-      hourConceptId: "concept-normal",
-      hourConceptName: "Hora normal",
+      normalHourConceptId: "concept-normal",
+      normalHourConceptName: "Hora normal",
       source: "ADMIN" as never,
       startAt,
       endAt,
@@ -585,8 +624,8 @@ describe("SpecialHourRuleApplication y multiplicador efectivo (Etapa 3)", () => 
     await timeEntriesRepository.closeOpenWorkShift({
       workShiftId: "shift-h",
       employeeId,
-      hourConceptId: "concept-normal",
-      hourConceptName: "Hora normal",
+      normalHourConceptId: "concept-normal",
+      normalHourConceptName: "Hora normal",
       source: "PORTAL_DNI" as never,
       endAt: new Date(sunday.getTime() + 4 * 60 * 60_000),
       totalMinutes: 240,
@@ -626,8 +665,8 @@ describe("SpecialHourRuleApplication y multiplicador efectivo (Etapa 3)", () => 
 
     await timeEntriesRepository.createFromWorkShift({
       employeeId,
-      hourConceptId: "concept-normal",
-      hourConceptName: "Hora normal",
+      normalHourConceptId: "concept-normal",
+      normalHourConceptName: "Hora normal",
       source: "ADMIN" as never,
       startAt,
       endAt,

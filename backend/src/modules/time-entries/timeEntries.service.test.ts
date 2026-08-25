@@ -25,6 +25,9 @@ vi.mock("./timeEntries.repository", () => ({
     failClockPunchAttempt: vi.fn(),
     findMany: vi.fn(),
     findPeriodEmployees: vi.fn(),
+    findEmployeeForShift: vi.fn(),
+    findOverlappingWorkShift: vi.fn(),
+    createFromWorkShift: vi.fn(),
   },
 }));
 
@@ -80,6 +83,9 @@ type RepoMock = {
   failClockPunchAttempt: Mock;
   findMany: Mock;
   findPeriodEmployees: Mock;
+  findEmployeeForShift: Mock;
+  findOverlappingWorkShift: Mock;
+  createFromWorkShift: Mock;
 };
 
 const repo = timeEntriesRepository as unknown as RepoMock;
@@ -349,6 +355,46 @@ describe("resolveShiftConcept — Etapa 6K (fichador resuelve Normal canónico, 
       statusCode: 400,
       code: "WORK_SHIFT_HOUR_CONCEPT_NOT_ENABLED",
     });
+  });
+});
+
+describe("createWorkShift — alta manual RRHH ya no crea TimeEntry especiales (Etapa 6L)", () => {
+  const adminUser = { id: "user-rrhh", role: "NIVEL_1_RRHH" } as Express.AuthUser;
+  const normalConcept = { id: "concept-normal", name: "Hora normal", status: "ACTIVO", systemRole: "NORMAL_BASE" };
+  const guardiaConcept = { id: "concept-guardia", name: "Guardia", status: "ACTIVO", systemRole: null };
+
+  it("aunque RRHH asocie explícitamente un concepto adicional (Guardia) al alta manual, el TimeEntry generado usa Hora normal canónica, no el concepto elegido", async () => {
+    repo.findEmployeeForShift.mockResolvedValue(activeEmployee);
+    repo.findOverlappingWorkShift.mockResolvedValue(null);
+    repo.findBlockingNovelty.mockResolvedValue(null);
+    // findDefaultHourConcept se llama dos veces: una con el id explícito (Guardia,
+    // para el clasificador legacy) y otra sin id (Normal, para el TimeEntry real).
+    repo.findDefaultHourConcept.mockImplementation(async (_employeeId: string, hourConceptId?: string) =>
+      hourConceptId ? { hourConcept: guardiaConcept } : { hourConcept: normalConcept },
+    );
+    repo.createFromWorkShift.mockResolvedValue({
+      workShift: { id: "shift-1" },
+      entries: [{ id: "entry-1", hourConceptId: normalConcept.id }],
+      timeSegments: [],
+    });
+
+    const input = {
+      employeeId: activeEmployee.id,
+      hourConceptId: guardiaConcept.id,
+      startAt: new Date("2026-08-24T13:00:00.000Z"),
+      endAt: new Date("2026-08-24T17:00:00.000Z"),
+      source: "ADMIN",
+      confirm: true as const,
+    } as unknown as Parameters<typeof timeEntriesService.createWorkShift>[0];
+
+    await timeEntriesService.createWorkShift(input, adminUser);
+
+    expect(repo.findDefaultHourConcept).toHaveBeenCalledWith(activeEmployee.id, guardiaConcept.id);
+    expect(repo.findDefaultHourConcept).toHaveBeenCalledWith(activeEmployee.id, undefined);
+    expect(repo.createFromWorkShift).toHaveBeenCalledTimes(1);
+    const persistedInput = repo.createFromWorkShift.mock.calls[0]![0] as { normalHourConceptId: string; normalHourConceptName: string };
+    expect(persistedInput.normalHourConceptId).toBe(normalConcept.id);
+    expect(persistedInput.normalHourConceptName).toBe(normalConcept.name);
   });
 });
 

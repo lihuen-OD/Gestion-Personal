@@ -1330,8 +1330,14 @@ export const timeEntriesRepository = {
 
   createFromWorkShift(input: {
     employeeId: string;
-    hourConceptId: string;
-    hourConceptName: string;
+    // Etapa 6L: ya no es "el concepto elegido para la jornada" — es la Hora
+    // normal canónica (systemRole NORMAL_BASE), resuelta por el servicio
+    // (resolveShiftConcept sin id). El clasificador legacy sigue partiendo
+    // `segments` por HourConceptRule/priority para TimeSegment (evidencia
+    // técnica), pero el TimeEntry que representa el trabajo real siempre usa
+    // este valor, nunca segment.hourConceptId.
+    normalHourConceptId: string;
+    normalHourConceptName: string;
     source: WorkShiftSource;
     startAt: Date;
     endAt: Date;
@@ -1426,7 +1432,7 @@ export const timeEntriesRepository = {
         const existing = await tx.timeEntry.findFirst({
           where: {
             employeeId: input.employeeId,
-            hourConceptId: segment.hourConceptId,
+            hourConceptId: input.normalHourConceptId,
             date: segment.date,
           },
           include: timeEntryInclude,
@@ -1460,7 +1466,7 @@ export const timeEntriesRepository = {
           entries.push(await tx.timeEntry.create({
             data: {
               employeeId: input.employeeId,
-              hourConceptId: segment.hourConceptId,
+              hourConceptId: input.normalHourConceptId,
               workShiftId: workShift.id,
               timeSegmentId: timeSegment.id,
               date: segment.date,
@@ -1489,8 +1495,12 @@ export const timeEntriesRepository = {
   closeOpenWorkShift(input: {
     workShiftId: string;
     employeeId: string;
-    hourConceptId: string;
-    hourConceptName: string;
+    // Etapa 6L: igual que en createFromWorkShift — Hora normal canónica,
+    // usada tanto para la etiqueta del WorkShift como para cada TimeEntry
+    // generado. El clasificador legacy sigue pudiendo partir `segments` por
+    // HourConceptRule/priority para TimeSegment; eso ya no llega a TimeEntry.
+    normalHourConceptId: string;
+    normalHourConceptName: string;
     source: WorkShiftSource;
     endAt: Date;
     totalMinutes: number;
@@ -1508,8 +1518,8 @@ export const timeEntriesRepository = {
         },
         data: {
           status: "PROCESADO",
-          hourConceptId: input.hourConceptId,
-          hourConceptName: input.hourConceptName,
+          hourConceptId: input.normalHourConceptId,
+          hourConceptName: input.normalHourConceptName,
           endAt: input.endAt,
           totalMinutes: input.totalMinutes,
           crossesMidnight: new Set(input.segments.map((segment) => segment.date.getTime())).size > 1,
@@ -1589,7 +1599,7 @@ export const timeEntriesRepository = {
         const existing = await tx.timeEntry.findFirst({
           where: {
             employeeId: input.employeeId,
-            hourConceptId: segment.hourConceptId,
+            hourConceptId: input.normalHourConceptId,
             date: segment.date,
           },
           include: timeEntryInclude,
@@ -1624,7 +1634,7 @@ export const timeEntriesRepository = {
           entries.push(await tx.timeEntry.create({
             data: {
               employeeId: input.employeeId,
-              hourConceptId: segment.hourConceptId,
+              hourConceptId: input.normalHourConceptId,
               workShiftId: workShift.id,
               timeSegmentId: timeSegment.id,
               date: segment.date,

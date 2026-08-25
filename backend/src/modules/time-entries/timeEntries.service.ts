@@ -771,8 +771,8 @@ export const timeEntriesService = {
     const created = await timeEntriesRepository.closeOpenWorkShift({
       workShiftId: before.id,
       employeeId: before.employeeId,
-      hourConceptId: hourConcept.id,
-      hourConceptName: hourConcept.name,
+      normalHourConceptId: hourConcept.id,
+      normalHourConceptName: hourConcept.name,
       source: "ADMIN",
       endAt: input.endAt,
       totalMinutes: calculation.totalMinutes,
@@ -871,11 +871,17 @@ export const timeEntriesService = {
   async createWorkShift(input: CreateWorkShiftInput, user: Express.AuthUser, audit?: AuditContext) {
     const result = await validateShift(input, user);
     try {
+      // Etapa 6L: result.hourConcept sigue gobernando la partición de
+      // TimeSegment (compatibilidad con el clasificador legacy si RRHH
+      // asoció un concepto adicional al alta manual), pero el TimeEntry que
+      // representa el trabajo real siempre debe resolver Hora normal
+      // canónica, sin depender de qué concepto haya elegido el cliente.
+      const normalConcept = await resolveShiftConcept(result.employee.id);
       const classifiedSegments = await classifySegmentsForEmployee(result.employee.id, result.segments, result.hourConcept);
       const created = await timeEntriesRepository.createFromWorkShift({
         employeeId: result.employee.id,
-        hourConceptId: result.hourConcept.id,
-        hourConceptName: result.hourConcept.name,
+        normalHourConceptId: normalConcept.id,
+        normalHourConceptName: normalConcept.name,
         source: input.source,
         startAt: input.startAt,
         endAt: input.endAt,
@@ -1069,17 +1075,22 @@ export const timeEntriesService = {
     const exitPreparation = input.punchType === "OUT" && currentOpenShift
       ? await (async () => {
         const hourConcept = selectedConcept;
+        // Etapa 6L: hourConcept sigue alimentando al clasificador legacy para
+        // partir TimeSegment (compatibilidad si el turno viniera con un
+        // concepto no-Normal ya asignado); normalConcept es la Hora normal
+        // canónica que va a recibir el TimeEntry, sin excepción.
+        const normalConcept = await resolveShiftConcept(employee.id);
         const calculation = buildShiftSegments(currentOpenShift.startAt, now);
         await Promise.all(calculation.segments.map(async (segment) => {
           const [, locked] = await Promise.all([
             ensureDayIsNotBlocked(employee.id, segment.date, segment.hours),
-            timeEntriesRepository.findLockedTimeEntry(employee.id, hourConcept.id, segment.date),
+            timeEntriesRepository.findLockedTimeEntry(employee.id, normalConcept.id, segment.date),
           ]);
           if (locked) {
             throw new AppError("La salida coincide con una carga horaria aprobada o cerrada. Avisá a RRHH para corregirla.", 409, "CLOCK_LOCKED_TIME_ENTRY");
           }
         }));
-        return { hourConcept, calculation };
+        return { hourConcept, normalConcept, calculation };
       })()
       : null;
     let evidence: ClockPhotoEvidence;
@@ -1221,15 +1232,15 @@ export const timeEntriesService = {
       await cleanupClockEvidence(evidence);
       throw new AppError("No se pudo preparar la salida. El intento no fue confirmado.", 409, "CLOCK_EXIT_NOT_READY");
     }
-    const { hourConcept, calculation } = exitPreparation;
+    const { hourConcept, normalConcept, calculation } = exitPreparation;
 
     try {
       const classifiedSegments = await classifySegmentsForEmployee(employee.id, calculation.segments, hourConcept);
       const created = await timeEntriesRepository.closeOpenWorkShift({
         workShiftId: openShift.id,
         employeeId: employee.id,
-        hourConceptId: hourConcept.id,
-        hourConceptName: hourConcept.name,
+        normalHourConceptId: normalConcept.id,
+        normalHourConceptName: normalConcept.name,
         source: "PUBLIC_CLOCK_PHOTO",
         endAt: now,
         totalMinutes: calculation.totalMinutes,
@@ -1415,8 +1426,8 @@ export const timeEntriesService = {
       const created = await timeEntriesRepository.closeOpenWorkShift({
         workShiftId: openShift.id,
         employeeId: employee.id,
-        hourConceptId: hourConcept.id,
-        hourConceptName: hourConcept.name,
+        normalHourConceptId: hourConcept.id,
+        normalHourConceptName: hourConcept.name,
         source,
         endAt,
         totalMinutes: calculation.totalMinutes,
