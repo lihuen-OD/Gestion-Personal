@@ -260,6 +260,8 @@ Además del contrato operativo histórico (`employee`, `entries`, novedades y ca
 
 Las filas adicionales leen `HourConceptBreakdown` visibles y no se suman a `totalWorkedMinutes`. Los conceptos `AUTOMATIC` son de sólo lectura; desde 6H los conceptos `MANUAL` y `BOTH` admiten la operación manual documentada a continuación.
 
+Cacheado 60s en backend por usuario+legajo+query string (`employeeTimeGridCache`, `employees.controller.ts`). Se invalida (`clearEmployeeReadCaches()`) al guardar un desglose manual y, desde la Etapa 6L.4, también al crear/editar/enviar/aprobar/rechazar/devolver un `TimeEntry` (`POST`/`PATCH`/`:id/submit`/`:id/approve`/`:id/reject`/`:id/return` de `/time-entries`) — antes de 6L.4 esos seis endpoints no invalidaban este cache, así que una hora podía guardarse bien y el siguiente `GET /time-grid` de esa misma sesión seguir devolviendo la respuesta cacheada hasta por 60s.
+
 #### Carga manual de desgloses adicionales
 
 ```txt

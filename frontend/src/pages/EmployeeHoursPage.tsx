@@ -1,9 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { AlertTriangle, Bell, CalendarDays, CheckCircle2, Clock3, ClipboardList, RefreshCcw } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { employeeApiService } from "../services/api/employeeApiService";
-import { ApiError, getUserErrorMessage } from "../services/api/apiClient";
+import { ApiError } from "../services/api/apiClient";
 import { documentApiService } from "../services/api/documentApiService";
 import { documentCategoryApiService } from "../services/api/documentCategoryApiService";
 import { noveltyApiService } from "../services/api/noveltyApiService";
@@ -16,7 +16,16 @@ import { noveltyColorClass } from "../utils/noveltyColor";
 import { displayLegajo, fullName } from "../utils/employee";
 import { currentMonthPeriod, formatPeriodDay, formatPeriodLabel, getMonthDays, getWeekdayAbbr, monthDate } from "../utils/period";
 import { formatHours } from "../utils/hours";
-import { additionalBreakdownHours, hourConceptLoadModeLabel, isManualBreakdownEditable, normalWorkedDays } from "../utils/employeeHoursGrid";
+import {
+  additionalBreakdownHours,
+  applyBreakdownToRows,
+  applyNormalEntryToRows,
+  hourConceptLoadModeLabel,
+  isManualBreakdownEditable,
+  normalWorkedDays,
+  totalWorkedMinutesFromRows,
+  upsertTimeEntry,
+} from "../utils/employeeHoursGrid";
 import { statusTone } from "../utils/status";
 import { roleLevel } from "../utils/roles";
 import { useAsyncAction } from "../utils/useAsyncAction";
@@ -44,8 +53,43 @@ function timeEntrySaveErrorMessage(error: unknown) {
     if (error.code === "HOUR_CONCEPT_NOT_ENABLED") {
       return "Ese tipo de hora no esta habilitado para este legajo.";
     }
+    if (error.code === "TIME_ENTRY_CORRECTION_REASON_REQUIRED") {
+      return "Indica el motivo de la corrección para poder guardar.";
+    }
+    if (error.code === "PERIOD_CLOSED_REQUIRES_CORRECTION") {
+      return "El período ya fue enviado a cierre. Solicitá la corrección para que RRHH la revise.";
+    }
+    if (error.code === "RELATION_CONSTRAINT") {
+      return "El legajo o el tipo de hora seleccionado ya no está disponible. Actualizá la página e intentá nuevamente.";
+    }
   }
   return "No se pudo guardar la carga horaria. Revisa los datos e intenta nuevamente.";
+}
+
+function manualBreakdownSaveErrorMessage(error: unknown) {
+  if (error instanceof ApiError) {
+    if (error.code === "PERIOD_CLOSED") {
+      return "El período está cerrado y no admite edición directa.";
+    }
+    if (error.code === "MANUAL_BREAKDOWN_CONCURRENT_CONFLICT") {
+      return "Alguien más modificó este desglose al mismo tiempo. Volvé a intentar.";
+    }
+    return error.message;
+  }
+  return "No pudimos guardar el desglose manual. Intentá nuevamente.";
+}
+
+async function fetchPeriodNovelties(employeeId: string, forPeriod: string) {
+  const [apiNovelties, apiNoveltyTypes] = await Promise.all([
+    noveltyApiService.getAll({ employeeId }),
+    noveltyTypeApiService.getAll(),
+  ]);
+  return {
+    novelties: apiNovelties.filter(
+      (novelty) => novelty.from.startsWith(forPeriod) || (novelty.to || novelty.from).startsWith(forPeriod),
+    ),
+    noveltyTypes: apiNoveltyTypes,
+  };
 }
 
 export function EmployeeHoursPage() {
@@ -65,7 +109,6 @@ export function EmployeeHoursPage() {
   const [refresh, setRefresh] = useState(0);
   const [noveltyTypes, setNoveltyTypes] = useState<NoveltyType[]>([]);
   const [rows, setRows] = useState<EmployeeTimeGridRow[]>([]);
-  const [totalWorkedMinutes, setTotalWorkedMinutes] = useState(0);
   const activeTypes = noveltyTypes.filter((item) => item.status === "ACTIVO");
   const noveltyTypesById = new Map(noveltyTypes.map((item) => [item.id, item]));
   const noveltyTypesByName = new Map(
@@ -84,15 +127,11 @@ export function EmployeeHoursPage() {
   const [attendanceIssues, setAttendanceIssues] = useState(0);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
-  const [notice, setNotice] = useState<{ text: string; durationMs: number } | null>(null);
   const monthDays = getMonthDays(period);
 
-  useEffect(() => {
-    if (!notice || loading) return;
-    const timeout = setTimeout(() => setNotice(null), notice.durationMs);
-    return () => clearTimeout(timeout);
-  }, [notice, loading]);
-
+  // Carga inicial (o cambio de legajo/período): la única que muestra el
+  // placeholder "Preparando información" — arranca de cero, así que no hay
+  // nada útil que mostrar mientras tanto.
   useEffect(() => {
     let cancelled = false;
     async function load() {
@@ -107,21 +146,12 @@ export function EmployeeHoursPage() {
         setPeriodNovelties([]);
         setNoveltyTypes([]);
         setRows(grid.rows);
-        setTotalWorkedMinutes(grid.totalWorkedMinutes);
         setAttendanceIssues(grid.attendanceIssues);
         setLoading(false);
 
-        Promise.all([
-          noveltyApiService.getAll({ employeeId: id }),
-          noveltyTypeApiService.getAll(),
-        ]).then(([apiNovelties, apiNoveltyTypes]) => {
+        fetchPeriodNovelties(id, period).then(({ novelties, noveltyTypes: apiNoveltyTypes }) => {
           if (cancelled) return;
-          setPeriodNovelties(
-            apiNovelties.filter(
-              (novelty) =>
-                novelty.from.startsWith(period) || (novelty.to || novelty.from).startsWith(period),
-            ),
-          );
+          setPeriodNovelties(novelties);
           setNoveltyTypes(apiNoveltyTypes);
         }).catch(() => {
           if (!cancelled) {
@@ -136,7 +166,6 @@ export function EmployeeHoursPage() {
         setPeriodNovelties([]);
         setNoveltyTypes([]);
         setRows([]);
-        setTotalWorkedMinutes(0);
         setAttendanceIssues(0);
         setLoadError("No pudimos cargar la grilla horaria. Verificá el legajo e intentá nuevamente.");
       } finally {
@@ -147,7 +176,43 @@ export function EmployeeHoursPage() {
     return () => {
       cancelled = true;
     };
-  }, [id, period, refresh]);
+  }, [id, period]);
+
+  // Etapa 6L.4: re-sincronización silenciosa en segundo plano después de
+  // guardar (Hora normal o desglose manual). save()/saveManualBreakdown() ya
+  // actualizan `entries`/`rows` de forma optimista apenas el guardado
+  // responde, así que esto no vuelve a mostrar "Preparando información" ni
+  // bloquea la pantalla — sólo corrige en silencio cualquier diferencia
+  // (p. ej. novedades asociadas, problemas de fichada) sin que la grilla
+  // parpadee. Se salta la primera corrida porque la carga inicial de arriba
+  // ya cubre el mount.
+  const skippedFirstRefresh = useRef(false);
+  useEffect(() => {
+    if (!skippedFirstRefresh.current) {
+      skippedFirstRefresh.current = true;
+      return;
+    }
+    if (!id) return;
+    let cancelled = false;
+    employeeApiService.getTimeGrid(id, period, { includeDetails: false }).then((grid) => {
+      if (cancelled) return;
+      setEmployee(grid.employee);
+      setEntries(grid.entries);
+      setRows(grid.rows);
+      setAttendanceIssues(grid.attendanceIssues);
+    }).catch(() => {
+      // Re-sincronización silenciosa: si falla, se conserva el último estado
+      // local ya actualizado de forma optimista.
+    });
+    fetchPeriodNovelties(id, period).then(({ novelties, noveltyTypes: apiNoveltyTypes }) => {
+      if (cancelled) return;
+      setPeriodNovelties(novelties);
+      setNoveltyTypes(apiNoveltyTypes);
+    }).catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [refresh]);
 
   const selectedType = activeTypes.find((item) => item.id === noveltyTypeId);
   const noveltyVisualClass = (novelty?: Novelty) => {
@@ -219,37 +284,22 @@ export function EmployeeHoursPage() {
     if (!Number.isFinite(numericHours) || numericHours < 0 || numericHours > 24) {
       return setManualError("Ingresá una cantidad entre 0 y 24 horas.");
     }
+    const minutes = Math.round(numericHours * 60);
     try {
       const input = { date: monthDate(period, manualSelected.day), hourConceptId: manualRow.concept.id };
       await employeeApiService.saveManualHourConceptBreakdown(id, {
         ...input,
-        minutes: Math.round(numericHours * 60),
+        minutes,
         observation: manualObservation || null,
       });
+      // Etapa 6L.4: actualización local inmediata — no depende de esperar el
+      // refetch en segundo plano para reflejar el desglose recién guardado.
+      // No toca la fila NORMAL_BASE ni su total.
+      setRows((prevRows) => applyBreakdownToRows(prevRows, manualRow.concept.id, manualSelected.day, minutes));
       setManualSelected(undefined);
       setRefresh((value) => value + 1);
     } catch (saveError) {
-      if (saveError instanceof ApiError && saveError.code === "PERIOD_CLOSED") {
-        return setManualError("El período está cerrado y no admite edición directa.");
-      }
-      if (saveError instanceof ApiError) return setManualError(saveError.message);
-      setManualError("No pudimos guardar el desglose manual. Intentá nuevamente.");
-    }
-  });
-  const { isRunning: isRecalculating, run: recalculateAutomatic } = useAsyncAction(async () => {
-    if (!id) return;
-    try {
-      await employeeApiService.recalculateAutomaticHourConceptBreakdowns(id, period);
-      setNotice({ text: "Conceptos automáticos recalculados correctamente.", durationMs: 3000 });
-      setRefresh((value) => value + 1);
-    } catch (recalculateError) {
-      const message =
-        recalculateError instanceof ApiError && recalculateError.code === "PERIOD_CLOSED"
-          ? "El período está cerrado y no admite recálculo de automáticos."
-          : recalculateError instanceof ApiError && recalculateError.code === "AUTOMATIC_BREAKDOWN_CONCURRENT_CONFLICT"
-            ? "Hubo un conflicto al recalcular los automáticos. Intentá nuevamente."
-            : getUserErrorMessage(recalculateError, "No pudimos recalcular los conceptos automáticos. Intentá nuevamente.");
-      setNotice({ text: message, durationMs: 4000 });
+      setManualError(manualBreakdownSaveErrorMessage(saveError));
     }
   });
   const noveltyRange = () => {
@@ -318,6 +368,11 @@ export function EmployeeHoursPage() {
           "La carga no se pudo guardar porque el registro esta bloqueado para edicion.",
         );
       }
+      // Etapa 6L.4: actualización local inmediata de la celda y el total —
+      // no depende de esperar el refetch en segundo plano (que igual se
+      // dispara más abajo como red de seguridad, sin bloquear la pantalla).
+      setEntries((prevEntries) => upsertTimeEntry(prevEntries, savedEntry!));
+      setRows((prevRows) => applyNormalEntryToRows(prevRows, savedEntry!));
       if (selectedType) {
         const hoursImpact = selectedType.rules.allowsHours ? Number(noveltyHours) || 0 : 0;
         let createdNovelties: Novelty[] = [];
@@ -382,7 +437,7 @@ export function EmployeeHoursPage() {
       </Section>
     );
   }
-  const total = totalWorkedMinutes / 60;
+  const total = totalWorkedMinutesFromRows(rows) / 60;
   const additionalTotal = additionalBreakdownHours(rows);
   const daysWithNormalHours = normalWorkedDays(rows);
   const exportableNovelties = periodNovelties.filter(
@@ -475,12 +530,7 @@ export function EmployeeHoursPage() {
 
       <Section
         title="Grilla mensual por concepto"
-        subtitle={`Horas normales contiene el total real. Los conceptos adicionales son desgloses y no se suman al total (${formatPeriodLabel(period)}). Recalcula los desgloses automáticos del período usando turnos procesados. No modifica las horas normales ni el total trabajado.`}
-        action={
-          <Button variant="subtle" icon={RefreshCcw} onClick={() => recalculateAutomatic()} disabled={isRecalculating}>
-            {isRecalculating ? "Recalculando..." : "Recalcular automáticos"}
-          </Button>
-        }
+        subtitle={`Horas normales contiene el total real. Los conceptos adicionales son desgloses y no se suman al total (${formatPeriodLabel(period)}). Los automáticos se calculan por sistema.`}
       >
         <div className="hours-grid">
           <table>
@@ -798,8 +848,6 @@ export function EmployeeHoursPage() {
           </div>
         </Modal>
       ) : null}
-
-      {notice ? <div className="toast">{notice.text}</div> : null}
     </>
   );
 }

@@ -135,9 +135,17 @@ export const timeEntriesController = {
     res.sendFile(result.path);
   }) satisfies RequestHandler,
 
+  // Etapa 6L.4: create/update/submit/approve/reject/return mutan TimeEntry,
+  // que es lo que lee GET /employees/:id/time-grid (employeeTimeGridCache,
+  // 60s de TTL en employees.controller.ts). Sin clearEmployeeReadCaches acá,
+  // la grilla podía guardar bien en base y seguir mostrando el estado
+  // anterior hasta que el cache expirara o algo más lo invalidara (p. ej. un
+  // desglose manual, que sí lo limpiaba) — ese era el bug de "se guarda pero
+  // no se ve" reportado en la grilla.
   create: (async (req, res) => {
     const item = await timeEntriesService.create(req.body, req.user!, requestAuditContext(req));
     clearTimeEntriesReadCaches();
+    clearEmployeeReadCaches();
     res.status(201).json({ data: item });
   }) satisfies RequestHandler,
 
@@ -173,30 +181,35 @@ export const timeEntriesController = {
   update: (async (req, res) => {
     const item = await timeEntriesService.update(requireParam(req, "id"), req.body, req.user!, requestAuditContext(req));
     clearTimeEntriesReadCaches();
+    clearEmployeeReadCaches();
     res.json({ data: item });
   }) satisfies RequestHandler,
 
   submit: (async (req, res) => {
     const item = await timeEntriesService.submit(requireParam(req, "id"), req.user!, requestAuditContext(req));
     clearTimeEntriesReadCaches();
+    clearEmployeeReadCaches();
     res.json({ data: item });
   }) satisfies RequestHandler,
 
   approve: (async (req, res) => {
     const item = await timeEntriesService.approve(requireParam(req, "id"), req.user!, requestAuditContext(req));
     clearTimeEntriesReadCaches();
+    clearEmployeeReadCaches();
     res.json({ data: item });
   }) satisfies RequestHandler,
 
   reject: (async (req, res) => {
     const item = await timeEntriesService.reject(requireParam(req, "id"), req.body, req.user!, requestAuditContext(req));
     clearTimeEntriesReadCaches();
+    clearEmployeeReadCaches();
     res.json({ data: item });
   }) satisfies RequestHandler,
 
   returnForCorrection: (async (req, res) => {
     const item = await timeEntriesService.returnForCorrection(requireParam(req, "id"), req.body, req.user!, requestAuditContext(req));
     clearTimeEntriesReadCaches();
+    clearEmployeeReadCaches();
     res.json({ data: item });
   }) satisfies RequestHandler,
 

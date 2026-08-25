@@ -165,6 +165,18 @@ describe("create/update TimeEntry — aplicación directa por rol (Etapa 6L.3)",
     expect(call.data).toMatchObject({ status: "APROBADO", approvedByUserId: "user-rrhh", rejectedAt: null });
     expect(call.data.approvedAt).toBeInstanceOf(Date);
   });
+
+  it("create/update piden el registro completo (empleado + concepto) para que el frontend pueda actualizar la celda sin otro request (Etapa 6L.4)", async () => {
+    mockedPrisma.timeEntry.create.mockResolvedValue({ id: "entry-1" });
+    mockedPrisma.timeEntry.update.mockResolvedValue({ id: "entry-1" });
+
+    await timeEntriesRepository.create(input, "user-rrhh", "user-rrhh");
+    await timeEntriesRepository.update("entry-1", { employeeId: "employee-1", hourConceptId: "concept-normal", date }, { hours: 6 } as never, "user-rrhh");
+
+    const expectedInclude = { include: { employee: { select: expect.objectContaining({ legajo: true }) }, hourConcept: true } };
+    expect(mockedPrisma.timeEntry.create.mock.calls[0]![0]).toMatchObject(expectedInclude);
+    expect(mockedPrisma.timeEntry.update.mock.calls[0]![0]).toMatchObject(expectedInclude);
+  });
 });
 
 describe("expireOpenWorkShifts — regresión de atribución de día/período (Etapa 2)", () => {
