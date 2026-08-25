@@ -1594,11 +1594,21 @@ export const timeEntriesService = {
 
     for (const entry of entries) {
       const current = grouped.get(entry.employeeId) || { normal: 0, special: 0, statuses: new Set<string>(), entry };
-      const hours = Number(entry.hours.toString());
-      if (entry.hourConcept.kind === "NORMAL") current.normal += hours;
-      else current.special += hours;
+      // Etapa 6M: "Horas normales" = sólo systemRole NORMAL_BASE. Un
+      // TimeEntry no-Normal legacy (posible sólo en datos históricos
+      // previos a la Etapa 6L) no suma acá ni en el total — "Horas
+      // especiales" se completa abajo desde HourConceptBreakdown.
+      if (entry.hourConcept.systemRole === "NORMAL_BASE") {
+        current.normal += Number(entry.hours.toString());
+      }
       current.statuses.add(entry.status);
       grouped.set(entry.employeeId, current);
+    }
+
+    const breakdowns = await timeEntriesRepository.findBreakdownHoursForExport(Array.from(grouped.keys()), query.period);
+    for (const breakdown of breakdowns) {
+      const current = grouped.get(breakdown.employeeId);
+      if (current) current.special += breakdown.minutes / 60;
     }
 
     const rows = Array.from(grouped.values()).map(({ normal, special, statuses, entry }) => {
@@ -1612,7 +1622,7 @@ export const timeEntriesService = {
         "Centro de costo": entry.employee.costCenter?.code || "",
         "Horas normales": formatNumber(normal),
         "Horas especiales": formatNumber(special),
-        "Horas trabajadas totales": formatNumber(normal + special),
+        "Horas trabajadas totales": formatNumber(normal),
         Estado: statuses.size === 1 ? Array.from(statuses)[0] || "" : "MIXTO",
       };
     });

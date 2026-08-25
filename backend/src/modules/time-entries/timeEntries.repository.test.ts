@@ -12,12 +12,15 @@ vi.mock("../../shared/prisma/client", () => {
   const tx = {
     workShift: { findFirst: vi.fn(), findMany: vi.fn(), updateMany: vi.fn(), create: vi.fn(), update: vi.fn() },
     employeeHourConcept: { findFirst: vi.fn() },
-    timeEntry: { create: vi.fn(), findFirst: vi.fn(), update: vi.fn() },
+    timeEntry: { create: vi.fn(), findFirst: vi.fn(), update: vi.fn(), findMany: vi.fn() },
     attendancePunch: { create: vi.fn(), findMany: vi.fn() },
     timeSegment: { create: vi.fn() },
     doubleHourRule: { findMany: vi.fn() },
     hourConcept: { findMany: vi.fn() },
     specialHourRuleApplication: { create: vi.fn() },
+    employee: { findMany: vi.fn(), count: vi.fn() },
+    hourConceptBreakdown: { findMany: vi.fn() },
+    novelty: { findMany: vi.fn() },
   };
   return {
     prisma: {
@@ -27,6 +30,9 @@ vi.mock("../../shared/prisma/client", () => {
       employeeWorkRegime: { findFirst: vi.fn() },
       attendancePunch: { findMany: vi.fn(), count: vi.fn() },
       attendanceInactivityIncident: { findMany: vi.fn(), count: vi.fn() },
+      employee: { count: vi.fn(), findMany: vi.fn() },
+      timeEntry: { aggregate: vi.fn(), groupBy: vi.fn(), findMany: vi.fn() },
+      hourConceptBreakdown: { findMany: vi.fn() },
       // $transaction real acepta un callback (uso transaccional clásico) o un
       // array de promesas (uso de "varias queries en paralelo" tipo
       // attendanceObservations) — el mock soporta ambas formas.
@@ -41,12 +47,15 @@ vi.mock("../../shared/prisma/client", () => {
 type TxMocks = {
   workShift: { findFirst: Mock; findMany: Mock; updateMany: Mock; create: Mock; update: Mock };
   employeeHourConcept: { findFirst: Mock };
-  timeEntry: { create: Mock; findFirst: Mock; update: Mock };
+  timeEntry: { create: Mock; findFirst: Mock; update: Mock; findMany: Mock };
   attendancePunch: { create: Mock; findMany: Mock };
   timeSegment: { create: Mock };
   doubleHourRule: { findMany: Mock };
   hourConcept: { findMany: Mock };
   specialHourRuleApplication: { create: Mock };
+  employee: { findMany: Mock; count: Mock };
+  hourConceptBreakdown: { findMany: Mock };
+  novelty: { findMany: Mock };
 };
 
 const mockedPrisma = prisma as unknown as {
@@ -56,6 +65,9 @@ const mockedPrisma = prisma as unknown as {
   employeeWorkRegime: { findFirst: Mock };
   attendancePunch: { findMany: Mock; count: Mock };
   attendanceInactivityIncident: { findMany: Mock; count: Mock };
+  employee: { count: Mock; findMany: Mock };
+  timeEntry: { aggregate: Mock; groupBy: Mock; findMany: Mock };
+  hourConceptBreakdown: { findMany: Mock };
   $transaction: Mock;
   __tx: TxMocks;
 };
@@ -711,5 +723,139 @@ describe("rolloverExpiredOpenWorkShift — regresión de atribución de día/per
         data: expect.objectContaining({ period: "2026-08", day: 14 }),
       }),
     );
+  });
+});
+
+describe("summary — horas contables = sólo Horas normales (Etapa 6M)", () => {
+  const employeeAccessWhere = { costCenterId: { in: ["cc-1"] } };
+
+  beforeEach(() => {
+    mockedPrisma.employee.count.mockResolvedValueOnce(10).mockResolvedValueOnce(7).mockResolvedValueOnce(3);
+    mockedPrisma.timeEntry.groupBy.mockResolvedValue([]);
+    mockedPrisma.timeEntry.aggregate.mockResolvedValue({ _sum: { hours: { toString: () => "56" } } });
+  });
+
+  it("filtra el aggregate por hourConcept.systemRole = NORMAL_BASE, excluyendo conceptos adicionales", async () => {
+    await timeEntriesRepository.summary("2026-08", employeeAccessWhere);
+
+    expect(mockedPrisma.timeEntry.aggregate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ hourConcept: { systemRole: "NORMAL_BASE" } }),
+      }),
+    );
+  });
+
+  it("countableHours refleja únicamente la suma de Horas normales devuelta por Prisma", async () => {
+    const result = await timeEntriesRepository.summary("2026-08", employeeAccessWhere);
+
+    expect(result.countableHours).toBe(56);
+  });
+});
+
+describe("findMany(view=byEmployee) — resumen por empleado suma sólo Horas normales (Etapa 6M)", () => {
+  const employeeAccessWhere = {};
+  const baseQuery = { view: "byEmployee" as const, page: 1, take: 200 };
+
+  beforeEach(() => {
+    mockedPrisma.__tx.employee.findMany.mockResolvedValue([
+      { id: "employee-1", legajo: "0001", legajoFinnegans: null, cuil: "20-1-1", dni: "1", firstName: "Juan", lastName: "Perez", status: "ACTIVO", sector: null, costCenter: null, position: null, companies: [] },
+    ]);
+    mockedPrisma.__tx.employee.count.mockResolvedValue(1);
+  });
+
+  it("filtra timeEntry.findMany por hourConcept.systemRole = NORMAL_BASE, excluyendo conceptos adicionales del total", async () => {
+    mockedPrisma.__tx.timeEntry.findMany.mockResolvedValue([{ employeeId: "employee-1", hours: { toString: () => "8" } }]);
+
+    await timeEntriesRepository.findMany(baseQuery, employeeAccessWhere);
+
+    expect(mockedPrisma.__tx.timeEntry.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ hourConcept: { systemRole: "NORMAL_BASE" } }),
+      }),
+    );
+  });
+
+  it("suma las horas normales ya filtradas por empleado", async () => {
+    mockedPrisma.__tx.timeEntry.findMany.mockResolvedValue([
+      { employeeId: "employee-1", hours: { toString: () => "8" } },
+      { employeeId: "employee-1", hours: { toString: () => "4" } },
+    ]);
+
+    const [items] = (await timeEntriesRepository.findMany(baseQuery, employeeAccessWhere)) as unknown as [Array<{ summary: { total: number } }>, number];
+
+    expect(items[0]!.summary.total).toBe(12);
+  });
+});
+
+describe("findPeriodEmployees — total=Normal, adicionales desde HourConceptBreakdown (Etapa 6M)", () => {
+  const employeeAccessWhere = {};
+  const baseQuery = { period: "2026-08", page: 1, take: 25 };
+
+  beforeEach(() => {
+    mockedPrisma.__tx.employee.findMany.mockResolvedValue([
+      { id: "employee-1", legajo: "0001", legajoFinnegans: null, cuil: "20-1-1", dni: "1", firstName: "Juan", lastName: "Perez", status: "ACTIVO", sector: null, costCenter: null, position: null, companies: [] },
+    ]);
+    mockedPrisma.__tx.employee.count.mockResolvedValue(1);
+    mockedPrisma.__tx.novelty.findMany.mockResolvedValue([]);
+  });
+
+  it("un TimeEntry legacy no-Normal (systemRole distinto de NORMAL_BASE) no infla el total ni 'normal'", async () => {
+    mockedPrisma.__tx.timeEntry.findMany.mockResolvedValue([
+      { employeeId: "employee-1", day: 1, hours: { toString: () => "8" }, status: "APROBADO", hourConcept: { systemRole: "NORMAL_BASE" }, workShift: null },
+      // Entrada especial legacy previa a la Etapa 6L: no debe sumar a total/normal.
+      { employeeId: "employee-1", day: 1, hours: { toString: () => "2" }, status: "APROBADO", hourConcept: { systemRole: null }, workShift: null },
+    ]);
+    mockedPrisma.__tx.hourConceptBreakdown.findMany.mockResolvedValue([]);
+
+    const result = await timeEntriesRepository.findPeriodEmployees(baseQuery, employeeAccessWhere);
+
+    expect(result.items[0]!.summary.total).toBe(8);
+    expect(result.items[0]!.summary.normal).toBe(8);
+  });
+
+  it("HourConceptBreakdown aparece como 'special' separado, sin sumarse a 'total'", async () => {
+    mockedPrisma.__tx.timeEntry.findMany.mockResolvedValue([
+      { employeeId: "employee-1", day: 1, hours: { toString: () => "8" }, status: "APROBADO", hourConcept: { systemRole: "NORMAL_BASE" }, workShift: null },
+    ]);
+    mockedPrisma.__tx.hourConceptBreakdown.findMany.mockResolvedValue([{ employeeId: "employee-1", day: 1, minutes: 120 }]);
+
+    const result = await timeEntriesRepository.findPeriodEmployees(baseQuery, employeeAccessWhere);
+
+    expect(result.items[0]!.summary).toMatchObject({ total: 8, normal: 8, special: 2 });
+    expect(result.items[0]!.summary.dailyBreakdown.find((day) => day.day === 1)).toMatchObject({ normal: 8, special: 2, total: 8 });
+  });
+
+  it("excluye breakdowns RECHAZADO vía el where de hourConceptBreakdown.findMany", async () => {
+    mockedPrisma.__tx.timeEntry.findMany.mockResolvedValue([]);
+    mockedPrisma.__tx.hourConceptBreakdown.findMany.mockResolvedValue([]);
+
+    await timeEntriesRepository.findPeriodEmployees(baseQuery, employeeAccessWhere);
+
+    expect(mockedPrisma.__tx.hourConceptBreakdown.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ status: { not: "RECHAZADO" } }),
+      }),
+    );
+  });
+});
+
+describe("findBreakdownHoursForExport — horas adicionales para exportación (Etapa 6M)", () => {
+  it("no consulta Prisma si employeeIds está vacío", async () => {
+    const result = await timeEntriesRepository.findBreakdownHoursForExport([], "2026-08");
+
+    expect(result).toEqual([]);
+    expect(mockedPrisma.hourConceptBreakdown.findMany).not.toHaveBeenCalled();
+  });
+
+  it("filtra por employeeIds, period y excluye status RECHAZADO", async () => {
+    mockedPrisma.hourConceptBreakdown.findMany.mockResolvedValue([{ employeeId: "employee-1", minutes: 360 }]);
+
+    const result = await timeEntriesRepository.findBreakdownHoursForExport(["employee-1"], "2026-08");
+
+    expect(mockedPrisma.hourConceptBreakdown.findMany).toHaveBeenCalledWith({
+      where: { employeeId: { in: ["employee-1"] }, period: "2026-08", status: { not: "RECHAZADO" } },
+      select: { employeeId: true, minutes: true },
+    });
+    expect(result).toEqual([{ employeeId: "employee-1", minutes: 360 }]);
   });
 });

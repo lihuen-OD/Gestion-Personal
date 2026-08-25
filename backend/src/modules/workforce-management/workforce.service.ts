@@ -76,7 +76,15 @@ export const workforceService = {
     if (user.role === roles.rrhh) throw new AppError("RH no envía cierres para aprobación", 400, "CLOSURE_SUBMIT_ROLE_INVALID");
     await ensureVisible(employeeIds, user);
     const range = periodRange(period);
-    const rows = await prisma.timeEntry.groupBy({ by: ["employeeId", "status"], where: { employeeId: { in: employeeIds }, period }, _sum: { hours: true }, _count: true });
+    // Etapa 6M: el snapshot de cierre sólo captura Horas normales/base — los
+    // conceptos adicionales viven en HourConceptBreakdown, fuera de este
+    // groupBy. El snapshot es sólo auditoría (nadie lo vuelve a leer hoy).
+    const rows = await prisma.timeEntry.groupBy({
+      by: ["employeeId", "status"],
+      where: { employeeId: { in: employeeIds }, period, hourConcept: { systemRole: "NORMAL_BASE" } },
+      _sum: { hours: true },
+      _count: true,
+    });
     const snapshots = new Map(employeeIds.map((id) => [id, rows.filter((row) => row.employeeId === id).map((row) => ({ status: row.status, hours: Number(row._sum.hours || 0), records: row._count }))]));
     const result = await execute(() => prisma.$transaction(employeeIds.map((employeeId) => prisma.monthlyTimeClosure.upsert({ where: { employeeId_period: { employeeId, period } }, create: { employeeId, period, status: "ENVIADO", snapshot: { range, entries: snapshots.get(employeeId) } as Prisma.InputJsonValue, submittedByUserId: user.id, submittedAt: new Date() }, update: { status: "ENVIADO", snapshot: { range, entries: snapshots.get(employeeId) } as Prisma.InputJsonValue, submittedByUserId: user.id, submittedAt: new Date(), reviewedAt: null, reviewedByUserId: null, reviewNote: null } }))));
     await Promise.all(result.map((item) => auditService.register({ ...audit, action: "UPDATE", entity: "MonthlyTimeClosure", entityId: item.id, description: `Se envió a revisión el cierre de ${period} (legajo ${item.employeeId}).`, after: item as Prisma.InputJsonValue })));

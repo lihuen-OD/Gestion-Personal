@@ -92,6 +92,9 @@ export const dashboardRepository = {
         period,
         employee: accessWhere,
         status: { in: [ApprovalStatus.APROBADO, ApprovalStatus.EN_REVISION] },
+        // Etapa 6M: el KPI de horas cargadas es Horas normales/base — los
+        // conceptos adicionales (HourConceptBreakdown) no se suman acá.
+        hourConcept: { systemRole: "NORMAL_BASE" },
       },
       _sum: { hours: true },
     });

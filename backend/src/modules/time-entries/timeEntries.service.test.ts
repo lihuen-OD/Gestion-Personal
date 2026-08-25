@@ -28,6 +28,8 @@ vi.mock("./timeEntries.repository", () => ({
     findEmployeeForShift: vi.fn(),
     findOverlappingWorkShift: vi.fn(),
     createFromWorkShift: vi.fn(),
+    findForExport: vi.fn(),
+    findBreakdownHoursForExport: vi.fn(),
   },
 }));
 
@@ -86,6 +88,8 @@ type RepoMock = {
   findEmployeeForShift: Mock;
   findOverlappingWorkShift: Mock;
   createFromWorkShift: Mock;
+  findForExport: Mock;
+  findBreakdownHoursForExport: Mock;
 };
 
 const repo = timeEntriesRepository as unknown as RepoMock;
@@ -490,5 +494,61 @@ describe("clockPhotoPunchIdempotent", () => {
       statusCode: 409,
       code: "CLOCK_IDEMPOTENCY_KEY_REUSED",
     });
+  });
+});
+
+describe("exportByPerson — 'Horas trabajadas totales' = Normal, 'Horas especiales' desde HourConceptBreakdown (Etapa 6M)", () => {
+  const rrhhUser = { id: "user-1", role: "NIVEL_1_RRHH" } as Express.AuthUser;
+
+  function exportEntry(overrides: Partial<{ employeeId: string; hours: string; status: string; systemRole: string | null }> = {}) {
+    return {
+      employeeId: overrides.employeeId ?? "employee-1",
+      hours: { toString: () => overrides.hours ?? "8" },
+      status: overrides.status ?? "APROBADO",
+      hourConcept: { systemRole: overrides.systemRole ?? "NORMAL_BASE" },
+      employee: {
+        cuil: "20-1-1",
+        lastName: "Perez",
+        firstName: "Juan",
+        legajo: "0001",
+        costCenter: { code: "CC1" },
+        companies: [{ isPrimary: true, company: { name: "Empresa 1" } }],
+      },
+    };
+  }
+
+  it("'Horas trabajadas totales' usa sólo Normal — un TimeEntry legacy no-Normal no lo infla", async () => {
+    repo.findForExport.mockResolvedValue([
+      exportEntry({ hours: "8", systemRole: "NORMAL_BASE" }),
+      // Entrada especial legacy previa a la Etapa 6L: no debe sumar al total.
+      exportEntry({ hours: "2", systemRole: "COLECTIVO" }),
+    ]);
+    repo.findBreakdownHoursForExport.mockResolvedValue([]);
+
+    const result = await timeEntriesService.exportByPerson({ period: "2026-08", includeInReview: false }, rrhhUser);
+
+    expect(result.rows).toEqual([
+      expect.objectContaining({
+        "Horas normales": "8",
+        "Horas especiales": "0",
+        "Horas trabajadas totales": "8",
+      }),
+    ]);
+  });
+
+  it("'Horas especiales' sale de findBreakdownHoursForExport, no del TimeEntry, y no se suma al total", async () => {
+    repo.findForExport.mockResolvedValue([exportEntry({ hours: "8", systemRole: "NORMAL_BASE" })]);
+    repo.findBreakdownHoursForExport.mockResolvedValue([{ employeeId: "employee-1", minutes: 120 }]);
+
+    const result = await timeEntriesService.exportByPerson({ period: "2026-08", includeInReview: false }, rrhhUser);
+
+    expect(repo.findBreakdownHoursForExport).toHaveBeenCalledWith(["employee-1"], "2026-08");
+    expect(result.rows).toEqual([
+      expect.objectContaining({
+        "Horas normales": "8",
+        "Horas especiales": "2",
+        "Horas trabajadas totales": "8",
+      }),
+    ]);
   });
 });

@@ -62,6 +62,20 @@ describe("workforceService — auditoria en correcciones/cierres (hueco cerrado)
     expect(auditService.register).toHaveBeenCalledWith(expect.objectContaining({ action: "UPDATE", entity: "MonthlyTimeClosure", entityId: "closure-1" }));
   });
 
+  it("submitClosures snapshotea sólo Horas normales (systemRole NORMAL_BASE), no conceptos adicionales (Etapa 6M)", async () => {
+    mockedPrisma.employee.count.mockResolvedValue(1);
+    mockedPrisma.timeEntry.groupBy.mockResolvedValue([]);
+    mockedPrisma.$transaction.mockResolvedValue([{ id: "closure-1", employeeId: "emp-1" }]);
+
+    await workforceService.submitClosures("2026-08", ["emp-1"], supervisor);
+
+    expect(mockedPrisma.timeEntry.groupBy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ hourConcept: { systemRole: "NORMAL_BASE" } }),
+      }),
+    );
+  });
+
   it("approveClosures registra un AuditLog por cada cierre aprobado", async () => {
     mockedPrisma.monthlyTimeClosure.findMany.mockResolvedValue([{ id: "closure-1", employeeId: "emp-1", period: "2026-08" }]);
     mockedPrisma.monthlyTimeClosure.updateMany.mockResolvedValue({ count: 1 });

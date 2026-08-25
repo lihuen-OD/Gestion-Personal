@@ -1074,6 +1074,7 @@ Reglas:
 - Respeta el alcance del rol autenticado.
 - Debe usarse para KPI cards del modulo Horas.
 - Evita traer todas las cargas del periodo solo para calcular contadores.
+- `countableHours` (Etapa 6M) suma exclusivamente `TimeEntry` con `hourConcept.systemRole = NORMAL_BASE`. Los conceptos adicionales (`HourConceptBreakdown`) no se suman acá — ver "Personas del periodo para tabla" para dónde se exponen.
 
 ### Personas del periodo para tabla
 
@@ -1124,6 +1125,7 @@ Reglas:
 - Devuelve empleados activos paginados.
 - Calcula total y estado solo para los empleados visibles.
 - Debe usarse para la tabla principal de Horas en lugar de descargar todos los legajos y todas las cargas del periodo.
+- `summary` trae además `normal`, `special`, `incidents` y `dailyBreakdown` (no incluidos en el JSON de ejemplo arriba, que está desactualizado en ese detalle desde antes de esta nota). Desde la Etapa 6M: `total` y `normal` sólo suman `TimeEntry` con `hourConcept.systemRole = NORMAL_BASE`; `special` (agregado y por día en `dailyBreakdown`) sale exclusivamente de `HourConceptBreakdown` con `status != RECHAZADO` y nunca se suma a `total`. Un `TimeEntry` especial legacy (sólo posible en datos previos a la Etapa 6L) queda excluido de `total`/`normal`/`special`.
 
 ## Exportaciones
 
@@ -1186,7 +1188,7 @@ Horas trabajadas totales
 Estado
 ```
 
-En el modelo objetivo, `Horas trabajadas totales` debe ser igual a Horas normales. `Horas especiales` se informa aparte y no se suma. Si el export actual calcula otra cosa, es deuda de implementación a corregir por etapas.
+Desde la Etapa 6M, el export cumple el modelo objetivo: `Horas trabajadas totales` = `Horas normales` (suma exclusiva de `TimeEntry` con `hourConcept.systemRole = NORMAL_BASE`); `Horas especiales` sale de `HourConceptBreakdown` (`status != RECHAZADO`) y se informa aparte, sin sumarse al total. Un `TimeEntry` especial legacy (sólo posible en datos previos a la Etapa 6L) queda excluido de ambas columnas.
 
 ## Auditoría
 
@@ -1274,7 +1276,7 @@ Todas las rutas requieren `requireAuth`.
 
 ### Dashboard (`dashboard`, montado en `/api/dashboard`)
 
-`GET /` (requiere auth) — métricas agregadas del home (empleados, altas/bajas, novedades, pendientes de carga horaria, alertas documentales, etc.). Cacheado ~30s en backend, ver `backend/src/modules/dashboard/dashboard.cache.ts`.
+`GET /` (requiere auth) — métricas agregadas del home (empleados, altas/bajas, novedades, pendientes de carga horaria, alertas documentales, etc.). Cacheado ~30s en backend, ver `backend/src/modules/dashboard/dashboard.cache.ts`. El KPI `loadedHours` (Etapa 6M) suma exclusivamente `TimeEntry` con `hourConcept.systemRole = NORMAL_BASE`; no incluye conceptos adicionales de `HourConceptBreakdown`.
 
 ### Storage (`storage`, montado en `/api/storage`)
 

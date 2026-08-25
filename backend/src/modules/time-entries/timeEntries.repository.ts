@@ -258,6 +258,9 @@ async function findManyByEmployeeGrouped(query: ListTimeEntriesQuery, employeeAc
             employeeId: { in: employeeIds },
             ...(query.status ? { status: query.status } : {}),
             ...(query.period ? { period: query.period } : {}),
+            // Etapa 6M: este listado sólo resume Horas normales — los
+            // conceptos adicionales viven en HourConceptBreakdown, no acá.
+            hourConcept: { systemRole: "NORMAL_BASE" },
           },
           select: { employeeId: true, hours: true },
         })
@@ -399,6 +402,10 @@ export const timeEntriesRepository = {
           period,
           employee: employeeAccessWhere,
           status: { in: countableStatuses },
+          // Etapa 6M: horas contables = sólo Horas normales (base trabajada).
+          // Los conceptos adicionales viven en HourConceptBreakdown y nunca
+          // deben sumarse acá.
+          hourConcept: { systemRole: "NORMAL_BASE" },
         },
         _sum: { hours: true },
       }),
@@ -493,7 +500,7 @@ export const timeEntriesRepository = {
       ]);
 
       const employeeIds = employees.map((employee) => employee.id);
-      const [entries, novelties] = await Promise.all([
+      const [entries, breakdowns, novelties] = await Promise.all([
         employeeIds.length
           ? tx.timeEntry.findMany({
               where: {
@@ -505,9 +512,22 @@ export const timeEntriesRepository = {
                 day: true,
                 hours: true,
                 status: true,
-                hourConcept: { select: { kind: true } },
+                hourConcept: { select: { systemRole: true } },
                 workShift: { select: { status: true } },
               },
+            })
+          : Promise.resolve([]),
+        // Etapa 6M: "especial"/"adicional" en este resumen ahora sale de
+        // HourConceptBreakdown (MANUAL o AUTOMATIC, sin RECHAZADO) — no de
+        // TimeEntry no-Normal legacy. No se suma al total.
+        employeeIds.length
+          ? tx.hourConceptBreakdown.findMany({
+              where: {
+                period: query.period,
+                employeeId: { in: employeeIds },
+                status: { not: "RECHAZADO" },
+              },
+              select: { employeeId: true, day: true, minutes: true },
             })
           : Promise.resolve([]),
         employeeIds.length
@@ -533,22 +553,40 @@ export const timeEntriesRepository = {
       for (const entry of entries) {
         const current = grouped.get(entry.employeeId) || { total: 0, normal: 0, special: 0, incidents: 0, statuses: [] };
         if (entry.status === ApprovalStatus.APROBADO || entry.status === ApprovalStatus.EN_REVISION) {
-          const hours = Number(entry.hours.toString());
-          current.total += hours;
-          if (entry.hourConcept.kind === "NORMAL") current.normal += hours;
-          else current.special += hours;
+          // Etapa 6M: el total sólo suma Horas normales/base (systemRole).
+          // Un TimeEntry no-Normal legacy (sólo posible en datos históricos
+          // previos a la Etapa 6L) queda excluido del total y del desglose
+          // "special" — éste último ahora sale exclusivamente de
+          // HourConceptBreakdown (ver abajo), no de TimeEntry.
+          if (entry.hourConcept.systemRole === "NORMAL_BASE") {
+            const hours = Number(entry.hours.toString());
+            current.total += hours;
+            current.normal += hours;
 
-          const dayMap = dailyGrouped.get(entry.employeeId) || new Map<number, { normal: number; special: number; total: number }>();
-          const dayCurrent = dayMap.get(entry.day) || { normal: 0, special: 0, total: 0 };
-          dayCurrent.total += hours;
-          if (entry.hourConcept.kind === "NORMAL") dayCurrent.normal += hours;
-          else dayCurrent.special += hours;
-          dayMap.set(entry.day, dayCurrent);
-          dailyGrouped.set(entry.employeeId, dayMap);
+            const dayMap = dailyGrouped.get(entry.employeeId) || new Map<number, { normal: number; special: number; total: number }>();
+            const dayCurrent = dayMap.get(entry.day) || { normal: 0, special: 0, total: 0 };
+            dayCurrent.total += hours;
+            dayCurrent.normal += hours;
+            dayMap.set(entry.day, dayCurrent);
+            dailyGrouped.set(entry.employeeId, dayMap);
+          }
         }
         if (entry.workShift && ["FALTA_SALIDA", "FALTA_INGRESO", "OBSERVADO", "INVALIDO"].includes(entry.workShift.status)) current.incidents += 1;
         current.statuses.push(entry.status);
         grouped.set(entry.employeeId, current);
+      }
+
+      for (const breakdown of breakdowns) {
+        const current = grouped.get(breakdown.employeeId) || { total: 0, normal: 0, special: 0, incidents: 0, statuses: [] };
+        const hours = breakdown.minutes / 60;
+        current.special += hours;
+        grouped.set(breakdown.employeeId, current);
+
+        const dayMap = dailyGrouped.get(breakdown.employeeId) || new Map<number, { normal: number; special: number; total: number }>();
+        const dayCurrent = dayMap.get(breakdown.day) || { normal: 0, special: 0, total: 0 };
+        dayCurrent.special += hours;
+        dayMap.set(breakdown.day, dayCurrent);
+        dailyGrouped.set(breakdown.employeeId, dayMap);
       }
 
       const noveltiesByEmployee = new Map<string, typeof novelties>();
@@ -614,6 +652,19 @@ export const timeEntriesRepository = {
       },
       orderBy: [{ employee: { lastName: "asc" } }, { employee: { firstName: "asc" } }, { date: "asc" }],
       take: 5000,
+    });
+  },
+
+  // Etapa 6M: horas de conceptos adicionales para el export, por empleado —
+  // fuente HourConceptBreakdown (MANUAL o AUTOMATIC, sin RECHAZADO), nunca
+  // TimeEntry no-Normal legacy. employeeIds ya llega scopeado (sale de
+  // findForExport, que ya aplicó employeeAccessWhere), así que no repite el
+  // scope acá.
+  findBreakdownHoursForExport(employeeIds: string[], period: string) {
+    if (!employeeIds.length) return Promise.resolve([]);
+    return prisma.hourConceptBreakdown.findMany({
+      where: { employeeId: { in: employeeIds }, period, status: { not: "RECHAZADO" } },
+      select: { employeeId: true, minutes: true },
     });
   },
 
