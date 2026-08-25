@@ -72,6 +72,35 @@ describe("employeesRepository.findById", () => {
   });
 });
 
+describe("employeesRepository.findOverviewDetailsById — Etapa 6L.1", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  // Regresión: antes de esta etapa, /overview-details seleccionaba
+  // `hourConcepts: { select: { hourConcept: { select: { id, code, name } } } }`
+  // sin loadMode/systemRole ni el where de asignabilidad. Como
+  // mapEmployeeFromApi filtra por `Boolean(hourConcept.loadMode)`, el Legajo
+  // (que lee por este endpoint, no por findById) mostraba siempre cero
+  // conceptos adicionales asignados aunque la fila existiera en
+  // EmployeeHourConcept. Este test fija la misma forma que ya exige findById,
+  // para que ambos selects no puedan volver a divergir en silencio.
+  it("selecciona hourConcepts con exactamente el mismo where/select que findById (misma fuente de verdad)", async () => {
+    (prisma.employee.findFirst as Mock).mockResolvedValue({ id: "emp-1" });
+
+    await employeesRepository.findOverviewDetailsById("emp-1");
+
+    const call = (prisma.employee.findFirst as Mock).mock.calls.at(0)?.[0];
+    expect(call?.select?.hourConcepts).toEqual({
+      where: { hourConcept: { systemRole: null, status: "ACTIVO", deletedAt: null, loadMode: { not: null } } },
+      select: {
+        hourConceptId: true,
+        hourConcept: { select: { id: true, code: true, name: true, kind: true, loadMode: true, status: true, systemRole: true } },
+      },
+    });
+  });
+});
+
 describe("employeesRepository.findAssignableHourConceptIds", () => {
   it("filtra por identidad estable, estado, baja lógica y loadMode", async () => {
     (prisma.hourConcept.findMany as Mock).mockResolvedValue([{ id: "colectivo" }]);

@@ -39,6 +39,18 @@ vi.mock("../components/time-clock/FaceCaptureModal", () => ({
 
 const employeeMatch = { id: "employee-1", legajo: "100", dni: "30000000", firstName: "Ana", lastName: "Gomez", name: "Ana Gomez" };
 
+// Fechas relativas al reloj real de la corrida, no hardcodeadas: un turno
+// abierto hace 8 horas nunca "expira" (supera las 20h de
+// MAX_CLOCK_SHIFT_MINUTES en TimeClockPage.tsx) sin importar cuándo se
+// ejecute el test — a diferencia de un ISO fijo, que sí termina superando ese
+// umbral con el correr de los días reales.
+function nowIso() {
+  return new Date().toISOString();
+}
+function isoHoursAgo(hours: number) {
+  return new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
+}
+
 function mockNoOpenShift() {
   vi.mocked(timeClockApiService.status).mockResolvedValue({
     employee: employeeMatch,
@@ -50,7 +62,7 @@ function mockNoOpenShift() {
 function mockOpenShift() {
   vi.mocked(timeClockApiService.status).mockResolvedValue({
     employee: employeeMatch,
-    openShift: { id: "shift-1", startAt: "2026-08-24T10:00:00.000Z", hourConcept: null },
+    openShift: { id: "shift-1", startAt: isoHoursAgo(8), hourConcept: null },
     hourConcepts: [],
   });
 }
@@ -109,7 +121,7 @@ describe("TimeClockPage — fichador sin selector de concepto horario (Etapa 6K)
     mockNoOpenShift();
     vi.mocked(timeClockApiService.photoPunch).mockResolvedValue({
       employee: employeeMatch,
-      workShift: { id: "shift-1", startAt: "2026-08-24T10:00:00.000Z" },
+      workShift: { id: "shift-1", startAt: nowIso() },
     });
     const user = await selectEmployee();
 
@@ -132,10 +144,12 @@ describe("TimeClockPage — fichador sin selector de concepto horario (Etapa 6K)
 
   it("permite marcar salida y el payload de fichada tampoco incluye conceptos", async () => {
     mockOpenShift();
+    const shiftStartAt = isoHoursAgo(8);
+    const shiftEndAt = nowIso();
     vi.mocked(timeClockApiService.photoPunch).mockResolvedValue({
       employee: employeeMatch,
-      workShift: { id: "shift-1", startAt: "2026-08-24T10:00:00.000Z", endAt: "2026-08-24T18:00:00.000Z", totalMinutes: 480, totalHours: 8 },
-      segments: [{ date: "2026-08-24", startAt: "2026-08-24T10:00:00.000Z", endAt: "2026-08-24T18:00:00.000Z", minutes: 480, hours: 8, label: "2026-08-24 10:00-18:00 (8 h)" }],
+      workShift: { id: "shift-1", startAt: shiftStartAt, endAt: shiftEndAt, totalMinutes: 480, totalHours: 8 },
+      segments: [{ date: shiftStartAt.slice(0, 10), startAt: shiftStartAt, endAt: shiftEndAt, minutes: 480, hours: 8, label: "8 h trabajadas" }],
     });
     const user = await selectEmployee();
 

@@ -66,6 +66,27 @@ const employeeListSelect = {
   },
 } satisfies Prisma.EmployeeSelect;
 
+// Etapa 6L.1: única fuente de verdad para el shape de EmployeeHourConcept que
+// se expone al frontend. Antes de esta etapa, employeeOverviewSelect definía
+// su propio `hourConcepts: { select: { hourConcept: { select: { id, code,
+// name } } } }` sin loadMode/systemRole ni el where de asignabilidad — como
+// mapEmployeeFromApi filtra por `Boolean(hourConcept.loadMode)`, la pantalla
+// de Legajo (que lee por /overview-details, no por /employees/:id) mostraba
+// SIEMPRE cero conceptos adicionales asignados, sin importar lo que hubiera
+// en la tabla. Cualquier select de Employee que necesite reflejar
+// habilitaciones debe reusar este fragmento en vez de redeclarar el suyo.
+const assignableHourConceptsSelect = {
+  where: {
+    hourConcept: { systemRole: null, status: "ACTIVO", deletedAt: null, loadMode: { not: null } },
+  },
+  select: {
+    hourConceptId: true,
+    hourConcept: {
+      select: { id: true, code: true, name: true, kind: true, loadMode: true, status: true, systemRole: true },
+    },
+  },
+} satisfies Prisma.Employee$hourConceptsArgs;
+
 const employeeDetailSelect = {
   id: true,
   legajo: true,
@@ -173,20 +194,7 @@ const employeeDetailSelect = {
     take: 50,
   },
   assignments: { take: 100, include: { user: { select: { id: true, name: true, employeeId: true } } } },
-  hourConcepts: {
-    // La presencia de la fila representa enabled=true. Se ignora de forma
-    // defensiva cualquier vínculo legacy con Normal o con un concepto que ya
-    // no sea asignable, aunque 6D haya limpiado esos datos.
-    where: {
-      hourConcept: { systemRole: null, status: "ACTIVO", deletedAt: null, loadMode: { not: null } },
-    },
-    select: {
-      hourConceptId: true,
-      hourConcept: {
-        select: { id: true, code: true, name: true, kind: true, loadMode: true, status: true, systemRole: true },
-      },
-    },
-  },
+  hourConcepts: assignableHourConceptsSelect,
   novelties: { include: { noveltyType: true }, orderBy: { fromDate: "desc" as const }, take: 20 },
   documents: { include: { category: true }, orderBy: { createdAt: "desc" as const }, take: 20 },
 } satisfies Prisma.EmployeeSelect;
@@ -320,7 +328,7 @@ const employeeOverviewSelect = {
     take: 50,
   },
   assignments: { take: 100, include: { user: { select: { id: true, name: true, employeeId: true } } } },
-  hourConcepts: { select: { hourConcept: { select: { id: true, code: true, name: true } } } },
+  hourConcepts: assignableHourConceptsSelect,
 } satisfies Prisma.EmployeeSelect;
 
 const employeeOverviewCoreSelect = {

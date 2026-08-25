@@ -2,6 +2,7 @@ import type { RequestHandler } from "express";
 import { requestAuditContext } from "../../shared/audit/requestAuditContext";
 import { createTtlCache } from "../../shared/cache/ttlCache";
 import { requireParam } from "../../shared/http/params";
+import { clearEmployeeReadCaches } from "../employees/employees.controller";
 import type { EnableHourConceptEmployeesInput, ListHourConceptEmployeesQuery, ListHourConceptsQuery, RemoveHourConceptQuery } from "./hourConcepts.schemas";
 import { hourConceptsService } from "./hourConcepts.service";
 
@@ -35,11 +36,17 @@ export const hourConceptsController = {
 
   enableEmployees: (async (req, res) => {
     const result = await hourConceptsService.enableEmployees(requireParam(req, "id"), req.body as EnableHourConceptEmployeesInput, requestAuditContext(req));
+    // Etapa 6L.1: EmployeeHourConcept es la misma fuente de verdad que lee el
+    // Legajo (/employees/:id, /overview-details) — sin este clear, esas
+    // lecturas podían devolver el snapshot cacheado de hasta 30s antes de la
+    // asignación hecha desde este módulo.
+    clearEmployeeReadCaches();
     res.status(201).json({ data: result });
   }) satisfies RequestHandler,
 
   disableEmployee: (async (req, res) => {
     const result = await hourConceptsService.disableEmployee(requireParam(req, "id"), requireParam(req, "employeeId"), requestAuditContext(req));
+    clearEmployeeReadCaches();
     res.json({ data: result });
   }) satisfies RequestHandler,
 
