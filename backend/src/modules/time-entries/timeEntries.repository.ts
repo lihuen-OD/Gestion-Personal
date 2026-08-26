@@ -1,9 +1,9 @@
 import { ApprovalStatus, EmployeeStatus, Prisma, WorkShiftSource, WorkShiftStatus } from "@prisma/client";
-import type { DoubleHourRule } from "@prisma/client";
 import { prisma } from "../../shared/prisma/client";
 import { noveltyCoversDay } from "../novelties/novelties.dateRange";
 import { resolveActiveWorkRegime } from "../work-regimes/workRegimes.service";
 import { flagOpenShiftOverflowForReview } from "../shifts/workShiftEvaluationRunner";
+import { buildActiveDatesByRule, resolveWinningRules, ruleMatchesDate } from "../workforce-management/doubleHourRuleMatching";
 import {
   argentinaCalendarDate,
   argentinaDateKey,
@@ -149,31 +149,46 @@ function minutesFromHours(hours: number) {
 // viola "no hardcodear conceptos": no se compara ningún string de nombre.
 const NIGHT_HOUR_CONCEPT_KINDS = new Set(["NOCTURNA", "GUARDIA", "SERENO"]);
 
-// Todas las DoubleHourRule activas del empleado que matchean el día del
-// segmento (etapa de SpecialHourRuleApplication) — a diferencia del
-// comportamiento anterior a esta etapa, ya no se queda con la primera regla
-// que matchea: se registran todas, y el multiplicador efectivo se resuelve
-// aparte (ver effectiveMultiplier).
-function matchingDoubleHourRules(rules: DoubleHourRule[], segmentDate: Date): DoubleHourRule[] {
-  const segmentDay = segmentDate.getUTCDay();
-  const segmentKey = segmentDate.toISOString().slice(0, 10);
-  return rules.filter((rule) => {
-    const fromKey = rule.fromDate.toISOString().slice(0, 10);
-    const toKey = rule.toDate?.toISOString().slice(0, 10);
-    if (rule.recurrenceType === "FECHA") return segmentKey === fromKey;
-    if (rule.recurrenceType === "RANGO") return segmentKey >= fromKey && (!toKey || segmentKey <= toKey);
-    return segmentKey >= fromKey && (!toKey || segmentKey <= toKey) && rule.weekdays.includes(segmentDay);
-  });
+type DoubleHourRuleForEngine = Prisma.DoubleHourRuleGetPayload<{ include: { dates: true } }>;
+
+// Filtro de una dimensión de alcance (sector/centro de costo/puesto): la
+// regla matchea si no restringe esa dimensión (null) o si restringe
+// exactamente al valor del empleado. OJO: no se puede escribir como
+// `{ OR: [{ [field]: null }, { [field]: employeeValue ?? undefined }] }` —
+// `undefined` hace que Prisma OMITA esa condición del OR (no que no
+// matchee), y un objeto `{}` dentro de un OR matchea cualquier fila. Por eso,
+// si el empleado no tiene valor en esa dimensión, la única condición posible
+// es "la regla tampoco la restringe" — nunca "vale cualquier cosa".
+function scopeDimensionFilter(field: "sectorId" | "costCenterId" | "positionId", employeeValue: string | null | undefined): Prisma.DoubleHourRuleWhereInput {
+  return employeeValue ? { OR: [{ [field]: null }, { [field]: employeeValue }] } : { [field]: null };
 }
 
-// V1 (decisión cerrada): si aplican varias reglas especiales al mismo
-// segmento, se usa la de mayor multiplicador — nunca se multiplican ni se
-// suman entre sí. Todas quedan igual registradas como
-// SpecialHourRuleApplication, aunque solo la de mayor multiplier determine
-// TimeEntry.appliedMultiplier.
-function effectiveMultiplier(rules: DoubleHourRule[]): number {
-  if (rules.length === 0) return 1;
-  return Math.max(...rules.map((rule) => Number(rule.multiplier)));
+// Filtro Prisma de alcance por empleado (empresa/sector/centro de
+// costo/puesto/empleados específicos, todos opcionales y combinados con AND)
+// — se arma con este helper en los dos únicos lugares que consultan
+// DoubleHourRule (createFromWorkShift/closeOpenWorkShift) porque ambos
+// necesitan un `tx` tipado por el contexto real de `prisma.$transaction`
+// (extendido con métricas — no coincide con el tipo genérico
+// Prisma.TransactionClient), así que no se puede extraer como función async
+// de nivel superior sin repetir esa anotación de tipo.
+function doubleHourRuleScopeWhere(employeeId: string, employeeCompanyIds: string[], employeeSectorId: string | null | undefined, employeeCostCenterId: string | null | undefined, employeePositionId: string | null | undefined): Prisma.DoubleHourRuleWhereInput["AND"] {
+  return [
+    { OR: [{ employees: { none: {} } }, { employees: { some: { employeeId } } }] },
+    employeeCompanyIds.length ? { OR: [{ companyId: null }, { companyId: { in: employeeCompanyIds } }] } : { companyId: null },
+    scopeDimensionFilter("sectorId", employeeSectorId),
+    scopeDimensionFilter("costCenterId", employeeCostCenterId),
+    scopeDimensionFilter("positionId", employeePositionId),
+  ];
+}
+
+// De las reglas ya alcanzadas por scope (doubleHourRuleScopeWhere), cuáles
+// matchean la fecha calendario de este tramo puntual — mismo criterio de
+// fecha para todos los tramos de la jornada, evaluado por separado en cada
+// uno (cruce de medianoche: el tramo del día siguiente puede matchear una
+// regla que el tramo anterior no).
+function matchingDoubleHourRules(rules: DoubleHourRuleForEngine[], segmentDate: Date): DoubleHourRuleForEngine[] {
+  const activeDatesByRule = buildActiveDatesByRule(rules);
+  return rules.filter((rule) => ruleMatchesDate(rule, segmentDate, activeDatesByRule));
 }
 
 function employeeSearchWhere(search?: string): Prisma.EmployeeWhereInput {
@@ -1469,13 +1484,18 @@ export const timeEntriesRepository = {
 
       const entries = [];
       const timeSegments = [];
+      const employeeScope = await tx.employee.findUnique({
+        where: { id: input.employeeId },
+        select: { sectorId: true, costCenterId: true, positionId: true, companies: { select: { companyId: true } } },
+      });
       const doubleHourRules = await tx.doubleHourRule.findMany({
         where: {
           status: "ACTIVO",
           fromDate: { lte: input.endAt },
           OR: [{ toDate: null }, { toDate: { gte: input.segments[0]?.date } }],
-          employees: { some: { employeeId: input.employeeId } },
+          AND: doubleHourRuleScopeWhere(input.employeeId, employeeScope?.companies.map((item) => item.companyId) ?? [], employeeScope?.sectorId, employeeScope?.costCenterId, employeeScope?.positionId),
         },
+        include: { dates: true },
       });
       const nightHourConcepts = await tx.hourConcept.findMany({
         where: { id: { in: [...new Set(input.segments.map((segment) => segment.hourConceptId))] } },
@@ -1484,7 +1504,8 @@ export const timeEntriesRepository = {
       const nightHourConceptIds = new Set(nightHourConcepts.filter((concept) => NIGHT_HOUR_CONCEPT_KINDS.has(concept.kind)).map((concept) => concept.id));
       for (const segment of input.segments) {
         const matchedRules = matchingDoubleHourRules(doubleHourRules, segment.date);
-        const multiplier = effectiveMultiplier(matchedRules);
+        const { winners, multiplier, conflicting } = resolveWinningRules(matchedRules);
+        const winningRuleIds = new Set(winners.map((rule) => rule.id));
         const timeSegment = await tx.timeSegment.create({
           data: {
             workShiftId: workShift.id,
@@ -1506,7 +1527,13 @@ export const timeEntriesRepository = {
 
         for (const rule of matchedRules) {
           await tx.specialHourRuleApplication.create({
-            data: { timeSegmentId: timeSegment.id, doubleHourRuleId: rule.id, multiplierApplied: rule.multiplier },
+            data: {
+              timeSegmentId: timeSegment.id,
+              doubleHourRuleId: rule.id,
+              multiplierApplied: rule.multiplier,
+              isWinner: winningRuleIds.has(rule.id),
+              wasConflicting: conflicting && winningRuleIds.has(rule.id),
+            },
           });
         }
 
@@ -1638,13 +1665,18 @@ export const timeEntriesRepository = {
 
       const entries = [];
       const timeSegments = [];
+      const employeeScope = await tx.employee.findUnique({
+        where: { id: input.employeeId },
+        select: { sectorId: true, costCenterId: true, positionId: true, companies: { select: { companyId: true } } },
+      });
       const doubleHourRules = await tx.doubleHourRule.findMany({
         where: {
           status: "ACTIVO",
           fromDate: { lte: input.endAt },
           OR: [{ toDate: null }, { toDate: { gte: input.segments[0]?.date } }],
-          employees: { some: { employeeId: input.employeeId } },
+          AND: doubleHourRuleScopeWhere(input.employeeId, employeeScope?.companies.map((item) => item.companyId) ?? [], employeeScope?.sectorId, employeeScope?.costCenterId, employeeScope?.positionId),
         },
+        include: { dates: true },
       });
       const nightHourConcepts = await tx.hourConcept.findMany({
         where: { id: { in: [...new Set(input.segments.map((segment) => segment.hourConceptId))] } },
@@ -1653,7 +1685,8 @@ export const timeEntriesRepository = {
       const nightHourConceptIds = new Set(nightHourConcepts.filter((concept) => NIGHT_HOUR_CONCEPT_KINDS.has(concept.kind)).map((concept) => concept.id));
       for (const segment of input.segments) {
         const matchedRules = matchingDoubleHourRules(doubleHourRules, segment.date);
-        const multiplier = effectiveMultiplier(matchedRules);
+        const { winners, multiplier, conflicting } = resolveWinningRules(matchedRules);
+        const winningRuleIds = new Set(winners.map((rule) => rule.id));
         const timeSegment = await tx.timeSegment.create({
           data: {
             workShiftId: workShift.id,
@@ -1674,7 +1707,13 @@ export const timeEntriesRepository = {
 
         for (const rule of matchedRules) {
           await tx.specialHourRuleApplication.create({
-            data: { timeSegmentId: timeSegment.id, doubleHourRuleId: rule.id, multiplierApplied: rule.multiplier },
+            data: {
+              timeSegmentId: timeSegment.id,
+              doubleHourRuleId: rule.id,
+              multiplierApplied: rule.multiplier,
+              isWinner: winningRuleIds.has(rule.id),
+              wasConflicting: conflicting && winningRuleIds.has(rule.id),
+            },
           });
         }
 

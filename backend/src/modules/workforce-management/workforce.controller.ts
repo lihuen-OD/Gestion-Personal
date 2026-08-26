@@ -23,4 +23,5 @@ export const workforceController = {
   createDoubleRule: (async (req,res)=>res.status(201).json({data:await workforceService.createDoubleRule(req.body,req.user!,requestAuditContext(req))})) satisfies RequestHandler,
   updateDoubleRule: (async (req,res)=>res.json({data:await workforceService.updateDoubleRule(requireParam(req,"id"),req.body,requestAuditContext(req))})) satisfies RequestHandler,
   removeDoubleRule: (async (req,res)=>res.json({data:await workforceService.removeDoubleRule(requireParam(req,"id"),requestAuditContext(req))})) satisfies RequestHandler,
+  doubleRulesCalendar: (async (req,res)=>res.json({data:await workforceService.calendarPreview(new Date(String(req.query.from)),new Date(String(req.query.to)))})) satisfies RequestHandler,
 };

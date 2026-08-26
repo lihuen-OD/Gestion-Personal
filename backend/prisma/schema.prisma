@@ -353,6 +353,7 @@ model Company {
   establishments  Establishment[]
   employees       EmployeeCompany[]
   costCenterLinks CostCenterCompany[]
+  doubleHourRules DoubleHourRule[]
 }
 
 model BusinessUnit {
@@ -427,6 +428,7 @@ model Sector {
   employees       Employee[]
   positions       Position[]
   costCenterLinks CostCenterSector[]
+  doubleHourRules DoubleHourRule[]
 
   @@index([areaId])
 }
@@ -439,12 +441,13 @@ model CostCenter {
   createdAt DateTime     @default(now()) @db.Timestamptz(3)
   updatedAt DateTime     @updatedAt @db.Timestamptz(3)
 
-  employees      Employee[]
-  companies      CostCenterCompany[]
-  businessUnits  CostCenterBusinessUnit[]
-  establishments CostCenterEstablishment[]
-  areas          CostCenterArea[]
-  sectors        CostCenterSector[]
+  employees       Employee[]
+  companies       CostCenterCompany[]
+  businessUnits   CostCenterBusinessUnit[]
+  establishments  CostCenterEstablishment[]
+  areas           CostCenterArea[]
+  sectors         CostCenterSector[]
+  doubleHourRules DoubleHourRule[]
 }
 
 model CostCenterCompany {
@@ -538,6 +541,7 @@ model Position {
   sector           Sector?                  @relation(fields: [sectorId], references: [id])
   employees        Employee[]
   salaryCategories PositionSalaryCategory[]
+  doubleHourRules  DoubleHourRule[]
 
   @@index([sectorId])
   @@index([status])
@@ -1237,16 +1241,39 @@ model DoubleHourRule {
   id                          String                       @id @default(uuid())
   name                        String
   recurrenceType              RecurrenceType
+  // SEMANAL/RANGO: define la vigencia junto con weekdays. FECHA: ya no se lee
+  // fromDate/toDate para la condición — la o las fechas alcanzadas viven en
+  // `dates` (Etapa 8B), porque una regla FECHA puede cubrir muchas fechas
+  // (ej. "Feriados 2026") o una sola (ej. "Feriado Navidad").
   fromDate                    DateTime                     @db.Date
   toDate                      DateTime?                    @db.Date
   weekdays                    Int[]                        @default([])
   multiplier                  Decimal                      @default(2) @db.Decimal(4, 2)
+  // Etapa 8B: desempata superposición cuando 2+ reglas matchean el mismo
+  // tramo — gana la de mayor prioridad. Empate entre las de mayor prioridad
+  // se resuelve igual que antes (mayor multiplicador) pero queda marcado
+  // como conflicto en SpecialHourRuleApplication.wasConflicting.
+  priority                    Int                          @default(0)
+  // Etapa 8B: alcance opcional — null = sin restricción en esa dimensión.
+  // Todas las dimensiones configuradas (compañía/sector/centro de
+  // costo/puesto/empleados específicos) combinan con AND. Sin ninguna
+  // configurada + sin empleados, la regla aplica a cualquier empleado que
+  // efectivamente trabaje/fiche en la fecha alcanzada.
+  companyId                   String?
+  sectorId                    String?
+  costCenterId                String?
+  positionId                  String?
   status                      RecordStatus                 @default(ACTIVO)
   reason                      String
   createdByUserId             String?
   createdAt                   DateTime                     @default(now()) @db.Timestamptz(3)
   updatedAt                   DateTime                     @updatedAt @db.Timestamptz(3)
   employees                   DoubleHourRuleEmployee[]
+  dates                       SpecialHourRuleDate[]
+  company                     Company?                     @relation(fields: [companyId], references: [id])
+  sector                      Sector?                      @relation(fields: [sectorId], references: [id])
+  costCenter                  CostCenter?                  @relation(fields: [costCenterId], references: [id])
+  position                    Position?                    @relation(fields: [positionId], references: [id])
   createdBy                   User?                        @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
   specialHourRuleApplications SpecialHourRuleApplication[]
 
@@ -1263,17 +1290,37 @@ model DoubleHourRuleEmployee {
   @@index([employeeId])
 }
 
+// Etapa 8B: fechas explícitas de una DoubleHourRule con recurrenceType =
+// FECHA (feriados, fechas manuales) — reemplaza el uso de fromDate como "la
+// única fecha" para ese tipo. Togglable (isActive) sin perder historial.
+model SpecialHourRuleDate {
+  id        String   @id @default(uuid())
+  ruleId    String
+  date      DateTime @db.Date
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  rule DoubleHourRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+
+  @@unique([ruleId, date])
+  @@index([date])
+}
+
 // Trazabilidad de qué DoubleHourRule aplicó a qué TimeSegment. No reemplaza
 // a DoubleHourRule (que sigue siendo el motor de reglas especiales) — registra
-// TODAS las reglas que matchearon un segmento, aunque en V1 el multiplicador
-// efectivo que se lleva a TimeEntry.appliedMultiplier sea el máximo entre
-// ellas (nunca se acumulan/multiplican entre sí todavía; esa selección es
-// lógica de servicio de la próxima etapa, no de este modelo).
+// TODAS las reglas que matchearon un segmento, aunque el multiplicador
+// efectivo que se lleva a TimeEntry.appliedMultiplier sea sólo el de la(s)
+// regla(s) ganadora(s) por prioridad (Etapa 8B) — nunca se acumulan ni
+// multiplican entre sí.
 model SpecialHourRuleApplication {
   id                String   @id @default(uuid())
   timeSegmentId     String
   doubleHourRuleId  String
   multiplierApplied Decimal  @db.Decimal(4, 2)
+  // Etapa 8B: congelados al momento de aplicar — no se recalculan si la
+  // prioridad de la regla cambia después (trazabilidad histórica real).
+  isWinner          Boolean  @default(false)
+  wasConflicting    Boolean  @default(false)
   createdAt         DateTime @default(now()) @db.Timestamptz(3)
 
   timeSegment    TimeSegment    @relation(fields: [timeSegmentId], references: [id], onDelete: Cascade)

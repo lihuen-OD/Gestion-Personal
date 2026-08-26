@@ -18,7 +18,7 @@ vi.mock("../../shared/prisma/client", () => {
     doubleHourRule: { findMany: vi.fn() },
     hourConcept: { findMany: vi.fn() },
     specialHourRuleApplication: { create: vi.fn() },
-    employee: { findMany: vi.fn(), count: vi.fn() },
+    employee: { findMany: vi.fn(), count: vi.fn(), findUnique: vi.fn() },
     hourConceptBreakdown: { findMany: vi.fn() },
     novelty: { findMany: vi.fn() },
   };
@@ -53,7 +53,7 @@ type TxMocks = {
   doubleHourRule: { findMany: Mock };
   hourConcept: { findMany: Mock };
   specialHourRuleApplication: { create: Mock };
-  employee: { findMany: Mock; count: Mock };
+  employee: { findMany: Mock; count: Mock; findUnique: Mock };
   hourConceptBreakdown: { findMany: Mock };
   novelty: { findMany: Mock };
 };
@@ -80,6 +80,10 @@ beforeEach(() => {
   mockedPrisma.__tx.doubleHourRule.findMany.mockResolvedValue([]);
   mockedPrisma.__tx.hourConcept.findMany.mockResolvedValue([]);
   mockedPrisma.__tx.timeEntry.findFirst.mockResolvedValue(null);
+  // Etapa 8B: empleado "general" por default — sin sector/centro de
+  // costo/puesto/empresa — para que los tests que no configuran scope sigan
+  // representando "una regla sin alcance restringido matchea a cualquiera".
+  mockedPrisma.__tx.employee.findUnique.mockResolvedValue({ sectorId: null, costCenterId: null, positionId: null, companies: [] });
   let segmentCounter = 0;
   let specialApplicationCounter = 0;
   mockedPrisma.__tx.timeSegment.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: `segment-${++segmentCounter}`, ...data }));
@@ -512,17 +516,28 @@ describe("SpecialHourRuleApplication y multiplicador efectivo (Etapa 3)", () => 
   const sunday = new Date("2026-08-16T00:00:00.000Z"); // domingo (weekday 0)
   const monday = new Date("2026-08-17T00:00:00.000Z"); // lunes (weekday 1)
 
-  function rule(overrides: Partial<{ id: string; name: string; recurrenceType: string; fromDate: Date; toDate: Date | null; weekdays: number[]; multiplier: number }>) {
+  function rule(overrides: Partial<{ id: string; name: string; recurrenceType: string; fromDate: Date; toDate: Date | null; weekdays: number[]; multiplier: number; priority: number; dates: Array<{ date: Date; isActive: boolean }> }>) {
+    const recurrenceType = overrides.recurrenceType ?? "SEMANAL";
+    const fromDate = overrides.fromDate ?? new Date("2026-01-01T00:00:00.000Z");
     return {
       id: "rule-1",
       name: "Regla",
-      recurrenceType: "SEMANAL",
-      fromDate: new Date("2026-01-01T00:00:00.000Z"),
+      recurrenceType,
+      fromDate,
       toDate: null,
       weekdays: [0],
       multiplier: 2,
+      priority: 0,
+      companyId: null,
+      sectorId: null,
+      costCenterId: null,
+      positionId: null,
       status: "ACTIVO",
       reason: "Domingo",
+      // Etapa 8B: FECHA ya no matchea por fromDate — si no se pasa `dates`
+      // explícito, se asume que la única fecha alcanzada es fromDate (mismo
+      // comportamiento observable que antes de 8B para estos tests).
+      dates: recurrenceType === "FECHA" ? [{ date: fromDate, isActive: true }] : [],
       ...overrides,
     };
   }
@@ -782,6 +797,204 @@ describe("SpecialHourRuleApplication y multiplicador efectivo (Etapa 3)", () => 
     expect(totalRealMinutes).toBe(240); // 120 + 120 reales, nunca 120 + 240
     expect(Number((result.entries[0] as unknown as { appliedMultiplier: unknown }).appliedMultiplier)).toBe(1); // tramo sábado: sin regla
     expect(Number((result.entries[1] as unknown as { appliedMultiplier: unknown }).appliedMultiplier)).toBe(2); // tramo domingo: regla aplicada
+  });
+
+  it("Caso L (Etapa 8B) — regla general (sin empresa/sector/centro de costo/puesto/empleados): construye el AND de scope como 'sin restricción' en las 4 dimensiones", async () => {
+    mockedPrisma.__tx.attendancePunch.create.mockResolvedValueOnce({ id: "punch-in" }).mockResolvedValueOnce({ id: "punch-out" });
+    mockedPrisma.__tx.workShift.create.mockResolvedValue({ id: "shift-l" });
+    mockedPrisma.__tx.employee.findUnique.mockResolvedValue({ sectorId: null, costCenterId: null, positionId: null, companies: [] });
+
+    await timeEntriesRepository.createFromWorkShift(oneSegmentInput(sunday));
+
+    expect(mockedPrisma.__tx.doubleHourRule.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          AND: expect.arrayContaining([
+            { companyId: null },
+            { sectorId: null },
+            { costCenterId: null },
+            { positionId: null },
+          ]),
+        }),
+      }),
+    );
+  });
+
+  it("Caso L.2 (Etapa 8B) — el AND de scope siempre exige 'sin empleados cargados O este empleado está en la lista' — una regla de empleados específicos nunca matchea a alguien fuera de esa lista", async () => {
+    mockedPrisma.__tx.attendancePunch.create.mockResolvedValueOnce({ id: "punch-in" }).mockResolvedValueOnce({ id: "punch-out" });
+    mockedPrisma.__tx.workShift.create.mockResolvedValue({ id: "shift-l2" });
+
+    await timeEntriesRepository.createFromWorkShift(oneSegmentInput(sunday));
+
+    expect(mockedPrisma.__tx.doubleHourRule.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          AND: expect.arrayContaining([{ OR: [{ employees: { none: {} } }, { employees: { some: { employeeId } } }] }]),
+        }),
+      }),
+    );
+  });
+
+  it("Caso M (Etapa 8B) — empleado con empresa: el AND de scope permite companyId null o esa empresa (nunca cualquier empresa)", async () => {
+    mockedPrisma.__tx.attendancePunch.create.mockResolvedValueOnce({ id: "punch-in" }).mockResolvedValueOnce({ id: "punch-out" });
+    mockedPrisma.__tx.workShift.create.mockResolvedValue({ id: "shift-m" });
+    mockedPrisma.__tx.employee.findUnique.mockResolvedValue({ sectorId: null, costCenterId: null, positionId: null, companies: [{ companyId: "odwyer" }] });
+
+    await timeEntriesRepository.createFromWorkShift(oneSegmentInput(sunday));
+
+    expect(mockedPrisma.__tx.doubleHourRule.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          AND: expect.arrayContaining([{ OR: [{ companyId: null }, { companyId: { in: ["odwyer"] } }] }]),
+        }),
+      }),
+    );
+  });
+
+  it("Caso N (Etapa 8B) — empleado con empresa + sector: el AND de scope combina ambas dimensiones", async () => {
+    mockedPrisma.__tx.attendancePunch.create.mockResolvedValueOnce({ id: "punch-in" }).mockResolvedValueOnce({ id: "punch-out" });
+    mockedPrisma.__tx.workShift.create.mockResolvedValue({ id: "shift-n" });
+    mockedPrisma.__tx.employee.findUnique.mockResolvedValue({ sectorId: "panol", costCenterId: null, positionId: null, companies: [{ companyId: "odwyer" }] });
+
+    await timeEntriesRepository.createFromWorkShift(oneSegmentInput(sunday));
+
+    expect(mockedPrisma.__tx.doubleHourRule.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          AND: expect.arrayContaining([
+            { OR: [{ companyId: null }, { companyId: { in: ["odwyer"] } }] },
+            { OR: [{ sectorId: null }, { sectorId: "panol" }] },
+          ]),
+        }),
+      }),
+    );
+  });
+
+  it("Caso O (Etapa 8B) — Domingo general (scope no aplicado por la base, simulado por el mock) aplica igual a un empleado sin scope", async () => {
+    mockedPrisma.__tx.attendancePunch.create.mockResolvedValueOnce({ id: "punch-in" }).mockResolvedValueOnce({ id: "punch-out" });
+    mockedPrisma.__tx.workShift.create.mockResolvedValue({ id: "shift-o" });
+    mockedPrisma.__tx.employee.findUnique.mockResolvedValue({ sectorId: null, costCenterId: null, positionId: null, companies: [] });
+    // Sin employeeIds ni empresa/sector/centro de costo/puesto — regla 100% general.
+    mockedPrisma.__tx.doubleHourRule.findMany.mockResolvedValue([rule({ id: "rule-domingo-general" })]);
+
+    await timeEntriesRepository.createFromWorkShift(oneSegmentInput(sunday));
+
+    expect(mockedPrisma.__tx.specialHourRuleApplication.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ doubleHourRuleId: "rule-domingo-general" }) }),
+    );
+  });
+
+  it("Caso P (Etapa 8B) — si la base ya excluyó la regla por scope (empresa distinta), el motor no la aplica (mock devuelve [])", async () => {
+    mockedPrisma.__tx.attendancePunch.create.mockResolvedValueOnce({ id: "punch-in" }).mockResolvedValueOnce({ id: "punch-out" });
+    mockedPrisma.__tx.workShift.create.mockResolvedValue({ id: "shift-p" });
+    mockedPrisma.__tx.employee.findUnique.mockResolvedValue({ sectorId: null, costCenterId: null, positionId: null, companies: [{ companyId: "tropa" }] });
+    mockedPrisma.__tx.doubleHourRule.findMany.mockResolvedValue([]); // "Domingo Odwyer" no matchea a un empleado de Tropa
+
+    await timeEntriesRepository.createFromWorkShift(oneSegmentInput(sunday));
+
+    expect(mockedPrisma.__tx.specialHourRuleApplication.create).not.toHaveBeenCalled();
+    expect(mockedPrisma.__tx.timeEntry.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ appliedMultiplier: 1 }) }));
+  });
+
+  it("Caso Q (Etapa 8B) — prioridad distinta: gana Domingo Pañol (mayor prioridad) sobre Domingo Odwyer, sin conflicto", async () => {
+    mockedPrisma.__tx.attendancePunch.create.mockResolvedValueOnce({ id: "punch-in" }).mockResolvedValueOnce({ id: "punch-out" });
+    mockedPrisma.__tx.workShift.create.mockResolvedValue({ id: "shift-q" });
+    mockedPrisma.__tx.doubleHourRule.findMany.mockResolvedValue([
+      rule({ id: "domingo-odwyer", priority: 1, multiplier: 2 }),
+      rule({ id: "domingo-panol", priority: 5, multiplier: 2.5 }),
+    ]);
+
+    await timeEntriesRepository.createFromWorkShift(oneSegmentInput(sunday));
+
+    expect(mockedPrisma.__tx.specialHourRuleApplication.create).toHaveBeenCalledTimes(2);
+    expect(mockedPrisma.__tx.specialHourRuleApplication.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ doubleHourRuleId: "domingo-odwyer", isWinner: false, wasConflicting: false }) }));
+    expect(mockedPrisma.__tx.specialHourRuleApplication.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ doubleHourRuleId: "domingo-panol", isWinner: true, wasConflicting: false }) }));
+    expect(mockedPrisma.__tx.timeEntry.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ appliedMultiplier: 2.5 }) }));
+  });
+
+  it("Caso R (Etapa 8B) — empate de prioridad: ambas quedan marcadas wasConflicting=true, y se sigue aplicando (no rompe el pipeline)", async () => {
+    mockedPrisma.__tx.attendancePunch.create.mockResolvedValueOnce({ id: "punch-in" }).mockResolvedValueOnce({ id: "punch-out" });
+    mockedPrisma.__tx.workShift.create.mockResolvedValue({ id: "shift-r" });
+    mockedPrisma.__tx.doubleHourRule.findMany.mockResolvedValue([
+      rule({ id: "domingo", priority: 3, multiplier: 2 }),
+      rule({ id: "feriado", priority: 3, multiplier: 2 }),
+    ]);
+
+    const result = await timeEntriesRepository.createFromWorkShift(oneSegmentInput(sunday));
+
+    expect(mockedPrisma.__tx.specialHourRuleApplication.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ doubleHourRuleId: "domingo", isWinner: true, wasConflicting: true }) }));
+    expect(mockedPrisma.__tx.specialHourRuleApplication.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ doubleHourRuleId: "feriado", isWinner: true, wasConflicting: true }) }));
+    // No rompe el pipeline: sigue generando el TimeEntry, con horas reales intactas.
+    const entry = result.entries[0] as unknown as { totalMinutes: number; appliedMultiplier: unknown };
+    expect(entry.totalMinutes).toBe(240);
+    expect(Number(entry.appliedMultiplier)).toBe(2);
+  });
+
+  it("Caso S (Etapa 8B — corrección) — una sola regla 'Feriado' con muchas fechas (01/01, 24/03, 02/04, 01/05, 25/05, 09/07, 25/12) aplica a fichadas reales en cualquiera de esas fechas, sin crear una regla por feriado", async () => {
+    const feriados = [
+      new Date("2026-01-01"), new Date("2026-03-24"), new Date("2026-04-02"),
+      new Date("2026-05-01"), new Date("2026-05-25"), new Date("2026-07-09"), new Date("2026-12-25"),
+    ];
+    const feriado = rule({ id: "rule-feriado", recurrenceType: "FECHA", multiplier: 2, dates: feriados.map((date) => ({ date, isActive: true })) });
+    mockedPrisma.__tx.doubleHourRule.findMany.mockResolvedValue([feriado]);
+    mockedPrisma.__tx.attendancePunch.create.mockResolvedValue({ id: "punch-in" });
+    mockedPrisma.__tx.workShift.create.mockResolvedValueOnce({ id: "shift-navidad" }).mockResolvedValueOnce({ id: "shift-anio-nuevo" });
+
+    const navidadResult = await timeEntriesRepository.createFromWorkShift(oneSegmentInput(new Date("2026-12-25T00:00:00.000Z")));
+    expect(mockedPrisma.__tx.specialHourRuleApplication.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ doubleHourRuleId: "rule-feriado" }) }));
+    expect(Number((navidadResult.entries[0] as unknown as { appliedMultiplier: unknown }).appliedMultiplier)).toBe(2);
+
+    vi.clearAllMocks();
+    mockedPrisma.__tx.doubleHourRule.findMany.mockResolvedValue([feriado]);
+    mockedPrisma.__tx.hourConcept.findMany.mockResolvedValue([]);
+    mockedPrisma.__tx.timeEntry.findFirst.mockResolvedValue(null);
+    mockedPrisma.__tx.employee.findUnique.mockResolvedValue({ sectorId: null, costCenterId: null, positionId: null, companies: [] });
+    mockedPrisma.__tx.timeSegment.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: "segment-9-julio", ...data }));
+    mockedPrisma.__tx.timeEntry.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: "entry-9-julio", ...data }));
+    mockedPrisma.__tx.specialHourRuleApplication.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: "app-9-julio", ...data }));
+    mockedPrisma.__tx.attendancePunch.create.mockResolvedValue({ id: "punch-in" });
+
+    // Misma regla ("rule-feriado"), otra fecha distinta del mismo array de `dates` (09/07): también aplica.
+    const nueveDeJulioResult = await timeEntriesRepository.createFromWorkShift(oneSegmentInput(new Date("2026-07-09T00:00:00.000Z")));
+    expect(mockedPrisma.__tx.specialHourRuleApplication.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ doubleHourRuleId: "rule-feriado" }) }));
+    expect(Number((nueveDeJulioResult.entries[0] as unknown as { appliedMultiplier: unknown }).appliedMultiplier)).toBe(2);
+
+    vi.clearAllMocks();
+    mockedPrisma.__tx.doubleHourRule.findMany.mockResolvedValue([feriado]);
+    mockedPrisma.__tx.hourConcept.findMany.mockResolvedValue([]);
+    mockedPrisma.__tx.timeEntry.findFirst.mockResolvedValue(null);
+    mockedPrisma.__tx.employee.findUnique.mockResolvedValue({ sectorId: null, costCenterId: null, positionId: null, companies: [] });
+    mockedPrisma.__tx.timeSegment.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: "segment-junio", ...data }));
+    mockedPrisma.__tx.timeEntry.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: "entry-junio", ...data }));
+    mockedPrisma.__tx.attendancePunch.create.mockResolvedValue({ id: "punch-in" });
+
+    // Un día que NO está en la lista de fechas de la regla: no aplica.
+    await timeEntriesRepository.createFromWorkShift(oneSegmentInput(new Date("2026-06-15T00:00:00.000Z")));
+    expect(mockedPrisma.__tx.specialHourRuleApplication.create).not.toHaveBeenCalled();
+  });
+
+  it("Caso T (Etapa 8B — corrección) — dentro de una misma regla FECHA con varias fechas, una fecha desactivada (isActive=false) no matchea aunque otra fecha de la misma regla sí", async () => {
+    const navidad = new Date("2026-12-25");
+    const anioNuevoDesactivado = new Date("2027-01-01");
+    const feriado = rule({ id: "rule-feriado", recurrenceType: "FECHA", multiplier: 2, dates: [{ date: navidad, isActive: true }, { date: anioNuevoDesactivado, isActive: false }] });
+    mockedPrisma.__tx.doubleHourRule.findMany.mockResolvedValue([feriado]);
+    mockedPrisma.__tx.attendancePunch.create.mockResolvedValue({ id: "punch-in" });
+    mockedPrisma.__tx.workShift.create.mockResolvedValue({ id: "shift-navidad" });
+
+    await timeEntriesRepository.createFromWorkShift(oneSegmentInput(new Date("2026-12-25T00:00:00.000Z")));
+    expect(mockedPrisma.__tx.specialHourRuleApplication.create).toHaveBeenCalledTimes(1);
+
+    vi.clearAllMocks();
+    mockedPrisma.__tx.doubleHourRule.findMany.mockResolvedValue([feriado]);
+    mockedPrisma.__tx.hourConcept.findMany.mockResolvedValue([]);
+    mockedPrisma.__tx.timeEntry.findFirst.mockResolvedValue(null);
+    mockedPrisma.__tx.employee.findUnique.mockResolvedValue({ sectorId: null, costCenterId: null, positionId: null, companies: [] });
+    mockedPrisma.__tx.timeSegment.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: "segment-x", ...data }));
+    mockedPrisma.__tx.timeEntry.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: "entry-x", ...data }));
+    mockedPrisma.__tx.attendancePunch.create.mockResolvedValue({ id: "punch-in" });
+
+    await timeEntriesRepository.createFromWorkShift(oneSegmentInput(new Date("2027-01-01T00:00:00.000Z")));
+    expect(mockedPrisma.__tx.specialHourRuleApplication.create).not.toHaveBeenCalled();
   });
 
   it("isNight se deriva del HourConceptKind (NOCTURNA/GUARDIA/SERENO) del concepto del segmento, sin comparar nombres", async () => {

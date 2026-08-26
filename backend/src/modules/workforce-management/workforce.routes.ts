@@ -6,7 +6,7 @@ import { validateBody } from "../../shared/validation/validateRequest";
 import { validateQuery } from "../../shared/validation/validateQuery";
 import { roles } from "../../shared/security/roles";
 import { workforceController as c } from "./workforce.controller";
-import { closureBulkSchema, closureSubmitSchema, correctionCreateSchema, correctionReviewSchema, doubleRuleSchema, periodQuerySchema, returnClosureSchema, shiftTemplateSchema, updateDoubleRuleSchema, updateShiftTemplateSchema } from "./workforce.schemas";
+import { calendarRangeQuerySchema, closureBulkSchema, closureSubmitSchema, correctionCreateSchema, correctionReviewSchema, doubleRuleSchema, periodQuerySchema, returnClosureSchema, shiftTemplateSchema, updateDoubleRuleSchema, updateShiftTemplateSchema } from "./workforce.schemas";
 
 export const workforceRouter=Router();
 workforceRouter.use(requireAuth);
@@ -27,6 +27,7 @@ workforceRouter.post("/shift-templates",requireAnyRole([roles.rrhh]),validateBod
 workforceRouter.patch("/shift-templates/:id",requireAnyRole([roles.rrhh]),validateBody(updateShiftTemplateSchema),asyncHandler(c.updateShiftTemplate));
 workforceRouter.delete("/shift-templates/:id",requireAnyRole([roles.rrhh]),asyncHandler(c.removeShiftTemplate));
 workforceRouter.get("/double-hour-rules",requireAnyRole(all),asyncHandler(c.doubleRules));
+workforceRouter.get("/double-hour-rules/calendar",requireAnyRole(all),validateQuery(calendarRangeQuerySchema),asyncHandler(c.doubleRulesCalendar));
 workforceRouter.post("/double-hour-rules",requireAnyRole([roles.rrhh]),validateBody(doubleRuleSchema),asyncHandler(c.createDoubleRule));
 workforceRouter.patch("/double-hour-rules/:id",requireAnyRole([roles.rrhh]),validateBody(updateDoubleRuleSchema),asyncHandler(c.updateDoubleRule));
 workforceRouter.delete("/double-hour-rules/:id",requireAnyRole([roles.rrhh]),asyncHandler(c.removeDoubleRule));

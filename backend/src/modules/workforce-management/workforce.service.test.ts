@@ -20,7 +20,7 @@ vi.mock("../../shared/prisma/client", () => ({
     monthlyTimeClosure: { findMany: vi.fn(), findUnique: vi.fn(), update: vi.fn(), updateMany: vi.fn(), upsert: vi.fn() },
     timeCorrectionRequest: { findUnique: vi.fn(), findUniqueOrThrow: vi.fn(), update: vi.fn(), create: vi.fn() },
     shiftTemplate: { create: vi.fn(), findUnique: vi.fn(), update: vi.fn(), delete: vi.fn() },
-    doubleHourRule: { create: vi.fn(), findUnique: vi.fn(), update: vi.fn(), delete: vi.fn() },
+    doubleHourRule: { create: vi.fn(), findUnique: vi.fn(), findMany: vi.fn(), update: vi.fn(), delete: vi.fn() },
     user: { findMany: vi.fn().mockResolvedValue([]) },
     $transaction: vi.fn(),
   },
@@ -36,7 +36,7 @@ const mockedPrisma = prisma as unknown as {
   monthlyTimeClosure: { findMany: Mock; findUnique: Mock; update: Mock; updateMany: Mock; upsert: Mock };
   timeCorrectionRequest: { findUnique: Mock; findUniqueOrThrow: Mock; update: Mock; create: Mock };
   shiftTemplate: { create: Mock; findUnique: Mock; update: Mock; delete: Mock };
-  doubleHourRule: { create: Mock; findUnique: Mock; update: Mock; delete: Mock };
+  doubleHourRule: { create: Mock; findUnique: Mock; findMany: Mock; update: Mock; delete: Mock };
   $transaction: Mock;
 };
 
@@ -252,5 +252,136 @@ describe("workforceService — FK reales sobre ShiftTemplate/DoubleHourRule", ()
     }
     expect(caught).toBeInstanceOf(Prisma.PrismaClientKnownRequestError);
     expect(caught).not.toBeInstanceOf(AppError);
+  });
+
+  it("Etapa 8B (test 1) — crea una Hora Especial general (sin empresa/sector/centro de costo/puesto/empleados)", async () => {
+    mockedPrisma.doubleHourRule.create.mockResolvedValue({ id: "rule-1", name: "Domingo" });
+
+    await workforceService.createDoubleRule({ name: "Domingo", recurrenceType: "SEMANAL", weekdays: [0], employeeIds: [] }, user);
+
+    expect(mockedPrisma.doubleHourRule.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ employees: { create: [] } }) }),
+    );
+    const createdData = mockedPrisma.doubleHourRule.create.mock.calls[0]![0].data;
+    expect(createdData.companyId).toBeUndefined();
+    expect(createdData.sectorId).toBeUndefined();
+  });
+
+  it("Etapa 8B (test 2) — crea una Hora Especial con empresa pero sin empleados", async () => {
+    mockedPrisma.doubleHourRule.create.mockResolvedValue({ id: "rule-2", name: "Domingo Odwyer" });
+
+    await workforceService.createDoubleRule({ name: "Domingo Odwyer", recurrenceType: "SEMANAL", weekdays: [0], companyId: "company-odwyer", employeeIds: [] }, user);
+
+    expect(mockedPrisma.doubleHourRule.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ companyId: "company-odwyer", employees: { create: [] } }) }),
+    );
+  });
+
+  it("Etapa 8B (test 3) — crea una Hora Especial con empresa + sector pero sin empleados", async () => {
+    mockedPrisma.doubleHourRule.create.mockResolvedValue({ id: "rule-3", name: "Domingo Pañol" });
+
+    await workforceService.createDoubleRule({ name: "Domingo Pañol", recurrenceType: "SEMANAL", weekdays: [0], companyId: "company-odwyer", sectorId: "sector-panol", employeeIds: [] }, user);
+
+    expect(mockedPrisma.doubleHourRule.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ companyId: "company-odwyer", sectorId: "sector-panol", employees: { create: [] } }) }),
+    );
+  });
+
+  it("Etapa 8B (test 4) — crea una Hora Especial con empleados específicos (comportamiento preexistente, sigue igual)", async () => {
+    mockedPrisma.doubleHourRule.create.mockResolvedValue({ id: "rule-4", name: "Domingo Pañol" });
+
+    await workforceService.createDoubleRule({ name: "Domingo Pañol", recurrenceType: "SEMANAL", weekdays: [0], employeeIds: ["juan", "pedro", "carlos"] }, user);
+
+    expect(mockedPrisma.doubleHourRule.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ employees: { create: [{ employeeId: "juan" }, { employeeId: "pedro" }, { employeeId: "carlos" }] } }) }),
+    );
+  });
+
+  it("Etapa 8B — crea una Hora Especial de fechas específicas (FECHA) con varias fechas cargadas (feriados)", async () => {
+    mockedPrisma.doubleHourRule.create.mockResolvedValue({ id: "rule-5", name: "Feriados 2026" });
+    const navidad = new Date("2026-12-25");
+    const anioNuevo = new Date("2027-01-01");
+
+    await workforceService.createDoubleRule({ name: "Feriados 2026", recurrenceType: "FECHA", employeeIds: [], dates: [{ date: navidad, isActive: true }, { date: anioNuevo, isActive: true }] }, user);
+
+    expect(mockedPrisma.doubleHourRule.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ dates: { create: [{ date: navidad, isActive: true }, { date: anioNuevo, isActive: true }] } }) }),
+    );
+    // fromDate/toDate se derivan server-side como min/max de las fechas cargadas,
+    // nunca se confía en lo que mande el cliente para una regla FECHA.
+    expect(mockedPrisma.doubleHourRule.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ fromDate: navidad, toDate: anioNuevo }) }),
+    );
+  });
+
+  it("Etapa 8B — calendarPreview marca hasOverlap cuando dos reglas con alcances no excluyentes matchean el mismo día", async () => {
+    const sunday = new Date("2026-08-16T00:00:00.000Z");
+    mockedPrisma.doubleHourRule.findMany.mockResolvedValue([
+      { id: "domingo", name: "Domingo", recurrenceType: "SEMANAL", fromDate: new Date("2026-01-01"), toDate: null, weekdays: [0], priority: 1, multiplier: 2, companyId: null, sectorId: null, costCenterId: null, positionId: null, employees: [], dates: [] },
+      { id: "feriado", name: "Feriado", recurrenceType: "FECHA", fromDate: new Date("2026-08-16"), toDate: null, weekdays: [], priority: 1, multiplier: 2, companyId: null, sectorId: null, costCenterId: null, positionId: null, employees: [], dates: [{ date: sunday, isActive: true }] },
+    ]);
+
+    const days = await workforceService.calendarPreview(sunday, sunday);
+
+    expect(days).toEqual([{ date: "2026-08-16", rules: expect.arrayContaining([expect.objectContaining({ id: "domingo" }), expect.objectContaining({ id: "feriado" })]), hasOverlap: true, hasConflict: true }]);
+  });
+
+  it("Etapa 8B — calendarPreview NO marca overlap cuando los alcances configurados son mutuamente excluyentes (empresas distintas)", async () => {
+    const sunday = new Date("2026-08-16T00:00:00.000Z");
+    mockedPrisma.doubleHourRule.findMany.mockResolvedValue([
+      { id: "domingo-odwyer", name: "Domingo Odwyer", recurrenceType: "SEMANAL", fromDate: new Date("2026-01-01"), toDate: null, weekdays: [0], priority: 1, multiplier: 2, companyId: "odwyer", sectorId: null, costCenterId: null, positionId: null, employees: [], dates: [] },
+      { id: "domingo-tropa", name: "Domingo Tropa", recurrenceType: "SEMANAL", fromDate: new Date("2026-01-01"), toDate: null, weekdays: [0], priority: 1, multiplier: 1, companyId: "tropa", sectorId: null, costCenterId: null, positionId: null, employees: [], dates: [] },
+    ]);
+
+    const days = await workforceService.calendarPreview(sunday, sunday);
+
+    expect(days[0]).toMatchObject({ hasOverlap: false, hasConflict: false });
+  });
+
+  it("Etapa 8B — calendarPreview no incluye días sin ninguna regla matcheando (payload chico)", async () => {
+    mockedPrisma.doubleHourRule.findMany.mockResolvedValue([
+      { id: "domingo", name: "Domingo", recurrenceType: "SEMANAL", fromDate: new Date("2026-01-01"), toDate: null, weekdays: [0], priority: 1, multiplier: 2, companyId: null, sectorId: null, costCenterId: null, positionId: null, employees: [], dates: [] },
+    ]);
+
+    const days = await workforceService.calendarPreview(new Date("2026-08-17"), new Date("2026-08-18")); // lunes y martes, ninguno domingo
+
+    expect(days).toEqual([]);
+  });
+
+  it("Etapa 8B (corrección) — calendarPreview muestra CADA fecha de una regla 'Feriado' con varias fechas, no sólo la primera", async () => {
+    const anioNuevo = new Date("2026-01-01");
+    const nueveDeJulio = new Date("2026-07-09");
+    const navidad = new Date("2026-12-25");
+    mockedPrisma.doubleHourRule.findMany.mockResolvedValue([
+      { id: "feriado", name: "Feriado", recurrenceType: "FECHA", fromDate: anioNuevo, toDate: navidad, weekdays: [], priority: 1, multiplier: 2, companyId: null, sectorId: null, costCenterId: null, positionId: null, employees: [], dates: [{ date: anioNuevo, isActive: true }, { date: nueveDeJulio, isActive: true }, { date: navidad, isActive: true }] },
+    ]);
+
+    const days = await workforceService.calendarPreview(anioNuevo, navidad);
+
+    expect(days.map((day) => day.date)).toEqual(["2026-01-01", "2026-07-09", "2026-12-25"]);
+    expect(days.every((day) => day.rules[0]!.id === "feriado")).toBe(true);
+  });
+
+  it("Etapa 8B (corrección) — updateDoubleRule reemplaza el set completo de fechas de una regla FECHA existente (agregar + quitar en la misma operación)", async () => {
+    mockedPrisma.doubleHourRule.findUnique.mockResolvedValue({
+      id: "rule-feriado",
+      name: "Feriado",
+      recurrenceType: "FECHA",
+      employees: [],
+      dates: [{ id: "date-1", date: new Date("2026-12-25"), isActive: true }],
+    });
+    mockedPrisma.doubleHourRule.update.mockResolvedValue({ id: "rule-feriado", name: "Feriado" });
+    const anioNuevo = new Date("2027-01-01");
+    const nueveDeJulio = new Date("2026-07-09");
+
+    await workforceService.updateDoubleRule("rule-feriado", { dates: [{ date: anioNuevo, isActive: true }, { date: nueveDeJulio, isActive: false }] });
+
+    expect(mockedPrisma.doubleHourRule.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          dates: { deleteMany: {}, create: [{ date: anioNuevo, isActive: true }, { date: nueveDeJulio, isActive: false }] },
+        }),
+      }),
+    );
   });
 });

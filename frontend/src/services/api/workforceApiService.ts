@@ -75,8 +75,56 @@ export type ShiftTemplateInput = {
   absoluteOpenShiftLimitMinutes: number;
   status?: "ACTIVO" | "INACTIVO";
 };
-export type DoubleHourRule = { id: string; name: string; recurrenceType: "FECHA" | "RANGO" | "SEMANAL"; fromDate: string; toDate?: string | null; weekdays: number[]; multiplier: number | string; reason: string; status: string; employees: Array<{ employee: { id: string; legajo: string; firstName: string; lastName: string } }> };
-export type DoubleHourRuleInput = { name: string; recurrenceType: "FECHA" | "RANGO" | "SEMANAL"; fromDate: string; toDate?: string | null; weekdays: number[]; multiplier: number; employeeIds: string[]; reason: string; status?: "ACTIVO" | "INACTIVO" };
+// Etapa 8B: companyId/sectorId/costCenterId/positionId son alcance opcional
+// (null = sin restricción en esa dimensión, combina con AND con el resto y
+// con employeeIds). priority desempata superposición (mayor gana). dates
+// sólo aplica cuando recurrenceType es FECHA (feriados/fechas manuales).
+export type DoubleHourRuleDate = { id?: string; date: string; isActive: boolean };
+export type DoubleHourRule = {
+  id: string;
+  name: string;
+  recurrenceType: "FECHA" | "RANGO" | "SEMANAL";
+  fromDate: string;
+  toDate?: string | null;
+  weekdays: number[];
+  multiplier: number | string;
+  priority: number;
+  companyId?: string | null;
+  sectorId?: string | null;
+  costCenterId?: string | null;
+  positionId?: string | null;
+  company?: { id: string; name: string } | null;
+  sector?: { id: string; name: string } | null;
+  costCenter?: { id: string; name: string } | null;
+  position?: { id: string; name: string } | null;
+  dates: DoubleHourRuleDate[];
+  reason: string;
+  status: string;
+  employees: Array<{ employee: { id: string; legajo: string; firstName: string; lastName: string } }>;
+};
+export type DoubleHourRuleInput = {
+  name: string;
+  recurrenceType: "FECHA" | "RANGO" | "SEMANAL";
+  fromDate: string;
+  toDate?: string | null;
+  weekdays: number[];
+  multiplier: number;
+  priority: number;
+  companyId?: string | null;
+  sectorId?: string | null;
+  costCenterId?: string | null;
+  positionId?: string | null;
+  dates?: Array<{ date: string; isActive: boolean }>;
+  employeeIds: string[];
+  reason: string;
+  status?: "ACTIVO" | "INACTIVO";
+};
+export type DoubleHourRuleCalendarDay = {
+  date: string;
+  rules: Array<{ id: string; name: string; priority: number; multiplier: number }>;
+  hasOverlap: boolean;
+  hasConflict: boolean;
+};
 
 export const workforceApiService = {
   closures(period: string) {
@@ -117,4 +165,7 @@ export const workforceApiService = {
   createDoubleHourRule(input: DoubleHourRuleInput) { return apiRequest<{ data: DoubleHourRule }>("/workforce/double-hour-rules", { method: "POST", body: input }).then((response) => response.data); },
   updateDoubleHourRule(id: string, input: Partial<DoubleHourRuleInput>) { return apiRequest<{ data: DoubleHourRule }>(`/workforce/double-hour-rules/${id}`, { method: "PATCH", body: input }).then((response) => response.data); },
   removeDoubleHourRule(id: string) { return apiRequest<{ data: { mode: "DELETED" | "INACTIVATED"; id?: string; item?: DoubleHourRule } }>(`/workforce/double-hour-rules/${id}`, { method: "DELETE" }).then((response) => response.data); },
+  doubleHourRulesCalendar(from: string, to: string) {
+    return apiRequest<{ data: DoubleHourRuleCalendarDay[] }>(`/workforce/double-hour-rules/calendar?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`, { apiCache: false }).then((response) => response.data);
+  },
 };

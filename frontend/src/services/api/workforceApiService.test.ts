@@ -15,6 +15,7 @@ describe("workforceApiService.createDoubleHourRule", () => {
       toDate: null,
       weekdays: [],
       multiplier: 1.5,
+      priority: 0,
       employeeIds: ["employee-1"],
       reason: "Evento especial",
     };

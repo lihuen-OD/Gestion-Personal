@@ -11,6 +11,17 @@ Estado: diagnóstico — sin rediseño implementado, pendiente de aprobación pa
 > de feriados, sin integración con Conceptos Horarios, sobrecarga del nombre
 > "Horas especiales", sin recálculo retroactivo) sigue vigente — 8F no los
 > aborda a propósito, quedan para 8B en adelante.
+>
+> **Actualización 8B:** resueltos el scope obligatorio por empleado (ahora
+> opcional, con alcance por empresa/sector/centro de costo/puesto), la falta
+> de calendario (nueva entidad `SpecialHourRuleDate` para fechas explícitas/
+> feriados) y la falta de prioridad/conflicto en superposición. Ver
+> `docs/decisions/HORAS_ESPECIALES_8B.md`. Siguen pendientes: integración con
+> Conceptos Horarios (Ejemplo 4 del pedido original — Domingo aplicando
+> también sobre Sereno), sobrecarga del nombre "Horas especiales" en otras
+> pantallas/docs, recálculo retroactivo de `TimeEntry` ya generados, y una
+> bandeja de resolución de conflictos (hoy sólo se detectan y se muestran en
+> el calendario, no hay flujo de resolución).
 
 ## 0. Resumen ejecutivo
 

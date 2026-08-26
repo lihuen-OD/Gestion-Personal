@@ -6,6 +6,7 @@ import { roles } from "../../shared/security/roles";
 import type { AuditContext } from "../audit/audit.service";
 import { auditService } from "../audit/audit.service";
 import { argentinaCalendarDate, todayArgentinaDateKey } from "../../shared/datetime/argentinaTime";
+import { buildActiveDatesByRule, resolveWinningRules, ruleMatchesDate, scopesCouldOverlap } from "./doubleHourRuleMatching";
 
 function mapPrismaError(error: unknown) {
   if (error instanceof Prisma.PrismaClientKnownRequestError) {
@@ -66,6 +67,19 @@ function computeExpectedMinutes(startTime: string, endTime: string, crossesMidni
 function periodRange(period: string) {
   const [year, month] = period.split("-").map(Number);
   return { start: new Date(Date.UTC(year!, month! - 1, 1)), end: new Date(Date.UTC(year!, month!, 1)) };
+}
+
+// Etapa 8B: para recurrenceType FECHA, fromDate/toDate ya no son la
+// condición de matching (eso vive en `dates`) — pero siguen siendo columnas
+// NOT NULL usadas como pre-filtro de vigencia grueso antes de evaluar
+// ruleMatchesDate (ver timeEntries.repository.ts). Se derivan acá,
+// server-side, como min/max de TODAS las fechas configuradas (activas o no)
+// para que ese pre-filtro nunca excluya una fecha real por error — nunca se
+// confía en lo que mande el cliente para estas dos columnas en una regla
+// FECHA.
+function fechaVigencyFromDates(dates: Array<{ date: Date }>) {
+  const timestamps = dates.map((entry) => new Date(entry.date).getTime());
+  return { fromDate: new Date(Math.min(...timestamps)), toDate: new Date(Math.max(...timestamps)) };
 }
 
 export const workforceService = {
@@ -220,27 +234,96 @@ export const workforceService = {
     await auditService.register({ ...audit, action: "DELETE", entity: "ShiftTemplate", entityId: id, description: `Se eliminó el turno sin uso ${before.code} - ${before.name}.`, before: before as Prisma.InputJsonValue });
     return { mode: "DELETED" as const, id, relatedWorkShifts: 0 };
   },
-  doubleRules() { return prisma.doubleHourRule.findMany({ include: { employees: { include: { employee: { select: { id: true, legajo: true, firstName: true, lastName: true } } } } }, orderBy: { fromDate: "desc" } }); },
+  // Etapa 8B: se agregan dates (calendario FECHA) y los 4 nombres de scope
+  // (empresa/sector/centro de costo/puesto) para que el frontend no necesite
+  // otra consulta para mostrarlos.
+  doubleRules() {
+    return prisma.doubleHourRule.findMany({
+      include: {
+        employees: { include: { employee: { select: { id: true, legajo: true, firstName: true, lastName: true } } } },
+        dates: { orderBy: { date: "asc" } },
+        company: { select: { id: true, name: true } },
+        sector: { select: { id: true, name: true } },
+        costCenter: { select: { id: true, name: true } },
+        position: { select: { id: true, name: true } },
+      },
+      orderBy: { fromDate: "desc" },
+    });
+  },
   async createDoubleRule(input: any, user: Express.AuthUser, audit?: AuditContext) {
-    const { employeeIds, ...data } = input;
-    const item = await execute(() => prisma.doubleHourRule.create({ data: { ...data, createdByUserId: user.id, employees: { create: employeeIds.map((employeeId: string) => ({ employeeId })) } }, include: { employees: true } }));
+    const { employeeIds, dates, ...data } = input;
+    const item = await execute(() => prisma.doubleHourRule.create({
+      data: {
+        ...data,
+        ...(data.recurrenceType === "FECHA" && dates?.length ? fechaVigencyFromDates(dates) : {}),
+        createdByUserId: user.id,
+        employees: { create: employeeIds.map((employeeId: string) => ({ employeeId })) },
+        ...(dates ? { dates: { create: dates.map((entry: { date: Date; isActive?: boolean }) => ({ date: entry.date, isActive: entry.isActive ?? true })) } } : {}),
+      },
+      include: { employees: true, dates: true },
+    }));
     await auditService.register({ ...audit, action: "CREATE", entity: "DoubleHourRule", entityId: item.id, description: `Se creó la regla de horas especiales ${item.name}.`, after: item as Prisma.InputJsonValue });
     return item;
   },
   async updateDoubleRule(id: string, input: any, audit?: AuditContext) {
-    const before = await prisma.doubleHourRule.findUnique({ where: { id }, include: { employees: true } });
+    const before = await prisma.doubleHourRule.findUnique({ where: { id }, include: { employees: true, dates: true } });
     if (!before) throw new AppError("No encontramos la regla solicitada", 404, "DOUBLE_HOUR_RULE_NOT_FOUND");
-    const { employeeIds, ...data } = input;
+    const { employeeIds, dates, ...data } = input;
+    const recurrenceType = data.recurrenceType ?? before.recurrenceType;
     const item = await prisma.doubleHourRule.update({
       where: { id },
       data: {
         ...data,
+        ...(recurrenceType === "FECHA" && dates?.length ? fechaVigencyFromDates(dates) : {}),
         ...(employeeIds ? { employees: { deleteMany: {}, create: employeeIds.map((employeeId: string) => ({ employeeId })) } } : {}),
+        ...(dates ? { dates: { deleteMany: {}, create: dates.map((entry: { date: Date; isActive?: boolean }) => ({ date: entry.date, isActive: entry.isActive ?? true })) } } : {}),
       },
-      include: { employees: { include: { employee: { select: { id: true, legajo: true, firstName: true, lastName: true } } } } },
+      include: {
+        employees: { include: { employee: { select: { id: true, legajo: true, firstName: true, lastName: true } } } },
+        dates: { orderBy: { date: "asc" } },
+        company: { select: { id: true, name: true } },
+        sector: { select: { id: true, name: true } },
+        costCenter: { select: { id: true, name: true } },
+        position: { select: { id: true, name: true } },
+      },
     });
     await auditService.register({ ...audit, action: "UPDATE", entity: "DoubleHourRule", entityId: id, description: `Se actualizó la regla de horas especiales ${item.name}.`, before: before as Prisma.InputJsonValue, after: item as Prisma.InputJsonValue });
     return item;
+  },
+  // Etapa 8B: preview de calendario — de sólo configuración (no depende de
+  // fichadas reales). Para cada fecha del rango, qué reglas ACTIVAS matchean
+  // por calendario (ruleMatchesDate) y si sus alcances podrían superponerse
+  // (scopesCouldOverlap, heurístico) con prioridad empatada entre las que sí
+  // podrían superponerse (resolveWinningRules) — es una alerta de
+  // configuración para RRHH, no la resolución real por empleado, que sólo
+  // ocurre en el motor al fichar.
+  async calendarPreview(from: Date, to: Date) {
+    const rules = await prisma.doubleHourRule.findMany({
+      where: { status: "ACTIVO", fromDate: { lte: to }, OR: [{ toDate: null }, { toDate: { gte: from } }] },
+      include: { employees: { select: { employeeId: true } }, dates: true },
+    });
+    const activeDatesByRule = buildActiveDatesByRule(rules);
+    const days: Array<{ date: string; rules: Array<{ id: string; name: string; priority: number; multiplier: number }>; hasOverlap: boolean; hasConflict: boolean }> = [];
+    for (let cursor = new Date(from); cursor <= to; cursor = new Date(cursor.getTime() + 86_400_000)) {
+      const matched = rules.filter((rule) => ruleMatchesDate(rule, cursor, activeDatesByRule));
+      if (!matched.length) continue;
+      const scopes = matched.map((rule) => ({ companyId: rule.companyId, sectorId: rule.sectorId, costCenterId: rule.costCenterId, positionId: rule.positionId, employeeIds: rule.employees.map((item) => item.employeeId) }));
+      let hasOverlap = false;
+      for (let i = 0; i < matched.length && !hasOverlap; i++) {
+        for (let j = i + 1; j < matched.length; j++) {
+          if (scopesCouldOverlap(scopes[i]!, scopes[j]!)) { hasOverlap = true; break; }
+        }
+      }
+      const overlappingRules = matched.filter((_, index) => matched.some((_other, otherIndex) => index !== otherIndex && scopesCouldOverlap(scopes[index]!, scopes[otherIndex]!)));
+      const { conflicting } = resolveWinningRules(overlappingRules.length ? overlappingRules : matched);
+      days.push({
+        date: cursor.toISOString().slice(0, 10),
+        rules: matched.map((rule) => ({ id: rule.id, name: rule.name, priority: rule.priority, multiplier: Number(rule.multiplier) })),
+        hasOverlap,
+        hasConflict: hasOverlap && conflicting,
+      });
+    }
+    return days;
   },
   async removeDoubleRule(id: string, audit?: AuditContext) {
     const before = await prisma.doubleHourRule.findUnique({ where: { id }, include: { employees: true } });
