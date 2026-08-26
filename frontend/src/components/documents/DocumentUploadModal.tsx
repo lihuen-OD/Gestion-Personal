@@ -4,7 +4,6 @@ import { documentApiService } from "../../services/api/documentApiService";
 import { employeeApiService } from "../../services/api/employeeApiService";
 import type { DocumentMock, Employee, User } from "../../types";
 import { defaultDocumentExpiration, documentStatusByExpiration } from "../../utils/documentStatus";
-import { displayLegajo, fullName } from "../../utils/employee";
 import { useAsyncAction } from "../../utils/useAsyncAction";
 import { Button } from "../ui/Button";
 import { Field, Select } from "../ui/FormControls";

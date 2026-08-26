@@ -3,6 +3,7 @@ import { requestAuditContext } from "../../shared/audit/requestAuditContext";
 import { createTtlCache } from "../../shared/cache/ttlCache";
 import { requireParam } from "../../shared/http/params";
 import { clearDocumentsReadCaches } from "../documents/documents.cache";
+import { clearTimeEntriesReadCaches } from "../time-entries/timeEntries.cache";
 import type { EmployeeTimeGridQuery, ListEmployeeHistoryQuery, ListEmployeeOptionsQuery, ListEmployeeOrgChartQuery, ListEmployeesQuery } from "./employees.schemas";
 import { employeesService } from "./employees.service";
 import { automaticHourConceptBreakdownsService } from "./automaticHourConceptBreakdowns.service";
@@ -104,27 +105,40 @@ export const employeesController = {
     res.json({ data: result });
   }) satisfies RequestHandler,
 
+  // Etapa 7A: estos cinco mutadores escriben HourConceptBreakdown, que es lo
+  // que lee findPeriodEmployees() para la columna "especial" del listado por
+  // período (timeEntriesPeriodEmployeesCache, 20s de TTL en
+  // timeEntries.controller.ts). Hasta 7A sólo limpiaban las cachés de
+  // employees, así que un desglose recién cargado/aprobado/rechazado se
+  // guardaba bien pero Carga de horas seguía mostrando el valor anterior
+  // hasta que el TTL expirara — la imagen espejo del bug de la grilla que
+  // arregló la Etapa 6L.4 en la dirección contraria (time-entries →
+  // employees). Se limpian ambos lados, igual que allá.
   upsertManualHourConceptBreakdown: (async (req, res) => {
     const result = await employeesService.upsertManualHourConceptBreakdown(requireParam(req, "id"), req.body, req.user!, requestAuditContext(req));
     clearEmployeeReadCaches();
+    clearTimeEntriesReadCaches();
     res.json({ data: result });
   }) satisfies RequestHandler,
 
   approveManualHourConceptBreakdown: (async (req, res) => {
     const result = await employeesService.approveManualHourConceptBreakdown(requireParam(req, "id"), requireParam(req, "breakdownId"), req.user!, requestAuditContext(req));
     clearEmployeeReadCaches();
+    clearTimeEntriesReadCaches();
     res.json({ data: result });
   }) satisfies RequestHandler,
 
   rejectManualHourConceptBreakdown: (async (req, res) => {
     const result = await employeesService.rejectManualHourConceptBreakdown(requireParam(req, "id"), requireParam(req, "breakdownId"), req.body, req.user!, requestAuditContext(req));
     clearEmployeeReadCaches();
+    clearTimeEntriesReadCaches();
     res.json({ data: result });
   }) satisfies RequestHandler,
 
   returnManualHourConceptBreakdown: (async (req, res) => {
     const result = await employeesService.returnManualHourConceptBreakdown(requireParam(req, "id"), requireParam(req, "breakdownId"), req.body, req.user!, requestAuditContext(req));
     clearEmployeeReadCaches();
+    clearTimeEntriesReadCaches();
     res.json({ data: result });
   }) satisfies RequestHandler,
 
@@ -136,6 +150,7 @@ export const employeesController = {
       requestAuditContext(req),
     );
     clearEmployeeReadCaches();
+    clearTimeEntriesReadCaches();
     res.json({ data: result });
   }) satisfies RequestHandler,
 

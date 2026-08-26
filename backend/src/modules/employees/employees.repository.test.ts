@@ -17,6 +17,7 @@ vi.mock("../../shared/prisma/client", () => ({
     hourConcept: { findMany: vi.fn() },
     employeeAssignment: { deleteMany: vi.fn(), createMany: vi.fn() },
     employeeHourConcept: { deleteMany: vi.fn(), createMany: vi.fn() },
+    employeeDocument: { create: vi.fn() },
     $transaction: vi.fn(),
   },
 }));
@@ -169,6 +170,68 @@ describe("employeesRepository.replaceAssignments / replaceHourConcepts — Etapa
       expect.objectContaining({ where: { id: "emp-1" } }),
     );
     expect((tx as Record<string, unknown>).employee).toBeUndefined();
+    expect(result).toEqual({ id: "emp-1" });
+  });
+});
+
+// Etapa 7A: los dos usos restantes del mismo antipatrón que arregló 6Q — el
+// re-fetch con employeeDetailSelect (relaciones anidadas pesadas, varias
+// colecciones con take 20/50/100) corría DENTRO de la transacción interactiva.
+// En createLaborMovement el create + recálculo de estado sí necesitan
+// atomicidad y quedan adentro; sólo sale la lectura. En createDocument la
+// transacción envolvía un único create más esa lectura, así que se retira
+// entera sin perder garantías.
+describe("employeesRepository.createLaborMovement / createDocument — Etapa 7A", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("createLaborMovement: create + update de estado quedan dentro de $transaction y el re-fetch pesado fuera", async () => {
+    const tx = {
+      laborMovement: {
+        create: vi.fn().mockResolvedValue({ id: "mov-1", type: "BAJA" }),
+        findMany: vi.fn().mockResolvedValue([{ type: "ALTA", effectiveFrom: new Date("2026-01-01T00:00:00.000Z") }]),
+      },
+      employee: { update: vi.fn() },
+    };
+    (prisma.$transaction as Mock).mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) => cb(tx));
+    (prisma.employee.findUniqueOrThrow as Mock).mockResolvedValue({ id: "emp-1" });
+
+    const result = await employeesRepository.createLaborMovement("emp-1", {
+      type: "ALTA",
+      effectiveFrom: new Date("2026-02-01T00:00:00.000Z"),
+      reason: "Ingreso",
+    } as Parameters<typeof employeesRepository.createLaborMovement>[1]);
+
+    // lo que sí necesita ser atómico sigue adentro de la transacción
+    expect(tx.laborMovement.create).toHaveBeenCalledTimes(1);
+    expect(tx.employee.update).toHaveBeenCalledTimes(1);
+    // el re-fetch pesado corre sobre `prisma`, no sobre `tx` — o sea, ya cerrada la transacción
+    expect(tx.employee).not.toHaveProperty("findUniqueOrThrow");
+    expect(prisma.employee.findUniqueOrThrow).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "emp-1" } }),
+    );
+    expect(result).toEqual({ employee: { id: "emp-1" }, movement: { id: "mov-1", type: "BAJA" } });
+  });
+
+  it("createDocument: ya no abre transacción interactiva y devuelve el legajo leído fuera", async () => {
+    (prisma.employeeDocument.create as Mock).mockResolvedValue({ id: "doc-1" });
+    (prisma.employee.findUniqueOrThrow as Mock).mockResolvedValue({ id: "emp-1" });
+
+    const result = await employeesRepository.createDocument("emp-1", {
+      categoryId: "cat-1",
+      fileName: "recibo.pdf",
+      fileMimeType: "application/pdf",
+      fileSizeBytes: 1024,
+      storageKey: "employees/emp-1/recibo.pdf",
+      status: "VIGENTE",
+    } as Parameters<typeof employeesRepository.createDocument>[1]);
+
+    expect(prisma.employeeDocument.create).toHaveBeenCalledTimes(1);
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(prisma.employee.findUniqueOrThrow).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "emp-1" } }),
+    );
     expect(result).toEqual({ id: "emp-1" });
   });
 });

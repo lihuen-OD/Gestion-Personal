@@ -1,7 +1,6 @@
 import { Power } from "lucide-react";
 import { useEffect, useState } from "react";
-import { Link, Navigate, useLocation, useParams } from "react-router-dom";
-import { PageHeader } from "../components/ui/PageHeader";
+import { Link, useLocation, useParams } from "react-router-dom";
 import { Section } from "../components/ui/Section";
 import { LoadingState } from "../components/ui/LoadingState";
 import { ErrorState } from "../components/ui/ErrorState";

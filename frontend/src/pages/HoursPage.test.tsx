@@ -333,3 +333,73 @@ describe("HoursPage — bandeja de revisión resuelve desgloses manuales (Etapa 
     expect(await screen.findByText(/no modifican Hora normal ni el total trabajado/i)).toBeInTheDocument();
   });
 });
+
+// Etapa 7A: aprobar/rechazar/devolver una carga horaria o una novedad no tenía
+// try/catch — si el endpoint fallaba, la promesa quedaba rechazada sin
+// capturar, no se mostraba ningún mensaje y el modal se cerraba igual, con lo
+// que la acción parecía haber funcionado. Los desgloses manuales ya tenían
+// este tratamiento desde 6L.5; estos tests fijan la simetría.
+describe("HoursPage — las acciones de revisión no fallan en silencio (Etapa 7A)", () => {
+  it("si aprobar una carga horaria falla, muestra el error y no lo traga", async () => {
+    const { default: userEvent } = await import("@testing-library/user-event");
+    const user = userEvent.setup();
+    authAs("Nivel 1 - RRHH");
+    vi.mocked(timeEntryApiService.approve).mockRejectedValue(new Error("network down"));
+    renderPending();
+
+    const row = await screen.findByText("100");
+    await user.click(within(row.closest("tr")!).getByRole("button", { name: "Aprobar" }));
+
+    expect(await screen.findByText("No pudimos completar la acción. Intentá nuevamente.")).toBeInTheDocument();
+  });
+
+  it("si rechazar una carga horaria falla, muestra el error y deja el modal abierto para reintentar", async () => {
+    const { default: userEvent } = await import("@testing-library/user-event");
+    const user = userEvent.setup();
+    authAs("Nivel 1 - RRHH");
+    vi.mocked(timeEntryApiService.reject).mockRejectedValue(new Error("network down"));
+    renderPending();
+
+    const row = await screen.findByText("100");
+    await user.click(within(row.closest("tr")!).getByRole("button", { name: "Rechazar" }));
+    const modal = (await screen.findByText("Rechazar carga horaria")).closest(".modal") as HTMLElement;
+    const reason = within(modal).getByPlaceholderText("Indicá el motivo para dejar trazabilidad");
+    await user.type(reason, "No corresponde");
+    await user.click(within(modal).getByRole("button", { name: "Rechazar" }));
+
+    expect(await within(modal).findByText("No pudimos completar la acción. Intentá nuevamente.")).toBeInTheDocument();
+    // el motivo tipeado sigue ahí: el modal no se cerró, se puede reintentar
+    expect(reason).toHaveValue("No corresponde");
+  });
+
+  it("si aprobar una novedad falla, muestra el error", async () => {
+    const { default: userEvent } = await import("@testing-library/user-event");
+    const { noveltyApiService } = await import("../services/api/noveltyApiService");
+    const user = userEvent.setup();
+    authAs("Nivel 1 - RRHH");
+    vi.mocked(noveltyApiService.approve).mockRejectedValue(new Error("network down"));
+    vi.mocked(pendingApiService.getAll).mockResolvedValue({
+      summary: { total: 1, novelties: 1, timeEntries: 0, hourConceptBreakdowns: 0 },
+      data: [buildPendingBreakdownItem({ kind: "novelty", sourceId: "novelty-1", title: "Vacaciones", employeeLabel: "300 - Diaz, Sol" })],
+    });
+    renderPending();
+
+    const row = await screen.findByText("300 - Diaz, Sol");
+    await user.click(within(row.closest("tr")!).getByRole("button", { name: /Aprobar/i }));
+
+    expect(await screen.findByText("No pudimos completar la acción. Intentá nuevamente.")).toBeInTheDocument();
+  });
+
+  it("una acción que sale bien no deja ningún mensaje de error colgado", async () => {
+    const { default: userEvent } = await import("@testing-library/user-event");
+    const user = userEvent.setup();
+    authAs("Nivel 1 - RRHH");
+    vi.mocked(timeEntryApiService.approve).mockResolvedValue(buildReviewEntry({ status: "Aprobado" }));
+    renderPending();
+
+    const row = await screen.findByText("100");
+    await user.click(within(row.closest("tr")!).getByRole("button", { name: "Aprobar" }));
+
+    expect(screen.queryByText("No pudimos completar la acción. Intentá nuevamente.")).not.toBeInTheDocument();
+  });
+});

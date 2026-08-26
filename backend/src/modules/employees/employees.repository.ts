@@ -1273,9 +1273,15 @@ export const employeesRepository = {
     });
   },
 
-  createLaborMovement(employeeId: string, input: CreateLaborMovementInput, createdByUserId?: string | null) {
-    return prisma.$transaction(async (tx) => {
-      const movement = await tx.laborMovement.create({
+  // Etapa 7A: mismo criterio que replaceAssignments/replaceHourConcepts (6Q).
+  // El create + recálculo de estado sí necesitan ser atómicos y quedan dentro
+  // de la transacción; el re-fetch con employeeDetailSelect (relaciones
+  // anidadas pesadas) es sólo lectura para dar forma a la respuesta y se hace
+  // después de que la transacción cerró, para no arriesgar el timeout de 5s
+  // de Prisma bajo latencia alta de Neon.
+  async createLaborMovement(employeeId: string, input: CreateLaborMovementInput, createdByUserId?: string | null) {
+    const movement = await prisma.$transaction(async (tx) => {
+      const created = await tx.laborMovement.create({
         data: {
           employeeId,
           type: input.type,
@@ -1296,9 +1302,11 @@ export const employeesRepository = {
         data: { status: resolveLaborStatus(movements) },
       });
 
-      const employee = await tx.employee.findUniqueOrThrow({ where: { id: employeeId }, select: employeeDetailSelect });
-      return { employee, movement };
+      return created;
     });
+
+    const employee = await prisma.employee.findUniqueOrThrow({ where: { id: employeeId }, select: employeeDetailSelect });
+    return { employee, movement };
   },
 
   findDocumentCategory(categoryId: string) {
@@ -1308,32 +1316,34 @@ export const employeesRepository = {
     });
   },
 
-  createDocument(
+  async createDocument(
     employeeId: string,
     input: Omit<CreateEmployeeDocumentInput, "storageKey"> & { storageKey: string; storageFileId?: string | null },
     uploadedByUserId?: string | null,
   ) {
-    return prisma.$transaction(async (tx) => {
-      await tx.employeeDocument.create({
-        data: {
-          employeeId,
-          categoryId: input.categoryId,
-          noveltyId: input.noveltyId || null,
-          fileName: input.fileName,
-          fileMimeType: input.fileMimeType,
-          fileSizeBytes: input.fileSizeBytes,
-          storageKey: input.storageKey,
-          storageFileId: input.storageFileId || null,
-          status: input.status,
-          notes: input.notes || null,
-          issuedAt: input.issuedAt || null,
-          expiresAt: input.expiresAt || null,
-          uploadedByUserId: uploadedByUserId || null,
-        },
-      });
-
-      return tx.employee.findUniqueOrThrow({ where: { id: employeeId }, select: employeeDetailSelect });
+    // Etapa 7A: mismo criterio que 6Q — el re-fetch con employeeDetailSelect
+    // se hace fuera de la transacción. Acá además la transacción sólo envolvía
+    // ese create (que ya es atómico por sí mismo) más la lectura pesada, así
+    // que sacarla no pierde ninguna garantía.
+    await prisma.employeeDocument.create({
+      data: {
+        employeeId,
+        categoryId: input.categoryId,
+        noveltyId: input.noveltyId || null,
+        fileName: input.fileName,
+        fileMimeType: input.fileMimeType,
+        fileSizeBytes: input.fileSizeBytes,
+        storageKey: input.storageKey,
+        storageFileId: input.storageFileId || null,
+        status: input.status,
+        notes: input.notes || null,
+        issuedAt: input.issuedAt || null,
+        expiresAt: input.expiresAt || null,
+        uploadedByUserId: uploadedByUserId || null,
+      },
     });
+
+    return prisma.employee.findUniqueOrThrow({ where: { id: employeeId }, select: employeeDetailSelect });
   },
 
   findFieldHistory(employeeId: string, query: ListEmployeeHistoryQuery) {

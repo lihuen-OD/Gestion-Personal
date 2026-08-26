@@ -168,6 +168,21 @@ function breakdownResolveErrorMessage(error: unknown) {
   }
   return "No pudimos resolver el desglose manual. Intentá nuevamente.";
 }
+
+// Etapa 7A: aprobar/rechazar/devolver una carga horaria o una novedad no tenía
+// ningún manejo de error — si el endpoint fallaba, la promesa quedaba
+// rechazada sin capturar: la bandeja no mostraba nada, el modal se cerraba
+// igual y parecía que la acción había funcionado. Se les da el mismo
+// tratamiento que ya tenían los desgloses manuales desde 6L.5.
+function reviewActionErrorMessage(error: unknown) {
+  if (error instanceof ApiError) {
+    if (error.code === "FORBIDDEN") {
+      return "No tenés permiso para resolver este registro.";
+    }
+    return error.message;
+  }
+  return "No pudimos completar la acción. Intentá nuevamente.";
+}
 const pageSize = 25;
 
 export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
@@ -185,6 +200,10 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
   const [breakdownReview, setBreakdownReview] = useState<{ item: PendingItem; action: "reject" | "return" }>();
   const [resolvingBreakdownId, setResolvingBreakdownId] = useState<string | null>(null);
   const [breakdownActionError, setBreakdownActionError] = useState("");
+  // Etapa 7A: error de las acciones de revisión de cargas horarias y novedades
+  // (antes fallaban en silencio). Se muestra en la cabecera de la página y,
+  // cuando la acción salió de un modal, también adentro del modal.
+  const [reviewActionError, setReviewActionError] = useState("");
   const [reviewReason, setReviewReason] = useState("");
   const [groupByPerson, setGroupByPerson] = useState(false);
   const [periodRows, setPeriodRows] = useState<
@@ -341,36 +360,59 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
   };
   const approve = async (entry: TimeEntry) => {
     if (!user) return;
-    await timeEntryApiService.approve(entry.id);
-    setRefresh((value) => value + 1);
+    setReviewActionError("");
+    try {
+      await timeEntryApiService.approve(entry.id);
+      setRefresh((value) => value + 1);
+    } catch (error) {
+      setReviewActionError(reviewActionErrorMessage(error));
+    }
   };
   const openReview = (entry: TimeEntry, action: "reject" | "return") => {
     setReview({ entry, action });
+    setReviewActionError("");
     setReviewReason("");
   };
   const confirmReview = async () => {
     if (!reviewReason.trim() || !review) return;
     if (!user) return;
-    if (review.action === "reject") {
-      await timeEntryApiService.reject(review.entry.id, reviewReason.trim());
-    } else {
-      await timeEntryApiService.returnForCorrection(review.entry.id, reviewReason.trim());
+    setReviewActionError("");
+    try {
+      if (review.action === "reject") {
+        await timeEntryApiService.reject(review.entry.id, reviewReason.trim());
+      } else {
+        await timeEntryApiService.returnForCorrection(review.entry.id, reviewReason.trim());
+      }
+      setReview(undefined);
+      setReviewReason("");
+      setRefresh((value) => value + 1);
+    } catch (error) {
+      // el modal queda abierto a propósito, para poder reintentar sin
+      // volver a escribir la observación
+      setReviewActionError(reviewActionErrorMessage(error));
     }
-    setReview(undefined);
-    setReviewReason("");
-    setRefresh((value) => value + 1);
   };
   const approveNovelty = async (item: PendingItem) => {
     if (!user) return;
-    await noveltyApiService.approve(item.sourceId);
-    setRefresh((value) => value + 1);
+    setReviewActionError("");
+    try {
+      await noveltyApiService.approve(item.sourceId);
+      setRefresh((value) => value + 1);
+    } catch (error) {
+      setReviewActionError(reviewActionErrorMessage(error));
+    }
   };
   const confirmNoveltyReject = async () => {
     if (!noveltyReject || !reviewReason.trim()) return;
-    await noveltyApiService.reject(noveltyReject.sourceId, reviewReason.trim());
-    setNoveltyReject(undefined);
-    setReviewReason("");
-    setRefresh((value) => value + 1);
+    setReviewActionError("");
+    try {
+      await noveltyApiService.reject(noveltyReject.sourceId, reviewReason.trim());
+      setNoveltyReject(undefined);
+      setReviewReason("");
+      setRefresh((value) => value + 1);
+    } catch (error) {
+      setReviewActionError(reviewActionErrorMessage(error));
+    }
   };
   // Etapa 6L.5: aprobar/rechazar/devolver un desglose manual pendiente
   // (HourConceptBreakdown) desde la bandeja — mismo patrón que TimeEntry
@@ -438,6 +480,7 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
       />
       {loadError ? <div className="form-error">{loadError}</div> : null}
       {exportError ? <div className="form-error">{exportError}</div> : null}
+      {reviewActionError ? <div className="form-error">{reviewActionError}</div> : null}
 
       <div className="stat-grid">
         <StatCard label="Personas activas" value={hoursSummary.activeEmployees} icon={Users} />
@@ -518,6 +561,7 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
                                 aria-label="Rechazar novedad"
                                 onClick={() => {
                                   setNoveltyReject(item);
+                                  setReviewActionError("");
                                   setReviewReason("");
                                 }}
                               >
@@ -999,6 +1043,7 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
             {!reviewReason.trim() ? (
               <p className="error">La observación es obligatoria.</p>
             ) : null}
+            {reviewActionError ? <p className="error">{reviewActionError}</p> : null}
             <div className="form-actions">
               <Button variant="subtle" onClick={() => setReview(undefined)}>
                 Cancelar
@@ -1084,6 +1129,7 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
             {!reviewReason.trim() ? (
               <p className="error">La observación es obligatoria.</p>
             ) : null}
+            {reviewActionError ? <p className="error">{reviewActionError}</p> : null}
             <div className="form-actions">
               <Button variant="subtle" onClick={() => setNoveltyReject(undefined)}>
                 Cancelar
