@@ -53,5 +53,18 @@ export const doubleRuleSchema = doubleRuleBaseSchema.superRefine((value, ctx) =>
     ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Una regla de fechas específicas necesita al menos una fecha cargada.", path: ["dates"] });
   }
 });
-export const updateDoubleRuleSchema = doubleRuleBaseSchema.partial().refine((value) => Object.keys(value).length > 0, { message: "Indicá al menos un dato para actualizar" });
+// Etapa 8C: la misma exigencia de doubleRuleSchema (FECHA necesita >=1 fecha)
+// también aplica acá — sin esto, un PATCH que cambia recurrenceType a FECHA
+// sin mandar `dates` dejaba la regla activa pero sin ninguna fecha que
+// pudiera matchear jamás (ruleMatchesDate siempre false). El frontend ya
+// manda `dates` junto con recurrenceType=FECHA en cada submit (nunca dispara
+// esto en uso normal); esto sólo cierra el hueco para un caller directo.
+export const updateDoubleRuleSchema = doubleRuleBaseSchema.partial().superRefine((value, ctx) => {
+  if (Object.keys(value).length === 0) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Indicá al menos un dato para actualizar" });
+  }
+  if (value.recurrenceType === "FECHA" && !value.dates?.length) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Una regla de fechas específicas necesita al menos una fecha cargada.", path: ["dates"] });
+  }
+});
 export const calendarRangeQuerySchema = z.object({ from: z.coerce.date(), to: z.coerce.date() }).refine((value) => value.to >= value.from, { message: "'to' debe ser posterior o igual a 'from'" }).refine((value) => (value.to.getTime() - value.from.getTime()) / 86_400_000 <= 400, { message: "El rango de calendario no puede superar los 400 días" });

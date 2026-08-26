@@ -534,3 +534,37 @@ describe("WorkScheduleSettingsPage — Etapa 8B (corrección: errores contenidos
     expect(tableCard).toContainElement(alert);
   });
 });
+
+describe("WorkScheduleSettingsPage — Etapa 8C (corrección: acciones de la tabla deshabilitadas durante el guardado)", () => {
+  it("Editar/Activar-Inactivar/Eliminar quedan deshabilitados mientras una mutación está en curso, y se rehabilitan al terminar", async () => {
+    vi.mocked(workforceApiService.doubleHourRules).mockResolvedValue([existingRule()]);
+    let resolveUpdate!: (value: DoubleHourRule) => void;
+    vi.mocked(workforceApiService.updateDoubleHourRule).mockReturnValue(
+      new Promise((resolve) => { resolveUpdate = resolve; }),
+    );
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByText("Domingo");
+
+    expect(screen.getByRole("button", { name: /editar domingo/i })).not.toBeDisabled();
+    expect(screen.getByRole("button", { name: /inactivar domingo/i })).not.toBeDisabled();
+    expect(screen.getByRole("button", { name: /eliminar domingo/i })).not.toBeDisabled();
+
+    await user.click(screen.getByRole("button", { name: /inactivar domingo/i }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /editar domingo/i })).toBeDisabled();
+      expect(screen.getByRole("button", { name: /(inactivar|activar) domingo/i })).toBeDisabled();
+      expect(screen.getByRole("button", { name: /eliminar domingo/i })).toBeDisabled();
+    });
+
+    resolveUpdate(existingRule({ status: "INACTIVO" }));
+
+    // La lista se recarga tras la mutación (mock siempre devuelve la regla
+    // ACTIVO original) — lo que importa acá es que las 3 acciones vuelven a
+    // habilitarse, no el estado final de la regla en sí.
+    await waitFor(() => expect(screen.getByRole("button", { name: /editar domingo/i })).not.toBeDisabled());
+    expect(screen.getByRole("button", { name: /(inactivar|activar) domingo/i })).not.toBeDisabled();
+    expect(screen.getByRole("button", { name: /eliminar domingo/i })).not.toBeDisabled();
+  });
+});

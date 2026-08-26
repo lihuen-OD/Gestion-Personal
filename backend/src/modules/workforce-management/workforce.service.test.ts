@@ -232,6 +232,26 @@ describe("workforceService — FK reales sobre ShiftTemplate/DoubleHourRule", ()
     }
   });
 
+  it("Etapa 8C — una regla cuya vigencia ya comenzó se inactiva en vez de borrarse (preserva la trazabilidad de SpecialHourRuleApplication ya generada)", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-15T12:00:00.000Z"));
+    mockedPrisma.doubleHourRule.findUnique.mockResolvedValue({
+      id: "rule-1",
+      name: "Domingo",
+      fromDate: new Date("2026-01-01T00:00:00.000Z"),
+      employees: [],
+    });
+    mockedPrisma.doubleHourRule.update.mockResolvedValue({ id: "rule-1", name: "Domingo", status: "INACTIVO" });
+
+    try {
+      await expect(workforceService.removeDoubleRule("rule-1")).resolves.toMatchObject({ mode: "INACTIVATED" });
+      expect(mockedPrisma.doubleHourRule.delete).not.toHaveBeenCalled();
+      expect(mockedPrisma.doubleHourRule.update).toHaveBeenCalledWith({ where: { id: "rule-1" }, data: { status: "INACTIVO" }, include: { employees: true } });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("createDoubleRule mapea un userId inexistente (P2003) a un 400 prolijo", async () => {
     mockedPrisma.doubleHourRule.create.mockRejectedValue(prismaKnownError("P2003"));
 

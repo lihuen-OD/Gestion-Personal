@@ -498,13 +498,13 @@ export function WorkScheduleSettingsPage() {
                       <td><Badge tone={item.status === "ACTIVO" ? "success" : "neutral"}>{item.status === "ACTIVO" ? "Activa" : "Inactiva"}</Badge></td>
                       <td>
                         <div className="table-actions">
-                          <button type="button" className="table-icon-action" title="Editar regla" aria-label={`Editar ${item.name}`} onClick={() => editRule(item)}>
+                          <button type="button" className="table-icon-action" disabled={working} title="Editar regla" aria-label={`Editar ${item.name}`} onClick={() => editRule(item)}>
                             <Pencil /><span>Editar</span>
                           </button>
-                          <button type="button" className="table-icon-action" title={item.status === "ACTIVO" ? "Inactivar regla" : "Activar regla"} aria-label={`${item.status === "ACTIVO" ? "Inactivar" : "Activar"} ${item.name}`} onClick={() => void toggleRule(item)}>
+                          <button type="button" className="table-icon-action" disabled={working} title={item.status === "ACTIVO" ? "Inactivar regla" : "Activar regla"} aria-label={`${item.status === "ACTIVO" ? "Inactivar" : "Activar"} ${item.name}`} onClick={() => void toggleRule(item)}>
                             <Power /><span>{item.status === "ACTIVO" ? "Inactivar" : "Activar"}</span>
                           </button>
-                          <button type="button" className="table-icon-action danger-link" title="Eliminar regla" aria-label={`Eliminar ${item.name}`} onClick={() => void removeRule(item)}>
+                          <button type="button" className="table-icon-action danger-link" disabled={working} title="Eliminar regla" aria-label={`Eliminar ${item.name}`} onClick={() => void removeRule(item)}>
                             <Trash2 /><span>Eliminar</span>
                           </button>
                         </div>
