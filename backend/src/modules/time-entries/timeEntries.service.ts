@@ -1618,16 +1618,25 @@ export const timeEntriesService = {
 
   async exportByPerson(query: TimeEntriesExportQuery, user: Express.AuthUser, audit?: AuditContext) {
     const entries = await timeEntriesRepository.findForExport(query, employeeAccessWhere(user));
-    const grouped = new Map<string, { normal: number; special: number; statuses: Set<string>; entry: (typeof entries)[number] }>();
+    const grouped = new Map<string, { normal: number; special: number; equivalent: number; ruleNames: Set<string>; statuses: Set<string>; entry: (typeof entries)[number] }>();
 
     for (const entry of entries) {
-      const current = grouped.get(entry.employeeId) || { normal: 0, special: 0, statuses: new Set<string>(), entry };
+      const current = grouped.get(entry.employeeId) || { normal: 0, special: 0, equivalent: 0, ruleNames: new Set<string>(), statuses: new Set<string>(), entry };
       // Etapa 6M: "Horas normales" = sólo systemRole NORMAL_BASE. Un
       // TimeEntry no-Normal legacy (posible sólo en datos históricos
       // previos a la Etapa 6L) no suma acá ni en el total — "Horas
       // especiales" se completa abajo desde HourConceptBreakdown.
       if (entry.hourConcept.systemRole === "NORMAL_BASE") {
-        current.normal += Number(entry.hours.toString());
+        // Etapa 8F: entry.hours es siempre real (desde esta etapa). El valor
+        // liquidable/equivalente de una Hora Especial (Domingo, Feriado, …)
+        // se deriva acá, por entrada, real × appliedMultiplier — nunca se
+        // vuelve a guardar inflado en hours/totalMinutes.
+        const realHours = Number(entry.hours.toString());
+        current.normal += realHours;
+        current.equivalent += realHours * Number(entry.appliedMultiplier ?? 1);
+        for (const application of entry.timeSegment?.specialHourRuleApplications ?? []) {
+          current.ruleNames.add(application.doubleHourRule.name);
+        }
       }
       current.statuses.add(entry.status);
       grouped.set(entry.employeeId, current);
@@ -1639,7 +1648,7 @@ export const timeEntriesService = {
       if (current) current.special += breakdown.minutes / 60;
     }
 
-    const rows = Array.from(grouped.values()).map(({ normal, special, statuses, entry }) => {
+    const rows = Array.from(grouped.values()).map(({ normal, special, equivalent, ruleNames, statuses, entry }) => {
       const primaryCompany = entry.employee.companies.find((company) => company.isPrimary)?.company || entry.employee.companies[0]?.company;
       return {
         CUIL: entry.employee.cuil,
@@ -1651,6 +1660,9 @@ export const timeEntriesService = {
         "Horas normales": formatNumber(normal),
         "Horas especiales": formatNumber(special),
         "Horas trabajadas totales": formatNumber(normal),
+        "Horas especiales (equivalente liquidable)": formatNumber(equivalent),
+        "Adicional por horas especiales": formatNumber(equivalent - normal),
+        "Reglas de horas especiales aplicadas": ruleNames.size ? Array.from(ruleNames).join(", ") : "",
         Estado: statuses.size === 1 ? Array.from(statuses)[0] || "" : "MIXTO",
       };
     });

@@ -791,12 +791,19 @@ describe("clockPhotoPunchIdempotent", () => {
 describe("exportByPerson — 'Horas trabajadas totales' = Normal, 'Horas especiales' desde HourConceptBreakdown (Etapa 6M)", () => {
   const rrhhUser = { id: "user-1", role: "NIVEL_1_RRHH" } as Express.AuthUser;
 
-  function exportEntry(overrides: Partial<{ employeeId: string; hours: string; status: string; systemRole: string | null }> = {}) {
+  function exportEntry(overrides: Partial<{ employeeId: string; hours: string; status: string; systemRole: string | null; appliedMultiplier: number; ruleNames: string[] }> = {}) {
     return {
       employeeId: overrides.employeeId ?? "employee-1",
       hours: { toString: () => overrides.hours ?? "8" },
       status: overrides.status ?? "APROBADO",
       hourConcept: { systemRole: overrides.systemRole ?? "NORMAL_BASE" },
+      // Etapa 8F: appliedMultiplier ya no infla hours/totalMinutes (que desde
+      // esta etapa son siempre reales) — es lo único de donde se deriva el
+      // equivalente liquidable en el export, junto con el nombre de la regla.
+      appliedMultiplier: overrides.appliedMultiplier ?? 1,
+      timeSegment: {
+        specialHourRuleApplications: (overrides.ruleNames ?? []).map((name) => ({ doubleHourRule: { name } })),
+      },
       employee: {
         cuil: "20-1-1",
         lastName: "Perez",
@@ -839,6 +846,41 @@ describe("exportByPerson — 'Horas trabajadas totales' = Normal, 'Horas especia
         "Horas normales": "8",
         "Horas especiales": "2",
         "Horas trabajadas totales": "8",
+      }),
+    ]);
+  });
+
+  it("Etapa 8F — Domingo x2: 'Horas trabajadas totales' nunca se infla, el equivalente/adicional/regla van en columnas separadas", async () => {
+    repo.findForExport.mockResolvedValue([
+      exportEntry({ hours: "8", systemRole: "NORMAL_BASE", appliedMultiplier: 2, ruleNames: ["Domingo x2"] }),
+    ]);
+    repo.findBreakdownHoursForExport.mockResolvedValue([]);
+
+    const result = await timeEntriesService.exportByPerson({ period: "2026-08", includeInReview: false }, rrhhUser);
+
+    expect(result.rows).toEqual([
+      expect.objectContaining({
+        "Horas normales": "8",
+        "Horas trabajadas totales": "8", // real, nunca 16 — la persona no "trabajó" 16hs
+        "Horas especiales (equivalente liquidable)": "16", // 8 real x2, sólo el equivalente/liquidable
+        "Adicional por horas especiales": "8", // 16 - 8
+        "Reglas de horas especiales aplicadas": "Domingo x2",
+      }),
+    ]);
+  });
+
+  it("Etapa 8F — sin regla especial (multiplicador 1): equivalente/adicional quedan en 0 y sin nombre de regla", async () => {
+    repo.findForExport.mockResolvedValue([exportEntry({ hours: "8", systemRole: "NORMAL_BASE", appliedMultiplier: 1 })]);
+    repo.findBreakdownHoursForExport.mockResolvedValue([]);
+
+    const result = await timeEntriesService.exportByPerson({ period: "2026-08", includeInReview: false }, rrhhUser);
+
+    expect(result.rows).toEqual([
+      expect.objectContaining({
+        "Horas trabajadas totales": "8",
+        "Horas especiales (equivalente liquidable)": "8",
+        "Adicional por horas especiales": "0",
+        "Reglas de horas especiales aplicadas": "",
       }),
     ]);
   });

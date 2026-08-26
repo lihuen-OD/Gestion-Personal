@@ -142,6 +142,9 @@ type ApiExportResponse = {
       "Horas normales": string;
       "Horas especiales": string;
       "Horas trabajadas totales": string;
+      "Horas especiales (equivalente liquidable)": string;
+      "Adicional por horas especiales": string;
+      "Reglas de horas especiales aplicadas": string;
       Estado: string;
     }>;
   };
@@ -272,6 +275,9 @@ function toExportRow(row: ApiExportResponse["data"]["rows"][number]): HoursExpor
     horasNormales: numberValue(row["Horas normales"]),
     horasEspeciales: numberValue(row["Horas especiales"]),
     horasTotales: numberValue(row["Horas trabajadas totales"]),
+    horasEspecialesEquivalentes: numberValue(row["Horas especiales (equivalente liquidable)"]),
+    adicionalPorHorasEspeciales: numberValue(row["Adicional por horas especiales"]),
+    reglasAplicadas: row["Reglas de horas especiales aplicadas"],
     estado: row.Estado,
   };
 }
@@ -494,6 +500,12 @@ export const timeEntryApiService = {
         horasNormales: summary.approved.filter((entry) => entry.type === "Hora normal").reduce((sum, entry) => sum + entry.hours, 0),
         horasEspeciales: summary.approved.filter((entry) => entry.type !== "Hora normal").reduce((sum, entry) => sum + entry.hours, 0),
         horasTotales: summary.approved.reduce((sum, entry) => sum + entry.hours, 0),
+        // Etapa 8F: fallback local (modo mock o error de red) — no tiene
+        // acceso a appliedMultiplier/SpecialHourRuleApplication, así que no
+        // inventa un valor liquidable; el export por backend sí lo completa.
+        horasEspecialesEquivalentes: 0,
+        adicionalPorHorasEspeciales: 0,
+        reglasAplicadas: "",
         estado: summary.status,
       };
     }).filter((row) => row.horasTotales > 0);

@@ -76,6 +76,23 @@ describe("workforceService — auditoria en correcciones/cierres (hueco cerrado)
     );
   });
 
+  it("Etapa 8F — el snapshot del cierre guarda exactamente el _sum.hours devuelto por Prisma, sin multiplicarlo de nuevo (hours ya es real desde 8F)", async () => {
+    mockedPrisma.employee.count.mockResolvedValue(1);
+    mockedPrisma.timeEntry.groupBy.mockResolvedValue([{ employeeId: "emp-1", status: "APROBADO", _sum: { hours: 8 }, _count: 3 }]);
+    mockedPrisma.monthlyTimeClosure.upsert.mockResolvedValue({ id: "closure-1", employeeId: "emp-1" });
+    mockedPrisma.$transaction.mockImplementation((operations: unknown[]) => Promise.all(operations));
+
+    await workforceService.submitClosures("2026-08", ["emp-1"], supervisor);
+
+    expect(mockedPrisma.monthlyTimeClosure.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          snapshot: expect.objectContaining({ entries: [{ status: "APROBADO", hours: 8, records: 3 }] }),
+        }),
+      }),
+    );
+  });
+
   it("approveClosures registra un AuditLog por cada cierre aprobado", async () => {
     mockedPrisma.monthlyTimeClosure.findMany.mockResolvedValue([{ id: "closure-1", employeeId: "emp-1", period: "2026-08" }]);
     mockedPrisma.monthlyTimeClosure.updateMany.mockResolvedValue({ count: 1 });

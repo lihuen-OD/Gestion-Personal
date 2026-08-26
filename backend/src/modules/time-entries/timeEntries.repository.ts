@@ -649,6 +649,18 @@ export const timeEntriesRepository = {
           },
         },
         hourConcept: true,
+        // Etapa 8F: appliedMultiplier ya viene por default (sin select
+        // restrictivo acá), pero el nombre de la regla que lo generó sólo
+        // sale de acá — es lo único que permite mostrar "equivalente
+        // liquidable" y "regla aplicada" en el export sin volver a inflar
+        // hours/totalMinutes (que desde esta etapa son siempre reales).
+        timeSegment: {
+          select: {
+            specialHourRuleApplications: {
+              select: { doubleHourRule: { select: { name: true } } },
+            },
+          },
+        },
       },
       orderBy: [{ employee: { lastName: "asc" } }, { employee: { firstName: "asc" } }, { date: "asc" }],
       take: 5000,
@@ -1473,7 +1485,6 @@ export const timeEntriesRepository = {
       for (const segment of input.segments) {
         const matchedRules = matchingDoubleHourRules(doubleHourRules, segment.date);
         const multiplier = effectiveMultiplier(matchedRules);
-        const creditedMinutes = Math.round(segment.minutes * multiplier);
         const timeSegment = await tx.timeSegment.create({
           data: {
             workShiftId: workShift.id,
@@ -1513,17 +1524,23 @@ export const timeEntriesRepository = {
         }
 
         if (existing) {
-          const nextActualMinutes = (existing.actualMinutes ?? existing.totalMinutes) + segment.minutes;
-          const nextMinutes = existing.totalMinutes + creditedMinutes;
+          // Etapa 8F: hours/totalMinutes/actualMinutes son siempre minutos
+          // reales trabajados, nunca el valor multiplicado por una Hora
+          // Especial (eso se deriva aparte con appliedMultiplier, nunca se
+          // persiste inflado acá). Se recalcula desde actualMinutes, no desde
+          // totalMinutes, para que un TimeEntry legado que haya quedado
+          // inflado antes de esta etapa se autocorrija apenas se le agregue
+          // un nuevo tramo.
+          const nextRealMinutes = (existing.actualMinutes ?? existing.totalMinutes) + segment.minutes;
           const currentObservation = existing.observation ? `${existing.observation}\n` : "";
           entries.push(await tx.timeEntry.update({
             where: { id: existing.id },
             data: {
               workShiftId: workShift.id,
               timeSegmentId: timeSegment.id,
-              hours: nextMinutes / 60,
-              totalMinutes: nextMinutes,
-              actualMinutes: nextActualMinutes,
+              hours: nextRealMinutes / 60,
+              totalMinutes: nextRealMinutes,
+              actualMinutes: nextRealMinutes,
               appliedMultiplier: multiplier,
               source: input.source,
               segmentStartAt: segment.startAt,
@@ -1542,8 +1559,8 @@ export const timeEntriesRepository = {
               date: segment.date,
               period: periodFromCalendarDate(segment.date),
               day: dayOfMonthFromCalendarDate(segment.date),
-              hours: creditedMinutes / 60,
-              totalMinutes: creditedMinutes,
+              hours: segment.minutes / 60,
+              totalMinutes: segment.minutes,
               actualMinutes: segment.minutes,
               appliedMultiplier: multiplier,
               status: "BORRADOR",
@@ -1637,7 +1654,6 @@ export const timeEntriesRepository = {
       for (const segment of input.segments) {
         const matchedRules = matchingDoubleHourRules(doubleHourRules, segment.date);
         const multiplier = effectiveMultiplier(matchedRules);
-        const creditedMinutes = Math.round(segment.minutes * multiplier);
         const timeSegment = await tx.timeSegment.create({
           data: {
             workShiftId: workShift.id,
@@ -1680,17 +1696,20 @@ export const timeEntriesRepository = {
         }
 
         if (existing) {
-          const nextActualMinutes = (existing.actualMinutes ?? existing.totalMinutes) + segment.minutes;
-          const nextMinutes = existing.totalMinutes + creditedMinutes;
+          // Etapa 8F: ver misma nota en createFromWorkShift — hours/
+          // totalMinutes/actualMinutes son siempre minutos reales, nunca el
+          // valor multiplicado por una Hora Especial, y se recalculan desde
+          // actualMinutes para autocorregir cualquier TimeEntry legado.
+          const nextRealMinutes = (existing.actualMinutes ?? existing.totalMinutes) + segment.minutes;
           const currentObservation = existing.observation ? `${existing.observation}\n` : "";
           entries.push(await tx.timeEntry.update({
             where: { id: existing.id },
             data: {
               workShiftId: workShift.id,
               timeSegmentId: timeSegment.id,
-              hours: nextMinutes / 60,
-              totalMinutes: nextMinutes,
-              actualMinutes: nextActualMinutes,
+              hours: nextRealMinutes / 60,
+              totalMinutes: nextRealMinutes,
+              actualMinutes: nextRealMinutes,
               appliedMultiplier: multiplier,
               source: input.source,
               segmentStartAt: segment.startAt,
@@ -1710,8 +1729,8 @@ export const timeEntriesRepository = {
               date: segment.date,
               period: periodFromCalendarDate(segment.date),
               day: dayOfMonthFromCalendarDate(segment.date),
-              hours: creditedMinutes / 60,
-              totalMinutes: creditedMinutes,
+              hours: segment.minutes / 60,
+              totalMinutes: segment.minutes,
               actualMinutes: segment.minutes,
               appliedMultiplier: multiplier,
               status: "APROBADO",

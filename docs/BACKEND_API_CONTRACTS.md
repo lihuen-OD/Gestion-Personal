@@ -1208,10 +1208,19 @@ Centro de costo
 Horas normales
 Horas especiales
 Horas trabajadas totales
+Horas especiales (equivalente liquidable)
+Adicional por horas especiales
+Reglas de horas especiales aplicadas
 Estado
 ```
 
 Desde la Etapa 6M, el export cumple el modelo objetivo: `Horas trabajadas totales` = `Horas normales` (suma exclusiva de `TimeEntry` con `hourConcept.systemRole = NORMAL_BASE`); `Horas especiales` sale de `HourConceptBreakdown` (`status != RECHAZADO`) y se informa aparte, sin sumarse al total. Un `TimeEntry` especial legacy (sólo posible en datos previos a la Etapa 6L) queda excluido de ambas columnas.
+
+Desde la Etapa 8F, `TimeEntry.hours`/`totalMinutes` son siempre minutos reales — nunca se inflan por el multiplicador de una regla de Horas Especiales (`DoubleHourRule`, ver `docs/decisions/HORAS_ESPECIALES_AUDITORIA_8A.md`). El valor equivalente/liquidable de esas reglas (Domingo, Feriado, …) ya no vive en `Horas normales`/`Horas trabajadas totales`: se agrega en tres columnas nuevas, calculadas por entrada (real × `TimeEntry.appliedMultiplier`, nunca acumulando entre entradas de distintos días con multiplicadores distintos) y sumadas sólo sobre entradas `NORMAL_BASE`:
+
+- `Horas especiales (equivalente liquidable)`: suma de horas reales × `appliedMultiplier`. Sin regla aplicada (`appliedMultiplier = 1`) coincide con `Horas normales`.
+- `Adicional por horas especiales`: equivalente − `Horas normales` (el "extra" a liquidar, `0` si no aplicó ninguna regla).
+- `Reglas de horas especiales aplicadas`: nombres únicos (`DoubleHourRule.name`, vía `SpecialHourRuleApplication`) de las reglas que matchearon algún tramo del período, separados por coma; vacío si ninguna aplicó.
 
 ## Auditoría
 

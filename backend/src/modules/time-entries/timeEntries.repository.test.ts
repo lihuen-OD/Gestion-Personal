@@ -705,19 +705,83 @@ describe("SpecialHourRuleApplication y multiplicador efectivo (Etapa 3)", () => 
     expect(mockedPrisma.__tx.specialHourRuleApplication.create).toHaveBeenCalledTimes(1); // una regla, un segmento -> una sola fila, sin duplicar
   });
 
-  it("Caso I — invariante: la suma de TimeEntry.actualMinutes (minutos reales, no multiplicados) coincide con el rango real del WorkShift", async () => {
+  it("Caso I (Etapa 8F) — invariante: totalMinutes/hours/actualMinutes son siempre minutos reales, nunca inflados por appliedMultiplier", async () => {
     mockedPrisma.__tx.attendancePunch.create.mockResolvedValueOnce({ id: "punch-in" }).mockResolvedValueOnce({ id: "punch-out" });
     mockedPrisma.__tx.workShift.create.mockResolvedValue({ id: "shift-i" });
     mockedPrisma.__tx.doubleHourRule.findMany.mockResolvedValue([rule({ id: "rule-domingo", multiplier: 2 })]);
 
     const result = await timeEntriesRepository.createFromWorkShift(oneSegmentInput(sunday));
 
-    // appliedMultiplier=2 infla totalMinutes/hours a propósito (pago de horas extra) —
-    // por eso el invariante de "minutos reales" se mide sobre actualMinutes, no sobre
-    // totalMinutes (que sí puede superar los minutos reales cuando aplica un multiplicador).
-    const totalActualMinutes = result.entries.reduce((sum, entry) => sum + (entry as { actualMinutes: number }).actualMinutes, 0);
+    // Etapa 8F: un domingo real de 4hs (240 min) con regla x2 nunca debe
+    // aparecer como "8hs trabajadas" — totalMinutes/hours/actualMinutes
+    // quedan los tres en el valor real; appliedMultiplier (2) es lo único
+    // que cambia, y es de ahí de donde se deriva después el valor liquidable
+    // (real × appliedMultiplier), nunca al revés.
+    const entry = result.entries[0] as unknown as { totalMinutes: number; actualMinutes: number; hours: unknown; appliedMultiplier: unknown };
+    expect(entry.totalMinutes).toBe(240);
+    expect(entry.actualMinutes).toBe(240);
+    expect(Number(entry.hours)).toBe(4);
+    expect(Number(entry.appliedMultiplier)).toBe(2);
+
+    const totalActualMinutes = result.entries.reduce((sum, e) => sum + (e as { actualMinutes: number }).actualMinutes, 0);
+    const totalRealMinutes = result.entries.reduce((sum, e) => sum + (e as { totalMinutes: number }).totalMinutes, 0);
     expect(totalActualMinutes).toBe(240);
-    expect((result.entries[0] as { totalMinutes: number }).totalMinutes).toBe(480); // 240 * multiplier 2, comportamiento preexistente sin cambios
+    expect(totalRealMinutes).toBe(240); // ya no 480: el equivalente liquidable se calcula aparte, no se persiste acá
+  });
+
+  it("Caso J (Etapa 8F) — un TimeEntry Normal ya existente e inflado por una etapa previa se autocorrige al recibir un nuevo tramo", async () => {
+    mockedPrisma.__tx.attendancePunch.create.mockResolvedValueOnce({ id: "punch-in" }).mockResolvedValueOnce({ id: "punch-out" });
+    mockedPrisma.__tx.workShift.create.mockResolvedValue({ id: "shift-j" });
+    mockedPrisma.__tx.doubleHourRule.findMany.mockResolvedValue([rule({ id: "rule-domingo", multiplier: 2 })]);
+    // Fila legada (pre-8F): totalMinutes=480 (240 reales x2 ya persistidos inflados),
+    // pero actualMinutes=240 sí guardaba el valor real correctamente.
+    mockedPrisma.__tx.timeEntry.findFirst.mockResolvedValueOnce({
+      id: "entry-legacy", totalMinutes: 480, actualMinutes: 240, status: "BORRADOR", observation: null,
+    });
+    mockedPrisma.__tx.timeEntry.update.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: "entry-legacy", ...data }));
+
+    const result = await timeEntriesRepository.createFromWorkShift(oneSegmentInput(sunday));
+
+    // Se recalcula desde actualMinutes (240 + 240 nuevos = 480 reales), no desde
+    // el totalMinutes legado (480 + 240 hubiera dado 720, arrastrando el error).
+    const entry = result.entries[0] as { totalMinutes: number; actualMinutes: number };
+    expect(entry.totalMinutes).toBe(480);
+    expect(entry.actualMinutes).toBe(480);
+  });
+
+  it("Caso K (Etapa 8F) — cruce de medianoche sábado 22:00 → domingo 02:00: sólo el tramo domingo recibe la regla, los dos TimeEntry quedan en minutos reales (nunca 120+240)", async () => {
+    mockedPrisma.__tx.attendancePunch.create.mockResolvedValueOnce({ id: "punch-in" }).mockResolvedValueOnce({ id: "punch-out" });
+    mockedPrisma.__tx.workShift.create.mockResolvedValue({ id: "shift-k" });
+    mockedPrisma.__tx.doubleHourRule.findMany.mockResolvedValue([rule({ id: "rule-domingo", multiplier: 2 })]);
+
+    const saturday = new Date("2026-08-15T00:00:00.000Z");
+    const startAt = new Date("2026-08-15T22:00:00.000Z"); // sábado 22:00
+    const midnight = new Date("2026-08-16T00:00:00.000Z");
+    const endAt = new Date("2026-08-16T02:00:00.000Z"); // domingo 02:00
+
+    const result = await timeEntriesRepository.createFromWorkShift({
+      employeeId,
+      normalHourConceptId: "concept-normal",
+      normalHourConceptName: "Hora normal",
+      source: "ADMIN" as never,
+      startAt,
+      endAt,
+      totalMinutes: 240,
+      segments: [
+        { date: saturday, startAt, endAt: midnight, minutes: 120, hours: 2, hourConceptId: "concept-normal", hourConceptName: "Hora normal", conceptStatus: "SUGERIDO", hourConceptRuleId: null },
+        { date: sunday, startAt: midnight, endAt, minutes: 120, hours: 2, hourConceptId: "concept-normal", hourConceptName: "Hora normal", conceptStatus: "SUGERIDO", hourConceptRuleId: null },
+      ],
+    });
+
+    expect(mockedPrisma.__tx.timeSegment.create).toHaveBeenNthCalledWith(1, expect.objectContaining({ data: expect.objectContaining({ isSpecial: false }) }));
+    expect(mockedPrisma.__tx.timeSegment.create).toHaveBeenNthCalledWith(2, expect.objectContaining({ data: expect.objectContaining({ isSpecial: true }) }));
+    expect(mockedPrisma.__tx.specialHourRuleApplication.create).toHaveBeenCalledTimes(1); // sólo el tramo domingo matchea
+
+    expect(result.entries).toHaveLength(2); // fechas distintas -> dos TimeEntry, uno por día
+    const totalRealMinutes = result.entries.reduce((sum, e) => sum + (e as { totalMinutes: number }).totalMinutes, 0);
+    expect(totalRealMinutes).toBe(240); // 120 + 120 reales, nunca 120 + 240
+    expect(Number((result.entries[0] as unknown as { appliedMultiplier: unknown }).appliedMultiplier)).toBe(1); // tramo sábado: sin regla
+    expect(Number((result.entries[1] as unknown as { appliedMultiplier: unknown }).appliedMultiplier)).toBe(2); // tramo domingo: regla aplicada
   });
 
   it("isNight se deriva del HourConceptKind (NOCTURNA/GUARDIA/SERENO) del concepto del segmento, sin comparar nombres", async () => {

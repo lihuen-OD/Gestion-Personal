@@ -3,6 +3,15 @@
 Fecha: 2026-08-26
 Estado: diagnóstico — sin rediseño implementado, pendiente de aprobación para 8B+
 
+> **Actualización 8F:** el hallazgo más grave de este documento (§6, punto 1 —
+> el multiplicador infla `TimeEntry.hours`/`totalMinutes` reales) fue
+> corregido. Ver `docs/decisions/HORAS_ESPECIALES_8F.md` para el diagnóstico
+> exacto, la estrategia elegida y los consumidores corregidos. El resto de los
+> hallazgos de esta auditoría (scope obligatorio por empleado, sin calendario
+> de feriados, sin integración con Conceptos Horarios, sobrecarga del nombre
+> "Horas especiales", sin recálculo retroactivo) sigue vigente — 8F no los
+> aborda a propósito, quedan para 8B en adelante.
+
 ## 0. Resumen ejecutivo
 
 El módulo existe y su núcleo de cálculo (motor de multiplicador, trazabilidad por

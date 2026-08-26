@@ -43,4 +43,13 @@ describe("sumLoadedHours — KPI 'horas cargadas' = sólo Horas normales (Etapa 
       _sum: { hours: true },
     });
   });
+
+  it("Etapa 8F — no aplica ninguna multiplicación propia sobre el resultado: el KPI 'horas cargadas' es exactamente el _sum.hours de la base, que desde 8F ya es real (nunca inflado por appliedMultiplier de una Hora Especial)", async () => {
+    const aggregateResult = { _sum: { hours: { toString: () => "8" } } };
+    mockedPrisma.timeEntry.aggregate.mockResolvedValue(aggregateResult);
+
+    const result = await dashboardRepository.sumLoadedHours("2026-08", {});
+
+    expect(result).toBe(aggregateResult);
+  });
 });
