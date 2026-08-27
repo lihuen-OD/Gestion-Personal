@@ -55,6 +55,27 @@ const disabledTemplate = {
   status: "ACTIVO",
 };
 
+// Etapa 10C: turno "sereno" (23:00-04:00, cruza medianoche) — mismo fixture
+// conceptual que workShiftEvaluation.service.test.ts, acá a nivel runner
+// (con Prisma mockeado) para confirmar que el cruce de medianoche no genera
+// alertas falsas end-to-end, no sólo en la función pura.
+const nightTemplate = {
+  id: "sereno",
+  code: "TURNO-SERENO",
+  startTime: "23:00",
+  endTime: "04:00",
+  crossesMidnight: true,
+  entryToleranceBeforeMinutes: 15,
+  entryToleranceAfterMinutes: 15,
+  exitToleranceBeforeMinutes: 15,
+  exitToleranceAfterMinutes: 15,
+  minimumMinutesForCompliance: null,
+  maximumInformativeMinutes: 300, // 5h — bajo a propósito para poder disparar JORNADA_EXTENDIDA en los tests
+  missingOutAlertAfterMinutes: 60,
+  absoluteOpenShiftLimitMinutes: 1200,
+  status: "ACTIVO",
+};
+
 beforeEach(() => {
   vi.clearAllMocks();
   mockedPrisma.workShift.findFirst.mockResolvedValue(null); // sin jornada previa: no evalua descanso
@@ -538,5 +559,69 @@ describe("Etapa 8K — régimen laboral y las 3 alertas de falta/configuración 
       expect(upsertedAlertTypes()).toContain("CONCEPTO_NO_HABILITADO");
       expect(mockedPrisma.employeeWorkRegime.findFirst).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe("Etapa 10C — turno nocturno/sereno (cruce de medianoche), diagnóstico de JORNADA_EXTENDIDA", () => {
+  it("entrada 23:05 matchea el turno sereno propio, sin ninguna alerta de turno", async () => {
+    mockedPrisma.shiftAssignment.findMany.mockResolvedValue([{ shiftTemplateId: "sereno", status: "HABILITADO" }]);
+    mockedPrisma.shiftTemplate.findMany.mockResolvedValue([nightTemplate]);
+    mockedPrisma.employeeWorkRegime.findFirst.mockResolvedValue(null);
+
+    await evaluateShiftEntry("employee-1", "shift-1", new Date("2026-08-18T02:05:00.000Z")); // 23:05 ART
+
+    expect(upsertedAlertTypes()).not.toContain("TURNO_NO_IDENTIFICADO");
+    expect(upsertedAlertTypes()).not.toContain("INGRESO_TARDE");
+  });
+
+  it("salida real en horario (04:00 del día siguiente, cruzando medianoche) no genera ninguna alerta de puntualidad ni jornada extendida — nunca confunde el cruce de medianoche con salida anticipada/tardía", async () => {
+    mockedPrisma.workShift.findUnique.mockResolvedValue({
+      id: "shift-sereno-1",
+      startAt: new Date("2026-08-18T02:05:00.000Z"), // 23:05 ART del 17/08
+      shiftTemplateId: "sereno",
+      totalMinutes: 295, // dentro del máximo informativo (300)
+    });
+    mockedPrisma.shiftTemplate.findUnique.mockResolvedValue(nightTemplate);
+    mockedPrisma.shiftAssignment.findUnique.mockResolvedValue({ status: "HABILITADO" });
+
+    await evaluateShiftExit("employee-1", "shift-sereno-1", new Date("2026-08-18T07:00:00.000Z")); // 04:00 ART del 18/08
+
+    expect(upsertedAlertTypes()).not.toContain("SALIDA_ANTICIPADA");
+    expect(upsertedAlertTypes()).not.toContain("SALIDA_TARDIA");
+    expect(upsertedAlertTypes()).not.toContain("JORNADA_EXTENDIDA");
+  });
+
+  it("jornada nocturna que se extiende real y de verdad (salida confirmada, más tarde de lo esperado) genera JORNADA_EXTENDIDA — nunca POSIBLE_OLVIDO_SALIDA, porque hay una salida real registrada", async () => {
+    mockedPrisma.workShift.findUnique.mockResolvedValue({
+      id: "shift-sereno-2",
+      startAt: new Date("2026-08-18T02:05:00.000Z"), // 23:05 ART
+      shiftTemplateId: "sereno",
+      totalMinutes: 360, // 6h > maximumInformativeMinutes (300 = 5h) del turno sereno
+    });
+    mockedPrisma.shiftTemplate.findUnique.mockResolvedValue(nightTemplate);
+    mockedPrisma.shiftAssignment.findUnique.mockResolvedValue({ status: "HABILITADO" });
+
+    // Sale 05:10 ART del 18/08 — real, confirmada por el empleado (no una expiración del sistema).
+    await evaluateShiftExit("employee-1", "shift-sereno-2", new Date("2026-08-18T08:10:00.000Z"));
+
+    expect(upsertedAlertTypes()).toContain("JORNADA_EXTENDIDA");
+    expect(upsertedAlertTypes()).not.toContain("POSIBLE_OLVIDO_SALIDA");
+  });
+
+  it("una salida real siempre resuelve cualquier POSIBLE_OLVIDO_SALIDA previa de esa jornada, incluso en turno nocturno — el aviso temprano de riesgo deja de tener sentido una vez que hay salida confirmada", async () => {
+    mockedPrisma.workShift.findUnique.mockResolvedValue({
+      id: "shift-sereno-3",
+      startAt: new Date("2026-08-18T02:05:00.000Z"),
+      shiftTemplateId: "sereno",
+      totalMinutes: 250,
+    });
+    mockedPrisma.shiftTemplate.findUnique.mockResolvedValue(nightTemplate);
+    mockedPrisma.shiftAssignment.findUnique.mockResolvedValue({ status: "HABILITADO" });
+
+    await evaluateShiftExit("employee-1", "shift-sereno-3", new Date("2026-08-18T07:15:00.000Z"));
+
+    expect(mockedPrisma.shiftAlert.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { workShiftId: "shift-sereno-3", type: "POSIBLE_OLVIDO_SALIDA", status: "PENDIENTE" } }),
+    );
   });
 });
