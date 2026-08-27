@@ -29,7 +29,13 @@ export function ShiftsPage() {
 
   useEffect(() => {
     let alive = true;
-    setLoadStatus("loading");
+    // Etapa 9C: sólo mostrar el loading grande cuando todavía no hay turnos
+    // en pantalla — activar/inactivar un turno dispara este mismo efecto
+    // (vía `refresh`) y no debe blanquear la tabla ya poblada ni los filtros
+    // (que viven en estado aparte, sin tocar) mientras llega la respuesta
+    // nueva (mismo patrón ya aplicado en la Etapa 9B a Novedades/Documentos/
+    // Auditoría/Horas Especiales/Cierres).
+    if (!templates) setLoadStatus("loading");
     Promise.all([workforceApiService.shiftTemplates(), shiftAssignmentApiService.getSummary()])
       .then(([shiftTemplates, summaries]) => {
         if (!alive) return;

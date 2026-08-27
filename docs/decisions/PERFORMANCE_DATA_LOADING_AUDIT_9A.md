@@ -313,3 +313,44 @@ General: `git diff --check` sin errores de espacios en blanco.
 ### 14.7 Siguiente etapa recomendada
 
 9C (extender cache a módulos que hoy no tienen ninguno — `shiftTemplates`/`doubleRules`, con los write paths ya enumerados en §4.14/§10 — más el guard pendiente de `ShiftsPage` documentado en §14.2), o cualquiera de 9D-9G según prioridad de negocio.
+
+## 15. Etapa 9C — Cache backend seguro y refresh silencioso pendiente
+
+Fecha: 2026-08-27. Alcance ejecutado: los 3 puntos habilitados por el pedido (cache de `shiftTemplates`, evaluación + cache de `doubleRules`, guard pendiente de `ShiftsPage`) — nada de paginación estructural, sin tocar fichador/carga horaria/Conceptos Horarios/dashboard/usuarios/documentos/novedades/legajos, sin schema, sin migraciones, sin librerías nuevas, sin cambio de contratos de API ni permisos.
+
+### 15.1 Cache backend implementado: `shiftTemplates`
+
+Nuevo `backend/src/modules/workforce-management/workforce.cache.ts` — mismo patrón que `dashboard.cache.ts`/`novelties.cache.ts`/`documents.cache.ts` (`createTtlCache` de `backend/src/shared/cache/ttlCache.ts`, TTL 30s). `workforce.controller.ts` — el handler `shiftTemplates` ahora hace lectura pasante por cache (clave `usuario:rol:URL`, mismo `userScopedCacheKey` ya duplicado en 4 controllers — se replicó el mismo helper acá en vez de extraerlo a un util compartido, para no exceder el alcance de esta etapa); `createShiftTemplate`/`updateShiftTemplate`/`removeShiftTemplate` invalidan el cache tras escribir. **Write paths verificados exhaustivamente** (grep de `.shiftTemplate.create/update/delete/upsert/updateMany/deleteMany` en todo `backend/src`, no sólo en el módulo): exactamente 4 llamadas, las 4 dentro de esas 3 funciones de `workforce.service.ts`, ningún mutador externo. Sin cambio de shape de respuesta (`{data: [...]}` idéntico a antes). Tests: 4 casos nuevos en `workforce.controller.test.ts` (primera lectura golpea el service, segunda usa cache, cada uno de los 3 mutadores invalida y la siguiente lectura vuelve a golpear el service).
+
+### 15.2 `doubleRules` — evaluado y sí implementado, con evidencia
+
+Se enumeraron exhaustivamente (grep en todo `backend/src`, no sólo `workforce-management`) los write paths de las 3 tablas involucradas:
+
+- **`DoubleHourRule`**: 4 llamadas (`create`, 2×`update`, `delete`), las 4 dentro de `createDoubleRule`/`updateDoubleRule`/`removeDoubleRule` en `workforce.service.ts`. Conjunto cerrado.
+- **`DoubleHourRuleEmployee`**: **cero** llamadas directas en todo el backend — sólo se escribe como write anidado dentro de `doubleHourRule.create`/`update` (`employees: {create:...}` / `employees: {deleteMany:{}, create:...}`), ya cubierto por invalidar en esas mismas 2 funciones.
+- **`SpecialHourRuleDate`**: **cero** llamadas directas — mismo caso, sólo anidado dentro de `doubleHourRule.create`/`update` (`dates: {create:...}` / `dates: {deleteMany:{}, create:...}`). No existe un endpoint separado de "agregar fecha"/"quitar fecha"/"activar fecha" — el frontend siempre manda el array completo de `dates` en el mismo `PATCH` de la regla (así quedó diseñado desde la Etapa 8B), así que no hay ningún mutador de fechas por fuera de `updateDoubleRule` que pudiera quedar sin invalidar.
+
+Con eso confirmado — conjunto de escritura cerrado, enumerable, sin mutadores externos, igual de simple que `shiftTemplates` — se implementó: mismo archivo `workforce.cache.ts` (`doubleRulesCache`, TTL 30s), lectura pasante en `doubleRules` del controller, invalidación en `createDoubleRule`/`updateDoubleRule`/`removeDoubleRule`.
+
+**Por qué no queda stale el calendario ni el motor de cálculo** (los dos riesgos que el pedido pidió confirmar explícitamente antes de cachear):
+- El **motor** (`timeEntries.repository.ts`, `createFromWorkShift`/`closeOpenWorkShift`) consulta `tx.doubleHourRule.findMany(...)` directo contra Prisma dentro de su propia transacción — un código completamente separado de `workforceService.doubleRules()`. El cache nuevo sólo envuelve la lectura de la tabla de reglas de `WorkScheduleSettingsPage.tsx`; el motor nunca pasa por ahí, así que sigue viendo siempre el estado real de la base al fichar, sin ningún cambio de comportamiento.
+- El **calendario visual** (`GET /workforce/double-hour-rules/calendar` → `calendarPreview()`) es otra función distinta, con su propia query (filtro por `status`/`fromDate`/`toDate`, sin relación con `doubleRules()`), y no se tocó — sigue sin cache, tal como ya lo confirmó 9A, y sigue recibiendo el refresh-tras-mutación que ya tenía desde la Etapa 8B (`refreshToken`/`hasLoadedCurrentMonth`).
+
+Tests nuevos en `workforce.controller.test.ts`, además de los 3 genéricos (primera lectura/cache hit/shape de respuesta): un test por cada escenario específico pedido — actualizar las fechas de una regla de feriado (`updateDoubleRule` con `dates`), cambiar la prioridad (`updateDoubleRule` con `priority`), y activar/desactivar una regla (`updateDoubleRule` con `status`, más `removeDoubleRule`) — cada uno confirma que la siguiente lectura de `doubleRules` vuelve a golpear el service en vez de servir el valor cacheado.
+
+### 15.3 ShiftsPage — guard de refresh silencioso aplicado (pendiente de 9B)
+
+`frontend/src/pages/ShiftsPage.tsx` — mismo guard `if (!templates) setLoadStatus("loading")` ya usado en las 5 pantallas de 9B, aplicado sobre el único efecto de carga (dependencia `[refresh]`, se dispara también tras activar/inactivar un turno). Los filtros (`search`/`status`) ya vivían en estado separado, sin relación con el efecto de carga, así que no hacía falta ningún cambio adicional para "no perder filtros" — es una consecuencia directa de no tocar ese estado. Sin cambios de lógica, de backend, ni de diseño. Tests nuevos: `ShiftsPage.test.tsx` (3 casos — loading grande en la carga inicial, activar/inactivar un turno ya cargado no blanquea la tabla ni pierde un filtro de búsqueda ya tipeado y la acción de toggle sigue funcionando igual, y el filtro de estado sigue funcionando correctamente después de un refresh).
+
+### 15.4 Qué quedó pendiente
+
+- `calendarPreview()` (calendario de Horas Especiales) sigue sin cache — deliberado, ver §15.2.
+- El resto de los módulos sin cache identificados en 9A (`attendanceApiService`, `shiftAlertApiService`, `shiftAssignmentApiService` del lado backend) siguen sin tocar — fuera del alcance explícito de esta etapa.
+- La duplicación del helper `userScopedCacheKey` (ahora en 5 controllers) sigue sin extraerse a un util compartido — es deuda de consistencia ya señalada en 9A §4.13, no se resuelve acá para no exceder el alcance de "cambios chicos".
+
+### 15.5 Reglas futuras (agregadas a las de §11/§12)
+
+- **Cache sólo con invalidación explícita**: nunca agregar un cache de lectura sin, en el mismo cambio, agregar la invalidación en cada mutador — y sin antes enumerar exhaustivamente esos mutadores con un grep en todo el backend, no sólo en el módulo dueño (criterio aplicado en §15.1/§15.2, el mismo que ya pedía §12).
+- **Datos críticos no se cachean si puede afectar trazabilidad**: si un dato alimenta el motor de cálculo de horas, el fichador, o cualquier flujo donde una lectura stale pudiera traducirse en una decisión de negocio incorrecta (aprobar, liquidar, fichar), no se cachea esa lectura — o, si se cachea una lectura *adyacente* (como acá con `doubleRules`), hay que confirmar y documentar explícitamente que el motor real no pasa por ese mismo cache (§15.2).
+- **Configuración puede cachearse con TTL e invalidación**: turnos, horas especiales, conceptos horarios, catálogos — mientras el conjunto de mutadores sea cerrado y enumerable, un TTL corto (20-30s, igual que el resto de los módulos ya cacheados) más invalidación en cada escritura es seguro.
+- **Refresh silencioso sin borrar datos**: todo efecto de carga que también se reutiliza para refrescos (tras una mutación, un poll, un cambio de filtro) debe encender el loading grande sólo si todavía no hay datos — nunca incondicional (patrón ya establecido en 9B §14.4, aplicado de nuevo acá a `ShiftsPage`).

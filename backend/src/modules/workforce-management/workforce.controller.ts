@@ -4,6 +4,15 @@ import { requireParam } from "../../shared/http/params";
 import { workforceService } from "./workforce.service";
 import { clearTimeEntriesReadCaches } from "../time-entries/timeEntries.cache";
 import { clearEmployeeReadCaches } from "../employees/employees.controller";
+import { clearDoubleRulesReadCache, clearShiftTemplatesReadCache, doubleRulesCache, shiftTemplatesCache } from "./workforce.cache";
+
+// Etapa 9C: mismo patrón ya usado en novelties/documents/time-entries/employees
+// controllers — clave por usuario+rol+URL (ninguno de los dos endpoints tiene
+// query params hoy, pero mantiene el mismo criterio "seguro por defecto" si
+// alguna vez se filtran por scope).
+function userScopedCacheKey(req: Parameters<RequestHandler>[0]) {
+  return `${req.user?.id || "anon"}:${req.user?.role || "none"}:${req.originalUrl}`;
+}
 
 export const workforceController = {
   closures: (async (req,res)=>res.json({data:await workforceService.closures(String(req.query.period),req.user!)})) satisfies RequestHandler,
@@ -25,13 +34,54 @@ export const workforceController = {
   notifications: (async (req,res)=>res.json({data:await workforceService.notifications(req.user!)})) satisfies RequestHandler,
   unreadNotificationCount: (async (req,res)=>res.json({data:{count:await workforceService.unreadNotificationCount(req.user!)}})) satisfies RequestHandler,
   readNotification: (async (req,res)=>res.json({data:await workforceService.markNotificationRead(requireParam(req,"id"),req.user!)})) satisfies RequestHandler,
-  shiftTemplates: (async (_req,res)=>res.json({data:await workforceService.shiftTemplates()})) satisfies RequestHandler,
-  createShiftTemplate: (async (req,res)=>res.status(201).json({data:await workforceService.createShiftTemplate(req.body,requestAuditContext(req))})) satisfies RequestHandler,
-  updateShiftTemplate: (async (req,res)=>res.json({data:await workforceService.updateShiftTemplate(requireParam(req,"id"),req.body,requestAuditContext(req))})) satisfies RequestHandler,
-  removeShiftTemplate: (async (req,res)=>res.json({data:await workforceService.removeShiftTemplate(requireParam(req,"id"),requestAuditContext(req))})) satisfies RequestHandler,
-  doubleRules: (async (_req,res)=>res.json({data:await workforceService.doubleRules()})) satisfies RequestHandler,
-  createDoubleRule: (async (req,res)=>res.status(201).json({data:await workforceService.createDoubleRule(req.body,req.user!,requestAuditContext(req))})) satisfies RequestHandler,
-  updateDoubleRule: (async (req,res)=>res.json({data:await workforceService.updateDoubleRule(requireParam(req,"id"),req.body,requestAuditContext(req))})) satisfies RequestHandler,
-  removeDoubleRule: (async (req,res)=>res.json({data:await workforceService.removeDoubleRule(requireParam(req,"id"),requestAuditContext(req))})) satisfies RequestHandler,
+  // Etapa 9C: cache de lectura TTL corto (ver workforce.cache.ts) — mismo
+  // shape de respuesta que antes, sólo cambia si la data viene de Prisma o
+  // del cache.
+  shiftTemplates: (async (req,res)=>{
+    const key=userScopedCacheKey(req);
+    const cached=shiftTemplatesCache.get(key);
+    if(cached) return res.json({data:cached});
+    const data=await workforceService.shiftTemplates();
+    shiftTemplatesCache.set(key,data);
+    res.json({data});
+  }) satisfies RequestHandler,
+  createShiftTemplate: (async (req,res)=>{
+    const data=await workforceService.createShiftTemplate(req.body,requestAuditContext(req));
+    clearShiftTemplatesReadCache();
+    res.status(201).json({data});
+  }) satisfies RequestHandler,
+  updateShiftTemplate: (async (req,res)=>{
+    const data=await workforceService.updateShiftTemplate(requireParam(req,"id"),req.body,requestAuditContext(req));
+    clearShiftTemplatesReadCache();
+    res.json({data});
+  }) satisfies RequestHandler,
+  removeShiftTemplate: (async (req,res)=>{
+    const data=await workforceService.removeShiftTemplate(requireParam(req,"id"),requestAuditContext(req));
+    clearShiftTemplatesReadCache();
+    res.json({data});
+  }) satisfies RequestHandler,
+  doubleRules: (async (req,res)=>{
+    const key=userScopedCacheKey(req);
+    const cached=doubleRulesCache.get(key);
+    if(cached) return res.json({data:cached});
+    const data=await workforceService.doubleRules();
+    doubleRulesCache.set(key,data);
+    res.json({data});
+  }) satisfies RequestHandler,
+  createDoubleRule: (async (req,res)=>{
+    const data=await workforceService.createDoubleRule(req.body,req.user!,requestAuditContext(req));
+    clearDoubleRulesReadCache();
+    res.status(201).json({data});
+  }) satisfies RequestHandler,
+  updateDoubleRule: (async (req,res)=>{
+    const data=await workforceService.updateDoubleRule(requireParam(req,"id"),req.body,requestAuditContext(req));
+    clearDoubleRulesReadCache();
+    res.json({data});
+  }) satisfies RequestHandler,
+  removeDoubleRule: (async (req,res)=>{
+    const data=await workforceService.removeDoubleRule(requireParam(req,"id"),requestAuditContext(req));
+    clearDoubleRulesReadCache();
+    res.json({data});
+  }) satisfies RequestHandler,
   doubleRulesCalendar: (async (req,res)=>res.json({data:await workforceService.calendarPreview(new Date(String(req.query.from)),new Date(String(req.query.to)))})) satisfies RequestHandler,
 };
