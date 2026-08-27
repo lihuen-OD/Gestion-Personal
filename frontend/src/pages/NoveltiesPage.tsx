@@ -33,7 +33,11 @@ export function NoveltiesPage() {
 
   useEffect(() => {
     let mounted = true;
-    setLoading(true);
+    // Etapa 9B: sólo mostrar el skeleton de carga completo cuando todavía no
+    // hay datos en pantalla — un refetch por filtro/página/mutación con la
+    // tabla ya poblada no debe blanquearla, se reemplaza recién cuando llega
+    // la respuesta nueva (mismo patrón ya usado en EmployeesPage).
+    if (!novelties.length) setLoading(true);
     setLoadError("");
     noveltyApiService
       .list({ page, take: pageSize, search: debouncedSearch })

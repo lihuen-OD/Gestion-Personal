@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Check, CheckCheck, RotateCcw, Send, X } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { employeeApiService } from "../services/api/employeeApiService";
@@ -35,9 +35,18 @@ export function MonthlyClosuresPage() {
   const [loading, setLoading] = useState(true);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState("");
+  // Etapa 9B: `load` está memoizado por [period] y se invoca también desde
+  // `execute()` (fuera del efecto de montaje) — leer `closures.length`
+  // directo del closure sería un valor stale entre renders donde `period`
+  // no cambió. Un ref siempre refleja el último dato real cargado.
+  const hasLoadedDataRef = useRef(false);
 
   const load = useCallback(async () => {
-    setLoading(true);
+    // Sólo mostrar el loading grande cuando todavía no hay datos en
+    // pantalla — cambiar de período o repetir load() tras una acción
+    // (aprobar/enviar/devolver) no debe blanquear toda la sección, incluida
+    // la barra de acciones (mismo patrón de EmployeesPage).
+    if (!hasLoadedDataRef.current) setLoading(true);
     setError("");
     try {
       const [employeeResult, closureResult, correctionResult] = await Promise.all([
@@ -49,6 +58,7 @@ export function MonthlyClosuresPage() {
       setClosures(closureResult);
       setCorrections(correctionResult);
       setSelected([]);
+      hasLoadedDataRef.current = true;
     } catch {
       setError("No se pudo cargar el circuito de cierres. Reintentá en unos segundos.");
     } finally {

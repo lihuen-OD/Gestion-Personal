@@ -568,3 +568,43 @@ describe("WorkScheduleSettingsPage — Etapa 8C (corrección: acciones de la tab
     expect(screen.getByRole("button", { name: /eliminar domingo/i })).not.toBeDisabled();
   });
 });
+
+describe("WorkScheduleSettingsPage — Etapa 9B (corrección: la tabla de reglas no se blanquea en un refresh con datos ya cargados)", () => {
+  it("muestra el loading grande en la carga inicial, cuando todavía no hay reglas en pantalla", async () => {
+    let resolveList!: (value: DoubleHourRule[]) => void;
+    vi.mocked(workforceApiService.doubleHourRules).mockReturnValue(new Promise((resolve) => { resolveList = resolve; }));
+
+    renderPage();
+
+    expect(screen.getByText("Cargando reglas de horas especiales...")).toBeInTheDocument();
+
+    resolveList([existingRule()]);
+    await screen.findByText("Domingo");
+    expect(screen.queryByText("Cargando reglas de horas especiales...")).not.toBeInTheDocument();
+  });
+
+  it("al activar/inactivar una regla ya cargada, no blanquea la tabla mientras llega la respuesta del reload posterior", async () => {
+    vi.mocked(workforceApiService.doubleHourRules).mockResolvedValueOnce([existingRule()]);
+    vi.mocked(workforceApiService.updateDoubleHourRule).mockResolvedValue(existingRule({ status: "INACTIVO" }));
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByText("Domingo");
+
+    // toggleRule() hace `await updateDoubleHourRule(...)` y recién después
+    // `await load()` (que vuelve a pedir doubleHourRules()) — se controla
+    // esa segunda llamada para inspeccionar el estado mientras el reload
+    // sigue en vuelo, que es exactamente cuando el guard de isLoading actúa.
+    let resolveReload!: (value: DoubleHourRule[]) => void;
+    vi.mocked(workforceApiService.doubleHourRules).mockReturnValue(new Promise((resolve) => { resolveReload = resolve; }));
+
+    await user.click(screen.getByRole("button", { name: /inactivar domingo/i }));
+
+    await waitFor(() => expect(workforceApiService.updateDoubleHourRule).toHaveBeenCalled());
+    expect(screen.getByText("Domingo")).toBeInTheDocument();
+    expect(screen.queryByText("Cargando reglas de horas especiales...")).not.toBeInTheDocument();
+
+    resolveReload([existingRule({ status: "INACTIVO" })]);
+
+    await waitFor(() => expect(screen.getByText("Inactiva")).toBeInTheDocument());
+  });
+});

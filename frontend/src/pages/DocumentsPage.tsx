@@ -34,7 +34,10 @@ export function DocumentsPage() {
 
   useEffect(() => {
     let mounted = true;
-    setListStatus("loading");
+    // Etapa 9B: sólo mostrar el skeleton de carga completo cuando todavía no
+    // hay documentos en pantalla — un refetch por filtro/página/mutación con
+    // la tabla ya poblada no debe blanquearla (mismo patrón de EmployeesPage).
+    if (!docs.length) setListStatus("loading");
     documentApiService
       .list({ page, take: pageSize, search: debouncedSearch })
       .then((result) => {

@@ -95,7 +95,10 @@ export function AuditPage() {
 
   useEffect(() => {
     let mounted = true;
-    setStatus("loading");
+    // Etapa 9B: sólo mostrar el skeleton de carga completo cuando todavía no
+    // hay eventos en pantalla — cambiar de página no debe blanquear la tabla
+    // ya poblada (mismo patrón de EmployeesPage).
+    if (!audits.length) setStatus("loading");
     auditApiService
       .list({ page, take: pageSize })
       .then((result) => {

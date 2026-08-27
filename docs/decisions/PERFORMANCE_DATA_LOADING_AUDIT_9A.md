@@ -264,3 +264,52 @@ Antes de dar por terminada cualquier pantalla/feature nueva que cargue datos, co
 - [ ] ¿Es un dato crítico/timestamp-sensible (fichador, cierre, aprobación)? Si sí: sin cache, sin optimistic update, siempre confirmar con el backend.
 - [ ] ¿Se está agregando un cache nuevo? ¿Se enumeraron todos los write paths de esa tabla en todo el backend, no sólo en el módulo actual?
 - [ ] ¿Se está por reescribir algo "porque parece lento"? ¿Hay una medición real (conteo de filas, lectura de código trazando llamadas) detrás, o es una suposición?
+
+## 14. Etapa 9B — Quick wins implementados
+
+Fecha: 2026-08-27. Alcance ejecutado: exactamente los 3 puntos de código habilitados por el pedido de 9B (bug de invalidación de `approveCorrection`, blanqueo de pantalla en refetch, parpadeo de 60s de Asistencia) — nada de paginación estructural, nada de cache backend nuevo para `workforce-management`, nada de catálogos diferidos en `UsersPage`, sin tocar Conceptos Horarios/Turnos/Dashboard, sin cambios de schema/permisos/contratos de API, sin librerías nuevas.
+
+### 14.1 Bug corregido: `approveCorrection` no invalidaba el cache de horas (§4.1)
+
+`backend/src/modules/workforce-management/workforce.controller.ts` — el handler `approveCorrection` ahora llama `clearTimeEntriesReadCaches()` y `clearEmployeeReadCaches()` después de que el service confirme la corrección, mismo patrón exacto ya usado en los ~10 write paths de `timeEntries.controller.ts`. Sin cambios en `workforce.service.ts` (la lógica de negocio no se tocó), sin cambio de contrato de la respuesta. Test nuevo: `workforce.controller.test.ts` (4 casos — invalida ambos caches, en el orden correcto respecto del service, y sin cambiar la respuesta).
+
+### 14.2 Blanqueo de pantalla en refetch — corregido en 5 de las 6 pantallas de §4.2
+
+Se copió el guard `if (!data.length) setLoading(true)` de `EmployeesPage` (la referencia que la propia 9A identificó como correcta) a:
+
+- `NoveltiesPage.tsx` — guard sobre `novelties.length`.
+- `DocumentsPage.tsx` — guard sobre `docs.length`.
+- `AuditPage.tsx` — guard sobre `audits.length`.
+- `WorkScheduleSettingsPage.tsx` — guard sobre `rules.length`, sólo en la sección "Reglas configuradas"; el calendario de la misma pantalla no se tocó (ya tenía su propio refresh silencioso desde la Etapa 8B).
+- `MonthlyClosuresPage.tsx` — mismo guard, pero implementado con un `useRef` (`hasLoadedDataRef`) en vez de leer `closures.length`/`employees.length` directo: `load()` está memoizado con `useCallback([period])` y se invoca también desde `execute()` (fuera del efecto de montaje), así que leer el estado por closure hubiera sido un valor stale entre renders donde `period` no cambió — el mismo bug que motivó el fix de §14.1, pero del lado del frontend. El test de esta pantalla ejercita exactamente ese camino (aprobar un cierre, que dispara `load()` desde `execute()`, no desde el montaje) para confirmar que el fix es real y no un guard que nunca se ejercita.
+
+**Pendiente, no tocada: `ShiftsPage.tsx` (Turnos).** Es la sexta pantalla listada en §4.2/§7.2, y el mismo guard mecánico aplicaría igual de simple que en las otras 5 — pero el pedido de esta etapa excluyó explícitamente el módulo Turnos sin excepción (a diferencia de Horas Especiales, que sí tenía una excepción explícita para tocar justamente este patrón ya auditado). Queda documentada para una etapa futura, sin ningún cambio de código.
+
+### 14.3 Parpadeo de Asistencia cada 60s — corregido (§4.4)
+
+`AttendancePage.tsx` — el efecto que trae el resumen (`getSummary`, dependencias `[date, refreshKey]`) ahora sólo muestra el loading grande cuando todavía no hay `summary` en memoria (`if (!summary) setLoading(true)`). El poll automático de 60s sigue funcionando exactamente igual (no se tocó el `setInterval` ni su lógica), pero cada ciclo ahora es silencioso: las tablas de jornadas abiertas/cerradas no se reemplazan por el skeleton, y como el estado `date`/filtros no se toca en ningún punto de este cambio, tampoco se pierden. El manejo de errores del poll ya era correcto antes de este cambio (no borraba `summary` en el catch, sólo mostraba un banner chico) — no hizo falta tocar esa parte. Test nuevo: `AttendancePage.test.tsx` (2 casos — loading grande en la carga inicial, y con `vi.useFakeTimers()` avanzando 60s: confirma que la fila anterior sigue visible, que no aparece el skeleton, y que el input de fecha conserva su valor).
+
+### 14.4 Patrón adoptado (referencia para desarrollo futuro)
+
+- **Loading inicial vs. refreshing**: un flag de loading que bloquea una sección sólo debe encenderse cuando esa sección todavía no tiene datos (`if (!data.length) setLoading(true)`, o un `useRef` equivalente si la función de carga está memoizada y se invoca fuera del efecto que la creó — ver §14.2). Nunca `setLoading(true)` incondicional al principio de una función de carga que también se usa para refrescos.
+- **Mantener datos anteriores**: al no re-encender el loading grande, la UI sigue mostrando lo último renderizado hasta que el nuevo `setState` con la respuesta la reemplaza — no hace falta ningún estado ni componente adicional para "conservar" los datos, es una consecuencia directa de no blanquear.
+- **Invalidar sólo caches relacionados**: cada escritura debe invalidar exactamente los caches de lectura que su propia tabla afecta (ver el patrón ya establecido en `timeEntries.controller.ts`, replicado ahora en `workforce.controller.ts` para `approveCorrection` — §14.1). Antes de escribir una función que mute una entidad cacheada, grepear quién más cachea esa lectura y confirmar que se invalida ahí también.
+- **No blanquear pantalla durante refetch**: aplicado en 5 pantallas esta etapa (§14.2); la sexta (`ShiftsPage`) queda con el mismo patrón documentado y pendiente de aplicar en una etapa futura sin necesidad de rediseño.
+- **Errores localizados por sección**: no se tocó nada acá — ya estaba bien implementado en las 5 pantallas modificadas (`ErrorState`/`div.form-error` embebidos, no un error de página completa) y se confirmó que ninguno de los cambios de 9B lo rompió (los 12 tests nuevos cubren tanto el camino feliz como que el error sigue contenido).
+- **No optimistic update en acciones críticas**: no aplica a ninguno de los 3 cambios de esta etapa (ninguno toca fichador ni ninguna acción crítica) — se mantiene la regla ya confirmada en 9A §4.7, sin cambios.
+
+### 14.5 Tests agregados
+
+Backend: `workforce.controller.test.ts` (4 tests nuevos, archivo nuevo). Total backend: 685 tests (681 + 4).
+
+Frontend: `NoveltiesPage.test.tsx` (2, archivo nuevo), `DocumentsPage.test.tsx` (2, archivo nuevo), `AuditPage.test.tsx` (2, archivo nuevo), `MonthlyClosuresPage.test.tsx` (2, archivo nuevo), `AttendancePage.test.tsx` (2, archivo nuevo), `WorkScheduleSettingsPage.test.tsx` (+2 sobre el archivo existente). Total frontend: 343 tests (331 + 12).
+
+### 14.6 Validaciones ejecutadas tras 9B
+
+Backend: `npx prisma validate` ✅, `npx prisma generate` ✅, `npx prisma migrate status` ✅ (45 migraciones, sin cambios — ninguna migración nueva en esta etapa), `npm run typecheck` ✅, `npx vitest run` ✅ 685/685, `npm run build` ✅.
+Frontend: `npx tsc -b` ✅, `npx vitest run` ✅ 343/343, `npm run build` ✅.
+General: `git diff --check` sin errores de espacios en blanco.
+
+### 14.7 Siguiente etapa recomendada
+
+9C (extender cache a módulos que hoy no tienen ninguno — `shiftTemplates`/`doubleRules`, con los write paths ya enumerados en §4.14/§10 — más el guard pendiente de `ShiftsPage` documentado en §14.2), o cualquiera de 9D-9G según prioridad de negocio.

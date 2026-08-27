@@ -2,6 +2,8 @@ import type { RequestHandler } from "express";
 import { requestAuditContext } from "../../shared/audit/requestAuditContext";
 import { requireParam } from "../../shared/http/params";
 import { workforceService } from "./workforce.service";
+import { clearTimeEntriesReadCaches } from "../time-entries/timeEntries.cache";
+import { clearEmployeeReadCaches } from "../employees/employees.controller";
 
 export const workforceController = {
   closures: (async (req,res)=>res.json({data:await workforceService.closures(String(req.query.period),req.user!)})) satisfies RequestHandler,
@@ -10,7 +12,15 @@ export const workforceController = {
   returnClosure: (async (req,res)=>res.json({data:await workforceService.returnClosure(requireParam(req,"id"),req.body.reason,req.user!,requestAuditContext(req))})) satisfies RequestHandler,
   corrections: (async (req,res)=>res.json({data:await workforceService.corrections(req.user!)})) satisfies RequestHandler,
   createCorrection: (async (req,res)=>res.status(201).json({data:await workforceService.createCorrection(req.body,req.user!,requestAuditContext(req))})) satisfies RequestHandler,
-  approveCorrection: (async (req,res)=>res.json({data:await workforceService.approveCorrection(requireParam(req,"id"),req.user!,requestAuditContext(req))})) satisfies RequestHandler,
+  // Etapa 9B: approveCorrection modifica TimeEntry.hours/totalMinutes (workforce.service.ts) —
+  // igual que cada escritura equivalente en timeEntries.controller.ts, debe invalidar los
+  // caches de lectura de horas/legajo para no mostrar el valor viejo hasta que expire el TTL.
+  approveCorrection: (async (req,res)=>{
+    const data=await workforceService.approveCorrection(requireParam(req,"id"),req.user!,requestAuditContext(req));
+    clearTimeEntriesReadCaches();
+    clearEmployeeReadCaches();
+    res.json({data});
+  }) satisfies RequestHandler,
   rejectCorrection: (async (req,res)=>res.json({data:await workforceService.rejectCorrection(requireParam(req,"id"),req.body.note,req.user!,requestAuditContext(req))})) satisfies RequestHandler,
   notifications: (async (req,res)=>res.json({data:await workforceService.notifications(req.user!)})) satisfies RequestHandler,
   unreadNotificationCount: (async (req,res)=>res.json({data:{count:await workforceService.unreadNotificationCount(req.user!)}})) satisfies RequestHandler,

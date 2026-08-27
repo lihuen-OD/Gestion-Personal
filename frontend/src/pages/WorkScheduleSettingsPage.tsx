@@ -102,7 +102,12 @@ export function WorkScheduleSettingsPage() {
   const notifyRulesMutated = () => setCalendarRefreshToken((token) => token + 1);
 
   const load = async () => {
-    setIsLoading(true);
+    // Etapa 9B: sólo mostrar el loading grande de la tabla de reglas cuando
+    // todavía no hay reglas en pantalla — crear/editar/activar/eliminar una
+    // regla vuelve a llamar load() y no debe blanquear la tabla ya poblada
+    // (mismo patrón de EmployeesPage; el calendario ya tenía su propio
+    // refresh silencioso desde la Etapa 8B, no se toca acá).
+    if (!rules.length) setIsLoading(true);
     try {
       const [items, orgCatalog, positionList] = await Promise.all([
         workforceApiService.doubleHourRules(),

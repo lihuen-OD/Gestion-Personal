@@ -303,7 +303,15 @@ export function AttendancePage() {
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
+    // Etapa 9B: el poll automático de 60s (más abajo) bumpea `refreshKey`,
+    // que es dependencia de este efecto — sin esta guarda, cada ciclo volvía
+    // a blanquear las tablas de jornadas abiertas/cerradas con el skeleton
+    // completo aunque el usuario las estuviera mirando en ese momento. Sólo
+    // se muestra el loading grande en la carga inicial real (sin summary
+    // todavía); un cambio de fecha también queda silencioso y mantiene la
+    // fecha/filtros elegidos, reemplazando la tabla recién cuando llega la
+    // respuesta nueva.
+    if (!summary) setLoading(true);
     setError("");
     attendanceApiService.getSummary(date)
       .then((result) => {
