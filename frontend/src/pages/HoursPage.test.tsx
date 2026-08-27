@@ -1,12 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { HoursPage } from "./HoursPage";
 import { employeeApiService } from "../services/api/employeeApiService";
 import { orgStructureApiService } from "../services/api/orgStructureApiService";
 import { pendingApiService, type PendingItem } from "../services/api/pendingApiService";
 import { timeEntryApiService } from "../services/api/timeEntryApiService";
-import type { TimeEntry } from "../types";
+import type { Employee, TimeEntry } from "../types";
 
 const mockUseAuth = vi.fn();
 vi.mock("../context/AuthContext", () => ({
@@ -39,6 +39,7 @@ vi.mock("../services/api/timeEntryApiService", async (importOriginal) => {
     timeEntryApiService: {
       ...actual.timeEntryApiService,
       list: vi.fn(),
+      listByEmployee: vi.fn(),
       getSummary: vi.fn(),
       getPeriodEmployees: vi.fn(),
       approve: vi.fn(),
@@ -106,6 +107,88 @@ function renderPending() {
   );
 }
 
+function renderGrid() {
+  return render(
+    <MemoryRouter initialEntries={["/horas?period=2026-08"]}>
+      <HoursPage />
+    </MemoryRouter>,
+  );
+}
+
+function buildEmployee(overrides: Partial<Employee> = {}): Employee {
+  return {
+    id: "employee-1",
+    legajo: "100",
+    legajoInterno: "100",
+    lastName: "Gomez",
+    firstName: "Ana",
+    dni: "12345678",
+    cuil: "20-12345678-9",
+    birthDate: "",
+    gender: "",
+    civilStatus: "",
+    nationality: "Argentina",
+    phone: "",
+    mobile: "",
+    email: "",
+    address: "",
+    addressStreet: "",
+    addressNumber: "",
+    city: "",
+    department: "",
+    province: "",
+    zip: "",
+    domicilio: {
+      calle: "",
+      numero: "",
+      provinciaId: "",
+      provinciaNombre: "",
+      departamentoId: "",
+      departamentoNombre: "",
+      localidadId: "",
+      localidadNombre: "",
+      codigoPostal: "",
+      ubicacionMapa: { lat: null, lng: null, source: "API", label: "" },
+    },
+    emergencyContact: "",
+    emergencyRelation: "",
+    emergencyPhone: "",
+    company: "Odwyer",
+    businessUnit: "",
+    establishment: "",
+    costCenter: "Pañol",
+    sector: "",
+    position: "",
+    receiptCategory: "",
+    internalCategory: "",
+    agreement: "",
+    healthInsurance: "",
+    directManager: "",
+    timeResponsible: "",
+    startDate: "",
+    transport: false,
+    transportRoute: "",
+    transportNotes: "",
+    enabledHours: [],
+    status: "Activo",
+    ...overrides,
+  } as Employee;
+}
+
+function buildPeriodRow(overrides: { employee?: Partial<Employee>; normal?: number; special?: number; total?: number } = {}) {
+  return {
+    employee: buildEmployee(overrides.employee),
+    summary: {
+      total: overrides.total ?? 8,
+      normal: overrides.normal ?? 8,
+      special: overrides.special ?? 0,
+      incidents: 0,
+      status: "Aprobado",
+      dailyBreakdown: [] as Array<{ day: number; normal: number; special: number; total: number; novelty: { label: string } | null }>,
+    },
+  } as never;
+}
+
 beforeEach(() => {
   vi.mocked(orgStructureApiService.getCatalog).mockResolvedValue({ costCenters: [] } as never);
   vi.mocked(pendingApiService.getAll).mockResolvedValue({ summary: { total: 0, novelties: 0, timeEntries: 0, hourConceptBreakdowns: 0 }, data: [] });
@@ -117,6 +200,7 @@ beforeEach(() => {
     items: [buildReviewEntry()],
     meta: { total: 1, page: 1, pageSize: 25, hasMore: false },
   });
+  vi.mocked(timeEntryApiService.listByEmployee).mockResolvedValue({ items: [], meta: { total: 0, page: 1, pageSize: 25, hasMore: false } } as never);
   vi.mocked(timeEntryApiService.approve).mockReset();
   vi.mocked(timeEntryApiService.reject).mockReset();
   vi.mocked(timeEntryApiService.returnForCorrection).mockReset();
@@ -401,5 +485,220 @@ describe("HoursPage — las acciones de revisión no fallan en silencio (Etapa 7
     await user.click(within(row.closest("tr")!).getByRole("button", { name: "Aprobar" }));
 
     expect(screen.queryByText("No pudimos completar la acción. Intentá nuevamente.")).not.toBeInTheDocument();
+  });
+});
+
+// Etapa 9F: el mega-efecto original (10 dependencias en un único Promise.all)
+// se separó en 3 efectos por dependencia real — estos tests fijan que la
+// separación es real (no sólo cosmética): cambiar un filtro que un endpoint
+// no usa ya no lo vuelve a llamar, y una mutación (refresh) sigue
+// invalidando todo lo relacionado, sin under-refrescar.
+describe("HoursPage — Etapa 9F (separación de efectos: sin refetch innecesario)", () => {
+  it("carga inicial en Bandeja: pide getSummary/list/pendingApiService.getAll una sola vez cada uno, y nunca getPeriodEmployees", async () => {
+    authAs("Nivel 1 - RRHH");
+    // El archivo no resetea el historial de llamadas entre tests (no hay
+    // clearMocks global) — se miden deltas contra el estado previo en vez de
+    // contadores absolutos, para no depender del orden de ejecución.
+    const before = {
+      summary: vi.mocked(timeEntryApiService.getSummary).mock.calls.length,
+      list: vi.mocked(timeEntryApiService.list).mock.calls.length,
+      pending: vi.mocked(pendingApiService.getAll).mock.calls.length,
+      periodEmployees: vi.mocked(timeEntryApiService.getPeriodEmployees).mock.calls.length,
+    };
+
+    renderPending();
+
+    await screen.findByText("100");
+    expect(vi.mocked(timeEntryApiService.getSummary).mock.calls.length - before.summary).toBe(1);
+    expect(vi.mocked(timeEntryApiService.list).mock.calls.length - before.list).toBe(1);
+    expect(vi.mocked(pendingApiService.getAll).mock.calls.length - before.pending).toBe(1);
+    expect(vi.mocked(timeEntryApiService.getPeriodEmployees).mock.calls.length).toBe(before.periodEmployees);
+  });
+
+  it("carga inicial en Carga de horas: pide getSummary/getPeriodEmployees una sola vez cada uno, y nunca list/listByEmployee/pendingApiService.getAll", async () => {
+    authAs("Nivel 1 - RRHH");
+    vi.mocked(timeEntryApiService.getPeriodEmployees).mockResolvedValue({
+      items: [buildPeriodRow()],
+      meta: { total: 1, page: 1, pageSize: 25, hasMore: false },
+    });
+    const before = {
+      summary: vi.mocked(timeEntryApiService.getSummary).mock.calls.length,
+      periodEmployees: vi.mocked(timeEntryApiService.getPeriodEmployees).mock.calls.length,
+      list: vi.mocked(timeEntryApiService.list).mock.calls.length,
+      listByEmployee: vi.mocked(timeEntryApiService.listByEmployee).mock.calls.length,
+      pending: vi.mocked(pendingApiService.getAll).mock.calls.length,
+    };
+
+    renderGrid();
+
+    await screen.findByText("Gomez, Ana");
+    expect(vi.mocked(timeEntryApiService.getSummary).mock.calls.length - before.summary).toBe(1);
+    expect(vi.mocked(timeEntryApiService.getPeriodEmployees).mock.calls.length - before.periodEmployees).toBe(1);
+    expect(vi.mocked(timeEntryApiService.list).mock.calls.length).toBe(before.list);
+    expect(vi.mocked(timeEntryApiService.listByEmployee).mock.calls.length).toBe(before.listByEmployee);
+    expect(vi.mocked(pendingApiService.getAll).mock.calls.length).toBe(before.pending);
+  });
+
+  it("cambiar de página de revisión sólo vuelve a pedir list — no getSummary ni pendingApiService.getAll", async () => {
+    const { default: userEvent } = await import("@testing-library/user-event");
+    const user = userEvent.setup();
+    authAs("Nivel 1 - RRHH");
+    vi.mocked(timeEntryApiService.list).mockResolvedValueOnce({
+      items: [buildReviewEntry()],
+      meta: { total: 30, page: 1, pageSize: 25, hasMore: true },
+    });
+    renderPending();
+    await screen.findByText("100");
+    const summaryCallsBefore = vi.mocked(timeEntryApiService.getSummary).mock.calls.length;
+    const pendingCallsBefore = vi.mocked(pendingApiService.getAll).mock.calls.length;
+
+    vi.mocked(timeEntryApiService.list).mockResolvedValueOnce({
+      items: [buildReviewEntry({ id: "entry-2", employeeLegajo: "200" })],
+      meta: { total: 30, page: 2, pageSize: 25, hasMore: false },
+    });
+    await user.click(screen.getByRole("button", { name: "Siguiente" }));
+
+    await screen.findByText("200");
+    expect(timeEntryApiService.getSummary).toHaveBeenCalledTimes(summaryCallsBefore);
+    expect(pendingApiService.getAll).toHaveBeenCalledTimes(pendingCallsBefore);
+  });
+
+  it("cambiar de página en Carga de horas sólo vuelve a pedir getPeriodEmployees — no getSummary", async () => {
+    const { default: userEvent } = await import("@testing-library/user-event");
+    const user = userEvent.setup();
+    authAs("Nivel 1 - RRHH");
+    vi.mocked(timeEntryApiService.getPeriodEmployees).mockResolvedValueOnce({
+      items: [buildPeriodRow()],
+      meta: { total: 30, page: 1, pageSize: 25, hasMore: true },
+    });
+    renderGrid();
+    await screen.findByText("Gomez, Ana");
+    const summaryCallsBefore = vi.mocked(timeEntryApiService.getSummary).mock.calls.length;
+
+    vi.mocked(timeEntryApiService.getPeriodEmployees).mockResolvedValueOnce({
+      items: [buildPeriodRow({ employee: { id: "employee-2", lastName: "Perez", firstName: "Luis", legajo: "200" } })],
+      meta: { total: 30, page: 2, pageSize: 25, hasMore: false },
+    });
+    await user.click(screen.getByRole("button", { name: "Siguiente" }));
+
+    await screen.findByText("Perez, Luis");
+    expect(timeEntryApiService.getSummary).toHaveBeenCalledTimes(summaryCallsBefore);
+  });
+
+  it("una mutación (aprobar) sí vuelve a pedir list, pendingApiService.getAll y getSummary — refresh sigue invalidando todo lo relacionado", async () => {
+    const { default: userEvent } = await import("@testing-library/user-event");
+    const user = userEvent.setup();
+    authAs("Nivel 1 - RRHH");
+    vi.mocked(timeEntryApiService.approve).mockResolvedValue(buildReviewEntry({ status: "Aprobado" }));
+    renderPending();
+    await screen.findByText("100");
+    const listBefore = vi.mocked(timeEntryApiService.list).mock.calls.length;
+    const pendingBefore = vi.mocked(pendingApiService.getAll).mock.calls.length;
+    const summaryBefore = vi.mocked(timeEntryApiService.getSummary).mock.calls.length;
+
+    await user.click(screen.getByRole("button", { name: "Aprobar" }));
+
+    await waitFor(() => {
+      expect(timeEntryApiService.list).toHaveBeenCalledTimes(listBefore + 1);
+      expect(pendingApiService.getAll).toHaveBeenCalledTimes(pendingBefore + 1);
+      expect(timeEntryApiService.getSummary).toHaveBeenCalledTimes(summaryBefore + 1);
+    });
+  });
+
+  it("cambiar de página de revisión con datos ya cargados no blanquea la tabla mientras llega la respuesta nueva", async () => {
+    const { default: userEvent } = await import("@testing-library/user-event");
+    const user = userEvent.setup();
+    authAs("Nivel 1 - RRHH");
+    vi.mocked(timeEntryApiService.list).mockResolvedValueOnce({
+      items: [buildReviewEntry()],
+      meta: { total: 30, page: 1, pageSize: 25, hasMore: true },
+    });
+    renderPending();
+    await screen.findByText("100");
+
+    let resolveNextPage!: (value: { items: TimeEntry[]; meta: { total: number; page: number; pageSize: number; hasMore: boolean } }) => void;
+    vi.mocked(timeEntryApiService.list).mockReturnValue(new Promise((resolve) => { resolveNextPage = resolve; }));
+
+    await user.click(screen.getByRole("button", { name: "Siguiente" }));
+
+    // Mientras la página 2 sigue en vuelo, la fila anterior sigue visible y
+    // no aparece el skeleton de carga completo de la sección.
+    expect(screen.getByText("100")).toBeInTheDocument();
+    expect(document.querySelector(".loading-table")).toBeNull();
+
+    resolveNextPage({ items: [buildReviewEntry({ id: "entry-2", employeeLegajo: "200" })], meta: { total: 30, page: 2, pageSize: 25, hasMore: false } });
+    await screen.findByText("200");
+  });
+
+  it("no se pierde el período ni el centro de costo seleccionados durante un refresh", async () => {
+    const { default: userEvent } = await import("@testing-library/user-event");
+    const user = userEvent.setup();
+    authAs("Nivel 1 - RRHH");
+    vi.mocked(orgStructureApiService.getCatalog).mockResolvedValue({ costCenters: [{ id: "cc-1", name: "Pañol", status: "ACTIVO" }] } as never);
+    vi.mocked(timeEntryApiService.approve).mockResolvedValue(buildReviewEntry({ status: "Aprobado" }));
+    renderPending();
+    await screen.findByText("100");
+
+    const periodInput = screen.getByDisplayValue("2026-08") as HTMLInputElement;
+    await user.selectOptions(screen.getByRole("combobox", { name: "Centro de costo" }), "Pañol");
+
+    await user.click(screen.getByRole("button", { name: "Aprobar" }));
+
+    await waitFor(() => expect(timeEntryApiService.list).toHaveBeenCalledWith(expect.objectContaining({ period: "2026-08", costCenterId: "cc-1" })));
+    expect(periodInput.value).toBe("2026-08");
+    expect((screen.getByRole("combobox", { name: "Centro de costo" }) as HTMLSelectElement).value).toBe("Pañol");
+  });
+
+  it("empty state en Carga de horas sigue funcionando", async () => {
+    authAs("Nivel 1 - RRHH");
+    vi.mocked(timeEntryApiService.getPeriodEmployees).mockResolvedValue({ items: [], meta: { total: 0, page: 1, pageSize: 25, hasMore: false } });
+    renderGrid();
+
+    await screen.findByText("No hay personas habilitadas para carga con los filtros aplicados.");
+  });
+
+  it("error state en Carga de horas sigue funcionando, con retry", async () => {
+    const { default: userEvent } = await import("@testing-library/user-event");
+    const user = userEvent.setup();
+    authAs("Nivel 1 - RRHH");
+    vi.mocked(timeEntryApiService.getPeriodEmployees).mockRejectedValueOnce(new Error("network down"));
+    renderGrid();
+
+    await screen.findByText("No pudimos cargar la información horaria. Intentá nuevamente.");
+
+    vi.mocked(timeEntryApiService.getPeriodEmployees).mockResolvedValueOnce({
+      items: [buildPeriodRow()],
+      meta: { total: 1, page: 1, pageSize: 25, hasMore: false },
+    });
+    await user.click(screen.getByRole("button", { name: /reintentar/i }));
+
+    await screen.findByText("Gomez, Ana");
+  });
+
+  it("Carga de horas: Normales/Especiales/Total se muestran por separado — Horas Especiales no se mezcla con Hora normal", async () => {
+    authAs("Nivel 1 - RRHH");
+    vi.mocked(timeEntryApiService.getPeriodEmployees).mockResolvedValue({
+      items: [buildPeriodRow({ normal: 40, special: 8, total: 48 })],
+      meta: { total: 1, page: 1, pageSize: 25, hasMore: false },
+    });
+    renderGrid();
+
+    const row = (await screen.findByText("Gomez, Ana")).closest("tr")!;
+    const cells = within(row);
+    expect(cells.getByText("40.00 h")).toBeInTheDocument();
+    expect(cells.getByText("8.00 h")).toBeInTheDocument();
+    expect(cells.getByText("48.00 h")).toBeInTheDocument();
+  });
+
+  it("no hay texto técnico visible (TimeEntry, HourConceptBreakdown, schema, backend) en ninguna de las 2 pantallas", async () => {
+    authAs("Nivel 1 - RRHH");
+    vi.mocked(timeEntryApiService.getPeriodEmployees).mockResolvedValue({
+      items: [buildPeriodRow()],
+      meta: { total: 1, page: 1, pageSize: 25, hasMore: false },
+    });
+    const { container } = renderGrid();
+    await screen.findByText("Gomez, Ana");
+
+    expect(container.textContent).not.toMatch(/TimeEntry|HourConceptBreakdown|schema|payload/i);
   });
 });

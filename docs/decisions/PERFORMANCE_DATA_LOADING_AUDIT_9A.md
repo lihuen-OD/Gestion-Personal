@@ -433,3 +433,91 @@ Frontend: `PuestosPage.test.tsx` (6, archivo nuevo — carga inicial, paginació
 Backend: `npx prisma validate` ✅, `npx prisma generate` ✅, `npx prisma migrate status` ✅ (45 migraciones, sin cambios — ninguna migración nueva), `npm run typecheck` ✅, `npx vitest run` ✅ 709/709, `npm run build` ✅.
 Frontend: `npx tsc -b` ✅, `npx vitest run` ✅ 358/358, `npm run build` ✅.
 General: `git diff --check` sin errores de espacios en blanco.
+
+## 17. Etapa 9F — Saneamiento del mega-efecto de HoursPage
+
+Fecha: 2026-08-27. La pantalla que 9A marcó como "Alta — necesita cambio revisado propio, no un quick win" (§4.3, §8) y que 9B dejó deliberadamente sin tocar. Sin rediseño visual, sin cambiar reglas de negocio/permisos/schema/contratos de API, sin librerías nuevas, sin tocar fichador — Conceptos Horarios y Horas Especiales sólo se verificaron (no se tocó ningún archivo de esos módulos).
+
+### 17.1 Problema original
+
+Un único `useEffect` (`frontend/src/pages/HoursPage.tsx`, antes líneas 237-290) con **10 dependencias** (`costCenter, costCenterOptionsReady, debouncedSearch, groupByPerson, page, pendingOnly, period, refresh, reviewPage, user`) hacía un `Promise.all` de 4 llamadas (`getPeriodEmployees`, `getSummary`, `list`/`listByEmployee`, `pendingApiService.getAll`) cada vez que **cualquiera** de esas 10 dependencias cambiaba, aunque la mayoría de las llamadas no usan la mayoría de esos parámetros. Un único flag `loading` compartido blanqueaba **4 secciones distintas** de la pantalla en cada corrida (Novedades pendientes, Horas en revisión, Desgloses manuales pendientes, Personas habilitadas para carga), sin importar si la sección tenía algo que ver con lo que había cambiado.
+
+### 17.2 Qué disparaba refetch (diagnóstico, verificado leyendo el código real, no sólo citando 9A)
+
+| Dependencia | Se usa en | No se usa en, pero igual disparaba |
+|---|---|---|
+| `period` | Las 4 llamadas (parámetro real siempre) | — |
+| `debouncedSearch` | `getPeriodEmployees`, `list`/`listByEmployee` | `getSummary` (sólo recibe `period`), `pendingApiService.getAll` (sólo recibe `period`+`kind`+`take` fijo) |
+| `costCenter` (→ `costCenterId`) | `getPeriodEmployees`, `list`/`listByEmployee` | `getSummary`, `pendingApiService.getAll` |
+| `page` | `getPeriodEmployees` (sólo si `!pendingOnly`) | `getSummary` |
+| `reviewPage` | `list`/`listByEmployee` (sólo si `pendingOnly`) | `getSummary`, `pendingApiService.getAll` (ni acepta página) |
+| `groupByPerson` | Cambia de endpoint dentro de `list`/`listByEmployee` (real, no es un toggle visual puro) | `getSummary`, `pendingApiService.getAll` |
+| `pendingOnly` | Gatilla casi todo el cuerpo | En la práctica nunca cambia dentro de un mismo montaje — `/horas` y `/pendientes` son rutas separadas (`HoursPage`/`HoursPage pendingOnly`), cada una remonta el componente |
+| `costCenterOptionsReady` | `getPeriodEmployees`/`list`/`listByEmployee` (necesitan `costCenterId` resuelto) | `getSummary`, `pendingApiService.getAll` (ninguno de los dos recibe `costCenterId`) — igual bloqueaba su primera carga detrás del catálogo de centros de costo sin necesidad |
+| `refresh` | Las 4 llamadas (única dependencia donde todo lo disparado estaba justificado — es la señal de "algo se guardó, invalidar") | — |
+| `user` | Guard de autenticación en las 4 | — |
+
+Confirmado con lectura directa del código (no sólo el resumen de 9A): `getSummary(period)` y `pendingApiService.getAll({period, kind:"all", take:300})` **nunca** reciben `search`/`costCenterId`/`reviewPage`/`groupByPerson` como parámetro — cualquier cambio en esos 4 campos los volvía a llamar igual, sin ninguna razón funcional.
+
+### 17.3 Qué se separó
+
+El único efecto se dividió en **3 efectos**, cada uno con exactamente las dependencias que sus llamadas realmente usan (más un 4° efecto de catálogo que ya estaba correctamente aislado desde antes y no se tocó):
+
+- **A) Grilla — "Personas habilitadas para carga"** (`getPeriodEmployees`). Sólo corre si `!pendingOnly`. Depende de `period, debouncedSearch, costCenterId, page, refresh, user, costCenterOptionsReady`. Loading/error propios: `gridLoading`/`gridError`.
+- **B) Bandeja de revisión — "Horas enviadas a revisión"** (`list`/`listByEmployee`). Sólo corre si `pendingOnly`. Depende de `period, debouncedSearch, costCenterId, reviewPage, groupByPerson, refresh, user, costCenterOptionsReady`. Loading/error propios: `reviewLoading`/`reviewError`.
+- **C) Resumen (tarjetas, ambos modos) + pendientes de novedades/desgloses** (`getSummary` + `pendingApiService.getAll`, combinados en un mismo efecto porque comparten exactamente las mismas dependencias reales). Depende únicamente de `period, refresh, user, pendingOnly` — **no depende de `costCenterOptionsReady`**, así que ahora carga en paralelo al catálogo de centros de costo en vez de esperarlo (mejora real de latencia de la primera pintura de las tarjetas, no un cambio de comportamiento). Loading propio: `pendingLoading` (usado por Novedades pendientes y Desgloses manuales, que comparten la misma fuente de datos).
+- **D) Catálogo de centros de costo** (`orgStructureApiService.getCatalog()`) — ya estaba aislado en su propio efecto desde antes de esta etapa; no se tocó.
+
+`loadError` (el banner superior) queda derivado como `gridError || reviewError` — nunca estado propio — así ningún efecto puede pisar el error de otro por accidente (riesgo documentado en §17.6). `getSummary`/`pendingApiService.getAll` siguen haciendo `catch` a un valor por defecto cada uno (exactamente como antes de esta etapa, sin cambios) — nunca "duro"-fallan ese efecto combinado.
+
+`costCenterId` se extrajo como un `const` derivado una sola vez por render (`costCenterOptions.find(...)`), en vez de recalcularse dentro de cada efecto por separado.
+
+### 17.4 Qué endpoints dejaron de llamarse innecesariamente
+
+- Cambiar la búsqueda, el centro de costo, la página de revisión o el toggle "Por registro/Por persona" **ya no vuelve a llamar** `getSummary` ni `pendingApiService.getAll` — antes sí, siempre, en cada una de esas 4 interacciones.
+- Cambiar la página de revisión (`reviewPage`) o el centro de costo/búsqueda **ya no vuelve a llamar** `getPeriodEmployees` cuando el cambio ocurrió en modo Bandeja (y viceversa) — estructuralmente imposible ahora, cada efecto sólo existe en su propio modo.
+- Las tarjetas resumen y los pendientes ya no esperan a que el catálogo de centros de costo termine de cargar (no lo necesitan) — se pintan más rápido en la carga inicial.
+- Verificado con tests de conteo de llamadas (no sólo revisado a ojo, ver §17.8): en la carga inicial de cada modo, cada endpoint relevante se llama exactamente una vez y ninguno de los endpoints del otro modo se llama nunca.
+
+### 17.5 Cómo queda el patrón de carga inicial vs refresh
+
+Cada uno de los 3 efectos nuevos sigue el mismo guard ya usado en 9B/9C/9E: `if (!data.length) setXLoading(true)` antes de la llamada — el skeleton de carga completo sólo aparece cuando esa sección todavía no tiene datos en pantalla. Un cambio de filtro/página/mutación con datos ya cargados **no blanquea la sección** — el usuario sigue viendo la tabla anterior hasta que la respuesta nueva la reemplaza. Verificado con tests que dejan una promesa "en vuelo" a propósito y confirman que la fila anterior sigue visible y el skeleton no aparece mientras tanto (§17.8).
+
+### 17.6 Cómo se comportan las mutaciones
+
+Ninguna de las 8 mutaciones existentes (aprobar/rechazar/devolver carga horaria, aprobar/rechazar novedad, aprobar/rechazar/devolver desglose manual) cambió su lógica — todas siguen llamando exactamente al mismo endpoint con los mismos parámetros, y todas siguen terminando en `setRefresh((value) => value + 1)`, igual que antes. Como `refresh` sigue siendo dependencia compartida de los 3 efectos, una mutación sigue invalidando **todo lo relacionado** (grilla, bandeja y resumen/pendientes) — no se intentó adivinar "esta mutación sólo necesita refrescar X" para no arriesgar sub-refrescar algo que dependa de una regla de negocio no evidente desde el frontend. Como cada mutación sólo se renderiza en el modo donde tiene sentido (aprobar/rechazar/devolver carga horaria y desgloses sólo existen en `pendingOnly`), el efecto del modo contrario (Grilla) nunca llega a disparar una llamada real aunque comparta la dependencia `refresh` — su propio guard `if (pendingOnly) return;` lo corta antes de tocar la red. Período/centro de costo seleccionados no se pierden durante ese refresh (son estado de UI separado, nunca tocado por los efectos de carga) — verificado con un test dedicado.
+
+### 17.7 Qué quedó sin tocar y por qué
+
+- El JSX/render de las 4 secciones — ninguna se rediseñó, sólo cambió qué variable de loading/error lee cada una.
+- Las 8 funciones de mutación (`approve`, `confirmReview`, `approveNovelty`, `confirmNoveltyReject`, `approveBreakdown`, `confirmBreakdownReview`, etc.) — mismo cuerpo, mismos endpoints, mismos parámetros.
+- `usesBackend` — se mantiene como un único booleano (no se separó por efecto) porque sus dos únicos usos (fallback de exportación, texto del empty-state de Novedades) están en ramas de render mutuamente excluyentes por `pendingOnly`, así que nunca hay conflicto entre quién lo escribe.
+- Conceptos Horarios y Horas Especiales — no se tocó ningún archivo de esos módulos; se verificó (test dedicado, ver §17.8) que "Normales"/"Especiales"/"Total" siguen viniendo de `getPeriodEmployees` como 3 campos separados (`summary.normal`/`summary.special`/`summary.total`), nunca mezclados.
+- No se extrajeron hooks (`useHoursGridData`, etc.) a archivos separados — los 3 efectos quedaron inline en el mismo componente, con comentarios explicando cada uno. Se evaluó extraerlos y se decidió que, para 3 efectos ya cortos y con dependencias claras, un hook por efecto habría agregado una capa de indirección (pasar/devolver 6-8 valores cada uno) sin reducir el riesgo ni mejorar la legibilidad lo suficiente para justificarlo en esta etapa — "no crear abstracciones complejas ni generalizar" fue la guía explícita del pedido.
+- No se tocó el bug técnicamente pre-existente de que `loadError` (ahora `gridError || reviewError`) puede, en un caso muy angosto, no reflejar un error de un efecto si el otro efecto relevante al mismo modo tuvo éxito en el mismo ciclo de `refresh` — ver riesgo en §17.8. Antes de esta etapa esto no podía pasar (era una única promesa atómica); ahora es estructuralmente posible pero de probabilidad muy baja (ambos efectos pegan al mismo backend, que normalmente está arriba o abajo para los dos a la vez) y no se intentó resolver con más estado para no exceder "cambios chicos".
+
+### 17.8 Tests agregados
+
+`HoursPage.test.tsx` — 11 tests nuevos (los 19 preexistentes siguen pasando sin ningún cambio, confirmando que el comportamiento visible no se rompió): carga inicial en Bandeja (3 endpoints exactos, `getPeriodEmployees` nunca), carga inicial en Carga de horas (2 endpoints exactos, los 3 de Bandeja nunca), cambiar página de revisión sólo repite `list`, cambiar página de grilla sólo repite `getPeriodEmployees`, una mutación sí repite los 3 (refresh sigue invalidando todo lo relacionado), cambiar de página de revisión con datos ya cargados no blanquea la tabla, período/centro de costo no se pierden durante un refresh, empty state y error state (con retry) siguen funcionando en Carga de horas, Normales/Especiales/Total se muestran separados (regresión Horas Especiales/Conceptos), sin texto técnico visible. Se agregó también el mock de `timeEntryApiService.listByEmployee` (no existía) y helpers `renderGrid()`/`buildEmployee()`/`buildPeriodRow()` para poder testear por primera vez el modo `!pendingOnly` (ningún test preexistente lo cubría). Total frontend: 369 tests (358 + 11).
+
+### 17.9 Validaciones ejecutadas
+
+Frontend: `npx tsc -b` ✅, `npx vitest run` ✅ 369/369, `npm run build` ✅.
+Backend (sin cambios, corrido igual por seguridad): `npx prisma validate` ✅, `npx prisma generate` ✅, `npx prisma migrate status` ✅ (45 migraciones, sin cambios), `npm run typecheck` ✅, `npx vitest run` ✅ 709/709, `npm run build` ✅.
+General: `git diff --check` sin errores de espacios en blanco.
+
+### 17.10 Riesgos pendientes
+
+- **Banner de error compartido entre 2 efectos** (`gridError || reviewError`, o dentro de C, entre `getSummary`/`pendingApiService.getAll`): en el caso angosto de que dos efectos relevantes al mismo modo fallen y tengan éxito en el mismo ciclo de `refresh`, el banner podría mostrar sólo uno de los dos estados. Ver §17.7 — se documenta como aceptado, no se resolvió con estado adicional.
+- La Bandeja de revisión (`reviewLoading`) sigue sin un `ErrorState` dedicado (con botón de reintentar) — igual que antes de esta etapa, un fallo ahí sólo se ve en el banner superior + la tabla mostrando "sin resultados". No se agregó una UI de error nueva para no exceder "no rediseñar".
+- El resto de los hallazgos de HoursPage documentados en 9A (paginación de la grilla ya existía, exportación con fallback client-side) sin cambios.
+- El resto de los riesgos de 9A/9B/9C/9E sin relación con esta etapa siguen vigentes sin cambios.
+
+### 17.11 Reglas futuras para pantallas complejas
+
+- Antes de tocar un efecto con muchas dependencias, mapear **qué llamada usa qué dependencia real** (una tabla como la de §17.2) — no asumir que "todas las dependencias son necesarias para todas las llamadas" sólo porque hoy conviven en el mismo `Promise.all`.
+- Un prop que nunca cambia dentro de un mismo montaje (como `pendingOnly`, dos rutas separadas) puede tratarse como una bifurcación estructural — separar el código en efectos que cada uno haga su propio `if (propX) return;`/`if (!propX) return;`, en vez de forzar todo a convivir en un único cuerpo condicional.
+- Combinar 2 llamadas en el mismo efecto sólo cuando comparten **exactamente** las mismas dependencias reales — combinarlas "porque van juntas visualmente" (ej. tarjetas + pendientes, que se ven en momentos distintos de la pantalla) es válido si además comparten dependencias; si no, separarlas.
+- Loading/error por sección, no uno global compartido por 3+ secciones — cada sección debe poder cargar/fallar sin afectar visualmente a las demás.
+- Extraer hooks (`useXData`) sólo cuando el número de efectos/estados crece lo suficiente como para que la indirección realmente reduzca la carga cognitiva de leer el componente — con 3 efectos cortos y bien comentados, mantenerlos inline puede ser la opción de menor riesgo.
+- Medir antes de asumir "esto va a mejorar" — los 11 tests nuevos existen específicamente para demostrar con evidencia (conteo de llamadas) que el refetch se redujo, no para documentar una intención.

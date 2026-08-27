@@ -229,65 +229,128 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
   const [hoursSummary, setHoursSummary] = useState(emptyHoursSummary);
   const [pendingItems, setPendingItems] = useState<PendingItem[]>([]);
   const [usesBackend, setUsesBackend] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState("");
+  // Etapa 9F: el mega-efecto original tenía 10 dependencias en un único
+  // Promise.all — cambiar `reviewPage`, `groupByPerson`, `debouncedSearch` o
+  // `costCenter` volvía a pedir getSummary/pendingApiService.getAll aunque
+  // ninguno de los dos acepta esos parámetros (siempre iban a devolver lo
+  // mismo), y `pendingOnly` (que nunca cambia dentro de un mismo montaje —
+  // /horas y /pendientes son rutas separadas) igual quedaba en el array. Se
+  // separó en 3 efectos por dependencia real (ver más abajo), cada uno con su
+  // propio loading/error para no blanquear ni bloquear secciones que no
+  // dependen de lo que cambió. loadError se deriva de los 2 que sí pueden
+  // fallar "duro" (grid/review) — getSummary y pendingApiService.getAll ya
+  // hacían catch a un default antes de esta etapa, eso no se tocó.
+  const [gridLoading, setGridLoading] = useState(true);
+  const [gridError, setGridError] = useState("");
+  const [reviewLoading, setReviewLoading] = useState(true);
+  const [reviewError, setReviewError] = useState("");
+  const [pendingLoading, setPendingLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState("");
+  const loadError = gridError || reviewError;
 
+  const costCenterId = costCenterOptions.find((item) => item.name === costCenter)?.id;
+
+  // A) Grilla "Personas habilitadas para carga" — sólo existe cuando
+  // !pendingOnly. Depende de período/búsqueda/centro de costo/página; no
+  // depende de reviewPage/groupByPerson (esos son de la Bandeja).
   useEffect(() => {
+    if (pendingOnly) return;
+    if (!user || !costCenterOptionsReady) return;
     let cancelled = false;
-    async function load() {
-      if (!user || !costCenterOptionsReady) return;
-      setLoading(true);
-      setLoadError("");
-      try {
-        const costCenterId = costCenterOptions.find((item) => item.name === costCenter)?.id;
-        const reviewFilters = { period, status: "En revisión" as const, search: debouncedSearch, costCenterId, page: reviewPage, take: pageSize };
-        const emptyRows = { items: [], meta: { total: 0, page: 1, pageSize, hasMore: false } };
-        async function loadReview() {
-          if (!pendingOnly) return { entries: [] as TimeEntry[], byPerson: [] as typeof reviewByPerson, meta: emptyRows.meta };
-          if (groupByPerson) {
-            const result = await timeEntryApiService.listByEmployee(reviewFilters);
-            return { entries: [] as TimeEntry[], byPerson: result.items, meta: result.meta };
-          }
-          const result = await timeEntryApiService.list(reviewFilters);
-          return { entries: result.items, byPerson: [] as typeof reviewByPerson, meta: result.meta };
-        }
-        const [apiRows, apiSummary, apiReview, apiPending] = await Promise.all([
-          pendingOnly ? Promise.resolve(emptyRows) : timeEntryApiService.getPeriodEmployees({ period, search: debouncedSearch, costCenterId, page, take: pageSize }),
-          timeEntryApiService.getSummary(period).catch(() => emptyHoursSummary),
-          loadReview(),
-          pendingOnly ? pendingApiService.getAll({ period, kind: "all", take: 300 }).catch(() => undefined) : Promise.resolve(undefined),
-        ]);
+    if (!periodRows.length) setGridLoading(true);
+    setGridError("");
+    timeEntryApiService.getPeriodEmployees({ period, search: debouncedSearch, costCenterId, page, take: pageSize })
+      .then((result) => {
         if (cancelled) return;
-        setPeriodRows(apiRows.items);
-        setPeriodRowsMeta(apiRows.meta);
-        setReviewEntries(apiReview.entries);
-        setReviewByPerson(apiReview.byPerson);
-        setReviewEntriesMeta(apiReview.meta);
-        setHoursSummary(apiSummary);
-        setPendingItems(apiPending?.data || []);
+        setPeriodRows(result.items);
+        setPeriodRowsMeta(result.meta);
         setUsesBackend(true);
-      } catch (error) {
+      })
+      .catch(() => {
         if (cancelled) return;
         setPeriodRows([]);
         setPeriodRowsMeta({ total: 0, page, pageSize, hasMore: false });
-        setReviewEntries([]);
-        setReviewByPerson([]);
-        setReviewEntriesMeta({ total: 0, page: reviewPage, pageSize, hasMore: false });
-        setHoursSummary(emptyHoursSummary);
-        setPendingItems([]);
         setUsesBackend(false);
-        setLoadError("No pudimos cargar la información horaria. Intentá nuevamente.");
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    }
-    load();
+        setGridError("No pudimos cargar la información horaria. Intentá nuevamente.");
+      })
+      .finally(() => {
+        if (!cancelled) setGridLoading(false);
+      });
     return () => {
       cancelled = true;
     };
-  }, [costCenter, costCenterOptionsReady, debouncedSearch, groupByPerson, page, pendingOnly, period, refresh, reviewPage, user]);
+  }, [costCenterId, costCenterOptionsReady, debouncedSearch, page, pendingOnly, period, refresh, user]);
+
+  // B) Bandeja de revisión (Horas enviadas a revisión) — sólo existe cuando
+  // pendingOnly. Depende de período/búsqueda/centro de costo/reviewPage/
+  // groupByPerson (cambia de endpoint: listByEmployee vs list).
+  useEffect(() => {
+    if (!pendingOnly) return;
+    if (!user || !costCenterOptionsReady) return;
+    let cancelled = false;
+    if (!reviewEntries.length && !reviewByPerson.length) setReviewLoading(true);
+    setReviewError("");
+    const reviewFilters = { period, status: "En revisión" as const, search: debouncedSearch, costCenterId, page: reviewPage, take: pageSize };
+    const request = groupByPerson ? timeEntryApiService.listByEmployee(reviewFilters) : timeEntryApiService.list(reviewFilters);
+    request
+      .then((result) => {
+        if (cancelled) return;
+        if (groupByPerson) {
+          setReviewByPerson(result.items as typeof reviewByPerson);
+          setReviewEntries([]);
+        } else {
+          setReviewEntries(result.items as TimeEntry[]);
+          setReviewByPerson([]);
+        }
+        setReviewEntriesMeta(result.meta);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setReviewEntries([]);
+        setReviewByPerson([]);
+        setReviewEntriesMeta({ total: 0, page: reviewPage, pageSize, hasMore: false });
+        setReviewError("No pudimos cargar la información horaria. Intentá nuevamente.");
+      })
+      .finally(() => {
+        if (!cancelled) setReviewLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [costCenterId, costCenterOptionsReady, debouncedSearch, groupByPerson, pendingOnly, period, refresh, reviewPage, user]);
+
+  // C) Resumen (tarjetas, ambos modos) + pendientes de novedades/desgloses
+  // (sólo pendingOnly) — ninguno de los dos endpoints acepta
+  // búsqueda/centro/página, así que no dependen de esos filtros ni de
+  // costCenterOptionsReady (pueden cargar en paralelo al catálogo de
+  // centros de costo, no bloqueados detrás de él como antes).
+  useEffect(() => {
+    if (!user) return;
+    let cancelled = false;
+    if (pendingOnly && !pendingItems.length) setPendingLoading(true);
+    timeEntryApiService.getSummary(period)
+      .then((result) => { if (!cancelled) setHoursSummary(result); })
+      .catch(() => { if (!cancelled) setHoursSummary(emptyHoursSummary); });
+    if (!pendingOnly) return () => { cancelled = true; };
+    pendingApiService.getAll({ period, kind: "all", take: 300 })
+      .then((result) => {
+        if (cancelled) return;
+        setPendingItems(result?.data || []);
+        setUsesBackend(true);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setPendingItems([]);
+        setUsesBackend(false);
+      })
+      .finally(() => {
+        if (!cancelled) setPendingLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [pendingOnly, period, refresh, user]);
 
   useEffect(() => {
     let mounted = true;
@@ -510,7 +573,7 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
             title="Novedades pendientes"
             subtitle={`${pendingNoveltyItems.length} novedades requieren revisión o aprobación`}
           >
-            {loading ? (
+            {pendingLoading ? (
               <LoadingState variant="table" rows={4} columns={7} />
             ) : pendingNoveltyItems.length ? (
               <TableShell minWidth={980}>
@@ -637,7 +700,7 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
             </label>
           </FilterPanel>
 
-          {loading ? (
+          {reviewLoading ? (
             <LoadingState variant="table" rows={5} columns={8} />
           ) : groupByPerson ? (
             reviewByPerson.length ? (
@@ -793,7 +856,7 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
             subtitle={`${pendingBreakdownItems.length} conceptos adicionales pendientes de resolución — son desgloses para liquidación/análisis y no modifican Hora normal ni el total trabajado.`}
           >
             {breakdownActionError ? <div className="form-error">{breakdownActionError}</div> : null}
-            {loading ? (
+            {pendingLoading ? (
               <LoadingState variant="table" rows={3} columns={7} />
             ) : pendingBreakdownItems.length ? (
               <TableShell minWidth={980}>
@@ -921,10 +984,10 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
           </label>
         </FilterPanel>
 
-        {loading ? (
+        {gridLoading ? (
           <LoadingState variant="table" rows={5} columns={9} />
-        ) : loadError ? (
-          <ErrorState message={loadError} onRetry={() => setRefresh((value) => value + 1)} />
+        ) : gridError ? (
+          <ErrorState message={gridError} onRetry={() => setRefresh((value) => value + 1)} />
         ) : !employees.length ? (
           <EmptyState text="No hay personas habilitadas para carga con los filtros aplicados." />
         ) : (
