@@ -146,11 +146,17 @@ export const workRegimesService = {
       effectiveTo: data.effectiveTo,
       assignedByUserId: audit?.userId,
     });
+    // Etapa 10B: entityId debe ser employeeId (no item.id, el id de la
+    // asignación) — mismo criterio ya usado en todo employees.service.ts
+    // (entity nombra qué cambió, entityId siempre ancla al legajo) — es lo
+    // que permite que este evento aparezca en el tab "Historial de Eventos"/
+    // "Auditoría" del propio legajo, que filtra por entityId=employee.id
+    // (hallazgo 10A §7/§11, antes quedaba invisible ahí).
     await auditService.register({
       ...audit,
       action: "CREATE",
       entity: "EmployeeWorkRegime",
-      entityId: item.id,
+      entityId: employeeId,
       description: `Se asignó el régimen laboral ${item.workRegime.code} - ${item.workRegime.name} al empleado desde ${data.effectiveFrom.toISOString().slice(0, 10)}.`,
       after: item as Prisma.InputJsonValue,
     });
@@ -174,11 +180,12 @@ export const workRegimesService = {
       ...(data.effectiveFrom ? { effectiveFrom: data.effectiveFrom } : {}),
       ...(data.effectiveTo !== undefined ? { effectiveTo: data.effectiveTo } : {}),
     });
+    // Etapa 10B: entityId=employeeId, mismo criterio que assign() arriba.
     await auditService.register({
       ...audit,
       action: "UPDATE",
       entity: "EmployeeWorkRegime",
-      entityId: item.id,
+      entityId: employeeId,
       description: `Se actualizó la asignación de régimen laboral del empleado (${item.workRegime.code} - ${item.workRegime.name}).`,
       before: before as unknown as Prisma.InputJsonValue,
       after: item as Prisma.InputJsonValue,
@@ -194,11 +201,12 @@ export const workRegimesService = {
     }
 
     const item = await workRegimesRepository.updateAssignment(assignmentId, { effectiveTo });
+    // Etapa 10B: entityId=employeeId, mismo criterio que assign()/updateAssignment() arriba.
     await auditService.register({
       ...audit,
       action: "UPDATE",
       entity: "EmployeeWorkRegime",
-      entityId: item.id,
+      entityId: employeeId,
       description: `Se cerró la vigencia de la asignación de régimen laboral (${item.workRegime.code} - ${item.workRegime.name}) al ${effectiveTo.toISOString().slice(0, 10)}.`,
       before: before as unknown as Prisma.InputJsonValue,
       after: item as Prisma.InputJsonValue,

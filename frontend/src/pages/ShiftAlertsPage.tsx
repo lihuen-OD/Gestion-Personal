@@ -25,6 +25,8 @@ const TYPE_LABELS: Record<ShiftAlertType, string> = {
   JORNADA_EXTENDIDA: "Jornada extendida",
   DESCANSO_INSUFICIENTE: "Descanso insuficiente",
   POSIBLE_OLVIDO_SALIDA: "Posible olvido de salida",
+  CONCEPTO_NO_HABILITADO: "Concepto no habilitado",
+  SEGMENTO_SIN_CLASIFICAR: "Segmento sin clasificar",
 };
 
 const SEVERITY_TONE: Record<ShiftAlertSeverity, "neutral" | "warning" | "danger"> = {

@@ -11,6 +11,12 @@ export const shiftAlertTypeSchema = z.enum([
   "JORNADA_EXTENDIDA",
   "DESCANSO_INSUFICIENTE",
   "POSIBLE_OLVIDO_SALIDA",
+  // Etapa 10B: faltaban en este schema Zod aunque ya existían en el enum de
+  // Prisma y se generaban en producción (workShiftEvaluationRunner.ts,
+  // notifyClassificationAlerts) — bloqueaban el filtro ?type=... con 400
+  // (hallazgo 10A §11.4).
+  "CONCEPTO_NO_HABILITADO",
+  "SEGMENTO_SIN_CLASIFICAR",
 ]);
 
 export const shiftAlertSeveritySchema = z.enum(["INFO", "ADVERTENCIA", "CRITICA"]);

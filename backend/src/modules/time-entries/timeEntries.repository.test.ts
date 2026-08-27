@@ -2,10 +2,11 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import type { Mock } from "vitest";
 import { prisma } from "../../shared/prisma/client";
 import { timeEntriesRepository } from "./timeEntries.repository";
-import { flagOpenShiftOverflowForReview } from "../shifts/workShiftEvaluationRunner";
+import { flagOpenShiftOverflowForReview, resolveOpenShiftOverflowAlert } from "../shifts/workShiftEvaluationRunner";
 
 vi.mock("../shifts/workShiftEvaluationRunner", () => ({
   flagOpenShiftOverflowForReview: vi.fn().mockResolvedValue(undefined),
+  resolveOpenShiftOverflowAlert: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("../../shared/prisma/client", () => {
@@ -73,6 +74,7 @@ const mockedPrisma = prisma as unknown as {
 };
 
 const mockedFlagOpenShiftOverflowForReview = flagOpenShiftOverflowForReview as unknown as Mock;
+const mockedResolveOpenShiftOverflowAlert = resolveOpenShiftOverflowAlert as unknown as Mock;
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -287,6 +289,57 @@ describe("expireOpenWorkShifts — política de rollover por régimen (Etapa 5)"
     // workShiftEvaluationRunner.test.ts para esa garantía de fondo.
     expect(mockedFlagOpenShiftOverflowForReview.mock.calls[0]![1]).toBe("shift-overflow");
     expect(mockedFlagOpenShiftOverflowForReview.mock.calls[1]![1]).toBe("shift-overflow");
+  });
+});
+
+describe("expireOpenWorkShifts — resolución de alertas huérfanas (Etapa 10B, hallazgo 10A §11.2)", () => {
+  const startAt = new Date("2026-08-14T04:00:00.000Z");
+  const now = new Date("2026-08-15T05:00:00.000Z");
+
+  function overLimitShift() {
+    return {
+      id: "shift-overflow",
+      employeeId: "employee-1",
+      startAt,
+      maxAllowedMinutes: 20 * 60,
+      source: "PORTAL_DNI",
+      hourConcept: { id: "concept-1", name: "Normal" },
+    };
+  }
+
+  it("al cerrar automáticamente la jornada (ROLLOVER/sin régimen), resuelve la alerta POSIBLE_OLVIDO_SALIDA de esa misma jornada", async () => {
+    mockedPrisma.workShift.findMany.mockResolvedValue([overLimitShift()]);
+    mockedPrisma.employeeWorkRegime.findFirst.mockResolvedValue(null);
+    mockedPrisma.__tx.workShift.updateMany.mockResolvedValue({ count: 1 });
+    mockedPrisma.__tx.timeEntry.create.mockResolvedValue({});
+
+    await timeEntriesRepository.expireOpenWorkShifts(now);
+
+    expect(mockedResolveOpenShiftOverflowAlert).toHaveBeenCalledTimes(1);
+    expect(mockedResolveOpenShiftOverflowAlert).toHaveBeenCalledWith("shift-overflow", expect.any(String));
+  });
+
+  it("bajo régimen ALERT_ONLY (la jornada NO se cierra), no intenta resolver ninguna alerta — sigue pendiente a propósito", async () => {
+    mockedPrisma.workShift.findMany.mockResolvedValue([overLimitShift()]);
+    mockedPrisma.employeeWorkRegime.findFirst.mockResolvedValue({
+      workRegime: { kind: "TURNO_FLEXIBLE", alertOnOutOfShift: false, openShiftOverflowAction: "ALERT_ONLY" },
+    });
+
+    await timeEntriesRepository.expireOpenWorkShifts(now);
+
+    expect(mockedResolveOpenShiftOverflowAlert).not.toHaveBeenCalled();
+  });
+
+  it("no rompe el batch de cierre automático si la resolución de una alerta falla puntualmente", async () => {
+    mockedPrisma.workShift.findMany.mockResolvedValue([overLimitShift()]);
+    mockedPrisma.employeeWorkRegime.findFirst.mockResolvedValue(null);
+    mockedPrisma.__tx.workShift.updateMany.mockResolvedValue({ count: 1 });
+    mockedPrisma.__tx.timeEntry.create.mockResolvedValue({});
+    mockedResolveOpenShiftOverflowAlert.mockRejectedValueOnce(new Error("db hiccup"));
+
+    const result = await timeEntriesRepository.expireOpenWorkShifts(now);
+
+    expect(result.count).toBe(1); // el cierre automático ya había sido reportado como exitoso
   });
 });
 
@@ -1159,6 +1212,29 @@ describe("rolloverExpiredOpenWorkShift — regresión de atribución de día/per
         data: expect.objectContaining({ period: "2026-08", day: 14 }),
       }),
     );
+  });
+
+  it("resuelve la alerta POSIBLE_OLVIDO_SALIDA de la jornada vieja que quedó marcada FALTA_SALIDA (Etapa 10B, hallazgo 10A §11.2)", async () => {
+    mockedPrisma.__tx.workShift.findFirst.mockResolvedValue({
+      id: "shift-prev",
+      startAt: new Date("2026-08-15T02:30:00.000Z"),
+      source: "PORTAL_DNI",
+      hourConcept: { id: "concept-1", name: "Normal" },
+    });
+    mockedPrisma.__tx.workShift.updateMany.mockResolvedValue({ count: 1 });
+    mockedPrisma.__tx.timeEntry.create.mockResolvedValue({});
+    mockedPrisma.__tx.attendancePunch.create.mockResolvedValue({ id: "punch-1" });
+    mockedPrisma.__tx.workShift.create.mockResolvedValue({ id: "shift-new" });
+
+    await timeEntriesRepository.rolloverExpiredOpenWorkShift({
+      openWorkShiftId: "shift-prev",
+      employeeId: "employee-1",
+      source: "PORTAL_DNI" as never,
+      startAt: new Date("2026-08-15T10:00:00.000Z"),
+      missingOutObservation: "Olvido de salida.",
+    });
+
+    expect(mockedResolveOpenShiftOverflowAlert).toHaveBeenCalledWith("shift-prev", expect.any(String));
   });
 });
 

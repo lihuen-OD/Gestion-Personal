@@ -2,7 +2,7 @@ import { ApprovalStatus, EmployeeStatus, Prisma, WorkShiftSource, WorkShiftStatu
 import { prisma } from "../../shared/prisma/client";
 import { noveltyCoversDay } from "../novelties/novelties.dateRange";
 import { resolveActiveWorkRegime } from "../work-regimes/workRegimes.service";
-import { flagOpenShiftOverflowForReview } from "../shifts/workShiftEvaluationRunner";
+import { flagOpenShiftOverflowForReview, resolveOpenShiftOverflowAlert } from "../shifts/workShiftEvaluationRunner";
 import { buildActiveDatesByRule, resolveWinningRules, ruleMatchesDate } from "../workforce-management/doubleHourRuleMatching";
 import {
   argentinaCalendarDate,
@@ -1206,6 +1206,24 @@ export const timeEntriesRepository = {
       }
     });
 
+    // Etapa 10B: la jornada que recién se auto-cerró en 0h puede tener una
+    // alerta POSIBLE_OLVIDO_SALIDA previa (creada por el chequeo de riesgo
+    // periódico, ver openShiftMonitor.service.ts) — se resuelve acá para que
+    // no quede "pendiente" indefinidamente en /turnos/alertas (ver 10A §11.2).
+    // Best-effort: un fallo puntual no debe impedir que el resto del batch de
+    // cierre automático se reporte como exitoso.
+    for (const item of items) {
+      try {
+        await resolveOpenShiftOverflowAlert(item.workShiftId, "Resuelta automáticamente: la jornada venció y se cerró sin salida registrada (revisión disponible en Asistencia).");
+      } catch (error) {
+        console.error("CLOCK_WORK_SHIFT_ALERT_RESOLVE_FAILED", {
+          severity: "warning",
+          workShiftId: item.workShiftId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
     return { count, items };
   },
 
@@ -1236,8 +1254,8 @@ export const timeEntriesRepository = {
     });
   },
 
-  rolloverExpiredOpenWorkShift(input: { openWorkShiftId: string; employeeId: string; hourConceptId?: string; hourConceptName?: string; source: WorkShiftSource; startAt: Date; missingOutObservation: string; punchEvidence?: PunchEvidenceInput }) {
-    return prisma.$transaction(async (tx) => {
+  async rolloverExpiredOpenWorkShift(input: { openWorkShiftId: string; employeeId: string; hourConceptId?: string; hourConceptName?: string; source: WorkShiftSource; startAt: Date; missingOutObservation: string; punchEvidence?: PunchEvidenceInput }) {
+    const newShift = await prisma.$transaction(async (tx) => {
       const previous = await tx.workShift.findFirst({
         where: { id: input.openWorkShiftId, employeeId: input.employeeId, status: WorkShiftStatus.ABIERTO, endAt: null },
         include: { hourConcept: true },
@@ -1297,6 +1315,22 @@ export const timeEntriesRepository = {
         },
       });
     });
+
+    // Etapa 10B: mismo fix que expireOpenWorkShifts — este camino también
+    // cierra la jornada vieja como FALTA_SALIDA sin pasar por
+    // evaluateShiftExit, así que una alerta POSIBLE_OLVIDO_SALIDA previa
+    // quedaría huérfana si no se resuelve acá explícitamente.
+    try {
+      await resolveOpenShiftOverflowAlert(input.openWorkShiftId, "Resuelta automáticamente: la jornada quedó marcada como olvido de salida al registrarse un nuevo ingreso.");
+    } catch (error) {
+      console.error("CLOCK_WORK_SHIFT_ALERT_RESOLVE_FAILED", {
+        severity: "warning",
+        workShiftId: input.openWorkShiftId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+
+    return newShift;
   },
 
   createObservedPunch(input: { employeeId: string; type: "INGRESO" | "SALIDA"; source: WorkShiftSource; timestamp: Date; observation: string; punchEvidence?: PunchEvidenceInput }) {

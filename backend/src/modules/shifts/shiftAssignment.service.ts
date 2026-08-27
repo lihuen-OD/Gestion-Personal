@@ -70,11 +70,15 @@ export const shiftAssignmentService = {
             user.id,
           ),
         );
+        // Etapa 10B: entityId=employeeId (no created.id, el id de la
+        // asignación) — mismo criterio ya usado en employees.service.ts, es
+        // lo que permite que este evento aparezca en el tab "Historial de
+        // Eventos"/"Auditoría" del propio legajo (hallazgo 10A §7/§11).
         await auditService.register({
           ...audit,
           action: "CREATE",
           entity: "ShiftAssignment",
-          entityId: created.id,
+          entityId: employeeId,
           description: `Se asignó el turno ${describeShift(template)} al empleado ${created.employee.legajo}.`,
           after: created as unknown as Prisma.InputJsonValue,
         });
@@ -90,11 +94,12 @@ export const shiftAssignmentService = {
             user.id,
           ),
         );
+        // Etapa 10B: entityId=employeeId, mismo criterio que arriba.
         await auditService.register({
           ...audit,
           action: "ACTIVATE",
           entity: "ShiftAssignment",
-          entityId: existing.id,
+          entityId: employeeId,
           description: `Se rehabilitó el turno ${describeShift(template)} para el empleado ${reenabled.employee.legajo}.`,
           before: existing as unknown as Prisma.InputJsonValue,
           after: reenabled as unknown as Prisma.InputJsonValue,
@@ -145,11 +150,13 @@ export const shiftAssignmentService = {
     }
 
     const item = await execute(() => shiftAssignmentRepository.update(id, data));
+    // Etapa 10B: entityId=employeeId (no id, el id de la asignación), mismo
+    // criterio que assign() arriba.
     await auditService.register({
       ...audit,
       action,
       entity: "ShiftAssignment",
-      entityId: id,
+      entityId: before.employeeId,
       description: `Se ${action === "DEACTIVATE" ? "deshabilitó" : action === "ACTIVATE" ? "habilitó" : "actualizó"} el turno ${describeShift(item.shiftTemplate)} para el empleado ${item.employee.legajo}.`,
       before: before as unknown as Prisma.InputJsonValue,
       after: item as unknown as Prisma.InputJsonValue,
@@ -161,11 +168,12 @@ export const shiftAssignmentService = {
     const before = await shiftAssignmentRepository.findById(id);
     if (!before) throw new AppError("No encontramos la asignación solicitada", 404, "SHIFT_ASSIGNMENT_NOT_FOUND");
     await shiftAssignmentRepository.remove(id);
+    // Etapa 10B: entityId=employeeId, mismo criterio que assign()/update() arriba.
     await auditService.register({
       ...audit,
       action: "DELETE",
       entity: "ShiftAssignment",
-      entityId: id,
+      entityId: before.employeeId,
       description: `Se quitó la asociación del turno ${describeShift(before.shiftTemplate)} con el empleado ${before.employee.legajo}.`,
       before: before as unknown as Prisma.InputJsonValue,
     });

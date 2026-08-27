@@ -202,9 +202,28 @@ async function resolveMatchForExit(employeeId: string, shiftTemplateId: string |
   return { case: assignment.status === "HABILITADO" ? "ENABLED" : "DISABLED_FOR_EMPLOYEE", template: templateRef, differenceMinutes: null };
 }
 
+// Etapa 10B: cierra el hueco de "alertas huérfanas" detectado en la
+// auditoría 10A — cuando una WorkShift pasa de ABIERTO a cualquier estado
+// cerrado (salida real, cierre manual de RRHH, auto-expiración por
+// mantenimiento, o rollover al registrar un nuevo ingreso sobre una jornada
+// vieja), el riesgo que POSIBLE_OLVIDO_SALIDA advertía ya dejó de existir —
+// la jornada tiene un desenlace definitivo, revisable por su propio estado
+// (FALTA_SALIDA en la bandeja de Asistencia, o la salida real registrada).
+// No borra la alerta ni su trazabilidad (resolvedAt/resolutionNote quedan),
+// solo actualiza su status — no-op si no había ninguna alerta PENDIENTE para
+// esta jornada, y nunca toca alertas de otro workShiftId/empleado (el
+// update siempre filtra por este workShiftId puntual).
+export async function resolveOpenShiftOverflowAlert(workShiftId: string, note: string) {
+  await prisma.shiftAlert.updateMany({
+    where: { workShiftId, type: "POSIBLE_OLVIDO_SALIDA", status: "PENDIENTE" },
+    data: { status: "RESUELTA", resolvedAt: new Date(), resolutionNote: note },
+  });
+}
+
 export async function evaluateShiftExit(employeeId: string, workShiftId: string, actualAt: Date) {
   const shift = await prisma.workShift.findUnique({ where: { id: workShiftId } });
   if (!shift) return;
+  await resolveOpenShiftOverflowAlert(workShiftId, "Resuelta automáticamente: la jornada se cerró con una salida registrada.");
   const match = await resolveMatchForExit(employeeId, shift.shiftTemplateId);
 
   const punctuality = evaluateExitPunctuality({ match, startAt: shift.startAt, actualExitAt: actualAt });

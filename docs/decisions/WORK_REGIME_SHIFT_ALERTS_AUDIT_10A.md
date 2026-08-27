@@ -314,6 +314,98 @@ Etapa exclusivamente documental — no se tocó ningún archivo de código. Vali
 - `git diff --stat` — sin cambios (no hay diff sobre archivos trackeados relacionados a esta etapa).
 - `git diff --check` — sin errores de espacios en blanco.
 
-## 20. Aprobación pendiente
+## 21. Etapa 10B — Ajustes mínimos aplicados
+
+Fecha: 2026-08-27. Alcance ejecutado: los 4 puntos habilitados por el pedido de esta etapa — enum drift, bug de auditoría/historial en Legajo, alertas huérfanas al auto-cerrar jornada, y evaluación (no corrección) de notificaciones duplicadas. Sin implementar `JORNADA_EXTENDIDA` configurable por régimen (queda para 10C, ver §21.7), sin campos nuevos, sin cambiar el significado de `alertOnOutOfShift`/`openShiftOverflowAction`, sin rediseño de UI, sin permisos, sin schema/migración (el índice y los campos ya existentes alcanzaban), sin librerías nuevas. El fichador se tocó únicamente en el ciclo de vida de alertas (ver §21.3), no en su lógica de cálculo de horas/turno.
+
+### 21.1 Enum drift corregido (hallazgo 10A §11.4)
+
+Confirmado: `CONCEPTO_NO_HABILITADO` y `SEGMENTO_SIN_CLASIFICAR` ya existían en el enum de Prisma (`schema.prisma`) y ya se generaban en producción (`workShiftEvaluationRunner.ts:notifyClassificationAlerts`, con labels internas ya definidas ahí — `labelByAlertType`), pero faltaban en 3 puntos:
+
+- `backend/src/modules/shifts/shiftAlert.schemas.ts` — `shiftAlertTypeSchema` (Zod): el filtro `GET /shifts/alerts?type=CONCEPTO_NO_HABILITADO` devolvía 400. Se agregaron los 2 tipos al enum Zod.
+- `frontend/src/services/api/shiftAlertApiService.ts` — tipo TS `ShiftAlertType`: se agregaron los 2 tipos.
+- `frontend/src/pages/ShiftAlertsPage.tsx` — `TYPE_LABELS`: se agregaron `CONCEPTO_NO_HABILITADO: "Concepto no habilitado"` y `SEGMENTO_SIN_CLASIFICAR: "Segmento sin clasificar"` — textos claros para el usuario final (nunca el enum crudo), consistentes en brevedad con los labels ya existentes en esa misma tabla (`"Jornada extendida"`, `"Descanso insuficiente"`, etc.). El filtro de tipo en la UI construye sus opciones a partir de `Object.entries(TYPE_LABELS)`, así que ambos tipos quedaron disponibles ahí automáticamente, sin tocar el JSX del `<select>`.
+
+No se tocó `workShiftEvaluationRunner.ts` para esto — ya tenía los 2 tipos correctamente definidos en su propio `ShiftAlertTypeValue`/`severityByAlertType`/`labelByAlertType` desde antes; el drift estaba sólo en los 3 puntos de arriba.
+
+### 21.2 Bug de auditoría/historial en Legajo corregido (hallazgo 10A §7/§11.10)
+
+Confirmado exactamente qué cambios no se auditaban: los eventos de `EmployeeWorkRegime` (`workRegimes.service.ts`, funciones `assign`/`updateAssignment`/`closeAssignment`) y de `ShiftAssignment` (`shiftAssignment.service.ts`, funciones `assign` en sus 2 ramas CREATE/reEnable, `update`, `remove`) se registraban con `entityId` = id de la fila de asignación, en vez de `employeeId` — a diferencia del resto de la app, donde `entityId` siempre ancla al legajo (confirmado el patrón en `employees.service.ts`: 8 call sites distintos, todos con `entity` nombrando el sub-registro que cambió pero `entityId: employee.id` siempre). Como `EmployeeDetailPage.tsx` filtra sus tabs "Historial de Eventos"/"Auditoría" por `entityId=employee.id`, estos 7 eventos quedaban invisibles ahí (aunque sí existían en el log de auditoría global).
+
+Corrección: los 7 call sites de `auditService.register(...)` en ambos archivos pasan a usar `entityId: employeeId` (ya disponible como parámetro de función en los 3 de `workRegimes.service.ts`; resuelto desde la asignación ya cargada — `before.employeeId`/loop variable — en los 4 de `shiftAssignment.service.ts`). El campo `entity` (`"EmployeeWorkRegime"`/`"ShiftAssignment"`) no se tocó — sigue identificando qué tipo de cambio fue. No se duplica ningún evento (se sigue llamando `auditService.register` exactamente una vez por operación, igual que antes) y no se tocó ningún evento no relacionado (legajos, novedades, cierres, etc. siguen exactamente igual).
+
+### 21.3 Alertas huérfanas al auto-cerrar jornada — resueltas (hallazgo 10A §11.2)
+
+Se ubicaron los 3 puntos donde una `WorkShift` puede salir del estado `ABIERTO`:
+1. `evaluateShiftExit` (`workShiftEvaluationRunner.ts`) — corre en toda salida real (fichador normal) y en el cierre manual de RRHH (`closeWorkShiftManually`).
+2. `expireOpenWorkShifts` (`timeEntries.repository.ts`) — cron de mantenimiento, cierre automático en 0h (régimen `ROLLOVER`/sin régimen).
+3. `rolloverExpiredOpenWorkShift` (`timeEntries.repository.ts`) — cierre automático en 0h de una jornada vieja cuando llega un nuevo ingreso encima.
+
+Se agregó `resolveOpenShiftOverflowAlert(workShiftId, note)` (`workShiftEvaluationRunner.ts`) — un `prisma.shiftAlert.updateMany({ where: { workShiftId, type: "POSIBLE_OLVIDO_SALIDA", status: "PENDIENTE" }, data: { status: "RESUELTA", resolvedAt, resolutionNote: note } })` — y se invoca desde los 3 puntos de arriba:
+- Dentro de `evaluateShiftExit`, al principio (cubre automáticamente los 2 casos de cierre real/manual con una sola línea, sin duplicar la llamada en cada uno de los 3+ call sites de `timeEntries.service.ts` que ya invocan `evaluateShiftExit`).
+- Al final de `expireOpenWorkShifts`, iterando los `items` efectivamente cerrados (nunca para jornadas en régimen `ALERT_ONLY`, que a propósito no se cierran — esa alerta debe seguir `PENDIENTE`, tal como pedía el objetivo de esta etapa).
+- Al final de `rolloverExpiredOpenWorkShift`, sobre la jornada vieja que quedó `FALTA_SALIDA`.
+
+**No borra la alerta ni su trazabilidad** — sólo cambia `status` a `RESUELTA` con `resolvedAt`/`resolutionNote` (sin `resolvedByUserId`, queda `null`: es una resolución del sistema, no de una persona — el campo ya era nullable, sin cambio de schema). **No inventa horas** — el fix es exclusivamente sobre el ciclo de vida de `ShiftAlert`, no toca ningún cálculo de `hours`/`totalMinutes`. **Mantiene la regla de "0h o revisión RRHH"** intacta: el `ALERT_ONLY` sigue sin cerrar la jornada (y por lo tanto sin resolver la alerta — sigue pendiente a propósito, correcto); el `ROLLOVER`/sin régimen sigue cerrando en 0h con observación textual, sólo que ahora la alerta que advertía el riesgo se resuelve junto con el cierre en vez de quedar huérfana. Los 2 call sites de `timeEntries.repository.ts` son *best-effort* (try/catch con log `CLOCK_WORK_SHIFT_ALERT_RESOLVE_FAILED`, severidad `warning`) — un fallo puntual al resolver la alerta nunca bloquea ni revierte el cierre/rollover de la jornada, que ya se había persistido correctamente antes de este paso.
+
+**No se resuelven alertas de otros empleados ni no relacionadas** — el `updateMany` siempre filtra por el `workShiftId` puntual (columna con constraint único junto a `type`), nunca por `employeeId` ni de forma global; y sólo apunta al tipo `POSIBLE_OLVIDO_SALIDA` — el resto de los 11 tipos de alerta (`INGRESO_TARDE`, `JORNADA_EXTENDIDA`, etc.) no se tocan por este cambio.
+
+### 21.4 Notificaciones duplicadas — evaluado, queda pendiente (hallazgo 10A §11.3)
+
+Se confirmó con evidencia de código (no se asumió) que el caso descripto en 10A **no es una duplicación literal simultánea**, sino dos notificaciones en dos momentos distintos del ciclo de vida de una misma jornada en riesgo:
+
+1. `checkMissingOutRisk` (`openShiftMonitor.service.ts`, corrida periódica) crea `ShiftAlert(POSIBLE_OLVIDO_SALIDA)` + `SystemNotification("ALERTA_FICHADA")` cuando la jornada supera `missingOutAlertAfterMinutes` (un umbral más bajo, de advertencia temprana) — la jornada sigue `ABIERTO`.
+2. Recién más tarde (en una corrida posterior, cuando la jornada además supera `absoluteOpenShiftLimitMinutes`, un umbral más alto), `expireOpenWorkShifts` la cierra y dispara `notifyMissingExit` → `SystemNotification("FALTA_SALIDA")`.
+
+Se verificó el orden de ejecución dentro de `maintainClockPunchAttempts` (`clockPunchMaintenance.ts:17,37`): `expireOpenWorkShifts` corre *antes* que `checkMissingOutRisk` en cada ciclo — por lo tanto, dentro de una misma corrida, una jornada que se cierra automáticamente ya no está `ABIERTO` cuando `checkMissingOutRisk` la evalúa después, así que nunca se generan ambas notificaciones en el mismo tick. Son dos avisos legítimos y correlativos en el tiempo (aviso temprano de riesgo → resultado final de cierre), no un bug de duplicación instantánea.
+
+**Decisión: no se tocó la generación de notificaciones.** Suprimir la segunda notificación (`FALTA_SALIDA`) porque ya se envió la primera (`ALERTA_FICHADA`) sería una decisión de producto — ¿el usuario quiere ambas (aviso + confirmación de cierre), o sólo la última? — no un bug mecánico corregible sin riesgo, y el pedido de esta etapa pidió explícitamente documentar y no tocar en ese caso. El fix de §21.3 ya aporta una mitigación parcial: la alerta en `/turnos/alertas` ahora refleja el estado final correcto (`RESUELTA`) en vez de quedar como una tercera señal contradictoria — el operador ya no ve "pendiente" ahí después de que el sistema cerró la jornada, aunque siga viendo 2 entradas en la campanita para la misma jornada. Queda documentado como candidato de una etapa futura si se decide consolidar ambas notificaciones en una sola con estado evolutivo.
+
+### 21.5 Qué NO se tocó
+
+- `JORNADA_EXTENDIDA` y su cobertura por régimen — sigue sin ser suprimible/configurable, tal como pedía explícitamente esta etapa (queda para 10C).
+- El significado de `alertOnOutOfShift`/`openShiftOverflowAction` — sin cambios.
+- Ningún campo nuevo en `WorkRegime`/`ShiftTemplate`/`Employee`.
+- Personas asignadas desde la pantalla de Régimen Laboral (bulk) — sigue sin existir, queda para 10D.
+- El cálculo de horas/turno del fichador — sólo se tocó el ciclo de vida de `ShiftAlert` (que el propio pedido autorizó explícitamente si estaba directamente relacionado).
+- Dashboard — no hubo ninguna consecuencia directa que ameritara invalidación.
+- Los 3 campos de `ShiftTemplate` sin consumidor (`warningThresholdMinutes`/`reviewThresholdMinutes`/`criticalThresholdMinutes`, hallazgo 10A §9) — 10A los marcó como candidatos a documentar/ocultar en 10B, pero se priorizaron los 4 puntos con bug real confirmado; quedan documentados como deuda, sin cambios de código (ver §21.7).
+- El acoplamiento UX de `kind` con los defaults de `alertOnOutOfShift` en el formulario de régimen (10A §13.6) — no incluido en el pedido explícito de esta etapa; queda para una futura pasada de UX de Régimen Laboral.
+
+### 21.6 Tests agregados
+
+Backend (+34 tests, total 745):
+- `shiftAlert.schemas.test.ts` (+4, archivo nuevo) — los 12 tipos reales pasan validación, los 2 antes faltantes no rompen el filtro de listado, un tipo inventado se sigue rechazando.
+- `workShiftEvaluationRunner.test.ts` (+3) — `resolveOpenShiftOverflowAlert` resuelve sólo la alerta puntual de esa jornada, es no-op seguro sin alertas previas, y `evaluateShiftExit` la invoca automáticamente.
+- `timeEntries.repository.test.ts` (+4) — `expireOpenWorkShifts` resuelve la alerta al cerrar (ROLLOVER/sin régimen), no la toca bajo `ALERT_ONLY` (sigue pendiente a propósito), no rompe el batch si la resolución falla puntualmente; `rolloverExpiredOpenWorkShift` resuelve la alerta de la jornada vieja.
+- `workRegimes.service.test.ts` (+3) — `assign`/`updateAssignment`/`closeAssignment` auditan con `entityId=employeeId`, no con el id de la asignación.
+- `shiftAssignment.service.test.ts` (+5, incluye 2 describe nuevos `remove`) — `assign` (alta y reactivación), `update`, `remove` auditan con `entityId=employeeId`; caso 404 de `remove` no audita nada.
+
+Frontend (+3 tests, archivo nuevo, total 386): `ShiftAlertsPage.test.tsx` — `CONCEPTO_NO_HABILITADO`/`SEGMENTO_SIN_CLASIFICAR` renderizan texto claro (no el enum crudo, no una celda en blanco), y el filtro de Tipo incluye ambas opciones con label legible.
+
+### 21.7 Validaciones ejecutadas
+
+Backend: `npx prisma validate` ✅, `npx prisma generate` ✅, `npx prisma migrate status` ✅ (45 migraciones, sin cambios — ninguna migración nueva en esta etapa), `npm run typecheck` ✅, `npx vitest run` ✅ 745/745, `npm run build` ✅.
+Frontend: `npx tsc -b` ✅, `npx vitest run` ✅ 386/386, `npm run build` ✅.
+General: `git diff --check` sin errores de espacios en blanco.
+
+### 21.8 Confirmaciones explícitas
+
+- **Sin schema ni migraciones**: confirmado — `resolvedByUserId`/`resolvedAt`/`resolutionNote` de `ShiftAlert` ya eran nullable, y el índice `[employeeId, status, createdAt]` ya cubría las consultas nuevas; `prisma migrate status` siguió reportando 45 migraciones sin cambios.
+- **Sin librerías nuevas**: confirmado — todos los cambios usan Prisma/Zod/React ya presentes en el proyecto.
+
+### 21.9 Riesgos pendientes
+
+- La brecha de `JORNADA_EXTENDIDA` (10A §11.1) sigue sin resolver — es la pieza central para el caso de negocio de cosecha, queda explícitamente para 10C.
+- La duplicación de notificaciones (§21.4) queda documentada pero no corregida — requiere una decisión de producto antes de tocarla.
+- Los 3 campos muertos de `ShiftTemplate` (`warningThresholdMinutes`/`reviewThresholdMinutes`/`criticalThresholdMinutes`) siguen sin consumidor — no se ocultaron ni documentaron en código en esta etapa, quedan como deuda ya conocida desde 10A.
+- El acoplamiento visual `kind`↔`alertOnOutOfShift` en el formulario de régimen (10A §13.6) sigue pendiente.
+- Caso "nocturno/sereno" (`crossesMidnight`) — sigue sin verificación explícita, tal como ya lo señalaba 10A §17.
+
+### 21.10 Siguiente etapa recomendada
+
+**10C — Integración de régimen con alertas**: decisión de producto + implementación para que `JORNADA_EXTENDIDA` sea configurable/suprimible por régimen (cierra la brecha central de 10A §11.1, la única pieza que falta para que el caso de negocio de cosecha quede 100% resuelto). Evaluar en la misma etapa si conviene consolidar la notificación duplicada de "olvido de salida" (§21.4) una vez que haya una decisión de producto sobre qué debe ver el usuario final.
+
+## 22. Aprobación pendiente
 
 No commitear sin aprobación explícita del usuario.

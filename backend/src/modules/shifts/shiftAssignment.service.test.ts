@@ -3,6 +3,7 @@ import type { Mock } from "vitest";
 import { Prisma } from "@prisma/client";
 import { AppError } from "../../shared/errors/AppError";
 import { prisma } from "../../shared/prisma/client";
+import { auditService } from "../audit/audit.service";
 import { shiftAssignmentRepository } from "./shiftAssignment.repository";
 import { shiftAssignmentService } from "./shiftAssignment.service";
 import { roles } from "../../shared/security/roles";
@@ -22,6 +23,7 @@ vi.mock("./shiftAssignment.repository", () => ({
     reEnable: vi.fn(),
     findById: vi.fn(),
     update: vi.fn(),
+    remove: vi.fn(),
   },
 }));
 
@@ -36,8 +38,9 @@ vi.mock("../audit/audit.service", () => ({
   auditService: { register: vi.fn().mockResolvedValue(null) },
 }));
 
-const repo = shiftAssignmentRepository as unknown as { countByTemplateAndStatus: Mock; findExisting: Mock; create: Mock; reEnable: Mock; findById: Mock; update: Mock };
+const repo = shiftAssignmentRepository as unknown as { countByTemplateAndStatus: Mock; findExisting: Mock; create: Mock; reEnable: Mock; findById: Mock; update: Mock; remove: Mock };
 const mockedPrisma = prisma as unknown as { shiftTemplate: { findUnique: Mock }; employee: { count: Mock } };
+const mockedAudit = auditService.register as unknown as Mock;
 
 function prismaKnownError(code: string) {
   return new Prisma.PrismaClientKnownRequestError("mock prisma error", { code, clientVersion: "0.0.0" });
@@ -120,6 +123,17 @@ describe("shiftAssignmentService.assign", () => {
     expect(caught).toBeInstanceOf(Prisma.PrismaClientKnownRequestError);
     expect(caught).not.toBeInstanceOf(AppError);
   });
+
+  // Etapa 10B (hallazgo 10A §7/§11): entityId debe ser el id del EMPLEADO,
+  // no el id de la fila de asignación — mismo criterio que workRegimes.
+  it("audita la asignación con entityId=employeeId (no el id de la asignación) para que aparezca en el historial del legajo", async () => {
+    repo.findExisting.mockResolvedValue(null);
+    repo.create.mockResolvedValue({ id: "assign-1", employeeId: "emp-1", employee: { legajo: "100" } });
+
+    await shiftAssignmentService.assign({ employeeIds: ["emp-1"], ...baseAssignInput }, user);
+
+    expect(mockedAudit).toHaveBeenCalledWith(expect.objectContaining({ action: "CREATE", entity: "ShiftAssignment", entityId: "emp-1" }));
+  });
 });
 
 describe("shiftAssignmentService.update", () => {
@@ -141,6 +155,39 @@ describe("shiftAssignmentService.update", () => {
       code: "RELATION_CONSTRAINT",
     });
   });
+
+  // Etapa 10B (hallazgo 10A §7/§11): entityId=employeeId, no el id de la
+  // asignación que se está actualizando.
+  it("audita la actualización con entityId=employeeId (antes usaba el id de la asignación)", async () => {
+    repo.findById.mockResolvedValue({ id: "assign-1", employeeId: "emp-1", status: "HABILITADO", employee: { legajo: "100" }, shiftTemplate: template });
+    repo.update.mockResolvedValue({ id: "assign-1", employeeId: "emp-1", employee: { legajo: "100" }, shiftTemplate: template });
+
+    await shiftAssignmentService.update("assign-1", { observation: "nota" }, user);
+
+    expect(mockedAudit).toHaveBeenCalledWith(expect.objectContaining({ entity: "ShiftAssignment", entityId: "emp-1" }));
+  });
+});
+
+describe("shiftAssignmentService.remove", () => {
+  it("audita la eliminación con entityId=employeeId (no el id de la asignación eliminada)", async () => {
+    repo.findById.mockResolvedValue({ id: "assign-1", employeeId: "emp-1", employee: { legajo: "100" }, shiftTemplate: template });
+    repo.remove.mockResolvedValue(undefined);
+
+    await shiftAssignmentService.remove("assign-1");
+
+    expect(repo.remove).toHaveBeenCalledWith("assign-1");
+    expect(mockedAudit).toHaveBeenCalledWith(expect.objectContaining({ action: "DELETE", entity: "ShiftAssignment", entityId: "emp-1" }));
+  });
+
+  it("rechaza eliminar una asignación inexistente (404), sin auditar nada", async () => {
+    repo.findById.mockResolvedValue(null);
+
+    await expect(shiftAssignmentService.remove("assign-inexistente")).rejects.toMatchObject({
+      statusCode: 404,
+      code: "SHIFT_ASSIGNMENT_NOT_FOUND",
+    });
+    expect(mockedAudit).not.toHaveBeenCalled();
+  });
 });
 
 describe("shiftAssignmentService.assign — reactivación (reEnable) con vigencia nueva (Etapa 8I)", () => {
@@ -158,6 +205,18 @@ describe("shiftAssignmentService.assign — reactivación (reEnable) con vigenci
       { observation: undefined, effectiveFrom: new Date("2026-07-01"), effectiveTo: null, weekdays: [0, 6] },
       "user-1",
     );
+  });
+
+  it("audita la reactivación con entityId=employeeId (no el id de la asignación) — Etapa 10B", async () => {
+    repo.findExisting.mockResolvedValue({ id: "assign-1", status: "DESHABILITADO", effectiveFrom: new Date("2025-01-01"), effectiveTo: new Date("2025-06-30"), weekdays: [1] });
+    repo.reEnable.mockResolvedValue({ id: "assign-1", employeeId: "emp-1", employee: { legajo: "100" } });
+
+    await shiftAssignmentService.assign(
+      { employeeIds: ["emp-1"], shiftTemplateId: template.id, effectiveFrom: new Date("2026-07-01"), effectiveTo: null, weekdays: [0, 6] },
+      user,
+    );
+
+    expect(mockedAudit).toHaveBeenCalledWith(expect.objectContaining({ action: "ACTIVATE", entity: "ShiftAssignment", entityId: "emp-1" }));
   });
 
   it("si la asignación existente ya está HABILITADO, no la toca (no reEnable, no create) — comportamiento de no-op preservado", async () => {

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import type { Mock } from "vitest";
 import { prisma } from "../../shared/prisma/client";
-import { evaluateShiftEntry, evaluateShiftExit, notifyClassificationAlerts, flagOpenShiftOverflowForReview } from "./workShiftEvaluationRunner";
+import { evaluateShiftEntry, evaluateShiftExit, notifyClassificationAlerts, flagOpenShiftOverflowForReview, resolveOpenShiftOverflowAlert } from "./workShiftEvaluationRunner";
 
 /**
  * Etapa de logica de Regimen de Trabajo (2026-08-18): un empleado sin
@@ -16,7 +16,7 @@ vi.mock("../../shared/prisma/client", () => ({
     shiftAssignment: { findMany: vi.fn(), findUnique: vi.fn() },
     shiftTemplate: { findMany: vi.fn(), findUnique: vi.fn() },
     workShift: { update: vi.fn(), findFirst: vi.fn(), findUnique: vi.fn() },
-    shiftAlert: { upsert: vi.fn() },
+    shiftAlert: { upsert: vi.fn(), updateMany: vi.fn() },
     employeeWorkRegime: { findFirst: vi.fn() },
   },
 }));
@@ -30,7 +30,7 @@ const mockedPrisma = prisma as unknown as {
   shiftAssignment: { findMany: Mock; findUnique: Mock };
   shiftTemplate: { findMany: Mock; findUnique: Mock };
   workShift: { update: Mock; findFirst: Mock; findUnique: Mock };
-  shiftAlert: { upsert: Mock };
+  shiftAlert: { upsert: Mock; updateMany: Mock };
   employeeWorkRegime: { findFirst: Mock };
 };
 
@@ -59,6 +59,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockedPrisma.workShift.findFirst.mockResolvedValue(null); // sin jornada previa: no evalua descanso
   mockedPrisma.shiftAlert.upsert.mockResolvedValue({ id: "alert-1" });
+  mockedPrisma.shiftAlert.updateMany.mockResolvedValue({ count: 0 });
 });
 
 describe("Caso A — empleado sin regimen vigente", () => {
@@ -203,6 +204,41 @@ describe("flagOpenShiftOverflowForReview — política de rollover por régimen 
 
     const call = mockedPrisma.shiftAlert.upsert.mock.calls.find((c) => c[0]?.create?.type === "JORNADA_EXTENDIDA")![0]!;
     expect(call.create.severity).toBe("INFO");
+  });
+});
+
+describe("resolveOpenShiftOverflowAlert — Etapa 10B (cierre del hueco de alertas huérfanas, 10A §11.2)", () => {
+  it("resuelve sólo la alerta POSIBLE_OLVIDO_SALIDA PENDIENTE de esta jornada puntual", async () => {
+    mockedPrisma.shiftAlert.updateMany.mockResolvedValue({ count: 1 });
+
+    await resolveOpenShiftOverflowAlert("shift-1", "Resuelta automáticamente: prueba.");
+
+    expect(mockedPrisma.shiftAlert.updateMany).toHaveBeenCalledWith({
+      where: { workShiftId: "shift-1", type: "POSIBLE_OLVIDO_SALIDA", status: "PENDIENTE" },
+      data: expect.objectContaining({ status: "RESUELTA", resolutionNote: "Resuelta automáticamente: prueba." }),
+    });
+  });
+
+  it("es un no-op seguro si no había ninguna alerta pendiente para esa jornada", async () => {
+    mockedPrisma.shiftAlert.updateMany.mockResolvedValue({ count: 0 });
+
+    await expect(resolveOpenShiftOverflowAlert("shift-sin-alertas", "nota")).resolves.toBeUndefined();
+  });
+
+  it("evaluateShiftExit (salida real registrada) resuelve automáticamente una alerta POSIBLE_OLVIDO_SALIDA previa de esa misma jornada", async () => {
+    mockedPrisma.workShift.findUnique.mockResolvedValue({
+      id: "shift-1",
+      startAt: new Date("2026-08-18T10:00:00.000Z"),
+      shiftTemplateId: null,
+      totalMinutes: 400,
+    });
+    mockedPrisma.shiftAlert.updateMany.mockResolvedValue({ count: 1 });
+
+    await evaluateShiftExit("employee-1", "shift-1", new Date("2026-08-18T18:00:00.000Z"));
+
+    expect(mockedPrisma.shiftAlert.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { workShiftId: "shift-1", type: "POSIBLE_OLVIDO_SALIDA", status: "PENDIENTE" } }),
+    );
   });
 });
 

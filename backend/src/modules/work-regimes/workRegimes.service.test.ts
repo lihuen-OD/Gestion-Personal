@@ -163,6 +163,22 @@ describe("EmployeeWorkRegime — asignación con vigencia", () => {
     expect(mockedAudit).toHaveBeenCalledWith(expect.objectContaining({ action: "CREATE", entity: "EmployeeWorkRegime" }));
   });
 
+  // Etapa 10B (hallazgo 10A §7/§11): entityId debe ser el id del EMPLEADO,
+  // no el id de la fila de asignación (assignment.id) — de lo contrario el
+  // cambio de régimen no aparece en el tab "Historial de Eventos"/"Auditoría"
+  // del propio legajo, que filtra por entityId=employee.id.
+  it("audita la asignación con entityId=employeeId (no el id de la asignación) para que aparezca en el historial del legajo", async () => {
+    repo.employeeExists.mockResolvedValue({ id: employeeId });
+    repo.findById.mockResolvedValue(baseRegime);
+    repo.findOverlappingAssignment.mockResolvedValue(null);
+    repo.createAssignment.mockResolvedValue(assignment); // assignment.id = "assignment-1", distinto de employeeId
+
+    await workRegimesService.assign(employeeId, { workRegimeId: "regime-1", effectiveFrom: new Date("2026-01-01") } as never, { userId: "user-1" });
+
+    expect(mockedAudit).toHaveBeenCalledWith(expect.objectContaining({ entity: "EmployeeWorkRegime", entityId: employeeId }));
+    expect(mockedAudit).not.toHaveBeenCalledWith(expect.objectContaining({ entityId: assignment.id }));
+  });
+
   it("rechaza employeeId inexistente (404), sin llegar a crear la asignación", async () => {
     repo.employeeExists.mockResolvedValue(null);
 
@@ -230,7 +246,7 @@ describe("EmployeeWorkRegime — asignación con vigencia", () => {
     await workRegimesService.updateAssignment(employeeId, "assignment-1", { effectiveFrom: new Date("2026-02-01") } as never, { userId: "user-1" });
 
     expect(repo.findOverlappingAssignment).toHaveBeenCalledWith(employeeId, new Date("2026-02-01"), null, "assignment-1");
-    expect(mockedAudit).toHaveBeenCalledWith(expect.objectContaining({ action: "UPDATE", entity: "EmployeeWorkRegime" }));
+    expect(mockedAudit).toHaveBeenCalledWith(expect.objectContaining({ action: "UPDATE", entity: "EmployeeWorkRegime", entityId: employeeId }));
   });
 
   it("rechaza editar una asignación inexistente (404)", async () => {
@@ -249,7 +265,7 @@ describe("EmployeeWorkRegime — asignación con vigencia", () => {
     const item = await workRegimesService.closeAssignment(employeeId, "assignment-1", new Date("2026-06-30"), { userId: "user-1" });
 
     expect(item.effectiveTo).toEqual(new Date("2026-06-30"));
-    expect(mockedAudit).toHaveBeenCalledWith(expect.objectContaining({ action: "UPDATE", entity: "EmployeeWorkRegime" }));
+    expect(mockedAudit).toHaveBeenCalledWith(expect.objectContaining({ action: "UPDATE", entity: "EmployeeWorkRegime", entityId: employeeId }));
   });
 
   it("rechaza cerrar la vigencia con effectiveTo anterior a effectiveFrom", async () => {
