@@ -42,6 +42,7 @@ type ApiPosition = {
 };
 
 type ApiListResponse = { data: ApiPosition[] };
+type ApiPaginatedListResponse = { data: ApiPosition[]; meta: { total: number; page: number; pageSize: number; hasMore: boolean } };
 type ApiItemResponse = { data: ApiPosition | null };
 
 type ApiAssignedEmployee = {
@@ -185,7 +186,46 @@ function isPositionList(value: Position[]) {
   return Array.isArray(value) && value.every(isPosition);
 }
 
+function isPositionListResponse(value: { items: Position[]; meta?: unknown }) {
+  return Boolean(value && Array.isArray(value.items) && value.items.every(isPosition));
+}
+
+// Etapa 9E: query separada de toQuery() (que sigue siendo la de getAll(),
+// take:300 fijo, usada por selects/catálogos) — acá page/take vienen del
+// caller (Pagination.tsx) y se agregan los 3 filtros de jerarquía
+// organizacional que el backend ahora sí resuelve server-side.
+function toListQuery(filters?: Partial<PositionFilters> & { page?: number; take?: number }) {
+  const params = new URLSearchParams();
+  params.set("page", String(filters?.page || 1));
+  params.set("take", String(filters?.take || 25));
+  if (filters?.search?.trim()) params.set("search", filters.search.trim());
+  if (filters?.status) params.set("status", filters.status);
+  if (filters?.sectorId) params.set("sectorId", filters.sectorId);
+  if (filters?.areaId) params.set("areaId", filters.areaId);
+  if (filters?.establishmentId) params.set("establishmentId", filters.establishmentId);
+  if (filters?.businessUnitId) params.set("businessUnitId", filters.businessUnitId);
+  if (filters?.salaryRangeCategory) params.set("salaryRangeCategory", filters.salaryRangeCategory);
+  return `?${params.toString()}`;
+}
+
 export const positionApiService = {
+  // Etapa 9E: paginación real para PuestosPage.tsx (page/take/meta, mismo
+  // contrato que employeeApiService.list()/Pagination.tsx). getAll() abajo
+  // sigue igual, sin tocar — lo siguen usando los selects/catálogos que
+  // necesitan "todos los puestos activos" de una sola vez.
+  async list(filters?: Partial<PositionFilters> & { page?: number; take?: number }) {
+    const query = toListQuery(filters);
+    const key = `/positions${query}`;
+    return cachedData({
+      requestKey: `GET:${key}`,
+      policy: cachePolicies.positionsList,
+      fetcher: () => apiRequest<ApiPaginatedListResponse>(key, { apiCache: false }).then((response) => ({
+        items: response.data.map(mapFromApi),
+        meta: response.meta,
+      })),
+      validate: isPositionListResponse,
+    });
+  },
   async getAll(filters?: Partial<PositionFilters>) {
     const query = toQuery(filters);
     const key = `/positions${query}`;

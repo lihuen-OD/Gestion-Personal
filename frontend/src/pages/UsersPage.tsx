@@ -49,36 +49,50 @@ export function UsersPage() {
   const [companyOptions, setCompanyOptions] = useState<string[]>([]);
   const [sectorOptions, setSectorOptions] = useState<string[]>([]);
   const [employeeOptions, setEmployeeOptions] = useState<Employee[]>([]);
-  const [usesBackend, setUsesBackend] = useState(false);
   const [refresh, setRefresh] = useState(0);
   const [listStatus, setListStatus] = useState<"loading" | "success" | "error">("loading");
   const [open, setOpen] = useState(false);
   const [editingUserId, setEditingUserId] = useState<string | null>(null);
   const [draft, setDraft] = useState<UserDraft>(() => emptyUserDraft());
   const [error, setError] = useState("");
+  // Etapa 9E: catálogo de empresas/sectores y los hasta 1000 empleados sólo
+  // los usa el modal de crear/editar (selects de alcance y empleado
+  // vinculado) — antes se pedían en el mount de la pantalla, bloqueando la
+  // tabla hasta que resolvieran, aunque la tabla nunca los muestra. Se
+  // difieren a cuando el modal se abre por primera vez; ambos servicios ya
+  // están cacheados (services/cache), así que abrir el modal de nuevo dentro
+  // del TTL no vuelve a pegarle a la red.
+  const [catalogStatus, setCatalogStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
 
   useEffect(() => {
     let mounted = true;
     setListStatus("loading");
-    Promise.all([userApiService.getAll(), orgStructureApiService.getCatalog(), employeeApiService.getOptions({ take: 1000 })])
-      .then(([apiUsers, catalog, apiEmployeeOptions]) => {
+    userApiService.getAll()
+      .then((apiUsers) => {
         if (!mounted) return;
         setUsers(apiUsers);
-        setCompanyOptions(catalog.companies.map((item) => item.name));
-        setSectorOptions(catalog.sectors.map((item) => item.name));
-        setEmployeeOptions(apiEmployeeOptions.items);
-        setUsesBackend(true);
         setListStatus("success");
       })
       .catch(() => {
         if (!mounted) return;
-        setUsesBackend(false);
         setListStatus("error");
       });
     return () => {
       mounted = false;
     };
   }, [refresh]);
+
+  const ensureCatalogLoaded = () => {
+    setCatalogStatus("loading");
+    Promise.all([orgStructureApiService.getCatalog(), employeeApiService.getOptions({ take: 1000 })])
+      .then(([catalog, apiEmployeeOptions]) => {
+        setCompanyOptions(catalog.companies.map((item) => item.name));
+        setSectorOptions(catalog.sectors.map((item) => item.name));
+        setEmployeeOptions(apiEmployeeOptions.items);
+        setCatalogStatus("ready");
+      })
+      .catch(() => setCatalogStatus("error"));
+  };
 
   const reset = () => {
     setEditingUserId(null);
@@ -94,6 +108,7 @@ export function UsersPage() {
   const openCreate = () => {
     reset();
     setOpen(true);
+    ensureCatalogLoaded();
   };
 
   const openEdit = (user: User, focusPassword = false) => {
@@ -101,6 +116,7 @@ export function UsersPage() {
     setDraft({ ...user, password: "" });
     setError(focusPassword ? "Completa la nueva contrasena y guarda los cambios." : "");
     setOpen(true);
+    ensureCatalogLoaded();
   };
 
   const reload = () => {
@@ -234,12 +250,15 @@ export function UsersPage() {
           <Field label={editingUserId ? "Nueva contrasena (opcional)" : "Contrasena inicial *"} type="password" value={draft.password} set={(password) => setDraft({ ...draft, password })} />
           <Select label="Rol *" value={draft.role} set={(role) => setDraft({ ...draft, role: role as Role })} options={userRoleOptions(draft.role)} />
           <Select label="Estado" value={draft.status} set={(status) => setDraft({ ...draft, status: status as User["status"] })} options={["Activo", "Inactivo"]} />
-          <Select label="Empresa / alcance" value={draft.company || ""} set={(company) => setDraft({ ...draft, company })} options={companyOptions} />
-          <Select label="Sector / area" value={draft.sector || ""} set={(sector) => setDraft({ ...draft, sector })} options={sectorOptions} />
+          {catalogStatus === "loading" ? <p className="muted small">Cargando opciones de empresa, sector y empleados...</p> : null}
+          {catalogStatus === "error" ? <p className="muted small">No pudimos cargar empresa/sector/empleados. Podés guardar igual sin esos datos, o cerrar y volver a intentar.</p> : null}
+          <Select label="Empresa / alcance" value={draft.company || ""} set={(company) => setDraft({ ...draft, company })} options={companyOptions} disabled={catalogStatus === "loading"} />
+          <Select label="Sector / area" value={draft.sector || ""} set={(sector) => setDraft({ ...draft, sector })} options={sectorOptions} disabled={catalogStatus === "loading"} />
           <label>
             Empleado vinculado
             <select
               value={draft.employeeId || ""}
+              disabled={catalogStatus === "loading"}
               onChange={(event) => {
                 const employee = employeeOptions.find((item) => item.id === event.target.value);
                 setDraft({

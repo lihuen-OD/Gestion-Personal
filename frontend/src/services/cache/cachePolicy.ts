@@ -66,6 +66,16 @@ export const cachePolicies = {
     sensitive: false,
     schemaVersion: CACHE_SCHEMA_VERSION,
   },
+  // Etapa 9E: TTL corto (misma familia "positions", así que un create/update
+  // invalida ambas) para la tabla paginada de PuestosPage — a diferencia de
+  // positionsCatalog (pensada para selects/catálogo, TTL más largo).
+  positionsList: {
+    family: "positions",
+    ttlMs: 30_000,
+    persist: false,
+    sensitive: false,
+    schemaVersion: CACHE_SCHEMA_VERSION,
+  },
   employeesOptions: {
     family: "employees",
     ttlMs: 60_000,

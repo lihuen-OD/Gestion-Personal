@@ -354,3 +354,82 @@ Tests nuevos en `workforce.controller.test.ts`, además de los 3 genéricos (pri
 - **Datos críticos no se cachean si puede afectar trazabilidad**: si un dato alimenta el motor de cálculo de horas, el fichador, o cualquier flujo donde una lectura stale pudiera traducirse en una decisión de negocio incorrecta (aprobar, liquidar, fichar), no se cachea esa lectura — o, si se cachea una lectura *adyacente* (como acá con `doubleRules`), hay que confirmar y documentar explícitamente que el motor real no pasa por ese mismo cache (§15.2).
 - **Configuración puede cachearse con TTL e invalidación**: turnos, horas especiales, conceptos horarios, catálogos — mientras el conjunto de mutadores sea cerrado y enumerable, un TTL corto (20-30s, igual que el resto de los módulos ya cacheados) más invalidación en cada escritura es seguro.
 - **Refresh silencioso sin borrar datos**: todo efecto de carga que también se reutiliza para refrescos (tras una mutación, un poll, un cambio de filtro) debe encender el loading grande sólo si todavía no hay datos — nunca incondicional (patrón ya establecido en 9B §14.4, aplicado de nuevo acá a `ShiftsPage`).
+
+## 16. Etapa 9E — Paginación real y reducción de fetch-all
+
+Fecha: 2026-08-27. Alcance ejecutado: las 7 pantallas listadas en el pedido, cada una diagnosticada antes de decidir si se paginaba, se difería un catálogo, o se documentaba como fetch-all justificado. Sin rediseño visual, sin cambiar reglas de negocio, sin permisos, sin schema, sin migraciones, sin librerías nuevas — el fichador y Carga de horas no se tocaron en absoluto (ni siquiera para verificar), Conceptos Horarios/Turnos/Dashboard tampoco.
+
+### 16.1 Diagnóstico por pantalla
+
+| Pantalla | ¿Fetch-all hoy? | Endpoint | ¿Backend soporta page/take/search? | ¿Frontend usa `Pagination.tsx`? | ¿Búsqueda/filtro? | ¿Necesita debounce? | ¿Operativo o catálogo chico? | Decisión |
+|---|---|---|---|---|---|---|---|---|
+| **Puestos** | Sí — hasta 300, filtrado 100% client-side | `GET /positions` | Sí (search/status/sectorId ya andaban; areaId/establishmentId/businessUnitId/salaryRangeCategory se aceptaban en la query pero **nunca se traducían a un `where` real** — gap cerrado en esta etapa) | No (antes) | Sí, 6 dimensiones (texto + 5 selects) | Sí, ya tenía `useDebouncedValue` disponible en el resto de la app | Operativo — puede crecer con la complejidad organizacional | **Paginar ahora** — implementado |
+| **Usuarios** | Parcial — la tabla de usuarios sí pagina en backend, pero el catálogo (empresas/sectores) y hasta 1000 empleados se cargaban en el montaje de la página, bloqueándola, para un modal que ni siquiera estaba abierto | `GET /users`, `GET /org-structure`, `GET /employees/options` | Ya soportaba | N/A (no aplica paginación a la tabla, User=3 hoy — cuentas de acceso, no crece con headcount) | No hay buscador en esta pantalla (confirmado en 9A) | No aplica | Catálogo chico (usuarios de sistema) — la tabla en sí no necesitaba paginar | **Diferir el catálogo del modal** — implementado |
+| **Conceptos Horarios** | Sí — hasta 500, con cache bespoke (TTL 120s) | `GET /hour-concepts` | **Sí, ya soporta paginación real** (`findMany` con path filtrado `skip/take/count`, igual patrón que Puestos tenía antes de esta etapa) — sólo el frontend no lo usa | No | No (`HourConceptsPage` no tiene buscador) | No aplica | Catálogo chico — vocabulario fijo de conceptos (Normal, Nocturna, Guardia, Sereno, etc.), HourConcept=5 hoy, jamás se espera que supere unas pocas decenas | **Fetch-all justificado** — documentado, no tocado |
+| **Tipos de novedad** | Sí — hasta 500, cache bespoke (TTL) | `GET /novelty-types` | **Sí, ya soporta paginación real** (mismo patrón dual filtrado/cacheado) | No | No | No aplica | Catálogo chico — vocabulario fijo (Vacaciones, Licencia médica, etc.), NoveltyType=1 hoy | **Fetch-all justificado** — documentado, no tocado |
+| **Categorías de documento** | Sí — hasta 500, cache bespoke (TTL) | `GET /document-categories` | **Sí, ya soporta paginación real** (mismo patrón dual) | No | Cliente (`getFiltered`) | No aplica | Catálogo chico — vocabulario fijo (DNI, CUIL, Certificado laboral, etc.), DocumentCategory=1 hoy | **Fetch-all justificado** — documentado, no tocado |
+| **Cierres mensuales** | Sí — `closures()` sin `take` en absoluto, `corrections()` con `take:500` fijo | `GET /workforce/closures`, `GET /workforce/corrections` | No (nunca se agregó) | No | Sólo por período (mes) | No aplica | **Operativo, categoría D (crítico) de la matriz 9A §2.2** — cierre/aprobación, crece con el tiempo (~12 filas/mes), MonthlyTimeClosure=0 hoy | **Diferir — no por volumen, por diseño** (ver §16.5) |
+| **Organigrama / Estructura organizacional** | `OrganigramasPage`: hasta 1000 empleados, con aviso de límite ya visible al usuario si se alcanza. `OrgStructurePage`: hasta 500, cacheado 10min | `GET /employees/org-chart`, `GET /org-structure` | N/A (por diseño: un organigrama/catálogo jerárquico completo es el caso de uso correcto, no una lista para paginar) | No aplica | No | No aplica | Estructural — Company=2, Sector=4, CostCenter=2 hoy, crecimiento lento y acotado | **Ya correcto — auditado, sin cambios** |
+
+### 16.2 Puestos — paginación real implementada
+
+**Backend** (`backend/src/modules/positions/`):
+- `positions.schemas.ts` — `listPositionsQuerySchema` gana `areaId`/`establishmentId`/`businessUnitId` (uuid, opcionales). `salaryRangeCategory` ya existía en el schema.
+- `positions.repository.ts` — `buildWhere()` ahora traduce los 3 filtros nuevos navegando la relación `sector→area→establishment→businessUnit` que `positionInclude` ya usaba para mostrar los derivados (sin agregar ninguna columna ni relación nueva), y **`salaryRangeCategory`, que ya se aceptaba en la query pero nunca se aplicaba como filtro real, ahora sí filtra** (`salaryCategories: { some: { salaryCategory: { name } } }`) — un bug de corrección necesario para que la paginación combinada con ese filtro no devolviera resultados incompletos ("paginación frontend falsa", exactamente lo que el pedido de esta etapa prohíbe). `hasFilters` se actualizó para incluir los 3 filtros nuevos.
+- Nada de esto cambia el contrato de `GET /positions` para los callers existentes — todos los filtros son opcionales, `meta` sigue con la misma forma (`{total,page,pageSize,hasMore}`).
+
+**Frontend** (`frontend/src/services/api/positionApiService.ts`, `frontend/src/pages/PuestosPage.tsx`):
+- Nuevo método `list(filters)` — paginado real, `{items, meta}`, cacheado con la nueva policy `positionsList` (30s TTL, misma familia `"positions"` que `positionsCatalog`, así que un create/update/delete invalida ambos). **`getAll()` queda sin tocar** — lo siguen usando `WorkScheduleSettingsPage.tsx` y otros selects/catálogos que necesitan "todos los puestos activos" de una sola vez, sin ningún cambio de comportamiento para ellos.
+- `PuestosPage.tsx` — la tabla pasa a usar `list()` + `Pagination.tsx` + `useDebouncedValue` en la búsqueda + el guard de no-blanquear-si-ya-hay-datos (mismo patrón de 9B/9C). Las tarjetas resumen y las opciones de "Rango salarial" del filtro siguen alimentándose de un fetch aparte con `getAll()` (sin cambios, hasta 300, sin filtrar) porque necesitan el universo completo, no sólo la página visible. `matches()`/`options()` (funciones puras exportadas, con su propio test suite en `PuestosPage.filters.test.ts`) quedan intactas — `matches()` ya no se usa en el render (el filtrado ahora es 100% server-side) pero se mantiene exportada para no romper su cobertura de test existente.
+
+### 16.3 Usuarios — catálogo diferido implementado
+
+`frontend/src/pages/UsersPage.tsx` — el efecto de montaje ahora sólo pide `userApiService.getAll()`. El catálogo de empresas/sectores (`orgStructureApiService.getCatalog()`) y las opciones de empleado (`employeeApiService.getOptions({take:1000})`) se piden recién al abrir el modal de crear/editar (`ensureCatalogLoaded()`), no en el montaje de la pantalla — ambos servicios ya estaban cacheados desde antes (`services/cache`), así que abrir el modal una segunda vez dentro del TTL no vuelve a golpear la red. Mientras la primera carga del catálogo está en vuelo, los 3 selects que dependen de él (Empresa, Sector, Empleado vinculado) quedan deshabilitados con un texto chico explicando por qué; el resto del formulario (nombre/email/contraseña/rol/estado) queda usable de inmediato. De paso se sacó `usesBackend`, un estado del efecto reescrito que ya no se leía en ningún lado (confirmado con grep, no tenía otro consumidor).
+
+### 16.4 Conceptos Horarios / Tipos de novedad / Categorías de documento — fetch-all justificado
+
+Los 3 backends (`hour-concepts.repository.ts`, `noveltyTypes.repository.ts`, `documentCategories.repository.ts`) **ya tienen el mismo patrón dual que tenía `positions.repository.ts`** antes de esta etapa (path filtrado con `skip/take/count` real, path sin filtros con cache bespoke de hasta 500) — confirmado leyendo cada uno, no asumido. Es decir: si algún día hace falta paginar estas 3 pantallas, **el trabajo es 100% frontend** (igual que se hizo con Puestos), sin tocar el backend.
+
+No se hizo ahora porque los 3 son vocabularios cerrados y administrados a mano por RRHH (tipos de concepto horario, tipos de novedad, categorías de documento) — HourConcept=5, NoveltyType=1, DocumentCategory=1 hoy, y ninguno tiene una razón de negocio para crecer más allá de unas pocas decenas (no escalan con headcount ni con tiempo transcurrido, a diferencia de Puestos o MonthlyTimeClosure). Coincide exactamente con la regla del pedido: "si un catálogo es estructural y casi siempre tendrá menos de 50 registros, puede quedar como fetch-all documentado". **Riesgo futuro**: si alguna de estas 3 listas creciera de forma inesperada (ej. una configuración multi-empresa con decenas de conceptos horarios distintos por convenio), la condición para reabrir es simple de verificar (un conteo de filas) y la implementación, dado que el backend ya está listo, sería un cambio chico y acotado al frontend.
+
+### 16.5 Cierres mensuales — diferido, no por volumen sino por diseño
+
+`workforce.service.ts` — `closures(period)` no tiene `take` en absoluto; `corrections()` tiene un `take:500` fijo (no paginación real). Ninguno de los dos se tocó en esta etapa.
+
+**Por qué no se paginó, aunque el pedido lo mencione explícitamente como candidato**: `MonthlyClosuresPage.tsx` es una pantalla de **selección múltiple para acciones en lote** — el checkbox "Seleccionar pendientes" marca `selectable` (derivado de `rows`, que hoy es la lista *completa* de cierres/correcciones del período) y el botón "Aprobar seleccionados"/"Enviar cierre a RH" opera sobre esa selección. Si se paginara la lectura sin rediseñar el modelo de selección, "Seleccionar pendientes" pasaría a significar "seleccionar los pendientes de esta página" en vez de "seleccionar todos los pendientes del período" — un cambio de comportamiento real en un flujo de aprobación (categoría D, crítica, de la matriz de 9A §2.2), no una mejora de performance transparente. Decidir si "seleccionar todos" debe operar sobre la página visible o sobre todo el período filtrado es una decisión de producto, no algo para resolver mecánicamente dentro de una etapa de paginación — por eso se documenta como pendiente en vez de implementarse.
+
+**Volumen esperado y condición de reapertura**: `MonthlyTimeClosure` es, según 9A/9B/9C, la única tabla de esta auditoría con una trayectoria de crecimiento predecible por tiempo transcurrido (no por configuración manual) — aproximadamente 12 filas/mes con la plantilla de empleados actual (Employee=12). Hoy está en 0 filas. Reabrir esta pantalla cuando la lista de un solo período supere ~1 página (o cuando el `take:500` de `corrections()` empiece a acercarse a su límite) — en ese momento, definir primero el alcance de "seleccionar todos" (página visible vs. todo el período) antes de tocar el backend.
+
+### 16.6 Organigrama / Estructura organizacional — ya correcto, sin cambios
+
+Confirmado releyendo el código actual (no sólo citando 9A):
+- `OrganigramasPage.tsx` usa `employeeApiService.getOrgChart()` (cache 60s), acotado a 1000 empleados, con un aviso visible al usuario si se alcanza ese límite (`reachedEmployeeLimit`) — ya es "fetch acotado + aviso de límite", el patrón correcto para un organigrama completo (no tiene sentido paginar un árbol jerárquico).
+- `OrgStructurePage.tsx` usa `orgStructureApiService.getCatalog()` (cache 10min, persistido en IndexedDB), acotado a 500 por tabla (empresas/sectores/áreas/etc.) — con los volúmenes reales de hoy (Company=2, Sector=4, CostCenter=2), lejísimos del límite.
+
+Cumple exactamente lo que pedía la instrucción ("si ya está cacheado 10min y limitado a 500 por diseño, documentar y no tocar si no corresponde") — no se tocó ningún archivo de esta pantalla.
+
+### 16.7 Reglas adoptadas
+
+- Antes de paginar una pantalla con múltiples filtros, confirmar que **todos** los filtros expuestos en la UI se resuelven server-side — paginar mientras un filtro sólo funciona client-side produce resultados incompletos ("paginación frontend falsa"), no una mejora.
+- Un catálogo administrado a mano (vocabulario cerrado, editado ocasionalmente por RRHH) no necesita paginación aunque el backend ya la soporte — la paginación es para datos que escalan con headcount, tiempo transcurrido o uso operativo, no para listas de configuración de un puñado de opciones.
+- Datos que alimentan un modal (selects de un formulario de creación/edición) se cargan al abrir ese modal, no en el montaje de la pantalla que lo contiene — si el servicio ya está cacheado, el costo de pedirlo de nuevo en cada apertura es mínimo.
+- Una pantalla con selección múltiple para acciones en lote no se pagina mecánicamente — primero hay que decidir qué significa "seleccionar todos" bajo paginación (alcance de producto), después implementar.
+- Antes de decidir "no paginar por bajo volumen", verificar si el backend ya soporta paginación real (puede que sólo falte enchufar el frontend) — eso cambia la severidad del riesgo futuro de "requiere trabajo de backend" a "es un cambio chico cuando haga falta".
+
+### 16.8 Riesgos futuros
+
+- `MonthlyClosuresPage`/`corrections()`/`closures()` seguirán sin paginar hasta que se resuelva la pregunta de diseño de §16.5 — vigilar el conteo de `MonthlyTimeClosure` por período.
+- Si Puestos, alguna vez, necesita un filtro server-side adicional que hoy no existe, replicar el mismo criterio: navegar relaciones existentes (`sector→area→establishment→businessUnit`), nunca duplicar datos derivados en columnas nuevas.
+- El resto de los hallazgos de 9A/9B/9C sin relación con esta etapa siguen vigentes sin cambios (mega-efecto de `HoursPage`, patrones de cache backend no consolidados, etc.).
+
+### 16.9 Tests agregados
+
+Backend: `positions.repository.test.ts` (+8 casos — pagina con/sin filtros, cada uno de los 3 filtros de jerarquía nuevos, `salaryRangeCategory` real, combinación de filtros, caso sin resultados), `positions.service.test.ts` (+3 casos — meta.total/page/pageSize/hasMore, hasMore=false en la última página, caso sin resultados). Total backend: 709 tests (698 + 11).
+
+Frontend: `PuestosPage.test.tsx` (6, archivo nuevo — carga inicial, paginación, debounce, refresh sin blanquear, empty state, eliminar/ocultar), `UsersPage.test.tsx` (6, archivo nuevo — catálogo diferido en mount, se pide al abrir crear, se pide al abrir editar, selects deshabilitados mientras carga, crear usuario sigue funcionando, empty state). Total frontend: 358 tests (346 + 12).
+
+### 16.10 Validaciones ejecutadas
+
+Backend: `npx prisma validate` ✅, `npx prisma generate` ✅, `npx prisma migrate status` ✅ (45 migraciones, sin cambios — ninguna migración nueva), `npm run typecheck` ✅, `npx vitest run` ✅ 709/709, `npm run build` ✅.
+Frontend: `npx tsc -b` ✅, `npx vitest run` ✅ 358/358, `npm run build` ✅.
+General: `git diff --check` sin errores de espacios en blanco.

@@ -30,11 +30,19 @@ export function invalidatePositionsCache() {
   listCache = null;
 }
 
+// Etapa 9E: areaId/establishmentId/businessUnitId se resuelven navegando la
+// misma cadena sector->area->establishment->businessUnit que ya usa
+// positionInclude para mostrar los derivados — sin agregar ninguna columna
+// nueva, sólo filtros anidados sobre relaciones existentes.
 function buildWhere(query: ListPositionsQuery): Prisma.PositionWhereInput {
   const search = query.search?.trim();
   return {
     ...(query.status ? { status: query.status } : {}),
     ...(query.sectorId ? { sectorId: query.sectorId } : {}),
+    ...(query.areaId ? { sector: { areaId: query.areaId } } : {}),
+    ...(query.establishmentId ? { sector: { area: { establishmentId: query.establishmentId } } } : {}),
+    ...(query.businessUnitId ? { sector: { area: { establishment: { businessUnitId: query.businessUnitId } } } } : {}),
+    ...(query.salaryRangeCategory ? { salaryCategories: { some: { salaryCategory: { name: query.salaryRangeCategory } } } } : {}),
     ...(search
       ? {
           OR: [
@@ -79,6 +87,9 @@ export const positionsRepository = {
     const hasFilters = Boolean(
       query.status ||
         query.sectorId ||
+        query.areaId ||
+        query.establishmentId ||
+        query.businessUnitId ||
         query.salaryRangeCategory ||
         query.search?.trim(),
     );

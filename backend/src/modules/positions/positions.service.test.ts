@@ -14,10 +14,12 @@ vi.mock("./positions.repository", () => ({
   positionsRepository: {
     findById: vi.fn(),
     findAssignedEmployees: vi.fn(),
+    findMany: vi.fn(),
   },
+  invalidatePositionsCache: vi.fn(),
 }));
 
-const repo = positionsRepository as unknown as { findById: Mock; findAssignedEmployees: Mock };
+const repo = positionsRepository as unknown as { findById: Mock; findAssignedEmployees: Mock; findMany: Mock };
 
 const rrhhUser = { id: "user-rrhh", role: roles.rrhh } as unknown as Express.AuthUser;
 const supervisionUser = { id: "user-sup", role: roles.supervision } as unknown as Express.AuthUser;
@@ -69,5 +71,33 @@ describe("positionsService.listAssignedEmployees", () => {
 
     await expect(positionsService.listAssignedEmployees("pos-inexistente", rrhhUser)).rejects.toThrow();
     expect(repo.findAssignedEmployees).not.toHaveBeenCalled();
+  });
+});
+
+describe("positionsService.list — Etapa 9E (meta de paginación)", () => {
+  it("arma meta.total/page/pageSize/hasMore a partir de lo que devuelve el repository", async () => {
+    repo.findMany.mockResolvedValue([[{ id: "pos-1" }, { id: "pos-2" }], 42]);
+
+    const result = await positionsService.list({ page: 2, take: 2 } as never);
+
+    expect(result.items).toEqual([{ id: "pos-1" }, { id: "pos-2" }]);
+    expect(result.meta).toEqual({ total: 42, page: 2, pageSize: 2, hasMore: true });
+  });
+
+  it("hasMore es false cuando la página actual ya cubre el total", async () => {
+    repo.findMany.mockResolvedValue([[{ id: "pos-1" }], 1]);
+
+    const result = await positionsService.list({ page: 1, take: 25 } as never);
+
+    expect(result.meta).toEqual({ total: 1, page: 1, pageSize: 25, hasMore: false });
+  });
+
+  it("caso sin resultados: meta.total en 0, items vacío", async () => {
+    repo.findMany.mockResolvedValue([[], 0]);
+
+    const result = await positionsService.list({ page: 1, take: 25 } as never);
+
+    expect(result.items).toEqual([]);
+    expect(result.meta).toEqual({ total: 0, page: 1, pageSize: 25, hasMore: false });
   });
 });
