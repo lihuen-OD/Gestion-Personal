@@ -2,6 +2,7 @@ import type { RequestHandler } from "express";
 import { requestAuditContext } from "../../shared/audit/requestAuditContext";
 import { requireParam } from "../../shared/http/params";
 import { workforceService } from "./workforce.service";
+import type { ListNotificationsQuery } from "./workforce.schemas";
 import { clearTimeEntriesReadCaches } from "../time-entries/timeEntries.cache";
 import { clearEmployeeReadCaches } from "../employees/employees.controller";
 import { clearDoubleRulesReadCache, clearShiftTemplatesReadCache, doubleRulesCache, shiftTemplatesCache } from "./workforce.cache";
@@ -31,7 +32,10 @@ export const workforceController = {
     res.json({data});
   }) satisfies RequestHandler,
   rejectCorrection: (async (req,res)=>res.json({data:await workforceService.rejectCorrection(requireParam(req,"id"),req.body.note,req.user!,requestAuditContext(req))})) satisfies RequestHandler,
-  notifications: (async (req,res)=>res.json({data:await workforceService.notifications(req.user!)})) satisfies RequestHandler,
+  notifications: (async (req,res)=>{
+    const result=await workforceService.notifications(req.query as unknown as ListNotificationsQuery,req.user!);
+    res.json({data:result.items,meta:result.meta});
+  }) satisfies RequestHandler,
   unreadNotificationCount: (async (req,res)=>res.json({data:{count:await workforceService.unreadNotificationCount(req.user!)}})) satisfies RequestHandler,
   readNotification: (async (req,res)=>res.json({data:await workforceService.markNotificationRead(requireParam(req,"id"),req.user!)})) satisfies RequestHandler,
   // Etapa 9C: cache de lectura TTL corto (ver workforce.cache.ts) — mismo

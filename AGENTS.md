@@ -77,6 +77,7 @@ If a document does not exist, continue with the best available context and menti
 - Authorship fields (`createdByUserId`, `approvedByUserId`, `uploadedByUserId`, etc.) are real FKs to `User` with `onDelete: SetNull`. Never `Cascade` from `User` to a historical record, and never delete a `User` row that has related history.
 - `.github/workflows/ci.yml` validates backend/frontend (typecheck, test, build) on every push to `main` and every pull request — see `docs/DEVOPS_DEPLOYMENT_STANDARDS.md`. Run the same commands locally before pushing; a failing run must be fixed, not bypassed.
 - Before starting a large feature (a new module, or anything touching `schema.prisma`), produce analysis and a plan first; implement only after that plan is agreed, and close the feature with tests plus a green `typecheck`/`test`/`build` and a validation summary.
+- Before adding or changing anything about data loading, caching, pagination, refresh behavior or calendars (frontend or backend), read `docs/PERFORMANCE_STANDARDS.md` first — it is the permanent standard distilled from the 9A-9H performance series and includes the one known open gap (fichador audit-trail on `clockInResolved`/`clockOutResolved` and `expireOpenWorkShifts`, see its §10) that must stay undocumented deuda, not be "fixed" silently outside a dedicated fichador stage.
 
 ## Non-negotiable design rules
 

@@ -7,6 +7,7 @@ import type { AuditContext } from "../audit/audit.service";
 import { auditService } from "../audit/audit.service";
 import { argentinaCalendarDate, todayArgentinaDateKey } from "../../shared/datetime/argentinaTime";
 import { buildActiveDatesByRule, resolveWinningRules, ruleMatchesDate, scopesCouldOverlap } from "./doubleHourRuleMatching";
+import type { ListNotificationsQuery } from "./workforce.schemas";
 
 function mapPrismaError(error: unknown) {
   if (error instanceof Prisma.PrismaClientKnownRequestError) {
@@ -153,28 +154,44 @@ export const workforceService = {
     await auditService.register({ ...audit, action: "REJECT", entity: "TimeCorrectionRequest", entityId: id, description: `Se rechazó la corrección de carga horaria (legajo ${before.employeeId}).`, before: before as Prisma.InputJsonValue, after: item as Prisma.InputJsonValue });
     return item;
   },
-  async notifications(user: Express.AuthUser) {
-    const notifications = await prisma.systemNotification.findMany({ where: { recipientUserId: user.id }, orderBy: { createdAt: "desc" }, take: 200 });
+  // Etapa 9I: antes hacía fetch-all con take:200 fijo, sin paginación real.
+  // Ahora pagina por page/take real (mismo patrón $transaction([findMany,count])
+  // que noveltiesRepository/positions.repository) y filtra por status
+  // server-side. Deliberadamente sin cache: los write paths de
+  // SystemNotification están dispersos en 5+ módulos (novelties/
+  // workforce-management/time-entries/shifts/attendance, todos vía
+  // notifyUsers/notifyRrhh o creación directa) — no es un conjunto cerrado y
+  // enumerable con confianza (criterio de docs/PERFORMANCE_STANDARDS.md §5),
+  // así que queda sin cachear, igual que closures() en 9C.
+  async notifications(query: ListNotificationsQuery, user: Express.AuthUser) {
+    const where: Prisma.SystemNotificationWhereInput = { recipientUserId: user.id, ...(query.status ? { status: query.status } : {}) };
+    const skip = (query.page - 1) * query.take;
+    const [notifications, total] = await prisma.$transaction([
+      prisma.systemNotification.findMany({ where, orderBy: { createdAt: "desc" }, skip, take: query.take }),
+      prisma.systemNotification.count({ where }),
+    ]);
     const shiftAlertIds = notifications.filter((item) => item.entityType === "ShiftAlert" && item.entityId).map((item) => item.entityId!);
     const workShiftIds = notifications.filter((item) => item.entityType === "WorkShift" && item.entityId).map((item) => item.entityId!);
     const employeeIds = notifications.filter((item) => item.entityType === "Employee" && item.entityId).map((item) => item.entityId!);
-    if (!shiftAlertIds.length && !workShiftIds.length && !employeeIds.length) return notifications;
     const employeeSelect = { id: true, legajo: true, firstName: true, lastName: true } as const;
-    const [alerts, shifts, employees] = await Promise.all([
-      shiftAlertIds.length ? prisma.shiftAlert.findMany({ where: { id: { in: shiftAlertIds } }, select: { id: true, employee: { select: employeeSelect } } }) : Promise.resolve([]),
-      workShiftIds.length ? prisma.workShift.findMany({ where: { id: { in: workShiftIds } }, select: { id: true, employee: { select: employeeSelect } } }) : Promise.resolve([]),
-      employeeIds.length ? prisma.employee.findMany({ where: { id: { in: employeeIds } }, select: employeeSelect }) : Promise.resolve([]),
-    ]);
+    const [alerts, shifts, employees] = shiftAlertIds.length || workShiftIds.length || employeeIds.length
+      ? await Promise.all([
+          shiftAlertIds.length ? prisma.shiftAlert.findMany({ where: { id: { in: shiftAlertIds } }, select: { id: true, employee: { select: employeeSelect } } }) : Promise.resolve([]),
+          workShiftIds.length ? prisma.workShift.findMany({ where: { id: { in: workShiftIds } }, select: { id: true, employee: { select: employeeSelect } } }) : Promise.resolve([]),
+          employeeIds.length ? prisma.employee.findMany({ where: { id: { in: employeeIds } }, select: employeeSelect }) : Promise.resolve([]),
+        ])
+      : [[], [], []];
     const employeeByAlert = new Map(alerts.map((alert) => [alert.id, alert.employee]));
     const employeeByShift = new Map(shifts.map((shift) => [shift.id, shift.employee]));
     const employeeById = new Map(employees.map((employee) => [employee.id, employee]));
-    return notifications.map((item) => {
+    const items = notifications.map((item) => {
       if (!item.entityId) return item;
       if (item.entityType === "ShiftAlert") return { ...item, employee: employeeByAlert.get(item.entityId) };
       if (item.entityType === "WorkShift") return { ...item, employee: employeeByShift.get(item.entityId) };
       if (item.entityType === "Employee") return { ...item, employee: employeeById.get(item.entityId) };
       return item;
     });
+    return { items, meta: { total, page: query.page, pageSize: query.take, hasMore: query.page * query.take < total } };
   },
   unreadNotificationCount(user: Express.AuthUser) { return prisma.systemNotification.count({ where: { recipientUserId: user.id, status: "NO_LEIDA" } }); },
   markNotificationRead(id: string, user: Express.AuthUser) { return prisma.systemNotification.updateMany({ where: { id, recipientUserId: user.id }, data: { status: "LEIDA", readAt: new Date() } }); },

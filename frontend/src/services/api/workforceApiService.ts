@@ -37,6 +37,8 @@ export type SystemNotification = {
   createdAt: string;
   employee?: { id: string; legajo: string; firstName: string; lastName: string };
 };
+export type SystemNotificationListParams = { page?: number; take?: number; status?: "NO_LEIDA" | "LEIDA" };
+export type SystemNotificationListMeta = { total: number; page: number; pageSize: number; hasMore: boolean };
 export type ShiftTemplate = {
   id: string;
   code: string;
@@ -159,8 +161,14 @@ export const workforceApiService = {
     if (decision === "approve") await invalidateCacheFamily("dashboard", "time correction approved");
     return result;
   },
-  notifications() {
-    return apiRequest<{ data: SystemNotification[] }>("/workforce/notifications", { apiCache: false }).then((response) => response.data);
+  // Etapa 9I: antes pedía las 200 últimas notificaciones de una sola vez.
+  // Ahora pagina real (page/take) y filtra por status server-side.
+  notifications(params: SystemNotificationListParams = {}) {
+    const query = new URLSearchParams();
+    query.set("page", String(params.page || 1));
+    query.set("take", String(params.take || 20));
+    if (params.status) query.set("status", params.status);
+    return apiRequest<{ data: SystemNotification[]; meta: SystemNotificationListMeta }>(`/workforce/notifications?${query.toString()}`, { apiCache: false }).then((response) => ({ items: response.data, meta: response.meta }));
   },
   unreadNotificationCount() {
     return apiRequest<{ data: { count: number } }>("/workforce/notifications-unread-count", { apiCache: false }).then((response) => response.data.count);

@@ -15,12 +15,15 @@ import { roles } from "../../shared/security/roles";
  */
 vi.mock("../../shared/prisma/client", () => ({
   prisma: {
-    employee: { count: vi.fn() },
+    employee: { count: vi.fn(), findMany: vi.fn() },
     timeEntry: { groupBy: vi.fn(), findFirst: vi.fn(), update: vi.fn() },
     monthlyTimeClosure: { findMany: vi.fn(), findUnique: vi.fn(), update: vi.fn(), updateMany: vi.fn(), upsert: vi.fn() },
     timeCorrectionRequest: { findUnique: vi.fn(), findUniqueOrThrow: vi.fn(), update: vi.fn(), create: vi.fn() },
     shiftTemplate: { create: vi.fn(), findUnique: vi.fn(), update: vi.fn(), delete: vi.fn() },
     doubleHourRule: { create: vi.fn(), findUnique: vi.fn(), findMany: vi.fn(), update: vi.fn(), delete: vi.fn() },
+    systemNotification: { findMany: vi.fn(), count: vi.fn() },
+    shiftAlert: { findMany: vi.fn() },
+    workShift: { findMany: vi.fn() },
     user: { findMany: vi.fn().mockResolvedValue([]) },
     $transaction: vi.fn(),
   },
@@ -31,12 +34,15 @@ vi.mock("../audit/audit.service", () => ({
 }));
 
 const mockedPrisma = prisma as unknown as {
-  employee: { count: Mock };
+  employee: { count: Mock; findMany: Mock };
   timeEntry: { groupBy: Mock; findFirst: Mock; update: Mock };
   monthlyTimeClosure: { findMany: Mock; findUnique: Mock; update: Mock; updateMany: Mock; upsert: Mock };
   timeCorrectionRequest: { findUnique: Mock; findUniqueOrThrow: Mock; update: Mock; create: Mock };
   shiftTemplate: { create: Mock; findUnique: Mock; update: Mock; delete: Mock };
   doubleHourRule: { create: Mock; findUnique: Mock; findMany: Mock; update: Mock; delete: Mock };
+  systemNotification: { findMany: Mock; count: Mock };
+  shiftAlert: { findMany: Mock };
+  workShift: { findMany: Mock };
   $transaction: Mock;
 };
 
@@ -403,5 +409,121 @@ describe("workforceService — FK reales sobre ShiftTemplate/DoubleHourRule", ()
         }),
       }),
     );
+  });
+});
+
+describe("workforceService.notifications — Etapa 9I (paginación real, antes fetch-all take:200)", () => {
+  it("filtra siempre por el usuario autenticado (recipientUserId)", async () => {
+    mockedPrisma.$transaction.mockResolvedValue([[], 0]);
+
+    await workforceService.notifications({ page: 1, take: 20 }, user);
+
+    expect(mockedPrisma.systemNotification.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { recipientUserId: "user-1" } }),
+    );
+    expect(mockedPrisma.systemNotification.count).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { recipientUserId: "user-1" } }),
+    );
+  });
+
+  it("nunca mezcla notificaciones de otro usuario — supervisor y RH piden con su propio id", async () => {
+    mockedPrisma.$transaction.mockResolvedValue([[], 0]);
+
+    await workforceService.notifications({ page: 1, take: 20 }, supervisor);
+
+    expect(mockedPrisma.systemNotification.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { recipientUserId: "user-2" } }),
+    );
+  });
+
+  it("ordena por fecha descendente", async () => {
+    mockedPrisma.$transaction.mockResolvedValue([[], 0]);
+
+    await workforceService.notifications({ page: 1, take: 20 }, user);
+
+    expect(mockedPrisma.systemNotification.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ orderBy: { createdAt: "desc" } }),
+    );
+  });
+
+  it("respeta page/take — page 3 con take 10 pide skip:20 take:10", async () => {
+    mockedPrisma.$transaction.mockResolvedValue([[], 0]);
+
+    await workforceService.notifications({ page: 3, take: 10 }, user);
+
+    expect(mockedPrisma.systemNotification.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ skip: 20, take: 10 }),
+    );
+  });
+
+  it("sin filtro de status no agrega status al where (todas)", async () => {
+    mockedPrisma.$transaction.mockResolvedValue([[], 0]);
+
+    await workforceService.notifications({ page: 1, take: 20 }, user);
+
+    expect(mockedPrisma.systemNotification.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { recipientUserId: "user-1" } }),
+    );
+  });
+
+  it("filtro status=NO_LEIDA se traduce a where.status server-side", async () => {
+    mockedPrisma.$transaction.mockResolvedValue([[], 0]);
+
+    await workforceService.notifications({ page: 1, take: 20, status: "NO_LEIDA" }, user);
+
+    expect(mockedPrisma.systemNotification.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { recipientUserId: "user-1", status: "NO_LEIDA" } }),
+    );
+    expect(mockedPrisma.systemNotification.count).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { recipientUserId: "user-1", status: "NO_LEIDA" } }),
+    );
+  });
+
+  it("devuelve meta correcta (total/page/pageSize/hasMore) cuando hay más páginas", async () => {
+    const rows = [{ id: "n-1", entityType: null, entityId: null }];
+    mockedPrisma.$transaction.mockResolvedValue([rows, 45]);
+
+    const result = await workforceService.notifications({ page: 2, take: 20 }, user);
+
+    expect(result.meta).toEqual({ total: 45, page: 2, pageSize: 20, hasMore: true });
+  });
+
+  it("hasMore es false en la última página", async () => {
+    const rows = [{ id: "n-1", entityType: null, entityId: null }];
+    mockedPrisma.$transaction.mockResolvedValue([rows, 21]);
+
+    const result = await workforceService.notifications({ page: 2, take: 20 }, user);
+
+    expect(result.meta).toEqual({ total: 21, page: 2, pageSize: 20, hasMore: false });
+  });
+
+  it("sin resultados: items vacío y meta válida (no rompe con 0 notificaciones)", async () => {
+    mockedPrisma.$transaction.mockResolvedValue([[], 0]);
+
+    const result = await workforceService.notifications({ page: 1, take: 20 }, user);
+
+    expect(result).toEqual({ items: [], meta: { total: 0, page: 1, pageSize: 20, hasMore: false } });
+  });
+
+  it("enriquece con el legajo del empleado sólo para las notificaciones de la página actual (no re-consulta las 200 de antes)", async () => {
+    const rows = [{ id: "n-1", entityType: "ShiftAlert", entityId: "alert-1" }];
+    mockedPrisma.$transaction.mockResolvedValue([rows, 1]);
+    mockedPrisma.shiftAlert.findMany.mockResolvedValue([{ id: "alert-1", employee: { id: "emp-1", legajo: "100", firstName: "Ana", lastName: "Gomez" } }]);
+
+    const result = await workforceService.notifications({ page: 1, take: 20 }, user);
+
+    expect(mockedPrisma.shiftAlert.findMany).toHaveBeenCalledWith({ where: { id: { in: ["alert-1"] } }, select: { id: true, employee: { select: { id: true, legajo: true, firstName: true, lastName: true } } } });
+    expect(result.items[0]).toMatchObject({ id: "n-1", employee: { id: "emp-1", legajo: "100" } });
+  });
+
+  it("no dispara ninguna query de enriquecimiento cuando ninguna notificación de la página tiene entityId", async () => {
+    const rows = [{ id: "n-1", entityType: null, entityId: null }];
+    mockedPrisma.$transaction.mockResolvedValue([rows, 1]);
+
+    await workforceService.notifications({ page: 1, take: 20 }, user);
+
+    expect(mockedPrisma.shiftAlert.findMany).not.toHaveBeenCalled();
+    expect(mockedPrisma.workShift.findMany).not.toHaveBeenCalled();
+    expect(mockedPrisma.employee.findMany).not.toHaveBeenCalled();
   });
 });

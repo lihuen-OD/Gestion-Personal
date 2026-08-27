@@ -264,6 +264,8 @@ When the project is frontend-only:
 * Keep mock data outside components.
 * Keep TypeScript models clean and explicit.
 
+For caching, pagination, refresh behavior (no blanking a screen that already has data), debounce and calendar loading strategy, follow `docs/PERFORMANCE_STANDARDS.md` — this document does not duplicate those rules.
+
 ---
 
 ## Auth UI

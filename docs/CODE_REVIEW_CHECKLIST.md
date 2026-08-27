@@ -78,6 +78,16 @@ Use this checklist before closing any task.
 - Any excessive frontend renders?
 - Any large payloads?
 - Any unnecessary dependency?
+- Reject a new screen with unjustified fetch-all (no documented low-volume evidence).
+- Reject global/page-wide loading used for what is a local refresh.
+- Reject a new cache with no invalidation, or invalidation not verified against every write path.
+- Reject a backend-hitting search input with no debounce.
+- Reject a potentially large list endpoint with no pagination.
+- Reject an export with no period/filter bound.
+- Reject optimistic update on a critical action (fichador, approvals, closures) without explicit justification.
+- Reject technical text (raw field/table names, error codes, "schema"/"payload") or out-of-context errors shown to the end user.
+
+See `docs/PERFORMANCE_STANDARDS.md` for the full rules (data classification, cache TTLs, pagination, calendars, dashboards, fichador) behind this checklist.
 
 ## Testing
 

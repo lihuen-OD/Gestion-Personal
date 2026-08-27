@@ -10,6 +10,7 @@ import { doubleRulesCache, shiftTemplatesCache } from "./workforce.cache";
 vi.mock("./workforce.service", () => ({
   workforceService: {
     approveCorrection: vi.fn(),
+    notifications: vi.fn(),
     shiftTemplates: vi.fn(),
     createShiftTemplate: vi.fn(),
     updateShiftTemplate: vi.fn(),
@@ -34,6 +35,7 @@ vi.mock("../employees/employees.controller", () => ({
 // sólo que se llamen ciertas funciones.
 const mockedService = workforceService as unknown as {
   approveCorrection: Mock;
+  notifications: Mock;
   shiftTemplates: Mock; createShiftTemplate: Mock; updateShiftTemplate: Mock; removeShiftTemplate: Mock;
   doubleRules: Mock; createDoubleRule: Mock; updateDoubleRule: Mock; removeDoubleRule: Mock;
 };
@@ -262,5 +264,28 @@ describe("workforceController.doubleRules — cache de lectura TTL (Etapa 9C)", 
     }), fakeRes());
     await workforceController.doubleRules(req, fakeRes()); // miss tras removeDoubleRule
     expect(mockedService.doubleRules).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe("workforceController.notifications — Etapa 9I (paginación real)", () => {
+  it("pasa page/take/status de req.query al service tal cual los dejó validateQuery", async () => {
+    mockedService.notifications.mockResolvedValue({ items: [], meta: { total: 0, page: 2, pageSize: 10, hasMore: false } });
+    // req.query llega acá ya coercionado por validateQuery (page/take numéricos
+    // reales, no strings) — el mismo shape que produce listNotificationsQuerySchema.
+    const req = fakeReq({ originalUrl: "/workforce/notifications", query: { page: 2, take: 10, status: "NO_LEIDA" } as unknown as Request["query"] });
+
+    await workforceController.notifications(req, fakeRes());
+
+    expect(mockedService.notifications).toHaveBeenCalledWith({ page: 2, take: 10, status: "NO_LEIDA" }, { id: "user-1", role: "NIVEL_1_RRHH" });
+  });
+
+  it("responde con {data, meta} — mismo formato de paginación que el resto de la app (novelties/positions)", async () => {
+    const items = [{ id: "n-1", title: "Cierre mensual" }];
+    mockedService.notifications.mockResolvedValue({ items, meta: { total: 1, page: 1, pageSize: 20, hasMore: false } });
+    const res = fakeRes();
+
+    await workforceController.notifications(fakeReq({ originalUrl: "/workforce/notifications", query: {} }), res);
+
+    expect(res.json).toHaveBeenCalledWith({ data: items, meta: { total: 1, page: 1, pageSize: 20, hasMore: false } });
   });
 });

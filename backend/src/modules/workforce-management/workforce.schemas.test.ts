@@ -1,5 +1,41 @@
 import { describe, expect, it } from "vitest";
-import { doubleRuleSchema, updateDoubleRuleSchema } from "./workforce.schemas";
+import { doubleRuleSchema, listNotificationsQuerySchema, updateDoubleRuleSchema } from "./workforce.schemas";
+
+describe("listNotificationsQuerySchema — Etapa 9I", () => {
+  it("sin parámetros: aplica los defaults (page=1, take=20, sin filtro de status)", () => {
+    const result = listNotificationsQuerySchema.safeParse({});
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data).toEqual({ page: 1, take: 20 });
+    }
+  });
+
+  it("acepta status NO_LEIDA/LEIDA", () => {
+    expect(listNotificationsQuerySchema.safeParse({ status: "NO_LEIDA" }).success).toBe(true);
+    expect(listNotificationsQuerySchema.safeParse({ status: "LEIDA" }).success).toBe(true);
+  });
+
+  it("rechaza un status fuera del enum", () => {
+    expect(listNotificationsQuerySchema.safeParse({ status: "ARCHIVADA" }).success).toBe(false);
+  });
+
+  it("rechaza un take por encima del máximo seguro (100)", () => {
+    const result = listNotificationsQuerySchema.safeParse({ take: 500 });
+    expect(result.success).toBe(false);
+  });
+
+  it("acepta take=100 (el máximo permitido)", () => {
+    expect(listNotificationsQuerySchema.safeParse({ take: 100 }).success).toBe(true);
+  });
+
+  it("coerciona page/take desde query string", () => {
+    const result = listNotificationsQuerySchema.safeParse({ page: "3", take: "10" });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data).toEqual({ page: 3, take: 10 });
+    }
+  });
+});
 
 describe("doubleRuleSchema — Etapa 8B", () => {
   const base = { name: "Domingo", recurrenceType: "SEMANAL" as const, fromDate: "2026-01-01", reason: "Domingo" };

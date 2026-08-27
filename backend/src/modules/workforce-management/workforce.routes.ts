@@ -6,7 +6,7 @@ import { validateBody } from "../../shared/validation/validateRequest";
 import { validateQuery } from "../../shared/validation/validateQuery";
 import { roles } from "../../shared/security/roles";
 import { workforceController as c } from "./workforce.controller";
-import { calendarRangeQuerySchema, closureBulkSchema, closureSubmitSchema, correctionCreateSchema, correctionReviewSchema, doubleRuleSchema, periodQuerySchema, returnClosureSchema, shiftTemplateSchema, updateDoubleRuleSchema, updateShiftTemplateSchema } from "./workforce.schemas";
+import { calendarRangeQuerySchema, closureBulkSchema, closureSubmitSchema, correctionCreateSchema, correctionReviewSchema, doubleRuleSchema, listNotificationsQuerySchema, periodQuerySchema, returnClosureSchema, shiftTemplateSchema, updateDoubleRuleSchema, updateShiftTemplateSchema } from "./workforce.schemas";
 
 export const workforceRouter=Router();
 workforceRouter.use(requireAuth);
@@ -19,7 +19,7 @@ workforceRouter.get("/corrections",requireAnyRole(all),asyncHandler(c.correction
 workforceRouter.post("/corrections",requireAnyRole([roles.supervision,roles.cargaHoraria]),validateBody(correctionCreateSchema),asyncHandler(c.createCorrection));
 workforceRouter.post("/corrections/:id/approve",requireAnyRole([roles.rrhh]),validateBody(correctionReviewSchema),asyncHandler(c.approveCorrection));
 workforceRouter.post("/corrections/:id/reject",requireAnyRole([roles.rrhh]),validateBody(correctionReviewSchema),asyncHandler(c.rejectCorrection));
-workforceRouter.get("/notifications",requireAnyRole(all),asyncHandler(c.notifications));
+workforceRouter.get("/notifications",requireAnyRole(all),validateQuery(listNotificationsQuerySchema),asyncHandler(c.notifications));
 workforceRouter.post("/notifications/:id/read",requireAnyRole(all),asyncHandler(c.readNotification));
 workforceRouter.get("/notifications-unread-count",requireAnyRole(all),asyncHandler(c.unreadNotificationCount));
 workforceRouter.get("/shift-templates",requireAnyRole(all),asyncHandler(c.shiftTemplates));

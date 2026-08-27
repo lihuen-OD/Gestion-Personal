@@ -6,6 +6,15 @@ export const closureBulkSchema = z.object({ ids: z.array(z.string().uuid()).min(
 export const returnClosureSchema = z.object({ reason: z.string().trim().min(2).max(600) });
 export const correctionCreateSchema = z.object({ timeEntryId: z.string().uuid(), proposedHours: z.coerce.number().min(0).max(24), reason: z.string().trim().min(2).max(600) });
 export const correctionReviewSchema = z.object({ note: z.string().trim().max(600).optional() });
+// Etapa 9I: page/take real (antes take:200 fijo, sin paginación) — mismo
+// tope máximo de take que shiftAlerts/otras listas chicas de la app (no hace
+// falta un take grande acá, la campanita sólo necesita las últimas 10-20).
+export const listNotificationsQuerySchema = z.object({
+  status: z.enum(["NO_LEIDA", "LEIDA"]).optional(),
+  page: z.coerce.number().int().positive().max(10000).default(1),
+  take: z.coerce.number().int().positive().max(100).default(20),
+});
+export type ListNotificationsQuery = z.infer<typeof listNotificationsQuerySchema>;
 export const shiftTemplateSchema = z.object({
   code: z.string().trim().min(2).max(30),
   name: z.string().trim().min(2).max(100),

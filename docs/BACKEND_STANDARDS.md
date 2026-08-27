@@ -59,6 +59,8 @@ APIs should:
 - support filters where needed
 - document important endpoints
 
+For cache TTLs, invalidation rules, when to paginate vs. allow fetch-all, and which data must never be cached (critical/fichador), follow `docs/PERFORMANCE_STANDARDS.md` — this document does not duplicate those rules.
+
 ## Validation
 
 Backend validation is mandatory for:

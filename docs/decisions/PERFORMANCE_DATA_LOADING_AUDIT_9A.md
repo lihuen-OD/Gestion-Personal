@@ -612,3 +612,132 @@ General: `git diff --check` sin errores de espacios en blanco.
 ### 18.11 Recomendación final
 
 Con esta etapa se completa el diagnóstico de las 7 áreas de mayor riesgo de performance identificadas en 9A. Las correcciones aplicadas a lo largo de 9B/9C/9E/9F/9G fueron todas puntuales, evidenciadas y con test — sin ningún rediseño ni cambio de regla de negocio. El único hallazgo real sin resolver (§18.7) queda íntegramente documentado, acotado en impacto (≤30s de staleness en un dashboard no crítico) y fuera del alcance de esta serie por diseño (fichador). **Se recomienda cerrar la serie de performance acá** — no abrir una 9H salvo que surja un hallazgo nuevo y concreto (no especulativo) en una auditoría futura, o que se decida explícitamente encarar una etapa dedicada al fichador para cerrar el hallazgo de §18.7.
+
+## 19. Etapa 9H — Cierre formal y estándares permanentes
+
+Fecha: 2026-08-27. Etapa exclusivamente documental — cero cambios de código, cero tests nuevos, cero migraciones, cero librerías nuevas, sin tocar ningún archivo del fichador (ni siquiera su documentación, más allá de citar el hallazgo ya existente de §18.7). El objetivo no fue seguir auditando ni optimizando pantallas, sino convertir todo lo aprendido en 9A-9G en reglas de arquitectura permanentes y obligatorias para trabajo futuro, y cerrar formalmente la serie.
+
+### 19.1 Qué se ejecutó en esta etapa
+
+- Se creó `docs/PERFORMANCE_STANDARDS.md` — documento nuevo, fuente permanente de reglas de performance/cache/paginación/refresh/UX de carga para todo trabajo futuro (frontend y backend), con 16 secciones: principios generales, clasificación de datos (A-E), reglas frontend obligatorias, reglas backend obligatorias, reglas de cache, reglas de paginación, reglas para calendarios, reglas para formularios/mutaciones, reglas para dashboards/reportes/exportaciones, reglas para el fichador (incluye el hallazgo de §18.7 marcado explícitamente como deuda puntual, no como bloqueo), checklist frontend, checklist backend, checklist de code review, performance budgets orientativos, deudas pendientes, e historial/estado de cierre de la serie.
+- Se actualizó este documento (§19, la sección que se está escribiendo ahora) con el cierre formal de la serie 9A-9H.
+- Se revisaron los 6 documentos de estándares existentes pedidos explícitamente (`docs/CODE_REVIEW_CHECKLIST.md`, `docs/FRONTEND_STANDARDS.md`, `docs/BACKEND_STANDARDS.md`, `docs/GLOBAL_ENGINEERING_STANDARDS.md`, `AGENTS.md`, `CLAUDE.md`) y se actualizaron 5 de los 6 con ediciones mínimas, sin duplicar contenido — ver §19.2.
+
+### 19.2 Documentos de estándares tocados (y el que se dejó igual)
+
+- **`CLAUDE.md`**: se agregó `docs/PERFORMANCE_STANDARDS.md` a la lista de "Mandatory documents", y una nueva regla en "Rules added after the 2026-08 technical audit..." apuntando a leerlo antes de tocar cache/paginación/refresh/calendarios, citando el hallazgo pendiente del fichador para que no se intente "arreglar" fuera de una etapa dedicada.
+- **`AGENTS.md`**: se agregó la misma regla nueva (mismo texto, en inglés, mismo criterio) a su sección equivalente "Rules added after the 2026-08 technical audit...", para mantener las dos listas de reglas post-auditoría en paridad (ya eran prácticamente espejo una de la otra). Su sección "Mandatory context reading" (más acotada — ni siquiera incluye hoy `docs/BACKEND_STANDARDS.md`/`docs/FRONTEND_STANDARDS.md`) se dejó sin tocar a propósito: agregar ahí `docs/PERFORMANCE_STANDARDS.md` habría roto la asimetría ya existente y deliberada entre ambos archivos (AGENTS.md tiene una lista de lectura previa más chica que la de "Mandatory documents" de CLAUDE.md), no la habría seguido.
+- **`docs/CODE_REVIEW_CHECKLIST.md`**: se agregaron 8 bullets nuevos a la sección "## Performance" ya existente (reglas de rechazo concretas: fetch-all injustificado, loading global para refresh local, cache sin invalidación, búsqueda sin debounce, endpoint grande sin paginación, exportación sin filtro/período, optimistic update en acción crítica, textos técnicos/errores fuera de contexto), más un puntero a `docs/PERFORMANCE_STANDARDS.md`. Los 6 bullets genéricos que ya existían se dejaron intactos.
+- **`docs/FRONTEND_STANDARDS.md`**: se agregó una única línea puntero al final de "## API communication", derivando a `docs/PERFORMANCE_STANDARDS.md` para cache/paginación/refresh/debounce/calendarios. Sin duplicar contenido.
+- **`docs/BACKEND_STANDARDS.md`**: se agregó una única línea puntero al final de "## API design", derivando a `docs/PERFORMANCE_STANDARDS.md` para TTLs de cache, invalidación, cuándo paginar vs. fetch-all, y qué nunca cachear. Sin duplicar contenido.
+- **`docs/GLOBAL_ENGINEERING_STANDARDS.md`**: **se dejó sin tocar, deliberadamente.** Es un documento genérico de calidad de código (objetivo, reglas generales, naming, funciones, manejo de errores, documentación) sin ninguna sección de performance/datos/cache hoy — agregar un puntero ahí habría sido forzar una referencia cruzada en un documento que no trata este tema en ningún otro punto, en vez de "actualizar sólo si corresponde" como pidió esta etapa explícitamente.
+
+### 19.3 Qué quedó resuelto (a lo largo de toda la serie, no sólo en 9H)
+
+Ver el detalle completo etapa por etapa en §14-§18. Resumen: cache backend seguro para turnos/horas especiales (9C), paginación real reemplazando fetch-all en Puestos/Usuarios/Organigrama (9E) con un bug de filtro no aplicado corregido en el camino, mega-efecto de 10 dependencias de `HoursPage` dividido en 3 efectos por dependencia real (9F), refresh silencioso sin blanquear pantalla aplicado en 7+ pantallas distintas a lo largo de la serie, hueco de invalidación de cache de dashboard en `workforceApiService.reviewCorrection` cerrado (9G), blanqueo de vista previa en `FinnegansExportPage` corregido (9G).
+
+### 19.4 Qué queda como estándar permanente
+
+`docs/PERFORMANCE_STANDARDS.md` — reemplaza, hacia adelante, la necesidad de releer esta auditoría completa para decidir cómo cachear/paginar/refrescar una pantalla nueva. Este documento (`PERFORMANCE_DATA_LOADING_AUDIT_9A.md`) queda como registro histórico de diagnóstico y evidencia — sigue siendo la referencia si hace falta entender **por qué** se llegó a una regla, pero la regla en sí ya no vive sólo acá.
+
+### 19.5 Qué queda como deuda puntual
+
+- El hallazgo del fichador (§18.7): `clockInResolved`/`clockOutResolved` sin foto y el cron `expireOpenWorkShifts` no registran auditoría, por lo que no invalidan el cache de dashboard (acotado a 30s). Documentado también en `docs/PERFORMANCE_STANDARDS.md` §10 y §15. Requiere una etapa futura dedicada y autorizada explícitamente a tocar el fichador.
+- Paginación de `MonthlyClosuresPage` (§18.3/§16.5): pendiente hasta que se defina explícitamente el alcance de "seleccionar todos" bajo paginación — decisión de producto, no un cambio mecánico.
+- Riesgos residuales de `HoursPage` documentados en 9F: banner de error compartido entre 2 efectos, Bandeja de revisión sin `ErrorState` dedicado con retry propio.
+- 4 patrones de cache backend distintos conviviendo (`ttlCache.ts` compartido, patrón fetch≤500+slice de positions/hour-concepts, `listCache` propio de novelty-types/document-categories, caso aislado de employees) — deuda de consistencia arquitectónica documentada desde 9A, no de corrección.
+- Catálogos con backend listo para paginar pero frontend en fetch-all (Conceptos Horarios, Tipos de novedad, Categorías de documento) — sólo requeriría trabajo frontend si el volumen alguna vez deja de ser un vocabulario cerrado chico.
+- Botón "Exportar resumen" sin `onClick` en `DashboardPage.tsx`, y `fallbackScope` muerto en el mismo archivo (§18.1) — funcionalidad faltante/código muerto sin costo de performance, fuera del alcance de esta serie.
+
+Todas están recogidas, sin re-priorizarlas, en `docs/PERFORMANCE_STANDARDS.md` §15.
+
+### 19.6 Cierre formal de la serie
+
+Etapas ejecutadas: 8C (Horas Especiales, calendario de referencia) → 9A (auditoría) → 9B (quick wins) → 9C (cache backend) → 9E (paginación real) → 9F (mega-efecto de HoursPage) → 9G (dashboard/reportes) → 9H (estándares permanentes y cierre, esta sección). Cada etapa quedó validada en verde (typecheck/test/build) al momento de cerrarse, con evidencia documentada en su propia sección de este archivo. Ningún cambio de código, en ninguna etapa, tocó el fichador.
+
+**Se recomienda cerrar formalmente la serie de performance en esta etapa.** No hay ningún hallazgo nuevo pendiente de investigar — sólo la deuda puntual ya enumerada en §19.5, que no requiere una nueva etapa de auditoría genérica sino, en el caso del fichador, una etapa dedicada y explícitamente autorizada a ese módulo específico. Cualquier trabajo de performance futuro debe partir directamente de `docs/PERFORMANCE_STANDARDS.md`, no de reabrir esta serie, salvo que aparezca un hallazgo nuevo y concreto (no especulativo) en una auditoría futura.
+
+## 20. Etapa 9I — Paginación y carga eficiente de Notificaciones
+
+Fecha: 2026-08-27. Alcance ejecutado: paginación real (`page`/`take`) + filtro de `status` server-side en el único endpoint de listado de notificaciones (`GET /workforce/notifications`), que hacía fetch-all con `take:200` fijo. Notificaciones nunca fue auditado explícitamente en 9A-9H (la matriz de §2.2 no lo incluye como pantalla) — quedó como el único punto de este tipo fuera del alcance de la serie cerrada en 9H, y esta etapa lo cierra puntualmente sin reabrir una auditoría general. Sin cambios de schema/migración, sin permisos, sin librerías nuevas, sin tocar fichador/carga horaria/Horas Especiales/Conceptos Horarios/dashboard.
+
+### 20.1 Diagnóstico original
+
+- El backend de Notificaciones existe y es real (no mock, no localStorage) — vive dentro de `workforce-management` (no en un módulo `notifications` propio), con modelo Prisma `SystemNotification` (`backend/prisma/schema.prisma:1055-1071`) e índice ya orientado a paginación por usuario/estado/fecha: `@@index([recipientUserId, status, createdAt])`.
+- `workforceService.notifications()` (`workforce.service.ts`, antes del cambio) hacía `prisma.systemNotification.findMany({ where: { recipientUserId: user.id }, orderBy: { createdAt: "desc" }, take: 200 })` — fetch-all con tope fijo, sin `skip`/página, sin filtro de `status`, sin `validateQuery` en la ruta (no aceptaba ningún parámetro).
+- `NotificationsPage.tsx` (la única pantalla de notificaciones — ver §20.2 sobre por qué no hay dropdown) pedía las 200 de una sola vez al montar, sin paginación ni filtros, con un único flag de loading global que blanqueaba toda la lista en cada `load()` (incluido el retry manual).
+- `markRead()` en el frontend no tenía manejo de error — un fallo de red en `readNotification` quedaba como promesa rechazada sin capturar, sin feedback al usuario y sin revertir nada visible.
+- No existía "marcar todas como leídas" (ni endpoint backend ni botón). No existía ningún filtro (leídas/no leídas) en la UI. Ninguno de los dos se agregó en esta etapa — decisión explícita, ver §20.7.
+
+### 20.2 Por qué no hay "campanita/dropdown" que optimizar
+
+La campanita del topbar (`frontend/src/app/AppShell.tsx`) **ya era eficiente antes de esta etapa y no se tocó**: no es un dropdown/panel con preview de notificaciones — es un ícono con badge que sólo llama a `workforceApiService.unreadNotificationCount()` (endpoint ya existente, liviano, usa el mismo índice `[recipientUserId, status, createdAt]`) al montar, cada 60s (`setInterval`), y al evento `app:notifications-changed`. Al hacer click navega a `/notificaciones` (la página completa) — nunca carga ninguna notificación en sí. Confirmado leyendo el código (no asumido): no existe ningún componente `NotificationDropdown`/`NotificationPanel` en el repo. Por eso el trabajo de esta etapa se concentró 100% en la página completa (`NotificationsPage.tsx`) y su endpoint — construir un dropdown nuevo habría sido una funcionalidad nueva, no una corrección de carga ineficiente, y quedó fuera del alcance explícitamente acordado.
+
+### 20.3 Endpoints revisados
+
+| Endpoint | ¿Se tocó? | Motivo |
+|---|---|---|
+| `GET /workforce/notifications` | **Sí** | Fetch-all confirmado (§20.1) — paginación real agregada |
+| `GET /workforce/notifications-unread-count` | No | Ya eficiente (`count()` sobre el índice existente), consumido sólo por la campanita |
+| `POST /workforce/notifications/:id/read` | No | Ya escribe acotado por `id`+`recipientUserId`, sin fetch de por medio |
+
+### 20.4 Cambios backend
+
+- `backend/src/modules/workforce-management/workforce.schemas.ts` — nuevo `listNotificationsQuerySchema` (`status` opcional `NO_LEIDA`/`LEIDA`, `page` default 1, `take` default 20 máximo 100 — mismo criterio de tope máximo seguro ya usado en `listNoveltiesQuerySchema`/`listPositionsQuerySchema`).
+- `backend/src/modules/workforce-management/workforce.service.ts` — `notifications()` pasa a recibir `(query, user)` en vez de sólo `user`, arma el `where` con `recipientUserId` + `status` opcional, y usa `prisma.$transaction([findMany({where,orderBy,skip,take}), count({where})])` — mismo patrón exacto que `noveltiesRepository.findMany`/`positions.repository.ts`. El enriquecimiento post-fetch (legajo del empleado asociado a `ShiftAlert`/`WorkShift`/`Employee`) se mantiene sin cambios de lógica, pero ahora corre sólo sobre los ítems de la página actual (antes corría sobre las 200 completas). Devuelve `{ items, meta: { total, page, pageSize, hasMore } }` — mismo shape de `meta` que el resto de la app.
+- `backend/src/modules/workforce-management/workforce.controller.ts` — el handler `notifications` responde `{ data: result.items, meta: result.meta }` (antes `{ data: notifications[] }`, sin `meta`).
+- `backend/src/modules/workforce-management/workforce.routes.ts` — la ruta `GET /notifications` gana `validateQuery(listNotificationsQuerySchema)`, mismo patrón que `/novelties`.
+- **Índice**: ya existente y correcto (`@@index([recipientUserId, status, createdAt])`, ver §20.1) — cubre exactamente `userId + status + createdAt` que pide la paginación nueva. **Sin migración.**
+
+### 20.5 Cambios frontend
+
+- `frontend/src/services/api/workforceApiService.ts` — `notifications()` pasa a aceptar `{ page?, take?, status? }` y devuelve `{ items, meta }` en vez de un array plano (mismo patrón que `noveltyApiService.list()`).
+- `frontend/src/pages/NotificationsPage.tsx` — reescrita para:
+  - Pedir sólo `page:1, take:20` al montar (antes 200 de una vez).
+  - Un filtro server-side "Estado" (Todas/No leídas/Leídas, `FilterPanel` + `<select>`, mismo patrón visual que `ShiftAlertsPage`/`AuditParametersPage`) — cambia el `where` del backend, no filtra en cliente.
+  - Un botón "Cargar N más" (infinite-scroll-style, mismo patrón que `ShiftAlertsPage`) que **agrega** la página siguiente sin reemplazar las notificaciones ya visibles — se prefirió sobre `Pagination.tsx` (prev/next) porque la pantalla es un feed de tarjetas (`<article>`), no una tabla, y reemplazar todo el feed al cambiar de página se sentiría más brusco que en una tabla.
+  - Guard de no-blanquear: el loading grande sólo se enciende si `!items.length` (mismo patrón `EmployeesPage`/`NoveltiesPage`/9B) — cambiar el filtro con notificaciones ya visibles no blanquea la lista mientras llega la respuesta filtrada.
+  - `markRead()` ahora tiene `try/catch` — un fallo muestra un error local (`form-error`, no bloquea la lista) en vez de una promesa rechazada silenciosa.
+
+### 20.6 Estrategia adoptada — campanita vs. página completa
+
+- **Campanita**: sin cambios — ya sólo pide el contador (§20.2), nunca la lista.
+- **Página completa**: paginación real vía "Cargar más" (page/take incremental) + filtro de estado server-side, en vez de fetch-all. Mantiene datos anteriores durante refresh/cambio de filtro/carga de más página (nunca blanquea si ya hay datos).
+
+### 20.7 unreadCount y marcado como leído/todas
+
+- `unreadCount` no cambió — sigue siendo `GET /workforce/notifications-unread-count`, ya eficiente, consumido por la campanita cada 60s + evento `app:notifications-changed` (disparado por `NotificationsPage` al marcar una notificación como leída, sin cambios en ese mecanismo).
+- Marcar como leída sigue siendo `POST /workforce/notifications/:id/read`, actualiza el ítem local (`setItems` con `map`) y el contador de la campanita vía el evento — nunca recarga la lista completa. Se le agregó manejo de error (§20.5).
+- **"Marcar todas como leídas" no se implementó** — no existía antes de esta etapa (ni endpoint ni UI) y es una acción de negocio nueva, no una mejora de carga; agregarla estaba fuera del alcance acordado explícitamente para esta etapa (ver §20.9).
+
+### 20.8 Cómo se evita cargar todo
+
+- Backend: `take` máximo 100 forzado por `listNotificationsQuerySchema` (rechaza, no trunca silenciosamente — mismo criterio que `listNoveltiesQuerySchema`).
+- Frontend: `take:20` por página, nunca pide más de una página a la vez; "Cargar más" es una acción explícita del usuario, no automática.
+- El filtro de `status` reduce el conjunto en origen (server-side), no en el cliente — evita traer notificaciones leídas cuando el usuario sólo quiere ver las no leídas.
+
+### 20.9 Por qué no se agregó cache
+
+Se evaluó explícitamente y se decidió **no** cachear (ni frontend ni backend), documentado en el propio código (`workforce.service.ts`, comentario sobre `notifications()`): los write paths de `SystemNotification` están dispersos en 5+ módulos (`novelties.service.ts`, `workforce.service.ts` propio, `timeEntries.service.ts`, `attendanceInactivity.service.ts`, `workShiftEvaluationRunner.ts`), todos vía `notifyUsers`/`notifyRrhh` o creación directa — no es un conjunto de escrituras cerrado y enumerable con confianza (criterio de `docs/PERFORMANCE_STANDARDS.md` §5). Mismo criterio ya aplicado en 9C para dejar `closures()` deliberadamente sin cachear.
+
+### 20.10 Tests agregados
+
+Backend: `workforce.schemas.test.ts` (+6 — defaults, status válido/inválido, take por encima/en el máximo, coerción de query string). `workforce.service.test.ts` (+11 — filtra por usuario autenticado, no mezcla usuarios, ordena descendente, respeta page/take con `skip` correcto, filtro status se traduce a `where`, meta correcta con/sin `hasMore`, caso sin resultados, enriquecimiento sólo sobre la página actual, sin queries de enriquecimiento cuando no hace falta). `workforce.controller.test.ts` (+2 — pass-through de query, shape `{data,meta}`). Total backend: 728 tests.
+
+Frontend: `NotificationsPage.test.tsx` (+8, archivo nuevo — loading inicial, page/take=20 sin duplicar llamadas al montar, "Cargar más" agrega sin blanquear, cambiar filtro no blanquea y pide status server-side, marcar leída actualiza sin recargar todo, error local si falla marcar leída, empty state, error state con retry). Total frontend: 383 tests.
+
+### 20.11 Validaciones ejecutadas
+
+Backend: `npx prisma validate` ✅, `npx prisma generate` ✅, `npx prisma migrate status` ✅ (45 migraciones, sin cambios — ninguna migración nueva en esta etapa), `npm run typecheck` ✅, `npx vitest run` ✅ 728/728, `npm run build` ✅.
+Frontend: `npx tsc -b` ✅, `npx vitest run` ✅ 383/383, `npm run build` ✅.
+General: `git diff --check` sin errores de espacios en blanco.
+
+### 20.12 Riesgos pendientes
+
+- Sin cache, cada apertura de `NotificationsPage`/cada "Cargar más" golpea la base directamente — aceptable con los volúmenes actuales (`AuditLog≈515-517` es la tabla de mayor volumen confirmada en 9A; `SystemNotification` no fue medida explícitamente pero comparte el mismo orden de magnitud por diseño) y coherente con la decisión de no cachear por write paths no enumerables (§20.9). Si el volumen de notificaciones creciera mucho (por ejemplo, un nuevo flujo que las genere en masa), revisar primero si el conjunto de escrituras se volvió enumerable antes de reabrir la decisión de cache.
+- "Marcar todas como leídas" sigue sin existir — si se pide en una etapa futura, es una funcionalidad nueva (backend: nuevo endpoint bulk con el mismo `where recipientUserId`; frontend: botón + refresco puntual del contador), no un cambio de carga.
+- El enriquecimiento post-fetch (`shiftAlert`/`workShift`/`employee` `findMany`) sigue haciendo hasta 3 queries adicionales por página cuando hay `entityId` variados — acotado a un máximo de 20 ítems por página (antes hasta 200), impacto ya reducido por la propia paginación sin necesidad de tocar esa lógica.
+
+### 20.13 Siguiente etapa recomendada
+
+Ninguna pendiente dentro de esta serie — con Notificaciones cerrado, la serie 9A-9I queda completa según lo relevado hasta la fecha. Cualquier trabajo futuro de performance debe partir de `docs/PERFORMANCE_STANDARDS.md` (actualizado con la subsección "Notificaciones" en esta misma etapa), salvo que aparezca un hallazgo nuevo y concreto en una auditoría futura.
