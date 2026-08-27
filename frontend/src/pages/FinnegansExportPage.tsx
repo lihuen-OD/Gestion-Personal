@@ -72,7 +72,14 @@ export function FinnegansExportPage() {
 
   useEffect(() => {
     let mounted = true;
-    setStatus("loading");
+    // Etapa 9G: sólo mostrar el loading grande cuando todavía no hay filas
+    // en pantalla — a diferencia de Dashboard/Reportes (sin ningún filtro
+    // interactivo, sólo reintento tras error), esta pantalla sí tiene un
+    // selector de período en vivo que antes blanqueaba la tabla de vista
+    // previa en cada cambio, con datos ya cargados (mismo patrón ya
+    // corregido en Novedades/Documentos/Auditoría/Horas Especiales/Turnos en
+    // 9B/9C, y en Puestos/Usuarios en 9E).
+    if (!rows.length) setStatus("loading");
 
     finnegansExportApiService
       .getNoveltyRows(period)

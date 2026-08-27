@@ -1,4 +1,5 @@
 import { apiRequest } from "./apiClient";
+import { invalidateCacheFamily } from "../cache";
 
 export type MonthlyClosure = {
   id: string;
@@ -145,8 +146,18 @@ export const workforceApiService = {
   createCorrection(input: { timeEntryId: string; proposedHours: number; reason: string }) {
     return apiRequest<{ data: TimeCorrection }>("/workforce/corrections", { method: "POST", body: input }).then((response) => response.data);
   },
-  reviewCorrection(id: string, decision: "approve" | "reject", note?: string) {
-    return apiRequest<{ data: TimeCorrection }>(`/workforce/corrections/${id}/${decision}`, { method: "POST", body: { note } }).then((response) => response.data);
+  // Etapa 9G: aprobar una corrección post-cierre reescribe TimeEntry.hours
+  // (workforce.service.ts:approveCorrection) — afecta directo la métrica
+  // "Horas cargadas" del dashboard. El backend ya invalida su propio cache
+  // (auditService.register limpia dashboardMetricsCache siempre), pero el
+  // cache del lado del frontend (dashboardMetricsApiService, TTL propio de
+  // 30s) es una capa aparte que nada invalidaba — quedaba sirviendo el valor
+  // viejo hasta que ese TTL expirara solo. rejectCorrection no toca
+  // TimeEntry, así que no hace falta invalidar nada en ese caso.
+  async reviewCorrection(id: string, decision: "approve" | "reject", note?: string) {
+    const result = await apiRequest<{ data: TimeCorrection }>(`/workforce/corrections/${id}/${decision}`, { method: "POST", body: { note } }).then((response) => response.data);
+    if (decision === "approve") await invalidateCacheFamily("dashboard", "time correction approved");
+    return result;
   },
   notifications() {
     return apiRequest<{ data: SystemNotification[] }>("/workforce/notifications", { apiCache: false }).then((response) => response.data);
