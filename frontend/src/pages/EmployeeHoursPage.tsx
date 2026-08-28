@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
-import { AlertTriangle, Bell, CalendarDays, CheckCircle2, Clock3, ClipboardList, RefreshCcw } from "lucide-react";
+import { AlertTriangle, Bell, CalendarDays, CheckCircle2, Clock3, ClipboardList, Coins, RefreshCcw } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { employeeApiService } from "../services/api/employeeApiService";
 import { ApiError } from "../services/api/apiClient";
@@ -10,7 +10,8 @@ import { noveltyApiService } from "../services/api/noveltyApiService";
 import { noveltyTypeApiService } from "../services/api/noveltyTypeApiService";
 import { timeEntryApiService } from "../services/api/timeEntryApiService";
 import type { Employee, Novelty, TimeEntry, TimeStatus } from "../types";
-import type { EmployeeTimeGridRow } from "../services/api/employeeApiService";
+import type { ApiTimeGridSpecialHourDay, EmployeeTimeGridRow } from "../services/api/employeeApiService";
+import { formatMultiplier } from "../components/attendance/segmentDisplay";
 import type { NoveltyType } from "../types/noveltyType.types";
 import { noveltyColorClass } from "../utils/noveltyColor";
 import { displayLegajo, fullName } from "../utils/employee";
@@ -124,6 +125,15 @@ export function EmployeeHoursPage() {
   const [entries, setEntries] = useState<TimeEntry[]>([]);
   const [periodNovelties, setPeriodNovelties] = useState<Novelty[]>([]);
   const [attendanceIssues, setAttendanceIssues] = useState(0);
+  // Etapa 11B: Horas Especiales en el detalle por legajo — mismo criterio ya
+  // usado en la grilla de período (11A/11A.1). Se sincroniza con el mismo
+  // refetch (inicial y silencioso) que ya usan `entries`/`rows`; no se
+  // recalcula localmente al guardar (ver comentario del efecto de refresh).
+  const [specialHours, setSpecialHours] = useState<{
+    byDay: Record<string, ApiTimeGridSpecialHourDay>;
+    additionalMinutes: number;
+    liquidableTotalMinutes: number;
+  }>({ byDay: {}, additionalMinutes: 0, liquidableTotalMinutes: 0 });
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const monthDays = getMonthDays(period);
@@ -146,6 +156,7 @@ export function EmployeeHoursPage() {
         setNoveltyTypes([]);
         setRows(grid.rows);
         setAttendanceIssues(grid.attendanceIssues);
+        setSpecialHours({ byDay: grid.specialHoursByDay, additionalMinutes: grid.specialHourAdditionalMinutes, liquidableTotalMinutes: grid.specialHourLiquidableTotalMinutes });
         setLoading(false);
 
         fetchPeriodNovelties(id, period).then(({ novelties, noveltyTypes: apiNoveltyTypes }) => {
@@ -166,6 +177,7 @@ export function EmployeeHoursPage() {
         setNoveltyTypes([]);
         setRows([]);
         setAttendanceIssues(0);
+        setSpecialHours({ byDay: {}, additionalMinutes: 0, liquidableTotalMinutes: 0 });
         setLoadError("No pudimos cargar la grilla horaria. Verificá el legajo e intentá nuevamente.");
       } finally {
         if (!cancelled) setLoading(false);
@@ -199,6 +211,7 @@ export function EmployeeHoursPage() {
       setEntries(grid.entries);
       setRows(grid.rows);
       setAttendanceIssues(grid.attendanceIssues);
+      setSpecialHours({ byDay: grid.specialHoursByDay, additionalMinutes: grid.specialHourAdditionalMinutes, liquidableTotalMinutes: grid.specialHourLiquidableTotalMinutes });
     }).catch(() => {
       // Re-sincronización silenciosa: si falla, se conserva el último estado
       // local ya actualizado de forma optimista.
@@ -273,10 +286,14 @@ export function EmployeeHoursPage() {
   const selectedEntry = selectedRow && selected ? entryFor(selected.day, selectedRow.concept.id, selectedRow.concept.name) : undefined;
   const canCorrectApproved = Boolean(selectedEntry?.status === "Aprobado" && user && timeEntryApiService.canReview(user));
   const selectedLocked = selectedEntry ? !timeEntryApiService.canEdit(selectedEntry) && !canCorrectApproved : false;
+  // Etapa 11B: multiplicador de Hora Especial del día que se está editando —
+  // aplica igual sea la fila de Hora normal o un concepto adicional (11A.1).
+  const selectedDaySpecialHour = selected ? specialHours.byDay[String(selected.day)] : undefined;
   // Etapa 6L.3: RRHH ya es quien aprueba, así que su carga manual se aplica
   // directo — no tiene sentido mostrarle "Enviar a revisión" a sí mismo.
   const isRrhh = Boolean(user && roleLevel(user.role) === 1);
   const manualRow = manualSelected ? rows.find((row) => row.concept.id === manualSelected.conceptId) : undefined;
+  const manualDaySpecialHour = manualSelected ? specialHours.byDay[String(manualSelected.day)] : undefined;
   const { isRunning: isSavingManual, run: saveManualBreakdown } = useAsyncAction(async () => {
     if (!id || !manualSelected || !manualRow || !isManualBreakdownEditable(manualRow)) return;
     const numericHours = Number(manualHours);
@@ -486,7 +503,7 @@ export function EmployeeHoursPage() {
         </div>
       </div>
 
-      <div className="stat-grid">
+      <div className={specialHours.additionalMinutes > 0 ? "stat-grid five" : "stat-grid"}>
         <StatCard label="Horas trabajadas" value={`${formatHours(total)} h`} icon={Clock3} />
         <StatCard
           label="Desgloses adicionales"
@@ -506,6 +523,15 @@ export function EmployeeHoursPage() {
           icon={Bell}
           tone="purple"
         />
+        {specialHours.additionalMinutes > 0 ? (
+          <StatCard
+            label="Valor liquidable"
+            value={`${formatHours(specialHours.liquidableTotalMinutes / 60)} h`}
+            detail={`Incluye Hora especial: +${formatHours(specialHours.additionalMinutes / 60)} h`}
+            icon={Coins}
+            tone="green"
+          />
+        ) : null}
       </div>
 
       <Section
@@ -556,6 +582,7 @@ export function EmployeeHoursPage() {
                     const novelties = row.role === "NORMAL_BASE" ? conceptNovelties(day, row.concept.name) : [];
                     const mainNovelty = novelties[0];
                     const breakdownMinutes = row.minutesByDay[String(day)] ?? 0;
+                    const daySpecialHour = specialHours.byDay[String(day)];
                     const cellClass = [
                       "hour-cell",
                       entry || breakdownMinutes ? "filled" : "",
@@ -564,6 +591,12 @@ export function EmployeeHoursPage() {
                     ]
                       .filter(Boolean)
                       .join(" ");
+                    // Etapa 11B: el multiplicador de Hora Especial de un día alcanza tanto a
+                    // la Hora normal como a los conceptos adicionales cargados ese día (11A.1)
+                    // — el punto ámbar se muestra en cualquier fila, no sólo en Hora normal.
+                    const specialHourDot = daySpecialHour ? (
+                      <span className="alert-dot orange" title={`Hora especial aplicada (${formatMultiplier(daySpecialHour.multiplier)})`} />
+                    ) : null;
                     return (
                       <td key={`${row.concept.id}-${day}`}>
                         {row.role === "NORMAL_BASE" ? (
@@ -574,6 +607,7 @@ export function EmployeeHoursPage() {
                           >
                             <span>{entry?.hours ?? (isBlocked(day) ? "0" : "+")}</span>
                             {mainNovelty ? <small>{mainNovelty.type.slice(0, 3)}</small> : null}
+                            {specialHourDot}
                           </button>
                         ) : isManualBreakdownEditable(row) ? (
                           <button
@@ -587,10 +621,12 @@ export function EmployeeHoursPage() {
                             }}
                           >
                             {breakdownMinutes ? formatHours(breakdownMinutes / 60) : "+"}
+                            {specialHourDot}
                           </button>
                         ) : (
                           <span className={cellClass} title={`${hourConceptLoadModeLabel(row.concept.loadMode)} · solo lectura`}>
                             {breakdownMinutes ? formatHours(breakdownMinutes / 60) : "—"}
+                            {specialHourDot}
                           </span>
                         )}
                       </td>
@@ -616,6 +652,15 @@ export function EmployeeHoursPage() {
               <b>Desglose adicional · {hourConceptLoadModeLabel(manualRow.concept.loadMode)}</b>
               <p>Esta carga no modifica Horas normales ni el total trabajado.</p>
             </div>
+            {manualDaySpecialHour ? (
+              <div className="info-note compact special-hour">
+                <b>Hora especial aplicada · Multiplicador {formatMultiplier(manualDaySpecialHour.multiplier)}{manualDaySpecialHour.ruleNames.length ? `: ${manualDaySpecialHour.ruleNames.join(", ")}` : ""}</b>
+                <p>
+                  Este concepto también queda alcanzado ese día. Valor liquidable del día: {formatHours(manualDaySpecialHour.liquidableTotalMinutes / 60)} h
+                  {manualDaySpecialHour.conflict ? " · Hay más de una regla en conflicto — se aplicó la de mayor prioridad." : ""}
+                </p>
+              </div>
+            ) : null}
             <div className="form-grid">
               <label>
                 Fecha
@@ -662,6 +707,16 @@ export function EmployeeHoursPage() {
               </Badge>
             </div>
 
+            {selectedDaySpecialHour ? (
+              <div className="info-note compact special-hour">
+                <b>Hora especial aplicada · Multiplicador {formatMultiplier(selectedDaySpecialHour.multiplier)}{selectedDaySpecialHour.ruleNames.length ? `: ${selectedDaySpecialHour.ruleNames.join(", ")}` : ""}</b>
+                <p>
+                  Horas reales sin cambios. Valor liquidable del día: {formatHours(selectedDaySpecialHour.liquidableTotalMinutes / 60)} h
+                  (adicional +{formatHours(selectedDaySpecialHour.additionalMinutes / 60)} h)
+                  {selectedDaySpecialHour.conflict ? " · Hay más de una regla en conflicto — se aplicó la de mayor prioridad." : ""}
+                </p>
+              </div>
+            ) : null}
             {selectedLocked ? (
               <div className="info-note compact">
                 <b>Registro aprobado</b>

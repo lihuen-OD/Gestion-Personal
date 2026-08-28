@@ -1489,6 +1489,18 @@ a.employee-hours-status-item:hover{border-color:var(--ds-blue-300);background:va
   padding-top:6px!important;
   margin-top:2px!important;
 }
+/* Etapa 11B: variante de .info-note para el aviso de Hora Especial dentro de
+   los modales de EmployeeHoursPage — mismo componente visual, tono de aviso
+   en vez del tono primario por default. */
+.info-note.special-hour{
+  border-color:var(--color-warning-border)!important;
+  border-left-color:var(--color-warning)!important;
+  background:var(--color-warning-bg)!important;
+  color:var(--color-text-secondary)!important;
+}
+.info-note.special-hour b{
+  color:var(--color-warning)!important;
+}
 .total-hours-cell{
   display:flex!important;
   align-items:center!important;

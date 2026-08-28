@@ -58,6 +58,13 @@ export interface TimeEntry {
   date?: string; startTime?: string; endTime?: string; totalMinutes?: number; origin?: "MANUAL" | "BIOTIME" | "CORRECCION_MANUAL" | "NOVEDAD"; createdBy?: string; updatedBy?: string;
   conceptId?: string; isSpecial?: boolean; finnegansCode?: string; exportToFinnegans?: boolean;
   employeeLegajo?: string; employeeName?: string;
+  // Etapa 11B: Hora Especial (DoubleHourRule) — deliberadamente separado de
+  // `isSpecial` (Conceptos Horarios, dominio distinto, ver 8A/11A).
+  // specialHourMultiplier=1 o ausente significa "sin regla aplicada".
+  specialHourMultiplier?: number;
+  specialHourLiquidableHours?: number;
+  specialHourRuleNames?: string[];
+  specialHourConflict?: boolean;
 }
 
 export interface Novelty {

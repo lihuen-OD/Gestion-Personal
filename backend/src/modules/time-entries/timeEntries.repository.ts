@@ -26,6 +26,18 @@ function periodRange(period: string) {
 const timeEntryInclude = {
   employee: { select: { id: true, legajo: true, cuil: true, firstName: true, lastName: true, status: true } },
   hourConcept: true,
+  // Etapa 11B: nombre de la/las regla(s) ganadora(s) de Hora Especial — usado
+  // por la Bandeja de revisión (mismo criterio ya usado en findPeriodEmployees
+  // desde 11A y en el detalle por legajo desde 11B). appliedMultiplier ya
+  // viaja por default (escalar de TimeEntry); esto agrega sólo la relación.
+  timeSegment: {
+    select: {
+      specialHourRuleApplications: {
+        where: { isWinner: true },
+        select: { wasConflicting: true, doubleHourRule: { select: { name: true } } },
+      },
+    },
+  },
 } satisfies Prisma.TimeEntryInclude;
 
 // Contrato compartido entre attendanceSummary y attendanceObservations (ver
@@ -784,10 +796,16 @@ export const timeEntriesRepository = {
         // sale de acá — es lo único que permite mostrar "equivalente
         // liquidable" y "regla aplicada" en el export sin volver a inflar
         // hours/totalMinutes (que desde esta etapa son siempre reales).
+        // Etapa 11B: se agrega `where: { isWinner: true }` — antes faltaba
+        // (a diferencia de findPeriodEmployees, que ya lo filtraba desde
+        // 11A) y el export podía listar reglas que NO ganaron el conflicto
+        // junto a la ganadora en "Reglas de horas especiales aplicadas".
+        // `wasConflicting` se agrega para poder señalarlo en esa misma columna.
         timeSegment: {
           select: {
             specialHourRuleApplications: {
-              select: { doubleHourRule: { select: { name: true } } },
+              where: { isWinner: true },
+              select: { wasConflicting: true, doubleHourRule: { select: { name: true } } },
             },
           },
         },
@@ -806,7 +824,12 @@ export const timeEntriesRepository = {
     if (!employeeIds.length) return Promise.resolve([]);
     return prisma.hourConceptBreakdown.findMany({
       where: { employeeId: { in: employeeIds }, period, status: { not: "RECHAZADO" } },
-      select: { employeeId: true, minutes: true },
+      // Etapa 11B: `day` se agrega para poder derivar el liquidable de
+      // Conceptos Horarios en exportByPerson (el multiplicador de Hora
+      // Especial es por día/empleado, no por período completo — sin `day`
+      // no hay forma de saber qué multiplicador le corresponde a cada
+      // desglose).
+      select: { employeeId: true, day: true, minutes: true },
     });
   },
 

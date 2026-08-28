@@ -113,6 +113,17 @@ type ApiEmployeeSummaryResponse = {
   };
 };
 
+// Etapa 11B: Horas Especiales por día en el detalle por legajo — mismo
+// criterio ya usado en la grilla de período (11A/11A.1), sólo se incluye la
+// clave del día cuando hay un multiplicador > 1.
+export type ApiTimeGridSpecialHourDay = {
+  multiplier: number;
+  additionalMinutes: number;
+  liquidableTotalMinutes: number;
+  ruleNames: string[];
+  conflict: boolean;
+};
+
 type ApiTimeGridResponse = {
   data: {
     employee: ApiEmployee;
@@ -128,6 +139,9 @@ type ApiTimeGridResponse = {
     }>;
     totalWorkedMinutes: number;
     attendanceIssues: number;
+    specialHoursByDay?: Record<string, ApiTimeGridSpecialHourDay>;
+    specialHourAdditionalMinutes?: number;
+    specialHourLiquidableTotalMinutes?: number;
   };
 };
 
@@ -147,6 +161,9 @@ export type EmployeeTimeGrid = {
   rows: EmployeeTimeGridRow[];
   totalWorkedMinutes: number;
   attendanceIssues: number;
+  specialHoursByDay: Record<string, ApiTimeGridSpecialHourDay>;
+  specialHourAdditionalMinutes: number;
+  specialHourLiquidableTotalMinutes: number;
 };
 
 export type ManualHourConceptBreakdownInput = {
@@ -688,6 +705,9 @@ export const employeeApiService = {
       rows: response.data.rows.map((row) => ({ ...row, concept: mapHourConceptFromApi(row.concept) })),
       totalWorkedMinutes: response.data.totalWorkedMinutes,
       attendanceIssues: response.data.attendanceIssues || 0,
+      specialHoursByDay: response.data.specialHoursByDay || {},
+      specialHourAdditionalMinutes: response.data.specialHourAdditionalMinutes || 0,
+      specialHourLiquidableTotalMinutes: response.data.specialHourLiquidableTotalMinutes ?? response.data.totalWorkedMinutes,
     };
   },
   async saveManualHourConceptBreakdown(employeeId: string, input: ManualHourConceptBreakdownInput) {

@@ -837,7 +837,18 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
                         <OverflowCell value={entry.type} />
                       </td>
                       <td>
-                        <b>{entry.hours} h</b>
+                        <span className="total-hours-cell">
+                          <b>{entry.hours} h</b>
+                          {(entry.specialHourMultiplier || 1) > 1 ? (
+                            <Badge tone={entry.specialHourConflict ? "danger" : "warning"}>
+                              <span
+                                title={`Hora especial aplicada — Multiplicador ${formatMultiplier(entry.specialHourMultiplier)}${entry.specialHourRuleNames?.length ? `: ${entry.specialHourRuleNames.join(", ")}` : ""} — Valor liquidable: ${formatHours(entry.specialHourLiquidableHours || 0)} h${entry.specialHourConflict ? " — Conflicto de reglas: se aplicó la de mayor prioridad" : ""}`}
+                              >
+                                {formatMultiplier(entry.specialHourMultiplier)}
+                              </span>
+                            </Badge>
+                          ) : null}
+                        </span>
                       </td>
                       <td className="observation-cell">
                         <OverflowCell value={entry.notes || "-"} />

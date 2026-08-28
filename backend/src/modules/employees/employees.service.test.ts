@@ -107,6 +107,81 @@ describe("buildAdditiveTimeGrid", () => {
     expect(result.rows).toHaveLength(2);
     expect(result.rows[1]).toMatchObject({ minutesByDay: { "2": 180 }, totalMinutes: 180 });
   });
+
+  // Etapa 11B: el detalle por legajo (EmployeeHoursPage) ignoraba por
+  // completo appliedMultiplier/SpecialHourRuleApplication — estos tests
+  // verifican que ahora expone lo mismo que ya expone la grilla principal
+  // (11A/11A.1), sin inflar totalWorkedMinutes ni minutesByDay reales.
+  describe("Horas Especiales sobre total y conceptos horarios (Etapa 11B)", () => {
+    it("sin ninguna regla: specialHoursByDay vacío, liquidable = real", () => {
+      const result = buildAdditiveTimeGrid(normal, [sereno], [
+        { day: 1, hours: 8 as never, status: "APROBADO", hourConcept: normal, appliedMultiplier: 1 },
+      ], []);
+
+      expect(result.specialHoursByDay).toEqual({});
+      expect(result.specialHourAdditionalMinutes).toBe(0);
+      expect(result.specialHourLiquidableTotalMinutes).toBe(480);
+      expect(result.totalWorkedMinutes).toBe(480); // real, sin inflar
+    });
+
+    it("caso obligatorio — 8hs normales + 4hs Sereno en domingo x2: liquidable total 24hs (1440 min), reales intactas", () => {
+      const result = buildAdditiveTimeGrid(normal, [sereno], [
+        {
+          day: 27, hours: 8 as never, status: "APROBADO", hourConcept: normal, appliedMultiplier: 2,
+          timeSegment: { specialHourRuleApplications: [{ wasConflicting: false, doubleHourRule: { name: "Domingo" } }] },
+        },
+      ], [{ day: 27, hourConceptId: "sereno", minutes: 240 }]);
+
+      // Reales: nunca se inflan.
+      expect(result.totalWorkedMinutes).toBe(480); // 8hs reales de Hora normal
+      expect(result.rows[1]).toMatchObject({ minutesByDay: { "27": 240 }, totalMinutes: 240 }); // 4hs reales de Sereno
+
+      // Liquidable: 8*2 + 4*2 = 16 + 8 = 24hs = 1440 min.
+      expect(result.specialHoursByDay["27"]).toMatchObject({
+        multiplier: 2,
+        additionalMinutes: 720, // 480*(2-1) + 240*(2-1)
+        liquidableTotalMinutes: 1440,
+        ruleNames: ["Domingo"],
+        conflict: false,
+      });
+      expect(result.specialHourAdditionalMinutes).toBe(720);
+      expect(result.specialHourLiquidableTotalMinutes).toBe(1440);
+    });
+
+    it("conflicto de prioridad (empate): se refleja en specialHoursByDay sin bloquear el cálculo", () => {
+      const result = buildAdditiveTimeGrid(normal, [sereno], [
+        {
+          day: 16, hours: 8 as never, status: "APROBADO", hourConcept: normal, appliedMultiplier: 2.5,
+          timeSegment: {
+            specialHourRuleApplications: [
+              { wasConflicting: true, doubleHourRule: { name: "Domingo Odwyer" } },
+              { wasConflicting: true, doubleHourRule: { name: "Domingo Pañol" } },
+            ],
+          },
+        },
+      ], []);
+
+      expect(result.specialHoursByDay["16"]).toMatchObject({ multiplier: 2.5, conflict: true, ruleNames: ["Domingo Odwyer", "Domingo Pañol"] });
+    });
+
+    it("carga manual (sin timeSegment/trazabilidad de regla) igual expone el multiplicador y el liquidable, sin nombre de regla", () => {
+      const result = buildAdditiveTimeGrid(normal, [sereno], [
+        { day: 5, hours: 8 as never, status: "APROBADO", hourConcept: normal, appliedMultiplier: 2, timeSegment: null },
+      ], [{ day: 5, hourConceptId: "sereno", minutes: 120 }]);
+
+      expect(result.specialHoursByDay["5"]).toMatchObject({ multiplier: 2, ruleNames: [], liquidableTotalMinutes: 1200 }); // (480+120)*2
+    });
+
+    it("un TimeEntry EN_REVISION también cuenta (mismo gate que 'normal'), uno BORRADOR no", () => {
+      const result = buildAdditiveTimeGrid(normal, [sereno], [
+        { day: 1, hours: 8 as never, status: "EN_REVISION", hourConcept: normal, appliedMultiplier: 2 },
+        { day: 2, hours: 8 as never, status: "BORRADOR", hourConcept: normal, appliedMultiplier: 2 },
+      ], []);
+
+      expect(result.specialHoursByDay).toHaveProperty("1");
+      expect(result.specialHoursByDay).not.toHaveProperty("2");
+    });
+  });
 });
 
 describe("employeesService manual hour concept breakdowns", () => {

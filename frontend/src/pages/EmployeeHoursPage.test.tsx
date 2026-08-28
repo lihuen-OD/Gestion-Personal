@@ -169,7 +169,8 @@ function buildRows(serenoMinutes: number): EmployeeTimeGridRow[] {
   ];
 }
 
-function buildGrid(serenoMinutes = 360): EmployeeTimeGrid {
+function buildGrid(serenoMinutes = 360, specialHours: EmployeeTimeGrid["specialHoursByDay"] = {}): EmployeeTimeGrid {
+  const additionalMinutes = Object.values(specialHours).reduce((sum, day) => sum + day.additionalMinutes, 0);
   return {
     employee: buildEmployee(),
     entries: [],
@@ -179,6 +180,9 @@ function buildGrid(serenoMinutes = 360): EmployeeTimeGrid {
     rows: buildRows(serenoMinutes),
     totalWorkedMinutes: 480,
     attendanceIssues: 0,
+    specialHoursByDay: specialHours,
+    specialHourAdditionalMinutes: additionalMinutes,
+    specialHourLiquidableTotalMinutes: 480 + serenoMinutes + additionalMinutes,
   };
 }
 
@@ -200,6 +204,9 @@ function buildNormalOnlyGrid(): EmployeeTimeGrid {
     ],
     totalWorkedMinutes: 0,
     attendanceIssues: 0,
+    specialHoursByDay: {},
+    specialHourAdditionalMinutes: 0,
+    specialHourLiquidableTotalMinutes: 0,
   };
 }
 
@@ -228,7 +235,10 @@ function totalCellText(row: HTMLElement) {
 function statCardValue(label: string) {
   const card = screen.getByText(label).closest(".stat-card");
   if (!card) throw new Error(`No se encontró la tarjeta de estadística "${label}"`);
-  return within(card as HTMLElement).getByText(/\d/).textContent;
+  // Etapa 11B: se apunta directo al <strong> (el value de StatCard) en vez de
+  // getByText(/\d/) — una tarjeta con `detail` (ej. "Valor liquidable", que
+  // también tiene dígitos en su detalle) rompía ese query por ambigüedad.
+  return card.querySelector("strong")?.textContent ?? null;
 }
 
 function dayCellText(row: HTMLElement, dayIndex: number) {
@@ -549,5 +559,76 @@ describe("EmployeeHoursPage — actualización local sin recarga completa (Etapa
     await user.click(screen.getByRole("button", { name: /Guardar desglose/i }));
 
     expect(await screen.findByText("Alguien más modificó este desglose al mismo tiempo. Volvé a intentar.")).toBeInTheDocument();
+  });
+});
+
+describe("EmployeeHoursPage — indicador de Hora Especial y Valor liquidable (Etapa 11B)", () => {
+  // Bug encontrado en la auditoría 11B: buildAdditiveTimeGrid ignoraba por
+  // completo appliedMultiplier/SpecialHourRuleApplication — el detalle por
+  // legajo nunca mostraba nada de Horas Especiales, a diferencia de la
+  // grilla de período (11A/11A.1).
+  it("caso obligatorio — 8hs normales + 4hs Sereno en domingo x2: muestra la tarjeta 'Valor liquidable' con 24 h", async () => {
+    vi.mocked(employeeApiService.getTimeGrid).mockResolvedValue(buildGrid(240, {
+      "1": { multiplier: 2, additionalMinutes: 720, liquidableTotalMinutes: 1440, ruleNames: ["Domingo"], conflict: false },
+    }));
+    renderPage();
+    await waitForGridLoaded();
+
+    expect(statCardValue("Valor liquidable")).toBe("24.00 h");
+    // Las horas reales ("Horas trabajadas") nunca se inflan por el liquidable.
+    expect(statCardValue("Horas trabajadas")).toBe("8.00 h");
+  });
+
+  it("sin ninguna Hora Especial en el período: no muestra la tarjeta 'Valor liquidable'", async () => {
+    vi.mocked(employeeApiService.getTimeGrid).mockResolvedValue(buildGrid());
+    renderPage();
+    await waitForGridLoaded();
+
+    expect(screen.queryByText("Valor liquidable")).not.toBeInTheDocument();
+  });
+
+  it("el modal de Hora normal muestra el aviso de Hora especial aplicada con multiplicador, regla y valor liquidable del día", async () => {
+    const user = userEvent.setup();
+    vi.mocked(employeeApiService.getTimeGrid).mockResolvedValue(buildGrid(240, {
+      "1": { multiplier: 2, additionalMinutes: 720, liquidableTotalMinutes: 1440, ruleNames: ["Domingo"], conflict: false },
+    }));
+    renderPage();
+    await waitForGridLoaded();
+
+    const normalDay1 = within(rowFor("Hora normal")).getAllByRole("button")[0]!;
+    await user.click(normalDay1);
+
+    expect(await screen.findByText(/Hora especial aplicada.*Multiplicador x2.*Domingo/)).toBeInTheDocument();
+    expect(screen.getByText(/Valor liquidable del día: 24\.00 h/)).toBeInTheDocument();
+  });
+
+  it("el modal de un desglose manual (Colectivo) también avisa cuando ese día está alcanzado por la Hora Especial", async () => {
+    const user = userEvent.setup();
+    const grid = buildGrid(240, {
+      "1": { multiplier: 2, additionalMinutes: 720, liquidableTotalMinutes: 1440, ruleNames: ["Domingo"], conflict: false },
+    });
+    grid.rows = grid.rows.map((row) => (row.concept.id === "colectivo" ? { ...row, minutesByDay: { "1": 60 }, totalMinutes: 60 } : row));
+    vi.mocked(employeeApiService.getTimeGrid).mockResolvedValue(grid);
+    renderPage();
+    await waitForGridLoaded();
+
+    const colectivoDay1 = within(rowFor("Colectivo")).getAllByRole("button")[0]!;
+    await user.click(colectivoDay1);
+
+    expect(await screen.findByText(/Hora especial aplicada.*Multiplicador x2.*Domingo/)).toBeInTheDocument();
+    expect(screen.getByText(/también queda alcanzado ese día/)).toBeInTheDocument();
+  });
+
+  it("sin Hora Especial ese día: el modal no muestra ningún aviso adicional", async () => {
+    const user = userEvent.setup();
+    vi.mocked(employeeApiService.getTimeGrid).mockResolvedValue(buildGrid());
+    renderPage();
+    await waitForGridLoaded();
+
+    const normalDay1 = within(rowFor("Hora normal")).getAllByRole("button")[0]!;
+    await user.click(normalDay1);
+
+    expect(await screen.findByText(/Cargar Hora normal/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Hora especial aplicada/)).not.toBeInTheDocument();
   });
 });

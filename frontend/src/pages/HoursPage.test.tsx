@@ -283,6 +283,58 @@ describe("HoursPage — bandeja de revisión: aprobar/rechazar/devolver es exclu
   });
 });
 
+describe("HoursPage — indicador de Hora Especial en la Bandeja de revisión (Etapa 11B)", () => {
+  // Bug encontrado en la auditoría 11B: appliedMultiplier ya viajaba en la
+  // respuesta cruda del backend para este endpoint (GET /time-entries, vista
+  // "Por registro"), pero se perdía en mapTimeEntryFromApi — la bandeja
+  // nunca mostraba ningún indicador de Hora Especial.
+  it("una carga en revisión con Hora Especial aplicada muestra el multiplicador con detalle en el tooltip", async () => {
+    authAs("Nivel 1 - RRHH");
+    vi.mocked(timeEntryApiService.list).mockResolvedValue({
+      items: [buildReviewEntry({
+        specialHourMultiplier: 2, specialHourLiquidableHours: 16, specialHourRuleNames: ["Feriado"], specialHourConflict: false,
+      })],
+      meta: { total: 1, page: 1, pageSize: 25, hasMore: false },
+    });
+    renderPending();
+
+    const row = (await screen.findByText("100")).closest("tr")!;
+    const badge = within(row).getByText("x2");
+    expect(badge).toBeInTheDocument();
+    expect(badge.title).toMatch(/Hora especial aplicada/);
+    expect(badge.title).toMatch(/Feriado/);
+    expect(badge.title).toMatch(/16\.00 h/);
+  });
+
+  it("una carga en revisión sin Hora Especial no muestra ningún indicador adicional junto a las horas", async () => {
+    authAs("Nivel 1 - RRHH");
+    vi.mocked(timeEntryApiService.list).mockResolvedValue({
+      items: [buildReviewEntry()],
+      meta: { total: 1, page: 1, pageSize: 25, hasMore: false },
+    });
+    renderPending();
+
+    const row = (await screen.findByText("100")).closest("tr")!;
+    expect(within(row).queryByText(/^x\d/)).not.toBeInTheDocument();
+  });
+
+  it("conflicto de reglas: el indicador usa tono de aviso más fuerte y lo menciona en el tooltip", async () => {
+    authAs("Nivel 1 - RRHH");
+    vi.mocked(timeEntryApiService.list).mockResolvedValue({
+      items: [buildReviewEntry({
+        specialHourMultiplier: 2.5, specialHourLiquidableHours: 20, specialHourRuleNames: ["Domingo Odwyer", "Domingo Pañol"], specialHourConflict: true,
+      })],
+      meta: { total: 1, page: 1, pageSize: 25, hasMore: false },
+    });
+    renderPending();
+
+    const row = (await screen.findByText("100")).closest("tr")!;
+    const badge = within(row).getByText("x2.5");
+    expect(badge.closest(".badge")).toHaveClass("danger");
+    expect(badge.title).toMatch(/Conflicto de reglas/);
+  });
+});
+
 describe("HoursPage — bandeja de revisión resuelve desgloses manuales (Etapa 6L.5)", () => {
   it("RRHH ve pendientes de Hora normal (TimeEntry) y de Desglose manual (HourConceptBreakdown) a la vez", async () => {
     authAs("Nivel 1 - RRHH");

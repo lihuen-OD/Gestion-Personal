@@ -1643,10 +1643,31 @@ export const timeEntriesService = {
 
   async exportByPerson(query: TimeEntriesExportQuery, user: Express.AuthUser, audit?: AuditContext) {
     const entries = await timeEntriesRepository.findForExport(query, employeeAccessWhere(user));
-    const grouped = new Map<string, { normal: number; special: number; equivalent: number; ruleNames: Set<string>; statuses: Set<string>; entry: (typeof entries)[number] }>();
+    const grouped = new Map<string, {
+      normal: number; special: number; equivalent: number;
+      // Etapa 11B: equivalente liquidable de Conceptos Horarios adicionales
+      // (Sereno/Colectivo/etc.), separado del equivalente de Hora normal —
+      // antes de esta etapa el export ignoraba por completo que una Hora
+      // Especial también alcanza a los conceptos (ver 11A.1, ya corregido en
+      // la grilla; acá cerraba la misma inconsistencia en el export).
+      conceptEquivalent: number;
+      ruleNames: Set<string>;
+      conflict: boolean;
+      statuses: Set<string>;
+      // Multiplicador ganador por día — Hora normal es la única fuente de
+      // appliedMultiplier; los Conceptos Horarios no tienen uno propio
+      // porque DoubleHourRule no distingue por concepto (mismo criterio que
+      // 11A.1: el día completo dentro de la regla alcanza a todo lo cargado).
+      multiplierByDay: Map<number, number>;
+      entry: (typeof entries)[number];
+    }>();
 
     for (const entry of entries) {
-      const current = grouped.get(entry.employeeId) || { normal: 0, special: 0, equivalent: 0, ruleNames: new Set<string>(), statuses: new Set<string>(), entry };
+      const current = grouped.get(entry.employeeId) || {
+        normal: 0, special: 0, equivalent: 0, conceptEquivalent: 0,
+        ruleNames: new Set<string>(), conflict: false, statuses: new Set<string>(),
+        multiplierByDay: new Map<number, number>(), entry,
+      };
       // Etapa 6M: "Horas normales" = sólo systemRole NORMAL_BASE. Un
       // TimeEntry no-Normal legacy (posible sólo en datos históricos
       // previos a la Etapa 6L) no suma acá ni en el total — "Horas
@@ -1657,10 +1678,15 @@ export const timeEntriesService = {
         // se deriva acá, por entrada, real × appliedMultiplier — nunca se
         // vuelve a guardar inflado en hours/totalMinutes.
         const realHours = Number(entry.hours.toString());
+        const multiplier = Number(entry.appliedMultiplier ?? 1);
         current.normal += realHours;
-        current.equivalent += realHours * Number(entry.appliedMultiplier ?? 1);
-        for (const application of entry.timeSegment?.specialHourRuleApplications ?? []) {
-          current.ruleNames.add(application.doubleHourRule.name);
+        current.equivalent += realHours * multiplier;
+        if (multiplier > 1) {
+          current.multiplierByDay.set(entry.day, Math.max(current.multiplierByDay.get(entry.day) ?? 1, multiplier));
+          for (const application of entry.timeSegment?.specialHourRuleApplications ?? []) {
+            current.ruleNames.add(application.doubleHourRule.name);
+            if (application.wasConflicting) current.conflict = true;
+          }
         }
       }
       current.statuses.add(entry.status);
@@ -1670,11 +1696,25 @@ export const timeEntriesService = {
     const breakdowns = await timeEntriesRepository.findBreakdownHoursForExport(Array.from(grouped.keys()), query.period);
     for (const breakdown of breakdowns) {
       const current = grouped.get(breakdown.employeeId);
-      if (current) current.special += breakdown.minutes / 60;
+      if (!current) continue;
+      const hours = breakdown.minutes / 60;
+      current.special += hours;
+      // Etapa 11B: mismo multiplicador que ya ganó ese día para la Hora
+      // normal del empleado — 1 si ese día no tuvo ninguna Hora Especial, o
+      // si el desglose no tiene ningún TimeEntry de Hora normal ese mismo
+      // día (limitación aceptada, misma que documenta 11A.1 para la grilla).
+      current.conceptEquivalent += hours * (current.multiplierByDay.get(breakdown.day) ?? 1);
     }
 
-    const rows = Array.from(grouped.values()).map(({ normal, special, equivalent, ruleNames, statuses, entry }) => {
+    const rows = Array.from(grouped.values()).map(({ normal, special, equivalent, conceptEquivalent, ruleNames, conflict, statuses, entry }) => {
       const primaryCompany = entry.employee.companies.find((company) => company.isPrimary)?.company || entry.employee.companies[0]?.company;
+      // Etapa 11B: adicional/total liquidable ahora incluyen Conceptos
+      // Horarios además de Hora normal (antes "Adicional por horas
+      // especiales" sólo consideraba Hora normal) — mismo criterio que
+      // specialHourAdditionalHours/specialHourLiquidableTotal en la grilla
+      // (11A.1), para que ambos caminos den el mismo número (Caso 8+4x2=24).
+      const totalAdditional = (equivalent - normal) + (conceptEquivalent - special);
+      const totalLiquidable = normal + special + totalAdditional;
       return {
         CUIL: entry.employee.cuil,
         Apellido: entry.employee.lastName,
@@ -1686,8 +1726,11 @@ export const timeEntriesService = {
         "Horas especiales": formatNumber(special),
         "Horas trabajadas totales": formatNumber(normal),
         "Horas especiales (equivalente liquidable)": formatNumber(equivalent),
-        "Adicional por horas especiales": formatNumber(equivalent - normal),
+        "Conceptos horarios (equivalente liquidable)": formatNumber(conceptEquivalent),
+        "Adicional por horas especiales": formatNumber(totalAdditional),
+        "Total liquidable": formatNumber(totalLiquidable),
         "Reglas de horas especiales aplicadas": ruleNames.size ? Array.from(ruleNames).join(", ") : "",
+        "Conflicto de reglas": conflict ? "Sí" : "",
         Estado: statuses.size === 1 ? Array.from(statuses)[0] || "" : "MIXTO",
       };
     });

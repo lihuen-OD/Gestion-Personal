@@ -920,4 +920,94 @@ describe("exportByPerson — 'Horas trabajadas totales' = Normal, 'Horas especia
       }),
     ]);
   });
+
+  // Etapa 11B: antes de esta etapa, "Conceptos horarios (equivalente
+  // liquidable)"/"Total liquidable" no existían y "Adicional por horas
+  // especiales" ignoraba HourConceptBreakdown — el export daba 16, no 24,
+  // para el caso obligatorio del pedido (8 normales + 4 Sereno + x2).
+  describe("liquidable de Horas Especiales sobre Conceptos Horarios en el export (Etapa 11B)", () => {
+    it("caso obligatorio — 8hs normales + 4hs Sereno en domingo x2: Total liquidable = 24", async () => {
+      repo.findForExport.mockResolvedValue([
+        { ...exportEntry({ hours: "8", systemRole: "NORMAL_BASE", appliedMultiplier: 2, ruleNames: ["Domingo"] }), day: 27 },
+      ]);
+      repo.findBreakdownHoursForExport.mockResolvedValue([{ employeeId: "employee-1", day: 27, minutes: 240 }]);
+
+      const result = await timeEntriesService.exportByPerson({ period: "2026-08", includeInReview: false }, rrhhUser);
+
+      expect(result.rows).toEqual([
+        expect.objectContaining({
+          "Horas normales": "8",
+          "Horas especiales": "4", // Sereno real, nunca inflado
+          "Horas trabajadas totales": "8", // real, nunca 24
+          "Horas especiales (equivalente liquidable)": "16", // 8 x 2
+          "Conceptos horarios (equivalente liquidable)": "8", // 4 x 2
+          "Adicional por horas especiales": "12", // (16-8) + (8-4)
+          "Total liquidable": "24", // 8 + 4 + 12
+          "Reglas de horas especiales aplicadas": "Domingo",
+        }),
+      ]);
+    });
+
+    it("un Concepto Horario en un día sin ninguna Hora Especial ese mismo empleado: equivalente = real (multiplicador 1 por default)", async () => {
+      repo.findForExport.mockResolvedValue([{ ...exportEntry({ hours: "8", systemRole: "NORMAL_BASE", appliedMultiplier: 1 }), day: 5 }]);
+      repo.findBreakdownHoursForExport.mockResolvedValue([{ employeeId: "employee-1", day: 5, minutes: 240 }]);
+
+      const result = await timeEntriesService.exportByPerson({ period: "2026-08", includeInReview: false }, rrhhUser);
+
+      expect(result.rows).toEqual([
+        expect.objectContaining({
+          "Conceptos horarios (equivalente liquidable)": "4",
+          "Total liquidable": "12", // 8 + 4, sin adicional
+        }),
+      ]);
+    });
+
+    it("un Concepto Horario en un día distinto al de la Hora Especial (mismo empleado): sólo el día alcanzado multiplica", async () => {
+      repo.findForExport.mockResolvedValue([
+        { ...exportEntry({ hours: "8", systemRole: "NORMAL_BASE", appliedMultiplier: 2, ruleNames: ["Feriado"] }), day: 27 },
+      ]);
+      repo.findBreakdownHoursForExport.mockResolvedValue([{ employeeId: "employee-1", day: 10, minutes: 240 }]); // día 10, sin regla
+
+      const result = await timeEntriesService.exportByPerson({ period: "2026-08", includeInReview: false }, rrhhUser);
+
+      expect(result.rows).toEqual([
+        expect.objectContaining({
+          "Conceptos horarios (equivalente liquidable)": "4", // día 10 sin regla -> real, sin multiplicar
+          "Total liquidable": "20", // 8*2 + 4
+        }),
+      ]);
+    });
+
+    it("conflicto de prioridad (empate): columna 'Conflicto de reglas' marca 'Sí', sin bloquear el cálculo", async () => {
+      repo.findForExport.mockResolvedValue([{
+        ...exportEntry({ hours: "8", systemRole: "NORMAL_BASE", appliedMultiplier: 2.5 }),
+        day: 16,
+        timeSegment: {
+          specialHourRuleApplications: [
+            { wasConflicting: true, doubleHourRule: { name: "Domingo Odwyer" } },
+            { wasConflicting: true, doubleHourRule: { name: "Domingo Pañol" } },
+          ],
+        },
+      }]);
+      repo.findBreakdownHoursForExport.mockResolvedValue([]);
+
+      const result = await timeEntriesService.exportByPerson({ period: "2026-08", includeInReview: false }, rrhhUser);
+
+      expect(result.rows).toEqual([
+        expect.objectContaining({
+          "Conflicto de reglas": "Sí",
+          "Reglas de horas especiales aplicadas": "Domingo Odwyer, Domingo Pañol",
+        }),
+      ]);
+    });
+
+    it("sin ningún conflicto: columna 'Conflicto de reglas' queda vacía", async () => {
+      repo.findForExport.mockResolvedValue([exportEntry({ hours: "8", systemRole: "NORMAL_BASE", appliedMultiplier: 1 })]);
+      repo.findBreakdownHoursForExport.mockResolvedValue([]);
+
+      const result = await timeEntriesService.exportByPerson({ period: "2026-08", includeInReview: false }, rrhhUser);
+
+      expect(result.rows).toEqual([expect.objectContaining({ "Conflicto de reglas": "" })]);
+    });
+  });
 });

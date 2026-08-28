@@ -33,6 +33,15 @@ export type ApiTimeEntry = {
   observation?: string | null;
   createdByUserId?: string | null;
   updatedByUserId?: string | null;
+  // Etapa 11B: Horas Especiales en la Bandeja de revisión — appliedMultiplier
+  // ya viajaba en la respuesta cruda del backend (escalar de TimeEntry, sin
+  // select restrictivo en el listado plano) pero se perdía en el mapeo al
+  // tipo TimeEntry del frontend. timeSegment sólo existe para entradas del
+  // fichador (una carga manual no genera TimeSegment, ver 11A).
+  appliedMultiplier?: string | number | null;
+  timeSegment?: {
+    specialHourRuleApplications: Array<{ wasConflicting: boolean; doubleHourRule: { name: string } }>;
+  } | null;
   employee?: {
     id: string;
     legajo: string;
@@ -156,8 +165,11 @@ type ApiExportResponse = {
       "Horas especiales": string;
       "Horas trabajadas totales": string;
       "Horas especiales (equivalente liquidable)": string;
+      "Conceptos horarios (equivalente liquidable)": string;
       "Adicional por horas especiales": string;
+      "Total liquidable": string;
       "Reglas de horas especiales aplicadas": string;
+      "Conflicto de reglas": string;
       Estado: string;
     }>;
   };
@@ -224,6 +236,9 @@ function dateFromEntry(entry: Pick<TimeEntry, "period" | "day" | "date">) {
 export function mapTimeEntryFromApi(item: ApiTimeEntry): TimeEntry {
   const date = item.date.slice(0, 10);
   const hours = numberValue(item.hours);
+  // Etapa 11B: multiplicador de Hora Especial de esta fila — 1/ausente
+  // significa "sin regla aplicada", igual criterio que la grilla (11A/11A.1).
+  const specialHourMultiplier = numberValue(item.appliedMultiplier) || 1;
   return {
     id: item.id,
     employeeId: item.employeeId,
@@ -244,6 +259,14 @@ export function mapTimeEntryFromApi(item: ApiTimeEntry): TimeEntry {
     isSpecial: item.hourConcept?.kind !== "NORMAL",
     employeeLegajo: item.employee?.legajo,
     employeeName: item.employee ? `${item.employee.lastName}, ${item.employee.firstName}` : undefined,
+    ...(specialHourMultiplier > 1
+      ? {
+          specialHourMultiplier,
+          specialHourLiquidableHours: hours * specialHourMultiplier,
+          specialHourRuleNames: (item.timeSegment?.specialHourRuleApplications ?? []).map((application) => application.doubleHourRule.name),
+          specialHourConflict: (item.timeSegment?.specialHourRuleApplications ?? []).some((application) => application.wasConflicting),
+        }
+      : {}),
   };
 }
 
@@ -289,8 +312,11 @@ function toExportRow(row: ApiExportResponse["data"]["rows"][number]): HoursExpor
     horasEspeciales: numberValue(row["Horas especiales"]),
     horasTotales: numberValue(row["Horas trabajadas totales"]),
     horasEspecialesEquivalentes: numberValue(row["Horas especiales (equivalente liquidable)"]),
+    conceptosHorariosEquivalentes: numberValue(row["Conceptos horarios (equivalente liquidable)"]),
     adicionalPorHorasEspeciales: numberValue(row["Adicional por horas especiales"]),
+    totalLiquidable: numberValue(row["Total liquidable"]),
     reglasAplicadas: row["Reglas de horas especiales aplicadas"],
+    conflictoDeReglas: row["Conflicto de reglas"],
     estado: row.Estado,
   };
 }
@@ -505,6 +531,7 @@ export const timeEntryApiService = {
   getPeriodExportRowsFromEntries: (period: string, employees: Employee[], entries: TimeEntry[]) => {
     return employees.map((employee) => {
       const summary = summarizePeriodEntries(entries.filter((entry) => entry.employeeId === employee.id && entry.period === period));
+      const totalHours = summary.approved.reduce((sum, entry) => sum + entry.hours, 0);
       return {
         cuil: employee.cuil,
         apellido: employee.lastName,
@@ -514,13 +541,18 @@ export const timeEntryApiService = {
         centroCosto: employee.costCenter,
         horasNormales: summary.approved.filter((entry) => entry.type === "Hora normal").reduce((sum, entry) => sum + entry.hours, 0),
         horasEspeciales: summary.approved.filter((entry) => entry.type !== "Hora normal").reduce((sum, entry) => sum + entry.hours, 0),
-        horasTotales: summary.approved.reduce((sum, entry) => sum + entry.hours, 0),
-        // Etapa 8F: fallback local (modo mock o error de red) — no tiene
+        horasTotales: totalHours,
+        // Etapa 8F/11B: fallback local (modo mock o error de red) — no tiene
         // acceso a appliedMultiplier/SpecialHourRuleApplication, así que no
-        // inventa un valor liquidable; el export por backend sí lo completa.
+        // inventa un valor liquidable adicional; Total liquidable queda
+        // igual al real (sin evidencia de ninguna Hora Especial acá), el
+        // export por backend sí lo completa con el valor correcto.
         horasEspecialesEquivalentes: 0,
+        conceptosHorariosEquivalentes: 0,
         adicionalPorHorasEspeciales: 0,
+        totalLiquidable: totalHours,
         reglasAplicadas: "",
+        conflictoDeReglas: "",
         estado: summary.status,
       };
     }).filter((row) => row.horasTotales > 0);

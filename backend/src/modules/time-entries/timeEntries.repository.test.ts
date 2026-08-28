@@ -1710,6 +1710,29 @@ describe("findPeriodEmployees — total=Normal, adicionales desde HourConceptBre
   });
 });
 
+describe("findForExport — filtra specialHourRuleApplications a isWinner=true (Etapa 11B)", () => {
+  it("consulta timeSegment.specialHourRuleApplications con where: { isWinner: true } y trae wasConflicting", async () => {
+    mockedPrisma.timeEntry.findMany.mockResolvedValue([]);
+
+    await timeEntriesRepository.findForExport({ period: "2026-08", includeInReview: false }, {});
+
+    expect(mockedPrisma.timeEntry.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        include: expect.objectContaining({
+          timeSegment: expect.objectContaining({
+            select: expect.objectContaining({
+              specialHourRuleApplications: expect.objectContaining({
+                where: { isWinner: true },
+                select: expect.objectContaining({ wasConflicting: true }),
+              }),
+            }),
+          }),
+        }),
+      }),
+    );
+  });
+});
+
 describe("findBreakdownHoursForExport — horas adicionales para exportación (Etapa 6M)", () => {
   it("no consulta Prisma si employeeIds está vacío", async () => {
     const result = await timeEntriesRepository.findBreakdownHoursForExport([], "2026-08");
@@ -1719,14 +1742,16 @@ describe("findBreakdownHoursForExport — horas adicionales para exportación (E
   });
 
   it("filtra por employeeIds, period y excluye status RECHAZADO", async () => {
-    mockedPrisma.hourConceptBreakdown.findMany.mockResolvedValue([{ employeeId: "employee-1", minutes: 360 }]);
+    mockedPrisma.hourConceptBreakdown.findMany.mockResolvedValue([{ employeeId: "employee-1", day: 27, minutes: 360 }]);
 
     const result = await timeEntriesRepository.findBreakdownHoursForExport(["employee-1"], "2026-08");
 
     expect(mockedPrisma.hourConceptBreakdown.findMany).toHaveBeenCalledWith({
       where: { employeeId: { in: ["employee-1"] }, period: "2026-08", status: { not: "RECHAZADO" } },
-      select: { employeeId: true, minutes: true },
+      // Etapa 11B: `day` se agrega para poder derivar el liquidable de
+      // Conceptos Horarios en exportByPerson (multiplicador por día/empleado).
+      select: { employeeId: true, day: true, minutes: true },
     });
-    expect(result).toEqual([{ employeeId: "employee-1", minutes: 360 }]);
+    expect(result).toEqual([{ employeeId: "employee-1", day: 27, minutes: 360 }]);
   });
 });

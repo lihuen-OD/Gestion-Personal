@@ -416,6 +416,18 @@ const timeGridCoreEmployeeSelect = {
 const timeGridTimeEntryInclude = {
   employee: { select: { id: true, legajo: true, cuil: true, firstName: true, lastName: true, status: true } },
   hourConcept: { select: { id: true, code: true, name: true, kind: true, loadMode: true, status: true, systemRole: true } },
+  // Etapa 11B: nombre de la/las regla(s) ganadora(s) de Hora Especial para el
+  // detalle por legajo — mismo patrón ya usado en findPeriodEmployees (11A) y
+  // findForExport (8F). `include` (no `select`) ya trae appliedMultiplier por
+  // default (es un escalar de TimeEntry), sólo falta esta relación anidada.
+  timeSegment: {
+    select: {
+      specialHourRuleApplications: {
+        where: { isWinner: true },
+        select: { wasConflicting: true, doubleHourRule: { select: { name: true } } },
+      },
+    },
+  },
 } satisfies Prisma.TimeEntryInclude;
 
 const timeGridNoveltyInclude = {

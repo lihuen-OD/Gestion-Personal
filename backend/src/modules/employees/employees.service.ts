@@ -103,9 +103,28 @@ type TimeGridEntry = {
   hours: Prisma.Decimal;
   status: string;
   hourConcept: TimeGridConcept;
+  // Etapa 11B: Horas Especiales — mismos campos ya usados en findPeriodEmployees
+  // (11A/11A.1). appliedMultiplier siempre es un escalar real de TimeEntry (1
+  // por default); timeSegment sólo existe para entradas del fichador.
+  appliedMultiplier?: Prisma.Decimal | number | null;
+  timeSegment?: {
+    specialHourRuleApplications: Array<{ wasConflicting: boolean; doubleHourRule: { name: string } }>;
+  } | null;
 };
 
 type TimeGridBreakdown = { day: number; hourConceptId: string; minutes: number };
+
+// Etapa 11B: multiplicador/adicional/regla(s)/conflicto de Hora Especial para
+// un día del legajo — sólo se incluye la clave del día cuando hay un
+// multiplicador > 1 (mismo criterio que specialHourAdditionalHours en
+// findPeriodEmployees: nunca se infla nada, sólo se deriva en lectura).
+export type TimeGridSpecialHourDay = {
+  multiplier: number;
+  additionalMinutes: number;
+  liquidableTotalMinutes: number;
+  ruleNames: string[];
+  conflict: boolean;
+};
 
 export function buildAdditiveTimeGrid(
   normalConcept: TimeGridConcept | null,
@@ -118,18 +137,55 @@ export function buildAdditiveTimeGrid(
   }
 
   const normalMinutesByDay: Record<string, number> = {};
+  // Etapa 11B: multiplicador/regla(s)/conflicto resueltos desde la Hora
+  // normal de cada día (misma fuente que appliedMultiplier ya persiste desde
+  // 11A, tanto para fichador como para carga manual) — no se re-consulta
+  // DoubleHourRule acá, sólo se lee lo que ya quedó escrito.
+  const multiplierByDay: Record<string, { multiplier: number; ruleNames: string[]; conflict: boolean }> = {};
   for (const entry of entries) {
     if (entry.hourConcept.systemRole !== "NORMAL_BASE" || !["APROBADO", "EN_REVISION"].includes(entry.status)) continue;
     const key = String(entry.day);
     normalMinutesByDay[key] = (normalMinutesByDay[key] ?? 0) + Math.round(Number(entry.hours) * 60);
+
+    const multiplier = Number(entry.appliedMultiplier ?? 1);
+    if (multiplier > 1) {
+      const current = multiplierByDay[key] ?? { multiplier: 1, ruleNames: [], conflict: false };
+      current.multiplier = Math.max(current.multiplier, multiplier);
+      for (const application of entry.timeSegment?.specialHourRuleApplications ?? []) {
+        if (!current.ruleNames.includes(application.doubleHourRule.name)) current.ruleNames.push(application.doubleHourRule.name);
+        if (application.wasConflicting) current.conflict = true;
+      }
+      multiplierByDay[key] = current;
+    }
   }
 
   const additionalMinutes = new Map<string, Record<string, number>>();
+  // Etapa 11B: minutos de TODOS los conceptos adicionales, sumados por día
+  // (sin distinguir concepto) — es lo que necesita el multiplicador del día
+  // para derivar el liquidable total, igual criterio que findPeriodEmployees.
+  const conceptMinutesByDay: Record<string, number> = {};
   for (const breakdown of breakdowns) {
     const byDay = additionalMinutes.get(breakdown.hourConceptId) ?? {};
     const key = String(breakdown.day);
     byDay[key] = (byDay[key] ?? 0) + breakdown.minutes;
     additionalMinutes.set(breakdown.hourConceptId, byDay);
+    conceptMinutesByDay[key] = (conceptMinutesByDay[key] ?? 0) + breakdown.minutes;
+  }
+
+  const specialHoursByDay: Record<string, TimeGridSpecialHourDay> = {};
+  let specialHourAdditionalMinutes = 0;
+  for (const [day, info] of Object.entries(multiplierByDay)) {
+    const normalMinutes = normalMinutesByDay[day] ?? 0;
+    const conceptMinutes = conceptMinutesByDay[day] ?? 0;
+    const additionalMinutesForDay = Math.round((normalMinutes + conceptMinutes) * (info.multiplier - 1));
+    specialHourAdditionalMinutes += additionalMinutesForDay;
+    specialHoursByDay[day] = {
+      multiplier: info.multiplier,
+      additionalMinutes: additionalMinutesForDay,
+      liquidableTotalMinutes: normalMinutes + conceptMinutes + additionalMinutesForDay,
+      ruleNames: info.ruleNames,
+      conflict: info.conflict,
+    };
   }
 
   const toRow = (concept: TimeGridConcept, role: "NORMAL_BASE" | "ADDITIONAL", minutesByDay: Record<string, number>) => ({
@@ -143,9 +199,18 @@ export function buildAdditiveTimeGrid(
     .filter((concept) => concept.systemRole === null && concept.loadMode !== null)
     .map((concept) => toRow(concept, "ADDITIONAL", additionalMinutes.get(concept.id) ?? {}));
 
+  const totalConceptMinutes = Object.values(conceptMinutesByDay).reduce((sum, minutes) => sum + minutes, 0);
+
   return {
     rows: [normalRow, ...additionalRows],
     totalWorkedMinutes: normalRow.totalMinutes,
+    specialHoursByDay,
+    specialHourAdditionalMinutes,
+    // Etapa 11B: total liquidable del período = reales (Normal + conceptos,
+    // nunca inflados) + adicional derivado. Sin ninguna Hora Especial en el
+    // período, coincide con normal+conceptos (mismo criterio ya documentado
+    // en 11A.1 para "sin regla, los conceptos igual liquidan como adicionales").
+    specialHourLiquidableTotalMinutes: normalRow.totalMinutes + totalConceptMinutes + specialHourAdditionalMinutes,
   };
 }
 
