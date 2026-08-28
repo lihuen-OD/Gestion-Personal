@@ -88,7 +88,12 @@ type ApiEmployeePeriodRow = {
     status: ApiApprovalStatus;
     specialHourAdditionalHours?: number;
     specialHourLiquidableTotal?: number;
-    dailyBreakdown: ApiEmployeePeriodDailyBreakdown[];
+    // Etapa 11C: sólo la vista "Por persona" de la Bandeja (listByEmployee)
+    // expone estos dos a nivel de resumen del período — la grilla de período
+    // (getPeriodEmployees) los expone por día en dailyBreakdown, no acá.
+    specialHourRuleNames?: string[];
+    specialHourConflict?: boolean;
+    dailyBreakdown?: ApiEmployeePeriodDailyBreakdown[];
   };
 };
 
@@ -358,6 +363,14 @@ export const timeEntryApiService = {
           special: row.summary.special,
           incidents: row.summary.incidents,
           status: statusFromApi[row.summary.status] || "Pendiente",
+          // Etapa 11C: antes de esta etapa la vista "Por persona" ni
+          // siquiera consultaba appliedMultiplier/HourConceptBreakdown —
+          // quedaba ciega a Horas Especiales, a diferencia de "Por
+          // registro" (11B) y la grilla principal (11A/11A.1).
+          specialHourAdditionalHours: row.summary.specialHourAdditionalHours || 0,
+          specialHourLiquidableTotal: row.summary.specialHourLiquidableTotal ?? row.summary.total,
+          specialHourRuleNames: row.summary.specialHourRuleNames || [],
+          specialHourConflict: row.summary.specialHourConflict || false,
         },
       })),
       meta: response.meta,

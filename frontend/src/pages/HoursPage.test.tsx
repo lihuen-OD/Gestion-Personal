@@ -923,3 +923,110 @@ describe("HoursPage — indicador de Hora Especial en la grilla de período (Eta
     expect(screen.queryByText(/Total liquidable/)).not.toBeInTheDocument();
   });
 });
+
+describe("HoursPage — indicador de Hora Especial en la Bandeja 'Por persona' (Etapa 11C)", () => {
+  // Bug encontrado en la auditoría 11C: "Por persona" (listByEmployee) ni
+  // siquiera consultaba appliedMultiplier/HourConceptBreakdown — quedaba
+  // completamente ciega a Horas Especiales, a diferencia de "Por registro"
+  // (11B) y la grilla principal (11A/11A.1).
+  function buildPersonRow(overrides: {
+    employee?: Partial<Employee>;
+    total?: number;
+    specialHourAdditionalHours?: number;
+    specialHourLiquidableTotal?: number;
+    specialHourRuleNames?: string[];
+    specialHourConflict?: boolean;
+  } = {}) {
+    return {
+      employee: buildEmployee(overrides.employee),
+      summary: {
+        total: overrides.total ?? 8,
+        status: "Aprobado",
+        specialHourAdditionalHours: overrides.specialHourAdditionalHours ?? 0,
+        specialHourLiquidableTotal: overrides.specialHourLiquidableTotal ?? (overrides.total ?? 8),
+        specialHourRuleNames: overrides.specialHourRuleNames ?? [],
+        specialHourConflict: overrides.specialHourConflict ?? false,
+      },
+    } as never;
+  }
+
+  async function switchToPersonTab() {
+    const { default: userEvent } = await import("@testing-library/user-event");
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Por persona" }));
+  }
+
+  it("caso obligatorio — 8hs normales + 4hs Sereno en domingo x2: muestra 'Total liquidable: 24.00 h', el total real (8) sigue separado", async () => {
+    authAs("Nivel 1 - RRHH");
+    vi.mocked(timeEntryApiService.listByEmployee).mockResolvedValue({
+      items: [buildPersonRow({ total: 8, specialHourAdditionalHours: 12, specialHourLiquidableTotal: 24, specialHourRuleNames: ["Domingo"] })],
+      meta: { total: 1, page: 1, pageSize: 25, hasMore: false },
+    });
+    renderPending();
+    await switchToPersonTab();
+
+    const row = (await screen.findByText("100")).closest("tr")!;
+    expect(within(row).getByText("8.00 h")).toBeInTheDocument();
+    const badge = within(row).getByText(/Total liquidable: 24\.00 h/);
+    expect(badge).toBeInTheDocument();
+    expect(badge.title).toMatch(/Domingo/);
+  });
+
+  it("persona sin Horas Especiales: muestra sólo el total real, sin ningún indicador adicional", async () => {
+    authAs("Nivel 1 - RRHH");
+    vi.mocked(timeEntryApiService.listByEmployee).mockResolvedValue({
+      items: [buildPersonRow({ total: 8 })],
+      meta: { total: 1, page: 1, pageSize: 25, hasMore: false },
+    });
+    renderPending();
+    await switchToPersonTab();
+
+    const row = (await screen.findByText("100")).closest("tr")!;
+    expect(within(row).getByText("8.00 h")).toBeInTheDocument();
+    expect(within(row).queryByText(/Total liquidable/)).not.toBeInTheDocument();
+  });
+
+  it("conflicto de reglas: el indicador usa tono de aviso más fuerte y lo menciona en el tooltip", async () => {
+    authAs("Nivel 1 - RRHH");
+    vi.mocked(timeEntryApiService.listByEmployee).mockResolvedValue({
+      items: [buildPersonRow({
+        total: 8, specialHourAdditionalHours: 12, specialHourLiquidableTotal: 20,
+        specialHourRuleNames: ["Domingo Odwyer", "Domingo Pañol"], specialHourConflict: true,
+      })],
+      meta: { total: 1, page: 1, pageSize: 25, hasMore: false },
+    });
+    renderPending();
+    await switchToPersonTab();
+
+    const row = (await screen.findByText("100")).closest("tr")!;
+    const badge = within(row).getByText(/Total liquidable: 20\.00 h/);
+    expect(badge.closest(".badge")).toHaveClass("danger");
+    expect(badge.title).toMatch(/Conflicto de reglas/);
+  });
+
+  it("las acciones de 'Ver detalle' existentes siguen disponibles sin cambios", async () => {
+    authAs("Nivel 1 - RRHH");
+    vi.mocked(timeEntryApiService.listByEmployee).mockResolvedValue({
+      items: [buildPersonRow({ total: 8, specialHourAdditionalHours: 8, specialHourLiquidableTotal: 16 })],
+      meta: { total: 1, page: 1, pageSize: 25, hasMore: false },
+    });
+    renderPending();
+    await switchToPersonTab();
+
+    const row = (await screen.findByText("100")).closest("tr")!;
+    expect(within(row).getByRole("link", { name: "Ver detalle" })).toBeInTheDocument();
+  });
+
+  it("no hay texto técnico visible en la vista 'Por persona' con Hora Especial aplicada", async () => {
+    authAs("Nivel 1 - RRHH");
+    vi.mocked(timeEntryApiService.listByEmployee).mockResolvedValue({
+      items: [buildPersonRow({ total: 8, specialHourAdditionalHours: 12, specialHourLiquidableTotal: 24, specialHourRuleNames: ["Domingo"] })],
+      meta: { total: 1, page: 1, pageSize: 25, hasMore: false },
+    });
+    const { container } = renderPending();
+    await switchToPersonTab();
+    await screen.findByText("100");
+
+    expect(container.textContent).not.toMatch(/TimeEntry|HourConceptBreakdown|DoubleHourRule|SpecialHourRuleApplication|schema|payload/i);
+  });
+});

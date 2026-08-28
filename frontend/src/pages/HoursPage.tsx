@@ -263,7 +263,20 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
   const [reviewPage, setReviewPage] = useState(1);
   const [reviewEntriesMeta, setReviewEntriesMeta] = useState({ total: 0, page: 1, pageSize, hasMore: false });
   const [reviewEntries, setReviewEntries] = useState<TimeEntry[]>([]);
-  const [reviewByPerson, setReviewByPerson] = useState<Array<{ employee: Employee; summary: { total: number; status: string } }>>([]);
+  const [reviewByPerson, setReviewByPerson] = useState<Array<{
+    employee: Employee;
+    summary: {
+      total: number;
+      status: string;
+      // Etapa 11C: Horas Especiales en la vista "Por persona" — mismo
+      // criterio ya usado en la grilla de período (11A/11A.1) y en "Por
+      // registro" (11B).
+      specialHourAdditionalHours: number;
+      specialHourLiquidableTotal: number;
+      specialHourRuleNames: string[];
+      specialHourConflict: boolean;
+    };
+  }>>([]);
   const [costCenterOptions, setCostCenterOptions] = useState<Array<{ id: string; name: string }>>([]);
   const [costCenterOptionsReady, setCostCenterOptionsReady] = useState(false);
   const [hoursSummary, setHoursSummary] = useState(emptyHoursSummary);
@@ -785,7 +798,20 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
                             }
                           />
                         </td>
-                        <td>{formatHours(personSummary.total)} h</td>
+                        <td>
+                          <span className="total-hours-cell">
+                            <span>{formatHours(personSummary.total)} h</span>
+                            {personSummary.specialHourAdditionalHours > 0 ? (
+                              <Badge tone={personSummary.specialHourConflict ? "danger" : "warning"}>
+                                <span
+                                  title={`Hora especial aplicada${personSummary.specialHourRuleNames.length ? `: ${personSummary.specialHourRuleNames.join(", ")}` : ""}${personSummary.specialHourConflict ? " — Conflicto de reglas: se aplicó la de mayor prioridad" : ""}`}
+                                >
+                                  Total liquidable: {formatHours(personSummary.specialHourLiquidableTotal)} h
+                                </span>
+                              </Badge>
+                            ) : null}
+                          </span>
+                        </td>
                         <td>
                           <Badge tone={statusTone(personSummary.status)}>{personSummary.status}</Badge>
                         </td>

@@ -1444,6 +1444,90 @@ describe("findMany(view=byEmployee) — resumen por empleado suma sólo Horas no
 
     expect(items[0]!.summary.total).toBe(12);
   });
+
+  // Etapa 11C: "Por persona" ni siquiera consultaba HourConceptBreakdown ni
+  // appliedMultiplier — quedaba completamente ciega a Horas Especiales,
+  // a diferencia de "Por registro" (11B) y la grilla principal (11A/11A.1).
+  describe("Horas Especiales en el resumen por persona (Etapa 11C)", () => {
+    const queryWithPeriod = { view: "byEmployee" as const, page: 1, take: 200, period: "2026-08", status: "EN_REVISION" as const };
+
+    it("caso obligatorio — 8hs normales + 4hs Sereno en domingo x2: total real=8, total liquidable=24", async () => {
+      mockedPrisma.__tx.timeEntry.findMany.mockResolvedValue([{
+        employeeId: "employee-1", day: 27, hours: { toString: () => "8" }, appliedMultiplier: 2,
+        timeSegment: { specialHourRuleApplications: [{ wasConflicting: false, doubleHourRule: { name: "Domingo" } }] },
+      }]);
+      mockedPrisma.__tx.hourConceptBreakdown.findMany.mockResolvedValue([{ employeeId: "employee-1", day: 27, minutes: 240 }]);
+
+      const [items] = (await timeEntriesRepository.findMany(queryWithPeriod, employeeAccessWhere)) as unknown as [
+        Array<{ summary: { total: number; specialHourAdditionalHours: number; specialHourLiquidableTotal: number; specialHourRuleNames: string[]; specialHourConflict: boolean } }>,
+        number,
+      ];
+
+      expect(items[0]!.summary).toMatchObject({
+        total: 8, // real, nunca 24
+        specialHourAdditionalHours: 12, // 8*(2-1) + 4*(2-1)
+        specialHourLiquidableTotal: 24, // (8+4) + 12
+        specialHourRuleNames: ["Domingo"],
+        specialHourConflict: false,
+      });
+    });
+
+    it("sin ninguna Hora Especial: adicional=0, liquidable=total real", async () => {
+      mockedPrisma.__tx.timeEntry.findMany.mockResolvedValue([
+        { employeeId: "employee-1", day: 10, hours: { toString: () => "8" }, appliedMultiplier: 1, timeSegment: null },
+      ]);
+      mockedPrisma.__tx.hourConceptBreakdown.findMany.mockResolvedValue([]);
+
+      const [items] = (await timeEntriesRepository.findMany(queryWithPeriod, employeeAccessWhere)) as unknown as [
+        Array<{ summary: { total: number; specialHourAdditionalHours: number; specialHourLiquidableTotal: number } }>,
+        number,
+      ];
+
+      expect(items[0]!.summary).toMatchObject({ total: 8, specialHourAdditionalHours: 0, specialHourLiquidableTotal: 8 });
+    });
+
+    it("carga manual (sin timeSegment): igual expone multiplicador/liquidable, sin nombre de regla — coherente con carga automática", async () => {
+      mockedPrisma.__tx.timeEntry.findMany.mockResolvedValue([
+        { employeeId: "employee-1", day: 27, hours: { toString: () => "8" }, appliedMultiplier: 2, timeSegment: null },
+      ]);
+      mockedPrisma.__tx.hourConceptBreakdown.findMany.mockResolvedValue([]);
+
+      const [items] = (await timeEntriesRepository.findMany(queryWithPeriod, employeeAccessWhere)) as unknown as [
+        Array<{ summary: { specialHourAdditionalHours: number; specialHourRuleNames: string[] } }>,
+        number,
+      ];
+
+      expect(items[0]!.summary).toMatchObject({ specialHourAdditionalHours: 8, specialHourRuleNames: [] });
+    });
+
+    it("conflicto de prioridad (empate): specialHourConflict=true por empleado", async () => {
+      mockedPrisma.__tx.timeEntry.findMany.mockResolvedValue([{
+        employeeId: "employee-1", day: 16, hours: { toString: () => "8" }, appliedMultiplier: 2.5,
+        timeSegment: {
+          specialHourRuleApplications: [
+            { wasConflicting: true, doubleHourRule: { name: "Domingo Odwyer" } },
+            { wasConflicting: true, doubleHourRule: { name: "Domingo Pañol" } },
+          ],
+        },
+      }]);
+      mockedPrisma.__tx.hourConceptBreakdown.findMany.mockResolvedValue([]);
+
+      const [items] = (await timeEntriesRepository.findMany(queryWithPeriod, employeeAccessWhere)) as unknown as [
+        Array<{ summary: { specialHourConflict: boolean } }>,
+        number,
+      ];
+
+      expect(items[0]!.summary.specialHourConflict).toBe(true);
+    });
+
+    it("no consulta HourConceptBreakdown si la query no trae period (evita una consulta innecesaria)", async () => {
+      mockedPrisma.__tx.timeEntry.findMany.mockResolvedValue([]);
+
+      await timeEntriesRepository.findMany({ view: "byEmployee", page: 1, take: 200 }, employeeAccessWhere);
+
+      expect(mockedPrisma.__tx.hourConceptBreakdown.findMany).not.toHaveBeenCalled();
+    });
+  });
 });
 
 describe("findPeriodEmployees — total=Normal, adicionales desde HourConceptBreakdown (Etapa 6M)", () => {

@@ -307,32 +307,105 @@ async function findManyByEmployeeGrouped(query: ListTimeEntriesQuery, employeeAc
     ]);
 
     const employeeIds = employees.map((employee) => employee.id);
-    const entries = employeeIds.length
-      ? await tx.timeEntry.findMany({
-          where: {
-            employeeId: { in: employeeIds },
-            ...(query.status ? { status: query.status } : {}),
-            ...(query.period ? { period: query.period } : {}),
-            // Etapa 6M: este listado sólo resume Horas normales — los
-            // conceptos adicionales viven en HourConceptBreakdown, no acá.
-            hourConcept: { systemRole: "NORMAL_BASE" },
-          },
-          select: { employeeId: true, hours: true },
-        })
-      : [];
+    const [entries, breakdowns] = employeeIds.length
+      ? await Promise.all([
+          tx.timeEntry.findMany({
+            where: {
+              employeeId: { in: employeeIds },
+              ...(query.status ? { status: query.status } : {}),
+              ...(query.period ? { period: query.period } : {}),
+              // Etapa 6M: este listado sólo resume Horas normales — los
+              // conceptos adicionales viven en HourConceptBreakdown, no acá.
+              hourConcept: { systemRole: "NORMAL_BASE" },
+            },
+            // Etapa 11C: appliedMultiplier/day/timeSegment se agregan para
+            // que "Por persona" deje de estar ciega a Horas Especiales —
+            // mismo criterio ya usado en findPeriodEmployees (11A.1) y
+            // buildAdditiveTimeGrid (11B): el multiplicador del día de la
+            // Hora normal también alcanza a los Conceptos Horarios
+            // adicionales cargados ese mismo día/empleado.
+            select: {
+              employeeId: true,
+              day: true,
+              hours: true,
+              appliedMultiplier: true,
+              timeSegment: {
+                select: {
+                  specialHourRuleApplications: {
+                    where: { isWinner: true },
+                    select: { wasConflicting: true, doubleHourRule: { select: { name: true } } },
+                  },
+                },
+              },
+            },
+          }),
+          query.period
+            ? tx.hourConceptBreakdown.findMany({
+                where: { employeeId: { in: employeeIds }, period: query.period, status: { not: "RECHAZADO" } },
+                select: { employeeId: true, day: true, minutes: true },
+              })
+            : Promise.resolve([]),
+        ])
+      : [[], []];
 
     const totalHoursByEmployee = new Map<string, number>();
+    // Etapa 11C: multiplicador ganador por empleado+día (sólo se completa si
+    // hay una Hora Especial ese día) — se resuelve primero para poder
+    // aplicarlo después a los Conceptos Horarios del mismo día/empleado.
+    const multiplierByEmployeeDay = new Map<string, Map<number, number>>();
+    const additionalByEmployee = new Map<string, number>();
+    const ruleNamesByEmployee = new Map<string, Set<string>>();
+    const conflictByEmployee = new Set<string>();
+
     for (const entry of entries) {
-      totalHoursByEmployee.set(entry.employeeId, (totalHoursByEmployee.get(entry.employeeId) || 0) + Number(entry.hours.toString()));
+      const realHours = Number(entry.hours.toString());
+      totalHoursByEmployee.set(entry.employeeId, (totalHoursByEmployee.get(entry.employeeId) || 0) + realHours);
+
+      const multiplier = Number(entry.appliedMultiplier ?? 1);
+      if (multiplier > 1) {
+        const dayMap = multiplierByEmployeeDay.get(entry.employeeId) || new Map<number, number>();
+        dayMap.set(entry.day, Math.max(dayMap.get(entry.day) ?? 1, multiplier));
+        multiplierByEmployeeDay.set(entry.employeeId, dayMap);
+
+        additionalByEmployee.set(entry.employeeId, (additionalByEmployee.get(entry.employeeId) || 0) + realHours * (multiplier - 1));
+
+        const ruleNames = ruleNamesByEmployee.get(entry.employeeId) || new Set<string>();
+        for (const application of entry.timeSegment?.specialHourRuleApplications ?? []) {
+          ruleNames.add(application.doubleHourRule.name);
+          if (application.wasConflicting) conflictByEmployee.add(entry.employeeId);
+        }
+        ruleNamesByEmployee.set(entry.employeeId, ruleNames);
+      }
     }
 
-    const items = employees.map((employee) => ({
-      employee,
-      summary: {
-        total: totalHoursByEmployee.get(employee.id) || 0,
-        status: query.status || ApprovalStatus.EN_REVISION,
-      },
-    }));
+    const specialByEmployee = new Map<string, number>();
+    for (const breakdown of breakdowns) {
+      const hours = breakdown.minutes / 60;
+      specialByEmployee.set(breakdown.employeeId, (specialByEmployee.get(breakdown.employeeId) || 0) + hours);
+      // Etapa 11C: mismo multiplicador ya resuelto para la Hora normal de
+      // ese día/empleado — DoubleHourRule no distingue por concepto (11A.1).
+      const multiplier = multiplierByEmployeeDay.get(breakdown.employeeId)?.get(breakdown.day) ?? 1;
+      if (multiplier > 1) {
+        additionalByEmployee.set(breakdown.employeeId, (additionalByEmployee.get(breakdown.employeeId) || 0) + hours * (multiplier - 1));
+      }
+    }
+
+    const items = employees.map((employee) => {
+      const employeeTotal = totalHoursByEmployee.get(employee.id) || 0;
+      const employeeSpecial = specialByEmployee.get(employee.id) || 0;
+      const employeeAdditional = additionalByEmployee.get(employee.id) || 0;
+      return {
+        employee,
+        summary: {
+          total: employeeTotal,
+          status: query.status || ApprovalStatus.EN_REVISION,
+          specialHourAdditionalHours: employeeAdditional,
+          specialHourLiquidableTotal: employeeTotal + employeeSpecial + employeeAdditional,
+          specialHourRuleNames: Array.from(ruleNamesByEmployee.get(employee.id) || []),
+          specialHourConflict: conflictByEmployee.has(employee.id),
+        },
+      };
+    });
 
     return [items, total] as const;
   });
