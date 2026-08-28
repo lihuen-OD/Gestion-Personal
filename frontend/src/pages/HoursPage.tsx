@@ -52,7 +52,10 @@ type DayBreakdown = {
   // "Horas especiales") — separado de `special`, que son Conceptos
   // Horarios (Sereno/Colectivo/etc.), un sistema distinto.
   specialHourMultiplier?: number;
+  // Etapa 11A.1: adicional/total liquidable del día — incluye Hora normal
+  // y Conceptos Horarios adicionales alcanzados por la misma regla.
   specialHourAdditionalHours?: number;
+  specialHourLiquidableTotal?: number;
   specialHourRuleNames?: string[];
   specialHourConflict?: boolean;
 };
@@ -134,17 +137,27 @@ function DayCell({
               <b>{label}</b>
               {breakdown ? (
                 <>
-                  <span>Horas normales: {formatHours(breakdown.normal)} h</span>
-                  <span>Horas especiales (conceptos): {formatHours(breakdown.special)} h</span>
+                  <span>Horas reales: {formatHours(breakdown.normal)} h</span>
+                  {breakdown.special > 0 ? <span>Conceptos horarios (reales): {formatHours(breakdown.special)} h</span> : null}
                   {(breakdown.specialHourMultiplier || 1) > 1 ? (
-                    <span className="day-cell-special-hour">
-                      Hora Especial {formatMultiplier(breakdown.specialHourMultiplier)}
-                      {breakdown.specialHourRuleNames?.length ? ` — ${breakdown.specialHourRuleNames.join(", ")}` : ""}
-                      {" "}(adicional liquidable +{formatHours(breakdown.specialHourAdditionalHours || 0)} h)
-                    </span>
+                    <>
+                      <span className="day-cell-special-hour">
+                        Hora especial aplicada — Multiplicador {formatMultiplier(breakdown.specialHourMultiplier)}
+                        {breakdown.specialHourRuleNames?.length ? `: ${breakdown.specialHourRuleNames.join(", ")}` : ""}
+                      </span>
+                      {breakdown.special > 0 ? (
+                        <span className="day-cell-special-hour">Conceptos alcanzados: {formatHours(breakdown.special)} h</span>
+                      ) : null}
+                      <span className="day-cell-special-hour">Adicional liquidable: +{formatHours(breakdown.specialHourAdditionalHours || 0)} h</span>
+                    </>
                   ) : null}
                   {breakdown.specialHourConflict ? (
-                    <span className="day-cell-special-hour-conflict">Hay más de una Hora Especial en conflicto ese día. Se aplicó la de mayor prioridad.</span>
+                    <span className="day-cell-special-hour-conflict">Hay más de una Hora especial en conflicto ese día. Se aplicó la de mayor prioridad.</span>
+                  ) : null}
+                  {breakdown.special > 0 || (breakdown.specialHourMultiplier || 1) > 1 ? (
+                    <span className="day-cell-liquidable-total">
+                      <b>Total liquidable: {formatHours(breakdown.specialHourLiquidableTotal ?? breakdown.normal + breakdown.special)} h</b>
+                    </span>
                   ) : null}
                   {breakdown.novelty ? <span>Novedad: {breakdown.novelty.label}</span> : null}
                 </>
@@ -241,6 +254,7 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
         incidents: number;
         status: string;
         specialHourAdditionalHours?: number;
+        specialHourLiquidableTotal?: number;
         dailyBreakdown: DayBreakdown[];
       };
     }>
@@ -410,7 +424,7 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
     const backendSummary = periodRows.find((row) => row.employee.id === employeeId)?.summary;
     if (backendSummary) return backendSummary;
     const legacy = timeEntryApiService.getEmployeePeriodSummary(reviewEntries, employeeId);
-    return { ...legacy, normal: legacy.total, special: 0, incidents: 0, specialHourAdditionalHours: 0, dailyBreakdown: [] as DayBreakdown[] };
+    return { ...legacy, normal: legacy.total, special: 0, incidents: 0, specialHourAdditionalHours: 0, specialHourLiquidableTotal: legacy.total, dailyBreakdown: [] as DayBreakdown[] };
   };
   const monthDays = getMonthDays(period);
   const dailyFor = (employeeId: string) => {
@@ -1073,7 +1087,9 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
                       <span className="total-hours-cell">
                         <span>{formatHours(periodSummary.total)} h</span>
                         {(periodSummary.specialHourAdditionalHours || 0) > 0 ? (
-                          <Badge tone="warning">Hora Especial +{formatHours(periodSummary.specialHourAdditionalHours || 0)} h</Badge>
+                          <Badge tone="warning">
+                            Total liquidable: {formatHours(periodSummary.specialHourLiquidableTotal ?? periodSummary.total)} h
+                          </Badge>
                         ) : null}
                       </span>
                     </td>

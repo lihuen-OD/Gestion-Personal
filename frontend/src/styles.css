@@ -1483,6 +1483,12 @@ a.employee-hours-status-item:hover{border-color:var(--ds-blue-300);background:va
   color:var(--color-danger)!important;
   font-weight:700!important;
 }
+.day-cell-liquidable-total{
+  color:var(--color-success)!important;
+  border-top:1px solid var(--color-warning-border)!important;
+  padding-top:6px!important;
+  margin-top:2px!important;
+}
 .total-hours-cell{
   display:flex!important;
   align-items:center!important;

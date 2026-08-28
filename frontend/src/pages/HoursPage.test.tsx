@@ -115,6 +115,15 @@ function renderGrid() {
   );
 }
 
+// El popover de un día y el badge de "Total liquidable" del período pueden
+// mostrar el mismo texto (ej. un único día especial en el período) — se
+// escopea explícitamente al popover abierto para no ambigüar la búsqueda.
+function currentDayPopover() {
+  const popover = document.querySelector(".day-cell-popover");
+  if (!popover) throw new Error("No hay ningún popover de día abierto");
+  return within(popover as HTMLElement);
+}
+
 function buildEmployee(overrides: Partial<Employee> = {}): Employee {
   return {
     id: "employee-1",
@@ -183,6 +192,7 @@ type TestDayBreakdown = {
   novelty: { label: string } | null;
   specialHourMultiplier?: number;
   specialHourAdditionalHours?: number;
+  specialHourLiquidableTotal?: number;
   specialHourRuleNames?: string[];
   specialHourConflict?: boolean;
 };
@@ -193,6 +203,7 @@ function buildPeriodRow(overrides: {
   special?: number;
   total?: number;
   specialHourAdditionalHours?: number;
+  specialHourLiquidableTotal?: number;
   dailyBreakdown?: TestDayBreakdown[];
 } = {}) {
   return {
@@ -204,6 +215,7 @@ function buildPeriodRow(overrides: {
       incidents: 0,
       status: "Aprobado",
       specialHourAdditionalHours: overrides.specialHourAdditionalHours ?? 0,
+      specialHourLiquidableTotal: overrides.specialHourLiquidableTotal ?? (overrides.total ?? 8),
       dailyBreakdown: overrides.dailyBreakdown ?? ([] as TestDayBreakdown[]),
     },
   } as never;
@@ -734,10 +746,10 @@ describe("HoursPage — indicador de Hora Especial en la grilla de período (Eta
     authAs("Nivel 1 - RRHH");
     vi.mocked(timeEntryApiService.getPeriodEmployees).mockResolvedValue({
       items: [buildPeriodRow({
-        normal: 8, total: 8, specialHourAdditionalHours: 8,
+        normal: 8, total: 8, specialHourAdditionalHours: 8, specialHourLiquidableTotal: 16,
         dailyBreakdown: [{
           day: 27, normal: 8, special: 0, total: 8, novelty: null,
-          specialHourMultiplier: 2, specialHourAdditionalHours: 8, specialHourRuleNames: ["Feriado"], specialHourConflict: false,
+          specialHourMultiplier: 2, specialHourAdditionalHours: 8, specialHourLiquidableTotal: 16, specialHourRuleNames: ["Feriado"], specialHourConflict: false,
         }],
       })],
       meta: { total: 1, page: 1, pageSize: 25, hasMore: false },
@@ -749,18 +761,21 @@ describe("HoursPage — indicador de Hora Especial en la grilla de período (Eta
     expect(within(dayButton).getByText("8.00")).toBeInTheDocument(); // horas reales del día, nunca 16
     await user.click(dayButton);
 
-    expect(await screen.findByText(/Hora Especial x2/)).toBeInTheDocument();
-    expect(screen.getByText(/Feriado/)).toBeInTheDocument();
-    expect(screen.getByText(/adicional liquidable \+8\.00 h/)).toBeInTheDocument();
+    await screen.findByText(/Hora especial aplicada.*x2/);
+    const popover = currentDayPopover();
+    expect(popover.getByText(/Hora especial aplicada.*x2/)).toBeInTheDocument();
+    expect(popover.getByText(/Feriado/)).toBeInTheDocument();
+    expect(popover.getByText(/Adicional liquidable: \+8\.00 h/)).toBeInTheDocument();
+    expect(popover.getByText(/Total liquidable: 16\.00 h/)).toBeInTheDocument();
   });
 
-  it("un día sin regla especial no muestra ningún indicador en el popover", async () => {
+  it("un día sin regla especial ni conceptos no muestra ningún indicador de Hora Especial ni total liquidable en el popover", async () => {
     const { default: userEvent } = await import("@testing-library/user-event");
     const user = userEvent.setup();
     authAs("Nivel 1 - RRHH");
     vi.mocked(timeEntryApiService.getPeriodEmployees).mockResolvedValue({
       items: [buildPeriodRow({
-        dailyBreakdown: [{ day: 10, normal: 8, special: 0, total: 8, novelty: null, specialHourMultiplier: 1, specialHourAdditionalHours: 0, specialHourRuleNames: [], specialHourConflict: false }],
+        dailyBreakdown: [{ day: 10, normal: 8, special: 0, total: 8, novelty: null, specialHourMultiplier: 1, specialHourAdditionalHours: 0, specialHourLiquidableTotal: 8, specialHourRuleNames: [], specialHourConflict: false }],
       })],
       meta: { total: 1, page: 1, pageSize: 25, hasMore: false },
     });
@@ -769,11 +784,44 @@ describe("HoursPage — indicador de Hora Especial en la grilla de período (Eta
 
     await user.click(screen.getByLabelText(/ 10$/));
 
-    expect(await screen.findByText("Horas normales: 8.00 h")).toBeInTheDocument();
-    expect(screen.queryByText(/Hora Especial/)).not.toBeInTheDocument();
+    expect(await screen.findByText("Horas reales: 8.00 h")).toBeInTheDocument();
+    expect(screen.queryByText(/Hora especial aplicada/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Total liquidable/)).not.toBeInTheDocument();
   });
 
-  it("conflicto de reglas (empate de prioridad) se indica de forma clara en el popover", async () => {
+  // Caso C del pedido 11A.1: 8hs normales + 4hs de Sereno en un día alcanzado
+  // por una regla x2 — el multiplicador ahora también afecta a los Conceptos
+  // Horarios adicionales, mostrado explícitamente en "Conceptos alcanzados".
+  it("8 horas normales + 4 horas de Sereno en un día x2 muestra 'Conceptos alcanzados' y Total liquidable 24", async () => {
+    const { default: userEvent } = await import("@testing-library/user-event");
+    const user = userEvent.setup();
+    authAs("Nivel 1 - RRHH");
+    vi.mocked(timeEntryApiService.getPeriodEmployees).mockResolvedValue({
+      items: [buildPeriodRow({
+        normal: 8, special: 4, total: 8, specialHourAdditionalHours: 12, specialHourLiquidableTotal: 24,
+        dailyBreakdown: [{
+          day: 27, normal: 8, special: 4, total: 8, novelty: null,
+          specialHourMultiplier: 2, specialHourAdditionalHours: 12, specialHourLiquidableTotal: 24, specialHourRuleNames: ["Feriado"], specialHourConflict: false,
+        }],
+      })],
+      meta: { total: 1, page: 1, pageSize: 25, hasMore: false },
+    });
+    renderGrid();
+    await screen.findByText("Gomez, Ana");
+
+    const dayButton = screen.getByLabelText(/ 27$/);
+    expect(within(dayButton).getByText("8.00")).toBeInTheDocument(); // real del día, nunca 24
+    await user.click(dayButton);
+
+    await screen.findByText("Horas reales: 8.00 h");
+    const popover = currentDayPopover();
+    expect(popover.getByText("Conceptos horarios (reales): 4.00 h")).toBeInTheDocument();
+    expect(popover.getByText("Conceptos alcanzados: 4.00 h")).toBeInTheDocument();
+    expect(popover.getByText(/Adicional liquidable: \+12\.00 h/)).toBeInTheDocument();
+    expect(popover.getByText(/Total liquidable: 24\.00 h/)).toBeInTheDocument();
+  });
+
+  it("conflicto de reglas (empate de prioridad) se indica de forma clara en el popover, sin ocultar el liquidable ya resuelto", async () => {
     const { default: userEvent } = await import("@testing-library/user-event");
     const user = userEvent.setup();
     authAs("Nivel 1 - RRHH");
@@ -781,7 +829,7 @@ describe("HoursPage — indicador de Hora Especial en la grilla de período (Eta
       items: [buildPeriodRow({
         dailyBreakdown: [{
           day: 16, normal: 8, special: 0, total: 8, novelty: null,
-          specialHourMultiplier: 2.5, specialHourAdditionalHours: 12, specialHourRuleNames: ["Domingo Odwyer", "Domingo Pañol"], specialHourConflict: true,
+          specialHourMultiplier: 2.5, specialHourAdditionalHours: 12, specialHourLiquidableTotal: 20, specialHourRuleNames: ["Domingo Odwyer", "Domingo Pañol"], specialHourConflict: true,
         }],
       })],
       meta: { total: 1, page: 1, pageSize: 25, hasMore: false },
@@ -792,29 +840,34 @@ describe("HoursPage — indicador de Hora Especial en la grilla de período (Eta
     await user.click(screen.getByLabelText(/ 16$/));
 
     expect(await screen.findByText(/conflicto/i)).toBeInTheDocument();
+    expect(screen.getByText(/Total liquidable: 20\.00 h/)).toBeInTheDocument();
   });
 
-  it("el total del período muestra un badge de Hora Especial cuando hay adicional liquidable en el mes", async () => {
+  it("el total del período muestra un badge de Total liquidable cuando hay adicional en el mes", async () => {
     authAs("Nivel 1 - RRHH");
     vi.mocked(timeEntryApiService.getPeriodEmployees).mockResolvedValue({
-      items: [buildPeriodRow({ normal: 40, total: 40, specialHourAdditionalHours: 8 })],
+      items: [buildPeriodRow({ normal: 40, total: 40, specialHourAdditionalHours: 8, specialHourLiquidableTotal: 48 })],
       meta: { total: 1, page: 1, pageSize: 25, hasMore: false },
     });
     renderGrid();
     await screen.findByText("Gomez, Ana");
 
-    expect(await screen.findByText("Hora Especial +8.00 h")).toBeInTheDocument();
+    expect(await screen.findByText(/Total liquidable: 48\.00 h/)).toBeInTheDocument();
+    // El total real (columna "Total") sigue mostrándose sin reemplazar, con su propia etiqueta —
+    // "40.00 h" aparece dos veces (Normales y Total, ya que son iguales sin conceptos adicionales).
+    const row = (await screen.findByText("Gomez, Ana")).closest("tr")!;
+    expect(within(row).getAllByText("40.00 h")).toHaveLength(2);
   });
 
-  it("sin adicional liquidable en el mes, no se muestra ningún badge de Hora Especial en el total", async () => {
+  it("sin adicional liquidable en el mes, no se muestra ningún badge de Total liquidable", async () => {
     authAs("Nivel 1 - RRHH");
     vi.mocked(timeEntryApiService.getPeriodEmployees).mockResolvedValue({
-      items: [buildPeriodRow({ normal: 40, total: 40, specialHourAdditionalHours: 0 })],
+      items: [buildPeriodRow({ normal: 40, total: 40, specialHourAdditionalHours: 0, specialHourLiquidableTotal: 40 })],
       meta: { total: 1, page: 1, pageSize: 25, hasMore: false },
     });
     renderGrid();
     await screen.findByText("Gomez, Ana");
 
-    expect(screen.queryByText(/Hora Especial/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Total liquidable/)).not.toBeInTheDocument();
   });
 });

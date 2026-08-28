@@ -655,13 +655,32 @@ export const timeEntriesRepository = {
         const current = grouped.get(breakdown.employeeId) || { total: 0, normal: 0, special: 0, incidents: 0, statuses: [], specialHourAdditional: 0 };
         const hours = breakdown.minutes / 60;
         current.special += hours;
-        grouped.set(breakdown.employeeId, current);
 
         const dayMap = dailyGrouped.get(breakdown.employeeId) || new Map<number, { normal: number; special: number; total: number; specialHourMultiplier: number; specialHourAdditional: number; specialHourRuleNames: string[]; specialHourConflict: boolean }>();
+        // Etapa 11A.1: el loop de `entries` (arriba) ya corrió por completo
+        // para este `dayMap` — si hubo una Hora Especial ganadora en la Hora
+        // normal de este día/empleado, `specialHourMultiplier` ya quedó
+        // resuelto acá. La regla no distingue por concepto (DoubleHourRule no
+        // tiene ningún selector de "aplica sólo a Normal" — ver 8A §8, sigue
+        // sin implementarse), así que el mismo multiplicador del día alcanza
+        // también a los Conceptos Horarios adicionales cargados ese día para
+        // el mismo empleado: si el día está alcanzado por la regla, todo lo
+        // trabajado/cargado ese día tiene el mismo valor liquidable por hora.
+        // Si no hay Hora normal ese día (breakdown "huérfano", caso raro), no
+        // hay forma de resolver el multiplicador sin volver a consultar
+        // DoubleHourRule por fila — se documenta como limitación aceptada
+        // (ver docs/decisions/HOURS_GRID_SPECIAL_HOURS_LIQUIDABLE_11A1.md) en
+        // vez de agregar N consultas nuevas a este endpoint.
         const dayCurrent = dayMap.get(breakdown.day) || { normal: 0, special: 0, total: 0, specialHourMultiplier: 1, specialHourAdditional: 0, specialHourRuleNames: [], specialHourConflict: false };
         dayCurrent.special += hours;
+        if (dayCurrent.specialHourMultiplier > 1) {
+          const conceptAdditional = hours * (dayCurrent.specialHourMultiplier - 1);
+          dayCurrent.specialHourAdditional += conceptAdditional;
+          current.specialHourAdditional += conceptAdditional;
+        }
         dayMap.set(breakdown.day, dayCurrent);
         dailyGrouped.set(breakdown.employeeId, dayMap);
+        grouped.set(breakdown.employeeId, current);
       }
 
       const noveltiesByEmployee = new Map<string, typeof novelties>();
@@ -689,15 +708,28 @@ export const timeEntriesRepository = {
             // se suma a `total`: sólo indica que ese día tiene valor
             // liquidable adicional sobre las horas reales ya contadas arriba.
             specialHourMultiplier: number;
+            // Etapa 11A.1: adicional liquidable TOTAL del día — incluye tanto
+            // Hora normal como Conceptos Horarios adicionales alcanzados por
+            // la misma regla (antes de esta etapa sólo incluía Hora normal,
+            // ver docs/decisions/HOURS_GRID_SPECIAL_HOURS_LIQUIDABLE_11A1.md).
             specialHourAdditionalHours: number;
             specialHourRuleNames: string[];
             specialHourConflict: boolean;
+            // Etapa 11A.1: total liquidable del día = (normal + special,
+            // reales) + specialHourAdditionalHours. Sin Hora Especial
+            // (multiplicador 1), coincide con normal+special — los Conceptos
+            // Horarios adicionales ya "liquidan como adicionales" según
+            // CONCEPTOS_HORARIOS_ADITIVOS.md aunque no formen parte del total
+            // real trabajado (`total`, que nunca cambia). Nunca se persiste,
+            // se deriva sólo en esta lectura.
+            specialHourLiquidableTotal: number;
           }> = [];
           for (let day = 1; day <= dayCount; day++) {
             const dayDate = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), day));
             const hours = dayMap?.get(day);
             const coveringNovelties = employeeNovelties.filter((novelty) => noveltyCoversDay(novelty, novelty.noveltyType, dayDate));
             if (!hours && !coveringNovelties.length) continue;
+            const dayAdditional = hours?.specialHourAdditional || 0;
             dailyBreakdown.push({
               day,
               normal: hours?.normal || 0,
@@ -705,11 +737,13 @@ export const timeEntriesRepository = {
               total: hours?.total || 0,
               novelty: coveringNovelties.length ? { label: coveringNovelties.map((novelty) => novelty.noveltyType.name).join(", ") } : null,
               specialHourMultiplier: hours?.specialHourMultiplier || 1,
-              specialHourAdditionalHours: hours?.specialHourAdditional || 0,
+              specialHourAdditionalHours: dayAdditional,
               specialHourRuleNames: hours?.specialHourRuleNames || [],
               specialHourConflict: hours?.specialHourConflict || false,
+              specialHourLiquidableTotal: (hours?.normal || 0) + (hours?.special || 0) + dayAdditional,
             });
           }
+          const periodAdditional = summary?.specialHourAdditional || 0;
           return {
             employee,
             summary: {
@@ -718,7 +752,8 @@ export const timeEntriesRepository = {
               special: summary?.special || 0,
               incidents: summary?.incidents || 0,
               status: resolvePeriodStatus(summary?.statuses || []),
-              specialHourAdditionalHours: summary?.specialHourAdditional || 0,
+              specialHourAdditionalHours: periodAdditional,
+              specialHourLiquidableTotal: (summary?.total || 0) + (summary?.special || 0) + periodAdditional,
               dailyBreakdown,
             },
           };

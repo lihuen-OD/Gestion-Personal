@@ -60,7 +60,11 @@ type ApiEmployeePeriodDailyBreakdown = {
   // separado de `special` (Conceptos Horarios/HourConceptBreakdown, sin
   // relación). specialHourMultiplier=1 significa "sin regla aplicada".
   specialHourMultiplier?: number;
+  // Etapa 11A.1: adicional liquidable TOTAL del día (Hora normal + Conceptos
+  // Horarios alcanzados por la misma regla) y total liquidable del día
+  // (real + adicional). Ver docs/decisions/HOURS_GRID_SPECIAL_HOURS_LIQUIDABLE_11A1.md.
   specialHourAdditionalHours?: number;
+  specialHourLiquidableTotal?: number;
   specialHourRuleNames?: string[];
   specialHourConflict?: boolean;
 };
@@ -74,6 +78,7 @@ type ApiEmployeePeriodRow = {
     incidents: number;
     status: ApiApprovalStatus;
     specialHourAdditionalHours?: number;
+    specialHourLiquidableTotal?: number;
     dailyBreakdown: ApiEmployeePeriodDailyBreakdown[];
   };
 };
@@ -400,6 +405,7 @@ export const timeEntryApiService = {
             incidents: row.summary.incidents,
             status: statusFromApi[row.summary.status] || "Pendiente",
             specialHourAdditionalHours: row.summary.specialHourAdditionalHours || 0,
+            specialHourLiquidableTotal: row.summary.specialHourLiquidableTotal ?? row.summary.total,
             dailyBreakdown: row.summary.dailyBreakdown || [],
           },
         })),

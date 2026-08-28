@@ -1595,6 +1595,119 @@ describe("findPeriodEmployees — total=Normal, adicionales desde HourConceptBre
       }),
     );
   });
+
+  // Etapa 11A.1: el multiplicador de Hora Especial ahora también alcanza a
+  // los Conceptos Horarios adicionales del mismo día/empleado, y se expone
+  // un "total liquidable" real (antes sólo se exponía el delta adicional).
+  describe("liquidable de Horas Especiales sobre total y conceptos horarios (Etapa 11A.1)", () => {
+    function normalEntry(day: number, hours: string, appliedMultiplier: number, ruleNames: string[] = [], wasConflicting = false) {
+      return {
+        employeeId: "employee-1", day, hours: { toString: () => hours }, status: "APROBADO",
+        appliedMultiplier, hourConcept: { systemRole: "NORMAL_BASE" }, workShift: null,
+        timeSegment: ruleNames.length ? { specialHourRuleApplications: ruleNames.map((name) => ({ wasConflicting, doubleHourRule: { name } })) } : null,
+      };
+    }
+    function breakdown(day: number, minutes: number) {
+      return { employeeId: "employee-1", day, minutes };
+    }
+
+    it("Caso C — 8 normales + 4hs Sereno en feriado x2: liquidable normal 16, liquidable conceptos 8, total liquidable 24, reales sin inflar", async () => {
+      mockedPrisma.__tx.timeEntry.findMany.mockResolvedValue([normalEntry(27, "8", 2, ["Feriado"])]);
+      mockedPrisma.__tx.hourConceptBreakdown.findMany.mockResolvedValue([breakdown(27, 240)]); // 4hs Sereno
+
+      const result = await timeEntriesRepository.findPeriodEmployees(baseQuery, employeeAccessWhere);
+
+      const day = result.items[0]!.summary.dailyBreakdown.find((entry) => entry.day === 27)!;
+      expect(day).toMatchObject({
+        normal: 8, special: 4, total: 8, // reales, nunca inflados
+        specialHourMultiplier: 2,
+        specialHourAdditionalHours: 12, // 8*(2-1) + 4*(2-1) = 8 + 4
+        specialHourLiquidableTotal: 24, // (8+4) + 12
+      });
+      expect(result.items[0]!.summary.specialHourLiquidableTotal).toBe(24);
+    });
+
+    it("Caso B (regresión) — 8 normales sin conceptos en domingo x2: liquidable 16, adicional 8, sin conceptos que multiplicar", async () => {
+      mockedPrisma.__tx.timeEntry.findMany.mockResolvedValue([normalEntry(16, "8", 2, ["Domingo"])]);
+      mockedPrisma.__tx.hourConceptBreakdown.findMany.mockResolvedValue([]);
+
+      const result = await timeEntriesRepository.findPeriodEmployees(baseQuery, employeeAccessWhere);
+
+      const day = result.items[0]!.summary.dailyBreakdown.find((entry) => entry.day === 16)!;
+      expect(day).toMatchObject({ normal: 8, special: 0, total: 8, specialHourAdditionalHours: 8, specialHourLiquidableTotal: 16 });
+    });
+
+    it("Caso A — 8 normales sin regla: total liquidable = total real, sin adicional", async () => {
+      mockedPrisma.__tx.timeEntry.findMany.mockResolvedValue([normalEntry(10, "8", 1)]);
+      mockedPrisma.__tx.hourConceptBreakdown.findMany.mockResolvedValue([]);
+
+      const result = await timeEntriesRepository.findPeriodEmployees(baseQuery, employeeAccessWhere);
+
+      const day = result.items[0]!.summary.dailyBreakdown.find((entry) => entry.day === 10)!;
+      expect(day).toMatchObject({ specialHourMultiplier: 1, specialHourAdditionalHours: 0, specialHourLiquidableTotal: 8 });
+    });
+
+    it("Caso D — día común (sin regla) con 8 normales + 4hs Sereno: total liquidable = normal+special (12), sin adicional — decisión documentada: los conceptos ya liquidan como adicionales, con o sin Hora Especial", async () => {
+      mockedPrisma.__tx.timeEntry.findMany.mockResolvedValue([normalEntry(5, "8", 1)]);
+      mockedPrisma.__tx.hourConceptBreakdown.findMany.mockResolvedValue([breakdown(5, 240)]);
+
+      const result = await timeEntriesRepository.findPeriodEmployees(baseQuery, employeeAccessWhere);
+
+      const day = result.items[0]!.summary.dailyBreakdown.find((entry) => entry.day === 5)!;
+      expect(day).toMatchObject({ normal: 8, special: 4, total: 8, specialHourMultiplier: 1, specialHourAdditionalHours: 0, specialHourLiquidableTotal: 12 });
+    });
+
+    it("Caso E — multiplicador x1.5 con 2hs de concepto adicional: liquidable con decimales correctos", async () => {
+      mockedPrisma.__tx.timeEntry.findMany.mockResolvedValue([normalEntry(3, "8", 1.5, ["Feriado 1.5x"])]);
+      mockedPrisma.__tx.hourConceptBreakdown.findMany.mockResolvedValue([breakdown(3, 120)]); // 2hs
+
+      const result = await timeEntriesRepository.findPeriodEmployees(baseQuery, employeeAccessWhere);
+
+      const day = result.items[0]!.summary.dailyBreakdown.find((entry) => entry.day === 3)!;
+      // adicional: 8*0.5 + 2*0.5 = 4 + 1 = 5; liquidable total: (8+2) + 5 = 15
+      expect(day).toMatchObject({ specialHourAdditionalHours: 5, specialHourLiquidableTotal: 15 });
+    });
+
+    it("Caso F — conflicto de prioridad (empate): usa el multiplicador ya resuelto por el motor (ganador), no inventa uno nuevo, y sigue marcando el conflicto", async () => {
+      // El motor (resolveWinningRules, ya probado en doubleHourRuleMatching.test.ts) resolvió el empate
+      // y appliedMultiplier ya llegó con el multiplicador ganador — acá sólo se verifica que la grilla
+      // no recalcula ni ignora ese valor, y que el conceptBreakdown también lo recibe.
+      mockedPrisma.__tx.timeEntry.findMany.mockResolvedValue([normalEntry(16, "8", 2.5, ["Domingo Odwyer", "Domingo Pañol"], true)]);
+      mockedPrisma.__tx.hourConceptBreakdown.findMany.mockResolvedValue([breakdown(16, 240)]);
+
+      const result = await timeEntriesRepository.findPeriodEmployees(baseQuery, employeeAccessWhere);
+
+      const day = result.items[0]!.summary.dailyBreakdown.find((entry) => entry.day === 16)!;
+      expect(day.specialHourConflict).toBe(true);
+      expect(day.specialHourMultiplier).toBe(2.5);
+      // liquidable: normal 8*2.5=20, concepto 4*2.5=10, total real 12, adicional 18, liquidable 30
+      expect(day.specialHourLiquidableTotal).toBe(30);
+    });
+
+    it("breakdown sin Hora normal ese día (huérfano): no se puede resolver el multiplicador sin otra fuente — queda en 1 (limitación documentada, no una consulta extra por fila)", async () => {
+      mockedPrisma.__tx.timeEntry.findMany.mockResolvedValue([]); // ninguna Hora normal cargada ese día
+      mockedPrisma.__tx.hourConceptBreakdown.findMany.mockResolvedValue([breakdown(20, 240)]);
+
+      const result = await timeEntriesRepository.findPeriodEmployees(baseQuery, employeeAccessWhere);
+
+      const day = result.items[0]!.summary.dailyBreakdown.find((entry) => entry.day === 20)!;
+      expect(day).toMatchObject({ special: 4, specialHourMultiplier: 1, specialHourAdditionalHours: 0, specialHourLiquidableTotal: 4 });
+    });
+
+    it("Caso G — empleado fuera de alcance de la regla: appliedMultiplier ya llegó en 1 (resuelto por el motor al cargar), sus Conceptos Horarios tampoco se multiplican", async () => {
+      // El scope (alcance) ya se resuelve en el motor de escritura (createFromWorkShift/
+      // closeOpenWorkShift/resolveDoubleHourMultiplierForManualEntry, Casos L-Y/11A) — acá
+      // sólo se confirma que la grilla no reintroduce una multiplicación por su cuenta
+      // cuando el appliedMultiplier persistido ya es 1 por estar fuera de alcance.
+      mockedPrisma.__tx.timeEntry.findMany.mockResolvedValue([normalEntry(27, "8", 1)]); // fuera de alcance -> multiplicador 1
+      mockedPrisma.__tx.hourConceptBreakdown.findMany.mockResolvedValue([breakdown(27, 240)]);
+
+      const result = await timeEntriesRepository.findPeriodEmployees(baseQuery, employeeAccessWhere);
+
+      const day = result.items[0]!.summary.dailyBreakdown.find((entry) => entry.day === 27)!;
+      expect(day).toMatchObject({ normal: 8, special: 4, specialHourMultiplier: 1, specialHourAdditionalHours: 0, specialHourLiquidableTotal: 12 });
+    });
+  });
 });
 
 describe("findBreakdownHoursForExport — horas adicionales para exportación (Etapa 6M)", () => {
