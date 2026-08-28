@@ -175,7 +175,26 @@ function buildEmployee(overrides: Partial<Employee> = {}): Employee {
   } as Employee;
 }
 
-function buildPeriodRow(overrides: { employee?: Partial<Employee>; normal?: number; special?: number; total?: number } = {}) {
+type TestDayBreakdown = {
+  day: number;
+  normal: number;
+  special: number;
+  total: number;
+  novelty: { label: string } | null;
+  specialHourMultiplier?: number;
+  specialHourAdditionalHours?: number;
+  specialHourRuleNames?: string[];
+  specialHourConflict?: boolean;
+};
+
+function buildPeriodRow(overrides: {
+  employee?: Partial<Employee>;
+  normal?: number;
+  special?: number;
+  total?: number;
+  specialHourAdditionalHours?: number;
+  dailyBreakdown?: TestDayBreakdown[];
+} = {}) {
   return {
     employee: buildEmployee(overrides.employee),
     summary: {
@@ -184,7 +203,8 @@ function buildPeriodRow(overrides: { employee?: Partial<Employee>; normal?: numb
       special: overrides.special ?? 0,
       incidents: 0,
       status: "Aprobado",
-      dailyBreakdown: [] as Array<{ day: number; normal: number; special: number; total: number; novelty: { label: string } | null }>,
+      specialHourAdditionalHours: overrides.specialHourAdditionalHours ?? 0,
+      dailyBreakdown: overrides.dailyBreakdown ?? ([] as TestDayBreakdown[]),
     },
   } as never;
 }
@@ -700,5 +720,101 @@ describe("HoursPage — Etapa 9F (separación de efectos: sin refetch innecesari
     await screen.findByText("Gomez, Ana");
 
     expect(container.textContent).not.toMatch(/TimeEntry|HourConceptBreakdown|schema|payload/i);
+  });
+});
+
+describe("HoursPage — indicador de Hora Especial en la grilla de período (Etapa 11A)", () => {
+  // Bug reportado: una Hora Especial (feriado/domingo x2) configurada y ya
+  // aplicada por el backend no se veía en ningún lado de la grilla. Estos
+  // tests cubren el indicador nuevo, sin tocar el indicador preexistente de
+  // "Especiales" (Conceptos Horarios, dominio distinto — ver 8A).
+  it("un día con multiplicador aplicado muestra el detalle en el popover, sin inflar las horas reales del día", async () => {
+    const { default: userEvent } = await import("@testing-library/user-event");
+    const user = userEvent.setup();
+    authAs("Nivel 1 - RRHH");
+    vi.mocked(timeEntryApiService.getPeriodEmployees).mockResolvedValue({
+      items: [buildPeriodRow({
+        normal: 8, total: 8, specialHourAdditionalHours: 8,
+        dailyBreakdown: [{
+          day: 27, normal: 8, special: 0, total: 8, novelty: null,
+          specialHourMultiplier: 2, specialHourAdditionalHours: 8, specialHourRuleNames: ["Feriado"], specialHourConflict: false,
+        }],
+      })],
+      meta: { total: 1, page: 1, pageSize: 25, hasMore: false },
+    });
+    renderGrid();
+    await screen.findByText("Gomez, Ana");
+
+    const dayButton = screen.getByLabelText(/ 27$/);
+    expect(within(dayButton).getByText("8.00")).toBeInTheDocument(); // horas reales del día, nunca 16
+    await user.click(dayButton);
+
+    expect(await screen.findByText(/Hora Especial x2/)).toBeInTheDocument();
+    expect(screen.getByText(/Feriado/)).toBeInTheDocument();
+    expect(screen.getByText(/adicional liquidable \+8\.00 h/)).toBeInTheDocument();
+  });
+
+  it("un día sin regla especial no muestra ningún indicador en el popover", async () => {
+    const { default: userEvent } = await import("@testing-library/user-event");
+    const user = userEvent.setup();
+    authAs("Nivel 1 - RRHH");
+    vi.mocked(timeEntryApiService.getPeriodEmployees).mockResolvedValue({
+      items: [buildPeriodRow({
+        dailyBreakdown: [{ day: 10, normal: 8, special: 0, total: 8, novelty: null, specialHourMultiplier: 1, specialHourAdditionalHours: 0, specialHourRuleNames: [], specialHourConflict: false }],
+      })],
+      meta: { total: 1, page: 1, pageSize: 25, hasMore: false },
+    });
+    renderGrid();
+    await screen.findByText("Gomez, Ana");
+
+    await user.click(screen.getByLabelText(/ 10$/));
+
+    expect(await screen.findByText("Horas normales: 8.00 h")).toBeInTheDocument();
+    expect(screen.queryByText(/Hora Especial/)).not.toBeInTheDocument();
+  });
+
+  it("conflicto de reglas (empate de prioridad) se indica de forma clara en el popover", async () => {
+    const { default: userEvent } = await import("@testing-library/user-event");
+    const user = userEvent.setup();
+    authAs("Nivel 1 - RRHH");
+    vi.mocked(timeEntryApiService.getPeriodEmployees).mockResolvedValue({
+      items: [buildPeriodRow({
+        dailyBreakdown: [{
+          day: 16, normal: 8, special: 0, total: 8, novelty: null,
+          specialHourMultiplier: 2.5, specialHourAdditionalHours: 12, specialHourRuleNames: ["Domingo Odwyer", "Domingo Pañol"], specialHourConflict: true,
+        }],
+      })],
+      meta: { total: 1, page: 1, pageSize: 25, hasMore: false },
+    });
+    renderGrid();
+    await screen.findByText("Gomez, Ana");
+
+    await user.click(screen.getByLabelText(/ 16$/));
+
+    expect(await screen.findByText(/conflicto/i)).toBeInTheDocument();
+  });
+
+  it("el total del período muestra un badge de Hora Especial cuando hay adicional liquidable en el mes", async () => {
+    authAs("Nivel 1 - RRHH");
+    vi.mocked(timeEntryApiService.getPeriodEmployees).mockResolvedValue({
+      items: [buildPeriodRow({ normal: 40, total: 40, specialHourAdditionalHours: 8 })],
+      meta: { total: 1, page: 1, pageSize: 25, hasMore: false },
+    });
+    renderGrid();
+    await screen.findByText("Gomez, Ana");
+
+    expect(await screen.findByText("Hora Especial +8.00 h")).toBeInTheDocument();
+  });
+
+  it("sin adicional liquidable en el mes, no se muestra ningún badge de Hora Especial en el total", async () => {
+    authAs("Nivel 1 - RRHH");
+    vi.mocked(timeEntryApiService.getPeriodEmployees).mockResolvedValue({
+      items: [buildPeriodRow({ normal: 40, total: 40, specialHourAdditionalHours: 0 })],
+      meta: { total: 1, page: 1, pageSize: 25, hasMore: false },
+    });
+    renderGrid();
+    await screen.findByText("Gomez, Ana");
+
+    expect(screen.queryByText(/Hora Especial/)).not.toBeInTheDocument();
   });
 });

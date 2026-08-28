@@ -1475,6 +1475,20 @@ a.employee-hours-status-item:hover{border-color:var(--ds-blue-300);background:va
   display:grid!important;
   gap:6px!important;
 }
+.day-cell-special-hour{
+  color:var(--color-warning)!important;
+  font-weight:700!important;
+}
+.day-cell-special-hour-conflict{
+  color:var(--color-danger)!important;
+  font-weight:700!important;
+}
+.total-hours-cell{
+  display:flex!important;
+  align-items:center!important;
+  gap:6px!important;
+  flex-wrap:wrap!important;
+}
 .table-actions{
   display:flex!important;
   align-items:center!important;

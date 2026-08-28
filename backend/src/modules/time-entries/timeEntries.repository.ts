@@ -191,6 +191,34 @@ function matchingDoubleHourRules(rules: DoubleHourRuleForEngine[], segmentDate: 
   return rules.filter((rule) => ruleMatchesDate(rule, segmentDate, activeDatesByRule));
 }
 
+// Etapa 11A: carga manual (create()/update()) no corre dentro de la
+// transacción con `tx` extendido que usan createFromWorkShift/
+// closeOpenWorkShift (ver comentario de doubleHourRuleScopeWhere sobre por
+// qué ese `tx` no se puede tipar como función async de nivel superior) — acá
+// alcanza con `prisma` directo, que sí tiene un tipo estable. A diferencia
+// del fichador, una carga manual no tiene jornada real que partir en tramos:
+// no crea TimeSegment ni SpecialHourRuleApplication (no hay a qué tramo
+// asociar la trazabilidad), sólo resuelve el multiplicador efectivo para que
+// TimeEntry.appliedMultiplier quede correcto — hours/totalMinutes siguen
+// siendo siempre minutos reales, igual que en el fichador desde la Etapa 8F.
+async function resolveDoubleHourMultiplierForManualEntry(employeeId: string, date: Date): Promise<number> {
+  const employeeScope = await prisma.employee.findUnique({
+    where: { id: employeeId },
+    select: { sectorId: true, costCenterId: true, positionId: true, companies: { select: { companyId: true } } },
+  });
+  const doubleHourRules = await prisma.doubleHourRule.findMany({
+    where: {
+      status: "ACTIVO",
+      fromDate: { lte: date },
+      OR: [{ toDate: null }, { toDate: { gte: date } }],
+      AND: doubleHourRuleScopeWhere(employeeId, employeeScope?.companies.map((item) => item.companyId) ?? [], employeeScope?.sectorId, employeeScope?.costCenterId, employeeScope?.positionId),
+    },
+    include: { dates: true },
+  });
+  const matchedRules = matchingDoubleHourRules(doubleHourRules, date);
+  return resolveWinningRules(matchedRules).multiplier;
+}
+
 function employeeSearchWhere(search?: string): Prisma.EmployeeWhereInput {
   const trimmed = search?.trim();
   if (!trimmed) return {};
@@ -527,8 +555,22 @@ export const timeEntriesRepository = {
                 day: true,
                 hours: true,
                 status: true,
+                appliedMultiplier: true,
                 hourConcept: { select: { systemRole: true } },
                 workShift: { select: { status: true } },
+                // Etapa 11A: nombre de la/las regla(s) ganadora(s) para el
+                // indicador de la grilla — sólo existe para entradas del
+                // fichador (timeSegmentId no nulo); una carga manual queda
+                // con appliedMultiplier correcto pero sin este detalle (ver
+                // docs/decisions/HOURS_GRID_REVIEW_SPECIAL_HOURS_AUDIT_11A.md).
+                timeSegment: {
+                  select: {
+                    specialHourRuleApplications: {
+                      where: { isWinner: true },
+                      select: { wasConflicting: true, doubleHourRule: { select: { name: true } } },
+                    },
+                  },
+                },
               },
             })
           : Promise.resolve([]),
@@ -563,10 +605,10 @@ export const timeEntriesRepository = {
           : Promise.resolve([]),
       ]);
 
-      const grouped = new Map<string, { total: number; normal: number; special: number; incidents: number; statuses: string[] }>();
-      const dailyGrouped = new Map<string, Map<number, { normal: number; special: number; total: number }>>();
+      const grouped = new Map<string, { total: number; normal: number; special: number; incidents: number; statuses: string[]; specialHourAdditional: number }>();
+      const dailyGrouped = new Map<string, Map<number, { normal: number; special: number; total: number; specialHourMultiplier: number; specialHourAdditional: number; specialHourRuleNames: string[]; specialHourConflict: boolean }>>();
       for (const entry of entries) {
-        const current = grouped.get(entry.employeeId) || { total: 0, normal: 0, special: 0, incidents: 0, statuses: [] };
+        const current = grouped.get(entry.employeeId) || { total: 0, normal: 0, special: 0, incidents: 0, statuses: [], specialHourAdditional: 0 };
         if (entry.status === ApprovalStatus.APROBADO || entry.status === ApprovalStatus.EN_REVISION) {
           // Etapa 6M: el total sólo suma Horas normales/base (systemRole).
           // Un TimeEntry no-Normal legacy (sólo posible en datos históricos
@@ -578,10 +620,28 @@ export const timeEntriesRepository = {
             current.total += hours;
             current.normal += hours;
 
-            const dayMap = dailyGrouped.get(entry.employeeId) || new Map<number, { normal: number; special: number; total: number }>();
-            const dayCurrent = dayMap.get(entry.day) || { normal: 0, special: 0, total: 0 };
+            const dayMap = dailyGrouped.get(entry.employeeId) || new Map<number, { normal: number; special: number; total: number; specialHourMultiplier: number; specialHourAdditional: number; specialHourRuleNames: string[]; specialHourConflict: boolean }>();
+            const dayCurrent = dayMap.get(entry.day) || { normal: 0, special: 0, total: 0, specialHourMultiplier: 1, specialHourAdditional: 0, specialHourRuleNames: [], specialHourConflict: false };
             dayCurrent.total += hours;
             dayCurrent.normal += hours;
+
+            // Etapa 11A: appliedMultiplier nunca infla hours/total (arriba) —
+            // el equivalente liquidable/adicional se deriva acá aparte, igual
+            // criterio que ya usa el export desde la Etapa 8F.
+            const multiplier = Number(entry.appliedMultiplier ?? 1);
+            if (multiplier > 1) {
+              const additional = hours * (multiplier - 1);
+              dayCurrent.specialHourMultiplier = Math.max(dayCurrent.specialHourMultiplier, multiplier);
+              dayCurrent.specialHourAdditional += additional;
+              current.specialHourAdditional += additional;
+              for (const application of entry.timeSegment?.specialHourRuleApplications ?? []) {
+                if (!dayCurrent.specialHourRuleNames.includes(application.doubleHourRule.name)) {
+                  dayCurrent.specialHourRuleNames.push(application.doubleHourRule.name);
+                }
+                if (application.wasConflicting) dayCurrent.specialHourConflict = true;
+              }
+            }
+
             dayMap.set(entry.day, dayCurrent);
             dailyGrouped.set(entry.employeeId, dayMap);
           }
@@ -592,13 +652,13 @@ export const timeEntriesRepository = {
       }
 
       for (const breakdown of breakdowns) {
-        const current = grouped.get(breakdown.employeeId) || { total: 0, normal: 0, special: 0, incidents: 0, statuses: [] };
+        const current = grouped.get(breakdown.employeeId) || { total: 0, normal: 0, special: 0, incidents: 0, statuses: [], specialHourAdditional: 0 };
         const hours = breakdown.minutes / 60;
         current.special += hours;
         grouped.set(breakdown.employeeId, current);
 
-        const dayMap = dailyGrouped.get(breakdown.employeeId) || new Map<number, { normal: number; special: number; total: number }>();
-        const dayCurrent = dayMap.get(breakdown.day) || { normal: 0, special: 0, total: 0 };
+        const dayMap = dailyGrouped.get(breakdown.employeeId) || new Map<number, { normal: number; special: number; total: number; specialHourMultiplier: number; specialHourAdditional: number; specialHourRuleNames: string[]; specialHourConflict: boolean }>();
+        const dayCurrent = dayMap.get(breakdown.day) || { normal: 0, special: 0, total: 0, specialHourMultiplier: 1, specialHourAdditional: 0, specialHourRuleNames: [], specialHourConflict: false };
         dayCurrent.special += hours;
         dayMap.set(breakdown.day, dayCurrent);
         dailyGrouped.set(breakdown.employeeId, dayMap);
@@ -617,7 +677,22 @@ export const timeEntriesRepository = {
           const summary = grouped.get(employee.id);
           const dayMap = dailyGrouped.get(employee.id);
           const employeeNovelties = noveltiesByEmployee.get(employee.id) || [];
-          const dailyBreakdown: Array<{ day: number; normal: number; special: number; total: number; novelty: { label: string } | null }> = [];
+          const dailyBreakdown: Array<{
+            day: number;
+            normal: number;
+            special: number;
+            total: number;
+            novelty: { label: string } | null;
+            // Etapa 11A: equivalente/multiplicador de Horas Especiales
+            // (DoubleHourRule) — deliberadamente separado de `special`
+            // (Conceptos Horarios/HourConceptBreakdown, sin relación). Nunca
+            // se suma a `total`: sólo indica que ese día tiene valor
+            // liquidable adicional sobre las horas reales ya contadas arriba.
+            specialHourMultiplier: number;
+            specialHourAdditionalHours: number;
+            specialHourRuleNames: string[];
+            specialHourConflict: boolean;
+          }> = [];
           for (let day = 1; day <= dayCount; day++) {
             const dayDate = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), day));
             const hours = dayMap?.get(day);
@@ -629,6 +704,10 @@ export const timeEntriesRepository = {
               special: hours?.special || 0,
               total: hours?.total || 0,
               novelty: coveringNovelties.length ? { label: coveringNovelties.map((novelty) => novelty.noveltyType.name).join(", ") } : null,
+              specialHourMultiplier: hours?.specialHourMultiplier || 1,
+              specialHourAdditionalHours: hours?.specialHourAdditional || 0,
+              specialHourRuleNames: hours?.specialHourRuleNames || [],
+              specialHourConflict: hours?.specialHourConflict || false,
             });
           }
           return {
@@ -639,6 +718,7 @@ export const timeEntriesRepository = {
               special: summary?.special || 0,
               incidents: summary?.incidents || 0,
               status: resolvePeriodStatus(summary?.statuses || []),
+              specialHourAdditionalHours: summary?.specialHourAdditional || 0,
               dailyBreakdown,
             },
           };
@@ -1440,7 +1520,15 @@ export const timeEntriesRepository = {
 
   // autoApprovedByUserId != null => quien carga (RRHH, Etapa 6L.3) aplica la
   // hora directo en APROBADO, sin pasar por BORRADOR/EN_REVISION.
-  create(input: CreateTimeEntryInput, createdByUserId?: string | null, autoApprovedByUserId?: string | null) {
+  async create(input: CreateTimeEntryInput, createdByUserId?: string | null, autoApprovedByUserId?: string | null) {
+    // Etapa 11A: antes de esta etapa, la carga manual nunca consultaba
+    // DoubleHourRule — un feriado/domingo x2 configurado no tenía ningún
+    // efecto si la hora se cargaba a mano en vez de por fichador. hours/
+    // totalMinutes siguen siendo siempre minutos reales (nunca se inflan);
+    // sólo appliedMultiplier queda correcto para que el equivalente
+    // liquidable se derive bien en grilla/export, igual que ya pasaba con el
+    // fichador desde la Etapa 8F.
+    const appliedMultiplier = await resolveDoubleHourMultiplierForManualEntry(input.employeeId, input.date);
     return prisma.timeEntry.create({
       data: {
         employeeId: input.employeeId,
@@ -1450,6 +1538,7 @@ export const timeEntriesRepository = {
         day: dayOfMonthFromCalendarDate(input.date),
         hours: input.hours,
         totalMinutes: minutesFromHours(input.hours),
+        appliedMultiplier,
         status: autoApprovedByUserId ? "APROBADO" : "BORRADOR",
         observation: input.observation || null,
         createdByUserId: createdByUserId || null,
@@ -1825,15 +1914,22 @@ export const timeEntriesRepository = {
   // aplica/aprueba directo sin importar el status anterior (BORRADOR,
   // EN_REVISION, DEVUELTO o ya APROBADO). Nivel 2/3 no mandan este
   // parámetro, así que el status queda intacto, igual que antes de 6L.3.
-  update(id: string, before: { employeeId: string; hourConceptId: string; date: Date }, input: UpdateTimeEntryInput, autoApprovedByUserId?: string | null) {
+  async update(id: string, before: { employeeId: string; hourConceptId: string; date: Date }, input: UpdateTimeEntryInput, autoApprovedByUserId?: string | null) {
     const date = input.date || before.date;
     const hours = input.hours;
+    // Etapa 11A: se re-resuelve el multiplicador contra la fecha efectiva en
+    // cada edición manual (mismo criterio "se corrige al tocar la fila" ya
+    // usado por el fichador desde 8F, no un recálculo retroactivo masivo) —
+    // así una corrección de una carga manual ya existente también queda
+    // alineada con las reglas de Horas Especiales vigentes hoy.
+    const appliedMultiplier = await resolveDoubleHourMultiplierForManualEntry(before.employeeId, date);
     return prisma.timeEntry.update({
       where: { id },
       data: {
         ...(input.hourConceptId !== undefined ? { hourConceptId: input.hourConceptId } : {}),
         ...(input.date !== undefined ? { date, period: periodFromCalendarDate(date), day: dayOfMonthFromCalendarDate(date) } : {}),
         ...(hours !== undefined ? { hours, totalMinutes: minutesFromHours(hours) } : {}),
+        appliedMultiplier,
         ...(input.observation !== undefined ? { observation: input.observation || null } : {}),
         ...(autoApprovedByUserId ? { status: "APROBADO", approvedByUserId: autoApprovedByUserId, approvedAt: new Date(), rejectedAt: null } : {}),
       },

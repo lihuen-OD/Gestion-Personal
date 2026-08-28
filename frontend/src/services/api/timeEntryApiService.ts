@@ -56,6 +56,13 @@ type ApiEmployeePeriodDailyBreakdown = {
   special: number;
   total: number;
   novelty: { label: string } | null;
+  // Etapa 11A: Horas Especiales (DoubleHourRule, feriado/domingo x2) —
+  // separado de `special` (Conceptos Horarios/HourConceptBreakdown, sin
+  // relación). specialHourMultiplier=1 significa "sin regla aplicada".
+  specialHourMultiplier?: number;
+  specialHourAdditionalHours?: number;
+  specialHourRuleNames?: string[];
+  specialHourConflict?: boolean;
 };
 
 type ApiEmployeePeriodRow = {
@@ -66,6 +73,7 @@ type ApiEmployeePeriodRow = {
     special: number;
     incidents: number;
     status: ApiApprovalStatus;
+    specialHourAdditionalHours?: number;
     dailyBreakdown: ApiEmployeePeriodDailyBreakdown[];
   };
 };
@@ -391,6 +399,7 @@ export const timeEntryApiService = {
             special: row.summary.special,
             incidents: row.summary.incidents,
             status: statusFromApi[row.summary.status] || "Pendiente",
+            specialHourAdditionalHours: row.summary.specialHourAdditionalHours || 0,
             dailyBreakdown: row.summary.dailyBreakdown || [],
           },
         })),

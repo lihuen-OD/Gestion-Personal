@@ -19,6 +19,7 @@ import { orgStructureApiService } from "../services/api/orgStructureApiService";
 import { pendingApiService, type PendingItem } from "../services/api/pendingApiService";
 import { timeEntryApiService } from "../services/api/timeEntryApiService";
 import { noveltyApiService } from "../services/api/noveltyApiService";
+import { formatMultiplier } from "../components/attendance/segmentDisplay";
 import type { Employee, TimeEntry } from "../types";
 import { displayLegajo, fullName } from "../utils/employee";
 import { currentMonthPeriod, formatPeriodDay, getMonthDays, getWeekdayAbbr } from "../utils/period";
@@ -41,7 +42,20 @@ import { Badge } from "../components/ui/Badge";
 import { Pagination } from "../components/ui/Pagination";
 import { Tabs } from "../components/ui/Tabs";
 
-type DayBreakdown = { day: number; normal: number; special: number; total: number; novelty: { label: string } | null };
+type DayBreakdown = {
+  day: number;
+  normal: number;
+  special: number;
+  total: number;
+  novelty: { label: string } | null;
+  // Etapa 11A: Horas Especiales (feriado/domingo x2 configurado en
+  // "Horas especiales") — separado de `special`, que son Conceptos
+  // Horarios (Sereno/Colectivo/etc.), un sistema distinto.
+  specialHourMultiplier?: number;
+  specialHourAdditionalHours?: number;
+  specialHourRuleNames?: string[];
+  specialHourConflict?: boolean;
+};
 
 const DAY_POPOVER_WIDTH = 260;
 const DAY_VIEWPORT_PADDING = 16;
@@ -108,6 +122,7 @@ function DayCell({
       >
         <span className={breakdown?.novelty ? "day-cell-value has-novelty" : "day-cell-value"}>{breakdown ? formatHours(breakdown.total) : "-"}</span>
         {breakdown?.novelty ? <span className="alert-dot purple" /> : null}
+        {breakdown && (breakdown.specialHourMultiplier || 1) > 1 ? <span className="alert-dot orange" /> : null}
       </button>
       {open && position
         ? createPortal(
@@ -120,7 +135,17 @@ function DayCell({
               {breakdown ? (
                 <>
                   <span>Horas normales: {formatHours(breakdown.normal)} h</span>
-                  <span>Horas especiales: {formatHours(breakdown.special)} h</span>
+                  <span>Horas especiales (conceptos): {formatHours(breakdown.special)} h</span>
+                  {(breakdown.specialHourMultiplier || 1) > 1 ? (
+                    <span className="day-cell-special-hour">
+                      Hora Especial {formatMultiplier(breakdown.specialHourMultiplier)}
+                      {breakdown.specialHourRuleNames?.length ? ` — ${breakdown.specialHourRuleNames.join(", ")}` : ""}
+                      {" "}(adicional liquidable +{formatHours(breakdown.specialHourAdditionalHours || 0)} h)
+                    </span>
+                  ) : null}
+                  {breakdown.specialHourConflict ? (
+                    <span className="day-cell-special-hour-conflict">Hay más de una Hora Especial en conflicto ese día. Se aplicó la de mayor prioridad.</span>
+                  ) : null}
                   {breakdown.novelty ? <span>Novedad: {breakdown.novelty.label}</span> : null}
                 </>
               ) : (
@@ -215,7 +240,8 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
         special: number;
         incidents: number;
         status: string;
-        dailyBreakdown: Array<{ day: number; normal: number; special: number; total: number; novelty: { label: string } | null }>;
+        specialHourAdditionalHours?: number;
+        dailyBreakdown: DayBreakdown[];
       };
     }>
   >([]);
@@ -384,11 +410,11 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
     const backendSummary = periodRows.find((row) => row.employee.id === employeeId)?.summary;
     if (backendSummary) return backendSummary;
     const legacy = timeEntryApiService.getEmployeePeriodSummary(reviewEntries, employeeId);
-    return { ...legacy, normal: legacy.total, special: 0, incidents: 0, dailyBreakdown: [] as Array<{ day: number; normal: number; special: number; total: number; novelty: { label: string } | null }> };
+    return { ...legacy, normal: legacy.total, special: 0, incidents: 0, specialHourAdditionalHours: 0, dailyBreakdown: [] as DayBreakdown[] };
   };
   const monthDays = getMonthDays(period);
   const dailyFor = (employeeId: string) => {
-    const map = new Map<number, { day: number; normal: number; special: number; total: number; novelty: { label: string } | null }>();
+    const map = new Map<number, DayBreakdown>();
     for (const entry of summary(employeeId).dailyBreakdown) map.set(entry.day, entry);
     return map;
   };
@@ -1043,7 +1069,14 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
                     </td>
                     <td>{formatHours(periodSummary.normal)} h</td>
                     <td>{formatHours(periodSummary.special)} h</td>
-                    <td>{formatHours(periodSummary.total)} h</td>
+                    <td>
+                      <span className="total-hours-cell">
+                        <span>{formatHours(periodSummary.total)} h</span>
+                        {(periodSummary.specialHourAdditionalHours || 0) > 0 ? (
+                          <Badge tone="warning">Hora Especial +{formatHours(periodSummary.specialHourAdditionalHours || 0)} h</Badge>
+                        ) : null}
+                      </span>
+                    </td>
                     <td>
                       <Link
                         className="table-icon-action"
