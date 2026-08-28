@@ -236,7 +236,11 @@ export async function evaluateShiftExit(employeeId: string, workShiftId: string,
     }
   }
 
-  const duration = evaluateWorkedDuration({ totalMinutes: shift.totalMinutes ?? 0, template: match.template });
+  // Etapa 10D: régimen (si tiene extendedShiftAlertMinutes seteado) gana por
+  // sobre el umbral del turno para decidir JORNADA_EXTENDIDA — ver
+  // evaluateWorkedDuration para la prioridad exacta (Régimen → Turno → Default).
+  const regime = await resolveActiveWorkRegime(employeeId, actualAt);
+  const duration = evaluateWorkedDuration({ totalMinutes: shift.totalMinutes ?? 0, template: match.template, regimeMaximumMinutes: regime?.extendedShiftAlertMinutes ?? null });
   if (duration.insufficientHours) {
     await createShiftAlert({ employeeId, workShiftId, type: "JORNADA_INSUFICIENTE", actualAt, differenceMinutes: shift.totalMinutes });
   }

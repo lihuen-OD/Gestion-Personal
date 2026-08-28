@@ -625,3 +625,105 @@ describe("Etapa 10C — turno nocturno/sereno (cruce de medianoche), diagnóstic
     );
   });
 });
+
+describe("Etapa 10D — evaluateShiftExit consulta el régimen para ajustar el umbral de JORNADA_EXTENDIDA", () => {
+  it("turno nocturno (cruza medianoche) + régimen con umbral mayor evita la alerta de jornada extendida", async () => {
+    mockedPrisma.workShift.findUnique.mockResolvedValue({
+      id: "shift-sereno-10d",
+      startAt: new Date("2026-08-18T02:05:00.000Z"), // 23:05 ART del 17/08
+      shiftTemplateId: "sereno",
+      totalMinutes: 360, // 6h > maximumInformativeMinutes del turno sereno (300) — con turno solo, generaría JORNADA_EXTENDIDA
+    });
+    mockedPrisma.shiftTemplate.findUnique.mockResolvedValue(nightTemplate);
+    mockedPrisma.shiftAssignment.findUnique.mockResolvedValue({ status: "HABILITADO" });
+    mockedPrisma.employeeWorkRegime.findFirst.mockResolvedValue({
+      workRegime: { kind: "TURNO_FLEXIBLE", alertOnOutOfShift: true, openShiftOverflowAction: "ROLLOVER", extendedShiftAlertMinutes: 900 },
+    });
+
+    await evaluateShiftExit("employee-1", "shift-sereno-10d", new Date("2026-08-18T08:10:00.000Z"));
+
+    expect(upsertedAlertTypes()).not.toContain("JORNADA_EXTENDIDA");
+  });
+
+  it("turno nocturno + régimen con umbral menor genera la alerta antes de lo que el turno solo hubiera generado", async () => {
+    mockedPrisma.workShift.findUnique.mockResolvedValue({
+      id: "shift-sereno-11d",
+      startAt: new Date("2026-08-18T02:05:00.000Z"),
+      shiftTemplateId: "sereno",
+      totalMinutes: 200, // < maximumInformativeMinutes del turno (300) — con turno solo, NO generaría JORNADA_EXTENDIDA
+    });
+    mockedPrisma.shiftTemplate.findUnique.mockResolvedValue(nightTemplate);
+    mockedPrisma.shiftAssignment.findUnique.mockResolvedValue({ status: "HABILITADO" });
+    mockedPrisma.employeeWorkRegime.findFirst.mockResolvedValue({
+      workRegime: { kind: "TURNO_OBLIGATORIO", alertOnOutOfShift: true, openShiftOverflowAction: "ROLLOVER", extendedShiftAlertMinutes: 120 },
+    });
+
+    await evaluateShiftExit("employee-1", "shift-sereno-11d", new Date("2026-08-18T05:25:00.000Z"));
+
+    expect(upsertedAlertTypes()).toContain("JORNADA_EXTENDIDA");
+  });
+
+  it("régimen sin extendedShiftAlertMinutes (null) no altera el umbral del turno — mismo comportamiento que antes de 10D", async () => {
+    mockedPrisma.workShift.findUnique.mockResolvedValue({
+      id: "shift-1",
+      startAt: new Date("2026-08-18T10:00:00.000Z"),
+      shiftTemplateId: "t1",
+      totalMinutes: 500, // > maximumInformativeMinutes de disabledTemplate (60)
+    });
+    mockedPrisma.shiftTemplate.findUnique.mockResolvedValue(disabledTemplate);
+    mockedPrisma.shiftAssignment.findUnique.mockResolvedValue({ status: "HABILITADO" });
+    mockedPrisma.employeeWorkRegime.findFirst.mockResolvedValue({
+      workRegime: { kind: "TURNO_OBLIGATORIO", alertOnOutOfShift: true, openShiftOverflowAction: "ROLLOVER", extendedShiftAlertMinutes: null },
+    });
+
+    await evaluateShiftExit("employee-1", "shift-1", new Date("2026-08-18T18:30:00.000Z"));
+
+    expect(upsertedAlertTypes()).toContain("JORNADA_EXTENDIDA");
+  });
+
+  it("JORNADA_EXTENDIDA (con o sin régimen) nunca modifica horas reales — ninguna llamada a workShift.update con datos de horas", async () => {
+    mockedPrisma.workShift.findUnique.mockResolvedValue({
+      id: "shift-sereno-12d",
+      startAt: new Date("2026-08-18T02:05:00.000Z"),
+      shiftTemplateId: "sereno",
+      totalMinutes: 360,
+    });
+    mockedPrisma.shiftTemplate.findUnique.mockResolvedValue(nightTemplate);
+    mockedPrisma.shiftAssignment.findUnique.mockResolvedValue({ status: "HABILITADO" });
+    mockedPrisma.employeeWorkRegime.findFirst.mockResolvedValue({
+      workRegime: { kind: "TURNO_OBLIGATORIO", alertOnOutOfShift: true, openShiftOverflowAction: "ROLLOVER", extendedShiftAlertMinutes: 120 },
+    });
+
+    await evaluateShiftExit("employee-1", "shift-sereno-12d", new Date("2026-08-18T08:10:00.000Z"));
+
+    expect(upsertedAlertTypes()).toContain("JORNADA_EXTENDIDA");
+    // El único método que este runner usa para persistir algo sobre la
+    // jornada es workShift.update, y sólo lo llama evaluateShiftEntry para
+    // adjuntar el turno matcheado (shiftTemplateId/maxAllowedMinutes) — nunca
+    // con hours/totalMinutes. evaluateShiftExit no lo llama en absoluto.
+    expect(mockedPrisma.workShift.update).not.toHaveBeenCalled();
+  });
+
+  it("POSIBLE_OLVIDO_SALIDA sigue completamente separado del nuevo umbral de régimen — el parámetro no se lee en el camino de jornada abierta", async () => {
+    mockedPrisma.workShift.findUnique.mockResolvedValue({
+      id: "shift-sereno-13d",
+      startAt: new Date("2026-08-18T02:05:00.000Z"),
+      shiftTemplateId: "sereno",
+      totalMinutes: 250, // dentro del umbral (300) del turno, sin régimen que lo ajuste
+    });
+    mockedPrisma.shiftTemplate.findUnique.mockResolvedValue(nightTemplate);
+    mockedPrisma.shiftAssignment.findUnique.mockResolvedValue({ status: "HABILITADO" });
+    mockedPrisma.employeeWorkRegime.findFirst.mockResolvedValue({
+      workRegime: { kind: "TURNO_OBLIGATORIO", alertOnOutOfShift: true, openShiftOverflowAction: "ROLLOVER", extendedShiftAlertMinutes: 30 },
+    });
+
+    await evaluateShiftExit("employee-1", "shift-sereno-13d", new Date("2026-08-18T07:15:00.000Z"));
+
+    // El régimen con extendedShiftAlertMinutes=30 sí dispara JORNADA_EXTENDIDA (250 > 30)...
+    expect(upsertedAlertTypes()).toContain("JORNADA_EXTENDIDA");
+    // ...pero nunca POSIBLE_OLVIDO_SALIDA — son alertas completamente
+    // independientes, el umbral de régimen de esta etapa no participa en
+    // absoluto en evaluateOpenShiftRisk (jornada abierta).
+    expect(upsertedAlertTypes()).not.toContain("POSIBLE_OLVIDO_SALIDA");
+  });
+});

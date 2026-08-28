@@ -18,6 +18,7 @@ type ApiWorkRegime = {
   kind: WorkRegimeKind;
   alertOnOutOfShift: boolean;
   openShiftOverflowAction: OpenShiftOverflowAction;
+  extendedShiftAlertMinutes?: number | null;
   description?: string | null;
   status: WorkRegimeStatus;
   createdAt: string;
@@ -50,11 +51,25 @@ export function mapWorkRegimeFromApi(item: ApiWorkRegime): WorkRegime {
     kind: item.kind,
     alertOnOutOfShift: item.alertOnOutOfShift,
     openShiftOverflowAction: item.openShiftOverflowAction,
+    extendedShiftAlertMinutes: item.extendedShiftAlertMinutes ?? null,
     description: item.description ?? null,
     status: item.status,
     createdAt: item.createdAt,
     updatedAt: item.updatedAt,
   };
+}
+
+// Etapa 10D: el backend guarda/valida extendedShiftAlertMinutes en minutos
+// (consistencia con ShiftTemplate y con totalMinutes, que es lo que compara
+// la lógica de negocio) — la UI lo edita en horas enteras, más natural para
+// RRHH que pensar en minutos. La conversión vive acá para no duplicarla si
+// otro componente además de WorkRegimesPage necesita mostrarla/editarla.
+export function extendedShiftAlertMinutesToHours(minutes: number | null): number | "" {
+  return minutes === null ? "" : Math.round(minutes / 60);
+}
+
+export function extendedShiftAlertHoursToMinutes(hours: number | ""): number | null {
+  return hours === "" ? null : Math.round(hours * 60);
 }
 
 type ApiWorkRegimeEmployeeAssociation = {
@@ -91,13 +106,16 @@ export function mapAssignmentFromApi(item: ApiEmployeeWorkRegimeAssignment): Emp
   };
 }
 
-function mapToApi(item: Pick<WorkRegime, "code" | "name" | "kind" | "alertOnOutOfShift" | "openShiftOverflowAction" | "description" | "status">) {
+export type WorkRegimeInput = Pick<WorkRegime, "code" | "name" | "kind" | "alertOnOutOfShift" | "openShiftOverflowAction" | "extendedShiftAlertMinutes" | "description" | "status">;
+
+function mapToApi(item: WorkRegimeInput) {
   return {
     code: item.code,
     name: item.name,
     kind: item.kind,
     alertOnOutOfShift: item.alertOnOutOfShift,
     openShiftOverflowAction: item.openShiftOverflowAction,
+    extendedShiftAlertMinutes: item.extendedShiftAlertMinutes,
     description: item.description || null,
     status: item.status,
   };
@@ -136,13 +154,13 @@ export const workRegimeApiService = {
     return mapWorkRegimeFromApi(response.data);
   },
 
-  async create(item: Pick<WorkRegime, "code" | "name" | "kind" | "alertOnOutOfShift" | "openShiftOverflowAction" | "description" | "status">) {
+  async create(item: WorkRegimeInput) {
     const response = await apiRequest<ApiItemResponse>("/work-regimes", { method: "POST", body: mapToApi(item) });
     await invalidateCacheFamily("work-regimes", "work regime created");
     return mapWorkRegimeFromApi(response.data);
   },
 
-  async update(id: string, item: Pick<WorkRegime, "code" | "name" | "kind" | "alertOnOutOfShift" | "openShiftOverflowAction" | "description" | "status">) {
+  async update(id: string, item: WorkRegimeInput) {
     const response = await apiRequest<ApiItemResponse>(`/work-regimes/${id}`, { method: "PATCH", body: mapToApi(item) });
     await invalidateCacheFamily("work-regimes", "work regime updated");
     return mapWorkRegimeFromApi(response.data);

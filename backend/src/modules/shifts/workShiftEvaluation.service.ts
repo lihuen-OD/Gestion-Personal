@@ -191,10 +191,22 @@ export interface DurationEvaluationResult {
   minimumThresholdUsed: number | null;
 }
 
-/** Las horas reales siempre se computan aparte; esto solo decide si corresponde marcar informativamente jornada corta/extendida. */
-export function evaluateWorkedDuration(input: { totalMinutes: number; template: ShiftTemplateRef | null }): DurationEvaluationResult {
+/**
+ * Las horas reales siempre se computan aparte; esto solo decide si
+ * corresponde marcar informativamente jornada corta/extendida.
+ *
+ * Etapa 10D: prioridad del umbral de jornada extendida = Régimen → Turno →
+ * Default. `regimeMaximumMinutes` (WorkRegime.extendedShiftAlertMinutes)
+ * gana incondicionalmente cuando está seteado — nunca se combina con el del
+ * turno, mismo criterio ya usado por alertOnOutOfShift/openShiftOverflowAction.
+ * Si es null/undefined (el caso hoy para todo régimen existente), cae
+ * exactamente al comportamiento anterior (turno o default), sin excepción.
+ * No afecta minimumMinutesForCompliance/insufficientHours — el pedido de
+ * esta etapa es específicamente sobre jornada extendida.
+ */
+export function evaluateWorkedDuration(input: { totalMinutes: number; template: ShiftTemplateRef | null; regimeMaximumMinutes?: number | null }): DurationEvaluationResult {
   const minimum = input.template?.minimumMinutesForCompliance ?? null;
-  const maximum = input.template ? input.template.maximumInformativeMinutes : DEFAULT_MAXIMUM_INFORMATIVE_MINUTES;
+  const maximum = input.regimeMaximumMinutes ?? (input.template ? input.template.maximumInformativeMinutes : DEFAULT_MAXIMUM_INFORMATIVE_MINUTES);
   return {
     insufficientHours: minimum !== null && input.totalMinutes < minimum,
     extendedShift: maximum !== null && input.totalMinutes > maximum,

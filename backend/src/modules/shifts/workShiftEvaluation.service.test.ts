@@ -276,6 +276,50 @@ describe("evaluateWorkedDuration", () => {
   });
 });
 
+describe("evaluateWorkedDuration — Etapa 10D (prioridad de umbral Régimen → Turno → Default)", () => {
+  it("sin régimen (undefined) + turno mantiene el comportamiento actual (usa el umbral del turno)", () => {
+    const result = evaluateWorkedDuration({ totalMinutes: 600, template: morningShift });
+    expect(result.extendedShift).toBe(true); // morningShift.maximumInformativeMinutes = 540
+    expect(result.maximumThresholdUsed).toBe(540);
+  });
+
+  it("régimen sin valor (null) + turno mantiene el comportamiento actual (usa el umbral del turno, no el default)", () => {
+    const result = evaluateWorkedDuration({ totalMinutes: 600, template: morningShift, regimeMaximumMinutes: null });
+    expect(result.extendedShift).toBe(true);
+    expect(result.maximumThresholdUsed).toBe(540);
+  });
+
+  it("régimen con umbral mayor evita la alerta prematura que el turno solo hubiera generado", () => {
+    const result = evaluateWorkedDuration({ totalMinutes: 600, template: morningShift, regimeMaximumMinutes: 900 });
+    expect(result.extendedShift).toBe(false);
+    expect(result.maximumThresholdUsed).toBe(900);
+  });
+
+  it("régimen con umbral menor genera alerta antes de lo que el turno solo hubiera generado", () => {
+    const result = evaluateWorkedDuration({ totalMinutes: 400, template: morningShift, regimeMaximumMinutes: 300 });
+    expect(result.extendedShift).toBe(true); // morningShift solo (540) no hubiera marcado extendedShift a los 400 min
+    expect(result.maximumThresholdUsed).toBe(300);
+  });
+
+  it("empleado sin turno + régimen con valor usa el umbral del régimen, no el default de 600", () => {
+    const result = evaluateWorkedDuration({ totalMinutes: 700, template: null, regimeMaximumMinutes: 900 });
+    expect(result.extendedShift).toBe(false);
+    expect(result.maximumThresholdUsed).toBe(900);
+  });
+
+  it("empleado sin turno ni régimen usa el default seguro (600), sin cambios", () => {
+    const result = evaluateWorkedDuration({ totalMinutes: 700, template: null, regimeMaximumMinutes: null });
+    expect(result.extendedShift).toBe(true);
+    expect(result.maximumThresholdUsed).toBe(600);
+  });
+
+  it("el umbral de régimen nunca afecta insufficientHours/minimumMinutesForCompliance (fuera de alcance de esta etapa)", () => {
+    const result = evaluateWorkedDuration({ totalMinutes: 300, template: morningShift, regimeMaximumMinutes: 900 });
+    expect(result.insufficientHours).toBe(true); // morningShift.minimumMinutesForCompliance = 465, sin cambios
+    expect(result.minimumThresholdUsed).toBe(465);
+  });
+});
+
 describe("evaluateOpenShiftRisk", () => {
   it("jornada abierta normal, todavía dentro de rango", () => {
     const result = evaluateOpenShiftRisk({ startAt: at(7, 0), now: at(15, 0), template: morningShift });

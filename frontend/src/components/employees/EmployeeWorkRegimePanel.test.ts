@@ -9,6 +9,7 @@ const baseWorkRegime = {
   kind: "TURNO_FLEXIBLE" as const,
   alertOnOutOfShift: false,
   openShiftOverflowAction: "ALERT_ONLY" as const,
+  extendedShiftAlertMinutes: null,
   description: null,
   status: "ACTIVO" as const,
   createdAt: "2026-01-01T00:00:00.000Z",

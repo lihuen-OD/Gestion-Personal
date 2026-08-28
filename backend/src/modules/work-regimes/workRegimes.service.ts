@@ -20,6 +20,9 @@ export interface ActiveWorkRegime {
   kind: WorkRegimeKind;
   alertOnOutOfShift: boolean;
   openShiftOverflowAction: OpenShiftOverflowAction;
+  // Etapa 10D: umbral en minutos para JORNADA_EXTENDIDA — null = el régimen
+  // no opina, el llamador debe caer al umbral del turno o al default (600 min).
+  extendedShiftAlertMinutes: number | null;
 }
 
 // Resuelve el régimen vigente de un empleado para la fecha calendario
@@ -34,6 +37,7 @@ export async function resolveActiveWorkRegime(employeeId: string, instant: Date)
     kind: assignment.workRegime.kind,
     alertOnOutOfShift: assignment.workRegime.alertOnOutOfShift,
     openShiftOverflowAction: assignment.workRegime.openShiftOverflowAction,
+    extendedShiftAlertMinutes: assignment.workRegime.extendedShiftAlertMinutes,
   };
 }
 

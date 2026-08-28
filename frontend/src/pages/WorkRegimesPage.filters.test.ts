@@ -12,6 +12,7 @@ function regime(overrides: Partial<WorkRegime> = {}): WorkRegime {
     kind: "TURNO_FLEXIBLE",
     alertOnOutOfShift: false,
     openShiftOverflowAction: "ALERT_ONLY",
+    extendedShiftAlertMinutes: null,
     description: "Régimen de cosecha con jornadas variables",
     status: "ACTIVO",
     createdAt: "2026-01-01T00:00:00.000Z",

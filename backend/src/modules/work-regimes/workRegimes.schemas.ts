@@ -20,6 +20,9 @@ export const createWorkRegimeSchema = z.object({
   kind: workRegimeKindSchema,
   alertOnOutOfShift: z.boolean().default(true),
   openShiftOverflowAction: openShiftOverflowActionSchema.default("ROLLOVER"),
+  // Etapa 10D: umbral en minutos para JORNADA_EXTENDIDA — null (default) =
+  // el régimen no opina, se usa el umbral del turno o el default de 600 min.
+  extendedShiftAlertMinutes: z.coerce.number().int().min(0).max(1440).optional().nullable(),
   description: z.string().trim().max(600).optional().nullable(),
   status: recordStatusSchema.default("ACTIVO"),
 });

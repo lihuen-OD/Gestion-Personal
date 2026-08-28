@@ -9,6 +9,10 @@ export type WorkRegime = {
   kind: WorkRegimeKind;
   alertOnOutOfShift: boolean;
   openShiftOverflowAction: OpenShiftOverflowAction;
+  // Etapa 10D: minutos — null = el régimen no ajusta el umbral de jornada
+  // extendida, se usa el del turno o el default del sistema. La UI edita
+  // este valor en horas (ver workRegimeApiService.ts para la conversión).
+  extendedShiftAlertMinutes: number | null;
   description: string | null;
   status: WorkRegimeStatus;
   createdAt: string;

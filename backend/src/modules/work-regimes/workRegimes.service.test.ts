@@ -90,6 +90,29 @@ describe("resolveActiveWorkRegime", () => {
     const referenceDateUsed = mockedFind.mock.calls.at(0)?.[1] as Date;
     expect(referenceDateUsed.toISOString().slice(0, 10)).toBe("2026-08-18");
   });
+
+  // Etapa 10D
+  it("devuelve extendedShiftAlertMinutes cuando el régimen lo tiene seteado", async () => {
+    mockedFind.mockResolvedValue({
+      id: "assignment-1",
+      workRegime: { kind: "TURNO_FLEXIBLE", alertOnOutOfShift: false, openShiftOverflowAction: "ROLLOVER", extendedShiftAlertMinutes: 900 },
+    });
+
+    const result = await resolveActiveWorkRegime("employee-1", new Date("2026-08-18T15:00:00.000Z"));
+
+    expect(result?.extendedShiftAlertMinutes).toBe(900);
+  });
+
+  it("devuelve extendedShiftAlertMinutes en null cuando el régimen no lo configuró (comportamiento por defecto)", async () => {
+    mockedFind.mockResolvedValue({
+      id: "assignment-1",
+      workRegime: { kind: "TURNO_OBLIGATORIO", alertOnOutOfShift: true, openShiftOverflowAction: "ROLLOVER", extendedShiftAlertMinutes: null },
+    });
+
+    const result = await resolveActiveWorkRegime("employee-1", new Date("2026-08-18T15:00:00.000Z"));
+
+    expect(result?.extendedShiftAlertMinutes).toBeNull();
+  });
 });
 
 function prismaKnownError(code: string) {

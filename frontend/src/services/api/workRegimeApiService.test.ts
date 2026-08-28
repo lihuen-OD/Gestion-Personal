@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { mapAssignmentFromApi, mapWorkRegimeEmployeeAssociationFromApi, mapWorkRegimeFromApi } from "./workRegimeApiService";
+import {
+  extendedShiftAlertHoursToMinutes,
+  extendedShiftAlertMinutesToHours,
+  mapAssignmentFromApi,
+  mapWorkRegimeEmployeeAssociationFromApi,
+  mapWorkRegimeFromApi,
+} from "./workRegimeApiService";
 
 const apiRegime = {
   id: "regime-1",
@@ -8,6 +14,7 @@ const apiRegime = {
   kind: "TURNO_FLEXIBLE" as const,
   alertOnOutOfShift: false,
   openShiftOverflowAction: "ALERT_ONLY" as const,
+  extendedShiftAlertMinutes: null,
   description: null,
   status: "ACTIVO" as const,
   createdAt: "2026-01-01T00:00:00.000Z",
@@ -24,6 +31,7 @@ describe("mapWorkRegimeFromApi", () => {
       kind: "TURNO_FLEXIBLE",
       alertOnOutOfShift: false,
       openShiftOverflowAction: "ALERT_ONLY",
+      extendedShiftAlertMinutes: null,
       description: null,
       status: "ACTIVO",
       createdAt: "2026-01-01T00:00:00.000Z",
@@ -35,6 +43,47 @@ describe("mapWorkRegimeFromApi", () => {
     const { description: _omitted, ...withoutDescription } = apiRegime;
     const regime = mapWorkRegimeFromApi(withoutDescription as typeof apiRegime);
     expect(regime.description).toBeNull();
+  });
+
+  it("Etapa 10D — preserva extendedShiftAlertMinutes cuando el backend lo manda", () => {
+    const regime = mapWorkRegimeFromApi({ ...apiRegime, extendedShiftAlertMinutes: 900 });
+    expect(regime.extendedShiftAlertMinutes).toBe(900);
+  });
+
+  it("Etapa 10D — extendedShiftAlertMinutes ausente se normaliza a null, no a undefined", () => {
+    const { extendedShiftAlertMinutes: _omitted, ...withoutField } = apiRegime;
+    const regime = mapWorkRegimeFromApi(withoutField as typeof apiRegime);
+    expect(regime.extendedShiftAlertMinutes).toBeNull();
+  });
+});
+
+describe("extendedShiftAlertMinutesToHours / extendedShiftAlertHoursToMinutes — Etapa 10D (UI en horas, backend en minutos)", () => {
+  it("convierte minutos a horas enteras (redondeando)", () => {
+    expect(extendedShiftAlertMinutesToHours(900)).toBe(15);
+    expect(extendedShiftAlertMinutesToHours(90)).toBe(2); // redondea 1.5 -> 2
+  });
+
+  it("null se muestra como campo vacío en la UI, nunca como 0", () => {
+    expect(extendedShiftAlertMinutesToHours(null)).toBe("");
+  });
+
+  it("0 minutos se muestra como 0 horas, no como vacío (0 explícito != sin configurar)", () => {
+    expect(extendedShiftAlertMinutesToHours(0)).toBe(0);
+  });
+
+  it("convierte horas a minutos al guardar", () => {
+    expect(extendedShiftAlertHoursToMinutes(15)).toBe(900);
+    expect(extendedShiftAlertHoursToMinutes(0)).toBe(0);
+  });
+
+  it("campo vacío se guarda como null, nunca se coacciona a 0", () => {
+    expect(extendedShiftAlertHoursToMinutes("")).toBeNull();
+  });
+
+  it("round-trip: convertir minutos a horas y de vuelta a minutos no pierde el valor (para horas enteras)", () => {
+    const originalMinutes = 720;
+    const hours = extendedShiftAlertMinutesToHours(originalMinutes);
+    expect(extendedShiftAlertHoursToMinutes(hours)).toBe(originalMinutes);
   });
 });
 

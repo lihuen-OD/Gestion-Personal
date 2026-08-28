@@ -10,7 +10,7 @@ import { Modal } from "../ui/Modal";
 import { TableShell } from "../ui/TableShell";
 import { confirmAction } from "../../services/appDialog";
 import { getUserErrorMessage } from "../../services/api/apiClient";
-import { workRegimeApiService } from "../../services/api/workRegimeApiService";
+import { extendedShiftAlertMinutesToHours, workRegimeApiService } from "../../services/api/workRegimeApiService";
 import type { EmployeeWorkRegimeAssignment, WorkRegime } from "../../types/workRegime.types";
 import type { Employee, User } from "../../types";
 import { useAsyncAction } from "../../utils/useAsyncAction";
@@ -205,6 +205,7 @@ export function EmployeeWorkRegimePanel({ employee, canEdit }: EmployeeWorkRegim
             {current ? (
               <small>
                 Alerta fuera de turno: {current.workRegime.alertOnOutOfShift ? "Sí" : "No"} · Jornada excedida: {openShiftOverflowActionLabel(current.workRegime.openShiftOverflowAction)}
+                {current.workRegime.extendedShiftAlertMinutes !== null ? ` · Alerta de jornada extendida: ${extendedShiftAlertMinutesToHours(current.workRegime.extendedShiftAlertMinutes)} h` : ""}
               </small>
             ) : null}
           </div>

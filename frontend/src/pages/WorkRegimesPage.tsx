@@ -21,14 +21,18 @@ import { StatCard } from "../components/ui/StatCard";
 import { useAuth } from "../context/AuthContext";
 import { confirmAction } from "../services/appDialog";
 import { getUserErrorMessage } from "../services/api/apiClient";
-import { workRegimeApiService } from "../services/api/workRegimeApiService";
+import { extendedShiftAlertHoursToMinutes, extendedShiftAlertMinutesToHours, workRegimeApiService, type WorkRegimeInput } from "../services/api/workRegimeApiService";
 import type { AssociatedEmployeeFilters } from "../types/associatedEmployee.types";
 import type { OpenShiftOverflowAction, WorkRegime, WorkRegimeFilters, WorkRegimeKind } from "../types/workRegime.types";
 import { formatVigencyDate, vigencyLabel, vigencyTone } from "../components/shared/AssociatedEmployeesPanel.helpers";
 import { roleLevel } from "../utils/roles";
 import { useAsyncAction } from "../utils/useAsyncAction";
 
-type WorkRegimeDraft = Pick<WorkRegime, "code" | "name" | "kind" | "alertOnOutOfShift" | "openShiftOverflowAction" | "description" | "status">;
+// Etapa 10D: el draft edita la alerta de jornada extendida en horas enteras
+// (extendedShiftAlertHours) — la conversión a/desde minutos (lo que
+// realmente guarda WorkRegime) ocurre sólo al cargar un registro existente y
+// al guardar, vía los helpers de workRegimeApiService.ts.
+type WorkRegimeDraft = Omit<WorkRegimeInput, "extendedShiftAlertMinutes"> & { extendedShiftAlertHours: number | "" };
 
 function emptyDraft(): WorkRegimeDraft {
   return {
@@ -37,6 +41,7 @@ function emptyDraft(): WorkRegimeDraft {
     kind: "TURNO_FLEXIBLE",
     alertOnOutOfShift: true,
     openShiftOverflowAction: "ROLLOVER",
+    extendedShiftAlertHours: "",
     description: "",
     status: "ACTIVO",
   };
@@ -121,6 +126,7 @@ export function WorkRegimesPage() {
       kind: item.kind,
       alertOnOutOfShift: item.alertOnOutOfShift,
       openShiftOverflowAction: item.openShiftOverflowAction,
+      extendedShiftAlertHours: extendedShiftAlertMinutesToHours(item.extendedShiftAlertMinutes),
       description: item.description || "",
       status: item.status,
     });
@@ -134,9 +140,12 @@ export function WorkRegimesPage() {
     if (!code) return setError("El código es obligatorio.");
     if (!name) return setError("El nombre es obligatorio.");
 
+    const { extendedShiftAlertHours, ...rest } = draft;
+    const payload: WorkRegimeInput = { ...rest, code, name, extendedShiftAlertMinutes: extendedShiftAlertHoursToMinutes(extendedShiftAlertHours) };
+
     try {
-      if (editingId) await workRegimeApiService.update(editingId, { ...draft, code, name });
-      else await workRegimeApiService.create({ ...draft, code, name });
+      if (editingId) await workRegimeApiService.update(editingId, payload);
+      else await workRegimeApiService.create(payload);
       reload();
       close();
       setNotice("Régimen laboral guardado correctamente.");
@@ -277,6 +286,18 @@ export function WorkRegimesPage() {
                 {openShiftOverflowActionOptions.map((action) => <option key={action} value={action}>{openShiftOverflowActionLabel(action)}</option>)}
               </select>
             </label>
+            <label>
+              Alerta de jornada extendida
+              <input
+                type="number"
+                min={0}
+                max={24}
+                placeholder="Sin definir"
+                value={draft.extendedShiftAlertHours}
+                onChange={(event) => setDraft({ ...draft, extendedShiftAlertHours: event.target.value === "" ? "" : Number(event.target.value) })}
+              />
+            </label>
+            <small className="muted">Cantidad máxima de horas trabajadas antes de generar una alerta informativa. No modifica las horas registradas.</small>
             <label>
               Descripción
               <textarea value={draft.description || ""} onChange={(event) => setDraft({ ...draft, description: event.target.value })} />
