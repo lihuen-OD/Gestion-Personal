@@ -77,3 +77,31 @@ describe("ShiftAlertsPage — Etapa 10B (enum drift corregido, 10A §11.4)", () 
     expect(optionLabels).toContain("Segmento sin clasificar");
   });
 });
+
+describe("ShiftAlertsPage — Etapa 10E (severidad legible, sin enum crudo en la tabla)", () => {
+  it("una alerta CRITICA se muestra como 'Crítica' en la tabla, no como el enum crudo sin acento", async () => {
+    vi.mocked(shiftAlertApiService.getAll).mockResolvedValue({
+      data: [buildAlert({ severity: "CRITICA" })],
+      meta: { total: 1, pageSize: 20, hasMore: false, nextBefore: null },
+    });
+
+    renderPage();
+
+    await screen.findByText("Crítica");
+    expect(screen.queryByText("CRITICA")).not.toBeInTheDocument();
+  });
+
+  it("el filtro de Severidad muestra labels legibles ('Informativa', 'Advertencia', 'Crítica')", async () => {
+    vi.mocked(shiftAlertApiService.getAll).mockResolvedValue({
+      data: [],
+      meta: { total: 0, pageSize: 20, hasMore: false, nextBefore: null },
+    });
+
+    renderPage();
+    await screen.findByText("No hay alertas para los filtros seleccionados.");
+
+    const severitySelect = screen.getByLabelText("Severidad") as HTMLSelectElement;
+    const optionLabels = Array.from(severitySelect.options).map((option) => option.text);
+    expect(optionLabels).toEqual(["Todas", "Informativa", "Advertencia", "Crítica"]);
+  });
+});

@@ -16,6 +16,7 @@ vi.mock("../../shared/prisma/client", () => ({
   prisma: {
     workShift: { findMany: vi.fn() },
     shiftAlert: { findUnique: vi.fn() },
+    employeeWorkRegime: { findFirst: vi.fn() },
   },
 }));
 
@@ -27,6 +28,7 @@ vi.mock("./workShiftEvaluationRunner", () => ({
 const mockedPrisma = prisma as unknown as {
   workShift: { findMany: Mock };
   shiftAlert: { findUnique: Mock };
+  employeeWorkRegime: { findFirst: Mock };
 };
 const mockedCreateShiftAlert = createShiftAlert as unknown as Mock;
 
@@ -52,6 +54,9 @@ const nightTemplate = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Etapa 10E: sin régimen vigente por defecto — comportamiento igual que
+  // antes de esta etapa (no suprime el default de "olvido de salida" sin turno).
+  mockedPrisma.employeeWorkRegime.findFirst.mockResolvedValue(null);
 });
 
 describe("checkMissingOutRisk", () => {
@@ -134,5 +139,76 @@ describe("checkMissingOutRisk", () => {
     expect(mockedCreateShiftAlert).toHaveBeenCalledWith(
       expect.objectContaining({ employeeId: "emp-1", workShiftId: "shift-sereno", type: "POSIBLE_OLVIDO_SALIDA" }),
     );
+  });
+});
+
+describe("checkMissingOutRisk — Etapa 10E (hallazgo central: empleado sin turno nunca generaba ShiftAlert de olvido de salida)", () => {
+  it("empleado sin turno (template null), sin régimen asignado, sí genera POSIBLE_OLVIDO_SALIDA al superar el default (600 min) — antes de este fix, nunca se generaba", async () => {
+    mockedPrisma.workShift.findMany.mockResolvedValue([
+      { id: "shift-sin-turno", employeeId: "emp-1", startAt: at(0, 0, 10), shiftTemplate: null },
+    ]);
+    mockedPrisma.shiftAlert.findUnique.mockResolvedValue(null);
+    mockedPrisma.employeeWorkRegime.findFirst.mockResolvedValue(null);
+
+    const result = await checkMissingOutRisk(at(10, 30, 10)); // 10h30 abierto
+
+    expect(result.created).toBe(1);
+    expect(mockedCreateShiftAlert).toHaveBeenCalledWith(
+      expect.objectContaining({ employeeId: "emp-1", workShiftId: "shift-sin-turno", type: "POSIBLE_OLVIDO_SALIDA" }),
+    );
+  });
+
+  it("empleado sin turno con régimen alertOnOutOfShift=false (cosecha/flexible) NO genera la alerta por el default — evita reintroducir ruido en jornadas largas legítimas", async () => {
+    mockedPrisma.workShift.findMany.mockResolvedValue([
+      { id: "shift-cosecha", employeeId: "emp-2", startAt: at(0, 0, 10), shiftTemplate: null },
+    ]);
+    mockedPrisma.employeeWorkRegime.findFirst.mockResolvedValue({
+      workRegime: { kind: "TURNO_FLEXIBLE", alertOnOutOfShift: false, openShiftOverflowAction: "ROLLOVER", extendedShiftAlertMinutes: null },
+    });
+
+    const result = await checkMissingOutRisk(at(10, 30, 10)); // 10h30 abierto, hubiera generado MISSING_OUT sin régimen
+
+    expect(result.created).toBe(0);
+    expect(mockedCreateShiftAlert).not.toHaveBeenCalled();
+  });
+
+  it("empleado sin turno con régimen alertOnOutOfShift=true (explícito) sigue generando la alerta por el default", async () => {
+    mockedPrisma.workShift.findMany.mockResolvedValue([
+      { id: "shift-sin-turno-2", employeeId: "emp-3", startAt: at(0, 0, 10), shiftTemplate: null },
+    ]);
+    mockedPrisma.shiftAlert.findUnique.mockResolvedValue(null);
+    mockedPrisma.employeeWorkRegime.findFirst.mockResolvedValue({
+      workRegime: { kind: "TURNO_OBLIGATORIO", alertOnOutOfShift: true, openShiftOverflowAction: "ROLLOVER", extendedShiftAlertMinutes: null },
+    });
+
+    const result = await checkMissingOutRisk(at(10, 30, 10));
+
+    expect(result.created).toBe(1);
+  });
+
+  it("empleado CON turno pero sin missingOutAlertAfterMinutes configurado también se beneficia del default (mismo hallazgo, otra causa raíz)", async () => {
+    const templateSinAlerta = { ...nightTemplate, id: "sin-alerta-cron", missingOutAlertAfterMinutes: null };
+    mockedPrisma.workShift.findMany.mockResolvedValue([
+      { id: "shift-turno-sin-alerta", employeeId: "emp-4", startAt: at(0, 0, 10), shiftTemplate: templateSinAlerta },
+    ]);
+    mockedPrisma.shiftAlert.findUnique.mockResolvedValue(null);
+    mockedPrisma.employeeWorkRegime.findFirst.mockResolvedValue(null);
+
+    const result = await checkMissingOutRisk(at(10, 30, 10));
+
+    expect(result.created).toBe(1);
+  });
+
+  it("coherencia con expireOpenWorkShifts: el default de olvido de salida nunca se evalúa para una jornada ya EXPIRED, ese caso sigue exclusivo del cierre automático", async () => {
+    mockedPrisma.workShift.findMany.mockResolvedValue([
+      { id: "shift-vencido", employeeId: "emp-5", startAt: at(0, 0, 9), shiftTemplate: null },
+    ]);
+    mockedPrisma.employeeWorkRegime.findFirst.mockResolvedValue(null);
+
+    // 21h abierto — ya superó el límite absoluto (1200 min = 20h), por lo tanto EXPIRED, no MISSING_OUT.
+    const result = await checkMissingOutRisk(at(21, 0, 9));
+
+    expect(result.created).toBe(0);
+    expect(mockedCreateShiftAlert).not.toHaveBeenCalled();
   });
 });

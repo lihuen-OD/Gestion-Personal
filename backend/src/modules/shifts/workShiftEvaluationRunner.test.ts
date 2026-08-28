@@ -1,7 +1,8 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import type { Mock } from "vitest";
 import { prisma } from "../../shared/prisma/client";
-import { evaluateShiftEntry, evaluateShiftExit, notifyClassificationAlerts, flagOpenShiftOverflowForReview, resolveOpenShiftOverflowAlert } from "./workShiftEvaluationRunner";
+import { notifyUsers } from "../workforce-management/workforce.service";
+import { createShiftAlert, evaluateShiftEntry, evaluateShiftExit, notifyClassificationAlerts, flagOpenShiftOverflowForReview, resolveOpenShiftOverflowAlert } from "./workShiftEvaluationRunner";
 
 /**
  * Etapa de logica de Regimen de Trabajo (2026-08-18): un empleado sin
@@ -725,5 +726,29 @@ describe("Etapa 10D — evaluateShiftExit consulta el régimen para ajustar el u
     // independientes, el umbral de régimen de esta etapa no participa en
     // absoluto en evaluateOpenShiftRisk (jornada abierta).
     expect(upsertedAlertTypes()).not.toContain("POSIBLE_OLVIDO_SALIDA");
+  });
+});
+
+describe("createShiftAlert — Etapa 10E (la notificación es best-effort, nunca bloquea la fichada/alerta real)", () => {
+  it("si notifyUsers falla, la alerta igual se crea/actualiza y se devuelve normalmente (no propaga la excepción)", async () => {
+    mockedPrisma.shiftAlert.upsert.mockResolvedValue({ id: "alert-1" });
+    vi.mocked(notifyUsers).mockRejectedValueOnce(new Error("db hiccup"));
+
+    const alert = await createShiftAlert({ employeeId: "employee-1", workShiftId: "shift-1", type: "INGRESO_TARDE", actualAt: new Date("2026-08-18T10:00:00.000Z") });
+
+    expect(alert).toEqual({ id: "alert-1" });
+    expect(mockedPrisma.shiftAlert.upsert).toHaveBeenCalledTimes(1);
+  });
+
+  it("un fallo de notificación no impide que el llamador (evaluateShiftEntry) siga funcionando normalmente", async () => {
+    mockedPrisma.shiftAssignment.findMany.mockResolvedValue([]);
+    mockedPrisma.shiftTemplate.findMany.mockResolvedValue([]);
+    mockedPrisma.employeeWorkRegime.findFirst.mockResolvedValue(null);
+    mockedPrisma.shiftAlert.upsert.mockResolvedValue({ id: "alert-1" });
+    vi.mocked(notifyUsers).mockRejectedValueOnce(new Error("db hiccup"));
+
+    await expect(evaluateShiftEntry("employee-1", "shift-1", new Date("2026-08-18T10:00:00.000Z"))).resolves.toBeUndefined();
+
+    expect(upsertedAlertTypes()).toContain("TURNO_NO_IDENTIFICADO");
   });
 });

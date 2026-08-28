@@ -93,6 +93,20 @@ function faceStatusLabel(status?: string | null) {
   return status ? labels[status] || status : "Sin validación";
 }
 
+// Etapa 10E: antes se mostraba item.shift.status.replace(/_/g, " ") crudo
+// ("FALTA SALIDA", "INVALIDO" sin acento) — sólo cubre los 4 status que
+// attendanceObservations puede devolver para type=SHIFT (ver
+// timeEntries.repository.ts:attendanceObservations, shiftTotalWhere).
+function shiftProblemLabel(status: string) {
+  const labels: Record<string, string> = {
+    OBSERVADO: "Jornada observada",
+    FALTA_SALIDA: "Falta registrar la salida",
+    FALTA_INGRESO: "Falta registrar el ingreso",
+    INVALIDO: "Jornada inválida",
+  };
+  return labels[status] || status.replace(/_/g, " ");
+}
+
 function hasPunchPhoto(punch?: { photoStoragePath?: string | null; photoUrl?: string | null; photoFileId?: string | null; thumbnailFileId?: string | null } | null) {
   return Boolean(punch?.photoFileId || punch?.thumbnailFileId || punch?.photoStoragePath || punch?.photoUrl);
 }
@@ -248,7 +262,7 @@ function ObservationRows({ items, onViewPhoto, onResolve, onViewSegments }: { it
         }
         const record = item.kind === "SHIFT" ? item.shift : item.punch;
         const isPending = record.reviewStatus === "PENDIENTE";
-        const problem = item.kind === "SHIFT" ? item.shift.status.replace(/_/g, " ") : item.punch.type === "INGRESO" ? "Intento de ingreso" : "Intento de salida";
+        const problem = item.kind === "SHIFT" ? shiftProblemLabel(item.shift.status) : item.punch.type === "INGRESO" ? "Intento de ingreso" : "Intento de salida";
         const detail = item.kind === "SHIFT"
           ? item.shift.observation || (item.shift.status === "FALTA_SALIDA" ? "No se registró la salida" : "Jornada con conflicto")
           : item.punch.observation || faceStatusLabel(item.punch.faceValidationStatus);

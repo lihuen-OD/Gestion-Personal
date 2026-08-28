@@ -225,8 +225,31 @@ export interface OpenShiftRiskResult {
   expectedExitAt: Date | null;
 }
 
-// El olvido de salida se marca en base a la salida esperada del turno, sin esperar al límite absoluto de seguridad.
-export function evaluateOpenShiftRisk(input: { startAt: Date; now: Date; template: ShiftTemplateRef | null }): OpenShiftRiskResult {
+/**
+ * El olvido de salida se marca en base a la salida esperada del turno, sin
+ * esperar al límite absoluto de seguridad.
+ *
+ * Etapa 10E: sin turno (o con turno pero sin `missingOutAlertAfterMinutes`
+ * configurado), antes de esta etapa `missingOutThresholdMinutes` quedaba
+ * `null` para siempre — el nivel nunca llegaba a MISSING_OUT, sólo saltaba
+ * directo a EXPIRED al límite absoluto (20h default). Como
+ * `checkMissingOutRisk` sólo actúa en MISSING_OUT (EXPIRED lo maneja
+ * `expireOpenWorkShifts`, que con régimen ROLLOVER cierra en 0h sin generar
+ * ninguna alerta), esto significaba que un olvido de salida sin turno nunca
+ * generaba `ShiftAlert` en ningún momento — aunque sí aparecía correctamente
+ * en Asistencia (que no depende de ShiftAlert). Hallazgo confirmado en la
+ * auditoría 10E.
+ *
+ * Fix: usar el mismo default ya establecido para "jornada larga"
+ * (`DEFAULT_MAXIMUM_INFORMATIVE_MINUTES`, el que ya usa JORNADA_EXTENDIDA
+ * cuando no hay turno) como umbral de aviso temprano por defecto.
+ * `suppressMissingOutDefault` (true cuando el régimen vigente tiene
+ * `alertOnOutOfShift=false`, resuelto por el llamador) apaga sólo este
+ * default — nunca un umbral explícito ya configurado en un turno real — para
+ * no reintroducir ruido en empleados de régimen flexible/cosecha, que son
+ * justamente los que más probablemente no tienen turno asignado.
+ */
+export function evaluateOpenShiftRisk(input: { startAt: Date; now: Date; template: ShiftTemplateRef | null; suppressMissingOutDefault?: boolean }): OpenShiftRiskResult {
   const minutesOpen = differenceInMinutes(input.now, input.startAt);
   const absoluteLimitMinutes = input.template?.absoluteOpenShiftLimitMinutes ?? DEFAULT_ABSOLUTE_OPEN_SHIFT_LIMIT_MINUTES;
 
@@ -236,6 +259,8 @@ export function evaluateOpenShiftRisk(input: { startAt: Date; now: Date; templat
   if (input.template && input.template.missingOutAlertAfterMinutes !== null && expectedExitAt) {
     const expectedMinutesToExit = differenceInMinutes(expectedExitAt, input.startAt);
     missingOutThresholdMinutes = expectedMinutesToExit + input.template.exitToleranceAfterMinutes + input.template.missingOutAlertAfterMinutes;
+  } else if (!input.suppressMissingOutDefault) {
+    missingOutThresholdMinutes = DEFAULT_MAXIMUM_INFORMATIVE_MINUTES;
   }
 
   const level: OpenShiftRiskLevel =

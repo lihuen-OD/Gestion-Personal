@@ -104,15 +104,29 @@ export async function createShiftAlert(input: { employeeId: string; workShiftId:
     create: { employeeId: input.employeeId, workShiftId: input.workShiftId, type: input.type, severity, scheduledAt: input.scheduledAt, actualAt: input.actualAt, differenceMinutes: input.differenceMinutes ?? undefined },
     update: { actualAt: input.actualAt, scheduledAt: input.scheduledAt, differenceMinutes: input.differenceMinutes ?? undefined, severity, status: "PENDIENTE" },
   });
-  await notifyUsers(await attendanceRecipients(input.employeeId), {
-    type: "ALERTA_FICHADA",
-    title: labelByAlertType[input.type],
-    message: "La fichada requiere seguimiento. Las horas no fueron modificadas automáticamente.",
-    entityType: "ShiftAlert",
-    entityId: alert.id,
-    link: "/asistencia",
-    priority: "ALTA",
-  });
+  // Etapa 10E: la notificación es best-effort — un fallo acá (ej. un
+  // problema transitorio de DB al insertar SystemNotification) nunca debe
+  // tirar abajo la fichada real que ya se confirmó, ni impedir que la alerta
+  // ya persistida quede registrada. Mismo criterio ya usado para
+  // resolveOpenShiftOverflowAlert (Etapa 10B).
+  try {
+    await notifyUsers(await attendanceRecipients(input.employeeId), {
+      type: "ALERTA_FICHADA",
+      title: labelByAlertType[input.type],
+      message: "La fichada requiere seguimiento. Las horas no fueron modificadas automáticamente.",
+      entityType: "ShiftAlert",
+      entityId: alert.id,
+      link: "/asistencia",
+      priority: "ALTA",
+    });
+  } catch (error) {
+    console.error("SHIFT_ALERT_NOTIFY_FAILED", {
+      severity: "warning",
+      shiftAlertId: alert.id,
+      type: input.type,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
   return alert;
 }
 

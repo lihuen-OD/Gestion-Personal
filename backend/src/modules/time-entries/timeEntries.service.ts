@@ -537,27 +537,52 @@ function faceStatusObservation(status: ClockPhotoPunchInput["faceValidationStatu
 }
 
 export async function notifyMissingExit(employeeId: string, workShiftId: string) {
-  await notifyUsers(await attendanceRecipients(employeeId), {
-    type: "FALTA_SALIDA",
-    title: "Falta registrar la salida",
-    message: "La jornada venció sin salida registrada y requiere revisión.",
-    entityType: "WorkShift",
-    entityId: workShiftId,
-    link: "/asistencia",
-    priority: "ALTA",
-  });
+  // Etapa 10E: best-effort — 3 de los 4 llamadores (clockInResolved/clockIn
+  // por foto y por app) corren dentro de la request en vivo del fichador; un
+  // fallo acá (ej. problema transitorio de DB) no debe tirar abajo una
+  // fichada/rollover que ya se confirmó. El único llamador restante
+  // (clockPunchMaintenance.ts, cron) ya tenía su propio try/catch por item —
+  // ese wrapper externo queda como defensa redundante, inofensiva.
+  try {
+    await notifyUsers(await attendanceRecipients(employeeId), {
+      type: "FALTA_SALIDA",
+      title: "Falta registrar la salida",
+      message: "La jornada venció sin salida registrada y requiere revisión.",
+      entityType: "WorkShift",
+      entityId: workShiftId,
+      link: "/asistencia",
+      priority: "ALTA",
+    });
+  } catch (error) {
+    console.error("MISSING_EXIT_NOTIFY_FAILED", {
+      severity: "warning",
+      workShiftId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
 }
 
 async function notifyOpenShiftAttempt(employeeId: string) {
-  await notifyUsers(await attendanceRecipients(employeeId), {
-    type: "INTENTO_INGRESO_JORNADA_ABIERTA",
-    title: "Intento de ingreso con jornada abierta",
-    message: "Se intentó registrar un nuevo ingreso mientras ya había una jornada abierta.",
-    entityType: "Employee",
-    entityId: employeeId,
-    link: "/asistencia",
-    priority: "ALTA",
-  });
+  // Etapa 10E: mismo criterio que notifyMissingExit — este llamador corre
+  // dentro de la request en vivo del fichador (intento de ingreso con
+  // jornada ya abierta).
+  try {
+    await notifyUsers(await attendanceRecipients(employeeId), {
+      type: "INTENTO_INGRESO_JORNADA_ABIERTA",
+      title: "Intento de ingreso con jornada abierta",
+      message: "Se intentó registrar un nuevo ingreso mientras ya había una jornada abierta.",
+      entityType: "Employee",
+      entityId: employeeId,
+      link: "/asistencia",
+      priority: "ALTA",
+    });
+  } catch (error) {
+    console.error("OPEN_SHIFT_ATTEMPT_NOTIFY_FAILED", {
+      severity: "warning",
+      employeeId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
 }
 
 export function timeEntriesExportToCsv(rows: TimeEntriesExportRow[]) {

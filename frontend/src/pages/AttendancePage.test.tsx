@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { AttendancePage } from "./AttendancePage";
-import { attendanceApiService, type AttendanceShift, type AttendanceSummary } from "../services/api/attendanceApiService";
+import { attendanceApiService, type AttendanceObservation, type AttendanceShift, type AttendanceSummary } from "../services/api/attendanceApiService";
 
 vi.mock("../services/api/attendanceApiService", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../services/api/attendanceApiService")>();
@@ -106,5 +106,26 @@ describe("AttendancePage — Etapa 9B (refresh silencioso del poll de 60s)", () 
     resolvePoll(buildSummary({ openShifts: [buildShift({ id: "shift-2", employee: { id: "employee-2", legajo: "200", dni: "30999888", firstName: "Luis", lastName: "Perez", status: "ACTIVO" } })] }));
 
     await vi.waitFor(() => expect(screen.getByText("Perez, Luis")).toBeInTheDocument());
+  });
+});
+
+describe("AttendancePage — Etapa 10E (traducción de problemas de fichada, sin enums crudos)", () => {
+  it("una jornada con status FALTA_SALIDA se muestra como 'Falta registrar la salida', nunca como el enum crudo", async () => {
+    vi.mocked(attendanceApiService.getSummary).mockResolvedValueOnce(buildSummary({ totals: { open: 0, closed: 0, observed: 1, workedHours: 0 }, openShifts: [] }));
+    const observation: AttendanceObservation = {
+      kind: "SHIFT",
+      occurredAt: "2026-08-27T20:00:00.000Z",
+      shift: buildShift({ id: "shift-falta-salida", status: "FALTA_SALIDA", reviewStatus: "PENDIENTE" }),
+    };
+    vi.mocked(attendanceApiService.getObservations).mockResolvedValueOnce({
+      data: [observation],
+      meta: { total: 1, pageSize: 10, hasMore: false, nextBefore: null },
+    });
+
+    renderPage();
+
+    await screen.findByText("Falta registrar la salida");
+    expect(screen.queryByText(/FALTA_SALIDA/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/FALTA SALIDA/)).not.toBeInTheDocument();
   });
 });

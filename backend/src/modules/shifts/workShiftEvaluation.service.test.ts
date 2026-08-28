@@ -357,6 +357,59 @@ describe("evaluateOpenShiftRisk", () => {
   });
 });
 
+describe("evaluateOpenShiftRisk — Etapa 10E (default de olvido de salida sin turno, hallazgo: Asistencia lo detectaba, Alertas de Turnos nunca)", () => {
+  it("sin turno, supera el default (600 min) sin llegar al límite absoluto -> MISSING_OUT (antes de este fix quedaba NORMAL para siempre)", () => {
+    const result = evaluateOpenShiftRisk({ startAt: at(0, 0, 10), now: at(10, 30, 10), template: null }); // 10h30 = 630 min
+    expect(result.level).toBe("MISSING_OUT");
+    expect(result.missingOutThresholdMinutes).toBe(600);
+  });
+
+  it("sin turno, todavía dentro del default (600 min) -> NORMAL", () => {
+    const result = evaluateOpenShiftRisk({ startAt: at(0, 0, 10), now: at(9, 0, 10), template: null }); // 9h = 540 min
+    expect(result.level).toBe("NORMAL");
+  });
+
+  it("sin turno + suppressMissingOutDefault=true (régimen alertOnOutOfShift=false) mantiene NORMAL más allá del default, hasta el límite absoluto", () => {
+    const result = evaluateOpenShiftRisk({ startAt: at(0, 0, 10), now: at(10, 30, 10), template: null, suppressMissingOutDefault: true }); // 630 min
+    expect(result.level).toBe("NORMAL");
+    expect(result.missingOutThresholdMinutes).toBeNull();
+  });
+
+  it("turno sin missingOutAlertAfterMinutes configurado también usa el default (600) en vez de quedar sin aviso para siempre", () => {
+    const shiftSinAlerta = template({ id: "sin-alerta-2", code: "SIN-ALERTA-2", startTime: "07:00", endTime: "15:30" });
+    const result = evaluateOpenShiftRisk({ startAt: at(7, 0), now: at(17, 30), template: shiftSinAlerta }); // 10h30 abierto
+    expect(result.level).toBe("MISSING_OUT");
+    expect(result.missingOutThresholdMinutes).toBe(600);
+  });
+
+  it("turno sin missingOutAlertAfterMinutes + suppressMissingOutDefault=true (régimen flexible) mantiene NORMAL", () => {
+    const shiftSinAlerta = template({ id: "sin-alerta-3", code: "SIN-ALERTA-3", startTime: "07:00", endTime: "15:30" });
+    const result = evaluateOpenShiftRisk({ startAt: at(7, 0), now: at(17, 30), template: shiftSinAlerta, suppressMissingOutDefault: true });
+    expect(result.level).toBe("NORMAL");
+  });
+
+  it("un turno con missingOutAlertAfterMinutes explícito NUNCA se suprime por régimen — sólo el default sin turno se suprime", () => {
+    const shift = template({ id: "reg-explicito", code: "REG-EXPLICITO", startTime: "07:00", endTime: "15:30", exitToleranceAfterMinutes: 20, missingOutAlertAfterMinutes: 60 });
+    const result = evaluateOpenShiftRisk({ startAt: at(7, 0), now: at(16, 50), template: shift, suppressMissingOutDefault: true });
+    // Mismo caso que el test "jornada abierta supera la salida esperada..." de arriba —
+    // el umbral explícito del turno (590 min) sigue aplicando igual, suppressMissingOutDefault
+    // sólo apaga el FALLBACK cuando no hay ningún umbral configurado, nunca uno real.
+    expect(result.level).toBe("MISSING_OUT");
+    expect(result.missingOutThresholdMinutes).toBe(590);
+  });
+
+  it("turno nocturno (sereno, cruza medianoche) sin missingOutAlertAfterMinutes también usa el default (600) — el fallback no depende de crossesMidnight", () => {
+    // nightShift entra 23:00 y no tiene missingOutAlertAfterMinutes configurado (ver template() defaults).
+    // Abierta desde las 23:00 hasta las 09:30 del día siguiente = 630 min.
+    const result = evaluateOpenShiftRisk({ startAt: at(23, 0, 10), now: at(9, 30, 11), template: nightShift });
+    expect(result.level).toBe("MISSING_OUT");
+    expect(result.missingOutThresholdMinutes).toBe(600);
+    // La salida esperada (04:00 del día siguiente) se sigue calculando igual, sin cambios.
+    expect(result.expectedExitAt?.getDate()).toBe(11);
+    expect(result.expectedExitAt?.getHours()).toBe(4);
+  });
+});
+
 describe("evaluateNewEntryWithOpenShift", () => {
   it("bloquea nuevo ingreso si la jornada previa es del mismo día y está normal", () => {
     const decision = evaluateNewEntryWithOpenShift({ previousOpenShiftStartAt: at(7, 0), now: at(12, 0), previousShiftRisk: "NORMAL" });

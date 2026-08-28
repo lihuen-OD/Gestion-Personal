@@ -35,6 +35,12 @@ const SEVERITY_TONE: Record<ShiftAlertSeverity, "neutral" | "warning" | "danger"
   CRITICA: "danger",
 };
 
+const SEVERITY_LABELS: Record<ShiftAlertSeverity, string> = {
+  INFO: "Informativa",
+  ADVERTENCIA: "Advertencia",
+  CRITICA: "Crítica",
+};
+
 const STATUS_TONE: Record<ShiftAlertStatus, "warning" | "success" | "neutral"> = {
   PENDIENTE: "warning",
   RESUELTA: "success",
@@ -143,7 +149,7 @@ export function ShiftAlertsPage() {
           onClear={() => { setSearch(""); setType(""); setSeverity(""); setStatus("PENDIENTE"); }}
         >
           <label>Tipo<select value={type} onChange={(e) => setType(e.target.value as ShiftAlertType | "")}><option value="">Todos</option>{Object.entries(TYPE_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-          <label>Severidad<select value={severity} onChange={(e) => setSeverity(e.target.value as ShiftAlertSeverity | "")}><option value="">Todas</option><option value="INFO">Informativa</option><option value="ADVERTENCIA">Advertencia</option><option value="CRITICA">Crítica</option></select></label>
+          <label>Severidad<select value={severity} onChange={(e) => setSeverity(e.target.value as ShiftAlertSeverity | "")}><option value="">Todas</option>{Object.entries(SEVERITY_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
           <label>Estado<select value={status} onChange={(e) => setStatus(e.target.value as ShiftAlertStatus | "ALL")}><option value="PENDIENTE">Pendientes</option><option value="RESUELTA">Resueltas</option><option value="DESCARTADA">Descartadas</option><option value="ALL">Todas</option></select></label>
         </FilterPanel>
 
@@ -176,7 +182,7 @@ export function ShiftAlertsPage() {
                     <tr key={alert.id}>
                       <td><b>{alert.employee.lastName}, {alert.employee.firstName}</b><span className="table-sub">Legajo {alert.employee.legajo}</span></td>
                       <td>{TYPE_LABELS[alert.type]}</td>
-                      <td><Badge tone={SEVERITY_TONE[alert.severity]}>{alert.severity}</Badge></td>
+                      <td><Badge tone={SEVERITY_TONE[alert.severity]}>{SEVERITY_LABELS[alert.severity]}</Badge></td>
                       <td>{alert.workShift.shiftTemplate ? `${alert.workShift.shiftTemplate.code} · ${alert.workShift.shiftTemplate.name}` : <em>Sin turno</em>}</td>
                       <td>{differenceLabel(alert)}</td>
                       <td>{formatDateTime(alert.actualAt)}</td>
