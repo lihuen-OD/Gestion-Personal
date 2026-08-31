@@ -30,15 +30,22 @@ const RECURRENCE_LABELS: Record<RuleFormState["recurrenceType"], string> = {
   RANGO: "Rango de fechas",
 };
 
-// Etapa 12B: el nombre de la regla es sólo texto visible — esta clasificación
-// es el dato estructurado que otros módulos (a futuro, Turnos) podrán leer
-// sin depender de cómo RRHH haya nombrado la regla.
+// Etapa 12B/12C: el nombre de la regla es sólo texto visible — esta
+// clasificación es el dato estructurado que otros módulos (a futuro, Turnos)
+// podrán leer sin depender de cómo RRHH haya nombrado la regla.
 const KIND_LABELS: Record<DoubleHourRuleKind, string> = {
   FERIADO: "Feriado",
   DOMINGO: "Domingo",
-  JORNADA_ESPECIAL: "Día especial laboral",
+  JORNADA_ESPECIAL: "Jornada especial",
   OTRO: "Otro",
 };
+const KIND_FILTER_OPTIONS: Array<{ value: DoubleHourRuleKind | ""; label: string }> = [
+  { value: "", label: "Todas" },
+  { value: "FERIADO", label: "Feriado" },
+  { value: "DOMINGO", label: "Domingo" },
+  { value: "JORNADA_ESPECIAL", label: "Jornada especial" },
+  { value: "OTRO", label: "Otro" },
+];
 
 type RuleFormState = {
   name: string;
@@ -106,6 +113,12 @@ export function WorkScheduleSettingsPage() {
   const [editingRuleId, setEditingRuleId] = useState<string>();
   const [rule, setRule] = useState<RuleFormState>(emptyRuleForm);
   const [newDateInput, setNewDateInput] = useState("");
+  // Etapa 12C: filtro por clasificación — client-side sobre `rules` (ya
+  // fetch-all, catálogo chico de configuración, mismo criterio ya usado para
+  // este listado) y, además, aplicado al calendario mensual vía el filtro
+  // `kind` que calendarPreview ya soporta desde 12B (evita traer/mostrar
+  // reglas de otro tipo en ambos lugares con un único control).
+  const [kindFilter, setKindFilter] = useState<DoubleHourRuleKind | "">("");
   // El calendario visual (SpecialHourRulesCalendarMonth) tiene su propio fetch,
   // desacoplado de `rules` — nada lo avisaba cuando una regla se creaba/editaba/
   // activaba/borraba, así que quedaba con datos del último mes cargado. Este
@@ -291,6 +304,8 @@ export function WorkScheduleSettingsPage() {
 
   if (roleLevel(user!.role) !== 1) return <Navigate to="/" />;
 
+  const visibleRules = kindFilter ? rules.filter((item) => item.kind === kindFilter) : rules;
+
   return (
     <>
       <PageHeader eyebrow="CONFIGURACIÓN" title="Horas especiales" description="Configurá reglas como domingos, feriados o casos especiales para calcular el valor liquidable de las horas registradas." />
@@ -323,14 +338,17 @@ export function WorkScheduleSettingsPage() {
                 <small>Si dos reglas se superponen en la misma fecha, se aplica la de mayor prioridad.</small>
               </label>
               <label className="field">
-                <span>Tipo de día especial</span>
+                <span>Clasificación</span>
                 <select value={rule.kind} onChange={(e) => setRule({ ...rule, kind: e.target.value as DoubleHourRuleKind })}>
                   <option value="FERIADO">Feriado</option>
                   <option value="DOMINGO">Domingo</option>
-                  <option value="JORNADA_ESPECIAL">Día especial laboral</option>
+                  <option value="JORNADA_ESPECIAL">Jornada especial</option>
                   <option value="OTRO">Otro</option>
                 </select>
-                <small>El tipo se usa para que otros módulos sepan cómo interpretar estas fechas. El nombre de la regla es sólo descriptivo.</small>
+                <small>El nombre es sólo descriptivo. La clasificación indica cómo otros módulos interpretan estas fechas.</small>
+                {rule.kind === "FERIADO" ? (
+                  <small className="rule-scope-help">Las fechas clasificadas como Feriado podrán usarse más adelante para asignar quiénes trabajan un feriado en Turnos.</small>
+                ) : null}
               </label>
               <label className="field field-wide">
                 <span>Motivo o descripción</span>
@@ -496,6 +514,21 @@ export function WorkScheduleSettingsPage() {
             <span>{tableError}</span>
           </div>
         ) : null}
+        {rules.length ? (
+          <div className="rule-kind-filter">
+            <label>
+              <span>Filtrar por clasificación</span>
+              <select value={kindFilter} onChange={(e) => setKindFilter(e.target.value as DoubleHourRuleKind | "")}>
+                {KIND_FILTER_OPTIONS.map((option) => (
+                  <option key={option.value || "TODAS"} value={option.value}>{option.label}</option>
+                ))}
+              </select>
+            </label>
+            {rules.some((item) => item.kind === "OTRO") ? (
+              <small className="rule-scope-help">Las reglas en &quot;Otro&quot; se aplican para liquidación, pero no aparecerán como feriados para futuras asignaciones de Turnos.</small>
+            ) : null}
+          </div>
+        ) : null}
         {isLoading ? (
           <LoadingState text="Cargando reglas de horas especiales..." />
         ) : (
@@ -505,7 +538,7 @@ export function WorkScheduleSettingsPage() {
                 <thead>
                   <tr>
                     <th>Regla</th>
-                    <th>Tipo</th>
+                    <th>Clasificación</th>
                     <th>Calendario</th>
                     <th>Período</th>
                     <th>Multiplicador</th>
@@ -517,7 +550,7 @@ export function WorkScheduleSettingsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {rules.map((item) => (
+                  {visibleRules.map((item) => (
                     <tr key={item.id}>
                       <td><b>{item.name}</b></td>
                       <td><Badge tone="neutral">{KIND_LABELS[item.kind]}</Badge></td>
@@ -546,13 +579,17 @@ export function WorkScheduleSettingsPage() {
                 </tbody>
               </table>
             </TableShell>
-            {!rules.length ? <EmptyState text="Todavía no hay reglas de horas especiales." /> : null}
+            {!rules.length ? (
+              <EmptyState text="Todavía no hay reglas de horas especiales." />
+            ) : !visibleRules.length ? (
+              <EmptyState text={`No hay reglas clasificadas como "${KIND_LABELS[kindFilter as DoubleHourRuleKind]}".`} />
+            ) : null}
           </>
         )}
       </Section>
 
       <Section className="schedule-settings-section" title="Calendario de reglas" subtitle="Visualizá qué reglas aplican cada día y detectá superposiciones.">
-        <SpecialHourRulesCalendarMonth refreshToken={calendarRefreshToken} />
+        <SpecialHourRulesCalendarMonth refreshToken={calendarRefreshToken} kindFilter={kindFilter || undefined} />
       </Section>
     </>
   );

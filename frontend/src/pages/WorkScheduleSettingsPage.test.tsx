@@ -91,6 +91,17 @@ async function fillRequiredBaseFields(user: ReturnType<typeof userEvent.setup>) 
   await user.type(desde, "2026-01-01");
 }
 
+// El select "Clasificación" del formulario y el select "Filtrar por
+// clasificación" de la tabla (Etapa 12C) comparten la subcadena
+// "clasificación" en su nombre accesible (que además incluye el texto de
+// cada <option>, igual que ya pasaba con "Prioridad"/su <small> desde la
+// Etapa 10D) — con reglas cargadas en la tabla, ambos matchean por texto.
+// Se acota al <form> (el filtro vive fuera de él, en la sección de listado)
+// para no depender de qué reglas estén mockeadas en cada test.
+function classificationSelect() {
+  return within(document.querySelector("form")!).getByLabelText("Clasificación", { exact: false }) as HTMLSelectElement;
+}
+
 function existingRule(overrides: Partial<DoubleHourRule> = {}): DoubleHourRule {
   return {
     id: "rule-1",
@@ -270,22 +281,36 @@ describe("WorkScheduleSettingsPage — Etapa 8B", () => {
   });
 });
 
-describe("WorkScheduleSettingsPage — Etapa 12B (clasificación estructurada, kind)", () => {
-  it("el formulario arranca con Tipo de día especial = Otro (default seguro, sin regla creada todavía)", async () => {
+describe("WorkScheduleSettingsPage — Etapa 12B/12C (clasificación estructurada, kind)", () => {
+  it("el formulario arranca con Clasificación = Otro (default seguro, sin regla creada todavía)", async () => {
     renderPage();
     await waitFor(() => expect(orgStructureApiService.getCatalog).toHaveBeenCalled());
 
-    expect((screen.getByLabelText("Tipo de día especial", { exact: false }) as HTMLSelectElement).value).toBe("OTRO");
+    expect(classificationSelect().value).toBe("OTRO");
   });
 
-  it("el copy del campo no usa lenguaje técnico (sin 'kind', 'enum' ni nombres de columna)", async () => {
+  it("el copy del campo no usa lenguaje técnico (sin 'kind', 'enum', 'DoubleHourRule', 'API', 'schema' ni 'backend')", async () => {
     renderPage();
     await waitFor(() => expect(orgStructureApiService.getCatalog).toHaveBeenCalled());
 
     expect(
-      screen.getByText("El tipo se usa para que otros módulos sepan cómo interpretar estas fechas. El nombre de la regla es sólo descriptivo."),
+      screen.getByText("El nombre es sólo descriptivo. La clasificación indica cómo otros módulos interpretan estas fechas."),
     ).toBeInTheDocument();
-    expect(screen.queryByText(/kind|enum|DoubleHourRule/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/kind|enum|DoubleHourRule|schema|backend|\bAPI\b/i)).not.toBeInTheDocument();
+  });
+
+  it("al elegir 'Feriado' aparece el aviso de que esas fechas podrán usarse a futuro en Turnos — con otra clasificación, no aparece", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await waitFor(() => expect(orgStructureApiService.getCatalog).toHaveBeenCalled());
+
+    expect(screen.queryByText(/podrán usarse más adelante para asignar/i)).not.toBeInTheDocument();
+
+    await user.selectOptions(classificationSelect(), "FERIADO");
+    expect(screen.getByText(/Las fechas clasificadas como Feriado podrán usarse más adelante para asignar quiénes trabajan un feriado en Turnos\./i)).toBeInTheDocument();
+
+    await user.selectOptions(classificationSelect(), "DOMINGO");
+    expect(screen.queryByText(/podrán usarse más adelante para asignar/i)).not.toBeInTheDocument();
   });
 
   it("seleccionar 'Feriado' y crear la regla manda kind: 'FERIADO' en el payload", async () => {
@@ -294,7 +319,7 @@ describe("WorkScheduleSettingsPage — Etapa 12B (clasificación estructurada, k
     await waitFor(() => expect(orgStructureApiService.getCatalog).toHaveBeenCalled());
 
     await fillRequiredBaseFields(user);
-    await user.selectOptions(screen.getByLabelText("Tipo de día especial", { exact: false }), "FERIADO");
+    await user.selectOptions(classificationSelect(), "FERIADO");
     await user.click(screen.getByRole("button", { name: /crear regla/i }));
 
     await waitFor(() => expect(workforceApiService.createDoubleHourRule).toHaveBeenCalled());
@@ -302,8 +327,24 @@ describe("WorkScheduleSettingsPage — Etapa 12B (clasificación estructurada, k
     expect(payload.kind).toBe("FERIADO");
   });
 
-  it("editar una regla existente precarga su clasificación real (no el default)", async () => {
-    const rule = existingRule({ kind: "FERIADO" });
+  it("seleccionar 'Domingo' y crear la regla manda kind: 'DOMINGO' en el payload", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await waitFor(() => expect(orgStructureApiService.getCatalog).toHaveBeenCalled());
+
+    await fillRequiredBaseFields(user);
+    await user.selectOptions(classificationSelect(), "DOMINGO");
+    await user.click(screen.getByRole("button", { name: /crear regla/i }));
+
+    await waitFor(() => expect(workforceApiService.createDoubleHourRule).toHaveBeenCalled());
+    const payload = vi.mocked(workforceApiService.createDoubleHourRule).mock.calls[0]![0];
+    expect(payload.kind).toBe("DOMINGO");
+  });
+
+  it("editar una regla existente precarga su clasificación real (no el default) y no la infiere del nombre", async () => {
+    // Nombre "Domingo" pero clasificada FERIADO — si algo infiriera por
+    // nombre, precargaría DOMINGO en vez del valor real guardado.
+    const rule = existingRule({ name: "Domingo", kind: "FERIADO" });
     vi.mocked(workforceApiService.doubleHourRules).mockResolvedValue([rule]);
     const user = userEvent.setup();
     renderPage();
@@ -311,15 +352,97 @@ describe("WorkScheduleSettingsPage — Etapa 12B (clasificación estructurada, k
     await screen.findByText("Domingo", { selector: "b" });
     await user.click(screen.getByRole("button", { name: /editar domingo/i }));
 
-    expect((screen.getByLabelText("Tipo de día especial", { exact: false }) as HTMLSelectElement).value).toBe("FERIADO");
+    expect(classificationSelect().value).toBe("FERIADO");
   });
 
-  it("la tabla de reglas muestra la clasificación de cada regla sin depender del nombre — 'Domingo' clasificada como Feriado se lista como 'Feriado', no como 'Domingo'", async () => {
-    const rule = existingRule({ name: "Domingo", kind: "FERIADO" });
+  it("cambiar la clasificación de una regla existente y guardar manda el nuevo kind en el payload de update", async () => {
+    const rule = existingRule({ kind: "OTRO" });
     vi.mocked(workforceApiService.doubleHourRules).mockResolvedValue([rule]);
+    vi.mocked(workforceApiService.updateDoubleHourRule).mockResolvedValue({ ...rule, kind: "DOMINGO" });
+    const user = userEvent.setup();
     renderPage();
 
     await screen.findByText("Domingo", { selector: "b" });
+    await user.click(screen.getByRole("button", { name: /editar domingo/i }));
+    await user.selectOptions(classificationSelect(), "DOMINGO");
+    await user.click(screen.getByRole("button", { name: /guardar cambios/i }));
+
+    await waitFor(() => expect(workforceApiService.updateDoubleHourRule).toHaveBeenCalled());
+    const [, payload] = vi.mocked(workforceApiService.updateDoubleHourRule).mock.calls[0]!;
+    expect(payload.kind).toBe("DOMINGO");
+  });
+
+  it("la tabla muestra la clasificación de cada regla sin depender del nombre — 'Pedro' clasificada Feriado se lista como 'Feriado'", async () => {
+    const rule = existingRule({ id: "rule-pedro", name: "Pedro", kind: "FERIADO" });
+    vi.mocked(workforceApiService.doubleHourRules).mockResolvedValue([rule]);
+    renderPage();
+
+    await screen.findByText("Pedro", { selector: "b" });
+    expect(screen.getByText("Feriado", { selector: "span" })).toBeInTheDocument();
+  });
+
+  it("la tabla no infiere por nombre — 'Feriados' clasificada Otro se lista como 'Otro', no como 'Feriado'", async () => {
+    const rule = existingRule({ id: "rule-feriados", name: "Feriados", kind: "OTRO" });
+    vi.mocked(workforceApiService.doubleHourRules).mockResolvedValue([rule]);
+    renderPage();
+
+    await screen.findByText("Feriados", { selector: "b" });
+    expect(screen.getByText("Otro", { selector: "span" })).toBeInTheDocument();
+    expect(screen.queryByText("Feriado", { selector: "span" })).not.toBeInTheDocument();
+  });
+
+  it("con al menos una regla clasificada Otro, muestra el aviso informativo de que no alimentará las futuras asignaciones de feriado", async () => {
+    vi.mocked(workforceApiService.doubleHourRules).mockResolvedValue([existingRule({ kind: "OTRO" })]);
+    renderPage();
+    await screen.findByText("Domingo", { selector: "b" });
+    expect(screen.getByText(/Las reglas en "Otro" se aplican para liquidación, pero no aparecerán como feriados/i)).toBeInTheDocument();
+  });
+
+  it("sin ninguna regla clasificada Otro, no muestra el aviso informativo", async () => {
+    vi.mocked(workforceApiService.doubleHourRules).mockResolvedValue([existingRule({ kind: "FERIADO" })]);
+    renderPage();
+    await screen.findByText("Domingo", { selector: "b" });
+    expect(screen.queryByText(/no aparecerán como feriados/i)).not.toBeInTheDocument();
+  });
+
+  it("el filtro 'Filtrar por clasificación' muestra sólo las reglas del tipo elegido en la tabla", async () => {
+    const feriado = existingRule({ id: "rule-feriado", name: "Feriado nacional", kind: "FERIADO" });
+    const domingo = existingRule({ id: "rule-domingo", name: "Domingo", kind: "DOMINGO" });
+    vi.mocked(workforceApiService.doubleHourRules).mockResolvedValue([feriado, domingo]);
+    const user = userEvent.setup();
+    renderPage();
+
+    await screen.findByText("Domingo", { selector: "b" });
+    expect(screen.getByText("Feriado nacional", { selector: "b" })).toBeInTheDocument();
+
+    await user.selectOptions(screen.getByLabelText("Filtrar por clasificación"), "FERIADO");
+
+    expect(screen.getByText("Feriado nacional", { selector: "b" })).toBeInTheDocument();
+    expect(screen.queryByText("Domingo", { selector: "b" })).not.toBeInTheDocument();
+  });
+
+  it("el filtro por clasificación se aplica también al calendario mensual (mismo kind que la tabla)", async () => {
+    vi.mocked(workforceApiService.doubleHourRules).mockResolvedValue([existingRule()]);
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByText("Domingo", { selector: "b" });
+    await waitFor(() => expect(workforceApiService.doubleHourRulesCalendar).toHaveBeenCalledWith(expect.any(String), expect.any(String), undefined));
+
+    await user.selectOptions(screen.getByLabelText("Filtrar por clasificación"), "FERIADO");
+
+    await waitFor(() => expect(workforceApiService.doubleHourRulesCalendar).toHaveBeenCalledWith(expect.any(String), expect.any(String), "FERIADO"));
+  });
+
+  it("el calendario y el listado siguen funcionando con reglas de distinto kind, sin romper por el campo nuevo", async () => {
+    vi.mocked(workforceApiService.doubleHourRules).mockResolvedValue([
+      existingRule({ id: "rule-1", name: "Domingo", kind: "DOMINGO" }),
+      existingRule({ id: "rule-2", name: "Feriados", kind: "FERIADO", recurrenceType: "FECHA", dates: [{ id: "d1", date: "2026-12-25", isActive: true }] }),
+    ]);
+    renderPage();
+
+    await screen.findByText("Domingo", { selector: "b" });
+    expect(screen.getByText("Feriados", { selector: "b" })).toBeInTheDocument();
+    expect(screen.getByText("Domingo", { selector: "span" })).toBeInTheDocument();
     expect(screen.getByText("Feriado", { selector: "span" })).toBeInTheDocument();
   });
 });

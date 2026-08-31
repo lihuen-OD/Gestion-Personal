@@ -1,9 +1,19 @@
 import { useEffect, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, AlertTriangle } from "lucide-react";
-import { workforceApiService, type DoubleHourRuleCalendarDay } from "../../services/api/workforceApiService";
+import { workforceApiService, type DoubleHourRuleCalendarDay, type DoubleHourRuleKind } from "../../services/api/workforceApiService";
 import { LoadingState } from "../ui/LoadingState";
 
 const WEEKDAY_LABELS = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"];
+
+// Etapa 12C: mismo copy discreto usado en la tabla de reglas — la
+// clasificación se muestra en el tooltip de cada chip, no como texto/badge
+// visible en la grilla, para no sobrecargar el calendario.
+const KIND_LABELS: Record<DoubleHourRuleKind, string> = {
+  FERIADO: "Feriado",
+  DOMINGO: "Domingo",
+  JORNADA_ESPECIAL: "Jornada especial",
+  OTRO: "Otro",
+};
 
 function monthRange(year: number, month: number) {
   return { from: new Date(Date.UTC(year, month, 1)), to: new Date(Date.UTC(year, month + 1, 0)) };
@@ -28,7 +38,11 @@ function toDateKey(date: Date) {
 // valor. El refetch por cambio de token es SILENCIOSO (no vuelve a mostrar
 // el esqueleto de carga ni borra la grilla mientras llega la respuesta) —
 // sólo el primer fetch de cada mes muestra el loading de página completa.
-export function SpecialHourRulesCalendarMonth({ refreshToken }: { refreshToken?: number } = {}) {
+// Etapa 12C: `kindFilter` opcional — mismo filtro `kind` que la tabla de
+// reglas usa client-side, aplicado acá al pedido real de calendarPreview
+// (backend, Etapa 12B) para no mostrar en el calendario reglas de un tipo
+// distinto al que RRHH está revisando en la tabla.
+export function SpecialHourRulesCalendarMonth({ refreshToken, kindFilter }: { refreshToken?: number; kindFilter?: DoubleHourRuleKind } = {}) {
   const today = new Date();
   const [cursor, setCursor] = useState({ year: today.getUTCFullYear(), month: today.getUTCMonth() });
   const [daysByDate, setDaysByDate] = useState<Map<string, DoubleHourRuleCalendarDay>>(new Map());
@@ -50,7 +64,7 @@ export function SpecialHourRulesCalendarMonth({ refreshToken }: { refreshToken?:
       if (isInitialLoadForMonth) setIsLoading(true);
       try {
         const { from, to } = monthRange(cursor.year, cursor.month);
-        const days = await workforceApiService.doubleHourRulesCalendar(toDateKey(from), toDateKey(to));
+        const days = await workforceApiService.doubleHourRulesCalendar(toDateKey(from), toDateKey(to), kindFilter);
         if (cancelled) return;
         setDaysByDate(new Map(days.map((day) => [day.date, day])));
         setError("");
@@ -69,7 +83,7 @@ export function SpecialHourRulesCalendarMonth({ refreshToken }: { refreshToken?:
     return () => {
       cancelled = true;
     };
-  }, [cursor, refreshToken]);
+  }, [cursor, refreshToken, kindFilter]);
 
   const { from } = monthRange(cursor.year, cursor.month);
   const daysInMonth = new Date(Date.UTC(cursor.year, cursor.month + 1, 0)).getUTCDate();
@@ -119,7 +133,7 @@ export function SpecialHourRulesCalendarMonth({ refreshToken }: { refreshToken?:
               <div key={cell.dateKey} className={`special-hours-calendar-cell${cellClass}`}>
                 <span className="special-hours-calendar-day-number">{cell.day}</span>
                 {day?.rules.map((appliedRule) => (
-                  <span key={appliedRule.id} className="special-hours-calendar-chip" title={`Prioridad ${appliedRule.priority}`}>
+                  <span key={appliedRule.id} className="special-hours-calendar-chip" title={`${KIND_LABELS[appliedRule.kind]} · Prioridad ${appliedRule.priority}`}>
                     {appliedRule.name} x{appliedRule.multiplier}
                   </span>
                 ))}
