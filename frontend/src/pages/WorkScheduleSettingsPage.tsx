@@ -20,6 +20,7 @@ import { SpecialHourRulesCalendarMonth } from "../components/workforce/SpecialHo
 import { useAuth } from "../context/AuthContext";
 import { roleLevel } from "../utils/roles";
 import { DOUBLE_HOUR_MULTIPLIER_MAX, DOUBLE_HOUR_MULTIPLIER_MIN, doubleHourMultiplierError } from "../utils/doubleHourRule";
+import type { DoubleHourRuleKind } from "../services/api/workforceApiService";
 
 const WEEKDAY_LABELS = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"];
 
@@ -27,6 +28,16 @@ const RECURRENCE_LABELS: Record<RuleFormState["recurrenceType"], string> = {
   SEMANAL: "Días de semana",
   FECHA: "Fechas específicas",
   RANGO: "Rango de fechas",
+};
+
+// Etapa 12B: el nombre de la regla es sólo texto visible — esta clasificación
+// es el dato estructurado que otros módulos (a futuro, Turnos) podrán leer
+// sin depender de cómo RRHH haya nombrado la regla.
+const KIND_LABELS: Record<DoubleHourRuleKind, string> = {
+  FERIADO: "Feriado",
+  DOMINGO: "Domingo",
+  JORNADA_ESPECIAL: "Día especial laboral",
+  OTRO: "Otro",
 };
 
 type RuleFormState = {
@@ -37,6 +48,7 @@ type RuleFormState = {
   weekdays: number[];
   multiplier: number;
   priority: number;
+  kind: DoubleHourRuleKind;
   companyId: string;
   sectorId: string;
   costCenterId: string;
@@ -53,6 +65,7 @@ const emptyRuleForm: RuleFormState = {
   weekdays: [],
   multiplier: 2,
   priority: 0,
+  kind: "OTRO",
   companyId: "",
   sectorId: "",
   costCenterId: "",
@@ -194,6 +207,7 @@ export function WorkScheduleSettingsPage() {
         weekdays: rule.weekdays,
         multiplier: rule.multiplier,
         priority: rule.priority,
+        kind: rule.kind,
         companyId: rule.companyId || null,
         sectorId: rule.sectorId || null,
         costCenterId: rule.costCenterId || null,
@@ -225,6 +239,7 @@ export function WorkScheduleSettingsPage() {
       weekdays: item.weekdays,
       multiplier: Number(item.multiplier),
       priority: item.priority,
+      kind: item.kind,
       companyId: item.companyId || "",
       sectorId: item.sectorId || "",
       costCenterId: item.costCenterId || "",
@@ -306,6 +321,16 @@ export function WorkScheduleSettingsPage() {
                 <span>Prioridad</span>
                 <input required type="number" min={0} max={1000} step="1" value={rule.priority} onChange={(e) => setRule({ ...rule, priority: e.target.valueAsNumber })} />
                 <small>Si dos reglas se superponen en la misma fecha, se aplica la de mayor prioridad.</small>
+              </label>
+              <label className="field">
+                <span>Tipo de día especial</span>
+                <select value={rule.kind} onChange={(e) => setRule({ ...rule, kind: e.target.value as DoubleHourRuleKind })}>
+                  <option value="FERIADO">Feriado</option>
+                  <option value="DOMINGO">Domingo</option>
+                  <option value="JORNADA_ESPECIAL">Día especial laboral</option>
+                  <option value="OTRO">Otro</option>
+                </select>
+                <small>El tipo se usa para que otros módulos sepan cómo interpretar estas fechas. El nombre de la regla es sólo descriptivo.</small>
               </label>
               <label className="field field-wide">
                 <span>Motivo o descripción</span>
@@ -475,11 +500,12 @@ export function WorkScheduleSettingsPage() {
           <LoadingState text="Cargando reglas de horas especiales..." />
         ) : (
           <>
-            <TableShell minWidth={1320}>
+            <TableShell minWidth={1420}>
               <table>
                 <thead>
                   <tr>
                     <th>Regla</th>
+                    <th>Tipo</th>
                     <th>Calendario</th>
                     <th>Período</th>
                     <th>Multiplicador</th>
@@ -494,6 +520,7 @@ export function WorkScheduleSettingsPage() {
                   {rules.map((item) => (
                     <tr key={item.id}>
                       <td><b>{item.name}</b></td>
+                      <td><Badge tone="neutral">{KIND_LABELS[item.kind]}</Badge></td>
                       <td>{RECURRENCE_LABELS[item.recurrenceType]}</td>
                       <td>{new Date(item.fromDate).toLocaleDateString("es-AR")}{item.toDate ? ` – ${new Date(item.toDate).toLocaleDateString("es-AR")}` : ""}</td>
                       <td>x{Number(item.multiplier)}</td>

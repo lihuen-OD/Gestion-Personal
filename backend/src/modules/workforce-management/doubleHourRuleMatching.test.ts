@@ -47,6 +47,27 @@ describe("ruleMatchesDate", () => {
   });
 });
 
+describe("Etapa 12B — el motor de matching/prioridad ignora `kind` (clasificación estructurada)", () => {
+  const sunday = new Date("2026-08-16T00:00:00.000Z");
+
+  it("ruleMatchesDate matchea igual sin importar el kind de la regla — la función ni siquiera lo lee", () => {
+    const feriado = { id: "r1", recurrenceType: "SEMANAL" as const, fromDate: new Date("2026-01-01"), toDate: null, weekdays: [0], kind: "FERIADO" as const };
+    const otro = { id: "r2", recurrenceType: "SEMANAL" as const, fromDate: new Date("2026-01-01"), toDate: null, weekdays: [0], kind: "OTRO" as const };
+    expect(ruleMatchesDate(feriado, sunday, new Map())).toBe(ruleMatchesDate(otro, sunday, new Map()));
+    expect(ruleMatchesDate(feriado, sunday, new Map())).toBe(true);
+  });
+
+  it("resolveWinningRules resuelve prioridad/multiplicador igual sin importar el kind — una regla 'Pedro' clasificada FERIADO liquida exactamente igual que si fuera OTRO", () => {
+    const pedroComoFeriado = { priority: 2, multiplier: 2, kind: "FERIADO" as const };
+    const pedroComoOtro = { priority: 2, multiplier: 2, kind: "OTRO" as const };
+    const resultFeriado = resolveWinningRules([pedroComoFeriado]);
+    const resultOtro = resolveWinningRules([pedroComoOtro]);
+    expect(resultFeriado.multiplier).toBe(resultOtro.multiplier);
+    expect(resultFeriado.conflicting).toBe(resultOtro.conflicting);
+    expect(resultFeriado.winners).toHaveLength(resultOtro.winners.length);
+  });
+});
+
 describe("resolveWinningRules", () => {
   it("sin reglas: multiplicador 1, sin ganadoras, sin conflicto", () => {
     expect(resolveWinningRules([])).toEqual({ winners: [], multiplier: 1, conflicting: false });

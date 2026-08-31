@@ -1305,9 +1305,9 @@ Todas las rutas requieren `requireAuth`.
 | GET / POST | `/notifications`, `/notifications/:id/read`, `/notifications-unread-count` | todos | Notificaciones internas del sistema |
 | GET / POST / PATCH / DELETE | `/shift-templates*` | RRHH (escritura) | Plantillas de turno |
 | GET / POST / PATCH / DELETE | `/double-hour-rules*` | RRHH (escritura) | Reglas de Horas Especiales (`DoubleHourRule`) |
-| GET | `/double-hour-rules/calendar?from&to` | todos los operativos | Preview de calendario de Horas Especiales (ver abajo) |
+| GET | `/double-hour-rules/calendar?from&to&kind` | todos los operativos | Preview de calendario de Horas Especiales (ver abajo) |
 
-#### Horas Especiales (`/double-hour-rules*`) — Etapa 8B
+#### Horas Especiales (`/double-hour-rules*`) — Etapa 8B (extendido en 12B)
 
 Body de `POST`/`PATCH` (todos los campos de scope y `dates` son opcionales; `updateDoubleRuleSchema` acepta un subconjunto parcial):
 
@@ -1320,6 +1320,7 @@ Body de `POST`/`PATCH` (todos los campos de scope y `dates` son opcionales; `upd
   "weekdays": [0],
   "multiplier": 2.5,
   "priority": 5,
+  "kind": "DOMINGO",
   "companyId": "uuid-o-null",
   "sectorId": "uuid-o-null",
   "costCenterId": "uuid-o-null",
@@ -1333,7 +1334,8 @@ Body de `POST`/`PATCH` (todos los campos de scope y `dates` son opcionales; `upd
 - `employeeIds` ya no es obligatorio (antes exigía `.min(1)`) — `[]` significa "sin restricción por persona". `companyId`/`sectorId`/`costCenterId`/`positionId` son independientes y opcionales; todas las dimensiones configuradas (incluida `employeeIds` cuando no está vacío) combinan con **AND**. Sin ninguna configurada, la regla alcanza a cualquier empleado que efectivamente trabaje/fiche.
 - `priority` (default `0`, mayor gana) resuelve superposición: si 2+ reglas activas matchean el mismo tramo, gana la de mayor prioridad; si empatan en la mayor, se marca conflicto (`SpecialHourRuleApplication.wasConflicting = true`) y se aplica el multiplicador mayor entre las empatadas como resolución determinística — no bloquea la fichada. Política fija por ahora (no configurable por regla); ver `docs/decisions/HORAS_ESPECIALES_8B.md` para lo que queda pendiente.
 - `dates` sólo aplica cuando `recurrenceType = "FECHA"` — reemplaza el uso de `fromDate` como "la única fecha": una regla FECHA puede tener muchas fechas (feriados) o una sola. `fromDate`/`toDate` enviados para una regla FECHA se ignoran — el backend los recalcula como min/max de `dates`.
-- `GET /double-hour-rules/calendar?from=YYYY-MM-DD&to=YYYY-MM-DD` (rango máximo 400 días): para cada fecha con al menos una regla `ACTIVO` cuyo calendario matchea, devuelve `{ date, rules: [{ id, name, priority, multiplier }], hasOverlap, hasConflict }`. Es un preview de **configuración** (heurístico de alcance, sin fichadas reales) — la resolución exacta por empleado sigue ocurriendo sólo en el motor al fichar.
+- `kind` (`FERIADO | DOMINGO | JORNADA_ESPECIAL | OTRO`, default `OTRO` — Etapa 12B): clasificación estructurada, independiente de `name` (que sigue siendo sólo texto visible, nunca se usa para lógica ni de matching ni de liquidación). Reglas creadas antes de esta etapa quedaron en `OTRO` por default de la migración, sin inferencia por nombre — requieren reclasificación explícita desde la UI. Ver `docs/decisions/SPECIAL_HOUR_RULE_CLASSIFICATION_12A.md`/`SPECIAL_HOUR_RULE_CLASSIFICATION_12B.md`.
+- `GET /double-hour-rules/calendar?from=YYYY-MM-DD&to=YYYY-MM-DD&kind=FERIADO` (rango máximo 400 días; `kind` opcional, Etapa 12B): para cada fecha con al menos una regla `ACTIVO` cuyo calendario matchea (y cuyo `kind` coincide, si se pasó el filtro), devuelve `{ date, rules: [{ id, name, priority, multiplier, kind }], hasOverlap, hasConflict }`. Sin `kind`, comportamiento idéntico al de antes de la Etapa 12B (sin filtro). Es un preview de **configuración** (heurístico de alcance, sin fichadas reales) — la resolución exacta por empleado sigue ocurriendo sólo en el motor al fichar.
 
 ### Dashboard (`dashboard`, montado en `/api/dashboard`)
 

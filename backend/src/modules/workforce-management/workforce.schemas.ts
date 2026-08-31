@@ -33,6 +33,11 @@ export const shiftTemplateSchema = z.object({
   status: z.enum(["ACTIVO", "INACTIVO"]).default("ACTIVO"),
 });
 export const updateShiftTemplateSchema = shiftTemplateSchema.partial().refine((value) => Object.keys(value).length > 0, { message: "Indicá al menos un dato para actualizar" });
+// Etapa 12B: clasificación estructurada, independiente del nombre libre
+// (`name` sigue siendo sólo texto visible, nunca se usa para lógica). Sin
+// `kind` en el body, queda en OTRO — mismo valor seguro que aplica la
+// migración a las reglas existentes, nunca se infiere por nombre.
+export const doubleHourRuleKindSchema = z.enum(["FERIADO", "DOMINGO", "JORNADA_ESPECIAL", "OTRO"]);
 // Etapa 8B: employeeIds ya no es obligatorio — [] significa "sin restricción
 // por persona" (alcanza a todos dentro del resto del alcance configurado).
 // companyId/sectorId/costCenterId/positionId son todos opcionales y
@@ -48,6 +53,7 @@ const doubleRuleBaseSchema = z.object({
   weekdays: z.array(z.number().int().min(0).max(6)).max(7).default([]),
   multiplier: z.coerce.number().min(1).max(5).default(2),
   priority: z.coerce.number().int().min(0).max(1000).default(0),
+  kind: doubleHourRuleKindSchema.default("OTRO"),
   companyId: z.string().uuid().optional().nullable(),
   sectorId: z.string().uuid().optional().nullable(),
   costCenterId: z.string().uuid().optional().nullable(),
@@ -76,4 +82,8 @@ export const updateDoubleRuleSchema = doubleRuleBaseSchema.partial().superRefine
     ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Una regla de fechas específicas necesita al menos una fecha cargada.", path: ["dates"] });
   }
 });
-export const calendarRangeQuerySchema = z.object({ from: z.coerce.date(), to: z.coerce.date() }).refine((value) => value.to >= value.from, { message: "'to' debe ser posterior o igual a 'from'" }).refine((value) => (value.to.getTime() - value.from.getTime()) / 86_400_000 <= 400, { message: "El rango de calendario no puede superar los 400 días" });
+// Etapa 12B: `kind` opcional — sin mandarlo, calendarPreview se comporta
+// exactamente igual que antes (sin filtro). Con `kind=FERIADO`, sólo
+// devuelve reglas clasificadas como feriado — es el filtro que consumiría a
+// futuro la pantalla de asignaciones de feriado de Turnos.
+export const calendarRangeQuerySchema = z.object({ from: z.coerce.date(), to: z.coerce.date(), kind: doubleHourRuleKindSchema.optional() }).refine((value) => value.to >= value.from, { message: "'to' debe ser posterior o igual a 'from'" }).refine((value) => (value.to.getTime() - value.from.getTime()) / 86_400_000 <= 400, { message: "El rango de calendario no puede superar los 400 días" });

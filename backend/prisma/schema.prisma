@@ -256,6 +256,20 @@ enum RecurrenceType {
   SEMANAL
 }
 
+// Etapa 12B: clasificación estructurada de una DoubleHourRule — nunca se
+// infiere del nombre libre (`DoubleHourRule.name`), que sigue siendo sólo
+// texto visible. Sólo FERIADO alimentará la futura pantalla de asignaciones
+// de trabajo en feriados de Turnos (ver docs/decisions/
+// SPECIAL_HOUR_RULE_CLASSIFICATION_12A.md). Default OTRO: las reglas
+// existentes nunca se reclasifican por adivinanza de nombre, quedan en OTRO
+// hasta que RRHH las reclasifique explícitamente desde la UI.
+enum DoubleHourRuleKind {
+  FERIADO
+  DOMINGO
+  JORNADA_ESPECIAL
+  OTRO
+}
+
 // Comportamientos genéricos, no nombres de cliente. Instancias concretas
 // (Cosecha, Riego, Campaña, Jornada libre controlada, etc.) son datos
 // configurables de WorkRegime, nunca valores de este enum.
@@ -1260,6 +1274,9 @@ model DoubleHourRule {
   // se resuelve igual que antes (mayor multiplicador) pero queda marcado
   // como conflicto en SpecialHourRuleApplication.wasConflicting.
   priority                    Int                          @default(0)
+  // Etapa 12B: clasificación estructurada, independiente del nombre libre —
+  // ver DoubleHourRuleKind. Default OTRO, sin backfill por nombre.
+  kind                        DoubleHourRuleKind           @default(OTRO)
   // Etapa 8B: alcance opcional — null = sin restricción en esa dimensión.
   // Todas las dimensiones configuradas (compañía/sector/centro de
   // costo/puesto/empleados específicos) combinan con AND. Sin ninguna

@@ -78,6 +78,10 @@ export type ShiftTemplateInput = {
   absoluteOpenShiftLimitMinutes: number;
   status?: "ACTIVO" | "INACTIVO";
 };
+// Etapa 12B: clasificación estructurada — independiente del nombre libre de
+// la regla (`name` sigue siendo sólo texto visible). Sólo FERIADO alimentaría
+// a futuro el filtro de asignaciones de feriado de Turnos.
+export type DoubleHourRuleKind = "FERIADO" | "DOMINGO" | "JORNADA_ESPECIAL" | "OTRO";
 // Etapa 8B: companyId/sectorId/costCenterId/positionId son alcance opcional
 // (null = sin restricción en esa dimensión, combina con AND con el resto y
 // con employeeIds). priority desempata superposición (mayor gana). dates
@@ -92,6 +96,7 @@ export type DoubleHourRule = {
   weekdays: number[];
   multiplier: number | string;
   priority: number;
+  kind: DoubleHourRuleKind;
   companyId?: string | null;
   sectorId?: string | null;
   costCenterId?: string | null;
@@ -113,6 +118,7 @@ export type DoubleHourRuleInput = {
   weekdays: number[];
   multiplier: number;
   priority: number;
+  kind?: DoubleHourRuleKind;
   companyId?: string | null;
   sectorId?: string | null;
   costCenterId?: string | null;
@@ -124,7 +130,7 @@ export type DoubleHourRuleInput = {
 };
 export type DoubleHourRuleCalendarDay = {
   date: string;
-  rules: Array<{ id: string; name: string; priority: number; multiplier: number }>;
+  rules: Array<{ id: string; name: string; priority: number; multiplier: number; kind: DoubleHourRuleKind }>;
   hasOverlap: boolean;
   hasConflict: boolean;
 };
@@ -184,7 +190,13 @@ export const workforceApiService = {
   createDoubleHourRule(input: DoubleHourRuleInput) { return apiRequest<{ data: DoubleHourRule }>("/workforce/double-hour-rules", { method: "POST", body: input }).then((response) => response.data); },
   updateDoubleHourRule(id: string, input: Partial<DoubleHourRuleInput>) { return apiRequest<{ data: DoubleHourRule }>(`/workforce/double-hour-rules/${id}`, { method: "PATCH", body: input }).then((response) => response.data); },
   removeDoubleHourRule(id: string) { return apiRequest<{ data: { mode: "DELETED" | "INACTIVATED"; id?: string; item?: DoubleHourRule } }>(`/workforce/double-hour-rules/${id}`, { method: "DELETE" }).then((response) => response.data); },
-  doubleHourRulesCalendar(from: string, to: string) {
-    return apiRequest<{ data: DoubleHourRuleCalendarDay[] }>(`/workforce/double-hour-rules/calendar?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`, { apiCache: false }).then((response) => response.data);
+  // Etapa 12B: `kind` opcional — sin pasarlo, comportamiento idéntico al de
+  // antes de esta etapa (sin filtro). Pensado para el futuro filtro de
+  // asignaciones de feriado de Turnos (kind="FERIADO"), no usado todavía por
+  // ninguna pantalla.
+  doubleHourRulesCalendar(from: string, to: string, kind?: DoubleHourRuleKind) {
+    const query = new URLSearchParams({ from, to });
+    if (kind) query.set("kind", kind);
+    return apiRequest<{ data: DoubleHourRuleCalendarDay[] }>(`/workforce/double-hour-rules/calendar?${query.toString()}`, { apiCache: false }).then((response) => response.data);
   },
 };

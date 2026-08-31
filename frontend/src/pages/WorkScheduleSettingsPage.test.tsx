@@ -101,6 +101,7 @@ function existingRule(overrides: Partial<DoubleHourRule> = {}): DoubleHourRule {
     weekdays: [0],
     multiplier: 2,
     priority: 0,
+    kind: "OTRO",
     companyId: null,
     sectorId: null,
     costCenterId: null,
@@ -207,7 +208,7 @@ describe("WorkScheduleSettingsPage — Etapa 8B", () => {
 
   it("test 7 — el calendario muestra la alerta de superposición cuando el backend la reporta", async () => {
     vi.mocked(workforceApiService.doubleHourRulesCalendar).mockResolvedValue([
-      { date: new Date().toISOString().slice(0, 10), rules: [{ id: "r1", name: "Domingo", priority: 1, multiplier: 2 }, { id: "r2", name: "Feriado", priority: 1, multiplier: 2 }], hasOverlap: true, hasConflict: false },
+      { date: new Date().toISOString().slice(0, 10), rules: [{ id: "r1", name: "Domingo", priority: 1, multiplier: 2, kind: "DOMINGO" }, { id: "r2", name: "Feriado", priority: 1, multiplier: 2, kind: "FERIADO" }], hasOverlap: true, hasConflict: false },
     ]);
     renderPage();
 
@@ -269,6 +270,60 @@ describe("WorkScheduleSettingsPage — Etapa 8B", () => {
   });
 });
 
+describe("WorkScheduleSettingsPage — Etapa 12B (clasificación estructurada, kind)", () => {
+  it("el formulario arranca con Tipo de día especial = Otro (default seguro, sin regla creada todavía)", async () => {
+    renderPage();
+    await waitFor(() => expect(orgStructureApiService.getCatalog).toHaveBeenCalled());
+
+    expect((screen.getByLabelText("Tipo de día especial", { exact: false }) as HTMLSelectElement).value).toBe("OTRO");
+  });
+
+  it("el copy del campo no usa lenguaje técnico (sin 'kind', 'enum' ni nombres de columna)", async () => {
+    renderPage();
+    await waitFor(() => expect(orgStructureApiService.getCatalog).toHaveBeenCalled());
+
+    expect(
+      screen.getByText("El tipo se usa para que otros módulos sepan cómo interpretar estas fechas. El nombre de la regla es sólo descriptivo."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/kind|enum|DoubleHourRule/i)).not.toBeInTheDocument();
+  });
+
+  it("seleccionar 'Feriado' y crear la regla manda kind: 'FERIADO' en el payload", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await waitFor(() => expect(orgStructureApiService.getCatalog).toHaveBeenCalled());
+
+    await fillRequiredBaseFields(user);
+    await user.selectOptions(screen.getByLabelText("Tipo de día especial", { exact: false }), "FERIADO");
+    await user.click(screen.getByRole("button", { name: /crear regla/i }));
+
+    await waitFor(() => expect(workforceApiService.createDoubleHourRule).toHaveBeenCalled());
+    const payload = vi.mocked(workforceApiService.createDoubleHourRule).mock.calls[0]![0];
+    expect(payload.kind).toBe("FERIADO");
+  });
+
+  it("editar una regla existente precarga su clasificación real (no el default)", async () => {
+    const rule = existingRule({ kind: "FERIADO" });
+    vi.mocked(workforceApiService.doubleHourRules).mockResolvedValue([rule]);
+    const user = userEvent.setup();
+    renderPage();
+
+    await screen.findByText("Domingo", { selector: "b" });
+    await user.click(screen.getByRole("button", { name: /editar domingo/i }));
+
+    expect((screen.getByLabelText("Tipo de día especial", { exact: false }) as HTMLSelectElement).value).toBe("FERIADO");
+  });
+
+  it("la tabla de reglas muestra la clasificación de cada regla sin depender del nombre — 'Domingo' clasificada como Feriado se lista como 'Feriado', no como 'Domingo'", async () => {
+    const rule = existingRule({ name: "Domingo", kind: "FERIADO" });
+    vi.mocked(workforceApiService.doubleHourRules).mockResolvedValue([rule]);
+    renderPage();
+
+    await screen.findByText("Domingo", { selector: "b" });
+    expect(screen.getByText("Feriado", { selector: "span" })).toBeInTheDocument();
+  });
+});
+
 // Corrección: el calendario (SpecialHourRulesCalendarMonth) tenía su propio
 // fetch, desacoplado del listado — crear/editar/activar/borrar una regla
 // nunca le llegaba ninguna señal y quedaba mostrando el mes visible con
@@ -294,7 +349,7 @@ describe("WorkScheduleSettingsPage — Etapa 8B (corrección: sincronización de
     const user = userEvent.setup();
     renderPage();
     await waitFor(() => expect(workforceApiService.doubleHourRulesCalendar).toHaveBeenCalledTimes(1));
-    await screen.findByText("Domingo");
+    await screen.findByText("Domingo", { selector: "b" });
 
     await user.click(screen.getByRole("button", { name: /editar domingo/i }));
     await user.click(screen.getByRole("button", { name: /guardar cambios/i }));
@@ -310,7 +365,7 @@ describe("WorkScheduleSettingsPage — Etapa 8B (corrección: sincronización de
     const user = userEvent.setup();
     renderPage();
     await waitFor(() => expect(workforceApiService.doubleHourRulesCalendar).toHaveBeenCalledTimes(1));
-    await screen.findByText("Domingo");
+    await screen.findByText("Domingo", { selector: "b" });
 
     await user.click(screen.getByRole("button", { name: /editar domingo/i }));
     const priorityInput = screen.getByLabelText("Prioridad", { exact: false }) as HTMLInputElement;
@@ -329,7 +384,7 @@ describe("WorkScheduleSettingsPage — Etapa 8B (corrección: sincronización de
     const user = userEvent.setup();
     renderPage();
     await waitFor(() => expect(workforceApiService.doubleHourRulesCalendar).toHaveBeenCalledTimes(1));
-    await screen.findByText("Domingo");
+    await screen.findByText("Domingo", { selector: "b" });
 
     await user.click(screen.getByRole("button", { name: /editar domingo/i }));
     const dateInput = screen.getByLabelText("Nueva fecha") as HTMLInputElement;
@@ -348,7 +403,7 @@ describe("WorkScheduleSettingsPage — Etapa 8B (corrección: sincronización de
     const today = new Date().toISOString().slice(0, 10);
     vi.mocked(workforceApiService.doubleHourRulesCalendar)
       .mockResolvedValueOnce([]) // carga inicial: sin superposición
-      .mockResolvedValueOnce([{ date: today, rules: [{ id: "r1", name: "Domingo", priority: 1, multiplier: 2 }, { id: "r2", name: "Feriado", priority: 1, multiplier: 2 }], hasOverlap: true, hasConflict: false }]);
+      .mockResolvedValueOnce([{ date: today, rules: [{ id: "r1", name: "Domingo", priority: 1, multiplier: 2, kind: "DOMINGO" }, { id: "r2", name: "Feriado", priority: 1, multiplier: 2, kind: "FERIADO" }], hasOverlap: true, hasConflict: false }]);
     const user = userEvent.setup();
     renderPage();
     await waitFor(() => expect(workforceApiService.doubleHourRulesCalendar).toHaveBeenCalledTimes(1));
@@ -365,14 +420,14 @@ describe("WorkScheduleSettingsPage — Etapa 8B (corrección: sincronización de
     const user = userEvent.setup();
     renderPage();
     await waitFor(() => expect(workforceApiService.doubleHourRulesCalendar).toHaveBeenCalledTimes(1));
-    await screen.findByText("Domingo"); // listado ya cargado
+    await screen.findByText("Domingo", { selector: "b" }); // listado ya cargado
 
     await fillRequiredBaseFields(user);
     await user.click(screen.getByRole("button", { name: /crear regla/i }));
 
     await waitFor(() => expect(workforceApiService.doubleHourRulesCalendar).toHaveBeenCalledTimes(2));
     // El listado sigue en pantalla durante y después del refresh — nunca se vació.
-    expect(screen.getByText("Domingo")).toBeInTheDocument();
+    expect(screen.getByText("Domingo", { selector: "b" })).toBeInTheDocument();
     // El refresh fue silencioso: no volvió a aparecer el esqueleto de carga completo del calendario.
     expect(screen.queryByText("Cargando calendario...")).not.toBeInTheDocument();
   });
@@ -419,7 +474,7 @@ describe("WorkScheduleSettingsPage — Etapa 8B (rediseño visual: copy funciona
     vi.mocked(workforceApiService.doubleHourRules).mockResolvedValue([existingRule()]);
     const user = userEvent.setup();
     renderPage();
-    await screen.findByText("Domingo");
+    await screen.findByText("Domingo", { selector: "b" });
 
     await user.click(screen.getByRole("button", { name: /editar domingo/i }));
 
@@ -507,7 +562,7 @@ describe("WorkScheduleSettingsPage — Etapa 8B (corrección: errores contenidos
     vi.mocked(workforceApiService.updateDoubleHourRule).mockRejectedValue(new Error("No se pudo actualizar la regla."));
     const user = userEvent.setup();
     renderPage();
-    await screen.findByText("Domingo");
+    await screen.findByText("Domingo", { selector: "b" });
 
     await user.click(screen.getByRole("button", { name: /editar domingo/i }));
     await user.click(screen.getByRole("button", { name: /guardar cambios/i }));
@@ -523,7 +578,7 @@ describe("WorkScheduleSettingsPage — Etapa 8B (corrección: errores contenidos
     vi.mocked(workforceApiService.updateDoubleHourRule).mockRejectedValue(new Error("No se pudo cambiar el estado."));
     const user = userEvent.setup();
     renderPage();
-    await screen.findByText("Domingo");
+    await screen.findByText("Domingo", { selector: "b" });
 
     await user.click(screen.getByRole("button", { name: /inactivar domingo/i }));
 
@@ -544,7 +599,7 @@ describe("WorkScheduleSettingsPage — Etapa 8C (corrección: acciones de la tab
     );
     const user = userEvent.setup();
     renderPage();
-    await screen.findByText("Domingo");
+    await screen.findByText("Domingo", { selector: "b" });
 
     expect(screen.getByRole("button", { name: /editar domingo/i })).not.toBeDisabled();
     expect(screen.getByRole("button", { name: /inactivar domingo/i })).not.toBeDisabled();
@@ -579,7 +634,7 @@ describe("WorkScheduleSettingsPage — Etapa 9B (corrección: la tabla de reglas
     expect(screen.getByText("Cargando reglas de horas especiales...")).toBeInTheDocument();
 
     resolveList([existingRule()]);
-    await screen.findByText("Domingo");
+    await screen.findByText("Domingo", { selector: "b" });
     expect(screen.queryByText("Cargando reglas de horas especiales...")).not.toBeInTheDocument();
   });
 
@@ -588,7 +643,7 @@ describe("WorkScheduleSettingsPage — Etapa 9B (corrección: la tabla de reglas
     vi.mocked(workforceApiService.updateDoubleHourRule).mockResolvedValue(existingRule({ status: "INACTIVO" }));
     const user = userEvent.setup();
     renderPage();
-    await screen.findByText("Domingo");
+    await screen.findByText("Domingo", { selector: "b" });
 
     // toggleRule() hace `await updateDoubleHourRule(...)` y recién después
     // `await load()` (que vuelve a pedir doubleHourRules()) — se controla
@@ -600,7 +655,7 @@ describe("WorkScheduleSettingsPage — Etapa 9B (corrección: la tabla de reglas
     await user.click(screen.getByRole("button", { name: /inactivar domingo/i }));
 
     await waitFor(() => expect(workforceApiService.updateDoubleHourRule).toHaveBeenCalled());
-    expect(screen.getByText("Domingo")).toBeInTheDocument();
+    expect(screen.getByText("Domingo", { selector: "b" })).toBeInTheDocument();
     expect(screen.queryByText("Cargando reglas de horas especiales...")).not.toBeInTheDocument();
 
     resolveReload([existingRule({ status: "INACTIVO" })]);

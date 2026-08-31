@@ -1,4 +1,4 @@
-import { Prisma } from "@prisma/client";
+import { Prisma, type DoubleHourRuleKind } from "@prisma/client";
 import { prisma } from "../../shared/prisma/client";
 import { AppError } from "../../shared/errors/AppError";
 import { employeeAccessWhere } from "../employees/employeeAccess";
@@ -314,13 +314,17 @@ export const workforceService = {
   // podrían superponerse (resolveWinningRules) — es una alerta de
   // configuración para RRHH, no la resolución real por empleado, que sólo
   // ocurre en el motor al fichar.
-  async calendarPreview(from: Date, to: Date) {
+  // Etapa 12B: `kind` opcional filtra por clasificación estructurada (nunca
+  // por nombre) — sin pasarlo, comportamiento idéntico al de antes de esta
+  // etapa. Es el filtro que consumiría a futuro la pantalla de asignaciones
+  // de feriado de Turnos (kind="FERIADO"), sin duplicar este cálculo.
+  async calendarPreview(from: Date, to: Date, kind?: DoubleHourRuleKind) {
     const rules = await prisma.doubleHourRule.findMany({
-      where: { status: "ACTIVO", fromDate: { lte: to }, OR: [{ toDate: null }, { toDate: { gte: from } }] },
+      where: { status: "ACTIVO", fromDate: { lte: to }, OR: [{ toDate: null }, { toDate: { gte: from } }], ...(kind ? { kind } : {}) },
       include: { employees: { select: { employeeId: true } }, dates: true },
     });
     const activeDatesByRule = buildActiveDatesByRule(rules);
-    const days: Array<{ date: string; rules: Array<{ id: string; name: string; priority: number; multiplier: number }>; hasOverlap: boolean; hasConflict: boolean }> = [];
+    const days: Array<{ date: string; rules: Array<{ id: string; name: string; priority: number; multiplier: number; kind: DoubleHourRuleKind }>; hasOverlap: boolean; hasConflict: boolean }> = [];
     for (let cursor = new Date(from); cursor <= to; cursor = new Date(cursor.getTime() + 86_400_000)) {
       const matched = rules.filter((rule) => ruleMatchesDate(rule, cursor, activeDatesByRule));
       if (!matched.length) continue;
@@ -335,7 +339,7 @@ export const workforceService = {
       const { conflicting } = resolveWinningRules(overlappingRules.length ? overlappingRules : matched);
       days.push({
         date: cursor.toISOString().slice(0, 10),
-        rules: matched.map((rule) => ({ id: rule.id, name: rule.name, priority: rule.priority, multiplier: Number(rule.multiplier) })),
+        rules: matched.map((rule) => ({ id: rule.id, name: rule.name, priority: rule.priority, multiplier: Number(rule.multiplier), kind: rule.kind })),
         hasOverlap,
         hasConflict: hasOverlap && conflicting,
       });

@@ -1,4 +1,5 @@
 import type { RequestHandler } from "express";
+import type { DoubleHourRuleKind } from "@prisma/client";
 import { requestAuditContext } from "../../shared/audit/requestAuditContext";
 import { requireParam } from "../../shared/http/params";
 import { workforceService } from "./workforce.service";
@@ -87,5 +88,8 @@ export const workforceController = {
     clearDoubleRulesReadCache();
     res.json({data});
   }) satisfies RequestHandler,
-  doubleRulesCalendar: (async (req,res)=>res.json({data:await workforceService.calendarPreview(new Date(String(req.query.from)),new Date(String(req.query.to)))})) satisfies RequestHandler,
+  // Etapa 12B: req.query.kind ya viene validado/coercido por
+  // validateQuery(calendarRangeQuerySchema) (mismo patrón que from/to) —
+  // undefined si no se mandó, sin filtro adicional en ese caso.
+  doubleRulesCalendar: (async (req,res)=>res.json({data:await workforceService.calendarPreview(new Date(String(req.query.from)),new Date(String(req.query.to)),req.query.kind as DoubleHourRuleKind|undefined)})) satisfies RequestHandler,
 };
