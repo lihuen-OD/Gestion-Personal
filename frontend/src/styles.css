@@ -2040,6 +2040,26 @@ a.employee-hours-status-item:hover{border-color:var(--ds-blue-300);background:va
 .special-hours-calendar-refresh-error{display:flex;align-items:flex-start;gap:6px;padding:8px 12px;border:1px solid #f0deb0;border-radius:10px;background:#fdf8ec;color:#8a6410;font-size:12px;line-height:1.5}
 .special-hours-calendar-refresh-error svg{flex:none;margin-top:1px;color:#c2932c}
 @media(max-width:900px){.special-hours-calendar-grid{grid-template-columns:repeat(7,minmax(40px,1fr));gap:3px}.special-hours-calendar-cell{min-height:60px;padding:3px}.special-hours-calendar-chip{font-size:9px}}
+
+/* Etapa 12D: Asignaciones de trabajo en feriados (Turnos). */
+.holiday-work-month-nav{display:flex;align-items:center;justify-content:center;gap:14px;margin-bottom:14px}
+.holiday-work-date-list{display:flex;flex-wrap:wrap;gap:8px}
+.holiday-work-date-chip{display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border:1px solid var(--color-border-light,#dfe8ee);border-radius:999px;background:#fff;font-size:13px;font-weight:600;color:#1f3a4d;cursor:pointer}
+.holiday-work-date-chip:hover{border-color:#14767d}
+.holiday-work-date-chip.is-selected{border-color:#14767d;background:#eef8f8;color:#14767d}
+.holiday-work-filters{display:flex;flex-wrap:wrap;align-items:flex-end;gap:14px;margin:16px 0}
+.holiday-work-filters .field{min-width:180px}
+.holiday-work-filters .search-field{min-width:220px}
+.holiday-work-without-shift-toggle{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;color:#1f3a4d;padding-bottom:10px}
+.holiday-work-quick-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:14px}
+.holiday-work-selected-count{margin-left:auto;font-size:12px;font-weight:700;color:var(--color-text-secondary,#64778a)}
+.holiday-work-time-inputs{display:flex;align-items:center;gap:6px}
+.holiday-work-time-inputs input{min-width:0;min-height:32px;padding:4px 6px;font-size:12px}
+.holiday-work-muted{color:var(--color-text-secondary,#64778a)}
+.holiday-work-save-bar{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-top:16px;padding-top:16px;border-top:1px solid var(--color-border-light,#e2e8f0)}
+.holiday-work-save-bar .rule-scope-help{flex:1;min-width:220px;margin:0}
+.holiday-work-section table tr.is-selected td{background:#f4fbfb}
+@media(max-width:640px){.holiday-work-filters{flex-direction:column;align-items:stretch}.holiday-work-filters .field,.holiday-work-filters .search-field{min-width:0}.holiday-work-save-bar{flex-direction:column;align-items:stretch}}
 @media(max-width:700px){.people-search-toolbar{align-items:stretch;flex-direction:column}.people-status-filter{min-width:0}}
 
 /* Auditoría UI/UX — variantes reutilizables (compact/embedded) para que un

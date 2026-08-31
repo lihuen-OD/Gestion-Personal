@@ -42,6 +42,7 @@ const WorkScheduleSettingsPage = lazy(() => import("./pages/WorkScheduleSettings
 const ShiftsPage = lazy(() => import("./pages/ShiftsPage").then((module) => ({ default: module.ShiftsPage })));
 const ShiftCreatePage = lazy(() => import("./pages/ShiftCreatePage").then((module) => ({ default: module.ShiftCreatePage })));
 const ShiftDetailPage = lazy(() => import("./pages/ShiftDetailPage").then((module) => ({ default: module.ShiftDetailPage })));
+const HolidayWorkAssignmentsPage = lazy(() => import("./pages/HolidayWorkAssignmentsPage").then((module) => ({ default: module.HolidayWorkAssignmentsPage })));
 
 function PageLoader() {
   return <LoadingState text="Cargando módulo..." />;
@@ -89,6 +90,7 @@ export function App() {
           <Route path="/configuracion/turnos" element={<ShiftsPage />} />
           <Route path="/configuracion/turnos/nuevo" element={<ShiftCreatePage />} />
           <Route path="/configuracion/turnos/:id" element={<ShiftDetailPage />} />
+          <Route path="/configuracion/turnos-asignaciones-feriados" element={<HolidayWorkAssignmentsPage />} />
           <Route path="/horas" element={<HoursPage />} />
           <Route path="/horas/:id" element={<EmployeeHoursPage />} />
           <Route path="/asistencia" element={<AttendancePage />} />

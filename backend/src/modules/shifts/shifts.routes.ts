@@ -9,6 +9,8 @@ import { shiftAssignmentController as c } from "./shiftAssignment.controller";
 import { createShiftAssignmentSchema, listShiftAssignmentsQuerySchema, updateShiftAssignmentSchema } from "./shiftAssignment.schemas";
 import { shiftAlertController } from "./shiftAlert.controller";
 import { listShiftAlertsQuerySchema, resolveShiftAlertSchema } from "./shiftAlert.schemas";
+import { holidayWorkAssignmentController } from "./holidayWorkAssignment.controller";
+import { holidayDatesQuerySchema, holidayWorkAssignmentsByDateQuerySchema, holidayWorkCandidatesQuerySchema, saveHolidayWorkAssignmentsSchema } from "./holidayWorkAssignment.schemas";
 
 export const shiftsRouter = Router();
 shiftsRouter.use(requireAuth);
@@ -23,3 +25,12 @@ shiftsRouter.delete("/assignments/:id", requireAnyRole([roles.rrhh]), asyncHandl
 
 shiftsRouter.get("/alerts", requireAnyRole(all), validateQuery(listShiftAlertsQuerySchema), asyncHandler(shiftAlertController.list));
 shiftsRouter.post("/alerts/:id/resolve", requireAnyRole([roles.rrhh, roles.supervision]), validateBody(resolveShiftAlertSchema), asyncHandler(shiftAlertController.resolve));
+
+// Etapa 12D: asignaciones de trabajo en feriados. Lectura para los mismos 3
+// roles operativos de siempre; escritura sólo RRHH — mismo criterio ya
+// usado para /assignments (ShiftAssignment) arriba, sin abrir permisos
+// nuevos sin justificar.
+shiftsRouter.get("/holiday-work/dates", requireAnyRole(all), validateQuery(holidayDatesQuerySchema), asyncHandler(holidayWorkAssignmentController.dates));
+shiftsRouter.get("/holiday-work/candidates", requireAnyRole(all), validateQuery(holidayWorkCandidatesQuerySchema), asyncHandler(holidayWorkAssignmentController.candidates));
+shiftsRouter.get("/holiday-work/assignments", requireAnyRole(all), validateQuery(holidayWorkAssignmentsByDateQuerySchema), asyncHandler(holidayWorkAssignmentController.listByDate));
+shiftsRouter.put("/holiday-work/assignments", requireAnyRole([roles.rrhh]), validateBody(saveHolidayWorkAssignmentsSchema), asyncHandler(holidayWorkAssignmentController.save));

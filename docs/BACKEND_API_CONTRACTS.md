@@ -1290,6 +1290,17 @@ Todas las rutas requieren `requireAuth`.
 | DELETE | `/assignments/:id` | RRHH | Quitar una asignación |
 | GET | `/alerts` | RRHH/Supervisión/Carga Horaria | Listar alertas de jornada abierta/vencida |
 | POST | `/alerts/:id/resolve` | RRHH/Supervisión | Resolver una alerta |
+| GET | `/holiday-work/dates?from&to` | RRHH/Supervisión/Carga Horaria | Fechas de feriado disponibles para convocar (Etapa 12D) |
+| GET | `/holiday-work/candidates?sectorId&shiftTemplateId&withoutShift&search&page&take` | RRHH/Supervisión/Carga Horaria | Empleados candidatos a convocar (con o sin turno habitual) |
+| GET | `/holiday-work/assignments?date` | RRHH/Supervisión/Carga Horaria | Convocatorias activas para una fecha |
+| PUT | `/holiday-work/assignments` | RRHH | Guardar convocatorias (upsert por empleado, ver abajo) |
+
+#### Asignaciones de trabajo en feriados (`/holiday-work/*`) — Etapa 12D
+
+- `GET /holiday-work/dates?from=YYYY-MM-DD&to=YYYY-MM-DD` (rango máximo 400 días): delega en `workforceService.holidayDatesInRange` (`workforce-management`, reutiliza `calendarPreview(kind=FERIADO)` sin duplicar el cálculo de calendario — ver `docs/decisions/SPECIAL_HOUR_RULE_CLASSIFICATION_12A.md`). Devuelve `[{ date, rules: [{ id, name }] }]` — nunca `multiplier`/`priority`/`hasOverlap`/`hasConflict` (eso es de liquidación, no de esta pantalla).
+- `GET /holiday-work/candidates`: empleados `status=ACTIVO` dentro del alcance del usuario (`employeeAccessWhere`), paginados (`take` máximo 500, default 100). `shiftTemplateId` filtra por `shiftAssignments` `HABILITADO`; `withoutShift=true` filtra a quienes no tienen ninguna. Devuelve, por empleado, su sector y sus turnos habituales activos.
+- `GET /holiday-work/assignments?date=YYYY-MM-DD`: convocatorias `status=ACTIVA` para esa fecha, dentro del alcance del usuario.
+- `PUT /holiday-work/assignments` — body `{ date, assignments: [{ employeeId, status?, shiftTemplateId?, expectedStartTime?, expectedEndTime?, notes? }] }` (`status` default `ACTIVA`). **Cada entrada es un upsert independiente para `(date, employeeId)` — nunca reemplaza todas las convocatorias ya guardadas para la fecha.** Un empleado no incluido en el body no se toca. `status=CANCELADA` desactiva sin borrar la fila (mismo criterio que `ShiftAssignment` `DESHABILITADO`); un `employeeId` repetido en el mismo body se rechaza. No crea `TimeSegment`/`TimeEntry`, no toca `DoubleHourRule` ni ninguna tabla de liquidación, no dispara notificaciones.
 
 ### Gestión de fuerza laboral (`workforce-management`, montado en `/api/workforce`)
 

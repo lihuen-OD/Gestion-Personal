@@ -431,6 +431,50 @@ describe("workforceService — FK reales sobre ShiftTemplate/DoubleHourRule", ()
     expect(unfiltered).toEqual([{ date: "2026-08-16", rules: [expect.objectContaining({ id: "domingo", kind: "DOMINGO" })], hasOverlap: false, hasConflict: false }]);
   });
 
+  it("Etapa 12D — holidayDatesInRange reutiliza calendarPreview(kind=FERIADO), sin duplicar el cálculo de calendario", async () => {
+    mockedPrisma.doubleHourRule.findMany.mockResolvedValue([]);
+
+    await workforceService.holidayDatesInRange(new Date("2026-08-01"), new Date("2026-08-31"));
+
+    const where = mockedPrisma.doubleHourRule.findMany.mock.calls[0]![0].where;
+    expect(where.kind).toBe("FERIADO");
+  });
+
+  it("Etapa 12D — holidayDatesInRange devuelve una forma angosta: sólo date y rules[{id,name}], sin multiplier/priority/hasOverlap/hasConflict", async () => {
+    const day = new Date("2026-08-16T00:00:00.000Z");
+    const pedroFeriado = { id: "pedro", name: "Pedro", recurrenceType: "FECHA" as const, fromDate: day, toDate: day, weekdays: [], priority: 3, multiplier: 2, kind: "FERIADO" as const, companyId: null, sectorId: null, costCenterId: null, positionId: null, employees: [], dates: [{ date: day, isActive: true }] };
+    mockedPrisma.doubleHourRule.findMany.mockResolvedValue([pedroFeriado]);
+
+    const result = await workforceService.holidayDatesInRange(day, day);
+
+    expect(result).toEqual([{ date: "2026-08-16", rules: [{ id: "pedro", name: "Pedro" }] }]);
+  });
+
+  it("Etapa 12D — una regla 'Pedro' clasificada FERIADO aparece en holidayDatesInRange; una 'Feriados' clasificada OTRO no", async () => {
+    const day = new Date("2026-08-16T00:00:00.000Z");
+    const pedroFeriado = { id: "pedro", name: "Pedro", recurrenceType: "FECHA" as const, fromDate: day, toDate: day, weekdays: [], priority: 0, multiplier: 2, kind: "FERIADO" as const, companyId: null, sectorId: null, costCenterId: null, positionId: null, employees: [], dates: [{ date: day, isActive: true }] };
+    const feriadosOtro = { id: "feriados-otro", name: "Feriados", recurrenceType: "FECHA" as const, fromDate: day, toDate: day, weekdays: [], priority: 0, multiplier: 2, kind: "OTRO" as const, companyId: null, sectorId: null, costCenterId: null, positionId: null, employees: [], dates: [{ date: day, isActive: true }] };
+    mockedPrisma.doubleHourRule.findMany.mockImplementation((args: { where?: { kind?: string } }) =>
+      Promise.resolve([pedroFeriado, feriadosOtro].filter((r) => r.kind === args?.where?.kind)),
+    );
+
+    const result = await workforceService.holidayDatesInRange(day, day);
+
+    expect(result).toEqual([{ date: "2026-08-16", rules: [{ id: "pedro", name: "Pedro" }] }]);
+  });
+
+  it("Etapa 12D — una regla clasificada DOMINGO no aparece en holidayDatesInRange", async () => {
+    const day = new Date("2026-08-16T00:00:00.000Z");
+    const domingo = { id: "domingo", name: "Domingo", recurrenceType: "SEMANAL" as const, fromDate: new Date("2026-01-01"), toDate: null, weekdays: [0], priority: 0, multiplier: 2, kind: "DOMINGO" as const, companyId: null, sectorId: null, costCenterId: null, positionId: null, employees: [], dates: [] };
+    mockedPrisma.doubleHourRule.findMany.mockImplementation((args: { where?: { kind?: string } }) =>
+      Promise.resolve(args?.where?.kind === "DOMINGO" ? [] : args?.where?.kind ? [] : [domingo]),
+    );
+
+    const result = await workforceService.holidayDatesInRange(day, day);
+
+    expect(result).toEqual([]);
+  });
+
   it("Etapa 8B — calendarPreview marca hasOverlap cuando dos reglas con alcances no excluyentes matchean el mismo día", async () => {
     const sunday = new Date("2026-08-16T00:00:00.000Z");
     mockedPrisma.doubleHourRule.findMany.mockResolvedValue([

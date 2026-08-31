@@ -346,6 +346,17 @@ export const workforceService = {
     }
     return days;
   },
+  // Etapa 12D: función fina para que Turnos (holidayWorkAssignment.service.ts)
+  // consuma fechas de feriado SIN duplicar el cálculo de calendario ni
+  // reimplementar ruleMatchesDate/buildActiveDatesByRule — reutiliza
+  // calendarPreview(kind=FERIADO) tal cual y sólo angosta la forma de
+  // respuesta a lo que un consumidor de "expectativa de trabajo" necesita
+  // (nunca multiplier/priority/hasOverlap/hasConflict — eso es liquidación,
+  // ver docs/decisions/SPECIAL_HOUR_RULE_CLASSIFICATION_12A.md §12).
+  async holidayDatesInRange(from: Date, to: Date) {
+    const days = await workforceService.calendarPreview(from, to, "FERIADO");
+    return days.map((day) => ({ date: day.date, rules: day.rules.map((rule) => ({ id: rule.id, name: rule.name })) }));
+  },
   async removeDoubleRule(id: string, audit?: AuditContext) {
     const before = await prisma.doubleHourRule.findUnique({ where: { id }, include: { employees: true } });
     if (!before) throw new AppError("No encontramos la regla solicitada", 404, "DOUBLE_HOUR_RULE_NOT_FOUND");

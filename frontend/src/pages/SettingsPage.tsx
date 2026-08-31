@@ -1,4 +1,4 @@
-import { Building2, CalendarClock, ChevronRight, ClipboardList, Clock3, FileText, FolderOpen, ShieldCheck, Workflow } from "lucide-react";
+import { Building2, CalendarCheck, CalendarClock, ChevronRight, ClipboardList, Clock3, FileText, FolderOpen, ShieldCheck, Workflow } from "lucide-react";
 import { Link, Navigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { roleLevel } from "../utils/roles";
@@ -9,6 +9,7 @@ export function SettingsPage() {
   if (roleLevel(user!.role) !== 1) return <Navigate to="/" />;
   const cards = [
     { name: "Turnos", icon: <CalendarClock />, path: "/configuracion/turnos" },
+    { name: "Asignaciones de feriados", icon: <CalendarCheck />, path: "/configuracion/turnos-asignaciones-feriados" },
     { name: "Horas especiales", icon: <Clock3 />, path: "/configuracion/turnos-horas-especiales" },
     { name: "Regímenes laborales", icon: <Workflow />, path: "/configuracion/regimenes-laborales" },
     { name: "Empresas y estructura", icon: <Building2 />, path: "/configuracion/empresas-estructura" },
