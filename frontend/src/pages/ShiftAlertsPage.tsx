@@ -16,6 +16,7 @@ import { useDebouncedValue } from "../utils/useDebouncedValue";
 
 const TYPE_LABELS: Record<ShiftAlertType, string> = {
   INGRESO_TARDE: "Llegada tarde",
+  INGRESO_ANTICIPADO: "Ingreso anticipado",
   SALIDA_ANTICIPADA: "Salida anticipada",
   SALIDA_TARDIA: "Salida tardía",
   TURNO_NO_IDENTIFICADO: "Sin turno compatible",

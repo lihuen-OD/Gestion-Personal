@@ -7,7 +7,7 @@ import { listShiftAlertsQuerySchema, shiftAlertTypeSchema } from "./shiftAlert.s
 // faltaban en este schema Zod — el filtro ?type=... de GET /shifts/alerts
 // los rechazaba con 400.
 describe("shiftAlertTypeSchema — Etapa 10B (enum drift corregido)", () => {
-  it("acepta los 12 tipos reales del enum de Prisma, incluidos los 2 que faltaban", () => {
+  it("acepta los 13 tipos reales del enum de Prisma, incluidos los 2 que faltaban", () => {
     const allTypes = [
       "INGRESO_TARDE",
       "SALIDA_ANTICIPADA",
@@ -21,10 +21,16 @@ describe("shiftAlertTypeSchema — Etapa 10B (enum drift corregido)", () => {
       "POSIBLE_OLVIDO_SALIDA",
       "CONCEPTO_NO_HABILITADO",
       "SEGMENTO_SIN_CLASIFICAR",
+      "INGRESO_ANTICIPADO",
     ];
     for (const type of allTypes) {
       expect(shiftAlertTypeSchema.safeParse(type).success).toBe(true);
     }
+  });
+
+  it("Etapa 13A: acepta INGRESO_ANTICIPADO al filtrar el listado por type", () => {
+    const result = listShiftAlertsQuerySchema.safeParse({ type: "INGRESO_ANTICIPADO" });
+    expect(result.success).toBe(true);
   });
 
   it("CONCEPTO_NO_HABILITADO ya no es rechazado al filtrar el listado por type (antes devolvía 400)", () => {

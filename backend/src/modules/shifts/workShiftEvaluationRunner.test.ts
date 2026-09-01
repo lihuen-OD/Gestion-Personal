@@ -154,6 +154,120 @@ describe("Caso D — regimen TURNO_FLEXIBLE con alertOnOutOfShift = false", () =
   });
 });
 
+// Etapa 13A (docs/decisions/SHIFT_ENTRY_CLASSIFICATION_13A.md): la entrada
+// debe clasificarse siempre contra el turno ASIGNADO al empleado, nunca
+// contra un turno ajeno que coincida mejor con la hora.
+describe("Etapa 13A — evaluateShiftEntry: ingreso anticipado usa el turno asignado", () => {
+  const shift0830 = {
+    id: "shift-0830",
+    code: "T-0830",
+    startTime: "08:30",
+    endTime: "16:30",
+    crossesMidnight: false,
+    entryToleranceBeforeMinutes: 10,
+    entryToleranceAfterMinutes: 10,
+    exitToleranceBeforeMinutes: 20,
+    exitToleranceAfterMinutes: 20,
+    minimumMinutesForCompliance: null,
+    maximumInformativeMinutes: null,
+    missingOutAlertAfterMinutes: null,
+    absoluteOpenShiftLimitMinutes: 1200,
+    status: "ACTIVO",
+  };
+  const alien0800 = { ...shift0830, id: "alien-0800", code: "T-0800", startTime: "08:00", endTime: "16:00" };
+
+  it("Caso 5/F del pedido: turno asignado 08:30, entrada 08:00, existe un turno de 08:00 no asignado -> INGRESO_ANTICIPADO sobre el turno propio, nunca sobre el ajeno", async () => {
+    mockedPrisma.shiftAssignment.findMany.mockResolvedValue([{ shiftTemplateId: "shift-0830", status: "HABILITADO" }]);
+    mockedPrisma.shiftTemplate.findMany.mockResolvedValue([shift0830, alien0800]);
+
+    // 08:00 hora Argentina = 11:00 UTC
+    await evaluateShiftEntry("employee-1", "shift-1", new Date("2026-08-18T11:00:00.000Z"));
+
+    expect(upsertedAlertTypes()).toContain("INGRESO_ANTICIPADO");
+    expect(upsertedAlertTypes()).not.toContain("POSSIBLE_SHIFT_CONFIGURATION_MISSING");
+    expect(upsertedAlertTypes()).not.toContain("TURNO_NO_IDENTIFICADO");
+    const call = mockedPrisma.shiftAlert.upsert.mock.calls.find((c) => c[0]?.create?.type === "INGRESO_ANTICIPADO")![0]!;
+    expect(call.create.differenceMinutes).toBe(-30);
+    expect(call.create.severity).toBe("INFO");
+    expect(mockedPrisma.workShift.update).toHaveBeenCalledWith({ where: { id: "shift-1" }, data: { shiftTemplateId: "shift-0830", maxAllowedMinutes: 1200 } });
+  });
+
+  it("Caso 4/E del pedido: turno asignado, entrada antes del horario, sin ningún otro turno en el sistema -> INGRESO_ANTICIPADO (antes de esta etapa daba TURNO_NO_IDENTIFICADO)", async () => {
+    mockedPrisma.shiftAssignment.findMany.mockResolvedValue([{ shiftTemplateId: "shift-0830", status: "HABILITADO" }]);
+    mockedPrisma.shiftTemplate.findMany.mockResolvedValue([shift0830]);
+
+    await evaluateShiftEntry("employee-1", "shift-1", new Date("2026-08-18T11:00:00.000Z"));
+
+    expect(upsertedAlertTypes()).toContain("INGRESO_ANTICIPADO");
+    expect(upsertedAlertTypes()).not.toContain("TURNO_NO_IDENTIFICADO");
+  });
+
+  it("Caso 3 del pedido: dentro de tolerancia no genera ninguna alerta de puntualidad de ingreso", async () => {
+    mockedPrisma.shiftAssignment.findMany.mockResolvedValue([{ shiftTemplateId: "shift-0830", status: "HABILITADO" }]);
+    mockedPrisma.shiftTemplate.findMany.mockResolvedValue([shift0830]);
+
+    // 08:25 ART = 11:25 UTC, 5 min antes, dentro de entryToleranceBeforeMinutes=10
+    await evaluateShiftEntry("employee-1", "shift-1", new Date("2026-08-18T11:25:00.000Z"));
+
+    expect(upsertedAlertTypes()).not.toContain("INGRESO_ANTICIPADO");
+    expect(upsertedAlertTypes()).not.toContain("INGRESO_TARDE");
+  });
+
+  it("Caso 3 del pedido: entrada tarde fuera de tolerancia sigue generando INGRESO_TARDE, nunca INGRESO_ANTICIPADO", async () => {
+    mockedPrisma.shiftAssignment.findMany.mockResolvedValue([{ shiftTemplateId: "shift-0830", status: "HABILITADO" }]);
+    mockedPrisma.shiftTemplate.findMany.mockResolvedValue([shift0830]);
+
+    // 08:50 ART = 11:50 UTC, 20 min tarde
+    await evaluateShiftEntry("employee-1", "shift-1", new Date("2026-08-18T11:50:00.000Z"));
+
+    expect(upsertedAlertTypes()).toContain("INGRESO_TARDE");
+    expect(upsertedAlertTypes()).not.toContain("INGRESO_ANTICIPADO");
+  });
+
+  it("Caso H del pedido: ingreso muy anticipado (más de 240 min antes) sube la severidad a ADVERTENCIA, pero sigue siendo INGRESO_ANTICIPADO sobre el turno propio", async () => {
+    mockedPrisma.shiftAssignment.findMany.mockResolvedValue([{ shiftTemplateId: "shift-0830", status: "HABILITADO" }]);
+    mockedPrisma.shiftTemplate.findMany.mockResolvedValue([shift0830]);
+
+    // 04:00 ART = 07:00 UTC, 270 min antes
+    await evaluateShiftEntry("employee-1", "shift-1", new Date("2026-08-18T07:00:00.000Z"));
+
+    const call = mockedPrisma.shiftAlert.upsert.mock.calls.find((c) => c[0]?.create?.type === "INGRESO_ANTICIPADO")![0]!;
+    expect(call.create.differenceMinutes).toBe(-270);
+    expect(call.create.severity).toBe("ADVERTENCIA");
+  });
+
+  it("un fallo de notificación no bloquea la fichada ni la alerta ya creada (mismo patrón best-effort de la Etapa 10E)", async () => {
+    mockedPrisma.shiftAssignment.findMany.mockResolvedValue([{ shiftTemplateId: "shift-0830", status: "HABILITADO" }]);
+    mockedPrisma.shiftTemplate.findMany.mockResolvedValue([shift0830]);
+    vi.mocked(notifyUsers).mockRejectedValueOnce(new Error("fallo transitorio"));
+
+    await expect(evaluateShiftEntry("employee-1", "shift-1", new Date("2026-08-18T11:00:00.000Z"))).resolves.toBeUndefined();
+    expect(upsertedAlertTypes()).toContain("INGRESO_ANTICIPADO");
+  });
+
+  it("no genera alertas duplicadas: evaluar la misma jornada dos veces upsertea la misma fila (mismo workShiftId+type)", async () => {
+    mockedPrisma.shiftAssignment.findMany.mockResolvedValue([{ shiftTemplateId: "shift-0830", status: "HABILITADO" }]);
+    mockedPrisma.shiftTemplate.findMany.mockResolvedValue([shift0830]);
+
+    await evaluateShiftEntry("employee-1", "shift-1", new Date("2026-08-18T11:00:00.000Z"));
+    await evaluateShiftEntry("employee-1", "shift-1", new Date("2026-08-18T11:00:00.000Z"));
+
+    const calls = mockedPrisma.shiftAlert.upsert.mock.calls.filter((c) => c[0]?.create?.type === "INGRESO_ANTICIPADO");
+    expect(calls).toHaveLength(2);
+    expect(calls[0]![0]!.where).toEqual(calls[1]![0]!.where); // misma clave [workShiftId, type] -> upsert, nunca una fila nueva
+  });
+
+  it("régimen alertOnOutOfShift=false no suprime INGRESO_ANTICIPADO (es puntualidad contra el turno ya matcheado, no una alerta de 'fuera de turno')", async () => {
+    mockedPrisma.shiftAssignment.findMany.mockResolvedValue([{ shiftTemplateId: "shift-0830", status: "HABILITADO" }]);
+    mockedPrisma.shiftTemplate.findMany.mockResolvedValue([shift0830]);
+    mockedPrisma.employeeWorkRegime.findFirst.mockResolvedValue({ workRegime: { kind: "TURNO_FLEXIBLE", alertOnOutOfShift: false } });
+
+    await evaluateShiftEntry("employee-1", "shift-1", new Date("2026-08-18T11:00:00.000Z"));
+
+    expect(upsertedAlertTypes()).toContain("INGRESO_ANTICIPADO");
+  });
+});
+
 describe("Caso E — notifyClassificationAlerts: una sola alerta por tipo por jornada, nunca por segmento", () => {
   it("varios segmentos CONCEPTO_NO_HABILITADO generan una sola alerta de ese tipo, con los minutos sumados", async () => {
     await notifyClassificationAlerts("employee-1", "shift-1", [

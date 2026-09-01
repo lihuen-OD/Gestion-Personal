@@ -85,17 +85,28 @@ function closestOccurrence(actualAt: Date, startTime: string) {
   return candidates[0]!;
 }
 
-// Turnos propios del empleado: ventana generosa (hasta ~una jornada máxima de más tarde) para no perder el ejemplo de "20 min tarde",
-// pero acotada, para que una fichada realmente ajena a todos sus turnos pueda caer en Caso C/D en vez de forzar siempre el más cercano.
+// Etapa 13A: turnos propios del empleado (asignación aplicable ese día) SIEMPRE
+// ganan como referencia — sin ventana de tolerancia que los excluya. Antes de
+// esta etapa, esta función descartaba el turno propio si la diferencia caía
+// fuera de [-entryToleranceBeforeMinutes, maximumInformativeMinutes +
+// entryToleranceAfterMinutes]; eso hacía que un ingreso anticipado más allá
+// de esos pocos minutos de tolerancia "antes" cayera al buscador de turnos
+// generales/ajenos (Caso C/D), pudiendo matchear el turno de otro empleado
+// (ej. turno propio 08:30, entrada 08:00, turno ajeno de 08:00 en el
+// sistema) o quedar "sin identificar" aunque el empleado sí tuviera turno
+// asignado ese día. Regla funcional aprobada (ver
+// docs/decisions/SHIFT_ENTRY_CLASSIFICATION_13A.md): si el empleado tiene un
+// turno propio aplicable ese día, ese turno es siempre la referencia — nunca
+// se busca un turno alternativo no asignado para "hacer match", sin importar
+// qué tan lejos esté la fichada de su horario. Con más de un turno propio
+// aplicable, gana el más cercano en el tiempo (mismo criterio ya usado desde
+// antes de esta etapa — ver "elige el turno más cercano..." en el test).
 function closestOwnMatch(actualAt: Date, templates: ShiftTemplateRef[]): { template: ShiftTemplateRef; differenceMinutes: number } | null {
+  if (!templates.length) return null;
   const candidates = templates
     .map((template) => ({ template, ...closestOccurrence(actualAt, template.startTime) }))
-    .filter(({ template, differenceMinutes }) => {
-      const after = (template.maximumInformativeMinutes ?? DEFAULT_MAXIMUM_INFORMATIVE_MINUTES) + template.entryToleranceAfterMinutes;
-      return differenceMinutes >= -template.entryToleranceBeforeMinutes && differenceMinutes <= after;
-    })
     .sort((a, b) => Math.abs(a.differenceMinutes) - Math.abs(b.differenceMinutes));
-  return candidates[0] ?? null;
+  return candidates[0]!;
 }
 
 function closestWithinTolerance(actualAt: Date, templates: ShiftTemplateRef[]): { template: ShiftTemplateRef; differenceMinutes: number } | null {
@@ -148,15 +159,50 @@ export function matchShiftForEmployee(input: {
 export interface EntryPunctualityResult {
   evaluated: boolean;
   lateArrival: boolean;
+  earlyArrival: boolean;
   differenceMinutes: number | null;
 }
 
-/** Solo se afirma puntualidad de ingreso cuando el turno coincidente está HABILITADO para el empleado (Caso A). */
+/**
+ * Solo se afirma puntualidad de ingreso cuando el turno coincidente está
+ * HABILITADO para el empleado (Caso A) — un turno DESHABILITADO/general no
+ * genera ni llegada tarde ni ingreso anticipado, sólo la alerta de
+ * configuración correspondiente (ver alertTypeForMatch en el runner).
+ *
+ * Etapa 13A: agrega `earlyArrival` (ingreso antes de
+ * -entryToleranceBeforeMinutes) como contraparte simétrica de `lateArrival`.
+ * Con closestOwnMatch ya sin ventana de exclusión (ver más arriba), un turno
+ * propio siempre matchea, así que un ingreso antes del horario del turno
+ * asignado ahora se clasifica acá en vez de caer en NO_MATCH/GENERAL_UNASSIGNED.
+ */
 export function evaluateEntryPunctuality(match: ShiftMatchResult): EntryPunctualityResult {
   if (match.case !== "ENABLED" || !match.template || match.differenceMinutes === null) {
-    return { evaluated: false, lateArrival: false, differenceMinutes: null };
+    return { evaluated: false, lateArrival: false, earlyArrival: false, differenceMinutes: null };
   }
-  return { evaluated: true, lateArrival: match.differenceMinutes > match.template.entryToleranceAfterMinutes, differenceMinutes: match.differenceMinutes };
+  const { differenceMinutes, template } = match;
+  return {
+    evaluated: true,
+    lateArrival: differenceMinutes > template.entryToleranceAfterMinutes,
+    earlyArrival: differenceMinutes < -template.entryToleranceBeforeMinutes,
+    differenceMinutes,
+  };
+}
+
+// Etapa 13A, caso H del pedido ("entrada muy anticipada", ej. turno 08:30
+// con entrada 04:00): un ingreso anticipado sigue siendo INGRESO_ANTICIPADO
+// sin importar la magnitud (nunca se reclasifica como turno ajeno ni como
+// "no identificado" — el turno asignado sigue siendo la referencia), pero a
+// partir de este umbral se sube la severidad de INFO a ADVERTENCIA para que
+// RRHH pueda distinguir/filtrar un caso que amerita revisión manual (posible
+// error de fichada, doble turno, etc.) de un adelanto normal de unos
+// minutos. Umbral propuesto y documentado acá (no configurable por turno:
+// no hay hoy ningún campo de "tolerancia de ingreso muy anticipado" en
+// ShiftTemplate, y agregar uno sería una migración nueva sin necesidad
+// confirmada) — ver docs/decisions/SHIFT_ENTRY_CLASSIFICATION_13A.md.
+export const EARLY_ARRIVAL_REVIEW_THRESHOLD_MINUTES = 240;
+
+export function isEarlyArrivalReviewRequired(differenceMinutes: number): boolean {
+  return Math.abs(differenceMinutes) >= EARLY_ARRIVAL_REVIEW_THRESHOLD_MINUTES;
 }
 
 export interface ExitPunctualityResult {

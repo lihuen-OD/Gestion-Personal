@@ -105,3 +105,43 @@ describe("ShiftAlertsPage — Etapa 10E (severidad legible, sin enum crudo en la
     expect(optionLabels).toEqual(["Todas", "Informativa", "Advertencia", "Crítica"]);
   });
 });
+
+describe("ShiftAlertsPage — Etapa 13A (nuevo tipo INGRESO_ANTICIPADO)", () => {
+  it("muestra 'Ingreso anticipado' para el nuevo tipo, no el enum crudo", async () => {
+    vi.mocked(shiftAlertApiService.getAll).mockResolvedValue({
+      data: [buildAlert({ type: "INGRESO_ANTICIPADO", differenceMinutes: -30 })],
+      meta: { total: 1, pageSize: 20, hasMore: false, nextBefore: null },
+    });
+
+    renderPage();
+
+    await screen.findByText("Ingreso anticipado");
+    expect(screen.queryByText("INGRESO_ANTICIPADO")).not.toBeInTheDocument();
+  });
+
+  it("el filtro de Tipo incluye 'Ingreso anticipado'", async () => {
+    vi.mocked(shiftAlertApiService.getAll).mockResolvedValue({
+      data: [],
+      meta: { total: 0, pageSize: 20, hasMore: false, nextBefore: null },
+    });
+
+    renderPage();
+    await screen.findByText("No hay alertas para los filtros seleccionados.");
+
+    const typeSelect = screen.getByLabelText("Tipo") as HTMLSelectElement;
+    const optionLabels = Array.from(typeSelect.options).map((option) => option.text);
+    expect(optionLabels).toContain("Ingreso anticipado");
+  });
+
+  it("una diferencia negativa (ingreso antes del horario) se muestra con signo '-' en la columna Diferencia", async () => {
+    vi.mocked(shiftAlertApiService.getAll).mockResolvedValue({
+      data: [buildAlert({ type: "INGRESO_ANTICIPADO", severity: "INFO", differenceMinutes: -30 })],
+      meta: { total: 1, pageSize: 20, hasMore: false, nextBefore: null },
+    });
+
+    renderPage();
+
+    await screen.findByText("Ingreso anticipado");
+    expect(screen.getByText("-30m")).toBeInTheDocument();
+  });
+});

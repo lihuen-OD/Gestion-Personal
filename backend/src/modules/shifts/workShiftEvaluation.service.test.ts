@@ -9,6 +9,7 @@ import {
   evaluateRestPeriod,
   evaluateWorkedDuration,
   hasNoShiftAssignments,
+  isEarlyArrivalReviewRequired,
   isShiftAssignmentActiveOnDate,
   isShiftAssignmentApplicableForInstant,
   isShiftAssignmentApplicableOnWeekday,
@@ -143,24 +144,33 @@ describe("matchShiftForEmployee", () => {
     expect(inputFor("DESHABILITADO").case).toBe("DISABLED_FOR_EMPLOYEE");
   });
 
-  it("empleado con turno habilitado no fuerza ese turno si la fichada es de un horario totalmente ajeno (cae a Caso C)", () => {
+  // Etapa 13A: estos dos tests reemplazan el comportamiento de la Etapa 8J
+  // ("un turno propio no se fuerza si la fichada es de un horario totalmente
+  // ajeno, cae a Caso C/D") — la regla funcional aprobada en 13A es la
+  // opuesta: si el empleado tiene un turno propio aplicable ese día, ese
+  // turno SIEMPRE es la referencia, nunca se busca un turno general/ajeno
+  // "para hacer match" (ver docs/decisions/SHIFT_ENTRY_CLASSIFICATION_13A.md).
+  it("Etapa 13A: el turno propio siempre gana, aunque un turno general no asignado coincida mejor con la hora", () => {
     const eveningGeneral = template({ id: "evening-general", code: "EVENING-GENERAL", startTime: "20:00", endTime: "23:00" });
     const match = matchShiftForEmployee({
       actualAt: at(20, 3),
       employeeAssignments: [{ shiftTemplateId: "morning", status: "HABILITADO" }],
       activeTemplates: [morningShift, eveningGeneral],
     });
-    expect(match.case).toBe("GENERAL_UNASSIGNED");
-    expect(match.template?.id).toBe("evening-general");
+    expect(match.case).toBe("ENABLED");
+    expect(match.template?.id).toBe("morning");
+    expect(match.differenceMinutes).toBe(-627);
   });
 
-  it("empleado con turno habilitado no fuerza ese turno si la fichada es de un horario totalmente ajeno y no hay ningún turno general (Caso D)", () => {
+  it("Etapa 13A: el turno propio sigue matcheando aunque no exista ningún turno general y la fichada esté muy lejos de su horario", () => {
     const match = matchShiftForEmployee({
       actualAt: at(20, 3),
       employeeAssignments: [{ shiftTemplateId: "morning", status: "HABILITADO" }],
       activeTemplates: [morningShift],
     });
-    expect(match.case).toBe("NO_MATCH");
+    expect(match.case).toBe("ENABLED");
+    expect(match.template?.id).toBe("morning");
+    expect(match.differenceMinutes).toBe(-627);
   });
 
   it("turno sereno cruza medianoche y matchea correctamente cerca del inicio", () => {
@@ -174,12 +184,90 @@ describe("matchShiftForEmployee", () => {
   });
 });
 
+// Etapa 13A: casos del pedido funcional (docs/decisions/SHIFT_ENTRY_CLASSIFICATION_13A.md).
+// Regla: si el empleado tiene un turno propio aplicable ese día, ese turno
+// SIEMPRE es la referencia — nunca se compara contra un turno general/ajeno
+// "para ver cuál coincide mejor con la hora".
+describe("matchShiftForEmployee — Etapa 13A (ingreso anticipado usa el turno asignado)", () => {
+  const shift0830 = template({ id: "shift-0830", code: "T-0830", startTime: "08:30", endTime: "16:30" });
+  const alien0800 = template({ id: "alien-0800", code: "T-0800", startTime: "08:00", endTime: "16:00" });
+
+  it("Caso 4/E del pedido: turno asignado, entrada antes del horario, sin ningún otro turno en el sistema -> usa el turno propio (antes daba NO_MATCH)", () => {
+    const match = matchShiftForEmployee({
+      actualAt: at(8, 0),
+      employeeAssignments: [{ shiftTemplateId: "shift-0830", status: "HABILITADO" }],
+      activeTemplates: [shift0830],
+    });
+    expect(match.case).toBe("ENABLED");
+    expect(match.template?.id).toBe("shift-0830");
+    expect(match.differenceMinutes).toBe(-30);
+  });
+
+  it("Caso 5/F del pedido: turno asignado 08:30, entrada 08:00, existe un turno general de 08:00 no asignado -> usa el turno propio, nunca el ajeno (antes daba GENERAL_UNASSIGNED sobre el ajeno)", () => {
+    const match = matchShiftForEmployee({
+      actualAt: at(8, 0),
+      employeeAssignments: [{ shiftTemplateId: "shift-0830", status: "HABILITADO" }],
+      activeTemplates: [shift0830, alien0800],
+    });
+    expect(match.case).toBe("ENABLED");
+    expect(match.template?.id).toBe("shift-0830");
+    expect(match.differenceMinutes).toBe(-30);
+  });
+
+  it("Caso H del pedido: entrada muy anticipada (turno 08:30, entrada 04:00) sigue usando el turno propio, nunca un turno ajeno ni NO_MATCH", () => {
+    const match = matchShiftForEmployee({
+      actualAt: at(4, 0),
+      employeeAssignments: [{ shiftTemplateId: "shift-0830", status: "HABILITADO" }],
+      activeTemplates: [shift0830, alien0800],
+    });
+    expect(match.case).toBe("ENABLED");
+    expect(match.template?.id).toBe("shift-0830");
+    expect(match.differenceMinutes).toBe(-270);
+  });
+
+  it("Caso G del pedido: varios turnos propios asignados el mismo día -> gana el más cercano, incluso adelantado (mismo criterio ya usado para llegadas tarde)", () => {
+    const afternoonShift = template({ id: "afternoon", code: "TURNO-TARDE", startTime: "14:00", endTime: "22:00" });
+    const match = matchShiftForEmployee({
+      actualAt: at(13, 0),
+      employeeAssignments: [
+        { shiftTemplateId: "morning", status: "HABILITADO" },
+        { shiftTemplateId: "afternoon", status: "HABILITADO" },
+      ],
+      activeTemplates: [morningShift, afternoonShift],
+    });
+    expect(match.case).toBe("ENABLED");
+    expect(match.template?.id).toBe("afternoon");
+    expect(match.differenceMinutes).toBe(-60);
+  });
+
+  it("Caso I del pedido (regresión): sin ninguna asignación, un turno general en el sistema coincide con la hora -> sigue siendo GENERAL_UNASSIGNED, sin cambios (8J, no tocado por 13A)", () => {
+    const match = matchShiftForEmployee({
+      actualAt: at(8, 25), // dentro de la tolerancia general (10 min) del turno 08:30
+      employeeAssignments: [],
+      activeTemplates: [shift0830],
+    });
+    expect(match.case).toBe("GENERAL_UNASSIGNED");
+    expect(match.template?.id).toBe("shift-0830");
+  });
+
+  it("Caso I del pedido (regresión): asignación existente pero no aplicable hoy (weekday no coincide) + turno general con esa hora -> sigue cayendo a GENERAL_UNASSIGNED, nunca fuerza el turno propio no aplicable hoy (8J, no tocado por 13A)", () => {
+    const match = matchShiftForEmployee({
+      actualAt: at(8, 25, 7), // martes 2026-07-07, dentro de la tolerancia general del turno 08:30
+      employeeAssignments: [{ shiftTemplateId: "shift-0830", status: "HABILITADO", weekdays: [1] }], // solo lunes
+      activeTemplates: [shift0830],
+    });
+    expect(match.case).toBe("GENERAL_UNASSIGNED");
+    expect(match.template?.id).toBe("shift-0830");
+  });
+});
+
 describe("evaluateEntryPunctuality", () => {
   it("no evalúa llegada tarde si el turno coincidente no está habilitado (Caso B/C/D)", () => {
     const match = matchShiftForEmployee({ actualAt: at(6, 32), employeeAssignments: [], activeTemplates: [morningShift] });
     const result = evaluateEntryPunctuality(match);
     expect(result.evaluated).toBe(false);
     expect(result.lateArrival).toBe(false);
+    expect(result.earlyArrival).toBe(false);
   });
 
   it("marca llegada tarde cuando excede el margen de entrada después, en Caso A", () => {
@@ -191,6 +279,7 @@ describe("evaluateEntryPunctuality", () => {
     const result = evaluateEntryPunctuality(match);
     expect(result.evaluated).toBe(true);
     expect(result.lateArrival).toBe(true);
+    expect(result.earlyArrival).toBe(false);
     expect(result.differenceMinutes).toBe(20);
   });
 
@@ -201,6 +290,59 @@ describe("evaluateEntryPunctuality", () => {
       activeTemplates: [morningShift],
     });
     expect(evaluateEntryPunctuality(match).lateArrival).toBe(false);
+  });
+
+  // Etapa 13A
+  it("Caso 3/C del pedido: dentro de tolerancia no marca ni llegada tarde ni ingreso anticipado", () => {
+    const match = matchShiftForEmployee({
+      actualAt: at(6, 25), // 5 min antes, dentro de entryToleranceBeforeMinutes=10
+      employeeAssignments: [{ shiftTemplateId: "morning", status: "HABILITADO" }],
+      activeTemplates: [morningShift],
+    });
+    const result = evaluateEntryPunctuality(match);
+    expect(result.evaluated).toBe(true);
+    expect(result.lateArrival).toBe(false);
+    expect(result.earlyArrival).toBe(false);
+  });
+
+  it("Caso 5/E del pedido: marca ingreso anticipado cuando la entrada precede la tolerancia de inicio, en Caso A", () => {
+    const match = matchShiftForEmployee({
+      actualAt: at(6, 10), // 20 min antes, entryToleranceBeforeMinutes=10
+      employeeAssignments: [{ shiftTemplateId: "morning", status: "HABILITADO" }],
+      activeTemplates: [morningShift],
+    });
+    const result = evaluateEntryPunctuality(match);
+    expect(result.evaluated).toBe(true);
+    expect(result.lateArrival).toBe(false);
+    expect(result.earlyArrival).toBe(true);
+    expect(result.differenceMinutes).toBe(-20);
+  });
+
+  it("no marca ingreso anticipado si el turno coincidente no está habilitado (mismo criterio que llegada tarde)", () => {
+    const match = matchShiftForEmployee({
+      actualAt: at(6, 10),
+      employeeAssignments: [{ shiftTemplateId: "morning", status: "DESHABILITADO" }],
+      activeTemplates: [morningShift],
+    });
+    const result = evaluateEntryPunctuality(match);
+    expect(result.evaluated).toBe(false);
+    expect(result.earlyArrival).toBe(false);
+  });
+});
+
+describe("isEarlyArrivalReviewRequired — Etapa 13A, Caso H (umbral de ingreso muy anticipado)", () => {
+  it("por debajo del umbral (240 min) no requiere revisión", () => {
+    expect(isEarlyArrivalReviewRequired(-239)).toBe(false);
+    expect(isEarlyArrivalReviewRequired(239)).toBe(false);
+  });
+
+  it("en el umbral exacto (240 min) ya requiere revisión", () => {
+    expect(isEarlyArrivalReviewRequired(-240)).toBe(true);
+  });
+
+  it("por encima del umbral requiere revisión, sin importar el signo", () => {
+    expect(isEarlyArrivalReviewRequired(-270)).toBe(true);
+    expect(isEarlyArrivalReviewRequired(270)).toBe(true);
   });
 });
 

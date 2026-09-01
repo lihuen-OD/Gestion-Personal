@@ -2,6 +2,7 @@ import { apiRequest } from "./apiClient";
 
 export type ShiftAlertType =
   | "INGRESO_TARDE"
+  | "INGRESO_ANTICIPADO"
   | "SALIDA_ANTICIPADA"
   | "SALIDA_TARDIA"
   | "TURNO_NO_IDENTIFICADO"

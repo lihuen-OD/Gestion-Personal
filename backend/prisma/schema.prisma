@@ -231,6 +231,10 @@ enum ShiftAlertType {
   POSIBLE_OLVIDO_SALIDA
   CONCEPTO_NO_HABILITADO
   SEGMENTO_SIN_CLASIFICAR
+  // Etapa 13A: ingreso registrado antes del horario/tolerancia del turno
+  // asignado del empleado (nunca se genera por comparación contra un turno
+  // ajeno — ver docs/decisions/SHIFT_ENTRY_CLASSIFICATION_13A.md).
+  INGRESO_ANTICIPADO
 }
 
 enum ShiftAlertStatus {

@@ -7,6 +7,7 @@ import {
   evaluateExitPunctuality,
   evaluateRestPeriod,
   evaluateWorkedDuration,
+  isEarlyArrivalReviewRequired,
   matchShiftForEmployee,
   type EmployeeShiftAssignmentRef,
   type ShiftMatchResult,
@@ -15,6 +16,7 @@ import {
 
 export type ShiftAlertTypeValue =
   | "INGRESO_TARDE"
+  | "INGRESO_ANTICIPADO"
   | "SALIDA_ANTICIPADA"
   | "SALIDA_TARDIA"
   | "TURNO_NO_IDENTIFICADO"
@@ -32,6 +34,7 @@ const DEFAULT_MINIMUM_REST_MINUTES = 480;
 
 const severityByAlertType: Record<ShiftAlertTypeValue, ShiftAlertSeverityValue> = {
   INGRESO_TARDE: "ADVERTENCIA",
+  INGRESO_ANTICIPADO: "INFO",
   SALIDA_ANTICIPADA: "ADVERTENCIA",
   SALIDA_TARDIA: "INFO",
   TURNO_NO_IDENTIFICADO: "ADVERTENCIA",
@@ -47,6 +50,7 @@ const severityByAlertType: Record<ShiftAlertTypeValue, ShiftAlertSeverityValue> 
 
 const labelByAlertType: Record<ShiftAlertTypeValue, string> = {
   INGRESO_TARDE: "Ingreso fuera de tolerancia",
+  INGRESO_ANTICIPADO: "Ingreso anticipado",
   SALIDA_ANTICIPADA: "Salida anticipada",
   SALIDA_TARDIA: "Salida fuera de tolerancia",
   TURNO_NO_IDENTIFICADO: "Turno no identificado",
@@ -192,6 +196,16 @@ export async function evaluateShiftEntry(employeeId: string, workShiftId: string
   const punctuality = evaluateEntryPunctuality(match);
   if (punctuality.evaluated && punctuality.lateArrival) {
     await createShiftAlert({ employeeId, workShiftId, type: "INGRESO_TARDE", actualAt, differenceMinutes: punctuality.differenceMinutes });
+  }
+  // Etapa 13A: contraparte del bloque anterior — ingreso antes del horario/
+  // tolerancia del turno YA asignado al empleado (nunca contra un turno
+  // ajeno, ver matchShiftForEmployee/closestOwnMatch). Un adelanto que supera
+  // EARLY_ARRIVAL_REVIEW_THRESHOLD_MINUTES sube de severidad (INFO ->
+  // ADVERTENCIA) para señalar revisión manual, sin cambiar el tipo de alerta
+  // ni bloquear la fichada.
+  if (punctuality.evaluated && punctuality.earlyArrival) {
+    const severity = isEarlyArrivalReviewRequired(punctuality.differenceMinutes ?? 0) ? "ADVERTENCIA" : undefined;
+    await createShiftAlert({ employeeId, workShiftId, type: "INGRESO_ANTICIPADO", actualAt, differenceMinutes: punctuality.differenceMinutes, severity });
   }
 
   const previousShift = await prisma.workShift.findFirst({

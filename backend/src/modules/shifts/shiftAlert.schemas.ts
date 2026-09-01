@@ -17,6 +17,8 @@ export const shiftAlertTypeSchema = z.enum([
   // (hallazgo 10A §11.4).
   "CONCEPTO_NO_HABILITADO",
   "SEGMENTO_SIN_CLASIFICAR",
+  // Etapa 13A: ingreso antes del horario/tolerancia del turno asignado.
+  "INGRESO_ANTICIPADO",
 ]);
 
 export const shiftAlertSeveritySchema = z.enum(["INFO", "ADVERTENCIA", "CRITICA"]);
