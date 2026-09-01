@@ -48,6 +48,32 @@ import type {
   UpdateTimeEntryInput,
 } from "./timeEntries.schemas";
 
+// Etapa 13B (docs/decisions/SHIFT_EXIT_CLASSIFICATION_13B.md): `evaluateShiftExit`
+// ya es best-effort por sí sola (nunca propaga una excepción, ver su propio
+// try/catch), pero se llama acá una segunda capa de contención a nivel
+// llamador — la salida real (WorkShift/TimeEntry/TimeSegment) ya se confirmó
+// en su propia transacción antes de este punto (closeOpenWorkShift), así que
+// ningún error posterior de evaluación de alertas debe poder revertir esa
+// respuesta exitosa hacia el cliente. Causa raíz original del 503 reportado
+// en "POST /clock/photo-punch": una excepción acá se propagaba sin capturar,
+// el catch de clockPhotoPunch la trataba igual que un fallo real de guardado
+// (borraba la evidencia fotográfica ya referenciada por la fichada
+// persistida) y el wrapper de idempotencia la convertía en 503
+// "El intento no fue confirmado" — un diagnóstico falso, porque el intento sí
+// se había confirmado.
+async function evaluateShiftExitSafely(...args: Parameters<typeof evaluateShiftExit>) {
+  try {
+    await evaluateShiftExit(...args);
+  } catch (error) {
+    console.error("EVALUATE_SHIFT_EXIT_CALL_FAILED", {
+      severity: "critical",
+      employeeId: args[0],
+      workShiftId: args[1],
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
 export type TimeEntriesExportRow = {
   CUIL: string;
   Apellido: string;
@@ -819,8 +845,7 @@ export const timeEntriesService = {
       segments: classifiedSegments,
       observation: `Cierre manual: ${input.reason}`,
     });
-    await evaluateShiftExit(before.employeeId, created.workShift.id, input.endAt);
-    await notifyClassificationAlerts(before.employeeId, created.workShift.id, classifiedSegments);
+    await evaluateShiftExitSafely(before.employeeId, created.workShift.id, input.endAt, classifiedSegments);
 
     await auditService.register({
       ...audit,
@@ -1302,8 +1327,7 @@ export const timeEntriesService = {
         after: { workShiftId: created.workShift.id, employeeId: employee.id, source: "PUBLIC_CLOCK_PHOTO" } as Prisma.InputJsonValue,
       });
       if (created.workShift.endPunchId) scheduleClockThumbnail(input, deferredThumbnail, evidence, created.workShift.endPunchId);
-      await evaluateShiftExit(employee.id, created.workShift.id, now);
-      await notifyClassificationAlerts(employee.id, created.workShift.id, classifiedSegments);
+      await evaluateShiftExitSafely(employee.id, created.workShift.id, now, classifiedSegments);
       console.info("CLOCK_PHOTO_PUNCH_PHASE_TIMING", {
         requestId: input.requestId,
         punchType: input.punchType,
@@ -1479,8 +1503,7 @@ export const timeEntriesService = {
         totalMinutes: calculation.totalMinutes,
         segments: classifiedSegments,
       });
-      await evaluateShiftExit(employee.id, created.workShift.id, endAt);
-      await notifyClassificationAlerts(employee.id, created.workShift.id, classifiedSegments);
+      await evaluateShiftExitSafely(employee.id, created.workShift.id, endAt, classifiedSegments);
       return {
         employee: publicEmployeeLabel(employee),
         workShift: {

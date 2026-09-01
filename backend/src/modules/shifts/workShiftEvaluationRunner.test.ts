@@ -866,3 +866,184 @@ describe("createShiftAlert — Etapa 10E (la notificación es best-effort, nunca
     expect(upsertedAlertTypes()).toContain("TURNO_NO_IDENTIFICADO");
   });
 });
+
+// Etapa 13B (docs/decisions/SHIFT_EXIT_CLASSIFICATION_13B.md): cierre,
+// clasificación y alertas duplicadas de una SALIDA con ingreso abierto.
+describe("evaluateShiftExit — Etapa 13B (clasificación de salida, política de alertas duplicadas, robustez)", () => {
+  const shiftWithMinimum = {
+    id: "min-shift",
+    code: "MIN-SHIFT",
+    startTime: "08:00",
+    endTime: "16:00",
+    crossesMidnight: false,
+    entryToleranceBeforeMinutes: 10,
+    entryToleranceAfterMinutes: 10,
+    exitToleranceBeforeMinutes: 15,
+    exitToleranceAfterMinutes: 15,
+    minimumMinutesForCompliance: 420, // 7h
+    maximumInformativeMinutes: 540, // 9h
+    missingOutAlertAfterMinutes: null,
+    absoluteOpenShiftLimitMinutes: 1200,
+    status: "ACTIVO",
+  };
+
+  function mockWorkShift(overrides: Partial<{ startAt: Date; shiftTemplateId: string | null; totalMinutes: number }>) {
+    mockedPrisma.workShift.findUnique.mockResolvedValue({
+      id: "shift-13b",
+      startAt: new Date("2026-08-18T11:00:00.000Z"), // 08:00 ART
+      shiftTemplateId: "min-shift",
+      totalMinutes: 480,
+      ...overrides,
+    });
+  }
+
+  function notifiedTitles(): string[] {
+    return vi.mocked(notifyUsers).mock.calls.map((call) => call[1]?.title);
+  }
+
+  beforeEach(() => {
+    mockedPrisma.shiftTemplate.findUnique.mockResolvedValue(shiftWithMinimum);
+    mockedPrisma.shiftAssignment.findUnique.mockResolvedValue({ status: "HABILITADO" });
+    mockedPrisma.employeeWorkRegime.findFirst.mockResolvedValue(null);
+  });
+
+  it("Caso 1 del pedido: salida normal (dentro de tolerancia, dentro del mínimo) no genera ninguna alerta", async () => {
+    mockWorkShift({ totalMinutes: 480 }); // 08:00-16:00 exacto, 8h
+
+    await evaluateShiftExit("employee-1", "shift-13b", new Date("2026-08-18T19:00:00.000Z")); // 16:00 ART
+
+    expect(upsertedAlertTypes()).toHaveLength(0);
+  });
+
+  it("Caso 2 del pedido: salida anticipada, dentro del mínimo -> sólo SALIDA_ANTICIPADA, sin ruido adicional", async () => {
+    mockWorkShift({ totalMinutes: 450 }); // 08:00-15:30, 7.5h (>= mínimo 420)
+
+    await evaluateShiftExit("employee-1", "shift-13b", new Date("2026-08-18T18:30:00.000Z")); // 15:30 ART, 30 min antes
+
+    expect(upsertedAlertTypes()).toEqual(["SALIDA_ANTICIPADA"]);
+    expect(notifiedTitles()).toEqual(["Salida anticipada"]);
+  });
+
+  it("Caso 3 del pedido: salida anticipada + jornada por debajo del mínimo -> ambas se persisten, pero sólo notifica SALIDA_ANTICIPADA (JORNADA_INSUFICIENTE queda como detalle sin aviso duplicado)", async () => {
+    mockWorkShift({ totalMinutes: 300 }); // 08:00-13:00, 5h (< mínimo 420)
+
+    await evaluateShiftExit("employee-1", "shift-13b", new Date("2026-08-18T16:00:00.000Z")); // 13:00 ART, 3h antes
+
+    expect(upsertedAlertTypes()).toEqual(expect.arrayContaining(["SALIDA_ANTICIPADA", "JORNADA_INSUFICIENTE"]));
+    expect(upsertedAlertTypes()).toHaveLength(2);
+    // Ambas ShiftAlert quedan registradas (no se oculta el problema), pero
+    // sólo la de mayor prioridad dispara SystemNotification.
+    expect(notifiedTitles()).toEqual(["Salida anticipada"]);
+    expect(notifiedTitles()).not.toContain("Jornada por debajo del mínimo");
+  });
+
+  it("jornada por debajo del mínimo SIN salida anticipada (ej. ingreso tardío, salida puntual) sí notifica -- no queda permanentemente silenciada", async () => {
+    mockWorkShift({ startAt: new Date("2026-08-18T12:30:00.000Z"), totalMinutes: 390 }); // ingreso 09:30 ART, salida puntual 16:00 ART, 6.5h
+
+    await evaluateShiftExit("employee-1", "shift-13b", new Date("2026-08-18T19:00:00.000Z")); // 16:00 ART, en horario exacto
+
+    expect(upsertedAlertTypes()).toEqual(["JORNADA_INSUFICIENTE"]);
+    expect(notifiedTitles()).toEqual(["Jornada por debajo del mínimo"]);
+  });
+
+  it("Caso 4 del pedido: salida anticipada + tramo sin concepto compatible -> se persiste el tramo, pero no duplica el aviso (subordinado a SALIDA_ANTICIPADA)", async () => {
+    mockWorkShift({ totalMinutes: 450 }); // 7.5h, por sobre el mínimo -> sólo SALIDA_ANTICIPADA es la explicación primaria
+
+    await evaluateShiftExit("employee-1", "shift-13b", new Date("2026-08-18T18:30:00.000Z"), [
+      { startAt: new Date("2026-08-18T18:00:00.000Z"), minutes: 30, conceptStatus: "SIN_CONCEPTO_COMPATIBLE" },
+    ]);
+
+    expect(upsertedAlertTypes()).toEqual(expect.arrayContaining(["SALIDA_ANTICIPADA", "SEGMENTO_SIN_CLASIFICAR"]));
+    expect(notifiedTitles()).toEqual(["Salida anticipada"]);
+    expect(notifiedTitles()).not.toContain("Tramo de jornada sin concepto horario compatible");
+  });
+
+  it("tramo sin concepto compatible SOLO (sin salida anticipada ni jornada corta) sí notifica -- sigue siendo un problema real de configuración cuando es la única explicación", async () => {
+    mockWorkShift({ totalMinutes: 480 }); // salida normal
+
+    await evaluateShiftExit("employee-1", "shift-13b", new Date("2026-08-18T19:00:00.000Z"), [
+      { startAt: new Date("2026-08-18T18:30:00.000Z"), minutes: 30, conceptStatus: "SIN_CONCEPTO_COMPATIBLE" },
+    ]);
+
+    expect(upsertedAlertTypes()).toEqual(["SEGMENTO_SIN_CLASIFICAR"]);
+    expect(notifiedTitles()).toEqual(["Tramo de jornada sin concepto horario compatible"]);
+  });
+
+  it("tramo sin concepto subordinado a JORNADA_INSUFICIENTE aunque no haya salida anticipada (prioridad 2 > 3)", async () => {
+    mockWorkShift({ startAt: new Date("2026-08-18T12:30:00.000Z"), totalMinutes: 390 }); // ingreso tardío, salida puntual, jornada corta sin salida anticipada
+
+    await evaluateShiftExit("employee-1", "shift-13b", new Date("2026-08-18T19:00:00.000Z"), [
+      { startAt: new Date("2026-08-18T18:30:00.000Z"), minutes: 30, conceptStatus: "SIN_CONCEPTO_COMPATIBLE" },
+    ]);
+
+    expect(upsertedAlertTypes()).toEqual(expect.arrayContaining(["JORNADA_INSUFICIENTE", "SEGMENTO_SIN_CLASIFICAR"]));
+    expect(notifiedTitles()).toEqual(["Jornada por debajo del mínimo"]);
+  });
+
+  it("CONCEPTO_NO_HABILITADO nunca se suprime -- es un problema de configuración real, independiente del horario de salida", async () => {
+    mockWorkShift({ totalMinutes: 450 }); // salida anticipada también dispara
+
+    await evaluateShiftExit("employee-1", "shift-13b", new Date("2026-08-18T18:30:00.000Z"), [
+      { startAt: new Date("2026-08-18T18:00:00.000Z"), minutes: 30, conceptStatus: "CONCEPTO_NO_HABILITADO" },
+    ]);
+
+    expect(upsertedAlertTypes()).toEqual(expect.arrayContaining(["SALIDA_ANTICIPADA", "CONCEPTO_NO_HABILITADO"]));
+    expect(notifiedTitles()).toEqual(expect.arrayContaining(["Salida anticipada", "Concepto horario detectado pero no habilitado para el empleado"]));
+  });
+
+  it("Caso 5 del pedido: la salida usa exclusivamente shift.shiftTemplateId (el turno ya resuelto en el ingreso) -- nunca busca contra todos los turnos del sistema", async () => {
+    mockWorkShift({ totalMinutes: 480 });
+
+    await evaluateShiftExit("employee-1", "shift-13b", new Date("2026-08-18T19:00:00.000Z"));
+
+    expect(mockedPrisma.shiftTemplate.findUnique).toHaveBeenCalledWith({ where: { id: "min-shift" } });
+    expect(mockedPrisma.shiftTemplate.findMany).not.toHaveBeenCalled();
+    expect(mockedPrisma.shiftAssignment.findUnique).toHaveBeenCalledWith({ where: { employeeId_shiftTemplateId: { employeeId: "employee-1", shiftTemplateId: "min-shift" } } });
+    expect(mockedPrisma.shiftAssignment.findMany).not.toHaveBeenCalled();
+  });
+
+  it("Caso 6/7 del pedido: sin turno (shiftTemplateId null), con régimen -> mantiene comportamiento actual, sin alertas de puntualidad/duración por debajo del default", async () => {
+    mockWorkShift({ shiftTemplateId: null, totalMinutes: 300 });
+    mockedPrisma.employeeWorkRegime.findFirst.mockResolvedValue({ workRegime: { kind: "TURNO_FLEXIBLE", alertOnOutOfShift: false } });
+
+    await evaluateShiftExit("employee-1", "shift-13b", new Date("2026-08-18T16:00:00.000Z"));
+
+    expect(upsertedAlertTypes()).toHaveLength(0);
+  });
+
+  it("Caso 6/7 del pedido: sin turno, sin régimen -> mismo comportamiento (sin cambios respecto de antes de esta etapa)", async () => {
+    mockWorkShift({ shiftTemplateId: null, totalMinutes: 300 });
+    mockedPrisma.employeeWorkRegime.findFirst.mockResolvedValue(null);
+
+    await evaluateShiftExit("employee-1", "shift-13b", new Date("2026-08-18T16:00:00.000Z"));
+
+    expect(upsertedAlertTypes()).toHaveLength(0);
+  });
+
+  it("Caso 8 del pedido: jornada extendida sigue funcionando exactamente igual, siempre notifica (fuera de la cascada de 'jornada corta')", async () => {
+    mockWorkShift({ totalMinutes: 600 }); // supera maximumInformativeMinutes (540)
+
+    await evaluateShiftExit("employee-1", "shift-13b", new Date("2026-08-18T21:00:00.000Z")); // 18:00 ART
+
+    expect(upsertedAlertTypes()).toEqual(expect.arrayContaining(["SALIDA_TARDIA", "JORNADA_EXTENDIDA"]));
+    expect(notifiedTitles()).toEqual(expect.arrayContaining(["Salida fuera de tolerancia", "Jornada extendida"]));
+  });
+
+  it("Caso 9 del pedido / causa raíz del 503: un fallo creando una ShiftAlert (no sólo la notificación) no propaga la excepción -- la salida ya se guardó antes de llamar acá", async () => {
+    mockWorkShift({ totalMinutes: 450 });
+    mockedPrisma.shiftAlert.upsert.mockRejectedValueOnce(new Error("connection reset"));
+
+    await expect(evaluateShiftExit("employee-1", "shift-13b", new Date("2026-08-18T18:30:00.000Z"))).resolves.toBeUndefined();
+  });
+
+  it("Caso 10 del pedido: reintentar la misma salida no duplica alertas -- upsertea la misma fila por [workShiftId, type]", async () => {
+    mockWorkShift({ totalMinutes: 450 });
+
+    await evaluateShiftExit("employee-1", "shift-13b", new Date("2026-08-18T18:30:00.000Z"));
+    await evaluateShiftExit("employee-1", "shift-13b", new Date("2026-08-18T18:30:00.000Z"));
+
+    const calls = mockedPrisma.shiftAlert.upsert.mock.calls.filter((call) => call[0]?.create?.type === "SALIDA_ANTICIPADA");
+    expect(calls).toHaveLength(2);
+    expect(calls[0]![0]!.where).toEqual(calls[1]![0]!.where);
+  });
+});

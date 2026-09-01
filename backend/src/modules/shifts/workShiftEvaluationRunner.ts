@@ -98,7 +98,22 @@ async function loadMatchingContext(employeeId: string) {
   return { employeeAssignments, activeTemplates };
 }
 
-export async function createShiftAlert(input: { employeeId: string; workShiftId: string; type: ShiftAlertTypeValue; scheduledAt?: Date; actualAt: Date; differenceMinutes?: number | null; severity?: ShiftAlertSeverityValue }) {
+export async function createShiftAlert(input: {
+  employeeId: string;
+  workShiftId: string;
+  type: ShiftAlertTypeValue;
+  scheduledAt?: Date;
+  actualAt: Date;
+  differenceMinutes?: number | null;
+  severity?: ShiftAlertSeverityValue;
+  // Etapa 13B: la alerta (ShiftAlert, historial/auditoría) SIEMPRE se
+  // persiste — `notify=false` sólo suprime el aviso (SystemNotification) a
+  // RRHH, para no duplicar avisos cuando otra alerta de mayor prioridad ya
+  // explica el mismo evento de salida (ver política en
+  // docs/decisions/SHIFT_EXIT_CLASSIFICATION_13B.md). Default `true`: no
+  // cambia el comportamiento de ningún llamador existente que no lo pase.
+  notify?: boolean;
+}) {
   // El override solo existe para casos puntuales que ya tienen su propia
   // severidad de negocio explícita (ej. jornada abierta excedida bajo
   // régimen ALERT_ONLY) — no reemplaza la severidad por defecto del tipo.
@@ -108,6 +123,7 @@ export async function createShiftAlert(input: { employeeId: string; workShiftId:
     create: { employeeId: input.employeeId, workShiftId: input.workShiftId, type: input.type, severity, scheduledAt: input.scheduledAt, actualAt: input.actualAt, differenceMinutes: input.differenceMinutes ?? undefined },
     update: { actualAt: input.actualAt, scheduledAt: input.scheduledAt, differenceMinutes: input.differenceMinutes ?? undefined, severity, status: "PENDIENTE" },
   });
+  if (input.notify === false) return alert;
   // Etapa 10E: la notificación es best-effort — un fallo acá (ej. un
   // problema transitorio de DB al insertar SystemNotification) nunca debe
   // tirar abajo la fichada real que ya se confirmó, ni impedir que la alerta
@@ -248,48 +264,39 @@ export async function resolveOpenShiftOverflowAlert(workShiftId: string, note: s
   });
 }
 
-export async function evaluateShiftExit(employeeId: string, workShiftId: string, actualAt: Date) {
-  const shift = await prisma.workShift.findUnique({ where: { id: workShiftId } });
-  if (!shift) return;
-  await resolveOpenShiftOverflowAlert(workShiftId, "Resuelta automáticamente: la jornada se cerró con una salida registrada.");
-  const match = await resolveMatchForExit(employeeId, shift.shiftTemplateId);
-
-  const punctuality = evaluateExitPunctuality({ match, startAt: shift.startAt, actualExitAt: actualAt });
-  if (punctuality.evaluated) {
-    if (punctuality.earlyLeave) {
-      await createShiftAlert({ employeeId, workShiftId, type: "SALIDA_ANTICIPADA", actualAt, scheduledAt: punctuality.scheduledExitAt ?? undefined, differenceMinutes: punctuality.differenceMinutes });
-    }
-    if (punctuality.lateLeave) {
-      await createShiftAlert({ employeeId, workShiftId, type: "SALIDA_TARDIA", actualAt, scheduledAt: punctuality.scheduledExitAt ?? undefined, differenceMinutes: punctuality.differenceMinutes });
-    }
-  }
-
-  // Etapa 10D: régimen (si tiene extendedShiftAlertMinutes seteado) gana por
-  // sobre el umbral del turno para decidir JORNADA_EXTENDIDA — ver
-  // evaluateWorkedDuration para la prioridad exacta (Régimen → Turno → Default).
-  const regime = await resolveActiveWorkRegime(employeeId, actualAt);
-  const duration = evaluateWorkedDuration({ totalMinutes: shift.totalMinutes ?? 0, template: match.template, regimeMaximumMinutes: regime?.extendedShiftAlertMinutes ?? null });
-  if (duration.insufficientHours) {
-    await createShiftAlert({ employeeId, workShiftId, type: "JORNADA_INSUFICIENTE", actualAt, differenceMinutes: shift.totalMinutes });
-  }
-  if (duration.extendedShift) {
-    await createShiftAlert({ employeeId, workShiftId, type: "JORNADA_EXTENDIDA", actualAt, differenceMinutes: shift.totalMinutes });
-  }
-}
-
 export interface ClassifiedSegmentAlertInput {
   startAt: Date;
   minutes: number;
   conceptStatus: "SUGERIDO" | "MANUAL" | "SIN_CONCEPTO_COMPATIBLE" | "CONCEPTO_NO_HABILITADO";
 }
 
-// Una sola alerta por tipo por jornada, aunque varios segmentos compartan el
-// mismo problema (createShiftAlert ya upsertea por [workShiftId, type], pero
-// llamarlo una vez por segmento igual dispararia una notificacion por
-// llamada — se agrega antes de notificar, para cumplir "no generar alertas
-// duplicadas por el mismo problema"). No genera nada si todos los segmentos
-// quedaron SUGERIDO/MANUAL.
-export async function notifyClassificationAlerts(employeeId: string, workShiftId: string, segments: ClassifiedSegmentAlertInput[]) {
+// Etapa 13B: política de alertas de salida duplicadas
+// (docs/decisions/SHIFT_EXIT_CLASSIFICATION_13B.md). Una misma salida corta/
+// anticipada podía disparar hasta 3 avisos casi simultáneos que en realidad
+// describen el mismo hecho: SALIDA_ANTICIPADA, JORNADA_INSUFICIENTE (jornada
+// corta consecuencia de haber salido antes) y SEGMENTO_SIN_CLASIFICAR (un
+// tramo residual sin regla de concepto horario compatible, típicamente
+// producto del mismo recorte). Ninguna de las 3 ShiftAlert deja de
+// persistirse (RRHH sigue viendo el detalle completo en Alertas de Turnos,
+// "no ocultar problemas críticos") — sólo se suprime el AVISO
+// (SystemNotification) de la de menor prioridad cuando una de mayor
+// prioridad ya explica el mismo evento, para no saturar a RRHH con 3
+// notificaciones por una sola salida. Prioridad: SALIDA_ANTICIPADA (nunca se
+// suprime) > JORNADA_INSUFICIENTE (se suprime su aviso sólo si hubo salida
+// anticipada) > SEGMENTO_SIN_CLASIFICAR (se suprime su aviso si hubo salida
+// anticipada o jornada insuficiente). CONCEPTO_NO_HABILITADO queda fuera de
+// esta cascada a propósito: es un problema de configuración real e
+// independiente del horario de salida (un concepto que matcheó pero no está
+// habilitado para el empleado), nunca "consecuencia" de una salida
+// anticipada — siempre notifica. SALIDA_TARDIA/JORNADA_EXTENDIDA tampoco
+// participan: son el cluster de "jornada larga", ortogonal al de "jornada
+// corta" que esta política resuelve.
+async function applyClassificationAlerts(
+  employeeId: string,
+  workShiftId: string,
+  segments: ClassifiedSegmentAlertInput[],
+  options: { notify: boolean },
+) {
   const byStatus = (status: ClassifiedSegmentAlertInput["conceptStatus"]) => segments.filter((segment) => segment.conceptStatus === status);
 
   const noHabilitado = byStatus("CONCEPTO_NO_HABILITADO");
@@ -311,6 +318,96 @@ export async function notifyClassificationAlerts(employeeId: string, workShiftId
       type: "SEGMENTO_SIN_CLASIFICAR",
       actualAt: sinClasificar[0]!.startAt,
       differenceMinutes: sinClasificar.reduce((sum, segment) => sum + segment.minutes, 0),
+      notify: options.notify,
+    });
+  }
+}
+
+// Una sola alerta por tipo por jornada, aunque varios segmentos compartan el
+// mismo problema (createShiftAlert ya upsertea por [workShiftId, type], pero
+// llamarlo una vez por segmento igual dispararia una notificacion por
+// llamada — se agrega antes de notificar, para cumplir "no generar alertas
+// duplicadas por el mismo problema"). No genera nada si todos los segmentos
+// quedaron SUGERIDO/MANUAL. Uso standalone (ej. createWorkShift, alta manual
+// de un día completo sin evaluateShiftExit) — siempre notifica, sin la
+// supresión por prioridad de la Etapa 13B (que sólo aplica al cerrar una
+// jornada abierta real, ver evaluateShiftExit).
+export async function notifyClassificationAlerts(employeeId: string, workShiftId: string, segments: ClassifiedSegmentAlertInput[]) {
+  await applyClassificationAlerts(employeeId, workShiftId, segments, { notify: true });
+}
+
+// Etapa 13B: además de las alertas de puntualidad/duración, ahora acepta los
+// segmentos ya clasificados de la misma salida (`classifiedSegments`) para
+// poder aplicar la política de prioridad de arriba en un solo lugar — antes,
+// el llamador invocaba `notifyClassificationAlerts` por separado, sin forma
+// de saber si `SALIDA_ANTICIPADA`/`JORNADA_INSUFICIENTE` ya habían disparado
+// para la misma jornada.
+//
+// Toda la función es best-effort: el cierre real (WorkShift/TimeEntry/
+// TimeSegment) ya se persistió en una transacción propia antes de llamar
+// acá (ver timeEntries.repository.ts:closeOpenWorkShift) — un error acá
+// (ej. un problema transitorio de DB al crear una ShiftAlert) nunca debe
+// revertir ni enmascarar una salida que ya se guardó con éxito. Antes de
+// esta etapa, cualquier excepción acá se propagaba sin capturar hasta el
+// llamador (timeEntries.service.ts), que la trataba igual que un fallo real
+// de guardado: limpiaba la evidencia fotográfica ya referenciada por la
+// fichada persistida y devolvía 503 "El intento no fue confirmado" — un
+// diagnóstico falso, porque el intento sí se había confirmado. Ver
+// docs/decisions/SHIFT_EXIT_CLASSIFICATION_13B.md §4.
+export async function evaluateShiftExit(
+  employeeId: string,
+  workShiftId: string,
+  actualAt: Date,
+  classifiedSegments: ClassifiedSegmentAlertInput[] = [],
+) {
+  try {
+    const shift = await prisma.workShift.findUnique({ where: { id: workShiftId } });
+    if (!shift) return;
+    await resolveOpenShiftOverflowAlert(workShiftId, "Resuelta automáticamente: la jornada se cerró con una salida registrada.");
+    // Etapa 13B: `resolveMatchForExit` nunca busca contra turnos ajenos — usa
+    // exclusivamente `shift.shiftTemplateId`, ya resuelto en el ingreso
+    // (Etapa 13A: siempre el turno propio del empleado cuando aplica ese
+    // día). Confirmado con test de regresión, sin necesidad de cambios acá.
+    const match = await resolveMatchForExit(employeeId, shift.shiftTemplateId);
+
+    let earlyLeave = false;
+    const punctuality = evaluateExitPunctuality({ match, startAt: shift.startAt, actualExitAt: actualAt });
+    if (punctuality.evaluated) {
+      earlyLeave = punctuality.earlyLeave;
+      if (punctuality.earlyLeave) {
+        await createShiftAlert({ employeeId, workShiftId, type: "SALIDA_ANTICIPADA", actualAt, scheduledAt: punctuality.scheduledExitAt ?? undefined, differenceMinutes: punctuality.differenceMinutes });
+      }
+      if (punctuality.lateLeave) {
+        await createShiftAlert({ employeeId, workShiftId, type: "SALIDA_TARDIA", actualAt, scheduledAt: punctuality.scheduledExitAt ?? undefined, differenceMinutes: punctuality.differenceMinutes });
+      }
+    }
+
+    // Etapa 10D: régimen (si tiene extendedShiftAlertMinutes seteado) gana por
+    // sobre el umbral del turno para decidir JORNADA_EXTENDIDA — ver
+    // evaluateWorkedDuration para la prioridad exacta (Régimen → Turno → Default).
+    const regime = await resolveActiveWorkRegime(employeeId, actualAt);
+    const duration = evaluateWorkedDuration({ totalMinutes: shift.totalMinutes ?? 0, template: match.template, regimeMaximumMinutes: regime?.extendedShiftAlertMinutes ?? null });
+    if (duration.insufficientHours) {
+      // Etapa 13B: si ya hubo SALIDA_ANTICIPADA, la jornada corta es
+      // consecuencia del mismo evento — se persiste igual (detalle/auditoría)
+      // pero sin un segundo aviso redundante.
+      await createShiftAlert({ employeeId, workShiftId, type: "JORNADA_INSUFICIENTE", actualAt, differenceMinutes: shift.totalMinutes, notify: !earlyLeave });
+    }
+    if (duration.extendedShift) {
+      await createShiftAlert({ employeeId, workShiftId, type: "JORNADA_EXTENDIDA", actualAt, differenceMinutes: shift.totalMinutes });
+    }
+
+    if (classifiedSegments.length > 0) {
+      // Etapa 13B: suprime el aviso de SEGMENTO_SIN_CLASIFICAR si alguna de
+      // las dos alertas de mayor prioridad ya disparó para esta misma salida.
+      await applyClassificationAlerts(employeeId, workShiftId, classifiedSegments, { notify: !earlyLeave && !duration.insufficientHours });
+    }
+  } catch (error) {
+    console.error("EVALUATE_SHIFT_EXIT_FAILED", {
+      severity: "critical",
+      employeeId,
+      workShiftId,
+      error: error instanceof Error ? error.message : String(error),
     });
   }
 }

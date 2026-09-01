@@ -5,7 +5,7 @@ import { AppError } from "../../shared/errors/AppError";
 import { prisma } from "../../shared/prisma/client";
 import { timeEntriesRepository } from "./timeEntries.repository";
 import { timeEntriesService, clockAttemptHash, resolveShiftConcept } from "./timeEntries.service";
-import { flagOpenShiftOverflowForReview } from "../shifts/workShiftEvaluationRunner";
+import { evaluateShiftExit, flagOpenShiftOverflowForReview, notifyClassificationAlerts } from "../shifts/workShiftEvaluationRunner";
 import { resolveActiveWorkRegime } from "../work-regimes/workRegimes.service";
 import { notifyUsers } from "../workforce-management/workforce.service";
 
@@ -638,6 +638,52 @@ describe("clockOutByEmployee", () => {
       statusCode: 409,
       code: "CLOCK_ALREADY_CLOSED",
     });
+  });
+
+  // Etapa 13B (docs/decisions/SHIFT_EXIT_CLASSIFICATION_13B.md)
+  it("llama a evaluateShiftExit una sola vez con los segmentos clasificados, sin un notifyClassificationAlerts separado (evita el aviso duplicado)", async () => {
+    const startAt = new Date(Date.now() - 60 * 60_000);
+    repo.findEmployeeByIdForClock.mockResolvedValue(activeEmployee);
+    repo.findOpenWorkShift.mockResolvedValue({ id: "shift-open", startAt });
+    repo.findDefaultHourConcept.mockResolvedValue({ hourConcept: { id: "concept-1", name: "Normal", status: "ACTIVO" } });
+    repo.findBlockingNovelty.mockResolvedValue(null);
+    repo.closeOpenWorkShift.mockResolvedValue({
+      workShift: { id: "shift-open", startAt, endAt: new Date(), totalMinutes: 60 },
+      entries: [],
+      timeSegments: [],
+    });
+
+    await timeEntriesService.clockOutByEmployee({ employeeId: activeEmployee.id });
+
+    expect(evaluateShiftExit).toHaveBeenCalledTimes(1);
+    const call = vi.mocked(evaluateShiftExit).mock.calls[0]!;
+    expect(call[0]).toBe(activeEmployee.id);
+    expect(call[1]).toBe("shift-open");
+    expect(call[3]).toEqual(expect.any(Array));
+    expect(notifyClassificationAlerts).not.toHaveBeenCalled();
+  });
+
+  // Causa raíz del 503 reportado en POST /clock/photo-punch (mismo camino de
+  // cierre que clockOutByEmployee, sin necesitar mockear storage/evidencia
+  // fotográfica para probar el punto exacto de la falla): un fallo evaluando
+  // alertas de salida ya NO debe convertir una salida guardada con éxito en
+  // un error hacia el cliente.
+  it("Caso 9 del pedido / causa raíz del 503: si evaluateShiftExit falla, la salida igual se confirma (no propaga el error, no lo convierte en 503)", async () => {
+    const startAt = new Date(Date.now() - 60 * 60_000);
+    repo.findEmployeeByIdForClock.mockResolvedValue(activeEmployee);
+    repo.findOpenWorkShift.mockResolvedValue({ id: "shift-open", startAt });
+    repo.findDefaultHourConcept.mockResolvedValue({ hourConcept: { id: "concept-1", name: "Normal", status: "ACTIVO" } });
+    repo.findBlockingNovelty.mockResolvedValue(null);
+    repo.closeOpenWorkShift.mockResolvedValue({
+      workShift: { id: "shift-open", startAt, endAt: new Date(), totalMinutes: 60 },
+      entries: [],
+      timeSegments: [],
+    });
+    vi.mocked(evaluateShiftExit).mockRejectedValueOnce(new Error("fallo inesperado evaluando la salida"));
+
+    const result = await timeEntriesService.clockOutByEmployee({ employeeId: activeEmployee.id });
+
+    expect(result.workShift.id).toBe("shift-open");
   });
 });
 
