@@ -102,6 +102,21 @@ export const hourConceptsRepository = {
     return new Set(enabled.map((row) => row.hourConceptId));
   },
 
+  // Etapa 13D: ¿tiene el empleado al menos un concepto horario ADICIONAL
+  // habilitado? (cualquiera que no sea la Hora Normal base). systemRole es
+  // @unique en HourConcept -- NORMAL_BASE es el único valor posible del
+  // enum, así que systemRole:null identifica sin ambigüedad "es un concepto
+  // adicional", sin depender de ningún id conocido de antemano. Usado para
+  // decidir si SEGMENTO_SIN_CLASIFICAR debe notificar a RRHH -- ver
+  // docs/decisions/SHIFT_SEGMENT_UNCLASSIFIED_POLICY_13D.md.
+  async findHasAdditionalConceptEnabled(employeeId: string): Promise<boolean> {
+    const additional = await prisma.employeeHourConcept.findFirst({
+      where: { employeeId, hourConcept: { status: "ACTIVO", systemRole: null } },
+      select: { employeeId: true },
+    });
+    return additional !== null;
+  },
+
   // Empleados habilitados para un concepto (Etapa 8G) — EmployeeHourConcept es
   // un simple on/off (sin effectiveFrom/effectiveTo, sin status propio); no se
   // infiere nada desde TimeSegment. Índice [hourConceptId] agregado en la

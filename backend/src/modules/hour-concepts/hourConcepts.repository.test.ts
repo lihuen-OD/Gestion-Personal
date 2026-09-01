@@ -7,7 +7,7 @@ vi.mock("../../shared/prisma/client", () => ({
   prisma: {
     hourConcept: { findUniqueOrThrow: vi.fn(), delete: vi.fn(), update: vi.fn(), findMany: vi.fn() },
     employee: { count: vi.fn() },
-    employeeHourConcept: { findMany: vi.fn(), count: vi.fn(), findUnique: vi.fn(), createMany: vi.fn(), delete: vi.fn(), deleteMany: vi.fn() },
+    employeeHourConcept: { findMany: vi.fn(), findFirst: vi.fn(), count: vi.fn(), findUnique: vi.fn(), createMany: vi.fn(), delete: vi.fn(), deleteMany: vi.fn() },
     hourConceptRule: { updateMany: vi.fn() },
     $transaction: vi.fn((ops: Promise<unknown>[]) => Promise.all(ops)),
   },
@@ -16,13 +16,39 @@ vi.mock("../../shared/prisma/client", () => ({
 const mockedPrisma = prisma as unknown as {
   hourConcept: { findUniqueOrThrow: Mock; delete: Mock; update: Mock; findMany: Mock };
   employee: { count: Mock };
-  employeeHourConcept: { findMany: Mock; count: Mock; findUnique: Mock; createMany: Mock; delete: Mock; deleteMany: Mock };
+  employeeHourConcept: { findMany: Mock; findFirst: Mock; count: Mock; findUnique: Mock; createMany: Mock; delete: Mock; deleteMany: Mock };
   hourConceptRule: { updateMany: Mock };
   $transaction: Mock;
 };
 
 beforeEach(() => {
   vi.clearAllMocks();
+});
+
+// Etapa 13D (docs/decisions/SHIFT_SEGMENT_UNCLASSIFIED_POLICY_13D.md)
+describe("findHasAdditionalConceptEnabled — ¿tiene el empleado algún concepto ADICIONAL habilitado?", () => {
+  it("consulta EmployeeHourConcept filtrando status ACTIVO y systemRole:null (excluye la Hora Normal base)", async () => {
+    mockedPrisma.employeeHourConcept.findFirst.mockResolvedValue(null);
+
+    await hourConceptsRepository.findHasAdditionalConceptEnabled("employee-1");
+
+    expect(mockedPrisma.employeeHourConcept.findFirst).toHaveBeenCalledWith({
+      where: { employeeId: "employee-1", hourConcept: { status: "ACTIVO", systemRole: null } },
+      select: { employeeId: true },
+    });
+  });
+
+  it("devuelve true si existe al menos un concepto adicional habilitado", async () => {
+    mockedPrisma.employeeHourConcept.findFirst.mockResolvedValue({ employeeId: "employee-1" });
+
+    await expect(hourConceptsRepository.findHasAdditionalConceptEnabled("employee-1")).resolves.toBe(true);
+  });
+
+  it("devuelve false si no existe ninguno (empleado sólo con Hora Normal, o sin ningún EmployeeHourConcept)", async () => {
+    mockedPrisma.employeeHourConcept.findFirst.mockResolvedValue(null);
+
+    await expect(hourConceptsRepository.findHasAdditionalConceptEnabled("employee-1")).resolves.toBe(false);
+  });
 });
 
 describe("findById", () => {

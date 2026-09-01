@@ -19,6 +19,7 @@ vi.mock("../../shared/prisma/client", () => ({
     workShift: { update: vi.fn(), findFirst: vi.fn(), findUnique: vi.fn() },
     shiftAlert: { upsert: vi.fn(), updateMany: vi.fn() },
     employeeWorkRegime: { findFirst: vi.fn() },
+    employeeHourConcept: { findFirst: vi.fn() },
   },
 }));
 
@@ -33,6 +34,7 @@ const mockedPrisma = prisma as unknown as {
   workShift: { update: Mock; findFirst: Mock; findUnique: Mock };
   shiftAlert: { upsert: Mock; updateMany: Mock };
   employeeWorkRegime: { findFirst: Mock };
+  employeeHourConcept: { findFirst: Mock };
 };
 
 function upsertedAlertTypes(): string[] {
@@ -82,6 +84,11 @@ beforeEach(() => {
   mockedPrisma.workShift.findFirst.mockResolvedValue(null); // sin jornada previa: no evalua descanso
   mockedPrisma.shiftAlert.upsert.mockResolvedValue({ id: "alert-1" });
   mockedPrisma.shiftAlert.updateMany.mockResolvedValue({ count: 0 });
+  // Etapa 13D: default = el empleado SÍ tiene un concepto adicional
+  // habilitado, para preservar el comportamiento de todos los tests
+  // preexistentes que no son sobre esta dimensión. Los tests de la Etapa
+  // 13D que sí prueban "sin conceptos adicionales" lo sobreescriben con null.
+  mockedPrisma.employeeHourConcept.findFirst.mockResolvedValue({ employeeId: "employee-1" });
 });
 
 describe("Caso A — empleado sin regimen vigente", () => {
@@ -1045,5 +1052,151 @@ describe("evaluateShiftExit — Etapa 13B (clasificación de salida, política d
     const calls = mockedPrisma.shiftAlert.upsert.mock.calls.filter((call) => call[0]?.create?.type === "SALIDA_ANTICIPADA");
     expect(calls).toHaveLength(2);
     expect(calls[0]![0]!.where).toEqual(calls[1]![0]!.where);
+  });
+});
+
+// Etapa 13D (docs/decisions/SHIFT_SEGMENT_UNCLASSIFIED_POLICY_13D.md): un
+// tramo SIN_CONCEPTO_COMPATIBLE sólo debe notificar a RRHH cuando el
+// empleado tiene al menos un concepto horario ADICIONAL habilitado (nunca la
+// Hora Normal base) y ninguna alerta principal de salida (13B) ya explica el
+// mismo evento. La ShiftAlert (historial/auditoría) se sigue persistiendo
+// siempre, sin excepción -- sólo se suprime el AVISO.
+describe("SEGMENTO_SIN_CLASIFICAR — Etapa 13D (política de concepto esperado)", () => {
+  const plainShift = {
+    id: "plain-shift",
+    code: "PLAIN",
+    startTime: "08:00",
+    endTime: "16:00",
+    crossesMidnight: false,
+    entryToleranceBeforeMinutes: 10,
+    entryToleranceAfterMinutes: 10,
+    exitToleranceBeforeMinutes: 15,
+    exitToleranceAfterMinutes: 15,
+    minimumMinutesForCompliance: null,
+    maximumInformativeMinutes: null,
+    missingOutAlertAfterMinutes: null,
+    absoluteOpenShiftLimitMinutes: 1200,
+    status: "ACTIVO",
+  };
+
+  function notifiedTitles(): string[] {
+    return vi.mocked(notifyUsers).mock.calls.map((call) => call[1]?.title);
+  }
+
+  beforeEach(() => {
+    mockedPrisma.shiftTemplate.findUnique.mockResolvedValue(plainShift);
+    mockedPrisma.shiftAssignment.findUnique.mockResolvedValue({ status: "HABILITADO" });
+    mockedPrisma.employeeWorkRegime.findFirst.mockResolvedValue(null);
+    mockedPrisma.workShift.findUnique.mockResolvedValue({
+      id: "shift-13d",
+      startAt: new Date("2026-08-18T11:00:00.000Z"), // 08:00 ART
+      shiftTemplateId: "plain-shift",
+      totalMinutes: 480, // 08:00-16:00 exacto -- salida puntual, sin salida anticipada ni jornada corta
+    });
+  });
+
+  it("Caso A del pedido: empleado SIN conceptos adicionales -- se persiste la ShiftAlert pero NO notifica", async () => {
+    mockedPrisma.employeeHourConcept.findFirst.mockResolvedValue(null);
+
+    await evaluateShiftExit("employee-1", "shift-13d", new Date("2026-08-18T19:00:00.000Z"), [
+      { startAt: new Date("2026-08-18T18:30:00.000Z"), minutes: 30, conceptStatus: "SIN_CONCEPTO_COMPATIBLE" },
+    ]);
+
+    expect(upsertedAlertTypes()).toEqual(["SEGMENTO_SIN_CLASIFICAR"]); // sigue persistida (trazabilidad interna)
+    expect(notifiedTitles()).toHaveLength(0); // pero no genera aviso a RRHH
+  });
+
+  it("el criterio de 'concepto esperado' consulta EmployeeHourConcept con systemRole:null -- nunca cuenta la Hora Normal base", async () => {
+    mockedPrisma.employeeHourConcept.findFirst.mockResolvedValue(null);
+
+    await evaluateShiftExit("employee-1", "shift-13d", new Date("2026-08-18T19:00:00.000Z"), [
+      { startAt: new Date("2026-08-18T18:30:00.000Z"), minutes: 30, conceptStatus: "SIN_CONCEPTO_COMPATIBLE" },
+    ]);
+
+    expect(mockedPrisma.employeeHourConcept.findFirst).toHaveBeenCalledWith({
+      where: { employeeId: "employee-1", hourConcept: { status: "ACTIVO", systemRole: null } },
+      select: { employeeId: true },
+    });
+  });
+
+  it("Caso B del pedido: empleado CON al menos un concepto adicional habilitado -- notifica cuando es la única explicación", async () => {
+    mockedPrisma.employeeHourConcept.findFirst.mockResolvedValue({ employeeId: "employee-1" });
+
+    await evaluateShiftExit("employee-1", "shift-13d", new Date("2026-08-18T19:00:00.000Z"), [
+      { startAt: new Date("2026-08-18T18:30:00.000Z"), minutes: 30, conceptStatus: "SIN_CONCEPTO_COMPATIBLE" },
+    ]);
+
+    expect(upsertedAlertTypes()).toEqual(["SEGMENTO_SIN_CLASIFICAR"]);
+    expect(notifiedTitles()).toEqual(["Tramo de jornada sin concepto horario compatible"]);
+  });
+
+  it("Caso D del pedido: SALIDA_ANTICIPADA + segmento sin clasificar, empleado CON conceptos adicionales -- igual no notifica el segmento (subordinado a la cascada 13B) y ni siquiera consulta EmployeeHourConcept", async () => {
+    mockedPrisma.employeeHourConcept.findFirst.mockResolvedValue({ employeeId: "employee-1" });
+    mockedPrisma.workShift.findUnique.mockResolvedValue({
+      id: "shift-13d",
+      startAt: new Date("2026-08-18T11:00:00.000Z"),
+      shiftTemplateId: "plain-shift",
+      totalMinutes: 450, // salida 30 min antes
+    });
+
+    await evaluateShiftExit("employee-1", "shift-13d", new Date("2026-08-18T18:30:00.000Z"), [
+      { startAt: new Date("2026-08-18T18:00:00.000Z"), minutes: 30, conceptStatus: "SIN_CONCEPTO_COMPATIBLE" },
+    ]);
+
+    expect(upsertedAlertTypes()).toEqual(expect.arrayContaining(["SALIDA_ANTICIPADA", "SEGMENTO_SIN_CLASIFICAR"]));
+    expect(notifiedTitles()).toEqual(["Salida anticipada"]);
+    expect(mockedPrisma.employeeHourConcept.findFirst).not.toHaveBeenCalled(); // 13B ya suprimió el aviso -- no hace falta consultar
+  });
+
+  it("Caso E del pedido: JORNADA_INSUFICIENTE + segmento sin clasificar -- igual no notifica el segmento, sin consultar EmployeeHourConcept", async () => {
+    mockedPrisma.shiftTemplate.findUnique.mockResolvedValue({ ...plainShift, minimumMinutesForCompliance: 420 });
+    mockedPrisma.employeeHourConcept.findFirst.mockResolvedValue({ employeeId: "employee-1" });
+    mockedPrisma.workShift.findUnique.mockResolvedValue({
+      id: "shift-13d",
+      startAt: new Date("2026-08-18T12:30:00.000Z"), // ingreso 09:30 ART (tardío), salida puntual -> sin SALIDA_ANTICIPADA
+      shiftTemplateId: "plain-shift",
+      totalMinutes: 390, // < 420
+    });
+
+    await evaluateShiftExit("employee-1", "shift-13d", new Date("2026-08-18T19:00:00.000Z"), [
+      { startAt: new Date("2026-08-18T18:30:00.000Z"), minutes: 30, conceptStatus: "SIN_CONCEPTO_COMPATIBLE" },
+    ]);
+
+    expect(upsertedAlertTypes()).toEqual(expect.arrayContaining(["JORNADA_INSUFICIENTE", "SEGMENTO_SIN_CLASIFICAR"]));
+    expect(notifiedTitles()).toEqual(["Jornada por debajo del mínimo"]);
+    expect(mockedPrisma.employeeHourConcept.findFirst).not.toHaveBeenCalled();
+  });
+
+  it("Caso C del pedido: CONCEPTO_NO_HABILITADO sigue notificando sin verse afectado por la nueva política (camino independiente, aunque no haya ningún concepto adicional habilitado)", async () => {
+    mockedPrisma.employeeHourConcept.findFirst.mockResolvedValue(null);
+
+    await evaluateShiftExit("employee-1", "shift-13d", new Date("2026-08-18T19:00:00.000Z"), [
+      { startAt: new Date("2026-08-18T18:30:00.000Z"), minutes: 30, conceptStatus: "CONCEPTO_NO_HABILITADO" },
+    ]);
+
+    expect(upsertedAlertTypes()).toEqual(["CONCEPTO_NO_HABILITADO"]);
+    expect(notifiedTitles()).toEqual(["Concepto horario detectado pero no habilitado para el empleado"]);
+  });
+
+  it("varios segmentos SIN_CONCEPTO_COMPATIBLE en la misma salida consultan EmployeeHourConcept una sola vez -- no por segmento, sin N+1", async () => {
+    mockedPrisma.employeeHourConcept.findFirst.mockResolvedValue({ employeeId: "employee-1" });
+
+    await evaluateShiftExit("employee-1", "shift-13d", new Date("2026-08-18T19:00:00.000Z"), [
+      { startAt: new Date("2026-08-18T14:00:00.000Z"), minutes: 30, conceptStatus: "SIN_CONCEPTO_COMPATIBLE" },
+      { startAt: new Date("2026-08-18T18:30:00.000Z"), minutes: 30, conceptStatus: "SIN_CONCEPTO_COMPATIBLE" },
+    ]);
+
+    expect(mockedPrisma.employeeHourConcept.findFirst).toHaveBeenCalledTimes(1);
+  });
+
+  it("notifyClassificationAlerts (alta manual standalone, fuera de la cascada 13B) también respeta la política -- sin conceptos adicionales, no notifica", async () => {
+    mockedPrisma.employeeHourConcept.findFirst.mockResolvedValue(null);
+
+    await notifyClassificationAlerts("employee-1", "shift-13d", [
+      { startAt: new Date("2026-08-18T18:30:00.000Z"), minutes: 30, conceptStatus: "SIN_CONCEPTO_COMPATIBLE" },
+    ]);
+
+    expect(upsertedAlertTypes()).toEqual(["SEGMENTO_SIN_CLASIFICAR"]);
+    expect(notifiedTitles()).toHaveLength(0);
   });
 });

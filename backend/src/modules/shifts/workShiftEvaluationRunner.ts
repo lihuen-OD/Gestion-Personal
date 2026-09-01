@@ -2,6 +2,7 @@ import { prisma } from "../../shared/prisma/client";
 import type { ShiftTemplateLike } from "./shiftTemplateRef.types";
 import { attendanceRecipients, notifyUsers } from "../workforce-management/workforce.service";
 import { resolveActiveWorkRegime } from "../work-regimes/workRegimes.service";
+import { hourConceptsRepository } from "../hour-concepts/hourConcepts.repository";
 import {
   evaluateEntryPunctuality,
   evaluateExitPunctuality,
@@ -312,13 +313,24 @@ async function applyClassificationAlerts(
 
   const sinClasificar = byStatus("SIN_CONCEPTO_COMPATIBLE");
   if (sinClasificar.length > 0) {
+    // Etapa 13D (docs/decisions/SHIFT_SEGMENT_UNCLASSIFIED_POLICY_13D.md):
+    // sin ningún concepto horario ADICIONAL habilitado, un tramo sin
+    // clasificar no es un hallazgo -- es la situación esperada de cualquier
+    // empleado que nunca tuvo Sereno/Guardia/Colectivo/etc. La ShiftAlert
+    // se sigue persistiendo siempre (trazabilidad interna, "no ocultar
+    // problemas de configuración"), sólo se suprime el AVISO a RRHH cuando
+    // no hay ningún concepto adicional que justifique la expectativa de
+    // clasificación. Una sola consulta (nunca por segmento), y sólo si
+    // options.notify ya era true -- si el evento ya está subordinado a
+    // SALIDA_ANTICIPADA/JORNADA_INSUFICIENTE (cascada 13B), ni se consulta.
+    const notify = options.notify ? await hourConceptsRepository.findHasAdditionalConceptEnabled(employeeId) : false;
     await createShiftAlert({
       employeeId,
       workShiftId,
       type: "SEGMENTO_SIN_CLASIFICAR",
       actualAt: sinClasificar[0]!.startAt,
       differenceMinutes: sinClasificar.reduce((sum, segment) => sum + segment.minutes, 0),
-      notify: options.notify,
+      notify,
     });
   }
 }
