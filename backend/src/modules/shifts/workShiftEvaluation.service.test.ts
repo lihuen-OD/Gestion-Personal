@@ -98,14 +98,21 @@ describe("matchShiftForEmployee", () => {
     expect(match.template?.id).toBe("sereno2");
   });
 
-  it("Caso C: coincide con un turno activo general no asociado al empleado", () => {
+  // Etapa 13E.1 (docs/decisions/SHIFT_CONFIGURATION_ALERT_POLICY_13E.md):
+  // antes de esta etapa, una fichada que coincidía por horario con un turno
+  // activo NO asociado al empleado (dentro de la tolerancia general de ese
+  // turno) resolvía GENERAL_UNASSIGNED -- se decidió que eso nunca es
+  // evidencia real para este empleado. Ahora, sin ninguna asignación propia
+  // aplicable, el resultado es NO_MATCH sin excepción, sin importar que
+  // exista un turno de otra persona compatible por hora.
+  it("Caso C (redefinido 13E.1): sin turno propio, un turno activo de otra persona que coincide por horario ya NO se usa -- NO_MATCH", () => {
     const match = matchShiftForEmployee({
       actualAt: at(6, 32),
       employeeAssignments: [],
       activeTemplates: [morningShift],
     });
-    expect(match.case).toBe("GENERAL_UNASSIGNED");
-    expect(match.template?.id).toBe("morning");
+    expect(match.case).toBe("NO_MATCH");
+    expect(match.template).toBeNull();
   });
 
   it("Caso D: no coincide con ningún turno (ni propio ni general dentro de tolerancia)", () => {
@@ -240,24 +247,30 @@ describe("matchShiftForEmployee — Etapa 13A (ingreso anticipado usa el turno a
     expect(match.differenceMinutes).toBe(-60);
   });
 
-  it("Caso I del pedido (regresión): sin ninguna asignación, un turno general en el sistema coincide con la hora -> sigue siendo GENERAL_UNASSIGNED, sin cambios (8J, no tocado por 13A)", () => {
+  // Etapa 13E.1 (docs/decisions/SHIFT_CONFIGURATION_ALERT_POLICY_13E.md):
+  // los dos "Caso I" de 13A quedaban documentados como GENERAL_UNASSIGNED a
+  // propósito (8J, no tocado por 13A) -- esa rama en sí misma se eliminó
+  // acá. Redefinidos para reflejar la regla nueva: sin ninguna asignación
+  // propia aplicable ese día, jamás se compara contra un ShiftTemplate
+  // ajeno, sin importar que exista uno con esa hora en el sistema.
+  it("Caso I del pedido (redefinido 13E.1): sin ninguna asignación, un turno general en el sistema coincide con la hora -> ya NO se usa, NO_MATCH", () => {
     const match = matchShiftForEmployee({
-      actualAt: at(8, 25), // dentro de la tolerancia general (10 min) del turno 08:30
+      actualAt: at(8, 25), // dentro de la tolerancia general (10 min) del turno 08:30 -- irrelevante ahora, no se compara
       employeeAssignments: [],
       activeTemplates: [shift0830],
     });
-    expect(match.case).toBe("GENERAL_UNASSIGNED");
-    expect(match.template?.id).toBe("shift-0830");
+    expect(match.case).toBe("NO_MATCH");
+    expect(match.template).toBeNull();
   });
 
-  it("Caso I del pedido (regresión): asignación existente pero no aplicable hoy (weekday no coincide) + turno general con esa hora -> sigue cayendo a GENERAL_UNASSIGNED, nunca fuerza el turno propio no aplicable hoy (8J, no tocado por 13A)", () => {
+  it("Caso I del pedido (redefinido 13E.1): asignación existente pero no aplicable hoy (weekday no coincide) -> tampoco se compara contra el turno ajeno, NO_MATCH", () => {
     const match = matchShiftForEmployee({
-      actualAt: at(8, 25, 7), // martes 2026-07-07, dentro de la tolerancia general del turno 08:30
+      actualAt: at(8, 25, 7), // martes 2026-07-07, dentro de la tolerancia general del turno 08:30 -- irrelevante ahora
       employeeAssignments: [{ shiftTemplateId: "shift-0830", status: "HABILITADO", weekdays: [1] }], // solo lunes
       activeTemplates: [shift0830],
     });
-    expect(match.case).toBe("GENERAL_UNASSIGNED");
-    expect(match.template?.id).toBe("shift-0830");
+    expect(match.case).toBe("NO_MATCH");
+    expect(match.template).toBeNull();
   });
 });
 

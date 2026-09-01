@@ -109,26 +109,22 @@ function closestOwnMatch(actualAt: Date, templates: ShiftTemplateRef[]): { templ
   return candidates[0]!;
 }
 
-function closestWithinTolerance(actualAt: Date, templates: ShiftTemplateRef[]): { template: ShiftTemplateRef; differenceMinutes: number } | null {
-  const candidates = templates
-    .map((template) => ({ template, ...closestOccurrence(actualAt, template.startTime) }))
-    .filter(({ template, differenceMinutes }) => differenceMinutes >= -template.entryToleranceBeforeMinutes && differenceMinutes <= template.entryToleranceAfterMinutes)
-    .sort((a, b) => Math.abs(a.differenceMinutes) - Math.abs(b.differenceMinutes));
-  return candidates[0] ?? null;
-}
-
 export function hasNoShiftAssignments(employeeAssignments: EmployeeShiftAssignmentRef[]) {
   return employeeAssignments.length === 0;
 }
 
-// Cascada: turnos propios del empleado (habilitado o deshabilitado, el más cercano gana, sin tolerancia) → turnos generales del sistema (sí con tolerancia, por no haber relación previa) → sin coincidencia.
-//
-// Etapa 8J: "propio" ahora también exige que la asignación esté vigente y
-// aplique ese día de semana en la fecha calendario Argentina de actualAt. Una
-// asignación HABILITADO/DESHABILITADO que no aplica ese día deja de contar
-// como "propia" — cae al mismo camino que un turno general (tolerancia
-// normal), en vez de forzar ENABLED o DISABLED_FOR_EMPLOYEE fuera de su
-// vigencia/día real.
+// Etapa 13E.1 (docs/decisions/SHIFT_CONFIGURATION_ALERT_POLICY_13E.md):
+// los turnos sólo aplican a un empleado con ShiftAssignment propia. Antes de
+// esta etapa, sin turno propio aplicable ese día, se buscaba un segundo
+// candidato por coincidencia horaria contra CUALQUIER ShiftTemplate activo
+// no asignado a este empleado (`closestWithinTolerance` sobre
+// "turnos generales") — eso trataba una coincidencia de horario con el turno
+// de otra persona como si fuera evidencia real para este empleado. Regla
+// funcional aprobada: que una fichada coincida con el horario de un turno
+// ajeno no significa que ese turno le aplique. Se eliminó por completo esa
+// búsqueda (y la función `closestWithinTolerance` que la resolvía, sin otro
+// llamador) — sin turno propio aplicable, el resultado es directamente
+// NO_MATCH, sin ningún paso intermedio de "turno general".
 export function matchShiftForEmployee(input: {
   actualAt: Date;
   employeeAssignments: EmployeeShiftAssignmentRef[];
@@ -147,11 +143,6 @@ export function matchShiftForEmployee(input: {
   if (ownMatch) {
     return { case: enabledIds.has(ownMatch.template.id) ? "ENABLED" : "DISABLED_FOR_EMPLOYEE", template: ownMatch.template, differenceMinutes: ownMatch.differenceMinutes };
   }
-
-  const assignedIds = new Set([...enabledIds, ...disabledIds]);
-  const generalTemplates = input.activeTemplates.filter((template) => !assignedIds.has(template.id));
-  const generalMatch = closestWithinTolerance(input.actualAt, generalTemplates);
-  if (generalMatch) return { case: "GENERAL_UNASSIGNED", template: generalMatch.template, differenceMinutes: generalMatch.differenceMinutes };
 
   return { case: "NO_MATCH", template: null, differenceMinutes: null };
 }

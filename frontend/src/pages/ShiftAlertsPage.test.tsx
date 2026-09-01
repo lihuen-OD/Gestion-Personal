@@ -145,3 +145,37 @@ describe("ShiftAlertsPage — Etapa 13A (nuevo tipo INGRESO_ANTICIPADO)", () => 
     expect(screen.getByText("-30m")).toBeInTheDocument();
   });
 });
+
+// Etapa 13E (docs/decisions/SHIFT_CONFIGURATION_ALERT_POLICY_13E.md): copy
+// más honesto para POSSIBLE_SHIFT_CONFIGURATION_MISSING -- pide revisar, no
+// afirma un diagnóstico de configuración que sólo es una hipótesis.
+describe("ShiftAlertsPage — Etapa 13E (copy revisado de POSSIBLE_SHIFT_CONFIGURATION_MISSING)", () => {
+  it("muestra 'Revisar configuración de turno', ni el enum crudo ni el copy técnico anterior", async () => {
+    vi.mocked(shiftAlertApiService.getAll).mockResolvedValue({
+      data: [buildAlert({ type: "POSSIBLE_SHIFT_CONFIGURATION_MISSING" })],
+      meta: { total: 1, pageSize: 20, hasMore: false, nextBefore: null },
+    });
+
+    renderPage();
+
+    await screen.findByText("Revisar configuración de turno");
+    expect(screen.queryByText("POSSIBLE_SHIFT_CONFIGURATION_MISSING")).not.toBeInTheDocument();
+    expect(screen.queryByText("Posible falta de configuración")).not.toBeInTheDocument();
+    expect(screen.queryByText("Posible falta de configuración de turno")).not.toBeInTheDocument();
+  });
+
+  it("el filtro de Tipo muestra 'Revisar configuración de turno', no el copy anterior", async () => {
+    vi.mocked(shiftAlertApiService.getAll).mockResolvedValue({
+      data: [],
+      meta: { total: 0, pageSize: 20, hasMore: false, nextBefore: null },
+    });
+
+    renderPage();
+    await screen.findByText("No hay alertas para los filtros seleccionados.");
+
+    const typeSelect = screen.getByLabelText("Tipo") as HTMLSelectElement;
+    const optionLabels = Array.from(typeSelect.options).map((option) => option.text);
+    expect(optionLabels).toContain("Revisar configuración de turno");
+    expect(optionLabels).not.toContain("Posible falta de configuración");
+  });
+});

@@ -21,7 +21,12 @@ const TYPE_LABELS: Record<ShiftAlertType, string> = {
   SALIDA_TARDIA: "Salida tardía",
   TURNO_NO_IDENTIFICADO: "Sin turno compatible",
   SHIFT_NOT_ENABLED_FOR_EMPLOYEE: "Turno no habilitado",
-  POSSIBLE_SHIFT_CONFIGURATION_MISSING: "Posible falta de configuración",
+  // Etapa 13E: mismo criterio que el label backend -- pide revisar, no
+  // afirma un diagnóstico de configuración que sólo es una hipótesis.
+  // Etapa 13E.1: el backend ya no genera alertas nuevas de este tipo (ver
+  // docs/decisions/SHIFT_CONFIGURATION_ALERT_POLICY_13E.md) -- este label
+  // queda sólo para alertas ya persistidas antes de esa etapa.
+  POSSIBLE_SHIFT_CONFIGURATION_MISSING: "Revisar configuración de turno",
   JORNADA_INSUFICIENTE: "Jornada por debajo del mínimo",
   JORNADA_EXTENDIDA: "Jornada extendida",
   DESCANSO_INSUFICIENTE: "Descanso insuficiente",

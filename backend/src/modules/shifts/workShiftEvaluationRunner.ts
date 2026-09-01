@@ -22,6 +22,12 @@ export type ShiftAlertTypeValue =
   | "SALIDA_TARDIA"
   | "TURNO_NO_IDENTIFICADO"
   | "SHIFT_NOT_ENABLED_FOR_EMPLOYEE"
+  // Etapa 13E.1: legacy -- ningún camino de código genera este tipo de acá
+  // en adelante (ver alertTypeForMatch más abajo). Se conserva en el enum de
+  // Prisma y en estos mapas de labels/severidad/mensaje sólo para que las
+  // filas de ShiftAlert ya persistidas antes de esta etapa se sigan
+  // mostrando correctamente en "Alertas de Turnos" -- ver
+  // docs/decisions/SHIFT_CONFIGURATION_ALERT_POLICY_13E.md.
   | "POSSIBLE_SHIFT_CONFIGURATION_MISSING"
   | "JORNADA_INSUFICIENTE"
   | "JORNADA_EXTENDIDA"
@@ -56,13 +62,31 @@ const labelByAlertType: Record<ShiftAlertTypeValue, string> = {
   SALIDA_TARDIA: "Salida fuera de tolerancia",
   TURNO_NO_IDENTIFICADO: "Turno no identificado",
   SHIFT_NOT_ENABLED_FOR_EMPLOYEE: "Turno no habilitado para el empleado",
-  POSSIBLE_SHIFT_CONFIGURATION_MISSING: "Posible falta de configuración de turno",
+  // Etapa 13E (docs/decisions/SHIFT_CONFIGURATION_ALERT_POLICY_13E.md): el
+  // label anterior ("Posible falta de configuración de turno") afirmaba un
+  // hecho de configuración cuando en realidad es sólo una coincidencia
+  // horaria contra un turno que no le pertenece al empleado (GENERAL_UNASSIGNED
+  // en matchShiftForEmployee) -- nunca una certeza. "Revisar..." pide una
+  // acción sin afirmar el diagnóstico.
+  POSSIBLE_SHIFT_CONFIGURATION_MISSING: "Revisar configuración de turno",
   JORNADA_INSUFICIENTE: "Jornada por debajo del mínimo",
   JORNADA_EXTENDIDA: "Jornada extendida",
   DESCANSO_INSUFICIENTE: "Descanso insuficiente entre jornadas",
   POSIBLE_OLVIDO_SALIDA: "Posible olvido de salida",
   CONCEPTO_NO_HABILITADO: "Concepto horario detectado pero no habilitado para el empleado",
   SEGMENTO_SIN_CLASIFICAR: "Tramo de jornada sin concepto horario compatible",
+};
+
+const DEFAULT_ALERT_NOTIFICATION_MESSAGE = "La fichada requiere seguimiento. Las horas no fueron modificadas automáticamente.";
+
+// Etapa 13E: cuerpo de notificación específico sólo para los tipos donde el
+// mensaje genérico ("la fichada requiere seguimiento") no comunica qué
+// revisar -- el resto de los 12 tipos sigue usando el mensaje genérico
+// (mismo criterio ya establecido en 13A: no introducir contenido dinámico
+// por instancia, sólo variar el texto fijo por TIPO).
+const messageByAlertType: Partial<Record<ShiftAlertTypeValue, string>> = {
+  POSSIBLE_SHIFT_CONFIGURATION_MISSING:
+    "La persona registró una fichada, pero no tiene un turno asignado compatible para ese horario. Revisá si corresponde asignarle un turno.",
 };
 
 export function toTemplateRef(template: ShiftTemplateLike): ShiftTemplateRef {
@@ -134,7 +158,7 @@ export async function createShiftAlert(input: {
     await notifyUsers(await attendanceRecipients(input.employeeId), {
       type: "ALERTA_FICHADA",
       title: labelByAlertType[input.type],
-      message: "La fichada requiere seguimiento. Las horas no fueron modificadas automáticamente.",
+      message: messageByAlertType[input.type] ?? DEFAULT_ALERT_NOTIFICATION_MESSAGE,
       entityType: "ShiftAlert",
       entityId: alert.id,
       link: "/asistencia",
@@ -151,9 +175,20 @@ export async function createShiftAlert(input: {
   return alert;
 }
 
+// Etapa 13E.1 (docs/decisions/SHIFT_CONFIGURATION_ALERT_POLICY_13E.md):
+// matchShiftForEmployee (entrada, único llamador de esta función) ya nunca
+// produce GENERAL_UNASSIGNED — la búsqueda contra turnos ajenos se eliminó
+// por completo. POSSIBLE_SHIFT_CONFIGURATION_MISSING queda sin ningún caso
+// funcional real que la dispare: el enum de Prisma se conserva (alertas
+// históricas ya persistidas siguen existiendo y se siguen mostrando
+// correctamente en "Alertas de Turnos"), pero no hay ningún camino de código
+// que vuelva a crear una fila nueva de este tipo. Si resolveMatchForExit
+// (salida) resolviera GENERAL_UNASSIGNED en su escenario residual (una
+// asignación que dejó de existir entre el ingreso y la salida — ver ese
+// comentario más abajo), tampoco corresponde alertar: esta función nunca se
+// llama desde salida.
 function alertTypeForMatch(match: ShiftMatchResult): ShiftAlertTypeValue | null {
   if (match.case === "DISABLED_FOR_EMPLOYEE") return "SHIFT_NOT_ENABLED_FOR_EMPLOYEE";
-  if (match.case === "GENERAL_UNASSIGNED") return "POSSIBLE_SHIFT_CONFIGURATION_MISSING";
   if (match.case === "NO_MATCH") return "TURNO_NO_IDENTIFICADO";
   return null;
 }
@@ -179,6 +214,13 @@ function alertTypeForMatch(match: ShiftMatchResult): ShiftAlertTypeValue | null 
 // exacto del GENERAL_UNASSIGNED (turno ajeno vs. turno propio no aplicable
 // hoy), que hubiera requerido un campo/lógica nueva en ShiftMatchResult sin
 // necesidad real.
+//
+// Etapa 13E.1: POSSIBLE_SHIFT_CONFIGURATION_MISSING queda en esta lista sin
+// efecto práctico -- alertTypeForMatch nunca vuelve a devolver ese tipo, así
+// que la condición de abajo jamás se evalúa para él. Se deja tal cual (no se
+// achica el Set) porque no cuesta nada mantenerlo y documenta la intención
+// histórica; si el tipo se retirara del todo más adelante, este Set es uno
+// de los lugares a revisar.
 const SUPPRESSIBLE_OUT_OF_SHIFT_ALERTS: ReadonlySet<ShiftAlertTypeValue> = new Set([
   "TURNO_NO_IDENTIFICADO",
   "SHIFT_NOT_ENABLED_FOR_EMPLOYEE",
@@ -198,7 +240,26 @@ export async function evaluateShiftEntry(employeeId: string, workShiftId: string
   const { employeeAssignments, activeTemplates } = await loadMatchingContext(employeeId);
   const match = matchShiftForEmployee({ actualAt, employeeAssignments, activeTemplates });
 
-  if (match.template) {
+  // Etapa 13E: un turno GENERAL_UNASSIGNED (ajeno -- coincide por horario
+  // pero no está asignado a este empleado) nunca se adopta como el turno real
+  // de esta jornada. Antes de la Etapa 13E sí se escribía acá, y ese dato
+  // "contaminaba" evaluaciones posteriores que confían en
+  // shift.shiftTemplateId/shift.maxAllowedMinutes -- evaluateWorkedDuration
+  // en la salida (JORNADA_INSUFICIENTE/EXTENDIDA contra el mínimo/máximo de
+  // un turno ajeno), checkMissingOutRisk (POSIBLE_OLVIDO_SALIDA contra
+  // missingOutAlertAfterMinutes de un turno ajeno) y expireOpenWorkShifts
+  // (auto-cierre contra maxAllowedMinutes de un turno ajeno). ENABLED y
+  // DISABLED_FOR_EMPLOYEE sí siguen adoptando el turno: en ambos casos existe
+  // una ShiftAssignment real del empleado a ese ShiftTemplate (habilitada o
+  // no), evidencia genuina, no una coincidencia.
+  //
+  // Etapa 13E.1 (docs/decisions/SHIFT_CONFIGURATION_ALERT_POLICY_13E.md):
+  // matchShiftForEmployee (entrada) ya nunca produce GENERAL_UNASSIGNED -- la
+  // búsqueda contra turnos ajenos se eliminó en el origen (workShiftEvaluation.service.ts).
+  // La condición `match.case !== "GENERAL_UNASSIGNED"` de acá abajo queda
+  // como defensa en profundidad (nunca hace daño, documenta la invariante) —
+  // no como el mecanismo que evita la adopción, que ahora es estructural.
+  if (match.template && match.case !== "GENERAL_UNASSIGNED") {
     await prisma.workShift.update({
       where: { id: workShiftId },
       data: { shiftTemplateId: match.template.id, maxAllowedMinutes: match.template.absoluteOpenShiftLimitMinutes },
@@ -398,7 +459,17 @@ export async function evaluateShiftExit(
     // sobre el umbral del turno para decidir JORNADA_EXTENDIDA — ver
     // evaluateWorkedDuration para la prioridad exacta (Régimen → Turno → Default).
     const regime = await resolveActiveWorkRegime(employeeId, actualAt);
-    const duration = evaluateWorkedDuration({ totalMinutes: shift.totalMinutes ?? 0, template: match.template, regimeMaximumMinutes: regime?.extendedShiftAlertMinutes ?? null });
+    // Etapa 13E: defensa en profundidad -- un turno GENERAL_UNASSIGNED (ajeno)
+    // nunca debe gobernar el mínimo/máximo de esta evaluación, ni siquiera si
+    // `shift.shiftTemplateId` quedó apuntando a uno por datos previos a esta
+    // etapa (no se hizo backfill de jornadas ya persistidas). El punto de
+    // escritura (evaluateShiftEntry, más arriba en este archivo) ya dejó de
+    // adoptar un turno ajeno para jornadas nuevas -- este `null` cubre el
+    // resto: cualquier jornada vieja que ya tuviera uno, o cualquier camino
+    // futuro que vuelva a resolver GENERAL_UNASSIGNED acá. Sin cambios para
+    // ENABLED/DISABLED_FOR_EMPLOYEE (evidencia real de una asignación).
+    const durationTemplate = match.case === "GENERAL_UNASSIGNED" ? null : match.template;
+    const duration = evaluateWorkedDuration({ totalMinutes: shift.totalMinutes ?? 0, template: durationTemplate, regimeMaximumMinutes: regime?.extendedShiftAlertMinutes ?? null });
     if (duration.insufficientHours) {
       // Etapa 13B: si ya hubo SALIDA_ANTICIPADA, la jornada corta es
       // consecuencia del mismo evento — se persiste igual (detalle/auditoría)
