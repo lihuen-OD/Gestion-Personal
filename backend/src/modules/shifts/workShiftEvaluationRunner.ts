@@ -6,7 +6,6 @@ import { hourConceptsRepository } from "../hour-concepts/hourConcepts.repository
 import {
   evaluateEntryPunctuality,
   evaluateExitPunctuality,
-  evaluateRestPeriod,
   evaluateWorkedDuration,
   isEarlyArrivalReviewRequired,
   matchShiftForEmployee,
@@ -31,13 +30,17 @@ export type ShiftAlertTypeValue =
   | "POSSIBLE_SHIFT_CONFIGURATION_MISSING"
   | "JORNADA_INSUFICIENTE"
   | "JORNADA_EXTENDIDA"
+  // Etapa 13I: legacy -- ya no se genera (ver evaluateShiftEntry más abajo).
+  // El umbral (480 min) estaba hardcodeado, sin ningún campo de Turno/Régimen
+  // que lo respaldara, y generaba ruido para regímenes flexibles/turnos
+  // partidos. Se conserva en el enum de Prisma y en estos mapas sólo para
+  // que las filas ya persistidas se sigan mostrando correctamente -- ver
+  // docs/decisions/SHIFT_REST_BETWEEN_SHIFTS_DISABLED_13I.md.
   | "DESCANSO_INSUFICIENTE"
   | "POSIBLE_OLVIDO_SALIDA"
   | "CONCEPTO_NO_HABILITADO"
   | "SEGMENTO_SIN_CLASIFICAR";
 type ShiftAlertSeverityValue = "INFO" | "ADVERTENCIA" | "CRITICA";
-
-const DEFAULT_MINIMUM_REST_MINUTES = 480;
 
 const severityByAlertType: Record<ShiftAlertTypeValue, ShiftAlertSeverityValue> = {
   INGRESO_TARDE: "ADVERTENCIA",
@@ -286,14 +289,21 @@ export async function evaluateShiftEntry(employeeId: string, workShiftId: string
     await createShiftAlert({ employeeId, workShiftId, type: "INGRESO_ANTICIPADO", actualAt, differenceMinutes: punctuality.differenceMinutes, severity });
   }
 
-  const previousShift = await prisma.workShift.findFirst({
-    where: { employeeId, id: { not: workShiftId }, endAt: { not: null } },
-    orderBy: { endAt: "desc" },
-  });
-  const rest = evaluateRestPeriod({ previousShiftEndAt: previousShift?.endAt ?? null, currentShiftStartAt: actualAt, minimumRestMinutes: DEFAULT_MINIMUM_REST_MINUTES });
-  if (rest.evaluated && rest.insufficientRest) {
-    await createShiftAlert({ employeeId, workShiftId, type: "DESCANSO_INSUFICIENTE", actualAt, differenceMinutes: rest.restMinutes });
-  }
+  // Etapa 13I (docs/decisions/SHIFT_REST_BETWEEN_SHIFTS_DISABLED_13I.md):
+  // DESCANSO_INSUFICIENTE deja de generarse -- el umbral (480 min) estaba
+  // hardcodeado, sin ningún campo de ShiftTemplate/WorkRegime detrás (Etapa
+  // 13C, hallazgo confirmado), y no distingue empleados con turno fijo de
+  // regímenes flexibles/turnos partidos, generando ruido/falsas alarmas para
+  // esa población. Se quita la consulta de `previousShift` y la llamada a
+  // `createShiftAlert` -- una consulta menos por evaluación de entrada, sin
+  // efecto en ninguna otra alerta. `evaluateRestPeriod` (workShiftEvaluation.service.ts)
+  // se conserva intacta y exportada, sin llamador en producción por ahora,
+  // lista para reactivarse si en el futuro se define una configuración real
+  // de descanso mínimo por régimen/turno. El tipo `DESCANSO_INSUFICIENTE`
+  // sigue en el enum de Prisma, en `severityByAlertType`/`labelByAlertType`
+  // y en el schema Zod -- las alertas ya persistidas siguen renderizando
+  // correctamente en "Alertas de Turnos"/"Notificaciones", legacy, no se
+  // genera ninguna fila nueva.
 }
 
 async function resolveMatchForExit(employeeId: string, shiftTemplateId: string | null): Promise<ShiftMatchResult> {
@@ -333,13 +343,17 @@ export interface ClassifiedSegmentAlertInput {
 }
 
 // Etapa 13D (docs/decisions/SHIFT_SEGMENT_UNCLASSIFIED_POLICY_13D.md),
-// reutilizado por la Etapa 13G: sin ningún concepto horario ADICIONAL
-// habilitado, un tramo SIN_CONCEPTO_COMPATIBLE no es un hallazgo real -- es
-// la situación esperada de cualquier empleado que nunca tuvo Sereno/Guardia/
-// Colectivo/etc. Nunca debe notificar, sin importar qué otra alerta haya o
-// no disparado para el mismo cierre. Una sola consulta, sólo si hay al menos
-// un segmento sin clasificar (nunca por segmento, nunca si ya se sabe que no
-// hace falta).
+// ampliado por la Etapa 13H.1 (docs/decisions/SHIFT_ALERTS_GROUPED_VIEW_13H_1.md):
+// sin ningún concepto horario ADICIONAL habilitado, un tramo
+// SIN_CONCEPTO_COMPATIBLE no es un hallazgo real -- es la situación esperada
+// de cualquier empleado que nunca tuvo Sereno/Guardia/Colectivo/etc. Hasta
+// 13H.1 esto sólo apagaba el AVISO (la ShiftAlert se persistía siempre,
+// "interna"); RRHH seguía viéndola como hallazgo asociado en Alertas de
+// Turnos (Etapa 13H), sin ningún indicio de que no había nada que revisar.
+// Desde 13H.1 esta misma consulta también decide si corresponde CREAR la
+// ShiftAlert -- sin concepto adicional, no se persiste en absoluto (ver
+// isSegmentoSinClasificarEligible más abajo). Una sola consulta por cierre,
+// sólo si hay al menos un segmento sin clasificar (nunca por segmento).
 async function isSegmentoSinClasificarNotifiable(employeeId: string, sinClasificarCount: number): Promise<boolean> {
   if (sinClasificarCount === 0) return false;
   return hourConceptsRepository.findHasAdditionalConceptEnabled(employeeId);
@@ -349,7 +363,7 @@ async function applyClassificationAlerts(
   employeeId: string,
   workShiftId: string,
   segments: ClassifiedSegmentAlertInput[],
-  options: { notifyConceptoNoHabilitado: boolean; notifySegmentoSinClasificar: boolean },
+  options: { notifyConceptoNoHabilitado: boolean; persistSegmentoSinClasificar: boolean; notifySegmentoSinClasificar: boolean },
 ) {
   const byStatus = (status: ClassifiedSegmentAlertInput["conceptStatus"]) => segments.filter((segment) => segment.conceptStatus === status);
 
@@ -365,12 +379,15 @@ async function applyClassificationAlerts(
     });
   }
 
+  // Etapa 13H.1: sin concepto adicional esperado (persistSegmentoSinClasificar
+  // en false), la ShiftAlert ni se crea -- no hay ningún hallazgo real que
+  // registrar (Regla 2 del pedido: "la ausencia de concepto horario adicional
+  // no es un problema"). Con concepto adicional, se sigue persistiendo
+  // siempre que haya un tramo sin clasificar (trazabilidad interna, "no
+  // ocultar problemas de configuración"), y notifySegmentoSinClasificar ya
+  // llega resuelto por el llamador (13D + la política unificada de 13G).
   const sinClasificar = byStatus("SIN_CONCEPTO_COMPATIBLE");
-  if (sinClasificar.length > 0) {
-    // La ShiftAlert se sigue persistiendo siempre (trazabilidad interna, "no
-    // ocultar problemas de configuración") -- notifySegmentoSinClasificar ya
-    // llega resuelto por el llamador (ver isSegmentoSinClasificarNotifiable
-    // y, desde la Etapa 13G, la política unificada de evaluateShiftExit).
+  if (sinClasificar.length > 0 && options.persistSegmentoSinClasificar) {
     await createShiftAlert({
       employeeId,
       workShiftId,
@@ -389,16 +406,21 @@ async function applyClassificationAlerts(
 // duplicadas por el mismo problema"). No genera nada si todos los segmentos
 // quedaron SUGERIDO/MANUAL. Uso standalone (ej. createWorkShift, alta manual
 // de un día completo sin evaluateShiftExit) — CONCEPTO_NO_HABILITADO siempre
-// notifica; SEGMENTO_SIN_CLASIFICAR respeta la Etapa 13D (sin concepto
-// adicional esperado, no notifica) pero, a diferencia de evaluateShiftExit,
-// no compite por un único "ganador" contra otras alertas -- este camino
-// nunca evalúa puntualidad/duración, así que no hay nada más con qué
-// competir (ver Etapa 13G, docs/decisions/SHIFT_EXIT_SINGLE_NOTIFICATION_POLICY_13G.md
-// §11, "qué NO se tocó").
+// notifica; SEGMENTO_SIN_CLASIFICAR respeta 13D/13H.1 (sin concepto
+// adicional esperado, ni se persiste ni notifica) pero, a diferencia de
+// evaluateShiftExit, no compite por un único "ganador" contra otras alertas
+// -- este camino nunca evalúa puntualidad/duración, así que "elegible"
+// (persistir) y "notificable" son la misma condición acá (ver Etapa 13G,
+// docs/decisions/SHIFT_EXIT_SINGLE_NOTIFICATION_POLICY_13G.md §11, "qué NO
+// se tocó").
 export async function notifyClassificationAlerts(employeeId: string, workShiftId: string, segments: ClassifiedSegmentAlertInput[]) {
   const sinClasificarCount = segments.filter((segment) => segment.conceptStatus === "SIN_CONCEPTO_COMPATIBLE").length;
-  const notifySegmentoSinClasificar = await isSegmentoSinClasificarNotifiable(employeeId, sinClasificarCount);
-  await applyClassificationAlerts(employeeId, workShiftId, segments, { notifyConceptoNoHabilitado: true, notifySegmentoSinClasificar });
+  const segmentoSinClasificarEligible = await isSegmentoSinClasificarNotifiable(employeeId, sinClasificarCount);
+  await applyClassificationAlerts(employeeId, workShiftId, segments, {
+    notifyConceptoNoHabilitado: true,
+    persistSegmentoSinClasificar: segmentoSinClasificarEligible,
+    notifySegmentoSinClasificar: segmentoSinClasificarEligible,
+  });
 }
 
 // Etapa 13G (docs/decisions/SHIFT_EXIT_SINGLE_NOTIFICATION_POLICY_13G.md):
@@ -495,12 +517,7 @@ export async function evaluateShiftExit(
 
     // Etapa 13G: qué tipos "dispararon" para este cierre (independientemente
     // de si van a notificar -- todos los que disparan se persisten siempre,
-    // ver los createShiftAlert de abajo). SEGMENTO_SIN_CLASIFICAR se resuelve
-    // aparte, en dos fases: como es el último en la prioridad, su propio piso
-    // de la Etapa 13D (sin concepto adicional esperado, ni siquiera es
-    // candidato) sólo se consulta si ningún tipo de mayor prioridad ya ganó
-    // -- mismo criterio de "no consultar si ya no hace falta" ya establecido
-    // en 13D, ahora generalizado a las 5 alertas de mayor prioridad.
+    // ver los createShiftAlert de abajo).
     const fired: Partial<Record<Exclude<ShiftAlertTypeValue, "SEGMENTO_SIN_CLASIFICAR">, boolean>> = {
       CONCEPTO_NO_HABILITADO: noHabilitadoCount > 0,
       JORNADA_EXTENDIDA: duration.extendedShift,
@@ -508,8 +525,18 @@ export async function evaluateShiftExit(
       SALIDA_ANTICIPADA: punctuality.earlyLeave,
       JORNADA_INSUFICIENTE: duration.insufficientHours,
     };
+    // Etapa 13H.1: a diferencia de las otras 5, SEGMENTO_SIN_CLASIFICAR ya no
+    // se persiste incondicionalmente -- "elegible" (isSegmentoSinClasificarNotifiable,
+    // Etapa 13D: ¿el empleado tiene algún concepto adicional habilitado?)
+    // ahora decide si la ShiftAlert se crea en absoluto, no sólo si notifica.
+    // Por eso esta consulta ya no puede diferirse a "sólo si ningún tipo de
+    // mayor prioridad ganó" (esa optimización de 13G asumía que la única
+    // pregunta pendiente era el aviso; acá también hace falta para decidir
+    // la persistencia) -- se resuelve siempre que haya al menos un segmento
+    // sin clasificar, una sola vez, nunca por segmento.
+    const segmentoSinClasificarEligible = sinClasificarCount > 0 && (await isSegmentoSinClasificarNotifiable(employeeId, sinClasificarCount));
     let notifiableWinner: ShiftAlertTypeValue | null = EXIT_ALERT_NOTIFICATION_PRIORITY.find((type) => type !== "SEGMENTO_SIN_CLASIFICAR" && fired[type]) ?? null;
-    if (!notifiableWinner && sinClasificarCount > 0 && (await isSegmentoSinClasificarNotifiable(employeeId, sinClasificarCount))) {
+    if (!notifiableWinner && segmentoSinClasificarEligible) {
       notifiableWinner = "SEGMENTO_SIN_CLASIFICAR";
     }
 
@@ -529,6 +556,7 @@ export async function evaluateShiftExit(
     if (classifiedSegments.length > 0) {
       await applyClassificationAlerts(employeeId, workShiftId, classifiedSegments, {
         notifyConceptoNoHabilitado: notifiableWinner === "CONCEPTO_NO_HABILITADO",
+        persistSegmentoSinClasificar: segmentoSinClasificarEligible,
         notifySegmentoSinClasificar: notifiableWinner === "SEGMENTO_SIN_CLASIFICAR",
       });
     }
