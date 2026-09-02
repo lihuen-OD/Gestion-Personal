@@ -1343,6 +1343,14 @@ html,body,#root,.app-shell{
 .attendance-results-bar small{color:var(--ds-slate-400)}
 .attendance-observed-panel .inline-actions{padding:14px 0 0;margin:0;border-top:1px solid var(--ds-slate-100)}
 .attendance-load-more{display:flex;justify-content:center;padding:16px 0 0}
+.shift-alert-type-cell{display:flex;flex-direction:column;gap:3px;white-space:normal}
+.shift-alert-toggle{display:inline-flex;align-items:center;gap:4px;border:0;background:transparent;padding:0;color:var(--ds-blue-600);font-size:11px;font-weight:600;cursor:pointer}
+.shift-alert-toggle:hover{text-decoration:underline}
+.shift-alert-group-detail-row td{background:var(--ds-slate-50);padding:10px 15px 14px}
+.shift-alert-group-detail p{margin:0 0 6px;color:var(--ds-slate-500);font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.03em}
+.shift-alert-group-detail ul{display:grid;gap:7px;margin:0;padding:0;list-style:none}
+.shift-alert-group-detail li{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:12px;color:var(--ds-slate-600)}
+.shift-alert-group-detail li>span:first-child{min-width:190px;color:var(--ds-slate-700);font-weight:500}
 .attendance-review-table{min-width:980px}
 .attendance-review-table th:nth-child(1){width:230px}
 .attendance-review-table th:nth-child(2){width:135px}

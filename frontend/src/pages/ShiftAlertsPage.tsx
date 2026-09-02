@@ -1,5 +1,5 @@
-import { AlertTriangle, CheckCircle2, Eye } from "lucide-react";
-import { useEffect, useState } from "react";
+import { AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, Eye } from "lucide-react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { PageHeader } from "../components/ui/PageHeader";
 import { FilterPanel } from "../components/ui/FilterPanel";
@@ -72,6 +72,81 @@ function differenceLabel(alert: ShiftAlert) {
   return alert.differenceMinutes >= 0 ? `+${label}` : `-${label}`;
 }
 
+// Etapa 13H (docs/decisions/SHIFT_ALERTS_GROUPED_VIEW_13H.md): prioridad
+// combinada para elegir la alerta "principal" de un grupo (mismo WorkShift).
+// Reutiliza, en orden, la prioridad de salida ya definida en la Etapa 13G
+// (Notificaciones) y la prioridad de entrada propuesta para esta etapa — más
+// 2 tipos que ninguna de las dos listas cubría:
+// - POSIBLE_OLVIDO_SALIDA va primero: es la señal más urgente en la
+//   práctica (jornada posiblemente sin cerrar, puede afectar la
+//   confiabilidad del resto del grupo), y puede llegar a severidad CRITICA
+//   (régimen ALERT_ONLY) — no estaba en ninguna de las 2 listas del pedido.
+// - DESCANSO_INSUFICIENTE y POSSIBLE_SHIFT_CONFIGURATION_MISSING (legacy,
+//   Etapa 13E.1 — ya no se genera) van al final: ninguna lista los ordenaba
+//   explícitamente y ninguno es, en la práctica, la alerta más relevante de
+//   un grupo real.
+const GROUP_MAIN_ALERT_PRIORITY: ShiftAlertType[] = [
+  "POSIBLE_OLVIDO_SALIDA",
+  "CONCEPTO_NO_HABILITADO",
+  "JORNADA_EXTENDIDA",
+  "SALIDA_TARDIA",
+  "SALIDA_ANTICIPADA",
+  "JORNADA_INSUFICIENTE",
+  "SEGMENTO_SIN_CLASIFICAR",
+  "TURNO_NO_IDENTIFICADO",
+  "SHIFT_NOT_ENABLED_FOR_EMPLOYEE",
+  "INGRESO_TARDE",
+  "INGRESO_ANTICIPADO",
+  "DESCANSO_INSUFICIENTE",
+  "POSSIBLE_SHIFT_CONFIGURATION_MISSING",
+];
+const alertPriorityRank = new Map(GROUP_MAIN_ALERT_PRIORITY.map((type, index) => [type, index]));
+
+type AlertGroup = {
+  workShiftId: string;
+  mainAlert: ShiftAlert;
+  secondaryAlerts: ShiftAlert[];
+  status: ShiftAlertStatus;
+};
+
+// Etapa 13H, Parte 5: el grupo queda Pendiente si CUALQUIER alerta interna
+// está pendiente (no ocultar que falta revisión); si ninguna lo está, queda
+// Resuelto en cuanto haya al menos una RESUELTA (se avanzó algo real);
+// Descartado sólo si TODAS las alertas del grupo se descartaron.
+function computeGroupStatus(members: ShiftAlert[]): ShiftAlertStatus {
+  if (members.some((alert) => alert.status === "PENDIENTE")) return "PENDIENTE";
+  if (members.some((alert) => alert.status === "RESUELTA")) return "RESUELTA";
+  return "DESCARTADA";
+}
+
+// Etapa 13H, Parte 2: agrupa por workShiftId -- el identificador más
+// confiable disponible (siempre presente, campo obligatorio en ShiftAlert;
+// ver docs/decisions/SHIFT_ALERTS_GROUPED_VIEW_13H.md §4). No hizo falta
+// implementar ningún fallback más débil (attendancePunchId no existe como
+// campo propio de ShiftAlert; employeeId+fecha nunca se necesitó). Preserva
+// el orden de llegada (la lista ya viene ordenada por createdAt desc desde
+// el backend) usando la posición del primer miembro visto de cada grupo.
+function groupAlerts(alerts: ShiftAlert[]): AlertGroup[] {
+  const order: string[] = [];
+  const membersByWorkShift = new Map<string, ShiftAlert[]>();
+  for (const alert of alerts) {
+    const existing = membersByWorkShift.get(alert.workShiftId);
+    if (existing) {
+      existing.push(alert);
+    } else {
+      membersByWorkShift.set(alert.workShiftId, [alert]);
+      order.push(alert.workShiftId);
+    }
+  }
+  return order.map((workShiftId) => {
+    const members = [...membersByWorkShift.get(workShiftId)!].sort(
+      (a, b) => (alertPriorityRank.get(a.type) ?? Number.MAX_SAFE_INTEGER) - (alertPriorityRank.get(b.type) ?? Number.MAX_SAFE_INTEGER),
+    );
+    const [mainAlert, ...secondaryAlerts] = members;
+    return { workShiftId, mainAlert: mainAlert!, secondaryAlerts, status: computeGroupStatus(members) };
+  });
+}
+
 export function ShiftAlertsPage() {
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebouncedValue(search, 300);
@@ -88,6 +163,20 @@ export function ShiftAlertsPage() {
   const [reason, setReason] = useState("");
   const [actionError, setActionError] = useState("");
   const [isResolving, setIsResolving] = useState(false);
+  // Etapa 13H: qué grupos (por workShiftId) están expandidos mostrando sus
+  // hallazgos secundarios -- colapsado por default, para no repetir el ruido
+  // de filas sueltas que esta etapa vino a resolver.
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  const groups = useMemo(() => groupAlerts(alerts), [alerts]);
+
+  const toggleGroup = (workShiftId: string) => {
+    setExpandedGroups((current) => {
+      const next = new Set(current);
+      if (next.has(workShiftId)) next.delete(workShiftId);
+      else next.add(workShiftId);
+      return next;
+    });
+  };
 
   useEffect(() => {
     let alive = true;
@@ -148,7 +237,14 @@ export function ShiftAlertsPage() {
   return (
     <>
       <PageHeader eyebrow="GESTIÓN HORARIA" title="Alertas de turnos" description="Fichadas que requieren revisión: tardanzas, salidas fuera de margen y turnos que no coinciden con lo habilitado." />
-      <Section title="Alertas" subtitle={`${meta.total} alerta(s) según filtros aplicados.`}>
+      <Section
+        title="Alertas"
+        subtitle={
+          groups.length !== meta.total
+            ? `${groups.length} grupo(s) de alertas (${meta.total} alerta(s) individuales) según filtros aplicados.`
+            : `${meta.total} alerta(s) según filtros aplicados.`
+        }
+      >
         <FilterPanel
           title="Filtros"
           search={{ value: search, onChange: setSearch, placeholder: "Nombre, legajo o DNI" }}
@@ -184,24 +280,69 @@ export function ShiftAlertsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {alerts.map((alert) => (
-                    <tr key={alert.id}>
-                      <td><b>{alert.employee.lastName}, {alert.employee.firstName}</b><span className="table-sub">Legajo {alert.employee.legajo}</span></td>
-                      <td>{TYPE_LABELS[alert.type]}</td>
-                      <td><Badge tone={SEVERITY_TONE[alert.severity]}>{SEVERITY_LABELS[alert.severity]}</Badge></td>
-                      <td>{alert.workShift.shiftTemplate ? `${alert.workShift.shiftTemplate.code} · ${alert.workShift.shiftTemplate.name}` : <em>Sin turno</em>}</td>
-                      <td>{differenceLabel(alert)}</td>
-                      <td>{formatDateTime(alert.actualAt)}</td>
-                      <td><Badge tone={STATUS_TONE[alert.status]}>{STATUS_LABELS[alert.status]}</Badge></td>
-                      <td>
-                        <div className="table-actions">
-                          <Link className="table-icon-action" title="Ver legajo" aria-label={`Ver legajo de ${alert.employee.firstName} ${alert.employee.lastName}`} to={`/legajos/${alert.employeeId}`}><Eye size={14} /><span>Ver legajo</span></Link>
-                          {alert.workShift.shiftTemplate ? <Link className="table-icon-action" title="Ver turno" aria-label="Ver turno" to={`/configuracion/turnos/${alert.workShift.shiftTemplate.id}`}><Eye size={14} /><span>Ver turno</span></Link> : null}
-                          {alert.status === "PENDIENTE" ? <button type="button" className="table-icon-action" title="Resolver alerta" aria-label="Resolver alerta" onClick={() => openResolve(alert)}><CheckCircle2 size={14} /><span>Resolver</span></button> : null}
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
+                  {groups.map((group) => {
+                    const alert = group.mainAlert;
+                    const expanded = expandedGroups.has(group.workShiftId);
+                    return (
+                      <Fragment key={group.workShiftId}>
+                        <tr>
+                          <td><b>{alert.employee.lastName}, {alert.employee.firstName}</b><span className="table-sub">Legajo {alert.employee.legajo}</span></td>
+                          <td>
+                            <div className="shift-alert-type-cell">
+                              <span>{TYPE_LABELS[alert.type]}</span>
+                              {group.secondaryAlerts.length > 0 ? (
+                                <button
+                                  type="button"
+                                  className="shift-alert-toggle"
+                                  onClick={() => toggleGroup(group.workShiftId)}
+                                  aria-expanded={expanded}
+                                >
+                                  {expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                                  <span>
+                                    {expanded ? "Ocultar" : "+"}{group.secondaryAlerts.length} hallazgo{group.secondaryAlerts.length > 1 ? "s" : ""} asociado{group.secondaryAlerts.length > 1 ? "s" : ""}
+                                  </span>
+                                </button>
+                              ) : null}
+                            </div>
+                          </td>
+                          <td><Badge tone={SEVERITY_TONE[alert.severity]}>{SEVERITY_LABELS[alert.severity]}</Badge></td>
+                          <td>{alert.workShift.shiftTemplate ? `${alert.workShift.shiftTemplate.code} · ${alert.workShift.shiftTemplate.name}` : <em>Sin turno</em>}</td>
+                          <td>{differenceLabel(alert)}</td>
+                          <td>{formatDateTime(alert.actualAt)}</td>
+                          <td><Badge tone={STATUS_TONE[group.status]}>{STATUS_LABELS[group.status]}</Badge></td>
+                          <td>
+                            <div className="table-actions">
+                              <Link className="table-icon-action" title="Ver legajo" aria-label={`Ver legajo de ${alert.employee.firstName} ${alert.employee.lastName}`} to={`/legajos/${alert.employeeId}`}><Eye size={14} /><span>Ver legajo</span></Link>
+                              {alert.workShift.shiftTemplate ? <Link className="table-icon-action" title="Ver turno" aria-label="Ver turno" to={`/configuracion/turnos/${alert.workShift.shiftTemplate.id}`}><Eye size={14} /><span>Ver turno</span></Link> : null}
+                              {alert.status === "PENDIENTE" ? <button type="button" className="table-icon-action" title="Resolver alerta" aria-label="Resolver alerta" onClick={() => openResolve(alert)}><CheckCircle2 size={14} /><span>Resolver</span></button> : null}
+                            </div>
+                          </td>
+                        </tr>
+                        {expanded && group.secondaryAlerts.length > 0 ? (
+                          <tr className="shift-alert-group-detail-row">
+                            <td colSpan={8}>
+                              <div className="shift-alert-group-detail">
+                                <p>También se detectó en esta misma jornada</p>
+                                <ul>
+                                  {group.secondaryAlerts.map((secondary) => (
+                                    <li key={secondary.id}>
+                                      <span>{TYPE_LABELS[secondary.type]}</span>
+                                      <Badge tone={SEVERITY_TONE[secondary.severity]}>{SEVERITY_LABELS[secondary.severity]}</Badge>
+                                      <span>{differenceLabel(secondary)}</span>
+                                      <Badge tone={STATUS_TONE[secondary.status]}>{STATUS_LABELS[secondary.status]}</Badge>
+                                      {secondary.status === "PENDIENTE" ? (
+                                        <button type="button" className="table-link" onClick={() => openResolve(secondary)}>Resolver</button>
+                                      ) : null}
+                                    </li>
+                                  ))}
+                                </ul>
+                              </div>
+                            </td>
+                          </tr>
+                        ) : null}
+                      </Fragment>
+                    );
+                  })}
                 </tbody>
               </table>
             </TableShell>
