@@ -18,7 +18,7 @@ vi.mock("../../shared/prisma/client", () => {
     timeSegment: { create: vi.fn() },
     doubleHourRule: { findMany: vi.fn() },
     hourConcept: { findMany: vi.fn() },
-    specialHourRuleApplication: { create: vi.fn() },
+    specialHourRuleApplication: { create: vi.fn(), createMany: vi.fn() },
     employee: { findMany: vi.fn(), count: vi.fn(), findUnique: vi.fn() },
     hourConceptBreakdown: { findMany: vi.fn() },
     novelty: { findMany: vi.fn() },
@@ -27,13 +27,17 @@ vi.mock("../../shared/prisma/client", () => {
     prisma: {
       workShift: { findMany: vi.fn(), count: vi.fn() },
       employeeHourConcept: { findFirst: vi.fn() },
-      hourConcept: { findFirst: vi.fn() },
+      hourConcept: { findFirst: vi.fn(), findMany: vi.fn() },
       employeeWorkRegime: { findFirst: vi.fn() },
       attendancePunch: { findMany: vi.fn(), count: vi.fn() },
       attendanceInactivityIncident: { findMany: vi.fn(), count: vi.fn() },
       // Etapa 11A: create()/update() manuales resuelven el multiplicador de
       // Horas Especiales vía `prisma` directo (no `tx`) — ver comentario de
       // resolveDoubleHourMultiplierForManualEntry en timeEntries.repository.ts.
+      // Etapa 13F: closeOpenWorkShift también resuelve employee/doubleHourRule/
+      // hourConcept vía `prisma` directo antes de abrir la transacción (ver
+      // docs/decisions/CLOCK_PHOTO_PUNCH_EXIT_TRANSACTION_13F.md) — mismos
+      // mocks reutilizados, no uno nuevo por función.
       employee: { count: vi.fn(), findMany: vi.fn(), findUnique: vi.fn() },
       doubleHourRule: { findMany: vi.fn() },
       timeEntry: { aggregate: vi.fn(), groupBy: vi.fn(), findMany: vi.fn(), create: vi.fn(), update: vi.fn() },
@@ -57,7 +61,7 @@ type TxMocks = {
   timeSegment: { create: Mock };
   doubleHourRule: { findMany: Mock };
   hourConcept: { findMany: Mock };
-  specialHourRuleApplication: { create: Mock };
+  specialHourRuleApplication: { create: Mock; createMany: Mock };
   employee: { findMany: Mock; count: Mock; findUnique: Mock };
   hourConceptBreakdown: { findMany: Mock };
   novelty: { findMany: Mock };
@@ -66,7 +70,7 @@ type TxMocks = {
 const mockedPrisma = prisma as unknown as {
   workShift: { findMany: Mock; count: Mock };
   employeeHourConcept: { findFirst: Mock };
-  hourConcept: { findFirst: Mock };
+  hourConcept: { findFirst: Mock; findMany: Mock };
   employeeWorkRegime: { findFirst: Mock };
   attendancePunch: { findMany: Mock; count: Mock };
   attendanceInactivityIncident: { findMany: Mock; count: Mock };
@@ -96,11 +100,17 @@ beforeEach(() => {
   // `prisma` directo en vez de `tx` (ver resolveDoubleHourMultiplierForManualEntry).
   mockedPrisma.employee.findUnique.mockResolvedValue({ sectorId: null, costCenterId: null, positionId: null, companies: [] });
   mockedPrisma.doubleHourRule.findMany.mockResolvedValue([]);
+  // Etapa 13F: defaults para las lecturas que closeOpenWorkShift ahora hace
+  // vía `prisma` (fuera del tx) y para el findMany agrupado que reemplazó al
+  // findFirst por segmento dentro del tx.
+  mockedPrisma.hourConcept.findMany.mockResolvedValue([]);
+  mockedPrisma.__tx.timeEntry.findMany.mockResolvedValue([]);
   let segmentCounter = 0;
   let specialApplicationCounter = 0;
   mockedPrisma.__tx.timeSegment.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: `segment-${++segmentCounter}`, ...data }));
   mockedPrisma.__tx.timeEntry.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: `entry-${segmentCounter}`, ...data }));
   mockedPrisma.__tx.specialHourRuleApplication.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: `special-application-${++specialApplicationCounter}`, ...data }));
+  mockedPrisma.__tx.specialHourRuleApplication.createMany.mockImplementation(async ({ data }: { data: Array<Record<string, unknown>> }) => ({ count: data.length }));
 });
 
 describe("findDefaultHourConcept — Hora normal es base universal, resuelta por systemRole (Etapa 6K)", () => {
@@ -904,7 +914,10 @@ describe("SpecialHourRuleApplication y multiplicador efectivo (Etapa 3)", () => 
     mockedPrisma.__tx.workShift.updateMany.mockResolvedValue({ count: 1 });
     mockedPrisma.__tx.attendancePunch.create.mockResolvedValue({ id: "punch-out" });
     mockedPrisma.__tx.workShift.update.mockResolvedValue({ id: "shift-h" });
-    mockedPrisma.__tx.doubleHourRule.findMany.mockResolvedValue([rule({ id: "rule-domingo", multiplier: 2 })]);
+    // Etapa 13F: closeOpenWorkShift resuelve Horas Especiales vía `prisma`
+    // (no `tx`) antes de abrir la transacción -- ver
+    // docs/decisions/CLOCK_PHOTO_PUNCH_EXIT_TRANSACTION_13F.md.
+    mockedPrisma.doubleHourRule.findMany.mockResolvedValue([rule({ id: "rule-domingo", multiplier: 2 })]);
 
     await timeEntriesRepository.closeOpenWorkShift({
       workShiftId: "shift-h",
@@ -917,7 +930,12 @@ describe("SpecialHourRuleApplication y multiplicador efectivo (Etapa 3)", () => 
       segments: [{ date: sunday, startAt: sunday, endAt: new Date(sunday.getTime() + 4 * 60 * 60_000), minutes: 240, hours: 4, hourConceptId: "concept-normal", hourConceptName: "Hora normal", conceptStatus: "SUGERIDO", hourConceptRuleId: null }],
     });
 
-    expect(mockedPrisma.__tx.specialHourRuleApplication.create).toHaveBeenCalledTimes(1); // una regla, un segmento -> una sola fila, sin duplicar
+    // Etapa 13F: las filas de SpecialHourRuleApplication de un mismo cierre
+    // ahora se escriben en un único createMany (no un create por regla) --
+    // una regla, un segmento -> un solo llamado, con un array de 1 fila.
+    expect(mockedPrisma.__tx.specialHourRuleApplication.create).not.toHaveBeenCalled();
+    expect(mockedPrisma.__tx.specialHourRuleApplication.createMany).toHaveBeenCalledTimes(1);
+    expect(mockedPrisma.__tx.specialHourRuleApplication.createMany.mock.calls[0]![0].data).toHaveLength(1);
   });
 
   it("Caso I (Etapa 8F) — invariante: totalMinutes/hours/actualMinutes son siempre minutos reales, nunca inflados por appliedMultiplier", async () => {
@@ -1327,6 +1345,127 @@ describe("SpecialHourRuleApplication y multiplicador efectivo (Etapa 3)", () => 
 
     expect(mockedPrisma.__tx.timeSegment.create).toHaveBeenNthCalledWith(1, expect.objectContaining({ data: expect.objectContaining({ hourConceptId: "concept-normal", isNight: false }) }));
     expect(mockedPrisma.__tx.timeSegment.create).toHaveBeenNthCalledWith(2, expect.objectContaining({ data: expect.objectContaining({ hourConceptId: "concept-guardia", isNight: true }) }));
+  });
+});
+
+// Etapa 13F (docs/decisions/CLOCK_PHOTO_PUNCH_EXIT_TRANSACTION_13F.md):
+// causa raíz del 503 "Transaction already closed" en la salida del fichador
+// con foto -- closeOpenWorkShift hacía toda la resolución de Horas
+// Especiales (scope del empleado, reglas activas, conceptos nocturnos) más
+// un findFirst de TimeEntry por segmento, todo dentro del presupuesto de
+// 5000ms del timeout por defecto de Prisma. Estos tests verifican
+// puntualmente el fix: las lecturas de sólo configuración corren vía
+// `prisma` antes de abrir la transacción (nunca vía `tx`), el chequeo de
+// TimeEntry existente queda agrupado en una sola consulta dentro del tx, y
+// la transacción sigue siendo atómica (ninguna escritura sin la otra).
+describe("closeOpenWorkShift — Etapa 13F (menos trabajo dentro del tx crítico)", () => {
+  const employeeId = "employee-13f";
+  const sunday = new Date("2026-08-16T00:00:00.000Z"); // domingo (weekday 0)
+
+  function rule(overrides: Partial<{ id: string; multiplier: number }> = {}) {
+    return {
+      id: overrides.id ?? "rule-domingo",
+      name: "Domingo",
+      recurrenceType: "SEMANAL",
+      fromDate: new Date("2026-01-01T00:00:00.000Z"),
+      toDate: null,
+      weekdays: [0],
+      multiplier: overrides.multiplier ?? 2,
+      priority: 0,
+      companyId: null,
+      sectorId: null,
+      costCenterId: null,
+      positionId: null,
+      status: "ACTIVO",
+      reason: "Domingo",
+      dates: [],
+    };
+  }
+
+  function closeInput(overrides: Partial<{ workShiftId: string; segments: Array<{ date: Date; startAt: Date; endAt: Date; minutes: number; hours: number; hourConceptId: string; hourConceptName: string; conceptStatus: "SUGERIDO"; hourConceptRuleId: null }> }> = {}) {
+    const startAt = sunday;
+    const endAt = new Date(sunday.getTime() + 4 * 60 * 60_000);
+    return {
+      workShiftId: overrides.workShiftId ?? "shift-13f",
+      employeeId,
+      normalHourConceptId: "concept-normal",
+      normalHourConceptName: "Hora normal",
+      source: "PORTAL_DNI" as never,
+      endAt,
+      totalMinutes: 240,
+      segments: overrides.segments ?? [{ date: sunday, startAt, endAt, minutes: 240, hours: 4, hourConceptId: "concept-normal", hourConceptName: "Hora normal", conceptStatus: "SUGERIDO" as const, hourConceptRuleId: null }],
+    };
+  }
+
+  beforeEach(() => {
+    mockedPrisma.__tx.workShift.updateMany.mockResolvedValue({ count: 1 });
+    mockedPrisma.__tx.attendancePunch.create.mockResolvedValue({ id: "punch-out-13f" });
+    mockedPrisma.__tx.workShift.update.mockResolvedValue({ id: "shift-13f" });
+  });
+
+  it("Parte 1 / Tests obligatorios #7: las lecturas de Horas Especiales (scope, reglas, conceptos nocturnos) corren vía `prisma`, nunca vía `tx` -- no compiten por el presupuesto de la transacción", async () => {
+    mockedPrisma.doubleHourRule.findMany.mockResolvedValue([rule()]);
+
+    await timeEntriesRepository.closeOpenWorkShift(closeInput());
+
+    expect(mockedPrisma.employee.findUnique).toHaveBeenCalledWith(expect.objectContaining({ where: { id: employeeId } }));
+    expect(mockedPrisma.doubleHourRule.findMany).toHaveBeenCalledTimes(1);
+    expect(mockedPrisma.hourConcept.findMany).toHaveBeenCalledTimes(1);
+    // Ninguna de las 3 corrió contra el `tx` mockeado -- confirma que ya no
+    // compiten por el timeout de la transacción.
+    expect(mockedPrisma.__tx.employee.findUnique).not.toHaveBeenCalled();
+    expect(mockedPrisma.__tx.doubleHourRule.findMany).not.toHaveBeenCalled();
+    expect(mockedPrisma.__tx.hourConcept.findMany).not.toHaveBeenCalled();
+  });
+
+  it("Parte 6: la transacción se abre con timeout de 10000ms (defensa en profundidad, no la solución principal)", async () => {
+    await timeEntriesRepository.closeOpenWorkShift(closeInput());
+
+    const transactionCall = mockedPrisma.$transaction.mock.calls.find((call) => typeof call[0] === "function");
+    expect(transactionCall![1]).toEqual({ timeout: 10_000 });
+  });
+
+  it("Parte 3: una jornada que cruza medianoche (2 segmentos, 2 fechas) consulta TimeEntry existente una sola vez, agrupado -- no un findFirst por segmento", async () => {
+    const mid = new Date(sunday.getTime() + 2 * 60 * 60_000);
+    const nextDay = new Date(sunday.getTime() + 20 * 60 * 60_000);
+    await timeEntriesRepository.closeOpenWorkShift(closeInput({
+      segments: [
+        { date: sunday, startAt: sunday, endAt: mid, minutes: 120, hours: 2, hourConceptId: "concept-normal", hourConceptName: "Hora normal", conceptStatus: "SUGERIDO", hourConceptRuleId: null },
+        { date: nextDay, startAt: mid, endAt: nextDay, minutes: 120, hours: 2, hourConceptId: "concept-normal", hourConceptName: "Hora normal", conceptStatus: "SUGERIDO", hourConceptRuleId: null },
+      ],
+    }));
+
+    expect(mockedPrisma.__tx.timeEntry.findMany).toHaveBeenCalledTimes(1);
+    expect(mockedPrisma.__tx.timeEntry.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ employeeId, hourConceptId: "concept-normal", date: { in: [sunday, nextDay] } }),
+    }));
+    expect(mockedPrisma.__tx.timeEntry.findFirst).not.toHaveBeenCalled();
+    expect(mockedPrisma.__tx.timeSegment.create).toHaveBeenCalledTimes(2);
+  });
+
+  it("Tests obligatorios #4/#5/#11: si el WorkShift ya no está ABIERTO (otro intento lo cerró primero), lanza WORK_SHIFT_ALREADY_CLOSED sin crear AttendancePunch ni TimeEntry -- nada se duplica", async () => {
+    mockedPrisma.__tx.workShift.updateMany.mockResolvedValue({ count: 0 });
+
+    await expect(timeEntriesRepository.closeOpenWorkShift(closeInput())).rejects.toThrow("WORK_SHIFT_ALREADY_CLOSED");
+
+    expect(mockedPrisma.__tx.attendancePunch.create).not.toHaveBeenCalled();
+    expect(mockedPrisma.__tx.timeEntry.create).not.toHaveBeenCalled();
+    expect(mockedPrisma.__tx.timeEntry.update).not.toHaveBeenCalled();
+    expect(mockedPrisma.__tx.timeSegment.create).not.toHaveBeenCalled();
+  });
+
+  it("una sola fila de TimeEntry existente se reutiliza correctamente vía el mapa por fecha (sin duplicar, mismo resultado que antes del batching)", async () => {
+    const existing = { id: "entry-existing", employeeId, hourConceptId: "concept-normal", date: sunday, actualMinutes: 60, totalMinutes: 60, observation: null, status: "APROBADO" };
+    mockedPrisma.__tx.timeEntry.findMany.mockResolvedValue([existing]);
+    mockedPrisma.__tx.timeEntry.update.mockResolvedValue({ id: "entry-existing" });
+
+    await timeEntriesRepository.closeOpenWorkShift(closeInput());
+
+    expect(mockedPrisma.__tx.timeEntry.create).not.toHaveBeenCalled();
+    expect(mockedPrisma.__tx.timeEntry.update).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "entry-existing" },
+      data: expect.objectContaining({ totalMinutes: 300, actualMinutes: 300 }), // 60 existentes + 240 del nuevo tramo
+    }));
   });
 });
 

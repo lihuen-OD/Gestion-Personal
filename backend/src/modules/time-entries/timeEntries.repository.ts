@@ -1860,7 +1860,29 @@ export const timeEntriesRepository = {
     }, { timeout: 20_000, maxWait: 5_000 });
   },
 
-  closeOpenWorkShift(input: {
+  // Etapa 13F (docs/decisions/CLOCK_PHOTO_PUNCH_EXIT_TRANSACTION_13F.md):
+  // causa raíz del 503 "Transaction already closed" en la salida del
+  // fichador con foto — esta transacción hacía TODA la resolución de Horas
+  // Especiales (scope del empleado, reglas activas, conceptos nocturnos) con
+  // `tx`, sumando 3 queries de sólo lectura al presupuesto de 5000ms del
+  // timeout por defecto de Prisma, más una `tx.timeEntry.findFirst` por
+  // segmento dentro del loop (1 round-trip evitable por tramo). Ninguna de
+  // esas 3 lecturas necesita el lock/aislamiento de esta transacción: son
+  // exactamente las mismas queries que ya corren fuera de cualquier tx en
+  // `resolveDoubleHourMultiplierForManualEntry` (carga manual, más arriba en
+  // este archivo) — mismo criterio de scope, mismo riesgo ya aceptado de que
+  // el scope del empleado pueda cambiar en el margen de milisegundos entre
+  // la lectura y el commit. Se resuelven acá con `prisma` (no `tx`) antes de
+  // abrir la transacción; el `tx.timeEntry.findFirst` por segmento se
+  // reemplaza por un único `tx.timeEntry.findMany` (cada segmento tiene una
+  // fecha calendario distinta por diseño de `buildShiftSegments`, así que
+  // agruparlos en una sola consulta no cambia ningún resultado, sólo el
+  // número de round-trips). Dentro de la transacción sólo queda lo
+  // indispensable para que la salida quede confirmada de forma atómica:
+  // reclamar el WorkShift, crear el AttendancePunch de salida, y crear/
+  // actualizar TimeEntry+TimeSegment+SpecialHourRuleApplication (el registro
+  // real de horas trabajadas, no un efecto secundario diferible).
+  async closeOpenWorkShift(input: {
     workShiftId: string;
     employeeId: string;
     // Etapa 6L: igual que en createFromWorkShift — Hora normal canónica,
@@ -1876,6 +1898,34 @@ export const timeEntriesRepository = {
     observation?: string | null;
     punchEvidence?: PunchEvidenceInput;
   }) {
+    // Fuera de la transacción: sólo lecturas de configuración de sistema
+    // (Horas Especiales activas + su alcance, conceptos nocturnos) que no
+    // dependen de nada que esta transacción vaya a escribir.
+    const employeeScope = await prisma.employee.findUnique({
+      where: { id: input.employeeId },
+      select: { sectorId: true, costCenterId: true, positionId: true, companies: { select: { companyId: true } } },
+    });
+    const [doubleHourRules, nightHourConcepts] = await Promise.all([
+      prisma.doubleHourRule.findMany({
+        where: {
+          status: "ACTIVO",
+          fromDate: { lte: input.endAt },
+          OR: [{ toDate: null }, { toDate: { gte: input.segments[0]?.date } }],
+          AND: doubleHourRuleScopeWhere(input.employeeId, employeeScope?.companies.map((item) => item.companyId) ?? [], employeeScope?.sectorId, employeeScope?.costCenterId, employeeScope?.positionId),
+        },
+        include: { dates: true },
+      }),
+      prisma.hourConcept.findMany({
+        where: { id: { in: [...new Set(input.segments.map((segment) => segment.hourConceptId))] } },
+        select: { id: true, kind: true },
+      }),
+    ]);
+    const nightHourConceptIds = new Set(nightHourConcepts.filter((concept) => NIGHT_HOUR_CONCEPT_KINDS.has(concept.kind)).map((concept) => concept.id));
+    // Cada segmento tiene una fecha calendario distinta (buildShiftSegments
+    // parte por medianoche, nunca dos tramos con la misma fecha) — el Map
+    // sólo deduplica por las dudas, no cambia el conjunto real de fechas.
+    const uniqueDates = [...new Map(input.segments.map((segment) => [segment.date.getTime(), segment.date])).values()];
+
     return prisma.$transaction(async (tx) => {
       const claimed = await tx.workShift.updateMany({
         where: {
@@ -1917,26 +1967,20 @@ export const timeEntriesRepository = {
         },
       });
 
+      // Una sola consulta agrupando todas las fechas de la jornada en vez de
+      // un findFirst por segmento -- mismo resultado (cada fecha es de un
+      // único segmento), menos round-trips dentro del tx crítico.
+      const existingEntries = uniqueDates.length
+        ? await tx.timeEntry.findMany({
+            where: { employeeId: input.employeeId, hourConceptId: input.normalHourConceptId, date: { in: uniqueDates } },
+            include: timeEntryInclude,
+          })
+        : [];
+      const existingByDate = new Map(existingEntries.map((entry) => [entry.date.getTime(), entry]));
+
       const entries = [];
       const timeSegments = [];
-      const employeeScope = await tx.employee.findUnique({
-        where: { id: input.employeeId },
-        select: { sectorId: true, costCenterId: true, positionId: true, companies: { select: { companyId: true } } },
-      });
-      const doubleHourRules = await tx.doubleHourRule.findMany({
-        where: {
-          status: "ACTIVO",
-          fromDate: { lte: input.endAt },
-          OR: [{ toDate: null }, { toDate: { gte: input.segments[0]?.date } }],
-          AND: doubleHourRuleScopeWhere(input.employeeId, employeeScope?.companies.map((item) => item.companyId) ?? [], employeeScope?.sectorId, employeeScope?.costCenterId, employeeScope?.positionId),
-        },
-        include: { dates: true },
-      });
-      const nightHourConcepts = await tx.hourConcept.findMany({
-        where: { id: { in: [...new Set(input.segments.map((segment) => segment.hourConceptId))] } },
-        select: { id: true, kind: true },
-      });
-      const nightHourConceptIds = new Set(nightHourConcepts.filter((concept) => NIGHT_HOUR_CONCEPT_KINDS.has(concept.kind)).map((concept) => concept.id));
+      const pendingRuleApplications: Prisma.SpecialHourRuleApplicationCreateManyInput[] = [];
       for (const segment of input.segments) {
         const matchedRules = matchingDoubleHourRules(doubleHourRules, segment.date);
         const { winners, multiplier, conflicting } = resolveWinningRules(matchedRules);
@@ -1959,15 +2003,15 @@ export const timeEntriesRepository = {
         });
         timeSegments.push(timeSegment);
 
+        // Acumulado, no escrito acá -- un solo createMany después del loop
+        // (ver más abajo) en vez de 1 round-trip por regla por segmento.
         for (const rule of matchedRules) {
-          await tx.specialHourRuleApplication.create({
-            data: {
-              timeSegmentId: timeSegment.id,
-              doubleHourRuleId: rule.id,
-              multiplierApplied: rule.multiplier,
-              isWinner: winningRuleIds.has(rule.id),
-              wasConflicting: conflicting && winningRuleIds.has(rule.id),
-            },
+          pendingRuleApplications.push({
+            timeSegmentId: timeSegment.id,
+            doubleHourRuleId: rule.id,
+            multiplierApplied: rule.multiplier,
+            isWinner: winningRuleIds.has(rule.id),
+            wasConflicting: conflicting && winningRuleIds.has(rule.id),
           });
         }
 
@@ -1975,14 +2019,7 @@ export const timeEntriesRepository = {
           ? ` Reglas aplicadas: ${matchedRules.map((rule) => rule.name).join(", ")}. Multiplicador efectivo x${multiplier} (${segment.minutes} min reales).`
           : "";
 
-        const existing = await tx.timeEntry.findFirst({
-          where: {
-            employeeId: input.employeeId,
-            hourConceptId: input.normalHourConceptId,
-            date: segment.date,
-          },
-          include: timeEntryInclude,
-        });
+        const existing = existingByDate.get(segment.date.getTime()) ?? null;
 
         if (existing && existing.status !== "APROBADO" && !editableStatuses.includes(existing.status)) {
           throw new Error(`TIME_ENTRY_LOCKED:${existing.id}`);
@@ -2037,8 +2074,19 @@ export const timeEntriesRepository = {
         }
       }
 
+      if (pendingRuleApplications.length) {
+        await tx.specialHourRuleApplication.createMany({ data: pendingRuleApplications });
+      }
+
       return { workShift, entries, timeSegments };
-    });
+      // maxWait: cuánto puede esperar para conseguir una conexión del pool
+      // (default 2000ms, mismo valor -- no era el problema real). timeout:
+      // presupuesto de ejecución una vez iniciada, subido de 5000ms (default
+      // de Prisma, nunca configurado explícitamente en este proyecto) a
+      // 10000ms como defensa en profundidad -- secundaria a la reducción de
+      // trabajo de arriba, no la solución principal (ver
+      // docs/decisions/CLOCK_PHOTO_PUNCH_EXIT_TRANSACTION_13F.md §6/§10).
+    }, { timeout: 10_000 });
   },
 
   // autoApprovedByUserId != null => la edición la hizo RRHH (Etapa 6L.3):
