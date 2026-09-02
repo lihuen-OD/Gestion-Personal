@@ -332,32 +332,24 @@ export interface ClassifiedSegmentAlertInput {
   conceptStatus: "SUGERIDO" | "MANUAL" | "SIN_CONCEPTO_COMPATIBLE" | "CONCEPTO_NO_HABILITADO";
 }
 
-// Etapa 13B: política de alertas de salida duplicadas
-// (docs/decisions/SHIFT_EXIT_CLASSIFICATION_13B.md). Una misma salida corta/
-// anticipada podía disparar hasta 3 avisos casi simultáneos que en realidad
-// describen el mismo hecho: SALIDA_ANTICIPADA, JORNADA_INSUFICIENTE (jornada
-// corta consecuencia de haber salido antes) y SEGMENTO_SIN_CLASIFICAR (un
-// tramo residual sin regla de concepto horario compatible, típicamente
-// producto del mismo recorte). Ninguna de las 3 ShiftAlert deja de
-// persistirse (RRHH sigue viendo el detalle completo en Alertas de Turnos,
-// "no ocultar problemas críticos") — sólo se suprime el AVISO
-// (SystemNotification) de la de menor prioridad cuando una de mayor
-// prioridad ya explica el mismo evento, para no saturar a RRHH con 3
-// notificaciones por una sola salida. Prioridad: SALIDA_ANTICIPADA (nunca se
-// suprime) > JORNADA_INSUFICIENTE (se suprime su aviso sólo si hubo salida
-// anticipada) > SEGMENTO_SIN_CLASIFICAR (se suprime su aviso si hubo salida
-// anticipada o jornada insuficiente). CONCEPTO_NO_HABILITADO queda fuera de
-// esta cascada a propósito: es un problema de configuración real e
-// independiente del horario de salida (un concepto que matcheó pero no está
-// habilitado para el empleado), nunca "consecuencia" de una salida
-// anticipada — siempre notifica. SALIDA_TARDIA/JORNADA_EXTENDIDA tampoco
-// participan: son el cluster de "jornada larga", ortogonal al de "jornada
-// corta" que esta política resuelve.
+// Etapa 13D (docs/decisions/SHIFT_SEGMENT_UNCLASSIFIED_POLICY_13D.md),
+// reutilizado por la Etapa 13G: sin ningún concepto horario ADICIONAL
+// habilitado, un tramo SIN_CONCEPTO_COMPATIBLE no es un hallazgo real -- es
+// la situación esperada de cualquier empleado que nunca tuvo Sereno/Guardia/
+// Colectivo/etc. Nunca debe notificar, sin importar qué otra alerta haya o
+// no disparado para el mismo cierre. Una sola consulta, sólo si hay al menos
+// un segmento sin clasificar (nunca por segmento, nunca si ya se sabe que no
+// hace falta).
+async function isSegmentoSinClasificarNotifiable(employeeId: string, sinClasificarCount: number): Promise<boolean> {
+  if (sinClasificarCount === 0) return false;
+  return hourConceptsRepository.findHasAdditionalConceptEnabled(employeeId);
+}
+
 async function applyClassificationAlerts(
   employeeId: string,
   workShiftId: string,
   segments: ClassifiedSegmentAlertInput[],
-  options: { notify: boolean },
+  options: { notifyConceptoNoHabilitado: boolean; notifySegmentoSinClasificar: boolean },
 ) {
   const byStatus = (status: ClassifiedSegmentAlertInput["conceptStatus"]) => segments.filter((segment) => segment.conceptStatus === status);
 
@@ -369,29 +361,23 @@ async function applyClassificationAlerts(
       type: "CONCEPTO_NO_HABILITADO",
       actualAt: noHabilitado[0]!.startAt,
       differenceMinutes: noHabilitado.reduce((sum, segment) => sum + segment.minutes, 0),
+      notify: options.notifyConceptoNoHabilitado,
     });
   }
 
   const sinClasificar = byStatus("SIN_CONCEPTO_COMPATIBLE");
   if (sinClasificar.length > 0) {
-    // Etapa 13D (docs/decisions/SHIFT_SEGMENT_UNCLASSIFIED_POLICY_13D.md):
-    // sin ningún concepto horario ADICIONAL habilitado, un tramo sin
-    // clasificar no es un hallazgo -- es la situación esperada de cualquier
-    // empleado que nunca tuvo Sereno/Guardia/Colectivo/etc. La ShiftAlert
-    // se sigue persistiendo siempre (trazabilidad interna, "no ocultar
-    // problemas de configuración"), sólo se suprime el AVISO a RRHH cuando
-    // no hay ningún concepto adicional que justifique la expectativa de
-    // clasificación. Una sola consulta (nunca por segmento), y sólo si
-    // options.notify ya era true -- si el evento ya está subordinado a
-    // SALIDA_ANTICIPADA/JORNADA_INSUFICIENTE (cascada 13B), ni se consulta.
-    const notify = options.notify ? await hourConceptsRepository.findHasAdditionalConceptEnabled(employeeId) : false;
+    // La ShiftAlert se sigue persistiendo siempre (trazabilidad interna, "no
+    // ocultar problemas de configuración") -- notifySegmentoSinClasificar ya
+    // llega resuelto por el llamador (ver isSegmentoSinClasificarNotifiable
+    // y, desde la Etapa 13G, la política unificada de evaluateShiftExit).
     await createShiftAlert({
       employeeId,
       workShiftId,
       type: "SEGMENTO_SIN_CLASIFICAR",
       actualAt: sinClasificar[0]!.startAt,
       differenceMinutes: sinClasificar.reduce((sum, segment) => sum + segment.minutes, 0),
-      notify,
+      notify: options.notifySegmentoSinClasificar,
     });
   }
 }
@@ -402,12 +388,54 @@ async function applyClassificationAlerts(
 // llamada — se agrega antes de notificar, para cumplir "no generar alertas
 // duplicadas por el mismo problema"). No genera nada si todos los segmentos
 // quedaron SUGERIDO/MANUAL. Uso standalone (ej. createWorkShift, alta manual
-// de un día completo sin evaluateShiftExit) — siempre notifica, sin la
-// supresión por prioridad de la Etapa 13B (que sólo aplica al cerrar una
-// jornada abierta real, ver evaluateShiftExit).
+// de un día completo sin evaluateShiftExit) — CONCEPTO_NO_HABILITADO siempre
+// notifica; SEGMENTO_SIN_CLASIFICAR respeta la Etapa 13D (sin concepto
+// adicional esperado, no notifica) pero, a diferencia de evaluateShiftExit,
+// no compite por un único "ganador" contra otras alertas -- este camino
+// nunca evalúa puntualidad/duración, así que no hay nada más con qué
+// competir (ver Etapa 13G, docs/decisions/SHIFT_EXIT_SINGLE_NOTIFICATION_POLICY_13G.md
+// §11, "qué NO se tocó").
 export async function notifyClassificationAlerts(employeeId: string, workShiftId: string, segments: ClassifiedSegmentAlertInput[]) {
-  await applyClassificationAlerts(employeeId, workShiftId, segments, { notify: true });
+  const sinClasificarCount = segments.filter((segment) => segment.conceptStatus === "SIN_CONCEPTO_COMPATIBLE").length;
+  const notifySegmentoSinClasificar = await isSegmentoSinClasificarNotifiable(employeeId, sinClasificarCount);
+  await applyClassificationAlerts(employeeId, workShiftId, segments, { notifyConceptoNoHabilitado: true, notifySegmentoSinClasificar });
 }
+
+// Etapa 13G (docs/decisions/SHIFT_EXIT_SINGLE_NOTIFICATION_POLICY_13G.md):
+// política única de notificación visible para un cierre de salida. Antes de
+// esta etapa, SALIDA_TARDIA, JORNADA_EXTENDIDA y CONCEPTO_NO_HABILITADO
+// notificaban siempre, sin participar en ninguna cascada de supresión (la de
+// la Etapa 13B sólo cubría SALIDA_ANTICIPADA/JORNADA_INSUFICIENTE/
+// SEGMENTO_SIN_CLASIFICAR) -- un mismo cierre con, por ejemplo, un concepto
+// no habilitado + jornada extendida + salida tardía generaba 3
+// notificaciones simultáneas (caso real: legajo 09 "Granja"). Ahora, de
+// TODOS los tipos que puede generar un cierre de salida, como máximo uno
+// notifica -- el de mayor prioridad según este orden. El resto se sigue
+// persistiendo siempre como ShiftAlert (trazabilidad completa en "Alertas de
+// Turnos", "no ocultar problemas críticos"), sólo se suprime el AVISO.
+const EXIT_ALERT_NOTIFICATION_PRIORITY: readonly ShiftAlertTypeValue[] = [
+  // Contradicción real de configuración: el tramo matcheó un concepto que
+  // existe, pero el empleado no lo tiene habilitado -- requiere revisión de
+  // configuración, no sólo de horario.
+  "CONCEPTO_NO_HABILITADO",
+  // Superó el máximo configurado/informativo de horas.
+  "JORNADA_EXTENDIDA",
+  // Salió después del horario/tolerancia, sin llegar a "extendida".
+  "SALIDA_TARDIA",
+  // Salió antes del horario/tolerancia. Nunca compite realmente contra
+  // SALIDA_TARDIA (evaluateExitPunctuality las computa como mutuamente
+  // excluyentes sobre el mismo differenceMinutes), pero sí puede coincidir
+  // con JORNADA_EXTENDIDA en un caso límite (ingreso muy anticipado + salida
+  // antes de horario, con el total igual por encima del máximo).
+  "SALIDA_ANTICIPADA",
+  // Por debajo del mínimo configurado -- normalmente ya explicada por una
+  // salida anticipada, pero puede darse sola (ingreso tardío, salida puntual).
+  "JORNADA_INSUFICIENTE",
+  // La señal más débil (Etapa 13C/13D) -- último en la prioridad, y sólo
+  // llega a "fired" (ver más abajo) si además el empleado tiene algún
+  // concepto adicional esperado.
+  "SEGMENTO_SIN_CLASIFICAR",
+];
 
 // Etapa 13B: además de las alertas de puntualidad/duración, ahora acepta los
 // segmentos ya clasificados de la misma salida (`classifiedSegments`) para
@@ -443,17 +471,7 @@ export async function evaluateShiftExit(
     // día). Confirmado con test de regresión, sin necesidad de cambios acá.
     const match = await resolveMatchForExit(employeeId, shift.shiftTemplateId);
 
-    let earlyLeave = false;
     const punctuality = evaluateExitPunctuality({ match, startAt: shift.startAt, actualExitAt: actualAt });
-    if (punctuality.evaluated) {
-      earlyLeave = punctuality.earlyLeave;
-      if (punctuality.earlyLeave) {
-        await createShiftAlert({ employeeId, workShiftId, type: "SALIDA_ANTICIPADA", actualAt, scheduledAt: punctuality.scheduledExitAt ?? undefined, differenceMinutes: punctuality.differenceMinutes });
-      }
-      if (punctuality.lateLeave) {
-        await createShiftAlert({ employeeId, workShiftId, type: "SALIDA_TARDIA", actualAt, scheduledAt: punctuality.scheduledExitAt ?? undefined, differenceMinutes: punctuality.differenceMinutes });
-      }
-    }
 
     // Etapa 10D: régimen (si tiene extendedShiftAlertMinutes seteado) gana por
     // sobre el umbral del turno para decidir JORNADA_EXTENDIDA — ver
@@ -470,20 +488,49 @@ export async function evaluateShiftExit(
     // ENABLED/DISABLED_FOR_EMPLOYEE (evidencia real de una asignación).
     const durationTemplate = match.case === "GENERAL_UNASSIGNED" ? null : match.template;
     const duration = evaluateWorkedDuration({ totalMinutes: shift.totalMinutes ?? 0, template: durationTemplate, regimeMaximumMinutes: regime?.extendedShiftAlertMinutes ?? null });
+
+    const byStatus = (status: ClassifiedSegmentAlertInput["conceptStatus"]) => classifiedSegments.filter((segment) => segment.conceptStatus === status);
+    const noHabilitadoCount = byStatus("CONCEPTO_NO_HABILITADO").length;
+    const sinClasificarCount = byStatus("SIN_CONCEPTO_COMPATIBLE").length;
+
+    // Etapa 13G: qué tipos "dispararon" para este cierre (independientemente
+    // de si van a notificar -- todos los que disparan se persisten siempre,
+    // ver los createShiftAlert de abajo). SEGMENTO_SIN_CLASIFICAR se resuelve
+    // aparte, en dos fases: como es el último en la prioridad, su propio piso
+    // de la Etapa 13D (sin concepto adicional esperado, ni siquiera es
+    // candidato) sólo se consulta si ningún tipo de mayor prioridad ya ganó
+    // -- mismo criterio de "no consultar si ya no hace falta" ya establecido
+    // en 13D, ahora generalizado a las 5 alertas de mayor prioridad.
+    const fired: Partial<Record<Exclude<ShiftAlertTypeValue, "SEGMENTO_SIN_CLASIFICAR">, boolean>> = {
+      CONCEPTO_NO_HABILITADO: noHabilitadoCount > 0,
+      JORNADA_EXTENDIDA: duration.extendedShift,
+      SALIDA_TARDIA: punctuality.lateLeave,
+      SALIDA_ANTICIPADA: punctuality.earlyLeave,
+      JORNADA_INSUFICIENTE: duration.insufficientHours,
+    };
+    let notifiableWinner: ShiftAlertTypeValue | null = EXIT_ALERT_NOTIFICATION_PRIORITY.find((type) => type !== "SEGMENTO_SIN_CLASIFICAR" && fired[type]) ?? null;
+    if (!notifiableWinner && sinClasificarCount > 0 && (await isSegmentoSinClasificarNotifiable(employeeId, sinClasificarCount))) {
+      notifiableWinner = "SEGMENTO_SIN_CLASIFICAR";
+    }
+
+    if (punctuality.earlyLeave) {
+      await createShiftAlert({ employeeId, workShiftId, type: "SALIDA_ANTICIPADA", actualAt, scheduledAt: punctuality.scheduledExitAt ?? undefined, differenceMinutes: punctuality.differenceMinutes, notify: notifiableWinner === "SALIDA_ANTICIPADA" });
+    }
+    if (punctuality.lateLeave) {
+      await createShiftAlert({ employeeId, workShiftId, type: "SALIDA_TARDIA", actualAt, scheduledAt: punctuality.scheduledExitAt ?? undefined, differenceMinutes: punctuality.differenceMinutes, notify: notifiableWinner === "SALIDA_TARDIA" });
+    }
     if (duration.insufficientHours) {
-      // Etapa 13B: si ya hubo SALIDA_ANTICIPADA, la jornada corta es
-      // consecuencia del mismo evento — se persiste igual (detalle/auditoría)
-      // pero sin un segundo aviso redundante.
-      await createShiftAlert({ employeeId, workShiftId, type: "JORNADA_INSUFICIENTE", actualAt, differenceMinutes: shift.totalMinutes, notify: !earlyLeave });
+      await createShiftAlert({ employeeId, workShiftId, type: "JORNADA_INSUFICIENTE", actualAt, differenceMinutes: shift.totalMinutes, notify: notifiableWinner === "JORNADA_INSUFICIENTE" });
     }
     if (duration.extendedShift) {
-      await createShiftAlert({ employeeId, workShiftId, type: "JORNADA_EXTENDIDA", actualAt, differenceMinutes: shift.totalMinutes });
+      await createShiftAlert({ employeeId, workShiftId, type: "JORNADA_EXTENDIDA", actualAt, differenceMinutes: shift.totalMinutes, notify: notifiableWinner === "JORNADA_EXTENDIDA" });
     }
 
     if (classifiedSegments.length > 0) {
-      // Etapa 13B: suprime el aviso de SEGMENTO_SIN_CLASIFICAR si alguna de
-      // las dos alertas de mayor prioridad ya disparó para esta misma salida.
-      await applyClassificationAlerts(employeeId, workShiftId, classifiedSegments, { notify: !earlyLeave && !duration.insufficientHours });
+      await applyClassificationAlerts(employeeId, workShiftId, classifiedSegments, {
+        notifyConceptoNoHabilitado: notifiableWinner === "CONCEPTO_NO_HABILITADO",
+        notifySegmentoSinClasificar: notifiableWinner === "SEGMENTO_SIN_CLASIFICAR",
+      });
     }
   } catch (error) {
     console.error("EVALUATE_SHIFT_EXIT_FAILED", {
