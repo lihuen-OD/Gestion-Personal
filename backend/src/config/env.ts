@@ -50,9 +50,25 @@ const envSchema = z.object({
   CLOCK_ATTEMPT_MAINTENANCE_INTERVAL_MS: z.coerce.number().int().positive().default(60_000),
   ATTENDANCE_INACTIVITY_CHECK_HOUR: z.coerce.number().int().min(0).max(23).default(1),
   ATTENDANCE_INACTIVITY_CHECK_MINUTE: z.coerce.number().int().min(0).max(59).default(0),
+  // Etapa 14B.2 — logging seguro de performance (ver docs/decisions/PERFORMANCE_LOGGING_14B2.md).
+  // PERFORMANCE_LOGGING_ENABLED sin valor explícito: activo fuera de production,
+  // apagado por defecto en production (opt-in explícito requerido ahí).
+  PERFORMANCE_LOGGING_ENABLED: envBoolean.optional(),
+  PERFORMANCE_LOGGING_SAMPLE_RATE: z.coerce.number().min(0).max(1).default(1),
+  PERFORMANCE_SLOW_REQUEST_MS: z.coerce.number().int().positive().default(1000),
+  PERFORMANCE_VERY_SLOW_REQUEST_MS: z.coerce.number().int().positive().default(3000),
+  PERFORMANCE_LOG_INCLUDE_QUERY_METRICS: envBoolean.default(true),
 });
 
-const parsed = envSchema.safeParse(process.env);
+const envSchemaWithRefinements = envSchema.refine(
+  (data) => data.PERFORMANCE_VERY_SLOW_REQUEST_MS >= data.PERFORMANCE_SLOW_REQUEST_MS,
+  {
+    message: "PERFORMANCE_VERY_SLOW_REQUEST_MS must be >= PERFORMANCE_SLOW_REQUEST_MS",
+    path: ["PERFORMANCE_VERY_SLOW_REQUEST_MS"],
+  },
+);
+
+const parsed = envSchemaWithRefinements.safeParse(process.env);
 
 if (!parsed.success) {
   console.error("Invalid backend environment configuration");
@@ -62,3 +78,17 @@ if (!parsed.success) {
 
 export const env = parsed.data;
 export const isProduction = env.NODE_ENV === "production";
+
+/**
+ * Etapa 14B.2 — helpers leídos en cada llamada (no cacheados en una const de
+ * módulo) a propósito, para que los tests puedan mutar `env.*` en caliente,
+ * mismo patrón ya usado por `clockDeviceAuth.ts` con `env.NODE_ENV`/
+ * `env.CLOCK_DEVICE_TOKEN`.
+ */
+export function isPerformanceLoggingEnabled(): boolean {
+  return env.PERFORMANCE_LOGGING_ENABLED ?? env.NODE_ENV !== "production";
+}
+
+export function shouldRecordQueryMetrics(): boolean {
+  return isPerformanceLoggingEnabled() && env.PERFORMANCE_LOG_INCLUDE_QUERY_METRICS;
+}

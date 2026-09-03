@@ -1,5 +1,5 @@
 import { Prisma, PrismaClient } from "@prisma/client";
-import { isProduction } from "../../config/env";
+import { isProduction, shouldRecordQueryMetrics } from "../../config/env";
 import { recordPrismaQuery } from "../observability/requestMetrics";
 
 declare global {
@@ -32,7 +32,11 @@ export const prisma = prismaClient.$extends({
         try {
           return await query(args);
         } finally {
-          if (!isProduction) {
+          // Etapa 14B.2: antes hardcodeado a `!isProduction` (nunca corría en
+          // production). Ahora sigue a PERFORMANCE_LOGGING_ENABLED +
+          // PERFORMANCE_LOG_INCLUDE_QUERY_METRICS — apagado por defecto en
+          // production, activable de forma explícita y controlada.
+          if (shouldRecordQueryMetrics()) {
             recordPrismaQuery(`${model}.${operation}`, performance.now() - startedAt);
           }
         }
