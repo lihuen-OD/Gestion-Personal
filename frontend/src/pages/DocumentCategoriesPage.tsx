@@ -85,7 +85,7 @@ export function DocumentCategoriesPage() {
   const [listStatus, setListStatus] = useState<"loading" | "success" | "error">("loading");
   useEffect(() => {
     let mounted = true;
-    setListStatus("loading");
+    if (!all.length) setListStatus("loading");
     documentCategoryApiService
       .getAll()
       .then((items) => {

@@ -73,7 +73,7 @@ export function AuditParametersPage() {
   const [listStatus, setListStatus] = useState<"loading" | "success" | "error">("loading");
   useEffect(() => {
     let mounted = true;
-    setListStatus("loading");
+    if (!apiItems) setListStatus("loading");
     auditParameterApiService.getAll()
       .then((items) => {
         if (!mounted) return;

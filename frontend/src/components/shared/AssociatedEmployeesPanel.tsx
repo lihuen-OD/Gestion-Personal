@@ -1,6 +1,6 @@
 import { Eye, UserPlus, X } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { EmployeeRemoteSelector } from "../employees/EmployeeRemoteSelector";
@@ -160,6 +160,7 @@ export function AssociatedEmployeesPanel<T extends { employeeId: string; employe
   const [retry, setRetry] = useState(0);
   const [selected, setSelected] = useState<Employee[]>([]);
   const [notice, setNotice] = useState("");
+  const hadItemsRef = useRef(false);
   // Etapa 13J.3: por employeeId, para deshabilitar SÓLO la fila en curso
   // (no las demás) mientras se confirma/llama la API, y para que un doble
   // click no dispare dos PATCH de cierre de vigencia en simultáneo.
@@ -190,7 +191,8 @@ export function AssociatedEmployeesPanel<T extends { employeeId: string; employe
 
   useEffect(() => {
     let mounted = true;
-    setStatus("loading");
+    if (!items.length) setStatus("loading");
+    hadItemsRef.current = items.length > 0;
     const request = buildAssociatedEmployeesRequest({
       search: debouncedSearch,
       sectorId: selectedSectorId,
@@ -208,8 +210,10 @@ export function AssociatedEmployeesPanel<T extends { employeeId: string; employe
       })
       .catch(() => {
         if (!mounted) return;
-        setItems([]);
-        setStatus("error");
+        if (!hadItemsRef.current) {
+          setItems([]);
+          setStatus("error");
+        }
       });
     return () => {
       mounted = false;

@@ -85,7 +85,7 @@ export function HourConceptsPage() {
 
   useEffect(() => {
     let alive = true;
-    setIsLoadingApi(true);
+    if (!apiItems) setIsLoadingApi(true);
     setLoadFailed(false);
     hourConceptApiService.getAll()
       .then((items) => {

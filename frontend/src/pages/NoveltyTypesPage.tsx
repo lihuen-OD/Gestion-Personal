@@ -49,7 +49,7 @@ export function NoveltyTypesPage() {
 
   useEffect(() => {
     let alive = true;
-    setIsLoadingApi(true);
+    if (!apiItems) setIsLoadingApi(true);
     noveltyTypeApiService.getAll()
       .then((items) => {
         if (!alive) return;
