@@ -24,19 +24,31 @@
 .block-wrap{display:grid;gap:14px;padding:0}.block-wrap.two{grid-template-columns:repeat(2,1fr)}.block-card{border:1px solid #e2e9ee;border-radius:10px;background:#fff;overflow:hidden}.block-card-head{display:flex;justify-content:space-between;gap:14px;padding:15px}.block-card h3{margin-bottom:6px;color:#243950;font-size:15px}.block-card p{color:#607287;font-size:12px;line-height:1.5}.block-card small{display:block;margin-top:5px;color:#8191a2;font-size:11px}.block-card .timeline{border-top:1px solid #edf0f4;background:#fbfcfd}
 
 .people-search{display:grid;gap:10px;position:relative;padding:14px;border:1px solid #dfe8ee;border-radius:10px;background:#fbfdfe}
-.people-search>small{margin:0;color:#31485a;font-weight:800;text-transform:uppercase;letter-spacing:.03em}
+/* Etapa 13J.1: antes CUALQUIER <small> hijo directo (buscá con 2+
+   caracteres, cargando, "primeros 20 resultados") salía en mayúsculas y
+   bold, como si fuera el título de una sección — se leía "tosco" (feedback
+   real de UX). .error queda afuera a propósito: ese small sigue usando el
+   estilo de error del proyecto (.error, más abajo), no éste. */
+.people-search>small:not(.error){margin:0;color:#64778a;font-weight:400;text-transform:none;letter-spacing:normal;font-size:12.5px}
 .people-search .search-field{width:100%;flex:none}
 .people-search-toolbar{display:grid;grid-template-columns:minmax(0,1fr) 140px;align-items:end;gap:10px;min-width:0}
 .people-status-filter{display:grid;gap:5px;min-width:140px;color:#31485a;font-size:12px;font-weight:700}
 .people-status-filter select{min-height:42px;padding:8px 10px;border:1px solid #dfe8ee;border-radius:9px;background:#fff;color:#243950}
-.people-search-results{display:grid;gap:6px;max-height:220px;overflow:auto;padding:8px;border:1px solid #dfe8ee;border-radius:9px;background:#fff;box-shadow:0 10px 24px #16304614}
-.people-search-results>button{display:grid;grid-template-columns:22px minmax(0,1fr);align-items:center;gap:8px;width:100%;padding:10px 11px;border:1px solid #e4eaf0;border-radius:8px;background:#fff;text-align:left;color:#243950}
-.people-search-results button:hover{border-color:#14767d;background:#f0f8f8}
-.people-search-results>button.is-selected{border-color:var(--color-primary);background:var(--color-primary-subtle)}
+.people-search-results{display:grid;gap:2px;max-height:260px;overflow:auto;padding:6px;border:1px solid #dfe8ee;border-radius:9px;background:#fff}
+/* Etapa 13J.1: cada fila tenía su propio border+radius+fondo blanco DENTRO
+   de un contenedor que ya tiene su propio border+sombra — "caja dentro de
+   caja" (feedback real de UX). Ahora la fila es plana (sin borde propio,
+   fondo transparente) y sólo se distingue por hover/selección, como una
+   lista, no como tarjetas apiladas. */
+.people-search-results>button{display:grid;grid-template-columns:20px minmax(0,1fr);align-items:center;gap:10px;width:100%;padding:9px 10px;border:0;border-radius:7px;background:transparent;text-align:left;color:#243950;transition:background-color .12s ease}
+.people-search-results button:hover{background:#f2f7f8}
+.people-search-results>button.is-selected{background:var(--color-primary-subtle)}
 .people-search-results>button>span:last-child{display:grid;gap:3px;min-width:0}
-.people-result-check{display:grid;place-items:center;width:20px;height:20px;border:1px solid #b8c6d3;border-radius:5px;background:#fff;color:#fff}
+.people-result-check{display:grid;place-items:center;width:18px;height:18px;border:1.5px solid #c3d1dc;border-radius:5px;background:#fff;color:#fff;transition:background-color .12s ease,border-color .12s ease}
 .people-search-results>button.is-selected .people-result-check{border-color:var(--color-primary);background:var(--color-primary)}
-.people-results-actions{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:2px 3px 7px;color:#66788a;font-size:11px;font-weight:700}
+.people-search-row-detail{color:#7c8b98;font-size:11px}
+.people-search-row-detail .badge{margin-left:6px}
+.people-results-actions{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:2px 3px 8px;color:#66788a;font-size:11.5px;font-weight:600}
 .people-results-actions button{border:0;background:transparent;color:var(--color-primary);font:inherit;cursor:pointer}
 .people-search-results b{font-size:13px;color:#203648}
 .people-search-results small,.people-search-results span{color:#66788a;font-size:11px}
@@ -1619,6 +1631,21 @@ a.employee-hours-status-item:hover{border-color:var(--ds-blue-300);background:va
 .modal:has(.address-edit-layout){
   width:min(1160px,calc(100vw - var(--app-sidebar-width) - 48px))!important;
 }
+/* El modal "Empleados asociados"/"Agregar empleados" de Régimen Laboral
+   tiene más columnas y controles que el ancho por defecto (960px) — mismo
+   patrón que .address-edit-layout, un selector :has() dedicado en vez de
+   una prop de ancho por modal (Etapa 13J.1). Etapa 13J.3: esta regla DEBE
+   vivir ACÁ, antes de las media queries de abajo — estaba al final del
+   archivo (fuera de esta sección) y, con la MISMA especificidad que las
+   reglas de @media de abajo, empataba por !important y ganaba por orden de
+   aparición (más tarde en el archivo = gana), pisando el fix mobile aunque
+   su media query no aplicara. Es el mismo tipo de bug que ya rompió
+   .people-search>small y el botón "Agregar empleados" en etapas
+   anteriores — confirmado en vivo (Playwright, 430px): sin este reordenamiento
+   el modal medía ~100px de ancho pese a las reglas de abajo. */
+.modal:has(.associated-employees-panel){
+  width:min(1100px,calc(100vw - var(--app-sidebar-width) - 48px))!important;
+}
 .modal-body{
   overflow:auto!important;
 }
@@ -1632,7 +1659,8 @@ a.employee-hours-status-item:hover{border-color:var(--ds-blue-300);background:va
     padding:20px!important;
   }
   .modal,
-  .modal:has(.address-edit-layout){
+  .modal:has(.address-edit-layout),
+  .modal:has(.associated-employees-panel){
     width:min(960px,calc(100vw - 40px))!important;
     max-height:calc(100vh - 40px)!important;
   }
@@ -1642,9 +1670,45 @@ a.employee-hours-status-item:hover{border-color:var(--ds-blue-300);background:va
     padding:12px!important;
   }
   .modal,
-  .modal:has(.address-edit-layout){
+  .modal:has(.address-edit-layout),
+  .modal:has(.associated-employees-panel){
     width:calc(100vw - 24px)!important;
     max-height:calc(100vh - 24px)!important;
+  }
+}
+/* Etapa 13J.3: el modal "Empleados con régimen" (AssociatedEmployeesPanel
+   con variant="full", ver más abajo) usa un ancho propio
+   .modal:has(.associated-employees-panel){width:min(1100px,calc(100vw -
+   var(--app-sidebar-width) - 48px))} para desktop (Etapa 13J.1). Esa regla
+   NUNCA se resetea por debajo de 980px salvo por las dos reglas de arriba
+   (agregadas acá) — sin ellas, a un ancho de celular real (390-430px) el
+   cálculo usaba igual var(--app-sidebar-width) (240px por la media query de
+   1280px, el sidebar sigue "ocupando" ese ancho en la variable aunque esté
+   oculto fuera de pantalla) y daba un modal de ~100px de ancho, literalmente
+   inutilizable — la causa real del "modal roto en mobile" reportado, no un
+   problema de la tabla ni de los filtros en sí. Confirmado leyendo cada
+   redefinición de --app-sidebar-width en este archivo: nunca vuelve a 0. */
+@media(max-width:620px){
+  .modal:has(.associated-employees-panel){
+    width:100vw!important;
+    height:100dvh!important;
+    max-height:100dvh!important;
+    max-width:100vw!important;
+    border-radius:0!important;
+    margin:0!important;
+  }
+  .modal-backdrop:has(.associated-employees-panel){
+    padding:0!important;
+    inset:0!important;
+  }
+  .modal:has(.associated-employees-panel) .modal-head{
+    border-radius:0!important;
+  }
+  .associated-employees-toolbar{
+    justify-content:stretch!important;
+  }
+  .associated-employees-toolbar .button{
+    width:100%!important;
   }
 }
 
@@ -2068,7 +2132,15 @@ a.employee-hours-status-item:hover{border-color:var(--ds-blue-300);background:va
 .holiday-work-save-bar .rule-scope-help{flex:1;min-width:220px;margin:0}
 .holiday-work-section table tr.is-selected td{background:#f4fbfb}
 @media(max-width:640px){.holiday-work-filters{flex-direction:column;align-items:stretch}.holiday-work-filters .field,.holiday-work-filters .search-field{min-width:0}.holiday-work-save-bar{flex-direction:column;align-items:stretch}}
-@media(max-width:700px){.people-search-toolbar{align-items:stretch;flex-direction:column}.people-status-filter{min-width:0}}
+/* Etapa 13J.3: .people-search-toolbar es display:grid (ver línea 34), no
+   flex — flex-direction:column acá nunca tuvo ningún efecto (bug latente,
+   confirmado con getComputedStyle en vivo: seguía en 2 columnas a 390px).
+   grid-template-columns:1fr es el equivalente real para un grid. Afecta a
+   los 6 usos de EmployeeRemoteSelector (NoveltyModal, DocumentUploadModal,
+   ShiftEmployeesPanel, WorkScheduleSettingsPage, AssociatedEmployeesPanel);
+   antes de este fix ninguno apilaba de verdad en mobile, así que es una
+   corrección pura, no un cambio de comportamiento esperado en ningún lado. */
+@media(max-width:700px){.people-search-toolbar{align-items:stretch;grid-template-columns:1fr}.people-status-filter{min-width:0}}
 
 /* Auditoría UI/UX — variantes reutilizables (compact/embedded) para que un
    componente pesado (Section/AssociatedEmployeesPanel/EmptyState) pueda
@@ -2109,3 +2181,106 @@ a.employee-hours-status-item:hover{border-color:var(--ds-blue-300);background:va
    así que no compite con ningún !important existente. */
 .button{white-space:nowrap}
 .panel-actions,.tracked-actions,.hero-actions,.page-actions{flex-shrink:0}
+
+/* Etapa 13J.1 — pulido UX de asignación de Régimen Laboral. */
+
+/* Subtítulo opcional de Modal (antes sólo <h3>, sin lugar para una segunda
+   línea de contexto — "Empleados con régimen X" necesita explicar qué
+   significa vigente/histórica sin invadir el cuerpo). align-items:flex-start
+   sólo aplica cuando hay subtítulo (:has), así que ningún otro modal con
+   título de una sola línea cambia su alineación vertical. */
+.modal-head-text{display:flex;flex-direction:column;gap:3px;min-width:0}
+.modal-head-text h3{margin:0}
+.modal-head-text p{margin:0;color:var(--color-text-secondary,#64778a);font-size:12.5px;font-weight:400;line-height:1.4}
+.modal-head:has(.modal-head-text p){align-items:flex-start}
+
+/* Etapa 13J.3: la regla de ancho de .modal:has(.associated-employees-panel)
+   se movió a la sección "Final modal centering pass" (junto a
+   .modal:has(.address-edit-layout), antes de sus propias media queries) —
+   acá, después de todas las media queries de esa sección, con la misma
+   especificidad y también !important, le ganaba el empate por orden de
+   aparición a la regla mobile aunque su media query no aplicara, dejando el
+   modal en ~100px de ancho en celulares reales. No duplicar esta regla acá. */
+
+/* Fila de "Vigencia" en la tabla de empleados asociados: "Desde"/"Hasta" en
+   dos líneas cortas debajo del badge, en vez de un rango "01/09/2026 — -"
+   compacto que se leía como una fecha rara. */
+.vigency-cell{display:grid;gap:2px}
+.vigency-cell .table-sub{margin-top:1px}
+
+/* Texto de ayuda bajo "Agregar seleccionados" cuando está deshabilitado —
+   nunca dejar el botón apagado sin explicar por qué (checklist UX). Etapa
+   13J.3: grid-column:span 2 por el mismo motivo que .add-vigency-field más
+   abajo (.form-wide fuerza 2 columnas implícitas en .form-stack). */
+.add-employees-hint{margin:0;grid-column:span 2}
+
+/* Etapa 13J.3 — bug real diagnosticado: .form-wide (la clase que
+   EmployeeRemoteSelector se pone a sí mismo por default, wide=true) declara
+   grid-column:span 2. Dentro de .form-stack (grid de 1 columna implícita,
+   sin grid-template-columns propio) eso fuerza al navegador a crear 2
+   columnas implícitas para poder cumplir ese span — y TODO lo que viene
+   después (el campo de vigencia, su ayuda, los botones) se reparte entre
+   esas 2 columnas en vez de apilarse. En desktop se veía "raro pero
+   pasable" (dos bloques lado a lado); en mobile quedaba roto (texto
+   partido, botones a mitad de ancho). Dos arreglos, sin tocar
+   EmployeeRemoteSelector (se usa en 5 lugares más) ni .form-wide en
+   general (se usa fuera de .form-stack con esa intención):
+   1) el campo "Vigencia desde" + su ayuda viven en un contenedor propio
+      (.add-vigency-field) que ocupa toda la fila sin importar cuántas
+      columnas haya, y decide su propio layout interno (lado a lado en
+      desktop, apilado en mobile).
+   2) .form-actions, dentro de .form-stack, siempre ocupa la fila completa
+      — así los botones "Cancelar"/"Agregar seleccionados" no quedan
+      encogidos a la mitad del ancho del modal (bug ya existente también
+      para Conceptos Horarios, que usa el mismo formulario compartido). */
+/* span 2, no 1/-1: -1 cuenta líneas del grid EXPLÍCITO — sin
+   grid-template-columns propio (el caso de .form-stack) el navegador no lo
+   resuelve como "hasta la última columna implícita" (medido: quedaba
+   angosto, sin ocupar la segunda columna). span 2 sí funciona en un grid
+   implícito — es el mismo mecanismo que ya usa .form-wide para crear esas
+   2 columnas en primer lugar. */
+.form-stack>.form-actions{grid-column:span 2}
+.add-vigency-field{grid-column:span 2;display:grid;grid-template-columns:auto 1fr;gap:6px 16px;align-items:start}
+.add-vigency-field label{min-width:170px}
+.add-vigency-field small{margin:0;padding-top:26px}
+@media(max-width:620px){
+  .add-vigency-field{grid-template-columns:1fr}
+  .add-vigency-field small{padding-top:0}
+}
+
+/* Etapa 13J.2 — toolbar del botón "Agregar empleados" en
+   AssociatedEmployeesPanel (variant="full", usado por WorkRegimesPage).
+   Antes reusaba .form-actions (pensada para la barra de guardar/cancelar
+   pegada abajo de un formulario: dentro de .modal-body es
+   position:sticky;bottom:-18px con márgenes negativos, ver más arriba) —
+   por eso el botón quedaba "cortando" el flujo antes de los filtros en vez
+   de leerse como una fila de acciones propia. Fila simple, alineada a la
+   derecha, sin herencia de esa otra clase. */
+.associated-employees-toolbar{display:flex;justify-content:flex-end;align-items:center;gap:10px;margin:0 0 12px}
+
+/* Etapa 13J.3 — lista de cards para AssociatedEmployeesPanel en mobile
+   (enableMobileCards, opt-in — ver el componente). La tabla (7 columnas,
+   min-width 720/880px) no puede usarse en un modal de ~360-400px de ancho
+   sin scroll horizontal o columnas cortadas; en vez de forzar la tabla, a
+   este ancho se reemplaza por una lista de cards con la misma información
+   agrupada. .has-mobile-cards sólo se aplica cuando el caller pide
+   enableMobileCards=true (WorkRegimesPage) — sin esa prop (HourConceptsPage)
+   ambas reglas quedan inertes: no hay .has-mobile-cards en el DOM y
+   .associated-employees-cards nunca se renderiza, cero cambio de
+   comportamiento para ese otro uso. */
+.associated-employees-cards{display:none}
+@media(max-width:620px){
+  .has-mobile-cards{display:none!important}
+  .associated-employees-cards{display:grid;gap:12px}
+}
+.associated-employees-card{display:grid;gap:12px;padding:14px;border:1px solid var(--color-border-light,#e4eaf0);border-radius:12px;background:#fff}
+.aec-card-head{display:grid;gap:2px}
+.aec-card-head b{color:#203648;font-size:14px}
+.aec-card-fields{display:grid;gap:8px;margin:0}
+.aec-card-fields>div{display:flex;align-items:baseline;justify-content:space-between;gap:12px}
+.aec-card-fields dt{color:#7c8c9b;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.02em}
+.aec-card-fields dd{margin:0;color:#263a4b;font-size:13px;text-align:right}
+.aec-card-vigency{display:grid;gap:2px;padding-top:8px;border-top:1px solid var(--color-border-light,#edf0f4)}
+.aec-card-vigency .table-sub{margin-top:1px}
+.aec-card-actions{display:flex;flex-wrap:wrap;gap:8px;padding-top:4px}
+.aec-card-actions .button{flex:1;justify-content:center;min-width:130px}

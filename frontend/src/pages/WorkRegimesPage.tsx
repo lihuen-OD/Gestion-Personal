@@ -1,4 +1,4 @@
-import { Pencil, Plus, Power, Users } from "lucide-react";
+import { CalendarOff, Pencil, Plus, Power, Users } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import {
   openShiftOverflowActionLabel,
@@ -22,7 +22,7 @@ import { useAuth } from "../context/AuthContext";
 import { confirmAction } from "../services/appDialog";
 import { getUserErrorMessage } from "../services/api/apiClient";
 import { extendedShiftAlertHoursToMinutes, extendedShiftAlertMinutesToHours, workRegimeApiService, type WorkRegimeInput } from "../services/api/workRegimeApiService";
-import type { AssociatedEmployeeFilters } from "../types/associatedEmployee.types";
+import type { AssociatedEmployeeFilters, WorkRegimeEmployeesStatusFilter } from "../types/associatedEmployee.types";
 import type { OpenShiftOverflowAction, WorkRegime, WorkRegimeFilters, WorkRegimeKind } from "../types/workRegime.types";
 import { formatVigencyDate, vigencyLabel, vigencyTone } from "../components/shared/AssociatedEmployeesPanel.helpers";
 import { roleLevel } from "../utils/roles";
@@ -51,6 +51,28 @@ function normalize(value: string) {
   return value.trim().toLowerCase();
 }
 
+function todayKey() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+const employeesVigencyFilterOptions: { value: WorkRegimeEmployeesStatusFilter; label: string }[] = [
+  { value: "current", label: "Vigentes" },
+  { value: "historical", label: "Históricos" },
+  { value: "all", label: "Todos" },
+];
+
+// Etapa 13J.1: "no hay vigentes" y "no encontramos nada con esos filtros"
+// son mensajes distintos (checklist UX, empty states) — hasActiveFilters
+// viene del propio AssociatedEmployeesPanel (búsqueda/sector/centro de
+// costo/empresa); el filtro de vigencia lo resuelve esta función porque
+// vive en WorkRegimesPage.
+export function associatedEmployeesEmptyText(vigencyFilter: WorkRegimeEmployeesStatusFilter, hasActiveFilters: boolean): string {
+  if (hasActiveFilters) return "No encontramos empleados con esos filtros.";
+  if (vigencyFilter === "current") return "No hay empleados vigentes con este régimen.";
+  if (vigencyFilter === "historical") return "No hay empleados históricos con este régimen.";
+  return "Este régimen todavía no tiene empleados asociados.";
+}
+
 export function matchesFilters(item: WorkRegime, filters: WorkRegimeFilters) {
   const search = normalize(filters.search);
   const text = normalize(`${item.code} ${item.name} ${item.description || ""}`);
@@ -74,6 +96,14 @@ export function WorkRegimesPage() {
   const [draft, setDraft] = useState<WorkRegimeDraft>(emptyDraft());
   const [error, setError] = useState("");
   const [viewingEmployeesFor, setViewingEmployeesFor] = useState<WorkRegime | null>(null);
+  // Etapa 13J: por defecto sólo vigentes — evita repetir el bug reportado
+  // (empleados con vigencia vencida apareciendo como "asociados" sin aviso).
+  const [employeesVigencyFilter, setEmployeesVigencyFilter] = useState<WorkRegimeEmployeesStatusFilter>("current");
+  const [assignEffectiveFrom, setAssignEffectiveFrom] = useState(todayKey());
+  // Etapa 13J.1: controla el título/subtítulo del modal "Empleados
+  // asociados" cuando el panel cambia a su vista interna de alta (evita
+  // modal sobre modal — ver AssociatedEmployeesPanel addMode="inline").
+  const [isAddingEmployees, setIsAddingEmployees] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -249,7 +279,19 @@ export function WorkRegimesPage() {
                   <td><Badge tone={workRegimeStatusTone(item.status)}>{item.status === "ACTIVO" ? "Activo" : "Inactivo"}</Badge></td>
                   <td>
                     <div className="table-actions">
-                      <button className="table-icon-action" title="Ver empleados asociados" aria-label="Ver empleados asociados" onClick={() => setViewingEmployeesFor(item)}><Users size={15} /></button>
+                      <button
+                        className="table-icon-action"
+                        title="Ver empleados asociados"
+                        aria-label="Ver empleados asociados"
+                        onClick={() => {
+                          setViewingEmployeesFor(item);
+                          setEmployeesVigencyFilter("current");
+                          setAssignEffectiveFrom(todayKey());
+                          setIsAddingEmployees(false);
+                        }}
+                      >
+                        <Users size={15} />
+                      </button>
                       {editable ? (
                         <>
                           <button className="table-icon-action" title="Editar régimen" aria-label="Editar régimen" onClick={() => openEdit(item)}><Pencil size={15} /></button>
@@ -321,23 +363,72 @@ export function WorkRegimesPage() {
       )}
 
       {viewingEmployeesFor && (
-        <Modal title={`Empleados asociados a ${viewingEmployeesFor.code} - ${viewingEmployeesFor.name}`} close={() => setViewingEmployeesFor(null)}>
+        <Modal
+          title={isAddingEmployees ? "Agregar empleados al régimen" : `Empleados con régimen ${viewingEmployeesFor.code} - ${viewingEmployeesFor.name}`}
+          subtitle={
+            isAddingEmployees
+              ? "Seleccioná los empleados que tendrán este régimen desde la fecha indicada."
+              : "Consultá empleados vigentes o históricos asociados a este régimen."
+          }
+          close={() => {
+            setViewingEmployeesFor(null);
+            setIsAddingEmployees(false);
+          }}
+        >
           <AssociatedEmployeesPanel
-            key={viewingEmployeesFor.id}
-            description="Empleados con este régimen laboral asignado, con su vigencia."
-            emptyText="Este régimen todavía no tiene empleados asociados."
-            fetcher={(filters: AssociatedEmployeeFilters) => workRegimeApiService.getWorkRegimeEmployees(viewingEmployeesFor.id, filters)}
+            key={`${viewingEmployeesFor.id}-${employeesVigencyFilter}`}
+            emptyText={(hasActiveFilters) => associatedEmployeesEmptyText(employeesVigencyFilter, hasActiveFilters)}
+            fetcher={(filters: AssociatedEmployeeFilters) => workRegimeApiService.getWorkRegimeEmployees(viewingEmployeesFor.id, { ...filters, status: employeesVigencyFilter })}
+            renderFilterExtra={() => (
+              <select
+                aria-label="Filtrar por vigencia"
+                value={employeesVigencyFilter}
+                onChange={(event) => setEmployeesVigencyFilter(event.target.value as WorkRegimeEmployeesStatusFilter)}
+              >
+                {employeesVigencyFilterOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+              </select>
+            )}
+            showCuilColumn={false}
+            showEmployeeStatusColumn={false}
+            enableMobileCards
             extraColumns={[
               {
                 header: "Vigencia",
                 render: (item) => (
-                  <div>
+                  <div className="vigency-cell">
                     <Badge tone={vigencyTone(item.vigencyStatus)}>{vigencyLabel(item.vigencyStatus)}</Badge>
-                    <div className="table-sub">{formatVigencyDate(item.effectiveFrom)} — {formatVigencyDate(item.effectiveTo)}</div>
+                    <span className="table-sub">Desde {formatVigencyDate(item.effectiveFrom)}</span>
+                    <span className="table-sub">Hasta {formatVigencyDate(item.effectiveTo)}</span>
                   </div>
                 ),
               },
             ]}
+            canEdit={editable}
+            addMode="inline"
+            onAddModeChange={setIsAddingEmployees}
+            onAddEmployees={async (employeeIds) => {
+              const effectiveFrom = assignEffectiveFrom || todayKey();
+              await Promise.all(
+                employeeIds.map((employeeId) => workRegimeApiService.assign(employeeId, { workRegimeId: viewingEmployeesFor.id, effectiveFrom })),
+              );
+            }}
+            addExtraDisabled={!assignEffectiveFrom}
+            addExtraDisabledHint="Indicá la fecha de vigencia desde para continuar."
+            renderAddExtra={() => (
+              <div className="add-vigency-field">
+                <Field label="Vigencia desde *" type="date" value={assignEffectiveFrom} set={setAssignEffectiveFrom} />
+                <small className="muted small">Fecha desde la cual este régimen queda activo para los empleados seleccionados.</small>
+              </div>
+            )}
+            onRemoveEmployee={async (item) => {
+              await workRegimeApiService.closeAssignment(item.employeeId, item.id, todayKey());
+            }}
+            canRemove={(item) => item.vigencyStatus === "current"}
+            removeActionTone="neutral"
+            removeActionIcon={CalendarOff}
+            removeActionLabel="Finalizar vigencia"
+            removeConfirmTitle="Finalizar asignación de régimen"
+            removeConfirmText={(item) => `¿Querés finalizar la asignación de "${viewingEmployeesFor.name}" para ${item.employee.lastName}, ${item.employee.firstName}? Esta acción cierra la vigencia del régimen a partir de hoy, pero conserva el historial.`}
           />
         </Modal>
       )}

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { APP_DIALOG_EVENT, type AppDialogRequest } from "../../services/appDialog";
 import { Button } from "./Button";
 import { Modal } from "./Modal";
@@ -35,7 +36,16 @@ export function AppDialogHost() {
     finish(true);
   };
 
-  return (
+  // Etapa 13J.3: si esta confirmación se dispara desde DENTRO de otro modal
+  // (ej. "Finalizar vigencia" en el modal de Régimen Laboral), sin portal
+  // este <Modal> renderiza en el lugar del árbol donde vive <AppDialogHost/>
+  // (montado en main.tsx, ANTES que <App/>) — como ambos .modal-backdrop
+  // comparten el mismo z-index, gana el que está más tarde en el DOM (el
+  // modal que ya estaba abierto), y la confirmación queda tapada e
+  // inutilizable (no se puede ni ver ni tocar "Finalizar vigencia"). Un
+  // portal a document.body lo saca de ese árbol y lo inserta como el último
+  // hijo del body en el momento en que se abre, así siempre queda arriba.
+  return createPortal(
     <Modal title={request.title} close={() => finish(request.kind === "confirm" ? false : null)}>
       <div className="app-dialog-content">
         <p>{request.message}</p>
@@ -54,6 +64,7 @@ export function AppDialogHost() {
           </Button>
         </div>
       </div>
-    </Modal>
+    </Modal>,
+    document.body,
   );
 }

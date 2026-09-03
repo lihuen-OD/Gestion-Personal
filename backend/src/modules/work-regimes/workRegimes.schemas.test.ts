@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createWorkRegimeSchema, updateWorkRegimeSchema } from "./workRegimes.schemas";
+import { createWorkRegimeSchema, listWorkRegimeEmployeesQuerySchema, updateWorkRegimeSchema } from "./workRegimes.schemas";
 
 const base = { code: "COSECHA", name: "Cosecha", kind: "TURNO_FLEXIBLE" as const };
 
@@ -62,5 +62,18 @@ describe("updateWorkRegimeSchema.extendedShiftAlertMinutes — Etapa 10D", () =>
 
   it("sigue rechazando fuera de rango en una actualización parcial", () => {
     expect(updateWorkRegimeSchema.safeParse({ extendedShiftAlertMinutes: 2000 }).success).toBe(false);
+  });
+});
+
+describe("listWorkRegimeEmployeesQuerySchema.status — Etapa 13J (consistencia vigente/histórica)", () => {
+  it("sin status en el query, default es 'current' (no 'all') — el modal de empleados asociados no debe mezclar históricas por defecto", () => {
+    const result = listWorkRegimeEmployeesQuerySchema.safeParse({});
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.status).toBe("current");
+  });
+
+  it("acepta 'historical' y 'all' explícitos sin pisarlos con el default", () => {
+    expect(listWorkRegimeEmployeesQuerySchema.safeParse({ status: "historical" }).success && listWorkRegimeEmployeesQuerySchema.parse({ status: "historical" }).status).toBe("historical");
+    expect(listWorkRegimeEmployeesQuerySchema.safeParse({ status: "all" }).success && listWorkRegimeEmployeesQuerySchema.parse({ status: "all" }).status).toBe("all");
   });
 });

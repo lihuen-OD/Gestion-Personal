@@ -132,6 +132,19 @@ describe("HourConceptsPage — nomenclatura correcta (Etapa 8M)", () => {
       expect(source).toMatch(/variant="embedded"/);
     });
 
+    // Etapa 13J.3: enableMobileCards/showCuilColumn/showEmployeeStatusColumn
+    // son opt-in (default false/true/true = comportamiento de siempre) en
+    // AssociatedEmployeesPanel — HourConceptsPage no debe pasarlos, así la
+    // tabla de "Empleados habilitados" (con CUIL/Estado, sin cards mobile)
+    // queda exactamente igual que antes de esa etapa.
+    it("Etapa 13J.3 — no activa enableMobileCards/showCuilColumn/showEmployeeStatusColumn (la tabla de Empleados habilitados no cambia)", () => {
+      const panelStart = source.indexOf("<AssociatedEmployeesPanel");
+      const panelBlock = source.slice(panelStart, source.indexOf("/>", panelStart));
+      expect(panelBlock).not.toContain("enableMobileCards");
+      expect(panelBlock).not.toContain("showCuilColumn");
+      expect(panelBlock).not.toContain("showEmployeeStatusColumn");
+    });
+
     it("el texto de reglas horarias/datos del concepto ya no repite párrafos largos duplicados con el PageHeader", () => {
       expect(source).not.toContain("No son novedades ni reglas especiales de pago.");
     });

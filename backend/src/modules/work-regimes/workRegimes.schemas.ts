@@ -66,8 +66,13 @@ export const currentWorkRegimeQuerySchema = z.object({
 
 export const workRegimeEmployeesVigencyStatusSchema = z.enum(["current", "historical", "future", "all"]);
 
+// Etapa 13J: default "current" (no "all") — el listado de empleados
+// asociados a un régimen debe mostrar sólo vigentes salvo que el caller pida
+// explícitamente históricos/futuros/todos (ver AssociatedEmployeesPanel en
+// WorkRegimesPage.tsx, que ahora manda status siempre, pero el default acá
+// también debe ser seguro para cualquier otro consumidor del endpoint).
 export const listWorkRegimeEmployeesQuerySchema = z.object({
-  status: workRegimeEmployeesVigencyStatusSchema.default("all"),
+  status: workRegimeEmployeesVigencyStatusSchema.default("current"),
   search: z.string().trim().optional(),
   sectorId: z.string().uuid().optional(),
   costCenterId: z.string().uuid().optional(),
