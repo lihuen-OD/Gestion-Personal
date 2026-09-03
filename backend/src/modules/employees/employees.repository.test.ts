@@ -13,11 +13,14 @@ import { EmployeeStatus } from "@prisma/client";
  */
 vi.mock("../../shared/prisma/client", () => ({
   prisma: {
-    employee: { findFirst: vi.fn(), findUniqueOrThrow: vi.fn() },
+    employee: { findFirst: vi.fn(), findMany: vi.fn(), findUniqueOrThrow: vi.fn(), groupBy: vi.fn(), count: vi.fn() },
     hourConcept: { findMany: vi.fn() },
-    employeeAssignment: { deleteMany: vi.fn(), createMany: vi.fn() },
-    employeeHourConcept: { deleteMany: vi.fn(), createMany: vi.fn() },
+    employeeCompany: { findMany: vi.fn() },
+    laborMovement: { findMany: vi.fn() },
+    employeeAssignment: { deleteMany: vi.fn(), createMany: vi.fn(), findMany: vi.fn() },
+    employeeHourConcept: { deleteMany: vi.fn(), createMany: vi.fn(), findMany: vi.fn() },
     employeeDocument: { create: vi.fn() },
+    timeEntry: { groupBy: vi.fn() },
     $transaction: vi.fn(),
   },
 }));
@@ -76,32 +79,182 @@ describe("employeesRepository.findById", () => {
   });
 });
 
-describe("employeesRepository.findOverviewDetailsById — Etapa 6L.1", () => {
+describe("employeesRepository.findOverviewDetailsById — Etapa 6L.1 / 14C.1", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    (prisma.employeeCompany.findMany as Mock).mockResolvedValue([]);
+    (prisma.laborMovement.findMany as Mock).mockResolvedValue([]);
+    (prisma.employeeAssignment.findMany as Mock).mockResolvedValue([]);
+    (prisma.employeeHourConcept.findMany as Mock).mockResolvedValue([]);
   });
 
-  // Regresión: antes de esta etapa, /overview-details seleccionaba
-  // `hourConcepts: { select: { hourConcept: { select: { id, code, name } } } }`
-  // sin loadMode/systemRole ni el where de asignabilidad. Como
-  // mapEmployeeFromApi filtra por `Boolean(hourConcept.loadMode)`, el Legajo
-  // (que lee por este endpoint, no por findById) mostraba siempre cero
-  // conceptos adicionales asignados aunque la fila existiera en
-  // EmployeeHourConcept. Este test fija la misma forma que ya exige findById,
-  // para que ambos selects no puedan volver a divergir en silencio.
+  // Regresión de la Etapa 6L.1, reubicada: antes de esa etapa, /overview-details
+  // seleccionaba `hourConcepts` sin loadMode/systemRole ni el where de
+  // asignabilidad, y mapEmployeeFromApi (que filtra por
+  // `Boolean(hourConcept.loadMode)`) mostraba siempre cero conceptos
+  // adicionales asignados. Desde la Etapa 14C.1, `hourConcepts` ya no viaja
+  // anidado dentro del `findFirst` de Employee — es un `employeeHourConcept.
+  // findMany` propio, pero reusa el MISMO `assignableHourConceptsSelect` que
+  // `findById` (fuente de verdad compartida) — este test confirma que ese
+  // where/select nunca diverge, ahora en su nueva ubicación.
   it("selecciona hourConcepts con exactamente el mismo where/select que findById (misma fuente de verdad)", async () => {
     (prisma.employee.findFirst as Mock).mockResolvedValue({ id: "emp-1" });
 
     await employeesRepository.findOverviewDetailsById("emp-1");
 
-    const call = (prisma.employee.findFirst as Mock).mock.calls.at(0)?.[0];
-    expect(call?.select?.hourConcepts).toEqual({
-      where: { hourConcept: { systemRole: null, status: "ACTIVO", deletedAt: null, loadMode: { not: null } } },
+    const call = (prisma.employeeHourConcept.findMany as Mock).mock.calls.at(0)?.[0];
+    expect(call).toEqual({
+      where: {
+        employeeId: "emp-1",
+        hourConcept: { systemRole: null, status: "ACTIVO", deletedAt: null, loadMode: { not: null } },
+      },
       select: {
         hourConceptId: true,
         hourConcept: { select: { id: true, code: true, name: true, kind: true, loadMode: true, status: true, systemRole: true } },
       },
     });
+  });
+
+  it("Etapa 14C.1: resuelve companies/laborMovements/assignments/hourConcepts en paralelo (Promise.all), no dentro del findFirst", async () => {
+    (prisma.employee.findFirst as Mock).mockResolvedValue({ id: "emp-1", legajo: "100" });
+    (prisma.employeeCompany.findMany as Mock).mockResolvedValue([{ isPrimary: true, company: { id: "c1", name: "OD", code: "OD" } }]);
+    (prisma.laborMovement.findMany as Mock).mockResolvedValue([{ id: "mov-1", type: "ALTA" }]);
+    (prisma.employeeAssignment.findMany as Mock).mockResolvedValue([{ id: "asg-1", type: "DIRECT_MANAGER" }]);
+    (prisma.employeeHourConcept.findMany as Mock).mockResolvedValue([{ hourConceptId: "hc-1" }]);
+
+    const result = await employeesRepository.findOverviewDetailsById("emp-1");
+
+    // El findFirst del núcleo (escalares + relaciones to-one) ya NO pide
+    // companies/laborMovements/assignments/hourConcepts — confirma que el
+    // select gigante anterior quedó desarmado.
+    const coreCall = (prisma.employee.findFirst as Mock).mock.calls.at(0)?.[0];
+    expect(coreCall?.select?.companies).toBeUndefined();
+    expect(coreCall?.select?.laborMovements).toBeUndefined();
+    expect(coreCall?.select?.assignments).toBeUndefined();
+    expect(coreCall?.select?.hourConcepts).toBeUndefined();
+    // Pero el core sigue trayendo las relaciones to-one que la cabecera del
+    // legajo necesita.
+    expect(coreCall?.select?.sector).toBeDefined();
+    expect(coreCall?.select?.costCenter).toBeDefined();
+    expect(coreCall?.select?.position).toBe(true);
+
+    // Las 4 consultas hijas filtran únicamente por employeeId (el control de
+    // acceso ya se validó en el core).
+    expect(prisma.employeeCompany.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { employeeId: "emp-1" } }));
+    expect(prisma.laborMovement.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { employeeId: "emp-1" }, take: 50 }));
+    expect(prisma.employeeAssignment.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { employeeId: "emp-1" }, take: 100 }));
+
+    // El shape final del objeto devuelto es idéntico al de antes de esta
+    // etapa (mismos 4 campos, ahora ensamblados en vez de anidados).
+    expect(result).toEqual({
+      id: "emp-1",
+      legajo: "100",
+      companies: [{ isPrimary: true, company: { id: "c1", name: "OD", code: "OD" } }],
+      laborMovements: [{ id: "mov-1", type: "ALTA" }],
+      assignments: [{ id: "asg-1", type: "DIRECT_MANAGER" }],
+      hourConcepts: [{ hourConceptId: "hc-1" }],
+    });
+  });
+
+  it("Etapa 14C.1 — permisos: si el core no existe/no es accesible, nunca dispara las 4 consultas hijas", async () => {
+    (prisma.employee.findFirst as Mock).mockResolvedValue(null);
+
+    const result = await employeesRepository.findOverviewDetailsById("emp-2", { sectorId: { in: ["sec-ajeno"] } });
+
+    expect(result).toBeNull();
+    expect(prisma.employeeCompany.findMany).not.toHaveBeenCalled();
+    expect(prisma.laborMovement.findMany).not.toHaveBeenCalled();
+    expect(prisma.employeeAssignment.findMany).not.toHaveBeenCalled();
+    expect(prisma.employeeHourConcept.findMany).not.toHaveBeenCalled();
+    expect((prisma.employee.findFirst as Mock).mock.calls.at(0)?.[0]).toEqual(
+      expect.objectContaining({ where: { AND: [{ id: "emp-2" }, { sectorId: { in: ["sec-ajeno"] } }] } }),
+    );
+  });
+});
+
+describe("employeesRepository.findMany (listado de Legajos) — Etapa 14C.1", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    (prisma.$transaction as Mock).mockResolvedValue([[], 0]);
+  });
+
+  it("el select del listado trae exactamente lo que la tabla/badge de Legajos necesita, nada más", async () => {
+    await employeesRepository.findMany({ page: 1, take: 25 } as never, {});
+
+    const transactionArg = (prisma.$transaction as Mock).mock.calls.at(0)?.[0] as unknown[];
+    expect(transactionArg).toHaveLength(2);
+  });
+
+  it("no carga sector/position/companies (relaciones no usadas por el listado)", async () => {
+    // `findMany` del repositorio arma el array de promesas (llamando
+    // employee.findMany/count de una) antes de pasarlo a `$transaction`
+    // (mockeado como función simple que no ejecuta el array) — alcanza con
+    // espiar los argumentos con los que se llamó employee.findMany.
+    (prisma.employee.findMany as Mock).mockReturnValue(Promise.resolve([]));
+    (prisma.employee.count as Mock).mockReturnValue(Promise.resolve(0));
+
+    await employeesRepository.findMany({ page: 1, take: 25 } as never, {});
+
+    const call = (prisma.employee.findMany as Mock).mock.calls.at(0)?.[0];
+    expect(call.select.sector).toBeUndefined();
+    expect(call.select.position).toBeUndefined();
+    expect(call.select.companies).toBeUndefined();
+    expect(call.select.dni).toBeUndefined();
+    expect(call.select.birthDate).toBeUndefined();
+    // Pero sí mantiene lo que la tabla/Estado (calculado desde movimientos) necesitan.
+    expect(call.select.id).toBe(true);
+    expect(call.select.legajo).toBe(true);
+    expect(call.select.legajoFinnegans).toBe(true);
+    expect(call.select.cuil).toBe(true);
+    expect(call.select.firstName).toBe(true);
+    expect(call.select.lastName).toBe(true);
+    expect(call.select.status).toBe(true);
+    expect(call.select.costCenter).toBeDefined();
+    expect(call.select.laborMovements).toBeDefined();
+    expect(call.select.laborMovements.take).toBe(5);
+  });
+
+  it("respeta paginación (skip/take) y accessWhere sin cambios", async () => {
+    (prisma.employee.findMany as Mock).mockReturnValue(Promise.resolve([]));
+    (prisma.employee.count as Mock).mockReturnValue(Promise.resolve(0));
+
+    await employeesRepository.findMany({ page: 3, take: 10 } as never, { sectorId: { in: ["sec-1"] } });
+
+    const call = (prisma.employee.findMany as Mock).mock.calls.at(0)?.[0];
+    expect(call.skip).toBe(20);
+    expect(call.take).toBe(10);
+    expect(call.where.AND).toContainEqual({ sectorId: { in: ["sec-1"] } });
+  });
+});
+
+describe("employeesRepository.summary — Etapa 14C.1", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    (prisma.employee.groupBy as Mock).mockResolvedValue([{ status: EmployeeStatus.ACTIVO, _count: { _all: 5 } }]);
+    (prisma.timeEntry.groupBy as Mock).mockResolvedValue([]);
+    (prisma.employee.count as Mock).mockResolvedValue(0);
+  });
+
+  it("usa Promise.all (no $transaction) — las 3 queries son independientes entre sí", async () => {
+    await employeesRepository.summary({});
+
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(prisma.employee.groupBy).toHaveBeenCalledTimes(1);
+    expect(prisma.timeEntry.groupBy).toHaveBeenCalledTimes(1);
+    expect(prisma.employee.count).toHaveBeenCalledTimes(1);
+  });
+
+  it("mantiene el mismo cálculo de total/active/inactive/pendingTimeLoads/missingTimeResponsible", async () => {
+    (prisma.employee.groupBy as Mock).mockResolvedValue([
+      { status: EmployeeStatus.ACTIVO, _count: { _all: 8 } },
+      { status: EmployeeStatus.INACTIVO, _count: { _all: 2 } },
+    ]);
+    (prisma.timeEntry.groupBy as Mock).mockResolvedValue([{ employeeId: "e1" }, { employeeId: "e2" }]);
+    (prisma.employee.count as Mock).mockResolvedValue(3);
+
+    const result = await employeesRepository.summary({});
+
+    expect(result).toEqual({ total: 10, active: 8, inactive: 2, missingTimeResponsible: 3, pendingTimeLoads: 2 });
   });
 });
 

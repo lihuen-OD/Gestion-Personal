@@ -30,25 +30,32 @@ const employeeOptionSelect = {
   status: true,
 } satisfies Prisma.EmployeeSelect;
 
+// Etapa 14C.1: recortado a exactamente lo que el listado necesita — ver
+// docs/decisions/EMPLOYEE_PERFORMANCE_14C1.md §1.5-1.6. La pantalla de
+// Legajos (`EmployeesPage.tsx`) sólo renderiza Legajo/CUIL/Apellido/Nombre/
+// Centro de costo/Estado/Acción (contrato explícito en
+// docs/PROJECT_CONTEXT.md → "Legajos / Personas"), confirmado por lectura
+// completa del componente antes de recortar este select. `sector`/`position`/
+// `companies` no se muestran en ningún lado del listado y se sacaron (cada
+// uno era una relación extra, un round-trip extra hacia la base). `dni`/
+// `birthDate`/`gender`/`civilStatus`/`nationality`/`createdAt`/`updatedAt`
+// tampoco se usan acá — son escalares del mismo query, su remoción no ahorra
+// round-trips pero sí reduce payload. `costCenter` se mantiene (se muestra en
+// la tabla) y `laborMovements` (take:5) también se mantiene a propósito: el
+// Estado de la tabla se calcula desde movimientos laborales
+// (`mapEmployeeFromApi`, regla de negocio explícita en
+// docs/PROJECT_CONTEXT.md: "Employee status is calculated from labor
+// movements") — sacarlo haría que el listado mostrara la columna cruda
+// `Employee.status` en vez del valor calculado.
 const employeeListSelect = {
   id: true,
   legajo: true,
   legajoFinnegans: true,
   cuil: true,
-  dni: true,
   firstName: true,
   lastName: true,
-  birthDate: true,
-  gender: true,
-  civilStatus: true,
-  nationality: true,
   status: true,
-  createdAt: true,
-  updatedAt: true,
-  sector: { select: { id: true, name: true, code: true } },
   costCenter: { select: { id: true, name: true, code: true } },
-  position: { select: { id: true, name: true, code: true } },
-  companies: { include: { company: { select: { id: true, name: true, code: true } } } },
   laborMovements: {
     select: {
       id: true,
@@ -266,71 +273,6 @@ const employeeUpdateWriteSelect = {
   internalCategory: true,
 } satisfies Prisma.EmployeeSelect;
 
-const employeeOverviewSelect = {
-  id: true,
-  legajo: true,
-  legajoFinnegans: true,
-  cuil: true,
-  dni: true,
-  firstName: true,
-  lastName: true,
-  birthDate: true,
-  gender: true,
-  civilStatus: true,
-  nationality: true,
-  email: true,
-  phone: true,
-  mobile: true,
-  emergencyContact: true,
-  emergencyRelation: true,
-  emergencyPhone: true,
-  status: true,
-  healthInsurance: true,
-  agreement: true,
-  receiptCategory: true,
-  internalCategory: true,
-  createdAt: true,
-  updatedAt: true,
-  createdByUserId: true,
-  address: true,
-  transport: true,
-  sector: {
-    select: {
-      id: true,
-      name: true,
-      code: true,
-      area: {
-        select: {
-          id: true,
-          name: true,
-          establishment: {
-            select: {
-              id: true,
-              name: true,
-              businessUnit: { select: { id: true, name: true } },
-            },
-          },
-        },
-      },
-    },
-  },
-  costCenter: { select: { id: true, name: true, code: true } },
-  position: true,
-  companies: {
-    select: {
-      isPrimary: true,
-      company: { select: { id: true, name: true, code: true } },
-    },
-  },
-  laborMovements: {
-    include: { createdBy: { select: { id: true, name: true } } },
-    orderBy: { effectiveFrom: "desc" as const },
-    take: 50,
-  },
-  assignments: { take: 100, include: { user: { select: { id: true, name: true, employeeId: true } } } },
-  hourConcepts: assignableHourConceptsSelect,
-} satisfies Prisma.EmployeeSelect;
-
 const employeeOverviewCoreSelect = {
   id: true,
   legajo: true,
@@ -357,6 +299,44 @@ const employeeOverviewCoreSelect = {
   createdAt: true,
   updatedAt: true,
   createdByUserId: true,
+} satisfies Prisma.EmployeeSelect;
+
+// Etapa 14C.1: antes, `findOverviewDetailsById` pedía esto MÁS `companies`/
+// `laborMovements`/`assignments`/`hourConcepts` en un único `findFirst`
+// anidado (~10 relaciones/niveles distintos, cada uno un round-trip propio
+// sin `relationJoins` — ver docs/decisions/EMPLOYEE_PERFORMANCE_14C1.md
+// §1.9-1.15). Ese select gigante quedó reemplazado por este (sólo escalares +
+// relaciones to-one, ya el máximo que puede resolverse en un solo
+// `findFirst`) más 4 `findMany` independientes ejecutados en paralelo — ver
+// `findOverviewDetailsById` más abajo. El shape final que recibe el
+// frontend es idéntico al de antes (mismo merge de campos), sólo cambió
+// cómo se arma.
+const employeeOverviewDetailsCoreSelect = {
+  ...employeeOverviewCoreSelect,
+  address: true,
+  transport: true,
+  sector: {
+    select: {
+      id: true,
+      name: true,
+      code: true,
+      area: {
+        select: {
+          id: true,
+          name: true,
+          establishment: {
+            select: {
+              id: true,
+              name: true,
+              businessUnit: { select: { id: true, name: true } },
+            },
+          },
+        },
+      },
+    },
+  },
+  costCenter: { select: { id: true, name: true, code: true } },
+  position: true,
 } satisfies Prisma.EmployeeSelect;
 
 const timeGridEmployeeSelect = {
@@ -730,8 +710,18 @@ export const employeesRepository = {
     ]);
   },
 
+  // Etapa 14C.1: `$transaction([...])` -> `Promise.all([...])`. Estas 3
+  // queries son contadores agregados de resumen (tarjetas de Legajos), no un
+  // guardado — misma categoría de dato que `dashboard.service.ts:
+  // calculateMetrics` (15 queries en un único Promise.all, sin transacción,
+  // ver docs/PERFORMANCE_STANDARDS.md §2.E). La forma-array de `$transaction`
+  // ejecuta las queries secuencialmente dentro de la misma transacción en
+  // Postgres — no en paralelo — lo que explicaba buena parte de los 1521ms
+  // medidos en el journey real de 14B.3. `Promise.all` sí garantiza
+  // concurrencia real. No requieren una foto transaccional consistente entre
+  // sí (son 3 conteos independientes para 3 tarjetas separadas).
   async summary(accessWhere: Prisma.EmployeeWhereInput) {
-    const [statusGroups, pendingTimeEmployeeGroups, missingTimeResponsible] = await prisma.$transaction([
+    const [statusGroups, pendingTimeEmployeeGroups, missingTimeResponsible] = await Promise.all([
       prisma.employee.groupBy({
         by: ["status"],
         where: accessWhere,
@@ -860,8 +850,51 @@ export const employeesRepository = {
     return prisma.employee.findFirst({ where: { AND: [{ id }, accessWhere] }, select: employeeOverviewCoreSelect });
   },
 
-  findOverviewDetailsById(id: string, accessWhere: Prisma.EmployeeWhereInput = {}) {
-    return prisma.employee.findFirst({ where: { AND: [{ id }, accessWhere] }, select: employeeOverviewSelect });
+  // Etapa 14C.1: antes era un único `findFirst` con `companies`/
+  // `laborMovements`/`assignments`/`hourConcepts` anidados (~10 round-trips
+  // secuenciales/no garantizadamente paralelos sin relationJoins, medido en
+  // 6021-6441ms en el journey real de 14B.3 — ver
+  // docs/decisions/EMPLOYEE_PERFORMANCE_14C1.md). El core (escalares +
+  // relaciones to-one) se resuelve primero para poder aplicar `accessWhere`
+  // (control de acceso por rol) — si no existe o no es accesible, se corta
+  // acá y nunca se disparan las 4 consultas hijas. Esas 4 sólo filtran por
+  // `employeeId` (ya validado vía el core), en paralelo real con
+  // `Promise.all` — mismo patrón ya usado en `dashboard.service.ts` y en la
+  // Etapa 13F. `hourConcepts` reusa `assignableHourConceptsSelect` tal cual
+  // (única fuente de verdad del where/select de habilitación, compartida con
+  // `findById` — ver el comentario en su definición) para no reintroducir el
+  // bug de la Etapa 6L.1. El objeto final devuelto tiene EXACTAMENTE el mismo
+  // shape que antes de esta etapa — el frontend no necesita ningún cambio.
+  async findOverviewDetailsById(id: string, accessWhere: Prisma.EmployeeWhereInput = {}) {
+    const core = await prisma.employee.findFirst({
+      where: { AND: [{ id }, accessWhere] },
+      select: employeeOverviewDetailsCoreSelect,
+    });
+    if (!core) return null;
+
+    const [companies, laborMovements, assignments, hourConcepts] = await Promise.all([
+      prisma.employeeCompany.findMany({
+        where: { employeeId: id },
+        select: { isPrimary: true, company: { select: { id: true, name: true, code: true } } },
+      }),
+      prisma.laborMovement.findMany({
+        where: { employeeId: id },
+        include: { createdBy: { select: { id: true, name: true } } },
+        orderBy: { effectiveFrom: "desc" },
+        take: 50,
+      }),
+      prisma.employeeAssignment.findMany({
+        where: { employeeId: id },
+        take: 100,
+        include: { user: { select: { id: true, name: true, employeeId: true } } },
+      }),
+      prisma.employeeHourConcept.findMany({
+        where: { employeeId: id, ...assignableHourConceptsSelect.where },
+        select: assignableHourConceptsSelect.select,
+      }),
+    ]);
+
+    return { ...core, companies, laborMovements, assignments, hourConcepts };
   },
 
   async findTimeGrid(id: string, query: EmployeeTimeGridQuery, accessWhere: Prisma.EmployeeWhereInput) {
