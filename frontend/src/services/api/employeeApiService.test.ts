@@ -250,3 +250,103 @@ describe("employeeApiService.getPositionValidation — caché por employeeId+pos
     expect(apiRequest).toHaveBeenCalledTimes(2);
   });
 });
+
+// Etapa 14D.5 (Parte 5 del pedido): getOverviewById/getOverviewDetailsById
+// eran fetch directo (sin `cachedData`) — cada invocación, incluido el
+// doble-montaje de React StrictMode en dev, disparaba una llamada de red
+// real nueva (medido en el journey: overview y overview-details x2 al abrir
+// el detalle). Mismo criterio que el describe de getPositionValidation de
+// arriba: ejercita la caché REAL de `services/cache`, no una simulación.
+// Ver docs/decisions/EMPLOYEE_DETAIL_LOAD_DEDUP_14D5.md.
+describe("employeeApiService.getOverviewById / getOverviewDetailsById — dedupe in-flight y caché corta (Etapa 14D.5)", () => {
+  const overviewPayload = { id: "employee-1", legajo: "100", firstName: "Ana", lastName: "Prueba", status: "ACTIVO" };
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    await cache.clearAllAppCaches("test reset");
+  });
+
+  it("dos llamadas simultáneas a getOverviewById comparten la misma llamada de red (in-flight)", async () => {
+    let resolveRequest!: (value: unknown) => void;
+    vi.mocked(apiRequest).mockReturnValue(new Promise((resolve) => { resolveRequest = resolve; }) as never);
+
+    const call1 = employeeApiService.getOverviewById("employee-1");
+    const call2 = employeeApiService.getOverviewById("employee-1");
+    // Deja que ambas invocaciones lleguen a `revalidate()` (buildCacheKey/
+    // readCached son async, incluyen crypto.subtle) antes de resolver el
+    // fetch — un macrotask garantiza que se drenaron los microtasks previos.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    resolveRequest({ data: overviewPayload });
+
+    const [a, b] = await Promise.all([call1, call2]);
+
+    expect(apiRequest).toHaveBeenCalledTimes(1);
+    expect(a).toEqual(b);
+  });
+
+  it("dos llamadas simultáneas a getOverviewDetailsById comparten la misma llamada de red (in-flight)", async () => {
+    let resolveRequest!: (value: unknown) => void;
+    vi.mocked(apiRequest).mockReturnValue(new Promise((resolve) => { resolveRequest = resolve; }) as never);
+
+    const call1 = employeeApiService.getOverviewDetailsById("employee-1");
+    const call2 = employeeApiService.getOverviewDetailsById("employee-1");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    resolveRequest({ data: overviewPayload });
+
+    await Promise.all([call1, call2]);
+
+    expect(apiRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it("reabrir el mismo legajo dentro del TTL no repite el request (caché corta)", async () => {
+    vi.mocked(apiRequest).mockResolvedValue({ data: overviewPayload });
+
+    await employeeApiService.getOverviewById("employee-1");
+    await employeeApiService.getOverviewById("employee-1");
+    await employeeApiService.getOverviewById("employee-1");
+
+    expect(apiRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it("un empleado distinto nunca sirve la caché de otro empleado", async () => {
+    vi.mocked(apiRequest).mockResolvedValue({ data: overviewPayload });
+
+    await employeeApiService.getOverviewById("employee-1");
+    await employeeApiService.getOverviewById("employee-2");
+
+    expect(apiRequest).toHaveBeenCalledTimes(2);
+  });
+
+  it("overview y overview-details son claves de caché separadas (no se pisan entre sí)", async () => {
+    vi.mocked(apiRequest).mockResolvedValue({ data: overviewPayload });
+
+    await employeeApiService.getOverviewById("employee-1");
+    await employeeApiService.getOverviewDetailsById("employee-1");
+
+    expect(apiRequest).toHaveBeenCalledTimes(2);
+    expect(apiRequest).toHaveBeenCalledWith("/employees/employee-1/overview", { apiCache: false });
+    expect(apiRequest).toHaveBeenCalledWith("/employees/employee-1/overview-details", { apiCache: false });
+  });
+
+  it("si el request falla, no queda una promesa rota cacheada — un retry vuelve a pegarle a la red", async () => {
+    vi.mocked(apiRequest).mockRejectedValueOnce(new Error("network down"));
+
+    await expect(employeeApiService.getOverviewById("employee-1")).rejects.toThrow("network down");
+
+    vi.mocked(apiRequest).mockResolvedValueOnce({ data: overviewPayload });
+    const result = await employeeApiService.getOverviewById("employee-1");
+
+    expect(result.id).toBe("employee-1");
+    expect(apiRequest).toHaveBeenCalledTimes(2);
+  });
+
+  it("invalidar la familia 'employees' (mismo mecanismo que ya usan los 8 mutadores existentes) hace que el próximo getOverviewById vuelva a pegarle a la red", async () => {
+    vi.mocked(apiRequest).mockResolvedValue({ data: overviewPayload });
+
+    await employeeApiService.getOverviewById("employee-1");
+    await cache.invalidateCacheFamily("employees", "test invalidation");
+    await employeeApiService.getOverviewById("employee-1");
+
+    expect(apiRequest).toHaveBeenCalledTimes(2);
+  });
+});

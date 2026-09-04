@@ -624,6 +624,12 @@ function isEmployeeSummary(value: EmployeeSummary) {
   return Boolean(value && typeof value.total === "number" && typeof value.active === "number" && typeof value.inactive === "number");
 }
 
+// Etapa 14D.5: validador mínimo para overview/overview-details — mismo
+// criterio que isEmployeeOptionsResponse, sólo que sobre un Employee único.
+function isEmployeeDetail(value: Employee) {
+  return Boolean(value && typeof value.id === "string" && typeof value.firstName === "string" && typeof value.lastName === "string");
+}
+
 export const employeeApiService = {
   async list(filters: EmployeeListFilters = {}) {
     const { path, snapshotKey } = employeeListRequest(filters);
@@ -687,13 +693,27 @@ export const employeeApiService = {
     const response = await apiRequest<ApiEmployeeItemResponse>(`/employees/${id}`);
     return mapEmployeeFromApi(response.data);
   },
+  // Etapa 14D.5: antes era un fetch directo, sin dedupe in-flight — el
+  // doble-montaje de React StrictMode en dev (y cualquier remount real)
+  // disparaba 2 llamadas de red idénticas. `cachedData` comparte la misma
+  // Promise entre invocaciones concurrentes y cachea 60s (familia
+  // "employees", ya invalidada por los 8 mutadores existentes de legajo) —
+  // ver docs/decisions/EMPLOYEE_DETAIL_LOAD_DEDUP_14D5.md.
   async getOverviewById(id: string) {
-    const response = await apiRequest<ApiEmployeeItemResponse>(`/employees/${id}/overview`);
-    return mapEmployeeFromApi(response.data);
+    return cachedData({
+      requestKey: `GET:/employees/${id}/overview`,
+      policy: cachePolicies.employeeDetailCore,
+      fetcher: () => apiRequest<ApiEmployeeItemResponse>(`/employees/${id}/overview`, { apiCache: false }).then((response) => mapEmployeeFromApi(response.data)),
+      validate: isEmployeeDetail,
+    });
   },
   async getOverviewDetailsById(id: string) {
-    const response = await apiRequest<ApiEmployeeItemResponse>(`/employees/${id}/overview-details`);
-    return mapEmployeeFromApi(response.data);
+    return cachedData({
+      requestKey: `GET:/employees/${id}/overview-details`,
+      policy: cachePolicies.employeeDetailCore,
+      fetcher: () => apiRequest<ApiEmployeeItemResponse>(`/employees/${id}/overview-details`, { apiCache: false }).then((response) => mapEmployeeFromApi(response.data)),
+      validate: isEmployeeDetail,
+    });
   },
   async getTimeGrid(id: string, period: string, options: { includeDetails?: boolean } = {}): Promise<EmployeeTimeGrid> {
     const params = new URLSearchParams({ period });

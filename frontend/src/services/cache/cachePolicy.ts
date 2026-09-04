@@ -101,6 +101,22 @@ export const cachePolicies = {
     sensitive: true,
     schemaVersion: CACHE_SCHEMA_VERSION,
   },
+  // Etapa 14D.5: overview/overview-details de EmployeeDetailPage no pasaban
+  // por `cachedData` (fetch directo) — sin dedupe in-flight, cada invocación
+  // (incluido el doble-montaje de React StrictMode en dev) disparaba una
+  // llamada de red nueva. Misma familia "employees" que el resto de las
+  // cachés de legajo — ya invalidada por los 8 mutadores existentes
+  // (`invalidateEmployeeDependentCaches`). TTL corto (no persistido, dato
+  // sensible con PII) sólo para reusar al reabrir el mismo legajo poco
+  // después, no para esconder datos viejos. Ver docs/decisions/
+  // EMPLOYEE_DETAIL_LOAD_DEDUP_14D5.md.
+  employeeDetailCore: {
+    family: "employees",
+    ttlMs: 60_000,
+    persist: false,
+    sensitive: true,
+    schemaVersion: CACHE_SCHEMA_VERSION,
+  },
   dashboardMetrics: {
     family: "dashboard",
     ttlMs: 30_000,
