@@ -17,6 +17,7 @@ import {
   listEmployeeOrgChartQuerySchema,
   listEmployeeHistoryQuerySchema,
   listEmployeesQuerySchema,
+  positionValidationQuerySchema,
   replaceEmployeeAssignmentsSchema,
   replaceEmployeeHourConceptsSchema,
   recalculateAutomaticHourConceptBreakdownsSchema,
@@ -96,6 +97,7 @@ employeesRouter.get(
 employeesRouter.get(
   "/:id/position-validation",
   requireAnyRole([roles.rrhh, roles.supervision, roles.cargaHoraria]),
+  validateQuery(positionValidationQuerySchema),
   asyncHandler(employeesController.getPositionValidation),
 );
 

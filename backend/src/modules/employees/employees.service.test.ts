@@ -17,6 +17,7 @@ vi.mock("./employees.repository", () => ({
   employeesRepository: {
     findById: vi.fn(),
     existsWithAccess: vi.fn(),
+    findPositionValidationById: vi.fn(),
     findFieldHistory: vi.fn(),
     findBlockHistory: vi.fn(),
     createFieldHistory: vi.fn(),
@@ -41,6 +42,7 @@ vi.mock("../audit/audit.service", () => ({ auditService: { register: vi.fn() } }
 const repo = employeesRepository as unknown as {
   findById: Mock;
   existsWithAccess: Mock;
+  findPositionValidationById: Mock;
   findFieldHistory: Mock;
   findBlockHistory: Mock;
   createFieldHistory: Mock;
@@ -451,7 +453,7 @@ describe("employeesService.replaceHourConcepts", () => {
 
 describe("employeesService.getPositionValidation", () => {
   it("cadena coincidente: tone success cuando el empleado y el puesto comparten sector/area/establecimiento/UN via sectorId", async () => {
-    repo.findById.mockResolvedValue(employeeFixture());
+    repo.findPositionValidationById.mockResolvedValue(employeeFixture());
 
     const result = await employeesService.getPositionValidation("emp-1", rrhhUser);
 
@@ -460,7 +462,7 @@ describe("employeesService.getPositionValidation", () => {
   });
 
   it("cadena distinta: tone danger cuando el sector real del puesto no coincide con el del empleado", async () => {
-    repo.findById.mockResolvedValue(employeeFixture({
+    repo.findPositionValidationById.mockResolvedValue(employeeFixture({
       position: {
         id: "pos-1",
         sector: sectorChain({ sector: "Compras", area: "Administracion", establishment: "Casa Central", businessUnit: "Administracion" }),
@@ -476,7 +478,7 @@ describe("employeesService.getPositionValidation", () => {
   });
 
   it("puesto sin sectorId: no hay cadena real para comparar, tone warning (no success, no danger)", async () => {
-    repo.findById.mockResolvedValue(employeeFixture({
+    repo.findPositionValidationById.mockResolvedValue(employeeFixture({
       position: { id: "pos-1", sector: null, salaryCategories: [] },
     }));
 
@@ -487,7 +489,7 @@ describe("employeesService.getPositionValidation", () => {
   });
 
   it("empleado sin sector: los checks quedan missing y el tone es warning, no danger", async () => {
-    repo.findById.mockResolvedValue(employeeFixture({ sector: null }));
+    repo.findPositionValidationById.mockResolvedValue(employeeFixture({ sector: null }));
 
     const result = await employeesService.getPositionValidation("emp-1", rrhhUser);
 
@@ -496,7 +498,7 @@ describe("employeesService.getPositionValidation", () => {
   });
 
   it("puesto con sectorId valido: el rango salarial se ordena por SalaryCategory.order, no por el orden del array de vinculos", async () => {
-    repo.findById.mockResolvedValue(employeeFixture({
+    repo.findPositionValidationById.mockResolvedValue(employeeFixture({
       internalCategory: "Operario A",
       position: {
         id: "pos-1",
@@ -518,12 +520,55 @@ describe("employeesService.getPositionValidation", () => {
   });
 
   it("puesto sin seleccionar: tone neutral", async () => {
-    repo.findById.mockResolvedValue(employeeFixture({ position: null }));
+    repo.findPositionValidationById.mockResolvedValue(employeeFixture({ position: null }));
 
     const result = await employeesService.getPositionValidation("emp-1", rrhhUser);
 
     expect(result.tone).toBe("neutral");
     expect(result.title).toBe("Puesto sin seleccionar");
+  });
+
+  // Etapa 14D.2: causa real de los 12825ms máx/9978ms promedio medidos en
+  // 14D.1 — `getPositionValidation` usaba `getById` (detalle completo) sólo
+  // para leer 3 campos. Estos tests confirman el cambio de mecanismo (Parte
+  // 5, ítems 1 y 4 del pedido).
+  it("usa findPositionValidationById (select liviano), no findById (detalle completo)", async () => {
+    repo.findPositionValidationById.mockResolvedValue(employeeFixture());
+
+    await employeesService.getPositionValidation("emp-1", rrhhUser);
+
+    expect(repo.findPositionValidationById).toHaveBeenCalledWith("emp-1", {}, undefined);
+    expect(repo.findById).not.toHaveBeenCalled();
+  });
+
+  // Etapa 14D.2.1: `positionId` opcional — el frontend lo pasa cuando ya lo
+  // conoce (viene de overview-details) para habilitar el camino paralelo en
+  // el repositorio; sin cambiar en nada el resultado ni el criterio de
+  // comparación.
+  it("pasa positionId al repositorio cuando el caller lo conoce (habilita el camino paralelo)", async () => {
+    repo.findPositionValidationById.mockResolvedValue(employeeFixture());
+
+    await employeesService.getPositionValidation("emp-1", rrhhUser, "pos-1");
+
+    expect(repo.findPositionValidationById).toHaveBeenCalledWith("emp-1", {}, "pos-1");
+  });
+
+  // Parte 5, ítem 2: respeta permisos/RBAC — mismo criterio de alcance que
+  // `findById`/`assertAccessible`, sólo pasado al select liviano nuevo.
+  it("aplica el mismo alcance (accessWhere) que el resto de los endpoints de legajo, según el rol", async () => {
+    const supervisionUser = { id: "user-2", role: roles.supervision } as unknown as Express.AuthUser;
+    repo.findPositionValidationById.mockResolvedValue(employeeFixture());
+
+    await employeesService.getPositionValidation("emp-1", supervisionUser);
+
+    const [, accessWhereArg] = repo.findPositionValidationById.mock.calls.at(0)!;
+    expect(accessWhereArg).not.toEqual({}); // RRHH es {} (sin restricción); otros roles sí llevan un where de alcance.
+  });
+
+  it("lanza EMPLOYEE_NOT_FOUND (404) si el legajo no existe o está fuera de alcance — no expone datos de otro empleado", async () => {
+    repo.findPositionValidationById.mockResolvedValue(null);
+
+    await expect(employeesService.getPositionValidation("emp-404", rrhhUser)).rejects.toMatchObject({ code: "EMPLOYEE_NOT_FOUND", statusCode: 404 });
   });
 });
 

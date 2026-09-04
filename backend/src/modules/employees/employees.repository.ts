@@ -448,6 +448,91 @@ async function existsWithAccess(id: string, accessWhere: Prisma.EmployeeWhereInp
   return Boolean(row);
 }
 
+// Etapa 14D.2: mismo diagnóstico que el de `existsWithAccess` en 14C.3,
+// aplicado a `GET /employees/:id/position-validation` (12825ms máx/9978ms
+// promedio medidos en el journey de 14D.1 — el endpoint más lento detectado
+// hasta ahora en Legajos). `getPositionValidation` (`employees.service.ts`)
+// usaba `employeesService.getById` → `findEmployeeDetailById` (núcleo con
+// cadena sector/position de 4 niveles + 6 `findMany` de companies/
+// laborMovements/assignments/hourConcepts/novelties/documents) para leer
+// apenas 3 cosas: `internalCategory` (escalar), `sector` (cadena hasta
+// businessUnit) y `position` (su propia cadena de sector + salaryCategories).
+// Confirmado leyendo `getPositionValidation` completo — NINGÚN otro campo del
+// legajo se usa ahí. Este select no trae ninguna de las 6 relaciones batch (0
+// round-trips extra) y ni siquiera pide `address`/`transport`/`costCenter`
+// (que sí necesita `employeeDetailCoreSelect`, pero acá no hacen falta) —
+// más liviano incluso que el núcleo genérico de detalle.
+const positionValidationSectorSelect = {
+  id: true,
+  name: true,
+  area: {
+    select: {
+      id: true,
+      name: true,
+      establishment: {
+        select: {
+          id: true,
+          name: true,
+          businessUnit: { select: { id: true, name: true } },
+        },
+      },
+    },
+  },
+} satisfies Prisma.SectorSelect;
+
+const positionValidationPositionSelect = {
+  sector: { select: positionValidationSectorSelect },
+  salaryCategories: {
+    select: { salaryCategory: { select: { id: true, name: true, order: true } } },
+  },
+} satisfies Prisma.PositionSelect;
+
+const employeePositionValidationSelect = {
+  internalCategory: true,
+  sector: { select: positionValidationSectorSelect },
+  position: { select: positionValidationPositionSelect },
+} satisfies Prisma.EmployeeSelect;
+
+// Etapa 14D.2.1: cuando el frontend ya conoce el `positionId` (siempre lo
+// conoce — viene de `overview-details`, ya cargado antes de que esta
+// pestaña se monte), la cadena del empleado y la del puesto son 2 lecturas
+// genuinamente independientes que se pueden resolver en `Promise.all` en
+// vez de en un único `findFirst` con las 2 cadenas anidadas (que, sin
+// `previewFeatures=["relationJoins"]`, Prisma resuelve como round-trips en
+// serie — mismo diagnóstico ya documentado para `overview-details` en
+// 14C.1). Nunca se confía ciegamente en el `positionId` del cliente: si no
+// coincide con el `positionId` real del empleado (leído en la misma
+// consulta), se vuelve a pedir el puesto correcto — un round-trip extra
+// sólo en ese caso borde, nunca un resultado incorrecto.
+async function findPositionValidationByIdParallel(
+  id: string,
+  accessWhere: Prisma.EmployeeWhereInput,
+  hintedPositionId: string,
+) {
+  const [employeeCore, hintedPosition] = await Promise.all([
+    prisma.employee.findFirst({
+      where: { AND: [{ id }, accessWhere] },
+      select: { internalCategory: true, positionId: true, sector: { select: positionValidationSectorSelect } },
+    }),
+    prisma.position.findUnique({ where: { id: hintedPositionId }, select: positionValidationPositionSelect }),
+  ]);
+  if (!employeeCore) return null;
+  const position =
+    employeeCore.positionId === hintedPositionId
+      ? hintedPosition
+      : employeeCore.positionId
+        ? await prisma.position.findUnique({ where: { id: employeeCore.positionId }, select: positionValidationPositionSelect })
+        : null;
+  return { internalCategory: employeeCore.internalCategory, sector: employeeCore.sector, position };
+}
+
+function findPositionValidationById(id: string, accessWhere: Prisma.EmployeeWhereInput = {}, positionId?: string) {
+  if (positionId) {
+    return findPositionValidationByIdParallel(id, accessWhere, positionId);
+  }
+  return prisma.employee.findFirst({ where: { AND: [{ id }, accessWhere] }, select: employeePositionValidationSelect });
+}
+
 // Etapa 14C.1: antes, `findOverviewDetailsById` pedía esto MÁS `companies`/
 // `laborMovements`/`assignments`/`hourConcepts` en un único `findFirst`
 // anidado (~10 relaciones/niveles distintos, cada uno un round-trip propio
@@ -951,6 +1036,10 @@ export const employeesRepository = {
 
   existsWithAccess(id: string, accessWhere: Prisma.EmployeeWhereInput = {}) {
     return existsWithAccess(id, accessWhere);
+  },
+
+  findPositionValidationById(id: string, accessWhere: Prisma.EmployeeWhereInput = {}, positionId?: string) {
+    return findPositionValidationById(id, accessWhere, positionId);
   },
 
   findUpdateAuditSnapshot(id: string) {

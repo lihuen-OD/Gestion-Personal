@@ -151,6 +151,14 @@ export function SalaryRangeValidationCard({
 }: SalaryRangeValidationCardProps) {
   const positions = usePositions();
   const [backendValidation, setBackendValidation] = useState<EmployeePositionValidation | null>(null);
+  // Etapa 14D.2.1: la validación local (`localValidation`, abajo) es una
+  // aproximación optimista — puede diferir de la oficial en el rango
+  // salarial (fuentes de categorías distintas entre frontend/backend, ver
+  // docs/decisions/POSITION_VALIDATION_PERFORMANCE_14D2_1.md). Este estado
+  // deja explícito en la UI si lo que se está mostrando ya es la validación
+  // oficial confirmada por el backend, o todavía/sólo la aproximación local
+  // — nunca se oculta que hubo un error real.
+  const [backendStatus, setBackendStatus] = useState<"loading" | "success" | "error" | "disabled">(useBackendValidation ? "loading" : "disabled");
   const [, setSalaryCatalogLoaded] = useState(0);
   const position = selectedEmployeePosition(employee, positions);
   const categoryResult = salaryRangeMockService.compareCategoryToPosition(position, employee.internalCategory);
@@ -223,17 +231,32 @@ export function SalaryRangeValidationCard({
     let mounted = true;
     if (!useBackendValidation || !employee.id) {
       setBackendValidation(null);
+      setBackendStatus("disabled");
       return () => {
         mounted = false;
       };
     }
+    setBackendStatus("loading");
     employeeApiService
-      .getPositionValidation(employee.id)
+      // Etapa 14D.2.1: `positionId` ya conocido (viene de overview-details)
+      // habilita el camino paralelo del backend; `sector`/`internalCategory`
+      // sólo entran en la clave de caché (services/cache), nunca se envían
+      // como si fueran la fuente de verdad — el backend siempre vuelve a
+      // derivarlos de la relación real.
+      .getPositionValidation(employee.id, {
+        positionId: employee.positionId,
+        sector: employee.sector,
+        internalCategory: employee.internalCategory,
+      })
       .then((result) => {
-        if (mounted) setBackendValidation(result);
+        if (!mounted) return;
+        setBackendValidation(result);
+        setBackendStatus("success");
       })
       .catch(() => {
-        if (mounted) setBackendValidation(null);
+        if (!mounted) return;
+        setBackendValidation(null);
+        setBackendStatus("error");
       });
     return () => {
       mounted = false;
@@ -251,6 +274,11 @@ export function SalaryRangeValidationCard({
   return (
     <div className={`salary-range-check ${validation.tone}`}>
       <small>Validacion contra Puestos</small>
+      {backendStatus === "loading" ? (
+        <span className="muted small">Validación preliminar (local) — confirmando con el servidor...</span>
+      ) : backendStatus === "error" ? (
+        <span className="muted small">No pudimos confirmar la validación oficial. Mostrando una aproximación local — no reemplaza la validación del servidor.</span>
+      ) : null}
       <b>{validation.title}</b>
       <p>{validation.categoryText}</p>
       <div className="structure-check-list">

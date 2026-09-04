@@ -382,18 +382,17 @@ test("employees performance journey — recorrido crítico del módulo Legajos (
         });
 
         if (label === "Datos Laborales") {
-          // Hallazgo de medición (no de optimización): los 8 field-history
-          // eager de esta pestaña (16 requests reales por React StrictMode
-          // en dev, ver docs/decisions/EMPLOYEE_PERFORMANCE_14C1.md sobre el
-          // mismo fenómeno ya documentado) MÁS `GET .../position-validation`
-          // (disparado por SalaryRangeValidationCard al montar, observado
-          // hasta >6-10s en corridas reales — ver §8 del reporte) tardan más
-          // en completarse que la ventana de "networkidle" de ESTA acción —
-          // quedan capturados en acciones POSTERIORES (a veces varias
-          // pestañas después) en vez de acá. El costo real pertenece a esta
-          // pestaña, no a la acción puntual donde termina apareciendo.
+          // Etapa 14D.2: antes de esta etapa, esta pestaña disparaba 8
+          // GET /field-history en paralelo al montar (16 con React
+          // StrictMode en dev) — hallazgo de 14D.1. Se hizo lazy (mismo
+          // patrón que Domicilio/Responsables/Transporte/Configuración):
+          // ahora esta acción sólo debería mostrar `GET .../position-
+          // validation` (SalaryRangeValidationCard, con select liviano
+          // desde esta etapa) — cero field-history hasta que el usuario
+          // abra alguno explícitamente (ver acciones "Abrir historial de
+          // ..." más abajo).
           actions.at(-1)!.notes.push(
-            "esta pestaña dispara en paralelo 8 field-history (16 con React StrictMode en dev) + GET .../position-validation (SalaryRangeValidationCard) — todos completan después de que esta ventana de medición cerró y quedan contados en acciones posteriores; ver 'Top 10 requests más lentas' del reporte para los tiempos reales de estas requests",
+            "desde la Etapa 14D.2 esta pestaña ya no dispara field-history al montar (antes disparaba 8 en paralelo, 16 con StrictMode) — el único request esperable acá es GET .../position-validation",
           );
         }
 
@@ -436,11 +435,13 @@ test("employees performance journey — recorrido crítico del módulo Legajos (
           }
         }
 
-        // E. Datos laborales — patrón EAGER: el fetch ya ocurrió al entrar a
-        // la pestaña (medido arriba); acá sólo se revela el panel ya
-        // cargado por cada campo trackeado (`.tracked-field` con botón
-        // "Historial" — los campos derivados sin historial, como Unidad de
-        // negocio/Establecimiento, no tienen ese botón y se saltean solos).
+        // E. Datos laborales — Etapa 14D.2: patrón lazy desde esta etapa
+        // (antes era eager, medido/diagnosticado en 14D.1) — cada campo
+        // trackeado (`.tracked-field` con botón "Historial") sólo dispara
+        // su field-history al abrirse, igual que los bloques lazy de
+        // Domicilio/Responsables/Transporte/Configuración. Los campos
+        // derivados sin historial (Unidad de negocio/Establecimiento) no
+        // tienen botón "Historial" y se saltean solos.
         if (label === "Datos Laborales") {
           const trackedFields = page.locator(".tracked-field");
           const trackedCount = await trackedFields.count();
@@ -449,21 +450,37 @@ test("employees performance journey — recorrido crítico del módulo Legajos (
             const toggle = fieldCard.getByRole("button", { name: "Historial" });
             if ((await toggle.count()) === 0) continue; // campo derivado, sin historial (Unidad de negocio/Establecimiento)
             const fieldLabel = (await fieldCard.locator(".tracked-main small").first().textContent().catch(() => null))?.trim() || `campo ${i + 1}`;
-            await measure(`Revelar historial de ${fieldLabel} (ya precargado)`, zone, false, async () => {
+            await measure(`Abrir historial de ${fieldLabel}`, zone, false, async () => {
               await toggle.first().click();
               return {
                 visibleLocator: fieldCard.locator(".timeline, .empty-compact"),
                 emptyLocator: fieldCard.locator(".empty-compact"),
-                notes:
-                  i === 0
-                    ? [
-                        "patrón eager: el fetch ya había ocurrido al entrar a la pestaña — este click sólo revela el panel, no dispara una request nueva",
-                        "los requests visibles en esta acción son en su mayoría los 8 field-history (16 con StrictMode) disparados por el cambio de pestaña anterior, capturados acá por timing — ver nota en 'Cambiar a pestaña Datos Laborales'",
-                      ]
-                    : ["patrón eager: el fetch ya había ocurrido al entrar a la pestaña — este click sólo revela el panel, no dispara una request nueva"],
+                notes: ["loading localizado: el spinner de esta acción queda contenido dentro del campo, no bloquea el resto de la pestaña"],
               };
             });
+            await measure(`Cerrar historial de ${fieldLabel}`, zone, false, async () => {
+              await toggle.first().click();
+              return { hiddenLocator: fieldCard.locator(".timeline, .empty-compact") };
+            });
           }
+
+          // Etapa 14D.2.1 (Parte 3, ítem 9 del pedido): confirma que
+          // revisitar la pestaña no vuelve a disparar position-validation —
+          // SalaryRangeValidationCard se remonta al volver a la pestaña, y
+          // el caché de sesión (services/cache, misma combinación
+          // employeeId+positionId+sector+internalCategory) debe servir el
+          // resultado ya conocido sin una request nueva.
+          await measure("Salir de Datos Laborales (a Contacto y Domicilio)", zone, false, async () => {
+            await page.locator(".tabs button", { hasText: "Contacto y Domicilio" }).first().click();
+            return { visibleLocator: page.locator("section, .section").first() };
+          });
+          await measure("Volver a entrar a Datos Laborales (debería servir position-validation desde caché)", zone, false, async () => {
+            await page.locator(".tabs button", { hasText: "Datos Laborales" }).first().click();
+            return {
+              visibleLocator: page.locator("section, .section").first(),
+              notes: ["si aparece un GET .../position-validation acá, la caché de sesión no está funcionando — no debería haber ninguno en una revisita sin cambios"],
+            };
+          });
         }
 
         // I. Adjuntos/Documentos — carga de la lista + abrir modal de carga

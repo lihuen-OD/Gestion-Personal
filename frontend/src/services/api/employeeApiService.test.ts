@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { apiRequest } from "./apiClient";
 import { employeeApiService, employeeListRequest, mapEmployeeFromApi, orgChartReachedLimit } from "./employeeApiService";
 import * as cache from "../cache";
@@ -183,5 +183,70 @@ describe("orgChartReachedLimit", () => {
 
   it("no advierte para una respuesta completa por debajo del límite", () => {
     expect(orgChartReachedLimit({ items: [employee], meta: { total: 1, page: 1, pageSize: 1000, hasMore: false } })).toBe(false);
+  });
+});
+
+// Etapa 14D.2.1 (Parte 3, ítems 3-6 del pedido): usa el `apiRequest` mockeado
+// directamente (no mockea `getPositionValidation` en sí) para ejercitar la
+// caché REAL de `services/cache` — no una simulación. `clearAllAppCaches()`
+// en cada test evita que el estado (module-level, LRU en memoria) se filtre
+// entre tests.
+describe("employeeApiService.getPositionValidation — caché por employeeId+positionId+sector+internalCategory (Etapa 14D.2.1)", () => {
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    await cache.clearAllAppCaches("test reset");
+    vi.mocked(apiRequest).mockResolvedValue({
+      data: { tone: "success", title: "OK", categoryText: "", checks: [], category: { status: "IN_RANGE", value: "Administrativo A", range: [] } },
+    });
+  });
+
+  it("pasa positionId como query param real al backend", async () => {
+    await employeeApiService.getPositionValidation("employee-1", { positionId: "pos-1", sector: "Ventas", internalCategory: "Administrativo A" });
+
+    expect(apiRequest).toHaveBeenCalledWith("/employees/employee-1/position-validation?positionId=pos-1", { apiCache: false });
+  });
+
+  it("sin positionId, no agrega ningún query string (compatibilidad hacia atrás)", async () => {
+    await employeeApiService.getPositionValidation("employee-1");
+
+    expect(apiRequest).toHaveBeenCalledWith("/employees/employee-1/position-validation", { apiCache: false });
+  });
+
+  it("misma combinación employeeId+positionId+sector+internalCategory: no repite el request (caché de sesión)", async () => {
+    const args = { positionId: "pos-1", sector: "Ventas", internalCategory: "Administrativo A" } as const;
+
+    await employeeApiService.getPositionValidation("employee-1", args);
+    await employeeApiService.getPositionValidation("employee-1", args);
+    await employeeApiService.getPositionValidation("employee-1", args);
+
+    expect(apiRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it("si cambia el sector, dispara un request nuevo (no sirve un resultado que ya no corresponde)", async () => {
+    await employeeApiService.getPositionValidation("employee-1", { positionId: "pos-1", sector: "Ventas", internalCategory: "Administrativo A" });
+    await employeeApiService.getPositionValidation("employee-1", { positionId: "pos-1", sector: "Compras", internalCategory: "Administrativo A" });
+
+    expect(apiRequest).toHaveBeenCalledTimes(2);
+  });
+
+  it("si cambia la categoría interna, dispara un request nuevo", async () => {
+    await employeeApiService.getPositionValidation("employee-1", { positionId: "pos-1", sector: "Ventas", internalCategory: "Administrativo A" });
+    await employeeApiService.getPositionValidation("employee-1", { positionId: "pos-1", sector: "Ventas", internalCategory: "Administrativo B" });
+
+    expect(apiRequest).toHaveBeenCalledTimes(2);
+  });
+
+  it("si cambia el positionId, dispara un request nuevo", async () => {
+    await employeeApiService.getPositionValidation("employee-1", { positionId: "pos-1", sector: "Ventas", internalCategory: "Administrativo A" });
+    await employeeApiService.getPositionValidation("employee-1", { positionId: "pos-2", sector: "Ventas", internalCategory: "Administrativo A" });
+
+    expect(apiRequest).toHaveBeenCalledTimes(2);
+  });
+
+  it("un empleado distinto nunca sirve la caché de otro empleado", async () => {
+    await employeeApiService.getPositionValidation("employee-1", { positionId: "pos-1", sector: "Ventas", internalCategory: "Administrativo A" });
+    await employeeApiService.getPositionValidation("employee-2", { positionId: "pos-1", sector: "Ventas", internalCategory: "Administrativo A" });
+
+    expect(apiRequest).toHaveBeenCalledTimes(2);
   });
 });

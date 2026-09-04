@@ -4,7 +4,7 @@ import { createTtlCache } from "../../shared/cache/ttlCache";
 import { requireParam } from "../../shared/http/params";
 import { clearDocumentsReadCaches } from "../documents/documents.cache";
 import { clearTimeEntriesReadCaches } from "../time-entries/timeEntries.cache";
-import type { EmployeeTimeGridQuery, ListEmployeeHistoryQuery, ListEmployeeOptionsQuery, ListEmployeeOrgChartQuery, ListEmployeesQuery } from "./employees.schemas";
+import type { EmployeeTimeGridQuery, ListEmployeeHistoryQuery, ListEmployeeOptionsQuery, ListEmployeeOrgChartQuery, ListEmployeesQuery, PositionValidationQuery } from "./employees.schemas";
 import { employeesService } from "./employees.service";
 import { automaticHourConceptBreakdownsService } from "./automaticHourConceptBreakdowns.service";
 
@@ -168,7 +168,8 @@ export const employeesController = {
   }) satisfies RequestHandler,
 
   getPositionValidation: (async (req, res) => {
-    const result = await employeesService.getPositionValidation(requireParam(req, "id"), req.user!);
+    const { positionId } = req.query as unknown as PositionValidationQuery;
+    const result = await employeesService.getPositionValidation(requireParam(req, "id"), req.user!, positionId);
     res.json({ data: result });
   }) satisfies RequestHandler,
 

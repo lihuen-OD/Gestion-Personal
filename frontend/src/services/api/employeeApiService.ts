@@ -751,9 +751,25 @@ export const employeeApiService = {
     await invalidateCacheFamily("time-entries", "automatic hour concept breakdowns recalculated");
     return response.data;
   },
-  async getPositionValidation(id: string) {
-    const response = await apiRequest<ApiEmployeePositionValidationResponse>(`/employees/${id}/position-validation`);
-    return response.data;
+  // Etapa 14D.2.1: `positionId` se pasa al backend (habilita el camino
+  // paralelo del repositorio, ver docs/decisions/
+  // POSITION_VALIDATION_PERFORMANCE_14D2_1.md). `sector`/`internalCategory`
+  // NO viajan al backend (que los vuelve a derivar de la fuente real) —
+  // sólo entran en la clave de caché, para que un cambio en cualquiera de
+  // las 4 dimensiones que afectan el resultado dispare un fetch nuevo en
+  // vez de servir un resultado cacheado que ya no corresponde.
+  async getPositionValidation(id: string, options: { positionId?: string; sector?: string; internalCategory?: string } = {}) {
+    const { positionId, sector, internalCategory } = options;
+    const params = new URLSearchParams();
+    if (positionId) params.set("positionId", positionId);
+    const query = params.toString();
+    const path = `/employees/${id}/position-validation${query ? `?${query}` : ""}`;
+    return cachedData({
+      requestKey: `GET:${path}:${sector || ""}:${internalCategory || ""}`,
+      policy: cachePolicies.employeePositionValidation,
+      fetcher: () => apiRequest<ApiEmployeePositionValidationResponse>(path, { apiCache: false }).then((response) => response.data),
+      validate: (value) => Boolean(value && typeof value.tone === "string" && typeof value.title === "string"),
+    });
   },
   async create(employee: Employee) {
     const response = await apiRequest<ApiEmployeeItemResponse>("/employees", {

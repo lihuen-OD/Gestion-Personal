@@ -184,6 +184,15 @@ export const listEmployeeHistoryQuerySchema = z.object({
   take: z.coerce.number().int().positive().max(100).default(50),
 });
 
+// Etapa 14D.2.1: `positionId` es opcional, sólo compatibilidad hacia
+// adelante — el frontend ya lo conoce (viene de `overview-details`) y
+// pasarlo permite resolver la cadena del empleado y la del puesto en
+// paralelo en vez de en serie. Sin el parámetro, el endpoint sigue
+// funcionando exactamente igual que antes (comportamiento de respaldo).
+export const positionValidationQuerySchema = z.object({
+  positionId: z.string().trim().min(1).max(64).optional(),
+});
+
 export const employeeTimeGridQuerySchema = z.object({
   period: z.string().regex(/^\d{4}-\d{2}$/),
   includeDetails: z.coerce.boolean().default(true),
@@ -246,6 +255,7 @@ export type ReplaceEmployeeHourConceptsInput = z.infer<typeof replaceEmployeeHou
 export type CreateLaborMovementInput = z.infer<typeof createLaborMovementSchema>;
 export type CreateEmployeeDocumentInput = z.infer<typeof createEmployeeDocumentSchema>;
 export type ListEmployeeHistoryQuery = z.infer<typeof listEmployeeHistoryQuerySchema>;
+export type PositionValidationQuery = z.infer<typeof positionValidationQuerySchema>;
 export type EmployeeTimeGridQuery = z.infer<typeof employeeTimeGridQuerySchema>;
 export type UpsertManualHourConceptBreakdownInput = z.infer<typeof upsertManualHourConceptBreakdownSchema>;
 export type ResolveManualHourConceptBreakdownInput = z.infer<typeof resolveManualHourConceptBreakdownSchema>;

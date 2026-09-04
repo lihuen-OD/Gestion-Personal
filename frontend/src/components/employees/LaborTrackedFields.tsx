@@ -34,12 +34,20 @@ async function recordFieldHistory(
   }
 }
 
-function useBackendFieldHistory(employeeId: string, field: string) {
+// Etapa 14D.2: mismo cambio que `FieldWithHistory` (FieldHistoryControls.tsx)
+// — antes este hook no dependía de `open`, se disparaba apenas
+// MultiCompanyField/EmployeePositionField montaban (2 de los 8 GET
+// /field-history en paralelo medidos en el journey de 14D.1). Ahora sólo
+// carga la primera vez que el historial se abre; `loaded` evita repetir el
+// fetch si se cierra y se vuelve a abrir (caché local, Parte 3 del pedido).
+function useBackendFieldHistory(employeeId: string, field: string, open: boolean) {
   const [history, setHistory] = useState<EmployeeFieldHistoryRecord[]>([]);
   const [status, setStatus] = useState<"loading" | "success" | "error">("loading");
   const [retry, setRetry] = useState(0);
+  const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
+    if (!open || loaded) return;
     let mounted = true;
     setStatus("loading");
     employeeHistoryApiService
@@ -48,6 +56,7 @@ function useBackendFieldHistory(employeeId: string, field: string) {
         if (mounted) {
           setHistory(rows);
           setStatus("success");
+          setLoaded(true);
         }
       })
       .catch(() => {
@@ -56,7 +65,7 @@ function useBackendFieldHistory(employeeId: string, field: string) {
     return () => {
       mounted = false;
     };
-  }, [employeeId, field, retry]);
+  }, [open, loaded, employeeId, field, retry]);
 
   return { history, setHistory, status, retry: () => setRetry((value) => value + 1), markLoaded: () => setStatus("success") };
 }
@@ -117,7 +126,7 @@ export function MultiCompanyField({ employee, canEdit, user, onSaved }: TrackedF
   const [from, setFrom] = useState(new Date().toISOString().slice(0, 10));
   const [reason, setReason] = useState("");
   const [error, setError] = useState("");
-  const { history, setHistory, status: historyStatus, retry: retryHistory, markLoaded: markHistoryLoaded } = useBackendFieldHistory(employee.id, "companies");
+  const { history, setHistory, status: historyStatus, retry: retryHistory, markLoaded: markHistoryLoaded } = useBackendFieldHistory(employee.id, "companies", open);
   const label = value.join(", ") || "Sin cargar";
 
   const toggle = (company: string) =>
@@ -254,7 +263,7 @@ export function EmployeePositionField({ employee, canEdit, user, onSaved }: Trac
   const [from, setFrom] = useState(new Date().toISOString().slice(0, 10));
   const [reason, setReason] = useState("");
   const [error, setError] = useState("");
-  const { history, setHistory, status: historyStatus, retry: retryHistory, markLoaded: markHistoryLoaded } = useBackendFieldHistory(employee.id, "positionId");
+  const { history, setHistory, status: historyStatus, retry: retryHistory, markLoaded: markHistoryLoaded } = useBackendFieldHistory(employee.id, "positionId", open);
   const selected = positions.find((position) => position.id === selectedId);
 
   const { isRunning: isSaving, run: save } = useAsyncAction(async () => {

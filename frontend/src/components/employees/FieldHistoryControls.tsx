@@ -57,8 +57,17 @@ export function FieldWithHistory({
   const [history, setHistory] = useState<EmployeeFieldHistoryRecord[]>([]);
   const [historyStatus, setHistoryStatus] = useState<"loading" | "success" | "error">("loading");
   const [historyRetry, setHistoryRetry] = useState(0);
+  // Etapa 14D.2: antes, este efecto no dependía de `open` — se disparaba
+  // apenas el campo montaba, sin que el usuario pidiera ver el historial
+  // (8 GET /field-history en paralelo al entrar a Datos Laborales, 16 con
+  // React StrictMode en dev — medido en el journey de 14D.1). Ahora sólo
+  // carga la PRIMERA vez que se abre (`historyLoaded` evita repetir el
+  // fetch si se cierra y se vuelve a abrir — "caché local" pedida en la
+  // Parte 3); un reintento tras error sí puede volver a disparar la carga.
+  const [historyLoaded, setHistoryLoaded] = useState(false);
 
   useEffect(() => {
+    if (!open || historyLoaded) return;
     let mounted = true;
     setHistoryStatus("loading");
     employeeHistoryApiService
@@ -67,6 +76,7 @@ export function FieldWithHistory({
         if (mounted) {
           setHistory(rows);
           setHistoryStatus("success");
+          setHistoryLoaded(true);
         }
       })
       .catch(() => {
@@ -75,7 +85,7 @@ export function FieldWithHistory({
     return () => {
       mounted = false;
     };
-  }, [employee.id, section, field, historyRetry]);
+  }, [open, historyLoaded, employee.id, section, field, historyRetry]);
 
   const currentFrom =
     history[0]?.effectiveFrom ||

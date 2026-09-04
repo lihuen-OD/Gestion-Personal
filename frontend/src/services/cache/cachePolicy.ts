@@ -90,6 +90,17 @@ export const cachePolicies = {
     sensitive: true,
     schemaVersion: CACHE_SCHEMA_VERSION,
   },
+  // Etapa 14D.2.1: evita repetir GET /employees/:id/position-validation al
+  // revisitar la pestaña Datos Laborales con el mismo puesto/sector/categoría
+  // (misma familia "employees" que el resto de las cachés de legajo — un
+  // guardado que cambie datos laborales ya invalida toda la familia).
+  employeePositionValidation: {
+    family: "employees",
+    ttlMs: 60_000,
+    persist: false,
+    sensitive: true,
+    schemaVersion: CACHE_SCHEMA_VERSION,
+  },
   dashboardMetrics: {
     family: "dashboard",
     ttlMs: 30_000,

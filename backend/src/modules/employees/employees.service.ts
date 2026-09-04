@@ -578,8 +578,26 @@ export const employeesService = {
     return item;
   },
 
-  async getPositionValidation(id: string, user: Express.AuthUser) {
-    const employee = await employeesService.getById(id, user);
+  // Etapa 14D.2: `getById` (detalle completo — núcleo con cadena
+  // sector/position de 4 niveles + 6 `findMany` batch) → select dedicado
+  // (`findPositionValidationById`, sólo `internalCategory`/`sector`/
+  // `position`, sin ninguna de las 6 relaciones batch) — mismo mecanismo ya
+  // usado en `assertAccessible` (14C.3). Causa real de los 12825ms
+  // máx/9978ms promedio medidos en 14D.1: el resto del legajo (documentos,
+  // movimientos laborales, asignaciones, conceptos horarios, novedades,
+  // empresas) nunca se lee acá — ver diagnóstico completo en
+  // docs/decisions/EMPLOYEE_LABOR_DATA_PERFORMANCE_14D2.md.
+  //
+  // Etapa 14D.2.1: `positionId` opcional (el frontend ya lo conoce, viene de
+  // `overview-details`) — cuando se pasa, `findPositionValidationById`
+  // resuelve la cadena del empleado y la del puesto en paralelo en vez de
+  // en un único `findFirst` con las 2 cadenas anidadas (6112ms máx medido en
+  // 14D.2 → ver docs/decisions/POSITION_VALIDATION_PERFORMANCE_14D2_1.md
+  // para el número real después de este cambio). Sin el parámetro, se
+  // preserva el comportamiento exacto de 14D.2 (compatibilidad hacia atrás).
+  async getPositionValidation(id: string, user: Express.AuthUser, positionId?: string) {
+    const employee = await employeesRepository.findPositionValidationById(id, employeeAccessWhere(user), positionId);
+    if (!employee) throw new AppError("Employee not found", 404, "EMPLOYEE_NOT_FOUND");
     const position = employee.position;
     const businessUnit = employee.sector?.area?.establishment?.businessUnit?.name || "";
     const establishment = employee.sector?.area?.establishment?.name || "";
