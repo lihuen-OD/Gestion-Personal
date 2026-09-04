@@ -4,7 +4,7 @@ Reporte generado automáticamente por `npm run perf:journey:employees`. No edita
 
 ## 1. Resumen ejecutivo
 
-Recorrido específico del módulo Legajos: 56/56 acciones cubiertas, 0 salteadas (con motivo documentado cada una), 0 respuestas HTTP >= 400, 0 errores de consola. 3 acción(es) en rango Crítico (> 3000ms) y 2 en rango Lento (2000-3000ms). Este reporte es de medición, no de optimización — ver docs/decisions/EMPLOYEES_FULL_PERFORMANCE_14C3.md para los cambios ya aplicados y §16 abajo para lo que queda como candidato con evidencia nueva.
+Recorrido específico del módulo Legajos: 56/56 acciones cubiertas, 0 salteadas (con motivo documentado cada una), 0 respuestas HTTP >= 400, 0 errores de consola. 3 acción(es) en rango Crítico (> 3000ms) y 0 en rango Lento (2000-3000ms). Este reporte es de medición, no de optimización — ver docs/decisions/EMPLOYEES_FULL_PERFORMANCE_14C3.md para los cambios ya aplicados y §16 abajo para lo que queda como candidato con evidencia nueva.
 
 ## 2. Alcance
 
@@ -40,7 +40,7 @@ Relevada leyendo el código real (`EmployeeDetailPage.tsx`, `EmployeeDetailBlock
 | D. Contacto y domicilio | 30. Cerrar historial | EmployeeDetailBlocks.tsx | — | Sí | Sí | — |
 | D. Contacto y domicilio | 31. Abrir edición de domicilio | EmployeeDetailBlocks.tsx (Modal) | — | Sí | Sí | Se abre y se cierra sin guardar (modo lectura). |
 | D. Contacto y domicilio | 32-33. Guardar contacto/domicilio + refetch | EmployeeDetailBlocks.tsx | PATCH /employees/:id/address | Sí | No | Ver Parte 3/9 del reporte: ningún guardado de Legajos es reversible sin control (el historial de campo/bloque es de sólo-agregado, por diseño) — escritura segura queda documentada como pendiente, no implementada esta etapa. |
-| E. Datos laborales | 34. Entrar a la pestaña | EmployeeDetailPage.tsx (tab 2) | 8 GET /employees/:id/field-history en paralelo + GET /employees/:id/position-validation (SalaryRangeValidationCard) — ver hallazgos en §16 | Sí | Sí | Hallazgo de esta etapa: a diferencia de los bloques (Domicilio/Responsables/Transporte/Configuración), los 8 campos trackeados de esta pestaña (empresa, sector, centro de costo, puesto, categoría de recibo, categoría interna, convenio, obra social) disparan su field-history automáticamente al entrar a la pestaña, no al abrir 'Historial'. Además, SalaryRangeValidationCard dispara GET position-validation al montar — observado hasta >10s en corridas reales (ver 'Top 10 requests más lentas'). |
+| E. Datos laborales | 34. Entrar a la pestaña | EmployeeDetailPage.tsx (tab 2) | GET /employees/:id/position-validation (SalaryRangeValidationCard) | Sí | Sí | **Corregido en 14D.2** (hallazgo original de la corrida 14D.1, dejado como registro histórico): esta pestaña ya NO dispara los 8 GET /employees/:id/field-history al entrar — cada uno de los 8 campos trackeados (empresa, sector, centro de costo, puesto, categoría de recibo, categoría interna, convenio, obra social) carga su historial recién al hacer click en 'Historial', igual que los bloques lazy (Domicilio/Responsables/Transporte/Configuración). `position-validation` sí sigue disparándose al entrar (ver 14D.2.1: caché de sesión + camino paralelo, ~3000ms, ya no crítico >3000ms de forma consistente). |
 | E. Datos laborales | 35. Historial de empresa | MultiCompanyField (LaborTrackedFields.tsx) | GET /employees/:id/field-history (field=companies) | Sí | Sí | — |
 | E. Datos laborales | 36. Historial de unidad de negocio | DerivedLaborField (EmployeeDetailPage.tsx) | — | No | No | Campo derivado de sector (sólo lectura), sin historial propio — confirmado en el código, no es una limitación del journey. |
 | E. Datos laborales | 37. Historial de establecimiento | DerivedLaborField (EmployeeDetailPage.tsx) | — | No | No | Mismo motivo que unidad de negocio: campo derivado, sin historial propio. |
@@ -67,62 +67,62 @@ Relevada leyendo el código real (`EmployeeDetailPage.tsx`, `EmployeeDetailBlock
 
 | Acción | Zona | Ruta | Visible | Network idle | Requests | Errores consola | Escritura |
 |---|---|---|---|---|---|---|---|
-| Login (acceso rápido RRHH) | Login | `blank` | 629ms | 8172ms | 6 | 0 | No |
-| Entrar a /legajos | A. Listado | `/` | 84ms | 4120ms | 6 | 0 | No |
-| Paginación — Siguiente | A. Listado | `/legajos` | 30ms | 112ms | 0 | 0 | No |
-| Paginación — Anterior | A. Listado | `/legajos` | 48ms | 130ms | 0 | 0 | No |
-| Buscar empleado por texto | A. Listado | `/legajos` | 22ms | 424ms | 0 | 0 | No |
-| Limpiar búsqueda | A. Listado | `/legajos` | 18ms | 421ms | 0 | 0 | No |
-| Aplicar filtro (Empresa) | A. Listado | `/legajos` | 19ms | 102ms | 0 | 0 | No |
-| Limpiar filtro (Empresa) | A. Listado | `/legajos` | 15ms | 98ms | 1 | 0 | No |
-| Abrir primer legajo disponible | B. Detalle | `/legajos` | 840ms | 5455ms | 8 | 0 | No |
-| Cambiar a pestaña "Información General" | C. Información general | `/legajos/:id` | 23ms | 107ms | 0 | 0 | No |
-| Cambiar a pestaña "Contacto y Domicilio" | D. Contacto y domicilio | `/legajos/:id` | 25ms | 106ms | 0 | 0 | No |
-| Abrir historial de Domicilio actual | D. Contacto y domicilio | `/legajos/:id` | 2326ms | 2409ms | 2 | 0 | No |
-| Cerrar historial de Domicilio actual | D. Contacto y domicilio | `/legajos/:id` | 31ms | 113ms | 0 | 0 | No |
-| Abrir edición de Domicilio actual | D. Contacto y domicilio | `/legajos/:id` | 15ms | 98ms | 0 | 0 | No |
-| Cambiar a pestaña "Datos Laborales" | E. Datos laborales | `/legajos/:id` | 38ms | 119ms | 0 | 0 | No |
-| Abrir historial de Empresa | E. Datos laborales | `/legajos/:id` | 1888ms | 1973ms | 1 | 0 | No |
-| Cerrar historial de Empresa | E. Datos laborales | `/legajos/:id` | 25ms | 110ms | 1 | 0 | No |
-| Abrir historial de Centro de costo | E. Datos laborales | `/legajos/:id` | 823ms | 907ms | 2 | 0 | No |
-| Cerrar historial de Centro de costo | E. Datos laborales | `/legajos/:id` | 27ms | 110ms | 0 | 0 | No |
-| Abrir historial de Sector | E. Datos laborales | `/legajos/:id` | 819ms | 902ms | 1 | 0 | No |
-| Cerrar historial de Sector | E. Datos laborales | `/legajos/:id` | 65ms | 148ms | 0 | 0 | No |
-| Abrir historial de Puesto | E. Datos laborales | `/legajos/:id` | 795ms | 878ms | 1 | 0 | No |
-| Cerrar historial de Puesto | E. Datos laborales | `/legajos/:id` | 28ms | 110ms | 0 | 0 | No |
-| Abrir historial de Categoría de recibo | E. Datos laborales | `/legajos/:id` | 801ms | 885ms | 1 | 0 | No |
-| Cerrar historial de Categoría de recibo | E. Datos laborales | `/legajos/:id` | 21ms | 104ms | 0 | 0 | No |
-| Abrir historial de Categoría interna | E. Datos laborales | `/legajos/:id` | 794ms | 878ms | 1 | 0 | No |
-| Cerrar historial de Categoría interna | E. Datos laborales | `/legajos/:id` | 28ms | 112ms | 0 | 0 | No |
-| Abrir historial de Convenio | E. Datos laborales | `/legajos/:id` | 811ms | 894ms | 1 | 0 | No |
-| Cerrar historial de Convenio | E. Datos laborales | `/legajos/:id` | 25ms | 108ms | 0 | 0 | No |
-| Abrir historial de Obra Social | E. Datos laborales | `/legajos/:id` | 1312ms | 1396ms | 1 | 0 | No |
-| Cerrar historial de Obra Social | E. Datos laborales | `/legajos/:id` | 23ms | 105ms | 0 | 0 | No |
-| Salir de Datos Laborales (a Contacto y Domicilio) | E. Datos laborales | `/legajos/:id` | 51ms | 135ms | 0 | 0 | No |
-| Volver a entrar a Datos Laborales (debería servir position-validation desde caché) | E. Datos laborales | `/legajos/:id` | 38ms | 123ms | 0 | 0 | No |
-| Cambiar a pestaña "Responsables / Asignaciones" | F. Responsables/Asignaciones | `/legajos/:id` | 24ms | 107ms | 0 | 0 | No |
-| Abrir historial de Encargado directo actual | F. Responsables/Asignaciones | `/legajos/:id` | 1307ms | 1390ms | 2 | 0 | No |
-| Cerrar historial de Encargado directo actual | F. Responsables/Asignaciones | `/legajos/:id` | 38ms | 122ms | 0 | 0 | No |
-| Abrir historial de Responsable de carga horaria actual | F. Responsables/Asignaciones | `/legajos/:id` | 1316ms | 1400ms | 2 | 0 | No |
-| Cerrar historial de Responsable de carga horaria actual | F. Responsables/Asignaciones | `/legajos/:id` | 33ms | 116ms | 0 | 0 | No |
-| Abrir edición de Encargado directo actual | F. Responsables/Asignaciones | `/legajos/:id` | 29ms | 111ms | 0 | 0 | No |
-| Abrir edición de Responsable de carga horaria actual | F. Responsables/Asignaciones | `/legajos/:id` | 31ms | 114ms | 0 | 0 | No |
-| Cambiar a pestaña "Transporte" | G. Transporte | `/legajos/:id` | 34ms | 117ms | 0 | 0 | No |
-| Abrir historial de Transporte actual | G. Transporte | `/legajos/:id` | 1317ms | 1402ms | 2 | 0 | No |
-| Cerrar historial de Transporte actual | G. Transporte | `/legajos/:id` | 37ms | 121ms | 0 | 0 | No |
-| Abrir edición de Transporte actual | G. Transporte | `/legajos/:id` | 25ms | 107ms | 0 | 0 | No |
+| Login (acceso rápido RRHH) | Login | `blank` | 352ms | 6924ms | 6 | 0 | No |
+| Entrar a /legajos | A. Listado | `/` | 89ms | 3825ms | 6 | 0 | No |
+| Paginación — Siguiente | A. Listado | `/legajos` | 26ms | 108ms | 0 | 0 | No |
+| Paginación — Anterior | A. Listado | `/legajos` | 38ms | 121ms | 0 | 0 | No |
+| Buscar empleado por texto | A. Listado | `/legajos` | 18ms | 421ms | 0 | 0 | No |
+| Limpiar búsqueda | A. Listado | `/legajos` | 23ms | 425ms | 0 | 0 | No |
+| Aplicar filtro (Empresa) | A. Listado | `/legajos` | 21ms | 103ms | 1 | 0 | No |
+| Limpiar filtro (Empresa) | A. Listado | `/legajos` | 17ms | 100ms | 0 | 0 | No |
+| Abrir primer legajo disponible | B. Detalle | `/legajos` | 836ms | 4093ms | 8 | 0 | No |
+| Cambiar a pestaña "Información General" | C. Información general | `/legajos/:id` | 16ms | 98ms | 0 | 0 | No |
+| Cambiar a pestaña "Contacto y Domicilio" | D. Contacto y domicilio | `/legajos/:id` | 24ms | 107ms | 0 | 0 | No |
+| Abrir historial de Domicilio actual | D. Contacto y domicilio | `/legajos/:id` | 1839ms | 1922ms | 2 | 0 | No |
+| Cerrar historial de Domicilio actual | D. Contacto y domicilio | `/legajos/:id` | 15ms | 99ms | 0 | 0 | No |
+| Abrir edición de Domicilio actual | D. Contacto y domicilio | `/legajos/:id` | 48ms | 130ms | 0 | 0 | No |
+| Cambiar a pestaña "Datos Laborales" | E. Datos laborales | `/legajos/:id` | 38ms | 121ms | 0 | 0 | No |
+| Abrir historial de Empresa | E. Datos laborales | `/legajos/:id` | 1806ms | 1890ms | 1 | 0 | No |
+| Cerrar historial de Empresa | E. Datos laborales | `/legajos/:id` | 31ms | 116ms | 0 | 0 | No |
+| Abrir historial de Centro de costo | E. Datos laborales | `/legajos/:id` | 806ms | 889ms | 3 | 0 | No |
+| Cerrar historial de Centro de costo | E. Datos laborales | `/legajos/:id` | 10ms | 93ms | 0 | 0 | No |
+| Abrir historial de Sector | E. Datos laborales | `/legajos/:id` | 797ms | 880ms | 1 | 0 | No |
+| Cerrar historial de Sector | E. Datos laborales | `/legajos/:id` | 29ms | 113ms | 0 | 0 | No |
+| Abrir historial de Puesto | E. Datos laborales | `/legajos/:id` | 818ms | 901ms | 1 | 0 | No |
+| Cerrar historial de Puesto | E. Datos laborales | `/legajos/:id` | 34ms | 118ms | 0 | 0 | No |
+| Abrir historial de Categoría de recibo | E. Datos laborales | `/legajos/:id` | 811ms | 895ms | 1 | 0 | No |
+| Cerrar historial de Categoría de recibo | E. Datos laborales | `/legajos/:id` | 36ms | 119ms | 0 | 0 | No |
+| Abrir historial de Categoría interna | E. Datos laborales | `/legajos/:id` | 821ms | 905ms | 1 | 0 | No |
+| Cerrar historial de Categoría interna | E. Datos laborales | `/legajos/:id` | 32ms | 115ms | 0 | 0 | No |
+| Abrir historial de Convenio | E. Datos laborales | `/legajos/:id` | 816ms | 899ms | 1 | 0 | No |
+| Cerrar historial de Convenio | E. Datos laborales | `/legajos/:id` | 35ms | 118ms | 0 | 0 | No |
+| Abrir historial de Obra Social | E. Datos laborales | `/legajos/:id` | 814ms | 899ms | 1 | 0 | No |
+| Cerrar historial de Obra Social | E. Datos laborales | `/legajos/:id` | 39ms | 122ms | 0 | 0 | No |
+| Salir de Datos Laborales (a Contacto y Domicilio) | E. Datos laborales | `/legajos/:id` | 50ms | 133ms | 0 | 0 | No |
+| Volver a entrar a Datos Laborales (debería servir position-validation desde caché) | E. Datos laborales | `/legajos/:id` | 37ms | 121ms | 0 | 0 | No |
+| Cambiar a pestaña "Responsables / Asignaciones" | F. Responsables/Asignaciones | `/legajos/:id` | 26ms | 109ms | 0 | 0 | No |
+| Abrir historial de Encargado directo actual | F. Responsables/Asignaciones | `/legajos/:id` | 1306ms | 1391ms | 2 | 0 | No |
+| Cerrar historial de Encargado directo actual | F. Responsables/Asignaciones | `/legajos/:id` | 35ms | 119ms | 0 | 0 | No |
+| Abrir historial de Responsable de carga horaria actual | F. Responsables/Asignaciones | `/legajos/:id` | 1315ms | 1400ms | 2 | 0 | No |
+| Cerrar historial de Responsable de carga horaria actual | F. Responsables/Asignaciones | `/legajos/:id` | 35ms | 117ms | 0 | 0 | No |
+| Abrir edición de Encargado directo actual | F. Responsables/Asignaciones | `/legajos/:id` | 29ms | 110ms | 0 | 0 | No |
+| Abrir edición de Responsable de carga horaria actual | F. Responsables/Asignaciones | `/legajos/:id` | 32ms | 114ms | 0 | 0 | No |
+| Cambiar a pestaña "Transporte" | G. Transporte | `/legajos/:id` | 35ms | 117ms | 0 | 0 | No |
+| Abrir historial de Transporte actual | G. Transporte | `/legajos/:id` | 809ms | 893ms | 2 | 0 | No |
+| Cerrar historial de Transporte actual | G. Transporte | `/legajos/:id` | 25ms | 108ms | 0 | 0 | No |
+| Abrir edición de Transporte actual | G. Transporte | `/legajos/:id` | 29ms | 112ms | 0 | 0 | No |
 | Cambiar a pestaña "Configuración Horaria" | H. Configuración | `/legajos/:id` | 33ms | 116ms | 0 | 0 | No |
-| Abrir historial de Conceptos horarios adicionales | H. Configuración | `/legajos/:id` | 2316ms | 2401ms | 3 | 0 | No |
-| Cerrar historial de Conceptos horarios adicionales | H. Configuración | `/legajos/:id` | 34ms | 118ms | 0 | 0 | No |
-| Abrir edición de Conceptos horarios adicionales | H. Configuración | `/legajos/:id` | 25ms | 106ms | 0 | 0 | No |
-| Cambiar a pestaña "Ausentismo / Novedades" | Otras pestañas del legajo (fuera de zonas C-I) | `/legajos/:id` | 36ms | 120ms | 0 | 0 | No |
-| Cambiar a pestaña "Gestión Documental" | I. Adjuntos/Documentos | `/legajos/:id` | 46ms | 129ms | 0 | 0 | No |
-| Abrir modal 'Agregar documento' (sin subir archivo) | I. Adjuntos/Documentos | `/legajos/:id` | 41ms | 123ms | 0 | 0 | No |
+| Abrir historial de Conceptos horarios adicionales | H. Configuración | `/legajos/:id` | 1299ms | 1382ms | 3 | 0 | No |
+| Cerrar historial de Conceptos horarios adicionales | H. Configuración | `/legajos/:id` | 24ms | 108ms | 0 | 0 | No |
+| Abrir edición de Conceptos horarios adicionales | H. Configuración | `/legajos/:id` | 28ms | 111ms | 0 | 0 | No |
+| Cambiar a pestaña "Ausentismo / Novedades" | Otras pestañas del legajo (fuera de zonas C-I) | `/legajos/:id` | 34ms | 116ms | 0 | 0 | No |
+| Cambiar a pestaña "Gestión Documental" | I. Adjuntos/Documentos | `/legajos/:id` | 32ms | 115ms | 0 | 0 | No |
+| Abrir modal 'Agregar documento' (sin subir archivo) | I. Adjuntos/Documentos | `/legajos/:id` | 42ms | 124ms | 0 | 0 | No |
 | Cambiar a pestaña "Historial de Eventos" | Otras pestañas del legajo (fuera de zonas C-I) | `/legajos/:id` | 34ms | 116ms | 2 | 0 | No |
-| Cambiar a pestaña "Turnos" | Otras pestañas del legajo (fuera de zonas C-I) | `/legajos/:id` | 22ms | 106ms | 0 | 0 | No |
-| Cambiar a pestaña "Auditoría" | Otras pestañas del legajo (fuera de zonas C-I) | `/legajos/:id` | 50ms | 133ms | 0 | 0 | No |
-| Cambiar a pestaña "Régimen Laboral" | Otras pestañas del legajo (fuera de zonas C-I) | `/legajos/:id` | 25ms | 108ms | 3 | 0 | No |
-| Volver al listado | A. Listado | `/legajos/:id` | 76ms | 158ms | 0 | 0 | No |
+| Cambiar a pestaña "Turnos" | Otras pestañas del legajo (fuera de zonas C-I) | `/legajos/:id` | 21ms | 106ms | 0 | 0 | No |
+| Cambiar a pestaña "Auditoría" | Otras pestañas del legajo (fuera de zonas C-I) | `/legajos/:id` | 49ms | 132ms | 3 | 0 | No |
+| Cambiar a pestaña "Régimen Laboral" | Otras pestañas del legajo (fuera de zonas C-I) | `/legajos/:id` | 25ms | 108ms | 1 | 0 | No |
+| Volver al listado | A. Listado | `/legajos/:id` | 76ms | 160ms | 3 | 0 | No |
 
 ## 6. Acciones no cubiertas y motivo
 
@@ -132,31 +132,31 @@ Ninguna — todas las acciones planificadas se ejercitaron.
 
 | Acción | Zona | Visible | Network idle | Rango |
 |---|---|---|---|---|
-| Login (acceso rápido RRHH) | Login | 629ms | 8172ms | Crítico |
-| Abrir primer legajo disponible | B. Detalle | 840ms | 5455ms | Crítico |
-| Entrar a /legajos | A. Listado | 84ms | 4120ms | Crítico |
-| Abrir historial de Domicilio actual | D. Contacto y domicilio | 2326ms | 2409ms | Lento |
-| Abrir historial de Conceptos horarios adicionales | H. Configuración | 2316ms | 2401ms | Lento |
-| Abrir historial de Empresa | E. Datos laborales | 1888ms | 1973ms | Medio |
-| Abrir historial de Transporte actual | G. Transporte | 1317ms | 1402ms | Medio |
-| Abrir historial de Responsable de carga horaria actual | F. Responsables/Asignaciones | 1316ms | 1400ms | Medio |
-| Abrir historial de Obra Social | E. Datos laborales | 1312ms | 1396ms | Medio |
-| Abrir historial de Encargado directo actual | F. Responsables/Asignaciones | 1307ms | 1390ms | Medio |
+| Login (acceso rápido RRHH) | Login | 352ms | 6924ms | Crítico |
+| Abrir primer legajo disponible | B. Detalle | 836ms | 4093ms | Crítico |
+| Entrar a /legajos | A. Listado | 89ms | 3825ms | Crítico |
+| Abrir historial de Domicilio actual | D. Contacto y domicilio | 1839ms | 1922ms | Medio |
+| Abrir historial de Empresa | E. Datos laborales | 1806ms | 1890ms | Medio |
+| Abrir historial de Responsable de carga horaria actual | F. Responsables/Asignaciones | 1315ms | 1400ms | Medio |
+| Abrir historial de Encargado directo actual | F. Responsables/Asignaciones | 1306ms | 1391ms | Medio |
+| Abrir historial de Conceptos horarios adicionales | H. Configuración | 1299ms | 1382ms | Medio |
+| Abrir historial de Categoría interna | E. Datos laborales | 821ms | 905ms | OK |
+| Abrir historial de Puesto | E. Datos laborales | 818ms | 901ms | OK |
 
 ## 8. Top 10 requests más lentas
 
 | Método | Path | Status | Duración |
 |---|---|---|---|
-| GET | `/api/dashboard/metrics` | 200 | 5828ms |
-| GET | `/api/employees/:id/overview-details` | 200 | 4875ms |
-| GET | `/api/employees/:id/overview-details` | 200 | 4499ms |
-| GET | `/api/employees/:id/position-validation` | 200 | 3292ms |
-| GET | `/api/positions` | 200 | 2919ms |
-| GET | `/api/audit` | 200 | 2822ms |
-| GET | `/api/audit` | 200 | 2821ms |
-| GET | `/api/org-structure` | 200 | 2181ms |
-| GET | `/api/employees/:id/block-history` | 200 | 2057ms |
-| GET | `/api/employees/:id/block-history` | 200 | 1957ms |
+| GET | `/api/dashboard/metrics` | 200 | 5073ms |
+| GET | `/api/positions` | 200 | 3739ms |
+| GET | `/api/employees/:id/overview-details` | 200 | 3519ms |
+| GET | `/api/employees/:id/overview-details` | 200 | 3517ms |
+| GET | `/api/employees/:id/position-validation` | 200 | 2987ms |
+| GET | `/api/novelties` | 200 | 2836ms |
+| GET | `/api/audit` | 200 | 2812ms |
+| GET | `/api/audit` | 200 | 2810ms |
+| GET | `/api/org-structure` | 200 | 2088ms |
+| GET | `/api/employees` | 200 | 1799ms |
 
 ## 9. Endpoints repetidos (misma acción o distintas)
 
@@ -214,32 +214,32 @@ Ninguno detectado — el único loading de página completa del proyecto es el `
 
 ## 13. Qué historiales se midieron
 
-- **Abrir historial de Domicilio actual** (D. Contacto y domicilio) — visible 2326ms, 2 request(s).
-- **Cerrar historial de Domicilio actual** (D. Contacto y domicilio) — visible 31ms, 0 request(s).
-- **Abrir historial de Empresa** (E. Datos laborales) — visible 1888ms, 1 request(s).
-- **Cerrar historial de Empresa** (E. Datos laborales) — visible 25ms, 1 request(s).
-- **Abrir historial de Centro de costo** (E. Datos laborales) — visible 823ms, 2 request(s).
-- **Cerrar historial de Centro de costo** (E. Datos laborales) — visible 27ms, 0 request(s).
-- **Abrir historial de Sector** (E. Datos laborales) — visible 819ms, 1 request(s).
-- **Cerrar historial de Sector** (E. Datos laborales) — visible 65ms, 0 request(s).
-- **Abrir historial de Puesto** (E. Datos laborales) — visible 795ms, 1 request(s).
-- **Cerrar historial de Puesto** (E. Datos laborales) — visible 28ms, 0 request(s).
-- **Abrir historial de Categoría de recibo** (E. Datos laborales) — visible 801ms, 1 request(s).
-- **Cerrar historial de Categoría de recibo** (E. Datos laborales) — visible 21ms, 0 request(s).
-- **Abrir historial de Categoría interna** (E. Datos laborales) — visible 794ms, 1 request(s).
-- **Cerrar historial de Categoría interna** (E. Datos laborales) — visible 28ms, 0 request(s).
-- **Abrir historial de Convenio** (E. Datos laborales) — visible 811ms, 1 request(s).
-- **Cerrar historial de Convenio** (E. Datos laborales) — visible 25ms, 0 request(s).
-- **Abrir historial de Obra Social** (E. Datos laborales) — visible 1312ms, 1 request(s).
-- **Cerrar historial de Obra Social** (E. Datos laborales) — visible 23ms, 0 request(s).
-- **Abrir historial de Encargado directo actual** (F. Responsables/Asignaciones) — visible 1307ms, 2 request(s).
-- **Cerrar historial de Encargado directo actual** (F. Responsables/Asignaciones) — visible 38ms, 0 request(s).
-- **Abrir historial de Responsable de carga horaria actual** (F. Responsables/Asignaciones) — visible 1316ms, 2 request(s).
-- **Cerrar historial de Responsable de carga horaria actual** (F. Responsables/Asignaciones) — visible 33ms, 0 request(s).
-- **Abrir historial de Transporte actual** (G. Transporte) — visible 1317ms, 2 request(s).
-- **Cerrar historial de Transporte actual** (G. Transporte) — visible 37ms, 0 request(s).
-- **Abrir historial de Conceptos horarios adicionales** (H. Configuración) — visible 2316ms, 3 request(s).
-- **Cerrar historial de Conceptos horarios adicionales** (H. Configuración) — visible 34ms, 0 request(s).
+- **Abrir historial de Domicilio actual** (D. Contacto y domicilio) — visible 1839ms, 2 request(s).
+- **Cerrar historial de Domicilio actual** (D. Contacto y domicilio) — visible 15ms, 0 request(s).
+- **Abrir historial de Empresa** (E. Datos laborales) — visible 1806ms, 1 request(s).
+- **Cerrar historial de Empresa** (E. Datos laborales) — visible 31ms, 0 request(s).
+- **Abrir historial de Centro de costo** (E. Datos laborales) — visible 806ms, 3 request(s).
+- **Cerrar historial de Centro de costo** (E. Datos laborales) — visible 10ms, 0 request(s).
+- **Abrir historial de Sector** (E. Datos laborales) — visible 797ms, 1 request(s).
+- **Cerrar historial de Sector** (E. Datos laborales) — visible 29ms, 0 request(s).
+- **Abrir historial de Puesto** (E. Datos laborales) — visible 818ms, 1 request(s).
+- **Cerrar historial de Puesto** (E. Datos laborales) — visible 34ms, 0 request(s).
+- **Abrir historial de Categoría de recibo** (E. Datos laborales) — visible 811ms, 1 request(s).
+- **Cerrar historial de Categoría de recibo** (E. Datos laborales) — visible 36ms, 0 request(s).
+- **Abrir historial de Categoría interna** (E. Datos laborales) — visible 821ms, 1 request(s).
+- **Cerrar historial de Categoría interna** (E. Datos laborales) — visible 32ms, 0 request(s).
+- **Abrir historial de Convenio** (E. Datos laborales) — visible 816ms, 1 request(s).
+- **Cerrar historial de Convenio** (E. Datos laborales) — visible 35ms, 0 request(s).
+- **Abrir historial de Obra Social** (E. Datos laborales) — visible 814ms, 1 request(s).
+- **Cerrar historial de Obra Social** (E. Datos laborales) — visible 39ms, 0 request(s).
+- **Abrir historial de Encargado directo actual** (F. Responsables/Asignaciones) — visible 1306ms, 2 request(s).
+- **Cerrar historial de Encargado directo actual** (F. Responsables/Asignaciones) — visible 35ms, 0 request(s).
+- **Abrir historial de Responsable de carga horaria actual** (F. Responsables/Asignaciones) — visible 1315ms, 2 request(s).
+- **Cerrar historial de Responsable de carga horaria actual** (F. Responsables/Asignaciones) — visible 35ms, 0 request(s).
+- **Abrir historial de Transporte actual** (G. Transporte) — visible 809ms, 2 request(s).
+- **Cerrar historial de Transporte actual** (G. Transporte) — visible 25ms, 0 request(s).
+- **Abrir historial de Conceptos horarios adicionales** (H. Configuración) — visible 1299ms, 3 request(s).
+- **Cerrar historial de Conceptos horarios adicionales** (H. Configuración) — visible 24ms, 0 request(s).
 
 ## 14. Qué guardados se pudieron medir
 
@@ -252,10 +252,14 @@ Ver fila "J. Guardados" de la matriz (§4) y el punto 9 de la matriz de este doc
 ## 16. Recomendaciones para próxima etapa de optimización
 
 - 3 endpoint(s) en rango Crítico detectados en este recorrido, priorizar antes de cualquier otra optimización:
-  - `GET /api/dashboard/metrics` — máx 5828ms, promedio 5828ms, 1 llamada(s) en este recorrido.
-  - `GET /api/employees/:id/overview-details` — máx 4875ms, promedio 4687ms, 2 llamada(s) en este recorrido.
-  - `GET /api/employees/:id/position-validation` — máx 3292ms, promedio 3292ms, 1 llamada(s) en este recorrido.
-- Hallazgo de esta etapa (no medido antes con esta granularidad): visitar la pestaña "Datos Laborales" dispara **8 GET /employees/:id/field-history en paralelo** (empresa, sector, centro de costo, puesto, categoría de recibo, categoría interna, convenio, obra social) de forma automática, sin que el usuario haya pedido ver ningún historial — el botón 'Historial' de cada campo sólo revela un panel ya cargado. Esto es distinto del patrón de Domicilio/Responsables/Transporte/Configuración (lazy, sólo al hacer click en 'Ver historial'). Candidato directo para una etapa de optimización dedicada: evaluar diferir esos 8 fetches a que el usuario abra cada 'Historial' individualmente, como ya funciona en los bloques lazy.
+  - `GET /api/dashboard/metrics` — máx 5073ms, promedio 5073ms, 1 llamada(s) en este recorrido.
+  - `GET /api/positions` — máx 3739ms, promedio 3739ms, 1 llamada(s) en este recorrido.
+  - `GET /api/employees/:id/overview-details` — máx 3519ms, promedio 3518ms, 2 llamada(s) en este recorrido.
+- **Corregido en 14D.2**: Datos Laborales ya no dispara 8 GET /employees/:id/field-history al montar (hallazgo original de esta etapa 14D.1, dejado acá como registro histórico). Los historiales ahora cargan bajo demanda — 1 request por historial abierto, igual que el patrón ya usado por Domicilio/Responsables/Transporte/Configuración. Ver `docs/decisions/EMPLOYEE_LABOR_DATA_PERFORMANCE_14D2.md`.
+- Quedan como próximos candidatos con evidencia (ver detalle y números en la lista de endpoints en rango Crítico más arriba):
+  - `GET /api/dashboard/metrics` — máx 5073ms.
+  - `GET /api/positions` — máx 3739ms.
+  - `GET /api/employees/:id/overview-details` — máx 3519ms (ya optimizado parcialmente en 14D.3, ver `docs/decisions/EMPLOYEE_OVERVIEW_DETAILS_PERFORMANCE_14D3.md` — sigue sin alcanzar la meta de <2000ms, causa exacta documentada ahí).
 - Cruzar los endpoints Crítico/Lento de este journey contra los logs reales de la Etapa 14B.2 (`slow:true`/`error:true`) antes de decidir la causa — este es un recorrido puntual de un solo usuario, sin concurrencia.
 
 ## 17. Riesgos
@@ -271,7 +275,7 @@ Ver docs/decisions correspondiente a esta etapa para el detalle completo de coma
 
 ## Ambiente
 
-- Generado: 2026-09-04T13:22:56.379Z
+- Generado: 2026-09-04T14:03:23.784Z
 - Frontend: http://localhost:5174
 - Backend: http://localhost:4002/api
 - Frontend y backend locales (`npm run dev`), backend conectado a la base real de staging (ver docs/LOCAL_DEVELOPMENT.md) — no es un ambiente de producción ni un ambiente aislado de test.

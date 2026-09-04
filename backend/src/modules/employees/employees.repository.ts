@@ -543,33 +543,54 @@ function findPositionValidationById(id: string, accessWhere: Prisma.EmployeeWher
 // `findOverviewDetailsById` más abajo. El shape final que recibe el
 // frontend es idéntico al de antes (mismo merge de campos), sólo cambió
 // cómo se arma.
+// Etapa 14D.3: dos recortes sobre el shape ya optimizado en 14C.1.
+// 1) `position: true` traía el registro COMPLETO de Position (mission,
+//    responsibilities, competencies, workConditions, performanceIndicators,
+//    evaluationCriteria, etc. — varios campos de texto/JSON potencialmente
+//    grandes) para que el frontend sólo use `.id`/`.name`
+//    (`mapEmployeeFromApi`, `employeeApiService.ts` — confirmado leyendo el
+//    mapper completo, ningún otro campo de Position se lee de acá). Recortado
+//    a esos 2 escalares — menos payload, sin ningún cambio de shape para lo
+//    que el frontend sí consume.
+// 2) `sector` (con su cadena `area→establishment→businessUnit` de 4 niveles)
+//    salía del `findFirst` del núcleo — la causa real de que este endpoint
+//    siguiera en ~4.5-4.9s después de la Etapa 14C.1 (ver docs/decisions/
+//    EMPLOYEE_OVERVIEW_DETAILS_PERFORMANCE_14D3.md). Se movió a una consulta
+//    de nivel superior aparte (`prisma.sector.findUnique`, por `sectorId`),
+//    ejecutada en el mismo `Promise.all` que ya usan `companies`/
+//    `laborMovements`/`assignments`/`hourConcepts` — la cadena de 4 niveles
+//    sigue pagando sus propios round-trips, pero ahora SOLAPADOS con esas 4
+//    consultas en vez de sumados en serie antes de ellas. `sectorId` se pide
+//    como escalar (gratis, viene con la fila del empleado) sólo para saber
+//    qué sector pedir en la consulta paralela — no forma parte del shape
+//    final devuelto (se descarta antes de devolver, ver `findOverviewDetailsById`).
 const employeeOverviewDetailsCoreSelect = {
   ...employeeOverviewCoreSelect,
   address: true,
   transport: true,
-  sector: {
+  sectorId: true,
+  costCenter: { select: { id: true, name: true, code: true } },
+  position: { select: { id: true, name: true } },
+} satisfies Prisma.EmployeeSelect;
+
+const overviewSectorChainSelect = {
+  id: true,
+  name: true,
+  code: true,
+  area: {
     select: {
       id: true,
       name: true,
-      code: true,
-      area: {
+      establishment: {
         select: {
           id: true,
           name: true,
-          establishment: {
-            select: {
-              id: true,
-              name: true,
-              businessUnit: { select: { id: true, name: true } },
-            },
-          },
+          businessUnit: { select: { id: true, name: true } },
         },
       },
     },
   },
-  costCenter: { select: { id: true, name: true, code: true } },
-  position: true,
-} satisfies Prisma.EmployeeSelect;
+} satisfies Prisma.SectorSelect;
 
 const timeGridEmployeeSelect = {
   id: true,
@@ -1123,8 +1144,9 @@ export const employeesRepository = {
       select: employeeOverviewDetailsCoreSelect,
     });
     if (!core) return null;
+    const { sectorId, ...coreWithoutSectorId } = core;
 
-    const [companies, laborMovements, assignments, hourConcepts] = await Promise.all([
+    const [companies, laborMovements, assignments, hourConcepts, sector] = await Promise.all([
       prisma.employeeCompany.findMany({
         where: { employeeId: id },
         select: { isPrimary: true, company: { select: { id: true, name: true, code: true } } },
@@ -1144,9 +1166,10 @@ export const employeesRepository = {
         where: { employeeId: id, ...assignableHourConceptsSelect.where },
         select: assignableHourConceptsSelect.select,
       }),
+      sectorId ? prisma.sector.findUnique({ where: { id: sectorId }, select: overviewSectorChainSelect }) : Promise.resolve(null),
     ]);
 
-    return { ...core, companies, laborMovements, assignments, hourConcepts };
+    return { ...coreWithoutSectorId, sector, companies, laborMovements, assignments, hourConcepts };
   },
 
   async findTimeGrid(id: string, query: EmployeeTimeGridQuery, accessWhere: Prisma.EmployeeWhereInput) {
