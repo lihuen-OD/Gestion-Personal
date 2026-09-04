@@ -11,6 +11,7 @@
     "preview": "vite preview",
     "test": "vitest run",
     "perf:journey": "playwright test --config=playwright.config.ts",
+    "perf:journey:employees": "playwright test --config=playwright.config.ts employeesPerformanceJourney.spec.ts",
     "typecheck:e2e": "tsc -p tsconfig.e2e.json --noEmit"
   },
   "dependencies": {

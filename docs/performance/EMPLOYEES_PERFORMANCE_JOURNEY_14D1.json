@@ -1,0 +1,1257 @@
+{
+  "generatedAt": "2026-09-04T11:39:59.153Z",
+  "environment": "Frontend y backend locales (`npm run dev`), backend conectado a la base real de staging (ver docs/LOCAL_DEVELOPMENT.md) — no es un ambiente de producción ni un ambiente aislado de test.",
+  "baseUrl": "http://localhost:5174",
+  "apiBaseUrl": "http://localhost:4002/api",
+  "user": "Nivel 1 - RRHH (acceso rápido demo — credenciales en docs/LOCAL_DEVELOPMENT.md, no se repiten en este reporte)",
+  "command": "npm run perf:journey:employees (desde frontend/)",
+  "mode": "read-only",
+  "thresholds": {
+    "okThresholdMs": 1000,
+    "mediumThresholdMs": 2000,
+    "slowThresholdMs": 3000
+  },
+  "summary": {
+    "totalActions": 46,
+    "coveredActions": 46,
+    "skippedActions": 0,
+    "slowActions": 1,
+    "verySlowActions": 3,
+    "httpErrors": 0,
+    "consoleErrors": 0
+  },
+  "actions": [
+    {
+      "name": "Login (acceso rápido RRHH)",
+      "zone": "Login",
+      "route": "blank",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 493,
+      "networkIdleMs": 5101,
+      "requests": [
+        {
+          "method": "POST",
+          "path": "/api/auth/login",
+          "statusCode": 200,
+          "durationMs": 1366
+        },
+        {
+          "method": "GET",
+          "path": "/api/workforce/notifications-unread-count",
+          "statusCode": 200,
+          "durationMs": 450
+        },
+        {
+          "method": "GET",
+          "path": "/api/workforce/notifications-unread-count",
+          "statusCode": 200,
+          "durationMs": 878
+        },
+        {
+          "method": "GET",
+          "path": "/api/audit",
+          "statusCode": 200,
+          "durationMs": 1238
+        },
+        {
+          "method": "GET",
+          "path": "/api/audit",
+          "statusCode": 200,
+          "durationMs": 1240
+        },
+        {
+          "method": "GET",
+          "path": "/api/dashboard/metrics",
+          "statusCode": 200,
+          "durationMs": 2723
+        }
+      ],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "hadRefetch": null,
+      "emptyScreen": null
+    },
+    {
+      "name": "Entrar a /legajos",
+      "zone": "A. Listado",
+      "route": "/",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 74,
+      "networkIdleMs": 3504,
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/api/workforce/notifications-unread-count",
+          "statusCode": 200,
+          "durationMs": 182
+        },
+        {
+          "method": "GET",
+          "path": "/api/workforce/notifications-unread-count",
+          "statusCode": 200,
+          "durationMs": 365
+        },
+        {
+          "method": "GET",
+          "path": "/api/employees/summary",
+          "statusCode": 200,
+          "durationMs": 364
+        },
+        {
+          "method": "GET",
+          "path": "/api/employees",
+          "statusCode": 200,
+          "durationMs": 1468
+        },
+        {
+          "method": "GET",
+          "path": "/api/org-structure",
+          "statusCode": 200,
+          "durationMs": 2049
+        },
+        {
+          "method": "GET",
+          "path": "/api/employees",
+          "statusCode": 200,
+          "durationMs": 1468
+        }
+      ],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "hadRefetch": null,
+      "emptyScreen": false
+    },
+    {
+      "name": "Paginación — Siguiente",
+      "zone": "A. Listado",
+      "route": "/legajos",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 46,
+      "networkIdleMs": 129,
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [
+        "la tabla mantuvo filas visibles inmediatamente después del click (no se blanqueó)"
+      ],
+      "isWrite": false,
+      "hadRefetch": null,
+      "emptyScreen": null
+    },
+    {
+      "name": "Paginación — Anterior",
+      "zone": "A. Listado",
+      "route": "/legajos",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 36,
+      "networkIdleMs": 120,
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [
+        "la tabla mantuvo filas visibles inmediatamente después del click (no se blanqueó)"
+      ],
+      "isWrite": false,
+      "hadRefetch": null,
+      "emptyScreen": null
+    },
+    {
+      "name": "Buscar empleado por texto",
+      "zone": "A. Listado",
+      "route": "/legajos",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 21,
+      "networkIdleMs": 424,
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [
+        "término de búsqueda tomado del primer legajo real de la tabla — no se registra el valor buscado en este reporte"
+      ],
+      "isWrite": false,
+      "hadRefetch": null,
+      "emptyScreen": null
+    },
+    {
+      "name": "Limpiar búsqueda",
+      "zone": "A. Listado",
+      "route": "/legajos",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 17,
+      "networkIdleMs": 419,
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "hadRefetch": null,
+      "emptyScreen": null
+    },
+    {
+      "name": "Aplicar filtro (Empresa)",
+      "zone": "A. Listado",
+      "route": "/legajos",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 16,
+      "networkIdleMs": 99,
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/api/employees",
+          "statusCode": 200,
+          "durationMs": 1219
+        }
+      ],
+      "consoleErrors": [],
+      "notes": [
+        "filtro representativo — Sector/Centro de costo comparten el mismo mecanismo de where en backend"
+      ],
+      "isWrite": false,
+      "hadRefetch": null,
+      "emptyScreen": null
+    },
+    {
+      "name": "Limpiar filtro (Empresa)",
+      "zone": "A. Listado",
+      "route": "/legajos",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 13,
+      "networkIdleMs": 96,
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "hadRefetch": null,
+      "emptyScreen": null
+    },
+    {
+      "name": "Abrir primer legajo disponible",
+      "zone": "B. Detalle",
+      "route": "/legajos",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 838,
+      "networkIdleMs": 4532,
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/api/workforce/notifications-unread-count",
+          "statusCode": 200,
+          "durationMs": 359
+        },
+        {
+          "method": "GET",
+          "path": "/api/employees/:id/overview",
+          "statusCode": 200,
+          "durationMs": 345
+        },
+        {
+          "method": "GET",
+          "path": "/api/employees/:id/overview",
+          "statusCode": 200,
+          "durationMs": 347
+        },
+        {
+          "method": "GET",
+          "path": "/api/salary-categories",
+          "statusCode": 200,
+          "durationMs": 370
+        },
+        {
+          "method": "GET",
+          "path": "/api/workforce/notifications-unread-count",
+          "statusCode": 200,
+          "durationMs": 546
+        },
+        {
+          "method": "GET",
+          "path": "/api/audit",
+          "statusCode": 200,
+          "durationMs": 739
+        },
+        {
+          "method": "GET",
+          "path": "/api/employees/:id/overview-details",
+          "statusCode": 200,
+          "durationMs": 3777
+        },
+        {
+          "method": "GET",
+          "path": "/api/employees/:id/overview-details",
+          "statusCode": 200,
+          "durationMs": 3956
+        }
+      ],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "hadRefetch": null,
+      "emptyScreen": null
+    },
+    {
+      "name": "Cambiar a pestaña \"Información General\"",
+      "zone": "C. Información general",
+      "route": "/legajos/:id",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 24,
+      "networkIdleMs": 108,
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "hadRefetch": null,
+      "emptyScreen": false
+    },
+    {
+      "name": "Cambiar a pestaña \"Contacto y Domicilio\"",
+      "zone": "D. Contacto y domicilio",
+      "route": "/legajos/:id",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 21,
+      "networkIdleMs": 103,
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "hadRefetch": null,
+      "emptyScreen": true
+    },
+    {
+      "name": "Abrir historial de Domicilio actual",
+      "zone": "D. Contacto y domicilio",
+      "route": "/legajos/:id",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 1818,
+      "networkIdleMs": 1902,
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/api/employees/:id/block-history",
+          "statusCode": 200,
+          "durationMs": 714
+        },
+        {
+          "method": "GET",
+          "path": "/api/employees/:id/block-history",
+          "statusCode": 200,
+          "durationMs": 1410
+        }
+      ],
+      "consoleErrors": [],
+      "notes": [
+        "loading localizado: el spinner de esta acción queda contenido dentro de la card del bloque, no bloquea el resto de la pantalla"
+      ],
+      "isWrite": false,
+      "hadRefetch": null,
+      "emptyScreen": false
+    },
+    {
+      "name": "Cerrar historial de Domicilio actual",
+      "zone": "D. Contacto y domicilio",
+      "route": "/legajos/:id",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 27,
+      "networkIdleMs": 110,
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "hadRefetch": null,
+      "emptyScreen": null
+    },
+    {
+      "name": "Abrir edición de Domicilio actual",
+      "zone": "D. Contacto y domicilio",
+      "route": "/legajos/:id",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 45,
+      "networkIdleMs": 126,
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [
+        "se abrió el modal y se cerró sin guardar (modo lectura de esta etapa)"
+      ],
+      "isWrite": false,
+      "hadRefetch": null,
+      "emptyScreen": null
+    },
+    {
+      "name": "Cambiar a pestaña \"Datos Laborales\"",
+      "zone": "E. Datos laborales",
+      "route": "/legajos/:id",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 38,
+      "networkIdleMs": 120,
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [
+        "esta pestaña dispara en paralelo 8 field-history (16 con React StrictMode en dev) + GET .../position-validation (SalaryRangeValidationCard) — todos completan después de que esta ventana de medición cerró y quedan contados en acciones posteriores; ver 'Top 10 requests más lentas' del reporte para los tiempos reales de estas requests"
+      ],
+      "isWrite": false,
+      "hadRefetch": null,
+      "emptyScreen": false
+    },
+    {
+      "name": "Revelar historial de Empresa (ya precargado)",
+      "zone": "E. Datos laborales",
+      "route": "/legajos/:id",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 2810,
+      "networkIdleMs": 2893,
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/api/employees/:id/field-history",
+          "statusCode": 200,
+          "durationMs": 531
+        },
+        {
+          "method": "GET",
+          "path": "/api/employees/:id/field-history",
+          "statusCode": 200,
+          "durationMs": 871
+        },
+        {
+          "method": "GET",
+          "path": "/api/employees/:id/field-history",
+          "statusCode": 200,
+          "durationMs": 1387
+        },
+        {
+          "method": "GET",
+          "path": "/api/employees/:id/field-history",
+          "statusCode": 200,
+          "durationMs": 1718
+        },
+        {
+          "method": "GET",
+          "path": "/api/employees/:id/field-history",
+          "statusCode": 200,
+          "durationMs": 1935
+        },
+        {
+          "method": "GET",
+          "path": "/api/employees/:id/field-history",
+          "statusCode": 200,
+          "durationMs": 1996
+        },
+        {
+          "method": "GET",
+          "path": "/api/employees/:id/field-history",
+          "statusCode": 200,
+          "durationMs": 2020
+        },
+        {
+          "method": "GET",
+          "path": "/api/employees/:id/field-history",
+          "statusCode": 200,
+          "durationMs": 2301
+        },
+        {
+          "method": "GET",
+          "path": "/api/employees/:id/field-history",
+          "statusCode": 200,
+          "durationMs": 2333
+        },
+        {
+          "method": "GET",
+          "path": "/api/employees/:id/field-history",
+          "statusCode": 200,
+          "durationMs": 2361
+        },
+        {
+          "method": "GET",
+          "path": "/api/employees/:id/field-history",
+          "statusCode": 200,
+          "durationMs": 2389
+        },
+        {
+          "method": "GET",
+          "path": "/api/employees/:id/field-history",
+          "statusCode": 200,
+          "durationMs": 2639
+        },
+        {
+          "method": "GET",
+          "path": "/api/employees/:id/field-history",
+          "statusCode": 200,
+          "durationMs": 2680
+        },
+        {
+          "method": "GET",
+          "path": "/api/employees/:id/field-history",
+          "statusCode": 200,
+          "durationMs": 2728
+        },
+        {
+          "method": "GET",
+          "path": "/api/employees/:id/field-history",
+          "statusCode": 200,
+          "durationMs": 2751
+        },
+        {
+          "method": "GET",
+          "path": "/api/employees/:id/field-history",
+          "statusCode": 200,
+          "durationMs": 2980
+        },
+        {
+          "method": "GET",
+          "path": "/api/positions",
+          "statusCode": 200,
+          "durationMs": 3091
+        }
+      ],
+      "consoleErrors": [],
+      "notes": [
+        "patrón eager: el fetch ya había ocurrido al entrar a la pestaña — este click sólo revela el panel, no dispara una request nueva",
+        "los requests visibles en esta acción son en su mayoría los 8 field-history (16 con StrictMode) disparados por el cambio de pestaña anterior, capturados acá por timing — ver nota en 'Cambiar a pestaña Datos Laborales'"
+      ],
+      "isWrite": false,
+      "hadRefetch": null,
+      "emptyScreen": true
+    },
+    {
+      "name": "Revelar historial de Centro de costo (ya precargado)",
+      "zone": "E. Datos laborales",
+      "route": "/legajos/:id",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 19,
+      "networkIdleMs": 102,
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [
+        "patrón eager: el fetch ya había ocurrido al entrar a la pestaña — este click sólo revela el panel, no dispara una request nueva"
+      ],
+      "isWrite": false,
+      "hadRefetch": null,
+      "emptyScreen": true
+    },
+    {
+      "name": "Revelar historial de Sector (ya precargado)",
+      "zone": "E. Datos laborales",
+      "route": "/legajos/:id",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 25,
+      "networkIdleMs": 108,
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [
+        "patrón eager: el fetch ya había ocurrido al entrar a la pestaña — este click sólo revela el panel, no dispara una request nueva"
+      ],
+      "isWrite": false,
+      "hadRefetch": null,
+      "emptyScreen": true
+    },
+    {
+      "name": "Revelar historial de Puesto (ya precargado)",
+      "zone": "E. Datos laborales",
+      "route": "/legajos/:id",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 26,
+      "networkIdleMs": 110,
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [
+        "patrón eager: el fetch ya había ocurrido al entrar a la pestaña — este click sólo revela el panel, no dispara una request nueva"
+      ],
+      "isWrite": false,
+      "hadRefetch": null,
+      "emptyScreen": true
+    },
+    {
+      "name": "Revelar historial de Categoría de recibo (ya precargado)",
+      "zone": "E. Datos laborales",
+      "route": "/legajos/:id",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 36,
+      "networkIdleMs": 117,
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [
+        "patrón eager: el fetch ya había ocurrido al entrar a la pestaña — este click sólo revela el panel, no dispara una request nueva"
+      ],
+      "isWrite": false,
+      "hadRefetch": null,
+      "emptyScreen": true
+    },
+    {
+      "name": "Revelar historial de Categoría interna (ya precargado)",
+      "zone": "E. Datos laborales",
+      "route": "/legajos/:id",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 12,
+      "networkIdleMs": 95,
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [
+        "patrón eager: el fetch ya había ocurrido al entrar a la pestaña — este click sólo revela el panel, no dispara una request nueva"
+      ],
+      "isWrite": false,
+      "hadRefetch": null,
+      "emptyScreen": true
+    },
+    {
+      "name": "Revelar historial de Convenio (ya precargado)",
+      "zone": "E. Datos laborales",
+      "route": "/legajos/:id",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 26,
+      "networkIdleMs": 110,
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [
+        "patrón eager: el fetch ya había ocurrido al entrar a la pestaña — este click sólo revela el panel, no dispara una request nueva"
+      ],
+      "isWrite": false,
+      "hadRefetch": null,
+      "emptyScreen": true
+    },
+    {
+      "name": "Revelar historial de Obra Social (ya precargado)",
+      "zone": "E. Datos laborales",
+      "route": "/legajos/:id",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 24,
+      "networkIdleMs": 107,
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [
+        "patrón eager: el fetch ya había ocurrido al entrar a la pestaña — este click sólo revela el panel, no dispara una request nueva"
+      ],
+      "isWrite": false,
+      "hadRefetch": null,
+      "emptyScreen": true
+    },
+    {
+      "name": "Cambiar a pestaña \"Responsables / Asignaciones\"",
+      "zone": "F. Responsables/Asignaciones",
+      "route": "/legajos/:id",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 13,
+      "networkIdleMs": 96,
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "hadRefetch": null,
+      "emptyScreen": false
+    },
+    {
+      "name": "Abrir historial de Encargado directo actual",
+      "zone": "F. Responsables/Asignaciones",
+      "route": "/legajos/:id",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 1799,
+      "networkIdleMs": 1881,
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/api/employees/:id/position-validation",
+          "statusCode": 200,
+          "durationMs": 7130
+        },
+        {
+          "method": "GET",
+          "path": "/api/employees/:id/block-history",
+          "statusCode": 200,
+          "durationMs": 1291
+        },
+        {
+          "method": "GET",
+          "path": "/api/employees/:id/block-history",
+          "statusCode": 200,
+          "durationMs": 1649
+        }
+      ],
+      "consoleErrors": [],
+      "notes": [
+        "loading localizado: el spinner de esta acción queda contenido dentro de la card del bloque, no bloquea el resto de la pantalla"
+      ],
+      "isWrite": false,
+      "hadRefetch": null,
+      "emptyScreen": true
+    },
+    {
+      "name": "Cerrar historial de Encargado directo actual",
+      "zone": "F. Responsables/Asignaciones",
+      "route": "/legajos/:id",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 23,
+      "networkIdleMs": 105,
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "hadRefetch": null,
+      "emptyScreen": null
+    },
+    {
+      "name": "Abrir historial de Responsable de carga horaria actual",
+      "zone": "F. Responsables/Asignaciones",
+      "route": "/legajos/:id",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 800,
+      "networkIdleMs": 882,
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/api/employees/:id/block-history",
+          "statusCode": 200,
+          "durationMs": 368
+        },
+        {
+          "method": "GET",
+          "path": "/api/employees/:id/block-history",
+          "statusCode": 200,
+          "durationMs": 733
+        }
+      ],
+      "consoleErrors": [],
+      "notes": [
+        "loading localizado: el spinner de esta acción queda contenido dentro de la card del bloque, no bloquea el resto de la pantalla"
+      ],
+      "isWrite": false,
+      "hadRefetch": null,
+      "emptyScreen": true
+    },
+    {
+      "name": "Cerrar historial de Responsable de carga horaria actual",
+      "zone": "F. Responsables/Asignaciones",
+      "route": "/legajos/:id",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 10,
+      "networkIdleMs": 91,
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "hadRefetch": null,
+      "emptyScreen": null
+    },
+    {
+      "name": "Abrir edición de Encargado directo actual",
+      "zone": "F. Responsables/Asignaciones",
+      "route": "/legajos/:id",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 14,
+      "networkIdleMs": 96,
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [
+        "se abrió el modal y se cerró sin guardar (modo lectura de esta etapa)"
+      ],
+      "isWrite": false,
+      "hadRefetch": null,
+      "emptyScreen": null
+    },
+    {
+      "name": "Abrir edición de Responsable de carga horaria actual",
+      "zone": "F. Responsables/Asignaciones",
+      "route": "/legajos/:id",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 31,
+      "networkIdleMs": 114,
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [
+        "se abrió el modal y se cerró sin guardar (modo lectura de esta etapa)"
+      ],
+      "isWrite": false,
+      "hadRefetch": null,
+      "emptyScreen": null
+    },
+    {
+      "name": "Cambiar a pestaña \"Transporte\"",
+      "zone": "G. Transporte",
+      "route": "/legajos/:id",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 36,
+      "networkIdleMs": 119,
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "hadRefetch": null,
+      "emptyScreen": false
+    },
+    {
+      "name": "Abrir historial de Transporte actual",
+      "zone": "G. Transporte",
+      "route": "/legajos/:id",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 807,
+      "networkIdleMs": 890,
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/api/employees/:id/block-history",
+          "statusCode": 200,
+          "durationMs": 347
+        },
+        {
+          "method": "GET",
+          "path": "/api/employees/:id/block-history",
+          "statusCode": 200,
+          "durationMs": 698
+        }
+      ],
+      "consoleErrors": [],
+      "notes": [
+        "loading localizado: el spinner de esta acción queda contenido dentro de la card del bloque, no bloquea el resto de la pantalla"
+      ],
+      "isWrite": false,
+      "hadRefetch": null,
+      "emptyScreen": true
+    },
+    {
+      "name": "Cerrar historial de Transporte actual",
+      "zone": "G. Transporte",
+      "route": "/legajos/:id",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 30,
+      "networkIdleMs": 112,
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/api/employees/:id/position-validation",
+          "statusCode": 200,
+          "durationMs": 12825
+        }
+      ],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "hadRefetch": null,
+      "emptyScreen": null
+    },
+    {
+      "name": "Abrir edición de Transporte actual",
+      "zone": "G. Transporte",
+      "route": "/legajos/:id",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 12,
+      "networkIdleMs": 93,
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [
+        "se abrió el modal y se cerró sin guardar (modo lectura de esta etapa)"
+      ],
+      "isWrite": false,
+      "hadRefetch": null,
+      "emptyScreen": null
+    },
+    {
+      "name": "Cambiar a pestaña \"Configuración Horaria\"",
+      "zone": "H. Configuración",
+      "route": "/legajos/:id",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 35,
+      "networkIdleMs": 119,
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "hadRefetch": null,
+      "emptyScreen": false
+    },
+    {
+      "name": "Abrir historial de Conceptos horarios adicionales",
+      "zone": "H. Configuración",
+      "route": "/legajos/:id",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 1300,
+      "networkIdleMs": 1383,
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/api/employees/:id/block-history",
+          "statusCode": 200,
+          "durationMs": 855
+        },
+        {
+          "method": "GET",
+          "path": "/api/hour-concepts",
+          "statusCode": 200,
+          "durationMs": 1454
+        },
+        {
+          "method": "GET",
+          "path": "/api/employees/:id/block-history",
+          "statusCode": 200,
+          "durationMs": 1186
+        }
+      ],
+      "consoleErrors": [],
+      "notes": [
+        "loading localizado: el spinner de esta acción queda contenido dentro de la card del bloque, no bloquea el resto de la pantalla"
+      ],
+      "isWrite": false,
+      "hadRefetch": null,
+      "emptyScreen": true
+    },
+    {
+      "name": "Cerrar historial de Conceptos horarios adicionales",
+      "zone": "H. Configuración",
+      "route": "/legajos/:id",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 31,
+      "networkIdleMs": 114,
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "hadRefetch": null,
+      "emptyScreen": null
+    },
+    {
+      "name": "Abrir edición de Conceptos horarios adicionales",
+      "zone": "H. Configuración",
+      "route": "/legajos/:id",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 12,
+      "networkIdleMs": 93,
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [
+        "se abrió el modal y se cerró sin guardar (modo lectura de esta etapa)"
+      ],
+      "isWrite": false,
+      "hadRefetch": null,
+      "emptyScreen": null
+    },
+    {
+      "name": "Cambiar a pestaña \"Ausentismo / Novedades\"",
+      "zone": "Otras pestañas del legajo (fuera de zonas C-I)",
+      "route": "/legajos/:id",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 35,
+      "networkIdleMs": 118,
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "hadRefetch": null,
+      "emptyScreen": true
+    },
+    {
+      "name": "Cambiar a pestaña \"Gestión Documental\"",
+      "zone": "I. Adjuntos/Documentos",
+      "route": "/legajos/:id",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 30,
+      "networkIdleMs": 114,
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "hadRefetch": null,
+      "emptyScreen": true
+    },
+    {
+      "name": "Abrir modal 'Agregar documento' (sin subir archivo)",
+      "zone": "I. Adjuntos/Documentos",
+      "route": "/legajos/:id",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 43,
+      "networkIdleMs": 125,
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [
+        "se abrió el modal y se cerró sin guardar (modo lectura de esta etapa)"
+      ],
+      "isWrite": false,
+      "hadRefetch": null,
+      "emptyScreen": null
+    },
+    {
+      "name": "Cambiar a pestaña \"Historial de Eventos\"",
+      "zone": "Otras pestañas del legajo (fuera de zonas C-I)",
+      "route": "/legajos/:id",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 34,
+      "networkIdleMs": 115,
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "hadRefetch": null,
+      "emptyScreen": false
+    },
+    {
+      "name": "Cambiar a pestaña \"Turnos\"",
+      "zone": "Otras pestañas del legajo (fuera de zonas C-I)",
+      "route": "/legajos/:id",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 19,
+      "networkIdleMs": 101,
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/api/documents",
+          "statusCode": 200,
+          "durationMs": 1205
+        },
+        {
+          "method": "GET",
+          "path": "/api/documents",
+          "statusCode": 200,
+          "durationMs": 1206
+        }
+      ],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "hadRefetch": null,
+      "emptyScreen": true
+    },
+    {
+      "name": "Cambiar a pestaña \"Auditoría\"",
+      "zone": "Otras pestañas del legajo (fuera de zonas C-I)",
+      "route": "/legajos/:id",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 33,
+      "networkIdleMs": 115,
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/api/workforce/shift-templates",
+          "statusCode": 200,
+          "durationMs": 545
+        },
+        {
+          "method": "GET",
+          "path": "/api/workforce/shift-templates",
+          "statusCode": 200,
+          "durationMs": 546
+        },
+        {
+          "method": "GET",
+          "path": "/api/document-categories",
+          "statusCode": 200,
+          "durationMs": 1305
+        }
+      ],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "hadRefetch": null,
+      "emptyScreen": false
+    },
+    {
+      "name": "Cambiar a pestaña \"Régimen Laboral\"",
+      "zone": "Otras pestañas del legajo (fuera de zonas C-I)",
+      "route": "/legajos/:id",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 11,
+      "networkIdleMs": 94,
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "hadRefetch": null,
+      "emptyScreen": true
+    },
+    {
+      "name": "Volver al listado",
+      "zone": "A. Listado",
+      "route": "/legajos/:id",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 57,
+      "networkIdleMs": 139,
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/api/shifts/assignments",
+          "statusCode": 200,
+          "durationMs": 1177
+        },
+        {
+          "method": "GET",
+          "path": "/api/employees/:id/work-regimes",
+          "statusCode": 200,
+          "durationMs": 685
+        },
+        {
+          "method": "GET",
+          "path": "/api/employees/:id/work-regimes/current",
+          "statusCode": 200,
+          "durationMs": 705
+        }
+      ],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "hadRefetch": null,
+      "emptyScreen": null
+    }
+  ],
+  "slowestRequests": [
+    {
+      "method": "GET",
+      "path": "/api/employees/:id/position-validation",
+      "statusCode": 200,
+      "durationMs": 12825
+    },
+    {
+      "method": "GET",
+      "path": "/api/employees/:id/position-validation",
+      "statusCode": 200,
+      "durationMs": 7130
+    },
+    {
+      "method": "GET",
+      "path": "/api/employees/:id/overview-details",
+      "statusCode": 200,
+      "durationMs": 3956
+    },
+    {
+      "method": "GET",
+      "path": "/api/employees/:id/overview-details",
+      "statusCode": 200,
+      "durationMs": 3777
+    },
+    {
+      "method": "GET",
+      "path": "/api/positions",
+      "statusCode": 200,
+      "durationMs": 3091
+    },
+    {
+      "method": "GET",
+      "path": "/api/employees/:id/field-history",
+      "statusCode": 200,
+      "durationMs": 2980
+    },
+    {
+      "method": "GET",
+      "path": "/api/employees/:id/field-history",
+      "statusCode": 200,
+      "durationMs": 2751
+    },
+    {
+      "method": "GET",
+      "path": "/api/employees/:id/field-history",
+      "statusCode": 200,
+      "durationMs": 2728
+    },
+    {
+      "method": "GET",
+      "path": "/api/dashboard/metrics",
+      "statusCode": 200,
+      "durationMs": 2723
+    },
+    {
+      "method": "GET",
+      "path": "/api/employees/:id/field-history",
+      "statusCode": 200,
+      "durationMs": 2680
+    }
+  ],
+  "slowestActions": [
+    {
+      "name": "Login (acceso rápido RRHH)",
+      "zone": "Login",
+      "visibleMs": 493,
+      "networkIdleMs": 5101
+    },
+    {
+      "name": "Abrir primer legajo disponible",
+      "zone": "B. Detalle",
+      "visibleMs": 838,
+      "networkIdleMs": 4532
+    },
+    {
+      "name": "Entrar a /legajos",
+      "zone": "A. Listado",
+      "visibleMs": 74,
+      "networkIdleMs": 3504
+    },
+    {
+      "name": "Revelar historial de Empresa (ya precargado)",
+      "zone": "E. Datos laborales",
+      "visibleMs": 2810,
+      "networkIdleMs": 2893
+    },
+    {
+      "name": "Abrir historial de Domicilio actual",
+      "zone": "D. Contacto y domicilio",
+      "visibleMs": 1818,
+      "networkIdleMs": 1902
+    },
+    {
+      "name": "Abrir historial de Encargado directo actual",
+      "zone": "F. Responsables/Asignaciones",
+      "visibleMs": 1799,
+      "networkIdleMs": 1881
+    },
+    {
+      "name": "Abrir historial de Conceptos horarios adicionales",
+      "zone": "H. Configuración",
+      "visibleMs": 1300,
+      "networkIdleMs": 1383
+    },
+    {
+      "name": "Abrir historial de Transporte actual",
+      "zone": "G. Transporte",
+      "visibleMs": 807,
+      "networkIdleMs": 890
+    },
+    {
+      "name": "Abrir historial de Responsable de carga horaria actual",
+      "zone": "F. Responsables/Asignaciones",
+      "visibleMs": 800,
+      "networkIdleMs": 882
+    },
+    {
+      "name": "Buscar empleado por texto",
+      "zone": "A. Listado",
+      "visibleMs": 21,
+      "networkIdleMs": 424
+    }
+  ],
+  "coverageGaps": []
+}
