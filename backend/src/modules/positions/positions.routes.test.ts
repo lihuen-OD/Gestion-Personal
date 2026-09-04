@@ -7,6 +7,7 @@ import { positionsRouter } from "./positions.routes";
 vi.mock("./positions.controller", () => ({
   positionsController: {
     list: vi.fn(),
+    listOptions: vi.fn(),
     getById: vi.fn(),
     assignedEmployees: vi.fn(),
     create: vi.fn(),
@@ -56,5 +57,27 @@ describe("positionsRouter GET /:id/employees", () => {
       guard(fakeReq(role), {} as Response, next);
       expect(next).toHaveBeenCalledWith();
     }
+  });
+});
+
+// Etapa 14D.4: Express matchea rutas en el orden en que se registran — si
+// "/options" quedara DESPUÉS de "/:id", Express interpretaría cualquier
+// pedido a GET /positions/options como GET /positions/:id con id="options",
+// rompiendo el catálogo liviano en silencio (sin error, sólo el handler
+// equivocado). Este test protege ese orden directamente contra el router
+// real registrado, no contra una suposición de lectura del archivo.
+describe("positionsRouter — orden de registro de /options (Etapa 14D.4)", () => {
+  it("GET /options está registrada antes que GET /:id", () => {
+    type RouterLayer = { route?: { path: string; methods: Record<string, boolean> } };
+    const getRoutes = (positionsRouter.stack as RouterLayer[])
+      .filter((layer) => layer.route?.methods.get)
+      .map((layer) => layer.route!.path);
+
+    const optionsIndex = getRoutes.indexOf("/options");
+    const byIdIndex = getRoutes.indexOf("/:id");
+
+    expect(optionsIndex).toBeGreaterThanOrEqual(0);
+    expect(byIdIndex).toBeGreaterThanOrEqual(0);
+    expect(optionsIndex).toBeLessThan(byIdIndex);
   });
 });

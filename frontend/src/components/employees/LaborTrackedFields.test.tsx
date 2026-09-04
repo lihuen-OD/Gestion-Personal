@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MultiCompanyField } from "./LaborTrackedFields";
+import { EmployeePositionField, MultiCompanyField } from "./LaborTrackedFields";
 import { employeeHistoryApiService } from "../../services/api/employeeHistoryApiService";
 import { orgStructureApiService } from "../../services/api/orgStructureApiService";
+import { positionApiService } from "../../services/api/positionApiService";
 import type { Employee, User } from "../../types";
 
 vi.mock("../../services/api/employeeHistoryApiService", () => ({
@@ -19,6 +20,10 @@ vi.mock("../../services/api/employeeApiService", () => ({
 
 vi.mock("../../services/api/orgStructureApiService", () => ({
   orgStructureApiService: { getCatalog: vi.fn() },
+}));
+
+vi.mock("../../services/api/positionApiService", () => ({
+  positionApiService: { getAll: vi.fn(), getOptions: vi.fn() },
 }));
 
 function buildEmployee(overrides: Partial<Employee> = {}): Employee {
@@ -101,6 +106,20 @@ const rrhhUser: User = { id: "user-1", name: "RRHH", email: "rrhh@test.com", pas
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(orgStructureApiService.getCatalog).mockResolvedValue({ companies: [], sectors: [], costCenters: [] } as never);
+  vi.mocked(positionApiService.getOptions).mockResolvedValue([]);
+});
+
+// Etapa 14D.4 (Parte 5 del pedido): EmployeePositionField usa
+// `useActivePositions()`, que ahora llama al catálogo liviano en vez del
+// registro completo de Position — ver docs/decisions/
+// POSITIONS_PERFORMANCE_FOR_EMPLOYEES_14D4.md.
+describe("EmployeePositionField — usa el catálogo liviano de puestos (Etapa 14D.4)", () => {
+  it("useActivePositions llama a positionApiService.getOptions(), no a getAll()", async () => {
+    render(<EmployeePositionField employee={buildEmployee()} canEdit={false} user={rrhhUser} onSaved={() => {}} />);
+
+    await waitFor(() => expect(positionApiService.getOptions).toHaveBeenCalledTimes(1));
+    expect(positionApiService.getAll).not.toHaveBeenCalled();
+  });
 });
 
 // Etapa 14D.2: MultiCompanyField (historial de "Empresa" en Datos Laborales)

@@ -2,7 +2,7 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import type { Mock } from "vitest";
 import { prisma } from "../../shared/prisma/client";
 import { invalidatePositionsCache, positionsRepository } from "./positions.repository";
-import type { ListPositionsQuery } from "./positions.schemas";
+import type { ListPositionOptionsQuery, ListPositionsQuery } from "./positions.schemas";
 
 /**
  * Cubre la limpieza final de Position (2026-08-18): sectorId es la unica
@@ -240,5 +240,88 @@ describe("positionsRepository.findMany — Etapa 9E (paginación real)", () => {
 
     expect(items).toEqual([]);
     expect(total).toBe(0);
+  });
+});
+
+function baseOptionsQuery(overrides: Partial<ListPositionOptionsQuery> = {}): ListPositionOptionsQuery {
+  return { take: 300, ...overrides };
+}
+
+// Etapa 14D.4: catálogo liviano para selects (Legajos hoy). Estos tests
+// cubren exactamente lo pedido en la Parte 4 — shape liviano, ausencia de
+// los campos pesados, orden estable, y que sector/salaryCategories (los
+// únicos derivados que Legajos sí consume) sigan viniendo completos.
+describe("positionsRepository.findOptions — Etapa 14D.4", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    (prisma.position.findMany as Mock).mockResolvedValue([]);
+  });
+
+  it("usa un select explícito (no include), sin ninguno de los 7 campos JSON ni description", async () => {
+    await positionsRepository.findOptions(baseOptionsQuery());
+
+    const call = (prisma.position.findMany as Mock).mock.calls.at(0)?.[0];
+    expect(call.select).toBeDefined();
+    expect(call.include).toBeUndefined();
+    for (const heavyField of [
+      "mission",
+      "description",
+      "responsibilities",
+      "internalRelations",
+      "externalRelations",
+      "competencies",
+      "workConditions",
+      "performanceIndicators",
+      "evaluationCriteria",
+    ]) {
+      expect(call.select[heavyField]).toBeUndefined();
+    }
+  });
+
+  it("no trae _count (assignedCount) ni la relación establishment.company", async () => {
+    await positionsRepository.findOptions(baseOptionsQuery());
+
+    const call = (prisma.position.findMany as Mock).mock.calls.at(0)?.[0];
+    expect(call.select._count).toBeUndefined();
+    expect(call.select.sector.select.area.select.establishment.select.company).toBeUndefined();
+  });
+
+  it("sí mantiene los escalares baratos, la cadena de sector (nombres) y salaryCategories — mismo shape que el frontend ya sabe mapear", async () => {
+    await positionsRepository.findOptions(baseOptionsQuery());
+
+    const call = (prisma.position.findMany as Mock).mock.calls.at(0)?.[0];
+    for (const field of ["id", "code", "name", "status", "lastUpdatedAt", "sectorId", "createdAt", "updatedAt"]) {
+      expect(call.select[field]).toBe(true);
+    }
+    expect(call.select.sector.select.area.select.establishment.select.businessUnit).toEqual({ select: { id: true, name: true } });
+    expect(call.select.salaryCategories).toEqual({ select: { salaryCategory: { select: { id: true, name: true, order: true } } } });
+  });
+
+  it("orden estable: status asc, name asc — mismo criterio que findMany", async () => {
+    await positionsRepository.findOptions(baseOptionsQuery());
+
+    const call = (prisma.position.findMany as Mock).mock.calls.at(0)?.[0];
+    expect(call.orderBy).toEqual([{ status: "asc" }, { name: "asc" }]);
+  });
+
+  it("sin status en la query: no filtra por estado (trae activos e inactivos, como necesita SalaryRangeValidationCard)", async () => {
+    await positionsRepository.findOptions(baseOptionsQuery());
+
+    const call = (prisma.position.findMany as Mock).mock.calls.at(0)?.[0];
+    expect(call.where).toEqual({});
+  });
+
+  it("con status en la query: filtra server-side (uso opcional, hoy ningún caller de Legajos lo pasa)", async () => {
+    await positionsRepository.findOptions(baseOptionsQuery({ status: "ACTIVO" }));
+
+    const call = (prisma.position.findMany as Mock).mock.calls.at(0)?.[0];
+    expect(call.where).toEqual({ status: "ACTIVO" });
+  });
+
+  it("respeta el take pedido", async () => {
+    await positionsRepository.findOptions(baseOptionsQuery({ take: 50 }));
+
+    const call = (prisma.position.findMany as Mock).mock.calls.at(0)?.[0];
+    expect(call.take).toBe(50);
   });
 });

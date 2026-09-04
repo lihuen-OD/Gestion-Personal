@@ -15,11 +15,12 @@ vi.mock("./positions.repository", () => ({
     findById: vi.fn(),
     findAssignedEmployees: vi.fn(),
     findMany: vi.fn(),
+    findOptions: vi.fn(),
   },
   invalidatePositionsCache: vi.fn(),
 }));
 
-const repo = positionsRepository as unknown as { findById: Mock; findAssignedEmployees: Mock; findMany: Mock };
+const repo = positionsRepository as unknown as { findById: Mock; findAssignedEmployees: Mock; findMany: Mock; findOptions: Mock };
 
 const rrhhUser = { id: "user-rrhh", role: roles.rrhh } as unknown as Express.AuthUser;
 const supervisionUser = { id: "user-sup", role: roles.supervision } as unknown as Express.AuthUser;
@@ -99,5 +100,17 @@ describe("positionsService.list — Etapa 9E (meta de paginación)", () => {
 
     expect(result.items).toEqual([]);
     expect(result.meta).toEqual({ total: 0, page: 1, pageSize: 25, hasMore: false });
+  });
+});
+
+describe("positionsService.listOptions — Etapa 14D.4", () => {
+  it("delega directo al repositorio, sin transformar el resultado", async () => {
+    const rows = [{ id: "pos-1", code: "PUE-1", name: "Puesto 1" }];
+    repo.findOptions.mockResolvedValue(rows);
+
+    const result = await positionsService.listOptions({ take: 300 } as never);
+
+    expect(repo.findOptions).toHaveBeenCalledWith({ take: 300 });
+    expect(result).toBe(rows);
   });
 });

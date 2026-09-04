@@ -10,7 +10,7 @@ vi.mock("../../services/api/employeeApiService", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../services/api/employeeApiService")>();
   return { ...actual, employeeApiService: { ...actual.employeeApiService, getPositionValidation: vi.fn() } };
 });
-vi.mock("../../services/api/positionApiService", () => ({ positionApiService: { getAll: vi.fn() } }));
+vi.mock("../../services/api/positionApiService", () => ({ positionApiService: { getAll: vi.fn(), getOptions: vi.fn() } }));
 vi.mock("../../services/api/salaryCategoryApiService", () => ({ salaryCategoryApiService: { getGroups: vi.fn() } }));
 
 function buildEmployee(overrides: Partial<Employee> = {}): Employee {
@@ -91,7 +91,23 @@ function buildEmployee(overrides: Partial<Employee> = {}): Employee {
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(positionApiService.getAll).mockResolvedValue([]);
+  vi.mocked(positionApiService.getOptions).mockResolvedValue([]);
   vi.mocked(salaryCategoryApiService.getGroups).mockResolvedValue([]);
+});
+
+// Etapa 14D.4 (Parte 5 del pedido): SalaryRangeValidationCard usa
+// `usePositions()`, que ahora llama al catálogo liviano en vez del registro
+// completo de Position — ver docs/decisions/
+// POSITIONS_PERFORMANCE_FOR_EMPLOYEES_14D4.md.
+describe("SalaryRangeValidationCard — usa el catálogo liviano de puestos (Etapa 14D.4)", () => {
+  it("usePositions llama a positionApiService.getOptions(), no a getAll()", async () => {
+    vi.mocked(employeeApiService.getPositionValidation).mockResolvedValue(undefined as never);
+
+    render(<SalaryRangeValidationCard employee={buildEmployee({ positionId: "" })} />);
+
+    await waitFor(() => expect(positionApiService.getOptions).toHaveBeenCalledTimes(1));
+    expect(positionApiService.getAll).not.toHaveBeenCalled();
+  });
 });
 
 // Etapa 14D.2 (Parte 5, ítems 13-14 del pedido): `getPositionValidation`

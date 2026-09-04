@@ -236,6 +236,26 @@ export const positionApiService = {
       validate: isPositionList,
     });
   },
+  // Etapa 14D.4: catálogo liviano para selects/catálogos de Legajos
+  // (usePositions/useActivePositions en EmployeeLaborFields.tsx/
+  // LaborTrackedFields.tsx, resolveRelations en employeeApiService.ts) —
+  // mismo mapper (`mapFromApi`) y mismo `Position` de salida que `getAll()`,
+  // sólo que el backend devuelve un select liviano (sin mission/
+  // description/responsibilities/internalRelations/externalRelations/
+  // competencies/workConditions/performanceIndicators/evaluationCriteria/
+  // company/_count — ninguno de esos campos lo usa Legajos, ver
+  // docs/decisions/POSITIONS_PERFORMANCE_FOR_EMPLOYEES_14D4.md). No toca
+  // PuestosPage/PuestoDetailPage/PuestoCreatePage/WorkScheduleSettingsPage,
+  // que siguen usando `getAll()`/`list()`/`getById()` sin cambios.
+  async getOptions() {
+    const key = "/positions/options";
+    return cachedData({
+      requestKey: `GET:${key}`,
+      policy: cachePolicies.positionsCatalog,
+      fetcher: () => apiRequest<ApiListResponse>(key, { apiCache: false }).then((response) => response.data.map(mapFromApi)),
+      validate: isPositionList,
+    });
+  },
   async getById(id: string) {
     return cachedData({
       requestKey: `GET:/positions/${id}`,

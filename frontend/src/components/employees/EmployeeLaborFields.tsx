@@ -25,12 +25,16 @@ function useCompanyNames() {
   return items;
 }
 
+// Etapa 14D.4: getAll() (registro completo de Position, ~10 columnas
+// pesadas de más para Legajos) -> getOptions() (catálogo liviano, mismo
+// Position/mapFromApi de salida). Ver docs/decisions/
+// POSITIONS_PERFORMANCE_FOR_EMPLOYEES_14D4.md.
 function usePositions(activeOnly = false) {
   const [items, setItems] = useState<Position[]>([]);
 
   useEffect(() => {
     let mounted = true;
-    positionApiService.getAll()
+    positionApiService.getOptions()
       .then((positions) => {
         if (!mounted) return;
         setItems(activeOnly ? positions.filter((position) => position.status === "ACTIVO") : positions);

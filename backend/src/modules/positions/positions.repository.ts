@@ -1,6 +1,6 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "../../shared/prisma/client";
-import type { CreatePositionInput, ListPositionsQuery, UpdatePositionInput } from "./positions.schemas";
+import type { CreatePositionInput, ListPositionOptionsQuery, ListPositionsQuery, UpdatePositionInput } from "./positions.schemas";
 
 const positionInclude = {
   sector: {
@@ -20,6 +20,54 @@ const positionInclude = {
   salaryCategories: { include: { salaryCategory: true } },
   _count: { select: { employees: true } },
 } satisfies Prisma.PositionInclude;
+
+// Etapa 14D.4: select liviano para catálogos/selectores — usado hoy sólo por
+// Legajos (`usePositions`/`useActivePositions` en EmployeeLaborFields.tsx/
+// LaborTrackedFields.tsx, y `resolveRelations` en employeeApiService.ts).
+// Excluye exactamente lo que ningún consumidor de Legajos lee (confirmado
+// leyendo los 3 call sites completos, ver docs/decisions/
+// POSITIONS_PERFORMANCE_FOR_EMPLOYEES_14D4.md): las 7 columnas JSON
+// (responsibilities/internalRelations/externalRelations/competencies/
+// workConditions/performanceIndicators/evaluationCriteria) + `description`,
+// la relación `establishment.company` (registro completo de Company) y
+// `_count.employees` (assignedCount, sólo se muestra en PuestosPage). Todo lo
+// demás (escalares baratos + cadena de NOMBRES de sector/area/establishment/
+// businessUnit + salaryCategories) se mantiene idéntico a `positionInclude`
+// para poder reusar el mismo mapper del frontend (`mapFromApi`) sin
+// duplicarlo — el shape que sí expone es un subconjunto exacto, nunca
+// distinto, de lo que ya devuelve `GET /positions`.
+const positionOptionSelect = {
+  id: true,
+  code: true,
+  name: true,
+  status: true,
+  lastUpdatedAt: true,
+  sectorId: true,
+  createdAt: true,
+  updatedAt: true,
+  sector: {
+    select: {
+      id: true,
+      name: true,
+      area: {
+        select: {
+          id: true,
+          name: true,
+          establishment: {
+            select: {
+              id: true,
+              name: true,
+              businessUnit: { select: { id: true, name: true } },
+            },
+          },
+        },
+      },
+    },
+  },
+  salaryCategories: {
+    select: { salaryCategory: { select: { id: true, name: true, order: true } } },
+  },
+} satisfies Prisma.PositionSelect;
 
 const json = (value: unknown): Prisma.InputJsonValue => value as Prisma.InputJsonValue;
 type PositionRow = Awaited<ReturnType<typeof prisma.position.findMany<{ include: typeof positionInclude }>>>[number];
@@ -123,6 +171,19 @@ export const positionsRepository = {
     return prisma.position.findUniqueOrThrow({
       where: { id },
       include: positionInclude,
+    });
+  },
+
+  // Etapa 14D.4: catálogo liviano — mismo criterio de "sin filtros pedidos
+  // hoy" que llevó a no exponer `search` en el schema (§ arriba). Orden
+  // estable (mismo criterio que `findMany`: status asc, name asc) para que
+  // selects/catálogos no salten de posición entre renders.
+  findOptions(query: ListPositionOptionsQuery) {
+    return prisma.position.findMany({
+      where: query.status ? { status: query.status } : {},
+      select: positionOptionSelect,
+      orderBy: [{ status: "asc" }, { name: "asc" }],
+      take: query.take,
     });
   },
 

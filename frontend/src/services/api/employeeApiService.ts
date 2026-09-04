@@ -357,9 +357,12 @@ export function mapEmployeeFromApi(item: ApiEmployee): Employee {
 }
 
 async function resolveRelations(employee: Employee) {
+  // Etapa 14D.4: sólo hace falta id/name para resolver positionId por
+  // nombre (`puestoNombre`) al guardar — getOptions() (catálogo liviano)
+  // en vez de getAll() (registro completo de Position).
   const [catalog, positions] = await Promise.all([
     orgStructureApiService.getCatalog().catch(() => null),
-    positionApiService.getAll().catch(() => []),
+    positionApiService.getOptions().catch(() => []),
   ]);
   const companyNames = compact([...(employee.companies || []), employee.company]);
   const companyIds = compact(companyNames.map((name) => catalog?.companies.find((item) => item.name === name)?.id));

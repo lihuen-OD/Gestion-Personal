@@ -22,6 +22,14 @@ export const listPositionsQuerySchema = z.object({
   take: z.coerce.number().int().positive().max(300).default(200),
 });
 
+// Etapa 14D.4: query del catálogo liviano (`GET /positions/options`) — sólo
+// lo que los selects/catálogos de Legajos realmente filtran hoy (ninguno
+// pasa `search`, así que no se agregó — evitar parámetros sin caller real).
+export const listPositionOptionsQuerySchema = z.object({
+  status: recordStatusSchema.optional(),
+  take: z.coerce.number().int().positive().max(500).default(300),
+});
+
 export const positionWorkConditionsSchema = z.object({
   modality: z.string().trim().default("PRESENCIAL"),
   workload: z.string().trim().default(""),
@@ -51,5 +59,6 @@ export const createPositionSchema = z.object({
 export const updatePositionSchema = createPositionSchema.partial();
 
 export type ListPositionsQuery = z.infer<typeof listPositionsQuerySchema>;
+export type ListPositionOptionsQuery = z.infer<typeof listPositionOptionsQuerySchema>;
 export type CreatePositionInput = z.infer<typeof createPositionSchema>;
 export type UpdatePositionInput = z.infer<typeof updatePositionSchema>;

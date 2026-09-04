@@ -3,7 +3,7 @@ import type { AuditContext } from "../audit/audit.service";
 import { auditService } from "../audit/audit.service";
 import { AppError } from "../../shared/errors/AppError";
 import { invalidatePositionsCache, positionsRepository } from "./positions.repository";
-import type { CreatePositionInput, ListPositionsQuery, UpdatePositionInput } from "./positions.schemas";
+import type { CreatePositionInput, ListPositionOptionsQuery, ListPositionsQuery, UpdatePositionInput } from "./positions.schemas";
 import { employeeAccessWhere } from "../employees/employeeAccess";
 
 function mapPrismaError(error: unknown) {
@@ -51,6 +51,11 @@ export const positionsService = {
 
   getById(id: string) {
     return execute(() => positionsRepository.findById(id));
+  },
+
+  // Etapa 14D.4: catálogo liviano para selects/catálogos (Legajos hoy).
+  listOptions(query: ListPositionOptionsQuery) {
+    return positionsRepository.findOptions(query);
   },
 
   async listAssignedEmployees(id: string, user: Express.AuthUser) {

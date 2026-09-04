@@ -90,13 +90,16 @@ function useCompanyOptions() {
   return options;
 }
 
+// Etapa 14D.4: getAll() -> getOptions() (catálogo liviano, mismo Position/
+// mapFromApi de salida) — ver docs/decisions/
+// POSITIONS_PERFORMANCE_FOR_EMPLOYEES_14D4.md.
 function useActivePositions() {
   const [positions, setPositions] = useState<Position[]>([]);
 
   useEffect(() => {
     let mounted = true;
     positionApiService
-      .getAll()
+      .getOptions()
       .then((items) => {
         if (mounted) setPositions(items.filter((position) => position.status === "ACTIVO"));
       })
