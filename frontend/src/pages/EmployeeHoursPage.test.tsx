@@ -281,7 +281,10 @@ describe("EmployeeHoursPage — Hora normal es universal (bug: HOUR_CONCEPT_NOT_
     await user.click(screen.getByRole("button", { name: "Guardar" }));
 
     await waitFor(() => expect(timeEntryApiService.save).toHaveBeenCalledTimes(1));
-    expect(timeEntryApiService.save).toHaveBeenCalledWith(expect.objectContaining({ conceptId: "normal", hours: 8 }));
+    expect(timeEntryApiService.save).toHaveBeenCalledWith(
+      expect.objectContaining({ conceptId: "normal", hours: 8 }),
+      { knownExistingId: null },
+    );
     await waitFor(() => expect(screen.queryByText(/Cargar Hora normal/i)).not.toBeInTheDocument());
   });
 
@@ -348,7 +351,10 @@ describe("EmployeeHoursPage — flujo de aprobación por rol en carga manual (Et
     await user.click(screen.getByRole("button", { name: "Guardar" }));
 
     await waitFor(() => expect(timeEntryApiService.save).toHaveBeenCalledTimes(1));
-    expect(timeEntryApiService.save).toHaveBeenCalledWith(expect.objectContaining({ status: "Aprobado" }));
+    expect(timeEntryApiService.save).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "Aprobado" }),
+      { knownExistingId: null },
+    );
   });
 
   it.each(["Nivel 2 - Supervisión / Gestión", "Nivel 3 - Administrativo de Carga Horaria"])(
@@ -384,7 +390,10 @@ describe("EmployeeHoursPage — flujo de aprobación por rol en carga manual (Et
     await user.click(screen.getByRole("button", { name: /Enviar a revisión/i }));
 
     await waitFor(() => expect(timeEntryApiService.save).toHaveBeenCalledTimes(1));
-    expect(timeEntryApiService.save).toHaveBeenCalledWith(expect.objectContaining({ status: "En revisión" }));
+    expect(timeEntryApiService.save).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "En revisión" }),
+      { knownExistingId: null },
+    );
   });
 });
 

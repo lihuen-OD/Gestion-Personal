@@ -151,6 +151,27 @@ async function ensureDayIsNotBlocked(employeeId: string, date: Date, hours?: num
   }
 }
 
+/**
+ * Etapa 14C.2 (ampliada): las validaciones que reciba (`ensureEmployeeScope`,
+ * `ensureHourConceptEnabled`, `ensureNoDuplicate`, `ensureDayIsNotBlocked`)
+ * son independientes entre sí (cada una lee una tabla distinta, ninguna
+ * depende del resultado de otra) pero antes de esta etapa se ejecutaban con
+ * `await` secuencial una tras otra — cada una paga un round-trip completo
+ * hacia Neon. Acá corren en paralelo real (`Promise.allSettled`, no
+ * `Promise.all`) y sólo después se decide qué error lanzar, **respetando
+ * exactamente el mismo orden de prioridad que el código secuencial
+ * anterior** (el primer validador de la lista que haya fallado es el que se
+ * lanza) — el usuario ve el mismo mensaje de error que antes ante cualquier
+ * combinación de fallos, sólo cambia que las validaciones ya no se pagan una
+ * por una. Ver docs/decisions/TIME_ENTRIES_AND_EMPLOYEES_PERFORMANCE_14C2.md.
+ */
+async function runValidationsInPriorityOrder(validations: Array<() => Promise<void>>): Promise<void> {
+  const results = await Promise.allSettled(validations.map((validation) => validation()));
+  for (const result of results) {
+    if (result.status === "rejected") throw result.reason;
+  }
+}
+
 // Etapa 6L.3 (ajuste): la aprobación final de una carga horaria es
 // exclusiva de RRHH — Supervisión ya no puede aprobar/rechazar/devolver
 // cargas de terceros, aunque siga pudiendo revisarlas visualmente. Esto es
@@ -898,10 +919,15 @@ export const timeEntriesService = {
   },
 
   async create(input: CreateTimeEntryInput, user: Express.AuthUser, audit?: AuditContext) {
-    await ensureEmployeeScope(input.employeeId, user);
-    await ensureHourConceptEnabled(input.employeeId, input.hourConceptId);
-    await ensureDayIsNotBlocked(input.employeeId, input.date, input.hours);
-    await ensureNoDuplicate(input.employeeId, input.hourConceptId, input.date);
+    // Etapa 14C.2 (ampliada): mismo orden de prioridad de errores que antes
+    // (scope > concepto habilitado > día bloqueado > duplicado), ahora
+    // corriendo las 4 validaciones en paralelo real en vez de secuencial.
+    await runValidationsInPriorityOrder([
+      () => ensureEmployeeScope(input.employeeId, user),
+      () => ensureHourConceptEnabled(input.employeeId, input.hourConceptId),
+      () => ensureDayIsNotBlocked(input.employeeId, input.date, input.hours),
+      () => ensureNoDuplicate(input.employeeId, input.hourConceptId, input.date),
+    ]);
     // Etapa 6L.3: RRHH ya es quien aprueba, así que su propia carga manual no
     // pasa por BORRADOR/EN_REVISION — queda aplicada/aprobada de una. Nivel
     // 2/3 mantienen el flujo previo (BORRADOR, luego "Enviar a revisión").
@@ -1561,9 +1587,13 @@ export const timeEntriesService = {
     const employeeId = before.employeeId;
     const hourConceptId = input.hourConceptId || before.hourConceptId;
     const date = input.date || before.date;
-    await ensureHourConceptEnabled(employeeId, hourConceptId);
-    await ensureDayIsNotBlocked(employeeId, date, input.hours);
-    await ensureNoDuplicate(employeeId, hourConceptId, date, id);
+    // Etapa 14C.2 (ampliada): mismo criterio que create() — mismo orden de
+    // prioridad de errores, ahora en paralelo real.
+    await runValidationsInPriorityOrder([
+      () => ensureHourConceptEnabled(employeeId, hourConceptId),
+      () => ensureDayIsNotBlocked(employeeId, date, input.hours),
+      () => ensureNoDuplicate(employeeId, hourConceptId, date, id),
+    ]);
 
     // Etapa 6L.3: toda edición hecha por RRHH aplica/aprueba directamente,
     // sea que esté corrigiendo una carga ya aprobada (arriba, con

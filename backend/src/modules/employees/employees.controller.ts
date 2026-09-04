@@ -32,6 +32,19 @@ export function clearEmployeeReadCaches() {
   employeeTimeGridCache.clear();
 }
 
+/**
+ * Etapa 14C.2 (ampliada): un guardado manual de carga horaria (POST/PATCH
+ * /time-entries) sólo afecta la grilla horaria de ESE empleado — nunca su
+ * legajo, el listado de Legajos, el resumen ni el organigrama. Antes de esta
+ * etapa, `timeEntries.controller.ts` llamaba a `clearEmployeeReadCaches()`
+ * (las 6 caches) en cada guardado, invalidando de más para cualquier otro
+ * usuario que estuviera navegando Legajos en simultáneo. Ver
+ * docs/decisions/TIME_ENTRIES_AND_EMPLOYEES_PERFORMANCE_14C2.md.
+ */
+export function clearEmployeeTimeGridCache() {
+  employeeTimeGridCache.clear();
+}
+
 export const employeesController = {
   list: (async (req, res) => {
     const key = userScopedCacheKey(req);

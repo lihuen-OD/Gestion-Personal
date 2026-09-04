@@ -23,7 +23,13 @@ export const auditRepository = {
       ...(query.action ? { action: query.action } : {}),
     };
     const skip = (query.page - 1) * query.take;
-    return prisma.$transaction([
+    // Etapa 14C.2 (ampliada): findMany + count son lecturas independientes
+    // (no hay ninguna escritura entre medio que requiera atomicidad), así que
+    // $transaction([...]) sólo forzaba que corrieran en serie por la misma
+    // conexión. Promise.all las corre en paralelo contra el pool, sin cambiar
+    // el resultado (misma respuesta [rows, total]) — mismo patrón ya aplicado
+    // en employees/time-entries esta etapa.
+    return Promise.all([
       prisma.auditLog.findMany({
         where,
         include: {

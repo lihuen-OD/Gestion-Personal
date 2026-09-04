@@ -62,6 +62,18 @@ export function EmployeesPage() {
         setAll(result.items);
         setMeta(result.meta);
         setListStatus("success");
+        // Etapa 14C.3: precarga silenciosa de la página siguiente en la caché
+        // ya existente (`employeeApiService.list`, `services/cache`) — no
+        // agrega ningún mecanismo nuevo, sólo dispara el mismo fetch que
+        // "Siguiente" haría, antes de que el usuario lo pida. Si el usuario
+        // efectivamente pasa de página, ese fetch encuentra la respuesta ya
+        // en caché (o el pedido en curso, deduplicado por `cachedData`); si
+        // no la pasa, la entrada expira sola con el TTL normal (30s).
+        if (result.meta.hasMore) {
+          employeeApiService
+            .list({ search: debouncedSearch, companyId: selectedCompanyId, sectorId: selectedSectorId, costCenterId: selectedCostCenterId, page: page + 1, take: pageSize })
+            .catch(() => {});
+        }
       })
       .catch(() => {
         if (!mounted) return;

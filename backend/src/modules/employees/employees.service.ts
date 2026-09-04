@@ -456,6 +456,14 @@ export const employeesService = {
     return employee;
   },
 
+  // Etapa 14C.3: variante liviana de `getById` para llamadores que sólo
+  // necesitan confirmar existencia + alcance (404/permiso), sin cargar el
+  // detalle completo del legajo. Ver `employeesRepository.existsWithAccess`.
+  async assertAccessible(id: string, user?: Express.AuthUser) {
+    const exists = await employeesRepository.existsWithAccess(id, user ? employeeAccessWhere(user) : {});
+    if (!exists) throw new AppError("Employee not found", 404, "EMPLOYEE_NOT_FOUND");
+  },
+
   async getOverviewById(id: string, user: Express.AuthUser) {
     const employee = await employeesRepository.findOverviewById(id, employeeAccessWhere(user));
     if (!employee) throw new AppError("Employee not found", 404, "EMPLOYEE_NOT_FOUND");
@@ -834,12 +842,12 @@ export const employeesService = {
   },
 
   async listFieldHistory(id: string, query: ListEmployeeHistoryQuery, user: Express.AuthUser) {
-    await employeesService.getById(id, user);
+    await employeesService.assertAccessible(id, user);
     return employeesRepository.findFieldHistory(id, query);
   },
 
   async createFieldHistory(id: string, input: CreateEmployeeFieldHistoryInput, audit?: AuditContext, user?: Express.AuthUser) {
-    if (user) await employeesService.getById(id, user);
+    if (user) await employeesService.assertAccessible(id, user);
     const record = await execute(() => employeesRepository.createFieldHistory(id, input, audit?.userId));
     await auditService.register({
       ...audit,
@@ -853,12 +861,12 @@ export const employeesService = {
   },
 
   async listBlockHistory(id: string, query: ListEmployeeHistoryQuery, user: Express.AuthUser) {
-    await employeesService.getById(id, user);
+    await employeesService.assertAccessible(id, user);
     return employeesRepository.findBlockHistory(id, query);
   },
 
   async createBlockHistory(id: string, input: CreateEmployeeBlockHistoryInput, audit?: AuditContext, user?: Express.AuthUser) {
-    if (user) await employeesService.getById(id, user);
+    if (user) await employeesService.assertAccessible(id, user);
     const record = await execute(() => employeesRepository.createBlockHistory(id, input, audit?.userId));
     await auditService.register({
       ...audit,

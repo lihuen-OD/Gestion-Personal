@@ -87,18 +87,20 @@ const attendanceTimeEntrySelect = {
   hourConcept: { select: { id: true, name: true, kind: true } },
 } satisfies Prisma.TimeEntrySelect;
 
+// Etapa 14C.2: recortado a lo que la grilla de Carga Horaria realmente
+// renderiza — ver docs/decisions/TIME_ENTRIES_PERFORMANCE_14C2.md §1.6-1.7.
+// `HoursPage.tsx` (grilla principal) sólo usa legajo/nombre/empresa/centro de
+// costo/estado; `sector`/`position`/`dni`/`cuil` no se muestran en ningún
+// lado de esta pantalla. `companies` se mantiene (alimenta `employee.company`
+// vía el mapper compartido) y `costCenter` se mantiene (se muestra).
 const periodEmployeeSelect = {
   id: true,
   legajo: true,
   legajoFinnegans: true,
-  cuil: true,
-  dni: true,
   firstName: true,
   lastName: true,
   status: true,
-  sector: { select: { id: true, name: true, code: true } },
   costCenter: { select: { id: true, name: true, code: true } },
-  position: { select: { id: true, name: true, code: true } },
   companies: { select: { isPrimary: true, company: { select: { id: true, name: true, code: true } } } },
 } satisfies Prisma.EmployeeSelect;
 
@@ -486,9 +488,15 @@ export const timeEntriesRepository = {
     ]);
   },
 
+  // Etapa 14C.2: `$transaction([...])` -> `Promise.all([...])`. Mismo criterio
+  // que `findPeriodEmployees` y que `employees.summary()` (Etapa 14C.1): 5
+  // conteos/agregados independientes de sólo lectura para tarjetas de
+  // resumen, sin necesidad de una foto transaccional consistente entre sí —
+  // la forma-array de `$transaction` los ejecutaba secuencialmente sobre una
+  // única conexión.
   async summary(period: string, employeeAccessWhere: Prisma.EmployeeWhereInput) {
     const countableStatuses = [ApprovalStatus.APROBADO, ApprovalStatus.EN_REVISION];
-    const [activeEmployees, employeesWithEntries, pendingEmployees, reviewEmployeeGroups, hoursResult] = await prisma.$transaction([
+    const [activeEmployees, employeesWithEntries, pendingEmployees, reviewEmployeeGroups, hoursResult] = await Promise.all([
       prisma.employee.count({
         where: { ...employeeAccessWhere, status: EmployeeStatus.ACTIVO },
       }),
@@ -610,85 +618,97 @@ export const timeEntriesRepository = {
     return observedShifts + observedPunches + inactivityIncidents;
   },
 
+  // Etapa 14C.2: antes, las 5 queries de abajo corrían dentro de un único
+  // `prisma.$transaction(async (tx) => {...}, { timeout: 15_000 })`. Al ser
+  // read-only (sin ningún create/update/delete), no necesitan atomicidad de
+  // escritura — pero una transacción interactiva usa una única conexión, así
+  // que el `Promise.all` de `tx.*` no lograba concurrencia real (el driver
+  // serializa los round-trips sobre esa conexión). Medido en 6447ms en el
+  // journey real (ver docs/decisions/TIME_ENTRIES_PERFORMANCE_14C2.md).
+  // Sacar el `$transaction` y usar el cliente `prisma` global (pool de
+  // conexiones) para los mismos dos `Promise.all` sí da concurrencia real —
+  // mismo patrón ya aplicado en `employees.summary()` (Etapa 14C.1) y en
+  // `dashboard.service.ts`. El pequeño riesgo de consistencia entre-queries
+  // (aceptado con el mismo criterio que esos dos casos) es irrelevante para
+  // una grilla operativa ya cacheada 20s.
   async findPeriodEmployees(query: TimeEntriesPeriodEmployeesQuery, employeeAccessWhere: Prisma.EmployeeWhereInput) {
     const where = buildPeriodEmployeeWhere(query, employeeAccessWhere);
     const skip = (query.page - 1) * query.take;
     const { start, end } = periodRange(query.period);
 
-    return prisma.$transaction(async (tx) => {
-      const [employees, total] = await Promise.all([
-        tx.employee.findMany({
-          where,
-          select: periodEmployeeSelect,
-          orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
-          skip,
-          take: query.take,
-        }),
-        tx.employee.count({ where }),
-      ]);
+    const [employees, total] = await Promise.all([
+      prisma.employee.findMany({
+        where,
+        select: periodEmployeeSelect,
+        orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
+        skip,
+        take: query.take,
+      }),
+      prisma.employee.count({ where }),
+    ]);
 
-      const employeeIds = employees.map((employee) => employee.id);
-      const [entries, breakdowns, novelties] = await Promise.all([
-        employeeIds.length
-          ? tx.timeEntry.findMany({
-              where: {
-                period: query.period,
-                employeeId: { in: employeeIds },
-              },
-              select: {
-                employeeId: true,
-                day: true,
-                hours: true,
-                status: true,
-                appliedMultiplier: true,
-                hourConcept: { select: { systemRole: true } },
-                workShift: { select: { status: true } },
-                // Etapa 11A: nombre de la/las regla(s) ganadora(s) para el
-                // indicador de la grilla — sólo existe para entradas del
-                // fichador (timeSegmentId no nulo); una carga manual queda
-                // con appliedMultiplier correcto pero sin este detalle (ver
-                // docs/decisions/HOURS_GRID_REVIEW_SPECIAL_HOURS_AUDIT_11A.md).
-                timeSegment: {
-                  select: {
-                    specialHourRuleApplications: {
-                      where: { isWinner: true },
-                      select: { wasConflicting: true, doubleHourRule: { select: { name: true } } },
-                    },
+    const employeeIds = employees.map((employee) => employee.id);
+    const [entries, breakdowns, novelties] = await Promise.all([
+      employeeIds.length
+        ? prisma.timeEntry.findMany({
+            where: {
+              period: query.period,
+              employeeId: { in: employeeIds },
+            },
+            select: {
+              employeeId: true,
+              day: true,
+              hours: true,
+              status: true,
+              appliedMultiplier: true,
+              hourConcept: { select: { systemRole: true } },
+              workShift: { select: { status: true } },
+              // Etapa 11A: nombre de la/las regla(s) ganadora(s) para el
+              // indicador de la grilla — sólo existe para entradas del
+              // fichador (timeSegmentId no nulo); una carga manual queda
+              // con appliedMultiplier correcto pero sin este detalle (ver
+              // docs/decisions/HOURS_GRID_REVIEW_SPECIAL_HOURS_AUDIT_11A.md).
+              timeSegment: {
+                select: {
+                  specialHourRuleApplications: {
+                    where: { isWinner: true },
+                    select: { wasConflicting: true, doubleHourRule: { select: { name: true } } },
                   },
                 },
               },
-            })
-          : Promise.resolve([]),
-        // Etapa 6M: "especial"/"adicional" en este resumen ahora sale de
-        // HourConceptBreakdown (MANUAL o AUTOMATIC, sin RECHAZADO) — no de
-        // TimeEntry no-Normal legacy. No se suma al total.
-        employeeIds.length
-          ? tx.hourConceptBreakdown.findMany({
-              where: {
-                period: query.period,
-                employeeId: { in: employeeIds },
-                status: { not: "RECHAZADO" },
-              },
-              select: { employeeId: true, day: true, minutes: true },
-            })
-          : Promise.resolve([]),
-        employeeIds.length
-          ? tx.novelty.findMany({
-              where: {
-                employeeId: { in: employeeIds },
-                status: { not: "RECHAZADO" },
-                fromDate: { lt: end },
-                OR: [{ toDate: null }, { toDate: { gte: start } }],
-              },
-              select: {
-                employeeId: true,
-                fromDate: true,
-                toDate: true,
-                noveltyType: { select: { name: true, allowsDateTo: true } },
-              },
-            })
-          : Promise.resolve([]),
-      ]);
+            },
+          })
+        : Promise.resolve([]),
+      // Etapa 6M: "especial"/"adicional" en este resumen ahora sale de
+      // HourConceptBreakdown (MANUAL o AUTOMATIC, sin RECHAZADO) — no de
+      // TimeEntry no-Normal legacy. No se suma al total.
+      employeeIds.length
+        ? prisma.hourConceptBreakdown.findMany({
+            where: {
+              period: query.period,
+              employeeId: { in: employeeIds },
+              status: { not: "RECHAZADO" },
+            },
+            select: { employeeId: true, day: true, minutes: true },
+          })
+        : Promise.resolve([]),
+      employeeIds.length
+        ? prisma.novelty.findMany({
+            where: {
+              employeeId: { in: employeeIds },
+              status: { not: "RECHAZADO" },
+              fromDate: { lt: end },
+              OR: [{ toDate: null }, { toDate: { gte: start } }],
+            },
+            select: {
+              employeeId: true,
+              fromDate: true,
+              toDate: true,
+              noveltyType: { select: { name: true, allowsDateTo: true } },
+            },
+          })
+        : Promise.resolve([]),
+    ]);
 
       const grouped = new Map<string, { total: number; normal: number; special: number; incidents: number; statuses: string[]; specialHourAdditional: number }>();
       const dailyGrouped = new Map<string, Map<number, { normal: number; special: number; total: number; specialHourMultiplier: number; specialHourAdditional: number; specialHourRuleNames: string[]; specialHourConflict: boolean }>>();
@@ -845,7 +865,6 @@ export const timeEntriesRepository = {
         }),
         total,
       };
-    }, { timeout: 15_000 });
   },
 
   findForExport(query: TimeEntriesExportQuery, employeeAccessWhere: Prisma.EmployeeWhereInput) {

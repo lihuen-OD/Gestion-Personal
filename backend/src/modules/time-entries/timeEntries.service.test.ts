@@ -381,6 +381,96 @@ describe("update — flujo de aprobación por rol (Etapa 6L.3)", () => {
   });
 });
 
+// Etapa 14C.2 (ampliada): create()/update() paralelizan sus validaciones
+// independientes con runValidationsInPriorityOrder (Promise.allSettled), en
+// vez de un await secuencial uno por uno. Estos tests fijan la garantía
+// central de ese cambio: ante varias validaciones fallando a la vez, se
+// sigue lanzando exactamente el mismo error que lanzaba el código secuencial
+// anterior (el de mayor prioridad en la lista) — el usuario nunca ve un
+// mensaje distinto sólo porque ahora corren en paralelo. También confirman
+// que las validaciones de menor prioridad SÍ se ejecutan igual (no se
+// cortocircuitan), que es la diferencia real con un await secuencial.
+describe("create/update — orden de prioridad de errores se mantiene igual al paralelizar validaciones (Etapa 14C.2 ampliada)", () => {
+  const rrhhUser = { id: "user-rrhh", role: "NIVEL_1_RRHH" } as Express.AuthUser;
+  const overtimeConcept = { id: "hour-concept-overtime", code: "HC-EXTRA", name: "Hora extra", status: "ACTIVO", systemRole: null };
+  const createInput = { employeeId: "employee-1", hourConceptId: overtimeConcept.id, date: new Date("2026-08-10T00:00:00Z"), hours: 8 };
+  const blockingNovelty = { noveltyType: { code: "VAC", name: "Vacaciones" } };
+
+  describe("create", () => {
+    it("scope + concepto + día bloqueado + duplicado fallan a la vez: se lanza EMPLOYEE_SCOPE_FORBIDDEN (mayor prioridad), no otro", async () => {
+      repo.countEmployeeInScope.mockResolvedValue(0); // ensureEmployeeScope falla (1ra prioridad)
+      repo.findHourConceptById.mockResolvedValue(overtimeConcept);
+      repo.findEnabledHourConcept.mockResolvedValue(null); // ensureHourConceptEnabled falla (2da)
+      repo.findBlockingNovelty.mockResolvedValue(blockingNovelty); // ensureDayIsNotBlocked falla (3ra)
+      repo.findDuplicate.mockResolvedValue({ id: "dup-1" }); // ensureNoDuplicate falla (4ta)
+
+      await expect(timeEntriesService.create(createInput, rrhhUser)).rejects.toMatchObject({ code: "EMPLOYEE_SCOPE_FORBIDDEN" });
+      // Las 4 se ejecutaron igual (Promise.allSettled no corta apenas una falla) —
+      // es la prueba de que corren en paralelo, no secuencial con corte temprano.
+      expect(repo.countEmployeeInScope).toHaveBeenCalledTimes(1);
+      expect(repo.findHourConceptById).toHaveBeenCalledTimes(1);
+      expect(repo.findBlockingNovelty).toHaveBeenCalledTimes(1);
+      expect(repo.findDuplicate).toHaveBeenCalledTimes(1);
+      expect(repo.create).not.toHaveBeenCalled();
+    });
+
+    it("scope OK pero concepto + día bloqueado + duplicado fallan: se lanza HOUR_CONCEPT_NOT_ENABLED (2da prioridad), no las de menor prioridad", async () => {
+      repo.countEmployeeInScope.mockResolvedValue(1);
+      repo.findHourConceptById.mockResolvedValue(overtimeConcept);
+      repo.findEnabledHourConcept.mockResolvedValue(null);
+      repo.findBlockingNovelty.mockResolvedValue(blockingNovelty);
+      repo.findDuplicate.mockResolvedValue({ id: "dup-1" });
+
+      await expect(timeEntriesService.create(createInput, rrhhUser)).rejects.toMatchObject({ code: "HOUR_CONCEPT_NOT_ENABLED" });
+      expect(repo.create).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("update", () => {
+    const existingEntry = {
+      id: "entry-1",
+      employeeId: "employee-1",
+      hourConceptId: overtimeConcept.id,
+      date: new Date("2026-08-10T00:00:00Z"),
+      period: "2026-08",
+      status: "BORRADOR",
+      createdByUserId: "user-rrhh",
+      employee: { legajo: "100" },
+    };
+
+    beforeEach(() => {
+      repo.findById.mockResolvedValue(existingEntry);
+      mockedMonthlyClosureFindUnique.mockResolvedValue(null);
+    });
+
+    it("concepto + día bloqueado + duplicado fallan a la vez: se lanza HOUR_CONCEPT_NOT_ENABLED (mayor prioridad en update)", async () => {
+      repo.findHourConceptById.mockResolvedValue(overtimeConcept);
+      repo.findEnabledHourConcept.mockResolvedValue(null); // ensureHourConceptEnabled falla (1ra prioridad en update)
+      repo.findBlockingNovelty.mockResolvedValue(blockingNovelty); // ensureDayIsNotBlocked falla (2da)
+      repo.findDuplicate.mockResolvedValue({ id: "dup-1" }); // ensureNoDuplicate falla (3ra)
+
+      await expect(timeEntriesService.update("entry-1", { hours: 6 }, rrhhUser)).rejects.toMatchObject({
+        code: "HOUR_CONCEPT_NOT_ENABLED",
+      });
+      expect(repo.findHourConceptById).toHaveBeenCalledTimes(1);
+      expect(repo.findBlockingNovelty).toHaveBeenCalledTimes(1);
+      expect(repo.findDuplicate).toHaveBeenCalledTimes(1);
+      expect(repo.update).not.toHaveBeenCalled();
+    });
+
+    it("concepto OK pero día bloqueado + duplicado fallan: se lanza TIME_ENTRY_DAY_BLOCKED_BY_NOVELTY (2da prioridad en update)", async () => {
+      repo.findHourConceptById.mockResolvedValue({ id: overtimeConcept.id, status: "ACTIVO", systemRole: "NORMAL_BASE" });
+      repo.findBlockingNovelty.mockResolvedValue(blockingNovelty);
+      repo.findDuplicate.mockResolvedValue({ id: "dup-1" });
+
+      await expect(timeEntriesService.update("entry-1", { hours: 6 }, rrhhUser)).rejects.toMatchObject({
+        code: "TIME_ENTRY_DAY_BLOCKED_BY_NOVELTY",
+      });
+      expect(repo.update).not.toHaveBeenCalled();
+    });
+  });
+});
+
 describe("approve/reject/return — la aprobación final es exclusiva de RRHH (Etapa 6L.3, ajuste)", () => {
   const rrhhUser = { id: "user-rrhh", role: "NIVEL_1_RRHH" } as Express.AuthUser;
   const supervisionUser = { id: "user-sup", role: "NIVEL_2_SUPERVISION" } as Express.AuthUser;

@@ -301,6 +301,153 @@ const employeeOverviewCoreSelect = {
   createdByUserId: true,
 } satisfies Prisma.EmployeeSelect;
 
+// Etapa 14C.2 (ampliada): mismo split ya probado en `employeeOverviewCoreSelect`
+// / `findOverviewDetailsById` (14C.1), aplicado ahora al detalle completo del
+// Legajo. `employeeDetailSelect` (arriba) queda como el único select "todo
+// anidado" — se sigue usando SOLO en `create()`, donde esas relaciones se
+// están creando en la misma llamada (partirlo ahí no evita ningún round-trip,
+// las filas no existen todavía). Los otros 7 call sites de `employeeDetailSelect`
+// (findById, updateContact, upsertAddress, upsertTransport, replaceAssignments,
+// replaceHourConcepts, createLaborMovement, createDocument) leían/escribían y
+// releían con esas mismas ~9 relaciones anidadas — sin `relationJoins`, Prisma
+// las resuelve como round-trips separados y SERIALIZADOS. Este core (escalares
+// + relaciones to-one, igual que employeeDetailSelect en esa parte) más
+// `attachEmployeeDetailRelations` (6 `findMany` en paralelo real vía
+// Promise.all) devuelven EXACTAMENTE el mismo shape, sólo más rápido.
+const employeeDetailCoreSelect = {
+  ...employeeOverviewCoreSelect,
+  address: true,
+  transport: true,
+  sector: {
+    select: {
+      id: true,
+      name: true,
+      code: true,
+      area: {
+        select: {
+          id: true,
+          name: true,
+          establishment: {
+            select: {
+              id: true,
+              name: true,
+              businessUnit: { select: { id: true, name: true } },
+            },
+          },
+        },
+      },
+    },
+  },
+  costCenter: { select: { id: true, name: true, code: true } },
+  position: {
+    select: {
+      id: true,
+      code: true,
+      name: true,
+      status: true,
+      mission: true,
+      description: true,
+      lastUpdatedAt: true,
+      responsibilities: true,
+      internalRelations: true,
+      externalRelations: true,
+      competencies: true,
+      workConditions: true,
+      performanceIndicators: true,
+      evaluationCriteria: true,
+      sectorId: true,
+      createdAt: true,
+      updatedAt: true,
+      sector: {
+        select: {
+          id: true,
+          name: true,
+          area: {
+            select: {
+              id: true,
+              name: true,
+              establishment: {
+                select: {
+                  id: true,
+                  name: true,
+                  businessUnit: { select: { id: true, name: true } },
+                },
+              },
+            },
+          },
+        },
+      },
+      salaryCategories: {
+        select: { salaryCategory: { select: { id: true, name: true, order: true } } },
+      },
+    },
+  },
+} satisfies Prisma.EmployeeSelect;
+
+async function attachEmployeeDetailRelations(employeeId: string) {
+  const [companies, laborMovements, assignments, hourConcepts, novelties, documents] = await Promise.all([
+    prisma.employeeCompany.findMany({
+      where: { employeeId },
+      select: { isPrimary: true, company: { select: { id: true, name: true, code: true } } },
+    }),
+    prisma.laborMovement.findMany({
+      where: { employeeId },
+      include: { createdBy: { select: { id: true, name: true } } },
+      orderBy: { effectiveFrom: "desc" },
+      take: 50,
+    }),
+    prisma.employeeAssignment.findMany({
+      where: { employeeId },
+      take: 100,
+      include: { user: { select: { id: true, name: true, employeeId: true } } },
+    }),
+    prisma.employeeHourConcept.findMany({
+      where: { employeeId, ...assignableHourConceptsSelect.where },
+      select: assignableHourConceptsSelect.select,
+    }),
+    prisma.novelty.findMany({
+      where: { employeeId },
+      include: { noveltyType: true },
+      orderBy: { fromDate: "desc" },
+      take: 20,
+    }),
+    prisma.employeeDocument.findMany({
+      where: { employeeId },
+      include: { category: true },
+      orderBy: { createdAt: "desc" },
+      take: 20,
+    }),
+  ]);
+  return { companies, laborMovements, assignments, hourConcepts, novelties, documents };
+}
+
+async function findEmployeeDetailById(id: string, accessWhere: Prisma.EmployeeWhereInput = {}) {
+  const core = await prisma.employee.findFirst({ where: { AND: [{ id }, accessWhere] }, select: employeeDetailCoreSelect });
+  if (!core) return null;
+  return { ...core, ...(await attachEmployeeDetailRelations(id)) };
+}
+
+async function findEmployeeDetailByIdOrThrow(id: string) {
+  const core = await prisma.employee.findUniqueOrThrow({ where: { id }, select: employeeDetailCoreSelect });
+  return { ...core, ...(await attachEmployeeDetailRelations(id)) };
+}
+
+// Etapa 14C.3: causa raíz real de los tiempos reportados en `block-history`
+// (Employee.findFirst 2994-3508ms, más EmployeeDocument/LaborMovement/
+// EmployeeCompany/Novelty.findMany innecesarios). `listFieldHistory`/
+// `listBlockHistory`/`createFieldHistory`/`createBlockHistory`
+// (`employees.service.ts`) sólo necesitan confirmar que el legajo existe y
+// está dentro del alcance del usuario — antes usaban `employeesService.getById`,
+// que trae el detalle COMPLETO (`findEmployeeDetailById`: núcleo con cadena
+// sector/position de 4 niveles + 6 `findMany` de relaciones) y descartaba el
+// resultado. Este check no trae ninguna relación — mismo `where`
+// (`AND: [{id}, accessWhere]`) que `findEmployeeDetailById`, mismo criterio de
+// acceso, sin pagar ninguno de esos 7 round-trips extra.
+async function existsWithAccess(id: string, accessWhere: Prisma.EmployeeWhereInput = {}) {
+  const row = await prisma.employee.findFirst({ where: { AND: [{ id }, accessWhere] }, select: { id: true } });
+  return Boolean(row);
+}
+
 // Etapa 14C.1: antes, `findOverviewDetailsById` pedía esto MÁS `companies`/
 // `laborMovements`/`assignments`/`hourConcepts` en un único `findFirst`
 // anidado (~10 relaciones/niveles distintos, cada uno un round-trip propio
@@ -695,10 +842,18 @@ async function fetchSyncBatch(cursor: string | undefined): Promise<Array<{ id: s
 }
 
 export const employeesRepository = {
+  // Etapa 14C.3: `$transaction([...])` -> `Promise.all([...])`. Mismo
+  // antipatrón ya corregido en `summary()` (14C.1), `audit.repository.findMany`
+  // y `findOverviewDetailsById` (14C.2 ampliada) — la forma-array de
+  // `$transaction` ejecuta sus queries secuencialmente sobre una única
+  // conexión en vez de en paralelo. `findMany`/`count` son dos lecturas
+  // independientes (listado + conteo para paginar), sin ninguna escritura
+  // entre medio — no necesitan una foto transaccional consistente entre sí,
+  // el mismo criterio ya aplicado a las otras 3 correcciones de este patrón.
   async findMany(query: ListEmployeesQuery, accessWhere: Prisma.EmployeeWhereInput) {
     const where = { AND: [buildWhere(query), accessWhere, ...(query.status ? [{ status: query.status }] : [])] };
     const skip = (query.page - 1) * query.take;
-    return prisma.$transaction([
+    return Promise.all([
       prisma.employee.findMany({
         where,
         select: employeeListSelect,
@@ -756,10 +911,13 @@ export const employeesRepository = {
     };
   },
 
+  // Etapa 14C.3: mismo cambio que `findMany` arriba — `$transaction([...])`
+  // -> `Promise.all([...])`, misma justificación (dos lecturas independientes
+  // para paginar un catálogo, sin escritura entre medio).
   findOrgChart(query: ListEmployeeOrgChartQuery, accessWhere: Prisma.EmployeeWhereInput) {
     const where = { AND: [buildOrgChartWhere(query), accessWhere] };
     const skip = (query.page - 1) * query.take;
-    return prisma.$transaction([
+    return Promise.all([
       prisma.employee.findMany({
         where,
         select: employeeOrgChartSelect,
@@ -771,10 +929,11 @@ export const employeesRepository = {
     ]);
   },
 
+  // Etapa 14C.3: mismo cambio, misma justificación que `findMany`/`findOrgChart`.
   findOptions(query: ListEmployeeOptionsQuery, accessWhere: Prisma.EmployeeWhereInput) {
     const where = { AND: [buildOptionsWhere(query), accessWhere] };
     const skip = (query.page - 1) * query.take;
-    return prisma.$transaction([
+    return Promise.all([
       prisma.employee.findMany({
         where,
         select: employeeOptionSelect,
@@ -787,7 +946,11 @@ export const employeesRepository = {
   },
 
   findById(id: string, accessWhere: Prisma.EmployeeWhereInput = {}) {
-    return prisma.employee.findFirst({ where: { AND: [{ id }, accessWhere] }, select: employeeDetailSelect });
+    return findEmployeeDetailById(id, accessWhere);
+  },
+
+  existsWithAccess(id: string, accessWhere: Prisma.EmployeeWhereInput = {}) {
+    return existsWithAccess(id, accessWhere);
   },
 
   findUpdateAuditSnapshot(id: string) {
@@ -1218,8 +1381,8 @@ export const employeesRepository = {
     });
   },
 
-  updateContact(employeeId: string, input: UpdateEmployeeContactInput) {
-    return prisma.employee.update({
+  async updateContact(employeeId: string, input: UpdateEmployeeContactInput) {
+    await prisma.employee.update({
       where: { id: employeeId },
       data: {
         ...(input.email !== undefined ? { email: input.email || null } : {}),
@@ -1229,12 +1392,13 @@ export const employeesRepository = {
         ...(input.emergencyRelation !== undefined ? { emergencyRelation: input.emergencyRelation || null } : {}),
         ...(input.emergencyPhone !== undefined ? { emergencyPhone: input.emergencyPhone || null } : {}),
       },
-      select: employeeDetailSelect,
+      select: { id: true },
     });
+    return findEmployeeDetailByIdOrThrow(employeeId);
   },
 
-  upsertAddress(employeeId: string, input: UpsertEmployeeAddressInput) {
-    return prisma.employee.update({
+  async upsertAddress(employeeId: string, input: UpsertEmployeeAddressInput) {
+    await prisma.employee.update({
       where: { id: employeeId },
       data: {
         address: {
@@ -1244,12 +1408,13 @@ export const employeesRepository = {
           },
         },
       },
-      select: employeeDetailSelect,
+      select: { id: true },
     });
+    return findEmployeeDetailByIdOrThrow(employeeId);
   },
 
-  upsertTransport(employeeId: string, input: UpsertEmployeeTransportInput) {
-    return prisma.employee.update({
+  async upsertTransport(employeeId: string, input: UpsertEmployeeTransportInput) {
+    await prisma.employee.update({
       where: { id: employeeId },
       data: {
         transport: {
@@ -1259,16 +1424,18 @@ export const employeesRepository = {
           },
         },
       },
-      select: employeeDetailSelect,
+      select: { id: true },
     });
+    return findEmployeeDetailByIdOrThrow(employeeId);
   },
 
   async replaceAssignments(employeeId: string, assignments: EmployeeAssignmentInput[]) {
-    // Etapa 6Q: el re-fetch con employeeDetailSelect (relaciones anidadas
-    // pesadas) se saca de la transacción interactiva — es sólo lectura para
-    // dar forma a la respuesta, no hace falta que sea atómico con el
-    // delete+create, y mantenerlo afuera evita expirar el timeout de 5s de
-    // Prisma bajo latencia alta de Neon (visto en QA de Etapa 6Q).
+    // Etapa 6Q: el re-fetch (relaciones anidadas pesadas, ver
+    // findEmployeeDetailByIdOrThrow) se saca de la transacción interactiva —
+    // es sólo lectura para dar forma a la respuesta, no hace falta que sea
+    // atómico con el delete+create, y mantenerlo afuera evita expirar el
+    // timeout de 5s de Prisma bajo latencia alta de Neon (visto en QA de
+    // Etapa 6Q).
     await prisma.$transaction(async (tx) => {
       await tx.employeeAssignment.deleteMany({ where: { employeeId } });
       if (assignments.length) {
@@ -1287,7 +1454,7 @@ export const employeesRepository = {
         });
       }
     });
-    return prisma.employee.findUniqueOrThrow({ where: { id: employeeId }, select: employeeDetailSelect });
+    return findEmployeeDetailByIdOrThrow(employeeId);
   },
 
   async replaceHourConcepts(employeeId: string, hourConceptIds: string[]) {
@@ -1302,7 +1469,7 @@ export const employeesRepository = {
         });
       }
     });
-    return prisma.employee.findUniqueOrThrow({ where: { id: employeeId }, select: employeeDetailSelect });
+    return findEmployeeDetailByIdOrThrow(employeeId);
   },
 
   findAssignableHourConceptIds(hourConceptIds: string[]) {
@@ -1320,10 +1487,10 @@ export const employeesRepository = {
 
   // Etapa 7A: mismo criterio que replaceAssignments/replaceHourConcepts (6Q).
   // El create + recálculo de estado sí necesitan ser atómicos y quedan dentro
-  // de la transacción; el re-fetch con employeeDetailSelect (relaciones
-  // anidadas pesadas) es sólo lectura para dar forma a la respuesta y se hace
-  // después de que la transacción cerró, para no arriesgar el timeout de 5s
-  // de Prisma bajo latencia alta de Neon.
+  // de la transacción; el re-fetch (relaciones anidadas pesadas, ver
+  // findEmployeeDetailByIdOrThrow) es sólo lectura para dar forma a la
+  // respuesta y se hace después de que la transacción cerró, para no
+  // arriesgar el timeout de 5s de Prisma bajo latencia alta de Neon.
   async createLaborMovement(employeeId: string, input: CreateLaborMovementInput, createdByUserId?: string | null) {
     const movement = await prisma.$transaction(async (tx) => {
       const created = await tx.laborMovement.create({
@@ -1350,7 +1517,7 @@ export const employeesRepository = {
       return created;
     });
 
-    const employee = await prisma.employee.findUniqueOrThrow({ where: { id: employeeId }, select: employeeDetailSelect });
+    const employee = await findEmployeeDetailByIdOrThrow(employeeId);
     return { employee, movement };
   },
 
@@ -1366,7 +1533,7 @@ export const employeesRepository = {
     input: Omit<CreateEmployeeDocumentInput, "storageKey"> & { storageKey: string; storageFileId?: string | null },
     uploadedByUserId?: string | null,
   ) {
-    // Etapa 7A: mismo criterio que 6Q — el re-fetch con employeeDetailSelect
+    // Etapa 7A: mismo criterio que 6Q — el re-fetch (findEmployeeDetailByIdOrThrow)
     // se hace fuera de la transacción. Acá además la transacción sólo envolvía
     // ese create (que ya es atómico por sí mismo) más la lectura pesada, así
     // que sacarla no pierde ninguna garantía.
@@ -1388,7 +1555,7 @@ export const employeesRepository = {
       },
     });
 
-    return prisma.employee.findUniqueOrThrow({ where: { id: employeeId }, select: employeeDetailSelect });
+    return findEmployeeDetailByIdOrThrow(employeeId);
   },
 
   findFieldHistory(employeeId: string, query: ListEmployeeHistoryQuery) {

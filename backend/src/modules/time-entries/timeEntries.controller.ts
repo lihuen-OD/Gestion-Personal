@@ -5,7 +5,7 @@ import { requireParam } from "../../shared/http/params";
 import type { AdminCloseWorkShiftInput, AdminWorkShiftReasonInput, AttendanceObservationsQuery, AttendanceSummaryQuery, ClockByDniInput, ClockByEmployeeInput, ClockEmployeeSearchQuery, ClockPhotoPunchInput, CreateWorkShiftInput, ListTimeEntriesQuery, PreviewWorkShiftInput, ResolveAttendanceObservationInput, TimeEntriesExportQuery, TimeEntriesPeriodEmployeesQuery, TimeEntriesSummaryQuery } from "./timeEntries.schemas";
 import { attendanceSummaryCache, clearTimeEntriesReadCaches, timeEntriesListCache, timeEntriesPeriodEmployeesCache, timeEntriesSummaryCache } from "./timeEntries.cache";
 import { timeEntriesExportToCsv, timeEntriesService } from "./timeEntries.service";
-import { clearEmployeeReadCaches } from "../employees/employees.controller";
+import { clearEmployeeReadCaches, clearEmployeeTimeGridCache } from "../employees/employees.controller";
 
 function userScopedCacheKey(req: Parameters<RequestHandler>[0]) {
   return `${req.user?.id || "anon"}:${req.user?.role || "none"}:${req.originalUrl}`;
@@ -137,15 +137,22 @@ export const timeEntriesController = {
 
   // Etapa 6L.4: create/update/submit/approve/reject/return mutan TimeEntry,
   // que es lo que lee GET /employees/:id/time-grid (employeeTimeGridCache,
-  // 60s de TTL en employees.controller.ts). Sin clearEmployeeReadCaches acá,
+  // 60s de TTL en employees.controller.ts). Sin invalidar esa cache acá,
   // la grilla podía guardar bien en base y seguir mostrando el estado
   // anterior hasta que el cache expirara o algo más lo invalidara (p. ej. un
   // desglose manual, que sí lo limpiaba) — ese era el bug de "se guarda pero
   // no se ve" reportado en la grilla.
+  // Etapa 14C.2 (ampliada): create/update (el guardado manual real, ver
+  // docs/decisions/TIME_ENTRIES_AND_EMPLOYEES_PERFORMANCE_14C2.md) sólo
+  // necesitaban esa única cache de grilla horaria — `clearEmployeeReadCaches`
+  // limpiaba además legajos/listado/resumen/organigrama/opciones sin ninguna
+  // relación con guardar una hora. submit/approve/reject/return quedan con
+  // el invalidado amplio sin cambios (fuera del alcance acotado de esta
+  // etapa: no son "guardado manual", son transiciones de aprobación).
   create: (async (req, res) => {
     const item = await timeEntriesService.create(req.body, req.user!, requestAuditContext(req));
     clearTimeEntriesReadCaches();
-    clearEmployeeReadCaches();
+    clearEmployeeTimeGridCache();
     res.status(201).json({ data: item });
   }) satisfies RequestHandler,
 
@@ -178,10 +185,12 @@ export const timeEntriesController = {
     res.json({ data: result });
   }) satisfies RequestHandler,
 
+  // Etapa 14C.2 (ampliada): mismo criterio que create() — sólo la grilla de
+  // este empleado se ve afectada por una edición manual.
   update: (async (req, res) => {
     const item = await timeEntriesService.update(requireParam(req, "id"), req.body, req.user!, requestAuditContext(req));
     clearTimeEntriesReadCaches();
-    clearEmployeeReadCaches();
+    clearEmployeeTimeGridCache();
     res.json({ data: item });
   }) satisfies RequestHandler,
 

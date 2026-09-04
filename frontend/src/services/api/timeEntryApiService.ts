@@ -485,11 +485,17 @@ export const timeEntryApiService = {
     return mapTimeEntryFromApi(response.data);
   },
 
-  async save(entry: Omit<TimeEntry, "id">) {
-    const existing = (await this.getByEmployee(entry.employeeId, entry.period)).find(
-      (item) => item.day === entry.day && (item.conceptId === entry.conceptId || item.type === entry.type),
-    );
-    const saved = existing ? await this.update(existing.id, entry) : await this.create(entry);
+  async save(entry: Omit<TimeEntry, "id">, options?: { knownExistingId?: string | null }) {
+    // Etapa 14C.2 (ampliada): si el llamador ya sabe (por el estado local,
+    // ya cargado) si la fila tiene un TimeEntry existente o no, se salta el
+    // GET redundante que hacía este método antes de decidir create/update.
+    const existingId =
+      options && "knownExistingId" in options
+        ? options.knownExistingId
+        : (await this.getByEmployee(entry.employeeId, entry.period)).find(
+            (item) => item.day === entry.day && (item.conceptId === entry.conceptId || item.type === entry.type),
+          )?.id;
+    const saved = existingId ? await this.update(existingId, entry) : await this.create(entry);
     if (entry.status === "En revisión" && saved.status !== "En revisión") {
       return this.submit(saved.id);
     }

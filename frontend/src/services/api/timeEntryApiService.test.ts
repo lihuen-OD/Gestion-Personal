@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
-import { mapTimeEntryFromApi } from "./timeEntryApiService";
+import { describe, expect, it, vi } from "vitest";
+import { mapTimeEntryFromApi, timeEntryApiService } from "./timeEntryApiService";
+import type { TimeEntry } from "../../types";
 
 // Etapa 11B: la Bandeja de revisión (HoursPage.tsx, vista "Por registro")
 // perdía appliedMultiplier al mapear la respuesta cruda del backend al tipo
@@ -73,5 +74,104 @@ describe("mapTimeEntryFromApi — Horas Especiales en la Bandeja de revisión (E
 
     expect(entry.isSpecial).toBe(false); // kind === "NORMAL" -> Concepto Horario base, no especial
     expect(entry.specialHourMultiplier).toBe(2); // Hora Especial sigue aplicando igual, dominio independiente
+  });
+});
+
+// Etapa 14C.2 (ampliada): guardado manual en Carga Horaria — save() hacía un
+// GET redundante (getByEmployee) para decidir create-vs-update aunque el
+// llamador (EmployeeHoursPage, ya con la grilla completa cargada en estado
+// local) ya sabía la respuesta. knownExistingId permite saltear ese GET sin
+// cambiar el resultado final (mismo create/update, mismo submit posterior).
+describe("timeEntryApiService.save — knownExistingId evita el GET redundante (Etapa 14C.2 ampliada)", () => {
+  const payload = {
+    employeeId: "employee-1",
+    period: "2026-08",
+    day: 5,
+    type: "Hora normal",
+    hours: 8,
+    notes: "",
+    status: "Aprobado",
+    conceptId: "concept-normal",
+    isSpecial: false,
+    origin: "MANUAL",
+  } as unknown as Omit<TimeEntry, "id">;
+
+  it("con knownExistingId (string): llama a update con ese id y NO consulta getByEmployee", async () => {
+    const getByEmployeeSpy = vi.spyOn(timeEntryApiService, "getByEmployee");
+    const updateSpy = vi
+      .spyOn(timeEntryApiService, "update")
+      .mockResolvedValue({ id: "entry-existing", status: "Aprobado" } as TimeEntry);
+    const createSpy = vi.spyOn(timeEntryApiService, "create");
+
+    const result = await timeEntryApiService.save(payload, { knownExistingId: "entry-existing" });
+
+    expect(getByEmployeeSpy).not.toHaveBeenCalled();
+    expect(updateSpy).toHaveBeenCalledWith("entry-existing", payload);
+    expect(createSpy).not.toHaveBeenCalled();
+    expect(result).toEqual({ id: "entry-existing", status: "Aprobado" });
+
+    getByEmployeeSpy.mockRestore();
+    updateSpy.mockRestore();
+    createSpy.mockRestore();
+  });
+
+  it("con knownExistingId: null (sabido que no existe): llama a create y NO consulta getByEmployee", async () => {
+    const getByEmployeeSpy = vi.spyOn(timeEntryApiService, "getByEmployee");
+    const createSpy = vi
+      .spyOn(timeEntryApiService, "create")
+      .mockResolvedValue({ id: "entry-new", status: "Aprobado" } as TimeEntry);
+    const updateSpy = vi.spyOn(timeEntryApiService, "update");
+
+    const result = await timeEntryApiService.save(payload, { knownExistingId: null });
+
+    expect(getByEmployeeSpy).not.toHaveBeenCalled();
+    expect(createSpy).toHaveBeenCalledWith(payload);
+    expect(updateSpy).not.toHaveBeenCalled();
+    expect(result).toEqual({ id: "entry-new", status: "Aprobado" });
+
+    getByEmployeeSpy.mockRestore();
+    createSpy.mockRestore();
+    updateSpy.mockRestore();
+  });
+
+  it("sin options (compatibilidad hacia atrás): sigue consultando getByEmployee para decidir create/update", async () => {
+    const getByEmployeeSpy = vi
+      .spyOn(timeEntryApiService, "getByEmployee")
+      .mockResolvedValue([{ id: "entry-found", day: 5, conceptId: "concept-normal", type: "Hora normal" } as TimeEntry]);
+    const updateSpy = vi
+      .spyOn(timeEntryApiService, "update")
+      .mockResolvedValue({ id: "entry-found", status: "Aprobado" } as TimeEntry);
+    const createSpy = vi.spyOn(timeEntryApiService, "create");
+
+    const result = await timeEntryApiService.save(payload);
+
+    expect(getByEmployeeSpy).toHaveBeenCalledWith("employee-1", "2026-08");
+    expect(updateSpy).toHaveBeenCalledWith("entry-found", payload);
+    expect(createSpy).not.toHaveBeenCalled();
+    expect(result).toEqual({ id: "entry-found", status: "Aprobado" });
+
+    getByEmployeeSpy.mockRestore();
+    updateSpy.mockRestore();
+    createSpy.mockRestore();
+  });
+
+  it("status 'En revisión' con resultado que aún no quedó en revisión: sigue disparando submit()", async () => {
+    const updateSpy = vi
+      .spyOn(timeEntryApiService, "update")
+      .mockResolvedValue({ id: "entry-existing", status: "Aprobado" } as TimeEntry);
+    const submitSpy = vi
+      .spyOn(timeEntryApiService, "submit")
+      .mockResolvedValue({ id: "entry-existing", status: "En revisión" } as TimeEntry);
+
+    const result = await timeEntryApiService.save(
+      { ...payload, status: "En revisión" },
+      { knownExistingId: "entry-existing" },
+    );
+
+    expect(submitSpy).toHaveBeenCalledWith("entry-existing");
+    expect(result).toEqual({ id: "entry-existing", status: "En revisión" });
+
+    updateSpy.mockRestore();
+    submitSpy.mockRestore();
   });
 });

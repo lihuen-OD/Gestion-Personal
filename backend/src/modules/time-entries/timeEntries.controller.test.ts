@@ -4,7 +4,7 @@ import type { Request, Response } from "express";
 import { timeEntriesController } from "./timeEntries.controller";
 import { timeEntriesService } from "./timeEntries.service";
 import { clearTimeEntriesReadCaches } from "./timeEntries.cache";
-import { clearEmployeeReadCaches } from "../employees/employees.controller";
+import { clearEmployeeReadCaches, clearEmployeeTimeGridCache } from "../employees/employees.controller";
 
 vi.mock("./timeEntries.service", () => ({
   timeEntriesService: {
@@ -28,6 +28,7 @@ vi.mock("./timeEntries.cache", () => ({
 
 vi.mock("../employees/employees.controller", () => ({
   clearEmployeeReadCaches: vi.fn(),
+  clearEmployeeTimeGridCache: vi.fn(),
 }));
 
 const mockedService = timeEntriesService as unknown as {
@@ -35,6 +36,7 @@ const mockedService = timeEntriesService as unknown as {
 };
 const mockedClearTimeEntriesReadCaches = clearTimeEntriesReadCaches as unknown as Mock;
 const mockedClearEmployeeReadCaches = clearEmployeeReadCaches as unknown as Mock;
+const mockedClearEmployeeTimeGridCache = clearEmployeeTimeGridCache as unknown as Mock;
 
 function fakeReq(overrides: Partial<Request> = {}): Request {
   return {
@@ -64,16 +66,23 @@ beforeEach(() => {
   mockedService.returnForCorrection.mockResolvedValue({ id: "entry-1", status: "DEVUELTO" });
 });
 
-describe("timeEntriesController — invalidación de employeeTimeGridCache (Etapa 6L.4)", () => {
-  it("create limpia tanto las cachés de time-entries como las de employees (grilla)", async () => {
+describe("timeEntriesController — invalidación de employeeTimeGridCache (Etapa 6L.4 / 14C.2 ampliada)", () => {
+  // Etapa 14C.2 (ampliada): create/update (guardado manual real) pasaron de
+  // `clearEmployeeReadCaches` (6 caches de employees) a
+  // `clearEmployeeTimeGridCache` (sólo la grilla horaria, la única
+  // realmente afectada por guardar una hora) — ver
+  // docs/decisions/TIME_ENTRIES_AND_EMPLOYEES_PERFORMANCE_14C2.md.
+  it("create limpia las cachés de time-entries y sólo la grilla horaria del empleado (no todo employees)", async () => {
     await timeEntriesController.create(fakeReq(), fakeRes());
     expect(mockedClearTimeEntriesReadCaches).toHaveBeenCalledTimes(1);
-    expect(mockedClearEmployeeReadCaches).toHaveBeenCalledTimes(1);
+    expect(mockedClearEmployeeTimeGridCache).toHaveBeenCalledTimes(1);
+    expect(mockedClearEmployeeReadCaches).not.toHaveBeenCalled();
   });
 
-  it("update limpia la caché de la grilla del empleado", async () => {
+  it("update limpia sólo la caché de la grilla del empleado (no todo employees)", async () => {
     await timeEntriesController.update(fakeReq(), fakeRes());
-    expect(mockedClearEmployeeReadCaches).toHaveBeenCalledTimes(1);
+    expect(mockedClearEmployeeTimeGridCache).toHaveBeenCalledTimes(1);
+    expect(mockedClearEmployeeReadCaches).not.toHaveBeenCalled();
   });
 
   it("submit limpia la caché de la grilla del empleado", async () => {

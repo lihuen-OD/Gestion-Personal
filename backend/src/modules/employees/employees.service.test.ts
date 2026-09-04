@@ -16,6 +16,11 @@ import { Prisma } from "@prisma/client";
 vi.mock("./employees.repository", () => ({
   employeesRepository: {
     findById: vi.fn(),
+    existsWithAccess: vi.fn(),
+    findFieldHistory: vi.fn(),
+    findBlockHistory: vi.fn(),
+    createFieldHistory: vi.fn(),
+    createBlockHistory: vi.fn(),
     findAssignableHourConceptIds: vi.fn(),
     findHourConceptsAuditSnapshot: vi.fn(),
     replaceHourConcepts: vi.fn(),
@@ -35,6 +40,11 @@ vi.mock("../audit/audit.service", () => ({ auditService: { register: vi.fn() } }
 
 const repo = employeesRepository as unknown as {
   findById: Mock;
+  existsWithAccess: Mock;
+  findFieldHistory: Mock;
+  findBlockHistory: Mock;
+  createFieldHistory: Mock;
+  createBlockHistory: Mock;
   findAssignableHourConceptIds: Mock;
   findHourConceptsAuditSnapshot: Mock;
   replaceHourConcepts: Mock;
@@ -514,5 +524,98 @@ describe("employeesService.getPositionValidation", () => {
 
     expect(result.tone).toBe("neutral");
     expect(result.title).toBe("Puesto sin seleccionar");
+  });
+});
+
+// Etapa 14C.3: `listFieldHistory`/`listBlockHistory`/`createFieldHistory`/
+// `createBlockHistory` pasaron de `employeesService.getById` (detalle
+// COMPLETO del legajo — causa real de los 3-5s medidos en block-history) a
+// `employeesService.assertAccessible` (sólo existencia + alcance, sin
+// relaciones). Estos tests confirman el cambio de mecanismo y que el
+// comportamiento de 404/permisos se preserva exactamente igual.
+describe("employeesService.assertAccessible / historiales de campo y bloque — Etapa 14C.3", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("assertAccessible no llama a findById (no carga el detalle completo)", async () => {
+    repo.existsWithAccess.mockResolvedValue(true);
+
+    await employeesService.assertAccessible("emp-1", rrhhUser);
+
+    expect(repo.existsWithAccess).toHaveBeenCalledWith("emp-1", {});
+    expect(repo.findById).not.toHaveBeenCalled();
+  });
+
+  it("assertAccessible lanza EMPLOYEE_NOT_FOUND (404) si no existe o está fuera de alcance", async () => {
+    repo.existsWithAccess.mockResolvedValue(false);
+
+    await expect(employeesService.assertAccessible("emp-404", rrhhUser)).rejects.toMatchObject({ code: "EMPLOYEE_NOT_FOUND", statusCode: 404 });
+  });
+
+  it("listFieldHistory usa assertAccessible (no findById) y devuelve el resultado de findFieldHistory tal cual", async () => {
+    repo.existsWithAccess.mockResolvedValue(true);
+    const rows = [{ id: "fh-1" }];
+    repo.findFieldHistory.mockResolvedValue(rows);
+
+    const result = await employeesService.listFieldHistory("emp-1", { take: 50 } as never, rrhhUser);
+
+    expect(repo.existsWithAccess).toHaveBeenCalledWith("emp-1", {});
+    expect(repo.findById).not.toHaveBeenCalled();
+    expect(repo.findFieldHistory).toHaveBeenCalledWith("emp-1", { take: 50 });
+    expect(result).toBe(rows);
+  });
+
+  it("listFieldHistory propaga 404 sin llegar a consultar el historial", async () => {
+    repo.existsWithAccess.mockResolvedValue(false);
+
+    await expect(employeesService.listFieldHistory("emp-404", { take: 50 } as never, rrhhUser)).rejects.toMatchObject({ code: "EMPLOYEE_NOT_FOUND" });
+    expect(repo.findFieldHistory).not.toHaveBeenCalled();
+  });
+
+  it("listBlockHistory usa assertAccessible (no findById) y devuelve el resultado de findBlockHistory tal cual", async () => {
+    repo.existsWithAccess.mockResolvedValue(true);
+    const rows = [{ id: "bh-1" }];
+    repo.findBlockHistory.mockResolvedValue(rows);
+
+    const result = await employeesService.listBlockHistory("emp-1", { take: 50 } as never, rrhhUser);
+
+    expect(repo.existsWithAccess).toHaveBeenCalledWith("emp-1", {});
+    expect(repo.findById).not.toHaveBeenCalled();
+    expect(repo.findBlockHistory).toHaveBeenCalledWith("emp-1", { take: 50 });
+    expect(result).toBe(rows);
+  });
+
+  it("listBlockHistory propaga 404 sin llegar a consultar el historial", async () => {
+    repo.existsWithAccess.mockResolvedValue(false);
+
+    await expect(employeesService.listBlockHistory("emp-404", { take: 50 } as never, rrhhUser)).rejects.toMatchObject({ code: "EMPLOYEE_NOT_FOUND" });
+    expect(repo.findBlockHistory).not.toHaveBeenCalled();
+  });
+
+  it("createFieldHistory usa assertAccessible cuando hay usuario, no findById", async () => {
+    repo.existsWithAccess.mockResolvedValue(true);
+    const record = { id: "fh-new", fieldLabel: "Sector" };
+    repo.createFieldHistory.mockResolvedValue(record);
+
+    const input = { section: "DATOS_LABORALES", field: "sectorId", fieldLabel: "Sector", newValue: "Ventas", effectiveFrom: "2026-09-01", reason: "Cambio de área" } as never;
+    const result = await employeesService.createFieldHistory("emp-1", input, { userId: "user-rrhh" }, rrhhUser);
+
+    expect(repo.existsWithAccess).toHaveBeenCalledWith("emp-1", {});
+    expect(repo.findById).not.toHaveBeenCalled();
+    expect(result).toBe(record);
+  });
+
+  it("createBlockHistory usa assertAccessible cuando hay usuario, no findById", async () => {
+    repo.existsWithAccess.mockResolvedValue(true);
+    const record = { id: "bh-new", blockLabel: "Responsable de carga" };
+    repo.createBlockHistory.mockResolvedValue(record);
+
+    const input = { section: "RESPONSABLES", block: "TIME_RESPONSIBLE", blockLabel: "Responsable de carga", newValue: "user-2", effectiveFrom: "2026-09-01", reason: "Reasignación" } as never;
+    const result = await employeesService.createBlockHistory("emp-1", input, { userId: "user-rrhh" }, rrhhUser);
+
+    expect(repo.existsWithAccess).toHaveBeenCalledWith("emp-1", {});
+    expect(repo.findById).not.toHaveBeenCalled();
+    expect(result).toBe(record);
   });
 });

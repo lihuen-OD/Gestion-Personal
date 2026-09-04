@@ -375,7 +375,7 @@ export function EmployeeHoursPage() {
       try {
         savedEntry = canCorrectApproved && selectedEntry
           ? await timeEntryApiService.update(selectedEntry.id, { ...payload, correctionReason })
-          : await timeEntryApiService.save(payload);
+          : await timeEntryApiService.save(payload, { knownExistingId: selectedEntry?.id ?? null });
       } catch (saveError) {
         return setError(timeEntrySaveErrorMessage(saveError));
       }

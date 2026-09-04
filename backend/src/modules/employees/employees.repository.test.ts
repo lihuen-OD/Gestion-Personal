@@ -19,15 +19,35 @@ vi.mock("../../shared/prisma/client", () => ({
     laborMovement: { findMany: vi.fn() },
     employeeAssignment: { deleteMany: vi.fn(), createMany: vi.fn(), findMany: vi.fn() },
     employeeHourConcept: { deleteMany: vi.fn(), createMany: vi.fn(), findMany: vi.fn() },
-    employeeDocument: { create: vi.fn() },
+    novelty: { findMany: vi.fn() },
+    employeeDocument: { create: vi.fn(), findMany: vi.fn() },
     timeEntry: { groupBy: vi.fn() },
     $transaction: vi.fn(),
   },
 }));
 
+// Etapa 14C.2 (ampliada): findById y los 7 endpoints de guardado de Legajos
+// que devuelven el legajo completo (updateContact, upsertAddress,
+// upsertTransport, replaceAssignments, replaceHourConcepts,
+// createLaborMovement, createDocument) ahora arman la respuesta con
+// `findEmployeeDetailById`/`findEmployeeDetailByIdOrThrow`: el core (findFirst
+// / findUniqueOrThrow) más `attachEmployeeDetailRelations` (6 findMany en
+// paralelo). Este helper deja esas 6 en `[]` por default para no repetir el
+// mock en cada describe block que ejercita alguno de esos 8 call sites.
+function mockEmptyDetailRelations() {
+  (prisma.employeeCompany.findMany as Mock).mockResolvedValue([]);
+  (prisma.laborMovement.findMany as Mock).mockResolvedValue([]);
+  (prisma.employeeAssignment.findMany as Mock).mockResolvedValue([]);
+  (prisma.employeeHourConcept.findMany as Mock).mockResolvedValue([]);
+  (prisma.novelty.findMany as Mock).mockResolvedValue([]);
+  (prisma.employeeDocument.findMany as Mock).mockResolvedValue([]);
+}
+const emptyDetailRelations = { companies: [], laborMovements: [], assignments: [], hourConcepts: [], novelties: [], documents: [] };
+
 describe("employeesRepository.findById", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockEmptyDetailRelations();
   });
 
   it("resuelve la cadena sector -> area -> establecimiento -> unidad de negocio via FK anidado", async () => {
@@ -52,15 +72,22 @@ describe("employeesRepository.findById", () => {
 
     const result = await employeesRepository.findById("emp-1");
 
-    expect(result).toEqual(resolvedChain);
+    // Etapa 14C.2 (ampliada): el core (findFirst) trae la cadena sector/etc.
+    // igual que antes; companies/laborMovements/assignments/hourConcepts/
+    // novelties/documents se agregan aparte, vía attachEmployeeDetailRelations.
+    expect(result).toEqual({ ...resolvedChain, ...emptyDetailRelations });
     const findFirstMock = prisma.employee.findFirst as Mock;
     expect(findFirstMock).toHaveBeenCalledWith(expect.objectContaining({ where: { AND: [{ id: "emp-1" }, {}] } }));
     const call = findFirstMock.mock.calls.at(0)?.[0];
     expect(call?.select?.sector?.select?.area?.select?.establishment?.select?.businessUnit).toEqual({
       select: { id: true, name: true },
     });
-    expect(call?.select?.hourConcepts).toEqual({
-      where: { hourConcept: { systemRole: null, status: "ACTIVO", deletedAt: null, loadMode: { not: null } } },
+    // hourConcepts ya no viaja anidado en el core (ver comentario arriba de
+    // employeeDetailCoreSelect) — se resuelve como employeeHourConcept.findMany
+    // propio, reusando el mismo where/select que findOverviewDetailsById.
+    expect(call?.select?.hourConcepts).toBeUndefined();
+    expect(prisma.employeeHourConcept.findMany).toHaveBeenCalledWith({
+      where: { employeeId: "emp-1", hourConcept: { systemRole: null, status: "ACTIVO", deletedAt: null, loadMode: { not: null } } },
       select: {
         hourConceptId: true,
         hourConcept: { select: { id: true, code: true, name: true, kind: true, loadMode: true, status: true, systemRole: true } },
@@ -71,11 +98,14 @@ describe("employeesRepository.findById", () => {
   it("respeta el accessWhere adicional sin alterar la forma de la cadena", async () => {
     (prisma.employee.findFirst as Mock).mockResolvedValue(null);
 
-    await employeesRepository.findById("emp-2", { sectorId: { in: ["sec-1"] } });
+    const result = await employeesRepository.findById("emp-2", { sectorId: { in: ["sec-1"] } });
 
     expect(prisma.employee.findFirst as Mock).toHaveBeenCalledWith(
       expect.objectContaining({ where: { AND: [{ id: "emp-2" }, { sectorId: { in: ["sec-1"] } }] } }),
     );
+    // No accesible/no existe: nunca dispara las 6 consultas hijas.
+    expect(result).toBeNull();
+    expect(prisma.employeeCompany.findMany).not.toHaveBeenCalled();
   });
 });
 
@@ -172,24 +202,28 @@ describe("employeesRepository.findOverviewDetailsById — Etapa 6L.1 / 14C.1", (
   });
 });
 
-describe("employeesRepository.findMany (listado de Legajos) — Etapa 14C.1", () => {
+describe("employeesRepository.findMany (listado de Legajos) — Etapa 14C.1 / 14C.3", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    (prisma.$transaction as Mock).mockResolvedValue([[], 0]);
+    (prisma.employee.findMany as Mock).mockResolvedValue([]);
+    (prisma.employee.count as Mock).mockResolvedValue(0);
   });
 
-  it("el select del listado trae exactamente lo que la tabla/badge de Legajos necesita, nada más", async () => {
-    await employeesRepository.findMany({ page: 1, take: 25 } as never, {});
+  // Etapa 14C.3: `$transaction([findMany, count])` -> `Promise.all([...])`
+  // (mismo patrón ya corregido en `summary()` durante 14C.1) — la forma-array
+  // de `$transaction` serializaba las dos lecturas de cada página sobre una
+  // única conexión, en vez de correrlas en paralelo real.
+  it("usa Promise.all (no $transaction) — findMany y count son independientes entre sí", async () => {
+    const [items, total] = await employeesRepository.findMany({ page: 1, take: 25 } as never, {});
 
-    const transactionArg = (prisma.$transaction as Mock).mock.calls.at(0)?.[0] as unknown[];
-    expect(transactionArg).toHaveLength(2);
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(prisma.employee.findMany).toHaveBeenCalledTimes(1);
+    expect(prisma.employee.count).toHaveBeenCalledTimes(1);
+    expect(items).toEqual([]);
+    expect(total).toBe(0);
   });
 
   it("no carga sector/position/companies (relaciones no usadas por el listado)", async () => {
-    // `findMany` del repositorio arma el array de promesas (llamando
-    // employee.findMany/count de una) antes de pasarlo a `$transaction`
-    // (mockeado como función simple que no ejecuta el array) — alcanza con
-    // espiar los argumentos con los que se llamó employee.findMany.
     (prisma.employee.findMany as Mock).mockReturnValue(Promise.resolve([]));
     (prisma.employee.count as Mock).mockReturnValue(Promise.resolve(0));
 
@@ -224,6 +258,71 @@ describe("employeesRepository.findMany (listado de Legajos) — Etapa 14C.1", ()
     expect(call.skip).toBe(20);
     expect(call.take).toBe(10);
     expect(call.where.AND).toContainEqual({ sectorId: { in: ["sec-1"] } });
+  });
+});
+
+describe("employeesRepository.findOrgChart / findOptions — Etapa 14C.3", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    (prisma.employee.findMany as Mock).mockResolvedValue([]);
+    (prisma.employee.count as Mock).mockResolvedValue(0);
+  });
+
+  it("findOrgChart usa Promise.all (no $transaction)", async () => {
+    const [items, total] = await employeesRepository.findOrgChart({ page: 1, take: 25 } as never, {});
+
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(prisma.employee.findMany).toHaveBeenCalledTimes(1);
+    expect(prisma.employee.count).toHaveBeenCalledTimes(1);
+    expect(items).toEqual([]);
+    expect(total).toBe(0);
+  });
+
+  it("findOptions usa Promise.all (no $transaction)", async () => {
+    const [items, total] = await employeesRepository.findOptions({ page: 1, take: 25 } as never, {});
+
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(prisma.employee.findMany).toHaveBeenCalledTimes(1);
+    expect(prisma.employee.count).toHaveBeenCalledTimes(1);
+    expect(items).toEqual([]);
+    expect(total).toBe(0);
+  });
+});
+
+describe("employeesRepository.existsWithAccess — Etapa 14C.3", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  // Causa raíz real de block-history/field-history reportada en 14C.3:
+  // `listFieldHistory`/`listBlockHistory` sólo necesitan confirmar
+  // existencia + alcance del legajo, no su detalle completo. Este check no
+  // debe traer NINGUNA relación (a diferencia de `findById`/
+  // `findEmployeeDetailById`, que trae 6 relaciones más el núcleo con la
+  // cadena sector/position de 4 niveles).
+  it("consulta sólo { id: true }, sin relaciones, con el mismo where que findById", async () => {
+    (prisma.employee.findFirst as Mock).mockResolvedValue({ id: "emp-1" });
+
+    const result = await employeesRepository.existsWithAccess("emp-1", { sectorId: { in: ["sec-1"] } });
+
+    expect(result).toBe(true);
+    expect(prisma.employee.findFirst).toHaveBeenCalledWith({
+      where: { AND: [{ id: "emp-1" }, { sectorId: { in: ["sec-1"] } }] },
+      select: { id: true },
+    });
+    expect(prisma.employeeCompany.findMany).not.toHaveBeenCalled();
+    expect(prisma.laborMovement.findMany).not.toHaveBeenCalled();
+    expect(prisma.employeeAssignment.findMany).not.toHaveBeenCalled();
+    expect(prisma.novelty.findMany).not.toHaveBeenCalled();
+    expect(prisma.employeeDocument.findMany).not.toHaveBeenCalled();
+  });
+
+  it("devuelve false si el legajo no existe o está fuera del alcance (accessWhere no matchea)", async () => {
+    (prisma.employee.findFirst as Mock).mockResolvedValue(null);
+
+    const result = await employeesRepository.existsWithAccess("emp-2", { id: "__NO_ACCESS__" });
+
+    expect(result).toBe(false);
   });
 });
 
@@ -287,6 +386,7 @@ describe("employeesRepository.findAssignableHourConceptIds", () => {
 describe("employeesRepository.replaceAssignments / replaceHourConcepts — Etapa 6Q", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockEmptyDetailRelations();
   });
 
   it("replaceAssignments: hace el delete+create dentro de $transaction y el re-fetch fuera", async () => {
@@ -305,7 +405,7 @@ describe("employeesRepository.replaceAssignments / replaceHourConcepts — Etapa
     );
     // el re-fetch corre sobre prisma, no sobre `tx` — es decir, después de que la transacción cerró
     expect((tx as Record<string, unknown>).employee).toBeUndefined();
-    expect(result).toEqual({ id: "emp-1" });
+    expect(result).toEqual({ id: "emp-1", ...emptyDetailRelations });
   });
 
   it("replaceHourConcepts: hace el delete+create dentro de $transaction y el re-fetch fuera", async () => {
@@ -323,7 +423,7 @@ describe("employeesRepository.replaceAssignments / replaceHourConcepts — Etapa
       expect.objectContaining({ where: { id: "emp-1" } }),
     );
     expect((tx as Record<string, unknown>).employee).toBeUndefined();
-    expect(result).toEqual({ id: "emp-1" });
+    expect(result).toEqual({ id: "emp-1", ...emptyDetailRelations });
   });
 });
 
@@ -337,6 +437,7 @@ describe("employeesRepository.replaceAssignments / replaceHourConcepts — Etapa
 describe("employeesRepository.createLaborMovement / createDocument — Etapa 7A", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockEmptyDetailRelations();
   });
 
   it("createLaborMovement: create + update de estado quedan dentro de $transaction y el re-fetch pesado fuera", async () => {
@@ -364,7 +465,7 @@ describe("employeesRepository.createLaborMovement / createDocument — Etapa 7A"
     expect(prisma.employee.findUniqueOrThrow).toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: "emp-1" } }),
     );
-    expect(result).toEqual({ employee: { id: "emp-1" }, movement: { id: "mov-1", type: "BAJA" } });
+    expect(result).toEqual({ employee: { id: "emp-1", ...emptyDetailRelations }, movement: { id: "mov-1", type: "BAJA" } });
   });
 
   it("createDocument: ya no abre transacción interactiva y devuelve el legajo leído fuera", async () => {
@@ -385,7 +486,7 @@ describe("employeesRepository.createLaborMovement / createDocument — Etapa 7A"
     expect(prisma.employee.findUniqueOrThrow).toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: "emp-1" } }),
     );
-    expect(result).toEqual({ id: "emp-1" });
+    expect(result).toEqual({ id: "emp-1", ...emptyDetailRelations });
   });
 });
 

@@ -42,6 +42,11 @@ vi.mock("../../shared/prisma/client", () => {
       doubleHourRule: { findMany: vi.fn() },
       timeEntry: { aggregate: vi.fn(), groupBy: vi.fn(), findMany: vi.fn(), create: vi.fn(), update: vi.fn() },
       hourConceptBreakdown: { findMany: vi.fn() },
+      // Etapa 14C.2: findPeriodEmployees ya no corre dentro de un
+      // $transaction(async (tx) => ...) — las mismas queries (incluida ésta)
+      // ahora usan el cliente `prisma` global (ver
+      // docs/decisions/TIME_ENTRIES_PERFORMANCE_14C2.md).
+      novelty: { findMany: vi.fn() },
       // $transaction real acepta un callback (uso transaccional clásico) o un
       // array de promesas (uso de "varias queries en paralelo" tipo
       // attendanceObservations) — el mock soporta ambas formas.
@@ -78,6 +83,7 @@ const mockedPrisma = prisma as unknown as {
   doubleHourRule: { findMany: Mock };
   timeEntry: { aggregate: Mock; groupBy: Mock; findMany: Mock; create: Mock; update: Mock };
   hourConceptBreakdown: { findMany: Mock };
+  novelty: { findMany: Mock };
   $transaction: Mock;
   __tx: TxMocks;
 };
@@ -1548,6 +1554,33 @@ describe("summary — horas contables = sólo Horas normales (Etapa 6M)", () => 
 
     expect(result.countableHours).toBe(56);
   });
+
+  // Etapa 14C.2: ver docs/decisions/TIME_ENTRIES_PERFORMANCE_14C2.md — las 5
+  // queries pasaron de `prisma.$transaction([...])` a `Promise.all([...])`.
+  it("usa Promise.all (no $transaction) — las 5 queries son independientes entre sí", async () => {
+    await timeEntriesRepository.summary("2026-08", employeeAccessWhere);
+
+    expect(mockedPrisma.$transaction).not.toHaveBeenCalled();
+    expect(mockedPrisma.employee.count).toHaveBeenCalledTimes(3);
+    expect(mockedPrisma.timeEntry.groupBy).toHaveBeenCalledTimes(1);
+    expect(mockedPrisma.timeEntry.aggregate).toHaveBeenCalledTimes(1);
+  });
+
+  it("mantiene el mismo cálculo de activeEmployees/coverage/reviewEmployees/pendingEmployees", async () => {
+    mockedPrisma.employee.count.mockReset();
+    mockedPrisma.employee.count.mockResolvedValueOnce(10).mockResolvedValueOnce(4).mockResolvedValueOnce(6);
+    mockedPrisma.timeEntry.groupBy.mockResolvedValue([{ employeeId: "e1" }, { employeeId: "e2" }]);
+
+    const result = await timeEntriesRepository.summary("2026-08", employeeAccessWhere);
+
+    expect(result).toMatchObject({
+      activeEmployees: 10,
+      employeesWithEntries: 4,
+      pendingEmployees: 6,
+      reviewEmployees: 2,
+      coverage: 40,
+    });
+  });
 });
 
 describe("findMany(view=byEmployee) — resumen por empleado suma sólo Horas normales (Etapa 6M)", () => {
@@ -1674,20 +1707,93 @@ describe("findPeriodEmployees — total=Normal, adicionales desde HourConceptBre
   const baseQuery = { period: "2026-08", page: 1, take: 25 };
 
   beforeEach(() => {
-    mockedPrisma.__tx.employee.findMany.mockResolvedValue([
-      { id: "employee-1", legajo: "0001", legajoFinnegans: null, cuil: "20-1-1", dni: "1", firstName: "Juan", lastName: "Perez", status: "ACTIVO", sector: null, costCenter: null, position: null, companies: [] },
+    // Etapa 14C.2: `periodEmployeeSelect` ya no trae sector/position/dni/cuil
+    // (recortado — ver docs/decisions/TIME_ENTRIES_PERFORMANCE_14C2.md
+    // §1.6-1.7); el objeto mockeado refleja el shape real actual.
+    mockedPrisma.employee.findMany.mockResolvedValue([
+      { id: "employee-1", legajo: "0001", legajoFinnegans: null, firstName: "Juan", lastName: "Perez", status: "ACTIVO", costCenter: null, companies: [] },
     ]);
-    mockedPrisma.__tx.employee.count.mockResolvedValue(1);
-    mockedPrisma.__tx.novelty.findMany.mockResolvedValue([]);
+    mockedPrisma.employee.count.mockResolvedValue(1);
+    mockedPrisma.novelty.findMany.mockResolvedValue([]);
+  });
+
+  // Etapa 14C.2 — Parte 7 del pedido, ítems 1-3 y 9.
+  describe("Etapa 14C.2 — select liviano, permisos, paginación, sin $transaction", () => {
+    beforeEach(() => {
+      mockedPrisma.timeEntry.findMany.mockResolvedValue([]);
+      mockedPrisma.hourConceptBreakdown.findMany.mockResolvedValue([]);
+    });
+
+    it("el select de empleados trae exactamente lo que la grilla necesita, sin sector/position/dni/cuil", async () => {
+      await timeEntriesRepository.findPeriodEmployees(baseQuery, employeeAccessWhere);
+
+      const call = mockedPrisma.employee.findMany.mock.calls.at(0)?.[0];
+      expect(call.select).toEqual({
+        id: true,
+        legajo: true,
+        legajoFinnegans: true,
+        firstName: true,
+        lastName: true,
+        status: true,
+        costCenter: { select: { id: true, name: true, code: true } },
+        companies: { select: { isPrimary: true, company: { select: { id: true, name: true, code: true } } } },
+      });
+    });
+
+    it("mantiene el filtro de permisos por rol (accessWhere) en el where de la DB, no en memoria", async () => {
+      const scopedAccessWhere = { sectorId: { in: ["sec-1"] } };
+
+      await timeEntriesRepository.findPeriodEmployees(baseQuery, scopedAccessWhere);
+
+      const employeeCall = mockedPrisma.employee.findMany.mock.calls.at(0)?.[0];
+      const countCall = mockedPrisma.employee.count.mock.calls.at(0)?.[0];
+      expect(employeeCall.where.AND[0]).toEqual(scopedAccessWhere);
+      expect(countCall.where).toEqual(employeeCall.where);
+    });
+
+    it("respeta paginación (skip/take) y acota TimeEntry/HourConceptBreakdown/Novelty exactamente al período pedido", async () => {
+      await timeEntriesRepository.findPeriodEmployees({ period: "2026-08", page: 3, take: 10 }, employeeAccessWhere);
+
+      const employeeCall = mockedPrisma.employee.findMany.mock.calls.at(0)?.[0];
+      expect(employeeCall.skip).toBe(20);
+      expect(employeeCall.take).toBe(10);
+
+      const timeEntryCall = mockedPrisma.timeEntry.findMany.mock.calls.at(0)?.[0];
+      expect(timeEntryCall.where.period).toBe("2026-08");
+      const breakdownCall = mockedPrisma.hourConceptBreakdown.findMany.mock.calls.at(0)?.[0];
+      expect(breakdownCall.where.period).toBe("2026-08");
+    });
+
+    it("ya no envuelve las 5 queries en $transaction — corren sobre el cliente prisma global (Promise.all real)", async () => {
+      await timeEntriesRepository.findPeriodEmployees(baseQuery, employeeAccessWhere);
+
+      expect(mockedPrisma.$transaction).not.toHaveBeenCalled();
+      expect(mockedPrisma.employee.findMany).toHaveBeenCalledTimes(1);
+      expect(mockedPrisma.employee.count).toHaveBeenCalledTimes(1);
+      expect(mockedPrisma.timeEntry.findMany).toHaveBeenCalledTimes(1);
+      expect(mockedPrisma.hourConceptBreakdown.findMany).toHaveBeenCalledTimes(1);
+      expect(mockedPrisma.novelty.findMany).toHaveBeenCalledTimes(1);
+    });
+
+    it("no dispara las 3 consultas de detalle (TimeEntry/HourConceptBreakdown/Novelty) si la página de empleados vino vacía", async () => {
+      mockedPrisma.employee.findMany.mockResolvedValueOnce([]);
+      mockedPrisma.employee.count.mockResolvedValueOnce(0);
+
+      await timeEntriesRepository.findPeriodEmployees(baseQuery, employeeAccessWhere);
+
+      expect(mockedPrisma.timeEntry.findMany).not.toHaveBeenCalled();
+      expect(mockedPrisma.hourConceptBreakdown.findMany).not.toHaveBeenCalled();
+      expect(mockedPrisma.novelty.findMany).not.toHaveBeenCalled();
+    });
   });
 
   it("un TimeEntry legacy no-Normal (systemRole distinto de NORMAL_BASE) no infla el total ni 'normal'", async () => {
-    mockedPrisma.__tx.timeEntry.findMany.mockResolvedValue([
+    mockedPrisma.timeEntry.findMany.mockResolvedValue([
       { employeeId: "employee-1", day: 1, hours: { toString: () => "8" }, status: "APROBADO", hourConcept: { systemRole: "NORMAL_BASE" }, workShift: null },
       // Entrada especial legacy previa a la Etapa 6L: no debe sumar a total/normal.
       { employeeId: "employee-1", day: 1, hours: { toString: () => "2" }, status: "APROBADO", hourConcept: { systemRole: null }, workShift: null },
     ]);
-    mockedPrisma.__tx.hourConceptBreakdown.findMany.mockResolvedValue([]);
+    mockedPrisma.hourConceptBreakdown.findMany.mockResolvedValue([]);
 
     const result = await timeEntriesRepository.findPeriodEmployees(baseQuery, employeeAccessWhere);
 
@@ -1696,10 +1802,10 @@ describe("findPeriodEmployees — total=Normal, adicionales desde HourConceptBre
   });
 
   it("HourConceptBreakdown aparece como 'special' separado, sin sumarse a 'total'", async () => {
-    mockedPrisma.__tx.timeEntry.findMany.mockResolvedValue([
+    mockedPrisma.timeEntry.findMany.mockResolvedValue([
       { employeeId: "employee-1", day: 1, hours: { toString: () => "8" }, status: "APROBADO", hourConcept: { systemRole: "NORMAL_BASE" }, workShift: null },
     ]);
-    mockedPrisma.__tx.hourConceptBreakdown.findMany.mockResolvedValue([{ employeeId: "employee-1", day: 1, minutes: 120 }]);
+    mockedPrisma.hourConceptBreakdown.findMany.mockResolvedValue([{ employeeId: "employee-1", day: 1, minutes: 120 }]);
 
     const result = await timeEntriesRepository.findPeriodEmployees(baseQuery, employeeAccessWhere);
 
@@ -1708,12 +1814,12 @@ describe("findPeriodEmployees — total=Normal, adicionales desde HourConceptBre
   });
 
   it("excluye breakdowns RECHAZADO vía el where de hourConceptBreakdown.findMany", async () => {
-    mockedPrisma.__tx.timeEntry.findMany.mockResolvedValue([]);
-    mockedPrisma.__tx.hourConceptBreakdown.findMany.mockResolvedValue([]);
+    mockedPrisma.timeEntry.findMany.mockResolvedValue([]);
+    mockedPrisma.hourConceptBreakdown.findMany.mockResolvedValue([]);
 
     await timeEntriesRepository.findPeriodEmployees(baseQuery, employeeAccessWhere);
 
-    expect(mockedPrisma.__tx.hourConceptBreakdown.findMany).toHaveBeenCalledWith(
+    expect(mockedPrisma.hourConceptBreakdown.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({ status: { not: "RECHAZADO" } }),
       }),
@@ -1725,14 +1831,14 @@ describe("findPeriodEmployees — total=Normal, adicionales desde HourConceptBre
   // docs/decisions/HOURS_GRID_REVIEW_SPECIAL_HOURS_AUDIT_11A.md). Estos tests
   // verifican que ahora sí, sin tocar total/normal (horas reales intactas).
   it("un día con appliedMultiplier=2 expone specialHourMultiplier/specialHourAdditionalHours sin sumarse a total/normal", async () => {
-    mockedPrisma.__tx.timeEntry.findMany.mockResolvedValue([
+    mockedPrisma.timeEntry.findMany.mockResolvedValue([
       {
         employeeId: "employee-1", day: 27, hours: { toString: () => "8" }, status: "APROBADO",
         appliedMultiplier: 2, hourConcept: { systemRole: "NORMAL_BASE" }, workShift: null,
         timeSegment: { specialHourRuleApplications: [{ wasConflicting: false, doubleHourRule: { name: "Feriado" } }] },
       },
     ]);
-    mockedPrisma.__tx.hourConceptBreakdown.findMany.mockResolvedValue([]);
+    mockedPrisma.hourConceptBreakdown.findMany.mockResolvedValue([]);
 
     const result = await timeEntriesRepository.findPeriodEmployees(baseQuery, employeeAccessWhere);
 
@@ -1748,10 +1854,10 @@ describe("findPeriodEmployees — total=Normal, adicionales desde HourConceptBre
   });
 
   it("appliedMultiplier=1 (sin regla): specialHourMultiplier queda en 1 y specialHourAdditionalHours en 0", async () => {
-    mockedPrisma.__tx.timeEntry.findMany.mockResolvedValue([
+    mockedPrisma.timeEntry.findMany.mockResolvedValue([
       { employeeId: "employee-1", day: 5, hours: { toString: () => "8" }, status: "APROBADO", appliedMultiplier: 1, hourConcept: { systemRole: "NORMAL_BASE" }, workShift: null, timeSegment: null },
     ]);
-    mockedPrisma.__tx.hourConceptBreakdown.findMany.mockResolvedValue([]);
+    mockedPrisma.hourConceptBreakdown.findMany.mockResolvedValue([]);
 
     const result = await timeEntriesRepository.findPeriodEmployees(baseQuery, employeeAccessWhere);
 
@@ -1763,10 +1869,10 @@ describe("findPeriodEmployees — total=Normal, adicionales desde HourConceptBre
   });
 
   it("una carga manual con appliedMultiplier=2 pero sin timeSegment (sin trazabilidad por regla): igual expone el multiplicador/adicional, sin nombre de regla", async () => {
-    mockedPrisma.__tx.timeEntry.findMany.mockResolvedValue([
+    mockedPrisma.timeEntry.findMany.mockResolvedValue([
       { employeeId: "employee-1", day: 27, hours: { toString: () => "8" }, status: "APROBADO", appliedMultiplier: 2, hourConcept: { systemRole: "NORMAL_BASE" }, workShift: null, timeSegment: null },
     ]);
-    mockedPrisma.__tx.hourConceptBreakdown.findMany.mockResolvedValue([]);
+    mockedPrisma.hourConceptBreakdown.findMany.mockResolvedValue([]);
 
     const result = await timeEntriesRepository.findPeriodEmployees(baseQuery, employeeAccessWhere);
 
@@ -1778,7 +1884,7 @@ describe("findPeriodEmployees — total=Normal, adicionales desde HourConceptBre
   });
 
   it("marca specialHourConflict cuando alguna regla ganadora quedó wasConflicting=true (empate de prioridad)", async () => {
-    mockedPrisma.__tx.timeEntry.findMany.mockResolvedValue([
+    mockedPrisma.timeEntry.findMany.mockResolvedValue([
       {
         employeeId: "employee-1", day: 16, hours: { toString: () => "8" }, status: "APROBADO",
         appliedMultiplier: 2.5, hourConcept: { systemRole: "NORMAL_BASE" }, workShift: null,
@@ -1790,7 +1896,7 @@ describe("findPeriodEmployees — total=Normal, adicionales desde HourConceptBre
         },
       },
     ]);
-    mockedPrisma.__tx.hourConceptBreakdown.findMany.mockResolvedValue([]);
+    mockedPrisma.hourConceptBreakdown.findMany.mockResolvedValue([]);
 
     const result = await timeEntriesRepository.findPeriodEmployees(baseQuery, employeeAccessWhere);
 
@@ -1800,12 +1906,12 @@ describe("findPeriodEmployees — total=Normal, adicionales desde HourConceptBre
   });
 
   it("consulta timeSegment.specialHourRuleApplications filtrado a isWinner=true (nunca las reglas perdedoras)", async () => {
-    mockedPrisma.__tx.timeEntry.findMany.mockResolvedValue([]);
-    mockedPrisma.__tx.hourConceptBreakdown.findMany.mockResolvedValue([]);
+    mockedPrisma.timeEntry.findMany.mockResolvedValue([]);
+    mockedPrisma.hourConceptBreakdown.findMany.mockResolvedValue([]);
 
     await timeEntriesRepository.findPeriodEmployees(baseQuery, employeeAccessWhere);
 
-    expect(mockedPrisma.__tx.timeEntry.findMany).toHaveBeenCalledWith(
+    expect(mockedPrisma.timeEntry.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         select: expect.objectContaining({
           appliedMultiplier: true,
@@ -1835,8 +1941,8 @@ describe("findPeriodEmployees — total=Normal, adicionales desde HourConceptBre
     }
 
     it("Caso C — 8 normales + 4hs Sereno en feriado x2: liquidable normal 16, liquidable conceptos 8, total liquidable 24, reales sin inflar", async () => {
-      mockedPrisma.__tx.timeEntry.findMany.mockResolvedValue([normalEntry(27, "8", 2, ["Feriado"])]);
-      mockedPrisma.__tx.hourConceptBreakdown.findMany.mockResolvedValue([breakdown(27, 240)]); // 4hs Sereno
+      mockedPrisma.timeEntry.findMany.mockResolvedValue([normalEntry(27, "8", 2, ["Feriado"])]);
+      mockedPrisma.hourConceptBreakdown.findMany.mockResolvedValue([breakdown(27, 240)]); // 4hs Sereno
 
       const result = await timeEntriesRepository.findPeriodEmployees(baseQuery, employeeAccessWhere);
 
@@ -1851,8 +1957,8 @@ describe("findPeriodEmployees — total=Normal, adicionales desde HourConceptBre
     });
 
     it("Caso B (regresión) — 8 normales sin conceptos en domingo x2: liquidable 16, adicional 8, sin conceptos que multiplicar", async () => {
-      mockedPrisma.__tx.timeEntry.findMany.mockResolvedValue([normalEntry(16, "8", 2, ["Domingo"])]);
-      mockedPrisma.__tx.hourConceptBreakdown.findMany.mockResolvedValue([]);
+      mockedPrisma.timeEntry.findMany.mockResolvedValue([normalEntry(16, "8", 2, ["Domingo"])]);
+      mockedPrisma.hourConceptBreakdown.findMany.mockResolvedValue([]);
 
       const result = await timeEntriesRepository.findPeriodEmployees(baseQuery, employeeAccessWhere);
 
@@ -1861,8 +1967,8 @@ describe("findPeriodEmployees — total=Normal, adicionales desde HourConceptBre
     });
 
     it("Caso A — 8 normales sin regla: total liquidable = total real, sin adicional", async () => {
-      mockedPrisma.__tx.timeEntry.findMany.mockResolvedValue([normalEntry(10, "8", 1)]);
-      mockedPrisma.__tx.hourConceptBreakdown.findMany.mockResolvedValue([]);
+      mockedPrisma.timeEntry.findMany.mockResolvedValue([normalEntry(10, "8", 1)]);
+      mockedPrisma.hourConceptBreakdown.findMany.mockResolvedValue([]);
 
       const result = await timeEntriesRepository.findPeriodEmployees(baseQuery, employeeAccessWhere);
 
@@ -1871,8 +1977,8 @@ describe("findPeriodEmployees — total=Normal, adicionales desde HourConceptBre
     });
 
     it("Caso D — día común (sin regla) con 8 normales + 4hs Sereno: total liquidable = normal+special (12), sin adicional — decisión documentada: los conceptos ya liquidan como adicionales, con o sin Hora Especial", async () => {
-      mockedPrisma.__tx.timeEntry.findMany.mockResolvedValue([normalEntry(5, "8", 1)]);
-      mockedPrisma.__tx.hourConceptBreakdown.findMany.mockResolvedValue([breakdown(5, 240)]);
+      mockedPrisma.timeEntry.findMany.mockResolvedValue([normalEntry(5, "8", 1)]);
+      mockedPrisma.hourConceptBreakdown.findMany.mockResolvedValue([breakdown(5, 240)]);
 
       const result = await timeEntriesRepository.findPeriodEmployees(baseQuery, employeeAccessWhere);
 
@@ -1881,8 +1987,8 @@ describe("findPeriodEmployees — total=Normal, adicionales desde HourConceptBre
     });
 
     it("Caso E — multiplicador x1.5 con 2hs de concepto adicional: liquidable con decimales correctos", async () => {
-      mockedPrisma.__tx.timeEntry.findMany.mockResolvedValue([normalEntry(3, "8", 1.5, ["Feriado 1.5x"])]);
-      mockedPrisma.__tx.hourConceptBreakdown.findMany.mockResolvedValue([breakdown(3, 120)]); // 2hs
+      mockedPrisma.timeEntry.findMany.mockResolvedValue([normalEntry(3, "8", 1.5, ["Feriado 1.5x"])]);
+      mockedPrisma.hourConceptBreakdown.findMany.mockResolvedValue([breakdown(3, 120)]); // 2hs
 
       const result = await timeEntriesRepository.findPeriodEmployees(baseQuery, employeeAccessWhere);
 
@@ -1895,8 +2001,8 @@ describe("findPeriodEmployees — total=Normal, adicionales desde HourConceptBre
       // El motor (resolveWinningRules, ya probado en doubleHourRuleMatching.test.ts) resolvió el empate
       // y appliedMultiplier ya llegó con el multiplicador ganador — acá sólo se verifica que la grilla
       // no recalcula ni ignora ese valor, y que el conceptBreakdown también lo recibe.
-      mockedPrisma.__tx.timeEntry.findMany.mockResolvedValue([normalEntry(16, "8", 2.5, ["Domingo Odwyer", "Domingo Pañol"], true)]);
-      mockedPrisma.__tx.hourConceptBreakdown.findMany.mockResolvedValue([breakdown(16, 240)]);
+      mockedPrisma.timeEntry.findMany.mockResolvedValue([normalEntry(16, "8", 2.5, ["Domingo Odwyer", "Domingo Pañol"], true)]);
+      mockedPrisma.hourConceptBreakdown.findMany.mockResolvedValue([breakdown(16, 240)]);
 
       const result = await timeEntriesRepository.findPeriodEmployees(baseQuery, employeeAccessWhere);
 
@@ -1908,8 +2014,8 @@ describe("findPeriodEmployees — total=Normal, adicionales desde HourConceptBre
     });
 
     it("breakdown sin Hora normal ese día (huérfano): no se puede resolver el multiplicador sin otra fuente — queda en 1 (limitación documentada, no una consulta extra por fila)", async () => {
-      mockedPrisma.__tx.timeEntry.findMany.mockResolvedValue([]); // ninguna Hora normal cargada ese día
-      mockedPrisma.__tx.hourConceptBreakdown.findMany.mockResolvedValue([breakdown(20, 240)]);
+      mockedPrisma.timeEntry.findMany.mockResolvedValue([]); // ninguna Hora normal cargada ese día
+      mockedPrisma.hourConceptBreakdown.findMany.mockResolvedValue([breakdown(20, 240)]);
 
       const result = await timeEntriesRepository.findPeriodEmployees(baseQuery, employeeAccessWhere);
 
@@ -1922,8 +2028,8 @@ describe("findPeriodEmployees — total=Normal, adicionales desde HourConceptBre
       // closeOpenWorkShift/resolveDoubleHourMultiplierForManualEntry, Casos L-Y/11A) — acá
       // sólo se confirma que la grilla no reintroduce una multiplicación por su cuenta
       // cuando el appliedMultiplier persistido ya es 1 por estar fuera de alcance.
-      mockedPrisma.__tx.timeEntry.findMany.mockResolvedValue([normalEntry(27, "8", 1)]); // fuera de alcance -> multiplicador 1
-      mockedPrisma.__tx.hourConceptBreakdown.findMany.mockResolvedValue([breakdown(27, 240)]);
+      mockedPrisma.timeEntry.findMany.mockResolvedValue([normalEntry(27, "8", 1)]); // fuera de alcance -> multiplicador 1
+      mockedPrisma.hourConceptBreakdown.findMany.mockResolvedValue([breakdown(27, 240)]);
 
       const result = await timeEntriesRepository.findPeriodEmployees(baseQuery, employeeAccessWhere);
 
