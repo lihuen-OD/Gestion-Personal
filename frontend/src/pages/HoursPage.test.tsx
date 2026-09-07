@@ -787,6 +787,78 @@ describe("HoursPage — Etapa 9F (separación de efectos: sin refetch innecesari
   });
 });
 
+// Etapa 14G.4: la grilla/bandeja no deben esperar a que resuelva el catálogo
+// de org-structure (GET /org-structure) para pedir period-employees/summary/
+// list — antes de esta etapa, un gate innecesario (`costCenterOptionsReady`)
+// serializaba ambos pedidos, sumando la latencia de org-structure al camino
+// crítico de "Entrar a Carga de horas" sin ninguna razón funcional (el
+// centro de costo por default es "Todos", así que `costCenterId` es
+// `undefined` de cualquier forma hasta que el usuario elige uno, lo que sólo
+// puede pasar después de que el catálogo ya cargó).
+describe("HoursPage — Etapa 14G.4 (grilla/bandeja no esperan al catálogo de centros de costo)", () => {
+  it("Carga de horas pide getPeriodEmployees/getSummary sin esperar a que resuelva GET /org-structure", async () => {
+    authAs("Nivel 1 - RRHH");
+    let resolveCatalog!: (value: { costCenters: Array<{ id: string; name: string; status: string }> }) => void;
+    vi.mocked(orgStructureApiService.getCatalog).mockReturnValue(
+      new Promise((resolve) => { resolveCatalog = resolve; }) as never,
+    );
+    vi.mocked(timeEntryApiService.getPeriodEmployees).mockResolvedValue({
+      items: [buildPeriodRow()],
+      meta: { total: 1, page: 1, pageSize: 25, hasMore: false },
+    });
+
+    renderGrid();
+
+    // La grilla ya se resuelve (getPeriodEmployees) mientras el catálogo de
+    // centros de costo (org-structure) todavía sigue en vuelo.
+    await screen.findByText("Gomez, Ana");
+    expect(timeEntryApiService.getPeriodEmployees).toHaveBeenCalled();
+    expect(timeEntryApiService.getSummary).toHaveBeenCalled();
+
+    resolveCatalog({ costCenters: [] });
+  });
+
+  it("Bandeja de revisión pide list/getSummary/pendingApiService.getAll sin esperar a que resuelva GET /org-structure", async () => {
+    authAs("Nivel 1 - RRHH");
+    let resolveCatalog!: (value: { costCenters: Array<{ id: string; name: string; status: string }> }) => void;
+    vi.mocked(orgStructureApiService.getCatalog).mockReturnValue(
+      new Promise((resolve) => { resolveCatalog = resolve; }) as never,
+    );
+
+    renderPending();
+
+    await screen.findByText("100");
+    expect(timeEntryApiService.list).toHaveBeenCalled();
+    expect(timeEntryApiService.getSummary).toHaveBeenCalled();
+    expect(pendingApiService.getAll).toHaveBeenCalled();
+
+    resolveCatalog({ costCenters: [] });
+  });
+
+  it("cuando el catálogo de centros de costo resuelve después, no repite el pedido de getPeriodEmployees (sin duplicado)", async () => {
+    authAs("Nivel 1 - RRHH");
+    let resolveCatalog!: (value: { costCenters: Array<{ id: string; name: string; status: string }> }) => void;
+    vi.mocked(orgStructureApiService.getCatalog).mockReturnValue(
+      new Promise((resolve) => { resolveCatalog = resolve; }) as never,
+    );
+    vi.mocked(timeEntryApiService.getPeriodEmployees).mockResolvedValue({
+      items: [buildPeriodRow()],
+      meta: { total: 1, page: 1, pageSize: 25, hasMore: false },
+    });
+
+    renderGrid();
+    await screen.findByText("Gomez, Ana");
+    const callsBefore = vi.mocked(timeEntryApiService.getPeriodEmployees).mock.calls.length;
+
+    resolveCatalog({ costCenters: [{ id: "cc-1", name: "Pañol", status: "ACTIVO" }] });
+    await waitFor(() => {
+      expect(within(screen.getByRole("combobox", { name: "Centro de costo" })).getByText("Pañol")).toBeInTheDocument();
+    });
+
+    expect(vi.mocked(timeEntryApiService.getPeriodEmployees).mock.calls.length).toBe(callsBefore);
+  });
+});
+
 describe("HoursPage — indicador de Hora Especial en la grilla de período (Etapa 11A)", () => {
   // Bug reportado: una Hora Especial (feriado/domingo x2) configurada y ya
   // aplicada por el backend no se veía en ningún lado de la grilla. Estos

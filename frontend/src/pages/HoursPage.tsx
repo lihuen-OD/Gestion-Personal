@@ -278,7 +278,6 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
     };
   }>>([]);
   const [costCenterOptions, setCostCenterOptions] = useState<Array<{ id: string; name: string }>>([]);
-  const [costCenterOptionsReady, setCostCenterOptionsReady] = useState(false);
   const [hoursSummary, setHoursSummary] = useState(emptyHoursSummary);
   const [pendingItems, setPendingItems] = useState<PendingItem[]>([]);
   const [usesBackend, setUsesBackend] = useState(false);
@@ -307,9 +306,16 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
   // A) Grilla "Personas habilitadas para carga" — sólo existe cuando
   // !pendingOnly. Depende de período/búsqueda/centro de costo/página; no
   // depende de reviewPage/groupByPerson (esos son de la Bandeja).
+  // Etapa 14G.4: antes esperaba a `costCenterOptionsReady` (catálogo de
+  // org-structure) para arrancar — una dependencia artificial: `costCenterId`
+  // ya sale de `costCenterOptions.find(...)`, que es `undefined` mientras el
+  // catálogo no cargó (no hay forma de que el usuario haya elegido un centro
+  // de costo todavía), así que sacar el gate no cambia qué se pide, sólo deja
+  // de bloquear la grilla detrás de GET /org-structure. Ver docs/decisions/
+  // WORKFORCE_MANAGEMENT_HOURS_ENTRY_PERFORMANCE_14G4.md.
   useEffect(() => {
     if (pendingOnly) return;
-    if (!user || !costCenterOptionsReady) return;
+    if (!user) return;
     let cancelled = false;
     if (!periodRows.length) setGridLoading(true);
     setGridError("");
@@ -333,14 +339,15 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
     return () => {
       cancelled = true;
     };
-  }, [costCenterId, costCenterOptionsReady, debouncedSearch, page, pendingOnly, period, refresh, user]);
+  }, [costCenterId, debouncedSearch, page, pendingOnly, period, refresh, user]);
 
   // B) Bandeja de revisión (Horas enviadas a revisión) — sólo existe cuando
   // pendingOnly. Depende de período/búsqueda/centro de costo/reviewPage/
-  // groupByPerson (cambia de endpoint: listByEmployee vs list).
+  // groupByPerson (cambia de endpoint: listByEmployee vs list). Etapa 14G.4:
+  // mismo criterio que la grilla (A) — sin gate de `costCenterOptionsReady`.
   useEffect(() => {
     if (!pendingOnly) return;
-    if (!user || !costCenterOptionsReady) return;
+    if (!user) return;
     let cancelled = false;
     if (!reviewEntries.length && !reviewByPerson.length) setReviewLoading(true);
     setReviewError("");
@@ -371,13 +378,13 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
     return () => {
       cancelled = true;
     };
-  }, [costCenterId, costCenterOptionsReady, debouncedSearch, groupByPerson, pendingOnly, period, refresh, reviewPage, user]);
+  }, [costCenterId, debouncedSearch, groupByPerson, pendingOnly, period, refresh, reviewPage, user]);
 
   // C) Resumen (tarjetas, ambos modos) + pendientes de novedades/desgloses
   // (sólo pendingOnly) — ninguno de los dos endpoints acepta
-  // búsqueda/centro/página, así que no dependen de esos filtros ni de
-  // costCenterOptionsReady (pueden cargar en paralelo al catálogo de
-  // centros de costo, no bloqueados detrás de él como antes).
+  // búsqueda/centro/página, así que no dependen de esos filtros; ya cargaba
+  // en paralelo al catálogo de centros de costo antes de 14G.4 (A/B ahora
+  // también, ver más arriba).
   useEffect(() => {
     if (!user) return;
     let cancelled = false;
@@ -405,6 +412,8 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
     };
   }, [pendingOnly, period, refresh, user]);
 
+  // Etapa 14G.4: catálogo de centros de costo para el filtro — ya no bloquea
+  // A/B (ver más arriba), así que corre en paralelo a la grilla/bandeja.
   useEffect(() => {
     let mounted = true;
     orgStructureApiService
@@ -412,12 +421,9 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
       .then((catalog) => {
         if (mounted) {
           setCostCenterOptions(catalog.costCenters.filter((item) => item.status === "ACTIVO").map((item) => ({ id: item.id, name: item.name })));
-          setCostCenterOptionsReady(true);
         }
       })
-      .catch(() => {
-        if (mounted) setCostCenterOptionsReady(true);
-      });
+      .catch(() => undefined);
     return () => {
       mounted = false;
     };

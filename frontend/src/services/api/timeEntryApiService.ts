@@ -221,6 +221,17 @@ function isEmployeePeriodRowsResponse(value: { items: Array<{ employee: Employee
   return Boolean(value && Array.isArray(value.items) && value.items.every((row) => typeof row.employee?.id === "string"));
 }
 
+// Etapa 14G.4: `list`/`listByEmployee` (Bandeja de revisión, HoursPage.tsx
+// pendingOnly) no pasaban por `cachedData` — sin dedupe in-flight, el
+// doble-montaje de React StrictMode en dev disparaba 2 llamadas de red reales
+// (mismo síntoma ya resuelto en `getSummary`/`getPeriodEmployees` acá mismo y
+// en otras pantallas, ver 14D.5/14F.2). Misma validación mínima que
+// `isEmployeePeriodRowsResponse` pero para la vista plana (`items` de
+// TimeEntry, no de `{employee, summary}`).
+function isTimeEntryListResponse(value: { items: Array<{ id: string }>; meta?: unknown }) {
+  return Boolean(value && Array.isArray(value.items) && value.items.every((item) => typeof item.id === "string"));
+}
+
 function numberValue(value: string | number | null | undefined) {
   const parsed = Number(value || 0);
   return Number.isFinite(parsed) ? parsed : 0;
@@ -336,12 +347,16 @@ export const timeEntryApiService = {
     if (filters.status && statusToApi[filters.status]) params.set("status", statusToApi[filters.status]!);
     if (filters.search?.trim()) params.set("search", filters.search.trim());
     if (filters.costCenterId) params.set("costCenterId", filters.costCenterId);
-    const query = params.toString();
-    const response = await apiRequest<ApiListResponse & { meta: ApiListMeta }>(`/time-entries${query ? `?${query}` : ""}`);
-    return {
-      items: response.data.map(mapTimeEntryFromApi),
-      meta: response.meta,
-    };
+    const key = `/time-entries?${params.toString()}`;
+    return cachedData({
+      requestKey: `GET:${key}`,
+      policy: cachePolicies.timeEntriesAggregates,
+      fetcher: () => apiRequest<ApiListResponse & { meta: ApiListMeta }>(key, { apiCache: false }).then((response) => ({
+        items: response.data.map(mapTimeEntryFromApi),
+        meta: response.meta,
+      })),
+      validate: isTimeEntryListResponse,
+    });
   },
 
   async listByEmployee(filters: { period?: string; status?: TimeStatus; search?: string; costCenterId?: string; page?: number; take?: number } = {}) {
@@ -353,28 +368,33 @@ export const timeEntryApiService = {
     if (filters.status && statusToApi[filters.status]) params.set("status", statusToApi[filters.status]!);
     if (filters.search?.trim()) params.set("search", filters.search.trim());
     if (filters.costCenterId) params.set("costCenterId", filters.costCenterId);
-    const response = await apiRequest<ApiEmployeePeriodRowsResponse>(`/time-entries?${params.toString()}`);
-    return {
-      items: response.data.map((row) => ({
-        employee: mapEmployeeFromApi(row.employee),
-        summary: {
-          total: row.summary.total,
-          normal: row.summary.normal,
-          special: row.summary.special,
-          incidents: row.summary.incidents,
-          status: statusFromApi[row.summary.status] || "Pendiente",
-          // Etapa 11C: antes de esta etapa la vista "Por persona" ni
-          // siquiera consultaba appliedMultiplier/HourConceptBreakdown —
-          // quedaba ciega a Horas Especiales, a diferencia de "Por
-          // registro" (11B) y la grilla principal (11A/11A.1).
-          specialHourAdditionalHours: row.summary.specialHourAdditionalHours || 0,
-          specialHourLiquidableTotal: row.summary.specialHourLiquidableTotal ?? row.summary.total,
-          specialHourRuleNames: row.summary.specialHourRuleNames || [],
-          specialHourConflict: row.summary.specialHourConflict || false,
-        },
+    const key = `/time-entries?${params.toString()}`;
+    return cachedData({
+      requestKey: `GET:${key}`,
+      policy: cachePolicies.timeEntriesAggregates,
+      fetcher: () => apiRequest<ApiEmployeePeriodRowsResponse>(key, { apiCache: false }).then((response) => ({
+        items: response.data.map((row) => ({
+          employee: mapEmployeeFromApi(row.employee),
+          summary: {
+            total: row.summary.total,
+            normal: row.summary.normal,
+            special: row.summary.special,
+            incidents: row.summary.incidents,
+            status: statusFromApi[row.summary.status] || "Pendiente",
+            // Etapa 11C: antes de esta etapa la vista "Por persona" ni
+            // siquiera consultaba appliedMultiplier/HourConceptBreakdown —
+            // quedaba ciega a Horas Especiales, a diferencia de "Por
+            // registro" (11B) y la grilla principal (11A/11A.1).
+            specialHourAdditionalHours: row.summary.specialHourAdditionalHours || 0,
+            specialHourLiquidableTotal: row.summary.specialHourLiquidableTotal ?? row.summary.total,
+            specialHourRuleNames: row.summary.specialHourRuleNames || [],
+            specialHourConflict: row.summary.specialHourConflict || false,
+          },
+        })),
+        meta: response.meta,
       })),
-      meta: response.meta,
-    };
+      validate: isEmployeePeriodRowsResponse,
+    });
   },
 
   async getAll(filters: { period?: string; employeeId?: string; status?: TimeStatus; take?: number } = {}) {

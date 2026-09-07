@@ -6,11 +6,11 @@ Reporte generado automáticamente por `npm run perf:journey:workforce`. No edita
 
 ## 1. Resumen ejecutivo
 
-Recorrido macro de los 10 submódulos de Gestión horaria: 37/65 acciones cubiertas, 28 salteadas (16 de ellas por ser de escritura, con motivo documentado cada una), 0 respuestas HTTP >= 400, 0 errores de consola. 2 acción(es) en rango Crítico (> 3000ms) y 5 en rango Lento (2000-3000ms). Cero escrituras ejecutadas — modo `read-only` en todo el recorrido.
+Recorrido macro de los 10 submódulos de Gestión horaria: 38/65 acciones cubiertas, 27 salteadas (16 de ellas por ser de escritura, con motivo documentado cada una), 0 respuestas HTTP >= 400, 0 errores de consola. 2 acción(es) en rango Crítico (> 3000ms) y 7 en rango Lento (2000-3000ms). Cero escrituras ejecutadas — modo `read-only` en todo el recorrido.
 
 ## 2. Ambiente
 
-- Generado: 2026-09-07T16:40:33.022Z
+- Generado: 2026-09-07T17:16:58.425Z
 - Frontend: http://localhost:5174
 - Backend: http://localhost:4002/api
 - Frontend y backend locales (`npm run dev`), backend conectado a la base real de staging (ver docs/LOCAL_DEVELOPMENT.md) — no es un ambiente de producción ni un ambiente aislado de test.
@@ -21,59 +21,60 @@ Recorrido macro de los 10 submódulos de Gestión horaria: 37/65 acciones cubier
 
 | Submódulo | Acciones cubiertas | Acciones salteadas | Requests capturadas | Peor duración | Rango |
 |---|---|---|---|---|---|
-| Login | 1 | 0 | 4 | 6389ms | Crítico |
-| A. Inicio | 2 | 0 | 3 | 2239ms | Lento |
-| B. Asistencia | 5 | 4 | 10 | 2192ms | Lento |
-| C. Alertas de turnos | 5 | 2 | 6 | 2509ms | Lento |
-| D. Carga de horas | 9 | 4 | 15 | 3362ms | Crítico |
-| E. Cierres mensuales | 2 | 2 | 7 | 1307ms | Medio |
-| F. Bandeja de revisión | 3 | 6 | 7 | 1690ms | Medio |
-| G. Novedades | 4 | 3 | 4 | 1701ms | Medio |
-| H. Notificaciones | 3 | 1 | 3 | 2799ms | Lento |
-| I. Fichador | 1 | 4 | 1 | 735ms | OK |
-| J. Exportación | 2 | 2 | 4 | 1706ms | Medio |
+| Login | 1 | 0 | 4 | 5061ms | Crítico |
+| A. Inicio | 2 | 0 | 3 | 2261ms | Lento |
+| B. Asistencia | 5 | 4 | 10 | 2219ms | Lento |
+| C. Alertas de turnos | 6 | 1 | 7 | 3044ms | Crítico |
+| D. Carga de horas | 9 | 4 | 15 | 2265ms | Lento |
+| E. Cierres mensuales | 2 | 2 | 8 | 1547ms | Medio |
+| F. Bandeja de revisión | 3 | 6 | 7 | 1759ms | Medio |
+| G. Novedades | 4 | 3 | 4 | 1637ms | Medio |
+| H. Notificaciones | 3 | 1 | 3 | 2282ms | Lento |
+| I. Fichador | 1 | 4 | 1 | 727ms | OK |
+| J. Exportación | 2 | 2 | 4 | 2086ms | Lento |
 
 ## 4. Tabla de acciones
 
 | Acción | Submódulo | Ruta | Visible | Network idle | Requests | Errores consola | Escritura |
 |---|---|---|---|---|---|---|---|
-| Login (acceso rápido RRHH) | Login | `/` | 626ms | 6389ms | 4 | 0 | No |
-| Entrar a Inicio (Gestión horaria) | A. Inicio | `/gestion-horaria` | 82ms | 2239ms | 3 | 0 | No |
-| Ver KPIs/resumen de Inicio | A. Inicio | `/gestion-horaria` | 3ms | 88ms | 0 | 0 | No |
-| Entrar a Asistencia (carga inicial del día) | B. Asistencia | `/asistencia` | 76ms | 2192ms | 5 | 0 | No |
-| Cambiar fecha del día | B. Asistencia | `/asistencia` | 26ms | 109ms | 0 | 0 | No |
-| Buscar en problemas de fichada | B. Asistencia | `/asistencia` | 24ms | 427ms | 1 | 0 | No |
-| Filtrar problemas de fichada por tipo | B. Asistencia | `/asistencia` | 22ms | 106ms | 1 | 0 | No |
-| Limpiar filtros de problemas de fichada | B. Asistencia | `/asistencia` | 30ms | 115ms | 3 | 0 | No |
-| Entrar a Alertas de turnos | C. Alertas de turnos | `/asistencia/alertas` | 67ms | 2509ms | 3 | 0 | No |
-| Buscar alerta por texto | C. Alertas de turnos | `/asistencia/alertas` | 17ms | 420ms | 0 | 0 | No |
-| Limpiar búsqueda de alertas | C. Alertas de turnos | `/asistencia/alertas` | 1822ms | 2227ms | 2 | 0 | No |
-| Filtrar alertas por tipo | C. Alertas de turnos | `/asistencia/alertas` | 1313ms | 1397ms | 1 | 0 | No |
-| Limpiar filtros de alertas | C. Alertas de turnos | `/asistencia/alertas` | 19ms | 101ms | 0 | 0 | No |
-| Entrar a Carga de horas (período actual) | D. Carga de horas | `/horas` | 73ms | 3362ms | 4 | 0 | No |
-| Cambiar período (Carga de horas) | D. Carga de horas | `/horas` | 50ms | 132ms | 0 | 0 | No |
-| Buscar empleado (Carga de horas) | D. Carga de horas | `/horas` | 19ms | 421ms | 2 | 0 | No |
-| Limpiar búsqueda (Carga de horas) | D. Carga de horas | `/horas` | 36ms | 438ms | 1 | 0 | No |
-| Abrir edición de horas de un empleado (navega a /horas/:id) | D. Carga de horas | `/horas/:id` | 828ms | 1705ms | 7 | 0 | No |
-| Ver total real/liquidable | D. Carga de horas | `/horas/:id` | 7ms | 89ms | 0 | 0 | No |
-| Abrir edición de hora sin guardar | D. Carga de horas | `/horas/:id` | 49ms | 131ms | 0 | 0 | No |
-| Cancelar edición de hora | D. Carga de horas | `/horas/:id` | 39ms | 122ms | 0 | 0 | No |
-| Volver a Carga de horas | D. Carga de horas | `/horas` | 54ms | 136ms | 1 | 0 | No |
-| Entrar a Cierres mensuales (período actual) | E. Cierres mensuales | `/cierres` | 54ms | 1307ms | 6 | 0 | No |
-| Cambiar período (Cierres mensuales) | E. Cierres mensuales | `/cierres` | 17ms | 100ms | 1 | 0 | No |
-| Entrar a Bandeja de revisión (Por registro) | F. Bandeja de revisión | `/pendientes` | 80ms | 1690ms | 4 | 0 | No |
-| Cambiar a pestaña "Por persona" | F. Bandeja de revisión | `/pendientes` | 39ms | 121ms | 0 | 0 | No |
-| Cambiar período (Bandeja de revisión) | F. Bandeja de revisión | `/pendientes` | 1310ms | 1393ms | 3 | 0 | No |
-| Entrar a Novedades | G. Novedades | `/novedades` | 69ms | 1701ms | 3 | 0 | No |
-| Buscar en Novedades | G. Novedades | `/novedades` | 13ms | 417ms | 0 | 0 | No |
-| Abrir modal "Nueva novedad" sin guardar | G. Novedades | `/novedades` | 25ms | 108ms | 0 | 0 | No |
-| Cancelar "Nueva novedad" | G. Novedades | `/novedades` | 23ms | 105ms | 1 | 0 | No |
-| Entrar a Notificaciones (Todas) | H. Notificaciones | `/notificaciones` | 80ms | 2799ms | 3 | 0 | No |
-| Filtrar por "No leídas" | H. Notificaciones | `/notificaciones` | 17ms | 101ms | 0 | 0 | No |
+| Login (acceso rápido RRHH) | Login | `/` | 360ms | 5061ms | 4 | 0 | No |
+| Entrar a Inicio (Gestión horaria) | A. Inicio | `/gestion-horaria` | 87ms | 2261ms | 3 | 0 | No |
+| Ver KPIs/resumen de Inicio | A. Inicio | `/gestion-horaria` | 3ms | 86ms | 0 | 0 | No |
+| Entrar a Asistencia (carga inicial del día) | B. Asistencia | `/asistencia` | 83ms | 2219ms | 5 | 0 | No |
+| Cambiar fecha del día | B. Asistencia | `/asistencia` | 28ms | 111ms | 0 | 0 | No |
+| Buscar en problemas de fichada | B. Asistencia | `/asistencia` | 23ms | 427ms | 1 | 0 | No |
+| Filtrar problemas de fichada por tipo | B. Asistencia | `/asistencia` | 22ms | 105ms | 1 | 0 | No |
+| Limpiar filtros de problemas de fichada | B. Asistencia | `/asistencia` | 22ms | 106ms | 3 | 0 | No |
+| Entrar a Alertas de turnos | C. Alertas de turnos | `/asistencia/alertas` | 66ms | 3044ms | 3 | 0 | No |
+| Buscar alerta por texto | C. Alertas de turnos | `/asistencia/alertas` | 15ms | 418ms | 0 | 0 | No |
+| Limpiar búsqueda de alertas | C. Alertas de turnos | `/asistencia/alertas` | 1813ms | 2218ms | 2 | 0 | No |
+| Filtrar alertas por tipo | C. Alertas de turnos | `/asistencia/alertas` | 1811ms | 1896ms | 1 | 0 | No |
+| Limpiar filtros de alertas | C. Alertas de turnos | `/asistencia/alertas` | 1326ms | 1411ms | 1 | 0 | No |
+| Expandir hallazgos asociados de un grupo | C. Alertas de turnos | `/asistencia/alertas` | 36ms | 120ms | 0 | 0 | No |
+| Entrar a Carga de horas (período actual) | D. Carga de horas | `/horas` | 81ms | 2265ms | 4 | 0 | No |
+| Cambiar período (Carga de horas) | D. Carga de horas | `/horas` | 45ms | 127ms | 0 | 0 | No |
+| Buscar empleado (Carga de horas) | D. Carga de horas | `/horas` | 18ms | 421ms | 2 | 0 | No |
+| Limpiar búsqueda (Carga de horas) | D. Carga de horas | `/horas` | 36ms | 438ms | 0 | 0 | No |
+| Abrir edición de horas de un empleado (navega a /horas/:id) | D. Carga de horas | `/horas/:id` | 836ms | 2173ms | 7 | 0 | No |
+| Ver total real/liquidable | D. Carga de horas | `/horas/:id` | 3ms | 86ms | 0 | 0 | No |
+| Abrir edición de hora sin guardar | D. Carga de horas | `/horas/:id` | 37ms | 120ms | 0 | 0 | No |
+| Cancelar edición de hora | D. Carga de horas | `/horas/:id` | 41ms | 124ms | 0 | 0 | No |
+| Volver a Carga de horas | D. Carga de horas | `/horas` | 79ms | 161ms | 2 | 0 | No |
+| Entrar a Cierres mensuales (período actual) | E. Cierres mensuales | `/cierres` | 75ms | 1547ms | 6 | 0 | No |
+| Cambiar período (Cierres mensuales) | E. Cierres mensuales | `/cierres` | 16ms | 100ms | 2 | 0 | No |
+| Entrar a Bandeja de revisión (Por registro) | F. Bandeja de revisión | `/pendientes` | 77ms | 1759ms | 4 | 0 | No |
+| Cambiar a pestaña "Por persona" | F. Bandeja de revisión | `/pendientes` | 39ms | 123ms | 0 | 0 | No |
+| Cambiar período (Bandeja de revisión) | F. Bandeja de revisión | `/pendientes` | 809ms | 894ms | 3 | 0 | No |
+| Entrar a Novedades | G. Novedades | `/novedades` | 67ms | 1637ms | 3 | 0 | No |
+| Buscar en Novedades | G. Novedades | `/novedades` | 19ms | 424ms | 0 | 0 | No |
+| Abrir modal "Nueva novedad" sin guardar | G. Novedades | `/novedades` | 32ms | 115ms | 0 | 0 | No |
+| Cancelar "Nueva novedad" | G. Novedades | `/novedades` | 25ms | 107ms | 1 | 0 | No |
+| Entrar a Notificaciones (Todas) | H. Notificaciones | `/notificaciones` | 77ms | 2282ms | 3 | 0 | No |
+| Filtrar por "No leídas" | H. Notificaciones | `/notificaciones` | 19ms | 103ms | 0 | 0 | No |
 | Cargar más notificaciones | H. Notificaciones | `/notificaciones` | 28ms | 111ms | 0 | 0 | No |
-| Entrar a Fichador (carga inicial) | I. Fichador | `/fichador` | 72ms | 735ms | 1 | 0 | No |
-| Entrar a Exportación (período actual) | J. Exportación | `/configuracion/liquidacion` | 77ms | 1706ms | 3 | 0 | No |
-| Cambiar período (Exportación) | J. Exportación | `/configuracion/liquidacion` | 804ms | 888ms | 1 | 0 | No |
+| Entrar a Fichador (carga inicial) | I. Fichador | `/fichador` | 72ms | 727ms | 1 | 0 | No |
+| Entrar a Exportación (período actual) | J. Exportación | `/configuracion/liquidacion` | 73ms | 2086ms | 3 | 0 | No |
+| Cambiar período (Exportación) | J. Exportación | `/configuracion/liquidacion` | 796ms | 881ms | 1 | 0 | No |
 
 ## 5. Tabla por submódulo
 
@@ -98,7 +99,6 @@ Relevada leyendo el código real (router, navegación, cada página y sus servic
 - **Cerrar detalle de tramos** (B. Asistencia, lectura): depende de la acción anterior, salteada.
 - **Cerrar jornada manualmente / Marcar olvido de salida / Observar jornada** (B. Asistencia, escritura): Prohibido por defecto (Parte 4 del pedido) — modifica jornadas reales de asistencia..
 - **Resolver problema de fichada** (B. Asistencia, escritura): Prohibido por defecto — cierra un caso de revisión real..
-- **Expandir hallazgos asociados de un grupo** (C. Alertas de turnos, lectura): ningún grupo de alertas tiene más de 1 hallazgo asociado en el entorno actual.
 - **Resolver alerta de turno** (C. Alertas de turnos, escritura): Prohibido por defecto — cierra una alerta real..
 - **Abrir conceptos adicionales sin guardar** (D. Carga de horas, lectura): no se encontró el disparador de este modal en el estado actual del entorno.
 - **Cancelar conceptos adicionales** (D. Carga de horas, lectura): depende de la acción anterior, salteada.
@@ -127,31 +127,31 @@ Relevada leyendo el código real (router, navegación, cada página y sus servic
 
 | Acción | Submódulo | Visible | Network idle | Rango |
 |---|---|---|---|---|
-| Login (acceso rápido RRHH) | Login | 626ms | 6389ms | Crítico |
-| Entrar a Carga de horas (período actual) | D. Carga de horas | 73ms | 3362ms | Crítico |
-| Entrar a Notificaciones (Todas) | H. Notificaciones | 80ms | 2799ms | Lento |
-| Entrar a Alertas de turnos | C. Alertas de turnos | 67ms | 2509ms | Lento |
-| Entrar a Inicio (Gestión horaria) | A. Inicio | 82ms | 2239ms | Lento |
-| Limpiar búsqueda de alertas | C. Alertas de turnos | 1822ms | 2227ms | Lento |
-| Entrar a Asistencia (carga inicial del día) | B. Asistencia | 76ms | 2192ms | Lento |
-| Entrar a Exportación (período actual) | J. Exportación | 77ms | 1706ms | Medio |
-| Abrir edición de horas de un empleado (navega a /horas/:id) | D. Carga de horas | 828ms | 1705ms | Medio |
-| Entrar a Novedades | G. Novedades | 69ms | 1701ms | Medio |
+| Login (acceso rápido RRHH) | Login | 360ms | 5061ms | Crítico |
+| Entrar a Alertas de turnos | C. Alertas de turnos | 66ms | 3044ms | Crítico |
+| Entrar a Notificaciones (Todas) | H. Notificaciones | 77ms | 2282ms | Lento |
+| Entrar a Carga de horas (período actual) | D. Carga de horas | 81ms | 2265ms | Lento |
+| Entrar a Inicio (Gestión horaria) | A. Inicio | 87ms | 2261ms | Lento |
+| Entrar a Asistencia (carga inicial del día) | B. Asistencia | 83ms | 2219ms | Lento |
+| Limpiar búsqueda de alertas | C. Alertas de turnos | 1813ms | 2218ms | Lento |
+| Abrir edición de horas de un empleado (navega a /horas/:id) | D. Carga de horas | 836ms | 2173ms | Lento |
+| Entrar a Exportación (período actual) | J. Exportación | 73ms | 2086ms | Lento |
+| Filtrar alertas por tipo | C. Alertas de turnos | 1811ms | 1896ms | Medio |
 
 ## 8. Top requests lentas
 
 | Método | Path | Status | Duración |
 |---|---|---|---|
-| GET | `/api/dashboard/metrics` | 200 | 4105ms |
-| GET | `/api/workforce/notifications` | 200 | 2237ms |
-| GET | `/api/audit` | 200 | 2156ms |
-| GET | `/api/shifts/alerts` | 200 | 1958ms |
-| GET | `/api/time-entries/home-summary` | 200 | 1671ms |
-| GET | `/api/time-entries/home-summary` | 200 | 1669ms |
-| GET | `/api/org-structure` | 200 | 1653ms |
-| GET | `/api/time-entries/attendance` | 200 | 1625ms |
-| GET | `/api/time-entries/attendance` | 200 | 1623ms |
-| GET | `/api/shifts/alerts` | 200 | 1505ms |
+| GET | `/api/dashboard/metrics` | 200 | 3172ms |
+| GET | `/api/shifts/alerts` | 200 | 2496ms |
+| GET | `/api/workforce/notifications` | 200 | 1721ms |
+| GET | `/api/time-entries/home-summary` | 200 | 1687ms |
+| GET | `/api/org-structure` | 200 | 1686ms |
+| GET | `/api/time-entries/home-summary` | 200 | 1685ms |
+| GET | `/api/time-entries/attendance` | 200 | 1648ms |
+| GET | `/api/time-entries/attendance` | 200 | 1646ms |
+| GET | `/api/novelty-types` | 200 | 1611ms |
+| GET | `/api/finnegans-export/novelties` | 200 | 1527ms |
 
 ## 9. Endpoints repetidos
 
@@ -161,16 +161,16 @@ Mismo endpoint (método+path) pedido más de una vez a lo largo de TODO el recor
 |---|---|
 | `GET /api/workforce/notifications-unread-count` | 12 |
 | `GET /api/time-entries/attendance/observations` | 6 |
-| `GET /api/shifts/alerts` | 5 |
+| `GET /api/shifts/alerts` | 6 |
 | `GET /api/time-entries/summary` | 5 |
 | `GET /api/novelties` | 4 |
 | `GET /api/time-entries/attendance` | 3 |
 | `GET /api/time-entries/period-employees` | 3 |
 | `GET /api/employees/:id/time-grid` | 3 |
 | `GET /api/workforce/corrections` | 3 |
+| `GET /api/workforce/closures` | 3 |
 | `GET /api/finnegans-export/novelties` | 3 |
 | `GET /api/time-entries/home-summary` | 2 |
-| `GET /api/workforce/closures` | 2 |
 | `GET /api/pending` | 2 |
 | `GET /api/time-entries` | 2 |
 | `GET /api/workforce/notifications` | 2 |
@@ -185,7 +185,7 @@ Mismo endpoint pedido más de una vez DENTRO de la ventana de una sola acción �
 - **Entrar a Alertas de turnos** (C. Alertas de turnos): `GET /api/shifts/alerts` x2
 - **Limpiar búsqueda de alertas** (C. Alertas de turnos): `GET /api/shifts/alerts` x2
 - **Abrir edición de horas de un empleado (navega a /horas/:id)** (D. Carga de horas): `GET /api/employees/:id/time-grid` x3, `GET /api/novelties` x2
-- **Entrar a Cierres mensuales (período actual)** (E. Cierres mensuales): `GET /api/workforce/closures` x2, `GET /api/workforce/corrections` x2
+- **Entrar a Cierres mensuales (período actual)** (E. Cierres mensuales): `GET /api/workforce/corrections` x2, `GET /api/workforce/closures` x2
 - **Entrar a Novedades** (G. Novedades): `GET /api/novelties` x2
 - **Entrar a Notificaciones (Todas)** (H. Notificaciones): `GET /api/workforce/notifications` x2
 - **Entrar a Exportación (período actual)** (J. Exportación): `GET /api/finnegans-export/novelties` x2
@@ -233,16 +233,16 @@ Submódulos ordenados por cantidad de endpoints Crítico/Lento detectados en est
 
 | Orden | Submódulo | Endpoints Crítico | Endpoints Lento | Duración máxima |
 |---|---|---|---|---|
-| 1 | H. Notificaciones | 0 | 1 | 2237ms |
-| 2 | C. Alertas de turnos | 0 | 0 | 1958ms |
-| 3 | A. Inicio | 0 | 0 | 1671ms |
-| 4 | D. Carga de horas | 0 | 0 | 1653ms |
-| 5 | B. Asistencia | 0 | 0 | 1625ms |
-| 6 | F. Bandeja de revisión | 0 | 0 | 1241ms |
-| 7 | G. Novedades | 0 | 0 | 1145ms |
-| 8 | J. Exportación | 0 | 0 | 1144ms |
-| 9 | E. Cierres mensuales | 0 | 0 | 766ms |
-| 10 | I. Fichador | 0 | 0 | 188ms |
+| 1 | C. Alertas de turnos | 0 | 1 | 2496ms |
+| 2 | H. Notificaciones | 0 | 0 | 1721ms |
+| 3 | A. Inicio | 0 | 0 | 1687ms |
+| 4 | D. Carga de horas | 0 | 0 | 1686ms |
+| 5 | B. Asistencia | 0 | 0 | 1648ms |
+| 6 | J. Exportación | 0 | 0 | 1527ms |
+| 7 | F. Bandeja de revisión | 0 | 0 | 1194ms |
+| 8 | G. Novedades | 0 | 0 | 1080ms |
+| 9 | E. Cierres mensuales | 0 | 0 | 986ms |
+| 10 | I. Fichador | 0 | 0 | 179ms |
 
 Contexto histórico relevante para esta priorización (no medido por este journey, ya documentado en etapas previas):
 - `GET /shifts/alerts` (Alertas de turnos) fue medido en 3906ms (Crítico) por el journey general 14B.3 y nunca se revisó desde entonces.
@@ -256,7 +256,7 @@ Idéntico al archivo `docs/performance/WORKFORCE_MANAGEMENT_PERFORMANCE_JOURNEY_
 
 ```json
 {
-  "generatedAt": "2026-09-07T16:40:33.022Z",
+  "generatedAt": "2026-09-07T17:16:58.425Z",
   "environment": "Frontend y backend locales (`npm run dev`), backend conectado a la base real de staging (ver docs/LOCAL_DEVELOPMENT.md) — no es un ambiente de producción ni un ambiente aislado de test.",
   "baseUrl": "http://localhost:5174",
   "apiBaseUrl": "http://localhost:4002/api",
@@ -270,9 +270,9 @@ Idéntico al archivo `docs/performance/WORKFORCE_MANAGEMENT_PERFORMANCE_JOURNEY_
   },
   "summary": {
     "totalActions": 65,
-    "coveredActions": 37,
-    "skippedActions": 28,
-    "slowActions": 5,
+    "coveredActions": 38,
+    "skippedActions": 27,
+    "slowActions": 7,
     "verySlowActions": 2,
     "writesSkipped": 16,
     "httpErrors": 0,
@@ -284,7 +284,7 @@ Idéntico al archivo `docs/performance/WORKFORCE_MANAGEMENT_PERFORMANCE_JOURNEY_
       "coveredActions": 1,
       "skippedActions": 0,
       "totalRequests": 4,
-      "maxDurationMs": 6389,
+      "maxDurationMs": 5061,
       "rank": "Crítico"
     },
     {
@@ -292,7 +292,7 @@ Idéntico al archivo `docs/performance/WORKFORCE_MANAGEMENT_PERFORMANCE_JOURNEY_
       "coveredActions": 2,
       "skippedActions": 0,
       "totalRequests": 3,
-      "maxDurationMs": 2239,
+      "maxDurationMs": 2261,
       "rank": "Lento"
     },
     {
@@ -300,31 +300,31 @@ Idéntico al archivo `docs/performance/WORKFORCE_MANAGEMENT_PERFORMANCE_JOURNEY_
       "coveredActions": 5,
       "skippedActions": 4,
       "totalRequests": 10,
-      "maxDurationMs": 2192,
+      "maxDurationMs": 2219,
       "rank": "Lento"
     },
     {
       "zone": "C. Alertas de turnos",
-      "coveredActions": 5,
-      "skippedActions": 2,
-      "totalRequests": 6,
-      "maxDurationMs": 2509,
-      "rank": "Lento"
+      "coveredActions": 6,
+      "skippedActions": 1,
+      "totalRequests": 7,
+      "maxDurationMs": 3044,
+      "rank": "Crítico"
     },
     {
       "zone": "D. Carga de horas",
       "coveredActions": 9,
       "skippedActions": 4,
       "totalRequests": 15,
-      "maxDurationMs": 3362,
-      "rank": "Crítico"
+      "maxDurationMs": 2265,
+      "rank": "Lento"
     },
     {
       "zone": "E. Cierres mensuales",
       "coveredActions": 2,
       "skippedActions": 2,
-      "totalRequests": 7,
-      "maxDurationMs": 1307,
+      "totalRequests": 8,
+      "maxDurationMs": 1547,
       "rank": "Medio"
     },
     {
@@ -332,7 +332,7 @@ Idéntico al archivo `docs/performance/WORKFORCE_MANAGEMENT_PERFORMANCE_JOURNEY_
       "coveredActions": 3,
       "skippedActions": 6,
       "totalRequests": 7,
-      "maxDurationMs": 1690,
+      "maxDurationMs": 1759,
       "rank": "Medio"
     },
     {
@@ -340,7 +340,7 @@ Idéntico al archivo `docs/performance/WORKFORCE_MANAGEMENT_PERFORMANCE_JOURNEY_
       "coveredActions": 4,
       "skippedActions": 3,
       "totalRequests": 4,
-      "maxDurationMs": 1701,
+      "maxDurationMs": 1637,
       "rank": "Medio"
     },
     {
@@ -348,7 +348,7 @@ Idéntico al archivo `docs/performance/WORKFORCE_MANAGEMENT_PERFORMANCE_JOURNEY_
       "coveredActions": 3,
       "skippedActions": 1,
       "totalRequests": 3,
-      "maxDurationMs": 2799,
+      "maxDurationMs": 2282,
       "rank": "Lento"
     },
     {
@@ -356,7 +356,7 @@ Idéntico al archivo `docs/performance/WORKFORCE_MANAGEMENT_PERFORMANCE_JOURNEY_
       "coveredActions": 1,
       "skippedActions": 4,
       "totalRequests": 1,
-      "maxDurationMs": 735,
+      "maxDurationMs": 727,
       "rank": "OK"
     },
     {
@@ -364,8 +364,8 @@ Idéntico al archivo `docs/performance/WORKFORCE_MANAGEMENT_PERFORMANCE_JOURNEY_
       "coveredActions": 2,
       "skippedActions": 2,
       "totalRequests": 4,
-      "maxDurationMs": 1706,
-      "rank": "Medio"
+      "maxDurationMs": 2086,
+      "rank": "Lento"
     }
   ],
   "actions": [
@@ -376,32 +376,32 @@ Idéntico al archivo `docs/performance/WORKFORCE_MANAGEMENT_PERFORMANCE_JOURNEY_
       "route": "/",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 626,
-      "networkIdleMs": 6389,
+      "visibleMs": 360,
+      "networkIdleMs": 5061,
       "requests": [
         {
           "method": "POST",
           "path": "/api/auth/login",
           "statusCode": 200,
-          "durationMs": 1190
+          "durationMs": 1015
         },
         {
           "method": "GET",
           "path": "/api/workforce/notifications-unread-count",
           "statusCode": 200,
-          "durationMs": 352
+          "durationMs": 496
         },
         {
           "method": "GET",
           "path": "/api/audit",
           "statusCode": 200,
-          "durationMs": 2156
+          "durationMs": 868
         },
         {
           "method": "GET",
           "path": "/api/dashboard/metrics",
           "statusCode": 200,
-          "durationMs": 4105
+          "durationMs": 3172
         }
       ],
       "consoleErrors": [],
@@ -418,26 +418,26 @@ Idéntico al archivo `docs/performance/WORKFORCE_MANAGEMENT_PERFORMANCE_JOURNEY_
       "route": "/gestion-horaria",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 82,
-      "networkIdleMs": 2239,
+      "visibleMs": 87,
+      "networkIdleMs": 2261,
       "requests": [
         {
           "method": "GET",
           "path": "/api/workforce/notifications-unread-count",
           "statusCode": 200,
-          "durationMs": 387
+          "durationMs": 181
         },
         {
           "method": "GET",
           "path": "/api/time-entries/home-summary",
           "statusCode": 200,
-          "durationMs": 1669
+          "durationMs": 1685
         },
         {
           "method": "GET",
           "path": "/api/time-entries/home-summary",
           "statusCode": 200,
-          "durationMs": 1671
+          "durationMs": 1687
         }
       ],
       "consoleErrors": [],
@@ -453,7 +453,7 @@ Idéntico al archivo `docs/performance/WORKFORCE_MANAGEMENT_PERFORMANCE_JOURNEY_
       "covered": true,
       "skippedReason": null,
       "visibleMs": 3,
-      "networkIdleMs": 88,
+      "networkIdleMs": 86,
       "requests": [],
       "consoleErrors": [],
       "notes": [
@@ -469,38 +469,38 @@ Idéntico al archivo `docs/performance/WORKFORCE_MANAGEMENT_PERFORMANCE_JOURNEY_
       "route": "/asistencia",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 76,
-      "networkIdleMs": 2192,
+      "visibleMs": 83,
+      "networkIdleMs": 2219,
       "requests": [
-        {
-          "method": "GET",
-          "path": "/api/time-entries/attendance/observations",
-          "statusCode": 200,
-          "durationMs": 844
-        },
-        {
-          "method": "GET",
-          "path": "/api/time-entries/attendance/observations",
-          "statusCode": 200,
-          "durationMs": 844
-        },
         {
           "method": "GET",
           "path": "/api/workforce/notifications-unread-count",
           "statusCode": 200,
-          "durationMs": 865
+          "durationMs": 752
+        },
+        {
+          "method": "GET",
+          "path": "/api/time-entries/attendance/observations",
+          "statusCode": 200,
+          "durationMs": 734
+        },
+        {
+          "method": "GET",
+          "path": "/api/time-entries/attendance/observations",
+          "statusCode": 200,
+          "durationMs": 735
         },
         {
           "method": "GET",
           "path": "/api/time-entries/attendance",
           "statusCode": 200,
-          "durationMs": 1623
+          "durationMs": 1646
         },
         {
           "method": "GET",
           "path": "/api/time-entries/attendance",
           "statusCode": 200,
-          "durationMs": 1625
+          "durationMs": 1648
         }
       ],
       "consoleErrors": [],
@@ -515,8 +515,8 @@ Idéntico al archivo `docs/performance/WORKFORCE_MANAGEMENT_PERFORMANCE_JOURNEY_
       "route": "/asistencia",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 26,
-      "networkIdleMs": 109,
+      "visibleMs": 28,
+      "networkIdleMs": 111,
       "requests": [],
       "consoleErrors": [],
       "notes": [],
@@ -530,14 +530,14 @@ Idéntico al archivo `docs/performance/WORKFORCE_MANAGEMENT_PERFORMANCE_JOURNEY_
       "route": "/asistencia",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 24,
+      "visibleMs": 23,
       "networkIdleMs": 427,
       "requests": [
         {
           "method": "GET",
           "path": "/api/time-entries/attendance",
           "statusCode": 200,
-          "durationMs": 889
+          "durationMs": 995
         }
       ],
       "consoleErrors": [],
@@ -555,13 +555,13 @@ Idéntico al archivo `docs/performance/WORKFORCE_MANAGEMENT_PERFORMANCE_JOURNEY_
       "covered": true,
       "skippedReason": null,
       "visibleMs": 22,
-      "networkIdleMs": 106,
+      "networkIdleMs": 105,
       "requests": [
         {
           "method": "GET",
           "path": "/api/time-entries/attendance/observations",
           "statusCode": 200,
-          "durationMs": 379
+          "durationMs": 397
         }
       ],
       "consoleErrors": [],
@@ -576,8 +576,8 @@ Idéntico al archivo `docs/performance/WORKFORCE_MANAGEMENT_PERFORMANCE_JOURNEY_
       "route": "/asistencia",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 30,
-      "networkIdleMs": 115,
+      "visibleMs": 22,
+      "networkIdleMs": 106,
       "requests": [
         {
           "method": "GET",
@@ -589,13 +589,13 @@ Idéntico al archivo `docs/performance/WORKFORCE_MANAGEMENT_PERFORMANCE_JOURNEY_
           "method": "GET",
           "path": "/api/time-entries/attendance/observations",
           "statusCode": 200,
-          "durationMs": 377
+          "durationMs": 372
         },
         {
           "method": "GET",
           "path": "/api/time-entries/attendance/observations",
           "statusCode": 200,
-          "durationMs": 4
+          "durationMs": 3
         }
       ],
       "consoleErrors": [],
@@ -662,26 +662,26 @@ Idéntico al archivo `docs/performance/WORKFORCE_MANAGEMENT_PERFORMANCE_JOURNEY_
       "route": "/asistencia/alertas",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 67,
-      "networkIdleMs": 2509,
+      "visibleMs": 66,
+      "networkIdleMs": 3044,
       "requests": [
         {
           "method": "GET",
           "path": "/api/workforce/notifications-unread-count",
           "statusCode": 200,
-          "durationMs": 178
+          "durationMs": 170
         },
         {
           "method": "GET",
           "path": "/api/shifts/alerts",
           "statusCode": 200,
-          "durationMs": 1253
+          "durationMs": 1373
         },
         {
           "method": "GET",
           "path": "/api/shifts/alerts",
           "statusCode": 200,
-          "durationMs": 1958
+          "durationMs": 2496
         }
       ],
       "consoleErrors": [],
@@ -696,8 +696,8 @@ Idéntico al archivo `docs/performance/WORKFORCE_MANAGEMENT_PERFORMANCE_JOURNEY_
       "route": "/asistencia/alertas",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 17,
-      "networkIdleMs": 420,
+      "visibleMs": 15,
+      "networkIdleMs": 418,
       "requests": [],
       "consoleErrors": [],
       "notes": [
@@ -713,20 +713,20 @@ Idéntico al archivo `docs/performance/WORKFORCE_MANAGEMENT_PERFORMANCE_JOURNEY_
       "route": "/asistencia/alertas",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 1822,
-      "networkIdleMs": 2227,
+      "visibleMs": 1813,
+      "networkIdleMs": 2218,
       "requests": [
         {
           "method": "GET",
           "path": "/api/shifts/alerts",
           "statusCode": 200,
-          "durationMs": 1505
+          "durationMs": 1218
         },
         {
           "method": "GET",
           "path": "/api/shifts/alerts",
           "statusCode": 200,
-          "durationMs": 1429
+          "durationMs": 1282
         }
       ],
       "consoleErrors": [],
@@ -741,14 +741,14 @@ Idéntico al archivo `docs/performance/WORKFORCE_MANAGEMENT_PERFORMANCE_JOURNEY_
       "route": "/asistencia/alertas",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 1313,
-      "networkIdleMs": 1397,
+      "visibleMs": 1811,
+      "networkIdleMs": 1896,
       "requests": [
         {
           "method": "GET",
           "path": "/api/shifts/alerts",
           "statusCode": 200,
-          "durationMs": 1220
+          "durationMs": 1459
         }
       ],
       "consoleErrors": [],
@@ -763,9 +763,16 @@ Idéntico al archivo `docs/performance/WORKFORCE_MANAGEMENT_PERFORMANCE_JOURNEY_
       "route": "/asistencia/alertas",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 19,
-      "networkIdleMs": 101,
-      "requests": [],
+      "visibleMs": 1326,
+      "networkIdleMs": 1411,
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/api/shifts/alerts",
+          "statusCode": 200,
+          "durationMs": 1115
+        }
+      ],
       "consoleErrors": [],
       "notes": [],
       "isWrite": false,
@@ -776,8 +783,10 @@ Idéntico al archivo `docs/performance/WORKFORCE_MANAGEMENT_PERFORMANCE_JOURNEY_
       "zone": "C. Alertas de turnos",
       "submodule": "C. Alertas de turnos",
       "route": "/asistencia/alertas",
-      "covered": false,
-      "skippedReason": "ningún grupo de alertas tiene más de 1 hallazgo asociado en el entorno actual",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 36,
+      "networkIdleMs": 120,
       "requests": [],
       "consoleErrors": [],
       "notes": [],
@@ -804,32 +813,32 @@ Idéntico al archivo `docs/performance/WORKFORCE_MANAGEMENT_PERFORMANCE_JOURNEY_
       "route": "/horas",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 73,
-      "networkIdleMs": 3362,
+      "visibleMs": 81,
+      "networkIdleMs": 2265,
       "requests": [
         {
           "method": "GET",
           "path": "/api/workforce/notifications-unread-count",
           "statusCode": 200,
-          "durationMs": 526
+          "durationMs": 377
         },
         {
           "method": "GET",
           "path": "/api/time-entries/summary",
           "statusCode": 200,
-          "durationMs": 550
-        },
-        {
-          "method": "GET",
-          "path": "/api/org-structure",
-          "statusCode": 200,
-          "durationMs": 1653
+          "durationMs": 544
         },
         {
           "method": "GET",
           "path": "/api/time-entries/period-employees",
           "statusCode": 200,
-          "durationMs": 1119
+          "durationMs": 939
+        },
+        {
+          "method": "GET",
+          "path": "/api/org-structure",
+          "statusCode": 200,
+          "durationMs": 1686
         }
       ],
       "consoleErrors": [],
@@ -844,8 +853,8 @@ Idéntico al archivo `docs/performance/WORKFORCE_MANAGEMENT_PERFORMANCE_JOURNEY_
       "route": "/horas",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 50,
-      "networkIdleMs": 132,
+      "visibleMs": 45,
+      "networkIdleMs": 127,
       "requests": [],
       "consoleErrors": [],
       "notes": [],
@@ -859,20 +868,20 @@ Idéntico al archivo `docs/performance/WORKFORCE_MANAGEMENT_PERFORMANCE_JOURNEY_
       "route": "/horas",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 19,
+      "visibleMs": 18,
       "networkIdleMs": 421,
       "requests": [
         {
           "method": "GET",
           "path": "/api/time-entries/summary",
           "statusCode": 200,
-          "durationMs": 560
+          "durationMs": 376
         },
         {
           "method": "GET",
           "path": "/api/time-entries/period-employees",
           "statusCode": 200,
-          "durationMs": 765
+          "durationMs": 755
         }
       ],
       "consoleErrors": [],
@@ -891,14 +900,7 @@ Idéntico al archivo `docs/performance/WORKFORCE_MANAGEMENT_PERFORMANCE_JOURNEY_
       "skippedReason": null,
       "visibleMs": 36,
       "networkIdleMs": 438,
-      "requests": [
-        {
-          "method": "GET",
-          "path": "/api/time-entries/period-employees",
-          "statusCode": 200,
-          "durationMs": 757
-        }
-      ],
+      "requests": [],
       "consoleErrors": [],
       "notes": [],
       "isWrite": false,
@@ -911,50 +913,50 @@ Idéntico al archivo `docs/performance/WORKFORCE_MANAGEMENT_PERFORMANCE_JOURNEY_
       "route": "/horas/:id",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 828,
-      "networkIdleMs": 1705,
+      "visibleMs": 836,
+      "networkIdleMs": 2173,
       "requests": [
         {
           "method": "GET",
           "path": "/api/workforce/notifications-unread-count",
           "statusCode": 200,
-          "durationMs": 401
+          "durationMs": 369
         },
         {
           "method": "GET",
           "path": "/api/employees/:id/time-grid",
           "statusCode": 200,
-          "durationMs": 389
+          "durationMs": 377
+        },
+        {
+          "method": "GET",
+          "path": "/api/employees/:id/time-grid",
+          "statusCode": 200,
+          "durationMs": 379
+        },
+        {
+          "method": "GET",
+          "path": "/api/employees/:id/time-grid",
+          "statusCode": 200,
+          "durationMs": 380
+        },
+        {
+          "method": "GET",
+          "path": "/api/novelties",
+          "statusCode": 200,
+          "durationMs": 1123
+        },
+        {
+          "method": "GET",
+          "path": "/api/novelties",
+          "statusCode": 200,
+          "durationMs": 746
         },
         {
           "method": "GET",
           "path": "/api/novelty-types",
           "statusCode": 200,
-          "durationMs": 388
-        },
-        {
-          "method": "GET",
-          "path": "/api/employees/:id/time-grid",
-          "statusCode": 200,
-          "durationMs": 391
-        },
-        {
-          "method": "GET",
-          "path": "/api/employees/:id/time-grid",
-          "statusCode": 200,
-          "durationMs": 392
-        },
-        {
-          "method": "GET",
-          "path": "/api/novelties",
-          "statusCode": 200,
-          "durationMs": 1141
-        },
-        {
-          "method": "GET",
-          "path": "/api/novelties",
-          "statusCode": 200,
-          "durationMs": 752
+          "durationMs": 1611
         }
       ],
       "consoleErrors": [],
@@ -969,8 +971,8 @@ Idéntico al archivo `docs/performance/WORKFORCE_MANAGEMENT_PERFORMANCE_JOURNEY_
       "route": "/horas/:id",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 7,
-      "networkIdleMs": 89,
+      "visibleMs": 3,
+      "networkIdleMs": 86,
       "requests": [],
       "consoleErrors": [],
       "notes": [
@@ -986,8 +988,8 @@ Idéntico al archivo `docs/performance/WORKFORCE_MANAGEMENT_PERFORMANCE_JOURNEY_
       "route": "/horas/:id",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 49,
-      "networkIdleMs": 131,
+      "visibleMs": 37,
+      "networkIdleMs": 120,
       "requests": [],
       "consoleErrors": [],
       "notes": [
@@ -1003,8 +1005,8 @@ Idéntico al archivo `docs/performance/WORKFORCE_MANAGEMENT_PERFORMANCE_JOURNEY_
       "route": "/horas/:id",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 39,
-      "networkIdleMs": 122,
+      "visibleMs": 41,
+      "networkIdleMs": 124,
       "requests": [],
       "consoleErrors": [],
       "notes": [],
@@ -1044,14 +1046,20 @@ Idéntico al archivo `docs/performance/WORKFORCE_MANAGEMENT_PERFORMANCE_JOURNEY_
       "route": "/horas",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 54,
-      "networkIdleMs": 136,
+      "visibleMs": 79,
+      "networkIdleMs": 161,
       "requests": [
+        {
+          "method": "GET",
+          "path": "/api/time-entries/period-employees",
+          "statusCode": 200,
+          "durationMs": 2
+        },
         {
           "method": "GET",
           "path": "/api/time-entries/summary",
           "statusCode": 200,
-          "durationMs": 175
+          "durationMs": 3
         }
       ],
       "consoleErrors": [],
@@ -1092,44 +1100,44 @@ Idéntico al archivo `docs/performance/WORKFORCE_MANAGEMENT_PERFORMANCE_JOURNEY_
       "route": "/cierres",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 54,
-      "networkIdleMs": 1307,
+      "visibleMs": 75,
+      "networkIdleMs": 1547,
       "requests": [
         {
           "method": "GET",
           "path": "/api/workforce/notifications-unread-count",
           "statusCode": 200,
-          "durationMs": 172
-        },
-        {
-          "method": "GET",
-          "path": "/api/workforce/closures",
-          "statusCode": 200,
-          "durationMs": 357
+          "durationMs": 384
         },
         {
           "method": "GET",
           "path": "/api/employees/options",
           "statusCode": 200,
-          "durationMs": 358
+          "durationMs": 372
         },
         {
           "method": "GET",
           "path": "/api/workforce/corrections",
           "statusCode": 200,
-          "durationMs": 359
-        },
-        {
-          "method": "GET",
-          "path": "/api/workforce/corrections",
-          "statusCode": 200,
-          "durationMs": 765
+          "durationMs": 398
         },
         {
           "method": "GET",
           "path": "/api/workforce/closures",
           "statusCode": 200,
-          "durationMs": 766
+          "durationMs": 399
+        },
+        {
+          "method": "GET",
+          "path": "/api/workforce/corrections",
+          "statusCode": 200,
+          "durationMs": 986
+        },
+        {
+          "method": "GET",
+          "path": "/api/workforce/closures",
+          "statusCode": 200,
+          "durationMs": 986
         }
       ],
       "consoleErrors": [],
@@ -1144,14 +1152,20 @@ Idéntico al archivo `docs/performance/WORKFORCE_MANAGEMENT_PERFORMANCE_JOURNEY_
       "route": "/cierres",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 17,
+      "visibleMs": 16,
       "networkIdleMs": 100,
       "requests": [
         {
           "method": "GET",
           "path": "/api/workforce/corrections",
           "statusCode": 200,
-          "durationMs": 189
+          "durationMs": 188
+        },
+        {
+          "method": "GET",
+          "path": "/api/workforce/closures",
+          "statusCode": 200,
+          "durationMs": 198
         }
       ],
       "consoleErrors": [],
@@ -1192,8 +1206,8 @@ Idéntico al archivo `docs/performance/WORKFORCE_MANAGEMENT_PERFORMANCE_JOURNEY_
       "route": "/pendientes",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 80,
-      "networkIdleMs": 1690,
+      "visibleMs": 77,
+      "networkIdleMs": 1759,
       "requests": [
         {
           "method": "GET",
@@ -1205,19 +1219,19 @@ Idéntico al archivo `docs/performance/WORKFORCE_MANAGEMENT_PERFORMANCE_JOURNEY_
           "method": "GET",
           "path": "/api/workforce/notifications-unread-count",
           "statusCode": 200,
-          "durationMs": 190
+          "durationMs": 181
         },
         {
           "method": "GET",
           "path": "/api/pending",
           "statusCode": 200,
-          "durationMs": 385
+          "durationMs": 359
         },
         {
           "method": "GET",
           "path": "/api/time-entries",
           "statusCode": 200,
-          "durationMs": 1120
+          "durationMs": 1194
         }
       ],
       "consoleErrors": [],
@@ -1233,7 +1247,7 @@ Idéntico al archivo `docs/performance/WORKFORCE_MANAGEMENT_PERFORMANCE_JOURNEY_
       "covered": true,
       "skippedReason": null,
       "visibleMs": 39,
-      "networkIdleMs": 121,
+      "networkIdleMs": 123,
       "requests": [],
       "consoleErrors": [],
       "notes": [],
@@ -1260,26 +1274,26 @@ Idéntico al archivo `docs/performance/WORKFORCE_MANAGEMENT_PERFORMANCE_JOURNEY_
       "route": "/pendientes",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 1310,
-      "networkIdleMs": 1393,
+      "visibleMs": 809,
+      "networkIdleMs": 894,
       "requests": [
         {
           "method": "GET",
-          "path": "/api/time-entries",
+          "path": "/api/pending",
           "statusCode": 200,
-          "durationMs": 979
+          "durationMs": 548
         },
         {
           "method": "GET",
           "path": "/api/time-entries/summary",
           "statusCode": 200,
-          "durationMs": 1081
+          "durationMs": 549
         },
         {
           "method": "GET",
-          "path": "/api/pending",
+          "path": "/api/time-entries",
           "statusCode": 200,
-          "durationMs": 1241
+          "durationMs": 902
         }
       ],
       "consoleErrors": [],
@@ -1359,26 +1373,26 @@ Idéntico al archivo `docs/performance/WORKFORCE_MANAGEMENT_PERFORMANCE_JOURNEY_
       "route": "/novedades",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 69,
-      "networkIdleMs": 1701,
+      "visibleMs": 67,
+      "networkIdleMs": 1637,
       "requests": [
         {
           "method": "GET",
           "path": "/api/workforce/notifications-unread-count",
           "statusCode": 200,
-          "durationMs": 368
+          "durationMs": 178
         },
         {
           "method": "GET",
           "path": "/api/novelties",
           "statusCode": 200,
-          "durationMs": 1143
+          "durationMs": 1078
         },
         {
           "method": "GET",
           "path": "/api/novelties",
           "statusCode": 200,
-          "durationMs": 1145
+          "durationMs": 1080
         }
       ],
       "consoleErrors": [],
@@ -1393,8 +1407,8 @@ Idéntico al archivo `docs/performance/WORKFORCE_MANAGEMENT_PERFORMANCE_JOURNEY_
       "route": "/novedades",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 13,
-      "networkIdleMs": 417,
+      "visibleMs": 19,
+      "networkIdleMs": 424,
       "requests": [],
       "consoleErrors": [],
       "notes": [
@@ -1410,8 +1424,8 @@ Idéntico al archivo `docs/performance/WORKFORCE_MANAGEMENT_PERFORMANCE_JOURNEY_
       "route": "/novedades",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 25,
-      "networkIdleMs": 108,
+      "visibleMs": 32,
+      "networkIdleMs": 115,
       "requests": [],
       "consoleErrors": [],
       "notes": [
@@ -1427,14 +1441,14 @@ Idéntico al archivo `docs/performance/WORKFORCE_MANAGEMENT_PERFORMANCE_JOURNEY_
       "route": "/novedades",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 23,
-      "networkIdleMs": 105,
+      "visibleMs": 25,
+      "networkIdleMs": 107,
       "requests": [
         {
           "method": "GET",
           "path": "/api/hour-concepts",
           "statusCode": 200,
-          "durationMs": 563
+          "durationMs": 369
         }
       ],
       "consoleErrors": [],
@@ -1488,26 +1502,26 @@ Idéntico al archivo `docs/performance/WORKFORCE_MANAGEMENT_PERFORMANCE_JOURNEY_
       "route": "/notificaciones",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 80,
-      "networkIdleMs": 2799,
+      "visibleMs": 77,
+      "networkIdleMs": 2282,
       "requests": [
         {
           "method": "GET",
           "path": "/api/workforce/notifications-unread-count",
           "statusCode": 200,
-          "durationMs": 290
+          "durationMs": 189
         },
         {
           "method": "GET",
           "path": "/api/workforce/notifications",
           "statusCode": 200,
-          "durationMs": 1328
+          "durationMs": 1046
         },
         {
           "method": "GET",
           "path": "/api/workforce/notifications",
           "statusCode": 200,
-          "durationMs": 2237
+          "durationMs": 1721
         }
       ],
       "consoleErrors": [],
@@ -1522,8 +1536,8 @@ Idéntico al archivo `docs/performance/WORKFORCE_MANAGEMENT_PERFORMANCE_JOURNEY_
       "route": "/notificaciones",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 17,
-      "networkIdleMs": 101,
+      "visibleMs": 19,
+      "networkIdleMs": 103,
       "requests": [],
       "consoleErrors": [],
       "notes": [],
@@ -1566,13 +1580,13 @@ Idéntico al archivo `docs/performance/WORKFORCE_MANAGEMENT_PERFORMANCE_JOURNEY_
       "covered": true,
       "skippedReason": null,
       "visibleMs": 72,
-      "networkIdleMs": 735,
+      "networkIdleMs": 727,
       "requests": [
         {
           "method": "GET",
           "path": "/api/workforce/notifications-unread-count",
           "statusCode": 200,
-          "durationMs": 188
+          "durationMs": 179
         }
       ],
       "consoleErrors": [],
@@ -1639,26 +1653,26 @@ Idéntico al archivo `docs/performance/WORKFORCE_MANAGEMENT_PERFORMANCE_JOURNEY_
       "route": "/configuracion/liquidacion",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 77,
-      "networkIdleMs": 1706,
+      "visibleMs": 73,
+      "networkIdleMs": 2086,
       "requests": [
         {
           "method": "GET",
           "path": "/api/workforce/notifications-unread-count",
           "statusCode": 200,
-          "durationMs": 182
-        },
-        {
-          "method": "GET",
-          "path": "/api/finnegans-export/novelties",
-          "statusCode": 200,
-          "durationMs": 781
+          "durationMs": 402
         },
         {
           "method": "GET",
           "path": "/api/finnegans-export/novelties",
           "statusCode": 200,
           "durationMs": 1144
+        },
+        {
+          "method": "GET",
+          "path": "/api/finnegans-export/novelties",
+          "statusCode": 200,
+          "durationMs": 1527
         }
       ],
       "consoleErrors": [],
@@ -1673,14 +1687,14 @@ Idéntico al archivo `docs/performance/WORKFORCE_MANAGEMENT_PERFORMANCE_JOURNEY_
       "route": "/configuracion/liquidacion",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 804,
-      "networkIdleMs": 888,
+      "visibleMs": 796,
+      "networkIdleMs": 881,
       "requests": [
         {
           "method": "GET",
           "path": "/api/finnegans-export/novelties",
           "statusCode": 200,
-          "durationMs": 547
+          "durationMs": 359
         }
       ],
       "consoleErrors": [],
@@ -1720,123 +1734,123 @@ Idéntico al archivo `docs/performance/WORKFORCE_MANAGEMENT_PERFORMANCE_JOURNEY_
       "method": "GET",
       "path": "/api/dashboard/metrics",
       "statusCode": 200,
-      "durationMs": 4105
+      "durationMs": 3172
+    },
+    {
+      "method": "GET",
+      "path": "/api/shifts/alerts",
+      "statusCode": 200,
+      "durationMs": 2496
     },
     {
       "method": "GET",
       "path": "/api/workforce/notifications",
       "statusCode": 200,
-      "durationMs": 2237
-    },
-    {
-      "method": "GET",
-      "path": "/api/audit",
-      "statusCode": 200,
-      "durationMs": 2156
-    },
-    {
-      "method": "GET",
-      "path": "/api/shifts/alerts",
-      "statusCode": 200,
-      "durationMs": 1958
+      "durationMs": 1721
     },
     {
       "method": "GET",
       "path": "/api/time-entries/home-summary",
       "statusCode": 200,
-      "durationMs": 1671
-    },
-    {
-      "method": "GET",
-      "path": "/api/time-entries/home-summary",
-      "statusCode": 200,
-      "durationMs": 1669
+      "durationMs": 1687
     },
     {
       "method": "GET",
       "path": "/api/org-structure",
       "statusCode": 200,
-      "durationMs": 1653
+      "durationMs": 1686
+    },
+    {
+      "method": "GET",
+      "path": "/api/time-entries/home-summary",
+      "statusCode": 200,
+      "durationMs": 1685
     },
     {
       "method": "GET",
       "path": "/api/time-entries/attendance",
       "statusCode": 200,
-      "durationMs": 1625
+      "durationMs": 1648
     },
     {
       "method": "GET",
       "path": "/api/time-entries/attendance",
       "statusCode": 200,
-      "durationMs": 1623
+      "durationMs": 1646
     },
     {
       "method": "GET",
-      "path": "/api/shifts/alerts",
+      "path": "/api/novelty-types",
       "statusCode": 200,
-      "durationMs": 1505
+      "durationMs": 1611
+    },
+    {
+      "method": "GET",
+      "path": "/api/finnegans-export/novelties",
+      "statusCode": 200,
+      "durationMs": 1527
     }
   ],
   "slowestActions": [
     {
       "name": "Login (acceso rápido RRHH)",
       "zone": "Login",
-      "visibleMs": 626,
-      "networkIdleMs": 6389
-    },
-    {
-      "name": "Entrar a Carga de horas (período actual)",
-      "zone": "D. Carga de horas",
-      "visibleMs": 73,
-      "networkIdleMs": 3362
-    },
-    {
-      "name": "Entrar a Notificaciones (Todas)",
-      "zone": "H. Notificaciones",
-      "visibleMs": 80,
-      "networkIdleMs": 2799
+      "visibleMs": 360,
+      "networkIdleMs": 5061
     },
     {
       "name": "Entrar a Alertas de turnos",
       "zone": "C. Alertas de turnos",
-      "visibleMs": 67,
-      "networkIdleMs": 2509
+      "visibleMs": 66,
+      "networkIdleMs": 3044
+    },
+    {
+      "name": "Entrar a Notificaciones (Todas)",
+      "zone": "H. Notificaciones",
+      "visibleMs": 77,
+      "networkIdleMs": 2282
+    },
+    {
+      "name": "Entrar a Carga de horas (período actual)",
+      "zone": "D. Carga de horas",
+      "visibleMs": 81,
+      "networkIdleMs": 2265
     },
     {
       "name": "Entrar a Inicio (Gestión horaria)",
       "zone": "A. Inicio",
-      "visibleMs": 82,
-      "networkIdleMs": 2239
-    },
-    {
-      "name": "Limpiar búsqueda de alertas",
-      "zone": "C. Alertas de turnos",
-      "visibleMs": 1822,
-      "networkIdleMs": 2227
+      "visibleMs": 87,
+      "networkIdleMs": 2261
     },
     {
       "name": "Entrar a Asistencia (carga inicial del día)",
       "zone": "B. Asistencia",
-      "visibleMs": 76,
-      "networkIdleMs": 2192
+      "visibleMs": 83,
+      "networkIdleMs": 2219
     },
     {
-      "name": "Entrar a Exportación (período actual)",
-      "zone": "J. Exportación",
-      "visibleMs": 77,
-      "networkIdleMs": 1706
+      "name": "Limpiar búsqueda de alertas",
+      "zone": "C. Alertas de turnos",
+      "visibleMs": 1813,
+      "networkIdleMs": 2218
     },
     {
       "name": "Abrir edición de horas de un empleado (navega a /horas/:id)",
       "zone": "D. Carga de horas",
-      "visibleMs": 828,
-      "networkIdleMs": 1705
+      "visibleMs": 836,
+      "networkIdleMs": 2173
     },
     {
-      "name": "Entrar a Novedades",
-      "zone": "G. Novedades",
-      "visibleMs": 69,
-      "networkIdleMs": 1701
+      "name": "Entrar a Exportación (período actual)",
+      "zone": "J. Exportación",
+      "visibleMs": 73,
+      "networkIdleMs": 2086
+    },
+    {
+      "name": "Filtrar alertas por tipo",
+      "zone": "C. Alertas de turnos",
+      "visibleMs": 1811,
+      "networkIdleMs": 1896
     }
   ],
   "repeatedEndpoints": [
@@ -1845,8 +1859,8 @@ Idéntico al archivo `docs/performance/WORKFORCE_MANAGEMENT_PERFORMANCE_JOURNEY_
       "method": "GET",
       "path": "/api/workforce/notifications-unread-count",
       "count": 12,
-      "avgDurationMs": 342,
-      "maxDurationMs": 865,
+      "avgDurationMs": 322,
+      "maxDurationMs": 752,
       "statusCodes": [
         200,
         200,
@@ -1869,8 +1883,8 @@ Idéntico al archivo `docs/performance/WORKFORCE_MANAGEMENT_PERFORMANCE_JOURNEY_
       "method": "GET",
       "path": "/api/time-entries/home-summary",
       "count": 2,
-      "avgDurationMs": 1670,
-      "maxDurationMs": 1671,
+      "avgDurationMs": 1686,
+      "maxDurationMs": 1687,
       "statusCodes": [
         200,
         200
@@ -1883,8 +1897,8 @@ Idéntico al archivo `docs/performance/WORKFORCE_MANAGEMENT_PERFORMANCE_JOURNEY_
       "method": "GET",
       "path": "/api/time-entries/attendance/observations",
       "count": 6,
-      "avgDurationMs": 408,
-      "maxDurationMs": 844,
+      "avgDurationMs": 374,
+      "maxDurationMs": 735,
       "statusCodes": [
         200,
         200,
@@ -1901,8 +1915,8 @@ Idéntico al archivo `docs/performance/WORKFORCE_MANAGEMENT_PERFORMANCE_JOURNEY_
       "method": "GET",
       "path": "/api/time-entries/attendance",
       "count": 3,
-      "avgDurationMs": 1379,
-      "maxDurationMs": 1625,
+      "avgDurationMs": 1430,
+      "maxDurationMs": 1648,
       "statusCodes": [
         200,
         200,
@@ -1915,10 +1929,11 @@ Idéntico al archivo `docs/performance/WORKFORCE_MANAGEMENT_PERFORMANCE_JOURNEY_
       "key": "GET /api/shifts/alerts",
       "method": "GET",
       "path": "/api/shifts/alerts",
-      "count": 5,
-      "avgDurationMs": 1473,
-      "maxDurationMs": 1958,
+      "count": 6,
+      "avgDurationMs": 1491,
+      "maxDurationMs": 2496,
       "statusCodes": [
+        200,
         200,
         200,
         200,
@@ -1933,8 +1948,8 @@ Idéntico al archivo `docs/performance/WORKFORCE_MANAGEMENT_PERFORMANCE_JOURNEY_
       "method": "GET",
       "path": "/api/time-entries/summary",
       "count": 5,
-      "avgDurationMs": 473,
-      "maxDurationMs": 1081,
+      "avgDurationMs": 295,
+      "maxDurationMs": 549,
       "statusCodes": [
         200,
         200,
@@ -1950,8 +1965,8 @@ Idéntico al archivo `docs/performance/WORKFORCE_MANAGEMENT_PERFORMANCE_JOURNEY_
       "method": "GET",
       "path": "/api/time-entries/period-employees",
       "count": 3,
-      "avgDurationMs": 880,
-      "maxDurationMs": 1119,
+      "avgDurationMs": 565,
+      "maxDurationMs": 939,
       "statusCodes": [
         200,
         200,
@@ -1965,8 +1980,8 @@ Idéntico al archivo `docs/performance/WORKFORCE_MANAGEMENT_PERFORMANCE_JOURNEY_
       "method": "GET",
       "path": "/api/employees/:id/time-grid",
       "count": 3,
-      "avgDurationMs": 391,
-      "maxDurationMs": 392,
+      "avgDurationMs": 379,
+      "maxDurationMs": 380,
       "statusCodes": [
         200,
         200,
@@ -1980,25 +1995,11 @@ Idéntico al archivo `docs/performance/WORKFORCE_MANAGEMENT_PERFORMANCE_JOURNEY_
       "method": "GET",
       "path": "/api/novelties",
       "count": 4,
-      "avgDurationMs": 1045,
-      "maxDurationMs": 1145,
+      "avgDurationMs": 1007,
+      "maxDurationMs": 1123,
       "statusCodes": [
         200,
         200,
-        200,
-        200
-      ],
-      "hasErrorStatus": false,
-      "hasServerErrorStatus": false
-    },
-    {
-      "key": "GET /api/workforce/closures",
-      "method": "GET",
-      "path": "/api/workforce/closures",
-      "count": 2,
-      "avgDurationMs": 562,
-      "maxDurationMs": 766,
-      "statusCodes": [
         200,
         200
       ],
@@ -2010,8 +2011,23 @@ Idéntico al archivo `docs/performance/WORKFORCE_MANAGEMENT_PERFORMANCE_JOURNEY_
       "method": "GET",
       "path": "/api/workforce/corrections",
       "count": 3,
-      "avgDurationMs": 438,
-      "maxDurationMs": 765,
+      "avgDurationMs": 524,
+      "maxDurationMs": 986,
+      "statusCodes": [
+        200,
+        200,
+        200
+      ],
+      "hasErrorStatus": false,
+      "hasServerErrorStatus": false
+    },
+    {
+      "key": "GET /api/workforce/closures",
+      "method": "GET",
+      "path": "/api/workforce/closures",
+      "count": 3,
+      "avgDurationMs": 528,
+      "maxDurationMs": 986,
       "statusCodes": [
         200,
         200,
@@ -2025,8 +2041,8 @@ Idéntico al archivo `docs/performance/WORKFORCE_MANAGEMENT_PERFORMANCE_JOURNEY_
       "method": "GET",
       "path": "/api/pending",
       "count": 2,
-      "avgDurationMs": 813,
-      "maxDurationMs": 1241,
+      "avgDurationMs": 454,
+      "maxDurationMs": 548,
       "statusCodes": [
         200,
         200
@@ -2039,8 +2055,8 @@ Idéntico al archivo `docs/performance/WORKFORCE_MANAGEMENT_PERFORMANCE_JOURNEY_
       "method": "GET",
       "path": "/api/time-entries",
       "count": 2,
-      "avgDurationMs": 1050,
-      "maxDurationMs": 1120,
+      "avgDurationMs": 1048,
+      "maxDurationMs": 1194,
       "statusCodes": [
         200,
         200
@@ -2053,8 +2069,8 @@ Idéntico al archivo `docs/performance/WORKFORCE_MANAGEMENT_PERFORMANCE_JOURNEY_
       "method": "GET",
       "path": "/api/workforce/notifications",
       "count": 2,
-      "avgDurationMs": 1783,
-      "maxDurationMs": 2237,
+      "avgDurationMs": 1384,
+      "maxDurationMs": 1721,
       "statusCodes": [
         200,
         200
@@ -2067,8 +2083,8 @@ Idéntico al archivo `docs/performance/WORKFORCE_MANAGEMENT_PERFORMANCE_JOURNEY_
       "method": "GET",
       "path": "/api/finnegans-export/novelties",
       "count": 3,
-      "avgDurationMs": 824,
-      "maxDurationMs": 1144,
+      "avgDurationMs": 1010,
+      "maxDurationMs": 1527,
       "statusCodes": [
         200,
         200,
@@ -2088,8 +2104,8 @@ Idéntico al archivo `docs/performance/WORKFORCE_MANAGEMENT_PERFORMANCE_JOURNEY_
           "path": "/api/time-entries/home-summary",
           "count": 2,
           "durationsMs": [
-            1669,
-            1671
+            1685,
+            1687
           ]
         }
       ]
@@ -2103,8 +2119,8 @@ Idéntico al archivo `docs/performance/WORKFORCE_MANAGEMENT_PERFORMANCE_JOURNEY_
           "path": "/api/time-entries/attendance/observations",
           "count": 2,
           "durationsMs": [
-            844,
-            844
+            734,
+            735
           ]
         },
         {
@@ -2112,8 +2128,8 @@ Idéntico al archivo `docs/performance/WORKFORCE_MANAGEMENT_PERFORMANCE_JOURNEY_
           "path": "/api/time-entries/attendance",
           "count": 2,
           "durationsMs": [
-            1623,
-            1625
+            1646,
+            1648
           ]
         }
       ]
@@ -2128,8 +2144,8 @@ Idéntico al archivo `docs/performance/WORKFORCE_MANAGEMENT_PERFORMANCE_JOURNEY_
           "count": 3,
           "durationsMs": [
             2,
-            377,
-            4
+            372,
+            3
           ]
         }
       ]
@@ -2143,8 +2159,8 @@ Idéntico al archivo `docs/performance/WORKFORCE_MANAGEMENT_PERFORMANCE_JOURNEY_
           "path": "/api/shifts/alerts",
           "count": 2,
           "durationsMs": [
-            1253,
-            1958
+            1373,
+            2496
           ]
         }
       ]
@@ -2158,8 +2174,8 @@ Idéntico al archivo `docs/performance/WORKFORCE_MANAGEMENT_PERFORMANCE_JOURNEY_
           "path": "/api/shifts/alerts",
           "count": 2,
           "durationsMs": [
-            1505,
-            1429
+            1218,
+            1282
           ]
         }
       ]
@@ -2173,9 +2189,9 @@ Idéntico al archivo `docs/performance/WORKFORCE_MANAGEMENT_PERFORMANCE_JOURNEY_
           "path": "/api/employees/:id/time-grid",
           "count": 3,
           "durationsMs": [
-            389,
-            391,
-            392
+            377,
+            379,
+            380
           ]
         },
         {
@@ -2183,8 +2199,8 @@ Idéntico al archivo `docs/performance/WORKFORCE_MANAGEMENT_PERFORMANCE_JOURNEY_
           "path": "/api/novelties",
           "count": 2,
           "durationsMs": [
-            1141,
-            752
+            1123,
+            746
           ]
         }
       ]
@@ -2195,20 +2211,20 @@ Idéntico al archivo `docs/performance/WORKFORCE_MANAGEMENT_PERFORMANCE_JOURNEY_
       "duplicates": [
         {
           "method": "GET",
-          "path": "/api/workforce/closures",
+          "path": "/api/workforce/corrections",
           "count": 2,
           "durationsMs": [
-            357,
-            766
+            398,
+            986
           ]
         },
         {
           "method": "GET",
-          "path": "/api/workforce/corrections",
+          "path": "/api/workforce/closures",
           "count": 2,
           "durationsMs": [
-            359,
-            765
+            399,
+            986
           ]
         }
       ]
@@ -2222,8 +2238,8 @@ Idéntico al archivo `docs/performance/WORKFORCE_MANAGEMENT_PERFORMANCE_JOURNEY_
           "path": "/api/novelties",
           "count": 2,
           "durationsMs": [
-            1143,
-            1145
+            1078,
+            1080
           ]
         }
       ]
@@ -2237,8 +2253,8 @@ Idéntico al archivo `docs/performance/WORKFORCE_MANAGEMENT_PERFORMANCE_JOURNEY_
           "path": "/api/workforce/notifications",
           "count": 2,
           "durationsMs": [
-            1328,
-            2237
+            1046,
+            1721
           ]
         }
       ]
@@ -2252,8 +2268,8 @@ Idéntico al archivo `docs/performance/WORKFORCE_MANAGEMENT_PERFORMANCE_JOURNEY_
           "path": "/api/finnegans-export/novelties",
           "count": 2,
           "durationsMs": [
-            781,
-            1144
+            1144,
+            1527
           ]
         }
       ]
@@ -2283,12 +2299,6 @@ Idéntico al archivo `docs/performance/WORKFORCE_MANAGEMENT_PERFORMANCE_JOURNEY_
       "zone": "B. Asistencia",
       "isWrite": true,
       "reason": "Prohibido por defecto — cierra un caso de revisión real."
-    },
-    {
-      "name": "Expandir hallazgos asociados de un grupo",
-      "zone": "C. Alertas de turnos",
-      "isWrite": false,
-      "reason": "ningún grupo de alertas tiene más de 1 hallazgo asociado en el entorno actual"
     },
     {
       "name": "Resolver alerta de turno",
