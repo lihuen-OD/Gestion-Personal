@@ -504,6 +504,10 @@ const employeePositionValidationSelect = {
 // coincide con el `positionId` real del empleado (leído en la misma
 // consulta), se vuelve a pedir el puesto correcto — un round-trip extra
 // sólo en ese caso borde, nunca un resultado incorrecto.
+// Etapa 14D.7: `relationLoadStrategy: "join"` en las 3 llamadas de esta
+// función — mismas 3 queries medidas y aprobadas en 14D.6 (mejora ~83-84%,
+// shape idéntico, `where`/`select`/`accessWhere` sin cambios). Ver
+// docs/decisions/PRISMA_RELATION_JOINS_LIMITED_ROLLOUT_14D7.md.
 async function findPositionValidationByIdParallel(
   id: string,
   accessWhere: Prisma.EmployeeWhereInput,
@@ -513,15 +517,20 @@ async function findPositionValidationByIdParallel(
     prisma.employee.findFirst({
       where: { AND: [{ id }, accessWhere] },
       select: { internalCategory: true, positionId: true, sector: { select: positionValidationSectorSelect } },
+      relationLoadStrategy: "join",
     }),
-    prisma.position.findUnique({ where: { id: hintedPositionId }, select: positionValidationPositionSelect }),
+    prisma.position.findUnique({
+      where: { id: hintedPositionId },
+      select: positionValidationPositionSelect,
+      relationLoadStrategy: "join",
+    }),
   ]);
   if (!employeeCore) return null;
   const position =
     employeeCore.positionId === hintedPositionId
       ? hintedPosition
       : employeeCore.positionId
-        ? await prisma.position.findUnique({ where: { id: employeeCore.positionId }, select: positionValidationPositionSelect })
+        ? await prisma.position.findUnique({ where: { id: employeeCore.positionId }, select: positionValidationPositionSelect, relationLoadStrategy: "join" })
         : null;
   return { internalCategory: employeeCore.internalCategory, sector: employeeCore.sector, position };
 }
@@ -1166,7 +1175,14 @@ export const employeesRepository = {
         where: { employeeId: id, ...assignableHourConceptsSelect.where },
         select: assignableHourConceptsSelect.select,
       }),
-      sectorId ? prisma.sector.findUnique({ where: { id: sectorId }, select: overviewSectorChainSelect }) : Promise.resolve(null),
+      // Etapa 14D.7: `relationLoadStrategy: "join"` — única query de este
+      // Promise.all tocada (la cadena sector→area→establishment→businessUnit
+      // medida y aprobada en 14D.6, mejora ~59-60%). Las otras 4 queries de
+      // este batch no tienen cadena profunda (§2 del diagnóstico) y quedan
+      // sin cambio. Ver docs/decisions/PRISMA_RELATION_JOINS_LIMITED_ROLLOUT_14D7.md.
+      sectorId
+        ? prisma.sector.findUnique({ where: { id: sectorId }, select: overviewSectorChainSelect, relationLoadStrategy: "join" })
+        : Promise.resolve(null),
     ]);
 
     return { ...coreWithoutSectorId, sector, companies, laborMovements, assignments, hourConcepts };

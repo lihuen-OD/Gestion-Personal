@@ -178,12 +178,19 @@ export const positionsRepository = {
   // hoy" que llevó a no exponer `search` en el schema (§ arriba). Orden
   // estable (mismo criterio que `findMany`: status asc, name asc) para que
   // selects/catálogos no salten de posición entre renders.
+  // Etapa 14D.7: `relationLoadStrategy: "join"` para la cadena
+  // sector→area→establishment→businessUnit anidada en `positionOptionSelect`
+  // — medida y aprobada en 14D.6 (mejora ~85-87%, shape idéntico). NO se
+  // aplica a `findMany`/`findById` (arriba, `positionInclude` con `_count` —
+  // fuera de alcance, ver riesgos §6 de 14D.6). Ver docs/decisions/
+  // PRISMA_RELATION_JOINS_LIMITED_ROLLOUT_14D7.md.
   findOptions(query: ListPositionOptionsQuery) {
     return prisma.position.findMany({
       where: query.status ? { status: query.status } : {},
       select: positionOptionSelect,
       orderBy: [{ status: "asc" }, { name: "asc" }],
       take: query.take,
+      relationLoadStrategy: "join",
     });
   },
 

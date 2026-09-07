@@ -187,7 +187,15 @@ describe("employeesRepository.findOverviewDetailsById — Etapa 6L.1 / 14C.1 / 1
     expect(prisma.employeeAssignment.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { employeeId: "emp-1" }, take: 100 }));
     // Etapa 14D.3: la cadena de sector corre en el MISMO Promise.all que las
     // 4 anteriores — se pide por el sectorId leído del core, no anidada.
-    expect(prisma.sector.findUnique).toHaveBeenCalledWith({ where: { id: "sec-1" }, select: expect.objectContaining({ id: true, name: true, code: true, area: expect.anything() }) });
+    // Etapa 14D.7: `relationLoadStrategy: "join"` agregado a esta query
+    // puntual (medida y aprobada en 14D.6/14D.7, ver docs/decisions/
+    // PRISMA_RELATION_JOINS_LIMITED_ROLLOUT_14D7.md) — se agrega acá como
+    // parte esperada explícita, no se relaja la aserción del resto.
+    expect(prisma.sector.findUnique).toHaveBeenCalledWith({
+      where: { id: "sec-1" },
+      select: expect.objectContaining({ id: true, name: true, code: true, area: expect.anything() }),
+      relationLoadStrategy: "join",
+    });
 
     // El shape final del objeto devuelto es idéntico al de antes de esta
     // etapa (mismos campos, `sector` ensamblado en vez de anidado;

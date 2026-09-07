@@ -1,5 +1,13 @@
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
+  // Etapa 14D.7: preview feature de Prisma (disponible en 6.19.3, no GA aún,
+  // ver docs/decisions/PRISMA_RELATION_JOINS_DIAGNOSTIC_14D6.md §1.5-1.7).
+  // Sólo habilita la opción `relationLoadStrategy` del cliente — no cambia
+  // el schema de la base de datos ni genera migraciones (confirmado: `git
+  // status` sobre prisma/migrations queda limpio después de `prisma
+  // generate`). Se usa quirúrgicamente en 4 queries puntuales, ver
+  // docs/decisions/PRISMA_RELATION_JOINS_LIMITED_ROLLOUT_14D7.md.
+  previewFeatures = ["relationJoins"]
 }
 
 datasource db {
