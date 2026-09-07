@@ -180,7 +180,14 @@ export function ShiftAlertsPage() {
 
   useEffect(() => {
     let alive = true;
-    setLoadStatus("loading");
+    // Etapa 14G.5: antes se hacía `setLoadStatus("loading")` incondicional en
+    // cada cambio de búsqueda/tipo/severidad/estado, blanqueando la tabla con
+    // el skeleton completo aunque ya hubiera alertas visibles -- mismo
+    // criterio ya usado en HoursPage/AttendancePage (`if (!X.length)
+    // setLoading(true)`). Sólo se muestra el loading grande en la carga
+    // inicial real; un refetch con datos ya visibles no blanquea la tabla
+    // mientras llega la respuesta nueva.
+    if (!alerts.length) setLoadStatus("loading");
     shiftAlertApiService
       .getAll({ search: debouncedSearch, type: type || undefined, severity: severity || undefined, status, take: 20 })
       .then((response) => {

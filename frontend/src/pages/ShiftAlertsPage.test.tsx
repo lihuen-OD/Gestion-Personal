@@ -349,3 +349,82 @@ describe("ShiftAlertsPage — Etapa 13H (agrupación por jornada/fichada)", () =
     await screen.findByText("1 grupo(s) de alertas (2 alerta(s) individuales) según filtros aplicados.");
   });
 });
+
+// Etapa 14G.5 (docs/decisions/WORKFORCE_MANAGEMENT_SHIFT_ALERTS_PERFORMANCE_14G5.md):
+// antes, cada cambio de filtro hacía `setLoadStatus("loading")` incondicional,
+// blanqueando la tabla completa con el skeleton aunque ya hubiera alertas
+// visibles -- mismo criterio que ya corrigieron HoursPage/AttendancePage en
+// etapas previas (9F/14G.3).
+describe("ShiftAlertsPage — Etapa 14G.5 (no blanquea la tabla en un refetch con datos ya visibles)", () => {
+  it("cambiar el filtro de Estado con datos ya cargados no blanquea la tabla mientras llega la respuesta nueva", async () => {
+    vi.mocked(shiftAlertApiService.getAll).mockResolvedValueOnce({
+      data: [buildAlert()],
+      meta: { total: 1, pageSize: 20, hasMore: false, nextBefore: null },
+    });
+
+    renderPage();
+    await screen.findByText("Legajo 100");
+
+    let resolveNext!: (value: { data: ShiftAlert[]; meta: { total: number; pageSize: number; hasMore: boolean; nextBefore: string | null } }) => void;
+    vi.mocked(shiftAlertApiService.getAll).mockReturnValue(new Promise((resolve) => { resolveNext = resolve; }));
+
+    await userEvent.selectOptions(screen.getByLabelText("Estado"), "Todas");
+
+    // Mientras la respuesta de la página filtrada sigue en vuelo, la fila
+    // anterior sigue visible y no aparece el skeleton de carga completo.
+    expect(screen.getByText("Legajo 100")).toBeInTheDocument();
+    expect(document.querySelector(".loading-table")).toBeNull();
+
+    resolveNext({
+      data: [buildAlert({ id: "alert-2", employee: { id: "employee-2", legajo: "200", dni: "1", firstName: "Beto", lastName: "Diaz", status: "ACTIVO" } })],
+      meta: { total: 1, pageSize: 20, hasMore: false, nextBefore: null },
+    });
+    await screen.findByText("Legajo 200");
+  });
+
+  it("carga inicial (sin datos previos) sigue mostrando el skeleton de carga completo", async () => {
+    let resolveFirst!: (value: { data: ShiftAlert[]; meta: { total: number; pageSize: number; hasMore: boolean; nextBefore: string | null } }) => void;
+    vi.mocked(shiftAlertApiService.getAll).mockReturnValue(new Promise((resolve) => { resolveFirst = resolve; }));
+
+    renderPage();
+
+    expect(document.querySelector(".loading-table")).not.toBeNull();
+
+    resolveFirst({ data: [buildAlert()], meta: { total: 1, pageSize: 20, hasMore: false, nextBefore: null } });
+    await screen.findByText("Legajo 100");
+  });
+
+  it("buscar/filtrar sigue disparando exactamente un pedido a getAll por cambio de filtro", async () => {
+    vi.mocked(shiftAlertApiService.getAll).mockResolvedValue({
+      data: [buildAlert()],
+      meta: { total: 1, pageSize: 20, hasMore: false, nextBefore: null },
+    });
+
+    renderPage();
+    await screen.findByText("Legajo 100");
+    const callsBefore = vi.mocked(shiftAlertApiService.getAll).mock.calls.length;
+
+    await userEvent.selectOptions(screen.getByLabelText("Severidad"), "Crítica");
+    await waitFor(() => expect(vi.mocked(shiftAlertApiService.getAll).mock.calls.length).toBe(callsBefore + 1));
+
+    expect(vi.mocked(shiftAlertApiService.getAll)).toHaveBeenLastCalledWith(
+      expect.objectContaining({ severity: "CRITICA" }),
+    );
+  });
+
+  it("resolver una alerta no se ejecuta como parte de la carga/filtro (sólo se dispara con un click explícito en 'Confirmar')", async () => {
+    vi.mocked(shiftAlertApiService.getAll).mockResolvedValue({
+      data: [buildAlert()],
+      meta: { total: 1, pageSize: 20, hasMore: false, nextBefore: null },
+    });
+    const resolveSpy = vi.spyOn(shiftAlertApiService, "resolve");
+
+    renderPage();
+    await screen.findByText("Legajo 100");
+    await userEvent.selectOptions(screen.getByLabelText("Estado"), "Todas");
+    await userEvent.selectOptions(screen.getByLabelText("Tipo"), "Salida tardía");
+
+    expect(resolveSpy).not.toHaveBeenCalled();
+    resolveSpy.mockRestore();
+  });
+});

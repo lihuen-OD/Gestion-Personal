@@ -1,4 +1,5 @@
 import { apiRequest } from "./apiClient";
+import { cachePolicies, cachedData, invalidateCacheFamily } from "../cache";
 
 export type ShiftAlertType =
   | "INGRESO_TARDE"
@@ -47,6 +48,8 @@ export type ShiftAlertFilters = {
   take?: number;
 };
 
+type ShiftAlertListResponse = { data: ShiftAlert[]; meta: { total: number; pageSize: number; hasMore: boolean; nextBefore: string | null } };
+
 function toQuery(filters?: ShiftAlertFilters) {
   const params = new URLSearchParams();
   if (filters?.employeeId) params.set("employeeId", filters.employeeId);
@@ -60,14 +63,33 @@ function toQuery(filters?: ShiftAlertFilters) {
   return params.toString();
 }
 
+// Etapa 14G.5: mismo criterio que isEmployeePeriodRowsResponse/isTimeEntryListResponse
+// (timeEntryApiService.ts) -- validación mínima para que un payload
+// inesperado (p. ej. una respuesta de error cacheada) no quede servido desde
+// `cachedData` como si fuera válido.
+function isShiftAlertListResponse(value: ShiftAlertListResponse) {
+  return Boolean(value && Array.isArray(value.data) && value.meta && typeof value.meta.total === "number");
+}
+
 export const shiftAlertApiService = {
+  // Etapa 14G.5: `getAll` no tenía dedupe in-flight -- el doble-montaje de
+  // StrictMode en dev disparaba 2 llamadas de red reales a GET /shifts/alerts
+  // (mismo síntoma ya resuelto en el resto de las listas operativas del
+  // proyecto). `cachedData` dedupea vía `pendingRevalidations` y agrega un
+  // TTL corto (15s, `cachePolicies.shiftAlertsList`) -- no cambia el shape de
+  // la respuesta ni los filtros que viajan en la URL.
   getAll(filters?: ShiftAlertFilters) {
-    return apiRequest<{ data: ShiftAlert[]; meta: { total: number; pageSize: number; hasMore: boolean; nextBefore: string | null } }>(
-      `/shifts/alerts?${toQuery(filters)}`,
-      { apiCache: false },
-    );
+    const key = `/shifts/alerts?${toQuery(filters)}`;
+    return cachedData({
+      requestKey: `GET:${key}`,
+      policy: cachePolicies.shiftAlertsList,
+      fetcher: () => apiRequest<ShiftAlertListResponse>(key, { apiCache: false }),
+      validate: isShiftAlertListResponse,
+    });
   },
-  resolve(id: string, resolution: "RESUELTA" | "DESCARTADA", reason: string) {
-    return apiRequest<{ data: ShiftAlert }>(`/shifts/alerts/${id}/resolve`, { method: "POST", body: { resolution, reason } }).then((response) => response.data);
+  async resolve(id: string, resolution: "RESUELTA" | "DESCARTADA", reason: string) {
+    const response = await apiRequest<{ data: ShiftAlert }>(`/shifts/alerts/${id}/resolve`, { method: "POST", body: { resolution, reason } });
+    await invalidateCacheFamily("shift-alerts", "shift alert resolved");
+    return response.data;
   },
 };

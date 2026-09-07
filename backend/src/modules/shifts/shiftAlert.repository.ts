@@ -32,9 +32,17 @@ function buildWhere(query: ListShiftAlertsQuery, employeeAccessWhere: Prisma.Emp
 }
 
 export const shiftAlertRepository = {
+  // Etapa 14G.5: `prisma.$transaction([...])` (forma array) -> `Promise.all([...])`
+  // sobre el cliente `prisma` global. Mismo antipatrón ya corregido en
+  // `time-entries` (14C.2), `home-summary` (14G.2) y `attendance-observations`
+  // (14G.3): las 2 queries son de sólo lectura e independientes (un listado +
+  // su count total, sin necesidad de una foto transaccional consistente entre
+  // sí -- es una lista operativa que ya se refresca sola), y la forma-array de
+  // `$transaction` las ejecutaba secuencialmente sobre una única conexión en
+  // vez de en paralelo. Mismos `where`/`include`/`orderBy`/`take` exactos.
   async findMany(query: ListShiftAlertsQuery, employeeAccessWhere: Prisma.EmployeeWhereInput) {
     const where = buildWhere(query, employeeAccessWhere);
-    const [items, total] = await prisma.$transaction([
+    const [items, total] = await Promise.all([
       prisma.shiftAlert.findMany({
         where: { ...where, ...(query.before ? { createdAt: { lt: query.before } } : {}) },
         include: { employee: { select: employeeSelect }, workShift: { select: workShiftSelect } },

@@ -13,7 +13,8 @@ export type CacheFamily =
   | "pending"
   | "work-regimes"
   | "audit"
-  | "notifications";
+  | "notifications"
+  | "shift-alerts";
 
 export type CachePolicy = {
   family: CacheFamily;
@@ -188,6 +189,20 @@ export const cachePolicies = {
   notificationsUnreadCount: {
     family: "notifications",
     ttlMs: 20_000,
+    persist: false,
+    sensitive: true,
+    schemaVersion: CACHE_SCHEMA_VERSION,
+  },
+  // Etapa 14G.5: GET /shifts/alerts no tenía dedupe in-flight -- el
+  // doble-montaje de React StrictMode en dev disparaba 2 llamadas de red
+  // reales (mismo síntoma ya resuelto en `getSummary`/`getPeriodEmployees`/
+  // `list`/`listByEmployee`, ver 14D.5/14F.2/14G.4). TTL corto (15s, mismo
+  // rango 10-20s backend / 30s frontend ya usado por el resto de las listas
+  // operativas de Gestión horaria) -- sólo para sobrevivir el doble-montaje y
+  // remounts rápidos, no para esconder alertas nuevas por mucho tiempo.
+  shiftAlertsList: {
+    family: "shift-alerts",
+    ttlMs: 15_000,
     persist: false,
     sensitive: true,
     schemaVersion: CACHE_SCHEMA_VERSION,
