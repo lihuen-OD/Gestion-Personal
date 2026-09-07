@@ -40,13 +40,17 @@ vi.mock("../../shared/prisma/client", () => {
       // mocks reutilizados, no uno nuevo por función.
       employee: { count: vi.fn(), findMany: vi.fn(), findUnique: vi.fn() },
       doubleHourRule: { findMany: vi.fn() },
-      timeEntry: { aggregate: vi.fn(), groupBy: vi.fn(), findMany: vi.fn(), create: vi.fn(), update: vi.fn() },
+      // Etapa 14G.2: `count` se agrega acá porque `homeCounts` (antes,
+      // $transaction([...])) ahora corre sobre el cliente `prisma` global —
+      // mismo criterio que `findPeriodEmployees` en 14C.2.
+      timeEntry: { aggregate: vi.fn(), groupBy: vi.fn(), findMany: vi.fn(), create: vi.fn(), update: vi.fn(), count: vi.fn() },
       hourConceptBreakdown: { findMany: vi.fn() },
       // Etapa 14C.2: findPeriodEmployees ya no corre dentro de un
       // $transaction(async (tx) => ...) — las mismas queries (incluida ésta)
       // ahora usan el cliente `prisma` global (ver
       // docs/decisions/TIME_ENTRIES_PERFORMANCE_14C2.md).
-      novelty: { findMany: vi.fn() },
+      // Etapa 14G.2: `count` se agrega para `pendingNoveltiesCount`.
+      novelty: { findMany: vi.fn(), count: vi.fn() },
       // $transaction real acepta un callback (uso transaccional clásico) o un
       // array de promesas (uso de "varias queries en paralelo" tipo
       // attendanceObservations) — el mock soporta ambas formas.
@@ -81,9 +85,9 @@ const mockedPrisma = prisma as unknown as {
   attendanceInactivityIncident: { findMany: Mock; count: Mock };
   employee: { count: Mock; findMany: Mock; findUnique: Mock };
   doubleHourRule: { findMany: Mock };
-  timeEntry: { aggregate: Mock; groupBy: Mock; findMany: Mock; create: Mock; update: Mock };
+  timeEntry: { aggregate: Mock; groupBy: Mock; findMany: Mock; create: Mock; update: Mock; count: Mock };
   hourConceptBreakdown: { findMany: Mock };
-  novelty: { findMany: Mock };
+  novelty: { findMany: Mock; count: Mock };
   $transaction: Mock;
   __tx: TxMocks;
 };
@@ -2082,5 +2086,101 @@ describe("findBreakdownHoursForExport — horas adicionales para exportación (E
       select: { employeeId: true, day: true, minutes: true },
     });
     expect(result).toEqual([{ employeeId: "employee-1", day: 27, minutes: 360 }]);
+  });
+});
+
+describe("homeCounts — Etapa 14G.2, sin $transaction (home-summary)", () => {
+  const employeeAccessWhere = {};
+
+  it("no envuelve las 3 queries en $transaction — corren sobre el cliente prisma global", async () => {
+    mockedPrisma.employee.count.mockResolvedValue(2);
+    mockedPrisma.timeEntry.count.mockResolvedValueOnce(1).mockResolvedValueOnce(3);
+
+    const result = await timeEntriesRepository.homeCounts("2026-09", employeeAccessWhere);
+
+    expect(mockedPrisma.$transaction).not.toHaveBeenCalled();
+    expect(mockedPrisma.employee.count).toHaveBeenCalledTimes(1);
+    expect(mockedPrisma.timeEntry.count).toHaveBeenCalledTimes(2);
+    expect(result).toEqual({ sinCargar: 2, devueltos: 1, enRevision: 3 });
+  });
+
+  it("mantiene el filtro de permisos (accessWhere) en las 3 queries", async () => {
+    const scopedAccessWhere = { sectorId: { in: ["sec-1"] } };
+    mockedPrisma.employee.count.mockResolvedValue(0);
+    mockedPrisma.timeEntry.count.mockResolvedValue(0);
+
+    await timeEntriesRepository.homeCounts("2026-09", scopedAccessWhere);
+
+    const employeeCountCall = mockedPrisma.employee.count.mock.calls.at(0)?.[0];
+    expect(employeeCountCall.where).toEqual(expect.objectContaining(scopedAccessWhere));
+    for (const call of mockedPrisma.timeEntry.count.mock.calls) {
+      expect(call[0].where.employee).toEqual(scopedAccessWhere);
+    }
+  });
+
+  it("acota las 3 queries exactamente al período pedido, sin traer otros períodos", async () => {
+    mockedPrisma.employee.count.mockResolvedValue(0);
+    mockedPrisma.timeEntry.count.mockResolvedValue(0);
+
+    await timeEntriesRepository.homeCounts("2026-09", employeeAccessWhere);
+
+    for (const call of mockedPrisma.timeEntry.count.mock.calls) {
+      expect(call[0].where.period).toBe("2026-09");
+    }
+    expect(mockedPrisma.employee.count.mock.calls[0]![0].where.timeEntries).toEqual({ none: { period: "2026-09" } });
+  });
+
+  it("sólo cuenta empleados ACTIVOS para 'sin cargar' (no da de baja la regla existente)", async () => {
+    mockedPrisma.employee.count.mockResolvedValue(0);
+    mockedPrisma.timeEntry.count.mockResolvedValue(0);
+
+    await timeEntriesRepository.homeCounts("2026-09", employeeAccessWhere);
+
+    expect(mockedPrisma.employee.count.mock.calls[0]![0].where.status).toBe("ACTIVO");
+  });
+});
+
+describe("attendanceObservedCount — Etapa 14G.2, sin $transaction (home-summary)", () => {
+  const employeeAccessWhere = {};
+  const startAt = new Date("2026-09-07T03:00:00.000Z");
+  const endAt = new Date("2026-09-08T03:00:00.000Z");
+
+  it("no envuelve las 3 queries en $transaction — corren sobre el cliente prisma global, y suma los 3 counts", async () => {
+    mockedPrisma.workShift.count.mockResolvedValue(2);
+    mockedPrisma.attendancePunch.count.mockResolvedValue(1);
+    mockedPrisma.attendanceInactivityIncident.count.mockResolvedValue(4);
+
+    const result = await timeEntriesRepository.attendanceObservedCount({ startAt, endAt, employeeAccessWhere });
+
+    expect(mockedPrisma.$transaction).not.toHaveBeenCalled();
+    expect(mockedPrisma.workShift.count).toHaveBeenCalledTimes(1);
+    expect(mockedPrisma.attendancePunch.count).toHaveBeenCalledTimes(1);
+    expect(mockedPrisma.attendanceInactivityIncident.count).toHaveBeenCalledTimes(1);
+    expect(result).toBe(7);
+  });
+
+  it("mantiene el filtro de permisos (accessWhere) en las 3 queries", async () => {
+    const scopedAccessWhere = { sectorId: { in: ["sec-1"] } };
+    mockedPrisma.workShift.count.mockResolvedValue(0);
+    mockedPrisma.attendancePunch.count.mockResolvedValue(0);
+    mockedPrisma.attendanceInactivityIncident.count.mockResolvedValue(0);
+
+    await timeEntriesRepository.attendanceObservedCount({ startAt, endAt, employeeAccessWhere: scopedAccessWhere });
+
+    expect(mockedPrisma.workShift.count.mock.calls[0]![0].where.employee).toEqual(scopedAccessWhere);
+    expect(mockedPrisma.attendancePunch.count.mock.calls[0]![0].where.employee).toEqual(scopedAccessWhere);
+    expect(mockedPrisma.attendanceInactivityIncident.count.mock.calls[0]![0].where.employee).toEqual(scopedAccessWhere);
+  });
+
+  it("sólo cuenta jornadas/fichadas con reviewStatus PENDIENTE (no recuenta lo ya resuelto)", async () => {
+    mockedPrisma.workShift.count.mockResolvedValue(0);
+    mockedPrisma.attendancePunch.count.mockResolvedValue(0);
+    mockedPrisma.attendanceInactivityIncident.count.mockResolvedValue(0);
+
+    await timeEntriesRepository.attendanceObservedCount({ startAt, endAt, employeeAccessWhere });
+
+    expect(mockedPrisma.workShift.count.mock.calls[0]![0].where.reviewStatus).toBe("PENDIENTE");
+    expect(mockedPrisma.attendancePunch.count.mock.calls[0]![0].where.reviewStatus).toBe("PENDIENTE");
+    expect(mockedPrisma.attendanceInactivityIncident.count.mock.calls[0]![0].where.status).toBe("PENDIENTE");
   });
 });

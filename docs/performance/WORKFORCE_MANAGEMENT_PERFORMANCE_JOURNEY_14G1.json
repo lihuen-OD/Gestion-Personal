@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-07T15:44:30.264Z",
+  "generatedAt": "2026-09-07T16:14:16.073Z",
   "environment": "Frontend y backend locales (`npm run dev`), backend conectado a la base real de staging (ver docs/LOCAL_DEVELOPMENT.md) — no es un ambiente de producción ni un ambiente aislado de test.",
   "baseUrl": "http://localhost:5174",
   "apiBaseUrl": "http://localhost:4002/api",
@@ -16,7 +16,7 @@
     "coveredActions": 37,
     "skippedActions": 28,
     "slowActions": 3,
-    "verySlowActions": 4,
+    "verySlowActions": 3,
     "writesSkipped": 16,
     "httpErrors": 0,
     "consoleErrors": 0
@@ -27,7 +27,7 @@
       "coveredActions": 1,
       "skippedActions": 0,
       "totalRequests": 4,
-      "maxDurationMs": 6321,
+      "maxDurationMs": 4922,
       "rank": "Crítico"
     },
     {
@@ -35,15 +35,15 @@
       "coveredActions": 2,
       "skippedActions": 0,
       "totalRequests": 3,
-      "maxDurationMs": 6827,
-      "rank": "Crítico"
+      "maxDurationMs": 1352,
+      "rank": "Medio"
     },
     {
       "zone": "B. Asistencia",
       "coveredActions": 5,
       "skippedActions": 4,
       "totalRequests": 6,
-      "maxDurationMs": 4879,
+      "maxDurationMs": 5248,
       "rank": "Crítico"
     },
     {
@@ -51,7 +51,7 @@
       "coveredActions": 5,
       "skippedActions": 2,
       "totalRequests": 6,
-      "maxDurationMs": 2926,
+      "maxDurationMs": 2406,
       "rank": "Lento"
     },
     {
@@ -59,15 +59,15 @@
       "coveredActions": 9,
       "skippedActions": 4,
       "totalRequests": 16,
-      "maxDurationMs": 3005,
+      "maxDurationMs": 3387,
       "rank": "Crítico"
     },
     {
       "zone": "E. Cierres mensuales",
       "coveredActions": 2,
       "skippedActions": 2,
-      "totalRequests": 8,
-      "maxDurationMs": 1477,
+      "totalRequests": 6,
+      "maxDurationMs": 1296,
       "rank": "Medio"
     },
     {
@@ -75,7 +75,7 @@
       "coveredActions": 3,
       "skippedActions": 6,
       "totalRequests": 7,
-      "maxDurationMs": 1627,
+      "maxDurationMs": 1571,
       "rank": "Medio"
     },
     {
@@ -83,7 +83,7 @@
       "coveredActions": 4,
       "skippedActions": 3,
       "totalRequests": 4,
-      "maxDurationMs": 1610,
+      "maxDurationMs": 1709,
       "rank": "Medio"
     },
     {
@@ -91,7 +91,7 @@
       "coveredActions": 3,
       "skippedActions": 1,
       "totalRequests": 3,
-      "maxDurationMs": 2483,
+      "maxDurationMs": 2743,
       "rank": "Lento"
     },
     {
@@ -99,7 +99,7 @@
       "coveredActions": 1,
       "skippedActions": 4,
       "totalRequests": 1,
-      "maxDurationMs": 885,
+      "maxDurationMs": 996,
       "rank": "OK"
     },
     {
@@ -107,7 +107,7 @@
       "coveredActions": 2,
       "skippedActions": 2,
       "totalRequests": 4,
-      "maxDurationMs": 1699,
+      "maxDurationMs": 1769,
       "rank": "Medio"
     }
   ],
@@ -119,32 +119,32 @@
       "route": "/",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 585,
-      "networkIdleMs": 6321,
+      "visibleMs": 812,
+      "networkIdleMs": 4922,
       "requests": [
         {
           "method": "POST",
           "path": "/api/auth/login",
           "statusCode": 200,
-          "durationMs": 975
+          "durationMs": 1206
         },
         {
           "method": "GET",
           "path": "/api/workforce/notifications-unread-count",
           "statusCode": 200,
-          "durationMs": 364
+          "durationMs": 174
         },
         {
           "method": "GET",
           "path": "/api/audit",
           "statusCode": 200,
-          "durationMs": 1922
+          "durationMs": 1746
         },
         {
           "method": "GET",
           "path": "/api/dashboard/metrics",
           "statusCode": 200,
-          "durationMs": 4246
+          "durationMs": 2555
         }
       ],
       "consoleErrors": [],
@@ -161,26 +161,26 @@
       "route": "/gestion-horaria",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 94,
-      "networkIdleMs": 6827,
+      "visibleMs": 86,
+      "networkIdleMs": 1352,
       "requests": [
         {
           "method": "GET",
           "path": "/api/workforce/notifications-unread-count",
           "statusCode": 200,
-          "durationMs": 369
+          "durationMs": 770
         },
         {
           "method": "GET",
           "path": "/api/time-entries/home-summary",
           "statusCode": 200,
-          "durationMs": 3085
+          "durationMs": 777
         },
         {
           "method": "GET",
           "path": "/api/time-entries/home-summary",
           "statusCode": 200,
-          "durationMs": 6246
+          "durationMs": 779
         }
       ],
       "consoleErrors": [],
@@ -212,38 +212,38 @@
       "route": "/asistencia",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 79,
-      "networkIdleMs": 4879,
+      "visibleMs": 77,
+      "networkIdleMs": 5248,
       "requests": [
         {
           "method": "GET",
           "path": "/api/workforce/notifications-unread-count",
           "statusCode": 200,
-          "durationMs": 177
+          "durationMs": 396
         },
         {
           "method": "GET",
           "path": "/api/time-entries/attendance",
           "statusCode": 200,
-          "durationMs": 1326
+          "durationMs": 1396
         },
         {
           "method": "GET",
           "path": "/api/time-entries/attendance",
           "statusCode": 200,
-          "durationMs": 1510
+          "durationMs": 1397
         },
         {
           "method": "GET",
           "path": "/api/time-entries/attendance/observations",
           "statusCode": 200,
-          "durationMs": 2813
+          "durationMs": 3108
         },
         {
           "method": "GET",
           "path": "/api/time-entries/attendance/observations",
           "statusCode": 200,
-          "durationMs": 4309
+          "durationMs": 4681
         }
       ],
       "consoleErrors": [],
@@ -258,8 +258,8 @@
       "route": "/asistencia",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 24,
-      "networkIdleMs": 108,
+      "visibleMs": 23,
+      "networkIdleMs": 106,
       "requests": [],
       "consoleErrors": [],
       "notes": [],
@@ -273,8 +273,8 @@
       "route": "/asistencia",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 14,
-      "networkIdleMs": 418,
+      "visibleMs": 24,
+      "networkIdleMs": 427,
       "requests": [],
       "consoleErrors": [],
       "notes": [
@@ -290,16 +290,9 @@
       "route": "/asistencia",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 23,
-      "networkIdleMs": 106,
-      "requests": [
-        {
-          "method": "GET",
-          "path": "/api/time-entries/attendance",
-          "statusCode": 200,
-          "durationMs": 1316
-        }
-      ],
+      "visibleMs": 19,
+      "networkIdleMs": 102,
+      "requests": [],
       "consoleErrors": [],
       "notes": [],
       "isWrite": false,
@@ -312,9 +305,16 @@
       "route": "/asistencia",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 38,
-      "networkIdleMs": 121,
-      "requests": [],
+      "visibleMs": 51,
+      "networkIdleMs": 133,
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/api/time-entries/attendance",
+          "statusCode": 200,
+          "durationMs": 1569
+        }
+      ],
       "consoleErrors": [],
       "notes": [],
       "isWrite": false,
@@ -379,26 +379,26 @@
       "route": "/asistencia/alertas",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 54,
-      "networkIdleMs": 2926,
+      "visibleMs": 66,
+      "networkIdleMs": 2406,
       "requests": [
         {
           "method": "GET",
           "path": "/api/workforce/notifications-unread-count",
           "statusCode": 200,
-          "durationMs": 911
+          "durationMs": 370
         },
         {
           "method": "GET",
           "path": "/api/shifts/alerts",
           "statusCode": 200,
-          "durationMs": 1647
+          "durationMs": 1178
         },
         {
           "method": "GET",
           "path": "/api/shifts/alerts",
           "statusCode": 200,
-          "durationMs": 2386
+          "durationMs": 1855
         }
       ],
       "consoleErrors": [],
@@ -414,7 +414,7 @@
       "covered": true,
       "skippedReason": null,
       "visibleMs": 16,
-      "networkIdleMs": 420,
+      "networkIdleMs": 419,
       "requests": [],
       "consoleErrors": [],
       "notes": [
@@ -430,20 +430,20 @@
       "route": "/asistencia/alertas",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 1806,
-      "networkIdleMs": 2209,
+      "visibleMs": 1824,
+      "networkIdleMs": 2229,
       "requests": [
         {
           "method": "GET",
           "path": "/api/shifts/alerts",
           "statusCode": 200,
-          "durationMs": 1132
+          "durationMs": 1091
         },
         {
           "method": "GET",
           "path": "/api/shifts/alerts",
           "statusCode": 200,
-          "durationMs": 1269
+          "durationMs": 1345
         }
       ],
       "consoleErrors": [],
@@ -458,14 +458,14 @@
       "route": "/asistencia/alertas",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 1308,
-      "networkIdleMs": 1392,
+      "visibleMs": 1304,
+      "networkIdleMs": 1388,
       "requests": [
         {
           "method": "GET",
           "path": "/api/shifts/alerts",
           "statusCode": 200,
-          "durationMs": 1282
+          "durationMs": 1043
         }
       ],
       "consoleErrors": [],
@@ -480,8 +480,8 @@
       "route": "/asistencia/alertas",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 31,
-      "networkIdleMs": 113,
+      "visibleMs": 19,
+      "networkIdleMs": 103,
       "requests": [],
       "consoleErrors": [],
       "notes": [],
@@ -521,32 +521,32 @@
       "route": "/horas",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 74,
-      "networkIdleMs": 3005,
+      "visibleMs": 77,
+      "networkIdleMs": 3387,
       "requests": [
         {
           "method": "GET",
           "path": "/api/workforce/notifications-unread-count",
           "statusCode": 200,
-          "durationMs": 365
+          "durationMs": 356
         },
         {
           "method": "GET",
           "path": "/api/time-entries/summary",
           "statusCode": 200,
-          "durationMs": 528
+          "durationMs": 546
         },
         {
           "method": "GET",
           "path": "/api/org-structure",
           "statusCode": 200,
-          "durationMs": 1654
+          "durationMs": 1644
         },
         {
           "method": "GET",
           "path": "/api/time-entries/period-employees",
           "statusCode": 200,
-          "durationMs": 768
+          "durationMs": 1146
         }
       ],
       "consoleErrors": [],
@@ -561,8 +561,8 @@
       "route": "/horas",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 49,
-      "networkIdleMs": 130,
+      "visibleMs": 51,
+      "networkIdleMs": 134,
       "requests": [],
       "consoleErrors": [],
       "notes": [],
@@ -576,14 +576,20 @@
       "route": "/horas",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 17,
-      "networkIdleMs": 419,
+      "visibleMs": 33,
+      "networkIdleMs": 436,
       "requests": [
         {
           "method": "GET",
           "path": "/api/time-entries/summary",
           "statusCode": 200,
-          "durationMs": 726
+          "durationMs": 446
+        },
+        {
+          "method": "GET",
+          "path": "/api/time-entries/period-employees",
+          "statusCode": 200,
+          "durationMs": 850
         }
       ],
       "consoleErrors": [],
@@ -600,20 +606,14 @@
       "route": "/horas",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 35,
-      "networkIdleMs": 437,
+      "visibleMs": 36,
+      "networkIdleMs": 438,
       "requests": [
         {
           "method": "GET",
           "path": "/api/time-entries/period-employees",
           "statusCode": 200,
-          "durationMs": 1115
-        },
-        {
-          "method": "GET",
-          "path": "/api/time-entries/period-employees",
-          "statusCode": 200,
-          "durationMs": 722
+          "durationMs": 733
         }
       ],
       "consoleErrors": [],
@@ -628,24 +628,18 @@
       "route": "/horas/:id",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 829,
-      "networkIdleMs": 1622,
+      "visibleMs": 839,
+      "networkIdleMs": 1636,
       "requests": [
         {
           "method": "GET",
           "path": "/api/workforce/notifications-unread-count",
           "statusCode": 200,
-          "durationMs": 342
+          "durationMs": 187
         },
         {
           "method": "GET",
           "path": "/api/novelty-types",
-          "statusCode": 200,
-          "durationMs": 375
-        },
-        {
-          "method": "GET",
-          "path": "/api/employees/:id/time-grid",
           "statusCode": 200,
           "durationMs": 377
         },
@@ -653,25 +647,31 @@
           "method": "GET",
           "path": "/api/employees/:id/time-grid",
           "statusCode": 200,
-          "durationMs": 379
+          "durationMs": 395
         },
         {
           "method": "GET",
           "path": "/api/employees/:id/time-grid",
           "statusCode": 200,
-          "durationMs": 380
+          "durationMs": 397
+        },
+        {
+          "method": "GET",
+          "path": "/api/employees/:id/time-grid",
+          "statusCode": 200,
+          "durationMs": 398
         },
         {
           "method": "GET",
           "path": "/api/novelties",
           "statusCode": 200,
-          "durationMs": 1060
+          "durationMs": 1063
         },
         {
           "method": "GET",
           "path": "/api/novelties",
           "statusCode": 200,
-          "durationMs": 681
+          "durationMs": 667
         }
       ],
       "consoleErrors": [],
@@ -686,8 +686,8 @@
       "route": "/horas/:id",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 3,
-      "networkIdleMs": 86,
+      "visibleMs": 4,
+      "networkIdleMs": 88,
       "requests": [],
       "consoleErrors": [],
       "notes": [
@@ -703,8 +703,8 @@
       "route": "/horas/:id",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 40,
-      "networkIdleMs": 123,
+      "visibleMs": 53,
+      "networkIdleMs": 136,
       "requests": [],
       "consoleErrors": [],
       "notes": [
@@ -720,8 +720,8 @@
       "route": "/horas/:id",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 31,
-      "networkIdleMs": 116,
+      "visibleMs": 36,
+      "networkIdleMs": 119,
       "requests": [],
       "consoleErrors": [],
       "notes": [],
@@ -761,20 +761,20 @@
       "route": "/horas",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 76,
-      "networkIdleMs": 158,
+      "visibleMs": 57,
+      "networkIdleMs": 141,
       "requests": [
         {
           "method": "GET",
           "path": "/api/time-entries/summary",
           "statusCode": 200,
-          "durationMs": 1
+          "durationMs": 180
         },
         {
           "method": "GET",
           "path": "/api/time-entries/period-employees",
           "statusCode": 200,
-          "durationMs": 1
+          "durationMs": 182
         }
       ],
       "consoleErrors": [],
@@ -815,44 +815,44 @@
       "route": "/cierres",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 70,
-      "networkIdleMs": 1477,
+      "visibleMs": 73,
+      "networkIdleMs": 1296,
       "requests": [
+        {
+          "method": "GET",
+          "path": "/api/workforce/corrections",
+          "statusCode": 200,
+          "durationMs": 353
+        },
         {
           "method": "GET",
           "path": "/api/workforce/notifications-unread-count",
           "statusCode": 200,
-          "durationMs": 355
+          "durationMs": 385
         },
         {
           "method": "GET",
           "path": "/api/workforce/closures",
           "statusCode": 200,
-          "durationMs": 373
-        },
-        {
-          "method": "GET",
-          "path": "/api/workforce/corrections",
-          "statusCode": 200,
-          "durationMs": 549
+          "durationMs": 374
         },
         {
           "method": "GET",
           "path": "/api/employees/options",
           "statusCode": 200,
-          "durationMs": 549
-        },
-        {
-          "method": "GET",
-          "path": "/api/workforce/closures",
-          "statusCode": 200,
-          "durationMs": 922
+          "durationMs": 376
         },
         {
           "method": "GET",
           "path": "/api/workforce/corrections",
           "statusCode": 200,
-          "durationMs": 922
+          "durationMs": 527
+        },
+        {
+          "method": "GET",
+          "path": "/api/workforce/closures",
+          "statusCode": 200,
+          "durationMs": 739
         }
       ],
       "consoleErrors": [],
@@ -867,22 +867,9 @@
       "route": "/cierres",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 17,
-      "networkIdleMs": 100,
-      "requests": [
-        {
-          "method": "GET",
-          "path": "/api/workforce/corrections",
-          "statusCode": 200,
-          "durationMs": 181
-        },
-        {
-          "method": "GET",
-          "path": "/api/workforce/closures",
-          "statusCode": 200,
-          "durationMs": 185
-        }
-      ],
+      "visibleMs": 14,
+      "networkIdleMs": 98,
+      "requests": [],
       "consoleErrors": [],
       "notes": [],
       "isWrite": false,
@@ -921,32 +908,32 @@
       "route": "/pendientes",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 74,
-      "networkIdleMs": 1627,
+      "visibleMs": 66,
+      "networkIdleMs": 1571,
       "requests": [
         {
           "method": "GET",
           "path": "/api/time-entries/summary",
           "statusCode": 200,
-          "durationMs": 2
+          "durationMs": 1
         },
         {
           "method": "GET",
           "path": "/api/workforce/notifications-unread-count",
           "statusCode": 200,
-          "durationMs": 177
+          "durationMs": 361
         },
         {
           "method": "GET",
           "path": "/api/pending",
           "statusCode": 200,
-          "durationMs": 368
+          "durationMs": 359
         },
         {
           "method": "GET",
           "path": "/api/time-entries",
           "statusCode": 200,
-          "durationMs": 1061
+          "durationMs": 998
         }
       ],
       "consoleErrors": [],
@@ -961,8 +948,8 @@
       "route": "/pendientes",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 49,
-      "networkIdleMs": 133,
+      "visibleMs": 34,
+      "networkIdleMs": 117,
       "requests": [],
       "consoleErrors": [],
       "notes": [],
@@ -994,21 +981,21 @@
       "requests": [
         {
           "method": "GET",
-          "path": "/api/pending",
+          "path": "/api/time-entries/summary",
           "statusCode": 200,
-          "durationMs": 888
+          "durationMs": 946
         },
         {
           "method": "GET",
-          "path": "/api/time-entries/summary",
+          "path": "/api/pending",
           "statusCode": 200,
-          "durationMs": 894
+          "durationMs": 1133
         },
         {
           "method": "GET",
           "path": "/api/time-entries",
           "statusCode": 200,
-          "durationMs": 1040
+          "durationMs": 1202
         }
       ],
       "consoleErrors": [],
@@ -1088,26 +1075,26 @@
       "route": "/novedades",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 112,
-      "networkIdleMs": 1610,
+      "visibleMs": 75,
+      "networkIdleMs": 1709,
       "requests": [
         {
           "method": "GET",
           "path": "/api/workforce/notifications-unread-count",
           "statusCode": 200,
-          "durationMs": 183
+          "durationMs": 190
         },
         {
           "method": "GET",
           "path": "/api/novelties",
           "statusCode": 200,
-          "durationMs": 1044
+          "durationMs": 1137
         },
         {
           "method": "GET",
           "path": "/api/novelties",
           "statusCode": 200,
-          "durationMs": 1046
+          "durationMs": 1139
         }
       ],
       "consoleErrors": [],
@@ -1123,7 +1110,7 @@
       "covered": true,
       "skippedReason": null,
       "visibleMs": 12,
-      "networkIdleMs": 415,
+      "networkIdleMs": 416,
       "requests": [],
       "consoleErrors": [],
       "notes": [
@@ -1139,8 +1126,8 @@
       "route": "/novedades",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 29,
-      "networkIdleMs": 111,
+      "visibleMs": 58,
+      "networkIdleMs": 140,
       "requests": [],
       "consoleErrors": [],
       "notes": [
@@ -1156,14 +1143,14 @@
       "route": "/novedades",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 25,
-      "networkIdleMs": 107,
+      "visibleMs": 33,
+      "networkIdleMs": 114,
       "requests": [
         {
           "method": "GET",
           "path": "/api/hour-concepts",
           "statusCode": 200,
-          "durationMs": 357
+          "durationMs": 402
         }
       ],
       "consoleErrors": [],
@@ -1217,26 +1204,26 @@
       "route": "/notificaciones",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 79,
-      "networkIdleMs": 2483,
+      "visibleMs": 80,
+      "networkIdleMs": 2743,
       "requests": [
         {
           "method": "GET",
           "path": "/api/workforce/notifications-unread-count",
           "statusCode": 200,
-          "durationMs": 343
+          "durationMs": 353
         },
         {
           "method": "GET",
           "path": "/api/workforce/notifications",
           "statusCode": 200,
-          "durationMs": 1043
+          "durationMs": 1097
         },
         {
           "method": "GET",
           "path": "/api/workforce/notifications",
           "statusCode": 200,
-          "durationMs": 1920
+          "durationMs": 2179
         }
       ],
       "consoleErrors": [],
@@ -1266,8 +1253,8 @@
       "route": "/notificaciones",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 28,
-      "networkIdleMs": 112,
+      "visibleMs": 17,
+      "networkIdleMs": 99,
       "requests": [],
       "consoleErrors": [],
       "notes": [],
@@ -1294,14 +1281,14 @@
       "route": "/fichador",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 75,
-      "networkIdleMs": 885,
+      "visibleMs": 72,
+      "networkIdleMs": 996,
       "requests": [
         {
           "method": "GET",
           "path": "/api/workforce/notifications-unread-count",
           "statusCode": 200,
-          "durationMs": 338
+          "durationMs": 452
         }
       ],
       "consoleErrors": [],
@@ -1368,26 +1355,26 @@
       "route": "/configuracion/liquidacion",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 77,
-      "networkIdleMs": 1699,
+      "visibleMs": 76,
+      "networkIdleMs": 1769,
       "requests": [
         {
           "method": "GET",
           "path": "/api/workforce/notifications-unread-count",
           "statusCode": 200,
-          "durationMs": 190
+          "durationMs": 178
         },
         {
           "method": "GET",
           "path": "/api/finnegans-export/novelties",
           "statusCode": 200,
-          "durationMs": 766
+          "durationMs": 808
         },
         {
           "method": "GET",
           "path": "/api/finnegans-export/novelties",
           "statusCode": 200,
-          "durationMs": 1128
+          "durationMs": 1208
         }
       ],
       "consoleErrors": [],
@@ -1402,14 +1389,14 @@
       "route": "/configuracion/liquidacion",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 800,
-      "networkIdleMs": 884,
+      "visibleMs": 798,
+      "networkIdleMs": 881,
       "requests": [
         {
           "method": "GET",
           "path": "/api/finnegans-export/novelties",
           "statusCode": 200,
-          "durationMs": 556
+          "durationMs": 592
         }
       ],
       "consoleErrors": [],
@@ -1447,125 +1434,125 @@
   "slowestRequests": [
     {
       "method": "GET",
-      "path": "/api/time-entries/home-summary",
+      "path": "/api/time-entries/attendance/observations",
       "statusCode": 200,
-      "durationMs": 6246
+      "durationMs": 4681
     },
     {
       "method": "GET",
       "path": "/api/time-entries/attendance/observations",
       "statusCode": 200,
-      "durationMs": 4309
+      "durationMs": 3108
     },
     {
       "method": "GET",
       "path": "/api/dashboard/metrics",
       "statusCode": 200,
-      "durationMs": 4246
-    },
-    {
-      "method": "GET",
-      "path": "/api/time-entries/home-summary",
-      "statusCode": 200,
-      "durationMs": 3085
-    },
-    {
-      "method": "GET",
-      "path": "/api/time-entries/attendance/observations",
-      "statusCode": 200,
-      "durationMs": 2813
-    },
-    {
-      "method": "GET",
-      "path": "/api/shifts/alerts",
-      "statusCode": 200,
-      "durationMs": 2386
-    },
-    {
-      "method": "GET",
-      "path": "/api/audit",
-      "statusCode": 200,
-      "durationMs": 1922
+      "durationMs": 2555
     },
     {
       "method": "GET",
       "path": "/api/workforce/notifications",
       "statusCode": 200,
-      "durationMs": 1920
-    },
-    {
-      "method": "GET",
-      "path": "/api/org-structure",
-      "statusCode": 200,
-      "durationMs": 1654
+      "durationMs": 2179
     },
     {
       "method": "GET",
       "path": "/api/shifts/alerts",
       "statusCode": 200,
-      "durationMs": 1647
+      "durationMs": 1855
+    },
+    {
+      "method": "GET",
+      "path": "/api/audit",
+      "statusCode": 200,
+      "durationMs": 1746
+    },
+    {
+      "method": "GET",
+      "path": "/api/org-structure",
+      "statusCode": 200,
+      "durationMs": 1644
+    },
+    {
+      "method": "GET",
+      "path": "/api/time-entries/attendance",
+      "statusCode": 200,
+      "durationMs": 1569
+    },
+    {
+      "method": "GET",
+      "path": "/api/time-entries/attendance",
+      "statusCode": 200,
+      "durationMs": 1397
+    },
+    {
+      "method": "GET",
+      "path": "/api/time-entries/attendance",
+      "statusCode": 200,
+      "durationMs": 1396
     }
   ],
   "slowestActions": [
     {
-      "name": "Entrar a Inicio (Gestión horaria)",
-      "zone": "A. Inicio",
-      "visibleMs": 94,
-      "networkIdleMs": 6827
+      "name": "Entrar a Asistencia (carga inicial del día)",
+      "zone": "B. Asistencia",
+      "visibleMs": 77,
+      "networkIdleMs": 5248
     },
     {
       "name": "Login (acceso rápido RRHH)",
       "zone": "Login",
-      "visibleMs": 585,
-      "networkIdleMs": 6321
-    },
-    {
-      "name": "Entrar a Asistencia (carga inicial del día)",
-      "zone": "B. Asistencia",
-      "visibleMs": 79,
-      "networkIdleMs": 4879
+      "visibleMs": 812,
+      "networkIdleMs": 4922
     },
     {
       "name": "Entrar a Carga de horas (período actual)",
       "zone": "D. Carga de horas",
-      "visibleMs": 74,
-      "networkIdleMs": 3005
-    },
-    {
-      "name": "Entrar a Alertas de turnos",
-      "zone": "C. Alertas de turnos",
-      "visibleMs": 54,
-      "networkIdleMs": 2926
+      "visibleMs": 77,
+      "networkIdleMs": 3387
     },
     {
       "name": "Entrar a Notificaciones (Todas)",
       "zone": "H. Notificaciones",
-      "visibleMs": 79,
-      "networkIdleMs": 2483
+      "visibleMs": 80,
+      "networkIdleMs": 2743
+    },
+    {
+      "name": "Entrar a Alertas de turnos",
+      "zone": "C. Alertas de turnos",
+      "visibleMs": 66,
+      "networkIdleMs": 2406
     },
     {
       "name": "Limpiar búsqueda de alertas",
       "zone": "C. Alertas de turnos",
-      "visibleMs": 1806,
-      "networkIdleMs": 2209
+      "visibleMs": 1824,
+      "networkIdleMs": 2229
     },
     {
       "name": "Entrar a Exportación (período actual)",
       "zone": "J. Exportación",
-      "visibleMs": 77,
-      "networkIdleMs": 1699
+      "visibleMs": 76,
+      "networkIdleMs": 1769
     },
     {
-      "name": "Entrar a Bandeja de revisión (Por registro)",
-      "zone": "F. Bandeja de revisión",
-      "visibleMs": 74,
-      "networkIdleMs": 1627
+      "name": "Entrar a Novedades",
+      "zone": "G. Novedades",
+      "visibleMs": 75,
+      "networkIdleMs": 1709
     },
     {
       "name": "Abrir edición de horas de un empleado (navega a /horas/:id)",
       "zone": "D. Carga de horas",
-      "visibleMs": 829,
-      "networkIdleMs": 1622
+      "visibleMs": 839,
+      "networkIdleMs": 1636
+    },
+    {
+      "name": "Entrar a Bandeja de revisión (Por registro)",
+      "zone": "F. Bandeja de revisión",
+      "visibleMs": 66,
+      "networkIdleMs": 1571
     }
   ],
   "repeatedEndpoints": [
@@ -1574,8 +1561,8 @@
       "method": "GET",
       "path": "/api/workforce/notifications-unread-count",
       "count": 12,
-      "avgDurationMs": 343,
-      "maxDurationMs": 911,
+      "avgDurationMs": 348,
+      "maxDurationMs": 770,
       "statusCodes": [
         200,
         200,
@@ -1598,8 +1585,8 @@
       "method": "GET",
       "path": "/api/time-entries/home-summary",
       "count": 2,
-      "avgDurationMs": 4666,
-      "maxDurationMs": 6246,
+      "avgDurationMs": 778,
+      "maxDurationMs": 779,
       "statusCodes": [
         200,
         200
@@ -1612,8 +1599,8 @@
       "method": "GET",
       "path": "/api/time-entries/attendance",
       "count": 3,
-      "avgDurationMs": 1384,
-      "maxDurationMs": 1510,
+      "avgDurationMs": 1454,
+      "maxDurationMs": 1569,
       "statusCodes": [
         200,
         200,
@@ -1627,8 +1614,8 @@
       "method": "GET",
       "path": "/api/time-entries/attendance/observations",
       "count": 2,
-      "avgDurationMs": 3561,
-      "maxDurationMs": 4309,
+      "avgDurationMs": 3895,
+      "maxDurationMs": 4681,
       "statusCodes": [
         200,
         200
@@ -1641,8 +1628,8 @@
       "method": "GET",
       "path": "/api/shifts/alerts",
       "count": 5,
-      "avgDurationMs": 1543,
-      "maxDurationMs": 2386,
+      "avgDurationMs": 1302,
+      "maxDurationMs": 1855,
       "statusCodes": [
         200,
         200,
@@ -1658,8 +1645,8 @@
       "method": "GET",
       "path": "/api/time-entries/summary",
       "count": 5,
-      "avgDurationMs": 430,
-      "maxDurationMs": 894,
+      "avgDurationMs": 424,
+      "maxDurationMs": 946,
       "statusCodes": [
         200,
         200,
@@ -1675,8 +1662,8 @@
       "method": "GET",
       "path": "/api/time-entries/period-employees",
       "count": 4,
-      "avgDurationMs": 652,
-      "maxDurationMs": 1115,
+      "avgDurationMs": 728,
+      "maxDurationMs": 1146,
       "statusCodes": [
         200,
         200,
@@ -1691,8 +1678,8 @@
       "method": "GET",
       "path": "/api/employees/:id/time-grid",
       "count": 3,
-      "avgDurationMs": 379,
-      "maxDurationMs": 380,
+      "avgDurationMs": 397,
+      "maxDurationMs": 398,
       "statusCodes": [
         200,
         200,
@@ -1706,25 +1693,10 @@
       "method": "GET",
       "path": "/api/novelties",
       "count": 4,
-      "avgDurationMs": 958,
-      "maxDurationMs": 1060,
+      "avgDurationMs": 1002,
+      "maxDurationMs": 1139,
       "statusCodes": [
         200,
-        200,
-        200,
-        200
-      ],
-      "hasErrorStatus": false,
-      "hasServerErrorStatus": false
-    },
-    {
-      "key": "GET /api/workforce/closures",
-      "method": "GET",
-      "path": "/api/workforce/closures",
-      "count": 3,
-      "avgDurationMs": 493,
-      "maxDurationMs": 922,
-      "statusCodes": [
         200,
         200,
         200
@@ -1736,11 +1708,24 @@
       "key": "GET /api/workforce/corrections",
       "method": "GET",
       "path": "/api/workforce/corrections",
-      "count": 3,
-      "avgDurationMs": 551,
-      "maxDurationMs": 922,
+      "count": 2,
+      "avgDurationMs": 440,
+      "maxDurationMs": 527,
       "statusCodes": [
         200,
+        200
+      ],
+      "hasErrorStatus": false,
+      "hasServerErrorStatus": false
+    },
+    {
+      "key": "GET /api/workforce/closures",
+      "method": "GET",
+      "path": "/api/workforce/closures",
+      "count": 2,
+      "avgDurationMs": 557,
+      "maxDurationMs": 739,
+      "statusCodes": [
         200,
         200
       ],
@@ -1752,8 +1737,8 @@
       "method": "GET",
       "path": "/api/pending",
       "count": 2,
-      "avgDurationMs": 628,
-      "maxDurationMs": 888,
+      "avgDurationMs": 746,
+      "maxDurationMs": 1133,
       "statusCodes": [
         200,
         200
@@ -1766,8 +1751,8 @@
       "method": "GET",
       "path": "/api/time-entries",
       "count": 2,
-      "avgDurationMs": 1051,
-      "maxDurationMs": 1061,
+      "avgDurationMs": 1100,
+      "maxDurationMs": 1202,
       "statusCodes": [
         200,
         200
@@ -1780,8 +1765,8 @@
       "method": "GET",
       "path": "/api/workforce/notifications",
       "count": 2,
-      "avgDurationMs": 1482,
-      "maxDurationMs": 1920,
+      "avgDurationMs": 1638,
+      "maxDurationMs": 2179,
       "statusCodes": [
         200,
         200
@@ -1794,8 +1779,8 @@
       "method": "GET",
       "path": "/api/finnegans-export/novelties",
       "count": 3,
-      "avgDurationMs": 817,
-      "maxDurationMs": 1128,
+      "avgDurationMs": 869,
+      "maxDurationMs": 1208,
       "statusCodes": [
         200,
         200,
@@ -1815,8 +1800,8 @@
           "path": "/api/time-entries/home-summary",
           "count": 2,
           "durationsMs": [
-            3085,
-            6246
+            777,
+            779
           ]
         }
       ]
@@ -1830,8 +1815,8 @@
           "path": "/api/time-entries/attendance",
           "count": 2,
           "durationsMs": [
-            1326,
-            1510
+            1396,
+            1397
           ]
         },
         {
@@ -1839,8 +1824,8 @@
           "path": "/api/time-entries/attendance/observations",
           "count": 2,
           "durationsMs": [
-            2813,
-            4309
+            3108,
+            4681
           ]
         }
       ]
@@ -1854,8 +1839,8 @@
           "path": "/api/shifts/alerts",
           "count": 2,
           "durationsMs": [
-            1647,
-            2386
+            1178,
+            1855
           ]
         }
       ]
@@ -1869,23 +1854,8 @@
           "path": "/api/shifts/alerts",
           "count": 2,
           "durationsMs": [
-            1132,
-            1269
-          ]
-        }
-      ]
-    },
-    {
-      "name": "Limpiar búsqueda (Carga de horas)",
-      "zone": "D. Carga de horas",
-      "duplicates": [
-        {
-          "method": "GET",
-          "path": "/api/time-entries/period-employees",
-          "count": 2,
-          "durationsMs": [
-            1115,
-            722
+            1091,
+            1345
           ]
         }
       ]
@@ -1899,9 +1869,9 @@
           "path": "/api/employees/:id/time-grid",
           "count": 3,
           "durationsMs": [
-            377,
-            379,
-            380
+            395,
+            397,
+            398
           ]
         },
         {
@@ -1909,8 +1879,8 @@
           "path": "/api/novelties",
           "count": 2,
           "durationsMs": [
-            1060,
-            681
+            1063,
+            667
           ]
         }
       ]
@@ -1921,20 +1891,20 @@
       "duplicates": [
         {
           "method": "GET",
-          "path": "/api/workforce/closures",
+          "path": "/api/workforce/corrections",
           "count": 2,
           "durationsMs": [
-            373,
-            922
+            353,
+            527
           ]
         },
         {
           "method": "GET",
-          "path": "/api/workforce/corrections",
+          "path": "/api/workforce/closures",
           "count": 2,
           "durationsMs": [
-            549,
-            922
+            374,
+            739
           ]
         }
       ]
@@ -1948,8 +1918,8 @@
           "path": "/api/novelties",
           "count": 2,
           "durationsMs": [
-            1044,
-            1046
+            1137,
+            1139
           ]
         }
       ]
@@ -1963,8 +1933,8 @@
           "path": "/api/workforce/notifications",
           "count": 2,
           "durationsMs": [
-            1043,
-            1920
+            1097,
+            2179
           ]
         }
       ]
@@ -1978,8 +1948,8 @@
           "path": "/api/finnegans-export/novelties",
           "count": 2,
           "durationsMs": [
-            766,
-            1128
+            808,
+            1208
           ]
         }
       ]

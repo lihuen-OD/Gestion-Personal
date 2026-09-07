@@ -559,8 +559,17 @@ export const timeEntriesRepository = {
     };
   },
 
+  // Etapa 14G.2: mismo criterio que `findPeriodEmployees` (14C.2, ver
+  // comentario abajo) — estos 3 counts son de sólo lectura e independientes
+  // entre sí, así que envolverlos en `prisma.$transaction([...])` (array-
+  // form) sólo fuerza que corran uno detrás del otro sobre una única
+  // conexión, sin ninguna ganancia de atomicidad real (nadie necesita ver
+  // los 3 counts como una foto consistente de un mismo instante — es un
+  // contador de "para hacer hoy", se refresca solo en el próximo request).
+  // Medido en 6246ms en el journey real (ver
+  // docs/decisions/WORKFORCE_MANAGEMENT_HOME_SUMMARY_PERFORMANCE_14G2.md).
   async homeCounts(period: string, employeeAccessWhere: Prisma.EmployeeWhereInput) {
-    const [sinCargar, devueltos, enRevision] = await prisma.$transaction([
+    const [sinCargar, devueltos, enRevision] = await Promise.all([
       prisma.employee.count({
         where: {
           ...employeeAccessWhere,
@@ -588,9 +597,11 @@ export const timeEntriesRepository = {
     });
   },
 
+  // Etapa 14G.2: mismo criterio que `homeCounts` arriba — 3 counts de sólo
+  // lectura e independientes, sin necesidad de atomicidad transaccional.
   async attendanceObservedCount(input: { startAt: Date; endAt: Date; employeeAccessWhere: Prisma.EmployeeWhereInput }) {
     const operationalDate = argentinaCalendarDate(argentinaDateKey(input.startAt));
-    const [observedShifts, observedPunches, inactivityIncidents] = await prisma.$transaction([
+    const [observedShifts, observedPunches, inactivityIncidents] = await Promise.all([
       prisma.workShift.count({
         where: {
           employee: input.employeeAccessWhere,

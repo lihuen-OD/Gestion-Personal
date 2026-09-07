@@ -5,6 +5,7 @@ import { AppError } from "../../shared/errors/AppError";
 import { prisma } from "../../shared/prisma/client";
 import { timeEntriesRepository } from "./timeEntries.repository";
 import { timeEntriesService, clockAttemptHash, resolveShiftConcept } from "./timeEntries.service";
+import { employeeAccessWhere } from "../employees/employeeAccess";
 import { evaluateShiftExit, flagOpenShiftOverflowForReview, notifyClassificationAlerts } from "../shifts/workShiftEvaluationRunner";
 import { resolveActiveWorkRegime } from "../work-regimes/workRegimes.service";
 import { notifyUsers } from "../workforce-management/workforce.service";
@@ -42,6 +43,10 @@ vi.mock("./timeEntries.repository", () => ({
     approve: vi.fn(),
     reject: vi.fn(),
     returnForCorrection: vi.fn(),
+    // Etapa 14G.2
+    homeCounts: vi.fn(),
+    pendingNoveltiesCount: vi.fn(),
+    attendanceObservedCount: vi.fn(),
   },
 }));
 
@@ -123,6 +128,9 @@ type RepoMock = {
   approve: Mock;
   reject: Mock;
   returnForCorrection: Mock;
+  homeCounts: Mock;
+  pendingNoveltiesCount: Mock;
+  attendanceObservedCount: Mock;
 };
 
 const repo = timeEntriesRepository as unknown as RepoMock;
@@ -1145,5 +1153,107 @@ describe("exportByPerson — 'Horas trabajadas totales' = Normal, 'Horas especia
 
       expect(result.rows).toEqual([expect.objectContaining({ "Conflicto de reglas": "" })]);
     });
+  });
+});
+
+describe("homeSummary — Etapa 14G.2 (Inicio de Gestión horaria)", () => {
+  const cargaUser = { id: "user-carga", role: "NIVEL_3_CARGA_HORARIA" } as Express.AuthUser;
+  const rrhhUser = { id: "user-rrhh", role: "NIVEL_1_RRHH" } as Express.AuthUser;
+  const supervisionUser = { id: "user-sup", role: "NIVEL_2_SUPERVISION" } as Express.AuthUser;
+
+  it("rol carga (Nivel 3): sólo llama homeCounts, no novedades ni asistencia (evita queries que Inicio no muestra para este rol)", async () => {
+    repo.homeCounts.mockResolvedValue({ sinCargar: 3, devueltos: 1, enRevision: 2 });
+
+    const result = await timeEntriesService.homeSummary(cargaUser);
+
+    expect(repo.homeCounts).toHaveBeenCalledTimes(1);
+    expect(repo.pendingNoveltiesCount).not.toHaveBeenCalled();
+    expect(repo.attendanceObservedCount).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      role: "carga",
+      period: result.period,
+      paraCargar: 3,
+      devueltosParaCorregir: 1,
+      enviadoEsperandoRevision: 2,
+    });
+  });
+
+  it("rol revisión (Nivel 1/2): llama las 3 queries independientes (homeCounts, novedades, asistencia) — Etapa 14G.2 las corre en un único Promise.all", async () => {
+    repo.homeCounts.mockResolvedValue({ sinCargar: 0, devueltos: 0, enRevision: 5 });
+    repo.pendingNoveltiesCount.mockResolvedValue(4);
+    repo.attendanceObservedCount.mockResolvedValue(2);
+
+    const result = await timeEntriesService.homeSummary(rrhhUser);
+
+    expect(repo.homeCounts).toHaveBeenCalledTimes(1);
+    expect(repo.pendingNoveltiesCount).toHaveBeenCalledTimes(1);
+    expect(repo.attendanceObservedCount).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({
+      role: "revision",
+      period: result.period,
+      paraRevisarHoy: 5,
+      novedadesPendientes: 4,
+      fichadasObservadas: 2,
+    });
+  });
+
+  it("no depende de un orden secuencial entre homeCounts y las otras dos — sigue funcionando si homeCounts resuelve después (regresión de la Etapa 14G.2: antes de paralelizar, un await previo a homeCounts hubiera bloqueado esto)", async () => {
+    let resolveHomeCounts!: (value: { sinCargar: number; devueltos: number; enRevision: number }) => void;
+    repo.homeCounts.mockReturnValue(new Promise((resolve) => { resolveHomeCounts = resolve; }));
+    repo.pendingNoveltiesCount.mockResolvedValue(1);
+    repo.attendanceObservedCount.mockResolvedValue(1);
+
+    const pending = timeEntriesService.homeSummary(rrhhUser);
+    // Las otras dos ya fueron invocadas aunque homeCounts todavía no resolvió
+    // — si siguiera habiendo un `await homeCounts(...)` previo al resto, esto
+    // fallaría porque nunca se llamarían hasta que homeCounts resolviera.
+    expect(repo.pendingNoveltiesCount).toHaveBeenCalledTimes(1);
+    expect(repo.attendanceObservedCount).toHaveBeenCalledTimes(1);
+
+    resolveHomeCounts({ sinCargar: 0, devueltos: 0, enRevision: 9 });
+    const result = await pending;
+    expect(result).toMatchObject({ paraRevisarHoy: 9 });
+  });
+
+  it("scope/RBAC: pasa el mismo employeeAccessWhere(user) a las 3 queries — nunca un scope distinto ni sin restricción para un rol acotado", async () => {
+    repo.homeCounts.mockResolvedValue({ sinCargar: 0, devueltos: 0, enRevision: 0 });
+    repo.pendingNoveltiesCount.mockResolvedValue(0);
+    repo.attendanceObservedCount.mockResolvedValue(0);
+
+    await timeEntriesService.homeSummary(supervisionUser);
+
+    const expectedAccess = employeeAccessWhere(supervisionUser);
+    expect(repo.homeCounts.mock.calls[0]![1]).toEqual(expectedAccess);
+    expect(repo.pendingNoveltiesCount.mock.calls[0]![0]).toEqual(expectedAccess);
+    expect(repo.attendanceObservedCount.mock.calls[0]![0].employeeAccessWhere).toEqual(expectedAccess);
+    // Nivel 2 (supervisión) nunca debe recibir el scope vacío de RRHH ({}) —
+    // confirma que no se "subió" el nivel de acceso por accidente al tocar
+    // el paralelizado.
+    expect(expectedAccess).not.toEqual({});
+  });
+
+  it("scope RRHH (sin restricción) se preserva igual que antes de paralelizar", async () => {
+    repo.homeCounts.mockResolvedValue({ sinCargar: 0, devueltos: 0, enRevision: 0 });
+    repo.pendingNoveltiesCount.mockResolvedValue(0);
+    repo.attendanceObservedCount.mockResolvedValue(0);
+
+    await timeEntriesService.homeSummary(rrhhUser);
+
+    expect(repo.homeCounts.mock.calls[0]![1]).toEqual({});
+    expect(repo.pendingNoveltiesCount.mock.calls[0]![0]).toEqual({});
+    expect(repo.attendanceObservedCount.mock.calls[0]![0].employeeAccessWhere).toEqual({});
+  });
+
+  it("el período usado es el actual (currentPeriod), igual para ambos roles", async () => {
+    repo.homeCounts.mockResolvedValue({ sinCargar: 0, devueltos: 0, enRevision: 0 });
+    repo.pendingNoveltiesCount.mockResolvedValue(0);
+    repo.attendanceObservedCount.mockResolvedValue(0);
+
+    const cargaResult = await timeEntriesService.homeSummary(cargaUser);
+    const revisionResult = await timeEntriesService.homeSummary(rrhhUser);
+
+    const expectedPeriod = new Date().toISOString().slice(0, 7);
+    expect(cargaResult.period).toBe(expectedPeriod);
+    expect(revisionResult.period).toBe(expectedPeriod);
   });
 });

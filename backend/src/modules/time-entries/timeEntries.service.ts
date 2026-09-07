@@ -772,9 +772,9 @@ export const timeEntriesService = {
   async homeSummary(user: Express.AuthUser) {
     const period = currentPeriod();
     const access = employeeAccessWhere(user);
-    const counts = await timeEntriesRepository.homeCounts(period, access);
 
     if (user.role === roles.cargaHoraria) {
+      const counts = await timeEntriesRepository.homeCounts(period, access);
       return {
         role: "carga" as const,
         period,
@@ -784,8 +784,17 @@ export const timeEntriesService = {
       };
     }
 
+    // Etapa 14G.2: antes, `homeCounts` corría `await`-eado solo, y RECIÉN
+    // después arrancaba el `Promise.all` de las otras dos — una dependencia
+    // secuencial artificial, porque `counts.enRevision` sólo se usa en el
+    // `return` de abajo, no para calcular `startAt`/`endAt` ni como input de
+    // las otras dos queries. Las 3 son independientes entre sí, así que
+    // corren en un único `Promise.all` (3 queries, muy por debajo del
+    // umbral de 5 que exige batching por Neon — ver PERFORMANCE_STANDARDS.md
+    // §4 / docs/decisions/DASHBOARD_METRICS_PERFORMANCE_14E1.md).
     const { startAt, endAt } = argentinaDayRange(todayArgentinaDateKey());
-    const [novedadesPendientes, fichadasObservadas] = await Promise.all([
+    const [counts, novedadesPendientes, fichadasObservadas] = await Promise.all([
+      timeEntriesRepository.homeCounts(period, access),
       timeEntriesRepository.pendingNoveltiesCount(access),
       timeEntriesRepository.attendanceObservedCount({ startAt, endAt, employeeAccessWhere: access }),
     ]);
