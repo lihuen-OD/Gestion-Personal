@@ -2184,3 +2184,123 @@ describe("attendanceObservedCount — Etapa 14G.2, sin $transaction (home-summar
     expect(mockedPrisma.attendanceInactivityIncident.count.mock.calls[0]![0].where.status).toBe("PENDIENTE");
   });
 });
+
+describe("attendanceObservations — Etapa 14G.3, sin $transaction y sin queries dummy cuando type filtra", () => {
+  const baseInput = { type: "ALL" as const, reviewStatus: "PENDIENTE" as const, take: 10, employeeAccessWhere: {} };
+
+  beforeEach(() => {
+    mockedPrisma.workShift.findMany.mockResolvedValue([]);
+    mockedPrisma.attendancePunch.findMany.mockResolvedValue([]);
+    mockedPrisma.attendanceInactivityIncident.findMany.mockResolvedValue([]);
+    mockedPrisma.workShift.count.mockResolvedValue(0);
+    mockedPrisma.attendancePunch.count.mockResolvedValue(0);
+    mockedPrisma.attendanceInactivityIncident.count.mockResolvedValue(0);
+  });
+
+  it("no envuelve las 6 queries en $transaction — corren sobre el cliente prisma global", async () => {
+    await timeEntriesRepository.attendanceObservations(baseInput);
+    expect(mockedPrisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("type=ALL: ejecuta las 6 queries (3 findMany + 3 count)", async () => {
+    await timeEntriesRepository.attendanceObservations(baseInput);
+    expect(mockedPrisma.workShift.findMany).toHaveBeenCalledTimes(1);
+    expect(mockedPrisma.attendancePunch.findMany).toHaveBeenCalledTimes(1);
+    expect(mockedPrisma.attendanceInactivityIncident.findMany).toHaveBeenCalledTimes(1);
+    expect(mockedPrisma.workShift.count).toHaveBeenCalledTimes(1);
+    expect(mockedPrisma.attendancePunch.count).toHaveBeenCalledTimes(1);
+    expect(mockedPrisma.attendanceInactivityIncident.count).toHaveBeenCalledTimes(1);
+  });
+
+  it("type=SHIFT: no dispara ninguna query (ni findMany ni count) de punches/inactivity — antes se disparaban como 'dummy' con where __none__", async () => {
+    await timeEntriesRepository.attendanceObservations({ ...baseInput, type: "SHIFT" });
+    expect(mockedPrisma.workShift.findMany).toHaveBeenCalledTimes(1);
+    expect(mockedPrisma.workShift.count).toHaveBeenCalledTimes(1);
+    expect(mockedPrisma.attendancePunch.findMany).not.toHaveBeenCalled();
+    expect(mockedPrisma.attendancePunch.count).not.toHaveBeenCalled();
+    expect(mockedPrisma.attendanceInactivityIncident.findMany).not.toHaveBeenCalled();
+    expect(mockedPrisma.attendanceInactivityIncident.count).not.toHaveBeenCalled();
+  });
+
+  it("type=PUNCH: sólo dispara las queries de punches", async () => {
+    await timeEntriesRepository.attendanceObservations({ ...baseInput, type: "PUNCH" });
+    expect(mockedPrisma.attendancePunch.findMany).toHaveBeenCalledTimes(1);
+    expect(mockedPrisma.attendancePunch.count).toHaveBeenCalledTimes(1);
+    expect(mockedPrisma.workShift.findMany).not.toHaveBeenCalled();
+    expect(mockedPrisma.attendanceInactivityIncident.findMany).not.toHaveBeenCalled();
+  });
+
+  it("type=INACTIVITY: sólo dispara las queries de inactividad", async () => {
+    await timeEntriesRepository.attendanceObservations({ ...baseInput, type: "INACTIVITY" });
+    expect(mockedPrisma.attendanceInactivityIncident.findMany).toHaveBeenCalledTimes(1);
+    expect(mockedPrisma.attendanceInactivityIncident.count).toHaveBeenCalledTimes(1);
+    expect(mockedPrisma.workShift.findMany).not.toHaveBeenCalled();
+    expect(mockedPrisma.attendancePunch.findMany).not.toHaveBeenCalled();
+  });
+
+  it("total sigue siendo la suma correcta de los counts aunque una categoría se saltee (queda en 0 local, no rompe la suma)", async () => {
+    mockedPrisma.workShift.count.mockResolvedValue(5);
+    const result = await timeEntriesRepository.attendanceObservations({ ...baseInput, type: "SHIFT" });
+    expect(result.total).toBe(5);
+  });
+
+  it("respeta el filtro de fecha: startAt/endAt en shift y punch, operationalDate en inactivity", async () => {
+    const startAt = new Date("2026-09-07T03:00:00.000Z");
+    const endAt = new Date("2026-09-08T03:00:00.000Z");
+    const operationalDate = new Date("2026-09-07T00:00:00.000Z");
+
+    await timeEntriesRepository.attendanceObservations({ ...baseInput, startAt, endAt, operationalDate });
+
+    const shiftCall = mockedPrisma.workShift.findMany.mock.calls[0]![0] as { where: { startAt: { gte: Date; lt: Date } } };
+    expect(shiftCall.where.startAt).toEqual({ gte: startAt, lt: endAt });
+    const punchCall = mockedPrisma.attendancePunch.findMany.mock.calls[0]![0] as { where: { timestamp: { gte: Date; lt: Date } } };
+    expect(punchCall.where.timestamp).toEqual({ gte: startAt, lt: endAt });
+    const inactivityCall = mockedPrisma.attendanceInactivityIncident.findMany.mock.calls[0]![0] as { where: { operationalDate: Date } };
+    expect(inactivityCall.where.operationalDate).toEqual(operationalDate);
+  });
+
+  it("respeta el filtro de búsqueda (search) por nombre/apellido/legajo/dni/sector", async () => {
+    await timeEntriesRepository.attendanceObservations({ ...baseInput, search: "Perez" });
+
+    const shiftCall = mockedPrisma.workShift.findMany.mock.calls[0]![0] as { where: { employee: { AND: Array<{ OR?: Array<Record<string, unknown>> }> } } };
+    const searchClause = shiftCall.where.employee.AND[1];
+    expect(searchClause?.OR).toEqual(
+      expect.arrayContaining([
+        { firstName: { contains: "Perez", mode: "insensitive" } },
+        { lastName: { contains: "Perez", mode: "insensitive" } },
+        { legajo: { contains: "Perez", mode: "insensitive" } },
+        { dni: { contains: "Perez", mode: "insensitive" } },
+      ]),
+    );
+  });
+
+  it("respeta el filtro de reviewStatus (no aplica ninguno cuando es ALL)", async () => {
+    await timeEntriesRepository.attendanceObservations({ ...baseInput, reviewStatus: "RESUELTA" });
+    const shiftCall = mockedPrisma.workShift.findMany.mock.calls[0]![0] as { where: { reviewStatus?: string } };
+    expect(shiftCall.where.reviewStatus).toBe("RESUELTA");
+
+    await timeEntriesRepository.attendanceObservations({ ...baseInput, reviewStatus: "ALL" });
+    const shiftCallAll = mockedPrisma.workShift.findMany.mock.calls[1]![0] as { where: { reviewStatus?: string } };
+    expect(shiftCallAll.where.reviewStatus).toBeUndefined();
+  });
+
+  it("mantiene el filtro de permisos (accessWhere) en el where de empleado de las 3 categorías", async () => {
+    const scopedAccessWhere = { sectorId: { in: ["sec-1"] } };
+
+    await timeEntriesRepository.attendanceObservations({ ...baseInput, employeeAccessWhere: scopedAccessWhere });
+
+    const shiftCall = mockedPrisma.workShift.findMany.mock.calls[0]![0] as { where: { employee: { AND: unknown[] } } };
+    const punchCall = mockedPrisma.attendancePunch.findMany.mock.calls[0]![0] as { where: { employee: { AND: unknown[] } } };
+    const inactivityCall = mockedPrisma.attendanceInactivityIncident.findMany.mock.calls[0]![0] as { where: { employee: { AND: unknown[] } } };
+    expect(shiftCall.where.employee.AND[0]).toEqual(scopedAccessWhere);
+    expect(punchCall.where.employee.AND[0]).toEqual(scopedAccessWhere);
+    expect(inactivityCall.where.employee.AND[0]).toEqual(scopedAccessWhere);
+  });
+
+  it("sigue trayendo startPunch/endPunch/timeSegments/timeEntries en el shift (contrato de respuesta sin recortar campos)", async () => {
+    await timeEntriesRepository.attendanceObservations(baseInput);
+    const shiftCall = mockedPrisma.workShift.findMany.mock.calls[0]![0] as { include: { startPunch: unknown; endPunch: unknown } };
+    expect(shiftCall.include.startPunch).toBe(true);
+    expect(shiftCall.include.endPunch).toBe(true);
+  });
+});

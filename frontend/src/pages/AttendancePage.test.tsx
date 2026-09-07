@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { AttendancePage } from "./AttendancePage";
 import { attendanceApiService, type AttendanceObservation, type AttendanceShift, type AttendanceSummary } from "../services/api/attendanceApiService";
@@ -106,6 +106,57 @@ describe("AttendancePage — Etapa 9B (refresh silencioso del poll de 60s)", () 
     resolvePoll(buildSummary({ openShifts: [buildShift({ id: "shift-2", employee: { id: "employee-2", legajo: "200", dni: "30999888", firstName: "Luis", lastName: "Perez", status: "ACTIVO" } })] }));
 
     await vi.waitFor(() => expect(screen.getByText("Perez, Luis")).toBeInTheDocument());
+  });
+});
+
+describe("AttendancePage — Etapa 14G.3 (refresh silencioso de Problemas de fichada)", () => {
+  it("muestra el loading grande sólo en la carga inicial de Problemas de fichada, cuando todavía no hay observaciones en pantalla", async () => {
+    vi.mocked(attendanceApiService.getSummary).mockResolvedValue(buildSummary());
+    let resolveObservations!: (value: { data: AttendanceObservation[]; meta: { total: number; pageSize: number; hasMore: boolean; nextBefore: string | null } }) => void;
+    vi.mocked(attendanceApiService.getObservations).mockReturnValue(new Promise((resolve) => { resolveObservations = resolve; }));
+
+    renderPage();
+    await screen.findByText("Gomez, Ana");
+    expect(document.querySelectorAll(".skeleton-bar").length).toBeGreaterThan(0);
+
+    resolveObservations({ data: [], meta: { total: 0, pageSize: 10, hasMore: false, nextBefore: null } });
+    await waitFor(() => expect(document.querySelectorAll(".skeleton-bar").length).toBe(0));
+  });
+
+  it("cambiar el filtro 'Mostrar' no blanquea la tabla de problemas de fichada mientras llega la respuesta nueva", async () => {
+    vi.mocked(attendanceApiService.getSummary).mockResolvedValue(buildSummary());
+    const firstObservation: AttendanceObservation = {
+      kind: "SHIFT",
+      occurredAt: "2026-08-27T20:00:00.000Z",
+      shift: buildShift({
+        id: "shift-obs-1",
+        status: "OBSERVADO",
+        reviewStatus: "PENDIENTE",
+        employee: { id: "employee-3", legajo: "300", dni: "30777666", firstName: "Marta", lastName: "Diaz", status: "ACTIVO" },
+      }),
+    };
+    vi.mocked(attendanceApiService.getObservations).mockResolvedValueOnce({
+      data: [firstObservation],
+      meta: { total: 1, pageSize: 10, hasMore: false, nextBefore: null },
+    });
+
+    renderPage();
+    await screen.findByText("Diaz, Marta");
+    expect(document.querySelectorAll(".skeleton-bar").length).toBe(0);
+
+    let resolveObservations!: (value: { data: AttendanceObservation[]; meta: { total: number; pageSize: number; hasMore: boolean; nextBefore: string | null } }) => void;
+    vi.mocked(attendanceApiService.getObservations).mockReturnValue(new Promise((resolve) => { resolveObservations = resolve; }));
+
+    fireEvent.change(screen.getByLabelText("Mostrar"), { target: { value: "SHIFT" } });
+    await waitFor(() => expect(attendanceApiService.getObservations).toHaveBeenCalledTimes(2));
+
+    // Mientras la respuesta del nuevo filtro está en vuelo, la fila anterior
+    // sigue visible (no se reemplaza por el skeleton de carga completo).
+    expect(screen.getByText("Diaz, Marta")).toBeInTheDocument();
+    expect(document.querySelectorAll(".skeleton-bar").length).toBe(0);
+
+    resolveObservations({ data: [], meta: { total: 0, pageSize: 10, hasMore: false, nextBefore: null } });
+    await waitFor(() => expect(screen.queryByText("Diaz, Marta")).not.toBeInTheDocument());
   });
 });
 

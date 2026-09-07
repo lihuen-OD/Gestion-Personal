@@ -12,6 +12,19 @@ export const attendanceSummaryCache = createTtlCache<Awaited<ReturnType<typeof t
 // comparte datos entre usuarios aunque compartan sector/empresa, porque cada
 // `req.user.id` es una entrada de cache distinta.
 export const homeSummaryCache = createTtlCache<Awaited<ReturnType<typeof timeEntriesService.homeSummary>>>(20_000);
+// Etapa 14G.3: TTL 15s — mismo rango 10-20s que sus hermanas de este mismo
+// archivo (attendanceSummaryCache 10s, timeEntriesListCache 15s). A
+// diferencia de attendanceSummary (refrescada por un poll de 60s en
+// AttendancePage.tsx), observations NO tiene ningún poll automático — sólo
+// se refetchea por una acción real del usuario (cambiar fecha/tipo/
+// búsqueda, que ya cambia `req.originalUrl` y por lo tanto la key) o tras
+// resolver una observación (que invalida vía clearTimeEntriesReadCaches()).
+// Key scopeada por `userScopedCacheKey` (userId:role:originalUrl) — el
+// querystring completo (fecha, tipo, búsqueda, reviewStatus, before, take)
+// ya forma parte de `originalUrl`, así que cada combinación de filtros de
+// cada usuario tiene su propia entrada, nunca compartida entre usuarios ni
+// entre distintos filtros del mismo usuario.
+export const attendanceObservationsCache = createTtlCache<Awaited<ReturnType<typeof timeEntriesService.attendanceObservations>>>(15_000);
 
 export function clearTimeEntriesReadCaches() {
   timeEntriesListCache.clear();
@@ -19,4 +32,5 @@ export function clearTimeEntriesReadCaches() {
   timeEntriesPeriodEmployeesCache.clear();
   attendanceSummaryCache.clear();
   homeSummaryCache.clear();
+  attendanceObservationsCache.clear();
 }

@@ -3,7 +3,7 @@ import { requestAuditContext } from "../../shared/audit/requestAuditContext";
 import { AppError } from "../../shared/errors/AppError";
 import { requireParam } from "../../shared/http/params";
 import type { AdminCloseWorkShiftInput, AdminWorkShiftReasonInput, AttendanceObservationsQuery, AttendanceSummaryQuery, ClockByDniInput, ClockByEmployeeInput, ClockEmployeeSearchQuery, ClockPhotoPunchInput, CreateWorkShiftInput, ListTimeEntriesQuery, PreviewWorkShiftInput, ResolveAttendanceObservationInput, TimeEntriesExportQuery, TimeEntriesPeriodEmployeesQuery, TimeEntriesSummaryQuery } from "./timeEntries.schemas";
-import { attendanceSummaryCache, clearTimeEntriesReadCaches, homeSummaryCache, timeEntriesListCache, timeEntriesPeriodEmployeesCache, timeEntriesSummaryCache } from "./timeEntries.cache";
+import { attendanceObservationsCache, attendanceSummaryCache, clearTimeEntriesReadCaches, homeSummaryCache, timeEntriesListCache, timeEntriesPeriodEmployeesCache, timeEntriesSummaryCache } from "./timeEntries.cache";
 import { timeEntriesExportToCsv, timeEntriesService } from "./timeEntries.service";
 import { clearEmployeeReadCaches, clearEmployeeTimeGridCache } from "../employees/employees.controller";
 
@@ -111,7 +111,11 @@ export const timeEntriesController = {
   }) satisfies RequestHandler,
 
   attendanceObservations: (async (req, res) => {
+    const key = userScopedCacheKey(req);
+    const cached = attendanceObservationsCache.get(key);
+    if (cached) return res.json({ data: cached.items, meta: cached.meta });
     const result = await timeEntriesService.attendanceObservations(req.query as unknown as AttendanceObservationsQuery, req.user!);
+    attendanceObservationsCache.set(key, result);
     res.json({ data: result.items, meta: result.meta });
   }) satisfies RequestHandler,
 

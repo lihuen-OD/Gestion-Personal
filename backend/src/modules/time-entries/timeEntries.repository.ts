@@ -1133,34 +1133,54 @@ export const timeEntriesRepository = {
       ...(input.before ? { detectedAt: { lt: input.before } } : {}),
     };
     const inactivityTotalWhere = { ...inactivityWhere, ...(input.before ? { detectedAt: undefined } : {}) };
-    const [shifts, punches, inactivity, shiftTotal, punchTotal, inactivityTotal] = await prisma.$transaction([
-      includeActualShifts ? prisma.workShift.findMany({
-        where: shiftWhere,
-        include: {
-          employee: { select: employeeSelect },
-          startPunch: true,
-          endPunch: true,
-          timeSegments: { select: attendanceTimeSegmentSelect, orderBy: { fromDateTime: "asc" } },
-          timeEntries: { select: attendanceTimeEntrySelect, orderBy: { date: "asc" } },
-        },
-        orderBy: [{ startAt: "desc" }, { id: "desc" }],
-        take: input.take + 1,
-      }) : prisma.workShift.findMany({ where: { id: "__none__" } }),
-      includePunches ? prisma.attendancePunch.findMany({
-        where: punchWhere,
-        include: { employee: { select: employeeSelect } },
-        orderBy: [{ timestamp: "desc" }, { id: "desc" }],
-        take: input.take + 1,
-      }) : prisma.attendancePunch.findMany({ where: { id: "__none__" } }),
-      includeInactivity ? prisma.attendanceInactivityIncident.findMany({
-        where: inactivityWhere,
-        include: { employee: { select: employeeSelect } },
-        orderBy: [{ detectedAt: "desc" }, { id: "desc" }],
-        take: input.take + 1,
-      }) : prisma.attendanceInactivityIncident.findMany({ where: { id: "__none__" } }),
-      prisma.workShift.count({ where: includeActualShifts ? shiftTotalWhere : { id: "__none__" } }),
-      prisma.attendancePunch.count({ where: includePunches ? punchTotalWhere : { id: "__none__" } }),
-      prisma.attendanceInactivityIncident.count({ where: includeInactivity ? inactivityTotalWhere : { id: "__none__" } }),
+    // Etapa 14G.3: antes, las 6 queries de abajo corrían dentro de un
+    // `prisma.$transaction([...])` (forma array) — mismo antipatrón ya
+    // corregido en 14C.2/14G.2 (una transacción interactiva serializa cada
+    // round-trip sobre una única conexión, sin ninguna ganancia real para 6
+    // lecturas independientes). Medido en 4681ms en el journey real (ver
+    // docs/decisions/WORKFORCE_MANAGEMENT_ATTENDANCE_OBSERVATIONS_PERFORMANCE_14G3.md).
+    //
+    // Además, cuando `type` filtra a una sola categoría, antes se seguían
+    // disparando las 4 queries "dummy" (`where: { id: "__none__" }`) de las
+    // categorías excluidas — sólo para mantener el mismo tipo/forma dentro
+    // del array de la transacción. Cada una era un round-trip real a Neon
+    // que siempre devolvía vacío/0. Ahora se saltean del todo cuando la
+    // categoría no aplica (`Promise.resolve([]/0)` local, sin ir a la
+    // base) — el resultado es idéntico (antes: dummy query → []/0; ahora:
+    // []/0 sin ida y vuelta), pero con menos round-trips cuando `type` no
+    // es "ALL".
+    const findShifts = () => prisma.workShift.findMany({
+      where: shiftWhere,
+      include: {
+        employee: { select: employeeSelect },
+        startPunch: true,
+        endPunch: true,
+        timeSegments: { select: attendanceTimeSegmentSelect, orderBy: { fromDateTime: "asc" } },
+        timeEntries: { select: attendanceTimeEntrySelect, orderBy: { date: "asc" } },
+      },
+      orderBy: [{ startAt: "desc" }, { id: "desc" }],
+      take: input.take + 1,
+    });
+    const findPunches = () => prisma.attendancePunch.findMany({
+      where: punchWhere,
+      include: { employee: { select: employeeSelect } },
+      orderBy: [{ timestamp: "desc" }, { id: "desc" }],
+      take: input.take + 1,
+    });
+    const findInactivity = () => prisma.attendanceInactivityIncident.findMany({
+      where: inactivityWhere,
+      include: { employee: { select: employeeSelect } },
+      orderBy: [{ detectedAt: "desc" }, { id: "desc" }],
+      take: input.take + 1,
+    });
+
+    const [shifts, punches, inactivity, shiftTotal, punchTotal, inactivityTotal] = await Promise.all([
+      includeActualShifts ? findShifts() : Promise.resolve([] as Awaited<ReturnType<typeof findShifts>>),
+      includePunches ? findPunches() : Promise.resolve([] as Awaited<ReturnType<typeof findPunches>>),
+      includeInactivity ? findInactivity() : Promise.resolve([] as Awaited<ReturnType<typeof findInactivity>>),
+      includeActualShifts ? prisma.workShift.count({ where: shiftTotalWhere }) : Promise.resolve(0),
+      includePunches ? prisma.attendancePunch.count({ where: punchTotalWhere }) : Promise.resolve(0),
+      includeInactivity ? prisma.attendanceInactivityIncident.count({ where: inactivityTotalWhere }) : Promise.resolve(0),
     ]);
     const items = [
       ...shifts.map((shift) => ({ kind: "SHIFT" as const, occurredAt: shift.startAt, shift })),

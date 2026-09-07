@@ -6,6 +6,7 @@ import { prisma } from "../../shared/prisma/client";
 import { timeEntriesRepository } from "./timeEntries.repository";
 import { timeEntriesService, clockAttemptHash, resolveShiftConcept } from "./timeEntries.service";
 import { employeeAccessWhere } from "../employees/employeeAccess";
+import type { AttendanceObservationsQuery } from "./timeEntries.schemas";
 import { evaluateShiftExit, flagOpenShiftOverflowForReview, notifyClassificationAlerts } from "../shifts/workShiftEvaluationRunner";
 import { resolveActiveWorkRegime } from "../work-regimes/workRegimes.service";
 import { notifyUsers } from "../workforce-management/workforce.service";
@@ -47,6 +48,8 @@ vi.mock("./timeEntries.repository", () => ({
     homeCounts: vi.fn(),
     pendingNoveltiesCount: vi.fn(),
     attendanceObservedCount: vi.fn(),
+    // Etapa 14G.3
+    attendanceObservations: vi.fn(),
   },
 }));
 
@@ -131,6 +134,7 @@ type RepoMock = {
   homeCounts: Mock;
   pendingNoveltiesCount: Mock;
   attendanceObservedCount: Mock;
+  attendanceObservations: Mock;
 };
 
 const repo = timeEntriesRepository as unknown as RepoMock;
@@ -1255,5 +1259,84 @@ describe("homeSummary — Etapa 14G.2 (Inicio de Gestión horaria)", () => {
     const expectedPeriod = new Date().toISOString().slice(0, 7);
     expect(cargaResult.period).toBe(expectedPeriod);
     expect(revisionResult.period).toBe(expectedPeriod);
+  });
+});
+
+describe("attendanceObservations — Etapa 14G.3 (contrato, scope y traducción de filtros)", () => {
+  const rrhhUser = { id: "user-rrhh", role: "NIVEL_1_RRHH" } as Express.AuthUser;
+  const baseQuery = { type: "ALL", reviewStatus: "PENDIENTE", take: 10 } as unknown as AttendanceObservationsQuery;
+
+  it("mantiene el contrato de respuesta: items + meta{total,pageSize,hasMore,nextBefore}", async () => {
+    const nextBefore = new Date("2026-09-07T10:00:00.000Z");
+    repo.attendanceObservations.mockResolvedValue({
+      items: [{ kind: "SHIFT", occurredAt: new Date(), shift: { id: "s1" } }],
+      total: 3,
+      hasMore: true,
+      nextBefore,
+    });
+
+    const result = await timeEntriesService.attendanceObservations(baseQuery, rrhhUser);
+
+    expect(result.meta).toEqual({ total: 3, pageSize: 10, hasMore: true, nextBefore: nextBefore.toISOString() });
+    expect(result.items).toHaveLength(1);
+  });
+
+  it("nextBefore queda null cuando hasMore es false, aunque el repo devuelva una fecha (no se infla la paginación)", async () => {
+    repo.attendanceObservations.mockResolvedValue({ items: [], total: 0, hasMore: false, nextBefore: new Date() });
+
+    const result = await timeEntriesService.attendanceObservations(baseQuery, rrhhUser);
+
+    expect(result.meta.nextBefore).toBeNull();
+  });
+
+  it("pasa employeeAccessWhere(user) al repositorio — no bypassa el scope de Nivel 2", async () => {
+    repo.attendanceObservations.mockResolvedValue({ items: [], total: 0, hasMore: false, nextBefore: null });
+    const supervisionUser = { id: "user-sup", role: "NIVEL_2_SUPERVISION" } as Express.AuthUser;
+
+    await timeEntriesService.attendanceObservations(baseQuery, supervisionUser);
+
+    const call = repo.attendanceObservations.mock.calls[0]![0];
+    expect(call.employeeAccessWhere).toEqual(employeeAccessWhere(supervisionUser));
+    expect(call.employeeAccessWhere).not.toEqual({});
+  });
+
+  it("sin query.date: no arma ningún rango startAt/endAt (observaciones históricas, no acotadas a un día)", async () => {
+    repo.attendanceObservations.mockResolvedValue({ items: [], total: 0, hasMore: false, nextBefore: null });
+
+    await timeEntriesService.attendanceObservations(baseQuery, rrhhUser);
+
+    const call = repo.attendanceObservations.mock.calls[0]![0];
+    expect(call.startAt).toBeUndefined();
+    expect(call.endAt).toBeUndefined();
+    expect(call.operationalDate).toBeUndefined();
+  });
+
+  it("con query.date: arma un rango startAt/endAt de un día completo en horario argentino", async () => {
+    repo.attendanceObservations.mockResolvedValue({ items: [], total: 0, hasMore: false, nextBefore: null });
+
+    await timeEntriesService.attendanceObservations({ ...baseQuery, date: "2026-09-07" } as unknown as AttendanceObservationsQuery, rrhhUser);
+
+    const call = repo.attendanceObservations.mock.calls[0]![0];
+    expect(call.startAt).toBeInstanceOf(Date);
+    expect(call.endAt).toBeInstanceOf(Date);
+    expect(call.operationalDate).toBeInstanceOf(Date);
+    expect((call.endAt as Date).getTime() - (call.startAt as Date).getTime()).toBe(24 * 60 * 60 * 1000);
+  });
+
+  it("propaga type/search/reviewStatus/before/take al repositorio sin transformarlos", async () => {
+    repo.attendanceObservations.mockResolvedValue({ items: [], total: 0, hasMore: false, nextBefore: null });
+    const before = new Date("2026-09-01T00:00:00.000Z");
+
+    await timeEntriesService.attendanceObservations(
+      { type: "PUNCH", search: "Perez", reviewStatus: "RESUELTA", before, take: 5 } as unknown as AttendanceObservationsQuery,
+      rrhhUser,
+    );
+
+    const call = repo.attendanceObservations.mock.calls[0]![0];
+    expect(call.type).toBe("PUNCH");
+    expect(call.search).toBe("Perez");
+    expect(call.reviewStatus).toBe("RESUELTA");
+    expect(call.before).toBe(before);
+    expect(call.take).toBe(5);
   });
 });

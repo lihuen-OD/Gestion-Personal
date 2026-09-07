@@ -349,7 +349,15 @@ export function AttendancePage() {
 
   useEffect(() => {
     let cancelled = false;
-    setObservationsLoading(true);
+    // Etapa 14G.3: mismo criterio que el efecto de `summary` arriba (Etapa
+    // 9B) — sin esta guarda, cambiar la fecha/búsqueda/tipo/estado de
+    // "Problemas de fichada", o resolver una observación (bumpea
+    // `observationsRefresh`), blanqueaba la tabla con el skeleton completo
+    // aunque ya hubiera datos visibles. Sólo se muestra el loading grande en
+    // la carga inicial real (sin observaciones todavía); un refetch por
+    // filtro queda silencioso y reemplaza la tabla recién cuando llega la
+    // respuesta nueva.
+    if (!observations.length) setObservationsLoading(true);
     setObservationsError("");
     attendanceApiService.getObservations({ date: observationDate || undefined, search: debouncedObservedQuery, type: observedType, reviewStatus: observedStatus, take: OBSERVED_PAGE_SIZE })
       .then((result) => {
