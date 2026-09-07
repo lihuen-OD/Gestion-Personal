@@ -110,6 +110,16 @@ export const dashboardRepository = {
   /**
    * Count of distinct active employees who have at least one countable
    * (APROBADO | EN_REVISION) time entry in the period.
+   *
+   * Etapa 14E.2: existía una `countEmployeesWithoutEntries` hermana (mismo
+   * `activeWhere`, mismo filtro de período/status, pero `timeEntries: {none}`
+   * en vez de `{some}`) — eliminada porque es matemáticamente redundante:
+   * "some" y "none" sobre el MISMO subconjunto base (`activeWhere`) y el
+   * MISMO filtro anidado son complementos lógicos exactos, así que
+   * `withoutEntries` siempre es exactamente `active - withEntries` (`active`
+   * ya se calcula aparte vía `countTotalAndActive`). Se deriva en
+   * `dashboard.service.ts` sin ninguna query extra — reduce el fan-out de 14
+   * a 13. Ver docs/decisions/DASHBOARD_METRICS_FINE_TUNING_14E2.md.
    */
   countEmployeesWithEntries(period: string, accessWhere: Prisma.EmployeeWhereInput) {
     return prisma.employee.count({
@@ -117,24 +127,6 @@ export const dashboardRepository = {
         ...activeWhere(accessWhere),
         timeEntries: {
           some: {
-            period,
-            status: { in: [ApprovalStatus.APROBADO, ApprovalStatus.EN_REVISION] },
-          },
-        },
-      },
-    });
-  },
-
-  /**
-   * Count of distinct active employees who have NO countable time entry
-   * in the period (pending load).
-   */
-  countEmployeesWithoutEntries(period: string, accessWhere: Prisma.EmployeeWhereInput) {
-    return prisma.employee.count({
-      where: {
-        ...activeWhere(accessWhere),
-        timeEntries: {
-          none: {
             period,
             status: { in: [ApprovalStatus.APROBADO, ApprovalStatus.EN_REVISION] },
           },

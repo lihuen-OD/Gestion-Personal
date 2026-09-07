@@ -10,6 +10,9 @@ import { dashboardService } from "./dashboard.service";
 // en 1 Promise.all -> 14 en 3 lotes de <=5) para no introducir una regresion
 // silenciosa en el calculo de metricas ni en el scoping del cache por
 // usuario/rol. Ver docs/decisions/DASHBOARD_METRICS_PERFORMANCE_14E1.md.
+// Etapa 14E.2: 14 -> 13 queries (countEmployeesWithoutEntries eliminada,
+// pendingLoads derivado de active - employeesWithEntries). Ver
+// docs/decisions/DASHBOARD_METRICS_FINE_TUNING_14E2.md.
 
 vi.mock("./dashboard.repository", () => ({
   dashboardRepository: {
@@ -18,7 +21,6 @@ vi.mock("./dashboard.repository", () => ({
     countTransported: vi.fn(),
     sumLoadedHours: vi.fn(),
     countEmployeesWithEntries: vi.fn(),
-    countEmployeesWithoutEntries: vi.fn(),
     countEmployeesInReview: vi.fn(),
     findPeriodAbsenceDateRanges: vi.fn(),
     countPendingNovelties: vi.fn(),
@@ -36,7 +38,6 @@ const repo = dashboardRepository as unknown as {
   countTransported: Mock;
   sumLoadedHours: Mock;
   countEmployeesWithEntries: Mock;
-  countEmployeesWithoutEntries: Mock;
   countEmployeesInReview: Mock;
   findPeriodAbsenceDateRanges: Mock;
   countPendingNovelties: Mock;
@@ -60,7 +61,6 @@ function mockAllDefaults() {
   repo.countTransported.mockResolvedValue(3);
   repo.sumLoadedHours.mockResolvedValue({ _sum: { hours: { toString: () => "40" } } });
   repo.countEmployeesWithEntries.mockResolvedValue(5);
-  repo.countEmployeesWithoutEntries.mockResolvedValue(2);
   repo.countEmployeesInReview.mockResolvedValue(1);
   repo.findPeriodAbsenceDateRanges.mockResolvedValue([]);
   repo.countPendingNovelties.mockResolvedValue(4);
@@ -77,7 +77,6 @@ const repoFnNames = [
   "countTransported",
   "sumLoadedHours",
   "countEmployeesWithEntries",
-  "countEmployeesWithoutEntries",
   "countEmployeesInReview",
   "findPeriodAbsenceDateRanges",
   "countPendingNovelties",
@@ -94,8 +93,8 @@ beforeEach(() => {
   mockAllDefaults();
 });
 
-describe("dashboardService.metrics — 14 queries en lotes, no 15 en un unico Promise.all (Etapa 14E.1)", () => {
-  it("llama exactamente a las 14 funciones del repositorio (countTotal/countActive quedaron colapsadas en countTotalAndActive)", async () => {
+describe("dashboardService.metrics — 13 queries en lotes, no 15 en un unico Promise.all (Etapa 14E.1 + 14E.2)", () => {
+  it("llama exactamente a las 13 funciones del repositorio (countTotal/countActive → groupBy en 14E.1; countEmployeesWithoutEntries eliminada en 14E.2)", async () => {
     await dashboardService.metrics({}, user(roles.rrhh));
 
     for (const name of repoFnNames) {
@@ -113,7 +112,6 @@ describe("dashboardService.metrics — 14 queries en lotes, no 15 en un unico Pr
       countTransported: 0,
       sumLoadedHours: { _sum: { hours: { toString: () => "0" } } },
       countEmployeesWithEntries: 0,
-      countEmployeesWithoutEntries: 0,
       countEmployeesInReview: 0,
       findPeriodAbsenceDateRanges: [],
       countPendingNovelties: 0,
@@ -175,7 +173,6 @@ describe("dashboardService.metrics — cálculo de métricas (Etapa 14E.1: total
     repo.countExitsThisYear.mockResolvedValue(7);
     repo.countTransported.mockResolvedValue(11);
     repo.countEmployeesWithEntries.mockResolvedValue(6);
-    repo.countEmployeesWithoutEntries.mockResolvedValue(9);
     repo.countEmployeesInReview.mockResolvedValue(13);
     repo.countPendingNovelties.mockResolvedValue(17);
     repo.countExpiredDocuments.mockResolvedValue(19);
@@ -186,13 +183,76 @@ describe("dashboardService.metrics — cálculo de métricas (Etapa 14E.1: total
 
     expect(result.exits).toBe(7);
     expect(result.transported).toBe(11);
-    expect(result.pendingLoads).toBe(9);
+    // active=8 (default de mockAllDefaults) - withEntries=6 = 2.
+    expect(result.pendingLoads).toBe(2);
     expect(result.reviewLoads).toBe(13);
     expect(result.pendingNovelties).toBe(17);
     expect(result.expiredDocuments).toBe(19);
     expect(result.expiringDocuments).toBe(23);
     expect(result.missingResponsible).toBe(29);
     expect(result.loadCoverage).toBe(Math.round((6 / 8) * 100));
+  });
+});
+
+// Etapa 14E.2: `countEmployeesWithoutEntries` se eliminó por ser el
+// complemento matemático exacto de `countEmployeesWithEntries` sobre el
+// mismo `activeWhere` — `pendingLoads` ahora se deriva sin query extra. Esta
+// lógica nueva necesita su propia cobertura de casos borde, no sólo la
+// incidental de "cada métrica llega al campo correcto".
+describe("dashboardService.metrics — pendingLoads derivado de active - employeesWithEntries, sin query extra (Etapa 14E.2)", () => {
+  it("ya no llama a countEmployeesWithoutEntries (no existe en el mock — llamarla rompería el test)", async () => {
+    await dashboardService.metrics({}, user(roles.rrhh));
+
+    expect(repo.countEmployeesWithEntries).toHaveBeenCalledTimes(1);
+    expect((repo as Record<string, unknown>).countEmployeesWithoutEntries).toBeUndefined();
+  });
+
+  it("caso normal: pendingLoads = active - withEntries", async () => {
+    repo.countTotalAndActive.mockResolvedValue([{ status: "ACTIVO", _count: { _all: 20 } }]);
+    repo.countEmployeesWithEntries.mockResolvedValue(14);
+
+    const result = await dashboardService.metrics({}, user(roles.rrhh));
+
+    expect(result.active).toBe(20);
+    expect(result.pendingLoads).toBe(6);
+  });
+
+  it("caso borde: 0 empleados activos → pendingLoads = 0, no negativo ni NaN", async () => {
+    repo.countTotalAndActive.mockResolvedValue([]);
+    repo.countEmployeesWithEntries.mockResolvedValue(0);
+
+    const result = await dashboardService.metrics({}, user(roles.rrhh));
+
+    expect(result.active).toBe(0);
+    expect(result.pendingLoads).toBe(0);
+  });
+
+  it("caso borde: todos los activos tienen carga (withEntries === active) → pendingLoads = 0", async () => {
+    repo.countTotalAndActive.mockResolvedValue([{ status: "ACTIVO", _count: { _all: 5 } }]);
+    repo.countEmployeesWithEntries.mockResolvedValue(5);
+
+    const result = await dashboardService.metrics({}, user(roles.rrhh));
+
+    expect(result.pendingLoads).toBe(0);
+  });
+
+  it("caso borde: ningún activo tiene carga (withEntries = 0) → pendingLoads = active", async () => {
+    repo.countTotalAndActive.mockResolvedValue([{ status: "ACTIVO", _count: { _all: 7 } }]);
+    repo.countEmployeesWithEntries.mockResolvedValue(0);
+
+    const result = await dashboardService.metrics({}, user(roles.rrhh));
+
+    expect(result.pendingLoads).toBe(7);
+  });
+
+  it("período sin ninguna carga registrada (withEntries=0, activos>0) — pendingLoads igual a active, no explota", async () => {
+    repo.countTotalAndActive.mockResolvedValue([{ status: "ACTIVO", _count: { _all: 12 } }]);
+    repo.countEmployeesWithEntries.mockResolvedValue(0);
+
+    const result = await dashboardService.metrics({ period: "2020-01" }, user(roles.rrhh));
+
+    expect(result.pendingLoads).toBe(12);
+    expect(result.loadCoverage).toBe(0);
   });
 });
 

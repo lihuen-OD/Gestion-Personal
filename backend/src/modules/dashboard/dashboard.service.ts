@@ -141,12 +141,21 @@ async function calculateMetrics(period: string, user: Express.AuthUser) {
 
   // Etapa 14E.1: antes 15 queries en un único Promise.all (root cause de los
   // 500 por saturación de pool, ver docs/decisions/
-  // DASHBOARD_METRICS_PERFORMANCE_14E1.md §1/§6). Ahora 14 (countTotal +
-  // countActive colapsados en 1 groupBy) repartidas en 3 lotes de máximo
-  // `DASHBOARD_METRICS_BATCH_SIZE` (5) queries concurrentes — los 2
-  // `findMany` más pesados (activeDashboardEmployees/transportedEmployees)
-  // se repartieron en lotes distintos (1 y 3) para no acumular el costo más
-  // alto en un mismo lote.
+  // DASHBOARD_METRICS_PERFORMANCE_14E1.md §1/§6) — pasaron a lotes de máximo
+  // `DASHBOARD_METRICS_BATCH_SIZE` (5) queries concurrentes.
+  // Etapa 14E.2: medido en frío (script temporal, revertido, ver
+  // docs/decisions/DASHBOARD_METRICS_FINE_TUNING_14E2.md) — ninguna query
+  // individual resultó desproporcionadamente pesada (todas ~150-400ms,
+  // dominadas por la latencia fija de red a Neon, no por su propio costo).
+  // `relationLoadStrategy: "join"` se probó en los 2 `findMany` con
+  // relaciones y no mostró mejora medible (relaciones de 1 solo nivel, ya
+  // eficientes sin join) — no se aplicó. La única reducción real con
+  // evidencia: `countEmployeesWithoutEntries` era matemáticamente redundante
+  // (complemento exacto de `countEmployeesWithEntries` sobre el mismo
+  // `activeWhere`) — eliminada, `pendingLoads` se deriva de `active -
+  // employeesWithEntries` sin query extra. 14 → 13 queries. Los 2 `findMany`
+  // más pesados (activeDashboardEmployees/transportedEmployees) se
+  // mantienen en lotes distintos (1 y 3).
   const [
     statusGroups,
     exits,
@@ -154,7 +163,6 @@ async function calculateMetrics(period: string, user: Express.AuthUser) {
     hoursResult,
     activeDashboardEmployees,
     employeesWithEntries,
-    pendingLoads,
     reviewLoads,
     absenceRanges,
     pendingNovelties,
@@ -170,7 +178,6 @@ async function calculateMetrics(period: string, user: Express.AuthUser) {
       task("TimeEntry.aggregate(loadedHours)", () => dashboardRepository.sumLoadedHours(period, accessWhere)),
       task("Employee.findMany(activeDashboardEmployees)", () => dashboardRepository.findActiveDashboardEmployees(accessWhere)),
       task("Employee.count(withEntries)", () => dashboardRepository.countEmployeesWithEntries(period, accessWhere)),
-      task("Employee.count(withoutEntries)", () => dashboardRepository.countEmployeesWithoutEntries(period, accessWhere)),
       task("Employee.count(inReview)", () => dashboardRepository.countEmployeesInReview(period, accessWhere)),
       task("Novelty.findMany(absenceRanges)", () => dashboardRepository.findPeriodAbsenceDateRanges(period, accessWhere)),
       task("Novelty.count(pending)", () => dashboardRepository.countPendingNovelties(accessWhere)),
@@ -186,6 +193,9 @@ async function calculateMetrics(period: string, user: Express.AuthUser) {
   const active = statusGroups.find((group) => group.status === EmployeeStatus.ACTIVO)?._count._all || 0;
   const inactive = total - active;
   const loadedHours = formatDecimal(hoursResult._sum.hours);
+  // Etapa 14E.2: complemento exacto de employeesWithEntries sobre el mismo
+  // activeWhere — ver comentario en dashboard.repository.ts:countEmployeesWithEntries.
+  const pendingLoads = Math.max(0, active - employeesWithEntries);
 
   const absenceDays = absenceRanges.reduce(
     (total, novelty) => total + dayCount(novelty.fromDate, novelty.toDate),
