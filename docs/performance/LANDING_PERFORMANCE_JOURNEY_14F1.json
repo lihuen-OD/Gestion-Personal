@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-07T13:15:05.973Z",
+  "generatedAt": "2026-09-07T13:51:49.436Z",
   "environment": "Frontend y backend locales (`npm run dev`), backend conectado a la base real de staging (ver docs/LOCAL_DEVELOPMENT.md) — no es un ambiente de producción ni un ambiente aislado de test.",
   "baseUrl": "http://localhost:5174",
   "apiBaseUrl": "http://localhost:4002/api",
@@ -7,168 +7,120 @@
   "runs": [
     {
       "label": "fría",
-      "loginVisibleMs": 2238,
-      "loginNetworkIdleMs": 6359,
+      "loginVisibleMs": 1900,
+      "loginNetworkIdleMs": 6460,
       "requests": [
         {
           "method": "POST",
           "path": "/api/auth/login",
           "statusCode": 200,
-          "durationMs": 1223,
-          "startOffsetMs": 542,
-          "endOffsetMs": 1765
+          "durationMs": 1144,
+          "startOffsetMs": 592,
+          "endOffsetMs": 1736
         },
         {
           "method": "GET",
           "path": "/api/workforce/notifications-unread-count",
           "statusCode": 200,
-          "durationMs": 737,
-          "startOffsetMs": 1785,
-          "endOffsetMs": 2522
-        },
-        {
-          "method": "GET",
-          "path": "/api/workforce/notifications-unread-count",
-          "statusCode": 200,
-          "durationMs": 918,
-          "startOffsetMs": 1786,
-          "endOffsetMs": 2704
+          "durationMs": 776,
+          "startOffsetMs": 1761,
+          "endOffsetMs": 2537
         },
         {
           "method": "GET",
           "path": "/api/audit",
           "statusCode": 200,
-          "durationMs": 3246,
-          "startOffsetMs": 1797,
-          "endOffsetMs": 5043
-        },
-        {
-          "method": "GET",
-          "path": "/api/audit",
-          "statusCode": 200,
-          "durationMs": 3248,
-          "startOffsetMs": 1813,
-          "endOffsetMs": 5061
+          "durationMs": 2053,
+          "startOffsetMs": 1770,
+          "endOffsetMs": 3823
         },
         {
           "method": "GET",
           "path": "/api/dashboard/metrics",
           "statusCode": 200,
-          "durationMs": 4060,
-          "startOffsetMs": 1798,
-          "endOffsetMs": 5858
+          "durationMs": 4190,
+          "startOffsetMs": 1769,
+          "endOffsetMs": 5959
         }
       ],
       "consoleErrors": []
     },
     {
       "label": "tibia (logout + login inmediato — cache backend probablemente vigente)",
-      "loginVisibleMs": 886,
-      "loginNetworkIdleMs": 3406,
+      "loginVisibleMs": 1371,
+      "loginNetworkIdleMs": 3580,
       "requests": [
         {
           "method": "POST",
           "path": "/api/auth/login",
           "statusCode": 200,
-          "durationMs": 769,
-          "startOffsetMs": 101,
-          "endOffsetMs": 870
+          "durationMs": 879,
+          "startOffsetMs": 88,
+          "endOffsetMs": 967
         },
         {
           "method": "GET",
           "path": "/api/workforce/notifications-unread-count",
           "statusCode": 200,
-          "durationMs": 718,
-          "startOffsetMs": 882,
-          "endOffsetMs": 1600
-        },
-        {
-          "method": "GET",
-          "path": "/api/workforce/notifications-unread-count",
-          "statusCode": 200,
-          "durationMs": 898,
-          "startOffsetMs": 881,
-          "endOffsetMs": 1779
+          "durationMs": 729,
+          "startOffsetMs": 979,
+          "endOffsetMs": 1708
         },
         {
           "method": "GET",
           "path": "/api/dashboard/metrics",
           "statusCode": 200,
-          "durationMs": 1293,
-          "startOffsetMs": 891,
-          "endOffsetMs": 2184
+          "durationMs": 1489,
+          "startOffsetMs": 990,
+          "endOffsetMs": 2479
         },
         {
           "method": "GET",
           "path": "/api/audit",
           "statusCode": 200,
-          "durationMs": 2012,
-          "startOffsetMs": 891,
-          "endOffsetMs": 2903
-        },
-        {
-          "method": "GET",
-          "path": "/api/audit",
-          "statusCode": 200,
-          "durationMs": 2014,
-          "startOffsetMs": 891,
-          "endOffsetMs": 2905
+          "durationMs": 2089,
+          "startOffsetMs": 990,
+          "endOffsetMs": 3079
         }
       ],
       "consoleErrors": []
     },
     {
       "label": "después de 16s (cache de audit vencido, cache de dashboard probablemente aún vigente — no es una corrida fría)",
-      "loginVisibleMs": 1358,
-      "loginNetworkIdleMs": 3328,
+      "loginVisibleMs": 1366,
+      "loginNetworkIdleMs": 3562,
       "requests": [
         {
           "method": "POST",
           "path": "/api/auth/login",
           "statusCode": 200,
-          "durationMs": 1054,
-          "startOffsetMs": 77,
-          "endOffsetMs": 1131
+          "durationMs": 970,
+          "startOffsetMs": 84,
+          "endOffsetMs": 1054
         },
         {
           "method": "GET",
           "path": "/api/workforce/notifications-unread-count",
           "statusCode": 200,
-          "durationMs": 726,
-          "startOffsetMs": 1141,
-          "endOffsetMs": 1867
-        },
-        {
-          "method": "GET",
-          "path": "/api/workforce/notifications-unread-count",
-          "statusCode": 200,
-          "durationMs": 912,
-          "startOffsetMs": 1141,
-          "endOffsetMs": 2053
+          "durationMs": 722,
+          "startOffsetMs": 1060,
+          "endOffsetMs": 1782
         },
         {
           "method": "GET",
           "path": "/api/audit",
           "statusCode": 200,
-          "durationMs": 908,
-          "startOffsetMs": 1150,
-          "endOffsetMs": 2058
-        },
-        {
-          "method": "GET",
-          "path": "/api/audit",
-          "statusCode": 200,
-          "durationMs": 910,
-          "startOffsetMs": 1149,
-          "endOffsetMs": 2059
+          "durationMs": 880,
+          "startOffsetMs": 1069,
+          "endOffsetMs": 1949
         },
         {
           "method": "GET",
           "path": "/api/dashboard/metrics",
           "statusCode": 200,
-          "durationMs": 1677,
-          "startOffsetMs": 1150,
-          "endOffsetMs": 2827
+          "durationMs": 1992,
+          "startOffsetMs": 1069,
+          "endOffsetMs": 3061
         }
       ],
       "consoleErrors": []

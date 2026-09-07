@@ -11,7 +11,9 @@ export type CacheFamily =
   | "time-entries"
   | "novelties"
   | "pending"
-  | "work-regimes";
+  | "work-regimes"
+  | "audit"
+  | "notifications";
 
 export type CachePolicy = {
   family: CacheFamily;
@@ -164,6 +166,30 @@ export const cachePolicies = {
     ttlMs: 10 * 60_000,
     persist: true,
     sensitive: false,
+    schemaVersion: CACHE_SCHEMA_VERSION,
+  },
+  // Etapa 14F.2: el feed de actividad reciente del Dashboard (`/audit?take=5`)
+  // no tenía dedupe frontend — en StrictMode se pedía dos veces por mount.
+  // TTL corto (15s, igual al `auditListCache` del backend) porque es lectura
+  // de auditoría — no tiene sentido cachear más tiempo que el propio backend.
+  // No persistido: nunca guardar auditoría en IndexedDB/localStorage.
+  auditList: {
+    family: "audit",
+    ttlMs: 15_000,
+    persist: false,
+    sensitive: true,
+    schemaVersion: CACHE_SCHEMA_VERSION,
+  },
+  // Etapa 14F.2: el badge de notificaciones sin leer (`AppShell`) tampoco
+  // tenía dedupe frontend — mismo síntoma de StrictMode que auditList. TTL
+  // corto (20s): sólo necesita sobrevivir el doble-montaje del effect y
+  // remounts rápidos, no el intervalo de refresco de 60s (que siempre va a
+  // ser un cache-miss real, TTL < intervalo, por diseño).
+  notificationsUnreadCount: {
+    family: "notifications",
+    ttlMs: 20_000,
+    persist: false,
+    sensitive: true,
     schemaVersion: CACHE_SCHEMA_VERSION,
   },
 } satisfies Record<string, CachePolicy>;

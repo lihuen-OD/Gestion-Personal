@@ -79,41 +79,65 @@ export function DashboardPage() {
     [level, user],
   );
   const [metrics, setMetrics] = useState<DashboardMetrics>({ active: 0, inactive: 0, total: 0, absenceRate: "0", absenceDays: 0, turnoverRate: "0", exits: 0, averageAge: "0", averageTenure: "0", transported: 0, loadedHours: 0, loadCoverage: 0, pendingLoads: 0, reviewLoads: 0, expiredDocuments: 0, expiringDocuments: 0, missingResponsible: 0, pendingNovelties: 0, headcountByCompany: [], headcountBySector: [], transportByCity: [], transportRoutes: [], upcomingBirthdays: [], period: "" });
+  const [metricsStatus, setMetricsStatus] = useState<"loading" | "success" | "error">("loading");
+  const [metricsRetry, setMetricsRetry] = useState(0);
+  // Etapa 14F.2: separado del estado de metrics — antes ambos compartían un
+  // único `status`, así que si /audit tardaba o fallaba, las KPI cards (que
+  // no dependen de audit) quedaban esperando o se rompían junto con él. Ver
+  // docs/decisions/INITIAL_APP_LANDING_OPTIMIZATION_14F2.md.
   const [audit, setAudit] = useState<AuditEntry[]>([]);
-  const [status, setStatus] = useState<"loading" | "success" | "error">("loading");
-  const [retry, setRetry] = useState(0);
+  const [auditStatus, setAuditStatus] = useState<"idle" | "loading" | "success" | "error">("idle");
+  const [auditRetry, setAuditRetry] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
     async function load() {
-      setStatus("loading");
+      setMetricsStatus("loading");
       try {
-        const [apiMetrics, apiAudit] = await Promise.all([
-          dashboardMetricsApiService.getMetrics(level === 2 ? (employee: Employee) => employee.sector === user!.sector : undefined),
-          level === 1 ? dashboardMetricsApiService.getAudit(5) : Promise.resolve([]),
-        ]);
+        const apiMetrics = await dashboardMetricsApiService.getMetrics(level === 2 ? (employee: Employee) => employee.sector === user!.sector : undefined);
         if (cancelled) return;
         setMetrics(apiMetrics);
-        setAudit(apiAudit);
-        setStatus("success");
+        setMetricsStatus("success");
       } catch {
         if (cancelled) return;
-        setStatus("error");
+        setMetricsStatus("error");
       }
     }
     load();
     return () => {
       cancelled = true;
     };
-  }, [fallbackScope, level, user, retry]);
+  }, [fallbackScope, level, user, metricsRetry]);
 
-  if (status === "error") {
+  useEffect(() => {
+    // Sólo Nivel 1 - RRHH ve el widget de actividad reciente — para el resto
+    // de los roles no se dispara ningún request a /audit.
+    if (level !== 1) {
+      setAuditStatus("idle");
+      return;
+    }
+    let cancelled = false;
+    setAuditStatus("loading");
+    dashboardMetricsApiService.getAudit(5).then((apiAudit) => {
+      if (cancelled) return;
+      setAudit(apiAudit);
+      setAuditStatus("success");
+    }).catch(() => {
+      if (cancelled) return;
+      setAuditStatus("error");
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [level, auditRetry]);
+
+  if (metricsStatus === "error") {
     return <><PageHeader eyebrow={level === 2 ? "PANEL DE GESTIÓN" : "DASHBOARD RRHH"} title={`Buen día, ${user!.name.split(" ")[0]}`} description="No se pudieron cargar los indicadores." />
-      <Section title="Indicadores"><ErrorState onRetry={() => setRetry((value) => value + 1)} /></Section>
+      <Section title="Indicadores"><ErrorState onRetry={() => setMetricsRetry((value) => value + 1)} /></Section>
     </>;
   }
 
-  if (status === "loading") {
+  if (metricsStatus === "loading") {
     return <><PageHeader eyebrow={level === 2 ? "PANEL DE GESTIÓN" : "DASHBOARD RRHH"} title={`Buen día, ${user!.name.split(" ")[0]}`} description="Cargando indicadores..." />
       <div className="stat-grid kpi-grid"><LoadingState variant="table" rows={2} columns={4} /></div>
     </>;
@@ -146,7 +170,12 @@ export function DashboardPage() {
       <Section title="Control de carga horaria" subtitle={`Periodo ${metrics.period ? formatPeriodLabel(metrics.period) : "actual"}`}><div className="compact-metrics"><div><b>{metrics.loadCoverage}%</b><span>Cobertura</span></div><div><b>{metrics.pendingLoads}</b><span>Pendientes</span></div><div><b>{metrics.reviewLoads}</b><span>En revisión</span></div><div><b>{metrics.loadedHours} h</b><span>Cargadas</span></div></div></Section>
     </div>
     {level === 1 && <Section title="Actividad reciente" subtitle="Últimos movimientos registrados en la plataforma">
-      <DataTable status={audit.length ? "ready" : "empty"} minWidth={860} emptyText="Todavía no hay actividad registrada.">
+      <DataTable
+        status={auditStatus === "success" ? (audit.length ? "ready" : "empty") : auditStatus === "error" ? "error" : "loading"}
+        minWidth={860}
+        emptyText="Todavía no hay actividad registrada."
+        onRetry={() => setAuditRetry((value) => value + 1)}
+      >
         <table className="dashboard-activity-table"><thead><tr><th>Fecha</th><th>Registrado por</th><th>Movimiento</th><th>Registro</th><th>Resumen</th></tr></thead><tbody>{audit.slice(0, 5).map((item) => <tr key={item.id}><td>{item.date} · {item.time}</td><td>{item.user}</td><td>{actionLabels[item.action] || item.action}</td><td><OverflowCell value={entityLabels[item.entity] || item.entity} /></td><td><span className="dashboard-activity-detail">{readableAuditDetail(item)}</span></td></tr>)}</tbody></table>
       </DataTable>
     </Section>}

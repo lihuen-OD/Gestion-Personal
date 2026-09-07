@@ -1,5 +1,5 @@
 import { apiRequest } from "./apiClient";
-import { invalidateCacheFamily } from "../cache";
+import { cachePolicies, cachedData, invalidateCacheFamily } from "../cache";
 
 export type MonthlyClosure = {
   id: string;
@@ -176,11 +176,29 @@ export const workforceApiService = {
     if (params.status) query.set("status", params.status);
     return apiRequest<{ data: SystemNotification[]; meta: SystemNotificationListMeta }>(`/workforce/notifications?${query.toString()}`, { apiCache: false }).then((response) => ({ items: response.data, meta: response.meta }));
   },
+  // Etapa 14F.2: `cachedData` agrega dedupe in-flight (AppShell monta el
+  // effect dos veces en StrictMode, disparando 2 requests idénticos) + TTL
+  // corto (20s) — sólo para sobrevivir ese doble-montaje/remounts rápidos,
+  // no para esconder un conteo desactualizado (el propio intervalo de 60s de
+  // AppShell y la invalidación de `readNotification` de abajo se encargan de
+  // eso). No persiste en storage: es un badge, no hace falta.
   unreadNotificationCount() {
-    return apiRequest<{ data: { count: number } }>("/workforce/notifications-unread-count", { apiCache: false }).then((response) => response.data.count);
+    return cachedData({
+      requestKey: "GET:/workforce/notifications-unread-count",
+      policy: cachePolicies.notificationsUnreadCount,
+      fetcher: () => apiRequest<{ data: { count: number } }>("/workforce/notifications-unread-count").then((response) => response.data.count),
+      validate: (value: number) => typeof value === "number" && Number.isFinite(value),
+    });
   },
   readNotification(id: string) {
-    return apiRequest(`/workforce/notifications/${id}/read`, { method: "POST" });
+    // Invalida el cache del badge para que, apenas se marca una notificación
+    // como leída, el próximo `unreadNotificationCount()` (disparado por el
+    // evento "app:notifications-changed" que ya dispara NotificationsPage)
+    // pida el número real en vez de servir el conteo cacheado, ahora viejo.
+    return apiRequest(`/workforce/notifications/${id}/read`, { method: "POST" }).then(async (result) => {
+      await invalidateCacheFamily("notifications", "notification marked as read");
+      return result;
+    });
   },
   shiftTemplates() { return apiRequest<{ data: ShiftTemplate[] }>("/workforce/shift-templates", { apiCache: false }).then((response) => response.data); },
   createShiftTemplate(input: ShiftTemplateInput) { return apiRequest<{ data: ShiftTemplate }>("/workforce/shift-templates", { method: "POST", body: input }).then((response) => response.data); },

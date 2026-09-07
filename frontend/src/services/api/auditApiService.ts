@@ -1,4 +1,5 @@
 import { apiRequest } from "./apiClient";
+import { cachePolicies, cachedData } from "../cache";
 import type { AuditEntry } from "../../types";
 
 type ApiAuditLog = {
@@ -18,6 +19,10 @@ type ApiAuditLog = {
 
 type ApiListMeta = { total: number; page: number; pageSize: number; hasMore: boolean };
 type ApiAuditResponse = { data: ApiAuditLog[]; meta: ApiListMeta };
+
+function isApiAuditResponse(value: ApiAuditResponse) {
+  return Boolean(value && Array.isArray(value.data) && value.meta && typeof value.meta.total === "number");
+}
 
 function dateParts(value: string) {
   const date = new Date(value);
@@ -241,13 +246,27 @@ function mapFromApi(item: ApiAuditLog): AuditEntry {
 }
 
 export const auditApiService = {
+  // Etapa 14F.2: `cachedData` agrega dedupe in-flight (StrictMode pedía
+  // /audit dos veces por mount) + TTL corto de lectura — sin esto, el
+  // backend ya cachea 15s (`auditListCache`), pero el frontend no. La
+  // requestKey incluye el query string completo (page/take/entity/entityId)
+  // para que filtros distintos (ej. take=5 del Dashboard vs. take=25 de
+  // AuditPage) nunca compartan resultado. No se toca `auditListCache` del
+  // backend ni `auditService.register()` — ver docs/decisions/
+  // INITIAL_APP_LANDING_OPTIMIZATION_14F2.md.
   async list(filters?: { entity?: string; entityId?: string; page?: number; take?: number }) {
     const params = new URLSearchParams();
     params.set("page", String(filters?.page || 1));
     params.set("take", String(filters?.take || 25));
     if (filters?.entity) params.set("entity", filters.entity);
     if (filters?.entityId) params.set("entityId", filters.entityId);
-    const response = await apiRequest<ApiAuditResponse>(`/audit?${params.toString()}`);
+    const query = params.toString();
+    const response = await cachedData({
+      requestKey: `GET:/audit?${query}`,
+      policy: cachePolicies.auditList,
+      fetcher: () => apiRequest<ApiAuditResponse>(`/audit?${query}`),
+      validate: isApiAuditResponse,
+    });
     return { items: response.data.map(mapFromApi), meta: response.meta };
   },
   async getAll(filters?: { entity?: string; entityId?: string; take?: number }) {

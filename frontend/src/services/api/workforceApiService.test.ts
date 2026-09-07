@@ -1,10 +1,23 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { apiRequest } from "./apiClient";
-import { invalidateCacheFamily } from "../cache";
+import { clearAllAppCaches, invalidateCacheFamily } from "../cache";
 import { workforceApiService, type DoubleHourRuleInput } from "./workforceApiService";
 
 vi.mock("./apiClient", () => ({ apiRequest: vi.fn() }));
-vi.mock("../cache", () => ({ invalidateCacheFamily: vi.fn() }));
+// Etapa 14F.2: `cachedData`/`cachePolicies`/`clearAllAppCaches` quedan
+// reales (mismo módulo probado en services/cache/cachedData.test.ts) para
+// poder verificar dedupe/TTL de verdad en unreadNotificationCount — sólo
+// `invalidateCacheFamily` sigue espiado, como ya lo estaba antes de esta
+// etapa para reviewCorrection.
+vi.mock("../cache", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../cache")>();
+  // Envuelve (no reemplaza) la implementación real: sigue siendo espiable
+  // con toHaveBeenCalledWith (igual que antes de esta etapa) pero además
+  // invalida la cache real de verdad — necesario para los tests de
+  // unreadNotificationCount que verifican que, tras invalidar, se vuelve a
+  // pedir el dato en vez de servir el valor cacheado.
+  return { ...actual, invalidateCacheFamily: vi.fn(actual.invalidateCacheFamily) };
+});
 
 describe("workforceApiService.createDoubleHourRule", () => {
   beforeEach(() => vi.clearAllMocks());
@@ -61,5 +74,88 @@ describe("workforceApiService.reviewCorrection — invalidación de dashboard (E
     const result = await workforceApiService.reviewCorrection("correction-1", "approve");
 
     expect(result).toEqual({ id: "correction-1", status: "APROBADA" });
+  });
+});
+
+// Etapa 14F.2: antes de esta etapa, unreadNotificationCount() llamaba
+// apiRequest directo sin ningún dedupe/cache frontend — en StrictMode
+// (AppShell monta el effect dos veces) esto generaba 2 requests idénticos
+// por mount, confirmado en el journey de 14F.1. Ver docs/decisions/
+// INITIAL_APP_LANDING_OPTIMIZATION_14F2.md.
+describe("workforceApiService.unreadNotificationCount — dedupe/cache frontend (Etapa 14F.2)", () => {
+  beforeEach(async () => {
+    // mockReset (no clearAllMocks): clearAllMocks no vacía la cola de
+    // mockResolvedValueOnce/mockRejectedValueOnce de un test anterior — un
+    // valor "once" no consumido (p. ej. porque la cache evitó una segunda
+    // llamada real) quedaría filtrándose al test siguiente.
+    vi.mocked(apiRequest).mockReset();
+    vi.mocked(invalidateCacheFamily).mockClear();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-07T10:00:00.000Z"));
+    await clearAllAppCaches("test setup");
+  });
+
+  afterEach(async () => {
+    await clearAllAppCaches("test teardown");
+    vi.useRealTimers();
+  });
+
+  it("dos llamadas concurrentes generan un solo request real (dedupe in-flight)", async () => {
+    vi.mocked(apiRequest).mockResolvedValue({ data: { count: 3 } });
+
+    const [a, b] = await Promise.all([workforceApiService.unreadNotificationCount(), workforceApiService.unreadNotificationCount()]);
+
+    expect(a).toBe(3);
+    expect(b).toBe(3);
+    expect(apiRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it("una segunda llamada dentro del TTL usa cache, no repite el request", async () => {
+    vi.mocked(apiRequest).mockResolvedValue({ data: { count: 5 } });
+
+    await workforceApiService.unreadNotificationCount();
+    await expect(workforceApiService.unreadNotificationCount()).resolves.toBe(5);
+
+    expect(apiRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it("después de invalidar la familia 'notifications', vuelve a pedir", async () => {
+    vi.mocked(apiRequest).mockResolvedValueOnce({ data: { count: 1 } }).mockResolvedValueOnce({ data: { count: 2 } });
+
+    await expect(workforceApiService.unreadNotificationCount()).resolves.toBe(1);
+    await invalidateCacheFamily("notifications", "unit test");
+    await expect(workforceApiService.unreadNotificationCount()).resolves.toBe(2);
+
+    expect(apiRequest).toHaveBeenCalledTimes(2);
+  });
+
+  it("un error no queda cacheado permanentemente — la siguiente llamada reintenta", async () => {
+    vi.mocked(apiRequest).mockRejectedValueOnce(new Error("network error")).mockResolvedValueOnce({ data: { count: 4 } });
+
+    await expect(workforceApiService.unreadNotificationCount()).rejects.toThrow("network error");
+    await expect(workforceApiService.unreadNotificationCount()).resolves.toBe(4);
+
+    expect(apiRequest).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("workforceApiService.readNotification — invalidación del badge (Etapa 14F.2)", () => {
+  beforeEach(() => {
+    vi.mocked(apiRequest).mockReset();
+    vi.mocked(invalidateCacheFamily).mockClear();
+  });
+
+  it("al marcar una notificación como leída, invalida la familia 'notifications'", async () => {
+    vi.mocked(apiRequest).mockResolvedValue(undefined);
+
+    await workforceApiService.readNotification("notif-1");
+
+    expect(invalidateCacheFamily).toHaveBeenCalledWith("notifications", expect.any(String));
+  });
+
+  it("sigue devolviendo el resultado del POST (sin cambiar el contrato)", async () => {
+    vi.mocked(apiRequest).mockResolvedValue({ ok: true });
+
+    await expect(workforceApiService.readNotification("notif-1")).resolves.toEqual({ ok: true });
   });
 });
