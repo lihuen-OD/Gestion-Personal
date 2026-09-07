@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-07T12:24:07.277Z",
+  "generatedAt": "2026-09-07T13:15:50.898Z",
   "environment": "Frontend y backend locales (`npm run dev`), backend conectado a la base real de staging (ver docs/LOCAL_DEVELOPMENT.md) — no es un ambiente de producción ni un ambiente aislado de test.",
   "baseUrl": "http://localhost:5174",
   "apiBaseUrl": "http://localhost:4002/api",
@@ -15,7 +15,7 @@
     "totalActions": 56,
     "coveredActions": 56,
     "skippedActions": 0,
-    "slowActions": 0,
+    "slowActions": 1,
     "verySlowActions": 1,
     "httpErrors": 0,
     "consoleErrors": 0
@@ -27,44 +27,44 @@
       "route": "blank",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 702,
-      "networkIdleMs": 3752,
+      "visibleMs": 281,
+      "networkIdleMs": 4558,
       "requests": [
         {
           "method": "POST",
           "path": "/api/auth/login",
           "statusCode": 200,
-          "durationMs": 1090
+          "durationMs": 952
         },
         {
           "method": "GET",
           "path": "/api/workforce/notifications-unread-count",
           "statusCode": 200,
-          "durationMs": 187
+          "durationMs": 553
+        },
+        {
+          "method": "GET",
+          "path": "/api/audit",
+          "statusCode": 200,
+          "durationMs": 548
+        },
+        {
+          "method": "GET",
+          "path": "/api/audit",
+          "statusCode": 200,
+          "durationMs": 550
         },
         {
           "method": "GET",
           "path": "/api/workforce/notifications-unread-count",
           "statusCode": 200,
-          "durationMs": 394
-        },
-        {
-          "method": "GET",
-          "path": "/api/audit",
-          "statusCode": 200,
-          "durationMs": 591
-        },
-        {
-          "method": "GET",
-          "path": "/api/audit",
-          "statusCode": 200,
-          "durationMs": 592
+          "durationMs": 1112
         },
         {
           "method": "GET",
           "path": "/api/dashboard/metrics",
           "statusCode": 200,
-          "durationMs": 1453
+          "durationMs": 2809
         }
       ],
       "consoleErrors": [],
@@ -79,44 +79,44 @@
       "route": "/",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 73,
-      "networkIdleMs": 1369,
+      "visibleMs": 79,
+      "networkIdleMs": 2252,
       "requests": [
         {
           "method": "GET",
           "path": "/api/workforce/notifications-unread-count",
           "statusCode": 200,
-          "durationMs": 197
-        },
-        {
-          "method": "GET",
-          "path": "/api/workforce/notifications-unread-count",
-          "statusCode": 200,
-          "durationMs": 401
-        },
-        {
-          "method": "GET",
-          "path": "/api/employees",
-          "statusCode": 200,
-          "durationMs": 397
+          "durationMs": 364
         },
         {
           "method": "GET",
           "path": "/api/employees/summary",
           "statusCode": 200,
-          "durationMs": 404
+          "durationMs": 372
         },
         {
           "method": "GET",
-          "path": "/api/org-structure",
+          "path": "/api/workforce/notifications-unread-count",
           "statusCode": 200,
-          "durationMs": 596
+          "durationMs": 546
         },
         {
           "method": "GET",
           "path": "/api/employees",
           "statusCode": 200,
-          "durationMs": 407
+          "durationMs": 523
+        },
+        {
+          "method": "GET",
+          "path": "/api/employees",
+          "statusCode": 200,
+          "durationMs": 361
+        },
+        {
+          "method": "GET",
+          "path": "/api/org-structure",
+          "statusCode": 200,
+          "durationMs": 1681
         }
       ],
       "consoleErrors": [],
@@ -131,8 +131,8 @@
       "route": "/legajos",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 29,
-      "networkIdleMs": 112,
+      "visibleMs": 32,
+      "networkIdleMs": 113,
       "requests": [],
       "consoleErrors": [],
       "notes": [
@@ -148,8 +148,8 @@
       "route": "/legajos",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 42,
-      "networkIdleMs": 125,
+      "visibleMs": 34,
+      "networkIdleMs": 116,
       "requests": [],
       "consoleErrors": [],
       "notes": [
@@ -165,8 +165,8 @@
       "route": "/legajos",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 19,
-      "networkIdleMs": 422,
+      "visibleMs": 20,
+      "networkIdleMs": 423,
       "requests": [],
       "consoleErrors": [],
       "notes": [
@@ -182,14 +182,14 @@
       "route": "/legajos",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 16,
-      "networkIdleMs": 419,
+      "visibleMs": 22,
+      "networkIdleMs": 424,
       "requests": [
         {
           "method": "GET",
           "path": "/api/employees",
           "statusCode": 200,
-          "durationMs": 739
+          "durationMs": 726
         }
       ],
       "consoleErrors": [],
@@ -204,8 +204,8 @@
       "route": "/legajos",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 21,
-      "networkIdleMs": 105,
+      "visibleMs": 17,
+      "networkIdleMs": 100,
       "requests": [],
       "consoleErrors": [],
       "notes": [
@@ -221,9 +221,16 @@
       "route": "/legajos",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 11,
-      "networkIdleMs": 95,
-      "requests": [],
+      "visibleMs": 7,
+      "networkIdleMs": 89,
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/api/employees",
+          "statusCode": 200,
+          "durationMs": 523
+        }
+      ],
       "consoleErrors": [],
       "notes": [],
       "isWrite": false,
@@ -236,50 +243,50 @@
       "route": "/legajos",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 826,
-      "networkIdleMs": 1335,
+      "visibleMs": 822,
+      "networkIdleMs": 1485,
       "requests": [
         {
           "method": "GET",
           "path": "/api/workforce/notifications-unread-count",
           "statusCode": 200,
-          "durationMs": 393
+          "durationMs": 336
         },
         {
           "method": "GET",
           "path": "/api/employees/:id/overview",
           "statusCode": 200,
-          "durationMs": 368
-        },
-        {
-          "method": "GET",
-          "path": "/api/salary-categories",
-          "statusCode": 200,
-          "durationMs": 372
+          "durationMs": 362
         },
         {
           "method": "GET",
           "path": "/api/workforce/notifications-unread-count",
           "statusCode": 200,
-          "durationMs": 585
+          "durationMs": 503
+        },
+        {
+          "method": "GET",
+          "path": "/api/salary-categories",
+          "statusCode": 200,
+          "durationMs": 542
         },
         {
           "method": "GET",
           "path": "/api/employees/:id/overview-details",
           "statusCode": 200,
-          "durationMs": 757
+          "durationMs": 905
         },
         {
           "method": "GET",
           "path": "/api/audit",
           "statusCode": 200,
-          "durationMs": 377
+          "durationMs": 536
         },
         {
           "method": "GET",
           "path": "/api/audit",
           "statusCode": 200,
-          "durationMs": 2
+          "durationMs": 10
         }
       ],
       "consoleErrors": [],
@@ -294,8 +301,8 @@
       "route": "/legajos/:id",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 24,
-      "networkIdleMs": 107,
+      "visibleMs": 25,
+      "networkIdleMs": 108,
       "requests": [],
       "consoleErrors": [],
       "notes": [],
@@ -309,8 +316,8 @@
       "route": "/legajos/:id",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 25,
-      "networkIdleMs": 107,
+      "visibleMs": 23,
+      "networkIdleMs": 104,
       "requests": [],
       "consoleErrors": [],
       "notes": [],
@@ -324,20 +331,20 @@
       "route": "/legajos/:id",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 1321,
-      "networkIdleMs": 1405,
+      "visibleMs": 1331,
+      "networkIdleMs": 1415,
       "requests": [
         {
           "method": "GET",
           "path": "/api/employees/:id/block-history",
           "statusCode": 200,
-          "durationMs": 783
+          "durationMs": 861
         },
         {
           "method": "GET",
           "path": "/api/employees/:id/block-history",
           "statusCode": 200,
-          "durationMs": 1167
+          "durationMs": 1223
         }
       ],
       "consoleErrors": [],
@@ -354,8 +361,8 @@
       "route": "/legajos/:id",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 28,
-      "networkIdleMs": 111,
+      "visibleMs": 40,
+      "networkIdleMs": 124,
       "requests": [],
       "consoleErrors": [],
       "notes": [],
@@ -369,8 +376,8 @@
       "route": "/legajos/:id",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 20,
-      "networkIdleMs": 103,
+      "visibleMs": 44,
+      "networkIdleMs": 127,
       "requests": [],
       "consoleErrors": [],
       "notes": [
@@ -386,8 +393,8 @@
       "route": "/legajos/:id",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 37,
-      "networkIdleMs": 119,
+      "visibleMs": 38,
+      "networkIdleMs": 121,
       "requests": [],
       "consoleErrors": [],
       "notes": [
@@ -403,26 +410,26 @@
       "route": "/legajos/:id",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 808,
-      "networkIdleMs": 892,
+      "visibleMs": 807,
+      "networkIdleMs": 891,
       "requests": [
         {
           "method": "GET",
           "path": "/api/employees/:id/position-validation",
           "statusCode": 200,
-          "durationMs": 596
+          "durationMs": 557
         },
         {
           "method": "GET",
           "path": "/api/positions/options",
           "statusCode": 200,
-          "durationMs": 598
+          "durationMs": 560
         },
         {
           "method": "GET",
           "path": "/api/employees/:id/field-history",
           "statusCode": 200,
-          "durationMs": 717
+          "durationMs": 760
         }
       ],
       "consoleErrors": [],
@@ -439,8 +446,8 @@
       "route": "/legajos/:id",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 28,
-      "networkIdleMs": 110,
+      "visibleMs": 23,
+      "networkIdleMs": 106,
       "requests": [],
       "consoleErrors": [],
       "notes": [],
@@ -454,14 +461,14 @@
       "route": "/legajos/:id",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 788,
-      "networkIdleMs": 870,
+      "visibleMs": 811,
+      "networkIdleMs": 897,
       "requests": [
         {
           "method": "GET",
           "path": "/api/employees/:id/field-history",
           "statusCode": 200,
-          "durationMs": 335
+          "durationMs": 366
         }
       ],
       "consoleErrors": [],
@@ -478,8 +485,8 @@
       "route": "/legajos/:id",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 35,
-      "networkIdleMs": 118,
+      "visibleMs": 17,
+      "networkIdleMs": 99,
       "requests": [],
       "consoleErrors": [],
       "notes": [],
@@ -493,14 +500,14 @@
       "route": "/legajos/:id",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 792,
-      "networkIdleMs": 875,
+      "visibleMs": 800,
+      "networkIdleMs": 884,
       "requests": [
         {
           "method": "GET",
           "path": "/api/employees/:id/field-history",
           "statusCode": 200,
-          "durationMs": 437
+          "durationMs": 388
         }
       ],
       "consoleErrors": [],
@@ -517,8 +524,8 @@
       "route": "/legajos/:id",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 31,
-      "networkIdleMs": 115,
+      "visibleMs": 25,
+      "networkIdleMs": 109,
       "requests": [],
       "consoleErrors": [],
       "notes": [],
@@ -532,14 +539,14 @@
       "route": "/legajos/:id",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 789,
-      "networkIdleMs": 871,
+      "visibleMs": 799,
+      "networkIdleMs": 883,
       "requests": [
         {
           "method": "GET",
           "path": "/api/employees/:id/field-history",
           "statusCode": 200,
-          "durationMs": 344
+          "durationMs": 365
         }
       ],
       "consoleErrors": [],
@@ -556,8 +563,8 @@
       "route": "/legajos/:id",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 21,
-      "networkIdleMs": 105,
+      "visibleMs": 28,
+      "networkIdleMs": 110,
       "requests": [],
       "consoleErrors": [],
       "notes": [],
@@ -571,14 +578,14 @@
       "route": "/legajos/:id",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 1292,
-      "networkIdleMs": 1373,
+      "visibleMs": 812,
+      "networkIdleMs": 896,
       "requests": [
         {
           "method": "GET",
           "path": "/api/employees/:id/field-history",
           "statusCode": 200,
-          "durationMs": 1039
+          "durationMs": 554
         }
       ],
       "consoleErrors": [],
@@ -595,8 +602,8 @@
       "route": "/legajos/:id",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 34,
-      "networkIdleMs": 117,
+      "visibleMs": 27,
+      "networkIdleMs": 110,
       "requests": [],
       "consoleErrors": [],
       "notes": [],
@@ -610,14 +617,14 @@
       "route": "/legajos/:id",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 796,
-      "networkIdleMs": 878,
+      "visibleMs": 813,
+      "networkIdleMs": 896,
       "requests": [
         {
           "method": "GET",
           "path": "/api/employees/:id/field-history",
           "statusCode": 200,
-          "durationMs": 344
+          "durationMs": 365
         }
       ],
       "consoleErrors": [],
@@ -634,8 +641,8 @@
       "route": "/legajos/:id",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 27,
-      "networkIdleMs": 111,
+      "visibleMs": 38,
+      "networkIdleMs": 127,
       "requests": [],
       "consoleErrors": [],
       "notes": [],
@@ -649,14 +656,14 @@
       "route": "/legajos/:id",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 809,
-      "networkIdleMs": 892,
+      "visibleMs": 805,
+      "networkIdleMs": 890,
       "requests": [
         {
           "method": "GET",
           "path": "/api/employees/:id/field-history",
           "statusCode": 200,
-          "durationMs": 349
+          "durationMs": 360
         }
       ],
       "consoleErrors": [],
@@ -673,8 +680,8 @@
       "route": "/legajos/:id",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 28,
-      "networkIdleMs": 111,
+      "visibleMs": 22,
+      "networkIdleMs": 106,
       "requests": [],
       "consoleErrors": [],
       "notes": [],
@@ -695,7 +702,7 @@
           "method": "GET",
           "path": "/api/employees/:id/field-history",
           "statusCode": 200,
-          "durationMs": 341
+          "durationMs": 544
         }
       ],
       "consoleErrors": [],
@@ -712,8 +719,8 @@
       "route": "/legajos/:id",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 60,
-      "networkIdleMs": 144,
+      "visibleMs": 24,
+      "networkIdleMs": 107,
       "requests": [],
       "consoleErrors": [],
       "notes": [],
@@ -727,8 +734,8 @@
       "route": "/legajos/:id",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 21,
-      "networkIdleMs": 104,
+      "visibleMs": 24,
+      "networkIdleMs": 108,
       "requests": [],
       "consoleErrors": [],
       "notes": [],
@@ -742,8 +749,8 @@
       "route": "/legajos/:id",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 31,
-      "networkIdleMs": 115,
+      "visibleMs": 35,
+      "networkIdleMs": 119,
       "requests": [],
       "consoleErrors": [],
       "notes": [
@@ -759,8 +766,8 @@
       "route": "/legajos/:id",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 26,
-      "networkIdleMs": 109,
+      "visibleMs": 20,
+      "networkIdleMs": 103,
       "requests": [],
       "consoleErrors": [],
       "notes": [],
@@ -774,20 +781,20 @@
       "route": "/legajos/:id",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 1311,
-      "networkIdleMs": 1395,
+      "visibleMs": 1313,
+      "networkIdleMs": 1396,
       "requests": [
         {
           "method": "GET",
           "path": "/api/employees/:id/block-history",
           "statusCode": 200,
-          "durationMs": 745
+          "durationMs": 784
         },
         {
           "method": "GET",
           "path": "/api/employees/:id/block-history",
           "statusCode": 200,
-          "durationMs": 1155
+          "durationMs": 1148
         }
       ],
       "consoleErrors": [],
@@ -804,8 +811,8 @@
       "route": "/legajos/:id",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 27,
-      "networkIdleMs": 109,
+      "visibleMs": 34,
+      "networkIdleMs": 118,
       "requests": [],
       "consoleErrors": [],
       "notes": [],
@@ -819,20 +826,20 @@
       "route": "/legajos/:id",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 1308,
-      "networkIdleMs": 1391,
+      "visibleMs": 809,
+      "networkIdleMs": 893,
       "requests": [
         {
           "method": "GET",
           "path": "/api/employees/:id/block-history",
           "statusCode": 200,
-          "durationMs": 440
+          "durationMs": 360
         },
         {
           "method": "GET",
           "path": "/api/employees/:id/block-history",
           "statusCode": 200,
-          "durationMs": 839
+          "durationMs": 715
         }
       ],
       "consoleErrors": [],
@@ -849,8 +856,8 @@
       "route": "/legajos/:id",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 27,
-      "networkIdleMs": 111,
+      "visibleMs": 26,
+      "networkIdleMs": 109,
       "requests": [],
       "consoleErrors": [],
       "notes": [],
@@ -864,8 +871,8 @@
       "route": "/legajos/:id",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 26,
-      "networkIdleMs": 108,
+      "visibleMs": 32,
+      "networkIdleMs": 115,
       "requests": [],
       "consoleErrors": [],
       "notes": [
@@ -881,8 +888,8 @@
       "route": "/legajos/:id",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 31,
-      "networkIdleMs": 113,
+      "visibleMs": 29,
+      "networkIdleMs": 111,
       "requests": [],
       "consoleErrors": [],
       "notes": [
@@ -898,8 +905,8 @@
       "route": "/legajos/:id",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 37,
-      "networkIdleMs": 120,
+      "visibleMs": 36,
+      "networkIdleMs": 118,
       "requests": [],
       "consoleErrors": [],
       "notes": [],
@@ -913,20 +920,20 @@
       "route": "/legajos/:id",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 1306,
-      "networkIdleMs": 1389,
+      "visibleMs": 801,
+      "networkIdleMs": 885,
       "requests": [
         {
           "method": "GET",
           "path": "/api/employees/:id/block-history",
           "statusCode": 200,
-          "durationMs": 392
+          "durationMs": 358
         },
         {
           "method": "GET",
           "path": "/api/employees/:id/block-history",
           "statusCode": 200,
-          "durationMs": 941
+          "durationMs": 717
         }
       ],
       "consoleErrors": [],
@@ -943,8 +950,8 @@
       "route": "/legajos/:id",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 9,
-      "networkIdleMs": 92,
+      "visibleMs": 19,
+      "networkIdleMs": 102,
       "requests": [],
       "consoleErrors": [],
       "notes": [],
@@ -958,8 +965,8 @@
       "route": "/legajos/:id",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 11,
-      "networkIdleMs": 93,
+      "visibleMs": 14,
+      "networkIdleMs": 96,
       "requests": [],
       "consoleErrors": [],
       "notes": [
@@ -975,8 +982,8 @@
       "route": "/legajos/:id",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 35,
-      "networkIdleMs": 118,
+      "visibleMs": 34,
+      "networkIdleMs": 117,
       "requests": [],
       "consoleErrors": [],
       "notes": [],
@@ -991,25 +998,25 @@
       "covered": true,
       "skippedReason": null,
       "visibleMs": 1311,
-      "networkIdleMs": 1393,
+      "networkIdleMs": 1395,
       "requests": [
+        {
+          "method": "GET",
+          "path": "/api/employees/:id/block-history",
+          "statusCode": 200,
+          "durationMs": 598
+        },
         {
           "method": "GET",
           "path": "/api/hour-concepts",
           "statusCode": 200,
-          "durationMs": 1076
+          "durationMs": 1307
         },
         {
           "method": "GET",
           "path": "/api/employees/:id/block-history",
           "statusCode": 200,
-          "durationMs": 919
-        },
-        {
-          "method": "GET",
-          "path": "/api/employees/:id/block-history",
-          "statusCode": 200,
-          "durationMs": 1271
+          "durationMs": 962
         }
       ],
       "consoleErrors": [],
@@ -1026,8 +1033,8 @@
       "route": "/legajos/:id",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 10,
-      "networkIdleMs": 92,
+      "visibleMs": 22,
+      "networkIdleMs": 107,
       "requests": [],
       "consoleErrors": [],
       "notes": [],
@@ -1041,8 +1048,8 @@
       "route": "/legajos/:id",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 15,
-      "networkIdleMs": 97,
+      "visibleMs": 29,
+      "networkIdleMs": 112,
       "requests": [],
       "consoleErrors": [],
       "notes": [
@@ -1058,8 +1065,8 @@
       "route": "/legajos/:id",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 35,
-      "networkIdleMs": 118,
+      "visibleMs": 33,
+      "networkIdleMs": 117,
       "requests": [],
       "consoleErrors": [],
       "notes": [],
@@ -1073,8 +1080,8 @@
       "route": "/legajos/:id",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 30,
-      "networkIdleMs": 112,
+      "visibleMs": 34,
+      "networkIdleMs": 116,
       "requests": [],
       "consoleErrors": [],
       "notes": [],
@@ -1088,14 +1095,20 @@
       "route": "/legajos/:id",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 43,
-      "networkIdleMs": 126,
+      "visibleMs": 40,
+      "networkIdleMs": 123,
       "requests": [
         {
           "method": "GET",
           "path": "/api/novelties",
           "statusCode": 200,
-          "durationMs": 1056
+          "durationMs": 1086
+        },
+        {
+          "method": "GET",
+          "path": "/api/novelties",
+          "statusCode": 200,
+          "durationMs": 1087
         }
       ],
       "consoleErrors": [],
@@ -1112,14 +1125,20 @@
       "route": "/legajos/:id",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 35,
+      "visibleMs": 34,
       "networkIdleMs": 116,
       "requests": [
         {
           "method": "GET",
-          "path": "/api/novelties",
+          "path": "/api/documents",
           "statusCode": 200,
-          "durationMs": 1416
+          "durationMs": 1101
+        },
+        {
+          "method": "GET",
+          "path": "/api/documents",
+          "statusCode": 200,
+          "durationMs": 1103
         }
       ],
       "consoleErrors": [],
@@ -1134,22 +1153,9 @@
       "route": "/legajos/:id",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 20,
-      "networkIdleMs": 103,
-      "requests": [
-        {
-          "method": "GET",
-          "path": "/api/documents",
-          "statusCode": 200,
-          "durationMs": 1181
-        },
-        {
-          "method": "GET",
-          "path": "/api/documents",
-          "statusCode": 200,
-          "durationMs": 1182
-        }
-      ],
+      "visibleMs": 22,
+      "networkIdleMs": 105,
+      "requests": [],
       "consoleErrors": [],
       "notes": [],
       "isWrite": false,
@@ -1162,38 +1168,32 @@
       "route": "/legajos/:id",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 34,
-      "networkIdleMs": 116,
+      "visibleMs": 51,
+      "networkIdleMs": 134,
       "requests": [
         {
           "method": "GET",
           "path": "/api/shifts/assignments",
           "statusCode": 200,
-          "durationMs": 372
+          "durationMs": 381
         },
         {
           "method": "GET",
           "path": "/api/workforce/shift-templates",
           "statusCode": 200,
-          "durationMs": 549
+          "durationMs": 382
         },
         {
           "method": "GET",
           "path": "/api/workforce/shift-templates",
           "statusCode": 200,
-          "durationMs": 550
-        },
-        {
-          "method": "GET",
-          "path": "/api/shifts/assignments",
-          "statusCode": 200,
-          "durationMs": 557
+          "durationMs": 383
         },
         {
           "method": "GET",
           "path": "/api/document-categories",
           "statusCode": 200,
-          "durationMs": 1435
+          "durationMs": 1292
         }
       ],
       "consoleErrors": [],
@@ -1208,9 +1208,16 @@
       "route": "/legajos/:id",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 28,
-      "networkIdleMs": 111,
-      "requests": [],
+      "visibleMs": 22,
+      "networkIdleMs": 106,
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/api/shifts/assignments",
+          "statusCode": 200,
+          "durationMs": 765
+        }
+      ],
       "consoleErrors": [],
       "notes": [],
       "isWrite": false,
@@ -1223,8 +1230,8 @@
       "route": "/legajos/:id",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 74,
-      "networkIdleMs": 156,
+      "visibleMs": 71,
+      "networkIdleMs": 155,
       "requests": [],
       "consoleErrors": [],
       "notes": [],
@@ -1238,117 +1245,117 @@
       "method": "GET",
       "path": "/api/dashboard/metrics",
       "statusCode": 200,
-      "durationMs": 1453
+      "durationMs": 2809
     },
     {
       "method": "GET",
-      "path": "/api/document-categories",
+      "path": "/api/org-structure",
       "statusCode": 200,
-      "durationMs": 1435
-    },
-    {
-      "method": "GET",
-      "path": "/api/novelties",
-      "statusCode": 200,
-      "durationMs": 1416
-    },
-    {
-      "method": "GET",
-      "path": "/api/employees/:id/block-history",
-      "statusCode": 200,
-      "durationMs": 1271
-    },
-    {
-      "method": "GET",
-      "path": "/api/documents",
-      "statusCode": 200,
-      "durationMs": 1182
-    },
-    {
-      "method": "GET",
-      "path": "/api/documents",
-      "statusCode": 200,
-      "durationMs": 1181
-    },
-    {
-      "method": "GET",
-      "path": "/api/employees/:id/block-history",
-      "statusCode": 200,
-      "durationMs": 1167
-    },
-    {
-      "method": "GET",
-      "path": "/api/employees/:id/block-history",
-      "statusCode": 200,
-      "durationMs": 1155
-    },
-    {
-      "method": "POST",
-      "path": "/api/auth/login",
-      "statusCode": 200,
-      "durationMs": 1090
+      "durationMs": 1681
     },
     {
       "method": "GET",
       "path": "/api/hour-concepts",
       "statusCode": 200,
-      "durationMs": 1076
+      "durationMs": 1307
+    },
+    {
+      "method": "GET",
+      "path": "/api/document-categories",
+      "statusCode": 200,
+      "durationMs": 1292
+    },
+    {
+      "method": "GET",
+      "path": "/api/employees/:id/block-history",
+      "statusCode": 200,
+      "durationMs": 1223
+    },
+    {
+      "method": "GET",
+      "path": "/api/employees/:id/block-history",
+      "statusCode": 200,
+      "durationMs": 1148
+    },
+    {
+      "method": "GET",
+      "path": "/api/workforce/notifications-unread-count",
+      "statusCode": 200,
+      "durationMs": 1112
+    },
+    {
+      "method": "GET",
+      "path": "/api/documents",
+      "statusCode": 200,
+      "durationMs": 1103
+    },
+    {
+      "method": "GET",
+      "path": "/api/documents",
+      "statusCode": 200,
+      "durationMs": 1101
+    },
+    {
+      "method": "GET",
+      "path": "/api/novelties",
+      "statusCode": 200,
+      "durationMs": 1087
     }
   ],
   "slowestActions": [
     {
       "name": "Login (acceso rápido RRHH)",
       "zone": "Login",
-      "visibleMs": 702,
-      "networkIdleMs": 3752
+      "visibleMs": 281,
+      "networkIdleMs": 4558
+    },
+    {
+      "name": "Entrar a /legajos",
+      "zone": "A. Listado",
+      "visibleMs": 79,
+      "networkIdleMs": 2252
+    },
+    {
+      "name": "Abrir primer legajo disponible",
+      "zone": "B. Detalle",
+      "visibleMs": 822,
+      "networkIdleMs": 1485
     },
     {
       "name": "Abrir historial de Domicilio actual",
       "zone": "D. Contacto y domicilio",
-      "visibleMs": 1321,
-      "networkIdleMs": 1405
+      "visibleMs": 1331,
+      "networkIdleMs": 1415
     },
     {
       "name": "Abrir historial de Encargado directo actual",
       "zone": "F. Responsables/Asignaciones",
-      "visibleMs": 1311,
-      "networkIdleMs": 1395
+      "visibleMs": 1313,
+      "networkIdleMs": 1396
     },
     {
       "name": "Abrir historial de Conceptos horarios adicionales",
       "zone": "H. Configuración",
       "visibleMs": 1311,
-      "networkIdleMs": 1393
+      "networkIdleMs": 1395
     },
     {
-      "name": "Abrir historial de Responsable de carga horaria actual",
-      "zone": "F. Responsables/Asignaciones",
-      "visibleMs": 1308,
-      "networkIdleMs": 1391
-    },
-    {
-      "name": "Abrir historial de Transporte actual",
-      "zone": "G. Transporte",
-      "visibleMs": 1306,
-      "networkIdleMs": 1389
+      "name": "Abrir historial de Centro de costo",
+      "zone": "E. Datos laborales",
+      "visibleMs": 811,
+      "networkIdleMs": 897
     },
     {
       "name": "Abrir historial de Categoría de recibo",
       "zone": "E. Datos laborales",
-      "visibleMs": 1292,
-      "networkIdleMs": 1373
+      "visibleMs": 812,
+      "networkIdleMs": 896
     },
     {
-      "name": "Entrar a /legajos",
-      "zone": "A. Listado",
-      "visibleMs": 73,
-      "networkIdleMs": 1369
-    },
-    {
-      "name": "Abrir primer legajo disponible",
-      "zone": "B. Detalle",
-      "visibleMs": 826,
-      "networkIdleMs": 1335
+      "name": "Abrir historial de Categoría interna",
+      "zone": "E. Datos laborales",
+      "visibleMs": 813,
+      "networkIdleMs": 896
     },
     {
       "name": "Abrir historial de Obra Social",
