@@ -1,0 +1,2158 @@
+{
+  "generatedAt": "2026-09-07T15:44:30.264Z",
+  "environment": "Frontend y backend locales (`npm run dev`), backend conectado a la base real de staging (ver docs/LOCAL_DEVELOPMENT.md) — no es un ambiente de producción ni un ambiente aislado de test.",
+  "baseUrl": "http://localhost:5174",
+  "apiBaseUrl": "http://localhost:4002/api",
+  "user": "Nivel 1 - RRHH (acceso rápido demo — credenciales en docs/LOCAL_DEVELOPMENT.md, no se repiten en este reporte)",
+  "command": "npm run perf:journey:workforce (desde frontend/)",
+  "mode": "read-only",
+  "thresholds": {
+    "okThresholdMs": 1000,
+    "mediumThresholdMs": 2000,
+    "slowThresholdMs": 3000
+  },
+  "summary": {
+    "totalActions": 65,
+    "coveredActions": 37,
+    "skippedActions": 28,
+    "slowActions": 3,
+    "verySlowActions": 4,
+    "writesSkipped": 16,
+    "httpErrors": 0,
+    "consoleErrors": 0
+  },
+  "submoduleRollup": [
+    {
+      "zone": "Login",
+      "coveredActions": 1,
+      "skippedActions": 0,
+      "totalRequests": 4,
+      "maxDurationMs": 6321,
+      "rank": "Crítico"
+    },
+    {
+      "zone": "A. Inicio",
+      "coveredActions": 2,
+      "skippedActions": 0,
+      "totalRequests": 3,
+      "maxDurationMs": 6827,
+      "rank": "Crítico"
+    },
+    {
+      "zone": "B. Asistencia",
+      "coveredActions": 5,
+      "skippedActions": 4,
+      "totalRequests": 6,
+      "maxDurationMs": 4879,
+      "rank": "Crítico"
+    },
+    {
+      "zone": "C. Alertas de turnos",
+      "coveredActions": 5,
+      "skippedActions": 2,
+      "totalRequests": 6,
+      "maxDurationMs": 2926,
+      "rank": "Lento"
+    },
+    {
+      "zone": "D. Carga de horas",
+      "coveredActions": 9,
+      "skippedActions": 4,
+      "totalRequests": 16,
+      "maxDurationMs": 3005,
+      "rank": "Crítico"
+    },
+    {
+      "zone": "E. Cierres mensuales",
+      "coveredActions": 2,
+      "skippedActions": 2,
+      "totalRequests": 8,
+      "maxDurationMs": 1477,
+      "rank": "Medio"
+    },
+    {
+      "zone": "F. Bandeja de revisión",
+      "coveredActions": 3,
+      "skippedActions": 6,
+      "totalRequests": 7,
+      "maxDurationMs": 1627,
+      "rank": "Medio"
+    },
+    {
+      "zone": "G. Novedades",
+      "coveredActions": 4,
+      "skippedActions": 3,
+      "totalRequests": 4,
+      "maxDurationMs": 1610,
+      "rank": "Medio"
+    },
+    {
+      "zone": "H. Notificaciones",
+      "coveredActions": 3,
+      "skippedActions": 1,
+      "totalRequests": 3,
+      "maxDurationMs": 2483,
+      "rank": "Lento"
+    },
+    {
+      "zone": "I. Fichador",
+      "coveredActions": 1,
+      "skippedActions": 4,
+      "totalRequests": 1,
+      "maxDurationMs": 885,
+      "rank": "OK"
+    },
+    {
+      "zone": "J. Exportación",
+      "coveredActions": 2,
+      "skippedActions": 2,
+      "totalRequests": 4,
+      "maxDurationMs": 1699,
+      "rank": "Medio"
+    }
+  ],
+  "actions": [
+    {
+      "name": "Login (acceso rápido RRHH)",
+      "zone": "Login",
+      "submodule": "Login",
+      "route": "/",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 585,
+      "networkIdleMs": 6321,
+      "requests": [
+        {
+          "method": "POST",
+          "path": "/api/auth/login",
+          "statusCode": 200,
+          "durationMs": 975
+        },
+        {
+          "method": "GET",
+          "path": "/api/workforce/notifications-unread-count",
+          "statusCode": 200,
+          "durationMs": 364
+        },
+        {
+          "method": "GET",
+          "path": "/api/audit",
+          "statusCode": 200,
+          "durationMs": 1922
+        },
+        {
+          "method": "GET",
+          "path": "/api/dashboard/metrics",
+          "statusCode": 200,
+          "durationMs": 4246
+        }
+      ],
+      "consoleErrors": [],
+      "notes": [
+        "Nivel 1 aterriza en / (DashboardPage) — dispara GET /dashboard/metrics como efecto colateral inevitable del login, fuera del alcance de Gestión horaria (ver docs/decisions/DASHBOARD_METRICS_PERFORMANCE_14E1.md para ese endpoint)."
+      ],
+      "isWrite": false,
+      "emptyScreen": null
+    },
+    {
+      "name": "Entrar a Inicio (Gestión horaria)",
+      "zone": "A. Inicio",
+      "submodule": "A. Inicio",
+      "route": "/gestion-horaria",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 94,
+      "networkIdleMs": 6827,
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/api/workforce/notifications-unread-count",
+          "statusCode": 200,
+          "durationMs": 369
+        },
+        {
+          "method": "GET",
+          "path": "/api/time-entries/home-summary",
+          "statusCode": 200,
+          "durationMs": 3085
+        },
+        {
+          "method": "GET",
+          "path": "/api/time-entries/home-summary",
+          "statusCode": 200,
+          "durationMs": 6246
+        }
+      ],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "emptyScreen": null
+    },
+    {
+      "name": "Ver KPIs/resumen de Inicio",
+      "zone": "A. Inicio",
+      "submodule": "A. Inicio",
+      "route": "/gestion-horaria",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 3,
+      "networkIdleMs": 86,
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [
+        "no dispara endpoint propio — los StatLink son <Link>, se confirma ausencia de requests nuevos en la ventana de esta acción"
+      ],
+      "isWrite": false,
+      "emptyScreen": null
+    },
+    {
+      "name": "Entrar a Asistencia (carga inicial del día)",
+      "zone": "B. Asistencia",
+      "submodule": "B. Asistencia",
+      "route": "/asistencia",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 79,
+      "networkIdleMs": 4879,
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/api/workforce/notifications-unread-count",
+          "statusCode": 200,
+          "durationMs": 177
+        },
+        {
+          "method": "GET",
+          "path": "/api/time-entries/attendance",
+          "statusCode": 200,
+          "durationMs": 1326
+        },
+        {
+          "method": "GET",
+          "path": "/api/time-entries/attendance",
+          "statusCode": 200,
+          "durationMs": 1510
+        },
+        {
+          "method": "GET",
+          "path": "/api/time-entries/attendance/observations",
+          "statusCode": 200,
+          "durationMs": 2813
+        },
+        {
+          "method": "GET",
+          "path": "/api/time-entries/attendance/observations",
+          "statusCode": 200,
+          "durationMs": 4309
+        }
+      ],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "emptyScreen": null
+    },
+    {
+      "name": "Cambiar fecha del día",
+      "zone": "B. Asistencia",
+      "submodule": "B. Asistencia",
+      "route": "/asistencia",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 24,
+      "networkIdleMs": 108,
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "emptyScreen": null
+    },
+    {
+      "name": "Buscar en problemas de fichada",
+      "zone": "B. Asistencia",
+      "submodule": "B. Asistencia",
+      "route": "/asistencia",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 14,
+      "networkIdleMs": 418,
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [
+        "término tomado de un problema de fichada real — no se registra el valor buscado en este reporte"
+      ],
+      "isWrite": false,
+      "emptyScreen": null
+    },
+    {
+      "name": "Filtrar problemas de fichada por tipo",
+      "zone": "B. Asistencia",
+      "submodule": "B. Asistencia",
+      "route": "/asistencia",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 23,
+      "networkIdleMs": 106,
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/api/time-entries/attendance",
+          "statusCode": 200,
+          "durationMs": 1316
+        }
+      ],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "emptyScreen": null
+    },
+    {
+      "name": "Limpiar filtros de problemas de fichada",
+      "zone": "B. Asistencia",
+      "submodule": "B. Asistencia",
+      "route": "/asistencia",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 38,
+      "networkIdleMs": 121,
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "emptyScreen": null
+    },
+    {
+      "name": "Abrir detalle de tramos de una jornada cerrada",
+      "zone": "B. Asistencia",
+      "submodule": "B. Asistencia",
+      "route": "/asistencia",
+      "covered": false,
+      "skippedReason": "no se encontró el disparador de este modal en el estado actual del entorno",
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "emptyScreen": null
+    },
+    {
+      "name": "Cerrar detalle de tramos",
+      "zone": "B. Asistencia",
+      "submodule": "B. Asistencia",
+      "route": "/asistencia",
+      "covered": false,
+      "skippedReason": "depende de la acción anterior, salteada",
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "emptyScreen": null
+    },
+    {
+      "name": "Cerrar jornada manualmente / Marcar olvido de salida / Observar jornada",
+      "zone": "B. Asistencia",
+      "submodule": "B. Asistencia",
+      "route": "/asistencia",
+      "covered": false,
+      "skippedReason": "Prohibido por defecto (Parte 4 del pedido) — modifica jornadas reales de asistencia.",
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": true,
+      "emptyScreen": null
+    },
+    {
+      "name": "Resolver problema de fichada",
+      "zone": "B. Asistencia",
+      "submodule": "B. Asistencia",
+      "route": "/asistencia",
+      "covered": false,
+      "skippedReason": "Prohibido por defecto — cierra un caso de revisión real.",
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": true,
+      "emptyScreen": null
+    },
+    {
+      "name": "Entrar a Alertas de turnos",
+      "zone": "C. Alertas de turnos",
+      "submodule": "C. Alertas de turnos",
+      "route": "/asistencia/alertas",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 54,
+      "networkIdleMs": 2926,
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/api/workforce/notifications-unread-count",
+          "statusCode": 200,
+          "durationMs": 911
+        },
+        {
+          "method": "GET",
+          "path": "/api/shifts/alerts",
+          "statusCode": 200,
+          "durationMs": 1647
+        },
+        {
+          "method": "GET",
+          "path": "/api/shifts/alerts",
+          "statusCode": 200,
+          "durationMs": 2386
+        }
+      ],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "emptyScreen": false
+    },
+    {
+      "name": "Buscar alerta por texto",
+      "zone": "C. Alertas de turnos",
+      "submodule": "C. Alertas de turnos",
+      "route": "/asistencia/alertas",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 16,
+      "networkIdleMs": 420,
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [
+        "término tomado de una alerta real — no se registra el valor buscado en este reporte"
+      ],
+      "isWrite": false,
+      "emptyScreen": null
+    },
+    {
+      "name": "Limpiar búsqueda de alertas",
+      "zone": "C. Alertas de turnos",
+      "submodule": "C. Alertas de turnos",
+      "route": "/asistencia/alertas",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 1806,
+      "networkIdleMs": 2209,
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/api/shifts/alerts",
+          "statusCode": 200,
+          "durationMs": 1132
+        },
+        {
+          "method": "GET",
+          "path": "/api/shifts/alerts",
+          "statusCode": 200,
+          "durationMs": 1269
+        }
+      ],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "emptyScreen": null
+    },
+    {
+      "name": "Filtrar alertas por tipo",
+      "zone": "C. Alertas de turnos",
+      "submodule": "C. Alertas de turnos",
+      "route": "/asistencia/alertas",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 1308,
+      "networkIdleMs": 1392,
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/api/shifts/alerts",
+          "statusCode": 200,
+          "durationMs": 1282
+        }
+      ],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "emptyScreen": null
+    },
+    {
+      "name": "Limpiar filtros de alertas",
+      "zone": "C. Alertas de turnos",
+      "submodule": "C. Alertas de turnos",
+      "route": "/asistencia/alertas",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 31,
+      "networkIdleMs": 113,
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "emptyScreen": null
+    },
+    {
+      "name": "Expandir hallazgos asociados de un grupo",
+      "zone": "C. Alertas de turnos",
+      "submodule": "C. Alertas de turnos",
+      "route": "/asistencia/alertas",
+      "covered": false,
+      "skippedReason": "ningún grupo de alertas tiene más de 1 hallazgo asociado en el entorno actual",
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "emptyScreen": null
+    },
+    {
+      "name": "Resolver alerta de turno",
+      "zone": "C. Alertas de turnos",
+      "submodule": "C. Alertas de turnos",
+      "route": "/asistencia/alertas",
+      "covered": false,
+      "skippedReason": "Prohibido por defecto — cierra una alerta real.",
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": true,
+      "emptyScreen": null
+    },
+    {
+      "name": "Entrar a Carga de horas (período actual)",
+      "zone": "D. Carga de horas",
+      "submodule": "D. Carga de horas",
+      "route": "/horas",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 74,
+      "networkIdleMs": 3005,
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/api/workforce/notifications-unread-count",
+          "statusCode": 200,
+          "durationMs": 365
+        },
+        {
+          "method": "GET",
+          "path": "/api/time-entries/summary",
+          "statusCode": 200,
+          "durationMs": 528
+        },
+        {
+          "method": "GET",
+          "path": "/api/org-structure",
+          "statusCode": 200,
+          "durationMs": 1654
+        },
+        {
+          "method": "GET",
+          "path": "/api/time-entries/period-employees",
+          "statusCode": 200,
+          "durationMs": 768
+        }
+      ],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "emptyScreen": false
+    },
+    {
+      "name": "Cambiar período (Carga de horas)",
+      "zone": "D. Carga de horas",
+      "submodule": "D. Carga de horas",
+      "route": "/horas",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 49,
+      "networkIdleMs": 130,
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "emptyScreen": null
+    },
+    {
+      "name": "Buscar empleado (Carga de horas)",
+      "zone": "D. Carga de horas",
+      "submodule": "D. Carga de horas",
+      "route": "/horas",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 17,
+      "networkIdleMs": 419,
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/api/time-entries/summary",
+          "statusCode": 200,
+          "durationMs": 726
+        }
+      ],
+      "consoleErrors": [],
+      "notes": [
+        "término tomado de la primera fila real de la grilla — no se registra el valor buscado en este reporte"
+      ],
+      "isWrite": false,
+      "emptyScreen": null
+    },
+    {
+      "name": "Limpiar búsqueda (Carga de horas)",
+      "zone": "D. Carga de horas",
+      "submodule": "D. Carga de horas",
+      "route": "/horas",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 35,
+      "networkIdleMs": 437,
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/api/time-entries/period-employees",
+          "statusCode": 200,
+          "durationMs": 1115
+        },
+        {
+          "method": "GET",
+          "path": "/api/time-entries/period-employees",
+          "statusCode": 200,
+          "durationMs": 722
+        }
+      ],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "emptyScreen": null
+    },
+    {
+      "name": "Abrir edición de horas de un empleado (navega a /horas/:id)",
+      "zone": "D. Carga de horas",
+      "submodule": "D. Carga de horas",
+      "route": "/horas/:id",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 829,
+      "networkIdleMs": 1622,
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/api/workforce/notifications-unread-count",
+          "statusCode": 200,
+          "durationMs": 342
+        },
+        {
+          "method": "GET",
+          "path": "/api/novelty-types",
+          "statusCode": 200,
+          "durationMs": 375
+        },
+        {
+          "method": "GET",
+          "path": "/api/employees/:id/time-grid",
+          "statusCode": 200,
+          "durationMs": 377
+        },
+        {
+          "method": "GET",
+          "path": "/api/employees/:id/time-grid",
+          "statusCode": 200,
+          "durationMs": 379
+        },
+        {
+          "method": "GET",
+          "path": "/api/employees/:id/time-grid",
+          "statusCode": 200,
+          "durationMs": 380
+        },
+        {
+          "method": "GET",
+          "path": "/api/novelties",
+          "statusCode": 200,
+          "durationMs": 1060
+        },
+        {
+          "method": "GET",
+          "path": "/api/novelties",
+          "statusCode": 200,
+          "durationMs": 681
+        }
+      ],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "emptyScreen": null
+    },
+    {
+      "name": "Ver total real/liquidable",
+      "zone": "D. Carga de horas",
+      "submodule": "D. Carga de horas",
+      "route": "/horas/:id",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 3,
+      "networkIdleMs": 86,
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [
+        "\"Horas trabajadas\" (total real) siempre presente; \"Valor liquidable\" sólo si el empleado tiene horas especiales adicionales este período — sin request propio, ya incluido en time-grid"
+      ],
+      "isWrite": false,
+      "emptyScreen": null
+    },
+    {
+      "name": "Abrir edición de hora sin guardar",
+      "zone": "D. Carga de horas",
+      "submodule": "D. Carga de horas",
+      "route": "/horas/:id",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 40,
+      "networkIdleMs": 123,
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [
+        "se abrió el modal y se cerró sin guardar (modo lectura de esta etapa)"
+      ],
+      "isWrite": false,
+      "emptyScreen": null
+    },
+    {
+      "name": "Cancelar edición de hora",
+      "zone": "D. Carga de horas",
+      "submodule": "D. Carga de horas",
+      "route": "/horas/:id",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 31,
+      "networkIdleMs": 116,
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "emptyScreen": null
+    },
+    {
+      "name": "Abrir conceptos adicionales sin guardar",
+      "zone": "D. Carga de horas",
+      "submodule": "D. Carga de horas",
+      "route": "/horas/:id",
+      "covered": false,
+      "skippedReason": "no se encontró el disparador de este modal en el estado actual del entorno",
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "emptyScreen": null
+    },
+    {
+      "name": "Cancelar conceptos adicionales",
+      "zone": "D. Carga de horas",
+      "submodule": "D. Carga de horas",
+      "route": "/horas/:id",
+      "covered": false,
+      "skippedReason": "depende de la acción anterior, salteada",
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "emptyScreen": null
+    },
+    {
+      "name": "Volver a Carga de horas",
+      "zone": "D. Carga de horas",
+      "submodule": "D. Carga de horas",
+      "route": "/horas",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 76,
+      "networkIdleMs": 158,
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/api/time-entries/summary",
+          "statusCode": 200,
+          "durationMs": 1
+        },
+        {
+          "method": "GET",
+          "path": "/api/time-entries/period-employees",
+          "statusCode": 200,
+          "durationMs": 1
+        }
+      ],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "emptyScreen": null
+    },
+    {
+      "name": "Guardar hora / Guardar desglose manual / Enviar a revisión",
+      "zone": "D. Carga de horas",
+      "submodule": "D. Carga de horas",
+      "route": "/horas",
+      "covered": false,
+      "skippedReason": "Prohibido por defecto — cargaría horas reales, posiblemente asociadas a liquidación.",
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": true,
+      "emptyScreen": null
+    },
+    {
+      "name": "Exportar horas",
+      "zone": "D. Carga de horas",
+      "submodule": "D. Carga de horas",
+      "route": "/horas",
+      "covered": false,
+      "skippedReason": "El endpoint es GET, pero el click dispara una descarga de archivo con datos de horas — prohibido por defecto (Parte 4: no generar exportación sensible / no descarga por defecto).",
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "emptyScreen": null
+    },
+    {
+      "name": "Entrar a Cierres mensuales (período actual)",
+      "zone": "E. Cierres mensuales",
+      "submodule": "E. Cierres mensuales",
+      "route": "/cierres",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 70,
+      "networkIdleMs": 1477,
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/api/workforce/notifications-unread-count",
+          "statusCode": 200,
+          "durationMs": 355
+        },
+        {
+          "method": "GET",
+          "path": "/api/workforce/closures",
+          "statusCode": 200,
+          "durationMs": 373
+        },
+        {
+          "method": "GET",
+          "path": "/api/workforce/corrections",
+          "statusCode": 200,
+          "durationMs": 549
+        },
+        {
+          "method": "GET",
+          "path": "/api/employees/options",
+          "statusCode": 200,
+          "durationMs": 549
+        },
+        {
+          "method": "GET",
+          "path": "/api/workforce/closures",
+          "statusCode": 200,
+          "durationMs": 922
+        },
+        {
+          "method": "GET",
+          "path": "/api/workforce/corrections",
+          "statusCode": 200,
+          "durationMs": 922
+        }
+      ],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "emptyScreen": null
+    },
+    {
+      "name": "Cambiar período (Cierres mensuales)",
+      "zone": "E. Cierres mensuales",
+      "submodule": "E. Cierres mensuales",
+      "route": "/cierres",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 17,
+      "networkIdleMs": 100,
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/api/workforce/corrections",
+          "statusCode": 200,
+          "durationMs": 181
+        },
+        {
+          "method": "GET",
+          "path": "/api/workforce/closures",
+          "statusCode": 200,
+          "durationMs": 185
+        }
+      ],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "emptyScreen": null
+    },
+    {
+      "name": "Aprobar seleccionados / Enviar cierre a RH / Devolver cierre",
+      "zone": "E. Cierres mensuales",
+      "submodule": "E. Cierres mensuales",
+      "route": "/cierres",
+      "covered": false,
+      "skippedReason": "Prohibido por defecto — cierra/reabre un período real de liquidación.",
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": true,
+      "emptyScreen": null
+    },
+    {
+      "name": "Aprobar/Rechazar corrección",
+      "zone": "E. Cierres mensuales",
+      "submodule": "E. Cierres mensuales",
+      "route": "/cierres",
+      "covered": false,
+      "skippedReason": "Prohibido por defecto.",
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": true,
+      "emptyScreen": null
+    },
+    {
+      "name": "Entrar a Bandeja de revisión (Por registro)",
+      "zone": "F. Bandeja de revisión",
+      "submodule": "F. Bandeja de revisión",
+      "route": "/pendientes",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 74,
+      "networkIdleMs": 1627,
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/api/time-entries/summary",
+          "statusCode": 200,
+          "durationMs": 2
+        },
+        {
+          "method": "GET",
+          "path": "/api/workforce/notifications-unread-count",
+          "statusCode": 200,
+          "durationMs": 177
+        },
+        {
+          "method": "GET",
+          "path": "/api/pending",
+          "statusCode": 200,
+          "durationMs": 368
+        },
+        {
+          "method": "GET",
+          "path": "/api/time-entries",
+          "statusCode": 200,
+          "durationMs": 1061
+        }
+      ],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "emptyScreen": true
+    },
+    {
+      "name": "Cambiar a pestaña \"Por persona\"",
+      "zone": "F. Bandeja de revisión",
+      "submodule": "F. Bandeja de revisión",
+      "route": "/pendientes",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 49,
+      "networkIdleMs": 133,
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "emptyScreen": null
+    },
+    {
+      "name": "Buscar en Bandeja de revisión",
+      "zone": "F. Bandeja de revisión",
+      "submodule": "F. Bandeja de revisión",
+      "route": "/pendientes",
+      "covered": false,
+      "skippedReason": "no hay ninguna fila en Bandeja de revisión en el entorno actual para tomar un término real de búsqueda",
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "emptyScreen": null
+    },
+    {
+      "name": "Cambiar período (Bandeja de revisión)",
+      "zone": "F. Bandeja de revisión",
+      "submodule": "F. Bandeja de revisión",
+      "route": "/pendientes",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 1309,
+      "networkIdleMs": 1394,
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/api/pending",
+          "statusCode": 200,
+          "durationMs": 888
+        },
+        {
+          "method": "GET",
+          "path": "/api/time-entries/summary",
+          "statusCode": 200,
+          "durationMs": 894
+        },
+        {
+          "method": "GET",
+          "path": "/api/time-entries",
+          "statusCode": 200,
+          "durationMs": 1040
+        }
+      ],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "emptyScreen": null
+    },
+    {
+      "name": "Abrir detalle (Ver detalle, Por persona)",
+      "zone": "F. Bandeja de revisión",
+      "submodule": "F. Bandeja de revisión",
+      "route": "/pendientes",
+      "covered": false,
+      "skippedReason": "no hay ninguna fila en la vista Por persona en el entorno actual, o la pestaña no está disponible",
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "emptyScreen": null
+    },
+    {
+      "name": "Volver a Bandeja de revisión",
+      "zone": "F. Bandeja de revisión",
+      "submodule": "F. Bandeja de revisión",
+      "route": "/pendientes",
+      "covered": false,
+      "skippedReason": "depende de la acción anterior, salteada",
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "emptyScreen": null
+    },
+    {
+      "name": "Aprobar/Rechazar/Devolver registro",
+      "zone": "F. Bandeja de revisión",
+      "submodule": "F. Bandeja de revisión",
+      "route": "/pendientes",
+      "covered": false,
+      "skippedReason": "Prohibido por defecto.",
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": true,
+      "emptyScreen": null
+    },
+    {
+      "name": "Aprobar/Rechazar novedad (desde Bandeja)",
+      "zone": "F. Bandeja de revisión",
+      "submodule": "F. Bandeja de revisión",
+      "route": "/pendientes",
+      "covered": false,
+      "skippedReason": "Prohibido por defecto.",
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": true,
+      "emptyScreen": null
+    },
+    {
+      "name": "Aprobar/Rechazar/Devolver desglose manual",
+      "zone": "F. Bandeja de revisión",
+      "submodule": "F. Bandeja de revisión",
+      "route": "/pendientes",
+      "covered": false,
+      "skippedReason": "Prohibido por defecto.",
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": true,
+      "emptyScreen": null
+    },
+    {
+      "name": "Entrar a Novedades",
+      "zone": "G. Novedades",
+      "submodule": "G. Novedades",
+      "route": "/novedades",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 112,
+      "networkIdleMs": 1610,
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/api/workforce/notifications-unread-count",
+          "statusCode": 200,
+          "durationMs": 183
+        },
+        {
+          "method": "GET",
+          "path": "/api/novelties",
+          "statusCode": 200,
+          "durationMs": 1044
+        },
+        {
+          "method": "GET",
+          "path": "/api/novelties",
+          "statusCode": 200,
+          "durationMs": 1046
+        }
+      ],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "emptyScreen": null
+    },
+    {
+      "name": "Buscar en Novedades",
+      "zone": "G. Novedades",
+      "submodule": "G. Novedades",
+      "route": "/novedades",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 12,
+      "networkIdleMs": 415,
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [
+        "término tomado de una novedad real — no se registra el valor buscado en este reporte"
+      ],
+      "isWrite": false,
+      "emptyScreen": null
+    },
+    {
+      "name": "Abrir modal \"Nueva novedad\" sin guardar",
+      "zone": "G. Novedades",
+      "submodule": "G. Novedades",
+      "route": "/novedades",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 29,
+      "networkIdleMs": 111,
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [
+        "se abrió el modal y se cerró sin guardar (modo lectura de esta etapa)"
+      ],
+      "isWrite": false,
+      "emptyScreen": null
+    },
+    {
+      "name": "Cancelar \"Nueva novedad\"",
+      "zone": "G. Novedades",
+      "submodule": "G. Novedades",
+      "route": "/novedades",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 25,
+      "networkIdleMs": 107,
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/api/hour-concepts",
+          "statusCode": 200,
+          "durationMs": 357
+        }
+      ],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "emptyScreen": null
+    },
+    {
+      "name": "Guardar nueva novedad",
+      "zone": "G. Novedades",
+      "submodule": "G. Novedades",
+      "route": "/novedades",
+      "covered": false,
+      "skippedReason": "Prohibido por defecto — crearía una novedad real (licencia/ausencia) para un empleado real.",
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": true,
+      "emptyScreen": null
+    },
+    {
+      "name": "Aprobar/Rechazar/Eliminar novedad",
+      "zone": "G. Novedades",
+      "submodule": "G. Novedades",
+      "route": "/novedades",
+      "covered": false,
+      "skippedReason": "Prohibido por defecto.",
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": true,
+      "emptyScreen": null
+    },
+    {
+      "name": "Aprobar pendientes visibles (bulk)",
+      "zone": "G. Novedades",
+      "submodule": "G. Novedades",
+      "route": "/novedades",
+      "covered": false,
+      "skippedReason": "Prohibido por defecto.",
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": true,
+      "emptyScreen": null
+    },
+    {
+      "name": "Entrar a Notificaciones (Todas)",
+      "zone": "H. Notificaciones",
+      "submodule": "H. Notificaciones",
+      "route": "/notificaciones",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 79,
+      "networkIdleMs": 2483,
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/api/workforce/notifications-unread-count",
+          "statusCode": 200,
+          "durationMs": 343
+        },
+        {
+          "method": "GET",
+          "path": "/api/workforce/notifications",
+          "statusCode": 200,
+          "durationMs": 1043
+        },
+        {
+          "method": "GET",
+          "path": "/api/workforce/notifications",
+          "statusCode": 200,
+          "durationMs": 1920
+        }
+      ],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "emptyScreen": null
+    },
+    {
+      "name": "Filtrar por \"No leídas\"",
+      "zone": "H. Notificaciones",
+      "submodule": "H. Notificaciones",
+      "route": "/notificaciones",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 17,
+      "networkIdleMs": 101,
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "emptyScreen": null
+    },
+    {
+      "name": "Cargar más notificaciones",
+      "zone": "H. Notificaciones",
+      "submodule": "H. Notificaciones",
+      "route": "/notificaciones",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 28,
+      "networkIdleMs": 112,
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "emptyScreen": null
+    },
+    {
+      "name": "Marcar como leída / Ver detalle",
+      "zone": "H. Notificaciones",
+      "submodule": "H. Notificaciones",
+      "route": "/notificaciones",
+      "covered": false,
+      "skippedReason": "Prohibido por defecto — ambos disparan POST /workforce/notifications/:id/read (el link \"Ver detalle\" también, como efecto colateral de su onClick).",
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": true,
+      "emptyScreen": null
+    },
+    {
+      "name": "Entrar a Fichador (carga inicial)",
+      "zone": "I. Fichador",
+      "submodule": "I. Fichador",
+      "route": "/fichador",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 75,
+      "networkIdleMs": 885,
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/api/workforce/notifications-unread-count",
+          "statusCode": 200,
+          "durationMs": 338
+        }
+      ],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "emptyScreen": null
+    },
+    {
+      "name": "Buscar empleado en Fichador",
+      "zone": "I. Fichador",
+      "submodule": "I. Fichador",
+      "route": "/fichador",
+      "covered": false,
+      "skippedReason": "Fuera del alcance mínimo pedido para Fichador (Parte 6, Zona I sólo pide \"entrar\" y \"medir carga inicial\", dado el perfil de riesgo del kiosco: sin auth de usuario, cámara, rate-limit compartido con uso real de 30/5min).",
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "emptyScreen": null
+    },
+    {
+      "name": "Marcar ingreso",
+      "zone": "I. Fichador",
+      "submodule": "I. Fichador",
+      "route": "/fichador",
+      "covered": false,
+      "skippedReason": "Prohibido por defecto — fichada real de un empleado real.",
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": true,
+      "emptyScreen": null
+    },
+    {
+      "name": "Marcar salida",
+      "zone": "I. Fichador",
+      "submodule": "I. Fichador",
+      "route": "/fichador",
+      "covered": false,
+      "skippedReason": "Prohibido por defecto.",
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": true,
+      "emptyScreen": null
+    },
+    {
+      "name": "Capturar foto / enviar punch",
+      "zone": "I. Fichador",
+      "submodule": "I. Fichador",
+      "route": "/fichador",
+      "covered": false,
+      "skippedReason": "Prohibido por defecto — el pedido prohíbe explícitamente aceptar permisos de cámara o ejecutar la acción.",
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": true,
+      "emptyScreen": null
+    },
+    {
+      "name": "Entrar a Exportación (período actual)",
+      "zone": "J. Exportación",
+      "submodule": "J. Exportación",
+      "route": "/configuracion/liquidacion",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 77,
+      "networkIdleMs": 1699,
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/api/workforce/notifications-unread-count",
+          "statusCode": 200,
+          "durationMs": 190
+        },
+        {
+          "method": "GET",
+          "path": "/api/finnegans-export/novelties",
+          "statusCode": 200,
+          "durationMs": 766
+        },
+        {
+          "method": "GET",
+          "path": "/api/finnegans-export/novelties",
+          "statusCode": 200,
+          "durationMs": 1128
+        }
+      ],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "emptyScreen": true
+    },
+    {
+      "name": "Cambiar período (Exportación)",
+      "zone": "J. Exportación",
+      "submodule": "J. Exportación",
+      "route": "/configuracion/liquidacion",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 800,
+      "networkIdleMs": 884,
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/api/finnegans-export/novelties",
+          "statusCode": 200,
+          "durationMs": 556
+        }
+      ],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "emptyScreen": null
+    },
+    {
+      "name": "Buscar en Exportación",
+      "zone": "J. Exportación",
+      "submodule": "J. Exportación",
+      "route": "/configuracion/liquidacion",
+      "covered": false,
+      "skippedReason": "no hay ningún registro para el período elegido en el entorno actual",
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "emptyScreen": null
+    },
+    {
+      "name": "Exportar Excel Finnegans",
+      "zone": "J. Exportación",
+      "submodule": "J. Exportación",
+      "route": "/configuracion/liquidacion",
+      "covered": false,
+      "skippedReason": "No es una escritura de API (build 100% client-side), pero genera y descarga un archivo con datos de novedades reales — prohibido por defecto (Parte 4: no generar exportación sensible / no descarga por defecto).",
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "emptyScreen": null
+    }
+  ],
+  "slowestRequests": [
+    {
+      "method": "GET",
+      "path": "/api/time-entries/home-summary",
+      "statusCode": 200,
+      "durationMs": 6246
+    },
+    {
+      "method": "GET",
+      "path": "/api/time-entries/attendance/observations",
+      "statusCode": 200,
+      "durationMs": 4309
+    },
+    {
+      "method": "GET",
+      "path": "/api/dashboard/metrics",
+      "statusCode": 200,
+      "durationMs": 4246
+    },
+    {
+      "method": "GET",
+      "path": "/api/time-entries/home-summary",
+      "statusCode": 200,
+      "durationMs": 3085
+    },
+    {
+      "method": "GET",
+      "path": "/api/time-entries/attendance/observations",
+      "statusCode": 200,
+      "durationMs": 2813
+    },
+    {
+      "method": "GET",
+      "path": "/api/shifts/alerts",
+      "statusCode": 200,
+      "durationMs": 2386
+    },
+    {
+      "method": "GET",
+      "path": "/api/audit",
+      "statusCode": 200,
+      "durationMs": 1922
+    },
+    {
+      "method": "GET",
+      "path": "/api/workforce/notifications",
+      "statusCode": 200,
+      "durationMs": 1920
+    },
+    {
+      "method": "GET",
+      "path": "/api/org-structure",
+      "statusCode": 200,
+      "durationMs": 1654
+    },
+    {
+      "method": "GET",
+      "path": "/api/shifts/alerts",
+      "statusCode": 200,
+      "durationMs": 1647
+    }
+  ],
+  "slowestActions": [
+    {
+      "name": "Entrar a Inicio (Gestión horaria)",
+      "zone": "A. Inicio",
+      "visibleMs": 94,
+      "networkIdleMs": 6827
+    },
+    {
+      "name": "Login (acceso rápido RRHH)",
+      "zone": "Login",
+      "visibleMs": 585,
+      "networkIdleMs": 6321
+    },
+    {
+      "name": "Entrar a Asistencia (carga inicial del día)",
+      "zone": "B. Asistencia",
+      "visibleMs": 79,
+      "networkIdleMs": 4879
+    },
+    {
+      "name": "Entrar a Carga de horas (período actual)",
+      "zone": "D. Carga de horas",
+      "visibleMs": 74,
+      "networkIdleMs": 3005
+    },
+    {
+      "name": "Entrar a Alertas de turnos",
+      "zone": "C. Alertas de turnos",
+      "visibleMs": 54,
+      "networkIdleMs": 2926
+    },
+    {
+      "name": "Entrar a Notificaciones (Todas)",
+      "zone": "H. Notificaciones",
+      "visibleMs": 79,
+      "networkIdleMs": 2483
+    },
+    {
+      "name": "Limpiar búsqueda de alertas",
+      "zone": "C. Alertas de turnos",
+      "visibleMs": 1806,
+      "networkIdleMs": 2209
+    },
+    {
+      "name": "Entrar a Exportación (período actual)",
+      "zone": "J. Exportación",
+      "visibleMs": 77,
+      "networkIdleMs": 1699
+    },
+    {
+      "name": "Entrar a Bandeja de revisión (Por registro)",
+      "zone": "F. Bandeja de revisión",
+      "visibleMs": 74,
+      "networkIdleMs": 1627
+    },
+    {
+      "name": "Abrir edición de horas de un empleado (navega a /horas/:id)",
+      "zone": "D. Carga de horas",
+      "visibleMs": 829,
+      "networkIdleMs": 1622
+    }
+  ],
+  "repeatedEndpoints": [
+    {
+      "key": "GET /api/workforce/notifications-unread-count",
+      "method": "GET",
+      "path": "/api/workforce/notifications-unread-count",
+      "count": 12,
+      "avgDurationMs": 343,
+      "maxDurationMs": 911,
+      "statusCodes": [
+        200,
+        200,
+        200,
+        200,
+        200,
+        200,
+        200,
+        200,
+        200,
+        200,
+        200,
+        200
+      ],
+      "hasErrorStatus": false,
+      "hasServerErrorStatus": false
+    },
+    {
+      "key": "GET /api/time-entries/home-summary",
+      "method": "GET",
+      "path": "/api/time-entries/home-summary",
+      "count": 2,
+      "avgDurationMs": 4666,
+      "maxDurationMs": 6246,
+      "statusCodes": [
+        200,
+        200
+      ],
+      "hasErrorStatus": false,
+      "hasServerErrorStatus": false
+    },
+    {
+      "key": "GET /api/time-entries/attendance",
+      "method": "GET",
+      "path": "/api/time-entries/attendance",
+      "count": 3,
+      "avgDurationMs": 1384,
+      "maxDurationMs": 1510,
+      "statusCodes": [
+        200,
+        200,
+        200
+      ],
+      "hasErrorStatus": false,
+      "hasServerErrorStatus": false
+    },
+    {
+      "key": "GET /api/time-entries/attendance/observations",
+      "method": "GET",
+      "path": "/api/time-entries/attendance/observations",
+      "count": 2,
+      "avgDurationMs": 3561,
+      "maxDurationMs": 4309,
+      "statusCodes": [
+        200,
+        200
+      ],
+      "hasErrorStatus": false,
+      "hasServerErrorStatus": false
+    },
+    {
+      "key": "GET /api/shifts/alerts",
+      "method": "GET",
+      "path": "/api/shifts/alerts",
+      "count": 5,
+      "avgDurationMs": 1543,
+      "maxDurationMs": 2386,
+      "statusCodes": [
+        200,
+        200,
+        200,
+        200,
+        200
+      ],
+      "hasErrorStatus": false,
+      "hasServerErrorStatus": false
+    },
+    {
+      "key": "GET /api/time-entries/summary",
+      "method": "GET",
+      "path": "/api/time-entries/summary",
+      "count": 5,
+      "avgDurationMs": 430,
+      "maxDurationMs": 894,
+      "statusCodes": [
+        200,
+        200,
+        200,
+        200,
+        200
+      ],
+      "hasErrorStatus": false,
+      "hasServerErrorStatus": false
+    },
+    {
+      "key": "GET /api/time-entries/period-employees",
+      "method": "GET",
+      "path": "/api/time-entries/period-employees",
+      "count": 4,
+      "avgDurationMs": 652,
+      "maxDurationMs": 1115,
+      "statusCodes": [
+        200,
+        200,
+        200,
+        200
+      ],
+      "hasErrorStatus": false,
+      "hasServerErrorStatus": false
+    },
+    {
+      "key": "GET /api/employees/:id/time-grid",
+      "method": "GET",
+      "path": "/api/employees/:id/time-grid",
+      "count": 3,
+      "avgDurationMs": 379,
+      "maxDurationMs": 380,
+      "statusCodes": [
+        200,
+        200,
+        200
+      ],
+      "hasErrorStatus": false,
+      "hasServerErrorStatus": false
+    },
+    {
+      "key": "GET /api/novelties",
+      "method": "GET",
+      "path": "/api/novelties",
+      "count": 4,
+      "avgDurationMs": 958,
+      "maxDurationMs": 1060,
+      "statusCodes": [
+        200,
+        200,
+        200,
+        200
+      ],
+      "hasErrorStatus": false,
+      "hasServerErrorStatus": false
+    },
+    {
+      "key": "GET /api/workforce/closures",
+      "method": "GET",
+      "path": "/api/workforce/closures",
+      "count": 3,
+      "avgDurationMs": 493,
+      "maxDurationMs": 922,
+      "statusCodes": [
+        200,
+        200,
+        200
+      ],
+      "hasErrorStatus": false,
+      "hasServerErrorStatus": false
+    },
+    {
+      "key": "GET /api/workforce/corrections",
+      "method": "GET",
+      "path": "/api/workforce/corrections",
+      "count": 3,
+      "avgDurationMs": 551,
+      "maxDurationMs": 922,
+      "statusCodes": [
+        200,
+        200,
+        200
+      ],
+      "hasErrorStatus": false,
+      "hasServerErrorStatus": false
+    },
+    {
+      "key": "GET /api/pending",
+      "method": "GET",
+      "path": "/api/pending",
+      "count": 2,
+      "avgDurationMs": 628,
+      "maxDurationMs": 888,
+      "statusCodes": [
+        200,
+        200
+      ],
+      "hasErrorStatus": false,
+      "hasServerErrorStatus": false
+    },
+    {
+      "key": "GET /api/time-entries",
+      "method": "GET",
+      "path": "/api/time-entries",
+      "count": 2,
+      "avgDurationMs": 1051,
+      "maxDurationMs": 1061,
+      "statusCodes": [
+        200,
+        200
+      ],
+      "hasErrorStatus": false,
+      "hasServerErrorStatus": false
+    },
+    {
+      "key": "GET /api/workforce/notifications",
+      "method": "GET",
+      "path": "/api/workforce/notifications",
+      "count": 2,
+      "avgDurationMs": 1482,
+      "maxDurationMs": 1920,
+      "statusCodes": [
+        200,
+        200
+      ],
+      "hasErrorStatus": false,
+      "hasServerErrorStatus": false
+    },
+    {
+      "key": "GET /api/finnegans-export/novelties",
+      "method": "GET",
+      "path": "/api/finnegans-export/novelties",
+      "count": 3,
+      "avgDurationMs": 817,
+      "maxDurationMs": 1128,
+      "statusCodes": [
+        200,
+        200,
+        200
+      ],
+      "hasErrorStatus": false,
+      "hasServerErrorStatus": false
+    }
+  ],
+  "duplicatesByAction": [
+    {
+      "name": "Entrar a Inicio (Gestión horaria)",
+      "zone": "A. Inicio",
+      "duplicates": [
+        {
+          "method": "GET",
+          "path": "/api/time-entries/home-summary",
+          "count": 2,
+          "durationsMs": [
+            3085,
+            6246
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Entrar a Asistencia (carga inicial del día)",
+      "zone": "B. Asistencia",
+      "duplicates": [
+        {
+          "method": "GET",
+          "path": "/api/time-entries/attendance",
+          "count": 2,
+          "durationsMs": [
+            1326,
+            1510
+          ]
+        },
+        {
+          "method": "GET",
+          "path": "/api/time-entries/attendance/observations",
+          "count": 2,
+          "durationsMs": [
+            2813,
+            4309
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Entrar a Alertas de turnos",
+      "zone": "C. Alertas de turnos",
+      "duplicates": [
+        {
+          "method": "GET",
+          "path": "/api/shifts/alerts",
+          "count": 2,
+          "durationsMs": [
+            1647,
+            2386
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Limpiar búsqueda de alertas",
+      "zone": "C. Alertas de turnos",
+      "duplicates": [
+        {
+          "method": "GET",
+          "path": "/api/shifts/alerts",
+          "count": 2,
+          "durationsMs": [
+            1132,
+            1269
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Limpiar búsqueda (Carga de horas)",
+      "zone": "D. Carga de horas",
+      "duplicates": [
+        {
+          "method": "GET",
+          "path": "/api/time-entries/period-employees",
+          "count": 2,
+          "durationsMs": [
+            1115,
+            722
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Abrir edición de horas de un empleado (navega a /horas/:id)",
+      "zone": "D. Carga de horas",
+      "duplicates": [
+        {
+          "method": "GET",
+          "path": "/api/employees/:id/time-grid",
+          "count": 3,
+          "durationsMs": [
+            377,
+            379,
+            380
+          ]
+        },
+        {
+          "method": "GET",
+          "path": "/api/novelties",
+          "count": 2,
+          "durationsMs": [
+            1060,
+            681
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Entrar a Cierres mensuales (período actual)",
+      "zone": "E. Cierres mensuales",
+      "duplicates": [
+        {
+          "method": "GET",
+          "path": "/api/workforce/closures",
+          "count": 2,
+          "durationsMs": [
+            373,
+            922
+          ]
+        },
+        {
+          "method": "GET",
+          "path": "/api/workforce/corrections",
+          "count": 2,
+          "durationsMs": [
+            549,
+            922
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Entrar a Novedades",
+      "zone": "G. Novedades",
+      "duplicates": [
+        {
+          "method": "GET",
+          "path": "/api/novelties",
+          "count": 2,
+          "durationsMs": [
+            1044,
+            1046
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Entrar a Notificaciones (Todas)",
+      "zone": "H. Notificaciones",
+      "duplicates": [
+        {
+          "method": "GET",
+          "path": "/api/workforce/notifications",
+          "count": 2,
+          "durationsMs": [
+            1043,
+            1920
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Entrar a Exportación (período actual)",
+      "zone": "J. Exportación",
+      "duplicates": [
+        {
+          "method": "GET",
+          "path": "/api/finnegans-export/novelties",
+          "count": 2,
+          "durationsMs": [
+            766,
+            1128
+          ]
+        }
+      ]
+    }
+  ],
+  "coverageGaps": [
+    {
+      "name": "Abrir detalle de tramos de una jornada cerrada",
+      "zone": "B. Asistencia",
+      "isWrite": false,
+      "reason": "no se encontró el disparador de este modal en el estado actual del entorno"
+    },
+    {
+      "name": "Cerrar detalle de tramos",
+      "zone": "B. Asistencia",
+      "isWrite": false,
+      "reason": "depende de la acción anterior, salteada"
+    },
+    {
+      "name": "Cerrar jornada manualmente / Marcar olvido de salida / Observar jornada",
+      "zone": "B. Asistencia",
+      "isWrite": true,
+      "reason": "Prohibido por defecto (Parte 4 del pedido) — modifica jornadas reales de asistencia."
+    },
+    {
+      "name": "Resolver problema de fichada",
+      "zone": "B. Asistencia",
+      "isWrite": true,
+      "reason": "Prohibido por defecto — cierra un caso de revisión real."
+    },
+    {
+      "name": "Expandir hallazgos asociados de un grupo",
+      "zone": "C. Alertas de turnos",
+      "isWrite": false,
+      "reason": "ningún grupo de alertas tiene más de 1 hallazgo asociado en el entorno actual"
+    },
+    {
+      "name": "Resolver alerta de turno",
+      "zone": "C. Alertas de turnos",
+      "isWrite": true,
+      "reason": "Prohibido por defecto — cierra una alerta real."
+    },
+    {
+      "name": "Abrir conceptos adicionales sin guardar",
+      "zone": "D. Carga de horas",
+      "isWrite": false,
+      "reason": "no se encontró el disparador de este modal en el estado actual del entorno"
+    },
+    {
+      "name": "Cancelar conceptos adicionales",
+      "zone": "D. Carga de horas",
+      "isWrite": false,
+      "reason": "depende de la acción anterior, salteada"
+    },
+    {
+      "name": "Guardar hora / Guardar desglose manual / Enviar a revisión",
+      "zone": "D. Carga de horas",
+      "isWrite": true,
+      "reason": "Prohibido por defecto — cargaría horas reales, posiblemente asociadas a liquidación."
+    },
+    {
+      "name": "Exportar horas",
+      "zone": "D. Carga de horas",
+      "isWrite": false,
+      "reason": "El endpoint es GET, pero el click dispara una descarga de archivo con datos de horas — prohibido por defecto (Parte 4: no generar exportación sensible / no descarga por defecto)."
+    },
+    {
+      "name": "Aprobar seleccionados / Enviar cierre a RH / Devolver cierre",
+      "zone": "E. Cierres mensuales",
+      "isWrite": true,
+      "reason": "Prohibido por defecto — cierra/reabre un período real de liquidación."
+    },
+    {
+      "name": "Aprobar/Rechazar corrección",
+      "zone": "E. Cierres mensuales",
+      "isWrite": true,
+      "reason": "Prohibido por defecto."
+    },
+    {
+      "name": "Buscar en Bandeja de revisión",
+      "zone": "F. Bandeja de revisión",
+      "isWrite": false,
+      "reason": "no hay ninguna fila en Bandeja de revisión en el entorno actual para tomar un término real de búsqueda"
+    },
+    {
+      "name": "Abrir detalle (Ver detalle, Por persona)",
+      "zone": "F. Bandeja de revisión",
+      "isWrite": false,
+      "reason": "no hay ninguna fila en la vista Por persona en el entorno actual, o la pestaña no está disponible"
+    },
+    {
+      "name": "Volver a Bandeja de revisión",
+      "zone": "F. Bandeja de revisión",
+      "isWrite": false,
+      "reason": "depende de la acción anterior, salteada"
+    },
+    {
+      "name": "Aprobar/Rechazar/Devolver registro",
+      "zone": "F. Bandeja de revisión",
+      "isWrite": true,
+      "reason": "Prohibido por defecto."
+    },
+    {
+      "name": "Aprobar/Rechazar novedad (desde Bandeja)",
+      "zone": "F. Bandeja de revisión",
+      "isWrite": true,
+      "reason": "Prohibido por defecto."
+    },
+    {
+      "name": "Aprobar/Rechazar/Devolver desglose manual",
+      "zone": "F. Bandeja de revisión",
+      "isWrite": true,
+      "reason": "Prohibido por defecto."
+    },
+    {
+      "name": "Guardar nueva novedad",
+      "zone": "G. Novedades",
+      "isWrite": true,
+      "reason": "Prohibido por defecto — crearía una novedad real (licencia/ausencia) para un empleado real."
+    },
+    {
+      "name": "Aprobar/Rechazar/Eliminar novedad",
+      "zone": "G. Novedades",
+      "isWrite": true,
+      "reason": "Prohibido por defecto."
+    },
+    {
+      "name": "Aprobar pendientes visibles (bulk)",
+      "zone": "G. Novedades",
+      "isWrite": true,
+      "reason": "Prohibido por defecto."
+    },
+    {
+      "name": "Marcar como leída / Ver detalle",
+      "zone": "H. Notificaciones",
+      "isWrite": true,
+      "reason": "Prohibido por defecto — ambos disparan POST /workforce/notifications/:id/read (el link \"Ver detalle\" también, como efecto colateral de su onClick)."
+    },
+    {
+      "name": "Buscar empleado en Fichador",
+      "zone": "I. Fichador",
+      "isWrite": false,
+      "reason": "Fuera del alcance mínimo pedido para Fichador (Parte 6, Zona I sólo pide \"entrar\" y \"medir carga inicial\", dado el perfil de riesgo del kiosco: sin auth de usuario, cámara, rate-limit compartido con uso real de 30/5min)."
+    },
+    {
+      "name": "Marcar ingreso",
+      "zone": "I. Fichador",
+      "isWrite": true,
+      "reason": "Prohibido por defecto — fichada real de un empleado real."
+    },
+    {
+      "name": "Marcar salida",
+      "zone": "I. Fichador",
+      "isWrite": true,
+      "reason": "Prohibido por defecto."
+    },
+    {
+      "name": "Capturar foto / enviar punch",
+      "zone": "I. Fichador",
+      "isWrite": true,
+      "reason": "Prohibido por defecto — el pedido prohíbe explícitamente aceptar permisos de cámara o ejecutar la acción."
+    },
+    {
+      "name": "Buscar en Exportación",
+      "zone": "J. Exportación",
+      "isWrite": false,
+      "reason": "no hay ningún registro para el período elegido en el entorno actual"
+    },
+    {
+      "name": "Exportar Excel Finnegans",
+      "zone": "J. Exportación",
+      "isWrite": false,
+      "reason": "No es una escritura de API (build 100% client-side), pero genera y descarga un archivo con datos de novedades reales — prohibido por defecto (Parte 4: no generar exportación sensible / no descarga por defecto)."
+    }
+  ]
+}
