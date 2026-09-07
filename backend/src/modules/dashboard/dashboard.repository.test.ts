@@ -6,10 +6,11 @@ import { dashboardRepository } from "./dashboard.repository";
 vi.mock("../../shared/prisma/client", () => ({
   prisma: {
     timeEntry: { aggregate: vi.fn() },
+    employee: { groupBy: vi.fn() },
   },
 }));
 
-const mockedPrisma = prisma as unknown as { timeEntry: { aggregate: Mock } };
+const mockedPrisma = prisma as unknown as { timeEntry: { aggregate: Mock }; employee: { groupBy: Mock } };
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -51,5 +52,33 @@ describe("sumLoadedHours — KPI 'horas cargadas' = sólo Horas normales (Etapa 
     const result = await dashboardRepository.sumLoadedHours("2026-08", {});
 
     expect(result).toBe(aggregateResult);
+  });
+});
+
+// Etapa 14E.1: `countTotal`+`countActive` (2 `Employee.count` separados)
+// colapsados en `countTotalAndActive` (1 `groupBy`) — parte de la reducción
+// de 15 a 14 queries en `calculateMetrics`. Ver docs/decisions/
+// DASHBOARD_METRICS_PERFORMANCE_14E1.md.
+describe("countTotalAndActive — colapsa countTotal+countActive en 1 groupBy (Etapa 14E.1)", () => {
+  it("agrupa por status con _count._all, respetando el accessWhere recibido", async () => {
+    mockedPrisma.employee.groupBy.mockResolvedValue([]);
+
+    await dashboardRepository.countTotalAndActive({ sectorId: { in: ["sec-1"] } });
+
+    expect(mockedPrisma.employee.groupBy).toHaveBeenCalledWith({
+      by: ["status"],
+      where: { sectorId: { in: ["sec-1"] } },
+      _count: { _all: true },
+    });
+  });
+
+  it("con accessWhere vacío (RRHH), no agrega ningún filtro extra", async () => {
+    mockedPrisma.employee.groupBy.mockResolvedValue([]);
+
+    await dashboardRepository.countTotalAndActive({});
+
+    expect(mockedPrisma.employee.groupBy).toHaveBeenCalledWith(
+      expect.objectContaining({ where: {} }),
+    );
   });
 });

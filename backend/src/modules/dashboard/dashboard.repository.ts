@@ -30,12 +30,19 @@ const absenceKinds: NoveltyTypeKind[] = [
 export const dashboardRepository = {
   // ── Headcounts ────────────────────────────────────────────────────────────
 
-  countTotal(accessWhere: Prisma.EmployeeWhereInput) {
-    return prisma.employee.count({ where: accessWhere });
-  },
-
-  countActive(accessWhere: Prisma.EmployeeWhereInput) {
-    return prisma.employee.count({ where: activeWhere(accessWhere) });
+  // Etapa 14E.1: `countTotal`+`countActive` (2 `Employee.count` separados)
+  // colapsados en 1 sólo `groupBy` — mismo patrón ya usado por
+  // `employeesRepository.summary()` para el mismo cálculo (ver comentario
+  // ahí). Reduce el fan-out de `calculateMetrics` de 15 a 14 queries. `total`
+  // se arma sumando todos los grupos; `active` es el grupo ACTIVO (0 si el
+  // `accessWhere` no tiene ningún activo). Ver docs/decisions/
+  // DASHBOARD_METRICS_PERFORMANCE_14E1.md.
+  countTotalAndActive(accessWhere: Prisma.EmployeeWhereInput) {
+    return prisma.employee.groupBy({
+      by: ["status"],
+      where: accessWhere,
+      _count: { _all: true },
+    });
   },
 
   /**

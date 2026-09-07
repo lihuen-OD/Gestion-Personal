@@ -1,7 +1,20 @@
+import { EmployeeStatus } from "@prisma/client";
+import { runInBatches } from "../../shared/prisma/runInBatches";
 import { employeeAccessWhere } from "../employees/employeeAccess";
 import { dashboardMetricsCache } from "./dashboard.cache";
 import { dashboardRepository } from "./dashboard.repository";
 import type { DashboardMetricsQuery } from "./dashboard.schemas";
+
+// Etapa 14E.1: `calculateMetrics` disparaba 15 queries Prisma en un único
+// `Promise.all` — bajo carga real (journeys de Legajos 14D.1-14D.7) esto
+// saturaba el pool de conexiones de Neon de forma intermitente (distintos
+// modelos fallando en distintas corridas con `P1017`/"Server has closed the
+// connection" — patrón de contención, no un bug puntual de un modelo). Se
+// pasa a lotes de `DASHBOARD_METRICS_BATCH_SIZE` queries concurrentes como
+// máximo, en vez de las 15 (ahora 14, ver countTotalAndActive) de una — ver
+// docs/decisions/DASHBOARD_METRICS_PERFORMANCE_14E1.md para el diagnóstico
+// completo y por qué se eligió 5 (no 3, no ilimitado).
+const DASHBOARD_METRICS_BATCH_SIZE = 5;
 
 const dayMs = 86_400_000;
 
@@ -94,17 +107,52 @@ export const dashboardService = {
   },
 };
 
+// Etapa 14E.1: loguea (sin PII — sólo el nombre de la query, el período y el
+// rol, mismo criterio que `performanceLogger.ts`) y re-lanza — nunca traga
+// el error ni devuelve un valor por defecto. El objetivo es que un futuro
+// P1017/timeout de pool identifique la query exacta en el log sin tener que
+// inspeccionar el stack completo de Prisma.
+function withQueryErrorLog<T>(query: string, period: string, role: string, task: () => Promise<T>): () => Promise<T> {
+  return async () => {
+    try {
+      return await task();
+    } catch (error) {
+      console.warn(
+        JSON.stringify({
+          level: "warn",
+          event: "dashboard_metrics_query_error",
+          query,
+          period,
+          role,
+          message: error instanceof Error ? error.message : String(error),
+        }),
+      );
+      throw error;
+    }
+  };
+}
+
 async function calculateMetrics(period: string, user: Express.AuthUser) {
   const accessWhere = employeeAccessWhere(user);
   const now = new Date();
   const year = now.getUTCFullYear();
+  const role = user.role;
+  const task = <T>(query: string, run: () => Promise<T>) => withQueryErrorLog(query, period, role, run);
 
+  // Etapa 14E.1: antes 15 queries en un único Promise.all (root cause de los
+  // 500 por saturación de pool, ver docs/decisions/
+  // DASHBOARD_METRICS_PERFORMANCE_14E1.md §1/§6). Ahora 14 (countTotal +
+  // countActive colapsados en 1 groupBy) repartidas en 3 lotes de máximo
+  // `DASHBOARD_METRICS_BATCH_SIZE` (5) queries concurrentes — los 2
+  // `findMany` más pesados (activeDashboardEmployees/transportedEmployees)
+  // se repartieron en lotes distintos (1 y 3) para no acumular el costo más
+  // alto en un mismo lote.
   const [
-    total,
-    active,
+    statusGroups,
     exits,
     transported,
     hoursResult,
+    activeDashboardEmployees,
     employeesWithEntries,
     pendingLoads,
     reviewLoads,
@@ -113,26 +161,29 @@ async function calculateMetrics(period: string, user: Express.AuthUser) {
     expiredDocuments,
     expiringDocuments,
     missingResponsible,
-    activeDashboardEmployees,
     transportedEmployees,
-  ] = await Promise.all([
-    dashboardRepository.countTotal(accessWhere),
-    dashboardRepository.countActive(accessWhere),
-    dashboardRepository.countExitsThisYear(accessWhere, year),
-    dashboardRepository.countTransported(accessWhere),
-    dashboardRepository.sumLoadedHours(period, accessWhere),
-    dashboardRepository.countEmployeesWithEntries(period, accessWhere),
-    dashboardRepository.countEmployeesWithoutEntries(period, accessWhere),
-    dashboardRepository.countEmployeesInReview(period, accessWhere),
-    dashboardRepository.findPeriodAbsenceDateRanges(period, accessWhere),
-    dashboardRepository.countPendingNovelties(accessWhere),
-    dashboardRepository.countExpiredDocuments(accessWhere),
-    dashboardRepository.countExpiringDocuments(accessWhere),
-    dashboardRepository.countMissingTimeResponsible(accessWhere),
-    dashboardRepository.findActiveDashboardEmployees(accessWhere),
-    dashboardRepository.findTransportedEmployees(accessWhere),
-  ]);
+  ] = await runInBatches(
+    [
+      task("Employee.groupBy(status)", () => dashboardRepository.countTotalAndActive(accessWhere)),
+      task("Employee.count(exitsThisYear)", () => dashboardRepository.countExitsThisYear(accessWhere, year)),
+      task("Employee.count(transported)", () => dashboardRepository.countTransported(accessWhere)),
+      task("TimeEntry.aggregate(loadedHours)", () => dashboardRepository.sumLoadedHours(period, accessWhere)),
+      task("Employee.findMany(activeDashboardEmployees)", () => dashboardRepository.findActiveDashboardEmployees(accessWhere)),
+      task("Employee.count(withEntries)", () => dashboardRepository.countEmployeesWithEntries(period, accessWhere)),
+      task("Employee.count(withoutEntries)", () => dashboardRepository.countEmployeesWithoutEntries(period, accessWhere)),
+      task("Employee.count(inReview)", () => dashboardRepository.countEmployeesInReview(period, accessWhere)),
+      task("Novelty.findMany(absenceRanges)", () => dashboardRepository.findPeriodAbsenceDateRanges(period, accessWhere)),
+      task("Novelty.count(pending)", () => dashboardRepository.countPendingNovelties(accessWhere)),
+      task("EmployeeDocument.count(expired)", () => dashboardRepository.countExpiredDocuments(accessWhere)),
+      task("EmployeeDocument.count(expiring)", () => dashboardRepository.countExpiringDocuments(accessWhere)),
+      task("Employee.count(missingTimeResponsible)", () => dashboardRepository.countMissingTimeResponsible(accessWhere)),
+      task("Employee.findMany(transportedEmployees)", () => dashboardRepository.findTransportedEmployees(accessWhere)),
+    ] as const,
+    DASHBOARD_METRICS_BATCH_SIZE,
+  );
 
+  const total = statusGroups.reduce((sum, group) => sum + group._count._all, 0);
+  const active = statusGroups.find((group) => group.status === EmployeeStatus.ACTIVO)?._count._all || 0;
   const inactive = total - active;
   const loadedHours = formatDecimal(hoursResult._sum.hours);
 

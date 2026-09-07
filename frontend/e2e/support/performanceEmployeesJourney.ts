@@ -342,6 +342,8 @@ export function buildMarkdownReport(rawRun: EmployeesJourneyRun): string {
   lines.push("");
   lines.push("Exclusivamente el módulo Legajos (listado, detalle, las 12 pestañas del legajo, historiales de campo/bloque, apertura de modales de edición sin guardar, Adjuntos/Documentos). No incluye otros módulos ni un recorrido general de la app (eso lo cubre `npm run perf:journey`, Etapa 14B.3).");
   lines.push("");
+  lines.push("**Nota (Etapa 14E.1)**: la acción \"Login (acceso rápido RRHH)\" de este journey mide el aterrizaje inicial en `/` tras autenticarse — esa pantalla es `DashboardPage.tsx`, que dispara `GET /api/dashboard/metrics` al montar. Este journey detecta y reporta ese endpoint (a veces como el más lento o incluso en rango Crítico) **sin que Dashboard sea parte del alcance de Legajos** — es un efecto colateral real de que el login navega a esa pantalla, no un error de este journey. Cualquier hallazgo sobre `dashboard/metrics` se documenta y corrige en su propia etapa dedicada (ver `docs/decisions/DASHBOARD_METRICS_PERFORMANCE_14E1.md`), nunca dentro de una etapa de Legajos.");
+  lines.push("");
 
   lines.push("## 3. Modo usado");
   lines.push("");
