@@ -5,7 +5,7 @@ import { hourConceptsRepository } from "./hourConcepts.repository";
 
 vi.mock("../../shared/prisma/client", () => ({
   prisma: {
-    hourConcept: { findUniqueOrThrow: vi.fn(), delete: vi.fn(), update: vi.fn(), findMany: vi.fn() },
+    hourConcept: { findUniqueOrThrow: vi.fn(), delete: vi.fn(), update: vi.fn(), findMany: vi.fn(), count: vi.fn() },
     employee: { count: vi.fn() },
     employeeHourConcept: { findMany: vi.fn(), findFirst: vi.fn(), count: vi.fn(), findUnique: vi.fn(), createMany: vi.fn(), delete: vi.fn(), deleteMany: vi.fn() },
     hourConceptRule: { updateMany: vi.fn() },
@@ -14,7 +14,7 @@ vi.mock("../../shared/prisma/client", () => ({
 }));
 
 const mockedPrisma = prisma as unknown as {
-  hourConcept: { findUniqueOrThrow: Mock; delete: Mock; update: Mock; findMany: Mock };
+  hourConcept: { findUniqueOrThrow: Mock; delete: Mock; update: Mock; findMany: Mock; count: Mock };
   employee: { count: Mock };
   employeeHourConcept: { findMany: Mock; findFirst: Mock; count: Mock; findUnique: Mock; createMany: Mock; delete: Mock; deleteMany: Mock };
   hourConceptRule: { updateMany: Mock };
@@ -23,6 +23,25 @@ const mockedPrisma = prisma as unknown as {
 
 beforeEach(() => {
   vi.clearAllMocks();
+});
+
+// Etapa 14H.5: findMany no tenía ningún test dedicado hasta esta etapa —
+// agregado al corregir el $transaction de la rama filtrada (ver
+// hourConcepts.repository.ts). La rama sin filtros usa el listCache en
+// memoria (2min TTL, sin $transaction, sin cambios esta etapa) — sólo se
+// cubre acá la rama filtrada, la única que tenía el antipatrón.
+describe("findMany — rama filtrada, Etapa 14H.5", () => {
+  it("con filtros activos, pagina con Promise.all([findMany, count]) — sin $transaction", async () => {
+    mockedPrisma.hourConcept.findMany.mockResolvedValue([]);
+    mockedPrisma.hourConcept.count.mockResolvedValue(0);
+
+    await hourConceptsRepository.findMany({ status: "ACTIVO", page: 1, take: 50 } as never);
+
+    expect(mockedPrisma.$transaction).not.toHaveBeenCalled();
+    expect(mockedPrisma.hourConcept.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ status: "ACTIVO" }), skip: 0, take: 50 }),
+    );
+  });
 });
 
 // Etapa 13D (docs/decisions/SHIFT_SEGMENT_UNCLASSIFIED_POLICY_13D.md)
@@ -67,10 +86,13 @@ describe("findEmployees — empleados habilitados para el concepto (Etapa 8G)", 
     mockedPrisma.employeeHourConcept.count.mockResolvedValue(0);
   });
 
-  it("filtra por hourConceptId y pagina con $transaction([findMany, count])", async () => {
+  it("filtra por hourConceptId y pagina con Promise.all([findMany, count]) — sin $transaction (Etapa 14H.5)", async () => {
     await hourConceptsRepository.findEmployees("concept-1", { page: 2, take: 10 } as never, {});
 
-    expect(mockedPrisma.$transaction).toHaveBeenCalledTimes(1);
+    // Etapa 14H.5: findMany/count ya no se piden dentro de una transacción
+    // interactiva (antipatrón que serializaba 2 lecturas independientes en
+    // una sola conexión) — ver hourConcepts.repository.ts.
+    expect(mockedPrisma.$transaction).not.toHaveBeenCalled();
     const call = mockedPrisma.employeeHourConcept.findMany.mock.calls.at(0)?.[0];
     expect(call.where.hourConceptId).toBe("concept-1");
     expect(call.skip).toBe(10);

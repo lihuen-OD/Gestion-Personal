@@ -34,11 +34,20 @@ function buildWhere(query: ListHourConceptsQuery): Prisma.HourConceptWhereInput 
 }
 
 export const hourConceptsRepository = {
+  // Etapa 14H.5: findMany + count son lecturas independientes (ninguna
+  // depende del resultado de la otra) — $transaction([...]) las pinaba a una
+  // única conexión de Neon en serie sin ganar concurrencia real. Promise.all
+  // sobre el cliente global sí las corre en paralelo. Mismo patrón ya
+  // aplicado 10+ veces en las series 14G/14H. Esta rama (con filtros) no la
+  // ejercita HourConceptsPage.tsx (filtra en memoria sobre un fetch-all), pero
+  // sí un caller real: timeEntryApiService.ts llama
+  // hourConceptApiService.getAll({status:"ACTIVO"}), que sí manda status y
+  // por lo tanto entra acá — confirmado con grep, no es código muerto.
   async findMany(query: ListHourConceptsQuery): Promise<[HourConceptRow[], number]> {
     if (hasActiveFilters(query)) {
       const where = buildWhere(query);
       const skip = (query.page - 1) * query.take;
-      return prisma.$transaction([
+      return Promise.all([
         prisma.hourConcept.findMany({
           where,
           orderBy: [{ status: "asc" }, { kind: "asc" }, { name: "asc" }],
@@ -121,6 +130,11 @@ export const hourConceptsRepository = {
   // un simple on/off (sin effectiveFrom/effectiveTo, sin status propio); no se
   // infiere nada desde TimeSegment. Índice [hourConceptId] agregado en la
   // Etapa 8H (ver schema.prisma) — esta consulta ya no depende de un full scan.
+  // Etapa 14H.5: mismo antipatrón que findMany arriba — findMany/count de
+  // EmployeeHourConcept son lecturas independientes. Endpoint activamente
+  // usado por AssociatedEmployeesPanel (embedded) en HourConceptsPage.tsx al
+  // editar un concepto existente. Fix directamente análogo al ya aplicado a
+  // workRegimesRepository.findEmployees (Etapa 14H.2).
   async findEmployees(hourConceptId: string, query: ListHourConceptEmployeesQuery, accessWhere: Prisma.EmployeeWhereInput) {
     const where: Prisma.EmployeeHourConceptWhereInput = {
       hourConceptId,
@@ -129,7 +143,7 @@ export const hourConceptsRepository = {
       },
     };
     const skip = (query.page - 1) * query.take;
-    const [items, total] = await prisma.$transaction([
+    const [items, total] = await Promise.all([
       prisma.employeeHourConcept.findMany({
         where,
         select: { employeeId: true, employee: { select: associatedEmployeeSelect } },

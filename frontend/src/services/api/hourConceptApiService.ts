@@ -160,25 +160,39 @@ export const hourConceptApiService = {
   getNextCode: nextCode,
 
   // Empleados habilitados para el concepto, vistos desde el concepto (Etapa
-  // 8G) — sin cachedData, mismo criterio que el resto de los métodos de
-  // relación de estos servicios (ver workRegimeApiService.getWorkRegimeEmployees).
+  // 8G; dedupe/cache agregado en 14H.5) — envuelto con `cachedData` (misma
+  // familia "hour-concepts" que hourConceptsCatalog) para colapsar el
+  // doble-montaje de StrictMode que dispara AssociatedEmployeesPanel
+  // (embedded) al abrir "Editar" en un concepto existente.
   async getHourConceptEmployees(
     hourConceptId: string,
     filters?: AssociatedEmployeeFilters & { status?: AssociatedEmployeeStatus },
   ): Promise<AssociatedEmployeesResult<HourConceptEmployeeAssociation>> {
     const query = associatedEmployeesQuery(filters, { status: filters?.status });
-    const response = await apiRequest<ApiHourConceptEmployeesResponse>(`/hour-concepts/${hourConceptId}/employees${query}`, { apiCache: false });
-    return { items: response.data.map(mapHourConceptEmployeeAssociationFromApi), meta: response.meta };
+    const path = `/hour-concepts/${hourConceptId}/employees${query}`;
+    return cachedData({
+      requestKey: `GET:${path}`,
+      policy: cachePolicies.hourConceptEmployeesList,
+      fetcher: () =>
+        apiRequest<ApiHourConceptEmployeesResponse>(path, { apiCache: false }).then((response) => ({
+          items: response.data.map(mapHourConceptEmployeeAssociationFromApi),
+          meta: response.meta,
+        })),
+      validate: (value) => Array.isArray(value.items),
+    });
   },
 
   // Habilitar/quitar empleados desde el propio concepto (Etapa 8N) —
   // POST/DELETE /hour-concepts/:id/employees[/:employeeId], mismo criterio
-  // de escritura que shiftAssignmentApiService.assign/remove.
+  // de escritura que shiftAssignmentApiService.assign/remove. Invalidación
+  // agregada en 14H.5 junto con el cache de getHourConceptEmployees de arriba.
   async enableEmployees(hourConceptId: string, employeeIds: string[]) {
     await apiRequest<{ data: unknown }>(buildHourConceptEmployeesPath(hourConceptId), { method: "POST", body: { employeeIds } });
+    await invalidateCacheFamily("hour-concepts", "hour concept employees enabled");
   },
 
   async disableEmployee(hourConceptId: string, employeeId: string) {
     await apiRequest<{ data: unknown }>(buildHourConceptEmployeePath(hourConceptId, employeeId), { method: "DELETE" });
+    await invalidateCacheFamily("hour-concepts", "hour concept employee disabled");
   },
 };

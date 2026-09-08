@@ -337,4 +337,31 @@ export const cachePolicies = {
     sensitive: false,
     schemaVersion: CACHE_SCHEMA_VERSION,
   },
+  // Etapa 14H.5: getHourConceptEmployees()/listByConcept() (reglas horarias
+  // por concepto) no tenían dedupe frontend -- ambas montan recién al abrir
+  // "Editar" en un concepto existente (HourConceptRulesPanel +
+  // AssociatedEmployeesPanel embedded, HourConceptsPage.tsx), un montaje
+  // fresco cada vez, así que StrictMode las duplica igual que cualquier otro
+  // efecto de montaje ya corregido en esta serie. Misma familia
+  // "hour-concepts" que hourConceptsCatalog (reusada, ya existía) -- crear/
+  // editar/eliminar un concepto ya invalida esa familia completa
+  // (hourConceptApiService.ts), así que ambas quedan cubiertas por los
+  // mismos 3 mutadores sin código adicional; se agregó además invalidación
+  // explícita en enableEmployees/disableEmployee (empleados) y en
+  // create/update/updateStatus de reglas (hourConceptRuleApiService.ts),
+  // que antes no invalidaban nada porque no había nada cacheado.
+  hourConceptEmployeesList: {
+    family: "hour-concepts",
+    ttlMs: 15_000,
+    persist: false,
+    sensitive: true,
+    schemaVersion: CACHE_SCHEMA_VERSION,
+  },
+  hourConceptRulesByConceptId: {
+    family: "hour-concepts",
+    ttlMs: 30_000,
+    persist: false,
+    sensitive: false,
+    schemaVersion: CACHE_SCHEMA_VERSION,
+  },
 } satisfies Record<string, CachePolicy>;

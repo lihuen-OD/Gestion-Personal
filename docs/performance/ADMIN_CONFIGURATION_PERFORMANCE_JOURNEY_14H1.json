@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-08T16:09:13.239Z",
+  "generatedAt": "2026-09-08T16:58:56.752Z",
   "environment": "Frontend y backend locales (`npm run dev`), backend conectado a la base real de staging (ver docs/LOCAL_DEVELOPMENT.md) — no es un ambiente de producción ni un ambiente aislado de test.",
   "baseUrl": "http://localhost:5174",
   "apiBaseUrl": "http://localhost:4002/api",
@@ -12,12 +12,12 @@
     "slowThresholdMs": 3000
   },
   "summary": {
-    "totalActions": 63,
-    "coveredActions": 41,
-    "skippedActions": 22,
-    "slowActions": 0,
+    "totalActions": 70,
+    "coveredActions": 43,
+    "skippedActions": 27,
+    "slowActions": 3,
     "verySlowActions": 1,
-    "writesSkipped": 18,
+    "writesSkipped": 21,
     "httpErrors": 0,
     "consoleErrors": 0
   },
@@ -27,7 +27,7 @@
       "coveredActions": 1,
       "skippedActions": 0,
       "totalRequests": 4,
-      "maxDurationMs": 3722,
+      "maxDurationMs": 5175,
       "rank": "Crítico"
     },
     {
@@ -35,7 +35,7 @@
       "coveredActions": 2,
       "skippedActions": 0,
       "totalRequests": 1,
-      "maxDurationMs": 731,
+      "maxDurationMs": 978,
       "rank": "OK"
     },
     {
@@ -43,7 +43,7 @@
       "coveredActions": 4,
       "skippedActions": 2,
       "totalRequests": 5,
-      "maxDurationMs": 1130,
+      "maxDurationMs": 1414,
       "rank": "Medio"
     },
     {
@@ -51,31 +51,31 @@
       "coveredActions": 2,
       "skippedActions": 1,
       "totalRequests": 6,
-      "maxDurationMs": 1212,
-      "rank": "Medio"
+      "maxDurationMs": 2404,
+      "rank": "Lento"
     },
     {
       "zone": "D. Horas especiales",
       "coveredActions": 2,
       "skippedActions": 2,
       "totalRequests": 4,
-      "maxDurationMs": 1843,
-      "rank": "Medio"
+      "maxDurationMs": 2333,
+      "rank": "Lento"
     },
     {
       "zone": "E. Regímenes laborales",
       "coveredActions": 8,
       "skippedActions": 2,
       "totalRequests": 4,
-      "maxDurationMs": 924,
-      "rank": "OK"
+      "maxDurationMs": 1369,
+      "rank": "Medio"
     },
     {
       "zone": "F. Empresas y estructura",
       "coveredActions": 2,
       "skippedActions": 1,
       "totalRequests": 1,
-      "maxDurationMs": 715,
+      "maxDurationMs": 829,
       "rank": "OK"
     },
     {
@@ -83,16 +83,16 @@
       "coveredActions": 3,
       "skippedActions": 3,
       "totalRequests": 2,
-      "maxDurationMs": 1106,
-      "rank": "Medio"
+      "maxDurationMs": 954,
+      "rank": "OK"
     },
     {
       "zone": "H. Conceptos horarios",
-      "coveredActions": 3,
-      "skippedActions": 2,
-      "totalRequests": 2,
-      "maxDurationMs": 989,
-      "rank": "OK"
+      "coveredActions": 5,
+      "skippedActions": 7,
+      "totalRequests": 4,
+      "maxDurationMs": 1389,
+      "rank": "Medio"
     },
     {
       "zone": "I. Exportación Finnegans",
@@ -106,23 +106,23 @@
       "coveredActions": 3,
       "skippedActions": 1,
       "totalRequests": 2,
-      "maxDurationMs": 911,
-      "rank": "OK"
+      "maxDurationMs": 1003,
+      "rank": "Medio"
     },
     {
       "zone": "K. Parámetros de auditoría",
       "coveredActions": 3,
       "skippedActions": 1,
       "totalRequests": 2,
-      "maxDurationMs": 1876,
-      "rank": "Medio"
+      "maxDurationMs": 2081,
+      "rank": "Lento"
     },
     {
       "zone": "L. Puestos (listado)",
       "coveredActions": 4,
       "skippedActions": 3,
-      "totalRequests": 4,
-      "maxDurationMs": 1126,
+      "totalRequests": 3,
+      "maxDurationMs": 1263,
       "rank": "Medio"
     },
     {
@@ -130,7 +130,7 @@
       "coveredActions": 2,
       "skippedActions": 2,
       "totalRequests": 3,
-      "maxDurationMs": 1613,
+      "maxDurationMs": 1472,
       "rank": "Medio"
     },
     {
@@ -138,8 +138,8 @@
       "coveredActions": 2,
       "skippedActions": 1,
       "totalRequests": 4,
-      "maxDurationMs": 761,
-      "rank": "OK"
+      "maxDurationMs": 1120,
+      "rank": "Medio"
     }
   ],
   "actions": [
@@ -150,32 +150,32 @@
       "route": "/",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 494,
-      "networkIdleMs": 3722,
+      "visibleMs": 617,
+      "networkIdleMs": 5175,
       "requests": [
         {
           "method": "POST",
           "path": "/api/auth/login",
           "statusCode": 200,
-          "durationMs": 1113
+          "durationMs": 1172
         },
         {
           "method": "GET",
           "path": "/api/workforce/notifications-unread-count",
           "statusCode": 200,
-          "durationMs": 349
+          "durationMs": 351
         },
         {
           "method": "GET",
           "path": "/api/audit",
           "statusCode": 200,
-          "durationMs": 860
+          "durationMs": 2083
         },
         {
           "method": "GET",
           "path": "/api/dashboard/metrics",
           "statusCode": 200,
-          "durationMs": 1596
+          "durationMs": 2866
         }
       ],
       "consoleErrors": [],
@@ -190,14 +190,14 @@
       "route": "/configuracion",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 81,
-      "networkIdleMs": 731,
+      "visibleMs": 86,
+      "networkIdleMs": 978,
       "requests": [
         {
           "method": "GET",
           "path": "/api/workforce/notifications-unread-count",
           "statusCode": 200,
-          "durationMs": 173
+          "durationMs": 428
         }
       ],
       "consoleErrors": [],
@@ -214,8 +214,8 @@
       "route": "/configuracion",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 7,
-      "networkIdleMs": 90,
+      "visibleMs": 8,
+      "networkIdleMs": 91,
       "requests": [],
       "consoleErrors": [],
       "notes": [
@@ -231,26 +231,26 @@
       "route": "/configuracion/turnos",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 48,
-      "networkIdleMs": 891,
+      "visibleMs": 77,
+      "networkIdleMs": 937,
       "requests": [
         {
           "method": "GET",
           "path": "/api/workforce/notifications-unread-count",
           "statusCode": 200,
-          "durationMs": 174
+          "durationMs": 184
         },
         {
           "method": "GET",
           "path": "/api/workforce/shift-templates",
           "statusCode": 200,
-          "durationMs": 335
+          "durationMs": 366
         },
         {
           "method": "GET",
           "path": "/api/shifts/assignments/summary",
           "statusCode": 200,
-          "durationMs": 346
+          "durationMs": 374
         }
       ],
       "consoleErrors": [],
@@ -265,8 +265,8 @@
       "route": "/configuracion/turnos",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 16,
-      "networkIdleMs": 418,
+      "visibleMs": 24,
+      "networkIdleMs": 428,
       "requests": [],
       "consoleErrors": [],
       "notes": [
@@ -282,8 +282,8 @@
       "route": "/configuracion/turnos",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 12,
-      "networkIdleMs": 95,
+      "visibleMs": 19,
+      "networkIdleMs": 101,
       "requests": [],
       "consoleErrors": [],
       "notes": [],
@@ -310,20 +310,20 @@
       "route": "/configuracion/turnos/:id",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 306,
-      "networkIdleMs": 1130,
+      "visibleMs": 322,
+      "networkIdleMs": 1414,
       "requests": [
         {
           "method": "GET",
           "path": "/api/workforce/shift-templates",
           "statusCode": 200,
-          "durationMs": 170
+          "durationMs": 180
         },
         {
           "method": "GET",
           "path": "/api/workforce/notifications-unread-count",
           "statusCode": 200,
-          "durationMs": 604
+          "durationMs": 868
         }
       ],
       "consoleErrors": [],
@@ -351,8 +351,8 @@
       "route": "/configuracion/turnos-asignaciones-feriados",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 76,
-      "networkIdleMs": 1089,
+      "visibleMs": 63,
+      "networkIdleMs": 2404,
       "requests": [
         {
           "method": "GET",
@@ -364,19 +364,19 @@
           "method": "GET",
           "path": "/api/workforce/notifications-unread-count",
           "statusCode": 200,
-          "durationMs": 192
+          "durationMs": 199
         },
         {
           "method": "GET",
           "path": "/api/shifts/holiday-work/dates",
           "statusCode": 200,
-          "durationMs": 351
+          "durationMs": 370
         },
         {
           "method": "GET",
           "path": "/api/org-structure",
           "statusCode": 200,
-          "durationMs": 518
+          "durationMs": 1843
         }
       ],
       "consoleErrors": [],
@@ -391,20 +391,20 @@
       "route": "/configuracion/turnos-asignaciones-feriados",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 807,
-      "networkIdleMs": 1212,
+      "visibleMs": 828,
+      "networkIdleMs": 1233,
       "requests": [
         {
           "method": "GET",
           "path": "/api/shifts/holiday-work/assignments",
           "statusCode": 200,
-          "durationMs": 342
+          "durationMs": 474
         },
         {
           "method": "GET",
           "path": "/api/shifts/holiday-work/candidates",
           "statusCode": 200,
-          "durationMs": 371
+          "durationMs": 477
         }
       ],
       "consoleErrors": [],
@@ -432,32 +432,32 @@
       "route": "/configuracion/turnos-horas-especiales",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 75,
-      "networkIdleMs": 1843,
+      "visibleMs": 78,
+      "networkIdleMs": 2333,
       "requests": [
         {
           "method": "GET",
           "path": "/api/workforce/notifications-unread-count",
           "statusCode": 200,
-          "durationMs": 187
-        },
-        {
-          "method": "GET",
-          "path": "/api/workforce/double-hour-rules/calendar",
-          "statusCode": 200,
-          "durationMs": 349
+          "durationMs": 849
         },
         {
           "method": "GET",
           "path": "/api/workforce/double-hour-rules",
           "statusCode": 200,
-          "durationMs": 371
+          "durationMs": 834
+        },
+        {
+          "method": "GET",
+          "path": "/api/workforce/double-hour-rules/calendar",
+          "statusCode": 200,
+          "durationMs": 836
         },
         {
           "method": "GET",
           "path": "/api/positions",
           "statusCode": 200,
-          "durationMs": 1278
+          "durationMs": 1769
         }
       ],
       "consoleErrors": [],
@@ -513,20 +513,20 @@
       "route": "/configuracion/regimenes-laborales",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 83,
-      "networkIdleMs": 924,
+      "visibleMs": 82,
+      "networkIdleMs": 963,
       "requests": [
         {
           "method": "GET",
           "path": "/api/workforce/notifications-unread-count",
           "statusCode": 200,
-          "durationMs": 175
+          "durationMs": 372
         },
         {
           "method": "GET",
           "path": "/api/work-regimes",
           "statusCode": 200,
-          "durationMs": 356
+          "durationMs": 386
         }
       ],
       "consoleErrors": [],
@@ -541,8 +541,8 @@
       "route": "/configuracion/regimenes-laborales",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 11,
-      "networkIdleMs": 413,
+      "visibleMs": 12,
+      "networkIdleMs": 415,
       "requests": [],
       "consoleErrors": [],
       "notes": [
@@ -558,8 +558,8 @@
       "route": "/configuracion/regimenes-laborales",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 8,
-      "networkIdleMs": 90,
+      "visibleMs": 11,
+      "networkIdleMs": 95,
       "requests": [],
       "consoleErrors": [],
       "notes": [],
@@ -573,8 +573,8 @@
       "route": "/configuracion/regimenes-laborales",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 33,
-      "networkIdleMs": 116,
+      "visibleMs": 22,
+      "networkIdleMs": 105,
       "requests": [],
       "consoleErrors": [],
       "notes": [
@@ -590,8 +590,8 @@
       "route": "/configuracion/regimenes-laborales",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 24,
-      "networkIdleMs": 106,
+      "visibleMs": 33,
+      "networkIdleMs": 116,
       "requests": [],
       "consoleErrors": [],
       "notes": [],
@@ -605,8 +605,8 @@
       "route": "/configuracion/regimenes-laborales",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 44,
-      "networkIdleMs": 125,
+      "visibleMs": 33,
+      "networkIdleMs": 115,
       "requests": [],
       "consoleErrors": [],
       "notes": [],
@@ -620,20 +620,20 @@
       "route": "/configuracion/regimenes-laborales",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 785,
-      "networkIdleMs": 866,
+      "visibleMs": 1285,
+      "networkIdleMs": 1369,
       "requests": [
         {
           "method": "GET",
           "path": "/api/work-regimes/:id/employees",
           "statusCode": 200,
-          "durationMs": 939
+          "durationMs": 1373
         },
         {
           "method": "GET",
           "path": "/api/work-regimes/:id/employees",
           "statusCode": 200,
-          "durationMs": 712
+          "durationMs": 1028
         }
       ],
       "consoleErrors": [],
@@ -648,8 +648,8 @@
       "route": "/configuracion/regimenes-laborales",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 23,
-      "networkIdleMs": 105,
+      "visibleMs": 33,
+      "networkIdleMs": 125,
       "requests": [],
       "consoleErrors": [],
       "notes": [],
@@ -689,14 +689,14 @@
       "route": "/configuracion/empresas-estructura",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 49,
-      "networkIdleMs": 715,
+      "visibleMs": 75,
+      "networkIdleMs": 829,
       "requests": [
         {
           "method": "GET",
           "path": "/api/workforce/notifications-unread-count",
           "statusCode": 200,
-          "durationMs": 193
+          "durationMs": 282
         }
       ],
       "consoleErrors": [],
@@ -711,8 +711,8 @@
       "route": "/configuracion/empresas-estructura",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 34,
-      "networkIdleMs": 236,
+      "visibleMs": 36,
+      "networkIdleMs": 239,
       "requests": [],
       "consoleErrors": [],
       "notes": [],
@@ -739,20 +739,20 @@
       "route": "/configuracion/tipos-novedades",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 71,
-      "networkIdleMs": 1106,
+      "visibleMs": 78,
+      "networkIdleMs": 954,
       "requests": [
         {
           "method": "GET",
           "path": "/api/workforce/notifications-unread-count",
           "statusCode": 200,
-          "durationMs": 384
+          "durationMs": 191
         },
         {
           "method": "GET",
           "path": "/api/novelty-types",
           "statusCode": 200,
-          "durationMs": 545
+          "durationMs": 388
         }
       ],
       "consoleErrors": [],
@@ -767,8 +767,8 @@
       "route": "/configuracion/tipos-novedades",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 10,
-      "networkIdleMs": 414,
+      "visibleMs": 11,
+      "networkIdleMs": 416,
       "requests": [],
       "consoleErrors": [],
       "notes": [
@@ -784,8 +784,8 @@
       "route": "/configuracion/tipos-novedades",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 13,
-      "networkIdleMs": 96,
+      "visibleMs": 14,
+      "networkIdleMs": 97,
       "requests": [],
       "consoleErrors": [],
       "notes": [],
@@ -838,20 +838,20 @@
       "route": "/configuracion/conceptos-horarios",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 65,
-      "networkIdleMs": 989,
+      "visibleMs": 80,
+      "networkIdleMs": 1389,
       "requests": [
         {
           "method": "GET",
           "path": "/api/workforce/notifications-unread-count",
           "statusCode": 200,
-          "durationMs": 204
+          "durationMs": 468
         },
         {
           "method": "GET",
           "path": "/api/hour-concepts",
           "statusCode": 200,
-          "durationMs": 436
+          "durationMs": 827
         }
       ],
       "consoleErrors": [],
@@ -867,7 +867,7 @@
       "covered": true,
       "skippedReason": null,
       "visibleMs": 12,
-      "networkIdleMs": 414,
+      "networkIdleMs": 415,
       "requests": [],
       "consoleErrors": [],
       "notes": [
@@ -883,8 +883,8 @@
       "route": "/configuracion/conceptos-horarios",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 4,
-      "networkIdleMs": 87,
+      "visibleMs": 13,
+      "networkIdleMs": 95,
       "requests": [],
       "consoleErrors": [],
       "notes": [],
@@ -892,12 +892,119 @@
       "emptyScreen": null
     },
     {
-      "name": "Crear/Editar concepto horario",
+      "name": "Abrir detalle de concepto horario (Editar)",
+      "zone": "H. Conceptos horarios",
+      "submodule": "H. Conceptos horarios",
+      "route": "/configuracion/conceptos-horarios",
+      "covered": true,
+      "skippedReason": null,
+      "networkIdleMs": 435,
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "emptyScreen": null
+    },
+    {
+      "name": "Abrir modal Nueva regla horaria",
       "zone": "H. Conceptos horarios",
       "submodule": "H. Conceptos horarios",
       "route": "/configuracion/conceptos-horarios",
       "covered": false,
-      "skippedReason": "El editor (con panel de reglas y empleados asociados embebidos) es inline de escritura (no el componente Modal compartido) — misma política de alcance que Horas especiales; el submit real es POST/PATCH /hour-concepts[/:id].",
+      "skippedReason": "no se encontró el disparador de este modal en el estado actual del entorno",
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "emptyScreen": null
+    },
+    {
+      "name": "Cerrar modal Nueva regla horaria",
+      "zone": "H. Conceptos horarios",
+      "submodule": "H. Conceptos horarios",
+      "route": "/configuracion/conceptos-horarios",
+      "covered": false,
+      "skippedReason": "depende de la acción anterior, salteada",
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "emptyScreen": null
+    },
+    {
+      "name": "Cerrar detalle de concepto horario sin guardar",
+      "zone": "H. Conceptos horarios",
+      "submodule": "H. Conceptos horarios",
+      "route": "/configuracion/conceptos-horarios",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 32,
+      "networkIdleMs": 115,
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/api/hour-concepts/:id/employees",
+          "statusCode": 200,
+          "durationMs": 872
+        },
+        {
+          "method": "GET",
+          "path": "/api/hour-concepts/:id/rules",
+          "statusCode": 200,
+          "durationMs": 880
+        }
+      ],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "emptyScreen": null
+    },
+    {
+      "name": "Crear concepto horario / Guardar cambios del concepto",
+      "zone": "H. Conceptos horarios",
+      "submodule": "H. Conceptos horarios",
+      "route": "/configuracion/conceptos-horarios",
+      "covered": false,
+      "skippedReason": "Prohibido por defecto — acción de escritura (POST/PATCH /hour-concepts[/:id]).",
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": true,
+      "emptyScreen": null
+    },
+    {
+      "name": "Crear/Editar regla horaria (Guardar)",
+      "zone": "H. Conceptos horarios",
+      "submodule": "H. Conceptos horarios",
+      "route": "/configuracion/conceptos-horarios",
+      "covered": false,
+      "skippedReason": "Prohibido por defecto — el modal se abre y se cierra sin tocar este botón (POST/PATCH /hour-concept-rules[/:id]).",
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": true,
+      "emptyScreen": null
+    },
+    {
+      "name": "Activar/Inactivar regla horaria",
+      "zone": "H. Conceptos horarios",
+      "submodule": "H. Conceptos horarios",
+      "route": "/configuracion/conceptos-horarios",
+      "covered": false,
+      "skippedReason": "Prohibido por defecto — acción de escritura (PATCH /hour-concept-rules/:id/status).",
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": true,
+      "emptyScreen": null
+    },
+    {
+      "name": "Agregar/Quitar empleados habilitados",
+      "zone": "H. Conceptos horarios",
+      "submodule": "H. Conceptos horarios",
+      "route": "/configuracion/conceptos-horarios",
+      "covered": false,
+      "skippedReason": "Prohibido por defecto — acciones de escritura (POST /hour-concepts/:id/employees, DELETE /hour-concepts/:id/employees/:employeeId).",
       "requests": [],
       "consoleErrors": [],
       "notes": [],
@@ -937,20 +1044,20 @@
       "route": "/configuracion/categorias-documentales",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 62,
-      "networkIdleMs": 911,
+      "visibleMs": 59,
+      "networkIdleMs": 1003,
       "requests": [
         {
           "method": "GET",
           "path": "/api/workforce/notifications-unread-count",
           "statusCode": 200,
-          "durationMs": 179
+          "durationMs": 181
         },
         {
           "method": "GET",
           "path": "/api/document-categories",
           "statusCode": 200,
-          "durationMs": 363
+          "durationMs": 457
         }
       ],
       "consoleErrors": [],
@@ -965,8 +1072,8 @@
       "route": "/configuracion/categorias-documentales",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 13,
-      "networkIdleMs": 416,
+      "visibleMs": 11,
+      "networkIdleMs": 415,
       "requests": [],
       "consoleErrors": [],
       "notes": [
@@ -982,8 +1089,8 @@
       "route": "/configuracion/categorias-documentales",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 8,
-      "networkIdleMs": 90,
+      "visibleMs": 11,
+      "networkIdleMs": 94,
       "requests": [],
       "consoleErrors": [],
       "notes": [],
@@ -1010,20 +1117,20 @@
       "route": "/configuracion/parametros-auditoria",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 69,
-      "networkIdleMs": 1876,
+      "visibleMs": 74,
+      "networkIdleMs": 2081,
       "requests": [
         {
           "method": "GET",
           "path": "/api/workforce/notifications-unread-count",
           "statusCode": 200,
-          "durationMs": 363
+          "durationMs": 433
         },
         {
           "method": "GET",
           "path": "/api/audit-parameters",
           "statusCode": 200,
-          "durationMs": 1319
+          "durationMs": 1523
         }
       ],
       "consoleErrors": [],
@@ -1039,7 +1146,7 @@
       "covered": true,
       "skippedReason": null,
       "visibleMs": 12,
-      "networkIdleMs": 416,
+      "networkIdleMs": 415,
       "requests": [],
       "consoleErrors": [],
       "notes": [
@@ -1056,7 +1163,7 @@
       "covered": true,
       "skippedReason": null,
       "visibleMs": 13,
-      "networkIdleMs": 98,
+      "networkIdleMs": 97,
       "requests": [],
       "consoleErrors": [],
       "notes": [],
@@ -1083,26 +1190,26 @@
       "route": "/puestos",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 77,
-      "networkIdleMs": 1126,
+      "visibleMs": 72,
+      "networkIdleMs": 1263,
       "requests": [
         {
           "method": "GET",
           "path": "/api/workforce/notifications-unread-count",
           "statusCode": 200,
-          "durationMs": 185
+          "durationMs": 177
         },
         {
           "method": "GET",
           "path": "/api/positions",
           "statusCode": 200,
-          "durationMs": 365
+          "durationMs": 539
         },
         {
           "method": "GET",
           "path": "/api/positions",
           "statusCode": 200,
-          "durationMs": 562
+          "durationMs": 706
         }
       ],
       "consoleErrors": [],
@@ -1117,8 +1224,8 @@
       "route": "/puestos",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 15,
-      "networkIdleMs": 417,
+      "visibleMs": 18,
+      "networkIdleMs": 422,
       "requests": [],
       "consoleErrors": [],
       "notes": [
@@ -1134,8 +1241,8 @@
       "route": "/puestos",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 11,
-      "networkIdleMs": 94,
+      "visibleMs": 18,
+      "networkIdleMs": 102,
       "requests": [],
       "consoleErrors": [],
       "notes": [],
@@ -1149,16 +1256,9 @@
       "route": "/puestos",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 36,
-      "networkIdleMs": 118,
-      "requests": [
-        {
-          "method": "GET",
-          "path": "/api/positions",
-          "statusCode": 200,
-          "durationMs": 765
-        }
-      ],
+      "visibleMs": 26,
+      "networkIdleMs": 109,
+      "requests": [],
       "consoleErrors": [],
       "notes": [],
       "isWrite": false,
@@ -1210,26 +1310,26 @@
       "route": "/puestos/:id",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 806,
-      "networkIdleMs": 1613,
+      "visibleMs": 820,
+      "networkIdleMs": 1472,
       "requests": [
         {
           "method": "GET",
           "path": "/api/workforce/notifications-unread-count",
           "statusCode": 200,
-          "durationMs": 174
+          "durationMs": 176
         },
         {
           "method": "GET",
           "path": "/api/positions/:id",
           "statusCode": 200,
-          "durationMs": 498
+          "durationMs": 370
         },
         {
           "method": "GET",
           "path": "/api/positions/:id/employees",
           "statusCode": 200,
-          "durationMs": 572
+          "durationMs": 543
         }
       ],
       "consoleErrors": [],
@@ -1244,8 +1344,8 @@
       "route": "/puestos/:id",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 48,
-      "networkIdleMs": 250,
+      "visibleMs": 27,
+      "networkIdleMs": 231,
       "requests": [],
       "consoleErrors": [],
       "notes": [
@@ -1287,26 +1387,26 @@
       "route": "/puestos/nuevo",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 86,
-      "networkIdleMs": 761,
+      "visibleMs": 75,
+      "networkIdleMs": 1120,
       "requests": [
         {
           "method": "GET",
           "path": "/api/positions",
           "statusCode": 200,
-          "durationMs": 1
+          "durationMs": 2
         },
         {
           "method": "GET",
           "path": "/api/workforce/notifications-unread-count",
           "statusCode": 200,
-          "durationMs": 175
+          "durationMs": 200
         },
         {
           "method": "GET",
           "path": "/api/salary-categories",
           "statusCode": 200,
-          "durationMs": 184
+          "durationMs": 548
         }
       ],
       "consoleErrors": [],
@@ -1323,14 +1423,14 @@
       "route": "/puestos",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 53,
-      "networkIdleMs": 134,
+      "visibleMs": 59,
+      "networkIdleMs": 141,
       "requests": [
         {
           "method": "GET",
           "path": "/api/positions",
           "statusCode": 200,
-          "durationMs": 1
+          "durationMs": 186
         }
       ],
       "consoleErrors": [],
@@ -1357,123 +1457,123 @@
       "method": "GET",
       "path": "/api/dashboard/metrics",
       "statusCode": 200,
-      "durationMs": 1596
-    },
-    {
-      "method": "GET",
-      "path": "/api/audit-parameters",
-      "statusCode": 200,
-      "durationMs": 1319
-    },
-    {
-      "method": "GET",
-      "path": "/api/positions",
-      "statusCode": 200,
-      "durationMs": 1278
-    },
-    {
-      "method": "POST",
-      "path": "/api/auth/login",
-      "statusCode": 200,
-      "durationMs": 1113
-    },
-    {
-      "method": "GET",
-      "path": "/api/work-regimes/:id/employees",
-      "statusCode": 200,
-      "durationMs": 939
+      "durationMs": 2866
     },
     {
       "method": "GET",
       "path": "/api/audit",
       "statusCode": 200,
-      "durationMs": 860
+      "durationMs": 2083
+    },
+    {
+      "method": "GET",
+      "path": "/api/org-structure",
+      "statusCode": 200,
+      "durationMs": 1843
     },
     {
       "method": "GET",
       "path": "/api/positions",
       "statusCode": 200,
-      "durationMs": 765
+      "durationMs": 1769
+    },
+    {
+      "method": "GET",
+      "path": "/api/audit-parameters",
+      "statusCode": 200,
+      "durationMs": 1523
     },
     {
       "method": "GET",
       "path": "/api/work-regimes/:id/employees",
       "statusCode": 200,
-      "durationMs": 712
+      "durationMs": 1373
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/login",
+      "statusCode": 200,
+      "durationMs": 1172
     },
     {
       "method": "GET",
-      "path": "/api/workforce/notifications-unread-count",
+      "path": "/api/work-regimes/:id/employees",
       "statusCode": 200,
-      "durationMs": 604
+      "durationMs": 1028
     },
     {
       "method": "GET",
-      "path": "/api/positions/:id/employees",
+      "path": "/api/hour-concepts/:id/rules",
       "statusCode": 200,
-      "durationMs": 572
+      "durationMs": 880
+    },
+    {
+      "method": "GET",
+      "path": "/api/hour-concepts/:id/employees",
+      "statusCode": 200,
+      "durationMs": 872
     }
   ],
   "slowestActions": [
     {
       "name": "Login (acceso rápido RRHH)",
       "zone": "Login",
-      "visibleMs": 494,
-      "networkIdleMs": 3722
-    },
-    {
-      "name": "Entrar a Parámetros de auditoría",
-      "zone": "K. Parámetros de auditoría",
-      "visibleMs": 69,
-      "networkIdleMs": 1876
-    },
-    {
-      "name": "Entrar a Horas especiales",
-      "zone": "D. Horas especiales",
-      "visibleMs": 75,
-      "networkIdleMs": 1843
-    },
-    {
-      "name": "Ver detalle de puesto",
-      "zone": "M. Puesto (detalle)",
-      "visibleMs": 806,
-      "networkIdleMs": 1613
-    },
-    {
-      "name": "Seleccionar fecha de feriado",
-      "zone": "C. Asignaciones de feriados",
-      "visibleMs": 807,
-      "networkIdleMs": 1212
-    },
-    {
-      "name": "Ver detalle de turno",
-      "zone": "B. Turnos",
-      "visibleMs": 306,
-      "networkIdleMs": 1130
-    },
-    {
-      "name": "Entrar a Puestos",
-      "zone": "L. Puestos (listado)",
-      "visibleMs": 77,
-      "networkIdleMs": 1126
-    },
-    {
-      "name": "Entrar a Tipos de novedades",
-      "zone": "G. Tipos de novedades",
-      "visibleMs": 71,
-      "networkIdleMs": 1106
+      "visibleMs": 617,
+      "networkIdleMs": 5175
     },
     {
       "name": "Entrar a Asignaciones de feriados",
       "zone": "C. Asignaciones de feriados",
-      "visibleMs": 76,
-      "networkIdleMs": 1089
+      "visibleMs": 63,
+      "networkIdleMs": 2404
+    },
+    {
+      "name": "Entrar a Horas especiales",
+      "zone": "D. Horas especiales",
+      "visibleMs": 78,
+      "networkIdleMs": 2333
+    },
+    {
+      "name": "Entrar a Parámetros de auditoría",
+      "zone": "K. Parámetros de auditoría",
+      "visibleMs": 74,
+      "networkIdleMs": 2081
+    },
+    {
+      "name": "Ver detalle de puesto",
+      "zone": "M. Puesto (detalle)",
+      "visibleMs": 820,
+      "networkIdleMs": 1472
+    },
+    {
+      "name": "Ver detalle de turno",
+      "zone": "B. Turnos",
+      "visibleMs": 322,
+      "networkIdleMs": 1414
     },
     {
       "name": "Entrar a Conceptos horarios",
       "zone": "H. Conceptos horarios",
-      "visibleMs": 65,
-      "networkIdleMs": 989
+      "visibleMs": 80,
+      "networkIdleMs": 1389
+    },
+    {
+      "name": "Filtrar vigencia de empleados asociados",
+      "zone": "E. Regímenes laborales",
+      "visibleMs": 1285,
+      "networkIdleMs": 1369
+    },
+    {
+      "name": "Entrar a Puestos",
+      "zone": "L. Puestos (listado)",
+      "visibleMs": 72,
+      "networkIdleMs": 1263
+    },
+    {
+      "name": "Seleccionar fecha de feriado",
+      "zone": "C. Asignaciones de feriados",
+      "visibleMs": 828,
+      "networkIdleMs": 1233
     }
   ],
   "repeatedEndpoints": [
@@ -1482,8 +1582,8 @@
       "method": "GET",
       "path": "/api/workforce/notifications-unread-count",
       "count": 15,
-      "avgDurationMs": 247,
-      "maxDurationMs": 604,
+      "avgDurationMs": 357,
+      "maxDurationMs": 868,
       "statusCodes": [
         200,
         200,
@@ -1509,8 +1609,8 @@
       "method": "GET",
       "path": "/api/workforce/shift-templates",
       "count": 3,
-      "avgDurationMs": 169,
-      "maxDurationMs": 335,
+      "avgDurationMs": 182,
+      "maxDurationMs": 366,
       "statusCodes": [
         200,
         200,
@@ -1523,11 +1623,10 @@
       "key": "GET /api/positions",
       "method": "GET",
       "path": "/api/positions",
-      "count": 6,
-      "avgDurationMs": 495,
-      "maxDurationMs": 1278,
+      "count": 5,
+      "avgDurationMs": 640,
+      "maxDurationMs": 1769,
       "statusCodes": [
-        200,
         200,
         200,
         200,
@@ -1542,8 +1641,8 @@
       "method": "GET",
       "path": "/api/work-regimes/:id/employees",
       "count": 2,
-      "avgDurationMs": 826,
-      "maxDurationMs": 939,
+      "avgDurationMs": 1201,
+      "maxDurationMs": 1373,
       "statusCodes": [
         200,
         200
@@ -1562,8 +1661,8 @@
           "path": "/api/work-regimes/:id/employees",
           "count": 2,
           "durationsMs": [
-            939,
-            712
+            1373,
+            1028
           ]
         }
       ]
@@ -1577,8 +1676,8 @@
           "path": "/api/positions",
           "count": 2,
           "durationsMs": [
-            365,
-            562
+            539,
+            706
           ]
         }
       ]
@@ -1652,10 +1751,40 @@
       "reason": "Prohibido por defecto — acción de escritura (PATCH /novelty-types/:id)."
     },
     {
-      "name": "Crear/Editar concepto horario",
+      "name": "Abrir modal Nueva regla horaria",
+      "zone": "H. Conceptos horarios",
+      "isWrite": false,
+      "reason": "no se encontró el disparador de este modal en el estado actual del entorno"
+    },
+    {
+      "name": "Cerrar modal Nueva regla horaria",
+      "zone": "H. Conceptos horarios",
+      "isWrite": false,
+      "reason": "depende de la acción anterior, salteada"
+    },
+    {
+      "name": "Crear concepto horario / Guardar cambios del concepto",
       "zone": "H. Conceptos horarios",
       "isWrite": true,
-      "reason": "El editor (con panel de reglas y empleados asociados embebidos) es inline de escritura (no el componente Modal compartido) — misma política de alcance que Horas especiales; el submit real es POST/PATCH /hour-concepts[/:id]."
+      "reason": "Prohibido por defecto — acción de escritura (POST/PATCH /hour-concepts[/:id])."
+    },
+    {
+      "name": "Crear/Editar regla horaria (Guardar)",
+      "zone": "H. Conceptos horarios",
+      "isWrite": true,
+      "reason": "Prohibido por defecto — el modal se abre y se cierra sin tocar este botón (POST/PATCH /hour-concept-rules[/:id])."
+    },
+    {
+      "name": "Activar/Inactivar regla horaria",
+      "zone": "H. Conceptos horarios",
+      "isWrite": true,
+      "reason": "Prohibido por defecto — acción de escritura (PATCH /hour-concept-rules/:id/status)."
+    },
+    {
+      "name": "Agregar/Quitar empleados habilitados",
+      "zone": "H. Conceptos horarios",
+      "isWrite": true,
+      "reason": "Prohibido por defecto — acciones de escritura (POST /hour-concepts/:id/employees, DELETE /hour-concepts/:id/employees/:employeeId)."
     },
     {
       "name": "Deshabilitar/Eliminar concepto horario",

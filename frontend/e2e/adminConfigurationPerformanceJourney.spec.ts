@@ -512,12 +512,67 @@ test("admin configuration performance journey — recorrido macro de Configuraci
     return { visibleLocator: page.locator("table tbody tr, .empty").first() };
   });
 
-  skip(
-    "Crear/Editar concepto horario",
-    ZONE.conceptosHorarios,
-    "El editor (con panel de reglas y empleados asociados embebidos) es inline de escritura (no el componente Modal compartido) — misma política de alcance que Horas especiales; el submit real es POST/PATCH /hour-concepts[/:id].",
-    true,
-  );
+  // Limpieza silenciosa (fuera de measure(), no cuenta como acción medida —
+  // mismo criterio que resetPeriodQuietly() en el journey de Gestión horaria)
+  // de la búsqueda y el filtro de Tipo aplicados arriba: ambos son 100%
+  // client-side, así que sin este reset la tabla podría quedar acotada a
+  // "Todas protegidas" o "sin filas" y la acción de abrir detalle de abajo
+  // saltearía siempre por un motivo ajeno a lo que mide.
+  await page.getByPlaceholder("Buscar por codigo, nombre o tipo").fill("", { timeout: ACTION_TIMEOUT_MS }).catch(() => undefined);
+  await page.getByLabel("Tipo").selectOption("").catch(() => undefined);
+  await page.waitForTimeout(150);
+
+  // Etapa 14H.5: único editor inline de Configuración que este journey abre
+  // (en modo lectura) — abrir "Editar" es 100% local (sin request propio,
+  // confirmado leyendo HourConceptsPage.tsx), sólo los paneles hijos que
+  // monta (HourConceptRulesPanel + AssociatedEmployeesPanel embedded)
+  // disparan red real. Nunca se toca "Guardar"/"Guardar regla"/"Guardar
+  // cambios". Se busca la primera fila NO protegida (systemRole !==
+  // NORMAL_BASE no tiene botón "Editar", muestra el badge "Protegido" en su
+  // lugar) — .first() ya cae ahí porque las filas protegidas no tienen ese
+  // botón en absoluto.
+  const hourConceptEditButton = page.getByRole("button", { name: "Editar" }).first();
+  if (await hourConceptEditButton.count()) {
+    await measure("Abrir detalle de concepto horario (Editar)", ZONE.conceptosHorarios, false, async () => {
+      await hourConceptEditButton.click();
+      // Sin visibleLocator a propósito: "Empleados habilitados" (el título del
+      // panel embebido) es estático y se renderiza de inmediato al montar,
+      // ANTES de que la data llegue — no sirve para confirmar que
+      // getHourConceptEmployees/listByConcept ya resolvieron. El estado
+      // final (loading/error/empty/con filas) varía según el concepto real
+      // que haya en el entorno, así que se confía en preNetworkIdleWaitMs +
+      // el chequeo de networkidle de más abajo para capturar ambos requests.
+      return { preNetworkIdleWaitMs: 400 };
+    });
+
+    if (actions.at(-1)!.covered) {
+      await measureModalOpenAndCancel(
+        "Abrir modal Nueva regla horaria",
+        "Cerrar modal Nueva regla horaria",
+        ZONE.conceptosHorarios,
+        page.getByRole("button", { name: "Nueva regla" }),
+      );
+
+      await measure("Cerrar detalle de concepto horario sin guardar", ZONE.conceptosHorarios, false, async () => {
+        await page.getByRole("button", { name: "Cancelar" }).first().click();
+        return { hiddenLocator: page.getByText("Empleados habilitados") };
+      });
+    } else {
+      skip("Abrir modal Nueva regla horaria", ZONE.conceptosHorarios, "depende de la acción anterior, que falló");
+      skip("Cerrar modal Nueva regla horaria", ZONE.conceptosHorarios, "depende de la acción anterior, salteada");
+      skip("Cerrar detalle de concepto horario sin guardar", ZONE.conceptosHorarios, "depende de la acción anterior, que falló");
+    }
+  } else {
+    skip("Abrir detalle de concepto horario (Editar)", ZONE.conceptosHorarios, "no se encontró ningún concepto horario editable (no protegido) en el entorno actual");
+    skip("Abrir modal Nueva regla horaria", ZONE.conceptosHorarios, "depende de la acción anterior, salteada");
+    skip("Cerrar modal Nueva regla horaria", ZONE.conceptosHorarios, "depende de la acción anterior, salteada");
+    skip("Cerrar detalle de concepto horario sin guardar", ZONE.conceptosHorarios, "depende de la acción anterior, salteada");
+  }
+
+  skip("Crear concepto horario / Guardar cambios del concepto", ZONE.conceptosHorarios, "Prohibido por defecto — acción de escritura (POST/PATCH /hour-concepts[/:id]).", true);
+  skip("Crear/Editar regla horaria (Guardar)", ZONE.conceptosHorarios, "Prohibido por defecto — el modal se abre y se cierra sin tocar este botón (POST/PATCH /hour-concept-rules[/:id]).", true);
+  skip("Activar/Inactivar regla horaria", ZONE.conceptosHorarios, "Prohibido por defecto — acción de escritura (PATCH /hour-concept-rules/:id/status).", true);
+  skip("Agregar/Quitar empleados habilitados", ZONE.conceptosHorarios, "Prohibido por defecto — acciones de escritura (POST /hour-concepts/:id/employees, DELETE /hour-concepts/:id/employees/:employeeId).", true);
   skip("Deshabilitar/Eliminar concepto horario", ZONE.conceptosHorarios, "Prohibido por defecto — acciones de escritura (PATCH /hour-concepts/:id/status, DELETE /hour-concepts/:id).", true);
 
   // -------------------------------------------------------------------

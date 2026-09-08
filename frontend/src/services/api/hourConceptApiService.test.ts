@@ -1,14 +1,30 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { apiRequest } from "./apiClient";
+import { clearAllAppCaches, invalidateCacheFamily } from "../cache";
 import {
   buildHourConceptEmployeePath,
   buildHourConceptEmployeesPath,
   buildHourConceptPath,
   buildHourConceptRemovePath,
+  hourConceptApiService,
   mapHourConceptEmployeeAssociationFromApi,
   mapHourConceptFromApi,
   mapToApi,
 } from "./hourConceptApiService";
 import type { HourConcept } from "../../types/hourConcept.types";
+
+// Etapa 14H.5: sólo el describe de más abajo (getHourConceptEmployees/
+// enableEmployees/disableEmployee) usa `apiRequest` de verdad — el resto de
+// este archivo (mapeo puro) nunca lo invoca.
+vi.mock("./apiClient", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./apiClient")>();
+  return { ...actual, apiRequest: vi.fn() };
+});
+
+vi.mock("../cache", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../cache")>();
+  return { ...actual, invalidateCacheFamily: vi.fn(actual.invalidateCacheFamily) };
+});
 
 describe("mapHourConceptEmployeeAssociationFromApi — empleados habilitados para el concepto (Etapa 8G)", () => {
   it("mapea employeeId y los datos del empleado habilitado", () => {
@@ -227,5 +243,93 @@ describe("buildHourConceptEmployeesPath / buildHourConceptEmployeePath — endpo
   it("usa los ids reales pasados, no valores fijos", () => {
     expect(buildHourConceptEmployeesPath("otro-concepto")).toBe("/hour-concepts/otro-concepto/employees");
     expect(buildHourConceptEmployeePath("otro-concepto", "otro-empleado")).toBe("/hour-concepts/otro-concepto/employees/otro-empleado");
+  });
+});
+
+// Etapa 14H.5: getHourConceptEmployees() no tenía dedupe/cache frontend — se
+// dispara al abrir "Editar" en un concepto existente (AssociatedEmployeesPanel
+// embedded), un montaje fresco cada vez que StrictMode duplica en dev. Mismo
+// patrón ya usado 10+ veces en las series 14G/14H.
+describe("hourConceptApiService.getHourConceptEmployees — dedupe/cache frontend (Etapa 14H.5)", () => {
+  const employeesResponse = {
+    data: [{ employeeId: "employee-1", employee: { id: "employee-1", legajo: "100", cuil: "20-12345678-9", firstName: "Ana", lastName: "Prueba", status: "ACTIVO" as const, sector: null, costCenter: null, companies: [] } }],
+    meta: { total: 1, pageSize: 20, page: 1, hasMore: false },
+  };
+
+  beforeEach(async () => {
+    vi.mocked(apiRequest).mockReset();
+    vi.mocked(invalidateCacheFamily).mockClear();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-08T10:00:00.000Z"));
+    await clearAllAppCaches("test setup");
+  });
+
+  afterEach(async () => {
+    await clearAllAppCaches("test teardown");
+    vi.useRealTimers();
+  });
+
+  it("dos llamadas concurrentes con el mismo concepto/filtros generan un solo request real (dedupe in-flight)", async () => {
+    vi.mocked(apiRequest).mockResolvedValue(employeesResponse);
+
+    const [a, b] = await Promise.all([
+      hourConceptApiService.getHourConceptEmployees("concept-1"),
+      hourConceptApiService.getHourConceptEmployees("concept-1"),
+    ]);
+
+    expect(a.items).toHaveLength(1);
+    expect(b.items).toHaveLength(1);
+    expect(apiRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it("una segunda llamada dentro del TTL usa cache, no repite el request", async () => {
+    vi.mocked(apiRequest).mockResolvedValue(employeesResponse);
+
+    await hourConceptApiService.getHourConceptEmployees("concept-1");
+    await hourConceptApiService.getHourConceptEmployees("concept-1");
+
+    expect(apiRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it("cambiar de concepto es un cache miss nuevo (hourConceptId forma parte de la key)", async () => {
+    vi.mocked(apiRequest).mockResolvedValue(employeesResponse);
+
+    await hourConceptApiService.getHourConceptEmployees("concept-1");
+    await hourConceptApiService.getHourConceptEmployees("concept-2");
+
+    expect(apiRequest).toHaveBeenCalledTimes(2);
+  });
+
+  it("no cambia el contrato: sigue devolviendo { items, meta } con el mismo shape mapeado", async () => {
+    vi.mocked(apiRequest).mockResolvedValue(employeesResponse);
+
+    const result = await hourConceptApiService.getHourConceptEmployees("concept-1");
+
+    expect(result).toEqual({
+      items: [mapHourConceptEmployeeAssociationFromApi(employeesResponse.data[0]!)],
+      meta: employeesResponse.meta,
+    });
+  });
+
+  it.each([
+    ["enableEmployees", () => hourConceptApiService.enableEmployees("concept-1", ["employee-2"])],
+    ["disableEmployee", () => hourConceptApiService.disableEmployee("concept-1", "employee-1")],
+  ])("%s invalida la familia 'hour-concepts'", async (_name, mutate) => {
+    vi.mocked(apiRequest).mockResolvedValue({ data: {} });
+
+    await mutate();
+
+    expect(invalidateCacheFamily).toHaveBeenCalledWith("hour-concepts", expect.any(String));
+  });
+
+  it("después de invalidar 'hour-concepts' (p. ej. tras habilitar un empleado), getHourConceptEmployees vuelve a pedirse", async () => {
+    vi.mocked(apiRequest).mockResolvedValue(employeesResponse);
+    await hourConceptApiService.getHourConceptEmployees("concept-1");
+    expect(apiRequest).toHaveBeenCalledTimes(1);
+
+    await invalidateCacheFamily("hour-concepts", "unit test");
+
+    await hourConceptApiService.getHourConceptEmployees("concept-1");
+    expect(apiRequest).toHaveBeenCalledTimes(2);
   });
 });
