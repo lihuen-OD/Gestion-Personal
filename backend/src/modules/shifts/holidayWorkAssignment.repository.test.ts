@@ -92,6 +92,18 @@ describe("findCandidates — Etapa 12D", () => {
 
     expect(mockedPrisma.employee.findMany.mock.calls[0]![0]).toMatchObject({ skip: 40, take: 20 });
   });
+
+  // Etapa 14H.4: findMany/count ya no se piden dentro de una transacción
+  // interactiva (antipatrón que serializaba 2 lecturas independientes en
+  // una sola conexión) — ver holidayWorkAssignment.repository.ts.
+  it("pagina con Promise.all([findMany, count]) — sin $transaction (Etapa 14H.4)", async () => {
+    mockedPrisma.employee.findMany.mockResolvedValue([]);
+    mockedPrisma.employee.count.mockResolvedValue(0);
+
+    await holidayWorkAssignmentRepository.findCandidates({ page: 1, take: 100 }, {});
+
+    expect((prisma as unknown as { $transaction: Mock }).$transaction).not.toHaveBeenCalled();
+  });
 });
 
 describe("findByDate — Etapa 12D", () => {

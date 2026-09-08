@@ -1,4 +1,5 @@
 import { apiRequest } from "./apiClient";
+import { cachePolicies, cachedData } from "../cache";
 
 // Etapa 12D: fechas de feriado — vienen siempre de Horas Especiales
 // (DoubleHourRule.kind=FERIADO, Etapa 12B), nunca se calculan ni se
@@ -47,8 +48,21 @@ export type HolidayWorkCandidatesFilters = { sectorId?: string; shiftTemplateId?
 export type HolidayWorkCandidatesMeta = { total: number; page: number; pageSize: number; hasMore: boolean };
 
 export const holidayWorkAssignmentApiService = {
+  // Etapa 14H.4: envuelto con `cachedData` (dedupe in-flight, familia
+  // "workforce-config" compartida con doubleHourRulesCalendarByMonth -- ver
+  // cachePolicy.ts) -- el journey 14H.1/14H.3 detectó 2 requests duplicadas
+  // (StrictMode) al entrar a esta pantalla. Se invalida sola cuando cambia
+  // una regla de Horas Especiales (misma familia); no hace falta invalidarla
+  // desde saveAssignments (las convocatorias no cambian qué fechas son
+  // feriado).
   getHolidayDates(from: string, to: string) {
-    return apiRequest<{ data: HolidayDate[] }>(`/shifts/holiday-work/dates?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`, { apiCache: false }).then((response) => response.data);
+    const path = `/shifts/holiday-work/dates?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`;
+    return cachedData({
+      requestKey: `GET:${path}`,
+      policy: cachePolicies.holidayDatesByMonth,
+      fetcher: () => apiRequest<{ data: HolidayDate[] }>(path, { apiCache: false }).then((response) => response.data),
+      validate: (value) => Array.isArray(value),
+    });
   },
   getCandidates(filters: HolidayWorkCandidatesFilters = {}) {
     const params = new URLSearchParams();

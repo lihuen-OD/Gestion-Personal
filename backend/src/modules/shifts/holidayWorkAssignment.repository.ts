@@ -29,10 +29,19 @@ function candidatesWhere(query: HolidayWorkCandidatesQuery): Prisma.EmployeeWher
 }
 
 export const holidayWorkAssignmentRepository = {
+  // Etapa 14H.4: findMany + count son lecturas independientes (ninguna
+  // depende del resultado de la otra) — $transaction([...]) las pinaba a una
+  // única conexión de Neon en serie, sin ganar concurrencia real pese a
+  // pedirlas "juntas". Promise.all sobre el cliente global (pool de
+  // conexiones) sí las corre en paralelo. Mismo patrón ya aplicado 9+ veces
+  // en las series 14G/14H (ver docs/decisions/WORK_REGIMES_PERFORMANCE_AND_KEYS_14H2.md
+  // y anteriores) — where/select/orderBy/skip/take sin cambios, cero impacto
+  // de contrato. Este era, además, el endpoint más lento medido en esta
+  // pantalla (candidates, ~811ms en el journey 14H.1/14H.3).
   findCandidates(query: HolidayWorkCandidatesQuery, accessWhere: Prisma.EmployeeWhereInput) {
     const where: Prisma.EmployeeWhereInput = { AND: [candidatesWhere(query), accessWhere] };
     const skip = (query.page - 1) * query.take;
-    return prisma.$transaction([
+    return Promise.all([
       prisma.employee.findMany({
         where,
         select: {

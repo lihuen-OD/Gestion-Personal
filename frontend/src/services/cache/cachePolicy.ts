@@ -318,4 +318,23 @@ export const cachePolicies = {
     sensitive: false,
     schemaVersion: CACHE_SCHEMA_VERSION,
   },
+  // Etapa 14H.4: GET /shifts/holiday-work/dates (Asignaciones de feriados) no
+  // tenía dedupe frontend -- el journey 14H.1/14H.3 confirmó 2 requests
+  // duplicadas (StrictMode) al entrar a la pantalla. La respuesta sale de
+  // DoubleHourRule.kind=FERIADO (workforceService.holidayDatesInRange ->
+  // calendarPreview, ver workforce.service.ts) -- misma familia
+  // "workforce-config" que doubleHourRulesCalendarByMonth a propósito: ya
+  // se invalida sola cuando se crea/edita/elimina una regla de Horas
+  // Especiales (los 3 mutadores de DoubleHourRule en workforceApiService.ts,
+  // Etapa 14H.3), sin necesitar código de invalidación nuevo acá. Las
+  // convocatorias en sí (HolidayWorkAssignment, guardadas vía
+  // saveAssignments) NO afectan qué fechas son feriado, así que no hace
+  // falta invalidar esta cache al guardar una convocatoria.
+  holidayDatesByMonth: {
+    family: "workforce-config",
+    ttlMs: 30_000,
+    persist: false,
+    sensitive: false,
+    schemaVersion: CACHE_SCHEMA_VERSION,
+  },
 } satisfies Record<string, CachePolicy>;
