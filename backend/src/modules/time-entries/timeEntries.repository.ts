@@ -292,125 +292,135 @@ function buildReviewByEmployeeWhere(query: ListTimeEntriesQuery, employeeAccessW
   };
 }
 
+// Etapa 14G.7: `prisma.$transaction(async (tx) => {...})` (forma
+// interactiva) -> queries planas sobre el cliente `prisma` global. Mismo
+// antipatrón ya corregido 5 veces en esta serie (14C.2/14G.2/14G.3/14G.5/
+// 14G.6), documentado 2 veces sin corregir (14G.1 §15, 14G.5 §14): una
+// transacción interactiva usa una única conexión, así que el `Promise.all`
+// de `tx.*` de acá adentro no lograba concurrencia real (mismo hallazgo que
+// `findPeriodEmployees` tenía antes de 14C.2). Las 4 lecturas (employee
+// findMany+count, luego timeEntry+hourConceptBreakdown) son de sólo lectura
+// e independientes entre sí dentro de cada etapa — sin necesidad de una foto
+// transaccional consistente para una lista operativa que se refresca sola.
+// Mismos `where`/`select`/`orderBy`/`skip`/`take` exactos, misma lógica de
+// agregación en memoria (sin cambios).
 async function findManyByEmployeeGrouped(query: ListTimeEntriesQuery, employeeAccessWhere: Prisma.EmployeeWhereInput) {
   const employeeWhere = buildReviewByEmployeeWhere(query, employeeAccessWhere);
   const skip = (query.page - 1) * query.take;
 
-  return prisma.$transaction(async (tx) => {
-    const [employees, total] = await Promise.all([
-      tx.employee.findMany({
-        where: employeeWhere,
-        select: periodEmployeeSelect,
-        orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
-        skip,
-        take: query.take,
-      }),
-      tx.employee.count({ where: employeeWhere }),
-    ]);
+  const [employees, total] = await Promise.all([
+    prisma.employee.findMany({
+      where: employeeWhere,
+      select: periodEmployeeSelect,
+      orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
+      skip,
+      take: query.take,
+    }),
+    prisma.employee.count({ where: employeeWhere }),
+  ]);
 
-    const employeeIds = employees.map((employee) => employee.id);
-    const [entries, breakdowns] = employeeIds.length
-      ? await Promise.all([
-          tx.timeEntry.findMany({
-            where: {
-              employeeId: { in: employeeIds },
-              ...(query.status ? { status: query.status } : {}),
-              ...(query.period ? { period: query.period } : {}),
-              // Etapa 6M: este listado sólo resume Horas normales — los
-              // conceptos adicionales viven en HourConceptBreakdown, no acá.
-              hourConcept: { systemRole: "NORMAL_BASE" },
-            },
-            // Etapa 11C: appliedMultiplier/day/timeSegment se agregan para
-            // que "Por persona" deje de estar ciega a Horas Especiales —
-            // mismo criterio ya usado en findPeriodEmployees (11A.1) y
-            // buildAdditiveTimeGrid (11B): el multiplicador del día de la
-            // Hora normal también alcanza a los Conceptos Horarios
-            // adicionales cargados ese mismo día/empleado.
-            select: {
-              employeeId: true,
-              day: true,
-              hours: true,
-              appliedMultiplier: true,
-              timeSegment: {
-                select: {
-                  specialHourRuleApplications: {
-                    where: { isWinner: true },
-                    select: { wasConflicting: true, doubleHourRule: { select: { name: true } } },
-                  },
+  const employeeIds = employees.map((employee) => employee.id);
+  const [entries, breakdowns] = employeeIds.length
+    ? await Promise.all([
+        prisma.timeEntry.findMany({
+          where: {
+            employeeId: { in: employeeIds },
+            ...(query.status ? { status: query.status } : {}),
+            ...(query.period ? { period: query.period } : {}),
+            // Etapa 6M: este listado sólo resume Horas normales — los
+            // conceptos adicionales viven en HourConceptBreakdown, no acá.
+            hourConcept: { systemRole: "NORMAL_BASE" },
+          },
+          // Etapa 11C: appliedMultiplier/day/timeSegment se agregan para
+          // que "Por persona" deje de estar ciega a Horas Especiales —
+          // mismo criterio ya usado en findPeriodEmployees (11A.1) y
+          // buildAdditiveTimeGrid (11B): el multiplicador del día de la
+          // Hora normal también alcanza a los Conceptos Horarios
+          // adicionales cargados ese mismo día/empleado.
+          select: {
+            employeeId: true,
+            day: true,
+            hours: true,
+            appliedMultiplier: true,
+            timeSegment: {
+              select: {
+                specialHourRuleApplications: {
+                  where: { isWinner: true },
+                  select: { wasConflicting: true, doubleHourRule: { select: { name: true } } },
                 },
               },
             },
-          }),
-          query.period
-            ? tx.hourConceptBreakdown.findMany({
-                where: { employeeId: { in: employeeIds }, period: query.period, status: { not: "RECHAZADO" } },
-                select: { employeeId: true, day: true, minutes: true },
-              })
-            : Promise.resolve([]),
-        ])
-      : [[], []];
+          },
+        }),
+        query.period
+          ? prisma.hourConceptBreakdown.findMany({
+              where: { employeeId: { in: employeeIds }, period: query.period, status: { not: "RECHAZADO" } },
+              select: { employeeId: true, day: true, minutes: true },
+            })
+          : Promise.resolve([]),
+      ])
+    : [[], []];
 
-    const totalHoursByEmployee = new Map<string, number>();
-    // Etapa 11C: multiplicador ganador por empleado+día (sólo se completa si
-    // hay una Hora Especial ese día) — se resuelve primero para poder
-    // aplicarlo después a los Conceptos Horarios del mismo día/empleado.
-    const multiplierByEmployeeDay = new Map<string, Map<number, number>>();
-    const additionalByEmployee = new Map<string, number>();
-    const ruleNamesByEmployee = new Map<string, Set<string>>();
-    const conflictByEmployee = new Set<string>();
+  const totalHoursByEmployee = new Map<string, number>();
+  // Etapa 11C: multiplicador ganador por empleado+día (sólo se completa si
+  // hay una Hora Especial ese día) — se resuelve primero para poder
+  // aplicarlo después a los Conceptos Horarios del mismo día/empleado.
+  const multiplierByEmployeeDay = new Map<string, Map<number, number>>();
+  const additionalByEmployee = new Map<string, number>();
+  const ruleNamesByEmployee = new Map<string, Set<string>>();
+  const conflictByEmployee = new Set<string>();
 
-    for (const entry of entries) {
-      const realHours = Number(entry.hours.toString());
-      totalHoursByEmployee.set(entry.employeeId, (totalHoursByEmployee.get(entry.employeeId) || 0) + realHours);
+  for (const entry of entries) {
+    const realHours = Number(entry.hours.toString());
+    totalHoursByEmployee.set(entry.employeeId, (totalHoursByEmployee.get(entry.employeeId) || 0) + realHours);
 
-      const multiplier = Number(entry.appliedMultiplier ?? 1);
-      if (multiplier > 1) {
-        const dayMap = multiplierByEmployeeDay.get(entry.employeeId) || new Map<number, number>();
-        dayMap.set(entry.day, Math.max(dayMap.get(entry.day) ?? 1, multiplier));
-        multiplierByEmployeeDay.set(entry.employeeId, dayMap);
+    const multiplier = Number(entry.appliedMultiplier ?? 1);
+    if (multiplier > 1) {
+      const dayMap = multiplierByEmployeeDay.get(entry.employeeId) || new Map<number, number>();
+      dayMap.set(entry.day, Math.max(dayMap.get(entry.day) ?? 1, multiplier));
+      multiplierByEmployeeDay.set(entry.employeeId, dayMap);
 
-        additionalByEmployee.set(entry.employeeId, (additionalByEmployee.get(entry.employeeId) || 0) + realHours * (multiplier - 1));
+      additionalByEmployee.set(entry.employeeId, (additionalByEmployee.get(entry.employeeId) || 0) + realHours * (multiplier - 1));
 
-        const ruleNames = ruleNamesByEmployee.get(entry.employeeId) || new Set<string>();
-        for (const application of entry.timeSegment?.specialHourRuleApplications ?? []) {
-          ruleNames.add(application.doubleHourRule.name);
-          if (application.wasConflicting) conflictByEmployee.add(entry.employeeId);
-        }
-        ruleNamesByEmployee.set(entry.employeeId, ruleNames);
+      const ruleNames = ruleNamesByEmployee.get(entry.employeeId) || new Set<string>();
+      for (const application of entry.timeSegment?.specialHourRuleApplications ?? []) {
+        ruleNames.add(application.doubleHourRule.name);
+        if (application.wasConflicting) conflictByEmployee.add(entry.employeeId);
       }
+      ruleNamesByEmployee.set(entry.employeeId, ruleNames);
     }
+  }
 
-    const specialByEmployee = new Map<string, number>();
-    for (const breakdown of breakdowns) {
-      const hours = breakdown.minutes / 60;
-      specialByEmployee.set(breakdown.employeeId, (specialByEmployee.get(breakdown.employeeId) || 0) + hours);
-      // Etapa 11C: mismo multiplicador ya resuelto para la Hora normal de
-      // ese día/empleado — DoubleHourRule no distingue por concepto (11A.1).
-      const multiplier = multiplierByEmployeeDay.get(breakdown.employeeId)?.get(breakdown.day) ?? 1;
-      if (multiplier > 1) {
-        additionalByEmployee.set(breakdown.employeeId, (additionalByEmployee.get(breakdown.employeeId) || 0) + hours * (multiplier - 1));
-      }
+  const specialByEmployee = new Map<string, number>();
+  for (const breakdown of breakdowns) {
+    const hours = breakdown.minutes / 60;
+    specialByEmployee.set(breakdown.employeeId, (specialByEmployee.get(breakdown.employeeId) || 0) + hours);
+    // Etapa 11C: mismo multiplicador ya resuelto para la Hora normal de
+    // ese día/empleado — DoubleHourRule no distingue por concepto (11A.1).
+    const multiplier = multiplierByEmployeeDay.get(breakdown.employeeId)?.get(breakdown.day) ?? 1;
+    if (multiplier > 1) {
+      additionalByEmployee.set(breakdown.employeeId, (additionalByEmployee.get(breakdown.employeeId) || 0) + hours * (multiplier - 1));
     }
+  }
 
-    const items = employees.map((employee) => {
-      const employeeTotal = totalHoursByEmployee.get(employee.id) || 0;
-      const employeeSpecial = specialByEmployee.get(employee.id) || 0;
-      const employeeAdditional = additionalByEmployee.get(employee.id) || 0;
-      return {
-        employee,
-        summary: {
-          total: employeeTotal,
-          status: query.status || ApprovalStatus.EN_REVISION,
-          specialHourAdditionalHours: employeeAdditional,
-          specialHourLiquidableTotal: employeeTotal + employeeSpecial + employeeAdditional,
-          specialHourRuleNames: Array.from(ruleNamesByEmployee.get(employee.id) || []),
-          specialHourConflict: conflictByEmployee.has(employee.id),
-        },
-      };
-    });
-
-    return [items, total] as const;
+  const items = employees.map((employee) => {
+    const employeeTotal = totalHoursByEmployee.get(employee.id) || 0;
+    const employeeSpecial = specialByEmployee.get(employee.id) || 0;
+    const employeeAdditional = additionalByEmployee.get(employee.id) || 0;
+    return {
+      employee,
+      summary: {
+        total: employeeTotal,
+        status: query.status || ApprovalStatus.EN_REVISION,
+        specialHourAdditionalHours: employeeAdditional,
+        specialHourLiquidableTotal: employeeTotal + employeeSpecial + employeeAdditional,
+        specialHourRuleNames: Array.from(ruleNamesByEmployee.get(employee.id) || []),
+        specialHourConflict: conflictByEmployee.has(employee.id),
+      },
+    };
   });
+
+  return [items, total] as const;
 }
 
 function buildPeriodEmployeeWhere(query: TimeEntriesPeriodEmployeesQuery, employeeAccessWhere: Prisma.EmployeeWhereInput): Prisma.EmployeeWhereInput {
@@ -472,11 +482,20 @@ export const timeEntriesRepository = {
     });
   },
 
+  // Etapa 14G.7: `prisma.$transaction([...])` (forma array) -> `Promise.all([...])`
+  // sobre el cliente `prisma` global. Mismo antipatrón que
+  // `findManyByEmployeeGrouped` de arriba, encontrado en el mismo repositorio
+  // durante el mismo diagnóstico -- gobierna el mismo endpoint (`GET
+  // /time-entries`) del que depende la vista "Por registro" de la Bandeja de
+  // revisión (`view=flat`, el default). Las 2 queries son de sólo lectura e
+  // independientes (un listado + su count total), sin necesidad de una foto
+  // transaccional consistente entre sí. Mismos `where`/`include`/`orderBy`/
+  // `skip`/`take` exactos.
   findMany(query: ListTimeEntriesQuery, employeeAccessWhere: Prisma.EmployeeWhereInput) {
     if (query.view === "byEmployee") return findManyByEmployeeGrouped(query, employeeAccessWhere);
     const where = buildWhere(query, employeeAccessWhere);
     const skip = (query.page - 1) * query.take;
-    return prisma.$transaction([
+    return Promise.all([
       prisma.timeEntry.findMany({
         where,
         include: timeEntryInclude,
