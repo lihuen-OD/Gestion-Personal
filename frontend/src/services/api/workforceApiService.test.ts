@@ -65,7 +65,21 @@ describe("workforceApiService.reviewCorrection — invalidación de dashboard (E
 
     await workforceApiService.reviewCorrection("correction-1", "reject");
 
-    expect(invalidateCacheFamily).not.toHaveBeenCalled();
+    expect(invalidateCacheFamily).not.toHaveBeenCalledWith("dashboard", expect.any(String));
+  });
+
+  // Etapa 14G.8: ambas ramas invalidan "monthly-closures" -- rechazar también
+  // afecta la lista de correcciones (TimeCorrectionRequest.status cambia),
+  // aunque no toque TimeEntry/dashboard.
+  it("aprobar y rechazar invalidan la familia 'monthly-closures' (lista de correcciones/cierres)", async () => {
+    vi.mocked(apiRequest).mockResolvedValue({ data: { id: "correction-1", status: "APROBADA" } });
+    await workforceApiService.reviewCorrection("correction-1", "approve");
+    expect(invalidateCacheFamily).toHaveBeenCalledWith("monthly-closures", expect.any(String));
+
+    vi.mocked(invalidateCacheFamily).mockClear();
+    vi.mocked(apiRequest).mockResolvedValue({ data: { id: "correction-1", status: "RECHAZADA" } });
+    await workforceApiService.reviewCorrection("correction-1", "reject");
+    expect(invalidateCacheFamily).toHaveBeenCalledWith("monthly-closures", expect.any(String));
   });
 
   it("sigue devolviendo el registro de la corrección (sin cambiar el contrato)", async () => {
@@ -228,5 +242,121 @@ describe("workforceApiService.readNotification — invalidación del badge (Etap
     vi.mocked(apiRequest).mockResolvedValue({ ok: true });
 
     await expect(workforceApiService.readNotification("notif-1")).resolves.toEqual({ ok: true });
+  });
+});
+
+// Etapa 14G.8: antes de esta etapa, closures()/corrections() llamaban
+// apiRequest directo sin ningún dedupe/cache frontend — en StrictMode
+// (MonthlyClosuresPage monta el effect dos veces) esto generaba 2 requests
+// idénticos por mount, confirmado en el journey de 14G.6/14G.7 ("Entrar a
+// Cierres mensuales": GET /workforce/closures x2, GET /workforce/corrections
+// x2). Mismo patrón exacto que unreadNotificationCount/notifications.
+describe("workforceApiService.closures/corrections — dedupe/cache frontend (Etapa 14G.8)", () => {
+  beforeEach(async () => {
+    vi.mocked(apiRequest).mockReset();
+    vi.mocked(invalidateCacheFamily).mockClear();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-08T10:00:00.000Z"));
+    await clearAllAppCaches("test setup");
+  });
+
+  afterEach(async () => {
+    await clearAllAppCaches("test teardown");
+    vi.useRealTimers();
+  });
+
+  it("closures: dos llamadas concurrentes con el mismo período generan un solo request real (dedupe in-flight)", async () => {
+    vi.mocked(apiRequest).mockResolvedValue({ data: [{ id: "closure-1" }] });
+
+    const [a, b] = await Promise.all([workforceApiService.closures("2026-08"), workforceApiService.closures("2026-08")]);
+
+    expect(a).toEqual([{ id: "closure-1" }]);
+    expect(b).toEqual([{ id: "closure-1" }]);
+    expect(apiRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it("closures: una segunda llamada idéntica dentro del TTL usa cache, no repite el request", async () => {
+    vi.mocked(apiRequest).mockResolvedValue({ data: [{ id: "closure-1" }] });
+
+    await workforceApiService.closures("2026-08");
+    await workforceApiService.closures("2026-08");
+
+    expect(apiRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it("closures: cambiar de período es un cache miss nuevo (no sirve el período anterior)", async () => {
+    vi.mocked(apiRequest).mockResolvedValue({ data: [] });
+
+    await workforceApiService.closures("2026-08");
+    await workforceApiService.closures("2026-07");
+
+    expect(apiRequest).toHaveBeenCalledTimes(2);
+  });
+
+  it("corrections: dos llamadas concurrentes generan un solo request real (dedupe in-flight)", async () => {
+    vi.mocked(apiRequest).mockResolvedValue({ data: [{ id: "correction-1" }] });
+
+    const [a, b] = await Promise.all([workforceApiService.corrections(), workforceApiService.corrections()]);
+
+    expect(a).toEqual([{ id: "correction-1" }]);
+    expect(b).toEqual([{ id: "correction-1" }]);
+    expect(apiRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it("corrections: una segunda llamada dentro del TTL usa cache, no repite el request", async () => {
+    vi.mocked(apiRequest).mockResolvedValue({ data: [{ id: "correction-1" }] });
+
+    await workforceApiService.corrections();
+    await workforceApiService.corrections();
+
+    expect(apiRequest).toHaveBeenCalledTimes(1);
+  });
+
+  // Confirma el objetivo real de compartir familia "monthly-closures":
+  // corrections() no depende del período, así que un segundo llamado (p. ej.
+  // disparado por un cambio de período que sí re-pide closures) sigue
+  // sirviendo el valor cacheado sin un request nuevo.
+  it("corrections: no se vuelve a pedir aunque closures() cambie de período en el medio", async () => {
+    vi.mocked(apiRequest).mockImplementation((url: string) => {
+      if (url.startsWith("/workforce/corrections")) return Promise.resolve({ data: [{ id: "correction-1" }] });
+      return Promise.resolve({ data: [{ id: "closure-1" }] });
+    });
+
+    await Promise.all([workforceApiService.closures("2026-08"), workforceApiService.corrections()]);
+    const callsBefore = vi.mocked(apiRequest).mock.calls.filter((call) => String(call[0]).startsWith("/workforce/corrections")).length;
+
+    await Promise.all([workforceApiService.closures("2026-07"), workforceApiService.corrections()]);
+    const callsAfter = vi.mocked(apiRequest).mock.calls.filter((call) => String(call[0]).startsWith("/workforce/corrections")).length;
+
+    expect(callsBefore).toBe(1);
+    expect(callsAfter).toBe(1); // sin cambios: corrections() sigue siendo un cache hit
+  });
+
+  it.each([
+    ["submitClosures", () => workforceApiService.submitClosures("2026-08", ["emp-1"])],
+    ["approveClosures", () => workforceApiService.approveClosures(["closure-1"])],
+    ["returnClosure", () => workforceApiService.returnClosure("closure-1", "falta revisar")],
+    ["createCorrection", () => workforceApiService.createCorrection({ timeEntryId: "entry-1", proposedHours: 9, reason: "olvido" })],
+  ])("%s invalida la familia 'monthly-closures'", async (_name, mutate) => {
+    vi.mocked(apiRequest).mockResolvedValue({ data: [] });
+
+    await mutate();
+
+    expect(invalidateCacheFamily).toHaveBeenCalledWith("monthly-closures", expect.any(String));
+  });
+
+  it("después de invalidar 'monthly-closures' (p. ej. tras aprobar un cierre), closures/corrections vuelven a pedirse", async () => {
+    vi.mocked(apiRequest).mockResolvedValue({ data: [{ id: "closure-1", status: "ENVIADO" }] });
+    await workforceApiService.closures("2026-08");
+    await workforceApiService.corrections();
+    expect(apiRequest).toHaveBeenCalledTimes(2);
+
+    await invalidateCacheFamily("monthly-closures", "unit test");
+
+    vi.mocked(apiRequest).mockResolvedValue({ data: [{ id: "closure-1", status: "APROBADO" }] });
+    await workforceApiService.closures("2026-08");
+    await workforceApiService.corrections();
+
+    expect(apiRequest).toHaveBeenCalledTimes(4);
   });
 });

@@ -18,7 +18,7 @@ vi.mock("../../shared/prisma/client", () => ({
     employee: { count: vi.fn(), findMany: vi.fn() },
     timeEntry: { groupBy: vi.fn(), findFirst: vi.fn(), update: vi.fn() },
     monthlyTimeClosure: { findMany: vi.fn(), findUnique: vi.fn(), update: vi.fn(), updateMany: vi.fn(), upsert: vi.fn() },
-    timeCorrectionRequest: { findUnique: vi.fn(), findUniqueOrThrow: vi.fn(), update: vi.fn(), create: vi.fn() },
+    timeCorrectionRequest: { findMany: vi.fn(), findUnique: vi.fn(), findUniqueOrThrow: vi.fn(), update: vi.fn(), create: vi.fn() },
     shiftTemplate: { create: vi.fn(), findUnique: vi.fn(), update: vi.fn(), delete: vi.fn() },
     doubleHourRule: { create: vi.fn(), findUnique: vi.fn(), findMany: vi.fn(), update: vi.fn(), delete: vi.fn() },
     systemNotification: { findMany: vi.fn(), count: vi.fn() },
@@ -37,7 +37,7 @@ const mockedPrisma = prisma as unknown as {
   employee: { count: Mock; findMany: Mock };
   timeEntry: { groupBy: Mock; findFirst: Mock; update: Mock };
   monthlyTimeClosure: { findMany: Mock; findUnique: Mock; update: Mock; updateMany: Mock; upsert: Mock };
-  timeCorrectionRequest: { findUnique: Mock; findUniqueOrThrow: Mock; update: Mock; create: Mock };
+  timeCorrectionRequest: { findMany: Mock; findUnique: Mock; findUniqueOrThrow: Mock; update: Mock; create: Mock };
   shiftTemplate: { create: Mock; findUnique: Mock; update: Mock; delete: Mock };
   doubleHourRule: { create: Mock; findUnique: Mock; findMany: Mock; update: Mock; delete: Mock };
   systemNotification: { findMany: Mock; count: Mock };
@@ -155,6 +155,61 @@ describe("workforceService — auditoria en correcciones/cierres (hueco cerrado)
     await workforceService.rejectCorrection("correction-1", "no corresponde", user);
 
     expect(auditService.register).toHaveBeenCalledWith(expect.objectContaining({ action: "REJECT", entity: "TimeCorrectionRequest", entityId: "correction-1" }));
+  });
+});
+
+// Etapa 14G.8: `closures`/`corrections` ya eran una sola query cada una (sin
+// `$transaction`, sin antipatrón que corregir) -- estos tests fijan el
+// contrato (scope, filtros, orden) que la cache backend nueva (§ workforce.
+// controller.test.ts) debe preservar exactamente.
+describe("workforceService.closures/corrections — contrato preservado (Etapa 14G.8)", () => {
+  it("closures filtra por período y por el scope del usuario (employeeAccessWhere)", async () => {
+    mockedPrisma.monthlyTimeClosure.findMany.mockResolvedValue([]);
+
+    await workforceService.closures("2026-08", supervisor);
+
+    expect(mockedPrisma.monthlyTimeClosure.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ period: "2026-08" }) }),
+    );
+  });
+
+  it("closures ordena por apellido del empleado ascendente", async () => {
+    mockedPrisma.monthlyTimeClosure.findMany.mockResolvedValue([]);
+
+    await workforceService.closures("2026-08", user);
+
+    expect(mockedPrisma.monthlyTimeClosure.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ orderBy: { employee: { lastName: "asc" } } }),
+    );
+  });
+
+  it("closures devuelve exactamente lo que resuelve la query (sin transformar el shape)", async () => {
+    const rows = [{ id: "closure-1", employeeId: "emp-1", period: "2026-08", status: "ENVIADO" }];
+    mockedPrisma.monthlyTimeClosure.findMany.mockResolvedValue(rows);
+
+    const result = await workforceService.closures("2026-08", user);
+
+    expect(result).toEqual(rows);
+  });
+
+  it("corrections filtra por el scope del usuario (employeeAccessWhere), sin filtro de período (lo aplica el frontend)", async () => {
+    mockedPrisma.timeCorrectionRequest.findMany.mockResolvedValue([]);
+
+    await workforceService.corrections(supervisor);
+
+    expect(mockedPrisma.timeCorrectionRequest.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { employee: expect.anything() } }),
+    );
+  });
+
+  it("corrections pide take:500, ordenado por fecha de creación descendente", async () => {
+    mockedPrisma.timeCorrectionRequest.findMany.mockResolvedValue([]);
+
+    await workforceService.corrections(user);
+
+    expect(mockedPrisma.timeCorrectionRequest.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ take: 500, orderBy: { createdAt: "desc" } }),
+    );
   });
 });
 

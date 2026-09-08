@@ -5,7 +5,7 @@ import { workforceController } from "./workforce.controller";
 import { workforceService } from "./workforce.service";
 import { clearTimeEntriesReadCaches } from "../time-entries/timeEntries.cache";
 import { clearEmployeeReadCaches } from "../employees/employees.controller";
-import { doubleRulesCache, notificationsListCache, shiftTemplatesCache } from "./workforce.cache";
+import { closuresCache, correctionsCache, doubleRulesCache, notificationsListCache, shiftTemplatesCache } from "./workforce.cache";
 
 vi.mock("./workforce.service", () => ({
   workforceService: {
@@ -20,6 +20,13 @@ vi.mock("./workforce.service", () => ({
     createDoubleRule: vi.fn(),
     updateDoubleRule: vi.fn(),
     removeDoubleRule: vi.fn(),
+    closures: vi.fn(),
+    submitClosures: vi.fn(),
+    approveClosures: vi.fn(),
+    returnClosure: vi.fn(),
+    corrections: vi.fn(),
+    createCorrection: vi.fn(),
+    rejectCorrection: vi.fn(),
   },
 }));
 
@@ -40,6 +47,8 @@ const mockedService = workforceService as unknown as {
   markNotificationRead: Mock;
   shiftTemplates: Mock; createShiftTemplate: Mock; updateShiftTemplate: Mock; removeShiftTemplate: Mock;
   doubleRules: Mock; createDoubleRule: Mock; updateDoubleRule: Mock; removeDoubleRule: Mock;
+  closures: Mock; submitClosures: Mock; approveClosures: Mock; returnClosure: Mock;
+  corrections: Mock; createCorrection: Mock; rejectCorrection: Mock;
 };
 const mockedClearTimeEntriesReadCaches = clearTimeEntriesReadCaches as unknown as Mock;
 const mockedClearEmployeeReadCaches = clearEmployeeReadCaches as unknown as Mock;
@@ -69,6 +78,8 @@ beforeEach(() => {
   shiftTemplatesCache.clear();
   doubleRulesCache.clear();
   notificationsListCache.clear();
+  closuresCache.clear();
+  correctionsCache.clear();
   mockedService.approveCorrection.mockResolvedValue({ id: "correction-1", status: "APROBADA" });
 });
 
@@ -374,5 +385,166 @@ describe("workforceController.notifications — cache backend (Etapa 14G.6)", ()
 
     expect(mockedService.notifications).toHaveBeenCalledTimes(2);
     expect(resAfter.json).toHaveBeenCalledWith({ data: result.items, meta: expect.objectContaining({ total: 0 }) });
+  });
+});
+
+// Etapa 14G.8: cache de lectura TTL corto (15s) para closures/corrections --
+// mismo patrón que shiftTemplates/doubleRules/notifications, cache real sin
+// mockear.
+describe("workforceController.closures — cache backend (Etapa 14G.8)", () => {
+  const closures = [{ id: "closure-1", employeeId: "emp-1", period: "2026-08", status: "ENVIADO" }];
+
+  it("la primera llamada lee del service", async () => {
+    mockedService.closures.mockResolvedValue(closures);
+    const req = fakeReq({ originalUrl: "/workforce/closures?period=2026-08", query: { period: "2026-08" } });
+    const res = fakeRes();
+
+    await workforceController.closures(req, res);
+
+    expect(mockedService.closures).toHaveBeenCalledTimes(1);
+    expect(res.json).toHaveBeenCalledWith({ data: closures });
+  });
+
+  it("la segunda llamada idéntica (mismo período, mismo usuario) usa el cache, sin volver a golpear el service", async () => {
+    mockedService.closures.mockResolvedValue(closures);
+    const req = fakeReq({ originalUrl: "/workforce/closures?period=2026-08", query: { period: "2026-08" } });
+
+    await workforceController.closures(req, fakeRes());
+    const res2 = fakeRes();
+    await workforceController.closures(req, res2);
+
+    expect(mockedService.closures).toHaveBeenCalledTimes(1);
+    expect(res2.json).toHaveBeenCalledWith({ data: closures });
+  });
+
+  it("cambiar el período es un cache miss nuevo, aunque sea el mismo usuario", async () => {
+    mockedService.closures
+      .mockResolvedValueOnce(closures)
+      .mockResolvedValueOnce([{ ...closures[0], period: "2026-07" }]);
+
+    await workforceController.closures(fakeReq({ originalUrl: "/workforce/closures?period=2026-08", query: { period: "2026-08" } }), fakeRes());
+    await workforceController.closures(fakeReq({ originalUrl: "/workforce/closures?period=2026-07", query: { period: "2026-07" } }), fakeRes());
+
+    expect(mockedService.closures).toHaveBeenCalledTimes(2);
+  });
+
+  it("key scopeada por usuario: dos usuarios con el mismo período nunca comparten el resultado cacheado del otro", async () => {
+    mockedService.closures
+      .mockResolvedValueOnce(closures)
+      .mockResolvedValueOnce([{ ...closures[0], id: "closure-2" }]);
+
+    const resA = fakeRes();
+    await workforceController.closures(fakeReq({ originalUrl: "/workforce/closures?period=2026-08", user: { id: "user-a", role: "NIVEL_1_RRHH" } } as Partial<Request>), resA);
+    const resB = fakeRes();
+    await workforceController.closures(fakeReq({ originalUrl: "/workforce/closures?period=2026-08", user: { id: "user-b", role: "NIVEL_2_SUPERVISION" } } as Partial<Request>), resB);
+
+    expect(mockedService.closures).toHaveBeenCalledTimes(2);
+    expect(resA.json).toHaveBeenCalledWith({ data: closures });
+    expect(resB.json).toHaveBeenCalledWith({ data: [{ ...closures[0], id: "closure-2" }] });
+  });
+
+  it.each([
+    ["submit", () => workforceController.submit(fakeReq({ originalUrl: "/workforce/closures/submit", body: { period: "2026-08", employeeIds: ["emp-1"] } }), fakeRes())],
+    ["approve", () => workforceController.approve(fakeReq({ originalUrl: "/workforce/closures/approve", body: { ids: ["closure-1"] } }), fakeRes())],
+    ["returnClosure", () => workforceController.returnClosure(fakeReq({ originalUrl: "/workforce/closures/closure-1/return", params: { id: "closure-1" }, body: { reason: "falta revisar" } }), fakeRes())],
+  ])("%s invalida la cache — la siguiente lectura vuelve a golpear el service", async (_name, mutate) => {
+    mockedService.closures.mockResolvedValue(closures);
+    const req = fakeReq({ originalUrl: "/workforce/closures?period=2026-08", query: { period: "2026-08" } });
+    await workforceController.closures(req, fakeRes());
+    await workforceController.closures(req, fakeRes());
+    expect(mockedService.closures).toHaveBeenCalledTimes(1);
+
+    mockedService.submitClosures.mockResolvedValue([]);
+    mockedService.approveClosures.mockResolvedValue({ count: 1 });
+    mockedService.returnClosure.mockResolvedValue({ id: "closure-1", status: "DEVUELTO" });
+    await mutate();
+
+    mockedService.closures.mockResolvedValue([{ ...closures[0], status: "APROBADO" }]);
+    const res = fakeRes();
+    await workforceController.closures(req, res);
+
+    expect(mockedService.closures).toHaveBeenCalledTimes(2);
+    expect(res.json).toHaveBeenCalledWith({ data: [{ ...closures[0], status: "APROBADO" }] });
+  });
+});
+
+describe("workforceController.corrections — cache backend (Etapa 14G.8)", () => {
+  const corrections = [{ id: "correction-1", status: "PENDIENTE" }];
+
+  it("la primera llamada lee del service", async () => {
+    mockedService.corrections.mockResolvedValue(corrections);
+    const req = fakeReq({ originalUrl: "/workforce/corrections" });
+    const res = fakeRes();
+
+    await workforceController.corrections(req, res);
+
+    expect(mockedService.corrections).toHaveBeenCalledTimes(1);
+    expect(res.json).toHaveBeenCalledWith({ data: corrections });
+  });
+
+  it("la segunda llamada (mismo usuario, sin filtros) usa el cache, sin volver a golpear el service", async () => {
+    mockedService.corrections.mockResolvedValue(corrections);
+    const req = fakeReq({ originalUrl: "/workforce/corrections" });
+
+    await workforceController.corrections(req, fakeRes());
+    const res2 = fakeRes();
+    await workforceController.corrections(req, res2);
+
+    expect(mockedService.corrections).toHaveBeenCalledTimes(1);
+    expect(res2.json).toHaveBeenCalledWith({ data: corrections });
+  });
+
+  it("key scopeada por usuario: dos usuarios nunca comparten el resultado cacheado del otro", async () => {
+    mockedService.corrections
+      .mockResolvedValueOnce(corrections)
+      .mockResolvedValueOnce([{ id: "correction-2", status: "PENDIENTE" }]);
+
+    const resA = fakeRes();
+    await workforceController.corrections(fakeReq({ originalUrl: "/workforce/corrections", user: { id: "user-a", role: "NIVEL_1_RRHH" } } as Partial<Request>), resA);
+    const resB = fakeRes();
+    await workforceController.corrections(fakeReq({ originalUrl: "/workforce/corrections", user: { id: "user-b", role: "NIVEL_2_SUPERVISION" } } as Partial<Request>), resB);
+
+    expect(mockedService.corrections).toHaveBeenCalledTimes(2);
+    expect(resA.json).toHaveBeenCalledWith({ data: corrections });
+    expect(resB.json).toHaveBeenCalledWith({ data: [{ id: "correction-2", status: "PENDIENTE" }] });
+  });
+
+  it.each([
+    ["createCorrection", () => workforceController.createCorrection(fakeReq({ originalUrl: "/workforce/corrections", body: { timeEntryId: "entry-1", proposedHours: 9, reason: "olvido" } }), fakeRes())],
+    ["approveCorrection", () => workforceController.approveCorrection(fakeReq({ originalUrl: "/workforce/corrections/correction-1/approve", params: { id: "correction-1" } }), fakeRes())],
+    ["rejectCorrection", () => workforceController.rejectCorrection(fakeReq({ originalUrl: "/workforce/corrections/correction-1/reject", params: { id: "correction-1" }, body: { note: "no corresponde" } }), fakeRes())],
+  ])("%s invalida la cache — la siguiente lectura vuelve a golpear el service", async (_name, mutate) => {
+    mockedService.corrections.mockResolvedValue(corrections);
+    const req = fakeReq({ originalUrl: "/workforce/corrections" });
+    await workforceController.corrections(req, fakeRes());
+    await workforceController.corrections(req, fakeRes());
+    expect(mockedService.corrections).toHaveBeenCalledTimes(1);
+
+    mockedService.createCorrection.mockResolvedValue({ id: "correction-2" });
+    mockedService.approveCorrection.mockResolvedValue({ id: "correction-1", status: "APROBADA" });
+    mockedService.rejectCorrection.mockResolvedValue({ id: "correction-1", status: "RECHAZADA" });
+    await mutate();
+
+    mockedService.corrections.mockResolvedValue([{ id: "correction-1", status: "RECHAZADA" }]);
+    const res = fakeRes();
+    await workforceController.corrections(req, res);
+
+    expect(mockedService.corrections).toHaveBeenCalledTimes(2);
+    expect(res.json).toHaveBeenCalledWith({ data: [{ id: "correction-1", status: "RECHAZADA" }] });
+  });
+
+  it("approveCorrection también invalida closuresCache (una corrección aprobada puede reabrir/cerrar el cierre del legajo)", async () => {
+    mockedService.closures.mockResolvedValue([{ id: "closure-1", status: "CORRECCION_PENDIENTE" }]);
+    const closuresReq = fakeReq({ originalUrl: "/workforce/closures?period=2026-08", query: { period: "2026-08" } });
+    await workforceController.closures(closuresReq, fakeRes());
+    expect(mockedService.closures).toHaveBeenCalledTimes(1);
+
+    mockedService.approveCorrection.mockResolvedValue({ id: "correction-1", status: "APROBADA" });
+    await workforceController.approveCorrection(fakeReq({ originalUrl: "/workforce/corrections/correction-1/approve", params: { id: "correction-1" } }), fakeRes());
+
+    mockedService.closures.mockResolvedValue([{ id: "closure-1", status: "APROBADO" }]);
+    await workforceController.closures(closuresReq, fakeRes());
+
+    expect(mockedService.closures).toHaveBeenCalledTimes(2);
   });
 });

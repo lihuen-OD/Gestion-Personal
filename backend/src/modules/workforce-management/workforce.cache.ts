@@ -39,3 +39,28 @@ export const notificationsListCache = createTtlCache<Awaited<ReturnType<typeof w
 export function clearNotificationsListCache() {
   notificationsListCache.clear();
 }
+
+// Etapa 14G.8: GET /workforce/closures y GET /workforce/corrections no
+// tenían ninguna cache backend. TTL 15s (rango 10-20s ya usado por el resto
+// de las listas operativas). A diferencia de `notificationsListCache`
+// (14G.6) y `shiftAlertListCache` (14G.5) -- donde el conjunto de write
+// paths no era cerrado -- acá SÍ es un conjunto cerrado y enumerable con
+// confianza: los únicos 6 lugares de todo el backend que escriben
+// `MonthlyTimeClosure`/`TimeCorrectionRequest` son las 6 funciones de este
+// mismo archivo (submitClosures/approveClosures/returnClosure/
+// createCorrection/approveCorrection/rejectCorrection), confirmado con grep
+// exhaustivo. Por eso una sola `clearMonthlyClosuresReadCaches()`, llamada
+// desde las 6, cubre el 100% de los write paths reales -- sin ningún hueco
+// de invalidación aceptado como riesgo (a diferencia de los 2 casos
+// anteriores). Key scopeada por usuario+rol vía `userScopedCacheKey`
+// (workforce.controller.ts) -- el querystring de `closures` (`period`) ya
+// forma parte de `originalUrl`, así que cada período de cada usuario es una
+// entrada distinta; `corrections` no tiene query params, así que su key es
+// estable por usuario+rol.
+export const closuresCache = createTtlCache<Awaited<ReturnType<typeof workforceService.closures>>>(15_000);
+export const correctionsCache = createTtlCache<Awaited<ReturnType<typeof workforceService.corrections>>>(15_000);
+
+export function clearMonthlyClosuresReadCaches() {
+  closuresCache.clear();
+  correctionsCache.clear();
+}

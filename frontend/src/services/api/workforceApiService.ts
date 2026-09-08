@@ -136,23 +136,47 @@ export type DoubleHourRuleCalendarDay = {
 };
 
 export const workforceApiService = {
+  // Etapa 14G.8: envuelto con `cachedData` (dedupe in-flight, familia
+  // "monthly-closures" compartida con `corrections` -- ver cachePolicy.ts).
   closures(period: string) {
-    return apiRequest<{ data: MonthlyClosure[] }>(`/workforce/closures?period=${encodeURIComponent(period)}`, { apiCache: false }).then((response) => response.data);
+    const key = `/workforce/closures?period=${encodeURIComponent(period)}`;
+    return cachedData({
+      requestKey: `GET:${key}`,
+      policy: cachePolicies.monthlyClosuresList,
+      fetcher: () => apiRequest<{ data: MonthlyClosure[] }>(key, { apiCache: false }).then((response) => response.data),
+      validate: (value: MonthlyClosure[]) => Array.isArray(value),
+    });
   },
-  submitClosures(period: string, employeeIds: string[]) {
-    return apiRequest<{ data: MonthlyClosure[] }>("/workforce/closures/submit", { method: "POST", body: { period, employeeIds } }).then((response) => response.data);
+  async submitClosures(period: string, employeeIds: string[]) {
+    const result = await apiRequest<{ data: MonthlyClosure[] }>("/workforce/closures/submit", { method: "POST", body: { period, employeeIds } }).then((response) => response.data);
+    await invalidateCacheFamily("monthly-closures", "closures submitted");
+    return result;
   },
-  approveClosures(ids: string[], note?: string) {
-    return apiRequest<{ data: { count: number } }>("/workforce/closures/approve", { method: "POST", body: { ids, note } }).then((response) => response.data);
+  async approveClosures(ids: string[], note?: string) {
+    const result = await apiRequest<{ data: { count: number } }>("/workforce/closures/approve", { method: "POST", body: { ids, note } }).then((response) => response.data);
+    await invalidateCacheFamily("monthly-closures", "closures approved");
+    return result;
   },
-  returnClosure(id: string, reason: string) {
-    return apiRequest<{ data: MonthlyClosure }>(`/workforce/closures/${id}/return`, { method: "POST", body: { reason } }).then((response) => response.data);
+  async returnClosure(id: string, reason: string) {
+    const result = await apiRequest<{ data: MonthlyClosure }>(`/workforce/closures/${id}/return`, { method: "POST", body: { reason } }).then((response) => response.data);
+    await invalidateCacheFamily("monthly-closures", "closure returned");
+    return result;
   },
+  // Etapa 14G.8: envuelto con `cachedData` -- misma familia "monthly-closures"
+  // que `closures` a propósito: `corrections` no depende del período, así que
+  // cambiar de período no lo vuelve a pedir mientras el TTL siga vigente.
   corrections() {
-    return apiRequest<{ data: TimeCorrection[] }>("/workforce/corrections", { apiCache: false }).then((response) => response.data);
+    return cachedData({
+      requestKey: "GET:/workforce/corrections",
+      policy: cachePolicies.timeCorrectionsList,
+      fetcher: () => apiRequest<{ data: TimeCorrection[] }>("/workforce/corrections", { apiCache: false }).then((response) => response.data),
+      validate: (value: TimeCorrection[]) => Array.isArray(value),
+    });
   },
-  createCorrection(input: { timeEntryId: string; proposedHours: number; reason: string }) {
-    return apiRequest<{ data: TimeCorrection }>("/workforce/corrections", { method: "POST", body: input }).then((response) => response.data);
+  async createCorrection(input: { timeEntryId: string; proposedHours: number; reason: string }) {
+    const result = await apiRequest<{ data: TimeCorrection }>("/workforce/corrections", { method: "POST", body: input }).then((response) => response.data);
+    await invalidateCacheFamily("monthly-closures", "correction created");
+    return result;
   },
   // Etapa 9G: aprobar una corrección post-cierre reescribe TimeEntry.hours
   // (workforce.service.ts:approveCorrection) — afecta directo la métrica
@@ -161,10 +185,14 @@ export const workforceApiService = {
   // cache del lado del frontend (dashboardMetricsApiService, TTL propio de
   // 30s) es una capa aparte que nada invalidaba — quedaba sirviendo el valor
   // viejo hasta que ese TTL expirara solo. rejectCorrection no toca
-  // TimeEntry, así que no hace falta invalidar nada en ese caso.
+  // TimeEntry, así que no hace falta invalidar el dashboard en ese caso.
+  // Etapa 14G.8: ambas ramas invalidan "monthly-closures" -- aprobar además
+  // puede cambiar MonthlyTimeClosure.status (workforce.service.ts,
+  // approveCorrection), no sólo TimeCorrectionRequest.
   async reviewCorrection(id: string, decision: "approve" | "reject", note?: string) {
     const result = await apiRequest<{ data: TimeCorrection }>(`/workforce/corrections/${id}/${decision}`, { method: "POST", body: { note } }).then((response) => response.data);
     if (decision === "approve") await invalidateCacheFamily("dashboard", "time correction approved");
+    await invalidateCacheFamily("monthly-closures", decision === "approve" ? "time correction approved" : "time correction rejected");
     return result;
   },
   // Etapa 9I: antes pedía las 200 últimas notificaciones de una sola vez.

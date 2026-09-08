@@ -6,7 +6,7 @@ import { workforceService } from "./workforce.service";
 import type { ListNotificationsQuery } from "./workforce.schemas";
 import { clearTimeEntriesReadCaches } from "../time-entries/timeEntries.cache";
 import { clearEmployeeReadCaches } from "../employees/employees.controller";
-import { clearDoubleRulesReadCache, clearNotificationsListCache, clearShiftTemplatesReadCache, doubleRulesCache, notificationsListCache, shiftTemplatesCache } from "./workforce.cache";
+import { clearDoubleRulesReadCache, clearMonthlyClosuresReadCaches, clearNotificationsListCache, clearShiftTemplatesReadCache, closuresCache, correctionsCache, doubleRulesCache, notificationsListCache, shiftTemplatesCache } from "./workforce.cache";
 
 // Etapa 9C: mismo patrón ya usado en novelties/documents/time-entries/employees
 // controllers — clave por usuario+rol+URL (ninguno de los dos endpoints tiene
@@ -17,22 +17,61 @@ function userScopedCacheKey(req: Parameters<RequestHandler>[0]) {
 }
 
 export const workforceController = {
-  closures: (async (req,res)=>res.json({data:await workforceService.closures(String(req.query.period),req.user!)})) satisfies RequestHandler,
-  submit: (async (req,res)=>res.status(201).json({data:await workforceService.submitClosures(req.body.period,req.body.employeeIds,req.user!,requestAuditContext(req))})) satisfies RequestHandler,
-  approve: (async (req,res)=>res.json({data:await workforceService.approveClosures(req.body.ids,req.body.note,req.user!,requestAuditContext(req))})) satisfies RequestHandler,
-  returnClosure: (async (req,res)=>res.json({data:await workforceService.returnClosure(requireParam(req,"id"),req.body.reason,req.user!,requestAuditContext(req))})) satisfies RequestHandler,
-  corrections: (async (req,res)=>res.json({data:await workforceService.corrections(req.user!)})) satisfies RequestHandler,
-  createCorrection: (async (req,res)=>res.status(201).json({data:await workforceService.createCorrection(req.body,req.user!,requestAuditContext(req))})) satisfies RequestHandler,
+  // Etapa 14G.8: cache de lectura TTL corto (15s, ver workforce.cache.ts) --
+  // mismo patrón exacto que shiftTemplates/doubleRules/notifications más abajo.
+  closures: (async (req,res)=>{
+    const key=userScopedCacheKey(req);
+    const cached=closuresCache.get(key);
+    if(cached){ res.json({data:cached}); return; }
+    const data=await workforceService.closures(String(req.query.period),req.user!);
+    closuresCache.set(key,data);
+    res.json({data});
+  }) satisfies RequestHandler,
+  submit: (async (req,res)=>{
+    const data=await workforceService.submitClosures(req.body.period,req.body.employeeIds,req.user!,requestAuditContext(req));
+    clearMonthlyClosuresReadCaches();
+    res.status(201).json({data});
+  }) satisfies RequestHandler,
+  approve: (async (req,res)=>{
+    const data=await workforceService.approveClosures(req.body.ids,req.body.note,req.user!,requestAuditContext(req));
+    clearMonthlyClosuresReadCaches();
+    res.json({data});
+  }) satisfies RequestHandler,
+  returnClosure: (async (req,res)=>{
+    const data=await workforceService.returnClosure(requireParam(req,"id"),req.body.reason,req.user!,requestAuditContext(req));
+    clearMonthlyClosuresReadCaches();
+    res.json({data});
+  }) satisfies RequestHandler,
+  corrections: (async (req,res)=>{
+    const key=userScopedCacheKey(req);
+    const cached=correctionsCache.get(key);
+    if(cached){ res.json({data:cached}); return; }
+    const data=await workforceService.corrections(req.user!);
+    correctionsCache.set(key,data);
+    res.json({data});
+  }) satisfies RequestHandler,
+  createCorrection: (async (req,res)=>{
+    const data=await workforceService.createCorrection(req.body,req.user!,requestAuditContext(req));
+    clearMonthlyClosuresReadCaches();
+    res.status(201).json({data});
+  }) satisfies RequestHandler,
   // Etapa 9B: approveCorrection modifica TimeEntry.hours/totalMinutes (workforce.service.ts) —
   // igual que cada escritura equivalente en timeEntries.controller.ts, debe invalidar los
   // caches de lectura de horas/legajo para no mostrar el valor viejo hasta que expire el TTL.
+  // Etapa 14G.8: también actualiza MonthlyTimeClosure.status (workforce.service.ts línea 144)
+  // cuando la corrección tiene closureId — invalida closures/corrections además.
   approveCorrection: (async (req,res)=>{
     const data=await workforceService.approveCorrection(requireParam(req,"id"),req.user!,requestAuditContext(req));
     clearTimeEntriesReadCaches();
     clearEmployeeReadCaches();
+    clearMonthlyClosuresReadCaches();
     res.json({data});
   }) satisfies RequestHandler,
-  rejectCorrection: (async (req,res)=>res.json({data:await workforceService.rejectCorrection(requireParam(req,"id"),req.body.note,req.user!,requestAuditContext(req))})) satisfies RequestHandler,
+  rejectCorrection: (async (req,res)=>{
+    const data=await workforceService.rejectCorrection(requireParam(req,"id"),req.body.note,req.user!,requestAuditContext(req));
+    clearMonthlyClosuresReadCaches();
+    res.json({data});
+  }) satisfies RequestHandler,
   // Etapa 14G.6: cache de lectura TTL corto (10s, ver workforce.cache.ts) --
   // mismo patrón exacto que shiftTemplates/doubleRules más abajo.
   notifications: (async (req,res)=>{

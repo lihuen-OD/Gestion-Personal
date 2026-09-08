@@ -14,7 +14,8 @@ export type CacheFamily =
   | "work-regimes"
   | "audit"
   | "notifications"
-  | "shift-alerts";
+  | "shift-alerts"
+  | "monthly-closures";
 
 export type CachePolicy = {
   family: CacheFamily;
@@ -220,6 +221,30 @@ export const cachePolicies = {
   // remounts rápidos, no para esconder alertas nuevas por mucho tiempo.
   shiftAlertsList: {
     family: "shift-alerts",
+    ttlMs: 15_000,
+    persist: false,
+    sensitive: true,
+    schemaVersion: CACHE_SCHEMA_VERSION,
+  },
+  // Etapa 14G.8: `closures`/`corrections` (MonthlyClosuresPage.tsx) no tenían
+  // dedupe in-flight -- el doble-montaje de StrictMode disparaba 2 llamadas
+  // de red reales a cada uno (confirmado en el journey de 14G.6/14G.7,
+  // "Entrar a Cierres mensuales"). Misma familia "monthly-closures" para
+  // ambas políticas a propósito: `corrections` no depende del período, así
+  // que cambiar de período (que sí re-pide `closures`) ya no dispara un
+  // nuevo request de `corrections` mientras el TTL siga vigente -- sin tener
+  // que reestructurar `MonthlyClosuresPage.tsx` (que sigue pidiendo los 3
+  // recursos juntos en su `load()`, sin cambios). TTL 15s, mismo rango
+  // 10-20s ya usado por el resto de las listas operativas del proyecto.
+  monthlyClosuresList: {
+    family: "monthly-closures",
+    ttlMs: 15_000,
+    persist: false,
+    sensitive: true,
+    schemaVersion: CACHE_SCHEMA_VERSION,
+  },
+  timeCorrectionsList: {
+    family: "monthly-closures",
     ttlMs: 15_000,
     persist: false,
     sensitive: true,
