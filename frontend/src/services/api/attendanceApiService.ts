@@ -1,4 +1,5 @@
 import { apiDownload, apiRequest } from "./apiClient";
+import { cachePolicies, cachedData, invalidateCacheFamily } from "../cache";
 
 export type AttendanceEmployee = {
   id: string;
@@ -168,15 +169,32 @@ export type AttendanceObservation =
   | { kind: "PUNCH"; occurredAt: string; punch: AttendancePunch }
   | { kind: "INACTIVITY"; occurredAt: string; incident: AttendanceInactivityIncident };
 
+// Etapa 14G.9: `getSummary`/`getObservations` no tenían dedupe in-flight —
+// el doble-montaje de React StrictMode disparaba 2 llamadas de red reales a
+// cada uno, confirmado en el journey de 14G.8 ("Entrar a Asistencia":
+// `GET /time-entries/attendance` x2, `GET /time-entries/attendance/
+// observations` x2) — mismo síntoma ya resuelto en el resto de las listas
+// operativas del proyecto, documentado como pendiente desde 14G.3 §12
+// ("Duplicado por StrictMode aún sin dedupe frontend"). Misma familia
+// "time-entries" que `timeEntryApiService` a propósito: el backend ya
+// agrupa estos 2 endpoints junto con el resto de time-entries bajo
+// `clearTimeEntriesReadCaches()` (ver timeEntries.cache.ts) — reusar la
+// misma familia en el frontend refleja esa misma agrupación, sin cache
+// nueva (`cachePolicies.timeEntriesAggregates`, ya usada por
+// `getSummary`/`getPeriodEmployees`/`list`/`listByEmployee` de
+// timeEntryApiService).
 export const attendanceApiService = {
   async getSummary(date?: string) {
     const params = new URLSearchParams();
     if (date) params.set("date", date);
     const query = params.toString();
-    const response = await apiRequest<AttendanceSummaryResponse>(`/time-entries/attendance${query ? `?${query}` : ""}`, {
-      apiCache: false,
+    const key = `/time-entries/attendance${query ? `?${query}` : ""}`;
+    return cachedData({
+      requestKey: `GET:${key}`,
+      policy: cachePolicies.timeEntriesAggregates,
+      fetcher: () => apiRequest<AttendanceSummaryResponse>(key, { apiCache: false }).then((response) => response.data),
+      validate: (value: AttendanceSummary) => Boolean(value && value.totals && typeof value.totals.open === "number"),
     });
-    return response.data;
   },
 
   async getObservations(filters: { date?: string; search?: string; type?: "ALL" | "SHIFT" | "PUNCH" | "INACTIVITY"; reviewStatus?: "PENDIENTE" | "RESUELTA" | "DESCARTADA" | "ALL"; before?: string; take?: number } = {}) {
@@ -187,35 +205,53 @@ export const attendanceApiService = {
     if (filters.reviewStatus) params.set("reviewStatus", filters.reviewStatus);
     if (filters.before) params.set("before", filters.before);
     params.set("take", String(filters.take || 10));
-    return apiRequest<{ data: AttendanceObservation[]; meta: { total: number; pageSize: number; hasMore: boolean; nextBefore: string | null } }>(`/time-entries/attendance/observations?${params.toString()}`, { apiCache: false });
+    const key = `/time-entries/attendance/observations?${params.toString()}`;
+    return cachedData({
+      requestKey: `GET:${key}`,
+      policy: cachePolicies.timeEntriesAggregates,
+      fetcher: () => apiRequest<{ data: AttendanceObservation[]; meta: { total: number; pageSize: number; hasMore: boolean; nextBefore: string | null } }>(key, { apiCache: false }),
+      validate: (value: { data: AttendanceObservation[]; meta: unknown }) => Boolean(value && Array.isArray(value.data)),
+    });
   },
 
-  resolveObservation(kind: "SHIFT" | "PUNCH" | "INACTIVITY", id: string, resolution: "RESUELTA" | "DESCARTADA", reason: string) {
-    return apiRequest<{ data: unknown }>(`/time-entries/attendance/observations/${kind}/${id}/resolve`, {
+  // Etapa 14G.9: las 4 escrituras de abajo ahora invalidan la familia
+  // "time-entries" -- necesario recién ahora que getSummary/getObservations
+  // pasan por `cachedData` (antes no había nada que invalidar del lado del
+  // frontend; el backend ya se invalidaba solo vía clearTimeEntriesReadCaches()).
+  async resolveObservation(kind: "SHIFT" | "PUNCH" | "INACTIVITY", id: string, resolution: "RESUELTA" | "DESCARTADA", reason: string) {
+    const result = await apiRequest<{ data: unknown }>(`/time-entries/attendance/observations/${kind}/${id}/resolve`, {
       method: "POST",
       body: { resolution, reason },
     });
+    await invalidateCacheFamily("time-entries", "attendance observation resolved");
+    return result;
   },
 
-  closeWorkShiftManually(id: string, input: { endAt: string; reason: string }) {
-    return apiRequest<{ data: unknown }>(`/time-entries/work-shifts/${id}/close-manual`, {
+  async closeWorkShiftManually(id: string, input: { endAt: string; reason: string }) {
+    const result = await apiRequest<{ data: unknown }>(`/time-entries/work-shifts/${id}/close-manual`, {
       method: "POST",
       body: input,
     });
+    await invalidateCacheFamily("time-entries", "work shift closed manually");
+    return result;
   },
 
-  markMissingOut(id: string, reason: string) {
-    return apiRequest<{ data: unknown }>(`/time-entries/work-shifts/${id}/missing-out`, {
+  async markMissingOut(id: string, reason: string) {
+    const result = await apiRequest<{ data: unknown }>(`/time-entries/work-shifts/${id}/missing-out`, {
       method: "POST",
       body: { reason },
     });
+    await invalidateCacheFamily("time-entries", "work shift missing out marked");
+    return result;
   },
 
-  observeWorkShift(id: string, reason: string) {
-    return apiRequest<{ data: unknown }>(`/time-entries/work-shifts/${id}/observe`, {
+  async observeWorkShift(id: string, reason: string) {
+    const result = await apiRequest<{ data: unknown }>(`/time-entries/work-shifts/${id}/observe`, {
       method: "POST",
       body: { reason },
     });
+    await invalidateCacheFamily("time-entries", "work shift observed");
+    return result;
   },
 
   downloadPunchPhoto(id: string) {

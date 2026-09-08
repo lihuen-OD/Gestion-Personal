@@ -1,6 +1,17 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { apiRequest } from "./apiClient";
+import { clearAllAppCaches } from "../cache";
 import { mapTimeEntryFromApi, timeEntryApiService } from "./timeEntryApiService";
 import type { TimeEntry } from "../../types";
+
+// Etapa 14G.9: sólo el describe de `getHomeSummary` de más abajo usa
+// `apiRequest` de verdad — el resto de este archivo (mapTimeEntryFromApi,
+// save()) nunca lo invoca (mapeo puro, o spy directo sobre los métodos del
+// service), así que mockearlo acá no afecta a ningún test preexistente.
+vi.mock("./apiClient", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./apiClient")>();
+  return { ...actual, apiRequest: vi.fn() };
+});
 
 // Etapa 11B: la Bandeja de revisión (HoursPage.tsx, vista "Por registro")
 // perdía appliedMultiplier al mapear la respuesta cruda del backend al tipo
@@ -173,5 +184,53 @@ describe("timeEntryApiService.save — knownExistingId evita el GET redundante (
 
     updateSpy.mockRestore();
     submitSpy.mockRestore();
+  });
+});
+
+// Etapa 14G.9: antes de esta etapa, getHomeSummary() llamaba apiRequest
+// directo sin ningún dedupe/cache frontend — en StrictMode (Hourly
+// ManagementHomePage monta el effect dos veces) esto generaba 2 requests
+// idénticos por mount, confirmado en el journey de 14G.8 ("Entrar a Inicio":
+// GET /time-entries/home-summary x2). Mismo patrón exacto ya usado para
+// notifications/closures/corrections (14G.6/14G.8).
+describe("timeEntryApiService.getHomeSummary — dedupe/cache frontend (Etapa 14G.9)", () => {
+  beforeEach(async () => {
+    vi.mocked(apiRequest).mockReset();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-08T10:00:00.000Z"));
+    await clearAllAppCaches("test setup");
+  });
+
+  afterEach(async () => {
+    await clearAllAppCaches("test teardown");
+    vi.useRealTimers();
+  });
+
+  it("dos llamadas concurrentes generan un solo request real (dedupe in-flight)", async () => {
+    vi.mocked(apiRequest).mockResolvedValue({ data: { role: "carga", period: "2026-08", paraCargar: 3, devueltosParaCorregir: 0, enviadoEsperandoRevision: 1 } });
+
+    const [a, b] = await Promise.all([timeEntryApiService.getHomeSummary(), timeEntryApiService.getHomeSummary()]);
+
+    expect(a).toMatchObject({ role: "carga", paraCargar: 3 });
+    expect(b).toMatchObject({ role: "carga", paraCargar: 3 });
+    expect(apiRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it("una segunda llamada dentro del TTL usa cache, no repite el request", async () => {
+    vi.mocked(apiRequest).mockResolvedValue({ data: { role: "revision", period: "2026-08", paraRevisarHoy: 2, novedadesPendientes: 0, fichadasObservadas: 1 } });
+
+    await timeEntryApiService.getHomeSummary();
+    await timeEntryApiService.getHomeSummary();
+
+    expect(apiRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it("no cambia el contrato: sigue devolviendo el objeto HomeSummary sin envolver", async () => {
+    const summary = { role: "carga" as const, period: "2026-08", paraCargar: 1, devueltosParaCorregir: 0, enviadoEsperandoRevision: 0 };
+    vi.mocked(apiRequest).mockResolvedValue({ data: summary });
+
+    const result = await timeEntryApiService.getHomeSummary();
+
+    expect(result).toEqual(summary);
   });
 });

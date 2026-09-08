@@ -427,9 +427,22 @@ export const timeEntryApiService = {
     };
   },
 
+  // Etapa 14G.9: `getHomeSummary` no tenía dedupe in-flight -- doble-montaje
+  // de StrictMode disparaba 2 llamadas de red reales, documentado como
+  // pendiente desde 14G.2 (comentario de `homeCounts` en timeEntries.
+  // service.ts) y confirmado con el journey de 14G.8 ("Entrar a Inicio":
+  // `GET /time-entries/home-summary` x2). Misma familia "time-entries" que
+  // el resto de este servicio -- toda mutación de horas ya invalida esta
+  // familia vía `invalidateTimeEntryDependentCaches`, sin código nuevo de
+  // invalidación.
   async getHomeSummary() {
-    const response = await apiRequest<{ data: HomeSummary }>("/time-entries/home-summary", { apiCache: false });
-    return response.data;
+    const key = "/time-entries/home-summary";
+    return cachedData({
+      requestKey: `GET:${key}`,
+      policy: cachePolicies.timeEntriesAggregates,
+      fetcher: () => apiRequest<{ data: HomeSummary }>(key, { apiCache: false }).then((response) => response.data),
+      validate: (value: HomeSummary) => Boolean(value && (value.role === "carga" || value.role === "revision")),
+    });
   },
 
   async getSummary(period: string) {
