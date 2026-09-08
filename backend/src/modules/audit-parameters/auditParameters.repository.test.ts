@@ -12,11 +12,12 @@ import { auditParametersRepository } from "./auditParameters.repository";
  */
 vi.mock("../../shared/prisma/client", () => ({
   prisma: {
-    auditParameter: { create: vi.fn(), update: vi.fn() },
+    auditParameter: { create: vi.fn(), update: vi.fn(), findMany: vi.fn(), count: vi.fn() },
+    $transaction: vi.fn((ops: Promise<unknown>[]) => Promise.all(ops)),
   },
 }));
 
-const mockedPrisma = prisma as unknown as { auditParameter: { create: Mock; update: Mock } };
+const mockedPrisma = prisma as unknown as { auditParameter: { create: Mock; update: Mock; findMany: Mock; count: Mock }; $transaction: Mock };
 
 function baseCreateInput(overrides: Record<string, unknown> = {}) {
   return {
@@ -43,6 +44,38 @@ function baseCreateInput(overrides: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+});
+
+// Etapa 14H.6: findMany no tenía ningún test dedicado hasta esta etapa —
+// agregado al corregir el $transaction que hasta ahora se usaba SIEMPRE
+// (sin rama alternativa sin filtros, a diferencia de hourConcepts/
+// documentCategories) — ver auditParameters.repository.ts.
+describe("auditParametersRepository.findMany — Etapa 14H.6", () => {
+  it("pagina con Promise.all([findMany, count]) — sin $transaction", async () => {
+    mockedPrisma.auditParameter.findMany.mockResolvedValue([]);
+    mockedPrisma.auditParameter.count.mockResolvedValue(0);
+
+    await auditParametersRepository.findMany({ page: 2, take: 10 } as never);
+
+    expect(mockedPrisma.$transaction).not.toHaveBeenCalled();
+    expect(mockedPrisma.auditParameter.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ skip: 10, take: 10 }),
+    );
+    expect(mockedPrisma.auditParameter.count).toHaveBeenCalledWith(expect.objectContaining({ where: expect.any(Object) }));
+  });
+
+  it("arma el where con scope/severity/status/requiresReason/search", async () => {
+    mockedPrisma.auditParameter.findMany.mockResolvedValue([]);
+    mockedPrisma.auditParameter.count.mockResolvedValue(0);
+
+    await auditParametersRepository.findMany({ scope: "LEGAJO", severity: "CRITICO", status: "ACTIVO", requiresReason: true, search: "acceso", page: 1, take: 50 } as never);
+
+    const call = mockedPrisma.auditParameter.findMany.mock.calls[0]![0];
+    expect(call.where).toMatchObject({ scope: "LEGAJO", severity: "CRITICO", status: "ACTIVO", requiresReason: true });
+    expect(call.where.OR).toEqual(
+      expect.arrayContaining([{ code: { contains: "acceso", mode: "insensitive" } }]),
+    );
+  });
 });
 
 describe("auditParametersRepository.create", () => {

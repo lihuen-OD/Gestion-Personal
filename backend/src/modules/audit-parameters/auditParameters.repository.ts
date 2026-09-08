@@ -51,10 +51,19 @@ function mapData(data: CreateAuditParameterInput | UpdateAuditParameterInput) {
 }
 
 export const auditParametersRepository = {
+  // Etapa 14H.6: findMany + count son lecturas independientes (ninguna
+  // depende del resultado de la otra) — $transaction([...]) las pinaba a una
+  // única conexión de Neon en serie sin ganar concurrencia real. A
+  // diferencia de hourConcepts/documentCategories (donde este mismo
+  // antipatrón sólo se ejercitaba en una rama con filtros activos), acá se
+  // usaba SIEMPRE — es el único camino de findMany, sin una rama alternativa
+  // sin filtros — así que este fix se ejercita en cada carga de la pantalla,
+  // no sólo en un caller secundario. Mismo patrón ya aplicado 12+ veces en
+  // las series 14G/14H — where/orderBy/skip/take sin cambios.
   findMany(query: ListAuditParametersQuery) {
     const where = buildWhere(query);
     const skip = (query.page - 1) * query.take;
-    return prisma.$transaction([
+    return Promise.all([
       prisma.auditParameter.findMany({
         where,
         orderBy: [{ status: "asc" }, { scope: "asc" }, { code: "asc" }],

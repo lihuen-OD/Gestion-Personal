@@ -66,9 +66,17 @@ function mapData(data: CreateDocumentCategoryInput | UpdateDocumentCategoryInput
 export const documentCategoriesRepository = {
   async findMany(query: ListDocumentCategoriesQuery): Promise<[DocumentCategoryRow[], number]> {
     if (hasActiveFilters(query)) {
+      // Etapa 14H.6: findMany + count son lecturas independientes —
+      // $transaction([...]) las pinaba a una única conexión de Neon en serie
+      // sin ganar concurrencia real. Rama alcanzable en producción vía
+      // documentCategoryApiService.getAll({status:"ACTIVO", scope:"NOVEDAD"})
+      // desde EmployeeHoursPage.tsx (Gestión Horaria) — ese caller no se
+      // toca, sólo esta función compartida. Mismo patrón ya aplicado en
+      // hourConcepts.repository.ts (14H.5) y auditParameters.repository.ts
+      // (14H.6) — where/orderBy/skip/take sin cambios.
       const where = buildWhere(query);
       const skip = (query.page - 1) * query.take;
-      return prisma.$transaction([
+      return Promise.all([
         prisma.documentCategory.findMany({
           where,
           orderBy: [{ status: "asc" }, { kind: "asc" }, { name: "asc" }],

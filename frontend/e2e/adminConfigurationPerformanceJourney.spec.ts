@@ -457,7 +457,7 @@ test("admin configuration performance journey — recorrido macro de Configuraci
   skip(
     "Nuevo registro / Editar / Guardar estructura",
     ZONE.estructura,
-    "El editor es inline y no tiene botón de cancelar limpio (sólo se cierra cambiando de pestaña) — no se abre esta etapa, ni se llega al submit real (POST/PATCH /org-structure/...).",
+    "Etapa 14H.6: evaluado y descartado ampliar el alcance acá (a diferencia de Categorías documentales/Parámetros de auditoría, arriba/abajo) — el editor inline no tiene botón de cancelar limpio (sólo se cierra cambiando de pestaña, un efecto colateral del onChange de las Tabs, no un control pensado para esto), y a diferencia de Conceptos horarios (14H.5) abrirlo no revelaría ningún request nuevo (el catálogo completo ya se cargó una sola vez vía getCatalog(), editar es 100% local) — sin valor diagnóstico que justifique salirse de la política de sólo abrir editores con un cierre limpio. No se abre esta etapa, ni se llega al submit real (POST/PATCH /org-structure/...).",
     true,
   );
 
@@ -608,10 +608,40 @@ test("admin configuration performance journey — recorrido macro de Configuraci
     return { visibleLocator: page.locator("table tbody tr, .empty").first() };
   });
 
+  // Etapa 14H.6: alcance ampliado por pedido explícito (cubrir detalle de
+  // este submódulo, que hasta 14H.5 sólo entraba a la tarjeta) — mismo
+  // criterio de riesgo que Conceptos horarios en 14H.5: abrir "Editar" es
+  // 100% local (setEditing(item), confirmado leyendo
+  // DocumentCategoriesPage.tsx), y este editor SÍ tiene un botón "Cerrar"
+  // explícito (a diferencia de Empresas y estructura, que no lo tiene y por
+  // eso no se abre esta etapa — ver más abajo). A diferencia de Conceptos
+  // horarios, este editor no anida ningún panel con fetch propio (sin reglas
+  // ni empleados asociados) — no se espera ningún request nuevo al abrirlo,
+  // sólo confirma que abrir/cerrar sigue siendo de sólo lectura.
+  const documentCategoryEditButton = page.getByRole("button", { name: "Editar" }).first();
+  if (await documentCategoryEditButton.count()) {
+    await measure("Abrir detalle de categoría documental (Editar)", ZONE.categoriasDocumentales, false, async () => {
+      await documentCategoryEditButton.click();
+      return { visibleLocator: page.getByRole("button", { name: "Cerrar" }) };
+    });
+
+    if (actions.at(-1)!.covered) {
+      await measure("Cerrar detalle de categoría documental sin guardar", ZONE.categoriasDocumentales, false, async () => {
+        await page.getByRole("button", { name: "Cerrar" }).first().click();
+        return { hiddenLocator: page.getByRole("button", { name: "Cerrar" }) };
+      });
+    } else {
+      skip("Cerrar detalle de categoría documental sin guardar", ZONE.categoriasDocumentales, "depende de la acción anterior, que falló");
+    }
+  } else {
+    skip("Abrir detalle de categoría documental (Editar)", ZONE.categoriasDocumentales, "no se encontró ninguna categoría documental editable en el entorno actual");
+    skip("Cerrar detalle de categoría documental sin guardar", ZONE.categoriasDocumentales, "depende de la acción anterior, salteada");
+  }
+
   skip(
-    "Crear/Editar categoría documental",
+    "Crear categoría documental / Guardar cambios de categoría",
     ZONE.categoriasDocumentales,
-    "Editor inline — misma política de alcance que el resto de los editores inline de Configuración (aunque este sí tiene un botón 'Cerrar' limpio, se excluye por consistencia); el submit real es POST/PATCH /document-categories[/:id].",
+    "Prohibido por defecto — el editor se abre y se cierra sin tocar 'Guardar categoria' (POST/PATCH /document-categories[/:id]).",
     true,
   );
 
@@ -638,10 +668,33 @@ test("admin configuration performance journey — recorrido macro de Configuraci
     return { visibleLocator: page.locator("table tbody tr, .empty").first() };
   });
 
+  // Etapa 14H.6: mismo criterio que Categorías documentales arriba — botón
+  // "Cerrar" explícito confirmado en AuditParametersPage.tsx, editor 100%
+  // local sin paneles anidados con fetch propio.
+  const auditParamEditButton = page.getByRole("button", { name: "Editar" }).first();
+  if (await auditParamEditButton.count()) {
+    await measure("Abrir detalle de parámetro de auditoría (Editar)", ZONE.parametrosAuditoria, false, async () => {
+      await auditParamEditButton.click();
+      return { visibleLocator: page.getByRole("button", { name: "Cerrar" }) };
+    });
+
+    if (actions.at(-1)!.covered) {
+      await measure("Cerrar detalle de parámetro de auditoría sin guardar", ZONE.parametrosAuditoria, false, async () => {
+        await page.getByRole("button", { name: "Cerrar" }).first().click();
+        return { hiddenLocator: page.getByRole("button", { name: "Cerrar" }) };
+      });
+    } else {
+      skip("Cerrar detalle de parámetro de auditoría sin guardar", ZONE.parametrosAuditoria, "depende de la acción anterior, que falló");
+    }
+  } else {
+    skip("Abrir detalle de parámetro de auditoría (Editar)", ZONE.parametrosAuditoria, "no se encontró ningún parámetro de auditoría editable en el entorno actual");
+    skip("Cerrar detalle de parámetro de auditoría sin guardar", ZONE.parametrosAuditoria, "depende de la acción anterior, salteada");
+  }
+
   skip(
-    "Crear/Editar parámetro de auditoría",
+    "Crear parámetro de auditoría / Guardar cambios de parámetro",
     ZONE.parametrosAuditoria,
-    "Editor inline — misma política de alcance; el submit real es POST/PATCH /audit-parameters[/:id].",
+    "Prohibido por defecto — el editor se abre y se cierra sin tocar 'Guardar parametro' (POST/PATCH /audit-parameters[/:id]).",
     true,
   );
 
