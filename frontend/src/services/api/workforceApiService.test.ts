@@ -360,3 +360,108 @@ describe("workforceApiService.closures/corrections — dedupe/cache frontend (Et
     expect(apiRequest).toHaveBeenCalledTimes(4);
   });
 });
+
+// Etapa 14H.3: shiftTemplates()/doubleHourRules()/doubleHourRulesCalendar()
+// no tenían dedupe/cache frontend -- el journey 14H.1/14H.2 confirmó
+// requests duplicadas (StrictMode) al entrar a Turnos/Horas especiales,
+// incluso con cache backend ya activo (shiftTemplates/doubleRules, Etapa
+// 9C) porque sin dedupe del lado del cliente dos llamadas casi simultáneas
+// llegan al backend antes de que la primera termine de escribir su propia
+// cache.
+describe("workforceApiService.shiftTemplates/doubleHourRules/doubleHourRulesCalendar — dedupe/cache frontend (Etapa 14H.3)", () => {
+  beforeEach(async () => {
+    vi.mocked(apiRequest).mockReset();
+    vi.mocked(invalidateCacheFamily).mockClear();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-08T10:00:00.000Z"));
+    await clearAllAppCaches("test setup");
+  });
+
+  afterEach(async () => {
+    await clearAllAppCaches("test teardown");
+    vi.useRealTimers();
+  });
+
+  it("shiftTemplates: dos llamadas concurrentes generan un solo request real (dedupe in-flight)", async () => {
+    const templates = [{ id: "shift-1", code: "M", name: "Mañana" }];
+    vi.mocked(apiRequest).mockResolvedValue({ data: templates });
+
+    const [a, b] = await Promise.all([workforceApiService.shiftTemplates(), workforceApiService.shiftTemplates()]);
+
+    expect(a).toEqual(templates);
+    expect(b).toEqual(templates);
+    expect(apiRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it("shiftTemplates: una segunda llamada dentro del TTL usa cache, no repite el request", async () => {
+    vi.mocked(apiRequest).mockResolvedValue({ data: [] });
+
+    await workforceApiService.shiftTemplates();
+    await workforceApiService.shiftTemplates();
+
+    expect(apiRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it("doubleHourRules: dos llamadas concurrentes generan un solo request real (dedupe in-flight)", async () => {
+    const rules = [{ id: "rule-1", name: "Domingo" }];
+    vi.mocked(apiRequest).mockResolvedValue({ data: rules });
+
+    const [a, b] = await Promise.all([workforceApiService.doubleHourRules(), workforceApiService.doubleHourRules()]);
+
+    expect(a).toEqual(rules);
+    expect(b).toEqual(rules);
+    expect(apiRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it("doubleHourRulesCalendar: dos llamadas concurrentes con el mismo rango generan un solo request real (dedupe in-flight)", async () => {
+    const days = [{ date: "2026-09-08", rules: [], hasOverlap: false, hasConflict: false }];
+    vi.mocked(apiRequest).mockResolvedValue({ data: days });
+
+    const [a, b] = await Promise.all([
+      workforceApiService.doubleHourRulesCalendar("2026-09-01", "2026-09-30"),
+      workforceApiService.doubleHourRulesCalendar("2026-09-01", "2026-09-30"),
+    ]);
+
+    expect(a).toEqual(days);
+    expect(b).toEqual(days);
+    expect(apiRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it("doubleHourRulesCalendar: cambiar el filtro kind es un cache miss nuevo (forma parte de la key)", async () => {
+    vi.mocked(apiRequest).mockResolvedValue({ data: [] });
+
+    await workforceApiService.doubleHourRulesCalendar("2026-09-01", "2026-09-30");
+    await workforceApiService.doubleHourRulesCalendar("2026-09-01", "2026-09-30", "FERIADO");
+
+    expect(apiRequest).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    ["createShiftTemplate", () => workforceApiService.createShiftTemplate({ code: "M", name: "Mañana", startTime: "08:00", endTime: "16:00" } as never)],
+    ["updateShiftTemplate", () => workforceApiService.updateShiftTemplate("shift-1", { name: "Mañana" })],
+    ["removeShiftTemplate", () => workforceApiService.removeShiftTemplate("shift-1")],
+    ["createDoubleHourRule", () => workforceApiService.createDoubleHourRule({ name: "Domingo", recurrenceType: "SEMANAL", fromDate: "2026-01-01", toDate: null, weekdays: [0], multiplier: 2, priority: 0, employeeIds: [], reason: "x" })],
+    ["updateDoubleHourRule", () => workforceApiService.updateDoubleHourRule("rule-1", { name: "Domingo" })],
+    ["removeDoubleHourRule", () => workforceApiService.removeDoubleHourRule("rule-1")],
+  ])("%s invalida la familia 'workforce-config'", async (_name, mutate) => {
+    vi.mocked(apiRequest).mockResolvedValue({ data: {} });
+
+    await mutate();
+
+    expect(invalidateCacheFamily).toHaveBeenCalledWith("workforce-config", expect.any(String));
+  });
+
+  it("después de invalidar 'workforce-config' (p. ej. tras crear un turno), shiftTemplates/doubleHourRules vuelven a pedirse", async () => {
+    vi.mocked(apiRequest).mockResolvedValue({ data: [] });
+    await workforceApiService.shiftTemplates();
+    await workforceApiService.doubleHourRules();
+    expect(apiRequest).toHaveBeenCalledTimes(2);
+
+    await invalidateCacheFamily("workforce-config", "unit test");
+
+    await workforceApiService.shiftTemplates();
+    await workforceApiService.doubleHourRules();
+
+    expect(apiRequest).toHaveBeenCalledTimes(4);
+  });
+});

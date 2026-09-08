@@ -15,7 +15,8 @@ export type CacheFamily =
   | "audit"
   | "notifications"
   | "shift-alerts"
-  | "monthly-closures";
+  | "monthly-closures"
+  | "workforce-config";
 
 export type CachePolicy = {
   family: CacheFamily;
@@ -270,6 +271,51 @@ export const cachePolicies = {
     ttlMs: 15_000,
     persist: false,
     sensitive: true,
+    schemaVersion: CACHE_SCHEMA_VERSION,
+  },
+  // Etapa 14H.3: Turnos y Horas especiales eran las únicas 2 tarjetas de
+  // Configuración sin ningún cache frontend (journey 14H.1) — cada visita
+  // disparaba requests reales duplicadas por StrictMode incluso cuando el
+  // backend YA tenía cache (shiftTemplates/doubleRules, 30s, Etapa 9C) o
+  // recién la ganó (shiftAssignment.summary, 30s, Etapa 14H.3): sin dedupe
+  // in-flight del lado del cliente, dos llamadas casi simultáneas llegan al
+  // backend antes de que la primera termine de escribir su propia cache, y
+  // ambas terminan pegándole a Neon. Familia única "workforce-config" para
+  // los 4 (mismo criterio que "work-regimes" en 14H.2: entidades
+  // relacionadas de una misma pantalla comparten familia; invalidar de más
+  // ante una mutación de una de ellas es aceptable, nunca al revés). TTL 30s
+  // en los 4, mismo rango que el backend ya usa para shiftTemplates/
+  // doubleRules — no persistidos (IndexedDB) por ser TTL corto.
+  shiftTemplatesCatalog: {
+    family: "workforce-config",
+    ttlMs: 30_000,
+    persist: false,
+    sensitive: false,
+    schemaVersion: CACHE_SCHEMA_VERSION,
+  },
+  // sensitive:true porque DoubleHourRule.employees trae legajo/nombre/apellido
+  // cuando la regla está limitada a empleados específicos (a diferencia de
+  // shiftTemplatesCatalog/shiftAssignmentSummary/doubleHourRulesCalendarByMonth,
+  // que nunca exponen datos de una persona puntual).
+  doubleHourRulesCatalog: {
+    family: "workforce-config",
+    ttlMs: 30_000,
+    persist: false,
+    sensitive: true,
+    schemaVersion: CACHE_SCHEMA_VERSION,
+  },
+  doubleHourRulesCalendarByMonth: {
+    family: "workforce-config",
+    ttlMs: 30_000,
+    persist: false,
+    sensitive: false,
+    schemaVersion: CACHE_SCHEMA_VERSION,
+  },
+  shiftAssignmentSummary: {
+    family: "workforce-config",
+    ttlMs: 30_000,
+    persist: false,
+    sensitive: false,
     schemaVersion: CACHE_SCHEMA_VERSION,
   },
 } satisfies Record<string, CachePolicy>;

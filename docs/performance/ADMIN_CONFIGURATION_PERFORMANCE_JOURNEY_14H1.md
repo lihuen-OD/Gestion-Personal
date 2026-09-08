@@ -10,7 +10,7 @@ Recorrido macro de la landing de Configuración, sus 10 tarjetas de submódulo (
 
 ## 2. Ambiente
 
-- Generado: 2026-09-08T14:51:11.124Z
+- Generado: 2026-09-08T15:31:18.316Z
 - Frontend: http://localhost:5174
 - Backend: http://localhost:4002/api
 - Frontend y backend locales (`npm run dev`), backend conectado a la base real de staging (ver docs/LOCAL_DEVELOPMENT.md) — no es un ambiente de producción ni un ambiente aislado de test.
@@ -21,67 +21,67 @@ Recorrido macro de la landing de Configuración, sus 10 tarjetas de submódulo (
 
 | Submódulo | Acciones cubiertas | Acciones salteadas | Requests capturadas | Peor duración | Rango |
 |---|---|---|---|---|---|
-| Login | 1 | 0 | 4 | 6207ms | Crítico |
-| A. Configuración (landing) | 2 | 0 | 1 | 1005ms | Medio |
-| B. Turnos | 4 | 2 | 8 | 1697ms | Medio |
-| C. Asignaciones de feriados | 2 | 1 | 8 | 2267ms | Lento |
-| D. Horas especiales | 2 | 2 | 6 | 1832ms | Medio |
-| E. Regímenes laborales | 8 | 2 | 4 | 1376ms | Medio |
-| F. Empresas y estructura | 2 | 1 | 1 | 812ms | OK |
-| G. Tipos de novedades | 3 | 3 | 2 | 914ms | OK |
-| H. Conceptos horarios | 3 | 2 | 2 | 1414ms | Medio |
+| Login | 1 | 0 | 4 | 4181ms | Crítico |
+| A. Configuración (landing) | 2 | 0 | 1 | 745ms | OK |
+| B. Turnos | 4 | 2 | 5 | 960ms | OK |
+| C. Asignaciones de feriados | 2 | 1 | 7 | 1738ms | Medio |
+| D. Horas especiales | 2 | 2 | 4 | 2937ms | Lento |
+| E. Regímenes laborales | 8 | 2 | 4 | 1374ms | Medio |
+| F. Empresas y estructura | 2 | 1 | 1 | 1038ms | Medio |
+| G. Tipos de novedades | 3 | 3 | 2 | 827ms | OK |
+| H. Conceptos horarios | 3 | 2 | 2 | 718ms | OK |
 | I. Exportación Finnegans | 0 | 1 | 0 | — | — |
-| J. Categorías documentales | 3 | 1 | 2 | 1002ms | Medio |
-| K. Parámetros de auditoría | 3 | 1 | 2 | 1778ms | Medio |
-| L. Puestos (listado) | 4 | 3 | 3 | 1464ms | Medio |
-| M. Puesto (detalle) | 2 | 2 | 3 | 1498ms | Medio |
-| N. Puesto (creación, sólo navegación) | 2 | 1 | 4 | 1263ms | Medio |
+| J. Categorías documentales | 3 | 1 | 2 | 911ms | OK |
+| K. Parámetros de auditoría | 3 | 1 | 2 | 1704ms | Medio |
+| L. Puestos (listado) | 4 | 3 | 3 | 778ms | OK |
+| M. Puesto (detalle) | 2 | 2 | 3 | 1513ms | Medio |
+| N. Puesto (creación, sólo navegación) | 2 | 1 | 4 | 780ms | OK |
 
 ## 4. Tabla de acciones
 
 | Acción | Submódulo | Ruta | Visible | Network idle | Requests | Errores consola | Escritura |
 |---|---|---|---|---|---|---|---|
-| Login (acceso rápido RRHH) | Login | `/` | 563ms | 6207ms | 4 | 0 | No |
-| Entrar a Configuración | A. Configuración (landing) | `/configuracion` | 87ms | 1005ms | 1 | 0 | No |
-| Ver tarjetas de submódulos | A. Configuración (landing) | `/configuracion` | 8ms | 93ms | 0 | 0 | No |
-| Entrar a Turnos | B. Turnos | `/configuracion/turnos` | 71ms | 1697ms | 5 | 0 | No |
-| Buscar en Turnos | B. Turnos | `/configuracion/turnos` | 18ms | 423ms | 0 | 0 | No |
-| Filtrar Turnos por Estado | B. Turnos | `/configuracion/turnos` | 17ms | 101ms | 0 | 0 | No |
-| Ver detalle de turno | B. Turnos | `/configuracion/turnos/:id` | 73ms | 1003ms | 3 | 0 | No |
-| Entrar a Asignaciones de feriados | C. Asignaciones de feriados | `/configuracion/turnos-asignaciones-feriados` | 77ms | 2267ms | 6 | 0 | No |
-| Seleccionar fecha de feriado | C. Asignaciones de feriados | `/configuracion/turnos-asignaciones-feriados` | 1331ms | 1735ms | 2 | 0 | No |
-| Entrar a Horas especiales | D. Horas especiales | `/configuracion/turnos-horas-especiales` | 113ms | 1832ms | 6 | 0 | No |
-| Filtrar Horas especiales por clasificación | D. Horas especiales | `/configuracion/turnos-horas-especiales` | 12ms | 96ms | 0 | 0 | No |
-| Entrar a Regímenes laborales | E. Regímenes laborales | `/configuracion/regimenes-laborales` | 131ms | 1148ms | 2 | 0 | No |
-| Buscar en Regímenes laborales | E. Regímenes laborales | `/configuracion/regimenes-laborales` | 9ms | 413ms | 0 | 0 | No |
-| Filtrar Regímenes laborales por Estado | E. Regímenes laborales | `/configuracion/regimenes-laborales` | 11ms | 94ms | 0 | 0 | No |
-| Abrir modal Crear régimen | E. Regímenes laborales | `/configuracion/regimenes-laborales` | 19ms | 101ms | 0 | 0 | No |
-| Cerrar modal Crear régimen | E. Regímenes laborales | `/configuracion/regimenes-laborales` | 27ms | 109ms | 0 | 0 | No |
-| Ver empleados asociados a un régimen | E. Regímenes laborales | `/configuracion/regimenes-laborales` | 41ms | 124ms | 0 | 0 | No |
-| Filtrar vigencia de empleados asociados | E. Regímenes laborales | `/configuracion/regimenes-laborales` | 1292ms | 1376ms | 2 | 0 | No |
-| Cerrar modal Empleados asociados | E. Regímenes laborales | `/configuracion/regimenes-laborales` | 41ms | 124ms | 0 | 0 | No |
-| Entrar a Empresas y estructura | F. Empresas y estructura | `/configuracion/empresas-estructura` | 124ms | 812ms | 1 | 0 | No |
-| Cambiar de pestaña en Empresas y estructura | F. Empresas y estructura | `/configuracion/empresas-estructura` | 47ms | 250ms | 0 | 0 | No |
-| Entrar a Tipos de novedades | G. Tipos de novedades | `/configuracion/tipos-novedades` | 74ms | 914ms | 2 | 0 | No |
-| Buscar en Tipos de novedades | G. Tipos de novedades | `/configuracion/tipos-novedades` | 13ms | 418ms | 0 | 0 | No |
-| Filtrar Tipos de novedades por Finnegans | G. Tipos de novedades | `/configuracion/tipos-novedades` | 15ms | 99ms | 0 | 0 | No |
-| Entrar a Conceptos horarios | H. Conceptos horarios | `/configuracion/conceptos-horarios` | 77ms | 1414ms | 2 | 0 | No |
-| Buscar en Conceptos horarios | H. Conceptos horarios | `/configuracion/conceptos-horarios` | 8ms | 411ms | 0 | 0 | No |
-| Filtrar Conceptos horarios por Tipo | H. Conceptos horarios | `/configuracion/conceptos-horarios` | 12ms | 95ms | 0 | 0 | No |
-| Entrar a Categorías documentales | J. Categorías documentales | `/configuracion/categorias-documentales` | 76ms | 1002ms | 2 | 0 | No |
+| Login (acceso rápido RRHH) | Login | `/` | 624ms | 4181ms | 4 | 0 | No |
+| Entrar a Configuración | A. Configuración (landing) | `/configuracion` | 88ms | 745ms | 1 | 0 | No |
+| Ver tarjetas de submódulos | A. Configuración (landing) | `/configuracion` | 6ms | 90ms | 0 | 0 | No |
+| Entrar a Turnos | B. Turnos | `/configuracion/turnos` | 75ms | 930ms | 3 | 0 | No |
+| Buscar en Turnos | B. Turnos | `/configuracion/turnos` | 23ms | 427ms | 0 | 0 | No |
+| Filtrar Turnos por Estado | B. Turnos | `/configuracion/turnos` | 18ms | 102ms | 0 | 0 | No |
+| Ver detalle de turno | B. Turnos | `/configuracion/turnos/:id` | 324ms | 960ms | 2 | 0 | No |
+| Entrar a Asignaciones de feriados | C. Asignaciones de feriados | `/configuracion/turnos-asignaciones-feriados` | 80ms | 1133ms | 5 | 0 | No |
+| Seleccionar fecha de feriado | C. Asignaciones de feriados | `/configuracion/turnos-asignaciones-feriados` | 1334ms | 1738ms | 2 | 0 | No |
+| Entrar a Horas especiales | D. Horas especiales | `/configuracion/turnos-horas-especiales` | 81ms | 2937ms | 4 | 0 | No |
+| Filtrar Horas especiales por clasificación | D. Horas especiales | `/configuracion/turnos-horas-especiales` | 13ms | 96ms | 0 | 0 | No |
+| Entrar a Regímenes laborales | E. Regímenes laborales | `/configuracion/regimenes-laborales` | 84ms | 965ms | 2 | 0 | No |
+| Buscar en Regímenes laborales | E. Regímenes laborales | `/configuracion/regimenes-laborales` | 11ms | 415ms | 0 | 0 | No |
+| Filtrar Regímenes laborales por Estado | E. Regímenes laborales | `/configuracion/regimenes-laborales` | 11ms | 96ms | 0 | 0 | No |
+| Abrir modal Crear régimen | E. Regímenes laborales | `/configuracion/regimenes-laborales` | 52ms | 134ms | 0 | 0 | No |
+| Cerrar modal Crear régimen | E. Regímenes laborales | `/configuracion/regimenes-laborales` | 17ms | 99ms | 0 | 0 | No |
+| Ver empleados asociados a un régimen | E. Regímenes laborales | `/configuracion/regimenes-laborales` | 47ms | 129ms | 0 | 0 | No |
+| Filtrar vigencia de empleados asociados | E. Regímenes laborales | `/configuracion/regimenes-laborales` | 1290ms | 1374ms | 2 | 0 | No |
+| Cerrar modal Empleados asociados | E. Regímenes laborales | `/configuracion/regimenes-laborales` | 41ms | 125ms | 0 | 0 | No |
+| Entrar a Empresas y estructura | F. Empresas y estructura | `/configuracion/empresas-estructura` | 57ms | 1038ms | 1 | 0 | No |
+| Cambiar de pestaña en Empresas y estructura | F. Empresas y estructura | `/configuracion/empresas-estructura` | 31ms | 235ms | 0 | 0 | No |
+| Entrar a Tipos de novedades | G. Tipos de novedades | `/configuracion/tipos-novedades` | 74ms | 827ms | 2 | 0 | No |
+| Buscar en Tipos de novedades | G. Tipos de novedades | `/configuracion/tipos-novedades` | 10ms | 415ms | 0 | 0 | No |
+| Filtrar Tipos de novedades por Finnegans | G. Tipos de novedades | `/configuracion/tipos-novedades` | 14ms | 98ms | 0 | 0 | No |
+| Entrar a Conceptos horarios | H. Conceptos horarios | `/configuracion/conceptos-horarios` | 77ms | 718ms | 2 | 0 | No |
+| Buscar en Conceptos horarios | H. Conceptos horarios | `/configuracion/conceptos-horarios` | 13ms | 417ms | 0 | 0 | No |
+| Filtrar Conceptos horarios por Tipo | H. Conceptos horarios | `/configuracion/conceptos-horarios` | 12ms | 96ms | 0 | 0 | No |
+| Entrar a Categorías documentales | J. Categorías documentales | `/configuracion/categorias-documentales` | 76ms | 911ms | 2 | 0 | No |
 | Buscar en Categorías documentales | J. Categorías documentales | `/configuracion/categorias-documentales` | 11ms | 415ms | 0 | 0 | No |
-| Filtrar Categorías documentales por Tipo | J. Categorías documentales | `/configuracion/categorias-documentales` | 11ms | 95ms | 0 | 0 | No |
-| Entrar a Parámetros de auditoría | K. Parámetros de auditoría | `/configuracion/parametros-auditoria` | 77ms | 1778ms | 2 | 0 | No |
-| Buscar en Parámetros de auditoría | K. Parámetros de auditoría | `/configuracion/parametros-auditoria` | 13ms | 417ms | 0 | 0 | No |
-| Filtrar Parámetros de auditoría por Módulo | K. Parámetros de auditoría | `/configuracion/parametros-auditoria` | 13ms | 97ms | 0 | 0 | No |
-| Entrar a Puestos | L. Puestos (listado) | `/puestos` | 75ms | 1464ms | 3 | 0 | No |
-| Buscar en Puestos | L. Puestos (listado) | `/puestos` | 14ms | 420ms | 0 | 0 | No |
-| Filtrar Puestos por Sector | L. Puestos (listado) | `/puestos` | 17ms | 101ms | 0 | 0 | No |
-| Limpiar filtros en Puestos | L. Puestos (listado) | `/puestos` | 31ms | 115ms | 0 | 0 | No |
-| Ver detalle de puesto | M. Puesto (detalle) | `/puestos/:id` | 819ms | 1498ms | 3 | 0 | No |
-| Cambiar de pestaña en detalle de Puesto | M. Puesto (detalle) | `/puestos/:id` | 32ms | 235ms | 0 | 0 | No |
-| Entrar a Crear puesto (sólo navegación, sin guardar) | N. Puesto (creación, sólo navegación) | `/puestos/nuevo` | 78ms | 1263ms | 3 | 0 | No |
-| Salir de Crear puesto sin guardar | N. Puesto (creación, sólo navegación) | `/puestos` | 62ms | 145ms | 1 | 0 | No |
+| Filtrar Categorías documentales por Tipo | J. Categorías documentales | `/configuracion/categorias-documentales` | 12ms | 96ms | 0 | 0 | No |
+| Entrar a Parámetros de auditoría | K. Parámetros de auditoría | `/configuracion/parametros-auditoria` | 76ms | 1704ms | 2 | 0 | No |
+| Buscar en Parámetros de auditoría | K. Parámetros de auditoría | `/configuracion/parametros-auditoria` | 11ms | 415ms | 0 | 0 | No |
+| Filtrar Parámetros de auditoría por Módulo | K. Parámetros de auditoría | `/configuracion/parametros-auditoria` | 12ms | 95ms | 0 | 0 | No |
+| Entrar a Puestos | L. Puestos (listado) | `/puestos` | 74ms | 778ms | 3 | 0 | No |
+| Buscar en Puestos | L. Puestos (listado) | `/puestos` | 14ms | 417ms | 0 | 0 | No |
+| Filtrar Puestos por Sector | L. Puestos (listado) | `/puestos` | 16ms | 100ms | 0 | 0 | No |
+| Limpiar filtros en Puestos | L. Puestos (listado) | `/puestos` | 30ms | 113ms | 0 | 0 | No |
+| Ver detalle de puesto | M. Puesto (detalle) | `/puestos/:id` | 824ms | 1513ms | 3 | 0 | No |
+| Cambiar de pestaña en detalle de Puesto | M. Puesto (detalle) | `/puestos/:id` | 37ms | 240ms | 0 | 0 | No |
+| Entrar a Crear puesto (sólo navegación, sin guardar) | N. Puesto (creación, sólo navegación) | `/puestos/nuevo` | 75ms | 780ms | 3 | 0 | No |
+| Salir de Crear puesto sin guardar | N. Puesto (creación, sólo navegación) | `/puestos` | 69ms | 152ms | 1 | 0 | No |
 
 ## 5. Tabla por submódulo
 
@@ -133,31 +133,31 @@ Relevada leyendo el código real (App.tsx, navigation.tsx, cada página y sus se
 
 | Acción | Submódulo | Visible | Network idle | Rango |
 |---|---|---|---|---|
-| Login (acceso rápido RRHH) | Login | 563ms | 6207ms | Crítico |
-| Entrar a Asignaciones de feriados | C. Asignaciones de feriados | 77ms | 2267ms | Lento |
-| Entrar a Horas especiales | D. Horas especiales | 113ms | 1832ms | Medio |
-| Entrar a Parámetros de auditoría | K. Parámetros de auditoría | 77ms | 1778ms | Medio |
-| Seleccionar fecha de feriado | C. Asignaciones de feriados | 1331ms | 1735ms | Medio |
-| Entrar a Turnos | B. Turnos | 71ms | 1697ms | Medio |
-| Ver detalle de puesto | M. Puesto (detalle) | 819ms | 1498ms | Medio |
-| Entrar a Puestos | L. Puestos (listado) | 75ms | 1464ms | Medio |
-| Entrar a Conceptos horarios | H. Conceptos horarios | 77ms | 1414ms | Medio |
-| Filtrar vigencia de empleados asociados | E. Regímenes laborales | 1292ms | 1376ms | Medio |
+| Login (acceso rápido RRHH) | Login | 624ms | 4181ms | Crítico |
+| Entrar a Horas especiales | D. Horas especiales | 81ms | 2937ms | Lento |
+| Seleccionar fecha de feriado | C. Asignaciones de feriados | 1334ms | 1738ms | Medio |
+| Entrar a Parámetros de auditoría | K. Parámetros de auditoría | 76ms | 1704ms | Medio |
+| Ver detalle de puesto | M. Puesto (detalle) | 824ms | 1513ms | Medio |
+| Filtrar vigencia de empleados asociados | E. Regímenes laborales | 1290ms | 1374ms | Medio |
+| Entrar a Asignaciones de feriados | C. Asignaciones de feriados | 80ms | 1133ms | Medio |
+| Entrar a Empresas y estructura | F. Empresas y estructura | 57ms | 1038ms | Medio |
+| Entrar a Regímenes laborales | E. Regímenes laborales | 84ms | 965ms | OK |
+| Ver detalle de turno | B. Turnos | 324ms | 960ms | OK |
 
 ## 8. Top requests lentas
 
 | Método | Path | Status | Duración |
 |---|---|---|---|
-| GET | `/api/dashboard/metrics` | 200 | 4121ms |
-| GET | `/api/audit` | 200 | 2001ms |
-| GET | `/api/org-structure` | 200 | 1681ms |
-| GET | `/api/shifts/holiday-work/candidates` | 200 | 1255ms |
-| GET | `/api/positions` | 200 | 1252ms |
-| POST | `/api/auth/login` | 200 | 1215ms |
-| GET | `/api/audit-parameters` | 200 | 1206ms |
-| GET | `/api/shifts/assignments/summary` | 200 | 1134ms |
-| GET | `/api/work-regimes/:id/employees` | 200 | 935ms |
-| GET | `/api/work-regimes/:id/employees` | 200 | 911ms |
+| GET | `/api/positions` | 200 | 2365ms |
+| GET | `/api/dashboard/metrics` | 200 | 1811ms |
+| POST | `/api/auth/login` | 200 | 1225ms |
+| GET | `/api/audit-parameters` | 200 | 1142ms |
+| GET | `/api/audit` | 200 | 920ms |
+| GET | `/api/work-regimes/:id/employees` | 200 | 900ms |
+| GET | `/api/work-regimes/:id/employees` | 200 | 892ms |
+| GET | `/api/workforce/double-hour-rules` | 200 | 839ms |
+| GET | `/api/workforce/double-hour-rules/calendar` | 200 | 829ms |
+| GET | `/api/shifts/holiday-work/candidates` | 200 | 811ms |
 
 ## 9. Endpoints repetidos
 
@@ -166,22 +166,16 @@ Mismo endpoint (método+path) pedido más de una vez a lo largo de TODO el recor
 | Endpoint | Llamadas totales |
 |---|---|
 | `GET /api/workforce/notifications-unread-count` | 15 |
-| `GET /api/workforce/shift-templates` | 6 |
 | `GET /api/positions` | 5 |
-| `GET /api/shifts/assignments/summary` | 2 |
+| `GET /api/workforce/shift-templates` | 3 |
 | `GET /api/shifts/holiday-work/dates` | 2 |
-| `GET /api/workforce/double-hour-rules` | 2 |
-| `GET /api/workforce/double-hour-rules/calendar` | 2 |
 | `GET /api/work-regimes/:id/employees` | 2 |
 
 ## 10. Duplicados por acción
 
 Mismo endpoint pedido más de una vez DENTRO de la ventana de una sola acción — señal de StrictMode (double-invoke en dev), remount de AppShell entre navegaciones completas, o un refetch inesperado.
 
-- **Entrar a Turnos** (B. Turnos): `GET /api/shifts/assignments/summary` x2, `GET /api/workforce/shift-templates` x2
-- **Ver detalle de turno** (B. Turnos): `GET /api/workforce/shift-templates` x2
-- **Entrar a Asignaciones de feriados** (C. Asignaciones de feriados): `GET /api/workforce/shift-templates` x2, `GET /api/shifts/holiday-work/dates` x2
-- **Entrar a Horas especiales** (D. Horas especiales): `GET /api/workforce/double-hour-rules` x2, `GET /api/workforce/double-hour-rules/calendar` x2
+- **Entrar a Asignaciones de feriados** (C. Asignaciones de feriados): `GET /api/shifts/holiday-work/dates` x2
 - **Filtrar vigencia de empleados asociados** (E. Regímenes laborales): `GET /api/work-regimes/:id/employees` x2
 - **Entrar a Puestos** (L. Puestos (listado)): `GET /api/positions` x2
 
@@ -226,7 +220,24 @@ Política de esta etapa sobre editores inline: 5 submódulos (Horas especiales, 
 
 ## 15. Recomendación de orden para 14H.2+
 
-Ningún submódulo mostró endpoints en rango Crítico/Lento en esta corrida puntual — no hay evidencia suficiente para priorizar. Repetir la corrida antes de decidir 14H.2.
+Submódulos ordenados por cantidad de endpoints Crítico/Lento detectados en este recorrido (desempate por la duración máxima observada):
+
+| Orden | Submódulo | Endpoints Crítico | Endpoints Lento | Duración máxima |
+|---|---|---|---|---|
+| 1 | D. Horas especiales | 0 | 1 | 2365ms |
+| 2 | K. Parámetros de auditoría | 0 | 0 | 1142ms |
+| 3 | E. Regímenes laborales | 0 | 0 | 900ms |
+| 4 | C. Asignaciones de feriados | 0 | 0 | 811ms |
+| 5 | M. Puesto (detalle) | 0 | 0 | 561ms |
+| 6 | F. Empresas y estructura | 0 | 0 | 507ms |
+| 7 | B. Turnos | 0 | 0 | 416ms |
+| 8 | J. Categorías documentales | 0 | 0 | 350ms |
+| 9 | N. Puesto (creación, sólo navegación) | 0 | 0 | 311ms |
+| 10 | G. Tipos de novedades | 0 | 0 | 280ms |
+| 11 | L. Puestos (listado) | 0 | 0 | 234ms |
+| 12 | A. Configuración (landing) | 0 | 0 | 179ms |
+| 13 | H. Conceptos horarios | 0 | 0 | 174ms |
+| 14 | I. Exportación Finnegans | 0 | 0 | 0ms |
 
 Contexto estructural relevante para esta priorización (relevado en el diagnóstico, no medido por endpoints individuales):
 - Turnos y Horas especiales son las únicas 2 tarjetas sin ningún cache frontend (`apiCache:false` directo, sin `cachedData`/`cachePolicies`) — cada visita es un round-trip real garantizado, a diferencia de las 7 tarjetas restantes que sí cachean su catálogo principal 10min.
@@ -240,7 +251,7 @@ Idéntico al archivo `docs/performance/ADMIN_CONFIGURATION_PERFORMANCE_JOURNEY_1
 
 ```json
 {
-  "generatedAt": "2026-09-08T14:51:11.124Z",
+  "generatedAt": "2026-09-08T15:31:18.316Z",
   "environment": "Frontend y backend locales (`npm run dev`), backend conectado a la base real de staging (ver docs/LOCAL_DEVELOPMENT.md) — no es un ambiente de producción ni un ambiente aislado de test.",
   "baseUrl": "http://localhost:5174",
   "apiBaseUrl": "http://localhost:4002/api",
@@ -268,7 +279,7 @@ Idéntico al archivo `docs/performance/ADMIN_CONFIGURATION_PERFORMANCE_JOURNEY_1
       "coveredActions": 1,
       "skippedActions": 0,
       "totalRequests": 4,
-      "maxDurationMs": 6207,
+      "maxDurationMs": 4181,
       "rank": "Crítico"
     },
     {
@@ -276,39 +287,39 @@ Idéntico al archivo `docs/performance/ADMIN_CONFIGURATION_PERFORMANCE_JOURNEY_1
       "coveredActions": 2,
       "skippedActions": 0,
       "totalRequests": 1,
-      "maxDurationMs": 1005,
-      "rank": "Medio"
+      "maxDurationMs": 745,
+      "rank": "OK"
     },
     {
       "zone": "B. Turnos",
       "coveredActions": 4,
       "skippedActions": 2,
-      "totalRequests": 8,
-      "maxDurationMs": 1697,
-      "rank": "Medio"
+      "totalRequests": 5,
+      "maxDurationMs": 960,
+      "rank": "OK"
     },
     {
       "zone": "C. Asignaciones de feriados",
       "coveredActions": 2,
       "skippedActions": 1,
-      "totalRequests": 8,
-      "maxDurationMs": 2267,
-      "rank": "Lento"
+      "totalRequests": 7,
+      "maxDurationMs": 1738,
+      "rank": "Medio"
     },
     {
       "zone": "D. Horas especiales",
       "coveredActions": 2,
       "skippedActions": 2,
-      "totalRequests": 6,
-      "maxDurationMs": 1832,
-      "rank": "Medio"
+      "totalRequests": 4,
+      "maxDurationMs": 2937,
+      "rank": "Lento"
     },
     {
       "zone": "E. Regímenes laborales",
       "coveredActions": 8,
       "skippedActions": 2,
       "totalRequests": 4,
-      "maxDurationMs": 1376,
+      "maxDurationMs": 1374,
       "rank": "Medio"
     },
     {
@@ -316,15 +327,15 @@ Idéntico al archivo `docs/performance/ADMIN_CONFIGURATION_PERFORMANCE_JOURNEY_1
       "coveredActions": 2,
       "skippedActions": 1,
       "totalRequests": 1,
-      "maxDurationMs": 812,
-      "rank": "OK"
+      "maxDurationMs": 1038,
+      "rank": "Medio"
     },
     {
       "zone": "G. Tipos de novedades",
       "coveredActions": 3,
       "skippedActions": 3,
       "totalRequests": 2,
-      "maxDurationMs": 914,
+      "maxDurationMs": 827,
       "rank": "OK"
     },
     {
@@ -332,8 +343,8 @@ Idéntico al archivo `docs/performance/ADMIN_CONFIGURATION_PERFORMANCE_JOURNEY_1
       "coveredActions": 3,
       "skippedActions": 2,
       "totalRequests": 2,
-      "maxDurationMs": 1414,
-      "rank": "Medio"
+      "maxDurationMs": 718,
+      "rank": "OK"
     },
     {
       "zone": "I. Exportación Finnegans",
@@ -347,15 +358,15 @@ Idéntico al archivo `docs/performance/ADMIN_CONFIGURATION_PERFORMANCE_JOURNEY_1
       "coveredActions": 3,
       "skippedActions": 1,
       "totalRequests": 2,
-      "maxDurationMs": 1002,
-      "rank": "Medio"
+      "maxDurationMs": 911,
+      "rank": "OK"
     },
     {
       "zone": "K. Parámetros de auditoría",
       "coveredActions": 3,
       "skippedActions": 1,
       "totalRequests": 2,
-      "maxDurationMs": 1778,
+      "maxDurationMs": 1704,
       "rank": "Medio"
     },
     {
@@ -363,15 +374,15 @@ Idéntico al archivo `docs/performance/ADMIN_CONFIGURATION_PERFORMANCE_JOURNEY_1
       "coveredActions": 4,
       "skippedActions": 3,
       "totalRequests": 3,
-      "maxDurationMs": 1464,
-      "rank": "Medio"
+      "maxDurationMs": 778,
+      "rank": "OK"
     },
     {
       "zone": "M. Puesto (detalle)",
       "coveredActions": 2,
       "skippedActions": 2,
       "totalRequests": 3,
-      "maxDurationMs": 1498,
+      "maxDurationMs": 1513,
       "rank": "Medio"
     },
     {
@@ -379,8 +390,8 @@ Idéntico al archivo `docs/performance/ADMIN_CONFIGURATION_PERFORMANCE_JOURNEY_1
       "coveredActions": 2,
       "skippedActions": 1,
       "totalRequests": 4,
-      "maxDurationMs": 1263,
-      "rank": "Medio"
+      "maxDurationMs": 780,
+      "rank": "OK"
     }
   ],
   "actions": [
@@ -391,32 +402,32 @@ Idéntico al archivo `docs/performance/ADMIN_CONFIGURATION_PERFORMANCE_JOURNEY_1
       "route": "/",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 563,
-      "networkIdleMs": 6207,
+      "visibleMs": 624,
+      "networkIdleMs": 4181,
       "requests": [
         {
           "method": "POST",
           "path": "/api/auth/login",
           "statusCode": 200,
-          "durationMs": 1215
+          "durationMs": 1225
         },
         {
           "method": "GET",
           "path": "/api/workforce/notifications-unread-count",
           "statusCode": 200,
-          "durationMs": 383
+          "durationMs": 385
         },
         {
           "method": "GET",
           "path": "/api/audit",
           "statusCode": 200,
-          "durationMs": 2001
+          "durationMs": 920
         },
         {
           "method": "GET",
           "path": "/api/dashboard/metrics",
           "statusCode": 200,
-          "durationMs": 4121
+          "durationMs": 1811
         }
       ],
       "consoleErrors": [],
@@ -431,14 +442,14 @@ Idéntico al archivo `docs/performance/ADMIN_CONFIGURATION_PERFORMANCE_JOURNEY_1
       "route": "/configuracion",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 87,
-      "networkIdleMs": 1005,
+      "visibleMs": 88,
+      "networkIdleMs": 745,
       "requests": [
         {
           "method": "GET",
           "path": "/api/workforce/notifications-unread-count",
           "statusCode": 200,
-          "durationMs": 441
+          "durationMs": 179
         }
       ],
       "consoleErrors": [],
@@ -455,8 +466,8 @@ Idéntico al archivo `docs/performance/ADMIN_CONFIGURATION_PERFORMANCE_JOURNEY_1
       "route": "/configuracion",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 8,
-      "networkIdleMs": 93,
+      "visibleMs": 6,
+      "networkIdleMs": 90,
       "requests": [],
       "consoleErrors": [],
       "notes": [
@@ -472,38 +483,26 @@ Idéntico al archivo `docs/performance/ADMIN_CONFIGURATION_PERFORMANCE_JOURNEY_1
       "route": "/configuracion/turnos",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 71,
-      "networkIdleMs": 1697,
+      "visibleMs": 75,
+      "networkIdleMs": 930,
       "requests": [
         {
           "method": "GET",
           "path": "/api/workforce/notifications-unread-count",
           "statusCode": 200,
-          "durationMs": 182
+          "durationMs": 175
         },
         {
           "method": "GET",
           "path": "/api/shifts/assignments/summary",
           "statusCode": 200,
-          "durationMs": 391
+          "durationMs": 350
         },
         {
           "method": "GET",
           "path": "/api/workforce/shift-templates",
           "statusCode": 200,
-          "durationMs": 394
-        },
-        {
-          "method": "GET",
-          "path": "/api/workforce/shift-templates",
-          "statusCode": 200,
-          "durationMs": 579
-        },
-        {
-          "method": "GET",
-          "path": "/api/shifts/assignments/summary",
-          "statusCode": 200,
-          "durationMs": 1134
+          "durationMs": 369
         }
       ],
       "consoleErrors": [],
@@ -518,8 +517,8 @@ Idéntico al archivo `docs/performance/ADMIN_CONFIGURATION_PERFORMANCE_JOURNEY_1
       "route": "/configuracion/turnos",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 18,
-      "networkIdleMs": 423,
+      "visibleMs": 23,
+      "networkIdleMs": 427,
       "requests": [],
       "consoleErrors": [],
       "notes": [
@@ -535,8 +534,8 @@ Idéntico al archivo `docs/performance/ADMIN_CONFIGURATION_PERFORMANCE_JOURNEY_1
       "route": "/configuracion/turnos",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 17,
-      "networkIdleMs": 101,
+      "visibleMs": 18,
+      "networkIdleMs": 102,
       "requests": [],
       "consoleErrors": [],
       "notes": [],
@@ -563,26 +562,20 @@ Idéntico al archivo `docs/performance/ADMIN_CONFIGURATION_PERFORMANCE_JOURNEY_1
       "route": "/configuracion/turnos/:id",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 73,
-      "networkIdleMs": 1003,
+      "visibleMs": 324,
+      "networkIdleMs": 960,
       "requests": [
         {
           "method": "GET",
           "path": "/api/workforce/shift-templates",
           "statusCode": 200,
-          "durationMs": 1
-        },
-        {
-          "method": "GET",
-          "path": "/api/workforce/shift-templates",
-          "statusCode": 200,
-          "durationMs": 1
+          "durationMs": 218
         },
         {
           "method": "GET",
           "path": "/api/workforce/notifications-unread-count",
           "statusCode": 200,
-          "durationMs": 453
+          "durationMs": 416
         }
       ],
       "consoleErrors": [],
@@ -610,8 +603,8 @@ Idéntico al archivo `docs/performance/ADMIN_CONFIGURATION_PERFORMANCE_JOURNEY_1
       "route": "/configuracion/turnos-asignaciones-feriados",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 77,
-      "networkIdleMs": 2267,
+      "visibleMs": 80,
+      "networkIdleMs": 1133,
       "requests": [
         {
           "method": "GET",
@@ -621,33 +614,27 @@ Idéntico al archivo `docs/performance/ADMIN_CONFIGURATION_PERFORMANCE_JOURNEY_1
         },
         {
           "method": "GET",
-          "path": "/api/workforce/shift-templates",
-          "statusCode": 200,
-          "durationMs": 3
-        },
-        {
-          "method": "GET",
           "path": "/api/workforce/notifications-unread-count",
           "statusCode": 200,
-          "durationMs": 190
+          "durationMs": 210
         },
         {
           "method": "GET",
           "path": "/api/shifts/holiday-work/dates",
           "statusCode": 200,
-          "durationMs": 376
+          "durationMs": 380
         },
         {
           "method": "GET",
           "path": "/api/shifts/holiday-work/dates",
           "statusCode": 200,
-          "durationMs": 547
+          "durationMs": 552
         },
         {
           "method": "GET",
           "path": "/api/org-structure",
           "statusCode": 200,
-          "durationMs": 1681
+          "durationMs": 559
         }
       ],
       "consoleErrors": [],
@@ -662,20 +649,20 @@ Idéntico al archivo `docs/performance/ADMIN_CONFIGURATION_PERFORMANCE_JOURNEY_1
       "route": "/configuracion/turnos-asignaciones-feriados",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 1331,
-      "networkIdleMs": 1735,
+      "visibleMs": 1334,
+      "networkIdleMs": 1738,
       "requests": [
         {
           "method": "GET",
           "path": "/api/shifts/holiday-work/assignments",
           "statusCode": 200,
-          "durationMs": 685
+          "durationMs": 391
         },
         {
           "method": "GET",
           "path": "/api/shifts/holiday-work/candidates",
           "statusCode": 200,
-          "durationMs": 1255
+          "durationMs": 811
         }
       ],
       "consoleErrors": [],
@@ -703,44 +690,32 @@ Idéntico al archivo `docs/performance/ADMIN_CONFIGURATION_PERFORMANCE_JOURNEY_1
       "route": "/configuracion/turnos-horas-especiales",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 113,
-      "networkIdleMs": 1832,
+      "visibleMs": 81,
+      "networkIdleMs": 2937,
       "requests": [
         {
           "method": "GET",
           "path": "/api/workforce/notifications-unread-count",
           "statusCode": 200,
-          "durationMs": 369
-        },
-        {
-          "method": "GET",
-          "path": "/api/workforce/double-hour-rules",
-          "statusCode": 200,
-          "durationMs": 351
-        },
-        {
-          "method": "GET",
-          "path": "/api/workforce/double-hour-rules",
-          "statusCode": 200,
-          "durationMs": 352
+          "durationMs": 171
         },
         {
           "method": "GET",
           "path": "/api/workforce/double-hour-rules/calendar",
           "statusCode": 200,
-          "durationMs": 383
+          "durationMs": 829
         },
         {
           "method": "GET",
-          "path": "/api/workforce/double-hour-rules/calendar",
+          "path": "/api/workforce/double-hour-rules",
           "statusCode": 200,
-          "durationMs": 564
+          "durationMs": 839
         },
         {
           "method": "GET",
           "path": "/api/positions",
           "statusCode": 200,
-          "durationMs": 1252
+          "durationMs": 2365
         }
       ],
       "consoleErrors": [],
@@ -755,7 +730,7 @@ Idéntico al archivo `docs/performance/ADMIN_CONFIGURATION_PERFORMANCE_JOURNEY_1
       "route": "/configuracion/turnos-horas-especiales",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 12,
+      "visibleMs": 13,
       "networkIdleMs": 96,
       "requests": [],
       "consoleErrors": [],
@@ -796,20 +771,20 @@ Idéntico al archivo `docs/performance/ADMIN_CONFIGURATION_PERFORMANCE_JOURNEY_1
       "route": "/configuracion/regimenes-laborales",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 131,
-      "networkIdleMs": 1148,
+      "visibleMs": 84,
+      "networkIdleMs": 965,
       "requests": [
         {
           "method": "GET",
           "path": "/api/workforce/notifications-unread-count",
           "statusCode": 200,
-          "durationMs": 190
+          "durationMs": 180
         },
         {
           "method": "GET",
           "path": "/api/work-regimes",
           "statusCode": 200,
-          "durationMs": 537
+          "durationMs": 395
         }
       ],
       "consoleErrors": [],
@@ -824,8 +799,8 @@ Idéntico al archivo `docs/performance/ADMIN_CONFIGURATION_PERFORMANCE_JOURNEY_1
       "route": "/configuracion/regimenes-laborales",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 9,
-      "networkIdleMs": 413,
+      "visibleMs": 11,
+      "networkIdleMs": 415,
       "requests": [],
       "consoleErrors": [],
       "notes": [
@@ -842,7 +817,7 @@ Idéntico al archivo `docs/performance/ADMIN_CONFIGURATION_PERFORMANCE_JOURNEY_1
       "covered": true,
       "skippedReason": null,
       "visibleMs": 11,
-      "networkIdleMs": 94,
+      "networkIdleMs": 96,
       "requests": [],
       "consoleErrors": [],
       "notes": [],
@@ -856,8 +831,8 @@ Idéntico al archivo `docs/performance/ADMIN_CONFIGURATION_PERFORMANCE_JOURNEY_1
       "route": "/configuracion/regimenes-laborales",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 19,
-      "networkIdleMs": 101,
+      "visibleMs": 52,
+      "networkIdleMs": 134,
       "requests": [],
       "consoleErrors": [],
       "notes": [
@@ -873,8 +848,8 @@ Idéntico al archivo `docs/performance/ADMIN_CONFIGURATION_PERFORMANCE_JOURNEY_1
       "route": "/configuracion/regimenes-laborales",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 27,
-      "networkIdleMs": 109,
+      "visibleMs": 17,
+      "networkIdleMs": 99,
       "requests": [],
       "consoleErrors": [],
       "notes": [],
@@ -888,8 +863,8 @@ Idéntico al archivo `docs/performance/ADMIN_CONFIGURATION_PERFORMANCE_JOURNEY_1
       "route": "/configuracion/regimenes-laborales",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 41,
-      "networkIdleMs": 124,
+      "visibleMs": 47,
+      "networkIdleMs": 129,
       "requests": [],
       "consoleErrors": [],
       "notes": [],
@@ -903,20 +878,20 @@ Idéntico al archivo `docs/performance/ADMIN_CONFIGURATION_PERFORMANCE_JOURNEY_1
       "route": "/configuracion/regimenes-laborales",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 1292,
-      "networkIdleMs": 1376,
+      "visibleMs": 1290,
+      "networkIdleMs": 1374,
       "requests": [
         {
           "method": "GET",
           "path": "/api/work-regimes/:id/employees",
           "statusCode": 200,
-          "durationMs": 911
+          "durationMs": 892
         },
         {
           "method": "GET",
           "path": "/api/work-regimes/:id/employees",
           "statusCode": 200,
-          "durationMs": 935
+          "durationMs": 900
         }
       ],
       "consoleErrors": [],
@@ -932,7 +907,7 @@ Idéntico al archivo `docs/performance/ADMIN_CONFIGURATION_PERFORMANCE_JOURNEY_1
       "covered": true,
       "skippedReason": null,
       "visibleMs": 41,
-      "networkIdleMs": 124,
+      "networkIdleMs": 125,
       "requests": [],
       "consoleErrors": [],
       "notes": [],
@@ -972,14 +947,14 @@ Idéntico al archivo `docs/performance/ADMIN_CONFIGURATION_PERFORMANCE_JOURNEY_1
       "route": "/configuracion/empresas-estructura",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 124,
-      "networkIdleMs": 812,
+      "visibleMs": 57,
+      "networkIdleMs": 1038,
       "requests": [
         {
           "method": "GET",
           "path": "/api/workforce/notifications-unread-count",
           "statusCode": 200,
-          "durationMs": 265
+          "durationMs": 507
         }
       ],
       "consoleErrors": [],
@@ -994,8 +969,8 @@ Idéntico al archivo `docs/performance/ADMIN_CONFIGURATION_PERFORMANCE_JOURNEY_1
       "route": "/configuracion/empresas-estructura",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 47,
-      "networkIdleMs": 250,
+      "visibleMs": 31,
+      "networkIdleMs": 235,
       "requests": [],
       "consoleErrors": [],
       "notes": [],
@@ -1023,19 +998,19 @@ Idéntico al archivo `docs/performance/ADMIN_CONFIGURATION_PERFORMANCE_JOURNEY_1
       "covered": true,
       "skippedReason": null,
       "visibleMs": 74,
-      "networkIdleMs": 914,
+      "networkIdleMs": 827,
       "requests": [
-        {
-          "method": "GET",
-          "path": "/api/workforce/notifications-unread-count",
-          "statusCode": 200,
-          "durationMs": 189
-        },
         {
           "method": "GET",
           "path": "/api/novelty-types",
           "statusCode": 200,
-          "durationMs": 353
+          "durationMs": 1
+        },
+        {
+          "method": "GET",
+          "path": "/api/workforce/notifications-unread-count",
+          "statusCode": 200,
+          "durationMs": 280
         }
       ],
       "consoleErrors": [],
@@ -1050,8 +1025,8 @@ Idéntico al archivo `docs/performance/ADMIN_CONFIGURATION_PERFORMANCE_JOURNEY_1
       "route": "/configuracion/tipos-novedades",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 13,
-      "networkIdleMs": 418,
+      "visibleMs": 10,
+      "networkIdleMs": 415,
       "requests": [],
       "consoleErrors": [],
       "notes": [
@@ -1067,8 +1042,8 @@ Idéntico al archivo `docs/performance/ADMIN_CONFIGURATION_PERFORMANCE_JOURNEY_1
       "route": "/configuracion/tipos-novedades",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 15,
-      "networkIdleMs": 99,
+      "visibleMs": 14,
+      "networkIdleMs": 98,
       "requests": [],
       "consoleErrors": [],
       "notes": [],
@@ -1122,19 +1097,19 @@ Idéntico al archivo `docs/performance/ADMIN_CONFIGURATION_PERFORMANCE_JOURNEY_1
       "covered": true,
       "skippedReason": null,
       "visibleMs": 77,
-      "networkIdleMs": 1414,
+      "networkIdleMs": 718,
       "requests": [
-        {
-          "method": "GET",
-          "path": "/api/workforce/notifications-unread-count",
-          "statusCode": 200,
-          "durationMs": 682
-        },
         {
           "method": "GET",
           "path": "/api/hour-concepts",
           "statusCode": 200,
-          "durationMs": 835
+          "durationMs": 2
+        },
+        {
+          "method": "GET",
+          "path": "/api/workforce/notifications-unread-count",
+          "statusCode": 200,
+          "durationMs": 174
         }
       ],
       "consoleErrors": [],
@@ -1149,8 +1124,8 @@ Idéntico al archivo `docs/performance/ADMIN_CONFIGURATION_PERFORMANCE_JOURNEY_1
       "route": "/configuracion/conceptos-horarios",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 8,
-      "networkIdleMs": 411,
+      "visibleMs": 13,
+      "networkIdleMs": 417,
       "requests": [],
       "consoleErrors": [],
       "notes": [
@@ -1167,7 +1142,7 @@ Idéntico al archivo `docs/performance/ADMIN_CONFIGURATION_PERFORMANCE_JOURNEY_1
       "covered": true,
       "skippedReason": null,
       "visibleMs": 12,
-      "networkIdleMs": 95,
+      "networkIdleMs": 96,
       "requests": [],
       "consoleErrors": [],
       "notes": [],
@@ -1221,19 +1196,19 @@ Idéntico al archivo `docs/performance/ADMIN_CONFIGURATION_PERFORMANCE_JOURNEY_1
       "covered": true,
       "skippedReason": null,
       "visibleMs": 76,
-      "networkIdleMs": 1002,
+      "networkIdleMs": 911,
       "requests": [
         {
           "method": "GET",
           "path": "/api/workforce/notifications-unread-count",
           "statusCode": 200,
-          "durationMs": 181
+          "durationMs": 339
         },
         {
           "method": "GET",
           "path": "/api/document-categories",
           "statusCode": 200,
-          "durationMs": 431
+          "durationMs": 350
         }
       ],
       "consoleErrors": [],
@@ -1265,8 +1240,8 @@ Idéntico al archivo `docs/performance/ADMIN_CONFIGURATION_PERFORMANCE_JOURNEY_1
       "route": "/configuracion/categorias-documentales",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 11,
-      "networkIdleMs": 95,
+      "visibleMs": 12,
+      "networkIdleMs": 96,
       "requests": [],
       "consoleErrors": [],
       "notes": [],
@@ -1293,20 +1268,20 @@ Idéntico al archivo `docs/performance/ADMIN_CONFIGURATION_PERFORMANCE_JOURNEY_1
       "route": "/configuracion/parametros-auditoria",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 77,
-      "networkIdleMs": 1778,
+      "visibleMs": 76,
+      "networkIdleMs": 1704,
       "requests": [
         {
           "method": "GET",
           "path": "/api/workforce/notifications-unread-count",
           "statusCode": 200,
-          "durationMs": 172
+          "durationMs": 240
         },
         {
           "method": "GET",
           "path": "/api/audit-parameters",
           "statusCode": 200,
-          "durationMs": 1206
+          "durationMs": 1142
         }
       ],
       "consoleErrors": [],
@@ -1321,8 +1296,8 @@ Idéntico al archivo `docs/performance/ADMIN_CONFIGURATION_PERFORMANCE_JOURNEY_1
       "route": "/configuracion/parametros-auditoria",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 13,
-      "networkIdleMs": 417,
+      "visibleMs": 11,
+      "networkIdleMs": 415,
       "requests": [],
       "consoleErrors": [],
       "notes": [
@@ -1338,8 +1313,8 @@ Idéntico al archivo `docs/performance/ADMIN_CONFIGURATION_PERFORMANCE_JOURNEY_1
       "route": "/configuracion/parametros-auditoria",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 13,
-      "networkIdleMs": 97,
+      "visibleMs": 12,
+      "networkIdleMs": 95,
       "requests": [],
       "consoleErrors": [],
       "notes": [],
@@ -1366,26 +1341,26 @@ Idéntico al archivo `docs/performance/ADMIN_CONFIGURATION_PERFORMANCE_JOURNEY_1
       "route": "/puestos",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 75,
-      "networkIdleMs": 1464,
+      "visibleMs": 74,
+      "networkIdleMs": 778,
       "requests": [
+        {
+          "method": "GET",
+          "path": "/api/positions",
+          "statusCode": 200,
+          "durationMs": 2
+        },
+        {
+          "method": "GET",
+          "path": "/api/positions",
+          "statusCode": 200,
+          "durationMs": 2
+        },
         {
           "method": "GET",
           "path": "/api/workforce/notifications-unread-count",
           "statusCode": 200,
-          "durationMs": 380
-        },
-        {
-          "method": "GET",
-          "path": "/api/positions",
-          "statusCode": 200,
-          "durationMs": 889
-        },
-        {
-          "method": "GET",
-          "path": "/api/positions",
-          "statusCode": 200,
-          "durationMs": 896
+          "durationMs": 234
         }
       ],
       "consoleErrors": [],
@@ -1401,7 +1376,7 @@ Idéntico al archivo `docs/performance/ADMIN_CONFIGURATION_PERFORMANCE_JOURNEY_1
       "covered": true,
       "skippedReason": null,
       "visibleMs": 14,
-      "networkIdleMs": 420,
+      "networkIdleMs": 417,
       "requests": [],
       "consoleErrors": [],
       "notes": [
@@ -1417,8 +1392,8 @@ Idéntico al archivo `docs/performance/ADMIN_CONFIGURATION_PERFORMANCE_JOURNEY_1
       "route": "/puestos",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 17,
-      "networkIdleMs": 101,
+      "visibleMs": 16,
+      "networkIdleMs": 100,
       "requests": [],
       "consoleErrors": [],
       "notes": [],
@@ -1432,8 +1407,8 @@ Idéntico al archivo `docs/performance/ADMIN_CONFIGURATION_PERFORMANCE_JOURNEY_1
       "route": "/puestos",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 31,
-      "networkIdleMs": 115,
+      "visibleMs": 30,
+      "networkIdleMs": 113,
       "requests": [],
       "consoleErrors": [],
       "notes": [],
@@ -1486,8 +1461,8 @@ Idéntico al archivo `docs/performance/ADMIN_CONFIGURATION_PERFORMANCE_JOURNEY_1
       "route": "/puestos/:id",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 819,
-      "networkIdleMs": 1498,
+      "visibleMs": 824,
+      "networkIdleMs": 1513,
       "requests": [
         {
           "method": "GET",
@@ -1499,13 +1474,13 @@ Idéntico al archivo `docs/performance/ADMIN_CONFIGURATION_PERFORMANCE_JOURNEY_1
           "method": "GET",
           "path": "/api/positions/:id",
           "statusCode": 200,
-          "durationMs": 380
+          "durationMs": 396
         },
         {
           "method": "GET",
           "path": "/api/positions/:id/employees",
           "statusCode": 200,
-          "durationMs": 552
+          "durationMs": 561
         }
       ],
       "consoleErrors": [],
@@ -1520,8 +1495,8 @@ Idéntico al archivo `docs/performance/ADMIN_CONFIGURATION_PERFORMANCE_JOURNEY_1
       "route": "/puestos/:id",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 32,
-      "networkIdleMs": 235,
+      "visibleMs": 37,
+      "networkIdleMs": 240,
       "requests": [],
       "consoleErrors": [],
       "notes": [
@@ -1563,26 +1538,26 @@ Idéntico al archivo `docs/performance/ADMIN_CONFIGURATION_PERFORMANCE_JOURNEY_1
       "route": "/puestos/nuevo",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 78,
-      "networkIdleMs": 1263,
+      "visibleMs": 75,
+      "networkIdleMs": 780,
       "requests": [
         {
           "method": "GET",
           "path": "/api/positions",
           "statusCode": 200,
-          "durationMs": 201
-        },
-        {
-          "method": "GET",
-          "path": "/api/workforce/notifications-unread-count",
-          "statusCode": 200,
-          "durationMs": 359
+          "durationMs": 1
         },
         {
           "method": "GET",
           "path": "/api/salary-categories",
           "statusCode": 200,
-          "durationMs": 691
+          "durationMs": 2
+        },
+        {
+          "method": "GET",
+          "path": "/api/workforce/notifications-unread-count",
+          "statusCode": 200,
+          "durationMs": 232
         }
       ],
       "consoleErrors": [],
@@ -1599,14 +1574,14 @@ Idéntico al archivo `docs/performance/ADMIN_CONFIGURATION_PERFORMANCE_JOURNEY_1
       "route": "/puestos",
       "covered": true,
       "skippedReason": null,
-      "visibleMs": 62,
-      "networkIdleMs": 145,
+      "visibleMs": 69,
+      "networkIdleMs": 152,
       "requests": [
         {
           "method": "GET",
           "path": "/api/positions",
           "statusCode": 200,
-          "durationMs": 2
+          "durationMs": 311
         }
       ],
       "consoleErrors": [],
@@ -1631,125 +1606,125 @@ Idéntico al archivo `docs/performance/ADMIN_CONFIGURATION_PERFORMANCE_JOURNEY_1
   "slowestRequests": [
     {
       "method": "GET",
-      "path": "/api/dashboard/metrics",
-      "statusCode": 200,
-      "durationMs": 4121
-    },
-    {
-      "method": "GET",
-      "path": "/api/audit",
-      "statusCode": 200,
-      "durationMs": 2001
-    },
-    {
-      "method": "GET",
-      "path": "/api/org-structure",
-      "statusCode": 200,
-      "durationMs": 1681
-    },
-    {
-      "method": "GET",
-      "path": "/api/shifts/holiday-work/candidates",
-      "statusCode": 200,
-      "durationMs": 1255
-    },
-    {
-      "method": "GET",
       "path": "/api/positions",
       "statusCode": 200,
-      "durationMs": 1252
+      "durationMs": 2365
+    },
+    {
+      "method": "GET",
+      "path": "/api/dashboard/metrics",
+      "statusCode": 200,
+      "durationMs": 1811
     },
     {
       "method": "POST",
       "path": "/api/auth/login",
       "statusCode": 200,
-      "durationMs": 1215
+      "durationMs": 1225
     },
     {
       "method": "GET",
       "path": "/api/audit-parameters",
       "statusCode": 200,
-      "durationMs": 1206
+      "durationMs": 1142
     },
     {
       "method": "GET",
-      "path": "/api/shifts/assignments/summary",
+      "path": "/api/audit",
       "statusCode": 200,
-      "durationMs": 1134
-    },
-    {
-      "method": "GET",
-      "path": "/api/work-regimes/:id/employees",
-      "statusCode": 200,
-      "durationMs": 935
+      "durationMs": 920
     },
     {
       "method": "GET",
       "path": "/api/work-regimes/:id/employees",
       "statusCode": 200,
-      "durationMs": 911
+      "durationMs": 900
+    },
+    {
+      "method": "GET",
+      "path": "/api/work-regimes/:id/employees",
+      "statusCode": 200,
+      "durationMs": 892
+    },
+    {
+      "method": "GET",
+      "path": "/api/workforce/double-hour-rules",
+      "statusCode": 200,
+      "durationMs": 839
+    },
+    {
+      "method": "GET",
+      "path": "/api/workforce/double-hour-rules/calendar",
+      "statusCode": 200,
+      "durationMs": 829
+    },
+    {
+      "method": "GET",
+      "path": "/api/shifts/holiday-work/candidates",
+      "statusCode": 200,
+      "durationMs": 811
     }
   ],
   "slowestActions": [
     {
       "name": "Login (acceso rápido RRHH)",
       "zone": "Login",
-      "visibleMs": 563,
-      "networkIdleMs": 6207
-    },
-    {
-      "name": "Entrar a Asignaciones de feriados",
-      "zone": "C. Asignaciones de feriados",
-      "visibleMs": 77,
-      "networkIdleMs": 2267
+      "visibleMs": 624,
+      "networkIdleMs": 4181
     },
     {
       "name": "Entrar a Horas especiales",
       "zone": "D. Horas especiales",
-      "visibleMs": 113,
-      "networkIdleMs": 1832
-    },
-    {
-      "name": "Entrar a Parámetros de auditoría",
-      "zone": "K. Parámetros de auditoría",
-      "visibleMs": 77,
-      "networkIdleMs": 1778
+      "visibleMs": 81,
+      "networkIdleMs": 2937
     },
     {
       "name": "Seleccionar fecha de feriado",
       "zone": "C. Asignaciones de feriados",
-      "visibleMs": 1331,
-      "networkIdleMs": 1735
+      "visibleMs": 1334,
+      "networkIdleMs": 1738
     },
     {
-      "name": "Entrar a Turnos",
-      "zone": "B. Turnos",
-      "visibleMs": 71,
-      "networkIdleMs": 1697
+      "name": "Entrar a Parámetros de auditoría",
+      "zone": "K. Parámetros de auditoría",
+      "visibleMs": 76,
+      "networkIdleMs": 1704
     },
     {
       "name": "Ver detalle de puesto",
       "zone": "M. Puesto (detalle)",
-      "visibleMs": 819,
-      "networkIdleMs": 1498
-    },
-    {
-      "name": "Entrar a Puestos",
-      "zone": "L. Puestos (listado)",
-      "visibleMs": 75,
-      "networkIdleMs": 1464
-    },
-    {
-      "name": "Entrar a Conceptos horarios",
-      "zone": "H. Conceptos horarios",
-      "visibleMs": 77,
-      "networkIdleMs": 1414
+      "visibleMs": 824,
+      "networkIdleMs": 1513
     },
     {
       "name": "Filtrar vigencia de empleados asociados",
       "zone": "E. Regímenes laborales",
-      "visibleMs": 1292,
-      "networkIdleMs": 1376
+      "visibleMs": 1290,
+      "networkIdleMs": 1374
+    },
+    {
+      "name": "Entrar a Asignaciones de feriados",
+      "zone": "C. Asignaciones de feriados",
+      "visibleMs": 80,
+      "networkIdleMs": 1133
+    },
+    {
+      "name": "Entrar a Empresas y estructura",
+      "zone": "F. Empresas y estructura",
+      "visibleMs": 57,
+      "networkIdleMs": 1038
+    },
+    {
+      "name": "Entrar a Regímenes laborales",
+      "zone": "E. Regímenes laborales",
+      "visibleMs": 84,
+      "networkIdleMs": 965
+    },
+    {
+      "name": "Ver detalle de turno",
+      "zone": "B. Turnos",
+      "visibleMs": 324,
+      "networkIdleMs": 960
     }
   ],
   "repeatedEndpoints": [
@@ -1758,8 +1733,8 @@ Idéntico al archivo `docs/performance/ADMIN_CONFIGURATION_PERFORMANCE_JOURNEY_1
       "method": "GET",
       "path": "/api/workforce/notifications-unread-count",
       "count": 15,
-      "avgDurationMs": 308,
-      "maxDurationMs": 682,
+      "avgDurationMs": 261,
+      "maxDurationMs": 507,
       "statusCodes": [
         200,
         200,
@@ -1774,20 +1749,6 @@ Idéntico al archivo `docs/performance/ADMIN_CONFIGURATION_PERFORMANCE_JOURNEY_1
         200,
         200,
         200,
-        200,
-        200
-      ],
-      "hasErrorStatus": false,
-      "hasServerErrorStatus": false
-    },
-    {
-      "key": "GET /api/shifts/assignments/summary",
-      "method": "GET",
-      "path": "/api/shifts/assignments/summary",
-      "count": 2,
-      "avgDurationMs": 763,
-      "maxDurationMs": 1134,
-      "statusCodes": [
         200,
         200
       ],
@@ -1798,13 +1759,10 @@ Idéntico al archivo `docs/performance/ADMIN_CONFIGURATION_PERFORMANCE_JOURNEY_1
       "key": "GET /api/workforce/shift-templates",
       "method": "GET",
       "path": "/api/workforce/shift-templates",
-      "count": 6,
-      "avgDurationMs": 163,
-      "maxDurationMs": 579,
+      "count": 3,
+      "avgDurationMs": 196,
+      "maxDurationMs": 369,
       "statusCodes": [
-        200,
-        200,
-        200,
         200,
         200,
         200
@@ -1817,36 +1775,8 @@ Idéntico al archivo `docs/performance/ADMIN_CONFIGURATION_PERFORMANCE_JOURNEY_1
       "method": "GET",
       "path": "/api/shifts/holiday-work/dates",
       "count": 2,
-      "avgDurationMs": 462,
-      "maxDurationMs": 547,
-      "statusCodes": [
-        200,
-        200
-      ],
-      "hasErrorStatus": false,
-      "hasServerErrorStatus": false
-    },
-    {
-      "key": "GET /api/workforce/double-hour-rules",
-      "method": "GET",
-      "path": "/api/workforce/double-hour-rules",
-      "count": 2,
-      "avgDurationMs": 352,
-      "maxDurationMs": 352,
-      "statusCodes": [
-        200,
-        200
-      ],
-      "hasErrorStatus": false,
-      "hasServerErrorStatus": false
-    },
-    {
-      "key": "GET /api/workforce/double-hour-rules/calendar",
-      "method": "GET",
-      "path": "/api/workforce/double-hour-rules/calendar",
-      "count": 2,
-      "avgDurationMs": 474,
-      "maxDurationMs": 564,
+      "avgDurationMs": 466,
+      "maxDurationMs": 552,
       "statusCodes": [
         200,
         200
@@ -1859,8 +1789,8 @@ Idéntico al archivo `docs/performance/ADMIN_CONFIGURATION_PERFORMANCE_JOURNEY_1
       "method": "GET",
       "path": "/api/positions",
       "count": 5,
-      "avgDurationMs": 648,
-      "maxDurationMs": 1252,
+      "avgDurationMs": 536,
+      "maxDurationMs": 2365,
       "statusCodes": [
         200,
         200,
@@ -1876,8 +1806,8 @@ Idéntico al archivo `docs/performance/ADMIN_CONFIGURATION_PERFORMANCE_JOURNEY_1
       "method": "GET",
       "path": "/api/work-regimes/:id/employees",
       "count": 2,
-      "avgDurationMs": 923,
-      "maxDurationMs": 935,
+      "avgDurationMs": 896,
+      "maxDurationMs": 900,
       "statusCodes": [
         200,
         200
@@ -1888,88 +1818,16 @@ Idéntico al archivo `docs/performance/ADMIN_CONFIGURATION_PERFORMANCE_JOURNEY_1
   ],
   "duplicatesByAction": [
     {
-      "name": "Entrar a Turnos",
-      "zone": "B. Turnos",
-      "duplicates": [
-        {
-          "method": "GET",
-          "path": "/api/shifts/assignments/summary",
-          "count": 2,
-          "durationsMs": [
-            391,
-            1134
-          ]
-        },
-        {
-          "method": "GET",
-          "path": "/api/workforce/shift-templates",
-          "count": 2,
-          "durationsMs": [
-            394,
-            579
-          ]
-        }
-      ]
-    },
-    {
-      "name": "Ver detalle de turno",
-      "zone": "B. Turnos",
-      "duplicates": [
-        {
-          "method": "GET",
-          "path": "/api/workforce/shift-templates",
-          "count": 2,
-          "durationsMs": [
-            1,
-            1
-          ]
-        }
-      ]
-    },
-    {
       "name": "Entrar a Asignaciones de feriados",
       "zone": "C. Asignaciones de feriados",
       "duplicates": [
         {
           "method": "GET",
-          "path": "/api/workforce/shift-templates",
-          "count": 2,
-          "durationsMs": [
-            1,
-            3
-          ]
-        },
-        {
-          "method": "GET",
           "path": "/api/shifts/holiday-work/dates",
           "count": 2,
           "durationsMs": [
-            376,
-            547
-          ]
-        }
-      ]
-    },
-    {
-      "name": "Entrar a Horas especiales",
-      "zone": "D. Horas especiales",
-      "duplicates": [
-        {
-          "method": "GET",
-          "path": "/api/workforce/double-hour-rules",
-          "count": 2,
-          "durationsMs": [
-            351,
-            352
-          ]
-        },
-        {
-          "method": "GET",
-          "path": "/api/workforce/double-hour-rules/calendar",
-          "count": 2,
-          "durationsMs": [
-            383,
-            564
+            380,
+            552
           ]
         }
       ]
@@ -1983,8 +1841,8 @@ Idéntico al archivo `docs/performance/ADMIN_CONFIGURATION_PERFORMANCE_JOURNEY_1
           "path": "/api/work-regimes/:id/employees",
           "count": 2,
           "durationsMs": [
-            911,
-            935
+            892,
+            900
           ]
         }
       ]
@@ -1998,8 +1856,8 @@ Idéntico al archivo `docs/performance/ADMIN_CONFIGURATION_PERFORMANCE_JOURNEY_1
           "path": "/api/positions",
           "count": 2,
           "durationsMs": [
-            889,
-            896
+            2,
+            2
           ]
         }
       ]

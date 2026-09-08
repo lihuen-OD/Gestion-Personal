@@ -237,21 +237,78 @@ export const workforceApiService = {
       return result;
     });
   },
-  shiftTemplates() { return apiRequest<{ data: ShiftTemplate[] }>("/workforce/shift-templates", { apiCache: false }).then((response) => response.data); },
-  createShiftTemplate(input: ShiftTemplateInput) { return apiRequest<{ data: ShiftTemplate }>("/workforce/shift-templates", { method: "POST", body: input }).then((response) => response.data); },
-  updateShiftTemplate(id: string, input: Partial<ShiftTemplateInput>) { return apiRequest<{ data: ShiftTemplate }>(`/workforce/shift-templates/${id}`, { method: "PATCH", body: input }).then((response) => response.data); },
-  removeShiftTemplate(id: string) { return apiRequest<{ data: { mode: "DELETED" | "INACTIVATED"; id?: string; item?: ShiftTemplate; relatedWorkShifts: number } }>(`/workforce/shift-templates/${id}`, { method: "DELETE" }).then((response) => response.data); },
-  doubleHourRules() { return apiRequest<{ data: DoubleHourRule[] }>("/workforce/double-hour-rules", { apiCache: false }).then((response) => response.data); },
-  createDoubleHourRule(input: DoubleHourRuleInput) { return apiRequest<{ data: DoubleHourRule }>("/workforce/double-hour-rules", { method: "POST", body: input }).then((response) => response.data); },
-  updateDoubleHourRule(id: string, input: Partial<DoubleHourRuleInput>) { return apiRequest<{ data: DoubleHourRule }>(`/workforce/double-hour-rules/${id}`, { method: "PATCH", body: input }).then((response) => response.data); },
-  removeDoubleHourRule(id: string) { return apiRequest<{ data: { mode: "DELETED" | "INACTIVATED"; id?: string; item?: DoubleHourRule } }>(`/workforce/double-hour-rules/${id}`, { method: "DELETE" }).then((response) => response.data); },
+  // Etapa 14H.3: envuelto con `cachedData` (dedupe in-flight, familia
+  // "workforce-config") -- el journey 14H.1/14H.2 detectó requests
+  // duplicadas por StrictMode al entrar a Turnos, incluso con cache backend
+  // ya activo (shiftTemplatesCache, Etapa 9C) porque sin dedupe del lado del
+  // cliente dos llamadas casi simultáneas llegan al backend antes de que la
+  // primera termine de escribir su propia cache.
+  shiftTemplates() {
+    return cachedData({
+      requestKey: "GET:/workforce/shift-templates",
+      policy: cachePolicies.shiftTemplatesCatalog,
+      fetcher: () => apiRequest<{ data: ShiftTemplate[] }>("/workforce/shift-templates", { apiCache: false }).then((response) => response.data),
+      validate: (value) => Array.isArray(value),
+    });
+  },
+  async createShiftTemplate(input: ShiftTemplateInput) {
+    const result = await apiRequest<{ data: ShiftTemplate }>("/workforce/shift-templates", { method: "POST", body: input }).then((response) => response.data);
+    await invalidateCacheFamily("workforce-config", "shift template created");
+    return result;
+  },
+  async updateShiftTemplate(id: string, input: Partial<ShiftTemplateInput>) {
+    const result = await apiRequest<{ data: ShiftTemplate }>(`/workforce/shift-templates/${id}`, { method: "PATCH", body: input }).then((response) => response.data);
+    await invalidateCacheFamily("workforce-config", "shift template updated");
+    return result;
+  },
+  async removeShiftTemplate(id: string) {
+    const result = await apiRequest<{ data: { mode: "DELETED" | "INACTIVATED"; id?: string; item?: ShiftTemplate; relatedWorkShifts: number } }>(`/workforce/shift-templates/${id}`, { method: "DELETE" }).then((response) => response.data);
+    await invalidateCacheFamily("workforce-config", "shift template removed");
+    return result;
+  },
+  // Etapa 14H.3: mismo criterio que shiftTemplates() arriba.
+  doubleHourRules() {
+    return cachedData({
+      requestKey: "GET:/workforce/double-hour-rules",
+      policy: cachePolicies.doubleHourRulesCatalog,
+      fetcher: () => apiRequest<{ data: DoubleHourRule[] }>("/workforce/double-hour-rules", { apiCache: false }).then((response) => response.data),
+      validate: (value) => Array.isArray(value),
+    });
+  },
+  async createDoubleHourRule(input: DoubleHourRuleInput) {
+    const result = await apiRequest<{ data: DoubleHourRule }>("/workforce/double-hour-rules", { method: "POST", body: input }).then((response) => response.data);
+    await invalidateCacheFamily("workforce-config", "double hour rule created");
+    return result;
+  },
+  async updateDoubleHourRule(id: string, input: Partial<DoubleHourRuleInput>) {
+    const result = await apiRequest<{ data: DoubleHourRule }>(`/workforce/double-hour-rules/${id}`, { method: "PATCH", body: input }).then((response) => response.data);
+    await invalidateCacheFamily("workforce-config", "double hour rule updated");
+    return result;
+  },
+  async removeDoubleHourRule(id: string) {
+    const result = await apiRequest<{ data: { mode: "DELETED" | "INACTIVATED"; id?: string; item?: DoubleHourRule } }>(`/workforce/double-hour-rules/${id}`, { method: "DELETE" }).then((response) => response.data);
+    await invalidateCacheFamily("workforce-config", "double hour rule removed");
+    return result;
+  },
   // Etapa 12B: `kind` opcional — sin pasarlo, comportamiento idéntico al de
   // antes de esta etapa (sin filtro). Pensado para el futuro filtro de
   // asignaciones de feriado de Turnos (kind="FERIADO"), no usado todavía por
   // ninguna pantalla.
+  // Etapa 14H.3: envuelto con `cachedData` (misma familia "workforce-config"
+  // que doubleHourRules — invalidar una regla también refresca el calendario,
+  // que muestra la misma entidad recortada por mes). `SpecialHourRulesCalendarMonth`
+  // ya implementa su propio "silent refresh" (nunca blanquea la grilla en un
+  // refetch por refreshToken/kindFilter) — cachedData no interfiere con eso,
+  // sólo evita el request duplicado que StrictMode dispara en cada montaje.
   doubleHourRulesCalendar(from: string, to: string, kind?: DoubleHourRuleKind) {
     const query = new URLSearchParams({ from, to });
     if (kind) query.set("kind", kind);
-    return apiRequest<{ data: DoubleHourRuleCalendarDay[] }>(`/workforce/double-hour-rules/calendar?${query.toString()}`, { apiCache: false }).then((response) => response.data);
+    const path = `/workforce/double-hour-rules/calendar?${query.toString()}`;
+    return cachedData({
+      requestKey: `GET:${path}`,
+      policy: cachePolicies.doubleHourRulesCalendarByMonth,
+      fetcher: () => apiRequest<{ data: DoubleHourRuleCalendarDay[] }>(path, { apiCache: false }).then((response) => response.data),
+      validate: (value) => Array.isArray(value),
+    });
   },
 };
