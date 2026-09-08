@@ -77,10 +77,17 @@ export function classifyWorkRegimeVigency(effectiveFrom: Date, effectiveTo: Date
 }
 
 export const workRegimesRepository = {
+  // Etapa 14H.2: findMany + count son lecturas independientes (ninguna
+  // depende del resultado de la otra) — $transaction([...]) las pinaba a una
+  // única conexión de Neon en serie, sin ganar concurrencia real pese a
+  // pedirlas "juntas". Promise.all sobre el cliente global (pool de
+  // conexiones) sí las corre en paralelo. Mismo patrón ya aplicado 6+ veces
+  // en la serie 14G (docs/decisions/WORKFORCE_MANAGEMENT_FINAL_DUPLICATES_AND_STABILITY_14G9.md
+  // y anteriores) — where/orderBy/skip/take sin cambios, cero impacto de contrato.
   async findMany(query: ListWorkRegimesQuery) {
     const where = buildWorkRegimeWhere(query);
     const skip = (query.page - 1) * query.take;
-    const [items, total] = await prisma.$transaction([
+    const [items, total] = await Promise.all([
       prisma.workRegime.findMany({
         where,
         orderBy: [{ status: "asc" }, { name: "asc" }],
@@ -163,7 +170,15 @@ export const workRegimesRepository = {
       employee: { AND: [buildEmployeeAssociationWhere(query), accessWhere] },
     };
     const skip = (query.page - 1) * query.take;
-    const [items, total] = await prisma.$transaction([
+    // Etapa 14H.2: mismo antipatrón que findMany arriba, acá con mayor
+    // impacto medido — el journey 14H.1 detectó "Filtrar vigencia de
+    // empleados asociados" en 2878ms con 4 requests duplicadas (StrictMode)
+    // a este endpoint, cada una entre 1.6-2.8s: $transaction([findMany,
+    // count]) serializaba 2 queries por request sobre una única conexión, y
+    // las 4 requests concurrentes competían por el pool — Promise.all sobre
+    // el cliente global elimina la serialización interna (el dedupe de las 4
+    // requests se resuelve del lado del frontend, ver workRegimeApiService.ts).
+    const [items, total] = await Promise.all([
       prisma.employeeWorkRegime.findMany({
         where,
         select: {

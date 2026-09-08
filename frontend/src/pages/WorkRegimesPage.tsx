@@ -391,6 +391,11 @@ export function WorkRegimesPage() {
             showCuilColumn={false}
             showEmployeeStatusColumn={false}
             enableMobileCards
+            // Etapa 14H.2: con el filtro "Todos" un mismo empleado puede
+            // aparecer más de una vez (histórica + vigente) — item.id es el
+            // id de la propia fila EmployeeWorkRegime (único siempre),
+            // nunca el employeeId (que sí puede repetirse bajo ese filtro).
+            rowKey={(item) => item.id}
             extraColumns={[
               {
                 header: "Vigencia",

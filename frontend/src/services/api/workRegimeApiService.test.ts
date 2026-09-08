@@ -1,11 +1,29 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { apiRequest } from "./apiClient";
+import { clearAllAppCaches, invalidateCacheFamily } from "../cache";
 import {
   extendedShiftAlertHoursToMinutes,
   extendedShiftAlertMinutesToHours,
   mapAssignmentFromApi,
   mapWorkRegimeEmployeeAssociationFromApi,
   mapWorkRegimeFromApi,
+  workRegimeApiService,
 } from "./workRegimeApiService";
+
+// Etapa 14H.2: sólo los describe blocks de más abajo (getWorkRegimeEmployees/
+// assign/updateAssignment/closeAssignment) usan `apiRequest` de verdad — el
+// resto de este archivo (mapeo puro) nunca lo invoca, así que mockearlo acá
+// no afecta a ningún test preexistente (mismo criterio ya usado en
+// timeEntryApiService.test.ts/attendanceApiService.test.ts, 14G.9).
+vi.mock("./apiClient", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./apiClient")>();
+  return { ...actual, apiRequest: vi.fn() };
+});
+
+vi.mock("../cache", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../cache")>();
+  return { ...actual, invalidateCacheFamily: vi.fn(actual.invalidateCacheFamily) };
+});
 
 const apiRegime = {
   id: "regime-1",
@@ -150,5 +168,128 @@ describe("mapWorkRegimeEmployeeAssociationFromApi — empleados asociados al ré
     const { effectiveTo: _omitted, ...withoutEffectiveTo } = apiAssociation;
     const association = mapWorkRegimeEmployeeAssociationFromApi(withoutEffectiveTo as typeof apiAssociation);
     expect(association.effectiveTo).toBeNull();
+  });
+});
+
+// Etapa 14H.2: getWorkRegimeEmployees() no tenía dedupe/cache frontend — el
+// journey 14H.1 confirmó 4 requests duplicadas (StrictMode) dentro de la
+// ventana de "Filtrar vigencia de empleados asociados" (2878ms). Mismo
+// patrón ya usado 7 veces en la serie 14G (shift alerts/notifications/
+// time-entries/closures/corrections/attendance/home-summary).
+describe("workRegimeApiService.getWorkRegimeEmployees — dedupe/cache frontend (Etapa 14H.2)", () => {
+  const apiAssociation = {
+    id: "assignment-1",
+    employeeId: "employee-1",
+    effectiveFrom: "2026-01-01T00:00:00.000Z",
+    effectiveTo: null,
+    vigencyStatus: "current" as const,
+    employee: {
+      id: "employee-1",
+      legajo: "100",
+      cuil: "20-12345678-9",
+      firstName: "Ana",
+      lastName: "Prueba",
+      status: "ACTIVO" as const,
+      sector: { id: "sector-1", name: "Campo" },
+      costCenter: null,
+      companies: [],
+    },
+  };
+  const employeesResponse = { data: [apiAssociation], meta: { total: 1, pageSize: 50, page: 1, hasMore: false } };
+
+  beforeEach(async () => {
+    vi.mocked(apiRequest).mockReset();
+    vi.mocked(invalidateCacheFamily).mockClear();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-08T10:00:00.000Z"));
+    await clearAllAppCaches("test setup");
+  });
+
+  afterEach(async () => {
+    await clearAllAppCaches("test teardown");
+    vi.useRealTimers();
+  });
+
+  it("dos llamadas concurrentes con el mismo régimen/filtros generan un solo request real (dedupe in-flight)", async () => {
+    vi.mocked(apiRequest).mockResolvedValue(employeesResponse);
+
+    const [a, b] = await Promise.all([
+      workRegimeApiService.getWorkRegimeEmployees("regime-1", { status: "all" }),
+      workRegimeApiService.getWorkRegimeEmployees("regime-1", { status: "all" }),
+    ]);
+
+    expect(a.items).toHaveLength(1);
+    expect(b.items).toHaveLength(1);
+    expect(apiRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it("una segunda llamada idéntica dentro del TTL usa cache, no repite el request", async () => {
+    vi.mocked(apiRequest).mockResolvedValue(employeesResponse);
+
+    await workRegimeApiService.getWorkRegimeEmployees("regime-1", { status: "current" });
+    await workRegimeApiService.getWorkRegimeEmployees("regime-1", { status: "current" });
+
+    expect(apiRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it("cambiar el filtro de vigencia es un cache miss nuevo (status forma parte de la key)", async () => {
+    vi.mocked(apiRequest).mockResolvedValue(employeesResponse);
+
+    await workRegimeApiService.getWorkRegimeEmployees("regime-1", { status: "current" });
+    await workRegimeApiService.getWorkRegimeEmployees("regime-1", { status: "all" });
+
+    expect(apiRequest).toHaveBeenCalledTimes(2);
+  });
+
+  it("cambiar de régimen es un cache miss nuevo (regimeId forma parte de la key)", async () => {
+    vi.mocked(apiRequest).mockResolvedValue(employeesResponse);
+
+    await workRegimeApiService.getWorkRegimeEmployees("regime-1", { status: "current" });
+    await workRegimeApiService.getWorkRegimeEmployees("regime-2", { status: "current" });
+
+    expect(apiRequest).toHaveBeenCalledTimes(2);
+  });
+
+  it("cambiar de página es un cache miss nuevo (paginación forma parte de la key)", async () => {
+    vi.mocked(apiRequest).mockResolvedValue(employeesResponse);
+
+    await workRegimeApiService.getWorkRegimeEmployees("regime-1", { status: "current", page: 1 });
+    await workRegimeApiService.getWorkRegimeEmployees("regime-1", { status: "current", page: 2 });
+
+    expect(apiRequest).toHaveBeenCalledTimes(2);
+  });
+
+  it("no cambia el contrato: sigue devolviendo { items, meta } con el mismo shape mapeado", async () => {
+    vi.mocked(apiRequest).mockResolvedValue(employeesResponse);
+
+    const result = await workRegimeApiService.getWorkRegimeEmployees("regime-1", { status: "all" });
+
+    expect(result).toEqual({
+      items: [mapWorkRegimeEmployeeAssociationFromApi(apiAssociation)],
+      meta: employeesResponse.meta,
+    });
+  });
+
+  it.each([
+    ["assign", () => workRegimeApiService.assign("employee-1", { workRegimeId: "regime-1", effectiveFrom: "2026-09-08" })],
+    ["updateAssignment", () => workRegimeApiService.updateAssignment("employee-1", "assignment-1", { effectiveFrom: "2026-09-08" })],
+    ["closeAssignment", () => workRegimeApiService.closeAssignment("employee-1", "assignment-1", "2026-09-08")],
+  ])("%s invalida la familia 'work-regimes'", async (_name, mutate) => {
+    vi.mocked(apiRequest).mockResolvedValue({ data: { id: "assignment-1", employeeId: "employee-1", workRegimeId: "regime-1", effectiveFrom: "2026-09-08T00:00:00.000Z", effectiveTo: null, assignedByUserId: null, createdAt: "2026-09-08T00:00:00.000Z", workRegime: apiRegime } });
+
+    await mutate();
+
+    expect(invalidateCacheFamily).toHaveBeenCalledWith("work-regimes", expect.any(String));
+  });
+
+  it("después de invalidar 'work-regimes' (p. ej. tras asignar), getWorkRegimeEmployees vuelve a pedirse", async () => {
+    vi.mocked(apiRequest).mockResolvedValue(employeesResponse);
+    await workRegimeApiService.getWorkRegimeEmployees("regime-1", { status: "current" });
+    expect(apiRequest).toHaveBeenCalledTimes(1);
+
+    await invalidateCacheFamily("work-regimes", "unit test");
+
+    await workRegimeApiService.getWorkRegimeEmployees("regime-1", { status: "current" });
+    expect(apiRequest).toHaveBeenCalledTimes(2);
   });
 });

@@ -170,6 +170,28 @@ export const cachePolicies = {
     sensitive: false,
     schemaVersion: CACHE_SCHEMA_VERSION,
   },
+  // Etapa 14H.2: getWorkRegimeEmployees() no tenía dedupe in-flight -- el
+  // doble-montaje de React StrictMode en dev disparaba requests reales
+  // duplicadas a GET /work-regimes/:id/employees cada vez que se abría el
+  // modal o se cambiaba el filtro de vigencia (confirmado en el journey
+  // 14H.1: 4 requests dentro de la ventana de una sola acción, "Filtrar
+  // vigencia de empleados asociados", 2878ms). Misma familia "work-regimes"
+  // que el catálogo (mismo criterio que positions/positionsList en 14D.4):
+  // create/update/updateStatus del régimen ya invalidan esta familia: se
+  // agrega además invalidación explícita en assign/updateAssignment/
+  // closeAssignment (los 3 mutadores reales de EmployeeWorkRegime, ver
+  // workRegimeApiService.ts). TTL corto (15s, mismo rango que
+  // shiftAlertsList/monthlyClosuresList) porque es una lista operativa con
+  // escrituras frecuentes, no un catálogo administrado a mano. No
+  // persistido (sensitive: true, contiene PII de empleados vía
+  // AssociatedEmployee) -- nunca en IndexedDB.
+  workRegimeEmployeesList: {
+    family: "work-regimes",
+    ttlMs: 15_000,
+    persist: false,
+    sensitive: true,
+    schemaVersion: CACHE_SCHEMA_VERSION,
+  },
   // Etapa 14F.2: el feed de actividad reciente del Dashboard (`/audit?take=5`)
   // no tenía dedupe frontend — en StrictMode se pedía dos veces por mount.
   // TTL corto (15s, igual al `auditListCache` del backend) porque es lectura

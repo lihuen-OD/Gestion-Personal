@@ -155,3 +155,55 @@ describe("AssociatedEmployeesPanel — Etapa 14B.1 (refresh silencioso)", () => 
     expect(screen.queryByText("No pudimos cargar los empleados asociados.")).not.toBeInTheDocument();
   });
 });
+
+// Etapa 14H.2: el journey 14H.1 detectó un warning real de React ("two
+// children with the same key") en Regímenes laborales al filtrar vigencia a
+// "Todos" -- `key={item.employeeId}` colisiona cuando un mismo empleado
+// aparece más de una vez (histórica + vigente). `rowKey` es el fix genérico
+// a nivel de panel; sin pasarlo, el default sigue siendo `item.employeeId`
+// (cero cambio de comportamiento para HourConceptsPage, que nunca repite un
+// employeeId en su listado).
+describe("AssociatedEmployeesPanel — rowKey evita duplicate key con employeeId repetido (Etapa 14H.2)", () => {
+  it("sin rowKey, dos filas con el mismo employeeId generan el warning de React (comportamiento previo, documentado)", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const items = [
+      buildItem({ employeeId: "emp-1" }),
+      buildItem({ employeeId: "emp-1", employee: { ...buildItem().employee, id: "emp-1", legajo: "LEG-002" } }),
+    ];
+    renderPanel(vi.fn().mockResolvedValue(buildResult(items, 2)));
+
+    await screen.findAllByText("Pérez, Juan");
+
+    expect(consoleError.mock.calls.some((call) => String(call[0]).includes("same key"))).toBe(true);
+    consoleError.mockRestore();
+  });
+
+  it("con rowKey único por fila, dos filas con el mismo employeeId NO generan warning y ambas se renderizan", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    type VigencyItem = ReturnType<typeof buildItem> & { assignmentId: string; effectiveFrom: string };
+    const items: VigencyItem[] = [
+      { ...buildItem({ employeeId: "emp-1" }), assignmentId: "assignment-current", effectiveFrom: "2026-09-01" },
+      { ...buildItem({ employeeId: "emp-1" }), assignmentId: "assignment-historical", effectiveFrom: "2026-01-01" },
+    ];
+    const fetcher = vi.fn().mockResolvedValue({ items, meta: { total: 2, page: 1, pageSize: 20, hasMore: false } });
+
+    render(
+      <MemoryRouter>
+        <AssociatedEmployeesPanel
+          title="Empleados test"
+          emptyText="No hay empleados"
+          fetcher={fetcher}
+          rowKey={(item) => (item as VigencyItem).assignmentId}
+          extraColumns={[{ header: "Desde", render: (item) => (item as VigencyItem).effectiveFrom }]}
+        />
+      </MemoryRouter>,
+    );
+
+    const rows = await screen.findAllByText("Pérez, Juan");
+    expect(rows).toHaveLength(2); // ambas filas (histórica + vigente) se renderizan, ninguna se pierde/duplica de más
+    expect(screen.getByText("2026-09-01")).toBeInTheDocument();
+    expect(screen.getByText("2026-01-01")).toBeInTheDocument();
+    expect(consoleError.mock.calls.some((call) => String(call[0]).includes("same key"))).toBe(false);
+    consoleError.mockRestore();
+  });
+});

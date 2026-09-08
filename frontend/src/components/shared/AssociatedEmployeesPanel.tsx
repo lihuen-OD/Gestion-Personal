@@ -65,6 +65,7 @@ export function AssociatedEmployeesPanel<T extends { employeeId: string; employe
   showEmployeeStatusColumn = true,
   enableMobileCards = false,
   variant = "full",
+  rowKey,
 }: {
   title?: string;
   description?: string;
@@ -144,6 +145,18 @@ export function AssociatedEmployeesPanel<T extends { employeeId: string; employe
   // DENTRO de otra card (ej. HourConceptsPage): header propio tipo
   // block-card-head, filtros sin card externa, empty state compacto.
   variant?: "full" | "embedded";
+  // Etapa 14H.2: el generic T sólo garantiza `employeeId` — suficiente como
+  // key mientras cada empleado aparece una única vez por listado (caso de
+  // HourConceptsPage, sin vigencia). WorkRegimesPage puede mostrar más de
+  // una fila del mismo empleado bajo el mismo régimen cuando el filtro de
+  // vigencia es "Todos" (una histórica + una vigente, mismo employeeId,
+  // distinto id de asignación) — ahí `key={item.employeeId}` colisiona
+  // (warning real de React "two children with the same key", detectado por
+  // el journey 14H.1). `rowKey` es opcional y por defecto reproduce el
+  // comportamiento anterior exacto (`item.employeeId`) para no afectar a
+  // ningún caller que no lo pase; WorkRegimesPage pasa `item.id` (el id
+  // propio de EmployeeWorkRegime, único por fila sin importar el filtro).
+  rowKey?: (item: T) => string;
 }) {
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebouncedValue(search);
@@ -279,6 +292,8 @@ export function AssociatedEmployeesPanel<T extends { employeeId: string; employe
   // un no-op silencioso, no un error.
   const alreadyAssociatedIds = new Set(items.map((item) => item.employeeId));
 
+  const resolveRowKey = rowKey ?? ((item: T) => item.employeeId);
+
   const canAdd = canEdit && Boolean(onAddEmployees);
   const hasActiveFilters = Boolean(debouncedSearch || selectedSectorId || selectedCostCenterId || selectedCompanyId);
   const resolvedEmptyText = typeof emptyText === "function" ? emptyText(hasActiveFilters) : emptyText;
@@ -411,7 +426,7 @@ export function AssociatedEmployeesPanel<T extends { employeeId: string; employe
                     const canRemoveRow = canEdit && onRemoveEmployee && (!canRemove || canRemove(item));
                     const isRemovingRow = removingId === item.employeeId;
                     return (
-                      <tr key={item.employeeId}>
+                      <tr key={resolveRowKey(item)}>
                         <td>{item.employee.legajo}</td>
                         <td>{item.employee.lastName}, {item.employee.firstName}</td>
                         {showCuilColumn ? <td>{item.employee.cuil}</td> : null}
@@ -459,7 +474,7 @@ export function AssociatedEmployeesPanel<T extends { employeeId: string; employe
                 const canRemoveRow = canEdit && onRemoveEmployee && (!canRemove || canRemove(item));
                 const isRemovingRow = removingId === item.employeeId;
                 return (
-                  <div className="associated-employees-card" key={item.employeeId}>
+                  <div className="associated-employees-card" key={resolveRowKey(item)}>
                     <div className="aec-card-head">
                       <b>{item.employee.lastName}, {item.employee.firstName}</b>
                       <span className="table-sub">Legajo {item.employee.legajo}</span>

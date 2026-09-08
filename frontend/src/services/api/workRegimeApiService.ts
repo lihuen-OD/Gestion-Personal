@@ -183,31 +183,60 @@ export const workRegimeApiService = {
     return response.data ? mapAssignmentFromApi(response.data) : null;
   },
 
+  // Etapa 14H.2: las 3 escrituras de abajo (assign/updateAssignment/
+  // closeAssignment) son los únicos 3 mutadores reales de EmployeeWorkRegime
+  // en todo el backend (confirmado con grep sobre backend/src, no sólo el
+  // módulo work-regimes) -- ahora que getWorkRegimeEmployees() pasa por
+  // cachedData (ver abajo), necesitan invalidar esa misma familia para que
+  // agregar/editar/finalizar una asignación se refleje sin esperar el TTL.
   async assign(employeeId: string, input: { workRegimeId: string; effectiveFrom: string; effectiveTo?: string | null }) {
     const response = await apiRequest<ApiAssignmentItemResponse>(`/employees/${employeeId}/work-regimes`, { method: "POST", body: input });
+    await invalidateCacheFamily("work-regimes", "work regime assigned to employee");
     return mapAssignmentFromApi(response.data);
   },
 
   async updateAssignment(employeeId: string, assignmentId: string, input: { workRegimeId?: string; effectiveFrom?: string; effectiveTo?: string | null }) {
     const response = await apiRequest<ApiAssignmentItemResponse>(`/employees/${employeeId}/work-regimes/${assignmentId}`, { method: "PATCH", body: input });
+    await invalidateCacheFamily("work-regimes", "work regime assignment updated");
     return mapAssignmentFromApi(response.data);
   },
 
   async closeAssignment(employeeId: string, assignmentId: string, effectiveTo: string) {
     const response = await apiRequest<ApiAssignmentItemResponse>(`/employees/${employeeId}/work-regimes/${assignmentId}/close`, { method: "PATCH", body: { effectiveTo } });
+    await invalidateCacheFamily("work-regimes", "work regime assignment closed");
     return mapAssignmentFromApi(response.data);
   },
 
-  // Empleados asociados al régimen, vistos desde el régimen (Etapa 8G) — sin
-  // cachedData, mismo criterio que el resto de los métodos de relación de
-  // este servicio (getAssignmentHistory/getCurrentAssignment), que tampoco
-  // cachean.
+  // Empleados asociados al régimen, vistos desde el régimen (Etapa 8G;
+  // dedupe/cache agregado en 14H.2) — el journey 14H.1 detectó 4 requests
+  // duplicadas (StrictMode) dentro de la ventana de "Filtrar vigencia de
+  // empleados asociados" (2878ms). cachedData() con TTL corto colapsa esas
+  // duplicadas concurrentes en una sola llamada real vía pendingRevalidations
+  // (mismo mecanismo ya usado 7 veces en la serie 14G) sin cambiar el shape
+  // de la respuesta. La query string ya incluye workRegimeId (path),
+  // page/take/search/sectorId/costCenterId/companyId y status (vigencia) —
+  // suficiente para que dos filtros/páginas distintos nunca compartan cache
+  // key. No hace falta embeber el usuario en la key: `sensitive: true` +
+  // `persist: false` (nunca IndexedDB) es el mismo criterio que el resto de
+  // las listas RBAC-scoped de este proyecto (employees/time-entries/pending/
+  // notifications/shift-alerts), y `clearAllAppCaches()` ya se dispara en
+  // cada cambio de cuenta/login/logout (AuthContext.tsx) — no hay ventana
+  // real de fuga entre usuarios distintos en el mismo navegador.
   async getWorkRegimeEmployees(
     workRegimeId: string,
     filters?: AssociatedEmployeeFilters & { status?: WorkRegimeEmployeesStatusFilter; date?: string },
   ): Promise<AssociatedEmployeesResult<WorkRegimeEmployeeAssociation>> {
     const query = associatedEmployeesQuery(filters, { status: filters?.status, date: filters?.date });
-    const response = await apiRequest<ApiWorkRegimeEmployeesResponse>(`/work-regimes/${workRegimeId}/employees${query}`, { apiCache: false });
-    return { items: response.data.map(mapWorkRegimeEmployeeAssociationFromApi), meta: response.meta };
+    const path = `/work-regimes/${workRegimeId}/employees${query}`;
+    return cachedData({
+      requestKey: `GET:${path}`,
+      policy: cachePolicies.workRegimeEmployeesList,
+      fetcher: () =>
+        apiRequest<ApiWorkRegimeEmployeesResponse>(path, { apiCache: false }).then((response) => ({
+          items: response.data.map(mapWorkRegimeEmployeeAssociationFromApi),
+          meta: response.meta,
+        })),
+      validate: (value) => Array.isArray(value.items),
+    });
   },
 };

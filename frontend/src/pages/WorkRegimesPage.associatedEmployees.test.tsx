@@ -274,6 +274,35 @@ describe("WorkRegimesPage — modal Empleados asociados (Etapa 13J / 13J.1 / 13J
     expect(withinTable().getByText("Histórica")).toBeInTheDocument();
   });
 
+  // Etapa 14H.2: hallazgo real del journey 14H.1 — con status=all, un mismo
+  // empleado puede aparecer dos veces (histórica + vigente, mismo
+  // employeeId, distinto id de asignación). Antes de esta etapa,
+  // `key={item.employeeId}` en AssociatedEmployeesPanel disparaba el
+  // warning de React "two children with the same key" y arriesgaba
+  // duplicar/omitir filas. Este test reproduce exactamente ese escenario
+  // contra la página real (no un componente aislado) para confirmar que
+  // `rowKey={(item) => item.id}` (agregado en WorkRegimesPage.tsx) lo evita.
+  it("status=all con el mismo empleado dos veces (histórica + vigente): ambas filas se renderizan sin warning de key duplicada", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.mocked(workRegimeApiService.getWorkRegimeEmployees).mockResolvedValue({
+      items: [
+        buildAssociation({ id: "assignment-historical", employeeId: "employee-1", effectiveFrom: "2026-01-01T00:00:00.000Z", effectiveTo: "2026-08-01T00:00:00.000Z", vigencyStatus: "historical" }),
+        buildAssociation({ id: "assignment-current", employeeId: "employee-1", effectiveFrom: "2026-08-01T00:00:00.000Z", effectiveTo: null, vigencyStatus: "current" }),
+      ],
+      meta: { ...emptyMeta, total: 2 },
+    });
+
+    const user = await openAssociatedEmployeesModal();
+    await user.selectOptions(screen.getByRole("combobox", { name: "Filtrar por vigencia" }), "all");
+
+    await screen.findAllByText("Vigente");
+    expect(withinTable().getByText("Vigente")).toBeInTheDocument();
+    expect(withinTable().getByText("Histórica")).toBeInTheDocument();
+    expect(withinTable().getAllByText("09, Granja")).toHaveLength(2);
+    expect(consoleError.mock.calls.some((call) => String(call[0]).includes("same key"))).toBe(false);
+    consoleError.mockRestore();
+  });
+
   it("cambiar el filtro a Todos pide status=all", async () => {
     vi.mocked(workRegimeApiService.getWorkRegimeEmployees).mockResolvedValue({ items: [], meta: emptyMeta });
 

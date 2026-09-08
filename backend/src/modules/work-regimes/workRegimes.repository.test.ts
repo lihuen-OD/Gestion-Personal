@@ -106,13 +106,16 @@ describe("findOverlappingAssignment — detección de solapamiento de vigencias"
 });
 
 describe("WorkRegime.findMany — filtros por status/kind/search", () => {
-  it("arma el where con kind/status/search y pagina con $transaction([findMany, count])", async () => {
+  it("arma el where con kind/status/search y pagina con Promise.all([findMany, count]) — sin $transaction (Etapa 14H.2)", async () => {
     mockedPrisma.workRegime.findMany.mockResolvedValue([]);
     mockedPrisma.workRegime.count.mockResolvedValue(0);
 
     await workRegimesRepository.findMany({ kind: "TURNO_FLEXIBLE", status: "ACTIVO", search: "campaña", page: 2, take: 10 } as never);
 
-    expect(mockedPrisma.$transaction).toHaveBeenCalledTimes(1);
+    // Etapa 14H.2: findMany/count ya no se piden dentro de una transacción
+    // interactiva (antipatrón que serializaba 2 lecturas independientes en
+    // una sola conexión) — ver workRegimes.repository.ts.
+    expect(mockedPrisma.$transaction).not.toHaveBeenCalled();
     expect(mockedPrisma.workRegime.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: {
@@ -170,10 +173,11 @@ describe("WorkRegime.findEmployees — empleados asociados al régimen (Etapa 8G
 
   const referenceDate = new Date("2026-08-18T00:00:00.000Z");
 
-  it("filtra por workRegimeId y pagina con $transaction([findMany, count])", async () => {
+  it("filtra por workRegimeId y pagina con Promise.all([findMany, count]) — sin $transaction (Etapa 14H.2)", async () => {
     await workRegimesRepository.findEmployees("regime-1", { status: "all", page: 2, take: 10 } as never, referenceDate, {});
 
-    expect(mockedPrisma.$transaction).toHaveBeenCalledTimes(1);
+    // Etapa 14H.2: mismo antipatrón corregido que en findMany — ver comentario ahí.
+    expect(mockedPrisma.$transaction).not.toHaveBeenCalled();
     const call = mockedPrisma.employeeWorkRegime.findMany.mock.calls.at(0)?.[0];
     expect(call.where.workRegimeId).toBe("regime-1");
     expect(call.skip).toBe(10);
