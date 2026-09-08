@@ -139,6 +139,77 @@ describe("workforceApiService.unreadNotificationCount — dedupe/cache frontend 
   });
 });
 
+// Etapa 14G.6: antes de esta etapa, notifications() llamaba apiRequest
+// directo sin ningún dedupe/cache frontend — en StrictMode (NotificationsPage
+// monta el effect dos veces) esto generaba 2 requests idénticos por mount,
+// confirmado en el journey de 14G.1/14G.5. Mismo patrón exacto que
+// unreadNotificationCount (14F.2), misma familia "notifications".
+describe("workforceApiService.notifications — dedupe/cache frontend (Etapa 14G.6)", () => {
+  const sampleResult = { data: [{ id: "n-1", title: "Cierre mensual" }], meta: { total: 1, page: 1, pageSize: 20, hasMore: false } };
+
+  beforeEach(async () => {
+    vi.mocked(apiRequest).mockReset();
+    vi.mocked(invalidateCacheFamily).mockClear();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-07T10:00:00.000Z"));
+    await clearAllAppCaches("test setup");
+  });
+
+  afterEach(async () => {
+    await clearAllAppCaches("test teardown");
+    vi.useRealTimers();
+  });
+
+  it("dos llamadas concurrentes con los mismos filtros generan un solo request real (dedupe in-flight)", async () => {
+    vi.mocked(apiRequest).mockResolvedValue(sampleResult);
+
+    const [a, b] = await Promise.all([workforceApiService.notifications({ page: 1, take: 20 }), workforceApiService.notifications({ page: 1, take: 20 })]);
+
+    expect(a.meta.total).toBe(1);
+    expect(b.meta.total).toBe(1);
+    expect(apiRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it("una segunda llamada idéntica dentro del TTL usa cache, no repite el request", async () => {
+    vi.mocked(apiRequest).mockResolvedValue(sampleResult);
+
+    await workforceApiService.notifications({ page: 1, take: 20 });
+    await workforceApiService.notifications({ page: 1, take: 20 });
+
+    expect(apiRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it("cambiar page/take/status es un cache miss nuevo (no sirve resultados de otra página/filtro)", async () => {
+    vi.mocked(apiRequest).mockResolvedValue(sampleResult);
+
+    await workforceApiService.notifications({ page: 1, take: 20 });
+    await workforceApiService.notifications({ page: 2, take: 20 });
+    await workforceApiService.notifications({ page: 1, take: 20, status: "NO_LEIDA" });
+
+    expect(apiRequest).toHaveBeenCalledTimes(3);
+  });
+
+  it("después de invalidar la familia 'notifications' (readNotification), vuelve a pedir", async () => {
+    vi.mocked(apiRequest)
+      .mockResolvedValueOnce(sampleResult)
+      .mockResolvedValueOnce({ ...sampleResult, meta: { ...sampleResult.meta, total: 0 } });
+
+    await expect(workforceApiService.notifications({ page: 1, take: 20 })).resolves.toMatchObject({ meta: { total: 1 } });
+    await invalidateCacheFamily("notifications", "unit test");
+    await expect(workforceApiService.notifications({ page: 1, take: 20 })).resolves.toMatchObject({ meta: { total: 0 } });
+
+    expect(apiRequest).toHaveBeenCalledTimes(2);
+  });
+
+  it("no cambia el contrato: sigue devolviendo {items, meta} igual que antes", async () => {
+    vi.mocked(apiRequest).mockResolvedValue(sampleResult);
+
+    const result = await workforceApiService.notifications({ page: 1, take: 20 });
+
+    expect(result).toEqual({ items: sampleResult.data, meta: sampleResult.meta });
+  });
+});
+
 describe("workforceApiService.readNotification — invalidación del badge (Etapa 14F.2)", () => {
   beforeEach(() => {
     vi.mocked(apiRequest).mockReset();

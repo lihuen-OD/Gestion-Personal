@@ -169,3 +169,63 @@ describe("NotificationsPage — Etapa 9I (paginación real, antes fetch-all take
     await screen.findByText("Cierres mensuales recibidos");
   });
 });
+
+// Etapa 14G.6 (docs/decisions/WORKFORCE_MANAGEMENT_NOTIFICATIONS_PERFORMANCE_14G6.md):
+// "Ver detalle" marcaba como leída como efecto colateral de la navegación,
+// además del botón explícito "Marcar leída" que hacía exactamente lo mismo
+// -- sin ninguna distinción visual entre ambas acciones. Se separó
+// navegación de escritura: "Ver detalle" sólo navega, "Marcar leída" sigue
+// siendo la única forma de marcar como leída.
+describe("NotificationsPage — Etapa 14G.6 (Ver detalle no marca como leída)", () => {
+  it("hacer click en 'Ver detalle' NO ejecuta markRead (no dispara ninguna escritura)", async () => {
+    vi.mocked(workforceApiService.notifications).mockResolvedValue({
+      items: [buildNotification({ status: "NO_LEIDA", link: "/novedades" })],
+      meta: { total: 1, page: 1, pageSize: 20, hasMore: false },
+    });
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByText("Cierres mensuales recibidos");
+
+    await user.click(screen.getByRole("link", { name: "Ver detalle" }));
+
+    expect(workforceApiService.readNotification).not.toHaveBeenCalled();
+  });
+
+  it("'Ver detalle' sigue navegando (link con el href correcto) aunque ya no marque como leída", async () => {
+    vi.mocked(workforceApiService.notifications).mockResolvedValue({
+      items: [buildNotification({ status: "NO_LEIDA", link: "/novedades" })],
+      meta: { total: 1, page: 1, pageSize: 20, hasMore: false },
+    });
+    renderPage();
+    await screen.findByText("Cierres mensuales recibidos");
+
+    expect(screen.getByRole("link", { name: "Ver detalle" })).toHaveAttribute("href", "/novedades");
+  });
+
+  it("el botón explícito 'Marcar leída' sigue ejecutando la escritura, sin cambios", async () => {
+    vi.mocked(workforceApiService.notifications).mockResolvedValue({
+      items: [buildNotification({ status: "NO_LEIDA", link: "/novedades" })],
+      meta: { total: 1, page: 1, pageSize: 20, hasMore: false },
+    });
+    vi.mocked(workforceApiService.readNotification).mockResolvedValue(undefined);
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByText("Cierres mensuales recibidos");
+
+    await user.click(screen.getByRole("button", { name: /Marcar leída/ }));
+
+    expect(workforceApiService.readNotification).toHaveBeenCalledWith("notif-1");
+  });
+
+  it("una notificación sin link no muestra 'Ver detalle', sólo el botón de marcar leída", async () => {
+    vi.mocked(workforceApiService.notifications).mockResolvedValue({
+      items: [buildNotification({ status: "NO_LEIDA", link: null })],
+      meta: { total: 1, page: 1, pageSize: 20, hasMore: false },
+    });
+    renderPage();
+    await screen.findByText("Cierres mensuales recibidos");
+
+    expect(screen.queryByRole("link", { name: "Ver detalle" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Marcar leída/ })).toBeInTheDocument();
+  });
+});

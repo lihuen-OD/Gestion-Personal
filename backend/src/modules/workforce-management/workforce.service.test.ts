@@ -547,10 +547,25 @@ describe("workforceService — FK reales sobre ShiftTemplate/DoubleHourRule", ()
   });
 });
 
-describe("workforceService.notifications — Etapa 9I (paginación real, antes fetch-all take:200)", () => {
-  it("filtra siempre por el usuario autenticado (recipientUserId)", async () => {
-    mockedPrisma.$transaction.mockResolvedValue([[], 0]);
+// Etapa 14G.6: `$transaction([...])` -> `Promise.all([...])`. Estos tests
+// mockean `systemNotification.findMany`/`count` directamente (antes,
+// `$transaction`) y agregan una aserción explícita de que `$transaction` ya
+// no se usa -- mismo criterio que shiftAlert.repository.test.ts (14G.5).
+describe("workforceService.notifications — Etapa 9I (paginación real, antes fetch-all take:200) + Etapa 14G.6 (sin $transaction)", () => {
+  beforeEach(() => {
+    mockedPrisma.systemNotification.findMany.mockResolvedValue([]);
+    mockedPrisma.systemNotification.count.mockResolvedValue(0);
+  });
 
+  it("no envuelve las 2 queries en $transaction — corren sobre el cliente prisma global (Promise.all real)", async () => {
+    await workforceService.notifications({ page: 1, take: 20 }, user);
+
+    expect(mockedPrisma.$transaction).not.toHaveBeenCalled();
+    expect(mockedPrisma.systemNotification.findMany).toHaveBeenCalledTimes(1);
+    expect(mockedPrisma.systemNotification.count).toHaveBeenCalledTimes(1);
+  });
+
+  it("filtra siempre por el usuario autenticado (recipientUserId)", async () => {
     await workforceService.notifications({ page: 1, take: 20 }, user);
 
     expect(mockedPrisma.systemNotification.findMany).toHaveBeenCalledWith(
@@ -562,8 +577,6 @@ describe("workforceService.notifications — Etapa 9I (paginación real, antes f
   });
 
   it("nunca mezcla notificaciones de otro usuario — supervisor y RH piden con su propio id", async () => {
-    mockedPrisma.$transaction.mockResolvedValue([[], 0]);
-
     await workforceService.notifications({ page: 1, take: 20 }, supervisor);
 
     expect(mockedPrisma.systemNotification.findMany).toHaveBeenCalledWith(
@@ -572,8 +585,6 @@ describe("workforceService.notifications — Etapa 9I (paginación real, antes f
   });
 
   it("ordena por fecha descendente", async () => {
-    mockedPrisma.$transaction.mockResolvedValue([[], 0]);
-
     await workforceService.notifications({ page: 1, take: 20 }, user);
 
     expect(mockedPrisma.systemNotification.findMany).toHaveBeenCalledWith(
@@ -582,8 +593,6 @@ describe("workforceService.notifications — Etapa 9I (paginación real, antes f
   });
 
   it("respeta page/take — page 3 con take 10 pide skip:20 take:10", async () => {
-    mockedPrisma.$transaction.mockResolvedValue([[], 0]);
-
     await workforceService.notifications({ page: 3, take: 10 }, user);
 
     expect(mockedPrisma.systemNotification.findMany).toHaveBeenCalledWith(
@@ -592,8 +601,6 @@ describe("workforceService.notifications — Etapa 9I (paginación real, antes f
   });
 
   it("sin filtro de status no agrega status al where (todas)", async () => {
-    mockedPrisma.$transaction.mockResolvedValue([[], 0]);
-
     await workforceService.notifications({ page: 1, take: 20 }, user);
 
     expect(mockedPrisma.systemNotification.findMany).toHaveBeenCalledWith(
@@ -602,8 +609,6 @@ describe("workforceService.notifications — Etapa 9I (paginación real, antes f
   });
 
   it("filtro status=NO_LEIDA se traduce a where.status server-side", async () => {
-    mockedPrisma.$transaction.mockResolvedValue([[], 0]);
-
     await workforceService.notifications({ page: 1, take: 20, status: "NO_LEIDA" }, user);
 
     expect(mockedPrisma.systemNotification.findMany).toHaveBeenCalledWith(
@@ -616,7 +621,8 @@ describe("workforceService.notifications — Etapa 9I (paginación real, antes f
 
   it("devuelve meta correcta (total/page/pageSize/hasMore) cuando hay más páginas", async () => {
     const rows = [{ id: "n-1", entityType: null, entityId: null }];
-    mockedPrisma.$transaction.mockResolvedValue([rows, 45]);
+    mockedPrisma.systemNotification.findMany.mockResolvedValue(rows);
+    mockedPrisma.systemNotification.count.mockResolvedValue(45);
 
     const result = await workforceService.notifications({ page: 2, take: 20 }, user);
 
@@ -625,7 +631,8 @@ describe("workforceService.notifications — Etapa 9I (paginación real, antes f
 
   it("hasMore es false en la última página", async () => {
     const rows = [{ id: "n-1", entityType: null, entityId: null }];
-    mockedPrisma.$transaction.mockResolvedValue([rows, 21]);
+    mockedPrisma.systemNotification.findMany.mockResolvedValue(rows);
+    mockedPrisma.systemNotification.count.mockResolvedValue(21);
 
     const result = await workforceService.notifications({ page: 2, take: 20 }, user);
 
@@ -633,8 +640,6 @@ describe("workforceService.notifications — Etapa 9I (paginación real, antes f
   });
 
   it("sin resultados: items vacío y meta válida (no rompe con 0 notificaciones)", async () => {
-    mockedPrisma.$transaction.mockResolvedValue([[], 0]);
-
     const result = await workforceService.notifications({ page: 1, take: 20 }, user);
 
     expect(result).toEqual({ items: [], meta: { total: 0, page: 1, pageSize: 20, hasMore: false } });
@@ -642,7 +647,8 @@ describe("workforceService.notifications — Etapa 9I (paginación real, antes f
 
   it("enriquece con el legajo del empleado sólo para las notificaciones de la página actual (no re-consulta las 200 de antes)", async () => {
     const rows = [{ id: "n-1", entityType: "ShiftAlert", entityId: "alert-1" }];
-    mockedPrisma.$transaction.mockResolvedValue([rows, 1]);
+    mockedPrisma.systemNotification.findMany.mockResolvedValue(rows);
+    mockedPrisma.systemNotification.count.mockResolvedValue(1);
     mockedPrisma.shiftAlert.findMany.mockResolvedValue([{ id: "alert-1", employee: { id: "emp-1", legajo: "100", firstName: "Ana", lastName: "Gomez" } }]);
 
     const result = await workforceService.notifications({ page: 1, take: 20 }, user);
@@ -653,7 +659,8 @@ describe("workforceService.notifications — Etapa 9I (paginación real, antes f
 
   it("no dispara ninguna query de enriquecimiento cuando ninguna notificación de la página tiene entityId", async () => {
     const rows = [{ id: "n-1", entityType: null, entityId: null }];
-    mockedPrisma.$transaction.mockResolvedValue([rows, 1]);
+    mockedPrisma.systemNotification.findMany.mockResolvedValue(rows);
+    mockedPrisma.systemNotification.count.mockResolvedValue(1);
 
     await workforceService.notifications({ page: 1, take: 20 }, user);
 

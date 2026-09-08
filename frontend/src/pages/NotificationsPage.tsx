@@ -100,7 +100,12 @@ export function NotificationsPage() {
         {status === "error" ? <ErrorState message={error} onRetry={() => setRefresh((value) => value + 1)} /> : null}
         {status === "success" ? items.map((item) => <article className={`notification-row ${item.status === "NO_LEIDA" ? "unread" : ""}`} key={item.id}>
           <div className="notification-icon"><Bell size={17}/></div><div><b>{item.title}</b>{item.employee ? <span className="notification-person">{item.employee.lastName}, {item.employee.firstName} · Legajo {item.employee.legajo}</span> : null}<p>{item.message}</p><small>{new Date(item.createdAt).toLocaleString("es-AR")}</small></div>
-          <div className="notification-actions">{item.link ? <Link className="table-link" to={item.link} onClick={() => void markRead(item)}>Ver detalle</Link> : null}{item.status === "NO_LEIDA" ? <button className="table-link" onClick={() => void markRead(item)}><Check size={15}/> Marcar leída</button> : <Badge tone="neutral">Leída</Badge>}</div>
+          {/* Etapa 14G.6: "Ver detalle" antes marcaba como leída como efecto
+              colateral de la navegación (además del botón explícito "Marcar
+              leída", que hacía lo mismo) -- sin ninguna distinción visual
+              entre ambas acciones. Ahora navegar sólo navega; "Marcar leída"
+              sigue siendo la única forma explícita de marcar como leída. */}
+          <div className="notification-actions">{item.link ? <Link className="table-link" to={item.link}>Ver detalle</Link> : null}{item.status === "NO_LEIDA" ? <button className="table-link" onClick={() => void markRead(item)}><Check size={15}/> Marcar leída</button> : <Badge tone="neutral">Leída</Badge>}</div>
         </article>) : null}
         {status === "success" && !items.length ? <div className="empty">{emptyText}</div> : null}
       </div>

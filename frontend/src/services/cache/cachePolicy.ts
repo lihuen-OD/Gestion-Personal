@@ -193,6 +193,24 @@ export const cachePolicies = {
     sensitive: true,
     schemaVersion: CACHE_SCHEMA_VERSION,
   },
+  // Etapa 14G.6: `workforceApiService.notifications()` (el listado) no tenía
+  // dedupe in-flight -- el doble-montaje de React StrictMode en dev disparaba
+  // 2 llamadas de red reales a GET /workforce/notifications (mismo síntoma ya
+  // resuelto en el resto de las listas operativas del proyecto). Misma
+  // familia "notifications" que `notificationsUnreadCount` a propósito:
+  // `readNotification()` ya invalida esa familia completa, así que marcar
+  // una notificación como leída invalida el badge Y el listado con la misma
+  // llamada, sin código nuevo. TTL corto (10s, más corto que los 20s del
+  // badge) porque los write paths de SystemNotification no son un conjunto
+  // cerrado (ver workforce.service.ts backend) -- se acota la ventana de
+  // "no ver una notificación nueva todavía" al mínimo razonable.
+  notificationsList: {
+    family: "notifications",
+    ttlMs: 10_000,
+    persist: false,
+    sensitive: true,
+    schemaVersion: CACHE_SCHEMA_VERSION,
+  },
   // Etapa 14G.5: GET /shifts/alerts no tenía dedupe in-flight -- el
   // doble-montaje de React StrictMode en dev disparaba 2 llamadas de red
   // reales (mismo síntoma ya resuelto en `getSummary`/`getPeriodEmployees`/

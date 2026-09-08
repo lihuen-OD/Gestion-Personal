@@ -169,12 +169,21 @@ export const workforceApiService = {
   },
   // Etapa 9I: antes pedía las 200 últimas notificaciones de una sola vez.
   // Ahora pagina real (page/take) y filtra por status server-side.
+  // Etapa 14G.6: envuelto con `cachedData` (dedupe in-flight, misma familia
+  // "notifications" que `unreadNotificationCount` -- `readNotification()`
+  // invalida ambas con la misma llamada, ver cachePolicy.ts).
   notifications(params: SystemNotificationListParams = {}) {
     const query = new URLSearchParams();
     query.set("page", String(params.page || 1));
     query.set("take", String(params.take || 20));
     if (params.status) query.set("status", params.status);
-    return apiRequest<{ data: SystemNotification[]; meta: SystemNotificationListMeta }>(`/workforce/notifications?${query.toString()}`, { apiCache: false }).then((response) => ({ items: response.data, meta: response.meta }));
+    const key = `/workforce/notifications?${query.toString()}`;
+    return cachedData({
+      requestKey: `GET:${key}`,
+      policy: cachePolicies.notificationsList,
+      fetcher: () => apiRequest<{ data: SystemNotification[]; meta: SystemNotificationListMeta }>(key, { apiCache: false }).then((response) => ({ items: response.data, meta: response.meta })),
+      validate: (value: { items: SystemNotification[]; meta: SystemNotificationListMeta }) => Boolean(value && Array.isArray(value.items) && value.meta && typeof value.meta.total === "number"),
+    });
   },
   // Etapa 14F.2: `cachedData` agrega dedupe in-flight (AppShell monta el
   // effect dos veces en StrictMode, disparando 2 requests idénticos) + TTL

@@ -5,12 +5,13 @@ import { workforceController } from "./workforce.controller";
 import { workforceService } from "./workforce.service";
 import { clearTimeEntriesReadCaches } from "../time-entries/timeEntries.cache";
 import { clearEmployeeReadCaches } from "../employees/employees.controller";
-import { doubleRulesCache, shiftTemplatesCache } from "./workforce.cache";
+import { doubleRulesCache, notificationsListCache, shiftTemplatesCache } from "./workforce.cache";
 
 vi.mock("./workforce.service", () => ({
   workforceService: {
     approveCorrection: vi.fn(),
     notifications: vi.fn(),
+    markNotificationRead: vi.fn(),
     shiftTemplates: vi.fn(),
     createShiftTemplate: vi.fn(),
     updateShiftTemplate: vi.fn(),
@@ -36,6 +37,7 @@ vi.mock("../employees/employees.controller", () => ({
 const mockedService = workforceService as unknown as {
   approveCorrection: Mock;
   notifications: Mock;
+  markNotificationRead: Mock;
   shiftTemplates: Mock; createShiftTemplate: Mock; updateShiftTemplate: Mock; removeShiftTemplate: Mock;
   doubleRules: Mock; createDoubleRule: Mock; updateDoubleRule: Mock; removeDoubleRule: Mock;
 };
@@ -66,6 +68,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   shiftTemplatesCache.clear();
   doubleRulesCache.clear();
+  notificationsListCache.clear();
   mockedService.approveCorrection.mockResolvedValue({ id: "correction-1", status: "APROBADA" });
 });
 
@@ -287,5 +290,89 @@ describe("workforceController.notifications — Etapa 9I (paginación real)", ()
     await workforceController.notifications(fakeReq({ originalUrl: "/workforce/notifications", query: {} }), res);
 
     expect(res.json).toHaveBeenCalledWith({ data: items, meta: { total: 1, page: 1, pageSize: 20, hasMore: false } });
+  });
+});
+
+// Etapa 14G.6: cache de lectura TTL corto (10s) — mismo patrón que
+// shiftTemplates/doubleRules (Etapa 9C), cache real sin mockear.
+describe("workforceController.notifications — cache backend (Etapa 14G.6)", () => {
+  const result = { items: [{ id: "n-1", title: "Cierre mensual" }], meta: { total: 1, page: 1, pageSize: 20, hasMore: false } };
+
+  it("la primera llamada lee del service", async () => {
+    mockedService.notifications.mockResolvedValue(result);
+    const req = fakeReq({ originalUrl: "/workforce/notifications?page=1&take=20" });
+    const res = fakeRes();
+
+    await workforceController.notifications(req, res);
+
+    expect(mockedService.notifications).toHaveBeenCalledTimes(1);
+    expect(res.json).toHaveBeenCalledWith({ data: result.items, meta: result.meta });
+  });
+
+  it("la segunda llamada idéntica (mismos filtros, mismo usuario) usa el cache, sin volver a golpear el service", async () => {
+    mockedService.notifications.mockResolvedValue(result);
+    const req = fakeReq({ originalUrl: "/workforce/notifications?page=1&take=20" });
+
+    await workforceController.notifications(req, fakeRes());
+    const res2 = fakeRes();
+    await workforceController.notifications(req, res2);
+
+    expect(mockedService.notifications).toHaveBeenCalledTimes(1);
+    expect(res2.json).toHaveBeenCalledWith({ data: result.items, meta: result.meta });
+  });
+
+  it("key incluye status/page/take: cambiar cualquier filtro es un cache miss nuevo, aunque sea el mismo usuario", async () => {
+    mockedService.notifications
+      .mockResolvedValueOnce(result)
+      .mockResolvedValueOnce({ ...result, meta: { ...result.meta, total: 2 } });
+
+    await workforceController.notifications(fakeReq({ originalUrl: "/workforce/notifications?page=1&take=20" }), fakeRes());
+    await workforceController.notifications(fakeReq({ originalUrl: "/workforce/notifications?page=1&take=20&status=NO_LEIDA" }), fakeRes());
+
+    expect(mockedService.notifications).toHaveBeenCalledTimes(2);
+  });
+
+  it("key scopeada por usuario: dos usuarios con los mismos filtros nunca comparten el resultado cacheado del otro", async () => {
+    mockedService.notifications
+      .mockResolvedValueOnce(result)
+      .mockResolvedValueOnce({ ...result, meta: { ...result.meta, total: 99 } });
+
+    const resA = fakeRes();
+    await workforceController.notifications(fakeReq({ originalUrl: "/workforce/notifications?page=1&take=20", user: { id: "user-a", role: "NIVEL_1_RRHH" } } as Partial<Request>), resA);
+    const resB = fakeRes();
+    await workforceController.notifications(fakeReq({ originalUrl: "/workforce/notifications?page=1&take=20", user: { id: "user-b", role: "NIVEL_2_SUPERVISION" } } as Partial<Request>), resB);
+
+    expect(mockedService.notifications).toHaveBeenCalledTimes(2);
+    expect(resA.json).toHaveBeenCalledWith({ data: result.items, meta: expect.objectContaining({ total: 1 }) });
+    expect(resB.json).toHaveBeenCalledWith({ data: result.items, meta: expect.objectContaining({ total: 99 }) });
+
+    // Repetir el pedido de user-a: sigue siendo SU propio resultado (total:1), nunca el de user-b (total:99).
+    const resA2 = fakeRes();
+    await workforceController.notifications(fakeReq({ originalUrl: "/workforce/notifications?page=1&take=20", user: { id: "user-a", role: "NIVEL_1_RRHH" } } as Partial<Request>), resA2);
+    expect(mockedService.notifications).toHaveBeenCalledTimes(2); // sigue en 2: hit de cache para user-a
+    expect(resA2.json).toHaveBeenCalledWith({ data: result.items, meta: expect.objectContaining({ total: 1 }) });
+  });
+
+  it("readNotification (escritura real) invalida la cache — una notificación marcada como leída deja de verse en el próximo pedido", async () => {
+    mockedService.notifications.mockResolvedValue(result);
+    mockedService.markNotificationRead.mockResolvedValue({ count: 1 });
+    const req = fakeReq({ originalUrl: "/workforce/notifications?page=1&take=20" });
+
+    // Popula la cache con el resultado "viejo" (notificación todavía sin leer).
+    await workforceController.notifications(req, fakeRes());
+    expect(mockedService.notifications).toHaveBeenCalledTimes(1);
+
+    // Marcar como leída es una escritura real -- nunca lee ni escribe
+    // notificationsListCache directamente, sólo la invalida.
+    await workforceController.readNotification(fakeReq({ originalUrl: "/workforce/notifications/n-1/read", params: { id: "n-1" } } as Partial<Request>), fakeRes());
+    expect(mockedService.markNotificationRead).toHaveBeenCalledTimes(1);
+
+    // El próximo pedido de notificaciones ya no debe servir el resultado cacheado viejo.
+    mockedService.notifications.mockResolvedValue({ ...result, meta: { ...result.meta, total: 0 } });
+    const resAfter = fakeRes();
+    await workforceController.notifications(req, resAfter);
+
+    expect(mockedService.notifications).toHaveBeenCalledTimes(2);
+    expect(resAfter.json).toHaveBeenCalledWith({ data: result.items, meta: expect.objectContaining({ total: 0 }) });
   });
 });

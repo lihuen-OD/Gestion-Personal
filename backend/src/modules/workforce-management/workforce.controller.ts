@@ -6,7 +6,7 @@ import { workforceService } from "./workforce.service";
 import type { ListNotificationsQuery } from "./workforce.schemas";
 import { clearTimeEntriesReadCaches } from "../time-entries/timeEntries.cache";
 import { clearEmployeeReadCaches } from "../employees/employees.controller";
-import { clearDoubleRulesReadCache, clearShiftTemplatesReadCache, doubleRulesCache, shiftTemplatesCache } from "./workforce.cache";
+import { clearDoubleRulesReadCache, clearNotificationsListCache, clearShiftTemplatesReadCache, doubleRulesCache, notificationsListCache, shiftTemplatesCache } from "./workforce.cache";
 
 // Etapa 9C: mismo patrón ya usado en novelties/documents/time-entries/employees
 // controllers — clave por usuario+rol+URL (ninguno de los dos endpoints tiene
@@ -33,12 +33,22 @@ export const workforceController = {
     res.json({data});
   }) satisfies RequestHandler,
   rejectCorrection: (async (req,res)=>res.json({data:await workforceService.rejectCorrection(requireParam(req,"id"),req.body.note,req.user!,requestAuditContext(req))})) satisfies RequestHandler,
+  // Etapa 14G.6: cache de lectura TTL corto (10s, ver workforce.cache.ts) --
+  // mismo patrón exacto que shiftTemplates/doubleRules más abajo.
   notifications: (async (req,res)=>{
+    const key=userScopedCacheKey(req);
+    const cached=notificationsListCache.get(key);
+    if(cached){ res.json({data:cached.items,meta:cached.meta}); return; }
     const result=await workforceService.notifications(req.query as unknown as ListNotificationsQuery,req.user!);
+    notificationsListCache.set(key,result);
     res.json({data:result.items,meta:result.meta});
   }) satisfies RequestHandler,
   unreadNotificationCount: (async (req,res)=>res.json({data:{count:await workforceService.unreadNotificationCount(req.user!)}})) satisfies RequestHandler,
-  readNotification: (async (req,res)=>res.json({data:await workforceService.markNotificationRead(requireParam(req,"id"),req.user!)})) satisfies RequestHandler,
+  readNotification: (async (req,res)=>{
+    const data=await workforceService.markNotificationRead(requireParam(req,"id"),req.user!);
+    clearNotificationsListCache();
+    res.json({data});
+  }) satisfies RequestHandler,
   // Etapa 9C: cache de lectura TTL corto (ver workforce.cache.ts) — mismo
   // shape de respuesta que antes, sólo cambia si la data viene de Prisma o
   // del cache.

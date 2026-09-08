@@ -155,18 +155,29 @@ export const workforceService = {
     return item;
   },
   // Etapa 9I: antes hacía fetch-all con take:200 fijo, sin paginación real.
-  // Ahora pagina por page/take real (mismo patrón $transaction([findMany,count])
-  // que noveltiesRepository/positions.repository) y filtra por status
-  // server-side. Deliberadamente sin cache: los write paths de
-  // SystemNotification están dispersos en 5+ módulos (novelties/
-  // workforce-management/time-entries/shifts/attendance, todos vía
-  // notifyUsers/notifyRrhh o creación directa) — no es un conjunto cerrado y
-  // enumerable con confianza (criterio de docs/PERFORMANCE_STANDARDS.md §5),
-  // así que queda sin cachear, igual que closures() en 9C.
+  // Ahora pagina por page/take real y filtra por status server-side.
+  // Etapa 14G.6: `prisma.$transaction([...])` (forma array, findMany+count)
+  // -> `Promise.all([...])` sobre el cliente `prisma` global. Mismo
+  // antipatrón ya corregido en time-entries (14C.2/14G.2/14G.3) y en
+  // shifts/shiftAlert (14G.5): las 2 queries son de sólo lectura e
+  // independientes (un listado + su count total), sin necesidad de una foto
+  // transaccional consistente entre sí, y la forma-array de `$transaction`
+  // las ejecutaba secuencialmente sobre una única conexión. La cache backend
+  // agregada en esta etapa (ver workforce.cache.ts) usa un TTL corto (10s)
+  // precisamente porque los write paths de SystemNotification siguen
+  // dispersos en 5+ módulos (novelties/workforce-management/time-entries/
+  // shifts/attendance, todos vía notifyUsers/notifyRrhh o creación directa)
+  // — no es un conjunto cerrado y enumerable con confianza (criterio de
+  // docs/PERFORMANCE_STANDARDS.md §5), así que no se invalida al crear una
+  // notificación nueva, sólo al marcar como leída (mismo write path que este
+  // módulo sí controla). Ver docs/decisions/
+  // WORKFORCE_MANAGEMENT_NOTIFICATIONS_PERFORMANCE_14G6.md §9 para el riesgo
+  // aceptado explícitamente (mismo criterio ya usado en 14G.5 para
+  // shiftAlertListCache, acotado por un TTL más corto todavía).
   async notifications(query: ListNotificationsQuery, user: Express.AuthUser) {
     const where: Prisma.SystemNotificationWhereInput = { recipientUserId: user.id, ...(query.status ? { status: query.status } : {}) };
     const skip = (query.page - 1) * query.take;
-    const [notifications, total] = await prisma.$transaction([
+    const [notifications, total] = await Promise.all([
       prisma.systemNotification.findMany({ where, orderBy: { createdAt: "desc" }, skip, take: query.take }),
       prisma.systemNotification.count({ where }),
     ]);
