@@ -14,6 +14,7 @@
     "perf:journey:employees": "playwright test --config=playwright.config.ts employeesPerformanceJourney.spec.ts",
     "perf:journey:landing": "playwright test --config=playwright.config.ts landingPerformanceJourney.spec.ts",
     "perf:journey:workforce": "playwright test --config=playwright.config.ts workforceManagementPerformanceJourney.spec.ts",
+    "perf:journey:admin-config": "playwright test --config=playwright.config.ts adminConfigurationPerformanceJourney.spec.ts",
     "typecheck:e2e": "tsc -p tsconfig.e2e.json --noEmit"
   },
   "dependencies": {

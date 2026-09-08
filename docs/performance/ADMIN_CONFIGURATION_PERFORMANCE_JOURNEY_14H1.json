@@ -1,0 +1,1922 @@
+{
+  "generatedAt": "2026-09-08T14:05:06.926Z",
+  "environment": "Frontend y backend locales (`npm run dev`), backend conectado a la base real de staging (ver docs/LOCAL_DEVELOPMENT.md) — no es un ambiente de producción ni un ambiente aislado de test.",
+  "baseUrl": "http://localhost:5174",
+  "apiBaseUrl": "http://localhost:4002/api",
+  "user": "Nivel 1 - RRHH (acceso rápido demo — credenciales en docs/LOCAL_DEVELOPMENT.md, no se repiten en este reporte)",
+  "command": "npm run perf:journey:admin-config (desde frontend/)",
+  "mode": "read-only",
+  "thresholds": {
+    "okThresholdMs": 1000,
+    "mediumThresholdMs": 2000,
+    "slowThresholdMs": 3000
+  },
+  "summary": {
+    "totalActions": 63,
+    "coveredActions": 41,
+    "skippedActions": 22,
+    "slowActions": 4,
+    "verySlowActions": 1,
+    "writesSkipped": 18,
+    "httpErrors": 0,
+    "consoleErrors": 4
+  },
+  "submoduleRollup": [
+    {
+      "zone": "Login",
+      "coveredActions": 1,
+      "skippedActions": 0,
+      "totalRequests": 4,
+      "maxDurationMs": 6563,
+      "rank": "Crítico"
+    },
+    {
+      "zone": "A. Configuración (landing)",
+      "coveredActions": 2,
+      "skippedActions": 0,
+      "totalRequests": 1,
+      "maxDurationMs": 970,
+      "rank": "OK"
+    },
+    {
+      "zone": "B. Turnos",
+      "coveredActions": 4,
+      "skippedActions": 2,
+      "totalRequests": 8,
+      "maxDurationMs": 1474,
+      "rank": "Medio"
+    },
+    {
+      "zone": "C. Asignaciones de feriados",
+      "coveredActions": 2,
+      "skippedActions": 1,
+      "totalRequests": 8,
+      "maxDurationMs": 2253,
+      "rank": "Lento"
+    },
+    {
+      "zone": "D. Horas especiales",
+      "coveredActions": 2,
+      "skippedActions": 2,
+      "totalRequests": 6,
+      "maxDurationMs": 1948,
+      "rank": "Medio"
+    },
+    {
+      "zone": "E. Regímenes laborales",
+      "coveredActions": 8,
+      "skippedActions": 2,
+      "totalRequests": 6,
+      "maxDurationMs": 2878,
+      "rank": "Lento"
+    },
+    {
+      "zone": "F. Empresas y estructura",
+      "coveredActions": 2,
+      "skippedActions": 1,
+      "totalRequests": 1,
+      "maxDurationMs": 722,
+      "rank": "OK"
+    },
+    {
+      "zone": "G. Tipos de novedades",
+      "coveredActions": 3,
+      "skippedActions": 3,
+      "totalRequests": 2,
+      "maxDurationMs": 1274,
+      "rank": "Medio"
+    },
+    {
+      "zone": "H. Conceptos horarios",
+      "coveredActions": 3,
+      "skippedActions": 2,
+      "totalRequests": 2,
+      "maxDurationMs": 951,
+      "rank": "OK"
+    },
+    {
+      "zone": "I. Exportación Finnegans",
+      "coveredActions": 0,
+      "skippedActions": 1,
+      "totalRequests": 0,
+      "rank": "—"
+    },
+    {
+      "zone": "J. Categorías documentales",
+      "coveredActions": 3,
+      "skippedActions": 1,
+      "totalRequests": 2,
+      "maxDurationMs": 903,
+      "rank": "OK"
+    },
+    {
+      "zone": "K. Parámetros de auditoría",
+      "coveredActions": 3,
+      "skippedActions": 1,
+      "totalRequests": 2,
+      "maxDurationMs": 2125,
+      "rank": "Lento"
+    },
+    {
+      "zone": "L. Puestos (listado)",
+      "coveredActions": 4,
+      "skippedActions": 3,
+      "totalRequests": 3,
+      "maxDurationMs": 1261,
+      "rank": "Medio"
+    },
+    {
+      "zone": "M. Puesto (detalle)",
+      "coveredActions": 2,
+      "skippedActions": 2,
+      "totalRequests": 3,
+      "maxDurationMs": 1604,
+      "rank": "Medio"
+    },
+    {
+      "zone": "N. Puesto (creación, sólo navegación)",
+      "coveredActions": 2,
+      "skippedActions": 1,
+      "totalRequests": 4,
+      "maxDurationMs": 972,
+      "rank": "OK"
+    }
+  ],
+  "actions": [
+    {
+      "name": "Login (acceso rápido RRHH)",
+      "zone": "Login",
+      "submodule": "Login",
+      "route": "/",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 631,
+      "networkIdleMs": 6563,
+      "requests": [
+        {
+          "method": "POST",
+          "path": "/api/auth/login",
+          "statusCode": 200,
+          "durationMs": 1023
+        },
+        {
+          "method": "GET",
+          "path": "/api/workforce/notifications-unread-count",
+          "statusCode": 200,
+          "durationMs": 392
+        },
+        {
+          "method": "GET",
+          "path": "/api/audit",
+          "statusCode": 200,
+          "durationMs": 2214
+        },
+        {
+          "method": "GET",
+          "path": "/api/dashboard/metrics",
+          "statusCode": 200,
+          "durationMs": 4390
+        }
+      ],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "emptyScreen": null
+    },
+    {
+      "name": "Entrar a Configuración",
+      "zone": "A. Configuración (landing)",
+      "submodule": "A. Configuración (landing)",
+      "route": "/configuracion",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 91,
+      "networkIdleMs": 970,
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/api/workforce/notifications-unread-count",
+          "statusCode": 200,
+          "durationMs": 406
+        }
+      ],
+      "consoleErrors": [],
+      "notes": [
+        "página estática sin llamadas API — 10 tarjetas de submódulos, todas con <Link> real sin efectos colaterales"
+      ],
+      "isWrite": false,
+      "emptyScreen": null
+    },
+    {
+      "name": "Ver tarjetas de submódulos",
+      "zone": "A. Configuración (landing)",
+      "submodule": "A. Configuración (landing)",
+      "route": "/configuracion",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 8,
+      "networkIdleMs": 93,
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [
+        "se detectaron 10 tarjetas (se esperan 10)"
+      ],
+      "isWrite": false,
+      "emptyScreen": null
+    },
+    {
+      "name": "Entrar a Turnos",
+      "zone": "B. Turnos",
+      "submodule": "B. Turnos",
+      "route": "/configuracion/turnos",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 82,
+      "networkIdleMs": 1474,
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/api/workforce/notifications-unread-count",
+          "statusCode": 200,
+          "durationMs": 231
+        },
+        {
+          "method": "GET",
+          "path": "/api/shifts/assignments/summary",
+          "statusCode": 200,
+          "durationMs": 385
+        },
+        {
+          "method": "GET",
+          "path": "/api/workforce/shift-templates",
+          "statusCode": 200,
+          "durationMs": 403
+        },
+        {
+          "method": "GET",
+          "path": "/api/workforce/shift-templates",
+          "statusCode": 200,
+          "durationMs": 756
+        },
+        {
+          "method": "GET",
+          "path": "/api/shifts/assignments/summary",
+          "statusCode": 200,
+          "durationMs": 901
+        }
+      ],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "emptyScreen": false
+    },
+    {
+      "name": "Buscar en Turnos",
+      "zone": "B. Turnos",
+      "submodule": "B. Turnos",
+      "route": "/configuracion/turnos",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 24,
+      "networkIdleMs": 429,
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [
+        "término tomado de un turno real — no se registra el valor buscado en este reporte"
+      ],
+      "isWrite": false,
+      "emptyScreen": null
+    },
+    {
+      "name": "Filtrar Turnos por Estado",
+      "zone": "B. Turnos",
+      "submodule": "B. Turnos",
+      "route": "/configuracion/turnos",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 11,
+      "networkIdleMs": 93,
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "emptyScreen": null
+    },
+    {
+      "name": "Crear turno",
+      "zone": "B. Turnos",
+      "submodule": "B. Turnos",
+      "route": "/configuracion/turnos",
+      "covered": false,
+      "skippedReason": "Prohibido por defecto — es la puerta de entrada a un alta real (POST /workforce/shift-templates), no se hace click.",
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": true,
+      "emptyScreen": null
+    },
+    {
+      "name": "Ver detalle de turno",
+      "zone": "B. Turnos",
+      "submodule": "B. Turnos",
+      "route": "/configuracion/turnos/:id",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 103,
+      "networkIdleMs": 887,
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/api/workforce/shift-templates",
+          "statusCode": 200,
+          "durationMs": 1
+        },
+        {
+          "method": "GET",
+          "path": "/api/workforce/shift-templates",
+          "statusCode": 200,
+          "durationMs": 1
+        },
+        {
+          "method": "GET",
+          "path": "/api/workforce/notifications-unread-count",
+          "statusCode": 200,
+          "durationMs": 359
+        }
+      ],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "emptyScreen": null
+    },
+    {
+      "name": "Inactivar/Activar turno",
+      "zone": "B. Turnos",
+      "submodule": "B. Turnos",
+      "route": "/configuracion/turnos/:id",
+      "covered": false,
+      "skippedReason": "Prohibido por defecto — acción de escritura (PATCH /workforce/shift-templates/:id).",
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": true,
+      "emptyScreen": null
+    },
+    {
+      "name": "Entrar a Asignaciones de feriados",
+      "zone": "C. Asignaciones de feriados",
+      "submodule": "C. Asignaciones de feriados",
+      "route": "/configuracion/turnos-asignaciones-feriados",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 81,
+      "networkIdleMs": 2253,
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/api/workforce/shift-templates",
+          "statusCode": 200,
+          "durationMs": 1
+        },
+        {
+          "method": "GET",
+          "path": "/api/workforce/shift-templates",
+          "statusCode": 200,
+          "durationMs": 3
+        },
+        {
+          "method": "GET",
+          "path": "/api/workforce/notifications-unread-count",
+          "statusCode": 200,
+          "durationMs": 176
+        },
+        {
+          "method": "GET",
+          "path": "/api/shifts/holiday-work/dates",
+          "statusCode": 200,
+          "durationMs": 381
+        },
+        {
+          "method": "GET",
+          "path": "/api/shifts/holiday-work/dates",
+          "statusCode": 200,
+          "durationMs": 564
+        },
+        {
+          "method": "GET",
+          "path": "/api/org-structure",
+          "statusCode": 200,
+          "durationMs": 1667
+        }
+      ],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "emptyScreen": false
+    },
+    {
+      "name": "Seleccionar fecha de feriado",
+      "zone": "C. Asignaciones de feriados",
+      "submodule": "C. Asignaciones de feriados",
+      "route": "/configuracion/turnos-asignaciones-feriados",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 1843,
+      "networkIdleMs": 2248,
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/api/shifts/holiday-work/assignments",
+          "statusCode": 200,
+          "durationMs": 766
+        },
+        {
+          "method": "GET",
+          "path": "/api/shifts/holiday-work/candidates",
+          "statusCode": 200,
+          "durationMs": 1499
+        }
+      ],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "emptyScreen": null
+    },
+    {
+      "name": "Guardar cambios (convocatoria de feriado)",
+      "zone": "C. Asignaciones de feriados",
+      "submodule": "C. Asignaciones de feriados",
+      "route": "/configuracion/turnos-asignaciones-feriados",
+      "covered": false,
+      "skippedReason": "Prohibido por defecto — asignaría feriados reales a empleados reales (PUT /shifts/holiday-work/assignments).",
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": true,
+      "emptyScreen": null
+    },
+    {
+      "name": "Entrar a Horas especiales",
+      "zone": "D. Horas especiales",
+      "submodule": "D. Horas especiales",
+      "route": "/configuracion/turnos-horas-especiales",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 130,
+      "networkIdleMs": 1948,
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/api/workforce/notifications-unread-count",
+          "statusCode": 200,
+          "durationMs": 362
+        },
+        {
+          "method": "GET",
+          "path": "/api/workforce/double-hour-rules/calendar",
+          "statusCode": 200,
+          "durationMs": 345
+        },
+        {
+          "method": "GET",
+          "path": "/api/workforce/double-hour-rules",
+          "statusCode": 200,
+          "durationMs": 356
+        },
+        {
+          "method": "GET",
+          "path": "/api/workforce/double-hour-rules",
+          "statusCode": 200,
+          "durationMs": 357
+        },
+        {
+          "method": "GET",
+          "path": "/api/workforce/double-hour-rules/calendar",
+          "statusCode": 200,
+          "durationMs": 516
+        },
+        {
+          "method": "GET",
+          "path": "/api/positions",
+          "statusCode": 200,
+          "durationMs": 1353
+        }
+      ],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "emptyScreen": false
+    },
+    {
+      "name": "Filtrar Horas especiales por clasificación",
+      "zone": "D. Horas especiales",
+      "submodule": "D. Horas especiales",
+      "route": "/configuracion/turnos-horas-especiales",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 16,
+      "networkIdleMs": 101,
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "emptyScreen": null
+    },
+    {
+      "name": "Abrir edición de regla / Crear regla",
+      "zone": "D. Horas especiales",
+      "submodule": "D. Horas especiales",
+      "route": "/configuracion/turnos-horas-especiales",
+      "covered": false,
+      "skippedReason": "El formulario 'Nueva regla'/'Editar' es un editor inline siempre presente en la página (no el componente Modal compartido) — esta etapa sólo abre y cierra modales del componente Modal compartido (Regímenes laborales) para mantener una única política simple de riesgo en todo el journey.",
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "emptyScreen": null
+    },
+    {
+      "name": "Activar/Inactivar/Eliminar regla",
+      "zone": "D. Horas especiales",
+      "submodule": "D. Horas especiales",
+      "route": "/configuracion/turnos-horas-especiales",
+      "covered": false,
+      "skippedReason": "Prohibido por defecto — acciones de escritura (PATCH/DELETE /workforce/double-hour-rules/:id).",
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": true,
+      "emptyScreen": null
+    },
+    {
+      "name": "Entrar a Regímenes laborales",
+      "zone": "E. Regímenes laborales",
+      "submodule": "E. Regímenes laborales",
+      "route": "/configuracion/regimenes-laborales",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 133,
+      "networkIdleMs": 1690,
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/api/workforce/notifications-unread-count",
+          "statusCode": 200,
+          "durationMs": 497
+        },
+        {
+          "method": "GET",
+          "path": "/api/work-regimes",
+          "statusCode": 200,
+          "durationMs": 1098
+        }
+      ],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "emptyScreen": false
+    },
+    {
+      "name": "Buscar en Regímenes laborales",
+      "zone": "E. Regímenes laborales",
+      "submodule": "E. Regímenes laborales",
+      "route": "/configuracion/regimenes-laborales",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 8,
+      "networkIdleMs": 412,
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [
+        "término tomado de un régimen real — no se registra el valor buscado en este reporte"
+      ],
+      "isWrite": false,
+      "emptyScreen": null
+    },
+    {
+      "name": "Filtrar Regímenes laborales por Estado",
+      "zone": "E. Regímenes laborales",
+      "submodule": "E. Regímenes laborales",
+      "route": "/configuracion/regimenes-laborales",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 13,
+      "networkIdleMs": 96,
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "emptyScreen": null
+    },
+    {
+      "name": "Abrir modal Crear régimen",
+      "zone": "E. Regímenes laborales",
+      "submodule": "E. Regímenes laborales",
+      "route": "/configuracion/regimenes-laborales",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 11,
+      "networkIdleMs": 93,
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [
+        "se abrió el modal y se cerró sin guardar (modo lectura de esta etapa)"
+      ],
+      "isWrite": false,
+      "emptyScreen": null
+    },
+    {
+      "name": "Cerrar modal Crear régimen",
+      "zone": "E. Regímenes laborales",
+      "submodule": "E. Regímenes laborales",
+      "route": "/configuracion/regimenes-laborales",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 18,
+      "networkIdleMs": 101,
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "emptyScreen": null
+    },
+    {
+      "name": "Ver empleados asociados a un régimen",
+      "zone": "E. Regímenes laborales",
+      "submodule": "E. Regímenes laborales",
+      "route": "/configuracion/regimenes-laborales",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 46,
+      "networkIdleMs": 128,
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "emptyScreen": null
+    },
+    {
+      "name": "Filtrar vigencia de empleados asociados",
+      "zone": "E. Regímenes laborales",
+      "submodule": "E. Regímenes laborales",
+      "route": "/configuracion/regimenes-laborales",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 2795,
+      "networkIdleMs": 2878,
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/api/work-regimes/:id/employees",
+          "statusCode": 200,
+          "durationMs": 1736
+        },
+        {
+          "method": "GET",
+          "path": "/api/work-regimes/:id/employees",
+          "statusCode": 200,
+          "durationMs": 1607
+        },
+        {
+          "method": "GET",
+          "path": "/api/work-regimes/:id/employees",
+          "statusCode": 200,
+          "durationMs": 2811
+        },
+        {
+          "method": "GET",
+          "path": "/api/work-regimes/:id/employees",
+          "statusCode": 200,
+          "durationMs": 2613
+        }
+      ],
+      "consoleErrors": [
+        "Warning: Encountered two children with the same key, `%s`. Keys should be unique so that components maintain their identity across updates. Non-unique keys may cause children to be duplicated and/or omitted — the behavior is unsupported and could change in a future version.%s 8aedbba2-7763-44da-b57a-b5db478e62e0 \n    at tbody\n    at table\n    at div\n    at TableShell (http://localhost:5174/src/components/ui/TableShell.tsx:18:3)\n    at div\n    at div\n    at AssociatedEmployeesPanel (http://localh",
+        "Warning: Encountered two children with the same key, `%s`. Keys should be unique so that components maintain their identity across updates. Non-unique keys may cause children to be duplicated and/or omitted — the behavior is unsupported and could change in a future version.%s 17ff5f1c-eb54-4661-a6af-7687b7a9f7b3 \n    at tbody\n    at table\n    at div\n    at TableShell (http://localhost:5174/src/components/ui/TableShell.tsx:18:3)\n    at div\n    at div\n    at AssociatedEmployeesPanel (http://localh",
+        "Warning: Encountered two children with the same key, `%s`. Keys should be unique so that components maintain their identity across updates. Non-unique keys may cause children to be duplicated and/or omitted — the behavior is unsupported and could change in a future version.%s 8aedbba2-7763-44da-b57a-b5db478e62e0 \n    at div\n    at div\n    at AssociatedEmployeesPanel (http://localhost:5174/src/components/shared/AssociatedEmployeesPanel.tsx:40:3)\n    at div\n    at div\n    at div\n    at Modal (http",
+        "Warning: Encountered two children with the same key, `%s`. Keys should be unique so that components maintain their identity across updates. Non-unique keys may cause children to be duplicated and/or omitted — the behavior is unsupported and could change in a future version.%s 17ff5f1c-eb54-4661-a6af-7687b7a9f7b3 \n    at div\n    at div\n    at AssociatedEmployeesPanel (http://localhost:5174/src/components/shared/AssociatedEmployeesPanel.tsx:40:3)\n    at div\n    at div\n    at div\n    at Modal (http"
+      ],
+      "notes": [],
+      "isWrite": false,
+      "emptyScreen": null
+    },
+    {
+      "name": "Cerrar modal Empleados asociados",
+      "zone": "E. Regímenes laborales",
+      "submodule": "E. Regímenes laborales",
+      "route": "/configuracion/regimenes-laborales",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 35,
+      "networkIdleMs": 118,
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "emptyScreen": null
+    },
+    {
+      "name": "Agregar empleados / Finalizar asignación",
+      "zone": "E. Regímenes laborales",
+      "submodule": "E. Regímenes laborales",
+      "route": "/configuracion/regimenes-laborales",
+      "covered": false,
+      "skippedReason": "Prohibido por defecto — acciones de escritura (POST /employees/:employeeId/work-regimes, PATCH .../:assignmentId/close).",
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": true,
+      "emptyScreen": null
+    },
+    {
+      "name": "Editar régimen / Activar-Inactivar régimen",
+      "zone": "E. Regímenes laborales",
+      "submodule": "E. Regímenes laborales",
+      "route": "/configuracion/regimenes-laborales",
+      "covered": false,
+      "skippedReason": "Prohibido por defecto — acciones de escritura (POST/PATCH /work-regimes[/:id][/status]).",
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": true,
+      "emptyScreen": null
+    },
+    {
+      "name": "Entrar a Empresas y estructura",
+      "zone": "F. Empresas y estructura",
+      "submodule": "F. Empresas y estructura",
+      "route": "/configuracion/empresas-estructura",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 140,
+      "networkIdleMs": 722,
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/api/workforce/notifications-unread-count",
+          "statusCode": 200,
+          "durationMs": 172
+        }
+      ],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "emptyScreen": null
+    },
+    {
+      "name": "Cambiar de pestaña en Empresas y estructura",
+      "zone": "F. Empresas y estructura",
+      "submodule": "F. Empresas y estructura",
+      "route": "/configuracion/empresas-estructura",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 34,
+      "networkIdleMs": 237,
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "emptyScreen": null
+    },
+    {
+      "name": "Nuevo registro / Editar / Guardar estructura",
+      "zone": "F. Empresas y estructura",
+      "submodule": "F. Empresas y estructura",
+      "route": "/configuracion/empresas-estructura",
+      "covered": false,
+      "skippedReason": "El editor es inline y no tiene botón de cancelar limpio (sólo se cierra cambiando de pestaña) — no se abre esta etapa, ni se llega al submit real (POST/PATCH /org-structure/...).",
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": true,
+      "emptyScreen": null
+    },
+    {
+      "name": "Entrar a Tipos de novedades",
+      "zone": "G. Tipos de novedades",
+      "submodule": "G. Tipos de novedades",
+      "route": "/configuracion/tipos-novedades",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 76,
+      "networkIdleMs": 1274,
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/api/workforce/notifications-unread-count",
+          "statusCode": 200,
+          "durationMs": 464
+        },
+        {
+          "method": "GET",
+          "path": "/api/novelty-types",
+          "statusCode": 200,
+          "durationMs": 703
+        }
+      ],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "emptyScreen": false
+    },
+    {
+      "name": "Buscar en Tipos de novedades",
+      "zone": "G. Tipos de novedades",
+      "submodule": "G. Tipos de novedades",
+      "route": "/configuracion/tipos-novedades",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 12,
+      "networkIdleMs": 416,
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [
+        "término tomado de un tipo de novedad real — no se registra el valor buscado en este reporte"
+      ],
+      "isWrite": false,
+      "emptyScreen": null
+    },
+    {
+      "name": "Filtrar Tipos de novedades por Finnegans",
+      "zone": "G. Tipos de novedades",
+      "submodule": "G. Tipos de novedades",
+      "route": "/configuracion/tipos-novedades",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 23,
+      "networkIdleMs": 106,
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "emptyScreen": null
+    },
+    {
+      "name": "Crear tipo de novedad",
+      "zone": "G. Tipos de novedades",
+      "submodule": "G. Tipos de novedades",
+      "route": "/configuracion/tipos-novedades",
+      "covered": false,
+      "skippedReason": "Prohibido por defecto — navegación a un formulario de alta (POST /novelty-types), no se hace click.",
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": true,
+      "emptyScreen": null
+    },
+    {
+      "name": "Ver detalle de tipo de novedad",
+      "zone": "G. Tipos de novedades",
+      "submodule": "G. Tipos de novedades",
+      "route": "/configuracion/tipos-novedades",
+      "covered": false,
+      "skippedReason": "Navegación de detalle fuera del alcance macro de esta etapa (no es escritura) — candidato de profundización en una etapa futura si el volumen lo justifica.",
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "emptyScreen": null
+    },
+    {
+      "name": "Activar/Inactivar tipo de novedad",
+      "zone": "G. Tipos de novedades",
+      "submodule": "G. Tipos de novedades",
+      "route": "/configuracion/tipos-novedades",
+      "covered": false,
+      "skippedReason": "Prohibido por defecto — acción de escritura (PATCH /novelty-types/:id).",
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": true,
+      "emptyScreen": null
+    },
+    {
+      "name": "Entrar a Conceptos horarios",
+      "zone": "H. Conceptos horarios",
+      "submodule": "H. Conceptos horarios",
+      "route": "/configuracion/conceptos-horarios",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 126,
+      "networkIdleMs": 951,
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/api/workforce/notifications-unread-count",
+          "statusCode": 200,
+          "durationMs": 162
+        },
+        {
+          "method": "GET",
+          "path": "/api/hour-concepts",
+          "statusCode": 200,
+          "durationMs": 371
+        }
+      ],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "emptyScreen": false
+    },
+    {
+      "name": "Buscar en Conceptos horarios",
+      "zone": "H. Conceptos horarios",
+      "submodule": "H. Conceptos horarios",
+      "route": "/configuracion/conceptos-horarios",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 12,
+      "networkIdleMs": 416,
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [
+        "término tomado de un concepto horario real — no se registra el valor buscado en este reporte"
+      ],
+      "isWrite": false,
+      "emptyScreen": null
+    },
+    {
+      "name": "Filtrar Conceptos horarios por Tipo",
+      "zone": "H. Conceptos horarios",
+      "submodule": "H. Conceptos horarios",
+      "route": "/configuracion/conceptos-horarios",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 10,
+      "networkIdleMs": 94,
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "emptyScreen": null
+    },
+    {
+      "name": "Crear/Editar concepto horario",
+      "zone": "H. Conceptos horarios",
+      "submodule": "H. Conceptos horarios",
+      "route": "/configuracion/conceptos-horarios",
+      "covered": false,
+      "skippedReason": "El editor (con panel de reglas y empleados asociados embebidos) es inline de escritura (no el componente Modal compartido) — misma política de alcance que Horas especiales; el submit real es POST/PATCH /hour-concepts[/:id].",
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": true,
+      "emptyScreen": null
+    },
+    {
+      "name": "Deshabilitar/Eliminar concepto horario",
+      "zone": "H. Conceptos horarios",
+      "submodule": "H. Conceptos horarios",
+      "route": "/configuracion/conceptos-horarios",
+      "covered": false,
+      "skippedReason": "Prohibido por defecto — acciones de escritura (PATCH /hour-concepts/:id/status, DELETE /hour-concepts/:id).",
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": true,
+      "emptyScreen": null
+    },
+    {
+      "name": "Entrar a Exportación Finnegans",
+      "zone": "I. Exportación Finnegans",
+      "submodule": "I. Exportación Finnegans",
+      "route": "/configuracion/conceptos-horarios",
+      "covered": false,
+      "skippedReason": "Ya cubierto en detalle por el journey de Gestión Horaria (Etapa 14G.1, zona 'J. Exportación', 4 acciones incl. cambio de período y búsqueda) — no se remide para no duplicar esfuerzo. Ver docs/performance/WORKFORCE_MANAGEMENT_PERFORMANCE_JOURNEY_14G1.md. Ruta real confirmada: /configuracion/liquidacion → FinnegansExportPage.tsx.",
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "emptyScreen": null
+    },
+    {
+      "name": "Entrar a Categorías documentales",
+      "zone": "J. Categorías documentales",
+      "submodule": "J. Categorías documentales",
+      "route": "/configuracion/categorias-documentales",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 71,
+      "networkIdleMs": 903,
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/api/workforce/notifications-unread-count",
+          "statusCode": 200,
+          "durationMs": 179
+        },
+        {
+          "method": "GET",
+          "path": "/api/document-categories",
+          "statusCode": 200,
+          "durationMs": 335
+        }
+      ],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "emptyScreen": false
+    },
+    {
+      "name": "Buscar en Categorías documentales",
+      "zone": "J. Categorías documentales",
+      "submodule": "J. Categorías documentales",
+      "route": "/configuracion/categorias-documentales",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 10,
+      "networkIdleMs": 413,
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [
+        "término tomado de una categoría documental real — no se registra el valor buscado en este reporte"
+      ],
+      "isWrite": false,
+      "emptyScreen": null
+    },
+    {
+      "name": "Filtrar Categorías documentales por Tipo",
+      "zone": "J. Categorías documentales",
+      "submodule": "J. Categorías documentales",
+      "route": "/configuracion/categorias-documentales",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 12,
+      "networkIdleMs": 96,
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "emptyScreen": null
+    },
+    {
+      "name": "Crear/Editar categoría documental",
+      "zone": "J. Categorías documentales",
+      "submodule": "J. Categorías documentales",
+      "route": "/configuracion/categorias-documentales",
+      "covered": false,
+      "skippedReason": "Editor inline — misma política de alcance que el resto de los editores inline de Configuración (aunque este sí tiene un botón 'Cerrar' limpio, se excluye por consistencia); el submit real es POST/PATCH /document-categories[/:id].",
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": true,
+      "emptyScreen": null
+    },
+    {
+      "name": "Entrar a Parámetros de auditoría",
+      "zone": "K. Parámetros de auditoría",
+      "submodule": "K. Parámetros de auditoría",
+      "route": "/configuracion/parametros-auditoria",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 77,
+      "networkIdleMs": 2125,
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/api/workforce/notifications-unread-count",
+          "statusCode": 200,
+          "durationMs": 575
+        },
+        {
+          "method": "GET",
+          "path": "/api/audit-parameters",
+          "statusCode": 200,
+          "durationMs": 1556
+        }
+      ],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "emptyScreen": false
+    },
+    {
+      "name": "Buscar en Parámetros de auditoría",
+      "zone": "K. Parámetros de auditoría",
+      "submodule": "K. Parámetros de auditoría",
+      "route": "/configuracion/parametros-auditoria",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 11,
+      "networkIdleMs": 415,
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [
+        "término tomado de un parámetro de auditoría real — no se registra el valor buscado en este reporte"
+      ],
+      "isWrite": false,
+      "emptyScreen": null
+    },
+    {
+      "name": "Filtrar Parámetros de auditoría por Módulo",
+      "zone": "K. Parámetros de auditoría",
+      "submodule": "K. Parámetros de auditoría",
+      "route": "/configuracion/parametros-auditoria",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 12,
+      "networkIdleMs": 95,
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "emptyScreen": null
+    },
+    {
+      "name": "Crear/Editar parámetro de auditoría",
+      "zone": "K. Parámetros de auditoría",
+      "submodule": "K. Parámetros de auditoría",
+      "route": "/configuracion/parametros-auditoria",
+      "covered": false,
+      "skippedReason": "Editor inline — misma política de alcance; el submit real es POST/PATCH /audit-parameters[/:id].",
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": true,
+      "emptyScreen": null
+    },
+    {
+      "name": "Entrar a Puestos",
+      "zone": "L. Puestos (listado)",
+      "submodule": "L. Puestos (listado)",
+      "route": "/puestos",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 74,
+      "networkIdleMs": 1261,
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/api/workforce/notifications-unread-count",
+          "statusCode": 200,
+          "durationMs": 188
+        },
+        {
+          "method": "GET",
+          "path": "/api/positions",
+          "statusCode": 200,
+          "durationMs": 530
+        },
+        {
+          "method": "GET",
+          "path": "/api/positions",
+          "statusCode": 200,
+          "durationMs": 698
+        }
+      ],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "emptyScreen": false
+    },
+    {
+      "name": "Buscar en Puestos",
+      "zone": "L. Puestos (listado)",
+      "submodule": "L. Puestos (listado)",
+      "route": "/puestos",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 14,
+      "networkIdleMs": 417,
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [
+        "término tomado de un puesto real — no se registra el valor buscado en este reporte"
+      ],
+      "isWrite": false,
+      "emptyScreen": null
+    },
+    {
+      "name": "Filtrar Puestos por Sector",
+      "zone": "L. Puestos (listado)",
+      "submodule": "L. Puestos (listado)",
+      "route": "/puestos",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 18,
+      "networkIdleMs": 101,
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "emptyScreen": null
+    },
+    {
+      "name": "Limpiar filtros en Puestos",
+      "zone": "L. Puestos (listado)",
+      "submodule": "L. Puestos (listado)",
+      "route": "/puestos",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 30,
+      "networkIdleMs": 112,
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "emptyScreen": null
+    },
+    {
+      "name": "Paginar Puestos",
+      "zone": "L. Puestos (listado)",
+      "submodule": "L. Puestos (listado)",
+      "route": "/puestos",
+      "covered": false,
+      "skippedReason": "no hay una segunda página de puestos en el entorno actual (botón 'Siguiente' ausente o deshabilitado)",
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "emptyScreen": null
+    },
+    {
+      "name": "Crear puesto",
+      "zone": "L. Puestos (listado)",
+      "submodule": "L. Puestos (listado)",
+      "route": "/puestos",
+      "covered": false,
+      "skippedReason": "Prohibido por defecto — es la puerta de entrada a un alta real (POST /positions), no se hace click.",
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": true,
+      "emptyScreen": null
+    },
+    {
+      "name": "Inactivar/Activar/Eliminar puesto",
+      "zone": "L. Puestos (listado)",
+      "submodule": "L. Puestos (listado)",
+      "route": "/puestos",
+      "covered": false,
+      "skippedReason": "Prohibido por defecto — acciones de escritura (PATCH /positions/:id, DELETE /positions/:id).",
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": true,
+      "emptyScreen": null
+    },
+    {
+      "name": "Ver detalle de puesto",
+      "zone": "M. Puesto (detalle)",
+      "submodule": "M. Puesto (detalle)",
+      "route": "/puestos/:id",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 812,
+      "networkIdleMs": 1604,
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/api/workforce/notifications-unread-count",
+          "statusCode": 200,
+          "durationMs": 175
+        },
+        {
+          "method": "GET",
+          "path": "/api/positions/:id",
+          "statusCode": 200,
+          "durationMs": 425
+        },
+        {
+          "method": "GET",
+          "path": "/api/positions/:id/employees",
+          "statusCode": 200,
+          "durationMs": 586
+        }
+      ],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "emptyScreen": null
+    },
+    {
+      "name": "Cambiar de pestaña en detalle de Puesto",
+      "zone": "M. Puesto (detalle)",
+      "submodule": "M. Puesto (detalle)",
+      "route": "/puestos/:id",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 35,
+      "networkIdleMs": 238,
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [
+        "cambio de pestaña 100% client-side — empleados asignados ya se cargó al entrar al detalle, no debería disparar un request nuevo"
+      ],
+      "isWrite": false,
+      "emptyScreen": null
+    },
+    {
+      "name": "Guardar cambios en Puesto",
+      "zone": "M. Puesto (detalle)",
+      "submodule": "M. Puesto (detalle)",
+      "route": "/puestos/:id",
+      "covered": false,
+      "skippedReason": "Prohibido por defecto — acción de escritura (PATCH /positions/:id).",
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": true,
+      "emptyScreen": null
+    },
+    {
+      "name": "Inactivar/Eliminar puesto (detalle)",
+      "zone": "M. Puesto (detalle)",
+      "submodule": "M. Puesto (detalle)",
+      "route": "/puestos/:id",
+      "covered": false,
+      "skippedReason": "Prohibido por defecto — acciones de escritura (PATCH /positions/:id, DELETE /positions/:id).",
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": true,
+      "emptyScreen": null
+    },
+    {
+      "name": "Entrar a Crear puesto (sólo navegación, sin guardar)",
+      "zone": "N. Puesto (creación, sólo navegación)",
+      "submodule": "N. Puesto (creación, sólo navegación)",
+      "route": "/puestos/nuevo",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 72,
+      "networkIdleMs": 972,
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/api/positions",
+          "statusCode": 200,
+          "durationMs": 2
+        },
+        {
+          "method": "GET",
+          "path": "/api/workforce/notifications-unread-count",
+          "statusCode": 200,
+          "durationMs": 260
+        },
+        {
+          "method": "GET",
+          "path": "/api/salary-categories",
+          "statusCode": 200,
+          "durationMs": 399
+        }
+      ],
+      "consoleErrors": [],
+      "notes": [
+        "visitar esta ruta dispara GET /positions (cálculo del próximo código correlativo) — es de sólo lectura, no persiste nada; probable cache hit si Puestos ya se visitó antes en este mismo recorrido (misma cachePolicies.positionsCatalog)"
+      ],
+      "isWrite": false,
+      "emptyScreen": null
+    },
+    {
+      "name": "Salir de Crear puesto sin guardar",
+      "zone": "N. Puesto (creación, sólo navegación)",
+      "submodule": "N. Puesto (creación, sólo navegación)",
+      "route": "/puestos",
+      "covered": true,
+      "skippedReason": null,
+      "visibleMs": 55,
+      "networkIdleMs": 137,
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/api/positions",
+          "statusCode": 200,
+          "durationMs": 2
+        }
+      ],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": false,
+      "emptyScreen": null
+    },
+    {
+      "name": "Guardar puesto",
+      "zone": "N. Puesto (creación, sólo navegación)",
+      "submodule": "N. Puesto (creación, sólo navegación)",
+      "route": "/puestos",
+      "covered": false,
+      "skippedReason": "Prohibido por defecto — crearía un puesto real (POST /positions). Nunca se usa .fill() en ningún campo del formulario, ni siquiera momentáneamente.",
+      "requests": [],
+      "consoleErrors": [],
+      "notes": [],
+      "isWrite": true,
+      "emptyScreen": null
+    }
+  ],
+  "slowestRequests": [
+    {
+      "method": "GET",
+      "path": "/api/dashboard/metrics",
+      "statusCode": 200,
+      "durationMs": 4390
+    },
+    {
+      "method": "GET",
+      "path": "/api/work-regimes/:id/employees",
+      "statusCode": 200,
+      "durationMs": 2811
+    },
+    {
+      "method": "GET",
+      "path": "/api/work-regimes/:id/employees",
+      "statusCode": 200,
+      "durationMs": 2613
+    },
+    {
+      "method": "GET",
+      "path": "/api/audit",
+      "statusCode": 200,
+      "durationMs": 2214
+    },
+    {
+      "method": "GET",
+      "path": "/api/work-regimes/:id/employees",
+      "statusCode": 200,
+      "durationMs": 1736
+    },
+    {
+      "method": "GET",
+      "path": "/api/org-structure",
+      "statusCode": 200,
+      "durationMs": 1667
+    },
+    {
+      "method": "GET",
+      "path": "/api/work-regimes/:id/employees",
+      "statusCode": 200,
+      "durationMs": 1607
+    },
+    {
+      "method": "GET",
+      "path": "/api/audit-parameters",
+      "statusCode": 200,
+      "durationMs": 1556
+    },
+    {
+      "method": "GET",
+      "path": "/api/shifts/holiday-work/candidates",
+      "statusCode": 200,
+      "durationMs": 1499
+    },
+    {
+      "method": "GET",
+      "path": "/api/positions",
+      "statusCode": 200,
+      "durationMs": 1353
+    }
+  ],
+  "slowestActions": [
+    {
+      "name": "Login (acceso rápido RRHH)",
+      "zone": "Login",
+      "visibleMs": 631,
+      "networkIdleMs": 6563
+    },
+    {
+      "name": "Filtrar vigencia de empleados asociados",
+      "zone": "E. Regímenes laborales",
+      "visibleMs": 2795,
+      "networkIdleMs": 2878
+    },
+    {
+      "name": "Entrar a Asignaciones de feriados",
+      "zone": "C. Asignaciones de feriados",
+      "visibleMs": 81,
+      "networkIdleMs": 2253
+    },
+    {
+      "name": "Seleccionar fecha de feriado",
+      "zone": "C. Asignaciones de feriados",
+      "visibleMs": 1843,
+      "networkIdleMs": 2248
+    },
+    {
+      "name": "Entrar a Parámetros de auditoría",
+      "zone": "K. Parámetros de auditoría",
+      "visibleMs": 77,
+      "networkIdleMs": 2125
+    },
+    {
+      "name": "Entrar a Horas especiales",
+      "zone": "D. Horas especiales",
+      "visibleMs": 130,
+      "networkIdleMs": 1948
+    },
+    {
+      "name": "Entrar a Regímenes laborales",
+      "zone": "E. Regímenes laborales",
+      "visibleMs": 133,
+      "networkIdleMs": 1690
+    },
+    {
+      "name": "Ver detalle de puesto",
+      "zone": "M. Puesto (detalle)",
+      "visibleMs": 812,
+      "networkIdleMs": 1604
+    },
+    {
+      "name": "Entrar a Turnos",
+      "zone": "B. Turnos",
+      "visibleMs": 82,
+      "networkIdleMs": 1474
+    },
+    {
+      "name": "Entrar a Tipos de novedades",
+      "zone": "G. Tipos de novedades",
+      "visibleMs": 76,
+      "networkIdleMs": 1274
+    }
+  ],
+  "repeatedEndpoints": [
+    {
+      "key": "GET /api/workforce/notifications-unread-count",
+      "method": "GET",
+      "path": "/api/workforce/notifications-unread-count",
+      "count": 15,
+      "avgDurationMs": 307,
+      "maxDurationMs": 575,
+      "statusCodes": [
+        200,
+        200,
+        200,
+        200,
+        200,
+        200,
+        200,
+        200,
+        200,
+        200,
+        200,
+        200,
+        200,
+        200,
+        200
+      ],
+      "hasErrorStatus": false,
+      "hasServerErrorStatus": false
+    },
+    {
+      "key": "GET /api/shifts/assignments/summary",
+      "method": "GET",
+      "path": "/api/shifts/assignments/summary",
+      "count": 2,
+      "avgDurationMs": 643,
+      "maxDurationMs": 901,
+      "statusCodes": [
+        200,
+        200
+      ],
+      "hasErrorStatus": false,
+      "hasServerErrorStatus": false
+    },
+    {
+      "key": "GET /api/workforce/shift-templates",
+      "method": "GET",
+      "path": "/api/workforce/shift-templates",
+      "count": 6,
+      "avgDurationMs": 194,
+      "maxDurationMs": 756,
+      "statusCodes": [
+        200,
+        200,
+        200,
+        200,
+        200,
+        200
+      ],
+      "hasErrorStatus": false,
+      "hasServerErrorStatus": false
+    },
+    {
+      "key": "GET /api/shifts/holiday-work/dates",
+      "method": "GET",
+      "path": "/api/shifts/holiday-work/dates",
+      "count": 2,
+      "avgDurationMs": 473,
+      "maxDurationMs": 564,
+      "statusCodes": [
+        200,
+        200
+      ],
+      "hasErrorStatus": false,
+      "hasServerErrorStatus": false
+    },
+    {
+      "key": "GET /api/workforce/double-hour-rules/calendar",
+      "method": "GET",
+      "path": "/api/workforce/double-hour-rules/calendar",
+      "count": 2,
+      "avgDurationMs": 431,
+      "maxDurationMs": 516,
+      "statusCodes": [
+        200,
+        200
+      ],
+      "hasErrorStatus": false,
+      "hasServerErrorStatus": false
+    },
+    {
+      "key": "GET /api/workforce/double-hour-rules",
+      "method": "GET",
+      "path": "/api/workforce/double-hour-rules",
+      "count": 2,
+      "avgDurationMs": 357,
+      "maxDurationMs": 357,
+      "statusCodes": [
+        200,
+        200
+      ],
+      "hasErrorStatus": false,
+      "hasServerErrorStatus": false
+    },
+    {
+      "key": "GET /api/positions",
+      "method": "GET",
+      "path": "/api/positions",
+      "count": 5,
+      "avgDurationMs": 517,
+      "maxDurationMs": 1353,
+      "statusCodes": [
+        200,
+        200,
+        200,
+        200,
+        200
+      ],
+      "hasErrorStatus": false,
+      "hasServerErrorStatus": false
+    },
+    {
+      "key": "GET /api/work-regimes/:id/employees",
+      "method": "GET",
+      "path": "/api/work-regimes/:id/employees",
+      "count": 4,
+      "avgDurationMs": 2192,
+      "maxDurationMs": 2811,
+      "statusCodes": [
+        200,
+        200,
+        200,
+        200
+      ],
+      "hasErrorStatus": false,
+      "hasServerErrorStatus": false
+    }
+  ],
+  "duplicatesByAction": [
+    {
+      "name": "Entrar a Turnos",
+      "zone": "B. Turnos",
+      "duplicates": [
+        {
+          "method": "GET",
+          "path": "/api/shifts/assignments/summary",
+          "count": 2,
+          "durationsMs": [
+            385,
+            901
+          ]
+        },
+        {
+          "method": "GET",
+          "path": "/api/workforce/shift-templates",
+          "count": 2,
+          "durationsMs": [
+            403,
+            756
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Ver detalle de turno",
+      "zone": "B. Turnos",
+      "duplicates": [
+        {
+          "method": "GET",
+          "path": "/api/workforce/shift-templates",
+          "count": 2,
+          "durationsMs": [
+            1,
+            1
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Entrar a Asignaciones de feriados",
+      "zone": "C. Asignaciones de feriados",
+      "duplicates": [
+        {
+          "method": "GET",
+          "path": "/api/workforce/shift-templates",
+          "count": 2,
+          "durationsMs": [
+            1,
+            3
+          ]
+        },
+        {
+          "method": "GET",
+          "path": "/api/shifts/holiday-work/dates",
+          "count": 2,
+          "durationsMs": [
+            381,
+            564
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Entrar a Horas especiales",
+      "zone": "D. Horas especiales",
+      "duplicates": [
+        {
+          "method": "GET",
+          "path": "/api/workforce/double-hour-rules/calendar",
+          "count": 2,
+          "durationsMs": [
+            345,
+            516
+          ]
+        },
+        {
+          "method": "GET",
+          "path": "/api/workforce/double-hour-rules",
+          "count": 2,
+          "durationsMs": [
+            356,
+            357
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Filtrar vigencia de empleados asociados",
+      "zone": "E. Regímenes laborales",
+      "duplicates": [
+        {
+          "method": "GET",
+          "path": "/api/work-regimes/:id/employees",
+          "count": 4,
+          "durationsMs": [
+            1736,
+            1607,
+            2811,
+            2613
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Entrar a Puestos",
+      "zone": "L. Puestos (listado)",
+      "duplicates": [
+        {
+          "method": "GET",
+          "path": "/api/positions",
+          "count": 2,
+          "durationsMs": [
+            530,
+            698
+          ]
+        }
+      ]
+    }
+  ],
+  "coverageGaps": [
+    {
+      "name": "Crear turno",
+      "zone": "B. Turnos",
+      "isWrite": true,
+      "reason": "Prohibido por defecto — es la puerta de entrada a un alta real (POST /workforce/shift-templates), no se hace click."
+    },
+    {
+      "name": "Inactivar/Activar turno",
+      "zone": "B. Turnos",
+      "isWrite": true,
+      "reason": "Prohibido por defecto — acción de escritura (PATCH /workforce/shift-templates/:id)."
+    },
+    {
+      "name": "Guardar cambios (convocatoria de feriado)",
+      "zone": "C. Asignaciones de feriados",
+      "isWrite": true,
+      "reason": "Prohibido por defecto — asignaría feriados reales a empleados reales (PUT /shifts/holiday-work/assignments)."
+    },
+    {
+      "name": "Abrir edición de regla / Crear regla",
+      "zone": "D. Horas especiales",
+      "isWrite": false,
+      "reason": "El formulario 'Nueva regla'/'Editar' es un editor inline siempre presente en la página (no el componente Modal compartido) — esta etapa sólo abre y cierra modales del componente Modal compartido (Regímenes laborales) para mantener una única política simple de riesgo en todo el journey."
+    },
+    {
+      "name": "Activar/Inactivar/Eliminar regla",
+      "zone": "D. Horas especiales",
+      "isWrite": true,
+      "reason": "Prohibido por defecto — acciones de escritura (PATCH/DELETE /workforce/double-hour-rules/:id)."
+    },
+    {
+      "name": "Agregar empleados / Finalizar asignación",
+      "zone": "E. Regímenes laborales",
+      "isWrite": true,
+      "reason": "Prohibido por defecto — acciones de escritura (POST /employees/:employeeId/work-regimes, PATCH .../:assignmentId/close)."
+    },
+    {
+      "name": "Editar régimen / Activar-Inactivar régimen",
+      "zone": "E. Regímenes laborales",
+      "isWrite": true,
+      "reason": "Prohibido por defecto — acciones de escritura (POST/PATCH /work-regimes[/:id][/status])."
+    },
+    {
+      "name": "Nuevo registro / Editar / Guardar estructura",
+      "zone": "F. Empresas y estructura",
+      "isWrite": true,
+      "reason": "El editor es inline y no tiene botón de cancelar limpio (sólo se cierra cambiando de pestaña) — no se abre esta etapa, ni se llega al submit real (POST/PATCH /org-structure/...)."
+    },
+    {
+      "name": "Crear tipo de novedad",
+      "zone": "G. Tipos de novedades",
+      "isWrite": true,
+      "reason": "Prohibido por defecto — navegación a un formulario de alta (POST /novelty-types), no se hace click."
+    },
+    {
+      "name": "Ver detalle de tipo de novedad",
+      "zone": "G. Tipos de novedades",
+      "isWrite": false,
+      "reason": "Navegación de detalle fuera del alcance macro de esta etapa (no es escritura) — candidato de profundización en una etapa futura si el volumen lo justifica."
+    },
+    {
+      "name": "Activar/Inactivar tipo de novedad",
+      "zone": "G. Tipos de novedades",
+      "isWrite": true,
+      "reason": "Prohibido por defecto — acción de escritura (PATCH /novelty-types/:id)."
+    },
+    {
+      "name": "Crear/Editar concepto horario",
+      "zone": "H. Conceptos horarios",
+      "isWrite": true,
+      "reason": "El editor (con panel de reglas y empleados asociados embebidos) es inline de escritura (no el componente Modal compartido) — misma política de alcance que Horas especiales; el submit real es POST/PATCH /hour-concepts[/:id]."
+    },
+    {
+      "name": "Deshabilitar/Eliminar concepto horario",
+      "zone": "H. Conceptos horarios",
+      "isWrite": true,
+      "reason": "Prohibido por defecto — acciones de escritura (PATCH /hour-concepts/:id/status, DELETE /hour-concepts/:id)."
+    },
+    {
+      "name": "Entrar a Exportación Finnegans",
+      "zone": "I. Exportación Finnegans",
+      "isWrite": false,
+      "reason": "Ya cubierto en detalle por el journey de Gestión Horaria (Etapa 14G.1, zona 'J. Exportación', 4 acciones incl. cambio de período y búsqueda) — no se remide para no duplicar esfuerzo. Ver docs/performance/WORKFORCE_MANAGEMENT_PERFORMANCE_JOURNEY_14G1.md. Ruta real confirmada: /configuracion/liquidacion → FinnegansExportPage.tsx."
+    },
+    {
+      "name": "Crear/Editar categoría documental",
+      "zone": "J. Categorías documentales",
+      "isWrite": true,
+      "reason": "Editor inline — misma política de alcance que el resto de los editores inline de Configuración (aunque este sí tiene un botón 'Cerrar' limpio, se excluye por consistencia); el submit real es POST/PATCH /document-categories[/:id]."
+    },
+    {
+      "name": "Crear/Editar parámetro de auditoría",
+      "zone": "K. Parámetros de auditoría",
+      "isWrite": true,
+      "reason": "Editor inline — misma política de alcance; el submit real es POST/PATCH /audit-parameters[/:id]."
+    },
+    {
+      "name": "Paginar Puestos",
+      "zone": "L. Puestos (listado)",
+      "isWrite": false,
+      "reason": "no hay una segunda página de puestos en el entorno actual (botón 'Siguiente' ausente o deshabilitado)"
+    },
+    {
+      "name": "Crear puesto",
+      "zone": "L. Puestos (listado)",
+      "isWrite": true,
+      "reason": "Prohibido por defecto — es la puerta de entrada a un alta real (POST /positions), no se hace click."
+    },
+    {
+      "name": "Inactivar/Activar/Eliminar puesto",
+      "zone": "L. Puestos (listado)",
+      "isWrite": true,
+      "reason": "Prohibido por defecto — acciones de escritura (PATCH /positions/:id, DELETE /positions/:id)."
+    },
+    {
+      "name": "Guardar cambios en Puesto",
+      "zone": "M. Puesto (detalle)",
+      "isWrite": true,
+      "reason": "Prohibido por defecto — acción de escritura (PATCH /positions/:id)."
+    },
+    {
+      "name": "Inactivar/Eliminar puesto (detalle)",
+      "zone": "M. Puesto (detalle)",
+      "isWrite": true,
+      "reason": "Prohibido por defecto — acciones de escritura (PATCH /positions/:id, DELETE /positions/:id)."
+    },
+    {
+      "name": "Guardar puesto",
+      "zone": "N. Puesto (creación, sólo navegación)",
+      "isWrite": true,
+      "reason": "Prohibido por defecto — crearía un puesto real (POST /positions). Nunca se usa .fill() en ningún campo del formulario, ni siquiera momentáneamente."
+    }
+  ]
+}
