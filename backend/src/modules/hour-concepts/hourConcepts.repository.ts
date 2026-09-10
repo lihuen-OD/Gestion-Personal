@@ -1,15 +1,19 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "../../shared/prisma/client";
+import { createRepositoryListCache } from "../../shared/cache/repositoryListCache";
 import { associatedEmployeeSelect, buildEmployeeAssociationWhere } from "../../shared/prisma/employeeAssociationQuery";
 import type { CreateHourConceptInput, ListHourConceptEmployeesQuery, ListHourConceptsQuery, UpdateHourConceptInput } from "./hourConcepts.schemas";
 
-// Cache en memoria para listados sin filtros
+// Cache en memoria para listados sin filtros. Etapa 14I.3: helper compartido
+// (backend/src/shared/cache/repositoryListCache.ts) — mismo TTL, misma
+// semántica, sin cambio de comportamiento. Ver docs/decisions/
+// BACKEND_REPOSITORY_LIST_CACHE_HELPER_14I3.md.
 type HourConceptRow = Awaited<ReturnType<typeof prisma.hourConcept.findMany>>[number];
-let listCache: { data: HourConceptRow[]; expiresAt: number } | null = null;
 const CACHE_TTL_MS = 120_000; // 2 minutos
+const listCache = createRepositoryListCache<HourConceptRow[]>(CACHE_TTL_MS);
 
 export function invalidateHourConceptsCache() {
-  listCache = null;
+  listCache.clear();
 }
 
 function hasActiveFilters(query: ListHourConceptsQuery): boolean {
@@ -58,18 +62,17 @@ export const hourConceptsRepository = {
       ]);
     }
 
-    if (!listCache || Date.now() >= listCache.expiresAt) {
-      const data = await prisma.hourConcept.findMany({
+    const data = await listCache.getOrLoad(() =>
+      prisma.hourConcept.findMany({
         where: { deletedAt: null },
         orderBy: [{ status: "asc" }, { kind: "asc" }, { name: "asc" }],
         take: 500,
-      });
-      listCache = { data, expiresAt: Date.now() + CACHE_TTL_MS };
-    }
+      }),
+    );
 
     const skip = (query.page - 1) * query.take;
-    const page = listCache.data.slice(skip, skip + query.take);
-    return [page, listCache.data.length];
+    const page = data.slice(skip, skip + query.take);
+    return [page, data.length];
   },
 
   findById(id: string) {

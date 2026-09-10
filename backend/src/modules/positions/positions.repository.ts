@@ -1,5 +1,6 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "../../shared/prisma/client";
+import { createRepositoryListCache } from "../../shared/cache/repositoryListCache";
 import type { CreatePositionInput, ListPositionOptionsQuery, ListPositionsQuery, UpdatePositionInput } from "./positions.schemas";
 
 const positionInclude = {
@@ -72,10 +73,13 @@ const positionOptionSelect = {
 const json = (value: unknown): Prisma.InputJsonValue => value as Prisma.InputJsonValue;
 type PositionRow = Awaited<ReturnType<typeof prisma.position.findMany<{ include: typeof positionInclude }>>>[number];
 const POSITION_CACHE_TTL_MS = 120_000;
-let listCache: { data: PositionRow[]; expiresAt: number } | null = null;
+// Etapa 14I.3: helper compartido (backend/src/shared/cache/
+// repositoryListCache.ts) — mismo TTL, misma semántica, sin cambio de
+// comportamiento. Ver docs/decisions/BACKEND_REPOSITORY_LIST_CACHE_HELPER_14I3.md.
+const listCache = createRepositoryListCache<PositionRow[]>(POSITION_CACHE_TTL_MS);
 
 export function invalidatePositionsCache() {
-  listCache = null;
+  listCache.clear();
 }
 
 // Etapa 9E: areaId/establishmentId/businessUnitId se resuelven navegando la
@@ -143,16 +147,15 @@ export const positionsRepository = {
     );
 
     if (!hasFilters) {
-      if (!listCache || Date.now() >= listCache.expiresAt) {
-        const data = await prisma.position.findMany({
+      const data = await listCache.getOrLoad(() =>
+        prisma.position.findMany({
           where,
           include: positionInclude,
           orderBy: [{ status: "asc" }, { name: "asc" }],
           take: 500,
-        });
-        listCache = { data, expiresAt: Date.now() + POSITION_CACHE_TTL_MS };
-      }
-      return [listCache.data.slice(skip, skip + query.take), listCache.data.length] as const;
+        }),
+      );
+      return [data.slice(skip, skip + query.take), data.length] as const;
     }
 
     // Etapa 14H.7: findMany + count son lecturas independientes (ninguna

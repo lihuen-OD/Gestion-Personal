@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import type { Mock } from "vitest";
 import { prisma } from "../../shared/prisma/client";
-import { hourConceptsRepository } from "./hourConcepts.repository";
+import { hourConceptsRepository, invalidateHourConceptsCache } from "./hourConcepts.repository";
 
 vi.mock("../../shared/prisma/client", () => ({
   prisma: {
@@ -23,6 +23,7 @@ const mockedPrisma = prisma as unknown as {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  invalidateHourConceptsCache();
 });
 
 // Etapa 14H.5: findMany no tenía ningún test dedicado hasta esta etapa —
@@ -41,6 +42,68 @@ describe("findMany — rama filtrada, Etapa 14H.5", () => {
     expect(mockedPrisma.hourConcept.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: expect.objectContaining({ status: "ACTIVO" }), skip: 0, take: 50 }),
     );
+  });
+
+  it("con filtros activos, nunca usa el listCache — cada llamada vuelve a pedir a la base", async () => {
+    mockedPrisma.hourConcept.findMany.mockResolvedValue([]);
+    mockedPrisma.hourConcept.count.mockResolvedValue(0);
+
+    await hourConceptsRepository.findMany({ status: "ACTIVO", page: 1, take: 50 } as never);
+    await hourConceptsRepository.findMany({ status: "ACTIVO", page: 1, take: 50 } as never);
+
+    expect(mockedPrisma.hourConcept.findMany).toHaveBeenCalledTimes(2);
+  });
+});
+
+// Etapa 14I.3: la rama sin filtros nunca había tenido cobertura dedicada
+// (comentario explícito en la propia etapa 14H.5 lo dejaba pendiente) —
+// agregada al migrar el listCache manual al helper compartido
+// (backend/src/shared/cache/repositoryListCache.ts), para confirmar que la
+// migración no cambió el comportamiento observable.
+describe("findMany — rama sin filtros (listCache vía repositoryListCache), Etapa 14I.3", () => {
+  it("sin filtros, filtra deletedAt:null y no usa $transaction ni pide count", async () => {
+    mockedPrisma.hourConcept.findMany.mockResolvedValue([{ id: "hc-1" }, { id: "hc-2" }]);
+
+    const [page, total] = await hourConceptsRepository.findMany({ page: 1, take: 50 } as never);
+
+    expect(mockedPrisma.$transaction).not.toHaveBeenCalled();
+    expect(mockedPrisma.hourConcept.count).not.toHaveBeenCalled();
+    expect(mockedPrisma.hourConcept.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { deletedAt: null }, take: 500 }),
+    );
+    expect(mockedPrisma.hourConcept.findMany).toHaveBeenCalledTimes(1);
+    expect(total).toBe(2);
+    expect(page).toHaveLength(2);
+  });
+
+  it("una segunda llamada sin filtros reutiliza el listCache — no vuelve a pegarle a la base", async () => {
+    mockedPrisma.hourConcept.findMany.mockResolvedValue([{ id: "hc-1" }]);
+
+    await hourConceptsRepository.findMany({ page: 1, take: 50 } as never);
+    await hourConceptsRepository.findMany({ page: 1, take: 50 } as never);
+
+    expect(mockedPrisma.hourConcept.findMany).toHaveBeenCalledTimes(1);
+  });
+
+  it("pagina en memoria sobre la data cacheada (skip/take de la query, no de la consulta a la base)", async () => {
+    const rows = Array.from({ length: 5 }, (_, index) => ({ id: `hc-${index}` }));
+    mockedPrisma.hourConcept.findMany.mockResolvedValue(rows);
+
+    const [page, total] = await hourConceptsRepository.findMany({ page: 2, take: 2 } as never);
+
+    expect(page).toEqual(rows.slice(2, 4));
+    expect(total).toBe(5);
+  });
+
+  it("invalidateHourConceptsCache() limpia el listCache — la siguiente llamada vuelve a pedir a la base", async () => {
+    mockedPrisma.hourConcept.findMany.mockResolvedValueOnce([{ id: "hc-1" }]).mockResolvedValueOnce([{ id: "hc-2" }]);
+
+    await hourConceptsRepository.findMany({ page: 1, take: 50 } as never);
+    invalidateHourConceptsCache();
+    const [page] = await hourConceptsRepository.findMany({ page: 1, take: 50 } as never);
+
+    expect(mockedPrisma.hourConcept.findMany).toHaveBeenCalledTimes(2);
+    expect(page).toEqual([{ id: "hc-2" }]);
   });
 });
 

@@ -1,18 +1,22 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "../../shared/prisma/client";
+import { createRepositoryListCache } from "../../shared/cache/repositoryListCache";
 import type { CreateNoveltyTypeInput, ListNoveltyTypesQuery, UpdateNoveltyTypeInput } from "./noveltyTypes.schemas";
 
 const noveltyTypeInclude = {
   finnegansLinks: { orderBy: [{ priority: "asc" }, { code: "asc" }] },
 } satisfies Prisma.NoveltyTypeInclude;
 
-// Cache en memoria para listados sin filtros
+// Cache en memoria para listados sin filtros. Etapa 14I.3: helper compartido
+// (backend/src/shared/cache/repositoryListCache.ts) — mismo TTL, misma
+// semántica, sin cambio de comportamiento. Ver docs/decisions/
+// BACKEND_REPOSITORY_LIST_CACHE_HELPER_14I3.md.
 type NoveltyTypeRow = Awaited<ReturnType<typeof prisma.noveltyType.findMany<{ include: typeof noveltyTypeInclude }>>>[number];
-let listCache: { data: NoveltyTypeRow[]; expiresAt: number } | null = null;
 const CACHE_TTL_MS = 120_000; // 2 minutos
+const listCache = createRepositoryListCache<NoveltyTypeRow[]>(CACHE_TTL_MS);
 
 export function invalidateNoveltyTypesCache() {
-  listCache = null;
+  listCache.clear();
 }
 
 function hasActiveFilters(query: ListNoveltyTypesQuery): boolean {
@@ -77,18 +81,17 @@ export const noveltyTypesRepository = {
       ]);
     }
 
-    if (!listCache || Date.now() >= listCache.expiresAt) {
-      const data = await prisma.noveltyType.findMany({
+    const data = await listCache.getOrLoad(() =>
+      prisma.noveltyType.findMany({
         include: noveltyTypeInclude,
         orderBy: [{ status: "asc" }, { name: "asc" }],
         take: 500,
-      });
-      listCache = { data, expiresAt: Date.now() + CACHE_TTL_MS };
-    }
+      }),
+    );
 
     const skip = (query.page - 1) * query.take;
-    const page = listCache.data.slice(skip, skip + query.take);
-    return [page, listCache.data.length];
+    const page = data.slice(skip, skip + query.take);
+    return [page, data.length];
   },
 
   findById(id: string) {

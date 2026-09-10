@@ -1,0 +1,112 @@
+{
+  "stage": "14I.3",
+  "generatedAt": "2026-09-10",
+  "type": "refactor-report",
+  "note": "Consolida la 'Forma B' de cache backend (docs/decisions/BACKEND_PERFORMANCE_INFRASTRUCTURE_DIAGNOSTIC_14I1.md) en un helper compartido. No cambia comportamiento observable. No se toca ni se reescribe el diagnostico historico de 14I.1/14I.2 - este es un archivo nuevo y separado.",
+  "helper": {
+    "file": "backend/src/shared/cache/repositoryListCache.ts",
+    "export": "createRepositoryListCache<T>(ttlMs: number)",
+    "methods": ["getOrLoad(loader, now?)", "clear()"],
+    "dependsOnPrisma": false,
+    "dependsOnExpress": false,
+    "userOrRoleScoped": false,
+    "designNote": "Deliberadamente sin shouldCache interno ni get/set separados — la decision de cachear o no ya la toma cada repositorio antes de llamar al helper (rama hasActiveFilters/hasFilters).",
+    "ownTests": "backend/src/shared/cache/repositoryListCache.test.ts (8 tests)"
+  },
+  "modulesMigrated": [
+    {
+      "module": "positions",
+      "file": "backend/src/modules/positions/positions.repository.ts",
+      "ttlMsBefore": 120000,
+      "ttlMsAfter": 120000,
+      "invalidationFn": "invalidatePositionsCache",
+      "invalidationFnChanged": false,
+      "cachedType": "PositionRow[] (positionInclude completo)",
+      "cacheCondition": "!hasFilters (status/sectorId/areaId/establishmentId/businessUnitId/salaryRangeCategory/search ausentes)",
+      "existingTestsUnchanged": true,
+      "newTestsAdded": 0
+    },
+    {
+      "module": "hour-concepts",
+      "file": "backend/src/modules/hour-concepts/hourConcepts.repository.ts",
+      "ttlMsBefore": 120000,
+      "ttlMsAfter": 120000,
+      "invalidationFn": "invalidateHourConceptsCache",
+      "invalidationFnChanged": false,
+      "cachedType": "HourConceptRow[]",
+      "cacheCondition": "!hasActiveFilters (kind/status/search/includeDeleted ausentes)",
+      "existingTestsUnchanged": true,
+      "newTestsAdded": 6,
+      "note": "Rama cacheada no tenia ningun test antes de esta etapa (comentario explicito de 14H.5) - agregada ahora."
+    },
+    {
+      "module": "novelty-types",
+      "file": "backend/src/modules/novelty-types/noveltyTypes.repository.ts",
+      "ttlMsBefore": 120000,
+      "ttlMsAfter": 120000,
+      "invalidationFn": "invalidateNoveltyTypesCache",
+      "invalidationFnChanged": false,
+      "cachedType": "NoveltyTypeRow[] (con finnegansLinks)",
+      "cacheCondition": "!hasActiveFilters (kind/origin/status/exportsToFinnegans/search ausentes)",
+      "existingTestsUnchanged": true,
+      "newTestsAdded": 0
+    },
+    {
+      "module": "document-categories",
+      "file": "backend/src/modules/document-categories/documentCategories.repository.ts",
+      "ttlMsBefore": 120000,
+      "ttlMsAfter": 120000,
+      "invalidationFn": "invalidateDocumentCategoriesCache",
+      "invalidationFnChanged": false,
+      "cachedType": "DocumentCategoryRow[]",
+      "cacheCondition": "!hasActiveFilters (kind/status/scope/mandatory/expires/search ausentes)",
+      "existingTestsUnchanged": true,
+      "newTestsAdded": 0
+    },
+    {
+      "module": "salary-categories",
+      "file": "backend/src/modules/salary-categories/salaryCategories.repository.ts",
+      "ttlMsBefore": 120000,
+      "ttlMsAfter": 120000,
+      "invalidationFn": "invalidateSalaryCategoriesCache",
+      "invalidationFnChanged": false,
+      "cachedType": "SalaryCategoryRow[]",
+      "cacheCondition": "!hasActiveFilters (family/status/search ausentes)",
+      "existingTestsUnchanged": null,
+      "newTestsAdded": 11,
+      "note": "Modulo sin ningun test antes de esta etapa (confirmado en 14I.1). La rama filtrada sigue usando $transaction sin cambios (P2, fuera de alcance)."
+    }
+  ],
+  "modulesSkipped": [
+    { "module": "employees (timeGridCatalogCache)", "reason": "variante distinta (fetch-all sin rama hasActiveFilters), fuera de alcance explicito (no tocar Legajos)" },
+    { "module": "org-structure (overviewCache)", "reason": "variante distinta (single overview fetch, sin paginacion), no era uno de los 5 candidatos de 14I.1" }
+  ],
+  "ttlBeforeAfter": {
+    "allModules": "120000ms -> 120000ms (sin cambios en ningun modulo)"
+  },
+  "tests": {
+    "helperNewTestFile": "backend/src/shared/cache/repositoryListCache.test.ts",
+    "helperNewTests": 8,
+    "hourConceptsNewTests": 6,
+    "salaryCategoriesNewTestFile": "backend/src/modules/salary-categories/salaryCategories.repository.test.ts",
+    "salaryCategoriesNewTests": 11,
+    "backendTotalAfter": "1301/1301 (87 files)"
+  },
+  "risks": [
+    "Doble capa de cache (createTtlCache controller + repositoryListCache repositorio) sigue existiendo en hour-concepts/novelty-types/document-categories/salary-categories - no consolidada en esta etapa",
+    "salary-categories mantiene el $transaction P2 en su rama filtrada, sin caller real - sin cambios"
+  ],
+  "validations": {
+    "prismaValidate": "pass",
+    "typecheck": "pass",
+    "test": "pass (1301/1301)",
+    "build": "pass",
+    "journeys": {
+      "adminConfig": "pass, smoke regression",
+      "workforce": "pass, smoke regression",
+      "employees": "pass, smoke regression",
+      "note": "collateral report regenerations restored via git restore"
+    },
+    "gitDiffCheck": "clean"
+  }
+}
