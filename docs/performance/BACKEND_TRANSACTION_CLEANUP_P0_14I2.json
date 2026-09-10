@@ -1,0 +1,97 @@
+{
+  "stage": "14I.2",
+  "generatedAt": "2026-09-10",
+  "type": "mechanical-fix-report",
+  "note": "Corrige exactamente los 3 hallazgos P0 de docs/decisions/BACKEND_PERFORMANCE_INFRASTRUCTURE_DIAGNOSTIC_14I1.md. No se toca ni se reescribe el diagnostico historico de 14I.1 (ni el .md ni el .json) - este es un archivo nuevo y separado.",
+  "before": {
+    "transactionsRemainingTotal": 6,
+    "p0Count": 3,
+    "p0": [
+      { "module": "novelties", "file": "backend/src/modules/novelties/novelties.repository.ts", "function": "findMany", "pattern": "prisma.$transaction([prisma.novelty.findMany(...), prisma.novelty.count(...)])" },
+      { "module": "users", "file": "backend/src/modules/users/users.repository.ts", "function": "findMany", "pattern": "prisma.$transaction([prisma.user.findMany(...), prisma.user.count(...)])" },
+      { "module": "documents", "file": "backend/src/modules/documents/documents.repository.ts", "function": "findMany", "pattern": "prisma.$transaction([prisma.employeeDocument.findMany(...), prisma.employeeDocument.count(...)])" }
+    ]
+  },
+  "after": {
+    "transactionsRemainingTotal": 3,
+    "p0Count": 0,
+    "p0Fixed": [
+      { "module": "novelties", "file": "backend/src/modules/novelties/novelties.repository.ts", "function": "findMany", "pattern": "Promise.all([prisma.novelty.findMany(...), prisma.novelty.count(...)])" },
+      { "module": "users", "file": "backend/src/modules/users/users.repository.ts", "function": "findMany", "pattern": "Promise.all([prisma.user.findMany(...), prisma.user.count(...)])" },
+      { "module": "documents", "file": "backend/src/modules/documents/documents.repository.ts", "function": "findMany", "pattern": "Promise.all([prisma.employeeDocument.findMany(...), prisma.employeeDocument.count(...)])" }
+    ]
+  },
+  "modules": [
+    {
+      "name": "novelties",
+      "endpoint": "GET /novelties",
+      "realCaller": true,
+      "callers": ["NoveltiesPage.tsx", "EmployeeHoursPage.tsx (noveltyApiService.getAll({employeeId}))"],
+      "backendCache": "noveltiesListCache (novelties.cache.ts, 15s, userScopedCacheKey)",
+      "cacheChanged": false,
+      "rbac": "requireAnyRole([rrhh, supervision, cargaHoraria]) + employeeAccessWhere(user)",
+      "rbacChanged": false,
+      "contractChanged": false
+    },
+    {
+      "name": "users",
+      "endpoint": "GET /users",
+      "realCaller": true,
+      "callers": ["UsersPage.tsx"],
+      "backendCache": "usersListCache (users.controller.ts, 30s, req.originalUrl)",
+      "cacheChanged": false,
+      "rbac": "requireAnyRole(adminRoles)",
+      "rbacChanged": false,
+      "contractChanged": false
+    },
+    {
+      "name": "documents",
+      "endpoint": "GET /documents",
+      "realCaller": true,
+      "callers": ["DocumentsPage.tsx"],
+      "backendCache": "documentsListCache (documents.cache.ts, 20s, userScopedCacheKey)",
+      "cacheChanged": false,
+      "rbac": "requireAnyRole([rrhh, supervision]) + assertCanAccessDocuments + employeeAccessWhere(user)",
+      "rbacChanged": false,
+      "contractChanged": false
+    }
+  ],
+  "files": {
+    "modified": [
+      "backend/src/modules/novelties/novelties.repository.ts",
+      "backend/src/modules/users/users.repository.ts",
+      "backend/src/modules/documents/documents.repository.ts"
+    ],
+    "created": [
+      "backend/src/modules/novelties/novelties.repository.test.ts",
+      "backend/src/modules/users/users.repository.test.ts",
+      "backend/src/modules/documents/documents.repository.test.ts",
+      "docs/decisions/BACKEND_TRANSACTION_CLEANUP_P0_14I2.md",
+      "docs/performance/BACKEND_TRANSACTION_CLEANUP_P0_14I2.json"
+    ]
+  },
+  "tests": {
+    "newTestFiles": 3,
+    "newTestCases": 12,
+    "backendTotalAfter": "1277/1277 (85 files)",
+    "coverageAddedFor": ["novelties.repository.findMany", "users.repository.findMany (module had zero tests before)", "documents.repository.findMany"]
+  },
+  "remainingTransactions": [
+    { "module": "time-entries", "file": "backend/src/modules/time-entries/timeEntries.repository.ts", "function": "attendanceSummary", "priority": "P1", "reason": "not in scope for 14I.2 (explicitly excluded)" },
+    { "module": "salary-categories", "file": "backend/src/modules/salary-categories/salaryCategories.repository.ts", "function": "findMany (filtered branch)", "priority": "P2", "reason": "no real caller passes filters" },
+    { "module": "hour-concepts", "file": "backend/src/modules/hour-concepts/hourConceptRules.repository.ts", "function": "findMany", "priority": "P2", "reason": "no real frontend caller for the general listing" }
+  ],
+  "validations": {
+    "prismaValidate": "pass",
+    "typecheck": "pass",
+    "test": "pass (1277/1277)",
+    "build": "pass",
+    "journeys": {
+      "adminConfig": "pass, 0 http/console errors, no writes executed",
+      "workforce": "pass, 0 http/console errors, no writes executed",
+      "employees": "pass, 0 http/console errors, no writes executed",
+      "note": "run as smoke regression only — none of the 3 fixed modules is covered by an existing journey; collateral report regenerations were restored via git restore"
+    },
+    "gitDiffCheck": "clean"
+  }
+}

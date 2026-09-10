@@ -163,7 +163,12 @@ export const noveltiesRepository = {
   findMany(query: ListNoveltiesQuery, employeeAccessWhere: Prisma.EmployeeWhereInput) {
     const where = buildWhere(query, employeeAccessWhere);
     const skip = (query.page - 1) * query.take;
-    return prisma.$transaction([
+    // Etapa 14I.2: findMany + count son lecturas independientes (ninguna
+    // depende del resultado de la otra) — $transaction([...]) las pinaba a
+    // una única conexión de Neon en serie sin ganar concurrencia real.
+    // Mismo patrón ya corregido 15 veces en las series 14C/14G/14H. Ver
+    // docs/decisions/BACKEND_TRANSACTION_CLEANUP_P0_14I2.md.
+    return Promise.all([
       prisma.novelty.findMany({
         where,
         include: noveltyInclude,
