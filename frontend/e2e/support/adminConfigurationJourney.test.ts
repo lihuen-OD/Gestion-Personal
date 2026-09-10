@@ -328,13 +328,13 @@ describe("buildMarkdownReport", () => {
 });
 
 describe("matrices de documentación (Parte 2 del pedido)", () => {
-  it("SUBMODULE_INVENTORY cubre las 14 zonas A-N, ninguna inventada fuera de la navegación real", () => {
-    expect(SUBMODULE_INVENTORY).toHaveLength(14);
+  it("SUBMODULE_INVENTORY cubre las 16 zonas A-P, ninguna inventada fuera de la navegación real", () => {
+    expect(SUBMODULE_INVENTORY).toHaveLength(16);
     const letters = SUBMODULE_INVENTORY.map((row) => row.submodule[0]);
-    expect(letters).toEqual(["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N"]);
+    expect(letters).toEqual(["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P"]);
   });
 
-  it("COVERAGE_MATRIX tiene al menos una fila por cada una de las 14 zonas A-N más Login", () => {
+  it("COVERAGE_MATRIX tiene al menos una fila por cada una de las 16 zonas A-P más Login", () => {
     const zones = new Set(COVERAGE_MATRIX.map((row) => row.zone));
     for (const zone of [
       "Login",
@@ -352,6 +352,8 @@ describe("matrices de documentación (Parte 2 del pedido)", () => {
       "L. Puestos (listado)",
       "M. Puesto (detalle)",
       "N. Puesto (creación, sólo navegación)",
+      "O. Tipo de novedad (detalle)",
+      "P. Tipo de novedad (creación, sólo navegación)",
     ]) {
       expect(zones.has(zone)).toBe(true);
     }

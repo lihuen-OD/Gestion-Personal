@@ -54,7 +54,18 @@ export const noveltyTypesRepository = {
     if (hasActiveFilters(query)) {
       const where = buildWhere(query);
       const skip = (query.page - 1) * query.take;
-      return prisma.$transaction([
+      // Etapa 14H.8: findMany + count son lecturas independientes (ninguna
+      // depende del resultado de la otra) — $transaction([...]) las pinaba a
+      // una única conexión de Neon en serie sin ganar concurrencia real.
+      // Mismo patrón ya corregido 13+ veces en las series 14G/14H. Nota: hoy
+      // ningún caller real del frontend pasa kind/origin/status/search (los
+      // 4 call sites de noveltyTypeApiService.getAll() en todo el frontend
+      // llaman sin filtros, confirmado por grep) — se corrige igual porque
+      // es la misma corrección trivial y sin riesgo ya estandarizada en toda
+      // la serie, y el endpoint sigue siendo API pública real y validada
+      // (GET /novelty-types?kind=...). Ver docs/decisions/
+      // NOVELTY_TYPES_PERFORMANCE_14H8.md.
+      return Promise.all([
         prisma.noveltyType.findMany({
           where,
           include: noveltyTypeInclude,

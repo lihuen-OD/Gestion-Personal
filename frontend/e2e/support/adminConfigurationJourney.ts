@@ -381,10 +381,10 @@ export const SUBMODULE_INVENTORY: SubmoduleInventoryRow[] = [
     services: "noveltyTypeApiService.ts",
     initialEndpoints: "GET /novelty-types",
     frontendCache: "Sí — familia novelty-types (noveltyTypesCatalog, 10min, persistido)",
-    backendCache: "No",
+    backendCache: "Sí — doble capa: repository-level (listCache en memoria, 120s, sólo rama sin filtros) + controller-level (noveltyTypesListCache/noveltyTypesDetailCache, 60s cada uno, createTtlCache keyed por req.originalUrl/id) — corrige el hallazgo original de 14H.1 (decía 'No'; relectura completa en 14H.8 confirmó que ambas capas ya existían desde antes de toda la serie 14H, ver git log). findMany() en su rama filtrada usa $transaction([findMany,count]) — sin ningún caller real que la ejercite hoy (los 4 call sites de getAll() en todo el frontend llaman siempre sin filtros, confirmado por grep), no corregido esta etapa por ese motivo (mismo criterio 'sólo se corrige lo que tiene un caller real, verificado por grep' ya establecido en 14H.5/14H.6).",
     writesData: "Sí (crear, activar/inactivar) — no ejecutado esta etapa",
     safeToMeasure: "Sí",
-    observation: "Tiene ruta de detalle real (/configuracion/tipos-novedades/:id, link 'Ver detalle' sin onClick oculto) — fuera del alcance macro de esta etapa, documentado como candidato de profundización.",
+    observation: "Tiene ruta de detalle real (/configuracion/tipos-novedades/:id) y de creación (/configuracion/tipos-novedades/nuevo) — ambas medidas desde la Etapa 14H.8 en las zonas O/P (ver abajo), cerrando el candidato de profundización que 14H.1 había dejado pendiente.",
   },
   {
     submodule: "H. Conceptos horarios",
@@ -470,6 +470,30 @@ export const SUBMODULE_INVENTORY: SubmoduleInventoryRow[] = [
     safeToMeasure: "Sí",
     observation: "Confirma que simplemente NAVEGAR a un formulario de alta ya dispara un GET real (para el código correlativo) — de sólo lectura, no persiste nada. Se sale vía el link 'Cancelar', nunca tocando 'Guardar puesto'.",
   },
+  {
+    submodule: "O. Tipo de novedad (detalle)",
+    route: "/configuracion/tipos-novedades/:id",
+    page: "NoveltyTypeDetailPage.tsx",
+    services: "noveltyTypeApiService.ts",
+    initialEndpoints: "GET /novelty-types/:id (único fetch — sin segundo GET encadenado, a diferencia de Puesto/detalle)",
+    frontendCache: "Sí — misma familia/policy novelty-types (noveltyTypesCatalog, 10min) que el listado",
+    backendCache: "Sí — noveltyTypesDetailCache (60s, controller-level, keyed por id)",
+    writesData: "Sí (Guardar cambios en tabs 1-3, activar/inactivar, ocultar) — no ejecutado esta etapa",
+    safeToMeasure: "Sí",
+    observation: "Etapa 14H.8: primera medición de esta ruta (14H.1 la había dejado fuera del alcance macro). 4 pestañas (Identificación/Reglas operativas/Finnegans/Historial), todas sobre el mismo `item` ya cargado por el único fetch inicial — ninguna dispara request nuevo (a diferencia de Puestos, este módulo no tiene panel de 'empleados vinculados' ni ningún otro fetch anidado). Diagnóstico: sin N+1, sin sobre-fetch, sin duplicados — ya óptimo, cero cambios de código.",
+  },
+  {
+    submodule: "P. Tipo de novedad (creación, sólo navegación)",
+    route: "/configuracion/tipos-novedades/nuevo",
+    page: "NoveltyTypeCreatePage.tsx",
+    services: "noveltyTypeApiService.ts",
+    initialEndpoints: "GET /novelty-types (para calcular el próximo código correlativo — noveltyTypeApiService.getNextCode)",
+    frontendCache: "Sí — misma familia/policy noveltyTypesCatalog que el listado; probable cache hit si se visitó antes en el mismo recorrido",
+    backendCache: "Sí — mismo listCache/noveltyTypesListCache que el listado (ver zona G)",
+    writesData: "No con sólo navegar — el único write es el submit 'Guardar tipo' (POST /novelty-types), no ejecutado esta etapa",
+    safeToMeasure: "Sí",
+    observation: "Etapa 14H.8: primera medición de esta ruta. Mismo patrón ya confirmado en Puesto (creación, N) — sólo navegar a un formulario de alta ya dispara un GET real de sólo lectura. Se sale vía el link 'Cancelar', nunca tocando 'Guardar tipo'.",
+  },
 ];
 
 // ---------------------------------------------------------------------------
@@ -533,7 +557,6 @@ export const COVERAGE_MATRIX: CoverageMatrixRow[] = [
   { zone: "G. Tipos de novedades", submodule: "G. Tipos de novedades", action: "Buscar en Tipos de novedades", route: "/configuracion/tipos-novedades", component: "NoveltyTypesPage.tsx (FilterPanel search)", expectedEndpoint: "filtra en memoria (fetch-all)", type: "Lectura", measurable: "Sí", measured: "Parcial", reasonIfNot: "Se saltea si no hay ningún tipo de novedad en el entorno actual.", risk: "Bajo", observation: "—" },
   { zone: "G. Tipos de novedades", submodule: "G. Tipos de novedades", action: "Filtrar Tipos de novedades por Finnegans", route: "/configuracion/tipos-novedades", component: "NoveltyTypesPage.tsx (select Finnegans)", expectedEndpoint: "filtra en memoria (fetch-all)", type: "Lectura", measurable: "Sí", measured: "Sí", reasonIfNot: "—", risk: "Bajo", observation: "—" },
   { zone: "G. Tipos de novedades", submodule: "G. Tipos de novedades", action: "Crear tipo de novedad", route: "/configuracion/tipos-novedades", component: "NoveltyTypesPage.tsx (link 'Crear tipo')", expectedEndpoint: "navegación a /configuracion/tipos-novedades/nuevo", type: "Escritura", measurable: "Sí", measured: "No", reasonIfNot: "Prohibido por defecto.", risk: "Alto si se ejecutara", observation: "—" },
-  { zone: "G. Tipos de novedades", submodule: "G. Tipos de novedades", action: "Ver detalle de tipo de novedad", route: "/configuracion/tipos-novedades → /configuracion/tipos-novedades/:id", component: "NoveltyTypesPage.tsx (link 'Ver detalle')", expectedEndpoint: "navegación de detalle", type: "Lectura", measurable: "Sí", measured: "No", reasonIfNot: "Fuera del alcance macro de esta etapa (no es escritura) — candidato de profundización en una etapa futura si el volumen lo justifica.", risk: "Bajo, pero fuera de alcance", observation: "—" },
   { zone: "G. Tipos de novedades", submodule: "G. Tipos de novedades", action: "Activar/Inactivar tipo de novedad", route: "/configuracion/tipos-novedades", component: "NoveltyTypesPage.tsx (botón 'Activar/Inactivar')", expectedEndpoint: "PATCH /novelty-types/:id", type: "Escritura", measurable: "Sí", measured: "No", reasonIfNot: "Prohibido por defecto.", risk: "Alto si se ejecutara", observation: "—" },
 
   { zone: "H. Conceptos horarios", submodule: "H. Conceptos horarios", action: "Entrar a Conceptos horarios", route: "/configuracion/conceptos-horarios", component: "HourConceptsPage.tsx", expectedEndpoint: "GET /hour-concepts", type: "Lectura", measurable: "Sí", measured: "Sí", reasonIfNot: "—", risk: "Bajo", observation: "—" },
@@ -580,6 +603,15 @@ export const COVERAGE_MATRIX: CoverageMatrixRow[] = [
   { zone: "N. Puesto (creación, sólo navegación)", submodule: "N. Puesto (creación, sólo navegación)", action: "Entrar a Crear puesto (sólo navegación, sin guardar)", route: "/puestos/nuevo", component: "PuestoCreatePage.tsx", expectedEndpoint: "GET /positions (cálculo de próximo código correlativo)", type: "Lectura", measurable: "Sí", measured: "Sí", reasonIfNot: "—", risk: "Bajo", observation: "Confirma que sólo navegar a un formulario de alta ya dispara un GET real — de sólo lectura, no persiste nada." },
   { zone: "N. Puesto (creación, sólo navegación)", submodule: "N. Puesto (creación, sólo navegación)", action: "Salir de Crear puesto sin guardar", route: "/puestos/nuevo → /puestos", component: "PuestoCreatePage.tsx (link 'Cancelar')", expectedEndpoint: "navegación (revisita /puestos)", type: "Lectura", measurable: "Sí", measured: "Parcial", reasonIfNot: "Se saltea si no se encuentra el link 'Cancelar' en el entorno actual.", risk: "Bajo", observation: "—" },
   { zone: "N. Puesto (creación, sólo navegación)", submodule: "N. Puesto (creación, sólo navegación)", action: "Guardar puesto", route: "/puestos/nuevo", component: "PuestoCreatePage.tsx (botón 'Guardar puesto')", expectedEndpoint: "POST /positions", type: "Escritura", measurable: "Sí", measured: "No", reasonIfNot: "Prohibido por defecto — crearía un puesto real.", risk: "Alto si se ejecutara", observation: "Nunca se usa .fill() en ningún campo del formulario, ni siquiera momentáneamente." },
+
+  { zone: "O. Tipo de novedad (detalle)", submodule: "O. Tipo de novedad (detalle)", action: "Ver detalle de tipo de novedad", route: "/configuracion/tipos-novedades → /configuracion/tipos-novedades/:id", component: "NoveltyTypesPage.tsx (link 'Ver detalle') → NoveltyTypeDetailPage.tsx", expectedEndpoint: "GET /novelty-types/:id", type: "Lectura", measurable: "Sí", measured: "Parcial", reasonIfNot: "Se saltea si no hay ningún link 'Ver detalle' en el entorno actual.", risk: "Bajo", observation: "Etapa 14H.8: primera medición — único GET, sin segundo fetch encadenado (a diferencia de Puesto/detalle)." },
+  { zone: "O. Tipo de novedad (detalle)", submodule: "O. Tipo de novedad (detalle)", action: "Cambiar de pestaña en detalle de Tipo de novedad", route: "/configuracion/tipos-novedades/:id", component: "NoveltyTypeDetailPage.tsx (Tabs)", expectedEndpoint: "sin request nuevo (ya cargado)", type: "Lectura", measurable: "Sí", measured: "Parcial", reasonIfNot: "Depende de la acción anterior (abrir el detalle).", risk: "Bajo", observation: "Confirma que 'Reglas operativas'/'Finnegans'/'Historial' no re-disparan requests." },
+  { zone: "O. Tipo de novedad (detalle)", submodule: "O. Tipo de novedad (detalle)", action: "Guardar cambios en Tipo de novedad", route: "/configuracion/tipos-novedades/:id", component: "NoveltyTypeDetailPage.tsx (botón 'Guardar cambios', tabs 1-3)", expectedEndpoint: "PATCH /novelty-types/:id", type: "Escritura", measurable: "Sí", measured: "No", reasonIfNot: "Prohibido por defecto.", risk: "Alto si se ejecutara", observation: "—" },
+  { zone: "O. Tipo de novedad (detalle)", submodule: "O. Tipo de novedad (detalle)", action: "Activar/Inactivar/Ocultar tipo de novedad (detalle)", route: "/configuracion/tipos-novedades/:id", component: "NoveltyTypeDetailPage.tsx (hero, icons Power/Trash2)", expectedEndpoint: "PATCH /novelty-types/:id", type: "Escritura", measurable: "Sí", measured: "No", reasonIfNot: "Prohibido por defecto.", risk: "Alto si se ejecutara", observation: "Sin DELETE real — 'Ocultar' también es un PATCH de status, nunca un hard-delete (sin ruta DELETE en este módulo)." },
+
+  { zone: "P. Tipo de novedad (creación, sólo navegación)", submodule: "P. Tipo de novedad (creación, sólo navegación)", action: "Entrar a Crear tipo de novedad (sólo navegación, sin guardar)", route: "/configuracion/tipos-novedades/nuevo", component: "NoveltyTypeCreatePage.tsx", expectedEndpoint: "GET /novelty-types (cálculo de próximo código correlativo)", type: "Lectura", measurable: "Sí", measured: "Sí", reasonIfNot: "—", risk: "Bajo", observation: "Etapa 14H.8: primera medición — confirma que sólo navegar a un formulario de alta ya dispara un GET real, de sólo lectura, no persiste nada." },
+  { zone: "P. Tipo de novedad (creación, sólo navegación)", submodule: "P. Tipo de novedad (creación, sólo navegación)", action: "Salir de Crear tipo de novedad sin guardar", route: "/configuracion/tipos-novedades/nuevo → /configuracion/tipos-novedades", component: "NoveltyTypeCreatePage.tsx (link 'Cancelar')", expectedEndpoint: "navegación (revisita /configuracion/tipos-novedades)", type: "Lectura", measurable: "Sí", measured: "Parcial", reasonIfNot: "Se saltea si no se encuentra el link 'Cancelar' en el entorno actual.", risk: "Bajo", observation: "—" },
+  { zone: "P. Tipo de novedad (creación, sólo navegación)", submodule: "P. Tipo de novedad (creación, sólo navegación)", action: "Guardar tipo de novedad", route: "/configuracion/tipos-novedades/nuevo", component: "NoveltyTypeCreatePage.tsx (botón 'Guardar tipo')", expectedEndpoint: "POST /novelty-types", type: "Escritura", measurable: "Sí", measured: "No", reasonIfNot: "Prohibido por defecto — crearía un tipo de novedad real.", risk: "Alto si se ejecutara", observation: "Nunca se usa .fill() en ningún campo del formulario, ni siquiera momentáneamente." },
 ];
 
 export function buildMarkdownReport(rawRun: AdminConfigJourneyRun): string {

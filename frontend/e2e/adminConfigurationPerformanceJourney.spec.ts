@@ -65,6 +65,8 @@ const ZONE = {
   puestosListado: "L. Puestos (listado)",
   puestoDetalle: "M. Puesto (detalle)",
   puestoCreacion: "N. Puesto (creación, sólo navegación)",
+  noveltyTypeDetalle: "O. Tipo de novedad (detalle)",
+  noveltyTypeCreacion: "P. Tipo de novedad (creación, sólo navegación)",
 } as const;
 
 test.describe.configure({ mode: "serial" });
@@ -485,8 +487,9 @@ test("admin configuration performance journey — recorrido macro de Configuraci
   });
 
   skip("Crear tipo de novedad", ZONE.tiposNovedades, "Prohibido por defecto — navegación a un formulario de alta (POST /novelty-types), no se hace click.", true);
-  skip("Ver detalle de tipo de novedad", ZONE.tiposNovedades, "Navegación de detalle fuera del alcance macro de esta etapa (no es escritura) — candidato de profundización en una etapa futura si el volumen lo justifica.");
   skip("Activar/Inactivar tipo de novedad", ZONE.tiposNovedades, "Prohibido por defecto — acción de escritura (PATCH /novelty-types/:id).", true);
+  // "Ver detalle de tipo de novedad" pasó a medirse en la zona O (ver más
+  // abajo, Etapa 14H.8) — ya no se saltea acá.
 
   // -------------------------------------------------------------------
   // H. Conceptos horarios — el submódulo con más profundidad potencial
@@ -809,6 +812,74 @@ test("admin configuration performance journey — recorrido macro de Configuraci
   }
 
   skip("Guardar puesto", ZONE.puestoCreacion, "Prohibido por defecto — crearía un puesto real (POST /positions). Nunca se usa .fill() en ningún campo del formulario, ni siquiera momentáneamente.", true);
+
+  // -------------------------------------------------------------------
+  // O. Tipo de novedad (detalle) — Etapa 14H.8: primera medición de esta
+  // ruta (14H.1 la había dejado fuera del alcance macro). Único GET, sin
+  // segundo fetch encadenado (a diferencia de Puesto/detalle). Volvemos a
+  // /configuracion/tipos-novedades primero para partir de un estado limpio
+  // de filtros (mismo criterio que Puesto/detalle, línea ~753).
+  // -------------------------------------------------------------------
+  await page.goto("/configuracion/tipos-novedades");
+  await page.waitForLoadState("networkidle", { timeout: ACTION_TIMEOUT_MS }).catch(() => undefined);
+
+  const noveltyTypeDetailLink = page.getByRole("link", { name: "Ver detalle" }).first();
+  const noveltyTypeDetailHref = (await noveltyTypeDetailLink.count()) ? await noveltyTypeDetailLink.getAttribute("href") : null;
+  if (noveltyTypeDetailHref) {
+    await measure("Ver detalle de tipo de novedad", ZONE.noveltyTypeDetalle, false, async () => {
+      await page.goto(noveltyTypeDetailHref);
+      return { visibleLocator: page.locator("h1").first() };
+    });
+
+    if (actions.at(-1)!.covered) {
+      const rulesTab = page.getByRole("button", { name: /Reglas operativas/ });
+      if (await rulesTab.count()) {
+        await measure("Cambiar de pestaña en detalle de Tipo de novedad", ZONE.noveltyTypeDetalle, false, async () => {
+          await rulesTab.click();
+          return {
+            visibleLocator: page.locator("h1").first(),
+            preNetworkIdleWaitMs: 200,
+            notes: ["cambio de pestaña 100% client-side — el tipo de novedad ya se cargó al entrar al detalle (único fetch), no debería disparar un request nuevo"],
+          };
+        });
+      } else {
+        skip("Cambiar de pestaña en detalle de Tipo de novedad", ZONE.noveltyTypeDetalle, "no se encontró la pestaña 'Reglas operativas' en el entorno actual");
+      }
+    } else {
+      skip("Cambiar de pestaña en detalle de Tipo de novedad", ZONE.noveltyTypeDetalle, "depende de la acción anterior, que falló");
+    }
+  } else {
+    skip("Ver detalle de tipo de novedad", ZONE.noveltyTypeDetalle, "no se encontró ningún link 'Ver detalle' en el listado de Tipos de novedades en el entorno actual");
+    skip("Cambiar de pestaña en detalle de Tipo de novedad", ZONE.noveltyTypeDetalle, "depende de la acción anterior, salteada");
+  }
+
+  skip("Guardar cambios en Tipo de novedad", ZONE.noveltyTypeDetalle, "Prohibido por defecto — acción de escritura (PATCH /novelty-types/:id).", true);
+  skip("Activar/Inactivar/Ocultar tipo de novedad (detalle)", ZONE.noveltyTypeDetalle, "Prohibido por defecto — acción de escritura (PATCH /novelty-types/:id).", true);
+
+  // -------------------------------------------------------------------
+  // P. Tipo de novedad (creación, sólo navegación) — Etapa 14H.8: primera
+  // medición de esta ruta. Nunca se toca "Guardar tipo" ni se usa .fill()
+  // en ningún campo del formulario (mismo criterio que Puesto/creación).
+  // -------------------------------------------------------------------
+  await measure("Entrar a Crear tipo de novedad (sólo navegación, sin guardar)", ZONE.noveltyTypeCreacion, false, async () => {
+    await page.goto("/configuracion/tipos-novedades/nuevo");
+    return {
+      visibleLocator: page.locator("h1").first(),
+      notes: ["visitar esta ruta dispara GET /novelty-types (cálculo del próximo código correlativo) — es de sólo lectura, no persiste nada; probable cache hit si Tipos de novedades ya se visitó antes en este mismo recorrido (misma cachePolicies.noveltyTypesCatalog)"],
+    };
+  });
+
+  const noveltyTypeCancelLink = page.getByRole("link", { name: "Cancelar" });
+  if (await noveltyTypeCancelLink.count()) {
+    await measure("Salir de Crear tipo de novedad sin guardar", ZONE.noveltyTypeCreacion, false, async () => {
+      await noveltyTypeCancelLink.first().click();
+      return { visibleLocator: page.locator("h1").first() };
+    });
+  } else {
+    skip("Salir de Crear tipo de novedad sin guardar", ZONE.noveltyTypeCreacion, "no se encontró el link 'Cancelar' en el entorno actual");
+  }
+
+  skip("Guardar tipo de novedad", ZONE.noveltyTypeCreacion, "Prohibido por defecto — crearía un tipo de novedad real (POST /novelty-types). Nunca se usa .fill() en ningún campo del formulario, ni siquiera momentáneamente.", true);
 
   // -------------------------------------------------------------------
   // Reporte final + asserts de seguridad/cobertura.
