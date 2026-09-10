@@ -57,13 +57,20 @@ export function PuestoDetailPage() {
     return () => { alive = false; };
   }, [id, loadRetry]);
 
+  // Etapa 14H.7: antes dependía de position?.id/position?.name (sólo
+  // disponible después de que getById() resolviera), encadenando esta
+  // llamada detrás de la anterior aunque ninguna de las dos depende del
+  // resultado de la otra — ambas sólo necesitan el `id` de la ruta, ya
+  // disponible desde el primer render. Depender de `id` directamente hace
+  // que las 2 llamadas salgan en paralelo (mismo patrón ya aplicado en
+  // Legajos, Etapa 14D). Ver docs/decisions/POSITIONS_MODULE_PERFORMANCE_14H7.md.
   useEffect(() => {
     let alive = true;
-    if (!position) {
+    if (!id) {
       setAssigned([]);
       return () => { alive = false; };
     }
-    positionApiService.getAssignedEmployees(position.id)
+    positionApiService.getAssignedEmployees(id)
       .then((employees) => {
         if (!alive) return;
         setAssigned(employees);
@@ -72,7 +79,7 @@ export function PuestoDetailPage() {
         if (alive) setAssigned([]);
       });
     return () => { alive = false; };
-  }, [position?.id, position?.name]);
+  }, [id]);
 
   const { isRunning: isSaving, run: save } = useAsyncAction(async () => {
     if (!position) return;

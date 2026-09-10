@@ -62,6 +62,26 @@ describe("positionsRepository.findById", () => {
   });
 });
 
+// Etapa 14H.7: usado por listAssignedEmployees() (positions.service.ts) sólo
+// para el chequeo de existencia (404 si no existe) — antes reusaba findById()
+// (positionInclude completo) para esto, descartando el resultado.
+describe("positionsRepository.existsById — Etapa 14H.7", () => {
+  it("usa un select minimo (sólo id), no positionInclude", async () => {
+    (prisma.position.findUniqueOrThrow as Mock).mockResolvedValue({ id: "pos-1" });
+
+    await positionsRepository.existsById("pos-1");
+
+    const call = (prisma.position.findUniqueOrThrow as Mock).mock.calls.at(0)?.[0];
+    expect(call).toEqual({ where: { id: "pos-1" }, select: { id: true } });
+  });
+
+  it("propaga el rechazo (P2025) cuando el puesto no existe, igual que findById", async () => {
+    (prisma.position.findUniqueOrThrow as Mock).mockRejectedValue(new Error("not found"));
+
+    await expect(positionsRepository.existsById("pos-inexistente")).rejects.toThrow();
+  });
+});
+
 function baseCreateInput(overrides: Record<string, unknown> = {}) {
   return {
     code: "PUE-100",
@@ -169,14 +189,15 @@ describe("positionsRepository.findMany — Etapa 9E (paginación real)", () => {
     expect(total).toBe(3);
   });
 
-  it("con al menos un filtro real: pagina con Prisma (skip/take) y cuenta con el mismo where", async () => {
+  it("con al menos un filtro real: pagina con Promise.all (skip/take) y cuenta con el mismo where — sin $transaction (Etapa 14H.7)", async () => {
     (prisma.position.findMany as Mock).mockResolvedValue([{ id: "pos-1", name: "Puesto 1" }]);
     (prisma.position.count as Mock).mockResolvedValue(1);
 
     const [items, total] = await positionsRepository.findMany(baseQuery({ page: 2, take: 10, search: "puesto" }));
 
-    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(prisma.$transaction).not.toHaveBeenCalled();
     expect(prisma.position.findMany).toHaveBeenCalledWith(expect.objectContaining({ skip: 10, take: 10 }));
+    expect(prisma.position.count).toHaveBeenCalledWith(expect.objectContaining({ where: expect.any(Object) }));
     expect(items).toEqual([{ id: "pos-1", name: "Puesto 1" }]);
     expect(total).toBe(1);
   });
@@ -323,5 +344,24 @@ describe("positionsRepository.findOptions — Etapa 14D.4", () => {
 
     const call = (prisma.position.findMany as Mock).mock.calls.at(0)?.[0];
     expect(call.take).toBe(50);
+  });
+
+  // Etapa 14H.7: includeAssignedCount habilita reusar este catálogo liviano
+  // desde PuestosPage.tsx (necesita assignedCount, a diferencia de Legajos) —
+  // ver docs/decisions/POSITIONS_MODULE_PERFORMANCE_14H7.md.
+  it("con includeAssignedCount: agrega _count.employees, sin tocar el resto del select liviano", async () => {
+    await positionsRepository.findOptions(baseOptionsQuery({ includeAssignedCount: true }));
+
+    const call = (prisma.position.findMany as Mock).mock.calls.at(0)?.[0];
+    expect(call.select._count).toEqual({ select: { employees: true } });
+    expect(call.select.mission).toBeUndefined();
+    expect(call.select.sector.select.area.select.establishment.select.company).toBeUndefined();
+  });
+
+  it("sin includeAssignedCount (default): sigue sin _count, igual que antes de 14H.7", async () => {
+    await positionsRepository.findOptions(baseOptionsQuery());
+
+    const call = (prisma.position.findMany as Mock).mock.calls.at(0)?.[0];
+    expect(call.select._count).toBeUndefined();
   });
 });

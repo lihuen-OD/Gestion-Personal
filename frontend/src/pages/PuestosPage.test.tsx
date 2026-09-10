@@ -27,7 +27,7 @@ function authAsRrhh() {
 
 vi.mock("../services/api/positionApiService", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../services/api/positionApiService")>();
-  return { ...actual, positionApiService: { ...actual.positionApiService, list: vi.fn(), getAll: vi.fn(), update: vi.fn(), removeOrHide: vi.fn() } };
+  return { ...actual, positionApiService: { ...actual.positionApiService, list: vi.fn(), getOptions: vi.fn(), update: vi.fn(), removeOrHide: vi.fn() } };
 });
 
 vi.mock("../services/api/orgStructureApiService", async (importOriginal) => {
@@ -72,7 +72,19 @@ beforeEach(() => {
   vi.clearAllMocks();
   authAsRrhh();
   vi.mocked(orgStructureApiService.getCatalog).mockResolvedValue(emptyCatalog);
-  vi.mocked(positionApiService.getAll).mockResolvedValue([]);
+  vi.mocked(positionApiService.getOptions).mockResolvedValue([]);
+});
+
+// Etapa 14H.7: PuestosPage.tsx pasó de getAll() a
+// getOptions({includeAssignedCount:true}) para las tarjetas de resumen/
+// opciones de rango salarial — ver docs/decisions/POSITIONS_MODULE_PERFORMANCE_14H7.md.
+describe("PuestosPage — Etapa 14H.7 (catálogo liviano para resumen)", () => {
+  it("pide el resumen con getOptions({includeAssignedCount:true}), no con getAll()", async () => {
+    vi.mocked(positionApiService.list).mockResolvedValue({ items: [], meta: { total: 0, page: 1, pageSize: 25, hasMore: false } });
+    renderPage();
+
+    await waitFor(() => expect(positionApiService.getOptions).toHaveBeenCalledWith({ includeAssignedCount: true }));
+  });
 });
 
 describe("PuestosPage — Etapa 9E (paginación real)", () => {

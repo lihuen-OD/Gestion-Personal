@@ -58,8 +58,11 @@ export const positionsService = {
     return positionsRepository.findOptions(query);
   },
 
+  // Etapa 14H.7: el chequeo de existencia usaba findById() (positionInclude
+  // completo, descartado sin usar salvo para el 404) — existsById() hace el
+  // mismo chequeo (mismo mapeo de P2025 -> 404) con un select mínimo.
   async listAssignedEmployees(id: string, user: Express.AuthUser) {
-    await execute(() => positionsRepository.findById(id));
+    await execute(() => positionsRepository.existsById(id));
     return positionsRepository.findAssignedEmployees(id, employeeAccessWhere(user));
   },
 

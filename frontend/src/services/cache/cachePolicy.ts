@@ -81,6 +81,30 @@ export const cachePolicies = {
     sensitive: false,
     schemaVersion: CACHE_SCHEMA_VERSION,
   },
+  // Etapa 14H.7: mismo hallazgo/mismo fix que workRegimeEmployeesList
+  // (14H.2, ver abajo) — GET /positions/:id/employees no tenía dedupe
+  // frontend. Antes esto quedaba oculto porque el efecto que la llamaba
+  // dependía de position?.id/position?.name (sólo disponible después de que
+  // getById resolviera, fuera de la ventana de doble-montaje de StrictMode);
+  // al pasar esa llamada a depender del `id` de la ruta directamente (para
+  // dispararla en paralelo con getById, ver PuestoDetailPage.tsx) quedó
+  // expuesta al mismo doble-montaje — confirmado en el journey: 2 requests
+  // reales a GET /positions/:id/employees dentro de la ventana de "Ver
+  // detalle de puesto". Misma familia "positions" que el resto del módulo
+  // (así que create/update/removeOrHide de Puestos la invalidan igual), más
+  // ya cubierta automáticamente por invalidateEmployeeDependentCaches()
+  // (employeeApiService.ts) en cada mutación real de Employee.positionId —
+  // sin invalidación nueva que agregar. TTL corto (15s, mismo rango que
+  // workRegimeEmployeesList/hourConceptEmployeesList) porque es una lista
+  // operativa. No persistido (sensitive: true, PII de empleados vía
+  // AssignedEmployee) -- nunca en IndexedDB.
+  positionsAssignedEmployees: {
+    family: "positions",
+    ttlMs: 15_000,
+    persist: false,
+    sensitive: true,
+    schemaVersion: CACHE_SCHEMA_VERSION,
+  },
   employeesOptions: {
     family: "employees",
     ttlMs: 60_000,

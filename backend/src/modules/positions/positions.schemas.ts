@@ -25,8 +25,16 @@ export const listPositionsQuerySchema = z.object({
 // Etapa 14D.4: query del catálogo liviano (`GET /positions/options`) — sólo
 // lo que los selects/catálogos de Legajos realmente filtran hoy (ninguno
 // pasa `search`, así que no se agregó — evitar parámetros sin caller real).
+// Etapa 14H.7: `includeAssignedCount` opcional (default false, no rompe a
+// los 3 callers de Legajos que ya usaban este endpoint) — agrega `_count.
+// employees` al select cuando se pide, para que PuestosPage.tsx pueda usar
+// este mismo catálogo liviano para sus tarjetas de resumen/filtro de rango
+// salarial en vez de `getAll()` (positionInclude completo, 9 columnas JSON +
+// company/businessUnit completos que ninguno de esos 2 usos lee) — ver
+// docs/decisions/POSITIONS_MODULE_PERFORMANCE_14H7.md.
 export const listPositionOptionsQuerySchema = z.object({
   status: recordStatusSchema.optional(),
+  includeAssignedCount: z.coerce.boolean().optional(),
   take: z.coerce.number().int().positive().max(500).default(300),
 });
 

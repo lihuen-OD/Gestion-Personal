@@ -439,8 +439,8 @@ export const SUBMODULE_INVENTORY: SubmoduleInventoryRow[] = [
     route: "/puestos",
     page: "PuestosPage.tsx",
     services: "orgStructureApiService.ts, positionApiService.ts",
-    initialEndpoints: "GET /org-structure, GET /positions (stats/rango salarial), GET /positions?page=&take=25&... (tabla paginada)",
-    frontendCache: "org-structure y positions (getAll) cacheados 5-10min; el listado paginado usa una policy separada (positionsList, 30s, no persistida)",
+    initialEndpoints: "GET /org-structure, GET /positions/options?includeAssignedCount=true (stats/rango salarial), GET /positions?page=&take=25&... (tabla paginada)",
+    frontendCache: "org-structure y positions/options (familia positions, positionsCatalog, 5-10min) cacheados; el listado paginado usa una policy separada (positionsList, 30s, no persistida). Etapa 14H.7: el fetch de stats/rango salarial pasó de getAll() (positionInclude completo: 9 columnas JSON + company/businessUnit completos) a getOptions({includeAssignedCount:true}) (select liviano de 14D.4 + _count opcional) — misma familia/policy, sin invalidación nueva.",
     backendCache: "No",
     writesData: "Sí (crear puesto, activar/inactivar, eliminar/ocultar) — no ejecutado esta etapa",
     safeToMeasure: "Sí",
@@ -451,12 +451,12 @@ export const SUBMODULE_INVENTORY: SubmoduleInventoryRow[] = [
     route: "/puestos/:id",
     page: "PuestoDetailPage.tsx",
     services: "positionApiService.ts",
-    initialEndpoints: "GET /positions/:id; luego GET /positions/:id/employees (secuencial, depende del primero)",
-    frontendCache: "getById cacheado (familia positions); empleados asignados sin cache — siempre fresco",
+    initialEndpoints: "GET /positions/:id y GET /positions/:id/employees en paralelo (ambos dependen sólo del id de ruta)",
+    frontendCache: "getById cacheado (familia positions); empleados asignados también cacheados desde 14H.7 (familia positions, policy positionsAssignedEmployees, TTL 15s, no persistido — PII de empleados) — agregado tras exponerse a doble-montaje de StrictMode al pasar a depender del id de ruta directamente (ver observación)",
     backendCache: "No",
     writesData: "Sí (Guardar cambios en tabs 1-9, activar/inactivar, eliminar) — no ejecutado esta etapa",
     safeToMeasure: "Sí",
-    observation: "11 pestañas (10. Personas Asignadas y 11. Historial no disparan requests nuevos — ya vienen en los 2 fetches iniciales). 2 GETs secuenciales (no paralelos) — mismo patrón de carga compuesta que EmployeeDetailPage en 14D.",
+    observation: "11 pestañas (10. Personas Asignadas y 11. Historial no disparan requests nuevos — ya vienen en los 2 fetches iniciales). Etapa 14H.7: los 2 GETs iniciales pasaron a dispararse en paralelo (antes secuencial, getById → getAssignedEmployees, mismo hallazgo documentado en 14H.1 §8) — mismo patrón de carga compuesta ya aplicado a EmployeeDetailPage en 14D.",
   },
   {
     submodule: "N. Puesto (creación, sólo navegación)",
@@ -564,7 +564,7 @@ export const COVERAGE_MATRIX: CoverageMatrixRow[] = [
   { zone: "K. Parámetros de auditoría", submodule: "K. Parámetros de auditoría", action: "Cerrar detalle de parámetro de auditoría sin guardar", route: "/configuracion/parametros-auditoria", component: "AuditParametersPage.tsx (botón 'Cerrar')", expectedEndpoint: "—", type: "Lectura", measurable: "Sí", measured: "Parcial", reasonIfNot: "Depende de la acción anterior (abrir el detalle).", risk: "Bajo", observation: "—" },
   { zone: "K. Parámetros de auditoría", submodule: "K. Parámetros de auditoría", action: "Crear parámetro de auditoría / Guardar cambios de parámetro", route: "/configuracion/parametros-auditoria", component: "AuditParametersPage.tsx (botón 'Guardar parametro')", expectedEndpoint: "POST/PATCH /audit-parameters[/:id]", type: "Escritura", measurable: "Sí", measured: "No", reasonIfNot: "Prohibido por defecto — el editor se abre y se cierra sin tocar este botón.", risk: "Alto si se ejecutara", observation: "—" },
 
-  { zone: "L. Puestos (listado)", submodule: "L. Puestos (listado)", action: "Entrar a Puestos", route: "/puestos", component: "PuestosPage.tsx", expectedEndpoint: "GET /org-structure, GET /positions, GET /positions?page=&take=25&...", type: "Lectura", measurable: "Sí", measured: "Sí", reasonIfNot: "—", risk: "Bajo", observation: "3 GETs en el montaje — el mayor conteo entre las pantallas de listado de este journey." },
+  { zone: "L. Puestos (listado)", submodule: "L. Puestos (listado)", action: "Entrar a Puestos", route: "/puestos", component: "PuestosPage.tsx", expectedEndpoint: "GET /org-structure, GET /positions/options?includeAssignedCount=true, GET /positions?page=&take=25&...", type: "Lectura", measurable: "Sí", measured: "Sí", reasonIfNot: "—", risk: "Bajo", observation: "3 GETs en el montaje. Etapa 14H.7: el fetch de resumen/filtro de rango salarial pasó de GET /positions (positionInclude completo) a GET /positions/options?includeAssignedCount=true (select liviano + _count opcional) — mismo criterio que 14D.4 para Legajos." },
   { zone: "L. Puestos (listado)", submodule: "L. Puestos (listado)", action: "Buscar en Puestos", route: "/puestos", component: "PuestosPage.tsx (FilterPanel search)", expectedEndpoint: "GET /positions?page=1&take=25&search=...", type: "Lectura", measurable: "Sí", measured: "Parcial", reasonIfNot: "Se saltea si no hay ningún puesto en el entorno actual.", risk: "Bajo", observation: "A diferencia de la mayoría de las tarjetas de Configuración, esta búsqueda SÍ es server-side (paginada), no fetch-all." },
   { zone: "L. Puestos (listado)", submodule: "L. Puestos (listado)", action: "Filtrar Puestos por Sector", route: "/puestos", component: "PuestosPage.tsx (select Sector)", expectedEndpoint: "GET /positions?page=1&take=25&sectorId=...", type: "Lectura", measurable: "Sí", measured: "Sí", reasonIfNot: "—", risk: "Bajo", observation: "—" },
   { zone: "L. Puestos (listado)", submodule: "L. Puestos (listado)", action: "Limpiar filtros en Puestos", route: "/puestos", component: "PuestosPage.tsx (botón 'Limpiar')", expectedEndpoint: "GET /positions?page=1&take=25", type: "Lectura", measurable: "Sí", measured: "Sí", reasonIfNot: "—", risk: "Bajo", observation: "Único botón 'Limpiar' filtros real de todo este journey (FilterPanel con onClear)." },
@@ -823,7 +823,7 @@ export function buildMarkdownReport(rawRun: AdminConfigJourneyRun): string {
   lines.push("Contexto estructural relevante para esta priorización (relevado en el diagnóstico, no medido por endpoints individuales):");
   lines.push("- Turnos y Horas especiales son las únicas 2 tarjetas sin ningún cache frontend (`apiCache:false` directo, sin `cachedData`/`cachePolicies`) — cada visita es un round-trip real garantizado, a diferencia de las 7 tarjetas restantes que sí cachean su catálogo principal 10min.");
   lines.push("- Conceptos horarios: desde la Etapa 14H.5 este journey también mide sus 2 endpoints anidados (reglas horarias + empleados habilitados) al abrir 'Editar' un concepto existente — ver `docs/decisions/HOUR_CONCEPTS_PERFORMANCE_14H5.md` para el diagnóstico completo y las métricas antes/después.");
-  lines.push("- Puestos (detalle) es el único submódulo de este journey con 2 GETs secuenciales dependientes (`getById` → `getAssignedEmployees`), mismo patrón de carga compuesta ya optimizado para Legajos en 14D — candidato a evaluar si el volumen de asignaciones por puesto crece.");
+  lines.push("- Puestos (detalle): el hallazgo de 14H.1 (`getById` → `getAssignedEmployees` secuencial) fue corregido en la Etapa 14H.7 — ambos GETs se disparan ahora en paralelo, mismo patrón ya optimizado para Legajos en 14D. Ver `docs/decisions/POSITIONS_MODULE_PERFORMANCE_14H7.md`.");
   lines.push("- Exportación Finnegans queda deliberadamente fuera de esta corrida — ya medido por 14G.1, ver `docs/performance/WORKFORCE_MANAGEMENT_PERFORMANCE_JOURNEY_14G1.md`.");
   lines.push("");
 

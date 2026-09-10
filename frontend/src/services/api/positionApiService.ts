@@ -244,11 +244,17 @@ export const positionApiService = {
   // description/responsibilities/internalRelations/externalRelations/
   // competencies/workConditions/performanceIndicators/evaluationCriteria/
   // company/_count — ninguno de esos campos lo usa Legajos, ver
-  // docs/decisions/POSITIONS_PERFORMANCE_FOR_EMPLOYEES_14D4.md). No toca
-  // PuestosPage/PuestoDetailPage/PuestoCreatePage/WorkScheduleSettingsPage,
-  // que siguen usando `getAll()`/`list()`/`getById()` sin cambios.
-  async getOptions() {
-    const key = "/positions/options";
+  // docs/decisions/POSITIONS_PERFORMANCE_FOR_EMPLOYEES_14D4.md).
+  // Etapa 14H.7: `includeAssignedCount` (opt-in, default false) agrega
+  // `_count.employees` al select — usado por PuestosPage.tsx (tarjetas de
+  // resumen + opciones de rango salarial) y PuestoCreatePage.tsx (próximo
+  // código), que antes llamaban `getAll()` (positionInclude completo) para
+  // leer sólo `status`/`assignedCount`/`salaryCategoryNames`/`code`. Misma
+  // policy/familia que `getAll()` — invalidación ya cubierta por
+  // `invalidateCacheFamily("positions", ...)` en create/update/removeOrHide,
+  // sin código nuevo. Ver docs/decisions/POSITIONS_MODULE_PERFORMANCE_14H7.md.
+  async getOptions(params?: { includeAssignedCount?: boolean }) {
+    const key = params?.includeAssignedCount ? "/positions/options?includeAssignedCount=true" : "/positions/options";
     return cachedData({
       requestKey: `GET:${key}`,
       policy: cachePolicies.positionsCatalog,
@@ -264,9 +270,19 @@ export const positionApiService = {
       validate: isPositionDetail,
     });
   },
+  // Etapa 14H.7: envuelto en cachedData (antes era un apiRequest crudo sin
+  // dedupe) — al pasar a depender sólo del `id` de la ruta (ver
+  // PuestoDetailPage.tsx), esta llamada quedó expuesta al doble-montaje de
+  // StrictMode (2 requests reales por apertura de detalle, confirmado en el
+  // journey) — mismo hallazgo/mismo fix que workRegimeEmployeesList (14H.2).
   async getAssignedEmployees(id: string) {
-    const response = await apiRequest<ApiAssignedEmployeesResponse>(`/positions/${id}/employees`);
-    return response.data.map(mapAssignedEmployee);
+    const key = `/positions/${id}/employees`;
+    return cachedData({
+      requestKey: `GET:${key}`,
+      policy: cachePolicies.positionsAssignedEmployees,
+      fetcher: () => apiRequest<ApiAssignedEmployeesResponse>(key).then((response) => response.data.map(mapAssignedEmployee)),
+      validate: (value: unknown) => Array.isArray(value),
+    });
   },
   async create(position: Position) {
     const response = await apiRequest<ApiItemResponse>("/positions", { method: "POST", body: mapToApi(position) });

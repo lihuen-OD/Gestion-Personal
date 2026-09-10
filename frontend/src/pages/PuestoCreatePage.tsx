@@ -26,9 +26,12 @@ export function PuestoCreatePage() {
   const [position, setPosition] = useState<Position>({ ...emptyPosition(), id: crypto.randomUUID(), history: [], createdAt: "", updatedAt: "" });
   const [error, setError] = useState("");
 
+  // Etapa 14H.7: getAll() (positionInclude completo) -> getOptions() (select
+  // liviano, 14D.4) — getNextCode() sólo lee `.code`, ya incluido en el
+  // catálogo liviano. Ver docs/decisions/POSITIONS_MODULE_PERFORMANCE_14H7.md.
   useEffect(() => {
     let alive = true;
-    positionApiService.getAll()
+    positionApiService.getOptions()
       .then((items) => {
         if (!alive) return;
         setUsesApi(true);

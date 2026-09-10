@@ -106,8 +106,13 @@ export function PuestosPage() {
 
   // Las tarjetas resumen y las opciones de "Rango salarial" del filtro
   // necesitan el universo completo de puestos (no sólo la página visible) —
-  // se mantiene un fetch aparte con getAll() (sin filtrar, hasta 300, sin
-  // cambios respecto de antes) sólo para eso, nunca para pintar la tabla.
+  // se mantiene un fetch aparte, nunca para pintar la tabla. Etapa 14H.7:
+  // pasó de getAll() (positionInclude completo: 9 columnas JSON + company/
+  // businessUnit completos) a getOptions({includeAssignedCount:true}) — lo
+  // único que summary()/options() leen es status/assignedCount/
+  // salaryCategoryNames, ya cubierto por el catálogo liviano de 14D.4 más el
+  // _count opcional agregado esta etapa. Ver docs/decisions/
+  // POSITIONS_MODULE_PERFORMANCE_14H7.md.
   const [statsItems, setStatsItems] = useState<Position[]>([]);
   const [statsLoaded, setStatsLoaded] = useState(false);
 
@@ -121,7 +126,7 @@ export function PuestosPage() {
 
   useEffect(() => {
     let alive = true;
-    positionApiService.getAll()
+    positionApiService.getOptions({ includeAssignedCount: true })
       .then((data) => { if (alive) { setStatsItems(data); setStatsLoaded(true); } })
       .catch(() => { if (alive) setStatsLoaded(true); });
     return () => { alive = false; };

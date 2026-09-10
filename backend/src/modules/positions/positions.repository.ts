@@ -155,7 +155,14 @@ export const positionsRepository = {
       return [listCache.data.slice(skip, skip + query.take), listCache.data.length] as const;
     }
 
-    return prisma.$transaction([
+    // Etapa 14H.7: findMany + count son lecturas independientes (ninguna
+    // depende del resultado de la otra) — $transaction([...]) las pinaba a
+    // una única conexión de Neon en serie sin ganar concurrencia real. A
+    // diferencia de las tarjetas de Configuración (donde este antipatrón se
+    // ejercitaba vía un caller externo), acá se ejercita directamente por el
+    // propio filtro/búsqueda de PuestosPage.tsx. Mismo patrón ya aplicado
+    // 14+ veces en las series 14G/14H — where/orderBy/skip/take sin cambios.
+    return Promise.all([
       prisma.position.findMany({
         where,
         include: positionInclude,
@@ -174,6 +181,18 @@ export const positionsRepository = {
     });
   },
 
+  // Etapa 14H.7: existencia liviana — usada por listAssignedEmployees()
+  // (positions.service.ts) sólo para confirmar que el puesto existe (y
+  // mapear P2025 -> 404), descartando el resultado por completo. Antes
+  // reusaba findById() (positionInclude completo: 9 columnas JSON + cadena
+  // sector->area->establishment->{businessUnit,company} + salaryCategories)
+  // para un chequeo que sólo necesita el `id` — mismo criterio de "no traer
+  // detalle completo cuando sólo se necesitan pocos campos" ya aplicado en
+  // positionOptionSelect (14D.4).
+  existsById(id: string) {
+    return prisma.position.findUniqueOrThrow({ where: { id }, select: { id: true } });
+  },
+
   // Etapa 14D.4: catálogo liviano — mismo criterio de "sin filtros pedidos
   // hoy" que llevó a no exponer `search` en el schema (§ arriba). Orden
   // estable (mismo criterio que `findMany`: status asc, name asc) para que
@@ -184,10 +203,18 @@ export const positionsRepository = {
   // aplica a `findMany`/`findById` (arriba, `positionInclude` con `_count` —
   // fuera de alcance, ver riesgos §6 de 14D.6). Ver docs/decisions/
   // PRISMA_RELATION_JOINS_LIMITED_ROLLOUT_14D7.md.
+  // Etapa 14H.7: `includeAssignedCount` agrega `_count.employees` al select
+  // sólo cuando se pide (default: no, igual que siempre) — habilita reusar
+  // este mismo catálogo liviano desde PuestosPage.tsx (tarjetas de resumen +
+  // opciones de rango salarial), que sí necesita assignedCount a diferencia
+  // de los 3 callers de Legajos (sin cambios para ellos, mismo select por
+  // defecto). Ver docs/decisions/POSITIONS_MODULE_PERFORMANCE_14H7.md.
   findOptions(query: ListPositionOptionsQuery) {
     return prisma.position.findMany({
       where: query.status ? { status: query.status } : {},
-      select: positionOptionSelect,
+      select: query.includeAssignedCount
+        ? { ...positionOptionSelect, _count: { select: { employees: true } } }
+        : positionOptionSelect,
       orderBy: [{ status: "asc" }, { name: "asc" }],
       take: query.take,
       relationLoadStrategy: "join",

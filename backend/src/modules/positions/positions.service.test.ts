@@ -13,6 +13,7 @@ import { roles } from "../../shared/security/roles";
 vi.mock("./positions.repository", () => ({
   positionsRepository: {
     findById: vi.fn(),
+    existsById: vi.fn(),
     findAssignedEmployees: vi.fn(),
     findMany: vi.fn(),
     findOptions: vi.fn(),
@@ -20,7 +21,7 @@ vi.mock("./positions.repository", () => ({
   invalidatePositionsCache: vi.fn(),
 }));
 
-const repo = positionsRepository as unknown as { findById: Mock; findAssignedEmployees: Mock; findMany: Mock; findOptions: Mock };
+const repo = positionsRepository as unknown as { findById: Mock; existsById: Mock; findAssignedEmployees: Mock; findMany: Mock; findOptions: Mock };
 
 const rrhhUser = { id: "user-rrhh", role: roles.rrhh } as unknown as Express.AuthUser;
 const supervisionUser = { id: "user-sup", role: roles.supervision } as unknown as Express.AuthUser;
@@ -29,6 +30,7 @@ const cargaHorariaUser = { id: "user-carga", role: roles.cargaHoraria } as unkno
 beforeEach(() => {
   vi.clearAllMocks();
   repo.findById.mockResolvedValue({ id: "pos-1", code: "PUE-1", name: "Puesto 1", _count: { employees: 1 } });
+  repo.existsById.mockResolvedValue({ id: "pos-1" });
   repo.findAssignedEmployees.mockResolvedValue([]);
 });
 
@@ -68,10 +70,21 @@ describe("positionsService.listAssignedEmployees", () => {
   });
 
   it("verifica que el puesto exista antes de listar (404 si no existe)", async () => {
-    repo.findById.mockRejectedValue(new Error("not found"));
+    repo.existsById.mockRejectedValue(new Error("not found"));
 
     await expect(positionsService.listAssignedEmployees("pos-inexistente", rrhhUser)).rejects.toThrow();
     expect(repo.findAssignedEmployees).not.toHaveBeenCalled();
+  });
+
+  // Etapa 14H.7: el chequeo de existencia paso de findById() (positionInclude
+  // completo) a existsById() (select minimo) — el resultado nunca se usaba
+  // para nada mas que el 404, asi que este test confirma que el camino feliz
+  // ya no paga ese costo.
+  it("usa existsById (select minimo), no findById (positionInclude completo), para el chequeo de existencia", async () => {
+    await positionsService.listAssignedEmployees("pos-1", rrhhUser);
+
+    expect(repo.existsById).toHaveBeenCalledWith("pos-1");
+    expect(repo.findById).not.toHaveBeenCalled();
   });
 });
 
