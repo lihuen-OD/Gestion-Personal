@@ -1,0 +1,268 @@
+{
+  "stage": "14I.1",
+  "generatedAt": "2026-09-10",
+  "type": "static-diagnostic-inventory",
+  "note": "Compilado a mano por lectura directa de codigo, cruzado con un segundo agente de grep exhaustivo independiente (ver revisionNote). Sin cambios de codigo productivo en esta etapa.",
+  "revisionNote": "Primera pasada reporto 22 caches backend y 5 $transaction remanentes; el cruce con un segundo agente sumo 1 $transaction adicional (forma callback, timeEntries.repository.ts:977 attendanceSummary), la familia completa de 6 caches de employees.controller.ts, el cache de auth.service.ts, los caches de infraestructura de googleDriveStorage.provider.ts, y 3 candidatos de over-fetch nuevos. Total corregido: ~34 caches, 6 $transaction remanentes.",
+  "transactions": {
+    "fixedHistorical": [
+      { "module": "employees", "file": "backend/src/modules/employees/employees.repository.ts", "function": "findMany", "stage": "14C.1" },
+      { "module": "employees", "file": "backend/src/modules/employees/employees.repository.ts", "function": "aggregation", "stage": "14C.3" },
+      { "module": "work-regimes", "file": "backend/src/modules/work-regimes/workRegimes.repository.ts", "function": "findMany", "stage": "14H.2" },
+      { "module": "work-regimes", "file": "backend/src/modules/work-regimes/workRegimes.repository.ts", "function": "findEmployees", "stage": "14H.2" },
+      { "module": "time-entries", "file": "backend/src/modules/time-entries/timeEntries.repository.ts", "function": "homeCounts/attendanceObservedCount", "stage": "14G.2" },
+      { "module": "time-entries", "file": "backend/src/modules/time-entries/timeEntries.repository.ts", "function": "attendanceObservations", "stage": "14G.3" },
+      { "module": "shifts", "file": "backend/src/modules/shifts/shiftAlert.repository.ts", "function": "findMany", "stage": "14G.5" },
+      { "module": "workforce-management", "file": "backend/src/modules/workforce-management/workforce.service.ts", "function": "notifications", "stage": "14G.6" },
+      { "module": "time-entries", "file": "backend/src/modules/time-entries/timeEntries.repository.ts", "function": "findManyByEmployeeGrouped + findMany (flat)", "stage": "14G.7" },
+      { "module": "shifts", "file": "backend/src/modules/shifts/holidayWorkAssignment.repository.ts", "function": "findCandidates", "stage": "14H.4" },
+      { "module": "hour-concepts", "file": "backend/src/modules/hour-concepts/hourConcepts.repository.ts", "function": "findMany (filtered) + findEmployees", "stage": "14H.5" },
+      { "module": "document-categories", "file": "backend/src/modules/document-categories/documentCategories.repository.ts", "function": "findMany (filtered)", "stage": "14H.6" },
+      { "module": "audit-parameters", "file": "backend/src/modules/audit-parameters/auditParameters.repository.ts", "function": "findMany", "stage": "14H.6" },
+      { "module": "positions", "file": "backend/src/modules/positions/positions.repository.ts", "function": "findMany (filtered)", "stage": "14H.7" },
+      { "module": "novelty-types", "file": "backend/src/modules/novelty-types/noveltyTypes.repository.ts", "function": "findMany (filtered)", "stage": "14H.8" }
+    ],
+    "remaining": [
+      {
+        "module": "novelties",
+        "file": "backend/src/modules/novelties/novelties.repository.ts",
+        "line": 166,
+        "function": "findMany",
+        "form": "array",
+        "conditional": false,
+        "realCaller": true,
+        "callers": ["NoveltiesPage.tsx", "NoveltyModal.tsx", "EmployeeHoursPage.tsx (noveltyApiService.getAll({employeeId}))"],
+        "rbacScoped": true,
+        "priority": "P0",
+        "risk": "low",
+        "recommendation": "Promise.all([findMany, count]) — same mechanical fix applied 15 times already"
+      },
+      {
+        "module": "users",
+        "file": "backend/src/modules/users/users.repository.ts",
+        "line": 41,
+        "function": "findMany",
+        "form": "array",
+        "conditional": false,
+        "realCaller": true,
+        "callers": ["UsersPage.tsx"],
+        "rbacScoped": "adminRoles only",
+        "priority": "P0",
+        "risk": "low",
+        "recommendation": "Promise.all([findMany, count]); add repository test file (module has zero tests today)"
+      },
+      {
+        "module": "documents",
+        "file": "backend/src/modules/documents/documents.repository.ts",
+        "line": 72,
+        "function": "findMany",
+        "form": "array",
+        "conditional": false,
+        "realCaller": true,
+        "callers": ["DocumentsPage.tsx"],
+        "rbacScoped": true,
+        "mitigatedBy": "documentsListCache (20s, userScopedCacheKey)",
+        "priority": "P0/P1",
+        "risk": "low",
+        "recommendation": "Promise.all([findMany, count]); add repository-level cache-isolation test"
+      },
+      {
+        "module": "salary-categories",
+        "file": "backend/src/modules/salary-categories/salaryCategories.repository.ts",
+        "line": 52,
+        "function": "findMany",
+        "form": "array",
+        "conditional": true,
+        "conditionalBranch": "hasActiveFilters",
+        "realCaller": false,
+        "callers": ["salaryCategoryApiService.getAll() from PuestoSalaryRangeTab.tsx — never passes filters"],
+        "priority": "P2",
+        "risk": "low",
+        "recommendation": "Document only for now, or fix transparently noting no live caller (same treatment as novelty-types before 14H.8)"
+      },
+      {
+        "module": "hour-concepts",
+        "file": "backend/src/modules/hour-concepts/hourConceptRules.repository.ts",
+        "line": 23,
+        "function": "findMany",
+        "form": "array",
+        "conditional": false,
+        "realCaller": false,
+        "callers": [],
+        "note": "General rules listing, distinct from findByConceptId/listByConcept which IS used and has no $transaction. Confirmed unchanged since 14H.5. Easy-to-miss sibling of the already-fixed hourConcepts.repository.ts (different file, near-identical name).",
+        "priority": "P2",
+        "risk": "low",
+        "recommendation": "Do not fix without a real caller (established 14H.5/14H.6 criterion)"
+      },
+      {
+        "module": "time-entries",
+        "file": "backend/src/modules/time-entries/timeEntries.repository.ts",
+        "line": 977,
+        "function": "attendanceSummary",
+        "form": "callback",
+        "conditional": false,
+        "realCaller": true,
+        "callers": ["AttendancePage.tsx (attendance summary)"],
+        "note": "Found by cross-check with a second exhaustive grep agent, missed in the first pass. Callback body contains ZERO writes — just Promise.all([workShift.findMany, attendancePunch.findMany]) wrapped needlessly in $transaction(async (tx)=>{...}). Same anti-pattern class as array form, different syntax. Distinct function from attendanceObservations (already fixed 14G.3) — this specific function was never touched by any 14G stage.",
+        "priority": "P1",
+        "risk": "low, but lives in time-entries.repository.ts (Gestion Horaria/Fichador-adjacent file) — requires the same care as any change to that module",
+        "recommendation": "Promise.all([...]) without the outer $transaction wrapper, once explicitly scoped and reviewed alongside/after the P0 fixes"
+      }
+    ],
+    "legitimateWriteTransactions": [
+      "novelties.repository.ts:199 (create)",
+      "novelty-types.repository.ts:119 (update + finnegansLinks replace)",
+      "org-structure.repository.ts:172,184 (cost center create/update)",
+      "positions.repository.ts:252,265 (create/update + salaryCategories)",
+      "workforce-management/workforce.service.ts:104 (bulk upsert, atomic write)",
+      "workforce-management/workforce.service.ts:127,138 (approve/reject closure)",
+      "time-entries/timeEntries.repository.ts (9 callback-form occurrences, Fichador/carga horaria multi-step writes — not touched)",
+      "employees/employees.repository.ts:1303,1567,1592,1623 (hire/terminate/movement writes)",
+      "employees/automaticHourConceptBreakdowns.repository.ts:52",
+      "time-entries/attendanceInactivity.service.ts:131"
+    ]
+  },
+  "relationJoins": {
+    "previewFeatureEnabled": true,
+    "enabledSinceStage": "14D.7",
+    "schemaFile": "backend/prisma/schema.prisma",
+    "schemaLines": "1-11",
+    "history": "14D.6 diagnosed and reverted; 14D.7 made it permanent — must read both in order",
+    "appliedSites": [
+      { "file": "backend/src/modules/positions/positions.repository.ts", "line": 220, "function": "findOptions", "improvementMeasured": "~85-87%" },
+      { "file": "backend/src/modules/employees/employees.repository.ts", "line": 520, "function": "findPositionValidationByIdParallel (employee.findFirst)", "improvementMeasured": "~83-84% (whole function)" },
+      { "file": "backend/src/modules/employees/employees.repository.ts", "line": 525, "function": "findPositionValidationByIdParallel (position.findUnique hinted)", "improvementMeasured": "~83-84% (whole function)" },
+      { "file": "backend/src/modules/employees/employees.repository.ts", "line": 533, "function": "findPositionValidationByIdParallel (position.findUnique fallback)", "improvementMeasured": "~83-84% (whole function)" },
+      { "file": "backend/src/modules/employees/employees.repository.ts", "line": 1184, "function": "findOverviewDetailsById (sector chain)", "improvementMeasured": "~59-60%" }
+    ],
+    "triedAndRejected": [
+      { "file": "backend/src/modules/dashboard/dashboard.service.ts", "queries": "2 findMany with single-level relations", "stage": "14E.2", "result": "0% measurable improvement — relations too shallow to benefit" }
+    ],
+    "explicitlyExcludedCandidates": [
+      { "target": "GET /positions main endpoint (findMany/findById)", "reason": "uses _count.employees — relationLoadStrategy + _count combination never tested, flagged risk" },
+      { "target": "positionsRepository.findMany with filters", "reason": "uses $transaction — combination with relationLoadStrategy never tested" },
+      { "target": "GET /dashboard/metrics", "reason": "flat single-level relations, nothing to collapse" },
+      { "target": "GET /org-structure", "reason": "flat relations, nothing to collapse" },
+      { "target": "employees block-history/field-history", "reason": "only 1 level of include" }
+    ],
+    "newCandidatesEvaluatedThisStage": [
+      { "module": "novelties", "verdict": "not a candidate — 2-level include, sibling relations, no deep to-one chain" },
+      { "module": "documents", "verdict": "not a candidate — 2-level include" },
+      { "module": "users", "verdict": "not a candidate — no nested relations" },
+      { "module": "salary-categories", "verdict": "not a candidate — no nested relations" }
+    ],
+    "risksToRespect": [
+      "_count compatibility untested",
+      "$transaction compatibility untested",
+      "to-many high-cardinality relations — theoretical row-duplication risk, never tested",
+      "complex where filters untested",
+      "nested orderBy untested",
+      "offset pagination untested",
+      "preview feature, not GA — behavior may change on Prisma upgrades"
+    ]
+  },
+  "caches": [
+    { "name": "dashboardMetricsCache", "file": "backend/src/modules/dashboard/dashboard.cache.ts", "ttlMs": 30000, "key": "global", "userScoped": false, "userScopeNeeded": false, "invalidatedBy": ["clearDashboardMetricsCache (audit.service.register)"], "hasTest": true, "risk": "none" },
+    { "name": "auditListCache", "file": "backend/src/modules/audit/audit.cache.ts", "ttlMs": 15000, "key": "req.originalUrl", "userScoped": false, "userScopeNeeded": false, "verifiedSafe": "auditService.list(query) does not receive user; route gated adminRoles", "invalidatedBy": ["clearAuditListCache (auditService.register)"], "hasTest": false, "risk": "low, verified correct" },
+    { "name": "documentsListCache", "file": "backend/src/modules/documents/documents.cache.ts", "ttlMs": 20000, "key": "userScopedCacheKey(userId:role:originalUrl)", "userScoped": true, "userScopeNeeded": true, "invalidatedBy": ["clearDocumentsReadCaches"], "hasTest": false, "risk": "low; missing dedicated isolation test" },
+    { "name": "noveltiesListCache", "file": "backend/src/modules/novelties/novelties.cache.ts", "ttlMs": 15000, "key": "userScopedCacheKey", "userScoped": true, "userScopeNeeded": true, "invalidatedBy": ["clearNoveltiesReadCaches"], "hasTest": false, "risk": "low; missing dedicated isolation test" },
+    { "name": "shiftTemplatesCache/doubleRulesCache", "file": "backend/src/modules/workforce-management/workforce.cache.ts", "ttlMs": 30000, "key": "global", "userScoped": false, "userScopeNeeded": false, "invalidatedBy": ["clearShiftTemplatesReadCache", "clearDoubleRulesReadCache"], "hasTest": true, "risk": "none" },
+    { "name": "notificationsListCache", "file": "backend/src/modules/workforce-management/workforce.cache.ts", "ttlMs": 10000, "key": "userScopedCacheKey", "userScoped": true, "userScopeNeeded": true, "invalidatedBy": ["clearNotificationsListCache (readNotification only)"], "hasTest": true, "risk": "accepted debt — 5+ generator modules don't invalidate, bounded by 10s TTL, documented since 14G.6/14G.9" },
+    { "name": "closuresCache/correctionsCache", "file": "backend/src/modules/workforce-management/workforce.cache.ts", "ttlMs": 15000, "key": "userScopedCacheKey", "userScoped": true, "userScopeNeeded": true, "invalidatedBy": ["clearMonthlyClosuresReadCaches (6 closed write paths, verified exhaustive)"], "hasTest": true, "risk": "none" },
+    { "name": "shiftAlertListCache", "file": "backend/src/modules/shifts/shiftAlert.cache.ts", "ttlMs": 15000, "key": "userScopedCacheKey", "userScoped": true, "userScopeNeeded": true, "invalidatedBy": ["clearShiftAlertReadCaches (resolve only)"], "hasTest": true, "risk": "accepted debt — Fichador-side alert generation doesn't invalidate, bounded by 15s TTL, documented since 14G.5/14G.9" },
+    { "name": "shiftAssignmentSummaryCache", "file": "backend/src/modules/shifts/shiftAssignment.cache.ts", "ttlMs": 30000, "key": "userScopedCacheKey", "userScoped": true, "userScopeNeeded": true, "invalidatedBy": ["clearShiftAssignmentSummaryCache (5 write paths, closed set)"], "hasTest": true, "risk": "none" },
+    { "name": "timeEntries caches (6)", "file": "backend/src/modules/time-entries/timeEntries.cache.ts", "ttlMs": "10000-20000", "key": "userScopedCacheKey (5 of 6)", "userScoped": true, "userScopeNeeded": true, "invalidatedBy": ["clearTimeEntriesReadCaches (~15 call sites)"], "hasTest": true, "risk": "none" },
+    { "name": "positionOptionsCache", "file": "backend/src/modules/positions/positions.controller.ts", "ttlMs": 60000, "key": "req.originalUrl", "userScoped": false, "userScopeNeeded": false, "invalidatedBy": ["clear() on create/update/remove"], "hasTest": true, "risk": "none" },
+    { "name": "hourConceptsReadCache + repository listCache", "file": "backend/src/modules/hour-concepts/{hourConcepts.controller.ts,hourConcepts.repository.ts}", "ttlMs": "60000 + 120000", "key": "req.originalUrl / global", "userScoped": false, "userScopeNeeded": false, "invalidatedBy": ["both cleared on mutation"], "hasTest": true, "risk": "documented double-layer debt (14H.5)" },
+    { "name": "noveltyTypesListCache/DetailCache + repository listCache", "file": "backend/src/modules/novelty-types/{noveltyTypes.controller.ts,noveltyTypes.repository.ts}", "ttlMs": "60000 + 120000", "key": "req.originalUrl / id / global", "userScoped": false, "userScopeNeeded": false, "invalidatedBy": ["both cleared on mutation"], "hasTest": true, "risk": "documented double-layer debt (14H.8)" },
+    { "name": "documentCategoriesReadCache + repository listCache", "file": "backend/src/modules/document-categories/{documentCategories.controller.ts,documentCategories.repository.ts}", "ttlMs": "60000 + 120000", "key": "req.originalUrl / global", "userScoped": false, "userScopeNeeded": false, "invalidatedBy": ["both cleared on mutation"], "hasTest": true, "risk": "documented double-layer debt (14H.6)" },
+    { "name": "auditParametersReadCache", "file": "backend/src/modules/audit-parameters/auditParameters.controller.ts", "ttlMs": 60000, "key": "req.originalUrl", "userScoped": false, "userScopeNeeded": false, "invalidatedBy": ["clear() on create/update"], "hasTest": true, "risk": "none — single layer only" },
+    { "name": "salaryCategoriesReadCache + repository listCache", "file": "backend/src/modules/salary-categories/{salaryCategories.controller.ts,salaryCategories.repository.ts}", "ttlMs": "60000 + 120000", "key": "req.originalUrl / global", "userScoped": false, "userScopeNeeded": false, "invalidatedBy": ["both cleared on mutation"], "hasTest": false, "risk": "NEW double-layer debt, never documented before this stage; module has zero tests" },
+    { "name": "usersListCache/usersDetailCache", "file": "backend/src/modules/users/users.controller.ts", "ttlMs": 30000, "key": "req.originalUrl / id", "userScoped": false, "userScopeNeeded": false, "invalidatedBy": ["clearUsersReadCache on create/update/reset"], "hasTest": false, "risk": "low; module has zero tests" },
+    { "name": "overviewCache", "file": "backend/src/modules/org-structure/orgStructure.repository.ts", "ttlMs": 60000, "key": "global (no filters, single overview fetch)", "userScoped": false, "userScopeNeeded": false, "invalidatedBy": ["invalidateOverviewCache (12 mutators, closed set confirmed 14H.6)"], "hasTest": true, "risk": "none" },
+    { "name": "timeGridCatalogCache", "file": "backend/src/modules/employees/employees.repository.ts", "line": 715, "ttlMs": 120000, "key": "global", "userScoped": false, "userScopeNeeded": false, "invalidatedBy": [], "hasTest": false, "risk": "isolated one-off pattern; NO explicit invalidation found — expires only by TTL; stale window up to 120s after a NoveltyType/HourConcept create/update" },
+    { "name": "employeeDetailCache", "file": "backend/src/modules/employees/employees.controller.ts", "line": 11, "ttlMs": 30000, "key": "userScopedCacheKey (userId:role:id, +overview/overview-details suffixes)", "userScoped": true, "userScopeNeeded": true, "invalidatedBy": ["clearEmployeeReadCaches (very wide call-site list across employees + hour-concepts + novelties + workforce.approveCorrection)"], "hasTest": "partial — only invalidation call assertions, no hit/miss test", "risk": "none (correctly scoped), missing dedicated isolation test", "foundBy": "second-pass grep agent, missed in first pass" },
+    { "name": "employeeTimeGridCache", "file": "backend/src/modules/employees/employees.controller.ts", "line": 12, "ttlMs": 60000, "key": "userScopedCacheKey + :time-grid: + originalUrl", "userScoped": true, "userScopeNeeded": true, "invalidatedBy": ["clearEmployeeTimeGridCache (narrow, time-entries create/update)", "clearEmployeeReadCaches (broad)"], "hasTest": "partial", "risk": "none, missing dedicated test", "foundBy": "second-pass grep agent" },
+    { "name": "employeeListCache", "file": "backend/src/modules/employees/employees.controller.ts", "line": 13, "ttlMs": 20000, "key": "userScopedCacheKey", "userScoped": true, "userScopeNeeded": true, "invalidatedBy": ["clearEmployeeReadCaches"], "hasTest": "partial", "risk": "none, missing dedicated test", "foundBy": "second-pass grep agent" },
+    { "name": "employeeSummaryCache", "file": "backend/src/modules/employees/employees.controller.ts", "line": 14, "ttlMs": 20000, "key": "userScopedCacheKey", "userScoped": true, "userScopeNeeded": true, "invalidatedBy": ["clearEmployeeReadCaches"], "hasTest": "partial", "risk": "none, missing dedicated test", "foundBy": "second-pass grep agent" },
+    { "name": "employeeOrgChartCache", "file": "backend/src/modules/employees/employees.controller.ts", "line": 15, "ttlMs": 20000, "key": "userScopedCacheKey", "userScoped": true, "userScopeNeeded": true, "invalidatedBy": ["clearEmployeeReadCaches"], "hasTest": "partial", "risk": "none, missing dedicated test", "foundBy": "second-pass grep agent" },
+    { "name": "employeeOptionsCache", "file": "backend/src/modules/employees/employees.controller.ts", "line": 16, "ttlMs": 30000, "key": "userScopedCacheKey", "userScoped": true, "userScopeNeeded": true, "invalidatedBy": ["clearEmployeeReadCaches"], "hasTest": "partial", "risk": "none, missing dedicated test", "foundBy": "second-pass grep agent" },
+    { "name": "currentUserCache", "file": "backend/src/modules/auth/auth.service.ts", "line": 35, "ttlMs": "AUTH_USER_CACHE_MS env, default 5000", "key": "Map<userId,...> — inherently per-user", "userScoped": true, "userScopeNeeded": true, "invalidatedBy": ["auth.service.ts logout", "users.service.ts create/update/resetPassword"], "hasTest": false, "risk": "none (safe by construction), no dedicated test", "foundBy": "second-pass grep agent" },
+    { "name": "googleDriveStorage token + folder cache", "file": "backend/src/shared/storage/googleDriveStorage.provider.ts", "line": "17-19", "ttlMs": "per expires_in, 60s refresh margin (token); permanent per-process (folder cache)", "key": "N/A (single OAuth token) / folder path string", "userScoped": false, "userScopeNeeded": false, "invalidatedBy": ["implicit overwrite on refresh (token)", "none found (folder cache)"], "hasTest": false, "risk": "infra-level, not user data, no leak risk; untested", "foundBy": "second-pass grep agent" }
+  ],
+  "ttlCacheDesignNote": "backend/src/shared/cache/ttlCache.ts exposes only get/set/clear() — no per-key delete. Every 'invalidation' in the codebase is a full clear() wiping all entries (all users/filters), not just the mutated row. Correct for safety (never serves stale cross-user data longer than necessary) but inefficient for hit-rate (one user's write clears everyone's cache for that resource). Not a bug in any of the ~34 caches — a design characteristic worth considering if a new shared helper is extracted in 14I.3.",
+  "cacheArchitectureDebt": {
+    "formA": "createTtlCache shared factory — 8 .cache.ts files + 7 inline controller caches, consistent and tested",
+    "formB": "hand-copied repository-level listCache ({data,expiresAt}|null + hasActiveFilters branch), duplicated identically in 5 modules: positions, hour-concepts, novelty-types, document-categories, salary-categories — never extracted to a shared helper",
+    "stackedAB": ["hour-concepts", "novelty-types", "document-categories", "salary-categories"],
+    "oneOffVariant": "timeGridCatalogCache in employees.repository.ts — reinvents formB shape without invalidation",
+    "performanceStandardsDocDrift": [
+      "PERFORMANCE_STANDARDS.md §17 claims notifications have no cache — false since 14G.6 added notificationsListCache",
+      "PERFORMANCE_STANDARDS.md §17 claims closures() has no cache, same as notifications — false since 14G.8 added closuresCache/correctionsCache",
+      "PERFORMANCE_STANDARDS.md §15 describes '4 distinct cache patterns' — more precisely 2 forms (A and B) inconsistently stacked, and omits the newly-found salary-categories double-layer"
+    ]
+  },
+  "uncachedCriticalEndpoints": [
+    { "endpoint": "GET /workforce/shift-templates", "frontendCache": false, "backendCache": true, "realProblem": "frontend gap only, backend already cached 30s", "priority": "P2 (frontend, out of scope for this backend diagnostic)" },
+    { "endpoint": "GET /workforce/double-hour-rules", "frontendCache": false, "backendCache": true, "realProblem": "frontend gap only", "priority": "P2 (frontend)" },
+    { "endpoint": "GET /employees/:id/time-grid (embedded catalog)", "frontendCache": "not audited here", "backendCache": "yes but unbounded staleness (timeGridCatalogCache)", "realProblem": "StrictMode duplicate x3 confirmed by 14G.9, never fixed (out of 14G scope — belongs to Legajos)", "priority": "P1" },
+    { "endpoint": "GET /novelties", "frontendCache": "not audited here", "backendCache": true, "realProblem": "$transaction remains the real issue, not absence of cache", "priority": "see transactions.remaining" },
+    { "endpoint": "GET /users", "frontendCache": "not audited here", "backendCache": true, "realProblem": "$transaction remains the real issue", "priority": "see transactions.remaining" }
+  ],
+  "overFetchingCandidates": [
+    { "file": "backend/src/modules/time-entries/timeEntries.repository.ts", "function": "attendanceObservations", "issue": "startPunch/endPunch bring full AttendancePunch object", "status": "documented 14G.3, not fixed — would change response shape", "priority": "P2" },
+    { "file": "backend/src/modules/time-entries/timeEntries.repository.ts", "function": "findMany (Bandeja, flat view)", "issue": "include: {hourConcept: true} full object instead of {name, kind}", "status": "documented 14G.7, not fixed", "priority": "P2" },
+    { "file": "backend/src/modules/workforce-management/workforce.service.ts", "function": "corrections", "issue": "same hourConcept full-object over-fetch", "status": "documented 14G.8, not fixed", "priority": "P2" },
+    { "file": "backend/src/modules/employees/employees.repository.ts", "function": "getTimeGridCatalogs", "issue": "brings finnegansLinks/full catalogs when the grid only needs id/name", "status": "NEW observation this stage — low impact (small catalog), same class as novelty-types/hour-concepts over-fetch already fixed elsewhere", "priority": "P2" },
+    { "file": "backend/src/modules/positions/positions.repository.ts", "function": "findMany/findById (main GET /positions)", "issue": "positionInclude with _count — looks heavy but confirmed correct shape for its real consumer (Puestos itself), not over-fetch", "status": "false positive, dismissed with evidence (14D.4/14D.7)", "priority": "none" },
+    { "file": "backend/src/modules/employees/employees.repository.ts", "lines": "755-783", "function": "findOrgChart (via employeeOrgChartSelect)", "issue": "4-level sector->area->establishment->businessUnit chain fetched per row of a LISTING endpoint, not just a detail view — same shape class that made GET /positions slow before 14D.4", "status": "NEW, never audited from this angle by any 14C/14D stage", "priority": "P1 — highest-impact new over-fetch finding this stage, but requires explicit authorization to touch employees (Legajos)", "foundBy": "second-pass grep agent" },
+    { "file": "backend/src/modules/time-entries/timeEntries.repository.ts", "lines": "26-36", "function": "findMany (line 501) and findById (line 961), both reuse timeEntryInclude", "issue": "3-level timeSegment->specialHourRuleApplications->doubleHourRule relation fetched identically for every row of the paginated list and for the single-record detail", "status": "NEW — needs confirmation against actual frontend table columns before any change (would alter response shape)", "priority": "P2", "foundBy": "second-pass grep agent" },
+    { "file": "backend/src/modules/novelties/novelties.repository.ts", "lines": "6-31", "function": "noveltyInclude.noveltyType.finnegansLinks, reused by approve/reject/remove", "issue": "nested finnegansLinks relation fetched on every approve/reject/remove round-trip even though those service functions (novelties.service.ts:142-210) never read it — only approvalRoles/setsWorkedHoursToZero/exportsToFinnegans/employee.legajo", "status": "NEW — low individual impact, paid on every mutation", "priority": "P2", "foundBy": "second-pass grep agent" }
+  ],
+  "roadmap": [
+    {
+      "stage": "14I.2",
+      "title": "relationJoins quirurgico",
+      "objective": "Evaluate relationLoadStrategy:'join' on GET /positions main endpoint (positionInclude with _count.employees), isolated benchmark first",
+      "scope": ["backend/src/modules/positions/positions.repository.ts (findMany, findById)"],
+      "benefits": "Potential 60-90% latency reduction on the heaviest remaining Puestos endpoint, consistent with prior relationJoins measurements",
+      "risks": "medium — _count + relationLoadStrategy combination never tested in this codebase",
+      "validations": ["isolated benchmark script (not committed)", "npm test", "npm run build", "byte-identical shape comparison", "perf:journey:admin-config"],
+      "needsFeatureFlag": false,
+      "needsNewJourney": false
+    },
+    {
+      "stage": "14I.3",
+      "title": "Consolidacion de patron de cache backend",
+      "objective": "Extract the hand-copied repository-level listCache pattern (Form B) into a shared helper, used identically by 5 modules",
+      "scope": ["backend/src/modules/{positions,hour-concepts,novelty-types,document-categories,salary-categories}/*.repository.ts", "new backend/src/shared/cache/listCache.ts"],
+      "benefits": "Removes 5 duplicated implementations, single point of maintenance/testing",
+      "risks": "low if done as mechanical refactor with regression tests, no behavior change",
+      "validations": ["npm test (existing tests for all 5 modules must pass unchanged)", "npm run build"],
+      "needsFeatureFlag": false,
+      "needsNewJourney": false
+    },
+    {
+      "stage": "14I.4",
+      "title": "Limpieza de $transaction restantes (P0)",
+      "objective": "Apply Promise.all fix to novelties.repository.ts, users.repository.ts, documents.repository.ts",
+      "scope": ["backend/src/modules/novelties/novelties.repository.ts", "backend/src/modules/users/users.repository.ts", "backend/src/modules/documents/documents.repository.ts", "new repository tests for users (zero tests today)"],
+      "benefits": "Same mechanical improvement pattern already validated 15 times; closes the last real P0 gaps",
+      "risks": "minimal — identical pattern with zero regressions across 15 prior applications",
+      "validations": ["npx prisma validate", "npm run typecheck", "npm test", "npm run build"],
+      "needsFeatureFlag": false,
+      "needsNewJourney": "undecided — none of the 3 modules are covered by an existing journey; may apply without journey measurement, same as salaryCategories/hourConceptRules precedent"
+    },
+    {
+      "stage": "14I.5 (optional, low priority)",
+      "title": "P1 loose ends",
+      "objective": "Add invalidation to timeGridCatalogCache; add cache-isolation tests to documents/novelties; investigate the 3 StrictMode duplicates named by 14G.9 but never closed",
+      "scope": ["backend/src/modules/employees/employees.repository.ts (invalidation only)", "backend/src/modules/{documents,novelties}/*.test.ts (new tests)", "frontend services for EmployeeHoursPage/NoveltiesPage/FinnegansExportPage duplicates"],
+      "benefits": "Closes long-standing named-but-never-taken candidates",
+      "risks": "touching employees.repository.ts requires explicit authorization (Legajos)",
+      "validations": ["npm test", "npm run build", "relevant journeys if touched"],
+      "needsFeatureFlag": false,
+      "needsNewJourney": true
+    }
+  ]
+}
