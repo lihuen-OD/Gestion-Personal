@@ -85,6 +85,22 @@ describe("findMany — rama sin filtros (listCache vía repositoryListCache), Et
     expect(mockedPrisma.hourConcept.findMany).toHaveBeenCalledTimes(1);
   });
 
+  // Etapa 14I.10 — diagnóstico de la doble capa de cache controller+
+  // repository: `hourConceptsReadCache` (controller, key = `req.originalUrl`)
+  // trata `?page=1` y `?page=2` como 2 entradas DISTINTAS (2 cache-miss), pero
+  // ambas caen acá en la misma rama "sin filtros" — este test confirma que
+  // el `listCache` de repositorio SÍ las sirve a las dos desde una única
+  // lectura real a la base (evidencia de que la doble capa no es puramente
+  // redundante, ver docs/decisions/DOUBLE_LAYER_CACHE_DIAGNOSTIC_14I10.md).
+  it("páginas distintas de la MISMA lista sin filtros comparten el listCache — una sola lectura real a la base para ambas", async () => {
+    mockedPrisma.hourConcept.findMany.mockResolvedValue(Array.from({ length: 5 }, (_, i) => ({ id: `hc-${i}` })));
+
+    await hourConceptsRepository.findMany({ page: 1, take: 2 } as never);
+    await hourConceptsRepository.findMany({ page: 2, take: 2 } as never);
+
+    expect(mockedPrisma.hourConcept.findMany).toHaveBeenCalledTimes(1);
+  });
+
   it("pagina en memoria sobre la data cacheada (skip/take de la query, no de la consulta a la base)", async () => {
     const rows = Array.from({ length: 5 }, (_, index) => ({ id: `hc-${index}` }));
     mockedPrisma.hourConcept.findMany.mockResolvedValue(rows);

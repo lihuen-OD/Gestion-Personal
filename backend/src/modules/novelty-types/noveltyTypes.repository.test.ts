@@ -76,6 +76,22 @@ describe("noveltyTypesRepository.findMany — Etapa 14H.8", () => {
 
     expect(mockedPrisma.noveltyType.findMany).toHaveBeenCalledTimes(1);
   });
+
+  // Etapa 14I.10 — diagnóstico de la doble capa de cache controller+
+  // repository: `noveltyTypesListCache` (controller, key = `req.originalUrl`)
+  // trata `?page=1` y `?page=2` como 2 entradas DISTINTAS (2 cache-miss), pero
+  // ambas caen en la misma rama "sin filtros" acá — este test confirma que el
+  // `listCache` de repositorio SÍ las sirve a las dos desde una única lectura
+  // real a la base, algo que la cache de controller sola no puede lograr
+  // (evidencia de que la doble capa no es puramente redundante).
+  it("páginas distintas de la MISMA lista sin filtros comparten el listCache — una sola lectura real a la base para ambas", async () => {
+    mockedPrisma.noveltyType.findMany.mockResolvedValue(Array.from({ length: 5 }, (_, i) => ({ id: `nt-${i}` })));
+
+    await noveltyTypesRepository.findMany(baseQuery({ page: 1, take: 2 }));
+    await noveltyTypesRepository.findMany(baseQuery({ page: 2, take: 2 }));
+
+    expect(mockedPrisma.noveltyType.findMany).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("noveltyTypesRepository.findById", () => {

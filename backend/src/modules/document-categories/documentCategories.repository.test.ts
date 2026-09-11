@@ -89,4 +89,21 @@ describe("documentCategoriesRepository.findMany — rama sin filtros (listCache)
 
     expect(mockedPrisma.documentCategory.findMany).toHaveBeenCalledTimes(1);
   });
+
+  // Etapa 14I.10 — diagnóstico de la doble capa de cache controller+
+  // repository: `documentCategoriesReadCache` (controller, key =
+  // `req.originalUrl`) trata `?page=1` y `?page=2` como 2 entradas DISTINTAS
+  // (2 cache-miss), pero ambas caen acá en la misma rama "sin filtros" —
+  // este test confirma que el `listCache` de repositorio SÍ las sirve a las
+  // dos desde una única lectura real a la base (evidencia de que la doble
+  // capa no es puramente redundante, ver docs/decisions/
+  // DOUBLE_LAYER_CACHE_DIAGNOSTIC_14I10.md).
+  it("páginas distintas de la MISMA lista sin filtros comparten el listCache — una sola lectura real a la base para ambas", async () => {
+    mockedPrisma.documentCategory.findMany.mockResolvedValue(Array.from({ length: 5 }, (_, i) => ({ id: `cat-${i}` })));
+
+    await documentCategoriesRepository.findMany({ page: 1, take: 2 } as never);
+    await documentCategoriesRepository.findMany({ page: 2, take: 2 } as never);
+
+    expect(mockedPrisma.documentCategory.findMany).toHaveBeenCalledTimes(1);
+  });
 });

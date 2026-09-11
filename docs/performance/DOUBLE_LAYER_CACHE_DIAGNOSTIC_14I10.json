@@ -1,0 +1,97 @@
+{
+  "stage": "14I.10",
+  "generatedAt": "2026-09-11",
+  "type": "diagnostic-plus-tests",
+  "note": "Diagnostico quirurgico de la doble capa de cache controller+repository en 4 modulos. Cero cambios de codigo productivo. Se agregaron 26 tests nuevos (cobertura pura) que ademas demuestran empiricamente el valor real de la cache de repositorio.",
+  "relatedStages": {
+    "14I1": "docs/decisions/BACKEND_PERFORMANCE_INFRASTRUCTURE_DIAGNOSTIC_14I1.md (nombro el apilamiento A+B, commit 3abb3c4)",
+    "14I3": "docs/decisions/BACKEND_REPOSITORY_LIST_CACHE_HELPER_14I3.md (extrajo la Forma B, no toco la doble capa, commit 66c84f4)",
+    "14I6": "docs/decisions/BACKEND_CACHE_ISOLATION_TESTS_14I6.md (commit c04c718)",
+    "14I7": "docs/decisions/BACKEND_CACHE_REMAINING_TESTS_14I7.md (cerro salary-categories controller cache, commit 75775ab)"
+  },
+  "auditedModules": ["hour-concepts", "novelty-types", "document-categories", "salary-categories"],
+  "modulesExcluded": [
+    { "module": "positions", "reason": "tiene Forma B en el repositorio pero su unica cache de controller (positionOptionsCache) cachea un endpoint distinto (/positions/options), no apilada sobre el mismo recurso" },
+    { "module": "audit-parameters", "reason": "solo tiene Forma A (createTtlCache), sin Forma B — endpoint siempre paginado/filtrado" }
+  ],
+  "controllerCaches": [
+    { "module": "hour-concepts", "name": "hourConceptsReadCache", "ttlMs": 60000, "key": "req.originalUrl", "invalidatedBy": ["create", "update", "remove"], "testsBefore": 0, "testsAfter": 7 },
+    { "module": "novelty-types", "name": "noveltyTypesListCache", "ttlMs": 60000, "key": "req.originalUrl", "invalidatedBy": ["create", "update"], "testsBefore": 0, "testsAfter": 9 },
+    { "module": "novelty-types", "name": "noveltyTypesDetailCache", "ttlMs": 60000, "key": "id", "invalidatedBy": ["create", "update"], "testsBefore": 0, "testsAfter": "incluido en los 9 de arriba" },
+    { "module": "document-categories", "name": "documentCategoriesReadCache", "ttlMs": 60000, "key": "req.originalUrl", "invalidatedBy": ["create", "update"], "testsBefore": 0, "testsAfter": 6 },
+    { "module": "salary-categories", "name": "salaryCategoriesReadCache", "ttlMs": 60000, "key": "req.originalUrl", "invalidatedBy": ["create", "update"], "testsBefore": 6, "testsAfter": 6 }
+  ],
+  "repositoryCaches": [
+    { "module": "hour-concepts", "name": "listCache (createRepositoryListCache)", "ttlMs": 120000, "key": "none (single global entry)", "invalidatedBy": ["invalidateHourConceptsCache() from service create/update/remove"], "externalCallers": 0 },
+    { "module": "novelty-types", "name": "listCache", "ttlMs": 120000, "key": "none", "invalidatedBy": ["invalidateNoveltyTypesCache() from service create/update"], "externalCallers": 0 },
+    { "module": "document-categories", "name": "listCache", "ttlMs": 120000, "key": "none", "invalidatedBy": ["invalidateDocumentCategoriesCache() from service create/update"], "externalCallers": 0 },
+    { "module": "salary-categories", "name": "listCache", "ttlMs": 120000, "key": "none", "invalidatedBy": ["invalidateSalaryCategoriesCache() from service create/update"], "externalCallers": 0, "note": "filtered branch still uses $transaction, P2 no real caller, documented since 14I.1/14I.2/14I.3, untouched here" }
+  ],
+  "ttls": { "controllerLayerMs": 60000, "repositoryLayerMs": 120000, "consistentAcrossAllFourModules": true },
+  "keys": { "controllerLayer": "req.originalUrl (list) / id (detail, novelty-types only)", "repositoryLayer": "none — single global entry per module, no user/role/query scope" },
+  "invalidations": {
+    "alwaysFiredTogether": true,
+    "crossModuleMutatorsFound": 0,
+    "repositoryMutatorBypassFound": 0,
+    "evidence": "grep exhaustivo de prisma.hourConcept/noveltyType/documentCategory/salaryCategory .update/.create/.delete en todo backend/src — cero resultados fuera del modulo dueno; grep de <repo>.create/update/delete/softDelete — solo llamados desde el service del mismo modulo, siempre seguido de invalidateXCache()"
+  },
+  "callers": {
+    "repositoryCacheExternalCallers": "0 en los 4 modulos — unico caller es siempre <module>Service.list()",
+    "frontendPattern": "fetch-all con take fijo (200/200/300/300), sin paginacion en la UI, con cache propia de 5-10min persistida en IndexedDB (cachePolicies.*Catalog)",
+    "realOriginalUrlVariance": "minima en la practica — todos los callers del mismo servicio producen el mismo originalUrl exacto salvo cuando pasan filtros reales (que ya bypassean ambas caches via hasActiveFilters)"
+  },
+  "risk": {
+    "stale": "ninguno mas alla del TTL declarado (120s max) — ambas capas se invalidan siempre juntas, sincronicamente, en el mismo mutador real",
+    "invalidationInconsistency": "ninguna encontrada — confirmado con grep exhaustivo, no bug",
+    "securityScope": "ninguno — ningun service.list() de los 4 recibe user, catalogos globales sin dimension de scope",
+    "performance": "impacto absoluto bajo dado el volumen actual (vocabulario cerrado chico, ~9E), pero el mecanismo de la cache de repositorio (compartir dataset entre distintos originalUrl sin filtros) es real y quedo demostrado empiricamente con 4 tests nuevos"
+  },
+  "demonstratedMechanism": {
+    "test": "2 llamadas a <repo>.findMany con page distinto (page:1 y page:2), ambas sin filtros activos -> el mock de prisma.findMany se llama UNA sola vez para las dos",
+    "modules": ["hour-concepts", "novelty-types", "document-categories", "salary-categories"],
+    "significance": "prueba que la cache de repositorio protege contra escaneos de originalUrl variable que la cache de controller (keyeada por originalUrl exacto) trataria como misses separados — la doble capa no es puramente redundante"
+  },
+  "maintainability": {
+    "duplicatedPattern": "identico en los 4 modulos (createTtlCache + createRepositoryListCache + .clear() inline + invalidateXCache exportada), ya extraido a helpers compartidos desde 14I.3 — lo que se repite es el patron de USO de 2 capas, no la implementacion del cache",
+    "testCoverageGapClosed": "3 de 4 modulos (hour-concepts/novelty-types/document-categories) no tenian ningun test de controller-cache antes de esta etapa",
+    "costToRemoveEitherLayer": "tecnicamente bajo (ninguna capa depende de la otra), mayormente una decision de arquitectura/producto, no de esfuerzo"
+  },
+  "productionCodeChanged": false,
+  "testsAdded": {
+    "totalNewTests": 26,
+    "newFiles": 3,
+    "modifiedFilesAdditiveOnly": 4,
+    "byFile": [
+      { "file": "backend/src/modules/hour-concepts/hourConcepts.readCache.test.ts", "tests": 7, "new": true },
+      { "file": "backend/src/modules/novelty-types/noveltyTypes.controller.test.ts", "tests": 9, "new": true },
+      { "file": "backend/src/modules/document-categories/documentCategories.controller.test.ts", "tests": 6, "new": true },
+      { "file": "backend/src/modules/hour-concepts/hourConcepts.repository.test.ts", "tests": 1, "new": false, "note": "additive, confirms page-1/page-2 sharing" },
+      { "file": "backend/src/modules/novelty-types/noveltyTypes.repository.test.ts", "tests": 1, "new": false, "note": "additive, confirms page-1/page-2 sharing" },
+      { "file": "backend/src/modules/document-categories/documentCategories.repository.test.ts", "tests": 1, "new": false, "note": "additive, confirms page-1/page-2 sharing" },
+      { "file": "backend/src/modules/salary-categories/salaryCategories.repository.test.ts", "tests": 1, "new": false, "note": "additive, confirms page-1/page-2 sharing" }
+    ]
+  },
+  "validations": {
+    "prismaValidate": "pass",
+    "typecheck": "pass",
+    "test": "1419/1419 (98 files, +26 tests vs 1393 at close of 14I.9)",
+    "build": "pass",
+    "gitDiffCheck": "pass, sin errores de espacios en blanco",
+    "journeysRun": false,
+    "journeysJustification": "no se toco codigo productivo ni frontend/e2e — solo tests unitarios de backend",
+    "realWritesExecuted": false
+  },
+  "recommendation": {
+    "verdict": "Resultado A — doble capa justificada, conservar sin consolidar",
+    "controllerCache": "conservar — patron estandar del proyecto (~30 casos), camino de respuesta mas corto",
+    "repositoryCache": "conservar — unico mecanismo que protege contra originalUrl variable sin filtros y extiende la ventana efectiva de proteccion de la DB de 60s a 120s",
+    "ttlChange": "no recomendado — 60s/120s ya estan en el rango de PERFORMANCE_STANDARDS.md para configuracion con escritura ocasional",
+    "onlyDocument": true
+  },
+  "recommendationFor14I11": [
+    "Invalidacion de timeGridCatalogCache (candidato B de 14I.8, aun no autorizado)",
+    "Duplicado StrictMode de GET /employees/:id/time-grid (x3, 14G.9, nunca cerrado)",
+    "Test explicito de compartir-entre-originalUrl a nivel del propio helper repositoryListCache.ts (cosmetico, bajo impacto)",
+    "Revisitar la doble capa solo si el volumen real de alguno de los 4 catalogos crece mas alla de vocabulario cerrado chico"
+  ]
+}

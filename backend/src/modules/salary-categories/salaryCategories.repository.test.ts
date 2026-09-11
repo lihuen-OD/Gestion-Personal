@@ -97,6 +97,23 @@ describe("salaryCategoriesRepository.findMany — rama sin filtros (listCache v�
     expect(total).toBe(5);
   });
 
+  // Etapa 14I.10 — diagnóstico de la doble capa de cache controller+
+  // repository: `salaryCategoriesReadCache` (controller, key =
+  // `req.originalUrl`) trata `?page=1` y `?page=2` como 2 entradas DISTINTAS
+  // (2 cache-miss), pero ambas caen acá en la misma rama "sin filtros" —
+  // este test confirma que el `listCache` de repositorio SÍ las sirve a las
+  // dos desde una única lectura real a la base (evidencia de que la doble
+  // capa no es puramente redundante, ver docs/decisions/
+  // DOUBLE_LAYER_CACHE_DIAGNOSTIC_14I10.md).
+  it("páginas distintas de la MISMA lista sin filtros comparten el listCache — una sola lectura real a la base para ambas", async () => {
+    mockedPrisma.salaryCategory.findMany.mockResolvedValue(Array.from({ length: 5 }, (_, i) => ({ id: `cat-${i}` })));
+
+    await salaryCategoriesRepository.findMany({ page: 1, take: 2 } as never);
+    await salaryCategoriesRepository.findMany({ page: 2, take: 2 } as never);
+
+    expect(mockedPrisma.salaryCategory.findMany).toHaveBeenCalledTimes(1);
+  });
+
   it("respeta el orderBy existente: status asc, order asc, name asc", async () => {
     mockedPrisma.salaryCategory.findMany.mockResolvedValue([]);
 
