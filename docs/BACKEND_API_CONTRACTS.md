@@ -59,8 +59,8 @@ Body:
 
 ```json
 {
-  "email": "admin@losod.local",
-  "password": "Admin1234!"
+  "email": "usuario@example.com",
+  "password": "<contraseña>"
 }
 ```
 
@@ -71,7 +71,7 @@ Response:
   "user": {
     "id": "uuid",
     "name": "Administrador RRHH",
-    "email": "admin@losod.local",
+    "email": "usuario@example.com",
     "role": "NIVEL_1_RRHH",
     "status": "ACTIVO"
   },
@@ -101,7 +101,7 @@ Response:
   "user": {
     "id": "uuid",
     "name": "Administrador RRHH",
-    "email": "admin@losod.local",
+    "email": "usuario@example.com",
     "role": "NIVEL_1_RRHH",
     "status": "ACTIVO"
   },
@@ -124,7 +124,7 @@ Response:
   "data": {
     "id": "uuid",
     "name": "Administrador RRHH",
-    "email": "admin@losod.local",
+    "email": "usuario@example.com",
     "role": "NIVEL_1_RRHH",
     "status": "ACTIVO"
   }

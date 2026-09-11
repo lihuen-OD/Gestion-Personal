@@ -51,8 +51,12 @@ npm run prisma:migrate:dev
 Seed inicial:
 
 ```bash
-npm run prisma:seed
+DEMO_SEED_PASSWORD="<contraseña-demo-local>" npm run prisma:seed
 ```
+
+El seed se niega a ejecutar si `APP_ENV=production` o `NODE_ENV=production`. La
+contraseña debe configurarse localmente mediante `DEMO_SEED_PASSWORD`; no tiene
+valor por defecto y no debe versionarse.
 
 Levantar backend:
 
@@ -70,14 +74,20 @@ GET http://localhost:4002/api/health
 
 ```txt
 RRHH:
-admin@losod.local / Admin1234!
+admin@losod.local
 
 Supervisor:
-supervisor@losod.local / Admin1234!
+supervisor@losod.local
 
 Carga horaria:
-carga@losod.local / Admin1234!
+carga@losod.local
 ```
+
+Los tres usuarios usan la contraseña local configurada en
+`DEMO_SEED_PASSWORD` al crearse. Para habilitar los accesos rápidos del
+frontend, crear `frontend/.env.local` con `VITE_DEMO_MODE=true` y completar las
+seis variables `VITE_DEMO_*_EMAIL` / `VITE_DEMO_*_PASSWORD` descriptas en
+`frontend/.env.example`. Si falta un email o password, ese perfil no se muestra.
 
 ## Frontend
 
@@ -91,6 +101,7 @@ Contenido:
 
 ```bash
 VITE_API_URL=http://localhost:4002/api
+VITE_DEMO_MODE=false
 ```
 
 Levantar frontend según el script del proyecto:

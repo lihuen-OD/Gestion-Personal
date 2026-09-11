@@ -39,12 +39,6 @@ function mapUser(user: BackendUser): User {
   };
 }
 
-export const demoCredentialsByRole: Record<Role, { email: string; password: string }> = {
-  "Nivel 1 - RRHH": { email: "admin@losod.local", password: "Admin1234!" },
-  "Nivel 2 - Supervisión / Gestión": { email: "supervisor@losod.local", password: "Admin1234!" },
-  "Nivel 3 - Administrativo de Carga Horaria": { email: "carga@losod.local", password: "Admin1234!" },
-};
-
 export const authApiService = {
   async login(email: string, password: string) {
     const response = await apiRequest<LoginResponse>("/auth/login", {

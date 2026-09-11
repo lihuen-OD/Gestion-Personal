@@ -1,13 +1,13 @@
 import { Activity, ChevronRight, Clock3, ShieldCheck, Users } from "lucide-react";
 import { useState, type FormEvent } from "react";
 import { useAuth } from "../context/AuthContext";
-import type { Role } from "../types";
 import { Button } from "../components/ui/Button";
+import { demoLoginProfiles, type DemoLoginProfile } from "../config/runtimeMode";
 
 export function LoginPage() {
-  const { login, loginAs } = useAuth();
-  const [email, setEmail] = useState("admin@losod.local");
-  const [password, setPassword] = useState("Admin1234!");
+  const { login } = useAuth();
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [error, setError] = useState(false);
   const [loading, setLoading] = useState(false);
 
@@ -20,15 +20,13 @@ export function LoginPage() {
     setLoading(false);
   };
 
-  const quickLogin = async (role: Role) => {
+  const quickLogin = async (profile: DemoLoginProfile) => {
     setLoading(true);
     setError(false);
-    const ok = await loginAs(role);
+    const ok = await login(profile.email, profile.password);
     setError(!ok);
     setLoading(false);
   };
-
-  const roles: Role[] = ["Nivel 1 - RRHH", "Nivel 2 - Supervisión / Gestión", "Nivel 3 - Administrativo de Carga Horaria"];
 
   return (
     <main className="login-page">
@@ -58,7 +56,7 @@ export function LoginPage() {
         <div>
           <p className="eyebrow">BIENVENIDO</p>
           <h2>Ingresar al sistema</h2>
-          <p className="muted">Usá tus credenciales o elegí un perfil rápido para recorrer la demostración.</p>
+          <p className="muted">Usá tus credenciales para acceder a la plataforma.</p>
         </div>
 
         <form onSubmit={submit} className="form-stack">
@@ -76,20 +74,24 @@ export function LoginPage() {
           </Button>
         </form>
 
-        <div className="login-divider">
-          <span>Accesos rápidos para demo</span>
-        </div>
-        <div className="quick-login">
-          {roles.map((role, index) => (
-            <button key={role} onClick={() => quickLogin(role)} disabled={loading}>
-              <span className={`role-dot level-${index + 1}`}>{index + 1}</span>
-              <span>
-                <b>{role}</b>
-                <small>{index === 0 ? "Acceso completo" : index === 1 ? "Control de su área" : "Carga de empleados asignados"}</small>
-              </span>
-            </button>
-          ))}
-        </div>
+        {demoLoginProfiles.length > 0 ? (
+          <>
+            <div className="login-divider">
+              <span>Accesos rápidos para demo</span>
+            </div>
+            <div className="quick-login">
+              {demoLoginProfiles.map((profile, index) => (
+                <button key={profile.role} type="button" onClick={() => quickLogin(profile)} disabled={loading}>
+                  <span className={`role-dot level-${index + 1}`}>{index + 1}</span>
+                  <span>
+                    <b>{profile.role}</b>
+                    <small>{index === 0 ? "Acceso completo" : index === 1 ? "Control de su área" : "Carga de empleados asignados"}</small>
+                  </span>
+                </button>
+              ))}
+            </div>
+          </>
+        ) : null}
       </section>
     </main>
   );

@@ -1,13 +1,12 @@
 import { createContext, useContext, useState, type ReactNode } from "react";
-import type { Role, User } from "../types";
-import { authApiService, demoCredentialsByRole } from "../services/api/authApiService";
+import type { User } from "../types";
+import { authApiService } from "../services/api/authApiService";
 import { refreshTokenStorage, tokenStorage } from "../services/api/apiClient";
 import { clearAllAppCaches } from "../services/cache";
 
 interface AuthValue {
   user?: User;
   login: (email: string, password: string) => Promise<boolean>;
-  loginAs: (role: Role) => Promise<boolean>;
   logout: () => Promise<void>;
 }
 const AuthContext = createContext<AuthValue | undefined>(undefined);
@@ -42,11 +41,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const loginAs = async (role: Role) => {
-    const credentials = demoCredentialsByRole[role];
-    return login(credentials.email, credentials.password);
-  };
-
   const logout = async () => {
     try {
       await authApiService.logout();
@@ -60,6 +54,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  return <AuthContext.Provider value={{ user, login, loginAs, logout }}>{children}</AuthContext.Provider>;
+  return <AuthContext.Provider value={{ user, login, logout }}>{children}</AuthContext.Provider>;
 }
 export const useAuth = () => useContext(AuthContext)!;

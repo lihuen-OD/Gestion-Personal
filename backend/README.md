@@ -46,18 +46,22 @@ GET http://localhost:4002/api/health
 
 ## Initial Auth
 
-Seed user:
+Demo seed users (all use the local `DEMO_SEED_PASSWORD` value):
 
 ```txt
 RRHH:
-admin@losod.local / Admin1234!
+admin@losod.local
 
 Supervisor:
-supervisor@losod.local / Admin1234!
+supervisor@losod.local
 
 Carga horaria:
-carga@losod.local / Admin1234!
+carga@losod.local
 ```
+
+The demo seed refuses to run when either `APP_ENV` or `NODE_ENV` is
+`production`. Configure `DEMO_SEED_PASSWORD` only in the local environment
+before invoking `npm run prisma:seed`; never commit it.
 
 Endpoints available:
 
