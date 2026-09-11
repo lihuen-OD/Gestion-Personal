@@ -1,0 +1,155 @@
+{
+  "stage": "14I.12",
+  "series": "14I",
+  "status": "closed",
+  "generatedAt": "2026-09-11",
+  "type": "closure-summary",
+  "note": "Docs/json only closure of series 14I. No productive code, no tests, no frontend/backend files were touched by this stage.",
+  "commits": [
+    { "stage": "14I.1", "hash": "3abb3c4", "message": "docs(performance): diagnosticar infraestructura backend", "type": "docs", "productiveCode": false },
+    { "stage": "14I.2", "hash": "709b633", "message": "perf(backend): limpiar transacciones p0", "type": "perf", "productiveCode": true },
+    { "stage": "14I.3", "hash": "66c84f4", "message": "refactor(backend): consolidar cache de repositorios", "type": "refactor", "productiveCode": true },
+    { "stage": "14I.4", "hash": "e942feb", "message": "perf(time-entries): quitar transaccion read-only de asistencia", "type": "perf", "productiveCode": true },
+    { "stage": "14I.5", "hash": "4554558", "message": "docs(performance): diagnosticar organigrama de empleados", "type": "docs", "productiveCode": false },
+    { "stage": "14I.6", "hash": "c04c718", "message": "test(backend): cubrir aislamiento de caches", "type": "test", "productiveCode": false },
+    { "stage": "14I.7", "hash": "75775ab", "message": "test(backend): cubrir caches restantes", "type": "test", "productiveCode": false },
+    { "stage": "14I.8", "hash": "6810a7b", "message": "docs(performance): diagnosticar cache de grilla horaria", "type": "docs", "productiveCode": false },
+    { "stage": "14I.9", "hash": "9299440", "message": "fix(employees): parsear includeDetails=false correctamente", "type": "fix", "productiveCode": true },
+    { "stage": "14I.10", "hash": "266169e", "message": "test(backend): diagnosticar doble cache de catalogos", "type": "test", "productiveCode": false },
+    { "stage": "14I.11", "hash": "7e6735c", "message": "fix(frontend): evitar refetch extra de grilla horaria", "type": "fix", "productiveCode": true }
+  ],
+  "productiveChanges": [
+    {
+      "stage": "14I.2",
+      "layer": "backend",
+      "files": [
+        "backend/src/modules/novelties/novelties.repository.ts",
+        "backend/src/modules/users/users.repository.ts",
+        "backend/src/modules/documents/documents.repository.ts"
+      ],
+      "change": "$transaction([findMany, count]) replaced with Promise.all([findMany, count]) — same where/include/select/orderBy/skip/take",
+      "finding": "P0 from 14I.1",
+      "contractChanged": false
+    },
+    {
+      "stage": "14I.3",
+      "layer": "backend",
+      "files": [
+        "backend/src/shared/cache/repositoryListCache.ts (new)",
+        "backend/src/modules/positions/positions.repository.ts",
+        "backend/src/modules/hour-concepts/hourConcepts.repository.ts",
+        "backend/src/modules/novelty-types/noveltyTypes.repository.ts",
+        "backend/src/modules/document-categories/documentCategories.repository.ts",
+        "backend/src/modules/salary-categories/salaryCategories.repository.ts"
+      ],
+      "change": "Hand-copied repository-level listCache pattern (Form B, 5 modules) extracted to a shared helper createRepositoryListCache<T>(ttlMs), same TTL/behavior/invalidation function names preserved",
+      "finding": "Form B duplication from 14I.1 §6.1",
+      "contractChanged": false
+    },
+    {
+      "stage": "14I.4",
+      "layer": "backend",
+      "files": ["backend/src/modules/time-entries/timeEntries.repository.ts"],
+      "change": "attendanceSummary stopped wrapping 2 independent reads in prisma.$transaction(async (tx) => {...}); now Promise.all on the global prisma client",
+      "finding": "P1 callback-form $transaction from 14I.1 §4.3",
+      "contractChanged": false
+    },
+    {
+      "stage": "14I.9",
+      "layer": "backend",
+      "files": ["backend/src/modules/employees/employees.schemas.ts"],
+      "change": "employeeTimeGridQuerySchema.includeDetails: z.coerce.boolean().default(true) -> z.preprocess((value) => (value === \"false\" ? false : value), z.coerce.boolean()).default(true)",
+      "finding": "Real bug found as a side-effect of the 14I.8 timeGridCatalogCache diagnostic (Boolean(\"false\") === true in JS)",
+      "contractChanged": false
+    },
+    {
+      "stage": "14I.11",
+      "layer": "frontend",
+      "files": ["frontend/src/pages/EmployeeHoursPage.tsx"],
+      "change": "Silent post-save resync effect guard replaced from useRef(false) (\"first run\") to useRef(refresh) + compare against last synced value — fixes a false-positive extra fetch under React 18 StrictMode double-invoke",
+      "finding": "x3 duplicate of GET /employees/:id/time-grid, named since 14G.9, root-caused and partially closed in this stage (x3 -> x2; remaining x2 is StrictMode-only, no production cost)",
+      "contractChanged": false
+    }
+  ],
+  "docsOnlyStages": ["14I.1", "14I.5", "14I.8"],
+  "testOnlyStages": ["14I.6", "14I.7", "14I.10"],
+  "bugsFixed": [
+    {
+      "description": "includeDetails=false query param was silently coerced to true by z.coerce.boolean() (Boolean(\"false\") is true in JS), so GET /employees/:id/time-grid always executed the heavy branch (period novelties + timeGridCatalogCache) regardless of what the caller asked for",
+      "foundInStage": "14I.8",
+      "fixedInStage": "14I.9",
+      "userFacingImpact": "none observed — EmployeeHoursPage.tsx already discarded the fields gated by includeDetails, so the fix only removes wasted server work, does not change any UI behavior",
+      "wasInOriginal14I1Inventory": false
+    },
+    {
+      "description": "GET /employees/:id/time-grid fired 3 real requests (plus GET /novelties x2) when opening the hours edit screen for an employee, instead of the expected 2 — root cause was a useRef(false) \"first render\" guard in EmployeeHoursPage.tsx's post-save resync effect that did not survive React 18 StrictMode's double-invoke of the same effect",
+      "foundInStage": "14I.11 (root cause independent from the includeDetails bug, confirmed not fixed by 14I.9)",
+      "fixedInStage": "14I.11",
+      "userFacingImpact": "none — reduces wasted requests from x3 to x2; the remaining x2 is StrictMode-only (development), zero cost for a real production user",
+      "wasInOriginal14I1Inventory": "named as a P1 candidate since 14G.9, referenced again in 14I.1 §7, but never diagnosed or closed by any prior stage"
+    }
+  ],
+  "decisionsNotToChange": [
+    {
+      "item": "employeeOrgChartSelect (4-level sector->area->establishment->businessUnit chain in findOrgChart)",
+      "stage": "14I.5",
+      "reason": "Measured with real data (32 employees, 1 SQL statement, 0ms query-time difference between full and reduced select, 25% payload on 8 unused sub-fields only) — the chain itself is genuinely consumed by the UI (EmployeeOrgPopover.tsx, 2 of 11 org-chart filters). No over-fetch justifying a change to a Legajos-sensitive select."
+    },
+    {
+      "item": "timeGridCatalogCache invalidation",
+      "stage": "14I.8, revisited 14I.11",
+      "reason": "No real functional impact: the only caller (EmployeeHoursPage.tsx) always discarded the embedded data even before the includeDetails fix; after the 14I.9 fix, getTimeGridCatalogs() no longer executes at all in the real application flow. Adding invalidation to a cache with no real consumer was not justified."
+    },
+    {
+      "item": "Controller (createTtlCache) + repository (repositoryListCache) double cache layer in hour-concepts/novelty-types/document-categories/salary-categories",
+      "stage": "14I.10",
+      "reason": "Demonstrated with a new test per module that the repository-layer cache serves any filter-free originalUrl from a single real DB read — a mechanism the controller-layer cache (keyed by exact URL) cannot replicate alone. No bug or stale-data risk forces consolidation; doing so would be 'a refactor without a bug behind it to justify it' (14I.1's own words)."
+    },
+    {
+      "item": "Remaining x2 StrictMode duplicate on GET /employees/:id/time-grid (Effect A, initial load)",
+      "stage": "14I.11",
+      "reason": "Zero cost in production — React only double-invokes effects in development mode, never in a production build. A real user always generated exactly 1 call from that effect."
+    },
+    {
+      "item": "salaryCategories.repository.ts / hourConceptRules.repository.ts $transaction (P2)",
+      "stage": "14I.1, reaffirmed 14I.2/14I.3/14I.7",
+      "reason": "No real caller exercises the filtered branch that uses $transaction — same criterion established since 14H.5: only fix what has a real caller, verified by grep."
+    },
+    {
+      "item": "relationJoins expansion beyond the 5 sites already applied since 14D.6/14D.7",
+      "stage": "14I.1",
+      "reason": "Already treated surgically and with measured evidence; the one new real candidate (GET /positions main endpoint, blocked by an untested _count + relationLoadStrategy combination) requires its own dedicated benchmark stage, not a silent extension within 14I."
+    }
+  ],
+  "remainingLowPriorityDebt": [
+    "timeGridCatalogCache still has no explicit invalidation — low priority, reinforced twice (14I.8, 14I.11), no real consumer today",
+    "x2 StrictMode duplicate remains on EmployeeHoursPage.tsx initial-load effect — dev-only artifact, no production cost",
+    "salaryCategories/hourConceptRules P2 $transaction remains without a real caller",
+    "clearUsersReadCache() and salaryCategoriesReadCache.clear are still not exported as named functions, unlike employees/documents/novelties/time-entries — cosmetic asymmetry, named in 14I.7 §14, not in scope of test-only stages",
+    "future monitoring of catalog volume (double-layer cache modules and employeeOrgChartSelect) if real headcount/catalog size grows beyond today's 'small closed vocabulary' — no action needed without real volume evidence",
+    "whether to push the 18 local commits to origin/main after final user review — no push executed in any stage of the series"
+  ],
+  "validationsSummary": {
+    "backendTestsAtSeriesStart": 1265,
+    "backendTestsAtClosure": 1419,
+    "backendTestFilesAtClosure": 98,
+    "backendTestsAddedInSeries": 154,
+    "frontendTestsAtClosure": "802/802",
+    "frontendTestFilesAtClosure": 81,
+    "frontendTestsAddedInSeries": 1,
+    "perStageValidations": "npx prisma validate / npm run typecheck / npm test / npm run build green on every stage touching backend code (14I.2, 14I.3, 14I.4, 14I.9); frontend typecheck/test/build green on 14I.11; journeys (admin-config/workforce/employees) run and green on 14I.2, 14I.3, 14I.4, 14I.11, with immediate git restore of regenerated 14D/14G/14H journey reports each time",
+    "noRealWritesInAnyStage": true,
+    "noMigrationsInAnyStage": true,
+    "noPushInAnyStage": true
+  },
+  "recommendation": {
+    "closeSeries": true,
+    "continueOptimizingInSameSeries": false,
+    "rationale": "All 6 actionable P0/P1 findings from the original 14I.1 inventory are either fixed (3 $transaction P0, 1 $transaction P1, 1 coercion bug, 1 duplicate-request bug) or closed without action backed by measured evidence (employeeOrgChartSelect, timeGridCatalogCache, double cache layer). The 2 P2 findings without a real caller remain accepted debt, consistent with the project's established criterion since 14H.5. Each successive diagnostic in the series (14I.5, 14I.8, 14I.10, 14I.11) found less new actionable work, not more — a sign of diminishing returns, not unfinished work.",
+    "nextSteps": [
+      { "option": "A", "description": "Controlled push of the 18 local commits, if the user authorizes it" },
+      { "option": "B", "description": "Return to product/feature work — no open performance backlog remains from series 14I" },
+      { "option": "C", "description": "Open a new performance series only if new real measurement/telemetry/incident evidence appears — not from generic suspicion" }
+    ]
+  }
+}
