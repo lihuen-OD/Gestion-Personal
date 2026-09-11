@@ -1,3 +1,4 @@
+import { StrictMode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, within, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -549,6 +550,37 @@ describe("EmployeeHoursPage — actualización local sin recarga completa (Etapa
     expect(screen.queryByText(LOADING_TEXT)).not.toBeInTheDocument();
     await waitFor(() => expect(employeeApiService.getTimeGrid).toHaveBeenCalledTimes(2));
     expect(screen.queryByText(LOADING_TEXT)).not.toBeInTheDocument();
+  });
+
+  // Etapa 14I.11: el efecto de re-sincronización silenciosa (dependiente de
+  // `refresh`) usaba un `useRef(false)` que se ponía en `true` en su primera
+  // ejecución para "saltarse" el mount — pero bajo React.StrictMode (dev),
+  // React vuelve a ejecutar ese mismo efecto una segunda vez con el MISMO
+  // `refresh` inicial, y como el ref ya había quedado en `true` tras la
+  // primera pasada, la segunda pasada ya no entraba a la rama de skip y
+  // disparaba un tercer `getTimeGrid` espurio (confirmado con el journey de
+  // Gestión Horaria: x3 en vez de x2 — ver docs/decisions/
+  // TIME_GRID_DUPLICATE_REQUESTS_DIAGNOSTIC_14I11.md). Este test renderiza
+  // bajo `StrictMode` explícitamente (a diferencia de `renderPage()`, que no
+  // lo hace) para reproducir el double-invoke real y confirmar que, tras el
+  // fix, sólo quedan los 2 llamados esperables del efecto de carga inicial
+  // (Effect A, doble-invocado por StrictMode — sin costo en producción, no
+  // se toca) y ninguno de más del efecto de refresh.
+  it("Etapa 14I.11: bajo React.StrictMode no dispara un tercer getTimeGrid espurio al montar (x2 esperado, no x3)", async () => {
+    vi.mocked(employeeApiService.getTimeGrid).mockResolvedValue(buildGrid());
+
+    render(
+      <StrictMode>
+        <MemoryRouter initialEntries={["/horas/employee-1?period=2026-08"]}>
+          <Routes>
+            <Route path="/horas/:id" element={<EmployeeHoursPage />} />
+          </Routes>
+        </MemoryRouter>
+      </StrictMode>,
+    );
+    await waitForGridLoaded();
+
+    await waitFor(() => expect(employeeApiService.getTimeGrid).toHaveBeenCalledTimes(2));
   });
 
   it("si el desglose manual falla por un conflicto concurrente, muestra un mensaje específico (no genérico)", async () => {

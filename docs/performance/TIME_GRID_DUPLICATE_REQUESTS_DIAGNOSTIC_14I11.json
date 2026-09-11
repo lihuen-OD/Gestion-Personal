@@ -1,0 +1,99 @@
+{
+  "stage": "14I.11",
+  "generatedAt": "2026-09-11",
+  "type": "diagnostic-plus-minimal-fix",
+  "note": "Diagnostico y fix quirurgico del duplicado x3 de GET /employees/:id/time-grid (14G.9, P1 de 14I.1, pendiente tras 14I.8/14I.9). Causa raiz independiente del bug de includeDetails (14I.9): un guard de useEffect no robusto a React StrictMode. Fix minimo en un solo archivo frontend, verificado con test unitario y journey real end-to-end.",
+  "relatedStages": {
+    "14I8": "docs/decisions/TIME_GRID_CATALOG_CACHE_INVALIDATION_DIAGNOSTIC_14I8.md (commit 6810a7b)",
+    "14I9": "docs/decisions/EMPLOYEE_TIME_GRID_INCLUDE_DETAILS_FIX_14I9.md (commit 9299440)",
+    "14I10": "docs/decisions/DOUBLE_LAYER_CACHE_DIAGNOSTIC_14I10.md (commit 266169e, no relacionado)"
+  },
+  "endpoint": {
+    "method": "GET",
+    "route": "/employees/:id/time-grid",
+    "measuredByJourney": "workforce (D. Carga de horas) — NOT employees (Legajos never navigates to /horas/:id)"
+  },
+  "callers": [
+    { "name": "Effect A (initial load)", "file": "frontend/src/pages/EmployeeHoursPage.tsx", "dependencyArray": "[id, period]", "touched": false, "note": "double-invoked by React StrictMode in dev, 2 real fetches — zero production cost, not fixed this stage" },
+    { "name": "Effect B (silent post-save resync)", "file": "frontend/src/pages/EmployeeHoursPage.tsx", "dependencyArray": "[refresh]", "touched": true, "note": "had a broken 'skip first run' ref guard that StrictMode's double-invoke defeated, causing 1 spurious extra fetch — fixed this stage" }
+  ],
+  "includeDetailsStatusAfter14I9": {
+    "backendParsingFixed": true,
+    "frontendAlwaysSendsFalse": true,
+    "duplicateWasNotInflatedByThisBug": true,
+    "note": "the x3 duplicate and the includeDetails coercion bug are two independent, unrelated bugs living in the same caller"
+  },
+  "requestCountBefore": {
+    "source": "existing recorded WORKFORCE_MANAGEMENT_PERFORMANCE_JOURNEY_14G1.md, action 'Abrir edicion de horas de un empleado'",
+    "timeGrid": 3,
+    "novelties": 2
+  },
+  "requestCountAfter": {
+    "source": "fresh run of npm run perf:journey:workforce after applying the fix, same action",
+    "timeGrid": 2,
+    "novelties": "no longer flagged as duplicate for this action",
+    "remainingCauseOfTimeGridX2": "React StrictMode double-invoke of Effect A — dev-only artifact, zero production cost, not touched"
+  },
+  "rootCause": {
+    "description": "Effect B used useRef(false) flipped to true on its first invocation to skip the mount run. Under React 18 StrictMode (dev), the same effect is invoked twice on a single real mount (mount -> cleanup -> mount, same component instance, refs NOT reset between passes). First pass: ref false -> set true, skip. Second pass: ref already true -> skip condition no longer met -> fires a real, spurious fetch even though `refresh` never actually changed.",
+    "fix": "Replaced the 'is this the first run' flag with a comparison against the last synced `refresh` value (useRef(refresh) + `if (lastSyncedRefresh.current === refresh) return;`). Robust to any number of effect invocations with an unchanged dependency value (StrictMode included), identical observable behavior for the real case (a genuine save incrementing `refresh`).",
+    "verifiedByReverting": true,
+    "verificationDescription": "temporarily reverted the fix, ran the new test — it failed (timeout waiting for 2 calls, got 3); restored the fix — test passes again"
+  },
+  "timeGridCatalogCache": {
+    "cachedData": "all ACTIVO NoveltyType (with finnegansLinks) + all ACTIVO HourConcept, global catalog, no user scope, ttlMs 120000, no explicit invalidation",
+    "frontendConsumption": "none — EmployeeHoursPage.tsx discards the 3 includeDetails-gated fields (novelties, noveltyTypes, hourConcepts) and rebuilds its own state from separate, well-cached calls",
+    "newEvidenceThisStage": "since 14I.9 fixed includeDetails parsing, EmployeeHoursPage.tsx's includeDetails=false now actually works, meaning getTimeGridCatalogs() is never executed at all anymore by the only real caller — even weaker justification than 14I.8 found to ever invalidate it",
+    "mutatorsThatWouldNeedToInvalidateItIfEverDone": ["noveltyTypesService.create", "noveltyTypesService.update", "hourConceptsService.create", "hourConceptsService.update", "hourConceptsService.remove"],
+    "realFunctionalBugFound": false,
+    "touched": false,
+    "reason": "no evidence of a real functional bug or an obvious mutator with real impact — explicit instruction not to touch it for tidiness"
+  },
+  "fixApplied": {
+    "productionCodeChanged": true,
+    "filesChanged": ["frontend/src/pages/EmployeeHoursPage.tsx"],
+    "linesChanged": "single useEffect guard (~5 lines), no other logic touched",
+    "contractChanged": false,
+    "shapeChanged": false,
+    "rbacChanged": false
+  },
+  "notTouched": [
+    "Effect A (initial load) — StrictMode double-invoke left as accepted dev-only artifact",
+    "timeGridCatalogCache / getTimeGridCatalogs()",
+    "includeDetails (already fixed in 14I.9, only re-confirmed)",
+    "employees.repository.ts / .service.ts / .controller.ts / .schemas.ts (backend, zero files touched)",
+    "hour calculations, hour concepts, special hours, shifts/regimes",
+    "Prisma schema, relationJoins, RBAC, double-layer cache (14I.10)",
+    "Fichador, Gestion/Carga Horaria productiva"
+  ],
+  "contractPreserved": true,
+  "rbacScopePreserved": true,
+  "tests": {
+    "frontendTestAdded": {
+      "file": "frontend/src/pages/EmployeeHoursPage.test.tsx",
+      "test": "Etapa 14I.11: bajo React.StrictMode no dispara un tercer getTimeGrid espurio al montar (x2 esperado, no x3)",
+      "rendersUnderStrictMode": true,
+      "deterministic": true
+    },
+    "frontendTest": "802/802 (81 files, +1 test vs prior state)",
+    "tscE2e": "pass",
+    "build": "pass (tsc -b && vite build)",
+    "backendTouched": false,
+    "backendValidationsNeeded": false
+  },
+  "journeysRun": [
+    { "name": "perf:journey:employees", "result": "pass (~47s)", "measuresThisEndpoint": false, "reason": "ran per explicit instruction, but Legajos never navigates to /horas/:id" },
+    { "name": "perf:journey:workforce", "result": "pass (~1.1min)", "measuresThisEndpoint": true, "httpErrors": 0, "consoleErrors": 0, "reportsRestoredAfter": ["docs/performance/WORKFORCE_MANAGEMENT_PERFORMANCE_JOURNEY_14G1.md", "docs/performance/WORKFORCE_MANAGEMENT_PERFORMANCE_JOURNEY_14G1.json", "docs/performance/EMPLOYEES_PERFORMANCE_JOURNEY_14D1.md", "docs/performance/EMPLOYEES_PERFORMANCE_JOURNEY_14D1.json"] }
+  ],
+  "realWritesExecuted": false,
+  "risks": [
+    "Ninguno introducido — fix minimo, verificado con test unitario (con reversion controlada para confirmar que detecta la falla), suite completa sin regresiones, y journey real end-to-end",
+    "El x2 remanente de time-grid (StrictMode, Effect A) sigue sin costo en produccion, no se toco por mayor superficie de riesgo en una pantalla que edita datos operativos",
+    "timeGridCatalogCache sigue sin invalidacion — reforzado como no-bug, no autorizado a tocar esta etapa"
+  ],
+  "recommendationFor14I12": [
+    "No hay etapa de timeGridCatalogCache que recomendar — evidencia acumulada de 3 diagnosticos (14I.1/14I.8/14I.11) confirma que no hace falta",
+    "Si se quiere cerrar el x2 remanente de time-grid: evaluar cachedData con TTL muy corto (dedupe in-flight puro) para el Effect A, en una etapa dedicada con tests de que un remount legitimo sigue trayendo datos frescos — no urgente, sin costo en produccion",
+    "El inventario de hallazgos P1 de 14I.1 (over-fetch/duplicados) queda practicamente agotado — evaluar si la serie 14I puede darse por cerrada salvo que aparezca un hallazgo nuevo real"
+  ]
+}

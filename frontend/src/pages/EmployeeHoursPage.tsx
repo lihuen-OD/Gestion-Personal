@@ -197,12 +197,26 @@ export function EmployeeHoursPage() {
   // (p. ej. novedades asociadas, problemas de fichada) sin que la grilla
   // parpadee. Se salta la primera corrida porque la carga inicial de arriba
   // ya cubre el mount.
-  const skippedFirstRefresh = useRef(false);
+  //
+  // Etapa 14I.11: el guard original (`useRef(false)` que se pone en `true`
+  // en su primera ejecución) no es robusto a StrictMode en desarrollo — el
+  // doble-invoke de efectos vuelve a ejecutar este mismo efecto con el
+  // MISMO `refresh` inicial, pero el ref ya había quedado en `true` tras la
+  // primera pasada, así que la segunda pasada ya no entraba a la rama de
+  // skip y disparaba un fetch real de más (confirmado con el journey de
+  // Gestión Horaria: `GET /employees/:id/time-grid` medía x3 en vez de x2 al
+  // abrir "Carga de horas" de un empleado — ver docs/decisions/
+  // TIME_GRID_DUPLICATE_REQUESTS_DIAGNOSTIC_14I11.md). Se reemplaza por
+  // comparar contra el último `refresh` efectivamente sincronizado: sigue
+  // sin disparar nada mientras `refresh` no cambie de verdad (cualquier
+  // cantidad de invocaciones del efecto con el mismo valor, StrictMode
+  // incluido), y dispara exactamente una vez por cada `refresh` nuevo real
+  // — mismo comportamiento observable para el caso real (guardar horas),
+  // sin el falso positivo de StrictMode.
+  const lastSyncedRefresh = useRef(refresh);
   useEffect(() => {
-    if (!skippedFirstRefresh.current) {
-      skippedFirstRefresh.current = true;
-      return;
-    }
+    if (lastSyncedRefresh.current === refresh) return;
+    lastSyncedRefresh.current = refresh;
     if (!id) return;
     let cancelled = false;
     employeeApiService.getTimeGrid(id, period, { includeDetails: false }).then((grid) => {
