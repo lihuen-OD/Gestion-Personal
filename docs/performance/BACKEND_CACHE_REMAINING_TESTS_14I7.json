@@ -1,0 +1,70 @@
+{
+  "stage": "14I.7",
+  "generatedAt": "2026-09-11",
+  "type": "test-coverage-only",
+  "note": "Cero cambios de codigo productivo. 3 archivos de test nuevos, 0 modificados. Cierra el ultimo gap de cobertura de cache nombrado por 14I.1 y reiterado por 14I.6 (helper base ttlCache.ts + users/salary-categories, unicos 2 modulos sin test de controller).",
+  "relatedStages": {
+    "14I1": "docs/decisions/BACKEND_PERFORMANCE_INFRASTRUCTURE_DIAGNOSTIC_14I1.md (diagnostico original, commit 3abb3c4)",
+    "14I3": "docs/decisions/BACKEND_REPOSITORY_LIST_CACHE_HELPER_14I3.md (commit 66c84f4)",
+    "14I6": "docs/decisions/BACKEND_CACHE_ISOLATION_TESTS_14I6.md (commit c04c718, nombro estos gaps para 14I.7)"
+  },
+  "productionCodeChanged": false,
+  "helpersTested": [
+    { "name": "createTtlCache", "file": "backend/src/shared/cache/ttlCache.ts", "hadOwnTestBefore": false, "usedByCaches": "~34 (8 archivos *.cache.ts + 7 controllers inline)" }
+  ],
+  "cachesTested": [
+    { "name": "usersListCache", "module": "users/users.controller.ts", "ttlMs": 30000, "key": "req.originalUrl", "userScoped": false, "hadControllerTestBefore": false },
+    { "name": "usersDetailCache", "module": "users/users.controller.ts", "ttlMs": 30000, "key": "id (requireParam)", "userScoped": false, "hadControllerTestBefore": false },
+    { "name": "salaryCategoriesReadCache", "module": "salary-categories/salaryCategories.controller.ts", "ttlMs": 60000, "key": "req.originalUrl", "userScoped": false, "hadControllerTestBefore": false }
+  ],
+  "testsAdded": {
+    "totalNewTests": 27,
+    "totalNewFiles": 3,
+    "modifiedFiles": 0,
+    "byFile": [
+      { "file": "backend/src/shared/cache/ttlCache.test.ts", "tests": 10, "covers": ["miss-before-set", "set+get-within-ttl", "expires-after-ttl", "clear-removes-all", "distinct-keys", "overwrite-resets-expiry", "instances-independent", "no-per-key-delete-only-clear", "stats()", "maxEntries-eviction"] },
+      { "file": "backend/src/modules/users/users.controller.test.ts", "tests": 11, "covers": ["list-miss", "list-hit-same-url", "list-query-variance", "list-error-not-cached", "detail-miss", "detail-hit-same-id", "detail-id-variance", "detail-error-not-cached", "invalidation-create", "invalidation-update", "invalidation-resetPassword"] },
+      { "file": "backend/src/modules/salary-categories/salaryCategories.controller.test.ts", "tests": 6, "covers": ["list-miss-contract-shape", "list-hit-same-url", "list-query-variance-family", "list-error-not-cached", "invalidation-create", "invalidation-update"] }
+    ]
+  },
+  "testsSkipped": [],
+  "implementationConstraintFound": {
+    "description": "usersListCache/usersDetailCache/salaryCategoriesReadCache son singletons de modulo sin exportar (clearUsersReadCache() y el .clear() inline de salary-categories no estan exportados) — no se pudo resetear la cache entre tests sin modificar controller.ts, prohibido por esta etapa.",
+    "resolution": "cada test usa una key (originalUrl/id) exclusiva, nunca reutilizada por otro test del mismo archivo, en vez de depender de un clear() entre tests. La invalidacion real se prueba igual, vía los mutadores reales (create/update/resetPassword), que si llaman internamente a la funcion de invalidacion privada.",
+    "productionCodeChanged": false
+  },
+  "isolationCoverage": {
+    "note": "usersListCache/usersDetailCache/salaryCategoriesReadCache son catalogos/listados sin scope de usuario por diseno (el service no recibe `user`) — no aplica aislamiento usuario/rol a estas 3 caches, confirmado por lectura de codigo (mismo criterio ya verificado por 14I.1)."
+  },
+  "queryVarianceCoverage": {
+    "cachesWithQueryVarianceTest": ["usersListCache", "salaryCategoriesReadCache"],
+    "cachesWithIdVarianceTest": ["usersDetailCache"]
+  },
+  "invalidationCoverage": {
+    "usersListCache_usersDetailCache": ["create", "update", "resetPassword"],
+    "salaryCategoriesReadCache": ["create", "update"]
+  },
+  "errorNotCachedCoverage": ["usersListCache", "usersDetailCache", "salaryCategoriesReadCache"],
+  "validation": {
+    "prismaValidate": "pass",
+    "typecheck": "pass",
+    "test": "1383/1383 (94 files, +27 tests vs 1356 en cierre de 14I.6)",
+    "build": "pass",
+    "gitDiffCheck": "pass, sin errores de espacios en blanco",
+    "journeysRun": false,
+    "journeysJustification": "no se toco codigo productivo ni frontend/e2e — solo tests unitarios de backend con servicios mockeados, sin cambio de contrato API",
+    "realWritesExecuted": false
+  },
+  "remainingGaps": [
+    "clearUsersReadCache()/salaryCategoriesReadCache.clear no exportadas — asimetria de diseno frente a employees/documents/novelties/time-entries, no corregida (requeriria tocar controller.ts)",
+    "salaryCategories.repository.ts $transaction P2 (rama filtrada, sin caller real) sigue sin corregir — deuda ya aceptada desde 14I.1",
+    "timeGridCatalogCache sin invalidacion explicita y sin test — requiere autorizacion para tocar employees.repository.ts",
+    "Doble capa de cache (createTtlCache + repositoryListCache) en hour-concepts/novelty-types/document-categories/salary-categories sigue sin consolidar"
+  ],
+  "recommendationFor14I8": [
+    "Exportar clearUsersReadCache()/salaryCategoriesReadCache.clear como funcion nombrada — cosmetico, requiere autorizacion para tocar controller.ts",
+    "Invalidacion de timeGridCatalogCache (requiere autorizacion explicita para employees)",
+    "Consolidar la doble capa de cache en hour-concepts/novelty-types/document-categories/salary-categories",
+    "salaryCategories $transaction P2 — solo si aparece un caller real"
+  ]
+}
