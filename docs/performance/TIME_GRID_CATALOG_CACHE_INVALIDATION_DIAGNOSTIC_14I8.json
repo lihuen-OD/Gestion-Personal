@@ -1,0 +1,95 @@
+{
+  "stage": "14I.8",
+  "generatedAt": "2026-09-11",
+  "type": "diagnostic-only",
+  "note": "Diagnostico quirurgico de timeGridCatalogCache (P1 de 14I.1). No se cambio codigo productivo. Hallazgo principal: un bug de coercion de zod (independiente de la cache en si) hace que includeDetails=false nunca funcione desde el cliente, nunca detectado en 6 auditorias previas (14A/9A/14I.1/14I.3/14I.6/14I.7).",
+  "relatedStages": {
+    "14A": "docs/decisions/PERFORMANCE_AUDIT_14A.md (primera mencion, 'Severidad Alto por ser la unica excepcion')",
+    "9A": "docs/decisions/PERFORMANCE_DATA_LOADING_AUDIT_9A.md",
+    "14I1": "docs/decisions/BACKEND_PERFORMANCE_INFRASTRUCTURE_DIAGNOSTIC_14I1.md (commit 3abb3c4)",
+    "14I3": "docs/decisions/BACKEND_REPOSITORY_LIST_CACHE_HELPER_14I3.md (commit 66c84f4, dejo fuera de alcance)",
+    "14I6": "docs/decisions/BACKEND_CACHE_ISOLATION_TESTS_14I6.md (commit c04c718, dejo fuera de alcance)",
+    "14I7": "docs/decisions/BACKEND_CACHE_REMAINING_TESTS_14I7.md (commit 75775ab, nombro esta etapa)"
+  },
+  "cacheName": "timeGridCatalogCache",
+  "location": "backend/src/modules/employees/employees.repository.ts:711-736",
+  "endpoint": {
+    "method": "GET",
+    "route": "/employees/:id/time-grid",
+    "controller": "employeesController.getTimeGrid",
+    "service": "employeesService.getTimeGrid",
+    "repository": "employeesRepository.findTimeGrid -> getTimeGridCatalogs() (private, not exported)",
+    "roleGate": "requireAnyRole([roles.rrhh, roles.supervision, roles.cargaHoraria])",
+    "queryParams": ["period (required, YYYY-MM)", "includeDetails (boolean, buggy — see gaps)"]
+  },
+  "caller": {
+    "frontendFile": "frontend/src/pages/EmployeeHoursPage.tsx",
+    "callSites": 2,
+    "callSitesDescription": ["mount/employee-or-period change (initial load)", "silent re-sync after saving an hour entry or manual breakdown"],
+    "intendedIncludeDetails": false,
+    "actualIncludeDetailsAtRuntime": true,
+    "embeddedCatalogFieldsUsedByFrontend": false
+  },
+  "ttl": 120000,
+  "key": "none — single global entry, no user/role/query/date scope",
+  "cachedData": {
+    "noveltyTypes": "all NoveltyType rows with status=ACTIVO (up to 500), include finnegansLinks",
+    "hourConcepts": "all HourConcept rows with status=ACTIVO (up to 100)"
+  },
+  "currentInvalidations": [],
+  "missingInvalidations": [
+    { "mutator": "noveltyTypesService.create", "file": "backend/src/modules/novelty-types/noveltyTypes.service.ts", "invalidatesOwnCache": true, "invalidatesTimeGridCatalogCache": false },
+    { "mutator": "noveltyTypesService.update", "file": "backend/src/modules/novelty-types/noveltyTypes.service.ts", "invalidatesOwnCache": true, "invalidatesTimeGridCatalogCache": false },
+    { "mutator": "hourConceptsService.create", "file": "backend/src/modules/hour-concepts/hourConcepts.service.ts", "invalidatesOwnCache": true, "invalidatesTimeGridCatalogCache": false },
+    { "mutator": "hourConceptsService.update", "file": "backend/src/modules/hour-concepts/hourConcepts.service.ts", "invalidatesOwnCache": true, "invalidatesTimeGridCatalogCache": false },
+    { "mutator": "hourConceptsService.remove (hard delete, no usage)", "file": "backend/src/modules/hour-concepts/hourConcepts.service.ts", "invalidatesOwnCache": true, "invalidatesTimeGridCatalogCache": false },
+    { "mutator": "hourConceptsService.remove (soft delete, force=true)", "file": "backend/src/modules/hour-concepts/hourConcepts.service.ts", "invalidatesOwnCache": true, "invalidatesTimeGridCatalogCache": false }
+  ],
+  "newBugFound": {
+    "description": "employees.schemas.ts:198 declares includeDetails: z.coerce.boolean().default(true). z.coerce.boolean() applies JS Boolean(value); a querystring value always arrives as a string, and Boolean(\"false\") is true (any non-empty string is truthy). So ?includeDetails=false is coerced to true, the same as omitting it or passing true.",
+    "reproduction": "node -e \"const {z}=require('zod'); console.log(z.object({includeDetails:z.coerce.boolean().default(true)}).parse({includeDetails:'false'}))\" -> { includeDetails: true } (verified against the actually installed zod@3.25.76)",
+    "consequence": "The only real caller (EmployeeHoursPage.tsx) always intends includeDetails=false but the backend always executes the heavy branch (period novelties fetch + getTimeGridCatalogs()) on every page load AND every post-save silent resync.",
+    "mitigatingFactor": "The frontend discards the 3 fields gated by includeDetails (novelties, noveltyTypes, hourConcepts) unconditionally — it always overwrites them from separate, correctly-cached-and-invalidated calls (noveltyApiService.getAll, noveltyTypeApiService.getAll) and builds hour-concept rows from grid.employee.hourConcepts + grid.normalConcept, never from the embedded catalog. So the functional risk today is nil.",
+    "realCost": "novelty.findMany (up to 200 rows, rich include) runs uncached on every load/save of the hours page for that employee/period — wasted work, not bounded by any TTL. getTimeGridCatalogs() is global and TTL-bounded (120s), so its marginal cost is low but still runs unnecessarily on the first miss of every 120s window app-wide.",
+    "neverDetectedBy": ["14A", "9A", "BACKEND_PERFORMANCE_INFRASTRUCTURE_DIAGNOSTIC_14I1", "BACKEND_REPOSITORY_LIST_CACHE_HELPER_14I3", "BACKEND_CACHE_ISOLATION_TESTS_14I6", "BACKEND_CACHE_REMAINING_TESTS_14I7"],
+    "productionCodeChanged": false,
+    "requiresExplicitAuthorizationToFix": true
+  },
+  "risk": {
+    "functional": "none today — embedded catalog fields (novelties/noveltyTypes/hourConcepts) are read by the API response but never consumed by the only frontend caller; if the invalidation gap alone existed without the includeDetails bug, worst case would be up to 120s of stale catalog data shown nowhere",
+    "securityScope": "none — no user/role/scope dimension in the cached data (active NoveltyType/HourConcept catalog, same for all 3 roles that can reach the endpoint), no PII",
+    "performance": "real and currently active — due to the includeDetails bug, an uncached novelty.findMany (up to 200 rows) runs on every hours-page load and every post-save silent resync for that employee/period, doing work whose result is always discarded; getTimeGridCatalogs() itself is cheap (TTL-bounded, global) but also runs unnecessarily"
+  },
+  "tests": {
+    "existing": [
+      { "file": "backend/src/modules/employees/employees.pii.test.ts", "covers": "PII redaction of getTimeGrid response, mocks employeesRepository.findTimeGrid entirely — does not exercise getTimeGridCatalogs()/timeGridCatalogCache or the real zod schema" },
+      { "file": "frontend/src/services/api/employeeApiService.test.ts", "covers": "response mapping with includeDetails:false passed by the client, mocks the HTTP response directly — does not exercise the real employeeTimeGridQuerySchema or the coercion bug" }
+    ],
+    "missing": [
+      "hit/miss/TTL/scope test for timeGridCatalogCache itself (same gap 14I.1 already named)",
+      "a test asserting what employeeTimeGridQuerySchema.parse({includeDetails: 'false'}) actually returns — would have caught the coercion bug"
+    ]
+  },
+  "measurement": {
+    "method": "read-only, isolated execution of the real installed zod schema logic (node -e), no HTTP request, no DB write, no test data created",
+    "zodVersionVerified": "3.25.76 (matches package.json ^3.25.56)",
+    "result": "includeDetails='false' (string, as Express delivers it) -> coerced to true; includeDetails omitted -> true (schema default); includeDetails='true' -> true",
+    "realVolumeQuery": "not run — out of scope, this etapa's evidence is about query-param coercion logic, not data volume"
+  },
+  "productionCodeChanged": false,
+  "filesTouched": [
+    "docs/decisions/TIME_GRID_CATALOG_CACHE_INVALIDATION_DIAGNOSTIC_14I8.md",
+    "docs/performance/TIME_GRID_CATALOG_CACHE_INVALIDATION_DIAGNOSTIC_14I8.json"
+  ],
+  "recommendation": {
+    "immediate": "No fix applied in this stage (diagnostic-only, as instructed). Two candidate actions identified, both require explicit user authorization before touching production:",
+    "candidateA_higherValue": "Fix employees.schemas.ts:198 (includeDetails: z.coerce.boolean().default(true)) to correctly parse the 'false' string from a querystring — e.g. z.enum(['true','false']).default('true').transform(v => v === 'true'). Removes real, recurring wasted work (uncached per-request novelty.findMany). No observable contract change (same response shape; the 3 gated fields just come back empty instead of unused-but-populated when the caller truly wants includeDetails=false).",
+    "candidateB_lowerPriorityGivenFindings": "Add invalidation to timeGridCatalogCache from noveltyTypesService.create/update and hourConceptsService.create/update/remove — closes 14I.1's original P1, but with near-zero real impact today since nothing consumes the cached data. Valid alternative: explicitly document why it's not needed (closed-set criterion, same as 14G.8), given today's lack of a real consumer.",
+    "bothRequireExplicitAuthorization": true
+  },
+  "recommendationFor14I9": [
+    "If no fix is authorized soon: pick up another P1/P2 from the 14I.1 inventory (StrictMode duplicate of GET /employees/:id/time-grid x3, named by 14G.9, never closed; or the finnegansLinks/timeEntryInclude over-fetch P2 items from 14I.1 §8)",
+    "If candidateA is authorized: scope 14I.9 to exactly that fix (1 line in employees.schemas.ts) + new tests pinning includeDetails=false really taking the light branch + full backend validations + before/after measurement if the environment allows it",
+    "The StrictMode duplicate x3 of this same endpoint (14G.9, never closed) is a natural companion to bundle with the includeDetails fix, since both live in the same caller (EmployeeHoursPage.tsx)"
+  ]
+}
