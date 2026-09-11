@@ -1,0 +1,67 @@
+{
+  "stage": "14I.9",
+  "generatedAt": "2026-09-11",
+  "type": "bugfix-minimal-authorized",
+  "note": "Fix quirurgico autorizado explicitamente por el usuario tras el diagnostico de 14I.8. Corrige la coercion de includeDetails, no toca timeGridCatalogCache (sin invalidacion agregada, candidato B de 14I.8, no autorizado).",
+  "relatedStages": {
+    "14I8": "docs/decisions/TIME_GRID_CATALOG_CACHE_INVALIDATION_DIAGNOSTIC_14I8.md (diagnostico y evidencia del bug)"
+  },
+  "bugFixed": {
+    "file": "backend/src/modules/employees/employees.schemas.ts",
+    "field": "employeeTimeGridQuerySchema.includeDetails",
+    "before": "z.coerce.boolean().default(true)",
+    "after": "z.preprocess((value) => (value === \"false\" ? false : value), z.coerce.boolean()).default(true)",
+    "rootCause": "z.coerce.boolean() applies JS Boolean(value); a querystring value always arrives as a string, and Boolean(\"false\") is true (any non-empty string is truthy)",
+    "verifiedBeforeAndAfter": true
+  },
+  "alternativeConsidered": {
+    "option": "z.enum(['true','false']).default('true').transform(v => v === 'true')",
+    "rejectedBecause": "wider behavior change — would reject any other truthy-looking string with a 400 instead of silently coercing to true as before; the chosen preprocess only fixes the exact broken case"
+  },
+  "notTouched": [
+    "backend/src/modules/employees/employees.repository.ts",
+    "backend/src/modules/employees/employees.service.ts",
+    "backend/src/modules/employees/employees.controller.ts",
+    "backend/src/modules/employees/employees.routes.ts",
+    "timeGridCatalogCache invalidation (candidate B of 14I.8, not authorized this stage)",
+    "noveltyTypes.service.ts",
+    "hourConcepts.service.ts",
+    "frontend (EmployeeHoursPage.tsx / employeeApiService.ts)",
+    "Prisma schema, relationJoins, Fichador, Gestion Horaria productiva, Horas Especiales, Turnos/Regimenes"
+  ],
+  "contractPreserved": true,
+  "rbacScopePreserved": true,
+  "testsAdded": {
+    "totalNewTests": 10,
+    "byFile": [
+      { "file": "backend/src/modules/employees/employees.schemas.test.ts", "tests": 7, "new": true, "covers": ["string 'false' -> false", "string 'true' -> true", "omitted -> default true", "real boolean false -> false", "real boolean true -> true", "fix scope boundary (other strings still coerce to true)", "period format unchanged"] },
+      { "file": "backend/src/modules/employees/employees.repository.test.ts", "tests": 3, "new": false, "note": "new describe block added to existing file, plus mock extension (noveltyType.findMany, workShift.count, attendancePunch.count, hourConceptBreakdown.findMany, hourConcept.findFirst, timeEntry.findMany) — additive only, no existing keys removed/renamed", "covers": ["includeDetails=true fetches novelties+catalog", "includeDetails=false skips both, returns empty arrays", "includeDetails=false repeated calls still skip (not a cache issue)"] }
+    ]
+  },
+  "validations": {
+    "prismaValidate": "pass",
+    "typecheck": "pass",
+    "test": "1393/1393 (95 files, +10 tests vs 1383 at close of 14I.7)",
+    "build": "pass",
+    "gitDiffCheck": "pass, sin errores de espacios en blanco",
+    "journeysRun": false,
+    "journeysJustification": "fix acotado a un schema Zod + tests unitarios; no cambia contrato observable para el unico caller real (que ya enviaba includeDetails=false)",
+    "realWritesExecuted": false
+  },
+  "filesTouched": [
+    "backend/src/modules/employees/employees.schemas.ts",
+    "backend/src/modules/employees/employees.schemas.test.ts",
+    "backend/src/modules/employees/employees.repository.test.ts",
+    "docs/decisions/EMPLOYEE_TIME_GRID_INCLUDE_DETAILS_FIX_14I9.md",
+    "docs/performance/EMPLOYEE_TIME_GRID_INCLUDE_DETAILS_FIX_14I9.json"
+  ],
+  "risks": [
+    "Ninguno introducido — fix acotado, verificado empiricamente antes y despues",
+    "EmployeeHoursPage.tsx empezara a recibir arrays vacios en novelties/noveltyTypes/hourConcepts en sus 2 llamadas reales — confirmado en 14I.8 que la pagina ya asume y pisa ese valor, sin cambio observable de UI",
+    "timeGridCatalogCache sigue sin invalidacion (no autorizado esta etapa) — su costo real de invocacion baja con este fix, pero la deuda de invalidacion en si no se cerro"
+  ],
+  "recommendationFor14I10": [
+    "Invalidacion de timeGridCatalogCache (candidato B de 14I.8, aun no autorizado, prioridad mas baja tras este fix)",
+    "Duplicado StrictMode de GET /employees/:id/time-grid (x3, nombrado por 14G.9, nunca cerrado, mismo caller que este fix)"
+  ]
+}

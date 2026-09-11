@@ -195,7 +195,16 @@ export const positionValidationQuerySchema = z.object({
 
 export const employeeTimeGridQuerySchema = z.object({
   period: z.string().regex(/^\d{4}-\d{2}$/),
-  includeDetails: z.coerce.boolean().default(true),
+  // Etapa 14I.9: `z.coerce.boolean()` aplica `Boolean(valor)` de JS — como un
+  // query param siempre llega como string, `Boolean("false")` da `true`
+  // (cualquier string no vacío es truthy), así que `?includeDetails=false`
+  // nunca desactivaba la rama pesada (novedades del período + catálogo de
+  // employees.repository.ts::getTimeGridCatalogs). El preprocess mapea
+  // exactamente el string `"false"` (el único valor que el único caller real,
+  // EmployeeHoursPage.tsx vía `String(false)`, envía) a un booleano real
+  // antes de que `coerce.boolean()` lo evalúe — ver docs/decisions/
+  // TIME_GRID_CATALOG_CACHE_INVALIDATION_DIAGNOSTIC_14I8.md.
+  includeDetails: z.preprocess((value) => (value === "false" ? false : value), z.coerce.boolean()).default(true),
 });
 
 const manualBreakdownDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((value) => {

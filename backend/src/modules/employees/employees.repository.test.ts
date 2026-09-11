@@ -14,18 +14,28 @@ import { EmployeeStatus } from "@prisma/client";
 vi.mock("../../shared/prisma/client", () => ({
   prisma: {
     employee: { findFirst: vi.fn(), findMany: vi.fn(), findUniqueOrThrow: vi.fn(), groupBy: vi.fn(), count: vi.fn() },
-    hourConcept: { findMany: vi.fn() },
+    hourConcept: { findMany: vi.fn(), findFirst: vi.fn() },
     employeeCompany: { findMany: vi.fn() },
     laborMovement: { findMany: vi.fn() },
     employeeAssignment: { deleteMany: vi.fn(), createMany: vi.fn(), findMany: vi.fn() },
     employeeHourConcept: { deleteMany: vi.fn(), createMany: vi.fn(), findMany: vi.fn() },
     novelty: { findMany: vi.fn() },
+    // Etapa 14I.9: findTimeGrid (rama `includeDetails`) usa además
+    // noveltyType.findMany/hourConcept.findMany (getTimeGridCatalogs),
+    // timeEntry.findMany, workShift.count, attendancePunch.count y
+    // hourConceptBreakdown.findMany — se agregan sólo para ese describe
+    // block nuevo, sin tocar ningún mock ya usado por otros tests de este
+    // archivo (claves nuevas o extendidas, ninguna eliminada/renombrada).
+    noveltyType: { findMany: vi.fn() },
+    workShift: { count: vi.fn() },
+    attendancePunch: { count: vi.fn() },
+    hourConceptBreakdown: { findMany: vi.fn() },
     employeeDocument: { create: vi.fn(), findMany: vi.fn() },
     employeeFieldHistory: { findMany: vi.fn(), create: vi.fn() },
     employeeBlockHistory: { findMany: vi.fn(), create: vi.fn() },
     position: { findUnique: vi.fn() },
     sector: { findUnique: vi.fn() },
-    timeEntry: { groupBy: vi.fn() },
+    timeEntry: { groupBy: vi.fn(), findMany: vi.fn() },
     $transaction: vi.fn(),
   },
 }));
@@ -377,6 +387,68 @@ describe("employeesRepository.findOrgChart / findOptions — Etapa 14C.3", () =>
       position: { select: { id: true, name: true, code: true } },
       assignments: { select: { type: true, personName: true } },
     });
+  });
+});
+
+// Etapa 14I.9 — cierra el bug encontrado en 14I.8: `employeeTimeGridQuerySchema`
+// coercionaba `?includeDetails=false` a `true` (Boolean("false") es truthy en
+// JS), así que la rama `query.includeDetails ? ... : Promise.resolve(...)`
+// de `findTimeGrid` (novedades del período + `getTimeGridCatalogs()`) SIEMPRE
+// corría, sin importar lo que pidiera el caller. El fix vive en el schema
+// (`employees.schemas.test.ts` fija esa parte); estos tests confirman que,
+// una vez que `query.includeDetails` llega como un booleano real, el
+// repositorio ya se comportaba bien (nunca fue el bug real).
+//
+// Nota de orden: `getTimeGridCatalogs()` cachea en una variable de módulo
+// (`timeGridCatalogCache`, sin exportar, sin `clear()` público — mismo caso
+// ya documentado en 14I.8) compartida por todo este archivo de test. El test
+// de `includeDetails: true` corre primero a propósito para observar el
+// cache-miss real; los de `includeDetails: false` nunca tocan esa cache (la
+// rama se salta antes de llamarla), así que son seguros en cualquier orden.
+describe("employeesRepository.findTimeGrid — includeDetails (Etapa 14I.9)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    (prisma.employee.findFirst as Mock).mockResolvedValue({ id: "emp-1" });
+    (prisma.timeEntry.findMany as Mock).mockResolvedValue([]);
+    (prisma.workShift.count as Mock).mockResolvedValue(0);
+    (prisma.attendancePunch.count as Mock).mockResolvedValue(0);
+    (prisma.hourConcept.findFirst as Mock).mockResolvedValue(null);
+    (prisma.hourConceptBreakdown.findMany as Mock).mockResolvedValue([]);
+  });
+
+  it("includeDetails=true: trae novedades del período y el catálogo global (noveltyTypes/hourConcepts no vacíos)", async () => {
+    (prisma.novelty.findMany as Mock).mockResolvedValue([{ id: "nov-1" }]);
+    (prisma.noveltyType.findMany as Mock).mockResolvedValue([{ id: "type-1", status: "ACTIVO" }]);
+    (prisma.hourConcept.findMany as Mock).mockResolvedValue([{ id: "concept-1", status: "ACTIVO" }]);
+
+    const result = await employeesRepository.findTimeGrid("emp-1", { period: "2026-09", includeDetails: true } as never, {});
+
+    expect(prisma.novelty.findMany).toHaveBeenCalledTimes(1);
+    expect(prisma.noveltyType.findMany).toHaveBeenCalledTimes(1);
+    expect(prisma.hourConcept.findMany).toHaveBeenCalledTimes(1);
+    expect(result?.novelties).toEqual([{ id: "nov-1" }]);
+    expect(result?.noveltyTypes).toEqual([{ id: "type-1", status: "ACTIVO" }]);
+    expect(result?.hourConcepts).toEqual([{ id: "concept-1", status: "ACTIVO" }]);
+  });
+
+  it("includeDetails=false: NO trae novedades del período ni el catálogo global — devuelve arrays vacíos sin pegarle a la base (Etapa 14I.9: antes del fix del schema, el bug hacía que esta rama nunca se ejercitara realmente desde HTTP)", async () => {
+    const result = await employeesRepository.findTimeGrid("emp-1", { period: "2026-09", includeDetails: false } as never, {});
+
+    expect(prisma.novelty.findMany).not.toHaveBeenCalled();
+    expect(prisma.noveltyType.findMany).not.toHaveBeenCalled();
+    expect(prisma.hourConcept.findMany).not.toHaveBeenCalled();
+    expect(result?.novelties).toEqual([]);
+    expect(result?.noveltyTypes).toEqual([]);
+    expect(result?.hourConcepts).toEqual([]);
+  });
+
+  it("includeDetails=false en llamadas sucesivas: sigue sin pedir novedades/catálogo — no es una cuestión de cache, directamente no se piden", async () => {
+    await employeesRepository.findTimeGrid("emp-1", { period: "2026-09", includeDetails: false } as never, {});
+    await employeesRepository.findTimeGrid("emp-1", { period: "2026-10", includeDetails: false } as never, {});
+
+    expect(prisma.novelty.findMany).not.toHaveBeenCalled();
+    expect(prisma.noveltyType.findMany).not.toHaveBeenCalled();
+    expect(prisma.hourConcept.findMany).not.toHaveBeenCalled();
   });
 });
 
