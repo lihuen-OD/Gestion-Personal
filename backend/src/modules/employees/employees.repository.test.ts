@@ -336,6 +336,48 @@ describe("employeesRepository.findOrgChart / findOptions — Etapa 14C.3", () =>
     expect(items).toEqual([]);
     expect(total).toBe(0);
   });
+
+  // Etapa 14I.5 (diagnóstico de over-fetch de `employeeOrgChartSelect`, ver
+  // docs/decisions/EMPLOYEE_ORG_CHART_OVERFETCH_DIAGNOSTIC_14I5.md): este test
+  // no existía — nada protegía el select de `findOrgChart` contra un cambio
+  // de campos silencioso. Se agrega como regresión pura (fija el select ya
+  // confirmado consumido campo por campo por `EmployeeOrgPopover.tsx`/
+  // `organizationChartMockService.ts`/`employeeApiService.ts`), sin modificar
+  // el select en sí — 14I.5 es diagnóstico, no optimización.
+  it("findOrgChart pide exactamente el select confirmado en uso (cadena sector->area->establishment->businessUnit incluida)", async () => {
+    await employeesRepository.findOrgChart({ page: 1, take: 25 } as never, {});
+
+    const call = (prisma.employee.findMany as Mock).mock.calls[0]![0] as { select: Record<string, unknown> };
+    expect(call.select).toEqual({
+      id: true,
+      legajo: true,
+      legajoFinnegans: true,
+      cuil: true,
+      dni: true,
+      firstName: true,
+      lastName: true,
+      status: true,
+      receiptCategory: true,
+      internalCategory: true,
+      companies: { include: { company: { select: { id: true, name: true, code: true } } } },
+      sector: {
+        select: {
+          id: true,
+          name: true,
+          code: true,
+          area: {
+            select: {
+              name: true,
+              establishment: { select: { name: true, businessUnit: { select: { name: true } } } },
+            },
+          },
+        },
+      },
+      costCenter: { select: { id: true, name: true, code: true } },
+      position: { select: { id: true, name: true, code: true } },
+      assignments: { select: { type: true, personName: true } },
+    });
+  });
 });
 
 describe("employeesRepository.existsWithAccess — Etapa 14C.3", () => {

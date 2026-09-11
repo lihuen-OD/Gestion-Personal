@@ -1,0 +1,127 @@
+{
+  "stage": "14I.5",
+  "generatedAt": "2026-09-11",
+  "type": "diagnostic-only",
+  "note": "Diagnostico quirurgico del candidato P1 de 14I.1 (employeeOrgChartSelect). No se cambio codigo productivo. Se agrego 1 test de regresion (fija el select actual, no lo modifica) mas esta documentacion.",
+  "relatedStages": {
+    "14I1": "docs/decisions/BACKEND_PERFORMANCE_INFRASTRUCTURE_DIAGNOSTIC_14I1.md (diagnostico original, commit 3abb3c4)",
+    "14I2": "docs/decisions/BACKEND_TRANSACTION_CLEANUP_P0_14I2.md (commit 709b633)",
+    "14I3": "docs/decisions/BACKEND_REPOSITORY_LIST_CACHE_HELPER_14I3.md (commit 66c84f4)",
+    "14I4": "docs/decisions/ATTENDANCE_SUMMARY_READONLY_TRANSACTION_14I4.md (commit e942feb)",
+    "14C3": "docs/decisions/EMPLOYEES_FULL_PERFORMANCE_14C3.md (fix $transaction original de findOrgChart, y primera mencion del gap de cobertura de journey)"
+  },
+  "endpoint": {
+    "method": "GET",
+    "route": "/employees/org-chart",
+    "controller": "employeesController.listOrgChart",
+    "service": "employeesService.listOrgChart",
+    "repository": "employeesRepository.findOrgChart",
+    "roleGate": "requireAnyRole([roles.rrhh, roles.supervision])",
+    "queryParams": ["search", "status", "companyId", "sectorId", "positionId", "costCenterId", "page", "take"],
+    "takeDefault": 500,
+    "takeMax": 1000,
+    "frontendCaller": "employeeApiService.getOrgChart() -> OrganigramasPage.tsx (unico caller confirmado por grep), siempre pide take=1000 sin filtros server-side, filtra client-side"
+  },
+  "selectFields": {
+    "scalarsUsed": ["id", "legajo", "legajoFinnegans", "cuil", "firstName", "lastName", "receiptCategory", "internalCategory"],
+    "scalarsUsedFilterOnly": ["dni"],
+    "scalarsUsedForHierarchy": ["internalCategory", "receiptCategory", "status"],
+    "relationsUsedVisibleUI": [
+      "companies.company.name (+ isPrimary)",
+      "sector.name",
+      "sector.area.establishment.name",
+      "sector.area.establishment.businessUnit.name",
+      "costCenter.name",
+      "position.name",
+      "assignments (type, personName) — core del organigrama (edges manager->subordinado)"
+    ],
+    "relationsUsedFilterOnly": ["position.id (match por id o nombre)"],
+    "unused": [
+      "companies.company.id",
+      "companies.company.code",
+      "sector.id",
+      "sector.code",
+      "sector.area.name (el nombre del area en si, solo se atraviesa para llegar a establishment)",
+      "costCenter.id",
+      "costCenter.code",
+      "position.code"
+    ],
+    "conclusion": "La cadena jerarquica de 4 niveles (sector->area->establishment->businessUnit) NO es over-fetch: sus 2 hojas terminales se muestran en EmployeeOrgPopover.tsx y alimentan 2 filtros reales. El unico over-fetch real es un puñado de sub-campos escalares id/code sobre relaciones ya necesarias."
+  },
+  "frontendUsage": {
+    "screen": "OrganigramasPage.tsx",
+    "loadTrigger": "useEffect al montar (una vez por sesion de la pantalla, mas retry manual)",
+    "filtersAppliedServerSide": false,
+    "filtersAppliedClientSide": true,
+    "debounce": "no aplica (fetch unico, sin busqueda incremental al backend)",
+    "frontendCache": "cachedData + cachePolicies.employeesOrgChart (familia employees, TTL 60s, persist:false, sensitive:true)",
+    "strictModeDedupe": "cubierto por cachedData, mismo mecanismo que el resto de la app desde 14D.5/14G.9",
+    "blanking": "loading de pagina completa en el mount inicial y en cada retry manual (no hay refresh silencioso porque no hay refresh automatico) — no evaluado como hallazgo, fuera del alcance backend de esta etapa",
+    "detailPopover": "EmployeeOrgPopover.tsx muestra Legajo/CUIL/Empresa/Unidad de negocio/Establecimiento/Centro de costo/Sector/Puesto/Categoria/Encargado directo/Responsable de carga al hacer click en un nodo"
+  },
+  "cache": {
+    "backend": {
+      "name": "employeeOrgChartCache",
+      "file": "backend/src/modules/employees/employees.controller.ts",
+      "mechanism": "createTtlCache",
+      "ttlMs": 20000,
+      "key": "userScopedCacheKey (userId:role:originalUrl, incluye query params)",
+      "invalidatedBy": "clearEmployeeReadCaches() — ~15+ call sites across employees/hour-concepts/novelties/workforce.approveCorrection",
+      "dedicatedHitMissTest": false,
+      "note": "gap ya conocido desde 14I.1 §6 para las 6 caches de employees.controller.ts, no nuevo, no corregido en esta etapa"
+    },
+    "frontend": {
+      "name": "cachePolicies.employeesOrgChart",
+      "ttlMs": 60000,
+      "persist": false,
+      "sensitive": true,
+      "family": "employees"
+    }
+  },
+  "measurements": {
+    "method": "temporary read-only script (backend/scripts/tmp-orgchart-measure.ts), npx tsx, deleted immediately after, never committed",
+    "realVolumeToday": { "total": 32, "active": 32, "inactive": 0 },
+    "sqlStatementsPerFindOrgChartCall": 1,
+    "noN1Confirmed": true,
+    "queryDurationWarmMs": { "currentSelect": [182, 183, 189], "leanSelectNoUnusedSubfields": [184, 178, 179], "conclusion": "diferencia dentro del ruido de medicion, sin senal de que el ancho del select afecte la duracion" },
+    "payloadBytes32Rows": { "current": 28614, "leanNoUnusedSubfields": 21447, "deltaBytes": 7167, "deltaPct": "25.05%" },
+    "payloadEstimateExtrapolated": {
+      "at200employees": { "currentKB": 179, "leanKB": 134 },
+      "at1000employeesTakeCap": { "currentKB": 894, "leanKB": 670 }
+    },
+    "gzipCompressionEnabled": false,
+    "gzipNote": "transversal a todo el backend (helmet+cors, sin middleware de compresion), no especifico de este endpoint, no tocado en esta etapa"
+  },
+  "diagnosis": {
+    "hasRealOverFetch": true,
+    "overFetchScope": "minimo y aislado — 8 sub-campos escalares (id/code) sobre relaciones ya necesarias, nunca la cadena jerarquica en si",
+    "hierarchyChainIsOverFetch": false,
+    "realCostLocation": "network payload (bajo), no DB (1 sola sentencia SQL, sin N+1), no query-time (0ms de diferencia medida), no frontend render (volumen trivial), no cache (ya bien configurada, solo le falta test de aislamiento)"
+  },
+  "changesApplied": {
+    "productionCodeChanged": false,
+    "testAdded": {
+      "file": "backend/src/modules/employees/employees.repository.test.ts",
+      "description": "fija (toEqual) el select exacto que findOrgChart pasa a prisma.employee.findMany hoy, incluida la cadena de 4 niveles — regresion pura, no cambia comportamiento"
+    },
+    "selectChanged": false,
+    "cacheChanged": false,
+    "contractChanged": false,
+    "rbacChanged": false
+  },
+  "risks": [
+    "Ninguno introducido — no se cambio codigo productivo",
+    "Riesgo de tocar el select a futuro sin evidencia adicional: bajo pero no cero (unico caller conocido, pero no se descarta un consumidor no auditado)",
+    "El gap de cobertura de journey para Organigramas sigue abierto (documentado desde 14C.3), sin cerrar en esta etapa por bajo valor dado el volumen real actual (32 empleados)"
+  ],
+  "recommendation": {
+    "immediate": "No optimizar employeeOrgChartSelect — la cadena jerarquica esta justificada por uso real, medido y confirmado campo por campo.",
+    "deferredCleanupCandidate": "Quitar los 8 sub-campos no usados (sector.id/code, area.name, costCenter.id/code, position.code, company.id/code) si alguna vez se toca este select por otro motivo — P3, cosmetico/mantenibilidad, no performance.",
+    "for14I6": [
+      "Tests de aislamiento de cache faltantes en documentsListCache/noveltiesListCache y en las 6 caches de employees.controller.ts (incluida employeeOrgChartCache)",
+      "Invalidacion de timeGridCatalogCache (employees.repository.ts) — requiere autorizacion explicita para tocar employees",
+      "Consolidar la doble capa de cache (createTtlCache + repositoryListCache) en hour-concepts/novelty-types/document-categories/salary-categories",
+      "Ampliar perf:journey:employees para cubrir Organigramas, si se prioriza cerrar el gap de cobertura independientemente del volumen real"
+    ]
+  }
+}
