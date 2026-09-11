@@ -1,0 +1,121 @@
+{
+  "stage": "14I.4",
+  "generatedAt": "2026-09-11",
+  "type": "backend-mechanical-fix",
+  "note": "Elimina la unica transaccion read-only remanente del inventario de 14I.1 (forma callback, sin escrituras). Mismo patron mecanico ya aplicado 18 veces antes (15 en 14C/14G/14H, 3 en 14I.2).",
+  "relatedStages": {
+    "14I1": "docs/decisions/BACKEND_PERFORMANCE_INFRASTRUCTURE_DIAGNOSTIC_14I1.md (diagnostico, commit 3abb3c4)",
+    "14I2": "docs/decisions/BACKEND_TRANSACTION_CLEANUP_P0_14I2.md (3 P0 forma array, commit 709b633)",
+    "14I3": "docs/decisions/BACKEND_REPOSITORY_LIST_CACHE_HELPER_14I3.md (consolidacion cache, commit 66c84f4)"
+  },
+  "endpoint": {
+    "method": "GET",
+    "route": "/time-entries/attendance",
+    "controller": "timeEntriesController.attendanceSummary",
+    "service": "timeEntriesService.attendanceSummary",
+    "repository": "timeEntriesRepository.attendanceSummary",
+    "frontendCaller": "attendanceApiService.getSummary(date) -> AttendancePage.tsx",
+    "roleGate": "requireAnyRole(operationalRoles)"
+  },
+  "function": {
+    "file": "backend/src/modules/time-entries/timeEntries.repository.ts",
+    "name": "attendanceSummary",
+    "form": "callback",
+    "hadWritesInCallback": false,
+    "queries": [
+      { "model": "WorkShift", "operation": "findMany" },
+      { "model": "AttendancePunch", "operation": "findMany" }
+    ],
+    "independentReads": true,
+    "postProcessingDependsOnTransactionalSnapshot": false
+  },
+  "before": {
+    "mechanism": "prisma.$transaction(async (tx) => { Promise.all([tx.workShift.findMany, tx.attendancePunch.findMany]) })",
+    "client": "tx (reserved Neon connection for the whole callback)"
+  },
+  "after": {
+    "mechanism": "Promise.all([prisma.workShift.findMany, prisma.attendancePunch.findMany])",
+    "client": "prisma (global client, real parallel execution, no reserved connection)"
+  },
+  "preserved": [
+    "where clauses (employeeAccessWhere, date range, status/reviewStatus filters)",
+    "select shape on both queries (employeeSelect, workShift select, attendancePunch select)",
+    "orderBy on both queries",
+    "API contract (GET /time-entries/attendance response shape)",
+    "RBAC/scope (operationalRoles route gate + employeeAccessWhere)",
+    "attendanceSummaryCache (controller-level createTtlCache, 10s, userScopedCacheKey) and its invalidation via clearTimeEntriesReadCaches()",
+    "frontend cache (cachedData + cachePolicies.timeEntriesAggregates) — untouched",
+    "attendance semantics (open/closed/observed shift classification, workedMinutes/workedHours computation)"
+  ],
+  "notTouched": [
+    "Fichador: clockInResolved, clockOutResolved, clockPhotoPunch, createFromWorkShift, closeOpenWorkShift, rolloverExpiredOpenWorkShift, expireOpenWorkShifts",
+    "AttendancePunch/WorkShift/TimeEntry/SpecialHourRuleApplication writes",
+    "hour concepts, special hours",
+    "Prisma schema / migrations",
+    "relationJoins/relationLoadStrategy",
+    "frontend files (read-only for caller confirmation)",
+    "any other backend module"
+  ],
+  "tests": {
+    "file": "backend/src/modules/time-entries/timeEntries.repository.test.ts",
+    "modified": 4,
+    "modifiedDescription": "existing select-shape tests migrated from mockedPrisma.__tx.* to mockedPrisma.* (no assertion content changed)",
+    "added": 5,
+    "addedDescription": [
+      "no $transaction call, both prisma queries called exactly once",
+      "employeeAccessWhere preserved on both queries",
+      "date range preserved (workShift startAt/endAt, attendancePunch timestamp/status/reviewStatus)",
+      "employee/sector/position select preserved on both queries",
+      "empty-data case returns same shape as before"
+    ],
+    "totalBackendTestsBefore": 1301,
+    "totalBackendTestsAfter": 1306
+  },
+  "validations": {
+    "prismaValidate": "pass",
+    "typecheck": "pass",
+    "test": "1306/1306 (87 files)",
+    "build": "pass",
+    "perfJourneyWorkforce": "pass (~1.0min, mandatory for this stage)",
+    "perfJourneyAdminConfig": "pass (~43.8s, optional regression smoke)",
+    "perfJourneyEmployees": "pass (~40.9s, optional regression smoke)",
+    "gitDiffCheck": "pass, no whitespace errors",
+    "journeyReportsRegeneratedAndRestored": [
+      "docs/performance/WORKFORCE_MANAGEMENT_PERFORMANCE_JOURNEY_14G1.md",
+      "docs/performance/WORKFORCE_MANAGEMENT_PERFORMANCE_JOURNEY_14G1.json",
+      "docs/performance/ADMIN_CONFIGURATION_PERFORMANCE_JOURNEY_14H1.md",
+      "docs/performance/ADMIN_CONFIGURATION_PERFORMANCE_JOURNEY_14H1.json",
+      "docs/performance/EMPLOYEES_PERFORMANCE_JOURNEY_14D1.md",
+      "docs/performance/EMPLOYEES_PERFORMANCE_JOURNEY_14D1.json"
+    ],
+    "realWritesExecuted": false
+  },
+  "risks": [
+    "None introduced by this change — mechanical pattern already validated 18 times (15 in 14C/14G/14H + 3 in 14I.2)",
+    "salaryCategories.repository.ts still has its P2 $transaction on the filtered branch, no real caller — unchanged",
+    "hourConceptRules.repository.ts still has its P2 $transaction, no real caller — unchanged",
+    "employeeOrgChartSelect (Legajos, P1 of 14I.1) still pending, requires explicit authorization to touch employees"
+  ],
+  "remainingTransactions": [
+    {
+      "module": "salary-categories",
+      "file": "backend/src/modules/salary-categories/salaryCategories.repository.ts",
+      "priority": "P2",
+      "realCaller": false,
+      "status": "unchanged, documented since 14I.1/14I.2/14I.3"
+    },
+    {
+      "module": "hour-concepts",
+      "file": "backend/src/modules/hour-concepts/hourConceptRules.repository.ts",
+      "priority": "P2",
+      "realCaller": false,
+      "status": "unchanged, documented since 14H.5/14I.1"
+    }
+  ],
+  "recommendationFor14I5": [
+    "Consolidate the stacked createTtlCache + repositoryListCache double layer in the 4 modules that have it",
+    "employeeOrgChartSelect (Legajos) 4-level chain reused per row in a listing — requires explicit authorization",
+    "timeGridCatalogCache (employees.repository.ts) missing invalidation — requires explicit authorization",
+    "Cache isolation tests for documentsListCache/noveltiesListCache and the 6 employees.controller.ts caches"
+  ]
+}

@@ -514,39 +514,39 @@ describe("attendanceSummary / attendanceObservations — select unificado de Tim
   const baseInput = { startAt: new Date("2026-08-18T00:00:00.000Z"), endAt: new Date("2026-08-19T00:00:00.000Z"), employeeAccessWhere: {} };
 
   it("attendanceSummary pide hourConceptId, hourConceptRuleId y conceptStatus en el select de timeSegments", async () => {
-    mockedPrisma.__tx.workShift.findMany.mockResolvedValue([]);
-    mockedPrisma.__tx.attendancePunch.findMany.mockResolvedValue([]);
+    mockedPrisma.workShift.findMany.mockResolvedValue([]);
+    mockedPrisma.attendancePunch.findMany.mockResolvedValue([]);
 
     await timeEntriesRepository.attendanceSummary(baseInput);
 
-    const call = mockedPrisma.__tx.workShift.findMany.mock.calls[0]![0] as { select: { timeSegments: { select: Record<string, unknown> } } };
+    const call = mockedPrisma.workShift.findMany.mock.calls[0]![0] as { select: { timeSegments: { select: Record<string, unknown> } } };
     expect(call.select.timeSegments.select).toMatchObject({ hourConceptId: true, hourConceptRuleId: true, conceptStatus: true });
   });
 
   it("attendanceSummary pide appliedMultiplier y actualMinutes en el select de timeEntries", async () => {
-    mockedPrisma.__tx.workShift.findMany.mockResolvedValue([]);
-    mockedPrisma.__tx.attendancePunch.findMany.mockResolvedValue([]);
+    mockedPrisma.workShift.findMany.mockResolvedValue([]);
+    mockedPrisma.attendancePunch.findMany.mockResolvedValue([]);
 
     await timeEntriesRepository.attendanceSummary(baseInput);
 
-    const call = mockedPrisma.__tx.workShift.findMany.mock.calls[0]![0] as { select: { timeEntries: { select: Record<string, unknown> } } };
+    const call = mockedPrisma.workShift.findMany.mock.calls[0]![0] as { select: { timeEntries: { select: Record<string, unknown> } } };
     expect(call.select.timeEntries.select).toMatchObject({ appliedMultiplier: true, actualMinutes: true });
   });
 
   it("attendanceSummary pide specialHourRuleApplications con doubleHourRule.name", async () => {
-    mockedPrisma.__tx.workShift.findMany.mockResolvedValue([]);
-    mockedPrisma.__tx.attendancePunch.findMany.mockResolvedValue([]);
+    mockedPrisma.workShift.findMany.mockResolvedValue([]);
+    mockedPrisma.attendancePunch.findMany.mockResolvedValue([]);
 
     await timeEntriesRepository.attendanceSummary(baseInput);
 
-    const call = mockedPrisma.__tx.workShift.findMany.mock.calls[0]![0] as {
+    const call = mockedPrisma.workShift.findMany.mock.calls[0]![0] as {
       select: { timeSegments: { select: { specialHourRuleApplications: { select: { doubleHourRule: { select: Record<string, unknown> } } } } } };
     };
     expect(call.select.timeSegments.select.specialHourRuleApplications.select.doubleHourRule.select).toMatchObject({ name: true });
   });
 
   it("attendanceSummary devuelve conceptStatus/hourConceptRuleId/appliedMultiplier/actualMinutes tal como los trae la base, sin recortarlos en código", async () => {
-    mockedPrisma.__tx.workShift.findMany.mockResolvedValue([
+    mockedPrisma.workShift.findMany.mockResolvedValue([
       {
         id: "shift-1",
         employeeId: "employee-1",
@@ -556,12 +556,87 @@ describe("attendanceSummary / attendanceObservations — select unificado de Tim
         timeEntries: [{ id: "entry-1", appliedMultiplier: 2, actualMinutes: 180, totalMinutes: 360 }],
       },
     ]);
-    mockedPrisma.__tx.attendancePunch.findMany.mockResolvedValue([]);
+    mockedPrisma.attendancePunch.findMany.mockResolvedValue([]);
 
     const result = await timeEntriesRepository.attendanceSummary(baseInput);
 
     expect(result.workShifts[0]!.timeSegments[0]).toMatchObject({ conceptStatus: "SIN_CONCEPTO_COMPATIBLE", hourConceptId: "concept-1" });
     expect(result.workShifts[0]!.timeEntries[0]).toMatchObject({ appliedMultiplier: 2, actualMinutes: 180 });
+  });
+
+  it("attendanceSummary no envuelve las 2 queries en $transaction — corren sobre el cliente prisma global (Promise.all real, Etapa 14I.4)", async () => {
+    mockedPrisma.workShift.findMany.mockResolvedValue([]);
+    mockedPrisma.attendancePunch.findMany.mockResolvedValue([]);
+
+    await timeEntriesRepository.attendanceSummary(baseInput);
+
+    expect(mockedPrisma.$transaction).not.toHaveBeenCalled();
+    expect(mockedPrisma.workShift.findMany).toHaveBeenCalledTimes(1);
+    expect(mockedPrisma.attendancePunch.findMany).toHaveBeenCalledTimes(1);
+  });
+
+  it("attendanceSummary preserva employeeAccessWhere en ambas queries", async () => {
+    mockedPrisma.workShift.findMany.mockResolvedValue([]);
+    mockedPrisma.attendancePunch.findMany.mockResolvedValue([]);
+    const employeeAccessWhere = { sectorId: { in: ["sector-1"] } };
+
+    await timeEntriesRepository.attendanceSummary({ ...baseInput, employeeAccessWhere });
+
+    const shiftCall = mockedPrisma.workShift.findMany.mock.calls[0]![0] as { where: { employee: unknown } };
+    const punchCall = mockedPrisma.attendancePunch.findMany.mock.calls[0]![0] as { where: { employee: unknown } };
+    expect(shiftCall.where.employee).toEqual(employeeAccessWhere);
+    expect(punchCall.where.employee).toEqual(employeeAccessWhere);
+  });
+
+  it("attendanceSummary preserva el rango de fechas: workShift por startAt/endAt abiertos, attendancePunch por timestamp acotado", async () => {
+    mockedPrisma.workShift.findMany.mockResolvedValue([]);
+    mockedPrisma.attendancePunch.findMany.mockResolvedValue([]);
+
+    await timeEntriesRepository.attendanceSummary(baseInput);
+
+    const shiftCall = mockedPrisma.workShift.findMany.mock.calls[0]![0] as {
+      where: { startAt: { lt: Date }; OR: Array<{ endAt: null | { gte: Date } }> };
+    };
+    expect(shiftCall.where.startAt).toEqual({ lt: baseInput.endAt });
+    expect(shiftCall.where.OR).toEqual([{ endAt: null }, { endAt: { gte: baseInput.startAt } }]);
+
+    const punchCall = mockedPrisma.attendancePunch.findMany.mock.calls[0]![0] as {
+      where: { timestamp: { gte: Date; lt: Date }; status: string; reviewStatus: string };
+    };
+    expect(punchCall.where.timestamp).toEqual({ gte: baseInput.startAt, lt: baseInput.endAt });
+    expect(punchCall.where.status).toBe("OBSERVADA");
+    expect(punchCall.where.reviewStatus).toBe("PENDIENTE");
+  });
+
+  it("attendanceSummary preserva el select de employee/sector/position en ambas queries", async () => {
+    mockedPrisma.workShift.findMany.mockResolvedValue([]);
+    mockedPrisma.attendancePunch.findMany.mockResolvedValue([]);
+
+    await timeEntriesRepository.attendanceSummary(baseInput);
+
+    const employeeSelect = {
+      id: true,
+      legajo: true,
+      dni: true,
+      firstName: true,
+      lastName: true,
+      status: true,
+      sector: { select: { id: true, name: true, code: true } },
+      position: { select: { id: true, name: true, code: true } },
+    };
+    const shiftCall = mockedPrisma.workShift.findMany.mock.calls[0]![0] as { select: { employee: { select: unknown } } };
+    const punchCall = mockedPrisma.attendancePunch.findMany.mock.calls[0]![0] as { select: { employee: { select: unknown } } };
+    expect(shiftCall.select.employee.select).toEqual(employeeSelect);
+    expect(punchCall.select.employee.select).toEqual(employeeSelect);
+  });
+
+  it("attendanceSummary sin datos devuelve { workShifts: [], observedPunches: [] }, mismo shape que antes", async () => {
+    mockedPrisma.workShift.findMany.mockResolvedValue([]);
+    mockedPrisma.attendancePunch.findMany.mockResolvedValue([]);
+
+    const result = await timeEntriesRepository.attendanceSummary(baseInput);
+
+    expect(result).toEqual({ workShifts: [], observedPunches: [] });
   });
 
   it("attendanceObservations sigue funcionando y ahora pide el mismo select unificado (antes traía todo por default de Prisma)", async () => {

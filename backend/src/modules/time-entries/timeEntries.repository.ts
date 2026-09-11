@@ -962,7 +962,11 @@ export const timeEntriesRepository = {
     });
   },
 
-  attendanceSummary(input: { startAt: Date; endAt: Date; employeeAccessWhere: Prisma.EmployeeWhereInput }) {
+  // Etapa 14I.4: mismo criterio que `homeCounts`/`attendanceObservedCount`
+  // arriba — 2 lecturas independientes sin ninguna escritura, sin necesidad
+  // de atomicidad transaccional (ver docs/decisions/
+  // ATTENDANCE_SUMMARY_READONLY_TRANSACTION_14I4.md).
+  async attendanceSummary(input: { startAt: Date; endAt: Date; employeeAccessWhere: Prisma.EmployeeWhereInput }) {
     const employeeSelect = {
       id: true,
       legajo: true,
@@ -974,120 +978,118 @@ export const timeEntriesRepository = {
       position: { select: { id: true, name: true, code: true } },
     } satisfies Prisma.EmployeeSelect;
 
-    return prisma.$transaction(async (tx) => {
-      const [workShifts, observedPunches] = await Promise.all([
-        tx.workShift.findMany({
-          where: {
-            employee: input.employeeAccessWhere,
-            startAt: { lt: input.endAt },
-            OR: [{ endAt: null }, { endAt: { gte: input.startAt } }],
-          },
-          select: {
-            id: true,
-            employeeId: true,
-            source: true,
-            status: true,
-            startAt: true,
-            endAt: true,
-            totalMinutes: true,
-            crossesMidnight: true,
-            observation: true,
-            reviewStatus: true,
-            shiftTemplateId: true,
-            shiftTemplate: {
-              select: {
-                id: true,
-                code: true,
-                name: true,
-                startTime: true,
-                endTime: true,
-                crossesMidnight: true,
-                entryToleranceBeforeMinutes: true,
-                entryToleranceAfterMinutes: true,
-                exitToleranceBeforeMinutes: true,
-                exitToleranceAfterMinutes: true,
-                minimumMinutesForCompliance: true,
-                maximumInformativeMinutes: true,
-                missingOutAlertAfterMinutes: true,
-                absoluteOpenShiftLimitMinutes: true,
-              },
-            },
-            employee: { select: employeeSelect },
-            startPunch: {
-              select: {
-                id: true,
-                timestamp: true,
-                source: true,
-                status: true,
-                observation: true,
-                photoStoragePath: true,
-                photoFileId: true,
-                thumbnailFileId: true,
-                photoUrl: true,
-                faceDetected: true,
-                faceValidationStatus: true,
-                faceDetectionScore: true,
-              },
-            },
-            endPunch: {
-              select: {
-                id: true,
-                timestamp: true,
-                source: true,
-                status: true,
-                observation: true,
-                photoStoragePath: true,
-                photoFileId: true,
-                thumbnailFileId: true,
-                photoUrl: true,
-                faceDetected: true,
-                faceValidationStatus: true,
-                faceDetectionScore: true,
-              },
-            },
-            timeSegments: {
-              select: attendanceTimeSegmentSelect,
-              orderBy: { fromDateTime: "asc" },
-            },
-            timeEntries: {
-              select: attendanceTimeEntrySelect,
-              orderBy: { date: "asc" },
+    const [workShifts, observedPunches] = await Promise.all([
+      prisma.workShift.findMany({
+        where: {
+          employee: input.employeeAccessWhere,
+          startAt: { lt: input.endAt },
+          OR: [{ endAt: null }, { endAt: { gte: input.startAt } }],
+        },
+        select: {
+          id: true,
+          employeeId: true,
+          source: true,
+          status: true,
+          startAt: true,
+          endAt: true,
+          totalMinutes: true,
+          crossesMidnight: true,
+          observation: true,
+          reviewStatus: true,
+          shiftTemplateId: true,
+          shiftTemplate: {
+            select: {
+              id: true,
+              code: true,
+              name: true,
+              startTime: true,
+              endTime: true,
+              crossesMidnight: true,
+              entryToleranceBeforeMinutes: true,
+              entryToleranceAfterMinutes: true,
+              exitToleranceBeforeMinutes: true,
+              exitToleranceAfterMinutes: true,
+              minimumMinutesForCompliance: true,
+              maximumInformativeMinutes: true,
+              missingOutAlertAfterMinutes: true,
+              absoluteOpenShiftLimitMinutes: true,
             },
           },
-          orderBy: [{ status: "asc" }, { startAt: "desc" }],
-        }),
-        tx.attendancePunch.findMany({
-          where: {
-            employee: input.employeeAccessWhere,
-            status: "OBSERVADA",
-            reviewStatus: "PENDIENTE",
-            startWorkShifts: { none: {} },
-            endWorkShifts: { none: {} },
-            timestamp: { gte: input.startAt, lt: input.endAt },
+          employee: { select: employeeSelect },
+          startPunch: {
+            select: {
+              id: true,
+              timestamp: true,
+              source: true,
+              status: true,
+              observation: true,
+              photoStoragePath: true,
+              photoFileId: true,
+              thumbnailFileId: true,
+              photoUrl: true,
+              faceDetected: true,
+              faceValidationStatus: true,
+              faceDetectionScore: true,
+            },
           },
-          select: {
-            id: true,
-            employeeId: true,
-            type: true,
-            timestamp: true,
-            source: true,
-            status: true,
-            observation: true,
-            photoStoragePath: true,
-            photoFileId: true,
-            thumbnailFileId: true,
-            photoUrl: true,
-            faceDetected: true,
-            faceValidationStatus: true,
-            faceDetectionScore: true,
-            employee: { select: employeeSelect },
+          endPunch: {
+            select: {
+              id: true,
+              timestamp: true,
+              source: true,
+              status: true,
+              observation: true,
+              photoStoragePath: true,
+              photoFileId: true,
+              thumbnailFileId: true,
+              photoUrl: true,
+              faceDetected: true,
+              faceValidationStatus: true,
+              faceDetectionScore: true,
+            },
           },
-          orderBy: { timestamp: "desc" },
-        }),
-      ]);
+          timeSegments: {
+            select: attendanceTimeSegmentSelect,
+            orderBy: { fromDateTime: "asc" },
+          },
+          timeEntries: {
+            select: attendanceTimeEntrySelect,
+            orderBy: { date: "asc" },
+          },
+        },
+        orderBy: [{ status: "asc" }, { startAt: "desc" }],
+      }),
+      prisma.attendancePunch.findMany({
+        where: {
+          employee: input.employeeAccessWhere,
+          status: "OBSERVADA",
+          reviewStatus: "PENDIENTE",
+          startWorkShifts: { none: {} },
+          endWorkShifts: { none: {} },
+          timestamp: { gte: input.startAt, lt: input.endAt },
+        },
+        select: {
+          id: true,
+          employeeId: true,
+          type: true,
+          timestamp: true,
+          source: true,
+          status: true,
+          observation: true,
+          photoStoragePath: true,
+          photoFileId: true,
+          thumbnailFileId: true,
+          photoUrl: true,
+          faceDetected: true,
+          faceValidationStatus: true,
+          faceDetectionScore: true,
+          employee: { select: employeeSelect },
+        },
+        orderBy: { timestamp: "desc" },
+      }),
+    ]);
 
-      return { workShifts, observedPunches };
-    });
+    return { workShifts, observedPunches };
   },
 
   async attendanceObservations(input: {
