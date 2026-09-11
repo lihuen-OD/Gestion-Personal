@@ -1,0 +1,86 @@
+{
+  "stage": "14I.6",
+  "generatedAt": "2026-09-11",
+  "type": "test-coverage-only",
+  "note": "Cero cambios de codigo productivo. 4 archivos de test nuevos, 0 modificados. Cierra el gap de cobertura de cache nombrado por 14I.1 (parrafo P1 punto 8) y reiterado por 14I.5.",
+  "relatedStages": {
+    "14I1": "docs/decisions/BACKEND_PERFORMANCE_INFRASTRUCTURE_DIAGNOSTIC_14I1.md (diagnostico original, commit 3abb3c4)",
+    "14I3": "docs/decisions/BACKEND_REPOSITORY_LIST_CACHE_HELPER_14I3.md (commit 66c84f4)",
+    "14I5": "docs/decisions/EMPLOYEE_ORG_CHART_OVERFETCH_DIAGNOSTIC_14I5.md (commit 4554558, reitero el gap)"
+  },
+  "productionCodeChanged": false,
+  "cachesTested": [
+    { "name": "employeeDetailCache", "module": "employees.controller.ts", "hadRealTestBefore": false },
+    { "name": "employeeTimeGridCache", "module": "employees.controller.ts", "hadRealTestBefore": false },
+    { "name": "employeeListCache", "module": "employees.controller.ts", "hadRealTestBefore": false },
+    { "name": "employeeSummaryCache", "module": "employees.controller.ts", "hadRealTestBefore": false },
+    { "name": "employeeOrgChartCache", "module": "employees.controller.ts", "hadRealTestBefore": false },
+    { "name": "employeeOptionsCache", "module": "employees.controller.ts", "hadRealTestBefore": false },
+    { "name": "documentsListCache", "module": "documents/documents.cache.ts", "hadRealTestBefore": false },
+    { "name": "noveltiesListCache", "module": "novelties/novelties.cache.ts", "hadRealTestBefore": false },
+    { "name": "timeEntriesListCache", "module": "time-entries/timeEntries.cache.ts", "hadRealTestBefore": "mocked-only" },
+    { "name": "timeEntriesSummaryCache", "module": "time-entries/timeEntries.cache.ts", "hadRealTestBefore": "mocked-only" },
+    { "name": "timeEntriesPeriodEmployeesCache", "module": "time-entries/timeEntries.cache.ts", "hadRealTestBefore": "mocked-only" },
+    { "name": "attendanceSummaryCache", "module": "time-entries/timeEntries.cache.ts", "hadRealTestBefore": "mocked-only" }
+  ],
+  "cachesAlreadyCoveredNotDuplicated": ["homeSummaryCache", "attendanceObservationsCache", "shiftAlertListCache", "shiftAssignmentSummaryCache", "notificationsListCache", "closuresCache", "correctionsCache", "positionOptionsCache", "hourConceptsReadCache", "noveltyTypesListCache", "noveltyTypesDetailCache", "documentCategoriesReadCache", "auditParametersReadCache", "overviewCache"],
+  "cachesOutOfScopeNotCovered": [
+    { "name": "usersListCache", "reason": "modulo sin ningun test hoy, pero no estaba en la lista de areas candidatas de este pedido" },
+    { "name": "usersDetailCache", "reason": "idem" },
+    { "name": "salaryCategoriesReadCache", "reason": "idem" },
+    { "name": "timeGridCatalogCache", "reason": "vive en employees.repository.ts (Legajos), requiere autorizacion explicita fuera de alcance de esta etapa (solo caches controller-layer)" },
+    { "name": "auth.currentUserCache", "reason": "no nombrada por el pedido, infraestructura de auth" },
+    { "name": "googleDriveStorage token/folder cache", "reason": "no nombrada por el pedido, infraestructura de storage" }
+  ],
+  "testsAdded": {
+    "totalNewTests": 49,
+    "totalNewFiles": 4,
+    "modifiedFiles": 0,
+    "byFile": [
+      { "file": "backend/src/modules/employees/employees.readCaches.test.ts", "tests": 24, "cachesCovered": ["employeeListCache", "employeeOrgChartCache", "employeeOptionsCache", "employeeSummaryCache", "employeeDetailCache", "employeeTimeGridCache"] },
+      { "file": "backend/src/modules/documents/documents.controller.test.ts", "tests": 5, "cachesCovered": ["documentsListCache"], "note": "primer archivo de test de controller para este modulo" },
+      { "file": "backend/src/modules/novelties/novelties.controller.test.ts", "tests": 6, "cachesCovered": ["noveltiesListCache"], "note": "primer archivo de test de controller para este modulo" },
+      { "file": "backend/src/modules/time-entries/timeEntries.readCaches.test.ts", "tests": 14, "cachesCovered": ["timeEntriesListCache", "timeEntriesSummaryCache", "timeEntriesPeriodEmployeesCache", "attendanceSummaryCache"] }
+    ]
+  },
+  "testsSkipped": [
+    { "cache": "ttlCache.ts (helper base)", "reason": "sin test dedicado de expiracion real (Date.now() sin reloj inyectable) — no pedido explicitamente por esta etapa, queda como recomendacion para 14I.7" }
+  ],
+  "isolationCoverage": {
+    "cachesWithUserRoleIsolationTest": ["employeeListCache", "employeeOrgChartCache", "employeeSummaryCache", "employeeDetailCache", "employeeTimeGridCache", "documentsListCache", "noveltiesListCache", "timeEntriesListCache", "timeEntriesSummaryCache", "attendanceSummaryCache"],
+    "minimumRequired": 2,
+    "delivered": 10
+  },
+  "queryVarianceCoverage": {
+    "cachesWithQueryVarianceTest": ["employeeListCache", "employeeOrgChartCache", "employeeTimeGridCache", "documentsListCache", "noveltiesListCache", "timeEntriesListCache", "timeEntriesPeriodEmployeesCache", "attendanceSummaryCache"],
+    "minimumRequired": 2,
+    "delivered": 8
+  },
+  "invalidationCoverage": {
+    "wideInvalidation": ["clearEmployeeReadCaches (6 caches employees)", "clearTimeEntriesReadCaches (4 caches time-entries)"],
+    "narrowInvalidation": ["clearEmployeeTimeGridCache (confirmado que NO invalida employeeDetailCache, Etapa 14C.2)", "clearDocumentsReadCaches", "clearNoveltiesReadCaches (via mutadores reales create/approve/reject/remove)"],
+    "realProductionCallSitesExercised": ["novelties create/approve/reject/remove (noveltiesController)"]
+  },
+  "validations": {
+    "prismaValidate": "pass",
+    "typecheck": "pass",
+    "test": "1356/1356 (91 files, +49 tests vs 1307 en cierre de 14I.5)",
+    "build": "pass",
+    "gitDiffCheck": "pass, sin errores de espacios en blanco",
+    "journeysRun": false,
+    "journeysJustification": "no se toco codigo productivo ni frontend/e2e — solo tests unitarios de backend con servicios mockeados",
+    "realWritesExecuted": false
+  },
+  "remainingGaps": [
+    "usersListCache/usersDetailCache/salaryCategoriesReadCache sin ningun test (modulos completos sin cobertura, fuera del alcance nombrado de esta etapa)",
+    "timeGridCatalogCache sin invalidacion explicita y sin test (requiere autorizacion para tocar employees.repository.ts)",
+    "ttlCache.ts (helper base) sin test propio de expiracion real — afecta transversalmente a las ~34 caches que lo usan",
+    "Doble capa de cache (createTtlCache + repositoryListCache) en 4 modulos sigue sin consolidar (deuda documentada desde 14I.3, sin bug que la fuerce)"
+  ],
+  "recommendationFor14I7": [
+    "Cobertura de cache para users/salary-categories (unicos 2 modulos backend sin ningun test)",
+    "Invalidacion de timeGridCatalogCache (requiere autorizacion explicita para employees)",
+    "Consolidar la doble capa de cache en hour-concepts/novelty-types/document-categories/salary-categories",
+    "ttlCache.test.ts para el helper base compartido"
+  ]
+}
