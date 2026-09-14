@@ -1,10 +1,17 @@
 import { env } from "../../config/env";
+import { AppError } from "../errors/AppError";
 import { cloudinaryStorageProvider } from "./cloudinaryStorage.provider";
 import { googleDriveStorageProvider } from "./googleDriveStorage.provider";
 import { localStorageProvider } from "./localStorage.provider";
 import { storageFilesRepository } from "./storageFiles.repository";
 import { checksum, fileExtension, safeFileName, validateStorageFile } from "./storageValidation";
-import type { ManagedStorageObjectInput, StorageObjectInput, StorageProvider } from "./storage.types";
+import type {
+  ManagedStorageObjectInput,
+  PersistedStorageProvider,
+  StorageFileRef,
+  StorageObjectInput,
+  StorageProvider,
+} from "./storage.types";
 
 function provider(): StorageProvider {
   if (env.STORAGE_PROVIDER === "google_drive") return googleDriveStorageProvider;
@@ -17,6 +24,32 @@ function providerName(resultProvider: string) {
   if (resultProvider === "cloudinary") return "CLOUDINARY" as const;
   return "LOCAL" as const;
 }
+
+/**
+ * Etapa 15D.1 (docs/decisions/STORAGE_PROVIDER_REGISTRY_15D1.md): registry
+ * que resuelve el provider por StorageFile.storageProvider PERSISTIDO, no
+ * por el provider global activo (`provider()` arriba). `provider()` sigue
+ * siendo el único usado para subir archivos nuevos — un archivo ya
+ * existente puede haberse subido con un provider distinto al configurado
+ * hoy (p. ej. se subió a Google Drive y luego STORAGE_PROVIDER pasó a
+ * cloudinary), y las operaciones sobre ese archivo (download/delete/url)
+ * deben seguir resolviendo contra el provider con el que realmente se subió.
+ */
+const providerRegistry: Record<PersistedStorageProvider, StorageProvider> = {
+  LOCAL: localStorageProvider,
+  GOOGLE_DRIVE: googleDriveStorageProvider,
+  CLOUDINARY: cloudinaryStorageProvider,
+};
+
+function providerFor(name: PersistedStorageProvider): StorageProvider {
+  const found = providerRegistry[name];
+  if (!found) {
+    throw new AppError(`Proveedor de storage desconocido: ${name}`, 500, "STORAGE_PROVIDER_UNKNOWN");
+  }
+  return found;
+}
+
+export const storageProviderRegistry = { get: providerFor };
 
 export const storageService = {
   upload(input: StorageObjectInput) {
@@ -76,23 +109,50 @@ export const storageService = {
   async deleteManaged(id: string) {
     const file = await storageFilesRepository.findById(id);
     if (!file || file.status === "DELETED") return;
-    await provider().delete(file.storageKey);
+    await providerFor(file.storageProvider).delete(file.storageKey);
     await storageFilesRepository.updateStatus(id, { status: "DELETED", deletedAt: new Date() });
   },
 
+  /**
+   * @legacy Resuelve por el provider GLOBAL activo, no por el provider con
+   * el que el archivo se subió. Sólo válido para storageKeys sin
+   * StorageFile vinculado (datos previos a esta etapa). Para un archivo
+   * con StorageFile, usar deleteStoredFile.
+   */
   delete(storageKey: string) {
     return provider().delete(storageKey);
   },
 
+  /** @legacy Ver nota de `delete` — usar getStoredFilePublicUrl para un archivo con StorageFile. */
   getPublicUrl(storageKey: string) {
     return provider().getPublicUrl(storageKey);
   },
 
+  /** @legacy Ver nota de `delete` — usar getStoredFilePath para un archivo con StorageFile. */
   getFilePath(storageKey: string) {
     return provider().getFilePath(storageKey);
   },
 
+  /** @legacy Ver nota de `delete` — usar downloadStoredFile para un archivo con StorageFile. */
   download(storageKey: string) {
     return provider().download?.(storageKey);
+  },
+
+  // Etapa 15D.1 — operaciones sobre un archivo EXISTENTE, resueltas por su
+  // StorageFile.storageProvider persistido (nunca por el provider global).
+  getStoredFilePublicUrl(file: StorageFileRef) {
+    return providerFor(file.storageProvider).getPublicUrl(file.storageKey);
+  },
+
+  getStoredFilePath(file: StorageFileRef) {
+    return providerFor(file.storageProvider).getFilePath(file.storageKey);
+  },
+
+  downloadStoredFile(file: StorageFileRef) {
+    return providerFor(file.storageProvider).download?.(file.storageKey);
+  },
+
+  async deleteStoredFile(file: StorageFileRef) {
+    await providerFor(file.storageProvider).delete(file.storageKey);
   },
 };

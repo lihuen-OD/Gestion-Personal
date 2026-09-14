@@ -814,7 +814,14 @@ export const timeEntriesService = {
     const storageKey = punch.photoFile?.storageKey || punch.photoStoragePath;
     if (!storageKey) throw new AppError("La fichada no tiene foto asociada.", 404, "ATTENDANCE_PUNCH_PHOTO_NOT_FOUND");
 
-    const publicUrl = punch.photoFile?.driveWebViewLink ? undefined : punch.photoUrl || storageService.getPublicUrl(storageKey);
+    // Etapa 15D.1: con photoFile vinculado, resolver siempre por su
+    // storageProvider persistido — nunca por el provider global activo hoy.
+    // El fallback a photoStoragePath "suelto" sólo cubre fichadas previas a
+    // que StorageFile existiera. Ver docs/decisions/STORAGE_PROVIDER_REGISTRY_15D1.md.
+    const fileRef = punch.photoFile;
+    const publicUrl = punch.photoFile?.driveWebViewLink
+      ? undefined
+      : punch.photoUrl || (fileRef ? storageService.getStoredFilePublicUrl(fileRef) : storageService.getPublicUrl(storageKey));
     if (publicUrl) {
       return {
         kind: "redirect" as const,
@@ -822,7 +829,7 @@ export const timeEntriesService = {
       };
     }
 
-    const downloaded = await storageService.download(storageKey);
+    const downloaded = fileRef ? await storageService.downloadStoredFile(fileRef) : await storageService.download(storageKey);
     if (downloaded) {
       return {
         kind: "buffer" as const,
@@ -832,7 +839,7 @@ export const timeEntriesService = {
       };
     }
 
-    const filePath = storageService.getFilePath(storageKey);
+    const filePath = fileRef ? storageService.getStoredFilePath(fileRef) : storageService.getFilePath(storageKey);
     if (!filePath) throw new AppError("Foto no disponible en storage.", 404, "ATTENDANCE_PUNCH_PHOTO_UNAVAILABLE");
     await access(filePath).catch(() => {
       throw new AppError("Foto no encontrada en storage.", 404, "ATTENDANCE_PUNCH_PHOTO_FILE_NOT_FOUND");

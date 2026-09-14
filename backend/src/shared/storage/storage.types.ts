@@ -1,4 +1,11 @@
-import type { StorageEntityType, StorageModule, StorageVisibility } from "@prisma/client";
+import type {
+  StorageEntityType,
+  StorageModule,
+  StorageProvider as PersistedStorageProvider,
+  StorageVisibility,
+} from "@prisma/client";
+
+export type { PersistedStorageProvider };
 
 export type StorageProviderName = "local" | "cloudinary" | "google_drive";
 
@@ -48,4 +55,14 @@ export interface StorageProvider {
   getPublicUrl(storageKey: string): string | undefined;
   getFilePath(storageKey: string): string | undefined;
   download?(storageKey: string): Promise<StorageDownloadResult>;
+}
+
+/**
+ * Referencia mínima a un archivo ya existente: el provider con el que
+ * realmente se subió (StorageFile.storageProvider persistido), no el
+ * provider global activo hoy. Ver docs/decisions/STORAGE_PROVIDER_REGISTRY_15D1.md.
+ */
+export interface StorageFileRef {
+  storageProvider: PersistedStorageProvider;
+  storageKey: string;
 }

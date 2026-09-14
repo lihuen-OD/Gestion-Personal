@@ -1252,7 +1252,7 @@ export const timeEntriesRepository = {
         photoStoragePath: true,
         photoFileId: true,
         thumbnailFileId: true,
-        photoFile: { select: { id: true, storageKey: true, mimeType: true, driveWebViewLink: true } },
+        photoFile: { select: { id: true, storageProvider: true, storageKey: true, mimeType: true, driveWebViewLink: true } },
         employee: { select: { legajo: true, firstName: true, lastName: true } },
       },
     });

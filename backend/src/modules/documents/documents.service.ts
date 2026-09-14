@@ -42,8 +42,20 @@ export const documentsService = {
       description: `Se descargo/visualizo el documento ${item.fileName} del legajo ${item.employee.legajo}.`,
     });
 
+    // Etapa 15D.1: un documento con storageFile vinculado resuelve SIEMPRE
+    // por su storageProvider persistido, nunca por el provider global activo
+    // hoy — ver docs/decisions/STORAGE_PROVIDER_REGISTRY_15D1.md. El
+    // fallback a storageKey "suelto" (sin storageFile) sólo aplica a
+    // documentos previos a que StorageFile existiera, y conserva el
+    // comportamiento legacy (provider global) porque no hay forma de saber
+    // con qué provider se subieron.
     const storageKey = item.storageFile?.storageKey || item.storageKey;
-    const publicUrl = item.storageFile?.driveWebViewLink ? undefined : storageService.getPublicUrl(storageKey);
+    const fileRef = item.storageFile;
+    const publicUrl = item.storageFile?.driveWebViewLink
+      ? undefined
+      : fileRef
+        ? storageService.getStoredFilePublicUrl(fileRef)
+        : storageService.getPublicUrl(storageKey);
     if (publicUrl) {
       return {
         kind: "redirect" as const,
@@ -51,7 +63,7 @@ export const documentsService = {
       };
     }
 
-    const downloaded = await storageService.download(storageKey);
+    const downloaded = fileRef ? await storageService.downloadStoredFile(fileRef) : await storageService.download(storageKey);
     if (downloaded) {
       return {
         kind: "buffer" as const,
@@ -61,7 +73,7 @@ export const documentsService = {
       };
     }
 
-    const filePath = storageService.getFilePath(storageKey);
+    const filePath = fileRef ? storageService.getStoredFilePath(fileRef) : storageService.getFilePath(storageKey);
     if (!filePath) throw new AppError("Archivo no disponible", 404, "DOCUMENT_FILE_NOT_AVAILABLE");
 
     await access(filePath).catch(() => {

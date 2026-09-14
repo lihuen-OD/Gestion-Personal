@@ -48,10 +48,10 @@ export const storageModuleService = {
       description: `Se descargo archivo ${file.fileName}.`,
     });
 
-    const publicUrl = file.storageProvider === "GOOGLE_DRIVE" ? undefined : storageService.getPublicUrl(file.storageKey);
+    const publicUrl = file.storageProvider === "GOOGLE_DRIVE" ? undefined : storageService.getStoredFilePublicUrl(file);
     if (publicUrl) return { kind: "redirect" as const, url: publicUrl };
 
-    const downloaded = await storageService.download(file.storageKey);
+    const downloaded = await storageService.downloadStoredFile(file);
     if (downloaded) {
       return {
         kind: "buffer" as const,
@@ -61,7 +61,7 @@ export const storageModuleService = {
       };
     }
 
-    const filePath = storageService.getFilePath(file.storageKey);
+    const filePath = storageService.getStoredFilePath(file);
     if (!filePath) throw new AppError("Archivo no disponible", 404, "STORAGE_FILE_NOT_AVAILABLE");
     await access(filePath).catch(() => {
       throw new AppError("Archivo no encontrado en storage", 404, "STORAGE_FILE_NOT_FOUND");

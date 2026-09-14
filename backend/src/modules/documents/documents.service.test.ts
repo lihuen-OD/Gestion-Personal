@@ -17,6 +17,9 @@ vi.mock("../../shared/storage/storage.service", () => ({
     getPublicUrl: vi.fn(),
     getFilePath: vi.fn(),
     download: vi.fn(),
+    getStoredFilePublicUrl: vi.fn(),
+    getStoredFilePath: vi.fn(),
+    downloadStoredFile: vi.fn(),
   },
 }));
 
@@ -25,7 +28,14 @@ vi.mock("../audit/audit.service", () => ({
 }));
 
 const repo = documentsRepository as unknown as { findById: Mock; findMany: Mock };
-const storage = storageService as unknown as { getPublicUrl: Mock; getFilePath: Mock; download: Mock };
+const storage = storageService as unknown as {
+  getPublicUrl: Mock;
+  getFilePath: Mock;
+  download: Mock;
+  getStoredFilePublicUrl: Mock;
+  getStoredFilePath: Mock;
+  downloadStoredFile: Mock;
+};
 const audit = auditService as unknown as { register: Mock };
 
 const fakeUser = { id: "user-1", role: "NIVEL_1_RRHH" } as unknown as Express.AuthUser;
@@ -70,6 +80,44 @@ describe("documentsService.download", () => {
       code: "DOCUMENT_NOT_FOUND",
     });
     expect(audit.register).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Etapa 15D.1 (docs/decisions/STORAGE_PROVIDER_REGISTRY_15D1.md): un
+ * documento con storageFile vinculado debe resolver SIEMPRE por su
+ * storageProvider persistido, nunca por el provider global activo hoy —
+ * el fallback a `storageKey` suelto sólo existe para documentos previos a
+ * que StorageFile existiera.
+ */
+describe("documentsService.download — provider persistido por storageFile (Etapa 15D.1)", () => {
+  it("descarga por el storageProvider GOOGLE_DRIVE persistido, nunca por storageService legacy", async () => {
+    const docWithStorageFile = {
+      ...document,
+      id: "doc-2",
+      storageFile: { id: "sf-1", storageProvider: "GOOGLE_DRIVE", storageKey: "drive-key-9", driveWebViewLink: null },
+    };
+    repo.findById.mockResolvedValue(docWithStorageFile);
+    storage.downloadStoredFile.mockResolvedValue({ buffer: Buffer.from("contenido"), mimeType: "application/pdf" });
+
+    const result = await documentsService.download("doc-2", fakeUser);
+
+    expect(result).toMatchObject({ kind: "buffer", fileName: "dni.pdf", mimeType: "application/pdf" });
+    expect(storage.downloadStoredFile).toHaveBeenCalledWith(docWithStorageFile.storageFile);
+    expect(storage.download).not.toHaveBeenCalled();
+    expect(storage.getPublicUrl).not.toHaveBeenCalled();
+  });
+
+  it("un documento sin storageFile (legacy) sigue resolviendo por el provider global activo, sin usar los métodos nuevos", async () => {
+    repo.findById.mockResolvedValue(document); // fixture: storageFile: null
+    storage.getPublicUrl.mockReturnValue("https://storage.example/dni.pdf");
+
+    const result = await documentsService.download("doc-1", fakeUser);
+
+    expect(result).toEqual({ kind: "redirect", url: "https://storage.example/dni.pdf" });
+    expect(storage.getPublicUrl).toHaveBeenCalledWith(document.storageKey);
+    expect(storage.getStoredFilePublicUrl).not.toHaveBeenCalled();
+    expect(storage.downloadStoredFile).not.toHaveBeenCalled();
   });
 });
 
