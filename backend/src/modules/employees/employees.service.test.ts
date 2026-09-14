@@ -240,9 +240,19 @@ describe("employeesService manual hour concept breakdowns", () => {
     expect(repo.findEmployeeForManualBreakdown).toHaveBeenCalledWith("emp-1", expect.any(Object));
   });
 
-  it("bloquea edición directa de un período cerrado", async () => {
+  it("RRHH corrige un período cerrado directo, siempre que mande motivo (Etapa 15E) — input.observation ya viene con 'Traslado'", async () => {
     repo.findMonthlyClosure.mockResolvedValue({ id: "closure-1", status: "APROBADO" });
-    await expect(employeesService.upsertManualHourConceptBreakdown("emp-1", input, rrhhUser)).rejects.toMatchObject({ code: "PERIOD_CLOSED" });
+    const result = await employeesService.upsertManualHourConceptBreakdown("emp-1", input, rrhhUser);
+    expect(result).toMatchObject({ id: "breakdown-1" });
+    expect(repo.saveManualHourConceptBreakdown).toHaveBeenCalledWith(expect.objectContaining({ approvedByUserId: rrhhUser.id }));
+  });
+
+  it("RRHH sin motivo en un período cerrado queda bloqueado con un error propio (Etapa 15E)", async () => {
+    repo.findMonthlyClosure.mockResolvedValue({ id: "closure-1", status: "APROBADO" });
+    await expect(
+      employeesService.upsertManualHourConceptBreakdown("emp-1", { ...input, observation: undefined }, rrhhUser),
+    ).rejects.toMatchObject({ statusCode: 400, code: "HOUR_CONCEPT_BREAKDOWN_CORRECTION_REASON_REQUIRED" });
+    expect(repo.saveManualHourConceptBreakdown).not.toHaveBeenCalled();
   });
 
   it("minutes cero usa el mismo comando idempotente para eliminar", async () => {

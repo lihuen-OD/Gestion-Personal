@@ -272,6 +272,8 @@ Each time entry should support:
 
 The current persisted/API shape may still express the previous per-concept classification model. That is implementation debt, not the business rule to preserve. See "Modelo oficial de Conceptos Horarios" below and `docs/decisions/CONCEPTOS_HORARIOS_ADITIVOS.md`.
 
+**Monthly closure integrity (Etapa 15E, `docs/decisions/TIME_CLOSURE_CONSISTENCY_15E.md`):** once a period's `MonthlyTimeClosure` is `ENVIADO`/`APROBADO`/`CORRECCION_PENDIENTE`, no role — RRHH included — can create a brand-new `TimeEntry` for that employee/period through the normal flow; the backend rejects it (`409 MONTHLY_CLOSURE_LOCKED`). Editing an *existing* entry still follows the pre-existing rule: Supervisión/Nivel 3 must go through a formal `TimeCorrectionRequest`, while RRHH can correct it directly but must supply a reason (`correctionReason`), and that correction is auto-approved and audited. The same RRHH-with-reason rule now also applies to manual `HourConceptBreakdown` corrections, so a closed period behaves consistently whether the change is to Horas normales or to an additional concept breakdown.
+
 ### 8. Control de Asistencia / Future BioTime Integration
 
 The system may later integrate with BioTime/ZKTeco or another biometric attendance system.

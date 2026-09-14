@@ -346,6 +346,85 @@ describe("create — flujo de aprobación por rol (Etapa 6L.3)", () => {
   });
 });
 
+/**
+ * Etapa 15E (docs/decisions/TIME_CLOSURE_CONSISTENCY_15E.md): P0 detectado
+ * en 15A — create() no consultaba MonthlyTimeClosure en absoluto, así que
+ * cualquier rol (RRHH incluido) podía cargar una hora nueva sobre un
+ * período ya enviado/aprobado/con corrección pendiente. A diferencia de
+ * update(), create() no tiene ninguna vía de corrección formal para dar de
+ * alta una fila nueva ahí, así que el bloqueo es total y sin excepción de
+ * rol — ni siquiera RRHH.
+ */
+describe("create — bloqueo por MonthlyTimeClosure (Etapa 15E)", () => {
+  const rrhhUser = { id: "user-rrhh", role: "NIVEL_1_RRHH" } as Express.AuthUser;
+  const nivel2User = { id: "user-n2", role: "NIVEL_2_SUPERVISION" } as Express.AuthUser;
+  const nivel3User = { id: "user-n3", role: "NIVEL_3_CARGA_HORARIA" } as Express.AuthUser;
+  const normalConcept = { id: "hour-concept-normal", code: "HC-NORMAL", name: "Hora normal", status: "ACTIVO", systemRole: "NORMAL_BASE" };
+  const createInput = { employeeId: "employee-1", hourConceptId: normalConcept.id, date: new Date("2026-08-10T00:00:00Z"), hours: 8 };
+  const createdEntry = { id: "entry-1", hours: 8, employee: { legajo: "100" } };
+
+  beforeEach(() => {
+    repo.countEmployeeInScope.mockResolvedValue(1);
+    repo.findHourConceptById.mockResolvedValue(normalConcept);
+    repo.findBlockingNovelty.mockResolvedValue(null);
+    repo.findDuplicate.mockResolvedValue(null);
+    repo.create.mockResolvedValue(createdEntry);
+  });
+
+  it.each(["ENVIADO", "APROBADO", "CORRECCION_PENDIENTE"] as const)(
+    "bloquea crear una hora nueva cuando el cierre está %s, incluso para RRHH",
+    async (status) => {
+      mockedMonthlyClosureFindUnique.mockResolvedValue({ status });
+
+      await expect(timeEntriesService.create(createInput, rrhhUser)).rejects.toMatchObject({
+        statusCode: 409,
+        code: "MONTHLY_CLOSURE_LOCKED",
+      });
+      expect(repo.create).not.toHaveBeenCalled();
+    },
+  );
+
+  it("bloquea a Supervisión (Nivel 2) igual que a RRHH", async () => {
+    mockedMonthlyClosureFindUnique.mockResolvedValue({ status: "APROBADO" });
+
+    await expect(timeEntriesService.create(createInput, nivel2User)).rejects.toMatchObject({
+      code: "MONTHLY_CLOSURE_LOCKED",
+    });
+    expect(repo.create).not.toHaveBeenCalled();
+  });
+
+  it("bloquea a Nivel 3 igual que a RRHH", async () => {
+    mockedMonthlyClosureFindUnique.mockResolvedValue({ status: "APROBADO" });
+
+    await expect(timeEntriesService.create(createInput, nivel3User)).rejects.toMatchObject({
+      code: "MONTHLY_CLOSURE_LOCKED",
+    });
+    expect(repo.create).not.toHaveBeenCalled();
+  });
+
+  it.each(["ABIERTO", "DEVUELTO"] as const)("permite crear cuando el cierre está %s", async (status) => {
+    mockedMonthlyClosureFindUnique.mockResolvedValue({ status });
+
+    await expect(timeEntriesService.create(createInput, rrhhUser)).resolves.toBe(createdEntry);
+  });
+
+  it("permite crear cuando no hay ningún cierre para el período (null)", async () => {
+    mockedMonthlyClosureFindUnique.mockResolvedValue(null);
+
+    await expect(timeEntriesService.create(createInput, rrhhUser)).resolves.toBe(createdEntry);
+  });
+
+  it("consulta el cierre por employeeId + período derivado de la fecha de la carga", async () => {
+    mockedMonthlyClosureFindUnique.mockResolvedValue(null);
+
+    await timeEntriesService.create(createInput, rrhhUser);
+
+    expect(mockedMonthlyClosureFindUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { employeeId_period: { employeeId: "employee-1", period: "2026-08" } } }),
+    );
+  });
+});
+
 describe("update — flujo de aprobación por rol (Etapa 6L.3)", () => {
   const rrhhUser = { id: "user-rrhh", role: "NIVEL_1_RRHH" } as Express.AuthUser;
   const nivel3User = { id: "user-n3", role: "NIVEL_3_CARGA_HORARIA" } as Express.AuthUser;

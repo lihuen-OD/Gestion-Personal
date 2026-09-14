@@ -9,6 +9,7 @@ import { prisma } from "../../shared/prisma/client";
 import { employeeAccessWhere } from "../employees/employeeAccess";
 import { roles } from "../../shared/security/roles";
 import { redactPiiForRole } from "../../shared/security/piiRedaction";
+import { isMonthlyClosureLocked } from "../../shared/monthlyClosure/closureLock";
 import { storageService } from "../../shared/storage/storage.service";
 import { storagePathBuilder } from "../../shared/storage/storagePathBuilder";
 import { timeEntriesRepository } from "./timeEntries.repository";
@@ -25,6 +26,7 @@ import {
   argentinaDayRange,
   formatArgentinaTime,
   nextArgentinaMidnightUtc,
+  periodFromCalendarDate,
   todayArgentinaDateKey,
 } from "../../shared/datetime/argentinaTime";
 import type {
@@ -147,6 +149,35 @@ async function ensureDayIsNotBlocked(employeeId: string, date: Date, hours?: num
       `The day is blocked by novelty ${blockingNovelty.noveltyType.code} - ${blockingNovelty.noveltyType.name}`,
       409,
       "TIME_ENTRY_DAY_BLOCKED_BY_NOVELTY",
+    );
+  }
+}
+
+/**
+ * Etapa 15E (docs/decisions/TIME_CLOSURE_CONSISTENCY_15E.md): P0 detectado en
+ * 15A — create() no verificaba MonthlyTimeClosure en absoluto, así que
+ * cualquier rol (RRHH incluido) podía cargar una hora NUEVA sobre un período
+ * ya enviado/aprobado/con corrección pendiente, sin dejar ningún rastro de
+ * excepción. A diferencia de update() (que tiene TimeCorrectionRequest como
+ * vía formal para corregir una fila EXISTENTE en un período cerrado),
+ * create() no tiene ningún mecanismo equivalente para dar de alta una fila
+ * nueva ahí — TimeCorrectionRequest exige un timeEntryId existente por
+ * diseño. Por eso el bloqueo acá es total, sin excepción de rol: si RRHH
+ * necesita cargar algo que quedó afuera de un período ya cerrado, el camino
+ * seguro con las piezas que ya existen es reabrirlo primero
+ * (`POST /closures/:id/return`, deja el cierre en DEVUELTO) y recién ahí
+ * cargar por flujo normal.
+ */
+async function assertPeriodAllowsCreate(employeeId: string, period: string) {
+  const closure = await prisma.monthlyTimeClosure.findUnique({
+    where: { employeeId_period: { employeeId, period } },
+    select: { status: true },
+  });
+  if (isMonthlyClosureLocked(closure)) {
+    throw new AppError(
+      "El período ya fue enviado a cierre. No se pueden cargar horas nuevas — pedile a RRHH que reabra el cierre si hace falta agregar algo.",
+      409,
+      "MONTHLY_CLOSURE_LOCKED",
     );
   }
 }
@@ -943,6 +974,7 @@ export const timeEntriesService = {
       () => ensureHourConceptEnabled(input.employeeId, input.hourConceptId),
       () => ensureDayIsNotBlocked(input.employeeId, input.date, input.hours),
       () => ensureNoDuplicate(input.employeeId, input.hourConceptId, input.date),
+      () => assertPeriodAllowsCreate(input.employeeId, periodFromCalendarDate(input.date)),
     ]);
     // Etapa 6L.3: RRHH ya es quien aprueba, así que su propia carga manual no
     // pasa por BORRADOR/EN_REVISION — queda aplicada/aprobada de una. Nivel
@@ -1585,8 +1617,7 @@ export const timeEntriesService = {
       where: { employeeId_period: { employeeId: before.employeeId, period: before.period } },
       select: { status: true },
     });
-    const requiresCorrectionRequest = monthlyClosure
-      && ["ENVIADO", "APROBADO", "CORRECCION_PENDIENTE"].includes(monthlyClosure.status);
+    const requiresCorrectionRequest = isMonthlyClosureLocked(monthlyClosure);
     if (requiresCorrectionRequest && user.role !== roles.rrhh) {
       throw new AppError(
         "El período ya fue enviado a cierre. Solicitá la corrección para que RH la revise.",

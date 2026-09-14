@@ -3,6 +3,7 @@ import type { AuditContext } from "../audit/audit.service";
 import { auditService } from "../audit/audit.service";
 import { AppError } from "../../shared/errors/AppError";
 import { employeeAccessWhere } from "./employeeAccess";
+import { isMonthlyClosureLocked } from "../../shared/monthlyClosure/closureLock";
 import { argentinaPeriodBounds, calculateAutomaticBreakdowns } from "./automaticHourConceptBreakdowns";
 import { automaticHourConceptBreakdownsRepository as repository } from "./automaticHourConceptBreakdowns.repository";
 
@@ -14,8 +15,14 @@ export const automaticHourConceptBreakdownsService = {
   async recalculate(employeeId: string, period: string, user: Express.AuthUser, audit?: AuditContext) {
     const employee = await repository.findEmployee(employeeId, employeeAccessWhere(user));
     if (!employee) throw new AppError("Employee not found", 404, "EMPLOYEE_NOT_FOUND");
+    // Etapa 15E: a diferencia de la carga MANUAL (ver validateManualBreakdownContext
+    // en employees.service.ts), el recálculo AUTOMÁTICO sigue bloqueado sin
+    // excepción para cualquier rol, RRHH incluido — es una regeneración
+    // masiva derivada de WorkShift, no una corrección puntual con motivo
+    // documentado, así que no encaja en el patrón correctionReason. Fuera de
+    // alcance explícito de 15E (ver docs/decisions/TIME_CLOSURE_CONSISTENCY_15E.md).
     const closure = await repository.findClosure(employeeId, period);
-    if (closure && ["ENVIADO", "APROBADO", "CORRECCION_PENDIENTE"].includes(closure.status)) {
+    if (isMonthlyClosureLocked(closure)) {
       throw new AppError("The period is closed for recalculation", 409, "PERIOD_CLOSED");
     }
 

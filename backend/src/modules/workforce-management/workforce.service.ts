@@ -3,6 +3,7 @@ import { prisma } from "../../shared/prisma/client";
 import { AppError } from "../../shared/errors/AppError";
 import { employeeAccessWhere } from "../employees/employeeAccess";
 import { roles } from "../../shared/security/roles";
+import { isMonthlyClosureLocked } from "../../shared/monthlyClosure/closureLock";
 import type { AuditContext } from "../audit/audit.service";
 import { auditService } from "../audit/audit.service";
 import { argentinaCalendarDate, todayArgentinaDateKey } from "../../shared/datetime/argentinaTime";
@@ -123,7 +124,7 @@ export const workforceService = {
     const entry = await prisma.timeEntry.findFirst({ where: { id: input.timeEntryId, employee: employeeAccessWhere(user) } });
     if (!entry) throw new AppError("Carga horaria no encontrada", 404, "TIME_ENTRY_NOT_FOUND");
     const closure = await prisma.monthlyTimeClosure.findUnique({ where: { employeeId_period: { employeeId: entry.employeeId, period: entry.period } } });
-    if (!closure || !["ENVIADO", "APROBADO", "CORRECCION_PENDIENTE"].includes(closure.status)) throw new AppError("El período todavía permite edición directa", 400, "PERIOD_NOT_CLOSED");
+    if (!closure || !isMonthlyClosureLocked(closure)) throw new AppError("El período todavía permite edición directa", 400, "PERIOD_NOT_CLOSED");
     const result = await execute(() => prisma.$transaction(async (tx) => {
       const request = await tx.timeCorrectionRequest.create({ data: { employeeId: entry.employeeId, timeEntryId: entry.id, closureId: closure.id, previousHours: entry.hours, proposedHours: input.proposedHours, reason: input.reason, createdByUserId: user.id } });
       await tx.monthlyTimeClosure.update({ where: { id: closure.id }, data: { status: "CORRECCION_PENDIENTE" } });

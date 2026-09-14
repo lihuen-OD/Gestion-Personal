@@ -6,6 +6,7 @@ import { storageService } from "../../shared/storage/storage.service";
 import { storagePathBuilder } from "../../shared/storage/storagePathBuilder";
 import { redactPiiForRole } from "../../shared/security/piiRedaction";
 import { canAccessDocumentCategory } from "../../shared/security/documentCategoryAccess";
+import { isMonthlyClosureLocked } from "../../shared/monthlyClosure/closureLock";
 import { roles } from "../../shared/security/roles";
 import { employeeAccessWhere } from "./employeeAccess";
 import { employeesRepository } from "./employees.repository";
@@ -220,6 +221,7 @@ async function validateManualBreakdownContext(
   hourConceptId: string,
   period: string,
   user: Express.AuthUser,
+  correctionReason?: string | null,
 ) {
   const employee = await employeesRepository.findEmployeeForManualBreakdown(employeeId, employeeAccessWhere(user));
   if (!employee) throw new AppError("Employee not found", 404, "EMPLOYEE_NOT_FOUND");
@@ -235,9 +237,26 @@ async function validateManualBreakdownContext(
     throw new AppError("Hour concept is not enabled for this employee", 409, "HOUR_CONCEPT_NOT_ENABLED");
   }
 
+  // Etapa 15E (docs/decisions/TIME_CLOSURE_CONSISTENCY_15E.md): alineado con
+  // TimeEntry.update() — un período cerrado seguía bloqueando la carga
+  // manual para TODOS los roles, RRHH incluido, sin ninguna vía de
+  // corrección (inconsistencia directa: TimeEntry ya permitía a RRHH
+  // corregir con motivo, el desglose no). RRHH ahora puede corregir directo
+  // con motivo obligatorio (reutiliza el campo `observation` ya existente,
+  // sin agregar ningún campo nuevo al schema); Nivel 2/3 siguen bloqueados
+  // sin excepción, igual que antes.
   const closure = await employeesRepository.findMonthlyClosure(employeeId, period);
-  if (closure && ["ENVIADO", "APROBADO", "CORRECCION_PENDIENTE"].includes(closure.status)) {
-    throw new AppError("The period is closed for direct editing", 409, "PERIOD_CLOSED");
+  if (isMonthlyClosureLocked(closure)) {
+    if (user.role !== roles.rrhh) {
+      throw new AppError("The period is closed for direct editing", 409, "PERIOD_CLOSED");
+    }
+    if (!correctionReason || !correctionReason.trim()) {
+      throw new AppError(
+        "Indicá el motivo de la corrección del desglose manual.",
+        400,
+        "HOUR_CONCEPT_BREAKDOWN_CORRECTION_REASON_REQUIRED",
+      );
+    }
   }
   return concept;
 }
@@ -498,7 +517,7 @@ export const employeesService = {
     const period = input.date.slice(0, 7);
     const date = new Date(`${input.date}T00:00:00.000Z`);
     const day = Number(input.date.slice(8, 10));
-    const concept = await validateManualBreakdownContext(employeeId, input.hourConceptId, period, user);
+    const concept = await validateManualBreakdownContext(employeeId, input.hourConceptId, period, user, input.observation);
     // Etapa 6L.3: mismo criterio que TimeEntry — RRHH aplica el desglose
     // directo (APROBADO); Nivel 2/3 lo dejan pendiente de revisión.
     const autoApprovedByUserId = user.role === roles.rrhh ? user.id : null;

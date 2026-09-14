@@ -59,6 +59,12 @@ function timeEntrySaveErrorMessage(error: unknown) {
     if (error.code === "PERIOD_CLOSED_REQUIRES_CORRECTION") {
       return "El período ya fue enviado a cierre. Solicitá la corrección para que RRHH la revise.";
     }
+    if (error.code === "MONTHLY_CLOSURE_LOCKED") {
+      // Etapa 15E: create() ahora bloquea horas nuevas sobre un período
+      // cerrado para cualquier rol, RRHH incluido — no hay vía de
+      // corrección para una fila que todavía no existe.
+      return "El período está cerrado. Solicitá una corrección o pedí intervención de RRHH.";
+    }
     if (error.code === "RELATION_CONSTRAINT") {
       return "El legajo o el tipo de hora seleccionado ya no está disponible. Actualizá la página e intentá nuevamente.";
     }

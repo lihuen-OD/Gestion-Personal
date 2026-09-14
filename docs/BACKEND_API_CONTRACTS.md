@@ -283,7 +283,9 @@ PUT con `minutes = 0` elimina el registro manual. No se expone DELETE porque el 
 
 Estado inicial (o resultante de sobrescribir un registro existente) según el rol de quien carga (Etapa 6L.3): **RRHH** deja el desglose `APROBADO` directo, con `approvedByUserId`/`approvedAt` propios. **Nivel 2/3** dejan el desglose `EN_REVISION` — a diferencia de `TimeEntry`, el desglose manual no tiene una acción separada de "enviar a revisión"; el único `PUT` ya es la carga completa, así que queda pendiente de una. RRHH ve esos desgloses `EN_REVISION` de Nivel 2/3 en `GET /pending` (ver más abajo) y los resuelve con los endpoints de abajo.
 
-Sólo admite conceptos adicionales habilitados, activos, no eliminados y con modo `MANUAL` o `BOTH`. Rechaza Normal, `AUTOMATIC`, conceptos fuera del legajo y períodos cerrados. Nivel 2/Nivel 3 conservan el alcance operativo por responsable de horas.
+Sólo admite conceptos adicionales habilitados, activos, no eliminados y con modo `MANUAL` o `BOTH`. Rechaza Normal, `AUTOMATIC`, conceptos fuera del legajo. Nivel 2/Nivel 3 conservan el alcance operativo por responsable de horas.
+
+Período cerrado (`MonthlyTimeClosure` en `ENVIADO`/`APROBADO`/`CORRECCION_PENDIENTE`) — **Etapa 15E**, alineado con `TimeEntry` (`docs/decisions/TIME_CLOSURE_CONSISTENCY_15E.md`): Nivel 2/3 siguen recibiendo `409 PERIOD_CLOSED` sin excepción. RRHH puede corregir directo si manda `observation` no vacío (reutiliza el campo del body, no hay uno nuevo); sin `observation`, responde `400 HOUR_CONCEPT_BREAKDOWN_CORRECTION_REASON_REQUIRED`.
 
 La base garantiza la idempotencia manual mediante el índice único parcial `HourConceptBreakdown_manual_unique` sobre empleado, fecha y concepto con `source = 'MANUAL'`. El índice no aplica a `AUTOMATIC`. Una carrera concurrente se reintenta una vez y, si persiste, responde `409` con código `MANUAL_BREAKDOWN_CONCURRENT_CONFLICT`.
 
@@ -947,6 +949,7 @@ Reglas:
 - Evita duplicado por empleado + fecha + concepto.
 - Permite `0` horas para registros generados o asociados a novedades bloqueantes.
 - Rechaza horas negativas y más de 24 horas por registro.
+- **Etapa 15E** (`docs/decisions/TIME_CLOSURE_CONSISTENCY_15E.md`): si `MonthlyTimeClosure` del empleado/período (derivado de `date`) está `ENVIADO`/`APROBADO`/`CORRECCION_PENDIENTE`, responde `409 MONTHLY_CLOSURE_LOCKED` — **sin excepción de rol, ni siquiera RRHH**. No existe una vía de "corrección" para crear una fila nueva en un período cerrado; para eso hay que reabrir el cierre primero (`POST /workforce/closures/:id/return`, ver más abajo).
 
 ### Editar
 
@@ -954,7 +957,7 @@ Reglas:
 PATCH /api/time-entries/:id
 ```
 
-No permite editar `CERRADO`. Editar una fila `APROBADO` (o con el período en `ENVIADO`/`APROBADO`/`CORRECCION_PENDIENTE`) exige `correctionReason` en el body. Si quien edita es RRHH (Etapa 6L.3), la fila queda (o se mantiene) `APROBADO` con `approvedByUserId`/`approvedAt` propios sin importar el estado anterior (`BORRADOR`, `EN_REVISION`, `DEVUELTO` o ya `APROBADO`); Nivel 2/3 no tocan el `status` al editar, igual que antes de esta etapa.
+No permite editar `CERRADO`. Editar una fila `APROBADO` (o con el período en `ENVIADO`/`APROBADO`/`CORRECCION_PENDIENTE`) exige `correctionReason` en el body. Si quien edita es RRHH (Etapa 6L.3), la fila queda (o se mantiene) `APROBADO` con `approvedByUserId`/`approvedAt` propios sin importar el estado anterior (`BORRADOR`, `EN_REVISION`, `DEVUELTO` o ya `APROBADO`); Nivel 2/3 no tocan el `status` al editar, igual que antes de esta etapa. Con el período `ENVIADO`/`APROBADO`/`CORRECCION_PENDIENTE`, Nivel 2/3 reciben `409 PERIOD_CLOSED_REQUIRES_CORRECTION` (deben usar `POST /workforce/corrections` en su lugar); no existe endpoint de borrado para `TimeEntry`.
 
 ### Enviar / aprobar / rechazar / devolver
 
@@ -1199,6 +1202,8 @@ period=YYYY-MM
 employeeId
 includeInReview=false
 ```
+
+**Deuda conocida (Etapa 15E, diagnóstico — `docs/decisions/TIME_CLOSURE_CONSISTENCY_15E.md` §8):** este endpoint filtra sólo por `TimeEntry.status` (`APROBADO`, o `APROBADO`+`EN_REVISION` con `includeInReview=true`) y nunca consulta `MonthlyTimeClosure` — puede exportar un período cuyo cierre mensual todavía no fue enviado/aprobado formalmente. No se implementó bloqueo ni advertencia en 15E (requiere una decisión de producto que esa etapa no tenía mandato para tomar); queda pendiente como Etapa 15E.2.
 
 Columnas:
 
