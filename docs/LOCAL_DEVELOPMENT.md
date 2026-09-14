@@ -84,10 +84,36 @@ carga@losod.local
 ```
 
 Los tres usuarios usan la contraseña local configurada en
-`DEMO_SEED_PASSWORD` al crearse. Para habilitar los accesos rápidos del
-frontend, crear `frontend/.env.local` con `VITE_DEMO_MODE=true` y completar las
-seis variables `VITE_DEMO_*_EMAIL` / `VITE_DEMO_*_PASSWORD` descriptas en
-`frontend/.env.example`. Si falta un email o password, ese perfil no se muestra.
+`DEMO_SEED_PASSWORD` al crearse.
+
+### Habilitar los accesos rápidos del login (sólo mientras el sistema está en prueba)
+
+Desde la Etapa 15C (`docs/decisions/DEMO_CREDENTIALS_CONTAINMENT_15C.md`),
+el login siempre arranca con email y contraseña vacíos, y los tres botones
+de acceso rápido (RRHH / Supervisión / Carga horaria) sólo se renderizan
+si `VITE_DEMO_MODE=true` **y** el perfil tiene su email y password
+completos — nunca hay credenciales hardcodeadas ni por defecto en el
+código. Si falta un email o password para un perfil, ese botón
+simplemente no aparece (la pantalla no se rompe).
+
+Para verlos en desarrollo local, crear `frontend/.env.local` (gitignoreado,
+nunca se versiona) con:
+
+```bash
+VITE_DEMO_MODE=true
+VITE_DEMO_ADMIN_EMAIL="admin-local@example.com"
+VITE_DEMO_ADMIN_PASSWORD="<password-local>"
+VITE_DEMO_SUPERVISOR_EMAIL="supervisor-local@example.com"
+VITE_DEMO_SUPERVISOR_PASSWORD="<password-local>"
+VITE_DEMO_CARGA_EMAIL="carga-local@example.com"
+VITE_DEMO_CARGA_PASSWORD="<password-local>"
+```
+
+Usar ahí los mismos emails de los usuarios seed (arriba) y la contraseña
+local que se haya configurado en `DEMO_SEED_PASSWORD`. Estas variables
+`VITE_*` quedan embebidas en el build de Vite (públicas por definición) —
+usarlas sólo en un ambiente de prueba/demo controlado, **nunca** con un
+email o contraseña de una cuenta productiva real.
 
 ## Frontend
 
