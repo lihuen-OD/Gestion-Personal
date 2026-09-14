@@ -35,7 +35,7 @@ describe("documentsRepository.findMany — Etapa 14I.2", () => {
     mockedPrisma.employeeDocument.findMany.mockResolvedValue([{ id: "doc-1" }]);
     mockedPrisma.employeeDocument.count.mockResolvedValue(1);
 
-    const [items, total] = await documentsRepository.findMany(baseQuery({ page: 2, take: 10 }), {});
+    const [items, total] = await documentsRepository.findMany(baseQuery({ page: 2, take: 10 }), {}, {});
 
     expect(mockedPrisma.$transaction).not.toHaveBeenCalled();
     expect(mockedPrisma.employeeDocument.findMany).toHaveBeenCalledWith(expect.objectContaining({ skip: 10, take: 10 }));
@@ -49,23 +49,31 @@ describe("documentsRepository.findMany — Etapa 14I.2", () => {
     mockedPrisma.employeeDocument.count.mockResolvedValue(0);
     const employeeAccessWhere = { sectorId: { in: ["sector-1"] } };
 
-    await documentsRepository.findMany(baseQuery({ categoryId: "11111111-1111-1111-1111-111111111111", status: "VIGENTE" }), employeeAccessWhere);
+    await documentsRepository.findMany(
+      baseQuery({ categoryId: "11111111-1111-1111-1111-111111111111", status: "VIGENTE" }),
+      employeeAccessWhere,
+      {},
+    );
 
     const findManyWhere = mockedPrisma.employeeDocument.findMany.mock.calls[0]![0].where;
     const countWhere = mockedPrisma.employeeDocument.count.mock.calls[0]![0].where;
     expect(findManyWhere).toEqual(countWhere);
-    expect(findManyWhere).toMatchObject({
-      employee: employeeAccessWhere,
-      categoryId: "11111111-1111-1111-1111-111111111111",
-      status: "VIGENTE",
-    });
+    // Etapa 15D.4: compuesto vía AND (no un objeto plano) — ver
+    // documents.repository.ts, evita colisión de claves con categoryViewWhere.
+    expect(findManyWhere.AND).toEqual(
+      expect.arrayContaining([
+        { employee: employeeAccessWhere },
+        { categoryId: "11111111-1111-1111-1111-111111111111" },
+        { status: "VIGENTE" },
+      ]),
+    );
   });
 
   it("mantiene el include de listado (categoría/empleado/novedad) y el orderBy existentes", async () => {
     mockedPrisma.employeeDocument.findMany.mockResolvedValue([]);
     mockedPrisma.employeeDocument.count.mockResolvedValue(0);
 
-    await documentsRepository.findMany(baseQuery(), {});
+    await documentsRepository.findMany(baseQuery(), {}, {});
 
     const call = mockedPrisma.employeeDocument.findMany.mock.calls[0]![0];
     expect(call.orderBy).toEqual([{ createdAt: "desc" }, { employee: { lastName: "asc" } }]);
@@ -78,11 +86,45 @@ describe("documentsRepository.findMany — Etapa 14I.2", () => {
     mockedPrisma.employeeDocument.findMany.mockResolvedValue([]);
     mockedPrisma.employeeDocument.count.mockResolvedValue(0);
 
-    await documentsRepository.findMany(baseQuery({ search: "contrato" }), {});
+    await documentsRepository.findMany(baseQuery({ search: "contrato" }), {}, {});
 
     const where = mockedPrisma.employeeDocument.findMany.mock.calls[0]![0].where;
-    expect(where.OR).toEqual(
+    const orEntry = (where.AND as Array<Record<string, unknown>>).find((clause) => "OR" in clause);
+    expect(orEntry?.OR).toEqual(
       expect.arrayContaining([{ fileName: { contains: "contrato", mode: "insensitive" } }]),
+    );
+  });
+});
+
+/**
+ * Etapa 15D.4 (docs/decisions/DOCUMENT_CATEGORY_AUTHORIZATION_15D4.md):
+ * `categoryViewWhere` viaja en el `where` compuesto de `findMany`/`findById`
+ * — es lo que hace que la paginación de listados y la descarga por ID
+ * directo respeten `DocumentCategory.viewRoles` a nivel de query, no en
+ * memoria después de traer los datos.
+ */
+describe("documentsRepository — categoryViewWhere viaja en el where (Etapa 15D.4)", () => {
+  it("findMany incluye categoryViewWhere en el AND compuesto", async () => {
+    mockedPrisma.employeeDocument.findMany.mockResolvedValue([]);
+    mockedPrisma.employeeDocument.count.mockResolvedValue(0);
+    const categoryViewWhere = { category: { viewRoles: { array_contains: "Nivel 2 - Supervisión / Gestión" } } };
+
+    await documentsRepository.findMany(baseQuery(), {}, categoryViewWhere);
+
+    const where = mockedPrisma.employeeDocument.findMany.mock.calls[0]![0].where;
+    expect(where.AND).toEqual(expect.arrayContaining([categoryViewWhere]));
+  });
+
+  it("findById incluye categoryViewWhere en el AND compuesto, junto al id y employeeAccessWhere", async () => {
+    mockedPrisma.employeeDocument.findFirst.mockResolvedValue(null);
+    const employeeAccessWhere = { id: "__NO_ACCESS__" };
+    const categoryViewWhere = { id: "__NO_DOCUMENT_CATEGORY_ACCESS__" };
+
+    await documentsRepository.findById("doc-1", employeeAccessWhere, categoryViewWhere);
+
+    const where = mockedPrisma.employeeDocument.findFirst.mock.calls[0]![0].where;
+    expect(where.AND).toEqual(
+      expect.arrayContaining([{ id: "doc-1" }, { employee: employeeAccessWhere }, categoryViewWhere]),
     );
   });
 });

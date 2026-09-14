@@ -504,6 +504,7 @@ Notas:
 - `fileBase64` permite enviar el archivo desde frontend sin depender de multipart.
 - Qué provider recibe el archivo lo decide el backend internamente (Etapa 15D.2, `docs/decisions/STORAGE_UPLOAD_POLICY_15D2.md`): `DOCUMENT_STORAGE_PROVIDER` para documentos de legajo, con fallback a `DEFAULT_STORAGE_PROVIDER` y luego a `STORAGE_PROVIDER` si no están configuradas — no es un valor que el cliente pueda elegir.
 - `storageKey` sigue disponible para integraciones futuras donde el archivo ya venga subido por otro canal.
+- Rol (Etapa 15D.4, `docs/decisions/DOCUMENT_CATEGORY_AUTHORIZATION_15D4.md`): `NIVEL_1_RRHH`/`NIVEL_2_SUPERVISION`/`NIVEL_3_CARGA_HORARIA` pueden llegar a la ruta; la autorización real es por categoría — RRHH siempre puede, los demás sólo si `categoryId` referencia una categoría existente cuyo `uploadRoles` incluye su rol **y** el legajo está dentro de su alcance (`employeeAccessWhere`). `categoryId` inexistente responde `404 DOCUMENT_CATEGORY_NOT_FOUND`; sin permiso de categoría responde `403 DOCUMENT_UPLOAD_FORBIDDEN` — ambos antes de tocar storage, para no dejar un archivo huérfano subido.
 
 ### Descargar / abrir documento
 
@@ -513,8 +514,8 @@ GET /api/documents/:id/download
 
 Reglas:
 
-- Requiere autenticacion.
-- Respeta el alcance del legajo asociado al documento.
+- Requiere autenticacion. Rol: `NIVEL_1_RRHH`/`NIVEL_2_SUPERVISION`/`NIVEL_3_CARGA_HORARIA` (Etapa 15D.4 — antes Nivel 3 quedaba bloqueado por completo de `/api/documents`, ver `docs/decisions/DOCUMENT_CATEGORY_AUTHORIZATION_15D4.md`).
+- Respeta el alcance del legajo asociado al documento (`employeeAccessWhere`) **y** que `category.viewRoles` incluya el rol del usuario (RRHH siempre puede). Ambas condiciones se resuelven a nivel de query — un documento fuera de alcance o de categoría no autorizada responde `404`, igual que uno inexistente; nunca revela que existe.
 - En storage local sirve el archivo desde `backend/uploads`.
 - En Cloudinary (Etapa 15D.3, `docs/decisions/CLOUDINARY_SECURE_DELIVERY_15D3.md`) el backend descarga el archivo del proveedor y lo sirve como respuesta autenticada — nunca redirige a una URL pública de Cloudinary, ni para documentos nuevos ni para los subidos antes de esta etapa.
 
@@ -649,6 +650,8 @@ expires
 take
 page
 ```
+
+`uploadRoles`/`viewRoles`/`approvalRoles` se guardan como `Json` con las ETIQUETAS en español del rol (`"Nivel 1 - RRHH"`, `"Nivel 2 - Supervisión / Gestión"`, `"Nivel 3 - Administrativo de Carga Horaria"`) — no el enum `RoleName` que trae el usuario autenticado. Desde la Etapa 15D.4 (`docs/decisions/DOCUMENT_CATEGORY_AUTHORIZATION_15D4.md`), `viewRoles`/`uploadRoles` ya se aplican server-side en listado/descarga/carga de documentos (antes existían en el modelo pero el backend no los usaba para autorizar); `approvalRoles` sigue sin un flujo de aprobación documental real conectado.
 
 ### Horas especiales
 
@@ -1030,9 +1033,11 @@ page
 
 Reglas:
 
+- Requiere autenticacion. Rol: `NIVEL_1_RRHH`/`NIVEL_2_SUPERVISION`/`NIVEL_3_CARGA_HORARIA` (Etapa 15D.4).
 - Devuelve datos minimos de categoria y empleado para renderizar la tabla.
 - Las pantallas de listado no deben pedir `/api/employees` solo para mostrar legajo/persona.
 - El listado debe mantenerse paginado; las subidas de documentos pueden cargar legajos bajo demanda al abrir el modal.
+- Filtra por `employeeAccessWhere` (alcance) y por `category.viewRoles` (Etapa 15D.4) — RRHH ve todo; Supervisión/Nivel 3 sólo ven documentos de categorías cuyo `viewRoles` incluya su rol, dentro de su alcance. El filtro va en la query (no en memoria), así `meta.total`/`hasMore` quedan correctos.
 
 ## Carga horaria — listados y resúmenes
 

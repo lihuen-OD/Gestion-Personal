@@ -9,16 +9,22 @@ import { listDocumentsQuerySchema } from "./documents.schemas";
 
 export const documentsRouter = Router();
 
+// Etapa 15D.4 (docs/decisions/DOCUMENT_CATEGORY_AUTHORIZATION_15D4.md):
+// Nivel 3 (Carga Horaria) se agrega acá — antes quedaba bloqueado por
+// completo. La autorización real y granular (scope + category.viewRoles)
+// pasa a resolverse en documentsService, no en este guard de rol general.
+const documentRoles = [roles.rrhh, roles.supervision, roles.cargaHoraria];
+
 documentsRouter.use(requireAuth);
 documentsRouter.get(
   "/",
-  requireAnyRole([roles.rrhh, roles.supervision]),
+  requireAnyRole(documentRoles),
   validateQuery(listDocumentsQuerySchema),
   asyncHandler(documentsController.list),
 );
 
 documentsRouter.get(
   "/:id/download",
-  requireAnyRole([roles.rrhh, roles.supervision]),
+  requireAnyRole(documentRoles),
   asyncHandler(documentsController.download),
 );

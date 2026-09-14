@@ -6,18 +6,24 @@ import type { AuditContext } from "../audit/audit.service";
 import { auditService } from "../audit/audit.service";
 import { documentsRepository } from "./documents.repository";
 import type { ListDocumentsQuery } from "./documents.schemas";
-import { roles } from "../../shared/security/roles";
+import { documentCategoryViewWhere } from "../../shared/security/documentCategoryAccess";
 
-function assertCanAccessDocuments(user: Express.AuthUser) {
-  if (user.role === roles.cargaHoraria) {
-    throw new AppError("No tenés permiso para acceder a documentación.", 403, "DOCUMENT_ACCESS_FORBIDDEN");
-  }
-}
+// Etapa 15D.4 (docs/decisions/DOCUMENT_CATEGORY_AUTHORIZATION_15D4.md):
+// reemplaza el bloqueo total que existía acá para Nivel 3 (Carga Horaria)
+// por control granular real: employeeAccessWhere (scope) +
+// documentCategoryViewWhere (category.viewRoles) resuelven juntos qué
+// documentos ve cada rol. RRHH sigue viendo todo (superadmin documental);
+// Nivel 3/Supervisión sólo ven lo que su categoría les habilita
+// explícitamente — por default (categorías no configuradas) eso sigue
+// siendo "nada" para Nivel 3, igual que antes de esta etapa.
 
 export const documentsService = {
   async list(query: ListDocumentsQuery, user: Express.AuthUser) {
-    assertCanAccessDocuments(user);
-    const [items, total] = await documentsRepository.findMany(query, employeeAccessWhere(user));
+    const [items, total] = await documentsRepository.findMany(
+      query,
+      employeeAccessWhere(user),
+      documentCategoryViewWhere(user.role),
+    );
     return {
       items,
       meta: {
@@ -30,8 +36,7 @@ export const documentsService = {
   },
 
   async download(id: string, user: Express.AuthUser, audit?: AuditContext) {
-    assertCanAccessDocuments(user);
-    const item = await documentsRepository.findById(id, employeeAccessWhere(user));
+    const item = await documentsRepository.findById(id, employeeAccessWhere(user), documentCategoryViewWhere(user.role));
     if (!item) throw new AppError("Documento no encontrado", 404, "DOCUMENT_NOT_FOUND");
 
     await auditService.register({

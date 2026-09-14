@@ -188,9 +188,12 @@ employeesRouter.post(
   asyncHandler(employeesController.createLaborMovement),
 );
 
+// Etapa 15D.4 (docs/decisions/DOCUMENT_CATEGORY_AUTHORIZATION_15D4.md): antes
+// sólo RRHH podía llegar acá. La autorización real (scope del empleado +
+// category.uploadRoles) se resuelve en employeesService.createDocument.
 employeesRouter.post(
   "/:id/documents",
-  requireAnyRole([roles.rrhh]),
+  requireAnyRole([roles.rrhh, roles.supervision, roles.cargaHoraria]),
   validateBody(createEmployeeDocumentSchema),
   asyncHandler(employeesController.createDocument),
 );

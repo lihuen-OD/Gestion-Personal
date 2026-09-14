@@ -5,6 +5,7 @@ import { AppError } from "../../shared/errors/AppError";
 import { storageService } from "../../shared/storage/storage.service";
 import { storagePathBuilder } from "../../shared/storage/storagePathBuilder";
 import { redactPiiForRole } from "../../shared/security/piiRedaction";
+import { canAccessDocumentCategory } from "../../shared/security/documentCategoryAccess";
 import { roles } from "../../shared/security/roles";
 import { employeeAccessWhere } from "./employeeAccess";
 import { employeesRepository } from "./employees.repository";
@@ -807,10 +808,21 @@ export const employeesService = {
     return employee;
   },
 
-  async createDocument(id: string, input: CreateEmployeeDocumentInput, audit?: AuditContext) {
-    const before = await employeesService.getById(id);
+  async createDocument(id: string, input: CreateEmployeeDocumentInput, user: Express.AuthUser, audit?: AuditContext) {
+    // Etapa 15D.4 (docs/decisions/DOCUMENT_CATEGORY_AUTHORIZATION_15D4.md):
+    // orden seguro — categoría, permiso de categoría y alcance del empleado
+    // se validan ANTES de tocar storage, así una categoría inexistente o no
+    // autorizada nunca deja un archivo huérfano subido.
     const category = await employeesRepository.findDocumentCategory(input.categoryId);
-    const documentType = category?.code || category?.name || input.categoryId;
+    if (!category) {
+      throw new AppError("Categoría documental no encontrada", 404, "DOCUMENT_CATEGORY_NOT_FOUND");
+    }
+    if (!canAccessDocumentCategory({ userRole: user.role, category, action: "upload" })) {
+      throw new AppError("No tenés permiso para subir documentos de esta categoría.", 403, "DOCUMENT_UPLOAD_FORBIDDEN");
+    }
+
+    const before = await employeesService.getById(id, user);
+    const documentType = category.code || category.name;
     const storageFile = await storageService.uploadManaged({
       buffer: bufferFromBase64(input.fileBase64),
       fileName: input.fileName,

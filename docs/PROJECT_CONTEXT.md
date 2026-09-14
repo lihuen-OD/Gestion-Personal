@@ -66,7 +66,7 @@ Can:
 Cannot:
 
 * Access full employee files.
-* Access complete documentation.
+* Access complete documentation — since the 15D.4 stage (`docs/decisions/DOCUMENT_CATEGORY_AUTHORIZATION_15D4.md`), this is enforced per `DocumentCategory` (`viewRoles`/`uploadRoles`) rather than a blanket block: Nivel 3 can only view/upload documents in categories explicitly configured to allow their role, and always within their own employee scope. Categories not explicitly configured for Nivel 3 stay inaccessible to them, same practical effect as before that stage.
 * Access global dashboards.
 * Access system configuration.
 * Access global audit.

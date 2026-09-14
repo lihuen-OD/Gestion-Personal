@@ -18,35 +18,50 @@ const documentListInclude = {
   novelty: { select: { id: true, fromDate: true, toDate: true, noveltyType: { select: { name: true } } } },
 } satisfies Prisma.EmployeeDocumentInclude;
 
-function buildWhere(query: ListDocumentsQuery, employeeAccessWhere: Prisma.EmployeeWhereInput): Prisma.EmployeeDocumentWhereInput {
+function buildWhere(
+  query: ListDocumentsQuery,
+  employeeAccessWhere: Prisma.EmployeeWhereInput,
+  categoryViewWhere: Prisma.EmployeeDocumentWhereInput,
+): Prisma.EmployeeDocumentWhereInput {
   const search = query.search?.trim();
+  // Etapa 15D.4: compuesto vía AND (no spread plano) a propósito — evita que
+  // categoryViewWhere (que puede traer una clave sentinela como `id`) pise o
+  // sea pisado por otro filtro que use la misma clave (p. ej. query.categoryId).
   return {
-    employee: employeeAccessWhere,
-    ...(query.employeeId ? { employeeId: query.employeeId } : {}),
-    ...(query.categoryId ? { categoryId: query.categoryId } : {}),
-    ...(query.status ? { status: query.status } : {}),
-    ...(search
-      ? {
-          OR: [
-            { fileName: { contains: search, mode: "insensitive" } },
-            { category: { name: { contains: search, mode: "insensitive" } } },
-            { employee: { legajo: { contains: search, mode: "insensitive" } } },
-            { employee: { cuil: { contains: search, mode: "insensitive" } } },
-            { employee: { dni: { contains: search, mode: "insensitive" } } },
-            { employee: { firstName: { contains: search, mode: "insensitive" } } },
-            { employee: { lastName: { contains: search, mode: "insensitive" } } },
-          ],
-        }
-      : {}),
+    AND: [
+      { employee: employeeAccessWhere },
+      categoryViewWhere,
+      ...(query.employeeId ? [{ employeeId: query.employeeId }] : []),
+      ...(query.categoryId ? [{ categoryId: query.categoryId }] : []),
+      ...(query.status ? [{ status: query.status }] : []),
+      ...(search
+        ? [
+            {
+              OR: [
+                { fileName: { contains: search, mode: "insensitive" as const } },
+                { category: { name: { contains: search, mode: "insensitive" as const } } },
+                { employee: { legajo: { contains: search, mode: "insensitive" as const } } },
+                { employee: { cuil: { contains: search, mode: "insensitive" as const } } },
+                { employee: { dni: { contains: search, mode: "insensitive" as const } } },
+                { employee: { firstName: { contains: search, mode: "insensitive" as const } } },
+                { employee: { lastName: { contains: search, mode: "insensitive" as const } } },
+              ],
+            },
+          ]
+        : []),
+    ],
   };
 }
 
 export const documentsRepository = {
-  findById(id: string, employeeAccessWhere: Prisma.EmployeeWhereInput) {
+  findById(
+    id: string,
+    employeeAccessWhere: Prisma.EmployeeWhereInput,
+    categoryViewWhere: Prisma.EmployeeDocumentWhereInput,
+  ) {
     return prisma.employeeDocument.findFirst({
       where: {
-        id,
-        employee: employeeAccessWhere,
+        AND: [{ id }, { employee: employeeAccessWhere }, categoryViewWhere],
       },
       include: {
         category: true,
@@ -66,8 +81,12 @@ export const documentsRepository = {
     });
   },
 
-  findMany(query: ListDocumentsQuery, employeeAccessWhere: Prisma.EmployeeWhereInput) {
-    const where = buildWhere(query, employeeAccessWhere);
+  findMany(
+    query: ListDocumentsQuery,
+    employeeAccessWhere: Prisma.EmployeeWhereInput,
+    categoryViewWhere: Prisma.EmployeeDocumentWhereInput,
+  ) {
+    const where = buildWhere(query, employeeAccessWhere, categoryViewWhere);
     const skip = (query.page - 1) * query.take;
     // Etapa 14I.2: findMany + count son lecturas independientes (ninguna
     // depende del resultado de la otra) — $transaction([...]) las pinaba a

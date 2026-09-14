@@ -228,7 +228,7 @@ export const employeesController = {
   }) satisfies RequestHandler,
 
   createDocument: (async (req, res) => {
-    const employee = await employeesService.createDocument(requireParam(req, "id"), req.body, requestAuditContext(req));
+    const employee = await employeesService.createDocument(requireParam(req, "id"), req.body, req.user!, requestAuditContext(req));
     clearEmployeeReadCaches();
     clearDocumentsReadCaches();
     res.status(201).json({ data: employee });

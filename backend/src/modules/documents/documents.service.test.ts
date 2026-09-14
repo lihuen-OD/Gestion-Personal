@@ -155,20 +155,62 @@ describe("documentsService.download — Cloudinary nunca redirige a URL pública
   });
 });
 
-describe("documentsService permisos Nivel 3", () => {
-  it("no permite listar documentos", async () => {
-    await expect(documentsService.list({ page: 1, take: 25 } as never, cargaUser)).rejects.toMatchObject({
-      statusCode: 403,
-      code: "DOCUMENT_ACCESS_FORBIDDEN",
-    });
-    expect(repo.findMany).not.toHaveBeenCalled();
+/**
+ * Etapa 15D.4 (docs/decisions/DOCUMENT_CATEGORY_AUTHORIZATION_15D4.md):
+ * reemplaza el bloqueo total que Nivel 3 tenía acá por control granular real
+ * — list/download ya no rechazan por rol general; delegan en
+ * documentCategoryViewWhere(user.role), que viaja hasta el `where` de la
+ * query (ver documents.repository.test.ts para cómo se compone).
+ */
+describe("documentsService — autorización documental por categoría (Etapa 15D.4)", () => {
+  const supervisionUser = { id: "user-2", role: "NIVEL_2_SUPERVISION" } as unknown as Express.AuthUser;
+
+  it("RRHH lista sin restricción de categoría (where vacío = ve todo)", async () => {
+    repo.findMany.mockResolvedValue([[], 0]);
+
+    await documentsService.list({ page: 1, take: 25 } as never, fakeUser);
+
+    expect(repo.findMany).toHaveBeenCalledWith(expect.anything(), expect.anything(), {});
   });
 
-  it("no permite descargar documentos", async () => {
-    await expect(documentsService.download("doc-1", cargaUser)).rejects.toMatchObject({
-      statusCode: 403,
-      code: "DOCUMENT_ACCESS_FORBIDDEN",
+  it("Supervisión lista restringida a su etiqueta de rol en viewRoles", async () => {
+    repo.findMany.mockResolvedValue([[], 0]);
+
+    await documentsService.list({ page: 1, take: 25 } as never, supervisionUser);
+
+    expect(repo.findMany).toHaveBeenCalledWith(expect.anything(), expect.anything(), {
+      category: { viewRoles: { array_contains: "Nivel 2 - Supervisión / Gestión" } },
     });
-    expect(repo.findById).not.toHaveBeenCalled();
+  });
+
+  it("Nivel 3 ya no está bloqueado por completo — lista restringida a su etiqueta de rol, igual que Supervisión", async () => {
+    repo.findMany.mockResolvedValue([[], 0]);
+
+    await documentsService.list({ page: 1, take: 25 } as never, cargaUser);
+
+    expect(repo.findMany).toHaveBeenCalledWith(expect.anything(), expect.anything(), {
+      category: { viewRoles: { array_contains: "Nivel 3 - Administrativo de Carga Horaria" } },
+    });
+  });
+
+  it("Nivel 3 puede descargar si el documento matchea su where — ya no rechaza por rol general", async () => {
+    repo.findById.mockResolvedValue(document);
+    storage.getPublicUrl.mockReturnValue("https://storage.example/dni.pdf");
+
+    const result = await documentsService.download("doc-1", cargaUser);
+
+    expect(result).toEqual({ kind: "redirect", url: "https://storage.example/dni.pdf" });
+    expect(repo.findById).toHaveBeenCalledWith("doc-1", expect.anything(), {
+      category: { viewRoles: { array_contains: "Nivel 3 - Administrativo de Carga Horaria" } },
+    });
+  });
+
+  it("descarga por ID directo bloquea cuando el where no matchea (repo devuelve null) → 404, nunca revela que existe", async () => {
+    repo.findById.mockResolvedValue(null);
+
+    await expect(documentsService.download("doc-fuera-de-alcance", cargaUser)).rejects.toMatchObject({
+      statusCode: 404,
+      code: "DOCUMENT_NOT_FOUND",
+    });
   });
 });
