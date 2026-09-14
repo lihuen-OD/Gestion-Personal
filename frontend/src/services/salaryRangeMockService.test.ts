@@ -11,6 +11,15 @@ vi.mock("./employeeMockService", () => ({
   employeeMockService: { getAll: vi.fn(() => []) },
 }));
 
+// Etapa 15F.0: demoMode se calcula en el import de config/runtimeMode.ts a
+// partir de import.meta.env.VITE_DEMO_MODE, que Vite resuelve leyendo
+// frontend/.env.local — un archivo gitignored y específico de cada
+// máquina. Sin este mock, estos tests dependían de un valor ambiente fuera
+// de su control (pasaban o fallaban según la config local de quien los
+// corriera, no según el código) — mismo patrón ya usado en
+// LoginPage.test.tsx para aislar el mismo módulo.
+vi.mock("../config/runtimeMode", () => ({ demoMode: false }));
+
 const mockedGetAll = employeeMockService.getAll as unknown as ReturnType<typeof vi.fn>;
 
 function employee(overrides: Partial<Employee> = {}): Employee {
