@@ -45,6 +45,10 @@ vi.mock("../../shared/prisma/client", () => {
       // mismo criterio que `findPeriodEmployees` en 14C.2.
       timeEntry: { aggregate: vi.fn(), groupBy: vi.fn(), findMany: vi.fn(), create: vi.fn(), update: vi.fn(), count: vi.fn() },
       hourConceptBreakdown: { findMany: vi.fn() },
+      // Etapa 15E.2: findClosuresForExport consulta MonthlyTimeClosure vía
+      // el cliente `prisma` global (mismo criterio que el resto de este
+      // repositorio para queries de sólo lectura sin necesidad de $transaction).
+      monthlyTimeClosure: { findMany: vi.fn() },
       // Etapa 14C.2: findPeriodEmployees ya no corre dentro de un
       // $transaction(async (tx) => ...) — las mismas queries (incluida ésta)
       // ahora usan el cliente `prisma` global (ver
@@ -87,6 +91,7 @@ const mockedPrisma = prisma as unknown as {
   doubleHourRule: { findMany: Mock };
   timeEntry: { aggregate: Mock; groupBy: Mock; findMany: Mock; create: Mock; update: Mock; count: Mock };
   hourConceptBreakdown: { findMany: Mock };
+  monthlyTimeClosure: { findMany: Mock };
   novelty: { findMany: Mock; count: Mock };
   $transaction: Mock;
   __tx: TxMocks;
@@ -2211,6 +2216,27 @@ describe("findForExport — filtra specialHourRuleApplications a isWinner=true (
         }),
       }),
     );
+  });
+});
+
+describe("findClosuresForExport — cierres mensuales para el gate de exportación (Etapa 15E.2)", () => {
+  it("no consulta Prisma si employeeIds está vacío", async () => {
+    const result = await timeEntriesRepository.findClosuresForExport([], "2026-08");
+
+    expect(result).toEqual([]);
+    expect(mockedPrisma.monthlyTimeClosure.findMany).not.toHaveBeenCalled();
+  });
+
+  it("filtra por employeeIds y period, trae sólo employeeId/status", async () => {
+    mockedPrisma.monthlyTimeClosure.findMany.mockResolvedValue([{ employeeId: "employee-1", status: "APROBADO" }]);
+
+    const result = await timeEntriesRepository.findClosuresForExport(["employee-1", "employee-2"], "2026-08");
+
+    expect(mockedPrisma.monthlyTimeClosure.findMany).toHaveBeenCalledWith({
+      where: { employeeId: { in: ["employee-1", "employee-2"] }, period: "2026-08" },
+      select: { employeeId: true, status: true },
+    });
+    expect(result).toEqual([{ employeeId: "employee-1", status: "APROBADO" }]);
   });
 });
 

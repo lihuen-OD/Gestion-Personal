@@ -469,6 +469,16 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
       const { buildHoursExportWorkbook } = await import("../utils/hoursExport");
       buildHoursExportWorkbook(rows, period);
     } catch (error) {
+      // Etapa 15E.2: el período todavía no tiene el cierre mensual
+      // aprobado — es un bloqueo de negocio explícito, no una falla de
+      // red/backend. A diferencia del resto de los errores (donde sí tiene
+      // sentido degradar a los datos ya visibles en pantalla), acá NUNCA
+      // hay que generar el archivo igual: haría inútil el bloqueo del
+      // backend.
+      if (error instanceof ApiError && error.code === "MONTHLY_CLOSURE_NOT_APPROVED") {
+        setExportError("El período debe estar aprobado antes de exportar para liquidación.");
+        return;
+      }
       if (!exportRows.length) {
         setExportError("No pudimos preparar la exportación. Intentá nuevamente.");
         return;

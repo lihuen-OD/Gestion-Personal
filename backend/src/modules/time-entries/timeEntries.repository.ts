@@ -937,6 +937,19 @@ export const timeEntriesRepository = {
     });
   },
 
+  // Etapa 15E.2 (docs/decisions/TIME_EXPORT_CLOSURE_GATE_15E2.md): estado de
+  // MonthlyTimeClosure de cada empleado que va a aparecer en el export, para
+  // exigir APROBADO antes de la exportación definitiva. employeeIds ya llega
+  // scopeado (sale de findForExport, que ya aplicó employeeAccessWhere), así
+  // que no repite el scope acá.
+  findClosuresForExport(employeeIds: string[], period: string) {
+    if (!employeeIds.length) return Promise.resolve([]);
+    return prisma.monthlyTimeClosure.findMany({
+      where: { employeeId: { in: employeeIds }, period },
+      select: { employeeId: true, status: true },
+    });
+  },
+
   // Etapa 6M: horas de conceptos adicionales para el export, por empleado —
   // fuente HourConceptBreakdown (MANUAL o AUTOMATIC, sin RECHAZADO), nunca
   // TimeEntry no-Normal legacy. employeeIds ya llega scopeado (sale de

@@ -9,7 +9,7 @@ import { prisma } from "../../shared/prisma/client";
 import { employeeAccessWhere } from "../employees/employeeAccess";
 import { roles } from "../../shared/security/roles";
 import { redactPiiForRole } from "../../shared/security/piiRedaction";
-import { isMonthlyClosureLocked } from "../../shared/monthlyClosure/closureLock";
+import { findUnapprovedEmployeeIdsForExport, isMonthlyClosureLocked } from "../../shared/monthlyClosure/closureLock";
 import { storageService } from "../../shared/storage/storage.service";
 import { storagePathBuilder } from "../../shared/storage/storagePathBuilder";
 import { timeEntriesRepository } from "./timeEntries.repository";
@@ -1793,7 +1793,31 @@ export const timeEntriesService = {
       grouped.set(entry.employeeId, current);
     }
 
-    const breakdowns = await timeEntriesRepository.findBreakdownHoursForExport(Array.from(grouped.keys()), query.period);
+    const employeeIds = Array.from(grouped.keys());
+
+    // Etapa 15E.2 (docs/decisions/TIME_EXPORT_CLOSURE_GATE_15E2.md): la
+    // exportación DEFINITIVA (includeInReview=false, el default) exige que
+    // el cierre mensual de CADA empleado incluido esté APROBADO — si
+    // alguno no lo está (o no tiene cierre), se bloquea el export
+    // COMPLETO antes de tocar HourConceptBreakdown o armar filas, nunca de
+    // forma parcial. includeInReview=true ya es la vía de preview
+    // existente (incluye filas EN_REVISION además de APROBADO) — ahí no se
+    // exige cierre aprobado, pero la respuesta queda marcada
+    // explícitamente como no definitiva (`definitive: false`, más abajo).
+    if (!query.includeInReview && employeeIds.length) {
+      const closures = await timeEntriesRepository.findClosuresForExport(employeeIds, query.period);
+      const closuresByEmployeeId = new Map(closures.map((closure) => [closure.employeeId, closure]));
+      const unapproved = findUnapprovedEmployeeIdsForExport(employeeIds, closuresByEmployeeId);
+      if (unapproved.length) {
+        throw new AppError(
+          "El período debe estar aprobado antes de exportar para liquidación.",
+          409,
+          "MONTHLY_CLOSURE_NOT_APPROVED",
+        );
+      }
+    }
+
+    const breakdowns = await timeEntriesRepository.findBreakdownHoursForExport(employeeIds, query.period);
     for (const breakdown of breakdowns) {
       const current = grouped.get(breakdown.employeeId);
       if (!current) continue;
@@ -1843,6 +1867,11 @@ export const timeEntriesService = {
       after: { query, totalRows: rows.length } as Prisma.InputJsonValue,
     });
 
-    return { total: rows.length, rows };
+    // Etapa 15E.2: `definitive` marca explícitamente si esta respuesta pasó
+    // el gate de cierre aprobado (uso para liquidación) o si es la vía de
+    // preview (includeInReview=true, incluye EN_REVISION, sin exigir
+    // cierre) — campo aditivo en el JSON, no toca las columnas del CSV
+    // (exportCsv sólo lee `.rows`).
+    return { total: rows.length, rows, definitive: !query.includeInReview };
   },
 };

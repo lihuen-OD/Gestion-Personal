@@ -1203,7 +1203,9 @@ employeeId
 includeInReview=false
 ```
 
-**Deuda conocida (Etapa 15E, diagnóstico — `docs/decisions/TIME_CLOSURE_CONSISTENCY_15E.md` §8):** este endpoint filtra sólo por `TimeEntry.status` (`APROBADO`, o `APROBADO`+`EN_REVISION` con `includeInReview=true`) y nunca consulta `MonthlyTimeClosure` — puede exportar un período cuyo cierre mensual todavía no fue enviado/aprobado formalmente. No se implementó bloqueo ni advertencia en 15E (requiere una decisión de producto que esa etapa no tenía mandato para tomar); queda pendiente como Etapa 15E.2.
+**Etapa 15E.2** (`docs/decisions/TIME_EXPORT_CLOSURE_GATE_15E2.md`): con `includeInReview=false` (el default — export **definitivo**, para liquidación), el endpoint exige que `MonthlyTimeClosure` esté `APROBADO` para **cada** empleado que aparecería en el resultado. Si algún empleado no tiene cierre para ese período, o lo tiene en `ABIERTO`/`ENVIADO`/`DEVUELTO`/`CORRECCION_PENDIENTE`, responde `409 MONTHLY_CLOSURE_NOT_APPROVED` — nunca genera un archivo parcial. Con `includeInReview=true` (vista previa — incluye filas `EN_REVISION` además de `APROBADO`), el gate no aplica; la respuesta JSON incluye `definitive: false` para marcar explícitamente que no es apta para liquidación (`definitive: true` en el export normal). Este campo es aditivo — no cambia las columnas del `.csv`, que sólo lee `rows`.
+
+Antes de 15E.2, este endpoint filtraba sólo por `TimeEntry.status` y nunca consultaba `MonthlyTimeClosure` — quedó documentado como deuda en `docs/decisions/TIME_CLOSURE_CONSISTENCY_15E.md` §8 y cerrado acá.
 
 Columnas:
 

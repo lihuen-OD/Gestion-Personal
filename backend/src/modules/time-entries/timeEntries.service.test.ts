@@ -10,6 +10,7 @@ import type { AttendanceObservationsQuery } from "./timeEntries.schemas";
 import { evaluateShiftExit, flagOpenShiftOverflowForReview, notifyClassificationAlerts } from "../shifts/workShiftEvaluationRunner";
 import { resolveActiveWorkRegime } from "../work-regimes/workRegimes.service";
 import { notifyUsers } from "../workforce-management/workforce.service";
+import { auditService } from "../audit/audit.service";
 
 vi.mock("./timeEntries.repository", () => ({
   timeEntriesRepository: {
@@ -33,6 +34,7 @@ vi.mock("./timeEntries.repository", () => ({
     findOverlappingWorkShift: vi.fn(),
     createFromWorkShift: vi.fn(),
     findForExport: vi.fn(),
+    findClosuresForExport: vi.fn(),
     findBreakdownHoursForExport: vi.fn(),
     countEmployeeInScope: vi.fn(),
     findHourConceptById: vi.fn(),
@@ -120,6 +122,7 @@ type RepoMock = {
   findOverlappingWorkShift: Mock;
   createFromWorkShift: Mock;
   findForExport: Mock;
+  findClosuresForExport: Mock;
   findBreakdownHoursForExport: Mock;
   countEmployeeInScope: Mock;
   findHourConceptById: Mock;
@@ -142,6 +145,7 @@ const mockedMonthlyClosureFindUnique = prisma.monthlyTimeClosure.findUnique as u
 const mockedResolveActiveWorkRegime = resolveActiveWorkRegime as unknown as Mock;
 const mockedFlagOpenShiftOverflowForReview = flagOpenShiftOverflowForReview as unknown as Mock;
 const mockedNotifyUsers = notifyUsers as unknown as Mock;
+const mockedAuditRegister = auditService.register as unknown as Mock;
 
 function prismaKnownError(code: string) {
   return new Prisma.PrismaClientKnownRequestError("mock prisma error", { code, clientVersion: "0.0.0" });
@@ -159,6 +163,14 @@ const activeEmployee = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Etapa 15E.2: default seguro para todos los tests de exportByPerson que
+  // no ejercitan específicamente el gate de cierre — cualquier employeeId
+  // consultado resuelve como si tuviera un cierre APROBADO para el período,
+  // así los tests existentes (previos a 15E.2) no necesitan mockear esto
+  // uno por uno. Los tests que sí prueban el bloqueo lo sobreescriben.
+  repo.findClosuresForExport.mockImplementation(async (employeeIds: string[]) =>
+    employeeIds.map((employeeId) => ({ employeeId, status: "APROBADO" })),
+  );
 });
 
 describe("timeEntriesService DTO operativo Nivel 3", () => {
@@ -1235,6 +1247,98 @@ describe("exportByPerson — 'Horas trabajadas totales' = Normal, 'Horas especia
       const result = await timeEntriesService.exportByPerson({ period: "2026-08", includeInReview: false }, rrhhUser);
 
       expect(result.rows).toEqual([expect.objectContaining({ "Conflicto de reglas": "" })]);
+    });
+  });
+
+  /**
+   * Etapa 15E.2 (docs/decisions/TIME_EXPORT_CLOSURE_GATE_15E2.md): la
+   * exportación DEFINITIVA (includeInReview=false, el default) exige que
+   * MonthlyTimeClosure esté APROBADO para cada empleado incluido. Sin
+   * cierre, o con cualquier otro estado, se bloquea el export completo
+   * antes de tocar HourConceptBreakdown o construir filas — nunca parcial.
+   */
+  describe("gate de cierre mensual aprobado para exportación definitiva (Etapa 15E.2)", () => {
+    it("cierre APROBADO: permite la exportación y la marca como definitiva", async () => {
+      repo.findForExport.mockResolvedValue([exportEntry({ hours: "8", systemRole: "NORMAL_BASE" })]);
+      repo.findBreakdownHoursForExport.mockResolvedValue([]);
+      repo.findClosuresForExport.mockResolvedValue([{ employeeId: "employee-1", status: "APROBADO" }]);
+
+      const result = await timeEntriesService.exportByPerson({ period: "2026-08", includeInReview: false }, rrhhUser);
+
+      expect(result.definitive).toBe(true);
+      expect(result.rows).toHaveLength(1);
+      expect(repo.findClosuresForExport).toHaveBeenCalledWith(["employee-1"], "2026-08");
+    });
+
+    it("sin ningún MonthlyTimeClosure para el período: bloquea", async () => {
+      repo.findForExport.mockResolvedValue([exportEntry({ hours: "8", systemRole: "NORMAL_BASE" })]);
+      repo.findClosuresForExport.mockResolvedValue([]);
+
+      await expect(
+        timeEntriesService.exportByPerson({ period: "2026-08", includeInReview: false }, rrhhUser),
+      ).rejects.toMatchObject({ statusCode: 409, code: "MONTHLY_CLOSURE_NOT_APPROVED" });
+      expect(repo.findBreakdownHoursForExport).not.toHaveBeenCalled();
+    });
+
+    it.each(["ABIERTO", "ENVIADO", "DEVUELTO", "CORRECCION_PENDIENTE"] as const)(
+      "cierre en estado %s (no APROBADO): bloquea sin generar el archivo",
+      async (status) => {
+        repo.findForExport.mockResolvedValue([exportEntry({ hours: "8", systemRole: "NORMAL_BASE" })]);
+        repo.findClosuresForExport.mockResolvedValue([{ employeeId: "employee-1", status }]);
+
+        await expect(
+          timeEntriesService.exportByPerson({ period: "2026-08", includeInReview: false }, rrhhUser),
+        ).rejects.toMatchObject({ statusCode: 409, code: "MONTHLY_CLOSURE_NOT_APPROVED" });
+        expect(repo.findBreakdownHoursForExport).not.toHaveBeenCalled();
+      },
+    );
+
+    it("multi-empleado: si uno solo no está aprobado, bloquea el export completo (nunca parcial)", async () => {
+      repo.findForExport.mockResolvedValue([
+        exportEntry({ employeeId: "employee-1", hours: "8", systemRole: "NORMAL_BASE" }),
+        exportEntry({ employeeId: "employee-2", hours: "6", systemRole: "NORMAL_BASE" }),
+      ]);
+      repo.findClosuresForExport.mockResolvedValue([
+        { employeeId: "employee-1", status: "APROBADO" },
+        { employeeId: "employee-2", status: "ENVIADO" },
+      ]);
+
+      await expect(
+        timeEntriesService.exportByPerson({ period: "2026-08", includeInReview: false }, rrhhUser),
+      ).rejects.toMatchObject({ code: "MONTHLY_CLOSURE_NOT_APPROVED" });
+      expect(repo.findBreakdownHoursForExport).not.toHaveBeenCalled();
+    });
+
+    it("no registra auditoría de EXPORT cuando el cierre no está aprobado (no hay export exitoso que auditar)", async () => {
+      repo.findForExport.mockResolvedValue([exportEntry({ hours: "8", systemRole: "NORMAL_BASE" })]);
+      repo.findClosuresForExport.mockResolvedValue([{ employeeId: "employee-1", status: "ABIERTO" }]);
+
+      await expect(
+        timeEntriesService.exportByPerson({ period: "2026-08", includeInReview: false }, rrhhUser),
+      ).rejects.toMatchObject({ code: "MONTHLY_CLOSURE_NOT_APPROVED" });
+      expect(mockedAuditRegister).not.toHaveBeenCalled();
+    });
+
+    it("includeInReview=true (preview): no exige cierre aprobado y marca la respuesta como no definitiva", async () => {
+      repo.findForExport.mockResolvedValue([exportEntry({ hours: "8", systemRole: "NORMAL_BASE", status: "EN_REVISION" })]);
+      repo.findBreakdownHoursForExport.mockResolvedValue([]);
+      repo.findClosuresForExport.mockResolvedValue([]); // ni siquiera hay cierre — igual permite el preview
+
+      const result = await timeEntriesService.exportByPerson({ period: "2026-08", includeInReview: true }, rrhhUser);
+
+      expect(result.definitive).toBe(false);
+      expect(result.rows).toHaveLength(1);
+      expect(repo.findClosuresForExport).not.toHaveBeenCalled();
+    });
+
+    it("sin filas para exportar (período vacío): no consulta cierres ni bloquea, devuelve vacío", async () => {
+      repo.findForExport.mockResolvedValue([]);
+      repo.findBreakdownHoursForExport.mockResolvedValue([]);
+
+      const result = await timeEntriesService.exportByPerson({ period: "2026-08", includeInReview: false }, rrhhUser);
+
+      expect(result).toMatchObject({ total: 0, rows: [], definitive: true });
+      expect(repo.findClosuresForExport).not.toHaveBeenCalled();
     });
   });
 });

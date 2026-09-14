@@ -70,6 +70,8 @@ Si una novedad bloquea la carga horaria, se genera un registro de 0 horas para e
 
 ## Exportación Finnegans
 
+> Confirmado en el diagnóstico de la Etapa 15E.2 (`docs/decisions/TIME_EXPORT_CLOSURE_GATE_15E2.md`): el módulo `finnegans-export` (`GET /api/finnegans-export/novelties[.csv]`) exporta exclusivamente novedades, tal como ya documentaba esta sección — nunca horas/liquidación. Por eso el requisito de cierre mensual `APROBADO` de 15E.2 se aplicó sólo a `GET /api/time-entries/export(.csv)`, no a este módulo.
+
 Exportación Finnegans reemplaza el enfoque de liquidación dentro de la app.
 
 Se exportan:
