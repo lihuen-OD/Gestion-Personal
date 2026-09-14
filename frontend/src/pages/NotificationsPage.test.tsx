@@ -1,13 +1,40 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { NotificationsPage } from "./NotificationsPage";
 import { workforceApiService, type SystemNotification } from "../services/api/workforceApiService";
+import { employeeApiService } from "../services/api/employeeApiService";
+import { noveltyApiService } from "../services/api/noveltyApiService";
+import { noveltyTypeApiService } from "../services/api/noveltyTypeApiService";
+import { hourConceptApiService } from "../services/api/hourConceptApiService";
+import type { NoveltyType } from "../types/noveltyType.types";
 
 vi.mock("../services/api/workforceApiService", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../services/api/workforceApiService")>();
   return { ...actual, workforceApiService: { ...actual.workforceApiService, notifications: vi.fn(), readNotification: vi.fn() } };
+});
+
+// Etapa 15G.2 (docs/decisions/ALERT_TO_NOVELTY_FLOW_15G2.md): mocks para el
+// flujo "Crear novedad" desde Notificaciones. employeeApiService se
+// mockea sólo para poder afirmar que NUNCA se llama -- la notificación ya
+// trae el empleado resuelto (cuando lo trae), no hace falta ningún fetch
+// adicional.
+vi.mock("../services/api/employeeApiService", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../services/api/employeeApiService")>();
+  return { ...actual, employeeApiService: { ...actual.employeeApiService, getById: vi.fn() } };
+});
+vi.mock("../services/api/noveltyApiService", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../services/api/noveltyApiService")>();
+  return { ...actual, noveltyApiService: { ...actual.noveltyApiService, create: vi.fn() } };
+});
+vi.mock("../services/api/noveltyTypeApiService", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../services/api/noveltyTypeApiService")>();
+  return { ...actual, noveltyTypeApiService: { ...actual.noveltyTypeApiService, getAll: vi.fn() } };
+});
+vi.mock("../services/api/hourConceptApiService", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../services/api/hourConceptApiService")>();
+  return { ...actual, hourConceptApiService: { ...actual.hourConceptApiService, getAll: vi.fn().mockResolvedValue([]) } };
 });
 
 function buildNotification(overrides: Partial<SystemNotification> = {}): SystemNotification {
@@ -20,6 +47,38 @@ function buildNotification(overrides: Partial<SystemNotification> = {}): SystemN
     status: "NO_LEIDA",
     createdAt: "2026-08-20T10:00:00.000Z",
     ...overrides,
+  };
+}
+
+function buildGenericActiveType(): NoveltyType {
+  return {
+    id: "type-vacaciones",
+    code: "NOV-VACACIONES",
+    name: "Vacaciones",
+    uiColor: "blue",
+    kind: "VACACIONES",
+    origin: "INTERNA",
+    description: "",
+    status: "ACTIVO",
+    rules: {
+      exportsToFinnegans: false,
+      requiresApproval: true,
+      requiresDocumentation: false,
+      allowsHours: false,
+      allowsDateTo: true,
+      hasValidity: false,
+      blocksTimeEntry: false,
+      setsWorkedHoursToZero: false,
+      timeImpact: "NO_AFECTA_HORAS",
+    },
+    allowedLoadRoles: [],
+    approvalRoles: [],
+    finnegansLinks: [],
+    createdAt: "",
+    updatedAt: "",
+    createdBy: "",
+    updatedBy: "",
+    history: [],
   };
 }
 
@@ -227,5 +286,147 @@ describe("NotificationsPage — Etapa 14G.6 (Ver detalle no marca como leída)",
 
     expect(screen.queryByRole("link", { name: "Ver detalle" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Marcar leída/ })).toBeInTheDocument();
+  });
+});
+
+async function findModalScope() {
+  const heading = await screen.findByText("Nueva novedad");
+  return within(heading.closest(".modal") as HTMLElement);
+}
+
+// Etapa 15G.2 (docs/decisions/ALERT_TO_NOVELTY_FLOW_15G2.md, ajuste
+// final): "Crear novedad" es el punto PRINCIPAL de este flujo --
+// Notificaciones agrupa TODAS las alertas del fichador (turnos, fichada,
+// ausencia), no sólo las de turno. Sólo se ofrece cuando la notificación
+// ya trae `employee` resuelto por el backend (`workforce.service.ts::notifications`
+// enriquece ShiftAlert/WorkShift/Employee/AttendanceInactivityIncident --
+// los 4 entityType con `employee`, incluido "no asistió" desde este
+// ajuste). Para cualquier otro entityType (cierres, correcciones,
+// novedades pendientes) sigue sin haber empleado resuelto -- ahí no se
+// ofrece el atajo.
+describe("NotificationsPage — Etapa 15G.2 (crear novedad desde notificación — FLUJO PRINCIPAL)", () => {
+  it("una notificación con empleado resuelto (ej. ALERTA_FICHADA — llegada tarde) muestra 'Crear novedad'", async () => {
+    vi.mocked(workforceApiService.notifications).mockResolvedValue({
+      items: [buildNotification({ type: "ALERTA_FICHADA", title: "Llegada tarde", message: "Ana Gomez llegó 1h 30m tarde.", employee: { id: "employee-1", legajo: "100", firstName: "Ana", lastName: "Gomez" } })],
+      meta: { total: 1, page: 1, pageSize: 20, hasMore: false },
+    });
+
+    renderPage();
+
+    expect(await screen.findByRole("button", { name: /Crear novedad/ })).toBeInTheDocument();
+  });
+
+  // Ajuste final: "no asistió" ahora SÍ puede crear novedad desde
+  // Notificaciones, gracias al enriquecimiento agregado en
+  // workforce.service.ts::notifications para AttendanceInactivityIncident.
+  it("una notificación de 'no asistió' (SIN_ACTIVIDAD_REGISTRADA) con empleado resuelto también muestra 'Crear novedad'", async () => {
+    vi.mocked(workforceApiService.notifications).mockResolvedValue({
+      items: [buildNotification({
+        id: "notif-ausencia",
+        type: "SIN_ACTIVIDAD_REGISTRADA",
+        title: "Sin actividad registrada",
+        message: "El legajo no registró fichadas, jornadas ni horas cargadas el 20/08/2026.",
+        employee: { id: "employee-5", legajo: "500", firstName: "Elena", lastName: "Soto" },
+      })],
+      meta: { total: 1, page: 1, pageSize: 20, hasMore: false },
+    });
+
+    renderPage();
+
+    expect(await screen.findByRole("button", { name: /Crear novedad/ })).toBeInTheDocument();
+  });
+
+  it("una notificación SIN empleado resuelto (ej. cierres/correcciones/novedades pendientes) no muestra 'Crear novedad'", async () => {
+    vi.mocked(workforceApiService.notifications).mockResolvedValue({
+      items: [buildNotification({ type: "CIERRE_MENSUAL", title: "Cierres mensuales recibidos" })],
+      meta: { total: 1, page: 1, pageSize: 20, hasMore: false },
+    });
+
+    renderPage();
+    await screen.findByText("Cierres mensuales recibidos");
+
+    expect(screen.queryByRole("button", { name: /Crear novedad/ })).not.toBeInTheDocument();
+  });
+
+  it("click en 'Crear novedad' de una ausencia (no asistió) precarga empleado/fecha/observación humana sin sugerir tipo, sin id técnico y sin llamar a employeeApiService.getById", async () => {
+    vi.mocked(workforceApiService.notifications).mockResolvedValue({
+      items: [buildNotification({
+        id: "notif-ausencia",
+        type: "SIN_ACTIVIDAD_REGISTRADA",
+        title: "Sin actividad registrada",
+        message: "El legajo no registró fichadas, jornadas ni horas cargadas el 20/08/2026.",
+        createdAt: "2026-08-20T09:00:00.000Z",
+        employee: { id: "employee-5", legajo: "500", firstName: "Elena", lastName: "Soto" },
+      })],
+      meta: { total: 1, page: 1, pageSize: 20, hasMore: false },
+    });
+    vi.mocked(noveltyTypeApiService.getAll).mockResolvedValue([buildGenericActiveType()]);
+
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: /Crear novedad/ }));
+
+    const modal = await findModalScope();
+    expect(modal.getByLabelText("Desde")).toHaveValue("2026-08-20");
+    expect(modal.getByText(/Origen: alerta del fichador/)).toBeInTheDocument();
+    expect(modal.getByText(/El legajo no registró fichadas/)).toBeInTheDocument();
+    expect(modal.getByText("500 · Soto, Elena")).toBeInTheDocument();
+    expect(modal.queryByText(/notif-ausencia/)).not.toBeInTheDocument();
+    // Sin tipo garantizado de "Ausencia" -- cae al primer tipo activo, el
+    // usuario elige manualmente (no se crea un tipo nuevo para esto).
+    expect(modal.getByLabelText("Tipo de novedad")).toHaveValue("type-vacaciones");
+    expect(employeeApiService.getById).not.toHaveBeenCalled();
+  });
+
+  it("click en 'Crear novedad' abre NoveltyModal precargado (empleado/fecha/observación humana, sin id técnico) SIN llamar a employeeApiService.getById", async () => {
+    vi.mocked(workforceApiService.notifications).mockResolvedValue({
+      items: [buildNotification({
+        id: "204bd1dc-ea7c-4b7b-a029-264faf5796ac",
+        type: "ALERTA_FICHADA",
+        title: "Llegada tarde",
+        message: "Ana Gomez llegó 1h 30m tarde.",
+        createdAt: "2026-08-20T12:00:00.000Z",
+        employee: { id: "employee-1", legajo: "100", firstName: "Ana", lastName: "Gomez" },
+      })],
+      meta: { total: 1, page: 1, pageSize: 20, hasMore: false },
+    });
+    vi.mocked(noveltyTypeApiService.getAll).mockResolvedValue([buildGenericActiveType()]);
+
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: /Crear novedad/ }));
+
+    const modal = await findModalScope();
+    expect(modal.getByLabelText("Desde")).toHaveValue("2026-08-20");
+    expect(modal.getByText(/Origen: alerta del fichador/)).toBeInTheDocument();
+    expect(modal.getByText(/Ana Gomez llegó 1h 30m tarde/)).toBeInTheDocument();
+    expect(modal.getByText(/Las horas reales se mantienen según fichador\/carga horaria/)).toBeInTheDocument();
+    expect(modal.getByText("100 · Gomez, Ana")).toBeInTheDocument();
+    expect(modal.queryByText(/204bd1dc-ea7c-4b7b-a029-264faf5796ac/)).not.toBeInTheDocument();
+    expect(employeeApiService.getById).not.toHaveBeenCalled();
+  });
+
+  it("guardar la novedad precargada usa el flujo normal de creación (POST /novelties) y no marca la notificación como leída", async () => {
+    vi.mocked(workforceApiService.notifications).mockResolvedValue({
+      items: [buildNotification({
+        id: "notif-alerta",
+        type: "ALERTA_FICHADA",
+        title: "Llegada tarde",
+        employee: { id: "employee-1", legajo: "100", firstName: "Ana", lastName: "Gomez" },
+        status: "NO_LEIDA",
+      })],
+      meta: { total: 1, page: 1, pageSize: 20, hasMore: false },
+    });
+    vi.mocked(noveltyTypeApiService.getAll).mockResolvedValue([buildGenericActiveType()]);
+    vi.mocked(noveltyApiService.create).mockResolvedValue([{ id: "novelty-1" } as never]);
+
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: /Crear novedad/ }));
+    const modal = await findModalScope();
+    await userEvent.click(modal.getByRole("button", { name: "Guardar novedad" }));
+
+    await waitFor(() => expect(noveltyApiService.create).toHaveBeenCalledWith(
+      expect.objectContaining({ employeeIds: ["employee-1"], noveltyTypeId: "type-vacaciones" }),
+    ));
+    await screen.findByText("Novedad creada. RRHH la revisa como cualquier otra novedad.");
+    expect(workforceApiService.readNotification).not.toHaveBeenCalled();
   });
 });

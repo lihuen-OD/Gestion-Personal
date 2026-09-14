@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { AlertTriangle, CalendarDays, Camera, CheckCircle2, Clock3, DoorOpen, Eye, Search, TimerReset, X } from "lucide-react";
+import { AlertTriangle, CalendarDays, Camera, CheckCircle2, Clock3, DoorOpen, Eye, FilePlus2, Search, TimerReset, X } from "lucide-react";
 import { attendanceApiService, type AttendanceObservation, type AttendancePunch, type AttendanceShift } from "../services/api/attendanceApiService";
 import { WorkShiftSegmentsPanel } from "../components/attendance/WorkShiftSegmentsPanel";
 import { Badge } from "../components/ui/Badge";
@@ -13,6 +13,9 @@ import { StatCard } from "../components/ui/StatCard";
 import { Modal } from "../components/ui/Modal";
 import { TableShell } from "../components/ui/TableShell";
 import { useDebouncedValue } from "../utils/useDebouncedValue";
+import { argentinaDateKey } from "../utils/argentinaDateKey";
+import { NoveltyFromContextModal } from "../components/novelties/NoveltyFromContextModal";
+import { buildNoveltyPrefillFromAttendanceShiftProblem, buildNoveltyPrefillFromInactivityIncident, type NoveltyPrefillContext } from "../utils/noveltyFromAlert";
 
 const OBSERVED_PAGE_SIZE = 10;
 
@@ -23,7 +26,7 @@ function observationId(item: AttendanceObservation) {
 }
 
 function todayKey() {
-  return new Date().toLocaleDateString("sv-SE", { timeZone: "America/Argentina/Cordoba" });
+  return argentinaDateKey(new Date());
 }
 
 function employeeName(shift: Pick<AttendanceShift, "employee"> | Pick<AttendancePunch, "employee">) {
@@ -239,7 +242,7 @@ type ShiftAction = {
   type: ShiftActionType;
 };
 
-function ObservationRows({ items, onViewPhoto, onResolve, onViewSegments }: { items: AttendanceObservation[]; onViewPhoto: (id: string) => void; onResolve: (kind: "SHIFT" | "PUNCH" | "INACTIVITY", id: string) => void; onViewSegments: (shift: AttendanceShift) => void }) {
+function ObservationRows({ items, onViewPhoto, onResolve, onViewSegments, onCreateNovelty }: { items: AttendanceObservation[]; onViewPhoto: (id: string) => void; onResolve: (kind: "SHIFT" | "PUNCH" | "INACTIVITY", id: string) => void; onViewSegments: (shift: AttendanceShift) => void; onCreateNovelty: (context: NoveltyPrefillContext) => void }) {
   if (!items.length) {
     return <EmptyState text="No hay problemas de fichada para los filtros seleccionados." icon={AlertTriangle} />;
   }
@@ -257,7 +260,10 @@ function ObservationRows({ items, onViewPhoto, onResolve, onViewSegments }: { it
             <td><Badge tone="danger">Sin actividad registrada</Badge></td>
             <td><span className="attendance-review-detail">{incident.observation}</span></td>
             <td>Control automático</td>
-            <td>{isPending ? <button type="button" className="table-icon-action" title="Resolver" aria-label="Resolver" onClick={() => onResolve("INACTIVITY", incident.id)}><CheckCircle2 size={14} /><span>Resolver</span></button> : <Badge tone="success">Resuelta</Badge>}</td>
+            <td>
+              {isPending ? <button type="button" className="table-icon-action" title="Resolver" aria-label="Resolver" onClick={() => onResolve("INACTIVITY", incident.id)}><CheckCircle2 size={14} /><span>Resolver</span></button> : <Badge tone="success">Resuelta</Badge>}
+              <button type="button" className="table-icon-action" title="Registrar novedad a partir de esta alerta" aria-label="Crear novedad" onClick={() => onCreateNovelty(buildNoveltyPrefillFromInactivityIncident(incident))}><FilePlus2 size={14} /><span>Crear novedad</span></button>
+            </td>
           </tr>;
         }
         const record = item.kind === "SHIFT" ? item.shift : item.punch;
@@ -276,7 +282,10 @@ function ObservationRows({ items, onViewPhoto, onResolve, onViewSegments }: { it
             {item.kind === "SHIFT" ? <button type="button" className="table-icon-action" title="Ver tramos" aria-label="Ver tramos" onClick={() => onViewSegments(item.shift)}><Eye size={14} /><span>Ver tramos</span></button> : null}
           </td>
           <td>{sourceLabel(record.source)}</td>
-          <td>{isPending ? <button type="button" className="table-icon-action" title="Resolver" aria-label="Resolver" onClick={() => onResolve(item.kind, record.id)}><CheckCircle2 size={14} /><span>Resolver</span></button> : <Badge tone="success">Resuelta</Badge>}</td>
+          <td>
+            {isPending ? <button type="button" className="table-icon-action" title="Resolver" aria-label="Resolver" onClick={() => onResolve(item.kind, record.id)}><CheckCircle2 size={14} /><span>Resolver</span></button> : <Badge tone="success">Resuelta</Badge>}
+            {item.kind === "SHIFT" ? <button type="button" className="table-icon-action" title="Registrar novedad a partir de esta alerta" aria-label="Crear novedad" onClick={() => onCreateNovelty(buildNoveltyPrefillFromAttendanceShiftProblem(item.shift, problem))}><FilePlus2 size={14} /><span>Crear novedad</span></button> : null}
+          </td>
         </tr>;
       })}</tbody>
     </table>
@@ -300,6 +309,11 @@ export function AttendancePage() {
   const [observationsRefresh, setObservationsRefresh] = useState(0);
   const [reviewAction, setReviewAction] = useState<{ kind: "SHIFT" | "PUNCH" | "INACTIVITY"; id: string }>();
   const [reviewReason, setReviewReason] = useState("");
+  // Etapa 15G.2: contexto de la observación desde la que se está creando una
+  // novedad. Crear la novedad no resuelve la observación -- eso sigue siendo
+  // una acción manual aparte ("Resolver").
+  const [noveltyContext, setNoveltyContext] = useState<NoveltyPrefillContext>();
+  const [noveltyNotice, setNoveltyNotice] = useState("");
   const [refreshKey, setRefreshKey] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -557,7 +571,7 @@ export function AttendancePage() {
         {observationsError ? <div className="form-error">{observationsError}</div> : null}
         {observationsLoading ? <LoadingState variant="table" columns={6} rows={4} /> : (
           <>
-            <ObservationRows items={observations} onViewPhoto={openPunchPhoto} onResolve={(kind, id) => { setReviewAction({ kind, id }); setReviewReason(""); setActionError(""); }} onViewSegments={setSegmentsShift} />
+            <ObservationRows items={observations} onViewPhoto={openPunchPhoto} onResolve={(kind, id) => { setReviewAction({ kind, id }); setReviewReason(""); setActionError(""); }} onViewSegments={setSegmentsShift} onCreateNovelty={setNoveltyContext} />
             {observationsMeta.hasMore ? <div className="attendance-load-more"><Button variant="subtle" onClick={loadMoreObservations} loading={observationsLoadingMore}>Cargar 10 más</Button></div> : null}
           </>
         )}
@@ -637,6 +651,19 @@ export function AttendancePage() {
           <LoadingState text="Cargando evidencia fotográfica..." />
         </Modal>
       ) : null}
+
+      {noveltyContext ? (
+        <NoveltyFromContextModal
+          context={noveltyContext}
+          close={() => setNoveltyContext(undefined)}
+          saved={() => {
+            setNoveltyContext(undefined);
+            setNoveltyNotice("Novedad creada. RRHH la revisa como cualquier otra novedad.");
+          }}
+        />
+      ) : null}
+
+      {noveltyNotice ? <div className="toast">{noveltyNotice}</div> : null}
     </div>
   );
 }

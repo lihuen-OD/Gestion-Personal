@@ -24,6 +24,10 @@ vi.mock("../../shared/prisma/client", () => ({
     systemNotification: { findMany: vi.fn(), count: vi.fn() },
     shiftAlert: { findMany: vi.fn() },
     workShift: { findMany: vi.fn() },
+    // Etapa 15G.2 (docs/decisions/ALERT_TO_NOVELTY_FLOW_15G2.md): enriquecimiento
+    // de notificaciones "no asistió" (entityType AttendanceInactivityIncident)
+    // con el mismo patrón ya usado para ShiftAlert/WorkShift/Employee.
+    attendanceInactivityIncident: { findMany: vi.fn() },
     user: { findMany: vi.fn().mockResolvedValue([]) },
     $transaction: vi.fn(),
   },
@@ -43,6 +47,7 @@ const mockedPrisma = prisma as unknown as {
   systemNotification: { findMany: Mock; count: Mock };
   shiftAlert: { findMany: Mock };
   workShift: { findMany: Mock };
+  attendanceInactivityIncident: { findMany: Mock };
   $transaction: Mock;
 };
 
@@ -722,5 +727,54 @@ describe("workforceService.notifications — Etapa 9I (paginación real, antes f
     expect(mockedPrisma.shiftAlert.findMany).not.toHaveBeenCalled();
     expect(mockedPrisma.workShift.findMany).not.toHaveBeenCalled();
     expect(mockedPrisma.employee.findMany).not.toHaveBeenCalled();
+    expect(mockedPrisma.attendanceInactivityIncident.findMany).not.toHaveBeenCalled();
+  });
+
+  // Etapa 15G.2 (docs/decisions/ALERT_TO_NOVELTY_FLOW_15G2.md): "no asistió"
+  // (SIN_ACTIVIDAD_REGISTRADA) no llegaba con `employee` -- Notificaciones
+  // no podía ofrecer "Crear novedad" para ese caso. Mismo patrón exacto que
+  // el enriquecimiento de ShiftAlert de arriba, sólo agrega el 4to
+  // entityType.
+  it("enriquece notificaciones de AttendanceInactivityIncident ('no asistió') con employee mínimo — id/legajo/firstName/lastName, no el legajo completo", async () => {
+    const rows = [{ id: "n-2", entityType: "AttendanceInactivityIncident", entityId: "incident-1" }];
+    mockedPrisma.systemNotification.findMany.mockResolvedValue(rows);
+    mockedPrisma.systemNotification.count.mockResolvedValue(1);
+    mockedPrisma.attendanceInactivityIncident.findMany.mockResolvedValue([{ id: "incident-1", employee: { id: "emp-2", legajo: "200", firstName: "Beto", lastName: "Diaz" } }]);
+
+    const result = await workforceService.notifications({ page: 1, take: 20 }, user);
+
+    expect(mockedPrisma.attendanceInactivityIncident.findMany).toHaveBeenCalledWith({
+      where: { id: { in: ["incident-1"] } },
+      select: { id: true, employee: { select: { id: true, legajo: true, firstName: true, lastName: true } } },
+    });
+    expect(result.items[0]).toMatchObject({ id: "n-2", employee: { id: "emp-2", legajo: "200", firstName: "Beto", lastName: "Diaz" } });
+    // No se pide ningún otro campo del empleado (ni dni/cuil/dirección/etc.) —
+    // el select ya lo garantiza arriba, esto confirma que no se agregó un
+    // segundo fetch por separado para completarlo.
+    expect(mockedPrisma.employee.findMany).not.toHaveBeenCalled();
+  });
+
+  it("el enriquecimiento nuevo de AttendanceInactivityIncident no interfiere con el de ShiftAlert/WorkShift/Employee en la misma página", async () => {
+    const rows = [
+      { id: "n-1", entityType: "ShiftAlert", entityId: "alert-1" },
+      { id: "n-2", entityType: "AttendanceInactivityIncident", entityId: "incident-1" },
+      { id: "n-3", entityType: "WorkShift", entityId: "shift-1" },
+      { id: "n-4", entityType: "Employee", entityId: "emp-4" },
+    ];
+    mockedPrisma.systemNotification.findMany.mockResolvedValue(rows);
+    mockedPrisma.systemNotification.count.mockResolvedValue(4);
+    mockedPrisma.shiftAlert.findMany.mockResolvedValue([{ id: "alert-1", employee: { id: "emp-1", legajo: "100", firstName: "Ana", lastName: "Gomez" } }]);
+    mockedPrisma.attendanceInactivityIncident.findMany.mockResolvedValue([{ id: "incident-1", employee: { id: "emp-2", legajo: "200", firstName: "Beto", lastName: "Diaz" } }]);
+    mockedPrisma.workShift.findMany.mockResolvedValue([{ id: "shift-1", employee: { id: "emp-3", legajo: "300", firstName: "Cora", lastName: "Ruiz" } }]);
+    mockedPrisma.employee.findMany.mockResolvedValue([{ id: "emp-4", legajo: "400", firstName: "Dino", lastName: "Paz" }]);
+
+    const result = await workforceService.notifications({ page: 1, take: 20 }, user);
+
+    expect(result.items).toEqual([
+      expect.objectContaining({ id: "n-1", employee: { id: "emp-1", legajo: "100", firstName: "Ana", lastName: "Gomez" } }),
+      expect.objectContaining({ id: "n-2", employee: { id: "emp-2", legajo: "200", firstName: "Beto", lastName: "Diaz" } }),
+      expect.objectContaining({ id: "n-3", employee: { id: "emp-3", legajo: "300", firstName: "Cora", lastName: "Ruiz" } }),
+      expect.objectContaining({ id: "n-4", employee: { id: "emp-4", legajo: "400", firstName: "Dino", lastName: "Paz" } }),
+    ]);
   });
 });

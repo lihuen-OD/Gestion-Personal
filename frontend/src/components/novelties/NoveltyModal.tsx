@@ -20,24 +20,38 @@ export function NoveltyModal({
   employees,
   close,
   saved,
+  initialFromDate,
+  initialQuantityHours,
+  initialObservation,
+  suggestedNoveltyTypeCode,
+  contextNote,
 }: {
   employees: Employee[];
   close: () => void;
   saved: (items: Novelty[]) => void;
+  // Etapa 15G.2 (docs/decisions/ALERT_TO_NOVELTY_FLOW_15G2.md): precarga
+  // opcional al abrir el modal desde una alerta de fichador/turnos. Todo
+  // sigue siendo editable por el usuario antes de guardar — nada de esto
+  // se envía "a ciegas" ni bypassea el flujo normal de creación.
+  initialFromDate?: string;
+  initialQuantityHours?: number;
+  initialObservation?: string;
+  suggestedNoveltyTypeCode?: string;
+  contextNote?: string;
 }) {
   const [activeTypes, setActiveTypes] = useState<NoveltyType[]>([]);
   const [hourConcepts, setHourConcepts] = useState<HourConcept[]>([]);
   const defaultPeriod = currentMonthPeriod();
-  const defaultDate = `${defaultPeriod}-01`;
+  const defaultDate = initialFromDate || `${defaultPeriod}-01`;
 
   const [selectedEmployees, setSelectedEmployees] = useState<Employee[]>(employees);
   const [typeId, setTypeId] = useState("");
   const [from, setFrom] = useState(defaultDate);
   const [to, setTo] = useState(defaultDate);
-  const [hours, setHours] = useState("1");
+  const [hours, setHours] = useState(initialQuantityHours != null ? String(initialQuantityHours) : "1");
   const [targetHour, setTargetHour] = useState("Hora normal");
   const [fileName, setFileName] = useState("");
-  const [docNotes, setDocNotes] = useState("");
+  const [docNotes, setDocNotes] = useState(initialObservation || "");
   const [error, setError] = useState("");
   const [catalogStatus, setCatalogStatus] = useState<"loading" | "success" | "error">("loading");
   const [catalogRetry, setCatalogRetry] = useState(0);
@@ -51,7 +65,16 @@ export function NoveltyModal({
         const active = types.filter((item) => item.status === "ACTIVO");
         setActiveTypes(active);
         setHourConcepts(concepts.filter((item) => item.status === "ACTIVO"));
-        if (!active.some((item) => item.id === typeId)) setTypeId(active[0]?.id || "");
+        if (!active.some((item) => item.id === typeId)) {
+          // El tipo sugerido por una alerta gana si existe y está activo;
+          // si no (código inexistente, tipo dado de baja, o no vino
+          // ninguno), cae al primer tipo activo -- mismo comportamiento de
+          // siempre, sin romper la carga manual.
+          const suggested = suggestedNoveltyTypeCode
+            ? active.find((item) => item.code === suggestedNoveltyTypeCode)
+            : undefined;
+          setTypeId(suggested?.id || active[0]?.id || "");
+        }
         setCatalogStatus("success");
       })
       .catch(() => {
@@ -141,6 +164,7 @@ export function NoveltyModal({
   return (
     <Modal title="Nueva novedad" close={close}>
       <div className="form-stack">
+        {contextNote ? <div className="info-note compact">{contextNote}</div> : null}
         {catalogStatus === "loading" ? (
           <LoadingState text="Cargando tipos de novedades..." />
         ) : catalogStatus === "error" ? (
@@ -245,6 +269,21 @@ export function NoveltyModal({
                   />
                 </label>
               </div>
+            ) : contextNote ? (
+              // Etapa 15G.2: si el tipo no exige documentación, el campo de
+              // arriba no se renderiza -- pero cuando el modal viene
+              // precargado desde una alerta, la observación sugerida
+              // (contexto de la alerta) igual se envía en el payload. Sin
+              // este campo, quedaría invisible: el usuario no podría
+              // revisarla ni corregirla antes de guardar.
+              <label>
+                Observación
+                <textarea
+                  value={docNotes}
+                  onChange={(event) => setDocNotes(event.target.value)}
+                  placeholder="Detalle de la novedad"
+                />
+              </label>
             ) : null}
 
             {error ? <p className="error">{error}</p> : null}

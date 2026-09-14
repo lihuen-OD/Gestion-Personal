@@ -14,6 +14,12 @@ import { TableShell } from "../components/ui/TableShell";
 import { shiftAlertApiService, type ShiftAlert, type ShiftAlertSeverity, type ShiftAlertStatus, type ShiftAlertType } from "../services/api/shiftAlertApiService";
 import { useDebouncedValue } from "../utils/useDebouncedValue";
 
+// Etapa 15G.2 (docs/decisions/ALERT_TO_NOVELTY_FLOW_15G2.md, ajuste final):
+// esta página ya NO ofrece "Crear novedad" -- el flujo principal para
+// justificar una anomalía del fichador con una novedad es Notificaciones
+// (NotificationsPage), con AttendancePage → "Problemas de fichada" como
+// acceso complementario. ShiftAlertsPage queda como consulta/análisis
+// técnico de alertas de turno solamente.
 const TYPE_LABELS: Record<ShiftAlertType, string> = {
   INGRESO_TARDE: "Llegada tarde",
   INGRESO_ANTICIPADO: "Ingreso anticipado",

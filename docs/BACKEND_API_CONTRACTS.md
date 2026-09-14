@@ -1332,6 +1332,17 @@ Todas las rutas requieren `requireAuth`.
 | GET / POST / PATCH / DELETE | `/double-hour-rules*` | RRHH (escritura) | Reglas de Horas Especiales (`DoubleHourRule`) |
 | GET | `/double-hour-rules/calendar?from&to&kind` | todos los operativos | Preview de calendario de Horas Especiales (ver abajo) |
 
+#### Notificaciones (`/notifications`) — enriquecimiento de `employee`
+
+`GET /notifications` siempre filtra por `recipientUserId` del usuario autenticado (nunca notificaciones de otro usuario). Cada item trae `id, type, priority, title, message, entityType?, entityId?, link?, status, createdAt` y, sólo para 4 valores de `entityType`, un `employee` ya resuelto (`{ id, legajo, firstName, lastName }`, select liviano — nunca el legajo completo):
+
+- `ShiftAlert` (alertas de turno: llegada tarde, salida anticipada, etc. — `type: "ALERTA_FICHADA"`).
+- `WorkShift` (falta de salida/olvido — `type: "FALTA_SALIDA"`).
+- `Employee` (intento de ingreso con jornada abierta — `type: "INTENTO_INGRESO_JORNADA_ABIERTA"`).
+- `AttendanceInactivityIncident` (**"no asistió"**, `type: "SIN_ACTIVIDAD_REGISTRADA"` — agregado en la Etapa 15G.2, docs/decisions/ALERT_TO_NOVELTY_FLOW_15G2.md; antes de esta etapa este `entityType` no traía `employee`).
+
+El resto de `entityType` (cierres, correcciones, novedades pendientes) no trae `employee`. El enriquecimiento sólo consulta el entityId de la página actual (nunca recorre todo el histórico) y usa un `select` mínimo — no dispara ningún fetch de legajo completo.
+
 #### Horas Especiales (`/double-hour-rules*`) — Etapa 8B (extendido en 12B)
 
 Body de `POST`/`PATCH` (todos los campos de scope y `dates` son opcionales; `updateDoubleRuleSchema` acepta un subconjunto parcial):

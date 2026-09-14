@@ -428,3 +428,54 @@ describe("ShiftAlertsPage — Etapa 14G.5 (no blanquea la tabla en un refetch co
     resolveSpy.mockRestore();
   });
 });
+
+// Ajuste final (docs/decisions/ALERT_TO_NOVELTY_FLOW_15G2.md): esta página
+// tuvo brevemente un botón "Crear novedad" (acceso secundario); el usuario
+// decidió quitarlo por completo -- el punto operativo correcto para
+// justificar una anomalía del fichador es Notificaciones (flujo
+// principal) y AttendancePage → Problemas de fichada (complementario).
+// ShiftAlertsPage queda como consulta/análisis de alertas de turno,
+// sin ninguna acción de creación de novedad.
+describe("ShiftAlertsPage — Etapa 15G.2 (ajuste final: SIN acción 'Crear novedad')", () => {
+  it("no muestra ningún botón/acción 'Crear novedad' sobre una alerta", async () => {
+    vi.mocked(shiftAlertApiService.getAll).mockResolvedValue({
+      data: [buildAlert({ type: "INGRESO_TARDE", differenceMinutes: 120 })],
+      meta: { total: 1, pageSize: 20, hasMore: false, nextBefore: null },
+    });
+
+    renderPage();
+    await screen.findByText("Legajo 100");
+
+    expect(screen.queryByText(/Crear novedad/i)).not.toBeInTheDocument();
+  });
+
+  it("tampoco aparece en los hallazgos secundarios de un grupo de alertas", async () => {
+    vi.mocked(shiftAlertApiService.getAll).mockResolvedValue({
+      data: [
+        buildAlert({ id: "alert-concepto", workShiftId: "shift-1", type: "CONCEPTO_NO_HABILITADO" }),
+        buildAlert({ id: "alert-segmento", workShiftId: "shift-1", type: "SEGMENTO_SIN_CLASIFICAR" }),
+      ],
+      meta: { total: 2, pageSize: 20, hasMore: false, nextBefore: null },
+    });
+
+    renderPage();
+    await screen.findByText("+1 hallazgo asociado");
+    await userEvent.click(screen.getByText("+1 hallazgo asociado"));
+
+    await screen.findByText("También se detectó en esta misma jornada");
+    expect(screen.queryByText(/Crear novedad/i)).not.toBeInTheDocument();
+  });
+
+  it("las demás acciones (Ver legajo, Ver turno, Resolver) siguen intactas", async () => {
+    vi.mocked(shiftAlertApiService.getAll).mockResolvedValue({
+      data: [buildAlert({ type: "INGRESO_TARDE", differenceMinutes: 120, status: "PENDIENTE" })],
+      meta: { total: 1, pageSize: 20, hasMore: false, nextBefore: null },
+    });
+
+    renderPage();
+    await screen.findByText("Legajo 100");
+
+    expect(screen.getByRole("link", { name: /Ver legajo/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Resolver alerta/i })).toBeInTheDocument();
+  });
+});

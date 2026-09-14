@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Bell, Check } from "lucide-react";
+import { Bell, Check, FilePlus2 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { PageHeader } from "../components/ui/PageHeader";
 import { Section } from "../components/ui/Section";
@@ -9,6 +9,8 @@ import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { FilterPanel } from "../components/ui/FilterPanel";
 import { workforceApiService, type SystemNotification, type SystemNotificationListMeta } from "../services/api/workforceApiService";
+import { NoveltyFromContextModal } from "../components/novelties/NoveltyFromContextModal";
+import { buildNoveltyPrefillFromNotification, type NoveltyPrefillContext } from "../utils/noveltyFromAlert";
 
 const PAGE_SIZE = 20;
 type StatusFilter = "" | "NO_LEIDA" | "LEIDA";
@@ -23,6 +25,13 @@ export function NotificationsPage() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState("");
   const [refresh, setRefresh] = useState(0);
+  // Etapa 15G.2 (docs/decisions/ALERT_TO_NOVELTY_FLOW_15G2.md): "Crear
+  // novedad" es el punto principal de este flujo -- Notificaciones agrupa
+  // TODAS las alertas del fichador, no sólo las de turno. Crear la
+  // novedad no marca la notificación como leída ni cambia su estado; eso
+  // sigue siendo "Marcar leída", una acción manual aparte.
+  const [noveltyContext, setNoveltyContext] = useState<NoveltyPrefillContext>();
+  const [noveltyNotice, setNoveltyNotice] = useState("");
 
   useEffect(() => {
     let mounted = true;
@@ -98,18 +107,43 @@ export function NotificationsPage() {
       <div className="notification-list">
         {status === "loading" ? <LoadingState text="Cargando notificaciones..." /> : null}
         {status === "error" ? <ErrorState message={error} onRetry={() => setRefresh((value) => value + 1)} /> : null}
-        {status === "success" ? items.map((item) => <article className={`notification-row ${item.status === "NO_LEIDA" ? "unread" : ""}`} key={item.id}>
-          <div className="notification-icon"><Bell size={17}/></div><div><b>{item.title}</b>{item.employee ? <span className="notification-person">{item.employee.lastName}, {item.employee.firstName} · Legajo {item.employee.legajo}</span> : null}<p>{item.message}</p><small>{new Date(item.createdAt).toLocaleString("es-AR")}</small></div>
+        {status === "success" ? items.map((item) => {
+          const employee = item.employee;
+          return <article className={`notification-row ${item.status === "NO_LEIDA" ? "unread" : ""}`} key={item.id}>
+          <div className="notification-icon"><Bell size={17}/></div><div><b>{item.title}</b>{employee ? <span className="notification-person">{employee.lastName}, {employee.firstName} · Legajo {employee.legajo}</span> : null}<p>{item.message}</p><small>{new Date(item.createdAt).toLocaleString("es-AR")}</small></div>
           {/* Etapa 14G.6: "Ver detalle" antes marcaba como leída como efecto
               colateral de la navegación (además del botón explícito "Marcar
               leída", que hacía lo mismo) -- sin ninguna distinción visual
               entre ambas acciones. Ahora navegar sólo navega; "Marcar leída"
               sigue siendo la única forma explícita de marcar como leída. */}
-          <div className="notification-actions">{item.link ? <Link className="table-link" to={item.link}>Ver detalle</Link> : null}{item.status === "NO_LEIDA" ? <button className="table-link" onClick={() => void markRead(item)}><Check size={15}/> Marcar leída</button> : <Badge tone="neutral">Leída</Badge>}</div>
-        </article>) : null}
+          <div className="notification-actions">
+            {item.link ? <Link className="table-link" to={item.link}>Ver detalle</Link> : null}
+            {/* Sólo si el backend ya resolvió el empleado para esta
+                notificación (ShiftAlert/WorkShift/Employee/
+                AttendanceInactivityIncident -- los 4 entityType que
+                workforce.service.ts::notifications() enriquece hoy). Sin
+                eso no hay datos suficientes para precargar nada. */}
+            {employee ? <button type="button" className="table-link" onClick={() => setNoveltyContext(buildNoveltyPrefillFromNotification({ ...item, employee }))}><FilePlus2 size={15}/> Crear novedad</button> : null}
+            {item.status === "NO_LEIDA" ? <button className="table-link" onClick={() => void markRead(item)}><Check size={15}/> Marcar leída</button> : <Badge tone="neutral">Leída</Badge>}
+          </div>
+        </article>;
+        }) : null}
         {status === "success" && !items.length ? <div className="empty">{emptyText}</div> : null}
       </div>
       {status === "success" && meta.hasMore ? <div className="attendance-load-more"><Button variant="subtle" onClick={() => void loadMore()} loading={loadingMore}>Cargar {Math.min(PAGE_SIZE, meta.total - items.length)} más</Button></div> : null}
     </Section>
+
+    {noveltyContext ? (
+      <NoveltyFromContextModal
+        context={noveltyContext}
+        close={() => setNoveltyContext(undefined)}
+        saved={() => {
+          setNoveltyContext(undefined);
+          setNoveltyNotice("Novedad creada. RRHH la revisa como cualquier otra novedad.");
+        }}
+      />
+    ) : null}
+
+    {noveltyNotice ? <div className="toast">{noveltyNotice}</div> : null}
   </>;
 }
