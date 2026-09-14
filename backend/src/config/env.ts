@@ -34,6 +34,17 @@ const envSchema = z.object({
   REFRESH_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(30),
   JSON_BODY_LIMIT: z.string().default("40mb"),
   STORAGE_PROVIDER: z.enum(["local", "cloudinary", "google_drive"]).default("local"),
+  // Etapa 15D.2 (docs/decisions/STORAGE_UPLOAD_POLICY_15D2.md): opcionales,
+  // sin default — sólo afectan qué provider recibe un upload NUEVO por
+  // módulo/propósito. Cadena de resolución: la variable específica del
+  // propósito -> DEFAULT_STORAGE_PROVIDER -> STORAGE_PROVIDER (arriba). Un
+  // .env que sólo define STORAGE_PROVIDER sigue comportándose exactamente
+  // igual que antes de esta etapa. La lectura/eliminación de archivos ya
+  // existentes nunca usa estas variables — sigue resolviendo por
+  // StorageFile.storageProvider persistido (Etapa 15D.1).
+  DEFAULT_STORAGE_PROVIDER: z.enum(["local", "cloudinary", "google_drive"]).optional(),
+  DOCUMENT_STORAGE_PROVIDER: z.enum(["local", "cloudinary", "google_drive"]).optional(),
+  PUNCH_PHOTO_STORAGE_PROVIDER: z.enum(["local", "cloudinary", "google_drive"]).optional(),
   CLOUDINARY_CLOUD_NAME: z.string().optional(),
   CLOUDINARY_API_KEY: z.string().optional(),
   CLOUDINARY_API_SECRET: z.string().optional(),

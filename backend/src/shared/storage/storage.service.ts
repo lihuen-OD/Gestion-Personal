@@ -13,10 +13,35 @@ import type {
   StorageProvider,
 } from "./storage.types";
 
-function provider(): StorageProvider {
-  if (env.STORAGE_PROVIDER === "google_drive") return googleDriveStorageProvider;
-  if (env.STORAGE_PROVIDER === "cloudinary") return cloudinaryStorageProvider;
+function providerByEnvName(name: string | undefined): StorageProvider {
+  if (name === "google_drive") return googleDriveStorageProvider;
+  if (name === "cloudinary") return cloudinaryStorageProvider;
   return localStorageProvider;
+}
+
+function provider(): StorageProvider {
+  return providerByEnvName(env.STORAGE_PROVIDER);
+}
+
+/**
+ * Etapa 15D.2 (docs/decisions/STORAGE_UPLOAD_POLICY_15D2.md): a qué provider
+ * va un upload NUEVO, según el `module` del archivo (LEGAJOS/FICHADAS/...).
+ * Sólo afecta uploads — nunca la lectura/eliminación de un archivo ya
+ * existente, que sigue resolviendo por StorageFile.storageProvider
+ * persistido (Etapa 15D.1, `providerFor` más abajo). Cadena de resolución:
+ * la variable específica del propósito -> DEFAULT_STORAGE_PROVIDER ->
+ * STORAGE_PROVIDER — así con las variables nuevas sin configurar, el
+ * comportamiento es idéntico al de antes de esta etapa.
+ */
+function uploadProviderEnvName(module: ManagedStorageObjectInput["module"]): string | undefined {
+  if (module === "FICHADAS") return env.PUNCH_PHOTO_STORAGE_PROVIDER;
+  if (module === "LEGAJOS" || module === "DOCUMENTACION_GENERAL") return env.DOCUMENT_STORAGE_PROVIDER;
+  return undefined;
+}
+
+function uploadProviderFor(module: ManagedStorageObjectInput["module"]): StorageProvider {
+  const configured = uploadProviderEnvName(module) || env.DEFAULT_STORAGE_PROVIDER || env.STORAGE_PROVIDER;
+  return providerByEnvName(configured);
 }
 
 function providerName(resultProvider: string) {
@@ -27,13 +52,13 @@ function providerName(resultProvider: string) {
 
 /**
  * Etapa 15D.1 (docs/decisions/STORAGE_PROVIDER_REGISTRY_15D1.md): registry
- * que resuelve el provider por StorageFile.storageProvider PERSISTIDO, no
- * por el provider global activo (`provider()` arriba). `provider()` sigue
- * siendo el único usado para subir archivos nuevos — un archivo ya
- * existente puede haberse subido con un provider distinto al configurado
- * hoy (p. ej. se subió a Google Drive y luego STORAGE_PROVIDER pasó a
- * cloudinary), y las operaciones sobre ese archivo (download/delete/url)
- * deben seguir resolviendo contra el provider con el que realmente se subió.
+ * que resuelve el provider por StorageFile.storageProvider PERSISTIDO — no
+ * por el provider global ni por la política de upload de 15D.2. Un archivo
+ * ya existente puede haberse subido con un provider distinto al que hoy
+ * resolvería un upload nuevo (p. ej. se subió a Google Drive antes de que
+ * existiera PUNCH_PHOTO_STORAGE_PROVIDER, o antes de que cambiara de valor),
+ * y las operaciones sobre ese archivo (download/delete/url) deben seguir
+ * resolviendo contra el provider con el que realmente se subió.
  */
 const providerRegistry: Record<PersistedStorageProvider, StorageProvider> = {
   LOCAL: localStorageProvider,
@@ -65,7 +90,8 @@ export const storageService = {
     });
 
     const fileName = safeFileName(input.fileName);
-    const uploaded = await provider().upload({ ...input, fileName });
+    const selectedProvider = uploadProviderFor(input.module);
+    const uploaded = await selectedProvider.upload({ ...input, fileName });
     try {
       return await storageFilesRepository.create({
         storageProvider: providerName(uploaded.provider),
@@ -94,7 +120,11 @@ export const storageService = {
       });
     } catch (error) {
       try {
-        await provider().delete(uploaded.storageKey);
+        // Compensar con el MISMO provider que acaba de recibir el upload —
+        // nunca con provider() (global): desde 15D.2 pueden diferir según
+        // input.module, y compensar con el provider equivocado dejaría el
+        // archivo huérfano en el provider real.
+        await selectedProvider.delete(uploaded.storageKey);
       } catch (compensationError) {
         console.error("STORAGE_COMPENSATION_FAILED", {
           severity: "critical",

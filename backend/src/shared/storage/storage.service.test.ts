@@ -39,13 +39,18 @@ vi.mock("./storageFiles.repository", () => ({
   },
 }));
 
-type MutableEnv = { STORAGE_PROVIDER?: string };
+type MutableEnv = {
+  STORAGE_PROVIDER?: string;
+  DEFAULT_STORAGE_PROVIDER?: string;
+  DOCUMENT_STORAGE_PROVIDER?: string;
+  PUNCH_PHOTO_STORAGE_PROVIDER?: string;
+};
 type MockProvider = { upload: Mock; delete: Mock; getPublicUrl: Mock; getFilePath: Mock; download: Mock };
 
 const local = localStorageProvider as unknown as MockProvider;
 const drive = googleDriveStorageProvider as unknown as MockProvider;
 const cloudinary = cloudinaryStorageProvider as unknown as MockProvider;
-const filesRepo = storageFilesRepository as unknown as { findById: Mock; updateStatus: Mock };
+const filesRepo = storageFilesRepository as unknown as { findById: Mock; updateStatus: Mock; create: Mock };
 
 describe("storageService — provider persistido por StorageFile (Etapa 15D.1)", () => {
   const originalStorageProvider = env.STORAGE_PROVIDER;
@@ -145,5 +150,125 @@ describe("storageService — provider persistido por StorageFile (Etapa 15D.1)",
       expect((error as AppError).code).toBe("STORAGE_PROVIDER_UNKNOWN");
       expect((error as AppError).statusCode).toBe(500);
     }
+  });
+});
+
+/**
+ * Etapa 15D.2 (docs/decisions/STORAGE_UPLOAD_POLICY_15D2.md): a qué provider
+ * va un upload NUEVO según module/propósito — nunca afecta lectura/borrado
+ * de un archivo ya existente (eso sigue siendo 15D.1, arriba). Cadena de
+ * resolución: variable específica del propósito -> DEFAULT_STORAGE_PROVIDER
+ * -> STORAGE_PROVIDER.
+ */
+describe("storageService.uploadManaged — política de upload por módulo/propósito (Etapa 15D.2)", () => {
+  const originalStorageProvider = env.STORAGE_PROVIDER;
+  const originalDefault = env.DEFAULT_STORAGE_PROVIDER;
+  const originalDocument = env.DOCUMENT_STORAGE_PROVIDER;
+  const originalPunchPhoto = env.PUNCH_PHOTO_STORAGE_PROVIDER;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    (env as MutableEnv).STORAGE_PROVIDER = originalStorageProvider;
+    (env as MutableEnv).DEFAULT_STORAGE_PROVIDER = originalDefault;
+    (env as MutableEnv).DOCUMENT_STORAGE_PROVIDER = originalDocument;
+    (env as MutableEnv).PUNCH_PHOTO_STORAGE_PROVIDER = originalPunchPhoto;
+  });
+
+  const documentInput = {
+    buffer: Buffer.from("contenido-pdf"),
+    fileName: "contrato.pdf",
+    mimeType: "application/pdf",
+    module: "LEGAJOS" as const,
+    entityType: "EMPLOYEE_DOCUMENT" as const,
+    entityId: "employee-1",
+    purpose: "general" as const,
+  };
+
+  const punchPhotoInput = {
+    buffer: Buffer.from("foto-jpeg"),
+    fileName: "punch.jpg",
+    mimeType: "image/jpeg",
+    module: "FICHADAS" as const,
+    entityType: "ATTENDANCE_PUNCH" as const,
+    entityId: "employee-1",
+    purpose: "punch-photo" as const,
+  };
+
+  it("un documento (module=LEGAJOS) sube por DOCUMENT_STORAGE_PROVIDER aunque STORAGE_PROVIDER global sea otro", async () => {
+    (env as MutableEnv).STORAGE_PROVIDER = "local";
+    (env as MutableEnv).DOCUMENT_STORAGE_PROVIDER = "cloudinary";
+    cloudinary.upload.mockResolvedValue({ provider: "cloudinary", storageKey: "cloud-doc-1" });
+    filesRepo.create.mockResolvedValue({ id: "sf-1", storageProvider: "CLOUDINARY", storageKey: "cloud-doc-1" });
+
+    await storageService.uploadManaged(documentInput);
+
+    expect(cloudinary.upload).toHaveBeenCalledTimes(1);
+    expect(local.upload).not.toHaveBeenCalled();
+    expect(drive.upload).not.toHaveBeenCalled();
+  });
+
+  it("una foto de fichada (module=FICHADAS) sube por PUNCH_PHOTO_STORAGE_PROVIDER aunque STORAGE_PROVIDER global sea otro", async () => {
+    (env as MutableEnv).STORAGE_PROVIDER = "cloudinary";
+    (env as MutableEnv).PUNCH_PHOTO_STORAGE_PROVIDER = "google_drive";
+    drive.upload.mockResolvedValue({ provider: "google_drive", storageKey: "drive-punch-1" });
+    filesRepo.create.mockResolvedValue({ id: "sf-2", storageProvider: "GOOGLE_DRIVE", storageKey: "drive-punch-1" });
+
+    await storageService.uploadManaged(punchPhotoInput);
+
+    expect(drive.upload).toHaveBeenCalledTimes(1);
+    expect(cloudinary.upload).not.toHaveBeenCalled();
+    expect(local.upload).not.toHaveBeenCalled();
+  });
+
+  it("module=DOCUMENTACION_GENERAL también resuelve por DOCUMENT_STORAGE_PROVIDER", async () => {
+    (env as MutableEnv).STORAGE_PROVIDER = "local";
+    (env as MutableEnv).DOCUMENT_STORAGE_PROVIDER = "cloudinary";
+    cloudinary.upload.mockResolvedValue({ provider: "cloudinary", storageKey: "cloud-doc-2" });
+    filesRepo.create.mockResolvedValue({ id: "sf-3", storageProvider: "CLOUDINARY", storageKey: "cloud-doc-2" });
+
+    await storageService.uploadManaged({ ...documentInput, module: "DOCUMENTACION_GENERAL", entityType: "GENERAL_DOCUMENT" });
+
+    expect(cloudinary.upload).toHaveBeenCalledTimes(1);
+  });
+
+  it("un módulo sin regla específica (p. ej. NOVEDADES) cae en DEFAULT_STORAGE_PROVIDER", async () => {
+    (env as MutableEnv).STORAGE_PROVIDER = "local";
+    (env as MutableEnv).DEFAULT_STORAGE_PROVIDER = "google_drive";
+    drive.upload.mockResolvedValue({ provider: "google_drive", storageKey: "drive-default-1" });
+    filesRepo.create.mockResolvedValue({ id: "sf-4", storageProvider: "GOOGLE_DRIVE", storageKey: "drive-default-1" });
+
+    await storageService.uploadManaged({ ...documentInput, module: "NOVEDADES", entityType: "ABSENCE" });
+
+    expect(drive.upload).toHaveBeenCalledTimes(1);
+    expect(local.upload).not.toHaveBeenCalled();
+  });
+
+  it("sin ninguna variable nueva configurada, el comportamiento es idéntico al de antes de 15D.2 (usa STORAGE_PROVIDER global para cualquier módulo)", async () => {
+    (env as MutableEnv).STORAGE_PROVIDER = "local";
+    local.upload.mockResolvedValue({ provider: "local", storageKey: "local-doc-1" });
+    filesRepo.create.mockResolvedValue({ id: "sf-5", storageProvider: "LOCAL", storageKey: "local-doc-1" });
+
+    await storageService.uploadManaged(documentInput);
+    await storageService.uploadManaged(punchPhotoInput);
+
+    expect(local.upload).toHaveBeenCalledTimes(2);
+    expect(drive.upload).not.toHaveBeenCalled();
+    expect(cloudinary.upload).not.toHaveBeenCalled();
+  });
+
+  it("si falla la creación del StorageFile, la compensación borra con el MISMO provider que recibió el upload — no con el provider global", async () => {
+    (env as MutableEnv).STORAGE_PROVIDER = "local";
+    (env as MutableEnv).PUNCH_PHOTO_STORAGE_PROVIDER = "google_drive";
+    drive.upload.mockResolvedValue({ provider: "google_drive", storageKey: "drive-punch-2" });
+    drive.delete.mockResolvedValue(undefined);
+    filesRepo.create.mockRejectedValue(new Error("db down"));
+
+    await expect(storageService.uploadManaged(punchPhotoInput)).rejects.toThrow("db down");
+
+    expect(drive.delete).toHaveBeenCalledWith("drive-punch-2");
+    expect(local.delete).not.toHaveBeenCalled();
   });
 });

@@ -155,3 +155,13 @@ CLOUDINARY_FOLDER=gestion-personal
 ```
 
 El frontend ya envia el archivo al backend como `fileBase64` y el backend decide si lo resuelve con storage local o Cloudinary.
+
+Desde la Etapa 15D.2 (`docs/decisions/STORAGE_UPLOAD_POLICY_15D2.md`), qué
+provider recibe un upload nuevo puede configurarse por propósito con
+`DOCUMENT_STORAGE_PROVIDER` (documentos) y `PUNCH_PHOTO_STORAGE_PROVIDER`
+(fotos/evidencia de fichada), con `DEFAULT_STORAGE_PROVIDER` como default
+compartido si no se define una específica. Dejarlas vacías (como en
+`.env.example`) es compatible: todo sigue resolviendo por `STORAGE_PROVIDER`
+como hasta ahora. La lectura/eliminación de un archivo ya existente nunca
+usa estas variables — sigue por `StorageFile.storageProvider` persistido
+(Etapa 15D.1, `docs/decisions/STORAGE_PROVIDER_REGISTRY_15D1.md`).

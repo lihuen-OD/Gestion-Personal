@@ -502,8 +502,7 @@ Body:
 Notas:
 
 - `fileBase64` permite enviar el archivo desde frontend sin depender de multipart.
-- Si `STORAGE_PROVIDER=local`, se genera un `storageKey` local para desarrollo.
-- Si `STORAGE_PROVIDER=cloudinary`, el backend sube el archivo a Cloudinary usando las variables de entorno configuradas.
+- Qué provider recibe el archivo lo decide el backend internamente (Etapa 15D.2, `docs/decisions/STORAGE_UPLOAD_POLICY_15D2.md`): `DOCUMENT_STORAGE_PROVIDER` para documentos de legajo, con fallback a `DEFAULT_STORAGE_PROVIDER` y luego a `STORAGE_PROVIDER` si no están configuradas — no es un valor que el cliente pueda elegir.
 - `storageKey` sigue disponible para integraciones futuras donde el archivo ya venga subido por otro canal.
 
 ### Descargar / abrir documento
