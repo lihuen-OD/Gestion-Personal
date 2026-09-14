@@ -847,10 +847,10 @@ Body:
 
 Reglas:
 
-- Si el tipo requiere aprobación, queda `PENDIENTE`.
-- Si no requiere aprobación, queda `APROBADO`.
+- Si quien crea es RRHH, la novedad nace `APROBADO` directo; cualquier otro rol la deja `PENDIENTE` (el campo `NoveltyType.requiresApproval` se persiste pero no controla este flujo — es decorativo).
 - Valida si el tipo permite horas o fecha hasta.
 - Valida vigencia cuando corresponde.
+- **Etapa 15G.1** (`docs/decisions/NOVELTIES_AS_ADMINISTRATIVE_JUSTIFICATION_15G1.md`): crear una novedad **nunca** crea ni modifica `TimeEntry` — esto aplica sin importar `status` (`PENDIENTE`/`APROBADO`), rol de quien crea, ni los campos horarios del tipo (`setsWorkedHoursToZero`, `blocksTimeEntry`, `timeImpact = BLOQUEA_CARGA_DIA`). El fichador y la carga horaria manual (`/api/time-entries`) son la única fuente de verdad de horas reales; Novedades es justificación administrativa.
 
 ### Aprobar / rechazar
 
@@ -866,6 +866,8 @@ Rechazo:
   "reason": "Motivo"
 }
 ```
+
+**Etapa 15G.1:** `approve` sólo cambia `status`/`approvedByUserId`/`approvedAt` y registra auditoría — nunca crea ni modifica `TimeEntry`, tampoco para un tipo con `setsWorkedHoursToZero`. `reject` tampoco toca `TimeEntry` (nunca hubo nada que revertir).
 
 ### Fichador público (clock)
 
@@ -950,6 +952,7 @@ Reglas:
 - Permite `0` horas para registros generados o asociados a novedades bloqueantes.
 - Rechaza horas negativas y más de 24 horas por registro.
 - **Etapa 15E** (`docs/decisions/TIME_CLOSURE_CONSISTENCY_15E.md`): si `MonthlyTimeClosure` del empleado/período (derivado de `date`) está `ENVIADO`/`APROBADO`/`CORRECCION_PENDIENTE`, responde `409 MONTHLY_CLOSURE_LOCKED` — **sin excepción de rol, ni siquiera RRHH**. No existe una vía de "corrección" para crear una fila nueva en un período cerrado; para eso hay que reabrir el cierre primero (`POST /workforce/closures/:id/return`, ver más abajo).
+- **Etapa 15G.1** (`docs/decisions/NOVELTIES_AS_ADMINISTRATIVE_JUSTIFICATION_15G1.md`): si el día está cubierto por una `Novelty` con `status = APROBADO` cuyo `noveltyType` tenga `blocksTimeEntry`, `setsWorkedHoursToZero` o `timeImpact = BLOQUEA_CARGA_DIA`, responde `409 TIME_ENTRY_DAY_BLOCKED_BY_NOVELTY`. Antes de esta etapa bastaba con que la novedad no estuviera `RECHAZADO` (una `PENDIENTE` ya bloqueaba); ahora sólo `APROBADO` bloquea. Esto es sólo bloqueo preventivo de carga **nueva** — nunca modifica un `TimeEntry` existente.
 
 ### Editar
 

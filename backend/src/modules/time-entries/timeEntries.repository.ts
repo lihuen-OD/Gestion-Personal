@@ -1704,11 +1704,17 @@ export const timeEntriesRepository = {
     });
   },
 
+  // Etapa 15G.1 (docs/decisions/NOVELTIES_AS_ADMINISTRATIVE_JUSTIFICATION_15G1.md):
+  // antes bloqueaba con cualquier novedad `!= RECHAZADO`, incluida una
+  // todavía PENDIENTE de aprobación — una novedad sin aprobar no debe poder
+  // impedir la carga horaria operativa. Sólo `APROBADO` bloquea. Esto es
+  // sólo bloqueo preventivo de carga NUEVA — Novedades nunca modifica un
+  // TimeEntry existente (ver el documento citado).
   findBlockingNovelty(employeeId: string, date: Date) {
     return prisma.novelty.findFirst({
       where: {
         employeeId,
-        status: { not: "RECHAZADO" },
+        status: "APROBADO",
         fromDate: { lte: date },
         OR: [{ toDate: null }, { toDate: { gte: date } }],
         noveltyType: {

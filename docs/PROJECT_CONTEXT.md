@@ -569,6 +569,7 @@ Current state (backend already enforces this — see `docs/SECURITY_STANDARDS.md
 * El organigrama advierte cuando alcanza el límite de 1000 empleados, pero todavía no implementa paginación completa.
 * La regla de conceptos horarios aditivos ya está definida, pero su implementación continúa pendiente y puede no coincidir con backend, frontend o esquema actuales.
 * El tratamiento de solapamientos de novedades continúa pendiente de definición de negocio.
+* **Etapa 15G/15G.1** (`docs/decisions/NOVELTIES_AS_ADMINISTRATIVE_JUSTIFICATION_15G1.md`): decisión funcional final — el fichador y la carga horaria manual son la única fuente de verdad de horas reales; Novedades es justificación administrativa. Una novedad nunca crea, modifica ni pone en 0 un `TimeEntry`, sin importar su `status` o los campos horarios de su tipo (`setsWorkedHoursToZero`/`blocksTimeEntry`/`timeImpact`); `timeImpact = REGISTRA_HORAS_NO_TRABAJADAS` sigue sin ningún efecto real (decorativo). Una novedad `APROBADA` con esos campos sólo puede impedir cargar manualmente una hora nueva ese día (bloqueo preventivo, no modificación). El descuento parcial de horas, la conexión Alertas → Crear Novedad, la relación con Finnegans/liquidación y el solapamiento de novedades siguen pendientes de decisión de negocio.
 
 ## Important flows
 

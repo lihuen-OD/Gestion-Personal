@@ -116,12 +116,13 @@ export const noveltiesService = {
     const normalizedInput = normalizeCreateInput(input, type);
     assertCanLoad(type, user);
     const status = user.role === roles.rrhh ? "APROBADO" : "PENDIENTE";
-    const items = await execute(() =>
-      noveltiesRepository.createMany(normalizedInput, status, user.id, {
-        createZeroTimeEntries: type.setsWorkedHoursToZero,
-        noveltyName: type.name,
-      }),
-    );
+    // Etapa 15G.1 (docs/decisions/NOVELTIES_AS_ADMINISTRATIVE_JUSTIFICATION_15G1.md):
+    // decisión funcional final — crear una novedad NUNCA crea ni modifica
+    // TimeEntry, sea cual sea el status resultante o los campos horarios del
+    // tipo (setsWorkedHoursToZero/blocksTimeEntry/timeImpact). El fichador y
+    // la carga horaria manual son la única fuente de verdad de horas reales;
+    // Novedades es sólo justificación administrativa.
+    const items = await execute(() => noveltiesRepository.createMany(normalizedInput, status, user.id));
 
     await auditService.register({
       ...audit,
@@ -147,6 +148,8 @@ export const noveltiesService = {
       throw new AppError("Only pending novelties can be approved", 400, "NOVELTY_STATUS_NOT_APPROVABLE");
     }
 
+    // Etapa 15G.1: aprobar sólo cambia status/auditoría — nunca crea ni
+    // modifica TimeEntry, ni siquiera para un tipo con setsWorkedHoursToZero.
     const item = await execute(() => noveltiesRepository.approve(id, user.id));
     await auditService.register({
       ...audit,
@@ -195,9 +198,13 @@ export const noveltiesService = {
     if (before.documents.length) {
       throw new AppError("Novelty has related documents", 409, "NOVELTY_DELETE_HAS_DOCUMENTS");
     }
-    if (before.noveltyType.setsWorkedHoursToZero) {
-      throw new AppError("Novelty generated time entries", 409, "NOVELTY_DELETE_HAS_TIME_IMPACT");
-    }
+    // Etapa 15G.1 (docs/decisions/NOVELTIES_AS_ADMINISTRATIVE_JUSTIFICATION_15G1.md):
+    // hasta este ajuste, un tipo con `setsWorkedHoursToZero` bloqueaba el
+    // borrado citando que la novedad "generó TimeEntry" — cierto cuando ese
+    // campo todavía escribía horas. Ahora Novedades nunca crea ni modifica
+    // TimeEntry bajo ningún caso, así que ese motivo ya no puede darse; se
+    // quitó el guard en vez de renombrarlo (no queda ninguna razón
+    // administrativa real para bloquear el borrado sólo por este campo).
     if (before.status === "APROBADO" && before.noveltyType.exportsToFinnegans) {
       throw new AppError("Approved exportable novelty cannot be deleted", 409, "NOVELTY_DELETE_EXPORTABLE_APPROVED");
     }

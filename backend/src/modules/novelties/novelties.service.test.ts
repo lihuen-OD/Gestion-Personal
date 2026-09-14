@@ -10,6 +10,7 @@ vi.mock("./novelties.repository", () => ({
     findById: vi.fn(),
     approve: vi.fn(),
     reject: vi.fn(),
+    remove: vi.fn(),
     countEmployees: vi.fn(),
     findNoveltyType: vi.fn(),
     createMany: vi.fn(),
@@ -29,6 +30,7 @@ const repo = noveltiesRepository as unknown as {
   findById: Mock;
   approve: Mock;
   reject: Mock;
+  remove: Mock;
   countEmployees: Mock;
   findNoveltyType: Mock;
   createMany: Mock;
@@ -71,8 +73,14 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
+// Etapa 15G.1 (docs/decisions/NOVELTIES_AS_ADMINISTRATIVE_JUSTIFICATION_15G1.md):
+// Novedades es justificación administrativa — nunca crea ni modifica
+// TimeEntry, sea cual sea su status o los campos de su NoveltyType
+// (setsWorkedHoursToZero/blocksTimeEntry/timeImpact incluidos). approve()
+// sólo cambia status + auditoría, siempre con la misma firma de 2
+// argumentos — no existe ningún "effect" horario que armar ni pasar.
 describe("noveltiesService.approve", () => {
-  it("aprueba una novedad PENDIENTE", async () => {
+  it("aprueba una novedad PENDIENTE cambiando sólo status/auditoría, sin ningún efecto horario", async () => {
     repo.findById.mockResolvedValue(novelty());
     repo.approve.mockResolvedValue(novelty({ status: "APROBADO" }));
 
@@ -80,6 +88,18 @@ describe("noveltiesService.approve", () => {
 
     expect(result.status).toBe("APROBADO");
     expect(repo.approve).toHaveBeenCalledWith("novelty-1", rrhhUser.id);
+  });
+
+  it("aprobar un tipo con setsWorkedHoursToZero=true tampoco dispara ningún efecto horario (llamada idéntica)", async () => {
+    repo.findById.mockResolvedValue(
+      novelty({ noveltyType: { code: "LLT", name: "Llegada tarde", approvalRoles: [], setsWorkedHoursToZero: true } }),
+    );
+    repo.approve.mockResolvedValue(novelty({ status: "APROBADO", noveltyType: { code: "LLT", name: "Llegada tarde" } }));
+
+    await noveltiesService.approve("novelty-1", rrhhUser);
+
+    expect(repo.approve).toHaveBeenCalledWith("novelty-1", rrhhUser.id);
+    expect(repo.approve).toHaveBeenCalledTimes(1);
   });
 
   it("impide aprobar una novedad ya aprobada (regresion: la guarda ya existia, se protege con test)", async () => {
@@ -104,13 +124,15 @@ describe("noveltiesService.approve", () => {
 });
 
 describe("noveltiesService.reject", () => {
-  it("rechaza una novedad PENDIENTE con motivo", async () => {
+  it("rechaza una novedad PENDIENTE con motivo, sin tocar ningún TimeEntry", async () => {
     repo.findById.mockResolvedValue(novelty());
     repo.reject.mockResolvedValue(novelty({ status: "RECHAZADO" }));
 
     const result = await noveltiesService.reject("novelty-1", { reason: "Datos incompletos" }, rrhhUser);
 
     expect(result.status).toBe("RECHAZADO");
+    // reject() sólo recibe el id: no hay ningún dato de horas para pasar.
+    expect(repo.reject).toHaveBeenCalledWith("novelty-1");
   });
 
   it("impide rechazar dos veces la misma novedad (regresion)", async () => {
@@ -121,6 +143,93 @@ describe("noveltiesService.reject", () => {
       code: "NOVELTY_STATUS_NOT_REJECTABLE",
     });
     expect(repo.reject).not.toHaveBeenCalled();
+  });
+});
+
+// Etapa 15G.1 — ajuste de residual (docs/decisions/NOVELTIES_AS_ADMINISTRATIVE_JUSTIFICATION_15G1.md):
+// remove() no tenía ningún test antes de este ajuste. El guard
+// NOVELTY_DELETE_HAS_TIME_IMPACT ("Novelty generated time entries") se
+// eliminó porque ya no existe ningún camino por el que una novedad genere
+// TimeEntry — estos tests fijan que un tipo con setsWorkedHoursToZero ya NO
+// bloquea el borrado por ese motivo, y que los otros dos guards (documentos
+// relacionados, aprobada+exportable a Finnegans) siguen intactos.
+describe("noveltiesService.remove", () => {
+  it("borra una novedad sin documentos ni impacto exportable", async () => {
+    repo.findById.mockResolvedValue(novelty({ documents: [], status: "PENDIENTE" }));
+    repo.remove.mockResolvedValue(undefined);
+
+    const result = await noveltiesService.remove("novelty-1", rrhhUser);
+
+    expect(result).toEqual({ id: "novelty-1" });
+    expect(repo.remove).toHaveBeenCalledWith("novelty-1");
+  });
+
+  it("Regla ajustada: un tipo con setsWorkedHoursToZero=true YA NO bloquea el borrado (ya no genera TimeEntry)", async () => {
+    repo.findById.mockResolvedValue(
+      novelty({
+        documents: [],
+        status: "PENDIENTE",
+        noveltyType: { code: "LLT", name: "Llegada tarde", setsWorkedHoursToZero: true, exportsToFinnegans: false },
+      }),
+    );
+    repo.remove.mockResolvedValue(undefined);
+
+    const result = await noveltiesService.remove("novelty-1", rrhhUser);
+
+    expect(result).toEqual({ id: "novelty-1" });
+    expect(repo.remove).toHaveBeenCalledWith("novelty-1");
+  });
+
+  it("bloquea el borrado si tiene documentos relacionados (NOVELTY_DELETE_HAS_DOCUMENTS)", async () => {
+    repo.findById.mockResolvedValue(novelty({ documents: [{ fileName: "certificado.pdf" }] }));
+
+    await expect(noveltiesService.remove("novelty-1", rrhhUser)).rejects.toMatchObject({
+      statusCode: 409,
+      code: "NOVELTY_DELETE_HAS_DOCUMENTS",
+    });
+    expect(repo.remove).not.toHaveBeenCalled();
+  });
+
+  it("sigue bloqueando el borrado de una novedad APROBADA y exportable a Finnegans (NOVELTY_DELETE_EXPORTABLE_APPROVED, sin cambios)", async () => {
+    repo.findById.mockResolvedValue(
+      novelty({
+        documents: [],
+        status: "APROBADO",
+        noveltyType: { code: "VAC", name: "Vacaciones", setsWorkedHoursToZero: false, exportsToFinnegans: true },
+      }),
+    );
+
+    await expect(noveltiesService.remove("novelty-1", rrhhUser)).rejects.toMatchObject({
+      statusCode: 409,
+      code: "NOVELTY_DELETE_EXPORTABLE_APPROVED",
+    });
+    expect(repo.remove).not.toHaveBeenCalled();
+  });
+
+  it("una novedad exportable pero todavia PENDIENTE (no aprobada) SI se puede borrar", async () => {
+    repo.findById.mockResolvedValue(
+      novelty({
+        documents: [],
+        status: "PENDIENTE",
+        noveltyType: { code: "VAC", name: "Vacaciones", setsWorkedHoursToZero: false, exportsToFinnegans: true },
+      }),
+    );
+    repo.remove.mockResolvedValue(undefined);
+
+    const result = await noveltiesService.remove("novelty-1", rrhhUser);
+
+    expect(result).toEqual({ id: "novelty-1" });
+    expect(repo.remove).toHaveBeenCalledWith("novelty-1");
+  });
+
+  it("404 si la novedad no existe o esta fuera de alcance", async () => {
+    repo.findById.mockResolvedValue(null);
+
+    await expect(noveltiesService.remove("novelty-1", rrhhUser)).rejects.toMatchObject({
+      statusCode: 404,
+      code: "NOVELTY_NOT_FOUND",
+    });
+    expect(repo.remove).not.toHaveBeenCalled();
   });
 });
 
@@ -148,6 +257,8 @@ function noveltyType(overrides: Partial<Record<string, unknown>> = {}) {
     allowsDateTo: true,
     hasValidity: false,
     setsWorkedHoursToZero: false,
+    blocksTimeEntry: false,
+    timeImpact: "NO_AFECTA_HORAS",
     allowedLoadRoles: [] as string[],
     ...overrides,
   };
@@ -164,11 +275,12 @@ describe("noveltiesService.create", () => {
     const items = await noveltiesService.create(createInput(), rrhhUser);
 
     expect(items).toEqual([{ id: "novelty-new" }]);
+    // Etapa 15G.1: createMany sólo recibe (input, status, userId) — no existe
+    // ningún cuarto argumento de "efecto horario" que pasar.
     expect(repo.createMany).toHaveBeenCalledWith(
       expect.objectContaining({ employeeIds: ["emp-1"] }),
       "APROBADO",
       rrhhUser.id,
-      expect.objectContaining({ createZeroTimeEntries: false }),
     );
   });
 
@@ -178,7 +290,51 @@ describe("noveltiesService.create", () => {
     const items = await noveltiesService.create(createInput(), supervisionUser);
 
     expect(items).toEqual([{ id: "novelty-new" }]);
-    expect(repo.createMany).toHaveBeenCalledWith(expect.anything(), "PENDIENTE", supervisionUser.id, expect.anything());
+    expect(repo.createMany).toHaveBeenCalledWith(expect.anything(), "PENDIENTE", supervisionUser.id);
+  });
+
+  // Etapa 15G.1 (docs/decisions/NOVELTIES_AS_ADMINISTRATIVE_JUSTIFICATION_15G1.md):
+  // decisión funcional final — Novedades NUNCA crea/modifica TimeEntry, sin
+  // importar status, rol de quien crea, ni los campos horarios del tipo
+  // (setsWorkedHoursToZero/blocksTimeEntry/timeImpact). Estos tests fijan
+  // esa garantía para las 4 combinaciones más sensibles: PENDIENTE/APROBADO
+  // × setsWorkedHoursToZero true/false — en los 4 casos la llamada a
+  // createMany es idéntica en forma (3 argumentos, nunca un 4to "effect").
+  it.each([
+    { label: "PENDIENTE + setsWorkedHoursToZero=false", user: supervisionUser, status: "PENDIENTE", type: noveltyType({ allowedLoadRoles: [roles.supervision] }) },
+    { label: "PENDIENTE + setsWorkedHoursToZero=true", user: supervisionUser, status: "PENDIENTE", type: noveltyType({ allowedLoadRoles: [roles.supervision], setsWorkedHoursToZero: true }) },
+    { label: "APROBADO (RRHH) + setsWorkedHoursToZero=false", user: rrhhUser, status: "APROBADO", type: noveltyType() },
+    { label: "APROBADO (RRHH) + setsWorkedHoursToZero=true", user: rrhhUser, status: "APROBADO", type: noveltyType({ setsWorkedHoursToZero: true }) },
+  ])("$label: createMany se llama sin ningún efecto horario (3 argumentos exactos)", async ({ user, status, type }) => {
+    repo.findNoveltyType.mockResolvedValue(type);
+
+    await noveltiesService.create(createInput(), user);
+
+    expect(repo.createMany).toHaveBeenCalledWith(expect.anything(), status, user.id);
+    expect(repo.createMany.mock.calls[0]).toHaveLength(3);
+  });
+
+  // Caso concreto del usuario: "Llegada tarde" (timeImpact=REGISTRA_HORAS_NO_TRABAJADAS)
+  // aprobada por RRHH no debe descontar ni tocar TimeEntry — sigue siendo
+  // sólo un registro administrativo.
+  it("llegada tarde (timeImpact=REGISTRA_HORAS_NO_TRABAJADAS) aprobada por RRHH no toca TimeEntry", async () => {
+    repo.findNoveltyType.mockResolvedValue(
+      noveltyType({ code: "LLT", name: "Llegada tarde", allowsHours: true, allowsDateTo: false, timeImpact: "REGISTRA_HORAS_NO_TRABAJADAS" }),
+    );
+
+    await noveltiesService.create(createInput({ quantityHours: 1 }), rrhhUser);
+
+    expect(repo.createMany).toHaveBeenCalledWith(expect.anything(), "APROBADO", rrhhUser.id);
+    expect(repo.createMany.mock.calls[0]).toHaveLength(3);
+  });
+
+  it("timeImpact=BLOQUEA_CARGA_DIA tampoco dispara ningún efecto horario al crear", async () => {
+    repo.findNoveltyType.mockResolvedValue(noveltyType({ timeImpact: "BLOQUEA_CARGA_DIA", blocksTimeEntry: true }));
+
+    await noveltiesService.create(createInput(), rrhhUser);
+
+    expect(repo.createMany).toHaveBeenCalledWith(expect.anything(), "APROBADO", rrhhUser.id);
+    expect(repo.createMany.mock.calls[0]).toHaveLength(3);
   });
 
   it("rechaza si algun empleado esta fuera del alcance de quien crea (EMPLOYEE_SCOPE_FORBIDDEN)", async () => {

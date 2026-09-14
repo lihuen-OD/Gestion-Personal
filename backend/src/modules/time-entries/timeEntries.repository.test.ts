@@ -54,7 +54,8 @@ vi.mock("../../shared/prisma/client", () => {
       // ahora usan el cliente `prisma` global (ver
       // docs/decisions/TIME_ENTRIES_PERFORMANCE_14C2.md).
       // Etapa 14G.2: `count` se agrega para `pendingNoveltiesCount`.
-      novelty: { findMany: vi.fn(), count: vi.fn() },
+      // Etapa 15G.1: `findFirst` se agrega para `findBlockingNovelty`.
+      novelty: { findMany: vi.fn(), count: vi.fn(), findFirst: vi.fn() },
       // $transaction real acepta un callback (uso transaccional clásico) o un
       // array de promesas (uso de "varias queries en paralelo" tipo
       // attendanceObservations) — el mock soporta ambas formas.
@@ -92,7 +93,7 @@ const mockedPrisma = prisma as unknown as {
   timeEntry: { aggregate: Mock; groupBy: Mock; findMany: Mock; create: Mock; update: Mock; count: Mock };
   hourConceptBreakdown: { findMany: Mock };
   monthlyTimeClosure: { findMany: Mock };
-  novelty: { findMany: Mock; count: Mock };
+  novelty: { findMany: Mock; count: Mock; findFirst: Mock };
   $transaction: Mock;
   __tx: TxMocks;
 };
@@ -2476,5 +2477,21 @@ describe("attendanceObservations — Etapa 14G.3, sin $transaction y sin queries
     const shiftCall = mockedPrisma.workShift.findMany.mock.calls[0]![0] as { include: { startPunch: unknown; endPunch: unknown } };
     expect(shiftCall.include.startPunch).toBe(true);
     expect(shiftCall.include.endPunch).toBe(true);
+  });
+});
+
+// Etapa 15G.1 (docs/decisions/NOVELTIES_AS_ADMINISTRATIVE_JUSTIFICATION_15G1.md):
+// antes bloqueaba con cualquier novedad `status != RECHAZADO`, incluida una
+// todavía PENDIENTE de aprobación. Este test fija que el filtro de
+// `findBlockingNovelty` es ahora exactamente `status: "APROBADO"` — una
+// novedad pendiente ya no debe poder bloquear la carga horaria operativa.
+describe("findBlockingNovelty — sólo novedades APROBADAS bloquean (Etapa 15G.1)", () => {
+  it("consulta con status: 'APROBADO' (no 'not: RECHAZADO')", async () => {
+    mockedPrisma.novelty.findFirst.mockResolvedValue(null);
+
+    await timeEntriesRepository.findBlockingNovelty("employee-1", new Date("2026-08-10"));
+
+    const call = mockedPrisma.novelty.findFirst.mock.calls[0]![0] as { where: { status: unknown } };
+    expect(call.where.status).toBe("APROBADO");
   });
 });

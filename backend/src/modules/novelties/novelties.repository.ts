@@ -1,6 +1,5 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "../../shared/prisma/client";
-import { dayOfMonthFromCalendarDate, periodFromCalendarDate } from "../../shared/datetime/argentinaTime";
 import type { CreateNoveltyInput, ListNoveltiesQuery } from "./novelties.schemas";
 
 const noveltyInclude = {
@@ -29,8 +28,6 @@ const noveltyInclude = {
   targetHourConcept: { select: { id: true, name: true } },
   documents: { select: { fileName: true }, orderBy: { createdAt: "desc" }, take: 1 },
 } satisfies Prisma.NoveltyInclude;
-
-type ZeroTimeEntryTransaction = Pick<typeof prisma, "employeeHourConcept" | "timeEntry">;
 
 function buildWhere(query: ListNoveltiesQuery, employeeAccessWhere: Prisma.EmployeeWhereInput): Prisma.NoveltyWhereInput {
   const search = query.search?.trim();
@@ -71,94 +68,6 @@ function buildWhere(query: ListNoveltiesQuery, employeeAccessWhere: Prisma.Emplo
   };
 }
 
-function dateRange(from: Date, to?: Date | null) {
-  const start = Date.UTC(from.getUTCFullYear(), from.getUTCMonth(), from.getUTCDate());
-  const endDate = to || from;
-  const end = Date.UTC(endDate.getUTCFullYear(), endDate.getUTCMonth(), endDate.getUTCDate());
-  const days: Date[] = [];
-  for (let cursor = start; cursor <= end; cursor += 86_400_000) {
-    days.push(new Date(cursor));
-  }
-  return days;
-}
-
-async function findZeroHourConcept(tx: ZeroTimeEntryTransaction, employeeId: string, targetHourConceptId?: string | null) {
-  if (targetHourConceptId) {
-    return tx.employeeHourConcept.findFirst({
-      where: {
-        employeeId,
-        hourConceptId: targetHourConceptId,
-        hourConcept: { status: "ACTIVO" },
-      },
-      include: { hourConcept: true },
-    });
-  }
-
-  return tx.employeeHourConcept.findFirst({
-    where: {
-      employeeId,
-      hourConcept: { name: "Hora normal", kind: "NORMAL", status: "ACTIVO" },
-    },
-    include: { hourConcept: true },
-  });
-}
-
-async function syncZeroTimeEntries(
-  tx: ZeroTimeEntryTransaction,
-  input: CreateNoveltyInput,
-  noveltyName: string,
-  createdByUserId?: string | null,
-) {
-  const observation = `Generado automáticamente por novedad que bloquea carga horaria: ${noveltyName}.`;
-  const days = dateRange(input.fromDate, input.toDate);
-
-  for (const employeeId of input.employeeIds) {
-    const enabledConcept = await findZeroHourConcept(tx, employeeId, input.targetHourConceptId);
-    if (!enabledConcept) continue;
-
-    for (const date of days) {
-      const existing = await tx.timeEntry.findFirst({
-        where: {
-          employeeId,
-          hourConceptId: enabledConcept.hourConceptId,
-          date,
-        },
-        select: { id: true, status: true, observation: true },
-      });
-
-      if (existing?.status === "APROBADO" || existing?.status === "CERRADO") continue;
-
-      if (existing) {
-        await tx.timeEntry.update({
-          where: { id: existing.id },
-          data: {
-            hours: 0,
-            totalMinutes: 0,
-            status: "EN_REVISION",
-            observation: existing.observation ? `${existing.observation} | ${observation}` : observation,
-          },
-        });
-        continue;
-      }
-
-      await tx.timeEntry.create({
-        data: {
-          employeeId,
-          hourConceptId: enabledConcept.hourConceptId,
-          date,
-          period: periodFromCalendarDate(date),
-          day: dayOfMonthFromCalendarDate(date),
-          hours: 0,
-          totalMinutes: 0,
-          status: "EN_REVISION",
-          observation,
-          createdByUserId: createdByUserId || null,
-        },
-      });
-    }
-  }
-}
-
 export const noveltiesRepository = {
   findMany(query: ListNoveltiesQuery, employeeAccessWhere: Prisma.EmployeeWhereInput) {
     const where = buildWhere(query, employeeAccessWhere);
@@ -195,12 +104,18 @@ export const noveltiesRepository = {
     return prisma.employee.count({ where: { AND: [{ id: { in: ids } }, employeeAccessWhere] } });
   },
 
-  createMany(
-    input: CreateNoveltyInput,
-    status: "PENDIENTE" | "APROBADO",
-    createdByUserId?: string | null,
-    options: { createZeroTimeEntries?: boolean; noveltyName?: string } = {},
-  ) {
+  // Etapa 15G.1 (docs/decisions/NOVELTIES_AS_ADMINISTRATIVE_JUSTIFICATION_15G1.md):
+  // decisión funcional final — crear novedades nunca crea ni modifica
+  // TimeEntry, sea cual sea `status` o los campos horarios del tipo
+  // (setsWorkedHoursToZero/blocksTimeEntry/timeImpact). Antes de esta etapa
+  // existía un `options.createZeroTimeEntries` que disparaba un efecto
+  // horario acá adentro (ver `novelties.timeEffects.ts` en el historial de
+  // 15G.1 original, eliminado en este ajuste) — se quitó por completo, sin
+  // dejar ningún parámetro ni rama de código capaz de volver a escribir
+  // TimeEntry desde acá. La transacción se mantiene sólo para la creación
+  // atómica de varias filas `Novelty` (alta masiva por legajo) + su lectura
+  // final, nada más.
+  createMany(input: CreateNoveltyInput, status: "PENDIENTE" | "APROBADO", createdByUserId?: string | null) {
     return prisma.$transaction(async (tx) => {
       const created = await Promise.all(
         input.employeeIds.map((employeeId) =>
@@ -222,10 +137,6 @@ export const noveltiesRepository = {
         ),
       );
 
-      if (options.createZeroTimeEntries) {
-        await syncZeroTimeEntries(tx, input, options.noveltyName || "Novedad", createdByUserId);
-      }
-
       return tx.novelty.findMany({
         where: {
           id: { in: created.map((item) => item.id) },
@@ -236,6 +147,8 @@ export const noveltiesRepository = {
     });
   },
 
+  // Etapa 15G.1: aprobar sólo cambia `status`/auditoría — nunca crea ni
+  // modifica TimeEntry, ni siquiera para un tipo con setsWorkedHoursToZero.
   approve(id: string, approvedByUserId: string) {
     return prisma.novelty.update({
       where: { id },
