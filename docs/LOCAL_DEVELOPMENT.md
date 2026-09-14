@@ -165,3 +165,14 @@ compartido si no se define una específica. Dejarlas vacías (como en
 como hasta ahora. La lectura/eliminación de un archivo ya existente nunca
 usa estas variables — sigue por `StorageFile.storageProvider` persistido
 (Etapa 15D.1, `docs/decisions/STORAGE_PROVIDER_REGISTRY_15D1.md`).
+
+Desde la Etapa 15D.3 (`docs/decisions/CLOUDINARY_SECURE_DELIVERY_15D3.md`),
+todo upload nuevo a Cloudinary queda con delivery `authenticated` — no es
+configurable todavía, no hace falta ninguna variable nueva. El backend nunca
+entrega al cliente una URL pública permanente de Cloudinary: descarga el
+archivo del proveedor y lo sirve como respuesta autenticada, igual que con
+local o Google Drive. Para probar Cloudinary en local hace falta una cuenta
+real (`CLOUDINARY_CLOUD_NAME`/`CLOUDINARY_API_KEY`/`CLOUDINARY_API_SECRET`
+propios, nunca commiteados) — el mecanismo de descarga autenticada no fue
+validado contra una cuenta real durante 15D.3 (ver riesgo residual en el
+documento de decisión).

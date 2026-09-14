@@ -70,7 +70,7 @@ describe("storageService — provider persistido por StorageFile (Etapa 15D.1)",
     const result = await storageService.downloadStoredFile({ storageProvider: "GOOGLE_DRIVE", storageKey: "drive-key-1" });
 
     expect(result).toEqual({ buffer: Buffer.from("foto-drive") });
-    expect(drive.download).toHaveBeenCalledWith("drive-key-1");
+    expect(drive.download).toHaveBeenCalledWith("drive-key-1", undefined);
     expect(cloudinary.download).not.toHaveBeenCalled();
   });
 
@@ -81,29 +81,31 @@ describe("storageService — provider persistido por StorageFile (Etapa 15D.1)",
     const result = await storageService.downloadStoredFile({ storageProvider: "CLOUDINARY", storageKey: "cloud-key-1" });
 
     expect(result).toEqual({ buffer: Buffer.from("foto-cloudinary") });
-    expect(cloudinary.download).toHaveBeenCalledWith("cloud-key-1");
+    expect(cloudinary.download).toHaveBeenCalledWith("cloud-key-1", undefined);
     expect(drive.download).not.toHaveBeenCalled();
   });
 
-  it("deleteStoredFile usa el provider persistido, no el global activo", async () => {
+  it("deleteStoredFile usa el provider persistido, no el global activo, y pasa la metadata persistida (Etapa 15D.3)", async () => {
     (env as MutableEnv).STORAGE_PROVIDER = "local";
     drive.delete.mockResolvedValue(undefined);
+    const metadata = { cloudinaryResourceType: "raw" };
 
-    await storageService.deleteStoredFile({ storageProvider: "GOOGLE_DRIVE", storageKey: "drive-key-2" });
+    await storageService.deleteStoredFile({ storageProvider: "GOOGLE_DRIVE", storageKey: "drive-key-2", metadata });
 
-    expect(drive.delete).toHaveBeenCalledWith("drive-key-2");
+    expect(drive.delete).toHaveBeenCalledWith("drive-key-2", metadata);
     expect(local.delete).not.toHaveBeenCalled();
   });
 
-  it("deleteManaged (compensación/borrado gestionado) resuelve el provider desde el StorageFile, no desde el global activo", async () => {
+  it("deleteManaged (compensación/borrado gestionado) resuelve el provider desde el StorageFile, no desde el global activo, y pasa su metadata (Etapa 15D.3)", async () => {
     (env as MutableEnv).STORAGE_PROVIDER = "local";
-    filesRepo.findById.mockResolvedValue({ id: "file-1", status: "ACTIVE", storageProvider: "CLOUDINARY", storageKey: "cloud-key-2" });
+    const metadata = { cloudinaryResourceType: "raw", cloudinaryDeliveryType: "authenticated" };
+    filesRepo.findById.mockResolvedValue({ id: "file-1", status: "ACTIVE", storageProvider: "CLOUDINARY", storageKey: "cloud-key-2", metadata });
     filesRepo.updateStatus.mockResolvedValue({});
     cloudinary.delete.mockResolvedValue(undefined);
 
     await storageService.deleteManaged("file-1");
 
-    expect(cloudinary.delete).toHaveBeenCalledWith("cloud-key-2");
+    expect(cloudinary.delete).toHaveBeenCalledWith("cloud-key-2", metadata);
     expect(local.delete).not.toHaveBeenCalled();
     expect(filesRepo.updateStatus).toHaveBeenCalledWith("file-1", expect.objectContaining({ status: "DELETED" }));
   });
@@ -137,7 +139,7 @@ describe("storageService — provider persistido por StorageFile (Etapa 15D.1)",
     expect(local.getFilePath).toHaveBeenCalledWith("local-key");
 
     expect(storageService.getStoredFilePublicUrl({ storageProvider: "GOOGLE_DRIVE", storageKey: "drive-key-3" })).toBeUndefined();
-    expect(drive.getPublicUrl).toHaveBeenCalledWith("drive-key-3");
+    expect(drive.getPublicUrl).toHaveBeenCalledWith("drive-key-3", undefined);
   });
 
   it("un storageProvider desconocido/corrupto responde un error claro y seguro (500 STORAGE_PROVIDER_UNKNOWN), nunca undefined silencioso", () => {

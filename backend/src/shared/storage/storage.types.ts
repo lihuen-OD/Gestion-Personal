@@ -20,6 +20,11 @@ export interface StorageObjectInput {
 
 export interface StorageObjectResult {
   storageKey: string;
+  /**
+   * @deprecated (Etapa 15D.3) URL informativa devuelta por el provider al
+   * subir — nunca usar para armar una respuesta de descarga/redirect al
+   * cliente. Ver docs/decisions/CLOUDINARY_SECURE_DELIVERY_15D3.md.
+   */
   publicUrl?: string;
   provider: StorageProviderName;
   driveFileId?: string;
@@ -27,6 +32,15 @@ export interface StorageObjectResult {
   driveWebViewLink?: string;
   driveWebContentLink?: string;
   sizeBytes?: number;
+  // Etapa 15D.3: metadata real que Cloudinary devuelve al subir (varía por
+  // archivo porque el upload usa resource_type=auto) — se persiste en
+  // StorageFile.metadata para poder resolver download/delete después con
+  // el resource_type/delivery type correctos, sin asumir uno fijo.
+  cloudinaryResourceType?: string;
+  cloudinaryDeliveryType?: string;
+  cloudinaryAssetId?: string;
+  cloudinaryVersion?: string;
+  cloudinaryFormat?: string;
 }
 
 export interface ManagedStorageObjectInput extends StorageObjectInput {
@@ -51,18 +65,26 @@ export interface StorageDownloadResult {
 
 export interface StorageProvider {
   upload(input: StorageObjectInput): Promise<StorageObjectResult>;
-  delete(storageKey: string): Promise<void>;
-  getPublicUrl(storageKey: string): string | undefined;
+  /**
+   * `metadata` (Etapa 15D.3): el StorageFile.metadata persistido del
+   * archivo, si el caller lo tiene disponible — sólo lo usa Cloudinary hoy
+   * (resource_type/delivery type reales); local/Google Drive lo ignoran.
+   */
+  delete(storageKey: string, metadata?: unknown): Promise<void>;
+  getPublicUrl(storageKey: string, metadata?: unknown): string | undefined;
   getFilePath(storageKey: string): string | undefined;
-  download?(storageKey: string): Promise<StorageDownloadResult>;
+  download?(storageKey: string, metadata?: unknown): Promise<StorageDownloadResult>;
 }
 
 /**
  * Referencia mínima a un archivo ya existente: el provider con el que
  * realmente se subió (StorageFile.storageProvider persistido), no el
  * provider global activo hoy. Ver docs/decisions/STORAGE_PROVIDER_REGISTRY_15D1.md.
+ * `metadata` (Etapa 15D.3): StorageFile.metadata persistido — opcional para
+ * no romper callers que sólo tenían provider/storageKey antes de esta etapa.
  */
 export interface StorageFileRef {
   storageProvider: PersistedStorageProvider;
   storageKey: string;
+  metadata?: unknown;
 }

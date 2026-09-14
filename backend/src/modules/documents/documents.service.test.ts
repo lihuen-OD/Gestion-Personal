@@ -121,6 +121,40 @@ describe("documentsService.download — provider persistido por storageFile (Eta
   });
 });
 
+/**
+ * Etapa 15D.3 (docs/decisions/CLOUDINARY_SECURE_DELIVERY_15D3.md): un
+ * documento CLOUDINARY nunca debe resolver en `{ kind: "redirect" }` — el
+ * provider real ya no entrega ninguna URL pública permanente
+ * (`getStoredFilePublicUrl` resuelve `undefined`), así que la descarga cae
+ * siempre en el buffer que sirve el propio endpoint backend autenticado.
+ * El frontend nunca recibe una URL de Cloudinary para seguir por su cuenta.
+ */
+describe("documentsService.download — Cloudinary nunca redirige a URL pública (Etapa 15D.3)", () => {
+  it("un documento CLOUDINARY se descarga como buffer servido por el backend, nunca como redirect", async () => {
+    const cloudinaryDocument = {
+      ...document,
+      id: "doc-3",
+      storageFile: {
+        id: "sf-2",
+        storageProvider: "CLOUDINARY",
+        storageKey: "1234-contrato",
+        driveWebViewLink: null,
+        metadata: { cloudinaryResourceType: "image", cloudinaryDeliveryType: "authenticated" },
+      },
+    };
+    repo.findById.mockResolvedValue(cloudinaryDocument);
+    // Como en el provider real de 15D.3, getStoredFilePublicUrl para
+    // Cloudinary nunca entrega una URL — se simula acá devolviendo undefined.
+    storage.getStoredFilePublicUrl.mockReturnValue(undefined);
+    storage.downloadStoredFile.mockResolvedValue({ buffer: Buffer.from("contrato-bytes"), mimeType: "application/pdf" });
+
+    const result = await documentsService.download("doc-3", fakeUser);
+
+    expect(result).toMatchObject({ kind: "buffer", fileName: "dni.pdf", mimeType: "application/pdf" });
+    expect(storage.downloadStoredFile).toHaveBeenCalledWith(cloudinaryDocument.storageFile);
+  });
+});
+
 describe("documentsService permisos Nivel 3", () => {
   it("no permite listar documentos", async () => {
     await expect(documentsService.list({ page: 1, take: 25 } as never, cargaUser)).rejects.toMatchObject({

@@ -10,6 +10,7 @@ import type {
   PersistedStorageProvider,
   StorageFileRef,
   StorageObjectInput,
+  StorageObjectResult,
   StorageProvider,
 } from "./storage.types";
 
@@ -48,6 +49,25 @@ function providerName(resultProvider: string) {
   if (resultProvider === "google_drive") return "GOOGLE_DRIVE" as const;
   if (resultProvider === "cloudinary") return "CLOUDINARY" as const;
   return "LOCAL" as const;
+}
+
+/**
+ * Etapa 15D.3 (docs/decisions/CLOUDINARY_SECURE_DELIVERY_15D3.md): junta la
+ * metadata real que el provider devolvió al subir (hoy sólo Cloudinary la
+ * llena — resource_type/delivery type/asset_id/version/format, necesarios
+ * para poder descargar/borrar después con los valores correctos, ya que
+ * `resource_type=auto` hace que varíen por archivo) con la metadata que el
+ * caller ya pasaba. Local/Google Drive no aportan nada acá, así que el
+ * comportamiento para esos dos providers no cambia.
+ */
+function cloudinaryMetadataFrom(uploaded: StorageObjectResult): Record<string, string> {
+  const entries: Record<string, string> = {};
+  if (uploaded.cloudinaryResourceType) entries.cloudinaryResourceType = uploaded.cloudinaryResourceType;
+  if (uploaded.cloudinaryDeliveryType) entries.cloudinaryDeliveryType = uploaded.cloudinaryDeliveryType;
+  if (uploaded.cloudinaryAssetId) entries.cloudinaryAssetId = uploaded.cloudinaryAssetId;
+  if (uploaded.cloudinaryVersion) entries.cloudinaryVersion = uploaded.cloudinaryVersion;
+  if (uploaded.cloudinaryFormat) entries.cloudinaryFormat = uploaded.cloudinaryFormat;
+  return entries;
 }
 
 /**
@@ -116,7 +136,7 @@ export const storageService = {
         visibility: input.visibility || "PRIVATE",
         uploadedByUserId: input.uploadedByUserId || null,
         checksum: input.buffer ? checksum(input.buffer) : null,
-        metadata: input.metadata || {},
+        metadata: { ...(input.metadata || {}), ...cloudinaryMetadataFrom(uploaded) },
       });
     } catch (error) {
       try {
@@ -139,7 +159,7 @@ export const storageService = {
   async deleteManaged(id: string) {
     const file = await storageFilesRepository.findById(id);
     if (!file || file.status === "DELETED") return;
-    await providerFor(file.storageProvider).delete(file.storageKey);
+    await providerFor(file.storageProvider).delete(file.storageKey, file.metadata);
     await storageFilesRepository.updateStatus(id, { status: "DELETED", deletedAt: new Date() });
   },
 
@@ -170,8 +190,10 @@ export const storageService = {
 
   // Etapa 15D.1 — operaciones sobre un archivo EXISTENTE, resueltas por su
   // StorageFile.storageProvider persistido (nunca por el provider global).
+  // `file.metadata` (Etapa 15D.3) viaja a cada provider — sólo Cloudinary
+  // la usa (resource_type/delivery type reales); local/Drive la ignoran.
   getStoredFilePublicUrl(file: StorageFileRef) {
-    return providerFor(file.storageProvider).getPublicUrl(file.storageKey);
+    return providerFor(file.storageProvider).getPublicUrl(file.storageKey, file.metadata);
   },
 
   getStoredFilePath(file: StorageFileRef) {
@@ -179,10 +201,10 @@ export const storageService = {
   },
 
   downloadStoredFile(file: StorageFileRef) {
-    return providerFor(file.storageProvider).download?.(file.storageKey);
+    return providerFor(file.storageProvider).download?.(file.storageKey, file.metadata);
   },
 
   async deleteStoredFile(file: StorageFileRef) {
-    await providerFor(file.storageProvider).delete(file.storageKey);
+    await providerFor(file.storageProvider).delete(file.storageKey, file.metadata);
   },
 };

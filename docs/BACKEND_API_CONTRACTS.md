@@ -516,7 +516,7 @@ Reglas:
 - Requiere autenticacion.
 - Respeta el alcance del legajo asociado al documento.
 - En storage local sirve el archivo desde `backend/uploads`.
-- En Cloudinary redirige a la URL del proveedor.
+- En Cloudinary (Etapa 15D.3, `docs/decisions/CLOUDINARY_SECURE_DELIVERY_15D3.md`) el backend descarga el archivo del proveedor y lo sirve como respuesta autenticada — nunca redirige a una URL pública de Cloudinary, ni para documentos nuevos ni para los subidos antes de esta etapa.
 
 ## Catálogos
 
@@ -1361,6 +1361,8 @@ Capa compartida de archivos (documentos, evidencia fotográfica del fichador). T
 | GET | `/files/:id/preview` | idem | Preview inline (mismo handler que download) |
 | GET | `/files/:id/download` | idem | Descarga (audita `EXPORT`) |
 | DELETE | `/files/:id` | RRHH | Archivar/eliminar (audita `DELETE`) |
+
+`preview`/`download` nunca redirigen a una URL pública del proveedor — resuelven por `StorageFile.storageProvider` persistido (Etapa 15D.1) y devuelven el archivo como respuesta autenticada del backend. Para Cloudinary esto es obligatorio desde la Etapa 15D.3 (`docs/decisions/CLOUDINARY_SECURE_DELIVERY_15D3.md`): `getPublicUrl` no entrega ninguna URL permanente utilizable por el cliente.
 
 ### Health (`health`, montado en `/api/health`)
 
