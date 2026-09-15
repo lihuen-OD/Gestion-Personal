@@ -350,3 +350,57 @@ describe("employeeApiService.getOverviewById / getOverviewDetailsById — dedupe
     expect(apiRequest).toHaveBeenCalledTimes(2);
   });
 });
+
+// El modal "Responsable de carga horaria actual" tenía un selector de Rol que
+// persistía en EmployeeAssignment.role — un campo sin ningún consumidor real
+// (permisos/filtros/cálculo de horas siempre leyeron User.role). Se dejó de
+// editar y de enviar desde la UI; este test fija el contrato del payload para
+// que ningún cambio futuro lo reintroduzca sin querer.
+describe("employeeApiService.replaceAssignments — ya no envía 'role' para TIME_RESPONSIBLE", () => {
+  const employeePayload = { id: "employee-1", legajo: "100", firstName: "Ana", lastName: "Prueba", status: "ACTIVO" as const };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("manda role: null aunque el legajo tenga un valor legacy en timeResponsibleRole", async () => {
+    vi.mocked(apiRequest).mockImplementation(async (url: unknown) => {
+      if (url === "/users") {
+        return {
+          data: [
+            {
+              id: "user-1",
+              name: "15taller@losodwyer.com",
+              email: "15taller@losodwyer.com",
+              role: "NIVEL_3_CARGA_HORARIA",
+              status: "ACTIVO",
+              employee: { id: "employee-2", legajo: "200", firstName: "15", lastName: "Taller" },
+            },
+          ],
+        } as never;
+      }
+      return { data: employeePayload } as never;
+    });
+
+    const employee = mapEmployeeFromApi(employeePayload);
+    const updated = {
+      ...employee,
+      timeResponsibles: ["15 Taller"],
+      timeResponsible: "15 Taller",
+      timeResponsibleRole: "Nivel 2 - Supervisión / Gestión",
+    };
+
+    await employeeApiService.replaceAssignments(updated);
+
+    const assignmentsCall = vi.mocked(apiRequest).mock.calls.find(([calledUrl]) => calledUrl === `/employees/${updated.id}/assignments`);
+    expect(assignmentsCall).toBeDefined();
+    const body = assignmentsCall![1] as { body: { assignments: Array<{ type: string; role: string | null; userId: string | null }> } };
+    const timeResponsibleAssignment = body.body.assignments.find((item) => item.type === "TIME_RESPONSIBLE");
+
+    expect(timeResponsibleAssignment).toBeDefined();
+    expect(timeResponsibleAssignment?.role).toBeNull();
+    // El vínculo real sigue resolviéndose por userId — la asignación identifica
+    // *quién* es responsable, nunca *qué nivel* tiene (eso vive en User.role).
+    expect(timeResponsibleAssignment?.userId).toBe("user-1");
+  });
+});

@@ -415,6 +415,8 @@ Body:
 }
 ```
 
+`EmployeeAssignment.role` (`String?`, in `schema.prisma`) still exists in the schema and in `employeeAssignmentSchema` as an optional/nullable field, but it is legacy: it has no consumer anywhere in permissions, access scoping (`employeeAccess.ts`), notifications (`workforce.service.ts`), or hour calculation. The frontend stopped sending it from the "Responsable de carga horaria actual" modal (2026-09-15) — a user's real role/level is `User.role` (`RoleName`), managed only from Usuarios/Roles, and the assignment must never redefine or duplicate it. The column and the schema field were kept as-is (not migrated away) because old rows may still carry a value and dropping it was not required to fix the UI confusion; do not read it for any authorization decision.
+
 ### Horas especiales habilitadas
 
 ```txt

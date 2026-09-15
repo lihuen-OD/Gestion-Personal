@@ -13,7 +13,7 @@ import {
 import { ContactAddressFields } from "../components/employees/ContactAddressFields";
 import { PeopleMultiSearch } from "../components/employees/PeopleMultiSearch";
 import { useLaborSelectOptions } from "../components/employees/options/laborOptions";
-import { useHourOptions, userRoleOptions } from "../components/employees/options/roleHourOptions";
+import { useHourOptions } from "../components/employees/options/roleHourOptions";
 import { useStructureSelectOptions } from "../components/employees/options/structureOptions";
 import { employeeApiService } from "../services/api/employeeApiService";
 import { ApiError } from "../services/api/apiClient";
@@ -88,7 +88,7 @@ const blankEmployee: Employee = {
   directManagerStatus: "",
   directManagerNotes: "",
   timeResponsible: "",
-  timeResponsibleRole: "Nivel 3 - Administrativo de Carga Horaria",
+  timeResponsibleRole: "",
   timeResponsibleFrom: "",
   timeResponsibleTo: "",
   timeResponsibleStatus: "",
@@ -136,6 +136,9 @@ export function EmployeeCreatePage() {
   const laborOptions = useLaborSelectOptions(value);
   const structureOptions = useStructureSelectOptions({ costCenter: value.costCenter });
   const enabledHourOptions = useHourOptions();
+  const timeResponsibleNames = value.timeResponsibles?.length
+    ? value.timeResponsibles
+    : [value.timeResponsible].filter(Boolean);
 
   const upd = (field: keyof Employee, next: Employee[keyof Employee]) =>
     setValue({ ...value, [field]: next });
@@ -430,11 +433,7 @@ export function EmployeeCreatePage() {
                 <div className="form-grid">
                   <PeopleMultiSearch
                     label="Responsables de carga horaria"
-                    selected={
-                      value.timeResponsibles?.length
-                        ? value.timeResponsibles
-                        : [value.timeResponsible].filter(Boolean)
-                    }
+                    selected={timeResponsibleNames}
                     onChange={(names) =>
                       setValue({
                         ...value,
@@ -443,12 +442,6 @@ export function EmployeeCreatePage() {
                       })
                     }
                     excludeId={value.id}
-                  />
-                  <Select
-                    label="Rol"
-                    value={value.timeResponsibleRole}
-                    set={(next) => upd("timeResponsibleRole", next)}
-                    options={userRoleOptions(value.timeResponsibleRole)}
                   />
                   <Field
                     label="Fecha desde"

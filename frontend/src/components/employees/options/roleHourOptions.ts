@@ -1,12 +1,6 @@
 import { useEffect, useState } from "react";
 import { hourConceptApiService } from "../../../services/api/hourConceptApiService";
-import { roleOptions } from "../../../utils/roles";
-import { uniqueOptions } from "./sharedOptions";
 import type { HourConcept } from "../../../types/hourConcept.types";
-
-export function userRoleOptions(current = "") {
-  return uniqueOptions([current, ...roleOptions]);
-}
 
 export function assignableHourConcepts(concepts: HourConcept[]) {
   return concepts.filter((concept) => (

@@ -237,6 +237,8 @@ Used for:
 
 These two concepts can coincide but must not be treated as the same field.
 
+A user's real role/level (`User.role` — Nivel 1 RRHH / Nivel 2 Supervisión / Nivel 3 Administrativo de Carga Horaria) is managed **only** from Usuarios/Roles and is the single source of truth for permissions. Assigning someone as Responsable de carga horaria (`EmployeeAssignment`) never redefines or duplicates that role — the assignment modal (2026-09-15) has no role selector and shows no role at all, editable or informational; a lookup by name (`personName`) against `User` is not reliable enough (names are not a unique key) to justify one. If a real, ID-based need to show that role ever comes up, it must be read from `User.role` of the linked person (never hardcoded, never inferred from the fact that they were assigned) and stay strictly read-only.
+
 ### 7. Carga Horaria
 
 Working hour entry must be employee-based, not cost-center-based.
@@ -425,6 +427,7 @@ The backend has 22 modules under `backend/src/modules`. The following exist and 
 * Alta/Baja laboral is one business block.
 * Domicilio is one business block.
 * Encargado directo and Responsable de carga horaria are different concepts.
+* `User.role` is the only source of truth for a user's real role/level; the Responsable de carga horaria assignment does not redefine or duplicate it (no editable role selector in that modal — fixed 2026-09-15, see `docs/BACKEND_API_CONTRACTS.md` "Responsables / asignaciones").
 * Carga horaria is employee-based, not cost-center-based.
 * Centro de costo is structural/reporting information, not the main access rule for time entry.
 * Dashboard indicators are calculated by the backend (`GET /dashboard`) from real Prisma queries, cached briefly (see `docs/CACHING_STRATEGY.md`).

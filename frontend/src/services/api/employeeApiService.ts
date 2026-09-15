@@ -494,7 +494,7 @@ async function assignmentsPayload(employee: Employee) {
         type: "TIME_RESPONSIBLE" as const,
         userId: linkedUser?.id || null,
         personName,
-        role: employee.timeResponsibleRole || null,
+        role: null,
         effectiveFrom: employee.timeResponsibleFrom || null,
         effectiveTo: employee.timeResponsibleTo || null,
         status: employee.timeResponsibleStatus || null,

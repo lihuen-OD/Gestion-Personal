@@ -13,7 +13,7 @@ import { Field, Select } from "../ui/FormControls";
 import { Modal } from "../ui/Modal";
 import { BlockHistoryTimeline } from "./FieldHistoryControls";
 import { PeopleMultiSearch } from "./PeopleMultiSearch";
-import { useHourConceptOptions, userRoleOptions } from "./options/roleHourOptions";
+import { useHourConceptOptions } from "./options/roleHourOptions";
 
 const LocationMapPicker = lazy(() =>
   import("../LocationMapPicker").then((module) => ({ default: module.LocationMapPicker })),
@@ -285,24 +285,18 @@ export function AssignmentBlock({
     : employee.timeResponsibles?.length
       ? employee.timeResponsibles
       : [employee.timeResponsible].filter(Boolean);
-  const role = isManager ? "" : employee.timeResponsibleRole;
   const fromValue = isManager ? employee.directManagerFrom : employee.timeResponsibleFrom;
   const notesValue = isManager ? employee.directManagerNotes : employee.timeResponsibleNotes;
   const [showHistory, setShowHistory] = useState(false);
   const [editing, setEditing] = useState(false);
   const [names, setNames] = useState<string[]>(currentList);
-  const [roleDraft, setRole] = useState(role);
   const [from, setFrom] = useState(fromValue || new Date().toISOString().slice(0, 10));
   const [notes, setNotes] = useState(notesValue || "");
   const [reason, setReason] = useState("");
   const [error, setError] = useState("");
 
   const summary = (values = currentList) =>
-    isManager
-      ? `${values.length ? values.join(", ") : "Sin asignar"} · Desde ${fromValue || "Sin cargar"}`
-      : `${values.length ? values.join(", ") : "Sin asignar"} · ${role || "Sin rol"} · Desde ${
-          fromValue || "Sin cargar"
-        }`;
+    `${values.length ? values.join(", ") : "Sin asignar"} · Desde ${fromValue || "Sin cargar"}`;
 
   const { isRunning: isSaving, run: save } = useAsyncAction(async () => {
     const validationError = requiredLaborChangeError(from, reason);
@@ -322,15 +316,12 @@ export function AssignmentBlock({
           ...employee,
           timeResponsibles: clean,
           timeResponsible: clean[0] || "",
-          timeResponsibleRole: roleDraft,
           timeResponsibleFrom: from,
           timeResponsibleTo: "",
           timeResponsibleStatus: "",
           timeResponsibleNotes: notes,
         };
-    const nextSummary = isManager
-      ? `${clean.length ? clean.join(", ") : "Sin asignar"} · Desde ${from}`
-      : `${clean.length ? clean.join(", ") : "Sin asignar"} · ${roleDraft || "Sin rol"} · Desde ${from}`;
+    const nextSummary = `${clean.length ? clean.join(", ") : "Sin asignar"} · Desde ${from}`;
     try {
       await persistEmployeeBlock(updated, user, onSaved, "assignments");
       await recordBlockHistory(
@@ -407,14 +398,6 @@ export function AssignmentBlock({
               onChange={setNames}
               excludeId={employee.id}
             />
-            {!isManager ? (
-              <Select
-                label="Rol"
-                value={roleDraft}
-                set={setRole}
-                options={userRoleOptions(roleDraft)}
-              />
-            ) : null}
             <Field label="Fecha desde" type="date" value={from} set={setFrom} />
             <Field label="Observacion" value={notes} set={setNotes} />
             <Field label="Motivo del cambio" value={reason} set={setReason} />
