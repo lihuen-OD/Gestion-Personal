@@ -1,4 +1,4 @@
-import { AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, Eye } from "lucide-react";
+import { AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, Clock, User } from "lucide-react";
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { PageHeader } from "../components/ui/PageHeader";
@@ -325,8 +325,8 @@ export function ShiftAlertsPage() {
                           <td><Badge tone={STATUS_TONE[group.status]}>{STATUS_LABELS[group.status]}</Badge></td>
                           <td>
                             <div className="table-actions">
-                              <Link className="table-icon-action" title="Ver legajo" aria-label={`Ver legajo de ${alert.employee.firstName} ${alert.employee.lastName}`} to={`/legajos/${alert.employeeId}`}><Eye size={14} /><span>Ver legajo</span></Link>
-                              {alert.workShift.shiftTemplate ? <Link className="table-icon-action" title="Ver turno" aria-label="Ver turno" to={`/configuracion/turnos/${alert.workShift.shiftTemplate.id}`}><Eye size={14} /><span>Ver turno</span></Link> : null}
+                              <Link className="table-icon-action" title="Ver legajo" aria-label={`Ver legajo de ${alert.employee.firstName} ${alert.employee.lastName}`} to={`/legajos/${alert.employeeId}`}><User size={14} /><span>Ver legajo</span></Link>
+                              {alert.workShift.shiftTemplate ? <Link className="table-icon-action" title="Ver turno" aria-label="Ver turno" to={`/configuracion/turnos/${alert.workShift.shiftTemplate.id}`}><Clock size={14} /><span>Ver turno</span></Link> : null}
                               {alert.status === "PENDIENTE" ? <button type="button" className="table-icon-action" title="Resolver alerta" aria-label="Resolver alerta" onClick={() => openResolve(alert)}><CheckCircle2 size={14} /><span>Resolver</span></button> : null}
                             </div>
                           </td>

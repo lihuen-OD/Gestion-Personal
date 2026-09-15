@@ -479,3 +479,34 @@ describe("ShiftAlertsPage — Etapa 15G.2 (ajuste final: SIN acción 'Crear nove
     expect(screen.getByRole("button", { name: /Resolver alerta/i })).toBeInTheDocument();
   });
 });
+
+// Ajuste visual: "Ver legajo" y "Ver turno" usaban el mismo ícono (Eye),
+// dando la impresión de que hacían lo mismo. Se diferencian por destino real
+// (legajo del empleado vs. plantilla de turno) sin tocar navegación,
+// permisos ni el resto de las acciones.
+describe("ShiftAlertsPage — 'Ver legajo' y 'Ver turno' con iconos distintos (ajuste visual)", () => {
+  it("'Ver legajo' usa un icono de usuario y 'Ver turno' un icono de reloj, ninguno usa el ojo (Eye)", async () => {
+    vi.mocked(shiftAlertApiService.getAll).mockResolvedValue({
+      data: [buildAlert({
+        workShift: { id: "shift-1", startAt: "2026-08-20T08:00:00.000Z", status: "CERRADO", shiftTemplate: { id: "template-1", code: "T-MAÑANA", name: "Mañana" } },
+      })],
+      meta: { total: 1, pageSize: 20, hasMore: false, nextBefore: null },
+    });
+
+    renderPage();
+    await screen.findByText("Legajo 100");
+
+    const legajoLink = screen.getByRole("link", { name: /Ver legajo/i });
+    const turnoLink = screen.getByRole("link", { name: "Ver turno" });
+
+    expect(legajoLink.querySelector("svg.lucide-user")).not.toBeNull();
+    expect(legajoLink.querySelector("svg.lucide-eye")).toBeNull();
+
+    expect(turnoLink.querySelector("svg.lucide-clock")).not.toBeNull();
+    expect(turnoLink.querySelector("svg.lucide-eye")).toBeNull();
+
+    // Siguen navegando exactamente a donde navegaban antes.
+    expect(legajoLink).toHaveAttribute("href", "/legajos/employee-1");
+    expect(turnoLink).toHaveAttribute("href", "/configuracion/turnos/template-1");
+  });
+});

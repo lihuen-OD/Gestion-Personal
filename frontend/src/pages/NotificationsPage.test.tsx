@@ -289,6 +289,40 @@ describe("NotificationsPage — Etapa 14G.6 (Ver detalle no marca como leída)",
   });
 });
 
+// Ajuste visual: "Ver detalle" y "Crear novedad" pasan de texto/icono+texto a
+// icono solo (mismo patrón `table-icon-action` que ya usa el resto de la
+// app), conservando accesibilidad vía title/aria-label y el mismo
+// comportamiento funcional (navegación / apertura del modal de novedad).
+describe("NotificationsPage — 'Ver detalle' y 'Crear novedad' como icono solo (ajuste visual)", () => {
+  it("'Ver detalle' se renderiza como icono (Eye) con title y aria-label 'Ver detalle', mismo estilo que 'Crear novedad'", async () => {
+    vi.mocked(workforceApiService.notifications).mockResolvedValue({
+      items: [buildNotification({
+        type: "ALERTA_FICHADA",
+        link: "/novedades",
+        employee: { id: "employee-1", legajo: "100", firstName: "Ana", lastName: "Gomez" },
+      })],
+      meta: { total: 1, page: 1, pageSize: 20, hasMore: false },
+    });
+    renderPage();
+    await screen.findByText("Cierres mensuales recibidos");
+
+    const detailLink = screen.getByRole("link", { name: "Ver detalle" });
+    const noveltyButton = screen.getByRole("button", { name: "Crear novedad" });
+
+    expect(detailLink).toHaveAttribute("title", "Ver detalle");
+    expect(detailLink.className).toBe("table-icon-action");
+    expect(detailLink.querySelector("svg.lucide-eye")).not.toBeNull();
+
+    expect(noveltyButton).toHaveAttribute("title", "Crear novedad");
+    expect(noveltyButton.className).toBe("table-icon-action");
+    expect(noveltyButton.querySelector("svg.lucide-file-plus2")).not.toBeNull();
+
+    // Consistencia visual: ambas acciones comparten exactamente la misma
+    // clase (mismo tamaño/alineación/hover/focus definidos en styles.css).
+    expect(detailLink.className).toBe(noveltyButton.className);
+  });
+});
+
 async function findModalScope() {
   const heading = await screen.findByText("Nueva novedad");
   return within(heading.closest(".modal") as HTMLElement);

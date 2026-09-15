@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Bell, Check, FilePlus2 } from "lucide-react";
+import { Bell, Check, Eye, FilePlus2 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { PageHeader } from "../components/ui/PageHeader";
 import { Section } from "../components/ui/Section";
@@ -117,13 +117,13 @@ export function NotificationsPage() {
               entre ambas acciones. Ahora navegar sólo navega; "Marcar leída"
               sigue siendo la única forma explícita de marcar como leída. */}
           <div className="notification-actions">
-            {item.link ? <Link className="table-link" to={item.link}>Ver detalle</Link> : null}
+            {item.link ? <Link className="table-icon-action" title="Ver detalle" aria-label="Ver detalle" to={item.link}><Eye size={14} /><span>Ver detalle</span></Link> : null}
             {/* Sólo si el backend ya resolvió el empleado para esta
                 notificación (ShiftAlert/WorkShift/Employee/
                 AttendanceInactivityIncident -- los 4 entityType que
                 workforce.service.ts::notifications() enriquece hoy). Sin
                 eso no hay datos suficientes para precargar nada. */}
-            {employee ? <button type="button" className="table-link" onClick={() => setNoveltyContext(buildNoveltyPrefillFromNotification({ ...item, employee }))}><FilePlus2 size={15}/> Crear novedad</button> : null}
+            {employee ? <button type="button" className="table-icon-action" title="Crear novedad" aria-label="Crear novedad" onClick={() => setNoveltyContext(buildNoveltyPrefillFromNotification({ ...item, employee }))}><FilePlus2 size={14} /><span>Crear novedad</span></button> : null}
             {item.status === "NO_LEIDA" ? <button className="table-link" onClick={() => void markRead(item)}><Check size={15}/> Marcar leída</button> : <Badge tone="neutral">Leída</Badge>}
           </div>
         </article>;
