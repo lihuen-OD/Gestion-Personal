@@ -692,6 +692,8 @@ Campos principales:
 ### Reglas de conceptos horarios (`HourConceptRule`)
 
 > Contrato actual/deuda conocida: la clasificación exclusiva documentada debajo todavía existe en la implementación, pero contradice el modelo aditivo objetivo. `priority`, el concepto “ganador” y la exclusión global por solapamiento quedan deprecados y pendientes de rediseño. En el modelo oficial, reglas activas pueden derivar desgloses independientes y superpuestos a partir de la misma fichada.
+>
+> Etapa 15I (`docs/decisions/ENABLED_HOUR_CONCEPT_CLASSIFICATION_15I.md`): `classifyWorkShiftSegments` ya no recibe todas las `HourConceptRule` activas del sistema — el caller (`classifySegmentsForEmployee`, `timeEntries.service.ts`) las filtra primero a sólo las reglas de conceptos que el empleado tiene habilitados (`EmployeeHourConcept`). Una regla activa de un concepto que el empleado no tiene asignado ya no compite por sus tramos ni genera `CONCEPTO_NO_HABILITADO` — ese status queda como salvaguarda legacy/defensiva, no como resultado esperado.
 
 Define CUÁNDO aplica un concepto horario (franja diaria recurrente), no su nombre — eso lo define RRHH en `HourConcept`. Usado por la clasificación automática de jornadas (`classifyWorkShiftSegments`). Lectura para cualquier autenticado; escritura solo RRHH. No hay `DELETE`: una regla histórica se inactiva (`status: INACTIVO`), nunca se borra.
 

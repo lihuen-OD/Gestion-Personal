@@ -91,7 +91,16 @@ describe("Caso C — tramo sin regla compatible al final de la jornada", () => {
   });
 });
 
-describe("Caso D — regla matchea pero el concepto no está habilitado para el empleado", () => {
+describe("Caso D — salvaguarda defensiva: si igual llega una regla no habilitada (no debería pasar desde la Etapa 15I)", () => {
+  // Etapa 15I (docs/decisions/ENABLED_HOUR_CONCEPT_CLASSIFICATION_15I.md): el
+  // único caller real (classifySegmentsForEmployee) ya filtra activeRules a
+  // sólo conceptos habilitados ANTES de llamar a classifyShiftInterval — este
+  // caso ya no ocurre en el camino normal. Se conserva para blindar el
+  // comportamiento defensivo de la función pura en sí (datos legacy, o un
+  // caller futuro que no pre-filtre): si por lo que sea llega una regla de un
+  // concepto no habilitado, sigue marcando CONCEPTO_NO_HABILITADO en vez de
+  // fallar o inventar un resultado — ver "Etapa 15I" más abajo para el
+  // comportamiento esperado del caller real.
   it("21:00–04:00 con Guardia matcheando pero no habilitada -> CONCEPTO_NO_HABILITADO, conserva el concepto detectado", () => {
     const result = classifyShiftInterval({
       startAt: art(DAY, "21:00"),
@@ -234,5 +243,150 @@ describe("Caso H — regresión: sin HourConceptRule activa, comportamiento idé
     expect(result[1]).toMatchObject({ hourConceptId: "concept-guardia", conceptStatus: "SUGERIDO", minutes: 180, date: daySegments[0]!.date });
     expect(result[2]).toMatchObject({ hourConceptId: "concept-guardia", conceptStatus: "SUGERIDO", minutes: 240, date: daySegments[1]!.date });
     expect(sumClassifiedMinutes(result)).toBe(660);
+  });
+});
+
+// Etapa 15I (docs/decisions/ENABLED_HOUR_CONCEPT_CLASSIFICATION_15I.md): estos
+// casos ejercitan exactamente lo que hace el caller real (classifySegmentsForEmployee,
+// timeEntries.service.ts) desde esta etapa — le pasa a estas funciones puras
+// `activeRules` YA filtradas a sólo conceptos habilitados para el empleado
+// (candidateRules = activeRules.filter(rule => enabledHourConceptIds.has(rule.hourConceptId))).
+// Sereno nunca tiene su propia regla de Hora normal en producción (Etapa 6E:
+// una HourConceptRule no puede pertenecer al concepto systemRole=NORMAL_BASE),
+// así que estos fixtures no incluyen una regla "NORMAL" — el fallback
+// (Hora normal) es siempre lo que classifyShiftInterval usa cuando ningún
+// candidato cubre el tramo.
+describe("Etapa 15I — sólo conceptos habilitados llegan como reglas candidatas", () => {
+  const SERENO: HourConceptRuleRef = {
+    id: "rule-sereno",
+    hourConceptId: "concept-sereno",
+    hourConceptName: "Sereno",
+    startTime: "21:00",
+    endTime: "03:00",
+    crossesMidnight: true,
+    priority: 0,
+  };
+
+  function expectNoConceptoNoHabilitado(result: Array<{ conceptStatus: string }>) {
+    expect(result.every((segment) => segment.conceptStatus !== "CONCEPTO_NO_HABILITADO")).toBe(true);
+  }
+
+  it("1) sólo Hora normal + trabajo diurno, Sereno filtrado (no candidato) -> 100% Hora normal, sin CONCEPTO_NO_HABILITADO", () => {
+    // candidateRules ya vino vacía del caller: Sereno no está habilitado para
+    // este empleado, así que ni siquiera llega acá.
+    const result = classifyWorkShiftSegments({
+      daySegments: [{ date: NEXT_DAY, startAt: art(DAY, "09:00"), endAt: art(DAY, "17:00") }],
+      activeRules: [],
+      enabledHourConceptIds: new Set(),
+      fallbackHourConcept: FALLBACK,
+    });
+
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({ hourConceptId: FALLBACK.id, hourConceptName: FALLBACK.name, conceptStatus: "MANUAL", minutes: 480 });
+    expectNoConceptoNoHabilitado(result);
+    expect(sumClassifiedMinutes(result)).toBe(480);
+  });
+
+  it("2) sólo Hora normal + trabajo nocturno, Sereno filtrado -> 100% Hora normal, sin CONCEPTO_NO_HABILITADO", () => {
+    const result = classifyWorkShiftSegments({
+      daySegments: [{ date: NEXT_DAY, startAt: art(DAY, "21:00"), endAt: art(DAY, "23:30") }],
+      activeRules: [],
+      enabledHourConceptIds: new Set(),
+      fallbackHourConcept: FALLBACK,
+    });
+
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({ hourConceptId: FALLBACK.id, conceptStatus: "MANUAL", minutes: 150 });
+    expectNoConceptoNoHabilitado(result);
+    expect(sumClassifiedMinutes(result)).toBe(150);
+  });
+
+  it("3) sólo Hora normal + cross-midnight, Sereno filtrado -> 100% Hora normal en ambos tramos de día, sin CONCEPTO_NO_HABILITADO", () => {
+    const daySegments = [
+      { date: NEXT_DAY, startAt: art(DAY, "22:00"), endAt: art(DAY, "24:00") },
+      { date: new Date(NEXT_DAY.getTime() + 24 * 60 * 60_000), startAt: art(DAY, "00:00", true), endAt: art(DAY, "02:00", true) },
+    ];
+
+    const result = classifyWorkShiftSegments({
+      daySegments,
+      activeRules: [],
+      enabledHourConceptIds: new Set(),
+      fallbackHourConcept: FALLBACK,
+    });
+
+    expect(result).toHaveLength(2);
+    expect(result[0]).toMatchObject({ hourConceptId: FALLBACK.id, conceptStatus: "MANUAL", minutes: 120, date: daySegments[0]!.date });
+    expect(result[1]).toMatchObject({ hourConceptId: FALLBACK.id, conceptStatus: "MANUAL", minutes: 120, date: daySegments[1]!.date });
+    expectNoConceptoNoHabilitado(result);
+    expect(sumClassifiedMinutes(result)).toBe(240);
+  });
+
+  it("4) Hora normal + Sereno habilitados, tramo mixto (mismo día) -> reparto correcto, sin pérdida ni CONCEPTO_NO_HABILITADO", () => {
+    // Sereno sí es candidata (habilitada). 14:00-21:00 no cae dentro de
+    // 21:00-03:00 -> ningún candidato lo cubre -> fallback Hora normal
+    // (SIN_CONCEPTO_COMPATIBLE, no CONCEPTO_NO_HABILITADO). 21:00-22:00 sí.
+    const result = classifyShiftInterval({
+      startAt: art(DAY, "14:00"),
+      endAt: art(DAY, "22:00"),
+      activeRules: [SERENO],
+      enabledHourConceptIds: new Set(["concept-sereno"]),
+      fallbackHourConcept: FALLBACK,
+    });
+
+    expect(result).toHaveLength(2);
+    expect(result[0]).toMatchObject({ hourConceptId: FALLBACK.id, minutes: 420 });
+    expect(result[1]).toMatchObject({ hourConceptId: "concept-sereno", conceptStatus: "SUGERIDO", minutes: 60 });
+    expectNoConceptoNoHabilitado(result);
+    expect(sumClassifiedMinutes(result)).toBe(480); // 14:00 a 22:00 = 8h reales
+  });
+
+  it("5) Hora normal + Sereno habilitados, jornada íntegramente dentro de Sereno -> 100% Sereno", () => {
+    const result = classifyShiftInterval({
+      startAt: art(DAY, "22:00"),
+      endAt: art(DAY, "02:00", true),
+      activeRules: [SERENO],
+      enabledHourConceptIds: new Set(["concept-sereno"]),
+      fallbackHourConcept: FALLBACK,
+    });
+
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({ hourConceptId: "concept-sereno", conceptStatus: "SUGERIDO", minutes: 240 });
+    expectNoConceptoNoHabilitado(result);
+    expect(sumClassifiedMinutes(result)).toBe(240); // 22:00 a 02:00 = 4h reales
+  });
+
+  it("6) Hora normal + Sereno habilitados, cross-midnight -> reparto correcto (ejemplo del pedido: 18:00-03:00, Normal=3h, Sereno=6h, total=9h)", () => {
+    const result = classifyShiftInterval({
+      startAt: art(DAY, "18:00"),
+      endAt: art(DAY, "03:00", true),
+      activeRules: [SERENO],
+      enabledHourConceptIds: new Set(["concept-sereno"]),
+      fallbackHourConcept: FALLBACK,
+    });
+
+    expect(result).toHaveLength(2);
+    expect(result[0]).toMatchObject({ hourConceptId: FALLBACK.id, minutes: 180 }); // 18:00-21:00 = 3h Hora normal
+    expect(result[1]).toMatchObject({ hourConceptId: "concept-sereno", conceptStatus: "SUGERIDO", minutes: 360 }); // 21:00-03:00 = 6h Sereno
+    expectNoConceptoNoHabilitado(result);
+    expect(sumClassifiedMinutes(result)).toBe(540); // 9h reales
+  });
+
+  it("7/8/9) invariante de minutos con candidateRules ya filtradas: nunca se pierden, inventan ni duplican, en ningún escenario anterior", () => {
+    const scenarios: Array<{ startAt: Date; endAt: Date; activeRules: HourConceptRuleRef[]; enabledHourConceptIds: ReadonlySet<string> }> = [
+      { startAt: art(DAY, "09:00"), endAt: art(DAY, "17:00"), activeRules: [], enabledHourConceptIds: new Set() },
+      { startAt: art(DAY, "21:00"), endAt: art(DAY, "23:30"), activeRules: [], enabledHourConceptIds: new Set() },
+      { startAt: art(DAY, "14:00"), endAt: art(DAY, "22:00"), activeRules: [SERENO], enabledHourConceptIds: new Set(["concept-sereno"]) },
+      { startAt: art(DAY, "22:00"), endAt: art(DAY, "02:00", true), activeRules: [SERENO], enabledHourConceptIds: new Set(["concept-sereno"]) },
+      { startAt: art(DAY, "18:00"), endAt: art(DAY, "03:00", true), activeRules: [SERENO], enabledHourConceptIds: new Set(["concept-sereno"]) },
+    ];
+
+    for (const scenario of scenarios) {
+      const expectedMinutes = Math.round((scenario.endAt.getTime() - scenario.startAt.getTime()) / 60_000);
+      const result = classifyShiftInterval({ ...scenario, fallbackHourConcept: FALLBACK });
+      expect(sumClassifiedMinutes(result)).toBe(expectedMinutes); // ni se pierde ni se inventa
+      const ids = new Set(result.map((segment) => `${segment.startAt.getTime()}-${segment.endAt.getTime()}`));
+      expect(ids.size).toBe(result.length); // ningún sub-tramo se cuenta dos veces
+      expectNoConceptoNoHabilitado(result);
+    }
   });
 });

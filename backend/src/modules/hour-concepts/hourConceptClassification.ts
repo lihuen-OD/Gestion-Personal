@@ -16,6 +16,18 @@ import { scheduledInstantForShiftTime } from "../../shared/datetime/argentinaTim
  * de este archivo es pura (sin acceso a datos) — quien la llama resuelve
  * antes qué reglas están activas y qué conceptos tiene habilitados el
  * empleado.
+ *
+ * Etapa 15I (docs/decisions/ENABLED_HOUR_CONCEPT_CLASSIFICATION_15I.md): el
+ * único caller real (`classifySegmentsForEmployee`, timeEntries.service.ts)
+ * ahora filtra `activeRules` a sólo las reglas de conceptos habilitados para
+ * el empleado ANTES de llamar a estas funciones — nunca le pasa la regla de
+ * un concepto adicional que el empleado no tiene asignado. Trabajar de noche
+ * ya no basta para que un tramo "compita" contra Sereno/Guardia/etc. si ese
+ * concepto no está habilitado; el tramo cae directo en el fallback (Hora
+ * normal). Las funciones de este archivo no se tocaron y siguen siendo
+ * capaces de recibir reglas sin filtrar (ver `enabled` en
+ * classifyShiftInterval más abajo) — es una salvaguarda defensiva para datos
+ * legacy o un futuro caller que no pre-filtre, no el camino esperado hoy.
  */
 
 export interface HourConceptRuleRef {
@@ -97,10 +109,18 @@ function pickWinner(rules: HourConceptRuleRef[]): HourConceptRuleRef | null {
  * - Regla matchea y el concepto está habilitado para el empleado -> SUGERIDO.
  * - Regla matchea pero el concepto NO está habilitado -> CONCEPTO_NO_HABILITADO
  *   (se conserva el concepto detectado, no se lo reemplaza por el default,
- *   para que RRHH vea exactamente qué detectó el sistema).
+ *   para que RRHH vea exactamente qué detectó el sistema). Desde la Etapa
+ *   15I esta rama es inalcanzable por el camino normal: el único caller ya
+ *   excluye de `activeRules` cualquier regla de un concepto no habilitado
+ *   antes de llegar acá, así que ninguna regla "no habilitada" puede ganar
+ *   un sub-tramo. Se conserva como salvaguarda defensiva (datos legacy, o un
+ *   caller futuro que no pre-filtre) — no como resultado esperado de que un
+ *   empleado trabaje en el horario de un concepto que no tiene asignado.
  * - Ninguna regla matchea el tramo -> SIN_CONCEPTO_COMPATIBLE, usando el
  *   concepto de fallback (nunca se deja un segmento sin hourConceptId: el
- *   campo es obligatorio en el schema).
+ *   campo es obligatorio en el schema). Con el filtrado de la Etapa 15I,
+ *   esto es lo que le pasa a un tramo que sólo coincide con un concepto NO
+ *   habilitado — cae acá, no a CONCEPTO_NO_HABILITADO.
  *
  * Invariante garantizada por construcción: la suma de `minutes` de todos los
  * intervalos devueltos es exactamente igual a los minutos reales entre

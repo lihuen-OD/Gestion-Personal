@@ -117,6 +117,8 @@ Igual que el punto anterior — `JORNADA_INSUFICIENTE` sigue notificando según 
 
 Sin ningún cambio — código no tocado, comportamiento idéntico. Sigue notificando siempre que una regla matcheó pero el concepto resultante no está habilitado para el empleado, sin verse afectado por si el empleado tiene o no **otros** conceptos adicionales habilitados (son evaluaciones independientes por diseño, confirmado con test — ver §14, "camino independiente, aunque no haya ningún concepto adicional habilitado").
 
+> **Actualización — Etapa 15I** (`docs/decisions/ENABLED_HOUR_CONCEPT_CLASSIFICATION_15I.md`): la premisa de este párrafo ("una regla matcheó pero el concepto no está habilitado" = "problema de configuración real e independiente") se corrigió aguas arriba. Desde 15I, `classifySegmentsForEmployee` filtra `activeRules` a sólo conceptos habilitados del empleado *antes* de llegar a `classifyShiftInterval` — una regla de un concepto no habilitado ya no compite por el tramo, así que este código (`workShiftEvaluationRunner.ts`, sin tocar en 15I) sigue funcionando exactamente igual, pero el caso normal de "trabajar en el horario de un concepto no asignado" ya no produce `CONCEPTO_NO_HABILITADO` en absoluto. El tipo queda como salvaguarda legacy/defensiva (datos históricos, o un caller que no pre-filtre) — no como resultado esperado.
+
 ## 14. Tests (Parte 6 del pedido)
 
 **Backend** (+11 tests, 953 → 964 total, todos verdes):

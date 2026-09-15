@@ -297,9 +297,26 @@ async function classifySegmentsForEmployee(
     hourConceptsRepository.findActiveRules(),
     hourConceptsRepository.findEnabledConceptIds(employeeId),
   ]);
+  // Etapa 15I (docs/decisions/ENABLED_HOUR_CONCEPT_CLASSIFICATION_15I.md):
+  // activeRules es global (todas las HourConceptRule activas del sistema,
+  // de cualquier concepto y de cualquier empleado) — antes se pasaba tal
+  // cual al clasificador, que recién revisaba enabledHourConceptIds DESPUÉS
+  // de elegir un "ganador" por horario, generando CONCEPTO_NO_HABILITADO
+  // para cualquier tramo que matcheara la regla de un concepto que este
+  // empleado nunca tuvo asignado (ej. Sereno detectado por horario nocturno
+  // en un empleado que sólo tiene Hora normal). Filtrar acá, antes de
+  // clasificar, a sólo las reglas de conceptos habilitados para ESTE
+  // empleado hace que esas reglas ni siquiera compitan por el tramo — el
+  // tramo cae directo en el fallback (Hora normal), sin pasar por
+  // CONCEPTO_NO_HABILITADO. Hora normal nunca tiene su propia
+  // HourConceptRule (Etapa 6E la rechaza para systemRole=NORMAL_BASE), así
+  // que este filtro nunca la excluye a ella — sólo acota el universo de
+  // conceptos ADICIONALES candidatos a los que el empleado realmente tiene
+  // habilitados.
+  const candidateRules = activeRules.filter((rule) => enabledHourConceptIds.has(rule.hourConceptId));
   const classified = classifyWorkShiftSegments({
     daySegments,
-    activeRules,
+    activeRules: candidateRules,
     enabledHourConceptIds,
     fallbackHourConcept,
   });

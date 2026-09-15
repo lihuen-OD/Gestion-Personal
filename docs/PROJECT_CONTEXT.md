@@ -476,6 +476,8 @@ The existing `priority` field and any rule where one concept “wins” a time o
 
 Until the staged redesign is implemented, current backend, frontend, schema, migrations and historical technical documents may still reflect exclusive classification. Do not extend that behavior as if it were the target model. The migration path and compatibility decisions are recorded in `docs/decisions/CONCEPTOS_HORARIOS_ADITIVOS.md`.
 
+**Etapa 15I update (`docs/decisions/ENABLED_HOUR_CONCEPT_CLASSIFICATION_15I.md`):** the legacy `TimeSegment` classifier (`hourConceptClassification.ts`) now only evaluates `HourConceptRule`s for concepts the employee actually has enabled (`classifySegmentsForEmployee`, `timeEntries.service.ts`, filters `activeRules` by `enabledHourConceptIds` before classifying) — working a night schedule no longer classifies a segment as an unassigned additional concept (e.g. Sereno) just because a matching rule exists somewhere in the system for a different population. Hora normal remains the universal fallback; `CONCEPTO_NO_HABILITADO` is unreachable through this path now and only remains as a defensive/legacy branch. This closes part of the exclusive-classification gap for `TimeSegment` specifically — `priority`, the "winning" concept semantics and the rest of the deprecated model described above are still present exactly as documented.
+
 ## Tech stack
 
 Frontend:

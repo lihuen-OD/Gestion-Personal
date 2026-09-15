@@ -11,6 +11,7 @@ import { evaluateShiftExit, flagOpenShiftOverflowForReview, notifyClassification
 import { resolveActiveWorkRegime } from "../work-regimes/workRegimes.service";
 import { notifyUsers } from "../workforce-management/workforce.service";
 import { auditService } from "../audit/audit.service";
+import { hourConceptsRepository } from "../hour-concepts/hourConcepts.repository";
 
 vi.mock("./timeEntries.repository", () => ({
   timeEntriesRepository: {
@@ -146,6 +147,9 @@ const mockedResolveActiveWorkRegime = resolveActiveWorkRegime as unknown as Mock
 const mockedFlagOpenShiftOverflowForReview = flagOpenShiftOverflowForReview as unknown as Mock;
 const mockedNotifyUsers = notifyUsers as unknown as Mock;
 const mockedAuditRegister = auditService.register as unknown as Mock;
+const mockedNotifyClassificationAlerts = notifyClassificationAlerts as unknown as Mock;
+const mockedFindActiveRules = hourConceptsRepository.findActiveRules as unknown as Mock;
+const mockedFindEnabledConceptIds = hourConceptsRepository.findEnabledConceptIds as unknown as Mock;
 
 function prismaKnownError(code: string) {
   return new Prisma.PrismaClientKnownRequestError("mock prisma error", { code, clientVersion: "0.0.0" });
@@ -965,6 +969,106 @@ describe("createWorkShift — alta manual RRHH ya no crea TimeEntry especiales (
     const persistedInput = repo.createFromWorkShift.mock.calls[0]![0] as { normalHourConceptId: string; normalHourConceptName: string };
     expect(persistedInput.normalHourConceptId).toBe(normalConcept.id);
     expect(persistedInput.normalHourConceptName).toBe(normalConcept.name);
+  });
+});
+
+// Etapa 15I (docs/decisions/ENABLED_HOUR_CONCEPT_CLASSIFICATION_15I.md):
+// classifySegmentsForEmployee (no exportada) ahora filtra activeRules a sólo
+// conceptos habilitados del empleado antes de clasificar. Se ejercita acá vía
+// createWorkShift, el call site más directo, sin pasar por evaluateShiftExit
+// (mockeado en este archivo). Jornada 18:00-03:00 ART (21:00 UTC día 1 a
+// 06:00 UTC día 2) = 9h reales, cruzando medianoche Argentina — mismo caso
+// numérico del pedido (Normal=3h, Sereno=6h si Sereno está habilitado).
+describe("createWorkShift — Etapa 15I: candidateRules filtradas por conceptos habilitados del empleado", () => {
+  const adminUser = { id: "user-rrhh", role: "NIVEL_1_RRHH" } as Express.AuthUser;
+  const normalConcept = { id: "concept-normal", name: "Hora normal", status: "ACTIVO", systemRole: "NORMAL_BASE" };
+  const serenoRule = { id: "rule-sereno", hourConceptId: "concept-sereno", hourConceptName: "Sereno", startTime: "21:00", endTime: "03:00", crossesMidnight: true, priority: 0 };
+
+  function nightShiftInput() {
+    return {
+      employeeId: activeEmployee.id,
+      startAt: new Date("2026-08-24T21:00:00.000Z"), // 18:00 ART
+      endAt: new Date("2026-08-25T06:00:00.000Z"), // 03:00 ART día siguiente
+      source: "ADMIN",
+      confirm: true as const,
+    } as unknown as Parameters<typeof timeEntriesService.createWorkShift>[0];
+  }
+
+  function setupCommonMocks() {
+    repo.findEmployeeForShift.mockResolvedValue(activeEmployee);
+    repo.findOverlappingWorkShift.mockResolvedValue(null);
+    repo.findBlockingNovelty.mockResolvedValue(null);
+    repo.findDefaultHourConcept.mockResolvedValue({ hourConcept: normalConcept });
+    repo.createFromWorkShift.mockResolvedValue({
+      workShift: { id: "shift-1" },
+      entries: [{ id: "entry-1", hourConceptId: normalConcept.id }],
+      timeSegments: [],
+    });
+  }
+
+  it("10) Sereno activo globalmente pero NO habilitado para el empleado -> se filtra antes de clasificar, 100% Hora normal, sin CONCEPTO_NO_HABILITADO", async () => {
+    setupCommonMocks();
+    mockedFindActiveRules.mockResolvedValue([serenoRule]);
+    mockedFindEnabledConceptIds.mockResolvedValue(new Set()); // sólo Hora normal.
+
+    await timeEntriesService.createWorkShift(nightShiftInput(), adminUser);
+
+    const persistedSegments = (repo.createFromWorkShift.mock.calls[0]![0] as { segments: Array<{ hourConceptId: string; conceptStatus: string; minutes: number }> }).segments;
+    expect(persistedSegments.length).toBeGreaterThan(0);
+    expect(persistedSegments.every((segment) => segment.hourConceptId === normalConcept.id)).toBe(true);
+    expect(persistedSegments.every((segment) => segment.conceptStatus !== "CONCEPTO_NO_HABILITADO")).toBe(true);
+    expect(persistedSegments.reduce((sum, segment) => sum + segment.minutes, 0)).toBe(540); // 9h reales, sin perder ni inventar minutos.
+    // El filtro nunca consultó régimen/turno para decidir esto (independencia confirmada, ver test 12/13 abajo).
+    expect(mockedResolveActiveWorkRegime).not.toHaveBeenCalled();
+  });
+
+  it("11) Sereno SÍ habilitado para el empleado -> entra como regla candidata y reparte: Hora normal=3h, Sereno=6h, total=9h", async () => {
+    setupCommonMocks();
+    mockedFindActiveRules.mockResolvedValue([serenoRule]);
+    mockedFindEnabledConceptIds.mockResolvedValue(new Set(["concept-sereno"]));
+
+    await timeEntriesService.createWorkShift(nightShiftInput(), adminUser);
+
+    const persistedSegments = (repo.createFromWorkShift.mock.calls[0]![0] as { segments: Array<{ hourConceptId: string; conceptStatus: string; minutes: number }> }).segments;
+    expect(persistedSegments.every((segment) => segment.conceptStatus !== "CONCEPTO_NO_HABILITADO")).toBe(true);
+    const minutesByConcept = persistedSegments.reduce<Record<string, number>>((acc, segment) => {
+      acc[segment.hourConceptId] = (acc[segment.hourConceptId] ?? 0) + segment.minutes;
+      return acc;
+    }, {});
+    expect(minutesByConcept["concept-normal"]).toBe(180); // 3h
+    expect(minutesByConcept["concept-sereno"]).toBe(360); // 6h
+    expect(persistedSegments.reduce((sum, segment) => sum + segment.minutes, 0)).toBe(540); // 9h totales, sin duplicar ni perder.
+  });
+
+  it("12/13) el filtro no depende de turno ni de régimen — sin consultar ShiftAssignment/WorkRegime, mismo resultado con o sin régimen agrícola simulado", async () => {
+    setupCommonMocks();
+    mockedFindActiveRules.mockResolvedValue([serenoRule]);
+    mockedFindEnabledConceptIds.mockResolvedValue(new Set()); // sin Sereno habilitado.
+    // Simula un empleado con régimen (ej. agricultura) vigente — esta clasificación
+    // no debería ni consultarlo: evaluateShiftEntry/evaluateShiftExit (los únicos
+    // llamadores reales de resolveActiveWorkRegime) están mockeados aparte en este
+    // archivo, así que createWorkShift nunca debería tocarlo.
+    mockedResolveActiveWorkRegime.mockResolvedValue({ id: "regime-agro", alertOnOutOfShift: true, extendedShiftAlertMinutes: null });
+
+    await timeEntriesService.createWorkShift(nightShiftInput(), adminUser);
+
+    const persistedSegments = (repo.createFromWorkShift.mock.calls[0]![0] as { segments: Array<{ hourConceptId: string; conceptStatus: string; minutes: number }> }).segments;
+    expect(persistedSegments.every((segment) => segment.hourConceptId === normalConcept.id)).toBe(true);
+    expect(persistedSegments.every((segment) => segment.conceptStatus !== "CONCEPTO_NO_HABILITADO")).toBe(true);
+    expect(mockedResolveActiveWorkRegime).not.toHaveBeenCalled(); // el régimen simulado no participa de esta clasificación.
+  });
+
+  it("14) cross-midnight: los 2 tramos de día (18:00-24:00 y 00:00-03:00) suman 9h reales, filtrado consistente en ambos", async () => {
+    setupCommonMocks();
+    mockedFindActiveRules.mockResolvedValue([serenoRule]);
+    mockedFindEnabledConceptIds.mockResolvedValue(new Set(["concept-sereno"]));
+
+    await timeEntriesService.createWorkShift(nightShiftInput(), adminUser);
+
+    const persistedSegments = (repo.createFromWorkShift.mock.calls[0]![0] as { segments: Array<{ date: Date; hourConceptId: string; minutes: number }> }).segments;
+    const distinctDates = new Set(persistedSegments.map((segment) => segment.date.getTime()));
+    expect(distinctDates.size).toBe(2); // buildShiftSegments partió la jornada en 2 días calendario Argentina.
+    expect(persistedSegments.reduce((sum, segment) => sum + segment.minutes, 0)).toBe(540);
   });
 });
 

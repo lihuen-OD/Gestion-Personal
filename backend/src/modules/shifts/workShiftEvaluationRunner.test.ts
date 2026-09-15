@@ -306,6 +306,25 @@ describe("Caso E — notifyClassificationAlerts: una sola alerta por tipo por jo
 
     expect(mockedPrisma.shiftAlert.upsert).not.toHaveBeenCalled();
   });
+
+  // Etapa 15I (docs/decisions/ENABLED_HOUR_CONCEPT_CLASSIFICATION_15I.md): este
+  // archivo no se tocó — CONCEPTO_NO_HABILITADO sigue existiendo como
+  // salvaguarda legacy/defensiva (ver los tests de arriba, que siguen
+  // pasando sin cambios: si algún TimeSegment ya persistido o un caller
+  // futuro sin pre-filtrar todavía trajera ese status, el runner lo sigue
+  // interpretando igual). Lo que cambió es upstream, en
+  // classifySegmentsForEmployee (timeEntries.service.ts): desde 15I, el caso
+  // normal de "trabajar en el horario de un concepto no habilitado" ya no
+  // produce ningún segmento CONCEPTO_NO_HABILITADO — el "todos SUGERIDO/MANUAL"
+  // de arriba es exactamente lo que ese fix produce para un empleado sólo con
+  // Hora normal. Este test lo deja explícito para trazar la conexión.
+  it("Etapa 15I: el caso normal de concepto no habilitado ya no llega como CONCEPTO_NO_HABILITADO -> ninguna alerta de ese tipo", async () => {
+    await notifyClassificationAlerts("employee-1", "shift-1", [
+      { startAt: new Date("2026-08-18T18:00:00.000Z"), minutes: 180, conceptStatus: "MANUAL" }, // 100% Hora normal, filtrado por classifySegmentsForEmployee.
+    ]);
+
+    expect(upsertedAlertTypes()).not.toContain("CONCEPTO_NO_HABILITADO");
+  });
 });
 
 describe("flagOpenShiftOverflowForReview — política de rollover por régimen (Etapa 5)", () => {
