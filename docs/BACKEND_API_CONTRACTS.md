@@ -851,6 +851,12 @@ Reglas:
 - Valida si el tipo permite horas o fecha hasta.
 - Valida vigencia cuando corresponde.
 - **Etapa 15G.1** (`docs/decisions/NOVELTIES_AS_ADMINISTRATIVE_JUSTIFICATION_15G1.md`): crear una novedad **nunca** crea ni modifica `TimeEntry` — esto aplica sin importar `status` (`PENDIENTE`/`APROBADO`), rol de quien crea, ni los campos horarios del tipo (`setsWorkedHoursToZero`, `blocksTimeEntry`, `timeImpact = BLOQUEA_CARGA_DIA`). El fichador y la carga horaria manual (`/api/time-entries`) son la única fuente de verdad de horas reales; Novedades es justificación administrativa.
+- **Etapa 15G.3** (`docs/decisions/NOVELTY_OVERLAP_DUPLICATE_RULES_15G3.md`): rechaza (409) crear una novedad del **mismo `noveltyTypeId`** para el **mismo empleado** cuando su rango de fechas (`fromDate`/`toDate`, `toDate` nulo tratado como igual a `fromDate`) coincide o se superpone con una novedad ya activa (cualquier `status` salvo `RECHAZADO`):
+  - `NOVELTY_DUPLICATE` — el rango coincide exactamente con el existente.
+  - `NOVELTY_OVERLAP` — el rango sólo se superpone parcialmente.
+  - En carga masiva (`employeeIds` con más de un legajo), si **cualquiera** tiene un conflicto se rechaza el lote completo — no crea parcialmente al resto.
+  - El mensaje (`error.message`) identifica el tipo de novedad y el/los legajo(s) en conflicto (p. ej. `Ya existe una novedad "Vacaciones" para el legajo 100 que se superpone con el rango de fechas seleccionado.`) — nunca un id/UUID técnico.
+  - **No** evalúa compatibilidad entre `NoveltyType` distintos (dos tipos diferentes pueden seguir superponiéndose sin bloqueo) — ver el documento de decisión para el alcance exacto.
 
 ### Aprobar / rechazar
 

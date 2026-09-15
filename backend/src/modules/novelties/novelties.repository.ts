@@ -162,6 +162,28 @@ export const noveltiesRepository = {
     });
   },
 
+  // Etapa 15G.3 (docs/decisions/NOVELTY_OVERLAP_DUPLICATE_RULES_15G3.md):
+  // busca novedades del MISMO tipo para los mismos empleados cuyo rango de
+  // fechas se superpone con el nuevo (toDate null se trata como si fuera
+  // igual a fromDate, tanto del lado existente como del nuevo). Ignora
+  // RECHAZADO -- una novedad rechazada no debe impedir volver a cargarla.
+  // Sólo compara contra el MISMO noveltyTypeId: la incompatibilidad entre
+  // tipos distintos (p. ej. Vacaciones + Licencia médica) no está resuelta
+  // hoy por ninguna regla de negocio existente y queda fuera de alcance.
+  findOverlapping(employeeIds: string[], noveltyTypeId: string, fromDate: Date, toDate: Date | null) {
+    const rangeEnd = toDate || fromDate;
+    return prisma.novelty.findMany({
+      where: {
+        employeeId: { in: employeeIds },
+        noveltyTypeId,
+        status: { not: "RECHAZADO" },
+        fromDate: { lte: rangeEnd },
+        OR: [{ toDate: null, fromDate: { gte: fromDate } }, { toDate: { gte: fromDate } }],
+      },
+      select: { id: true, fromDate: true, toDate: true, employee: { select: { legajo: true } } },
+    });
+  },
+
   reject(id: string) {
     return prisma.novelty.update({
       where: { id },

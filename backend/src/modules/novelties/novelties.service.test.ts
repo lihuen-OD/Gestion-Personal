@@ -15,6 +15,7 @@ vi.mock("./novelties.repository", () => ({
     findNoveltyType: vi.fn(),
     createMany: vi.fn(),
     findMany: vi.fn(),
+    findOverlapping: vi.fn(),
   },
 }));
 
@@ -35,6 +36,7 @@ const repo = noveltiesRepository as unknown as {
   findNoveltyType: Mock;
   createMany: Mock;
   findMany: Mock;
+  findOverlapping: Mock;
 };
 
 const rrhhUser = { id: "user-rrhh", role: roles.rrhh } as unknown as Express.AuthUser;
@@ -269,6 +271,7 @@ describe("noveltiesService.create", () => {
     repo.countEmployees.mockResolvedValue(1);
     repo.findNoveltyType.mockResolvedValue(noveltyType());
     repo.createMany.mockResolvedValue([{ id: "novelty-new" }]);
+    repo.findOverlapping.mockResolvedValue([]);
   });
 
   it("crea una novedad valida: RRHH crea ya APROBADO y no notifica a RH (es RH)", async () => {
@@ -393,28 +396,161 @@ describe("noveltiesService.create", () => {
     expect(repo.createMany).not.toHaveBeenCalled();
   });
 
-  // NOTA (auditoria 2026-08-24): no se encontro, en create() ni en
-  // novelties.dateRange.ts, ninguna validacion que rechace novedades
-  // solapadas (mismo empleado + rango de fechas superpuesto) ni duplicados
-  // logicos (mismo empleado + tipo + fecha). noveltyCoversDay solo se usa
-  // para calcular cobertura dia-por-dia en la grilla mensual de horas
-  // (timeEntries.repository.ts), no para bloquear la creacion. No se agrega
-  // esa regla aqui porque implementarla es logica de negocio nueva, fuera
-  // del alcance autorizado para esta etapa — queda documentado como pendiente
-  // de decision, no como bug cerrado.
-  it("DOCUMENTA UN GAP REAL: hoy no existe ningun chequeo de solapamiento/duplicado al crear (no hay assert que lo bloquee)", async () => {
+});
+
+// Etapa 15G.3 (docs/decisions/NOVELTY_OVERLAP_DUPLICATE_RULES_15G3.md):
+// cierra el gap documentado en la auditoria 2026-08-24 (ver commit previo)
+// — antes de esta etapa, dos novedades del mismo tipo para el mismo
+// empleado podian solaparse libremente. La regla implementada es
+// deliberadamente acotada: sólo compara contra el MISMO noveltyTypeId
+// (nunca inventa incompatibilidad entre tipos distintos) e ignora
+// RECHAZADO. Distingue dos codigos: NOVELTY_DUPLICATE (rango exactamente
+// igual) y NOVELTY_OVERLAP (se superponen pero no son iguales) — ambos
+// bloquean, pero con mensaje distinto.
+describe("noveltiesService.create — Etapa 15G.3 (duplicado/solapamiento del mismo tipo)", () => {
+  beforeEach(() => {
+    repo.countEmployees.mockResolvedValue(1);
     repo.findNoveltyType.mockResolvedValue(noveltyType());
-    repo.createMany.mockResolvedValue([{ id: "novelty-a" }]);
+    repo.createMany.mockResolvedValue([{ id: "novelty-new" }]);
+  });
 
-    const first = await noveltiesService.create(createInput({ fromDate: new Date("2026-08-10"), toDate: new Date("2026-08-15") }), rrhhUser);
-    const second = await noveltiesService.create(createInput({ fromDate: new Date("2026-08-12"), toDate: new Date("2026-08-20") }), rrhhUser);
+  function conflict(overrides: Partial<Record<string, unknown>> = {}) {
+    return {
+      id: "novelty-existing",
+      fromDate: new Date("2026-08-10"),
+      toDate: null,
+      employee: { legajo: "100" },
+      ...overrides,
+    };
+  }
 
-    // Ambas creaciones se completan sin error pese a solaparse en fechas
-    // para el mismo empleado — este test falla (a proposito) si alguien
-    // agrega la validacion mas adelante, como recordatorio de actualizarlo.
-    expect(first).toEqual([{ id: "novelty-a" }]);
-    expect(second).toEqual([{ id: "novelty-a" }]);
-    expect(repo.createMany).toHaveBeenCalledTimes(2);
+  it("1. mismo empleado + mismo tipo + mismo dia + PENDIENTE existente -> bloquea (NOVELTY_DUPLICATE)", async () => {
+    repo.findOverlapping.mockResolvedValue([conflict()]);
+
+    await expect(
+      noveltiesService.create(createInput({ fromDate: new Date("2026-08-10"), toDate: null }), rrhhUser),
+    ).rejects.toMatchObject({ statusCode: 409, code: "NOVELTY_DUPLICATE" });
+    expect(repo.createMany).not.toHaveBeenCalled();
+  });
+
+  it("2. mismo empleado + mismo tipo + mismo dia + APROBADO existente -> bloquea (NOVELTY_DUPLICATE)", async () => {
+    // El repositorio real ya filtra status != RECHAZADO sin importar cual
+    // sea (PENDIENTE/APROBADO/etc.) — desde el service da igual cual de
+    // los dos devuelva findOverlapping, lo relevante es que llega.
+    repo.findOverlapping.mockResolvedValue([conflict()]);
+
+    await expect(
+      noveltiesService.create(createInput({ fromDate: new Date("2026-08-10"), toDate: null }), rrhhUser),
+    ).rejects.toMatchObject({ statusCode: 409, code: "NOVELTY_DUPLICATE" });
+    expect(repo.createMany).not.toHaveBeenCalled();
+  });
+
+  it("3. mismo empleado + mismo tipo + mismo dia + RECHAZADO existente -> permite (el repo ya lo excluye, findOverlapping no lo devuelve)", async () => {
+    repo.findOverlapping.mockResolvedValue([]);
+
+    const items = await noveltiesService.create(createInput({ fromDate: new Date("2026-08-10"), toDate: null }), rrhhUser);
+
+    expect(items).toEqual([{ id: "novelty-new" }]);
+    expect(repo.createMany).toHaveBeenCalledTimes(1);
+  });
+
+  it("4. mismo tipo + distinto empleado -> permite (findOverlapping no encuentra nada para ese empleado)", async () => {
+    repo.findOverlapping.mockResolvedValue([]);
+
+    const items = await noveltiesService.create(createInput({ employeeIds: ["emp-2"] }), rrhhUser);
+
+    expect(items).toEqual([{ id: "novelty-new" }]);
+    expect(repo.findOverlapping).toHaveBeenCalledWith(["emp-2"], "type-1", expect.any(Date), null);
+  });
+
+  it("5. mismo empleado + distinto tipo -> permite (la regla sólo compara contra el mismo noveltyTypeId, no inventa incompatibilidad cruzada)", async () => {
+    repo.findOverlapping.mockResolvedValue([]);
+
+    const items = await noveltiesService.create(createInput({ noveltyTypeId: "type-2" }), rrhhUser);
+
+    expect(items).toEqual([{ id: "novelty-new" }]);
+    expect(repo.findOverlapping).toHaveBeenCalledWith(["emp-1"], "type-2", expect.any(Date), null);
+  });
+
+  it("6. mismo empleado + mismo tipo + rango identico -> bloquea (NOVELTY_DUPLICATE)", async () => {
+    repo.findOverlapping.mockResolvedValue([
+      conflict({ fromDate: new Date("2026-08-10"), toDate: new Date("2026-08-15") }),
+    ]);
+
+    await expect(
+      noveltiesService.create(createInput({ fromDate: new Date("2026-08-10"), toDate: new Date("2026-08-15") }), rrhhUser),
+    ).rejects.toMatchObject({ statusCode: 409, code: "NOVELTY_DUPLICATE" });
+    expect(repo.createMany).not.toHaveBeenCalled();
+  });
+
+  it("7. rangos solapados (no identicos) del mismo tipo -> bloquea (NOVELTY_OVERLAP, distinto de NOVELTY_DUPLICATE)", async () => {
+    // Existente: Vacaciones 10-15. Nuevo: Vacaciones 13-20 -> se pisan del
+    // 13 al 15, pero el rango no es el mismo.
+    repo.findOverlapping.mockResolvedValue([
+      conflict({ fromDate: new Date("2026-08-10"), toDate: new Date("2026-08-15") }),
+    ]);
+
+    await expect(
+      noveltiesService.create(createInput({ fromDate: new Date("2026-08-13"), toDate: new Date("2026-08-20") }), rrhhUser),
+    ).rejects.toMatchObject({ statusCode: 409, code: "NOVELTY_OVERLAP" });
+    expect(repo.createMany).not.toHaveBeenCalled();
+  });
+
+  it("8. rangos no solapados del mismo tipo -> permite (findOverlapping no devuelve nada fuera de rango)", async () => {
+    repo.findOverlapping.mockResolvedValue([]);
+
+    const items = await noveltiesService.create(
+      createInput({ fromDate: new Date("2026-09-01"), toDate: new Date("2026-09-05") }),
+      rrhhUser,
+    );
+
+    expect(items).toEqual([{ id: "novelty-new" }]);
+    expect(repo.createMany).toHaveBeenCalledTimes(1);
+  });
+
+  it("9. carga masiva: un solo empleado en conflicto bloquea TODO el lote, sin crear parcialmente al resto en silencio", async () => {
+    repo.countEmployees.mockResolvedValue(2);
+    repo.findOverlapping.mockResolvedValue([conflict({ employee: { legajo: "200" } })]);
+
+    await expect(
+      noveltiesService.create(createInput({ employeeIds: ["emp-1", "emp-2"] }), rrhhUser),
+    ).rejects.toMatchObject({ statusCode: 409 });
+    // No se llama a createMany en absoluto -- ni para el lote completo, ni
+    // para "el resto" sin el empleado en conflicto. Todo o nada.
+    expect(repo.createMany).not.toHaveBeenCalled();
+  });
+
+  it("10. el mensaje de error identifica el legajo en conflicto, nunca un id/UUID tecnico", async () => {
+    repo.findOverlapping.mockResolvedValue([conflict({ employee: { legajo: "100" } })]);
+
+    const error = await noveltiesService.create(createInput(), rrhhUser).catch((caught) => caught);
+
+    expect(error.message).toContain("legajo 100");
+    expect(error.message).toContain("Vacaciones");
+    expect(error.message.toLowerCase()).not.toMatch(/\buuid\b|emp-1|novelty-existing|type-1/);
+  });
+
+  it("con varios legajos en conflicto, el mensaje los lista a todos (sin ids tecnicos)", async () => {
+    repo.countEmployees.mockResolvedValue(2);
+    repo.findOverlapping.mockResolvedValue([
+      conflict({ employee: { legajo: "100" } }),
+      conflict({ id: "novelty-existing-2", employee: { legajo: "200" } }),
+    ]);
+
+    const error = await noveltiesService.create(createInput({ employeeIds: ["emp-1", "emp-2"] }), rrhhUser).catch((caught) => caught);
+
+    expect(error.message).toContain("100");
+    expect(error.message).toContain("200");
+  });
+
+  it("no evalua solapamiento contra el empleado que ya esta fuera de alcance (el chequeo de scope corre primero)", async () => {
+    repo.countEmployees.mockResolvedValue(0);
+
+    await expect(noveltiesService.create(createInput(), supervisionUser)).rejects.toMatchObject({
+      statusCode: 403,
+      code: "EMPLOYEE_SCOPE_FORBIDDEN",
+    });
+    expect(repo.findOverlapping).not.toHaveBeenCalled();
   });
 });
 

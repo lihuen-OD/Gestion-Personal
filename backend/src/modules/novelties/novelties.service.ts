@@ -96,6 +96,45 @@ function normalizeCreateInput(input: CreateNoveltyInput, type: Awaited<ReturnTyp
   return input;
 }
 
+function rangeBounds(fromDate: Date, toDate: Date | null | undefined) {
+  const end = toDate || fromDate;
+  return { start: fromDate.getTime(), end: end.getTime() };
+}
+
+// Etapa 15G.3 (docs/decisions/NOVELTY_OVERLAP_DUPLICATE_RULES_15G3.md):
+// bloquea crear una novedad del MISMO tipo para el MISMO empleado cuyo
+// rango se superponga con una ya activa (cualquier status salvo
+// RECHAZADO). Dos niveles con el mismo código de error no aplica —
+// se distingue el mensaje según el rango exista igual (duplicado exacto,
+// típicamente el caso "mismo día") o sólo se superponga parcialmente
+// (p. ej. dos rangos de "Vacaciones" que se pisan). NO evalúa
+// compatibilidad entre tipos distintos (Vacaciones vs. Licencia médica,
+// Ausencia vs. Llegada tarde, etc.) porque el modelo actual (`NoveltyType`)
+// no tiene ningún campo que permita inferir esa incompatibilidad con
+// seguridad — inventar esa regla a partir del nombre/kind del tipo violaría
+// la instrucción explícita de esta etapa. Queda documentado como deuda para
+// una etapa posterior si se define una matriz de compatibilidad real.
+async function ensureNoOverlap(input: CreateNoveltyInput, type: Awaited<ReturnType<typeof noveltiesRepository.findNoveltyType>>) {
+  const uniqueEmployeeIds = Array.from(new Set(input.employeeIds));
+  const conflicts = await noveltiesRepository.findOverlapping(uniqueEmployeeIds, input.noveltyTypeId, input.fromDate, input.toDate || null);
+  if (!conflicts.length) return;
+
+  const newRange = rangeBounds(input.fromDate, input.toDate);
+  const isExactDuplicate = conflicts.some((conflict) => {
+    const existingRange = rangeBounds(conflict.fromDate, conflict.toDate);
+    return existingRange.start === newRange.start && existingRange.end === newRange.end;
+  });
+
+  const legajos = Array.from(new Set(conflicts.map((conflict) => conflict.employee.legajo))).sort();
+  const employeeLabel = legajos.length === 1 ? `el legajo ${legajos[0]}` : `los legajos ${legajos.join(", ")}`;
+  const typeName = type?.name || "seleccionada";
+
+  if (isExactDuplicate) {
+    throw new AppError(`Ya existe una novedad "${typeName}" para ${employeeLabel} en la fecha seleccionada.`, 409, "NOVELTY_DUPLICATE");
+  }
+  throw new AppError(`Ya existe una novedad "${typeName}" para ${employeeLabel} que se superpone con el rango de fechas seleccionado.`, 409, "NOVELTY_OVERLAP");
+}
+
 export const noveltiesService = {
   async list(query: ListNoveltiesQuery, user: Express.AuthUser) {
     const [items, total] = await noveltiesRepository.findMany(query, employeeAccessWhere(user));
@@ -115,6 +154,7 @@ export const noveltiesService = {
     const type = await ensureNoveltyTypeReady(input);
     const normalizedInput = normalizeCreateInput(input, type);
     assertCanLoad(type, user);
+    await ensureNoOverlap(normalizedInput, type);
     const status = user.role === roles.rrhh ? "APROBADO" : "PENDIENTE";
     // Etapa 15G.1 (docs/decisions/NOVELTIES_AS_ADMINISTRATIVE_JUSTIFICATION_15G1.md):
     // decisión funcional final — crear una novedad NUNCA crea ni modifica

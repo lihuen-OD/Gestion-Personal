@@ -140,6 +140,53 @@ describe("noveltiesRepository.createMany — Etapa 15G.1 (ajuste: sin efecto hor
 // Ya no acepta ningún 3er argumento de "efecto horario" ni abre una
 // transacción — es un update directo, igual que antes de que existiera
 // cualquier noción de efecto horario en este repositorio.
+// Etapa 15G.3 (docs/decisions/NOVELTY_OVERLAP_DUPLICATE_RULES_15G3.md):
+// query nueva usada por noveltiesService.create() para detectar novedades
+// del mismo tipo/empleado cuyo rango se superponga con el nuevo.
+describe("noveltiesRepository.findOverlapping — Etapa 15G.3", () => {
+  it("filtra por employeeId in, mismo noveltyTypeId y status distinto de RECHAZADO", async () => {
+    mockedPrisma.novelty.findMany.mockResolvedValue([]);
+
+    await noveltiesRepository.findOverlapping(["employee-1", "employee-2"], "type-1", new Date("2026-08-10"), new Date("2026-08-15"));
+
+    const call = mockedPrisma.novelty.findMany.mock.calls[0]![0];
+    expect(call.where.employeeId).toEqual({ in: ["employee-1", "employee-2"] });
+    expect(call.where.noveltyTypeId).toBe("type-1");
+    expect(call.where.status).toEqual({ not: "RECHAZADO" });
+  });
+
+  it("la condicion de overlap usa fromDate <= rangeEnd AND (toDate null y fromDate >= nuevo.fromDate, o toDate >= nuevo.fromDate)", async () => {
+    mockedPrisma.novelty.findMany.mockResolvedValue([]);
+
+    await noveltiesRepository.findOverlapping(["employee-1"], "type-1", new Date("2026-08-10"), new Date("2026-08-15"));
+
+    const where = mockedPrisma.novelty.findMany.mock.calls[0]![0].where;
+    expect(where.fromDate).toEqual({ lte: new Date("2026-08-15") });
+    expect(where.OR).toEqual([
+      { toDate: null, fromDate: { gte: new Date("2026-08-10") } },
+      { toDate: { gte: new Date("2026-08-10") } },
+    ]);
+  });
+
+  it("cuando el nuevo toDate es null, trata el rango como si terminara en fromDate (rangeEnd = fromDate)", async () => {
+    mockedPrisma.novelty.findMany.mockResolvedValue([]);
+
+    await noveltiesRepository.findOverlapping(["employee-1"], "type-1", new Date("2026-08-10"), null);
+
+    const where = mockedPrisma.novelty.findMany.mock.calls[0]![0].where;
+    expect(where.fromDate).toEqual({ lte: new Date("2026-08-10") });
+  });
+
+  it("selecciona sólo id/fromDate/toDate/legajo -- nunca dni/cuil ni el empleado completo", async () => {
+    mockedPrisma.novelty.findMany.mockResolvedValue([]);
+
+    await noveltiesRepository.findOverlapping(["employee-1"], "type-1", new Date("2026-08-10"), null);
+
+    const select = mockedPrisma.novelty.findMany.mock.calls[0]![0].select;
+    expect(select).toEqual({ id: true, fromDate: true, toDate: true, employee: { select: { legajo: true } } });
+  });
+});
+
 describe("noveltiesRepository.approve — Etapa 15G.1 (ajuste: sin efecto horario)", () => {
   it("actualiza sólo status/approvedByUserId/approvedAt, sin transacción ni TimeEntry", async () => {
     mockedPrisma.novelty.update.mockResolvedValue({ id: "novelty-1", status: "APROBADO" });

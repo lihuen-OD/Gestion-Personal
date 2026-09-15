@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { ApiError } from "../../services/api/apiClient";
 import { hourConceptApiService } from "../../services/api/hourConceptApiService";
 import { noveltyApiService } from "../../services/api/noveltyApiService";
 import { noveltyTypeApiService } from "../../services/api/noveltyTypeApiService";
@@ -153,6 +154,15 @@ export function NoveltyModal({
       saved(created);
       return;
     } catch (apiError) {
+      // Etapa 15G.3 (docs/decisions/NOVELTY_OVERLAP_DUPLICATE_RULES_15G3.md):
+      // el backend ya arma un mensaje humano y específico (tipo + legajo,
+      // sin ids técnicos) para estos dos códigos -- se muestra tal cual en
+      // vez del genérico de abajo. No se reimplementa la regla de
+      // duplicado/solapamiento acá: sólo se refleja lo que el backend ya
+      // decidió.
+      if (apiError instanceof ApiError && (apiError.code === "NOVELTY_DUPLICATE" || apiError.code === "NOVELTY_OVERLAP")) {
+        return setError(apiError.message);
+      }
       if (String((apiError as Error)?.message || "").includes("uuid")) {
         return setError("El legajo o el tipo de novedad seleccionado no es válido. Volvé a seleccionarlo.");
       }

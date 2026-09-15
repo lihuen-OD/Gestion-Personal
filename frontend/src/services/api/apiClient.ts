@@ -113,6 +113,13 @@ const errorMessagesByCode: Record<string, string> = {
   NOVELTY_DELETE_HAS_DOCUMENTS: "La novedad tiene documentación asociada y debe conservarse para mantener la trazabilidad.",
   NOVELTY_DELETE_HAS_TIME_IMPACT: "La novedad ya generó movimientos horarios y no se puede eliminar. Debe corregirse mediante una anulación.",
   NOVELTY_DELETE_EXPORTABLE_APPROVED: "La novedad está aprobada y puede haber sido informada externamente. Debe conservarse o anularse.",
+  // Etapa 15G.3 (docs/decisions/NOVELTY_OVERLAP_DUPLICATE_RULES_15G3.md):
+  // NOVELTY_DUPLICATE y NOVELTY_OVERLAP se dejan deliberadamente afuera de
+  // este mapa. El backend ya arma, para estos dos códigos, un mensaje
+  // específico (tipo de novedad + legajo) en `error.message` -- un texto
+  // genérico acá lo pisaría (este mapa tiene prioridad sobre el mensaje
+  // crudo en formatApiErrorMessage) y el usuario perdería el detalle de
+  // qué novedad/legajo generó el conflicto.
   TIME_ENTRY_NOT_FOUND: "No encontramos la carga horaria solicitada.",
   TIME_ENTRY_DUPLICATED: "Ya existe una carga para ese empleado, fecha y concepto de horas.",
   TIME_ENTRY_LOCKED: "Las cargas aprobadas o cerradas no se pueden editar.",

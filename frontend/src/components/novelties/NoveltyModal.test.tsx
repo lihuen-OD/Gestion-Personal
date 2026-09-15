@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { NoveltyModal } from "./NoveltyModal";
+import { ApiError } from "../../services/api/apiClient";
 import { noveltyApiService } from "../../services/api/noveltyApiService";
 import { noveltyTypeApiService } from "../../services/api/noveltyTypeApiService";
 import { hourConceptApiService } from "../../services/api/hourConceptApiService";
@@ -301,5 +302,59 @@ describe("NoveltyModal — Etapa 15G.2 (precarga desde alerta)", () => {
     await waitFor(() => expect(noveltyApiService.create).toHaveBeenCalledWith(
       expect.objectContaining({ employeeIds: ["employee-9"] }),
     ));
+  });
+});
+
+// Etapa 15G.3 (docs/decisions/NOVELTY_OVERLAP_DUPLICATE_RULES_15G3.md): el
+// backend ya arma un mensaje humano y especifico (tipo + legajo, sin ids
+// tecnicos) para NOVELTY_DUPLICATE/NOVELTY_OVERLAP -- estos tests
+// confirman que el modal lo muestra tal cual, sin reimplementar la regla
+// de duplicado/solapamiento en el frontend (sólo refleja lo que el
+// backend ya decidió) y sin romper el manejo de errores existente para
+// otros codigos.
+describe("NoveltyModal — Etapa 15G.3 (conflicto de duplicado/solapamiento)", () => {
+  it("NOVELTY_DUPLICATE: muestra el mensaje especifico del backend (tipo + legajo), no el generico", async () => {
+    vi.mocked(noveltyTypeApiService.getAll).mockResolvedValue([llegadaTardeType]);
+    vi.mocked(noveltyApiService.create).mockRejectedValue(
+      new ApiError('Ya existe una novedad "Llegada tarde" para el legajo 100 en la fecha seleccionada.', "NOVELTY_DUPLICATE", 409),
+    );
+
+    render(<NoveltyModal employees={[buildEmployee()]} close={vi.fn()} saved={vi.fn()} />);
+
+    await screen.findByText("Llegada tarde");
+    await userEvent.click(screen.getByRole("button", { name: "Guardar novedad" }));
+
+    expect(await screen.findByText('Ya existe una novedad "Llegada tarde" para el legajo 100 en la fecha seleccionada.')).toBeInTheDocument();
+    expect(screen.queryByText("No pudimos guardar la novedad. Revisá los datos e intentá nuevamente.")).not.toBeInTheDocument();
+  });
+
+  it("NOVELTY_OVERLAP: muestra el mensaje especifico del backend, sin ningun id/UUID tecnico visible", async () => {
+    vi.mocked(noveltyTypeApiService.getAll).mockResolvedValue([llegadaTardeType]);
+    vi.mocked(noveltyApiService.create).mockRejectedValue(
+      new ApiError('Ya existe una novedad "Llegada tarde" para el legajo 100 que se superpone con el rango de fechas seleccionado.', "NOVELTY_OVERLAP", 409),
+    );
+
+    render(<NoveltyModal employees={[buildEmployee()]} close={vi.fn()} saved={vi.fn()} />);
+
+    await screen.findByText("Llegada tarde");
+    await userEvent.click(screen.getByRole("button", { name: "Guardar novedad" }));
+
+    const message = await screen.findByText(/se superpone con el rango de fechas/);
+    expect(message).toBeInTheDocument();
+    expect(message.textContent?.toLowerCase()).not.toMatch(/\buuid\b|employee-1|type-llegada-tarde/);
+  });
+
+  it("otros codigos de error siguen mostrando el mensaje generico existente (sin regresion)", async () => {
+    vi.mocked(noveltyTypeApiService.getAll).mockResolvedValue([llegadaTardeType]);
+    vi.mocked(noveltyApiService.create).mockRejectedValue(
+      new ApiError("El tipo de novedad no está disponible.", "NOVELTY_TYPE_NOT_AVAILABLE", 400),
+    );
+
+    render(<NoveltyModal employees={[buildEmployee()]} close={vi.fn()} saved={vi.fn()} />);
+
+    await screen.findByText("Llegada tarde");
+    await userEvent.click(screen.getByRole("button", { name: "Guardar novedad" }));
+
+    expect(await screen.findByText("No pudimos guardar la novedad. Revisá los datos e intentá nuevamente.")).toBeInTheDocument();
   });
 });
