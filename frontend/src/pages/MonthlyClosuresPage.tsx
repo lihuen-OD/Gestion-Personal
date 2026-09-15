@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Check, CheckCheck, RotateCcw, Send, X } from "lucide-react";
+import { Check, CheckCheck, Eye, RotateCcw, Send, X } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { employeeApiService } from "../services/api/employeeApiService";
 import { workforceApiService, type MonthlyClosure, type TimeCorrection } from "../services/api/workforceApiService";
 import type { Employee } from "../types";
 import { roleLevel } from "../utils/roles";
+import { monthlyClosureStatusText as statusText, monthlyClosureStatusTone as statusTone } from "../utils/monthlyClosureStatus";
 import { PageHeader } from "../components/ui/PageHeader";
 import { Section } from "../components/ui/Section";
 import { Button } from "../components/ui/Button";
@@ -12,17 +13,10 @@ import { Badge } from "../components/ui/Badge";
 import { TableShell } from "../components/ui/TableShell";
 import { LoadingState } from "../components/ui/LoadingState";
 import { EmptyState } from "../components/ui/EmptyState";
+import { MonthlyClosureReviewPanel } from "../components/hours/MonthlyClosureReviewPanel";
 import { requestText } from "../services/appDialog";
 
 const currentPeriod = () => new Date().toISOString().slice(0, 7);
-const statusText: Record<string, string> = {
-  ABIERTO: "Abierto",
-  ENVIADO: "Esperando a RH",
-  APROBADO: "Aprobado por RH",
-  DEVUELTO: "Devuelto para corregir",
-  CORRECCION_PENDIENTE: "Corrección pendiente",
-};
-const statusTone = (status: string) => status === "APROBADO" ? "success" : status === "DEVUELTO" ? "danger" : status === "ABIERTO" ? "neutral" : "warning";
 
 export function MonthlyClosuresPage() {
   const { user } = useAuth();
@@ -35,6 +29,10 @@ export function MonthlyClosuresPage() {
   const [loading, setLoading] = useState(true);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState("");
+  // Etapa 15K: sólo dispara la carga lazy de time-grid de ESTE empleado al
+  // abrir el panel — no toca `closures`/`rows`, no dispara ningún fetch por
+  // fila del listado.
+  const [reviewing, setReviewing] = useState<MonthlyClosure | null>(null);
   // Etapa 9B: `load` está memoizado por [period] y se invoca también desde
   // `execute()` (fuera del efecto de montaje) — leer `closures.length`
   // directo del closure sería un valor stale entre renders donde `period`
@@ -99,7 +97,10 @@ export function MonthlyClosuresPage() {
             <td><b>{row.employee.legajo}</b></td><td>{row.employee.lastName}, {row.employee.firstName}</td>
             <td><Badge tone={statusTone(row.status)}>{statusText[row.status]}</Badge></td>
             <td>{row.submittedBy?.name || "—"}</td><td>{row.reviewNote || "—"}</td>
-            <td>{isRrhh && row.status === "ENVIADO" ? <div className="table-actions"><button type="button" className="table-icon-action" title="Devolver cierre" aria-label={`Devolver cierre de ${row.employee.legajo}`} onClick={async () => { const reason = await requestText("Indicá por qué se devuelve este cierre para que el responsable pueda corregirlo.", { title: "Devolver cierre mensual", inputLabel: "Motivo de devolución", confirmLabel: "Devolver", tone: "danger" }); if (reason) await execute(() => workforceApiService.returnClosure(row.id, reason)); }}><RotateCcw size={14}/><span>Devolver</span></button></div> : "—"}</td>
+            <td><div className="table-actions">
+              <button type="button" className="table-icon-action" title="Revisar horas" aria-label={`Revisar horas de ${row.employee.legajo}`} onClick={() => setReviewing(row)}><Eye size={14}/><span>Revisar horas</span></button>
+              {isRrhh && row.status === "ENVIADO" ? <button type="button" className="table-icon-action" title="Devolver cierre" aria-label={`Devolver cierre de ${row.employee.legajo}`} onClick={async () => { const reason = await requestText("Indicá por qué se devuelve este cierre para que el responsable pueda corregirlo.", { title: "Devolver cierre mensual", inputLabel: "Motivo de devolución", confirmLabel: "Devolver", tone: "danger" }); if (reason) await execute(() => workforceApiService.returnClosure(row.id, reason)); }}><RotateCcw size={14}/><span>Devolver</span></button> : null}
+            </div></td>
           </tr>; })}
         </tbody></table>
         </TableShell>
@@ -114,5 +115,6 @@ export function MonthlyClosuresPage() {
       </TableShell>
       {!pendingCorrections.length ? <EmptyState text="No hay correcciones pendientes para este período." /> : null}
     </Section>
+    {reviewing ? <MonthlyClosureReviewPanel closure={reviewing} period={period} close={() => setReviewing(null)} /> : null}
   </>;
 }

@@ -1646,6 +1646,19 @@ a.employee-hours-status-item:hover{border-color:var(--ds-blue-300);background:va
 .modal:has(.associated-employees-panel){
   width:min(1100px,calc(100vw - var(--app-sidebar-width) - 48px))!important;
 }
+/* Etapa 15K: el panel de revisión de Cierre de Horas muestra la grilla
+   mensual completa (hasta 31 columnas de día) — mismo criterio que
+   .associated-employees-panel arriba, un marcador dedicado en vez de una
+   prop de ancho por modal. */
+.modal:has(.monthly-hours-review-panel){
+  width:min(1200px,calc(100vw - var(--app-sidebar-width) - 48px))!important;
+}
+.monthly-hours-review-panel .review-panel-head{
+  margin-bottom:14px;
+}
+.monthly-hours-review-panel .stat-grid{
+  margin-bottom:16px;
+}
 .modal-body{
   overflow:auto!important;
 }
@@ -1660,7 +1673,8 @@ a.employee-hours-status-item:hover{border-color:var(--ds-blue-300);background:va
   }
   .modal,
   .modal:has(.address-edit-layout),
-  .modal:has(.associated-employees-panel){
+  .modal:has(.associated-employees-panel),
+  .modal:has(.monthly-hours-review-panel){
     width:min(960px,calc(100vw - 40px))!important;
     max-height:calc(100vh - 40px)!important;
   }
@@ -1671,7 +1685,8 @@ a.employee-hours-status-item:hover{border-color:var(--ds-blue-300);background:va
   }
   .modal,
   .modal:has(.address-edit-layout),
-  .modal:has(.associated-employees-panel){
+  .modal:has(.associated-employees-panel),
+  .modal:has(.monthly-hours-review-panel){
     width:calc(100vw - 24px)!important;
     max-height:calc(100vh - 24px)!important;
   }
