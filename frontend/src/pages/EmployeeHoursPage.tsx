@@ -261,9 +261,16 @@ export function EmployeeHoursPage() {
       const toDay = Number((novelty.to || novelty.from).slice(8, 10));
       return day >= fromDay && day <= toDay;
     });
+  // Etapa 15L.2C (docs/decisions/NOVELTY_TYPE_CONSUMER_MIGRATION_15L2C.md):
+  // timeEntryBehavior reemplaza blocksTimeEntry/timeImpact=BLOQUEA_CARGA_DIA
+  // (legacy, siguen existiendo y sincronizados 1:1) como fuente productiva.
+  // novelty.timeImpact === "REGISTRA_HORAS_NO_TRABAJADAS" (abajo) se
+  // mantiene tal cual -- no tiene equivalente en el enum nuevo de 2 valores
+  // (NO_BLOQUEA/BLOQUEA_NUEVA_CARGA), migrarlo perdería esa distinción.
+  const noveltyBlocksTimeEntry = (novelty: Novelty) => novelty.timeEntryBehavior === "BLOQUEA_NUEVA_CARGA";
   const conceptNovelties = (day: number, conceptName: string) =>
     dayNovelties(day).filter((novelty) =>
-      novelty.blocksTimeEntry || novelty.timeImpact === "BLOQUEA_CARGA_DIA"
+      noveltyBlocksTimeEntry(novelty)
         ? true
         : novelty.targetHourConceptName
           ? novelty.targetHourConceptName === conceptName
@@ -273,11 +280,7 @@ export function EmployeeHoursPage() {
     );
   const entryFor = (day: number, conceptId: string, conceptName: string) =>
     entries.find((entry) => entry.day === day && (entry.conceptId === conceptId || entry.type === conceptName));
-  const isBlocked = (day: number) =>
-    dayNovelties(day).some(
-      (novelty) =>
-        novelty.blocksTimeEntry || novelty.timeImpact === "BLOQUEA_CARGA_DIA",
-    );
+  const isBlocked = (day: number) => dayNovelties(day).some(noveltyBlocksTimeEntry);
   const openCell = (day: number, conceptId: string, conceptName: string, entry?: TimeEntry) => {
     const date = monthDate(period, day);
     setSelected({ day, conceptId });
@@ -341,7 +344,7 @@ export function EmployeeHoursPage() {
   const noveltyRange = () => {
     const start = new Date(`${noveltyFrom}T00:00:00`);
     const end = new Date(
-      `${selectedType?.rules.allowsDateTo ? noveltyTo : noveltyFrom}T00:00:00`,
+      `${selectedType?.rules.allowsDateRange ? noveltyTo : noveltyFrom}T00:00:00`,
     );
     const days: number[] = [];
     for (
@@ -369,8 +372,8 @@ export function EmployeeHoursPage() {
       return setError("Adjunta la documentacion requerida para guardar esta novedad.");
     }
     if (
-      selectedType?.rules.hasValidity &&
-      selectedType.rules.allowsDateTo &&
+      selectedType?.rules.finnegansRequiresValidity &&
+      selectedType.rules.allowsDateRange &&
       noveltyTo < noveltyFrom
     ) {
       return setError("La fecha hasta no puede ser anterior a la fecha desde.");
@@ -417,7 +420,7 @@ export function EmployeeHoursPage() {
             employeeIds: [id],
             noveltyTypeId: selectedType.id,
             fromDate: noveltyFrom,
-            toDate: selectedType.rules.allowsDateTo ? noveltyTo : null,
+            toDate: selectedType.rules.allowsDateRange ? noveltyTo : null,
             quantityHours: selectedType.rules.allowsHours ? hoursImpact : null,
             quantityDays: selectedType.rules.allowsHours ? null : Math.max(1, noveltyRange().length),
             observation: docNotes || null,
@@ -820,7 +823,7 @@ export function EmployeeHoursPage() {
                     disabled={selectedLocked}
                   />
                 ) : null}
-                {selectedType?.rules.allowsDateTo ? (
+                {selectedType?.rules.allowsDateRange ? (
                   <Field
                     label="Hasta"
                     type="date"

@@ -33,6 +33,8 @@ type ApiNovelty = {
     blocksTimeEntry: boolean;
     setsWorkedHoursToZero: boolean;
     timeImpact: string;
+    // Etapa 15L.2C: fuente de verdad preferida (ver los legacy arriba).
+    timeEntryBehavior?: "NO_BLOQUEA" | "BLOQUEA_NUEVA_CARGA";
     approvalRoles?: Role[];
     finnegansLinks?: Array<{
       code: string;
@@ -140,6 +142,7 @@ export function mapNoveltyFromApi(item: ApiNovelty): Novelty {
     targetHourConceptName: item.targetHourConcept?.name,
     blocksTimeEntry: item.noveltyType.blocksTimeEntry,
     setsWorkedHoursToZero: item.noveltyType.setsWorkedHoursToZero,
+    timeEntryBehavior: item.noveltyType.timeEntryBehavior,
     approvalRoles: normalizeRoles(item.noveltyType.approvalRoles),
     exportsToFinnegans: item.noveltyType.exportsToFinnegans,
     finnegansCode: activeLink?.code,

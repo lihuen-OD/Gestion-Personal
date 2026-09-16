@@ -129,6 +129,10 @@ export function NoveltyModal({
   const normalizedTargetHour = targetHourOptions.includes(targetHour)
     ? targetHour
     : targetHourOptions[0] || "Hora normal";
+  // Etapa 15L.2C: timeImpact==="REGISTRA_HORAS_NO_TRABAJADAS" se mantiene
+  // -- sin equivalente en el enum nuevo de 2 valores (timeEntryBehavior:
+  // NO_BLOQUEA/BLOQUEA_NUEVA_CARGA), migrarlo perdería esta distinción
+  // (docs/decisions/NOVELTY_TYPE_CONSUMER_MIGRATION_15L2C.md).
   const requiresTargetHour = Boolean(
     selectedType?.rules.allowsHours ||
       selectedType?.rules.timeImpact === "REGISTRA_HORAS_NO_TRABAJADAS",
@@ -137,7 +141,7 @@ export function NoveltyModal({
   const dateRange = () => {
     const start = new Date(`${from}T00:00:00`);
     const end = new Date(
-      `${selectedType?.rules.allowsDateTo ? to : from}T00:00:00`,
+      `${selectedType?.rules.allowsDateRange ? to : from}T00:00:00`,
     );
     const days: number[] = [];
     for (
@@ -159,7 +163,7 @@ export function NoveltyModal({
     if (selectedType.rules.requiresDocumentation && !fileName) {
       return setError("Adjunta la documentacion requerida para guardar esta novedad.");
     }
-    if (selectedType.rules.hasValidity && selectedType.rules.allowsDateTo && to < from) {
+    if (selectedType.rules.finnegansRequiresValidity && selectedType.rules.allowsDateRange && to < from) {
       return setError("La fecha hasta no puede ser anterior a la fecha desde.");
     }
 
@@ -175,7 +179,7 @@ export function NoveltyModal({
         employeeIds,
         noveltyTypeId: selectedType.id,
         fromDate: from,
-        toDate: selectedType.rules.allowsDateTo ? to : null,
+        toDate: selectedType.rules.allowsDateRange ? to : null,
         ...quantities,
         observation: docNotes || null,
         targetHourConceptId: requiresTargetHour ? targetConcept?.id || null : null,
@@ -255,7 +259,7 @@ export function NoveltyModal({
 
             <div className="form-grid">
               <Field label="Desde" type="date" value={from} set={setFrom} />
-              {selectedType?.rules.allowsDateTo ? (
+              {selectedType?.rules.allowsDateRange ? (
                 <Field label="Hasta" type="date" value={to} set={setTo} />
               ) : null}
               {selectedType?.rules.allowsHours ? (

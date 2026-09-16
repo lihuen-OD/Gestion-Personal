@@ -99,17 +99,22 @@ async function ensureNoveltyTypeReady(input: CreateNoveltyInput) {
     throw new AppError("This novelty type does not allow quantity hours", 400, "NOVELTY_HOURS_NOT_ALLOWED");
   }
   assertQuantityCoherence(input);
-  if (!type.allowsDateTo && input.toDate && !sameUtcDate(input.toDate, input.fromDate)) {
+  // Etapa 15L.2C (docs/decisions/NOVELTY_TYPE_CONSUMER_MIGRATION_15L2C.md):
+  // allowsDateRange/finnegansRequiresValidity reemplazan a allowsDateTo/
+  // hasValidity (legacy, siguen existiendo y sincronizados 1:1 por
+  // noveltyTypes.sync.ts desde la Etapa 15L.2A) como fuente productiva de
+  // esta validación.
+  if (!type.allowsDateRange && input.toDate && !sameUtcDate(input.toDate, input.fromDate)) {
     throw new AppError("This novelty type does not allow toDate", 400, "NOVELTY_TO_DATE_NOT_ALLOWED");
   }
-  if (type.hasValidity && type.allowsDateTo && !input.toDate) {
+  if (type.finnegansRequiresValidity && type.allowsDateRange && !input.toDate) {
     throw new AppError("This novelty type requires fromDate and toDate", 400, "NOVELTY_VALIDITY_REQUIRED");
   }
   return type;
 }
 
 function normalizeCreateInput(input: CreateNoveltyInput, type: Awaited<ReturnType<typeof noveltiesRepository.findNoveltyType>>): CreateNoveltyInput {
-  if (!type?.allowsDateTo) {
+  if (!type?.allowsDateRange) {
     return { ...input, toDate: null };
   }
   return input;

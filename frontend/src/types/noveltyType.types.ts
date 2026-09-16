@@ -44,10 +44,15 @@ export interface NoveltyTypeRules {
   requiresApproval: boolean;
   requiresDocumentation: boolean;
   allowsHours: boolean;
+  /** @deprecated Etapa 15L.2A -- usar allowsDateRange. Se mantiene sincronizado por compatibilidad (docs/decisions/NOVELTY_TYPE_CONSUMER_MIGRATION_15L2C.md). */
   allowsDateTo: boolean;
+  /** @deprecated Etapa 15L.2A -- usar finnegansRequiresValidity. Se mantiene sincronizado por compatibilidad. */
   hasValidity: boolean;
+  /** @deprecated Etapa 15L.2A -- usar timeEntryBehavior. Se mantiene sincronizado por compatibilidad. */
   blocksTimeEntry: boolean;
+  /** @deprecated Etapa 15G.1/15L.2A -- sin efecto productivo sobre TimeEntry desde 15G.1. Nunca volver a escribir true desde código nuevo. */
   setsWorkedHoursToZero: boolean;
+  /** @deprecated Etapa 15L.2A -- usar timeEntryBehavior. Único valor sin equivalente: REGISTRA_HORAS_NO_TRABAJADAS (ver NoveltyModal.tsx/EmployeeHoursPage.tsx, lectura tolerada por falta de equivalente en el enum nuevo de 2 valores). */
   timeImpact: NoveltyTimeImpact;
   // Etapa 15L.2A -- modelo nuevo, fuente de verdad preferida (ver los tipos
   // NoveltyTimeEntryBehavior/FinnegansValueUnit arriba).
@@ -72,6 +77,7 @@ export interface NoveltyType {
   name: string;
   uiColor: NoveltyUiColor;
   kind: NoveltyTypeKind;
+  /** @deprecated Etapa 15L.2A -- sin consumidor de negocio real, redundante con exportsToFinnegans. Se mantiene por compatibilidad de contrato (docs/decisions/NOVELTY_TYPE_CONSUMER_MIGRATION_15L2C.md). */
   origin: NoveltyTypeOrigin;
   description: string;
   status: NoveltyTypeStatus;

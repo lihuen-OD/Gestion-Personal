@@ -122,12 +122,18 @@ export function NoveltyTable({
                 </td>
                 <td>{novelty.quantity}</td>
                 <td>
+                  {/* Etapa 15L.2C (docs/decisions/NOVELTY_TYPE_CONSUMER_MIGRATION_15L2C.md):
+                      la decisión de "bloquea carga" migra a timeEntryBehavior.
+                      El label de noveltyTimeImpactLabel(timeImpact) se
+                      mantiene -- REGISTRA_HORAS_NO_TRABAJADAS no tiene
+                      equivalente en el enum nuevo de 2 valores y perdería
+                      información real mostrada a RRHH si se reemplazara. */}
                   <OverflowCell
                     value={`${noveltyTimeImpactLabel(novelty.timeImpact)}${
                       novelty.targetHourConceptName
                         ? `\nAplica sobre ${novelty.targetHourConceptName}`
                         : ""
-                    }${novelty.blocksTimeEntry ? "\nBloquea carga · 0 hs" : ""}`}
+                    }${novelty.timeEntryBehavior === "BLOQUEA_NUEVA_CARGA" ? "\nBloquea nueva carga" : ""}`}
                   />
                 </td>
                 <td>

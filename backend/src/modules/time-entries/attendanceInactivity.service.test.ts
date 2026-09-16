@@ -114,8 +114,8 @@ describe("detectAttendanceInactivity — Etapa 12E (feriado + HolidayWorkAssignm
         fromDate: { lte: operationalDate },
         OR: [
           { toDate: { gte: operationalDate } },
-          { toDate: null, noveltyType: { allowsDateTo: true } },
-          { toDate: null, noveltyType: { allowsDateTo: false }, fromDate: operationalDate },
+          { toDate: null, noveltyType: { allowsDateRange: true } },
+          { toDate: null, noveltyType: { allowsDateRange: false }, fromDate: operationalDate },
         ],
       },
     });

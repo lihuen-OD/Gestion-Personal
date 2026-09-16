@@ -2495,3 +2495,22 @@ describe("findBlockingNovelty — sólo novedades APROBADAS bloquean (Etapa 15G.
     expect(call.where.status).toBe("APROBADO");
   });
 });
+
+// Etapa 15L.2C (docs/decisions/NOVELTY_TYPE_CONSUMER_MIGRATION_15L2C.md):
+// findBlockingNovelty pasó de un OR entre 3 campos legacy
+// (blocksTimeEntry/setsWorkedHoursToZero/timeImpact=BLOQUEA_CARGA_DIA) a
+// una única condición sobre timeEntryBehavior. Este describe fija la
+// forma exacta del `where` que llega a Prisma -- status: "APROBADO" ya
+// filtra PENDIENTE/RECHAZADO fuera de la consulta (confirmado arriba); acá
+// se confirma que la condición de tipo de novedad ya no depende de ningún
+// campo legacy.
+describe("findBlockingNovelty — timeEntryBehavior como única fuente productiva (Etapa 15L.2C)", () => {
+  it("el where de noveltyType es exactamente { timeEntryBehavior: 'BLOQUEA_NUEVA_CARGA' }, sin OR ni campos legacy", async () => {
+    mockedPrisma.novelty.findFirst.mockResolvedValue(null);
+
+    await timeEntriesRepository.findBlockingNovelty("employee-1", new Date("2026-08-10"));
+
+    const call = mockedPrisma.novelty.findFirst.mock.calls[0]![0] as { where: { noveltyType: unknown } };
+    expect(call.where.noveltyType).toEqual({ timeEntryBehavior: "BLOQUEA_NUEVA_CARGA" });
+  });
+});

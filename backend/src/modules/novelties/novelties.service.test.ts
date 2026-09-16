@@ -261,6 +261,12 @@ function noveltyType(overrides: Partial<Record<string, unknown>> = {}) {
     setsWorkedHoursToZero: false,
     blocksTimeEntry: false,
     timeImpact: "NO_AFECTA_HORAS",
+    // Etapa 15L.2C: campos nuevos, con el mismo valor que su par legacy de
+    // arriba -- mismo estado que un NoveltyType real post-backfill de
+    // 15L.2A (docs/decisions/NOVELTY_TYPE_CONSUMER_MIGRATION_15L2C.md).
+    allowsDateRange: true,
+    finnegansRequiresValidity: false,
+    timeEntryBehavior: "NO_BLOQUEA",
     allowedLoadRoles: [] as string[],
     ...overrides,
   };
@@ -370,15 +376,34 @@ describe("noveltiesService.create", () => {
   });
 
   it("rechaza fechaHasta si el tipo no la permite (NOVELTY_TO_DATE_NOT_ALLOWED)", async () => {
-    repo.findNoveltyType.mockResolvedValue(noveltyType({ allowsDateTo: false }));
+    repo.findNoveltyType.mockResolvedValue(noveltyType({ allowsDateTo: false, allowsDateRange: false }));
 
     await expect(
       noveltiesService.create(createInput({ fromDate: new Date("2026-08-10"), toDate: new Date("2026-08-12") }), rrhhUser),
     ).rejects.toMatchObject({ statusCode: 400, code: "NOVELTY_TO_DATE_NOT_ALLOWED" });
   });
 
+  // Etapa 15L.2C (docs/decisions/NOVELTY_TYPE_CONSUMER_MIGRATION_15L2C.md):
+  // allowsDateRange es la única fuente productiva -- allowsDateTo (legacy)
+  // ya no se lee, aunque siga existiendo y sincronizado 1:1 en el modelo.
+  it("allowsDateRange=false bloquea toDate aunque allowsDateTo (legacy) diga lo contrario", async () => {
+    repo.findNoveltyType.mockResolvedValue(noveltyType({ allowsDateTo: true, allowsDateRange: false }));
+
+    await expect(
+      noveltiesService.create(createInput({ fromDate: new Date("2026-08-10"), toDate: new Date("2026-08-12") }), rrhhUser),
+    ).rejects.toMatchObject({ statusCode: 400, code: "NOVELTY_TO_DATE_NOT_ALLOWED" });
+  });
+
+  it("allowsDateRange=true permite toDate aunque allowsDateTo (legacy) diga lo contrario", async () => {
+    repo.findNoveltyType.mockResolvedValue(noveltyType({ allowsDateTo: false, allowsDateRange: true }));
+
+    await expect(
+      noveltiesService.create(createInput({ fromDate: new Date("2026-08-10"), toDate: new Date("2026-08-12") }), rrhhUser),
+    ).resolves.toBeDefined();
+  });
+
   it("exige fechaDesde y fechaHasta cuando el tipo tiene vigencia obligatoria (NOVELTY_VALIDITY_REQUIRED)", async () => {
-    repo.findNoveltyType.mockResolvedValue(noveltyType({ hasValidity: true, allowsDateTo: true }));
+    repo.findNoveltyType.mockResolvedValue(noveltyType({ hasValidity: true, allowsDateTo: true, finnegansRequiresValidity: true, allowsDateRange: true }));
 
     await expect(noveltiesService.create(createInput({ toDate: null }), rrhhUser)).rejects.toMatchObject({
       statusCode: 400,

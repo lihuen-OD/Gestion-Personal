@@ -12,6 +12,13 @@ const noveltyInclude = {
       origin: true,
       exportsToFinnegans: true,
       allowsHours: true,
+      // Etapa 15L.2C: se agregan los 3 campos nuevos para que los
+      // consumidores de esta respuesta (frontend) puedan migrar sus
+      // lecturas. Los legacy de abajo se mantienen por compatibilidad
+      // (docs/decisions/NOVELTY_TYPE_CONSUMER_MIGRATION_15L2C.md).
+      timeEntryBehavior: true,
+      allowsDateRange: true,
+      finnegansRequiresValidity: true,
       allowsDateTo: true,
       hasValidity: true,
       blocksTimeEntry: true,

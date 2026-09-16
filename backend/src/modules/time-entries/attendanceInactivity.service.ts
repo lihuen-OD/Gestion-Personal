@@ -62,14 +62,17 @@ export async function detectAttendanceInactivity(dateKey: string) {
       attendancePunches: { none: { timestamp: { gte: localStart, lt: localEnd } } },
       workShifts: { none: { startAt: { gte: localStart, lt: localEnd } } },
       timeEntries: { none: { date: { gte: operationalDate, lt: nextOperationalDate } } },
+      // Etapa 15L.2C: allowsDateRange reemplaza allowsDateTo (legacy, sigue
+      // existiendo y sincronizado 1:1) como fuente productiva -- mismo
+      // criterio que noveltyCoversDay (novelties.dateRange.ts).
       novelties: {
         none: {
           status: { not: "RECHAZADO" },
           fromDate: { lte: operationalDate },
           OR: [
             { toDate: { gte: operationalDate } },
-            { toDate: null, noveltyType: { allowsDateTo: true } },
-            { toDate: null, noveltyType: { allowsDateTo: false }, fromDate: operationalDate },
+            { toDate: null, noveltyType: { allowsDateRange: true } },
+            { toDate: null, noveltyType: { allowsDateRange: false }, fromDate: operationalDate },
           ],
         },
       },

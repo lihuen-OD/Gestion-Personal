@@ -10,7 +10,7 @@ import { noveltyTypeApiService } from "../services/api/noveltyTypeApiService";
 import { documentCategoryApiService } from "../services/api/documentCategoryApiService";
 import { timeEntryApiService } from "../services/api/timeEntryApiService";
 import { ApiError } from "../services/api/apiClient";
-import type { Employee } from "../types";
+import type { Employee, Novelty } from "../types";
 import type { EmployeeTimeGrid, EmployeeTimeGridRow } from "../services/api/employeeApiService";
 
 const mockUseAuth = vi.fn();
@@ -671,5 +671,55 @@ describe("EmployeeHoursPage — indicador de Hora Especial y Valor liquidable (E
 
     expect(await screen.findByText(/Cargar Hora normal/i)).toBeInTheDocument();
     expect(screen.queryByText(/Hora especial aplicada/)).not.toBeInTheDocument();
+  });
+});
+
+function buildBlockingNovelty(overrides: Partial<Novelty> = {}): Novelty {
+  return {
+    id: "novelty-1",
+    employeeId: "employee-1",
+    type: "Suspensión",
+    from: "2026-08-05",
+    to: "2026-08-05",
+    quantity: "1 día",
+    affectsSettlement: false,
+    status: "Aprobado",
+    createdBy: "Sistema",
+    ...overrides,
+  };
+}
+
+// Etapa 15L.2C (docs/decisions/NOVELTY_TYPE_CONSUMER_MIGRATION_15L2C.md):
+// isBlocked/conceptNovelties migraron de blocksTimeEntry/timeImpact
+// (legacy) a timeEntryBehavior. Este describe no tenía ninguna cobertura
+// antes de esta etapa.
+describe("EmployeeHoursPage — bloqueo por novedad vía timeEntryBehavior (Etapa 15L.2C)", () => {
+  it("timeEntryBehavior=BLOQUEA_NUEVA_CARGA bloquea la celda de Hora normal ese día, aunque los legacy digan lo contrario", async () => {
+    vi.mocked(employeeApiService.getTimeGrid).mockResolvedValue(buildGrid());
+    vi.mocked(noveltyApiService.getAll).mockResolvedValue([
+      buildBlockingNovelty({ timeEntryBehavior: "BLOQUEA_NUEVA_CARGA", blocksTimeEntry: false, timeImpact: "NO_AFECTA_HORAS" }),
+    ]);
+    renderPage();
+    await waitForGridLoaded();
+
+    const day5 = within(rowFor("Hora normal")).getByTitle("Suspensión");
+    expect(day5.className).toContain("blocked");
+    expect(within(day5).getByText("0")).toBeInTheDocument();
+  });
+
+  it("timeEntryBehavior=NO_BLOQUEA no bloquea la celda, aunque los legacy digan lo contrario", async () => {
+    vi.mocked(employeeApiService.getTimeGrid).mockResolvedValue(buildGrid());
+    vi.mocked(noveltyApiService.getAll).mockResolvedValue([
+      buildBlockingNovelty({ timeEntryBehavior: "NO_BLOQUEA", blocksTimeEntry: true, timeImpact: "BLOQUEA_CARGA_DIA" }),
+    ]);
+    renderPage();
+    await waitForGridLoaded();
+
+    // Día 5 = 5to botón de la fila (sin bloqueo y sin concepto destino, la
+    // novedad no aparece en el título -- conceptNovelties la filtra fuera
+    // de "Hora normal", comportamiento correcto y sin cambios de esta etapa).
+    const day5 = within(rowFor("Hora normal")).getAllByRole("button")[4]!;
+    expect(day5.className).not.toContain("blocked");
+    expect(within(day5).getByText("+")).toBeInTheDocument();
   });
 });

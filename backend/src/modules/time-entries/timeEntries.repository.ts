@@ -734,7 +734,9 @@ export const timeEntriesRepository = {
               employeeId: true,
               fromDate: true,
               toDate: true,
-              noveltyType: { select: { name: true, allowsDateTo: true } },
+              // Etapa 15L.2C: allowsDateRange reemplaza allowsDateTo como
+              // fuente productiva -- ver noveltyCoversDay.
+              noveltyType: { select: { name: true, allowsDateRange: true } },
             },
           })
         : Promise.resolve([]),
@@ -1710,6 +1712,12 @@ export const timeEntriesRepository = {
   // impedir la carga horaria operativa. Sólo `APROBADO` bloquea. Esto es
   // sólo bloqueo preventivo de carga NUEVA — Novedades nunca modifica un
   // TimeEntry existente (ver el documento citado).
+  // Etapa 15L.2C (docs/decisions/NOVELTY_TYPE_CONSUMER_MIGRATION_15L2C.md):
+  // migrado a leer únicamente timeEntryBehavior -- antes comparaba un OR
+  // entre blocksTimeEntry/setsWorkedHoursToZero/timeImpact=BLOQUEA_CARGA_DIA
+  // (los 3 campos legacy, siempre sincronizados en conjunto por
+  // noveltyTypes.sync.ts desde la Etapa 15L.2A). timeEntryBehavior es ahora
+  // la única fuente de verdad productiva de este bloqueo.
   findBlockingNovelty(employeeId: string, date: Date) {
     return prisma.novelty.findFirst({
       where: {
@@ -1717,13 +1725,7 @@ export const timeEntriesRepository = {
         status: "APROBADO",
         fromDate: { lte: date },
         OR: [{ toDate: null }, { toDate: { gte: date } }],
-        noveltyType: {
-          OR: [
-            { blocksTimeEntry: true },
-            { setsWorkedHoursToZero: true },
-            { timeImpact: "BLOQUEA_CARGA_DIA" },
-          ],
-        },
+        noveltyType: { timeEntryBehavior: "BLOQUEA_NUEVA_CARGA" },
       },
       include: { noveltyType: { select: { code: true, name: true } } },
     });
