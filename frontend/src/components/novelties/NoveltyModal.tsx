@@ -8,6 +8,7 @@ import type { Employee, Novelty } from "../../types";
 import type { HourConcept } from "../../types/hourConcept.types";
 import type { NoveltyType } from "../../types/noveltyType.types";
 import { displayLegajo, fullName } from "../../utils/employee";
+import { calendarDaysInclusive } from "../../utils/noveltyDateRange";
 import { currentMonthPeriod } from "../../utils/period";
 import { useAsyncAction } from "../../utils/useAsyncAction";
 import { Field, Select } from "../ui/FormControls";
@@ -28,9 +29,16 @@ import { LoadingState } from "../ui/LoadingState";
 // que el usuario sí veía y completaba en pantalla (allowsHours=true) sólo
 // porque el tipo exportaba como DAYS/UNIT. No modifica TimeEntry en ningún
 // caso -- quantityHours/quantityDays son sólo metadato de la novedad.
-function resolveNoveltyQuantities(allowsHours: boolean, hoursImpact: number, daysInRange: number) {
+//
+// Etapa 15L.5 (docs/decisions/NOVELTY_QUANTITY_SEMANTICS_15L5.md): ya no
+// manda ningún `quantityDays` calculado -- el backend es la única
+// autoridad (`novelties.service.ts::resolveQuantities`) y recalcula ese
+// valor sobre el rango real completo, sin importar lo que llegue acá. La
+// previsualización en pantalla ("Cantidad de días: N") usa
+// `calendarDaysInclusive` sólo para mostrarle algo a RRHH antes de guardar.
+function resolveNoveltyQuantities(allowsHours: boolean, hoursImpact: number) {
   if (allowsHours) return { quantityHours: hoursImpact, quantityDays: null };
-  return { quantityHours: null, quantityDays: daysInRange };
+  return { quantityHours: null, quantityDays: null };
 }
 
 export function NoveltyModal({
@@ -138,21 +146,12 @@ export function NoveltyModal({
       selectedType?.rules.timeImpact === "REGISTRA_HORAS_NO_TRABAJADAS",
   );
 
-  const dateRange = () => {
-    const start = new Date(`${from}T00:00:00`);
-    const end = new Date(
-      `${selectedType?.rules.allowsDateRange ? to : from}T00:00:00`,
-    );
-    const days: number[] = [];
-    for (
-      const current = new Date(start);
-      current <= end;
-      current.setDate(current.getDate() + 1)
-    ) {
-      if (current.getMonth() === start.getMonth()) days.push(current.getDate());
-    }
-    return days;
-  };
+  // Etapa 15L.5: sólo previsualización -- el backend recalcula quantityDays
+  // sobre el rango real completo al crear la novedad (ver
+  // resolveNoveltyQuantities más abajo, que ya no manda ningún valor).
+  const previewDays = selectedType && !selectedType.rules.allowsHours
+    ? calendarDaysInclusive(from, selectedType.rules.allowsDateRange ? to : from)
+    : null;
 
   const { isRunning: isSaving, run: save } = useAsyncAction(async () => {
     if (!selectedType) return;
@@ -172,7 +171,9 @@ export function NoveltyModal({
     // Etapa 15L.2B.1: allowsHours decide qué cantidad se envía -- decisión
     // operativa de la novedad, independiente de finnegansValueUnit (que
     // sólo interpreta esa cantidad para Finnegans, sin decidir si existe).
-    const quantities = resolveNoveltyQuantities(selectedType.rules.allowsHours, hoursImpact, Math.max(1, dateRange().length));
+    // Etapa 15L.5: quantityDays ya no se calcula acá -- el backend es la
+    // única autoridad (ver resolveNoveltyQuantities arriba).
+    const quantities = resolveNoveltyQuantities(selectedType.rules.allowsHours, hoursImpact);
 
     try {
       const created = await noveltyApiService.create({
@@ -279,6 +280,13 @@ export function NoveltyModal({
                 />
               ) : null}
             </div>
+
+            {previewDays !== null ? (
+              // Etapa 15L.5 (docs/decisions/NOVELTY_QUANTITY_SEMANTICS_15L5.md
+              // §8): sólo previsualización -- el backend calcula el valor
+              // definitivo al guardar, sobre el rango real completo.
+              <p className="table-sub">Cantidad de días: {previewDays}</p>
+            ) : null}
 
             {selectedType?.rules.requiresDocumentation ? (
               <div className="document-upload-card">

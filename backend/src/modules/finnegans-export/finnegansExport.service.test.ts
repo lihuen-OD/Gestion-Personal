@@ -224,6 +224,36 @@ describe("finnegansExportService.exportDefinitive — selección y readiness (si
   });
 });
 
+// Etapa 15L.5 (docs/decisions/NOVELTY_QUANTITY_SEMANTICS_15L5.md §13): el
+// exportador NO cambia -- sigue leyendo `Novelty.quantityDays` tal cual
+// (`resolveValue1`, sin tocar). Lo que cambió es que ese valor ahora es
+// canónico (calculado por novelties.service.ts sobre el rango completo, sin
+// recortar al mes de fromDate) en vez del valor recortado que calculaba el
+// frontend antes de esta etapa. Este test fija que, dado un `quantityDays`
+// ya canónico (4, para 30/07→02/08), el exportador lo usa tal cual como
+// Valor 1 -- coherente con Fecha desde/Fecha hasta, que siguen siendo el
+// rango real completo (15L.3B.1, sin recorte).
+describe("finnegansExportService.exportDefinitive — Valor 1 DAYS usa la cantidad canónica (Etapa 15L.5)", () => {
+  it("novedad cross-month 30/07→02/08 con quantityDays=4 (canónico): Valor 1=4, Fecha desde/hasta = rango completo", async () => {
+    repo.findExportableNovelties.mockResolvedValue([
+      novelty({
+        finnegansValueUnit: "DAYS",
+        finnegansRequiresValidity: true,
+        quantityDays: decimal("4"),
+        fromDate: new Date("2026-07-30"),
+        toDate: new Date("2026-08-02"),
+      }),
+    ]);
+    repo.findClosuresForExport.mockResolvedValue([{ employeeId: "employee-1", status: "APROBADO" }]);
+
+    const result = await finnegansExportService.exportDefinitive(requestInput({ period: "2026-07" }));
+
+    expect(result.rows[0]!["Valor 1"]).toBe("4");
+    expect(result.rows[0]!["Fecha desde"]).toBe("30/07/2026");
+    expect(result.rows[0]!["Fecha hasta"]).toBe("02/08/2026");
+  });
+});
+
 describe("finnegansExportService.exportDefinitive — versionado (tests A/B/D)", () => {
   it("A. primera exportación de un período: crea v1", async () => {
     repo.findExportableNovelties.mockResolvedValue([novelty()]);

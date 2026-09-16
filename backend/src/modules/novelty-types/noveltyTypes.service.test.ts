@@ -153,6 +153,44 @@ describe("noveltyTypesService.create — Etapa 15L.2B (coherencia Finnegans)", (
   });
 });
 
+// Etapa 15L.5 (docs/decisions/NOVELTY_QUANTITY_SEMANTICS_15L5.md §15/§17):
+// allowsHours=true + finnegansValueUnit=DAYS queda prohibido -- con la
+// regla nueva de novelties.service.ts::resolveQuantities, quantityDays
+// SIEMPRE es null cuando allowsHours=true, así que ese tipo nunca podría
+// exportar Valor 1. Auditado contra datos reales: hoy no existe ningún
+// NoveltyType con esta combinación (ver decision doc §16).
+describe("noveltyTypesService.create — Etapa 15L.5 (allowsHours + finnegansValueUnit=DAYS incompatibles)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    repo.create.mockResolvedValue({ id: "nt-1", code: "NOV-001", name: "Vacaciones" });
+  });
+
+  it("allowsHours=true + finnegansValueUnit=DAYS rechaza (NOVELTY_TYPE_HOURS_DAYS_CONFLICT), incluso sin exportsToFinnegans", async () => {
+    await expect(
+      noveltyTypesService.create(createInput({ allowsHours: true, finnegansValueUnit: "DAYS", exportsToFinnegans: false })),
+    ).rejects.toMatchObject({ statusCode: 400, code: "NOVELTY_TYPE_HOURS_DAYS_CONFLICT" });
+    expect(repo.create).not.toHaveBeenCalled();
+  });
+
+  it("allowsHours=true + finnegansValueUnit=HOURS sigue permitido", async () => {
+    await expect(
+      noveltyTypesService.create(createInput({ allowsHours: true, finnegansValueUnit: "HOURS" })),
+    ).resolves.toBeDefined();
+  });
+
+  it("allowsHours=true + finnegansValueUnit=UNIT sigue permitido", async () => {
+    await expect(
+      noveltyTypesService.create(createInput({ allowsHours: true, finnegansValueUnit: "UNIT" })),
+    ).resolves.toBeDefined();
+  });
+
+  it("allowsHours=false + finnegansValueUnit=DAYS sigue permitido (la combinación válida real)", async () => {
+    await expect(
+      noveltyTypesService.create(createInput({ allowsHours: false, finnegansValueUnit: "DAYS" })),
+    ).resolves.toBeDefined();
+  });
+});
+
 describe("noveltyTypesService.update — Etapa 15L.2A", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -218,5 +256,24 @@ describe("noveltyTypesService.update — Etapa 15L.2B (coherencia Finnegans)", (
     });
 
     await expect(noveltyTypesService.update("nt-1", { name: "Vacaciones anuales" } as UpdateNoveltyTypeInput)).resolves.toBeDefined();
+  });
+
+  // Etapa 15L.5: mismo criterio que create() -- mira el estado RESULTANTE
+  // (fila actual + patch), no sólo lo que vino en este PATCH puntual.
+  it("un PATCH que sólo prende allowsHours, con la fila actual ya en finnegansValueUnit=DAYS, rechaza (NOVELTY_TYPE_HOURS_DAYS_CONFLICT)", async () => {
+    repo.findById.mockResolvedValue({ exportsToFinnegans: false, finnegansValueUnit: "DAYS", finnegansLinks: [], allowsHours: false });
+
+    await expect(
+      noveltyTypesService.update("nt-1", { allowsHours: true } as UpdateNoveltyTypeInput),
+    ).rejects.toMatchObject({ statusCode: 400, code: "NOVELTY_TYPE_HOURS_DAYS_CONFLICT" });
+    expect(repo.update).not.toHaveBeenCalled();
+  });
+
+  it("un PATCH que sólo cambia finnegansValueUnit a DAYS, con la fila actual ya en allowsHours=true, rechaza", async () => {
+    repo.findById.mockResolvedValue({ exportsToFinnegans: false, finnegansValueUnit: "HOURS", finnegansLinks: [], allowsHours: true });
+
+    await expect(
+      noveltyTypesService.update("nt-1", { finnegansValueUnit: "DAYS" } as UpdateNoveltyTypeInput),
+    ).rejects.toMatchObject({ statusCode: 400, code: "NOVELTY_TYPE_HOURS_DAYS_CONFLICT" });
   });
 });

@@ -14,6 +14,7 @@ import type { ApiTimeGridSpecialHourDay, EmployeeTimeGridRow } from "../services
 import { formatMultiplier } from "../components/attendance/segmentDisplay";
 import type { NoveltyType } from "../types/noveltyType.types";
 import { noveltyColorClass } from "../utils/noveltyColor";
+import { calendarDaysInclusive } from "../utils/noveltyDateRange";
 import { displayLegajo, fullName } from "../utils/employee";
 import { currentMonthPeriod, formatPeriodDay, formatPeriodLabel, getMonthDays, getWeekdayAbbr, monthDate } from "../utils/period";
 import { formatHours } from "../utils/hours";
@@ -341,21 +342,13 @@ export function EmployeeHoursPage() {
       setManualError(manualBreakdownSaveErrorMessage(saveError));
     }
   });
-  const noveltyRange = () => {
-    const start = new Date(`${noveltyFrom}T00:00:00`);
-    const end = new Date(
-      `${selectedType?.rules.allowsDateRange ? noveltyTo : noveltyFrom}T00:00:00`,
-    );
-    const days: number[] = [];
-    for (
-      const current = new Date(start);
-      current <= end;
-      current.setDate(current.getDate() + 1)
-    ) {
-      if (current.getMonth() === start.getMonth()) days.push(current.getDate());
-    }
-    return days;
-  };
+  // Etapa 15L.5 (docs/decisions/NOVELTY_QUANTITY_SEMANTICS_15L5.md): sólo
+  // previsualización -- el backend recalcula quantityDays sobre el rango
+  // real completo al crear la novedad (novelties.service.ts::resolveQuantities),
+  // sin importar lo que se mande en el payload.
+  const previewNoveltyDays = selectedType && !selectedType.rules.allowsHours
+    ? calendarDaysInclusive(noveltyFrom, selectedType.rules.allowsDateRange ? noveltyTo : noveltyFrom)
+    : null;
   const { isRunning: isSaving, run: save } = useAsyncAction(async (status: TimeStatus) => {
     if (!selected || !employee) return;
     if (!user || !id) return;
@@ -422,7 +415,10 @@ export function EmployeeHoursPage() {
             fromDate: noveltyFrom,
             toDate: selectedType.rules.allowsDateRange ? noveltyTo : null,
             quantityHours: selectedType.rules.allowsHours ? hoursImpact : null,
-            quantityDays: selectedType.rules.allowsHours ? null : Math.max(1, noveltyRange().length),
+            // Etapa 15L.5: ya no se calcula acá -- el backend es la única
+            // autoridad de quantityDays (recalcula sobre el rango real
+            // completo, sin recortar al mes de fromDate).
+            quantityDays: null,
             observation: docNotes || null,
             targetHourConceptId: concept?.id || null,
           });
@@ -842,6 +838,13 @@ export function EmployeeHoursPage() {
                   />
                 ) : null}
               </div>
+
+              {previewNoveltyDays !== null ? (
+                // Etapa 15L.5 (docs/decisions/NOVELTY_QUANTITY_SEMANTICS_15L5.md
+                // §8): sólo previsualización -- el backend calcula el valor
+                // definitivo al guardar, sobre el rango real completo.
+                <p className="table-sub">Cantidad de días: {previewNoveltyDays}</p>
+              ) : null}
 
               {selectedType?.uiColor ? (
                 <div className="novelty-color-preview">

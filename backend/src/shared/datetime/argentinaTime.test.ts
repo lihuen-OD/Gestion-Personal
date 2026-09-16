@@ -3,6 +3,7 @@ import {
   argentinaCalendarDate,
   argentinaDateKey,
   argentinaDayRange,
+  calendarDaysInclusive,
   dayOfMonthFromCalendarDate,
   dayOfMonthFromInstant,
   nextArgentinaMidnightUtc,
@@ -98,6 +99,46 @@ describe("scheduledInstantForShiftTime (independiente de la zona horaria del pro
     const second = scheduledInstantForShiftTime(new Date(reference.getTime()), "14:45").getTime();
     expect(first).toBe(second);
     expect(new Date(first).toISOString()).toBe("2025-12-31T17:45:00.000Z");
+  });
+});
+
+describe("calendarDaysInclusive — Etapa 15L.5 (docs/decisions/NOVELTY_QUANTITY_SEMANTICS_15L5.md)", () => {
+  it("sin toDate: 1 día", () => {
+    expect(calendarDaysInclusive(argentinaCalendarDate("2026-07-15"), null)).toBe(1);
+  });
+
+  it("toDate igual a fromDate: 1 día", () => {
+    expect(calendarDaysInclusive(argentinaCalendarDate("2026-07-15"), argentinaCalendarDate("2026-07-15"))).toBe(1);
+  });
+
+  it("30/07 → 02/08: 4 días (cruza de mes, sin recortar al mes de fromDate)", () => {
+    expect(calendarDaysInclusive(argentinaCalendarDate("2026-07-30"), argentinaCalendarDate("2026-08-02"))).toBe(4);
+  });
+
+  it("31/12 → 02/01 del año siguiente: 3 días (cruza de año)", () => {
+    expect(calendarDaysInclusive(argentinaCalendarDate("2026-12-31"), argentinaCalendarDate("2027-01-02"))).toBe(3);
+  });
+
+  it("28/02 → 01/03 en año bisiesto (2028): 3 días (incluye el 29/02)", () => {
+    expect(calendarDaysInclusive(argentinaCalendarDate("2028-02-28"), argentinaCalendarDate("2028-03-01"))).toBe(3);
+  });
+
+  it("28/02 → 01/03 en año NO bisiesto (2026): 2 días", () => {
+    expect(calendarDaysInclusive(argentinaCalendarDate("2026-02-28"), argentinaCalendarDate("2026-03-01"))).toBe(2);
+  });
+
+  it("toDate anterior a fromDate: lanza en vez de devolver un número negativo/engañoso", () => {
+    expect(() => calendarDaysInclusive(argentinaCalendarDate("2026-08-02"), argentinaCalendarDate("2026-07-30"))).toThrow(RangeError);
+  });
+
+  it("la hora-de-día del Date no altera el resultado (se normaliza a medianoche UTC en ambos extremos)", () => {
+    const fromWithTime = new Date("2026-07-30T23:59:59.999Z");
+    const toWithTime = new Date("2026-08-02T00:00:00.001Z");
+    expect(calendarDaysInclusive(fromWithTime, toWithTime)).toBe(4);
+  });
+
+  it("rango largo dentro del mismo mes: cuenta todos los días, no sólo hasta fin de mes", () => {
+    expect(calendarDaysInclusive(argentinaCalendarDate("2026-07-01"), argentinaCalendarDate("2026-07-31"))).toBe(31);
   });
 });
 

@@ -536,6 +536,107 @@ describe("noveltiesService.create", () => {
       ).rejects.toMatchObject({ statusCode: 400, code: "NOVELTY_QUANTITY_UNIT_CONFLICT" });
     });
   });
+
+  // Etapa 15L.5 (docs/decisions/NOVELTY_QUANTITY_SEMANTICS_15L5.md): el
+  // backend pasa a ser la única autoridad de quantityDays -- deja de
+  // confiar en lo que mande el cliente. allowsHours sigue siendo la única
+  // señal que decide qué campo aplica (sin volver a acoplar
+  // finnegansValueUnit).
+  describe("Etapa 15L.5 — resolveQuantities: backend es la autoridad de quantityDays", () => {
+    it("allowsHours=true: quantityHours pasa tal cual (dato manual), quantityDays siempre null aunque el cliente mande uno", async () => {
+      repo.findNoveltyType.mockResolvedValue(noveltyType({ allowsHours: true }));
+
+      await noveltiesService.create(createInput({ quantityHours: 3 }), rrhhUser);
+
+      expect(repo.createMany).toHaveBeenCalledWith(
+        expect.objectContaining({ quantityHours: 3, quantityDays: null }),
+        "APROBADO",
+        rrhhUser.id,
+      );
+    });
+
+    it("allowsHours=false, sin toDate: quantityDays=1, quantityHours siempre null", async () => {
+      repo.findNoveltyType.mockResolvedValue(noveltyType({ allowsHours: false }));
+
+      await noveltiesService.create(createInput({ fromDate: new Date("2026-07-15"), toDate: null }), rrhhUser);
+
+      expect(repo.createMany).toHaveBeenCalledWith(
+        expect.objectContaining({ quantityDays: 1, quantityHours: null }),
+        "APROBADO",
+        rrhhUser.id,
+      );
+    });
+
+    it("toDate igual a fromDate: quantityDays=1", async () => {
+      repo.findNoveltyType.mockResolvedValue(noveltyType({ allowsHours: false }));
+
+      await noveltiesService.create(createInput({ fromDate: new Date("2026-07-15"), toDate: new Date("2026-07-15") }), rrhhUser);
+
+      expect(repo.createMany).toHaveBeenCalledWith(expect.objectContaining({ quantityDays: 1 }), "APROBADO", rrhhUser.id);
+    });
+
+    it("cross-month 30/07 → 02/08: quantityDays=4 (rango real completo, sin recortar al mes de fromDate)", async () => {
+      repo.findNoveltyType.mockResolvedValue(noveltyType({ allowsHours: false }));
+
+      await noveltiesService.create(createInput({ fromDate: new Date("2026-07-30"), toDate: new Date("2026-08-02") }), rrhhUser);
+
+      expect(repo.createMany).toHaveBeenCalledWith(expect.objectContaining({ quantityDays: 4 }), "APROBADO", rrhhUser.id);
+    });
+
+    it("cross-year 31/12 → 02/01: quantityDays=3", async () => {
+      repo.findNoveltyType.mockResolvedValue(noveltyType({ allowsHours: false }));
+
+      await noveltiesService.create(createInput({ fromDate: new Date("2026-12-31"), toDate: new Date("2027-01-02") }), rrhhUser);
+
+      expect(repo.createMany).toHaveBeenCalledWith(expect.objectContaining({ quantityDays: 3 }), "APROBADO", rrhhUser.id);
+    });
+
+    it("el cliente manda un quantityDays incorrecto: el backend lo ignora y persiste el valor canónico", async () => {
+      repo.findNoveltyType.mockResolvedValue(noveltyType({ allowsHours: false }));
+
+      await noveltiesService.create(
+        createInput({ fromDate: new Date("2026-07-30"), toDate: new Date("2026-08-02"), quantityDays: 2 }),
+        rrhhUser,
+      );
+
+      expect(repo.createMany).toHaveBeenCalledWith(expect.objectContaining({ quantityDays: 4 }), "APROBADO", rrhhUser.id);
+    });
+
+    it("allowsDateRange=false: quantityDays=1 -- un toDate distinto de fromDate ya se rechaza antes (NOVELTY_TO_DATE_NOT_ALLOWED), nunca llega a calcularse sobre un rango extendido", async () => {
+      repo.findNoveltyType.mockResolvedValue(noveltyType({ allowsHours: false, allowsDateRange: false }));
+
+      await noveltiesService.create(createInput({ fromDate: new Date("2026-07-30"), toDate: null }), rrhhUser);
+
+      expect(repo.createMany).toHaveBeenCalledWith(expect.objectContaining({ quantityDays: 1, toDate: null }), "APROBADO", rrhhUser.id);
+
+      await expect(
+        noveltiesService.create(createInput({ fromDate: new Date("2026-07-30"), toDate: new Date("2026-08-05") }), rrhhUser),
+      ).rejects.toMatchObject({ code: "NOVELTY_TO_DATE_NOT_ALLOWED" });
+    });
+
+    it("timezone: la hora-de-día que traiga el Date no altera el resultado (se normaliza a medianoche UTC)", async () => {
+      repo.findNoveltyType.mockResolvedValue(noveltyType({ allowsHours: false }));
+
+      await noveltiesService.create(
+        createInput({ fromDate: new Date("2026-07-30T23:59:59.999Z"), toDate: new Date("2026-08-02T00:00:00.001Z") }),
+        rrhhUser,
+      );
+
+      expect(repo.createMany).toHaveBeenCalledWith(expect.objectContaining({ quantityDays: 4 }), "APROBADO", rrhhUser.id);
+    });
+  });
+
+  describe("Etapa 15L.5 — createNoveltySchema sigue rechazando toDate < fromDate", () => {
+    it("toDate anterior a fromDate: la validación del schema falla (gate real de la API, antes de llegar al service)", () => {
+      const result = createNoveltySchema.safeParse({
+        employeeIds: ["11111111-1111-1111-1111-111111111111"],
+        noveltyTypeId: "22222222-2222-2222-2222-222222222222",
+        fromDate: "2026-08-02",
+        toDate: "2026-07-30",
+      });
+      expect(result.success).toBe(false);
+    });
+  });
 });
 
 // Etapa 15G.3 (docs/decisions/NOVELTY_OVERLAP_DUPLICATE_RULES_15G3.md):

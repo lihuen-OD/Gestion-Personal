@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { NoveltyModal } from "./NoveltyModal";
 import { ApiError } from "../../services/api/apiClient";
@@ -441,7 +441,13 @@ describe("NoveltyModal — Etapa 15L.2B.1 (allowsHours decide la cantidad, indep
     ));
   });
 
-  it("allowsHours=false envía quantityDays sin importar finnegansValueUnit=UNIT (gap documentado para 15L.2C)", async () => {
+  // Etapa 15L.5 (docs/decisions/NOVELTY_QUANTITY_SEMANTICS_15L5.md): cierra
+  // el gap que dejaba abierto 15L.2C -- antes el frontend calculaba y
+  // enviaba un quantityDays (recortado al mes de fromDate, bug real) sin
+  // importar si el tipo lo necesitaba. Ahora nunca se envía ninguno: el
+  // backend es la única autoridad y lo recalcula siempre sobre el rango
+  // real completo, sin importar finnegansValueUnit.
+  it("allowsHours=false: nunca envía quantityDays calculado (el backend lo recalcula), sin importar finnegansValueUnit=UNIT", async () => {
     const type = buildNoveltyType({
       id: "type-sancion",
       code: "NOV-SANCION",
@@ -457,7 +463,7 @@ describe("NoveltyModal — Etapa 15L.2B.1 (allowsHours decide la cantidad, indep
     await userEvent.click(screen.getByRole("button", { name: "Guardar novedad" }));
 
     await waitFor(() => expect(noveltyApiService.create).toHaveBeenCalledWith(
-      expect.objectContaining({ quantityHours: null, quantityDays: expect.any(Number) }),
+      expect.objectContaining({ quantityHours: null, quantityDays: null }),
     ));
   });
 
@@ -474,6 +480,84 @@ describe("NoveltyModal — Etapa 15L.2B.1 (allowsHours decide la cantidad, indep
 
     await screen.findByText("SoloExportaHoras");
     expect(screen.queryByLabelText("Cantidad de horas")).not.toBeInTheDocument();
+  });
+});
+
+// Etapa 15L.5 (docs/decisions/NOVELTY_QUANTITY_SEMANTICS_15L5.md §11/§20):
+// previsualización de "Cantidad de días" -- nunca se envía como el dato
+// definitivo (eso lo decide el backend), pero le muestra a RRHH un número
+// coherente con lo que el backend va a calcular, sobre el rango real
+// completo (nunca recortado al mes de fromDate, el bug que tenía la lógica
+// duplicada antes de esta etapa).
+describe("NoveltyModal — Etapa 15L.5 (previsualización de Cantidad de días)", () => {
+  it("DAYS: no hay ningún input manual de cantidad de días -- sólo texto de previsualización", async () => {
+    const type = buildNoveltyType({ id: "type-dias", code: "NOV-DIAS", name: "Suspension", rules: { ...buildNoveltyType().rules, allowsHours: false } });
+    vi.mocked(noveltyTypeApiService.getAll).mockResolvedValue([type]);
+
+    render(<NoveltyModal employees={[buildEmployee()]} close={vi.fn()} saved={vi.fn()} />);
+
+    await screen.findByText("Suspension");
+    expect(screen.queryByLabelText("Cantidad de días")).not.toBeInTheDocument();
+    expect(screen.getByText(/Cantidad de días:/)).toBeInTheDocument();
+  });
+
+  it("HOURS: sigue mostrando el input manual de cantidad de horas (sin cambios)", async () => {
+    vi.mocked(noveltyTypeApiService.getAll).mockResolvedValue([llegadaTardeType]);
+
+    render(<NoveltyModal employees={[buildEmployee()]} close={vi.fn()} saved={vi.fn()} />);
+
+    await screen.findByText("Llegada tarde");
+    expect(screen.getByLabelText("Cantidad de horas")).toBeInTheDocument();
+    expect(screen.queryByText(/Cantidad de días:/)).not.toBeInTheDocument();
+  });
+
+  it("mismo día (Desde = Hasta): previsualiza 1 día", async () => {
+    const type = buildNoveltyType({ id: "type-dias", code: "NOV-DIAS", name: "Suspension", rules: { ...buildNoveltyType().rules, allowsHours: false } });
+    vi.mocked(noveltyTypeApiService.getAll).mockResolvedValue([type]);
+
+    render(<NoveltyModal employees={[buildEmployee()]} close={vi.fn()} saved={vi.fn()} />);
+    await screen.findByText("Suspension");
+
+    expect(screen.getByText("Cantidad de días: 1")).toBeInTheDocument();
+  });
+
+  it("cross-month 30/07 → 02/08: previsualiza 4 días, no sólo los del mes de Desde", async () => {
+    const type = buildNoveltyType({ id: "type-dias", code: "NOV-DIAS", name: "Suspension", rules: { ...buildNoveltyType().rules, allowsHours: false } });
+    vi.mocked(noveltyTypeApiService.getAll).mockResolvedValue([type]);
+
+    render(<NoveltyModal employees={[buildEmployee()]} close={vi.fn()} saved={vi.fn()} />);
+    await screen.findByText("Suspension");
+
+    fireEvent.change(screen.getByLabelText("Desde"), { target: { value: "2026-07-30" } });
+    fireEvent.change(screen.getByLabelText("Hasta"), { target: { value: "2026-08-02" } });
+
+    expect(screen.getByText("Cantidad de días: 4")).toBeInTheDocument();
+  });
+
+  it("cambio de año 31/12 → 02/01: previsualiza 3 días", async () => {
+    const type = buildNoveltyType({ id: "type-dias", code: "NOV-DIAS", name: "Suspension", rules: { ...buildNoveltyType().rules, allowsHours: false } });
+    vi.mocked(noveltyTypeApiService.getAll).mockResolvedValue([type]);
+
+    render(<NoveltyModal employees={[buildEmployee()]} close={vi.fn()} saved={vi.fn()} />);
+    await screen.findByText("Suspension");
+
+    fireEvent.change(screen.getByLabelText("Desde"), { target: { value: "2026-12-31" } });
+    fireEvent.change(screen.getByLabelText("Hasta"), { target: { value: "2027-01-02" } });
+
+    expect(screen.getByText("Cantidad de días: 3")).toBeInTheDocument();
+  });
+
+  it("cambiar cualquiera de las dos fechas actualiza la previsualización", async () => {
+    const type = buildNoveltyType({ id: "type-dias", code: "NOV-DIAS", name: "Suspension", rules: { ...buildNoveltyType().rules, allowsHours: false } });
+    vi.mocked(noveltyTypeApiService.getAll).mockResolvedValue([type]);
+
+    render(<NoveltyModal employees={[buildEmployee()]} close={vi.fn()} saved={vi.fn()} />);
+    await screen.findByText("Suspension");
+    expect(screen.getByText("Cantidad de días: 1")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Hasta"), { target: { value: "2026-09-05" } });
+    expect(screen.getByText(/Cantidad de días: \d+/)).toBeInTheDocument();
+    expect(screen.queryByText("Cantidad de días: 1")).not.toBeInTheDocument();
   });
 });
 

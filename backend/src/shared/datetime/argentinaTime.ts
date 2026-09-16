@@ -116,6 +116,32 @@ export function dayOfMonthFromCalendarDate(dateOnly: Date): number {
   return dateOnly.getUTCDate();
 }
 
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+/**
+ * Etapa 15L.5 (docs/decisions/NOVELTY_QUANTITY_SEMANTICS_15L5.md): cantidad
+ * de días CALENDARIO, inclusive, entre dos FECHAS CALENDARIO ya normalizadas
+ * (ver nota de `periodFromCalendarDate` — ej. `Novelty.fromDate`/`toDate`,
+ * ambas `@db.Date`). Sin `toDate` (o `Novelty.allowsDateRange=false`, que ya
+ * llega acá como `toDate=null`), la novedad es de un solo día → 1. Con
+ * `toDate`, cuenta ambos extremos: `30/07 → 02/08` = 4 días (30, 31, 01, 02),
+ * `31/12 → 02/01` = 3 días — funciona igual cruzando mes o año porque usa
+ * `Date.UTC` normalizado a medianoche en ambos extremos, nunca la hora local
+ * del proceso ni ninguna resta de milisegundos sobre un `Date` sin
+ * normalizar. No recorta el rango a ningún mes: es el mismo helper que
+ * `finnegans-export` usa indirectamente al leer `Novelty.quantityDays` ya
+ * calculado por `novelties.service.ts` al crear la novedad.
+ */
+export function calendarDaysInclusive(fromDate: Date, toDate?: Date | null): number {
+  if (!toDate) return 1;
+  const from = Date.UTC(fromDate.getUTCFullYear(), fromDate.getUTCMonth(), fromDate.getUTCDate());
+  const to = Date.UTC(toDate.getUTCFullYear(), toDate.getUTCMonth(), toDate.getUTCDate());
+  if (to < from) {
+    throw new RangeError("calendarDaysInclusive: toDate must be on or after fromDate");
+  }
+  return Math.round((to - from) / MS_PER_DAY) + 1;
+}
+
 /** Formatea un instante como hora local Argentina "HH:MM". */
 export function formatArgentinaTime(instant: Date): string {
   return new Intl.DateTimeFormat("es-AR", {

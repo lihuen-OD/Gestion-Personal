@@ -4,6 +4,7 @@ import { auditService } from "../audit/audit.service";
 import { AppError } from "../../shared/errors/AppError";
 import { employeeAccessWhere } from "../employees/employeeAccess";
 import { roles } from "../../shared/security/roles";
+import { calendarDaysInclusive } from "../../shared/datetime/argentinaTime";
 import { noveltiesRepository } from "./novelties.repository";
 import type { CreateNoveltyInput, ListNoveltiesQuery, RejectNoveltyInput } from "./novelties.schemas";
 import { notifyRrhh } from "../workforce-management/workforce.service";
@@ -120,6 +121,31 @@ function normalizeCreateInput(input: CreateNoveltyInput, type: Awaited<ReturnTyp
   return input;
 }
 
+// Etapa 15L.5 (docs/decisions/NOVELTY_QUANTITY_SEMANTICS_15L5.md): el
+// backend pasa a ser la única autoridad de `quantityDays` -- deja de
+// confiar en lo que mande el cliente (antes: el frontend lo calculaba
+// recortado al mes de `fromDate`, lógica duplicada en NoveltyModal.tsx/
+// EmployeeHoursPage.tsx). `allowsHours` sigue siendo la única señal que
+// decide qué campo aplica, mismo criterio ya establecido en la Etapa
+// 15L.2B.1 -- no se vuelve a acoplar nada a `finnegansValueUnit` (que sólo
+// interpreta el valor ya persistido para el exportador, nunca decide si
+// existe). `allowsHours=true` -> `quantityHours` queda tal cual lo mandó el
+// cliente (dato manual, sin cálculo); `quantityDays` siempre `null`.
+// `allowsHours=false` -> `quantityDays` = días calendario inclusivos del
+// rango REAL (`calendarDaysInclusive`, sin recortar a ningún mes: la
+// pertenencia mensual de la novedad ya la decide `fromDate` en el
+// exportador, Etapa 15L.3B.1 — la cantidad no necesita repetir ese
+// recorte); `quantityHours` siempre `null`. Se aplica DESPUÉS de
+// `normalizeCreateInput` para que un tipo con `allowsDateRange=false`
+// calcule sobre `toDate=null` (1 día), nunca sobre un `toDate` extendido
+// que igual se iba a descartar.
+function resolveQuantities(input: CreateNoveltyInput, type: Awaited<ReturnType<typeof noveltiesRepository.findNoveltyType>>): CreateNoveltyInput {
+  if (type?.allowsHours) {
+    return { ...input, quantityDays: null };
+  }
+  return { ...input, quantityHours: null, quantityDays: calendarDaysInclusive(input.fromDate, input.toDate) };
+}
+
 function rangeBounds(fromDate: Date, toDate: Date | null | undefined) {
   const end = toDate || fromDate;
   return { start: fromDate.getTime(), end: end.getTime() };
@@ -176,7 +202,7 @@ export const noveltiesService = {
   async create(input: CreateNoveltyInput, user: Express.AuthUser, audit?: AuditContext) {
     await ensureEmployeesVisible(input.employeeIds, user);
     const type = await ensureNoveltyTypeReady(input);
-    const normalizedInput = normalizeCreateInput(input, type);
+    const normalizedInput = resolveQuantities(normalizeCreateInput(input, type), type);
     assertCanLoad(type, user);
     await ensureNoOverlap(normalizedInput, type);
     // Etapa 15L.2A (docs/decisions/NOVELTY_TYPE_MODEL_NORMALIZATION_15L2A.md,

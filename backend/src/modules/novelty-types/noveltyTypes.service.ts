@@ -44,11 +44,33 @@ async function auditChange(action: "CREATE" | "UPDATE", item: { id: string; code
 // excluye en silencio (exige finnegansLinks activo) y "Valor 1" queda
 // ambiguo (docs/decisions/NOVELTY_TYPE_MODEL_NORMALIZATION_15L2A.md §8). No
 // se exige para tipos legacy que ya no exportan (exportsToFinnegans=false).
+//
+// Etapa 15L.5 (docs/decisions/NOVELTY_QUANTITY_SEMANTICS_15L5.md §15/§17):
+// además prohíbe `allowsHours=true` + `finnegansValueUnit=DAYS`. Auditado
+// contra los datos reales (Etapa 15L.5, sólo lectura): hoy no existe
+// ningún `NoveltyType` con esa combinación. Se prohíbe en vez de tolerarla
+// porque, con la regla nueva de `novelties.service.ts::resolveQuantities`,
+// `allowsHours=true` implica `quantityDays` SIEMPRE `null` (nunca se
+// calcula para un tipo que captura horas) -- un tipo así configurado
+// exportaría para siempre con Valor 1 vacío (`MISSING_DAYS_QUANTITY`), sin
+// ningún dato que pudiera completarlo. `allowsHours` (captura operativa) y
+// `finnegansValueUnit` (interpretación de exportación) siguen siendo
+// conceptos independientes en toda otra combinación -- esta es la única
+// combinación que se bloquea, y sólo porque es estructuralmente inviable,
+// no por volver a acoplar ambos campos.
 function assertFinnegansConfigCoherent(effective: {
   exportsToFinnegans: boolean;
   finnegansValueUnit: string | null | undefined;
   finnegansLinks: Array<{ code: string; name: string }>;
+  allowsHours: boolean;
 }) {
+  if (effective.allowsHours && effective.finnegansValueUnit === "DAYS") {
+    throw new AppError(
+      "Un tipo con \"Permite cantidad de horas\" activo no puede usar \"Días\" como unidad de Valor 1: nunca habría una cantidad de días para exportar.",
+      400,
+      "NOVELTY_TYPE_HOURS_DAYS_CONFLICT",
+    );
+  }
   if (!effective.exportsToFinnegans) return;
   if (!effective.finnegansLinks.length) {
     throw new AppError("Para exportar a Finnegans hace falta un código y un nombre Finnegans.", 400, "NOVELTY_TYPE_FINNEGANS_LINK_REQUIRED");
@@ -85,6 +107,7 @@ export const noveltyTypesService = {
       exportsToFinnegans: Boolean(synced.exportsToFinnegans),
       finnegansValueUnit: synced.finnegansValueUnit,
       finnegansLinks: synced.finnegansLinks,
+      allowsHours: Boolean(synced.allowsHours),
     });
     const item = await execute(() => noveltyTypesRepository.create(synced));
     invalidateNoveltyTypesCache();
@@ -102,6 +125,7 @@ export const noveltyTypesService = {
       exportsToFinnegans: synced.exportsToFinnegans !== undefined ? synced.exportsToFinnegans : current.exportsToFinnegans,
       finnegansValueUnit: synced.finnegansValueUnit !== undefined ? synced.finnegansValueUnit : current.finnegansValueUnit,
       finnegansLinks: synced.finnegansLinks !== undefined ? synced.finnegansLinks : current.finnegansLinks,
+      allowsHours: synced.allowsHours !== undefined ? synced.allowsHours : current.allowsHours,
     });
     const item = await execute(() => noveltyTypesRepository.update(id, synced));
     invalidateNoveltyTypesCache();

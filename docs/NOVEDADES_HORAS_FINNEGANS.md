@@ -99,6 +99,18 @@ Columnas de exportación (CSV/XLSX, sin cambios desde la Etapa 15L.3A):
 | Fecha desde | Vacía salvo que el tipo exija vigencia (`finnegansRequiresValidity`). |
 | Fecha hasta | Vacía salvo que el tipo exija vigencia; si falta, la fila queda bloqueada en vez de exportarse con la celda vacía. |
 
+**`quantityDays`/`quantityHours`** (Etapa 15L.5,
+`docs/decisions/NOVELTY_QUANTITY_SEMANTICS_15L5.md`): el backend es la
+única autoridad de ambos valores, calculados/validados al crear la
+novedad — el cliente ya no puede fijarlos. `quantityHours` sigue siendo
+100% manual (aplica si `NoveltyType.allowsHours = true`).
+`quantityDays` (aplica si `allowsHours = false`) es la cantidad de días
+calendario **inclusive** del rango real completo `[fromDate, toDate]`, sin
+recortar al mes al que pertenece la novedad para Finnegans (ese período lo
+sigue decidiendo sólo `fromDate`, Etapa 15L.3B.1): una novedad
+`30/07/2026 → 02/08/2026` tiene `quantityDays = 4`, y se exporta en julio
+con ese mismo valor completo — nunca `2` (los días de julio solamente).
+
 **Preview vs. exportación definitiva** (Etapa 15L.3A, contrato de endpoint
 actualizado en la Etapa 15L.4): `GET .../novelties?period=YYYY-MM&preview=true`
 sólo informa — muestra todas las novedades candidatas del período,
