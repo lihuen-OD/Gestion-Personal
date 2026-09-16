@@ -1172,11 +1172,10 @@ Reglas:
 
 ## Exportaciones
 
-### Finnegans novedades
+### Finnegans novedades — preview
 
 ```txt
 GET /api/finnegans-export/novelties
-GET /api/finnegans-export/novelties.csv
 ```
 
 Query:
@@ -1184,23 +1183,17 @@ Query:
 ```txt
 period=YYYY-MM   (obligatorio)
 employeeId       (opcional)
-preview=false    (sólo para .novelties, no para .csv)
+preview=true     (aceptado por compatibilidad textual; este GET siempre se
+                   trata como preview desde la Etapa 15L.4 — la exportación
+                   definitiva se movió a POST, ver abajo)
 ```
 
 **Etapa 15L.3A** (`docs/decisions/FINNEGANS_EXPORT_NORMALIZED_15L3A.md`):
 `from`/`to`/`includePending` se retiraron (sin caller real, incompatibles con
-el gate de cierre mensual). `preview=true` sólo informa — nunca exige cierre
-mensual aprobado y nunca queda auditado; `preview=false` (default,
-equivalente a la operación anterior) es la exportación **definitiva**:
-revalida todo, exige que el cierre mensual de cada empleado incluido esté
-`APROBADO` (si no, `409 FINNEGANS_MONTHLY_CLOSURE_NOT_APPROVED`) y que cada
-fila esté completamente lista (vínculo Finnegans activo, unidad de Valor 1,
-cantidad, vigencia — si no, `409 FINNEGANS_EXPORT_NOT_READY`), y sí queda
-auditada (`AuditLog`, `action: EXPORT`, `entity: FinnegansExport`).
-`.novelties.csv` nunca acepta `preview` — siempre corre la operación
-definitiva, sin excepción.
+el gate de cierre mensual). Este GET nunca exige cierre mensual aprobado,
+nunca audita y nunca crea historial.
 
-Respuesta JSON (`{ data: { period, rows, readiness } }`):
+Respuesta JSON (`{ data: { period, rows, readiness, hash, lastExport } }`):
 
 ```txt
 readiness.ready        boolean
@@ -1208,13 +1201,75 @@ readiness.totalRows    number
 readiness.readyRows    number
 readiness.blockedRows  number
 readiness.reasons      string[]  (motivos humanos, sin ids técnicos)
+hash                    string   (SHA-256 del dataset actual, Etapa 15L.4 §7)
+lastExport              FinnegansExportBatchSummary & { sameAsCurrent: boolean } | null
 ```
 
 Cada fila trae, además de las columnas de abajo, un campo `estado`
 (`LISTO`/`FALTA_CANTIDAD`/`FALTA_CONFIGURACION`/`CIERRE_PENDIENTE`) — sólo
 para la UI de preview, nunca se exporta en el CSV/XLSX.
 
-Columnas (CSV/XLSX, sin cambios de nombre ni de orden):
+### Finnegans novedades — exportación definitiva (Etapa 15L.4)
+
+```txt
+POST /api/finnegans-export/novelties/export
+```
+
+Reemplaza al GET sin `preview` y a `GET .../novelties.csv` de 15L.3A
+(ambos retirados — sin ningún caller real). Body:
+
+```txt
+{
+  period: "YYYY-MM",       (obligatorio)
+  employeeId?: string,      (opcional)
+  format: "XLSX" | "CSV",   (obligatorio, sólo informativo — no cambia selección)
+  reexportReason?: string,  (obligatorio si el período ya tiene algún batch —
+                              exigido por el backend, mínimo 5 caracteres)
+  idempotencyKey: string,   (obligatorio, UUID — un reintento con la misma
+                              key nunca crea una versión nueva)
+}
+```
+
+Revalida todo desde cero: exige que el cierre mensual de cada empleado
+incluido esté `APROBADO` (si no, `409 FINNEGANS_MONTHLY_CLOSURE_NOT_APPROVED`),
+que cada fila esté completamente lista (si no, `409 FINNEGANS_EXPORT_NOT_READY`
+— con precedencia sobre el de cierre si ambos aplican), y que venga motivo
+si corresponde (si no, `400 FINNEGANS_EXPORT_REASON_REQUIRED`). Si autoriza,
+crea un `FinnegansExportBatch` + snapshot de filas (`FinnegansExportBatchItem`)
+y audita (`AuditLog`, `action: EXPORT`, `entity: FinnegansExport`,
+`entityId: batch.id`).
+
+Respuesta JSON (`{ data: { period, rows, readiness, batch } }`):
+
+```txt
+batch.id              string  (referencia de navegación, no se muestra como texto)
+batch.version          number
+batch.format            "XLSX" | "CSV"
+batch.createdAt          string (ISO)
+batch.createdByName      string | null
+batch.rowCount           number
+batch.reason             string | null
+batch.isReexport         boolean  (version > 1)
+batch.sameAsPrevious     boolean  (hash igual al batch anterior)
+batch.diff               { added, removed, modified } | null  (null en v1)
+```
+
+### Finnegans novedades — historial (Etapa 15L.4)
+
+```txt
+GET /api/finnegans-export/history?period=YYYY-MM
+GET /api/finnegans-export/history/:batchId
+```
+
+El primero devuelve `{ data: { period, batches } }` — batches del período,
+más nueva primero, cada uno con la misma forma que `batch` de arriba más
+`diff` contra su versión anterior inmediata. El segundo devuelve
+`{ data: { batch, rows, diff } }` — metadata + snapshot completo de filas
+(mismo formato que las columnas de exportación) + diff contra el anterior.
+Ambos exigen el mismo rol que el resto del módulo (RRHH) — sin ids
+técnicos expuestos en ningún texto de presentación.
+
+Columnas (CSV/XLSX, sin cambios de nombre ni de orden desde 15L.3A):
 
 ```txt
 Legajo

@@ -28,10 +28,57 @@ export type FinnegansExportRow = {
   estado: FinnegansRowStatus;
 };
 
+export type FinnegansExportFormat = "XLSX" | "CSV";
+
+export type FinnegansExportDiffSummary = {
+  added: number;
+  removed: number;
+  modified: number;
+};
+
+// Etapa 15L.4 (docs/decisions/FINNEGANS_EXPORT_HISTORY_IDEMPOTENCY_15L4.md):
+// `id` viaja sólo como referencia de navegación (para pedir el detalle) —
+// nunca se muestra como texto en pantalla.
+export type FinnegansExportBatchSummary = {
+  id: string;
+  version: number;
+  format: FinnegansExportFormat;
+  createdAt: string;
+  createdByName: string | null;
+  rowCount: number;
+  reason: string | null;
+  isReexport: boolean;
+  sameAsPrevious: boolean;
+};
+
 export type FinnegansExportPreview = {
   period: string;
   rows: FinnegansExportRow[];
   readiness: FinnegansReadinessSummary;
+  hash: string;
+  lastExport: (FinnegansExportBatchSummary & { sameAsCurrent: boolean }) | null;
+};
+
+export type FinnegansExportResult = {
+  period: string;
+  rows: FinnegansExportRow[];
+  readiness: FinnegansReadinessSummary;
+  batch: FinnegansExportBatchSummary & { diff: FinnegansExportDiffSummary | null };
+};
+
+// Etapa 15L.4 §33: cada versión trae el resumen de diff contra su anterior
+// inmediata (null para la primera versión de un período).
+export type FinnegansExportHistoryEntry = FinnegansExportBatchSummary & { diff: FinnegansExportDiffSummary | null };
+
+export type FinnegansExportHistory = {
+  period: string;
+  batches: FinnegansExportHistoryEntry[];
+};
+
+export type FinnegansExportHistoryDetail = {
+  batch: FinnegansExportBatchSummary;
+  rows: FinnegansExportRow[];
+  diff: FinnegansExportDiffSummary | null;
 };
 
 type ApiFinnegansRow = {
@@ -48,7 +95,17 @@ type ApiFinnegansRow = {
   estado?: FinnegansRowStatus;
 };
 
-type ApiResponse = { data: { period: string; rows: ApiFinnegansRow[]; readiness: FinnegansReadinessSummary } };
+type ApiPreviewResponse = {
+  data: { period: string; rows: ApiFinnegansRow[]; readiness: FinnegansReadinessSummary; hash: string; lastExport: (FinnegansExportBatchSummary & { sameAsCurrent: boolean }) | null };
+};
+
+type ApiExportResponse = {
+  data: { period: string; rows: ApiFinnegansRow[]; readiness: FinnegansReadinessSummary; batch: FinnegansExportBatchSummary & { diff: FinnegansExportDiffSummary | null } };
+};
+
+type ApiHistoryResponse = { data: FinnegansExportHistory };
+
+type ApiHistoryDetailResponse = { data: { batch: FinnegansExportBatchSummary; rows: ApiFinnegansRow[]; diff: FinnegansExportDiffSummary | null } };
 
 function mapFromApi(row: ApiFinnegansRow, index: number): FinnegansExportRow {
   return {
@@ -67,26 +124,54 @@ function mapFromApi(row: ApiFinnegansRow, index: number): FinnegansExportRow {
   };
 }
 
-function mapPreview(response: ApiResponse): FinnegansExportPreview {
-  return { period: response.data.period, rows: response.data.rows.map(mapFromApi), readiness: response.data.readiness };
-}
-
 export const finnegansExportApiService = {
-  // Etapa 15L.3A §15/§26: sólo informa — nunca exige cierre mensual
-  // aprobado y nunca queda auditada como una exportación realizada. El
-  // botón "Exportar Excel" nunca genera el archivo con estas filas.
-  async getPreview(period: string) {
+  // Etapa 15L.3A §15/§26 / 15L.4 §29: sólo informa — nunca exige cierre
+  // mensual aprobado y nunca queda auditada ni crea historial. Además del
+  // dataset y el readiness, trae `hash` (para comparar sin exportar) y
+  // `lastExport` (resumen de la última exportación definitiva del período,
+  // si existe).
+  async getPreview(period: string): Promise<FinnegansExportPreview> {
     const params = new URLSearchParams({ period, preview: "true" });
-    const response = await apiRequest<ApiResponse>(`/finnegans-export/novelties?${params.toString()}`);
-    return mapPreview(response);
+    const response = await apiRequest<ApiPreviewResponse>(`/finnegans-export/novelties?${params.toString()}`);
+    return {
+      period: response.data.period,
+      rows: response.data.rows.map(mapFromApi),
+      readiness: response.data.readiness,
+      hash: response.data.hash,
+      lastExport: response.data.lastExport,
+    };
   },
 
-  // Etapa 15L.3A §15/§18/§26: operación definitiva — revalida todo en el
-  // backend (readiness + cierre mensual aprobado de cada empleado incluido).
-  // Sólo el resultado de esta llamada puede usarse para generar el .xlsx.
-  async getDefinitive(period: string) {
+  // Etapa 15L.4 §18/§22/§23: operación definitiva — revalida todo en el
+  // backend y, si autoriza, deja un batch persistente. `idempotencyKey` se
+  // genera una vez por intento de exportación (crypto.randomUUID()); un
+  // reintento con la misma key nunca crea una versión nueva.
+  async exportDefinitive(input: { period: string; format: FinnegansExportFormat; reexportReason?: string; idempotencyKey: string }): Promise<FinnegansExportResult> {
+    const response = await apiRequest<ApiExportResponse>("/finnegans-export/novelties/export", { method: "POST", body: input });
+    return {
+      period: response.data.period,
+      rows: response.data.rows.map(mapFromApi),
+      readiness: response.data.readiness,
+      batch: response.data.batch,
+    };
+  },
+
+  // Etapa 15L.4 §26: historial de exportaciones definitivas de un período,
+  // más nueva primero.
+  async getHistory(period: string): Promise<FinnegansExportHistory> {
     const params = new URLSearchParams({ period });
-    const response = await apiRequest<ApiResponse>(`/finnegans-export/novelties?${params.toString()}`);
-    return mapPreview(response);
+    const response = await apiRequest<ApiHistoryResponse>(`/finnegans-export/history?${params.toString()}`);
+    return response.data;
+  },
+
+  // Etapa 15L.4 §27: detalle de un batch — metadata + snapshot de filas +
+  // comparación contra el anterior.
+  async getHistoryDetail(batchId: string): Promise<FinnegansExportHistoryDetail> {
+    const response = await apiRequest<ApiHistoryDetailResponse>(`/finnegans-export/history/${batchId}`);
+    return {
+      batch: response.data.batch,
+      rows: response.data.rows.map(mapFromApi),
+      diff: response.data.diff,
+    };
   },
 };

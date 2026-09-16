@@ -75,6 +75,14 @@ enum FinnegansValueUnit {
   UNIT
 }
 
+// Etapa 15L.4: formato con el que se autorizó una exportación definitiva
+// (FinnegansExportBatch.format) -- puramente informativo, no cambia qué
+// filas se seleccionan ni cómo se arman.
+enum FinnegansExportFormat {
+  XLSX
+  CSV
+}
+
 enum ApprovalStatus {
   BORRADOR
   PENDIENTE
@@ -380,6 +388,7 @@ model User {
   workRegimesCreated            WorkRegime[]                   @relation("WorkRegimeCreatedBy")
   workRegimesUpdated            WorkRegime[]                   @relation("WorkRegimeUpdatedBy")
   workRegimesAssigned           EmployeeWorkRegime[]
+  finnegansExportBatchesCreated FinnegansExportBatch[]         @relation("FinnegansExportBatchCreatedBy")
 
   @@index([role])
   @@index([status])
@@ -662,6 +671,7 @@ model Employee {
   holidayWorkAssignments HolidayWorkAssignment[]
   workRegimeAssignments  EmployeeWorkRegime[]
   userAccount            User?                          @relation("EmployeeUserAccount")
+  finnegansExportBatchItems FinnegansExportBatchItem[]
 
   @@index([lastName, firstName])
   @@index([status])
@@ -979,6 +989,10 @@ model Novelty {
   createdBy         User?              @relation("NoveltyCreatedBy", fields: [createdByUserId], references: [id])
   approvedBy        User?              @relation("NoveltyApprovedBy", fields: [approvedByUserId], references: [id], onDelete: SetNull)
   documents         EmployeeDocument[]
+  // Etapa 15L.4: onDelete: SetNull en FinnegansExportBatchItem.novelty -- el
+  // snapshot exportado debe sobrevivir aunque esta Novelty se borre (hard
+  // delete, ver novelties.repository.ts::remove).
+  finnegansExportBatchItems FinnegansExportBatchItem[]
 
   @@index([employeeId, fromDate])
   @@index([employeeId, status, fromDate])
@@ -986,6 +1000,93 @@ model Novelty {
   @@index([fromDate, toDate])
   @@index([noveltyTypeId])
   @@index([status])
+}
+
+// Etapa 15L.4 (docs/decisions/FINNEGANS_EXPORT_HISTORY_IDEMPOTENCY_15L4.md):
+// una exportación Finnegans DEFINITIVA autorizada por el backend deja un
+// batch persistente -- nunca la preview (finnegansExport.service.ts::getPreview
+// no crea ninguna fila acá). `version` es el correlativo por `period`
+// (1, 2, 3...), protegido por `@@unique([period, version])` contra dos
+// versiones simultáneas para el mismo período. Sin campo `status`: el batch
+// y sus items se crean en una única transacción de Prisma (todo o nada) --
+// si la transacción falla, no queda ninguna fila; si el batch existe, ya
+// está completo. No hay ningún flujo asíncrono que deje un batch a medio
+// crear, así que agregar PENDING/FAILED sería un estado sin ningún caller
+// real (instrucción explícita de esta etapa: no agregar estados sin
+// necesidad).
+model FinnegansExportBatch {
+  id              String                @id @default(uuid())
+  period          String
+  version         Int
+  format          FinnegansExportFormat
+  // SHA-256 hex sobre la representación canónica de las 7 columnas
+  // exportadas de cada fila (orden estable, sin ids) -- ver
+  // finnegansExport.hash.ts. Permite saber si una reexportación tiene
+  // exactamente el mismo contenido que la anterior sin comparar filas a mano.
+  hash            String
+  rowCount        Int
+  // Etapa 15L.4 §10: opcional en la primera exportación de un período
+  // (version=1); obligatorio (backend lo exige, no sólo el frontend) desde
+  // la segunda en adelante -- ver finnegansExport.service.ts::assertReexportReason.
+  reason          String?
+  // Protege contra un batch duplicado por doble click/retry de red -- ver
+  // finnegansExport.batch.repository.ts::createBatchWithItems. Un reintento
+  // legítimo del mismo intento de exportación reutiliza la misma key y
+  // recibe el mismo batch ya creado; una reexportación voluntaria nueva
+  // siempre manda una key distinta.
+  idempotencyKey  String                @unique
+  createdByUserId String?
+  createdAt       DateTime              @default(now()) @db.Timestamptz(3)
+
+  createdBy       User?                      @relation("FinnegansExportBatchCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  previousBatchId String?
+  previousBatch   FinnegansExportBatch?      @relation("FinnegansExportBatchHistory", fields: [previousBatchId], references: [id], onDelete: SetNull)
+  reexportedBy    FinnegansExportBatch[]     @relation("FinnegansExportBatchHistory")
+  items           FinnegansExportBatchItem[]
+
+  @@unique([period, version])
+  @@index([period, version])
+}
+
+// Snapshot inmutable de una fila exportada -- Etapa 15L.4 §5/§6. Los 7
+// campos de abajo (legajo..validTo) son EXACTAMENTE lo que salió en esa
+// exportación, como string ya formateado (igual que la columna real del
+// CSV/XLSX) -- nunca se reconstruyen desde Novelty/Employee/NoveltyType a
+// futuro, así que sobreviven aunque esos registros cambien o se borren.
+// `noveltyId`/`employeeId` son sólo referencias técnicas internas para
+// trazabilidad -- nunca se exponen al usuario final (ver
+// finnegansExport.controller.ts, ningún mapper de presentación los incluye).
+model FinnegansExportBatchItem {
+  id      String @id @default(uuid())
+  batchId String
+
+  // Nullable + onDelete: SetNull -- una Novelty puede borrarse (hard delete,
+  // política existente, no modificada en esta etapa) sin que el snapshot ya
+  // exportado desaparezca ni pierda su fila.
+  noveltyId String?
+  // Employee nunca se borra en este sistema (sin endpoint de hard delete,
+  // confirmado) -- Restrict, mismo criterio que Novelty.employee.
+  employeeId String
+
+  legajo          String
+  employeeName    String
+  noveltyCode     String
+  detail          String
+  costCenter      String
+  value1          String
+  applicationDate String
+  validFrom       String
+  validTo         String
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  batch    FinnegansExportBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  novelty  Novelty?             @relation(fields: [noveltyId], references: [id], onDelete: SetNull)
+  employee Employee             @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+
+  @@index([batchId])
+  @@index([noveltyId])
+  @@index([employeeId])
 }
 
 model TimeEntry {

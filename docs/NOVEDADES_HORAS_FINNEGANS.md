@@ -99,22 +99,40 @@ Columnas de exportación (CSV/XLSX, sin cambios desde la Etapa 15L.3A):
 | Fecha desde | Vacía salvo que el tipo exija vigencia (`finnegansRequiresValidity`). |
 | Fecha hasta | Vacía salvo que el tipo exija vigencia; si falta, la fila queda bloqueada en vez de exportarse con la celda vacía. |
 
-**Preview vs. exportación definitiva** (Etapa 15L.3A): `GET
-.../novelties?period=YYYY-MM&preview=true` sólo informa — muestra todas las
-novedades candidatas del período, incluidas las que todavía no están
-completamente configuradas (marcadas con un estado de "readiness"), y nunca
-exige cierre mensual aprobado ni queda registrada como una exportación
-realizada. `GET .../novelties?period=YYYY-MM` (sin `preview`, y siempre
-`.../novelties.csv`) es la exportación **definitiva**: revalida todo,
-bloquea con `409` si alguna novedad no está lista (vínculo Finnegans
-activo, unidad de Valor 1, cantidad, vigencia) o si el cierre mensual de
-algún empleado incluido no está `APROBADO`, y sólo entonces genera el
-archivo — nunca una exportación parcial.
+**Preview vs. exportación definitiva** (Etapa 15L.3A, contrato de endpoint
+actualizado en la Etapa 15L.4): `GET .../novelties?period=YYYY-MM&preview=true`
+sólo informa — muestra todas las novedades candidatas del período,
+incluidas las que todavía no están completamente configuradas (marcadas
+con un estado de "readiness"), y nunca exige cierre mensual aprobado ni
+queda registrada como una exportación realizada. `POST .../novelties/export`
+(`{ period, format: "XLSX"|"CSV", reexportReason?, idempotencyKey }`) es la
+exportación **definitiva**: revalida todo, bloquea con `409` si alguna
+novedad no está lista (vínculo Finnegans activo, unidad de Valor 1,
+cantidad, vigencia) o si el cierre mensual de algún empleado incluido no
+está `APROBADO`, y sólo entonces genera el archivo — nunca una exportación
+parcial. El GET sin `preview` y `.novelties.csv` se retiraron (sin ningún
+caller real) a favor de este único endpoint POST.
 
 **Gate de cierre mensual propio de este módulo**: sólo se exige el cierre
 `APROBADO` de los empleados que tienen alguna novedad candidata en el
 período — un legajo sin ninguna novedad exportable nunca bloquea la
 exportación de los demás.
+
+**Historial, versionado e idempotencia** (Etapa 15L.4,
+`docs/decisions/FINNEGANS_EXPORT_HISTORY_IDEMPOTENCY_15L4.md`): cada
+exportación definitiva exitosa deja un `FinnegansExportBatch` persistente
+(período, versión correlativa, formato, hash del contenido, motivo,
+quién y cuándo) con sus filas exportadas en snapshot
+(`FinnegansExportBatchItem`, sobrevive aunque la `Novelty` original se
+borre después). Reexportar un período ya exportado es posible sin límite,
+pero siempre explícito: exige un motivo (mínimo 5 caracteres, exigido por
+el backend, no sólo por el frontend). Un mismo intento de exportación
+(mismo `idempotencyKey`, generado por el frontend por click) nunca crea
+una versión duplicada aunque la request se reintente; una reexportación
+voluntaria nueva sí crea una versión nueva, siempre con motivo. `GET
+.../history?period=YYYY-MM` lista las versiones de un período (con el
+resumen de qué cambió respecto de la anterior); `GET
+.../history/:batchId` muestra el detalle de una versión puntual.
 
 **Pertenencia mensual única** (Etapa 15L.3B.1,
 `docs/decisions/FINNEGANS_EXPORT_MONTHLY_OWNERSHIP_15L3B.md`): el período de
