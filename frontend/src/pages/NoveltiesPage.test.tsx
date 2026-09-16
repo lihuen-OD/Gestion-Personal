@@ -32,7 +32,6 @@ function buildNovelty(overrides: Partial<Novelty> = {}): Novelty {
     from: "2026-08-10",
     to: "2026-08-12",
     quantity: "3",
-    affectsSettlement: false,
     status: "Aprobada",
     createdBy: "user-1",
     employeeLegajo: "100",

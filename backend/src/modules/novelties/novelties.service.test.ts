@@ -77,10 +77,10 @@ beforeEach(() => {
 
 // Etapa 15G.1 (docs/decisions/NOVELTIES_AS_ADMINISTRATIVE_JUSTIFICATION_15G1.md):
 // Novedades es justificación administrativa — nunca crea ni modifica
-// TimeEntry, sea cual sea su status o los campos de su NoveltyType
-// (setsWorkedHoursToZero/blocksTimeEntry/timeImpact incluidos). approve()
-// sólo cambia status + auditoría, siempre con la misma firma de 2
-// argumentos — no existe ningún "effect" horario que armar ni pasar.
+// TimeEntry, sea cual sea su status o `timeEntryBehavior` de su
+// NoveltyType. approve() sólo cambia status + auditoría, siempre con la
+// misma firma de 2 argumentos — no existe ningún "effect" horario que armar
+// ni pasar.
 describe("noveltiesService.approve", () => {
   it("aprueba una novedad PENDIENTE cambiando sólo status/auditoría, sin ningún efecto horario", async () => {
     repo.findById.mockResolvedValue(novelty());
@@ -92,9 +92,9 @@ describe("noveltiesService.approve", () => {
     expect(repo.approve).toHaveBeenCalledWith("novelty-1", rrhhUser.id);
   });
 
-  it("aprobar un tipo con setsWorkedHoursToZero=true tampoco dispara ningún efecto horario (llamada idéntica)", async () => {
+  it("aprobar un tipo con timeEntryBehavior=BLOQUEA_NUEVA_CARGA tampoco dispara ningún efecto horario (llamada idéntica)", async () => {
     repo.findById.mockResolvedValue(
-      novelty({ noveltyType: { code: "LLT", name: "Llegada tarde", approvalRoles: [], setsWorkedHoursToZero: true } }),
+      novelty({ noveltyType: { code: "LLT", name: "Llegada tarde", approvalRoles: [], timeEntryBehavior: "BLOQUEA_NUEVA_CARGA" } }),
     );
     repo.approve.mockResolvedValue(novelty({ status: "APROBADO", noveltyType: { code: "LLT", name: "Llegada tarde" } }));
 
@@ -152,9 +152,10 @@ describe("noveltiesService.reject", () => {
 // remove() no tenía ningún test antes de este ajuste. El guard
 // NOVELTY_DELETE_HAS_TIME_IMPACT ("Novelty generated time entries") se
 // eliminó porque ya no existe ningún camino por el que una novedad genere
-// TimeEntry — estos tests fijan que un tipo con setsWorkedHoursToZero ya NO
-// bloquea el borrado por ese motivo, y que los otros dos guards (documentos
-// relacionados, aprobada+exportable a Finnegans) siguen intactos.
+// TimeEntry — estos tests fijan que un tipo con timeEntryBehavior=
+// BLOQUEA_NUEVA_CARGA ya NO bloquea el borrado por ese motivo, y que los
+// otros dos guards (documentos relacionados, aprobada+exportable a
+// Finnegans) siguen intactos.
 describe("noveltiesService.remove", () => {
   it("borra una novedad sin documentos ni impacto exportable", async () => {
     repo.findById.mockResolvedValue(novelty({ documents: [], status: "PENDIENTE" }));
@@ -166,12 +167,12 @@ describe("noveltiesService.remove", () => {
     expect(repo.remove).toHaveBeenCalledWith("novelty-1");
   });
 
-  it("Regla ajustada: un tipo con setsWorkedHoursToZero=true YA NO bloquea el borrado (ya no genera TimeEntry)", async () => {
+  it("Regla ajustada: un tipo con timeEntryBehavior=BLOQUEA_NUEVA_CARGA YA NO bloquea el borrado (ya no genera TimeEntry)", async () => {
     repo.findById.mockResolvedValue(
       novelty({
         documents: [],
         status: "PENDIENTE",
-        noveltyType: { code: "LLT", name: "Llegada tarde", setsWorkedHoursToZero: true, exportsToFinnegans: false },
+        noveltyType: { code: "LLT", name: "Llegada tarde", timeEntryBehavior: "BLOQUEA_NUEVA_CARGA", exportsToFinnegans: false },
       }),
     );
     repo.remove.mockResolvedValue(undefined);
@@ -197,7 +198,7 @@ describe("noveltiesService.remove", () => {
       novelty({
         documents: [],
         status: "APROBADO",
-        noveltyType: { code: "VAC", name: "Vacaciones", setsWorkedHoursToZero: false, exportsToFinnegans: true },
+        noveltyType: { code: "VAC", name: "Vacaciones", exportsToFinnegans: true },
       }),
     );
 
@@ -213,7 +214,7 @@ describe("noveltiesService.remove", () => {
       novelty({
         documents: [],
         status: "PENDIENTE",
-        noveltyType: { code: "VAC", name: "Vacaciones", setsWorkedHoursToZero: false, exportsToFinnegans: true },
+        noveltyType: { code: "VAC", name: "Vacaciones", exportsToFinnegans: true },
       }),
     );
     repo.remove.mockResolvedValue(undefined);
@@ -256,14 +257,6 @@ function noveltyType(overrides: Partial<Record<string, unknown>> = {}) {
     name: "Vacaciones",
     status: "ACTIVO",
     allowsHours: false,
-    allowsDateTo: true,
-    hasValidity: false,
-    setsWorkedHoursToZero: false,
-    blocksTimeEntry: false,
-    timeImpact: "NO_AFECTA_HORAS",
-    // Etapa 15L.2C: campos nuevos, con el mismo valor que su par legacy de
-    // arriba -- mismo estado que un NoveltyType real post-backfill de
-    // 15L.2A (docs/decisions/NOVELTY_TYPE_CONSUMER_MIGRATION_15L2C.md).
     allowsDateRange: true,
     finnegansRequiresValidity: false,
     timeEntryBehavior: "NO_BLOQUEA",
@@ -304,16 +297,16 @@ describe("noveltiesService.create", () => {
 
   // Etapa 15G.1 (docs/decisions/NOVELTIES_AS_ADMINISTRATIVE_JUSTIFICATION_15G1.md):
   // decisión funcional final — Novedades NUNCA crea/modifica TimeEntry, sin
-  // importar status, rol de quien crea, ni los campos horarios del tipo
-  // (setsWorkedHoursToZero/blocksTimeEntry/timeImpact). Estos tests fijan
-  // esa garantía para las 4 combinaciones más sensibles: PENDIENTE/APROBADO
-  // × setsWorkedHoursToZero true/false — en los 4 casos la llamada a
-  // createMany es idéntica en forma (3 argumentos, nunca un 4to "effect").
+  // importar status, rol de quien crea, ni `timeEntryBehavior` del tipo.
+  // Estos tests fijan esa garantía para las 4 combinaciones más sensibles:
+  // PENDIENTE/APROBADO × NO_BLOQUEA/BLOQUEA_NUEVA_CARGA — en los 4 casos la
+  // llamada a createMany es idéntica en forma (3 argumentos, nunca un 4to
+  // "effect").
   it.each([
-    { label: "PENDIENTE + setsWorkedHoursToZero=false", user: supervisionUser, status: "PENDIENTE", type: noveltyType({ allowedLoadRoles: [roles.supervision] }) },
-    { label: "PENDIENTE + setsWorkedHoursToZero=true", user: supervisionUser, status: "PENDIENTE", type: noveltyType({ allowedLoadRoles: [roles.supervision], setsWorkedHoursToZero: true }) },
-    { label: "APROBADO (RRHH) + setsWorkedHoursToZero=false", user: rrhhUser, status: "APROBADO", type: noveltyType() },
-    { label: "APROBADO (RRHH) + setsWorkedHoursToZero=true", user: rrhhUser, status: "APROBADO", type: noveltyType({ setsWorkedHoursToZero: true }) },
+    { label: "PENDIENTE + timeEntryBehavior=NO_BLOQUEA", user: supervisionUser, status: "PENDIENTE", type: noveltyType({ allowedLoadRoles: [roles.supervision] }) },
+    { label: "PENDIENTE + timeEntryBehavior=BLOQUEA_NUEVA_CARGA", user: supervisionUser, status: "PENDIENTE", type: noveltyType({ allowedLoadRoles: [roles.supervision], timeEntryBehavior: "BLOQUEA_NUEVA_CARGA" }) },
+    { label: "APROBADO (RRHH) + timeEntryBehavior=NO_BLOQUEA", user: rrhhUser, status: "APROBADO", type: noveltyType() },
+    { label: "APROBADO (RRHH) + timeEntryBehavior=BLOQUEA_NUEVA_CARGA", user: rrhhUser, status: "APROBADO", type: noveltyType({ timeEntryBehavior: "BLOQUEA_NUEVA_CARGA" }) },
   ])("$label: createMany se llama sin ningún efecto horario (3 argumentos exactos)", async ({ user, status, type }) => {
     repo.findNoveltyType.mockResolvedValue(type);
 
@@ -323,12 +316,13 @@ describe("noveltiesService.create", () => {
     expect(repo.createMany.mock.calls[0]).toHaveLength(3);
   });
 
-  // Caso concreto del usuario: "Llegada tarde" (timeImpact=REGISTRA_HORAS_NO_TRABAJADAS)
-  // aprobada por RRHH no debe descontar ni tocar TimeEntry — sigue siendo
-  // sólo un registro administrativo.
-  it("llegada tarde (timeImpact=REGISTRA_HORAS_NO_TRABAJADAS) aprobada por RRHH no toca TimeEntry", async () => {
+  // Caso concreto del usuario: "Llegada tarde" (allowsHours=true,
+  // timeEntryBehavior=NO_BLOQUEA en la configuración real) aprobada por
+  // RRHH no debe descontar ni tocar TimeEntry — sigue siendo sólo un
+  // registro administrativo.
+  it("llegada tarde aprobada por RRHH no toca TimeEntry", async () => {
     repo.findNoveltyType.mockResolvedValue(
-      noveltyType({ code: "LLT", name: "Llegada tarde", allowsHours: true, allowsDateTo: false, timeImpact: "REGISTRA_HORAS_NO_TRABAJADAS" }),
+      noveltyType({ code: "LLT", name: "Llegada tarde", allowsHours: true, allowsDateRange: false }),
     );
 
     await noveltiesService.create(createInput({ quantityHours: 1 }), rrhhUser);
@@ -337,8 +331,8 @@ describe("noveltiesService.create", () => {
     expect(repo.createMany.mock.calls[0]).toHaveLength(3);
   });
 
-  it("timeImpact=BLOQUEA_CARGA_DIA tampoco dispara ningún efecto horario al crear", async () => {
-    repo.findNoveltyType.mockResolvedValue(noveltyType({ timeImpact: "BLOQUEA_CARGA_DIA", blocksTimeEntry: true }));
+  it("timeEntryBehavior=BLOQUEA_NUEVA_CARGA tampoco dispara ningún efecto horario al crear", async () => {
+    repo.findNoveltyType.mockResolvedValue(noveltyType({ timeEntryBehavior: "BLOQUEA_NUEVA_CARGA" }));
 
     await noveltiesService.create(createInput(), rrhhUser);
 
@@ -376,26 +370,15 @@ describe("noveltiesService.create", () => {
   });
 
   it("rechaza fechaHasta si el tipo no la permite (NOVELTY_TO_DATE_NOT_ALLOWED)", async () => {
-    repo.findNoveltyType.mockResolvedValue(noveltyType({ allowsDateTo: false, allowsDateRange: false }));
+    repo.findNoveltyType.mockResolvedValue(noveltyType({ allowsDateRange: false }));
 
     await expect(
       noveltiesService.create(createInput({ fromDate: new Date("2026-08-10"), toDate: new Date("2026-08-12") }), rrhhUser),
     ).rejects.toMatchObject({ statusCode: 400, code: "NOVELTY_TO_DATE_NOT_ALLOWED" });
   });
 
-  // Etapa 15L.2C (docs/decisions/NOVELTY_TYPE_CONSUMER_MIGRATION_15L2C.md):
-  // allowsDateRange es la única fuente productiva -- allowsDateTo (legacy)
-  // ya no se lee, aunque siga existiendo y sincronizado 1:1 en el modelo.
-  it("allowsDateRange=false bloquea toDate aunque allowsDateTo (legacy) diga lo contrario", async () => {
-    repo.findNoveltyType.mockResolvedValue(noveltyType({ allowsDateTo: true, allowsDateRange: false }));
-
-    await expect(
-      noveltiesService.create(createInput({ fromDate: new Date("2026-08-10"), toDate: new Date("2026-08-12") }), rrhhUser),
-    ).rejects.toMatchObject({ statusCode: 400, code: "NOVELTY_TO_DATE_NOT_ALLOWED" });
-  });
-
-  it("allowsDateRange=true permite toDate aunque allowsDateTo (legacy) diga lo contrario", async () => {
-    repo.findNoveltyType.mockResolvedValue(noveltyType({ allowsDateTo: false, allowsDateRange: true }));
+  it("allowsDateRange=true permite toDate", async () => {
+    repo.findNoveltyType.mockResolvedValue(noveltyType({ allowsDateRange: true }));
 
     await expect(
       noveltiesService.create(createInput({ fromDate: new Date("2026-08-10"), toDate: new Date("2026-08-12") }), rrhhUser),
@@ -403,7 +386,7 @@ describe("noveltiesService.create", () => {
   });
 
   it("exige fechaDesde y fechaHasta cuando el tipo tiene vigencia obligatoria (NOVELTY_VALIDITY_REQUIRED)", async () => {
-    repo.findNoveltyType.mockResolvedValue(noveltyType({ hasValidity: true, allowsDateTo: true, finnegansRequiresValidity: true, allowsDateRange: true }));
+    repo.findNoveltyType.mockResolvedValue(noveltyType({ finnegansRequiresValidity: true, allowsDateRange: true }));
 
     await expect(noveltiesService.create(createInput({ toDate: null }), rrhhUser)).rejects.toMatchObject({
       statusCode: 400,

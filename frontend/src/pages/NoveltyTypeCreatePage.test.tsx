@@ -48,6 +48,8 @@ describe("NoveltyTypeCreatePage — Etapa 15L.2B", () => {
     expect(screen.queryByText("INTERNA")).not.toBeInTheDocument();
   });
 
+  // Etapa 15L.6 (docs/decisions/NOVELTY_TYPE_LEGACY_REMOVAL_15L6.md): los 3
+  // campos legacy ya no existen en absoluto en el modelo.
   it("no muestra los campos legacy de comportamiento horario (blocksTimeEntry/setsWorkedHoursToZero/timeImpact)", async () => {
     renderPage();
     await screen.findByText("2. Reglas operativas");
@@ -126,13 +128,14 @@ describe("NoveltyTypeCreatePage — Etapa 15L.2B", () => {
     await userEvent.type(screen.getByLabelText("Descripción funcional"), "Licencia anual");
     await userEvent.click(screen.getByRole("checkbox", { name: /Exportar esta novedad a Finnegans/ }));
     await userEvent.type(screen.getByLabelText(/Código Finnegans/), "VAC");
+    await userEvent.type(screen.getByLabelText(/Nombre Finnegans/), "Vacaciones gozadas");
 
     await userEvent.click(screen.getByRole("button", { name: "Guardar tipo" }));
 
     expect(await screen.findByText("Para exportar a Finnegans elegí la unidad de Valor 1.")).toBeInTheDocument();
   });
 
-  it("guardar con Finnegans completo (código, nombre heredado, unidad) crea el tipo", async () => {
+  it("guardar con Finnegans completo (código, nombre, unidad) crea el tipo", async () => {
     vi.mocked(noveltyTypeApiService.create).mockResolvedValue({ id: "nt-new" } as NoveltyType);
     renderPage();
     await screen.findByText("1. Identificación");
@@ -140,6 +143,7 @@ describe("NoveltyTypeCreatePage — Etapa 15L.2B", () => {
     await userEvent.type(screen.getByLabelText("Descripción funcional"), "Licencia anual");
     await userEvent.click(screen.getByRole("checkbox", { name: /Exportar esta novedad a Finnegans/ }));
     await userEvent.type(screen.getByLabelText(/Código Finnegans/), "VAC");
+    await userEvent.type(screen.getByLabelText(/Nombre Finnegans/), "Vacaciones gozadas");
     await userEvent.selectOptions(screen.getByLabelText(/Unidad de Valor 1/), "Días");
 
     await userEvent.click(screen.getByRole("button", { name: "Guardar tipo" }));
@@ -147,7 +151,8 @@ describe("NoveltyTypeCreatePage — Etapa 15L.2B", () => {
     await waitFor(() => expect(noveltyTypeApiService.create).toHaveBeenCalledWith(
       expect.objectContaining({
         name: "Vacaciones",
-        finnegansLinks: expect.arrayContaining([expect.objectContaining({ code: "VAC" })]),
+        finnegansCode: "VAC",
+        finnegansName: "Vacaciones gozadas",
         rules: expect.objectContaining({ exportsToFinnegans: true, finnegansValueUnit: "DAYS" }),
       }),
     ));
@@ -193,6 +198,7 @@ describe("NoveltyTypeCreatePage — Etapa 15L.2B.1 (allowsHours y finnegansValue
     await userEvent.click(screen.getByRole("checkbox", { name: /Permite cantidad de horas/ }));
     await userEvent.click(screen.getByRole("checkbox", { name: /Exportar esta novedad a Finnegans/ }));
     await userEvent.type(screen.getByLabelText(/Código Finnegans/), "SANC");
+    await userEvent.type(screen.getByLabelText(/Nombre Finnegans/), "Sancion");
     await userEvent.selectOptions(screen.getByLabelText(/Unidad de Valor 1/), "Unidad");
 
     await userEvent.click(screen.getByRole("button", { name: "Guardar tipo" }));

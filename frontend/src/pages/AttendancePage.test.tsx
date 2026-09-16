@@ -101,7 +101,6 @@ function buildGenericActiveType(): NoveltyType {
     name: "Vacaciones",
     uiColor: "blue",
     kind: "VACACIONES",
-    origin: "INTERNA",
     description: "",
     status: "ACTIVO",
     rules: {
@@ -109,11 +108,6 @@ function buildGenericActiveType(): NoveltyType {
       requiresApproval: true,
       requiresDocumentation: false,
       allowsHours: false,
-      allowsDateTo: true,
-      hasValidity: false,
-      blocksTimeEntry: false,
-      setsWorkedHoursToZero: false,
-      timeImpact: "NO_AFECTA_HORAS",
       timeEntryBehavior: "NO_BLOQUEA",
       allowsDateRange: true,
       finnegansValueUnit: null,
@@ -121,12 +115,12 @@ function buildGenericActiveType(): NoveltyType {
     },
     allowedLoadRoles: [],
     approvalRoles: [],
-    finnegansLinks: [],
+    finnegansCode: null,
+    finnegansName: null,
     createdAt: "",
     updatedAt: "",
     createdBy: "",
     updatedBy: "",
-    history: [],
   };
 }
 

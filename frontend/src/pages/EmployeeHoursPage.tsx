@@ -262,22 +262,10 @@ export function EmployeeHoursPage() {
       const toDay = Number((novelty.to || novelty.from).slice(8, 10));
       return day >= fromDay && day <= toDay;
     });
-  // Etapa 15L.2C (docs/decisions/NOVELTY_TYPE_CONSUMER_MIGRATION_15L2C.md):
-  // timeEntryBehavior reemplaza blocksTimeEntry/timeImpact=BLOQUEA_CARGA_DIA
-  // (legacy, siguen existiendo y sincronizados 1:1) como fuente productiva.
-  // novelty.timeImpact === "REGISTRA_HORAS_NO_TRABAJADAS" (abajo) se
-  // mantiene tal cual -- no tiene equivalente en el enum nuevo de 2 valores
-  // (NO_BLOQUEA/BLOQUEA_NUEVA_CARGA), migrarlo perdería esa distinción.
   const noveltyBlocksTimeEntry = (novelty: Novelty) => novelty.timeEntryBehavior === "BLOQUEA_NUEVA_CARGA";
   const conceptNovelties = (day: number, conceptName: string) =>
     dayNovelties(day).filter((novelty) =>
-      noveltyBlocksTimeEntry(novelty)
-        ? true
-        : novelty.targetHourConceptName
-          ? novelty.targetHourConceptName === conceptName
-          : novelty.timeImpact === "REGISTRA_HORAS_NO_TRABAJADAS"
-            ? conceptName === "Hora normal"
-            : false,
+      noveltyBlocksTimeEntry(novelty) ? true : novelty.targetHourConceptName === conceptName,
     );
   const entryFor = (day: number, conceptId: string, conceptName: string) =>
     entries.find((entry) => entry.day === day && (entry.conceptId === conceptId || entry.type === conceptName));

@@ -66,7 +66,7 @@ Una misma persona puede tener el mismo día:
 
 Cada registro se guarda separado para evitar mezclar el total trabajado, sus desgloses y los eventos administrativos. En este ejemplo el total trabajado es 10, no 12.
 
-**Etapa 15G.1** (`docs/decisions/NOVELTIES_AS_ADMINISTRATIVE_JUSTIFICATION_15G1.md`, decisión funcional final): el fichador y la carga horaria manual son la única fuente de verdad de horas reales; Novedades es justificación administrativa. Una novedad **nunca** crea ni modifica un `TimeEntry`, en ningún estado (ni `PENDIENTE` ni `APROBADO`) ni para ningún tipo (tampoco para uno con `setsWorkedHoursToZero`). Si una novedad `APROBADA` bloquea la carga horaria (`blocksTimeEntry`/`setsWorkedHoursToZero`/`timeImpact = BLOQUEA_CARGA_DIA`), su único efecto es impedir que se cargue manualmente una hora **nueva** ese día — no genera ningún registro de 0 horas por sí misma. La app no calcula descuento ni sueldo.
+**Etapa 15G.1** (`docs/decisions/NOVELTIES_AS_ADMINISTRATIVE_JUSTIFICATION_15G1.md`, decisión funcional final): el fichador y la carga horaria manual son la única fuente de verdad de horas reales; Novedades es justificación administrativa. Una novedad **nunca** crea ni modifica un `TimeEntry`, en ningún estado (ni `PENDIENTE` ni `APROBADO`) ni para ningún tipo. Si una novedad `APROBADA` bloquea la carga horaria (`NoveltyType.timeEntryBehavior = BLOQUEA_NUEVA_CARGA`, única fuente desde la Etapa 15L.6, `docs/decisions/NOVELTY_TYPE_LEGACY_REMOVAL_15L6.md`), su único efecto es impedir que se cargue manualmente una hora **nueva** ese día — no genera ningún registro de 0 horas por sí misma. La app no calcula descuento ni sueldo.
 
 ## Exportación Finnegans
 
@@ -119,7 +119,7 @@ con un estado de "readiness"), y nunca exige cierre mensual aprobado ni
 queda registrada como una exportación realizada. `POST .../novelties/export`
 (`{ period, format: "XLSX"|"CSV", reexportReason?, idempotencyKey }`) es la
 exportación **definitiva**: revalida todo, bloquea con `409` si alguna
-novedad no está lista (vínculo Finnegans activo, unidad de Valor 1,
+novedad no está lista (código Finnegans configurado, unidad de Valor 1,
 cantidad, vigencia) o si el cierre mensual de algún empleado incluido no
 está `APROBADO`, y sólo entonces genera el archivo — nunca una exportación
 parcial. El GET sin `preview` y `.novelties.csv` se retiraron (sin ningún

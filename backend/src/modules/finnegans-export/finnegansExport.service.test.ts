@@ -44,7 +44,7 @@ function novelty(overrides: {
   legajoFinnegans?: string | null;
   finnegansValueUnit?: "HOURS" | "DAYS" | "UNIT" | null;
   finnegansRequiresValidity?: boolean;
-  finnegansLinks?: { code: string; priority: number }[];
+  finnegansCode?: string | null;
   noveltyTypeName?: string;
 } = {}) {
   return {
@@ -66,7 +66,7 @@ function novelty(overrides: {
       name: overrides.noveltyTypeName || "Vacaciones",
       finnegansValueUnit: overrides.finnegansValueUnit === undefined ? "UNIT" : overrides.finnegansValueUnit,
       finnegansRequiresValidity: overrides.finnegansRequiresValidity ?? false,
-      finnegansLinks: overrides.finnegansLinks === undefined ? [{ code: "VAC", priority: 1 }] : overrides.finnegansLinks,
+      finnegansCode: overrides.finnegansCode === undefined ? "VAC" : overrides.finnegansCode,
     },
   } as unknown as Awaited<ReturnType<typeof finnegansExportRepository.findExportableNovelties>>[number];
 }
@@ -200,8 +200,8 @@ describe("finnegansExportService.exportDefinitive — selección y readiness (si
     expect(mockedRegister).toHaveBeenCalledWith(expect.objectContaining({ action: "EXPORT", entity: "FinnegansExport", entityId: "batch-1", userId: "user-1" }));
   });
 
-  it("sin vínculo Finnegans activo: bloquea con FINNEGANS_EXPORT_NOT_READY, sin crear batch (test M)", async () => {
-    repo.findExportableNovelties.mockResolvedValue([novelty({ finnegansLinks: [] })]);
+  it("sin código Finnegans configurado: bloquea con FINNEGANS_EXPORT_NOT_READY, sin crear batch (test M)", async () => {
+    repo.findExportableNovelties.mockResolvedValue([novelty({ finnegansCode: null })]);
     repo.findClosuresForExport.mockResolvedValue([{ employeeId: "employee-1", status: "APROBADO" }]);
 
     await expect(finnegansExportService.exportDefinitive(requestInput())).rejects.toMatchObject({

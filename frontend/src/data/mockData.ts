@@ -90,11 +90,11 @@ export const mockTimeEntries: TimeEntry[] = [
 ];
 
 export const mockNovelties: Novelty[] = [
-  { id: "n1", employeeId: "e2", type: "Vacaciones", from: "2026-06-08", to: "2026-06-12", quantity: "5 días", affectsSettlement: true, status: "Aprobado", createdBy: "Ana RRHH" },
-  { id: "n2", employeeId: "e7", type: "Certificado médico", from: "2026-06-01", to: "2026-06-02", quantity: "2 días", affectsSettlement: true, status: "Pendiente", createdBy: "María Gómez" },
-  { id: "n3", employeeId: "e5", type: "Llegada tarde", from: "2026-05-29", to: "2026-05-29", quantity: "45 min", affectsSettlement: false, status: "Registrado", createdBy: "Diego Torres" },
-  { id: "n4", employeeId: "e9", type: "Enfermedad", from: "2026-06-01", to: "2026-06-01", quantity: "1 día", affectsSettlement: true, status: "Aprobado", createdBy: "Laura Díaz" },
-  { id: "n5", employeeId: "e4", type: "ART", from: "2026-05-20", to: "2026-05-23", quantity: "4 días", affectsSettlement: true, status: "Aprobado", createdBy: "Ana RRHH" },
+  { id: "n1", employeeId: "e2", type: "Vacaciones", from: "2026-06-08", to: "2026-06-12", quantity: "5 días", status: "Aprobado", createdBy: "Ana RRHH" },
+  { id: "n2", employeeId: "e7", type: "Certificado médico", from: "2026-06-01", to: "2026-06-02", quantity: "2 días", status: "Pendiente", createdBy: "María Gómez" },
+  { id: "n3", employeeId: "e5", type: "Llegada tarde", from: "2026-05-29", to: "2026-05-29", quantity: "45 min", status: "Registrado", createdBy: "Diego Torres" },
+  { id: "n4", employeeId: "e9", type: "Enfermedad", from: "2026-06-01", to: "2026-06-01", quantity: "1 día", status: "Aprobado", createdBy: "Laura Díaz" },
+  { id: "n5", employeeId: "e4", type: "ART", from: "2026-05-20", to: "2026-05-23", quantity: "4 días", status: "Aprobado", createdBy: "Ana RRHH" },
 ];
 
 export const mockAudit: AuditEntry[] = [

@@ -1,10 +1,6 @@
 import type { NoveltyType } from "../../types/noveltyType.types";
 import { NoveltyColorField, noveltyKinds, SelectField, TextAreaField, TextField } from "./NoveltyTypeFields";
 
-// Etapa 15L.2B (docs/decisions/NOVELTY_TYPE_FRONTEND_REDESIGN_15L2B.md):
-// origin ya no se muestra -- auditado en 15L.1, redundante con
-// exportsToFinnegans (Finnegans tab) y sin ningún consumidor real. Sigue
-// existiendo en el modelo por compatibilidad, sólo se deja de editar acá.
 export function NoveltyTypeIdentificationTab({ item, setItem, disabled }: { item: NoveltyType; setItem: (item: NoveltyType) => void; disabled?: boolean }) {
   return <div className="form-grid">
     <TextField label="Código interno" value={item.code} disabled onChange={() => undefined} />

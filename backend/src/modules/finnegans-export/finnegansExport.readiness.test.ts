@@ -8,7 +8,7 @@ function baseInput(overrides: Partial<NoveltyReadinessInput> = {}): NoveltyReadi
     toDate: null,
     finnegansValueUnit: "UNIT",
     finnegansRequiresValidity: false,
-    hasPrincipalLink: true,
+    hasFinnegansCode: true,
     closureApproved: true,
     ...overrides,
   };
@@ -78,8 +78,8 @@ describe("evaluateNoveltyReadiness — Etapa 15L.3A", () => {
     expect(result.estado).toBe("FALTA_CONFIGURACION");
   });
 
-  it("sin vínculo principal: blocker MISSING_LINK, estado Falta configuración", () => {
-    const result = evaluateNoveltyReadiness(baseInput({ hasPrincipalLink: false }));
+  it("sin código Finnegans: blocker MISSING_LINK, estado Falta configuración", () => {
+    const result = evaluateNoveltyReadiness(baseInput({ hasFinnegansCode: false }));
     expect(result.reasonCodes).toEqual(["MISSING_LINK"]);
     expect(result.estado).toBe("FALTA_CONFIGURACION");
   });
@@ -92,7 +92,7 @@ describe("evaluateNoveltyReadiness — Etapa 15L.3A", () => {
   });
 
   it("configuración incompleta domina sobre cierre pendiente en el estado mostrado", () => {
-    const result = evaluateNoveltyReadiness(baseInput({ hasPrincipalLink: false, closureApproved: false }));
+    const result = evaluateNoveltyReadiness(baseInput({ hasFinnegansCode: false, closureApproved: false }));
     expect(result.estado).toBe("FALTA_CONFIGURACION");
     expect(result.reasonCodes).toEqual(["MISSING_LINK", "CLOSURE_NOT_APPROVED"]);
   });
@@ -140,14 +140,14 @@ describe("buildReadinessSummary — Etapa 15L.3A", () => {
   });
 
   it("agrega múltiples tipos de motivo en orden estable", () => {
-    const missingLink = evaluateNoveltyReadiness(baseInput({ hasPrincipalLink: false }));
+    const missingLink = evaluateNoveltyReadiness(baseInput({ hasFinnegansCode: false }));
     const closurePending = evaluateNoveltyReadiness(baseInput({ closureApproved: false }));
     const summary = buildReadinessSummary([
       { employeeId: "e1", readiness: missingLink },
       { employeeId: "e2", readiness: closurePending },
     ]);
     expect(summary.reasons).toEqual([
-      "1 novedad sin vínculo Finnegans activo configurado",
+      "1 novedad sin código Finnegans configurado",
       "1 persona con cierre mensual pendiente",
     ]);
   });

@@ -69,16 +69,12 @@ export interface TimeEntry {
 
 export interface Novelty {
   id: string; employeeId: string; type: string; noveltyTypeId?: string; from: string; to: string; quantity: string;
-  affectsSettlement: boolean; status: string; createdBy: string; documentationFileName?: string; documentationNotes?: string;
+  status: string; createdBy: string; documentationFileName?: string; documentationNotes?: string;
   employeeLegajo?: string; employeeName?: string;
-  // Etapa 15L.2A/15L.2B: @deprecated -- usar timeEntryBehavior/allowsDateRange/
-  // finnegansRequiresValidity. Se mantienen sincronizados por compatibilidad
-  // (docs/decisions/NOVELTY_TYPE_CONSUMER_MIGRATION_15L2C.md).
-  origin?: "INTERNA" | "FINNEGANS" | "MIXTA"; timeImpact?: string; hoursImpact?: number;
+  hoursImpact?: number;
   targetHourConceptId?: string; targetHourConceptName?: string;
-  exportsToFinnegans?: boolean; finnegansCode?: string; finnegansName?: string; valor1?: string; fechaAplicacion?: string; hasValidity?: boolean; blocksTimeEntry?: boolean; setsWorkedHoursToZero?: boolean;
-  // Etapa 15L.2C: fuente de verdad preferida para el comportamiento en
-  // carga horaria (reemplaza timeImpact/blocksTimeEntry arriba).
+  exportsToFinnegans?: boolean; finnegansCode?: string; finnegansName?: string; valor1?: string; fechaAplicacion?: string;
+  // Etapa 15L.2C: fuente de verdad del comportamiento en carga horaria.
   timeEntryBehavior?: "NO_BLOQUEA" | "BLOQUEA_NUEVA_CARGA";
   approvalRoles?: Role[];
 }

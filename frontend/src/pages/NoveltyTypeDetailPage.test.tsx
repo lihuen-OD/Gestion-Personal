@@ -38,10 +38,10 @@ function buildNoveltyType(overrides: Partial<NoveltyType> = {}): NoveltyType {
     name: "Vacaciones",
     description: "Licencia anual",
     kind: "VACACIONES",
-    origin: "INTERNA",
     uiColor: "blue",
     status: "ACTIVO",
-    finnegansLinks: [],
+    finnegansCode: null,
+    finnegansName: null,
     allowedLoadRoles: [],
     approvalRoles: [],
     rules: {
@@ -49,11 +49,6 @@ function buildNoveltyType(overrides: Partial<NoveltyType> = {}): NoveltyType {
       requiresApproval: true,
       requiresDocumentation: false,
       allowsHours: false,
-      allowsDateTo: true,
-      hasValidity: false,
-      blocksTimeEntry: false,
-      setsWorkedHoursToZero: false,
-      timeImpact: "NO_AFECTA_HORAS",
       timeEntryBehavior: "NO_BLOQUEA",
       allowsDateRange: true,
       finnegansValueUnit: null,
@@ -64,7 +59,6 @@ function buildNoveltyType(overrides: Partial<NoveltyType> = {}): NoveltyType {
     updatedAt: "",
     createdBy: "",
     updatedBy: "",
-    history: [],
     ...overrides,
   };
 }
@@ -108,7 +102,7 @@ describe("NoveltyTypeDetailPage — Etapa 15L.2B", () => {
 
   it("con exportsToFinnegans muestra el badge Finnegans en el header", async () => {
     vi.mocked(noveltyTypeApiService.getById).mockResolvedValue(
-      buildNoveltyType({ rules: { ...buildNoveltyType().rules, exportsToFinnegans: true, finnegansValueUnit: "DAYS" }, finnegansLinks: [{ id: "l1", code: "VAC", name: "Vacaciones", exportConcept: "Vacaciones", priority: 1, status: "ACTIVO", hasValidity: false }] }),
+      buildNoveltyType({ rules: { ...buildNoveltyType().rules, exportsToFinnegans: true, finnegansValueUnit: "DAYS" }, finnegansCode: "VAC", finnegansName: "Vacaciones" }),
     );
     renderPage();
 
@@ -116,23 +110,21 @@ describe("NoveltyTypeDetailPage — Etapa 15L.2B", () => {
     expect(screen.getByText("Finnegans", { selector: "span.badge" })).toBeInTheDocument();
   });
 
-  it("con más de un vínculo Finnegans muestra el aviso de configuraciones adicionales, sin exponer UUIDs", async () => {
-    const links = [
-      { id: "l1", code: "VAC1", name: "Vacaciones legacy 1", exportConcept: "", priority: 2, status: "ACTIVO" as const, hasValidity: false },
-      { id: "l2", code: "VAC2", name: "Vacaciones principal", exportConcept: "", priority: 1, status: "ACTIVO" as const, hasValidity: false },
-    ];
+  // Etapa 15L.6 (docs/decisions/NOVELTY_TYPE_LEGACY_REMOVAL_15L6.md):
+  // FinnegansNoveltyLink (1:N) se retiró a favor de finnegansCode/
+  // finnegansName (1:1 físico) -- ya no existe un escenario de "más de un
+  // vínculo" para probar.
+  it("muestra el código/nombre Finnegans configurados en el tab Finnegans", async () => {
     vi.mocked(noveltyTypeApiService.getById).mockResolvedValue(
-      buildNoveltyType({ rules: { ...buildNoveltyType().rules, exportsToFinnegans: true, finnegansValueUnit: "DAYS" }, finnegansLinks: links }),
+      buildNoveltyType({ rules: { ...buildNoveltyType().rules, exportsToFinnegans: true, finnegansValueUnit: "DAYS" }, finnegansCode: "VAC2", finnegansName: "Vacaciones principal" }),
     );
     renderPage();
 
     await screen.findByText("Vacaciones");
     await userEvent.click(screen.getByText("Finnegans", { selector: "button" }));
 
-    expect(await screen.findByText(/configuraciones Finnegans adicionales/)).toBeInTheDocument();
     expect(screen.getByDisplayValue("VAC2")).toBeInTheDocument();
-    expect(screen.queryByText("l1")).not.toBeInTheDocument();
-    expect(screen.queryByText("l2")).not.toBeInTheDocument();
+    expect(screen.getByDisplayValue("Vacaciones principal")).toBeInTheDocument();
   });
 
   it("editar y guardar persiste los campos nuevos (timeEntryBehavior/notes)", async () => {

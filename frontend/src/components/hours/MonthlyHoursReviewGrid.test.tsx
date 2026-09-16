@@ -31,7 +31,6 @@ function buildNovelty(overrides: Partial<Novelty> = {}): Novelty {
     from: "2026-08-01",
     to: "2026-08-01",
     quantity: "1 día",
-    affectsSettlement: true,
     status: "Aprobado",
     createdBy: "Sistema",
     ...overrides,

@@ -4,7 +4,6 @@ import { isMonthlyClosureApproved } from "../../shared/monthlyClosure/closureLoc
 import type { AuditContext } from "../audit/audit.service";
 import { auditService } from "../audit/audit.service";
 import { finnegansExportRepository, type FinnegansExportNovelty } from "./finnegansExport.repository";
-import { resolvePrincipalFinnegansLink } from "./finnegansExport.principalLink";
 import { buildReadinessSummary, evaluateNoveltyReadiness, type FinnegansReadinessSummary, type FinnegansRowStatus } from "./finnegansExport.readiness";
 import { finnegansExportBatchRepository, type CreateBatchItemInput } from "./finnegansExport.batch.repository";
 import { computeExportHash } from "./finnegansExport.hash";
@@ -112,7 +111,6 @@ interface DatasetRow {
 }
 
 function buildRow(item: FinnegansExportNovelty, closureApproved: boolean): DatasetRow {
-  const principalLink = resolvePrincipalFinnegansLink(item.noveltyType.finnegansLinks);
   const unit = item.noveltyType.finnegansValueUnit;
   const requiresValidity = item.noveltyType.finnegansRequiresValidity;
 
@@ -122,13 +120,13 @@ function buildRow(item: FinnegansExportNovelty, closureApproved: boolean): Datas
     toDate: item.toDate,
     finnegansValueUnit: unit,
     finnegansRequiresValidity: requiresValidity,
-    hasPrincipalLink: !!principalLink,
+    hasFinnegansCode: !!item.noveltyType.finnegansCode,
     closureApproved,
   });
 
   const row: FinnegansExportRow = {
     Legajo: item.employee.legajoFinnegans || item.employee.legajo,
-    Novedad: principalLink?.code || "",
+    Novedad: item.noveltyType.finnegansCode || "",
     // Etapa 15L.3A §14: auditado, sin evidencia de una regla real para
     // llenarlo — se mantiene vacío tal como hoy (ver
     // docs/NOVEDADES_HORAS_FINNEGANS.md: "Si queda vacío, Finnegans toma el
@@ -138,8 +136,7 @@ function buildRow(item: FinnegansExportNovelty, closureApproved: boolean): Datas
     // Etapa 15L.3A §13: sin evidencia de un comportamiento distinto, se
     // mantiene Fecha Aplicación = fromDate, sin cambios.
     "Fecha Aplicación": formatDate(item.fromDate),
-    // Etapa 15L.3A §11/§12: fuente nueva finnegansRequiresValidity (ya no el
-    // OR legacy `NoveltyType.hasValidity || link.hasValidity`). Si falta
+    // Etapa 15L.3A §11/§12: fuente única finnegansRequiresValidity. Si falta
     // toDate con vigencia requerida, no se inventa una fecha — la fila queda
     // bloqueada (MISSING_VALIDITY_TO_DATE) y Fecha hasta sale "" (formatDate
     // ya es null-safe), nunca se recorta ni se reemplaza Fecha desde.

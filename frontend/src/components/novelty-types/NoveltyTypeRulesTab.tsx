@@ -2,10 +2,9 @@ import type { NoveltyType, NoveltyTypeRules } from "../../types/noveltyType.type
 import { noveltyTimeEntryBehaviorDescriptions, noveltyTimeEntryBehaviorLabels, noveltyTimeEntryBehaviors, RoleChecklist } from "./NoveltyTypeFields";
 
 // Etapa 15L.2B (docs/decisions/NOVELTY_TYPE_FRONTEND_REDESIGN_15L2B.md): un
-// solo control de comportamiento horario (timeEntryBehavior) en vez de 3
-// campos legacy independientes y desincronizables entre sí
-// (blocksTimeEntry/setsWorkedHoursToZero/timeImpact, ver 15L.1 §7). El
-// backend sigue sincronizando los 3 legacy a partir de este único valor.
+// solo control de comportamiento horario (timeEntryBehavior). Etapa 15L.6
+// (docs/decisions/NOVELTY_TYPE_LEGACY_REMOVAL_15L6.md) retiró los 3 campos
+// legacy que reemplazaba.
 export function NoveltyTypeRulesTab({ item, setItem, disabled }: { item: NoveltyType; setItem: (item: NoveltyType) => void; disabled?: boolean }) {
   const patchRules = (patch: Partial<NoveltyTypeRules>) => setItem({ ...item, rules: { ...item.rules, ...patch } });
 

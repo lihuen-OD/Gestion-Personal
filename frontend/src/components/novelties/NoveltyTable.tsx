@@ -11,7 +11,7 @@ import { OverflowCell } from "../ui/OverflowCell";
 import { TableShell } from "../ui/TableShell";
 import { EmptyState } from "../ui/EmptyState";
 import { confirmAction } from "../../services/appDialog";
-import { noveltyTimeImpactLabel } from "../novelty-types/NoveltyTypeFields";
+import { noveltyTimeEntryBehaviorLabel } from "../novelty-types/NoveltyTypeFields";
 import { getUserErrorMessage } from "../../services/api/apiClient";
 
 export function NoveltyTable({
@@ -82,7 +82,6 @@ export function NoveltyTable({
             <th>Legajo</th>
             <th>Empleado</th>
             <th>Novedad</th>
-            <th>Origen</th>
             <th>Vigencia</th>
             <th>Cantidad</th>
             <th>Impacto horas</th>
@@ -112,9 +111,6 @@ export function NoveltyTable({
                   <b>{novelty.type}</b>
                 </td>
                 <td>
-                  <Badge tone="neutral">{novelty.origin || "INTERNA"}</Badge>
-                </td>
-                <td>
                   {novelty.from}
                   {novelty.to && novelty.to !== novelty.from ? (
                     <span className="table-sub">Hasta {novelty.to}</span>
@@ -122,18 +118,12 @@ export function NoveltyTable({
                 </td>
                 <td>{novelty.quantity}</td>
                 <td>
-                  {/* Etapa 15L.2C (docs/decisions/NOVELTY_TYPE_CONSUMER_MIGRATION_15L2C.md):
-                      la decisión de "bloquea carga" migra a timeEntryBehavior.
-                      El label de noveltyTimeImpactLabel(timeImpact) se
-                      mantiene -- REGISTRA_HORAS_NO_TRABAJADAS no tiene
-                      equivalente en el enum nuevo de 2 valores y perdería
-                      información real mostrada a RRHH si se reemplazara. */}
                   <OverflowCell
-                    value={`${noveltyTimeImpactLabel(novelty.timeImpact)}${
+                    value={`${noveltyTimeEntryBehaviorLabel(novelty.timeEntryBehavior)}${
                       novelty.targetHourConceptName
                         ? `\nAplica sobre ${novelty.targetHourConceptName}`
                         : ""
-                    }${novelty.timeEntryBehavior === "BLOQUEA_NUEVA_CARGA" ? "\nBloquea nueva carga" : ""}`}
+                    }`}
                   />
                 </td>
                 <td>

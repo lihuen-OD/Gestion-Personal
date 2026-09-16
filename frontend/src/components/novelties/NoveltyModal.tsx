@@ -124,7 +124,6 @@ export function NoveltyModal({
   }, [catalogRetry]);
 
   const selectedType = activeTypes.find((item) => item.id === typeId);
-  const activeLink = selectedType?.finnegansLinks.find((link) => link.status === "ACTIVO");
   const employeeIds = selectedEmployees.map((employee) => employee.id);
   const targetHourOptions = Array.from(
     new Set(
@@ -137,14 +136,7 @@ export function NoveltyModal({
   const normalizedTargetHour = targetHourOptions.includes(targetHour)
     ? targetHour
     : targetHourOptions[0] || "Hora normal";
-  // Etapa 15L.2C: timeImpact==="REGISTRA_HORAS_NO_TRABAJADAS" se mantiene
-  // -- sin equivalente en el enum nuevo de 2 valores (timeEntryBehavior:
-  // NO_BLOQUEA/BLOQUEA_NUEVA_CARGA), migrarlo perdería esta distinción
-  // (docs/decisions/NOVELTY_TYPE_CONSUMER_MIGRATION_15L2C.md).
-  const requiresTargetHour = Boolean(
-    selectedType?.rules.allowsHours ||
-      selectedType?.rules.timeImpact === "REGISTRA_HORAS_NO_TRABAJADAS",
-  );
+  const requiresTargetHour = Boolean(selectedType?.rules.allowsHours);
 
   // Etapa 15L.5: sólo previsualización -- el backend recalcula quantityDays
   // sobre el rango real completo al crear la novedad (ver
@@ -253,7 +245,7 @@ export function NoveltyModal({
                 <p>{selectedType.description}</p>
                 <div>
                   <span>{noveltyTimeEntryBehaviorLabel(selectedType.rules.timeEntryBehavior)}</span>
-                  <span>Finnegans: {selectedType.rules.exportsToFinnegans ? (activeLink?.code || "Configuración pendiente") : "No exporta"}</span>
+                  <span>Finnegans: {selectedType.rules.exportsToFinnegans ? (selectedType.finnegansCode || "Configuración pendiente") : "No exporta"}</span>
                 </div>
               </div>
             ) : null}

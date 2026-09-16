@@ -1,37 +1,18 @@
 import type {
-  FinnegansNoveltyLink,
   FinnegansValueUnit,
   NoveltyTimeEntryBehavior,
-  NoveltyTimeImpact,
   NoveltyType,
   NoveltyTypeKind,
-  NoveltyTypeOrigin,
   NoveltyUiColor,
 } from "../../types/noveltyType.types";
 import { noveltyColorClass, noveltyUiColors } from "../../utils/noveltyColor";
 
 export const noveltyKinds: NoveltyTypeKind[] = ["AUSENCIA", "LICENCIA", "HORARIA", "ACCIDENTE", "VACACIONES", "SANCION", "OTRO"];
-export const noveltyOrigins: NoveltyTypeOrigin[] = ["INTERNA", "FINNEGANS", "MIXTA"];
-export const noveltyTimeImpacts: NoveltyTimeImpact[] = ["NO_AFECTA_HORAS", "REGISTRA_HORAS_NO_TRABAJADAS", "BLOQUEA_CARGA_DIA"];
-export const noveltyTimeImpactLabels: Record<NoveltyTimeImpact, string> = {
-  NO_AFECTA_HORAS: "No modifica las horas",
-  REGISTRA_HORAS_NO_TRABAJADAS: "Registra horas no trabajadas",
-  BLOQUEA_CARGA_DIA: "Bloquea el día completo",
-};
-export const noveltyTimeImpactDescriptions: Record<NoveltyTimeImpact, string> = {
-  NO_AFECTA_HORAS: "La novedad queda informada, pero permite cargar las horas habituales del día.",
-  REGISTRA_HORAS_NO_TRABAJADAS: "Registra una cantidad de horas no trabajadas sobre el concepto horario seleccionado.",
-  BLOQUEA_CARGA_DIA: "Marca el día con 0 horas trabajadas e impide cargar horas normales, salvo una corrección autorizada.",
-};
-
-export function noveltyTimeImpactLabel(value?: string) {
-  return noveltyTimeImpactLabels[value as NoveltyTimeImpact] || "No modifica las horas";
-}
 
 // Etapa 15L.2B (docs/decisions/NOVELTY_TYPE_FRONTEND_REDESIGN_15L2B.md):
-// único control visible de comportamiento horario -- reemplaza en la UI a
-// blocksTimeEntry/setsWorkedHoursToZero/timeImpact (siguen existiendo por
-// compatibilidad, pero ya no se muestran).
+// único control visible de comportamiento horario. Etapa 15L.6
+// (docs/decisions/NOVELTY_TYPE_LEGACY_REMOVAL_15L6.md): retiró los campos
+// legacy que reemplazaba (blocksTimeEntry/setsWorkedHoursToZero/timeImpact).
 export const noveltyTimeEntryBehaviors: NoveltyTimeEntryBehavior[] = ["NO_BLOQUEA", "BLOQUEA_NUEVA_CARGA"];
 export const noveltyTimeEntryBehaviorLabels: Record<NoveltyTimeEntryBehavior, string> = {
   NO_BLOQUEA: "No bloquea la carga horaria",
@@ -85,7 +66,6 @@ export function emptyNoveltyType(): NoveltyType {
     name: "",
     uiColor: "blue",
     kind: "AUSENCIA",
-    origin: "INTERNA",
     description: "",
     status: "ACTIVO",
     rules: {
@@ -93,11 +73,6 @@ export function emptyNoveltyType(): NoveltyType {
       requiresApproval: true,
       requiresDocumentation: false,
       allowsHours: false,
-      allowsDateTo: true,
-      hasValidity: true,
-      blocksTimeEntry: false,
-      setsWorkedHoursToZero: false,
-      timeImpact: "NO_AFECTA_HORAS",
       timeEntryBehavior: "NO_BLOQUEA",
       allowsDateRange: true,
       finnegansValueUnit: null,
@@ -105,32 +80,14 @@ export function emptyNoveltyType(): NoveltyType {
     },
     allowedLoadRoles: ["Nivel 1 - RRHH", "Nivel 2 - Supervisión / Gestión", "Nivel 3 - Administrativo de Carga Horaria"],
     approvalRoles: ["Nivel 1 - RRHH", "Nivel 2 - Supervisión / Gestión"],
-    finnegansLinks: [],
+    finnegansCode: null,
+    finnegansName: null,
     notes: "",
     createdAt: "",
     updatedAt: "",
     createdBy: "",
     updatedBy: "",
-    history: [],
   };
-}
-
-// Etapa 15L.2B (docs/decisions/NOVELTY_TYPE_FRONTEND_REDESIGN_15L2B.md,
-// punto 14): la UI trabaja con UN solo "vínculo principal" aunque el
-// modelo siga siendo 1:N (FinnegansNoveltyLink[] no se tocó, ver 15L.1
-// §13). Regla: el link ACTIVO de mayor prioridad; si no hay ninguno
-// ACTIVO, el primero que exista. Los demás links existentes nunca se
-// editan ni se borran desde esta pantalla.
-export function findPrincipalLinkIndex(links: FinnegansNoveltyLink[]): number {
-  if (!links.length) return -1;
-  const activeLinks = links.filter((link) => link.status === "ACTIVO");
-  const pool = activeLinks.length ? activeLinks : links;
-  const principal = pool.reduce((best, link) => (link.priority < best.priority ? link : best), pool[0]);
-  return links.indexOf(principal);
-}
-
-export function newPrincipalLink(name: string): FinnegansNoveltyLink {
-  return { id: crypto.randomUUID(), code: "", name: name || "", exportConcept: name || "", priority: 1, status: "ACTIVO", hasValidity: false, notes: "" };
 }
 
 // Etapa 15L.2B, punto 27: validación compartida entre creación y edición
@@ -139,8 +96,7 @@ export function validateNoveltyType(item: NoveltyType): string | null {
   if (!item.name.trim()) return "Completá el nombre de la novedad.";
   if (!item.description.trim()) return "Completá la descripción funcional.";
   if (item.rules.exportsToFinnegans) {
-    const principal = item.finnegansLinks[findPrincipalLinkIndex(item.finnegansLinks)];
-    if (!principal?.code?.trim() || !principal?.name?.trim()) {
+    if (!item.finnegansCode?.trim() || !item.finnegansName?.trim()) {
       return "Para exportar a Finnegans completá el código y el nombre Finnegans.";
     }
     if (!item.rules.finnegansValueUnit) {

@@ -14,34 +14,28 @@ function createInput(overrides: Partial<CreateNoveltyTypeInput> = {}): CreateNov
     name: "Vacaciones",
     uiColor: "blue",
     kind: "VACACIONES",
-    origin: "INTERNA",
     status: "ACTIVO",
     exportsToFinnegans: false,
     requiresApproval: true,
     requiresDocumentation: false,
     allowsHours: false,
-    allowsDateTo: true,
-    hasValidity: true,
-    blocksTimeEntry: false,
-    setsWorkedHoursToZero: false,
-    timeImpact: "NO_AFECTA_HORAS",
+    allowsDateRange: true,
+    timeEntryBehavior: "NO_BLOQUEA",
+    finnegansRequiresValidity: false,
     allowedLoadRoles: [],
     approvalRoles: [],
-    finnegansLinks: [],
     ...overrides,
   } as CreateNoveltyTypeInput;
 }
 
 vi.mock("../../shared/prisma/client", () => ({
   prisma: {
-    noveltyType: { findMany: vi.fn(), count: vi.fn(), findUniqueOrThrow: vi.fn(), create: vi.fn() },
-    $transaction: vi.fn((ops: Promise<unknown>[]) => Promise.all(ops)),
+    noveltyType: { findMany: vi.fn(), count: vi.fn(), findUniqueOrThrow: vi.fn(), create: vi.fn(), update: vi.fn() },
   },
 }));
 
 const mockedPrisma = prisma as unknown as {
-  noveltyType: { findMany: Mock; count: Mock; findUniqueOrThrow: Mock; create: Mock };
-  $transaction: Mock;
+  noveltyType: { findMany: Mock; count: Mock; findUniqueOrThrow: Mock; create: Mock; update: Mock };
 };
 
 function baseQuery(overrides: Partial<ListNoveltyTypesQuery> = {}): ListNoveltyTypesQuery {
@@ -59,38 +53,36 @@ beforeEach(() => {
 // noveltyTypeApiService.getAll()), pero el endpoint sigue siendo API pública
 // validada (GET /novelty-types?kind=...) — ver noveltyTypes.repository.ts.
 describe("noveltyTypesRepository.findMany — Etapa 14H.8", () => {
-  it("con al menos un filtro real: pagina con Promise.all([findMany, count]) — sin $transaction", async () => {
+  it("con al menos un filtro real: pagina con Promise.all([findMany, count])", async () => {
     mockedPrisma.noveltyType.findMany.mockResolvedValue([{ id: "nt-1", name: "Ausencia" }]);
     mockedPrisma.noveltyType.count.mockResolvedValue(1);
 
     const [items, total] = await noveltyTypesRepository.findMany(baseQuery({ page: 2, take: 10, kind: "AUSENCIA" }));
 
-    expect(mockedPrisma.$transaction).not.toHaveBeenCalled();
     expect(mockedPrisma.noveltyType.findMany).toHaveBeenCalledWith(expect.objectContaining({ skip: 10, take: 10 }));
     expect(mockedPrisma.noveltyType.count).toHaveBeenCalledWith(expect.objectContaining({ where: expect.any(Object) }));
     expect(items).toEqual([{ id: "nt-1", name: "Ausencia" }]);
     expect(total).toBe(1);
   });
 
-  it("arma el where con kind/origin/status/exportsToFinnegans/search", async () => {
+  it("arma el where con kind/status/exportsToFinnegans/search", async () => {
     mockedPrisma.noveltyType.findMany.mockResolvedValue([]);
     mockedPrisma.noveltyType.count.mockResolvedValue(0);
 
     await noveltyTypesRepository.findMany(
-      baseQuery({ kind: "LICENCIA", origin: "FINNEGANS", status: "ACTIVO", exportsToFinnegans: true, search: "vacaciones" }),
+      baseQuery({ kind: "LICENCIA", status: "ACTIVO", exportsToFinnegans: true, search: "vacaciones" }),
     );
 
     const call = mockedPrisma.noveltyType.findMany.mock.calls[0]![0];
-    expect(call.where).toMatchObject({ kind: "LICENCIA", origin: "FINNEGANS", status: "ACTIVO", exportsToFinnegans: true });
+    expect(call.where).toMatchObject({ kind: "LICENCIA", status: "ACTIVO", exportsToFinnegans: true });
     expect(call.where.OR).toEqual(expect.arrayContaining([{ code: { contains: "vacaciones", mode: "insensitive" } }]));
   });
 
-  it("sin filtros: usa el listCache en memoria, nunca $transaction ni una query de count separada", async () => {
+  it("sin filtros: usa el listCache en memoria, nunca una query de count separada", async () => {
     mockedPrisma.noveltyType.findMany.mockResolvedValue([{ id: "nt-1" }, { id: "nt-2" }]);
 
     const [items, total] = await noveltyTypesRepository.findMany(baseQuery({ page: 1, take: 25 }));
 
-    expect(mockedPrisma.$transaction).not.toHaveBeenCalled();
     expect(mockedPrisma.noveltyType.count).not.toHaveBeenCalled();
     expect(items).toEqual([{ id: "nt-1" }, { id: "nt-2" }]);
     expect(total).toBe(2);
@@ -123,13 +115,13 @@ describe("noveltyTypesRepository.findMany — Etapa 14H.8", () => {
 });
 
 describe("noveltyTypesRepository.findById", () => {
-  it("usa findUniqueOrThrow con el include completo (finnegansLinks)", async () => {
+  it("usa findUniqueOrThrow sin ningún include (Etapa 15L.6: todos los campos son escalares propios)", async () => {
     mockedPrisma.noveltyType.findUniqueOrThrow.mockResolvedValue({ id: "nt-1" });
 
     await noveltyTypesRepository.findById("nt-1");
 
     const call = mockedPrisma.noveltyType.findUniqueOrThrow.mock.calls.at(0)?.[0];
-    expect(call).toEqual({ where: { id: "nt-1" }, include: { finnegansLinks: { orderBy: [{ priority: "asc" }, { code: "asc" }] } } });
+    expect(call).toEqual({ where: { id: "nt-1" } });
   });
 
   it("propaga el rechazo (P2025) cuando el tipo de novedad no existe", async () => {

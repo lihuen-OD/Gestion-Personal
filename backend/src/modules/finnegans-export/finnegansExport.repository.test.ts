@@ -45,10 +45,10 @@ describe("finnegansExportRepository.findExportableNovelties — Etapa 15L.3A/15L
     expect(call.where).toMatchObject({ employeeId: "emp-1" });
   });
 
-  it("sólo trae vínculos Finnegans ACTIVO (un vínculo INACTIVO nunca puede ser principal)", async () => {
+  it("trae el NoveltyType completo (finnegansCode/finnegansName son columnas propias, 1:1 físico desde la Etapa 15L.6)", async () => {
     await finnegansExportRepository.findExportableNovelties("2026-09");
-    const call = vi.mocked(prisma.novelty.findMany).mock.calls[0]![0]! as { include: { noveltyType: { include: { finnegansLinks: { where: { status: string } } } } } };
-    expect(call.include.noveltyType.include.finnegansLinks.where).toEqual({ status: "ACTIVO" });
+    const call = vi.mocked(prisma.novelty.findMany).mock.calls[0]![0]! as { include: { noveltyType: boolean } };
+    expect(call.include.noveltyType).toBe(true);
   });
 });
 

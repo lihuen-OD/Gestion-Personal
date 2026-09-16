@@ -25,23 +25,12 @@ type ApiNovelty = {
     id: string;
     code: string;
     name: string;
-    origin: "INTERNA" | "FINNEGANS" | "MIXTA";
     exportsToFinnegans: boolean;
     allowsHours: boolean;
-    allowsDateTo: boolean;
-    hasValidity: boolean;
-    blocksTimeEntry: boolean;
-    setsWorkedHoursToZero: boolean;
-    timeImpact: string;
-    // Etapa 15L.2C: fuente de verdad preferida (ver los legacy arriba).
     timeEntryBehavior?: "NO_BLOQUEA" | "BLOQUEA_NUEVA_CARGA";
     approvalRoles?: Role[];
-    finnegansLinks?: Array<{
-      code: string;
-      name: string;
-      hasValidity?: boolean | null;
-      status: "ACTIVO" | "INACTIVO";
-    }>;
+    finnegansCode?: string | null;
+    finnegansName?: string | null;
   };
   targetHourConcept?: {
     id: string;
@@ -116,7 +105,6 @@ function quantityLabel(item: ApiNovelty) {
 }
 
 export function mapNoveltyFromApi(item: ApiNovelty): Novelty {
-  const activeLink = item.noveltyType.finnegansLinks?.find((link) => link.status === "ACTIVO");
   const hours = asNumber(item.quantityHours) || 0;
   const days = asNumber(item.quantityDays) || 1;
 
@@ -128,28 +116,22 @@ export function mapNoveltyFromApi(item: ApiNovelty): Novelty {
     from: dateOnly(item.fromDate),
     to: item.toDate ? dateOnly(item.toDate) : dateOnly(item.fromDate),
     quantity: quantityLabel(item),
-    affectsSettlement: item.noveltyType.exportsToFinnegans,
     status: toFrontendStatus(item.status),
     createdBy: "Sistema",
     employeeLegajo: item.employee?.legajo,
     employeeName: item.employee ? `${item.employee.lastName}, ${item.employee.firstName}` : undefined,
     documentationFileName: item.documents?.[0]?.fileName,
     documentationNotes: item.observation || undefined,
-    origin: item.noveltyType.origin,
-    timeImpact: item.noveltyType.timeImpact,
     hoursImpact: hours,
     targetHourConceptId: item.targetHourConceptId || undefined,
     targetHourConceptName: item.targetHourConcept?.name,
-    blocksTimeEntry: item.noveltyType.blocksTimeEntry,
-    setsWorkedHoursToZero: item.noveltyType.setsWorkedHoursToZero,
     timeEntryBehavior: item.noveltyType.timeEntryBehavior,
     approvalRoles: normalizeRoles(item.noveltyType.approvalRoles),
     exportsToFinnegans: item.noveltyType.exportsToFinnegans,
-    finnegansCode: activeLink?.code,
-    finnegansName: activeLink?.name,
+    finnegansCode: item.noveltyType.finnegansCode || undefined,
+    finnegansName: item.noveltyType.finnegansName || undefined,
     valor1: item.noveltyType.allowsHours ? String(hours) : String(days),
     fechaAplicacion: dateOnly(item.fromDate),
-    hasValidity: item.noveltyType.hasValidity || Boolean(activeLink?.hasValidity),
   };
 }
 

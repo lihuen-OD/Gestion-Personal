@@ -1,30 +1,16 @@
 import { apiRequest } from "./apiClient";
 import { cachePolicies, cachedData, invalidateCacheFamily } from "../cache";
 import type {
-  FinnegansNoveltyLink,
   FinnegansValueUnit,
   NoveltyTimeEntryBehavior,
-  NoveltyTimeImpact,
   NoveltyType,
   NoveltyTypeFilters,
   NoveltyTypeKind,
-  NoveltyTypeOrigin,
   NoveltyTypeStatus,
   NoveltyUiColor,
 } from "../../types/noveltyType.types";
 import type { Role } from "../../types";
 import { resolveNoveltyUiColor } from "../../utils/noveltyColor";
-
-type ApiFinnegansNoveltyLink = {
-  id?: string;
-  code: string;
-  name: string;
-  exportConcept?: string | null;
-  priority: number;
-  status: NoveltyTypeStatus;
-  hasValidity: boolean;
-  notes?: string | null;
-};
 
 type ApiNoveltyType = {
   id: string;
@@ -35,7 +21,6 @@ type ApiNoveltyType = {
   // exactamente el mismo enum, sin ningún mapeo especial.
   uiColor: NoveltyUiColor;
   kind: NoveltyTypeKind;
-  origin: NoveltyTypeOrigin;
   status: NoveltyTypeStatus;
   description?: string | null;
   notes?: string | null;
@@ -43,19 +28,15 @@ type ApiNoveltyType = {
   requiresApproval: boolean;
   requiresDocumentation: boolean;
   allowsHours: boolean;
-  allowsDateTo: boolean;
-  hasValidity: boolean;
-  blocksTimeEntry: boolean;
-  setsWorkedHoursToZero: boolean;
-  timeImpact: NoveltyTimeImpact;
-  // Etapa 15L.2A -- modelo nuevo, ver noveltyType.types.ts.
   timeEntryBehavior: NoveltyTimeEntryBehavior;
   allowsDateRange: boolean;
   finnegansValueUnit: FinnegansValueUnit | null;
   finnegansRequiresValidity: boolean;
+  // Etapa 15L.6: reemplaza FinnegansNoveltyLink (1:N) -- 1:1 físico.
+  finnegansCode?: string | null;
+  finnegansName?: string | null;
   allowedLoadRoles?: Role[];
   approvalRoles?: Role[];
-  finnegansLinks: ApiFinnegansNoveltyLink[];
   createdAt: string;
   updatedAt: string;
 };
@@ -73,35 +54,6 @@ function normalizeRoles(value: unknown, fallback: Role[]): Role[] {
   return roles.length ? roles : fallback;
 }
 
-function mapLinkFromApi(link: ApiFinnegansNoveltyLink): FinnegansNoveltyLink {
-  return {
-    id: link.id || crypto.randomUUID(),
-    code: link.code,
-    name: link.name,
-    exportConcept: link.exportConcept || "",
-    priority: link.priority,
-    status: link.status,
-    notes: link.notes || "",
-    hasValidity: link.hasValidity,
-  };
-}
-
-function mapLinkToApi(link: FinnegansNoveltyLink): ApiFinnegansNoveltyLink | null {
-  if (!link.code.trim()) return null;
-  return {
-    code: link.code.trim(),
-    name: link.name.trim(),
-    // Etapa 15L.2B: ya no se pide en la UI (docs/decisions/
-    // NOVELTY_TYPE_FRONTEND_REDESIGN_15L2B.md) -- se espeja el nombre para
-    // que, si algún día se lee, tenga un valor legible en vez de vacío.
-    exportConcept: link.exportConcept?.trim() || link.name.trim(),
-    priority: Number(link.priority) || 1,
-    status: link.status,
-    hasValidity: Boolean(link.hasValidity),
-    notes: link.notes?.trim() || null,
-  };
-}
-
 export function mapNoveltyTypeFromApi(item: ApiNoveltyType): NoveltyType {
   const allowedLoadRoles = normalizeRoles(item.allowedLoadRoles, fallbackAllowedLoadRoles);
   const approvalRoles = normalizeRoles(item.approvalRoles, fallbackApprovalRoles);
@@ -111,7 +63,6 @@ export function mapNoveltyTypeFromApi(item: ApiNoveltyType): NoveltyType {
     name: item.name,
     uiColor: resolveNoveltyUiColor(item.uiColor, item.id || item.name || item.code),
     kind: item.kind,
-    origin: item.origin,
     description: item.description || "",
     status: item.status,
     rules: {
@@ -119,11 +70,6 @@ export function mapNoveltyTypeFromApi(item: ApiNoveltyType): NoveltyType {
       requiresApproval: item.requiresApproval,
       requiresDocumentation: item.requiresDocumentation,
       allowsHours: item.allowsHours,
-      allowsDateTo: item.allowsDateTo,
-      hasValidity: item.hasValidity,
-      blocksTimeEntry: item.blocksTimeEntry,
-      setsWorkedHoursToZero: item.setsWorkedHoursToZero,
-      timeImpact: item.timeImpact,
       timeEntryBehavior: item.timeEntryBehavior,
       allowsDateRange: item.allowsDateRange,
       finnegansValueUnit: item.finnegansValueUnit,
@@ -131,7 +77,8 @@ export function mapNoveltyTypeFromApi(item: ApiNoveltyType): NoveltyType {
     },
     allowedLoadRoles,
     approvalRoles,
-    finnegansLinks: (item.finnegansLinks || []).map(mapLinkFromApi),
+    finnegansCode: item.finnegansCode || null,
+    finnegansName: item.finnegansName || null,
     // Etapa 15L.2A: antes se hardcodeaba "" y el texto editado se perdía
     // siempre al guardar -- el backend ahora persiste notes de verdad.
     notes: item.notes || "",
@@ -139,7 +86,6 @@ export function mapNoveltyTypeFromApi(item: ApiNoveltyType): NoveltyType {
     updatedAt: item.updatedAt,
     createdBy: "Sistema",
     updatedBy: "Sistema",
-    history: [],
   };
 }
 
@@ -149,30 +95,21 @@ function mapToApi(item: NoveltyType) {
     name: item.name,
     uiColor: item.uiColor,
     kind: item.kind,
-    origin: item.origin,
     status: item.status,
     description: item.description || null,
-    // Etapa 15L.2A: mapToApi antes no incluía notes en absoluto -- el
-    // textarea "Observaciones internas" se editaba pero nunca se enviaba.
     notes: item.notes?.trim() || null,
     exportsToFinnegans: item.rules.exportsToFinnegans,
     requiresApproval: item.rules.requiresApproval,
     requiresDocumentation: item.rules.requiresDocumentation,
     allowsHours: item.rules.allowsHours,
-    allowsDateTo: item.rules.allowsDateTo,
-    hasValidity: item.rules.hasValidity,
-    blocksTimeEntry: item.rules.blocksTimeEntry,
-    setsWorkedHoursToZero: item.rules.setsWorkedHoursToZero,
-    timeImpact: item.rules.timeImpact,
-    // Etapa 15L.2B: fuente de verdad preferida -- el backend sincroniza los
-    // 3 campos legacy de arriba a partir de estos (noveltyTypes.sync.ts).
     timeEntryBehavior: item.rules.timeEntryBehavior,
     allowsDateRange: item.rules.allowsDateRange,
     finnegansValueUnit: item.rules.finnegansValueUnit,
     finnegansRequiresValidity: item.rules.finnegansRequiresValidity,
+    finnegansCode: item.finnegansCode?.trim() || null,
+    finnegansName: item.finnegansName?.trim() || null,
     allowedLoadRoles: item.allowedLoadRoles,
     approvalRoles: item.approvalRoles,
-    finnegansLinks: item.finnegansLinks.map(mapLinkToApi).filter(Boolean),
   };
 }
 

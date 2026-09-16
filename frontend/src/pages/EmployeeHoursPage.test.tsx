@@ -682,7 +682,6 @@ function buildBlockingNovelty(overrides: Partial<Novelty> = {}): Novelty {
     from: "2026-08-05",
     to: "2026-08-05",
     quantity: "1 día",
-    affectsSettlement: false,
     status: "Aprobado",
     createdBy: "Sistema",
     ...overrides,
@@ -690,14 +689,12 @@ function buildBlockingNovelty(overrides: Partial<Novelty> = {}): Novelty {
 }
 
 // Etapa 15L.2C (docs/decisions/NOVELTY_TYPE_CONSUMER_MIGRATION_15L2C.md):
-// isBlocked/conceptNovelties migraron de blocksTimeEntry/timeImpact
-// (legacy) a timeEntryBehavior. Este describe no tenía ninguna cobertura
-// antes de esta etapa.
+// isBlocked/conceptNovelties usan timeEntryBehavior como única fuente.
 describe("EmployeeHoursPage — bloqueo por novedad vía timeEntryBehavior (Etapa 15L.2C)", () => {
-  it("timeEntryBehavior=BLOQUEA_NUEVA_CARGA bloquea la celda de Hora normal ese día, aunque los legacy digan lo contrario", async () => {
+  it("timeEntryBehavior=BLOQUEA_NUEVA_CARGA bloquea la celda de Hora normal ese día", async () => {
     vi.mocked(employeeApiService.getTimeGrid).mockResolvedValue(buildGrid());
     vi.mocked(noveltyApiService.getAll).mockResolvedValue([
-      buildBlockingNovelty({ timeEntryBehavior: "BLOQUEA_NUEVA_CARGA", blocksTimeEntry: false, timeImpact: "NO_AFECTA_HORAS" }),
+      buildBlockingNovelty({ timeEntryBehavior: "BLOQUEA_NUEVA_CARGA" }),
     ]);
     renderPage();
     await waitForGridLoaded();
@@ -707,10 +704,10 @@ describe("EmployeeHoursPage — bloqueo por novedad vía timeEntryBehavior (Etap
     expect(within(day5).getByText("0")).toBeInTheDocument();
   });
 
-  it("timeEntryBehavior=NO_BLOQUEA no bloquea la celda, aunque los legacy digan lo contrario", async () => {
+  it("timeEntryBehavior=NO_BLOQUEA no bloquea la celda", async () => {
     vi.mocked(employeeApiService.getTimeGrid).mockResolvedValue(buildGrid());
     vi.mocked(noveltyApiService.getAll).mockResolvedValue([
-      buildBlockingNovelty({ timeEntryBehavior: "NO_BLOQUEA", blocksTimeEntry: true, timeImpact: "BLOQUEA_CARGA_DIA" }),
+      buildBlockingNovelty({ timeEntryBehavior: "NO_BLOQUEA" }),
     ]);
     renderPage();
     await waitForGridLoaded();

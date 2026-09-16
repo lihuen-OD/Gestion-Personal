@@ -21,7 +21,7 @@ function normalize(value: string) {
 
 function matchesFilters(item: NoveltyType, filters: NoveltyTypeFiltersModel) {
   const search = normalize(filters.search);
-  const text = normalize(`${item.code} ${item.name} ${item.description} ${item.finnegansLinks.map((link) => `${link.code} ${link.name} ${link.exportConcept || ""}`).join(" ")}`);
+  const text = normalize(`${item.code} ${item.name} ${item.description} ${item.finnegansCode || ""} ${item.finnegansName || ""}`);
   if (search && !text.includes(search)) return false;
   if (filters.kind && item.kind !== filters.kind) return false;
   if (filters.status && item.status !== filters.status) return false;

@@ -740,14 +740,19 @@ Query de listado:
 ```txt
 search
 kind
-origin
 status
 exportsToFinnegans
 take
 page
 ```
 
-Soporta reglas y vínculos Finnegans:
+**Etapa 15L.6** (`docs/decisions/NOVELTY_TYPE_LEGACY_REMOVAL_15L6.md`, breaking
+interno — sólo lo consume el frontend de este mismo repo): se eliminaron los
+campos legacy `origin`, `allowsDateTo`, `hasValidity`, `blocksTimeEntry`,
+`setsWorkedHoursToZero`, `timeImpact` y la relación 1:N
+`finnegansLinks`/`FinnegansNoveltyLink`, migrada a columnas planas
+`finnegansCode`/`finnegansName` (1:1 físico, mismo patrón que
+`finnegansValueUnit`/`finnegansRequiresValidity`):
 
 ```json
 {
@@ -755,28 +760,25 @@ Soporta reglas y vínculos Finnegans:
   "name": "Llegada tarde",
   "uiColor": "amber",
   "kind": "HORARIA",
-  "origin": "MIXTA",
   "exportsToFinnegans": true,
   "requiresApproval": false,
   "requiresDocumentation": false,
   "allowsHours": true,
-  "allowsDateTo": false,
-  "hasValidity": false,
-  "blocksTimeEntry": false,
-  "setsWorkedHoursToZero": false,
-  "timeImpact": "REGISTRA_HORAS_NO_TRABAJADAS",
-  "finnegansLinks": [
-    {
-      "code": "TARDANZA",
-      "name": "Tardanza",
-      "exportConcept": "Llegada tarde",
-      "priority": 1,
-      "status": "ACTIVO",
-      "hasValidity": false
-    }
-  ]
+  "allowsDateRange": false,
+  "timeEntryBehavior": "NO_BLOQUEA",
+  "finnegansValueUnit": "HOURS",
+  "finnegansRequiresValidity": false,
+  "finnegansCode": "TARDANZA",
+  "finnegansName": "Tardanza"
 }
 ```
+
+Si `exportsToFinnegans=true`, `finnegansCode`/`finnegansName` y
+`finnegansValueUnit` son obligatorios (`400
+NOVELTY_TYPE_FINNEGANS_LINK_REQUIRED` / `NOVELTY_TYPE_FINNEGANS_VALUE_UNIT_REQUIRED`).
+`allowsHours=true` + `finnegansValueUnit=DAYS` está prohibido (`400
+NOVELTY_TYPE_HOURS_DAYS_CONFLICT`, Etapa 15L.5) — estructuralmente inviable,
+ese tipo nunca tendría `quantityDays` para exportar.
 
 ### Puestos
 
@@ -854,7 +856,7 @@ Reglas:
 - Si quien crea es RRHH, la novedad nace `APROBADO` directo; cualquier otro rol la deja `PENDIENTE` (el campo `NoveltyType.requiresApproval` se persiste pero no controla este flujo — es decorativo).
 - Valida si el tipo permite horas o fecha hasta.
 - Valida vigencia cuando corresponde.
-- **Etapa 15G.1** (`docs/decisions/NOVELTIES_AS_ADMINISTRATIVE_JUSTIFICATION_15G1.md`): crear una novedad **nunca** crea ni modifica `TimeEntry` — esto aplica sin importar `status` (`PENDIENTE`/`APROBADO`), rol de quien crea, ni los campos horarios del tipo (`setsWorkedHoursToZero`, `blocksTimeEntry`, `timeImpact = BLOQUEA_CARGA_DIA`). El fichador y la carga horaria manual (`/api/time-entries`) son la única fuente de verdad de horas reales; Novedades es justificación administrativa.
+- **Etapa 15G.1** (`docs/decisions/NOVELTIES_AS_ADMINISTRATIVE_JUSTIFICATION_15G1.md`): crear una novedad **nunca** crea ni modifica `TimeEntry` — esto aplica sin importar `status` (`PENDIENTE`/`APROBADO`), rol de quien crea, ni `timeEntryBehavior` del tipo. El fichador y la carga horaria manual (`/api/time-entries`) son la única fuente de verdad de horas reales; Novedades es justificación administrativa.
 - **Etapa 15G.3** (`docs/decisions/NOVELTY_OVERLAP_DUPLICATE_RULES_15G3.md`): rechaza (409) crear una novedad del **mismo `noveltyTypeId`** para el **mismo empleado** cuando su rango de fechas (`fromDate`/`toDate`, `toDate` nulo tratado como igual a `fromDate`) coincide o se superpone con una novedad ya activa (cualquier `status` salvo `RECHAZADO`):
   - `NOVELTY_DUPLICATE` — el rango coincide exactamente con el existente.
   - `NOVELTY_OVERLAP` — el rango sólo se superpone parcialmente.
@@ -877,7 +879,7 @@ Rechazo:
 }
 ```
 
-**Etapa 15G.1:** `approve` sólo cambia `status`/`approvedByUserId`/`approvedAt` y registra auditoría — nunca crea ni modifica `TimeEntry`, tampoco para un tipo con `setsWorkedHoursToZero`. `reject` tampoco toca `TimeEntry` (nunca hubo nada que revertir).
+**Etapa 15G.1:** `approve` sólo cambia `status`/`approvedByUserId`/`approvedAt` y registra auditoría — nunca crea ni modifica `TimeEntry`, sea cual sea `timeEntryBehavior` del tipo. `reject` tampoco toca `TimeEntry` (nunca hubo nada que revertir).
 
 ### Fichador público (clock)
 
@@ -962,7 +964,7 @@ Reglas:
 - Permite `0` horas para registros generados o asociados a novedades bloqueantes.
 - Rechaza horas negativas y más de 24 horas por registro.
 - **Etapa 15E** (`docs/decisions/TIME_CLOSURE_CONSISTENCY_15E.md`): si `MonthlyTimeClosure` del empleado/período (derivado de `date`) está `ENVIADO`/`APROBADO`/`CORRECCION_PENDIENTE`, responde `409 MONTHLY_CLOSURE_LOCKED` — **sin excepción de rol, ni siquiera RRHH**. No existe una vía de "corrección" para crear una fila nueva en un período cerrado; para eso hay que reabrir el cierre primero (`POST /workforce/closures/:id/return`, ver más abajo).
-- **Etapa 15G.1** (`docs/decisions/NOVELTIES_AS_ADMINISTRATIVE_JUSTIFICATION_15G1.md`): si el día está cubierto por una `Novelty` con `status = APROBADO` cuyo `noveltyType` tenga `blocksTimeEntry`, `setsWorkedHoursToZero` o `timeImpact = BLOQUEA_CARGA_DIA`, responde `409 TIME_ENTRY_DAY_BLOCKED_BY_NOVELTY`. Antes de esta etapa bastaba con que la novedad no estuviera `RECHAZADO` (una `PENDIENTE` ya bloqueaba); ahora sólo `APROBADO` bloquea. Esto es sólo bloqueo preventivo de carga **nueva** — nunca modifica un `TimeEntry` existente.
+- **Etapa 15G.1** (`docs/decisions/NOVELTIES_AS_ADMINISTRATIVE_JUSTIFICATION_15G1.md`): si el día está cubierto por una `Novelty` con `status = APROBADO` cuyo `noveltyType` tenga `timeEntryBehavior = BLOQUEA_NUEVA_CARGA`, responde `409 TIME_ENTRY_DAY_BLOCKED_BY_NOVELTY`. Antes de esta etapa bastaba con que la novedad no estuviera `RECHAZADO` (una `PENDIENTE` ya bloqueaba); ahora sólo `APROBADO` bloquea. Esto es sólo bloqueo preventivo de carga **nueva** — nunca modifica un `TimeEntry` existente.
 
 ### Editar
 

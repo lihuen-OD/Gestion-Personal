@@ -46,22 +46,14 @@ enum NoveltyTypeKind {
   OTRO
 }
 
-enum NoveltyTypeOrigin {
-  INTERNA
-  FINNEGANS
-  MIXTA
-}
-
-enum NoveltyTimeImpact {
-  NO_AFECTA_HORAS
-  REGISTRA_HORAS_NO_TRABAJADAS
-  BLOQUEA_CARGA_DIA
-}
-
-// Etapa 15L.2A (docs/decisions/NOVELTY_TYPE_MODEL_NORMALIZATION_15L2A.md):
-// fuente de verdad unica para el comportamiento en carga horaria, reemplaza
-// en la practica a blocksTimeEntry/setsWorkedHoursToZero/timeImpact (legacy,
-// se mantienen por compatibilidad, ver NoveltyType mas abajo).
+// Etapa 15L.6 (docs/decisions/NOVELTY_TYPE_LEGACY_REMOVAL_15L6.md): fuente de
+// verdad única para el comportamiento en carga horaria. Reemplazó en la
+// práctica a blocksTimeEntry/setsWorkedHoursToZero/timeImpact (Etapa 15L.2A);
+// esos 3 campos y el enum NoveltyTimeImpact se eliminaron en esta etapa —
+// confirmado por auditoría que timeEntryBehavior era ya la única fuente
+// productiva (findBlockingNovelty, Etapa 15L.2C) y que el único valor de
+// NoveltyTimeImpact sin equivalente (REGISTRA_HORAS_NO_TRABAJADAS) no tenía
+// ningún efecto real distinto del que ya daba allowsHours=true.
 enum NoveltyTimeEntryBehavior {
   NO_BLOQUEA
   BLOQUEA_NUEVA_CARGA
@@ -887,82 +879,52 @@ model EmployeeBlockHistory {
   @@index([effectiveFrom])
 }
 
+// Etapa 15L.6 (docs/decisions/NOVELTY_TYPE_LEGACY_REMOVAL_15L6.md): retira
+// origin/allowsDateTo/hasValidity/blocksTimeEntry/setsWorkedHoursToZero/
+// timeImpact (Etapa 15L.2A los dejó como legacy sincronizado; auditoría de
+// esta etapa confirmó cero consumidores productivos reales de ninguno de
+// los 6, más allá de la sincronización que existía sólo para sostenerlos).
+// `FinnegansNoveltyLink` (1:N) también se retira: auditoría contra datos
+// reales confirmó un único NoveltyType, con un único vínculo activo — el
+// código/nombre Finnegans pasan a ser columnas directas (finnegansCode/
+// finnegansName), 1:1 físico, junto a finnegansValueUnit/
+// finnegansRequiresValidity (Etapa 15L.2A).
 model NoveltyType {
   id                        String                   @id @default(uuid())
   code                      String                   @unique
   name                      String
   uiColor                   String
   kind                      NoveltyTypeKind
-  /// @deprecated Etapa 15L.2A: sin consumidor de negocio real (ver
-  /// docs/decisions/NOVELTY_TYPE_MODEL_NORMALIZATION_15L2A.md). Se mantiene
-  /// por compatibilidad de contrato, no se elimina todavia.
-  origin                    NoveltyTypeOrigin
   status                    RecordStatus             @default(ACTIVO)
   description               String?
   /// Etapa 15L.2A: observaciones internas editables desde el catalogo.
-  /// Antes de esta etapa el campo no existia y el frontend perdia el texto
-  /// al guardar (bug corregido en esta etapa).
   notes                     String?
   exportsToFinnegans        Boolean                  @default(false)
   requiresApproval          Boolean                  @default(true)
   requiresDocumentation     Boolean                  @default(false)
   allowsHours               Boolean                  @default(false)
-  /// @deprecated Etapa 15L.2A: usar allowsDateRange. Se mantiene
-  /// sincronizado por compatibilidad, no se elimina todavia.
-  allowsDateTo              Boolean                  @default(true)
   allowsDateRange           Boolean                  @default(true)
-  /// @deprecated Etapa 15L.2A: usar finnegansRequiresValidity. Se mantiene
-  /// sincronizado por compatibilidad, no se elimina todavia.
-  hasValidity               Boolean                  @default(true)
-  /// @deprecated Etapa 15L.2A: usar timeEntryBehavior. Se mantiene
-  /// sincronizado por compatibilidad, no se elimina todavia.
-  blocksTimeEntry           Boolean                  @default(false)
-  /// @deprecated Etapa 15G.1/15L.2A: sin efecto productivo sobre TimeEntry
-  /// desde la Etapa 15G.1 (ver docs/decisions/
-  /// NOVELTIES_AS_ADMINISTRATIVE_JUSTIFICATION_15G1.md). Codigo nuevo nunca
-  /// debe volver a escribir true aca; se mantiene solo por compatibilidad de
-  /// lectura (findBlockingNovelty).
-  setsWorkedHoursToZero     Boolean                  @default(false)
-  /// @deprecated Etapa 15L.2A: usar timeEntryBehavior. Se mantiene
-  /// sincronizado por compatibilidad, no se elimina todavia.
-  timeImpact                NoveltyTimeImpact        @default(NO_AFECTA_HORAS)
-  /// Etapa 15L.2A: fuente de verdad preferida para el comportamiento en
-  /// carga horaria (reemplaza blocksTimeEntry/setsWorkedHoursToZero/
-  /// timeImpact, ver docs/decisions/NOVELTY_TYPE_MODEL_NORMALIZATION_15L2A.md).
+  /// Etapa 15L.2A: fuente de verdad del comportamiento en carga horaria
+  /// (findBlockingNovelty, time-entries).
   timeEntryBehavior         NoveltyTimeEntryBehavior @default(NO_BLOQUEA)
   /// Etapa 15L.2A: unidad real de "Valor 1" para exportacion Finnegans.
   /// null = todavia no determinado (no se infiere DAYS/UNIT sin evidencia).
   finnegansValueUnit        FinnegansValueUnit?
-  /// Etapa 15L.2A: fuente de verdad preferida, reemplaza hasValidity (a
-  /// nivel de NoveltyType) para decidir si la exportacion Finnegans exige
-  /// fecha desde/hasta.
+  /// Etapa 15L.2A: exige fecha desde/hasta en la exportacion Finnegans.
   finnegansRequiresValidity Boolean                  @default(false)
+  /// Etapa 15L.6: reemplaza FinnegansNoveltyLink.code (1:1 fisico, migrado
+  /// desde el unico vinculo activo real de cada tipo).
+  finnegansCode             String?
+  /// Etapa 15L.6: reemplaza FinnegansNoveltyLink.name.
+  finnegansName             String?
   allowedLoadRoles          Json                     @default("[]")
   approvalRoles             Json                     @default("[]")
   createdAt                 DateTime                 @default(now()) @db.Timestamptz(3)
   updatedAt                 DateTime                 @updatedAt @db.Timestamptz(3)
 
-  finnegansLinks FinnegansNoveltyLink[]
-  novelties      Novelty[]
+  novelties Novelty[]
 
   @@index([status])
-}
-
-model FinnegansNoveltyLink {
-  id            String       @id @default(uuid())
-  noveltyTypeId String
-  code          String
-  name          String
-  exportConcept String
-  priority      Int          @default(1)
-  status        RecordStatus @default(ACTIVO)
-  hasValidity   Boolean      @default(false)
-  notes         String?
-
-  noveltyType NoveltyType @relation(fields: [noveltyTypeId], references: [id], onDelete: Cascade)
-
-  @@unique([noveltyTypeId, code])
-  @@index([noveltyTypeId])
 }
 
 model Novelty {

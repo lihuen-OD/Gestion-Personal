@@ -41,18 +41,17 @@ function buildNoveltyType(overrides: Partial<NoveltyType> = {}): NoveltyType {
     name: "Licencia médica",
     description: "Ausencia por illness",
     kind: "AUSENCIA",
-    origin: "INTERNA",
     uiColor: "blue",
     status: "ACTIVO",
-    finnegansLinks: [],
+    finnegansCode: null,
+    finnegansName: null,
     allowedLoadRoles: [],
     approvalRoles: [],
-    rules: { exportsToFinnegans: false, requiresApproval: false, requiresDocumentation: false, allowsHours: false, allowsDateTo: false, hasValidity: false, blocksTimeEntry: false, setsWorkedHoursToZero: false, timeImpact: "NO_AFECTA_HORAS", timeEntryBehavior: "NO_BLOQUEA", allowsDateRange: false, finnegansValueUnit: null, finnegansRequiresValidity: false },
+    rules: { exportsToFinnegans: false, requiresApproval: false, requiresDocumentation: false, allowsHours: false, timeEntryBehavior: "NO_BLOQUEA", allowsDateRange: false, finnegansValueUnit: null, finnegansRequiresValidity: false },
     createdAt: "",
     updatedAt: "",
     createdBy: "",
     updatedBy: "",
-    history: [],
     ...overrides,
   };
 }
@@ -117,15 +116,15 @@ describe("NoveltyTypesPage — Etapa 14B.1 (refresh silencioso)", () => {
 });
 
 // Etapa 15L.2B (docs/decisions/NOVELTY_TYPE_FRONTEND_REDESIGN_15L2B.md,
-// punto 20): columnas realmente útiles -- se quita "Origen" (legacy).
+// punto 20): columnas realmente útiles -- se quita "Origen" (legacy, y
+// desde la Etapa 15L.6 el campo ya no existe en absoluto en el modelo).
 describe("NoveltyTypesPage — Etapa 15L.2B (listado)", () => {
-  it("la tabla no muestra la columna Origen ni el valor del enum", async () => {
-    vi.mocked(noveltyTypeApiService.getAll).mockResolvedValue([buildNoveltyType({ origin: "MIXTA" })]);
+  it("la tabla no muestra la columna Origen", async () => {
+    vi.mocked(noveltyTypeApiService.getAll).mockResolvedValue([buildNoveltyType()]);
     render(<MemoryRouter><NoveltyTypesPage /></MemoryRouter>);
     await screen.findByText("Licencia médica");
 
     expect(screen.queryByText("Origen")).not.toBeInTheDocument();
-    expect(screen.queryByText("MIXTA")).not.toBeInTheDocument();
   });
 
   it("muestra las columnas Codigo/Novedad/Categoria/Estado/Finnegans/Aprobacion/Acciones", async () => {

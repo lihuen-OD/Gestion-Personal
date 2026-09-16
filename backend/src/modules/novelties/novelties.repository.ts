@@ -9,27 +9,14 @@ const noveltyInclude = {
       id: true,
       code: true,
       name: true,
-      origin: true,
       exportsToFinnegans: true,
       allowsHours: true,
-      // Etapa 15L.2C: se agregan los 3 campos nuevos para que los
-      // consumidores de esta respuesta (frontend) puedan migrar sus
-      // lecturas. Los legacy de abajo se mantienen por compatibilidad
-      // (docs/decisions/NOVELTY_TYPE_CONSUMER_MIGRATION_15L2C.md).
       timeEntryBehavior: true,
       allowsDateRange: true,
       finnegansRequiresValidity: true,
-      allowsDateTo: true,
-      hasValidity: true,
-      blocksTimeEntry: true,
-      setsWorkedHoursToZero: true,
-      timeImpact: true,
+      finnegansCode: true,
+      finnegansName: true,
       approvalRoles: true,
-      finnegansLinks: {
-        where: { status: "ACTIVO" },
-        orderBy: { priority: "asc" },
-        select: { code: true, name: true, hasValidity: true, status: true },
-      },
     },
   },
   targetHourConcept: { select: { id: true, name: true } },
@@ -47,7 +34,7 @@ function buildWhere(query: ListNoveltiesQuery, employeeAccessWhere: Prisma.Emplo
       ? {
           noveltyType: {
             exportsToFinnegans: query.exportable,
-            ...(query.exportable ? { finnegansLinks: { some: { status: "ACTIVO" } } } : {}),
+            ...(query.exportable ? { finnegansCode: { not: null } } : {}),
           },
         }
       : {}),
@@ -104,7 +91,7 @@ export const noveltiesRepository = {
   },
 
   findNoveltyType(id: string) {
-    return prisma.noveltyType.findUnique({ where: { id }, include: { finnegansLinks: true } });
+    return prisma.noveltyType.findUnique({ where: { id } });
   },
 
   countEmployees(ids: string[], employeeAccessWhere: Prisma.EmployeeWhereInput) {
@@ -113,9 +100,8 @@ export const noveltiesRepository = {
 
   // Etapa 15G.1 (docs/decisions/NOVELTIES_AS_ADMINISTRATIVE_JUSTIFICATION_15G1.md):
   // decisión funcional final — crear novedades nunca crea ni modifica
-  // TimeEntry, sea cual sea `status` o los campos horarios del tipo
-  // (setsWorkedHoursToZero/blocksTimeEntry/timeImpact). Antes de esta etapa
-  // existía un `options.createZeroTimeEntries` que disparaba un efecto
+  // TimeEntry, sea cual sea `status` o `timeEntryBehavior` del tipo. Antes
+  // de esta etapa existía un `options.createZeroTimeEntries` que disparaba un efecto
   // horario acá adentro (ver `novelties.timeEffects.ts` en el historial de
   // 15G.1 original, eliminado en este ajuste) — se quitó por completo, sin
   // dejar ningún parámetro ni rama de código capaz de volver a escribir
@@ -155,7 +141,7 @@ export const noveltiesRepository = {
   },
 
   // Etapa 15G.1: aprobar sólo cambia `status`/auditoría — nunca crea ni
-  // modifica TimeEntry, ni siquiera para un tipo con setsWorkedHoursToZero.
+  // modifica TimeEntry, sea cual sea `timeEntryBehavior` del tipo.
   approve(id: string, approvedByUserId: string) {
     return prisma.novelty.update({
       where: { id },

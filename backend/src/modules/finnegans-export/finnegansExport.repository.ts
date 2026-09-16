@@ -54,15 +54,7 @@ export const finnegansExportRepository = {
       where: buildWhere(period, employeeId),
       include: {
         employee: { select: { id: true, legajo: true, legajoFinnegans: true, firstName: true, lastName: true, costCenter: { select: { code: true } } } },
-        noveltyType: {
-          include: {
-            // Etapa 15L.3A §6: sólo vínculos ACTIVO — un vínculo INACTIVO
-            // nunca puede ser el principal de una exportación. El desempate
-            // determinista (menor priority, empate por code) vive en
-            // finnegansExport.principalLink.ts, no en el `orderBy` acá.
-            finnegansLinks: { where: { status: "ACTIVO" } },
-          },
-        },
+        noveltyType: true,
       },
       orderBy: [{ fromDate: "asc" }, { employee: { legajo: "asc" } }],
       take: 10000,

@@ -20,48 +20,33 @@ function createInput(overrides: Partial<CreateNoveltyTypeInput> = {}): CreateNov
     name: "Vacaciones",
     uiColor: "blue",
     kind: "VACACIONES",
-    origin: "INTERNA",
     status: "ACTIVO",
     exportsToFinnegans: false,
     requiresApproval: true,
     requiresDocumentation: false,
     allowsHours: false,
-    allowsDateTo: true,
-    hasValidity: true,
-    blocksTimeEntry: false,
-    setsWorkedHoursToZero: false,
-    timeImpact: "NO_AFECTA_HORAS",
+    allowsDateRange: true,
+    timeEntryBehavior: "NO_BLOQUEA",
+    finnegansRequiresValidity: false,
     allowedLoadRoles: [],
     approvalRoles: [],
-    finnegansLinks: [],
     ...overrides,
   } as CreateNoveltyTypeInput;
 }
 
-// Etapa 15L.2A (docs/decisions/NOVELTY_TYPE_MODEL_NORMALIZATION_15L2A.md):
-// el módulo no tenía tests de create/update hasta esta etapa (sólo de
-// repository/controller) -- se agregan acá porque es donde vive la
-// sincronización nueva (aplicada antes de llegar al repositorio).
-describe("noveltyTypesService.create — Etapa 15L.2A", () => {
+describe("noveltyTypesService.create — Etapa 15L.2A/15L.6", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     repo.create.mockResolvedValue({ id: "nt-1", code: "NOV-001", name: "Vacaciones" });
   });
 
-  it("sincroniza el modelo nuevo desde el legacy antes de llamar al repositorio", async () => {
-    await noveltyTypesService.create(createInput({ blocksTimeEntry: true }));
+  it("persiste timeEntryBehavior tal cual, sin ninguna sincronización adicional (Etapa 15L.6: retirada)", async () => {
+    await noveltyTypesService.create(createInput({ timeEntryBehavior: "BLOQUEA_NUEVA_CARGA" }));
 
-    expect(repo.create).toHaveBeenCalledWith(
-      expect.objectContaining({
-        timeEntryBehavior: "BLOQUEA_NUEVA_CARGA",
-        blocksTimeEntry: true,
-        setsWorkedHoursToZero: false,
-        timeImpact: "BLOQUEA_CARGA_DIA",
-      }),
-    );
+    expect(repo.create).toHaveBeenCalledWith(expect.objectContaining({ timeEntryBehavior: "BLOQUEA_NUEVA_CARGA" }));
   });
 
-  it("persiste notes tal cual (antes no existía en el modelo)", async () => {
+  it("persiste notes tal cual", async () => {
     await noveltyTypesService.create(createInput({ notes: "Uso interno, no exportar todavía" }));
 
     expect(repo.create).toHaveBeenCalledWith(expect.objectContaining({ notes: "Uso interno, no exportar todavía" }));
@@ -92,32 +77,33 @@ describe("noveltyTypesService.create — Etapa 15L.2A", () => {
 });
 
 // Etapa 15L.2B (docs/decisions/NOVELTY_TYPE_FRONTEND_REDESIGN_15L2B.md):
-// si el tipo exporta a Finnegans, exige vínculo (código+nombre) y unidad de
-// Valor 1 -- antes 15L.2A dejaba esto sin exigir para no romper el
-// frontend viejo, que todavía no tenía UI para elegir la unidad.
+// si el tipo exporta a Finnegans, exige código+nombre Finnegans y unidad de
+// Valor 1. Etapa 15L.6: código/nombre pasaron de FinnegansNoveltyLink (1:N)
+// a columnas directas finnegansCode/finnegansName (1:1 físico).
 describe("noveltyTypesService.create — Etapa 15L.2B (coherencia Finnegans)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     repo.create.mockResolvedValue({ id: "nt-1", code: "NOV-001", name: "Vacaciones" });
   });
 
-  it("exportsToFinnegans=false no exige ningún vínculo ni unidad", async () => {
+  it("exportsToFinnegans=false no exige ningún código ni unidad", async () => {
     await expect(noveltyTypesService.create(createInput({ exportsToFinnegans: false }))).resolves.toBeDefined();
   });
 
-  it("exportsToFinnegans=true sin vínculos rechaza (NOVELTY_TYPE_FINNEGANS_LINK_REQUIRED)", async () => {
+  it("exportsToFinnegans=true sin finnegansCode/finnegansName rechaza (NOVELTY_TYPE_FINNEGANS_LINK_REQUIRED)", async () => {
     await expect(
-      noveltyTypesService.create(createInput({ exportsToFinnegans: true, finnegansLinks: [] })),
+      noveltyTypesService.create(createInput({ exportsToFinnegans: true, finnegansCode: null, finnegansName: null })),
     ).rejects.toMatchObject({ statusCode: 400, code: "NOVELTY_TYPE_FINNEGANS_LINK_REQUIRED" });
     expect(repo.create).not.toHaveBeenCalled();
   });
 
-  it("exportsToFinnegans=true con vínculo pero sin finnegansValueUnit rechaza (NOVELTY_TYPE_FINNEGANS_VALUE_UNIT_REQUIRED)", async () => {
+  it("exportsToFinnegans=true con código pero sin finnegansValueUnit rechaza (NOVELTY_TYPE_FINNEGANS_VALUE_UNIT_REQUIRED)", async () => {
     await expect(
       noveltyTypesService.create(
         createInput({
           exportsToFinnegans: true,
-          finnegansLinks: [{ code: "VAC", name: "Vacaciones", exportConcept: "", priority: 1, status: "ACTIVO", hasValidity: false, notes: null }],
+          finnegansCode: "VAC",
+          finnegansName: "Vacaciones",
         }),
       ),
     ).rejects.toMatchObject({ statusCode: 400, code: "NOVELTY_TYPE_FINNEGANS_VALUE_UNIT_REQUIRED" });
@@ -127,26 +113,28 @@ describe("noveltyTypesService.create — Etapa 15L.2B (coherencia Finnegans)", (
   // requisito de unidad -- confirma que la decisión de exportación no se
   // infiere de la capacidad operativa, hay que mandar finnegansValueUnit
   // explícito.
-  it("exportsToFinnegans=true con vínculo y allowsHours=true, pero SIN finnegansValueUnit explícito, sigue rechazando", async () => {
+  it("exportsToFinnegans=true con código y allowsHours=true, pero SIN finnegansValueUnit explícito, sigue rechazando", async () => {
     await expect(
       noveltyTypesService.create(
         createInput({
           exportsToFinnegans: true,
           allowsHours: true,
-          finnegansLinks: [{ code: "VAC", name: "Vacaciones", exportConcept: "", priority: 1, status: "ACTIVO", hasValidity: false, notes: null }],
+          finnegansCode: "VAC",
+          finnegansName: "Vacaciones",
         }),
       ),
     ).rejects.toMatchObject({ statusCode: 400, code: "NOVELTY_TYPE_FINNEGANS_VALUE_UNIT_REQUIRED" });
   });
 
-  it("exportsToFinnegans=true con vínculo y finnegansValueUnit explícito se crea sin error, sin importar allowsHours", async () => {
+  it("exportsToFinnegans=true con código y finnegansValueUnit explícito se crea sin error, sin importar allowsHours", async () => {
     await expect(
       noveltyTypesService.create(
         createInput({
           exportsToFinnegans: true,
           allowsHours: false,
           finnegansValueUnit: "UNIT",
-          finnegansLinks: [{ code: "VAC", name: "Vacaciones", exportConcept: "", priority: 1, status: "ACTIVO", hasValidity: false, notes: null }],
+          finnegansCode: "VAC",
+          finnegansName: "Vacaciones",
         }),
       ),
     ).resolves.toBeDefined();
@@ -191,14 +179,14 @@ describe("noveltyTypesService.create — Etapa 15L.5 (allowsHours + finnegansVal
   });
 });
 
-describe("noveltyTypesService.update — Etapa 15L.2A", () => {
+describe("noveltyTypesService.update — Etapa 15L.6 (sin sincronización legacy)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     repo.update.mockResolvedValue({ id: "nt-1", code: "NOV-001", name: "Vacaciones" });
-    repo.findById.mockResolvedValue({ exportsToFinnegans: false, finnegansValueUnit: null, finnegansLinks: [] });
+    repo.findById.mockResolvedValue({ exportsToFinnegans: false, finnegansValueUnit: null, finnegansCode: null, finnegansName: null });
   });
 
-  it("un PATCH que sólo cambia name no toca ninguno de los campos sincronizables", async () => {
+  it("un PATCH que sólo cambia name no toca ningún otro campo", async () => {
     const patch: UpdateNoveltyTypeInput = { name: "Vacaciones anuales" };
     await noveltyTypesService.update("nt-1", patch);
 
@@ -206,27 +194,24 @@ describe("noveltyTypesService.update — Etapa 15L.2A", () => {
     expect(call).toEqual({ name: "Vacaciones anuales" });
   });
 
-  it("un PATCH que manda timeEntryBehavior fuerza los 3 legacy, incluso si el mismo PATCH manda otro valor contradictorio", async () => {
-    await noveltyTypesService.update("nt-1", { timeEntryBehavior: "BLOQUEA_NUEVA_CARGA", timeImpact: "NO_AFECTA_HORAS" } as UpdateNoveltyTypeInput);
+  it("un PATCH que manda timeEntryBehavior lo persiste tal cual, sin ningún campo legacy adicional", async () => {
+    await noveltyTypesService.update("nt-1", { timeEntryBehavior: "BLOQUEA_NUEVA_CARGA" } as UpdateNoveltyTypeInput);
 
-    expect(repo.update).toHaveBeenCalledWith(
-      "nt-1",
-      expect.objectContaining({ timeEntryBehavior: "BLOQUEA_NUEVA_CARGA", blocksTimeEntry: true, setsWorkedHoursToZero: false, timeImpact: "BLOQUEA_CARGA_DIA" }),
-    );
+    expect(repo.update).toHaveBeenCalledWith("nt-1", { timeEntryBehavior: "BLOQUEA_NUEVA_CARGA" });
   });
 
-  it("un PATCH que sólo manda allowsDateTo (legacy) sincroniza allowsDateRange", async () => {
-    await noveltyTypesService.update("nt-1", { allowsDateTo: false } as UpdateNoveltyTypeInput);
+  it("un PATCH que manda allowsDateRange lo persiste tal cual", async () => {
+    await noveltyTypesService.update("nt-1", { allowsDateRange: false } as UpdateNoveltyTypeInput);
 
-    expect(repo.update).toHaveBeenCalledWith("nt-1", expect.objectContaining({ allowsDateRange: false, allowsDateTo: false }));
+    expect(repo.update).toHaveBeenCalledWith("nt-1", { allowsDateRange: false });
   });
 });
 
 // Etapa 15L.2B: la validación de coherencia Finnegans en update() mira el
 // estado RESULTANTE (fila actual + patch) -- un PATCH que no toca
-// exportsToFinnegans/finnegansValueUnit/finnegansLinks no debe fallar ni
-// tampoco debe dejar pasar una fila que YA exporta sin vínculo/unidad si el
-// patch intenta apagar justo lo que la hacía válida.
+// exportsToFinnegans/finnegansValueUnit/finnegansCode/finnegansName no debe
+// fallar ni tampoco debe dejar pasar una fila que YA exporta sin código si
+// el patch intenta apagar justo lo que la hacía válida.
 describe("noveltyTypesService.update — Etapa 15L.2B (coherencia Finnegans)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -234,13 +219,13 @@ describe("noveltyTypesService.update — Etapa 15L.2B (coherencia Finnegans)", (
   });
 
   it("un PATCH que no toca nada de Finnegans no exige nada, aunque la fila actual no exporte", async () => {
-    repo.findById.mockResolvedValue({ exportsToFinnegans: false, finnegansValueUnit: null, finnegansLinks: [] });
+    repo.findById.mockResolvedValue({ exportsToFinnegans: false, finnegansValueUnit: null, finnegansCode: null, finnegansName: null });
 
     await expect(noveltyTypesService.update("nt-1", { name: "Vacaciones anuales" } as UpdateNoveltyTypeInput)).resolves.toBeDefined();
   });
 
-  it("un PATCH que sólo prende exportsToFinnegans, con la fila actual sin vínculo, rechaza", async () => {
-    repo.findById.mockResolvedValue({ exportsToFinnegans: false, finnegansValueUnit: null, finnegansLinks: [] });
+  it("un PATCH que sólo prende exportsToFinnegans, con la fila actual sin código, rechaza", async () => {
+    repo.findById.mockResolvedValue({ exportsToFinnegans: false, finnegansValueUnit: null, finnegansCode: null, finnegansName: null });
 
     await expect(
       noveltyTypesService.update("nt-1", { exportsToFinnegans: true } as UpdateNoveltyTypeInput),
@@ -252,7 +237,8 @@ describe("noveltyTypesService.update — Etapa 15L.2B (coherencia Finnegans)", (
     repo.findById.mockResolvedValue({
       exportsToFinnegans: true,
       finnegansValueUnit: "HOURS",
-      finnegansLinks: [{ code: "VAC", name: "Vacaciones" }],
+      finnegansCode: "VAC",
+      finnegansName: "Vacaciones",
     });
 
     await expect(noveltyTypesService.update("nt-1", { name: "Vacaciones anuales" } as UpdateNoveltyTypeInput)).resolves.toBeDefined();
@@ -261,7 +247,7 @@ describe("noveltyTypesService.update — Etapa 15L.2B (coherencia Finnegans)", (
   // Etapa 15L.5: mismo criterio que create() -- mira el estado RESULTANTE
   // (fila actual + patch), no sólo lo que vino en este PATCH puntual.
   it("un PATCH que sólo prende allowsHours, con la fila actual ya en finnegansValueUnit=DAYS, rechaza (NOVELTY_TYPE_HOURS_DAYS_CONFLICT)", async () => {
-    repo.findById.mockResolvedValue({ exportsToFinnegans: false, finnegansValueUnit: "DAYS", finnegansLinks: [], allowsHours: false });
+    repo.findById.mockResolvedValue({ exportsToFinnegans: false, finnegansValueUnit: "DAYS", finnegansCode: null, finnegansName: null, allowsHours: false });
 
     await expect(
       noveltyTypesService.update("nt-1", { allowsHours: true } as UpdateNoveltyTypeInput),
@@ -270,7 +256,7 @@ describe("noveltyTypesService.update — Etapa 15L.2B (coherencia Finnegans)", (
   });
 
   it("un PATCH que sólo cambia finnegansValueUnit a DAYS, con la fila actual ya en allowsHours=true, rechaza", async () => {
-    repo.findById.mockResolvedValue({ exportsToFinnegans: false, finnegansValueUnit: "HOURS", finnegansLinks: [], allowsHours: true });
+    repo.findById.mockResolvedValue({ exportsToFinnegans: false, finnegansValueUnit: "HOURS", finnegansCode: null, finnegansName: null, allowsHours: true });
 
     await expect(
       noveltyTypesService.update("nt-1", { finnegansValueUnit: "DAYS" } as UpdateNoveltyTypeInput),

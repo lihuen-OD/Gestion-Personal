@@ -25,7 +25,7 @@ export interface NoveltyReadinessInput {
   toDate: Date | null;
   finnegansValueUnit: FinnegansValueUnit | null;
   finnegansRequiresValidity: boolean;
-  hasPrincipalLink: boolean;
+  hasFinnegansCode: boolean;
   closureApproved: boolean;
 }
 
@@ -43,7 +43,7 @@ export interface NoveltyReadiness {
 export function evaluateNoveltyReadiness(input: NoveltyReadinessInput): NoveltyReadiness {
   const reasonCodes: FinnegansReadinessReasonCode[] = [];
 
-  if (!input.hasPrincipalLink) reasonCodes.push("MISSING_LINK");
+  if (!input.hasFinnegansCode) reasonCodes.push("MISSING_LINK");
 
   const unit = input.finnegansValueUnit;
   if (!unit) {
@@ -96,7 +96,7 @@ function pluralize(count: number, singular: string, plural: string) {
 }
 
 const REASON_LABELS: Record<FinnegansReadinessReasonCode, (count: number) => string> = {
-  MISSING_LINK: (count) => pluralize(count, "novedad sin vínculo Finnegans activo configurado", "novedades sin vínculo Finnegans activo configurado"),
+  MISSING_LINK: (count) => pluralize(count, "novedad sin código Finnegans configurado", "novedades sin código Finnegans configurado"),
   MISSING_VALUE_UNIT: (count) => pluralize(count, "novedad sin unidad de Valor 1 configurada", "novedades sin unidad de Valor 1 configurada"),
   MISSING_HOURS_QUANTITY: (count) => pluralize(count, "novedad sin cantidad de horas", "novedades sin cantidad de horas"),
   MISSING_DAYS_QUANTITY: (count) => pluralize(count, "novedad sin cantidad de días", "novedades sin cantidad de días"),

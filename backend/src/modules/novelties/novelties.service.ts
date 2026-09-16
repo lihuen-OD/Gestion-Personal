@@ -100,11 +100,6 @@ async function ensureNoveltyTypeReady(input: CreateNoveltyInput) {
     throw new AppError("This novelty type does not allow quantity hours", 400, "NOVELTY_HOURS_NOT_ALLOWED");
   }
   assertQuantityCoherence(input);
-  // Etapa 15L.2C (docs/decisions/NOVELTY_TYPE_CONSUMER_MIGRATION_15L2C.md):
-  // allowsDateRange/finnegansRequiresValidity reemplazan a allowsDateTo/
-  // hasValidity (legacy, siguen existiendo y sincronizados 1:1 por
-  // noveltyTypes.sync.ts desde la Etapa 15L.2A) como fuente productiva de
-  // esta validación.
   if (!type.allowsDateRange && input.toDate && !sameUtcDate(input.toDate, input.fromDate)) {
     throw new AppError("This novelty type does not allow toDate", 400, "NOVELTY_TO_DATE_NOT_ALLOWED");
   }
@@ -213,10 +208,9 @@ export const noveltiesService = {
     const status = user.role === roles.rrhh || type.requiresApproval === false ? "APROBADO" : "PENDIENTE";
     // Etapa 15G.1 (docs/decisions/NOVELTIES_AS_ADMINISTRATIVE_JUSTIFICATION_15G1.md):
     // decisión funcional final — crear una novedad NUNCA crea ni modifica
-    // TimeEntry, sea cual sea el status resultante o los campos horarios del
-    // tipo (setsWorkedHoursToZero/blocksTimeEntry/timeImpact). El fichador y
-    // la carga horaria manual son la única fuente de verdad de horas reales;
-    // Novedades es sólo justificación administrativa.
+    // TimeEntry, sea cual sea el status resultante o `timeEntryBehavior` del
+    // tipo. El fichador y la carga horaria manual son la única fuente de
+    // verdad de horas reales; Novedades es sólo justificación administrativa.
     const items = await execute(() => noveltiesRepository.createMany(normalizedInput, status, user.id));
 
     await auditService.register({
@@ -246,7 +240,7 @@ export const noveltiesService = {
     }
 
     // Etapa 15G.1: aprobar sólo cambia status/auditoría — nunca crea ni
-    // modifica TimeEntry, ni siquiera para un tipo con setsWorkedHoursToZero.
+    // modifica TimeEntry, sea cual sea `timeEntryBehavior` del tipo.
     const item = await execute(() => noveltiesRepository.approve(id, user.id));
     await auditService.register({
       ...audit,
@@ -296,12 +290,9 @@ export const noveltiesService = {
       throw new AppError("Novelty has related documents", 409, "NOVELTY_DELETE_HAS_DOCUMENTS");
     }
     // Etapa 15G.1 (docs/decisions/NOVELTIES_AS_ADMINISTRATIVE_JUSTIFICATION_15G1.md):
-    // hasta este ajuste, un tipo con `setsWorkedHoursToZero` bloqueaba el
-    // borrado citando que la novedad "generó TimeEntry" — cierto cuando ese
-    // campo todavía escribía horas. Ahora Novedades nunca crea ni modifica
-    // TimeEntry bajo ningún caso, así que ese motivo ya no puede darse; se
-    // quitó el guard en vez de renombrarlo (no queda ninguna razón
-    // administrativa real para bloquear el borrado sólo por este campo).
+    // Novedades nunca crea ni modifica TimeEntry bajo ningún caso, así que no
+    // hay ninguna razón administrativa para bloquear el borrado por el
+    // comportamiento horario del tipo.
     if (before.status === "APROBADO" && before.noveltyType.exportsToFinnegans) {
       throw new AppError("Approved exportable novelty cannot be deleted", 409, "NOVELTY_DELETE_EXPORTABLE_APPROVED");
     }
