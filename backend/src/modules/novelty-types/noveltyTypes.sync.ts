@@ -1,18 +1,19 @@
 import type { z } from "zod";
-import { finnegansValueUnitSchema, noveltyTimeEntryBehaviorSchema, noveltyTimeImpactSchema } from "./noveltyTypes.schemas";
+import { noveltyTimeEntryBehaviorSchema, noveltyTimeImpactSchema } from "./noveltyTypes.schemas";
 
 // Etapa 15L.2A (docs/decisions/NOVELTY_TYPE_MODEL_NORMALIZATION_15L2A.md):
 // funciones puras de sincronizacion entre el modelo nuevo (timeEntryBehavior/
-// allowsDateRange/finnegansRequiresValidity/finnegansValueUnit) y los campos
-// legacy que se mantienen por compatibilidad (blocksTimeEntry/
-// setsWorkedHoursToZero/timeImpact/allowsDateTo/hasValidity/allowsHours).
-// Objetivo unico: que un create/update nunca deje una combinacion
-// contradictoria entre ambos modelos. No decide nada de negocio nuevo, sólo
-// resuelve que par de valores persistir.
+// allowsDateRange/finnegansRequiresValidity) y los campos legacy que se
+// mantienen por compatibilidad (blocksTimeEntry/setsWorkedHoursToZero/
+// timeImpact/allowsDateTo/hasValidity). Objetivo unico: que un create/update
+// nunca deje una combinacion contradictoria entre ambos modelos. No decide
+// nada de negocio nuevo, sólo resuelve que par de valores persistir.
+//
+// finnegansValueUnit/allowsHours NO se sincronizan acá (ver comentario más
+// abajo, Etapa 15L.2B.1) -- son dos decisiones independientes.
 
 type NoveltyTimeImpact = z.infer<typeof noveltyTimeImpactSchema>;
 type NoveltyTimeEntryBehavior = z.infer<typeof noveltyTimeEntryBehaviorSchema>;
-type FinnegansValueUnit = z.infer<typeof finnegansValueUnitSchema>;
 
 type TimeEntryBehaviorFields = {
   timeEntryBehavior?: NoveltyTimeEntryBehavior;
@@ -87,30 +88,33 @@ export function resolveFinnegansRequiresValiditySync(input: {
   return {};
 }
 
-// finnegansValueUnit es la fuente preferida. Si no viene pero el cliente
-// prende allowsHours, se infiere HOURS (único caso seguro sin inventar
-// DAYS/UNIT). Apagar allowsHours no borra un finnegansValueUnit ya elegido
-// -- no hay evidencia segura de a qué debería volver.
-export function resolveFinnegansValueUnitSync(input: {
-  finnegansValueUnit?: FinnegansValueUnit | null;
-  allowsHours?: boolean;
-}): Partial<{ finnegansValueUnit: FinnegansValueUnit | null }> {
-  if (input.finnegansValueUnit !== undefined) return { finnegansValueUnit: input.finnegansValueUnit };
-  if (input.allowsHours === true) return { finnegansValueUnit: "HOURS" };
-  return {};
-}
+// Etapa 15L.2B.1 (corrección puntual, docs/decisions/
+// NOVELTY_TYPE_FRONTEND_REDESIGN_15L2B.md): finnegansValueUnit y
+// allowsHours son dos decisiones independientes -- allowsHours responde
+// "¿este tipo permite cargar quantityHours como dato operativo de la
+// novedad?"; finnegansValueUnit responde "si esta novedad se exporta a
+// Finnegans, qué representa Valor 1?". Hasta esta corrección,
+// resolveFinnegansValueUnitSync sincronizaba ambos en las dos direcciones
+// (cambiar uno pisaba el otro sin que el usuario lo pidiera). Se eliminó
+// por completo esa función: ninguno de los dos campos vuelve a escribir el
+// otro desde ahora. El backfill histórico de la migración
+// 20260916120000_add_novelty_type_normalization_fields (finnegansValueUnit
+// = HOURS donde allowsHours ya era true) fue una corrida única al agregar
+// la columna y NO se revierte -- sólo deja de repetirse en cada
+// create/update futuro. Prisma ya preserva por sí solo el campo que un
+// PATCH parcial no menciona (ver noveltyTypes.repository.ts), así que no
+// hace falta ninguna función "identidad" en su lugar.
 
-// Combina las 4 sincronizaciones sobre un mismo input de create/update.
-// Se aplica antes de llegar al repositorio -- el repositorio persiste tal
-// cual, sin conocer ninguna regla de compatibilidad.
+// Combina las 3 sincronizaciones restantes sobre un mismo input de
+// create/update. Se aplica antes de llegar al repositorio -- el
+// repositorio persiste tal cual, sin conocer ninguna regla de
+// compatibilidad.
 export function applyNoveltyTypeCompatibilitySync<
   T extends TimeEntryBehaviorFields & {
     allowsDateRange?: boolean;
     allowsDateTo?: boolean;
     finnegansRequiresValidity?: boolean;
     hasValidity?: boolean;
-    finnegansValueUnit?: FinnegansValueUnit | null;
-    allowsHours?: boolean;
   },
 >(input: T): T {
   return {
@@ -118,6 +122,5 @@ export function applyNoveltyTypeCompatibilitySync<
     ...resolveTimeEntryBehaviorSync(input),
     ...resolveAllowsDateRangeSync(input),
     ...resolveFinnegansRequiresValiditySync(input),
-    ...resolveFinnegansValueUnitSync(input),
   };
 }

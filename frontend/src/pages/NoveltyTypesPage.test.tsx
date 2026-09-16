@@ -47,7 +47,7 @@ function buildNoveltyType(overrides: Partial<NoveltyType> = {}): NoveltyType {
     finnegansLinks: [],
     allowedLoadRoles: [],
     approvalRoles: [],
-    rules: { exportsToFinnegans: false, requiresApproval: false, requiresDocumentation: false, allowsHours: false, allowsDateTo: false, hasValidity: false, blocksTimeEntry: false, setsWorkedHoursToZero: false, timeImpact: "NO_AFECTA_HORAS" },
+    rules: { exportsToFinnegans: false, requiresApproval: false, requiresDocumentation: false, allowsHours: false, allowsDateTo: false, hasValidity: false, blocksTimeEntry: false, setsWorkedHoursToZero: false, timeImpact: "NO_AFECTA_HORAS", timeEntryBehavior: "NO_BLOQUEA", allowsDateRange: false, finnegansValueUnit: null, finnegansRequiresValidity: false },
     createdAt: "",
     updatedAt: "",
     createdBy: "",
@@ -113,5 +113,48 @@ describe("NoveltyTypesPage — Etapa 14B.1 (refresh silencioso)", () => {
     resolveGetAll2([buildNoveltyType({ name: "Vacaciones" })]);
     await screen.findByText("Vacaciones");
     expect(screen.queryByText("Cargando tipos de novedades...")).not.toBeInTheDocument();
+  });
+});
+
+// Etapa 15L.2B (docs/decisions/NOVELTY_TYPE_FRONTEND_REDESIGN_15L2B.md,
+// punto 20): columnas realmente útiles -- se quita "Origen" (legacy).
+describe("NoveltyTypesPage — Etapa 15L.2B (listado)", () => {
+  it("la tabla no muestra la columna Origen ni el valor del enum", async () => {
+    vi.mocked(noveltyTypeApiService.getAll).mockResolvedValue([buildNoveltyType({ origin: "MIXTA" })]);
+    render(<MemoryRouter><NoveltyTypesPage /></MemoryRouter>);
+    await screen.findByText("Licencia médica");
+
+    expect(screen.queryByText("Origen")).not.toBeInTheDocument();
+    expect(screen.queryByText("MIXTA")).not.toBeInTheDocument();
+  });
+
+  it("muestra las columnas Codigo/Novedad/Categoria/Estado/Finnegans/Aprobacion/Acciones", async () => {
+    vi.mocked(noveltyTypeApiService.getAll).mockResolvedValue([buildNoveltyType()]);
+    render(<MemoryRouter><NoveltyTypesPage /></MemoryRouter>);
+    await screen.findByText("Licencia médica");
+
+    ["Codigo", "Novedad", "Categoria", "Estado", "Finnegans", "Aprobacion", "Acciones"].forEach((header) => {
+      expect(screen.getAllByText(header).length).toBeGreaterThan(0);
+    });
+  });
+
+  it("no queda ningun filtro con la etiqueta legacy Tipo (ahora Categoria)", async () => {
+    vi.mocked(noveltyTypeApiService.getAll).mockResolvedValue([buildNoveltyType()]);
+    render(<MemoryRouter><NoveltyTypesPage /></MemoryRouter>);
+    await screen.findByText("Licencia médica");
+
+    expect(screen.queryByText("Tipo")).not.toBeInTheDocument();
+    expect(screen.getAllByText("Categoria").length).toBeGreaterThan(0);
+  });
+
+  it("las tarjetas de resumen muestran Total/Activos/Exportables a Finnegans/Requieren aprobacion", async () => {
+    vi.mocked(noveltyTypeApiService.getAll).mockResolvedValue([buildNoveltyType()]);
+    render(<MemoryRouter><NoveltyTypesPage /></MemoryRouter>);
+    await screen.findByText("Licencia médica");
+
+    expect(screen.getByText("Total de tipos")).toBeInTheDocument();
+    expect(screen.getByText("Activos")).toBeInTheDocument();
+    expect(screen.getByText("Exportables a Finnegans")).toBeInTheDocument();
+    expect(screen.getByText("Requieren aprobación")).toBeInTheDocument();
   });
 });

@@ -20,13 +20,19 @@ export type NoveltyUiColor =
   | "violet"
   | "purple"
   | "slate";
+// Etapa 15L.2A: fuente de verdad preferida para el comportamiento en carga
+// horaria, reemplaza en la práctica a blocksTimeEntry/setsWorkedHoursToZero/
+// timeImpact (legacy, se mantienen sincronizados por compatibilidad).
+export type NoveltyTimeEntryBehavior = "NO_BLOQUEA" | "BLOQUEA_NUEVA_CARGA";
+// Etapa 15L.2A: unidad real de "Valor 1" para exportación Finnegans. null =
+// todavía sin determinar (no se infiere sin evidencia).
+export type FinnegansValueUnit = "HOURS" | "DAYS" | "UNIT";
 
 export interface FinnegansNoveltyLink {
   id: string;
   code: string;
   name: string;
   exportConcept: string;
-  settlementConcept?: string;
   priority: number;
   status: NoveltyTypeStatus;
   notes?: string;
@@ -43,9 +49,12 @@ export interface NoveltyTypeRules {
   blocksTimeEntry: boolean;
   setsWorkedHoursToZero: boolean;
   timeImpact: NoveltyTimeImpact;
-  affectsSettlement?: boolean;
-  settlementImpact?: string;
-  hourConceptName?: string;
+  // Etapa 15L.2A -- modelo nuevo, fuente de verdad preferida (ver los tipos
+  // NoveltyTimeEntryBehavior/FinnegansValueUnit arriba).
+  timeEntryBehavior: NoveltyTimeEntryBehavior;
+  allowsDateRange: boolean;
+  finnegansValueUnit: FinnegansValueUnit | null;
+  finnegansRequiresValidity: boolean;
 }
 
 export interface NoveltyTypeHistoryRecord {

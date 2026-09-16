@@ -3,6 +3,7 @@ import { ApiError } from "../../services/api/apiClient";
 import { hourConceptApiService } from "../../services/api/hourConceptApiService";
 import { noveltyApiService } from "../../services/api/noveltyApiService";
 import { noveltyTypeApiService } from "../../services/api/noveltyTypeApiService";
+import { useAuth } from "../../context/AuthContext";
 import type { Employee, Novelty } from "../../types";
 import type { HourConcept } from "../../types/hourConcept.types";
 import type { NoveltyType } from "../../types/noveltyType.types";
@@ -13,9 +14,24 @@ import { Field, Select } from "../ui/FormControls";
 import { Button } from "../ui/Button";
 import { Modal } from "../ui/Modal";
 import { EmployeeRemoteSelector } from "../employees/EmployeeRemoteSelector";
-import { noveltyTimeImpactLabel } from "../novelty-types/NoveltyTypeFields";
+import { noveltyTimeEntryBehaviorLabel } from "../novelty-types/NoveltyTypeFields";
 import { ErrorState } from "../ui/ErrorState";
 import { LoadingState } from "../ui/LoadingState";
+
+// Etapa 15L.2B.1 (corrección puntual, docs/decisions/
+// NOVELTY_TYPE_FRONTEND_REDESIGN_15L2B.md): qué cantidad se puede cargar
+// es una decisión OPERATIVA de la novedad (allowsHours) -- nunca depende
+// de finnegansValueUnit, que sólo describe cómo Finnegans va a interpretar
+// esa cantidad al exportar (un tema del exportador, no de esta carga). La
+// versión anterior de esta etapa decidía qué enviar mirando
+// finnegansValueUnit, lo que descartaba en silencio una cantidad de horas
+// que el usuario sí veía y completaba en pantalla (allowsHours=true) sólo
+// porque el tipo exportaba como DAYS/UNIT. No modifica TimeEntry en ningún
+// caso -- quantityHours/quantityDays son sólo metadato de la novedad.
+function resolveNoveltyQuantities(allowsHours: boolean, hoursImpact: number, daysInRange: number) {
+  if (allowsHours) return { quantityHours: hoursImpact, quantityDays: null };
+  return { quantityHours: null, quantityDays: daysInRange };
+}
 
 export function NoveltyModal({
   employees,
@@ -40,10 +56,18 @@ export function NoveltyModal({
   suggestedNoveltyTypeCode?: string;
   contextNote?: string;
 }) {
-  const [activeTypes, setActiveTypes] = useState<NoveltyType[]>([]);
+  const { user } = useAuth();
+  const [allActiveTypes, setAllActiveTypes] = useState<NoveltyType[]>([]);
   const [hourConcepts, setHourConcepts] = useState<HourConcept[]>([]);
   const defaultPeriod = currentMonthPeriod();
   const defaultDate = initialFromDate || `${defaultPeriod}-01`;
+
+  // Etapa 15L.2B, punto 25: RRHH mantiene autoridad global (mismo criterio
+  // que el backend, assertCanLoad); el resto sólo ve los tipos que el
+  // backend le va a aceptar -- evita mostrar una opción que después se
+  // rechaza con 403 NOVELTY_LOAD_FORBIDDEN.
+  const isRrhh = user?.role === "Nivel 1 - RRHH";
+  const activeTypes = isRrhh ? allActiveTypes : allActiveTypes.filter((item) => item.allowedLoadRoles.includes(user!.role));
 
   const [selectedEmployees, setSelectedEmployees] = useState<Employee[]>(employees);
   const [typeId, setTypeId] = useState("");
@@ -64,23 +88,25 @@ export function NoveltyModal({
       .then(([types, concepts]) => {
         if (!mounted) return;
         const active = types.filter((item) => item.status === "ACTIVO");
-        setActiveTypes(active);
+        setAllActiveTypes(active);
         setHourConcepts(concepts.filter((item) => item.status === "ACTIVO"));
-        if (!active.some((item) => item.id === typeId)) {
-          // El tipo sugerido por una alerta gana si existe y está activo;
-          // si no (código inexistente, tipo dado de baja, o no vino
-          // ninguno), cae al primer tipo activo -- mismo comportamiento de
-          // siempre, sin romper la carga manual.
+        const loadable = isRrhh ? active : active.filter((item) => item.allowedLoadRoles.includes(user!.role));
+        if (!loadable.some((item) => item.id === typeId)) {
+          // El tipo sugerido por una alerta gana si existe, está activo y
+          // el usuario puede cargarlo; si no (código inexistente, tipo
+          // dado de baja, fuera de sus roles, o no vino ninguno), cae al
+          // primer tipo cargable -- mismo comportamiento de siempre, sin
+          // romper la carga manual.
           const suggested = suggestedNoveltyTypeCode
-            ? active.find((item) => item.code === suggestedNoveltyTypeCode)
+            ? loadable.find((item) => item.code === suggestedNoveltyTypeCode)
             : undefined;
-          setTypeId(suggested?.id || active[0]?.id || "");
+          setTypeId(suggested?.id || loadable[0]?.id || "");
         }
         setCatalogStatus("success");
       })
       .catch(() => {
         if (!mounted) return;
-        setActiveTypes([]);
+        setAllActiveTypes([]);
         setHourConcepts([]);
         setCatalogStatus("error");
       });
@@ -139,6 +165,10 @@ export function NoveltyModal({
 
     const hoursImpact = selectedType.rules.allowsHours ? Number(hours) || 0 : 0;
     const targetConcept = hourConcepts.find((concept) => concept.name === normalizedTargetHour);
+    // Etapa 15L.2B.1: allowsHours decide qué cantidad se envía -- decisión
+    // operativa de la novedad, independiente de finnegansValueUnit (que
+    // sólo interpreta esa cantidad para Finnegans, sin decidir si existe).
+    const quantities = resolveNoveltyQuantities(selectedType.rules.allowsHours, hoursImpact, Math.max(1, dateRange().length));
 
     try {
       const created = await noveltyApiService.create({
@@ -146,8 +176,7 @@ export function NoveltyModal({
         noveltyTypeId: selectedType.id,
         fromDate: from,
         toDate: selectedType.rules.allowsDateTo ? to : null,
-        quantityHours: selectedType.rules.allowsHours ? hoursImpact : null,
-        quantityDays: selectedType.rules.allowsHours ? null : Math.max(1, dateRange().length),
+        ...quantities,
         observation: docNotes || null,
         targetHourConceptId: requiresTargetHour ? targetConcept?.id || null : null,
       });
@@ -218,14 +247,8 @@ export function NoveltyModal({
                 <b>{selectedType.name}</b>
                 <p>{selectedType.description}</p>
                 <div>
-                  <span>Origen: {selectedType.origin}</span>
-                  <span>Horas: {noveltyTimeImpactLabel(selectedType.rules.timeImpact)}</span>
-                  <span>
-                    {selectedType.rules.blocksTimeEntry
-                      ? "Bloquea carga diaria"
-                      : "Convive con horas"}
-                  </span>
-                  <span>Finnegans: {activeLink?.code || "No exporta"}</span>
+                  <span>{noveltyTimeEntryBehaviorLabel(selectedType.rules.timeEntryBehavior)}</span>
+                  <span>Finnegans: {selectedType.rules.exportsToFinnegans ? (activeLink?.code || "Configuración pendiente") : "No exporta"}</span>
                 </div>
               </div>
             ) : null}
@@ -309,8 +332,9 @@ export function NoveltyModal({
           </>
         ) : (
           <div className="empty">
-            No hay tipos de novedades activos. Cargalos desde Configuracion &gt;
-            Tipos de novedades.
+            {allActiveTypes.length
+              ? "Tu rol no tiene tipos de novedad habilitados para cargar."
+              : <>No hay tipos de novedades activos. Cargalos desde Configuracion &gt; Tipos de novedades.</>}
           </div>
         )}
       </div>

@@ -1,21 +1,75 @@
-import { Plus, Trash2 } from "lucide-react";
 import type { FinnegansNoveltyLink, NoveltyType } from "../../types/noveltyType.types";
-import { Button } from "../ui/Button";
+import { findPrincipalLinkIndex, finnegansValueUnitDescriptions, finnegansValueUnitLabels, finnegansValueUnits, newPrincipalLink } from "./NoveltyTypeFields";
 
 export function NoveltyTypeFinnegansTab({ item, setItem, disabled }: { item: NoveltyType; setItem: (item: NoveltyType) => void; disabled?: boolean }) {
-  const update = (linkId: string, patch: Partial<FinnegansNoveltyLink>) => setItem({ ...item, finnegansLinks: item.finnegansLinks.map((link) => link.id === linkId ? { ...link, ...patch } : link) });
+  const principalIndex = findPrincipalLinkIndex(item.finnegansLinks);
+  const principal = principalIndex >= 0 ? item.finnegansLinks[principalIndex] : undefined;
+  const secondaryCount = item.finnegansLinks.length - (principalIndex >= 0 ? 1 : 0);
+
+  const updatePrincipal = (patch: Partial<FinnegansNoveltyLink>) => {
+    if (principalIndex >= 0) {
+      const links = item.finnegansLinks.map((link, index) => (index === principalIndex ? { ...link, ...patch } : link));
+      setItem({ ...item, finnegansLinks: links });
+      return;
+    }
+    setItem({ ...item, finnegansLinks: [{ ...newPrincipalLink(item.name), ...patch }] });
+  };
+
+  const toggleExports = (exportsToFinnegans: boolean) => {
+    const links = exportsToFinnegans && !item.finnegansLinks.length ? [newPrincipalLink(item.name)] : item.finnegansLinks;
+    setItem({ ...item, finnegansLinks: links, rules: { ...item.rules, exportsToFinnegans } });
+  };
+
+  const setRequiresValidity = (finnegansRequiresValidity: boolean) => {
+    // Etapa 15L.2B, 15L.1 §14: el exportador hace un OR entre
+    // NoveltyType.hasValidity (ya sincronizado con finnegansRequiresValidity
+    // por el backend) y FinnegansNoveltyLink.hasValidity -- sin esto,
+    // apagar "Requiere vigencia" acá no tendría efecto real si el vínculo
+    // ya tenía hasValidity=true de antes.
+    const links = principalIndex >= 0
+      ? item.finnegansLinks.map((link, index) => (index === principalIndex ? { ...link, hasValidity: finnegansRequiresValidity } : link))
+      : item.finnegansLinks;
+    setItem({ ...item, finnegansLinks: links, rules: { ...item.rules, finnegansRequiresValidity } });
+  };
+
   return <div className="catalog-finnegans">
-    <div className="info-note"><b>Vinculacion Finnegans</b><p>Se exporta el codigo de novedad Finnegans, no el nombre interno. Si tiene vigencia, la exportacion exige fecha desde y fecha hasta.</p></div>
-    <div className="form-actions inline-actions">{!disabled && <Button type="button" variant="primary" onClick={() => setItem({ ...item, finnegansLinks: [...item.finnegansLinks, { id: crypto.randomUUID(), code: "", name: "", exportConcept: "", priority: item.finnegansLinks.length + 1, status: "ACTIVO", hasValidity: false, notes: "" }] })}><Plus size={15} /> Agregar vinculo Finnegans</Button>}</div>
-    {item.finnegansLinks.length ? <div className="catalog-link-list">{item.finnegansLinks.map((link) => <div className="catalog-link-row novelty-finnegans-row" key={link.id}>
-      <label>Codigo Finnegans<input disabled={disabled} value={link.code} onChange={(event) => update(link.id, { code: event.target.value })} /></label>
-      <label>Nombre Finnegans<input disabled={disabled} value={link.name} onChange={(event) => update(link.id, { name: event.target.value })} /></label>
-      <label>Concepto exportable<input disabled={disabled} value={link.exportConcept} onChange={(event) => update(link.id, { exportConcept: event.target.value })} /></label>
-      <label>Prioridad<input type="number" min="1" disabled={disabled} value={link.priority} onChange={(event) => update(link.id, { priority: Number(event.target.value) || 1 })} /></label>
-      <label>Estado<select disabled={disabled} value={link.status} onChange={(event) => update(link.id, { status: event.target.value as FinnegansNoveltyLink["status"] })}><option>ACTIVO</option><option>INACTIVO</option></select></label>
-      <label className="mini-check novelty-finnegans-validity"><input disabled={disabled} type="checkbox" checked={Boolean(link.hasValidity)} onChange={(event) => update(link.id, { hasValidity: event.target.checked })} /> <span>Tiene vigencia</span></label>
-      <label>Observacion<input disabled={disabled} value={link.notes || ""} onChange={(event) => update(link.id, { notes: event.target.value })} /></label>
-      {!disabled && <button type="button" className="icon-button danger-link" onClick={() => setItem({ ...item, finnegansLinks: item.finnegansLinks.filter((l) => l.id !== link.id) })}><Trash2 size={18} /></button>}
-    </div>)}</div> : <div className="empty">Todavia no hay equivalencias Finnegans cargadas.</div>}
+    <label className="catalog-rule-card">
+      <input type="checkbox" disabled={disabled} checked={item.rules.exportsToFinnegans} onChange={(event) => toggleExports(event.target.checked)} />
+      <span>
+        <b>Exportar esta novedad a Finnegans</b>
+        <small>Se incluye en la vista mensual de exportación cuando la novedad está aprobada. Si se desactiva, la configuración de abajo se conserva para poder reactivarla más adelante.</small>
+      </span>
+    </label>
+
+    {item.rules.exportsToFinnegans ? (
+      <>
+        {secondaryCount > 0 ? (
+          <div className="info-note compact">
+            Este tipo tiene configuraciones Finnegans adicionales creadas anteriormente. En esta pantalla se utiliza la configuración principal.
+          </div>
+        ) : null}
+
+        <div className="form-grid">
+          <label>Código Finnegans *<input disabled={disabled} value={principal?.code || ""} onChange={(event) => updatePrincipal({ code: event.target.value })} /></label>
+          <label>Nombre Finnegans *<input disabled={disabled} value={principal?.name || ""} onChange={(event) => updatePrincipal({ name: event.target.value })} /></label>
+          <label>
+            Unidad de Valor 1 *
+            <select
+              disabled={disabled}
+              value={item.rules.finnegansValueUnit || ""}
+              onChange={(event) => setItem({ ...item, rules: { ...item.rules, finnegansValueUnit: (event.target.value || null) as NoveltyType["rules"]["finnegansValueUnit"] } })}
+            >
+              <option value="">Seleccioná una unidad</option>
+              {finnegansValueUnits.map((unit) => <option key={unit} value={unit}>{finnegansValueUnitLabels[unit]}</option>)}
+            </select>
+            {item.rules.finnegansValueUnit ? <small>{finnegansValueUnitDescriptions[item.rules.finnegansValueUnit]}</small> : null}
+          </label>
+          <label className="mini-check">
+            <input type="checkbox" disabled={disabled} checked={item.rules.finnegansRequiresValidity} onChange={(event) => setRequiresValidity(event.target.checked)} />
+            <span>Requiere vigencia (fecha desde y fecha hasta obligatorias para exportar)</span>
+          </label>
+        </div>
+      </>
+    ) : null}
   </div>;
 }

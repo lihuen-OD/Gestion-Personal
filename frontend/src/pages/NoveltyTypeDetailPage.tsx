@@ -2,7 +2,7 @@ import { Power, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link, Navigate, useLocation, useNavigate, useParams } from "react-router-dom";
 import { NoveltyTypeFinnegansTab } from "../components/novelty-types/NoveltyTypeFinnegansTab";
-import { NoveltyTypeHistoryTab } from "../components/novelty-types/NoveltyTypeHistoryTab";
+import { validateNoveltyType } from "../components/novelty-types/NoveltyTypeFields";
 import { NoveltyTypeIdentificationTab } from "../components/novelty-types/NoveltyTypeIdentificationTab";
 import { NoveltyTypeRulesTab } from "../components/novelty-types/NoveltyTypeRulesTab";
 import { useAuth } from "../context/AuthContext";
@@ -18,8 +18,14 @@ import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { confirmAction } from "../services/appDialog";
 
-const tabs = ["Identificacion", "Reglas operativas", "Finnegans", "Historial"];
-const tabItems = tabs.map((label, index) => ({ key: String(index), label: `${index + 1}. ${label}` }));
+// Etapa 15L.2B (docs/decisions/NOVELTY_TYPE_FRONTEND_REDESIGN_15L2B.md): se
+// quita la pestaña "Historial" -- history queda hardcodeado vacío en
+// noveltyTypeApiService.ts (el backend audita en AuditLog, pero esta
+// pantalla no lo consulta todavía). Mostrar una pestaña siempre vacía es
+// peor que no mostrarla; se reconecta en una etapa futura si se conecta a
+// AuditLog. Ver también §14 del documento de decisión.
+const tabs = ["General", "Reglas", "Finnegans"];
+const tabItems = tabs.map((label, index) => ({ key: String(index), label }));
 
 export function NoveltyTypeDetailPage() {
   const { id } = useParams();
@@ -50,7 +56,8 @@ export function NoveltyTypeDetailPage() {
 
   const { isRunning: isSaving, run: save } = useAsyncAction(async () => {
     if (!item) return;
-    if (!item.name.trim() || !item.description.trim()) return setNotice("Completa nombre y descripcion funcional.");
+    const validationError = validateNoveltyType(item);
+    if (validationError) return setNotice(validationError);
     try {
       const saved = await noveltyTypeApiService.update(item.id, item);
       if (saved) setItem(saved);
@@ -81,8 +88,7 @@ export function NoveltyTypeDetailPage() {
   const render = () => {
     if (tab === 0) return <NoveltyTypeIdentificationTab item={item} setItem={setItem} />;
     if (tab === 1) return <NoveltyTypeRulesTab item={item} setItem={setItem} />;
-    if (tab === 2) return <NoveltyTypeFinnegansTab item={item} setItem={setItem} />;
-    return <NoveltyTypeHistoryTab item={item} />;
+    return <NoveltyTypeFinnegansTab item={item} setItem={setItem} />;
   };
 
   return (
@@ -99,6 +105,7 @@ export function NoveltyTypeDetailPage() {
         </div>
         <div className="hero-actions">
           <Badge tone={item.status === "ACTIVO" ? "success" : "neutral"}>{item.status}</Badge>
+          {item.rules.exportsToFinnegans ? <Badge tone="neutral">Finnegans</Badge> : null}
           <button className="table-icon-action" title={item.status === "ACTIVO" ? "Inactivar" : "Activar"} aria-label={item.status === "ACTIVO" ? "Inactivar" : "Activar"} onClick={() => void toggle()}><Power size={14} /><span>{item.status === "ACTIVO" ? "Inactivar" : "Activar"}</span></button>
           <button className="table-icon-action danger-link" title="Ocultar" aria-label="Ocultar" onClick={async () => { if (await confirmAction("El tipo de novedad no se eliminará: quedará inactivo para conservar su trazabilidad.", { title: "Ocultar tipo de novedad", confirmLabel: "Ocultar", tone: "danger" })) await toggle(true); }}><Trash2 size={14} /><span>Ocultar</span></button>
         </div>
@@ -107,8 +114,8 @@ export function NoveltyTypeDetailPage() {
       <Tabs tabs={tabItems} active={String(tab)} onChange={(key) => setTab(Number(key))} />
       <Section
         title={tabs[tab]}
-        subtitle={tab === 2 ? "Equivalencias entre la novedad interna y conceptos externos." : tab === 3 ? "Trazabilidad del catalogo." : "Configuracion editable del tipo de novedad."}
-        action={tab < 3 ? <Button variant="primary" onClick={save} disabled={isSaving}>{isSaving ? "Guardando..." : "Guardar cambios"}</Button> : undefined}
+        subtitle={tab === 2 ? "Equivalencias entre la novedad interna y conceptos externos." : "Configuracion editable del tipo de novedad."}
+        action={<Button variant="primary" onClick={save} disabled={isSaving}>{isSaving ? "Guardando..." : "Guardar cambios"}</Button>}
       >
         {render()}
       </Section>

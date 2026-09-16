@@ -2,6 +2,8 @@ import { apiRequest } from "./apiClient";
 import { cachePolicies, cachedData, invalidateCacheFamily } from "../cache";
 import type {
   FinnegansNoveltyLink,
+  FinnegansValueUnit,
+  NoveltyTimeEntryBehavior,
   NoveltyTimeImpact,
   NoveltyType,
   NoveltyTypeFilters,
@@ -13,13 +15,11 @@ import type {
 import type { Role } from "../../types";
 import { resolveNoveltyUiColor } from "../../utils/noveltyColor";
 
-type ApiNoveltyUiColor = Exclude<NoveltyUiColor, "purple">;
-
 type ApiFinnegansNoveltyLink = {
   id?: string;
   code: string;
   name: string;
-  exportConcept: string;
+  exportConcept?: string | null;
   priority: number;
   status: NoveltyTypeStatus;
   hasValidity: boolean;
@@ -30,7 +30,10 @@ type ApiNoveltyType = {
   id: string;
   code: string;
   name: string;
-  uiColor: ApiNoveltyUiColor;
+  // Etapa 15L.2B: catálogo único de colores (docs/decisions/
+  // NOVELTY_TYPE_FRONTEND_REDESIGN_15L2B.md) -- backend y frontend ya usan
+  // exactamente el mismo enum, sin ningún mapeo especial.
+  uiColor: NoveltyUiColor;
   kind: NoveltyTypeKind;
   origin: NoveltyTypeOrigin;
   status: NoveltyTypeStatus;
@@ -45,6 +48,11 @@ type ApiNoveltyType = {
   blocksTimeEntry: boolean;
   setsWorkedHoursToZero: boolean;
   timeImpact: NoveltyTimeImpact;
+  // Etapa 15L.2A -- modelo nuevo, ver noveltyType.types.ts.
+  timeEntryBehavior: NoveltyTimeEntryBehavior;
+  allowsDateRange: boolean;
+  finnegansValueUnit: FinnegansValueUnit | null;
+  finnegansRequiresValidity: boolean;
   allowedLoadRoles?: Role[];
   approvalRoles?: Role[];
   finnegansLinks: ApiFinnegansNoveltyLink[];
@@ -65,16 +73,12 @@ function normalizeRoles(value: unknown, fallback: Role[]): Role[] {
   return roles.length ? roles : fallback;
 }
 
-function mapColorToApi(color: NoveltyUiColor): ApiNoveltyUiColor {
-  return color === "purple" ? "violet" : color;
-}
-
 function mapLinkFromApi(link: ApiFinnegansNoveltyLink): FinnegansNoveltyLink {
   return {
     id: link.id || crypto.randomUUID(),
     code: link.code,
     name: link.name,
-    exportConcept: link.exportConcept,
+    exportConcept: link.exportConcept || "",
     priority: link.priority,
     status: link.status,
     notes: link.notes || "",
@@ -87,7 +91,10 @@ function mapLinkToApi(link: FinnegansNoveltyLink): ApiFinnegansNoveltyLink | nul
   return {
     code: link.code.trim(),
     name: link.name.trim(),
-    exportConcept: link.exportConcept.trim(),
+    // Etapa 15L.2B: ya no se pide en la UI (docs/decisions/
+    // NOVELTY_TYPE_FRONTEND_REDESIGN_15L2B.md) -- se espeja el nombre para
+    // que, si algún día se lee, tenga un valor legible en vez de vacío.
+    exportConcept: link.exportConcept?.trim() || link.name.trim(),
     priority: Number(link.priority) || 1,
     status: link.status,
     hasValidity: Boolean(link.hasValidity),
@@ -117,6 +124,10 @@ export function mapNoveltyTypeFromApi(item: ApiNoveltyType): NoveltyType {
       blocksTimeEntry: item.blocksTimeEntry,
       setsWorkedHoursToZero: item.setsWorkedHoursToZero,
       timeImpact: item.timeImpact,
+      timeEntryBehavior: item.timeEntryBehavior,
+      allowsDateRange: item.allowsDateRange,
+      finnegansValueUnit: item.finnegansValueUnit,
+      finnegansRequiresValidity: item.finnegansRequiresValidity,
     },
     allowedLoadRoles,
     approvalRoles,
@@ -136,7 +147,7 @@ function mapToApi(item: NoveltyType) {
   return {
     code: item.code,
     name: item.name,
-    uiColor: mapColorToApi(item.uiColor),
+    uiColor: item.uiColor,
     kind: item.kind,
     origin: item.origin,
     status: item.status,
@@ -153,6 +164,12 @@ function mapToApi(item: NoveltyType) {
     blocksTimeEntry: item.rules.blocksTimeEntry,
     setsWorkedHoursToZero: item.rules.setsWorkedHoursToZero,
     timeImpact: item.rules.timeImpact,
+    // Etapa 15L.2B: fuente de verdad preferida -- el backend sincroniza los
+    // 3 campos legacy de arriba a partir de estos (noveltyTypes.sync.ts).
+    timeEntryBehavior: item.rules.timeEntryBehavior,
+    allowsDateRange: item.rules.allowsDateRange,
+    finnegansValueUnit: item.rules.finnegansValueUnit,
+    finnegansRequiresValidity: item.rules.finnegansRequiresValidity,
     allowedLoadRoles: item.allowedLoadRoles,
     approvalRoles: item.approvalRoles,
     finnegansLinks: item.finnegansLinks.map(mapLinkToApi).filter(Boolean),

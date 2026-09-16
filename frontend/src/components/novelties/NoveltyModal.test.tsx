@@ -19,6 +19,18 @@ vi.mock("../../services/api/hourConceptApiService", () => ({
   hourConceptApiService: { getAll: vi.fn() },
 }));
 
+// Etapa 15L.2B (docs/decisions/NOVELTY_TYPE_FRONTEND_REDESIGN_15L2B.md,
+// punto 25): NoveltyModal ahora filtra el catálogo por allowedLoadRoles del
+// usuario -- por defecto se mockea RRHH (autoridad global, ve todo) para no
+// afectar los tests existentes; los tests de filtrado por rol sobreescriben esto.
+const mockUseAuth = vi.fn();
+vi.mock("../../context/AuthContext", () => ({
+  useAuth: () => mockUseAuth(),
+}));
+function authAs(role: string) {
+  mockUseAuth.mockReturnValue({ user: { id: "user-1", name: "Test", email: "", password: "", role, status: "Activo" }, login: vi.fn(), loginAs: vi.fn(), logout: vi.fn() });
+}
+
 function buildEmployee(overrides: Partial<Employee> = {}): Employee {
   return {
     id: "employee-1",
@@ -113,6 +125,10 @@ function buildNoveltyType(overrides: Partial<NoveltyType> = {}): NoveltyType {
       blocksTimeEntry: false,
       setsWorkedHoursToZero: false,
       timeImpact: "NO_AFECTA_HORAS",
+      timeEntryBehavior: "NO_BLOQUEA",
+      allowsDateRange: true,
+      finnegansValueUnit: null,
+      finnegansRequiresValidity: false,
     },
     allowedLoadRoles: [],
     approvalRoles: [],
@@ -140,12 +156,17 @@ const llegadaTardeType = buildNoveltyType({
     blocksTimeEntry: false,
     setsWorkedHoursToZero: false,
     timeImpact: "REGISTRA_HORAS_NO_TRABAJADAS",
+    timeEntryBehavior: "NO_BLOQUEA",
+    allowsDateRange: false,
+    finnegansValueUnit: "HOURS",
+    finnegansRequiresValidity: false,
   },
 });
 
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(hourConceptApiService.getAll).mockResolvedValue([]);
+  authAs("Nivel 1 - RRHH");
 });
 
 describe("NoveltyModal — Etapa 15G.2 (precarga desde alerta)", () => {
@@ -356,5 +377,139 @@ describe("NoveltyModal — Etapa 15G.3 (conflicto de duplicado/solapamiento)", (
     await userEvent.click(screen.getByRole("button", { name: "Guardar novedad" }));
 
     expect(await screen.findByText("No pudimos guardar la novedad. Revisá los datos e intentá nuevamente.")).toBeInTheDocument();
+  });
+});
+
+// Etapa 15L.2B.1 (corrección puntual, docs/decisions/
+// NOVELTY_TYPE_FRONTEND_REDESIGN_15L2B.md): allowsHours decide qué
+// cantidad se envía -- decisión operativa de la novedad, siempre respetada
+// sin importar finnegansValueUnit (que sólo describe cómo Finnegans va a
+// interpretar esa cantidad al exportar, un tema del exportador). No
+// modifica TimeEntry -- quantityHours/quantityDays son sólo metadato.
+describe("NoveltyModal — Etapa 15L.2B.1 (allowsHours decide la cantidad, independiente de finnegansValueUnit)", () => {
+  it("allowsHours=true envía quantityHours sin importar finnegansValueUnit=null", async () => {
+    vi.mocked(noveltyTypeApiService.getAll).mockResolvedValue([llegadaTardeType]);
+    vi.mocked(noveltyApiService.create).mockResolvedValue([{ id: "novelty-created" } as never]);
+
+    render(<NoveltyModal employees={[buildEmployee()]} close={vi.fn()} saved={vi.fn()} />);
+
+    await screen.findByText("Llegada tarde");
+    await userEvent.click(screen.getByRole("button", { name: "Guardar novedad" }));
+
+    await waitFor(() => expect(noveltyApiService.create).toHaveBeenCalledWith(
+      expect.objectContaining({ quantityHours: expect.any(Number), quantityDays: null }),
+    ));
+  });
+
+  it("allowsHours=true + finnegansValueUnit=UNIT igual envía quantityHours (no se descarta en silencio)", async () => {
+    const type = buildNoveltyType({
+      id: "type-hours-unit",
+      code: "NOV-HOURS-UNIT",
+      name: "HorasUnidad",
+      rules: { ...buildNoveltyType().rules, allowsHours: true, finnegansValueUnit: "UNIT" },
+    });
+    vi.mocked(noveltyTypeApiService.getAll).mockResolvedValue([type]);
+    vi.mocked(noveltyApiService.create).mockResolvedValue([{ id: "novelty-created" } as never]);
+
+    render(<NoveltyModal employees={[buildEmployee()]} close={vi.fn()} saved={vi.fn()} />);
+
+    await screen.findByText("HorasUnidad");
+    await userEvent.click(screen.getByRole("button", { name: "Guardar novedad" }));
+
+    await waitFor(() => expect(noveltyApiService.create).toHaveBeenCalledWith(
+      expect.objectContaining({ quantityHours: expect.any(Number), quantityDays: null }),
+    ));
+  });
+
+  it("allowsHours=true + finnegansValueUnit=DAYS igual envía quantityHours", async () => {
+    const type = buildNoveltyType({
+      id: "type-hours-days",
+      code: "NOV-HOURS-DAYS",
+      name: "HorasDias",
+      rules: { ...buildNoveltyType().rules, allowsHours: true, finnegansValueUnit: "DAYS" },
+    });
+    vi.mocked(noveltyTypeApiService.getAll).mockResolvedValue([type]);
+    vi.mocked(noveltyApiService.create).mockResolvedValue([{ id: "novelty-created" } as never]);
+
+    render(<NoveltyModal employees={[buildEmployee()]} close={vi.fn()} saved={vi.fn()} />);
+
+    await screen.findByText("HorasDias");
+    await userEvent.click(screen.getByRole("button", { name: "Guardar novedad" }));
+
+    await waitFor(() => expect(noveltyApiService.create).toHaveBeenCalledWith(
+      expect.objectContaining({ quantityHours: expect.any(Number), quantityDays: null }),
+    ));
+  });
+
+  it("allowsHours=false envía quantityDays sin importar finnegansValueUnit=UNIT (gap documentado para 15L.2C)", async () => {
+    const type = buildNoveltyType({
+      id: "type-sancion",
+      code: "NOV-SANCION",
+      name: "Sancion",
+      rules: { ...buildNoveltyType().rules, allowsHours: false, finnegansValueUnit: "UNIT" },
+    });
+    vi.mocked(noveltyTypeApiService.getAll).mockResolvedValue([type]);
+    vi.mocked(noveltyApiService.create).mockResolvedValue([{ id: "novelty-created" } as never]);
+
+    render(<NoveltyModal employees={[buildEmployee()]} close={vi.fn()} saved={vi.fn()} />);
+
+    await screen.findByText("Sancion");
+    await userEvent.click(screen.getByRole("button", { name: "Guardar novedad" }));
+
+    await waitFor(() => expect(noveltyApiService.create).toHaveBeenCalledWith(
+      expect.objectContaining({ quantityHours: null, quantityDays: expect.any(Number) }),
+    ));
+  });
+
+  it("allowsHours=false + finnegansValueUnit=HOURS: el input de horas ni siquiera se muestra (combinación imposible desde este formulario, documentada para 15L.2C)", async () => {
+    const type = buildNoveltyType({
+      id: "type-hours-export-no-capture",
+      code: "NOV-HOURS-EXPORT",
+      name: "SoloExportaHoras",
+      rules: { ...buildNoveltyType().rules, allowsHours: false, finnegansValueUnit: "HOURS" },
+    });
+    vi.mocked(noveltyTypeApiService.getAll).mockResolvedValue([type]);
+
+    render(<NoveltyModal employees={[buildEmployee()]} close={vi.fn()} saved={vi.fn()} />);
+
+    await screen.findByText("SoloExportaHoras");
+    expect(screen.queryByLabelText("Cantidad de horas")).not.toBeInTheDocument();
+  });
+});
+
+// Etapa 15L.2B, punto 25: filtra el catálogo por allowedLoadRoles del
+// usuario actual -- RRHH mantiene autoridad global (mismo criterio que
+// assertCanLoad en el backend).
+describe("NoveltyModal — Etapa 15L.2B (filtro por allowedLoadRoles)", () => {
+  it("un rol no-RRHH sólo ve los tipos que puede cargar", async () => {
+    authAs("Nivel 2 - Supervisión / Gestión");
+    const loadable = buildNoveltyType({ id: "type-loadable", code: "NOV-LOADABLE", name: "Cargable", allowedLoadRoles: ["Nivel 2 - Supervisión / Gestión"] });
+    const notLoadable = buildNoveltyType({ id: "type-not-loadable", code: "NOV-NOLOAD", name: "Solo RRHH", allowedLoadRoles: ["Nivel 1 - RRHH"] });
+    vi.mocked(noveltyTypeApiService.getAll).mockResolvedValue([loadable, notLoadable]);
+
+    render(<NoveltyModal employees={[buildEmployee()]} close={vi.fn()} saved={vi.fn()} />);
+
+    await screen.findByText("Cargable");
+    expect(screen.queryByText("Solo RRHH")).not.toBeInTheDocument();
+  });
+
+  it("RRHH ve todos los tipos activos sin importar allowedLoadRoles", async () => {
+    authAs("Nivel 1 - RRHH");
+    const rrhhOnly = buildNoveltyType({ id: "type-rrhh-only", code: "NOV-RRHH", name: "Solo RRHH", allowedLoadRoles: [] });
+    vi.mocked(noveltyTypeApiService.getAll).mockResolvedValue([rrhhOnly]);
+
+    render(<NoveltyModal employees={[buildEmployee()]} close={vi.fn()} saved={vi.fn()} />);
+
+    await screen.findByText("Solo RRHH");
+  });
+
+  it("si ningún tipo cargable, muestra un mensaje distinto al de catálogo vacío", async () => {
+    authAs("Nivel 3 - Administrativo de Carga Horaria");
+    const rrhhOnly = buildNoveltyType({ id: "type-rrhh-only", code: "NOV-RRHH", name: "Solo RRHH", allowedLoadRoles: ["Nivel 1 - RRHH"] });
+    vi.mocked(noveltyTypeApiService.getAll).mockResolvedValue([rrhhOnly]);
+
+    render(<NoveltyModal employees={[buildEmployee()]} close={vi.fn()} saved={vi.fn()} />);
+
+    expect(await screen.findByText("Tu rol no tiene tipos de novedad habilitados para cargar.")).toBeInTheDocument();
   });
 });

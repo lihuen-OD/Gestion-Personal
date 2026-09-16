@@ -453,64 +453,57 @@ describe("noveltiesService.create", () => {
     });
   });
 
-  // Etapa 15L.2A, punto 14: coherencia de quantityHours/quantityDays contra
-  // finnegansValueUnit. No cambia que Novedades nunca toca TimeEntry — son
-  // sólo metadatos de la novedad/exportación.
-  describe("Etapa 15L.2A — coherencia de Valor 1 (finnegansValueUnit)", () => {
-    it("HOURS permite quantityHours", async () => {
+  // Etapa 15L.2B.1 (corrección puntual, docs/decisions/
+  // NOVELTY_TYPE_FRONTEND_REDESIGN_15L2B.md): assertQuantityCoherence ya
+  // NO rechaza quantityHours/quantityDays según finnegansValueUnit -- esa
+  // mezcla (capacidad operativa vs. interpretación de exportación) era
+  // exactamente el acoplamiento que esta etapa corrige. La única regla que
+  // queda es de integridad de datos, independiente de cualquier unidad:
+  // no se puede cargar horas Y días a la vez. La capacidad operativa
+  // (¿se puede cargar quantityHours?) sigue dependiendo únicamente de
+  // allowsHours, vía el guard preexistente NOVELTY_HOURS_NOT_ALLOWED.
+  describe("Etapa 15L.2B.1 — quantityHours/quantityDays independientes de finnegansValueUnit", () => {
+    it("finnegansValueUnit=HOURS ya no rechaza quantityDays (el gap de Valor 1 ambiguo queda para 15L.2C)", async () => {
       repo.findNoveltyType.mockResolvedValue(noveltyType({ allowsHours: true, finnegansValueUnit: "HOURS" }));
 
-      await expect(noveltiesService.create(createInput({ quantityHours: 2 }), rrhhUser)).resolves.toBeDefined();
+      await expect(noveltiesService.create(createInput({ quantityDays: 1 }), rrhhUser)).resolves.toBeDefined();
     });
 
-    it("HOURS rechaza quantityDays (NOVELTY_QUANTITY_UNIT_MISMATCH)", async () => {
-      repo.findNoveltyType.mockResolvedValue(noveltyType({ allowsHours: true, finnegansValueUnit: "HOURS" }));
-
-      await expect(noveltiesService.create(createInput({ quantityDays: 1 }), rrhhUser)).rejects.toMatchObject({
-        statusCode: 400,
-        code: "NOVELTY_QUANTITY_UNIT_MISMATCH",
-      });
-    });
-
-    it("DAYS permite quantityDays", async () => {
-      repo.findNoveltyType.mockResolvedValue(noveltyType({ finnegansValueUnit: "DAYS" }));
-
-      await expect(noveltiesService.create(createInput({ quantityDays: 3 }), rrhhUser)).resolves.toBeDefined();
-    });
-
-    it("DAYS rechaza quantityHours (NOVELTY_QUANTITY_UNIT_MISMATCH)", async () => {
+    it("finnegansValueUnit=DAYS ya no rechaza quantityHours (allowsHours sigue siendo el único gate operativo)", async () => {
       repo.findNoveltyType.mockResolvedValue(noveltyType({ allowsHours: true, finnegansValueUnit: "DAYS" }));
 
-      await expect(noveltiesService.create(createInput({ quantityHours: 1 }), rrhhUser)).rejects.toMatchObject({
-        statusCode: 400,
-        code: "NOVELTY_QUANTITY_UNIT_MISMATCH",
-      });
+      await expect(noveltiesService.create(createInput({ quantityHours: 1 }), rrhhUser)).resolves.toBeDefined();
     });
 
-    it("UNIT rechaza cualquier cantidad", async () => {
+    it("finnegansValueUnit=UNIT ya no rechaza ninguna cantidad si allowsHours lo permite", async () => {
       repo.findNoveltyType.mockResolvedValue(noveltyType({ allowsHours: true, finnegansValueUnit: "UNIT" }));
 
+      await expect(noveltiesService.create(createInput({ quantityHours: 1 }), rrhhUser)).resolves.toBeDefined();
+      await expect(noveltiesService.create(createInput({ quantityDays: 1 }), rrhhUser)).resolves.toBeDefined();
+    });
+
+    it("allowsHours=false sigue rechazando quantityHours sin importar finnegansValueUnit=HOURS (NOVELTY_HOURS_NOT_ALLOWED, gate preexistente y ajeno a esta corrección)", async () => {
+      repo.findNoveltyType.mockResolvedValue(noveltyType({ allowsHours: false, finnegansValueUnit: "HOURS" }));
+
       await expect(noveltiesService.create(createInput({ quantityHours: 1 }), rrhhUser)).rejects.toMatchObject({
-        code: "NOVELTY_QUANTITY_UNIT_MISMATCH",
-      });
-      await expect(noveltiesService.create(createInput({ quantityDays: 1 }), rrhhUser)).rejects.toMatchObject({
-        code: "NOVELTY_QUANTITY_UNIT_MISMATCH",
+        statusCode: 400,
+        code: "NOVELTY_HOURS_NOT_ALLOWED",
       });
     });
 
-    it("UNIT permite crear sin ninguna cantidad", async () => {
-      repo.findNoveltyType.mockResolvedValue(noveltyType({ finnegansValueUnit: "UNIT" }));
-
-      await expect(noveltiesService.create(createInput(), rrhhUser)).resolves.toBeDefined();
-    });
-
-    it("finnegansValueUnit=null (legacy, allowsHours=false) no agrega restriccion nueva sobre quantityDays", async () => {
+    it("finnegansValueUnit=null no agrega ninguna restricción sobre quantityDays (sin cambios)", async () => {
       repo.findNoveltyType.mockResolvedValue(noveltyType({ allowsHours: false, finnegansValueUnit: null }));
 
       await expect(noveltiesService.create(createInput({ quantityDays: 5 }), rrhhUser)).resolves.toBeDefined();
     });
 
-    it("quantityHours y quantityDays simultaneos se rechazan sin importar la unidad (NOVELTY_QUANTITY_UNIT_CONFLICT)", async () => {
+    it("crear sin ninguna cantidad sigue funcionando para cualquier unidad", async () => {
+      repo.findNoveltyType.mockResolvedValue(noveltyType({ finnegansValueUnit: "UNIT" }));
+
+      await expect(noveltiesService.create(createInput(), rrhhUser)).resolves.toBeDefined();
+    });
+
+    it("quantityHours y quantityDays simultaneos siguen rechazándose, sin importar la unidad (NOVELTY_QUANTITY_UNIT_CONFLICT) -- única regla de integridad que queda", async () => {
       repo.findNoveltyType.mockResolvedValue(noveltyType({ allowsHours: true, finnegansValueUnit: "HOURS" }));
 
       await expect(

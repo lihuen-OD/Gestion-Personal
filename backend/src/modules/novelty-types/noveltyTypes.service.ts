@@ -38,6 +38,26 @@ async function auditChange(action: "CREATE" | "UPDATE", item: { id: string; code
   });
 }
 
+// Etapa 15L.2B: si el tipo exporta a Finnegans, exige que tenga al menos un
+// vínculo (código+nombre) y una unidad de Valor 1 definida -- sin esto la
+// exportación real (finnegansExport.repository.ts::buildWhere) ya lo
+// excluye en silencio (exige finnegansLinks activo) y "Valor 1" queda
+// ambiguo (docs/decisions/NOVELTY_TYPE_MODEL_NORMALIZATION_15L2A.md §8). No
+// se exige para tipos legacy que ya no exportan (exportsToFinnegans=false).
+function assertFinnegansConfigCoherent(effective: {
+  exportsToFinnegans: boolean;
+  finnegansValueUnit: string | null | undefined;
+  finnegansLinks: Array<{ code: string; name: string }>;
+}) {
+  if (!effective.exportsToFinnegans) return;
+  if (!effective.finnegansLinks.length) {
+    throw new AppError("Para exportar a Finnegans hace falta un código y un nombre Finnegans.", 400, "NOVELTY_TYPE_FINNEGANS_LINK_REQUIRED");
+  }
+  if (!effective.finnegansValueUnit) {
+    throw new AppError("Para exportar a Finnegans hace falta definir la unidad de Valor 1.", 400, "NOVELTY_TYPE_FINNEGANS_VALUE_UNIT_REQUIRED");
+  }
+}
+
 export const noveltyTypesService = {
   async list(query: ListNoveltyTypesQuery) {
     const [items, total] = await noveltyTypesRepository.findMany(query);
@@ -61,6 +81,11 @@ export const noveltyTypesService = {
     // allowsDateRange/finnegansRequiresValidity/finnegansValueUnit) con los
     // campos legacy antes de persistir -- ver noveltyTypes.sync.ts.
     const synced = applyNoveltyTypeCompatibilitySync(data);
+    assertFinnegansConfigCoherent({
+      exportsToFinnegans: Boolean(synced.exportsToFinnegans),
+      finnegansValueUnit: synced.finnegansValueUnit,
+      finnegansLinks: synced.finnegansLinks,
+    });
     const item = await execute(() => noveltyTypesRepository.create(synced));
     invalidateNoveltyTypesCache();
     await auditChange("CREATE", item, audit);
@@ -69,6 +94,15 @@ export const noveltyTypesService = {
 
   async update(id: string, data: UpdateNoveltyTypeInput, audit?: AuditContext) {
     const synced = applyNoveltyTypeCompatibilitySync(data);
+    // Etapa 15L.2B: un PATCH parcial puede no tocar exportsToFinnegans/
+    // finnegansValueUnit/finnegansLinks -- se valida el estado RESULTANTE
+    // (fila actual + patch), no sólo lo que vino en este request puntual.
+    const current = await execute(() => noveltyTypesRepository.findById(id));
+    assertFinnegansConfigCoherent({
+      exportsToFinnegans: synced.exportsToFinnegans !== undefined ? synced.exportsToFinnegans : current.exportsToFinnegans,
+      finnegansValueUnit: synced.finnegansValueUnit !== undefined ? synced.finnegansValueUnit : current.finnegansValueUnit,
+      finnegansLinks: synced.finnegansLinks !== undefined ? synced.finnegansLinks : current.finnegansLinks,
+    });
     const item = await execute(() => noveltyTypesRepository.update(id, synced));
     invalidateNoveltyTypesCache();
     await auditChange("UPDATE", item, audit);

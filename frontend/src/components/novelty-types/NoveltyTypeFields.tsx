@@ -1,5 +1,13 @@
-import { useEffect } from "react";
-import type { NoveltyTimeImpact, NoveltyType, NoveltyTypeKind, NoveltyTypeOrigin, NoveltyUiColor } from "../../types/noveltyType.types";
+import type {
+  FinnegansNoveltyLink,
+  FinnegansValueUnit,
+  NoveltyTimeEntryBehavior,
+  NoveltyTimeImpact,
+  NoveltyType,
+  NoveltyTypeKind,
+  NoveltyTypeOrigin,
+  NoveltyUiColor,
+} from "../../types/noveltyType.types";
 import { noveltyColorClass, noveltyUiColors } from "../../utils/noveltyColor";
 
 export const noveltyKinds: NoveltyTypeKind[] = ["AUSENCIA", "LICENCIA", "HORARIA", "ACCIDENTE", "VACACIONES", "SANCION", "OTRO"];
@@ -19,6 +27,38 @@ export const noveltyTimeImpactDescriptions: Record<NoveltyTimeImpact, string> = 
 export function noveltyTimeImpactLabel(value?: string) {
   return noveltyTimeImpactLabels[value as NoveltyTimeImpact] || "No modifica las horas";
 }
+
+// Etapa 15L.2B (docs/decisions/NOVELTY_TYPE_FRONTEND_REDESIGN_15L2B.md):
+// único control visible de comportamiento horario -- reemplaza en la UI a
+// blocksTimeEntry/setsWorkedHoursToZero/timeImpact (siguen existiendo por
+// compatibilidad, pero ya no se muestran).
+export const noveltyTimeEntryBehaviors: NoveltyTimeEntryBehavior[] = ["NO_BLOQUEA", "BLOQUEA_NUEVA_CARGA"];
+export const noveltyTimeEntryBehaviorLabels: Record<NoveltyTimeEntryBehavior, string> = {
+  NO_BLOQUEA: "No bloquea la carga horaria",
+  BLOQUEA_NUEVA_CARGA: "Bloquea nueva carga horaria cuando la novedad está aprobada",
+};
+export const noveltyTimeEntryBehaviorDescriptions: Record<NoveltyTimeEntryBehavior, string> = {
+  NO_BLOQUEA: "La novedad se muestra como contexto, pero no impide cargar horas.",
+  BLOQUEA_NUEVA_CARGA:
+    "Cuando la novedad está aprobada, evita crear nuevas cargas horarias para ese día. No modifica horas ya registradas.",
+};
+export function noveltyTimeEntryBehaviorLabel(value?: string) {
+  return noveltyTimeEntryBehaviorLabels[value as NoveltyTimeEntryBehavior] || noveltyTimeEntryBehaviorLabels.NO_BLOQUEA;
+}
+
+// Unidad real de "Valor 1" para exportación Finnegans.
+export const finnegansValueUnits: FinnegansValueUnit[] = ["HOURS", "DAYS", "UNIT"];
+export const finnegansValueUnitLabels: Record<FinnegansValueUnit, string> = {
+  HOURS: "Horas",
+  DAYS: "Días",
+  UNIT: "Unidad",
+};
+export const finnegansValueUnitDescriptions: Record<FinnegansValueUnit, string> = {
+  HOURS: "Valor 1 se toma de la cantidad de horas cargada en la novedad.",
+  DAYS: "Valor 1 se toma de la cantidad de días cargada en la novedad.",
+  UNIT: "Valor 1 se exporta como 1.",
+};
+
 export const roleOptions = ["Nivel 1 - RRHH", "Nivel 2 - Supervisión / Gestión", "Nivel 3 - Administrativo de Carga Horaria"] as const;
 export const noveltyUiColorLabels: Record<NoveltyUiColor, string> = {
   blue: "Azul",
@@ -58,6 +98,10 @@ export function emptyNoveltyType(): NoveltyType {
       blocksTimeEntry: false,
       setsWorkedHoursToZero: false,
       timeImpact: "NO_AFECTA_HORAS",
+      timeEntryBehavior: "NO_BLOQUEA",
+      allowsDateRange: true,
+      finnegansValueUnit: null,
+      finnegansRequiresValidity: false,
     },
     allowedLoadRoles: ["Nivel 1 - RRHH", "Nivel 2 - Supervisión / Gestión", "Nivel 3 - Administrativo de Carga Horaria"],
     approvalRoles: ["Nivel 1 - RRHH", "Nivel 2 - Supervisión / Gestión"],
@@ -69,6 +113,41 @@ export function emptyNoveltyType(): NoveltyType {
     updatedBy: "",
     history: [],
   };
+}
+
+// Etapa 15L.2B (docs/decisions/NOVELTY_TYPE_FRONTEND_REDESIGN_15L2B.md,
+// punto 14): la UI trabaja con UN solo "vínculo principal" aunque el
+// modelo siga siendo 1:N (FinnegansNoveltyLink[] no se tocó, ver 15L.1
+// §13). Regla: el link ACTIVO de mayor prioridad; si no hay ninguno
+// ACTIVO, el primero que exista. Los demás links existentes nunca se
+// editan ni se borran desde esta pantalla.
+export function findPrincipalLinkIndex(links: FinnegansNoveltyLink[]): number {
+  if (!links.length) return -1;
+  const activeLinks = links.filter((link) => link.status === "ACTIVO");
+  const pool = activeLinks.length ? activeLinks : links;
+  const principal = pool.reduce((best, link) => (link.priority < best.priority ? link : best), pool[0]);
+  return links.indexOf(principal);
+}
+
+export function newPrincipalLink(name: string): FinnegansNoveltyLink {
+  return { id: crypto.randomUUID(), code: "", name: name || "", exportConcept: name || "", priority: 1, status: "ACTIVO", hasValidity: false, notes: "" };
+}
+
+// Etapa 15L.2B, punto 27: validación compartida entre creación y edición
+// -- evita tener dos implementaciones distintas de la misma regla.
+export function validateNoveltyType(item: NoveltyType): string | null {
+  if (!item.name.trim()) return "Completá el nombre de la novedad.";
+  if (!item.description.trim()) return "Completá la descripción funcional.";
+  if (item.rules.exportsToFinnegans) {
+    const principal = item.finnegansLinks[findPrincipalLinkIndex(item.finnegansLinks)];
+    if (!principal?.code?.trim() || !principal?.name?.trim()) {
+      return "Para exportar a Finnegans completá el código y el nombre Finnegans.";
+    }
+    if (!item.rules.finnegansValueUnit) {
+      return "Para exportar a Finnegans elegí la unidad de Valor 1.";
+    }
+  }
+  return null;
 }
 
 export function TextField({ label, value, onChange, disabled, type = "text" }: { label: string; value: string | number; onChange: (value: string) => void; disabled?: boolean; type?: string }) {
@@ -88,33 +167,27 @@ export function RoleChecklist({ label, value, onChange, disabled }: { label: str
   return <div className="catalog-check-block"><small>{label}</small><div className="check-grid inline">{roleOptions.map((role) => <label className="check-card" key={role}><input type="checkbox" disabled={disabled} checked={value.includes(role)} onChange={() => toggle(role)} />{role}</label>)}</div></div>;
 }
 
-export function NoveltyColorField({ value, onChange, disabled, noveltyTypeId }: { value: NoveltyUiColor; onChange: (value: NoveltyUiColor) => void; disabled?: boolean; noveltyTypeId?: string }) {
-  const usedColors = new Set<NoveltyUiColor>();
-  const firstAvailable = noveltyUiColors.find((color) => !usedColors.has(color));
-
-  useEffect(() => {
-    if (!disabled && usedColors.has(value) && firstAvailable) onChange(firstAvailable);
-  }, [disabled, firstAvailable, onChange, usedColors, value]);
-
+// Etapa 15L.2B: se quitó la validación de "color ya usado" -- vivía rota
+// (usedColors nunca se poblaba con los colores de otros tipos, ver 15L.1
+// §18/§25/§23) y, auditado, no hay ninguna regla de negocio real que exija
+// unicidad de color. Es sólo una ayuda visual: permitir colores repetidos.
+export function NoveltyColorField({ value, onChange, disabled }: { value: NoveltyUiColor; onChange: (value: NoveltyUiColor) => void; disabled?: boolean }) {
   return <div className="catalog-check-block form-wide">
     <small>Color en carga horaria</small>
     <div className="novelty-color-grid">
       {noveltyUiColors.map((color) => {
         const active = value === color;
-        const alreadyUsed = usedColors.has(color);
         return <button
           key={color}
           type="button"
           className={`novelty-color-option ${active ? "active" : ""}`}
-          disabled={disabled || alreadyUsed}
+          disabled={disabled}
           onClick={() => onChange(color)}
-          title={alreadyUsed ? "Este color ya esta asignado a otra novedad." : undefined}
         >
           <span className={`cell-novelty-pill ${noveltyColorClass(color, color)}`}>{noveltyUiColorLabels[color]}</span>
-          <small>{alreadyUsed ? "Ya asignado" : active ? "Seleccionado" : "Usar color"}</small>
+          <small>{active ? "Seleccionado" : "Usar color"}</small>
         </button>;
       })}
     </div>
-    {!firstAvailable && !noveltyTypeId ? <p className="info-note compact">Todos los colores disponibles ya estan asignados.</p> : null}
   </div>;
 }

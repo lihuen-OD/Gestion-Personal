@@ -14,22 +14,28 @@ export const roleSchema = z.enum([
   "Nivel 2 - Supervisión / Gestión",
   "Nivel 3 - Administrativo de Carga Horaria",
 ]);
+// Etapa 15L.2B: catálogo único de colores, alineado 1:1 con
+// frontend/src/types/noveltyType.types.ts::NoveltyUiColor -- antes el
+// backend aceptaba "indigo" (nunca usado por ningún cliente real) y no
+// aceptaba "purple" (el frontend lo mapeaba a "violet" antes de mandarlo).
+// Confirmado contra la base real: ningún NoveltyType existente usa
+// "indigo", así que quitarlo del enum no pierde ningún dato.
 export const noveltyColorSchema = z.enum([
   "blue",
-  "green",
-  "amber",
-  "red",
-  "violet",
-  "teal",
-  "cyan",
-  "indigo",
-  "pink",
-  "orange",
-  "lime",
-  "slate",
-  "rose",
-  "emerald",
   "sky",
+  "cyan",
+  "teal",
+  "emerald",
+  "green",
+  "lime",
+  "amber",
+  "orange",
+  "red",
+  "rose",
+  "pink",
+  "violet",
+  "purple",
+  "slate",
 ]);
 
 export const listNoveltyTypesQuerySchema = z.object({
@@ -45,7 +51,11 @@ export const listNoveltyTypesQuerySchema = z.object({
 export const finnegansNoveltyLinkSchema = z.object({
   code: z.string().trim().min(1).max(40),
   name: z.string().trim().min(2).max(160),
-  exportConcept: z.string().trim().min(2).max(120),
+  // Etapa 15L.2B: deja de ser obligatorio -- auditado en 15L.1, ningún
+  // exportador real lo lee (finnegansExport.service.ts sólo usa
+  // link.code). La UI nueva ya no lo pide; se mantiene por compatibilidad
+  // con datos existentes que sí lo tengan.
+  exportConcept: z.string().trim().max(120).optional().default(""),
   priority: z.number().int().positive().max(99).default(1),
   status: recordStatusSchema.default("ACTIVO"),
   hasValidity: z.boolean().default(false),

@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Navigate, useNavigate } from "react-router-dom";
-import { emptyNoveltyType } from "../components/novelty-types/NoveltyTypeFields";
+import { emptyNoveltyType, validateNoveltyType } from "../components/novelty-types/NoveltyTypeFields";
 import { NoveltyTypeFinnegansTab } from "../components/novelty-types/NoveltyTypeFinnegansTab";
 import { NoveltyTypeIdentificationTab } from "../components/novelty-types/NoveltyTypeIdentificationTab";
 import { NoveltyTypeRulesTab } from "../components/novelty-types/NoveltyTypeRulesTab";
@@ -32,9 +32,8 @@ export function NoveltyTypeCreatePage() {
 
   const { isRunning: isSaving, run: save } = useAsyncAction(async (event: FormEvent) => {
     event.preventDefault();
-    if (!item.name.trim() || !item.description.trim()) return setError("Completa nombre y descripcion funcional.");
-    const invalidLink = item.finnegansLinks.some((link) => link.code.trim() && (!link.name.trim() || !link.exportConcept.trim()));
-    if (invalidLink) return setError("Si cargas un codigo Finnegans, completa nombre y concepto exportable.");
+    const validationError = validateNoveltyType(item);
+    if (validationError) return setError(validationError);
 
     try {
       const created = await noveltyTypeApiService.create(item);
@@ -49,9 +48,9 @@ export function NoveltyTypeCreatePage() {
   return (
     <form onSubmit={save}>
       <PageHeader eyebrow="TIPOS DE NOVEDADES" title="Crear tipo de novedad" description="Defini la novedad interna, sus reglas y la vinculacion con Finnegans." />
-      <Section title="1. Identificacion interna" subtitle="Datos visibles para RRHH, supervision y carga horaria."><NoveltyTypeIdentificationTab item={item} setItem={setItem} /></Section>
-      <Section title="2. Reglas operativas" subtitle="Controlan que campos se habilitan y que impactos genera la novedad."><NoveltyTypeRulesTab item={item} setItem={setItem} /></Section>
-      <Section title="3. Vinculacion Finnegans" subtitle="Equivalencias externas para exportacion e integracion futura."><NoveltyTypeFinnegansTab item={item} setItem={setItem} /></Section>
+      <Section title="1. Identificación" subtitle="Datos visibles para RRHH, supervisión y carga horaria."><NoveltyTypeIdentificationTab item={item} setItem={setItem} /></Section>
+      <Section title="2. Reglas operativas" subtitle="Controlan que campos se habilitan y qué impactos genera la novedad."><NoveltyTypeRulesTab item={item} setItem={setItem} /></Section>
+      <Section title="3. Finnegans" subtitle="Configuración de exportación mensual a Finnegans."><NoveltyTypeFinnegansTab item={item} setItem={setItem} /></Section>
       {error && <p className="error create-error">{error}</p>}
       <div className="form-actions create-actions">
         <Button to="/configuracion/tipos-novedades" variant="subtle">Cancelar</Button>

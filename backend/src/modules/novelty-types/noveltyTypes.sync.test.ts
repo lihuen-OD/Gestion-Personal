@@ -3,7 +3,6 @@ import {
   applyNoveltyTypeCompatibilitySync,
   resolveAllowsDateRangeSync,
   resolveFinnegansRequiresValiditySync,
-  resolveFinnegansValueUnitSync,
   resolveTimeEntryBehaviorSync,
 } from "./noveltyTypes.sync";
 
@@ -102,27 +101,17 @@ describe("resolveFinnegansRequiresValiditySync", () => {
   });
 });
 
-describe("resolveFinnegansValueUnitSync", () => {
-  it("finnegansValueUnit explícito gana, incluso null", () => {
-    expect(resolveFinnegansValueUnitSync({ finnegansValueUnit: "DAYS" })).toEqual({ finnegansValueUnit: "DAYS" });
-    expect(resolveFinnegansValueUnitSync({ finnegansValueUnit: null })).toEqual({ finnegansValueUnit: null });
-  });
-
-  it("sin finnegansValueUnit, allowsHours=true infiere HOURS", () => {
-    expect(resolveFinnegansValueUnitSync({ allowsHours: true })).toEqual({ finnegansValueUnit: "HOURS" });
-  });
-
-  it("sin finnegansValueUnit, allowsHours=false no infiere nada (no asume DAYS/UNIT)", () => {
-    expect(resolveFinnegansValueUnitSync({ allowsHours: false })).toEqual({});
-  });
-
-  it("sin ninguno de los dos: no devuelve nada", () => {
-    expect(resolveFinnegansValueUnitSync({})).toEqual({});
-  });
-});
-
-describe("applyNoveltyTypeCompatibilitySync", () => {
-  it("combina las 4 sincronizaciones sobre un input de create legacy típico", () => {
+// Etapa 15L.2B.1 (corrección puntual, docs/decisions/
+// NOVELTY_TYPE_FRONTEND_REDESIGN_15L2B.md): finnegansValueUnit y
+// allowsHours son dos decisiones independientes -- allowsHours es la
+// capacidad OPERATIVA de la novedad (¿permite cargar quantityHours?);
+// finnegansValueUnit es la interpretación de EXPORTACIÓN de esa cantidad
+// (qué representa Valor 1 en Finnegans). resolveFinnegansValueUnitSync
+// (que sincronizaba ambos en las dos direcciones) se eliminó por completo
+// -- estos tests fijan que applyNoveltyTypeCompatibilitySync ya no toca
+// ninguno de los dos campos.
+describe("applyNoveltyTypeCompatibilitySync — Etapa 15L.2B.1 (allowsHours y finnegansValueUnit desacoplados)", () => {
+  it("combina las 3 sincronizaciones restantes sobre un input de create legacy típico, sin tocar finnegansValueUnit", () => {
     const result = applyNoveltyTypeCompatibilitySync({
       allowsHours: true,
       allowsDateTo: false,
@@ -133,11 +122,40 @@ describe("applyNoveltyTypeCompatibilitySync", () => {
     });
 
     expect(result).toMatchObject({
+      allowsHours: true,
       allowsDateRange: false,
       finnegansRequiresValidity: false,
-      finnegansValueUnit: "HOURS",
       timeEntryBehavior: "NO_BLOQUEA",
     });
+    expect(result).not.toHaveProperty("finnegansValueUnit");
+  });
+
+  it("allowsHours=true en el input no cambia finnegansValueUnit", () => {
+    const result = applyNoveltyTypeCompatibilitySync({ allowsHours: true, finnegansValueUnit: null } as never);
+    expect(result).toMatchObject({ allowsHours: true, finnegansValueUnit: null });
+  });
+
+  it("allowsHours=false en el input no cambia finnegansValueUnit", () => {
+    const result = applyNoveltyTypeCompatibilitySync({ allowsHours: false, finnegansValueUnit: "DAYS" } as never);
+    expect(result).toMatchObject({ allowsHours: false, finnegansValueUnit: "DAYS" });
+  });
+
+  it("finnegansValueUnit=HOURS/DAYS/UNIT en el input no cambia allowsHours", () => {
+    expect(applyNoveltyTypeCompatibilitySync({ finnegansValueUnit: "HOURS", allowsHours: false } as never)).toMatchObject({ allowsHours: false, finnegansValueUnit: "HOURS" });
+    expect(applyNoveltyTypeCompatibilitySync({ finnegansValueUnit: "DAYS", allowsHours: true } as never)).toMatchObject({ allowsHours: true, finnegansValueUnit: "DAYS" });
+    expect(applyNoveltyTypeCompatibilitySync({ finnegansValueUnit: "UNIT", allowsHours: true } as never)).toMatchObject({ allowsHours: true, finnegansValueUnit: "UNIT" });
+  });
+
+  it("PATCH que sólo manda allowsHours preserva finnegansValueUnit (no viene en el patch, no se toca)", () => {
+    const result = applyNoveltyTypeCompatibilitySync({ allowsHours: true } as never);
+    expect(result).toEqual({ allowsHours: true });
+    expect(result).not.toHaveProperty("finnegansValueUnit");
+  });
+
+  it("PATCH que sólo manda finnegansValueUnit preserva allowsHours (no viene en el patch, no se toca)", () => {
+    const result = applyNoveltyTypeCompatibilitySync({ finnegansValueUnit: "UNIT" } as never);
+    expect(result).toEqual({ finnegansValueUnit: "UNIT" });
+    expect(result).not.toHaveProperty("allowsHours");
   });
 
   it("un input que sólo trae el contrato nuevo no depende de ningún legacy", () => {
@@ -145,7 +163,6 @@ describe("applyNoveltyTypeCompatibilitySync", () => {
       timeEntryBehavior: "BLOQUEA_NUEVA_CARGA",
       allowsDateRange: true,
       finnegansRequiresValidity: true,
-      finnegansValueUnit: "UNIT",
     });
 
     expect(result).toMatchObject({
@@ -154,7 +171,6 @@ describe("applyNoveltyTypeCompatibilitySync", () => {
       timeImpact: "BLOQUEA_CARGA_DIA",
       allowsDateTo: true,
       hasValidity: true,
-      finnegansValueUnit: "UNIT",
     });
   });
 

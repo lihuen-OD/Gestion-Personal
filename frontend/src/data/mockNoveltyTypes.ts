@@ -15,6 +15,12 @@ const baseRules = {
   blocksTimeEntry: false,
   setsWorkedHoursToZero: false,
   timeImpact: "NO_AFECTA_HORAS" as const,
+  // Etapa 15L.2A/15L.2B: modelo nuevo -- valores por defecto consistentes
+  // con el resto de baseRules (ver noveltyTypes.sync.ts en backend).
+  timeEntryBehavior: "NO_BLOQUEA" as const,
+  allowsDateRange: true,
+  finnegansValueUnit: null as "HOURS" | "DAYS" | "UNIT" | null,
+  finnegansRequiresValidity: true,
 };
 
 const history = (id: string, name: string) => [{ id, action: "Alta de tipo", description: `Se creo la novedad ${name}.`, createdAt: now, createdByUserId: "system", createdByUserName: "Sistema" }];
@@ -29,7 +35,7 @@ export const mockNoveltyTypes: NoveltyType[] = [
     origin: "FINNEGANS",
     description: "Ausencia justificada por enfermedad. Requiere certificado medico para seguimiento.",
     status: "ACTIVO",
-    rules: { ...baseRules, exportsToFinnegans: true, requiresDocumentation: true, blocksTimeEntry: true, setsWorkedHoursToZero: true, timeImpact: "BLOQUEA_CARGA_DIA" },
+    rules: { ...baseRules, exportsToFinnegans: true, requiresDocumentation: true, blocksTimeEntry: true, setsWorkedHoursToZero: true, timeImpact: "BLOQUEA_CARGA_DIA", timeEntryBehavior: "BLOQUEA_NUEVA_CARGA", finnegansValueUnit: "DAYS" },
     allowedLoadRoles: [rrhh, supervisor, carga],
     approvalRoles: [rrhh, supervisor],
     finnegansLinks: [{ id: "fin-enf-1", code: "LIC_ENF", name: "Licencia por enfermedad", exportConcept: "Enfermedad", priority: 1, status: "ACTIVO", hasValidity: true }],
@@ -49,7 +55,7 @@ export const mockNoveltyTypes: NoveltyType[] = [
     origin: "FINNEGANS",
     description: "Licencia anual planificada. Se informa a Finnegans como novedad con vigencia.",
     status: "ACTIVO",
-    rules: { ...baseRules, exportsToFinnegans: true, requiresDocumentation: false, blocksTimeEntry: true, setsWorkedHoursToZero: true, timeImpact: "BLOQUEA_CARGA_DIA" },
+    rules: { ...baseRules, exportsToFinnegans: true, requiresDocumentation: false, blocksTimeEntry: true, setsWorkedHoursToZero: true, timeImpact: "BLOQUEA_CARGA_DIA", timeEntryBehavior: "BLOQUEA_NUEVA_CARGA", finnegansValueUnit: "DAYS" },
     allowedLoadRoles: [rrhh, supervisor],
     approvalRoles: [rrhh],
     finnegansLinks: [{ id: "fin-vac-1", code: "VAC_GOZ", name: "Vacaciones gozadas", exportConcept: "Vacaciones", priority: 1, status: "ACTIVO", hasValidity: true }],
@@ -68,7 +74,7 @@ export const mockNoveltyTypes: NoveltyType[] = [
     origin: "INTERNA",
     description: "Novedad horaria por ingreso posterior al horario asignado. Registra horas no trabajadas.",
     status: "ACTIVO",
-    rules: { ...baseRules, requiresApproval: false, allowsDateTo: false, allowsHours: true, hasValidity: false, timeImpact: "REGISTRA_HORAS_NO_TRABAJADAS" },
+    rules: { ...baseRules, requiresApproval: false, allowsDateTo: false, allowsDateRange: false, allowsHours: true, hasValidity: false, finnegansRequiresValidity: false, timeImpact: "REGISTRA_HORAS_NO_TRABAJADAS", finnegansValueUnit: "HOURS" },
     allowedLoadRoles: [rrhh, supervisor, carga],
     approvalRoles: [rrhh, supervisor],
     finnegansLinks: [],
@@ -87,7 +93,7 @@ export const mockNoveltyTypes: NoveltyType[] = [
     origin: "FINNEGANS",
     description: "Suspension informada a Finnegans. Bloquea la carga horaria del dia y registra 0 hs trabajadas.",
     status: "ACTIVO",
-    rules: { ...baseRules, exportsToFinnegans: true, requiresDocumentation: false, blocksTimeEntry: true, setsWorkedHoursToZero: true, timeImpact: "BLOQUEA_CARGA_DIA" },
+    rules: { ...baseRules, exportsToFinnegans: true, requiresDocumentation: false, blocksTimeEntry: true, setsWorkedHoursToZero: true, timeImpact: "BLOQUEA_CARGA_DIA", timeEntryBehavior: "BLOQUEA_NUEVA_CARGA", finnegansValueUnit: "DAYS" },
     allowedLoadRoles: [rrhh, supervisor],
     approvalRoles: [rrhh],
     finnegansLinks: [{ id: "fin-susp-1", code: "SUSP", name: "Suspension", exportConcept: "Suspension", priority: 1, status: "ACTIVO", hasValidity: true }],
@@ -106,7 +112,7 @@ export const mockNoveltyTypes: NoveltyType[] = [
     origin: "MIXTA",
     description: "Accidente laboral informado a ART y eventualmente a Finnegans.",
     status: "ACTIVO",
-    rules: { ...baseRules, exportsToFinnegans: true, requiresDocumentation: true, blocksTimeEntry: true, setsWorkedHoursToZero: true, timeImpact: "BLOQUEA_CARGA_DIA" },
+    rules: { ...baseRules, exportsToFinnegans: true, requiresDocumentation: true, blocksTimeEntry: true, setsWorkedHoursToZero: true, timeImpact: "BLOQUEA_CARGA_DIA", timeEntryBehavior: "BLOQUEA_NUEVA_CARGA", finnegansValueUnit: "DAYS" },
     allowedLoadRoles: [rrhh, supervisor],
     approvalRoles: [rrhh],
     finnegansLinks: [{ id: "fin-art-1", code: "ACC_ART", name: "Accidente ART", exportConcept: "ART", priority: 1, status: "ACTIVO", hasValidity: true }],

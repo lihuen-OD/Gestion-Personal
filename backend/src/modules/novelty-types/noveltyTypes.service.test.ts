@@ -67,10 +67,20 @@ describe("noveltyTypesService.create — Etapa 15L.2A", () => {
     expect(repo.create).toHaveBeenCalledWith(expect.objectContaining({ notes: "Uso interno, no exportar todavía" }));
   });
 
-  it("infiere finnegansValueUnit=HOURS cuando allowsHours=true y no vino el campo nuevo", async () => {
+  // Etapa 15L.2B.1 (corrección puntual, docs/decisions/
+  // NOVELTY_TYPE_FRONTEND_REDESIGN_15L2B.md): allowsHours=true ya NO
+  // infiere finnegansValueUnit -- son dos decisiones independientes.
+  it("allowsHours=true no infiere ni toca finnegansValueUnit", async () => {
     await noveltyTypesService.create(createInput({ allowsHours: true }));
 
-    expect(repo.create).toHaveBeenCalledWith(expect.objectContaining({ finnegansValueUnit: "HOURS" }));
+    const call = repo.create.mock.calls[0]![0];
+    expect(call).not.toHaveProperty("finnegansValueUnit");
+  });
+
+  it("finnegansValueUnit explícito no infiere ni toca allowsHours", async () => {
+    await noveltyTypesService.create(createInput({ allowsHours: false, finnegansValueUnit: "DAYS" }));
+
+    expect(repo.create).toHaveBeenCalledWith(expect.objectContaining({ allowsHours: false, finnegansValueUnit: "DAYS" }));
   });
 
   it("invalida la cache y audita CREATE", async () => {
@@ -81,10 +91,73 @@ describe("noveltyTypesService.create — Etapa 15L.2A", () => {
   });
 });
 
+// Etapa 15L.2B (docs/decisions/NOVELTY_TYPE_FRONTEND_REDESIGN_15L2B.md):
+// si el tipo exporta a Finnegans, exige vínculo (código+nombre) y unidad de
+// Valor 1 -- antes 15L.2A dejaba esto sin exigir para no romper el
+// frontend viejo, que todavía no tenía UI para elegir la unidad.
+describe("noveltyTypesService.create — Etapa 15L.2B (coherencia Finnegans)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    repo.create.mockResolvedValue({ id: "nt-1", code: "NOV-001", name: "Vacaciones" });
+  });
+
+  it("exportsToFinnegans=false no exige ningún vínculo ni unidad", async () => {
+    await expect(noveltyTypesService.create(createInput({ exportsToFinnegans: false }))).resolves.toBeDefined();
+  });
+
+  it("exportsToFinnegans=true sin vínculos rechaza (NOVELTY_TYPE_FINNEGANS_LINK_REQUIRED)", async () => {
+    await expect(
+      noveltyTypesService.create(createInput({ exportsToFinnegans: true, finnegansLinks: [] })),
+    ).rejects.toMatchObject({ statusCode: 400, code: "NOVELTY_TYPE_FINNEGANS_LINK_REQUIRED" });
+    expect(repo.create).not.toHaveBeenCalled();
+  });
+
+  it("exportsToFinnegans=true con vínculo pero sin finnegansValueUnit rechaza (NOVELTY_TYPE_FINNEGANS_VALUE_UNIT_REQUIRED)", async () => {
+    await expect(
+      noveltyTypesService.create(
+        createInput({
+          exportsToFinnegans: true,
+          finnegansLinks: [{ code: "VAC", name: "Vacaciones", exportConcept: "", priority: 1, status: "ACTIVO", hasValidity: false, notes: null }],
+        }),
+      ),
+    ).rejects.toMatchObject({ statusCode: 400, code: "NOVELTY_TYPE_FINNEGANS_VALUE_UNIT_REQUIRED" });
+  });
+
+  // Etapa 15L.2B.1: allowsHours=true NO alcanza para satisfacer el
+  // requisito de unidad -- confirma que la decisión de exportación no se
+  // infiere de la capacidad operativa, hay que mandar finnegansValueUnit
+  // explícito.
+  it("exportsToFinnegans=true con vínculo y allowsHours=true, pero SIN finnegansValueUnit explícito, sigue rechazando", async () => {
+    await expect(
+      noveltyTypesService.create(
+        createInput({
+          exportsToFinnegans: true,
+          allowsHours: true,
+          finnegansLinks: [{ code: "VAC", name: "Vacaciones", exportConcept: "", priority: 1, status: "ACTIVO", hasValidity: false, notes: null }],
+        }),
+      ),
+    ).rejects.toMatchObject({ statusCode: 400, code: "NOVELTY_TYPE_FINNEGANS_VALUE_UNIT_REQUIRED" });
+  });
+
+  it("exportsToFinnegans=true con vínculo y finnegansValueUnit explícito se crea sin error, sin importar allowsHours", async () => {
+    await expect(
+      noveltyTypesService.create(
+        createInput({
+          exportsToFinnegans: true,
+          allowsHours: false,
+          finnegansValueUnit: "UNIT",
+          finnegansLinks: [{ code: "VAC", name: "Vacaciones", exportConcept: "", priority: 1, status: "ACTIVO", hasValidity: false, notes: null }],
+        }),
+      ),
+    ).resolves.toBeDefined();
+  });
+});
+
 describe("noveltyTypesService.update — Etapa 15L.2A", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     repo.update.mockResolvedValue({ id: "nt-1", code: "NOV-001", name: "Vacaciones" });
+    repo.findById.mockResolvedValue({ exportsToFinnegans: false, finnegansValueUnit: null, finnegansLinks: [] });
   });
 
   it("un PATCH que sólo cambia name no toca ninguno de los campos sincronizables", async () => {
@@ -108,5 +181,42 @@ describe("noveltyTypesService.update — Etapa 15L.2A", () => {
     await noveltyTypesService.update("nt-1", { allowsDateTo: false } as UpdateNoveltyTypeInput);
 
     expect(repo.update).toHaveBeenCalledWith("nt-1", expect.objectContaining({ allowsDateRange: false, allowsDateTo: false }));
+  });
+});
+
+// Etapa 15L.2B: la validación de coherencia Finnegans en update() mira el
+// estado RESULTANTE (fila actual + patch) -- un PATCH que no toca
+// exportsToFinnegans/finnegansValueUnit/finnegansLinks no debe fallar ni
+// tampoco debe dejar pasar una fila que YA exporta sin vínculo/unidad si el
+// patch intenta apagar justo lo que la hacía válida.
+describe("noveltyTypesService.update — Etapa 15L.2B (coherencia Finnegans)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    repo.update.mockResolvedValue({ id: "nt-1", code: "NOV-001", name: "Vacaciones" });
+  });
+
+  it("un PATCH que no toca nada de Finnegans no exige nada, aunque la fila actual no exporte", async () => {
+    repo.findById.mockResolvedValue({ exportsToFinnegans: false, finnegansValueUnit: null, finnegansLinks: [] });
+
+    await expect(noveltyTypesService.update("nt-1", { name: "Vacaciones anuales" } as UpdateNoveltyTypeInput)).resolves.toBeDefined();
+  });
+
+  it("un PATCH que sólo prende exportsToFinnegans, con la fila actual sin vínculo, rechaza", async () => {
+    repo.findById.mockResolvedValue({ exportsToFinnegans: false, finnegansValueUnit: null, finnegansLinks: [] });
+
+    await expect(
+      noveltyTypesService.update("nt-1", { exportsToFinnegans: true } as UpdateNoveltyTypeInput),
+    ).rejects.toMatchObject({ code: "NOVELTY_TYPE_FINNEGANS_LINK_REQUIRED" });
+    expect(repo.update).not.toHaveBeenCalled();
+  });
+
+  it("un PATCH que sólo cambia name, con la fila actual ya exportando correctamente, no exige nada de nuevo", async () => {
+    repo.findById.mockResolvedValue({
+      exportsToFinnegans: true,
+      finnegansValueUnit: "HOURS",
+      finnegansLinks: [{ code: "VAC", name: "Vacaciones" }],
+    });
+
+    await expect(noveltyTypesService.update("nt-1", { name: "Vacaciones anuales" } as UpdateNoveltyTypeInput)).resolves.toBeDefined();
   });
 });

@@ -10,6 +10,14 @@ import { noveltyTypeApiService } from "../services/api/noveltyTypeApiService";
 import { hourConceptApiService } from "../services/api/hourConceptApiService";
 import type { NoveltyType } from "../types/noveltyType.types";
 
+// Etapa 15L.2B (docs/decisions/NOVELTY_TYPE_FRONTEND_REDESIGN_15L2B.md,
+// punto 25): NoveltyModal (montado acá vía "Crear novedad") ahora usa
+// useAuth para filtrar el catálogo por rol -- se mockea RRHH (autoridad
+// global, ve todo) para no cambiar el comportamiento de estos tests.
+vi.mock("../context/AuthContext", () => ({
+  useAuth: () => ({ user: { id: "user-1", name: "RRHH", email: "", password: "", role: "Nivel 1 - RRHH", status: "Activo" }, login: vi.fn(), loginAs: vi.fn(), logout: vi.fn() }),
+}));
+
 vi.mock("../services/api/attendanceApiService", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../services/api/attendanceApiService")>();
   return {
@@ -106,6 +114,10 @@ function buildGenericActiveType(): NoveltyType {
       blocksTimeEntry: false,
       setsWorkedHoursToZero: false,
       timeImpact: "NO_AFECTA_HORAS",
+      timeEntryBehavior: "NO_BLOQUEA",
+      allowsDateRange: true,
+      finnegansValueUnit: null,
+      finnegansRequiresValidity: false,
     },
     allowedLoadRoles: [],
     approvalRoles: [],
