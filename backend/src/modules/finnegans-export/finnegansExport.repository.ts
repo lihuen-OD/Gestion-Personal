@@ -13,23 +13,34 @@ function periodRange(period: string) {
 }
 
 // Etapa 15L.3A §3/§5: candidata = Novelty APROBADO de un NoveltyType ACTIVO
-// con exportsToFinnegans=true, superpuesto con el período pedido. A
-// propósito ya NO filtra por vínculo Finnegans activo (antes:
-// `finnegansLinks: { some: { status: "ACTIVO" } }`) — la ausencia de un
-// vínculo activo pasa a ser un blocker de readiness (MISSING_LINK, ver
-// finnegansExport.readiness.ts), no un motivo para que la fila desaparezca
-// en silencio de la preview (antes: `.filter((row) => row.Novedad)` en el
-// service, retirado en esta etapa). Semántica mensual sin cambios (§5/§32/
-// §33 del pedido de esta etapa): una novedad 30/01→02/02 sigue pudiendo
-// aparecer tanto en enero como en febrero — deuda documentada, no resuelta
-// acá.
+// con exportsToFinnegans=true. A propósito ya NO filtra por vínculo
+// Finnegans activo (antes: `finnegansLinks: { some: { status: "ACTIVO" } }`)
+// — la ausencia de un vínculo activo pasa a ser un blocker de readiness
+// (MISSING_LINK, ver finnegansExport.readiness.ts), no un motivo para que
+// la fila desaparezca en silencio de la preview (antes:
+// `.filter((row) => row.Novedad)` en el service, retirado en esa etapa).
+//
+// Etapa 15L.3B.1 (docs/decisions/FINNEGANS_EXPORT_MONTHLY_OWNERSHIP_15L3B.md):
+// el período dueño de una novedad es EXCLUSIVAMENTE el mes de `fromDate` —
+// `toDate` ya no participa en la selección. Antes, un filtro de
+// solapamiento (`fromDate <= finMes AND (toDate IS NULL OR toDate >=
+// inicioMes)`) podía hacer que una novedad cross-month (30/01→02/02)
+// apareciera como candidata tanto en enero como en febrero, y que una
+// novedad open-ended (toDate=null) reapareciera indefinidamente en todos
+// los meses posteriores a fromDate — ambos casos, confirmados y auditados
+// en 15L.3B (no implementada), quedan resueltos acá: `fromDate` dentro de
+// `[range.from, range.to]` es la única condición de pertenencia mensual.
+// `toDate` sigue siendo el dato real de vigencia/"Fecha hasta" exportada
+// (finnegansExport.service.ts, sin cambios) y lo que usa la grilla horaria
+// para mostrar la novedad en pantalla (`novelties.dateRange.ts`, módulo
+// distinto, no tocado) — sólo deja de decidir en qué período Finnegans se
+// exporta.
 function buildWhere(period: string, employeeId?: string): Prisma.NoveltyWhereInput {
   const range = periodRange(period);
   return {
     ...(employeeId ? { employeeId } : {}),
     status: "APROBADO",
-    fromDate: { lte: range.to },
-    OR: [{ toDate: null }, { toDate: { gte: range.from } }],
+    fromDate: { gte: range.from, lte: range.to },
     noveltyType: {
       status: "ACTIVO",
       exportsToFinnegans: true,

@@ -71,6 +71,14 @@ sin ningún test previo (0% de cobertura, confirmado por ausencia de
 
 ## 3. Riesgo de semántica mensual — confirmado, NO resuelto en esta etapa
 
+> **Resuelto en la Etapa 15L.3B.1**
+> (`docs/decisions/FINNEGANS_EXPORT_MONTHLY_OWNERSHIP_15L3B.md`): la consulta
+> ya no usa un criterio de solapamiento — la pertenencia mensual de una
+> novedad depende exclusivamente de `fromDate`, sin ningún efecto de
+> `toDate` sobre la selección. Cross-month y open-ended quedaron cerrados,
+> con tests de comportamiento observable. El resto de esta sección se
+> conserva como registro histórico del diagnóstico original.
+
 La consulta sigue usando exactamente el mismo criterio de solapamiento que
 tenía antes (`fromDate <= finMes AND (toDate IS NULL OR toDate >=
 inicioMes)`), sin recortar rangos, sin dividir la novedad, sin mover nada al
@@ -383,9 +391,12 @@ estado de carga ("Generando...").
 
 ## 19. Deuda pendiente — explícita
 
-- **Cross-month** (§3 de este documento): sin resolver. 15L.3B decide.
-- **Open-ended** (`toDate = null`): sin resolver, misma nota que
-  cross-month. 15L.3B decide.
+- **Cross-month** (§3 de este documento): ~~sin resolver. 15L.3B decide.~~
+  **Resuelto en la Etapa 15L.3B.1** — la pertenencia mensual depende
+  exclusivamente de `fromDate` (`docs/decisions/FINNEGANS_EXPORT_MONTHLY_OWNERSHIP_15L3B.md`).
+- **Open-ended** (`toDate = null`): ~~sin resolver, misma nota que
+  cross-month. 15L.3B decide.~~ **Resuelto en la Etapa 15L.3B.1**, misma
+  corrección que cross-month.
 - **Historial/idempotencia de exportaciones**: no implementado — el evento
   de auditoría de esta etapa no es un batch formal. 15L.4.
 - **Relación 1:1 física con Finnegans**: `FinnegansNoveltyLink` sigue siendo

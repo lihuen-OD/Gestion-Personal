@@ -116,6 +116,18 @@ archivo — nunca una exportación parcial.
 período — un legajo sin ninguna novedad exportable nunca bloquea la
 exportación de los demás.
 
+**Pertenencia mensual única** (Etapa 15L.3B.1,
+`docs/decisions/FINNEGANS_EXPORT_MONTHLY_OWNERSHIP_15L3B.md`): el período de
+exportación de una novedad se determina por su Fecha desde (`fromDate`). Una
+novedad se exporta en un único período, aunque su Fecha hasta pertenezca a
+otro mes. Una novedad `30/07/2026 → 02/08/2026` se exporta únicamente en
+julio, con el rango real completo (`Fecha desde=30/07/2026`,
+`Fecha hasta=02/08/2026`, sin recortar); una novedad abierta
+(`toDate = null`) se exporta una única vez, en el mes de su `fromDate`, sin
+repetirse en los meses siguientes. `toDate` no decide en qué mes se exporta
+— sólo sigue siendo la vigencia real exportada y lo que usa la grilla
+horaria para mostrar la novedad en pantalla.
+
 ## Criterios de aceptación
 
 - Sereno, guardia y manejo de colectivo no aparecen como novedades.

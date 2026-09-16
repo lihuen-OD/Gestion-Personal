@@ -299,6 +299,55 @@ describe("finnegansExportService.getDefinitive — gate de cierre mensual (Etapa
   });
 });
 
+// Etapa 15L.3B.1 (docs/decisions/FINNEGANS_EXPORT_MONTHLY_OWNERSHIP_15L3B.md):
+// la corrección real de selección mensual vive en
+// finnegansExport.repository.ts (probada en finnegansExport.repository.test.ts,
+// con asserts de comportamiento observable sobre el `where` real de Prisma).
+// Estos tests prueban, a nivel de service, que el cierre mensual sigue
+// exactamente a lo que el repositorio ya decidió: si el repositorio no
+// devuelve la novedad para un período, ese empleado nunca entra al set que
+// se le exige cierre — nunca queda "cierre de agosto" exigido por una
+// novedad que sólo pertenece a julio.
+describe("finnegansExportService.getDefinitive — pertenencia mensual única (Etapa 15L.3B.1)", () => {
+  it("novedad cross-month (30/07→02/08): en julio el empleado participa y sólo se consulta el cierre de julio", async () => {
+    // El repositorio (finnegansExport.repository.test.ts) ya prueba que esta
+    // misma novedad, con la query nueva, sólo puede volver para period
+    // "2026-07" — acá se simula exactamente ese resultado para confirmar que
+    // el service respeta lo que el repositorio decide, sin volver a filtrar
+    // por su cuenta.
+    repo.findExportableNovelties.mockResolvedValue([
+      novelty({ employeeId: "employee-1", fromDate: new Date("2026-07-30"), toDate: new Date("2026-08-02") }),
+    ]);
+    repo.findClosuresForExport.mockResolvedValue([{ employeeId: "employee-1", status: "APROBADO" }]);
+
+    const result = await finnegansExportService.getDefinitive({ period: "2026-07" });
+
+    expect(result.rows).toHaveLength(1);
+    expect(repo.findClosuresForExport).toHaveBeenCalledWith(["employee-1"], "2026-07");
+  });
+
+  it("la misma novedad cross-month: en agosto no es candidata (la devuelve el repositorio vacío), no agrega al empleado y no exige cierre de agosto", async () => {
+    repo.findExportableNovelties.mockResolvedValue([]);
+
+    const result = await finnegansExportService.getDefinitive({ period: "2026-08" });
+
+    expect(result.rows).toEqual([]);
+    expect(repo.findClosuresForExport).not.toHaveBeenCalled();
+  });
+
+  it("el rango exportado se mantiene REAL completo — sin recortar Fecha hasta al fin del mes dueño", async () => {
+    repo.findExportableNovelties.mockResolvedValue([
+      novelty({ finnegansRequiresValidity: true, fromDate: new Date("2026-07-30"), toDate: new Date("2026-08-02") }),
+    ]);
+    repo.findClosuresForExport.mockResolvedValue([{ employeeId: "employee-1", status: "APROBADO" }]);
+
+    const result = await finnegansExportService.getDefinitive({ period: "2026-07" });
+
+    expect(result.rows[0]!["Fecha desde"]).toBe("30/07/2026");
+    expect(result.rows[0]!["Fecha hasta"]).toBe("02/08/2026");
+  });
+});
+
 describe("toCsv — Etapa 15L.3A §27", () => {
   it("nunca incluye la columna 'estado', sin importar qué traiga la fila", () => {
     const csv = toCsv([
