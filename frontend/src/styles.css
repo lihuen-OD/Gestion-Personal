@@ -2299,3 +2299,22 @@ a.employee-hours-status-item:hover{border-color:var(--ds-blue-300);background:va
 .aec-card-vigency .table-sub{margin-top:1px}
 .aec-card-actions{display:flex;flex-wrap:wrap;gap:8px;padding-top:4px}
 .aec-card-actions .button{flex:1;justify-content:center;min-width:130px}
+/* Etapa 15L.3A: banner de estado de preparación de la exportación Finnegans
+   — mismo componente visual que .info-note (Etapa 11B ya define el patrón de
+   variante con .special-hour), tono éxito/aviso según readiness.ready. */
+.info-note.readiness-ready{
+  border-color:var(--color-success-border)!important;
+  border-left-color:var(--color-success)!important;
+  background:var(--color-success-bg)!important;
+  color:var(--color-text-secondary)!important;
+}
+.info-note.readiness-ready b{color:var(--color-success)!important}
+.info-note.readiness-blocked{
+  border-color:var(--color-warning-border)!important;
+  border-left-color:var(--color-warning)!important;
+  background:var(--color-warning-bg)!important;
+  color:var(--color-text-secondary)!important;
+}
+.info-note.readiness-blocked b{color:var(--color-warning)!important}
+.info-note.readiness-blocked p{margin:8px 0 4px;font-weight:600;color:var(--color-text-secondary)}
+.readiness-reasons{margin:0;padding-left:18px;display:grid;gap:3px;font-size:12px}

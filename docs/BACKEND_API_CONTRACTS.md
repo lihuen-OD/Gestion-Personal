@@ -1182,14 +1182,39 @@ GET /api/finnegans-export/novelties.csv
 Query:
 
 ```txt
-period=YYYY-MM
-from=YYYY-MM-DD
-to=YYYY-MM-DD
-employeeId
-includePending=false
+period=YYYY-MM   (obligatorio)
+employeeId       (opcional)
+preview=false    (sólo para .novelties, no para .csv)
 ```
 
-Columnas:
+**Etapa 15L.3A** (`docs/decisions/FINNEGANS_EXPORT_NORMALIZED_15L3A.md`):
+`from`/`to`/`includePending` se retiraron (sin caller real, incompatibles con
+el gate de cierre mensual). `preview=true` sólo informa — nunca exige cierre
+mensual aprobado y nunca queda auditado; `preview=false` (default,
+equivalente a la operación anterior) es la exportación **definitiva**:
+revalida todo, exige que el cierre mensual de cada empleado incluido esté
+`APROBADO` (si no, `409 FINNEGANS_MONTHLY_CLOSURE_NOT_APPROVED`) y que cada
+fila esté completamente lista (vínculo Finnegans activo, unidad de Valor 1,
+cantidad, vigencia — si no, `409 FINNEGANS_EXPORT_NOT_READY`), y sí queda
+auditada (`AuditLog`, `action: EXPORT`, `entity: FinnegansExport`).
+`.novelties.csv` nunca acepta `preview` — siempre corre la operación
+definitiva, sin excepción.
+
+Respuesta JSON (`{ data: { period, rows, readiness } }`):
+
+```txt
+readiness.ready        boolean
+readiness.totalRows    number
+readiness.readyRows    number
+readiness.blockedRows  number
+readiness.reasons      string[]  (motivos humanos, sin ids técnicos)
+```
+
+Cada fila trae, además de las columnas de abajo, un campo `estado`
+(`LISTO`/`FALTA_CANTIDAD`/`FALTA_CONFIGURACION`/`CIERRE_PENDIENTE`) — sólo
+para la UI de preview, nunca se exporta en el CSV/XLSX.
+
+Columnas (CSV/XLSX, sin cambios de nombre ni de orden):
 
 ```txt
 Legajo

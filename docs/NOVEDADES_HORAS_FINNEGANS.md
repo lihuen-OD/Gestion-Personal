@@ -70,7 +70,7 @@ Cada registro se guarda separado para evitar mezclar el total trabajado, sus des
 
 ## Exportación Finnegans
 
-> Confirmado en el diagnóstico de la Etapa 15E.2 (`docs/decisions/TIME_EXPORT_CLOSURE_GATE_15E2.md`): el módulo `finnegans-export` (`GET /api/finnegans-export/novelties[.csv]`) exporta exclusivamente novedades, tal como ya documentaba esta sección — nunca horas/liquidación. Por eso el requisito de cierre mensual `APROBADO` de 15E.2 se aplicó sólo a `GET /api/time-entries/export(.csv)`, no a este módulo.
+> Confirmado en el diagnóstico de la Etapa 15E.2 (`docs/decisions/TIME_EXPORT_CLOSURE_GATE_15E2.md`): el módulo `finnegans-export` (`GET /api/finnegans-export/novelties[.csv]`) exporta exclusivamente novedades, tal como ya documentaba esta sección — nunca horas/liquidación. Por eso el requisito de cierre mensual `APROBADO` de 15E.2 se aplicó a `GET /api/time-entries/export(.csv)`; este módulo tiene, desde la Etapa 15L.3A (`docs/decisions/FINNEGANS_EXPORT_NORMALIZED_15L3A.md`), su **propio** gate de cierre mensual, independiente del de horas (ver más abajo).
 
 Exportación Finnegans reemplaza el enfoque de liquidación dentro de la app.
 
@@ -87,17 +87,34 @@ No se exportan:
 - Alertas.
 - Información sin código exportable.
 
-Columnas de exportación:
+Columnas de exportación (CSV/XLSX, sin cambios desde la Etapa 15L.3A):
 
 | Campo | Regla |
 | --- | --- |
 | Legajo | Texto. Conserva ceros adelante. |
 | Novedad | Código Finnegans, no nombre interno. |
 | Centro de costo | Opcional. Si queda vacío, Finnegans toma el del legajo. |
-| Valor 1 | Unidad, cantidad u horas. |
-| Fecha Aplicación | Fecha de aplicación de la transacción. |
-| Fecha desde | Obligatoria si tiene vigencia. |
-| Fecha hasta | Obligatoria si tiene vigencia. |
+| Valor 1 | Depende exclusivamente de `NoveltyType.finnegansValueUnit` (horas/días/unidad) — sin ningún fallback entre cantidades. |
+| Fecha Aplicación | Fecha de aplicación de la transacción (`fromDate`). |
+| Fecha desde | Vacía salvo que el tipo exija vigencia (`finnegansRequiresValidity`). |
+| Fecha hasta | Vacía salvo que el tipo exija vigencia; si falta, la fila queda bloqueada en vez de exportarse con la celda vacía. |
+
+**Preview vs. exportación definitiva** (Etapa 15L.3A): `GET
+.../novelties?period=YYYY-MM&preview=true` sólo informa — muestra todas las
+novedades candidatas del período, incluidas las que todavía no están
+completamente configuradas (marcadas con un estado de "readiness"), y nunca
+exige cierre mensual aprobado ni queda registrada como una exportación
+realizada. `GET .../novelties?period=YYYY-MM` (sin `preview`, y siempre
+`.../novelties.csv`) es la exportación **definitiva**: revalida todo,
+bloquea con `409` si alguna novedad no está lista (vínculo Finnegans
+activo, unidad de Valor 1, cantidad, vigencia) o si el cierre mensual de
+algún empleado incluido no está `APROBADO`, y sólo entonces genera el
+archivo — nunca una exportación parcial.
+
+**Gate de cierre mensual propio de este módulo**: sólo se exige el cierre
+`APROBADO` de los empleados que tienen alguna novedad candidata en el
+período — un legajo sin ninguna novedad exportable nunca bloquea la
+exportación de los demás.
 
 ## Criterios de aceptación
 
@@ -109,4 +126,4 @@ Columnas de exportación:
 - Las novedades se registran separadas de las horas.
 - Suspensión y vacaciones pueden bloquear el día y registrar 0 horas.
 - Exportación Finnegans no calcula sueldos.
-- Exportación Finnegans muestra solo registros con código exportable.
+- La exportación **definitiva** de Finnegans sólo contiene registros con código exportable y configuración completa; la **preview** puede mostrar además novedades candidatas que todavía no están completamente configuradas, señalándolas como tales.
