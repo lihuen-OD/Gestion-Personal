@@ -72,6 +72,31 @@ function sameUtcDate(left: Date, right: Date) {
     left.getUTCDate() === right.getUTCDate();
 }
 
+// Etapa 15L.2A (docs/decisions/NOVELTY_TYPE_MODEL_NORMALIZATION_15L2A.md,
+// punto 14): coherencia de quantityHours/quantityDays contra la unidad real
+// del tipo. No decide si la novedad afecta horas -- son sólo metadatos de
+// la novedad/exportación (Novedades sigue sin tocar TimeEntry, Etapa 15G.1).
+function assertQuantityCoherence(type: Awaited<ReturnType<typeof noveltiesRepository.findNoveltyType>>, input: CreateNoveltyInput) {
+  if (input.quantityHours != null && input.quantityDays != null) {
+    throw new AppError("Esta novedad admite horas o días, no ambos a la vez.", 400, "NOVELTY_QUANTITY_UNIT_CONFLICT");
+  }
+  // finnegansValueUnit ausente (null) = todavía sin determinar (tipo legacy
+  // sin migrar explícitamente) -- se infiere HOURS desde allowsHours cuando
+  // corresponde, y en cualquier otro caso no se agrega ninguna restricción
+  // nueva más allá de la ya existente (NOVELTY_HOURS_NOT_ALLOWED abajo), tal
+  // como pide la Etapa 15L.2A ("no asumir DAYS/UNIT sin evidencia").
+  const unit = type?.finnegansValueUnit ?? (type?.allowsHours ? "HOURS" : null);
+  if (unit === "HOURS" && input.quantityDays != null) {
+    throw new AppError("Esta novedad no admite cantidad de días.", 400, "NOVELTY_QUANTITY_UNIT_MISMATCH");
+  }
+  if (unit === "DAYS" && input.quantityHours != null) {
+    throw new AppError("Esta novedad no admite cantidad de horas.", 400, "NOVELTY_QUANTITY_UNIT_MISMATCH");
+  }
+  if (unit === "UNIT" && (input.quantityHours != null || input.quantityDays != null)) {
+    throw new AppError("Esta novedad no admite cantidad, se exporta como unidad fija.", 400, "NOVELTY_QUANTITY_UNIT_MISMATCH");
+  }
+}
+
 async function ensureNoveltyTypeReady(input: CreateNoveltyInput) {
   const type = await noveltiesRepository.findNoveltyType(input.noveltyTypeId);
   if (!type || type.status !== "ACTIVO") {
@@ -80,6 +105,7 @@ async function ensureNoveltyTypeReady(input: CreateNoveltyInput) {
   if (!type.allowsHours && input.quantityHours) {
     throw new AppError("This novelty type does not allow quantity hours", 400, "NOVELTY_HOURS_NOT_ALLOWED");
   }
+  assertQuantityCoherence(type, input);
   if (!type.allowsDateTo && input.toDate && !sameUtcDate(input.toDate, input.fromDate)) {
     throw new AppError("This novelty type does not allow toDate", 400, "NOVELTY_TO_DATE_NOT_ALLOWED");
   }
@@ -155,7 +181,12 @@ export const noveltiesService = {
     const normalizedInput = normalizeCreateInput(input, type);
     assertCanLoad(type, user);
     await ensureNoOverlap(normalizedInput, type);
-    const status = user.role === roles.rrhh ? "APROBADO" : "PENDIENTE";
+    // Etapa 15L.2A (docs/decisions/NOVELTY_TYPE_MODEL_NORMALIZATION_15L2A.md,
+    // punto 15): RRHH sigue siendo la autoridad final -- crea siempre
+    // APROBADO. Para el resto de los roles, requiresApproval del tipo ahora
+    // decide de verdad: `false` autoaprueba, cualquier otro valor (incluido
+    // ausente, por defecto seguro) sigue pidiendo aprobación como hasta hoy.
+    const status = user.role === roles.rrhh || type.requiresApproval === false ? "APROBADO" : "PENDIENTE";
     // Etapa 15G.1 (docs/decisions/NOVELTIES_AS_ADMINISTRATIVE_JUSTIFICATION_15G1.md):
     // decisión funcional final — crear una novedad NUNCA crea ni modifica
     // TimeEntry, sea cual sea el status resultante o los campos horarios del
@@ -173,7 +204,9 @@ export const noveltiesService = {
       after: items as Prisma.InputJsonValue,
     });
 
-    if (user.role !== roles.rrhh) {
+    // Etapa 15L.2A: sólo notifica si de verdad queda pendiente -- con
+    // requiresApproval=false ya nace APROBADO y no hay nada que revisar.
+    if (status === "PENDIENTE") {
       await notifyRrhh({ type: "NOVEDAD_PENDIENTE", title: "Nueva novedad pendiente", message: `${items.length} novedad(es) requieren aprobación de RH.`, entityType: "Novelty", entityId: items[0]?.id, link: "/pendientes", priority: "ALTA" });
     }
 

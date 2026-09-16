@@ -396,6 +396,128 @@ describe("noveltiesService.create", () => {
     expect(repo.createMany).not.toHaveBeenCalled();
   });
 
+  // Etapa 15L.2A (docs/decisions/NOVELTY_TYPE_MODEL_NORMALIZATION_15L2A.md,
+  // punto 15): requiresApproval ahora decide de verdad el estado inicial
+  // para roles no-RRHH. RRHH sigue siendo autoridad final sin excepción.
+  describe("Etapa 15L.2A — requiresApproval con efecto real", () => {
+    it("Nivel 2 con requiresApproval=true crea PENDIENTE y notifica a RH", async () => {
+      repo.findNoveltyType.mockResolvedValue(noveltyType({ allowedLoadRoles: [roles.supervision], requiresApproval: true }));
+
+      await noveltiesService.create(createInput(), supervisionUser);
+
+      expect(repo.createMany).toHaveBeenCalledWith(expect.anything(), "PENDIENTE", supervisionUser.id);
+      const { notifyRrhh } = await import("../workforce-management/workforce.service");
+      expect(notifyRrhh).toHaveBeenCalled();
+    });
+
+    it("Nivel 2 con requiresApproval=false crea APROBADO directo y NO notifica a RH", async () => {
+      repo.findNoveltyType.mockResolvedValue(noveltyType({ allowedLoadRoles: [roles.supervision], requiresApproval: false }));
+
+      await noveltiesService.create(createInput(), supervisionUser);
+
+      expect(repo.createMany).toHaveBeenCalledWith(expect.anything(), "APROBADO", supervisionUser.id);
+      const { notifyRrhh } = await import("../workforce-management/workforce.service");
+      expect(notifyRrhh).not.toHaveBeenCalled();
+    });
+
+    it("Nivel 3 con requiresApproval=false crea APROBADO directo (mismo criterio que Nivel 2)", async () => {
+      repo.findNoveltyType.mockResolvedValue(noveltyType({ allowedLoadRoles: [roles.cargaHoraria], requiresApproval: false }));
+
+      await noveltiesService.create(createInput(), cargaUser);
+
+      expect(repo.createMany).toHaveBeenCalledWith(expect.anything(), "APROBADO", cargaUser.id);
+    });
+
+    it("Nivel 3 con requiresApproval=true crea PENDIENTE", async () => {
+      repo.findNoveltyType.mockResolvedValue(noveltyType({ allowedLoadRoles: [roles.cargaHoraria], requiresApproval: true }));
+
+      await noveltiesService.create(createInput(), cargaUser);
+
+      expect(repo.createMany).toHaveBeenCalledWith(expect.anything(), "PENDIENTE", cargaUser.id);
+    });
+
+    it("requiresApproval ausente (undefined) sigue tratandose como true — sin cambio de comportamiento", async () => {
+      repo.findNoveltyType.mockResolvedValue(noveltyType({ allowedLoadRoles: [roles.supervision] }));
+
+      await noveltiesService.create(createInput(), supervisionUser);
+
+      expect(repo.createMany).toHaveBeenCalledWith(expect.anything(), "PENDIENTE", supervisionUser.id);
+    });
+
+    it("RRHH crea APROBADO sin importar requiresApproval, incluso si el tipo tiene requiresApproval=false", async () => {
+      repo.findNoveltyType.mockResolvedValue(noveltyType({ requiresApproval: false }));
+
+      await noveltiesService.create(createInput(), rrhhUser);
+
+      expect(repo.createMany).toHaveBeenCalledWith(expect.anything(), "APROBADO", rrhhUser.id);
+    });
+  });
+
+  // Etapa 15L.2A, punto 14: coherencia de quantityHours/quantityDays contra
+  // finnegansValueUnit. No cambia que Novedades nunca toca TimeEntry — son
+  // sólo metadatos de la novedad/exportación.
+  describe("Etapa 15L.2A — coherencia de Valor 1 (finnegansValueUnit)", () => {
+    it("HOURS permite quantityHours", async () => {
+      repo.findNoveltyType.mockResolvedValue(noveltyType({ allowsHours: true, finnegansValueUnit: "HOURS" }));
+
+      await expect(noveltiesService.create(createInput({ quantityHours: 2 }), rrhhUser)).resolves.toBeDefined();
+    });
+
+    it("HOURS rechaza quantityDays (NOVELTY_QUANTITY_UNIT_MISMATCH)", async () => {
+      repo.findNoveltyType.mockResolvedValue(noveltyType({ allowsHours: true, finnegansValueUnit: "HOURS" }));
+
+      await expect(noveltiesService.create(createInput({ quantityDays: 1 }), rrhhUser)).rejects.toMatchObject({
+        statusCode: 400,
+        code: "NOVELTY_QUANTITY_UNIT_MISMATCH",
+      });
+    });
+
+    it("DAYS permite quantityDays", async () => {
+      repo.findNoveltyType.mockResolvedValue(noveltyType({ finnegansValueUnit: "DAYS" }));
+
+      await expect(noveltiesService.create(createInput({ quantityDays: 3 }), rrhhUser)).resolves.toBeDefined();
+    });
+
+    it("DAYS rechaza quantityHours (NOVELTY_QUANTITY_UNIT_MISMATCH)", async () => {
+      repo.findNoveltyType.mockResolvedValue(noveltyType({ allowsHours: true, finnegansValueUnit: "DAYS" }));
+
+      await expect(noveltiesService.create(createInput({ quantityHours: 1 }), rrhhUser)).rejects.toMatchObject({
+        statusCode: 400,
+        code: "NOVELTY_QUANTITY_UNIT_MISMATCH",
+      });
+    });
+
+    it("UNIT rechaza cualquier cantidad", async () => {
+      repo.findNoveltyType.mockResolvedValue(noveltyType({ allowsHours: true, finnegansValueUnit: "UNIT" }));
+
+      await expect(noveltiesService.create(createInput({ quantityHours: 1 }), rrhhUser)).rejects.toMatchObject({
+        code: "NOVELTY_QUANTITY_UNIT_MISMATCH",
+      });
+      await expect(noveltiesService.create(createInput({ quantityDays: 1 }), rrhhUser)).rejects.toMatchObject({
+        code: "NOVELTY_QUANTITY_UNIT_MISMATCH",
+      });
+    });
+
+    it("UNIT permite crear sin ninguna cantidad", async () => {
+      repo.findNoveltyType.mockResolvedValue(noveltyType({ finnegansValueUnit: "UNIT" }));
+
+      await expect(noveltiesService.create(createInput(), rrhhUser)).resolves.toBeDefined();
+    });
+
+    it("finnegansValueUnit=null (legacy, allowsHours=false) no agrega restriccion nueva sobre quantityDays", async () => {
+      repo.findNoveltyType.mockResolvedValue(noveltyType({ allowsHours: false, finnegansValueUnit: null }));
+
+      await expect(noveltiesService.create(createInput({ quantityDays: 5 }), rrhhUser)).resolves.toBeDefined();
+    });
+
+    it("quantityHours y quantityDays simultaneos se rechazan sin importar la unidad (NOVELTY_QUANTITY_UNIT_CONFLICT)", async () => {
+      repo.findNoveltyType.mockResolvedValue(noveltyType({ allowsHours: true, finnegansValueUnit: "HOURS" }));
+
+      await expect(
+        noveltiesService.create(createInput({ quantityHours: 1, quantityDays: 1 }), rrhhUser),
+      ).rejects.toMatchObject({ statusCode: 400, code: "NOVELTY_QUANTITY_UNIT_CONFLICT" });
+    });
+  });
 });
 
 // Etapa 15G.3 (docs/decisions/NOVELTY_OVERLAP_DUPLICATE_RULES_15G3.md):

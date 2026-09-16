@@ -4,6 +4,11 @@ export const noveltyTypeKindSchema = z.enum(["AUSENCIA", "LICENCIA", "HORARIA", 
 export const noveltyTypeOriginSchema = z.enum(["INTERNA", "FINNEGANS", "MIXTA"]);
 export const noveltyTimeImpactSchema = z.enum(["NO_AFECTA_HORAS", "REGISTRA_HORAS_NO_TRABAJADAS", "BLOQUEA_CARGA_DIA"]);
 export const recordStatusSchema = z.enum(["ACTIVO", "INACTIVO"]);
+// Etapa 15L.2A (docs/decisions/NOVELTY_TYPE_MODEL_NORMALIZATION_15L2A.md):
+// modelo nuevo aditivo, fuente de verdad preferida sobre los campos legacy
+// de arriba (timeImpact/blocksTimeEntry/setsWorkedHoursToZero).
+export const noveltyTimeEntryBehaviorSchema = z.enum(["NO_BLOQUEA", "BLOQUEA_NUEVA_CARGA"]);
+export const finnegansValueUnitSchema = z.enum(["HOURS", "DAYS", "UNIT"]);
 export const roleSchema = z.enum([
   "Nivel 1 - RRHH",
   "Nivel 2 - Supervisión / Gestión",
@@ -48,13 +53,17 @@ export const finnegansNoveltyLinkSchema = z.object({
 });
 
 export const createNoveltyTypeSchema = z.object({
-  code: z.string().trim().min(2).max(40),
+  // Etapa 15L.2A: opcional -- si no viene, el backend genera el proximo
+  // codigo correlativo (antes solo lo generaba el frontend). Ver
+  // noveltyTypes.repository.ts::generateNextCode.
+  code: z.string().trim().min(2).max(40).optional(),
   name: z.string().trim().min(2).max(160),
   uiColor: noveltyColorSchema.default("blue"),
   kind: noveltyTypeKindSchema,
   origin: noveltyTypeOriginSchema,
   status: recordStatusSchema.default("ACTIVO"),
   description: z.string().trim().max(600).optional().nullable(),
+  notes: z.string().trim().max(600).optional().nullable(),
   exportsToFinnegans: z.boolean().default(false),
   requiresApproval: z.boolean().default(true),
   requiresDocumentation: z.boolean().default(false),
@@ -64,6 +73,15 @@ export const createNoveltyTypeSchema = z.object({
   blocksTimeEntry: z.boolean().default(false),
   setsWorkedHoursToZero: z.boolean().default(false),
   timeImpact: noveltyTimeImpactSchema.default("NO_AFECTA_HORAS"),
+  // Etapa 15L.2A: campos nuevos, sin default -- su ausencia (undefined)
+  // distingue "cliente legacy, no los conoce todavia" de "cliente nuevo,
+  // eligio explicitamente". La sincronizacion real vive en
+  // noveltyTypes.sync.ts, no aca (ver docs/decisions/
+  // NOVELTY_TYPE_MODEL_NORMALIZATION_15L2A.md).
+  allowsDateRange: z.boolean().optional(),
+  timeEntryBehavior: noveltyTimeEntryBehaviorSchema.optional(),
+  finnegansValueUnit: finnegansValueUnitSchema.optional().nullable(),
+  finnegansRequiresValidity: z.boolean().optional(),
   allowedLoadRoles: z.array(roleSchema).default([
     "Nivel 1 - RRHH",
     "Nivel 2 - Supervisión / Gestión",

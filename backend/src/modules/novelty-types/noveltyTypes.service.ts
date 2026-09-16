@@ -4,6 +4,7 @@ import { auditService } from "../audit/audit.service";
 import { AppError } from "../../shared/errors/AppError";
 import { noveltyTypesRepository, invalidateNoveltyTypesCache } from "./noveltyTypes.repository";
 import type { CreateNoveltyTypeInput, ListNoveltyTypesQuery, UpdateNoveltyTypeInput } from "./noveltyTypes.schemas";
+import { applyNoveltyTypeCompatibilitySync } from "./noveltyTypes.sync";
 
 function mapPrismaError(error: unknown) {
   if (error instanceof Prisma.PrismaClientKnownRequestError) {
@@ -56,14 +57,19 @@ export const noveltyTypesService = {
   },
 
   async create(data: CreateNoveltyTypeInput, audit?: AuditContext) {
-    const item = await execute(() => noveltyTypesRepository.create(data));
+    // Etapa 15L.2A: sincroniza el modelo nuevo (timeEntryBehavior/
+    // allowsDateRange/finnegansRequiresValidity/finnegansValueUnit) con los
+    // campos legacy antes de persistir -- ver noveltyTypes.sync.ts.
+    const synced = applyNoveltyTypeCompatibilitySync(data);
+    const item = await execute(() => noveltyTypesRepository.create(synced));
     invalidateNoveltyTypesCache();
     await auditChange("CREATE", item, audit);
     return item;
   },
 
   async update(id: string, data: UpdateNoveltyTypeInput, audit?: AuditContext) {
-    const item = await execute(() => noveltyTypesRepository.update(id, data));
+    const synced = applyNoveltyTypeCompatibilitySync(data);
+    const item = await execute(() => noveltyTypesRepository.update(id, synced));
     invalidateNoveltyTypesCache();
     await auditChange("UPDATE", item, audit);
     return item;

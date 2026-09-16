@@ -53,6 +53,23 @@ function updateNoveltyTypeData(input: UpdateNoveltyTypeInput) {
   return data;
 }
 
+// Etapa 15L.2A (docs/decisions/NOVELTY_TYPE_MODEL_NORMALIZATION_15L2A.md):
+// generacion de codigo movida al backend -- antes solo el frontend
+// (noveltyTypeApiService.ts::nextCode) calculaba "NOV-XXX", sin ninguna
+// fuente de verdad del lado servidor. Mismo formato, mismo criterio (maximo
+// sufijo numerico + 1). Sólo se ejercita si el caller no envia `code`
+// (el frontend actual sigue enviandolo siempre, así que en la práctica hoy
+// esta rama sólo la ejercita un caller directo de la API).
+function extractCodeSuffix(code: string) {
+  return Number(code.replace(/\D/g, "")) || 0;
+}
+
+async function generateNextCode(): Promise<string> {
+  const rows = await prisma.noveltyType.findMany({ select: { code: true } });
+  const max = rows.reduce((value, row) => Math.max(value, extractCodeSuffix(row.code)), 0);
+  return `NOV-${String(max + 1).padStart(3, "0")}`;
+}
+
 export const noveltyTypesRepository = {
   async findMany(query: ListNoveltyTypesQuery): Promise<[NoveltyTypeRow[], number]> {
     if (hasActiveFilters(query)) {
@@ -101,20 +118,36 @@ export const noveltyTypesRepository = {
     });
   },
 
-  create(input: CreateNoveltyTypeInput) {
-    return prisma.noveltyType.create({
-      data: {
-        ...createNoveltyTypeData(input),
-        ...(input.finnegansLinks.length
-          ? {
-              finnegansLinks: {
-                createMany: { data: input.finnegansLinks },
-              },
-            }
-          : {}),
-      },
-      include: noveltyTypeInclude,
-    });
+  // Etapa 15L.2A: hasta 3 intentos sólo cuando el caller no mandó `code` --
+  // tolera la colisión de concurrencia de generar el mismo código dos veces
+  // (dos altas casi simultáneas) sin inventar una tabla de secuencia nueva.
+  // Si el caller sí mandó `code`, un P2002 se propaga directo (mismo
+  // comportamiento que antes de esta etapa).
+  async create(input: CreateNoveltyTypeInput) {
+    const MAX_ATTEMPTS = 3;
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
+      const code = input.code || (await generateNextCode());
+      try {
+        return await prisma.noveltyType.create({
+          data: {
+            ...createNoveltyTypeData(input),
+            code,
+            ...(input.finnegansLinks.length
+              ? {
+                  finnegansLinks: {
+                    createMany: { data: input.finnegansLinks },
+                  },
+                }
+              : {}),
+          },
+          include: noveltyTypeInclude,
+        });
+      } catch (error) {
+        const isRetriableCollision = !input.code && attempt < MAX_ATTEMPTS && error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002";
+        if (!isRetriableCollision) throw error;
+      }
+    }
+    throw new Error("noveltyTypesRepository.create: unreachable");
   },
 
   update(id: string, input: UpdateNoveltyTypeInput) {

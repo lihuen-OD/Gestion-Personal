@@ -35,6 +35,7 @@ type ApiNoveltyType = {
   origin: NoveltyTypeOrigin;
   status: NoveltyTypeStatus;
   description?: string | null;
+  notes?: string | null;
   exportsToFinnegans: boolean;
   requiresApproval: boolean;
   requiresDocumentation: boolean;
@@ -120,7 +121,9 @@ export function mapNoveltyTypeFromApi(item: ApiNoveltyType): NoveltyType {
     allowedLoadRoles,
     approvalRoles,
     finnegansLinks: (item.finnegansLinks || []).map(mapLinkFromApi),
-    notes: "",
+    // Etapa 15L.2A: antes se hardcodeaba "" y el texto editado se perdía
+    // siempre al guardar -- el backend ahora persiste notes de verdad.
+    notes: item.notes || "",
     createdAt: item.createdAt,
     updatedAt: item.updatedAt,
     createdBy: "Sistema",
@@ -138,6 +141,9 @@ function mapToApi(item: NoveltyType) {
     origin: item.origin,
     status: item.status,
     description: item.description || null,
+    // Etapa 15L.2A: mapToApi antes no incluía notes en absoluto -- el
+    // textarea "Observaciones internas" se editaba pero nunca se enviaba.
+    notes: item.notes?.trim() || null,
     exportsToFinnegans: item.rules.exportsToFinnegans,
     requiresApproval: item.rules.requiresApproval,
     requiresDocumentation: item.rules.requiresDocumentation,

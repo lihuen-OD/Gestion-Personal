@@ -58,6 +58,23 @@ enum NoveltyTimeImpact {
   BLOQUEA_CARGA_DIA
 }
 
+// Etapa 15L.2A (docs/decisions/NOVELTY_TYPE_MODEL_NORMALIZATION_15L2A.md):
+// fuente de verdad unica para el comportamiento en carga horaria, reemplaza
+// en la practica a blocksTimeEntry/setsWorkedHoursToZero/timeImpact (legacy,
+// se mantienen por compatibilidad, ver NoveltyType mas abajo).
+enum NoveltyTimeEntryBehavior {
+  NO_BLOQUEA
+  BLOQUEA_NUEVA_CARGA
+}
+
+// Etapa 15L.2A: unidad real de "Valor 1" para la exportacion Finnegans.
+// null = no determinado todavia (no se infiere DAYS/UNIT sin evidencia).
+enum FinnegansValueUnit {
+  HOURS
+  DAYS
+  UNIT
+}
+
 enum ApprovalStatus {
   BORRADOR
   PENDIENTE
@@ -615,36 +632,36 @@ model Employee {
   createdAt         DateTime       @default(now()) @db.Timestamptz(3)
   updatedAt         DateTime       @updatedAt @db.Timestamptz(3)
 
-  position              Position?                      @relation(fields: [positionId], references: [id])
-  sector                Sector?                        @relation(fields: [sectorId], references: [id])
-  costCenter            CostCenter?                    @relation(fields: [costCenterId], references: [id])
-  createdBy             User?                          @relation("EmployeeCreatedBy", fields: [createdByUserId], references: [id])
-  address               EmployeeAddress?
-  companies             EmployeeCompany[]
-  laborMovements        LaborMovement[]
-  assignments           EmployeeAssignment[]
-  hourConcepts          EmployeeHourConcept[]
-  transport             EmployeeTransport?
-  fieldHistory          EmployeeFieldHistory[]
-  blockHistory          EmployeeBlockHistory[]
-  novelties             Novelty[]
-  timeEntries           TimeEntry[]
-  hourConceptBreakdowns HourConceptBreakdown[]
-  workShifts            WorkShift[]
-  attendancePunches     AttendancePunch[]
-  clockPunchAttempts    ClockPunchAttempt[]
-  timeSegments          TimeSegment[]
-  documents             EmployeeDocument[]
-  storageFiles          StorageFile[]
-  monthlyClosures       MonthlyTimeClosure[]
-  correctionRequests    TimeCorrectionRequest[]
-  shiftAlerts           ShiftAlert[]
-  inactivityIncidents   AttendanceInactivityIncident[]
-  doubleHourAssignments DoubleHourRuleEmployee[]
-  shiftAssignments      ShiftAssignment[]
+  position               Position?                      @relation(fields: [positionId], references: [id])
+  sector                 Sector?                        @relation(fields: [sectorId], references: [id])
+  costCenter             CostCenter?                    @relation(fields: [costCenterId], references: [id])
+  createdBy              User?                          @relation("EmployeeCreatedBy", fields: [createdByUserId], references: [id])
+  address                EmployeeAddress?
+  companies              EmployeeCompany[]
+  laborMovements         LaborMovement[]
+  assignments            EmployeeAssignment[]
+  hourConcepts           EmployeeHourConcept[]
+  transport              EmployeeTransport?
+  fieldHistory           EmployeeFieldHistory[]
+  blockHistory           EmployeeBlockHistory[]
+  novelties              Novelty[]
+  timeEntries            TimeEntry[]
+  hourConceptBreakdowns  HourConceptBreakdown[]
+  workShifts             WorkShift[]
+  attendancePunches      AttendancePunch[]
+  clockPunchAttempts     ClockPunchAttempt[]
+  timeSegments           TimeSegment[]
+  documents              EmployeeDocument[]
+  storageFiles           StorageFile[]
+  monthlyClosures        MonthlyTimeClosure[]
+  correctionRequests     TimeCorrectionRequest[]
+  shiftAlerts            ShiftAlert[]
+  inactivityIncidents    AttendanceInactivityIncident[]
+  doubleHourAssignments  DoubleHourRuleEmployee[]
+  shiftAssignments       ShiftAssignment[]
   holidayWorkAssignments HolidayWorkAssignment[]
-  workRegimeAssignments EmployeeWorkRegime[]
-  userAccount           User?                          @relation("EmployeeUserAccount")
+  workRegimeAssignments  EmployeeWorkRegime[]
+  userAccount            User?                          @relation("EmployeeUserAccount")
 
   @@index([lastName, firstName])
   @@index([status])
@@ -861,27 +878,59 @@ model EmployeeBlockHistory {
 }
 
 model NoveltyType {
-  id                    String            @id @default(uuid())
-  code                  String            @unique
-  name                  String
-  uiColor               String
-  kind                  NoveltyTypeKind
-  origin                NoveltyTypeOrigin
-  status                RecordStatus      @default(ACTIVO)
-  description           String?
-  exportsToFinnegans    Boolean           @default(false)
-  requiresApproval      Boolean           @default(true)
-  requiresDocumentation Boolean           @default(false)
-  allowsHours           Boolean           @default(false)
-  allowsDateTo          Boolean           @default(true)
-  hasValidity           Boolean           @default(true)
-  blocksTimeEntry       Boolean           @default(false)
-  setsWorkedHoursToZero Boolean           @default(false)
-  timeImpact            NoveltyTimeImpact @default(NO_AFECTA_HORAS)
-  allowedLoadRoles      Json              @default("[]")
-  approvalRoles         Json              @default("[]")
-  createdAt             DateTime          @default(now()) @db.Timestamptz(3)
-  updatedAt             DateTime          @updatedAt @db.Timestamptz(3)
+  id                        String                   @id @default(uuid())
+  code                      String                   @unique
+  name                      String
+  uiColor                   String
+  kind                      NoveltyTypeKind
+  /// @deprecated Etapa 15L.2A: sin consumidor de negocio real (ver
+  /// docs/decisions/NOVELTY_TYPE_MODEL_NORMALIZATION_15L2A.md). Se mantiene
+  /// por compatibilidad de contrato, no se elimina todavia.
+  origin                    NoveltyTypeOrigin
+  status                    RecordStatus             @default(ACTIVO)
+  description               String?
+  /// Etapa 15L.2A: observaciones internas editables desde el catalogo.
+  /// Antes de esta etapa el campo no existia y el frontend perdia el texto
+  /// al guardar (bug corregido en esta etapa).
+  notes                     String?
+  exportsToFinnegans        Boolean                  @default(false)
+  requiresApproval          Boolean                  @default(true)
+  requiresDocumentation     Boolean                  @default(false)
+  allowsHours               Boolean                  @default(false)
+  /// @deprecated Etapa 15L.2A: usar allowsDateRange. Se mantiene
+  /// sincronizado por compatibilidad, no se elimina todavia.
+  allowsDateTo              Boolean                  @default(true)
+  allowsDateRange           Boolean                  @default(true)
+  /// @deprecated Etapa 15L.2A: usar finnegansRequiresValidity. Se mantiene
+  /// sincronizado por compatibilidad, no se elimina todavia.
+  hasValidity               Boolean                  @default(true)
+  /// @deprecated Etapa 15L.2A: usar timeEntryBehavior. Se mantiene
+  /// sincronizado por compatibilidad, no se elimina todavia.
+  blocksTimeEntry           Boolean                  @default(false)
+  /// @deprecated Etapa 15G.1/15L.2A: sin efecto productivo sobre TimeEntry
+  /// desde la Etapa 15G.1 (ver docs/decisions/
+  /// NOVELTIES_AS_ADMINISTRATIVE_JUSTIFICATION_15G1.md). Codigo nuevo nunca
+  /// debe volver a escribir true aca; se mantiene solo por compatibilidad de
+  /// lectura (findBlockingNovelty).
+  setsWorkedHoursToZero     Boolean                  @default(false)
+  /// @deprecated Etapa 15L.2A: usar timeEntryBehavior. Se mantiene
+  /// sincronizado por compatibilidad, no se elimina todavia.
+  timeImpact                NoveltyTimeImpact        @default(NO_AFECTA_HORAS)
+  /// Etapa 15L.2A: fuente de verdad preferida para el comportamiento en
+  /// carga horaria (reemplaza blocksTimeEntry/setsWorkedHoursToZero/
+  /// timeImpact, ver docs/decisions/NOVELTY_TYPE_MODEL_NORMALIZATION_15L2A.md).
+  timeEntryBehavior         NoveltyTimeEntryBehavior @default(NO_BLOQUEA)
+  /// Etapa 15L.2A: unidad real de "Valor 1" para exportacion Finnegans.
+  /// null = todavia no determinado (no se infiere DAYS/UNIT sin evidencia).
+  finnegansValueUnit        FinnegansValueUnit?
+  /// Etapa 15L.2A: fuente de verdad preferida, reemplaza hasValidity (a
+  /// nivel de NoveltyType) para decidir si la exportacion Finnegans exige
+  /// fecha desde/hasta.
+  finnegansRequiresValidity Boolean                  @default(false)
+  allowedLoadRoles          Json                     @default("[]")
+  approvalRoles             Json                     @default("[]")
+  createdAt                 DateTime                 @default(now()) @db.Timestamptz(3)
+  updatedAt                 DateTime                 @updatedAt @db.Timestamptz(3)
 
   finnegansLinks FinnegansNoveltyLink[]
   novelties      Novelty[]
@@ -1100,40 +1149,40 @@ model SystemNotification {
 }
 
 model ShiftTemplate {
-  id                            String            @id @default(uuid())
-  code                          String            @unique
+  id                            String                  @id @default(uuid())
+  code                          String                  @unique
   name                          String
   description                   String?
   categoryName                  String?
   startTime                     String
   endTime                       String
-  crossesMidnight               Boolean           @default(false)
+  crossesMidnight               Boolean                 @default(false)
   expectedMinutes               Int?
-  entryToleranceBeforeMinutes   Int               @default(10)
-  entryToleranceAfterMinutes    Int               @default(10)
-  exitToleranceBeforeMinutes    Int               @default(20)
-  exitToleranceAfterMinutes     Int               @default(20)
+  entryToleranceBeforeMinutes   Int                     @default(10)
+  entryToleranceAfterMinutes    Int                     @default(10)
+  exitToleranceBeforeMinutes    Int                     @default(20)
+  exitToleranceAfterMinutes     Int                     @default(20)
   minimumMinutesForCompliance   Int?
   maximumInformativeMinutes     Int?
   missingOutAlertAfterMinutes   Int?
-  absoluteOpenShiftLimitMinutes Int               @default(1200)
+  absoluteOpenShiftLimitMinutes Int                     @default(1200)
   // Umbrales informativos de jornada extendida (severidad graduada). No
   // reemplazan absoluteOpenShiftLimitMinutes (que sigue gobernando el
   // rollover actual sin cambios en esta etapa) — se usan para graduar la
   // alerta JORNADA_EXTENDIDA entre ADVERTENCIA y CRITICA.
-  warningThresholdMinutes       Int               @default(720)
-  reviewThresholdMinutes        Int               @default(960)
+  warningThresholdMinutes       Int                     @default(720)
+  reviewThresholdMinutes        Int                     @default(960)
   criticalThresholdMinutes      Int?
-  status                        RecordStatus      @default(ACTIVO)
+  status                        RecordStatus            @default(ACTIVO)
   createdByUserId               String?
   updatedByUserId               String?
-  createdAt                     DateTime          @default(now()) @db.Timestamptz(3)
-  updatedAt                     DateTime          @updatedAt @db.Timestamptz(3)
+  createdAt                     DateTime                @default(now()) @db.Timestamptz(3)
+  updatedAt                     DateTime                @updatedAt @db.Timestamptz(3)
   workShifts                    WorkShift[]
   assignments                   ShiftAssignment[]
   holidayWorkAssignments        HolidayWorkAssignment[]
-  createdBy                     User?             @relation("ShiftTemplateCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
-  updatedBy                     User?             @relation("ShiftTemplateUpdatedBy", fields: [updatedByUserId], references: [id], onDelete: SetNull)
+  createdBy                     User?                   @relation("ShiftTemplateCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  updatedBy                     User?                   @relation("ShiftTemplateUpdatedBy", fields: [updatedByUserId], references: [id], onDelete: SetNull)
 
   @@index([status])
   @@index([categoryName])
@@ -1191,18 +1240,18 @@ enum HolidayWorkAssignmentStatus {
 // la fila ni permite crear una segunda, la deja en `status=CANCELADA` (mismo
 // patrón reEnable/DESHABILITADO ya usado en ShiftAssignment).
 model HolidayWorkAssignment {
-  id                String                       @id @default(uuid())
-  date              DateTime                     @db.Date
+  id                String                      @id @default(uuid())
+  date              DateTime                    @db.Date
   employeeId        String
   shiftTemplateId   String?
   expectedStartTime String?
   expectedEndTime   String?
   notes             String?
-  status            HolidayWorkAssignmentStatus  @default(ACTIVA)
+  status            HolidayWorkAssignmentStatus @default(ACTIVA)
   createdByUserId   String?
   updatedByUserId   String?
-  createdAt         DateTime                     @default(now()) @db.Timestamptz(3)
-  updatedAt         DateTime                     @updatedAt @db.Timestamptz(3)
+  createdAt         DateTime                    @default(now()) @db.Timestamptz(3)
+  updatedAt         DateTime                    @updatedAt @db.Timestamptz(3)
 
   employee      Employee       @relation(fields: [employeeId], references: [id], onDelete: Restrict)
   shiftTemplate ShiftTemplate? @relation(fields: [shiftTemplateId], references: [id], onDelete: SetNull)

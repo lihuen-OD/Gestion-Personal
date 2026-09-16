@@ -1,18 +1,46 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import type { Mock } from "vitest";
+import { Prisma } from "@prisma/client";
 import { prisma } from "../../shared/prisma/client";
 import { invalidateNoveltyTypesCache, noveltyTypesRepository } from "./noveltyTypes.repository";
-import type { ListNoveltyTypesQuery } from "./noveltyTypes.schemas";
+import type { CreateNoveltyTypeInput, ListNoveltyTypesQuery } from "./noveltyTypes.schemas";
+
+function uniqueConstraintError() {
+  return new Prisma.PrismaClientKnownRequestError("Unique constraint failed", { code: "P2002", clientVersion: "0.0.0" });
+}
+
+function createInput(overrides: Partial<CreateNoveltyTypeInput> = {}): CreateNoveltyTypeInput {
+  return {
+    name: "Vacaciones",
+    uiColor: "blue",
+    kind: "VACACIONES",
+    origin: "INTERNA",
+    status: "ACTIVO",
+    exportsToFinnegans: false,
+    requiresApproval: true,
+    requiresDocumentation: false,
+    allowsHours: false,
+    allowsDateTo: true,
+    hasValidity: true,
+    blocksTimeEntry: false,
+    setsWorkedHoursToZero: false,
+    timeImpact: "NO_AFECTA_HORAS",
+    allowedLoadRoles: [],
+    approvalRoles: [],
+    finnegansLinks: [],
+    ...overrides,
+  } as CreateNoveltyTypeInput;
+}
 
 vi.mock("../../shared/prisma/client", () => ({
   prisma: {
-    noveltyType: { findMany: vi.fn(), count: vi.fn(), findUniqueOrThrow: vi.fn() },
+    noveltyType: { findMany: vi.fn(), count: vi.fn(), findUniqueOrThrow: vi.fn(), create: vi.fn() },
     $transaction: vi.fn((ops: Promise<unknown>[]) => Promise.all(ops)),
   },
 }));
 
 const mockedPrisma = prisma as unknown as {
-  noveltyType: { findMany: Mock; count: Mock; findUniqueOrThrow: Mock };
+  noveltyType: { findMany: Mock; count: Mock; findUniqueOrThrow: Mock; create: Mock };
   $transaction: Mock;
 };
 
@@ -108,5 +136,60 @@ describe("noveltyTypesRepository.findById", () => {
     mockedPrisma.noveltyType.findUniqueOrThrow.mockRejectedValue(new Error("not found"));
 
     await expect(noveltyTypesRepository.findById("nt-inexistente")).rejects.toThrow();
+  });
+});
+
+// Etapa 15L.2A: generación de código movida al backend -- antes sólo la
+// calculaba el frontend (noveltyTypeApiService.ts::nextCode).
+describe("noveltyTypesRepository.create — generación de código (Etapa 15L.2A)", () => {
+  it("con code explícito, lo usa tal cual y no consulta el máximo existente", async () => {
+    mockedPrisma.noveltyType.create.mockResolvedValue({ id: "nt-1", code: "NOV-007" });
+
+    await noveltyTypesRepository.create(createInput({ code: "NOV-007" }));
+
+    expect(mockedPrisma.noveltyType.findMany).not.toHaveBeenCalled();
+    expect(mockedPrisma.noveltyType.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ code: "NOV-007" }) }));
+  });
+
+  it("sin code, genera el próximo correlativo a partir del máximo existente", async () => {
+    mockedPrisma.noveltyType.findMany.mockResolvedValue([{ code: "NOV-001" }, { code: "NOV-003" }]);
+    mockedPrisma.noveltyType.create.mockResolvedValue({ id: "nt-1", code: "NOV-004" });
+
+    await noveltyTypesRepository.create(createInput());
+
+    expect(mockedPrisma.noveltyType.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ code: "NOV-004" }) }));
+  });
+
+  it("sin code, catálogo vacío genera NOV-001", async () => {
+    mockedPrisma.noveltyType.findMany.mockResolvedValue([]);
+    mockedPrisma.noveltyType.create.mockResolvedValue({ id: "nt-1", code: "NOV-001" });
+
+    await noveltyTypesRepository.create(createInput());
+
+    expect(mockedPrisma.noveltyType.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ code: "NOV-001" }) }));
+  });
+
+  it("sin code, colisión de concurrencia (P2002) reintenta con el siguiente correlativo", async () => {
+    mockedPrisma.noveltyType.findMany.mockResolvedValue([{ code: "NOV-001" }]);
+    mockedPrisma.noveltyType.create.mockRejectedValueOnce(uniqueConstraintError()).mockResolvedValueOnce({ id: "nt-1", code: "NOV-003" });
+
+    await noveltyTypesRepository.create(createInput());
+
+    expect(mockedPrisma.noveltyType.create).toHaveBeenCalledTimes(2);
+  });
+
+  it("sin code, agota los 3 intentos y propaga el último error", async () => {
+    mockedPrisma.noveltyType.findMany.mockResolvedValue([{ code: "NOV-001" }]);
+    mockedPrisma.noveltyType.create.mockRejectedValue(uniqueConstraintError());
+
+    await expect(noveltyTypesRepository.create(createInput())).rejects.toBeInstanceOf(Prisma.PrismaClientKnownRequestError);
+    expect(mockedPrisma.noveltyType.create).toHaveBeenCalledTimes(3);
+  });
+
+  it("con code explícito, un P2002 se propaga directo sin ningún reintento", async () => {
+    mockedPrisma.noveltyType.create.mockRejectedValue(uniqueConstraintError());
+
+    await expect(noveltyTypesRepository.create(createInput({ code: "NOV-DUP" }))).rejects.toBeInstanceOf(Prisma.PrismaClientKnownRequestError);
+    expect(mockedPrisma.noveltyType.create).toHaveBeenCalledTimes(1);
   });
 });
