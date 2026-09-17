@@ -30,14 +30,14 @@ describe("A. Labels/helpers", () => {
   it("segmentConceptStatusLabel traduce los 4 estados a texto humano", () => {
     expect(segmentConceptStatusLabel("SUGERIDO")).toBe("Sugerido por sistema");
     expect(segmentConceptStatusLabel("MANUAL")).toBe("Manual");
-    expect(segmentConceptStatusLabel("SIN_CONCEPTO_COMPATIBLE")).toBe("Sin concepto compatible");
+    expect(segmentConceptStatusLabel("SIN_CONCEPTO_COMPATIBLE")).toBe("Sin concepto adicional");
     expect(segmentConceptStatusLabel("CONCEPTO_NO_HABILITADO")).toBe("Concepto no habilitado");
   });
 
   it("segmentConceptStatusMessage devuelve el mensaje explicativo pedido para cada estado", () => {
     expect(segmentConceptStatusMessage("SUGERIDO")).toBe("Clasificado automáticamente según reglas horarias configuradas.");
     expect(segmentConceptStatusMessage("MANUAL")).toBe("Clasificación manual.");
-    expect(segmentConceptStatusMessage("SIN_CONCEPTO_COMPATIBLE")).toBe("El sistema no encontró una regla horaria compatible para este tramo. Requiere revisión de RRHH.");
+    expect(segmentConceptStatusMessage("SIN_CONCEPTO_COMPATIBLE")).toBe("Hora normal sin concepto adicional aplicado.");
     expect(segmentConceptStatusMessage("CONCEPTO_NO_HABILITADO")).toBe("El sistema detectó un concepto posible, pero el empleado no lo tiene habilitado. Requiere revisión.");
   });
 
@@ -78,8 +78,8 @@ describe("A. Labels/helpers", () => {
 });
 
 describe("B. Review state", () => {
-  it("SIN_CONCEPTO_COMPATIBLE requiere revisión", () => {
-    expect(getSegmentReviewState("SIN_CONCEPTO_COMPATIBLE")).toBe("REQUIRES_REVIEW");
+  it("SIN_CONCEPTO_COMPATIBLE es Hora normal sin adicional y no requiere revisión", () => {
+    expect(getSegmentReviewState("SIN_CONCEPTO_COMPATIBLE")).toBe("OK");
   });
 
   it("CONCEPTO_NO_HABILITADO requiere revisión", () => {
@@ -107,8 +107,8 @@ describe("C. Mappers/descripciones", () => {
 
   it("mapea regla horaria presente vs faltante", () => {
     expect(describeHourConceptRule("rule-1")).toBe("Regla horaria aplicada");
-    expect(describeHourConceptRule(null)).toBe("Sin regla horaria (manual)");
-    expect(describeHourConceptRule(undefined)).toBe("Sin regla horaria (manual)");
+    expect(describeHourConceptRule(null)).toBe("Sin regla adicional aplicada");
+    expect(describeHourConceptRule(undefined)).toBe("Sin regla adicional aplicada");
   });
 
   it("mapea reglas especiales vacías (isSpecial false)", () => {

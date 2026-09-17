@@ -14,6 +14,7 @@ import { Modal } from "../components/ui/Modal";
 import { TableShell } from "../components/ui/TableShell";
 import { useDebouncedValue } from "../utils/useDebouncedValue";
 import { argentinaDateKey } from "../utils/argentinaDateKey";
+import { formatDurationMinutes } from "../utils/hours";
 import { NoveltyFromContextModal } from "../components/novelties/NoveltyFromContextModal";
 import { buildNoveltyPrefillFromAttendanceShiftProblem, buildNoveltyPrefillFromInactivityIncident, type NoveltyPrefillContext } from "../utils/noveltyFromAlert";
 
@@ -51,13 +52,6 @@ function formatDateTime(value?: string | null) {
     hour: "2-digit",
     minute: "2-digit",
   }).format(new Date(value));
-}
-
-function formatDuration(minutes?: number | null) {
-  if (!minutes) return "0 h";
-  const hours = Math.floor(minutes / 60);
-  const rest = minutes % 60;
-  return rest ? `${hours} h ${rest} min` : `${hours} h`;
 }
 
 function toDateTimeLocalValue(value = new Date()) {
@@ -180,7 +174,7 @@ function ShiftRows({ items, emptyText, showSegments = false, showRisk = false, o
               {formatDateTime(shift.endAt)}
               <PunchEvidence punch={shift.endPunch} label="Ver foto" onViewPhoto={onViewPhoto} />
             </td>
-            <td>{formatDuration(shift.workedMinutes || shift.totalMinutes)}</td>
+            <td>{formatDurationMinutes(shift.workedMinutes || shift.totalMinutes)}</td>
             <td>{sourceLabel(shift.source)}</td>
             {showRisk && <td>{shift.shiftTemplate ? `${shift.shiftTemplate.code} · ${shift.shiftTemplate.name}` : <em>Sin turno</em>}</td>}
             {showRisk && <td>{formatDateTime(shift.risk?.expectedExitAt)}</td>}
@@ -190,7 +184,7 @@ function ShiftRows({ items, emptyText, showSegments = false, showRisk = false, o
               <td>
                 <div className="attendance-segments">
                   {shift.timeSegments.length ? shift.timeSegments.map((segment) => (
-                    <span key={segment.id}>{formatTime(segment.fromDateTime)} a {formatTime(segment.toDateTime)} · {formatDuration(segment.minutes)}</span>
+                    <span key={segment.id}>{formatTime(segment.fromDateTime)} a {formatTime(segment.toDateTime)} · {formatDurationMinutes(segment.minutes)}</span>
                   )) : <span>Sin tramos</span>}
                 </div>
                 {onViewSegments ? (

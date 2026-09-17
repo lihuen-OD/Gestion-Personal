@@ -132,6 +132,14 @@ describe("WorkRegime CRUD", () => {
     expect(mockedAudit).toHaveBeenCalledWith(expect.objectContaining({ action: "CREATE", entity: "WorkRegime", entityId: "regime-1" }));
   });
 
+  it.each(["SIN_TURNO", "TURNO_FLEXIBLE"] as const)("normaliza alertOnOutOfShift=false al crear %s", async (kind) => {
+    repo.create.mockResolvedValue({ ...baseRegime, kind, alertOnOutOfShift: false });
+
+    await workRegimesService.create({ code: "LIBRE", name: "Libre", kind, alertOnOutOfShift: true } as never);
+
+    expect(repo.create).toHaveBeenCalledWith(expect.objectContaining({ kind, alertOnOutOfShift: false }), undefined);
+  });
+
   it("rechaza code duplicado (P2002) con 409", async () => {
     repo.create.mockRejectedValue(prismaKnownError("P2002"));
 
@@ -158,6 +166,33 @@ describe("WorkRegime CRUD", () => {
     await workRegimesService.update("regime-1", { name: "Campaña de verano" } as never, { userId: "user-1" });
 
     expect(mockedAudit).toHaveBeenCalledWith(expect.objectContaining({ action: "UPDATE", entity: "WorkRegime" }));
+  });
+
+  it("al cambiar TURNO_OBLIGATORIO a SIN_TURNO neutraliza el booleano histórico", async () => {
+    repo.findById.mockResolvedValue({ ...baseRegime, kind: "TURNO_OBLIGATORIO", alertOnOutOfShift: true });
+    repo.update.mockResolvedValue({ ...baseRegime, kind: "SIN_TURNO", alertOnOutOfShift: false });
+
+    await workRegimesService.update("regime-1", { kind: "SIN_TURNO", alertOnOutOfShift: true } as never);
+
+    expect(repo.update).toHaveBeenCalledWith("regime-1", expect.objectContaining({ kind: "SIN_TURNO", alertOnOutOfShift: false }), undefined);
+  });
+
+  it("al cambiar SIN_TURNO a TURNO_OBLIGATORIO reactiva por defecto el control de turno", async () => {
+    repo.findById.mockResolvedValue({ ...baseRegime, kind: "SIN_TURNO", alertOnOutOfShift: false });
+    repo.update.mockResolvedValue({ ...baseRegime, kind: "TURNO_OBLIGATORIO", alertOnOutOfShift: true });
+
+    await workRegimesService.update("regime-1", { kind: "TURNO_OBLIGATORIO" } as never);
+
+    expect(repo.update).toHaveBeenCalledWith("regime-1", expect.objectContaining({ kind: "TURNO_OBLIGATORIO", alertOnOutOfShift: true }), undefined);
+  });
+
+  it("TURNO_OBLIGATORIO respeta un opt-out explícito al cambiar de kind", async () => {
+    repo.findById.mockResolvedValue({ ...baseRegime, kind: "SIN_TURNO", alertOnOutOfShift: false });
+    repo.update.mockResolvedValue({ ...baseRegime, kind: "TURNO_OBLIGATORIO", alertOnOutOfShift: false });
+
+    await workRegimesService.update("regime-1", { kind: "TURNO_OBLIGATORIO", alertOnOutOfShift: false } as never);
+
+    expect(repo.update).toHaveBeenCalledWith("regime-1", expect.objectContaining({ kind: "TURNO_OBLIGATORIO", alertOnOutOfShift: false }), undefined);
   });
 
   it("inactiva un régimen (status ACTIVO -> INACTIVO) audita DEACTIVATE", async () => {

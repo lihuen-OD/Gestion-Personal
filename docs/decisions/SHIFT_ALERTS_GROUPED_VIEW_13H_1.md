@@ -1,5 +1,10 @@
 # Corrección 13H.1 — Dejar de crear SEGMENTO_SIN_CLASIFICAR sin concepto adicional esperado
 
+> Estado histórico: 15M.7A cerró definitivamente este comportamiento. Desde
+> esa etapa ningún `SIN_CONCEPTO_COMPATIBLE` produce una nueva
+> `SEGMENTO_SIN_CLASIFICAR`, exista o no un concepto adicional habilitado.
+> Las filas históricas continúan visibles.
+
 Fecha: 2026-09-02
 Estado: implementado, validado, pendiente de aprobación para commitear
 Continúa: `docs/decisions/SHIFT_ALERTS_GROUPED_VIEW_13H.md` (agrupación por jornada, donde se detectó el problema), `docs/decisions/SHIFT_SEGMENT_UNCLASSIFIED_POLICY_13D.md` (política original de concepto esperado)

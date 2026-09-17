@@ -23,7 +23,7 @@ import { formatMultiplier } from "../components/attendance/segmentDisplay";
 import type { Employee, TimeEntry } from "../types";
 import { displayLegajo, fullName } from "../utils/employee";
 import { currentMonthPeriod, formatPeriodDay, getMonthDays, getWeekdayAbbr } from "../utils/period";
-import { formatHours } from "../utils/hours";
+import { formatDecimalHoursDuration, formatDurationMinutes, hoursDecimalToMinutes } from "../utils/hours";
 import { statusTone } from "../utils/status";
 import { useDebouncedValue } from "../utils/useDebouncedValue";
 import { uniqueOptions } from "../components/employees/options/sharedOptions";
@@ -123,7 +123,7 @@ function DayCell({
         onClick={() => setOpen((current) => !current)}
         aria-label={`Detalle del ${label}`}
       >
-        <span className={breakdown?.novelty ? "day-cell-value has-novelty" : "day-cell-value"}>{breakdown ? formatHours(breakdown.total) : "-"}</span>
+        <span className={breakdown?.novelty ? "day-cell-value has-novelty" : "day-cell-value"}>{breakdown ? formatDecimalHoursDuration(breakdown.total) : "-"}</span>
         {breakdown?.novelty ? <span className="alert-dot purple" /> : null}
         {breakdown && (breakdown.specialHourMultiplier || 1) > 1 ? <span className="alert-dot orange" /> : null}
       </button>
@@ -137,8 +137,8 @@ function DayCell({
               <b>{label}</b>
               {breakdown ? (
                 <>
-                  <span>Horas reales: {formatHours(breakdown.normal)} h</span>
-                  {breakdown.special > 0 ? <span>Conceptos horarios (reales): {formatHours(breakdown.special)} h</span> : null}
+                  <span>Horas reales: {formatDecimalHoursDuration(breakdown.normal)}</span>
+                  {breakdown.special > 0 ? <span>Conceptos horarios (reales): {formatDecimalHoursDuration(breakdown.special)}</span> : null}
                   {(breakdown.specialHourMultiplier || 1) > 1 ? (
                     <>
                       <span className="day-cell-special-hour">
@@ -146,9 +146,9 @@ function DayCell({
                         {breakdown.specialHourRuleNames?.length ? `: ${breakdown.specialHourRuleNames.join(", ")}` : ""}
                       </span>
                       {breakdown.special > 0 ? (
-                        <span className="day-cell-special-hour">Conceptos alcanzados: {formatHours(breakdown.special)} h</span>
+                        <span className="day-cell-special-hour">Conceptos alcanzados: {formatDecimalHoursDuration(breakdown.special)}</span>
                       ) : null}
-                      <span className="day-cell-special-hour">Adicional liquidable: +{formatHours(breakdown.specialHourAdditionalHours || 0)} h</span>
+                      <span className="day-cell-special-hour">Adicional liquidable: +{formatDecimalHoursDuration(breakdown.specialHourAdditionalHours || 0)}</span>
                     </>
                   ) : null}
                   {breakdown.specialHourConflict ? (
@@ -156,7 +156,7 @@ function DayCell({
                   ) : null}
                   {breakdown.special > 0 || (breakdown.specialHourMultiplier || 1) > 1 ? (
                     <span className="day-cell-liquidable-total">
-                      <b>Total liquidable: {formatHours(breakdown.specialHourLiquidableTotal ?? breakdown.normal + breakdown.special)} h</b>
+                      <b>Total liquidable: {formatDecimalHoursDuration(breakdown.specialHourLiquidableTotal ?? breakdown.normal + breakdown.special)}</b>
                     </span>
                   ) : null}
                   {breakdown.novelty ? <span>Novedad: {breakdown.novelty.label}</span> : null}
@@ -630,7 +630,7 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
         />
         <StatCard
           label="Horas contables"
-          value={`${formatHours(hoursSummary.countableHours)} h`}
+          value={formatDecimalHoursDuration(hoursSummary.countableHours)}
           icon={BarChart3}
           tone="green"
         />
@@ -816,13 +816,13 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
                         </td>
                         <td>
                           <span className="total-hours-cell">
-                            <span>{formatHours(personSummary.total)} h</span>
+                            <span>{formatDecimalHoursDuration(personSummary.total)}</span>
                             {personSummary.specialHourAdditionalHours > 0 ? (
                               <Badge tone={personSummary.specialHourConflict ? "danger" : "warning"}>
                                 <span
                                   title={`Hora especial aplicada${personSummary.specialHourRuleNames.length ? `: ${personSummary.specialHourRuleNames.join(", ")}` : ""}${personSummary.specialHourConflict ? " — Conflicto de reglas: se aplicó la de mayor prioridad" : ""}`}
                                 >
-                                  Total liquidable: {formatHours(personSummary.specialHourLiquidableTotal)} h
+                                  Total liquidable: {formatDecimalHoursDuration(personSummary.specialHourLiquidableTotal)}
                                 </span>
                               </Badge>
                             ) : null}
@@ -880,11 +880,11 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
                       </td>
                       <td>
                         <span className="total-hours-cell">
-                          <b>{entry.hours} h</b>
+                          <b>{formatDurationMinutes(entry.totalMinutes ?? hoursDecimalToMinutes(entry.hours))}</b>
                           {(entry.specialHourMultiplier || 1) > 1 ? (
                             <Badge tone={entry.specialHourConflict ? "danger" : "warning"}>
                               <span
-                                title={`Hora especial aplicada — Multiplicador ${formatMultiplier(entry.specialHourMultiplier)}${entry.specialHourRuleNames?.length ? `: ${entry.specialHourRuleNames.join(", ")}` : ""} — Valor liquidable: ${formatHours(entry.specialHourLiquidableHours || 0)} h${entry.specialHourConflict ? " — Conflicto de reglas: se aplicó la de mayor prioridad" : ""}`}
+                                title={`Hora especial aplicada — Multiplicador ${formatMultiplier(entry.specialHourMultiplier)}${entry.specialHourRuleNames?.length ? `: ${entry.specialHourRuleNames.join(", ")}` : ""} — Valor liquidable: ${formatDecimalHoursDuration(entry.specialHourLiquidableHours || 0)}${entry.specialHourConflict ? " — Conflicto de reglas: se aplicó la de mayor prioridad" : ""}`}
                               >
                                 {formatMultiplier(entry.specialHourMultiplier)}
                               </span>
@@ -1134,14 +1134,14 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
                         }
                       />
                     </td>
-                    <td>{formatHours(periodSummary.normal)} h</td>
-                    <td>{formatHours(periodSummary.special)} h</td>
+                    <td>{formatDecimalHoursDuration(periodSummary.normal)}</td>
+                    <td>{formatDecimalHoursDuration(periodSummary.special)}</td>
                     <td>
                       <span className="total-hours-cell">
-                        <span>{formatHours(periodSummary.total)} h</span>
+                        <span>{formatDecimalHoursDuration(periodSummary.total)}</span>
                         {(periodSummary.specialHourAdditionalHours || 0) > 0 ? (
                           <Badge tone="warning">
-                            Total liquidable: {formatHours(periodSummary.specialHourLiquidableTotal ?? periodSummary.total)} h
+                            Total liquidable: {formatDecimalHoursDuration(periodSummary.specialHourLiquidableTotal ?? periodSummary.total)}
                           </Badge>
                         ) : null}
                       </span>

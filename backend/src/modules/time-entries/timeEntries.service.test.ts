@@ -1107,6 +1107,90 @@ describe("createWorkShift — Etapa 15I: candidateRules filtradas por conceptos 
   });
 });
 
+describe("createWorkShift — Etapa 15M.7B: Motor A respeta loadMode", () => {
+  const adminUser = { id: "user-rrhh", role: "NIVEL_1_RRHH" } as Express.AuthUser;
+  const normalConcept = { id: "concept-normal", name: "Hora normal", status: "ACTIVO", systemRole: "NORMAL_BASE" };
+  const guardiaRule = { id: "rule-guardia", hourConceptId: "concept-guardia", hourConceptName: "Guardia", startTime: "21:00", endTime: "04:00", crossesMidnight: true, priority: 0 };
+
+  function setup() {
+    repo.findEmployeeForShift.mockResolvedValue(activeEmployee);
+    repo.findOverlappingWorkShift.mockResolvedValue(null);
+    repo.findBlockingNovelty.mockResolvedValue(null);
+    repo.findDefaultHourConcept.mockResolvedValue({ hourConcept: normalConcept });
+    repo.createFromWorkShift.mockResolvedValue({ workShift: { id: "shift-15m7b" }, entries: [], timeSegments: [] });
+    mockedFindEnabledConceptIds.mockResolvedValue(new Set(["concept-guardia"]));
+  }
+
+  function crossMidnightInput() {
+    return {
+      employeeId: activeEmployee.id,
+      startAt: new Date("2026-08-25T02:00:00.000Z"), // 23:00 ART
+      endAt: new Date("2026-08-25T06:00:00.000Z"), // 03:00 ART
+      source: "ADMIN",
+      confirm: true as const,
+    } as unknown as Parameters<typeof timeEntriesService.createWorkShift>[0];
+  }
+
+  it("Caso A/cross-midnight: MANUAL queda fuera del repositorio y toda 23:00–03:00 permanece Hora normal", async () => {
+    setup();
+    mockedFindActiveRules.mockResolvedValue([]); // findActiveRules excluyó Guardia MANUAL aunque su regla esté activa.
+
+    await timeEntriesService.createWorkShift(crossMidnightInput(), adminUser);
+
+    const segments = (repo.createFromWorkShift.mock.calls[0]![0] as { segments: Array<{ hourConceptId: string; conceptStatus: string; minutes: number }> }).segments;
+    expect(segments.reduce((sum, segment) => sum + segment.minutes, 0)).toBe(240);
+    expect(segments.every((segment) => segment.hourConceptId === normalConcept.id)).toBe(true);
+    expect(segments.every((segment) => segment.conceptStatus !== "SUGERIDO" && segment.conceptStatus !== "CONCEPTO_NO_HABILITADO")).toBe(true);
+    expect(mockedNotifyClassificationAlerts).toHaveBeenCalledWith(activeEmployee.id, "shift-15m7b", segments);
+  });
+
+  it.each(["AUTOMATIC", "BOTH"])("Caso B/C: %s conserva la clasificación SUGERIDO cross-midnight y la regla asociada", async () => {
+    setup();
+    mockedFindActiveRules.mockResolvedValue([guardiaRule]);
+    mockedResolveActiveWorkRegime.mockResolvedValue({
+      kind: "SIN_TURNO",
+      alertOnOutOfShift: false,
+      openShiftOverflowAction: "ROLLOVER",
+      extendedShiftAlertMinutes: null,
+    });
+
+    await timeEntriesService.createWorkShift(crossMidnightInput(), adminUser);
+
+    const segments = (repo.createFromWorkShift.mock.calls[0]![0] as { segments: Array<{ hourConceptId: string; hourConceptRuleId: string | null; conceptStatus: string; minutes: number }> }).segments;
+    expect(segments.reduce((sum, segment) => sum + segment.minutes, 0)).toBe(240);
+    expect(segments.every((segment) => segment.hourConceptId === "concept-guardia")).toBe(true);
+    expect(segments.every((segment) => segment.conceptStatus === "SUGERIDO" && segment.hourConceptRuleId === "rule-guardia")).toBe(true);
+    expect(mockedResolveActiveWorkRegime).not.toHaveBeenCalled();
+  });
+
+  it("Caso D: AUTOMATIC no habilitado sigue sin competir ni producir CONCEPTO_NO_HABILITADO", async () => {
+    setup();
+    mockedFindActiveRules.mockResolvedValue([guardiaRule]);
+    mockedFindEnabledConceptIds.mockResolvedValue(new Set());
+
+    await timeEntriesService.createWorkShift(crossMidnightInput(), adminUser);
+
+    const segments = (repo.createFromWorkShift.mock.calls[0]![0] as { segments: Array<{ hourConceptId: string; conceptStatus: string; minutes: number }> }).segments;
+    expect(segments.every((segment) => segment.hourConceptId === normalConcept.id)).toBe(true);
+    expect(segments.every((segment) => segment.conceptStatus !== "CONCEPTO_NO_HABILITADO")).toBe(true);
+  });
+
+  it("Caso H: si el repositorio excluye A MANUAL, sólo B AUTOMATIC y C BOTH llegan a competir", async () => {
+    setup();
+    const automatic = { ...guardiaRule, id: "rule-b", hourConceptId: "concept-b", hourConceptName: "B", priority: 0 };
+    const both = { ...guardiaRule, id: "rule-c", hourConceptId: "concept-c", hourConceptName: "C", priority: 0 };
+    mockedFindActiveRules.mockResolvedValue([automatic, both]);
+    mockedFindEnabledConceptIds.mockResolvedValue(new Set(["concept-a-manual", "concept-b", "concept-c"]));
+
+    await timeEntriesService.createWorkShift(crossMidnightInput(), adminUser);
+
+    const segments = (repo.createFromWorkShift.mock.calls[0]![0] as { segments: Array<{ hourConceptId: string; conceptStatus: string }> }).segments;
+    expect(segments.some((segment) => segment.hourConceptId === "concept-a-manual")).toBe(false);
+    expect(segments.every((segment) => ["concept-b", "concept-c"].includes(segment.hourConceptId))).toBe(true);
+    expect(segments.every((segment) => segment.conceptStatus === "SUGERIDO")).toBe(true);
+  });
+});
+
 function clockPhotoPunchInput() {
   return {
     requestId: "11111111-1111-1111-1111-111111111111",

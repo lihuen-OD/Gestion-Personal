@@ -8,7 +8,7 @@ vi.mock("../../shared/prisma/client", () => ({
     hourConcept: { findUniqueOrThrow: vi.fn(), delete: vi.fn(), update: vi.fn(), findMany: vi.fn(), count: vi.fn() },
     employee: { count: vi.fn() },
     employeeHourConcept: { findMany: vi.fn(), findFirst: vi.fn(), count: vi.fn(), findUnique: vi.fn(), createMany: vi.fn(), delete: vi.fn(), deleteMany: vi.fn() },
-    hourConceptRule: { updateMany: vi.fn() },
+    hourConceptRule: { findMany: vi.fn(), updateMany: vi.fn() },
     $transaction: vi.fn((ops: Promise<unknown>[]) => Promise.all(ops)),
   },
 }));
@@ -17,7 +17,7 @@ const mockedPrisma = prisma as unknown as {
   hourConcept: { findUniqueOrThrow: Mock; delete: Mock; update: Mock; findMany: Mock; count: Mock };
   employee: { count: Mock };
   employeeHourConcept: { findMany: Mock; findFirst: Mock; count: Mock; findUnique: Mock; createMany: Mock; delete: Mock; deleteMany: Mock };
-  hourConceptRule: { updateMany: Mock };
+  hourConceptRule: { findMany: Mock; updateMany: Mock };
   $transaction: Mock;
 };
 
@@ -123,32 +123,6 @@ describe("findMany — rama sin filtros (listCache vía repositoryListCache), Et
   });
 });
 
-// Etapa 13D (docs/decisions/SHIFT_SEGMENT_UNCLASSIFIED_POLICY_13D.md)
-describe("findHasAdditionalConceptEnabled — ¿tiene el empleado algún concepto ADICIONAL habilitado?", () => {
-  it("consulta EmployeeHourConcept filtrando status ACTIVO y systemRole:null (excluye la Hora Normal base)", async () => {
-    mockedPrisma.employeeHourConcept.findFirst.mockResolvedValue(null);
-
-    await hourConceptsRepository.findHasAdditionalConceptEnabled("employee-1");
-
-    expect(mockedPrisma.employeeHourConcept.findFirst).toHaveBeenCalledWith({
-      where: { employeeId: "employee-1", hourConcept: { status: "ACTIVO", systemRole: null } },
-      select: { employeeId: true },
-    });
-  });
-
-  it("devuelve true si existe al menos un concepto adicional habilitado", async () => {
-    mockedPrisma.employeeHourConcept.findFirst.mockResolvedValue({ employeeId: "employee-1" });
-
-    await expect(hourConceptsRepository.findHasAdditionalConceptEnabled("employee-1")).resolves.toBe(true);
-  });
-
-  it("devuelve false si no existe ninguno (empleado sólo con Hora Normal, o sin ningún EmployeeHourConcept)", async () => {
-    mockedPrisma.employeeHourConcept.findFirst.mockResolvedValue(null);
-
-    await expect(hourConceptsRepository.findHasAdditionalConceptEnabled("employee-1")).resolves.toBe(false);
-  });
-});
-
 describe("findById", () => {
   it("delega en findUniqueOrThrow por id (P2025 -> 404 lo mapea el service)", async () => {
     mockedPrisma.hourConcept.findUniqueOrThrow.mockResolvedValue({ id: "concept-1" });
@@ -156,6 +130,38 @@ describe("findById", () => {
     await hourConceptsRepository.findById("concept-1");
 
     expect(mockedPrisma.hourConcept.findUniqueOrThrow).toHaveBeenCalledWith({ where: { id: "concept-1" } });
+  });
+});
+
+describe("findActiveRules — universo automático de Motor A (Etapa 15M.7B)", () => {
+  it("filtra regla activa + concepto ACTIVO/no eliminado + loadMode AUTOMATIC o BOTH", async () => {
+    mockedPrisma.hourConceptRule.findMany.mockResolvedValue([]);
+
+    await hourConceptsRepository.findActiveRules();
+
+    expect(mockedPrisma.hourConceptRule.findMany).toHaveBeenCalledWith({
+      where: {
+        status: "ACTIVO",
+        hourConcept: {
+          status: "ACTIVO",
+          deletedAt: null,
+          loadMode: { in: ["AUTOMATIC", "BOTH"] },
+        },
+      },
+      include: { hourConcept: { select: { name: true } } },
+    });
+  });
+
+  it("mapea las reglas AUTOMATIC/BOTH elegibles sin alterar horario, cruce ni trazabilidad", async () => {
+    mockedPrisma.hourConceptRule.findMany.mockResolvedValue([
+      { id: "rule-auto", hourConceptId: "auto", startTime: "21:00", endTime: "04:00", crossesMidnight: true, priority: 0, hourConcept: { name: "Guardia" } },
+      { id: "rule-both", hourConceptId: "both", startTime: "09:00", endTime: "11:00", crossesMidnight: false, priority: 0, hourConcept: { name: "Prueba" } },
+    ]);
+
+    await expect(hourConceptsRepository.findActiveRules()).resolves.toEqual([
+      { id: "rule-auto", hourConceptId: "auto", hourConceptName: "Guardia", startTime: "21:00", endTime: "04:00", crossesMidnight: true, priority: 0 },
+      { id: "rule-both", hourConceptId: "both", hourConceptName: "Prueba", startTime: "09:00", endTime: "11:00", crossesMidnight: false, priority: 0 },
+    ]);
   });
 });
 

@@ -303,7 +303,7 @@ describe("HoursPage — indicador de Hora Especial en la Bandeja de revisión (E
     expect(badge).toBeInTheDocument();
     expect(badge.title).toMatch(/Hora especial aplicada/);
     expect(badge.title).toMatch(/Feriado/);
-    expect(badge.title).toMatch(/16\.00 h/);
+    expect(badge.title).toMatch(/16 h/);
   });
 
   it("una carga en revisión sin Hora Especial no muestra ningún indicador adicional junto a las horas", async () => {
@@ -769,9 +769,9 @@ describe("HoursPage — Etapa 9F (separación de efectos: sin refetch innecesari
 
     const row = (await screen.findByText("Gomez, Ana")).closest("tr")!;
     const cells = within(row);
-    expect(cells.getByText("40.00 h")).toBeInTheDocument();
-    expect(cells.getByText("8.00 h")).toBeInTheDocument();
-    expect(cells.getByText("48.00 h")).toBeInTheDocument();
+    expect(cells.getByText("40 h")).toBeInTheDocument();
+    expect(cells.getByText("8 h")).toBeInTheDocument();
+    expect(cells.getByText("48 h")).toBeInTheDocument();
   });
 
   it("no hay texto técnico visible (TimeEntry, HourConceptBreakdown, schema, backend) en ninguna de las 2 pantallas", async () => {
@@ -882,15 +882,15 @@ describe("HoursPage — indicador de Hora Especial en la grilla de período (Eta
     await screen.findByText("Gomez, Ana");
 
     const dayButton = screen.getByLabelText(/ 27$/);
-    expect(within(dayButton).getByText("8.00")).toBeInTheDocument(); // horas reales del día, nunca 16
+    expect(within(dayButton).getByText("8 h")).toBeInTheDocument(); // horas reales del día, nunca 16
     await user.click(dayButton);
 
     await screen.findByText(/Hora especial aplicada.*x2/);
     const popover = currentDayPopover();
     expect(popover.getByText(/Hora especial aplicada.*x2/)).toBeInTheDocument();
     expect(popover.getByText(/Feriado/)).toBeInTheDocument();
-    expect(popover.getByText(/Adicional liquidable: \+8\.00 h/)).toBeInTheDocument();
-    expect(popover.getByText(/Total liquidable: 16\.00 h/)).toBeInTheDocument();
+    expect(popover.getByText(/Adicional liquidable: \+8 h/)).toBeInTheDocument();
+    expect(popover.getByText(/Total liquidable: 16 h/)).toBeInTheDocument();
   });
 
   it("un día sin regla especial ni conceptos no muestra ningún indicador de Hora Especial ni total liquidable en el popover", async () => {
@@ -908,7 +908,7 @@ describe("HoursPage — indicador de Hora Especial en la grilla de período (Eta
 
     await user.click(screen.getByLabelText(/ 10$/));
 
-    expect(await screen.findByText("Horas reales: 8.00 h")).toBeInTheDocument();
+    expect(await screen.findByText("Horas reales: 8 h")).toBeInTheDocument();
     expect(screen.queryByText(/Hora especial aplicada/)).not.toBeInTheDocument();
     expect(screen.queryByText(/Total liquidable/)).not.toBeInTheDocument();
   });
@@ -934,15 +934,15 @@ describe("HoursPage — indicador de Hora Especial en la grilla de período (Eta
     await screen.findByText("Gomez, Ana");
 
     const dayButton = screen.getByLabelText(/ 27$/);
-    expect(within(dayButton).getByText("8.00")).toBeInTheDocument(); // real del día, nunca 24
+    expect(within(dayButton).getByText("8 h")).toBeInTheDocument(); // real del día, nunca 24
     await user.click(dayButton);
 
-    await screen.findByText("Horas reales: 8.00 h");
+    await screen.findByText("Horas reales: 8 h");
     const popover = currentDayPopover();
-    expect(popover.getByText("Conceptos horarios (reales): 4.00 h")).toBeInTheDocument();
-    expect(popover.getByText("Conceptos alcanzados: 4.00 h")).toBeInTheDocument();
-    expect(popover.getByText(/Adicional liquidable: \+12\.00 h/)).toBeInTheDocument();
-    expect(popover.getByText(/Total liquidable: 24\.00 h/)).toBeInTheDocument();
+    expect(popover.getByText("Conceptos horarios (reales): 4 h")).toBeInTheDocument();
+    expect(popover.getByText("Conceptos alcanzados: 4 h")).toBeInTheDocument();
+    expect(popover.getByText(/Adicional liquidable: \+12 h/)).toBeInTheDocument();
+    expect(popover.getByText(/Total liquidable: 24 h/)).toBeInTheDocument();
   });
 
   it("conflicto de reglas (empate de prioridad) se indica de forma clara en el popover, sin ocultar el liquidable ya resuelto", async () => {
@@ -964,7 +964,7 @@ describe("HoursPage — indicador de Hora Especial en la grilla de período (Eta
     await user.click(screen.getByLabelText(/ 16$/));
 
     expect(await screen.findByText(/conflicto/i)).toBeInTheDocument();
-    expect(screen.getByText(/Total liquidable: 20\.00 h/)).toBeInTheDocument();
+    expect(screen.getByText(/Total liquidable: 20 h/)).toBeInTheDocument();
   });
 
   it("el total del período muestra un badge de Total liquidable cuando hay adicional en el mes", async () => {
@@ -976,11 +976,11 @@ describe("HoursPage — indicador de Hora Especial en la grilla de período (Eta
     renderGrid();
     await screen.findByText("Gomez, Ana");
 
-    expect(await screen.findByText(/Total liquidable: 48\.00 h/)).toBeInTheDocument();
+    expect(await screen.findByText(/Total liquidable: 48 h/)).toBeInTheDocument();
     // El total real (columna "Total") sigue mostrándose sin reemplazar, con su propia etiqueta —
-    // "40.00 h" aparece dos veces (Normales y Total, ya que son iguales sin conceptos adicionales).
+    // "40 h" aparece dos veces (Normales y Total, ya que son iguales sin conceptos adicionales).
     const row = (await screen.findByText("Gomez, Ana")).closest("tr")!;
-    expect(within(row).getAllByText("40.00 h")).toHaveLength(2);
+    expect(within(row).getAllByText("40 h")).toHaveLength(2);
   });
 
   it("sin adicional liquidable en el mes, no se muestra ningún badge de Total liquidable", async () => {
@@ -1028,7 +1028,7 @@ describe("HoursPage — indicador de Hora Especial en la Bandeja 'Por persona' (
     await user.click(screen.getByRole("button", { name: "Por persona" }));
   }
 
-  it("caso obligatorio — 8hs normales + 4hs Sereno en domingo x2: muestra 'Total liquidable: 24.00 h', el total real (8) sigue separado", async () => {
+  it("caso obligatorio — 8hs normales + 4hs Sereno en domingo x2: muestra 'Total liquidable: 24 h', el total real (8) sigue separado", async () => {
     authAs("Nivel 1 - RRHH");
     vi.mocked(timeEntryApiService.listByEmployee).mockResolvedValue({
       items: [buildPersonRow({ total: 8, specialHourAdditionalHours: 12, specialHourLiquidableTotal: 24, specialHourRuleNames: ["Domingo"] })],
@@ -1038,8 +1038,8 @@ describe("HoursPage — indicador de Hora Especial en la Bandeja 'Por persona' (
     await switchToPersonTab();
 
     const row = (await screen.findByText("100")).closest("tr")!;
-    expect(within(row).getByText("8.00 h")).toBeInTheDocument();
-    const badge = within(row).getByText(/Total liquidable: 24\.00 h/);
+    expect(within(row).getByText("8 h")).toBeInTheDocument();
+    const badge = within(row).getByText(/Total liquidable: 24 h/);
     expect(badge).toBeInTheDocument();
     expect(badge.title).toMatch(/Domingo/);
   });
@@ -1054,7 +1054,7 @@ describe("HoursPage — indicador de Hora Especial en la Bandeja 'Por persona' (
     await switchToPersonTab();
 
     const row = (await screen.findByText("100")).closest("tr")!;
-    expect(within(row).getByText("8.00 h")).toBeInTheDocument();
+    expect(within(row).getByText("8 h")).toBeInTheDocument();
     expect(within(row).queryByText(/Total liquidable/)).not.toBeInTheDocument();
   });
 
@@ -1071,7 +1071,7 @@ describe("HoursPage — indicador de Hora Especial en la Bandeja 'Por persona' (
     await switchToPersonTab();
 
     const row = (await screen.findByText("100")).closest("tr")!;
-    const badge = within(row).getByText(/Total liquidable: 20\.00 h/);
+    const badge = within(row).getByText(/Total liquidable: 20 h/);
     expect(badge.closest(".badge")).toHaveClass("danger");
     expect(badge.title).toMatch(/Conflicto de reglas/);
   });

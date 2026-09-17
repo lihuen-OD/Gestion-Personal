@@ -14,7 +14,8 @@ export type ShiftAlertType =
   | "DESCANSO_INSUFICIENTE"
   | "POSIBLE_OLVIDO_SALIDA"
   | "CONCEPTO_NO_HABILITADO"
-  | "SEGMENTO_SIN_CLASIFICAR";
+  | "SEGMENTO_SIN_CLASIFICAR"
+  | "JORNADA_FUERA_DE_TURNO";
 
 export type ShiftAlertSeverity = "INFO" | "ADVERTENCIA" | "CRITICA";
 export type ShiftAlertStatus = "PENDIENTE" | "RESUELTA" | "DESCARTADA";

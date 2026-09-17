@@ -1,11 +1,11 @@
 import { prisma } from "../../shared/prisma/client";
 import type { ShiftTemplateLike } from "./shiftTemplateRef.types";
 import { attendanceRecipients, notifyUsers } from "../workforce-management/workforce.service";
-import { resolveActiveWorkRegime } from "../work-regimes/workRegimes.service";
-import { hourConceptsRepository } from "../hour-concepts/hourConcepts.repository";
+import { resolveActiveWorkRegime, shouldSuppressMissingShiftAlert } from "../work-regimes/workRegimes.service";
 import {
   evaluateEntryPunctuality,
   evaluateExitPunctuality,
+  evaluateOutOfShiftWorkday,
   evaluateWorkedDuration,
   isEarlyArrivalReviewRequired,
   matchShiftForEmployee,
@@ -39,7 +39,8 @@ export type ShiftAlertTypeValue =
   | "DESCANSO_INSUFICIENTE"
   | "POSIBLE_OLVIDO_SALIDA"
   | "CONCEPTO_NO_HABILITADO"
-  | "SEGMENTO_SIN_CLASIFICAR";
+  | "SEGMENTO_SIN_CLASIFICAR"
+  | "JORNADA_FUERA_DE_TURNO";
 type ShiftAlertSeverityValue = "INFO" | "ADVERTENCIA" | "CRITICA";
 
 const severityByAlertType: Record<ShiftAlertTypeValue, ShiftAlertSeverityValue> = {
@@ -56,6 +57,7 @@ const severityByAlertType: Record<ShiftAlertTypeValue, ShiftAlertSeverityValue> 
   POSIBLE_OLVIDO_SALIDA: "ADVERTENCIA",
   CONCEPTO_NO_HABILITADO: "ADVERTENCIA",
   SEGMENTO_SIN_CLASIFICAR: "ADVERTENCIA",
+  JORNADA_FUERA_DE_TURNO: "ADVERTENCIA",
 };
 
 const labelByAlertType: Record<ShiftAlertTypeValue, string> = {
@@ -78,6 +80,7 @@ const labelByAlertType: Record<ShiftAlertTypeValue, string> = {
   POSIBLE_OLVIDO_SALIDA: "Posible olvido de salida",
   CONCEPTO_NO_HABILITADO: "Concepto horario detectado pero no habilitado para el empleado",
   SEGMENTO_SIN_CLASIFICAR: "Tramo de jornada sin concepto horario compatible",
+  JORNADA_FUERA_DE_TURNO: "Jornada fuera de turno",
 };
 
 const DEFAULT_ALERT_NOTIFICATION_MESSAGE = "La fichada requiere seguimiento. Las horas no fueron modificadas automáticamente.";
@@ -90,6 +93,8 @@ const DEFAULT_ALERT_NOTIFICATION_MESSAGE = "La fichada requiere seguimiento. Las
 const messageByAlertType: Partial<Record<ShiftAlertTypeValue, string>> = {
   POSSIBLE_SHIFT_CONFIGURATION_MISSING:
     "La persona registró una fichada, pero no tiene un turno asignado compatible para ese horario. Revisá si corresponde asignarle un turno.",
+  JORNADA_FUERA_DE_TURNO:
+    "La jornada registrada no tuvo superposición con el turno asignado para ese día.",
 };
 
 export function toTemplateRef(template: ShiftTemplateLike): ShiftTemplateRef {
@@ -230,13 +235,15 @@ const SUPPRESSIBLE_OUT_OF_SHIFT_ALERTS: ReadonlySet<ShiftAlertTypeValue> = new S
   "POSSIBLE_SHIFT_CONFIGURATION_MISSING",
 ]);
 
-// Si el empleado no tiene régimen vigente, o el régimen vigente exige alertar
-// fuera de turno (alertOnOutOfShift = true), el comportamiento es exactamente
-// el de siempre: no se suprime nada.
+// Etapa 15M.7C: WorkRegime.kind es la fuente semántica principal. Los
+// regímenes SIN_TURNO y TURNO_FLEXIBLE nunca producen alertas por ausencia o
+// incompatibilidad de turno, incluso con alertOnOutOfShift=true histórico.
+// Sin régimen se conserva el fallback; TURNO_OBLIGATORIO mantiene el opt-out
+// histórico del booleano.
 async function isOutOfShiftAlertSuppressed(employeeId: string, actualAt: Date, alertType: ShiftAlertTypeValue): Promise<boolean> {
   if (!SUPPRESSIBLE_OUT_OF_SHIFT_ALERTS.has(alertType)) return false;
   const regime = await resolveActiveWorkRegime(employeeId, actualAt);
-  return regime !== null && !regime.alertOnOutOfShift;
+  return shouldSuppressMissingShiftAlert(regime);
 }
 
 export async function evaluateShiftEntry(employeeId: string, workShiftId: string, actualAt: Date) {
@@ -336,34 +343,32 @@ export async function resolveOpenShiftOverflowAlert(workShiftId: string, note: s
   });
 }
 
+async function resolvePunctualityAlertsForOutOfShiftWorkday(workShiftId: string) {
+  await prisma.shiftAlert.updateMany({
+    where: {
+      workShiftId,
+      type: { in: ["INGRESO_TARDE", "INGRESO_ANTICIPADO", "SALIDA_ANTICIPADA", "SALIDA_TARDIA"] },
+      status: "PENDIENTE",
+    },
+    data: {
+      status: "RESUELTA",
+      resolvedAt: new Date(),
+      resolutionNote: "Resuelta automáticamente: el cierre confirmó que la jornada ocurrió completamente fuera del turno asignado.",
+    },
+  });
+}
+
 export interface ClassifiedSegmentAlertInput {
   startAt: Date;
   minutes: number;
   conceptStatus: "SUGERIDO" | "MANUAL" | "SIN_CONCEPTO_COMPATIBLE" | "CONCEPTO_NO_HABILITADO";
 }
 
-// Etapa 13D (docs/decisions/SHIFT_SEGMENT_UNCLASSIFIED_POLICY_13D.md),
-// ampliado por la Etapa 13H.1 (docs/decisions/SHIFT_ALERTS_GROUPED_VIEW_13H_1.md):
-// sin ningún concepto horario ADICIONAL habilitado, un tramo
-// SIN_CONCEPTO_COMPATIBLE no es un hallazgo real -- es la situación esperada
-// de cualquier empleado que nunca tuvo Sereno/Guardia/Colectivo/etc. Hasta
-// 13H.1 esto sólo apagaba el AVISO (la ShiftAlert se persistía siempre,
-// "interna"); RRHH seguía viéndola como hallazgo asociado en Alertas de
-// Turnos (Etapa 13H), sin ningún indicio de que no había nada que revisar.
-// Desde 13H.1 esta misma consulta también decide si corresponde CREAR la
-// ShiftAlert -- sin concepto adicional, no se persiste en absoluto (ver
-// isSegmentoSinClasificarEligible más abajo). Una sola consulta por cierre,
-// sólo si hay al menos un segmento sin clasificar (nunca por segmento).
-async function isSegmentoSinClasificarNotifiable(employeeId: string, sinClasificarCount: number): Promise<boolean> {
-  if (sinClasificarCount === 0) return false;
-  return hourConceptsRepository.findHasAdditionalConceptEnabled(employeeId);
-}
-
 async function applyClassificationAlerts(
   employeeId: string,
   workShiftId: string,
   segments: ClassifiedSegmentAlertInput[],
-  options: { notifyConceptoNoHabilitado: boolean; persistSegmentoSinClasificar: boolean; notifySegmentoSinClasificar: boolean },
+  options: { notifyConceptoNoHabilitado: boolean },
 ) {
   const byStatus = (status: ClassifiedSegmentAlertInput["conceptStatus"]) => segments.filter((segment) => segment.conceptStatus === status);
 
@@ -379,47 +384,22 @@ async function applyClassificationAlerts(
     });
   }
 
-  // Etapa 13H.1: sin concepto adicional esperado (persistSegmentoSinClasificar
-  // en false), la ShiftAlert ni se crea -- no hay ningún hallazgo real que
-  // registrar (Regla 2 del pedido: "la ausencia de concepto horario adicional
-  // no es un problema"). Con concepto adicional, se sigue persistiendo
-  // siempre que haya un tramo sin clasificar (trazabilidad interna, "no
-  // ocultar problemas de configuración"), y notifySegmentoSinClasificar ya
-  // llega resuelto por el llamador (13D + la política unificada de 13G).
-  const sinClasificar = byStatus("SIN_CONCEPTO_COMPATIBLE");
-  if (sinClasificar.length > 0 && options.persistSegmentoSinClasificar) {
-    await createShiftAlert({
-      employeeId,
-      workShiftId,
-      type: "SEGMENTO_SIN_CLASIFICAR",
-      actualAt: sinClasificar[0]!.startAt,
-      differenceMinutes: sinClasificar.reduce((sum, segment) => sum + segment.minutes, 0),
-      notify: options.notifySegmentoSinClasificar,
-    });
-  }
+  // Etapa 15M.7A: SIN_CONCEPTO_COMPATIBLE queda como metadata técnica para
+  // indicar que no se aplicó ninguna regla adicional. El tramo ya pertenece
+  // a Hora normal (fallback universal), por lo que no es un hallazgo y nunca
+  // produce una ShiftAlert nueva. SEGMENTO_SIN_CLASIFICAR se conserva en los
+  // enums/mapas para poder leer alertas históricas.
 }
 
 // Una sola alerta por tipo por jornada, aunque varios segmentos compartan el
 // mismo problema (createShiftAlert ya upsertea por [workShiftId, type], pero
 // llamarlo una vez por segmento igual dispararia una notificacion por
-// llamada — se agrega antes de notificar, para cumplir "no generar alertas
-// duplicadas por el mismo problema"). No genera nada si todos los segmentos
-// quedaron SUGERIDO/MANUAL. Uso standalone (ej. createWorkShift, alta manual
-// de un día completo sin evaluateShiftExit) — CONCEPTO_NO_HABILITADO siempre
-// notifica; SEGMENTO_SIN_CLASIFICAR respeta 13D/13H.1 (sin concepto
-// adicional esperado, ni se persiste ni notifica) pero, a diferencia de
-// evaluateShiftExit, no compite por un único "ganador" contra otras alertas
-// -- este camino nunca evalúa puntualidad/duración, así que "elegible"
-// (persistir) y "notificable" son la misma condición acá (ver Etapa 13G,
-// docs/decisions/SHIFT_EXIT_SINGLE_NOTIFICATION_POLICY_13G.md §11, "qué NO
-// se tocó").
+// llamada. Desde 15M.7A sólo CONCEPTO_NO_HABILITADO puede producir una alerta
+// desde esta metadata; SIN_CONCEPTO_COMPATIBLE representa Hora normal sin
+// concepto adicional y se ignora.
 export async function notifyClassificationAlerts(employeeId: string, workShiftId: string, segments: ClassifiedSegmentAlertInput[]) {
-  const sinClasificarCount = segments.filter((segment) => segment.conceptStatus === "SIN_CONCEPTO_COMPATIBLE").length;
-  const segmentoSinClasificarEligible = await isSegmentoSinClasificarNotifiable(employeeId, sinClasificarCount);
   await applyClassificationAlerts(employeeId, workShiftId, segments, {
     notifyConceptoNoHabilitado: true,
-    persistSegmentoSinClasificar: segmentoSinClasificarEligible,
-    notifySegmentoSinClasificar: segmentoSinClasificarEligible,
   });
 }
 
@@ -435,7 +415,10 @@ export async function notifyClassificationAlerts(employeeId: string, workShiftId
 // notifica -- el de mayor prioridad según este orden. El resto se sigue
 // persistiendo siempre como ShiftAlert (trazabilidad completa en "Alertas de
 // Turnos", "no ocultar problemas críticos"), sólo se suprime el AVISO.
+// Desde 15M.7A SEGMENTO_SIN_CLASIFICAR ya no participa: el fallback es Hora
+// normal sin concepto adicional y no produce ninguna alerta nueva.
 const EXIT_ALERT_NOTIFICATION_PRIORITY: readonly ShiftAlertTypeValue[] = [
+  "JORNADA_FUERA_DE_TURNO",
   // Contradicción real de configuración: el tramo matcheó un concepto que
   // existe, pero el empleado no lo tiene habilitado -- requiere revisión de
   // configuración, no sólo de horario.
@@ -453,10 +436,6 @@ const EXIT_ALERT_NOTIFICATION_PRIORITY: readonly ShiftAlertTypeValue[] = [
   // Por debajo del mínimo configurado -- normalmente ya explicada por una
   // salida anticipada, pero puede darse sola (ingreso tardío, salida puntual).
   "JORNADA_INSUFICIENTE",
-  // La señal más débil (Etapa 13C/13D) -- último en la prioridad, y sólo
-  // llega a "fired" (ver más abajo) si además el empleado tiene algún
-  // concepto adicional esperado.
-  "SEGMENTO_SIN_CLASIFICAR",
 ];
 
 // Etapa 13B: además de las alertas de puntualidad/duración, ahora acepta los
@@ -498,7 +477,15 @@ export async function evaluateShiftExit(
     // Etapa 10D: régimen (si tiene extendedShiftAlertMinutes seteado) gana por
     // sobre el umbral del turno para decidir JORNADA_EXTENDIDA — ver
     // evaluateWorkedDuration para la prioridad exacta (Régimen → Turno → Default).
-    const regime = await resolveActiveWorkRegime(employeeId, actualAt);
+    const regime = await resolveActiveWorkRegime(employeeId, shift.startAt);
+    const overlap = evaluateOutOfShiftWorkday({ match, actualStartAt: shift.startAt, actualEndAt: actualAt });
+    const outsideShift = regime?.kind !== "SIN_TURNO" && overlap.evaluated && overlap.outsideShift;
+    if (outsideShift) {
+      // La alerta temprana de ingreso puede haber sido notificada y no puede
+      // "desenviarse". Se conserva el historial, pero deja de quedar activa
+      // como un hallazgo independiente al confirmarse la causa real.
+      await resolvePunctualityAlertsForOutOfShiftWorkday(workShiftId);
+    }
     // Etapa 13E: defensa en profundidad -- un turno GENERAL_UNASSIGNED (ajeno)
     // nunca debe gobernar el mínimo/máximo de esta evaluación, ni siquiera si
     // `shift.shiftTemplateId` quedó apuntando a uno por datos previos a esta
@@ -513,37 +500,35 @@ export async function evaluateShiftExit(
 
     const byStatus = (status: ClassifiedSegmentAlertInput["conceptStatus"]) => classifiedSegments.filter((segment) => segment.conceptStatus === status);
     const noHabilitadoCount = byStatus("CONCEPTO_NO_HABILITADO").length;
-    const sinClasificarCount = byStatus("SIN_CONCEPTO_COMPATIBLE").length;
 
     // Etapa 13G: qué tipos "dispararon" para este cierre (independientemente
     // de si van a notificar -- todos los que disparan se persisten siempre,
     // ver los createShiftAlert de abajo).
-    const fired: Partial<Record<Exclude<ShiftAlertTypeValue, "SEGMENTO_SIN_CLASIFICAR">, boolean>> = {
+    const fired: Partial<Record<ShiftAlertTypeValue, boolean>> = {
+      JORNADA_FUERA_DE_TURNO: outsideShift,
       CONCEPTO_NO_HABILITADO: noHabilitadoCount > 0,
       JORNADA_EXTENDIDA: duration.extendedShift,
-      SALIDA_TARDIA: punctuality.lateLeave,
-      SALIDA_ANTICIPADA: punctuality.earlyLeave,
+      SALIDA_TARDIA: !outsideShift && punctuality.lateLeave,
+      SALIDA_ANTICIPADA: !outsideShift && punctuality.earlyLeave,
       JORNADA_INSUFICIENTE: duration.insufficientHours,
     };
-    // Etapa 13H.1: a diferencia de las otras 5, SEGMENTO_SIN_CLASIFICAR ya no
-    // se persiste incondicionalmente -- "elegible" (isSegmentoSinClasificarNotifiable,
-    // Etapa 13D: ¿el empleado tiene algún concepto adicional habilitado?)
-    // ahora decide si la ShiftAlert se crea en absoluto, no sólo si notifica.
-    // Por eso esta consulta ya no puede diferirse a "sólo si ningún tipo de
-    // mayor prioridad ganó" (esa optimización de 13G asumía que la única
-    // pregunta pendiente era el aviso; acá también hace falta para decidir
-    // la persistencia) -- se resuelve siempre que haya al menos un segmento
-    // sin clasificar, una sola vez, nunca por segmento.
-    const segmentoSinClasificarEligible = sinClasificarCount > 0 && (await isSegmentoSinClasificarNotifiable(employeeId, sinClasificarCount));
-    let notifiableWinner: ShiftAlertTypeValue | null = EXIT_ALERT_NOTIFICATION_PRIORITY.find((type) => type !== "SEGMENTO_SIN_CLASIFICAR" && fired[type]) ?? null;
-    if (!notifiableWinner && segmentoSinClasificarEligible) {
-      notifiableWinner = "SEGMENTO_SIN_CLASIFICAR";
-    }
+    const notifiableWinner: ShiftAlertTypeValue | null = EXIT_ALERT_NOTIFICATION_PRIORITY.find((type) => fired[type]) ?? null;
 
-    if (punctuality.earlyLeave) {
+    if (outsideShift) {
+      await createShiftAlert({
+        employeeId,
+        workShiftId,
+        type: "JORNADA_FUERA_DE_TURNO",
+        actualAt,
+        scheduledAt: overlap.scheduledStartAt ?? undefined,
+        differenceMinutes: 0,
+        notify: notifiableWinner === "JORNADA_FUERA_DE_TURNO",
+      });
+    }
+    if (!outsideShift && punctuality.earlyLeave) {
       await createShiftAlert({ employeeId, workShiftId, type: "SALIDA_ANTICIPADA", actualAt, scheduledAt: punctuality.scheduledExitAt ?? undefined, differenceMinutes: punctuality.differenceMinutes, notify: notifiableWinner === "SALIDA_ANTICIPADA" });
     }
-    if (punctuality.lateLeave) {
+    if (!outsideShift && punctuality.lateLeave) {
       await createShiftAlert({ employeeId, workShiftId, type: "SALIDA_TARDIA", actualAt, scheduledAt: punctuality.scheduledExitAt ?? undefined, differenceMinutes: punctuality.differenceMinutes, notify: notifiableWinner === "SALIDA_TARDIA" });
     }
     if (duration.insufficientHours) {
@@ -556,8 +541,6 @@ export async function evaluateShiftExit(
     if (classifiedSegments.length > 0) {
       await applyClassificationAlerts(employeeId, workShiftId, classifiedSegments, {
         notifyConceptoNoHabilitado: notifiableWinner === "CONCEPTO_NO_HABILITADO",
-        persistSegmentoSinClasificar: segmentoSinClasificarEligible,
-        notifySegmentoSinClasificar: notifiableWinner === "SEGMENTO_SIN_CLASIFICAR",
       });
     }
   } catch (error) {

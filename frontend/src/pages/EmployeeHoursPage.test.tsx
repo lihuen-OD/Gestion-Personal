@@ -411,7 +411,7 @@ describe("EmployeeHoursPage — el botón 'Recalcular automáticos' ya no se exp
     renderPage();
     await waitForGridLoaded();
     expect(within(rowFor("Sereno")).queryAllByRole("button")).toHaveLength(0);
-    expect(totalCellText(rowFor("Sereno"))).toBe("6.00");
+    expect(totalCellText(rowFor("Sereno"))).toBe("6 h");
   });
 
   it("el concepto MANUAL (Colectivo) sigue siendo editable", async () => {
@@ -458,7 +458,7 @@ describe("EmployeeHoursPage — actualización local sin recarga completa (Etapa
     await user.click(screen.getByRole("button", { name: "Guardar" }));
 
     await waitFor(() => expect(screen.queryByText(/Cargar Hora normal/i)).not.toBeInTheDocument());
-    expect(dayCellText(rowFor("Hora normal"), 1)).toBe("5");
+    expect(dayCellText(rowFor("Hora normal"), 1)).toBe("5 h");
   });
 
   it("guardar Hora normal actualiza el total diario/mensual (Horas trabajadas y columna Total) de inmediato", async () => {
@@ -471,7 +471,7 @@ describe("EmployeeHoursPage — actualización local sin recarga completa (Etapa
     });
     renderPage();
     await waitForGridLoaded();
-    expect(statCardValue("Horas trabajadas")).toBe("8.00 h");
+    expect(statCardValue("Horas trabajadas")).toBe("8 h");
 
     const normalDay2 = within(rowFor("Hora normal")).getAllByRole("button")[1]!;
     await user.click(normalDay2);
@@ -481,8 +481,8 @@ describe("EmployeeHoursPage — actualización local sin recarga completa (Etapa
     await user.click(screen.getByRole("button", { name: "Guardar" }));
 
     await waitFor(() => expect(screen.queryByText(/Cargar Hora normal/i)).not.toBeInTheDocument());
-    expect(totalCellText(rowFor("Hora normal"))).toBe("13.00");
-    expect(statCardValue("Horas trabajadas")).toBe("13.00 h");
+    expect(totalCellText(rowFor("Hora normal"))).toBe("13 h");
+    expect(statCardValue("Horas trabajadas")).toBe("13 h");
   });
 
   it("guardar un desglose manual actualiza su celda de inmediato sin esperar un segundo getTimeGrid", async () => {
@@ -502,7 +502,7 @@ describe("EmployeeHoursPage — actualización local sin recarga completa (Etapa
     await user.click(screen.getByRole("button", { name: /Guardar desglose/i }));
 
     await waitFor(() => expect(screen.queryByText(/Cargar desglose Colectivo/i)).not.toBeInTheDocument());
-    expect(dayCellText(rowFor("Colectivo"), 0)).toBe("2.00");
+    expect(dayCellText(rowFor("Colectivo"), 0)).toBe("2 h");
   });
 
   it("guardar un desglose manual no modifica Horas trabajadas (totalWorkedMinutes)", async () => {
@@ -513,7 +513,7 @@ describe("EmployeeHoursPage — actualización local sin recarga completa (Etapa
     vi.mocked(employeeApiService.saveManualHourConceptBreakdown).mockResolvedValueOnce({ id: "breakdown-1" });
     renderPage();
     await waitForGridLoaded();
-    expect(statCardValue("Horas trabajadas")).toBe("8.00 h");
+    expect(statCardValue("Horas trabajadas")).toBe("8 h");
 
     const colectivoDay1 = within(rowFor("Colectivo")).getAllByRole("button")[0]!;
     await user.click(colectivoDay1);
@@ -523,8 +523,8 @@ describe("EmployeeHoursPage — actualización local sin recarga completa (Etapa
     await user.click(screen.getByRole("button", { name: /Guardar desglose/i }));
 
     await waitFor(() => expect(screen.queryByText(/Cargar desglose Colectivo/i)).not.toBeInTheDocument());
-    expect(statCardValue("Horas trabajadas")).toBe("8.00 h");
-    expect(totalCellText(rowFor("Hora normal"))).toBe("8.00");
+    expect(statCardValue("Horas trabajadas")).toBe("8 h");
+    expect(totalCellText(rowFor("Hora normal"))).toBe("8 h");
   });
 
   it("no vuelve a mostrar 'Preparando grilla horaria...' después de guardar (no hay recarga completa)", async () => {
@@ -615,9 +615,9 @@ describe("EmployeeHoursPage — indicador de Hora Especial y Valor liquidable (E
     renderPage();
     await waitForGridLoaded();
 
-    expect(statCardValue("Valor liquidable")).toBe("24.00 h");
+    expect(statCardValue("Valor liquidable")).toBe("24 h");
     // Las horas reales ("Horas trabajadas") nunca se inflan por el liquidable.
-    expect(statCardValue("Horas trabajadas")).toBe("8.00 h");
+    expect(statCardValue("Horas trabajadas")).toBe("8 h");
   });
 
   it("sin ninguna Hora Especial en el período: no muestra la tarjeta 'Valor liquidable'", async () => {
@@ -640,7 +640,7 @@ describe("EmployeeHoursPage — indicador de Hora Especial y Valor liquidable (E
     await user.click(normalDay1);
 
     expect(await screen.findByText(/Hora especial aplicada.*Multiplicador x2.*Domingo/)).toBeInTheDocument();
-    expect(screen.getByText(/Valor liquidable del día: 24\.00 h/)).toBeInTheDocument();
+    expect(screen.getByText(/Valor liquidable del día: 24 h/)).toBeInTheDocument();
   });
 
   it("el modal de un desglose manual (Colectivo) también avisa cuando ese día está alcanzado por la Hora Especial", async () => {
@@ -701,7 +701,7 @@ describe("EmployeeHoursPage — bloqueo por novedad vía timeEntryBehavior (Etap
 
     const day5 = within(rowFor("Hora normal")).getByTitle("Suspensión");
     expect(day5.className).toContain("blocked");
-    expect(within(day5).getByText("0")).toBeInTheDocument();
+    expect(within(day5).getByText("0 h")).toBeInTheDocument();
   });
 
   it("timeEntryBehavior=NO_BLOQUEA no bloquea la celda", async () => {

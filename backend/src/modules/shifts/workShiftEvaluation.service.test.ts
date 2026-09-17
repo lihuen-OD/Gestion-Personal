@@ -6,6 +6,7 @@ import {
   evaluateExitPunctuality,
   evaluateNewEntryWithOpenShift,
   evaluateOpenShiftRisk,
+  evaluateOutOfShiftWorkday,
   evaluateRestPeriod,
   evaluateWorkedDuration,
   hasNoShiftAssignments,
@@ -59,6 +60,41 @@ const nightShift = template({
   entryToleranceAfterMinutes: 15,
   exitToleranceBeforeMinutes: 15,
   exitToleranceAfterMinutes: 15,
+});
+
+describe("evaluateOutOfShiftWorkday — Etapa 15M.7D", () => {
+  const dayShift = template({ id: "day", code: "DIA", startTime: "07:00", endTime: "15:00" });
+  const overnightShift = template({ id: "overnight", code: "NOCHE", startTime: "22:00", endTime: "06:00", crossesMidnight: true });
+  const enabled = (shift: ShiftTemplateRef) => ({ case: "ENABLED", template: shift, differenceMinutes: 0 } as const);
+
+  it.each([
+    ["06:30→15:00", at(6, 30), at(15, 0), false, 480],
+    ["13:00→20:00", at(13, 0), at(20, 0), false, 120],
+    ["14:50→22:00", at(14, 50), at(22, 0), false, 10],
+    ["19:00→23:00", at(19, 0), at(23, 0), true, 0],
+  ])("turno diurno: %s", (_label, actualStartAt, actualEndAt, outsideShift, overlapMinutes) => {
+    const result = evaluateOutOfShiftWorkday({ match: enabled(dayShift), actualStartAt, actualEndAt });
+    expect(result).toMatchObject({ evaluated: true, outsideShift, overlapMinutes });
+  });
+
+  it.each([
+    ["23:00→04:00", at(23, 0), at(4, 0, 11), false, 300],
+    ["07:00→10:00", at(7, 0, 11), at(10, 0, 11), true, 0],
+    ["21:00→23:00", at(21, 0), at(23, 0), false, 60],
+    ["06:00→08:00", at(6, 0, 11), at(8, 0, 11), true, 0],
+  ])("turno nocturno semicerrado: %s", (_label, actualStartAt, actualEndAt, outsideShift, overlapMinutes) => {
+    const result = evaluateOutOfShiftWorkday({ match: enabled(overnightShift), actualStartAt, actualEndAt });
+    expect(result).toMatchObject({ evaluated: true, outsideShift, overlapMinutes });
+  });
+
+  it.each(["NO_MATCH", "DISABLED_FOR_EMPLOYEE"] as const)("no evalúa sin referencia habilitada: %s", (matchCase) => {
+    const result = evaluateOutOfShiftWorkday({
+      match: { case: matchCase, template: matchCase === "NO_MATCH" ? null : dayShift, differenceMinutes: null },
+      actualStartAt: at(19, 0),
+      actualEndAt: at(23, 0),
+    });
+    expect(result).toMatchObject({ evaluated: false, outsideShift: false });
+  });
 });
 
 describe("matchShiftForEmployee", () => {
@@ -524,10 +560,10 @@ describe("evaluateOpenShiftRisk — Etapa 10E (default de olvido de salida sin t
     expect(result.level).toBe("NORMAL");
   });
 
-  it("sin turno + suppressMissingOutDefault=true (régimen alertOnOutOfShift=false) mantiene NORMAL más allá del default, hasta el límite absoluto", () => {
-    const result = evaluateOpenShiftRisk({ startAt: at(0, 0, 10), now: at(10, 30, 10), template: null, suppressMissingOutDefault: true }); // 630 min
-    expect(result.level).toBe("NORMAL");
-    expect(result.missingOutThresholdMinutes).toBeNull();
+  it("sin turno aplica el control universal aun cuando el régimen no exija turno", () => {
+    const result = evaluateOpenShiftRisk({ startAt: at(0, 0, 10), now: at(10, 30, 10), template: null });
+    expect(result.level).toBe("MISSING_OUT");
+    expect(result.missingOutThresholdMinutes).toBe(600);
   });
 
   it("turno sin missingOutAlertAfterMinutes configurado también usa el default (600) en vez de quedar sin aviso para siempre", () => {
@@ -537,18 +573,15 @@ describe("evaluateOpenShiftRisk — Etapa 10E (default de olvido de salida sin t
     expect(result.missingOutThresholdMinutes).toBe(600);
   });
 
-  it("turno sin missingOutAlertAfterMinutes + suppressMissingOutDefault=true (régimen flexible) mantiene NORMAL", () => {
+  it("turno sin missingOutAlertAfterMinutes conserva el default universal", () => {
     const shiftSinAlerta = template({ id: "sin-alerta-3", code: "SIN-ALERTA-3", startTime: "07:00", endTime: "15:30" });
-    const result = evaluateOpenShiftRisk({ startAt: at(7, 0), now: at(17, 30), template: shiftSinAlerta, suppressMissingOutDefault: true });
-    expect(result.level).toBe("NORMAL");
+    const result = evaluateOpenShiftRisk({ startAt: at(7, 0), now: at(17, 30), template: shiftSinAlerta });
+    expect(result.level).toBe("MISSING_OUT");
   });
 
-  it("un turno con missingOutAlertAfterMinutes explícito NUNCA se suprime por régimen — sólo el default sin turno se suprime", () => {
+  it("un turno con missingOutAlertAfterMinutes explícito conserva su umbral específico", () => {
     const shift = template({ id: "reg-explicito", code: "REG-EXPLICITO", startTime: "07:00", endTime: "15:30", exitToleranceAfterMinutes: 20, missingOutAlertAfterMinutes: 60 });
-    const result = evaluateOpenShiftRisk({ startAt: at(7, 0), now: at(16, 50), template: shift, suppressMissingOutDefault: true });
-    // Mismo caso que el test "jornada abierta supera la salida esperada..." de arriba —
-    // el umbral explícito del turno (590 min) sigue aplicando igual, suppressMissingOutDefault
-    // sólo apaga el FALLBACK cuando no hay ningún umbral configurado, nunca uno real.
+    const result = evaluateOpenShiftRisk({ startAt: at(7, 0), now: at(16, 50), template: shift });
     expect(result.level).toBe("MISSING_OUT");
     expect(result.missingOutThresholdMinutes).toBe(590);
   });

@@ -79,7 +79,7 @@ describe("MonthlyHoursReviewGrid — Etapa 15K", () => {
     const serenoRow = rows.find((row) => within(row).queryByText("Sereno"));
     expect(serenoRow).toBeTruthy();
     const cells = within(serenoRow!).getAllByRole("cell");
-    expect(cells[cells.length - 1]).toHaveTextContent("6.00");
+    expect(cells[cells.length - 1]).toHaveTextContent("6 h");
   });
 
   it("maneja un día sin horas mostrando un guion, sin romper", () => {

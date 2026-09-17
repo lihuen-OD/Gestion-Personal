@@ -12,6 +12,7 @@ import { DataTable } from "../components/ui/DataTable";
 import { LoadingState } from "../components/ui/LoadingState";
 import { ErrorState } from "../components/ui/ErrorState";
 import { formatPeriodLabel } from "../utils/period";
+import { formatDecimalHoursDuration } from "../utils/hours";
 import { roleLevel } from "../utils/roles";
 
 export function DashboardBars({ rows }: { rows: { label: string; value: number }[] }) {
@@ -151,7 +152,7 @@ export function DashboardPage() {
       <StatCard label="Edad promedio" value={`${metrics.averageAge} años`} detail="Sobre dotación activa" icon={Cake} tone="purple" />
       <StatCard label="Antigüedad promedio" value={`${metrics.averageTenure} años`} detail="Desde fecha de ingreso" icon={BriefcaseBusiness} tone="green" />
       <StatCard label="Transporte empresa" value={metrics.transported} detail="Personas que usan colectivo" icon={Bus} />
-      <StatCard label="Horas cargadas" value={`${metrics.loadedHours} h`} detail={`${metrics.loadCoverage}% de dotación con carga`} icon={Clock3} tone="green" />
+      <StatCard label="Horas cargadas" value={formatDecimalHoursDuration(metrics.loadedHours)} detail={`${metrics.loadCoverage}% de dotación con carga`} icon={Clock3} tone="green" />
       <StatCard label="Documentación crítica" value={metrics.expiredDocuments + metrics.expiringDocuments} detail={`${metrics.expiredDocuments} vencidos · ${metrics.expiringDocuments} por vencer`} icon={FolderOpen} tone="orange" />
     </div>
     <div className="dashboard-grid">
@@ -167,7 +168,7 @@ export function DashboardPage() {
       </Section>
     </div>
     <div className="dashboard-grid">
-      <Section title="Control de carga horaria" subtitle={`Periodo ${metrics.period ? formatPeriodLabel(metrics.period) : "actual"}`}><div className="compact-metrics"><div><b>{metrics.loadCoverage}%</b><span>Cobertura</span></div><div><b>{metrics.pendingLoads}</b><span>Pendientes</span></div><div><b>{metrics.reviewLoads}</b><span>En revisión</span></div><div><b>{metrics.loadedHours} h</b><span>Cargadas</span></div></div></Section>
+      <Section title="Control de carga horaria" subtitle={`Periodo ${metrics.period ? formatPeriodLabel(metrics.period) : "actual"}`}><div className="compact-metrics"><div><b>{metrics.loadCoverage}%</b><span>Cobertura</span></div><div><b>{metrics.pendingLoads}</b><span>Pendientes</span></div><div><b>{metrics.reviewLoads}</b><span>En revisión</span></div><div><b>{formatDecimalHoursDuration(metrics.loadedHours)}</b><span>Cargadas</span></div></div></Section>
     </div>
     {level === 1 && <Section title="Actividad reciente" subtitle="Últimos movimientos registrados en la plataforma">
       <DataTable

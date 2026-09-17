@@ -260,6 +260,7 @@ enum ShiftAlertType {
   // asignado del empleado (nunca se genera por comparación contra un turno
   // ajeno — ver docs/decisions/SHIFT_ENTRY_CLASSIFICATION_13A.md).
   INGRESO_ANTICIPADO
+  JORNADA_FUERA_DE_TURNO
 }
 
 enum ShiftAlertStatus {

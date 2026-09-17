@@ -39,12 +39,16 @@ function emptyDraft(): WorkRegimeDraft {
     code: "",
     name: "",
     kind: "TURNO_FLEXIBLE",
-    alertOnOutOfShift: true,
+    alertOnOutOfShift: false,
     openShiftOverflowAction: "ROLLOVER",
     extendedShiftAlertHours: "",
     description: "",
     status: "ACTIVO",
   };
+}
+
+function kindRequiresShift(kind: WorkRegimeKind) {
+  return kind === "TURNO_OBLIGATORIO";
 }
 
 function normalize(value: string) {
@@ -171,7 +175,13 @@ export function WorkRegimesPage() {
     if (!name) return setError("El nombre es obligatorio.");
 
     const { extendedShiftAlertHours, ...rest } = draft;
-    const payload: WorkRegimeInput = { ...rest, code, name, extendedShiftAlertMinutes: extendedShiftAlertHoursToMinutes(extendedShiftAlertHours) };
+    const payload: WorkRegimeInput = {
+      ...rest,
+      code,
+      name,
+      alertOnOutOfShift: kindRequiresShift(rest.kind) ? rest.alertOnOutOfShift : false,
+      extendedShiftAlertMinutes: extendedShiftAlertHoursToMinutes(extendedShiftAlertHours),
+    };
 
     try {
       if (editingId) await workRegimeApiService.update(editingId, payload);
@@ -274,7 +284,11 @@ export function WorkRegimesPage() {
                   <td><b>{item.code}</b></td>
                   <td><OverflowCell value={item.name} />{item.description ? <span className="table-sub">{item.description}</span> : null}</td>
                   <td>{workRegimeKindLabel(item.kind)}</td>
-                  <td><Badge tone={item.alertOnOutOfShift ? "warning" : "neutral"}>{item.alertOnOutOfShift ? "Sí" : "No"}</Badge></td>
+                  <td>
+                    <Badge tone={kindRequiresShift(item.kind) && item.alertOnOutOfShift ? "warning" : "neutral"}>
+                      {kindRequiresShift(item.kind) ? (item.alertOnOutOfShift ? "Sí" : "No") : "No aplica"}
+                    </Badge>
+                  </td>
                   <td>{openShiftOverflowActionLabel(item.openShiftOverflowAction)}</td>
                   <td><Badge tone={workRegimeStatusTone(item.status)}>{item.status === "ACTIVO" ? "Activo" : "Inactivo"}</Badge></td>
                   <td>
@@ -314,14 +328,24 @@ export function WorkRegimesPage() {
             <Field label="Nombre *" value={draft.name} set={(name) => setDraft({ ...draft, name })} />
             <label>
               Tipo de régimen
-              <select value={draft.kind} onChange={(event) => setDraft({ ...draft, kind: event.target.value as WorkRegimeKind })}>
+              <select
+                value={draft.kind}
+                onChange={(event) => {
+                  const kind = event.target.value as WorkRegimeKind;
+                  setDraft({ ...draft, kind, alertOnOutOfShift: kindRequiresShift(kind) });
+                }}
+              >
                 {workRegimeKindOptions.map((kind) => <option key={kind} value={kind}>{workRegimeKindLabel(kind)}</option>)}
               </select>
             </label>
-            <label className="check-card">
-              <input type="checkbox" checked={draft.alertOnOutOfShift} onChange={(event) => setDraft({ ...draft, alertOnOutOfShift: event.target.checked })} />
-              Alertar si el empleado no tiene turno compatible
-            </label>
+            {kindRequiresShift(draft.kind) ? (
+              <label className="check-card">
+                <input type="checkbox" checked={draft.alertOnOutOfShift} onChange={(event) => setDraft({ ...draft, alertOnOutOfShift: event.target.checked })} />
+                Alertar si el empleado no tiene turno compatible
+              </label>
+            ) : (
+              <div className="info-note">Este régimen no requiere un turno fijo.</div>
+            )}
             <label>
               Acción ante jornada abierta excedida
               <select value={draft.openShiftOverflowAction} onChange={(event) => setDraft({ ...draft, openShiftOverflowAction: event.target.value as OpenShiftOverflowAction })}>

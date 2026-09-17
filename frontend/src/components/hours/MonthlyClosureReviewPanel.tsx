@@ -2,8 +2,8 @@ import { useEffect, useState } from "react";
 import { AlertTriangle, Bell, Clock3, Coins, ShieldAlert } from "lucide-react";
 import { employeeApiService, type EmployeeTimeGrid } from "../../services/api/employeeApiService";
 import type { MonthlyClosure } from "../../services/api/workforceApiService";
-import { additionalBreakdownHours, totalWorkedMinutesFromRows } from "../../utils/employeeHoursGrid";
-import { formatHours } from "../../utils/hours";
+import { additionalBreakdownMinutes, totalWorkedMinutesFromRows } from "../../utils/employeeHoursGrid";
+import { formatDurationMinutes } from "../../utils/hours";
 import { formatPeriodLabel } from "../../utils/period";
 import { monthlyClosureStatusText, monthlyClosureStatusTone } from "../../utils/monthlyClosureStatus";
 import { Badge } from "../ui/Badge";
@@ -43,8 +43,8 @@ export function MonthlyClosureReviewPanel({ closure, period, close }: { closure:
     };
   }, [closure.employeeId, period]);
 
-  const total = grid ? totalWorkedMinutesFromRows(grid.rows) / 60 : 0;
-  const additionalTotal = grid ? additionalBreakdownHours(grid.rows) : 0;
+  const totalMinutes = grid ? totalWorkedMinutesFromRows(grid.rows) : 0;
+  const additionalTotalMinutes = grid ? additionalBreakdownMinutes(grid.rows) : 0;
   const noveltyCount = grid?.novelties.length ?? 0;
   const hasLiquidable = Boolean(grid && grid.specialHourAdditionalMinutes > 0);
 
@@ -66,15 +66,15 @@ export function MonthlyClosureReviewPanel({ closure, period, close }: { closure:
         {!loading && !error && grid ? (
           <>
             <div className={hasLiquidable ? "stat-grid five" : "stat-grid"}>
-              <StatCard label="Horas reales trabajadas" value={`${formatHours(total)} h`} icon={Clock3} />
-              <StatCard label="Conceptos horarios adicionales" value={`${formatHours(additionalTotal)} h`} icon={AlertTriangle} tone="orange" />
+              <StatCard label="Horas reales trabajadas" value={formatDurationMinutes(totalMinutes)} icon={Clock3} />
+              <StatCard label="Conceptos horarios adicionales" value={formatDurationMinutes(additionalTotalMinutes)} icon={AlertTriangle} tone="orange" />
               <StatCard label="Incidencias del período" value={grid.attendanceIssues} icon={ShieldAlert} tone="red" />
               <StatCard label="Novedades del período" value={noveltyCount} icon={Bell} tone="purple" />
               {hasLiquidable ? (
                 <StatCard
                   label="Valor liquidable"
-                  value={`${formatHours(grid.specialHourLiquidableTotalMinutes / 60)} h`}
-                  detail={`Incluye Hora especial: +${formatHours(grid.specialHourAdditionalMinutes / 60)} h`}
+                  value={formatDurationMinutes(grid.specialHourLiquidableTotalMinutes)}
+                  detail={`Incluye Hora especial: +${formatDurationMinutes(grid.specialHourAdditionalMinutes)}`}
                   icon={Coins}
                   tone="green"
                 />

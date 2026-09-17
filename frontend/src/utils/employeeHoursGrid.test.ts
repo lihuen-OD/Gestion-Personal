@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { EmployeeTimeGridRow } from "../services/api/employeeApiService";
 import type { TimeEntry } from "../types";
 import {
-  additionalBreakdownHours,
+  additionalBreakdownMinutes,
   applyBreakdownToRows,
   applyNormalEntryToRows,
   hourConceptLoadModeLabel,
@@ -31,7 +31,7 @@ describe("presentación de grilla aditiva", () => {
 
   it("mantiene separados total base y desgloses", () => {
     expect(rows[0]!.totalMinutes / 60).toBe(8);
-    expect(additionalBreakdownHours(rows)).toBe(6);
+    expect(additionalBreakdownMinutes(rows)).toBe(360);
     expect(normalWorkedDays(rows)).toBe(1);
   });
 

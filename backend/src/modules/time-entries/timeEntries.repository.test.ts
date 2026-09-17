@@ -431,6 +431,20 @@ describe("expireOpenWorkShifts — política de rollover por régimen (Etapa 5)"
     expect(mockedFlagOpenShiftOverflowForReview).not.toHaveBeenCalled();
   });
 
+  it.each(["SIN_TURNO", "TURNO_FLEXIBLE"] as const)("régimen %s con política ROLLOVER conserva FALTA_SALIDA", async (kind) => {
+    mockedPrisma.workShift.findMany.mockResolvedValue([overLimitShift()]);
+    mockedPrisma.employeeWorkRegime.findFirst.mockResolvedValue({
+      workRegime: { kind, alertOnOutOfShift: false, openShiftOverflowAction: "ROLLOVER" },
+    });
+    mockedPrisma.__tx.workShift.updateMany.mockResolvedValue({ count: 1 });
+    mockedPrisma.__tx.timeEntry.create.mockResolvedValue({});
+
+    const result = await timeEntriesRepository.expireOpenWorkShifts(now);
+
+    expect(result.count).toBe(1);
+    expect(mockedPrisma.__tx.workShift.updateMany).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "FALTA_SALIDA" }) }));
+  });
+
   it("Caso C — régimen ALERT_ONLY: NO cierra automáticamente, NO crea TimeEntry, marca para revisión con alerta crítica", async () => {
     mockedPrisma.workShift.findMany.mockResolvedValue([overLimitShift()]);
     mockedPrisma.employeeWorkRegime.findFirst.mockResolvedValue({

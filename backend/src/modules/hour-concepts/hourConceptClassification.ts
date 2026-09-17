@@ -116,11 +116,11 @@ function pickWinner(rules: HourConceptRuleRef[]): HourConceptRuleRef | null {
  *   un sub-tramo. Se conserva como salvaguarda defensiva (datos legacy, o un
  *   caller futuro que no pre-filtre) — no como resultado esperado de que un
  *   empleado trabaje en el horario de un concepto que no tiene asignado.
- * - Ninguna regla matchea el tramo -> SIN_CONCEPTO_COMPATIBLE, usando el
- *   concepto de fallback (nunca se deja un segmento sin hourConceptId: el
- *   campo es obligatorio en el schema). Con el filtrado de la Etapa 15I,
- *   esto es lo que le pasa a un tramo que sólo coincide con un concepto NO
- *   habilitado — cae acá, no a CONCEPTO_NO_HABILITADO.
+ * - Ninguna regla adicional matchea el tramo -> Hora normal (fallback), con
+ *   SIN_CONCEPTO_COMPATIBLE como metadata técnica histórica. Desde 15M.7A
+ *   este estado no significa anomalía, no requiere revisión y no genera
+ *   SEGMENTO_SIN_CLASIFICAR. Se conserva para evitar atribuir falsamente
+ *   MANUAL a un fallback automático y para no cambiar el schema en esta etapa.
  *
  * Invariante garantizada por construcción: la suma de `minutes` de todos los
  * intervalos devueltos es exactamente igual a los minutos reales entre
@@ -209,7 +209,8 @@ export interface ClassifiedDaySegment extends ClassifiedInterval {
  * clasificación automática ni se intenta — se devuelve un único segmento
  * "MANUAL" por tramo de día, exactamente el comportamiento anterior a esta
  * etapa. La clasificación automática solo se activa cuando existe al menos
- * una regla activa en algún lado.
+ * una regla candidata. MANUAL mantiene así su semántica histórica; los
+ * huecos automáticos conservan SIN_CONCEPTO_COMPATIBLE como metadata neutral.
  *
  * Con clasificación activa: reutiliza la partición por día calendario
  * Argentina-aware que ya hace buildShiftSegments (recibida acá como

@@ -25,6 +25,26 @@ export interface ActiveWorkRegime {
   extendedShiftAlertMinutes: number | null;
 }
 
+// Etapa 15M.7C: fuente semántica única para decidir si la ausencia de un
+// turno válido constituye un hallazgo. `alertOnOutOfShift` queda como opción
+// histórica para TURNO_OBLIGATORIO, pero nunca puede contradecir un régimen
+// cuyo propio kind declara que no requiere turno.
+export function shouldSuppressMissingShiftAlert(regime: Pick<ActiveWorkRegime, "kind" | "alertOnOutOfShift"> | null): boolean {
+  if (!regime) return false;
+  if (regime.kind === "SIN_TURNO" || regime.kind === "TURNO_FLEXIBLE") return true;
+  return !regime.alertOnOutOfShift;
+}
+
+function normalizeShiftAlertPolicy<T extends { kind?: WorkRegimeKind; alertOnOutOfShift?: boolean }>(data: T, previousKind?: WorkRegimeKind): T {
+  if (data.kind === "SIN_TURNO" || data.kind === "TURNO_FLEXIBLE") {
+    return { ...data, alertOnOutOfShift: false };
+  }
+  if (data.kind === "TURNO_OBLIGATORIO" && previousKind && previousKind !== "TURNO_OBLIGATORIO" && data.alertOnOutOfShift === undefined) {
+    return { ...data, alertOnOutOfShift: true };
+  }
+  return data;
+}
+
 // Resuelve el régimen vigente de un empleado para la fecha calendario
 // Argentina del instante dado. Devuelve null si no tiene ningún régimen
 // asignado para esa fecha — en ese caso el llamador debe comportarse
@@ -110,14 +130,16 @@ export const workRegimesService = {
   },
 
   async create(data: CreateWorkRegimeInput, audit?: AuditContext) {
-    const item = await execute(() => workRegimesRepository.create(data, audit?.userId));
+    const normalizedData = normalizeShiftAlertPolicy(data);
+    const item = await execute(() => workRegimesRepository.create(normalizedData, audit?.userId));
     await auditWorkRegimeChange("CREATE", item, audit);
     return item;
   },
 
   async update(id: string, data: UpdateWorkRegimeInput, audit?: AuditContext) {
     const before = await execute(() => workRegimesRepository.findById(id));
-    const item = await execute(() => workRegimesRepository.update(id, data, audit?.userId));
+    const normalizedData = normalizeShiftAlertPolicy(data, before.kind);
+    const item = await execute(() => workRegimesRepository.update(id, normalizedData, audit?.userId));
     const action = data.status && data.status !== before.status ? (data.status === "ACTIVO" ? "ACTIVATE" : "DEACTIVATE") : "UPDATE";
     await auditWorkRegimeChange(action, item, audit, before);
     return item;

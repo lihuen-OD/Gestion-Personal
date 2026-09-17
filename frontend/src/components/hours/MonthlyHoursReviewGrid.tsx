@@ -2,7 +2,7 @@ import type { EmployeeTimeGrid } from "../../services/api/employeeApiService";
 import type { Novelty } from "../../types";
 import { formatMultiplier } from "../attendance/segmentDisplay";
 import { hourConceptLoadModeLabel } from "../../utils/employeeHoursGrid";
-import { formatHours } from "../../utils/hours";
+import { formatDurationMinutes } from "../../utils/hours";
 import { getMonthDays, getWeekdayAbbr } from "../../utils/period";
 import { EmptyState } from "../ui/EmptyState";
 
@@ -63,7 +63,7 @@ export function MonthlyHoursReviewGrid({ grid, period }: { grid: EmployeeTimeGri
                 return (
                   <td key={`${row.concept.id}-${day}`}>
                     <span className={cellClass} title={title}>
-                      <span>{minutes ? formatHours(minutes / 60) : "—"}</span>
+                      <span>{minutes ? formatDurationMinutes(minutes) : "—"}</span>
                       {dayNovelties.length ? <span className="alert-dot purple" /> : null}
                       {daySpecialHour ? (
                         <span className="alert-dot orange" title={`Hora especial aplicada (${formatMultiplier(daySpecialHour.multiplier)})`} />
@@ -73,7 +73,7 @@ export function MonthlyHoursReviewGrid({ grid, period }: { grid: EmployeeTimeGri
                 );
               })}
               <td>
-                <b>{formatHours(row.totalMinutes / 60)}</b>
+                <b>{formatDurationMinutes(row.totalMinutes)}</b>
               </td>
             </tr>
           ))}

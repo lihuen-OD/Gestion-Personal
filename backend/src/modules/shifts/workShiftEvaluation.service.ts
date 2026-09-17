@@ -85,6 +85,43 @@ function closestOccurrence(actualAt: Date, startTime: string) {
   return candidates[0]!;
 }
 
+export interface OutOfShiftWorkdayResult {
+  evaluated: boolean;
+  outsideShift: boolean;
+  overlapMinutes: number | null;
+  scheduledStartAt: Date | null;
+  scheduledEndAt: Date | null;
+}
+
+// Etapa 15M.7D: compara intervalos reales semicerrados [inicio, fin). Sólo
+// un turno propio HABILITADO constituye una referencia válida. Tocar el
+// límite (por ejemplo, comenzar exactamente cuando termina el turno) da
+// cero solapamiento.
+export function evaluateOutOfShiftWorkday(input: {
+  match: ShiftMatchResult;
+  actualStartAt: Date;
+  actualEndAt: Date;
+}): OutOfShiftWorkdayResult {
+  if (input.match.case !== "ENABLED" || !input.match.template) {
+    return { evaluated: false, outsideShift: false, overlapMinutes: null, scheduledStartAt: null, scheduledEndAt: null };
+  }
+
+  const scheduledStartAt = closestOccurrence(input.actualStartAt, input.match.template.startTime).scheduledAt;
+  const scheduledEndAt = scheduledInstantForShiftTime(scheduledStartAt, input.match.template.endTime, input.match.template.crossesMidnight);
+  const overlapMilliseconds = Math.max(
+    0,
+    Math.min(input.actualEndAt.getTime(), scheduledEndAt.getTime()) - Math.max(input.actualStartAt.getTime(), scheduledStartAt.getTime()),
+  );
+
+  return {
+    evaluated: true,
+    outsideShift: overlapMilliseconds === 0,
+    overlapMinutes: Math.floor(overlapMilliseconds / 60_000),
+    scheduledStartAt,
+    scheduledEndAt,
+  };
+}
+
 // Etapa 13A: turnos propios del empleado (asignación aplicable ese día) SIEMPRE
 // ganan como referencia — sin ventana de tolerancia que los excluya. Antes de
 // esta etapa, esta función descartaba el turno propio si la diferencia caía
@@ -280,13 +317,10 @@ export interface OpenShiftRiskResult {
  * Fix: usar el mismo default ya establecido para "jornada larga"
  * (`DEFAULT_MAXIMUM_INFORMATIVE_MINUTES`, el que ya usa JORNADA_EXTENDIDA
  * cuando no hay turno) como umbral de aviso temprano por defecto.
- * `suppressMissingOutDefault` (true cuando el régimen vigente tiene
- * `alertOnOutOfShift=false`, resuelto por el llamador) apaga sólo este
- * default — nunca un umbral explícito ya configurado en un turno real — para
- * no reintroducir ruido en empleados de régimen flexible/cosecha, que son
- * justamente los que más probablemente no tienen turno asignado.
+ * Etapa 15M.7C: este control es universal. La obligación de cumplir un turno
+ * no altera el riesgo de que una jornada haya quedado abierta.
  */
-export function evaluateOpenShiftRisk(input: { startAt: Date; now: Date; template: ShiftTemplateRef | null; suppressMissingOutDefault?: boolean }): OpenShiftRiskResult {
+export function evaluateOpenShiftRisk(input: { startAt: Date; now: Date; template: ShiftTemplateRef | null }): OpenShiftRiskResult {
   const minutesOpen = differenceInMinutes(input.now, input.startAt);
   const absoluteLimitMinutes = input.template?.absoluteOpenShiftLimitMinutes ?? DEFAULT_ABSOLUTE_OPEN_SHIFT_LIMIT_MINUTES;
 
@@ -296,7 +330,7 @@ export function evaluateOpenShiftRisk(input: { startAt: Date; now: Date; templat
   if (input.template && input.template.missingOutAlertAfterMinutes !== null && expectedExitAt) {
     const expectedMinutesToExit = differenceInMinutes(expectedExitAt, input.startAt);
     missingOutThresholdMinutes = expectedMinutesToExit + input.template.exitToleranceAfterMinutes + input.template.missingOutAlertAfterMinutes;
-  } else if (!input.suppressMissingOutDefault) {
+  } else {
     missingOutThresholdMinutes = DEFAULT_MAXIMUM_INFORMATIVE_MINUTES;
   }
 

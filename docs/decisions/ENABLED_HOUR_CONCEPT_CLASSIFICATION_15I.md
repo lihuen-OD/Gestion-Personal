@@ -1,5 +1,12 @@
 # Etapa 15I — Clasificación de segmentos sólo por conceptos habilitados del empleado
 
+> Estado histórico: las referencias de este documento a huecos
+> `SIN_CONCEPTO_COMPATIBLE` como hallazgos y a la política 13D quedaron
+> supersedidas por 15M.7A (`SHIFT_SEGMENT_NORMAL_FALLBACK_15M7A.md`). Esos
+> huecos son hoy Hora normal neutral y no producen nuevas
+> `SEGMENTO_SIN_CLASIFICAR`. La elegibilidad por `loadMode` fue alineada en
+> 15M.7B (`MOTOR_A_LOAD_MODE_ALIGNMENT_15M7B.md`).
+
 Fecha: 2026-09-15
 Estado: implementado, validado, pendiente de aprobación para commitear
 Continúa: `docs/decisions/SHIFT_SEGMENT_UNCLASSIFIED_POLICY_13D.md` (misma familia de problema, resuelto entonces sólo para `SEGMENTO_SIN_CLASIFICAR`), auditoría 15H (read-only, sin archivo propio — quedó documentada como respuesta de esa conversación)

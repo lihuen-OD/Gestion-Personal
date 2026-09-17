@@ -39,6 +39,7 @@ const TYPE_LABELS: Record<ShiftAlertType, string> = {
   POSIBLE_OLVIDO_SALIDA: "Posible olvido de salida",
   CONCEPTO_NO_HABILITADO: "Concepto no habilitado",
   SEGMENTO_SIN_CLASIFICAR: "Segmento sin clasificar",
+  JORNADA_FUERA_DE_TURNO: "Jornada fuera de turno",
 };
 
 const SEVERITY_TONE: Record<ShiftAlertSeverity, "neutral" | "warning" | "danger"> = {
@@ -92,6 +93,7 @@ function differenceLabel(alert: ShiftAlert) {
 //   explícitamente y ninguno es, en la práctica, la alerta más relevante de
 //   un grupo real.
 const GROUP_MAIN_ALERT_PRIORITY: ShiftAlertType[] = [
+  "JORNADA_FUERA_DE_TURNO",
   "POSIBLE_OLVIDO_SALIDA",
   "CONCEPTO_NO_HABILITADO",
   "JORNADA_EXTENDIDA",

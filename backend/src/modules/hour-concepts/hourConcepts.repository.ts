@@ -87,12 +87,21 @@ export const hourConceptsRepository = {
     return prisma.hourConcept.update({ where: { id }, data });
   },
 
-  // Clasificación automática de jornadas (etapa de Turnos V1): reglas de
-  // aplicación de concepto activas, con el nombre del concepto ya
-  // denormalizado para no repetir el join en cada segmento clasificado.
+  // Clasificación automática de jornadas (Motor A): devuelve exclusivamente
+  // reglas activas de conceptos que también son elegibles para automatización.
+  // Etapa 15M.7B: el mismo universo funcional que Motor B respecto de
+  // status/deletedAt/loadMode; la habilitación por empleado se intersecta
+  // después en classifySegmentsForEmployee (Etapa 15I).
   async findActiveRules() {
     const rules = await prisma.hourConceptRule.findMany({
-      where: { status: "ACTIVO", hourConcept: { status: "ACTIVO" } },
+      where: {
+        status: "ACTIVO",
+        hourConcept: {
+          status: "ACTIVO",
+          deletedAt: null,
+          loadMode: { in: ["AUTOMATIC", "BOTH"] },
+        },
+      },
       include: { hourConcept: { select: { name: true } } },
     });
     return rules.map((rule) => ({
@@ -112,21 +121,6 @@ export const hourConceptsRepository = {
       select: { hourConceptId: true },
     });
     return new Set(enabled.map((row) => row.hourConceptId));
-  },
-
-  // Etapa 13D: ¿tiene el empleado al menos un concepto horario ADICIONAL
-  // habilitado? (cualquiera que no sea la Hora Normal base). systemRole es
-  // @unique en HourConcept -- NORMAL_BASE es el único valor posible del
-  // enum, así que systemRole:null identifica sin ambigüedad "es un concepto
-  // adicional", sin depender de ningún id conocido de antemano. Usado para
-  // decidir si SEGMENTO_SIN_CLASIFICAR debe notificar a RRHH -- ver
-  // docs/decisions/SHIFT_SEGMENT_UNCLASSIFIED_POLICY_13D.md.
-  async findHasAdditionalConceptEnabled(employeeId: string): Promise<boolean> {
-    const additional = await prisma.employeeHourConcept.findFirst({
-      where: { employeeId, hourConcept: { status: "ACTIVO", systemRole: null } },
-      select: { employeeId: true },
-    });
-    return additional !== null;
   },
 
   // Empleados habilitados para un concepto (Etapa 8G) — EmployeeHourConcept es

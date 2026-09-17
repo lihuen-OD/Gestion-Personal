@@ -340,8 +340,8 @@ function shiftMinutes(startAt: Date, endAt: Date) {
 
 // Clasificación automática multi-concepto (etapa de Turnos V1): parte cada
 // tramo de día (ya resuelto por buildShiftSegments, sin duplicar esa lógica)
-// por HourConceptRule activas. Compatibilidad hacia atrás: si no hay ninguna
-// regla activa en el sistema, classifyWorkShiftSegments devuelve exactamente
+// por HourConceptRule automáticamente elegibles. Compatibilidad hacia atrás:
+// si no hay ninguna regla candidata, classifyWorkShiftSegments devuelve
 // el mismo tramo con conceptStatus "MANUAL" y el concepto por defecto — el
 // comportamiento es idéntico al de antes de esta etapa.
 type ClassifiedSegment = ClassifiedSegmentForPersistence & {
@@ -358,9 +358,13 @@ async function classifySegmentsForEmployee(
     hourConceptsRepository.findActiveRules(),
     hourConceptsRepository.findEnabledConceptIds(employeeId),
   ]);
+  // Etapa 15M.7B: findActiveRules ya excluye conceptos MANUAL, inactivos o
+  // eliminados y reglas inactivas. Este segundo filtro preserva 15I: aun una
+  // regla AUTOMATIC/BOTH válida no compite si el empleado no tiene habilitado
+  // ese concepto. Sin candidatos, 15M.7A mantiene Hora normal sin alerta.
   // Etapa 15I (docs/decisions/ENABLED_HOUR_CONCEPT_CLASSIFICATION_15I.md):
-  // activeRules es global (todas las HourConceptRule activas del sistema,
-  // de cualquier concepto y de cualquier empleado) — antes se pasaba tal
+  // activeRules es global (todas las HourConceptRule automáticamente elegibles,
+  // de cualquier empleado) — antes se pasaba tal
   // cual al clasificador, que recién revisaba enabledHourConceptIds DESPUÉS
   // de elegir un "ganador" por horario, generando CONCEPTO_NO_HABILITADO
   // para cualquier tramo que matcheara la regla de un concepto que este

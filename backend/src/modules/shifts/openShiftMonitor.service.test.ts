@@ -158,18 +158,22 @@ describe("checkMissingOutRisk — Etapa 10E (hallazgo central: empleado sin turn
     );
   });
 
-  it("empleado sin turno con régimen alertOnOutOfShift=false (cosecha/flexible) NO genera la alerta por el default — evita reintroducir ruido en jornadas largas legítimas", async () => {
+  it("empleado sin turno con régimen flexible conserva POSIBLE_OLVIDO_SALIDA como control universal", async () => {
     mockedPrisma.workShift.findMany.mockResolvedValue([
       { id: "shift-cosecha", employeeId: "emp-2", startAt: at(0, 0, 10), shiftTemplate: null },
     ]);
     mockedPrisma.employeeWorkRegime.findFirst.mockResolvedValue({
       workRegime: { kind: "TURNO_FLEXIBLE", alertOnOutOfShift: false, openShiftOverflowAction: "ROLLOVER", extendedShiftAlertMinutes: null },
     });
+    mockedPrisma.shiftAlert.findUnique.mockResolvedValue(null);
 
     const result = await checkMissingOutRisk(at(10, 30, 10)); // 10h30 abierto, hubiera generado MISSING_OUT sin régimen
 
-    expect(result.created).toBe(0);
-    expect(mockedCreateShiftAlert).not.toHaveBeenCalled();
+    expect(result.created).toBe(1);
+    expect(mockedCreateShiftAlert).toHaveBeenCalledWith(
+      expect.objectContaining({ employeeId: "emp-2", workShiftId: "shift-cosecha", type: "POSIBLE_OLVIDO_SALIDA" }),
+    );
+    expect(mockedPrisma.employeeWorkRegime.findFirst).not.toHaveBeenCalled();
   });
 
   it("empleado sin turno con régimen alertOnOutOfShift=true (explícito) sigue generando la alerta por el default", async () => {

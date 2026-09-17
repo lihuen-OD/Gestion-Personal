@@ -390,3 +390,72 @@ describe("Etapa 15I — sólo conceptos habilitados llegan como reglas candidata
     }
   });
 });
+
+describe("Etapa 15M.7A — el fallback es Hora normal sin alerta", () => {
+  const rule = (id: string, concept: string, startTime: string, endTime: string): HourConceptRuleRef => ({
+    id,
+    hourConceptId: concept,
+    hourConceptName: concept,
+    startTime,
+    endTime,
+    crossesMidnight: false,
+    priority: 0,
+  });
+
+  it("Caso A: 08:59–11:20 conserva 141 min normales y detecta 120 min de Prueba", () => {
+    const result = classifyShiftInterval({
+      startAt: art(DAY, "08:59"),
+      endAt: art(DAY, "11:20"),
+      activeRules: [rule("rule-prueba", "Prueba", "09:00", "11:00")],
+      enabledHourConceptIds: new Set(["Prueba"]),
+      fallbackHourConcept: FALLBACK,
+    });
+
+    expect(sumClassifiedMinutes(result)).toBe(141);
+    expect(result.filter((segment) => segment.hourConceptId === "Prueba").reduce((sum, segment) => sum + segment.minutes, 0)).toBe(120);
+    expect(result.filter((segment) => segment.hourConceptId === FALLBACK.id).map((segment) => segment.minutes)).toEqual([1, 20]);
+  });
+
+  it("Caso B: una regla 10:00–12:00 deja 07–10 y 12–15 como Hora normal legítima", () => {
+    const result = classifyShiftInterval({
+      startAt: art(DAY, "07:00"),
+      endAt: art(DAY, "15:00"),
+      activeRules: [rule("rule-extra", "Extra", "10:00", "12:00")],
+      enabledHourConceptIds: new Set(["Extra"]),
+      fallbackHourConcept: FALLBACK,
+    });
+
+    expect(result.map(({ hourConceptId, minutes }) => ({ hourConceptId, minutes }))).toEqual([
+      { hourConceptId: FALLBACK.id, minutes: 180 },
+      { hourConceptId: "Extra", minutes: 120 },
+      { hourConceptId: FALLBACK.id, minutes: 180 },
+    ]);
+    expect(sumClassifiedMinutes(result)).toBe(480);
+  });
+
+  it("Caso C: huecos entre varios conceptos adicionales permanecen en Hora normal", () => {
+    const result = classifyShiftInterval({
+      startAt: art(DAY, "07:00"),
+      endAt: art(DAY, "15:00"),
+      activeRules: [rule("rule-a", "A", "08:00", "09:00"), rule("rule-b", "B", "12:00", "13:30")],
+      enabledHourConceptIds: new Set(["A", "B"]),
+      fallbackHourConcept: FALLBACK,
+    });
+
+    expect(result.filter((segment) => segment.hourConceptId === FALLBACK.id).reduce((sum, segment) => sum + segment.minutes, 0)).toBe(330);
+    expect(sumClassifiedMinutes(result)).toBe(480);
+  });
+
+  it("Caso D: si ninguna regla habilitada coincide, toda la jornada queda en Hora normal", () => {
+    const result = classifyShiftInterval({
+      startAt: art(DAY, "07:00"),
+      endAt: art(DAY, "15:00"),
+      activeRules: [rule("rule-night", "Nocturno", "21:00", "23:00")],
+      enabledHourConceptIds: new Set(["Nocturno"]),
+      fallbackHourConcept: FALLBACK,
+    });
+
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({ hourConceptId: FALLBACK.id, minutes: 480, conceptStatus: "SIN_CONCEPTO_COMPATIBLE" });
+  });
+});

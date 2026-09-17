@@ -1,5 +1,10 @@
 # Etapa 15M.2 — Sincronización automática Asistencia → Carga Horaria
 
+> Estado histórico: el gap documentado aquí donde Motor A podía sugerir un
+> concepto `MANUAL` fue cerrado por 15M.7B. La política vigente admite en la
+> clasificación automática únicamente conceptos `AUTOMATIC` o `BOTH` activos,
+> no eliminados y habilitados para el empleado.
+
 Fecha: 2026-09-17
 Estado: implementado, pendiente de aprobación para commitear
 Continúa: `docs/decisions/ATTENDANCE_HOURS_GRID_SYNC_AUDIT_15M1.md` (auditoría read-only previa, sin archivo propio — quedó documentada como respuesta de esa conversación), `docs/decisions/CONCEPTOS_HORARIOS_ADITIVOS.md` (Etapa 6I/6J/6L.4), `docs/decisions/ENABLED_HOUR_CONCEPT_CLASSIFICATION_15I.md`, `docs/decisions/TIME_CLOSURE_CONSISTENCY_15E.md`

@@ -79,6 +79,26 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
+// Etapa 15M.5 (docs/decisions/HUMAN_DURATION_FORMAT_15M5.md): el KPI "Horas
+// cargadas" interpolaba `metrics.loadedHours` crudo (`${metrics.loadedHours} h`)
+// — un decimal técnico sin formatear, nunca una duración humana. 2.35 horas
+// decimales NO son "2h 35min", son 2h 21min (0.35 * 60 = 21).
+describe("DashboardPage — KPI 'Horas cargadas' muestra duración humana (Etapa 15M.5)", () => {
+  it("2.35 horas decimales se muestran como '2 h 21 min', nunca como '2.35 h'", async () => {
+    authAsRrhh();
+    vi.mocked(dashboardMetricsApiService.getMetrics).mockResolvedValue({ ...baseMetrics, loadedHours: 2.35 });
+    vi.mocked(dashboardMetricsApiService.getAudit).mockResolvedValue([]);
+
+    renderPage();
+
+    // Aparece dos veces (la tarjeta KPI y el resumen compacto de "Control de
+    // carga horaria") — ambas deben coincidir en el mismo formato humano.
+    await screen.findByText("42");
+    expect(screen.getAllByText("2 h 21 min").length).toBeGreaterThanOrEqual(1);
+    expect(screen.queryByText(/2\.35/)).not.toBeInTheDocument();
+  });
+});
+
 // Etapa 14F.2: antes, metrics y audit compartían un único estado `status` —
 // si /audit tardaba o fallaba, las KPI cards (que no dependen de audit)
 // quedaban esperando o se rompían junto con él. Ver docs/decisions/

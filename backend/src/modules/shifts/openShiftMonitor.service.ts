@@ -1,18 +1,11 @@
 import { WorkShiftStatus } from "@prisma/client";
 import { prisma } from "../../shared/prisma/client";
-import { resolveActiveWorkRegime } from "../work-regimes/workRegimes.service";
 import { evaluateOpenShiftRisk, type OpenShiftRiskResult } from "./workShiftEvaluation.service";
 import { createShiftAlert, toTemplateRef } from "./workShiftEvaluationRunner";
 import type { ShiftTemplateLike } from "./shiftTemplateRef.types";
 
-// `suppressMissingOutDefault` es opcional a propósito (Etapa 10E): el
-// llamador de attendanceSummary (timeEntries.service.ts) sigue sin pasarlo,
-// así que el ranking de riesgo que ve Asistencia no cambia — es un indicador
-// operativo de "hace cuánto está abierta esta jornada", no una decisión de
-// alertar, y no depende del régimen. Sólo checkMissingOutRisk (que sí decide
-// si crear un ShiftAlert) lo resuelve y lo pasa.
-export function computeOpenShiftRisk(startAt: Date, shiftTemplate: ShiftTemplateLike | null, now: Date, suppressMissingOutDefault?: boolean): OpenShiftRiskResult {
-  return evaluateOpenShiftRisk({ startAt, now, template: shiftTemplate ? toTemplateRef(shiftTemplate) : null, suppressMissingOutDefault });
+export function computeOpenShiftRisk(startAt: Date, shiftTemplate: ShiftTemplateLike | null, now: Date): OpenShiftRiskResult {
+  return evaluateOpenShiftRisk({ startAt, now, template: shiftTemplate ? toTemplateRef(shiftTemplate) : null });
 }
 
 const RISK_RANK: Record<OpenShiftRiskResult["level"], number> = {
@@ -33,16 +26,11 @@ export async function checkMissingOutRisk(now: Date) {
     include: { shiftTemplate: true },
   });
 
-  // Etapa 10E: resuelve el régimen vigente de cada jornada abierta para
-  // decidir si corresponde suprimir el default de "olvido de salida" sin
-  // turno (mismo criterio que isOutOfShiftAlertSuppressed en
-  // workShiftEvaluationRunner.ts — alertOnOutOfShift=false lo suprime).
-  const regimes = await Promise.all(openShifts.map((shift) => resolveActiveWorkRegime(shift.employeeId, now)));
-
   let created = 0;
-  for (const [index, shift] of openShifts.entries()) {
-    const suppressMissingOutDefault = regimes[index]?.alertOnOutOfShift === false;
-    const risk = computeOpenShiftRisk(shift.startAt, shift.shiftTemplate, now, suppressMissingOutDefault);
+  for (const shift of openShifts) {
+    // Etapa 15M.7C: controla una jornada abierta, no la obligación de turno;
+    // por eso el riesgo se evalúa para todos los regímenes.
+    const risk = computeOpenShiftRisk(shift.startAt, shift.shiftTemplate, now);
     if (risk.level !== "MISSING_OUT") continue;
 
     const existingAlert = await prisma.shiftAlert.findUnique({

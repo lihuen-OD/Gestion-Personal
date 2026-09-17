@@ -39,6 +39,20 @@ beforeEach(() => {
 });
 
 describe("ShiftAlertsPage — Etapa 10B (enum drift corregido, 10A §11.4)", () => {
+  it("muestra JORNADA_FUERA_DE_TURNO con label legible y disponible en filtros", async () => {
+    vi.mocked(shiftAlertApiService.getAll).mockResolvedValue({
+      data: [buildAlert({ type: "JORNADA_FUERA_DE_TURNO" })],
+      meta: { total: 1, pageSize: 20, hasMore: false, nextBefore: null },
+    });
+
+    renderPage();
+
+    expect(await screen.findByText("Jornada fuera de turno")).toBeInTheDocument();
+    expect(screen.queryByText("JORNADA_FUERA_DE_TURNO")).not.toBeInTheDocument();
+    const typeSelect = screen.getByLabelText("Tipo") as HTMLSelectElement;
+    expect(Array.from(typeSelect.options).map((option) => option.text)).toContain("Jornada fuera de turno");
+  });
+
   it("muestra un texto claro para CONCEPTO_NO_HABILITADO, no el enum crudo ni una celda en blanco", async () => {
     vi.mocked(shiftAlertApiService.getAll).mockResolvedValue({
       data: [buildAlert({ type: "CONCEPTO_NO_HABILITADO" })],
@@ -254,6 +268,22 @@ describe("ShiftAlertsPage — Etapa 13H (agrupación por jornada/fichada)", () =
     // "Salida tardía" sigue existiendo como opción del filtro de Tipo -- lo
     // que se verifica es que no aparece TAMBIÉN como contenido de la tabla.
     expect(screen.queryAllByText("Salida tardía")).toHaveLength(1);
+  });
+
+  it("15M.7D: Jornada fuera de turno es principal frente a duración y puntualidad", async () => {
+    vi.mocked(shiftAlertApiService.getAll).mockResolvedValue({
+      data: [
+        buildAlert({ id: "alert-extended", workShiftId: "shift-1", type: "JORNADA_EXTENDIDA" }),
+        buildAlert({ id: "alert-late", workShiftId: "shift-1", type: "INGRESO_TARDE" }),
+        buildAlert({ id: "alert-outside", workShiftId: "shift-1", type: "JORNADA_FUERA_DE_TURNO" }),
+      ],
+      meta: { total: 3, pageSize: 20, hasMore: false, nextBefore: null },
+    });
+
+    renderPage();
+
+    expect(await screen.findByText("Jornada fuera de turno")).toBeInTheDocument();
+    expect(screen.getByText("+2 hallazgos asociados")).toBeInTheDocument();
   });
 
   it("Tests obligatorios #5/#11: muestra '+1 hallazgo asociado', sin lenguaje técnico (ni workShiftId ni el enum crudo)", async () => {

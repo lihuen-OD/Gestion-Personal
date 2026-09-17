@@ -1384,6 +1384,7 @@ html,body,#root,.app-shell{
 .employee-hours-status-item.purple svg{color:var(--ds-purple-700)}
 .employee-hours-status-item.orange svg{color:var(--ds-amber-600)}
 a.employee-hours-status-item:hover{border-color:var(--ds-blue-300);background:var(--ds-blue-50)}
+.employee-hours-kpis .stat-copy strong{font-size:20px!important;letter-spacing:-.02em!important;text-overflow:clip!important}
 @media(max-width:1000px){.employee-hours-status-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
 @media(max-width:620px){.employee-hours-status-grid{grid-template-columns:1fr 1fr}}
 .table-shell{

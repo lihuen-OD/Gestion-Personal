@@ -1,5 +1,9 @@
 # Etapa 13D — Política de notificación de SEGMENTO_SIN_CLASIFICAR
 
+> Estado histórico: esta política fue reemplazada por 15M.7A. El fallback sin
+> regla adicional es Hora normal neutral; ya no se persiste ni notifica una
+> nueva `SEGMENTO_SIN_CLASIFICAR`. El tipo permanece sólo para leer históricos.
+
 Fecha: 2026-09-01
 Estado: implementado, validado, pendiente de aprobación para commitear
 Continúa: `docs/decisions/SHIFT_ALERT_RULES_AUDIT_13C.md` (hallazgo que motiva esta etapa), `docs/decisions/SHIFT_EXIT_CLASSIFICATION_13B.md` (cascada de prioridad que se reutiliza), `docs/decisions/SHIFT_ENTRY_CLASSIFICATION_13A.md`

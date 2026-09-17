@@ -3,7 +3,7 @@ import type { AttendanceSegment, AttendanceSegmentSpecialRuleApplication, Segmen
 export const segmentConceptStatusLabels: Record<SegmentConceptStatus, string> = {
   SUGERIDO: "Sugerido por sistema",
   MANUAL: "Manual",
-  SIN_CONCEPTO_COMPATIBLE: "Sin concepto compatible",
+  SIN_CONCEPTO_COMPATIBLE: "Sin concepto adicional",
   CONCEPTO_NO_HABILITADO: "Concepto no habilitado",
 };
 
@@ -11,15 +11,13 @@ export function segmentConceptStatusLabel(status: SegmentConceptStatus) {
   return segmentConceptStatusLabels[status] || status;
 }
 
-// Mismo criterio de severidad que ya usa el backend (severityByAlertType en
-// workShiftEvaluationRunner.ts): CONCEPTO_NO_HABILITADO y
-// SEGMENTO_SIN_CLASIFICAR son las dos ADVERTENCIA, ninguna escalada a algo
-// más grave — por eso ambos estados de revisión comparten el mismo tono acá,
-// en vez de inventar una severidad más alta para uno de los dos.
+// SIN_CONCEPTO_COMPATIBLE es metadata histórica del fallback a Hora normal:
+// no expresa una anomalía. CONCEPTO_NO_HABILITADO conserva su warning para
+// datos defensivos/históricos.
 export const segmentConceptStatusTones: Record<SegmentConceptStatus, "success" | "warning" | "neutral"> = {
   SUGERIDO: "success",
   MANUAL: "neutral",
-  SIN_CONCEPTO_COMPATIBLE: "warning",
+  SIN_CONCEPTO_COMPATIBLE: "neutral",
   CONCEPTO_NO_HABILITADO: "warning",
 };
 
@@ -30,7 +28,7 @@ export function segmentConceptStatusTone(status: SegmentConceptStatus) {
 export const segmentConceptStatusMessages: Record<SegmentConceptStatus, string> = {
   SUGERIDO: "Clasificado automáticamente según reglas horarias configuradas.",
   MANUAL: "Clasificación manual.",
-  SIN_CONCEPTO_COMPATIBLE: "El sistema no encontró una regla horaria compatible para este tramo. Requiere revisión de RRHH.",
+  SIN_CONCEPTO_COMPATIBLE: "Hora normal sin concepto adicional aplicado.",
   CONCEPTO_NO_HABILITADO: "El sistema detectó un concepto posible, pero el empleado no lo tiene habilitado. Requiere revisión.",
 };
 
@@ -45,7 +43,7 @@ export type SegmentReviewState = "REQUIRES_REVIEW" | "OK" | "UNKNOWN";
 // "requiere revisión" a partir de un dato que no llegó.
 export function getSegmentReviewState(conceptStatus: SegmentConceptStatus | undefined): SegmentReviewState {
   if (!conceptStatus) return "UNKNOWN";
-  if (conceptStatus === "SIN_CONCEPTO_COMPATIBLE" || conceptStatus === "CONCEPTO_NO_HABILITADO") return "REQUIRES_REVIEW";
+  if (conceptStatus === "CONCEPTO_NO_HABILITADO") return "REQUIRES_REVIEW";
   return "OK";
 }
 
@@ -75,11 +73,11 @@ export function formatMinutesDuration(minutes: number | null | undefined): strin
 }
 
 // hourConceptRuleId presente -> una HourConceptRule disparó la clasificación
-// (ver módulo de Reglas horarias, Etapa 8C). null/undefined -> manual o sin
-// regla que matcheara. Nunca se muestra el id crudo (no es accionable para
-// RRHH); solo si hubo o no una regla detrás.
+// (ver módulo de Reglas horarias, Etapa 8C). null/undefined -> no se aplicó
+// una regla adicional (puede ser manual o fallback normal). Nunca se muestra
+// el id crudo, que no es accionable para RRHH.
 export function describeHourConceptRule(hourConceptRuleId: string | null | undefined): string {
-  return hourConceptRuleId ? "Regla horaria aplicada" : "Sin regla horaria (manual)";
+  return hourConceptRuleId ? "Regla horaria aplicada" : "Sin regla adicional aplicada";
 }
 
 // Desde la Etapa 8F, specialHourRuleApplications sí llega (select unificado

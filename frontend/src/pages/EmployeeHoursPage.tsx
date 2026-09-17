@@ -17,9 +17,9 @@ import { noveltyColorClass } from "../utils/noveltyColor";
 import { calendarDaysInclusive } from "../utils/noveltyDateRange";
 import { displayLegajo, fullName } from "../utils/employee";
 import { currentMonthPeriod, formatPeriodDay, formatPeriodLabel, getMonthDays, getWeekdayAbbr, monthDate } from "../utils/period";
-import { formatHours } from "../utils/hours";
+import { formatDurationMinutes, hoursDecimalToMinutes } from "../utils/hours";
 import {
-  additionalBreakdownHours,
+  additionalBreakdownMinutes,
   applyBreakdownToRows,
   applyNormalEntryToRows,
   hourConceptLoadModeLabel,
@@ -460,8 +460,8 @@ export function EmployeeHoursPage() {
       </Section>
     );
   }
-  const total = totalWorkedMinutesFromRows(rows) / 60;
-  const additionalTotal = additionalBreakdownHours(rows);
+  const totalMinutes = totalWorkedMinutesFromRows(rows);
+  const additionalTotalMinutes = additionalBreakdownMinutes(rows);
   const daysWithNormalHours = normalWorkedDays(rows);
   const exportableNovelties = periodNovelties.filter(
     (novelty) =>
@@ -510,11 +510,11 @@ export function EmployeeHoursPage() {
         </div>
       </div>
 
-      <div className={specialHours.additionalMinutes > 0 ? "stat-grid five" : "stat-grid"}>
-        <StatCard label="Horas trabajadas" value={`${formatHours(total)} h`} icon={Clock3} />
+      <div className={specialHours.additionalMinutes > 0 ? "stat-grid five employee-hours-kpis" : "stat-grid employee-hours-kpis"}>
+        <StatCard label="Horas trabajadas" value={formatDurationMinutes(totalMinutes)} icon={Clock3} />
         <StatCard
           label="Desgloses adicionales"
-          value={`${formatHours(additionalTotal)} h`}
+          value={formatDurationMinutes(additionalTotalMinutes)}
           icon={AlertTriangle}
           tone="orange"
         />
@@ -533,8 +533,8 @@ export function EmployeeHoursPage() {
         {specialHours.additionalMinutes > 0 ? (
           <StatCard
             label="Valor liquidable"
-            value={`${formatHours(specialHours.liquidableTotalMinutes / 60)} h`}
-            detail={`Incluye Hora especial: +${formatHours(specialHours.additionalMinutes / 60)} h`}
+            value={formatDurationMinutes(specialHours.liquidableTotalMinutes)}
+            detail={`Incluye Hora especial: +${formatDurationMinutes(specialHours.additionalMinutes)}`}
             icon={Coins}
             tone="green"
           />
@@ -612,7 +612,7 @@ export function EmployeeHoursPage() {
                             title={novelties.map((novelty) => novelty.type).join(", ")}
                             onClick={() => openCell(day, row.concept.id, row.concept.name, entry)}
                           >
-                            <span>{entry?.hours ?? (isBlocked(day) ? "0" : "+")}</span>
+                            <span>{entry ? formatDurationMinutes(entry.totalMinutes ?? hoursDecimalToMinutes(entry.hours)) : isBlocked(day) ? "0 h" : "+"}</span>
                             {mainNovelty ? <small>{mainNovelty.type.slice(0, 3)}</small> : null}
                             {specialHourDot}
                           </button>
@@ -627,12 +627,12 @@ export function EmployeeHoursPage() {
                               setManualError("");
                             }}
                           >
-                            {breakdownMinutes ? formatHours(breakdownMinutes / 60) : "+"}
+                            {breakdownMinutes ? formatDurationMinutes(breakdownMinutes) : "+"}
                             {specialHourDot}
                           </button>
                         ) : (
                           <span className={cellClass} title={`${hourConceptLoadModeLabel(row.concept.loadMode)} · solo lectura`}>
-                            {breakdownMinutes ? formatHours(breakdownMinutes / 60) : "—"}
+                            {breakdownMinutes ? formatDurationMinutes(breakdownMinutes) : "—"}
                             {specialHourDot}
                           </span>
                         )}
@@ -640,7 +640,7 @@ export function EmployeeHoursPage() {
                     );
                   })}
                   <td>
-                    <b>{formatHours(row.totalMinutes / 60)}</b>
+                    <b>{formatDurationMinutes(row.totalMinutes)}</b>
                   </td>
                 </tr>
               ))}
@@ -663,7 +663,7 @@ export function EmployeeHoursPage() {
               <div className="info-note compact special-hour">
                 <b>Hora especial aplicada · Multiplicador {formatMultiplier(manualDaySpecialHour.multiplier)}{manualDaySpecialHour.ruleNames.length ? `: ${manualDaySpecialHour.ruleNames.join(", ")}` : ""}</b>
                 <p>
-                  Este concepto también queda alcanzado ese día. Valor liquidable del día: {formatHours(manualDaySpecialHour.liquidableTotalMinutes / 60)} h
+                  Este concepto también queda alcanzado ese día. Valor liquidable del día: {formatDurationMinutes(manualDaySpecialHour.liquidableTotalMinutes)}
                   {manualDaySpecialHour.conflict ? " · Hay más de una regla en conflicto — se aplicó la de mayor prioridad." : ""}
                 </p>
               </div>
@@ -718,8 +718,8 @@ export function EmployeeHoursPage() {
               <div className="info-note compact special-hour">
                 <b>Hora especial aplicada · Multiplicador {formatMultiplier(selectedDaySpecialHour.multiplier)}{selectedDaySpecialHour.ruleNames.length ? `: ${selectedDaySpecialHour.ruleNames.join(", ")}` : ""}</b>
                 <p>
-                  Horas reales sin cambios. Valor liquidable del día: {formatHours(selectedDaySpecialHour.liquidableTotalMinutes / 60)} h
-                  (adicional +{formatHours(selectedDaySpecialHour.additionalMinutes / 60)} h)
+                  Horas reales sin cambios. Valor liquidable del día: {formatDurationMinutes(selectedDaySpecialHour.liquidableTotalMinutes)}
+                  (adicional +{formatDurationMinutes(selectedDaySpecialHour.additionalMinutes)})
                   {selectedDaySpecialHour.conflict ? " · Hay más de una regla en conflicto — se aplicó la de mayor prioridad." : ""}
                 </p>
               </div>

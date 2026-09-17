@@ -124,3 +124,55 @@ describe("WorkRegimesPage — Etapa 10D (alerta de jornada extendida)", () => {
     expect(workRegimeApiService.update).toHaveBeenCalledWith("regime-1", expect.objectContaining({ extendedShiftAlertMinutes: 720 }));
   });
 });
+
+describe("WorkRegimesPage — Etapa 15M.7C.1 (política de turno por kind)", () => {
+  it("oculta la opción de alerta para TURNO_FLEXIBLE y explica que no requiere turno fijo", async () => {
+    vi.mocked(workRegimeApiService.getAll).mockResolvedValue({ items: [], meta: { total: 0, page: 1, pageSize: 200, hasMore: false } });
+    const user = userEvent.setup();
+    render(<WorkRegimesPage />);
+
+    await user.click(screen.getByRole("button", { name: "Crear régimen" }));
+
+    expect(screen.getByText("Este régimen no requiere un turno fijo.")).toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: "Alertar si el empleado no tiene turno compatible" })).not.toBeInTheDocument();
+  });
+
+  it("muestra y activa el control al seleccionar TURNO_OBLIGATORIO", async () => {
+    vi.mocked(workRegimeApiService.getAll).mockResolvedValue({ items: [], meta: { total: 0, page: 1, pageSize: 200, hasMore: false } });
+    const user = userEvent.setup();
+    render(<WorkRegimesPage />);
+
+    await user.click(screen.getByRole("button", { name: "Crear régimen" }));
+    await user.selectOptions(screen.getByLabelText("Tipo de régimen"), "TURNO_OBLIGATORIO");
+
+    expect(screen.getByRole("checkbox", { name: "Alertar si el empleado no tiene turno compatible" })).toBeChecked();
+    expect(screen.queryByText("Este régimen no requiere un turno fijo.")).not.toBeInTheDocument();
+  });
+
+  it("al volver de TURNO_OBLIGATORIO a SIN_TURNO envía alertOnOutOfShift=false", async () => {
+    vi.mocked(workRegimeApiService.getAll).mockResolvedValue({ items: [], meta: { total: 0, page: 1, pageSize: 200, hasMore: false } });
+    vi.mocked(workRegimeApiService.create).mockResolvedValue(buildRegime({ kind: "SIN_TURNO" }));
+    const user = userEvent.setup();
+    render(<WorkRegimesPage />);
+
+    await user.click(screen.getByRole("button", { name: "Crear régimen" }));
+    await user.type(screen.getByLabelText("Código *"), "LIBRE");
+    await user.type(screen.getByLabelText("Nombre *"), "Libre");
+    await user.selectOptions(screen.getByLabelText("Tipo de régimen"), "TURNO_OBLIGATORIO");
+    await user.selectOptions(screen.getByLabelText("Tipo de régimen"), "SIN_TURNO");
+    await user.click(screen.getByRole("button", { name: "Guardar régimen" }));
+
+    await vi.waitFor(() => expect(workRegimeApiService.create).toHaveBeenCalledWith(expect.objectContaining({ kind: "SIN_TURNO", alertOnOutOfShift: false })));
+  });
+
+  it("renderiza No aplica para datos históricos contradictorios de un kind sin turno", async () => {
+    vi.mocked(workRegimeApiService.getAll).mockResolvedValue({
+      items: [buildRegime({ kind: "SIN_TURNO", alertOnOutOfShift: true })],
+      meta: { total: 1, page: 1, pageSize: 200, hasMore: false },
+    });
+    render(<WorkRegimesPage />);
+
+    expect(await screen.findByText("No aplica")).toBeInTheDocument();
+    expect(screen.queryByText("Sí")).not.toBeInTheDocument();
+  });
+});
