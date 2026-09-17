@@ -79,7 +79,7 @@ describe("MonthlyHoursReviewGrid — Etapa 15K", () => {
     const serenoRow = rows.find((row) => within(row).queryByText("Sereno"));
     expect(serenoRow).toBeTruthy();
     const cells = within(serenoRow!).getAllByRole("cell");
-    expect(cells[cells.length - 1]).toHaveTextContent("6 h");
+    expect(cells[cells.length - 1]).toHaveTextContent("6h");
   });
 
   it("maneja un día sin horas mostrando un guion, sin romper", () => {
@@ -109,6 +109,22 @@ describe("MonthlyHoursReviewGrid — Etapa 15K", () => {
   it("es read-only: no expone ningún botón dentro de la grilla", () => {
     const { container } = render(<MonthlyHoursReviewGrid grid={buildGrid()} period="2026-08" />);
     expect(container.querySelectorAll("button")).toHaveLength(0);
+  });
+
+  it("usa duración compacta legible para valores de más de 10 y 24 horas", () => {
+    const rows = buildRows(1612);
+    rows[0].minutesByDay = { "1": 760 };
+    rows[0].totalMinutes = 760;
+    render(<MonthlyHoursReviewGrid grid={buildGrid({ rows })} period="2026-08" />);
+    expect(screen.getAllByText("12h 40m")).toHaveLength(2);
+    expect(screen.getAllByText("26h 52m")).toHaveLength(2);
+    expect(screen.queryByText(/12\.67|26\.87/)).not.toBeInTheDocument();
+  });
+
+  it("expone el contenedor horizontal y la tabla mensual mediante clases estables", () => {
+    const { container } = render(<MonthlyHoursReviewGrid grid={buildGrid()} period="2026-08" />);
+    expect(container.querySelector(".hours-grid.monthly-concept-grid[tabindex='0']")).toBeInTheDocument();
+    expect(container.querySelector("table.monthly-concept-table")).toBeInTheDocument();
   });
 
   it("muestra un mensaje de vacío en vez de una tabla cuando no hay filas", () => {

@@ -176,7 +176,7 @@ function ShiftRows({ items, emptyText, showSegments = false, showRisk = false, o
             </td>
             <td>{formatDurationMinutes(shift.workedMinutes || shift.totalMinutes)}</td>
             <td>{sourceLabel(shift.source)}</td>
-            {showRisk && <td>{shift.shiftTemplate ? `${shift.shiftTemplate.code} · ${shift.shiftTemplate.name}` : <em>Sin turno</em>}</td>}
+            {showRisk && <td>{shift.shiftTemplate ? shift.shiftTemplate.name : <em>Sin turno</em>}</td>}
             {showRisk && <td>{formatDateTime(shift.risk?.expectedExitAt)}</td>}
             <td><Badge tone={statusTone(shift.status)}>{shift.status.replace(/_/g, " ")}</Badge></td>
             {showRisk && <td>{shift.risk ? <Badge tone={RISK_TONE[shift.risk.level]}>{RISK_LABEL[shift.risk.level]}</Badge> : "-"}</td>}

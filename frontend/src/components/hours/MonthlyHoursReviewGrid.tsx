@@ -2,7 +2,7 @@ import type { EmployeeTimeGrid } from "../../services/api/employeeApiService";
 import type { Novelty } from "../../types";
 import { formatMultiplier } from "../attendance/segmentDisplay";
 import { hourConceptLoadModeLabel } from "../../utils/employeeHoursGrid";
-import { formatDurationMinutes } from "../../utils/hours";
+import { formatCompactDurationMinutes, formatDurationMinutes } from "../../utils/hours";
 import { getMonthDays, getWeekdayAbbr } from "../../utils/period";
 import { EmptyState } from "../ui/EmptyState";
 
@@ -29,8 +29,8 @@ export function MonthlyHoursReviewGrid({ grid, period }: { grid: EmployeeTimeGri
   const monthDays = getMonthDays(period);
 
   return (
-    <div className="hours-grid readonly-hours-grid">
-      <table>
+    <div className="hours-grid monthly-concept-grid readonly-hours-grid" tabIndex={0} aria-label="Grilla mensual por concepto; desplazamiento horizontal disponible">
+      <table className="monthly-concept-table">
         <thead>
           <tr>
             <th>Concepto</th>
@@ -59,11 +59,13 @@ export function MonthlyHoursReviewGrid({ grid, period }: { grid: EmployeeTimeGri
                 // normal, mismo criterio que EmployeeHoursPage.
                 const dayNovelties = row.role === "NORMAL_BASE" ? noveltiesForDay(grid.novelties, day) : [];
                 const cellClass = ["hour-cell", minutes ? "filled" : ""].filter(Boolean).join(" ");
-                const title = dayNovelties.length ? dayNovelties.map((novelty) => `${novelty.type} · ${novelty.quantity}`).join(", ") : undefined;
+                const fullDuration = formatDurationMinutes(minutes);
+                const titleParts = minutes ? [fullDuration] : [];
+                if (dayNovelties.length) titleParts.push(dayNovelties.map((novelty) => `${novelty.type} · ${novelty.quantity}`).join(", "));
                 return (
                   <td key={`${row.concept.id}-${day}`}>
-                    <span className={cellClass} title={title}>
-                      <span>{minutes ? formatDurationMinutes(minutes) : "—"}</span>
+                    <span className={cellClass} title={titleParts.join(" · ") || undefined} aria-label={`${row.concept.name}, día ${day}: ${minutes ? fullDuration : "sin horas"}`}>
+                      <span>{minutes ? formatCompactDurationMinutes(minutes) : "—"}</span>
                       {dayNovelties.length ? <span className="alert-dot purple" /> : null}
                       {daySpecialHour ? (
                         <span className="alert-dot orange" title={`Hora especial aplicada (${formatMultiplier(daySpecialHour.multiplier)})`} />
@@ -73,7 +75,7 @@ export function MonthlyHoursReviewGrid({ grid, period }: { grid: EmployeeTimeGri
                 );
               })}
               <td>
-                <b>{formatDurationMinutes(row.totalMinutes)}</b>
+                <b title={formatDurationMinutes(row.totalMinutes)}>{formatCompactDurationMinutes(row.totalMinutes)}</b>
               </td>
             </tr>
           ))}

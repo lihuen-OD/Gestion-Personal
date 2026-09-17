@@ -2143,8 +2143,13 @@ export const timeEntriesRepository = {
         // §3.9) — todos los tramos de una misma fecha comparten exactamente
         // el mismo `multiplier`/`matchedRules`, así que sobreescribir acá es
         // seguro y equivalente a calcularlo una sola vez por fecha.
+        const workedHours = Math.floor(segment.minutes / 60);
+        const remainingMinutes = segment.minutes % 60;
+        const workedDuration = workedHours > 0
+          ? `${workedHours} h${remainingMinutes > 0 ? ` ${remainingMinutes} min` : ""}`
+          : `${remainingMinutes} min`;
         const rulesNote = matchedRules.length > 0
-          ? ` Reglas aplicadas: ${matchedRules.map((rule) => rule.name).join(", ")}. Multiplicador efectivo x${multiplier} (${segment.minutes} min reales).`
+          ? ` Reglas aplicadas: ${matchedRules.map((rule) => rule.name).join(", ")}. Multiplicador x${multiplier} · ${workedDuration} trabajadas.`
           : "";
         const dateKey = segment.date.getTime();
         dailyNormalMinutes.set(dateKey, (dailyNormalMinutes.get(dateKey) ?? 0) + segment.minutes);
@@ -2182,7 +2187,7 @@ export const timeEntriesRepository = {
               source: input.source,
               segmentStartAt: lastSegment.startAt,
               segmentEndAt: lastSegment.endAt,
-              observation: `${currentObservation}Fichada ${workShift.id}: generado por ingreso/salida.${rulesNote}`,
+              observation: `${currentObservation}Generado automáticamente a partir de la fichada.${rulesNote}`,
               status: "APROBADO",
             },
             include: timeEntryInclude,
@@ -2205,7 +2210,7 @@ export const timeEntriesRepository = {
               segmentStartAt: lastSegment.startAt,
               segmentEndAt: lastSegment.endAt,
               source: input.source,
-              observation: `Generado por fichada de ingreso/salida.${rulesNote}`,
+              observation: `Generado automáticamente a partir de la fichada.${rulesNote}`,
             },
             include: timeEntryInclude,
           }));

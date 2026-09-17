@@ -283,10 +283,10 @@ describe("ShiftAlertsPage — Etapa 13H (agrupación por jornada/fichada)", () =
     renderPage();
 
     expect(await screen.findByText("Jornada fuera de turno")).toBeInTheDocument();
-    expect(screen.getByText("+2 hallazgos asociados")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Ver 3 alertas" })).toHaveAttribute("aria-expanded", "false");
   });
 
-  it("Tests obligatorios #5/#11: muestra '+1 hallazgo asociado', sin lenguaje técnico (ni workShiftId ni el enum crudo)", async () => {
+  it("Tests obligatorios #5/#11: muestra el total de alertas de la jornada sin lenguaje técnico", async () => {
     vi.mocked(shiftAlertApiService.getAll).mockResolvedValue({
       data: [
         buildAlert({ id: "alert-concepto", workShiftId: "shift-1", type: "CONCEPTO_NO_HABILITADO" }),
@@ -297,7 +297,7 @@ describe("ShiftAlertsPage — Etapa 13H (agrupación por jornada/fichada)", () =
 
     renderPage();
 
-    await screen.findByText("+1 hallazgo asociado");
+    await screen.findByRole("button", { name: "Ver 2 alertas" });
     expect(screen.queryByText("shift-1")).not.toBeInTheDocument();
     expect(screen.queryByText("SEGMENTO_SIN_CLASIFICAR")).not.toBeInTheDocument();
   });
@@ -312,17 +312,15 @@ describe("ShiftAlertsPage — Etapa 13H (agrupación por jornada/fichada)", () =
     });
 
     renderPage();
-    await screen.findByText("+1 hallazgo asociado");
+    await userEvent.click(await screen.findByRole("button", { name: "Ver 2 alertas" }));
 
-    await userEvent.click(screen.getByText("+1 hallazgo asociado"));
-
-    const detailHeading = await screen.findByText("También se detectó en esta misma jornada");
+    const detailHeading = await screen.findByText("Alertas de esta jornada");
     const detail = within(detailHeading.closest(".shift-alert-group-detail") as HTMLElement);
     expect(detail.getByText("Segmento sin clasificar")).toBeInTheDocument();
     expect(detail.getByText("+3h 46m")).toBeInTheDocument(); // 226 min
   });
 
-  it("Tests obligatorios #8: el grupo queda Pendiente si alguna alerta interna está pendiente, aunque la principal ya esté resuelta", async () => {
+  it("Tests obligatorios #8: el grupo queda parcialmente resuelto si mezcla alertas pendientes y resueltas", async () => {
     vi.mocked(shiftAlertApiService.getAll).mockResolvedValue({
       data: [
         buildAlert({ id: "alert-concepto", workShiftId: "shift-1", type: "CONCEPTO_NO_HABILITADO", status: "RESUELTA" }),
@@ -334,7 +332,17 @@ describe("ShiftAlertsPage — Etapa 13H (agrupación por jornada/fichada)", () =
     renderPage();
 
     await screen.findByText("Concepto no habilitado");
-    expect(screen.getByText("Pendiente")).toBeInTheDocument();
+    expect(screen.getByText("Parcialmente resuelta")).toBeInTheDocument();
+  });
+
+  it("marca los tipos históricos sin ocultarlos", async () => {
+    vi.mocked(shiftAlertApiService.getAll).mockResolvedValue({
+      data: [buildAlert({ type: "SEGMENTO_SIN_CLASIFICAR" })],
+      meta: { total: 1, pageSize: 20, hasMore: false, nextBefore: null },
+    });
+    renderPage();
+    await screen.findByText("Segmento sin clasificar");
+    expect(screen.getByText("Registro anterior")).toBeInTheDocument();
   });
 
   it("Tests obligatorios #9: la acción de detalle ('Ver legajo') sigue funcionando sobre la fila principal del grupo", async () => {
@@ -353,7 +361,7 @@ describe("ShiftAlertsPage — Etapa 13H (agrupación por jornada/fichada)", () =
     expect(legajoLink).toHaveAttribute("href", "/legajos/employee-1");
   });
 
-  it("un empleado con una sola alerta no muestra ningún indicador de hallazgos asociados (sin regresión sobre el caso simple)", async () => {
+  it("un empleado con una sola alerta muestra una jornada y pluralización singular", async () => {
     vi.mocked(shiftAlertApiService.getAll).mockResolvedValue({
       data: [buildAlert({ id: "alert-unica", workShiftId: "shift-1", type: "SALIDA_TARDIA" })],
       meta: { total: 1, pageSize: 20, hasMore: false, nextBefore: null },
@@ -362,7 +370,7 @@ describe("ShiftAlertsPage — Etapa 13H (agrupación por jornada/fichada)", () =
     renderPage();
 
     await screen.findByText("Salida tardía");
-    expect(screen.queryByText(/hallazgo/i)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Ver 1 alerta" })).toBeInTheDocument();
   });
 
   it("el subtítulo distingue grupos de alertas individuales cuando difieren", async () => {
@@ -376,7 +384,7 @@ describe("ShiftAlertsPage — Etapa 13H (agrupación por jornada/fichada)", () =
 
     renderPage();
 
-    await screen.findByText("1 grupo(s) de alertas (2 alerta(s) individuales) según filtros aplicados.");
+    await screen.findByText("1 jornada con alertas · 2 alertas");
   });
 });
 
@@ -489,10 +497,9 @@ describe("ShiftAlertsPage — Etapa 15G.2 (ajuste final: SIN acción 'Crear nove
     });
 
     renderPage();
-    await screen.findByText("+1 hallazgo asociado");
-    await userEvent.click(screen.getByText("+1 hallazgo asociado"));
+    await userEvent.click(await screen.findByRole("button", { name: "Ver 2 alertas" }));
 
-    await screen.findByText("También se detectó en esta misma jornada");
+    await screen.findByText("Alertas de esta jornada");
     expect(screen.queryByText(/Crear novedad/i)).not.toBeInTheDocument();
   });
 
@@ -506,7 +513,8 @@ describe("ShiftAlertsPage — Etapa 15G.2 (ajuste final: SIN acción 'Crear nove
     await screen.findByText("Legajo 100");
 
     expect(screen.getByRole("link", { name: /Ver legajo/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Resolver alerta/i })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Ver 1 alerta" }));
+    expect(screen.getByRole("button", { name: /Resolver Llegada tarde/i })).toBeInTheDocument();
   });
 });
 

@@ -1,5 +1,24 @@
 # Project Context
 
+> Etapa 15M.13: Alertas de turnos usa `workShiftId` como unidad visual de
+> empleado + jornada. Cada card deriva en frontend la severidad máxima activa
+> y el estado Pendiente/Parcialmente resuelta/Resuelta; conserva prioridad y
+> resolución individual, y marca tipos legacy como “Registro anterior”. No se
+> modificó generación, matching ni persistencia de alertas.
+
+> Etapa 15M.12: el modal de carga/corrección horaria usa una composición
+> explícita: resumen superior, aviso administrativo transversal y contenido
+> fluido de formulario/novedad. Ya no depende de las columnas implícitas que
+> podía crear `.form-wide`/`.form-actions`. Los valores editables mantienen el
+> contrato de horas decimales y muestran simultáneamente su equivalencia
+> humana en horas y minutos.
+
+> Etapa 15M.11: la UI operacional no expone UUID, códigos de error ni enums
+> internos. Las observaciones históricas generadas por fichadas se humanizan
+> al presentarlas, sin migrar ni perder el dato persistido; las nuevas ya se
+> guardan sin identificadores técnicos. Ver
+> `docs/decisions/USER_FACING_TEXT_POLICY_15M11.md`.
+
 > Etapa 15M.7C/15M.7C.1: `WorkRegime.kind` define la obligación de turno.
 > `SIN_TURNO` y `TURNO_FLEXIBLE` no producen alertas por ausencia o
 > incompatibilidad de turno; `TURNO_OBLIGATORIO` conserva ese control y sin
@@ -531,6 +550,12 @@ Until the staged redesign is implemented, current backend, frontend, schema, mig
 **Etapa 15M.4B update (same decision doc):** that separate pass ran next — a fresh global dry-run (never trusting the prior one) reconfirmed legajo 30 fully `OK` and found 9 remaining employee-dates across legajos 09/10/27/29/32 (2 `UNDERCOUNT`, 1 `OVERCOUNT`, 6 `DUPLICATE`). Using the same tool with no redesign and no policy change, `--mode=repair --period=2026-09` (no legajo filter, letting the tool's own dry-run decide scope) repaired all 9 in their own per-employee-date transactions — 0 errors, 0 rows hard-deleted, Motor B regenerated for all 5 affected employees, and a final dry-run came back with **0 inconsistencies of any kind across all 26 active employee-dates in September 2026**, with legajo 30 unchanged (16/09 still exactly 250 min).
 
 **Etapa 15M.5 update (`docs/decisions/HUMAN_DURATION_FORMAT_15M5.md`):** separately from the 13F/15M.x data-correctness chain above, Gestión Horaria's UI (`HoursPage.tsx`, `EmployeeHoursPage.tsx`, `MonthlyHoursReviewGrid.tsx`, `MonthlyClosureReviewPanel.tsx`) and the dashboard's "Horas cargadas" KPI displayed every duration as a raw decimal-hours string (`formatHours`, just `.toFixed(2)`) — a reconciled, perfectly correct 141-minute shift (legajo 29, or legajo 30's 250 minutes from 15M.4) still rendered as `"2.35 h"`/`"4.17 h"`, which reads as "2 hours 35" but is mathematically 2h21min (`0.35 × 60 = 21`, not 35). Asistencia (`AttendancePage.tsx`) already had its own correct minutes-based formatter; this stage promoted a single canonical one (`formatDurationMinutes`, `frontend/src/utils/hours.ts`) that both screens now share, migrated every duration display in Carga Horaria and the dashboard KPI to it (preferring an already-available minutes field over converting from decimal wherever one exists), and deleted `formatHours` once it had zero remaining callers. Pure frontend/display-only — no backend endpoint, `TimeEntry`, `WorkShift`, `TimeSegment`, Motor A/B, export file (CSV/XLSX) or Finnegans logic changed; only how an already-correct number gets shown to a human.
+
+**Etapa 15M.9 update:** monthly concept grids are explicitly treated as
+high-density surfaces. They render the same real minute values through
+`formatCompactDurationMinutes` (`10h 43m`, never decimal hours), keep each day
+at 88 px on desktop, expose horizontal scrolling, and pin the concept column
+while scrolling. Normal surfaces and KPI continue using the long formatter.
 
 ## Tech stack
 

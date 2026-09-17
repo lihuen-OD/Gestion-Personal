@@ -24,6 +24,7 @@ import type { Employee, TimeEntry } from "../types";
 import { displayLegajo, fullName } from "../utils/employee";
 import { currentMonthPeriod, formatPeriodDay, getMonthDays, getWeekdayAbbr } from "../utils/period";
 import { formatDecimalHoursDuration, formatDurationMinutes, hoursDecimalToMinutes } from "../utils/hours";
+import { formatTimeEntryObservation } from "../utils/userFacingText";
 import { statusTone } from "../utils/status";
 import { useDebouncedValue } from "../utils/useDebouncedValue";
 import { uniqueOptions } from "../components/employees/options/sharedOptions";
@@ -202,7 +203,7 @@ function breakdownResolveErrorMessage(error: unknown) {
     if (error.code === "FORBIDDEN") {
       return "No tenés permiso para resolver este desglose.";
     }
-    return error.message;
+    return "No pudimos resolver el desglose manual. Actualizá la bandeja e intentá nuevamente.";
   }
   return "No pudimos resolver el desglose manual. Intentá nuevamente.";
 }
@@ -217,7 +218,7 @@ function reviewActionErrorMessage(error: unknown) {
     if (error.code === "FORBIDDEN") {
       return "No tenés permiso para resolver este registro.";
     }
-    return error.message;
+    return "No pudimos completar la acción. Actualizá la bandeja e intentá nuevamente.";
   }
   return "No pudimos completar la acción. Intentá nuevamente.";
 }
@@ -893,7 +894,7 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
                         </span>
                       </td>
                       <td className="observation-cell">
-                        <OverflowCell value={entry.notes || "-"} />
+                        <OverflowCell value={formatTimeEntryObservation(entry.notes) || "-"} />
                       </td>
                       <td>
                         <Badge tone={statusTone(entry.status)}>{entry.status}</Badge>

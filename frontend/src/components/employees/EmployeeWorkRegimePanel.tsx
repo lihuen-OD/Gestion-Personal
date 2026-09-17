@@ -274,7 +274,7 @@ export function EmployeeWorkRegimePanel({ employee, canEdit }: EmployeeWorkRegim
                 <option value="">Seleccionar régimen...</option>
                 {catalog.map((regime) => (
                   <option key={regime.id} value={regime.id}>
-                    {regime.code} · {regime.name}{regime.status === "INACTIVO" ? " (inactivo)" : ""}
+                    {regime.name}{regime.status === "INACTIVO" ? " (inactivo)" : ""}
                   </option>
                 ))}
               </select>

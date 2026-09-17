@@ -4,6 +4,12 @@ Fecha: 2026-09-17
 Estado: implementado y testeado, pendiente de aprobación para commitear
 Continúa: `docs/decisions/ATTENDANCE_NORMAL_HOURS_RECONCILIATION_15M4.md` (15M.4/15M.4B — los mismos casos reales, legajo 29 y 30, sirven de regresión acá)
 
+> **Extensión 15M.9 — superficies de alta densidad:** el formato largo
+> (`10 h 43 min`) sigue siendo el canónico para pantallas normales y KPI. Las
+> grillas mensuales usan `formatCompactDurationMinutes` (`10h 43m`) para
+> mantener columnas diarias legibles. Ambos formatters reciben minutos reales;
+> el compacto es sólo presentación y nunca restaura horas decimales.
+
 ## 1. Resumen ejecutivo
 
 Toda la UI de Gestión Horaria (`HoursPage.tsx`, `EmployeeHoursPage.tsx`, `MonthlyHoursReviewGrid.tsx`, `MonthlyClosureReviewPanel.tsx`) y el KPI "Horas cargadas" del dashboard mostraban duraciones como horas decimales con 2 decimales (`2.35`, `4.12`, `1.02`). Ese formato es ambiguo y matemáticamente engañoso: `2.35` se lee naturalmente como "2 horas con 35" pero representa `2h 21min` (`0.35 × 60 = 21`, no `35`). Se creó un formatter canónico único (`formatDurationMinutes`, en minutos) y se reemplazaron todos los puntos donde una duración real se mostraba en decimal. Asistencia ya tenía su propio formatter correcto (`formatDuration` en `AttendancePage.tsx`) — se unificó para que ambas pantallas compartan exactamente la misma función. Ningún cálculo interno, `TimeEntry`, `WorkShift`, `TimeSegment`, Motor A/B, exportación de archivos ni Finnegans se tocó.

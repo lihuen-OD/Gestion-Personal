@@ -199,7 +199,7 @@ export function EmployeeDetailPage() {
       if (error instanceof ApiError && error.status === 409) {
         setNotice("No se pudo guardar: ya existe otro legajo con el mismo Legajo, Legajo Finnegans, CUIL o DNI.");
       } else if (error instanceof ApiError) {
-        setNotice(`No se pudo guardar: ${error.message} (${error.code}).`);
+        setNotice("No se pudieron guardar los cambios. Revisá los datos e intentá nuevamente.");
       } else {
       setNotice("No pudimos guardar los cambios. Intentá nuevamente.");
       }

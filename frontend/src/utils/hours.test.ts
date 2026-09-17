@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatDecimalHoursDuration, formatDurationMinutes, hoursDecimalToMinutes } from "./hours";
+import { formatCompactDurationMinutes, formatDecimalHoursDuration, formatDurationMinutes, hoursDecimalToMinutes } from "./hours";
 
 // Etapa 15M.5 (docs/decisions/HUMAN_DURATION_FORMAT_15M5.md): 2.35 horas
 // decimales NO son "2h 35min" — son 2h 21min (0.35 * 60 = 21).
@@ -31,6 +31,21 @@ describe("formatDurationMinutes", () => {
 
   it("redondea minutos fraccionarios antes de formatear", () => {
     expect(formatDurationMinutes(140.6)).toBe("2 h 21 min");
+  });
+});
+
+describe("formatCompactDurationMinutes — grillas de alta densidad", () => {
+  it.each([
+    [0, "0m"], [5, "5m"], [45, "45m"], [59, "59m"], [60, "1h"],
+    [61, "1h 1m"], [125, "2h 5m"], [250, "4h 10m"],
+    [643, "10h 43m"], [760, "12h 40m"], [1612, "26h 52m"],
+  ])("%i min -> %s", (minutes, expected) => {
+    expect(formatCompactDurationMinutes(minutes)).toBe(expected);
+  });
+
+  it("nunca representa minutos como horas decimales", () => {
+    expect(formatCompactDurationMinutes(141)).toBe("2h 21m");
+    expect(formatCompactDurationMinutes(250)).toBe("4h 10m");
   });
 });
 

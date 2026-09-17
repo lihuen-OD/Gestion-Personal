@@ -56,6 +56,29 @@ Mandatory visual matches:
 
 ## 1. Purpose
 
+### Texto visible para usuarios
+
+Las pantallas operativas deben mostrar lenguaje de negocio: nombres humanos,
+estados traducidos y errores accionables. UUID, claves internas, códigos de
+error y enums crudos quedan reservados para contratos, logs y auditoría
+técnica. Los códigos de negocio deliberadamente editables en catálogos son
+una excepción válida. Ver `docs/decisions/USER_FACING_TEXT_POLICY_15M11.md`.
+
+### Revisión compositiva
+
+Una corrección visual local requiere revisar la composición completa del
+contenedor o pantalla afectada. Reducir o mover un componente no se considera
+terminado si deja huecos accidentales, filas sincronizadas sin necesidad o un
+recorrido visual desequilibrado alrededor suyo.
+
+### Alertas por jornada
+
+Las alertas se presentan agrupadas visualmente por empleado y jornada, no
+como filas independientes. Cada card prioriza persona, legajo, fecha y turno;
+resume severidad máxima y estado conjunto, y contiene las alertas hijas con
+resolución individual. Los tipos que sólo sobreviven como datos históricos se
+identifican como “Registro anterior” y nunca se ocultan.
+
 This document defines the official visual and user experience direction for all internal company applications.
 
 It must be used as the base design system for every frontend project developed for the company, including but not limited to:

@@ -1,4 +1,5 @@
 import type { AttendanceSegment, AttendanceSegmentSpecialRuleApplication, SegmentConceptStatus } from "../../services/api/attendanceApiService";
+import { formatCompactDurationMinutes } from "../../utils/hours";
 
 export const segmentConceptStatusLabels: Record<SegmentConceptStatus, string> = {
   SUGERIDO: "Sugerido por sistema",
@@ -64,12 +65,7 @@ export function formatMultiplier(value: number | string | undefined | null): str
 // no se tocó esa función existente para no alterar su formato en otro lado.
 export function formatMinutesDuration(minutes: number | null | undefined): string {
   if (minutes === null || minutes === undefined || !Number.isFinite(minutes)) return "-";
-  const totalMinutes = Math.round(minutes);
-  const hours = Math.floor(totalMinutes / 60);
-  const rest = totalMinutes % 60;
-  if (hours === 0) return `${rest}m`;
-  if (rest === 0) return `${hours}h`;
-  return `${hours}h ${rest}m`;
+  return formatCompactDurationMinutes(minutes);
 }
 
 // hourConceptRuleId presente -> una HourConceptRule disparó la clasificación

@@ -45,6 +45,18 @@ export function formatDurationMinutes(totalMinutes: number | null | undefined): 
   return `${hours} h ${minutes} min`;
 }
 
+/** Variante visual compacta para grillas densas; la unidad canónica sigue
+ * siendo el minuto y no se introduce ninguna conversión a horas decimales. */
+export function formatCompactDurationMinutes(totalMinutes: number | null | undefined): string {
+  const parsed = Number(totalMinutes ?? 0);
+  const rounded = Number.isFinite(parsed) ? Math.max(0, Math.round(parsed)) : 0;
+  const hours = Math.floor(rounded / 60);
+  const minutes = rounded % 60;
+  if (hours === 0) return `${minutes}m`;
+  if (minutes === 0) return `${hours}h`;
+  return `${hours}h ${minutes}m`;
+}
+
 /**
  * Composición conveniente para los DTO que sólo exponen horas decimales, sin
  * ningún campo de minutos en paralelo (ej. `findPeriodEmployees` — la grilla

@@ -11,6 +11,7 @@ import { documentCategoryApiService } from "../services/api/documentCategoryApiS
 import { timeEntryApiService } from "../services/api/timeEntryApiService";
 import { ApiError } from "../services/api/apiClient";
 import type { Employee, Novelty } from "../types";
+import type { NoveltyType } from "../types/noveltyType.types";
 import type { EmployeeTimeGrid, EmployeeTimeGridRow } from "../services/api/employeeApiService";
 
 const mockUseAuth = vi.fn();
@@ -411,7 +412,7 @@ describe("EmployeeHoursPage — el botón 'Recalcular automáticos' ya no se exp
     renderPage();
     await waitForGridLoaded();
     expect(within(rowFor("Sereno")).queryAllByRole("button")).toHaveLength(0);
-    expect(totalCellText(rowFor("Sereno"))).toBe("6 h");
+    expect(totalCellText(rowFor("Sereno"))).toBe("6h");
   });
 
   it("el concepto MANUAL (Colectivo) sigue siendo editable", async () => {
@@ -458,7 +459,7 @@ describe("EmployeeHoursPage — actualización local sin recarga completa (Etapa
     await user.click(screen.getByRole("button", { name: "Guardar" }));
 
     await waitFor(() => expect(screen.queryByText(/Cargar Hora normal/i)).not.toBeInTheDocument());
-    expect(dayCellText(rowFor("Hora normal"), 1)).toBe("5 h");
+    expect(dayCellText(rowFor("Hora normal"), 1)).toBe("5h");
   });
 
   it("guardar Hora normal actualiza el total diario/mensual (Horas trabajadas y columna Total) de inmediato", async () => {
@@ -481,7 +482,7 @@ describe("EmployeeHoursPage — actualización local sin recarga completa (Etapa
     await user.click(screen.getByRole("button", { name: "Guardar" }));
 
     await waitFor(() => expect(screen.queryByText(/Cargar Hora normal/i)).not.toBeInTheDocument());
-    expect(totalCellText(rowFor("Hora normal"))).toBe("13 h");
+    expect(totalCellText(rowFor("Hora normal"))).toBe("13h");
     expect(statCardValue("Horas trabajadas")).toBe("13 h");
   });
 
@@ -502,7 +503,7 @@ describe("EmployeeHoursPage — actualización local sin recarga completa (Etapa
     await user.click(screen.getByRole("button", { name: /Guardar desglose/i }));
 
     await waitFor(() => expect(screen.queryByText(/Cargar desglose Colectivo/i)).not.toBeInTheDocument());
-    expect(dayCellText(rowFor("Colectivo"), 0)).toBe("2 h");
+    expect(dayCellText(rowFor("Colectivo"), 0)).toBe("2h");
   });
 
   it("guardar un desglose manual no modifica Horas trabajadas (totalWorkedMinutes)", async () => {
@@ -524,7 +525,7 @@ describe("EmployeeHoursPage — actualización local sin recarga completa (Etapa
 
     await waitFor(() => expect(screen.queryByText(/Cargar desglose Colectivo/i)).not.toBeInTheDocument());
     expect(statCardValue("Horas trabajadas")).toBe("8 h");
-    expect(totalCellText(rowFor("Hora normal"))).toBe("8 h");
+    expect(totalCellText(rowFor("Hora normal"))).toBe("8h");
   });
 
   it("no vuelve a mostrar 'Preparando grilla horaria...' después de guardar (no hay recarga completa)", async () => {
@@ -643,6 +644,42 @@ describe("EmployeeHoursPage — indicador de Hora Especial y Valor liquidable (E
     expect(screen.getByText(/Valor liquidable del día: 24 h/)).toBeInTheDocument();
   });
 
+  it("humaniza observaciones históricas y mantiene compacto el aviso administrativo", async () => {
+    const user = userEvent.setup();
+    const uuid = "a90b1c2d-3456-4789-8abc-def012345678";
+    const grid = buildGrid(240, {
+      "1": { multiplier: 2, additionalMinutes: 720, liquidableTotalMinutes: 1440, ruleNames: ["Domingo"], conflict: false },
+    });
+    grid.entries = [{
+      id: "entry-1",
+      employeeId: "employee-1",
+      period: "2026-08",
+      day: 1,
+      type: "Hora normal",
+      hours: 8,
+      totalMinutes: 480,
+      status: "Aprobado",
+      conceptId: "normal",
+      notes: `Fichada ${uuid}: generado por ingreso/salida. Reglas aplicadas: Domingo. Multiplicador efectivo x2 (146 min reales).`,
+    }];
+    vi.mocked(employeeApiService.getTimeGrid).mockResolvedValue(grid);
+    renderPage();
+    await waitForGridLoaded();
+
+    await user.click(within(rowFor("Hora normal")).getAllByRole("button")[0]!);
+
+    expect(await screen.findByDisplayValue(/Generado automáticamente a partir de la fichada/)).toBeInTheDocument();
+    expect(screen.getByDisplayValue(/2 h 26 min trabajadas/)).toBeInTheDocument();
+    expect(screen.queryByDisplayValue(new RegExp(uuid))).not.toBeInTheDocument();
+    expect(screen.getByText("Corrección administrativa").closest(".administrative-correction-callout")).toBeInTheDocument();
+    expect(screen.getByText(/Valor liquidable del día: 24 h \(adicional \+12 h\)/)).toBeInTheDocument();
+    expect(document.querySelector(".time-entry-modal-summary .context-hour-card")).toBeInTheDocument();
+    expect(document.querySelector(".time-entry-modal-summary .special-hour")).toBeInTheDocument();
+    expect(document.querySelector(".time-entry-modal-content > .time-entry-fields")).toBeInTheDocument();
+    expect(document.querySelector(".time-entry-modal-content > .context-novelty-card")).toBeInTheDocument();
+    expect(screen.getByText("Formato decimal. Equivale a 8 h.")).toBeInTheDocument();
+  });
+
   it("el modal de un desglose manual (Colectivo) también avisa cuando ese día está alcanzado por la Hora Especial", async () => {
     const user = userEvent.setup();
     const grid = buildGrid(240, {
@@ -688,6 +725,106 @@ function buildBlockingNovelty(overrides: Partial<Novelty> = {}): Novelty {
   };
 }
 
+function buildHourlyNoveltyType(overrides: Partial<NoveltyType> = {}): NoveltyType {
+  return {
+    id: "type-late",
+    code: "NOV-LLEGADA-TARDE",
+    name: "Llegada tarde",
+    uiColor: "amber",
+    kind: "HORARIA",
+    description: "Ingreso posterior al horario previsto.",
+    status: "ACTIVO",
+    rules: {
+      exportsToFinnegans: false,
+      requiresApproval: false,
+      requiresDocumentation: false,
+      allowsHours: true,
+      timeEntryBehavior: "NO_BLOQUEA",
+      allowsDateRange: false,
+      finnegansValueUnit: "HOURS",
+      finnegansRequiresValidity: false,
+    },
+    allowedLoadRoles: ["Nivel 1 - RRHH"],
+    approvalRoles: ["Nivel 1 - RRHH"],
+    finnegansCode: null,
+    finnegansName: null,
+    createdAt: "2026-01-01",
+    updatedAt: "2026-01-01",
+    createdBy: "Sistema",
+    updatedBy: "Sistema",
+    ...overrides,
+  };
+}
+
+describe("EmployeeHoursPage — estado de novedad en el modal (Etapa 15M.10)", () => {
+  async function openNormalDayOne() {
+    renderPage();
+    await waitForGridLoaded();
+    await userEvent.click(within(rowFor("Hora normal")).getAllByRole("button")[0]!);
+    await screen.findByText(/Cargar Hora normal/i);
+  }
+
+  it("muestra un estado vacío cuando no hay selección ni detección", async () => {
+    vi.mocked(employeeApiService.getTimeGrid).mockResolvedValue(buildGrid());
+    await openNormalDayOne();
+    expect(screen.getByLabelText("Tipo de novedad")).toHaveValue("");
+    expect(screen.getByText("No hay novedad asociada a esta hora.")).toBeInTheDocument();
+    expect(screen.queryByText("Detección del sistema")).not.toBeInTheDocument();
+  });
+
+  it("distingue una detección existente de una novedad seleccionada", async () => {
+    vi.mocked(employeeApiService.getTimeGrid).mockResolvedValue(buildGrid());
+    vi.mocked(noveltyApiService.getAll).mockResolvedValue([
+      buildBlockingNovelty({
+        type: "Llegada tarde",
+        from: "2026-08-01",
+        to: "2026-08-01",
+        quantity: "1h",
+        timeEntryBehavior: "NO_BLOQUEA",
+        targetHourConceptName: "Hora normal",
+      }),
+    ]);
+    await openNormalDayOne();
+    expect(screen.getByLabelText("Tipo de novedad")).toHaveValue("");
+    expect(screen.getByText("Detección del sistema")).toBeInTheDocument();
+    expect(screen.getByText("Duración estimada: 1h")).toBeInTheDocument();
+    expect(screen.getByText(/no queda asociada automáticamente/i)).toBeInTheDocument();
+    expect(document.querySelector(".context-novelty-card .cell-novelty-pill")).not.toBeInTheDocument();
+  });
+
+  it("muestra la novedad aplicada y permite volver a Sin novedad", async () => {
+    const user = userEvent.setup();
+    vi.mocked(employeeApiService.getTimeGrid).mockResolvedValue(buildGrid());
+    vi.mocked(noveltyTypeApiService.getAll).mockResolvedValue([buildHourlyNoveltyType()]);
+    await openNormalDayOne();
+
+    const selector = await screen.findByLabelText("Tipo de novedad");
+    await user.selectOptions(selector, "type-late");
+    expect(screen.getByText("Novedad asociada", { selector: ".hour-novelty-eyebrow" })).toBeInTheDocument();
+    expect(screen.getByText("Duración: 1h")).toBeInTheDocument();
+    expect(screen.getByText(/Se asociará únicamente a esta fila/i)).toBeInTheDocument();
+
+    await user.selectOptions(selector, "");
+    expect(screen.getByText("No hay novedad asociada a esta hora.")).toBeInTheDocument();
+    expect(screen.queryByText(/Se asociará únicamente a esta fila/i)).not.toBeInTheDocument();
+  });
+
+  it("mantiene legible un nombre y una duración largos", async () => {
+    const user = userEvent.setup();
+    vi.mocked(employeeApiService.getTimeGrid).mockResolvedValue(buildGrid());
+    vi.mocked(noveltyTypeApiService.getAll).mockResolvedValue([
+      buildHourlyNoveltyType({ name: "Llegada tarde con justificación administrativa pendiente de revisión" }),
+    ]);
+    await openNormalDayOne();
+    await user.selectOptions(await screen.findByLabelText("Tipo de novedad"), "type-late");
+    const noveltyHoursInput = screen.getAllByLabelText("Cantidad de horas")[1]!;
+    await user.clear(noveltyHoursInput);
+    await user.type(noveltyHoursInput, "26.8667");
+    expect(screen.getByText("26h 52m", { exact: false })).toBeInTheDocument();
+    expect(screen.getByText(/justificación administrativa pendiente/i, { selector: ".hour-novelty-state b" })).toBeInTheDocument();
+  });
+});
+
 // Etapa 15L.2C (docs/decisions/NOVELTY_TYPE_CONSUMER_MIGRATION_15L2C.md):
 // isBlocked/conceptNovelties usan timeEntryBehavior como única fuente.
 describe("EmployeeHoursPage — bloqueo por novedad vía timeEntryBehavior (Etapa 15L.2C)", () => {
@@ -699,9 +836,9 @@ describe("EmployeeHoursPage — bloqueo por novedad vía timeEntryBehavior (Etap
     renderPage();
     await waitForGridLoaded();
 
-    const day5 = within(rowFor("Hora normal")).getByTitle("Suspensión");
+    const day5 = within(rowFor("Hora normal")).getByTitle("0 h · Suspensión");
     expect(day5.className).toContain("blocked");
-    expect(within(day5).getByText("0 h")).toBeInTheDocument();
+    expect(within(day5).getByText("0m")).toBeInTheDocument();
   });
 
   it("timeEntryBehavior=NO_BLOQUEA no bloquea la celda", async () => {

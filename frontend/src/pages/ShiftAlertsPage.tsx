@@ -1,5 +1,5 @@
 import { AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, Clock, User } from "lucide-react";
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { PageHeader } from "../components/ui/PageHeader";
 import { FilterPanel } from "../components/ui/FilterPanel";
@@ -10,7 +10,6 @@ import { Modal } from "../components/ui/Modal";
 import { EmptyState } from "../components/ui/EmptyState";
 import { LoadingState } from "../components/ui/LoadingState";
 import { ErrorState } from "../components/ui/ErrorState";
-import { TableShell } from "../components/ui/TableShell";
 import { shiftAlertApiService, type ShiftAlert, type ShiftAlertSeverity, type ShiftAlertStatus, type ShiftAlertType } from "../services/api/shiftAlertApiService";
 import { useDebouncedValue } from "../utils/useDebouncedValue";
 
@@ -66,6 +65,11 @@ const STATUS_LABELS: Record<ShiftAlertStatus, string> = {
   DESCARTADA: "Descartada",
 };
 
+const LEGACY_ALERT_TYPES = new Set<ShiftAlertType>([
+  "SEGMENTO_SIN_CLASIFICAR", "CONCEPTO_NO_HABILITADO",
+  "POSSIBLE_SHIFT_CONFIGURATION_MISSING", "DESCANSO_INSUFICIENTE",
+]);
+
 function formatDateTime(value: string) {
   return new Date(value).toLocaleString("es-AR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
 }
@@ -114,17 +118,28 @@ type AlertGroup = {
   workShiftId: string;
   mainAlert: ShiftAlert;
   secondaryAlerts: ShiftAlert[];
-  status: ShiftAlertStatus;
+  status: "PENDIENTE" | "PARCIAL" | "RESUELTA";
+  severity: ShiftAlertSeverity;
 };
 
-// Etapa 13H, Parte 5: el grupo queda Pendiente si CUALQUIER alerta interna
-// está pendiente (no ocultar que falta revisión); si ninguna lo está, queda
-// Resuelto en cuanto haya al menos una RESUELTA (se avanzó algo real);
-// Descartado sólo si TODAS las alertas del grupo se descartaron.
-function computeGroupStatus(members: ShiftAlert[]): ShiftAlertStatus {
-  if (members.some((alert) => alert.status === "PENDIENTE")) return "PENDIENTE";
-  if (members.some((alert) => alert.status === "RESUELTA")) return "RESUELTA";
-  return "DESCARTADA";
+// La jornada queda pendiente mientras todas sus alertas lo estén, pasa a
+// resolución parcial cuando conviven alertas pendientes y revisadas, y queda
+// resuelta cuando ya no tiene alertas pendientes.
+function computeGroupStatus(members: ShiftAlert[]): AlertGroup["status"] {
+  const pending = members.filter((alert) => alert.status === "PENDIENTE").length;
+  if (pending === members.length) return "PENDIENTE";
+  if (pending > 0) return "PARCIAL";
+  return "RESUELTA";
+}
+
+const GROUP_STATUS_LABELS: Record<AlertGroup["status"], string> = { PENDIENTE: "Pendiente", PARCIAL: "Parcialmente resuelta", RESUELTA: "Resuelta" };
+const GROUP_STATUS_TONE: Record<AlertGroup["status"], "warning" | "success" | "neutral"> = { PENDIENTE: "warning", PARCIAL: "neutral", RESUELTA: "success" };
+
+function maximumGroupSeverity(members: ShiftAlert[]): ShiftAlertSeverity {
+  const candidates = members.some((alert) => alert.status === "PENDIENTE") ? members.filter((alert) => alert.status === "PENDIENTE") : members;
+  if (candidates.some((alert) => alert.severity === "CRITICA")) return "CRITICA";
+  if (candidates.some((alert) => alert.severity === "ADVERTENCIA")) return "ADVERTENCIA";
+  return "INFO";
 }
 
 // Etapa 13H, Parte 2: agrupa por workShiftId -- el identificador más
@@ -151,8 +166,12 @@ function groupAlerts(alerts: ShiftAlert[]): AlertGroup[] {
       (a, b) => (alertPriorityRank.get(a.type) ?? Number.MAX_SAFE_INTEGER) - (alertPriorityRank.get(b.type) ?? Number.MAX_SAFE_INTEGER),
     );
     const [mainAlert, ...secondaryAlerts] = members;
-    return { workShiftId, mainAlert: mainAlert!, secondaryAlerts, status: computeGroupStatus(members) };
+    return { workShiftId, mainAlert: mainAlert!, secondaryAlerts, status: computeGroupStatus(members), severity: maximumGroupSeverity(members) };
   });
+}
+
+function countLabel(count: number, singular: string, plural: string) {
+  return `${count} ${count === 1 ? singular : plural}`;
 }
 
 export function ShiftAlertsPage() {
@@ -243,7 +262,7 @@ export function ShiftAlertsPage() {
       setReason("");
       setRefresh((value) => value + 1);
     } catch (error) {
-      setActionError(error instanceof Error ? error.message : "No pudimos resolver la alerta.");
+      setActionError("No pudimos resolver la alerta. Actualizá la página e intentá nuevamente.");
     } finally {
       setIsResolving(false);
     }
@@ -255,9 +274,7 @@ export function ShiftAlertsPage() {
       <Section
         title="Alertas"
         subtitle={
-          groups.length !== meta.total
-            ? `${groups.length} grupo(s) de alertas (${meta.total} alerta(s) individuales) según filtros aplicados.`
-            : `${meta.total} alerta(s) según filtros aplicados.`
+          `${countLabel(groups.length, "jornada con alertas", "jornadas con alertas")} · ${countLabel(meta.total, "alerta", "alertas")}`
         }
       >
         <FilterPanel
@@ -280,87 +297,34 @@ export function ShiftAlertsPage() {
           <EmptyState text="No hay alertas para los filtros seleccionados." icon={AlertTriangle} />
         ) : (
           <>
-            <TableShell minWidth={1200}>
-              <table>
-                <thead>
-                  <tr>
-                    <th>Empleado</th>
-                    <th>Tipo</th>
-                    <th>Severidad</th>
-                    <th>Turno</th>
-                    <th>Diferencia</th>
-                    <th>Fecha</th>
-                    <th>Estado</th>
-                    <th>Acciones</th>
-                  </tr>
-                </thead>
-                <tbody>
+            <div className="shift-alert-journey-list">
                   {groups.map((group) => {
                     const alert = group.mainAlert;
                     const expanded = expandedGroups.has(group.workShiftId);
+                    const members = [group.mainAlert, ...group.secondaryAlerts];
+                    const warningCount = members.filter((item) => item.severity === "ADVERTENCIA").length;
+                    const infoCount = members.filter((item) => item.severity === "INFO").length;
                     return (
-                      <Fragment key={group.workShiftId}>
-                        <tr>
-                          <td><b>{alert.employee.lastName}, {alert.employee.firstName}</b><span className="table-sub">Legajo {alert.employee.legajo}</span></td>
-                          <td>
-                            <div className="shift-alert-type-cell">
-                              <span>{TYPE_LABELS[alert.type]}</span>
-                              {group.secondaryAlerts.length > 0 ? (
-                                <button
-                                  type="button"
-                                  className="shift-alert-toggle"
-                                  onClick={() => toggleGroup(group.workShiftId)}
-                                  aria-expanded={expanded}
-                                >
-                                  {expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-                                  <span>
-                                    {expanded ? "Ocultar" : "+"}{group.secondaryAlerts.length} hallazgo{group.secondaryAlerts.length > 1 ? "s" : ""} asociado{group.secondaryAlerts.length > 1 ? "s" : ""}
-                                  </span>
-                                </button>
-                              ) : null}
-                            </div>
-                          </td>
-                          <td><Badge tone={SEVERITY_TONE[alert.severity]}>{SEVERITY_LABELS[alert.severity]}</Badge></td>
-                          <td>{alert.workShift.shiftTemplate ? `${alert.workShift.shiftTemplate.code} · ${alert.workShift.shiftTemplate.name}` : <em>Sin turno</em>}</td>
-                          <td>{differenceLabel(alert)}</td>
-                          <td>{formatDateTime(alert.actualAt)}</td>
-                          <td><Badge tone={STATUS_TONE[group.status]}>{STATUS_LABELS[group.status]}</Badge></td>
-                          <td>
-                            <div className="table-actions">
+                      <article className={`shift-alert-journey-card severity-${group.severity.toLowerCase()}`} key={group.workShiftId}>
+                        <header className="shift-alert-journey-header">
+                          <div className="shift-alert-employee"><h3>{alert.employee.lastName}, {alert.employee.firstName}</h3><span>Legajo {alert.employee.legajo}</span></div>
+                          <div className="shift-alert-journey-context"><b>{formatDateTime(alert.actualAt)}</b><span>{alert.workShift.shiftTemplate ? `Turno ${alert.workShift.shiftTemplate.name}` : "Sin turno asignado"}</span></div>
+                          <div className="shift-alert-group-badges"><Badge tone={SEVERITY_TONE[group.severity]}>{SEVERITY_LABELS[group.severity]}</Badge><Badge tone={GROUP_STATUS_TONE[group.status]}>{GROUP_STATUS_LABELS[group.status]}</Badge></div>
+                          <div className="shift-alert-journey-actions">
                               <Link className="table-icon-action" title="Ver legajo" aria-label={`Ver legajo de ${alert.employee.firstName} ${alert.employee.lastName}`} to={`/legajos/${alert.employeeId}`}><User size={14} /><span>Ver legajo</span></Link>
                               {alert.workShift.shiftTemplate ? <Link className="table-icon-action" title="Ver turno" aria-label="Ver turno" to={`/configuracion/turnos/${alert.workShift.shiftTemplate.id}`}><Clock size={14} /><span>Ver turno</span></Link> : null}
-                              {alert.status === "PENDIENTE" ? <button type="button" className="table-icon-action" title="Resolver alerta" aria-label="Resolver alerta" onClick={() => openResolve(alert)}><CheckCircle2 size={14} /><span>Resolver</span></button> : null}
-                            </div>
-                          </td>
-                        </tr>
-                        {expanded && group.secondaryAlerts.length > 0 ? (
-                          <tr className="shift-alert-group-detail-row">
-                            <td colSpan={8}>
-                              <div className="shift-alert-group-detail">
-                                <p>También se detectó en esta misma jornada</p>
-                                <ul>
-                                  {group.secondaryAlerts.map((secondary) => (
-                                    <li key={secondary.id}>
-                                      <span>{TYPE_LABELS[secondary.type]}</span>
-                                      <Badge tone={SEVERITY_TONE[secondary.severity]}>{SEVERITY_LABELS[secondary.severity]}</Badge>
-                                      <span>{differenceLabel(secondary)}</span>
-                                      <Badge tone={STATUS_TONE[secondary.status]}>{STATUS_LABELS[secondary.status]}</Badge>
-                                      {secondary.status === "PENDIENTE" ? (
-                                        <button type="button" className="table-link" onClick={() => openResolve(secondary)}>Resolver</button>
-                                      ) : null}
-                                    </li>
-                                  ))}
-                                </ul>
-                              </div>
-                            </td>
-                          </tr>
-                        ) : null}
-                      </Fragment>
+                          </div>
+                        </header>
+                        <div className="shift-alert-journey-summary">
+                          <div><span className="shift-alert-primary-label">Alerta principal</span><b>{TYPE_LABELS[alert.type]}</b><span>{differenceLabel(alert)}</span>{LEGACY_ALERT_TYPES.has(alert.type) ? <Badge tone="neutral">Registro anterior</Badge> : null}</div>
+                          <span>{countLabel(members.length, "alerta", "alertas")}{warningCount ? ` · ${countLabel(warningCount, "advertencia", "advertencias")}` : ""}{infoCount ? ` · ${countLabel(infoCount, "informativa", "informativas")}` : ""}</span>
+                          <button type="button" className="shift-alert-toggle" onClick={() => toggleGroup(group.workShiftId)} aria-expanded={expanded} aria-controls={`shift-alert-detail-${group.workShiftId}`}>{expanded ? <ChevronDown size={15} /> : <ChevronRight size={15} />}<span>{expanded ? "Ocultar detalles" : `Ver ${countLabel(members.length, "alerta", "alertas")}`}</span></button>
+                        </div>
+                        {expanded ? <div className="shift-alert-group-detail" id={`shift-alert-detail-${group.workShiftId}`}><p>Alertas de esta jornada</p><ul>{members.map((member, index) => <li key={member.id} className={index === 0 ? "is-primary" : ""}><div className="shift-alert-detail-name"><span>{TYPE_LABELS[member.type]}</span>{index === 0 ? <small>Principal</small> : null}{LEGACY_ALERT_TYPES.has(member.type) ? <small>Registro anterior</small> : null}</div><span className="shift-alert-difference">{differenceLabel(member)}</span><Badge tone={SEVERITY_TONE[member.severity]}>{SEVERITY_LABELS[member.severity]}</Badge><Badge tone={STATUS_TONE[member.status]}>{STATUS_LABELS[member.status]}</Badge>{member.status === "PENDIENTE" ? <button type="button" className="table-link" aria-label={`Resolver ${TYPE_LABELS[member.type]}`} onClick={() => openResolve(member)}><CheckCircle2 size={13} />Resolver</button> : <span />}</li>)}</ul></div> : null}
+                      </article>
                     );
                   })}
-                </tbody>
-              </table>
-            </TableShell>
+            </div>
             {meta.hasMore ? <div className="attendance-load-more"><Button variant="subtle" onClick={loadMore} loading={loadingMore}>Cargar 20 más</Button></div> : null}
           </>
         )}

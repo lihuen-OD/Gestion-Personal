@@ -138,7 +138,7 @@ export function DocumentUploadModal({
                 <select value={categoryId} onChange={(event) => setCategoryId(event.target.value)}>
                   {categories.map((category) => (
                     <option key={category.id} value={category.id}>
-                      {category.code} · {category.name}
+                      {category.name}
                     </option>
                   ))}
                 </select>

@@ -38,7 +38,7 @@ function ShiftAssignmentTable({ rows, canEdit, onToggle, onRemove }: { rows: Shi
         <tbody>
           {rows.map((assignment) => (
             <tr key={assignment.id}>
-              <td><b>{assignment.shiftTemplate.code}</b> · {assignment.shiftTemplate.name}</td>
+              <td><b>{assignment.shiftTemplate.name}</b></td>
               <td>{assignment.shiftTemplate.categoryName || <em>Sin categoría</em>}</td>
               <td>{assignment.shiftTemplate.startTime}–{assignment.shiftTemplate.endTime}</td>
               <td>{formatAssignmentDate(assignment.effectiveFrom)}</td>
@@ -159,7 +159,7 @@ export function EmployeeShiftsPanel({ employee, canEdit = false }: { employee: E
                 <option value="">Seleccionar turno...</option>
                 {availableTemplates.map((template) => (
                   <option key={template.id} value={template.id}>
-                    {template.code} · {template.name}{template.categoryName ? ` (${template.categoryName})` : ""}
+                    {template.name}{template.categoryName ? ` (${template.categoryName})` : ""}
                   </option>
                 ))}
               </select>

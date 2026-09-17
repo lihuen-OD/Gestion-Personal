@@ -17,7 +17,8 @@ import { noveltyColorClass } from "../utils/noveltyColor";
 import { calendarDaysInclusive } from "../utils/noveltyDateRange";
 import { displayLegajo, fullName } from "../utils/employee";
 import { currentMonthPeriod, formatPeriodDay, formatPeriodLabel, getMonthDays, getWeekdayAbbr, monthDate } from "../utils/period";
-import { formatDurationMinutes, hoursDecimalToMinutes } from "../utils/hours";
+import { formatCompactDurationMinutes, formatDurationMinutes, hoursDecimalToMinutes } from "../utils/hours";
+import { formatTimeEntryObservation } from "../utils/userFacingText";
 import {
   additionalBreakdownMinutes,
   applyBreakdownToRows,
@@ -81,7 +82,7 @@ function manualBreakdownSaveErrorMessage(error: unknown) {
     if (error.code === "MANUAL_BREAKDOWN_CONCURRENT_CONFLICT") {
       return "Alguien más modificó este desglose al mismo tiempo. Volvé a intentar.";
     }
-    return error.message;
+    return "No pudimos guardar el desglose manual. Revisá los datos e intentá nuevamente.";
   }
   return "No pudimos guardar el desglose manual. Intentá nuevamente.";
 }
@@ -283,7 +284,7 @@ export function EmployeeHoursPage() {
               : 1),
       ),
     );
-    setNotes(entry?.notes || "");
+    setNotes(formatTimeEntryObservation(entry?.notes));
     setCorrectionReason("");
     setNoveltyTypeId("");
     setNoveltyFrom(date);
@@ -296,6 +297,7 @@ export function EmployeeHoursPage() {
   const selectedRow = selected ? rows.find((row) => row.concept.id === selected.conceptId) : undefined;
   const selectedConceptName = selectedRow?.concept.name ?? "Hora normal";
   const selectedEntry = selectedRow && selected ? entryFor(selected.day, selectedRow.concept.id, selectedRow.concept.name) : undefined;
+  const selectedConceptNovelties = selected ? conceptNovelties(selected.day, selectedConceptName) : [];
   const canCorrectApproved = Boolean(selectedEntry?.status === "Aprobado" && user && timeEntryApiService.canReview(user));
   const selectedLocked = selectedEntry ? !timeEntryApiService.canEdit(selectedEntry) && !canCorrectApproved : false;
   // Etapa 11B: multiplicador de Hora Especial del día que se está editando —
@@ -564,8 +566,8 @@ export function EmployeeHoursPage() {
         title="Grilla mensual por concepto"
         subtitle={`Horas normales contiene el total real. Los conceptos adicionales son desgloses y no se suman al total (${formatPeriodLabel(period)}). Los automáticos se calculan por sistema.`}
       >
-        <div className="hours-grid">
-          <table>
+        <div className="hours-grid monthly-concept-grid" tabIndex={0} aria-label="Grilla mensual por concepto; desplazamiento horizontal disponible">
+          <table className="monthly-concept-table">
             <thead>
               <tr>
                 <th>Concepto</th>
@@ -604,22 +606,27 @@ export function EmployeeHoursPage() {
                     const specialHourDot = daySpecialHour ? (
                       <span className="alert-dot orange" title={`Hora especial aplicada (${formatMultiplier(daySpecialHour.multiplier)})`} />
                     ) : null;
+                    const minutes = entry ? entry.totalMinutes ?? hoursDecimalToMinutes(entry.hours) : breakdownMinutes;
+                    const compactDuration = formatCompactDurationMinutes(minutes);
+                    const fullDuration = formatDurationMinutes(minutes);
                     return (
                       <td key={`${row.concept.id}-${day}`}>
                         {row.role === "NORMAL_BASE" ? (
                           <button
                             className={cellClass}
-                            title={novelties.map((novelty) => novelty.type).join(", ")}
+                            title={[entry || isBlocked(day) ? fullDuration : "Agregar horas", ...novelties.map((novelty) => novelty.type)].filter(Boolean).join(" · ")}
+                            aria-label={`${row.concept.name}, día ${day}: ${entry || isBlocked(day) ? fullDuration : "agregar horas"}`}
                             onClick={() => openCell(day, row.concept.id, row.concept.name, entry)}
                           >
-                            <span>{entry ? formatDurationMinutes(entry.totalMinutes ?? hoursDecimalToMinutes(entry.hours)) : isBlocked(day) ? "0 h" : "+"}</span>
+                            <span>{entry ? compactDuration : isBlocked(day) ? "0m" : "+"}</span>
                             {mainNovelty ? <small>{mainNovelty.type.slice(0, 3)}</small> : null}
                             {specialHourDot}
                           </button>
                         ) : isManualBreakdownEditable(row) ? (
                           <button
                             className={cellClass}
-                            title={`${hourConceptLoadModeLabel(row.concept.loadMode)} · editar desglose`}
+                            title={`${breakdownMinutes ? `${fullDuration} · ` : ""}${hourConceptLoadModeLabel(row.concept.loadMode)} · editar desglose`}
+                            aria-label={`${row.concept.name}, día ${day}: ${breakdownMinutes ? fullDuration : "agregar desglose"}`}
                             onClick={() => {
                               setManualSelected({ day, conceptId: row.concept.id });
                               setManualHours(String(breakdownMinutes / 60));
@@ -627,12 +634,12 @@ export function EmployeeHoursPage() {
                               setManualError("");
                             }}
                           >
-                            {breakdownMinutes ? formatDurationMinutes(breakdownMinutes) : "+"}
+                            {breakdownMinutes ? compactDuration : "+"}
                             {specialHourDot}
                           </button>
                         ) : (
-                          <span className={cellClass} title={`${hourConceptLoadModeLabel(row.concept.loadMode)} · solo lectura`}>
-                            {breakdownMinutes ? formatDurationMinutes(breakdownMinutes) : "—"}
+                          <span className={cellClass} title={`${breakdownMinutes ? `${fullDuration} · ` : ""}${hourConceptLoadModeLabel(row.concept.loadMode)} · solo lectura`} aria-label={`${row.concept.name}, día ${day}: ${breakdownMinutes ? fullDuration : "sin horas"}`}>
+                            {breakdownMinutes ? compactDuration : "—"}
                             {specialHourDot}
                           </span>
                         )}
@@ -640,7 +647,7 @@ export function EmployeeHoursPage() {
                     );
                   })}
                   <td>
-                    <b>{formatDurationMinutes(row.totalMinutes)}</b>
+                    <b title={formatDurationMinutes(row.totalMinutes)}>{formatCompactDurationMinutes(row.totalMinutes)}</b>
                   </td>
                 </tr>
               ))}
@@ -654,7 +661,7 @@ export function EmployeeHoursPage() {
           title={`Cargar desglose ${manualRow.concept.name} · ${formatPeriodDay(period, manualSelected.day)}`}
           close={() => setManualSelected(undefined)}
         >
-          <div className="form-stack">
+          <div className="form-stack time-entry-modal-stack">
             <div className="info-note compact">
               <b>Desglose adicional · {hourConceptLoadModeLabel(manualRow.concept.loadMode)}</b>
               <p>Esta carga no modifica Horas normales ni el total trabajado.</p>
@@ -699,8 +706,9 @@ export function EmployeeHoursPage() {
           title={`Cargar ${selectedConceptName} · ${formatPeriodDay(period, selected.day)}`}
           close={() => setSelected(undefined)}
         >
-          <div className="form-stack">
-            <div className="context-hour-card">
+          <div className="form-stack time-entry-modal-layout">
+            <div className="time-entry-modal-summary">
+              <div className="context-hour-card">
               <div>
                 <b>{selectedConceptName}</b>
                 <span>
@@ -712,18 +720,19 @@ export function EmployeeHoursPage() {
                   ? `${conceptNovelties(selected.day, selectedConceptName).length} novedad(es)`
                   : "Sin novedad cargada"}
               </Badge>
-            </div>
+              </div>
 
-            {selectedDaySpecialHour ? (
-              <div className="info-note compact special-hour">
+              {selectedDaySpecialHour ? (
+                <div className="info-note compact special-hour">
                 <b>Hora especial aplicada · Multiplicador {formatMultiplier(selectedDaySpecialHour.multiplier)}{selectedDaySpecialHour.ruleNames.length ? `: ${selectedDaySpecialHour.ruleNames.join(", ")}` : ""}</b>
                 <p>
-                  Horas reales sin cambios. Valor liquidable del día: {formatDurationMinutes(selectedDaySpecialHour.liquidableTotalMinutes)}
+                  Horas reales sin cambios. Valor liquidable del día: {formatDurationMinutes(selectedDaySpecialHour.liquidableTotalMinutes)}{" "}
                   (adicional +{formatDurationMinutes(selectedDaySpecialHour.additionalMinutes)})
                   {selectedDaySpecialHour.conflict ? " · Hay más de una regla en conflicto — se aplicó la de mayor prioridad." : ""}
                 </p>
-              </div>
-            ) : null}
+                </div>
+              ) : null}
+            </div>
             {selectedLocked ? (
               <div className="info-note compact">
                 <b>Registro aprobado</b>
@@ -731,28 +740,35 @@ export function EmployeeHoursPage() {
               </div>
             ) : null}
             {canCorrectApproved ? (
-              <div className="info-note compact">
+              <div className="info-note compact administrative-correction-callout">
                 <b>Corrección administrativa</b>
                 <p>La hora seguirá registrada. El cambio y su motivo quedarán auditados.</p>
               </div>
             ) : null}
 
-            <div className="form-grid">
+            <div className="time-entry-modal-content">
+            <div className="form-grid time-entry-fields">
               <label>
                 Fecha
                 <input value={formatPeriodDay(period, selected.day)} disabled />
               </label>
-              <label>
-                Cantidad de horas
-                <input
-                  type="number"
-                  min="0"
-                  step="0.5"
-                  value={hours}
-                  disabled={selectedLocked}
-                  onChange={(event) => setHours(event.target.value)}
-                />
-              </label>
+              <div className="time-entry-hours-field">
+                <label>
+                  Cantidad de horas
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.5"
+                    value={hours}
+                    disabled={selectedLocked}
+                    onChange={(event) => setHours(event.target.value)}
+                    aria-describedby="time-entry-hours-help"
+                  />
+                </label>
+                <small id="time-entry-hours-help" className="field-help">
+                  Formato decimal. Equivale a {formatDurationMinutes(hoursDecimalToMinutes(hours))}.
+                </small>
+              </div>
               <label className="form-wide">
                 Observaciones
                 <textarea
@@ -793,7 +809,7 @@ export function EmployeeHoursPage() {
                     <option value="">Sin novedad</option>
                     {activeTypes.map((item) => (
                       <option key={item.id} value={item.id}>
-                        {item.code} · {item.name}
+                        {item.name}
                       </option>
                     ))}
                   </select>
@@ -834,18 +850,35 @@ export function EmployeeHoursPage() {
                 <p className="table-sub">Cantidad de días: {previewNoveltyDays}</p>
               ) : null}
 
-              {selectedType?.uiColor ? (
-                <div className="novelty-color-preview">
-                  <span
-                    className={`cell-novelty-pill ${noveltyColorClass(
-                      selectedType.uiColor,
-                      selectedType.id,
-                    )}`}
-                  >
-                    Color aplicado: {selectedType.name}
+              {selectedType ? (
+                <div className="hour-novelty-state applied" role="status">
+                  <span className="hour-novelty-eyebrow">Novedad asociada</span>
+                  <b>{selectedType.name}</b>
+                  <span className="hour-novelty-duration">
+                    {selectedType.rules.allowsHours
+                      ? `Duración: ${formatCompactDurationMinutes(hoursDecimalToMinutes(noveltyHours))}`
+                      : `Duración: ${previewNoveltyDays ?? 1} día(s)`}
                   </span>
+                  <p>Se asociará únicamente a esta fila cuando guardes la hora.</p>
                 </div>
-              ) : null}
+              ) : selectedConceptNovelties.length ? (
+                <div className="hour-novelty-state suggested" role="status">
+                  <span className="hour-novelty-eyebrow">Detección del sistema</span>
+                  {selectedConceptNovelties.map((novelty) => (
+                    <div className="hour-novelty-detection" key={novelty.id}>
+                      <b>{novelty.type}</b>
+                      <span className="hour-novelty-duration">Duración estimada: {novelty.quantity}</span>
+                    </div>
+                  ))}
+                  <p>Esta detección es informativa y no queda asociada automáticamente a la fila.</p>
+                </div>
+              ) : (
+                <div className="hour-novelty-state empty" role="status">
+                  <span className="hour-novelty-eyebrow">Sin novedad</span>
+                  <b>No hay novedad asociada a esta hora.</b>
+                  <p>Podés seleccionar una arriba si necesitás justificar esta carga.</p>
+                </div>
+              )}
 
               {selectedType?.rules.requiresDocumentation ? (
                 <div className="document-upload-card">
@@ -872,18 +905,7 @@ export function EmployeeHoursPage() {
                 </div>
               ) : null}
 
-              {conceptNovelties(selected.day, selectedConceptName).length ? (
-                <div className="cell-novelty-list">
-                  {conceptNovelties(selected.day, selectedConceptName).map((novelty) => (
-                    <span
-                      className={`cell-novelty-pill ${noveltyVisualClass(novelty)}`}
-                      key={novelty.id}
-                    >
-                      {novelty.type} · {novelty.quantity}
-                    </span>
-                  ))}
-                </div>
-              ) : null}
+            </div>
             </div>
 
             {error ? <p className="error">{error}</p> : null}

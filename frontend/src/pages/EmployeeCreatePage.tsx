@@ -234,7 +234,7 @@ export function EmployeeCreatePage() {
         return;
       }
       if (error instanceof ApiError) {
-        setError(`No se pudo guardar el legajo: ${error.message} (${error.code}).`);
+        setError("No se pudo guardar el legajo. Revisá los datos e intentá nuevamente.");
         return;
       }
       setError("No se pudo guardar el legajo. Intentá de nuevo.");
