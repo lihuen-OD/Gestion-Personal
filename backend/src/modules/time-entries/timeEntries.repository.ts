@@ -2064,17 +2064,46 @@ export const timeEntriesRepository = {
       // Una sola consulta agrupando todas las fechas de la jornada en vez de
       // un findFirst por segmento -- mismo resultado (cada fecha es de un
       // único segmento), menos round-trips dentro del tx crítico.
+      // Etapa 15M.3: `orderBy: createdAt asc` + construir el Map en ese orden
+      // hace que, ante un duplicado histórico real (mismo employeeId+date+
+      // hourConceptId, posible por el bug corregido en esta etapa — no hay
+      // constraint único, sólo índice), la fila más RECIENTE quede como
+      // "existing" de forma determinística (la última en pisar el Map),
+      // en vez de depender del orden no garantizado que devuelve Postgres
+      // sin ORDER BY. No fusiona ni borra el duplicado — sólo hace
+      // predecible cuál de las filas sigue acumulando hacia adelante.
       const existingEntries = uniqueDates.length
         ? await tx.timeEntry.findMany({
             where: { employeeId: input.employeeId, hourConceptId: input.normalHourConceptId, date: { in: uniqueDates } },
             include: timeEntryInclude,
+            orderBy: { createdAt: "asc" },
           })
         : [];
       const existingByDate = new Map(existingEntries.map((entry) => [entry.date.getTime(), entry]));
 
-      const entries = [];
       const timeSegments = [];
       const pendingRuleApplications: Prisma.SpecialHourRuleApplicationCreateManyInput[] = [];
+      // Etapa 15M.3 (docs/decisions/ATTENDANCE_TIME_GRID_REAL_DATA_FIX_15M3.md):
+      // Hora normal representa el total físico completo de la jornada, sin
+      // importar en cuántos TimeSegment se haya partido por concepto —
+      // Motor A (el clasificador legacy) puede dividir un mismo WorkShift en
+      // varios tramos de la MISMA fecha calendario cuando hay un concepto
+      // adicional AUTOMATIC/BOTH con una regla horaria que sólo cubre parte
+      // del turno (ej. "Prueba" 09:00-11:00 dentro de un turno 07:50-11:59).
+      // Antes de esta etapa, cada tramo escribía su propio TimeEntry.update
+      // leyendo `existingByDate` (fijado UNA sola vez antes de este loop,
+      // Etapa 13F) sin refrescarlo entre tramos: el segundo/tercer tramo de
+      // la misma fecha recalculaba `existing.actualMinutes` desde el mismo
+      // valor stale de antes del loop, sobreescribiendo por completo lo que
+      // el tramo anterior acababa de guardar — la última iteración ganaba y
+      // los minutos de los tramos intermedios se perdían en silencio. Acá se
+      // acumulan los minutos de TODOS los tramos de esta jornada agrupados
+      // por fecha, y recién después de crear los TimeSegment se escribe
+      // exactamente un TimeEntry por fecha calendario (nunca uno por tramo).
+      const dailyNormalMinutes = new Map<number, number>();
+      const lastSegmentByDate = new Map<number, { id: string; startAt: Date; endAt: Date }>();
+      const dailyMultiplier = new Map<number, { multiplier: number; rulesNote: string }>();
+
       for (const segment of input.segments) {
         const matchedRules = matchingDoubleHourRules(doubleHourRules, segment.date);
         const { winners, multiplier, conflicting } = resolveWinningRules(matchedRules);
@@ -2109,35 +2138,50 @@ export const timeEntriesRepository = {
           });
         }
 
+        // DoubleHourRule matchea por fecha calendario completa, nunca por
+        // franja horaria (ver docs/decisions/HOURS_GRID_SPECIAL_HOURS_LIQUIDABLE_11A1.md
+        // §3.9) — todos los tramos de una misma fecha comparten exactamente
+        // el mismo `multiplier`/`matchedRules`, así que sobreescribir acá es
+        // seguro y equivalente a calcularlo una sola vez por fecha.
         const rulesNote = matchedRules.length > 0
           ? ` Reglas aplicadas: ${matchedRules.map((rule) => rule.name).join(", ")}. Multiplicador efectivo x${multiplier} (${segment.minutes} min reales).`
           : "";
+        const dateKey = segment.date.getTime();
+        dailyNormalMinutes.set(dateKey, (dailyNormalMinutes.get(dateKey) ?? 0) + segment.minutes);
+        lastSegmentByDate.set(dateKey, { id: timeSegment.id, startAt: segment.startAt, endAt: segment.endAt });
+        dailyMultiplier.set(dateKey, { multiplier, rulesNote });
+      }
 
-        const existing = existingByDate.get(segment.date.getTime()) ?? null;
+      const entries = [];
+      for (const [dateKey, minutes] of dailyNormalMinutes) {
+        const existing = existingByDate.get(dateKey) ?? null;
 
         if (existing && existing.status !== "APROBADO" && !editableStatuses.includes(existing.status)) {
           throw new Error(`TIME_ENTRY_LOCKED:${existing.id}`);
         }
+
+        const lastSegment = lastSegmentByDate.get(dateKey)!;
+        const { multiplier, rulesNote } = dailyMultiplier.get(dateKey)!;
 
         if (existing) {
           // Etapa 8F: ver misma nota en createFromWorkShift — hours/
           // totalMinutes/actualMinutes son siempre minutos reales, nunca el
           // valor multiplicado por una Hora Especial, y se recalculan desde
           // actualMinutes para autocorregir cualquier TimeEntry legado.
-          const nextRealMinutes = (existing.actualMinutes ?? existing.totalMinutes) + segment.minutes;
+          const nextRealMinutes = (existing.actualMinutes ?? existing.totalMinutes) + minutes;
           const currentObservation = existing.observation ? `${existing.observation}\n` : "";
           entries.push(await tx.timeEntry.update({
             where: { id: existing.id },
             data: {
               workShiftId: workShift.id,
-              timeSegmentId: timeSegment.id,
+              timeSegmentId: lastSegment.id,
               hours: nextRealMinutes / 60,
               totalMinutes: nextRealMinutes,
               actualMinutes: nextRealMinutes,
               appliedMultiplier: multiplier,
               source: input.source,
-              segmentStartAt: segment.startAt,
-              segmentEndAt: segment.endAt,
+              segmentStartAt: lastSegment.startAt,
+              segmentEndAt: lastSegment.endAt,
               observation: `${currentObservation}Fichada ${workShift.id}: generado por ingreso/salida.${rulesNote}`,
               status: "APROBADO",
             },
@@ -2149,17 +2193,17 @@ export const timeEntriesRepository = {
               employeeId: input.employeeId,
               hourConceptId: input.normalHourConceptId,
               workShiftId: workShift.id,
-              timeSegmentId: timeSegment.id,
-              date: segment.date,
-              period: periodFromCalendarDate(segment.date),
-              day: dayOfMonthFromCalendarDate(segment.date),
-              hours: segment.minutes / 60,
-              totalMinutes: segment.minutes,
-              actualMinutes: segment.minutes,
+              timeSegmentId: lastSegment.id,
+              date: new Date(dateKey),
+              period: periodFromCalendarDate(new Date(dateKey)),
+              day: dayOfMonthFromCalendarDate(new Date(dateKey)),
+              hours: minutes / 60,
+              totalMinutes: minutes,
+              actualMinutes: minutes,
               appliedMultiplier: multiplier,
               status: "APROBADO",
-              segmentStartAt: segment.startAt,
-              segmentEndAt: segment.endAt,
+              segmentStartAt: lastSegment.startAt,
+              segmentEndAt: lastSegment.endAt,
               source: input.source,
               observation: `Generado por fichada de ingreso/salida.${rulesNote}`,
             },

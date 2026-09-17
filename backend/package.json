@@ -16,6 +16,8 @@
     "staging:clock:orphans": "tsx scripts/reconcile-clock-orphans.ts",
     "staging:clock:orphans:apply": "tsx scripts/reconcile-clock-orphans.ts --apply",
     "staging:clock:matrix": "tsx scripts/clock-staging-matrix.ts",
+    "staging:normal-hours:dry-run": "tsx scripts/reconcile-normal-hours.ts --mode=dry-run",
+    "staging:normal-hours:repair": "tsx scripts/reconcile-normal-hours.ts --mode=repair",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run"
   },

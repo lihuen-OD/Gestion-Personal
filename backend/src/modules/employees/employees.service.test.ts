@@ -4,6 +4,7 @@ import { employeesRepository } from "./employees.repository";
 import { buildAdditiveTimeGrid, employeesService } from "./employees.service";
 import { roles } from "../../shared/security/roles";
 import { Prisma } from "@prisma/client";
+import { calculateAutomaticBreakdowns } from "./automaticHourConceptBreakdowns";
 
 /**
  * Regresion de la limpieza final de Position (2026-08-18): getPositionValidation
@@ -192,6 +193,37 @@ describe("buildAdditiveTimeGrid", () => {
 
       expect(result.specialHoursByDay).toHaveProperty("1");
       expect(result.specialHoursByDay).not.toHaveProperty("2");
+    });
+  });
+
+  // Etapa 15M.2 (docs/decisions/ATTENDANCE_AUTO_BREAKDOWN_SYNC_15M2.md):
+  // reproduce el caso exacto reportado en 15M.1 de punta a punta a nivel de
+  // funciones puras — el motor de Motor B (`calculateAutomaticBreakdowns`,
+  // ya testeado por separado en automaticHourConceptBreakdowns.test.ts) y la
+  // grilla (`buildAdditiveTimeGrid`) son las dos piezas reales que hoy
+  // conecta la sincronización automática; encadenarlas acá prueba la
+  // invariante aditiva sin necesitar una base real (no hay tests de
+  // integración con DB en este repo — ver 15M.1 §23).
+  describe("invariante aditiva end-to-end (Motor B -> grilla) — Etapa 15M.2", () => {
+    const sereno = { id: "sereno", code: "HC-SERENO", name: "Sereno", kind: "SERENO", loadMode: "AUTOMATIC", status: "ACTIVO", systemRole: null } as const;
+
+    it("07:50-11:59 (249 min reales) con concepto automático 09:00-11:00 (120 min): Normal=249, adicional=120, total=249 (nunca 369)", () => {
+      const shift = { id: "shift-1", startAt: new Date("2026-09-10T10:50:00.000Z"), endAt: new Date("2026-09-10T14:59:00.000Z") }; // 07:50-11:59 ART
+      const rule = { id: "rule-sereno", hourConceptId: "sereno", startTime: "09:00", endTime: "11:00", crossesMidnight: false };
+
+      const breakdownRows = calculateAutomaticBreakdowns("2026-09", [shift], [rule]);
+      expect(breakdownRows).toEqual([expect.objectContaining({ hourConceptId: "sereno", minutes: 120, day: 10 })]);
+
+      const result = buildAdditiveTimeGrid(
+        normal,
+        [sereno],
+        [{ day: 10, hours: 4.15 as never, status: "APROBADO", hourConcept: normal }],
+        breakdownRows.map((row) => ({ day: row.day, hourConceptId: row.hourConceptId, minutes: row.minutes })),
+      );
+
+      expect(result.rows[0]).toMatchObject({ role: "NORMAL_BASE", totalMinutes: 249 });
+      expect(result.rows[1]).toMatchObject({ role: "ADDITIONAL", minutesByDay: { "10": 120 }, totalMinutes: 120 });
+      expect(result.totalWorkedMinutes).toBe(249); // nunca 249+120=369 — el adicional no se suma al total real.
     });
   });
 });

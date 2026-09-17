@@ -14,6 +14,11 @@ vi.mock("./timeEntries.service", () => ({
     approve: vi.fn(),
     reject: vi.fn(),
     returnForCorrection: vi.fn(),
+    clockOut: vi.fn(),
+    clockOutByEmployee: vi.fn(),
+    clockPhotoPunchIdempotent: vi.fn(),
+    createWorkShift: vi.fn(),
+    closeWorkShiftManually: vi.fn(),
   },
   timeEntriesExportToCsv: vi.fn(),
 }));
@@ -33,6 +38,7 @@ vi.mock("../employees/employees.controller", () => ({
 
 const mockedService = timeEntriesService as unknown as {
   create: Mock; update: Mock; submit: Mock; approve: Mock; reject: Mock; returnForCorrection: Mock;
+  clockOut: Mock; clockOutByEmployee: Mock; clockPhotoPunchIdempotent: Mock; createWorkShift: Mock; closeWorkShiftManually: Mock;
 };
 const mockedClearTimeEntriesReadCaches = clearTimeEntriesReadCaches as unknown as Mock;
 const mockedClearEmployeeReadCaches = clearEmployeeReadCaches as unknown as Mock;
@@ -64,6 +70,11 @@ beforeEach(() => {
   mockedService.approve.mockResolvedValue({ id: "entry-1", status: "APROBADO" });
   mockedService.reject.mockResolvedValue({ id: "entry-1", status: "RECHAZADO" });
   mockedService.returnForCorrection.mockResolvedValue({ id: "entry-1", status: "DEVUELTO" });
+  mockedService.clockOut.mockResolvedValue({ workShift: { id: "shift-1" } });
+  mockedService.clockOutByEmployee.mockResolvedValue({ workShift: { id: "shift-1" } });
+  mockedService.clockPhotoPunchIdempotent.mockResolvedValue({ workShift: { id: "shift-1" } });
+  mockedService.createWorkShift.mockResolvedValue({ workShift: { id: "shift-1" } });
+  mockedService.closeWorkShiftManually.mockResolvedValue({ workShift: { id: "shift-1" } });
 });
 
 describe("timeEntriesController — invalidación de employeeTimeGridCache (Etapa 6L.4 / 14C.2 ampliada)", () => {
@@ -110,5 +121,55 @@ describe("timeEntriesController — invalidación de employeeTimeGridCache (Etap
     await timeEntriesController.create(fakeReq(), res);
     expect(res.status).toHaveBeenCalledWith(201);
     expect(res.json).toHaveBeenCalledWith({ data: { id: "entry-1", status: "APROBADO" } });
+  });
+});
+
+// Etapa 15M.2 (docs/decisions/ATTENDANCE_AUTO_BREAKDOWN_SYNC_15M2.md): 15M.1
+// confirmó que clockOut/clockOutByEmployee/clockPhotoPunch y
+// createWorkShift/closeWorkShiftManually sólo limpiaban
+// `clearTimeEntriesReadCaches()` — la grilla por-legajo
+// (`employeeTimeGridCache`) podía quedar hasta 60s desactualizada tras una
+// salida real, aunque el TimeEntry normal ya se hubiera guardado (y, desde
+// esta etapa, el breakdown automático también). Estos 5 handlers ahora
+// invalidan ambas, con el mismo criterio acotado de 14C.2 (sólo la grilla
+// del empleado, no `clearEmployeeReadCaches()` completo).
+describe("timeEntriesController — invalidación de employeeTimeGridCache en fichador/cierres (Etapa 15M.2)", () => {
+  it("clockOut limpia time-entries y la grilla horaria del empleado", async () => {
+    await timeEntriesController.clockOut(fakeReq(), fakeRes());
+    expect(mockedClearTimeEntriesReadCaches).toHaveBeenCalledTimes(1);
+    expect(mockedClearEmployeeTimeGridCache).toHaveBeenCalledTimes(1);
+  });
+
+  it("clockOutByEmployee limpia time-entries y la grilla horaria del empleado", async () => {
+    await timeEntriesController.clockOutByEmployee(fakeReq(), fakeRes());
+    expect(mockedClearTimeEntriesReadCaches).toHaveBeenCalledTimes(1);
+    expect(mockedClearEmployeeTimeGridCache).toHaveBeenCalledTimes(1);
+  });
+
+  it("clockPhotoPunch limpia time-entries y la grilla horaria del empleado", async () => {
+    await timeEntriesController.clockPhotoPunch(fakeReq(), fakeRes());
+    expect(mockedClearTimeEntriesReadCaches).toHaveBeenCalledTimes(1);
+    expect(mockedClearEmployeeTimeGridCache).toHaveBeenCalledTimes(1);
+  });
+
+  it("createWorkShift limpia time-entries y la grilla horaria del empleado", async () => {
+    await timeEntriesController.createWorkShift(fakeReq(), fakeRes());
+    expect(mockedClearTimeEntriesReadCaches).toHaveBeenCalledTimes(1);
+    expect(mockedClearEmployeeTimeGridCache).toHaveBeenCalledTimes(1);
+  });
+
+  it("closeWorkShiftManually limpia time-entries y la grilla horaria del empleado", async () => {
+    await timeEntriesController.closeWorkShiftManually(fakeReq(), fakeRes());
+    expect(mockedClearTimeEntriesReadCaches).toHaveBeenCalledTimes(1);
+    expect(mockedClearEmployeeTimeGridCache).toHaveBeenCalledTimes(1);
+  });
+
+  it("ninguno de los 5 amplía a clearEmployeeReadCaches() completo (sólo la grilla, mismo criterio de 14C.2)", async () => {
+    await timeEntriesController.clockOut(fakeReq(), fakeRes());
+    await timeEntriesController.clockOutByEmployee(fakeReq(), fakeRes());
+    await timeEntriesController.clockPhotoPunch(fakeReq(), fakeRes());
+    await timeEntriesController.createWorkShift(fakeReq(), fakeRes());
+    await timeEntriesController.closeWorkShiftManually(fakeReq(), fakeRes());
+    expect(mockedClearEmployeeReadCaches).not.toHaveBeenCalled();
   });
 });

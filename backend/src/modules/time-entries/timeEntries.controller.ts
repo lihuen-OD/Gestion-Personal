@@ -40,21 +40,35 @@ export const timeEntriesController = {
     res.status(201).json({ data: result });
   }) satisfies RequestHandler,
 
+  // Etapa 15M.2 (docs/decisions/ATTENDANCE_AUTO_BREAKDOWN_SYNC_15M2.md): una
+  // salida cierra el WorkShift y crea/actualiza TimeEntry NORMAL_BASE (y,
+  // desde esta etapa, dispara la sincronización automática de
+  // HourConceptBreakdown) — igual que create()/update() del guardado manual,
+  // eso invalida la grilla por-legajo (`employeeTimeGridCache`), no sólo las
+  // cachés de time-entries. 15M.1 confirmó que estos tres handlers sólo
+  // limpiaban `clearTimeEntriesReadCaches()`, dejando la grilla con hasta 60s
+  // de datos viejos tras una salida — se agrega la misma invalidación
+  // acotada que ya usan `create()`/`update()` (Etapa 14C.2), sin ampliar a
+  // `clearEmployeeReadCaches()` completo porque una fichada no toca legajo,
+  // listado, resumen ni organigrama.
   clockOut: (async (req, res) => {
     const result = await timeEntriesService.clockOut(req.body as ClockByDniInput);
     clearTimeEntriesReadCaches();
+    clearEmployeeTimeGridCache();
     res.json({ data: result });
   }) satisfies RequestHandler,
 
   clockOutByEmployee: (async (req, res) => {
     const result = await timeEntriesService.clockOutByEmployee(req.body as ClockByEmployeeInput);
     clearTimeEntriesReadCaches();
+    clearEmployeeTimeGridCache();
     res.json({ data: result });
   }) satisfies RequestHandler,
 
   clockPhotoPunch: (async (req, res) => {
     const result = await timeEntriesService.clockPhotoPunchIdempotent(req.body as ClockPhotoPunchInput, requestAuditContext(req));
     clearTimeEntriesReadCaches();
+    clearEmployeeTimeGridCache();
     res.status(201).json({ data: result });
   }) satisfies RequestHandler,
 
@@ -169,15 +183,21 @@ export const timeEntriesController = {
     res.json({ data: result });
   }) satisfies RequestHandler,
 
+  // Etapa 15M.2: idem clockOut/clockOutByEmployee/clockPhotoPunch — ambos
+  // caminos terminan un WorkShift en PROCESADO (TimeEntry normal +
+  // sincronización automática de HourConceptBreakdown), así que la grilla
+  // por-legajo debe invalidarse acá también.
   createWorkShift: (async (req, res) => {
     const result = await timeEntriesService.createWorkShift(req.body as CreateWorkShiftInput, req.user!, requestAuditContext(req));
     clearTimeEntriesReadCaches();
+    clearEmployeeTimeGridCache();
     res.status(201).json({ data: result });
   }) satisfies RequestHandler,
 
   closeWorkShiftManually: (async (req, res) => {
     const result = await timeEntriesService.closeWorkShiftManually(requireParam(req, "id"), req.body as AdminCloseWorkShiftInput, req.user!, requestAuditContext(req));
     clearTimeEntriesReadCaches();
+    clearEmployeeTimeGridCache();
     res.json({ data: result });
   }) satisfies RequestHandler,
 

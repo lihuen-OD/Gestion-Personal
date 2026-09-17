@@ -51,4 +51,69 @@ describe("automaticHourConceptBreakdownsService", () => {
       expect.objectContaining({ hourConceptId: "sereno", workShiftId: "shift-1" }),
     ]), undefined);
   });
+
+  it("dos recálculos consecutivos del mismo employee/period producen el mismo resultado, sin duplicar (idempotencia)", async () => {
+    repo.findEligibleConcepts.mockResolvedValue([{ hourConcept: { id: "sereno", loadMode: "AUTOMATIC", rules: [{ id: "rule-1", hourConceptId: "sereno", startTime: "22:00", endTime: "06:00", crossesMidnight: true }] } }] as never);
+    repo.findProcessedShifts.mockResolvedValue([{ id: "shift-1", startAt: new Date("2026-08-10T22:00:00-03:00"), endAt: new Date("2026-08-11T04:00:00-03:00") }] as never);
+    repo.replaceAutomatic.mockImplementation(async (_employeeId, _period, rows) => ({ deleted: rows.length, created: rows.length }));
+
+    const first = await service.recalculate("employee-1", "2026-08", user);
+    const second = await service.recalculate("employee-1", "2026-08", user);
+
+    expect(first).toMatchObject({ generated: second.generated, removed: second.removed });
+    expect(repo.replaceAutomatic).toHaveBeenCalledTimes(2);
+    // Cada corrida reemplaza el conjunto AUTOMATIC completo del período (delete-then-insert
+    // en automaticHourConceptBreakdownsRepository.replaceAutomatic) — nunca se acumulan filas.
+    expect(repo.replaceAutomatic.mock.calls[0]).toEqual(repo.replaceAutomatic.mock.calls[1]);
+  });
+});
+
+// Etapa 15M.2 (docs/decisions/ATTENDANCE_AUTO_BREAKDOWN_SYNC_15M2.md): separa
+// la autorización HTTP (`recalculate`, sigue validando scope vía
+// `Express.AuthUser`) del núcleo funcional reutilizable
+// (`recalculateForEmployeePeriod`), que ahora es el único punto que dispara
+// tanto el endpoint administrativo como la sincronización automática post-
+// cierre de jornada (`timeEntries.service.ts`).
+describe("automaticHourConceptBreakdownsService.recalculateForEmployeePeriod — núcleo interno sin autorización HTTP", () => {
+  it("no valida scope (nunca llama findEmployee) — uso interno, ya autorizado por el flujo de fichada/cierre", async () => {
+    repo.findEligibleConcepts.mockResolvedValue([]);
+    repo.findProcessedShifts.mockResolvedValue([]);
+    repo.replaceAutomatic.mockResolvedValue({ deleted: 0, created: 0 });
+
+    await service.recalculateForEmployeePeriod({ employeeId: "employee-1", period: "2026-08" });
+
+    expect(repo.findEmployee).not.toHaveBeenCalled();
+  });
+
+  it("sigue bloqueando por MonthlyTimeClosure igual que el endpoint administrativo", async () => {
+    repo.findClosure.mockResolvedValue({ status: "APROBADO" } as never);
+
+    await expect(service.recalculateForEmployeePeriod({ employeeId: "employee-1", period: "2026-08" })).rejects.toMatchObject({
+      statusCode: 409,
+      code: "PERIOD_CLOSED",
+    });
+    expect(repo.replaceAutomatic).not.toHaveBeenCalled();
+  });
+
+  it("reenvía createdByUserId al repositorio (trazabilidad de quién/qué disparó la fila AUTOMATIC)", async () => {
+    repo.findEligibleConcepts.mockResolvedValue([]);
+    repo.findProcessedShifts.mockResolvedValue([]);
+    repo.replaceAutomatic.mockResolvedValue({ deleted: 0, created: 0 });
+
+    await service.recalculateForEmployeePeriod({ employeeId: "employee-1", period: "2026-08", createdByUserId: "user-rrhh" });
+
+    expect(repo.replaceAutomatic).toHaveBeenCalledWith("employee-1", "2026-08", [], "user-rrhh");
+  });
+
+  it("recalculate (endpoint) sigue validando scope y delega en el mismo núcleo — mismo resultado que antes del refactor", async () => {
+    repo.findEmployee.mockResolvedValue({ id: "employee-1" });
+    repo.findEligibleConcepts.mockResolvedValue([]);
+    repo.findProcessedShifts.mockResolvedValue([]);
+    repo.replaceAutomatic.mockResolvedValue({ deleted: 0, created: 0 });
+
+    await service.recalculate("employee-1", "2026-08", user, { userId: user.id });
+
+    expect(repo.findEmployee).toHaveBeenCalledTimes(1);
+    expect(repo.replaceAutomatic).toHaveBeenCalledWith("employee-1", "2026-08", [], user.id);
+  });
 });

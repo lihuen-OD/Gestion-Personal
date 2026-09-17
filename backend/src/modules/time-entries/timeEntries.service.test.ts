@@ -12,6 +12,7 @@ import { resolveActiveWorkRegime } from "../work-regimes/workRegimes.service";
 import { notifyUsers } from "../workforce-management/workforce.service";
 import { auditService } from "../audit/audit.service";
 import { hourConceptsRepository } from "../hour-concepts/hourConcepts.repository";
+import { automaticHourConceptBreakdownsService } from "../employees/automaticHourConceptBreakdowns.service";
 
 vi.mock("./timeEntries.repository", () => ({
   timeEntriesRepository: {
@@ -53,6 +54,37 @@ vi.mock("./timeEntries.repository", () => ({
     attendanceObservedCount: vi.fn(),
     // Etapa 14G.3
     attendanceObservations: vi.fn(),
+    // Etapa 15M.2
+    findWorkShiftForAdmin: vi.fn(),
+    findLockedTimeEntry: vi.fn(),
+  },
+}));
+
+// Etapa 15M.2: sólo los tests de clockPhotoPunch (salida real, con evidencia
+// fotográfica) llegan a este módulo — ningún test anterior en este archivo
+// alcanzaba ese camino (se resolvían antes por idempotencia). Se mockea acá
+// mismo, sin storage real, siguiendo el mismo criterio que
+// timeEntries.attendancePunchPhoto.test.ts.
+vi.mock("../../shared/storage/storage.service", () => ({
+  storageService: {
+    uploadManaged: vi.fn().mockResolvedValue({ id: "file-1", storageKey: "key-1", driveWebViewLink: null }),
+    deleteManaged: vi.fn().mockResolvedValue(undefined),
+  },
+}));
+
+vi.mock("../../shared/storage/storagePathBuilder", () => ({
+  storagePathBuilder: { attendancePunch: vi.fn().mockReturnValue(["fichadas", "2026", "09"]) },
+}));
+
+// Etapa 15M.2 (docs/decisions/ATTENDANCE_AUTO_BREAKDOWN_SYNC_15M2.md): Motor B
+// se mockea completo acá — este archivo prueba que los 4 caminos de cierre
+// LLAMAN al core de sincronización con los datos correctos (employeeId,
+// período(s) derivados) y que un fallo suyo nunca se propaga, no el cálculo
+// interno de Motor B en sí (ya cubierto por
+// automaticHourConceptBreakdowns.service.test.ts / .repository.test.ts).
+vi.mock("../employees/automaticHourConceptBreakdowns.service", () => ({
+  automaticHourConceptBreakdownsService: {
+    recalculateForEmployeePeriod: vi.fn().mockResolvedValue(undefined),
   },
 }));
 
@@ -139,9 +171,12 @@ type RepoMock = {
   pendingNoveltiesCount: Mock;
   attendanceObservedCount: Mock;
   attendanceObservations: Mock;
+  findWorkShiftForAdmin: Mock;
+  findLockedTimeEntry: Mock;
 };
 
 const repo = timeEntriesRepository as unknown as RepoMock;
+const mockedRecalculateForEmployeePeriod = automaticHourConceptBreakdownsService.recalculateForEmployeePeriod as unknown as Mock;
 const mockedMonthlyClosureFindUnique = prisma.monthlyTimeClosure.findUnique as unknown as Mock;
 const mockedResolveActiveWorkRegime = resolveActiveWorkRegime as unknown as Mock;
 const mockedFlagOpenShiftOverflowForReview = flagOpenShiftOverflowForReview as unknown as Mock;
@@ -1625,5 +1660,249 @@ describe("attendanceObservations — Etapa 14G.3 (contrato, scope y traducción 
     expect(call.reviewStatus).toBe("RESUELTA");
     expect(call.before).toBe(before);
     expect(call.take).toBe(5);
+  });
+});
+
+function bigPhotoDataUrl() {
+  // 6000 bytes reales: supera el mínimo de la foto (5000) y de la miniatura
+  // (500), y queda muy por debajo de ambos máximos (2.5MB / 700KB) — la
+  // miniatura reutiliza el mismo buffer cuando no se manda `thumbnail`.
+  return `data:image/jpeg;base64,${Buffer.alloc(6000, 1).toString("base64")}`;
+}
+
+// Etapa 15M.2 (docs/decisions/ATTENDANCE_AUTO_BREAKDOWN_SYNC_15M2.md): 15M.1
+// (auditoría read-only) confirmó que cerrar una jornada nunca disparaba
+// Motor B (automaticHourConceptBreakdownsService) — estos tests prueban que
+// los 4 caminos reales que terminan un WorkShift en PROCESADO ahora llaman a
+// syncAutomaticBreakdownsAfterProcessedShift (mockeado vía
+// recalculateForEmployeePeriod), que ningún camino que NO cierra jornada lo
+// hace, que el período se deriva correctamente (incluido cruce de mes) y que
+// un fallo de Motor B nunca revierte ni bloquea la jornada ya persistida.
+describe("Etapa 15M.2 — sincronización automática de HourConceptBreakdown al cerrar una jornada", () => {
+  const normalConcept = { id: "concept-normal", name: "Hora normal", status: "ACTIVO", systemRole: "NORMAL_BASE" };
+  const adminUser = { id: "user-rrhh", role: "NIVEL_1_RRHH" } as Express.AuthUser;
+
+  function sameDayWorkShiftInput() {
+    return {
+      employeeId: activeEmployee.id,
+      startAt: new Date("2026-09-10T13:00:00.000Z"), // 10:00 ART
+      endAt: new Date("2026-09-10T17:00:00.000Z"), // 14:00 ART, mismo día
+      source: "ADMIN",
+      confirm: true as const,
+    } as unknown as Parameters<typeof timeEntriesService.createWorkShift>[0];
+  }
+
+  beforeEach(() => {
+    repo.findDefaultHourConcept.mockResolvedValue({ hourConcept: normalConcept });
+    repo.findBlockingNovelty.mockResolvedValue(null);
+    repo.findLockedTimeEntry.mockResolvedValue(null);
+  });
+
+  describe("A) createWorkShift — alta manual que termina PROCESADO", () => {
+    it("dispara la sincronización con el employeeId y el período de la jornada", async () => {
+      repo.findEmployeeForShift.mockResolvedValue(activeEmployee);
+      repo.findOverlappingWorkShift.mockResolvedValue(null);
+      repo.createFromWorkShift.mockResolvedValue({ workShift: { id: "shift-1" }, entries: [], timeSegments: [] });
+
+      await timeEntriesService.createWorkShift(sameDayWorkShiftInput(), adminUser);
+
+      expect(mockedRecalculateForEmployeePeriod).toHaveBeenCalledTimes(1);
+      expect(mockedRecalculateForEmployeePeriod).toHaveBeenCalledWith(expect.objectContaining({ employeeId: activeEmployee.id, period: "2026-09" }));
+    });
+  });
+
+  describe("B) closeWorkShiftManually — cierre administrativo que termina PROCESADO", () => {
+    function adminCloseFixture() {
+      return {
+        id: "shift-open",
+        employeeId: activeEmployee.id,
+        startAt: new Date("2026-09-10T13:00:00.000Z"),
+        status: "ABIERTO",
+        timeEntries: [],
+        employee: { legajo: activeEmployee.legajo },
+      };
+    }
+
+    it("dispara la sincronización con el employeeId y el período del cierre", async () => {
+      repo.findWorkShiftForAdmin.mockResolvedValue(adminCloseFixture());
+      repo.closeOpenWorkShift.mockResolvedValue({ workShift: { id: "shift-open" }, entries: [], timeSegments: [] });
+
+      await timeEntriesService.closeWorkShiftManually(
+        "shift-open",
+        { endAt: new Date("2026-09-10T16:00:00.000Z"), reason: "Ajuste" } as unknown as Parameters<typeof timeEntriesService.closeWorkShiftManually>[1],
+        adminUser,
+      );
+
+      expect(mockedRecalculateForEmployeePeriod).toHaveBeenCalledTimes(1);
+      expect(mockedRecalculateForEmployeePeriod).toHaveBeenCalledWith(expect.objectContaining({ employeeId: activeEmployee.id, period: "2026-09" }));
+    });
+
+    it("un fallo de Motor B no bloquea el cierre administrativo (sigue devolviendo éxito)", async () => {
+      repo.findWorkShiftForAdmin.mockResolvedValue(adminCloseFixture());
+      repo.closeOpenWorkShift.mockResolvedValue({ workShift: { id: "shift-open" }, entries: [], timeSegments: [] });
+      mockedRecalculateForEmployeePeriod.mockRejectedValueOnce(new Error("fallo inesperado de Motor B"));
+
+      const result = await timeEntriesService.closeWorkShiftManually(
+        "shift-open",
+        { endAt: new Date("2026-09-10T16:00:00.000Z"), reason: "Ajuste" } as unknown as Parameters<typeof timeEntriesService.closeWorkShiftManually>[1],
+        adminUser,
+      );
+
+      expect(result.workShift.id).toBe("shift-open");
+    });
+  });
+
+  describe("C) clockPhotoPunch — SALIDA termina PROCESADO, INGRESO nunca sincroniza", () => {
+    function exitValidationContext() {
+      return {
+        ...activeEmployee,
+        workShifts: [{ id: "shift-open", startAt: new Date(Date.now() - 60 * 60_000), hourConcept: normalConcept }],
+        hourConcepts: [],
+      };
+    }
+
+    it("SALIDA: dispara la sincronización tras cerrar la jornada", async () => {
+      repo.closeOpenWorkShift.mockResolvedValue({ workShift: { id: "shift-open" }, entries: [], timeSegments: [] });
+      const input = {
+        requestId: "22222222-2222-2222-2222-222222222222",
+        employeeId: activeEmployee.id,
+        punchType: "OUT" as const,
+        photo: bigPhotoDataUrl(),
+        faceValidationStatus: "VALID" as const,
+      };
+
+      await timeEntriesService.clockPhotoPunch(input, undefined, exitValidationContext() as never);
+
+      expect(mockedRecalculateForEmployeePeriod).toHaveBeenCalledTimes(1);
+      expect(mockedRecalculateForEmployeePeriod).toHaveBeenCalledWith(expect.objectContaining({ employeeId: activeEmployee.id }));
+    });
+
+    it("E) INGRESO: nunca dispara la sincronización — la jornada queda ABIERTA, no PROCESADO", async () => {
+      repo.createOpenWorkShift.mockResolvedValue({ id: "shift-new", startAt: new Date(), startPunchId: null });
+      const input = {
+        requestId: "33333333-3333-3333-3333-333333333333",
+        employeeId: activeEmployee.id,
+        punchType: "IN" as const,
+        photo: bigPhotoDataUrl(),
+        faceValidationStatus: "VALID" as const,
+      };
+
+      await timeEntriesService.clockPhotoPunch(input, undefined, { ...activeEmployee, workShifts: [], hourConcepts: [] } as never);
+
+      expect(mockedRecalculateForEmployeePeriod).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("D) clockOutResolved (clockOutByEmployee) — SALIDA termina PROCESADO", () => {
+    it("dispara la sincronización tras cerrar la jornada", async () => {
+      const startAt = new Date(Date.now() - 60 * 60_000);
+      repo.findEmployeeByIdForClock.mockResolvedValue(activeEmployee);
+      repo.findOpenWorkShift.mockResolvedValue({ id: "shift-open", startAt });
+      repo.closeOpenWorkShift.mockResolvedValue({ workShift: { id: "shift-open" }, entries: [], timeSegments: [] });
+
+      await timeEntriesService.clockOutByEmployee({ employeeId: activeEmployee.id });
+
+      expect(mockedRecalculateForEmployeePeriod).toHaveBeenCalledTimes(1);
+      expect(mockedRecalculateForEmployeePeriod).toHaveBeenCalledWith(expect.objectContaining({ employeeId: activeEmployee.id }));
+    });
+
+    it("un fallo de Motor B no bloquea la salida (sigue devolviendo éxito)", async () => {
+      const startAt = new Date(Date.now() - 60 * 60_000);
+      repo.findEmployeeByIdForClock.mockResolvedValue(activeEmployee);
+      repo.findOpenWorkShift.mockResolvedValue({ id: "shift-open", startAt });
+      repo.closeOpenWorkShift.mockResolvedValue({ workShift: { id: "shift-open" }, entries: [], timeSegments: [] });
+      mockedRecalculateForEmployeePeriod.mockRejectedValueOnce(new AppError("The period is closed for recalculation", 409, "PERIOD_CLOSED"));
+
+      const result = await timeEntriesService.clockOutByEmployee({ employeeId: activeEmployee.id });
+
+      expect(result.workShift.id).toBe("shift-open");
+    });
+  });
+
+  describe("F/G) caminos que NO cierran jornada — nunca sincronizan", () => {
+    it("F) clockInByEmployee (ingreso): la jornada queda ABIERTA, nunca sincroniza", async () => {
+      repo.findEmployeeByIdForClock.mockResolvedValue(activeEmployee);
+      repo.findOpenWorkShift.mockResolvedValue(null);
+      repo.createOpenWorkShift.mockResolvedValue({ id: "shift-new", startAt: new Date() });
+
+      await timeEntriesService.clockInByEmployee({ employeeId: activeEmployee.id });
+
+      expect(mockedRecalculateForEmployeePeriod).not.toHaveBeenCalled();
+    });
+
+    it("G) intento de salida sin ingreso abierto: nunca llega a cerrar un WorkShift, no sincroniza", async () => {
+      repo.findEmployeeByIdForClock.mockResolvedValue(activeEmployee);
+      repo.findOpenWorkShift.mockResolvedValue(null);
+
+      await expect(timeEntriesService.clockOutByEmployee({ employeeId: activeEmployee.id })).rejects.toMatchObject({ code: "CLOCK_NO_OPEN_SHIFT" });
+
+      expect(repo.closeOpenWorkShift).not.toHaveBeenCalled();
+      expect(mockedRecalculateForEmployeePeriod).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("cross-midnight / cross-month — período(s) derivados de los segmentos ya persistidos", () => {
+    it("cruce de medianoche dentro del mismo mes: dos TimeSegment, un solo período recalculado una única vez", async () => {
+      repo.findEmployeeForShift.mockResolvedValue(activeEmployee);
+      repo.findOverlappingWorkShift.mockResolvedValue(null);
+      repo.createFromWorkShift.mockResolvedValue({ workShift: { id: "shift-1" }, entries: [], timeSegments: [] });
+
+      const input = {
+        employeeId: activeEmployee.id,
+        startAt: new Date("2026-09-24T21:00:00.000Z"), // 18:00 ART 24/09
+        endAt: new Date("2026-09-25T06:00:00.000Z"), // 03:00 ART 25/09, mismo mes
+        source: "ADMIN",
+        confirm: true as const,
+      } as unknown as Parameters<typeof timeEntriesService.createWorkShift>[0];
+
+      await timeEntriesService.createWorkShift(input, adminUser);
+
+      expect(mockedRecalculateForEmployeePeriod).toHaveBeenCalledTimes(1);
+      expect(mockedRecalculateForEmployeePeriod).toHaveBeenCalledWith(expect.objectContaining({ period: "2026-09" }));
+    });
+
+    it("cruce de mes (31/08 22:00 ART -> 01/09 06:00 ART): recalcula 2026-08 y 2026-09, cada uno exactamente una vez", async () => {
+      repo.findEmployeeForShift.mockResolvedValue(activeEmployee);
+      repo.findOverlappingWorkShift.mockResolvedValue(null);
+      repo.createFromWorkShift.mockResolvedValue({ workShift: { id: "shift-1" }, entries: [], timeSegments: [] });
+
+      const input = {
+        employeeId: activeEmployee.id,
+        startAt: new Date("2026-09-01T01:00:00.000Z"), // 31/08 22:00 ART
+        endAt: new Date("2026-09-01T09:00:00.000Z"), // 01/09 06:00 ART
+        source: "ADMIN",
+        confirm: true as const,
+      } as unknown as Parameters<typeof timeEntriesService.createWorkShift>[0];
+
+      await timeEntriesService.createWorkShift(input, adminUser);
+
+      expect(mockedRecalculateForEmployeePeriod).toHaveBeenCalledTimes(2);
+      const periods = mockedRecalculateForEmployeePeriod.mock.calls.map((call) => (call[0] as { period: string }).period).sort();
+      expect(periods).toEqual(["2026-08", "2026-09"]);
+    });
+  });
+
+  describe("aislamiento de errores — Motor B nunca revierte ni bloquea una jornada ya persistida", () => {
+    it("Motor B lanza un error genérico: createWorkShift igual se confirma y responde con éxito", async () => {
+      repo.findEmployeeForShift.mockResolvedValue(activeEmployee);
+      repo.findOverlappingWorkShift.mockResolvedValue(null);
+      repo.createFromWorkShift.mockResolvedValue({ workShift: { id: "shift-1" }, entries: [{ id: "entry-1" }], timeSegments: [] });
+      mockedRecalculateForEmployeePeriod.mockRejectedValueOnce(new Error("fallo inesperado de Motor B"));
+
+      const result = await timeEntriesService.createWorkShift(sameDayWorkShiftInput(), adminUser);
+
+      expect(result.workShift.id).toBe("shift-1");
+    });
+
+    it("Motor B lanza PERIOD_CLOSED (409): createWorkShift igual se confirma, sin propagar el 409 al cliente", async () => {
+      repo.findEmployeeForShift.mockResolvedValue(activeEmployee);
+      repo.findOverlappingWorkShift.mockResolvedValue(null);
+      repo.createFromWorkShift.mockResolvedValue({ workShift: { id: "shift-1" }, entries: [{ id: "entry-1" }], timeSegments: [] });
+      mockedRecalculateForEmployeePeriod.mockRejectedValueOnce(new AppError("The period is closed for recalculation", 409, "PERIOD_CLOSED"));
+
+      const result = await timeEntriesService.createWorkShift(sameDayWorkShiftInput(), adminUser);
+
+      expect(result.workShift.id).toBe("shift-1");
+    });
   });
 });

@@ -1558,6 +1558,69 @@ describe("closeOpenWorkShift — Etapa 13F (menos trabajo dentro del tx crítico
       data: expect.objectContaining({ totalMinutes: 300, actualMinutes: 300 }), // 60 existentes + 240 del nuevo tramo
     }));
   });
+
+  // Etapa 15M.3 (docs/decisions/ATTENDANCE_TIME_GRID_REAL_DATA_FIX_15M3.md):
+  // regresión real confirmada contra datos de producción (legajo 30,
+  // 2026-09-16) — un turno 07:50-11:59 (249 min) con el concepto adicional
+  // AUTOMATIC "Prueba" habilitado (regla 09:00-11:00) hace que Motor A
+  // (`classifyWorkShiftSegments`) parta el turno en 3 TimeSegment de la
+  // MISMA fecha calendario: Normal 69min, Prueba 120min, Normal 60min. Antes
+  // de esta etapa, cada tramo leía `existingByDate` (fijado una sola vez
+  // antes del loop, Etapa 13F) y lo sobreescribía sin refrescarlo entre
+  // tramos — la fila terminaba en 61 min (1 min de otro turno cerrado antes
+  // ese mismo día + sólo el ÚLTIMO tramo de 60 min), perdiendo los 69+120
+  // minutos intermedios en silencio. `hours: 1.02` en la grilla real venía
+  // exactamente de ahí.
+  describe("Etapa 15M.3 — múltiples TimeSegment de la MISMA fecha no se pisan entre sí", () => {
+    const day = new Date("2026-09-16T00:00:00.000Z");
+    const shiftStart = new Date("2026-09-16T10:50:46.469Z");
+    const t1 = new Date("2026-09-16T12:00:00.000Z");
+    const t2 = new Date("2026-09-16T14:00:00.000Z");
+    const shiftEnd = new Date("2026-09-16T14:59:36.724Z");
+
+    function splitShiftSegments() {
+      return [
+        { date: day, startAt: shiftStart, endAt: t1, minutes: 69, hours: 1.15, hourConceptId: "concept-normal", hourConceptName: "Hora normal", conceptStatus: "SUGERIDO" as const, hourConceptRuleId: null },
+        { date: day, startAt: t1, endAt: t2, minutes: 120, hours: 2, hourConceptId: "concept-prueba", hourConceptName: "Prueba", conceptStatus: "SUGERIDO" as const, hourConceptRuleId: null },
+        { date: day, startAt: t2, endAt: shiftEnd, minutes: 60, hours: 1, hourConceptId: "concept-normal", hourConceptName: "Hora normal", conceptStatus: "SUGERIDO" as const, hourConceptRuleId: null },
+      ];
+    }
+
+    it("sin TimeEntry previo: persiste los 3 TimeSegment pero un único TimeEntry Normal con los 249 min reales (nunca sólo el último tramo)", async () => {
+      await timeEntriesRepository.closeOpenWorkShift(closeInput({ segments: splitShiftSegments() }));
+
+      expect(mockedPrisma.__tx.timeSegment.create).toHaveBeenCalledTimes(3);
+      expect(mockedPrisma.__tx.timeEntry.create).toHaveBeenCalledTimes(1);
+      expect(mockedPrisma.__tx.timeEntry.update).not.toHaveBeenCalled();
+      expect(mockedPrisma.__tx.timeEntry.create).toHaveBeenCalledWith(expect.objectContaining({
+        data: expect.objectContaining({ totalMinutes: 249, actualMinutes: 249, hours: 249 / 60 }),
+      }));
+    });
+
+    it("con un TimeEntry ya existente ese día (otra jornada cerrada antes): acumula sobre él exactamente una vez -- 1 + 69 + 120 + 60 = 250, nunca 61 (regresión legajo 30)", async () => {
+      const existing = { id: "entry-existing", employeeId, hourConceptId: "concept-normal", date: day, actualMinutes: 1, totalMinutes: 1, observation: "Generado por fichada de ingreso/salida.", status: "APROBADO" };
+      mockedPrisma.__tx.timeEntry.findMany.mockResolvedValue([existing]);
+      mockedPrisma.__tx.timeEntry.update.mockResolvedValue({ id: "entry-existing" });
+
+      await timeEntriesRepository.closeOpenWorkShift(closeInput({ segments: splitShiftSegments() }));
+
+      expect(mockedPrisma.__tx.timeEntry.update).toHaveBeenCalledTimes(1);
+      expect(mockedPrisma.__tx.timeEntry.create).not.toHaveBeenCalled();
+      expect(mockedPrisma.__tx.timeEntry.update).toHaveBeenCalledWith(expect.objectContaining({
+        where: { id: "entry-existing" },
+        data: expect.objectContaining({ totalMinutes: 250, actualMinutes: 250 }),
+      }));
+    });
+
+    it("el TimeEntry queda vinculado al último TimeSegment de la fecha (trazabilidad), pero eso nunca reduce los minutos acumulados", async () => {
+      await timeEntriesRepository.closeOpenWorkShift(closeInput({ segments: splitShiftSegments() }));
+
+      const lastSegmentCreateCall = mockedPrisma.__tx.timeSegment.create.mock.calls.at(-1)![0] as { data: { hourConceptName: string } };
+      expect(lastSegmentCreateCall.data.hourConceptName).toBe("Hora normal");
+      const entryCreateCall = mockedPrisma.__tx.timeEntry.create.mock.calls[0]![0] as { data: { totalMinutes: number } };
+      expect(entryCreateCall.data.totalMinutes).toBe(249);
+    });
+  });
 });
 
 describe("rolloverExpiredOpenWorkShift — regresión de atribución de día/período (Etapa 2)", () => {

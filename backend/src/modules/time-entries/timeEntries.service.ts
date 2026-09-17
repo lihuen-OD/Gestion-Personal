@@ -20,6 +20,7 @@ import { compareOpenShiftRisk, computeOpenShiftRisk } from "../shifts/openShiftM
 import { resolveActiveWorkRegime } from "../work-regimes/workRegimes.service";
 import { hourConceptsRepository } from "../hour-concepts/hourConcepts.repository";
 import { classifyWorkShiftSegments } from "../hour-concepts/hourConceptClassification";
+import { automaticHourConceptBreakdownsService } from "../employees/automaticHourConceptBreakdowns.service";
 import {
   argentinaCalendarDate,
   argentinaDateParts,
@@ -74,6 +75,66 @@ async function evaluateShiftExitSafely(...args: Parameters<typeof evaluateShiftE
       error: error instanceof Error ? error.message : String(error),
     });
   }
+}
+
+// Etapa 15M.2 (docs/decisions/ATTENDANCE_AUTO_BREAKDOWN_SYNC_15M2.md): 15M.1
+// (auditoría read-only) confirmó que cerrar una jornada nunca disparaba
+// Motor B (automaticHourConceptBreakdownsService) — el único caller real era
+// el endpoint administrativo explícito, y ni siquiera ese tenía ya un botón
+// de UI que lo llamara desde la Etapa 6L.4. Por eso Asistencia (que lee
+// TimeSegment, Motor A) podía mostrar una jornada correcta mientras la
+// grilla de Carga Horaria (que lee HourConceptBreakdown, Motor B) nunca
+// recibía nada. Esta función corre DESPUÉS de que WorkShift/TimeEntry/
+// TimeSegment ya se confirmaron en su propia transacción
+// (closeOpenWorkShift/createFromWorkShift) — nunca antes, y nunca dentro de
+// esa transacción — y nunca propaga: mismo principio de aislamiento que ya
+// usa evaluateShiftExitSafely para las alertas de turno. Un fallo de Motor B
+// (incluido PERIOD_CLOSED, ver 15M.1 §26) no debe poder revertir, invalidar
+// ni convertir en error una fichada/cierre ya persistido.
+async function syncAutomaticHourConceptBreakdownsSafely(employeeId: string, period: string, workShiftId?: string, audit?: AuditContext) {
+  try {
+    await automaticHourConceptBreakdownsService.recalculateForEmployeePeriod({ employeeId, period, createdByUserId: audit?.userId, audit });
+  } catch (error) {
+    const appError = error instanceof AppError ? error : null;
+    console.error("AUTOMATIC_BREAKDOWN_SYNC_FAILED", {
+      // PERIOD_CLOSED es un estado esperado (deuda documentada, no un error
+      // real del sistema) — se distingue en el log para no confundirlo con
+      // una falla genuina de Motor B (ver §21/22 del pedido de 15M.2).
+      severity: appError?.code === "PERIOD_CLOSED" ? "warning" : "critical",
+      employeeId,
+      period,
+      workShiftId,
+      code: appError?.code || "UNKNOWN",
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+/**
+ * Deriva los períodos Argentina realmente afectados por los tramos ya
+ * persistidos de una jornada PROCESADA (puede ser más de uno si la jornada
+ * cruza de mes, ej. 31/08 22:00 -> 01/09 06:00) y recalcula Motor B una vez
+ * por período — nunca por tramo ni por WorkShift, para no recalcular el
+ * mismo período dos veces cuando una jornada cruza medianoche dentro del
+ * mismo mes (dos TimeSegment, un solo período). No recibe ni modifica
+ * TimeEntry directamente: sólo dispara el core de Motor B
+ * (`recalculateForEmployeePeriod`), que sigue siendo el único dueño de
+ * `HourConceptBreakdown`.
+ */
+async function syncAutomaticBreakdownsAfterProcessedShift({
+  employeeId,
+  workShiftId,
+  segments,
+  audit,
+}: {
+  employeeId: string;
+  workShiftId: string;
+  segments: Array<{ date: Date }>;
+  audit?: AuditContext;
+}) {
+  const periods = new Set(segments.map((segment) => periodFromCalendarDate(segment.date)));
+  await Promise.all([...periods].map((period) => syncAutomaticHourConceptBreakdownsSafely(employeeId, period, workShiftId, audit)));
+  return { periods: [...periods] };
 }
 
 export type TimeEntriesExportRow = {
@@ -930,6 +991,12 @@ export const timeEntriesService = {
       segments: classifiedSegments,
       observation: `Cierre manual: ${input.reason}`,
     });
+    await syncAutomaticBreakdownsAfterProcessedShift({
+      employeeId: before.employeeId,
+      workShiftId: created.workShift.id,
+      segments: classifiedSegments,
+      audit,
+    });
     await evaluateShiftExitSafely(before.employeeId, created.workShift.id, input.endAt, classifiedSegments);
 
     await auditService.register({
@@ -1051,6 +1118,12 @@ export const timeEntriesService = {
         observation: input.observation,
         segments: classifiedSegments,
         createdByUserId: user.id,
+      });
+      await syncAutomaticBreakdownsAfterProcessedShift({
+        employeeId: result.employee.id,
+        workShiftId: created.workShift.id,
+        segments: classifiedSegments,
+        audit,
       });
       await notifyClassificationAlerts(result.employee.id, created.workShift.id, classifiedSegments);
 
@@ -1418,6 +1491,12 @@ export const timeEntriesService = {
         after: { workShiftId: created.workShift.id, employeeId: employee.id, source: "PUBLIC_CLOCK_PHOTO" } as Prisma.InputJsonValue,
       });
       if (created.workShift.endPunchId) scheduleClockThumbnail(input, deferredThumbnail, evidence, created.workShift.endPunchId);
+      await syncAutomaticBreakdownsAfterProcessedShift({
+        employeeId: employee.id,
+        workShiftId: created.workShift.id,
+        segments: classifiedSegments,
+        audit,
+      });
       await evaluateShiftExitSafely(employee.id, created.workShift.id, now, classifiedSegments);
       console.info("CLOCK_PHOTO_PUNCH_PHASE_TIMING", {
         requestId: input.requestId,
@@ -1592,6 +1671,11 @@ export const timeEntriesService = {
         source,
         endAt,
         totalMinutes: calculation.totalMinutes,
+        segments: classifiedSegments,
+      });
+      await syncAutomaticBreakdownsAfterProcessedShift({
+        employeeId: employee.id,
+        workShiftId: created.workShift.id,
         segments: classifiedSegments,
       });
       await evaluateShiftExitSafely(employee.id, created.workShift.id, endAt, classifiedSegments);

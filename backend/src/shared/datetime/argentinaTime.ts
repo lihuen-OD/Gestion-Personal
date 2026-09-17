@@ -116,6 +116,25 @@ export function dayOfMonthFromCalendarDate(dateOnly: Date): number {
   return dateOnly.getUTCDate();
 }
 
+/**
+ * [start, end) del período "YYYY-MM", como límites UTC puros (sin
+ * corrimiento de huso horario) para filtrar columnas `@db.Date` ya
+ * normalizadas (`TimeEntry.date`, `TimeSegment.date`) — mismo criterio que
+ * `periodFromCalendarDate`: esas columnas representan un día calendario sin
+ * hora asociada, así que corregir por Argentina las movería un día para
+ * atrás. No confundir con `argentinaPeriodBounds`
+ * (`automaticHourConceptBreakdowns.ts`), que sí corrige +3h porque filtra
+ * `WorkShift.startAt`, un instante real (`TIMESTAMPTZ`).
+ */
+export function periodCalendarBounds(period: string): { start: Date; end: Date } {
+  const year = Number(period.slice(0, 4));
+  const month = Number(period.slice(5, 7));
+  return {
+    start: new Date(Date.UTC(year, month - 1, 1)),
+    end: new Date(Date.UTC(year, month, 1)),
+  };
+}
+
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 /**
