@@ -79,6 +79,64 @@ resume severidad máxima y estado conjunto, y contiene las alertas hijas con
 resolución individual. Los tipos que sólo sobreviven como datos históricos se
 identifican como “Registro anterior” y nunca se ocultan.
 
+### Política de scroll vertical (Etapa 15M.14)
+
+La aplicación tiene un único propietario del scroll vertical principal:
+`.page-wrap` (dentro de `AppShell`, `frontend/src/app/AppShell.tsx`). Cadena
+completa:
+
+```text
+html            -> overflow:hidden, sin scroll propio
+body            -> overflow:hidden, sin scroll propio
+#root           -> overflow:hidden, sin scroll propio
+.app-shell      -> height:100vh, overflow:hidden (enmarca, no scrollea)
+.sidebar        -> position:fixed, height:100vh (independiente del scroll)
+.workspace      -> height:100vh, overflow:hidden (enmarca, no scrollea)
+.topbar         -> position:sticky, altura fija dentro de .workspace
+.page-wrap      -> height:calc(100vh - 64px), overflow-y:auto, contain:layout
+                   ← ÚNICO propietario del scroll vertical
+```
+
+Reglas derivadas, no negociables para código nuevo:
+
+* Ninguna pantalla debe agregar un segundo scroll vertical de página
+  (`overflow-y:auto`/`scroll` en un wrapper propio que compita con
+  `.page-wrap`). Scroll interno propio sólo se justifica para necesidades
+  explícitas: scroll horizontal de grillas/tablas anchas (ver
+  `docs/decisions/` de la grilla mensual), o el scroll interno de un modal
+  (`.modal-body{overflow:auto}`).
+  * El final visual del contenido debe coincidir con el final desplazable de
+  la página: no debe poder seguir haciendo scroll después de terminado el
+  contenido real.
+* `.page-wrap` lleva `contain: layout` a propósito: sin esto, contenido real
+  de una página (cualquier `display:grid` con columnas `auto`, por ejemplo
+  `.shift-alert-journey-header`/`.notification-row`) podía inflar
+  `document.documentElement.scrollHeight` por encima de lo que `.page-wrap`
+  reportaba, generando un segundo scroll de documento por accidente (el
+  defecto visual corregido en esta etapa: scroll vacío después del contenido
+  real, sidebar aparentando desacoplarse). Cualquier pantalla nueva con un
+  grid similar queda cubierta automáticamente por este único punto — no hace
+  falta (ni corresponde) repetir `contain` por pantalla.
+* Consecuencia directa de `contain: layout` en `.page-wrap`: cualquier
+  overlay que necesite cubrir el viewport completo (sidebar incluido) —
+  modales, popovers — debe montarse vía `createPortal(..., document.body)`,
+  nunca inline dentro del árbol de una página. `Modal`
+  (`frontend/src/components/ui/Modal.tsx`) ya lo hace así, igual que
+  `AppDialogHost` y `OverflowCell`. Un overlay `position:fixed` renderizado
+  inline dentro de `.page-wrap` quedaría contenido a los límites de
+  `.page-wrap` (no cubriría sidebar/topbar) en vez de al viewport.
+* Scroll restoration entre rutas es centralizado en `AppShell`: cada cambio
+  de `location.pathname` resetea `.page-wrap.scrollTop` a `0` (incluye
+  navegación por sidebar/links y los botones atrás/adelante del navegador,
+  ya que ambos cambian la ruta de React Router). No existía restauración de
+  posición previa a esta etapa, así que la política elegida es simple:
+  toda ruta nueva abre arriba. No agregar `window.scrollTo(0,0)` manual en
+  páginas individuales — el reset ya es responsabilidad de `AppShell`.
+* `100vh` en el shell es intencional (no reemplazar por `100dvh` sin motivo
+  concreto): el layout ya resuelve el caso desktop/notebook/tablet; un
+  reemplazo masivo no es parte de esta política y podría introducir un
+  problema distinto en navegadores móviles con chrome dinámico.
+
 This document defines the official visual and user experience direction for all internal company applications.
 
 It must be used as the base design system for every frontend project developed for the company, including but not limited to:

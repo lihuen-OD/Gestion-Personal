@@ -362,12 +362,14 @@ describe("WorkRegimesPage — modal Empleados asociados (Etapa 13J / 13J.1 / 13J
       new Promise((resolve) => { resolveFetch = resolve; }),
     );
 
-    const { container } = renderPage();
+    renderPage();
     await screen.findByText("Agricultura");
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "Ver empleados asociados" }));
 
-    expect(container.querySelector(".loading-table")).toBeInTheDocument();
+    // Etapa 15M.14: `Modal` ahora porta a document.body (igual que ya hacía
+    // AppDialogHost) -- el skeleton vive ahí, no dentro de `container`.
+    expect(document.querySelector(".loading-table")).toBeInTheDocument();
 
     resolveFetch({ items: [], meta: emptyMeta });
   });

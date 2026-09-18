@@ -1,5 +1,5 @@
 import { Bell, ChevronRight, Menu, RefreshCcw, Settings, ShieldCheck, X } from "lucide-react";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { demoMode } from "../config/runtimeMode";
@@ -56,6 +56,19 @@ export function AppShell({ children }: { children: ReactNode }) {
   const activeHref = findActiveHref(location.pathname, flatNavItems.map((item) => item.href));
   const currentNav = flatNavItems.find((item) => item.href === activeHref);
   const topbarTitle = currentNav?.label || "Dashboard";
+  const pageWrapRef = useRef<HTMLDivElement>(null);
+  // Etapa 15M.14 (docs/PROJECT_UI_CONTEXT.md "Política de scroll vertical"):
+  // `.page-wrap` es el único dueño del scroll vertical y, a diferencia de
+  // `{children}`, nunca se desmonta entre rutas -- sin este reset, una
+  // navegación (sidebar, Link, back/forward) podía "heredar" el scrollTop de
+  // la pantalla anterior. Depender de que la próxima pantalla renderice
+  // momentáneamente contenido más corto que el viewport (lo que a veces lo
+  // dejaba en 0 por accidente) no es una garantía real. Política elegida:
+  // cada nueva ruta abre arriba del todo; no hay restauración de posición
+  // por ruta anterior porque nunca existió antes de esta etapa.
+  useEffect(() => {
+    pageWrapRef.current?.scrollTo(0, 0);
+  }, [location.pathname]);
   useEffect(() => {
     let mounted = true;
     const load = () => workforceApiService.unreadNotificationCount().then((count) => { if (mounted) setUnreadNotifications(count); }).catch(() => undefined);
@@ -88,7 +101,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     </aside>
     <section className="workspace">
       <header className="topbar"><button className="icon-button menu-toggle" onClick={() => setOpen(true)}><Menu /></button><div className="topbar-title"><span>{topbarTitle}</span><small>Personal y Control Horario</small></div><div className="topbar-actions"><button className={`icon-button notification-button ${unreadNotifications ? "has-unread" : ""}`} title={unreadNotifications ? `${unreadNotifications} notificaciones sin leer` : "No hay notificaciones sin leer"} aria-label="Abrir notificaciones" onClick={() => navigate("/notificaciones")}><Bell size={18} />{unreadNotifications ? <span className="notification-count">{unreadNotifications > 99 ? "99+" : unreadNotifications}</span> : null}</button><button className="icon-button"><Settings size={18} /></button><div className="user-chip"><span>{user!.name.split(" ").map((x) => x[0]).join("").slice(0, 2)}</span><div><b>{user!.name}</b><small>{user!.role}</small></div></div></div></header>
-      <div className="page-wrap">{children}</div>
+      <div className="page-wrap" ref={pageWrapRef}>{children}</div>
     </section>
   </div>;
 }

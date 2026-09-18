@@ -781,7 +781,26 @@ html{font-family:"Inter",system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",s
 body{background:var(--ds-slate-50)!important;color:var(--ds-slate-700)!important}
 .app-shell{height:100vh!important;overflow:hidden!important;background:var(--ds-slate-50)!important}
 .workspace{height:100vh!important;overflow:hidden!important;background:var(--ds-slate-50)!important}
-.page-wrap{height:calc(100vh - 64px)!important;overflow-y:auto!important;overflow-x:hidden!important;padding:24px 32px!important;background:var(--ds-slate-50)!important}
+/* Etapa 15M.14 (docs/PROJECT_UI_CONTEXT.md "Política de scroll vertical"):
+   `.page-wrap` es el único propietario del scroll vertical principal --
+   `.app-shell`/`.workspace` sólo lo enmarcan a 100vh y no scrollean. Sin
+   `contain: layout`, el contenido real de una página (cualquier grid con
+   columnas `auto`, ej. `.shift-alert-journey-header`/`.notification-row`)
+   podía inflar `document.documentElement.scrollHeight`/`body.scrollHeight`
+   por encima de lo que su propio `overflow-y: auto` reportaba -- `html`,
+   `body` y `#root` heredan `overflow-y: auto` computado (por la regla de
+   abajo que sólo fija `overflow-x: hidden`, forzando el eje Y a `auto` por
+   spec) y ese overflow filtrado los convertía en un segundo scroll
+   compitiendo con `.page-wrap`: el body scrolleaba una pantalla llena de
+   vacío mientras el sidebar (fixed, anclado al viewport) parecía
+   desacoplarse del contenido. `contain: layout` en `.page-wrap` aísla su
+   subárbol para que ese exceso ya no se propague fuera de él -- confirmado
+   con Playwright antes/después (ver auditoría de esta etapa). Requiere que
+   `Modal` (`components/ui/Modal.tsx`) porte a `document.body`, igual que
+   ya hacía `AppDialogHost` (Etapa 13J.3) por una razón distinta: sin eso,
+   `.modal-backdrop` (fixed, pensado para cubrir todo el viewport) quedaría
+   contenido dentro de `.page-wrap` en vez de cubrir sidebar/topbar. */
+.page-wrap{height:calc(100vh - 64px)!important;overflow-y:auto!important;overflow-x:hidden!important;padding:24px 32px!important;background:var(--ds-slate-50)!important;contain:layout!important}
 
 .sidebar{width:256px!important;background:var(--ds-slate-900)!important;border-right:0!important;box-shadow:none!important}
 .workspace{width:calc(100% - 256px)!important;margin-left:256px!important}
@@ -1332,9 +1351,17 @@ td b{color:var(--ds-slate-900)!important;font-weight:600!important}
 .stat-icon.purple{background:var(--ds-purple-50)!important;color:var(--ds-purple-700)!important}
 .stat-icon svg{width:18px!important;height:18px!important}
 
-/* Final table readability and overflow stability pass */
+/* Final table readability and overflow stability pass.
+   Etapa 15M.14: era sólo `overflow-x:hidden`, que por spec CSS fuerza el eje
+   Y (dejado en `visible` por default en html/body/#root) a computar como
+   `auto` -- un único eje no-visible obliga al otro a `auto` para evitar la
+   combinación inválida overflow-x:hidden + overflow-y:visible. Eso volvía a
+   html/body/#root scrolleables por accidente, compitiendo con `.page-wrap`
+   (el propietario único elegido, ver comentario ahí). Ninguno de los 4
+   necesita scroll propio -- `overflow:hidden` en ambos ejes lo deja
+   explícito en vez de depender de ese efecto lateral. */
 html,body,#root,.app-shell{
-  overflow-x:hidden!important;
+  overflow:hidden!important;
 }
 .workspace,
 .page-wrap,

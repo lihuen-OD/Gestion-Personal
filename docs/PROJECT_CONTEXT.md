@@ -1,5 +1,23 @@
 # Project Context
 
+> Etapa 15M.14: corrección global de scroll vertical en el App Shell.
+> `.page-wrap` (`frontend/src/app/AppShell.tsx`) es el único propietario del
+> scroll vertical de toda la aplicación; `html`/`body`/`#root`/`.app-shell`/
+> `.workspace` no scrollean. Causa raíz: `.page-wrap` no tenía `contain:
+> layout`, y contenido real con `display:grid`/columnas `auto` (ej.
+> `.shift-alert-journey-header`, `.notification-row`) podía inflar el
+> scrollHeight del documento por encima de lo que `.page-wrap` reportaba —
+> generando un segundo scroll de página compitiendo con el de `.page-wrap`
+> (scroll vacío después del contenido real, sidebar aparentando
+> desacoplarse). Se agregó `contain: layout` a `.page-wrap`, lo que a su vez
+> exigió portar `Modal` (`components/ui/Modal.tsx`) a `document.body` (ya lo
+> hacía `AppDialogHost`) para que los modales sigan cubriendo todo el
+> viewport. `AppShell` ahora resetea `.page-wrap.scrollTop` a `0` en cada
+> cambio de ruta (antes no había ninguna política de scroll restoration). Ver
+> `docs/PROJECT_UI_CONTEXT.md` "Política de scroll vertical" para la cadena
+> completa y las reglas para código nuevo. No se tocó negocio/generación de
+> alertas/cálculos.
+
 > Etapa 15M.13: Alertas de turnos usa `workShiftId` como unidad visual de
 > empleado + jornada. Cada card deriva en frontend la severidad máxima activa
 > y el estado Pendiente/Parcialmente resuelta/Resuelta; conserva prioridad y
