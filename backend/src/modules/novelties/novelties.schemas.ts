@@ -8,6 +8,15 @@ export const listNoveltiesQuerySchema = z.object({
   status: approvalStatusSchema.optional(),
   from: z.coerce.date().optional(),
   to: z.coerce.date().optional(),
+  // Etapa 15M.15 (docs/decisions/... pendiente): "YYYY-MM" -- distinto de
+  // `from`/`to` de arriba (esos filtran sólo por `fromDate`, sin intersección
+  // de rango; ver novelties.repository.ts::buildWhere). `period` selecciona
+  // por vigencia real intersectando el mes completo, igual que la grilla de
+  // horas/`noveltyCoversDay` tratan un rango de novedad.
+  period: z
+    .string()
+    .regex(/^\d{4}-(0[1-9]|1[0-2])$/, "period must be YYYY-MM")
+    .optional(),
   exportable: z.coerce.boolean().optional(),
   search: z.string().trim().optional(),
   page: z.coerce.number().int().positive().max(10000).default(1),

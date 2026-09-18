@@ -8,14 +8,51 @@ import { ErrorState } from "../components/ui/ErrorState";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { FilterPanel } from "../components/ui/FilterPanel";
-import { workforceApiService, type SystemNotification, type SystemNotificationListMeta } from "../services/api/workforceApiService";
+import { NOTIFICATIONS_POLL_INTERVAL_MS, workforceApiService, type SystemNotification, type SystemNotificationListMeta } from "../services/api/workforceApiService";
 import { NoveltyFromContextModal } from "../components/novelties/NoveltyFromContextModal";
 import { buildNoveltyPrefillFromNotification, type NoveltyPrefillContext } from "../utils/noveltyFromAlert";
+import { TOAST_SUCCESS_MS } from "../utils/toast";
 
 const PAGE_SIZE = 20;
 type StatusFilter = "" | "NO_LEIDA" | "LEIDA";
 
 const emptyMeta: SystemNotificationListMeta = { total: 0, page: 1, pageSize: PAGE_SIZE, hasMore: false };
+
+/**
+ * Etapa 15M.19C: fusiona un refresco silencioso (siempre página 1, hasta
+ * PAGE_SIZE notificaciones — las más recientes por createdAt desc) con lo
+ * que ya está en pantalla, sin perder páginas cargadas con "Cargar más" ni
+ * duplicar filas. Las filas frescas (nuevas o con campos actualizados) van
+ * primero; lo que ya estaba cargado y no vino en esta página 1 fresca se
+ * conserva después, en su orden relativo — nunca se descarta por el sólo
+ * hecho de no reaparecer en una ventana de sólo 20 elementos.
+ *
+ * El estado "leída" es monótono (el producto no tiene "marcar como no
+ * leída"): si el estado local de una fila ya avanzó a LEIDA, un refresco que
+ * todavía no vio esa escritura (carrera de red entre el POST de lectura y un
+ * poll en vuelo) nunca la revierte.
+ *
+ * Etapa 15M.19D (docs/decisions/NOTIFICATIONS_END_TO_END_ACCEPTANCE_15M19D.md
+ * §26): esta conservación de "lo que no reapareció" sólo es válida para un
+ * filtro cuya pertenencia es monótona no decreciente — "" (Todas) y "LEIDA"
+ * nunca pierden una fila que ya matcheaba (una vez leída, nunca vuelve a
+ * NO_LEIDA). Bajo el filtro "NO_LEIDA" la pertenencia SÍ puede pasar a falsa
+ * (otro cliente la marca como leída) — ahí "ausente de la página 1 fresca"
+ * ya no distingue "está más abajo, sin re-pedir todavía" de "dejó de
+ * pertenecer al filtro". Ver `refreshSilently` para el tratamiento distinto
+ * de ese caso.
+ */
+function mergeNotifications(current: SystemNotification[], fresh: SystemNotification[]): SystemNotification[] {
+  const currentById = new Map(current.map((item) => [item.id, item]));
+  const freshIds = new Set(fresh.map((item) => item.id));
+  const reconciled = fresh.map((item) => {
+    const existing = currentById.get(item.id);
+    if (existing?.status === "LEIDA" && item.status !== "LEIDA") return { ...item, status: existing.status };
+    return item;
+  });
+  const remaining = current.filter((item) => !freshIds.has(item.id));
+  return [...reconciled, ...remaining];
+}
 
 export function NotificationsPage() {
   const [items, setItems] = useState<SystemNotification[]>([]);
@@ -54,8 +91,61 @@ export function NotificationsPage() {
         setError("No se pudieron cargar las notificaciones.");
         setStatus("error");
       });
+
+    // Etapa 15M.19C (docs/decisions/NOTIFICATIONS_PAGE_LIVE_REFRESH_15M19C.md):
+    // refresco silencioso — misma capa de acceso (workforceApiService), mismo
+    // endpoint y filtro activo, pero NUNCA toca loading/error ni reemplaza la
+    // lista entera (fusiona vía mergeNotifications). Un fallo acá se ignora a
+    // propósito: la lista visible no se toca, y el próximo tick/evento
+    // reintenta solo — nunca tapa contenido ya visible con una pantalla de
+    // error por un refresh de fondo.
+    function refreshSilently() {
+      workforceApiService
+        .notifications({ page: 1, take: PAGE_SIZE, status: statusFilter || undefined })
+        .then((result) => {
+          if (!mounted) return;
+          // Etapa 15M.19D §26: bajo "NO_LEIDA" la pertenencia al filtro puede
+          // pasar a falsa (otro cliente marcó la fila como leída) — la página
+          // 1 fresca YA es, en ese caso, la verdad completa (el backlog de no
+          // leídas rara vez supera PAGE_SIZE, y aunque lo superara, preferir
+          // una bandeja "No leídas" correcta sobre preservar páginas
+          // profundas de un filtro que puede encogerse). Reemplazo completo,
+          // sigue sin loading/error — sigue siendo un refresco silencioso.
+          // "" y "LEIDA" son monótonos (una fila que ya matcheaba nunca deja
+          // de hacerlo) — ahí sí vale la fusión que preserva páginas
+          // profundas (mergeNotifications).
+          if (statusFilter === "NO_LEIDA") {
+            setItems(result.items);
+            setMeta(result.meta);
+            return;
+          }
+          let mergedLength = 0;
+          setItems((current) => {
+            const merged = mergeNotifications(current, result.items);
+            mergedLength = merged.length;
+            return merged;
+          });
+          // Sólo total/hasMore se actualizan acá — page/pageSize quedan
+          // intactos: pisarlos con el page=1 de este refresco silencioso
+          // rompería "Cargar más" (siempre pediría la página siguiente a 1).
+          setMeta((current) => ({ ...current, total: result.meta.total, hasMore: mergedLength < result.meta.total }));
+        })
+        .catch(() => undefined);
+    }
+
+    const timer = window.setInterval(refreshSilently, NOTIFICATIONS_POLL_INTERVAL_MS);
+    // Etapa 15M.19C §11/21: mismo evento que ya usa la campana del topbar
+    // (AppShell.tsx) — reacciona sin esperar al próximo tick. `markRead`, más
+    // abajo, ya lo dispara al marcar como leída; también puede llegar de
+    // otra pestaña/flujo futuro. `focus` cubre volver a la pestaña/app.
+    window.addEventListener("app:notifications-changed", refreshSilently);
+    window.addEventListener("focus", refreshSilently);
+
     return () => {
       mounted = false;
+      window.clearInterval(timer);
+      window.removeEventListener("app:notifications-changed", refreshSilently);
+      window.removeEventListener("focus", refreshSilently);
     };
   }, [statusFilter, refresh]);
 
@@ -65,7 +155,13 @@ export function NotificationsPage() {
     setError("");
     try {
       const result = await workforceApiService.notifications({ page: meta.page + 1, take: PAGE_SIZE, status: statusFilter || undefined });
-      setItems((current) => [...current, ...result.items]);
+      // Etapa 15M.19C: de-dup por id — si un refresco silencioso de la
+      // página 1 ya trajo alguna de estas filas (offset movido por
+      // notificaciones nuevas insertadas entre medio), no se duplica.
+      setItems((current) => {
+        const existingIds = new Set(current.map((row) => row.id));
+        return [...current, ...result.items.filter((row) => !existingIds.has(row.id))];
+      });
       setMeta(result.meta);
     } catch {
       setError("No se pudieron cargar las notificaciones.");
@@ -78,7 +174,16 @@ export function NotificationsPage() {
     if (item.status === "LEIDA") return;
     try {
       await workforceApiService.readNotification(item.id);
-      setItems((current) => current.map((row) => (row.id === item.id ? { ...row, status: "LEIDA" } : row)));
+      setItems((current) =>
+        // Etapa 15M.19C §12: bajo el filtro "No leídas", una fila recién
+        // marcada como leída deja de pertenecer a la vista actual — se
+        // quita de inmediato en vez de quedar visible con el badge "Leída"
+        // hasta el próximo refresco.
+        statusFilter === "NO_LEIDA"
+          ? current.filter((row) => row.id !== item.id)
+          : current.map((row) => (row.id === item.id ? { ...row, status: "LEIDA" } : row)),
+      );
+      if (statusFilter === "NO_LEIDA") setMeta((current) => ({ ...current, total: Math.max(0, current.total - 1) }));
       window.dispatchEvent(new Event("app:notifications-changed"));
     } catch {
       setError("No se pudo marcar la notificación como leída.");
@@ -140,10 +245,16 @@ export function NotificationsPage() {
         saved={() => {
           setNoveltyContext(undefined);
           setNoveltyNotice("Novedad creada. RRHH la revisa como cualquier otra novedad.");
+          // Etapa 15M.16: faltaba este auto-cierre -- el mensaje quedaba
+          // anclado en pantalla indefinidamente (mismo bug duplicado en
+          // AttendancePage.tsx, mismo flujo de origen). El resto de los
+          // ".toast" de la app siempre se limpian solos; éste era la
+          // excepción, no la regla.
+          setTimeout(() => setNoveltyNotice(""), TOAST_SUCCESS_MS);
         }}
       />
     ) : null}
 
-    {noveltyNotice ? <div className="toast">{noveltyNotice}</div> : null}
+    {noveltyNotice ? <div className="toast" role="status">{noveltyNotice}</div> : null}
   </>;
 }

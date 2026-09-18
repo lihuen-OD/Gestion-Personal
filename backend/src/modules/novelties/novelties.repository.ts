@@ -1,5 +1,6 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "../../shared/prisma/client";
+import { periodCalendarBounds } from "../../shared/datetime/argentinaTime";
 import type { CreateNoveltyInput, ListNoveltiesQuery } from "./novelties.schemas";
 
 const noveltyInclude = {
@@ -23,43 +24,78 @@ const noveltyInclude = {
   documents: { select: { fileName: true }, orderBy: { createdAt: "desc" }, take: 1 },
 } satisfies Prisma.NoveltyInclude;
 
+// Etapa 15M.15: intersección real de [fromDate, effectiveToDate] contra el
+// mes completo del período, mismo criterio de negocio que
+// `novelties.dateRange.ts::noveltyCoversDay` (generalizado de "cubre este
+// día" a "toca este mes") en vez de inventar uno nuevo:
+// - toDate cerrado: interseca si fromDate < fin de mes Y toDate >= inicio.
+// - toDate null Y el tipo permite rango (`allowsDateRange`): novedad
+//   vigente abierta -- sigue "activa" en cualquier mes posterior a que
+//   empezó, sin límite de fin.
+// - toDate null Y el tipo NO permite rango: no es una novedad abierta, es
+//   de un único día (mismo criterio que `noveltyCoversDay`) -- sólo
+//   interseca el mes de esa fecha exacta.
+// A propósito NO es la misma regla que `finnegansExport.repository.ts`
+// (Etapa 15L.3B.1: un período "dueño" único por `fromDate`, sin
+// intersección, para no exportar la misma fila dos veces). Son dos
+// preguntas distintas sobre el mismo campo -- ver comentario en
+// docs/PROJECT_UI_CONTEXT.md "Novedades por período".
+function periodIntersectionWhere(period: string): Prisma.NoveltyWhereInput {
+  const { start, end } = periodCalendarBounds(period);
+  return {
+    OR: [
+      { fromDate: { lt: end }, toDate: { not: null, gte: start } },
+      { fromDate: { lt: end }, toDate: null, noveltyType: { allowsDateRange: true } },
+      { fromDate: { gte: start, lt: end }, toDate: null, noveltyType: { allowsDateRange: false } },
+    ],
+  };
+}
+
 function buildWhere(query: ListNoveltiesQuery, employeeAccessWhere: Prisma.EmployeeWhereInput): Prisma.NoveltyWhereInput {
   const search = query.search?.trim();
-  return {
-    employee: employeeAccessWhere,
-    ...(query.employeeId ? { employeeId: query.employeeId } : {}),
-    ...(query.noveltyTypeId ? { noveltyTypeId: query.noveltyTypeId } : {}),
-    ...(query.status ? { status: query.status } : {}),
+  const conditions: Prisma.NoveltyWhereInput[] = [
+    { employee: employeeAccessWhere },
+    ...(query.employeeId ? [{ employeeId: query.employeeId }] : []),
+    ...(query.noveltyTypeId ? [{ noveltyTypeId: query.noveltyTypeId }] : []),
+    ...(query.status ? [{ status: query.status }] : []),
     ...(query.exportable !== undefined
-      ? {
-          noveltyType: {
-            exportsToFinnegans: query.exportable,
-            ...(query.exportable ? { finnegansCode: { not: null } } : {}),
+      ? [
+          {
+            noveltyType: {
+              exportsToFinnegans: query.exportable,
+              ...(query.exportable ? { finnegansCode: { not: null } } : {}),
+            },
           },
-        }
-      : {}),
+        ]
+      : []),
     ...(query.from || query.to
-      ? {
-          fromDate: {
-            ...(query.from ? { gte: query.from } : {}),
-            ...(query.to ? { lte: query.to } : {}),
+      ? [
+          {
+            fromDate: {
+              ...(query.from ? { gte: query.from } : {}),
+              ...(query.to ? { lte: query.to } : {}),
+            },
           },
-        }
-      : {}),
+        ]
+      : []),
+    ...(query.period ? [periodIntersectionWhere(query.period)] : []),
     ...(search
-      ? {
-          OR: [
-            { employee: { legajo: { contains: search, mode: "insensitive" } } },
-            { employee: { cuil: { contains: search, mode: "insensitive" } } },
-            { employee: { dni: { contains: search, mode: "insensitive" } } },
-            { employee: { firstName: { contains: search, mode: "insensitive" } } },
-            { employee: { lastName: { contains: search, mode: "insensitive" } } },
-            { noveltyType: { code: { contains: search, mode: "insensitive" } } },
-            { noveltyType: { name: { contains: search, mode: "insensitive" } } },
-          ],
-        }
-      : {}),
-  };
+      ? [
+          {
+            OR: [
+              { employee: { legajo: { contains: search, mode: "insensitive" as const } } },
+              { employee: { cuil: { contains: search, mode: "insensitive" as const } } },
+              { employee: { dni: { contains: search, mode: "insensitive" as const } } },
+              { employee: { firstName: { contains: search, mode: "insensitive" as const } } },
+              { employee: { lastName: { contains: search, mode: "insensitive" as const } } },
+              { noveltyType: { code: { contains: search, mode: "insensitive" as const } } },
+              { noveltyType: { name: { contains: search, mode: "insensitive" as const } } },
+            ],
+          },
+        ]
+      : []),
+  ];
+  return { AND: conditions };
 }
 
 export const noveltiesRepository = {

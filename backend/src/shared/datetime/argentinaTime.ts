@@ -117,6 +117,20 @@ export function dayOfMonthFromCalendarDate(dateOnly: Date): number {
 }
 
 /**
+ * "YYYY-MM-DD" de una FECHA CALENDARIO ya normalizada (ver nota de
+ * `periodFromCalendarDate` — mismo criterio: sin corrimiento de huso
+ * horario). Inversa de `argentinaCalendarDate`. Etapa 15M.19A: usado por el
+ * watermark de `JobCheckpoint` para volver a una clave de fecha desde el
+ * `@db.Date` persistido.
+ */
+export function calendarDateKey(dateOnly: Date): string {
+  const year = dateOnly.getUTCFullYear();
+  const month = String(dateOnly.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(dateOnly.getUTCDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+/**
  * [start, end) del período "YYYY-MM", como límites UTC puros (sin
  * corrimiento de huso horario) para filtrar columnas `@db.Date` ya
  * normalizadas (`TimeEntry.date`, `TimeSegment.date`) — mismo criterio que
@@ -136,6 +150,11 @@ export function periodCalendarBounds(period: string): { start: Date; end: Date }
 }
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+/** Día calendario siguiente a `dateKey` (ambos "YYYY-MM-DD"), sin corrimiento de huso horario. */
+export function nextCalendarDateKey(dateKey: string): string {
+  return calendarDateKey(new Date(argentinaCalendarDate(dateKey).getTime() + MS_PER_DAY));
+}
 
 /**
  * Etapa 15L.5 (docs/decisions/NOVELTY_QUANTITY_SEMANTICS_15L5.md): cantidad

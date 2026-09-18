@@ -1,14 +1,16 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { StrictMode } from "react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { NotificationsPage } from "./NotificationsPage";
-import { workforceApiService, type SystemNotification } from "../services/api/workforceApiService";
+import { NOTIFICATIONS_POLL_INTERVAL_MS, workforceApiService, type SystemNotification } from "../services/api/workforceApiService";
 import { employeeApiService } from "../services/api/employeeApiService";
 import { noveltyApiService } from "../services/api/noveltyApiService";
 import { noveltyTypeApiService } from "../services/api/noveltyTypeApiService";
 import { hourConceptApiService } from "../services/api/hourConceptApiService";
 import type { NoveltyType } from "../types/noveltyType.types";
+import { TOAST_SUCCESS_MS } from "../utils/toast";
 
 // Etapa 15L.2B (docs/decisions/NOVELTY_TYPE_FRONTEND_REDESIGN_15L2B.md,
 // punto 25): NoveltyModal (montado acá vía "Crear novedad") ahora usa
@@ -176,7 +178,7 @@ describe("NotificationsPage — Etapa 9I (paginación real, antes fetch-all take
     await screen.findByText("No tenés notificaciones sin leer.");
   });
 
-  it("marcar una notificación como leída actualiza el ítem y no vuelve a pedir el listado completo", async () => {
+  it("marcar una notificación como leída actualiza el ítem de inmediato (sin esperar ningún refetch)", async () => {
     vi.mocked(workforceApiService.notifications).mockResolvedValue({
       items: [buildNotification({ status: "NO_LEIDA" })],
       meta: { total: 1, page: 1, pageSize: 20, hasMore: false },
@@ -188,11 +190,38 @@ describe("NotificationsPage — Etapa 9I (paginación real, antes fetch-all take
 
     await user.click(screen.getByRole("button", { name: /Marcar leída/ }));
 
+    // La fila pasa a "Leída" apenas resuelve el POST — antes de que exista
+    // cualquier refetch. La notificación sigue visible (no se blanqueó ni
+    // recargó toda la lista para lograrlo).
     await screen.findByText("Leída");
     expect(workforceApiService.readNotification).toHaveBeenCalledWith("notif-1");
-    expect(workforceApiService.notifications).toHaveBeenCalledTimes(1);
-    // La notificación sigue visible (no se blanqueó ni recargó toda la lista).
     expect(screen.getByText("Cierres mensuales recibidos")).toBeInTheDocument();
+  });
+
+  // Etapa 15M.19C (docs/decisions/NOTIFICATIONS_PAGE_LIVE_REFRESH_15M19C.md
+  // §11/§12): markRead ya disparaba "app:notifications-changed" (para que la
+  // campana del topbar se actualice) — ahora NotificationsPage también
+  // escucha ese mismo evento y dispara un refresco silencioso propio, sin
+  // esperar al próximo tick del polling.
+  it("marcar como leída dispara además un refresco silencioso propio (reacciona a su propio evento app:notifications-changed)", async () => {
+    vi.mocked(workforceApiService.notifications).mockResolvedValue({
+      items: [buildNotification({ status: "NO_LEIDA" })],
+      meta: { total: 1, page: 1, pageSize: 20, hasMore: false },
+    });
+    vi.mocked(workforceApiService.readNotification).mockResolvedValue(undefined);
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByText("Cierres mensuales recibidos");
+    expect(workforceApiService.notifications).toHaveBeenCalledTimes(1);
+
+    await user.click(screen.getByRole("button", { name: /Marcar leída/ }));
+    await screen.findByText("Leída");
+
+    await waitFor(() => expect(workforceApiService.notifications).toHaveBeenCalledTimes(2));
+    // El refresco silencioso no reemplaza la lista ni muestra loading: sigue
+    // exactamente la misma fila en pantalla, ahora "Leída".
+    expect(screen.getByText("Cierres mensuales recibidos")).toBeInTheDocument();
+    expect(document.querySelector(".skeleton-bar")).toBeNull();
   });
 
   it("si marcar como leída falla, muestra un error local sin romper la lista visible", async () => {
@@ -468,5 +497,453 @@ describe("NotificationsPage — Etapa 15G.2 (crear novedad desde notificación �
     ));
     await screen.findByText("Novedad creada. RRHH la revisa como cualquier otra novedad.");
     expect(workforceApiService.readNotification).not.toHaveBeenCalled();
+  });
+});
+
+// Etapa 15M.16 (docs/PROJECT_UI_CONTEXT.md "Feedback temporal vs banners
+// persistentes"): el mensaje de éxito quedaba anclado en pantalla para
+// siempre -- al `.toast` de "Novedad creada..." le faltaba el
+// `setTimeout(() => setNoveltyNotice(""), ...)` que el resto de los avisos
+// transitorios de la app (WorkRegimesPage, HourConceptsPage,
+// AssociatedEmployeesPanel, etc.) siempre tienen. Mismo bug duplicado en
+// AttendancePage.tsx (mismo flujo de origen, Etapa 15G.2).
+describe("NotificationsPage — Etapa 15M.16 (el toast de 'Novedad creada' es temporal)", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function mockNotificationWithNovelty() {
+    vi.mocked(workforceApiService.notifications).mockResolvedValue({
+      items: [buildNotification({
+        id: "notif-alerta",
+        type: "ALERTA_FICHADA",
+        title: "Llegada tarde",
+        employee: { id: "employee-1", legajo: "100", firstName: "Ana", lastName: "Gomez" },
+        status: "NO_LEIDA",
+      })],
+      meta: { total: 1, page: 1, pageSize: 20, hasMore: false },
+    });
+    vi.mocked(noveltyTypeApiService.getAll).mockResolvedValue([buildGenericActiveType()]);
+  }
+
+  async function createNoveltyFromFirstNotification() {
+    await userEvent.click(await screen.findByRole("button", { name: /Crear novedad/ }));
+    const modal = await findModalScope();
+    await userEvent.click(modal.getByRole("button", { name: "Guardar novedad" }));
+  }
+
+  // Caso A
+  it("Caso A: al crear la novedad, el mensaje aparece como región de estado (role=status), no como banner mudo", async () => {
+    mockNotificationWithNovelty();
+    vi.mocked(noveltyApiService.create).mockResolvedValue([{ id: "novelty-1" } as never]);
+
+    renderPage();
+    await createNoveltyFromFirstNotification();
+
+    const message = await screen.findByText("Novedad creada. RRHH la revisa como cualquier otra novedad.");
+    expect(message.closest('[role="status"]')).not.toBeNull();
+  });
+
+  // Caso B
+  it("Caso B: el mensaje desaparece solo después de TOAST_SUCCESS_MS, sin acción del usuario", async () => {
+    mockNotificationWithNovelty();
+    vi.mocked(noveltyApiService.create).mockResolvedValue([{ id: "novelty-1" } as never]);
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+
+    renderPage();
+    await createNoveltyFromFirstNotification();
+    await vi.waitFor(() => expect(screen.getByText("Novedad creada. RRHH la revisa como cualquier otra novedad.")).toBeInTheDocument());
+
+    vi.advanceTimersByTime(TOAST_SUCCESS_MS);
+
+    await vi.waitFor(() =>
+      expect(screen.queryByText("Novedad creada. RRHH la revisa como cualquier otra novedad.")).not.toBeInTheDocument(),
+    );
+  });
+
+  // Caso D
+  it("Caso D: si falla la creación, el mensaje de éxito nunca aparece (el error queda dentro del modal)", async () => {
+    mockNotificationWithNovelty();
+    vi.mocked(noveltyApiService.create).mockRejectedValue(new Error("network"));
+
+    renderPage();
+    await createNoveltyFromFirstNotification();
+
+    await waitFor(() => expect(noveltyApiService.create).toHaveBeenCalled());
+    expect(screen.queryByText("Novedad creada. RRHH la revisa como cualquier otra novedad.")).not.toBeInTheDocument();
+  });
+
+  // Caso E: nada de esto vive en localStorage/sessionStorage/route state --
+  // es puro useState del componente, así que un montaje nuevo (equivalente
+  // a navegar y volver, o a un refresh) nunca puede heredarlo.
+  it("Caso E: no queda ningún mensaje persistido — un montaje nuevo de la pantalla no lo hereda", async () => {
+    mockNotificationWithNovelty();
+    vi.mocked(noveltyApiService.create).mockResolvedValue([{ id: "novelty-1" } as never]);
+
+    const { unmount } = renderPage();
+    await createNoveltyFromFirstNotification();
+    await screen.findByText("Novedad creada. RRHH la revisa como cualquier otra novedad.");
+    unmount();
+
+    renderPage();
+    await screen.findByText("Llegada tarde");
+    expect(screen.queryByText("Novedad creada. RRHH la revisa como cualquier otra novedad.")).not.toBeInTheDocument();
+  });
+});
+
+// Etapa 15M.19C (docs/decisions/NOTIFICATIONS_PAGE_LIVE_REFRESH_15M19C.md):
+// refresco automático sin F5 — mismo endpoint/capa de acceso, mismo
+// intervalo que la campana del topbar, sin SSE/WebSocket.
+describe("NotificationsPage — Etapa 15M.19C (refresco automático sin F5)", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  // Caso A (fetch inicial) ya cubierto por la suite de la Etapa 9I de arriba.
+
+  it("Caso B: al cumplirse el intervalo de polling, vuelve a pedir la página 1", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.mocked(workforceApiService.notifications).mockResolvedValue({
+      items: [buildNotification()],
+      meta: { total: 1, page: 1, pageSize: 20, hasMore: false },
+    });
+    renderPage();
+    await vi.waitFor(() => expect(screen.getByText("Cierres mensuales recibidos")).toBeInTheDocument());
+    expect(workforceApiService.notifications).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(NOTIFICATIONS_POLL_INTERVAL_MS);
+
+    expect(workforceApiService.notifications).toHaveBeenCalledTimes(2);
+    expect(workforceApiService.notifications).toHaveBeenLastCalledWith({ page: 1, take: 20, status: undefined });
+  });
+
+  it("Caso C: una notificación nueva que aparece en el siguiente poll se muestra sin remontar la página", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.mocked(workforceApiService.notifications).mockResolvedValueOnce({
+      items: [buildNotification({ id: "A", title: "Notificación A" })],
+      meta: { total: 1, page: 1, pageSize: 20, hasMore: false },
+    });
+    renderPage();
+    await vi.waitFor(() => expect(screen.getByText("Notificación A")).toBeInTheDocument());
+
+    vi.mocked(workforceApiService.notifications).mockResolvedValueOnce({
+      items: [buildNotification({ id: "B", title: "Notificación B" }), buildNotification({ id: "A", title: "Notificación A" })],
+      meta: { total: 2, page: 1, pageSize: 20, hasMore: false },
+    });
+    await vi.advanceTimersByTimeAsync(NOTIFICATIONS_POLL_INTERVAL_MS);
+
+    await vi.waitFor(() => expect(screen.getByText("Notificación B")).toBeInTheDocument());
+    expect(screen.getByText("Notificación A")).toBeInTheDocument();
+  });
+
+  it("Caso D: el polling conserva el filtro activo (No leídas)", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.mocked(workforceApiService.notifications).mockResolvedValue({ items: [], meta: { total: 0, page: 1, pageSize: 20, hasMore: false } });
+    renderPage();
+    await vi.waitFor(() => expect(screen.getByText("No hay notificaciones todavía.")).toBeInTheDocument());
+
+    await userEvent.selectOptions(screen.getByLabelText("Estado"), "NO_LEIDA");
+    await vi.waitFor(() => expect(workforceApiService.notifications).toHaveBeenLastCalledWith({ page: 1, take: 20, status: "NO_LEIDA" }));
+
+    await vi.advanceTimersByTimeAsync(NOTIFICATIONS_POLL_INTERVAL_MS);
+
+    expect(workforceApiService.notifications).toHaveBeenLastCalledWith({ page: 1, take: 20, status: "NO_LEIDA" });
+  });
+
+  it("Caso E: un fallo temporal de polling no vacía ni tapa la lista ya visible", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.mocked(workforceApiService.notifications).mockResolvedValueOnce({
+      items: [buildNotification()],
+      meta: { total: 1, page: 1, pageSize: 20, hasMore: false },
+    });
+    renderPage();
+    await vi.waitFor(() => expect(screen.getByText("Cierres mensuales recibidos")).toBeInTheDocument());
+
+    vi.mocked(workforceApiService.notifications).mockRejectedValueOnce(new Error("network error"));
+    await vi.advanceTimersByTimeAsync(NOTIFICATIONS_POLL_INTERVAL_MS);
+
+    expect(screen.getByText("Cierres mensuales recibidos")).toBeInTheDocument();
+    expect(screen.queryByText("No se pudieron cargar las notificaciones.")).not.toBeInTheDocument();
+
+    // El siguiente tick reintenta solo, sin acción del usuario.
+    vi.mocked(workforceApiService.notifications).mockResolvedValueOnce({
+      items: [buildNotification({ id: "B", title: "Notificación B" }), buildNotification()],
+      meta: { total: 2, page: 1, pageSize: 20, hasMore: false },
+    });
+    await vi.advanceTimersByTimeAsync(NOTIFICATIONS_POLL_INTERVAL_MS);
+    await vi.waitFor(() => expect(screen.getByText("Notificación B")).toBeInTheDocument());
+  });
+
+  it("Caso F: el evento app:notifications-changed dispara un refetch inmediato, sin esperar al polling", async () => {
+    vi.mocked(workforceApiService.notifications).mockResolvedValueOnce({
+      items: [buildNotification({ id: "A", title: "Notificación A" })],
+      meta: { total: 1, page: 1, pageSize: 20, hasMore: false },
+    });
+    renderPage();
+    await screen.findByText("Notificación A");
+
+    vi.mocked(workforceApiService.notifications).mockResolvedValueOnce({
+      items: [buildNotification({ id: "B", title: "Notificación B" }), buildNotification({ id: "A", title: "Notificación A" })],
+      meta: { total: 2, page: 1, pageSize: 20, hasMore: false },
+    });
+    window.dispatchEvent(new Event("app:notifications-changed"));
+
+    await screen.findByText("Notificación B");
+  });
+
+  it("recuperar el foco de la ventana también dispara un refetch inmediato (§21)", async () => {
+    vi.mocked(workforceApiService.notifications).mockResolvedValueOnce({
+      items: [buildNotification({ id: "A", title: "Notificación A" })],
+      meta: { total: 1, page: 1, pageSize: 20, hasMore: false },
+    });
+    renderPage();
+    await screen.findByText("Notificación A");
+
+    vi.mocked(workforceApiService.notifications).mockResolvedValueOnce({
+      items: [buildNotification({ id: "B", title: "Notificación B" }), buildNotification({ id: "A", title: "Notificación A" })],
+      meta: { total: 2, page: 1, pageSize: 20, hasMore: false },
+    });
+    window.dispatchEvent(new Event("focus"));
+
+    await screen.findByText("Notificación B");
+  });
+
+  it("Caso G: al desmontar la página, se limpia el timer — no sigue pidiendo en segundo plano", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.mocked(workforceApiService.notifications).mockResolvedValue({
+      items: [buildNotification()],
+      meta: { total: 1, page: 1, pageSize: 20, hasMore: false },
+    });
+    const { unmount } = renderPage();
+    await vi.waitFor(() => expect(screen.getByText("Cierres mensuales recibidos")).toBeInTheDocument());
+    const callsBeforeUnmount = vi.mocked(workforceApiService.notifications).mock.calls.length;
+
+    unmount();
+    await vi.advanceTimersByTimeAsync(NOTIFICATIONS_POLL_INTERVAL_MS * 3);
+
+    expect(workforceApiService.notifications).toHaveBeenCalledTimes(callsBeforeUnmount);
+  });
+
+  it("Caso H: el refresco silencioso nunca muestra el skeleton de carga completa", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.mocked(workforceApiService.notifications).mockResolvedValue({
+      items: [buildNotification()],
+      meta: { total: 1, page: 1, pageSize: 20, hasMore: false },
+    });
+    renderPage();
+    await vi.waitFor(() => expect(screen.getByText("Cierres mensuales recibidos")).toBeInTheDocument());
+    expect(document.querySelector(".skeleton-bar")).toBeNull();
+
+    await vi.advanceTimersByTimeAsync(NOTIFICATIONS_POLL_INTERVAL_MS);
+
+    expect(document.querySelector(".skeleton-bar")).toBeNull();
+    expect(screen.getByText("Cierres mensuales recibidos")).toBeInTheDocument();
+  });
+
+  // Etapa 15M.19C §7/§24: paginación + polling.
+  describe("paginación estable frente al polling", () => {
+    it("con 2 páginas ya cargadas, un refresco silencioso con una notificación nueva no duplica ni pierde las ya cargadas", async () => {
+      vi.mocked(workforceApiService.notifications).mockResolvedValueOnce({
+        items: [buildNotification({ id: "p1", title: "Página uno" })],
+        meta: { total: 21, page: 1, pageSize: 20, hasMore: true },
+      });
+      renderPage();
+      await screen.findByText("Página uno");
+
+      vi.mocked(workforceApiService.notifications).mockResolvedValueOnce({
+        items: [buildNotification({ id: "p2", title: "Página dos" })],
+        meta: { total: 21, page: 2, pageSize: 20, hasMore: false },
+      });
+      await userEvent.click(screen.getByRole("button", { name: /Cargar/ }));
+      await screen.findByText("Página dos");
+
+      vi.mocked(workforceApiService.notifications).mockResolvedValueOnce({
+        items: [buildNotification({ id: "nueva", title: "Notificación nueva" }), buildNotification({ id: "p1", title: "Página uno" })],
+        meta: { total: 22, page: 1, pageSize: 20, hasMore: true },
+      });
+      window.dispatchEvent(new Event("app:notifications-changed"));
+
+      await screen.findByText("Notificación nueva");
+      expect(screen.getAllByText("Página uno")).toHaveLength(1);
+      expect(screen.getByText("Página dos")).toBeInTheDocument();
+    });
+
+    it("'Cargar más' después de un refresco silencioso no duplica una fila que ese refresco ya había traído", async () => {
+      vi.mocked(workforceApiService.notifications).mockResolvedValueOnce({
+        items: [buildNotification({ id: "p1", title: "Página uno" })],
+        meta: { total: 25, page: 1, pageSize: 20, hasMore: true },
+      });
+      renderPage();
+      await screen.findByText("Página uno");
+
+      // El refresco silencioso ya trae, por drift de offset, una fila que la
+      // próxima página "oficial" también incluiría.
+      vi.mocked(workforceApiService.notifications).mockResolvedValueOnce({
+        items: [buildNotification({ id: "compartido", title: "Notificación compartida" }), buildNotification({ id: "p1", title: "Página uno" })],
+        meta: { total: 26, page: 1, pageSize: 20, hasMore: true },
+      });
+      window.dispatchEvent(new Event("app:notifications-changed"));
+      await screen.findByText("Notificación compartida");
+
+      vi.mocked(workforceApiService.notifications).mockResolvedValueOnce({
+        items: [buildNotification({ id: "compartido", title: "Notificación compartida" }), buildNotification({ id: "p2", title: "Página dos" })],
+        meta: { total: 26, page: 2, pageSize: 20, hasMore: false },
+      });
+      await userEvent.click(screen.getByRole("button", { name: /Cargar/ }));
+      await screen.findByText("Página dos");
+
+      expect(screen.getAllByText("Notificación compartida")).toHaveLength(1);
+    });
+  });
+});
+
+// Etapa 15M.19D (docs/decisions/NOTIFICATIONS_END_TO_END_ACCEPTANCE_15M19D.md
+// §26): regresión encontrada durante la aceptación end-to-end de la serie.
+describe("NotificationsPage — Etapa 15M.19D (bug real: filtro 'No leídas' + cambio desde otro cliente)", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("una notificación marcada como leída desde OTRO cliente desaparece del filtro 'No leídas' en el próximo refresco silencioso", async () => {
+    // Bajo el filtro "No leídas", el backend ya filtra server-side por
+    // status=NO_LEIDA -- si otro cliente la marca leída, el próximo fetch de
+    // página 1 con ese filtro simplemente deja de incluirla. mockResolvedValue
+    // (no "Once"): cubre tanto el fetch inicial (filtro "") como el que
+    // dispara el cambio de filtro a NO_LEIDA -- ambos con la misma A.
+    vi.mocked(workforceApiService.notifications).mockResolvedValue({
+      items: [buildNotification({ id: "A", title: "Notificación A", status: "NO_LEIDA" })],
+      meta: { total: 1, page: 1, pageSize: 20, hasMore: false },
+    });
+    renderPage();
+    await userEvent.selectOptions(screen.getByLabelText("Estado"), "NO_LEIDA");
+    await screen.findByText("Notificación A");
+
+    // El próximo refresco silencioso (otro cliente ya marcó A como leída):
+    // el backend, filtrando por NO_LEIDA, ya no la devuelve en absoluto.
+    vi.mocked(workforceApiService.notifications).mockResolvedValueOnce({
+      items: [],
+      meta: { total: 0, page: 1, pageSize: 20, hasMore: false },
+    });
+    window.dispatchEvent(new Event("app:notifications-changed"));
+
+    await waitFor(() => expect(screen.queryByText("Notificación A")).not.toBeInTheDocument());
+    await screen.findByText("No tenés notificaciones sin leer.");
+  });
+
+  it("el mismo caso, pero vía polling (avanzando el intervalo) en vez del evento", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.mocked(workforceApiService.notifications).mockResolvedValue({
+      items: [buildNotification({ id: "A", title: "Notificación A", status: "NO_LEIDA" })],
+      meta: { total: 1, page: 1, pageSize: 20, hasMore: false },
+    });
+    renderPage();
+    await userEvent.selectOptions(screen.getByLabelText("Estado"), "NO_LEIDA");
+    await vi.waitFor(() => expect(screen.getByText("Notificación A")).toBeInTheDocument());
+
+    vi.mocked(workforceApiService.notifications).mockResolvedValueOnce({
+      items: [],
+      meta: { total: 0, page: 1, pageSize: 20, hasMore: false },
+    });
+    await vi.advanceTimersByTimeAsync(NOTIFICATIONS_POLL_INTERVAL_MS);
+
+    await vi.waitFor(() => expect(screen.queryByText("Notificación A")).not.toBeInTheDocument());
+  });
+
+  it("bajo el filtro 'Todas' (monótono), una fila que no reaparece en la página 1 fresca SÍ se conserva (no es el mismo bug)", async () => {
+    vi.mocked(workforceApiService.notifications).mockResolvedValueOnce({
+      items: [buildNotification({ id: "A", title: "Notificación A" })],
+      meta: { total: 1, page: 1, pageSize: 20, hasMore: false },
+    });
+    renderPage();
+    await screen.findByText("Notificación A");
+
+    // Sin filtro, A sigue existiendo (sólo cambió de posición, no de status) --
+    // una página 1 fresca que ya no la incluya (porque hay más recientes) no
+    // significa que dejó de existir.
+    vi.mocked(workforceApiService.notifications).mockResolvedValueOnce({
+      items: [buildNotification({ id: "B", title: "Notificación B" })],
+      meta: { total: 2, page: 1, pageSize: 20, hasMore: true },
+    });
+    window.dispatchEvent(new Event("app:notifications-changed"));
+
+    await screen.findByText("Notificación B");
+    expect(screen.getByText("Notificación A")).toBeInTheDocument();
+  });
+});
+
+// Etapa 15M.19D §31: offset drift con múltiples inserciones entre "Cargar
+// más" sucesivos -- confirma que ninguna fila queda saltada (nunca
+// alcanzable por ninguna página pedida), sólo eventualmente re-pedida y
+// deduplicada.
+describe("NotificationsPage — Etapa 15M.19D §31 (offset drift, sin gaps)", () => {
+  it("dos inserciones sucesivas entre 'Cargar más' no dejan ninguna fila vieja sin cubrir por ninguna página pedida", async () => {
+    // t0: página 1 (createdAt desc) = A,B,C,D,E,F (6 de un total de 9).
+    vi.mocked(workforceApiService.notifications).mockResolvedValueOnce({
+      items: ["A", "B", "C", "D", "E", "F"].map((id) => buildNotification({ id, title: `Notificación ${id}` })),
+      meta: { total: 9, page: 1, pageSize: 6, hasMore: true },
+    });
+    renderPage();
+    await screen.findByText("Notificación A");
+
+    // Se inserta X1 antes de pedir la página 2: el orden real pasa a ser
+    // X1,A,B,C,D,E,F,G,H,I (10 en total). skip=6 (page=2) cae en F,G,H.
+    vi.mocked(workforceApiService.notifications).mockResolvedValueOnce({
+      items: ["F", "G", "H"].map((id) => buildNotification({ id, title: `Notificación ${id}` })),
+      meta: { total: 10, page: 2, pageSize: 6, hasMore: true },
+    });
+    await userEvent.click(screen.getByRole("button", { name: /Cargar/ }));
+    await screen.findByText("Notificación G");
+    // F ya estaba (deduplicada), no aparece dos veces.
+    expect(screen.getAllByText("Notificación F")).toHaveLength(1);
+
+    // Se inserta X2 antes de pedir la página 3: orden real ahora
+    // X1,X2,A..I,J (11 en total). skip=12 (page=3) cae en H,I,J (X1/X2 nunca
+    // se pidieron por "Cargar más" -- sólo un refresco silencioso los trae,
+    // comportamiento esperado, no un gap de la paginación en sí).
+    vi.mocked(workforceApiService.notifications).mockResolvedValueOnce({
+      items: ["H", "I", "J"].map((id) => buildNotification({ id, title: `Notificación ${id}` })),
+      meta: { total: 11, page: 3, pageSize: 6, hasMore: false },
+    });
+    await userEvent.click(screen.getByRole("button", { name: /Cargar/ }));
+    await screen.findByText("Notificación J");
+
+    // Ninguna de A-J quedó sin mostrarse (H se deduplica, no se pierde).
+    for (const id of ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J"]) {
+      expect(screen.getAllByText(`Notificación ${id}`)).toHaveLength(1);
+    }
+  });
+});
+
+// Etapa 15M.19D §44: React.StrictMode monta el componente dos veces en
+// desarrollo (mount → cleanup → mount) para exponer efectos con cleanup
+// incorrecto. Mismo patrón ya usado en EmployeeHoursPage.test.tsx (Etapa
+// 14I.11) -- acá se prueba específicamente que, tras ese doble-montaje, el
+// timer de polling que sobrevive es uno solo (no dos), sin importar cuántas
+// llamadas duplicó el propio doble-montaje inicial.
+describe("NotificationsPage — Etapa 15M.19D §44 (React.StrictMode, un solo timer efectivo)", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("bajo StrictMode, tras asentarse el doble-montaje, un intervalo de polling produce exactamente UN refetch adicional (no dos)", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.mocked(workforceApiService.notifications).mockResolvedValue({
+      items: [buildNotification()],
+      meta: { total: 1, page: 1, pageSize: 20, hasMore: false },
+    });
+
+    render(
+      <StrictMode>
+        <MemoryRouter>
+          <NotificationsPage />
+        </MemoryRouter>
+      </StrictMode>,
+    );
+    await vi.waitFor(() => expect(screen.getByText("Cierres mensuales recibidos")).toBeInTheDocument());
+    const callsAfterMount = vi.mocked(workforceApiService.notifications).mock.calls.length;
+
+    await vi.advanceTimersByTimeAsync(NOTIFICATIONS_POLL_INTERVAL_MS);
+
+    expect(vi.mocked(workforceApiService.notifications).mock.calls.length).toBe(callsAfterMount + 1);
   });
 });

@@ -822,11 +822,14 @@ noveltyTypeId
 status
 from
 to
+period
 exportable
 search
 take
 page
 ```
+
+`from`/`to` filtran únicamente por `fromDate` (sin intersección de rango) — sin caller real hoy. `period` (Etapa 15M.15, `"YYYY-MM"`) es distinto: selecciona por intersección real de vigencia contra el mes completo, mismo criterio de negocio que `novelties.dateRange.ts::noveltyCoversDay` generalizado de "cubre este día" a "toca este mes" — no el mismo criterio que usa `finnegans-export` (Etapa 15L.3B.1, dueño único por `fromDate`, sin intersección, para no exportar la misma fila dos veces). Con `toDate` cargado: interseca si el rango `[fromDate, toDate]` toca el mes. Sin `toDate`: si `NoveltyType.allowsDateRange=true` la novedad se considera vigente abierta y aparece en el mes de inicio y en todos los posteriores; si `allowsDateRange=false` es una novedad de un único día y sólo aparece en el mes de `fromDate`. Usado por `NoveltiesPage.tsx` (filtro server-side, se combina por AND con `search`/`status`/etc., nunca OR).
 
 Las pantallas de listado deben usar los datos de empleado incluidos en cada novedad cuando alcance para mostrar legajo/persona. No deben pedir todos los legajos solo para resolver nombres.
 

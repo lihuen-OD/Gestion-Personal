@@ -557,11 +557,29 @@ export async function evaluateShiftExit(
 // abierta que superó el límite operativo, para un empleado en régimen
 // ALERT_ONLY, nunca se cierra ni se reemplaza automáticamente. En su lugar
 // se marca para revisión de RRHH con una alerta crítica — se reutiliza
-// POSIBLE_OLVIDO_SALIDA (createShiftAlert ya deduplica por
-// [workShiftId, type]: evaluar la misma jornada más de una vez actualiza la
-// misma fila, no crea una nueva).
+// POSIBLE_OLVIDO_SALIDA.
+//
+// Etapa 15M.19B (docs/decisions/MISSING_EXPECTED_ENTRY_15M19B.md): hallazgo
+// de 15M.18 — el comentario histórico de acá decía que createShiftAlert
+// "ya deduplica por [workShiftId, type]", pero eso sólo es cierto para la
+// fila de ShiftAlert: createShiftAlert hace upsert con `status: "PENDIENTE"`
+// incondicional en su rama `update` y dispara `notifyUsers` de nuevo salvo
+// `notify: false`. Sin ningún guard previo, cada tick de 60s (este método se
+// llama desde `expireOpenWorkShifts`, en el mismo cron) reenviaba la
+// SystemNotification y revertía a PENDIENTE cualquier alerta que RRHH ya
+// hubiera resuelto manualmente. Fix: mismo guard que ya usa la alerta
+// hermana de esta (`checkMissingOutRisk`, openShiftMonitor.service.ts) — si
+// ya existe una fila para este [workShiftId, type], no se vuelve a tocar,
+// sin importar su status (PENDIENTE/RESUELTA/DESCARTADA). Primera detección
+// crea y notifica una vez; RRHH resolviéndola no se reabre en el próximo
+// tick; una jornada nueva (workShiftId distinto) sí genera una alerta propia.
 export async function flagOpenShiftOverflowForReview(employeeId: string, workShiftId: string, minutesOpen: number, now: Date) {
-  await createShiftAlert({
+  const existingAlert = await prisma.shiftAlert.findUnique({
+    where: { workShiftId_type: { workShiftId, type: "POSIBLE_OLVIDO_SALIDA" } },
+  });
+  if (existingAlert) return existingAlert;
+
+  return createShiftAlert({
     employeeId,
     workShiftId,
     type: "POSIBLE_OLVIDO_SALIDA",

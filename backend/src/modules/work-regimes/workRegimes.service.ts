@@ -6,7 +6,7 @@ import { AppError } from "../../shared/errors/AppError";
 import { argentinaCalendarDate, argentinaDateKey } from "../../shared/datetime/argentinaTime";
 import { mapAssociatedEmployee } from "../../shared/prisma/employeeAssociationQuery";
 import { employeeAccessWhere } from "../employees/employeeAccess";
-import { classifyWorkRegimeVigency, findActiveEmployeeWorkRegime, workRegimesRepository } from "./workRegimes.repository";
+import { classifyWorkRegimeVigency, findActiveEmployeeWorkRegime, findActiveEmployeeWorkRegimesForDate, workRegimesRepository } from "./workRegimes.repository";
 import type {
   AssignWorkRegimeInput,
   CreateWorkRegimeInput,
@@ -59,6 +59,26 @@ export async function resolveActiveWorkRegime(employeeId: string, instant: Date)
     openShiftOverflowAction: assignment.workRegime.openShiftOverflowAction,
     extendedShiftAlertMinutes: assignment.workRegime.extendedShiftAlertMinutes,
   };
+}
+
+// Etapa 15M.19B: versión batch de resolveActiveWorkRegime — un Map en vez de
+// N llamadas individuales (usado por workObligation.service.ts, que evalúa
+// muchos empleados candidatos por corrida). El orden `effectiveFrom desc` +
+// "el primero que aparece por empleado gana" reproduce el mismo desempate
+// que `findFirst` en la versión de un solo empleado.
+export async function resolveActiveWorkRegimesForDate(referenceDate: Date): Promise<Map<string, ActiveWorkRegime>> {
+  const rows = await findActiveEmployeeWorkRegimesForDate(referenceDate);
+  const byEmployee = new Map<string, ActiveWorkRegime>();
+  for (const row of rows) {
+    if (byEmployee.has(row.employeeId)) continue;
+    byEmployee.set(row.employeeId, {
+      kind: row.workRegime.kind,
+      alertOnOutOfShift: row.workRegime.alertOnOutOfShift,
+      openShiftOverflowAction: row.workRegime.openShiftOverflowAction,
+      extendedShiftAlertMinutes: row.workRegime.extendedShiftAlertMinutes,
+    });
+  }
+  return byEmployee;
 }
 
 function mapPrismaError(error: unknown) {

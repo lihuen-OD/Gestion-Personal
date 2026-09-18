@@ -1593,6 +1593,21 @@ model ClockPunchAttempt {
   @@index([status, startedAt])
 }
 
+// Etapa 15M.19A (docs/decisions/DURABLE_ATTENDANCE_INACTIVITY_SCHEDULER_15M19A.md):
+// watermark persistido para jobs del `setInterval` de mantenimiento
+// (clockPunchMaintenance.ts) — antes de esta etapa, "última fecha
+// procesada" vivía sólo en una variable module-level de Node
+// (`lastInactivityDateKey`), que se pierde en cada restart/deploy/cold
+// start de Render. `key` identifica el job (una sola fila por job, sin
+// tabla de historial); `lastProcessedDate` es `@db.Date` porque el job
+// trabaja por día operativo Argentina, nunca por instante.
+model JobCheckpoint {
+  key               String    @id
+  lastProcessedDate DateTime? @db.Date
+  createdAt         DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt         DateTime  @updatedAt @db.Timestamptz(3)
+}
+
 model TimeSegment {
   id                String               @id @default(uuid())
   workShiftId       String

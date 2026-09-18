@@ -138,6 +138,10 @@ export function mapNoveltyFromApi(item: ApiNovelty): Novelty {
 export type NoveltyListFilters = {
   employeeId?: string;
   search?: string;
+  // Etapa 15M.15: "YYYY-MM". El backend intersecta la vigencia real de la
+  // novedad contra el mes completo (ver docs/BACKEND_API_CONTRACTS.md
+  // "Novedades operativas" → Listar) — no es un simple filtro por fromDate.
+  period?: string;
   exportable?: boolean;
   page?: number;
   take?: number;
@@ -149,6 +153,7 @@ function toQuery(filters?: NoveltyListFilters) {
   params.set("take", String(filters?.take || 25));
   if (filters?.employeeId) params.set("employeeId", filters.employeeId);
   if (filters?.search?.trim()) params.set("search", filters.search.trim());
+  if (filters?.period) params.set("period", filters.period);
   if (filters?.exportable !== undefined) params.set("exportable", String(filters.exportable));
   return `?${params.toString()}`;
 }

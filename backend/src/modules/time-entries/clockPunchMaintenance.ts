@@ -2,12 +2,12 @@ import { env } from "../../config/env";
 import { timeEntriesRepository } from "./timeEntries.repository";
 import { notifyMissingExit } from "./timeEntries.service";
 import { storageFilesRepository } from "../../shared/storage/storageFiles.repository";
-import { detectAttendanceInactivity, isInactivityCheckDue, previousOperationalDateKey } from "./attendanceInactivity.service";
+import { runAttendanceInactivityCatchUp } from "./attendanceInactivityScheduler";
+import { checkMissingExpectedEntries } from "./missingEntry.service";
 import { checkMissingOutRisk } from "../shifts/openShiftMonitor.service";
 
 let running = false;
 let lastOrphanCount: number | undefined;
-let lastInactivityDateKey: string | undefined;
 
 export async function maintainClockPunchAttempts() {
   if (running) return;
@@ -37,6 +37,23 @@ export async function maintainClockPunchAttempts() {
       await checkMissingOutRisk(new Date(now));
     } catch (error) {
       console.error("CLOCK_MISSING_OUT_RISK_CHECK_FAILED", {
+        severity: "critical",
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+
+    // Etapa 15M.19B: falta de ingreso intradía — reutiliza este mismo
+    // scheduler de 60s (sin setInterval nuevo). No gatea por hora del día:
+    // resolveWorkObligationCandidates/isToleranceExpired ya deciden por sí
+    // solos si hay algo que hacer, y la idempotencia de
+    // AttendanceInactivityIncident hace seguro reevaluar cada tick.
+    try {
+      const missingEntry = await checkMissingExpectedEntries(new Date(now));
+      if (missingEntry.created > 0 || missingEntry.resolved > 0) {
+        console.info("MISSING_EXPECTED_ENTRY_CHECKED", missingEntry);
+      }
+    } catch (error) {
+      console.error("MISSING_EXPECTED_ENTRY_CHECK_FAILED", {
         severity: "critical",
         error: error instanceof Error ? error.message : String(error),
       });
@@ -74,15 +91,16 @@ export async function maintainClockPunchAttempts() {
     }
     lastOrphanCount = orphanCount;
 
-    const current = new Date();
-    const inactivityDateKey = previousOperationalDateKey(current);
-    if (
-      lastInactivityDateKey !== inactivityDateKey &&
-      isInactivityCheckDue(current, env.ATTENDANCE_INACTIVITY_CHECK_HOUR, env.ATTENDANCE_INACTIVITY_CHECK_MINUTE)
-    ) {
-      const result = await detectAttendanceInactivity(inactivityDateKey);
-      lastInactivityDateKey = inactivityDateKey;
-      if (result.detected > 0) console.info("ATTENDANCE_INACTIVITY_DETECTED", result);
+    try {
+      const catchUp = await runAttendanceInactivityCatchUp(new Date());
+      if (catchUp.detectedTotal > 0 || catchUp.ranDates.length > 0) {
+        console.info("ATTENDANCE_INACTIVITY_DETECTED", catchUp);
+      }
+    } catch (error) {
+      console.error("ATTENDANCE_INACTIVITY_CATCHUP_FAILED", {
+        severity: "critical",
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   } catch (error) {
     console.error("CLOCK_ATTEMPT_MAINTENANCE_FAILED", {

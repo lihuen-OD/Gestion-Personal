@@ -17,6 +17,7 @@ import { argentinaDateKey } from "../utils/argentinaDateKey";
 import { formatDurationMinutes } from "../utils/hours";
 import { NoveltyFromContextModal } from "../components/novelties/NoveltyFromContextModal";
 import { buildNoveltyPrefillFromAttendanceShiftProblem, buildNoveltyPrefillFromInactivityIncident, type NoveltyPrefillContext } from "../utils/noveltyFromAlert";
+import { TOAST_SUCCESS_MS } from "../utils/toast";
 
 const OBSERVED_PAGE_SIZE = 10;
 
@@ -653,11 +654,17 @@ export function AttendancePage() {
           saved={() => {
             setNoveltyContext(undefined);
             setNoveltyNotice("Novedad creada. RRHH la revisa como cualquier otra novedad.");
+            // Etapa 15M.16: faltaba este auto-cierre -- el mensaje quedaba
+            // anclado en pantalla indefinidamente (mismo bug duplicado en
+            // NotificationsPage.tsx, mismo flujo de origen). El resto de los
+            // ".toast" de la app siempre se limpian solos; éste era la
+            // excepción, no la regla.
+            setTimeout(() => setNoveltyNotice(""), TOAST_SUCCESS_MS);
           }}
         />
       ) : null}
 
-      {noveltyNotice ? <div className="toast">{noveltyNotice}</div> : null}
+      {noveltyNotice ? <div className="toast" role="status">{noveltyNotice}</div> : null}
     </div>
   );
 }

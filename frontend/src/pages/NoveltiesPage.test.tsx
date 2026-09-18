@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { NoveltiesPage } from "./NoveltiesPage";
 import { noveltyApiService } from "../services/api/noveltyApiService";
 import type { Novelty } from "../types";
+import { currentMonthPeriod } from "../utils/period";
 
 const mockUseAuth = vi.fn();
 vi.mock("../context/AuthContext", () => ({
@@ -85,5 +86,105 @@ describe("NoveltiesPage — Etapa 9B (refresh silencioso)", () => {
 
     await waitFor(() => expect(screen.getByText("Vacaciones")).toBeInTheDocument());
     expect(screen.queryByText("Licencia médica")).not.toBeInTheDocument();
+  });
+});
+
+// Etapa 15M.15: filtro principal por período mensual. La regla de
+// intersección de fechas en sí (Casos A/B/C/I del pedido) se prueba a nivel
+// del motor real en backend/src/modules/novelties/novelties.repository.test.ts
+// -- acá se cubre lo que es observable desde la pantalla: qué le manda al
+// backend, cómo se combina con la búsqueda, y cómo se muestra.
+describe("NoveltiesPage — Etapa 15M.15 (filtro por período)", () => {
+  it("pide el período del mes actual al entrar a la pantalla, sin fecha inventada", async () => {
+    vi.mocked(noveltyApiService.list).mockResolvedValue({
+      items: [buildNovelty()],
+      meta: { total: 1, page: 1, pageSize: 25, hasMore: false },
+    });
+    render(<NoveltiesPage />);
+    await screen.findByText("Licencia médica");
+
+    expect(vi.mocked(noveltyApiService.list).mock.calls[0]?.[0]).toMatchObject({ period: currentMonthPeriod() });
+  });
+
+  // Caso H
+  it("Caso H: muestra la vigencia en formato humano (DD/MM/YYYY), nunca ISO", async () => {
+    vi.mocked(noveltyApiService.list).mockResolvedValue({
+      items: [buildNovelty({ from: "2026-09-17", to: "2026-09-20" })],
+      meta: { total: 1, page: 1, pageSize: 25, hasMore: false },
+    });
+    render(<NoveltiesPage />);
+
+    await screen.findByText("17/09/2026");
+    expect(screen.getByText("Hasta 20/09/2026")).toBeInTheDocument();
+    expect(screen.queryByText("2026-09-17")).not.toBeInTheDocument();
+  });
+
+  // Caso F
+  it("Caso F: pluraliza correctamente (1 novedad, sin 'registro(s)')", async () => {
+    vi.mocked(noveltyApiService.list).mockResolvedValue({
+      items: [buildNovelty()],
+      meta: { total: 1, page: 1, pageSize: 25, hasMore: false },
+    });
+    render(<NoveltiesPage />);
+
+    await waitFor(() => expect(screen.getByText(/1 novedad en/)).toBeInTheDocument());
+    // "registro(s)" era el copy anterior (sección 9 del pedido) -- no debe
+    // seguir presente en el subtítulo de la sección.
+    expect(document.querySelector(".panel-title-block p")?.textContent).not.toMatch(/registro/i);
+  });
+
+  // Caso E
+  it("Caso E: 0 resultados muestra un empty state con el período, no una tabla vacía muda", async () => {
+    vi.mocked(noveltyApiService.list).mockResolvedValue({
+      items: [],
+      meta: { total: 0, page: 1, pageSize: 25, hasMore: false },
+    });
+    render(<NoveltiesPage />);
+
+    await waitFor(() => expect(screen.getByText(/0 novedades en/)).toBeInTheDocument());
+    expect(await screen.findByText(new RegExp(`No hay novedades registradas para .*\\.`))).toBeInTheDocument();
+    // El botón "Nueva novedad" sigue disponible aunque no haya resultados.
+    expect(screen.getByRole("button", { name: "Nueva novedad" })).toBeInTheDocument();
+  });
+
+  // Caso G
+  it("Caso G: cambiar de período pide de nuevo al backend con el nuevo período y vuelve a la página 1", async () => {
+    vi.mocked(noveltyApiService.list).mockResolvedValue({
+      items: [buildNovelty()],
+      meta: { total: 1, page: 2, pageSize: 25, hasMore: false },
+    });
+    render(<NoveltiesPage />);
+    await screen.findByText("Licencia médica");
+
+    fireEvent.change(screen.getByLabelText("Período"), { target: { value: "2026-10" } });
+
+    await waitFor(() => {
+      const calls = vi.mocked(noveltyApiService.list).mock.calls;
+      expect(calls[calls.length - 1]?.[0]).toMatchObject({ period: "2026-10", page: 1 });
+    });
+  });
+
+  // Caso D
+  it("Caso D: búsqueda y período se combinan en el mismo pedido, sin resetear el período al escribir", async () => {
+    vi.mocked(noveltyApiService.list).mockResolvedValue({
+      items: [buildNovelty()],
+      meta: { total: 1, page: 1, pageSize: 25, hasMore: false },
+    });
+    const user = userEvent.setup();
+    render(<NoveltiesPage />);
+    await screen.findByText("Licencia médica");
+
+    fireEvent.change(screen.getByLabelText("Período"), { target: { value: "2026-09" } });
+    await waitFor(() => {
+      const calls = vi.mocked(noveltyApiService.list).mock.calls;
+      expect(calls[calls.length - 1]?.[0]).toMatchObject({ period: "2026-09" });
+    });
+
+    await user.type(screen.getByPlaceholderText("Buscar por legajo, DNI, empleado o tipo de novedad"), "Prueba");
+
+    await waitFor(() => {
+      const calls = vi.mocked(noveltyApiService.list).mock.calls;
+      expect(calls[calls.length - 1]?.[0]).toMatchObject({ search: "Prueba", period: "2026-09" });
+    });
   });
 });

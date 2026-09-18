@@ -61,6 +61,19 @@ const envSchema = z.object({
   CLOCK_ATTEMPT_MAINTENANCE_INTERVAL_MS: z.coerce.number().int().positive().default(60_000),
   ATTENDANCE_INACTIVITY_CHECK_HOUR: z.coerce.number().int().min(0).max(23).default(1),
   ATTENDANCE_INACTIVITY_CHECK_MINUTE: z.coerce.number().int().min(0).max(59).default(0),
+  // Etapa 15M.19A (docs/decisions/DURABLE_ATTENDANCE_INACTIVITY_SCHEDULER_15M19A.md):
+  // tope de fechas operativas que el catch-up procesa en un mismo tick del
+  // scheduler de 60s. 14 (dos semanas) cubre cualquier fin de semana/feriado
+  // largo real en una sola pasada; una caída más extensa simplemente sigue
+  // drenándose en los ticks siguientes (cada 60s), sin bloquear el event
+  // loop con una corrida sin límite.
+  ATTENDANCE_INACTIVITY_MAX_CATCHUP_DATES: z.coerce.number().int().positive().default(14),
+  // Etapa 15M.19A: sólo aplica la PRIMERA vez que corre (todavía no existe
+  // fila en JobCheckpoint). Sin configurar, el bootstrap inicializa el
+  // checkpoint en "ayer" y no reprocesa historia (ver docs/decisions/
+  // DURABLE_ATTENDANCE_INACTIVITY_SCHEDULER_15M19A.md §Bootstrap). Formato
+  // "YYYY-MM-DD" — nunca hardcodear una fecha en el código.
+  ATTENDANCE_INACTIVITY_BOOTSTRAP_DATE: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "ATTENDANCE_INACTIVITY_BOOTSTRAP_DATE must be YYYY-MM-DD").optional(),
   // Etapa 14B.2 — logging seguro de performance (ver docs/decisions/PERFORMANCE_LOGGING_14B2.md).
   // PERFORMANCE_LOGGING_ENABLED sin valor explícito: activo fuera de production,
   // apagado por defecto en production (opt-in explícito requerido ahí).

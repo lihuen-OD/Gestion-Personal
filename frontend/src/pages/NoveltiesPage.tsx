@@ -13,8 +13,16 @@ import { FilterPanel } from "../components/ui/FilterPanel";
 import { LoadingState } from "../components/ui/LoadingState";
 import { useDebouncedValue } from "../utils/useDebouncedValue";
 import { roleLevel } from "../utils/roles";
+import { currentMonthPeriod, formatPeriodLabel } from "../utils/period";
 
 const pageSize = 25;
+
+// Etapa 15M.15: mismo criterio de pluralización ya usado localmente en
+// ShiftAlertsPage.tsx (countLabel) — no existe un helper compartido para
+// esto, y una sola función de 3 líneas por pantalla no justifica crear uno.
+function countLabel(count: number, singular: string, plural: string) {
+  return `${count} ${count === 1 ? singular : plural}`;
+}
 
 export function NoveltiesPage() {
   const { user } = useAuth();
@@ -23,6 +31,9 @@ export function NoveltiesPage() {
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebouncedValue(search);
+  // Etapa 15M.15: filtro principal por período, mismo patrón que
+  // FinnegansExportPage.tsx (input type="month" + currentMonthPeriod()).
+  const [period, setPeriod] = useState(currentMonthPeriod);
   const employees: Employee[] = [];
   const [novelties, setNovelties] = useState<Novelty[]>([]);
   const [meta, setMeta] = useState({ total: 0, page: 1, pageSize, hasMore: false });
@@ -30,6 +41,7 @@ export function NoveltiesPage() {
   const [loadError, setLoadError] = useState("");
   const [bulkApproving, setBulkApproving] = useState(false);
   const pendingVisible = novelties.filter((item) => item.status === "Pendiente");
+  const periodLabel = formatPeriodLabel(period);
 
   useEffect(() => {
     let mounted = true;
@@ -40,7 +52,7 @@ export function NoveltiesPage() {
     if (!novelties.length) setLoading(true);
     setLoadError("");
     noveltyApiService
-      .list({ page, take: pageSize, search: debouncedSearch })
+      .list({ page, take: pageSize, search: debouncedSearch, period })
       .then((result) => {
         if (!mounted) return;
         setNovelties(result.items);
@@ -59,7 +71,7 @@ export function NoveltiesPage() {
     return () => {
       mounted = false;
     };
-  }, [debouncedSearch, page, refresh, user]);
+  }, [debouncedSearch, page, period, refresh, user]);
 
   const openCreate = () => {
     setLoadError("");
@@ -83,7 +95,7 @@ export function NoveltiesPage() {
 
       <Section
         title="Novedades registradas"
-        subtitle={`${meta.total} registros visibles según tu perfil`}
+        subtitle={`${countLabel(meta.total, "novedad", "novedades")} en ${periodLabel} según tu perfil`}
       >
         {roleLevel(user!.role) === 1 && pendingVisible.length ? <div className="bulk-toolbar"><span>{pendingVisible.length} novedades pendientes en esta vista</span><Button variant="primary" icon={CheckCheck} loading={bulkApproving} onClick={async () => { setBulkApproving(true); setLoadError(""); try { const updated = await noveltyApiService.approveMany(pendingVisible.map((item) => item.id)); const byId = new Map(updated.map((item) => [item.id, item])); setNovelties((current) => current.map((item) => byId.get(item.id) || item)); } catch { setLoadError("No se pudieron aprobar las novedades en lote."); } finally { setBulkApproving(false); } }}>Aprobar pendientes visibles</Button></div> : null}
         <FilterPanel
@@ -95,7 +107,19 @@ export function NoveltiesPage() {
               setPage(1);
             },
           }}
-        />
+        >
+          <label>
+            Período
+            <input
+              type="month"
+              value={period}
+              onChange={(event) => {
+                setPeriod(event.target.value);
+                setPage(1);
+              }}
+            />
+          </label>
+        </FilterPanel>
         {loading ? (
           <LoadingState variant="table" rows={5} columns={9} />
         ) : (
@@ -103,6 +127,7 @@ export function NoveltiesPage() {
             rows={novelties}
             employees={employees}
             currentUser={user!}
+            emptyText={`No hay novedades registradas para ${periodLabel}.`}
             onChanged={(updated) => setNovelties((current) => current.map((item) => item.id === updated.id ? updated : item))}
             onDeleted={(id) => {
               setNovelties((current) => current.filter((item) => item.id !== id));
@@ -119,14 +144,17 @@ export function NoveltiesPage() {
         <NoveltyModal
           employees={employees}
           close={() => setOpen(false)}
-          saved={(created) => {
-            if (page === 1 && !debouncedSearch) {
-              setNovelties((current) => [...created, ...current].slice(0, pageSize));
-              setMeta((current) => ({ ...current, total: current.total + created.length, hasMore: current.total + created.length > current.pageSize }));
-            } else {
-              setPage(1);
-              setRefresh((value) => value + 1);
-            }
+          saved={() => {
+            // Etapa 15M.15: antes había un atajo optimista que insertaba la
+            // novedad creada directo en la lista visible cuando no había
+            // búsqueda activa y se estaba en la página 1. Con el período
+            // como filtro principal eso ya no alcanza -- el modal permite
+            // elegir cualquier fecha, así que una novedad creada puede caer
+            // fuera del período que se está mirando. Siempre se refresca
+            // desde el servidor para que el listado sólo muestre lo que de
+            // verdad corresponde al período seleccionado.
+            setPage(1);
+            setRefresh((value) => value + 1);
             setOpen(false);
           }}
         />

@@ -1,7 +1,8 @@
 import { EmployeeStatus } from "@prisma/client";
 import { prisma } from "../../shared/prisma/client";
 import { argentinaCalendarDate, argentinaDateParts, argentinaDayRange } from "../../shared/datetime/argentinaTime";
-import { workforceService } from "../workforce-management/workforce.service";
+import { noveltyCoversDay } from "../novelties/novelties.dateRange";
+import { resolveWorkObligationCandidates } from "../shifts/workObligation.service";
 
 export function previousOperationalDateKey(value = new Date()) {
   const { year, month, day } = argentinaDateParts(value);
@@ -13,115 +14,128 @@ export function isInactivityCheckDue(value: Date, hour: number, minute: number) 
   return local.hour > hour || (local.hour === hour && local.minute >= minute);
 }
 
-function ranges(dateKey: string) {
+// Etapa 15M.19B: renombrado de `ranges` (privado) a `operationalDateRanges`
+// (exportado) — sigue siendo la misma cuenta de siempre, ahora reutilizada
+// también por missingEntry.service.ts (chequeo intradía de falta de
+// ingreso), que necesita exactamente el mismo rango [00:00, 24:00) ART de
+// una fecha operativa para buscar evidencia de actividad.
+export function operationalDateRanges(dateKey: string) {
   const operationalDate = argentinaCalendarDate(dateKey);
   const nextOperationalDate = new Date(operationalDate.getTime() + 24 * 60 * 60 * 1000);
   const { startAt: localStart, endAt: localEnd } = argentinaDayRange(dateKey);
   return { operationalDate, nextOperationalDate, localStart, localEnd };
 }
 
-// Etapa 12E: en una fecha feriado (DoubleHourRule.kind=FERIADO — nunca por
-// nombre de regla), "Sin actividad registrada" sólo tiene sentido para
-// quien tenía una expectativa real de trabajar. Esa expectativa la define
-// HolidayWorkAssignment (Etapa 12D), nunca "tener turno" ni "estar activo"
-// por sí solos. Reutiliza workforceService.holidayDatesInRange (que a su
-// vez reutiliza calendarPreview, Etapa 12B) — nunca reimplementa el cálculo
-// de calendario ni resuelve el scope (empresa/sector/…) de la regla que
-// originó el feriado: "es feriado" queda V1 global por fecha (ver
-// docs/decisions/HOLIDAY_INACTIVITY_NOTIFICATIONS_12E.md §6 para la
-// limitación documentada) — el scope real de "quién debía trabajar" ya lo
-// resuelve HolidayWorkAssignment, que es una decisión explícita de RRHH
-// por persona.
-export async function detectAttendanceInactivity(dateKey: string) {
-  const { operationalDate, nextOperationalDate, localStart, localEnd } = ranges(dateKey);
-  // Un único query de calendario + un único query de asignaciones (ambos
-  // acotados a esta fecha exacta, nunca un rango ni un loop por empleado) —
-  // ver Parte 9 del pedido. `isHoliday` se calcula una sola vez para toda
-  // la corrida: todo lo que sigue (candidatos, incidentes, notificaciones)
-  // queda scopeado a esta misma `operationalDate`.
-  const holidayDays = await workforceService.holidayDatesInRange(operationalDate, operationalDate);
-  const isHoliday = holidayDays.length > 0;
-  let convokedEmployeeIds: string[] | null = null;
-  if (isHoliday) {
-    const assignments = await prisma.holidayWorkAssignment.findMany({ where: { date: operationalDate, status: "ACTIVA" }, select: { employeeId: true } });
-    convokedEmployeeIds = assignments.map((item) => item.employeeId);
-    // Nadie convocado ese feriado: cero candidatos posibles, sin excepción.
-    // Cortar acá es sólo claridad — un `id: { in: [] }` abajo resolvería
-    // exactamente lo mismo (Prisma lo interpreta como "ningún resultado").
-    if (!convokedEmployeeIds.length) return { date: dateKey, detected: 0, notified: 0 };
-  }
-  const candidates = await prisma.employee.findMany({
-    where: {
-      status: EmployeeStatus.ACTIVO,
-      // Etapa 12E: en feriado, sólo evaluar a quien tenía una convocatoria
-      // ACTIVA para esta fecha exacta — una asignación CANCELADA no cuenta
-      // (nunca aparece en `convokedEmployeeIds`, ver arriba). En día normal
-      // (convokedEmployeeIds === null) no se agrega ningún filtro nuevo —
-      // comportamiento idéntico al de antes de esta etapa.
-      ...(convokedEmployeeIds ? { id: { in: convokedEmployeeIds } } : {}),
-      attendancePunches: { none: { timestamp: { gte: localStart, lt: localEnd } } },
-      workShifts: { none: { startAt: { gte: localStart, lt: localEnd } } },
-      timeEntries: { none: { date: { gte: operationalDate, lt: nextOperationalDate } } },
-      // Etapa 15L.2C: allowsDateRange decide si una novedad open-ended cubre
-      // días posteriores a fromDate -- mismo criterio que noveltyCoversDay
-      // (novelties.dateRange.ts).
-      novelties: {
-        none: {
-          status: { not: "RECHAZADO" },
-          fromDate: { lte: operationalDate },
-          OR: [
-            { toDate: { gte: operationalDate } },
-            { toDate: null, noveltyType: { allowsDateRange: true } },
-            { toDate: null, noveltyType: { allowsDateRange: false }, fromDate: operationalDate },
-          ],
-        },
-      },
-    },
-    select: {
-      id: true,
-      legajo: true,
-      firstName: true,
-      lastName: true,
-      assignments: {
-        where: {
-          type: "TIME_RESPONSIBLE",
-          userId: { not: null },
-          OR: [{ status: null }, { status: { in: ["ACTIVO", "Activo"] } }],
-        },
-        select: { userId: true },
-      },
-    },
-  });
+export type OperationalDateRanges = ReturnType<typeof operationalDateRanges>;
 
-  if (!candidates.length) return { date: dateKey, detected: 0, notified: 0 };
+/**
+ * Etapa 15M.19B: qué cuenta como "evidencia de actividad" para un conjunto
+ * de empleados en una fecha operativa — extraído del `where` que antes vivía
+ * inline en `detectAttendanceInactivity` (relación `Employee.attendancePunches
+ * /workShifts/timeEntries: none`), ahora expresado como 3 consultas batch
+ * (una por modelo, `employeeId IN (...)`, nunca una por empleado) porque el
+ * chequeo intradía de falta de ingreso (missingEntry.service.ts) necesita
+ * exactamente la misma pregunta para un universo de candidatos distinto
+ * (resuelto por ShiftAssignment, no por Employee). Misma semántica de
+ * siempre: fichada, jornada iniciada o carga horaria manual/automática
+ * cualquiera cuenta como "hubo actividad" — no distingue tipo ni fuente.
+ */
+export async function findEmployeeIdsWithActivityEvidence(employeeIds: string[], ranges: OperationalDateRanges): Promise<Set<string>> {
+  if (!employeeIds.length) return new Set();
+  const [punches, workShifts, timeEntries] = await Promise.all([
+    prisma.attendancePunch.findMany({ where: { employeeId: { in: employeeIds }, timestamp: { gte: ranges.localStart, lt: ranges.localEnd } }, select: { employeeId: true }, distinct: ["employeeId"] }),
+    prisma.workShift.findMany({ where: { employeeId: { in: employeeIds }, startAt: { gte: ranges.localStart, lt: ranges.localEnd } }, select: { employeeId: true }, distinct: ["employeeId"] }),
+    prisma.timeEntry.findMany({ where: { employeeId: { in: employeeIds }, date: { gte: ranges.operationalDate, lt: ranges.nextOperationalDate } }, select: { employeeId: true }, distinct: ["employeeId"] }),
+  ]);
+  return new Set([...punches, ...workShifts, ...timeEntries].map((row) => row.employeeId));
+}
+
+/**
+ * Etapa 15M.19B: qué empleados quedan exceptuados por una novedad vigente
+ * — extraído del `where` de novedades que antes vivía inline en
+ * `detectAttendanceInactivity` (Etapa 15L.2C: `allowsDateRange` decide si
+ * una novedad open-ended cubre días posteriores a `fromDate`, mismo criterio
+ * que `noveltyCoversDay`). Misma política de siempre, sin cambios: cualquier
+ * estado distinto de RECHAZADO exime presencia — usar exactamente este
+ * criterio en cualquier llamador nuevo, nunca una política paralela (ver
+ * docs/decisions/MISSING_EXPECTED_ENTRY_15M19B.md §Novedades).
+ */
+export async function findEmployeeIdsExcludedByNovelty(employeeIds: string[], operationalDate: Date): Promise<Set<string>> {
+  if (!employeeIds.length) return new Set();
+  const novelties = await prisma.novelty.findMany({
+    where: {
+      employeeId: { in: employeeIds },
+      status: { not: "RECHAZADO" },
+      fromDate: { lte: operationalDate },
+      OR: [{ toDate: null }, { toDate: { gte: operationalDate } }],
+    },
+    select: { employeeId: true, fromDate: true, toDate: true, noveltyType: { select: { allowsDateRange: true } } },
+  });
+  return new Set(novelties.filter((novelty) => noveltyCoversDay(novelty, novelty.noveltyType, operationalDate)).map((novelty) => novelty.employeeId));
+}
+
+export interface InactivityCandidate {
+  id: string;
+  legajo: string;
+  firstName: string;
+  lastName: string;
+  assignments: { userId: string | null }[];
+}
+
+export interface PersistInactivityResult {
+  detected: number;
+  notified: number;
+}
+
+const TIME_RESPONSIBLE_SELECT = {
+  where: { type: "TIME_RESPONSIBLE" as const, userId: { not: null }, OR: [{ status: null }, { status: { in: ["ACTIVO", "Activo"] } }] },
+  select: { userId: true },
+};
+
+export const INACTIVITY_CANDIDATE_SELECT = {
+  id: true,
+  legajo: true,
+  firstName: true,
+  lastName: true,
+  assignments: TIME_RESPONSIBLE_SELECT,
+} as const;
+
+/**
+ * Etapa 15M.19B: extraído de `detectAttendanceInactivity` para reutilizarse
+ * también desde el chequeo intradía de falta de ingreso
+ * (missingEntry.service.ts) — ambos escriben al MISMO modelo
+ * (`AttendanceInactivityIncident`) con la MISMA identidad (`employeeId` +
+ * `operationalDate`, `@@unique`) y el MISMO mecanismo de idempotencia
+ * (`createMany` con `skipDuplicates` + `notifiedAt` dentro de una
+ * transacción por incidente). Esto no es casualidad: una ausencia detectada
+ * primero por el chequeo intradía y luego revisitada por el chequeo diario
+ * NUNCA debe generar un segundo incidente ni una segunda notificación — son,
+ * a propósito, la misma fila (ver docs/decisions/MISSING_EXPECTED_ENTRY_15M19B.md
+ * §Relación con Sin actividad registrada).
+ */
+export async function persistAndNotifyInactivityIncidents(
+  operationalDate: Date,
+  dateKey: string,
+  type: "SIN_ACTIVIDAD_REGISTRADA" | "FALTA_INGRESO",
+  title: string,
+  candidates: InactivityCandidate[],
+  buildObservation: (candidate: InactivityCandidate) => string,
+  buildMessage: (candidate: InactivityCandidate) => string,
+): Promise<PersistInactivityResult> {
+  if (!candidates.length) return { detected: 0, notified: 0 };
 
   await prisma.attendanceInactivityIncident.createMany({
     data: candidates.map((employee) => ({
       employeeId: employee.id,
       operationalDate,
-      observation: isHoliday
-        ? `La persona estaba convocada a trabajar el feriado del ${dateKey} y no se registraron fichadas, horas ni novedades. Requiere revisión.`
-        : `No se registraron fichadas, horas ni novedades para el ${dateKey}. Requiere revisión.`,
+      observation: buildObservation(employee),
     })),
     skipDuplicates: true,
   });
 
   const pendingNotification = await prisma.attendanceInactivityIncident.findMany({
-    where: { operationalDate, notifiedAt: null },
-    include: {
-      employee: {
-        select: {
-          id: true,
-          legajo: true,
-          firstName: true,
-          lastName: true,
-          assignments: {
-            where: { type: "TIME_RESPONSIBLE", userId: { not: null }, OR: [{ status: null }, { status: { in: ["ACTIVO", "Activo"] } }] },
-            select: { userId: true },
-          },
-        },
-      },
-    },
+    where: { operationalDate, notifiedAt: null, employeeId: { in: candidates.map((employee) => employee.id) } },
+    include: { employee: { select: INACTIVITY_CANDIDATE_SELECT } },
   });
   const rrhh = await prisma.user.findMany({ where: { role: "NIVEL_1_RRHH", status: "ACTIVO" }, select: { id: true } });
   let notified = 0;
@@ -129,19 +143,17 @@ export async function detectAttendanceInactivity(dateKey: string) {
   for (const incident of pendingNotification) {
     const recipients = Array.from(new Set([
       ...rrhh.map((user) => user.id),
-      ...incident.employee.assignments.flatMap((assignment) => assignment.userId ? [assignment.userId] : []),
+      ...incident.employee.assignments.flatMap((assignment) => (assignment.userId ? [assignment.userId] : [])),
     ]));
     await prisma.$transaction(async (tx) => {
       if (recipients.length) {
         await tx.systemNotification.createMany({
           data: recipients.map((recipientUserId) => ({
             recipientUserId,
-            type: "SIN_ACTIVIDAD_REGISTRADA",
+            type,
             priority: "ALTA",
-            title: "Sin actividad registrada",
-            message: isHoliday
-              ? `${incident.employee.lastName}, ${incident.employee.firstName} · Legajo ${incident.employee.legajo} estaba convocado a trabajar el feriado del ${dateKey} y no registra actividad.`
-              : `${incident.employee.lastName}, ${incident.employee.firstName} · Legajo ${incident.employee.legajo} no registra actividad para el ${dateKey}.`,
+            title,
+            message: buildMessage(incident.employee),
             entityType: "AttendanceInactivityIncident",
             entityId: incident.id,
             link: `/asistencia?observationDate=${dateKey}`,
@@ -153,5 +165,60 @@ export async function detectAttendanceInactivity(dateKey: string) {
     notified += recipients.length;
   }
 
-  return { date: dateKey, detected: candidates.length, notified };
+  return { detected: candidates.length, notified };
+}
+
+// Etapa 12E: en una fecha feriado (DoubleHourRule.kind=FERIADO — nunca por
+// nombre de regla), "Sin actividad registrada" sólo tiene sentido para
+// quien tenía una expectativa real de trabajar. Esa expectativa la define
+// HolidayWorkAssignment (Etapa 12D), nunca "tener turno" ni "estar activo"
+// por sí solos.
+//
+// Etapa 15M.19B (docs/decisions/MISSING_EXPECTED_ENTRY_15M19B.md): antes de
+// esta etapa, el universo de candidatos era "todo Employee ACTIVO", sin
+// ninguna noción de turno/régimen — un empleado sin obligación real de
+// trabajar ese día (régimen SIN_TURNO, día de descanso semanal, asignación
+// vencida) igual generaba el incidente si no tenía fichadas/horas/novedades.
+// Ahora el universo de candidatos lo resuelve `resolveWorkObligationCandidates`
+// (shifts/workObligation.service.ts) — la MISMA función que usa el chequeo
+// intradía de falta de ingreso — que ya exige ShiftAssignment propia
+// HABILITADA, vigente, aplicable a este día de semana, régimen distinto de
+// SIN_TURNO, y (en feriado) convocatoria HolidayWorkAssignment ACTIVA. Este
+// chequeo diario sigue agregando, sobre esos candidatos, las dos condiciones
+// que le son propias: cero evidencia de actividad en TODO el día, y ninguna
+// novedad vigente que lo exima.
+export async function detectAttendanceInactivity(dateKey: string): Promise<{ date: string } & PersistInactivityResult> {
+  const ranges = operationalDateRanges(dateKey);
+  const { isHoliday, candidates: obligationCandidates } = await resolveWorkObligationCandidates(dateKey);
+  if (!obligationCandidates.length) return { date: dateKey, detected: 0, notified: 0 };
+
+  const obligationEmployeeIds = obligationCandidates.map((candidate) => candidate.employeeId);
+  const [hasEvidence, excludedByNovelty] = await Promise.all([
+    findEmployeeIdsWithActivityEvidence(obligationEmployeeIds, ranges),
+    findEmployeeIdsExcludedByNovelty(obligationEmployeeIds, ranges.operationalDate),
+  ]);
+  const finalCandidateIds = obligationEmployeeIds.filter((id) => !hasEvidence.has(id) && !excludedByNovelty.has(id));
+  if (!finalCandidateIds.length) return { date: dateKey, detected: 0, notified: 0 };
+
+  const employees = await prisma.employee.findMany({
+    where: { id: { in: finalCandidateIds }, status: EmployeeStatus.ACTIVO },
+    select: INACTIVITY_CANDIDATE_SELECT,
+  });
+
+  const result = await persistAndNotifyInactivityIncidents(
+    ranges.operationalDate,
+    dateKey,
+    "SIN_ACTIVIDAD_REGISTRADA",
+    "Sin actividad registrada",
+    employees,
+    (employee) =>
+      isHoliday
+        ? `La persona estaba convocada a trabajar el feriado del ${dateKey} y no se registraron fichadas, horas ni novedades. Requiere revisión.`
+        : `No se registraron fichadas, horas ni novedades para el ${dateKey}. Requiere revisión.`,
+    (employee) =>
+      isHoliday
+        ? `${employee.lastName}, ${employee.firstName} · Legajo ${employee.legajo} estaba convocado a trabajar el feriado del ${dateKey} y no registra actividad.`
+        : `${employee.lastName}, ${employee.firstName} · Legajo ${employee.legajo} no registra actividad para el ${dateKey}.`,
+  );
+  return { date: dateKey, ...result };
 }

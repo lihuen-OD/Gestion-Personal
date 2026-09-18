@@ -3,10 +3,12 @@ import {
   argentinaCalendarDate,
   argentinaDateKey,
   argentinaDayRange,
+  calendarDateKey,
   calendarDaysInclusive,
   dayOfMonthFromCalendarDate,
   dayOfMonthFromInstant,
   nextArgentinaMidnightUtc,
+  nextCalendarDateKey,
   periodFromCalendarDate,
   periodFromInstant,
   scheduledInstantForShiftTime,
@@ -139,6 +141,40 @@ describe("calendarDaysInclusive — Etapa 15L.5 (docs/decisions/NOVELTY_QUANTITY
 
   it("rango largo dentro del mismo mes: cuenta todos los días, no sólo hasta fin de mes", () => {
     expect(calendarDaysInclusive(argentinaCalendarDate("2026-07-01"), argentinaCalendarDate("2026-07-31"))).toBe(31);
+  });
+});
+
+describe("calendarDateKey — Etapa 15M.19A (inversa de argentinaCalendarDate)", () => {
+  it("es la inversa exacta de argentinaCalendarDate para cualquier clave", () => {
+    expect(calendarDateKey(argentinaCalendarDate("2026-09-13"))).toBe("2026-09-13");
+  });
+
+  it("no aplica corrimiento de huso horario sobre una fecha-calendario ya normalizada (mismo criterio que periodFromCalendarDate)", () => {
+    // Si aplicara el offset de -3h, medianoche UTC se correría al día anterior.
+    expect(calendarDateKey(new Date("2026-09-01T00:00:00.000Z"))).toBe("2026-09-01");
+  });
+});
+
+describe("nextCalendarDateKey — Etapa 15M.19A (catch-up de attendanceInactivityScheduler)", () => {
+  it("suma un día calendario simple", () => {
+    expect(nextCalendarDateKey("2026-09-12")).toBe("2026-09-13");
+  });
+
+  it("cruza fin de mes", () => {
+    expect(nextCalendarDateKey("2026-09-30")).toBe("2026-10-01");
+  });
+
+  it("cruza fin de año", () => {
+    expect(nextCalendarDateKey("2026-12-31")).toBe("2027-01-01");
+  });
+
+  it("respeta año bisiesto", () => {
+    expect(nextCalendarDateKey("2028-02-28")).toBe("2028-02-29");
+    expect(nextCalendarDateKey("2028-02-29")).toBe("2028-03-01");
+  });
+
+  it("año NO bisiesto salta directo de 28/02 a 01/03", () => {
+    expect(nextCalendarDateKey("2026-02-28")).toBe("2026-03-01");
   });
 });
 

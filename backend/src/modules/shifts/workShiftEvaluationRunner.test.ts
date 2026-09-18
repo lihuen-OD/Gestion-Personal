@@ -17,7 +17,7 @@ vi.mock("../../shared/prisma/client", () => ({
     shiftAssignment: { findMany: vi.fn(), findUnique: vi.fn() },
     shiftTemplate: { findMany: vi.fn(), findUnique: vi.fn() },
     workShift: { update: vi.fn(), findFirst: vi.fn(), findUnique: vi.fn() },
-    shiftAlert: { upsert: vi.fn(), updateMany: vi.fn() },
+    shiftAlert: { upsert: vi.fn(), updateMany: vi.fn(), findUnique: vi.fn() },
     employeeWorkRegime: { findFirst: vi.fn() },
     employeeHourConcept: { findFirst: vi.fn() },
   },
@@ -32,7 +32,7 @@ const mockedPrisma = prisma as unknown as {
   shiftAssignment: { findMany: Mock; findUnique: Mock };
   shiftTemplate: { findMany: Mock; findUnique: Mock };
   workShift: { update: Mock; findFirst: Mock; findUnique: Mock };
-  shiftAlert: { upsert: Mock; updateMany: Mock };
+  shiftAlert: { upsert: Mock; updateMany: Mock; findUnique: Mock };
   employeeWorkRegime: { findFirst: Mock };
   employeeHourConcept: { findFirst: Mock };
 };
@@ -82,6 +82,10 @@ const nightTemplate = {
 beforeEach(() => {
   vi.clearAllMocks();
   mockedPrisma.workShift.findFirst.mockResolvedValue(null); // sin jornada previa: no evalua descanso
+  // Etapa 15M.19B: default "no existe alerta previa" para el guard nuevo de
+  // flagOpenShiftOverflowForReview — los tests que no lo ejercen (la mayoria)
+  // deben seguir viendo el comportamiento de antes (createShiftAlert corre).
+  mockedPrisma.shiftAlert.findUnique.mockResolvedValue(null);
   mockedPrisma.shiftAlert.upsert.mockResolvedValue({ id: "alert-1" });
   mockedPrisma.shiftAlert.updateMany.mockResolvedValue({ count: 0 });
   // Etapa 13D: default = el empleado SÍ tiene un concepto adicional
@@ -421,16 +425,37 @@ describe("flagOpenShiftOverflowForReview — política de rollover por régimen 
     expect(call.where).toEqual({ workShiftId_type: { workShiftId: "shift-1", type: "POSIBLE_OLVIDO_SALIDA" } });
   });
 
-  it("idempotencia: evaluar la misma jornada dos veces upsertea la misma fila (mismo workShiftId+type), no crea una segunda — y conserva severity CRITICA en el update", async () => {
+  it("Etapa 15M.19B (fix hallazgo 15M.18): reevaluar la misma jornada en el siguiente tick de 60s NO reenvía la notificación ni toca la fila ya creada — se corta antes del upsert", async () => {
     mockedPrisma.shiftAlert.upsert.mockResolvedValue({ id: "alert-1" });
 
     await flagOpenShiftOverflowForReview("employee-1", "shift-1", 1500, new Date("2026-08-18T05:00:00.000Z"));
+    expect(mockedPrisma.shiftAlert.upsert).toHaveBeenCalledTimes(1);
+
+    // El siguiente tick del scheduler ve la alerta que el propio primer
+    // llamado acaba de crear.
+    mockedPrisma.shiftAlert.findUnique.mockResolvedValue({ id: "alert-1", status: "PENDIENTE" });
     await flagOpenShiftOverflowForReview("employee-1", "shift-1", 1560, new Date("2026-08-18T06:00:00.000Z"));
 
-    expect(mockedPrisma.shiftAlert.upsert).toHaveBeenCalledTimes(2);
-    const [first, second] = mockedPrisma.shiftAlert.upsert.mock.calls.map((call) => call[0]!);
-    expect(first.where).toEqual(second.where); // misma clave [workShiftId, type] en ambos llamados -> upsert, no create duplicado
-    expect(second.update).toMatchObject({ severity: "CRITICA", differenceMinutes: 1560 });
+    expect(mockedPrisma.shiftAlert.upsert).toHaveBeenCalledTimes(1); // sigue en 1: el segundo llamado no upsertea de nuevo
+    expect(mockedPrisma.shiftAlert.findUnique).toHaveBeenCalledWith({ where: { workShiftId_type: { workShiftId: "shift-1", type: "POSIBLE_OLVIDO_SALIDA" } } });
+  });
+
+  it("Etapa 15M.19B: si RRHH ya resolvió la alerta (RESUELTA), el siguiente tick no la reabre — el guard corta sin importar el status existente", async () => {
+    mockedPrisma.shiftAlert.findUnique.mockResolvedValue({ id: "alert-1", status: "RESUELTA" });
+
+    await flagOpenShiftOverflowForReview("employee-1", "shift-1", 1600, new Date("2026-08-18T07:00:00.000Z"));
+
+    expect(mockedPrisma.shiftAlert.upsert).not.toHaveBeenCalled();
+  });
+
+  it("Etapa 15M.19B: una jornada nueva (workShiftId distinto) sí genera su propia alerta, sin verse bloqueada por la de otra jornada", async () => {
+    mockedPrisma.shiftAlert.findUnique.mockResolvedValue(null);
+    mockedPrisma.shiftAlert.upsert.mockResolvedValue({ id: "alert-2" });
+
+    await flagOpenShiftOverflowForReview("employee-1", "shift-2", 1500, new Date("2026-08-19T05:00:00.000Z"));
+
+    expect(mockedPrisma.shiftAlert.findUnique).toHaveBeenCalledWith({ where: { workShiftId_type: { workShiftId: "shift-2", type: "POSIBLE_OLVIDO_SALIDA" } } });
+    expect(mockedPrisma.shiftAlert.upsert).toHaveBeenCalledTimes(1);
   });
 
   it("no pisa la severity por defecto de otros tipos de alerta (ej. JORNADA_EXTENDIDA sigue en INFO)", async () => {

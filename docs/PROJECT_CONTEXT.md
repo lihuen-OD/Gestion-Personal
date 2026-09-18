@@ -1,5 +1,116 @@
 # Project Context
 
+> Etapa 15M.19D (`docs/decisions/NOTIFICATIONS_END_TO_END_ACCEPTANCE_15M19D.md`):
+> cierre de aceptación/regresión de la serie 15M.19 (A: scheduler durable,
+> B: obligación real + falta de ingreso, C: refresco automático). Sin
+> features nuevas — se corrió toda la suite existente contra ~40 escenarios
+> del pedido (varios días sin login, restarts, feriados, fines de semana,
+> SIN_TURNO/FLEXIBLE, cross-midnight, overflow, polling, filtros,
+> paginación, F5, login, timezone) y se cerraron los gaps reales con tests
+> nuevos que cruzan módulos (algo que los tests unitarios de A/B/C no
+> ejercían por diseño). **Un bug real encontrado y corregido**: bajo el
+> filtro "No leídas" de `NotificationsPage`, una notificación marcada como
+> leída desde otro cliente no desaparecía de la vista hasta un remount
+> completo — el merge por id de 15M.19C asumía pertenencia monótona al
+> filtro, válida para "Todas"/"Leídas" pero no para "No leídas" (única cuya
+> pertenencia puede pasar de verdadera a falsa). Fix acotado a
+> `NotificationsPage.tsx`: bajo ese filtro específico, el refresco silencioso
+> reemplaza la lista en vez de fusionarla. Sin cambios de backend. Los 14
+> criterios de cierre de la serie (`docs/decisions/NOTIFICATIONS_END_TO_END_ACCEPTANCE_15M19D.md`
+> §8) cierran en PASS — **15M.19 A/B/C/D queda cerrada**, con dos riesgos
+> residuales documentados (concurrencia real no ejercida contra Postgres
+> real; validación de navegador real no ejecutada por restricciones del
+> entorno de esta sesión).
+
+> Etapa 15M.19C (`docs/decisions/NOTIFICATIONS_PAGE_LIVE_REFRESH_15M19C.md`):
+> `NotificationsPage` dejó de depender de F5 — 15M.18 había diagnosticado que
+> la página no se actualizaba mientras permanecía abierta, aunque el backend
+> ya generaba notificaciones de forma independiente. Frontend-only: reutiliza
+> polling (mismo intervalo que la campana del topbar, ahora una constante
+> compartida `NOTIFICATIONS_POLL_INTERVAL_MS`), la misma capa de acceso
+> (`workforceApiService.notifications`, sin cliente HTTP nuevo) y el mismo
+> evento `app:notifications-changed` que ya usaba la campana — sin SSE/
+> WebSocket. El refresco de fondo es silencioso (nunca skeleton, nunca
+> reemplaza la lista entera) y fusiona por id para no perder páginas ya
+> cargadas con "Cargar más" ni duplicar filas; el estado "leída" es monótono
+> (un poll nunca revierte una lectura ya confirmada). Un fallo temporal de
+> polling nunca vacía la lista visible. Cero cambios de backend/generación/
+> scheduler/reglas de negocio.
+
+> Etapa 15M.19B (`docs/decisions/MISSING_EXPECTED_ENTRY_15M19B.md`): se agregó
+> el chequeo intradía de "falta de ingreso" que 15M.18 encontró que no existía
+> — turno esperado + tolerancia de ingreso (`ShiftTemplate.entryToleranceAfterMinutes`)
+> vencida + sin fichada. Nuevo `shifts/workObligation.service.ts` resuelve una
+> única vez "¿existe obligación REAL de trabajar hoy?" (ShiftAssignment propia
+> HABILITADA/vigente/aplicable al día de semana, régimen distinto de
+> `SIN_TURNO`, feriado sólo con `HolidayWorkAssignment` ACTIVA) — reutilizado
+> tanto por el chequeo intradía nuevo (`time-entries/missingEntry.service.ts`)
+> como por el chequeo diario ya existente (`detectAttendanceInactivity`, que
+> antes evaluaba "todo empleado activo" sin ninguna noción de turno/régimen,
+> con riesgo real de falso positivo en descansos semanales). Ambas señales
+> escriben la MISMA fila de `AttendanceInactivityIncident`
+> (`employeeId`+`operationalDate`) — nunca duplican notificación entre sí — y
+> se resuelve automáticamente ("motivo auditable", sin borrar histórico)
+> cuando el empleado ficha después de haber sido detectado. **Sin ninguna
+> migración**: el modelo ya tenía la forma necesaria. De paso se corrigió el
+> bug de re-notificación de `flagOpenShiftOverflowForReview` ya identificado
+> en 15M.18 (reenviaba la notificación y reabría alertas `RESUELTA` cada 60s).
+> Reutiliza el mismo scheduler de 60s de 15M.19A, sin `setInterval` nuevo.
+> Frontend sin tocar (15M.19C).
+
+> Etapa 15M.19A (`docs/decisions/DURABLE_ATTENDANCE_INACTIVITY_SCHEDULER_15M19A.md`):
+> el chequeo diario de "Sin actividad registrada" (`detectAttendanceInactivity`)
+> dejó de depender de una variable en memoria del proceso Node
+> (`lastInactivityDateKey`, en `clockPunchMaintenance.ts`) para recordar
+> "hasta qué día procesó" — un restart/deploy/cold start de Render alrededor
+> de la ventana diaria (01:00 ARG) perdía ese día para siempre, sin ningún
+> backfill posible. Ahora un watermark persistido (`JobCheckpoint`, tabla
+> nueva, una fila por job) más un catch-up ascendente y topeado por tick
+> (`attendanceInactivityScheduler.ts`, nuevo) procesan cualquier fecha
+> operativa completa pendiente entre el checkpoint y "ayer" — un reinicio ya
+> no pierde días intermedios. No se tocó `detectAttendanceInactivity` en sí
+> (sus exclusiones pendientes — descanso semanal, `ShiftAssignment` vigente,
+> `WorkRegime` `SIN_TURNO`/`FLEXIBLE` — quedan para 15M.19B), ni el frontend,
+> ni el bug ya detectado de re-notificación de `POSIBLE_OLVIDO_SALIDA`
+> (`flagOpenShiftOverflowForReview`, también 15M.19B). Migración
+> (`20260918100000_add_job_checkpoint`) generada y validada
+> (`prisma validate`/`generate`/`migrate status` contra Neon), no aplicada
+> (`migrate dev`/`deploy` no se ejecutaron).
+
+> Etapa 15M.17: se eliminó un acceso operativo duplicado — la card
+> "Exportación Finnegans" en `SettingsPage.tsx` (`/configuracion`) apuntaba a
+> la misma ruta (`/configuracion/liquidacion`) que "Exportación" en el
+> sidebar (`navigation.tsx`, grupo Gestión horaria, sólo Nivel 1). Se quitó
+> únicamente la card; ruta, módulo, permisos, lógica de exportación y el
+> acceso del sidebar quedaron sin cambios. Auditados Dashboard, Inicio de
+> Gestión horaria y el resto de las pantallas: no se encontró ningún otro
+> acceso operativo duplicado hacia el mismo destino. Ver
+> `docs/PROJECT_UI_CONTEXT.md` "Un único acceso principal por módulo
+> operativo".
+
+> Etapa 15M.15: Novedades (`/novedades`) filtra por período mensual
+> (`GET /novelties?period=YYYY-MM`), mismo concepto/patrón que Exportación
+> Finnegans pero sin copiarla. Fecha de negocio: vigencia real
+> (`fromDate`/`toDate`), nunca `createdAt`. Criterio de selección:
+> intersección real contra el mes completo (una novedad aparece en todo mes
+> que su vigencia toca, no sólo en el de `fromDate`) — mismo criterio que
+> `novelties.dateRange.ts::noveltyCoversDay` generalizado a un rango, y
+> **distinto** del criterio de dueño-único-por-`fromDate` que usa
+> `finnegans-export` (Etapa 15L.3B.1) para no exportar la misma fila dos
+> veces; son dos preguntas distintas sobre el mismo campo. Sin `toDate`: si
+> el tipo permite rango (`allowsDateRange=true`) es una novedad vigente
+> abierta y sigue apareciendo en meses posteriores; si no, es de un único día
+> y sólo aparece en el mes de `fromDate`. Búsqueda y período se combinan
+> siempre con AND. Vigencia se muestra en `DD/MM/YYYY`
+> (`utils/date.ts::formatCalendarDate`), nunca ISO. Crear una novedad
+> siempre refresca la lista desde el servidor (ya no hay atajo optimista) —
+> el modal permite elegir cualquier fecha, así que la novedad creada puede
+> caer fuera del período que se está mirando. Ver
+> `docs/PROJECT_UI_CONTEXT.md` "Novedades por período" y
+> `docs/BACKEND_API_CONTRACTS.md` "Novedades operativas". No se tocó
+> aprobación, cálculos horarios, Motor A/B, Horas Especiales ni
+> exportaciones.
+
 > Etapa 15M.14: corrección global de scroll vertical en el App Shell.
 > `.page-wrap` (`frontend/src/app/AppShell.tsx`) es el único propietario del
 > scroll vertical de toda la aplicación; `html`/`body`/`#root`/`.app-shell`/

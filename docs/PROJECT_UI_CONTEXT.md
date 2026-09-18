@@ -79,6 +79,111 @@ resume severidad máxima y estado conjunto, y contiene las alertas hijas con
 resolución individual. Los tipos que sólo sobreviven como datos históricos se
 identifican como “Registro anterior” y nunca se ocultan.
 
+### Un único acceso principal por módulo operativo (Etapa 15M.17)
+
+> Los módulos operativos tienen un único acceso principal. Configuración no
+> duplica módulos operativos ya presentes en la navegación principal.
+
+`Exportación` (Finnegans, `/configuracion/liquidacion`) es una operación de
+Gestión horaria — vive en el sidebar (`navigation.tsx`, grupo "Gestión
+horaria", sólo Nivel 1) y ahí se queda. `SettingsPage.tsx` (`/configuracion`)
+dejó de repetirla como card: esa pantalla es para parámetros, catálogos y
+reglas configurables (Turnos, Regímenes laborales, Tipos de novedades,
+Conceptos horarios, Categorías documentales, etc.), no para reflejar accesos
+operativos que ya tienen su propio lugar en la navegación principal. Antes de
+agregar una card nueva a Configuración, confirmar que no exista ya un enlace
+al mismo destino en el sidebar u otro punto de navegación principal.
+
+### Feedback temporal vs banners persistentes (Etapa 15M.16)
+
+> Los mensajes de éxito de acciones completadas son feedback temporal, no
+> contenido persistente.
+
+> Los banners persistentes se reservan para condiciones que continúan
+> vigentes o requieren acción.
+
+En la práctica:
+
+* **Toast temporal** (`.toast`, `position: fixed`, no reserva altura ni
+  desplaza contenido): confirma que una acción ya terminó — "Novedad
+  creada", "Empleados agregados correctamente", "Regla horaria guardada
+  correctamente", etc. Debe desaparecer solo, sin acción del usuario.
+  Duración estándar: `TOAST_SUCCESS_MS` (2200 ms,
+  `frontend/src/utils/toast.ts`) — mismo valor que ya usan ~10 pantallas
+  (`WorkRegimesPage`, `HourConceptsPage`, `AssociatedEmployeesPanel`,
+  `EmployeeDetailPage`, etc.); código nuevo debe importar esa constante en
+  vez de inventar un número distinto. Debe llevar `role="status"` (o la live
+  region que corresponda) para que un lector de pantalla lo anuncie sin
+  robar foco.
+* **Banner persistente** (`.form-error`, `.info-note`, etc., dentro del
+  flujo normal de la página): se usa para una condición que sigue vigente —
+  error de red, cierre mensual bloqueado, configuración incompleta,
+  advertencia que exige una acción. No debe autodesaparecer solo porque
+  "ya pasó un rato" — sigue siendo cierto hasta que la condición cambie.
+* Antes de esta etapa, `NotificationsPage.tsx` y `AttendancePage.tsx` (mismo
+  flujo compartido, Etapa 15G.2, "Crear novedad" desde una alerta/
+  notificación) mostraban el toast de éxito sin el `setTimeout` que le
+  faltaba — quedaba anclado en pantalla para siempre. Corregido agregando el
+  mismo auto-cierre que ya usa el resto de los `.toast` de la app; no se creó
+  un sistema de toasts nuevo.
+
+### Notificaciones — refresco automático sin F5 (Etapa 15M.19C)
+
+`NotificationsPage.tsx` se actualiza automáticamente mediante polling
+coherente con la campana del topbar. Las nuevas notificaciones aparecen sin
+recargar la página. Mismo intervalo (`NOTIFICATIONS_POLL_INTERVAL_MS`,
+`workforceApiService.ts` — antes hardcodeado sólo en `AppShell.tsx`), misma
+capa de acceso (`workforceApiService.notifications`, sin cliente HTTP
+paralelo), mismo mecanismo de reacción inmediata que ya usaba la campana
+(`app:notifications-changed`), sin SSE/WebSocket. El refresco de fondo es
+silencioso: nunca muestra el skeleton de carga completa, nunca reemplaza la
+lista entera (se fusiona por id, preservando páginas ya cargadas con "Cargar
+más"), y un fallo temporal de red nunca vacía lo que ya está en pantalla — el
+siguiente tick reintenta solo. Ver `docs/decisions/NOTIFICATIONS_PAGE_LIVE_REFRESH_15M19C.md`.
+
+**Corrección (Etapa 15M.19D)**: "se fusiona por id, preservando páginas ya
+cargadas" de arriba sólo es correcto para un filtro de pertenencia monótona
+("Todas"/"Leídas" — una fila que ya matcheaba nunca deja de matchear). Bajo
+el filtro "No leídas" la pertenencia SÍ puede pasar a falsa (otro cliente
+marca la fila como leída) — ahí el refresco silencioso reemplaza la lista
+completa en vez de fusionarla, para que la fila desaparezca de inmediato en
+el próximo refresco. Ver `docs/decisions/NOTIFICATIONS_END_TO_END_ACCEPTANCE_15M19D.md` §5.3.
+
+### Novedades por período (Etapa 15M.15)
+
+`NoveltiesPage.tsx` (`/novedades`) filtra por un período mensual principal,
+mismo concepto y patrón visual que `FinnegansExportPage.tsx` (`input
+type="month"` + `formatPeriodLabel()`, `frontend/src/utils/period.ts`) pero
+sin copiar su contenido (sin textos de Finnegans, sin columnas ni acciones de
+exportación).
+
+* **Fecha de negocio**: la vigencia real de la novedad (`Novelty.fromDate`/
+  `toDate`), nunca `createdAt`/`updatedAt`.
+* **Criterio de intersección** (server-side, `GET /novelties?period=YYYY-MM`,
+  ver `docs/BACKEND_API_CONTRACTS.md`): una novedad aparece en todo período
+  mensual con el que su vigencia real tenga intersección — no sólo en el mes
+  de `fromDate`. Con `toDate` cargado, interseca si el rango toca el mes. Sin
+  `toDate`: si `NoveltyType.allowsDateRange=true` es una novedad vigente
+  abierta y aparece en el mes de inicio y en todos los posteriores; si
+  `allowsDateRange=false` es de un único día y sólo aparece en ese mes. Mismo
+  criterio de negocio que `novelties.dateRange.ts::noveltyCoversDay`
+  (generalizado de "cubre este día" a "toca este mes") — **no** el mismo
+  criterio que usa `finnegans-export` (Etapa 15L.3B.1: dueño único por
+  `fromDate`, sin intersección, para no exportar la misma fila dos veces).
+  Son dos preguntas distintas sobre el mismo campo, cada una resuelta para su
+  propio propósito.
+* **Búsqueda + período**: se combinan siempre con AND (nunca OR) en el mismo
+  pedido al backend; cambiar el texto de búsqueda no resetea el período.
+* **Formato humano**: fechas de vigencia en `DD/MM/YYYY`
+  (`frontend/src/utils/date.ts::formatCalendarDate`), nunca ISO. El período
+  mismo se muestra como "septiembre de 2026" (`formatPeriodLabel`), nunca
+  como `"2026-09"` fuera del valor interno del `<input type="month">`.
+* **Crear novedad**: el modal permite elegir cualquier fecha, sin atarla al
+  período que se está mirando — por eso, después de crear, la pantalla
+  siempre refresca desde el servidor (ya no hay un atajo optimista que
+  insertara la fila directo en la lista visible); una novedad creada fuera
+  del período seleccionado no debe quedar visible por error.
+
 ### Política de scroll vertical (Etapa 15M.14)
 
 La aplicación tiene un único propietario del scroll vertical principal:

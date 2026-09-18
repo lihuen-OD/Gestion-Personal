@@ -5,7 +5,7 @@ import { useAuth } from "../context/AuthContext";
 import { demoMode } from "../config/runtimeMode";
 import { flattenNavigation, navigationForRole, type NavGroupItem, type NavLinkItem } from "./navigation";
 import { confirmAction } from "../services/appDialog";
-import { workforceApiService } from "../services/api/workforceApiService";
+import { NOTIFICATIONS_POLL_INTERVAL_MS, workforceApiService } from "../services/api/workforceApiService";
 
 function isActivePath(pathname: string, href: string) {
   return pathname === href || (href !== "/" && pathname.startsWith(href));
@@ -73,7 +73,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     let mounted = true;
     const load = () => workforceApiService.unreadNotificationCount().then((count) => { if (mounted) setUnreadNotifications(count); }).catch(() => undefined);
     void load();
-    const timer = window.setInterval(() => void load(), 60_000);
+    const timer = window.setInterval(() => void load(), NOTIFICATIONS_POLL_INTERVAL_MS);
     window.addEventListener("app:notifications-changed", load);
     return () => { mounted = false; window.clearInterval(timer); window.removeEventListener("app:notifications-changed", load); };
   }, [user?.id]);

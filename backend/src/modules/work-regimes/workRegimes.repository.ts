@@ -18,6 +18,23 @@ export function findActiveEmployeeWorkRegime(employeeId: string, referenceDate: 
   });
 }
 
+// Etapa 15M.19B: versión batch de findActiveEmployeeWorkRegime — resuelve el
+// régimen vigente de TODOS los empleados en una sola consulta, para que un
+// job que recorre muchos candidatos (workObligation.service.ts) no haga una
+// consulta por empleado. Mismo criterio de vigencia; el desempate
+// (effectiveFrom más reciente gana) lo aplica el caller agrupando por
+// employeeId sobre este mismo orderBy.
+export function findActiveEmployeeWorkRegimesForDate(referenceDate: Date) {
+  return prisma.employeeWorkRegime.findMany({
+    where: {
+      effectiveFrom: { lte: referenceDate },
+      OR: [{ effectiveTo: null }, { effectiveTo: { gte: referenceDate } }],
+    },
+    orderBy: { effectiveFrom: "desc" },
+    include: { workRegime: true },
+  });
+}
+
 function buildWorkRegimeWhere(query: ListWorkRegimesQuery): Prisma.WorkRegimeWhereInput {
   const search = query.search?.trim();
   return {

@@ -4,6 +4,7 @@ import { noveltyApiService } from "../../services/api/noveltyApiService";
 import type { Employee, Novelty, User } from "../../types";
 import { displayLegajo, fullName } from "../../utils/employee";
 import { statusTone } from "../../utils/status";
+import { formatCalendarDate } from "../../utils/date";
 import { Badge } from "../ui/Badge";
 import { Button } from "../ui/Button";
 import { Modal } from "../ui/Modal";
@@ -20,12 +21,14 @@ export function NoveltyTable({
   currentUser,
   onChanged,
   onDeleted,
+  emptyText = "Todavía no hay novedades registradas.",
 }: {
   rows: Novelty[];
   employees: Employee[];
   currentUser: User;
   onChanged: (updated: Novelty) => void;
   onDeleted?: (id: string) => void;
+  emptyText?: string;
 }) {
   const [rejecting, setRejecting] = useState<Novelty | null>(null);
   const [rejectReason, setRejectReason] = useState("");
@@ -70,7 +73,7 @@ export function NoveltyTable({
   };
 
   if (!rows.length) {
-    return <EmptyState text="Todavía no hay novedades registradas." />;
+    return <EmptyState text={emptyText} />;
   }
 
   return (
@@ -111,9 +114,9 @@ export function NoveltyTable({
                   <b>{novelty.type}</b>
                 </td>
                 <td>
-                  {novelty.from}
+                  {formatCalendarDate(novelty.from)}
                   {novelty.to && novelty.to !== novelty.from ? (
-                    <span className="table-sub">Hasta {novelty.to}</span>
+                    <span className="table-sub">Hasta {formatCalendarDate(novelty.to)}</span>
                   ) : null}
                 </td>
                 <td>{novelty.quantity}</td>

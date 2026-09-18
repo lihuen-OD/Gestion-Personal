@@ -39,6 +39,12 @@ export type SystemNotification = {
 };
 export type SystemNotificationListParams = { page?: number; take?: number; status?: "NO_LEIDA" | "LEIDA" };
 export type SystemNotificationListMeta = { total: number; page: number; pageSize: number; hasMore: boolean };
+
+// Etapa 15M.19C: único intervalo de polling de notificaciones, compartido
+// entre la campana del topbar (AppShell.tsx) y NotificationsPage — antes de
+// esta etapa sólo la campana tenía este número, hardcodeado inline. Evita
+// dos constantes mágicas que puedan divergir con el tiempo.
+export const NOTIFICATIONS_POLL_INTERVAL_MS = 60_000;
 export type ShiftTemplate = {
   id: string;
   code: string;

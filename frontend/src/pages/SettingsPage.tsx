@@ -1,9 +1,14 @@
-import { Building2, CalendarCheck, CalendarClock, ChevronRight, ClipboardList, Clock3, FileText, FolderOpen, ShieldCheck, Workflow } from "lucide-react";
+import { Building2, CalendarCheck, CalendarClock, ChevronRight, ClipboardList, Clock3, FolderOpen, ShieldCheck, Workflow } from "lucide-react";
 import { Link, Navigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { roleLevel } from "../utils/roles";
 import { PageHeader } from "../components/ui/PageHeader";
 
+// Etapa 15M.17: "Exportación" ya es un acceso operativo principal dentro
+// del sidebar de Gestión horaria (navigation.tsx, sólo Nivel 1 —
+// /configuracion/liquidacion). Esta pantalla es para parámetros/catálogos
+// de configuración, no para repetir accesos operativos ya presentes en la
+// navegación principal — por eso no incluye una card de Exportación.
 export function SettingsPage() {
   const { user } = useAuth();
   if (roleLevel(user!.role) !== 1) return <Navigate to="/" />;
@@ -15,9 +20,8 @@ export function SettingsPage() {
     { name: "Empresas y estructura", icon: <Building2 />, path: "/configuracion/empresas-estructura" },
     { name: "Tipos de novedades", icon: <ClipboardList />, path: "/configuracion/tipos-novedades" },
     { name: "Conceptos horarios", icon: <Clock3 />, path: "/configuracion/conceptos-horarios" },
-    { name: "Exportación Finnegans", icon: <FileText />, path: "/configuracion/liquidacion" },
     { name: "Categorías documentales", icon: <FolderOpen />, path: "/configuracion/categorias-documentales" },
     { name: "Parámetros de auditoría", icon: <ShieldCheck />, path: "/configuracion/parametros-auditoria" },
   ];
-  return <><PageHeader eyebrow="CONFIGURACIÓN GENERAL" title="Parámetros del sistema" description="Administración de catálogos, reglas operativas y salidas del sistema." /><div className="settings-grid">{cards.map((card) => <div className="setting-card" key={card.name}><span>{card.icon}</span><h3>{card.name}</h3><p>{card.name === "Exportación Finnegans" ? "Preparar novedades exportables, sin calcular sueldos." : "Configurar catálogos, estados y reglas disponibles para la operación."}</p>{card.path ? <Link className="table-link" to={card.path}>Administrar <ChevronRight size={15} /></Link> : <button className="table-link">Administrar <ChevronRight size={15} /></button>}</div>)}</div></>;
+  return <><PageHeader eyebrow="CONFIGURACIÓN GENERAL" title="Parámetros del sistema" description="Administración de catálogos, reglas operativas y salidas del sistema." /><div className="settings-grid">{cards.map((card) => <div className="setting-card" key={card.name}><span>{card.icon}</span><h3>{card.name}</h3><p>Configurar catálogos, estados y reglas disponibles para la operación.</p>{card.path ? <Link className="table-link" to={card.path}>Administrar <ChevronRight size={15} /></Link> : <button className="table-link">Administrar <ChevronRight size={15} /></button>}</div>)}</div></>;
 }

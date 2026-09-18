@@ -9,6 +9,7 @@ import { noveltyApiService } from "../services/api/noveltyApiService";
 import { noveltyTypeApiService } from "../services/api/noveltyTypeApiService";
 import { hourConceptApiService } from "../services/api/hourConceptApiService";
 import type { NoveltyType } from "../types/noveltyType.types";
+import { TOAST_SUCCESS_MS } from "../utils/toast";
 
 // Etapa 15L.2B (docs/decisions/NOVELTY_TYPE_FRONTEND_REDESIGN_15L2B.md,
 // punto 25): NoveltyModal (montado acá vía "Crear novedad") ahora usa
@@ -352,5 +353,39 @@ describe("AttendancePage — Etapa 15G.2 (crear novedad desde alerta/observació
     expect(resolveObservationSpy).not.toHaveBeenCalled();
     expect(employeeApiService.getById).not.toHaveBeenCalled();
     resolveObservationSpy.mockRestore();
+  });
+});
+
+// Etapa 15M.16: mismo bug que NotificationsPage.test.tsx (mismo flujo de
+// origen, Etapa 15G.2) -- al ".toast" de "Novedad creada..." le faltaba el
+// auto-cierre y quedaba anclado en pantalla para siempre.
+describe("AttendancePage — Etapa 15M.16 (el toast de 'Novedad creada' es temporal)", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("el mensaje desaparece solo después de TOAST_SUCCESS_MS, sin acción del usuario", async () => {
+    vi.mocked(attendanceApiService.getSummary).mockResolvedValueOnce(buildSummary({ totals: { open: 0, closed: 0, observed: 1, workedHours: 0 }, openShifts: [] }));
+    vi.mocked(attendanceApiService.getObservations).mockResolvedValueOnce({
+      data: [{ kind: "INACTIVITY", occurredAt: "2026-08-27T00:00:00.000Z", incident: buildInactivityIncident() }],
+      meta: { total: 1, pageSize: 10, hasMore: false, nextBefore: null },
+    });
+    vi.mocked(noveltyTypeApiService.getAll).mockResolvedValue([buildGenericActiveType()]);
+    vi.mocked(noveltyApiService.create).mockResolvedValue([{ id: "novelty-1" } as never]);
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "Crear novedad" }));
+    const modal = await findModalScope();
+    await userEvent.click(modal.getByRole("button", { name: "Guardar novedad" }));
+
+    await vi.waitFor(() => expect(screen.getByText("Novedad creada. RRHH la revisa como cualquier otra novedad.")).toBeInTheDocument());
+    expect(screen.getByText("Novedad creada. RRHH la revisa como cualquier otra novedad.").closest('[role="status"]')).not.toBeNull();
+
+    vi.advanceTimersByTime(TOAST_SUCCESS_MS);
+
+    await vi.waitFor(() =>
+      expect(screen.queryByText("Novedad creada. RRHH la revisa como cualquier otra novedad.")).not.toBeInTheDocument(),
+    );
   });
 });
