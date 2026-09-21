@@ -947,3 +947,58 @@ describe("NotificationsPage — Etapa 15M.19D §44 (React.StrictMode, un solo ti
     expect(vi.mocked(workforceApiService.notifications).mock.calls.length).toBe(callsAfterMount + 1);
   });
 });
+
+// Etapa 15M.19E: antes de esta etapa sólo se mostraba `createdAt` (cuándo se
+// insertó la fila) — una notificación recuperada por catch-up (15M.19A/B)
+// días después del hecho real parecía haber ocurrido "hoy". `eventDate`
+// (nuevo en el DTO) trae la fecha real ya persistida en la entidad de
+// origen; estos tests confirman que la pantalla la usa en vez de `createdAt`
+// cuando está disponible, con el formato seguro correspondiente.
+describe("NotificationsPage — Etapa 15M.19E (fecha real del hecho, no de creación de la fila)", () => {
+  it("con eventDate de AttendanceInactivityIncident, muestra la fecha calendario real (no createdAt, y sin corrimiento de huso horario)", async () => {
+    vi.mocked(workforceApiService.notifications).mockResolvedValue({
+      items: [buildNotification({
+        title: "No se registraron fichadas",
+        entityType: "AttendanceInactivityIncident",
+        eventDate: "2026-09-19T00:00:00.000Z",
+        createdAt: "2026-09-21T10:00:00.000Z",
+      })],
+      meta: { total: 1, page: 1, pageSize: 20, hasMore: false },
+    });
+
+    renderPage();
+
+    await screen.findByText("No se registraron fichadas");
+    expect(screen.getByText("19/09/2026")).toBeInTheDocument();
+    expect(screen.queryByText("18/09/2026")).not.toBeInTheDocument();
+  });
+
+  it("con eventDate de ShiftAlert, muestra fecha y hora del instante real, no createdAt", async () => {
+    vi.mocked(workforceApiService.notifications).mockResolvedValue({
+      items: [buildNotification({
+        title: "Alerta de turno",
+        entityType: "ShiftAlert",
+        eventDate: "2026-09-19T08:11:00.000Z",
+        createdAt: "2026-09-21T10:00:00.000Z",
+      })],
+      meta: { total: 1, page: 1, pageSize: 20, hasMore: false },
+    });
+
+    renderPage();
+
+    await screen.findByText("Alerta de turno");
+    expect(screen.getByText(/19\/9\/2026/)).toBeInTheDocument();
+  });
+
+  it("sin eventDate (ej. notificación tipo Employee, o legado), sigue mostrando createdAt como antes", async () => {
+    vi.mocked(workforceApiService.notifications).mockResolvedValue({
+      items: [buildNotification({ title: "Cierres mensuales recibidos", createdAt: "2026-08-20T10:00:00.000Z" })],
+      meta: { total: 1, page: 1, pageSize: 20, hasMore: false },
+    });
+
+    renderPage();
+
+    await screen.findByText("Cierres mensuales recibidos");
+    expect(screen.getByText(new Date("2026-08-20T10:00:00.000Z").toLocaleString("es-AR"))).toBeInTheDocument();
+  });
+});

@@ -12,11 +12,30 @@ import { NOTIFICATIONS_POLL_INTERVAL_MS, workforceApiService, type SystemNotific
 import { NoveltyFromContextModal } from "../components/novelties/NoveltyFromContextModal";
 import { buildNoveltyPrefillFromNotification, type NoveltyPrefillContext } from "../utils/noveltyFromAlert";
 import { TOAST_SUCCESS_MS } from "../utils/toast";
+import { formatCalendarDate } from "../utils/date";
 
 const PAGE_SIZE = 20;
 type StatusFilter = "" | "NO_LEIDA" | "LEIDA";
 
 const emptyMeta: SystemNotificationListMeta = { total: 0, page: 1, pageSize: PAGE_SIZE, hasMore: false };
+
+// Etapa 15M.19E: `createdAt` es cuándo se insertó la fila, no cuándo pasó el
+// hecho de negocio — para una notificación recuperada por catch-up
+// (15M.19A/B) días después, mostrar sólo `createdAt` la hace parecer que
+// ocurrió "hoy". `eventDate` (nuevo en el DTO) trae la fecha real ya
+// persistida en la entidad de origen. `AttendanceInactivityIncident.
+// operationalDate` es `@db.Date` (calendario puro) — se formatea con
+// `formatCalendarDate` (sin `new Date().toLocaleDateString()`, que corre la
+// fecha un día para atrás en Argentina, mismo riesgo ya corregido en la
+// Etapa 15M.20 para este mismo tipo de campo). `ShiftAlert.actualAt`/
+// `WorkShift.startAt` son instantes reales — se formatean con fecha y hora.
+function notificationEventDateLabel(item: SystemNotification): string | null {
+  if (!item.eventDate) return null;
+  if (item.entityType === "AttendanceInactivityIncident") return formatCalendarDate(item.eventDate);
+  const date = new Date(item.eventDate);
+  if (Number.isNaN(date.getTime())) return null;
+  return `${date.toLocaleDateString("es-AR")} ${date.toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" })}`;
+}
 
 /**
  * Etapa 15M.19C: fusiona un refresco silencioso (siempre página 1, hasta
@@ -215,7 +234,7 @@ export function NotificationsPage() {
         {status === "success" ? items.map((item) => {
           const employee = item.employee;
           return <article className={`notification-row ${item.status === "NO_LEIDA" ? "unread" : ""}`} key={item.id}>
-          <div className="notification-icon"><Bell size={17}/></div><div><b>{item.title}</b>{employee ? <span className="notification-person">{employee.lastName}, {employee.firstName} · Legajo {employee.legajo}</span> : null}<p>{item.message}</p><small>{new Date(item.createdAt).toLocaleString("es-AR")}</small></div>
+          <div className="notification-icon"><Bell size={17}/></div><div><b>{item.title}</b>{employee ? <span className="notification-person">{employee.lastName}, {employee.firstName} · Legajo {employee.legajo}</span> : null}<p>{item.message}</p><small>{notificationEventDateLabel(item) ?? new Date(item.createdAt).toLocaleString("es-AR")}</small></div>
           {/* Etapa 14G.6: "Ver detalle" antes marcaba como leída como efecto
               colateral de la navegación (además del botón explícito "Marcar
               leída", que hacía lo mismo) -- sin ninguna distinción visual

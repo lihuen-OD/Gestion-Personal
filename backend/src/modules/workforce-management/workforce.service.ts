@@ -193,22 +193,37 @@ export const workforceService = {
     const employeeSelect = { id: true, legajo: true, firstName: true, lastName: true } as const;
     const [alerts, shifts, employees, incidents] = shiftAlertIds.length || workShiftIds.length || employeeIds.length || inactivityIncidentIds.length
       ? await Promise.all([
-          shiftAlertIds.length ? prisma.shiftAlert.findMany({ where: { id: { in: shiftAlertIds } }, select: { id: true, employee: { select: employeeSelect } } }) : Promise.resolve([]),
-          workShiftIds.length ? prisma.workShift.findMany({ where: { id: { in: workShiftIds } }, select: { id: true, employee: { select: employeeSelect } } }) : Promise.resolve([]),
+          shiftAlertIds.length ? prisma.shiftAlert.findMany({ where: { id: { in: shiftAlertIds } }, select: { id: true, actualAt: true, employee: { select: employeeSelect } } }) : Promise.resolve([]),
+          // Etapa 15M.19E: `startAt` (no `closedAt`/`endAt`) -- para una
+          // jornada que el mantenimiento de 60s cierra automáticamente
+          // (expireOpenWorkShifts), `closedAt` sería justamente la fecha
+          // "equivocada" (cuándo se detectó/cerró) que esta etapa busca dejar
+          // de mostrar; `startAt` es cuándo ocurrió la jornada de negocio.
+          workShiftIds.length ? prisma.workShift.findMany({ where: { id: { in: workShiftIds } }, select: { id: true, startAt: true, employee: { select: employeeSelect } } }) : Promise.resolve([]),
           employeeIds.length ? prisma.employee.findMany({ where: { id: { in: employeeIds } }, select: employeeSelect }) : Promise.resolve([]),
-          inactivityIncidentIds.length ? prisma.attendanceInactivityIncident.findMany({ where: { id: { in: inactivityIncidentIds } }, select: { id: true, employee: { select: employeeSelect } } }) : Promise.resolve([]),
+          inactivityIncidentIds.length ? prisma.attendanceInactivityIncident.findMany({ where: { id: { in: inactivityIncidentIds } }, select: { id: true, operationalDate: true, employee: { select: employeeSelect } } }) : Promise.resolve([]),
         ])
       : [[], [], [], []];
     const employeeByAlert = new Map(alerts.map((alert) => [alert.id, alert.employee]));
     const employeeByShift = new Map(shifts.map((shift) => [shift.id, shift.employee]));
     const employeeById = new Map(employees.map((employee) => [employee.id, employee]));
     const employeeByIncident = new Map(incidents.map((incident) => [incident.id, incident.employee]));
+    // Etapa 15M.19E: `SystemNotification` sólo tiene `createdAt` (cuándo se
+    // insertó la fila) -- para una notificación recuperada por catch-up
+    // (15M.19A/B) días después del hecho real, eso muestra "hoy" en vez del
+    // día real del evento. Las tres entidades de origen ya tienen la fecha
+    // real persistida (`ShiftAlert.actualAt`, `WorkShift.startAt`,
+    // `AttendanceInactivityIncident.operationalDate`); acá sólo se expone,
+    // mismo patrón exacto que `employeeByX` de arriba.
+    const dateByAlert = new Map(alerts.map((alert) => [alert.id, alert.actualAt]));
+    const dateByShift = new Map(shifts.map((shift) => [shift.id, shift.startAt]));
+    const dateByIncident = new Map(incidents.map((incident) => [incident.id, incident.operationalDate]));
     const items = notifications.map((item) => {
       if (!item.entityId) return item;
-      if (item.entityType === "ShiftAlert") return { ...item, employee: employeeByAlert.get(item.entityId) };
-      if (item.entityType === "WorkShift") return { ...item, employee: employeeByShift.get(item.entityId) };
+      if (item.entityType === "ShiftAlert") return { ...item, employee: employeeByAlert.get(item.entityId), eventDate: dateByAlert.get(item.entityId) ?? null };
+      if (item.entityType === "WorkShift") return { ...item, employee: employeeByShift.get(item.entityId), eventDate: dateByShift.get(item.entityId) ?? null };
       if (item.entityType === "Employee") return { ...item, employee: employeeById.get(item.entityId) };
-      if (item.entityType === "AttendanceInactivityIncident") return { ...item, employee: employeeByIncident.get(item.entityId) };
+      if (item.entityType === "AttendanceInactivityIncident") return { ...item, employee: employeeByIncident.get(item.entityId), eventDate: dateByIncident.get(item.entityId) ?? null };
       return item;
     });
     return { items, meta: { total, page: query.page, pageSize: query.take, hasMore: query.page * query.take < total } };

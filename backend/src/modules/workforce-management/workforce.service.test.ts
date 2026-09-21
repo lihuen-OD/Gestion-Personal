@@ -713,7 +713,7 @@ describe("workforceService.notifications — Etapa 9I (paginación real, antes f
 
     const result = await workforceService.notifications({ page: 1, take: 20 }, user);
 
-    expect(mockedPrisma.shiftAlert.findMany).toHaveBeenCalledWith({ where: { id: { in: ["alert-1"] } }, select: { id: true, employee: { select: { id: true, legajo: true, firstName: true, lastName: true } } } });
+    expect(mockedPrisma.shiftAlert.findMany).toHaveBeenCalledWith({ where: { id: { in: ["alert-1"] } }, select: { id: true, actualAt: true, employee: { select: { id: true, legajo: true, firstName: true, lastName: true } } } });
     expect(result.items[0]).toMatchObject({ id: "n-1", employee: { id: "emp-1", legajo: "100" } });
   });
 
@@ -745,7 +745,7 @@ describe("workforceService.notifications — Etapa 9I (paginación real, antes f
 
     expect(mockedPrisma.attendanceInactivityIncident.findMany).toHaveBeenCalledWith({
       where: { id: { in: ["incident-1"] } },
-      select: { id: true, employee: { select: { id: true, legajo: true, firstName: true, lastName: true } } },
+      select: { id: true, operationalDate: true, employee: { select: { id: true, legajo: true, firstName: true, lastName: true } } },
     });
     expect(result.items[0]).toMatchObject({ id: "n-2", employee: { id: "emp-2", legajo: "200", firstName: "Beto", lastName: "Diaz" } });
     // No se pide ningún otro campo del empleado (ni dni/cuil/dirección/etc.) —
@@ -776,5 +776,73 @@ describe("workforceService.notifications — Etapa 9I (paginación real, antes f
       expect.objectContaining({ id: "n-3", employee: { id: "emp-3", legajo: "300", firstName: "Cora", lastName: "Ruiz" } }),
       expect.objectContaining({ id: "n-4", employee: { id: "emp-4", legajo: "400", firstName: "Dino", lastName: "Paz" } }),
     ]);
+  });
+
+  // Etapa 15M.19E: `SystemNotification.createdAt` sólo dice cuándo se
+  // insertó la fila — para una notificación recuperada por catch-up
+  // (15M.19A/B) días después del hecho real, eso mostraba "hoy" en vez del
+  // día real del evento. `eventDate` expone la fecha de negocio ya
+  // persistida en la entidad de origen, sin ningún campo/migración nueva.
+  describe("eventDate — fecha real del hecho, no de creación de la fila (Etapa 15M.19E)", () => {
+    it("para AttendanceInactivityIncident, eventDate es operationalDate — incluso si createdAt es muy posterior (recuperado por catch-up)", async () => {
+      const rows = [{ id: "n-1", entityType: "AttendanceInactivityIncident", entityId: "incident-1", createdAt: new Date("2026-09-21T10:00:00.000Z") }];
+      mockedPrisma.systemNotification.findMany.mockResolvedValue(rows);
+      mockedPrisma.systemNotification.count.mockResolvedValue(1);
+      mockedPrisma.attendanceInactivityIncident.findMany.mockResolvedValue([
+        { id: "incident-1", operationalDate: new Date("2026-09-19T00:00:00.000Z"), employee: { id: "emp-1", legajo: "100", firstName: "Ana", lastName: "Gomez" } },
+      ]);
+
+      const result = await workforceService.notifications({ page: 1, take: 20 }, user);
+
+      expect(result.items[0]).toMatchObject({ eventDate: new Date("2026-09-19T00:00:00.000Z") });
+    });
+
+    it("para ShiftAlert, eventDate es actualAt", async () => {
+      const rows = [{ id: "n-1", entityType: "ShiftAlert", entityId: "alert-1" }];
+      mockedPrisma.systemNotification.findMany.mockResolvedValue(rows);
+      mockedPrisma.systemNotification.count.mockResolvedValue(1);
+      mockedPrisma.shiftAlert.findMany.mockResolvedValue([
+        { id: "alert-1", actualAt: new Date("2026-09-19T08:11:00.000Z"), employee: { id: "emp-1", legajo: "100", firstName: "Ana", lastName: "Gomez" } },
+      ]);
+
+      const result = await workforceService.notifications({ page: 1, take: 20 }, user);
+
+      expect(result.items[0]).toMatchObject({ eventDate: new Date("2026-09-19T08:11:00.000Z") });
+    });
+
+    it("para WorkShift, eventDate es startAt (no closedAt/endAt — sería la fecha del cierre automático, no de la jornada)", async () => {
+      const rows = [{ id: "n-1", entityType: "WorkShift", entityId: "shift-1" }];
+      mockedPrisma.systemNotification.findMany.mockResolvedValue(rows);
+      mockedPrisma.systemNotification.count.mockResolvedValue(1);
+      mockedPrisma.workShift.findMany.mockResolvedValue([
+        { id: "shift-1", startAt: new Date("2026-09-19T08:00:00.000Z"), employee: { id: "emp-1", legajo: "100", firstName: "Ana", lastName: "Gomez" } },
+      ]);
+
+      const result = await workforceService.notifications({ page: 1, take: 20 }, user);
+
+      expect(result.items[0]).toMatchObject({ eventDate: new Date("2026-09-19T08:00:00.000Z") });
+      expect(mockedPrisma.workShift.findMany).toHaveBeenCalledWith(expect.objectContaining({ select: expect.objectContaining({ startAt: true }) }));
+    });
+
+    it("para Employee (sin fecha de negocio natural), no agrega eventDate", async () => {
+      const rows = [{ id: "n-1", entityType: "Employee", entityId: "emp-4" }];
+      mockedPrisma.systemNotification.findMany.mockResolvedValue(rows);
+      mockedPrisma.systemNotification.count.mockResolvedValue(1);
+      mockedPrisma.employee.findMany.mockResolvedValue([{ id: "emp-4", legajo: "400", firstName: "Dino", lastName: "Paz" }]);
+
+      const result = await workforceService.notifications({ page: 1, take: 20 }, user);
+
+      expect(result.items[0]).not.toHaveProperty("eventDate");
+    });
+
+    it("sin entityId, no agrega eventDate (mismo camino que ya devuelve la fila sin tocar)", async () => {
+      const rows = [{ id: "n-1", entityType: null, entityId: null }];
+      mockedPrisma.systemNotification.findMany.mockResolvedValue(rows);
+      mockedPrisma.systemNotification.count.mockResolvedValue(1);
+
+      const result = await workforceService.notifications({ page: 1, take: 20 }, user);
+
+      expect(result.items[0]).not.toHaveProperty("eventDate");
+    });
   });
 });

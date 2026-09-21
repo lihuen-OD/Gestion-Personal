@@ -35,6 +35,13 @@ export type SystemNotification = {
   link?: string | null;
   status: "NO_LEIDA" | "LEIDA";
   createdAt: string;
+  // Etapa 15M.19E: cuándo ocurrió el hecho de negocio real, no cuándo se
+  // creó esta fila — importante para una notificación recuperada por
+  // catch-up (15M.19A/B) días después. `entityType` decide, en pantalla,
+  // si `eventDate` es un instante (ShiftAlert/WorkShift) o una fecha
+  // calendario pura (AttendanceInactivityIncident) — ver NotificationsPage.tsx.
+  entityType?: string | null;
+  eventDate?: string | null;
   employee?: { id: string; legajo: string; firstName: string; lastName: string };
 };
 export type SystemNotificationListParams = { page?: number; take?: number; status?: "NO_LEIDA" | "LEIDA" };
