@@ -1,6 +1,7 @@
 import { calculateLaborStatus, resolveCurrentLaborPeriod } from "../../services/employeeStatusService";
 import type { Employee } from "../../types";
 import { statusTone } from "../../utils/status";
+import { formatCalendarDate } from "../../utils/date";
 import { Badge } from "../ui/Badge";
 
 type LaborStatusCardProps = {
@@ -31,15 +32,15 @@ export function LaborStatusCard({ employee }: LaborStatusCardProps) {
       </div>
       <div>
         <small>Fecha de alta / ingreso</small>
-        <b>{latestStart || "Alta no registrada"}</b>
+        <b>{latestStart ? formatCalendarDate(latestStart) : "Alta no registrada"}</b>
       </div>
       <div>
         <small>Fecha de baja / egreso</small>
-        <b>{latestEnd || "Sin baja en el período actual"}</b>
+        <b>{latestEnd ? formatCalendarDate(latestEnd) : "Sin baja en el período actual"}</b>
       </div>
       <div>
         <small>Fecha de creación del legajo</small>
-        <b>{createdAt || "Sin dato"}</b>
+        <b>{createdAt ? formatCalendarDate(createdAt) : "Sin dato"}</b>
       </div>
       <div>
         <small>{movement ? "Último movimiento vigente" : status.scheduledMovement ? "Próximo movimiento" : "Último movimiento vigente"}</small>
@@ -47,7 +48,7 @@ export function LaborStatusCard({ employee }: LaborStatusCardProps) {
       </div>
       <div>
         <small>Fecha desde</small>
-        <b>{visibleMovement?.effectiveFrom || status.scheduledTermination?.effectiveFrom || "Sin cargar"}</b>
+        <b>{visibleMovement?.effectiveFrom ? formatCalendarDate(visibleMovement.effectiveFrom) : status.scheduledTermination?.effectiveFrom ? formatCalendarDate(status.scheduledTermination.effectiveFrom) : "Sin cargar"}</b>
       </div>
     </div>
   );

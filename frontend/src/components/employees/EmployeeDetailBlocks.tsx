@@ -8,6 +8,7 @@ import type { Employee, User } from "../../types";
 import type { HourConcept, HourConceptLoadMode } from "../../types/hourConcept.types";
 import { useAsyncAction } from "../../utils/useAsyncAction";
 import { requiredLaborChangeError } from "../../utils/laborFieldValidation";
+import { activoInactivoLabel } from "../../utils/status";
 import { Button } from "../ui/Button";
 import { Field, Select } from "../ui/FormControls";
 import { Modal } from "../ui/Modal";
@@ -594,7 +595,7 @@ export function HoursSpecialBlock({ employee, user, canEdit, onSaved }: Employee
         <div className="check-grid">
           {employee.enabledHourConcepts.map((concept) => (
             <div className="check-card" key={concept.id}>
-              <span><b>{concept.name}</b><small>{concept.loadMode ? hourConceptLoadModeLabels[concept.loadMode] : "Sin modo"} · {concept.status}</small></span>
+              <span><b>{concept.name}</b><small>{concept.loadMode ? hourConceptLoadModeLabels[concept.loadMode] : "Sin modo"} · {activoInactivoLabel(concept.status)}</small></span>
             </div>
           ))}
         </div>
@@ -624,7 +625,7 @@ export function HoursSpecialBlock({ employee, user, canEdit, onSaved }: Employee
                       )
                     }
                   />
-                  <span><b>{concept.name}</b><small>{concept.loadMode ? hourConceptLoadModeLabels[concept.loadMode] : "Sin modo"} · {concept.status}</small></span>
+                  <span><b>{concept.name}</b><small>{concept.loadMode ? hourConceptLoadModeLabels[concept.loadMode] : "Sin modo"} · {activoInactivoLabel(concept.status)}</small></span>
                 </label>
               ))}
             </div>

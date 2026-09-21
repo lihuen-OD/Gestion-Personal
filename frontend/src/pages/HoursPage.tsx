@@ -662,7 +662,7 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
                   <tbody>
                     {pendingNoveltyItems.map((item) => (
                       <tr key={`${item.kind}-${item.sourceId}`}>
-                        <td>{item.date}</td>
+                        <td>{pendingItemDayLabel(item)}</td>
                         <td>
                           <OverflowCell value={item.employeeLabel} />
                         </td>

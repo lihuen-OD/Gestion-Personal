@@ -61,7 +61,7 @@ function toFrontendStatus(status: ApiDocumentStatus) {
     VENCIDO: "Vencido",
     RECHAZADO: "Rechazado",
   };
-  return map[status] || status;
+  return map[status] || "Sin definir";
 }
 
 function toApiStatus(status: string): ApiDocumentStatus {

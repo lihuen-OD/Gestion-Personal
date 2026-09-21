@@ -9,6 +9,7 @@ import { Button } from "../ui/Button";
 import { Field, Select } from "../ui/FormControls";
 import { Modal } from "../ui/Modal";
 import type { DocumentCategory } from "../../types/documentCategory.types";
+import { documentCategoryScopeLabels } from "../../utils/documentCategoryLabels";
 import { EmployeeRemoteSelector } from "../employees/EmployeeRemoteSelector";
 import { ErrorState } from "../ui/ErrorState";
 import { LoadingState } from "../ui/LoadingState";
@@ -150,7 +151,7 @@ export function DocumentUploadModal({
                 <b>{selectedCategory.name}</b>
                 <p>{selectedCategory.description}</p>
                 <small>
-                  Ámbitos: {selectedCategory.scopes.join(", ")} · Vence:{" "}
+                  Ámbitos: {selectedCategory.scopes.map((scope) => documentCategoryScopeLabels[scope]).join(", ")} · Vence:{" "}
                   {selectedCategory.rules.expires ? "Sí" : "No"} · Aprobación:{" "}
                   {selectedCategory.rules.requiresApproval ? "Sí" : "No"}
                 </small>

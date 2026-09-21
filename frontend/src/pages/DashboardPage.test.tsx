@@ -186,3 +186,28 @@ describe("DashboardPage — metrics y audit desacoplados (Etapa 14F.2)", () => {
     expect(dashboardMetricsApiService.getAudit).toHaveBeenCalledTimes(2);
   });
 });
+
+// Etapa 15M.20: "Actividad reciente" mostraba nombres de modelo del backend
+// crudos (WorkShift, ShiftAlert, HourConceptBreakdown) cuando la entidad no
+// estaba en el mapa local de la página — ver utils/auditLabels.ts.
+describe("DashboardPage — Actividad reciente sin fugas de nombres técnicos (Etapa 15M.20)", () => {
+  it("traduce WorkShift, ShiftAlert y HourConceptBreakdown a lenguaje de negocio", async () => {
+    authAsRrhh();
+    vi.mocked(dashboardMetricsApiService.getMetrics).mockResolvedValue(baseMetrics);
+    vi.mocked(dashboardMetricsApiService.getAudit).mockResolvedValue([
+      { id: "a1", date: "18/09/2026", time: "10:00", user: "Ana Gómez", role: "Nivel 1 - RRHH", action: "UPDATE", entity: "WorkShift", previous: "-", next: "-", reason: "-" },
+      { id: "a2", date: "18/09/2026", time: "10:05", user: "Ana Gómez", role: "Nivel 1 - RRHH", action: "UPDATE", entity: "ShiftAlert", previous: "-", next: "-", reason: "-" },
+      { id: "a3", date: "18/09/2026", time: "10:10", user: "Ana Gómez", role: "Nivel 1 - RRHH", action: "UPDATE", entity: "HourConceptBreakdown", previous: "-", next: "-", reason: "-" },
+    ]);
+
+    renderPage();
+
+    await screen.findByText("Jornada laboral");
+    expect(screen.getByText("Alerta de turno")).toBeInTheDocument();
+    expect(screen.getByText("Desglose de conceptos horarios")).toBeInTheDocument();
+
+    expect(screen.queryByText("WorkShift")).not.toBeInTheDocument();
+    expect(screen.queryByText("ShiftAlert")).not.toBeInTheDocument();
+    expect(screen.queryByText("HourConceptBreakdown")).not.toBeInTheDocument();
+  });
+});

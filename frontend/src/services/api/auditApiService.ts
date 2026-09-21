@@ -51,6 +51,17 @@ const hiddenKeys = new Set([
   "passwordHash",
 ]);
 
+// Etapa 15M.20: además de la lista puntual de arriba, cualquier propiedad
+// que termine en "Id" es por definición un identificador técnico (FK interna
+// a otra tabla) — nunca debe mostrarse cruda en el resumen de un cambio de
+// auditoría, sin importar de qué modelo venga. Cubre de una sola vez
+// workShiftId, hourConceptId, shiftTemplateId, startPunchId, endPunchId,
+// timeSegmentId, reviewedByUserId, approvedByUserId, etc. — y cualquier FK
+// nueva que se agregue en el futuro, sin tener que volver a esta lista.
+function isHiddenKey(key: string) {
+  return hiddenKeys.has(key) || /Id$/.test(key);
+}
+
 const labels: Record<string, string> = {
   legajo: "Legajo",
   legajoFinnegans: "Legajo Finnegans",
@@ -79,7 +90,7 @@ const labels: Record<string, string> = {
   usesCompanyTransport: "Usa transporte",
   locality: "Localidad",
   busLine: "Linea",
-  observation: "Observacion",
+  observation: "Observación",
   type: "Tipo",
   reason: "Motivo",
   effectiveFrom: "Fecha desde",
@@ -90,6 +101,28 @@ const labels: Record<string, string> = {
   fileName: "Archivo",
   statusText: "Estado",
   name: "Nombre",
+  employee: "Empleado",
+  source: "Origen",
+  startAt: "Inicio",
+  endAt: "Fin",
+  actualAt: "Registrado",
+  scheduledAt: "Programado",
+  reviewStatus: "Estado de revisión",
+  reviewedAt: "Fecha de revisión",
+  reviewNote: "Nota de revisión",
+  closedAt: "Cierre",
+  hours: "Horas",
+  totalMinutes: "Minutos totales",
+  actualMinutes: "Minutos reales",
+  appliedMultiplier: "Multiplicador aplicado",
+  segmentStartAt: "Inicio del segmento",
+  segmentEndAt: "Fin del segmento",
+  approvedAt: "Fecha de aprobación",
+  rejectedAt: "Fecha de rechazo",
+  differenceMinutes: "Diferencia en minutos",
+  removed: "Eliminados",
+  processedShifts: "Jornadas procesadas",
+  eligible: "Elegibles",
 };
 
 function labelFor(key: string) {
@@ -99,8 +132,38 @@ function labelFor(key: string) {
 function formatPrimitive(value: unknown): string {
   if (value === null || value === undefined) return "-";
   if (typeof value === "string") return value || "-";
-  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (typeof value === "boolean") return value ? "Sí" : "No";
+  if (typeof value === "number") return String(value);
   return "";
+}
+
+// Etapa 15M.20: sólo estas claves son TIMESTAMPTZ reales (instante) en
+// schema.prisma — startAt/endAt/actualAt/scheduledAt/reviewedAt/approvedAt/
+// rejectedAt/closedAt/segmentStartAt/segmentEndAt. `date` (TimeEntry, etc.)
+// es `@db.Date`, calendario puro: convertirlo con `new Date().toLocaleDate
+// String()` lo corre un día para atrás en Argentina (UTC-3) si el backend
+// lo serializa a medianoche UTC — mismo riesgo que docs/DATABASE_STANDARDS.md
+// documenta para el resto de la app. Por eso el formateo de instante va acá,
+// restringido por nombre de clave, y NO como detección genérica por forma de
+// string en `formatPrimitive` (que no sabe a qué clave pertenece el valor).
+const instantKeys = new Set([
+  "startAt", "endAt", "actualAt", "scheduledAt", "reviewedAt", "approvedAt",
+  "rejectedAt", "closedAt", "segmentStartAt", "segmentEndAt",
+]);
+const isoInstantPattern = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z?$/;
+
+function formatInstantValue(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return `${date.toLocaleDateString("es-AR")} ${date.toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" })}`;
+}
+
+function displayValueForKey(key: string, entryValue: unknown): string {
+  if (Array.isArray(entryValue)) return summarizeList(entryValue);
+  if (instantKeys.has(key) && typeof entryValue === "string" && isoInstantPattern.test(entryValue)) {
+    return formatInstantValue(entryValue);
+  }
+  return displayName(entryValue);
 }
 
 function displayName(value: unknown): string {
@@ -111,6 +174,7 @@ function displayName(value: unknown): string {
   if (record.category && typeof record.category === "object") return displayName(record.category);
   if (record.company && typeof record.company === "object") return displayName(record.company);
   if (record.user && typeof record.user === "object") return displayName(record.user);
+  if (record.employee && typeof record.employee === "object") return displayName(record.employee);
   if (record.firstName || record.lastName) return [record.firstName, record.lastName].filter(Boolean).join(" ");
   if (record.name) return String(record.name);
   if (record.fileName) return String(record.fileName);
@@ -129,12 +193,12 @@ function summarizeList(value: unknown): string {
 
 function summarizeObject(value: Record<string, unknown>) {
   const entries = Object.entries(value).filter(
-    ([key, entryValue]) => !hiddenKeys.has(key) && entryValue !== undefined && entryValue !== null && entryValue !== "",
+    ([key, entryValue]) => !isHiddenKey(key) && entryValue !== undefined && entryValue !== null && entryValue !== "",
   );
   if (!entries.length) return "-";
   return entries
     .slice(0, 8)
-    .map(([key, entryValue]) => `${labelFor(key)}: ${Array.isArray(entryValue) ? summarizeList(entryValue) : displayName(entryValue)}`)
+    .map(([key, entryValue]) => `${labelFor(key)}: ${displayValueForKey(key, entryValue)}`)
     .join(" | ");
 }
 
@@ -170,21 +234,6 @@ function stringify(value: unknown): string {
   } catch (error) {
     return String(value);
   }
-}
-
-function actionLabel(action: string) {
-  return {
-    CREATE: "Alta",
-    UPDATE: "Modificacion",
-    DELETE: "Eliminacion",
-    ACTIVATE: "Activacion",
-    DEACTIVATE: "Inactivacion",
-    APPROVE: "Aprobacion",
-    REJECT: "Rechazo",
-    RETURN: "Devolucion",
-    LOGIN: "Ingreso",
-    EXPORT: "Exportacion",
-  }[action] || action;
 }
 
 const employeeAuditFields: Array<{ field: string; label: string }> = [
@@ -235,7 +284,7 @@ function mapFromApi(item: ApiAuditLog): AuditEntry {
     time: parts.time,
     user: item.user?.name || "Sistema",
     role: item.user?.role || "-",
-    action: actionLabel(item.action),
+    action: item.action,
     entity: item.entity,
     field: item.entityId || undefined,
     previous: summarizeChange(item.before),

@@ -3,6 +3,9 @@ import { orgStructureApiService } from "../../services/api/orgStructureApiServic
 import type { OrgStructureCatalog } from "../../types/orgStructure.types";
 import type { Position } from "../../types/position.types";
 import { PuestoDerivedField, PuestoField, PuestoIdSelect, PuestoSelect } from "./PuestoFields";
+import { activoInactivoLabel } from "../../utils/status";
+
+const statusOptionLabels: Record<string, string> = { ACTIVO: activoInactivoLabel("ACTIVO"), INACTIVO: activoInactivoLabel("INACTIVO") };
 
 /**
  * Cadena derivada sector -> area -> establishment -> businessUnit -> company,
@@ -49,6 +52,6 @@ export function PuestoIdentificationTab({ position, setPosition, disabled = fals
     <PuestoDerivedField label="Empresa" value={chain.company} />
     <PuestoField label="Codigo del puesto" value={position.code || "Se genera automaticamente al guardar"} onChange={() => undefined} disabled />
     <PuestoField label="Fecha de actualizacion *" type="date" value={position.lastUpdatedAt} onChange={(value) => set("lastUpdatedAt", value)} disabled={disabled} />
-    <PuestoSelect label="Estado *" value={position.status} onChange={(value) => set("status", value)} options={["ACTIVO", "INACTIVO"]} disabled={disabled} />
+    <PuestoSelect label="Estado *" value={position.status} onChange={(value) => set("status", value)} options={["ACTIVO", "INACTIVO"]} labels={statusOptionLabels} disabled={disabled} />
   </div>;
 }

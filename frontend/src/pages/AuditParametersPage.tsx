@@ -9,11 +9,15 @@ import { PageHeader } from "../components/ui/PageHeader";
 import { Section } from "../components/ui/Section";
 import { Button } from "../components/ui/Button";
 import { Badge } from "../components/ui/Badge";
+import { BoolCheck } from "../components/shared/BoolCheck";
 import { useAuth } from "../context/AuthContext";
+import { getUserErrorMessage } from "../services/api/apiClient";
 import { auditParameterApiService } from "../services/api/auditParameterApiService";
 import type { Role } from "../types";
 import type { AuditEventScope, AuditEventSeverity, AuditParameter, AuditRetentionUnit } from "../types/auditParameter.types";
+import { auditEventScopeLabels, auditEventSeverityLabels } from "../utils/auditParameterLabels";
 import { roleLevel } from "../utils/roles";
+import { activoInactivoLabel } from "../utils/status";
 import { useAsyncAction } from "../utils/useAsyncAction";
 
 const roles: Role[] = ["Nivel 1 - RRHH", "Nivel 2 - Supervisión / Gestión", "Nivel 3 - Administrativo de Carga Horaria"];
@@ -32,10 +36,6 @@ function nextAuditCode(items: AuditParameter[]) {
   return `AUD-${String(max + 1).padStart(3, "0")}`;
 }
 
-function BoolCheck({ label, checked, onChange }: { label: string; checked: boolean; onChange: (value: boolean) => void }) {
-  return <label className="catalog-rule-card"><input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} /><span><b>{label}</b><small>{checked ? "Activo" : "Inactivo"}</small></span></label>;
-}
-
 function RoleChecks({ label, value, onChange }: { label: string; value: Role[]; onChange: (value: Role[]) => void }) {
   return <div className="catalog-check-block"><small>{label}</small><div className="check-grid inline">{roles.map((role) => <label className="check-card" key={role}><input type="checkbox" checked={value.includes(role)} onChange={() => onChange(toggleValue(value, role))} />{role}</label>)}</div></div>;
 }
@@ -47,9 +47,9 @@ function ParameterEditor({ item, setItem }: { item: AuditParameter; setItem: (it
     <div className="form-grid">
       <label>Codigo<input value={item.code} disabled /></label>
       <label>Nombre *<input value={item.name} onChange={(event) => setItem({ ...item, name: event.target.value })} /></label>
-      <label>Modulo<select value={item.scope} onChange={(event) => setItem({ ...item, scope: event.target.value as AuditEventScope })}>{scopes.map((scope) => <option key={scope}>{scope}</option>)}</select></label>
-      <label>Severidad<select value={item.severity} onChange={(event) => setItem({ ...item, severity: event.target.value as AuditEventSeverity })}>{severities.map((severity) => <option key={severity}>{severity}</option>)}</select></label>
-      <label>Estado<select value={item.status} onChange={(event) => setItem({ ...item, status: event.target.value as "ACTIVO" | "INACTIVO" })}><option>ACTIVO</option><option>INACTIVO</option></select></label>
+      <label>Modulo<select value={item.scope} onChange={(event) => setItem({ ...item, scope: event.target.value as AuditEventScope })}>{scopes.map((scope) => <option key={scope} value={scope}>{auditEventScopeLabels[scope]}</option>)}</select></label>
+      <label>Severidad<select value={item.severity} onChange={(event) => setItem({ ...item, severity: event.target.value as AuditEventSeverity })}>{severities.map((severity) => <option key={severity} value={severity}>{auditEventSeverityLabels[severity]}</option>)}</select></label>
+      <label>Estado<select value={item.status} onChange={(event) => setItem({ ...item, status: event.target.value as "ACTIVO" | "INACTIVO" })}><option value="ACTIVO">Activo</option><option value="INACTIVO">Inactivo</option></select></label>
       <label>Retencion<input type="number" value={item.retention.amount} onChange={(event) => setRetention({ amount: Number(event.target.value) })} /></label>
       <label>Unidad retencion<select value={item.retention.unit} onChange={(event) => setRetention({ unit: event.target.value as AuditRetentionUnit })}>{retentionUnits.map((unit) => <option key={unit}>{unit}</option>)}</select></label>
       <div className="form-wide"><label>Descripcion *<textarea value={item.description} onChange={(event) => setItem({ ...item, description: event.target.value })} /></label></div>
@@ -120,8 +120,8 @@ export function AuditParametersPage() {
       setRefresh((value) => value + 1);
       setNotice("Parametro de auditoria guardado correctamente.");
       setTimeout(() => setNotice(""), 2200);
-    } catch {
-      setNotice("No se pudo guardar el parametro de auditoria.");
+    } catch (e) {
+      setNotice(getUserErrorMessage(e, "No se pudo guardar el parametro de auditoria."));
     }
   });
   if (roleLevel(user!.role) !== 1) return <Navigate to="/configuracion" />;
@@ -130,9 +130,9 @@ export function AuditParametersPage() {
     {notice && <div className="toast">{notice}</div>}
     <div className="stat-grid novelty-type-summary">{summary.map(([label, value]) => <StatCard key={label} label={label} value={value} detail="Auditoria" />)}</div>
     <Section title="Listado de parametros" subtitle={`${items.length} resultados segun filtros aplicados.`}>
-      <FilterPanel search={{ value: filters.search, onChange: (value) => setFilters({ ...filters, search: value }), placeholder: "Buscar por codigo, nombre o modulo" }}><label>Modulo<select value={filters.scope} onChange={(event) => setFilters({ ...filters, scope: event.target.value })}><option value="">Todos</option>{options.scopes.map((scope) => <option key={scope}>{scope}</option>)}</select></label><label>Severidad<select value={filters.severity} onChange={(event) => setFilters({ ...filters, severity: event.target.value })}><option value="">Todas</option>{options.severities.map((severity) => <option key={severity}>{severity}</option>)}</select></label><label>Motivo<select value={filters.requiresReason} onChange={(event) => setFilters({ ...filters, requiresReason: event.target.value })}><option value="">Todos</option><option value="true">Requiere</option><option value="false">No requiere</option></select></label><label>Estado<select value={filters.status} onChange={(event) => setFilters({ ...filters, status: event.target.value })}><option value="">Todos</option>{options.statuses.map((status) => <option key={status}>{status}</option>)}</select></label></FilterPanel>
+      <FilterPanel search={{ value: filters.search, onChange: (value) => setFilters({ ...filters, search: value }), placeholder: "Buscar por codigo, nombre o modulo" }}><label>Modulo<select value={filters.scope} onChange={(event) => setFilters({ ...filters, scope: event.target.value })}><option value="">Todos</option>{options.scopes.map((scope) => <option key={scope} value={scope}>{auditEventScopeLabels[scope]}</option>)}</select></label><label>Severidad<select value={filters.severity} onChange={(event) => setFilters({ ...filters, severity: event.target.value })}><option value="">Todas</option>{options.severities.map((severity) => <option key={severity} value={severity}>{auditEventSeverityLabels[severity]}</option>)}</select></label><label>Motivo<select value={filters.requiresReason} onChange={(event) => setFilters({ ...filters, requiresReason: event.target.value })}><option value="">Todos</option><option value="true">Requiere</option><option value="false">No requiere</option></select></label><label>Estado<select value={filters.status} onChange={(event) => setFilters({ ...filters, status: event.target.value })}><option value="">Todos</option>{options.statuses.map((status) => <option key={status} value={status}>{activoInactivoLabel(status)}</option>)}</select></label></FilterPanel>
       <DataTable status={listStatus === "loading" ? "loading" : listStatus === "error" ? "error" : items.length === 0 ? "empty" : "ready"} minWidth={1040} emptyText="No hay parametros de auditoria con los filtros aplicados." errorMessage="No se pudieron cargar los parametros de auditoria." onRetry={() => setRefresh((value) => value + 1)}>
-        <table><thead><tr><th>Codigo</th><th>Parametro</th><th>Modulo</th><th>Eventos</th><th>Retencion</th><th>Estado</th><th>Accion</th></tr></thead><tbody>{items.map((item) => <tr key={item.id}><td><b>{item.code}</b></td><td><OverflowCell value={item.name} /><span className="table-sub">{item.description}</span></td><td><OverflowCell value={`${item.scope} · ${item.severity}`} /></td><td><OverflowCell value={[item.trackCreate && "Alta", item.trackUpdate && "Edicion", item.trackApproval && "Aprobacion", item.trackExport && "Exportacion"].filter(Boolean).join(", ")} /></td><td>{item.retention.amount} {item.retention.unit}</td><td><Badge tone={item.status === "ACTIVO" ? "success" : "neutral"}>{item.status}</Badge></td><td><button className="table-icon-action" title="Editar" aria-label="Editar" onClick={() => setEditing(item)}><Pencil size={14}/><span>Editar</span></button></td></tr>)}</tbody></table>
+        <table><thead><tr><th>Codigo</th><th>Parametro</th><th>Modulo</th><th>Eventos</th><th>Retencion</th><th>Estado</th><th>Accion</th></tr></thead><tbody>{items.map((item) => <tr key={item.id}><td><b>{item.code}</b></td><td><OverflowCell value={item.name} /><span className="table-sub">{item.description}</span></td><td><OverflowCell value={`${auditEventScopeLabels[item.scope]} · ${auditEventSeverityLabels[item.severity]}`} /></td><td><OverflowCell value={[item.trackCreate && "Alta", item.trackUpdate && "Edicion", item.trackApproval && "Aprobacion", item.trackExport && "Exportacion"].filter(Boolean).join(", ")} /></td><td>{item.retention.amount} {item.retention.unit}</td><td><Badge tone={item.status === "ACTIVO" ? "success" : "neutral"}>{activoInactivoLabel(item.status)}</Badge></td><td><button className="table-icon-action" title="Editar" aria-label="Editar" onClick={() => setEditing(item)}><Pencil size={14}/><span>Editar</span></button></td></tr>)}</tbody></table>
       </DataTable>
     </Section>
     {editing && <Section title={editing.name || "Nuevo parametro"} subtitle="Eventos auditados, retencion, motivo obligatorio y notificaciones." action={<div className="hero-actions"><Button variant="subtle" onClick={() => setEditing(null)}>Cerrar</Button><Button variant="primary" onClick={save} disabled={isSaving}>{isSaving ? "Guardando..." : "Guardar parametro"}</Button></div>}>

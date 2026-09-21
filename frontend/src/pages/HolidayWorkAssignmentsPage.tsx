@@ -16,6 +16,7 @@ import {
 } from "../services/api/holidayWorkAssignmentApiService";
 import { workforceApiService, type ShiftTemplate } from "../services/api/workforceApiService";
 import { orgStructureApiService } from "../services/api/orgStructureApiService";
+import { getUserErrorMessage } from "../services/api/apiClient";
 import type { OrgStructureCatalog } from "../types/orgStructure.types";
 import { useDebouncedValue } from "../utils/useDebouncedValue";
 import { useAuth } from "../context/AuthContext";
@@ -257,7 +258,7 @@ export function HolidayWorkAssignmentsPage() {
       setNotice("Convocatoria guardada correctamente.");
       setTimeout(() => setNotice(""), 2500);
     } catch (reason) {
-      setFormError(reason instanceof Error ? reason.message : "No pudimos guardar los cambios. Intentá nuevamente.");
+      setFormError(getUserErrorMessage(reason, "No pudimos guardar los cambios. Intentá nuevamente."));
     } finally {
       setSaving(false);
     }

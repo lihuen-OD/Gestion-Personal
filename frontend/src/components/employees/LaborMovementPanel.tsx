@@ -13,6 +13,13 @@ import { Modal } from "../ui/Modal";
 import { OverflowCell } from "../ui/OverflowCell";
 import { Section } from "../ui/Section";
 import { TableShell } from "../ui/TableShell";
+import { formatCalendarDate } from "../../utils/date";
+
+// Etapa 15M.20: `LaborMovementType` ("ALTA"/"BAJA") ya son palabras en
+// castellano — solo se ajusta el casing visual a Title Case (como el resto
+// de los badges de la app, p. ej. "Activo"); el valor crudo sigue siendo
+// "ALTA"/"BAJA" en el estado/payload, esto es solo texto mostrado.
+const laborMovementTypeLabels: Record<LaborMovementType, string> = { ALTA: "Alta", BAJA: "Baja" };
 
 const entryReasons = [
   "Alta inicial",
@@ -110,9 +117,9 @@ export function LaborMovementPanel({
                 return (
                   <tr key={movement.id}>
                     <td>
-                      <Badge tone={movement.type === "ALTA" ? "success" : "danger"}>{movement.type}</Badge>
+                      <Badge tone={movement.type === "ALTA" ? "success" : "danger"}>{laborMovementTypeLabels[movement.type]}</Badge>
                     </td>
-                    <td>{movement.effectiveFrom}</td>
+                    <td>{formatCalendarDate(movement.effectiveFrom)}</td>
                     <td>
                       <OverflowCell value={movement.reason} />
                     </td>
@@ -143,9 +150,9 @@ export function LaborMovementPanel({
           <div className="form-stack">
             <Select
               label="Tipo de movimiento"
-              value={type}
-              set={(next) => setType(next as LaborMovementType)}
-              options={["ALTA", "BAJA"]}
+              value={laborMovementTypeLabels[type]}
+              set={(next) => setType(next === "Alta" ? "ALTA" : "BAJA")}
+              options={["Alta", "Baja"]}
             />
             <Field label="Fecha desde" type="date" value={effectiveFrom} set={setEffectiveFrom} />
             <Select

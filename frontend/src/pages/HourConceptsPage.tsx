@@ -17,10 +17,21 @@ import { hourConceptApiService } from "../services/api/hourConceptApiService";
 import type { AssociatedEmployeeFilters } from "../types/associatedEmployee.types";
 import type { HourConcept, HourConceptFilters, HourConceptKind, HourConceptLoadMode } from "../types/hourConcept.types";
 import { roleLevel } from "../utils/roles";
+import { activoInactivoLabel } from "../utils/status";
 import { useAsyncAction } from "../utils/useAsyncAction";
 
 const additionalKinds: HourConceptKind[] = ["EXTRA", "FERIADO", "NOCTURNA", "GUARDIA", "SERENO", "TRANSPORTE", "OTRO"];
 const loadModeLabels: Record<HourConceptLoadMode, string> = { MANUAL: "Manual", AUTOMATIC: "Automático", BOTH: "Manual y automático" };
+const hourConceptKindLabels: Record<HourConceptKind, string> = {
+  NORMAL: "Normal",
+  EXTRA: "Extra",
+  FERIADO: "Feriado",
+  NOCTURNA: "Nocturna",
+  GUARDIA: "Guardia",
+  SERENO: "Sereno",
+  TRANSPORTE: "Transporte",
+  OTRO: "Otro",
+};
 
 export function emptyConcept(code: string): HourConcept {
   return {
@@ -65,9 +76,9 @@ function ConceptDataFields({ item, setItem }: { item: HourConcept; setItem: (ite
     <div className="form-grid">
       <label>Codigo<input value={item.code} disabled /></label>
       <label>Nombre *<input value={item.name} onChange={(event) => setItem({ ...item, name: event.target.value })} /></label>
-      <label>Tipo<select value={item.kind} onChange={(event) => setItem({ ...item, kind: event.target.value as HourConceptKind })}>{additionalKinds.map((kind) => <option key={kind}>{kind}</option>)}</select></label>
+      <label>Tipo<select value={item.kind} onChange={(event) => setItem({ ...item, kind: event.target.value as HourConceptKind })}>{additionalKinds.map((kind) => <option key={kind} value={kind}>{hourConceptKindLabels[kind]}</option>)}</select></label>
       <label>Modo de carga *<select value={item.loadMode ?? "MANUAL"} onChange={(event) => setItem({ ...item, loadMode: event.target.value as HourConceptLoadMode })}>{Object.entries(loadModeLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-      <label>Estado<select value={item.status} onChange={(event) => setItem({ ...item, status: event.target.value as "ACTIVO" | "INACTIVO" })}><option>ACTIVO</option><option>INACTIVO</option></select></label>
+      <label>Estado<select value={item.status} onChange={(event) => setItem({ ...item, status: event.target.value as "ACTIVO" | "INACTIVO" })}><option value="ACTIVO">Activo</option><option value="INACTIVO">Inactivo</option></select></label>
     </div>
   );
 }
@@ -229,8 +240,8 @@ export function HourConceptsPage() {
 
       <Section title="Listado de conceptos horarios" subtitle={isLoadingApi ? "Cargando catálogo..." : `${items.length} resultados segun filtros aplicados.`}>
         <FilterPanel search={{ value: filters.search, onChange: (value) => setFilters({ ...filters, search: value }), placeholder: "Buscar por codigo, nombre o tipo" }}>
-          <label>Tipo<select value={filters.kind} onChange={(event) => setFilters({ ...filters, kind: event.target.value })}><option value="">Todos</option>{options.kinds.map((kind) => <option key={kind}>{kind}</option>)}</select></label>
-          <label>Estado<select value={filters.status} onChange={(event) => setFilters({ ...filters, status: event.target.value })}><option value="">Todos</option>{options.statuses.map((status) => <option key={status}>{status}</option>)}</select></label>
+          <label>Tipo<select value={filters.kind} onChange={(event) => setFilters({ ...filters, kind: event.target.value })}><option value="">Todos</option>{options.kinds.map((kind) => <option key={kind} value={kind}>{hourConceptKindLabels[kind]}</option>)}</select></label>
+          <label>Estado<select value={filters.status} onChange={(event) => setFilters({ ...filters, status: event.target.value })}><option value="">Todos</option>{options.statuses.map((status) => <option key={status} value={status}>{activoInactivoLabel(status)}</option>)}</select></label>
         </FilterPanel>
         <DataTable
           status={isLoadingApi ? "loading" : loadFailed ? "error" : items.length === 0 ? "empty" : "ready"}
@@ -247,9 +258,9 @@ export function HourConceptsPage() {
                   <td><b>{item.code}</b></td>
                   <td><OverflowCell value={item.name} /></td>
                   <td>{item.systemRole === "NORMAL_BASE" ? <Badge tone="neutral">Base del sistema</Badge> : "Adicional"}</td>
-                  <td>{item.kind}</td>
+                  <td>{hourConceptKindLabels[item.kind]}</td>
                   <td>{item.loadMode ? loadModeLabels[item.loadMode] : "No aplica"}</td>
-                  <td><Badge tone={item.status === "ACTIVO" ? "success" : "neutral"}>{item.status}</Badge></td>
+                  <td><Badge tone={item.status === "ACTIVO" ? "success" : "neutral"}>{activoInactivoLabel(item.status)}</Badge></td>
                   <td>
                     {item.systemRole === "NORMAL_BASE" ? <Badge tone="neutral">Protegido</Badge> : editable ? (
                       <div className="table-actions">

@@ -205,6 +205,14 @@ const statusToApi: Partial<Record<TimeStatus, ApiApprovalStatus>> = {
   Cerrado: "CERRADO",
 };
 
+// Etapa 15M.20: reexporta el mismo mapeo ApprovalStatus -> TimeStatus que ya
+// usa esta pantalla (arriba), para que otras vistas que muestran el status
+// crudo de un TimeEntry (p.ej. WorkShiftSegmentsPanel en Asistencia) lo
+// reusen en vez de duplicar un tercer diccionario para el mismo enum.
+export function timeEntryStatusFromApi(status: string): TimeStatus {
+  return statusFromApi[status as ApiApprovalStatus] || "Pendiente";
+}
+
 async function invalidateTimeEntryDependentCaches(reason: string) {
   await Promise.all([
     invalidateCacheFamily("dashboard", reason),

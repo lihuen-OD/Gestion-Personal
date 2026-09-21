@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { confirmAction } from "../../services/appDialog";
 import { shiftAssignmentApiService, type ShiftAssignment } from "../../services/api/shiftAssignmentApiService";
 import { workforceApiService, type ShiftTemplate } from "../../services/api/workforceApiService";
+import { getUserErrorMessage } from "../../services/api/apiClient";
 import type { Employee, User } from "../../types";
 import { useAsyncAction } from "../../utils/useAsyncAction";
 import { assignmentVigencyLabel, assignmentVigencyStatus, assignmentVigencyTone, buildShiftAssignmentVigencyPayload, formatAssignmentDate, formatWeekdays } from "../../utils/shiftAssignment";
@@ -114,7 +115,7 @@ export function EmployeeShiftsPanel({ employee, canEdit = false }: { employee: E
       setRefresh((value) => value + 1);
       setTimeout(() => setNotice(""), 2200);
     } catch (reason) {
-      setNotice(reason instanceof Error ? reason.message : "No pudimos asignar el turno.");
+      setNotice(getUserErrorMessage(reason, "No pudimos asignar el turno."));
     }
   });
 
@@ -125,7 +126,7 @@ export function EmployeeShiftsPanel({ employee, canEdit = false }: { employee: E
       await shiftAssignmentApiService.update(assignment.id, { status: activating ? "HABILITADO" : "DESHABILITADO" });
       setRefresh((value) => value + 1);
     } catch (reason) {
-      setNotice(reason instanceof Error ? reason.message : "No pudimos cambiar el estado del turno.");
+      setNotice(getUserErrorMessage(reason, "No pudimos cambiar el estado del turno."));
     }
   };
 
@@ -135,7 +136,7 @@ export function EmployeeShiftsPanel({ employee, canEdit = false }: { employee: E
       await shiftAssignmentApiService.remove(assignment.id);
       setRefresh((value) => value + 1);
     } catch (reason) {
-      setNotice(reason instanceof Error ? reason.message : "No pudimos quitar la asociación.");
+      setNotice(getUserErrorMessage(reason, "No pudimos quitar la asociación."));
     }
   };
 

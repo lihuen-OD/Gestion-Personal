@@ -6,6 +6,7 @@ import { Button } from "../components/ui/Button";
 import { FormActions } from "../components/ui/FormControls";
 import { emptyShiftTemplate, shiftTemplateFormToInput, ShiftTemplateFormFields } from "../components/shifts/ShiftTemplateFormFields";
 import { useAuth } from "../context/AuthContext";
+import { getUserErrorMessage } from "../services/api/apiClient";
 import { workforceApiService } from "../services/api/workforceApiService";
 import { roleLevel } from "../utils/roles";
 import { useAsyncAction } from "../utils/useAsyncAction";
@@ -24,7 +25,7 @@ export function ShiftCreatePage() {
       const created = await workforceApiService.createShiftTemplate(shiftTemplateFormToInput(value));
       navigate(`/configuracion/turnos/${created.id}`, { state: { created: true } });
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "No pudimos guardar el turno.");
+      setError(getUserErrorMessage(reason, "No pudimos guardar el turno."));
     }
   });
 

@@ -93,7 +93,7 @@ function toFrontendStatus(status: ApiNoveltyStatus) {
     DEVUELTO: "Devuelto",
     CERRADO: "Cerrado",
   };
-  return map[status] || status;
+  return map[status] || "Estado desconocido";
 }
 
 function quantityLabel(item: ApiNovelty) {

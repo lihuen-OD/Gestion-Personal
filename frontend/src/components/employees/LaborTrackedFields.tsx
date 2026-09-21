@@ -8,6 +8,7 @@ import type { Employee, EmployeeFieldHistoryRecord, FieldHistorySection, User } 
 import type { Position } from "../../types/position.types";
 import { useAsyncAction } from "../../utils/useAsyncAction";
 import { requiredLaborChangeError } from "../../utils/laborFieldValidation";
+import { formatCalendarDate } from "../../utils/date";
 import { Button } from "../ui/Button";
 import { EmptyState } from "../ui/EmptyState";
 import { ErrorState } from "../ui/ErrorState";
@@ -209,7 +210,7 @@ export function MultiCompanyField({ employee, canEdit, user, onSaved }: TrackedF
                 <div key={item.id}>
                   <i />
                   <b>
-                    {item.effectiveFrom} | {item.newValue}
+                    {formatCalendarDate(item.effectiveFrom)} | {item.newValue}
                   </b>
                   <span>{item.createdByUserName}</span>
                   <p>
@@ -344,7 +345,7 @@ export function EmployeePositionField({ employee, canEdit, user, onSaved }: Trac
                 <div key={item.id}>
                   <i />
                   <b>
-                    {item.effectiveFrom} | {item.newValue}
+                    {formatCalendarDate(item.effectiveFrom)} | {item.newValue}
                   </b>
                   <span>{item.createdByUserName}</span>
                   <p>Anterior: {item.oldValue || "-"} · Motivo: {item.reason}</p>

@@ -2,6 +2,7 @@ import { Badge } from "../ui/Badge";
 import { EmptyState } from "../ui/EmptyState";
 import { TableShell } from "../ui/TableShell";
 import type { AttendanceSegment, AttendanceTimeEntry } from "../../services/api/attendanceApiService";
+import { timeEntryStatusFromApi } from "../../services/api/timeEntryApiService";
 import {
   describeHourConceptRule,
   describeSpecialRuleApplication,
@@ -85,7 +86,7 @@ function TimeEntriesSummary({ entries }: { entries: AttendanceTimeEntry[] }) {
                 <td>{entry.actualMinutes !== undefined ? formatMinutesDuration(entry.actualMinutes) : <em>No disponible</em>}</td>
                 <td>{formatMinutesDuration(entry.totalMinutes)}</td>
                 <td>{entry.appliedMultiplier !== undefined ? formatMultiplier(entry.appliedMultiplier) : <em>No disponible</em>}</td>
-                <td>{entry.status.replace(/_/g, " ")}</td>
+                <td>{timeEntryStatusFromApi(entry.status)}</td>
               </tr>
             ))}
           </tbody>

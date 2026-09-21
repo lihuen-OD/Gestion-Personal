@@ -2,13 +2,14 @@ import { Power, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link, Navigate, useLocation, useNavigate, useParams } from "react-router-dom";
 import { NoveltyTypeFinnegansTab } from "../components/novelty-types/NoveltyTypeFinnegansTab";
-import { validateNoveltyType } from "../components/novelty-types/NoveltyTypeFields";
+import { noveltyKindLabels, validateNoveltyType } from "../components/novelty-types/NoveltyTypeFields";
 import { NoveltyTypeIdentificationTab } from "../components/novelty-types/NoveltyTypeIdentificationTab";
 import { NoveltyTypeRulesTab } from "../components/novelty-types/NoveltyTypeRulesTab";
 import { useAuth } from "../context/AuthContext";
 import { noveltyTypeApiService } from "../services/api/noveltyTypeApiService";
 import type { NoveltyType } from "../types/noveltyType.types";
 import { roleLevel } from "../utils/roles";
+import { activoInactivoLabel, statusTone } from "../utils/status";
 import { useAsyncAction } from "../utils/useAsyncAction";
 import { Section } from "../components/ui/Section";
 import { LoadingState } from "../components/ui/LoadingState";
@@ -91,6 +92,8 @@ export function NoveltyTypeDetailPage() {
     return <NoveltyTypeFinnegansTab item={item} setItem={setItem} />;
   };
 
+  const statusLabel = activoInactivoLabel(item.status);
+
   return (
     <>
       <div className="detail-hero catalog-hero">
@@ -98,13 +101,13 @@ export function NoveltyTypeDetailPage() {
         <div>
           <div className="avatar">{item.name.slice(0, 2).toUpperCase()}</div>
           <div>
-            <p className="eyebrow">{item.code} · {item.kind}</p>
+            <p className="eyebrow">{item.code} · {noveltyKindLabels[item.kind]}</p>
             <h1>{item.name}</h1>
             <p>{item.description}</p>
           </div>
         </div>
         <div className="hero-actions">
-          <Badge tone={item.status === "ACTIVO" ? "success" : "neutral"}>{item.status}</Badge>
+          <Badge tone={statusTone(statusLabel)}>{statusLabel}</Badge>
           {item.rules.exportsToFinnegans ? <Badge tone="neutral">Finnegans</Badge> : null}
           <button className="table-icon-action" title={item.status === "ACTIVO" ? "Inactivar" : "Activar"} aria-label={item.status === "ACTIVO" ? "Inactivar" : "Activar"} onClick={() => void toggle()}><Power size={14} /><span>{item.status === "ACTIVO" ? "Inactivar" : "Activar"}</span></button>
           <button className="table-icon-action danger-link" title="Ocultar" aria-label="Ocultar" onClick={async () => { if (await confirmAction("El tipo de novedad no se eliminará: quedará inactivo para conservar su trazabilidad.", { title: "Ocultar tipo de novedad", confirmLabel: "Ocultar", tone: "danger" })) await toggle(true); }}><Trash2 size={14} /><span>Ocultar</span></button>

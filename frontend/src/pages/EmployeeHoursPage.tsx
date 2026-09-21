@@ -3,7 +3,7 @@ import { Link, useParams, useSearchParams } from "react-router-dom";
 import { AlertTriangle, Bell, CalendarDays, CheckCircle2, Clock3, ClipboardList, Coins, RefreshCcw } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { employeeApiService } from "../services/api/employeeApiService";
-import { ApiError } from "../services/api/apiClient";
+import { ApiError, getUserErrorMessage } from "../services/api/apiClient";
 import { documentApiService } from "../services/api/documentApiService";
 import { documentCategoryApiService } from "../services/api/documentCategoryApiService";
 import { noveltyApiService } from "../services/api/noveltyApiService";
@@ -413,10 +413,7 @@ export function EmployeeHoursPage() {
             targetHourConceptId: concept?.id || null,
           });
         } catch (noveltyError) {
-          if (noveltyError instanceof ApiError) {
-            return setError(`La hora se guardo, pero no se pudo guardar la novedad: ${noveltyError.message} (${noveltyError.code}).`);
-          }
-          return setError("La hora se guardó, pero no pudimos registrar la novedad. Revisá el tipo seleccionado e intentá nuevamente.");
+          return setError(getUserErrorMessage(noveltyError, "La hora se guardó, pero no pudimos registrar la novedad. Revisá el tipo seleccionado e intentá nuevamente."));
         }
         if (fileName) {
           try {

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { AlertTriangle, CalendarDays, Camera, CheckCircle2, Clock3, DoorOpen, Eye, FilePlus2, Search, TimerReset, X } from "lucide-react";
 import { attendanceApiService, type AttendanceObservation, type AttendancePunch, type AttendanceShift } from "../services/api/attendanceApiService";
+import { getUserErrorMessage } from "../services/api/apiClient";
 import { WorkShiftSegmentsPanel } from "../components/attendance/WorkShiftSegmentsPanel";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
@@ -18,6 +19,7 @@ import { formatDurationMinutes } from "../utils/hours";
 import { NoveltyFromContextModal } from "../components/novelties/NoveltyFromContextModal";
 import { buildNoveltyPrefillFromAttendanceShiftProblem, buildNoveltyPrefillFromInactivityIncident, type NoveltyPrefillContext } from "../utils/noveltyFromAlert";
 import { TOAST_SUCCESS_MS } from "../utils/toast";
+import { workShiftStatusLabel, workShiftStatusTone } from "../utils/status";
 
 const OBSERVED_PAGE_SIZE = 10;
 
@@ -60,13 +62,6 @@ function toDateTimeLocalValue(value = new Date()) {
   return local.toISOString().slice(0, 16);
 }
 
-function statusTone(status: string): "success" | "warning" | "danger" | "neutral" {
-  if (status === "PROCESADO" || status === "REVISADO") return "success";
-  if (status === "ABIERTO") return "warning";
-  if (status === "OBSERVADO" || status === "FALTA_SALIDA" || status === "FALTA_INGRESO" || status === "INVALIDO") return "danger";
-  return "neutral";
-}
-
 function sourceLabel(source: string) {
   const labels: Record<string, string> = {
     ADMIN: "Admin",
@@ -76,7 +71,10 @@ function sourceLabel(source: string) {
     BIOTIME: "BioTime",
     FACIAL: "Facial",
   };
-  return labels[source] || source;
+  // Etapa 15M.20: fallback fijo en vez de devolver el enum crudo — cubre
+  // hoy los 6/6 valores de WorkShiftSource, pero si el backend agrega uno
+  // nuevo no debe filtrarse a la UI sin traducir.
+  return labels[source] || "Origen no identificado";
 }
 
 function faceStatusLabel(status?: string | null) {
@@ -88,13 +86,19 @@ function faceStatusLabel(status?: string | null) {
     FACE_TOO_SMALL: "Rostro pequeño",
     CAMERA_ERROR: "Error cámara",
   };
-  return status ? labels[status] || status : "Sin validación";
+  // Etapa 15M.20: idem sourceLabel — cubre hoy los 6/6 valores de
+  // FaceValidationStatus, con fallback fijo en vez del enum crudo.
+  if (!status) return "Sin validación";
+  return labels[status] || "Estado de validación no identificado";
 }
 
 // Etapa 10E: antes se mostraba item.shift.status.replace(/_/g, " ") crudo
 // ("FALTA SALIDA", "INVALIDO" sin acento) — sólo cubre los 4 status que
 // attendanceObservations puede devolver para type=SHIFT (ver
 // timeEntries.repository.ts:attendanceObservations, shiftTotalWhere).
+// Etapa 15M.20: el fallback pasó de "status crudo" a un texto fijo — hoy
+// sólo cubre 4 de los 9 WorkShiftStatus, así que un 5to status usado como
+// "problema" en el futuro debe mostrar un mensaje humano, nunca el enum.
 function shiftProblemLabel(status: string) {
   const labels: Record<string, string> = {
     OBSERVADO: "Jornada observada",
@@ -102,7 +106,7 @@ function shiftProblemLabel(status: string) {
     FALTA_INGRESO: "Falta registrar el ingreso",
     INVALIDO: "Jornada inválida",
   };
-  return labels[status] || status.replace(/_/g, " ");
+  return labels[status] || "Problema no identificado";
 }
 
 function hasPunchPhoto(punch?: { photoStoragePath?: string | null; photoUrl?: string | null; photoFileId?: string | null; thumbnailFileId?: string | null } | null) {
@@ -179,7 +183,7 @@ function ShiftRows({ items, emptyText, showSegments = false, showRisk = false, o
             <td>{sourceLabel(shift.source)}</td>
             {showRisk && <td>{shift.shiftTemplate ? shift.shiftTemplate.name : <em>Sin turno</em>}</td>}
             {showRisk && <td>{formatDateTime(shift.risk?.expectedExitAt)}</td>}
-            <td><Badge tone={statusTone(shift.status)}>{shift.status.replace(/_/g, " ")}</Badge></td>
+            <td><Badge tone={workShiftStatusTone(shift.status)}>{workShiftStatusLabel(shift.status)}</Badge></td>
             {showRisk && <td>{shift.risk ? <Badge tone={RISK_TONE[shift.risk.level]}>{RISK_LABEL[shift.risk.level]}</Badge> : "-"}</td>}
             {showSegments && (
               <td>
@@ -411,7 +415,7 @@ export function AttendancePage() {
       setObservationsRefresh((value) => value + 1);
       setRefreshKey((value) => value + 1);
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : "No se pudo resolver el problema de fichada.");
+      setActionError(getUserErrorMessage(err, "No se pudo resolver el problema de fichada."));
     } finally {
       setActionLoading(false);
     }
@@ -454,7 +458,7 @@ export function AttendancePage() {
         title: result.fileName || "Foto de fichada",
       });
     } catch (err) {
-      setPhotoError(err instanceof Error ? err.message : "No se pudo abrir la foto de la fichada.");
+      setPhotoError(getUserErrorMessage(err, "No se pudo abrir la foto de la fichada."));
     } finally {
       setPhotoLoading(false);
     }
@@ -478,7 +482,7 @@ export function AttendancePage() {
       closeAction();
       setRefreshKey((value) => value + 1);
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : "No se pudo registrar la acción.");
+      setActionError(getUserErrorMessage(err, "No se pudo registrar la acción."));
     } finally {
       setActionLoading(false);
     }

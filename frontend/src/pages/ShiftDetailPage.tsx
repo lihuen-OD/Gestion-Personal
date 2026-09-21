@@ -10,6 +10,7 @@ import { Button } from "../components/ui/Button";
 import { ShiftTemplateFormFields, shiftTemplateFormToInput, shiftTemplateToFormValue, type ShiftTemplateFormValue } from "../components/shifts/ShiftTemplateFormFields";
 import { ShiftEmployeesPanel } from "../components/shifts/ShiftEmployeesPanel";
 import { useAuth } from "../context/AuthContext";
+import { getUserErrorMessage } from "../services/api/apiClient";
 import { workforceApiService, type ShiftTemplate } from "../services/api/workforceApiService";
 import { confirmAction } from "../services/appDialog";
 import { roleLevel } from "../utils/roles";
@@ -67,7 +68,7 @@ export function ShiftDetailPage() {
       setNotice("Cambios guardados correctamente.");
       setTimeout(() => setNotice(""), 2200);
     } catch (reason) {
-      setNotice(reason instanceof Error ? reason.message : "No pudimos guardar el turno.");
+      setNotice(getUserErrorMessage(reason, "No pudimos guardar el turno."));
     }
   });
 
@@ -80,7 +81,7 @@ export function ShiftDetailPage() {
       setSource(saved);
       setValue(shiftTemplateToFormValue(saved));
     } catch (reason) {
-      setNotice(reason instanceof Error ? reason.message : "No pudimos cambiar el estado del turno.");
+      setNotice(getUserErrorMessage(reason, "No pudimos cambiar el estado del turno."));
     }
   };
 

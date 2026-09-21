@@ -32,7 +32,7 @@ function buildAudit(overrides: Partial<AuditEntry> = {}): AuditEntry {
     time: "10:00",
     user: "Ana Gomez",
     role: "Nivel 1 - RRHH",
-    action: "Alta",
+    action: "CREATE",
     entity: "Employee",
     previous: "-",
     next: "-",
@@ -92,5 +92,41 @@ describe("AuditPage — Etapa 9B (refresh silencioso)", () => {
 
     await waitFor(() => expect(screen.getByText("Se actualizó el legajo 101.")).toBeInTheDocument());
     expect(screen.queryByText("Se creó el legajo 100.")).not.toBeInTheDocument();
+  });
+});
+
+describe("AuditPage — Etapa 15M.20 (sin fugas de nombres técnicos)", () => {
+  it("traduce entidad y acción a lenguaje de negocio, incluso para una entidad fuera del mapa original", async () => {
+    vi.mocked(auditApiService.list).mockResolvedValueOnce({
+      items: [
+        buildAudit({ id: "audit-shift", action: "UPDATE", entity: "WorkShift", reason: "-", next: "-" }),
+        buildAudit({ id: "audit-alert", action: "UPDATE", entity: "ShiftAlert", reason: "-", next: "-" }),
+        buildAudit({ id: "audit-breakdown", action: "UPDATE", entity: "HourConceptBreakdown", reason: "-", next: "-" }),
+      ],
+      meta: { total: 3, page: 1, pageSize: 25, hasMore: false },
+    });
+    renderPage();
+
+    await screen.findByText("Jornada laboral");
+    expect(screen.getByText("Alerta de turno")).toBeInTheDocument();
+    expect(screen.getByText("Desglose de conceptos horarios")).toBeInTheDocument();
+    expect(screen.getAllByText("Modificación").length).toBeGreaterThan(0);
+
+    expect(screen.queryByText("WorkShift")).not.toBeInTheDocument();
+    expect(screen.queryByText("ShiftAlert")).not.toBeInTheDocument();
+    expect(screen.queryByText("HourConceptBreakdown")).not.toBeInTheDocument();
+  });
+
+  it("nunca muestra un nombre de entidad o acción crudo cuando no está en el mapa", async () => {
+    vi.mocked(auditApiService.list).mockResolvedValueOnce({
+      items: [buildAudit({ action: "SOME_FUTURE_ACTION", entity: "SomeFutureEntity", reason: "-", next: "-" })],
+      meta: { total: 1, page: 1, pageSize: 25, hasMore: false },
+    });
+    renderPage();
+
+    await screen.findByText("Registro del sistema");
+    expect(screen.getByText("Movimiento registrado")).toBeInTheDocument();
+    expect(screen.queryByText("SomeFutureEntity")).not.toBeInTheDocument();
+    expect(screen.queryByText("SOME_FUTURE_ACTION")).not.toBeInTheDocument();
   });
 });

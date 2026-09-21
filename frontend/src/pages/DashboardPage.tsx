@@ -14,6 +14,7 @@ import { ErrorState } from "../components/ui/ErrorState";
 import { formatPeriodLabel } from "../utils/period";
 import { formatDecimalHoursDuration } from "../utils/hours";
 import { roleLevel } from "../utils/roles";
+import { auditActionLabel, auditEntityLabel, auditDescription } from "../utils/auditLabels";
 
 export function DashboardBars({ rows }: { rows: { label: string; value: number }[] }) {
   const max = Math.max(...rows.map((row) => row.value), 1);
@@ -22,54 +23,6 @@ export function DashboardBars({ rows }: { rows: { label: string; value: number }
 
 export function Alert({ label, value, tone }: { label: string; value: string; tone: string }) {
   return <div className="alert-row"><span className={`alert-dot ${tone}`} /><b>{label}</b><span>{value}</span></div>;
-}
-
-const entityLabels: Record<string, string> = {
-  Employee: "Legajo",
-  FinnegansExport: "Exportación a Finnegans",
-  Novelty: "Novedad",
-  TimeEntry: "Carga horaria",
-  Document: "Documento",
-  Position: "Puesto",
-  User: "Usuario",
-};
-
-const actionLabels: Record<string, string> = {
-  Alta: "Alta",
-  Modificacion: "Modificación",
-  Aprobacion: "Aprobación",
-  Rechazo: "Rechazo",
-  Devolucion: "Devolución",
-  Exportacion: "Exportación",
-};
-
-function polishSpanishText(value: string) {
-  return value
-    .replace(/\baprobo\b/gi, "aprobó")
-    .replace(/\bactualizo\b/gi, "actualizó")
-    .replace(/\benvio\b/gi, "envió")
-    .replace(/\brechazo\b/gi, "rechazó")
-    .replace(/\bdevolvio\b/gi, "devolvió")
-    .replace(/\bcargo\b/gi, "cargó")
-    .replace(/\bpreparo\b/gi, "preparó")
-    .replace(/\bexportacion\b/gi, "exportación")
-    .replace(/\blegajo\b/gi, "legajo")
-    .replace(/\bcarga horaria\b/gi, "carga horaria");
-}
-
-function readableAuditDetail(item: AuditEntry) {
-  const preferred = item.reason && item.reason !== "-" ? item.reason : item.next;
-  if (!preferred || preferred === "-") return "Movimiento registrado en el sistema.";
-
-  return polishSpanishText(preferred)
-    .replace(/\s*\|\s*Id:\s*[a-f0-9-]{20,}/gi, "")
-    .replace(/\bEstado:\s*EN_REVISION\b/g, "Estado: en revisión")
-    .replace(/\bEstado:\s*APROBADO\b/g, "Estado: aprobado")
-    .replace(/\bInclude Pending:\s*(true|false)\b/gi, (_, value) => `Incluye pendientes: ${value === "true" ? "sí" : "no"}`)
-    .replace(/\bTotal Rows:\s*(\d+)\b/gi, (_, total) => `${total} registro${total === "1" ? "" : "s"}`)
-    .replace(/\bQuery:\s*/gi, "")
-    .replace(/\bPeriod:\s*(\d{4}-\d{2})\b/gi, (_, period) => `Periodo ${formatPeriodLabel(period)}`)
-    .replace(/\s+\|\s+/g, " · ");
 }
 
 export function DashboardPage() {
@@ -177,7 +130,7 @@ export function DashboardPage() {
         emptyText="Todavía no hay actividad registrada."
         onRetry={() => setAuditRetry((value) => value + 1)}
       >
-        <table className="dashboard-activity-table"><thead><tr><th>Fecha</th><th>Registrado por</th><th>Movimiento</th><th>Registro</th><th>Resumen</th></tr></thead><tbody>{audit.slice(0, 5).map((item) => <tr key={item.id}><td>{item.date} · {item.time}</td><td>{item.user}</td><td>{actionLabels[item.action] || item.action}</td><td><OverflowCell value={entityLabels[item.entity] || item.entity} /></td><td><span className="dashboard-activity-detail">{readableAuditDetail(item)}</span></td></tr>)}</tbody></table>
+        <table className="dashboard-activity-table"><thead><tr><th>Fecha</th><th>Registrado por</th><th>Movimiento</th><th>Registro</th><th>Resumen</th></tr></thead><tbody>{audit.slice(0, 5).map((item) => <tr key={item.id}><td>{item.date} · {item.time}</td><td>{item.user}</td><td>{auditActionLabel(item.action)}</td><td><OverflowCell value={auditEntityLabel(item.entity)} /></td><td><span className="dashboard-activity-detail">{auditDescription(item)}</span></td></tr>)}</tbody></table>
       </DataTable>
     </Section>}
   </>;

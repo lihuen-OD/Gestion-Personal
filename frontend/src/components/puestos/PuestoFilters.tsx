@@ -1,5 +1,6 @@
 import type { PositionFilters } from "../../types/position.types";
 import { FilterPanel } from "../ui/FilterPanel";
+import { activoInactivoLabel } from "../../utils/status";
 
 type IdOption = { id: string; name: string };
 
@@ -35,6 +36,6 @@ export function PuestoFilters({ filters, options, onChange }: { filters: Positio
     <SelectFilterById label="Area / Departamento" value={filters.areaId} options={options.areaId} onChange={(value) => set("areaId", value)} />
     <SelectFilterById label="Sector" value={filters.sectorId} options={options.sectorId} onChange={(value) => set("sectorId", value)} />
     <SelectFilter label="Rango salarial" value={filters.salaryRangeCategory} options={options.salaryRangeCategory} onChange={(value) => set("salaryRangeCategory", value)} />
-    <label>Estado<select value={filters.status} onChange={(event) => set("status", event.target.value)}><option value="">Todos</option><option value="ACTIVO">ACTIVO</option><option value="INACTIVO">INACTIVO</option></select></label>
+    <label>Estado<select value={filters.status} onChange={(event) => set("status", event.target.value)}><option value="">Todos</option><option value="ACTIVO">{activoInactivoLabel("ACTIVO")}</option><option value="INACTIVO">{activoInactivoLabel("INACTIVO")}</option></select></label>
   </FilterPanel>;
 }

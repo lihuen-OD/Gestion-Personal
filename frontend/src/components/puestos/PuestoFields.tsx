@@ -8,8 +8,12 @@ export function PuestoTextarea({ label, value, onChange, disabled = false }: { l
   return <label className="form-wide">{label}<textarea disabled={disabled} value={value} onChange={(event) => onChange(event.target.value)} /></label>;
 }
 
-export function PuestoSelect({ label, value, onChange, options, disabled = false }: { label: string; value: string; onChange: (value: string) => void; options: string[]; disabled?: boolean }) {
-  return <label>{label}<select disabled={disabled} value={value} onChange={(event) => onChange(event.target.value)}><option value="">Seleccionar</option>{options.map((option) => <option key={option}>{option}</option>)}</select></label>;
+// Etapa 15M.20: `labels` traduce el texto visible de cada opcion (p. ej.
+// enum crudo -> label en castellano) sin tocar el valor real que viaja al
+// backend — por eso ahora cada <option> fija su `value` explicitamente en
+// vez de depender del contenido de texto (antes texto == value implicito).
+export function PuestoSelect({ label, value, onChange, options, labels, disabled = false }: { label: string; value: string; onChange: (value: string) => void; options: string[]; labels?: Record<string, string>; disabled?: boolean }) {
+  return <label>{label}<select disabled={disabled} value={value} onChange={(event) => onChange(event.target.value)}><option value="">Seleccionar</option>{options.map((option) => <option key={option} value={option}>{labels?.[option] || option}</option>)}</select></label>;
 }
 
 export function PuestoIdSelect({ label, value, onChange, options, disabled = false, placeholder = "Sin asignar" }: { label: string; value: string | undefined; onChange: (id: string | undefined) => void; options: Array<{ id: string; name: string }>; disabled?: boolean; placeholder?: string }) {
@@ -74,3 +78,12 @@ export function addCriterion(items: PositionEvaluationCriterion[]) {
 }
 
 export const modalityOptions: WorkModality[] = ["PRESENCIAL", "HIBRIDA", "REMOTA", "OTRA"];
+
+// Etapa 15M.20: label visible para cada WorkModality — el select sigue
+// enviando el enum crudo (`value=`), esto solo traduce el texto mostrado.
+export const workModalityLabels: Record<WorkModality, string> = {
+  PRESENCIAL: "Presencial",
+  HIBRIDA: "Híbrida",
+  REMOTA: "Remota",
+  OTRA: "Otra",
+};

@@ -8,6 +8,7 @@ import { Badge } from "../components/ui/Badge";
 import { LoadingState } from "../components/ui/LoadingState";
 import { EmptyState } from "../components/ui/EmptyState";
 import { TableShell } from "../components/ui/TableShell";
+import { getUserErrorMessage } from "../services/api/apiClient";
 import { workforceApiService, type DoubleHourRule } from "../services/api/workforceApiService";
 import { orgStructureApiService } from "../services/api/orgStructureApiService";
 import { positionApiService } from "../services/api/positionApiService";
@@ -236,7 +237,7 @@ export function WorkScheduleSettingsPage() {
       await load();
       notifyRulesMutated();
     } catch (reason) {
-      setFormError(reason instanceof Error ? reason.message : "No se pudo guardar la regla. Revisá los datos e intentá nuevamente.");
+      setFormError(getUserErrorMessage(reason, "No se pudo guardar la regla. Revisá los datos e intentá nuevamente."));
     } finally {
       setWorking(false);
     }
@@ -278,7 +279,7 @@ export function WorkScheduleSettingsPage() {
       await load();
       notifyRulesMutated();
     } catch (reason) {
-      setTableError(reason instanceof Error ? reason.message : "No se pudo cambiar el estado de la regla. Intentá nuevamente.");
+      setTableError(getUserErrorMessage(reason, "No se pudo cambiar el estado de la regla. Intentá nuevamente."));
     } finally {
       setWorking(false);
     }
@@ -296,7 +297,7 @@ export function WorkScheduleSettingsPage() {
       await load();
       notifyRulesMutated();
     } catch (reason) {
-      setTableError(reason instanceof Error ? reason.message : "No se pudo eliminar la regla. Intentá nuevamente.");
+      setTableError(getUserErrorMessage(reason, "No se pudo eliminar la regla. Intentá nuevamente."));
     } finally {
       setWorking(false);
     }

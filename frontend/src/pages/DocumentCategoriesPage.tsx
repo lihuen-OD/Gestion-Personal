@@ -9,11 +9,15 @@ import { PageHeader } from "../components/ui/PageHeader";
 import { Section } from "../components/ui/Section";
 import { Button } from "../components/ui/Button";
 import { Badge } from "../components/ui/Badge";
+import { BoolCheck } from "../components/shared/BoolCheck";
 import { useAuth } from "../context/AuthContext";
+import { getUserErrorMessage } from "../services/api/apiClient";
 import { documentCategoryApiService } from "../services/api/documentCategoryApiService";
 import type { Role } from "../types";
 import type { DocumentCategory, DocumentCategoryKind, DocumentCategoryScope, ExternalDocumentLink } from "../types/documentCategory.types";
+import { documentCategoryKindLabels, documentCategoryScopeLabels, documentLinkProviderLabels } from "../utils/documentCategoryLabels";
 import { roleLevel } from "../utils/roles";
+import { activoInactivoLabel } from "../utils/status";
 import { useAsyncAction } from "../utils/useAsyncAction";
 
 const roles: Role[] = ["Nivel 1 - RRHH", "Nivel 2 - Supervisión / Gestión", "Nivel 3 - Administrativo de Carga Horaria"];
@@ -24,10 +28,6 @@ function toggleValue<T extends string>(values: T[], value: T) { return values.in
 
 function emptyCategory(code: string): DocumentCategory {
   return { id: crypto.randomUUID(), code, name: "", kind: "PERSONAL", status: "ACTIVO", description: "", scopes: ["LEGAJO"], rules: { expires: false, alertBeforeDays: 0, mandatory: false, requiresApproval: false, allowMultipleFiles: true }, uploadRoles: ["Nivel 1 - RRHH"], viewRoles: ["Nivel 1 - RRHH"], approvalRoles: ["Nivel 1 - RRHH"], externalLinks: [], createdAt: "", updatedAt: "", createdBy: "", updatedBy: "", history: [] };
-}
-
-function BoolCheck({ label, checked, onChange }: { label: string; checked: boolean; onChange: (value: boolean) => void }) {
-  return <label className="catalog-rule-card"><input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} /><span><b>{label}</b><small>{checked ? "Activo" : "Inactivo"}</small></span></label>;
 }
 
 function CheckList<T extends string>({ label, options, value, onChange }: { label: string; options: T[]; value: T[]; onChange: (value: T[]) => void }) {
@@ -50,7 +50,7 @@ function removeExternalLink(item: DocumentCategory, linkId: string): DocumentCat
 
 function ExternalLinks({ item, setItem }: { item: DocumentCategory; setItem: (item: DocumentCategory) => void }) {
   const update = (id: string, patch: Partial<ExternalDocumentLink>) => setItem({ ...item, externalLinks: item.externalLinks.map((link) => link.id === id ? { ...link, ...patch } : link) });
-  return <div className="catalog-finnegans"><div className="panel-head compact"><div><h3>Vinculos externos</h3><p>Codigos o carpetas externas para integraciones futuras.</p></div><Button type="button" variant="subtle" onClick={() => setItem(addExternalLink(item))}>Agregar vinculo</Button></div><div className="catalog-link-list">{item.externalLinks.map((link) => <div className="catalog-link-row" key={link.id}><label>Proveedor<select value={link.provider} onChange={(event) => update(link.id, { provider: event.target.value as ExternalDocumentLink["provider"] })}><option>FINNEGANS</option><option>CARPETA_RED</option><option>OTRO</option></select></label><label>Codigo<input value={link.code} onChange={(event) => update(link.id, { code: event.target.value })} /></label><label>Nombre<input value={link.name} onChange={(event) => update(link.id, { name: event.target.value })} /></label><label>Estado<select value={link.status} onChange={(event) => update(link.id, { status: event.target.value as "ACTIVO" | "INACTIVO" })}><option>ACTIVO</option><option>INACTIVO</option></select></label><label>Notas<input value={link.notes || ""} onChange={(event) => update(link.id, { notes: event.target.value })} /></label><button className="icon-button danger-link" type="button" onClick={() => setItem(removeExternalLink(item, link.id))}>x</button></div>)}</div></div>;
+  return <div className="catalog-finnegans"><div className="panel-head compact"><div><h3>Vinculos externos</h3><p>Codigos o carpetas externas para integraciones futuras.</p></div><Button type="button" variant="subtle" onClick={() => setItem(addExternalLink(item))}>Agregar vinculo</Button></div><div className="catalog-link-list">{item.externalLinks.map((link) => <div className="catalog-link-row" key={link.id}><label>Proveedor<select value={link.provider} onChange={(event) => update(link.id, { provider: event.target.value as ExternalDocumentLink["provider"] })}><option value="FINNEGANS">{documentLinkProviderLabels.FINNEGANS}</option><option value="CARPETA_RED">{documentLinkProviderLabels.CARPETA_RED}</option><option value="OTRO">{documentLinkProviderLabels.OTRO}</option></select></label><label>Codigo<input value={link.code} onChange={(event) => update(link.id, { code: event.target.value })} /></label><label>Nombre<input value={link.name} onChange={(event) => update(link.id, { name: event.target.value })} /></label><label>Estado<select value={link.status} onChange={(event) => update(link.id, { status: event.target.value as "ACTIVO" | "INACTIVO" })}><option value="ACTIVO">Activo</option><option value="INACTIVO">Inactivo</option></select></label><label>Notas<input value={link.notes || ""} onChange={(event) => update(link.id, { notes: event.target.value })} /></label><button className="icon-button danger-link" type="button" onClick={() => setItem(removeExternalLink(item, link.id))}>x</button></div>)}</div></div>;
 }
 
 function CategoryEditor({ item, setItem }: { item: DocumentCategory; setItem: (item: DocumentCategory) => void }) {
@@ -59,8 +59,8 @@ function CategoryEditor({ item, setItem }: { item: DocumentCategory; setItem: (i
     <div className="form-grid">
       <label>Codigo<input value={item.code} disabled /></label>
       <label>Nombre *<input value={item.name} onChange={(event) => setItem({ ...item, name: event.target.value })} /></label>
-      <label>Tipo<select value={item.kind} onChange={(event) => setItem({ ...item, kind: event.target.value as DocumentCategoryKind })}>{kinds.map((kind) => <option key={kind}>{kind}</option>)}</select></label>
-      <label>Estado<select value={item.status} onChange={(event) => setItem({ ...item, status: event.target.value as "ACTIVO" | "INACTIVO" })}><option>ACTIVO</option><option>INACTIVO</option></select></label>
+      <label>Tipo<select value={item.kind} onChange={(event) => setItem({ ...item, kind: event.target.value as DocumentCategoryKind })}>{kinds.map((kind) => <option key={kind} value={kind}>{documentCategoryKindLabels[kind]}</option>)}</select></label>
+      <label>Estado<select value={item.status} onChange={(event) => setItem({ ...item, status: event.target.value as "ACTIVO" | "INACTIVO" })}><option value="ACTIVO">Activo</option><option value="INACTIVO">Inactivo</option></select></label>
       <label>Dias alerta vencimiento<input type="number" value={item.rules.alertBeforeDays} onChange={(event) => setRule({ alertBeforeDays: Number(event.target.value) })} /></label>
       <label>Vigencia default dias<input type="number" value={item.rules.defaultValidityDays || ""} onChange={(event) => setRule({ defaultValidityDays: event.target.value ? Number(event.target.value) : undefined })} /></label>
       <div className="form-wide"><label>Descripcion *<textarea value={item.description} onChange={(event) => setItem({ ...item, description: event.target.value })} /></label></div>
@@ -115,8 +115,8 @@ export function DocumentCategoriesPage() {
       setRefresh((value) => value + 1);
       setNotice("Categoria documental guardada correctamente.");
       setTimeout(() => setNotice(""), 2200);
-    } catch {
-      setNotice("No pudimos guardar la categoría documental. Intentá nuevamente.");
+    } catch (e) {
+      setNotice(getUserErrorMessage(e, "No pudimos guardar la categoría documental. Intentá nuevamente."));
     }
   });
   if (roleLevel(user!.role) !== 1) return <Navigate to="/configuracion" />;
@@ -125,9 +125,9 @@ export function DocumentCategoriesPage() {
     {notice && <div className="toast">{notice}</div>}
     <div className="stat-grid novelty-type-summary">{summary.map(([label, value]) => <StatCard key={label} label={label} value={value} detail="Documentacion" />)}</div>
     <Section title="Listado de categorias" subtitle={`${items.length} resultados segun filtros aplicados.`}>
-      <FilterPanel search={{ value: filters.search, onChange: (value) => setFilters({ ...filters, search: value }), placeholder: "Buscar por codigo, nombre o vinculo externo" }}><label>Tipo<select value={filters.kind} onChange={(event) => setFilters({ ...filters, kind: event.target.value })}><option value="">Todos</option>{options.kinds.map((kind) => <option key={kind}>{kind}</option>)}</select></label><label>Modulo<select value={filters.scope} onChange={(event) => setFilters({ ...filters, scope: event.target.value })}><option value="">Todos</option>{options.scopes.map((scope) => <option key={scope}>{scope}</option>)}</select></label><label>Obligatoria<select value={filters.mandatory} onChange={(event) => setFilters({ ...filters, mandatory: event.target.value })}><option value="">Todas</option><option value="true">Si</option><option value="false">No</option></select></label><label>Estado<select value={filters.status} onChange={(event) => setFilters({ ...filters, status: event.target.value })}><option value="">Todos</option>{options.statuses.map((status) => <option key={status}>{status}</option>)}</select></label></FilterPanel>
+      <FilterPanel search={{ value: filters.search, onChange: (value) => setFilters({ ...filters, search: value }), placeholder: "Buscar por codigo, nombre o vinculo externo" }}><label>Tipo<select value={filters.kind} onChange={(event) => setFilters({ ...filters, kind: event.target.value })}><option value="">Todos</option>{options.kinds.map((kind) => <option key={kind} value={kind}>{documentCategoryKindLabels[kind]}</option>)}</select></label><label>Modulo<select value={filters.scope} onChange={(event) => setFilters({ ...filters, scope: event.target.value })}><option value="">Todos</option>{options.scopes.map((scope) => <option key={scope} value={scope}>{documentCategoryScopeLabels[scope]}</option>)}</select></label><label>Obligatoria<select value={filters.mandatory} onChange={(event) => setFilters({ ...filters, mandatory: event.target.value })}><option value="">Todas</option><option value="true">Si</option><option value="false">No</option></select></label><label>Estado<select value={filters.status} onChange={(event) => setFilters({ ...filters, status: event.target.value })}><option value="">Todos</option>{options.statuses.map((status) => <option key={status} value={status}>{activoInactivoLabel(status)}</option>)}</select></label></FilterPanel>
       <DataTable status={listStatus === "loading" ? "loading" : listStatus === "error" ? "error" : items.length === 0 ? "empty" : "ready"} minWidth={1080} emptyText="No hay categorias documentales con los filtros aplicados." errorMessage="No se pudieron cargar las categorias documentales." onRetry={() => setRefresh((value) => value + 1)}>
-        <table><thead><tr><th>Codigo</th><th>Categoria</th><th>Tipo</th><th>Modulos</th><th>Reglas</th><th>Estado</th><th>Accion</th></tr></thead><tbody>{items.map((item) => <tr key={item.id}><td><b>{item.code}</b></td><td><OverflowCell value={item.name} /><span className="table-sub">{item.description}</span></td><td>{item.kind}</td><td><OverflowCell value={item.scopes.join(", ")} /></td><td><OverflowCell value={`${item.rules.mandatory ? "Obligatoria" : "Opcional"} · ${item.rules.expires ? `Vence / alerta ${item.rules.alertBeforeDays}d` : "Sin vencimiento"}`} /></td><td><Badge tone={item.status === "ACTIVO" ? "success" : "neutral"}>{item.status}</Badge></td><td><button className="table-icon-action" title="Editar" aria-label="Editar" onClick={() => setEditing(item)}><Pencil size={14}/><span>Editar</span></button></td></tr>)}</tbody></table>
+        <table><thead><tr><th>Codigo</th><th>Categoria</th><th>Tipo</th><th>Modulos</th><th>Reglas</th><th>Estado</th><th>Accion</th></tr></thead><tbody>{items.map((item) => <tr key={item.id}><td><b>{item.code}</b></td><td><OverflowCell value={item.name} /><span className="table-sub">{item.description}</span></td><td>{documentCategoryKindLabels[item.kind]}</td><td><OverflowCell value={item.scopes.map((scope) => documentCategoryScopeLabels[scope]).join(", ")} /></td><td><OverflowCell value={`${item.rules.mandatory ? "Obligatoria" : "Opcional"} · ${item.rules.expires ? `Vence / alerta ${item.rules.alertBeforeDays}d` : "Sin vencimiento"}`} /></td><td><Badge tone={item.status === "ACTIVO" ? "success" : "neutral"}>{activoInactivoLabel(item.status)}</Badge></td><td><button className="table-icon-action" title="Editar" aria-label="Editar" onClick={() => setEditing(item)}><Pencil size={14}/><span>Editar</span></button></td></tr>)}</tbody></table>
       </DataTable>
     </Section>
     {editing && <Section title={editing.name || "Nueva categoria"} subtitle="Definicion documental, reglas de vencimiento, permisos y vinculos externos." action={<div className="hero-actions"><Button variant="subtle" onClick={() => setEditing(null)}>Cerrar</Button><Button variant="primary" onClick={save} disabled={isSaving}>{isSaving ? "Guardando..." : "Guardar categoria"}</Button></div>}>

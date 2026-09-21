@@ -15,11 +15,11 @@ export const openShiftOverflowActionLabels: Record<OpenShiftOverflowAction, stri
 };
 
 export function workRegimeKindLabel(kind: WorkRegimeKind) {
-  return workRegimeKindLabels[kind] || kind;
+  return workRegimeKindLabels[kind] || "Tipo de régimen desconocido";
 }
 
 export function openShiftOverflowActionLabel(action: OpenShiftOverflowAction) {
-  return openShiftOverflowActionLabels[action] || action;
+  return openShiftOverflowActionLabels[action] || "Acción desconocida";
 }
 
 export function workRegimeStatusTone(status: WorkRegimeStatus): "success" | "neutral" {

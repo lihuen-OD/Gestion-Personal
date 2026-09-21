@@ -9,6 +9,7 @@ import { TableShell } from "../ui/TableShell";
 import { Button } from "../ui/Button";
 import { Badge } from "../ui/Badge";
 import { confirmAction } from "../../services/appDialog";
+import { getUserErrorMessage } from "../../services/api/apiClient";
 import { shiftAssignmentApiService, type ShiftAssignment } from "../../services/api/shiftAssignmentApiService";
 import type { Employee } from "../../types";
 import { useAsyncAction } from "../../utils/useAsyncAction";
@@ -71,7 +72,7 @@ export function ShiftEmployeesPanel({ shiftTemplateId, canEdit }: { shiftTemplat
       setLoadRetry((value) => value + 1);
       setTimeout(() => setNotice(""), 2200);
     } catch (reason) {
-      setNotice(reason instanceof Error ? reason.message : "No pudimos asignar el turno.");
+      setNotice(getUserErrorMessage(reason, "No pudimos asignar el turno."));
     }
   });
 
@@ -88,7 +89,7 @@ export function ShiftEmployeesPanel({ shiftTemplateId, canEdit }: { shiftTemplat
       await shiftAssignmentApiService.update(assignment.id, { status: activating ? "HABILITADO" : "DESHABILITADO" });
       setLoadRetry((value) => value + 1);
     } catch (reason) {
-      setNotice(reason instanceof Error ? reason.message : "No pudimos cambiar el estado de la asignación.");
+      setNotice(getUserErrorMessage(reason, "No pudimos cambiar el estado de la asignación."));
     }
   };
 
@@ -99,7 +100,7 @@ export function ShiftEmployeesPanel({ shiftTemplateId, canEdit }: { shiftTemplat
       await shiftAssignmentApiService.remove(assignment.id);
       setLoadRetry((value) => value + 1);
     } catch (reason) {
-      setNotice(reason instanceof Error ? reason.message : "No pudimos quitar la asociación.");
+      setNotice(getUserErrorMessage(reason, "No pudimos quitar la asociación."));
     }
   };
 

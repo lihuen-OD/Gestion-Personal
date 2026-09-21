@@ -15,6 +15,7 @@ import { orgStructureApiService } from "../services/api/orgStructureApiService";
 import { subscribeCacheEvent } from "../services/cache";
 import type { EmployeeAddress, Role } from "../types";
 import type { OrgArea, OrgBusinessUnit, OrgCompany, OrgCostCenter, OrgEstablishment, OrgSector, OrgStructureCatalog, OrgStructureEntityType, OrgStructureStatus } from "../types/orgStructure.types";
+import { activoInactivoLabel } from "../utils/status";
 import { useAsyncAction } from "../utils/useAsyncAction";
 
 type Tab = OrgStructureEntityType;
@@ -97,7 +98,7 @@ function TextField({ label, value, onChange, disabled }: { label: string; value:
 }
 
 function StatusField({ value, onChange }: { value: OrgStructureStatus; onChange: (value: OrgStructureStatus) => void }) {
-  return <label>Estado<select value={value} onChange={(event) => onChange(event.target.value as OrgStructureStatus)}><option>ACTIVO</option><option>INACTIVO</option></select></label>;
+  return <label>Estado<select value={value} onChange={(event) => onChange(event.target.value as OrgStructureStatus)}><option value="ACTIVO">Activo</option><option value="INACTIVO">Inactivo</option></select></label>;
 }
 
 function Editor({ type, item, catalog, onChange }: { type: Tab; item: Editable; catalog: OrgStructureCatalog; onChange: (item: Editable) => void }) {
@@ -163,7 +164,7 @@ function EditAction({ item, readOnly, onEdit }: { item: Editable; readOnly: bool
 }
 
 function StatusBadge({ status }: { status: OrgStructureStatus }) {
-  return <Badge tone={status === "ACTIVO" ? "success" : "neutral"}>{status}</Badge>;
+  return <Badge tone={status === "ACTIVO" ? "success" : "neutral"}>{activoInactivoLabel(status)}</Badge>;
 }
 
 function Rows({ type, catalog, readOnly, onEdit }: { type: Tab; catalog: OrgStructureCatalog; readOnly: boolean; onEdit: (item: Editable) => void }) {

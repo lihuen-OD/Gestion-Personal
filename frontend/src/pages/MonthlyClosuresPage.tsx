@@ -3,9 +3,11 @@ import { Check, CheckCheck, Eye, RotateCcw, Send, X } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { employeeApiService } from "../services/api/employeeApiService";
 import { workforceApiService, type MonthlyClosure, type TimeCorrection } from "../services/api/workforceApiService";
+import { getUserErrorMessage } from "../services/api/apiClient";
 import type { Employee } from "../types";
 import { roleLevel } from "../utils/roles";
 import { monthlyClosureStatusText as statusText, monthlyClosureStatusTone as statusTone } from "../utils/monthlyClosureStatus";
+import { formatCalendarDate } from "../utils/date";
 import { PageHeader } from "../components/ui/PageHeader";
 import { Section } from "../components/ui/Section";
 import { Button } from "../components/ui/Button";
@@ -76,7 +78,7 @@ export function MonthlyClosuresPage() {
 
   const execute = async (operation: () => Promise<unknown>) => {
     setWorking(true); setError("");
-    try { await operation(); await load(); } catch (reason) { setError(reason instanceof Error ? reason.message : "No se pudo completar la acción."); }
+    try { await operation(); await load(); } catch (reason) { setError(getUserErrorMessage(reason, "No se pudo completar la acción.")); }
     finally { setWorking(false); }
   };
 
@@ -110,7 +112,7 @@ export function MonthlyClosuresPage() {
     <Section title="Correcciones posteriores al cierre" subtitle="Aquí aparecen únicamente cambios solicitados después de enviar o aprobar el mes.">
       <TableShell minWidth={1100}>
       <table><thead><tr><th>Empleado</th><th>Día / concepto</th><th>Anterior</th><th>Propuesto</th><th>Motivo</th><th>Solicitó</th><th>Acción</th></tr></thead><tbody>
-        {pendingCorrections.map((item) => <tr key={item.id}><td><b>{item.employee.legajo}</b> · {item.employee.lastName}, {item.employee.firstName}</td><td>{new Date(item.timeEntry.date).toLocaleDateString("es-AR")} · {item.timeEntry.hourConcept.name}</td><td>{Number(item.previousHours)} h</td><td>{Number(item.proposedHours)} h</td><td>{item.reason}</td><td>{item.createdBy.name}</td><td>{isRrhh ? <div className="table-actions"><button type="button" className="table-icon-action" title="Aprobar corrección" aria-label="Aprobar corrección" onClick={() => void execute(() => workforceApiService.reviewCorrection(item.id, "approve"))}><Check size={14}/><span>Aprobar</span></button><button type="button" className="table-icon-action danger-link" title="Rechazar corrección" aria-label="Rechazar corrección" onClick={() => void execute(() => workforceApiService.reviewCorrection(item.id, "reject"))}><X size={14}/><span>Rechazar</span></button></div> : <Badge tone="warning">Esperando a RH</Badge>}</td></tr>)}
+        {pendingCorrections.map((item) => <tr key={item.id}><td><b>{item.employee.legajo}</b> · {item.employee.lastName}, {item.employee.firstName}</td><td>{formatCalendarDate(item.timeEntry.date)} · {item.timeEntry.hourConcept.name}</td><td>{Number(item.previousHours)} h</td><td>{Number(item.proposedHours)} h</td><td>{item.reason}</td><td>{item.createdBy.name}</td><td>{isRrhh ? <div className="table-actions"><button type="button" className="table-icon-action" title="Aprobar corrección" aria-label="Aprobar corrección" onClick={() => void execute(() => workforceApiService.reviewCorrection(item.id, "approve"))}><Check size={14}/><span>Aprobar</span></button><button type="button" className="table-icon-action danger-link" title="Rechazar corrección" aria-label="Rechazar corrección" onClick={() => void execute(() => workforceApiService.reviewCorrection(item.id, "reject"))}><X size={14}/><span>Rechazar</span></button></div> : <Badge tone="warning">Esperando a RH</Badge>}</td></tr>)}
       </tbody></table>
       </TableShell>
       {!pendingCorrections.length ? <EmptyState text="No hay correcciones pendientes para este período." /> : null}

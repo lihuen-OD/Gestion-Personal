@@ -3,6 +3,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { WorkScheduleSettingsPage } from "./WorkScheduleSettingsPage";
+import { ApiError } from "../services/api/apiClient";
 import { workforceApiService, type DoubleHourRule } from "../services/api/workforceApiService";
 import { orgStructureApiService } from "../services/api/orgStructureApiService";
 import { positionApiService } from "../services/api/positionApiService";
@@ -664,7 +665,7 @@ describe("WorkScheduleSettingsPage — Etapa 8B (corrección: errores contenidos
   });
 
   it("un error del backend al crear se muestra dentro de la card y el formulario sigue usable", async () => {
-    vi.mocked(workforceApiService.createDoubleHourRule).mockRejectedValue(new Error("Ya existe una regla con ese nombre."));
+    vi.mocked(workforceApiService.createDoubleHourRule).mockRejectedValue(new ApiError("Ya existe una regla con ese nombre.", "DOUBLE_HOUR_RULE_DUPLICATE", 409));
     const user = userEvent.setup();
     renderPage();
     await waitFor(() => expect(orgStructureApiService.getCatalog).toHaveBeenCalled());
@@ -682,7 +683,7 @@ describe("WorkScheduleSettingsPage — Etapa 8B (corrección: errores contenidos
 
   it("un error del backend al editar también se muestra dentro de la card, sin romper la pantalla", async () => {
     vi.mocked(workforceApiService.doubleHourRules).mockResolvedValue([existingRule()]);
-    vi.mocked(workforceApiService.updateDoubleHourRule).mockRejectedValue(new Error("No se pudo actualizar la regla."));
+    vi.mocked(workforceApiService.updateDoubleHourRule).mockRejectedValue(new ApiError("No se pudo actualizar la regla.", "DOUBLE_HOUR_RULE_UPDATE_FAILED", 400));
     const user = userEvent.setup();
     renderPage();
     await screen.findByText("Domingo", { selector: "b" });
@@ -698,7 +699,7 @@ describe("WorkScheduleSettingsPage — Etapa 8B (corrección: errores contenidos
 
   it("un error al activar/inactivar una regla se muestra dentro de la card del listado, no arriba de toda la página", async () => {
     vi.mocked(workforceApiService.doubleHourRules).mockResolvedValue([existingRule()]);
-    vi.mocked(workforceApiService.updateDoubleHourRule).mockRejectedValue(new Error("No se pudo cambiar el estado."));
+    vi.mocked(workforceApiService.updateDoubleHourRule).mockRejectedValue(new ApiError("No se pudo cambiar el estado.", "DOUBLE_HOUR_RULE_STATUS_FAILED", 400));
     const user = userEvent.setup();
     renderPage();
     await screen.findByText("Domingo", { selector: "b" });

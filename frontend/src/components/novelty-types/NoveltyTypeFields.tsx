@@ -9,6 +9,18 @@ import { noveltyColorClass, noveltyUiColors } from "../../utils/noveltyColor";
 
 export const noveltyKinds: NoveltyTypeKind[] = ["AUSENCIA", "LICENCIA", "HORARIA", "ACCIDENTE", "VACACIONES", "SANCION", "OTRO"];
 
+// Etapa 15M.20: nunca mostrar el enum crudo del backend en pantalla -- único
+// punto de verdad para la etiqueta humana de cada categoría de novedad.
+export const noveltyKindLabels: Record<NoveltyTypeKind, string> = {
+  AUSENCIA: "Ausencia",
+  LICENCIA: "Licencia",
+  HORARIA: "Horaria",
+  ACCIDENTE: "Accidente",
+  VACACIONES: "Vacaciones",
+  SANCION: "Sanción",
+  OTRO: "Otro",
+};
+
 // Etapa 15L.2B (docs/decisions/NOVELTY_TYPE_FRONTEND_REDESIGN_15L2B.md):
 // único control visible de comportamiento horario. Etapa 15L.6
 // (docs/decisions/NOVELTY_TYPE_LEGACY_REMOVAL_15L6.md): retiró los campos
@@ -110,8 +122,11 @@ export function TextField({ label, value, onChange, disabled, type = "text" }: {
   return <label>{label}<input type={type} value={value} disabled={disabled} onChange={(event) => onChange(event.target.value)} /></label>;
 }
 
-export function SelectField({ label, value, onChange, options, disabled }: { label: string; value: string; onChange: (value: string) => void; options: readonly string[]; disabled?: boolean }) {
-  return <label>{label}<select value={value} disabled={disabled} onChange={(event) => onChange(event.target.value)}>{options.map((option) => <option key={option} value={option}>{option}</option>)}</select></label>;
+// Etapa 15M.20: `labels` es opcional -- humaniza el texto visible de cada
+// <option> sin tocar el `value` (sigue siendo el enum crudo que espera el
+// backend). Sin `labels`, se comporta como antes.
+export function SelectField({ label, value, onChange, options, labels, disabled }: { label: string; value: string; onChange: (value: string) => void; options: readonly string[]; labels?: Record<string, string>; disabled?: boolean }) {
+  return <label>{label}<select value={value} disabled={disabled} onChange={(event) => onChange(event.target.value)}>{options.map((option) => <option key={option} value={option}>{labels?.[option] ?? option}</option>)}</select></label>;
 }
 
 export function TextAreaField({ label, value, onChange, disabled }: { label: string; value: string; onChange: (value: string) => void; disabled?: boolean }) {

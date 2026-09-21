@@ -1008,7 +1008,7 @@ export const timeEntriesService = {
       action: "UPDATE",
       entity: "WorkShift",
       entityId: before.id,
-      description: `Se cerro manualmente jornada del legajo ${before.employee.legajo}. Motivo: ${input.reason}`,
+      description: `Se cerró manualmente la jornada del legajo ${before.employee.legajo}. Motivo: ${input.reason}`,
       before: before as Prisma.InputJsonValue,
       after: created as Prisma.InputJsonValue,
     });
@@ -1026,7 +1026,7 @@ export const timeEntriesService = {
       action: "UPDATE",
       entity: "WorkShift",
       entityId: id,
-      description: `Se observo jornada del legajo ${before.employee.legajo}. Motivo: ${input.reason}`,
+      description: `Se observó la jornada del legajo ${before.employee.legajo}. Motivo: ${input.reason}`,
       before: before as Prisma.InputJsonValue,
       after: item as Prisma.InputJsonValue,
     });
@@ -1046,7 +1046,7 @@ export const timeEntriesService = {
       action: "UPDATE",
       entity: "WorkShift",
       entityId: id,
-      description: `Se marco olvido de salida para el legajo ${before.employee.legajo}. Motivo: ${input.reason}`,
+      description: `Se marcó un olvido de salida para el legajo ${before.employee.legajo}. Motivo: ${input.reason}`,
       before: before as Prisma.InputJsonValue,
       after: item as Prisma.InputJsonValue,
     });
@@ -1076,8 +1076,8 @@ export const timeEntriesService = {
       entity: "TimeEntry",
       entityId: item.id,
       description: autoApprovedByUserId
-        ? `Se cargo y aplico ${item.hours.toString()} hs (RRHH) para el legajo ${item.employee.legajo}.`
-        : `Se cargo ${item.hours.toString()} hs para el legajo ${item.employee.legajo}.`,
+        ? `Se cargó y aplicó ${item.hours.toString()} hs (RRHH) para el legajo ${item.employee.legajo}.`
+        : `Se cargó ${item.hours.toString()} hs para el legajo ${item.employee.legajo}.`,
       after: item as Prisma.InputJsonValue,
     });
     return redactPiiForRole(item, user);
@@ -1136,7 +1136,7 @@ export const timeEntriesService = {
         action: "CREATE",
         entity: "WorkShift",
         entityId: created.workShift.id,
-        description: `Se registro marcacion de ${formatNumber(result.totalMinutes / 60)} hs para el legajo ${result.employee.legajo}.`,
+        description: `Se registró una marcación de ${formatNumber(result.totalMinutes / 60)} hs para el legajo ${result.employee.legajo}.`,
         after: {
           workShift: created.workShift,
           segments: result.segments.map((segment) => segment.label),

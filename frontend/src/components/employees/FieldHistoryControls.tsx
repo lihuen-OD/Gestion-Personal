@@ -5,6 +5,7 @@ import { getUserErrorMessage } from "../../services/api/apiClient";
 import type { Employee, EmployeeBlockHistoryRecord, EmployeeFieldHistoryRecord, FieldHistorySection, User } from "../../types";
 import { useAsyncAction } from "../../utils/useAsyncAction";
 import { requiredLaborChangeError } from "../../utils/laborFieldValidation";
+import { formatCalendarDate } from "../../utils/date";
 import { Button } from "../ui/Button";
 import { EmptyState } from "../ui/EmptyState";
 import { ErrorState } from "../ui/ErrorState";
@@ -87,11 +88,8 @@ export function FieldWithHistory({
     };
   }, [open, historyLoaded, employee.id, section, field, historyRetry]);
 
-  const currentFrom =
-    history[0]?.effectiveFrom ||
-    effectiveFrom ||
-    employee.startDate ||
-    "Sin cargar";
+  const currentFromRaw = history[0]?.effectiveFrom || effectiveFrom || employee.startDate;
+  const currentFrom = currentFromRaw ? formatCalendarDate(currentFromRaw) : "Sin cargar";
 
   const { isRunning: isSaving, run: save } = useAsyncAction(async () => {
     const validationError = requiredLaborChangeError(from, reason);
@@ -164,7 +162,7 @@ export function FieldWithHistory({
                 <div key={item.id}>
                   <i />
                   <b>
-                    {item.effectiveFrom} | {item.newValue}
+                    {formatCalendarDate(item.effectiveFrom)} | {item.newValue}
                   </b>
                   <span>{item.createdByUserName}</span>
                   <p>
@@ -251,7 +249,7 @@ export function BlockHistoryTimeline({
         <div key={row.id}>
           <i />
           <b>
-            {row.effectiveFrom} · {row.blockLabel}
+            {formatCalendarDate(row.effectiveFrom)} · {row.blockLabel}
           </b>
           <span>{row.createdByUserName}</span>
           <p>

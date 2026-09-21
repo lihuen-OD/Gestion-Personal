@@ -1847,10 +1847,14 @@ a.employee-hours-status-item:hover{border-color:var(--ds-blue-300);background:va
   color:var(--ds-slate-500)!important;
   white-space:nowrap!important;
 }
+.dashboard-activity-table td:nth-child(2){
+  white-space:nowrap!important;
+}
 .dashboard-activity-table td:nth-child(3),
 .dashboard-activity-table td:nth-child(4){
   color:var(--ds-slate-800)!important;
   font-weight:600!important;
+  white-space:nowrap!important;
 }
 .dashboard-activity-detail{
   display:block!important;

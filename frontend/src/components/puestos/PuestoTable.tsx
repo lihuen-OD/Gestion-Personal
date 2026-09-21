@@ -6,6 +6,7 @@ import { CompactBadgeList } from "../ui/CompactBadgeList";
 import { Badge } from "../ui/Badge";
 import { EmptyState } from "../ui/EmptyState";
 import type { Position } from "../../types/position.types";
+import { activoInactivoLabel } from "../../utils/status";
 
 /**
  * Ubicacion mostrada en la fila: siempre los derivados via sectorId
@@ -37,7 +38,7 @@ export function PuestoTable({ positions, assignedCount, canEdit, onRemove, onTog
       <td className="position-text-cell">{location.sector ? <OverflowCell value={location.sector} /> : <span className="position-muted">Sin definir</span>}</td>
       <td className="position-range-cell"><SalaryRangeCell categories={position.salaryCategoryNames} /></td>
       <td><span className="position-count">{assignedCount(position.id)}</span></td>
-      <td><Badge tone={position.status === "ACTIVO" ? "success" : "neutral"}>{position.status}</Badge></td>
+      <td><Badge tone={position.status === "ACTIVO" ? "success" : "neutral"}>{activoInactivoLabel(position.status)}</Badge></td>
       <td><div className="table-actions">
         <Link className="table-icon-action" title="Ver detalle" aria-label="Ver detalle" to={`/puestos/${position.id}`}><Eye size={14} /><span>Ver detalle</span></Link>
         {canEdit && <button className="table-icon-action" title={position.status === "ACTIVO" ? "Inactivar" : "Activar"} aria-label={position.status === "ACTIVO" ? "Inactivar" : "Activar"} onClick={() => onToggleStatus(position)}><Power size={14} /><span>{position.status === "ACTIVO" ? "Inactivar" : "Activar"}</span></button>}

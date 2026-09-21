@@ -24,6 +24,71 @@ describe("auditFieldChanges", () => {
   });
 });
 
+// Etapa 15M.20 (relevado en navegador real, con datos reales de staging): el
+// resumen "Antes/Después" de un evento de auditoría volcaba cualquier FK
+// cruda (workShiftId, shiftTemplateId, etc.) y cualquier TIMESTAMPTZ como
+// instante ISO sin formatear dentro de `previous`/`next`.
+describe("auditApiService — resumen de before/after sin IDs crudos ni fechas ISO (Etapa 15M.20)", () => {
+  beforeEach(async () => {
+    await clearAllAppCaches("test setup");
+    vi.mocked(apiRequest).mockReset();
+  });
+
+  it("oculta cualquier propiedad que termine en 'Id' y formatea los timestamps embebidos", async () => {
+    vi.mocked(apiRequest).mockResolvedValue({
+      data: [{
+        id: "audit-1",
+        action: "UPDATE",
+        entity: "WorkShift",
+        entityId: "a6656986-e233-4216-8b87-72d10232ef2a",
+        description: "-",
+        createdAt: "2026-09-18T17:24:00.000Z",
+        before: { workShiftId: "a6656986-e233-4216-8b87-72d10232ef2a", source: "PUBLIC_CLOCK_PHOTO", status: "ABIERTO", startAt: "2026-09-18T14:00:00.000Z" },
+        after: { status: "PROCESADO" },
+        user: { name: "Ana", role: "NIVEL_1_RRHH" },
+      }],
+      meta: { total: 1, page: 1, pageSize: 25, hasMore: false },
+    });
+
+    const result = await auditApiService.list({ take: 25 });
+    const previous = result.items[0].previous;
+
+    expect(previous).not.toContain("a6656986-e233-4216-8b87-72d10232ef2a");
+    expect(previous).not.toContain("workShiftId");
+    expect(previous).not.toContain("2026-09-18T14:00:00.000Z");
+    expect(previous).toContain("Origen");
+    expect(previous).toContain("Estado");
+  });
+
+  // Un campo `@db.Date` (calendario puro, ej. TimeEntry.date) llega
+  // serializado como instante ISO a medianoche UTC. Tratarlo como TIMESTAMPTZ
+  // (parsearlo con `new Date()` y convertir a horario de Argentina) lo corre
+  // un día para atrás — el mismo riesgo que documenta docs/DATABASE_STANDARDS.md.
+  // Sólo las claves TIMESTAMPTZ reales (startAt, endAt, actualAt, ...) deben
+  // pasar por ese formateo; `date` no es una de ellas.
+  it("no reinterpreta un campo @db.Date (calendario) como instante con huso horario", async () => {
+    vi.mocked(apiRequest).mockResolvedValue({
+      data: [{
+        id: "audit-2",
+        action: "UPDATE",
+        entity: "TimeEntry",
+        entityId: null,
+        description: "-",
+        createdAt: "2026-09-18T17:24:00.000Z",
+        before: { date: "2026-09-18T00:00:00.000Z", hours: 8 },
+        after: null,
+        user: { name: "Ana", role: "NIVEL_1_RRHH" },
+      }],
+      meta: { total: 1, page: 1, pageSize: 25, hasMore: false },
+    });
+
+    const result = await auditApiService.list({ take: 25 });
+    // El valor crudo de `date` se conserva tal cual (el regex de limpieza en
+    // utils/auditLabels.ts lo extrae de forma segura por texto, sin Date()).
+    expect(result.items[0].previous).toContain("2026-09-18T00:00:00.000Z");
+  });
+});
+
 // Etapa 14F.2: antes de esta etapa, auditApiService.list llamaba apiRequest
 // directo sin ningún dedupe/cache frontend — en StrictMode (DashboardPage
 // monta el effect dos veces) esto generaba 2 requests idénticos a
@@ -104,7 +169,10 @@ describe("auditApiService.list/getAll — dedupe/cache frontend (Etapa 14F.2)", 
     const result = await auditApiService.list({ take: 2 });
 
     expect(result.meta).toEqual({ total: 2, page: 1, pageSize: 2, hasMore: false });
-    expect(result.items[0]).toMatchObject({ id: "audit-0", action: "Alta", entity: "Employee" });
+    // Etapa 15M.20: la traducción a español se mueve a la capa de
+    // presentación (utils/auditLabels.ts) — el servicio pasa la acción cruda
+    // del backend tal cual, igual que ya hacía con `entity`.
+    expect(result.items[0]).toMatchObject({ id: "audit-0", action: "CREATE", entity: "Employee" });
   });
 
   it("no arma la cache key con datos sensibles — sólo path+query, sin tokens", async () => {

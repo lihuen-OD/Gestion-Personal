@@ -5,6 +5,7 @@ import { auditApiService } from "../services/api/auditApiService";
 import { employeeApiService } from "../services/api/employeeApiService";
 import { ApiError } from "../services/api/apiClient";
 import { calculateEmployeeStatus } from "../services/employeeStatusService";
+import { auditActionLabel, auditEntityLabel, auditDescription, auditChange } from "../utils/auditLabels";
 import { EmployeeDocumentsPanel } from "../components/documents/EmployeeDocumentsPanel";
 import { EmployeeNoveltiesPanel } from "../components/novelties/EmployeeNoveltiesPanel";
 import { EmployeeShiftsPanel } from "../components/employees/EmployeeShiftsPanel";
@@ -394,10 +395,10 @@ function renderEmployeeTab(
         {auditRows.map((event) => (
           <div key={event.id}>
             <i />
-            <b>{event.action} · {event.entity}</b>
+            <b>{auditActionLabel(event.action)} · {auditEntityLabel(event.entity)}</b>
             <span>{event.date} {event.time} · {event.user}</span>
             <p>
-              {event.reason}
+              {auditDescription(event)}
             </p>
           </div>
         ))}
@@ -433,12 +434,12 @@ function renderEmployeeTab(
                   {audit.date} {audit.time}
                 </td>
                 <td>{audit.user}</td>
-                <td>{audit.action}</td>
+                <td>{auditActionLabel(audit.action)}</td>
                 <td>
-                  <OverflowCell value={audit.reason} />
+                  <OverflowCell value={auditDescription(audit)} />
                 </td>
                 <td>
-                  <OverflowCell value={`${audit.previous !== "-" ? `Antes: ${audit.previous}` : ""}${audit.previous !== "-" && audit.next !== "-" ? " | " : ""}${audit.next !== "-" ? `Despues: ${audit.next}` : ""}` || "-"} />
+                  <OverflowCell value={auditChange(audit)} />
                 </td>
               </tr>
             ))}

@@ -190,6 +190,20 @@ export function formatArgentinaTime(instant: Date): string {
 }
 
 /**
+ * Etapa 15M.20 (docs/decisions/GLOBAL_USER_FACING_TEXT_POLICY_15M20.md):
+ * "YYYY-MM" a texto humano ("septiembre de 2026") — para textos de negocio
+ * (ej. `AuditLog.description`) que hoy interpolan el período técnico
+ * directamente. No usar en contratos/exports/inputs, donde "YYYY-MM" sigue
+ * siendo el formato correcto.
+ */
+export function humanizePeriodEs(period: string): string {
+  const [year, month] = period.split("-").map(Number);
+  if (!year || !month) return period;
+  const label = new Intl.DateTimeFormat("es-AR", { month: "long", timeZone: "UTC" }).format(new Date(Date.UTC(year, month - 1, 1)));
+  return `${label} de ${year}`;
+}
+
+/**
  * Instante real (UTC) correspondiente a "el día calendario Argentina de
  * `reference`, a las `time` (HH:MM) hora Argentina", opcionalmente +1 día.
  *
