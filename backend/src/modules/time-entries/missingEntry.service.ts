@@ -1,5 +1,5 @@
 import { prisma } from "../../shared/prisma/client";
-import { todayArgentinaDateKey } from "../../shared/datetime/argentinaTime";
+import { formatArgentinaDate, todayArgentinaDateKey } from "../../shared/datetime/argentinaTime";
 import { resolveWorkObligationCandidates, type WorkObligationCandidate } from "../shifts/workObligation.service";
 import {
   findEmployeeIdsExcludedByNovelty,
@@ -115,7 +115,7 @@ export async function checkMissingExpectedEntries(now: Date = new Date()): Promi
       employees,
       (employee) => {
         const template = templateById.get(employee.id)!;
-        return `No se registró el ingreso dentro de la tolerancia del turno ${template.code} (${template.startTime}) para el ${dateKey}. Requiere revisión.`;
+        return `No se registró el ingreso dentro de la tolerancia del turno ${template.code} (${template.startTime}) para el ${formatArgentinaDate(dateKey)}. Requiere revisión.`;
       },
       (employee) => {
         const template = templateById.get(employee.id)!;

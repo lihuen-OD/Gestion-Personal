@@ -180,13 +180,34 @@ export function calendarDaysInclusive(fromDate: Date, toDate?: Date | null): num
   return Math.round((to - from) / MS_PER_DAY) + 1;
 }
 
-/** Formatea un instante como hora local Argentina "HH:MM". */
+/**
+ * Formatea un instante como hora local Argentina "HH:MM" (24 horas). El
+ * locale "es-AR" por default usa 12 horas con sufijo "a. m."/"p. m." en el
+ * motor ICU de Node — `hour12: false` fuerza el formato 24 horas estándar.
+ */
 export function formatArgentinaTime(instant: Date): string {
   return new Intl.DateTimeFormat("es-AR", {
     timeZone: ARGENTINA_TIME_ZONE,
     hour: "2-digit",
     minute: "2-digit",
+    hour12: false,
   }).format(instant);
+}
+
+/**
+ * Etapa 15M.21 (normalización global de fechas visibles): "DD/MM/AAAA" de una
+ * FECHA CALENDARIO ya normalizada — acepta el `Date` `@db.Date` tal como lo
+ * devuelve Prisma o su clave "YYYY-MM-DD" ya resuelta (ej. `dateKey` de un
+ * incidente de inactividad). Mismo criterio que `periodFromCalendarDate`: NO
+ * aplica corrimiento de huso horario, porque el valor ya representa el día
+ * calendario correcto. Para texto de negocio (avisos de inactividad,
+ * convocatorias a feriado, mensajes de error de vigencia, etc.) que hoy
+ * interpola la fecha técnica directamente.
+ */
+export function formatArgentinaDate(value: Date | string): string {
+  const key = typeof value === "string" ? value.slice(0, 10) : calendarDateKey(value);
+  const [year, month, day] = key.split("-");
+  return `${day}/${month}/${year}`;
 }
 
 /**

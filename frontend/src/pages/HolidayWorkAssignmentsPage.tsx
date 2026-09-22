@@ -21,6 +21,7 @@ import type { OrgStructureCatalog } from "../types/orgStructure.types";
 import { useDebouncedValue } from "../utils/useDebouncedValue";
 import { useAuth } from "../context/AuthContext";
 import { roleLevel } from "../utils/roles";
+import { argentinaDateKey } from "../utils/argentinaDateKey";
 
 function monthRange(year: number, month: number) {
   const from = new Date(Date.UTC(year, month, 1));
@@ -49,8 +50,8 @@ export function HolidayWorkAssignmentsPage() {
   const { user } = useAuth();
   const canEdit = roleLevel(user!.role) === 1;
 
-  const today = new Date();
-  const [cursor, setCursor] = useState({ year: today.getUTCFullYear(), month: today.getUTCMonth() });
+  const [todayYear, todayMonth] = argentinaDateKey(new Date()).slice(0, 7).split("-").map(Number);
+  const [cursor, setCursor] = useState({ year: todayYear, month: todayMonth - 1 });
   const [holidayDates, setHolidayDates] = useState<HolidayDate[] | null>(null);
   const [datesStatus, setDatesStatus] = useState<"loading" | "success" | "error">("loading");
   const [datesRetryToken, setDatesRetryToken] = useState(0);

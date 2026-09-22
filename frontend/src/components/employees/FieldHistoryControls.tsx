@@ -5,7 +5,8 @@ import { getUserErrorMessage } from "../../services/api/apiClient";
 import type { Employee, EmployeeBlockHistoryRecord, EmployeeFieldHistoryRecord, FieldHistorySection, User } from "../../types";
 import { useAsyncAction } from "../../utils/useAsyncAction";
 import { requiredLaborChangeError } from "../../utils/laborFieldValidation";
-import { formatCalendarDate } from "../../utils/date";
+import { formatCalendarDate, formatDateTime } from "../../utils/date";
+import { argentinaDateKey } from "../../utils/argentinaDateKey";
 import { Button } from "../ui/Button";
 import { EmptyState } from "../ui/EmptyState";
 import { ErrorState } from "../ui/ErrorState";
@@ -52,7 +53,7 @@ export function FieldWithHistory({
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(false);
   const [next, setNext] = useState(value);
-  const [from, setFrom] = useState(effectiveFrom || new Date().toISOString().slice(0, 10));
+  const [from, setFrom] = useState(effectiveFrom || argentinaDateKey(new Date()));
   const [reason, setReason] = useState("");
   const [error, setError] = useState("");
   const [history, setHistory] = useState<EmployeeFieldHistoryRecord[]>([]);
@@ -167,7 +168,7 @@ export function FieldWithHistory({
                   <span>{item.createdByUserName}</span>
                   <p>
                     Anterior: {item.oldValue || "-"} · Motivo: {item.reason} · Registro:{" "}
-                    {new Date(item.createdAt).toLocaleString("es-AR")}
+                    {formatDateTime(item.createdAt)}
                   </p>
                 </div>
               ))}
@@ -254,7 +255,7 @@ export function BlockHistoryTimeline({
           <span>{row.createdByUserName}</span>
           <p>
             Anterior: {row.oldValue || "-"} · Nuevo: {row.newValue} · Motivo: {row.reason} ·
-            Registro: {new Date(row.createdAt).toLocaleString("es-AR")}
+            Registro: {formatDateTime(row.createdAt)}
           </p>
         </div>
       ))}

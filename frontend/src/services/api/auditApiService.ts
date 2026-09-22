@@ -1,6 +1,7 @@
 import { apiRequest } from "./apiClient";
 import { cachePolicies, cachedData } from "../cache";
 import type { AuditEntry } from "../../types";
+import { formatInstantDate, formatInstantTime } from "../../utils/date";
 
 type ApiAuditLog = {
   id: string;
@@ -28,8 +29,8 @@ function dateParts(value: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return { date: value.slice(0, 10), time: "" };
   return {
-    date: date.toLocaleDateString("es-AR"),
-    time: date.toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" }),
+    date: formatInstantDate(date),
+    time: formatInstantTime(date),
   };
 }
 
@@ -155,7 +156,7 @@ const isoInstantPattern = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z?$/;
 function formatInstantValue(value: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
-  return `${date.toLocaleDateString("es-AR")} ${date.toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" })}`;
+  return `${formatInstantDate(date)} · ${formatInstantTime(date)}`;
 }
 
 function displayValueForKey(key: string, entryValue: unknown): string {

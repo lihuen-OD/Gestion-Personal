@@ -5,6 +5,7 @@ import { timeClockApiService } from "../services/api/timeClockApiService";
 import { Button } from "../components/ui/Button";
 import { LoadingState } from "../components/ui/LoadingState";
 import type { FaceCaptureResult } from "../components/time-clock/FaceCaptureModal";
+import { formatDateTime } from "../utils/date";
 
 const FaceCaptureModal = lazy(() =>
   import("../components/time-clock/FaceCaptureModal").then((module) => ({ default: module.FaceCaptureModal })),
@@ -12,16 +13,8 @@ const FaceCaptureModal = lazy(() =>
 
 const MAX_CLOCK_SHIFT_MINUTES = 20 * 60;
 
-function formatDateTime(value?: string) {
-  if (!value) return "-";
-  return new Date(value).toLocaleString("es-AR", {
-    dateStyle: "short",
-    timeStyle: "short",
-  });
-}
-
 function formatCurrentTime(value: Date) {
-  return value.toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  return value.toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
 }
 
 export function TimeClockPage() {

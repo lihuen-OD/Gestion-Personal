@@ -18,6 +18,7 @@ import { useStructureSelectOptions } from "../components/employees/options/struc
 import { employeeApiService } from "../services/api/employeeApiService";
 import { ApiError } from "../services/api/apiClient";
 import { calculateEmployeeStatus } from "../services/employeeStatusService";
+import { formatInstantDate } from "../utils/date";
 import type { Employee } from "../types";
 
 const entryReasons = [
@@ -218,7 +219,7 @@ export function EmployeeCreatePage() {
         historyEvents: [
           {
             id: crypto.randomUUID(),
-            date: new Date().toLocaleDateString("es-AR"),
+            date: formatInstantDate(new Date()),
             type: "Alta",
             description: "Se creó el legajo del colaborador.",
             user: user!.name,

@@ -7,6 +7,7 @@ import { NoveltyTable } from "./NoveltyTable";
 import { Button } from "../ui/Button";
 import { ErrorState } from "../ui/ErrorState";
 import { LoadingState } from "../ui/LoadingState";
+import { formatInstantDate } from "../../utils/date";
 
 export function EmployeeNoveltiesPanel({
   employee,
@@ -47,7 +48,7 @@ export function EmployeeNoveltiesPanel({
       historyEvents: [
         {
           id: crypto.randomUUID(),
-          date: new Date().toLocaleDateString("es-AR"),
+          date: formatInstantDate(new Date()),
           type: "Novedad registrada",
           description: "Se registró una novedad de ausentismo / horario.",
           user: user.name,

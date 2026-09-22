@@ -1,12 +1,16 @@
 import type { DocumentCategory } from "../types/documentCategory.types";
+import { argentinaDateKey } from "./argentinaDateKey";
 
+// Etapa 15M.21: "hoy" es el día calendario Argentina, no el día UTC — entre
+// ~21:00 y 23:59 ART el día UTC ya rodó al siguiente, lo que corría un día
+// hacia adelante el estado "Vencido"/"Por vencer" de un documento.
 export function isoToday() {
-  return new Date().toISOString().slice(0, 10);
+  return argentinaDateKey(new Date());
 }
 
 export function isoAddDays(days: number) {
-  const date = new Date();
-  date.setDate(date.getDate() + days);
+  const date = new Date(`${isoToday()}T00:00:00.000Z`);
+  date.setUTCDate(date.getUTCDate() + days);
   return date.toISOString().slice(0, 10);
 }
 

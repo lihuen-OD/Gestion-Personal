@@ -987,7 +987,8 @@ describe("NotificationsPage — Etapa 15M.19E (fecha real del hecho, no de creac
     renderPage();
 
     await screen.findByText("Alerta de turno");
-    expect(screen.getByText(/19\/9\/2026/)).toBeInTheDocument();
+    // 2026-09-19T08:11:00.000Z = 05:11 hora Argentina (UTC-3), mismo día.
+    expect(screen.getByText("19/09/2026 · 05:11")).toBeInTheDocument();
   });
 
   it("sin eventDate (ej. notificación tipo Employee, o legado), sigue mostrando createdAt como antes", async () => {
@@ -999,6 +1000,7 @@ describe("NotificationsPage — Etapa 15M.19E (fecha real del hecho, no de creac
     renderPage();
 
     await screen.findByText("Cierres mensuales recibidos");
-    expect(screen.getByText(new Date("2026-08-20T10:00:00.000Z").toLocaleString("es-AR"))).toBeInTheDocument();
+    // 2026-08-20T10:00:00.000Z = 07:00 hora Argentina (UTC-3), mismo día.
+    expect(screen.getByText("20/08/2026 · 07:00")).toBeInTheDocument();
   });
 });

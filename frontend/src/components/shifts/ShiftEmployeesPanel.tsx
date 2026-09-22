@@ -15,9 +15,11 @@ import type { Employee } from "../../types";
 import { useAsyncAction } from "../../utils/useAsyncAction";
 import { assignmentVigencyLabel, assignmentVigencyStatus, assignmentVigencyTone, buildShiftAssignmentVigencyPayload, formatAssignmentDate, formatWeekdays } from "../../utils/shiftAssignment";
 import { ShiftAssignmentVigencyFields } from "../shared/ShiftAssignmentVigencyFields";
+import { argentinaDateKey } from "../../utils/argentinaDateKey";
+import { formatInstantDate } from "../../utils/date";
 
 function todayDateInput() {
-  return new Date().toISOString().slice(0, 10);
+  return argentinaDateKey(new Date());
 }
 
 export function ShiftEmployeesPanel({ shiftTemplateId, canEdit }: { shiftTemplateId: string; canEdit: boolean }) {
@@ -176,7 +178,7 @@ export function ShiftEmployeesPanel({ shiftTemplateId, canEdit }: { shiftTemplat
                   <td>{formatAssignmentDate(assignment.effectiveTo)}</td>
                   <td>{formatWeekdays(assignment.weekdays)}</td>
                   <td><Badge tone={assignmentVigencyTone(assignmentVigencyStatus(assignment.effectiveFrom, assignment.effectiveTo))}>{assignmentVigencyLabel(assignmentVigencyStatus(assignment.effectiveFrom, assignment.effectiveTo))}</Badge></td>
-                  <td>{assignment.disabledAt ? new Date(assignment.disabledAt).toLocaleDateString("es-AR") : "-"}</td>
+                  <td>{assignment.disabledAt ? formatInstantDate(assignment.disabledAt) : "-"}</td>
                   <td>{assignment.observation || <em>Sin observación</em>}</td>
                   <td>
                     {canEdit ? (

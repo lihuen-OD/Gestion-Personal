@@ -1,3 +1,5 @@
+import { argentinaDateKey } from "./argentinaDateKey";
+
 export function getPeriodDayCount(period: string) {
   const [year, month] = period.split("-").map(Number);
   if (!year || !month) return 30;
@@ -8,8 +10,12 @@ export function getMonthDays(period: string) {
   return Array.from({ length: getPeriodDayCount(period) }, (_, index) => index + 1);
 }
 
+// Etapa 15M.21: el mes calendario "actual" depende de la hora Argentina, no
+// de UTC — entre ~21:00 y 23:59 ART el día (y, en fin de mes, el mes) UTC ya
+// rodó al siguiente, así que `new Date().toISOString().slice(0, 7)` podía
+// devolver el período equivocado en esa ventana horaria.
 export function currentMonthPeriod() {
-  return new Date().toISOString().slice(0, 7);
+  return argentinaDateKey(new Date()).slice(0, 7);
 }
 
 export function monthDate(period: string, day: number) {

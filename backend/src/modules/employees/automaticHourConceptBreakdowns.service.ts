@@ -4,6 +4,7 @@ import { auditService } from "../audit/audit.service";
 import { AppError } from "../../shared/errors/AppError";
 import { employeeAccessWhere } from "./employeeAccess";
 import { isMonthlyClosureLocked } from "../../shared/monthlyClosure/closureLock";
+import { humanizePeriodEs } from "../../shared/datetime/argentinaTime";
 import { argentinaPeriodBounds, calculateAutomaticBreakdowns } from "./automaticHourConceptBreakdowns";
 import { automaticHourConceptBreakdownsRepository as repository } from "./automaticHourConceptBreakdowns.repository";
 
@@ -75,7 +76,7 @@ async function recalculateForEmployeePeriod({ employeeId, period, createdByUserI
   }
 
   const response = { employeeId, period, processedShifts: completeShifts.length, eligibleConcepts: assignments.length, generated: result.created, removed: result.deleted };
-  await auditService.register({ ...audit, action: "UPDATE", entity: "HourConceptBreakdown", entityId: employeeId, description: `Recalculó desgloses automáticos de ${period}`, after: response });
+  await auditService.register({ ...audit, action: "UPDATE", entity: "HourConceptBreakdown", entityId: employeeId, description: `Recalculó desgloses automáticos de ${humanizePeriodEs(period)}`, after: response });
   return response;
 }
 

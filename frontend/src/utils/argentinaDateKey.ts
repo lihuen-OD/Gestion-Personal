@@ -1,4 +1,4 @@
-const ARGENTINA_TIME_ZONE = "America/Argentina/Cordoba";
+export const ARGENTINA_TIME_ZONE = "America/Argentina/Cordoba";
 
 /**
  * Convierte un instante (ISO string o Date) a su fecha calendario Argentina

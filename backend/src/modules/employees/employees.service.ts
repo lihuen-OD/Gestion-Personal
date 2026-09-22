@@ -7,6 +7,7 @@ import { storagePathBuilder } from "../../shared/storage/storagePathBuilder";
 import { redactPiiForRole } from "../../shared/security/piiRedaction";
 import { canAccessDocumentCategory } from "../../shared/security/documentCategoryAccess";
 import { isMonthlyClosureLocked } from "../../shared/monthlyClosure/closureLock";
+import { formatArgentinaDate } from "../../shared/datetime/argentinaTime";
 import { roles } from "../../shared/security/roles";
 import { employeeAccessWhere } from "./employeeAccess";
 import { employeesRepository } from "./employees.repository";
@@ -538,10 +539,10 @@ export const employeesService = {
       entity: "HourConceptBreakdown",
       entityId: result.item?.id || null,
       description: result.operation === "DELETE"
-        ? `Se eliminó el desglose manual ${concept.name} de ${input.date} para el legajo ${employeeId}.`
+        ? `Se eliminó el desglose manual ${concept.name} de ${formatArgentinaDate(input.date)} para el legajo ${employeeId}.`
         : autoApprovedByUserId
-          ? `Se guardó y aplicó (RRHH) el desglose manual ${concept.name} de ${input.date} para el legajo ${employeeId}.`
-          : `Se guardó el desglose manual ${concept.name} de ${input.date} para el legajo ${employeeId}.`,
+          ? `Se guardó y aplicó (RRHH) el desglose manual ${concept.name} de ${formatArgentinaDate(input.date)} para el legajo ${employeeId}.`
+          : `Se guardó el desglose manual ${concept.name} de ${formatArgentinaDate(input.date)} para el legajo ${employeeId}.`,
       after: result.item as Prisma.InputJsonValue | undefined,
     });
     return result.item;

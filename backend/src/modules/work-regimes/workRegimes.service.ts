@@ -3,7 +3,7 @@ import type { OpenShiftOverflowAction, WorkRegimeKind } from "@prisma/client";
 import type { AuditContext } from "../audit/audit.service";
 import { auditService } from "../audit/audit.service";
 import { AppError } from "../../shared/errors/AppError";
-import { argentinaCalendarDate, argentinaDateKey } from "../../shared/datetime/argentinaTime";
+import { argentinaCalendarDate, argentinaDateKey, formatArgentinaDate } from "../../shared/datetime/argentinaTime";
 import { mapAssociatedEmployee } from "../../shared/prisma/employeeAssociationQuery";
 import { employeeAccessWhere } from "../employees/employeeAccess";
 import { classifyWorkRegimeVigency, findActiveEmployeeWorkRegime, findActiveEmployeeWorkRegimesForDate, workRegimesRepository } from "./workRegimes.repository";
@@ -129,7 +129,7 @@ async function assertNoOverlap(employeeId: string, effectiveFrom: Date, effectiv
   const overlapping = await workRegimesRepository.findOverlappingAssignment(employeeId, effectiveFrom, effectiveTo, excludeId);
   if (overlapping) {
     throw new AppError(
-      `La vigencia se superpone con una asignación existente (${overlapping.workRegime.code} - ${overlapping.workRegime.name}, desde ${overlapping.effectiveFrom.toISOString().slice(0, 10)}${overlapping.effectiveTo ? ` hasta ${overlapping.effectiveTo.toISOString().slice(0, 10)}` : ""}).`,
+      `La vigencia se superpone con una asignación existente (${overlapping.workRegime.code} - ${overlapping.workRegime.name}, desde ${formatArgentinaDate(overlapping.effectiveFrom)}${overlapping.effectiveTo ? ` hasta ${formatArgentinaDate(overlapping.effectiveTo)}` : ""}).`,
       409,
       "WORK_REGIME_ASSIGNMENT_OVERLAP",
     );
@@ -203,7 +203,7 @@ export const workRegimesService = {
       action: "CREATE",
       entity: "EmployeeWorkRegime",
       entityId: employeeId,
-      description: `Se asignó el régimen laboral ${item.workRegime.code} - ${item.workRegime.name} al empleado desde ${data.effectiveFrom.toISOString().slice(0, 10)}.`,
+      description: `Se asignó el régimen laboral ${item.workRegime.code} - ${item.workRegime.name} al empleado desde ${formatArgentinaDate(data.effectiveFrom)}.`,
       after: item as Prisma.InputJsonValue,
     });
     return item;
@@ -253,7 +253,7 @@ export const workRegimesService = {
       action: "UPDATE",
       entity: "EmployeeWorkRegime",
       entityId: employeeId,
-      description: `Se cerró la vigencia de la asignación de régimen laboral (${item.workRegime.code} - ${item.workRegime.name}) al ${effectiveTo.toISOString().slice(0, 10)}.`,
+      description: `Se cerró la vigencia de la asignación de régimen laboral (${item.workRegime.code} - ${item.workRegime.name}) al ${formatArgentinaDate(effectiveTo)}.`,
       before: before as unknown as Prisma.InputJsonValue,
       after: item as Prisma.InputJsonValue,
     });

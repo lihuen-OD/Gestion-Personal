@@ -72,7 +72,7 @@ export function SectionChangeHistory({
               <tbody>
                 {rows.map((row) => (
                   <tr key={`${row.audit.id}-${row.field}`}>
-                    <td>{row.audit.date} {row.audit.time}</td>
+                    <td>{row.audit.date} · {row.audit.time}</td>
                     <td>{row.audit.user}</td>
                     <td>
                       <OverflowCell value={row.label} />

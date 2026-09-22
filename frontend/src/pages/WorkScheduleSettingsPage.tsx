@@ -18,6 +18,8 @@ import type { Employee } from "../types";
 import { confirmAction } from "../services/appDialog";
 import { EmployeeRemoteSelector } from "../components/employees/EmployeeRemoteSelector";
 import { SpecialHourRulesCalendarMonth } from "../components/workforce/SpecialHourRulesCalendarMonth";
+import { formatCalendarDate } from "../utils/date";
+import { argentinaDateKey } from "../utils/argentinaDateKey";
 import { useAuth } from "../context/AuthContext";
 import { roleLevel } from "../utils/roles";
 import { DOUBLE_HOUR_MULTIPLIER_MAX, DOUBLE_HOUR_MULTIPLIER_MIN, doubleHourMultiplierError } from "../utils/doubleHourRule";
@@ -83,7 +85,7 @@ const emptyRuleForm: RuleFormState = {
 };
 
 function todayDateInput() {
-  return new Date().toISOString().slice(0, 10);
+  return argentinaDateKey(new Date());
 }
 
 // Resumen legible del alcance de una regla ya guardada, para la tabla —
@@ -179,7 +181,7 @@ export function WorkScheduleSettingsPage() {
   };
 
   const applyWholeCurrentYear = () => {
-    const year = new Date().getFullYear();
+    const year = todayDateInput().slice(0, 4);
     setRule((current) => ({ ...current, fromDate: `${year}-01-01`, toDate: `${year}-12-31` }));
   };
   const applyFromToday = () => {
@@ -556,7 +558,7 @@ export function WorkScheduleSettingsPage() {
                       <td><b>{item.name}</b></td>
                       <td><Badge tone="neutral">{KIND_LABELS[item.kind]}</Badge></td>
                       <td>{RECURRENCE_LABELS[item.recurrenceType]}</td>
-                      <td>{new Date(item.fromDate).toLocaleDateString("es-AR")}{item.toDate ? ` – ${new Date(item.toDate).toLocaleDateString("es-AR")}` : ""}</td>
+                      <td>{formatCalendarDate(item.fromDate)}{item.toDate ? ` – ${formatCalendarDate(item.toDate)}` : ""}</td>
                       <td>x{Number(item.multiplier)}</td>
                       <td>{item.priority}</td>
                       <td>{scopeLabel(item)}</td>

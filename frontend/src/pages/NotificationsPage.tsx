@@ -12,7 +12,7 @@ import { NOTIFICATIONS_POLL_INTERVAL_MS, workforceApiService, type SystemNotific
 import { NoveltyFromContextModal } from "../components/novelties/NoveltyFromContextModal";
 import { buildNoveltyPrefillFromNotification, type NoveltyPrefillContext } from "../utils/noveltyFromAlert";
 import { TOAST_SUCCESS_MS } from "../utils/toast";
-import { formatCalendarDate } from "../utils/date";
+import { formatCalendarDate, formatDateTime } from "../utils/date";
 
 const PAGE_SIZE = 20;
 type StatusFilter = "" | "NO_LEIDA" | "LEIDA";
@@ -34,7 +34,7 @@ function notificationEventDateLabel(item: SystemNotification): string | null {
   if (item.entityType === "AttendanceInactivityIncident") return formatCalendarDate(item.eventDate);
   const date = new Date(item.eventDate);
   if (Number.isNaN(date.getTime())) return null;
-  return `${date.toLocaleDateString("es-AR")} ${date.toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" })}`;
+  return formatDateTime(date);
 }
 
 /**
@@ -234,7 +234,7 @@ export function NotificationsPage() {
         {status === "success" ? items.map((item) => {
           const employee = item.employee;
           return <article className={`notification-row ${item.status === "NO_LEIDA" ? "unread" : ""}`} key={item.id}>
-          <div className="notification-icon"><Bell size={17}/></div><div><b>{item.title}</b>{employee ? <span className="notification-person">{employee.lastName}, {employee.firstName} · Legajo {employee.legajo}</span> : null}<p>{item.message}</p><small>{notificationEventDateLabel(item) ?? new Date(item.createdAt).toLocaleString("es-AR")}</small></div>
+          <div className="notification-icon"><Bell size={17}/></div><div><b>{item.title}</b>{employee ? <span className="notification-person">{employee.lastName}, {employee.firstName} · Legajo {employee.legajo}</span> : null}<p>{item.message}</p><small>{notificationEventDateLabel(item) ?? formatDateTime(item.createdAt)}</small></div>
           {/* Etapa 14G.6: "Ver detalle" antes marcaba como leída como efecto
               colateral de la navegación (además del botón explícito "Marcar
               leída", que hacía lo mismo) -- sin ninguna distinción visual

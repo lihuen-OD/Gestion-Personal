@@ -207,7 +207,7 @@ describe("detectAttendanceInactivity — Etapa 15M.19B (universo de candidatos p
       await detectAttendanceInactivity(dateKey);
 
       expect(capturedNotification?.title).toBe("Sin actividad registrada");
-      expect(capturedNotification?.message).toBe("Pérez, Juan · Legajo 100 estaba convocado a trabajar el feriado del 2026-08-27 y no registra actividad.");
+      expect(capturedNotification?.message).toBe("Pérez, Juan · Legajo 100 estaba convocado a trabajar el feriado del 27/08/2026 y no registra actividad.");
       expect(capturedNotification?.message).not.toMatch(/HolidayWorkAssignment|DoubleHourRule|kind|enum|backend/i);
     });
 
@@ -226,7 +226,7 @@ describe("detectAttendanceInactivity — Etapa 15M.19B (universo de candidatos p
 
       await detectAttendanceInactivity(dateKey);
 
-      expect(capturedNotification?.message).toBe("Pérez, Juan · Legajo 100 no registra actividad para el 2026-08-27.");
+      expect(capturedNotification?.message).toBe("Pérez, Juan · Legajo 100 no registra actividad para el 27/08/2026.");
     });
   });
 });

@@ -25,7 +25,9 @@ import {
   argentinaCalendarDate,
   argentinaDateParts,
   argentinaDayRange,
+  formatArgentinaDate,
   formatArgentinaTime,
+  humanizePeriodEs,
   nextArgentinaMidnightUtc,
   periodFromCalendarDate,
   todayArgentinaDateKey,
@@ -299,7 +301,7 @@ function escapeCsv(value: string) {
 }
 
 function currentPeriod() {
-  return new Date().toISOString().slice(0, 7);
+  return todayArgentinaDateKey().slice(0, 7);
 }
 
 const MAX_SHIFT_MINUTES = 20 * 60;
@@ -326,7 +328,7 @@ function buildShiftSegments(startAt: Date, endAt: Date) {
         endAt: segmentEnd,
         minutes,
         hours: Number((minutes / 60).toFixed(2)),
-        label: `${localDate} ${formatArgentinaTime(cursor)}-${formatArgentinaTime(segmentEnd)} (${formatNumber(minutes / 60)} h)`,
+        label: `${formatArgentinaDate(localDate)} ${formatArgentinaTime(cursor)}-${formatArgentinaTime(segmentEnd)} (${formatNumber(minutes / 60)} h)`,
       });
     }
     cursor = segmentEnd;
@@ -1968,7 +1970,7 @@ export const timeEntriesService = {
       ...audit,
       action: "EXPORT",
       entity: "TimeEntry",
-      description: `Se preparo exportacion de horas del periodo ${query.period} con ${rows.length} personas.`,
+      description: `Se preparo exportacion de horas del periodo ${humanizePeriodEs(query.period)} con ${rows.length} personas.`,
       after: { query, totalRows: rows.length } as Prisma.InputJsonValue,
     });
 

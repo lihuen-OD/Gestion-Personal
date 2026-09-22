@@ -1,6 +1,7 @@
 import { EmployeeStatus } from "@prisma/client";
 import { runInBatches } from "../../shared/prisma/runInBatches";
 import { employeeAccessWhere } from "../employees/employeeAccess";
+import { todayArgentinaDateKey } from "../../shared/datetime/argentinaTime";
 import { dashboardMetricsCache } from "./dashboard.cache";
 import { dashboardRepository } from "./dashboard.repository";
 import type { DashboardMetricsQuery } from "./dashboard.schemas";
@@ -19,7 +20,7 @@ const DASHBOARD_METRICS_BATCH_SIZE = 5;
 const dayMs = 86_400_000;
 
 function currentPeriod() {
-  return new Date().toISOString().slice(0, 7);
+  return todayArgentinaDateKey().slice(0, 7);
 }
 
 function yearsBetween(from?: Date | null, to = new Date()) {

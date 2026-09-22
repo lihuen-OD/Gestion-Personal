@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, AlertTriangle } from "lucide-react";
 import { workforceApiService, type DoubleHourRuleCalendarDay, type DoubleHourRuleKind } from "../../services/api/workforceApiService";
 import { LoadingState } from "../ui/LoadingState";
+import { argentinaDateKey } from "../../utils/argentinaDateKey";
 
 const WEEKDAY_LABELS = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"];
 
@@ -43,8 +44,8 @@ function toDateKey(date: Date) {
 // (backend, Etapa 12B) para no mostrar en el calendario reglas de un tipo
 // distinto al que RRHH está revisando en la tabla.
 export function SpecialHourRulesCalendarMonth({ refreshToken, kindFilter }: { refreshToken?: number; kindFilter?: DoubleHourRuleKind } = {}) {
-  const today = new Date();
-  const [cursor, setCursor] = useState({ year: today.getUTCFullYear(), month: today.getUTCMonth() });
+  const [todayYear, todayMonth] = argentinaDateKey(new Date()).slice(0, 7).split("-").map(Number);
+  const [cursor, setCursor] = useState({ year: todayYear, month: todayMonth - 1 });
   const [daysByDate, setDaysByDate] = useState<Map<string, DoubleHourRuleCalendarDay>>(new Map());
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState("");

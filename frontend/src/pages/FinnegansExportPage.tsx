@@ -22,6 +22,7 @@ import {
   type FinnegansRowStatus,
 } from "../services/api/finnegansExportApiService";
 import { currentMonthPeriod } from "../utils/period";
+import { formatDateTime } from "../utils/date";
 
 const exportHeaders = [
   "Legajo",
@@ -32,21 +33,6 @@ const exportHeaders = [
   "Fecha desde",
   "Fecha hasta",
 ];
-
-// Etapa 15L.4 (docs/decisions/FINNEGANS_EXPORT_HISTORY_IDEMPOTENCY_15L4.md):
-// mismo formato ya usado en AttendancePage.tsx/ShiftAlertsPage.tsx para
-// instantes reales (TIMESTAMPTZ) — con año, porque un historial puede
-// mostrar exportaciones de meses/años distintos al actual.
-function formatBatchTimestamp(value: string) {
-  return new Intl.DateTimeFormat("es-AR", {
-    timeZone: "America/Argentina/Cordoba",
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(new Date(value));
-}
 
 // Etapa 15L.3A §26: sólo se llama con el resultado de exportDefinitive() —
 // nunca con las filas de preview ni con el subconjunto filtrado por
@@ -100,7 +86,7 @@ const rowStatusBadge: Record<FinnegansRowStatus, { tone: "success" | "warning"; 
 function exportStatusLabel(lastExport: FinnegansExportPreview["lastExport"]) {
   if (!lastExport) return "Sin exportaciones registradas para este período.";
   const changeLabel = lastExport.sameAsCurrent ? "Sin cambios desde la última exportación." : "Hay cambios desde la última exportación.";
-  return `Última exportación: versión ${lastExport.version} · ${formatBatchTimestamp(lastExport.createdAt)} — ${changeLabel}`;
+  return `Última exportación: versión ${lastExport.version} · ${formatDateTime(lastExport.createdAt)} — ${changeLabel}`;
 }
 
 // Etapa 15L.3A §17/§29 / 15L.4 §29: mismo dato (readiness) que decide si el
@@ -170,7 +156,7 @@ function ExportHistoryTimeline({ status, batches }: { status: "loading" | "succe
               <Badge tone={batch.isReexport ? "warning" : "success"}>{batch.isReexport ? "Reexportación" : "Primera exportación"}</Badge>
             </b>
             <span>
-              {formatBatchTimestamp(batch.createdAt)} · {batch.format} · {batch.rowCount} novedades
+              {formatDateTime(batch.createdAt)} · {batch.format} · {batch.rowCount} novedades
               {batch.createdByName ? ` · ${batch.createdByName}` : ""}
             </span>
             {batch.reason ? <p>Motivo: {batch.reason}</p> : null}
@@ -411,7 +397,7 @@ export function FinnegansExportPage() {
             {lastExport ? (
               <div className="info-note compact">
                 <b>Última versión: {lastExport.version}</b>
-                <p>{formatBatchTimestamp(lastExport.createdAt)} · {lastExport.rowCount} novedades</p>
+                <p>{formatDateTime(lastExport.createdAt)} · {lastExport.rowCount} novedades</p>
                 <p>{lastExport.sameAsCurrent ? "No se detectaron cambios respecto de la última exportación." : "Hay cambios respecto de la última exportación."}</p>
               </div>
             ) : null}

@@ -87,6 +87,17 @@ describe("assignmentVigencyStatus / isAssignmentCurrent — effectiveTo >= effec
   it("effectiveTo null nunca rompe el cálculo (asignación sin fecha de fin)", () => {
     expect(() => assignmentVigencyStatus("2026-01-01", null, ref)).not.toThrow();
   });
+
+  // Etapa 15M.21: `referenceDate` solía resolverse con
+  // `referenceDate.toISOString().slice(0, 10)` (día UTC) — entre las 21:00 y
+  // las 23:59 hora Argentina el día UTC ya rodó al siguiente, así que una
+  // vigencia que arranca ese día siguiente se clasificaba como "current" un
+  // día antes de tiempo.
+  it("una referencia de las 22:00 ART (ya 01:00 UTC del día siguiente) no adelanta una vigencia que arranca ese día UTC", () => {
+    // 2026-08-19 22:00 ART = 2026-08-20 01:00 UTC.
+    const lateNightRef = new Date("2026-08-20T01:00:00.000Z");
+    expect(assignmentVigencyStatus("2026-08-20", null, lateNightRef)).toBe("future");
+  });
 });
 
 describe("buildShiftAssignmentVigencyPayload — string vacío de effectiveTo -> null", () => {

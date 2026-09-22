@@ -8,6 +8,7 @@ import type { Employee } from "../types";
 import { roleLevel } from "../utils/roles";
 import { monthlyClosureStatusText as statusText, monthlyClosureStatusTone as statusTone } from "../utils/monthlyClosureStatus";
 import { formatCalendarDate } from "../utils/date";
+import { currentMonthPeriod } from "../utils/period";
 import { PageHeader } from "../components/ui/PageHeader";
 import { Section } from "../components/ui/Section";
 import { Button } from "../components/ui/Button";
@@ -18,12 +19,10 @@ import { EmptyState } from "../components/ui/EmptyState";
 import { MonthlyClosureReviewPanel } from "../components/hours/MonthlyClosureReviewPanel";
 import { requestText } from "../services/appDialog";
 
-const currentPeriod = () => new Date().toISOString().slice(0, 7);
-
 export function MonthlyClosuresPage() {
   const { user } = useAuth();
   const isRrhh = roleLevel(user!.role) === 1;
-  const [period, setPeriod] = useState(currentPeriod);
+  const [period, setPeriod] = useState(currentMonthPeriod);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [closures, setClosures] = useState<MonthlyClosure[]>([]);
   const [corrections, setCorrections] = useState<TimeCorrection[]>([]);

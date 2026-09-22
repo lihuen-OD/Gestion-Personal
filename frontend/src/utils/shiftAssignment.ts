@@ -1,5 +1,6 @@
 import { formatVigencyDate, vigencyLabel, vigencyTone } from "../components/shared/AssociatedEmployeesPanel.helpers";
 import type { AssociatedEmployeeVigencyStatus } from "../types/associatedEmployee.types";
+import { argentinaDateKey } from "./argentinaDateKey";
 
 // weekdays sigue la misma convención ya usada en el proyecto para arrays de
 // días (DoubleHourRule.weekdays, backend workforce.schemas.ts, y
@@ -42,7 +43,7 @@ export function assignmentVigencyStatus(
 ): AssociatedEmployeeVigencyStatus {
   const from = effectiveFrom.slice(0, 10);
   const to = effectiveTo ? effectiveTo.slice(0, 10) : null;
-  const ref = referenceDate.toISOString().slice(0, 10);
+  const ref = argentinaDateKey(referenceDate);
   if (from > ref) return "future";
   if (to && to < ref) return "historical";
   return "current";

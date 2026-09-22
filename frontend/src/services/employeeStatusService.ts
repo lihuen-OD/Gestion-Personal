@@ -1,4 +1,5 @@
 import type { Employee, EmployeeStatus, LaborMovement } from "../types";
+import { formatCalendarDate } from "../utils/date";
 
 const today = () => {
   const now = new Date();
@@ -33,15 +34,15 @@ export function calculateLaborStatus(laborMovements: LaborMovement[] = []): {
   const scheduledMovement = sorted.find((movement) => new Date(`${movement.effectiveFrom}T00:00:00`) > currentDate) || null;
   const scheduledTermination = sorted.find((movement) => movement.type === "BAJA" && new Date(`${movement.effectiveFrom}T00:00:00`) > currentDate) || null;
   if (currentMovement?.type === "BAJA") {
-    const label = new Date(`${currentMovement.effectiveFrom}T00:00:00`).toLocaleDateString("es-AR");
+    const label = formatCalendarDate(currentMovement.effectiveFrom);
     return { status: "Inactivo", currentMovement, scheduledMovement, scheduledTermination: null, message: `Colaborador inactivo desde el ${label}.` };
   }
   if (scheduledTermination) {
-    const label = new Date(`${scheduledTermination.effectiveFrom}T00:00:00`).toLocaleDateString("es-AR");
+    const label = formatCalendarDate(scheduledTermination.effectiveFrom);
     return { status: "Activo", currentMovement, scheduledMovement, scheduledTermination, message: `Baja programada para el ${label}.` };
   }
   if (!currentMovement && scheduledMovement?.type === "ALTA") {
-    const label = new Date(`${scheduledMovement.effectiveFrom}T00:00:00`).toLocaleDateString("es-AR");
+    const label = formatCalendarDate(scheduledMovement.effectiveFrom);
     return { status: "Inactivo", currentMovement, scheduledMovement, scheduledTermination: null, message: `Alta programada para el ${label}.` };
   }
   return {
@@ -65,6 +66,6 @@ export function laborStatusMessage(employee: Pick<Employee, "startDate" | "endDa
   if (!employee.startDate) return "Sin fecha de alta cargada.";
   if (!employee.endDate) return "El estado se calcula automáticamente según la fecha de alta y fecha de baja.";
   const endDate = new Date(`${employee.endDate}T00:00:00`);
-  const label = endDate.toLocaleDateString("es-AR");
+  const label = formatCalendarDate(employee.endDate);
   return endDate <= today() ? `Colaborador inactivo desde el ${label}.` : `Baja programada para el ${label}. El colaborador continuará activo hasta esa fecha.`;
 }

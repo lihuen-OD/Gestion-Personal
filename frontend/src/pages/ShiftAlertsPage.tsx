@@ -12,6 +12,7 @@ import { LoadingState } from "../components/ui/LoadingState";
 import { ErrorState } from "../components/ui/ErrorState";
 import { shiftAlertApiService, type ShiftAlert, type ShiftAlertSeverity, type ShiftAlertStatus, type ShiftAlertType } from "../services/api/shiftAlertApiService";
 import { useDebouncedValue } from "../utils/useDebouncedValue";
+import { formatDateTime } from "../utils/date";
 
 // Etapa 15G.2 (docs/decisions/ALERT_TO_NOVELTY_FLOW_15G2.md, ajuste final):
 // esta página ya NO ofrece "Crear novedad" -- el flujo principal para
@@ -69,10 +70,6 @@ const LEGACY_ALERT_TYPES = new Set<ShiftAlertType>([
   "SEGMENTO_SIN_CLASIFICAR", "CONCEPTO_NO_HABILITADO",
   "POSSIBLE_SHIFT_CONFIGURATION_MISSING", "DESCANSO_INSUFICIENTE",
 ]);
-
-function formatDateTime(value: string) {
-  return new Date(value).toLocaleString("es-AR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
-}
 
 function differenceLabel(alert: ShiftAlert) {
   if (alert.differenceMinutes === null || alert.differenceMinutes === undefined) return "-";

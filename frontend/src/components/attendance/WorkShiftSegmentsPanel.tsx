@@ -14,20 +14,13 @@ import {
   segmentConceptStatusTone,
   sortSegmentsByStart,
 } from "./segmentDisplay";
-
-function formatTime(value: string) {
-  return new Intl.DateTimeFormat("es-AR", { timeZone: "America/Argentina/Cordoba", hour: "2-digit", minute: "2-digit" }).format(new Date(value));
-}
-
-function formatDate(value: string) {
-  return new Intl.DateTimeFormat("es-AR", { timeZone: "America/Argentina/Cordoba", day: "2-digit", month: "2-digit", year: "numeric" }).format(new Date(value));
-}
+import { formatCalendarDate, formatInstantTime as formatTime } from "../../utils/date";
 
 function SegmentRow({ segment }: { segment: AttendanceSegment }) {
   const reviewState = getSegmentReviewState(segment.conceptStatus);
   return (
     <tr>
-      <td>{formatDate(segment.date)}</td>
+      <td>{formatCalendarDate(segment.date)}</td>
       <td>{formatTime(segment.fromDateTime)}</td>
       <td>{formatTime(segment.toDateTime)}</td>
       <td>{formatMinutesDuration(segment.minutes)}</td>

@@ -1,6 +1,6 @@
 import { EmployeeStatus } from "@prisma/client";
 import { prisma } from "../../shared/prisma/client";
-import { argentinaCalendarDate, argentinaDateParts, argentinaDayRange } from "../../shared/datetime/argentinaTime";
+import { argentinaCalendarDate, argentinaDateParts, argentinaDayRange, formatArgentinaDate } from "../../shared/datetime/argentinaTime";
 import { noveltyCoversDay } from "../novelties/novelties.dateRange";
 import { resolveWorkObligationCandidates } from "../shifts/workObligation.service";
 
@@ -213,12 +213,12 @@ export async function detectAttendanceInactivity(dateKey: string): Promise<{ dat
     employees,
     (employee) =>
       isHoliday
-        ? `La persona estaba convocada a trabajar el feriado del ${dateKey} y no se registraron fichadas, horas ni novedades. Requiere revisión.`
-        : `No se registraron fichadas, horas ni novedades para el ${dateKey}. Requiere revisión.`,
+        ? `La persona estaba convocada a trabajar el feriado del ${formatArgentinaDate(dateKey)} y no se registraron fichadas, horas ni novedades. Requiere revisión.`
+        : `No se registraron fichadas, horas ni novedades para el ${formatArgentinaDate(dateKey)}. Requiere revisión.`,
     (employee) =>
       isHoliday
-        ? `${employee.lastName}, ${employee.firstName} · Legajo ${employee.legajo} estaba convocado a trabajar el feriado del ${dateKey} y no registra actividad.`
-        : `${employee.lastName}, ${employee.firstName} · Legajo ${employee.legajo} no registra actividad para el ${dateKey}.`,
+        ? `${employee.lastName}, ${employee.firstName} · Legajo ${employee.legajo} estaba convocado a trabajar el feriado del ${formatArgentinaDate(dateKey)} y no registra actividad.`
+        : `${employee.lastName}, ${employee.firstName} · Legajo ${employee.legajo} no registra actividad para el ${formatArgentinaDate(dateKey)}.`,
   );
   return { date: dateKey, ...result };
 }

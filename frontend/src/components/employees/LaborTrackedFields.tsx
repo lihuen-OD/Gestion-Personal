@@ -8,7 +8,8 @@ import type { Employee, EmployeeFieldHistoryRecord, FieldHistorySection, User } 
 import type { Position } from "../../types/position.types";
 import { useAsyncAction } from "../../utils/useAsyncAction";
 import { requiredLaborChangeError } from "../../utils/laborFieldValidation";
-import { formatCalendarDate } from "../../utils/date";
+import { formatCalendarDate, formatDateTime } from "../../utils/date";
+import { argentinaDateKey } from "../../utils/argentinaDateKey";
 import { Button } from "../ui/Button";
 import { EmptyState } from "../ui/EmptyState";
 import { ErrorState } from "../ui/ErrorState";
@@ -127,7 +128,7 @@ export function MultiCompanyField({ employee, canEdit, user, onSaved }: TrackedF
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(false);
   const [selected, setSelected] = useState<string[]>(value);
-  const [from, setFrom] = useState(new Date().toISOString().slice(0, 10));
+  const [from, setFrom] = useState(argentinaDateKey(new Date()));
   const [reason, setReason] = useState("");
   const [error, setError] = useState("");
   const { history, setHistory, status: historyStatus, retry: retryHistory, markLoaded: markHistoryLoaded } = useBackendFieldHistory(employee.id, "companies", open);
@@ -215,7 +216,7 @@ export function MultiCompanyField({ employee, canEdit, user, onSaved }: TrackedF
                   <span>{item.createdByUserName}</span>
                   <p>
                     Anterior: {item.oldValue || "-"} · Motivo: {item.reason} · Registro:{" "}
-                    {new Date(item.createdAt).toLocaleString("es-AR")}
+                    {formatDateTime(item.createdAt)}
                   </p>
                 </div>
               ))}
@@ -264,7 +265,7 @@ export function EmployeePositionField({ employee, canEdit, user, onSaved }: Trac
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(false);
   const [selectedId, setSelectedId] = useState(current?.id || "");
-  const [from, setFrom] = useState(new Date().toISOString().slice(0, 10));
+  const [from, setFrom] = useState(argentinaDateKey(new Date()));
   const [reason, setReason] = useState("");
   const [error, setError] = useState("");
   const { history, setHistory, status: historyStatus, retry: retryHistory, markLoaded: markHistoryLoaded } = useBackendFieldHistory(employee.id, "positionId", open);

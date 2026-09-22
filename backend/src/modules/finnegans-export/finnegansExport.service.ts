@@ -1,5 +1,6 @@
 import type { Prisma } from "@prisma/client";
 import { AppError } from "../../shared/errors/AppError";
+import { humanizePeriodEs } from "../../shared/datetime/argentinaTime";
 import { isMonthlyClosureApproved } from "../../shared/monthlyClosure/closureLock";
 import type { AuditContext } from "../audit/audit.service";
 import { auditService } from "../audit/audit.service";
@@ -366,7 +367,7 @@ export const finnegansExportService = {
       action: "EXPORT",
       entity: "FinnegansExport",
       entityId: batch.id,
-      description: `${isReexport ? "Reexportación" : "Exportación"} Finnegans (${input.format}) de ${input.period}, versión ${batch.version}, ${rows.length} registros.${input.reexportReason ? ` Motivo: ${input.reexportReason.trim()}` : ""}`,
+      description: `${isReexport ? "Reexportación" : "Exportación"} Finnegans (${input.format}) de ${humanizePeriodEs(input.period)}, versión ${batch.version}, ${rows.length} registros.${input.reexportReason ? ` Motivo: ${input.reexportReason.trim()}` : ""}`,
       after: { period: input.period, format: input.format, version: batch.version, totalRows: rows.length } as Prisma.InputJsonValue,
     });
 

@@ -7,6 +7,9 @@ import {
   calendarDaysInclusive,
   dayOfMonthFromCalendarDate,
   dayOfMonthFromInstant,
+  formatArgentinaDate,
+  formatArgentinaTime,
+  humanizePeriodEs,
   nextArgentinaMidnightUtc,
   nextCalendarDateKey,
   periodFromCalendarDate,
@@ -188,5 +191,48 @@ describe("argentinaCalendarDate / argentinaDayRange", () => {
     // 2026-08-14 00:00 ART = 2026-08-14 03:00 UTC.
     expect(startAt.toISOString()).toBe("2026-08-14T03:00:00.000Z");
     expect(endAt.toISOString()).toBe("2026-08-15T03:00:00.000Z");
+  });
+});
+
+// Etapa 15M.21 (normalización global de fechas visibles): estos tres helpers
+// son los que traducen fecha/hora técnica a texto que ve RRHH — se cubren acá
+// porque antes no tenían test propio y ya hubo un bug real (formatArgentinaTime
+// devolvía "02:35 p. m." en vez de "14:35" por el default 12hs del locale
+// "es-AR" en el motor ICU de Node).
+describe("formatArgentinaDate", () => {
+  it("formatea una clave 'YYYY-MM-DD' calendario sin corrimiento de huso horario", () => {
+    expect(formatArgentinaDate("2026-09-21")).toBe("21/09/2026");
+  });
+
+  it("formatea un Date @db.Date (medianoche UTC) sin correrlo un día para atrás", () => {
+    expect(formatArgentinaDate(argentinaCalendarDate("2026-09-21"))).toBe("21/09/2026");
+  });
+
+  it("no confunde un string con hora/offset: sólo toma los primeros 10 caracteres", () => {
+    expect(formatArgentinaDate("2026-01-05T00:00:00.000Z")).toBe("05/01/2026");
+  });
+});
+
+describe("formatArgentinaTime", () => {
+  it("formatea en 24 horas ('HH:MM'), nunca en 12 horas con 'a. m.'/'p. m.'", () => {
+    // 2026-09-21 17:35 UTC = 2026-09-21 14:35 ART.
+    const instant = new Date("2026-09-21T17:35:00.000Z");
+    expect(formatArgentinaTime(instant)).toBe("14:35");
+  });
+
+  it("resuelve la madrugada Argentina (antes de las 10) con cero a la izquierda", () => {
+    // 2026-09-19 08:11 UTC = 2026-09-19 05:11 ART.
+    const instant = new Date("2026-09-19T08:11:00.000Z");
+    expect(formatArgentinaTime(instant)).toBe("05:11");
+  });
+});
+
+describe("humanizePeriodEs", () => {
+  it("convierte 'YYYY-MM' a 'mes de año' en español", () => {
+    expect(humanizePeriodEs("2026-09")).toBe("septiembre de 2026");
+  });
+
+  it("devuelve el valor original si no matchea el formato esperado", () => {
+    expect(humanizePeriodEs("no-period")).toBe("no-period");
   });
 });

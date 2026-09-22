@@ -1,7 +1,7 @@
 import { calculateLaborStatus, resolveCurrentLaborPeriod } from "../../services/employeeStatusService";
 import type { Employee } from "../../types";
 import { statusTone } from "../../utils/status";
-import { formatCalendarDate } from "../../utils/date";
+import { formatCalendarDate, formatInstantDate } from "../../utils/date";
 import { Badge } from "../ui/Badge";
 
 type LaborStatusCardProps = {
@@ -15,7 +15,7 @@ export function LaborStatusCard({ employee }: LaborStatusCardProps) {
   const currentPeriod = resolveCurrentLaborPeriod(employee.laborMovements || []);
   const latestStart = currentPeriod.startDate || employee.startDate;
   const latestEnd = currentPeriod.endDate;
-  const createdAt = employee.createdAt?.slice(0, 10);
+  const createdAt = employee.createdAt;
 
   return (
     <div className="labor-status-card">
@@ -40,7 +40,7 @@ export function LaborStatusCard({ employee }: LaborStatusCardProps) {
       </div>
       <div>
         <small>Fecha de creación del legajo</small>
-        <b>{createdAt ? formatCalendarDate(createdAt) : "Sin dato"}</b>
+        <b>{createdAt ? formatInstantDate(createdAt) : "Sin dato"}</b>
       </div>
       <div>
         <small>{movement ? "Último movimiento vigente" : status.scheduledMovement ? "Próximo movimiento" : "Último movimiento vigente"}</small>

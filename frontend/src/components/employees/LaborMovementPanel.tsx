@@ -13,7 +13,8 @@ import { Modal } from "../ui/Modal";
 import { OverflowCell } from "../ui/OverflowCell";
 import { Section } from "../ui/Section";
 import { TableShell } from "../ui/TableShell";
-import { formatCalendarDate } from "../../utils/date";
+import { formatCalendarDate, formatDateTime } from "../../utils/date";
+import { argentinaDateKey } from "../../utils/argentinaDateKey";
 
 // Etapa 15M.20: `LaborMovementType` ("ALTA"/"BAJA") ya son palabras en
 // castellano — solo se ajusta el casing visual a Title Case (como el resto
@@ -48,7 +49,7 @@ export function LaborMovementPanel({
   const [type, setType] = useState<LaborMovementType>(() => (
     calculateLaborStatus(employee.laborMovements || []).status === "Inactivo" ? "ALTA" : "BAJA"
   ));
-  const [effectiveFrom, setEffectiveFrom] = useState(new Date().toISOString().slice(0, 10));
+  const [effectiveFrom, setEffectiveFrom] = useState(argentinaDateKey(new Date()));
   const [reason, setReason] = useState("");
   const [observation, setObservation] = useState("");
   const [error, setError] = useState("");
@@ -127,7 +128,7 @@ export function LaborMovementPanel({
                       <OverflowCell value={movement.observation || "-"} />
                     </td>
                     <td>{movement.createdByUserName}</td>
-                    <td>{new Date(movement.createdAt).toLocaleString("es-AR")}</td>
+                    <td>{formatDateTime(movement.createdAt)}</td>
                     <td>{isFuture ? "Programado" : "Vigente / histórico"}</td>
                   </tr>
                 );

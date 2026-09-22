@@ -14,9 +14,10 @@ import { LoadingState } from "../ui/LoadingState";
 import { Button } from "../ui/Button";
 import { TableShell } from "../ui/TableShell";
 import { ShiftAssignmentVigencyFields } from "../shared/ShiftAssignmentVigencyFields";
+import { argentinaDateKey } from "../../utils/argentinaDateKey";
 
 function todayDateInput() {
-  return new Date().toISOString().slice(0, 10);
+  return argentinaDateKey(new Date());
 }
 
 function ShiftAssignmentTable({ rows, canEdit, onToggle, onRemove }: { rows: ShiftAssignment[]; canEdit: boolean; onToggle: (assignment: ShiftAssignment) => void; onRemove: (assignment: ShiftAssignment) => void }) {

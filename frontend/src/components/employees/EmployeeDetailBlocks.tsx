@@ -9,6 +9,7 @@ import type { HourConcept, HourConceptLoadMode } from "../../types/hourConcept.t
 import { useAsyncAction } from "../../utils/useAsyncAction";
 import { requiredLaborChangeError } from "../../utils/laborFieldValidation";
 import { activoInactivoLabel } from "../../utils/status";
+import { argentinaDateKey } from "../../utils/argentinaDateKey";
 import { Button } from "../ui/Button";
 import { Field, Select } from "../ui/FormControls";
 import { Modal } from "../ui/Modal";
@@ -127,7 +128,7 @@ export function AddressEditBlock({ employee, user, canEdit, onSaved }: EmployeeB
   const [showHistory, setShowHistory] = useState(false);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(employee.domicilio);
-  const [from, setFrom] = useState(new Date().toISOString().slice(0, 10));
+  const [from, setFrom] = useState(argentinaDateKey(new Date()));
   const [reason, setReason] = useState("");
   const [error, setError] = useState("");
 
@@ -291,7 +292,7 @@ export function AssignmentBlock({
   const [showHistory, setShowHistory] = useState(false);
   const [editing, setEditing] = useState(false);
   const [names, setNames] = useState<string[]>(currentList);
-  const [from, setFrom] = useState(fromValue || new Date().toISOString().slice(0, 10));
+  const [from, setFrom] = useState(fromValue || argentinaDateKey(new Date()));
   const [notes, setNotes] = useState(notesValue || "");
   const [reason, setReason] = useState("");
   const [error, setError] = useState("");
@@ -425,7 +426,7 @@ export function TransportBlock({ employee, user, canEdit, onSaved }: EmployeeBlo
   const [transport, setTransport] = useState(employee.transport ? "Sí" : "No");
   const [city, setCity] = useState(employee.transportLocality || employee.city);
   const [notes, setNotes] = useState(employee.transportNotes);
-  const [from, setFrom] = useState(new Date().toISOString().slice(0, 10));
+  const [from, setFrom] = useState(argentinaDateKey(new Date()));
   const [reason, setReason] = useState("");
   const [error, setError] = useState("");
 
@@ -536,7 +537,7 @@ export function HoursSpecialBlock({ employee, user, canEdit, onSaved }: Employee
   const [editing, setEditing] = useState(false);
   const [concepts, setConcepts] = useState<Array<HourConcept & { enabled: true }>>(employee.enabledHourConcepts ?? []);
   const enabledHourOptions = useHourConceptOptions();
-  const [from, setFrom] = useState(new Date().toISOString().slice(0, 10));
+  const [from, setFrom] = useState(argentinaDateKey(new Date()));
   const [reason, setReason] = useState("");
   const [error, setError] = useState("");
 

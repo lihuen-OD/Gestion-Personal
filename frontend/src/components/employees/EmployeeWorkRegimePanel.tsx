@@ -15,6 +15,7 @@ import type { EmployeeWorkRegimeAssignment, WorkRegime } from "../../types/workR
 import type { Employee, User } from "../../types";
 import { useAsyncAction } from "../../utils/useAsyncAction";
 import { formatCalendarDate } from "../../utils/date";
+import { argentinaDateKey } from "../../utils/argentinaDateKey";
 import { requiredLaborChangeError } from "../../utils/laborFieldValidation";
 import { openShiftOverflowActionLabel, workRegimeKindLabel } from "../work-regimes/workRegimeLabels";
 
@@ -32,7 +33,7 @@ type AssignmentDraft = {
 };
 
 function todayKey() {
-  return new Date().toISOString().slice(0, 10);
+  return argentinaDateKey(new Date());
 }
 
 function dateKey(value: string) {

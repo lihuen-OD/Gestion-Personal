@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "../../shared/prisma/client";
 import { AppError } from "../../shared/errors/AppError";
+import { formatArgentinaDate } from "../../shared/datetime/argentinaTime";
 import type { AuditContext } from "../audit/audit.service";
 import { auditService } from "../audit/audit.service";
 import { employeeAccessWhere } from "../employees/employeeAccess";
@@ -71,7 +72,7 @@ export const holidayWorkAssignmentService = {
     const existingEmployees = await prisma.employee.count({ where: { id: { in: employeeIds } } });
     if (existingEmployees !== uniqueEmployeeIds.size) throw new AppError("Uno o más empleados no existen", 404, "EMPLOYEE_NOT_FOUND");
 
-    const dateLabel = dateKey(input.date);
+    const dateLabel = formatArgentinaDate(input.date);
     const results = [];
     for (const item of input.assignments) {
       const existing = await holidayWorkAssignmentRepository.findExisting(input.date, item.employeeId);

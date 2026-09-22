@@ -31,7 +31,7 @@ function buildDocument(overrides: Partial<DocumentMock> = {}): DocumentMock {
     employeeId: "employee-1",
     category: "DNI",
     fileName: "dni-frente.pdf",
-    uploadedAt: "2026-08-01",
+    uploadedAt: "2026-08-01T14:00:00.000Z",
     status: "Vigente",
     employeeLegajo: "100",
     employeeName: "Gomez, Ana",

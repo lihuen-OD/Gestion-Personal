@@ -25,6 +25,7 @@ import { extendedShiftAlertHoursToMinutes, extendedShiftAlertMinutesToHours, wor
 import type { AssociatedEmployeeFilters, WorkRegimeEmployeesStatusFilter } from "../types/associatedEmployee.types";
 import type { OpenShiftOverflowAction, WorkRegime, WorkRegimeFilters, WorkRegimeKind } from "../types/workRegime.types";
 import { formatVigencyDate, vigencyLabel, vigencyTone } from "../components/shared/AssociatedEmployeesPanel.helpers";
+import { argentinaDateKey } from "../utils/argentinaDateKey";
 import { roleLevel } from "../utils/roles";
 import { useAsyncAction } from "../utils/useAsyncAction";
 
@@ -56,7 +57,7 @@ function normalize(value: string) {
 }
 
 function todayKey() {
-  return new Date().toISOString().slice(0, 10);
+  return argentinaDateKey(new Date());
 }
 
 const employeesVigencyFilterOptions: { value: WorkRegimeEmployeesStatusFilter; label: string }[] = [

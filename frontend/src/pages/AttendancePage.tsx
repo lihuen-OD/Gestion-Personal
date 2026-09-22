@@ -15,6 +15,7 @@ import { Modal } from "../components/ui/Modal";
 import { TableShell } from "../components/ui/TableShell";
 import { useDebouncedValue } from "../utils/useDebouncedValue";
 import { argentinaDateKey } from "../utils/argentinaDateKey";
+import { formatCalendarDate } from "../utils/date";
 import { formatDurationMinutes } from "../utils/hours";
 import { NoveltyFromContextModal } from "../components/novelties/NoveltyFromContextModal";
 import { buildNoveltyPrefillFromAttendanceShiftProblem, buildNoveltyPrefillFromInactivityIncident, type NoveltyPrefillContext } from "../utils/noveltyFromAlert";
@@ -43,18 +44,19 @@ function formatTime(value?: string | null) {
     timeZone: "America/Argentina/Cordoba",
     hour: "2-digit",
     minute: "2-digit",
+    hour12: false,
   }).format(new Date(value));
 }
 
+const dayMonthFormatter = new Intl.DateTimeFormat("es-AR", {
+  timeZone: "America/Argentina/Cordoba",
+  day: "2-digit",
+  month: "2-digit",
+});
+
 function formatDateTime(value?: string | null) {
   if (!value) return "-";
-  return new Intl.DateTimeFormat("es-AR", {
-    timeZone: "America/Argentina/Cordoba",
-    day: "2-digit",
-    month: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(new Date(value));
+  return `${dayMonthFormatter.format(new Date(value))} · ${formatTime(value)}`;
 }
 
 function toDateTimeLocalValue(value = new Date()) {
@@ -202,7 +204,7 @@ function ShiftRows({ items, emptyText, showSegments = false, showRisk = false, o
             )}
             <td>
               <div className="attendance-actions">
-                <Link className="table-icon-action" title="Ver carga de horas" aria-label="Ver carga de horas" to={`/horas/${shift.employeeId}?period=${shift.startAt.slice(0, 7)}`}>
+                <Link className="table-icon-action" title="Ver carga de horas" aria-label="Ver carga de horas" to={`/horas/${shift.employeeId}?period=${argentinaDateKey(shift.startAt).slice(0, 7)}`}>
                   <Eye size={14} />
                   <span>Ver carga</span>
                 </Link>
@@ -255,7 +257,7 @@ function ObservationRows({ items, onViewPhoto, onResolve, onViewSegments, onCrea
           const isPending = incident.status === "PENDIENTE";
           return <tr key={`INACTIVITY-${incident.id}`}>
             <td><strong>{employeeName(incident)}</strong><span className="muted-line">Legajo {incident.employee.legajo}</span></td>
-            <td>{new Date(incident.operationalDate).toLocaleDateString("es-AR", { timeZone: "UTC" })}</td>
+            <td>{formatCalendarDate(incident.operationalDate)}</td>
             <td><Badge tone="danger">Sin actividad registrada</Badge></td>
             <td><span className="attendance-review-detail">{incident.observation}</span></td>
             <td>Control automático</td>

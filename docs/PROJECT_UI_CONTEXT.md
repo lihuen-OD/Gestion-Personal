@@ -1542,3 +1542,33 @@ A user should be able to move from one internal system to another and immediatel
 The final result must look like a serious enterprise platform, not a collection of unrelated prototypes.
 
 The UI must support real business work, daily operations, data management, document tracking, employee management, insurance management, financial analysis and reporting.
+
+---
+
+## 30. Global Date Formatting Policy (Etapa 15M.21)
+
+The app is Argentina-only. Every date shown to a user, anywhere in the UI (tables, cards, timelines, modals, tooltips, toasts, banners, notifications, audit trails, exports' on-screen previews), must be presented as:
+
+```text
+DD/MM/AAAA
+```
+
+When it includes a time, it must be:
+
+```text
+DD/MM/AAAA · HH:mm
+```
+
+Example: `21/09/2026` or `21/09/2026 · 14:35`.
+
+Never show a user a raw technical value such as `2026-09-21`, `2026-09-21T14:35:00.000Z`, `2026-09` (a bare period), a `Date.toString()`, or a 12-hour time with `a. m.`/`p. m.` — Node's ICU data defaults the `es-AR` locale to 12-hour time unless `hour12: false` is set explicitly.
+
+### Calendar dates vs. timestamps — never treat them the same
+
+* **Calendar date** (`@db.Date` in Prisma — `TimeEntry.date`, `Novelty.fromDate`/`toDate`, `effectiveFrom`/`effectiveTo`, `birthDate`, `operationalDate`, holiday dates): represents a day with no associated time. Format it **without** any timezone conversion — re-parsing it as an instant and converting to Argentina time can shift it a day backward. Frontend: `formatCalendarDate` (`frontend/src/utils/date.ts`). Backend, for copy embedded in notification/audit text: `formatArgentinaDate` (`backend/src/shared/datetime/argentinaTime.ts`).
+* **Instant / timestamp** (`@db.Timestamptz` — `createdAt`, `updatedAt`, `startAt`, `endAt`, `actualAt`, `uploadedAt`, `disabledAt`): represents a real moment. It **must** be converted to Argentina time (`America/Argentina/Cordoba`, UTC-3, no DST) before display. Frontend: `formatInstantDate` / `formatInstantTime` / `formatDateTime` (`frontend/src/utils/date.ts`). Backend: `formatArgentinaTime` for the time part, `argentinaDateParts`/`argentinaDateKey` for the date part (`backend/src/shared/datetime/argentinaTime.ts`).
+* A monthly period (`"YYYY-MM"`, e.g. `TimeEntry.period`, `MonthlyTimeClosure.period`) is humanized as `"septiembre de 2026"`, never shown as `"2026-09"`. Frontend: `formatPeriodLabel` (`frontend/src/utils/period.ts`). Backend: `humanizePeriodEs` (`backend/src/shared/datetime/argentinaTime.ts`).
+
+Reuse these canonical helpers — do not add a new ad-hoc `toLocaleDateString`/`toLocaleString`/`Intl.DateTimeFormat` call per screen. Each redundant formatter is another place the 12-hour/AM-PM default or a day-shift bug can silently reappear.
+
+This rule does **not** apply to: the technical `value` of an `<input type="date">`/`type="month">` (`YYYY-MM-DD`/`YYYY-MM` is correct there), URL query params, CSV/TXT/API export formats required by external integrations (e.g. Finnegans), or internal request/response payload fields meant to be formatted by the consumer.

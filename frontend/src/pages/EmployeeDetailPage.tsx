@@ -396,7 +396,7 @@ function renderEmployeeTab(
           <div key={event.id}>
             <i />
             <b>{auditActionLabel(event.action)} · {auditEntityLabel(event.entity)}</b>
-            <span>{event.date} {event.time} · {event.user}</span>
+            <span>{event.date} · {event.time} · {event.user}</span>
             <p>
               {auditDescription(event)}
             </p>
@@ -431,7 +431,7 @@ function renderEmployeeTab(
           {auditRows.map((audit) => (
               <tr key={audit.id}>
                 <td>
-                  {audit.date} {audit.time}
+                  {audit.date} · {audit.time}
                 </td>
                 <td>{audit.user}</td>
                 <td>{auditActionLabel(audit.action)}</td>

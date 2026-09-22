@@ -3,7 +3,7 @@ import { Download, Plus } from "lucide-react";
 import { documentApiService } from "../../services/api/documentApiService";
 import type { DocumentMock, Employee, User } from "../../types";
 import { statusTone } from "../../utils/status";
-import { formatCalendarDate } from "../../utils/date";
+import { formatCalendarDate, formatInstantDate } from "../../utils/date";
 import { Badge } from "../ui/Badge";
 import { Button } from "../ui/Button";
 import { EmptyState } from "../ui/EmptyState";
@@ -98,7 +98,7 @@ export function EmployeeDocumentsPanel({
                   <td>
                     <OverflowCell value={doc.fileName} />
                   </td>
-                  <td>{formatCalendarDate(doc.uploadedAt)}</td>
+                  <td>{formatInstantDate(doc.uploadedAt)}</td>
                   <td>{doc.expiresAt ? formatCalendarDate(doc.expiresAt) : "-"}</td>
                   <td>
                     <Badge tone={statusTone(doc.status)}>{doc.status}</Badge>

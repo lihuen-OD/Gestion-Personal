@@ -4,6 +4,7 @@ import { employeeChangeLogService } from "./employeeChangeLogService";
 import { employeeFieldHistoryMockService } from "./employeeFieldHistoryMockService";
 import { calculateEmployeeStatus } from "./employeeStatusService";
 import { readStore, writeStore } from "./storage";
+import { formatInstantDate } from "../utils/date";
 
 const initialTrackedFields: { section: FieldHistorySection; field: string; label: string; get: (employee: Employee) => unknown }[] = [
   { section: "DATOS_LABORALES", field: "companies", label: "Empresa", get: (employee) => employee.companies || [employee.company] },
@@ -45,7 +46,7 @@ export const employeeMockService = {
     const previousStatus = previous ? calculateEmployeeStatus(previous) : calculateEmployeeStatus(employee);
     const nextStatus = calculateEmployeeStatus(employee);
     const events = [...(employee.historyEvents || [])];
-    const addEvent = (type: string, description: string) => events.unshift({ id: crypto.randomUUID(), date: new Date().toLocaleDateString("es-AR"), type, description, user: user.name });
+    const addEvent = (type: string, description: string) => events.unshift({ id: crypto.randomUUID(), date: formatInstantDate(new Date()), type, description, user: user.name });
     if (previous) {
       if (previous.company !== employee.company) addEvent("Cambio de empresa", `Empresa: ${previous.company || "-"} -> ${employee.company || "-"}`);
       if (previous.costCenter !== employee.costCenter) addEvent("Cambio de centro de costo", `Centro de costo: ${previous.costCenter || "-"} -> ${employee.costCenter || "-"}`);
