@@ -98,7 +98,8 @@ describe("checkMissingExpectedEntries — Etapa 15M.19B", () => {
 
   it("fichada dentro de tolerancia (antes del deadline): no genera falta de ingreso, sin importar en qué tick se evalúe", async () => {
     mockedObligation.mockResolvedValue({ isHoliday: false, candidates: [candidate("employee-1")] });
-    mockedPrisma.attendancePunch.findMany.mockResolvedValue([{ employeeId: "employee-1" }]);
+    // Ingreso real a las 08:03 ART (11:03 UTC) -- misma ocurrencia de turno que la obligación (08:00 ART).
+    mockedPrisma.attendancePunch.findMany.mockResolvedValue([{ employeeId: "employee-1", timestamp: new Date("2026-09-18T11:03:00.000Z") }]);
 
     const result = await checkMissingExpectedEntries(new Date("2026-09-18T11:11:00.000Z"));
 
@@ -107,7 +108,7 @@ describe("checkMissingExpectedEntries — Etapa 15M.19B", () => {
 
   it("tolerancia vencida pero YA fichó (evidencia via attendancePunch): NO genera falta de ingreso", async () => {
     mockedObligation.mockResolvedValue({ isHoliday: false, candidates: [candidate("employee-1")] });
-    mockedPrisma.attendancePunch.findMany.mockResolvedValue([{ employeeId: "employee-1" }]);
+    mockedPrisma.attendancePunch.findMany.mockResolvedValue([{ employeeId: "employee-1", timestamp: new Date("2026-09-18T11:03:00.000Z") }]);
 
     const result = await checkMissingExpectedEntries(new Date("2026-09-18T11:30:00.000Z"));
 
@@ -152,7 +153,7 @@ describe("checkMissingExpectedEntries — Etapa 15M.19B", () => {
     it("empleado ficha después de haber sido detectado: el incidente PENDIENTE de hoy se resuelve automáticamente", async () => {
       mockedObligation.mockResolvedValue({ isHoliday: false, candidates: [candidate("employee-1")] });
       // Ya no está "due" en el sentido de generar uno nuevo, pero puede seguir habiendo un PENDIENTE de un tick anterior.
-      mockedPrisma.attendancePunch.findMany.mockResolvedValue([{ employeeId: "employee-1" }]);
+      mockedPrisma.attendancePunch.findMany.mockResolvedValue([{ employeeId: "employee-1", timestamp: new Date("2026-09-18T11:03:00.000Z") }]);
       mockedPrisma.attendanceInactivityIncident.findMany.mockResolvedValue([{ id: "incident-1", employeeId: "employee-1" }]);
 
       const result = await checkMissingExpectedEntries(new Date("2026-09-18T11:20:00.000Z"));
@@ -166,7 +167,7 @@ describe("checkMissingExpectedEntries — Etapa 15M.19B", () => {
 
     it("sin incidente PENDIENTE para hoy: no llama updateMany (nada que resolver)", async () => {
       mockedObligation.mockResolvedValue({ isHoliday: false, candidates: [candidate("employee-1")] });
-      mockedPrisma.attendancePunch.findMany.mockResolvedValue([{ employeeId: "employee-1" }]);
+      mockedPrisma.attendancePunch.findMany.mockResolvedValue([{ employeeId: "employee-1", timestamp: new Date("2026-09-18T11:03:00.000Z") }]);
       mockedPrisma.attendanceInactivityIncident.findMany.mockResolvedValue([]);
 
       const result = await checkMissingExpectedEntries(new Date("2026-09-18T11:20:00.000Z"));

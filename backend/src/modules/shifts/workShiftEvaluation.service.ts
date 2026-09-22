@@ -76,8 +76,13 @@ function differenceInMinutes(actual: Date, scheduled: Date) {
   return Math.round((actual.getTime() - scheduled.getTime()) / 60_000);
 }
 
-// Busca la ocurrencia (hoy, ayer o mañana) del horario de inicio más cercana a `actualAt`, para no fallar cerca de la medianoche.
-function closestOccurrence(actualAt: Date, startTime: string) {
+// Busca la ocurrencia (hoy, ayer o mañana) del horario de inicio más cercana
+// a `actualAt`, para no fallar cerca de la medianoche. Exportada (Etapa
+// 15M.19F) para que `attendanceInactivity.service.ts` pueda reutilizar
+// exactamente este mismo criterio de "a qué ocurrencia del turno pertenece
+// una fichada" al decidir si una obligación puntual de ingreso fue
+// cumplida — nunca reimplementar esta cuenta en otro módulo.
+export function closestOccurrence(actualAt: Date, startTime: string) {
   const today = scheduledInstantForShiftTime(actualAt, startTime);
   const candidates = [today, new Date(today.getTime() - 24 * 60 * 60_000), new Date(today.getTime() + 24 * 60 * 60_000)]
     .map((scheduledAt) => ({ scheduledAt, differenceMinutes: differenceInMinutes(actualAt, scheduledAt) }))

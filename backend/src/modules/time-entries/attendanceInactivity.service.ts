@@ -2,7 +2,8 @@ import { EmployeeStatus } from "@prisma/client";
 import { prisma } from "../../shared/prisma/client";
 import { argentinaCalendarDate, argentinaDateParts, argentinaDayRange, formatArgentinaDate } from "../../shared/datetime/argentinaTime";
 import { noveltyCoversDay } from "../novelties/novelties.dateRange";
-import { resolveWorkObligationCandidates } from "../shifts/workObligation.service";
+import { resolveWorkObligationCandidates, type WorkObligationCandidate } from "../shifts/workObligation.service";
+import { closestOccurrence } from "../shifts/workShiftEvaluation.service";
 
 export function previousOperationalDateKey(value = new Date()) {
   const { year, month, day } = argentinaDateParts(value);
@@ -48,6 +49,73 @@ export async function findEmployeeIdsWithActivityEvidence(employeeIds: string[],
     prisma.timeEntry.findMany({ where: { employeeId: { in: employeeIds }, date: { gte: ranges.operationalDate, lt: ranges.nextOperationalDate } }, select: { employeeId: true }, distinct: ["employeeId"] }),
   ]);
   return new Set([...punches, ...workShifts, ...timeEntries].map((row) => row.employeeId));
+}
+
+/**
+ * Etapa 15M.19F (docs/decisions/MISSING_ENTRY_CROSS_MIDNIGHT_RECONCILIATION_15M19F.md):
+ * evidencia PRECISA de que una obligación PUNTUAL de ingreso fue cumplida —
+ * a diferencia de `findEmployeeIdsWithActivityEvidence` (que responde "¿hubo
+ * CUALQUIER actividad ese día calendario?", la pregunta correcta para
+ * SIN_ACTIVIDAD_REGISTRADA), esta responde "¿existe una fichada de INGRESO
+ * que corresponda específicamente a ESTA obligación (este turno, este
+ * `scheduledStartAt`)?" — la pregunta correcta para FALTA_INGRESO.
+ *
+ * Bug real que motivó esta función (caso "Sereno", turno nocturno
+ * 23:00-07:00): la jornada anterior que cruza medianoche deja evidencia dentro
+ * de la ventana `[00:00,24:00)` del día siguiente (la fichada de SALIDA, y/o
+ * el `TimeEntry`/`WorkShift` generado por esa misma jornada) — ninguna de esas
+ * señales demuestra que la NUEVA obligación de esa noche fue cumplida.
+ * `findEmployeeIdsWithActivityEvidence`, al mirar "cualquier actividad del
+ * día calendario", quedaba engañada por esa cola de actividad.
+ *
+ * Decisiones de diseño (documentadas a propósito, ver §21 del pedido):
+ * - Sólo `AttendancePunch` de tipo INGRESO cuenta — nunca SALIDA (no es
+ *   evidencia de haber INICIADO una jornada) ni `TimeEntry` (una carga
+ *   horaria manual/automática no demuestra por sí sola que la persona fichó
+ *   su ingreso; puede haberse cargado después, por otro motivo).
+ * - Para cada punch candidato, se reutiliza `closestOccurrence` — el MISMO
+ *   cálculo de "a qué ocurrencia del turno pertenece esta fichada" que ya usa
+ *   `matchShiftForEmployee` (workShiftEvaluation.service.ts) para clasificar
+ *   INGRESO_TARDE/TEMPRANO — en vez de un rango `[00:00,24:00)` del día
+ *   calendario. Así, una fichada de las 23:00 de AYER nunca cuenta como
+ *   evidencia de la obligación de HOY a las 23:00, aunque ambas toquen "el
+ *   mismo día calendario" en algún punto de su ventana; y una fichada
+ *   TARDÍA (ej. 23:25 con 10' de tolerancia) sigue contando como
+ *   cumplimiento de la obligación de esta noche — sólo dejará de contar la
+ *   FALTA_INGRESO, el retraso en sí lo sigue marcando `INGRESO_TARDE`
+ *   (ShiftAlert), un sistema totalmente independiente que esta función no
+ *   toca.
+ */
+export async function findEmployeeIdsWithMatchingEntryEvidence(candidates: WorkObligationCandidate[]): Promise<Set<string>> {
+  if (!candidates.length) return new Set();
+  const employeeIds = candidates.map((candidate) => candidate.employeeId);
+  const times = candidates.map((candidate) => candidate.scheduledStartAt.getTime());
+  const oneDayMs = 24 * 60 * 60 * 1000;
+  const windowStart = new Date(Math.min(...times) - oneDayMs);
+  const windowEnd = new Date(Math.max(...times) + oneDayMs);
+
+  const punches = await prisma.attendancePunch.findMany({
+    where: { employeeId: { in: employeeIds }, type: "INGRESO", timestamp: { gte: windowStart, lt: windowEnd } },
+    select: { employeeId: true, timestamp: true },
+  });
+
+  const timestampsByEmployee = new Map<string, Date[]>();
+  for (const punch of punches) {
+    const list = timestampsByEmployee.get(punch.employeeId) ?? [];
+    list.push(punch.timestamp);
+    timestampsByEmployee.set(punch.employeeId, list);
+  }
+
+  const matched = new Set<string>();
+  for (const candidate of candidates) {
+    const timestamps = timestampsByEmployee.get(candidate.employeeId);
+    if (!timestamps?.length) continue;
+    const satisfiesThisObligation = timestamps.some(
+      (timestamp) => closestOccurrence(timestamp, candidate.template.startTime).scheduledAt.getTime() === candidate.scheduledStartAt.getTime(),
+    );
+    if (satisfiesThisObligation) matched.add(candidate.employeeId);
+  }
+  return matched;
 }
 
 /**

@@ -4,6 +4,7 @@ import { notifyMissingExit } from "./timeEntries.service";
 import { storageFilesRepository } from "../../shared/storage/storageFiles.repository";
 import { runAttendanceInactivityCatchUp } from "./attendanceInactivityScheduler";
 import { checkMissingExpectedEntries } from "./missingEntry.service";
+import { runMissingEntryCatchUp } from "./missingEntryScheduler";
 import { checkMissingOutRisk } from "../shifts/openShiftMonitor.service";
 
 let running = false;
@@ -98,6 +99,21 @@ export async function maintainClockPunchAttempts() {
       }
     } catch (error) {
       console.error("ATTENDANCE_INACTIVITY_CATCHUP_FAILED", {
+        severity: "critical",
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+
+    // Etapa 15M.19F: catch-up de falta de ingreso para días anteriores ya
+    // elapsados — checkpoint propio, independiente del de inactividad diaria
+    // de arriba (ver missingEntryScheduler.ts).
+    try {
+      const missingEntryCatchUp = await runMissingEntryCatchUp(new Date());
+      if (missingEntryCatchUp.detectedTotal > 0 || missingEntryCatchUp.ranDates.length > 0 || missingEntryCatchUp.bootstrapped) {
+        console.info("MISSING_ENTRY_CATCHUP_CHECKED", missingEntryCatchUp);
+      }
+    } catch (error) {
+      console.error("MISSING_ENTRY_CATCHUP_FAILED", {
         severity: "critical",
         error: error instanceof Error ? error.message : String(error),
       });

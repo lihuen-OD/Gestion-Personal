@@ -74,6 +74,12 @@ const envSchema = z.object({
   // DURABLE_ATTENDANCE_INACTIVITY_SCHEDULER_15M19A.md §Bootstrap). Formato
   // "YYYY-MM-DD" — nunca hardcodear una fecha en el código.
   ATTENDANCE_INACTIVITY_BOOTSTRAP_DATE: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "ATTENDANCE_INACTIVITY_BOOTSTRAP_DATE must be YYYY-MM-DD").optional(),
+  // Etapa 15M.19F (docs/decisions/MISSING_ENTRY_CROSS_MIDNIGHT_RECONCILIATION_15M19F.md):
+  // mismo criterio y mismo default que ATTENDANCE_INACTIVITY_MAX_CATCHUP_DATES
+  // (ver arriba), aplicado al catch-up de falta de ingreso — checkpoint
+  // propio ("missing-entry-catchup"), independiente del de inactividad
+  // diaria.
+  MISSING_ENTRY_MAX_CATCHUP_DATES: z.coerce.number().int().positive().default(14),
   // Etapa 14B.2 — logging seguro de performance (ver docs/decisions/PERFORMANCE_LOGGING_14B2.md).
   // PERFORMANCE_LOGGING_ENABLED sin valor explícito: activo fuera de production,
   // apagado por defecto en production (opt-in explícito requerido ahí).
