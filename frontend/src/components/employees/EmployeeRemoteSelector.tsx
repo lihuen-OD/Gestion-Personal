@@ -1,5 +1,5 @@
 import { Check } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { employeeApiService } from "../../services/api/employeeApiService";
 import type { Employee } from "../../types";
 import { displayLegajo, fullName } from "../../utils/employee";
@@ -8,8 +8,22 @@ import { useDebouncedValue } from "../../utils/useDebouncedValue";
 import { Badge } from "../ui/Badge";
 import { SearchInput } from "../ui/SearchInput";
 
+// Tamaño de página inicial y de cada "Cargar más" — nunca se trae todo de
+// una sola vez (antes: `take: 20` fijo, sin forma de ver más resultados).
+const PAGE_SIZE = 20;
+
 export function visibleEmployeeResults(results: Employee[], excludeIds?: Set<string>): Employee[] {
   return excludeIds ? results.filter((employee) => !excludeIds.has(employee.id)) : results;
+}
+
+function mergeEmployeesById(current: Employee[], incoming: Employee[]): Employee[] {
+  const seen = new Set(current.map((employee) => employee.id));
+  const appended = incoming.filter((employee) => {
+    if (seen.has(employee.id)) return false;
+    seen.add(employee.id);
+    return true;
+  });
+  return [...current, ...appended];
 }
 
 export function EmployeeRemoteSelector({
@@ -38,34 +52,80 @@ export function EmployeeRemoteSelector({
   const [statusFilter, setStatusFilter] = useState<"" | "ACTIVO" | "INACTIVO">("ACTIVO");
   const [results, setResults] = useState<Employee[]>([]);
   const [status, setStatus] = useState<"idle" | "loading" | "success" | "error">("idle");
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(false);
+  const [total, setTotal] = useState<number | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [loadMoreError, setLoadMoreError] = useState(false);
   const debouncedSearch = useDebouncedValue(search, 300);
+  // Contador de "request vigente": cada reset (búsqueda/filtro) y cada
+  // "Cargar más" lo incrementa y captura su propio valor. Una respuesta que
+  // llega cuando el contador ya avanzó (por un reset posterior, un nuevo
+  // "Cargar más", o el desmontaje del componente) se descarta — evita que
+  // una búsqueda vieja pise una más nueva (ver ejemplo "Oficina"/"Granja").
+  const requestSeqRef = useRef(0);
 
   useEffect(() => {
     const query = debouncedSearch.trim();
     if (!showStatusFilter && query.length < 2) {
+      requestSeqRef.current += 1;
       setResults([]);
       setStatus("idle");
+      setPage(1);
+      setHasMore(false);
+      setTotal(null);
+      setLoadMoreError(false);
       return;
     }
 
-    let mounted = true;
+    const seq = ++requestSeqRef.current;
     setStatus("loading");
+    setLoadMoreError(false);
     employeeApiService
-      .getOptions({ search: query || undefined, status: showStatusFilter ? statusFilter || undefined : undefined, take: 20 })
+      .getOptions({ search: query || undefined, status: showStatusFilter ? statusFilter || undefined : undefined, page: 1, take: PAGE_SIZE })
       .then((response) => {
-        if (!mounted) return;
+        if (requestSeqRef.current !== seq) return;
         setResults(response.items);
+        setPage(1);
+        setHasMore(response.meta.hasMore);
+        setTotal(response.meta.total);
         setStatus("success");
       })
       .catch(() => {
-        if (!mounted) return;
+        if (requestSeqRef.current !== seq) return;
         setResults([]);
         setStatus("error");
+        setHasMore(false);
+        setTotal(null);
       });
+
     return () => {
-      mounted = false;
+      requestSeqRef.current += 1;
     };
   }, [debouncedSearch, showStatusFilter, statusFilter]);
+
+  const loadMore = () => {
+    if (loadingMore || !hasMore) return;
+    const nextPage = page + 1;
+    const seq = ++requestSeqRef.current;
+    setLoadingMore(true);
+    setLoadMoreError(false);
+    employeeApiService
+      .getOptions({ search: debouncedSearch.trim() || undefined, status: showStatusFilter ? statusFilter || undefined : undefined, page: nextPage, take: PAGE_SIZE })
+      .then((response) => {
+        if (requestSeqRef.current !== seq) return;
+        setResults((current) => mergeEmployeesById(current, response.items));
+        setPage(nextPage);
+        setHasMore(response.meta.hasMore);
+        setTotal(response.meta.total);
+        setLoadingMore(false);
+      })
+      .catch(() => {
+        if (requestSeqRef.current !== seq) return;
+        setLoadingMore(false);
+        setLoadMoreError(true);
+      });
+  };
 
   const selectedIds = new Set(selected.map((employee) => employee.id));
   const choose = (employee: Employee) => {
@@ -74,7 +134,8 @@ export function EmployeeRemoteSelector({
       return;
     }
     onChange([employee]);
-    setSearch(""); setResults([]); setStatus("idle");
+    requestSeqRef.current += 1;
+    setSearch(""); setResults([]); setStatus("idle"); setPage(1); setHasMore(false); setTotal(null); setLoadMoreError(false);
   };
   const visibleResults = visibleEmployeeResults(results, excludeIds);
   const selectableResults = visibleResults.filter((employee) => !selectedIds.has(employee.id));
@@ -91,12 +152,16 @@ export function EmployeeRemoteSelector({
         {showStatusFilter ? <label className="people-status-filter"><span>Estado</span><select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as typeof statusFilter)}><option value="ACTIVO">Activos</option><option value="INACTIVO">Inactivos</option><option value="">Todos</option></select></label> : null}
       </div>
       {!showStatusFilter && search.trim().length < 2 ? <small>Ingresá al menos 2 caracteres para buscar.</small> : null}
-      {showStatusFilter && !search.trim() && status === "success" ? <small>Mostramos hasta 20 resultados. Usá el buscador para encontrar más empleados.</small> : null}
-      {status === "loading" ? <small>Buscando legajos...</small> : null}
+      {status === "loading" ? <small>Buscando empleados...</small> : null}
       {status === "error" ? <small className="error">No se pudo completar la búsqueda.</small> : null}
       {status === "success" ? (
         <div className="people-search-results">
-          {multiple && visibleResults.length ? <div className="people-results-actions"><span>{visibleResults.length} resultado{visibleResults.length === 1 ? "" : "s"}</span>{selectableResults.length ? <button type="button" onClick={selectVisible}>Seleccionar resultados visibles</button> : <span>Todos seleccionados</span>}</div> : null}
+          {multiple && results.length ? (
+            <div className="people-results-actions">
+              <span>{total !== null ? `${results.length} de ${total} empleado${total === 1 ? "" : "s"}` : `${results.length} empleado${results.length === 1 ? "" : "s"} cargado${results.length === 1 ? "" : "s"}`}</span>
+              {selectableResults.length ? <button type="button" onClick={selectVisible}>Seleccionar resultados visibles</button> : <span>Todos seleccionados</span>}
+            </div>
+          ) : null}
           {visibleResults.length ? visibleResults.map((employee) => {
             const detail = [employee.sector, employee.company].filter(Boolean).join(" · ");
             return (
@@ -114,7 +179,21 @@ export function EmployeeRemoteSelector({
                 </span>
               </button>
             );
-          }) : <span>No encontramos legajos con esa búsqueda.</span>}
+          }) : <span>{hasMore ? "Ningún resultado de esta página coincide con los filtros — cargá más para ver otros." : "No encontramos legajos con esa búsqueda."}</span>}
+          {hasMore || loadingMore || loadMoreError ? (
+            <div className="people-results-load-more">
+              {loadingMore ? (
+                <small>Cargando más empleados...</small>
+              ) : loadMoreError ? (
+                <>
+                  <span className="error">No pudimos cargar más empleados.</span>
+                  <button type="button" onClick={loadMore}>Reintentar</button>
+                </>
+              ) : (
+                <button type="button" onClick={loadMore}>Cargar más empleados</button>
+              )}
+            </div>
+          ) : null}
         </div>
       ) : null}
       <div className="selected-people">

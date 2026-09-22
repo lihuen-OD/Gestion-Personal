@@ -369,6 +369,9 @@ Check:
 * Labels for form fields.
 * Button text is clear.
 * Focus states are usable.
+  * `input`/`select`/`textarea` with their own border use a single ring via `border-color` + `box-shadow` on `:focus-visible` — never combined with `outline` (see `styles.css`, single consolidated rule; a second competing rule is a regression, not a new design choice).
+  * Links, buttons and checkbox/radio inputs (no reinforceable text-box border) keep the `outline`-based ring instead.
+  * A compound control whose visible border lives on a wrapper (icon + input, e.g. `.date-filter`, `.search-field`) draws the ring on the wrapper via `:focus-within` and explicitly suppresses the inner input's own ring — never both.
 * Contrast is acceptable.
 * Images have alt text when meaningful.
 * Keyboard navigation is not broken.

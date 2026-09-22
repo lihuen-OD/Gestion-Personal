@@ -453,14 +453,19 @@ describe("WorkRegimesPage — modal Empleados asociados (Etapa 13J / 13J.1 / 13J
     expect(document.querySelector(".people-status-filter")).toBeInTheDocument();
   });
 
-  it("muestra el copy de 'hasta 20 resultados' sin mayúsculas gritadas", async () => {
+  it("muestra el contador de empleados cargados (sin mayúsculas gritadas) y permite cargar más si hay más páginas", async () => {
     vi.mocked(workRegimeApiService.getWorkRegimeEmployees).mockResolvedValue({ items: [], meta: emptyMeta });
+    vi.mocked(employeeApiService.getOptions).mockResolvedValue({
+      items: [buildEmployee()],
+      meta: { total: 45, page: 1, pageSize: 20, hasMore: true },
+    });
 
     const user = await openAssociatedEmployeesModal();
     await user.click(screen.getByRole("button", { name: "Agregar empleados" }));
 
-    const hint = await screen.findByText("Mostramos hasta 20 resultados. Usá el buscador para encontrar más empleados.");
+    const hint = await screen.findByText("1 de 45 empleados");
     expect(hint.textContent).not.toBe(hint.textContent!.toUpperCase());
+    expect(screen.getByRole("button", { name: "Cargar más empleados" })).toBeInTheDocument();
   });
 
   it("'Volver a empleados asociados' regresa a la lista sin perder el filtro de vigencia", async () => {
