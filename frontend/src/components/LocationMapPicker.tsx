@@ -17,6 +17,12 @@ interface LocationMapPickerProps {
   readOnly?: boolean;
 }
 
+// CARTO Voyager (datos OSM): HTTPS, sin API key, apto para bajo volumen de
+// desarrollo/demo. tile.openstreetmap.org bloqueaba los tiles con 403 por su
+// política de uso.
+const BASE_TILE_URL = "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png";
+const BASE_TILE_ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>';
+
 const markerIcon = L.divIcon({
   className: "custom-leaflet-marker",
   html: "<span></span>",
@@ -63,6 +69,7 @@ function ClickHandler({ disabled, onPick }: { disabled?: boolean; onPick: (lat: 
 export function LocationMapPicker(props: LocationMapPickerProps) {
   const [mapsUrl, setMapsUrl] = useState("");
   const [mapsUrlError, setMapsUrlError] = useState("");
+  const [tilesFailed, setTilesFailed] = useState(false);
   const selectedCenter = props.value.lat !== null && props.value.lng !== null ? { lat: props.value.lat, lng: props.value.lng } : undefined;
   const hasLocality = Boolean(props.provinceName && props.departmentName && props.localityName && (props.initialCenter || selectedCenter));
   const mapCenter = selectedCenter || props.initialCenter;
@@ -100,7 +107,13 @@ export function LocationMapPicker(props: LocationMapPickerProps) {
     </div>}
     <MapContainer center={[mapCenter.lat, mapCenter.lng]} zoom={zoom} scrollWheelZoom className="leaflet-map">
       <Recenter lat={mapCenter.lat} lng={mapCenter.lng} zoom={zoom} />
-      <TileLayer attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>' url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+      <TileLayer
+        attribution={BASE_TILE_ATTRIBUTION}
+        url={BASE_TILE_URL}
+        subdomains="abcd"
+        eventHandlers={{ tileerror: () => setTilesFailed(true), tileload: () => setTilesFailed(false) }}
+      />
+      {tilesFailed && <div className="map-tiles-error" role="status">No pudimos cargar el mapa base. Las coordenadas siguen disponibles.</div>}
       <ClickHandler disabled={props.readOnly} onPick={setPoint} />
       {selectedCenter && <Marker
         position={[selectedCenter.lat, selectedCenter.lng]}
