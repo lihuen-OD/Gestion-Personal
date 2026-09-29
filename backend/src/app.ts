@@ -2,6 +2,7 @@ import cors from "cors";
 import express from "express";
 import rateLimit from "express-rate-limit";
 import helmet from "helmet";
+import { parseCorsOrigins } from "./config/corsOrigins";
 import { env } from "./config/env";
 import { requestLogger } from "./middlewares/requestLogger";
 import { apiRouter } from "./routes";
@@ -15,7 +16,7 @@ export function createApp() {
   app.use(helmet());
   app.use(
     cors({
-      origin: env.CORS_ORIGIN.split(",").map((origin) => origin.trim()),
+      origin: parseCorsOrigins(env.CORS_ORIGIN),
       credentials: true,
     }),
   );
