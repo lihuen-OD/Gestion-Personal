@@ -4,6 +4,11 @@ dist
 *.tsbuildinfo
 .env
 .env.local
+# Config local por modo de Vite, ej. .env.tunnel.local con la URL temporal
+# de VS Code Dev Tunnels (ver docs/LOCAL_DEVELOPMENT.md); se versiona sólo
+# .env.tunnel.local.example.
+.env.tunnel
+.env.*.local
 # Etapa 14B.3 — artefactos locales del performance journey (Playwright)
 test-results
 playwright-report

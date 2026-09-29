@@ -153,6 +153,56 @@ PORT=<PUERTO_BACKEND>
 VITE_API_URL=http://localhost:<PUERTO_BACKEND>/api
 ```
 
+## Mostrar la app con VS Code Dev Tunnels
+
+Para mostrar el entorno de prueba local a otras personas sin deployar. No
+toca producción; funciona mientras tu PC y VS Code estén prendidos.
+
+### Uso normal
+
+```bash
+cd backend && npm run dev     # http://localhost:4002/api
+cd frontend && npm run dev    # http://localhost:5174 -> API localhost
+```
+
+### Para mostrar la app con VS Code Tunnel
+
+1. Levantar backend: `cd backend && npm run dev`.
+2. Pestaña **Puertos** de VS Code: reenviar `4002`.
+3. Reenviar `5174`.
+4. Poner ambos en visibilidad **Pública** (clic derecho → Visibilidad del
+   puerto). Un `4002` privado se ve en el navegador como error de CORS.
+5. Configurar una sola vez (se repite sólo si la URL del tunnel cambia):
+   - `frontend/.env.tunnel.local` (gitignoreado, copiar de
+     `frontend/.env.tunnel.local.example`):
+     `VITE_API_URL=https://XXXXXXXX-4002.brs.devtunnels.ms/api`
+   - `backend/.env`, agregar el origin del frontend tunnel (sin `/` final) y
+     reiniciar el backend:
+     `CORS_ORIGIN=http://localhost:5174,https://XXXXXXXX-5174.brs.devtunnels.ms`
+6. Frontend: `cd frontend && npm run dev:tunnel`.
+7. Compartir sólo la URL del `5174`.
+
+### Para volver a local
+
+```bash
+cd frontend && npm run dev
+```
+
+Qué archivo gana (Vite pisa clave por clave, el último manda):
+
+| Comando              | Archivos cargados, en orden                          |
+| -------------------- | ---------------------------------------------------- |
+| `npm run dev`        | `.env` → `.env.local`                                |
+| `npm run dev:tunnel` | `.env` → `.env.local` → `.env.tunnel.local`          |
+
+`.env.tunnel.local` define sólo `VITE_API_URL`; el modo demo y sus perfiles
+se heredan de `.env.local`, así el tunnel muestra la misma app de prueba.
+Las credenciales demo quedan visibles para quien abra el link (como toda
+variable `VITE_*`): usar sólo cuentas de prueba con contraseña exclusiva.
+La auth no usa cookies (Bearer + refresh en body, `sessionStorage`), así que
+cross-origin alcanza con CORS. Quienes entran por el tunnel comparten el rate
+limit de login (misma IP local).
+
 ## Notas de seguridad
 
 - No commitear `.env`.
