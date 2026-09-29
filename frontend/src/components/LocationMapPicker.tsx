@@ -17,11 +17,13 @@ interface LocationMapPickerProps {
   readOnly?: boolean;
 }
 
-// CARTO Voyager (datos OSM): HTTPS, sin API key, apto para bajo volumen de
-// desarrollo/demo. tile.openstreetmap.org bloqueaba los tiles con 403 por su
-// política de uso.
-const BASE_TILE_URL = "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png";
-const BASE_TILE_ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>';
+// OpenTopoMap (datos OSM, CC-BY-SA): HTTPS, sin API key ni cuenta, uso
+// comercial permitido con atribución visible y volumen moderado
+// (https://opentopomap.org/about). tile.openstreetmap.org devolvía 403 y
+// CARTO exige API key fuera de su plataforma. Sirve hasta zoom 17.
+const BASE_TILE_URL = "https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png";
+const BASE_TILE_ATTRIBUTION = 'Map data: &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, SRTM | Map style: &copy; <a href="https://opentopomap.org">OpenTopoMap</a> (<a href="https://creativecommons.org/licenses/by-sa/3.0/">CC-BY-SA</a>)';
+const BASE_TILE_MAX_ZOOM = 17;
 
 const markerIcon = L.divIcon({
   className: "custom-leaflet-marker",
@@ -105,12 +107,13 @@ export function LocationMapPicker(props: LocationMapPickerProps) {
       <Button type="button" variant="subtle" disabled={!mapsUrl.trim()} onClick={applyGoogleMapsUrl}>Usar coordenadas del link</Button>
       {mapsUrlError && <small>{mapsUrlError}</small>}
     </div>}
-    <MapContainer center={[mapCenter.lat, mapCenter.lng]} zoom={zoom} scrollWheelZoom className="leaflet-map">
+    <MapContainer center={[mapCenter.lat, mapCenter.lng]} zoom={zoom} maxZoom={BASE_TILE_MAX_ZOOM} scrollWheelZoom className="leaflet-map">
       <Recenter lat={mapCenter.lat} lng={mapCenter.lng} zoom={zoom} />
       <TileLayer
         attribution={BASE_TILE_ATTRIBUTION}
         url={BASE_TILE_URL}
-        subdomains="abcd"
+        subdomains="abc"
+        maxZoom={BASE_TILE_MAX_ZOOM}
         eventHandlers={{ tileerror: () => setTilesFailed(true), tileload: () => setTilesFailed(false) }}
       />
       {tilesFailed && <div className="map-tiles-error" role="status">No pudimos cargar el mapa base. Las coordenadas siguen disponibles.</div>}
