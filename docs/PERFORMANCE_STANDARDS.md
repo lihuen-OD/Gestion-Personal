@@ -139,6 +139,10 @@ Request: parámetros `page`/`take` (no `pageSize` del lado del request — esa e
 
 **Filtros server-side**: si una pantalla expone un filtro en la UI, ese filtro debe resolverse en el backend antes de paginar — un filtro que sólo funciona client-side sobre una página ya recortada da resultados incorrectos. Antes de paginar una pantalla con múltiples filtros, confirmar que **todos** se resuelven server-side (ver el caso de Puestos en 9E, donde 3 filtros de jerarquía organizacional se aceptaban en la query pero nunca se traducían a un `where` real — se corrigió como parte de habilitar la paginación real, no después).
 
+**Orden server-side**: toda tabla paginada ordena en el backend (`sortBy`/`sortOrder`, whitelist explícita por endpoint, desempate estable por `id`, `NULLS LAST`) antes de `OFFSET/LIMIT` — ver `docs/BACKEND_API_CONTRACTS.md` "Contrato de listados paginados". Cambiar el orden vuelve a la página 1. Ordenar en el cliente una página ya recortada es el mismo error que filtrarla.
+
+**Sin truncado silencioso**: un listado que la UI presenta como completo no puede depender de un `take` implícito (default del schema) ni de un tope fijo sin señal. Catálogos chicos que la pantalla necesita enteros: `collectAllPages` en el frontend (sigue `meta.hasMore`, falla visible pasado el tope) o endpoint documentado como catálogo completo. Topes de cache de repositorio (`REPOSITORY_LIST_CACHE_MAX_ROWS`): si el catálogo los supera, caer a la consulta paginada real, nunca devolver `total = filas cacheadas`.
+
 **No hacer paginación falsa**: nunca recortar en el frontend un array ya fetcheado completo y llamarlo "paginación" cuando el volumen real puede crecer — eso no resuelve el problema de payload/query, sólo lo esconde visualmente.
 
 ## 7. Reglas para calendarios

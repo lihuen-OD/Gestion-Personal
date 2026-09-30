@@ -36,6 +36,46 @@ Los listados grandes pueden incluir metadatos de paginación sin cambiar `data`:
 }
 ```
 
+### Contrato de listados paginados: filtros, búsqueda, orden y paginación server-side
+
+Toda pantalla que no tiene el dataset completo resuelve búsqueda, filtros, orden y paginación en el backend, en este orden: `WHERE` (filtros + búsqueda) → `ORDER BY` → `COUNT` → `OFFSET/LIMIT`. Nunca se ordena ni filtra en el frontend una página ya recortada.
+
+Request (sin cambiar convenciones existentes):
+
+```txt
+page        1..10000 (default 1)
+take        tamaño de página (máximo propio de cada endpoint; la respuesta lo informa como meta.pageSize)
+search      texto libre, si el endpoint lo soporta
+<filtros>   propios del módulo (companyId, status, period, ...)
+sortBy      key pública de una whitelist explícita por endpoint (opcional)
+sortOrder   asc | desc (opcional, default asc)
+```
+
+- `sortBy` fuera de la whitelist → `400 VALIDATION_ERROR` (mismo `validateQuery` que el resto de los parámetros). Nunca se pasa un nombre de campo del request a Prisma: cada endpoint traduce su key pública con un mapa propio (`backend/src/shared/validation/listSort.ts`).
+- Sin `sortBy` se mantiene el orden de negocio default del endpoint (sin cambios respecto del comportamiento previo).
+- Siempre se agrega un desempate estable por columna única (`id`) al final del `ORDER BY`, para que paginar no repita ni saltee filas con el mismo valor.
+- Columnas nulables ordenan con `NULLS LAST` en ambas direcciones. Relaciones opcionales (sector, centro de costo, usuario) **no** se exponen como `sortBy`: Prisma no permite `nulls` sobre relaciones y en `DESC` los vacíos quedarían primero.
+- Texto: la base usa collation `C.UTF-8` (orden por bytes). El orden server-side distingue mayúsculas y ubica iniciales acentuadas después de la Z; el orden natural/sin acentos (`localeCompare("es")`) aplica sólo a tablas client-side. Cambiarlo requiere una migración de collation ICU por columna — pendiente, fuera del alcance de la etapa de tablas.
+- Booleanos de query: sólo `true`/`false` (`shared/validation/queryBoolean.ts`); antes `z.coerce.boolean()` interpretaba `"false"` como `true`.
+
+Whitelists vigentes:
+
+| Endpoint | `sortBy` | Default sin `sortBy` |
+|---|---|---|
+| `GET /api/employees` | `legajo`, `cuil`, `lastName`, `firstName`, `status` | estado, apellido, nombre |
+| `GET /api/documents` | `legajo`, `employee`, `category`, `fileName`, `createdAt`, `expiresAt`, `status` | fecha de carga desc |
+| `GET /api/novelties` | `legajo`, `employee`, `noveltyType`, `fromDate`, `status` | vigencia desde desc |
+| `GET /api/audit` | `createdAt` | fecha desc |
+| `GET /api/positions` | `name`, `status` | estado, nombre |
+| `GET /api/positions/:id/employees` | `legajo`, `employee` | apellido, nombre |
+| `GET /api/time-entries` (`view=flat`) | `legajo`, `employee`, `date`, `hourConcept`, `hours`, `status` | fecha desc, apellido |
+| `GET /api/time-entries` (`view=byEmployee`), `GET /api/time-entries/period-employees` | `legajo`, `employee` (otra key de la whitelist de `/time-entries` cae al default) | apellido, nombre |
+| `GET /api/hour-concepts/:id/employees`, `GET /api/work-regimes/:id/employees` | `legajo`, `employee` | apellido, nombre |
+
+`status` ordena por el orden de declaración del enum (ciclo de vida), no alfabéticamente por la etiqueta.
+
+**Sin truncado silencioso.** Ningún listado que la UI presente como completo puede cortarse en un `take` implícito. Los catálogos chicos que la pantalla necesita enteros se piden explícitamente completos: el frontend recorre `meta.hasMore` con `collectAllPages` (`frontend/src/services/api/listQuery.ts`, falla de forma visible si supera 50 páginas), o el endpoint es un catálogo completo documentado (`GET /api/org-structure`, `GET /api/positions/options` sin `take`). La rama cacheada "sin filtros" de los catálogos (`REPOSITORY_LIST_CACHE_MAX_ROWS`, 500) cae a la consulta paginada real si el catálogo la supera, en vez de informar un total recortado.
+
 En errores:
 
 ```json
@@ -165,9 +205,11 @@ sectorId
 costCenterId
 take
 page
+sortBy     legajo | cuil | lastName | firstName | status
+sortOrder  asc | desc
 ```
 
-Devuelve `meta` de paginacion. Las pantallas de listado deben consumir este endpoint de forma paginada y no pedir todos los legajos para calcular tarjetas.
+Devuelve `meta` de paginacion. Las pantallas de listado deben consumir este endpoint de forma paginada y no pedir todos los legajos para calcular tarjetas. Ver "Contrato de listados paginados" arriba.
 
 ### Resumen de legajos
 
@@ -804,7 +846,9 @@ page
 
 `sectorId` es la única fuente de ubicación de un puesto (no existen `businessUnitName`/`establishmentName`/`areaDepartment`/`sector` como query params ni como columnas de `Position` — fueron eliminados en la limpieza final de Position, ver `docs/DATABASE_STANDARDS.md`). El body de creación/edición usa `sectorId` y `salaryCategoryIds` (array de IDs contra `PositionSalaryCategory`), no un único "suggested category".
 
-`GET /api/positions/:id/employees` devuelve los legajos activos asignados al puesto para la solapa de personas asignadas, incluyendo legajo, nombre, empresas, sector, centro de costo, categoria interna y estado.
+`GET /api/positions/:id/employees` devuelve los legajos activos asignados al puesto para la solapa de personas asignadas, incluyendo legajo, nombre, empresas, sector, centro de costo, categoria interna y estado. Paginado (`page`, `take` default 25 / máx. 100, `sortBy=legajo|employee`, `sortOrder`) con `meta` real — antes `take: 500` fijo sin meta. `meta.total` es la cantidad real de personas asignadas.
+
+`GET /api/positions/options` sin `take` devuelve el catálogo completo (antes default 300); `includeAssignedCount` acepta sólo `true`/`false`.
 
 ## Novedades operativas
 
@@ -997,10 +1041,13 @@ GET /api/pending
 Query:
 
 ```txt
-kind=all|novelties|timeEntries
+kind=all|novelties|timeEntries|hourConceptBreakdowns
 period=YYYY-MM
+page=1
 take=100
 ```
+
+`novelties` y `hourConceptBreakdowns` son de una sola fuente y paginan de verdad (`page` + `meta`). `all`/`timeEntries` combinan fuentes y devuelven siempre la primera página de cada una (`meta.page = 1`, `meta.hasMore` si hay más). `summary` informa **totales reales** (`count`), no la cantidad de filas traídas.
 
 Devuelve:
 
@@ -1024,7 +1071,8 @@ Devuelve:
         "subtitle": "NOV-VAC",
         "quantity": "1"
       }
-    ]
+    ],
+    "meta": { "total": 1, "page": 1, "pageSize": 100, "hasMore": false }
   }
 }
 ```
@@ -1421,7 +1469,7 @@ Todas las rutas requieren `requireAuth`.
 | POST | `/closures/submit` | Supervisión/Carga Horaria | Enviar cierre a aprobación |
 | POST | `/closures/approve` | RRHH | Aprobar cierres en lote |
 | POST | `/closures/:id/return` | RRHH | Devolver un cierre |
-| GET / POST | `/corrections`, `/corrections/:id/approve`, `/corrections/:id/reject` | según rol | Solicitudes de corrección de horas |
+| GET / POST | `/corrections`, `/corrections/:id/approve`, `/corrections/:id/reject` | según rol | Solicitudes de corrección de horas. `GET` exige `period=YYYY-MM` y acepta `status=PENDIENTE|APROBADA|RECHAZADA` — filtrados en el `where` (antes: últimas 500 de todos los períodos, filtradas en el cliente) |
 | GET / POST | `/notifications`, `/notifications/:id/read`, `/notifications-unread-count` | todos | Notificaciones internas del sistema |
 | GET / POST / PATCH / DELETE | `/shift-templates*` | RRHH (escritura) | Plantillas de turno |
 | GET / POST / PATCH / DELETE | `/double-hour-rules*` | RRHH (escritura) | Reglas de Horas Especiales (`DoubleHourRule`) |

@@ -240,6 +240,29 @@ Tables should:
 
 Tables are critical in enterprise applications and must never look improvised.
 
+### Table system (mandatory)
+
+One family of shared pieces, no per-screen table implementations:
+
+* `DataTable` — loading / error / empty / ready states + `TableShell`.
+* `TableShell` — horizontal scroll inside the panel, `minWidth` per table.
+* `SortableHeader` — sortable `<th>`: semantic `<button>` inside the header, `aria-sort` (`none` / `ascending` / `descending`), keyboard accessible, `ArrowUpDown` / `ArrowUp` / `ArrowDown` icon (12px, kept glued to the last word so wrapped headers stay aligned). Styles live in `.sortable-header` (styles.css); never restyle headers per screen.
+* `Pagination` — rendered whenever `meta.total > 0` (not only when the current page has rows, so an emptied page can still navigate back).
+* `OverflowCell` — long text inside cells.
+
+Sorting behaviour is the same everywhere: first click ASC, second DESC, alternating after that; another column starts at ASC; Action/Actions columns, buttons, icons, yes/no flags, constant or always-empty columns are never sortable. Sort by the business value (visible label, real date, real number), never by rendered text or a `Badge`.
+
+**Every table is one of two modes:**
+
+1. **Client-side** — only when the screen really has *all* rows (small catalog loaded complete). Search, filters and `useSort` (natural Spanish comparison, case/accent-insensitive, numeric; empties always last; never mutates) run locally. If the list comes from a paginated endpoint, load it complete explicitly with `collectAllPages` (`services/api/listQuery.ts`) — never trust a single `take`.
+2. **Server-side** — mandatory when there is pagination, a potentially large dataset, or any backend limit. Search, filters, sorting and pagination are resolved in the backend: send `page`, `take`, filters, `search`, `sortBy`, `sortOrder` (`appendSortParams`). Use `useSortState(resetPage)` — changing the sort, a filter, the search or the page size returns to page 1; paginating keeps filters and sort. Never use `useSort` on a paginated table.
+
+**Rules:**
+
+* A table that does not have the complete dataset must resolve search, filters, sorting and pagination in the backend.
+* No list may be truncated silently. A list the UI presents as complete must either be paginated for real or be loaded complete explicitly (`collectAllPages`, which fails visibly instead of cutting). If a view intentionally shows only the most recent N rows, it must say so on screen.
+* `sortBy` keys are an explicit per-endpoint whitelist on the backend (`docs/BACKEND_API_CONTRACTS.md`, "Contrato de listados paginados").
+
 ---
 
 ## API communication
