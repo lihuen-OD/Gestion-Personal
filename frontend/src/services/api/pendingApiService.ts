@@ -1,4 +1,5 @@
 import { apiRequest } from "./apiClient";
+import type { ListMeta } from "./listQuery";
 import { cachePolicies, cachedData } from "../cache";
 import type { TimeStatus } from "../../types";
 
@@ -11,7 +12,7 @@ type ApiApprovalStatus =
   | "DEVUELTO"
   | "CERRADO";
 
-export type PendingKind = "all" | "novelties" | "timeEntries";
+export type PendingKind = "all" | "novelties" | "timeEntries" | "hourConceptBreakdowns";
 
 type ApiPendingItem = {
   kind: "novelty" | "timeEntry" | "hourConceptBreakdown";
@@ -35,6 +36,7 @@ type ApiPendingResponse = {
       hourConceptBreakdowns: number;
     };
     data: ApiPendingItem[];
+    meta: ListMeta;
   };
 };
 
@@ -45,6 +47,7 @@ export type PendingItem = Omit<ApiPendingItem, "status"> & {
 export type PendingResult = {
   summary: ApiPendingResponse["data"]["summary"];
   data: PendingItem[];
+  meta: ListMeta;
 };
 
 const statusFromApi: Record<ApiApprovalStatus, TimeStatus> = {
@@ -70,9 +73,13 @@ function isPendingResult(value: PendingResult) {
 }
 
 export const pendingApiService = {
-  async getAll(filters: { kind?: PendingKind; period?: string; take?: number } = {}): Promise<PendingResult> {
+  // "novelties"/"hourConceptBreakdowns" paginan de verdad (page + meta.total
+  // real); "all"/"timeEntries" combinan fuentes y sólo traen la primera
+  // página de cada una, con `meta.hasMore` si hay más.
+  async getAll(filters: { kind?: PendingKind; period?: string; page?: number; take?: number } = {}): Promise<PendingResult> {
     const params = new URLSearchParams();
     params.set("kind", filters.kind || "all");
+    params.set("page", String(filters.page || 1));
     params.set("take", String(filters.take || 200));
     if (filters.period) params.set("period", filters.period);
 
@@ -83,6 +90,7 @@ export const pendingApiService = {
       fetcher: () => apiRequest<ApiPendingResponse>(key, { apiCache: false }).then((response) => ({
         summary: response.data.summary,
         data: response.data.data.map(mapItem),
+        meta: response.data.meta,
       })),
       validate: isPendingResult,
     });

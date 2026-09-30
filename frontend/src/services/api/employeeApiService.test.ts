@@ -365,7 +365,8 @@ describe("employeeApiService.replaceAssignments — ya no envía 'role' para TIM
 
   it("manda role: null aunque el legajo tenga un valor legacy en timeResponsibleRole", async () => {
     vi.mocked(apiRequest).mockImplementation(async (url: unknown) => {
-      if (url === "/users") {
+      // userApiService.getAll recorre las páginas de /users (collectAllPages).
+      if (typeof url === "string" && url.startsWith("/users?")) {
         return {
           data: [
             {

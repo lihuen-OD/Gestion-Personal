@@ -1,4 +1,5 @@
 import { apiRequest } from "./apiClient";
+import { collectAllPages } from "./listQuery";
 import { cachePolicies, cachedData, invalidateCacheFamily } from "../cache";
 import { associatedEmployeesQuery, mapAssociatedEmployeeFromApi, type ApiAssociatedEmployee } from "./associatedEmployeeMapper";
 import type { HourConcept, HourConceptFilters, HourConceptKind, HourConceptLoadMode, HourConceptStatus, HourConceptSystemRole } from "../../types/hourConcept.types";
@@ -111,7 +112,7 @@ export const hourConceptApiService = {
     return cachedData({
       requestKey: `GET:${key}`,
       policy: cachePolicies.hourConceptsCatalog,
-      fetcher: () => apiRequest<ApiListResponse>(key, { apiCache: false }).then((response) => response.data.map(mapHourConceptFromApi)),
+      fetcher: () => collectAllPages(key, (path) => apiRequest<ApiListResponse>(path, { apiCache: false })).then((rows) => rows.map(mapHourConceptFromApi)),
       validate: isHourConceptList,
     });
   },

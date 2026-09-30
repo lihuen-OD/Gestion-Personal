@@ -1,4 +1,6 @@
 import { apiRequest } from "./apiClient";
+import { appendSortParams, collectAllPages } from "./listQuery";
+import type { SortState } from "../../utils/sort";
 import { invalidateCacheFamily } from "../cache";
 import type { Novelty, Role, User } from "../../types";
 
@@ -145,7 +147,11 @@ export type NoveltyListFilters = {
   exportable?: boolean;
   page?: number;
   take?: number;
+  sort?: SortState<NoveltyListSortKey>;
 };
+
+// Whitelist server-side de GET /novelties (novelties.schemas.ts::noveltyListSortKeys).
+export type NoveltyListSortKey = "legajo" | "employee" | "noveltyType" | "fromDate" | "status";
 
 function toQuery(filters?: NoveltyListFilters) {
   const params = new URLSearchParams();
@@ -155,6 +161,7 @@ function toQuery(filters?: NoveltyListFilters) {
   if (filters?.search?.trim()) params.set("search", filters.search.trim());
   if (filters?.period) params.set("period", filters.period);
   if (filters?.exportable !== undefined) params.set("exportable", String(filters.exportable));
+  appendSortParams(params, filters?.sort);
   return `?${params.toString()}`;
 }
 
@@ -167,9 +174,12 @@ export const noveltyApiService = {
     };
   },
 
-  async getAll(filters?: NoveltyListFilters) {
-    const response = await this.list({ ...filters, take: filters?.take || 100 });
-    return response.items;
+  // Todas las novedades que cumplen el filtro (p. ej. las de un legajo en
+  // EmployeeNoveltiesPanel/EmployeeHoursPage): antes una única página de 100
+  // cortaba en silencio las más antiguas.
+  async getAll(filters?: Omit<NoveltyListFilters, "page">) {
+    const rows = await collectAllPages(`/novelties${toQuery({ ...filters, take: filters?.take || 300 })}`, (path) => apiRequest<ApiPaginatedListResponse>(path));
+    return rows.map(mapNoveltyFromApi);
   },
 
   async create(input: CreateNoveltyApiInput) {

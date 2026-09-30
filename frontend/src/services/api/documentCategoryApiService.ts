@@ -1,4 +1,5 @@
 import { apiRequest } from "./apiClient";
+import { collectAllPages } from "./listQuery";
 import { cachePolicies, cachedData, invalidateCacheFamily } from "../cache";
 import type { Role } from "../../types";
 import type {
@@ -131,7 +132,7 @@ export const documentCategoryApiService = {
     return cachedData({
       requestKey: `GET:${key}`,
       policy: cachePolicies.documentCategoriesCatalog,
-      fetcher: () => apiRequest<ApiListResponse>(key, { apiCache: false }).then((response) => response.data.map(mapFromApi)),
+      fetcher: () => collectAllPages(key, (path) => apiRequest<ApiListResponse>(path, { apiCache: false })).then((rows) => rows.map(mapFromApi)),
       validate: isDocumentCategoryList,
     });
   },

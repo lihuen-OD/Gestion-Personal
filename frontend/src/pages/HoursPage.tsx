@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Link, useSearchParams } from "react-router-dom";
 import {
@@ -17,7 +17,9 @@ import { ApiError } from "../services/api/apiClient";
 import { employeeApiService } from "../services/api/employeeApiService";
 import { orgStructureApiService } from "../services/api/orgStructureApiService";
 import { pendingApiService, type PendingItem } from "../services/api/pendingApiService";
-import { timeEntryApiService } from "../services/api/timeEntryApiService";
+import { timeEntryApiService, type EmployeeRowSortKey, type TimeEntryListSortKey } from "../services/api/timeEntryApiService";
+import type { ListMeta } from "../services/api/listQuery";
+import { useSortState, type SortState } from "../utils/sort";
 import { noveltyApiService } from "../services/api/noveltyApiService";
 import { formatMultiplier } from "../components/attendance/segmentDisplay";
 import type { Employee, TimeEntry } from "../types";
@@ -41,6 +43,7 @@ import { ErrorState } from "../components/ui/ErrorState";
 import { Button } from "../components/ui/Button";
 import { Badge } from "../components/ui/Badge";
 import { Pagination } from "../components/ui/Pagination";
+import { SortableHeader } from "../components/ui/SortableHeader";
 import { Tabs } from "../components/ui/Tabs";
 
 type DayBreakdown = {
@@ -223,6 +226,13 @@ function reviewActionErrorMessage(error: unknown) {
   return "No pudimos completar la acción. Intentá nuevamente.";
 }
 const pageSize = 25;
+const emptyListMeta: ListMeta = { total: 0, page: 1, pageSize, hasMore: false };
+
+// "Por persona" pagina empleados: sólo legajo/empleado se ordenan en el
+// backend; con otra columna elegida en "Por registro" se usa el orden default.
+function employeeRowSort(sort: SortState<TimeEntryListSortKey>): SortState<EmployeeRowSortKey> {
+  return sort && (sort.key === "legajo" || sort.key === "employee") ? { key: sort.key, direction: sort.direction } : null;
+}
 
 export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
   const { user } = useAuth();
@@ -232,6 +242,9 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
   const period = searchParams.get("period") || currentMonthPeriod();
   const [costCenter, setCostCenter] = useState("");
   const [page, setPage] = useState(1);
+  // Orden server-side de cada tabla paginada: cambiarlo vuelve a su página 1.
+  const resetGridPage = useCallback(() => setPage(1), []);
+  const { sort: gridSort, toggleSort: toggleGridSort } = useSortState<EmployeeRowSortKey>(resetGridPage);
   const [refresh, setRefresh] = useState(0);
   const [review, setReview] = useState<{ entry: TimeEntry; action: "reject" | "return" }>();
   const [noveltyReject, setNoveltyReject] = useState<PendingItem>();
@@ -262,6 +275,8 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
   >([]);
   const [periodRowsMeta, setPeriodRowsMeta] = useState({ total: 0, page: 1, pageSize, hasMore: false });
   const [reviewPage, setReviewPage] = useState(1);
+  const resetReviewPage = useCallback(() => setReviewPage(1), []);
+  const { sort: reviewSort, toggleSort: toggleReviewSort } = useSortState<TimeEntryListSortKey>(resetReviewPage);
   const [reviewEntriesMeta, setReviewEntriesMeta] = useState({ total: 0, page: 1, pageSize, hasMore: false });
   const [reviewEntries, setReviewEntries] = useState<TimeEntry[]>([]);
   const [reviewByPerson, setReviewByPerson] = useState<Array<{
@@ -280,7 +295,15 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
   }>>([]);
   const [costCenterOptions, setCostCenterOptions] = useState<Array<{ id: string; name: string }>>([]);
   const [hoursSummary, setHoursSummary] = useState(emptyHoursSummary);
-  const [pendingItems, setPendingItems] = useState<PendingItem[]>([]);
+  // Novedades y desgloses pendientes paginan por separado contra /pending
+  // (kind=novelties / kind=hourConceptBreakdowns): antes una sola carga
+  // kind=all&take=300 cortaba en silencio y el subtítulo contaba sólo lo traído.
+  const [pendingNovelties, setPendingNovelties] = useState<PendingItem[]>([]);
+  const [pendingNoveltiesMeta, setPendingNoveltiesMeta] = useState<ListMeta>(emptyListMeta);
+  const [pendingNoveltyPage, setPendingNoveltyPage] = useState(1);
+  const [pendingBreakdowns, setPendingBreakdowns] = useState<PendingItem[]>([]);
+  const [pendingBreakdownsMeta, setPendingBreakdownsMeta] = useState<ListMeta>(emptyListMeta);
+  const [pendingBreakdownPage, setPendingBreakdownPage] = useState(1);
   const [usesBackend, setUsesBackend] = useState(false);
   // Etapa 9F: el mega-efecto original tenía 10 dependencias en un único
   // Promise.all — cambiar `reviewPage`, `groupByPerson`, `debouncedSearch` o
@@ -320,7 +343,7 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
     let cancelled = false;
     if (!periodRows.length) setGridLoading(true);
     setGridError("");
-    timeEntryApiService.getPeriodEmployees({ period, search: debouncedSearch, costCenterId, page, take: pageSize })
+    timeEntryApiService.getPeriodEmployees({ period, search: debouncedSearch, costCenterId, page, take: pageSize, sort: gridSort })
       .then((result) => {
         if (cancelled) return;
         setPeriodRows(result.items);
@@ -340,7 +363,7 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
     return () => {
       cancelled = true;
     };
-  }, [costCenterId, debouncedSearch, page, pendingOnly, period, refresh, user]);
+  }, [costCenterId, debouncedSearch, gridSort, page, pendingOnly, period, refresh, user]);
 
   // B) Bandeja de revisión (Horas enviadas a revisión) — sólo existe cuando
   // pendingOnly. Depende de período/búsqueda/centro de costo/reviewPage/
@@ -353,7 +376,9 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
     if (!reviewEntries.length && !reviewByPerson.length) setReviewLoading(true);
     setReviewError("");
     const reviewFilters = { period, status: "En revisión" as const, search: debouncedSearch, costCenterId, page: reviewPage, take: pageSize };
-    const request = groupByPerson ? timeEntryApiService.listByEmployee(reviewFilters) : timeEntryApiService.list(reviewFilters);
+    const request = groupByPerson
+      ? timeEntryApiService.listByEmployee({ ...reviewFilters, sort: employeeRowSort(reviewSort) })
+      : timeEntryApiService.list({ ...reviewFilters, sort: reviewSort });
     request
       .then((result) => {
         if (cancelled) return;
@@ -379,7 +404,7 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
     return () => {
       cancelled = true;
     };
-  }, [costCenterId, debouncedSearch, groupByPerson, pendingOnly, period, refresh, reviewPage, user]);
+  }, [costCenterId, debouncedSearch, groupByPerson, pendingOnly, period, refresh, reviewPage, reviewSort, user]);
 
   // C) Resumen (tarjetas, ambos modos) + pendientes de novedades/desgloses
   // (sólo pendingOnly) — ninguno de los dos endpoints acepta
@@ -389,20 +414,29 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
   useEffect(() => {
     if (!user) return;
     let cancelled = false;
-    if (pendingOnly && !pendingItems.length) setPendingLoading(true);
+    if (pendingOnly && !pendingNovelties.length && !pendingBreakdowns.length) setPendingLoading(true);
     timeEntryApiService.getSummary(period)
       .then((result) => { if (!cancelled) setHoursSummary(result); })
       .catch(() => { if (!cancelled) setHoursSummary(emptyHoursSummary); });
     if (!pendingOnly) return () => { cancelled = true; };
-    pendingApiService.getAll({ period, kind: "all", take: 300 })
-      .then((result) => {
+    Promise.all([
+      pendingApiService.getAll({ period, kind: "novelties", page: pendingNoveltyPage, take: pageSize }),
+      pendingApiService.getAll({ period, kind: "hourConceptBreakdowns", page: pendingBreakdownPage, take: pageSize }),
+    ])
+      .then(([novelties, breakdowns]) => {
         if (cancelled) return;
-        setPendingItems(result?.data || []);
+        setPendingNovelties(novelties.data);
+        setPendingNoveltiesMeta(novelties.meta);
+        setPendingBreakdowns(breakdowns.data);
+        setPendingBreakdownsMeta(breakdowns.meta);
         setUsesBackend(true);
       })
       .catch(() => {
         if (cancelled) return;
-        setPendingItems([]);
+        setPendingNovelties([]);
+        setPendingNoveltiesMeta(emptyListMeta);
+        setPendingBreakdowns([]);
+        setPendingBreakdownsMeta(emptyListMeta);
         setUsesBackend(false);
       })
       .finally(() => {
@@ -411,7 +445,7 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
     return () => {
       cancelled = true;
     };
-  }, [pendingOnly, period, refresh, user]);
+  }, [pendingBreakdownPage, pendingNoveltyPage, pendingOnly, period, refresh, user]);
 
   // Etapa 14G.4: catálogo de centros de costo para el filtro — ya no bloquea
   // A/B (ver más arriba), así que corre en paralelo a la grilla/bandeja.
@@ -432,10 +466,9 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
 
   const costCenters = uniqueOptions(costCenterOptions.map((item) => item.name));
   const employees = periodRows.map((row) => row.employee);
-  const pendingNoveltyItems = pendingItems.filter((item) => item.kind === "novelty");
-  // Etapa 6L.5: desgloses manuales EN_REVISION — ya llegaban en pendingItems
-  // desde 6L.3 (kind: "hourConceptBreakdown"), pero no se mostraban en ningún lado.
-  const pendingBreakdownItems = pendingItems.filter((item) => item.kind === "hourConceptBreakdown");
+  const pendingNoveltyItems = pendingNovelties;
+  // Etapa 6L.5: desgloses manuales EN_REVISION (kind: "hourConceptBreakdown").
+  const pendingBreakdownItems = pendingBreakdowns;
   const canReview = user ? timeEntryApiService.canReview(user) : false;
   // Etapa 6L.3 (ajuste): aprobar/rechazar/devolver cargas horarias es
   // exclusivo de RRHH. canReview sigue igual para novedades (sin cambios).
@@ -456,6 +489,8 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
   const setPeriodValue = (value: string) => {
     setPage(1);
     setReviewPage(1);
+    setPendingNoveltyPage(1);
+    setPendingBreakdownPage(1);
     setSearchParams(value ? { period: value } : {});
   };
   const exportHours = async () => {
@@ -641,7 +676,7 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
         <>
           <Section
             title="Novedades pendientes"
-            subtitle={`${pendingNoveltyItems.length} novedades requieren revisión o aprobación`}
+            subtitle={`${pendingNoveltiesMeta.total} novedades requieren revisión o aprobación`}
           >
             {pendingLoading ? (
               <LoadingState variant="table" rows={4} columns={7} />
@@ -714,11 +749,14 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
             ) : (
               <EmptyState text={usesBackend ? "No hay novedades pendientes para este período." : "Las novedades pendientes no están disponibles temporalmente."} />
             )}
+            {!pendingLoading && pendingNoveltiesMeta.total > 0 ? (
+              <Pagination page={pendingNoveltiesMeta.page} pageSize={pendingNoveltiesMeta.pageSize} total={pendingNoveltiesMeta.total} hasMore={pendingNoveltiesMeta.hasMore} onPageChange={setPendingNoveltyPage} itemLabel="novedades" />
+            ) : null}
           </Section>
 
           <Section
             title="Horas enviadas a revisión"
-            subtitle={groupByPerson ? `${reviewByPerson.length} personas con registros en revisión` : `${reviewEntries.length} registros de Hora normal pendientes de resolución — afectan el total trabajado.`}
+            subtitle={groupByPerson ? `${reviewEntriesMeta.total} personas con registros en revisión` : `${reviewEntriesMeta.total} registros de Hora normal pendientes de resolución — afectan el total trabajado.`}
             action={
               <Tabs
                 tabs={[
@@ -778,8 +816,8 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
                 <table>
                   <thead>
                     <tr>
-                      <th>Legajo</th>
-                      <th>Empleado</th>
+                      <SortableHeader label="Legajo" sortKey="legajo" sort={employeeRowSort(reviewSort)} onSort={toggleReviewSort} />
+                      <SortableHeader label="Empleado" sortKey="employee" sort={employeeRowSort(reviewSort)} onSort={toggleReviewSort} />
                       <th>Empresa</th>
                       <th>Centro de costo</th>
                       <th>Responsable de carga</th>
@@ -856,13 +894,13 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
               <table>
                 <thead>
                   <tr>
-                    <th>Legajo</th>
-                    <th>Empleado</th>
-                    <th>Día</th>
-                    <th>Concepto</th>
-                    <th>Horas</th>
+                    <SortableHeader label="Legajo" sortKey="legajo" sort={reviewSort} onSort={toggleReviewSort} />
+                    <SortableHeader label="Empleado" sortKey="employee" sort={reviewSort} onSort={toggleReviewSort} />
+                    <SortableHeader label="Día" sortKey="date" sort={reviewSort} onSort={toggleReviewSort} />
+                    <SortableHeader label="Concepto" sortKey="hourConcept" sort={reviewSort} onSort={toggleReviewSort} />
+                    <SortableHeader label="Horas" sortKey="hours" sort={reviewSort} onSort={toggleReviewSort} />
                     <th>Observación</th>
-                    <th>Estado</th>
+                    <SortableHeader label="Estado" sortKey="status" sort={reviewSort} onSort={toggleReviewSort} />
                     <th>Acción</th>
                   </tr>
                 </thead>
@@ -947,7 +985,7 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
 
           <Section
             title="Desgloses manuales pendientes"
-            subtitle={`${pendingBreakdownItems.length} conceptos adicionales pendientes de resolución — son desgloses para liquidación/análisis y no modifican Hora normal ni el total trabajado.`}
+            subtitle={`${pendingBreakdownsMeta.total} conceptos adicionales pendientes de resolución — son desgloses para liquidación/análisis y no modifican Hora normal ni el total trabajado.`}
           >
             {breakdownActionError ? <div className="form-error">{breakdownActionError}</div> : null}
             {pendingLoading ? (
@@ -1032,6 +1070,9 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
             ) : (
               <EmptyState text="No hay desgloses manuales pendientes de revisión." />
             )}
+            {!pendingLoading && pendingBreakdownsMeta.total > 0 ? (
+              <Pagination page={pendingBreakdownsMeta.page} pageSize={pendingBreakdownsMeta.pageSize} total={pendingBreakdownsMeta.total} hasMore={pendingBreakdownsMeta.hasMore} onPageChange={setPendingBreakdownPage} itemLabel="desgloses" />
+            ) : null}
           </Section>
         </>
       ) : null}
@@ -1089,8 +1130,8 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
           <table className="people-hours-table">
             <thead>
               <tr>
-                <th>Legajo</th>
-                <th>Empleado</th>
+                <SortableHeader label="Legajo" sortKey="legajo" sort={gridSort} onSort={toggleGridSort} />
+                <SortableHeader label="Empleado" sortKey="employee" sort={gridSort} onSort={toggleGridSort} />
                 <th>Empresa</th>
                 <th>Centro de costo</th>
                 <th>Responsable de carga</th>

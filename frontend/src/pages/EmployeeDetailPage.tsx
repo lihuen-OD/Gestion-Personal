@@ -5,12 +5,11 @@ import { auditApiService } from "../services/api/auditApiService";
 import { employeeApiService } from "../services/api/employeeApiService";
 import { ApiError } from "../services/api/apiClient";
 import { calculateEmployeeStatus } from "../services/employeeStatusService";
-import { auditActionLabel, auditEntityLabel, auditDescription, auditChange } from "../utils/auditLabels";
+import { auditActionLabel, auditEntityLabel, auditDescription } from "../utils/auditLabels";
 import { EmployeeDocumentsPanel } from "../components/documents/EmployeeDocumentsPanel";
 import { EmployeeNoveltiesPanel } from "../components/novelties/EmployeeNoveltiesPanel";
 import { EmployeeShiftsPanel } from "../components/employees/EmployeeShiftsPanel";
 import { EmployeeWorkRegimePanel } from "../components/employees/EmployeeWorkRegimePanel";
-import { OverflowCell } from "../components/ui/OverflowCell";
 import { Field, Select } from "../components/ui/FormControls";
 import { Section } from "../components/ui/Section";
 import { LoadingState } from "../components/ui/LoadingState";
@@ -18,7 +17,7 @@ import { ErrorState } from "../components/ui/ErrorState";
 import { Tabs } from "../components/ui/Tabs";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
-import { DataTable } from "../components/ui/DataTable";
+import { EmployeeAuditPanel } from "../components/employees/EmployeeAuditPanel";
 import { EmptyState } from "../components/ui/EmptyState";
 import {
   employeeDetailTabSections,
@@ -87,6 +86,7 @@ export function EmployeeDetailPage() {
   const [employee, setEmployee] = useState<Employee | null>(null);
   const [auditRows, setAuditRows] = useState<Awaited<ReturnType<typeof auditApiService.getAll>>>([]);
   const [auditLoaded, setAuditLoaded] = useState(false);
+  const [auditHasMore, setAuditHasMore] = useState(false);
   const [auditError, setAuditError] = useState(false);
   const [auditRetry, setAuditRetry] = useState(0);
   const [notice, setNotice] = useState(location.state?.created ? "Legajo creado correctamente." : "");
@@ -132,13 +132,16 @@ export function EmployeeDetailPage() {
   }, [id, loadRetry]);
 
   useEffect(() => {
-    if (!employee || ![0, 1, 8, 10].includes(tab) || auditLoaded) return;
+    // Pestañas 0/1 (historial de la sección) y 8 (línea de tiempo): los 200
+    // eventos más recientes. La pestaña 10 pagina su propia consulta completa.
+    if (!employee || ![0, 1, 8].includes(tab) || auditLoaded) return;
     let mounted = true;
     auditApiService
-      .getAll({ entityId: employee.id, take: 200 })
-      .then((items) => {
+      .list({ entityId: employee.id, take: 200 })
+      .then((result) => {
         if (mounted) {
-          setAuditRows(items);
+          setAuditRows(result.items);
+          setAuditHasMore(result.meta.hasMore);
           setAuditLoaded(true);
         }
       })
@@ -270,7 +273,7 @@ export function EmployeeDetailPage() {
           ) : tabsThatNeedOverviewDetails.has(tab) && detailsStatus === "error" ? (
             <ErrorState message="No se pudo cargar la información completa del legajo." onRetry={() => setLoadRetry((value) => value + 1)} />
           ) : (
-            renderEmployeeTab(tab, currentEmployee, setEmployee, editable, user!, structureOptions, laborOptions, auditRows, auditLoaded, auditError, () => { setAuditLoaded(false); setAuditRetry((value) => value + 1); })
+            renderEmployeeTab(tab, currentEmployee, setEmployee, editable, user!, structureOptions, laborOptions, auditRows, auditHasMore, auditLoaded, auditError, () => { setAuditLoaded(false); setAuditRetry((value) => value + 1); })
           )}
         </fieldset>
       </Section>
@@ -296,6 +299,7 @@ function renderEmployeeTab(
   structureOptions: ReturnType<typeof useStructureSelectOptions>,
   laborOptions: ReturnType<typeof useLaborSelectOptions>,
   auditRows: Awaited<ReturnType<typeof auditApiService.getAll>>,
+  auditHasMore: boolean,
   auditLoaded: boolean,
   auditError: boolean,
   retryAudit: () => void,
@@ -391,6 +395,8 @@ function renderEmployeeTab(
     if (!auditLoaded) return <LoadingState text="Cargando historial de eventos..." />;
     if (auditError) return <ErrorState message="No pudimos cargar el historial de eventos." onRetry={retryAudit} />;
     return auditRows.length ? (
+      <>
+      {auditHasMore ? <div className="info-note compact"><b>Últimos {auditRows.length} eventos</b><p>El historial completo del legajo está en la pestaña Auditoría.</p></div> : null}
       <div className="timeline">
         {auditRows.map((event) => (
           <div key={event.id}>
@@ -403,50 +409,13 @@ function renderEmployeeTab(
           </div>
         ))}
       </div>
+      </>
     ) : <EmptyState text="Todavía no hay eventos registrados para este legajo." />;
   }
   if (tab === 9) return <EmployeeShiftsPanel employee={employee} user={user} canEdit={editable} />;
   if (tab === 11) return <EmployeeWorkRegimePanel employee={employee} user={user} canEdit={editable} onSaved={setEmployee} />;
 
-  return (
-    <DataTable
-      status={!auditLoaded ? "loading" : auditError ? "error" : auditRows.length ? "ready" : "empty"}
-      minWidth={960}
-      loadingColumns={5}
-      errorMessage="No pudimos cargar la auditoría del legajo."
-      onRetry={retryAudit}
-      emptyText="Todavía no hay eventos de auditoría para este legajo."
-    >
-      <table>
-        <thead>
-          <tr>
-            <th>Fecha</th>
-            <th>Usuario</th>
-            <th>Acción</th>
-            <th>Detalle</th>
-            <th>Cambio</th>
-          </tr>
-        </thead>
-        <tbody>
-          {auditRows.map((audit) => (
-              <tr key={audit.id}>
-                <td>
-                  {audit.date} · {audit.time}
-                </td>
-                <td>{audit.user}</td>
-                <td>{auditActionLabel(audit.action)}</td>
-                <td>
-                  <OverflowCell value={auditDescription(audit)} />
-                </td>
-                <td>
-                  <OverflowCell value={auditChange(audit)} />
-                </td>
-              </tr>
-            ))}
-        </tbody>
-      </table>
-    </DataTable>
-  );
+  return <EmployeeAuditPanel employeeId={employee.id} />;
 }
 
 function DerivedLaborField({ label, value }: { label: string; value: string }) {

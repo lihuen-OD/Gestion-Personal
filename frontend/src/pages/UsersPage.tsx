@@ -96,11 +96,11 @@ export function UsersPage() {
 
   const ensureCatalogLoaded = () => {
     setCatalogStatus("loading");
-    Promise.all([orgStructureApiService.getCatalog(), employeeApiService.getOptions({ take: 1000 })])
+    Promise.all([orgStructureApiService.getCatalog(), employeeApiService.getAllOptions()])
       .then(([catalog, apiEmployeeOptions]) => {
         setCompanyOptions(catalog.companies.map((item) => item.name));
         setSectorOptions(catalog.sectors.map((item) => item.name));
-        setEmployeeOptions(apiEmployeeOptions.items);
+        setEmployeeOptions(apiEmployeeOptions);
         setCatalogStatus("ready");
       })
       .catch(() => setCatalogStatus("error"));

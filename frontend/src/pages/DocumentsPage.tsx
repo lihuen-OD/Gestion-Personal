@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Navigate } from "react-router-dom";
 import { Download, Plus } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
@@ -12,11 +12,13 @@ import { DataTable } from "../components/ui/DataTable";
 import { Button } from "../components/ui/Button";
 import { Badge } from "../components/ui/Badge";
 import { Pagination } from "../components/ui/Pagination";
-import { documentApiService } from "../services/api/documentApiService";
+import { SortableHeader } from "../components/ui/SortableHeader";
+import { documentApiService, type DocumentListSortKey } from "../services/api/documentApiService";
 import type { DocumentMock, Employee } from "../types";
 import { statusTone } from "../utils/status";
 import { formatCalendarDate, formatInstantDate } from "../utils/date";
 import { useDebouncedValue } from "../utils/useDebouncedValue";
+import { useSortState } from "../utils/sort";
 
 const pageSize = 25;
 
@@ -25,6 +27,8 @@ export function DocumentsPage() {
   const [open, setOpen] = useState(false);
   const [refresh, setRefresh] = useState(0);
   const [page, setPage] = useState(1);
+  const resetPage = useCallback(() => setPage(1), []);
+  const { sort, toggleSort } = useSortState<DocumentListSortKey>(resetPage);
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebouncedValue(search);
   const [docs, setDocs] = useState<DocumentMock[]>([]);
@@ -40,7 +44,7 @@ export function DocumentsPage() {
     // la tabla ya poblada no debe blanquearla (mismo patrón de EmployeesPage).
     if (!docs.length) setListStatus("loading");
     documentApiService
-      .list({ page, take: pageSize, search: debouncedSearch })
+      .list({ page, take: pageSize, search: debouncedSearch, sort })
       .then((result) => {
         if (!mounted) return;
         setDocs(result.items);
@@ -56,7 +60,7 @@ export function DocumentsPage() {
     return () => {
       mounted = false;
     };
-  }, [debouncedSearch, page, refresh]);
+  }, [debouncedSearch, page, refresh, sort]);
 
   const openUpload = () => {
     setError("");
@@ -110,13 +114,13 @@ export function DocumentsPage() {
           <table>
             <thead>
               <tr>
-                <th>Legajo</th>
-                <th>Empleado</th>
-                <th>Categoria</th>
-                <th>Archivo</th>
-                <th>Fecha carga</th>
-                <th>Vencimiento</th>
-                <th>Estado</th>
+                <SortableHeader label="Legajo" sortKey="legajo" sort={sort} onSort={toggleSort} />
+                <SortableHeader label="Empleado" sortKey="employee" sort={sort} onSort={toggleSort} />
+                <SortableHeader label="Categoria" sortKey="category" sort={sort} onSort={toggleSort} />
+                <SortableHeader label="Archivo" sortKey="fileName" sort={sort} onSort={toggleSort} />
+                <SortableHeader label="Fecha carga" sortKey="createdAt" sort={sort} onSort={toggleSort} />
+                <SortableHeader label="Vencimiento" sortKey="expiresAt" sort={sort} onSort={toggleSort} />
+                <SortableHeader label="Estado" sortKey="status" sort={sort} onSort={toggleSort} />
                 <th>Observacion</th>
                 <th>Accion</th>
               </tr>
@@ -163,7 +167,7 @@ export function DocumentsPage() {
             </tbody>
           </table>
         </DataTable>
-        {listStatus === "success" && docs.length > 0 && (
+        {listStatus === "success" && meta.total > 0 && (
           <Pagination page={meta.page} pageSize={meta.pageSize} total={meta.total} hasMore={meta.hasMore} onPageChange={setPage} itemLabel="documentos" />
         )}
       </Section>
@@ -175,7 +179,8 @@ export function DocumentsPage() {
           close={() => setOpen(false)}
           saved={(employee, createdDocuments) => {
             const created = createdDocuments?.[0];
-            if (created && employee && page === 1 && !debouncedSearch) {
+            // Insertar arriba sólo es correcto con el orden default (más nuevo primero).
+            if (created && employee && page === 1 && !debouncedSearch && !sort) {
               setDocs((current) => [{ ...created, employeeLegajo: employee.legajoInterno || employee.legajo, employeeName: `${employee.lastName}, ${employee.firstName}` }, ...current].slice(0, pageSize));
               setMeta((current) => ({ ...current, total: current.total + 1, hasMore: current.total + 1 > current.pageSize }));
             } else {

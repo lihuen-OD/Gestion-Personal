@@ -1,4 +1,5 @@
 import type { AssociatedEmployee, AssociatedEmployeeFilters } from "../../types/associatedEmployee.types";
+import { appendSortParams } from "./listQuery";
 
 export type ApiAssociatedEmployee = {
   id: string;
@@ -38,6 +39,7 @@ export function associatedEmployeesQuery(filters?: AssociatedEmployeeFilters, ex
   if (filters?.sectorId) params.set("sectorId", filters.sectorId);
   if (filters?.costCenterId) params.set("costCenterId", filters.costCenterId);
   if (filters?.companyId) params.set("companyId", filters.companyId);
+  appendSortParams(params, filters?.sort);
   if (extraParams) {
     for (const [key, value] of Object.entries(extraParams)) {
       if (value) params.set(key, value);

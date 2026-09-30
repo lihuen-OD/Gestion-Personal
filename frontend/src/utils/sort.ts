@@ -34,14 +34,25 @@ export function sortItems<T>(items: readonly T[], accessor: (item: T) => SortVal
   return [...items].sort((a, b) => compareSortValues(accessor(a), accessor(b), direction));
 }
 
+// Estado de orden de una tabla: primer click ASC, siguientes alternan; otra
+// columna arranca en ASC. `onChange` corre en cada cambio — las tablas
+// server-side lo usan para volver a la página 1 (el orden cambia qué filas
+// caen en cada página). Para tablas paginadas usar esto + mandar sortBy/
+// sortOrder al backend (services/api/listQuery.ts), nunca `useSort`.
+export function useSortState<K extends string>(onChange?: () => void) {
+  const [sort, setSort] = useState<SortState<K>>(null);
+  const toggleSort = useCallback((key: K) => {
+    setSort((current) => ({ key, direction: current?.key === key && current.direction === "asc" ? "desc" : "asc" }));
+    onChange?.();
+  }, [onChange]);
+  return { sort, toggleSort };
+}
+
 // Ordenamiento en memoria para tablas que tienen TODOS sus registros cargados.
 // No usar en tablas paginadas desde backend: ordenaría sólo la página visible.
 // Sin interacción (`sort === null`) devuelve `items` tal cual, preservando el orden original.
 export function useSort<T, K extends string>(items: readonly T[], accessors: SortAccessors<T, K>) {
-  const [sort, setSort] = useState<SortState<K>>(null);
-  const toggleSort = useCallback((key: K) => {
-    setSort((current) => ({ key, direction: current?.key === key && current.direction === "asc" ? "desc" : "asc" }));
-  }, []);
+  const { sort, toggleSort } = useSortState<K>();
   const sorted = useMemo(
     () => (sort ? sortItems(items, accessors[sort.key], sort.direction) : items),
     [items, accessors, sort],

@@ -4,6 +4,7 @@ import { Navigate } from "react-router-dom";
 import { OverflowCell } from "../components/ui/OverflowCell";
 import { FilterPanel } from "../components/ui/FilterPanel";
 import { StatCard } from "../components/ui/StatCard";
+import { SortableHeader } from "../components/ui/SortableHeader";
 import { DataTable } from "../components/ui/DataTable";
 import { PageHeader } from "../components/ui/PageHeader";
 import { Section } from "../components/ui/Section";
@@ -19,6 +20,7 @@ import { auditEventScopeLabels, auditEventSeverityLabels } from "../utils/auditP
 import { roleLevel } from "../utils/roles";
 import { activoInactivoLabel } from "../utils/status";
 import { useAsyncAction } from "../utils/useAsyncAction";
+import { useSort, type SortAccessors } from "../utils/sort";
 
 const roles: Role[] = ["Nivel 1 - RRHH", "Nivel 2 - Supervisión / Gestión", "Nivel 3 - Administrativo de Carga Horaria"];
 const scopes: AuditEventScope[] = ["LEGAJO", "NOVEDAD", "HORAS", "LIQUIDACION", "DOCUMENTACION", "PUESTOS", "CONFIGURACION", "ORGANIGRAMA", "USUARIOS"];
@@ -62,6 +64,15 @@ function ParameterEditor({ item, setItem }: { item: AuditParameter; setItem: (it
   </div>;
 }
 
+// Catálogo completo en memoria (collectAllPages): orden local válido.
+// "Modulo" ordena por la etiqueta visible del ámbito, no por el enum.
+const sortAccessors: SortAccessors<AuditParameter, "code" | "name" | "scope" | "status"> = {
+  code: (item) => item.code,
+  name: (item) => item.name,
+  scope: (item) => auditEventScopeLabels[item.scope],
+  status: (item) => activoInactivoLabel(item.status),
+};
+
 export function AuditParametersPage() {
   const { user } = useAuth();
   const [filters, setFilters] = useState({ search: "", scope: "", severity: "", requiresReason: "", status: "" });
@@ -93,7 +104,7 @@ export function AuditParametersPage() {
   }, [refresh]);
   const all = apiItems ?? [];
   const filterText = filters.search.trim().toLowerCase();
-  const items = all.filter((item) => {
+  const items = useMemo(() => all.filter((item) => {
     const text = `${item.code} ${item.name} ${item.description} ${item.scope} ${item.severity}`.toLowerCase();
     if (filterText && !text.includes(filterText)) return false;
     if (filters.scope && item.scope !== filters.scope) return false;
@@ -101,7 +112,8 @@ export function AuditParametersPage() {
     if (filters.requiresReason && String(item.requiresReason) !== filters.requiresReason) return false;
     if (filters.status && item.status !== filters.status) return false;
     return true;
-  });
+  }), [all, filterText, filters]);
+  const { sorted, sort, toggleSort } = useSort(items, sortAccessors);
   const options = {
     scopes: Array.from(new Set(all.map((item) => item.scope))).sort(),
     severities: Array.from(new Set(all.map((item) => item.severity))).sort(),
@@ -132,7 +144,7 @@ export function AuditParametersPage() {
     <Section title="Listado de parametros" subtitle={`${items.length} resultados segun filtros aplicados.`}>
       <FilterPanel search={{ value: filters.search, onChange: (value) => setFilters({ ...filters, search: value }), placeholder: "Buscar por codigo, nombre o modulo" }}><label>Modulo<select value={filters.scope} onChange={(event) => setFilters({ ...filters, scope: event.target.value })}><option value="">Todos</option>{options.scopes.map((scope) => <option key={scope} value={scope}>{auditEventScopeLabels[scope]}</option>)}</select></label><label>Severidad<select value={filters.severity} onChange={(event) => setFilters({ ...filters, severity: event.target.value })}><option value="">Todas</option>{options.severities.map((severity) => <option key={severity} value={severity}>{auditEventSeverityLabels[severity]}</option>)}</select></label><label>Motivo<select value={filters.requiresReason} onChange={(event) => setFilters({ ...filters, requiresReason: event.target.value })}><option value="">Todos</option><option value="true">Requiere</option><option value="false">No requiere</option></select></label><label>Estado<select value={filters.status} onChange={(event) => setFilters({ ...filters, status: event.target.value })}><option value="">Todos</option>{options.statuses.map((status) => <option key={status} value={status}>{activoInactivoLabel(status)}</option>)}</select></label></FilterPanel>
       <DataTable status={listStatus === "loading" ? "loading" : listStatus === "error" ? "error" : items.length === 0 ? "empty" : "ready"} minWidth={1040} emptyText="No hay parametros de auditoria con los filtros aplicados." errorMessage="No se pudieron cargar los parametros de auditoria." onRetry={() => setRefresh((value) => value + 1)}>
-        <table><thead><tr><th>Codigo</th><th>Parametro</th><th>Modulo</th><th>Eventos</th><th>Retencion</th><th>Estado</th><th>Accion</th></tr></thead><tbody>{items.map((item) => <tr key={item.id}><td><b>{item.code}</b></td><td><OverflowCell value={item.name} /><span className="table-sub">{item.description}</span></td><td><OverflowCell value={`${auditEventScopeLabels[item.scope]} · ${auditEventSeverityLabels[item.severity]}`} /></td><td><OverflowCell value={[item.trackCreate && "Alta", item.trackUpdate && "Edicion", item.trackApproval && "Aprobacion", item.trackExport && "Exportacion"].filter(Boolean).join(", ")} /></td><td>{item.retention.amount} {item.retention.unit}</td><td><Badge tone={item.status === "ACTIVO" ? "success" : "neutral"}>{activoInactivoLabel(item.status)}</Badge></td><td><button className="table-icon-action" title="Editar" aria-label="Editar" onClick={() => setEditing(item)}><Pencil size={14}/><span>Editar</span></button></td></tr>)}</tbody></table>
+        <table><thead><tr><SortableHeader label="Codigo" sortKey="code" sort={sort} onSort={toggleSort} /><SortableHeader label="Parametro" sortKey="name" sort={sort} onSort={toggleSort} /><SortableHeader label="Modulo" sortKey="scope" sort={sort} onSort={toggleSort} /><th>Eventos</th><th>Retencion</th><SortableHeader label="Estado" sortKey="status" sort={sort} onSort={toggleSort} /><th>Accion</th></tr></thead><tbody>{sorted.map((item) => <tr key={item.id}><td><b>{item.code}</b></td><td><OverflowCell value={item.name} /><span className="table-sub">{item.description}</span></td><td><OverflowCell value={`${auditEventScopeLabels[item.scope]} · ${auditEventSeverityLabels[item.severity]}`} /></td><td><OverflowCell value={[item.trackCreate && "Alta", item.trackUpdate && "Edicion", item.trackApproval && "Aprobacion", item.trackExport && "Exportacion"].filter(Boolean).join(", ")} /></td><td>{item.retention.amount} {item.retention.unit}</td><td><Badge tone={item.status === "ACTIVO" ? "success" : "neutral"}>{activoInactivoLabel(item.status)}</Badge></td><td><button className="table-icon-action" title="Editar" aria-label="Editar" onClick={() => setEditing(item)}><Pencil size={14}/><span>Editar</span></button></td></tr>)}</tbody></table>
       </DataTable>
     </Section>
     {editing && <Section title={editing.name || "Nuevo parametro"} subtitle="Eventos auditados, retencion, motivo obligatorio y notificaciones." action={<div className="hero-actions"><Button variant="subtle" onClick={() => setEditing(null)}>Cerrar</Button><Button variant="primary" onClick={save} disabled={isSaving}>{isSaving ? "Guardando..." : "Guardar parametro"}</Button></div>}>

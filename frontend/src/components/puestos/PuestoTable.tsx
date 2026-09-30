@@ -2,6 +2,9 @@ import { Eye, Power, Trash2 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { OverflowCell } from "../ui/OverflowCell";
 import { TableShell } from "../ui/TableShell";
+import { SortableHeader } from "../ui/SortableHeader";
+import type { PositionListSortKey } from "../../services/api/positionApiService";
+import type { SortState } from "../../utils/sort";
 import { CompactBadgeList } from "../ui/CompactBadgeList";
 import { Badge } from "../ui/Badge";
 import { EmptyState } from "../ui/EmptyState";
@@ -27,9 +30,11 @@ function SalaryRangeCell({ categories }: { categories?: string[] }) {
   return <CompactBadgeList items={categories} />;
 }
 
-export function PuestoTable({ positions, assignedCount, canEdit, onRemove, onToggleStatus }: { positions: Position[]; assignedCount: (id: string) => number; canEdit: boolean; onRemove: (position: Position) => void; onToggleStatus: (position: Position) => void }) {
+// Orden server-side (PuestosPage pagina): Nombre y Estado. Las columnas de
+// ubicación son derivadas de una relación opcional (sector) y no se ordenan.
+export function PuestoTable({ positions, assignedCount, canEdit, onRemove, onToggleStatus, sort, onSort }: { positions: Position[]; assignedCount: (id: string) => number; canEdit: boolean; onRemove: (position: Position) => void; onToggleStatus: (position: Position) => void; sort: SortState<PositionListSortKey>; onSort: (key: PositionListSortKey) => void }) {
   if (!positions.length) return <EmptyState text="No hay puestos para los filtros seleccionados." />;
-  return <TableShell className="position-table-wrap" minWidth={1120}><table className="position-table"><thead><tr><th>Nombre del puesto</th><th>Unidad de negocio</th><th>Establecimiento</th><th>Area / Departamento</th><th>Sector</th><th>Rango salarial</th><th>Personas</th><th>Estado</th><th>Acciones</th></tr></thead><tbody>
+  return <TableShell className="position-table-wrap" minWidth={1120}><table className="position-table"><thead><tr><SortableHeader label="Nombre del puesto" sortKey="name" sort={sort} onSort={onSort} /><th>Unidad de negocio</th><th>Establecimiento</th><th>Area / Departamento</th><th>Sector</th><th>Rango salarial</th><th>Personas</th><SortableHeader label="Estado" sortKey="status" sort={sort} onSort={onSort} /><th>Acciones</th></tr></thead><tbody>
     {positions.map((position) => { const location = positionLocationCells(position); return <tr key={position.id}>
       <td className="position-name-cell"><b>{position.name}</b><small className="table-sub">{position.code || "Sin codigo"}</small></td>
       <td className="position-text-cell">{location.businessUnit ? <OverflowCell value={location.businessUnit} /> : <span className="position-muted">Sin definir</span>}</td>

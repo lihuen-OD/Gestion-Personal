@@ -1,4 +1,12 @@
 import { apiRequest } from "./apiClient";
+import { appendSortParams } from "./listQuery";
+import type { SortState } from "../../utils/sort";
+
+// Whitelists server-side (time-entries/timeEntries.schemas.ts): "Por registro"
+// ordena por cualquiera de TimeEntryListSortKey; "Por persona" y "Personas
+// habilitadas" paginan empleados y sólo aceptan legajo/empleado.
+export type TimeEntryListSortKey = "legajo" | "employee" | "date" | "hourConcept" | "hours" | "status";
+export type EmployeeRowSortKey = "legajo" | "employee";
 import { mapEmployeeFromApi } from "./employeeApiService";
 import { hourConceptApiService } from "./hourConceptApiService";
 import { cachePolicies, cachedData, invalidateCacheFamily } from "../cache";
@@ -346,7 +354,7 @@ function toExportRow(row: ApiExportResponse["data"]["rows"][number]): HoursExpor
 }
 
 export const timeEntryApiService = {
-  async list(filters: { period?: string; employeeId?: string; status?: TimeStatus; search?: string; costCenterId?: string; page?: number; take?: number } = {}) {
+  async list(filters: { period?: string; employeeId?: string; status?: TimeStatus; search?: string; costCenterId?: string; page?: number; take?: number; sort?: SortState<TimeEntryListSortKey> } = {}) {
     const params = new URLSearchParams();
     params.set("page", String(filters.page || 1));
     params.set("take", String(filters.take || 25));
@@ -355,6 +363,7 @@ export const timeEntryApiService = {
     if (filters.status && statusToApi[filters.status]) params.set("status", statusToApi[filters.status]!);
     if (filters.search?.trim()) params.set("search", filters.search.trim());
     if (filters.costCenterId) params.set("costCenterId", filters.costCenterId);
+    appendSortParams(params, filters.sort);
     const key = `/time-entries?${params.toString()}`;
     return cachedData({
       requestKey: `GET:${key}`,
@@ -367,7 +376,7 @@ export const timeEntryApiService = {
     });
   },
 
-  async listByEmployee(filters: { period?: string; status?: TimeStatus; search?: string; costCenterId?: string; page?: number; take?: number } = {}) {
+  async listByEmployee(filters: { period?: string; status?: TimeStatus; search?: string; costCenterId?: string; page?: number; take?: number; sort?: SortState<EmployeeRowSortKey> } = {}) {
     const params = new URLSearchParams();
     params.set("view", "byEmployee");
     params.set("page", String(filters.page || 1));
@@ -376,6 +385,7 @@ export const timeEntryApiService = {
     if (filters.status && statusToApi[filters.status]) params.set("status", statusToApi[filters.status]!);
     if (filters.search?.trim()) params.set("search", filters.search.trim());
     if (filters.costCenterId) params.set("costCenterId", filters.costCenterId);
+    appendSortParams(params, filters.sort);
     const key = `/time-entries?${params.toString()}`;
     return cachedData({
       requestKey: `GET:${key}`,
@@ -464,13 +474,14 @@ export const timeEntryApiService = {
     });
   },
 
-  async getPeriodEmployees(filters: { period: string; search?: string; costCenterId?: string; page?: number; take?: number }) {
+  async getPeriodEmployees(filters: { period: string; search?: string; costCenterId?: string; page?: number; take?: number; sort?: SortState<EmployeeRowSortKey> }) {
     const params = new URLSearchParams();
     params.set("period", filters.period);
     params.set("page", String(filters.page || 1));
     params.set("take", String(filters.take || 25));
     if (filters.search?.trim()) params.set("search", filters.search.trim());
     if (filters.costCenterId) params.set("costCenterId", filters.costCenterId);
+    appendSortParams(params, filters.sort);
     const key = `/time-entries/period-employees?${params.toString()}`;
     return cachedData({
       requestKey: `GET:${key}`,

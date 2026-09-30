@@ -1,4 +1,5 @@
 import { apiRequest } from "./apiClient";
+import { collectAllPages } from "./listQuery";
 import { cachePolicies, cachedData, invalidateCacheFamily } from "../cache";
 import type { AuditParameter, AuditParameterFilters } from "../../types/auditParameter.types";
 
@@ -27,7 +28,7 @@ export const auditParameterApiService = {
     return cachedData({
       requestKey: `GET:${key}`,
       policy: cachePolicies.auditParametersCatalog,
-      fetcher: () => apiRequest<ApiListResponse>(key, { apiCache: false }).then((response) => response.data),
+      fetcher: () => collectAllPages(key, (path) => apiRequest<ApiListResponse>(path, { apiCache: false })),
       validate: isAuditParameterList,
     });
   },

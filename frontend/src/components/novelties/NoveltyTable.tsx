@@ -10,6 +10,9 @@ import { Button } from "../ui/Button";
 import { Modal } from "../ui/Modal";
 import { OverflowCell } from "../ui/OverflowCell";
 import { TableShell } from "../ui/TableShell";
+import { SortableHeader } from "../ui/SortableHeader";
+import type { NoveltyListSortKey } from "../../services/api/noveltyApiService";
+import type { SortState } from "../../utils/sort";
 import { EmptyState } from "../ui/EmptyState";
 import { confirmAction } from "../../services/appDialog";
 import { noveltyTimeEntryBehaviorLabel } from "../novelty-types/NoveltyTypeFields";
@@ -22,6 +25,8 @@ export function NoveltyTable({
   onChanged,
   onDeleted,
   emptyText = "Todavía no hay novedades registradas.",
+  sort,
+  onSort,
 }: {
   rows: Novelty[];
   employees: Employee[];
@@ -29,7 +34,12 @@ export function NoveltyTable({
   onChanged: (updated: Novelty) => void;
   onDeleted?: (id: string) => void;
   emptyText?: string;
+  // Orden server-side (NoveltiesPage, paginada): sin `onSort` los headers son
+  // estáticos — nunca se ordena localmente una página parcial.
+  sort?: SortState<NoveltyListSortKey>;
+  onSort?: (key: NoveltyListSortKey) => void;
 }) {
+  const header = (label: string, key: NoveltyListSortKey) => (onSort ? <SortableHeader label={label} sortKey={key} sort={sort ?? null} onSort={onSort} /> : <th>{label}</th>);
   const [rejecting, setRejecting] = useState<Novelty | null>(null);
   const [rejectReason, setRejectReason] = useState("");
   const [actionError, setActionError] = useState("");
@@ -82,15 +92,15 @@ export function NoveltyTable({
         <table>
         <thead>
           <tr>
-            <th>Legajo</th>
-            <th>Empleado</th>
-            <th>Novedad</th>
-            <th>Vigencia</th>
+            {header("Legajo", "legajo")}
+            {header("Empleado", "employee")}
+            {header("Novedad", "noveltyType")}
+            {header("Vigencia", "fromDate")}
             <th>Cantidad</th>
             <th>Impacto horas</th>
             <th>Finnegans</th>
             <th>Documentación</th>
-            <th>Estado</th>
+            {header("Estado", "status")}
             <th>Acción</th>
           </tr>
         </thead>

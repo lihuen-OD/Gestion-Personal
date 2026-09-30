@@ -37,6 +37,7 @@ export function buildAssociatedEmployeesRequest(filters: {
   companyId?: string;
   page: number;
   take: number;
+  sort?: AssociatedEmployeeFilters["sort"];
 }): AssociatedEmployeeFilters {
   return {
     search: filters.search.trim() || undefined,
@@ -45,5 +46,6 @@ export function buildAssociatedEmployeesRequest(filters: {
     companyId: filters.companyId || undefined,
     page: filters.page,
     take: filters.take,
+    sort: filters.sort ?? undefined,
   };
 }

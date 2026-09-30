@@ -27,7 +27,7 @@ function authAs(role: string) {
 
 vi.mock("../services/api/employeeApiService", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../services/api/employeeApiService")>();
-  return { ...actual, employeeApiService: { ...actual.employeeApiService, getOptions: vi.fn(), getTimeGrid: vi.fn() } };
+  return { ...actual, employeeApiService: { ...actual.employeeApiService, getAllOptions: vi.fn(), getTimeGrid: vi.fn() } };
 });
 
 vi.mock("../services/api/workforceApiService", async (importOriginal) => {
@@ -116,7 +116,7 @@ const period = new Date().toISOString().slice(0, 7);
 beforeEach(() => {
   vi.clearAllMocks();
   authAsRrhh();
-  vi.mocked(employeeApiService.getOptions).mockResolvedValue({ items: [], meta: { total: 0, page: 1, pageSize: 20, hasMore: false } });
+  vi.mocked(employeeApiService.getAllOptions).mockResolvedValue([]);
   vi.mocked(workforceApiService.corrections).mockResolvedValue([]);
   vi.mocked(employeeApiService.getTimeGrid).mockResolvedValue(buildGrid());
 });
@@ -215,7 +215,7 @@ describe("MonthlyClosuresPage — Etapa 15K (panel de revisión de horas)", () =
   ])("%s ve el mismo detalle horario al revisar un empleado", async (role) => {
     authAs(role);
     vi.mocked(workforceApiService.closures).mockResolvedValue([buildClosure()]);
-    vi.mocked(employeeApiService.getOptions).mockResolvedValue({ items: [buildEmployeeOption()], meta: { total: 1, page: 1, pageSize: 20, hasMore: false } });
+    vi.mocked(employeeApiService.getAllOptions).mockResolvedValue([buildEmployeeOption()]);
     const user = userEvent.setup();
     render(<MonthlyClosuresPage />);
     await screen.findByText("100");
@@ -280,7 +280,7 @@ describe("MonthlyClosuresPage — Etapa 15K (regresión: acciones existentes int
   it("Nivel 2 puede seguir enviando el cierre a RH (acción masiva existente)", async () => {
     authAs("Nivel 2 - Supervisión / Gestión");
     vi.mocked(workforceApiService.closures).mockResolvedValue([]);
-    vi.mocked(employeeApiService.getOptions).mockResolvedValue({ items: [buildEmployeeOption()], meta: { total: 1, page: 1, pageSize: 20, hasMore: false } });
+    vi.mocked(employeeApiService.getAllOptions).mockResolvedValue([buildEmployeeOption()]);
     vi.mocked(workforceApiService.submitClosures).mockResolvedValue([buildClosure({ status: "ENVIADO" })]);
     const user = userEvent.setup();
     render(<MonthlyClosuresPage />);
@@ -320,5 +320,7 @@ describe("MonthlyClosuresPage — Etapa 15K (regresión: acciones existentes int
     render(<MonthlyClosuresPage />);
     await screen.findByText("Ajuste de horario");
     expect(screen.getByRole("button", { name: "Aprobar corrección" })).toBeInTheDocument();
+    // Período y estado se filtran en el backend (antes: últimas 500 + filtro local).
+    expect(workforceApiService.corrections).toHaveBeenCalledWith(period, "PENDIENTE");
   });
 });

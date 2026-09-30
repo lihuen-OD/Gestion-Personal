@@ -1,4 +1,5 @@
 import { apiRequest } from "./apiClient";
+import { collectAllPages } from "./listQuery";
 import { cachePolicies, cachedData } from "../cache";
 
 // Etapa 12D: fechas de feriado — vienen siempre de Horas Especiales
@@ -64,20 +65,22 @@ export const holidayWorkAssignmentApiService = {
       validate: (value) => Array.isArray(value),
     });
   },
-  getCandidates(filters: HolidayWorkCandidatesFilters = {}) {
+  // Planilla de asignación de un feriado: la pantalla necesita todos los
+  // candidatos que cumplen los filtros (se marcan en bloque), así que se
+  // recorren todas las páginas — antes page=1&take=300 ignoraba `meta` y el
+  // candidato 301 no aparecía (límite V1 de la Etapa 12D, HOLIDAY_WORK_
+  // ASSIGNMENTS_12D.md §10). Búsqueda y filtros siguen resolviéndose en el
+  // backend antes de paginar.
+  async getCandidates(filters: HolidayWorkCandidatesFilters = {}) {
     const params = new URLSearchParams();
-    params.set("page", String(filters.page || 1));
-    // Etapa 12D (límite V1 documentado): sin "cargar más"/paginación real en
-    // la UI todavía — take alto (300) alcanza para un solo establecimiento
-    // operando hoy; si el headcount activo supera ese número, esta pantalla
-    // no lo mostraría completo sin filtrar por sector/turno/búsqueda. Ver
-    // docs/decisions/HOLIDAY_WORK_ASSIGNMENTS_12D.md §10 (Performance).
     params.set("take", String(filters.take || 300));
     if (filters.sectorId) params.set("sectorId", filters.sectorId);
     if (filters.shiftTemplateId) params.set("shiftTemplateId", filters.shiftTemplateId);
     if (filters.withoutShift) params.set("withoutShift", "true");
     if (filters.search?.trim()) params.set("search", filters.search.trim());
-    return apiRequest<{ data: HolidayWorkAssignmentCandidate[]; meta: HolidayWorkCandidatesMeta }>(`/shifts/holiday-work/candidates?${params.toString()}`, { apiCache: false }).then((response) => ({ items: response.data, meta: response.meta }));
+    const items = await collectAllPages(`/shifts/holiday-work/candidates?${params.toString()}`, (path) => apiRequest<{ data: HolidayWorkAssignmentCandidate[]; meta: HolidayWorkCandidatesMeta }>(path, { apiCache: false }));
+    const meta: HolidayWorkCandidatesMeta = { total: items.length, page: 1, pageSize: items.length, hasMore: false };
+    return { items, meta };
   },
   getAssignmentsByDate(date: string) {
     return apiRequest<{ data: { date: string; assignments: HolidayWorkAssignment[] } }>(`/shifts/holiday-work/assignments?date=${encodeURIComponent(date)}`, { apiCache: false }).then((response) => response.data);

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Navigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { roleLevel } from "../utils/roles";
@@ -7,6 +7,8 @@ import { PageHeader } from "../components/ui/PageHeader";
 import { Section } from "../components/ui/Section";
 import { DataTable } from "../components/ui/DataTable";
 import { Pagination } from "../components/ui/Pagination";
+import { SortableHeader } from "../components/ui/SortableHeader";
+import { useSortState } from "../utils/sort";
 import { auditApiService } from "../services/api/auditApiService";
 import type { AuditEntry } from "../types";
 import { auditActionLabel, auditEntityLabel, auditRoleLabel, auditChange, auditDescription } from "../utils/auditLabels";
@@ -19,6 +21,10 @@ export function AuditPage() {
   const [status, setStatus] = useState<"loading" | "success" | "error">("loading");
   const [retry, setRetry] = useState(0);
   const [page, setPage] = useState(1);
+  const resetPage = useCallback(() => setPage(1), []);
+  // Sólo Fecha es ordenable: Evento/Registro se muestran traducidos y el
+  // backend ordenaría por el valor técnico crudo.
+  const { sort, toggleSort } = useSortState<"createdAt">(resetPage);
   const [meta, setMeta] = useState({ total: 0, page: 1, pageSize, hasMore: false });
 
   useEffect(() => {
@@ -28,7 +34,7 @@ export function AuditPage() {
     // ya poblada (mismo patrón de EmployeesPage).
     if (!audits.length) setStatus("loading");
     auditApiService
-      .list({ page, take: pageSize })
+      .list({ page, take: pageSize, sort })
       .then((result) => {
         if (!mounted) return;
         setAudits(result.items);
@@ -42,7 +48,7 @@ export function AuditPage() {
     return () => {
       mounted = false;
     };
-  }, [page, retry]);
+  }, [page, retry, sort]);
 
   if (roleLevel(user!.role) !== 1) return <Navigate to="/" />;
 
@@ -65,7 +71,7 @@ export function AuditPage() {
           <table className="audit-readable-table">
             <thead>
               <tr>
-                <th>Fecha</th>
+                <SortableHeader label="Fecha" sortKey="createdAt" sort={sort} onSort={toggleSort} />
                 <th>Usuario</th>
                 <th>Evento</th>
                 <th>Registro</th>
@@ -100,7 +106,7 @@ export function AuditPage() {
             </tbody>
           </table>
         </DataTable>
-        {audits.length ? <Pagination page={meta.page} pageSize={meta.pageSize} total={meta.total} hasMore={meta.hasMore} onPageChange={setPage} itemLabel="eventos" /> : null}
+        {status === "success" && meta.total > 0 ? <Pagination page={meta.page} pageSize={meta.pageSize} total={meta.total} hasMore={meta.hasMore} onPageChange={setPage} itemLabel="eventos" /> : null}
       </Section>
     </>
   );

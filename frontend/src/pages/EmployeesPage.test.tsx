@@ -207,3 +207,76 @@ describe("EmployeesPage — paginación (Etapa 14C.3)", () => {
     expect(pageTwoCall).toBeUndefined();
   });
 });
+
+// Orden server-side: el header no ordena la página visible — cambia
+// sortBy/sortOrder del request y vuelve a la página 1; el backend ordena el
+// dataset filtrado completo antes de paginar.
+describe("EmployeesPage — orden server-side", () => {
+  function mockPagedList() {
+    vi.mocked(employeeApiService.list).mockImplementation(async (filters = {}) => ({
+      items: [buildEmployee({ id: `employee-p${filters.page}`, lastName: `Pagina${filters.page}` })],
+      meta: { total: 60, page: filters.page || 1, pageSize: 25, hasMore: (filters.page || 1) < 3 },
+    }));
+  }
+  const expectListCall = (filters: Record<string, unknown>) => expect(vi.mocked(employeeApiService.list)).toHaveBeenCalledWith(expect.objectContaining(filters));
+  const header = (name: string) => screen.getByRole("columnheader", { name });
+
+  it("click en Apellido pide sortBy/sortOrder al backend (ASC, luego DESC) y actualiza aria-sort", async () => {
+    mockPagedList();
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByText("Pagina1");
+    expect(header("Apellido")).toHaveAttribute("aria-sort", "none");
+
+    await user.click(screen.getByRole("button", { name: "Apellido" }));
+    await waitFor(() => expectListCall({ page: 1, sort: { key: "lastName", direction: "asc" } }));
+    expect(header("Apellido")).toHaveAttribute("aria-sort", "ascending");
+
+    await user.click(screen.getByRole("button", { name: "Apellido" }));
+    await waitFor(() => expectListCall({ page: 1, sort: { key: "lastName", direction: "desc" } }));
+    expect(header("Apellido")).toHaveAttribute("aria-sort", "descending");
+  });
+
+  it("cambiar el orden estando en la página 2 vuelve a la página 1; paginar después conserva el orden", async () => {
+    mockPagedList();
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByText("Pagina1");
+
+    await user.click(screen.getByRole("button", { name: "Siguiente" }));
+    await screen.findByText("Pagina2");
+
+    await user.click(screen.getByRole("button", { name: "Legajo" }));
+    await screen.findByText("Pagina1");
+    expectListCall({ page: 1, sort: { key: "legajo", direction: "asc" } });
+    expect(screen.getByText(/Página 1 de 3/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Siguiente" }));
+    await screen.findByText("Pagina2");
+    expect(vi.mocked(employeeApiService.list)).toHaveBeenCalledWith(expect.objectContaining({ page: 2, sort: { key: "legajo", direction: "asc" } }));
+  });
+
+  it("buscar vuelve a la página 1 y mantiene el orden elegido", async () => {
+    mockPagedList();
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByText("Pagina1");
+    await user.click(screen.getByRole("button", { name: "Estado" }));
+    await user.click(screen.getByRole("button", { name: "Siguiente" }));
+    await screen.findByText("Pagina2");
+
+    await user.type(screen.getByPlaceholderText(/Buscar/i), "gomez");
+
+    await waitFor(() => expect(vi.mocked(employeeApiService.list)).toHaveBeenCalledWith(expect.objectContaining({ page: 1, search: "gomez", sort: { key: "status", direction: "asc" } })));
+  });
+
+  it("Accion y Centro de costo no son ordenables", async () => {
+    mockPagedList();
+    renderPage();
+    await screen.findByText("Pagina1");
+    for (const name of ["Accion", "Centro de costo"]) {
+      expect(header(name)).not.toHaveAttribute("aria-sort");
+      expect(header(name).querySelector("button")).toBeNull();
+    }
+  });
+});

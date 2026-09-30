@@ -1,5 +1,5 @@
 import { AlertTriangle, Archive, CheckCircle2, Link2, Plus } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Navigate } from "react-router-dom";
 import { PuestoFilters } from "../components/puestos/PuestoFilters";
 import { PuestoTable } from "../components/puestos/PuestoTable";
@@ -12,12 +12,13 @@ import { LoadingState } from "../components/ui/LoadingState";
 import { Pagination } from "../components/ui/Pagination";
 import { useAuth } from "../context/AuthContext";
 import { orgStructureApiService } from "../services/api/orgStructureApiService";
-import { positionApiService } from "../services/api/positionApiService";
+import { positionApiService, type PositionListSortKey } from "../services/api/positionApiService";
 import type { OrgStructureCatalog } from "../types/orgStructure.types";
 import type { Position, PositionFilters, PositionSummary } from "../types/position.types";
 import { roleLevel } from "../utils/roles";
 import { confirmAction } from "../services/appDialog";
 import { useDebouncedValue } from "../utils/useDebouncedValue";
+import { useSortState } from "../utils/sort";
 
 const pageSize = 25;
 
@@ -95,6 +96,8 @@ export function PuestosPage() {
   const [filters, setFilters] = useState<PositionFilters>(emptyFilters);
   const debouncedSearch = useDebouncedValue(filters.search);
   const [page, setPage] = useState(1);
+  const resetPage = useCallback(() => setPage(1), []);
+  const { sort, toggleSort } = useSortState<PositionListSortKey>(resetPage);
   const [refresh, setRefresh] = useState(0);
   const [catalog, setCatalog] = useState<OrgStructureCatalog | undefined>(undefined);
 
@@ -148,6 +151,7 @@ export function PuestosPage() {
       establishmentId: filters.establishmentId,
       businessUnitId: filters.businessUnitId,
       salaryRangeCategory: filters.salaryRangeCategory,
+      sort,
     })
       .then((result) => {
         if (!alive) return;
@@ -162,7 +166,7 @@ export function PuestosPage() {
         setListStatus("error");
       });
     return () => { alive = false; };
-  }, [page, debouncedSearch, filters.status, filters.sectorId, filters.areaId, filters.establishmentId, filters.businessUnitId, filters.salaryRangeCategory, refresh]);
+  }, [page, debouncedSearch, filters.status, filters.sectorId, filters.areaId, filters.establishmentId, filters.businessUnitId, filters.salaryRangeCategory, refresh, sort]);
 
   if (level === 3) return <Navigate to="/gestion-horaria" />;
 
@@ -211,8 +215,8 @@ export function PuestosPage() {
           <PuestoFilters filters={filters} options={options(statsItems, catalog)} onChange={changeFilters} />
           {listStatus === "loading" ? <LoadingState text="Cargando puestos..." /> : listStatus === "error" ? <ErrorState message="No pudimos cargar los puestos." onRetry={() => setRefresh((value) => value + 1)} /> : (
             <>
-              <PuestoTable positions={items} assignedCount={(id) => getAssignedCount(items.find((position) => position.id === id)!)} canEdit={canEdit} onRemove={remove} onToggleStatus={toggle} />
-              {items.length > 0 ? <Pagination page={meta.page} pageSize={meta.pageSize} total={meta.total} hasMore={meta.hasMore} onPageChange={setPage} itemLabel="puestos" /> : null}
+              <PuestoTable positions={items} assignedCount={(id) => getAssignedCount(items.find((position) => position.id === id)!)} canEdit={canEdit} onRemove={remove} onToggleStatus={toggle} sort={sort} onSort={toggleSort} />
+              {meta.total > 0 ? <Pagination page={meta.page} pageSize={meta.pageSize} total={meta.total} hasMore={meta.hasMore} onPageChange={setPage} itemLabel="puestos" /> : null}
             </>
           )}
         </div>

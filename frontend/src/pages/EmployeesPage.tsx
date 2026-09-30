@@ -1,14 +1,15 @@
 import { Link } from "react-router-dom";
 import { AlertTriangle, Archive, CheckCircle2, Clock3, Eye, Plus, RefreshCcw, SlidersHorizontal, Users } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "../context/AuthContext";
-import { employeeApiService, type EmployeeSummary } from "../services/api/employeeApiService";
+import { employeeApiService, type EmployeeListSortKey, type EmployeeSummary } from "../services/api/employeeApiService";
 import { orgStructureApiService } from "../services/api/orgStructureApiService";
 import type { Employee } from "../types";
 import { displayLegajo, employeeCompanies } from "../utils/employee";
 import { roleLevel } from "../utils/roles";
 import { statusTone } from "../utils/status";
 import { useDebouncedValue } from "../utils/useDebouncedValue";
+import { useSortState } from "../utils/sort";
 import { OverflowCell } from "../components/ui/OverflowCell";
 import { FilterPanel } from "../components/ui/FilterPanel";
 import { PageHeader } from "../components/ui/PageHeader";
@@ -18,6 +19,7 @@ import { Button } from "../components/ui/Button";
 import { Badge } from "../components/ui/Badge";
 import { DataTable } from "../components/ui/DataTable";
 import { Pagination } from "../components/ui/Pagination";
+import { SortableHeader } from "../components/ui/SortableHeader";
 
 const pageSize = 25;
 const emptySummary: EmployeeSummary = {
@@ -37,6 +39,10 @@ export function EmployeesPage() {
   const [sector, setSector] = useState("");
   const [costCenter, setCostCenter] = useState("");
   const [page, setPage] = useState(1);
+  // Orden server-side: cambiarlo vuelve a la página 1 (el backend ordena el
+  // dataset filtrado completo antes de paginar).
+  const resetPage = useCallback(() => setPage(1), []);
+  const { sort, toggleSort } = useSortState<EmployeeListSortKey>(resetPage);
   const [refresh, setRefresh] = useState(0);
   const [syncing, setSyncing] = useState(false);
   const [syncMessage, setSyncMessage] = useState("");
@@ -56,7 +62,7 @@ export function EmployeesPage() {
     let mounted = true;
     if (!all.length) setListStatus("loading");
     employeeApiService
-      .list({ search: debouncedSearch, companyId: selectedCompanyId, sectorId: selectedSectorId, costCenterId: selectedCostCenterId, page, take: pageSize })
+      .list({ search: debouncedSearch, companyId: selectedCompanyId, sectorId: selectedSectorId, costCenterId: selectedCostCenterId, page, take: pageSize, sort })
       .then((result) => {
         if (!mounted) return;
         setAll(result.items);
@@ -71,7 +77,7 @@ export function EmployeesPage() {
         // no la pasa, la entrada expira sola con el TTL normal (30s).
         if (result.meta.hasMore) {
           employeeApiService
-            .list({ search: debouncedSearch, companyId: selectedCompanyId, sectorId: selectedSectorId, costCenterId: selectedCostCenterId, page: page + 1, take: pageSize })
+            .list({ search: debouncedSearch, companyId: selectedCompanyId, sectorId: selectedSectorId, costCenterId: selectedCostCenterId, page: page + 1, take: pageSize, sort })
             .catch(() => {});
         }
       })
@@ -84,7 +90,7 @@ export function EmployeesPage() {
     return () => {
       mounted = false;
     };
-  }, [debouncedSearch, page, refresh, selectedCompanyId, selectedSectorId, selectedCostCenterId]);
+  }, [debouncedSearch, page, refresh, selectedCompanyId, selectedSectorId, selectedCostCenterId, sort]);
 
   useEffect(() => {
     let mounted = true;
@@ -227,12 +233,12 @@ export function EmployeesPage() {
           <table>
             <thead>
               <tr>
-                <th>Legajo</th>
-                <th>CUIL</th>
-                <th>Apellido</th>
-                <th>Nombre</th>
+                <SortableHeader label="Legajo" sortKey="legajo" sort={sort} onSort={toggleSort} />
+                <SortableHeader label="CUIL" sortKey="cuil" sort={sort} onSort={toggleSort} />
+                <SortableHeader label="Apellido" sortKey="lastName" sort={sort} onSort={toggleSort} />
+                <SortableHeader label="Nombre" sortKey="firstName" sort={sort} onSort={toggleSort} />
                 <th>Centro de costo</th>
-                <th>Estado</th>
+                <SortableHeader label="Estado" sortKey="status" sort={sort} onSort={toggleSort} />
                 <th>Accion</th>
               </tr>
             </thead>

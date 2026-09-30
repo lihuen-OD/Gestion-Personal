@@ -14,7 +14,6 @@ import { PuestoSalaryRangeTab } from "../components/puestos/PuestoSalaryRangeTab
 import { PuestoWorkConditionsTab } from "../components/puestos/PuestoWorkConditionsTab";
 import { useAuth } from "../context/AuthContext";
 import { positionApiService } from "../services/api/positionApiService";
-import type { Employee } from "../types";
 import type { Position } from "../types/position.types";
 import { roleLevel } from "../utils/roles";
 import { useAsyncAction } from "../utils/useAsyncAction";
@@ -35,7 +34,7 @@ export function PuestoDetailPage() {
   const [position, setPosition] = useState<Position | undefined>(undefined);
   const [loadStatus, setLoadStatus] = useState<"loading" | "success" | "error">("loading");
   const [loadRetry, setLoadRetry] = useState(0);
-  const [assigned, setAssigned] = useState<Employee[]>([]);
+  const [assignedCount, setAssignedCount] = useState(0);
   const [tab, setTab] = useState(0);
   const [notice, setNotice] = useState(location.state?.created ? "Puesto creado correctamente." : "");
 
@@ -67,16 +66,17 @@ export function PuestoDetailPage() {
   useEffect(() => {
     let alive = true;
     if (!id) {
-      setAssigned([]);
+      setAssignedCount(0);
       return () => { alive = false; };
     }
-    positionApiService.getAssignedEmployees(id)
-      .then((employees) => {
+    // Sólo el total real (la pestaña "Personas asignadas" pagina su propio listado).
+    positionApiService.getAssignedEmployees(id, { take: 1 })
+      .then((result) => {
         if (!alive) return;
-        setAssigned(employees);
+        setAssignedCount(result.meta.total);
       })
       .catch(() => {
-        if (alive) setAssigned([]);
+        if (alive) setAssignedCount(0);
       });
     return () => { alive = false; };
   }, [id]);
@@ -109,7 +109,7 @@ export function PuestoDetailPage() {
   };
 
   const remove = async () => {
-    const message = assigned.length ? `Este puesto tiene ${assigned.length} persona(s) asignadas. No se borra para no romper legajos; se va a inactivar/ocultar. Confirmar?` : "Confirmar ocultar/eliminar este puesto?";
+    const message = assignedCount ? `Este puesto tiene ${assignedCount} persona(s) asignadas. No se borra para no romper legajos; se va a inactivar/ocultar. Confirmar?` : "Confirmar ocultar/eliminar este puesto?";
     if (!await confirmAction(message, { title: "Ocultar puesto", confirmLabel: "Ocultar", tone: "danger" })) return;
     const result = await positionApiService.removeOrHide(position.id);
     if (result) { setPosition(result); setNotice("Puesto inactivado para conservar trazabilidad."); }
@@ -126,12 +126,12 @@ export function PuestoDetailPage() {
     if (tab === 6) return <PuestoWorkConditionsTab position={position} setPosition={setPosition} disabled={!canEdit} />;
     if (tab === 7) return <PuestoIndicatorsTab position={position} setPosition={setPosition} disabled={!canEdit} />;
     if (tab === 8) return <PuestoEvaluationCriteriaTab position={position} setPosition={setPosition} disabled={!canEdit} />;
-    if (tab === 9) return <PuestoAssignedPeopleTab employees={assigned} />;
+    if (tab === 9) return id ? <PuestoAssignedPeopleTab positionId={id} /> : null;
     return <PuestoHistoryTab position={position} />;
   };
 
   return <>
-    <PuestoHeader position={position} assignedCount={assigned.length} canEdit={canEdit} onRemove={remove} onToggleStatus={toggle} />
+    <PuestoHeader position={position} assignedCount={assignedCount} canEdit={canEdit} onRemove={remove} onToggleStatus={toggle} />
     {notice && <div className="toast">{notice}</div>}
 
     <Tabs tabs={tabs.map((label, index) => ({ key: String(index), label: `${index + 1}. ${label}` }))} active={String(tab)} onChange={(key) => setTab(Number(key))} />

@@ -176,13 +176,17 @@ export const workforceApiService = {
     return result;
   },
   // Etapa 14G.8: envuelto con `cachedData` -- misma familia "monthly-closures"
-  // que `closures` a propósito: `corrections` no depende del período, así que
-  // cambiar de período no lo vuelve a pedir mientras el TTL siga vigente.
-  corrections() {
+  // que `closures`. Período y estado se filtran en el backend (antes: las
+  // últimas 500 de todos los períodos + filtro local, que perdía en silencio
+  // correcciones del período fuera de esas 500).
+  corrections(period: string, status?: TimeCorrection["status"]) {
+    const params = new URLSearchParams({ period });
+    if (status) params.set("status", status);
+    const path = `/workforce/corrections?${params.toString()}`;
     return cachedData({
-      requestKey: "GET:/workforce/corrections",
+      requestKey: `GET:${path}`,
       policy: cachePolicies.timeCorrectionsList,
-      fetcher: () => apiRequest<{ data: TimeCorrection[] }>("/workforce/corrections", { apiCache: false }).then((response) => response.data),
+      fetcher: () => apiRequest<{ data: TimeCorrection[] }>(path, { apiCache: false }).then((response) => response.data),
       validate: (value: TimeCorrection[]) => Array.isArray(value),
     });
   },

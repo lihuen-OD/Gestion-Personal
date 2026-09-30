@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { CheckCheck, Plus } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
-import { noveltyApiService } from "../services/api/noveltyApiService";
+import { noveltyApiService, type NoveltyListSortKey } from "../services/api/noveltyApiService";
 import type { Employee, Novelty } from "../types";
 import { NoveltyModal } from "../components/novelties/NoveltyModal";
 import { NoveltyTable } from "../components/novelties/NoveltyTable";
@@ -12,6 +12,7 @@ import { Pagination } from "../components/ui/Pagination";
 import { FilterPanel } from "../components/ui/FilterPanel";
 import { LoadingState } from "../components/ui/LoadingState";
 import { useDebouncedValue } from "../utils/useDebouncedValue";
+import { useSortState } from "../utils/sort";
 import { roleLevel } from "../utils/roles";
 import { currentMonthPeriod, formatPeriodLabel } from "../utils/period";
 
@@ -29,6 +30,8 @@ export function NoveltiesPage() {
   const [open, setOpen] = useState(false);
   const [refresh, setRefresh] = useState(0);
   const [page, setPage] = useState(1);
+  const resetPage = useCallback(() => setPage(1), []);
+  const { sort, toggleSort } = useSortState<NoveltyListSortKey>(resetPage);
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebouncedValue(search);
   // Etapa 15M.15: filtro principal por período, mismo patrón que
@@ -52,7 +55,7 @@ export function NoveltiesPage() {
     if (!novelties.length) setLoading(true);
     setLoadError("");
     noveltyApiService
-      .list({ page, take: pageSize, search: debouncedSearch, period })
+      .list({ page, take: pageSize, search: debouncedSearch, period, sort })
       .then((result) => {
         if (!mounted) return;
         setNovelties(result.items);
@@ -71,7 +74,7 @@ export function NoveltiesPage() {
     return () => {
       mounted = false;
     };
-  }, [debouncedSearch, page, period, refresh, user]);
+  }, [debouncedSearch, page, period, refresh, sort, user]);
 
   const openCreate = () => {
     setLoadError("");
@@ -128,6 +131,8 @@ export function NoveltiesPage() {
             employees={employees}
             currentUser={user!}
             emptyText={`No hay novedades registradas para ${periodLabel}.`}
+            sort={sort}
+            onSort={toggleSort}
             onChanged={(updated) => setNovelties((current) => current.map((item) => item.id === updated.id ? updated : item))}
             onDeleted={(id) => {
               setNovelties((current) => current.filter((item) => item.id !== id));
@@ -135,7 +140,7 @@ export function NoveltiesPage() {
             }}
           />
         )}
-        {novelties.length > 0 && (
+        {meta.total > 0 && (
           <Pagination page={meta.page} pageSize={meta.pageSize} total={meta.total} hasMore={meta.hasMore} onPageChange={setPage} itemLabel="novedades" />
         )}
       </Section>

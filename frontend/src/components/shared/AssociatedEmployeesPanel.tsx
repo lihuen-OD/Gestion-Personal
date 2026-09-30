@@ -1,13 +1,13 @@
 import { Eye, UserPlus, X } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { EmployeeRemoteSelector } from "../employees/EmployeeRemoteSelector";
 import { orgStructureApiService } from "../../services/api/orgStructureApiService";
 import { confirmAction } from "../../services/appDialog";
 import { getUserErrorMessage } from "../../services/api/apiClient";
-import type { AssociatedEmployee, AssociatedEmployeeFilters, AssociatedEmployeesResult } from "../../types/associatedEmployee.types";
+import type { AssociatedEmployee, AssociatedEmployeeFilters, AssociatedEmployeeSortKey, AssociatedEmployeesResult } from "../../types/associatedEmployee.types";
 import type { Employee } from "../../types";
 import { useAsyncAction } from "../../utils/useAsyncAction";
 import { Badge } from "../ui/Badge";
@@ -22,6 +22,8 @@ import { TableShell } from "../ui/TableShell";
 import { useDebouncedValue } from "../../utils/useDebouncedValue";
 import { statusTone } from "../../utils/status";
 import { buildAssociatedEmployeesRequest, employeeCompanyNames, employeeStatusLabel } from "./AssociatedEmployeesPanel.helpers";
+import { SortableHeader } from "../ui/SortableHeader";
+import { useSortState } from "../../utils/sort";
 
 export type AssociatedEmployeesColumn<T> = {
   header: string;
@@ -167,6 +169,8 @@ export function AssociatedEmployeesPanel<T extends { employeeId: string; employe
   const [structureCostCenters, setStructureCostCenters] = useState<Array<{ id: string; name: string }>>([]);
   const [structureCompanies, setStructureCompanies] = useState<Array<{ id: string; name: string }>>([]);
   const [page, setPage] = useState(1);
+  const resetPageOnSort = useCallback(() => setPage(1), []);
+  const { sort, toggleSort } = useSortState<AssociatedEmployeeSortKey>(resetPageOnSort);
   const [items, setItems] = useState<T[]>([]);
   const [meta, setMeta] = useState({ total: 0, page: 1, pageSize: PAGE_SIZE, hasMore: false });
   const [status, setStatus] = useState<"loading" | "success" | "error">("loading");
@@ -213,6 +217,7 @@ export function AssociatedEmployeesPanel<T extends { employeeId: string; employe
       companyId: selectedCompanyId,
       page,
       take: PAGE_SIZE,
+      sort,
     });
     fetcher(request)
       .then((result) => {
@@ -237,7 +242,7 @@ export function AssociatedEmployeesPanel<T extends { employeeId: string; employe
     // <AssociatedEmployeesPanel> para forzar un remount limpio en vez de
     // depender de la identidad de fetcher.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [debouncedSearch, selectedSectorId, selectedCostCenterId, selectedCompanyId, page, retry, refreshKey]);
+  }, [debouncedSearch, selectedSectorId, selectedCostCenterId, selectedCompanyId, page, retry, refreshKey, sort]);
 
   const resetPage = () => setPage(1);
   const reload = () => setRetry((value) => value + 1);
@@ -408,8 +413,8 @@ export function AssociatedEmployeesPanel<T extends { employeeId: string; employe
               <table>
                 <thead>
                   <tr>
-                    <th>Legajo</th>
-                    <th>Empleado</th>
+                    <SortableHeader label="Legajo" sortKey="legajo" sort={sort} onSort={toggleSort} />
+                    <SortableHeader label="Empleado" sortKey="employee" sort={sort} onSort={toggleSort} />
                     {showCuilColumn ? <th>CUIL</th> : null}
                     <th>Sector</th>
                     <th>Centro de costo</th>

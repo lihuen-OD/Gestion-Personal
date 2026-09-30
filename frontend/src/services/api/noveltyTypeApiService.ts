@@ -1,4 +1,5 @@
 import { apiRequest } from "./apiClient";
+import { collectAllPages } from "./listQuery";
 import { cachePolicies, cachedData, invalidateCacheFamily } from "../cache";
 import type {
   FinnegansValueUnit,
@@ -144,7 +145,7 @@ export const noveltyTypeApiService = {
     return cachedData({
       requestKey: `GET:${key}`,
       policy: cachePolicies.noveltyTypesCatalog,
-      fetcher: () => apiRequest<ApiListResponse>(key, { apiCache: false }).then((response) => response.data.map(mapNoveltyTypeFromApi)),
+      fetcher: () => collectAllPages(key, (path) => apiRequest<ApiListResponse>(path, { apiCache: false })).then((rows) => rows.map(mapNoveltyTypeFromApi)),
       validate: isNoveltyTypeList,
     });
   },

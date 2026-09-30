@@ -221,9 +221,23 @@ function buildPeriodRow(overrides: {
   } as never;
 }
 
+// /pending se consulta por fuente (kind=novelties / kind=hourConceptBreakdowns),
+// cada una paginada con su meta real: el mock responde según `kind`.
+function mockPending(items: PendingItem[]) {
+  vi.mocked(pendingApiService.getAll).mockImplementation(async (filters = {}) => {
+    const kind = filters.kind === "novelties" ? "novelty" : "hourConceptBreakdown";
+    const data = items.filter((item) => item.kind === kind);
+    return {
+      summary: { total: data.length, novelties: kind === "novelty" ? data.length : 0, timeEntries: 0, hourConceptBreakdowns: kind === "hourConceptBreakdown" ? data.length : 0 },
+      data,
+      meta: { total: data.length, page: 1, pageSize: 25, hasMore: false },
+    };
+  });
+}
+
 beforeEach(() => {
   vi.mocked(orgStructureApiService.getCatalog).mockResolvedValue({ costCenters: [] } as never);
-  vi.mocked(pendingApiService.getAll).mockResolvedValue({ summary: { total: 0, novelties: 0, timeEntries: 0, hourConceptBreakdowns: 0 }, data: [] });
+  mockPending([]);
   vi.mocked(timeEntryApiService.getSummary).mockResolvedValue({
     activeEmployees: 0, employeesWithEntries: 0, pendingEmployees: 0, reviewEmployees: 0, countableHours: 0, coverage: 0,
   } as never);
@@ -338,10 +352,7 @@ describe("HoursPage — indicador de Hora Especial en la Bandeja de revisión (E
 describe("HoursPage — bandeja de revisión resuelve desgloses manuales (Etapa 6L.5)", () => {
   it("RRHH ve pendientes de Hora normal (TimeEntry) y de Desglose manual (HourConceptBreakdown) a la vez", async () => {
     authAs("Nivel 1 - RRHH");
-    vi.mocked(pendingApiService.getAll).mockResolvedValue({
-      summary: { total: 1, novelties: 0, timeEntries: 0, hourConceptBreakdowns: 1 },
-      data: [buildPendingBreakdownItem()],
-    });
+    mockPending([buildPendingBreakdownItem()]);
     renderPending();
 
     expect(await screen.findByText("100")).toBeInTheDocument();
@@ -351,10 +362,7 @@ describe("HoursPage — bandeja de revisión resuelve desgloses manuales (Etapa 
 
   it("RRHH ve acciones Aprobar/Rechazar/Devolver también en la fila del desglose manual", async () => {
     authAs("Nivel 1 - RRHH");
-    vi.mocked(pendingApiService.getAll).mockResolvedValue({
-      summary: { total: 1, novelties: 0, timeEntries: 0, hourConceptBreakdowns: 1 },
-      data: [buildPendingBreakdownItem()],
-    });
+    mockPending([buildPendingBreakdownItem()]);
     renderPending();
 
     const row = await screen.findByText("200 - Perez, Luis");
@@ -368,10 +376,7 @@ describe("HoursPage — bandeja de revisión resuelve desgloses manuales (Etapa 
     "%s NO ve acciones de aprobación sobre un desglose manual pendiente (queda 'Solo lectura')",
     async (role) => {
       authAs(role);
-      vi.mocked(pendingApiService.getAll).mockResolvedValue({
-        summary: { total: 1, novelties: 0, timeEntries: 0, hourConceptBreakdowns: 1 },
-        data: [buildPendingBreakdownItem()],
-      });
+      mockPending([buildPendingBreakdownItem()]);
       renderPending();
 
       const row = await screen.findByText("200 - Perez, Luis");
@@ -387,10 +392,7 @@ describe("HoursPage — bandeja de revisión resuelve desgloses manuales (Etapa 
     const { default: userEvent } = await import("@testing-library/user-event");
     const user = userEvent.setup();
     authAs("Nivel 1 - RRHH");
-    vi.mocked(pendingApiService.getAll).mockResolvedValue({
-      summary: { total: 1, novelties: 0, timeEntries: 0, hourConceptBreakdowns: 1 },
-      data: [buildPendingBreakdownItem()],
-    });
+    mockPending([buildPendingBreakdownItem()]);
     vi.mocked(employeeApiService.approveManualHourConceptBreakdown).mockResolvedValue({ id: "breakdown-1", status: "APROBADO" });
     renderPending();
 
@@ -404,10 +406,7 @@ describe("HoursPage — bandeja de revisión resuelve desgloses manuales (Etapa 
     const { default: userEvent } = await import("@testing-library/user-event");
     const user = userEvent.setup();
     authAs("Nivel 1 - RRHH");
-    vi.mocked(pendingApiService.getAll).mockResolvedValue({
-      summary: { total: 1, novelties: 0, timeEntries: 0, hourConceptBreakdowns: 1 },
-      data: [buildPendingBreakdownItem()],
-    });
+    mockPending([buildPendingBreakdownItem()]);
     vi.mocked(employeeApiService.rejectManualHourConceptBreakdown).mockResolvedValue({ id: "breakdown-1", status: "RECHAZADO" });
     renderPending();
 
@@ -424,10 +423,7 @@ describe("HoursPage — bandeja de revisión resuelve desgloses manuales (Etapa 
     const { default: userEvent } = await import("@testing-library/user-event");
     const user = userEvent.setup();
     authAs("Nivel 1 - RRHH");
-    vi.mocked(pendingApiService.getAll).mockResolvedValue({
-      summary: { total: 1, novelties: 0, timeEntries: 0, hourConceptBreakdowns: 1 },
-      data: [buildPendingBreakdownItem()],
-    });
+    mockPending([buildPendingBreakdownItem()]);
     vi.mocked(employeeApiService.returnManualHourConceptBreakdown).mockResolvedValue({ id: "breakdown-1", status: "DEVUELTO" });
     renderPending();
 
@@ -444,10 +440,7 @@ describe("HoursPage — bandeja de revisión resuelve desgloses manuales (Etapa 
     const { default: userEvent } = await import("@testing-library/user-event");
     const user = userEvent.setup();
     authAs("Nivel 1 - RRHH");
-    vi.mocked(pendingApiService.getAll).mockResolvedValue({
-      summary: { total: 1, novelties: 0, timeEntries: 0, hourConceptBreakdowns: 1 },
-      data: [buildPendingBreakdownItem()],
-    });
+    mockPending([buildPendingBreakdownItem()]);
     vi.mocked(employeeApiService.approveManualHourConceptBreakdown).mockResolvedValue({ id: "breakdown-1", status: "APROBADO" });
     renderPending();
 
@@ -463,10 +456,7 @@ describe("HoursPage — bandeja de revisión resuelve desgloses manuales (Etapa 
     const { default: userEvent } = await import("@testing-library/user-event");
     const user = userEvent.setup();
     authAs("Nivel 1 - RRHH");
-    vi.mocked(pendingApiService.getAll).mockResolvedValue({
-      summary: { total: 1, novelties: 0, timeEntries: 0, hourConceptBreakdowns: 1 },
-      data: [buildPendingBreakdownItem()],
-    });
+    mockPending([buildPendingBreakdownItem()]);
     vi.mocked(timeEntryApiService.approve).mockResolvedValue(buildReviewEntry({ status: "Aprobado" }));
     renderPending();
 
@@ -478,10 +468,7 @@ describe("HoursPage — bandeja de revisión resuelve desgloses manuales (Etapa 
 
   it("la UI distingue 'Hora normal' de 'Desglose manual' con secciones y columnas separadas", async () => {
     authAs("Nivel 1 - RRHH");
-    vi.mocked(pendingApiService.getAll).mockResolvedValue({
-      summary: { total: 1, novelties: 0, timeEntries: 0, hourConceptBreakdowns: 1 },
-      data: [buildPendingBreakdownItem()],
-    });
+    mockPending([buildPendingBreakdownItem()]);
     renderPending();
 
     expect(await screen.findByText("Horas enviadas a revisión")).toBeInTheDocument();
@@ -492,10 +479,7 @@ describe("HoursPage — bandeja de revisión resuelve desgloses manuales (Etapa 
 
   it("no da a entender que el desglose manual suma al total trabajado", async () => {
     authAs("Nivel 1 - RRHH");
-    vi.mocked(pendingApiService.getAll).mockResolvedValue({
-      summary: { total: 1, novelties: 0, timeEntries: 0, hourConceptBreakdowns: 1 },
-      data: [buildPendingBreakdownItem()],
-    });
+    mockPending([buildPendingBreakdownItem()]);
     renderPending();
 
     expect(await screen.findByText(/no modifican Hora normal ni el total trabajado/i)).toBeInTheDocument();
@@ -546,10 +530,7 @@ describe("HoursPage — las acciones de revisión no fallan en silencio (Etapa 7
     const user = userEvent.setup();
     authAs("Nivel 1 - RRHH");
     vi.mocked(noveltyApiService.approve).mockRejectedValue(new Error("network down"));
-    vi.mocked(pendingApiService.getAll).mockResolvedValue({
-      summary: { total: 1, novelties: 1, timeEntries: 0, hourConceptBreakdowns: 0 },
-      data: [buildPendingBreakdownItem({ kind: "novelty", sourceId: "novelty-1", title: "Vacaciones", employeeLabel: "300 - Diaz, Sol" })],
-    });
+    mockPending([buildPendingBreakdownItem({ kind: "novelty", sourceId: "novelty-1", title: "Vacaciones", employeeLabel: "300 - Diaz, Sol" })]);
     renderPending();
 
     const row = await screen.findByText("300 - Diaz, Sol");
@@ -595,7 +576,8 @@ describe("HoursPage — Etapa 9F (separación de efectos: sin refetch innecesari
     await screen.findByText("100");
     expect(vi.mocked(timeEntryApiService.getSummary).mock.calls.length - before.summary).toBe(1);
     expect(vi.mocked(timeEntryApiService.list).mock.calls.length - before.list).toBe(1);
-    expect(vi.mocked(pendingApiService.getAll).mock.calls.length - before.pending).toBe(1);
+    // 2 = una por fuente paginada (novedades + desgloses), no una carga kind=all.
+    expect(vi.mocked(pendingApiService.getAll).mock.calls.length - before.pending).toBe(2);
     expect(vi.mocked(timeEntryApiService.getPeriodEmployees).mock.calls.length).toBe(before.periodEmployees);
   });
 
@@ -684,7 +666,7 @@ describe("HoursPage — Etapa 9F (separación de efectos: sin refetch innecesari
 
     await waitFor(() => {
       expect(timeEntryApiService.list).toHaveBeenCalledTimes(listBefore + 1);
-      expect(pendingApiService.getAll).toHaveBeenCalledTimes(pendingBefore + 1);
+      expect(pendingApiService.getAll).toHaveBeenCalledTimes(pendingBefore + 2);
       expect(timeEntryApiService.getSummary).toHaveBeenCalledTimes(summaryBefore + 1);
     });
   });

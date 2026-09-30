@@ -49,11 +49,11 @@ export function MonthlyClosuresPage() {
     setError("");
     try {
       const [employeeResult, closureResult, correctionResult] = await Promise.all([
-        employeeApiService.getOptions({ take: 1000 }),
+        employeeApiService.getAllOptions(),
         workforceApiService.closures(period),
-        workforceApiService.corrections(),
+        workforceApiService.corrections(period, "PENDIENTE"),
       ]);
-      setEmployees(employeeResult.items);
+      setEmployees(employeeResult);
       setClosures(closureResult);
       setCorrections(correctionResult);
       setSelected([]);
@@ -73,7 +73,8 @@ export function MonthlyClosuresPage() {
     },
   } as MonthlyClosure));
   const selectable = rows.filter((row) => isRrhh ? row.status === "ENVIADO" : ["ABIERTO", "DEVUELTO"].includes(row.status));
-  const pendingCorrections = corrections.filter((item) => item.status === "PENDIENTE" && item.timeEntry.date.slice(0, 7) === period);
+  // Ya filtradas por período y PENDIENTE en el backend.
+  const pendingCorrections = corrections;
 
   const execute = async (operation: () => Promise<unknown>) => {
     setWorking(true); setError("");

@@ -71,14 +71,14 @@ describe("PuestoDetailPage — Etapa 14H.7 (getById/getAssignedEmployees en para
   it("dispara getById y getAssignedEmployees con el mismo id, sin esperar a que getById resuelva primero", async () => {
     let resolveById!: (value: Position) => void;
     vi.mocked(positionApiService.getById).mockReturnValue(new Promise((resolve) => { resolveById = resolve; }));
-    vi.mocked(positionApiService.getAssignedEmployees).mockResolvedValue([]);
+    vi.mocked(positionApiService.getAssignedEmployees).mockResolvedValue({ items: [], meta: { total: 0, page: 1, pageSize: 1, hasMore: false } });
 
     renderPage("pos-1");
 
     // getAssignedEmployees ya debe haber sido llamado aunque getById todavía
     // no resolvió — si estuviera encadenado (patrón previo a 14H.7), esta
     // aserción fallaría porque `position` seguiría siendo `undefined`.
-    await waitFor(() => expect(positionApiService.getAssignedEmployees).toHaveBeenCalledWith("pos-1"));
+    await waitFor(() => expect(positionApiService.getAssignedEmployees).toHaveBeenCalledWith("pos-1", { take: 1 }));
     expect(positionApiService.getById).toHaveBeenCalledWith("pos-1");
 
     resolveById(buildPosition());
@@ -88,7 +88,7 @@ describe("PuestoDetailPage — Etapa 14H.7 (getById/getAssignedEmployees en para
   it("carga correctamente: muestra el nombre del puesto y las personas asignadas una vez que ambas resuelven", async () => {
     vi.mocked(positionApiService.getById).mockResolvedValue(buildPosition({ name: "Jefe de Sector" }));
     const employees = [{ id: "emp-1", legajo: "1001", firstName: "Ana", lastName: "Gomez", status: "Activo" } as Employee];
-    vi.mocked(positionApiService.getAssignedEmployees).mockResolvedValue(employees);
+    vi.mocked(positionApiService.getAssignedEmployees).mockResolvedValue({ items: employees, meta: { total: 1, page: 1, pageSize: 1, hasMore: false } });
 
     renderPage("pos-1");
 
@@ -97,7 +97,7 @@ describe("PuestoDetailPage — Etapa 14H.7 (getById/getAssignedEmployees en para
 
   it("getById falla: muestra el error y no rompe por el resultado de getAssignedEmployees", async () => {
     vi.mocked(positionApiService.getById).mockRejectedValue(new Error("not found"));
-    vi.mocked(positionApiService.getAssignedEmployees).mockResolvedValue([]);
+    vi.mocked(positionApiService.getAssignedEmployees).mockResolvedValue({ items: [], meta: { total: 0, page: 1, pageSize: 1, hasMore: false } });
 
     renderPage("pos-inexistente");
 

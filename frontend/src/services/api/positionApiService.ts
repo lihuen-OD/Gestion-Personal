@@ -1,4 +1,6 @@
 import { apiRequest } from "./apiClient";
+import { appendSortParams, collectAllPages, type ListMeta } from "./listQuery";
+import type { SortState } from "../../utils/sort";
 import { cachePolicies, cachedData, invalidateCacheFamily } from "../cache";
 import type { Employee } from "../../types";
 import type { Position, PositionFilters, PositionStatus } from "../../types/position.types";
@@ -62,7 +64,8 @@ type ApiAssignedEmployee = {
   companies?: { isPrimary: boolean; company: { id: string; name: string } }[];
 };
 
-type ApiAssignedEmployeesResponse = { data: ApiAssignedEmployee[] };
+type ApiAssignedEmployeesResponse = { data: ApiAssignedEmployee[]; meta: ListMeta };
+export type AssignedEmployeeSortKey = "legajo" | "employee";
 
 const asArray = <T>(value: unknown): T[] => Array.isArray(value) ? value as T[] : [];
 
@@ -194,7 +197,10 @@ function isPositionListResponse(value: { items: Position[]; meta?: unknown }) {
 // take:300 fijo, usada por selects/catálogos) — acá page/take vienen del
 // caller (Pagination.tsx) y se agregan los 3 filtros de jerarquía
 // organizacional que el backend ahora sí resuelve server-side.
-function toListQuery(filters?: Partial<PositionFilters> & { page?: number; take?: number }) {
+// Whitelist server-side de GET /positions (positions.schemas.ts::positionListSortKeys).
+export type PositionListSortKey = "name" | "status";
+
+function toListQuery(filters?: Partial<PositionFilters> & { page?: number; take?: number; sort?: SortState<PositionListSortKey> }) {
   const params = new URLSearchParams();
   params.set("page", String(filters?.page || 1));
   params.set("take", String(filters?.take || 25));
@@ -205,6 +211,7 @@ function toListQuery(filters?: Partial<PositionFilters> & { page?: number; take?
   if (filters?.establishmentId) params.set("establishmentId", filters.establishmentId);
   if (filters?.businessUnitId) params.set("businessUnitId", filters.businessUnitId);
   if (filters?.salaryRangeCategory) params.set("salaryRangeCategory", filters.salaryRangeCategory);
+  appendSortParams(params, filters?.sort);
   return `?${params.toString()}`;
 }
 
@@ -213,7 +220,7 @@ export const positionApiService = {
   // contrato que employeeApiService.list()/Pagination.tsx). getAll() abajo
   // sigue igual, sin tocar — lo siguen usando los selects/catálogos que
   // necesitan "todos los puestos activos" de una sola vez.
-  async list(filters?: Partial<PositionFilters> & { page?: number; take?: number }) {
+  async list(filters?: Partial<PositionFilters> & { page?: number; take?: number; sort?: SortState<PositionListSortKey> }) {
     const query = toListQuery(filters);
     const key = `/positions${query}`;
     return cachedData({
@@ -232,7 +239,9 @@ export const positionApiService = {
     return cachedData({
       requestKey: `GET:${key}`,
       policy: cachePolicies.positionsCatalog,
-      fetcher: () => apiRequest<ApiListResponse>(key, { apiCache: false }).then((response) => response.data.map(mapFromApi)),
+      // Catálogo completo (select de puestos activos de Horario laboral): se
+      // recorren las páginas en vez de confiar en un único take de 300.
+      fetcher: () => collectAllPages(key, (path) => apiRequest<ApiListResponse>(path, { apiCache: false })).then((rows) => rows.map(mapFromApi)),
       validate: isPositionList,
     });
   },
@@ -275,13 +284,20 @@ export const positionApiService = {
   // PuestoDetailPage.tsx), esta llamada quedó expuesta al doble-montaje de
   // StrictMode (2 requests reales por apertura de detalle, confirmado en el
   // journey) — mismo hallazgo/mismo fix que workRegimeEmployeesList (14H.2).
-  async getAssignedEmployees(id: string) {
-    const key = `/positions/${id}/employees`;
+  // Paginado server-side (antes: take 500 fijo sin meta). `meta.total` es la
+  // cantidad real de personas asignadas — la usan el encabezado del puesto y
+  // la confirmación de baja.
+  async getAssignedEmployees(id: string, filters: { page?: number; take?: number; sort?: SortState<AssignedEmployeeSortKey> } = {}) {
+    const params = new URLSearchParams();
+    params.set("page", String(filters.page || 1));
+    params.set("take", String(filters.take || 25));
+    appendSortParams(params, filters.sort);
+    const key = `/positions/${id}/employees?${params.toString()}`;
     return cachedData({
       requestKey: `GET:${key}`,
       policy: cachePolicies.positionsAssignedEmployees,
-      fetcher: () => apiRequest<ApiAssignedEmployeesResponse>(key).then((response) => response.data.map(mapAssignedEmployee)),
-      validate: (value: unknown) => Array.isArray(value),
+      fetcher: () => apiRequest<ApiAssignedEmployeesResponse>(key).then((response) => ({ items: response.data.map(mapAssignedEmployee), meta: response.meta })),
+      validate: (value: { items: unknown }) => Array.isArray(value.items),
     });
   },
   async create(position: Position) {

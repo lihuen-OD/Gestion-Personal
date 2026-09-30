@@ -1,3 +1,4 @@
+import type { SortState } from "../utils/sort";
 export type AssociatedEmployeeStatus = "ACTIVO" | "INACTIVO";
 
 // Forma compartida por los dos listados de "empleados asociados" (Régimen
@@ -39,7 +40,11 @@ export type AssociatedEmployeeFilters = {
   companyId?: string;
   page?: number;
   take?: number;
+  // Orden server-side (whitelist: legajo, employee) de /hour-concepts/:id/employees y /work-regimes/:id/employees.
+  sort?: SortState<AssociatedEmployeeSortKey>;
 };
+
+export type AssociatedEmployeeSortKey = "legajo" | "employee";
 
 export type AssociatedEmployeesMeta = { total: number; page: number; pageSize: number; hasMore: boolean };
 export type AssociatedEmployeesResult<T> = { items: T[]; meta: AssociatedEmployeesMeta };

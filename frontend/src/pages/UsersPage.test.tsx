@@ -34,7 +34,7 @@ vi.mock("../services/api/orgStructureApiService", async (importOriginal) => {
 
 vi.mock("../services/api/employeeApiService", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../services/api/employeeApiService")>();
-  return { ...actual, employeeApiService: { ...actual.employeeApiService, getOptions: vi.fn() } };
+  return { ...actual, employeeApiService: { ...actual.employeeApiService, getAllOptions: vi.fn() } };
 });
 
 function buildUser(overrides: Partial<User> = {}): User {
@@ -63,7 +63,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   authAsRrhh();
   vi.mocked(orgStructureApiService.getCatalog).mockResolvedValue(emptyCatalog as never);
-  vi.mocked(employeeApiService.getOptions).mockResolvedValue({ items: [], meta: { total: 0, page: 1, pageSize: 1000, hasMore: false } });
+  vi.mocked(employeeApiService.getAllOptions).mockResolvedValue([]);
 });
 
 describe("UsersPage — Etapa 9E (catálogo diferido al abrir el modal)", () => {
@@ -75,7 +75,7 @@ describe("UsersPage — Etapa 9E (catálogo diferido al abrir el modal)", () => 
     await screen.findByText("Ana Gomez");
     expect(userApiService.getAll).toHaveBeenCalledTimes(1);
     expect(orgStructureApiService.getCatalog).not.toHaveBeenCalled();
-    expect(employeeApiService.getOptions).not.toHaveBeenCalled();
+    expect(employeeApiService.getAllOptions).not.toHaveBeenCalled();
   });
 
   it("al abrir 'Crear usuario' recién ahí se piden el catálogo y las opciones de empleados", async () => {
@@ -88,7 +88,7 @@ describe("UsersPage — Etapa 9E (catálogo diferido al abrir el modal)", () => 
 
     await waitFor(() => {
       expect(orgStructureApiService.getCatalog).toHaveBeenCalledTimes(1);
-      expect(employeeApiService.getOptions).toHaveBeenCalledWith({ take: 1000 });
+      expect(employeeApiService.getAllOptions).toHaveBeenCalledTimes(1);
     });
   });
 

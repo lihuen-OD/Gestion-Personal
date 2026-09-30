@@ -36,7 +36,7 @@ describe("positionApiService.getAssignedEmployees — dedupe/cache frontend (Eta
     costCenter: null,
     companies: [],
   };
-  const employeesResponse = { data: [apiEmployee] };
+  const employeesResponse = { data: [apiEmployee], meta: { total: 1, page: 1, pageSize: 25, hasMore: false } };
 
   beforeEach(async () => {
     vi.mocked(apiRequest).mockReset();
@@ -59,8 +59,8 @@ describe("positionApiService.getAssignedEmployees — dedupe/cache frontend (Eta
       positionApiService.getAssignedEmployees("pos-1"),
     ]);
 
-    expect(a).toHaveLength(1);
-    expect(b).toHaveLength(1);
+    expect(a.items).toHaveLength(1);
+    expect(b.items).toHaveLength(1);
     expect(apiRequest).toHaveBeenCalledTimes(1);
   });
 
@@ -82,14 +82,16 @@ describe("positionApiService.getAssignedEmployees — dedupe/cache frontend (Eta
     expect(apiRequest).toHaveBeenCalledTimes(2);
   });
 
-  it("no cambia el contrato: sigue devolviendo la lista mapeada de empleados", async () => {
+  it("devuelve la página mapeada con el total real y pide page/take/sort al backend (antes take 500 fijo sin meta)", async () => {
     vi.mocked(apiRequest).mockResolvedValue(employeesResponse);
 
-    const result = await positionApiService.getAssignedEmployees("pos-1");
+    const result = await positionApiService.getAssignedEmployees("pos-1", { page: 2, take: 25, sort: { key: "legajo", direction: "desc" } });
 
-    expect(result).toEqual([
+    expect(result.items).toEqual([
       expect.objectContaining({ id: "employee-1", legajo: "100", firstName: "Ana", lastName: "Prueba" }),
     ]);
+    expect(result.meta.total).toBe(1);
+    expect(apiRequest).toHaveBeenCalledWith("/positions/pos-1/employees?page=2&take=25&sortBy=legajo&sortOrder=desc");
   });
 
   it.each([

@@ -1,4 +1,6 @@
 import { apiRequest } from "./apiClient";
+import { appendSortParams, collectAllPages } from "./listQuery";
+import type { SortState } from "../../utils/sort";
 import { hourConceptApiService, mapHourConceptFromApi } from "./hourConceptApiService";
 import { mapNoveltyFromApi } from "./noveltyApiService";
 import { mapNoveltyTypeFromApi } from "./noveltyTypeApiService";
@@ -193,7 +195,11 @@ export type EmployeeListFilters = {
   status?: "ACTIVO" | "INACTIVO";
   page?: number;
   take?: number;
+  sort?: SortState<EmployeeListSortKey>;
 };
+
+// Whitelist server-side de GET /employees (employees.schemas.ts::employeeListSortKeys).
+export type EmployeeListSortKey = "legajo" | "cuil" | "lastName" | "firstName" | "status";
 
 export type EmployeeSummary = ApiEmployeeSummaryResponse["data"];
 
@@ -612,6 +618,7 @@ export function employeeListRequest(filters: EmployeeListFilters = {}) {
   if (filters.sectorId) params.set("sectorId", filters.sectorId);
   if (filters.costCenterId) params.set("costCenterId", filters.costCenterId);
   if (filters.status) params.set("status", filters.status);
+  appendSortParams(params, filters.sort);
   const path = `/employees?${params.toString()}`;
   return { path, snapshotKey: `${currentCacheScope()}:${path}` };
 }
@@ -668,6 +675,24 @@ export const employeeApiService = {
         meta: response.meta,
       })),
       validate: isEmployeeOptionsResponse,
+    });
+  },
+  // Opciones de TODOS los empleados visibles para el usuario (no una página):
+  // Cierres mensuales arma una fila por empleado y el select de "empleado
+  // vinculado" de Usuarios lista a todos. Antes `take: 1000` fijo cortaba en
+  // silencio al empleado 1001; ahora se recorren las páginas del endpoint.
+  async getAllOptions(filters: Omit<EmployeeListFilters, "page" | "take"> = {}) {
+    const params = new URLSearchParams();
+    params.set("take", "1000");
+    if (filters.search?.trim()) params.set("search", filters.search.trim());
+    if (filters.companyId) params.set("companyId", filters.companyId);
+    if (filters.status) params.set("status", filters.status);
+    const key = `/employees/options?${params.toString()}`;
+    return cachedData({
+      requestKey: `GET:${key}#all`,
+      policy: cachePolicies.employeesOptions,
+      fetcher: () => collectAllPages(key, (path) => apiRequest<ApiEmployeePaginatedResponse>(path, { apiCache: false })).then((rows) => rows.map(mapEmployeeFromApi)),
+      validate: (value) => Array.isArray(value) && value.every((item) => typeof item.id === "string"),
     });
   },
   async getSummary() {

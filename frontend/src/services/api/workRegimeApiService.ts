@@ -1,4 +1,5 @@
 import { apiRequest } from "./apiClient";
+import { collectAllPages } from "./listQuery";
 import { cachePolicies, cachedData, invalidateCacheFamily } from "../cache";
 import { associatedEmployeesQuery, mapAssociatedEmployeeFromApi, type ApiAssociatedEmployee } from "./associatedEmployeeMapper";
 import type {
@@ -141,10 +142,17 @@ export const workRegimeApiService = {
     return cachedData({
       requestKey: `GET:${path}`,
       policy: cachePolicies.workRegimesCatalog,
-      fetcher: () => apiRequest<ApiPaginatedResponse>(path, { apiCache: false }).then((response) => ({
-        items: response.data.map(mapWorkRegimeFromApi),
-        meta: response.meta,
-      })),
+      // Sin `page` explícito = catálogo completo (WorkRegimesPage filtra/ordena
+      // en memoria, EmployeeWorkRegimePanel lo usa como select): se recorren
+      // todas las páginas en vez de quedarse con la primera.
+      fetcher: async () => {
+        if (filters?.page) {
+          const response = await apiRequest<ApiPaginatedResponse>(path, { apiCache: false });
+          return { items: response.data.map(mapWorkRegimeFromApi), meta: response.meta };
+        }
+        const rows = await collectAllPages(path, (pagedPath) => apiRequest<ApiPaginatedResponse>(pagedPath, { apiCache: false }));
+        return { items: rows.map(mapWorkRegimeFromApi), meta: { total: rows.length, page: 1, pageSize: rows.length, hasMore: false } };
+      },
       validate: (value) => isWorkRegimeList(value.items),
     });
   },

@@ -1,4 +1,5 @@
 import { apiRequest } from "./apiClient";
+import { collectAllPages } from "./listQuery";
 import { orgStructureApiService } from "./orgStructureApiService";
 import type { Role, User } from "../../types";
 
@@ -66,9 +67,12 @@ async function resolveScope(user: Omit<User, "id"> | User) {
 }
 
 export const userApiService = {
+  // Listado completo explícito: la pantalla de Usuarios y la resolución de
+  // responsables por nombre (employeeApiService) necesitan todos los usuarios;
+  // antes GET /users sin take cortaba en silencio en el default 100.
   async getAll() {
-    const response = await apiRequest<ApiListResponse>("/users");
-    return response.data.map(mapFromApi);
+    const rows = await collectAllPages("/users?take=200", (path) => apiRequest<ApiListResponse>(path));
+    return rows.map(mapFromApi);
   },
 
   async getById(id: string) {

@@ -1,4 +1,6 @@
 import { apiDownload, apiRequest } from "./apiClient";
+import { appendSortParams, collectAllPages } from "./listQuery";
+import type { SortState } from "../../utils/sort";
 import { invalidateCacheFamily } from "../cache";
 import type { DocumentMock } from "../../types";
 
@@ -45,7 +47,11 @@ export type DocumentListFilters = {
   employeeId?: string;
   categoryId?: string;
   status?: ApiDocumentStatus;
+  sort?: SortState<DocumentListSortKey>;
 };
+
+// Whitelist server-side de GET /documents (documents.schemas.ts::documentListSortKeys).
+export type DocumentListSortKey = "legajo" | "employee" | "category" | "fileName" | "createdAt" | "expiresAt" | "status";
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -88,9 +94,12 @@ function mapFromApi(item: ApiEmployeeDocument): DocumentMock {
   };
 }
 
+// Documentación completa del legajo (EmployeeDocumentsPanel la presenta como
+// "toda la documentación"): antes page=1&take=100 fijo descartaba meta y
+// cortaba en silencio a partir del documento 101.
 async function getEmployeeDocuments(employeeId: string) {
-  const response = await apiRequest<ApiDocumentsListResponse>(`/documents?employeeId=${employeeId}&page=1&take=100`);
-  return response.data.map(mapFromApi);
+  const rows = await collectAllPages(`/documents?employeeId=${encodeURIComponent(employeeId)}&take=100`, (path) => apiRequest<ApiDocumentsListResponse>(path));
+  return rows.map(mapFromApi);
 }
 
 export const documentApiService = {
@@ -104,6 +113,7 @@ export const documentApiService = {
     if (filters.employeeId) params.set("employeeId", filters.employeeId);
     if (filters.categoryId) params.set("categoryId", filters.categoryId);
     if (filters.status) params.set("status", filters.status);
+    appendSortParams(params, filters.sort);
     const response = await apiRequest<ApiDocumentsListResponse>(`/documents?${params.toString()}`);
     return {
       items: response.data.map(mapFromApi),
