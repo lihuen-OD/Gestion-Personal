@@ -81,3 +81,5 @@ export interface OrgStructureFilters {
   search: string;
   status: string;
 }
+
+export type OrgStructureEntity = OrgCompany | OrgBusinessUnit | OrgEstablishment | OrgArea | OrgSector | OrgCostCenter;

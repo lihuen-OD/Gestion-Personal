@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import type { OrgArea, OrgCompany, OrgSector } from "../types/orgStructure.types";
@@ -21,17 +21,23 @@ const sectors: OrgSector[] = [
 ];
 
 vi.mock("../context/AuthContext", () => ({ useAuth: () => ({ user: { role: "Nivel 1 - RRHH" } }) }));
+const { updateCompany } = vi.hoisted(() => ({ updateCompany: vi.fn(async (item: unknown) => item) }));
 vi.mock("../services/api/orgStructureApiService", () => ({
   orgStructureApiService: {
     getCatalog: () => Promise.resolve({ companies, businessUnits: [], establishments: [], areas, sectors, costCenters: [] }),
+    updateCompany,
   },
 }));
+vi.mock("../services/appDialog", () => ({ confirmAction: vi.fn(async () => true) }));
 
 const { OrgStructurePage } = await import("./OrgStructurePage");
 
+// La vista árbol es la principal; estos tests cubren la vista tabla.
 async function renderPage() {
   render(<MemoryRouter><OrgStructurePage /></MemoryRouter>);
-  await screen.findByText("EMP-10");
+  await screen.findByRole("tree");
+  await userEvent.click(screen.getByRole("button", { name: "Vista tabla" }));
+  await screen.findByRole("table");
 }
 
 const column = (index: number) => screen.getAllByRole("row").slice(1).map((row) => within(row).getAllByRole("cell")[index].textContent);
@@ -89,5 +95,49 @@ describe("OrgStructurePage — ordenamiento de Empresas", () => {
     expect(column(2)).toEqual(["Administración", "Operaciones", "-"]);
     await userEvent.click(button);
     expect(column(2)).toEqual(["Operaciones", "Administración", "-"]);
+  });
+});
+
+describe("OrgStructurePage — vista árbol (principal) y acciones por nodo", () => {
+  async function renderTree() {
+    render(<MemoryRouter><OrgStructurePage /></MemoryRouter>);
+    return screen.findByRole("tree");
+  }
+  const treeItem = (name: RegExp) => screen.getByRole("treeitem", { name });
+
+  it("es la vista por defecto; los registros sin padre válido quedan agrupados en 'Sin asignar'", async () => {
+    await renderTree();
+    expect(treeItem(/^Empresa Álamo/)).toBeInTheDocument();
+    expect(treeItem(/^Sin asignar/)).toBeInTheDocument();
+    expect(screen.getByText("Seleccioná un elemento")).toBeInTheDocument();
+  });
+
+  it("seleccionar un nodo muestra su detalle y acciones; Editar abre el editor de ese tipo", async () => {
+    await renderTree();
+    await userEvent.click(within(treeItem(/^Empresa Cedro/)).getByText("Cedro"));
+
+    const detail = screen.getByRole("complementary", { name: "Detalle de Cedro" });
+    expect(within(detail).getByText("30-1")).toBeInTheDocument();
+    await userEvent.click(within(detail).getByRole("button", { name: "Editar" }));
+
+    expect(await screen.findByRole("heading", { name: "Editar empresa" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Nombre *")).toHaveValue("Cedro");
+  });
+
+  it("Agregar unidad de negocio abre un alta nueva con la empresa del nodo ya asociada", async () => {
+    await renderTree();
+    await userEvent.click(within(treeItem(/^Empresa Cedro/)).getByText("Cedro"));
+    await userEvent.click(screen.getByRole("button", { name: "Agregar unidad de negocio" }));
+
+    expect(await screen.findByRole("heading", { name: "Nuevo registro · Unidad de negocio" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Empresa asociada")).toHaveValue("3");
+  });
+
+  it("Inactivar confirma y persiste el cambio de estado con la API existente", async () => {
+    await renderTree();
+    await userEvent.click(within(treeItem(/^Empresa beta/)).getByText("beta"));
+    await userEvent.click(screen.getByRole("button", { name: "Inactivar" }));
+
+    await waitFor(() => expect(updateCompany).toHaveBeenCalledWith(expect.objectContaining({ id: "1", status: "INACTIVO" })));
   });
 });
