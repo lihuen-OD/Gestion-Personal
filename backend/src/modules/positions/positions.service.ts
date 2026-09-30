@@ -3,7 +3,7 @@ import type { AuditContext } from "../audit/audit.service";
 import { auditService } from "../audit/audit.service";
 import { AppError } from "../../shared/errors/AppError";
 import { invalidatePositionsCache, positionsRepository } from "./positions.repository";
-import type { CreatePositionInput, ListPositionOptionsQuery, ListPositionsQuery, UpdatePositionInput } from "./positions.schemas";
+import type { CreatePositionInput, ListPositionEmployeesQuery, ListPositionOptionsQuery, ListPositionsQuery, UpdatePositionInput } from "./positions.schemas";
 import { employeeAccessWhere } from "../employees/employeeAccess";
 
 function mapPrismaError(error: unknown) {
@@ -61,9 +61,10 @@ export const positionsService = {
   // Etapa 14H.7: el chequeo de existencia usaba findById() (positionInclude
   // completo, descartado sin usar salvo para el 404) — existsById() hace el
   // mismo chequeo (mismo mapeo de P2025 -> 404) con un select mínimo.
-  async listAssignedEmployees(id: string, user: Express.AuthUser) {
+  async listAssignedEmployees(id: string, query: ListPositionEmployeesQuery, user: Express.AuthUser) {
     await execute(() => positionsRepository.existsById(id));
-    return positionsRepository.findAssignedEmployees(id, employeeAccessWhere(user));
+    const [items, total] = await positionsRepository.findAssignedEmployees(id, query, employeeAccessWhere(user));
+    return { items, meta: { total, page: query.page, pageSize: query.take, hasMore: query.page * query.take < total } };
   },
 
   async create(data: CreatePositionInput, audit?: AuditContext) {

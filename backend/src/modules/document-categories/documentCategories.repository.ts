@@ -1,6 +1,6 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "../../shared/prisma/client";
-import { createRepositoryListCache } from "../../shared/cache/repositoryListCache";
+import { createRepositoryListCache, pageFromCappedList, REPOSITORY_LIST_CACHE_MAX_ROWS } from "../../shared/cache/repositoryListCache";
 import type {
   CreateDocumentCategoryInput,
   ListDocumentCategoriesQuery,
@@ -36,8 +36,12 @@ function buildWhere(query: ListDocumentCategoriesQuery): Prisma.DocumentCategory
     ...(query.kind ? { kind: query.kind } : {}),
     ...(query.status ? { status: query.status } : {}),
     ...(query.scope ? { scopes: { array_contains: query.scope } } : {}),
-    ...(query.mandatory !== undefined ? { rules: { path: ["mandatory"], equals: query.mandatory } } : {}),
-    ...(query.expires !== undefined ? { rules: { path: ["expires"], equals: query.expires } } : {}),
+    // AND explícito: ambos filtros apuntan a la misma columna JSON `rules`;
+    // como spreads de la misma key, `expires` pisaba a `mandatory`.
+    AND: [
+      ...(query.mandatory !== undefined ? [{ rules: { path: ["mandatory"], equals: query.mandatory } }] : []),
+      ...(query.expires !== undefined ? [{ rules: { path: ["expires"], equals: query.expires } }] : []),
+    ],
     ...(search
       ? {
           OR: [
@@ -67,40 +71,40 @@ function mapData(data: CreateDocumentCategoryInput | UpdateDocumentCategoryInput
   };
 }
 
+function findPageFromDatabase(query: ListDocumentCategoriesQuery) {
+    // Etapa 14H.6: findMany + count son lecturas independientes —
+    // $transaction([...]) las pinaba a una única conexión de Neon en serie
+    // sin ganar concurrencia real. Rama alcanzable en producción vía
+    // documentCategoryApiService.getAll({status:"ACTIVO", scope:"NOVEDAD"})
+    // desde EmployeeHoursPage.tsx (Gestión Horaria) — ese caller no se
+    // toca, sólo esta función compartida. Mismo patrón ya aplicado en
+    // hourConcepts.repository.ts (14H.5) y auditParameters.repository.ts
+    // (14H.6) — where/orderBy/skip/take sin cambios.
+    const where = buildWhere(query);
+    const skip = (query.page - 1) * query.take;
+    return Promise.all([
+      prisma.documentCategory.findMany({
+        where,
+        orderBy: [{ status: "asc" }, { kind: "asc" }, { name: "asc" }],
+        skip,
+        take: query.take,
+      }),
+      prisma.documentCategory.count({ where }),
+    ]);
+}
+
 export const documentCategoriesRepository = {
   async findMany(query: ListDocumentCategoriesQuery): Promise<[DocumentCategoryRow[], number]> {
-    if (hasActiveFilters(query)) {
-      // Etapa 14H.6: findMany + count son lecturas independientes —
-      // $transaction([...]) las pinaba a una única conexión de Neon en serie
-      // sin ganar concurrencia real. Rama alcanzable en producción vía
-      // documentCategoryApiService.getAll({status:"ACTIVO", scope:"NOVEDAD"})
-      // desde EmployeeHoursPage.tsx (Gestión Horaria) — ese caller no se
-      // toca, sólo esta función compartida. Mismo patrón ya aplicado en
-      // hourConcepts.repository.ts (14H.5) y auditParameters.repository.ts
-      // (14H.6) — where/orderBy/skip/take sin cambios.
-      const where = buildWhere(query);
-      const skip = (query.page - 1) * query.take;
-      return Promise.all([
-        prisma.documentCategory.findMany({
-          where,
-          orderBy: [{ status: "asc" }, { kind: "asc" }, { name: "asc" }],
-          skip,
-          take: query.take,
-        }),
-        prisma.documentCategory.count({ where }),
-      ]);
-    }
+    if (hasActiveFilters(query)) return findPageFromDatabase(query);
 
     const data = await listCache.getOrLoad(() =>
       prisma.documentCategory.findMany({
         orderBy: [{ status: "asc" }, { kind: "asc" }, { name: "asc" }],
-        take: 500,
+        take: REPOSITORY_LIST_CACHE_MAX_ROWS + 1,
       }),
     );
 
-    const skip = (query.page - 1) * query.take;
-    const page = data.slice(skip, skip + query.take);
-    return [page, data.length];
+    return pageFromCappedList(data, query.page, query.take) ?? findPageFromDatabase(query);
   },
 
   findById(id: string) {

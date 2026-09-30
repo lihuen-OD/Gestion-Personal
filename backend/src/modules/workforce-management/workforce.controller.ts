@@ -3,7 +3,7 @@ import type { DoubleHourRuleKind } from "@prisma/client";
 import { requestAuditContext } from "../../shared/audit/requestAuditContext";
 import { requireParam } from "../../shared/http/params";
 import { workforceService } from "./workforce.service";
-import type { ListNotificationsQuery } from "./workforce.schemas";
+import type { CorrectionsQuery, ListNotificationsQuery } from "./workforce.schemas";
 import { clearTimeEntriesReadCaches } from "../time-entries/timeEntries.cache";
 import { clearEmployeeReadCaches } from "../employees/employees.controller";
 import { clearDoubleRulesReadCache, clearMonthlyClosuresReadCaches, clearNotificationsListCache, clearShiftTemplatesReadCache, closuresCache, correctionsCache, doubleRulesCache, notificationsListCache, shiftTemplatesCache } from "./workforce.cache";
@@ -46,7 +46,7 @@ export const workforceController = {
     const key=userScopedCacheKey(req);
     const cached=correctionsCache.get(key);
     if(cached){ res.json({data:cached}); return; }
-    const data=await workforceService.corrections(req.user!);
+    const data=await workforceService.corrections(req.user!, req.query as unknown as CorrectionsQuery);
     correctionsCache.set(key,data);
     res.json({data});
   }) satisfies RequestHandler,

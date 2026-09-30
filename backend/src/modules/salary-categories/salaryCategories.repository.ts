@@ -1,6 +1,6 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "../../shared/prisma/client";
-import { createRepositoryListCache } from "../../shared/cache/repositoryListCache";
+import { createRepositoryListCache, pageFromCappedList, REPOSITORY_LIST_CACHE_MAX_ROWS } from "../../shared/cache/repositoryListCache";
 import type {
   CreateSalaryCategoryInput,
   ListSalaryCategoriesQuery,
@@ -50,32 +50,32 @@ function mapData(data: CreateSalaryCategoryInput | UpdateSalaryCategoryInput) {
   };
 }
 
+function findPageFromDatabase(query: ListSalaryCategoriesQuery) {
+    const where = buildWhere(query);
+    const skip = (query.page - 1) * query.take;
+    return prisma.$transaction([
+      prisma.salaryCategory.findMany({
+        where,
+        orderBy: [{ status: "asc" }, { order: "asc" }, { name: "asc" }],
+        skip,
+        take: query.take,
+      }),
+      prisma.salaryCategory.count({ where }),
+    ]);
+}
+
 export const salaryCategoriesRepository = {
   async findMany(query: ListSalaryCategoriesQuery): Promise<[SalaryCategoryRow[], number]> {
-    if (hasActiveFilters(query)) {
-      const where = buildWhere(query);
-      const skip = (query.page - 1) * query.take;
-      return prisma.$transaction([
-        prisma.salaryCategory.findMany({
-          where,
-          orderBy: [{ status: "asc" }, { order: "asc" }, { name: "asc" }],
-          skip,
-          take: query.take,
-        }),
-        prisma.salaryCategory.count({ where }),
-      ]);
-    }
+    if (hasActiveFilters(query)) return findPageFromDatabase(query);
 
     const data = await listCache.getOrLoad(() =>
       prisma.salaryCategory.findMany({
         orderBy: [{ status: "asc" }, { order: "asc" }, { name: "asc" }],
-        take: 500,
+        take: REPOSITORY_LIST_CACHE_MAX_ROWS + 1,
       }),
     );
 
-    const skip = (query.page - 1) * query.take;
-    const page = data.slice(skip, skip + query.take);
-    return [page, data.length];
+    return pageFromCappedList(data, query.page, query.take) ?? findPageFromDatabase(query);
   },
 
   findById(id: string) {

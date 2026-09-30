@@ -205,7 +205,7 @@ describe("noveltiesRepository.findMany — Etapa 14I.2", () => {
     await noveltiesRepository.findMany(baseQuery(), {});
 
     const call = mockedPrisma.novelty.findMany.mock.calls[0]![0];
-    expect(call.orderBy).toEqual([{ fromDate: "desc" }, { createdAt: "desc" }]);
+    expect(call.orderBy).toEqual([{ fromDate: "desc" }, { createdAt: "desc" }, { id: "asc" }]);
     expect(call.include).toBeDefined();
     expect(call.include.employee).toBeDefined();
     expect(call.include.noveltyType).toBeDefined();

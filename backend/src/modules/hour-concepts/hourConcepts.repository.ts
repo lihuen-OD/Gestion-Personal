@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "../../shared/prisma/client";
-import { createRepositoryListCache } from "../../shared/cache/repositoryListCache";
+import { resolveOrderBy } from "../../shared/validation/listSort";
+import { createRepositoryListCache, pageFromCappedList, REPOSITORY_LIST_CACHE_MAX_ROWS } from "../../shared/cache/repositoryListCache";
 import { associatedEmployeeSelect, buildEmployeeAssociationWhere } from "../../shared/prisma/employeeAssociationQuery";
 import type { CreateHourConceptInput, ListHourConceptEmployeesQuery, ListHourConceptsQuery, UpdateHourConceptInput } from "./hourConcepts.schemas";
 
@@ -37,6 +38,20 @@ function buildWhere(query: ListHourConceptsQuery): Prisma.HourConceptWhereInput 
   };
 }
 
+function findPageFromDatabase(query: ListHourConceptsQuery) {
+    const where = buildWhere(query);
+    const skip = (query.page - 1) * query.take;
+    return Promise.all([
+      prisma.hourConcept.findMany({
+        where,
+        orderBy: [{ status: "asc" }, { kind: "asc" }, { name: "asc" }],
+        skip,
+        take: query.take,
+      }),
+      prisma.hourConcept.count({ where }),
+    ]);
+}
+
 export const hourConceptsRepository = {
   // Etapa 14H.5: findMany + count son lecturas independientes (ninguna
   // depende del resultado de la otra) — $transaction([...]) las pinaba a una
@@ -48,31 +63,17 @@ export const hourConceptsRepository = {
   // hourConceptApiService.getAll({status:"ACTIVO"}), que sí manda status y
   // por lo tanto entra acá — confirmado con grep, no es código muerto.
   async findMany(query: ListHourConceptsQuery): Promise<[HourConceptRow[], number]> {
-    if (hasActiveFilters(query)) {
-      const where = buildWhere(query);
-      const skip = (query.page - 1) * query.take;
-      return Promise.all([
-        prisma.hourConcept.findMany({
-          where,
-          orderBy: [{ status: "asc" }, { kind: "asc" }, { name: "asc" }],
-          skip,
-          take: query.take,
-        }),
-        prisma.hourConcept.count({ where }),
-      ]);
-    }
+    if (hasActiveFilters(query)) return findPageFromDatabase(query);
 
     const data = await listCache.getOrLoad(() =>
       prisma.hourConcept.findMany({
         where: { deletedAt: null },
         orderBy: [{ status: "asc" }, { kind: "asc" }, { name: "asc" }],
-        take: 500,
+        take: REPOSITORY_LIST_CACHE_MAX_ROWS + 1,
       }),
     );
 
-    const skip = (query.page - 1) * query.take;
-    const page = data.slice(skip, skip + query.take);
-    return [page, data.length];
+    return pageFromCappedList(data, query.page, query.take) ?? findPageFromDatabase(query);
   },
 
   findById(id: string) {
@@ -144,7 +145,12 @@ export const hourConceptsRepository = {
       prisma.employeeHourConcept.findMany({
         where,
         select: { employeeId: true, employee: { select: associatedEmployeeSelect } },
-        orderBy: [{ employee: { lastName: "asc" } }, { employee: { firstName: "asc" } }, { employeeId: "asc" }],
+        orderBy: resolveOrderBy<"legajo" | "employee", Prisma.EmployeeHourConceptOrderByWithRelationInput>(
+          query,
+          { legajo: (order) => [{ employee: { legajo: order } }], employee: (order) => [{ employee: { lastName: order } }, { employee: { firstName: order } }] },
+          [{ employee: { lastName: "asc" } }, { employee: { firstName: "asc" } }],
+          { employeeId: "asc" },
+        ),
         skip,
         take: query.take,
       }),

@@ -184,7 +184,8 @@ describe("positionsRepository.findMany — Etapa 9E (paginación real)", () => {
 
     const [items, total] = await positionsRepository.findMany(baseQuery({ page: 1, take: 2 }));
 
-    expect(prisma.position.findMany).toHaveBeenCalledWith(expect.objectContaining({ take: 500 }));
+    // tope del cache + 1 fila: detectar si el catálogo lo superó (REPOSITORY_LIST_CACHE_MAX_ROWS)
+    expect(prisma.position.findMany).toHaveBeenCalledWith(expect.objectContaining({ take: 501 }));
     expect(items).toEqual(cachedRows.slice(0, 2));
     expect(total).toBe(3);
   });
@@ -209,7 +210,7 @@ describe("positionsRepository.findMany — Etapa 9E (paginación real)", () => {
     await positionsRepository.findMany(baseQuery({ areaId: "area-1" }));
 
     const where = (prisma.position.findMany as Mock).mock.calls.at(0)?.[0]?.where;
-    expect(where).toMatchObject({ sector: { areaId: "area-1" } });
+    expect(where).toMatchObject({ AND: [{ sector: { areaId: "area-1" } }] });
   });
 
   it("respeta el filtro de establishmentId, navegando sector->area->establishment", async () => {
@@ -219,7 +220,7 @@ describe("positionsRepository.findMany — Etapa 9E (paginación real)", () => {
     await positionsRepository.findMany(baseQuery({ establishmentId: "est-1" }));
 
     const where = (prisma.position.findMany as Mock).mock.calls.at(0)?.[0]?.where;
-    expect(where).toMatchObject({ sector: { area: { establishmentId: "est-1" } } });
+    expect(where).toMatchObject({ AND: [{ sector: { area: { establishmentId: "est-1" } } }] });
   });
 
   it("respeta el filtro de businessUnitId, navegando sector->area->establishment->businessUnit", async () => {
@@ -229,7 +230,41 @@ describe("positionsRepository.findMany — Etapa 9E (paginación real)", () => {
     await positionsRepository.findMany(baseQuery({ businessUnitId: "bu-1" }));
 
     const where = (prisma.position.findMany as Mock).mock.calls.at(0)?.[0]?.where;
-    expect(where).toMatchObject({ sector: { area: { establishment: { businessUnitId: "bu-1" } } } });
+    expect(where).toMatchObject({ AND: [{ sector: { area: { establishment: { businessUnitId: "bu-1" } } } }] });
+  });
+
+  it("combina Área + Unidad de negocio (antes el último filtro sobre `sector` pisaba al anterior)", async () => {
+    (prisma.position.findMany as Mock).mockResolvedValue([]);
+    (prisma.position.count as Mock).mockResolvedValue(0);
+
+    await positionsRepository.findMany(baseQuery({ areaId: "area-1", businessUnitId: "bu-1" }));
+
+    const where = (prisma.position.findMany as Mock).mock.calls.at(0)?.[0]?.where;
+    expect(where.AND).toEqual([{ sector: { areaId: "area-1" } }, { sector: { area: { establishment: { businessUnitId: "bu-1" } } } }]);
+  });
+
+  it("sin filtros pero con sortBy: no usa el cache (ordena en la base, sobre todo el dataset)", async () => {
+    invalidatePositionsCache();
+    (prisma.position.findMany as Mock).mockResolvedValue([]);
+    (prisma.position.count as Mock).mockResolvedValue(0);
+
+    await positionsRepository.findMany(baseQuery({ page: 2, take: 10, sortBy: "name", sortOrder: "desc" }));
+
+    expect(prisma.position.findMany).toHaveBeenCalledTimes(1);
+    expect(prisma.position.findMany).toHaveBeenCalledWith(expect.objectContaining({ orderBy: [{ name: "desc" }, { id: "asc" }], skip: 10, take: 10 }));
+  });
+
+  it("si el catálogo supera el tope del cache, cae a la consulta paginada real en vez de recortar el total", async () => {
+    invalidatePositionsCache();
+    const overflow = Array.from({ length: 501 }, (_, index) => ({ id: `pos-${index}`, name: `Puesto ${index}` }));
+    (prisma.position.findMany as Mock).mockResolvedValueOnce(overflow).mockResolvedValueOnce(overflow.slice(0, 25));
+    (prisma.position.count as Mock).mockResolvedValue(730);
+
+    const [items, total] = await positionsRepository.findMany(baseQuery({ page: 1, take: 25 }));
+
+    expect(total).toBe(730);
+    expect(items).toHaveLength(25);
+    expect(prisma.position.count).toHaveBeenCalledTimes(1);
   });
 
   it("respeta el filtro de salaryRangeCategory (antes se aceptaba en la query pero nunca se traducía a un where real)", async () => {

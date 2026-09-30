@@ -8,6 +8,9 @@ vi.mock("./pending.repository", () => ({
     findPendingNovelties: vi.fn(),
     findPendingTimeEntries: vi.fn(),
     findPendingHourConceptBreakdowns: vi.fn(),
+    countPendingNovelties: vi.fn(),
+    countPendingTimeEntries: vi.fn(),
+    countPendingHourConceptBreakdowns: vi.fn(),
   },
 }));
 
@@ -15,6 +18,9 @@ const repo = pendingRepository as unknown as {
   findPendingNovelties: Mock;
   findPendingTimeEntries: Mock;
   findPendingHourConceptBreakdowns: Mock;
+  countPendingNovelties: Mock;
+  countPendingTimeEntries: Mock;
+  countPendingHourConceptBreakdowns: Mock;
 };
 
 const rrhhUser = { id: "user-rrhh", role: "NIVEL_1_RRHH" } as Express.AuthUser;
@@ -26,6 +32,11 @@ beforeEach(() => {
   repo.findPendingNovelties.mockResolvedValue([]);
   repo.findPendingTimeEntries.mockResolvedValue([]);
   repo.findPendingHourConceptBreakdowns.mockResolvedValue([]);
+  // Por default los counts coinciden con lo que devuelve cada find (dataset
+  // chico); los tests de totales reales los sobrescriben.
+  repo.countPendingNovelties.mockImplementation(async (...args: unknown[]) => (await repo.findPendingNovelties(...args)).length);
+  repo.countPendingTimeEntries.mockImplementation(async (...args: unknown[]) => (await repo.findPendingTimeEntries(...args)).length);
+  repo.countPendingHourConceptBreakdowns.mockImplementation(async (...args: unknown[]) => (await repo.findPendingHourConceptBreakdowns(...args)).length);
 });
 
 describe("pendingService.list — bandeja de revisión incluye desgloses manuales EN_REVISION (Etapa 6L.3)", () => {
@@ -104,5 +115,37 @@ describe("pendingService.list — bandeja de revisión incluye desgloses manuale
 
     expect(result.data.every((item) => item.employeeId === "emp-1")).toBe(true);
     expect(result.data[0]).not.toHaveProperty("employee");
+  });
+});
+
+describe("pendingService.list — sin truncado silencioso", () => {
+  it("el summary informa el total real aunque se traiga una sola página", async () => {
+    repo.findPendingNovelties.mockResolvedValue([]);
+    repo.countPendingNovelties.mockResolvedValue(340);
+
+    const result = await pendingService.list({ kind: "novelties", page: 2, take: 25 } as never, rrhhUser);
+
+    expect(result.summary).toMatchObject({ total: 340, novelties: 340 });
+    expect(result.meta).toEqual({ total: 340, page: 2, pageSize: 25, hasMore: true });
+    expect(repo.findPendingNovelties).toHaveBeenCalledWith(expect.objectContaining({ page: 2, take: 25 }), expect.anything());
+  });
+
+  it("kind=hourConceptBreakdowns pagina sólo desgloses", async () => {
+    repo.countPendingHourConceptBreakdowns.mockResolvedValue(3);
+
+    const result = await pendingService.list({ kind: "hourConceptBreakdowns", page: 1, take: 25 } as never, rrhhUser);
+
+    expect(repo.findPendingNovelties).not.toHaveBeenCalled();
+    expect(repo.findPendingTimeEntries).not.toHaveBeenCalled();
+    expect(result.meta).toEqual({ total: 3, page: 1, pageSize: 25, hasMore: false });
+  });
+
+  it("kinds combinados siempre consultan la página 1 de cada fuente y marcan hasMore cuando hay más", async () => {
+    repo.countPendingNovelties.mockResolvedValue(400);
+
+    const result = await pendingService.list({ kind: "all", page: 3, take: 100 } as never, rrhhUser);
+
+    expect(repo.findPendingNovelties).toHaveBeenCalledWith(expect.objectContaining({ page: 1 }), expect.anything());
+    expect(result.meta).toMatchObject({ total: 400, page: 1, hasMore: true });
   });
 });

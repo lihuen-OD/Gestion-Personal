@@ -69,7 +69,8 @@ describe("auditRepository.findMany", () => {
 
     expect(mockedPrisma.auditLog.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        orderBy: { createdAt: "desc" },
+        // desempate estable por id: paginar sin repetir/saltear filas con la misma fecha
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
         include: { user: { select: { id: true, name: true, email: true, role: true } } },
       }),
     );

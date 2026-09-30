@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { sortQueryShape } from "../../shared/validation/listSort";
+import { queryBoolean } from "../../shared/validation/queryBoolean";
 
 export const hourConceptKindSchema = z.enum(["NORMAL", "EXTRA", "NOCTURNA", "GUARDIA", "SERENO", "TRANSPORTE", "FERIADO", "OTRO"]);
 export const additionalHourConceptKindSchema = z.enum(["EXTRA", "NOCTURNA", "GUARDIA", "SERENO", "TRANSPORTE", "FERIADO", "OTRO"]);
@@ -11,7 +13,7 @@ export const listHourConceptsQuerySchema = z.object({
   status: recordStatusSchema.optional(),
   // Etapa 8P: por default el catálogo oculta los eliminados lógicamente
   // (deletedAt != null) — "se siente eliminado" sin perder el historial.
-  includeDeleted: z.coerce.boolean().default(false),
+  includeDeleted: queryBoolean().default(false),
   page: z.coerce.number().int().positive().max(10000).default(1),
   take: z.coerce.number().int().positive().max(200).default(100),
 });
@@ -45,6 +47,7 @@ export const listHourConceptEmployeesQuerySchema = z.object({
   status: recordStatusSchema.optional(),
   page: z.coerce.number().int().positive().max(10000).default(1),
   take: z.coerce.number().int().positive().max(200).default(50),
+  ...sortQueryShape(["legajo", "employee"] as const),
 });
 
 // Habilitar empleados para el concepto desde la propia pantalla de

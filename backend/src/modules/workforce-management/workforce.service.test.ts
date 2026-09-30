@@ -197,24 +197,25 @@ describe("workforceService.closures/corrections — contrato preservado (Etapa 1
     expect(result).toEqual(rows);
   });
 
-  it("corrections filtra por el scope del usuario (employeeAccessWhere), sin filtro de período (lo aplica el frontend)", async () => {
+  it("corrections filtra por scope del usuario, período y estado en el where (antes el período lo filtraba el frontend sobre las últimas 500)", async () => {
     mockedPrisma.timeCorrectionRequest.findMany.mockResolvedValue([]);
 
-    await workforceService.corrections(supervisor);
+    await workforceService.corrections(supervisor, { period: "2026-08", status: "PENDIENTE" });
 
     expect(mockedPrisma.timeCorrectionRequest.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { employee: expect.anything() } }),
+      expect.objectContaining({ where: { employee: expect.anything(), timeEntry: { period: "2026-08" }, status: "PENDIENTE" } }),
     );
   });
 
-  it("corrections pide take:500, ordenado por fecha de creación descendente", async () => {
+  it("corrections no tiene tope fijo (acotado por período) y ordena por creación desc con desempate estable", async () => {
     mockedPrisma.timeCorrectionRequest.findMany.mockResolvedValue([]);
 
-    await workforceService.corrections(user);
+    await workforceService.corrections(user, { period: "2026-08" });
 
-    expect(mockedPrisma.timeCorrectionRequest.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ take: 500, orderBy: { createdAt: "desc" } }),
-    );
+    const args = mockedPrisma.timeCorrectionRequest.findMany.mock.calls[0]![0];
+    expect(args).not.toHaveProperty("take");
+    expect(args.orderBy).toEqual([{ createdAt: "desc" }, { id: "asc" }]);
+    expect(args.where).not.toHaveProperty("status");
   });
 });
 

@@ -72,7 +72,7 @@ describe("salaryCategoriesRepository.findMany â€” rama sin filtros (listCache vÃ
 
     expect(mockedPrisma.$transaction).not.toHaveBeenCalled();
     expect(mockedPrisma.salaryCategory.count).not.toHaveBeenCalled();
-    expect(mockedPrisma.salaryCategory.findMany).toHaveBeenCalledWith(expect.objectContaining({ take: 500 }));
+    expect(mockedPrisma.salaryCategory.findMany).toHaveBeenCalledWith(expect.objectContaining({ take: 501 }));
     expect(mockedPrisma.salaryCategory.findMany).toHaveBeenCalledTimes(1);
     expect(total).toBe(2);
     expect(page).toHaveLength(2);

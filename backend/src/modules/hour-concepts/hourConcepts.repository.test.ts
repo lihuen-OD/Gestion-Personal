@@ -69,7 +69,7 @@ describe("findMany — rama sin filtros (listCache vía repositoryListCache), Et
     expect(mockedPrisma.$transaction).not.toHaveBeenCalled();
     expect(mockedPrisma.hourConcept.count).not.toHaveBeenCalled();
     expect(mockedPrisma.hourConcept.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { deletedAt: null }, take: 500 }),
+      expect.objectContaining({ where: { deletedAt: null }, take: 501 }),
     );
     expect(mockedPrisma.hourConcept.findMany).toHaveBeenCalledTimes(1);
     expect(total).toBe(2);

@@ -29,15 +29,22 @@ interface OverviewCache {
 
 let overviewCache: OverviewCache | null = null;
 
+// Catálogo completo explícito (docs/PERFORMANCE_STANDARDS.md §6, "fetch-all
+// permitido"): la estructura organizacional es un vocabulario administrado a
+// mano por RRHH que no crece con headcount ni con el tiempo (volumen real
+// confirmado: 6 empresas, 12 unidades, 16 establecimientos, 34 áreas, 15
+// sectores, 2 centros de costo). Antes cada entidad tenía `take: 500` sin
+// señal de corte: con la 501ª fila, selects, filtros, legajos y el
+// organigrama la perdían en silencio. Sin tope, la respuesta es siempre el
+// catálogo completo; está cacheada (overviewCache) e invalidada en cada
+// escritura.
 function fetchOverview() {
   return Promise.all([
     prisma.company.findMany({
-      take: 500,
       orderBy: { name: "asc" },
       select: { id: true, code: true, name: true, status: true },
     }),
     prisma.businessUnit.findMany({
-      take: 500,
       orderBy: { name: "asc" },
       select: {
         id: true,
@@ -48,7 +55,6 @@ function fetchOverview() {
       },
     }),
     prisma.establishment.findMany({
-      take: 500,
       orderBy: { name: "asc" },
       select: {
         id: true,
@@ -66,7 +72,6 @@ function fetchOverview() {
       },
     }),
     prisma.area.findMany({
-      take: 500,
       orderBy: { name: "asc" },
       select: {
         id: true,
@@ -77,7 +82,6 @@ function fetchOverview() {
       },
     }),
     prisma.sector.findMany({
-      take: 500,
       orderBy: { name: "asc" },
       select: {
         id: true,
@@ -88,7 +92,6 @@ function fetchOverview() {
       },
     }),
     prisma.costCenter.findMany({
-      take: 500,
       orderBy: { code: "asc" },
       select: {
         id: true,

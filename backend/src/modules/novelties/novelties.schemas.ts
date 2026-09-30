@@ -1,6 +1,10 @@
 import { z } from "zod";
+import { sortQueryShape } from "../../shared/validation/listSort";
+import { queryBoolean } from "../../shared/validation/queryBoolean";
 
 export const approvalStatusSchema = z.enum(["BORRADOR", "PENDIENTE", "EN_REVISION", "APROBADO", "RECHAZADO", "DEVUELTO", "CERRADO"]);
+
+export const noveltyListSortKeys = ["legajo", "employee", "noveltyType", "fromDate", "status"] as const;
 
 export const listNoveltiesQuerySchema = z.object({
   employeeId: z.string().uuid().optional(),
@@ -17,10 +21,11 @@ export const listNoveltiesQuerySchema = z.object({
     .string()
     .regex(/^\d{4}-(0[1-9]|1[0-2])$/, "period must be YYYY-MM")
     .optional(),
-  exportable: z.coerce.boolean().optional(),
+  exportable: queryBoolean().optional(),
   search: z.string().trim().optional(),
   page: z.coerce.number().int().positive().max(10000).default(1),
   take: z.coerce.number().int().positive().max(300).default(100),
+  ...sortQueryShape(noveltyListSortKeys),
 });
 
 export const createNoveltySchema = z

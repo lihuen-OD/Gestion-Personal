@@ -76,7 +76,7 @@ describe("documentsRepository.findMany — Etapa 14I.2", () => {
     await documentsRepository.findMany(baseQuery(), {}, {});
 
     const call = mockedPrisma.employeeDocument.findMany.mock.calls[0]![0];
-    expect(call.orderBy).toEqual([{ createdAt: "desc" }, { employee: { lastName: "asc" } }]);
+    expect(call.orderBy).toEqual([{ createdAt: "desc" }, { employee: { lastName: "asc" } }, { id: "asc" }]);
     expect(call.include.category).toBeDefined();
     expect(call.include.employee).toBeDefined();
     expect(call.include.novelty).toBeDefined();

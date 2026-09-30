@@ -6,7 +6,7 @@ import { validateBody } from "../../shared/validation/validateRequest";
 import { validateQuery } from "../../shared/validation/validateQuery";
 import { roles } from "../../shared/security/roles";
 import { workforceController as c } from "./workforce.controller";
-import { calendarRangeQuerySchema, closureBulkSchema, closureSubmitSchema, correctionCreateSchema, correctionReviewSchema, doubleRuleSchema, listNotificationsQuerySchema, periodQuerySchema, returnClosureSchema, shiftTemplateSchema, updateDoubleRuleSchema, updateShiftTemplateSchema } from "./workforce.schemas";
+import { calendarRangeQuerySchema, closureBulkSchema, closureSubmitSchema, correctionCreateSchema, correctionReviewSchema, correctionsQuerySchema, doubleRuleSchema, listNotificationsQuerySchema, periodQuerySchema, returnClosureSchema, shiftTemplateSchema, updateDoubleRuleSchema, updateShiftTemplateSchema } from "./workforce.schemas";
 
 export const workforceRouter=Router();
 workforceRouter.use(requireAuth);
@@ -15,7 +15,7 @@ workforceRouter.get("/closures",requireAnyRole(all),validateQuery(periodQuerySch
 workforceRouter.post("/closures/submit",requireAnyRole([roles.supervision,roles.cargaHoraria]),validateBody(closureSubmitSchema),asyncHandler(c.submit));
 workforceRouter.post("/closures/approve",requireAnyRole([roles.rrhh]),validateBody(closureBulkSchema),asyncHandler(c.approve));
 workforceRouter.post("/closures/:id/return",requireAnyRole([roles.rrhh]),validateBody(returnClosureSchema),asyncHandler(c.returnClosure));
-workforceRouter.get("/corrections",requireAnyRole(all),asyncHandler(c.corrections));
+workforceRouter.get("/corrections",requireAnyRole(all),validateQuery(correctionsQuerySchema),asyncHandler(c.corrections));
 workforceRouter.post("/corrections",requireAnyRole([roles.supervision,roles.cargaHoraria]),validateBody(correctionCreateSchema),asyncHandler(c.createCorrection));
 workforceRouter.post("/corrections/:id/approve",requireAnyRole([roles.rrhh]),validateBody(correctionReviewSchema),asyncHandler(c.approveCorrection));
 workforceRouter.post("/corrections/:id/reject",requireAnyRole([roles.rrhh]),validateBody(correctionReviewSchema),asyncHandler(c.rejectCorrection));

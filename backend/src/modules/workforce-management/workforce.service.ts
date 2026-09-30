@@ -8,7 +8,7 @@ import type { AuditContext } from "../audit/audit.service";
 import { auditService } from "../audit/audit.service";
 import { argentinaCalendarDate, humanizePeriodEs, todayArgentinaDateKey } from "../../shared/datetime/argentinaTime";
 import { buildActiveDatesByRule, resolveWinningRules, ruleMatchesDate, scopesCouldOverlap } from "./doubleHourRuleMatching";
-import type { ListNotificationsQuery } from "./workforce.schemas";
+import type { CorrectionsQuery, ListNotificationsQuery } from "./workforce.schemas";
 
 function mapPrismaError(error: unknown) {
   if (error instanceof Prisma.PrismaClientKnownRequestError) {
@@ -134,7 +134,8 @@ export const workforceService = {
     await notifyRrhh({ type: "CORRECCION_HORARIA", title: "Corrección posterior al cierre", message: `Se solicitó modificar una carga de ${humanizePeriodEs(entry.period)}.`, entityType: "TimeCorrectionRequest", entityId: result.id, link: "/cierres", priority: "ALTA" });
     return result;
   },
-  corrections(user: Express.AuthUser) { return prisma.timeCorrectionRequest.findMany({ where: { employee: employeeAccessWhere(user) }, include: { employee: { select: { legajo: true, firstName: true, lastName: true } }, timeEntry: { include: { hourConcept: true } }, createdBy: { select: { name: true } } }, orderBy: { createdAt: "desc" }, take: 500 }); },
+  // Sin `take`: acotado por período (a lo sumo una corrección por carga del mes) — ver correctionsQuerySchema.
+  corrections(user: Express.AuthUser, query: CorrectionsQuery) { return prisma.timeCorrectionRequest.findMany({ where: { employee: employeeAccessWhere(user), timeEntry: { period: query.period }, ...(query.status ? { status: query.status } : {}) }, include: { employee: { select: { legajo: true, firstName: true, lastName: true } }, timeEntry: { include: { hourConcept: true } }, createdBy: { select: { name: true } } }, orderBy: [{ createdAt: "desc" }, { id: "asc" }] }); },
   async approveCorrection(id: string, user: Express.AuthUser, audit?: AuditContext) {
     const { before, after } = await execute(() => prisma.$transaction(async (tx) => {
       const request = await tx.timeCorrectionRequest.findUniqueOrThrow({ where: { id } });

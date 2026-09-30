@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { createRepositoryListCache } from "./repositoryListCache";
+import { createRepositoryListCache, pageFromCappedList, REPOSITORY_LIST_CACHE_MAX_ROWS } from "./repositoryListCache";
 
 describe("createRepositoryListCache — Etapa 14I.3", () => {
   const TTL = 120_000;
@@ -106,5 +106,17 @@ describe("createRepositoryListCache — Etapa 14I.3", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("pageFromCappedList", () => {
+  it("pagina en memoria mientras el catálogo entra en el tope", () => {
+    const rows = Array.from({ length: 30 }, (_, index) => index);
+    expect(pageFromCappedList(rows, 2, 25)).toEqual([[25, 26, 27, 28, 29], 30]);
+  });
+
+  it("devuelve null si el loader trajo más filas que el tope (el repositorio debe usar la consulta paginada real)", () => {
+    const rows = Array.from({ length: REPOSITORY_LIST_CACHE_MAX_ROWS + 1 }, (_, index) => index);
+    expect(pageFromCappedList(rows, 1, 25)).toBeNull();
   });
 });

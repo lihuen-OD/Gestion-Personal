@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { queryBoolean } from "../../shared/validation/queryBoolean";
 
 export const noveltyTypeKindSchema = z.enum(["AUSENCIA", "LICENCIA", "HORARIA", "ACCIDENTE", "VACACIONES", "SANCION", "OTRO"]);
 export const recordStatusSchema = z.enum(["ACTIVO", "INACTIVO"]);
@@ -41,7 +42,7 @@ export const listNoveltyTypesQuerySchema = z.object({
   search: z.string().trim().optional(),
   kind: noveltyTypeKindSchema.optional(),
   status: recordStatusSchema.optional(),
-  exportsToFinnegans: z.coerce.boolean().optional(),
+  exportsToFinnegans: queryBoolean().optional(),
   page: z.coerce.number().int().positive().max(10000).default(1),
   take: z.coerce.number().int().positive().max(200).default(100),
 });

@@ -1,6 +1,11 @@
 import { z } from "zod";
 
 export const periodQuerySchema = z.object({ period: z.string().regex(/^\d{4}-\d{2}$/) });
+// Correcciones de Cierre mensual: período y estado se resuelven en el where
+// (antes: fetch de las últimas 500 de todos los períodos + filtro en el
+// cliente, que perdía en silencio correcciones del período fuera de esas 500).
+export const correctionsQuerySchema = z.object({ period: z.string().regex(/^\d{4}-\d{2}$/), status: z.enum(["PENDIENTE", "APROBADA", "RECHAZADA"]).optional() });
+export type CorrectionsQuery = z.infer<typeof correctionsQuerySchema>;
 export const closureSubmitSchema = z.object({ period: z.string().regex(/^\d{4}-\d{2}$/), employeeIds: z.array(z.string().uuid()).min(1).max(500) });
 export const closureBulkSchema = z.object({ ids: z.array(z.string().uuid()).min(1).max(500), note: z.string().trim().max(600).optional() });
 export const returnClosureSchema = z.object({ reason: z.string().trim().min(2).max(600) });

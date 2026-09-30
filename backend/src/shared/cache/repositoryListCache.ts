@@ -37,3 +37,18 @@ export function createRepositoryListCache<T>(ttlMs: number) {
     },
   };
 }
+
+/**
+ * Tope de filas de la rama cacheada "sin filtros" de los catálogos. El loader
+ * debe pedir `REPOSITORY_LIST_CACHE_MAX_ROWS + 1` filas: si vuelve más que el
+ * tope, el catálogo ya no entra en el cache y `pageFromCappedList` devuelve
+ * `null` para que el repositorio use la consulta paginada real — nunca un
+ * total recortado en silencio (antes `take: 500` + `total = data.length`).
+ */
+export const REPOSITORY_LIST_CACHE_MAX_ROWS = 500;
+
+export function pageFromCappedList<T>(data: T[], page: number, take: number): [T[], number] | null {
+  if (data.length > REPOSITORY_LIST_CACHE_MAX_ROWS) return null;
+  const skip = (page - 1) * take;
+  return [data.slice(skip, skip + take), data.length];
+}

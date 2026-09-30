@@ -1,6 +1,19 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "../../shared/prisma/client";
-import type { ListDocumentsQuery } from "./documents.schemas";
+import type { documentListSortKeys, ListDocumentsQuery } from "./documents.schemas";
+import { resolveOrderBy, type SortOrderByMap } from "../../shared/validation/listSort";
+
+// `status` ordena por el ciclo de vida del enum DocumentStatus (orden de
+// declaración en schema.prisma), no alfabéticamente por la etiqueta visible.
+const documentListOrderBy: SortOrderByMap<(typeof documentListSortKeys)[number], Prisma.EmployeeDocumentOrderByWithRelationInput> = {
+  legajo: (order) => [{ employee: { legajo: order } }],
+  employee: (order) => [{ employee: { lastName: order } }, { employee: { firstName: order } }],
+  category: (order) => [{ category: { name: order } }],
+  fileName: (order) => [{ fileName: order }],
+  createdAt: (order) => [{ createdAt: order }],
+  expiresAt: (order) => [{ expiresAt: { sort: order, nulls: "last" } }],
+  status: (order) => [{ status: order }, { createdAt: "desc" }],
+};
 
 const documentListInclude = {
   category: { select: { id: true, code: true, name: true } },
@@ -97,7 +110,7 @@ export const documentsRepository = {
       prisma.employeeDocument.findMany({
         where,
         include: documentListInclude,
-        orderBy: [{ createdAt: "desc" }, { employee: { lastName: "asc" } }],
+        orderBy: resolveOrderBy(query, documentListOrderBy, [{ createdAt: "desc" }, { employee: { lastName: "asc" } }], { id: "asc" }),
         skip,
         take: query.take,
       }),

@@ -1,5 +1,6 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "../../shared/prisma/client";
+import { resolveOrderBy } from "../../shared/validation/listSort";
 import { associatedEmployeeSelect, buildEmployeeAssociationWhere } from "../../shared/prisma/employeeAssociationQuery";
 import type { CreateWorkRegimeInput, ListWorkRegimeEmployeesQuery, ListWorkRegimesQuery, UpdateWorkRegimeInput, WorkRegimeEmployeesVigencyStatus } from "./workRegimes.schemas";
 
@@ -204,7 +205,12 @@ export const workRegimesRepository = {
           effectiveTo: true,
           employee: { select: associatedEmployeeSelect },
         },
-        orderBy: [{ employee: { lastName: "asc" } }, { employee: { firstName: "asc" } }, { effectiveFrom: "desc" }, { id: "asc" }],
+        orderBy: resolveOrderBy<"legajo" | "employee", Prisma.EmployeeWorkRegimeOrderByWithRelationInput>(
+          query,
+          { legajo: (order) => [{ employee: { legajo: order } }, { effectiveFrom: "desc" }], employee: (order) => [{ employee: { lastName: order } }, { employee: { firstName: order } }, { effectiveFrom: "desc" }] },
+          [{ employee: { lastName: "asc" } }, { employee: { firstName: "asc" } }, { effectiveFrom: "desc" }],
+          { id: "asc" },
+        ),
         skip,
         take: query.take,
       }),

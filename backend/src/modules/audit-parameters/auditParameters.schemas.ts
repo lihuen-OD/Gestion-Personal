@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { queryBoolean } from "../../shared/validation/queryBoolean";
 
 export const auditParameterStatusSchema = z.enum(["ACTIVO", "INACTIVO"]);
 export const auditEventScopeSchema = z.enum([
@@ -51,7 +52,7 @@ export const listAuditParametersQuerySchema = z.object({
   scope: auditEventScopeSchema.optional(),
   severity: auditEventSeveritySchema.optional(),
   status: auditParameterStatusSchema.optional(),
-  requiresReason: z.coerce.boolean().optional(),
+  requiresReason: queryBoolean().optional(),
   page: z.coerce.number().int().positive().max(10000).default(1),
   take: z.coerce.number().int().positive().max(300).default(100),
 });

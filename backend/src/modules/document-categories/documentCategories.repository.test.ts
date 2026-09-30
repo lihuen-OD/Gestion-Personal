@@ -62,8 +62,12 @@ describe("documentCategoriesRepository.findMany — rama filtrada, Etapa 14H.6",
       kind: "LEGAL",
       status: "ACTIVO",
       scopes: { array_contains: "NOVEDAD" },
-      rules: { path: ["expires"], equals: false },
     });
+    // mandatory + expires combinados: ambos filtros sobre `rules` (antes el segundo pisaba al primero)
+    expect(call.where.AND).toEqual([
+      { rules: { path: ["mandatory"], equals: true } },
+      { rules: { path: ["expires"], equals: false } },
+    ]);
     expect(call.where.OR).toEqual(expect.arrayContaining([{ code: { contains: "dni", mode: "insensitive" } }]));
   });
 });

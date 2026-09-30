@@ -2,7 +2,7 @@ import type { RequestHandler } from "express";
 import { requestAuditContext } from "../../shared/audit/requestAuditContext";
 import { createTtlCache } from "../../shared/cache/ttlCache";
 import { requireParam } from "../../shared/http/params";
-import type { ListPositionOptionsQuery, ListPositionsQuery } from "./positions.schemas";
+import type { ListPositionEmployeesQuery, ListPositionOptionsQuery, ListPositionsQuery } from "./positions.schemas";
 import { positionsService } from "./positions.service";
 
 // Etapa 14D.4: mismo patrón ya usado en `employees.controller.ts` para
@@ -34,8 +34,8 @@ export const positionsController = {
   }) satisfies RequestHandler,
 
   assignedEmployees: (async (req, res) => {
-    const items = await positionsService.listAssignedEmployees(requireParam(req, "id"), req.user!);
-    res.json({ data: items });
+    const result = await positionsService.listAssignedEmployees(requireParam(req, "id"), req.query as unknown as ListPositionEmployeesQuery, req.user!);
+    res.json({ data: result.items, meta: result.meta });
   }) satisfies RequestHandler,
 
   create: (async (req, res) => {

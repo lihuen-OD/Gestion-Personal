@@ -27,24 +27,26 @@ const rrhhUser = { id: "user-rrhh", role: roles.rrhh } as unknown as Express.Aut
 const supervisionUser = { id: "user-sup", role: roles.supervision } as unknown as Express.AuthUser;
 const cargaHorariaUser = { id: "user-carga", role: roles.cargaHoraria } as unknown as Express.AuthUser;
 
+const listQuery = { page: 1, take: 25 };
+
 beforeEach(() => {
   vi.clearAllMocks();
   repo.findById.mockResolvedValue({ id: "pos-1", code: "PUE-1", name: "Puesto 1", _count: { employees: 1 } });
   repo.existsById.mockResolvedValue({ id: "pos-1" });
-  repo.findAssignedEmployees.mockResolvedValue([]);
+  repo.findAssignedEmployees.mockResolvedValue([[], 0]);
 });
 
 describe("positionsService.listAssignedEmployees", () => {
   it("RRHH ve todos los empleados del puesto: se le pasa un where vacio (sin restriccion)", async () => {
-    await positionsService.listAssignedEmployees("pos-1", rrhhUser);
+    await positionsService.listAssignedEmployees("pos-1", listQuery, rrhhUser);
 
-    expect(repo.findAssignedEmployees).toHaveBeenCalledWith("pos-1", {});
+    expect(repo.findAssignedEmployees).toHaveBeenCalledWith("pos-1", listQuery, {});
   });
 
   it("Supervision solo ve empleados dentro de su alcance: recibe el mismo filtro de employeeAccessWhere que usan hour-concepts/work-regimes", async () => {
-    await positionsService.listAssignedEmployees("pos-1", supervisionUser);
+    await positionsService.listAssignedEmployees("pos-1", listQuery, supervisionUser);
 
-    const accessWhere = repo.findAssignedEmployees.mock.calls[0]![1];
+    const accessWhere = repo.findAssignedEmployees.mock.calls[0]![2];
     expect(accessWhere).toEqual({
       assignments: {
         some: {
@@ -61,9 +63,9 @@ describe("positionsService.listAssignedEmployees", () => {
   });
 
   it("Nivel 3 (Carga Horaria) tambien queda acotado a sus empleados asignados, no ve el puesto completo", async () => {
-    await positionsService.listAssignedEmployees("pos-1", cargaHorariaUser);
+    await positionsService.listAssignedEmployees("pos-1", listQuery, cargaHorariaUser);
 
-    const accessWhere = repo.findAssignedEmployees.mock.calls[0]![1];
+    const accessWhere = repo.findAssignedEmployees.mock.calls[0]![2];
     expect(accessWhere.assignments.some.userId).toBe(cargaHorariaUser.id);
     expect(accessWhere.assignments.some.type).toBe("TIME_RESPONSIBLE");
     expect(accessWhere).not.toEqual({});
@@ -72,7 +74,7 @@ describe("positionsService.listAssignedEmployees", () => {
   it("verifica que el puesto exista antes de listar (404 si no existe)", async () => {
     repo.existsById.mockRejectedValue(new Error("not found"));
 
-    await expect(positionsService.listAssignedEmployees("pos-inexistente", rrhhUser)).rejects.toThrow();
+    await expect(positionsService.listAssignedEmployees("pos-inexistente", listQuery, rrhhUser)).rejects.toThrow();
     expect(repo.findAssignedEmployees).not.toHaveBeenCalled();
   });
 
@@ -81,7 +83,7 @@ describe("positionsService.listAssignedEmployees", () => {
   // para nada mas que el 404, asi que este test confirma que el camino feliz
   // ya no paga ese costo.
   it("usa existsById (select minimo), no findById (positionInclude completo), para el chequeo de existencia", async () => {
-    await positionsService.listAssignedEmployees("pos-1", rrhhUser);
+    await positionsService.listAssignedEmployees("pos-1", listQuery, rrhhUser);
 
     expect(repo.existsById).toHaveBeenCalledWith("pos-1");
     expect(repo.findById).not.toHaveBeenCalled();
@@ -125,5 +127,13 @@ describe("positionsService.listOptions — Etapa 14D.4", () => {
 
     expect(repo.findOptions).toHaveBeenCalledWith({ take: 300 });
     expect(result).toBe(rows);
+  });
+
+  it("devuelve la página pedida con el total real (antes take: 500 fijo, sin meta)", async () => {
+    repo.findAssignedEmployees.mockResolvedValue([[{ id: "emp-1" }], 612]);
+
+    const result = await positionsService.listAssignedEmployees("pos-1", { page: 2, take: 25 }, rrhhUser);
+
+    expect(result).toEqual({ items: [{ id: "emp-1" }], meta: { total: 612, page: 2, pageSize: 25, hasMore: true } });
   });
 });

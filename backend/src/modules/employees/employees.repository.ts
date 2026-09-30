@@ -1,5 +1,6 @@
 import { ApprovalStatus, EmployeeStatus, Prisma } from "@prisma/client";
 import { prisma } from "../../shared/prisma/client";
+import { resolveOrderBy, type SortOrderByMap } from "../../shared/validation/listSort";
 import { argentinaCalendarDate, todayArgentinaDateKey } from "../../shared/datetime/argentinaTime";
 import type {
   CreateEmployeeDocumentInput,
@@ -18,6 +19,7 @@ import type {
   UpsertEmployeeAddressInput,
   UpsertEmployeeTransportInput,
 } from "./employees.schemas";
+import type { employeeListSortKeys } from "./employees.schemas";
 
 const employeeOptionSelect = {
   id: true,
@@ -195,10 +197,14 @@ const employeeDetailSelect = {
       company: { select: { id: true, name: true, code: true } },
     },
   },
+  // Historial laboral completo, sin `take`: el estado laboral vigente
+  // (resolveLaborStatus / LaborMovementPanel) se calcula sobre esta lista y la
+  // pestaña la presenta como historial completo — un tope de 50 cortaba en
+  // silencio los movimientos más antiguos. Acotado por empleado (altas, bajas
+  // y cambios de su propia trayectoria), no crece con headcount.
   laborMovements: {
     include: { createdBy: { select: { id: true, name: true } } },
     orderBy: { effectiveFrom: "desc" as const },
-    take: 50,
   },
   assignments: { take: 100, include: { user: { select: { id: true, name: true, employeeId: true } } } },
   hourConcepts: assignableHourConceptsSelect,
@@ -394,7 +400,6 @@ async function attachEmployeeDetailRelations(employeeId: string) {
       where: { employeeId },
       include: { createdBy: { select: { id: true, name: true } } },
       orderBy: { effectiveFrom: "desc" },
-      take: 50,
     }),
     prisma.employeeAssignment.findMany({
       where: { employeeId },
@@ -797,6 +802,14 @@ function resolveEmployeeStatus(employee: { status: EmployeeStatus; laborMovement
   return resolveLaborStatus(laborStatusMovements(employee.laborMovements));
 }
 
+const employeeListOrderBy: SortOrderByMap<(typeof employeeListSortKeys)[number], Prisma.EmployeeOrderByWithRelationInput> = {
+  legajo: (order) => [{ legajo: order }],
+  cuil: (order) => [{ cuil: order }],
+  lastName: (order) => [{ lastName: order }, { firstName: order }],
+  firstName: (order) => [{ firstName: order }, { lastName: order }],
+  status: (order) => [{ status: order }, { lastName: "asc" }, { firstName: "asc" }],
+};
+
 function buildWhere(query: ListEmployeesQuery): Prisma.EmployeeWhereInput {
   const search = query.search?.trim();
   return {
@@ -961,11 +974,13 @@ export const employeesRepository = {
   async findMany(query: ListEmployeesQuery, accessWhere: Prisma.EmployeeWhereInput) {
     const where = { AND: [buildWhere(query), accessWhere, ...(query.status ? [{ status: query.status }] : [])] };
     const skip = (query.page - 1) * query.take;
+    // WHERE + ORDER BY + OFFSET/LIMIT en la misma consulta: el orden se
+    // aplica sobre todo el dataset filtrado, nunca sobre la página ya cortada.
     return Promise.all([
       prisma.employee.findMany({
         where,
         select: employeeListSelect,
-        orderBy: [{ status: "asc" }, { lastName: "asc" }, { firstName: "asc" }],
+        orderBy: resolveOrderBy(query, employeeListOrderBy, [{ status: "asc" }, { lastName: "asc" }, { firstName: "asc" }], { id: "asc" }),
         skip,
         take: query.take,
       }),
@@ -1157,7 +1172,6 @@ export const employeesRepository = {
         where: { employeeId: id },
         include: { createdBy: { select: { id: true, name: true } } },
         orderBy: { effectiveFrom: "desc" },
-        take: 50,
       }),
       prisma.employeeAssignment.findMany({
         where: { employeeId: id },

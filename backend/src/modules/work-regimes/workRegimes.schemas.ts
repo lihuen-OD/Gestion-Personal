@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { sortQueryShape } from "../../shared/validation/listSort";
 
 // Comportamientos genéricos (ver schema.prisma) — Cosecha/Riego/Campaña/etc.
 // son instancias de WorkRegime, nunca valores de este enum.
@@ -80,6 +81,7 @@ export const listWorkRegimeEmployeesQuerySchema = z.object({
   date: z.coerce.date().optional(),
   page: z.coerce.number().int().positive().max(10000).default(1),
   take: z.coerce.number().int().positive().max(200).default(50),
+  ...sortQueryShape(["legajo", "employee"] as const),
 });
 
 export type ListWorkRegimesQuery = z.infer<typeof listWorkRegimesQuerySchema>;

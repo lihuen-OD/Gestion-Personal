@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { sortQueryShape } from "../../shared/validation/listSort";
+import { queryBoolean } from "../../shared/validation/queryBoolean";
 
 export const recordStatusSchema = z.enum(["ACTIVO", "INACTIVO"]);
 
@@ -10,6 +12,8 @@ const nullableText = z.string().trim().max(1000).optional().nullable();
 // UI (antes sólo sectorId/salaryRangeCategory se resolvían server-side; los
 // otros 3 se filtraban en el cliente sobre un fetch-all, lo que hubiera dado
 // resultados incorrectos al combinarlos con paginación real).
+export const positionListSortKeys = ["name", "status"] as const;
+
 export const listPositionsQuerySchema = z.object({
   search: z.string().trim().optional(),
   status: recordStatusSchema.optional(),
@@ -20,6 +24,7 @@ export const listPositionsQuerySchema = z.object({
   salaryRangeCategory: z.string().trim().optional(),
   page: z.coerce.number().int().positive().max(10000).default(1),
   take: z.coerce.number().int().positive().max(300).default(200),
+  ...sortQueryShape(positionListSortKeys),
 });
 
 // Etapa 14D.4: query del catálogo liviano (`GET /positions/options`) — sólo
@@ -32,10 +37,24 @@ export const listPositionsQuerySchema = z.object({
 // salarial en vez de `getAll()` (positionInclude completo, 9 columnas JSON +
 // company/businessUnit completos que ninguno de esos 2 usos lee) — ver
 // docs/decisions/POSITIONS_MODULE_PERFORMANCE_14H7.md.
+// Personas asignadas a un puesto (PuestoAssignedPeopleTab): antes `take: 500`
+// fijo sin meta — con la 501ª persona la pestaña y el contador del puesto la
+// perdían en silencio. Ahora paginado real con total.
+export const listPositionEmployeesQuerySchema = z.object({
+  page: z.coerce.number().int().positive().max(10000).default(1),
+  take: z.coerce.number().int().positive().max(100).default(25),
+  ...sortQueryShape(["legajo", "employee"] as const),
+});
+
 export const listPositionOptionsQuerySchema = z.object({
   status: recordStatusSchema.optional(),
-  includeAssignedCount: z.coerce.boolean().optional(),
-  take: z.coerce.number().int().positive().max(500).default(300),
+  includeAssignedCount: queryBoolean().optional(),
+  // Sin `take` = catálogo completo explícito: lo consumen los selects de
+  // Legajos y las tarjetas de resumen de Puestos, que asumen el catálogo
+  // entero (antes default 300 recortaba en silencio). Los puestos son un
+  // catálogo administrado a mano por RRHH (4 filas reales al auditar), no un
+  // dato operativo — mismo criterio de docs/PERFORMANCE_STANDARDS.md §6.
+  take: z.coerce.number().int().positive().max(500).optional(),
 });
 
 export const positionWorkConditionsSchema = z.object({
@@ -70,3 +89,4 @@ export type ListPositionsQuery = z.infer<typeof listPositionsQuerySchema>;
 export type ListPositionOptionsQuery = z.infer<typeof listPositionOptionsQuerySchema>;
 export type CreatePositionInput = z.infer<typeof createPositionSchema>;
 export type UpdatePositionInput = z.infer<typeof updatePositionSchema>;
+export type ListPositionEmployeesQuery = z.infer<typeof listPositionEmployeesQuerySchema>;

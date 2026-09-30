@@ -193,7 +193,10 @@ describe("employeesRepository.findOverviewDetailsById — Etapa 6L.1 / 14C.1 / 1
     // Las 4 consultas hijas filtran únicamente por employeeId (el control de
     // acceso ya se validó en el core).
     expect(prisma.employeeCompany.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { employeeId: "emp-1" } }));
-    expect(prisma.laborMovement.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { employeeId: "emp-1" }, take: 50 }));
+    expect(prisma.laborMovement.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { employeeId: "emp-1" } }));
+    // Historial laboral completo: sin tope (antes take: 50 cortaba en silencio
+    // movimientos viejos sobre los que se calcula el estado laboral).
+    expect((prisma.laborMovement.findMany as Mock).mock.calls[0]?.[0]).not.toHaveProperty("take");
     expect(prisma.employeeAssignment.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { employeeId: "emp-1" }, take: 100 }));
     // Etapa 14D.3: la cadena de sector corre en el MISMO Promise.all que las
     // 4 anteriores — se pide por el sectorId leído del core, no anidada.

@@ -1,6 +1,12 @@
 import { z } from "zod";
+import { sortQueryShape } from "../../shared/validation/listSort";
 
 export const employeeStatusSchema = z.enum(["ACTIVO", "INACTIVO"]);
+
+// "Centro de costo" no es ordenable server-side: es una relación opcional y
+// Prisma no permite `nulls: "last"` sobre relaciones — en DESC los legajos
+// sin centro de costo quedarían primero, rompiendo la regla de vacíos al final.
+export const employeeListSortKeys = ["legajo", "cuil", "lastName", "firstName", "status"] as const;
 
 export const listEmployeesQuerySchema = z.object({
   search: z.string().trim().optional(),
@@ -10,6 +16,7 @@ export const listEmployeesQuerySchema = z.object({
   costCenterId: z.string().uuid().optional(),
   page: z.coerce.number().int().positive().max(10000).default(1),
   take: z.coerce.number().int().positive().max(200).default(100),
+  ...sortQueryShape(employeeListSortKeys),
 });
 
 export const listEmployeeOrgChartQuerySchema = z.object({

@@ -6,7 +6,7 @@ import { adminRoles, roles } from "../../shared/security/roles";
 import { validateBody } from "../../shared/validation/validateRequest";
 import { validateQuery } from "../../shared/validation/validateQuery";
 import { positionsController } from "./positions.controller";
-import { createPositionSchema, listPositionOptionsQuerySchema, listPositionsQuerySchema, updatePositionSchema } from "./positions.schemas";
+import { createPositionSchema, listPositionEmployeesQuerySchema, listPositionOptionsQuerySchema, listPositionsQuerySchema, updatePositionSchema } from "./positions.schemas";
 
 export const positionsRouter = Router();
 
@@ -24,6 +24,7 @@ positionsRouter.get("/options", validateQuery(listPositionOptionsQuerySchema), a
 positionsRouter.get(
   "/:id/employees",
   requireAnyRole([roles.rrhh, roles.supervision, roles.cargaHoraria]),
+  validateQuery(listPositionEmployeesQuerySchema),
   asyncHandler(positionsController.assignedEmployees),
 );
 positionsRouter.get("/:id", asyncHandler(positionsController.getById));

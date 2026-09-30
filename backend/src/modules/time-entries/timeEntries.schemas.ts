@@ -1,6 +1,13 @@
 import { z } from "zod";
+import { sortQueryShape } from "../../shared/validation/listSort";
 
 export const approvalStatusSchema = z.enum(["BORRADOR", "PENDIENTE", "EN_REVISION", "APROBADO", "RECHAZADO", "DEVUELTO", "CERRADO"]);
+
+// "Por registro" (view=flat) ordena por cualquiera de estas keys; "Por
+// persona" (view=byEmployee) pagina empleados, así que sólo legajo/empleado
+// aplican — el resto cae al orden default de esa vista.
+export const timeEntryListSortKeys = ["legajo", "employee", "date", "hourConcept", "hours", "status"] as const;
+export const employeeRowSortKeys = ["legajo", "employee"] as const;
 
 export const listTimeEntriesQuerySchema = z.object({
   employeeId: z.string().uuid().optional(),
@@ -14,6 +21,7 @@ export const listTimeEntriesQuerySchema = z.object({
   view: z.enum(["flat", "byEmployee"]).default("flat"),
   page: z.coerce.number().int().positive().max(10000).default(1),
   take: z.coerce.number().int().positive().max(500).default(200),
+  ...sortQueryShape(timeEntryListSortKeys),
 });
 
 export const timeEntriesSummaryQuerySchema = z.object({
@@ -44,6 +52,7 @@ export const timeEntriesPeriodEmployeesQuerySchema = z.object({
   costCenterId: z.string().uuid().optional(),
   page: z.coerce.number().int().positive().max(10000).default(1),
   take: z.coerce.number().int().positive().max(100).default(25),
+  ...sortQueryShape(employeeRowSortKeys),
 });
 
 export const createTimeEntrySchema = z.object({

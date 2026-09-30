@@ -1787,7 +1787,7 @@ describe("findMany(view=flat/default) — Etapa 14G.7 (sin $transaction, contrat
     await timeEntriesRepository.findMany({ page: 1, take: 25 } as never, employeeAccessWhere);
 
     expect(mockedPrisma.timeEntry.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ orderBy: [{ date: "desc" }, { employee: { lastName: "asc" } }] }),
+      expect.objectContaining({ orderBy: [{ date: "desc" }, { employee: { lastName: "asc" } }, { id: "asc" }] }),
     );
   });
 

@@ -1,6 +1,7 @@
 import type { AuditAction, Prisma } from "@prisma/client";
 import { prisma } from "../../shared/prisma/client";
 import type { ListAuditQuery } from "./audit.schemas";
+import { resolveOrderBy } from "../../shared/validation/listSort";
 
 export interface CreateAuditLogInput {
   action: AuditAction;
@@ -35,7 +36,7 @@ export const auditRepository = {
         include: {
           user: { select: { id: true, name: true, email: true, role: true } },
         },
-        orderBy: { createdAt: "desc" },
+        orderBy: resolveOrderBy<"createdAt", Prisma.AuditLogOrderByWithRelationInput>(query, { createdAt: (order) => [{ createdAt: order }] }, [{ createdAt: "desc" }], { id: "desc" }),
         skip,
         take: query.take,
       }),

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { queryBoolean } from "../../shared/validation/queryBoolean";
 
 export const recordStatusSchema = z.enum(["ACTIVO", "INACTIVO"]);
 
@@ -8,7 +9,7 @@ export const timeOfDaySchema = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Fo
 export const listHourConceptRulesQuerySchema = z.object({
   hourConceptId: z.string().uuid().optional(),
   status: recordStatusSchema.optional(),
-  crossesMidnight: z.coerce.boolean().optional(),
+  crossesMidnight: queryBoolean().optional(),
   page: z.coerce.number().int().positive().max(10000).default(1),
   take: z.coerce.number().int().positive().max(200).default(100),
 });

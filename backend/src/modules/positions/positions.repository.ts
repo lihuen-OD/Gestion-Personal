@@ -1,7 +1,14 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "../../shared/prisma/client";
-import { createRepositoryListCache } from "../../shared/cache/repositoryListCache";
-import type { CreatePositionInput, ListPositionOptionsQuery, ListPositionsQuery, UpdatePositionInput } from "./positions.schemas";
+import { createRepositoryListCache, pageFromCappedList, REPOSITORY_LIST_CACHE_MAX_ROWS } from "../../shared/cache/repositoryListCache";
+import type { CreatePositionInput, ListPositionEmployeesQuery, ListPositionOptionsQuery, ListPositionsQuery, positionListSortKeys, UpdatePositionInput } from "./positions.schemas";
+import { resolveOrderBy, type SortOrderByMap } from "../../shared/validation/listSort";
+
+const positionListOrderBy: SortOrderByMap<(typeof positionListSortKeys)[number], Prisma.PositionOrderByWithRelationInput> = {
+  name: (order) => [{ name: order }],
+  status: (order) => [{ status: order }, { name: "asc" }],
+};
+const positionDefaultOrderBy: Prisma.PositionOrderByWithRelationInput[] = [{ status: "asc" }, { name: "asc" }];
 
 const positionInclude = {
   sector: {
@@ -91,9 +98,14 @@ function buildWhere(query: ListPositionsQuery): Prisma.PositionWhereInput {
   return {
     ...(query.status ? { status: query.status } : {}),
     ...(query.sectorId ? { sectorId: query.sectorId } : {}),
-    ...(query.areaId ? { sector: { areaId: query.areaId } } : {}),
-    ...(query.establishmentId ? { sector: { area: { establishmentId: query.establishmentId } } } : {}),
-    ...(query.businessUnitId ? { sector: { area: { establishment: { businessUnitId: query.businessUnitId } } } } : {}),
+    // AND explícito: los 3 filtros navegan la misma relación `sector` — como
+    // spreads separados de la misma key, el último pisaba a los anteriores y
+    // combinar p. ej. Área + Unidad de negocio filtraba sólo por la unidad.
+    AND: [
+      ...(query.areaId ? [{ sector: { areaId: query.areaId } }] : []),
+      ...(query.establishmentId ? [{ sector: { area: { establishmentId: query.establishmentId } } }] : []),
+      ...(query.businessUnitId ? [{ sector: { area: { establishment: { businessUnitId: query.businessUnitId } } } }] : []),
+    ],
     ...(query.salaryRangeCategory ? { salaryCategories: { some: { salaryCategory: { name: query.salaryRangeCategory } } } } : {}),
     ...(search
       ? {
@@ -143,7 +155,8 @@ export const positionsRepository = {
         query.establishmentId ||
         query.businessUnitId ||
         query.salaryRangeCategory ||
-        query.search?.trim(),
+        query.search?.trim() ||
+        query.sortBy,
     );
 
     if (!hasFilters) {
@@ -151,11 +164,12 @@ export const positionsRepository = {
         prisma.position.findMany({
           where,
           include: positionInclude,
-          orderBy: [{ status: "asc" }, { name: "asc" }],
-          take: 500,
+          orderBy: [...positionDefaultOrderBy, { id: "asc" }],
+          take: REPOSITORY_LIST_CACHE_MAX_ROWS + 1,
         }),
       );
-      return [data.slice(skip, skip + query.take), data.length] as const;
+      const cached = pageFromCappedList(data, query.page, query.take);
+      if (cached) return cached;
     }
 
     // Etapa 14H.7: findMany + count son lecturas independientes (ninguna
@@ -169,7 +183,7 @@ export const positionsRepository = {
       prisma.position.findMany({
         where,
         include: positionInclude,
-        orderBy: [{ status: "asc" }, { name: "asc" }],
+        orderBy: resolveOrderBy(query, positionListOrderBy, positionDefaultOrderBy, { id: "asc" }),
         skip,
         take: query.take,
       }),
@@ -224,9 +238,11 @@ export const positionsRepository = {
     });
   },
 
-  findAssignedEmployees(positionId: string, accessWhere: Prisma.EmployeeWhereInput) {
-    return prisma.employee.findMany({
-      where: { AND: [{ positionId, status: "ACTIVO" }, accessWhere] },
+  findAssignedEmployees(positionId: string, query: ListPositionEmployeesQuery, accessWhere: Prisma.EmployeeWhereInput) {
+    const where: Prisma.EmployeeWhereInput = { AND: [{ positionId, status: "ACTIVO" }, accessWhere] };
+    return Promise.all([
+      prisma.employee.findMany({
+      where,
       select: {
         id: true,
         legajo: true,
@@ -246,9 +262,17 @@ export const positionsRepository = {
           orderBy: { isPrimary: "desc" },
         },
       },
-      orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
-      take: 500,
-    });
+      orderBy: resolveOrderBy<"legajo" | "employee", Prisma.EmployeeOrderByWithRelationInput>(
+        query,
+        { legajo: (order) => [{ legajo: order }], employee: (order) => [{ lastName: order }, { firstName: order }] },
+        [{ lastName: "asc" }, { firstName: "asc" }],
+        { id: "asc" },
+      ),
+      skip: (query.page - 1) * query.take,
+      take: query.take,
+      }),
+      prisma.employee.count({ where }),
+    ]);
   },
 
   create(input: CreatePositionInput) {

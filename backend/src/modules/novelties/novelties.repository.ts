@@ -1,7 +1,16 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "../../shared/prisma/client";
 import { periodCalendarBounds } from "../../shared/datetime/argentinaTime";
-import type { CreateNoveltyInput, ListNoveltiesQuery } from "./novelties.schemas";
+import type { CreateNoveltyInput, ListNoveltiesQuery, noveltyListSortKeys } from "./novelties.schemas";
+import { resolveOrderBy, type SortOrderByMap } from "../../shared/validation/listSort";
+
+const noveltyListOrderBy: SortOrderByMap<(typeof noveltyListSortKeys)[number], Prisma.NoveltyOrderByWithRelationInput> = {
+  legajo: (order) => [{ employee: { legajo: order } }],
+  employee: (order) => [{ employee: { lastName: order } }, { employee: { firstName: order } }],
+  noveltyType: (order) => [{ noveltyType: { name: order } }, { fromDate: "desc" }],
+  fromDate: (order) => [{ fromDate: order }, { createdAt: order }],
+  status: (order) => [{ status: order }, { fromDate: "desc" }],
+};
 
 const noveltyInclude = {
   employee: { select: { id: true, legajo: true, cuil: true, dni: true, firstName: true, lastName: true, status: true } },
@@ -111,7 +120,7 @@ export const noveltiesRepository = {
       prisma.novelty.findMany({
         where,
         include: noveltyInclude,
-        orderBy: [{ fromDate: "desc" }, { createdAt: "desc" }],
+        orderBy: resolveOrderBy(query, noveltyListOrderBy, [{ fromDate: "desc" }, { createdAt: "desc" }], { id: "asc" }),
         skip,
         take: query.take,
       }),

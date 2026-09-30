@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { queryBoolean } from "../../shared/validation/queryBoolean";
 
 // Etapa 12D: mismo límite/criterio que calendarRangeQuerySchema
 // (workforce-management) para el rango de fechas — no se reinventa acá,
@@ -14,7 +15,7 @@ export const holidayWorkAssignmentsByDateQuerySchema = z.object({ date: z.coerce
 export const holidayWorkCandidatesQuerySchema = z.object({
   sectorId: z.string().uuid().optional(),
   shiftTemplateId: z.string().uuid().optional(),
-  withoutShift: z.coerce.boolean().optional(),
+  withoutShift: queryBoolean().optional(),
   search: z.string().trim().optional(),
   page: z.coerce.number().int().positive().max(10000).default(1),
   take: z.coerce.number().int().positive().max(500).default(100),

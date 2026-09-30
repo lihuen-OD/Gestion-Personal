@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { queryBoolean } from "../../shared/validation/queryBoolean";
 
 export const documentCategoryStatusSchema = z.enum(["ACTIVO", "INACTIVO"]);
 export const documentCategoryKindSchema = z.enum([
@@ -43,8 +44,8 @@ export const listDocumentCategoriesQuerySchema = z.object({
   kind: documentCategoryKindSchema.optional(),
   scope: documentCategoryScopeSchema.optional(),
   status: documentCategoryStatusSchema.optional(),
-  mandatory: z.coerce.boolean().optional(),
-  expires: z.coerce.boolean().optional(),
+  mandatory: queryBoolean().optional(),
+  expires: queryBoolean().optional(),
   page: z.coerce.number().int().positive().max(10000).default(1),
   take: z.coerce.number().int().positive().max(300).default(100),
 });

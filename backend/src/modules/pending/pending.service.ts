@@ -9,12 +9,25 @@ function formatEmployee(employee: { legajo: string; firstName: string; lastName:
 export const pendingService = {
   async list(query: PendingQuery, user: Express.AuthUser) {
     const accessWhere = employeeAccessWhere(user);
-    const [novelties, timeEntries, breakdowns] = await Promise.all([
-      query.kind === "timeEntries" ? Promise.resolve([]) : pendingRepository.findPendingNovelties(query, accessWhere),
-      query.kind === "novelties" ? Promise.resolve([]) : pendingRepository.findPendingTimeEntries(query, accessWhere),
-      // Etapa 6L.3: mismo filtro "timeEntries" agrupa TimeEntry y desgloses
-      // manuales — ambos son "cargas horarias pendientes" desde la bandeja.
-      query.kind === "novelties" ? Promise.resolve([]) : pendingRepository.findPendingHourConceptBreakdowns(query, accessWhere),
+    const includeNovelties = query.kind === "all" || query.kind === "novelties";
+    const includeTimeEntries = query.kind === "all" || query.kind === "timeEntries";
+    // Etapa 6L.3: mismo filtro "timeEntries" agrupa TimeEntry y desgloses
+    // manuales — ambos son "cargas horarias pendientes" desde la bandeja.
+    const includeBreakdowns = query.kind === "all" || query.kind === "timeEntries" || query.kind === "hourConceptBreakdowns";
+    // Sólo los kinds de una fuente paginan; los combinados siempre devuelven
+    // la primera página de cada fuente (paginar una unión de 3 tablas con
+    // OFFSET independiente por tabla daría páginas incorrectas).
+    const paginated = query.kind === "novelties" || query.kind === "hourConceptBreakdowns";
+    const sourceQuery = paginated ? query : { ...query, page: 1 };
+    const none = Promise.resolve([]);
+    const zero = Promise.resolve(0);
+    const [novelties, timeEntries, breakdowns, noveltyTotal, timeEntryTotal, breakdownTotal] = await Promise.all([
+      includeNovelties ? pendingRepository.findPendingNovelties(sourceQuery, accessWhere) : none,
+      includeTimeEntries ? pendingRepository.findPendingTimeEntries(sourceQuery, accessWhere) : none,
+      includeBreakdowns ? pendingRepository.findPendingHourConceptBreakdowns(sourceQuery, accessWhere) : none,
+      includeNovelties ? pendingRepository.countPendingNovelties(query, accessWhere) : zero,
+      includeTimeEntries ? pendingRepository.countPendingTimeEntries(query, accessWhere) : zero,
+      includeBreakdowns ? pendingRepository.countPendingHourConceptBreakdowns(query, accessWhere) : zero,
     ]);
 
     const noveltyItems = novelties.map((item) => ({
@@ -62,14 +75,25 @@ export const pendingService = {
       return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
     });
 
+    const total = noveltyTotal + timeEntryTotal + breakdownTotal;
+    const data = items.slice(0, query.take);
+    const page = paginated ? query.page ?? 1 : 1;
     return {
+      // Totales reales (count), no la cantidad de filas traídas: antes con
+      // take=300 la bandeja nunca podía informar más de 300 pendientes.
       summary: {
-        total: items.length,
-        novelties: noveltyItems.length,
-        timeEntries: timeEntryItems.length,
-        hourConceptBreakdowns: breakdownItems.length,
+        total,
+        novelties: noveltyTotal,
+        timeEntries: timeEntryTotal,
+        hourConceptBreakdowns: breakdownTotal,
       },
-      data: items.slice(0, query.take),
+      data,
+      meta: {
+        total,
+        page,
+        pageSize: query.take,
+        hasMore: paginated ? page * query.take < total : data.length < total,
+      },
     };
   },
 };

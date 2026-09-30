@@ -12,7 +12,27 @@ import {
   periodFromCalendarDate,
   periodFromInstant,
 } from "../../shared/datetime/argentinaTime";
-import type { CreateTimeEntryInput, ListTimeEntriesQuery, TimeEntriesExportQuery, TimeEntriesPeriodEmployeesQuery, UpdateTimeEntryInput } from "./timeEntries.schemas";
+import type { CreateTimeEntryInput, employeeRowSortKeys, ListTimeEntriesQuery, TimeEntriesExportQuery, TimeEntriesPeriodEmployeesQuery, timeEntryListSortKeys, UpdateTimeEntryInput } from "./timeEntries.schemas";
+import { resolveOrderBy, type SortOrderByMap } from "../../shared/validation/listSort";
+
+const timeEntryListOrderBy: SortOrderByMap<(typeof timeEntryListSortKeys)[number], Prisma.TimeEntryOrderByWithRelationInput> = {
+  legajo: (order) => [{ employee: { legajo: order } }, { date: "desc" }],
+  employee: (order) => [{ employee: { lastName: order } }, { employee: { firstName: order } }, { date: "desc" }],
+  date: (order) => [{ date: order }, { employee: { lastName: "asc" } }],
+  hourConcept: (order) => [{ hourConcept: { name: order } }, { date: "desc" }],
+  hours: (order) => [{ hours: order }, { date: "desc" }],
+  status: (order) => [{ status: order }, { date: "desc" }],
+};
+
+const employeeRowOrderBy: SortOrderByMap<(typeof employeeRowSortKeys)[number], Prisma.EmployeeOrderByWithRelationInput> = {
+  legajo: (order) => [{ legajo: order }],
+  employee: (order) => [{ lastName: order }, { firstName: order }],
+};
+const employeeRowDefaultOrderBy: Prisma.EmployeeOrderByWithRelationInput[] = [{ lastName: "asc" }, { firstName: "asc" }];
+
+function isEmployeeRowSortKey(key: string | undefined): key is (typeof employeeRowSortKeys)[number] {
+  return key === "legajo" || key === "employee";
+}
 
 function periodRange(period: string) {
   const year = Number(period.slice(0, 4));
@@ -312,7 +332,7 @@ async function findManyByEmployeeGrouped(query: ListTimeEntriesQuery, employeeAc
     prisma.employee.findMany({
       where: employeeWhere,
       select: periodEmployeeSelect,
-      orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
+      orderBy: resolveOrderBy({ sortBy: isEmployeeRowSortKey(query.sortBy) ? query.sortBy : undefined, sortOrder: query.sortOrder }, employeeRowOrderBy, employeeRowDefaultOrderBy, { id: "asc" }),
       skip,
       take: query.take,
     }),
@@ -499,7 +519,7 @@ export const timeEntriesRepository = {
       prisma.timeEntry.findMany({
         where,
         include: timeEntryInclude,
-        orderBy: [{ date: "desc" }, { employee: { lastName: "asc" } }],
+        orderBy: resolveOrderBy(query, timeEntryListOrderBy, [{ date: "desc" }, { employee: { lastName: "asc" } }], { id: "asc" }),
         skip,
         take: query.take,
       }),
@@ -670,7 +690,7 @@ export const timeEntriesRepository = {
       prisma.employee.findMany({
         where,
         select: periodEmployeeSelect,
-        orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
+        orderBy: resolveOrderBy(query, employeeRowOrderBy, employeeRowDefaultOrderBy, { id: "asc" }),
         skip,
         take: query.take,
       }),
