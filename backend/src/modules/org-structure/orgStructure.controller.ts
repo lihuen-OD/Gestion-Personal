@@ -25,4 +25,11 @@ export const orgStructureController = {
 
   createCostCenter: (async (req, res) => res.status(201).json({ data: await orgStructureService.createCostCenter(req.body, requestAuditContext(req)) })) satisfies RequestHandler,
   updateCostCenter: (async (req, res) => res.json({ data: await orgStructureService.updateCostCenter(requireParam(req, "id"), req.body, requestAuditContext(req)) })) satisfies RequestHandler,
+
+  deleteCompany: (async (req, res) => res.json({ data: await orgStructureService.deleteEntity("company", requireParam(req, "id"), requestAuditContext(req)) })) satisfies RequestHandler,
+  deleteBusinessUnit: (async (req, res) => res.json({ data: await orgStructureService.deleteEntity("businessUnit", requireParam(req, "id"), requestAuditContext(req)) })) satisfies RequestHandler,
+  deleteEstablishment: (async (req, res) => res.json({ data: await orgStructureService.deleteEntity("establishment", requireParam(req, "id"), requestAuditContext(req)) })) satisfies RequestHandler,
+  deleteArea: (async (req, res) => res.json({ data: await orgStructureService.deleteEntity("area", requireParam(req, "id"), requestAuditContext(req)) })) satisfies RequestHandler,
+  deleteSector: (async (req, res) => res.json({ data: await orgStructureService.deleteEntity("sector", requireParam(req, "id"), requestAuditContext(req)) })) satisfies RequestHandler,
+  deleteCostCenter: (async (req, res) => res.json({ data: await orgStructureService.deleteEntity("costCenter", requireParam(req, "id"), requestAuditContext(req)) })) satisfies RequestHandler,
 };

@@ -3,6 +3,7 @@ import type { AuditContext } from "../audit/audit.service";
 import { auditService } from "../audit/audit.service";
 import { AppError } from "../../shared/errors/AppError";
 import { invalidateOverviewCache, orgStructureRepository } from "./orgStructure.repository";
+import { dependencyBlockedMessage, describeDependencies, orgEntityLabels, type OrgEntityKind } from "./orgStructure.dependencies";
 import type {
   CreateAreaInput,
   CreateBusinessUnitInput,
@@ -25,6 +26,9 @@ function mapPrismaError(error: unknown) {
     }
     if (error.code === "P2025") {
       throw new AppError("Record not found", 404, "RECORD_NOT_FOUND");
+    }
+    if (error.code === "P2034") {
+      throw new AppError("Otra operación modificó la estructura al mismo tiempo. Actualizá la pantalla e intentá nuevamente.", 409, "ORG_STRUCTURE_CONCURRENT_CHANGE");
     }
     if (error.code === "P2003") {
       throw new AppError("Related record not found or cannot be used", 400, "RELATION_CONSTRAINT");
@@ -142,5 +146,29 @@ export const orgStructureService = {
     invalidateOverviewCache();
     await auditCatalogChange("UPDATE", "CostCenter", item, audit);
     return item;
+  },
+
+  // Eliminación definitiva de un registro creado por error. Sólo si no tiene
+  // ninguna dependencia de negocio; si la tiene, 409 con el motivo y la
+  // sugerencia de inactivarlo (Inactivar sigue siendo la baja normal).
+  async deleteEntity(kind: OrgEntityKind, id: string, audit?: AuditContext) {
+    const result = await execute(() => orgStructureRepository.deleteIfUnused(kind, id, (record) => describeDependencies(kind, record.counts).length > 0));
+    if (result.status === "NOT_FOUND") throw new AppError("No encontramos el registro solicitado.", 404, "RECORD_NOT_FOUND");
+    if (result.status === "BLOCKED") {
+      const dependencies = describeDependencies(kind, result.record.counts);
+      throw new AppError(dependencyBlockedMessage(kind, result.record.name, dependencies), 409, "ORG_STRUCTURE_HAS_DEPENDENCIES", { dependencies });
+    }
+    invalidateOverviewCache();
+    const { record } = result;
+    const { noun, auditEntity } = orgEntityLabels[kind];
+    await auditService.register({
+      ...audit,
+      action: "DELETE",
+      entity: auditEntity,
+      entityId: record.id,
+      description: `Se eliminó definitivamente ${noun} ${record.code} - ${record.name} (sin dependencias).`,
+      before: { id: record.id, code: record.code, name: record.name } as Prisma.InputJsonValue,
+    });
+    return { id: record.id, code: record.code, name: record.name };
   },
 };

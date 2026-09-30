@@ -595,6 +595,30 @@ POST/PATCH /api/org-structure/sectors
 POST/PATCH /api/org-structure/cost-centers
 ```
 
+Eliminación definitiva (sólo `NIVEL_1_RRHH`, mismo permiso que altas/ediciones):
+
+```txt
+DELETE /api/org-structure/companies/:id
+DELETE /api/org-structure/business-units/:id
+DELETE /api/org-structure/establishments/:id
+DELETE /api/org-structure/areas/:id
+DELETE /api/org-structure/sectors/:id
+DELETE /api/org-structure/cost-centers/:id
+```
+
+Pensada para corregir registros creados por error; la baja normal sigue siendo pasar `status` a `INACTIVO` (reversible). Sólo borra si el registro no tiene ninguna dependencia de negocio; si tiene alguna responde `409 ORG_STRUCTURE_HAS_DEPENDENCIES` con el motivo en lenguaje de negocio (`message`) y el detalle (`details.dependencies: [{ key, count, label }]`). Nunca borra ni desvincula en cadena.
+
+| Entidad | Bloquean la eliminación |
+|---|---|
+| Empresa | unidades de negocio, establecimientos, empleados (`EmployeeCompany`), usuarios con alcance, centros de costo asociados, reglas de horas dobles |
+| Unidad de negocio | establecimientos, centros de costo asociados |
+| Establecimiento | áreas, centros de costo asociados |
+| Área | sectores, centros de costo asociados |
+| Sector | empleados, puestos, usuarios con alcance, centros de costo asociados, reglas de horas dobles |
+| Centro de costo | empleados, reglas de horas dobles (sus propios vínculos de ubicación se eliminan con él) |
+
+La base no protege estos casos por sí sola (varias FK son `ON DELETE SET NULL` y `EmployeeCompany`/`CostCenter*` son `CASCADE`), por eso el conteo y el borrado corren en una transacción `Serializable`: un alta concurrente de una dependencia hace fallar la operación (`409 ORG_STRUCTURE_CONCURRENT_CHANGE`) en vez de dejar registros huérfanos. Inexistente → `404 RECORD_NOT_FOUND`. Cada eliminación queda en auditoría (`action: DELETE`). Ver `backend/src/modules/org-structure/orgStructure.dependencies.ts`.
+
 ### Usuarios
 
 ```txt

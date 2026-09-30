@@ -8,6 +8,7 @@ import type {
   OrgEstablishment,
   OrgSector,
   OrgStructureCatalog,
+  OrgStructureEntityType,
   OrgStructureStatus,
 } from "../../types/orgStructure.types";
 
@@ -220,4 +221,17 @@ export const orgStructureApiService = {
 
   createCostCenter: (item: OrgCostCenter) => writeAndRefresh(apiRequest("/org-structure/cost-centers", { method: "POST", body: { code: item.code, name: item.name, status: item.status, companyIds: item.companyIds, businessUnitIds: item.businessUnitIds, establishmentIds: item.establishmentIds, areaIds: item.areaIds, sectorIds: item.sectorIds } })),
   updateCostCenter: (item: OrgCostCenter) => writeAndRefresh(apiRequest(`/org-structure/cost-centers/${item.id}`, { method: "PATCH", body: { code: item.code, name: item.name, status: item.status, companyIds: item.companyIds, businessUnitIds: item.businessUnitIds, establishmentIds: item.establishmentIds, areaIds: item.areaIds, sectorIds: item.sectorIds } })),
+
+  // Eliminación definitiva (sólo registros sin dependencias; si las tiene, el
+  // backend responde 409 con el motivo de negocio).
+  deleteEntity: (type: OrgStructureEntityType, id: string) => writeAndRefresh(apiRequest(`/org-structure/${orgEntityPaths[type]}/${encodeURIComponent(id)}`, { method: "DELETE" })),
+};
+
+const orgEntityPaths: Record<OrgStructureEntityType, string> = {
+  COMPANY: "companies",
+  BUSINESS_UNIT: "business-units",
+  ESTABLISHMENT: "establishments",
+  AREA: "areas",
+  SECTOR: "sectors",
+  COST_CENTER: "cost-centers",
 };

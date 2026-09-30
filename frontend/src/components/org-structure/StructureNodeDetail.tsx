@@ -1,4 +1,4 @@
-import { MousePointerClick, Pencil, Plus, Power } from "lucide-react";
+import { MousePointerClick, Pencil, Plus, Power, Trash2 } from "lucide-react";
 import type { ReactNode } from "react";
 import { Badge } from "../ui/Badge";
 import { Button } from "../ui/Button";
@@ -33,19 +33,22 @@ function EntityFacts({ node }: { node: OrgTreeNode }) {
 }
 
 // Panel de detalle del nodo seleccionado: datos clave + acciones del nivel.
-// Las acciones reutilizan el editor existente del módulo; no hay baja física
-// (la API de estructura no expone DELETE) — "Inactivar" cambia el estado.
+// Las acciones reutilizan el editor existente del módulo. "Inactivar" es la
+// baja normal (reversible); "Eliminar" borra definitivamente un registro
+// creado por error y el backend sólo lo permite si no tiene dependencias.
 export function StructureNodeDetail({
   node,
   onEdit,
   onAddChild,
   onToggleStatus,
+  onDelete,
   busy,
 }: {
   node: OrgTreeNode | undefined;
   onEdit: (node: OrgTreeNode) => void;
   onAddChild: (node: OrgTreeNode, childType: OrgStructureEntityType) => void;
   onToggleStatus: (node: OrgTreeNode) => void;
+  onDelete: (node: OrgTreeNode) => void;
   busy: boolean;
 }) {
   if (!node) {
@@ -100,7 +103,8 @@ export function StructureNodeDetail({
         <div className="org-detail-actions">
           <Button type="button" variant="primary" icon={Pencil} onClick={() => onEdit(node)}>Editar</Button>
           {childType ? <Button type="button" icon={Plus} onClick={() => onAddChild(node, childType)}>Agregar {orgNodeTypeLabels[childType].toLowerCase()}</Button> : null}
-          <Button type="button" className={active ? "danger-text" : ""} icon={Power} disabled={busy} onClick={() => onToggleStatus(node)}>{active ? "Inactivar" : "Activar"}</Button>
+          <Button type="button" icon={Power} disabled={busy} onClick={() => onToggleStatus(node)}>{active ? "Inactivar" : "Activar"}</Button>
+          <Button type="button" className="danger-text" icon={Trash2} disabled={busy} onClick={() => onDelete(node)}>Eliminar</Button>
         </div>
       ) : null}
     </aside>

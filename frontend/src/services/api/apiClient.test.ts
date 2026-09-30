@@ -76,3 +76,10 @@ describe("apiRequest sin cache propia", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });
+
+describe("formatApiErrorMessage — eliminación de estructura con dependencias", () => {
+  it("muestra tal cual el motivo de negocio del backend (no lo reemplaza por el genérico)", () => {
+    const message = "No se puede eliminar la unidad de negocio “Producción” porque tiene elementos asociados: 2 establecimientos. Podés inactivarla si ya no debe utilizarse.";
+    expect(formatApiErrorMessage({ error: { code: "ORG_STRUCTURE_HAS_DEPENDENCIES", message } })).toBe(message);
+  });
+});

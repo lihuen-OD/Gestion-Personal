@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
@@ -21,16 +21,24 @@ const sectors: OrgSector[] = [
 ];
 
 vi.mock("../context/AuthContext", () => ({ useAuth: () => ({ user: { role: "Nivel 1 - RRHH" } }) }));
-const { updateCompany } = vi.hoisted(() => ({ updateCompany: vi.fn(async (item: unknown) => item) }));
+const { updateCompany, deleteEntity, removedIds } = vi.hoisted(() => ({
+  updateCompany: vi.fn(async (item: unknown) => item),
+  deleteEntity: vi.fn(async (_type: string, _id: string) => ({})),
+  removedIds: new Set<string>(),
+}));
 vi.mock("../services/api/orgStructureApiService", () => ({
   orgStructureApiService: {
-    getCatalog: () => Promise.resolve({ companies, businessUnits: [], establishments: [], areas, sectors, costCenters: [] }),
+    // Lo eliminado deja de venir en el catálogo refrescado (como el backend real).
+    getCatalog: () => Promise.resolve({ companies: companies.filter((item) => !removedIds.has(item.id)), businessUnits: [], establishments: [], areas, sectors, costCenters: [] }),
     updateCompany,
+    deleteEntity,
   },
 }));
 vi.mock("../services/appDialog", () => ({ confirmAction: vi.fn(async () => true) }));
 
 const { OrgStructurePage } = await import("./OrgStructurePage");
+const { confirmAction } = await import("../services/appDialog");
+const { ApiError } = await import("../services/api/apiClient");
 
 // La vista árbol es la principal; estos tests cubren la vista tabla.
 async function renderPage() {
@@ -139,5 +147,78 @@ describe("OrgStructurePage — vista árbol (principal) y acciones por nodo", ()
     await userEvent.click(screen.getByRole("button", { name: "Inactivar" }));
 
     await waitFor(() => expect(updateCompany).toHaveBeenCalledWith(expect.objectContaining({ id: "1", status: "INACTIVO" })));
+  });
+});
+
+describe("OrgStructurePage — eliminación segura (árbol y tabla)", () => {
+  beforeEach(() => {
+    removedIds.clear();
+    deleteEntity.mockReset();
+    deleteEntity.mockImplementation(async (_type: string, id: string) => { removedIds.add(id); return {}; });
+    vi.mocked(confirmAction).mockReset();
+    vi.mocked(confirmAction).mockResolvedValue(true);
+  });
+
+  async function selectInTree(name: string) {
+    render(<MemoryRouter><OrgStructurePage /></MemoryRouter>);
+    await screen.findByRole("tree");
+    await userEvent.click(within(screen.getByRole("treeitem", { name: new RegExp(`^Empresa ${name}`) })).getByText(name));
+    return screen.getByRole("complementary", { name: `Detalle de ${name}` });
+  }
+
+  it("árbol: Eliminar pide confirmación explícita; cancelar no elimina", async () => {
+    vi.mocked(confirmAction).mockResolvedValue(false);
+    const detail = await selectInTree("Cedro");
+
+    await userEvent.click(within(detail).getByRole("button", { name: "Eliminar" }));
+
+    expect(confirmAction).toHaveBeenCalledWith(
+      "Esta acción elimina el registro de forma permanente y no se puede deshacer. Si sólo ya no debe utilizarse, inactivalo.",
+      expect.objectContaining({ title: "¿Eliminar definitivamente “Cedro”?", confirmLabel: "Eliminar definitivamente", tone: "danger" }),
+    );
+    expect(deleteEntity).not.toHaveBeenCalled();
+    expect(within(detail).getByRole("button", { name: "Inactivar" })).toBeInTheDocument(); // Inactivar sigue disponible
+  });
+
+  it("árbol: confirmar llama al endpoint, cierra el panel, saca el nodo del árbol y avisa", async () => {
+    const detail = await selectInTree("Cedro");
+
+    await userEvent.click(within(detail).getByRole("button", { name: "Eliminar" }));
+
+    await waitFor(() => expect(deleteEntity).toHaveBeenCalledWith("COMPANY", "3"));
+    expect(await screen.findByText("Empresa eliminada correctamente.")).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole("treeitem", { name: /^Empresa Cedro/ })).toBeNull());
+    expect(screen.getByText("Seleccioná un elemento")).toBeInTheDocument();
+  });
+
+  it("tabla: la misma acción está en la columna Acción y el registro desaparece al confirmar", async () => {
+    await renderPage();
+
+    await userEvent.click(screen.getByRole("button", { name: "Eliminar beta" }));
+
+    await waitFor(() => expect(deleteEntity).toHaveBeenCalledWith("COMPANY", "1"));
+    await waitFor(() => expect(screen.queryByText("EMP-10")).toBeNull());
+    expect(screen.getByRole("columnheader", { name: "Accion" }).querySelector("button")).toBeNull();
+  });
+
+  it("con dependencias no se elimina; el motivo de negocio lo muestra el aviso global (sin duplicarlo en la página)", async () => {
+    deleteEntity.mockRejectedValue(new ApiError("No se puede eliminar la empresa “Cedro” porque tiene elementos asociados: 2 unidades de negocio. Podés inactivarla si ya no debe utilizarse.", "ORG_STRUCTURE_HAS_DEPENDENCIES", 409));
+    const detail = await selectInTree("Cedro");
+
+    await userEvent.click(within(detail).getByRole("button", { name: "Eliminar" }));
+
+    await waitFor(() => expect(deleteEntity).toHaveBeenCalled());
+    expect(screen.getByRole("treeitem", { name: /^Empresa Cedro/ })).toBeInTheDocument();
+    expect(screen.queryByText(/eliminada correctamente/)).toBeNull();
+    expect(screen.queryByText(/No se puede eliminar/)).toBeNull();
+  });
+
+  it("un error no cubierto por el aviso global (p. ej. 404) se muestra en la página con texto legible", async () => {
+    deleteEntity.mockRejectedValue(new ApiError("No encontramos el registro solicitado.", "RECORD_NOT_FOUND", 404));
+    const detail = await selectInTree("Cedro");
+
+    await userEvent.click(within(detail).getByRole("button", { name: "Eliminar" }));
+
+    expect(await screen.findByText("No encontramos el registro solicitado.")).toBeInTheDocument();
   });
 });

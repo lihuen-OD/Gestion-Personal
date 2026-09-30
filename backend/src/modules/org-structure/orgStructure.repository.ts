@@ -1,4 +1,6 @@
+import { Prisma } from "@prisma/client";
 import { prisma } from "../../shared/prisma/client";
+import type { OrgDependencyKey, OrgEntityKind } from "./orgStructure.dependencies";
 import type {
   CreateAreaInput,
   CreateBusinessUnitInput,
@@ -126,7 +128,83 @@ function costCenterData(input: CreateCostCenterInput | UpdateCostCenterInput) {
   return data;
 }
 
+// El cliente de este proyecto está extendido (métricas), así que su `tx` no es
+// Prisma.TransactionClient: se deriva del callback real de `prisma.$transaction`.
+type TransactionCallback = Extract<Parameters<typeof prisma.$transaction>[0], (...args: never[]) => unknown>;
+type Tx = Parameters<TransactionCallback>[0];
+type DeletableRecord = { id: string; code: string; name: string; counts: Partial<Record<OrgDependencyKey, number>> };
+
+// Lectura del registro + conteo de cada dependencia (ver orgStructure.dependencies.ts),
+// y borrado — ambos dentro de la misma transacción.
+const deletableEntities: Record<OrgEntityKind, { find: (tx: Tx, id: string) => Promise<DeletableRecord | null>; remove: (tx: Tx, id: string) => Promise<unknown> }> = {
+  company: {
+    find: async (tx, id) => {
+      const row = await tx.company.findUnique({ where: { id }, select: { id: true, code: true, name: true, _count: { select: { businessUnits: true, establishments: true, employees: true, users: true, costCenterLinks: true, doubleHourRules: true } } } });
+      return row && { id: row.id, code: row.code, name: row.name, counts: row._count };
+    },
+    remove: (tx, id) => tx.company.delete({ where: { id } }),
+  },
+  businessUnit: {
+    find: async (tx, id) => {
+      const row = await tx.businessUnit.findUnique({ where: { id }, select: { id: true, code: true, name: true, _count: { select: { establishments: true, costCenterLinks: true } } } });
+      return row && { id: row.id, code: row.code, name: row.name, counts: row._count };
+    },
+    remove: (tx, id) => tx.businessUnit.delete({ where: { id } }),
+  },
+  establishment: {
+    find: async (tx, id) => {
+      const row = await tx.establishment.findUnique({ where: { id }, select: { id: true, code: true, name: true, _count: { select: { areas: true, costCenterLinks: true } } } });
+      return row && { id: row.id, code: row.code, name: row.name, counts: row._count };
+    },
+    remove: (tx, id) => tx.establishment.delete({ where: { id } }),
+  },
+  area: {
+    find: async (tx, id) => {
+      const row = await tx.area.findUnique({ where: { id }, select: { id: true, code: true, name: true, _count: { select: { sectors: true, costCenterLinks: true } } } });
+      return row && { id: row.id, code: row.code, name: row.name, counts: row._count };
+    },
+    remove: (tx, id) => tx.area.delete({ where: { id } }),
+  },
+  sector: {
+    find: async (tx, id) => {
+      const row = await tx.sector.findUnique({ where: { id }, select: { id: true, code: true, name: true, _count: { select: { employees: true, positions: true, users: true, costCenterLinks: true, doubleHourRules: true } } } });
+      return row && { id: row.id, code: row.code, name: row.name, counts: row._count };
+    },
+    remove: (tx, id) => tx.sector.delete({ where: { id } }),
+  },
+  costCenter: {
+    find: async (tx, id) => {
+      const row = await tx.costCenter.findUnique({ where: { id }, select: { id: true, code: true, name: true, _count: { select: { employees: true, doubleHourRules: true } } } });
+      return row && { id: row.id, code: row.code, name: row.name, counts: row._count };
+    },
+    // Sus vínculos CostCenter* (su propia ubicación) caen con él por FK CASCADE — ver orgStructure.dependencies.ts.
+    remove: (tx, id) => tx.costCenter.delete({ where: { id } }),
+  },
+};
+
+export type DeleteIfUnusedResult =
+  | { status: "NOT_FOUND" }
+  | { status: "BLOCKED"; record: DeletableRecord }
+  | { status: "DELETED"; record: DeletableRecord };
+
 export const orgStructureRepository = {
+  /**
+   * Borra sólo si ninguna dependencia existe. Serializable: si otra
+   * transacción agrega un hijo/empleado entre el conteo y el delete, una de
+   * las dos aborta (P2034) en vez de dejar un registro huérfano por el
+   * ON DELETE SET NULL de la base.
+   */
+  deleteIfUnused(kind: OrgEntityKind, id: string, isBlocked: (record: DeletableRecord) => boolean): Promise<DeleteIfUnusedResult> {
+    const entity = deletableEntities[kind];
+    return prisma.$transaction(async (tx) => {
+      const record = await entity.find(tx, id);
+      if (!record) return { status: "NOT_FOUND" as const };
+      if (isBlocked(record)) return { status: "BLOCKED" as const, record };
+      await entity.remove(tx, id);
+      return { status: "DELETED" as const, record };
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+  },
+
   getOverview() {
     return getCachedOverview();
   },

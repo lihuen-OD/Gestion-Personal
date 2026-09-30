@@ -1,4 +1,4 @@
-import { Pencil, Plus } from "lucide-react";
+import { Pencil, Plus, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Navigate } from "react-router-dom";
 import { GeoAddressFields } from "../components/GeoAddressFields";
@@ -13,6 +13,7 @@ import { StructureTreeView } from "../components/org-structure/StructureTreeView
 import { StructureNodeDetail } from "../components/org-structure/StructureNodeDetail";
 import { buildOrgStructureTree, findNode, orgNodeTypeLabels, type OrgTreeNode } from "../components/org-structure/orgStructureTree";
 import { confirmAction } from "../services/appDialog";
+import { ApiError, getUserErrorMessage } from "../services/api/apiClient";
 import { SortableHeader } from "../components/ui/SortableHeader";
 import { Button } from "../components/ui/Button";
 import { Badge } from "../components/ui/Badge";
@@ -33,6 +34,33 @@ const views: Array<{ key: View; label: string }> = [
   { key: "tree", label: "Vista árbol" },
   { key: "table", label: "Vista tabla" },
 ];
+
+const deletedMessages: Record<Tab, string> = {
+  COMPANY: "Empresa eliminada correctamente.",
+  BUSINESS_UNIT: "Unidad de negocio eliminada correctamente.",
+  ESTABLISHMENT: "Establecimiento eliminado correctamente.",
+  AREA: "Área eliminada correctamente.",
+  SECTOR: "Sector eliminado correctamente.",
+  COST_CENTER: "Centro de costo eliminado correctamente.",
+};
+
+const catalogListKey: Record<Tab, keyof OrgStructureCatalog> = {
+  COMPANY: "companies",
+  BUSINESS_UNIT: "businessUnits",
+  ESTABLISHMENT: "establishments",
+  AREA: "areas",
+  SECTOR: "sectors",
+  COST_CENTER: "costCenters",
+};
+
+// Tras un DELETE exitoso el registro se quita del catálogo en memoria antes de
+// que llegue el refetch: árbol y tabla quedan consistentes al instante. Es
+// seguro porque el backend sólo borra registros sin dependencias (nada en el
+// catálogo lo referencia).
+function withoutEntity(catalog: OrgStructureCatalog, type: Tab, id: string): OrgStructureCatalog {
+  const key = catalogListKey[type];
+  return { ...catalog, [key]: (catalog[key] as Editable[]).filter((item) => item.id !== id) };
+}
 
 const emptyCatalog: OrgStructureCatalog = { companies: [], businessUnits: [], establishments: [], areas: [], sectors: [], costCenters: [] };
 
@@ -187,22 +215,25 @@ function Editor({ type, item, catalog, onChange }: { type: Tab; item: Editable; 
   </div>;
 }
 
-function EditAction({ item, readOnly, onEdit }: { item: Editable; readOnly: boolean; onEdit: (item: Editable) => void }) {
+function EditAction({ item, readOnly, onEdit, onDelete }: { item: Editable; readOnly: boolean; onEdit: (item: Editable) => void; onDelete: (item: Editable) => void }) {
   if (readOnly) return <Badge tone="neutral">Solo lectura</Badge>;
-  return <button className="table-icon-action" title="Editar" aria-label="Editar" onClick={() => onEdit(item)}><Pencil size={14}/><span>Editar</span></button>;
+  return <div className="table-actions">
+    <button className="table-icon-action" title="Editar" aria-label={`Editar ${item.name}`} onClick={() => onEdit(item)}><Pencil size={14}/><span>Editar</span></button>
+    <button className="table-icon-action danger-link" title="Eliminar" aria-label={`Eliminar ${item.name}`} onClick={() => onDelete(item)}><Trash2 size={14}/><span>Eliminar</span></button>
+  </div>;
 }
 
 function StatusBadge({ status }: { status: OrgStructureStatus }) {
   return <Badge tone={status === "ACTIVO" ? "success" : "neutral"}>{activoInactivoLabel(status)}</Badge>;
 }
 
-function Rows({ type, catalog, items, readOnly, onEdit }: { type: Tab; catalog: OrgStructureCatalog; items: readonly Editable[]; readOnly: boolean; onEdit: (item: Editable) => void }) {
-  if (type === "COMPANY") return <tbody>{(items as OrgCompany[]).map((item) => <tr key={item.id}><td><b>{item.code}</b></td><td><OverflowCell value={item.name} /><span className="table-sub">{item.legalName}</span></td><td>{item.cuit || "-"}</td><td>-</td><td><StatusBadge status={item.status} /></td><td><EditAction item={item} readOnly={readOnly} onEdit={onEdit} /></td></tr>)}</tbody>;
-  if (type === "BUSINESS_UNIT") return <tbody>{(items as OrgBusinessUnit[]).map((item) => <tr key={item.id}><td><b>{item.code}</b></td><td><OverflowCell value={item.name} /></td><td><OverflowCell value={nameByOne(catalog.companies, item.companyId)} /></td><td>-</td><td><StatusBadge status={item.status} /></td><td><EditAction item={item} readOnly={readOnly} onEdit={onEdit} /></td></tr>)}</tbody>;
-  if (type === "ESTABLISHMENT") return <tbody>{(items as OrgEstablishment[]).map((item) => <tr key={item.id}><td><b>{item.code}</b></td><td><OverflowCell value={item.name} /><span className="table-sub">{item.locality}, {item.department}</span></td><td><OverflowCell value={nameByOne(catalog.companies, item.companyId)} /></td><td><OverflowCell value={nameByOne(catalog.businessUnits, item.businessUnitId)} /></td><td><StatusBadge status={item.status} /></td><td><EditAction item={item} readOnly={readOnly} onEdit={onEdit} /></td></tr>)}</tbody>;
-  if (type === "AREA") return <tbody>{(items as OrgArea[]).map((item) => <tr key={item.id}><td><b>{item.code}</b></td><td><OverflowCell value={item.name} /></td><td><OverflowCell value={nameByOne(catalog.establishments, item.establishmentId)} /></td><td><OverflowCell value={nameByOne(catalog.businessUnits, deriveAreaBusinessUnitId(catalog, item.establishmentId))} /></td><td><StatusBadge status={item.status} /></td><td><EditAction item={item} readOnly={readOnly} onEdit={onEdit} /></td></tr>)}</tbody>;
-  if (type === "SECTOR") return <tbody>{(items as OrgSector[]).map((item) => <tr key={item.id}><td><b>{item.code}</b></td><td><OverflowCell value={item.name} /></td><td><OverflowCell value={nameByOne(catalog.areas, item.areaId)} /></td><td><OverflowCell value={nameByOne(catalog.establishments, deriveSectorEstablishmentId(catalog, item.areaId))} /></td><td><StatusBadge status={item.status} /></td><td><EditAction item={item} readOnly={readOnly} onEdit={onEdit} /></td></tr>)}</tbody>;
-  return <tbody>{(items as OrgCostCenter[]).map((item) => <tr key={item.id}><td><b>{item.code}</b></td><td><OverflowCell value={item.name} /><span className="table-sub">{item.finnegansCode || "Sin codigo Finnegans"}</span></td><td><OverflowCell value={nameById(catalog.companies, item.companyIds)} /></td><td><OverflowCell value={nameById(catalog.sectors, item.sectorIds)} /></td><td><StatusBadge status={item.status} /></td><td><EditAction item={item} readOnly={readOnly} onEdit={onEdit} /></td></tr>)}</tbody>;
+function Rows({ type, catalog, items, readOnly, onEdit, onDelete }: { type: Tab; catalog: OrgStructureCatalog; items: readonly Editable[]; readOnly: boolean; onEdit: (item: Editable) => void; onDelete: (item: Editable) => void }) {
+  if (type === "COMPANY") return <tbody>{(items as OrgCompany[]).map((item) => <tr key={item.id}><td><b>{item.code}</b></td><td><OverflowCell value={item.name} /><span className="table-sub">{item.legalName}</span></td><td>{item.cuit || "-"}</td><td>-</td><td><StatusBadge status={item.status} /></td><td><EditAction item={item} readOnly={readOnly} onEdit={onEdit} onDelete={onDelete} /></td></tr>)}</tbody>;
+  if (type === "BUSINESS_UNIT") return <tbody>{(items as OrgBusinessUnit[]).map((item) => <tr key={item.id}><td><b>{item.code}</b></td><td><OverflowCell value={item.name} /></td><td><OverflowCell value={nameByOne(catalog.companies, item.companyId)} /></td><td>-</td><td><StatusBadge status={item.status} /></td><td><EditAction item={item} readOnly={readOnly} onEdit={onEdit} onDelete={onDelete} /></td></tr>)}</tbody>;
+  if (type === "ESTABLISHMENT") return <tbody>{(items as OrgEstablishment[]).map((item) => <tr key={item.id}><td><b>{item.code}</b></td><td><OverflowCell value={item.name} /><span className="table-sub">{item.locality}, {item.department}</span></td><td><OverflowCell value={nameByOne(catalog.companies, item.companyId)} /></td><td><OverflowCell value={nameByOne(catalog.businessUnits, item.businessUnitId)} /></td><td><StatusBadge status={item.status} /></td><td><EditAction item={item} readOnly={readOnly} onEdit={onEdit} onDelete={onDelete} /></td></tr>)}</tbody>;
+  if (type === "AREA") return <tbody>{(items as OrgArea[]).map((item) => <tr key={item.id}><td><b>{item.code}</b></td><td><OverflowCell value={item.name} /></td><td><OverflowCell value={nameByOne(catalog.establishments, item.establishmentId)} /></td><td><OverflowCell value={nameByOne(catalog.businessUnits, deriveAreaBusinessUnitId(catalog, item.establishmentId))} /></td><td><StatusBadge status={item.status} /></td><td><EditAction item={item} readOnly={readOnly} onEdit={onEdit} onDelete={onDelete} /></td></tr>)}</tbody>;
+  if (type === "SECTOR") return <tbody>{(items as OrgSector[]).map((item) => <tr key={item.id}><td><b>{item.code}</b></td><td><OverflowCell value={item.name} /></td><td><OverflowCell value={nameByOne(catalog.areas, item.areaId)} /></td><td><OverflowCell value={nameByOne(catalog.establishments, deriveSectorEstablishmentId(catalog, item.areaId))} /></td><td><StatusBadge status={item.status} /></td><td><EditAction item={item} readOnly={readOnly} onEdit={onEdit} onDelete={onDelete} /></td></tr>)}</tbody>;
+  return <tbody>{(items as OrgCostCenter[]).map((item) => <tr key={item.id}><td><b>{item.code}</b></td><td><OverflowCell value={item.name} /><span className="table-sub">{item.finnegansCode || "Sin codigo Finnegans"}</span></td><td><OverflowCell value={nameById(catalog.companies, item.companyIds)} /></td><td><OverflowCell value={nameById(catalog.sectors, item.sectorIds)} /></td><td><StatusBadge status={item.status} /></td><td><EditAction item={item} readOnly={readOnly} onEdit={onEdit} onDelete={onDelete} /></td></tr>)}</tbody>;
 }
 
 type OrgColumnKey = "code" | "name" | "primary" | "secondary" | "status";
@@ -245,7 +276,7 @@ function relationSortAccessors(type: Tab, catalog: OrgStructureCatalog): Partial
 const notSortable = (): SortValue => null;
 
 // Montado con `key={tab}`: el orden arranca sin interacción en cada pestaña.
-function OrgStructureTable({ type, catalog, items, onEdit }: { type: Tab; catalog: OrgStructureCatalog; items: readonly Editable[]; onEdit: (item: Editable) => void }) {
+function OrgStructureTable({ type, catalog, items, onEdit, onDelete }: { type: Tab; catalog: OrgStructureCatalog; items: readonly Editable[]; onEdit: (item: Editable) => void; onDelete: (item: Editable) => void }) {
   const relations = useMemo(() => relationSortAccessors(type, catalog), [type, catalog]);
   const accessors = useMemo<OrgSortAccessors>(() => ({
     code: (item) => item.code,
@@ -263,7 +294,7 @@ function OrgStructureTable({ type, catalog, items, onEdit }: { type: Tab; catalo
         : <th key={column.key}>{column.label}</th>)}
       <th>Accion</th>
     </tr></thead>
-    <Rows type={type} catalog={catalog} items={sorted} readOnly={false} onEdit={onEdit} />
+    <Rows type={type} catalog={catalog} items={sorted} readOnly={false} onEdit={onEdit} onDelete={onDelete} />
   </table>;
 }
 
@@ -366,6 +397,33 @@ export function OrgStructurePage() {
     }
   });
 
+  // Eliminar (árbol y tabla comparten este único flujo): confirmación explícita
+  // y borrado definitivo sólo si el backend no encuentra dependencias. Si las
+  // hay, el 409 trae el motivo de negocio y lo muestra el aviso global de
+  // errores de la app (ApiErrorNotice) — no se duplica acá.
+  const { isRunning: isDeleting, run: removeEntity } = useAsyncAction(async (type: Tab, item: Editable) => {
+    const confirmed = await confirmAction("Esta acción elimina el registro de forma permanente y no se puede deshacer. Si sólo ya no debe utilizarse, inactivalo.", {
+      title: `¿Eliminar definitivamente “${item.name}”?`,
+      confirmLabel: "Eliminar definitivamente",
+      tone: "danger",
+    });
+    if (!confirmed) return;
+    try {
+      await orgStructureApiService.deleteEntity(type, item.id);
+      setApiCatalog((current) => (current ? withoutEntity(current, type, item.id) : current));
+      setSelectedKey((current) => (current && findNode(tree, current)?.id === item.id ? null : current));
+      setEditing((current) => (current?.id === item.id ? null : current));
+      setRefresh((value) => value + 1);
+      flashNotice(deletedMessages[type]);
+    } catch (error) {
+      const shownGlobally = error instanceof ApiError && [400, 409, 422].includes(error.status);
+      if (!shownGlobally) setNotice(getUserErrorMessage(error, "No se pudo eliminar el registro. Intentá nuevamente."));
+    }
+  });
+  const deleteNode = useCallback((node: OrgTreeNode) => {
+    if (node.entity && node.type !== "UNASSIGNED") void removeEntity(node.type, node.entity);
+  }, [removeEntity]);
+
   // Abrir el editor (desde el árbol o la tabla) lo trae a la vista.
   const editorRef = useRef<HTMLDivElement>(null);
   const openEditor = useCallback((type: Tab, item: Editable) => {
@@ -397,7 +455,7 @@ export function OrgStructurePage() {
         {isLoadingApi && !apiCatalog ? <LoadingState variant="table" rows={6} columns={3} /> : (
           <div className="org-tree-layout">
             <StructureTreeView nodes={tree} selectedKey={selectedKey} onSelect={selectNode} />
-            <StructureNodeDetail node={selectedNode} onEdit={editNode} onAddChild={addChild} onToggleStatus={toggleNodeStatus} busy={isTogglingStatus} />
+            <StructureNodeDetail node={selectedNode} onEdit={editNode} onAddChild={addChild} onToggleStatus={toggleNodeStatus} onDelete={deleteNode} busy={isTogglingStatus || isDeleting} />
           </div>
         )}
       </Section>
@@ -410,7 +468,7 @@ export function OrgStructurePage() {
           action={<Tabs className="view-switch" tabs={views} active={view} onChange={(key) => setView(key as View)} />}
         >
           <DataTable status={isLoadingApi ? "loading" : activeRows.length === 0 ? "empty" : "ready"} minWidth={940} emptyText="No hay registros cargados para esta categoria.">
-            <OrgStructureTable key={tab} type={tab} catalog={catalog} items={activeRows} onEdit={(item) => openEditor(tab, item)} />
+            <OrgStructureTable key={tab} type={tab} catalog={catalog} items={activeRows} onEdit={(item) => openEditor(tab, item)} onDelete={(item) => void removeEntity(tab, item)} />
           </DataTable>
         </Section>
       </>
