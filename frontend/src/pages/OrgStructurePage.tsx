@@ -8,6 +8,7 @@ import { PageHeader } from "../components/ui/PageHeader";
 import { Section } from "../components/ui/Section";
 import { StatCard } from "../components/ui/StatCard";
 import { Tabs } from "../components/ui/Tabs";
+import { SortableHeader } from "../components/ui/SortableHeader";
 import { Button } from "../components/ui/Button";
 import { Badge } from "../components/ui/Badge";
 import { useAuth } from "../context/AuthContext";
@@ -17,8 +18,17 @@ import type { EmployeeAddress, Role } from "../types";
 import type { OrgArea, OrgBusinessUnit, OrgCompany, OrgCostCenter, OrgEstablishment, OrgSector, OrgStructureCatalog, OrgStructureEntityType, OrgStructureStatus } from "../types/orgStructure.types";
 import { activoInactivoLabel } from "../utils/status";
 import { useAsyncAction } from "../utils/useAsyncAction";
+import { useSort, type SortAccessors } from "../utils/sort";
 
 type Tab = OrgStructureEntityType;
+type CompanySortKey = "code" | "name" | "cuit" | "status";
+
+const companySortAccessors: SortAccessors<OrgCompany, CompanySortKey> = {
+  code: (item) => item.code,
+  name: (item) => item.name,
+  cuit: (item) => item.cuit,
+  status: (item) => activoInactivoLabel(item.status),
+};
 type Editable = OrgCompany | OrgBusinessUnit | OrgEstablishment | OrgArea | OrgSector | OrgCostCenter;
 
 const tabs: Array<{ id: Tab; label: string }> = [
@@ -167,8 +177,8 @@ function StatusBadge({ status }: { status: OrgStructureStatus }) {
   return <Badge tone={status === "ACTIVO" ? "success" : "neutral"}>{activoInactivoLabel(status)}</Badge>;
 }
 
-function Rows({ type, catalog, readOnly, onEdit }: { type: Tab; catalog: OrgStructureCatalog; readOnly: boolean; onEdit: (item: Editable) => void }) {
-  if (type === "COMPANY") return <tbody>{catalog.companies.map((item) => <tr key={item.id}><td><b>{item.code}</b></td><td><OverflowCell value={item.name} /><span className="table-sub">{item.legalName}</span></td><td>{item.cuit || "-"}</td><td>-</td><td><StatusBadge status={item.status} /></td><td><EditAction item={item} readOnly={readOnly} onEdit={onEdit} /></td></tr>)}</tbody>;
+function Rows({ type, catalog, companies, readOnly, onEdit }: { type: Tab; catalog: OrgStructureCatalog; companies: readonly OrgCompany[]; readOnly: boolean; onEdit: (item: Editable) => void }) {
+  if (type === "COMPANY") return <tbody>{companies.map((item) => <tr key={item.id}><td><b>{item.code}</b></td><td><OverflowCell value={item.name} /><span className="table-sub">{item.legalName}</span></td><td>{item.cuit || "-"}</td><td>-</td><td><StatusBadge status={item.status} /></td><td><EditAction item={item} readOnly={readOnly} onEdit={onEdit} /></td></tr>)}</tbody>;
   if (type === "BUSINESS_UNIT") return <tbody>{catalog.businessUnits.map((item) => <tr key={item.id}><td><b>{item.code}</b></td><td><OverflowCell value={item.name} /></td><td><OverflowCell value={nameByOne(catalog.companies, item.companyId)} /></td><td>-</td><td><StatusBadge status={item.status} /></td><td><EditAction item={item} readOnly={readOnly} onEdit={onEdit} /></td></tr>)}</tbody>;
   if (type === "ESTABLISHMENT") return <tbody>{catalog.establishments.map((item) => <tr key={item.id}><td><b>{item.code}</b></td><td><OverflowCell value={item.name} /><span className="table-sub">{item.locality}, {item.department}</span></td><td><OverflowCell value={nameByOne(catalog.companies, item.companyId)} /></td><td><OverflowCell value={nameByOne(catalog.businessUnits, item.businessUnitId)} /></td><td><StatusBadge status={item.status} /></td><td><EditAction item={item} readOnly={readOnly} onEdit={onEdit} /></td></tr>)}</tbody>;
   if (type === "AREA") return <tbody>{catalog.areas.map((item) => <tr key={item.id}><td><b>{item.code}</b></td><td><OverflowCell value={item.name} /></td><td><OverflowCell value={nameByOne(catalog.establishments, item.establishmentId)} /></td><td><OverflowCell value={nameByOne(catalog.businessUnits, deriveAreaBusinessUnitId(catalog, item.establishmentId))} /></td><td><StatusBadge status={item.status} /></td><td><EditAction item={item} readOnly={readOnly} onEdit={onEdit} /></td></tr>)}</tbody>;
@@ -220,6 +230,7 @@ export function OrgStructurePage() {
     ["Establecimientos", catalog.establishments.length],
     ["Sectores", catalog.sectors.length],
   ] as const, [catalog]);
+  const { sorted: sortedCompanies, sort: companySort, toggleSort: toggleCompanySort } = useSort(catalog.companies, companySortAccessors);
   const { isRunning: isSaving, run: save } = useAsyncAction(async () => {
     if (!editing?.name.trim()) return setNotice("Completa el nombre antes de guardar.");
     const normalized = normalizeDerivedRelations(tab, editing, catalog);
@@ -259,7 +270,9 @@ export function OrgStructurePage() {
     <Tabs tabs={tabs.map((item) => ({ key: item.id, label: item.label }))} active={tab} onChange={(key) => { setTab(key as Tab); setEditing(null); }} />
     <Section title={tabs.find((item) => item.id === tab)?.label || ""} subtitle={isLoadingApi ? "Cargando estructura..." : "Administracion de relaciones y estados disponibles para operacion."}>
       <DataTable status={isLoadingApi ? "loading" : activeRows.length === 0 ? "empty" : "ready"} minWidth={940} emptyText="No hay registros cargados para esta categoria.">
-        <table><thead><tr><th>Codigo</th><th>Nombre</th><th>Relacion principal</th><th>Relacion secundaria</th><th>Estado</th><th>Accion</th></tr></thead><Rows type={tab} catalog={catalog} readOnly={false} onEdit={setEditing} /></table>
+        <table><thead>{tab === "COMPANY"
+          ? <tr><SortableHeader label="Codigo" sortKey="code" sort={companySort} onSort={toggleCompanySort} /><SortableHeader label="Nombre" sortKey="name" sort={companySort} onSort={toggleCompanySort} /><SortableHeader label="Relacion principal" sortKey="cuit" sort={companySort} onSort={toggleCompanySort} /><th>Relacion secundaria</th><SortableHeader label="Estado" sortKey="status" sort={companySort} onSort={toggleCompanySort} /><th>Accion</th></tr>
+          : <tr><th>Codigo</th><th>Nombre</th><th>Relacion principal</th><th>Relacion secundaria</th><th>Estado</th><th>Accion</th></tr>}</thead><Rows type={tab} catalog={catalog} companies={sortedCompanies} readOnly={false} onEdit={setEditing} /></table>
       </DataTable>
     </Section>
     {editing && (
