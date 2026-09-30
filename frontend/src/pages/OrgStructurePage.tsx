@@ -18,17 +18,9 @@ import type { EmployeeAddress, Role } from "../types";
 import type { OrgArea, OrgBusinessUnit, OrgCompany, OrgCostCenter, OrgEstablishment, OrgSector, OrgStructureCatalog, OrgStructureEntityType, OrgStructureStatus } from "../types/orgStructure.types";
 import { activoInactivoLabel } from "../utils/status";
 import { useAsyncAction } from "../utils/useAsyncAction";
-import { useSort, type SortAccessors } from "../utils/sort";
+import { useSort, type SortAccessors, type SortValue } from "../utils/sort";
 
 type Tab = OrgStructureEntityType;
-type CompanySortKey = "code" | "name" | "cuit" | "status";
-
-const companySortAccessors: SortAccessors<OrgCompany, CompanySortKey> = {
-  code: (item) => item.code,
-  name: (item) => item.name,
-  cuit: (item) => item.cuit,
-  status: (item) => activoInactivoLabel(item.status),
-};
 type Editable = OrgCompany | OrgBusinessUnit | OrgEstablishment | OrgArea | OrgSector | OrgCostCenter;
 
 const tabs: Array<{ id: Tab; label: string }> = [
@@ -60,8 +52,12 @@ function blank(type: Tab, catalog: OrgStructureCatalog): Editable {
   return { id: uid(), code, name: "", companyIds: [], businessUnitIds: [], establishmentIds: [], areaIds: [], sectorIds: [], finnegansCode: "", status: "ACTIVO" };
 }
 
+function namesOf(items: { id: string; name: string }[], ids: string[] = []) {
+  return ids.map((id) => items.find((item) => item.id === id)?.name).filter(Boolean).join(", ");
+}
+
 function nameById(items: { id: string; name: string }[], ids: string[] = []) {
-  return ids.map((id) => items.find((item) => item.id === id)?.name).filter(Boolean).join(", ") || "-";
+  return namesOf(items, ids) || "-";
 }
 
 function nameByOne(items: { id: string; name: string }[], id: string | undefined) {
@@ -177,13 +173,75 @@ function StatusBadge({ status }: { status: OrgStructureStatus }) {
   return <Badge tone={status === "ACTIVO" ? "success" : "neutral"}>{activoInactivoLabel(status)}</Badge>;
 }
 
-function Rows({ type, catalog, companies, readOnly, onEdit }: { type: Tab; catalog: OrgStructureCatalog; companies: readonly OrgCompany[]; readOnly: boolean; onEdit: (item: Editable) => void }) {
-  if (type === "COMPANY") return <tbody>{companies.map((item) => <tr key={item.id}><td><b>{item.code}</b></td><td><OverflowCell value={item.name} /><span className="table-sub">{item.legalName}</span></td><td>{item.cuit || "-"}</td><td>-</td><td><StatusBadge status={item.status} /></td><td><EditAction item={item} readOnly={readOnly} onEdit={onEdit} /></td></tr>)}</tbody>;
-  if (type === "BUSINESS_UNIT") return <tbody>{catalog.businessUnits.map((item) => <tr key={item.id}><td><b>{item.code}</b></td><td><OverflowCell value={item.name} /></td><td><OverflowCell value={nameByOne(catalog.companies, item.companyId)} /></td><td>-</td><td><StatusBadge status={item.status} /></td><td><EditAction item={item} readOnly={readOnly} onEdit={onEdit} /></td></tr>)}</tbody>;
-  if (type === "ESTABLISHMENT") return <tbody>{catalog.establishments.map((item) => <tr key={item.id}><td><b>{item.code}</b></td><td><OverflowCell value={item.name} /><span className="table-sub">{item.locality}, {item.department}</span></td><td><OverflowCell value={nameByOne(catalog.companies, item.companyId)} /></td><td><OverflowCell value={nameByOne(catalog.businessUnits, item.businessUnitId)} /></td><td><StatusBadge status={item.status} /></td><td><EditAction item={item} readOnly={readOnly} onEdit={onEdit} /></td></tr>)}</tbody>;
-  if (type === "AREA") return <tbody>{catalog.areas.map((item) => <tr key={item.id}><td><b>{item.code}</b></td><td><OverflowCell value={item.name} /></td><td><OverflowCell value={nameByOne(catalog.establishments, item.establishmentId)} /></td><td><OverflowCell value={nameByOne(catalog.businessUnits, deriveAreaBusinessUnitId(catalog, item.establishmentId))} /></td><td><StatusBadge status={item.status} /></td><td><EditAction item={item} readOnly={readOnly} onEdit={onEdit} /></td></tr>)}</tbody>;
-  if (type === "SECTOR") return <tbody>{catalog.sectors.map((item) => <tr key={item.id}><td><b>{item.code}</b></td><td><OverflowCell value={item.name} /></td><td><OverflowCell value={nameByOne(catalog.areas, item.areaId)} /></td><td><OverflowCell value={nameByOne(catalog.establishments, deriveSectorEstablishmentId(catalog, item.areaId))} /></td><td><StatusBadge status={item.status} /></td><td><EditAction item={item} readOnly={readOnly} onEdit={onEdit} /></td></tr>)}</tbody>;
-  return <tbody>{catalog.costCenters.map((item) => <tr key={item.id}><td><b>{item.code}</b></td><td><OverflowCell value={item.name} /><span className="table-sub">{item.finnegansCode || "Sin codigo Finnegans"}</span></td><td><OverflowCell value={nameById(catalog.companies, item.companyIds)} /></td><td><OverflowCell value={nameById(catalog.sectors, item.sectorIds)} /></td><td><StatusBadge status={item.status} /></td><td><EditAction item={item} readOnly={readOnly} onEdit={onEdit} /></td></tr>)}</tbody>;
+function Rows({ type, catalog, items, readOnly, onEdit }: { type: Tab; catalog: OrgStructureCatalog; items: readonly Editable[]; readOnly: boolean; onEdit: (item: Editable) => void }) {
+  if (type === "COMPANY") return <tbody>{(items as OrgCompany[]).map((item) => <tr key={item.id}><td><b>{item.code}</b></td><td><OverflowCell value={item.name} /><span className="table-sub">{item.legalName}</span></td><td>{item.cuit || "-"}</td><td>-</td><td><StatusBadge status={item.status} /></td><td><EditAction item={item} readOnly={readOnly} onEdit={onEdit} /></td></tr>)}</tbody>;
+  if (type === "BUSINESS_UNIT") return <tbody>{(items as OrgBusinessUnit[]).map((item) => <tr key={item.id}><td><b>{item.code}</b></td><td><OverflowCell value={item.name} /></td><td><OverflowCell value={nameByOne(catalog.companies, item.companyId)} /></td><td>-</td><td><StatusBadge status={item.status} /></td><td><EditAction item={item} readOnly={readOnly} onEdit={onEdit} /></td></tr>)}</tbody>;
+  if (type === "ESTABLISHMENT") return <tbody>{(items as OrgEstablishment[]).map((item) => <tr key={item.id}><td><b>{item.code}</b></td><td><OverflowCell value={item.name} /><span className="table-sub">{item.locality}, {item.department}</span></td><td><OverflowCell value={nameByOne(catalog.companies, item.companyId)} /></td><td><OverflowCell value={nameByOne(catalog.businessUnits, item.businessUnitId)} /></td><td><StatusBadge status={item.status} /></td><td><EditAction item={item} readOnly={readOnly} onEdit={onEdit} /></td></tr>)}</tbody>;
+  if (type === "AREA") return <tbody>{(items as OrgArea[]).map((item) => <tr key={item.id}><td><b>{item.code}</b></td><td><OverflowCell value={item.name} /></td><td><OverflowCell value={nameByOne(catalog.establishments, item.establishmentId)} /></td><td><OverflowCell value={nameByOne(catalog.businessUnits, deriveAreaBusinessUnitId(catalog, item.establishmentId))} /></td><td><StatusBadge status={item.status} /></td><td><EditAction item={item} readOnly={readOnly} onEdit={onEdit} /></td></tr>)}</tbody>;
+  if (type === "SECTOR") return <tbody>{(items as OrgSector[]).map((item) => <tr key={item.id}><td><b>{item.code}</b></td><td><OverflowCell value={item.name} /></td><td><OverflowCell value={nameByOne(catalog.areas, item.areaId)} /></td><td><OverflowCell value={nameByOne(catalog.establishments, deriveSectorEstablishmentId(catalog, item.areaId))} /></td><td><StatusBadge status={item.status} /></td><td><EditAction item={item} readOnly={readOnly} onEdit={onEdit} /></td></tr>)}</tbody>;
+  return <tbody>{(items as OrgCostCenter[]).map((item) => <tr key={item.id}><td><b>{item.code}</b></td><td><OverflowCell value={item.name} /><span className="table-sub">{item.finnegansCode || "Sin codigo Finnegans"}</span></td><td><OverflowCell value={nameById(catalog.companies, item.companyIds)} /></td><td><OverflowCell value={nameById(catalog.sectors, item.sectorIds)} /></td><td><StatusBadge status={item.status} /></td><td><EditAction item={item} readOnly={readOnly} onEdit={onEdit} /></td></tr>)}</tbody>;
+}
+
+type OrgColumnKey = "code" | "name" | "primary" | "secondary" | "status";
+type RelationColumnKey = Extract<OrgColumnKey, "primary" | "secondary">;
+type OrgSortAccessors = SortAccessors<Editable, OrgColumnKey>;
+
+const orgColumns: Array<{ key: OrgColumnKey; label: string }> = [
+  { key: "code", label: "Codigo" },
+  { key: "name", label: "Nombre" },
+  { key: "primary", label: "Relacion principal" },
+  { key: "secondary", label: "Relacion secundaria" },
+  { key: "status", label: "Estado" },
+];
+
+// Relaciones ordenables por pestaña, por el nombre resuelto (vacío si no hay
+// relación, nunca el "-" renderizado). Sin accessor = columna no ordenable
+// (ej. "Relacion secundaria" de Empresas/Unidades, siempre "-").
+function relationSortAccessors(type: Tab, catalog: OrgStructureCatalog): Partial<Pick<OrgSortAccessors, RelationColumnKey>> {
+  const one = (items: { id: string; name: string }[], id: string | undefined) => namesOf(items, id ? [id] : []);
+  if (type === "COMPANY") return { primary: (item) => (item as OrgCompany).cuit };
+  if (type === "BUSINESS_UNIT") return { primary: (item) => one(catalog.companies, (item as OrgBusinessUnit).companyId) };
+  if (type === "ESTABLISHMENT") return {
+    primary: (item) => one(catalog.companies, (item as OrgEstablishment).companyId),
+    secondary: (item) => one(catalog.businessUnits, (item as OrgEstablishment).businessUnitId),
+  };
+  if (type === "AREA") return {
+    primary: (item) => one(catalog.establishments, (item as OrgArea).establishmentId),
+    secondary: (item) => one(catalog.businessUnits, deriveAreaBusinessUnitId(catalog, (item as OrgArea).establishmentId)),
+  };
+  if (type === "SECTOR") return {
+    primary: (item) => one(catalog.areas, (item as OrgSector).areaId),
+    secondary: (item) => one(catalog.establishments, deriveSectorEstablishmentId(catalog, (item as OrgSector).areaId)),
+  };
+  return {
+    primary: (item) => namesOf(catalog.companies, (item as OrgCostCenter).companyIds),
+    secondary: (item) => namesOf(catalog.sectors, (item as OrgCostCenter).sectorIds),
+  };
+}
+
+const notSortable = (): SortValue => null;
+
+// Montado con `key={tab}`: el orden arranca sin interacción en cada pestaña.
+function OrgStructureTable({ type, catalog, items, onEdit }: { type: Tab; catalog: OrgStructureCatalog; items: readonly Editable[]; onEdit: (item: Editable) => void }) {
+  const relations = useMemo(() => relationSortAccessors(type, catalog), [type, catalog]);
+  const accessors = useMemo<OrgSortAccessors>(() => ({
+    code: (item) => item.code,
+    name: (item) => item.name,
+    primary: relations.primary ?? notSortable,
+    secondary: relations.secondary ?? notSortable,
+    status: (item) => activoInactivoLabel(item.status),
+  }), [relations]);
+  const { sorted, sort, toggleSort } = useSort(items, accessors);
+  const isSortable = (key: OrgColumnKey) => (key !== "primary" && key !== "secondary") || Boolean(relations[key]);
+  return <table>
+    <thead><tr>
+      {orgColumns.map((column) => isSortable(column.key)
+        ? <SortableHeader key={column.key} label={column.label} sortKey={column.key} sort={sort} onSort={toggleSort} />
+        : <th key={column.key}>{column.label}</th>)}
+      <th>Accion</th>
+    </tr></thead>
+    <Rows type={type} catalog={catalog} items={sorted} readOnly={false} onEdit={onEdit} />
+  </table>;
 }
 
 export function OrgStructurePage() {
@@ -230,7 +288,6 @@ export function OrgStructurePage() {
     ["Establecimientos", catalog.establishments.length],
     ["Sectores", catalog.sectors.length],
   ] as const, [catalog]);
-  const { sorted: sortedCompanies, sort: companySort, toggleSort: toggleCompanySort } = useSort(catalog.companies, companySortAccessors);
   const { isRunning: isSaving, run: save } = useAsyncAction(async () => {
     if (!editing?.name.trim()) return setNotice("Completa el nombre antes de guardar.");
     const normalized = normalizeDerivedRelations(tab, editing, catalog);
@@ -270,9 +327,7 @@ export function OrgStructurePage() {
     <Tabs tabs={tabs.map((item) => ({ key: item.id, label: item.label }))} active={tab} onChange={(key) => { setTab(key as Tab); setEditing(null); }} />
     <Section title={tabs.find((item) => item.id === tab)?.label || ""} subtitle={isLoadingApi ? "Cargando estructura..." : "Administracion de relaciones y estados disponibles para operacion."}>
       <DataTable status={isLoadingApi ? "loading" : activeRows.length === 0 ? "empty" : "ready"} minWidth={940} emptyText="No hay registros cargados para esta categoria.">
-        <table><thead>{tab === "COMPANY"
-          ? <tr><SortableHeader label="Codigo" sortKey="code" sort={companySort} onSort={toggleCompanySort} /><SortableHeader label="Nombre" sortKey="name" sort={companySort} onSort={toggleCompanySort} /><SortableHeader label="Relacion principal" sortKey="cuit" sort={companySort} onSort={toggleCompanySort} /><th>Relacion secundaria</th><SortableHeader label="Estado" sortKey="status" sort={companySort} onSort={toggleCompanySort} /><th>Accion</th></tr>
-          : <tr><th>Codigo</th><th>Nombre</th><th>Relacion principal</th><th>Relacion secundaria</th><th>Estado</th><th>Accion</th></tr>}</thead><Rows type={tab} catalog={catalog} companies={sortedCompanies} readOnly={false} onEdit={setEditing} /></table>
+        <OrgStructureTable key={tab} type={tab} catalog={catalog} items={activeRows} onEdit={setEditing} />
       </DataTable>
     </Section>
     {editing && (

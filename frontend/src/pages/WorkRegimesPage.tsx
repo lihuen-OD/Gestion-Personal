@@ -18,6 +18,7 @@ import { OverflowCell } from "../components/ui/OverflowCell";
 import { PageHeader } from "../components/ui/PageHeader";
 import { Section } from "../components/ui/Section";
 import { StatCard } from "../components/ui/StatCard";
+import { SortableHeader } from "../components/ui/SortableHeader";
 import { useAuth } from "../context/AuthContext";
 import { confirmAction } from "../services/appDialog";
 import { getUserErrorMessage } from "../services/api/apiClient";
@@ -28,6 +29,7 @@ import { formatVigencyDate, vigencyLabel, vigencyTone } from "../components/shar
 import { argentinaDateKey } from "../utils/argentinaDateKey";
 import { roleLevel } from "../utils/roles";
 import { useAsyncAction } from "../utils/useAsyncAction";
+import { useSort, type SortAccessors } from "../utils/sort";
 
 // Etapa 10D: el draft edita la alerta de jornada extendida en horas enteras
 // (extendedShiftAlertHours) — la conversión a/desde minutos (lo que
@@ -87,6 +89,13 @@ export function matchesFilters(item: WorkRegime, filters: WorkRegimeFilters) {
   return true;
 }
 
+const sortAccessors: SortAccessors<WorkRegime, "code" | "name" | "kind" | "status"> = {
+  code: (item) => item.code,
+  name: (item) => item.name,
+  kind: (item) => workRegimeKindLabel(item.kind),
+  status: (item) => item.status === "ACTIVO" ? "Activo" : "Inactivo",
+};
+
 export function WorkRegimesPage() {
   const { user } = useAuth();
   const [filters, setFilters] = useState<WorkRegimeFilters>({ search: "", kind: "", status: "" });
@@ -131,7 +140,8 @@ export function WorkRegimesPage() {
   }, [refresh]);
 
   const all = apiItems ?? [];
-  const items = all.filter((item) => matchesFilters(item, filters));
+  const items = useMemo(() => all.filter((item) => matchesFilters(item, filters)), [all, filters]);
+  const { sorted, sort, toggleSort } = useSort(items, sortAccessors);
   const summary = useMemo(() => [
     ["Regímenes activos", all.filter((item) => item.status === "ACTIVO").length],
     ["Total configurados", all.length],
@@ -270,17 +280,17 @@ export function WorkRegimesPage() {
           <table>
             <thead>
               <tr>
-                <th>Código</th>
-                <th>Nombre</th>
-                <th>Tipo de régimen</th>
+                <SortableHeader label="Código" sortKey="code" sort={sort} onSort={toggleSort} />
+                <SortableHeader label="Nombre" sortKey="name" sort={sort} onSort={toggleSort} />
+                <SortableHeader label="Tipo de régimen" sortKey="kind" sort={sort} onSort={toggleSort} />
                 <th>Alerta fuera de turno</th>
                 <th>Acción jornada excedida</th>
-                <th>Estado</th>
+                <SortableHeader label="Estado" sortKey="status" sort={sort} onSort={toggleSort} />
                 <th>Acciones</th>
               </tr>
             </thead>
             <tbody>
-              {items.map((item) => (
+              {sorted.map((item) => (
                 <tr key={item.id}>
                   <td><b>{item.code}</b></td>
                   <td><OverflowCell value={item.name} />{item.description ? <span className="table-sub">{item.description}</span> : null}</td>

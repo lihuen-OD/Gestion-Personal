@@ -10,6 +10,7 @@ import { Section } from "../components/ui/Section";
 import { Button } from "../components/ui/Button";
 import { Badge } from "../components/ui/Badge";
 import { StatCard } from "../components/ui/StatCard";
+import { SortableHeader } from "../components/ui/SortableHeader";
 import { useAuth } from "../context/AuthContext";
 import { confirmAction } from "../services/appDialog";
 import { ApiError, getUserErrorMessage } from "../services/api/apiClient";
@@ -19,6 +20,7 @@ import type { HourConcept, HourConceptFilters, HourConceptKind, HourConceptLoadM
 import { roleLevel } from "../utils/roles";
 import { activoInactivoLabel } from "../utils/status";
 import { useAsyncAction } from "../utils/useAsyncAction";
+import { useSort, type SortAccessors } from "../utils/sort";
 
 const additionalKinds: HourConceptKind[] = ["EXTRA", "FERIADO", "NOCTURNA", "GUARDIA", "SERENO", "TRANSPORTE", "OTRO"];
 const loadModeLabels: Record<HourConceptLoadMode, string> = { MANUAL: "Manual", AUTOMATIC: "Automático", BOTH: "Manual y automático" };
@@ -83,6 +85,13 @@ function ConceptDataFields({ item, setItem }: { item: HourConcept; setItem: (ite
   );
 }
 
+const sortAccessors: SortAccessors<HourConcept, "code" | "name" | "kind" | "status"> = {
+  code: (item) => item.code,
+  name: (item) => item.name,
+  kind: (item) => hourConceptKindLabels[item.kind],
+  status: (item) => activoInactivoLabel(item.status),
+};
+
 export function HourConceptsPage() {
   const { user } = useAuth();
   const [filters, setFilters] = useState<HourConceptFilters>({ search: "", kind: "", status: "" });
@@ -121,7 +130,8 @@ export function HourConceptsPage() {
   }, [editing]);
 
   const all = apiItems ?? [];
-  const items = all.filter((item) => matchesFilters(item, filters));
+  const items = useMemo(() => all.filter((item) => matchesFilters(item, filters)), [all, filters]);
+  const { sorted, sort, toggleSort } = useSort(items, sortAccessors);
   const options = getFilterOptions(all);
   const summary = useMemo(() => [
     ["Activas", all.filter((item) => item.status === "ACTIVO").length],
@@ -251,9 +261,9 @@ export function HourConceptsPage() {
           onRetry={() => setRefresh((value) => value + 1)}
         >
           <table>
-            <thead><tr><th>Codigo</th><th>Concepto horario</th><th>Rol</th><th>Tipo</th><th>Modo de carga</th><th>Estado</th><th>Acción</th></tr></thead>
+            <thead><tr><SortableHeader label="Codigo" sortKey="code" sort={sort} onSort={toggleSort} /><SortableHeader label="Concepto horario" sortKey="name" sort={sort} onSort={toggleSort} /><th>Rol</th><SortableHeader label="Tipo" sortKey="kind" sort={sort} onSort={toggleSort} /><th>Modo de carga</th><SortableHeader label="Estado" sortKey="status" sort={sort} onSort={toggleSort} /><th>Acción</th></tr></thead>
             <tbody>
-              {items.map((item) => (
+              {sorted.map((item) => (
                 <tr key={item.id}>
                   <td><b>{item.code}</b></td>
                   <td><OverflowCell value={item.name} /></td>

@@ -2442,8 +2442,9 @@ a.employee-hours-status-item:hover{border-color:var(--ds-blue-300);background:va
 .info-note.readiness-blocked b{color:var(--color-warning)!important}
 .info-note.readiness-blocked p{margin:8px 0 4px;font-weight:600;color:var(--color-text-secondary)}
 .readiness-reasons{margin:0;padding-left:18px;display:grid;gap:3px;font-size:12px}
-.sortable-header{display:inline-flex;align-items:center;gap:4px;margin:0;padding:0;border:0;background:none;color:inherit;font:inherit;letter-spacing:inherit;text-transform:inherit;cursor:pointer}
-.sortable-header svg{flex-shrink:0;opacity:.45}
+.sortable-header{display:inline-block;margin:0;padding:0;border:0;background:none;color:inherit;font:inherit;letter-spacing:inherit;text-align:inherit;text-transform:inherit;cursor:pointer}
+.sortable-header svg{display:inline-block;margin-left:4px;vertical-align:-2px;opacity:.45}
+.sortable-header-tail{white-space:nowrap}
 .sortable-header:hover,.sortable-header.active{color:var(--color-text-primary)}
 .sortable-header:hover svg,.sortable-header.active svg{opacity:1}
 .sortable-header:focus-visible{outline:2px solid var(--color-primary);outline-offset:2px;border-radius:2px}

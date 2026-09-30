@@ -15,10 +15,12 @@ import { Modal } from "../components/ui/Modal";
 import { Field, Select } from "../components/ui/FormControls";
 import { Button } from "../components/ui/Button";
 import { Badge } from "../components/ui/Badge";
+import { SortableHeader } from "../components/ui/SortableHeader";
 import { statusTone } from "../utils/status";
 import { roleOptions } from "../utils/roles";
 import { displayLegajo } from "../utils/employee";
 import { useAsyncAction } from "../utils/useAsyncAction";
+import { useSort, type SortAccessors } from "../utils/sort";
 import { confirmAction } from "../services/appDialog";
 import { getUserErrorMessage } from "../services/api/apiClient";
 import { uniqueOptions } from "../components/employees/options/sharedOptions";
@@ -42,6 +44,16 @@ function emptyUserDraft(): UserDraft {
     employeeName: "",
   };
 }
+
+// Empresa / Area: sin empresa (se muestra "Acceso global") queda al final, como cualquier vacío.
+const sortAccessors: SortAccessors<User, "name" | "email" | "role" | "status" | "scope" | "employee"> = {
+  name: (user) => user.name,
+  email: (user) => user.email,
+  role: (user) => user.role,
+  status: (user) => user.status,
+  scope: (user) => [user.company, user.sector].filter(Boolean).join(" - "),
+  employee: (user) => user.employeeName,
+};
 
 export function UsersPage() {
   const { user: currentUser } = useAuth();
@@ -180,6 +192,8 @@ export function UsersPage() {
     }
   };
 
+  const { sorted, sort, toggleSort } = useSort(users, sortAccessors);
+
   if (roleLevel(currentUser!.role) !== 1) return <Navigate to="/" />;
 
   return <>
@@ -201,17 +215,17 @@ export function UsersPage() {
         <table>
           <thead>
             <tr>
-              <th>Nombre</th>
-              <th>Email</th>
-              <th>Rol</th>
-              <th>Estado</th>
-              <th>Empresa / Area</th>
-              <th>Empleado vinculado</th>
+              <SortableHeader label="Nombre" sortKey="name" sort={sort} onSort={toggleSort} />
+              <SortableHeader label="Email" sortKey="email" sort={sort} onSort={toggleSort} />
+              <SortableHeader label="Rol" sortKey="role" sort={sort} onSort={toggleSort} />
+              <SortableHeader label="Estado" sortKey="status" sort={sort} onSort={toggleSort} />
+              <SortableHeader label="Empresa / Area" sortKey="scope" sort={sort} onSort={toggleSort} />
+              <SortableHeader label="Empleado vinculado" sortKey="employee" sort={sort} onSort={toggleSort} />
               <th>Acciones</th>
             </tr>
           </thead>
           <tbody>
-            {users.map((user) => (
+            {sorted.map((user) => (
               <tr key={user.id}>
                 <td><b>{user.name}</b></td>
                 <td>{user.email}</td>

@@ -4,6 +4,7 @@ import { Navigate } from "react-router-dom";
 import { OverflowCell } from "../components/ui/OverflowCell";
 import { FilterPanel } from "../components/ui/FilterPanel";
 import { StatCard } from "../components/ui/StatCard";
+import { SortableHeader } from "../components/ui/SortableHeader";
 import { DataTable } from "../components/ui/DataTable";
 import { PageHeader } from "../components/ui/PageHeader";
 import { Section } from "../components/ui/Section";
@@ -19,6 +20,7 @@ import { documentCategoryKindLabels, documentCategoryScopeLabels, documentLinkPr
 import { roleLevel } from "../utils/roles";
 import { activoInactivoLabel } from "../utils/status";
 import { useAsyncAction } from "../utils/useAsyncAction";
+import { useSort, type SortAccessors } from "../utils/sort";
 
 const roles: Role[] = ["Nivel 1 - RRHH", "Nivel 2 - Supervisión / Gestión", "Nivel 3 - Administrativo de Carga Horaria"];
 const kinds: DocumentCategoryKind[] = ["PERSONAL", "LABORAL", "MEDICA", "LIQUIDACION", "TRANSPORTE", "CAPACITACION", "LEGAL", "NOVEDAD", "OTRO"];
@@ -75,6 +77,13 @@ function CategoryEditor({ item, setItem }: { item: DocumentCategory; setItem: (i
   </div>;
 }
 
+const sortAccessors: SortAccessors<DocumentCategory, "code" | "name" | "kind" | "status"> = {
+  code: (item) => item.code,
+  name: (item) => item.name,
+  kind: (item) => documentCategoryKindLabels[item.kind],
+  status: (item) => activoInactivoLabel(item.status),
+};
+
 export function DocumentCategoriesPage() {
   const { user } = useAuth();
   const [filters, setFilters] = useState(documentCategoryApiService.getEmptyFilters());
@@ -100,7 +109,8 @@ export function DocumentCategoriesPage() {
       mounted = false;
     };
   }, [refresh]);
-  const items = documentCategoryApiService.getFiltered(all, filters);
+  const items = useMemo(() => documentCategoryApiService.getFiltered(all, filters), [all, filters]);
+  const { sorted, sort, toggleSort } = useSort(items, sortAccessors);
   const options = documentCategoryApiService.getFilterOptions(all);
   const summary = useMemo(() => [["Categorias", all.length], ["Obligatorias", all.filter((item) => item.rules.mandatory).length], ["Con vencimiento", all.filter((item) => item.rules.expires).length], ["Con aprobacion", all.filter((item) => item.rules.requiresApproval).length]] as const, [all]);
   const { isRunning: isSaving, run: save } = useAsyncAction(async () => {
@@ -127,7 +137,7 @@ export function DocumentCategoriesPage() {
     <Section title="Listado de categorias" subtitle={`${items.length} resultados segun filtros aplicados.`}>
       <FilterPanel search={{ value: filters.search, onChange: (value) => setFilters({ ...filters, search: value }), placeholder: "Buscar por codigo, nombre o vinculo externo" }}><label>Tipo<select value={filters.kind} onChange={(event) => setFilters({ ...filters, kind: event.target.value })}><option value="">Todos</option>{options.kinds.map((kind) => <option key={kind} value={kind}>{documentCategoryKindLabels[kind]}</option>)}</select></label><label>Modulo<select value={filters.scope} onChange={(event) => setFilters({ ...filters, scope: event.target.value })}><option value="">Todos</option>{options.scopes.map((scope) => <option key={scope} value={scope}>{documentCategoryScopeLabels[scope]}</option>)}</select></label><label>Obligatoria<select value={filters.mandatory} onChange={(event) => setFilters({ ...filters, mandatory: event.target.value })}><option value="">Todas</option><option value="true">Si</option><option value="false">No</option></select></label><label>Estado<select value={filters.status} onChange={(event) => setFilters({ ...filters, status: event.target.value })}><option value="">Todos</option>{options.statuses.map((status) => <option key={status} value={status}>{activoInactivoLabel(status)}</option>)}</select></label></FilterPanel>
       <DataTable status={listStatus === "loading" ? "loading" : listStatus === "error" ? "error" : items.length === 0 ? "empty" : "ready"} minWidth={1080} emptyText="No hay categorias documentales con los filtros aplicados." errorMessage="No se pudieron cargar las categorias documentales." onRetry={() => setRefresh((value) => value + 1)}>
-        <table><thead><tr><th>Codigo</th><th>Categoria</th><th>Tipo</th><th>Modulos</th><th>Reglas</th><th>Estado</th><th>Accion</th></tr></thead><tbody>{items.map((item) => <tr key={item.id}><td><b>{item.code}</b></td><td><OverflowCell value={item.name} /><span className="table-sub">{item.description}</span></td><td>{documentCategoryKindLabels[item.kind]}</td><td><OverflowCell value={item.scopes.map((scope) => documentCategoryScopeLabels[scope]).join(", ")} /></td><td><OverflowCell value={`${item.rules.mandatory ? "Obligatoria" : "Opcional"} · ${item.rules.expires ? `Vence / alerta ${item.rules.alertBeforeDays}d` : "Sin vencimiento"}`} /></td><td><Badge tone={item.status === "ACTIVO" ? "success" : "neutral"}>{activoInactivoLabel(item.status)}</Badge></td><td><button className="table-icon-action" title="Editar" aria-label="Editar" onClick={() => setEditing(item)}><Pencil size={14}/><span>Editar</span></button></td></tr>)}</tbody></table>
+        <table><thead><tr><SortableHeader label="Codigo" sortKey="code" sort={sort} onSort={toggleSort} /><SortableHeader label="Categoria" sortKey="name" sort={sort} onSort={toggleSort} /><SortableHeader label="Tipo" sortKey="kind" sort={sort} onSort={toggleSort} /><th>Modulos</th><th>Reglas</th><SortableHeader label="Estado" sortKey="status" sort={sort} onSort={toggleSort} /><th>Accion</th></tr></thead><tbody>{sorted.map((item) => <tr key={item.id}><td><b>{item.code}</b></td><td><OverflowCell value={item.name} /><span className="table-sub">{item.description}</span></td><td>{documentCategoryKindLabels[item.kind]}</td><td><OverflowCell value={item.scopes.map((scope) => documentCategoryScopeLabels[scope]).join(", ")} /></td><td><OverflowCell value={`${item.rules.mandatory ? "Obligatoria" : "Opcional"} · ${item.rules.expires ? `Vence / alerta ${item.rules.alertBeforeDays}d` : "Sin vencimiento"}`} /></td><td><Badge tone={item.status === "ACTIVO" ? "success" : "neutral"}>{activoInactivoLabel(item.status)}</Badge></td><td><button className="table-icon-action" title="Editar" aria-label="Editar" onClick={() => setEditing(item)}><Pencil size={14}/><span>Editar</span></button></td></tr>)}</tbody></table>
       </DataTable>
     </Section>
     {editing && <Section title={editing.name || "Nueva categoria"} subtitle="Definicion documental, reglas de vencimiento, permisos y vinculos externos." action={<div className="hero-actions"><Button variant="subtle" onClick={() => setEditing(null)}>Cerrar</Button><Button variant="primary" onClick={save} disabled={isSaving}>{isSaving ? "Guardando..." : "Guardar categoria"}</Button></div>}>

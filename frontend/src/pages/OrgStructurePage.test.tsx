@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
-import type { OrgCompany } from "../types/orgStructure.types";
+import type { OrgArea, OrgCompany, OrgSector } from "../types/orgStructure.types";
 
 const companies: OrgCompany[] = [
   { id: "1", code: "EMP-10", name: "beta", legalName: "", cuit: "", status: "ACTIVO" },
@@ -10,10 +10,20 @@ const companies: OrgCompany[] = [
   { id: "3", code: "EMP-1", name: "Cedro", legalName: "", cuit: "30-1", status: "ACTIVO" },
 ];
 
+const areas: OrgArea[] = [
+  { id: "a1", code: "AREA-1", name: "Operaciones", status: "ACTIVO" },
+  { id: "a2", code: "AREA-2", name: "Administración", status: "ACTIVO" },
+];
+const sectors: OrgSector[] = [
+  { id: "s1", code: "SEC-1", name: "Sin área", areaId: undefined, status: "ACTIVO" },
+  { id: "s2", code: "SEC-2", name: "Depósito", areaId: "a1", status: "ACTIVO" },
+  { id: "s3", code: "SEC-3", name: "Tesorería", areaId: "a2", status: "ACTIVO" },
+];
+
 vi.mock("../context/AuthContext", () => ({ useAuth: () => ({ user: { role: "Nivel 1 - RRHH" } }) }));
 vi.mock("../services/api/orgStructureApiService", () => ({
   orgStructureApiService: {
-    getCatalog: () => Promise.resolve({ companies, businessUnits: [], establishments: [], areas: [], sectors: [], costCenters: [] }),
+    getCatalog: () => Promise.resolve({ companies, businessUnits: [], establishments: [], areas, sectors, costCenters: [] }),
   },
 }));
 
@@ -66,5 +76,18 @@ describe("OrgStructurePage — ordenamiento de Empresas", () => {
     expect(within(header("Accion")).queryByRole("button")).toBeNull();
     expect(header("Accion")).not.toHaveAttribute("aria-sort");
     expect(within(header("Relacion secundaria")).queryByRole("button")).toBeNull();
+  });
+
+  it("Sectores: ordena por el nombre del área real, sin relación al final, y el orden se reinicia al cambiar de pestaña", async () => {
+    await renderPage();
+    await userEvent.click(screen.getByRole("button", { name: "Nombre" }));
+    await userEvent.click(screen.getByRole("button", { name: "Sectores" }));
+    await screen.findByText("SEC-1");
+    expect(header("Nombre")).toHaveAttribute("aria-sort", "none");
+    const button = screen.getByRole("button", { name: "Relacion principal" });
+    await userEvent.click(button);
+    expect(column(2)).toEqual(["Administración", "Operaciones", "-"]);
+    await userEvent.click(button);
+    expect(column(2)).toEqual(["Operaciones", "Administración", "-"]);
   });
 });
