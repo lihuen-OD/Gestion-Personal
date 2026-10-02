@@ -16,11 +16,12 @@ import { confirmAction } from "../services/appDialog";
 import { ApiError, getUserErrorMessage } from "../services/api/apiClient";
 import { hourConceptApiService } from "../services/api/hourConceptApiService";
 import type { AssociatedEmployeeFilters } from "../types/associatedEmployee.types";
-import type { HourConcept, HourConceptFilters, HourConceptKind, HourConceptLoadMode } from "../types/hourConcept.types";
+import type { HourConcept, HourConceptFilters, HourConceptKind, HourConceptLoadMode, HourConceptWorkTreatment } from "../types/hourConcept.types";
 import { roleLevel } from "../utils/roles";
 import { activoInactivoLabel } from "../utils/status";
 import { useAsyncAction } from "../utils/useAsyncAction";
 import { useSort, type SortAccessors } from "../utils/sort";
+import { workTreatmentDescriptions, workTreatmentLabels, workTreatmentOptions } from "../utils/workedTimeAccounting";
 
 const additionalKinds: HourConceptKind[] = ["EXTRA", "FERIADO", "NOCTURNA", "GUARDIA", "SERENO", "TRANSPORTE", "OTRO"];
 const loadModeLabels: Record<HourConceptLoadMode, string> = { MANUAL: "Manual", AUTOMATIC: "Automático", BOTH: "Manual y automático" };
@@ -44,6 +45,9 @@ export function emptyConcept(code: string): HourConcept {
     status: "ACTIVO",
     loadMode: "MANUAL",
     systemRole: null,
+    // Sin default a propósito: si suma o no al total es una decisión de
+    // negocio explícita, nunca deducida del modo de carga.
+    workTreatment: null,
     createdAt: "",
     updatedAt: "",
   };
@@ -80,6 +84,14 @@ function ConceptDataFields({ item, setItem }: { item: HourConcept; setItem: (ite
       <label>Nombre *<input value={item.name} onChange={(event) => setItem({ ...item, name: event.target.value })} /></label>
       <label>Tipo<select value={item.kind} onChange={(event) => setItem({ ...item, kind: event.target.value as HourConceptKind })}>{additionalKinds.map((kind) => <option key={kind} value={kind}>{hourConceptKindLabels[kind]}</option>)}</select></label>
       <label>Modo de carga *<select value={item.loadMode ?? "MANUAL"} onChange={(event) => setItem({ ...item, loadMode: event.target.value as HourConceptLoadMode })}>{Object.entries(loadModeLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+      <label>
+        Tratamiento en el total *
+        <select value={item.workTreatment ?? ""} onChange={(event) => setItem({ ...item, workTreatment: (event.target.value || null) as HourConceptWorkTreatment | null })}>
+          <option value="" disabled>Seleccioná una opción</option>
+          {workTreatmentOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+        </select>
+        {item.workTreatment ? <small className="field-help">{workTreatmentDescriptions[item.workTreatment]}</small> : null}
+      </label>
       <label>Estado<select value={item.status} onChange={(event) => setItem({ ...item, status: event.target.value as "ACTIVO" | "INACTIVO" })}><option value="ACTIVO">Activo</option><option value="INACTIVO">Inactivo</option></select></label>
     </div>
   );
@@ -143,6 +155,10 @@ export function HourConceptsPage() {
     if (!editing) return;
     if (!editing.name.trim()) {
       setNotice("Completa el nombre.");
+      return;
+    }
+    if (!editing.workTreatment) {
+      setNotice("Elegí si el concepto está dentro de la jornada o suma horas adicionales.");
       return;
     }
 
@@ -236,7 +252,7 @@ export function HourConceptsPage() {
       <PageHeader
         eyebrow="CONFIGURACION"
         title="Conceptos horarios"
-        description="Horas normales representa el total trabajado. Los conceptos adicionales son desgloses para liquidación, análisis y control."
+        description="Horas base es la jornada registrada. Cada concepto adicional clasifica horas dentro de esa jornada o suma horas trabajadas fuera de la fichada."
         action={editable ? <Button variant="primary" icon={Plus} onClick={() => setEditing(emptyConcept(hourConceptApiService.getNextCode(all)))}>Crear concepto horario</Button> : undefined}
       />
 
@@ -261,13 +277,13 @@ export function HourConceptsPage() {
           onRetry={() => setRefresh((value) => value + 1)}
         >
           <table>
-            <thead><tr><SortableHeader label="Codigo" sortKey="code" sort={sort} onSort={toggleSort} /><SortableHeader label="Concepto horario" sortKey="name" sort={sort} onSort={toggleSort} /><th>Rol</th><SortableHeader label="Tipo" sortKey="kind" sort={sort} onSort={toggleSort} /><th>Modo de carga</th><SortableHeader label="Estado" sortKey="status" sort={sort} onSort={toggleSort} /><th>Acción</th></tr></thead>
+            <thead><tr><SortableHeader label="Codigo" sortKey="code" sort={sort} onSort={toggleSort} /><SortableHeader label="Concepto horario" sortKey="name" sort={sort} onSort={toggleSort} /><th>Tratamiento</th><SortableHeader label="Tipo" sortKey="kind" sort={sort} onSort={toggleSort} /><th>Modo de carga</th><SortableHeader label="Estado" sortKey="status" sort={sort} onSort={toggleSort} /><th>Acción</th></tr></thead>
             <tbody>
               {sorted.map((item) => (
                 <tr key={item.id}>
                   <td><b>{item.code}</b></td>
                   <td><OverflowCell value={item.name} /></td>
-                  <td>{item.systemRole === "NORMAL_BASE" ? <Badge tone="neutral">Base del sistema</Badge> : "Adicional"}</td>
+                  <td>{item.systemRole === "NORMAL_BASE" ? <Badge tone="neutral">Base del sistema</Badge> : item.workTreatment ? workTreatmentLabels[item.workTreatment] : "Sin definir"}</td>
                   <td>{hourConceptKindLabels[item.kind]}</td>
                   <td>{item.loadMode ? loadModeLabels[item.loadMode] : "No aplica"}</td>
                   <td><Badge tone={item.status === "ACTIVO" ? "success" : "neutral"}>{activoInactivoLabel(item.status)}</Badge></td>
@@ -302,7 +318,7 @@ export function HourConceptsPage() {
         <div ref={editorRef} className="detail-section-stack">
           <Section
             title={isExistingConcept ? "Editar concepto horario" : "Nuevo concepto horario"}
-            subtitle="Configura un desglose adicional. No reemplaza ni incrementa Horas normales."
+            subtitle="Configurá el concepto y si clasifica horas dentro de la jornada o suma horas adicionales al total trabajado."
             action={<div className="hero-actions"><Button variant="subtle" onClick={() => setEditing(null)}>Cancelar</Button><Button variant="primary" onClick={save} disabled={isSaving}>{isSaving ? "Guardando..." : "Guardar"}</Button></div>}
           >
             <ConceptDataFields item={editing} setItem={setEditing} />

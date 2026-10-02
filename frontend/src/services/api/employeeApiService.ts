@@ -9,6 +9,7 @@ import { positionApiService } from "./positionApiService";
 import { mapTimeEntryFromApi, type ApiTimeEntry } from "./timeEntryApiService";
 import { userApiService } from "./userApiService";
 import { cachePolicies, cachedData, invalidateCacheFamily } from "../cache";
+import type { PeriodAccounting } from "../../types/workedTimeAccounting.types";
 import { currentCacheScope } from "../cache/cacheKey";
 import { calculateLaborStatus, resolveCurrentLaborPeriod } from "../employeeStatusService";
 import type { Employee, EmployeeStatus, LaborMovement, Novelty, TimeEntry } from "../../types";
@@ -115,13 +116,10 @@ type ApiEmployeeSummaryResponse = {
   };
 };
 
-// Etapa 11B: Horas Especiales por día en el detalle por legajo — mismo
-// criterio ya usado en la grilla de período (11A/11A.1), sólo se incluye la
-// clave del día cuando hay un multiplicador > 1.
+// Indicador de Hora Especial por día (sólo presentación: punto y nombre de la
+// regla). Las horas del día viven en `accounting.days[day]`.
 export type ApiTimeGridSpecialHourDay = {
   multiplier: number;
-  additionalMinutes: number;
-  liquidableTotalMinutes: number;
   ruleNames: string[];
   conflict: boolean;
 };
@@ -136,20 +134,25 @@ type ApiTimeGridResponse = {
     rows: Array<{
       concept: Parameters<typeof mapHourConceptFromApi>[0];
       role: "NORMAL_BASE" | "ADDITIONAL";
+      enabled: boolean;
       minutesByDay: Record<string, number>;
       totalMinutes: number;
     }>;
-    totalWorkedMinutes: number;
+    accounting: PeriodAccounting;
     attendanceIssues: number;
     specialHoursByDay?: Record<string, ApiTimeGridSpecialHourDay>;
-    specialHourAdditionalMinutes?: number;
-    specialHourLiquidableTotalMinutes?: number;
   };
 };
 
+// Filas de la grilla por legajo (docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md):
+// NORMAL_BASE = Horas base registradas; ADDITIONAL = un concepto, cuyo
+// `concept.workTreatment` indica si está dentro de la jornada o suma al total.
+// `enabled: false` = concepto con horas en el período que hoy ya no está
+// habilitado (sólo lectura).
 export type EmployeeTimeGridRow = {
   concept: HourConcept;
   role: "NORMAL_BASE" | "ADDITIONAL";
+  enabled: boolean;
   minutesByDay: Record<string, number>;
   totalMinutes: number;
 };
@@ -161,11 +164,10 @@ export type EmployeeTimeGrid = {
   noveltyTypes: NoveltyType[];
   hourConcepts: HourConcept[];
   rows: EmployeeTimeGridRow[];
-  totalWorkedMinutes: number;
+  // Única fuente de base, Horas normales, total trabajado y equivalencia.
+  accounting: PeriodAccounting;
   attendanceIssues: number;
   specialHoursByDay: Record<string, ApiTimeGridSpecialHourDay>;
-  specialHourAdditionalMinutes: number;
-  specialHourLiquidableTotalMinutes: number;
 };
 
 export type ManualHourConceptBreakdownInput = {
@@ -593,10 +595,14 @@ async function invalidateEmployeeDependentCaches(reason: string) {
 // Bandeja de revisión (family "pending", para los 4 mutadores que cambian
 // status EN_REVISION) podían quedar hasta 30s desactualizadas tras guardar,
 // aprobar, rechazar o devolver un desglose manual.
+// docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md: un concepto de horas
+// adicionales cambia el total trabajado, así que también el KPI "Horas
+// cargadas" del dashboard.
 async function invalidateHourConceptBreakdownDependentCaches(reason: string) {
   await Promise.all([
     invalidateCacheFamily("time-entries", reason),
     invalidateCacheFamily("pending", reason),
+    invalidateCacheFamily("dashboard", reason),
   ]);
 }
 
@@ -751,11 +757,9 @@ export const employeeApiService = {
       noveltyTypes: response.data.noveltyTypes.map(mapNoveltyTypeFromApi),
       hourConcepts: response.data.hourConcepts.map(mapHourConceptFromApi),
       rows: response.data.rows.map((row) => ({ ...row, concept: mapHourConceptFromApi(row.concept) })),
-      totalWorkedMinutes: response.data.totalWorkedMinutes,
+      accounting: response.data.accounting,
       attendanceIssues: response.data.attendanceIssues || 0,
       specialHoursByDay: response.data.specialHoursByDay || {},
-      specialHourAdditionalMinutes: response.data.specialHourAdditionalMinutes || 0,
-      specialHourLiquidableTotalMinutes: response.data.specialHourLiquidableTotalMinutes ?? response.data.totalWorkedMinutes,
     };
   },
   async saveManualHourConceptBreakdown(employeeId: string, input: ManualHourConceptBreakdownInput) {
@@ -796,7 +800,10 @@ export const employeeApiService = {
       `/employees/${employeeId}/hour-concept-breakdowns/recalculate-automatic`,
       { method: "POST", body: { period } },
     );
-    await invalidateCacheFamily("time-entries", "automatic hour concept breakdowns recalculated");
+    await Promise.all([
+      invalidateCacheFamily("time-entries", "automatic hour concept breakdowns recalculated"),
+      invalidateCacheFamily("dashboard", "automatic hour concept breakdowns recalculated"),
+    ]);
     return response.data;
   },
   // Etapa 14D.2.1: `positionId` se pasa al backend (habilita el camino

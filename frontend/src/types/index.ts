@@ -62,7 +62,6 @@ export interface TimeEntry {
   // `isSpecial` (Conceptos Horarios, dominio distinto, ver 8A/11A).
   // specialHourMultiplier=1 o ausente significa "sin regla aplicada".
   specialHourMultiplier?: number;
-  specialHourLiquidableHours?: number;
   specialHourRuleNames?: string[];
   specialHourConflict?: boolean;
 }

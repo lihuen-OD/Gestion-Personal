@@ -11,7 +11,8 @@ import { mapEmployeeFromApi } from "./employeeApiService";
 import { hourConceptApiService } from "./hourConceptApiService";
 import { cachePolicies, cachedData, invalidateCacheFamily } from "../cache";
 import type { Employee, TimeEntry, TimeStatus, User } from "../../types";
-import type { HoursExportRow } from "../../utils/hoursExport";
+import type { HoursExportColumn } from "../../utils/hoursExport";
+import type { PeriodAccounting, PeriodAccountingSummary } from "../../types/workedTimeAccounting.types";
 
 type ApiApprovalStatus =
   | "BORRADOR"
@@ -67,41 +68,27 @@ export type ApiTimeEntry = {
   };
 };
 
-type ApiEmployeePeriodDailyBreakdown = {
+// Por día: novedad e indicador de Hora Especial. Las horas viven en
+// `summary.accounting.days[day]` (docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md).
+export type EmployeePeriodDay = {
   day: number;
-  normal: number;
-  special: number;
-  total: number;
   novelty: { label: string } | null;
-  // Etapa 11A: Horas Especiales (DoubleHourRule, feriado/domingo x2) —
-  // separado de `special` (Conceptos Horarios/HourConceptBreakdown, sin
-  // relación). specialHourMultiplier=1 significa "sin regla aplicada".
-  specialHourMultiplier?: number;
-  // Etapa 11A.1: adicional liquidable TOTAL del día (Hora normal + Conceptos
-  // Horarios alcanzados por la misma regla) y total liquidable del día
-  // (real + adicional). Ver docs/decisions/HOURS_GRID_SPECIAL_HOURS_LIQUIDABLE_11A1.md.
-  specialHourAdditionalHours?: number;
-  specialHourLiquidableTotal?: number;
-  specialHourRuleNames?: string[];
-  specialHourConflict?: boolean;
+  specialHourRuleNames: string[];
+  specialHourConflict: boolean;
 };
 
 type ApiEmployeePeriodRow = {
   employee: Parameters<typeof mapEmployeeFromApi>[0];
   summary: {
-    total: number;
-    normal: number;
-    special: number;
-    incidents: number;
+    incidents?: number;
     status: ApiApprovalStatus;
-    specialHourAdditionalHours?: number;
-    specialHourLiquidableTotal?: number;
-    // Etapa 11C: sólo la vista "Por persona" de la Bandeja (listByEmployee)
-    // expone estos dos a nivel de resumen del período — la grilla de período
-    // (getPeriodEmployees) los expone por día en dailyBreakdown, no acá.
+    // Contabilidad única calculada por el backend: base, Horas normales,
+    // conceptos dentro de la jornada, horas adicionales, total trabajado y
+    // equivalencia para liquidación. "Por persona" la recibe sin `days`.
+    accounting: PeriodAccountingSummary;
     specialHourRuleNames?: string[];
     specialHourConflict?: boolean;
-    dailyBreakdown?: ApiEmployeePeriodDailyBreakdown[];
+    dailyBreakdown?: EmployeePeriodDay[];
   };
 };
 
@@ -167,31 +154,17 @@ type ApiSummaryResponse = {
 type ApiExportResponse = {
   data: {
     total: number;
-    rows: Array<{
-      CUIL: string;
-      Apellido: string;
-      Nombre: string;
-      Legajo: string;
-      Empresa: string;
-      "Centro de costo": string;
-      "Horas normales": string;
-      "Horas especiales": string;
-      "Horas trabajadas totales": string;
-      "Horas especiales (equivalente liquidable)": string;
-      "Conceptos horarios (equivalente liquidable)": string;
-      "Adicional por horas especiales": string;
-      "Total liquidable": string;
-      "Reglas de horas especiales aplicadas": string;
-      "Conflicto de reglas": string;
-      Estado: string;
-    }>;
+    // Columnas definidas por el backend (fijas + 2 por concepto del período:
+    // horas reales y para liquidación). El frontend no arma columnas propias.
+    columns: HoursExportColumn[];
+    rows: Array<Record<string, string>>;
+    definitive: boolean;
   };
 };
 
 const countableStatuses = new Set<TimeStatus>(["Aprobado", "En revisión"]);
 const exportableStatuses = new Set<TimeStatus>(["Aprobado"]);
 const lockedStatuses = new Set<TimeStatus>(["Aprobado", "Cerrado", "Exportado"]);
-const statusPriority: TimeStatus[] = ["Devuelto", "En revisión", "Rechazado", "Pendiente", "Borrador", "Aprobado", "Cerrado", "Exportado"];
 
 const statusFromApi: Record<ApiApprovalStatus, TimeStatus> = {
   BORRADOR: "Borrador",
@@ -291,36 +264,16 @@ export function mapTimeEntryFromApi(item: ApiTimeEntry): TimeEntry {
     isSpecial: item.hourConcept?.kind !== "NORMAL",
     employeeLegajo: item.employee?.legajo,
     employeeName: item.employee ? `${item.employee.lastName}, ${item.employee.firstName}` : undefined,
+    // Sólo el multiplicador y la regla: la equivalencia para liquidación de
+    // un registro de Horas base aislado no existe (depende de los conceptos
+    // dentro de la jornada de ese día) — la calcula el backend por persona.
     ...(specialHourMultiplier > 1
       ? {
           specialHourMultiplier,
-          specialHourLiquidableHours: hours * specialHourMultiplier,
           specialHourRuleNames: (item.timeSegment?.specialHourRuleApplications ?? []).map((application) => application.doubleHourRule.name),
           specialHourConflict: (item.timeSegment?.specialHourRuleApplications ?? []).some((application) => application.wasConflicting),
         }
       : {}),
-  };
-}
-
-function resolveEmployeePeriodStatus(entries: TimeEntry[]) {
-  return statusPriority.find((status) => entries.some((entry) => entry.status === status)) || "Pendiente";
-}
-
-function summarizePeriodEntries(entries: TimeEntry[]) {
-  const countable = entries.filter((entry) => countableStatuses.has(entry.status));
-  const approved = entries.filter((entry) => entry.status === "Aprobado");
-  const special = countable.filter((entry) => entry.isSpecial || entry.type !== "Hora normal");
-  return {
-    entries,
-    countable,
-    approved,
-    total: countable.reduce((sum, entry) => sum + entry.hours, 0),
-    normalHours: countable.filter((entry) => entry.type === "Hora normal").reduce((sum, entry) => sum + entry.hours, 0),
-    specialHours: special.reduce((sum, entry) => sum + entry.hours, 0),
-    approvedHours: approved.reduce((sum, entry) => sum + entry.hours, 0),
-    reviewHours: entries.filter((entry) => entry.status === "En revisión").reduce((sum, entry) => sum + entry.hours, 0),
-    daysWithEntries: new Set(entries.map((entry) => entry.day)).size,
-    status: resolveEmployeePeriodStatus(entries),
   };
 }
 
@@ -330,27 +283,6 @@ async function resolveHourConceptId(entry: Pick<TimeEntry, "conceptId" | "type">
   const concept = concepts.find((item) => item.name === entry.type);
   if (!concept) throw new Error(`No se encontró la hora especial "${entry.type}" entre los conceptos disponibles.`);
   return concept.id;
-}
-
-function toExportRow(row: ApiExportResponse["data"]["rows"][number]): HoursExportRow {
-  return {
-    cuil: row.CUIL,
-    apellido: row.Apellido,
-    nombre: row.Nombre,
-    legajo: row.Legajo,
-    empresa: row.Empresa,
-    centroCosto: row["Centro de costo"],
-    horasNormales: numberValue(row["Horas normales"]),
-    horasEspeciales: numberValue(row["Horas especiales"]),
-    horasTotales: numberValue(row["Horas trabajadas totales"]),
-    horasEspecialesEquivalentes: numberValue(row["Horas especiales (equivalente liquidable)"]),
-    conceptosHorariosEquivalentes: numberValue(row["Conceptos horarios (equivalente liquidable)"]),
-    adicionalPorHorasEspeciales: numberValue(row["Adicional por horas especiales"]),
-    totalLiquidable: numberValue(row["Total liquidable"]),
-    reglasAplicadas: row["Reglas de horas especiales aplicadas"],
-    conflictoDeReglas: row["Conflicto de reglas"],
-    estado: row.Estado,
-  };
 }
 
 export const timeEntryApiService = {
@@ -394,17 +326,8 @@ export const timeEntryApiService = {
         items: response.data.map((row) => ({
           employee: mapEmployeeFromApi(row.employee),
           summary: {
-            total: row.summary.total,
-            normal: row.summary.normal,
-            special: row.summary.special,
-            incidents: row.summary.incidents,
             status: statusFromApi[row.summary.status] || "Pendiente",
-            // Etapa 11C: antes de esta etapa la vista "Por persona" ni
-            // siquiera consultaba appliedMultiplier/HourConceptBreakdown —
-            // quedaba ciega a Horas Especiales, a diferencia de "Por
-            // registro" (11B) y la grilla principal (11A/11A.1).
-            specialHourAdditionalHours: row.summary.specialHourAdditionalHours || 0,
-            specialHourLiquidableTotal: row.summary.specialHourLiquidableTotal ?? row.summary.total,
+            accounting: row.summary.accounting,
             specialHourRuleNames: row.summary.specialHourRuleNames || [],
             specialHourConflict: row.summary.specialHourConflict || false,
           },
@@ -490,13 +413,9 @@ export const timeEntryApiService = {
         items: response.data.map((row) => ({
           employee: mapEmployeeFromApi(row.employee),
           summary: {
-            total: row.summary.total,
-            normal: row.summary.normal,
-            special: row.summary.special,
-            incidents: row.summary.incidents,
+            incidents: row.summary.incidents || 0,
             status: statusFromApi[row.summary.status] || "Pendiente",
-            specialHourAdditionalHours: row.summary.specialHourAdditionalHours || 0,
-            specialHourLiquidableTotal: row.summary.specialHourLiquidableTotal ?? row.summary.total,
+            accounting: row.summary.accounting as PeriodAccounting,
             dailyBreakdown: row.summary.dailyBreakdown || [],
           },
         })),
@@ -584,10 +503,10 @@ export const timeEntryApiService = {
     return mapTimeEntryFromApi(response.data);
   },
 
-  async getPeriodExportRows(period: string, includeInReview = false) {
+  async getPeriodExport(period: string, includeInReview = false) {
     const params = new URLSearchParams({ period, includeInReview: String(includeInReview) });
     const response = await apiRequest<ApiExportResponse>(`/time-entries/export?${params.toString()}`);
-    return response.data.rows.map(toExportRow);
+    return { columns: response.data.columns, rows: response.data.rows };
   },
 
   canEdit: (entry?: TimeEntry) => !entry || !lockedStatuses.has(entry.status),
@@ -598,34 +517,4 @@ export const timeEntryApiService = {
   canApprove: (user: User) => user.role === "Nivel 1 - RRHH",
   isCountableStatus: (status: TimeStatus) => countableStatuses.has(status),
   isExportableStatus: (status: TimeStatus) => exportableStatuses.has(status),
-  getEmployeePeriodSummary: (entries: TimeEntry[], employeeId: string) => summarizePeriodEntries(entries.filter((entry) => entry.employeeId === employeeId)),
-  getPeriodExportRowsFromEntries: (period: string, employees: Employee[], entries: TimeEntry[]) => {
-    return employees.map((employee) => {
-      const summary = summarizePeriodEntries(entries.filter((entry) => entry.employeeId === employee.id && entry.period === period));
-      const totalHours = summary.approved.reduce((sum, entry) => sum + entry.hours, 0);
-      return {
-        cuil: employee.cuil,
-        apellido: employee.lastName,
-        nombre: employee.firstName,
-        legajo: employee.legajoInterno || employee.legajoFinnegans || employee.legajo || "Sin cargar",
-        empresa: employee.company,
-        centroCosto: employee.costCenter,
-        horasNormales: summary.approved.filter((entry) => entry.type === "Hora normal").reduce((sum, entry) => sum + entry.hours, 0),
-        horasEspeciales: summary.approved.filter((entry) => entry.type !== "Hora normal").reduce((sum, entry) => sum + entry.hours, 0),
-        horasTotales: totalHours,
-        // Etapa 8F/11B: fallback local (modo mock o error de red) — no tiene
-        // acceso a appliedMultiplier/SpecialHourRuleApplication, así que no
-        // inventa un valor liquidable adicional; Total liquidable queda
-        // igual al real (sin evidencia de ninguna Hora Especial acá), el
-        // export por backend sí lo completa con el valor correcto.
-        horasEspecialesEquivalentes: 0,
-        conceptosHorariosEquivalentes: 0,
-        adicionalPorHorasEspeciales: 0,
-        totalLiquidable: totalHours,
-        reglasAplicadas: "",
-        conflictoDeReglas: "",
-        estado: summary.status,
-      };
-    }).filter((row) => row.horasTotales > 0);
-  },
 };

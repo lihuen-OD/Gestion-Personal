@@ -3,7 +3,8 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MonthlyClosuresPage } from "./MonthlyClosuresPage";
 import { employeeApiService } from "../services/api/employeeApiService";
-import type { EmployeeTimeGrid, EmployeeTimeGridRow } from "../services/api/employeeApiService";
+import type { EmployeeTimeGrid } from "../services/api/employeeApiService";
+import { dayAccounting, timeGridFixture } from "../test/workedTimeAccountingFixtures";
 import { workforceApiService, type MonthlyClosure } from "../services/api/workforceApiService";
 import type { Employee } from "../types";
 
@@ -81,34 +82,8 @@ function buildEmployeeOption(overrides: Partial<Employee> = {}): Employee {
   } as Employee;
 }
 
-const GRID_CONCEPT_BASE = { createdAt: "2026-01-01", updatedAt: "2026-01-01" };
-
-function buildGridRows(): EmployeeTimeGridRow[] {
-  return [
-    {
-      concept: { ...GRID_CONCEPT_BASE, id: "normal", code: "HC-NORMAL", name: "Hora normal", kind: "NORMAL", status: "ACTIVO", loadMode: null, systemRole: "NORMAL_BASE" },
-      role: "NORMAL_BASE",
-      minutesByDay: { "1": 480 },
-      totalMinutes: 480,
-    },
-  ];
-}
-
 function buildGrid(overrides: Partial<EmployeeTimeGrid> = {}): EmployeeTimeGrid {
-  return {
-    employee: {} as EmployeeTimeGrid["employee"],
-    entries: [],
-    novelties: [],
-    noveltyTypes: [],
-    hourConcepts: [],
-    rows: buildGridRows(),
-    totalWorkedMinutes: 480,
-    attendanceIssues: 0,
-    specialHoursByDay: {},
-    specialHourAdditionalMinutes: 0,
-    specialHourLiquidableTotalMinutes: 480,
-    ...overrides,
-  };
+  return timeGridFixture([dayAccounting(1)], overrides);
 }
 
 const period = new Date().toISOString().slice(0, 7);
@@ -186,7 +161,7 @@ describe("MonthlyClosuresPage — Etapa 15K (panel de revisión de horas)", () =
     expect(employeeApiService.getTimeGrid).not.toHaveBeenCalled();
 
     await user.click(screen.getByRole("button", { name: "Revisar horas de 100" }));
-    await screen.findByText("Hora normal");
+    await screen.findByText("Composición");
 
     expect(employeeApiService.getTimeGrid).toHaveBeenCalledTimes(1);
     expect(employeeApiService.getTimeGrid).toHaveBeenCalledWith("employee-1", period, { includeDetails: true });
@@ -199,10 +174,10 @@ describe("MonthlyClosuresPage — Etapa 15K (panel de revisión de horas)", () =
     await screen.findByText("100");
 
     await user.click(screen.getByRole("button", { name: "Revisar horas de 100" }));
-    await screen.findByText("Hora normal");
+    await screen.findByText("Composición");
     await user.click(screen.getByRole("button", { name: "Cerrar" }));
 
-    expect(screen.queryByText("Hora normal")).not.toBeInTheDocument();
+    expect(screen.queryByText("Composición")).not.toBeInTheDocument();
     expect(workforceApiService.approveClosures).not.toHaveBeenCalled();
     expect(workforceApiService.submitClosures).not.toHaveBeenCalled();
     expect(workforceApiService.returnClosure).not.toHaveBeenCalled();
@@ -221,10 +196,10 @@ describe("MonthlyClosuresPage — Etapa 15K (panel de revisión de horas)", () =
     await screen.findByText("100");
 
     await user.click(screen.getByRole("button", { name: "Revisar horas de 100" }));
-    await screen.findByText("Hora normal");
+    await screen.findByText("Composición");
 
-    expect(screen.getByText("Horas reales trabajadas")).toBeInTheDocument();
-    expect(screen.getByText("Conceptos horarios adicionales")).toBeInTheDocument();
+    // docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md: misma contabilidad que la grilla.
+    expect(document.querySelector(".stat-grid")).toHaveTextContent("Total trabajado9 h");
     expect(screen.getByText("Incidencias del período")).toBeInTheDocument();
     expect(screen.getByText("Novedades del período")).toBeInTheDocument();
   });
@@ -253,11 +228,11 @@ describe("MonthlyClosuresPage — Etapa 15K (performance: cero N+1)", () => {
     await screen.findByText("100");
 
     await user.click(screen.getByRole("button", { name: "Revisar horas de 100" }));
-    await screen.findByText("Hora normal");
+    await screen.findByText("Composición");
     await user.click(screen.getByRole("button", { name: "Cerrar" }));
 
     await user.click(screen.getByRole("button", { name: "Revisar horas de 200" }));
-    await screen.findByText("Hora normal");
+    await screen.findByText("Composición");
 
     expect(employeeApiService.getTimeGrid).toHaveBeenCalledTimes(2);
     expect(employeeApiService.getTimeGrid).toHaveBeenNthCalledWith(1, "employee-1", period, { includeDetails: true });

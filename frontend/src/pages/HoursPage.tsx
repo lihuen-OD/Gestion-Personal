@@ -17,7 +17,9 @@ import { ApiError } from "../services/api/apiClient";
 import { employeeApiService } from "../services/api/employeeApiService";
 import { orgStructureApiService } from "../services/api/orgStructureApiService";
 import { pendingApiService, type PendingItem } from "../services/api/pendingApiService";
-import { timeEntryApiService, type EmployeeRowSortKey, type TimeEntryListSortKey } from "../services/api/timeEntryApiService";
+import { timeEntryApiService, type EmployeePeriodDay, type EmployeeRowSortKey, type TimeEntryListSortKey } from "../services/api/timeEntryApiService";
+import type { DayAccounting, PeriodAccounting, PeriodAccountingSummary } from "../types/workedTimeAccounting.types";
+import { emptyPeriodAccounting } from "../utils/workedTimeAccounting";
 import type { ListMeta } from "../services/api/listQuery";
 import { useSortState, type SortState } from "../utils/sort";
 import { noveltyApiService } from "../services/api/noveltyApiService";
@@ -46,36 +48,24 @@ import { Pagination } from "../components/ui/Pagination";
 import { SortableHeader } from "../components/ui/SortableHeader";
 import { Tabs } from "../components/ui/Tabs";
 
-type DayBreakdown = {
-  day: number;
-  normal: number;
-  special: number;
-  total: number;
-  novelty: { label: string } | null;
-  // Etapa 11A: Horas Especiales (feriado/domingo x2 configurado en
-  // "Horas especiales") — separado de `special`, que son Conceptos
-  // Horarios (Sereno/Colectivo/etc.), un sistema distinto.
-  specialHourMultiplier?: number;
-  // Etapa 11A.1: adicional/total liquidable del día — incluye Hora normal
-  // y Conceptos Horarios adicionales alcanzados por la misma regla.
-  specialHourAdditionalHours?: number;
-  specialHourLiquidableTotal?: number;
-  specialHourRuleNames?: string[];
-  specialHourConflict?: boolean;
-};
-
 const DAY_POPOVER_WIDTH = 260;
 const DAY_VIEWPORT_PADDING = 16;
 const DAY_POPOVER_GAP = 10;
+const DAY_POPOVER_ESTIMATED_HEIGHT = 240;
 
+// Celda de un día en la grilla de período: muestra el total trabajado real
+// y, en el detalle, la composición calculada por el backend
+// (docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md) — nunca la recalcula.
 function DayCell({
   label,
-  breakdown,
+  day,
+  accounting,
   employeeId,
   period,
 }: {
   label: string;
-  breakdown?: DayBreakdown;
+  day?: EmployeePeriodDay;
+  accounting?: DayAccounting;
   employeeId: string;
   period: string;
 }) {
@@ -88,14 +78,19 @@ function DayCell({
     if (!triggerRef.current) return;
     const rect = triggerRef.current.getBoundingClientRect();
     const left = Math.min(Math.max(DAY_VIEWPORT_PADDING, rect.left), window.innerWidth - DAY_POPOVER_WIDTH - DAY_VIEWPORT_PADDING);
-    const fitsBelow = window.innerHeight - rect.bottom > 160;
-    const top = fitsBelow ? rect.bottom + DAY_POPOVER_GAP : Math.max(DAY_VIEWPORT_PADDING, rect.top - 150);
+    // Altura real del popover una vez montado (la composición del día varía
+    // según los conceptos); antes del primer render se usa una estimación.
+    const height = popoverRef.current?.offsetHeight || DAY_POPOVER_ESTIMATED_HEIGHT;
+    const fitsBelow = window.innerHeight - rect.bottom > height + DAY_POPOVER_GAP + DAY_VIEWPORT_PADDING;
+    const top = fitsBelow ? rect.bottom + DAY_POPOVER_GAP : Math.max(DAY_VIEWPORT_PADDING, rect.top - height - DAY_POPOVER_GAP);
     setPosition({ left, top });
   };
 
   useEffect(() => {
     if (!open) return undefined;
     updatePosition();
+    // Segunda pasada con la altura real ya medida.
+    const frame = window.requestAnimationFrame(updatePosition);
     const onScrollOrResize = () => updatePosition();
     const onPointerDown = (event: MouseEvent) => {
       const target = event.target as Node;
@@ -111,6 +106,7 @@ function DayCell({
     document.addEventListener("mousedown", onPointerDown);
     document.addEventListener("keydown", onEscape);
     return () => {
+      window.cancelAnimationFrame(frame);
       window.removeEventListener("resize", onScrollOrResize);
       window.removeEventListener("scroll", onScrollOrResize, true);
       document.removeEventListener("mousedown", onPointerDown);
@@ -127,9 +123,9 @@ function DayCell({
         onClick={() => setOpen((current) => !current)}
         aria-label={`Detalle del ${label}`}
       >
-        <span className={breakdown?.novelty ? "day-cell-value has-novelty" : "day-cell-value"}>{breakdown ? formatDecimalHoursDuration(breakdown.total) : "-"}</span>
-        {breakdown?.novelty ? <span className="alert-dot purple" /> : null}
-        {breakdown && (breakdown.specialHourMultiplier || 1) > 1 ? <span className="alert-dot orange" /> : null}
+        <span className={day?.novelty ? "day-cell-value has-novelty" : "day-cell-value"}>{accounting ? formatDurationMinutes(accounting.totalWorkedMinutes) : "-"}</span>
+        {day?.novelty ? <span className="alert-dot purple" /> : null}
+        {accounting && accounting.multiplier > 1 ? <span className="alert-dot orange" /> : null}
       </button>
       {open && position
         ? createPortal(
@@ -139,31 +135,37 @@ function DayCell({
               style={{ left: `${position.left}px`, top: `${position.top}px`, maxWidth: `${DAY_POPOVER_WIDTH}px` }}
             >
               <b>{label}</b>
-              {breakdown ? (
+              {accounting || day ? (
                 <>
-                  <span>Horas reales: {formatDecimalHoursDuration(breakdown.normal)}</span>
-                  {breakdown.special > 0 ? <span>Conceptos horarios (reales): {formatDecimalHoursDuration(breakdown.special)}</span> : null}
-                  {(breakdown.specialHourMultiplier || 1) > 1 ? (
+                  {accounting ? (
                     <>
-                      <span className="day-cell-special-hour">
-                        Hora especial aplicada — Multiplicador {formatMultiplier(breakdown.specialHourMultiplier)}
-                        {breakdown.specialHourRuleNames?.length ? `: ${breakdown.specialHourRuleNames.join(", ")}` : ""}
-                      </span>
-                      {breakdown.special > 0 ? (
-                        <span className="day-cell-special-hour">Conceptos alcanzados: {formatDecimalHoursDuration(breakdown.special)}</span>
+                      <span>Horas base: {formatDurationMinutes(accounting.baseMinutes)}</span>
+                      {accounting.withinBaseMinutes > 0 ? (
+                        <>
+                          <span>Horas normales: {formatDurationMinutes(accounting.normalResidualMinutes)}</span>
+                          <span>Dentro de la jornada: {formatDurationMinutes(accounting.withinBaseMinutes)}</span>
+                        </>
                       ) : null}
-                      <span className="day-cell-special-hour">Adicional liquidable: +{formatDecimalHoursDuration(breakdown.specialHourAdditionalHours || 0)}</span>
+                      {accounting.additiveMinutes > 0 ? <span>Horas adicionales: {formatDurationMinutes(accounting.additiveMinutes)}</span> : null}
+                      <span className="day-cell-worked-total"><b>Total trabajado: {formatDurationMinutes(accounting.totalWorkedMinutes)}</b></span>
+                      {accounting.multiplier > 1 ? (
+                        <>
+                          <span className="day-cell-special-hour">
+                            Hora especial aplicada — Multiplicador {formatMultiplier(accounting.multiplier)}
+                            {day?.specialHourRuleNames.length ? `: ${day.specialHourRuleNames.join(", ")}` : ""}
+                          </span>
+                          <span className="day-cell-liquidable-total"><b>Equivalencia para liquidación: {formatDurationMinutes(accounting.settlement.totalMinutes)}</b></span>
+                        </>
+                      ) : null}
+                      {accounting.withinBaseExcessMinutes > 0 ? (
+                        <span className="day-cell-special-hour-conflict">Hay horas dentro de la jornada sin horas base que las contengan. Revisá la carga.</span>
+                      ) : null}
                     </>
                   ) : null}
-                  {breakdown.specialHourConflict ? (
+                  {day?.specialHourConflict ? (
                     <span className="day-cell-special-hour-conflict">Hay más de una Hora especial en conflicto ese día. Se aplicó la de mayor prioridad.</span>
                   ) : null}
-                  {breakdown.special > 0 || (breakdown.specialHourMultiplier || 1) > 1 ? (
-                    <span className="day-cell-liquidable-total">
-                      <b>Total liquidable: {formatDecimalHoursDuration(breakdown.specialHourLiquidableTotal ?? breakdown.normal + breakdown.special)}</b>
-                    </span>
-                  ) : null}
-                  {breakdown.novelty ? <span>Novedad: {breakdown.novelty.label}</span> : null}
+                  {day?.novelty ? <span>Novedad: {day.novelty.label}</span> : null}
                 </>
               ) : (
                 <span>Sin carga ni novedades registradas.</span>
@@ -198,17 +200,17 @@ function pendingItemDayLabel(item: PendingItem) {
 function breakdownResolveErrorMessage(error: unknown) {
   if (error instanceof ApiError) {
     if (error.code === "HOUR_CONCEPT_BREAKDOWN_STATUS_NOT_RESOLVABLE") {
-      return "Este desglose ya fue resuelto por otra persona. Actualizá la bandeja e intentá de nuevo.";
+      return "Esta carga ya fue resuelta por otra persona. Actualizá la bandeja e intentá de nuevo.";
     }
     if (error.code === "HOUR_CONCEPT_BREAKDOWN_NOT_FOUND") {
-      return "No encontramos este desglose. Puede que ya no exista o esté fuera de tu alcance.";
+      return "No encontramos esta carga. Puede que ya no exista o esté fuera de tu alcance.";
     }
     if (error.code === "FORBIDDEN") {
-      return "No tenés permiso para resolver este desglose.";
+      return "No tenés permiso para resolver esta carga.";
     }
-    return "No pudimos resolver el desglose manual. Actualizá la bandeja e intentá nuevamente.";
+    return "No pudimos resolver la carga del concepto. Actualizá la bandeja e intentá nuevamente.";
   }
-  return "No pudimos resolver el desglose manual. Intentá nuevamente.";
+  return "No pudimos resolver la carga del concepto. Intentá nuevamente.";
 }
 
 // Etapa 7A: aprobar/rechazar/devolver una carga horaria o una novedad no tenía
@@ -262,14 +264,10 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
     Array<{
       employee: Employee;
       summary: {
-        total: number;
-        normal: number;
-        special: number;
         incidents: number;
         status: string;
-        specialHourAdditionalHours?: number;
-        specialHourLiquidableTotal?: number;
-        dailyBreakdown: DayBreakdown[];
+        accounting: PeriodAccounting;
+        dailyBreakdown: EmployeePeriodDay[];
       };
     }>
   >([]);
@@ -282,13 +280,10 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
   const [reviewByPerson, setReviewByPerson] = useState<Array<{
     employee: Employee;
     summary: {
-      total: number;
       status: string;
-      // Etapa 11C: Horas Especiales en la vista "Por persona" — mismo
-      // criterio ya usado en la grilla de período (11A/11A.1) y en "Por
-      // registro" (11B).
-      specialHourAdditionalHours: number;
-      specialHourLiquidableTotal: number;
+      // Misma contabilidad que la grilla, el cierre y el export
+      // (docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md).
+      accounting: PeriodAccountingSummary;
       specialHourRuleNames: string[];
       specialHourConflict: boolean;
     };
@@ -473,19 +468,15 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
   // Etapa 6L.3 (ajuste): aprobar/rechazar/devolver cargas horarias es
   // exclusivo de RRHH. canReview sigue igual para novedades (sin cambios).
   const canApprove = user ? timeEntryApiService.canApprove(user) : false;
-  const summary = (employeeId: string) => {
-    const backendSummary = periodRows.find((row) => row.employee.id === employeeId)?.summary;
-    if (backendSummary) return backendSummary;
-    const legacy = timeEntryApiService.getEmployeePeriodSummary(reviewEntries, employeeId);
-    return { ...legacy, normal: legacy.total, special: 0, incidents: 0, specialHourAdditionalHours: 0, specialHourLiquidableTotal: legacy.total, dailyBreakdown: [] as DayBreakdown[] };
-  };
+  const summary = (employeeId: string) =>
+    periodRows.find((row) => row.employee.id === employeeId)?.summary
+    ?? { incidents: 0, status: "Pendiente", accounting: emptyPeriodAccounting(), dailyBreakdown: [] as EmployeePeriodDay[] };
   const monthDays = getMonthDays(period);
   const dailyFor = (employeeId: string) => {
-    const map = new Map<number, DayBreakdown>();
+    const map = new Map<number, EmployeePeriodDay>();
     for (const entry of summary(employeeId).dailyBreakdown) map.set(entry.day, entry);
     return map;
   };
-  const exportRows = timeEntryApiService.getPeriodExportRowsFromEntries(period, employees, reviewEntries);
   const setPeriodValue = (value: string) => {
     setPage(1);
     setReviewPage(1);
@@ -493,35 +484,29 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
     setPendingBreakdownPage(1);
     setSearchParams(value ? { period: value } : {});
   };
+  // docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md: el export sale sólo del
+  // backend (misma contabilidad que la grilla y el cierre). Ya no existe el
+  // "export con los datos visibles": sin conceptos ni equivalencias por día
+  // produciría un archivo para liquidación con totales incorrectos.
   const exportHours = async () => {
     setExportError("");
     setExporting(true);
     try {
-      const rows = usesBackend ? await timeEntryApiService.getPeriodExportRows(period) : exportRows;
+      const { columns, rows } = await timeEntryApiService.getPeriodExport(period);
       if (!rows.length) {
         setExportError("No hay horas aprobadas para exportar con los filtros actuales.");
         return;
       }
       const { buildHoursExportWorkbook } = await import("../utils/hoursExport");
-      buildHoursExportWorkbook(rows, period);
+      buildHoursExportWorkbook(columns, rows, period);
     } catch (error) {
-      // Etapa 15E.2: el período todavía no tiene el cierre mensual
-      // aprobado — es un bloqueo de negocio explícito, no una falla de
-      // red/backend. A diferencia del resto de los errores (donde sí tiene
-      // sentido degradar a los datos ya visibles en pantalla), acá NUNCA
-      // hay que generar el archivo igual: haría inútil el bloqueo del
-      // backend.
+      // Etapa 15E.2: el período todavía no tiene el cierre mensual aprobado —
+      // bloqueo de negocio explícito, nunca se genera el archivo igual.
       if (error instanceof ApiError && error.code === "MONTHLY_CLOSURE_NOT_APPROVED") {
         setExportError("El período debe estar aprobado antes de exportar para liquidación.");
         return;
       }
-      if (!exportRows.length) {
-        setExportError("No pudimos preparar la exportación. Intentá nuevamente.");
-        return;
-      }
-      const { buildHoursExportWorkbook } = await import("../utils/hoursExport");
-      buildHoursExportWorkbook(exportRows, period);
-      setExportError("La exportación se generó con los datos visibles porque no pudimos obtener información adicional.");
+      setExportError("No pudimos preparar la exportación. Intentá nuevamente.");
     } finally {
       setExporting(false);
     }
@@ -638,7 +623,7 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
             <Button
               variant="subtle"
               icon={FileBarChart}
-              disabled={exporting || (!usesBackend && !exportRows.length)}
+              disabled={exporting}
               onClick={exportHours}
             >
               {exporting ? "Exportando..." : "Exportar horas"}
@@ -665,7 +650,7 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
           tone="purple"
         />
         <StatCard
-          label="Horas contables"
+          label="Total trabajado"
           value={formatDecimalHoursDuration(hoursSummary.countableHours)}
           icon={BarChart3}
           tone="green"
@@ -855,13 +840,15 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
                         </td>
                         <td>
                           <span className="total-hours-cell">
-                            <span>{formatDecimalHoursDuration(personSummary.total)}</span>
-                            {personSummary.specialHourAdditionalHours > 0 ? (
+                            <span title={personSummary.accounting.additiveMinutes > 0 ? `Base ${formatDurationMinutes(personSummary.accounting.baseMinutes)} + adicionales ${formatDurationMinutes(personSummary.accounting.additiveMinutes)}` : undefined}>
+                              {formatDurationMinutes(personSummary.accounting.totalWorkedMinutes)}
+                            </span>
+                            {personSummary.accounting.hasSpecialMultiplier ? (
                               <Badge tone={personSummary.specialHourConflict ? "danger" : "warning"}>
                                 <span
                                   title={`Hora especial aplicada${personSummary.specialHourRuleNames.length ? `: ${personSummary.specialHourRuleNames.join(", ")}` : ""}${personSummary.specialHourConflict ? " — Conflicto de reglas: se aplicó la de mayor prioridad" : ""}`}
                                 >
-                                  Total liquidable: {formatDecimalHoursDuration(personSummary.specialHourLiquidableTotal)}
+                                  Para liquidación: {formatDurationMinutes(personSummary.accounting.settlement.totalMinutes)}
                                 </span>
                               </Badge>
                             ) : null}
@@ -923,7 +910,7 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
                           {(entry.specialHourMultiplier || 1) > 1 ? (
                             <Badge tone={entry.specialHourConflict ? "danger" : "warning"}>
                               <span
-                                title={`Hora especial aplicada — Multiplicador ${formatMultiplier(entry.specialHourMultiplier)}${entry.specialHourRuleNames?.length ? `: ${entry.specialHourRuleNames.join(", ")}` : ""} — Valor liquidable: ${formatDecimalHoursDuration(entry.specialHourLiquidableHours || 0)}${entry.specialHourConflict ? " — Conflicto de reglas: se aplicó la de mayor prioridad" : ""}`}
+                                title={`Hora especial aplicada — Multiplicador ${formatMultiplier(entry.specialHourMultiplier)}${entry.specialHourRuleNames?.length ? `: ${entry.specialHourRuleNames.join(", ")}` : ""}${entry.specialHourConflict ? " — Conflicto de reglas: se aplicó la de mayor prioridad" : ""}`}
                               >
                                 {formatMultiplier(entry.specialHourMultiplier)}
                               </span>
@@ -984,8 +971,8 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
           </Section>
 
           <Section
-            title="Desgloses manuales pendientes"
-            subtitle={`${pendingBreakdownsMeta.total} conceptos adicionales pendientes de resolución — son desgloses para liquidación/análisis y no modifican Hora normal ni el total trabajado.`}
+            title="Conceptos horarios pendientes"
+            subtitle={`${pendingBreakdownsMeta.total} cargas de conceptos pendientes de resolución — las de horas adicionales suman al total trabajado al aprobarse; las de dentro de la jornada no.`}
           >
             {breakdownActionError ? <div className="form-error">{breakdownActionError}</div> : null}
             {pendingLoading ? (
@@ -1028,8 +1015,8 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
                               <div className="table-actions">
                                 <button
                                   className="table-icon-action"
-                                  title="Aprobar desglose"
-                                  aria-label="Aprobar desglose"
+                                  title="Aprobar carga del concepto"
+                                  aria-label="Aprobar carga del concepto"
                                   disabled={isResolving}
                                   onClick={() => approveBreakdown(item)}
                                 >
@@ -1038,8 +1025,8 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
                                 </button>
                                 <button
                                   className="table-icon-action danger-link"
-                                  title="Rechazar desglose"
-                                  aria-label="Rechazar desglose"
+                                  title="Rechazar carga del concepto"
+                                  aria-label="Rechazar carga del concepto"
                                   disabled={isResolving}
                                   onClick={() => openBreakdownReview(item, "reject")}
                                 >
@@ -1048,8 +1035,8 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
                                 </button>
                                 <button
                                   className="table-icon-action"
-                                  title="Devolver desglose"
-                                  aria-label="Devolver desglose"
+                                  title="Devolver carga del concepto"
+                                  aria-label="Devolver carga del concepto"
                                   disabled={isResolving}
                                   onClick={() => openBreakdownReview(item, "return")}
                                 >
@@ -1068,10 +1055,10 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
                 </table>
               </TableShell>
             ) : (
-              <EmptyState text="No hay desgloses manuales pendientes de revisión." />
+              <EmptyState text="No hay cargas de conceptos pendientes de revisión." />
             )}
             {!pendingLoading && pendingBreakdownsMeta.total > 0 ? (
-              <Pagination page={pendingBreakdownsMeta.page} pageSize={pendingBreakdownsMeta.pageSize} total={pendingBreakdownsMeta.total} hasMore={pendingBreakdownsMeta.hasMore} onPageChange={setPendingBreakdownPage} itemLabel="desgloses" />
+              <Pagination page={pendingBreakdownsMeta.page} pageSize={pendingBreakdownsMeta.pageSize} total={pendingBreakdownsMeta.total} hasMore={pendingBreakdownsMeta.hasMore} onPageChange={setPendingBreakdownPage} itemLabel="cargas" />
             ) : null}
           </Section>
         </>
@@ -1135,9 +1122,9 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
                 <th>Empresa</th>
                 <th>Centro de costo</th>
                 <th>Responsable de carga</th>
-                <th>Normales</th>
-                <th>Especiales</th>
-                <th>Total</th>
+                <th>Horas base</th>
+                <th>Horas adicionales</th>
+                <th>Total trabajado</th>
                 <th>Acción</th>
                 {monthDays.map((day) => (
                   <th key={day} className="day-col">
@@ -1176,14 +1163,14 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
                         }
                       />
                     </td>
-                    <td>{formatDecimalHoursDuration(periodSummary.normal)}</td>
-                    <td>{formatDecimalHoursDuration(periodSummary.special)}</td>
+                    <td>{formatDurationMinutes(periodSummary.accounting.baseMinutes)}</td>
+                    <td>{formatDurationMinutes(periodSummary.accounting.additiveMinutes)}</td>
                     <td>
                       <span className="total-hours-cell">
-                        <span>{formatDecimalHoursDuration(periodSummary.total)}</span>
-                        {(periodSummary.specialHourAdditionalHours || 0) > 0 ? (
+                        <span>{formatDurationMinutes(periodSummary.accounting.totalWorkedMinutes)}</span>
+                        {periodSummary.accounting.hasSpecialMultiplier ? (
                           <Badge tone="warning">
-                            Total liquidable: {formatDecimalHoursDuration(periodSummary.specialHourLiquidableTotal ?? periodSummary.total)}
+                            Para liquidación: {formatDurationMinutes(periodSummary.accounting.settlement.totalMinutes)}
                           </Badge>
                         ) : null}
                       </span>
@@ -1203,7 +1190,8 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
                       <DayCell
                         key={day}
                         label={`${getWeekdayAbbr(period, day)} ${day}`}
-                        breakdown={dayMap.get(day)}
+                        day={dayMap.get(day)}
+                        accounting={periodSummary.accounting.days[String(day)]}
                         employeeId={employee.id}
                         period={period}
                       />
@@ -1270,8 +1258,8 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
         <Modal
           title={
             breakdownReview.action === "reject"
-              ? "Rechazar desglose manual"
-              : "Devolver desglose manual"
+              ? "Rechazar carga del concepto"
+              : "Devolver carga del concepto"
           }
           close={() => setBreakdownReview(undefined)}
         >
@@ -1282,8 +1270,8 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
               </b>
               <p>
                 {breakdownReview.action === "reject"
-                  ? "El desglose quedará rechazado y se conservará para auditoría. No afecta Hora normal ni el total trabajado."
-                  : "El desglose queda en estado Devuelto para que Nivel 2/3 lo corrija y lo vuelva a enviar. No afecta Hora normal ni el total trabajado."}
+                  ? "La carga quedará rechazada y se conservará para auditoría. No se cuenta en las horas del período."
+                  : "La carga queda en estado Devuelto para que Nivel 2/3 la corrija y la vuelva a enviar."}
               </p>
             </div>
             <label>

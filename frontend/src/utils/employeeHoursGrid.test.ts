@@ -2,25 +2,31 @@ import { describe, expect, it } from "vitest";
 import type { EmployeeTimeGridRow } from "../services/api/employeeApiService";
 import type { TimeEntry } from "../types";
 import {
-  additionalBreakdownMinutes,
   applyBreakdownToRows,
   applyNormalEntryToRows,
+  groupTimeGridRows,
   hourConceptLoadModeLabel,
   isManualBreakdownEditable,
   normalWorkedDays,
-  totalWorkedMinutesFromRows,
+  timeGridRowLabel,
+  timeGridRowSubtitle,
   upsertTimeEntry,
 } from "./employeeHoursGrid";
 
-const concept = (id: string, loadMode: EmployeeTimeGridRow["concept"]["loadMode"], systemRole: EmployeeTimeGridRow["concept"]["systemRole"]) => ({
-  id, code: id, name: id, kind: "OTRO" as const, status: "ACTIVO" as const, loadMode, systemRole, createdAt: "", updatedAt: "",
+const concept = (
+  id: string,
+  loadMode: EmployeeTimeGridRow["concept"]["loadMode"],
+  systemRole: EmployeeTimeGridRow["concept"]["systemRole"],
+  workTreatment: EmployeeTimeGridRow["concept"]["workTreatment"] = systemRole ? null : "WITHIN_BASE",
+) => ({
+  id, code: id, name: id, kind: "OTRO" as const, status: "ACTIVO" as const, loadMode, systemRole, workTreatment, createdAt: "", updatedAt: "",
 });
 
-describe("presentación de grilla aditiva", () => {
+describe("presentación de la grilla por tratamiento (docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md)", () => {
   const rows: EmployeeTimeGridRow[] = [
-    { concept: concept("normal", null, "NORMAL_BASE"), role: "NORMAL_BASE", minutesByDay: { "1": 480 }, totalMinutes: 480 },
-    { concept: concept("sereno", "AUTOMATIC", null), role: "ADDITIONAL", minutesByDay: { "1": 360 }, totalMinutes: 360 },
-    { concept: concept("colectivo", "MANUAL", null), role: "ADDITIONAL", minutesByDay: {}, totalMinutes: 0 },
+    { concept: concept("normal", null, "NORMAL_BASE"), role: "NORMAL_BASE", enabled: true, minutesByDay: { "1": 480 }, totalMinutes: 480 },
+    { concept: concept("sereno", "AUTOMATIC", null), role: "ADDITIONAL", enabled: true, minutesByDay: { "1": 360 }, totalMinutes: 360 },
+    { concept: concept("colectivo", "MANUAL", null, "ADDITIVE_TO_WORKED_TOTAL"), role: "ADDITIONAL", enabled: true, minutesByDay: {}, totalMinutes: 0 },
   ];
 
   it("muestra los modos oficiales sin depender del nombre visible", () => {
@@ -29,17 +35,32 @@ describe("presentación de grilla aditiva", () => {
     expect(hourConceptLoadModeLabel("BOTH")).toBe("Manual y automático");
   });
 
-  it("mantiene separados total base y desgloses", () => {
-    expect(rows[0]!.totalMinutes / 60).toBe(8);
-    expect(additionalBreakdownMinutes(rows)).toBe(360);
+  it("agrupa por tratamiento: Horas base, dentro de la jornada y horas adicionales (nunca por loadMode)", () => {
+    const groups = groupTimeGridRows(rows);
+    expect(groups.base?.concept.id).toBe("normal");
+    expect(groups.withinBase.map((row) => row.concept.id)).toEqual(["sereno"]);
+    expect(groups.additive.map((row) => row.concept.id)).toEqual(["colectivo"]);
+    // Un concepto MANUAL dentro de la jornada sigue dentro de la jornada.
+    const manualWithin = { ...rows[2]!, concept: concept("correccion", "MANUAL", null, "WITHIN_BASE") };
+    expect(groupTimeGridRows([manualWithin]).withinBase).toHaveLength(1);
     expect(normalWorkedDays(rows)).toBe(1);
   });
 
-  it("habilita edición sólo para adicionales MANUAL o BOTH", () => {
+  it("copy de negocio: 'Horas base' para la base y efecto sobre el total para cada concepto", () => {
+    expect(timeGridRowLabel(rows[0]!)).toBe("Horas base");
+    expect(timeGridRowSubtitle(rows[0]!)).toBe("Registradas · fichada o carga");
+    expect(timeGridRowSubtitle(rows[1]!)).toBe("No suma al total · Automático");
+    expect(timeGridRowSubtitle(rows[2]!)).toBe("Suma al total · Manual");
+    expect(timeGridRowSubtitle({ ...rows[2]!, enabled: false })).toBe("Suma al total · Manual · No habilitado");
+    for (const row of rows) expect(timeGridRowSubtitle(row)).not.toMatch(/WITHIN_BASE|ADDITIVE|NORMAL_BASE|Breakdown/);
+  });
+
+  it("habilita edición sólo para conceptos MANUAL o BOTH habilitados", () => {
     expect(isManualBreakdownEditable(rows[0]!)).toBe(false);
     expect(isManualBreakdownEditable(rows[1]!)).toBe(false);
     expect(isManualBreakdownEditable(rows[2]!)).toBe(true);
     expect(isManualBreakdownEditable({ ...rows[2]!, concept: concept("both", "BOTH", null) })).toBe(true);
+    expect(isManualBreakdownEditable({ ...rows[2]!, enabled: false })).toBe(false);
   });
 });
 
@@ -73,10 +94,10 @@ describe("upsertTimeEntry — actualización local tras guardar (Etapa 6L.4)", (
   });
 });
 
-describe("applyNormalEntryToRows — la celda y el total de Hora normal se actualizan sin refetch (Etapa 6L.4)", () => {
+describe("applyNormalEntryToRows — la celda de Horas base se actualiza sin refetch (Etapa 6L.4)", () => {
   const rows: EmployeeTimeGridRow[] = [
-    { concept: concept("normal", null, "NORMAL_BASE"), role: "NORMAL_BASE", minutesByDay: { "1": 480 }, totalMinutes: 480 },
-    { concept: concept("colectivo", "MANUAL", null), role: "ADDITIONAL", minutesByDay: {}, totalMinutes: 0 },
+    { concept: concept("normal", null, "NORMAL_BASE"), role: "NORMAL_BASE", enabled: true, minutesByDay: { "1": 480 }, totalMinutes: 480 },
+    { concept: concept("colectivo", "MANUAL", null, "ADDITIVE_TO_WORKED_TOTAL"), role: "ADDITIONAL", enabled: true, minutesByDay: {}, totalMinutes: 0 },
   ];
 
   it("un entry Aprobado suma sus minutos al día y al total", () => {
@@ -84,7 +105,6 @@ describe("applyNormalEntryToRows — la celda y el total de Hora normal se actua
     const normalRow = result.find((row) => row.role === "NORMAL_BASE")!;
     expect(normalRow.minutesByDay["10"]).toBe(480);
     expect(normalRow.totalMinutes).toBe(960);
-    expect(totalWorkedMinutesFromRows(result)).toBe(960);
   });
 
   it("un entry En revisión también cuenta (mismo criterio que el backend)", () => {
@@ -92,7 +112,7 @@ describe("applyNormalEntryToRows — la celda y el total de Hora normal se actua
     expect(result.find((row) => row.role === "NORMAL_BASE")!.minutesByDay["10"]).toBe(360);
   });
 
-  it("un entry Borrador no cuenta para el total (igual que buildAdditiveTimeGrid en backend)", () => {
+  it("un entry Borrador no cuenta (igual que buildEmployeeTimeGrid en backend)", () => {
     const result = applyNormalEntryToRows(rows, entry({ day: 10, hours: 8, status: "Borrador" }));
     const normalRow = result.find((row) => row.role === "NORMAL_BASE")!;
     expect(normalRow.minutesByDay["10"]).toBeUndefined();
@@ -105,10 +125,10 @@ describe("applyNormalEntryToRows — la celda y el total de Hora normal se actua
   });
 });
 
-describe("applyBreakdownToRows — el desglose manual se actualiza sin tocar Hora normal ni el total (Etapa 6L.4)", () => {
+describe("applyBreakdownToRows — la carga manual de un concepto actualiza sólo su fila (Etapa 6L.4)", () => {
   const rows: EmployeeTimeGridRow[] = [
-    { concept: concept("normal", null, "NORMAL_BASE"), role: "NORMAL_BASE", minutesByDay: { "1": 480 }, totalMinutes: 480 },
-    { concept: concept("colectivo", "MANUAL", null), role: "ADDITIONAL", minutesByDay: {}, totalMinutes: 0 },
+    { concept: concept("normal", null, "NORMAL_BASE"), role: "NORMAL_BASE", enabled: true, minutesByDay: { "1": 480 }, totalMinutes: 480 },
+    { concept: concept("colectivo", "MANUAL", null, "ADDITIVE_TO_WORKED_TOTAL"), role: "ADDITIONAL", enabled: true, minutesByDay: {}, totalMinutes: 0 },
   ];
 
   it("agrega minutos al día del concepto adicional correspondiente", () => {
@@ -126,9 +146,8 @@ describe("applyBreakdownToRows — el desglose manual se actualiza sin tocar Hor
     expect(row.totalMinutes).toBe(0);
   });
 
-  it("nunca toca la fila NORMAL_BASE ni totalWorkedMinutesFromRows", () => {
+  it("nunca toca la fila de Horas base (los totales llegan del backend)", () => {
     const result = applyBreakdownToRows(rows, "colectivo", 12, 120);
     expect(result.find((row) => row.role === "NORMAL_BASE")).toEqual(rows[0]);
-    expect(totalWorkedMinutesFromRows(result)).toBe(480);
   });
 });

@@ -108,3 +108,43 @@ describe("HourConceptsPage — Etapa 14B.1 (refresh silencioso)", () => {
     expect(screen.queryByText("Cargando catálogo...")).not.toBeInTheDocument();
   });
 });
+
+// docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md: si el concepto suma o no al
+// total trabajado es una decisión explícita, nunca deducida del modo de carga.
+describe("HourConceptsPage — tratamiento en el total trabajado", () => {
+  it("no permite guardar un concepto nuevo sin elegir el tratamiento y lo envía al backend cuando se elige", async () => {
+    const { default: userEvent } = await import("@testing-library/user-event");
+    const user = userEvent.setup();
+    // jsdom no implementa scrollIntoView (la pantalla lleva el editor a la vista).
+    Element.prototype.scrollIntoView = vi.fn();
+    vi.mocked(hourConceptApiService.getAll).mockResolvedValue([]);
+    const create = vi.spyOn(hourConceptApiService, "create").mockResolvedValue(buildConcept({ id: "nuevo", systemRole: null, kind: "TRANSPORTE", workTreatment: "ADDITIVE_TO_WORKED_TOTAL" }));
+    render(<MemoryRouter><HourConceptsPage /></MemoryRouter>);
+
+    await user.click(await screen.findByRole("button", { name: "Crear concepto horario" }));
+    await user.type(screen.getByLabelText("Nombre *"), "Camioneta");
+    await user.click(screen.getByRole("button", { name: "Guardar" }));
+
+    expect(await screen.findByText("Elegí si el concepto está dentro de la jornada o suma horas adicionales.")).toBeInTheDocument();
+    expect(create).not.toHaveBeenCalled();
+
+    await user.selectOptions(screen.getByLabelText(/Tratamiento en el total/), "ADDITIVE_TO_WORKED_TOTAL");
+    expect(screen.getByText("Tiempo trabajado fuera de la fichada. Suma al total trabajado.")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Guardar" }));
+
+    await waitFor(() => expect(create).toHaveBeenCalledWith(expect.objectContaining({ name: "Camioneta", workTreatment: "ADDITIVE_TO_WORKED_TOTAL" })));
+  });
+
+  it("la tabla muestra el tratamiento en lenguaje de negocio", async () => {
+    vi.mocked(hourConceptApiService.getAll).mockResolvedValue([
+      buildConcept(),
+      buildConcept({ id: "sereno", code: "HOR-001", name: "Sereno", kind: "SERENO", loadMode: "BOTH", systemRole: null, workTreatment: "WITHIN_BASE" }),
+      buildConcept({ id: "colectivo", code: "HOR-002", name: "Colectivo", kind: "TRANSPORTE", systemRole: null, workTreatment: "ADDITIVE_TO_WORKED_TOTAL" }),
+    ]);
+    const { container } = render(<MemoryRouter><HourConceptsPage /></MemoryRouter>);
+
+    expect(await screen.findByText("Dentro de la jornada")).toBeInTheDocument();
+    expect(screen.getByText("Horas adicionales")).toBeInTheDocument();
+    expect(container.textContent).not.toMatch(/WITHIN_BASE|ADDITIVE_TO_WORKED_TOTAL/);
+  });
+});

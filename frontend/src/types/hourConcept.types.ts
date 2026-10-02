@@ -2,6 +2,11 @@ export type HourConceptStatus = "ACTIVO" | "INACTIVO";
 export type HourConceptKind = "NORMAL" | "EXTRA" | "FERIADO" | "NOCTURNA" | "GUARDIA" | "SERENO" | "TRANSPORTE" | "OTRO";
 export type HourConceptLoadMode = "MANUAL" | "AUTOMATIC" | "BOTH";
 export type HourConceptSystemRole = "NORMAL_BASE";
+// Semántica de negocio, independiente del modo de carga
+// (docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md): WITHIN_BASE clasifica
+// horas ya incluidas en las Horas base; ADDITIVE_TO_WORKED_TOTAL es tiempo
+// trabajado fuera de la fichada y suma al total.
+export type HourConceptWorkTreatment = "WITHIN_BASE" | "ADDITIVE_TO_WORKED_TOTAL";
 
 // Campos reales, persistidos por el backend, que además tiene sentido
 // mostrar/editar en esta pantalla. HourConcept en schema.prisma también
@@ -22,6 +27,7 @@ export interface HourConcept {
   status: HourConceptStatus;
   loadMode?: HourConceptLoadMode | null;
   systemRole?: HourConceptSystemRole | null;
+  workTreatment?: HourConceptWorkTreatment | null;
   createdAt: string;
   updatedAt: string;
 }

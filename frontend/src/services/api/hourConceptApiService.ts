@@ -2,7 +2,7 @@ import { apiRequest } from "./apiClient";
 import { collectAllPages } from "./listQuery";
 import { cachePolicies, cachedData, invalidateCacheFamily } from "../cache";
 import { associatedEmployeesQuery, mapAssociatedEmployeeFromApi, type ApiAssociatedEmployee } from "./associatedEmployeeMapper";
-import type { HourConcept, HourConceptFilters, HourConceptKind, HourConceptLoadMode, HourConceptStatus, HourConceptSystemRole } from "../../types/hourConcept.types";
+import type { HourConcept, HourConceptFilters, HourConceptKind, HourConceptLoadMode, HourConceptStatus, HourConceptSystemRole, HourConceptWorkTreatment } from "../../types/hourConcept.types";
 import type { AssociatedEmployeeFilters, AssociatedEmployeeStatus, AssociatedEmployeesResult, HourConceptEmployeeAssociation } from "../../types/associatedEmployee.types";
 
 type ApiHourConcept = {
@@ -13,6 +13,7 @@ type ApiHourConcept = {
   status: HourConceptStatus;
   loadMode: HourConceptLoadMode | null;
   systemRole: HourConceptSystemRole | null;
+  workTreatment?: HourConceptWorkTreatment | null;
   countsAsWorked?: boolean;
   deletedAt: string | null;
   createdAt: string;
@@ -42,6 +43,7 @@ export function mapHourConceptFromApi(item: ApiHourConcept): HourConcept {
     status: item.status,
     loadMode: item.loadMode,
     systemRole: item.systemRole,
+    workTreatment: item.workTreatment ?? null,
     createdAt: item.createdAt,
     updatedAt: item.updatedAt,
   };
@@ -61,6 +63,9 @@ export function mapToApi(item: HourConcept) {
     kind: item.kind,
     status: item.status,
     loadMode: item.loadMode,
+    // Obligatorio para todo concepto adicional; el backend bloquea cambiarlo
+    // si el concepto ya tiene horas cargadas.
+    ...(item.workTreatment ? { workTreatment: item.workTreatment } : {}),
   };
 }
 

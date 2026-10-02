@@ -54,7 +54,7 @@ describe("HourConceptsPage — nomenclatura correcta (Etapa 8M)", () => {
     it("distingue la base protegida de los conceptos adicionales", () => {
       expect(source).toContain("Base del sistema");
       expect(source).toContain("Protegido");
-      expect(source).toContain("Adicional");
+      expect(source).toContain("workTreatmentLabels");
     });
 
     it("ofrece los tres modos de carga", () => {
@@ -63,9 +63,13 @@ describe("HourConceptsPage — nomenclatura correcta (Etapa 8M)", () => {
       expect(source).toContain("Manual");
     });
 
-    it("explica que Normal es el total y los adicionales son desgloses", () => {
-      expect(source).toContain("Horas normales representa el total trabajado");
-      expect(source).toContain("conceptos adicionales son desgloses");
+    // docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md: reemplaza "Normal es el
+    // total y los adicionales son desgloses" (ya no es cierto para Colectivo).
+    it("explica que cada concepto clasifica horas dentro de la jornada o suma horas fuera de la fichada", () => {
+      expect(source).toContain("Horas base es la jornada registrada");
+      expect(source).toContain("suma horas trabajadas fuera de la fichada");
+      expect(source).toContain("Tratamiento en el total *");
+      expect(source).not.toContain("son desgloses");
     });
   });
 

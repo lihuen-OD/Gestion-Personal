@@ -1,10 +1,11 @@
-import type { EmployeeTimeGrid } from "../../services/api/employeeApiService";
+import type { EmployeeTimeGrid, EmployeeTimeGridRow } from "../../services/api/employeeApiService";
 import type { Novelty } from "../../types";
 import { formatMultiplier } from "../attendance/segmentDisplay";
-import { hourConceptLoadModeLabel } from "../../utils/employeeHoursGrid";
+import { timeGridRowLabel, timeGridRowSubtitle } from "../../utils/employeeHoursGrid";
 import { formatCompactDurationMinutes, formatDurationMinutes } from "../../utils/hours";
 import { getMonthDays, getWeekdayAbbr } from "../../utils/period";
 import { EmptyState } from "../ui/EmptyState";
+import { MonthlyHoursTableSections } from "./MonthlyHoursTableSections";
 
 // Mismo criterio de asociación día↔novedad que EmployeeHoursPage.tsx
 // (dayNovelties, no exportado ahí) — se repite acá en vez de tocar esa
@@ -20,13 +21,53 @@ function noveltiesForDay(novelties: Novelty[], day: number): Novelty[] {
 
 // Etapa 15K: presentacional puro — recibe la grilla ya cargada (misma fuente
 // que EmployeeHoursPage, GET /employees/:id/time-grid) y sólo la muestra.
-// No llama APIs, no edita horas, no abre modales, no conoce roles.
+// No llama APIs, no edita horas, no abre modales, no conoce roles. Las
+// secciones (Horas base / Distribución de la jornada / Horas adicionales /
+// totales) son las mismas que el detalle por legajo
+// (docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md).
 export function MonthlyHoursReviewGrid({ grid, period }: { grid: EmployeeTimeGrid; period: string }) {
   if (!grid.rows.length) {
     return <EmptyState text="No hay horas registradas para este período." size="compact" />;
   }
 
   const monthDays = getMonthDays(period);
+  const renderRow = (row: EmployeeTimeGridRow) => {
+    const label = timeGridRowLabel(row);
+    return (
+      <tr key={row.concept.id} className={row.role === "NORMAL_BASE" ? "hours-base-row" : undefined}>
+        <td>
+          <b>{label}</b>
+          <span className="table-sub" title={timeGridRowSubtitle(row)}>{timeGridRowSubtitle(row)}</span>
+        </td>
+        {monthDays.map((day) => {
+          const minutes = row.minutesByDay[String(day)] ?? 0;
+          const daySpecialHour = grid.specialHoursByDay[String(day)];
+          // El multiplicador de Hora Especial alcanza a cualquier fila ese
+          // día; la novedad sólo se asocia visualmente a las Horas base, mismo
+          // criterio que EmployeeHoursPage.
+          const dayNovelties = row.role === "NORMAL_BASE" ? noveltiesForDay(grid.novelties, day) : [];
+          const cellClass = ["hour-cell", minutes ? "filled" : ""].filter(Boolean).join(" ");
+          const fullDuration = formatDurationMinutes(minutes);
+          const titleParts = minutes ? [fullDuration] : [];
+          if (dayNovelties.length) titleParts.push(dayNovelties.map((novelty) => `${novelty.type} · ${novelty.quantity}`).join(", "));
+          return (
+            <td key={`${row.concept.id}-${day}`}>
+              <span className={cellClass} title={titleParts.join(" · ") || undefined} aria-label={`${label}, día ${day}: ${minutes ? fullDuration : "sin horas"}`}>
+                <span>{minutes ? formatCompactDurationMinutes(minutes) : "—"}</span>
+                {dayNovelties.length ? <span className="alert-dot purple" /> : null}
+                {daySpecialHour ? (
+                  <span className="alert-dot orange" title={`Hora especial aplicada (${formatMultiplier(daySpecialHour.multiplier)})`} />
+                ) : null}
+              </span>
+            </td>
+          );
+        })}
+        <td>
+          <b title={formatDurationMinutes(row.totalMinutes)}>{formatCompactDurationMinutes(row.totalMinutes)}</b>
+        </td>
+      </tr>
+    );
+  };
 
   return (
     <div className="hours-grid monthly-concept-grid readonly-hours-grid" tabIndex={0} aria-label="Grilla mensual por concepto; desplazamiento horizontal disponible">
@@ -42,44 +83,7 @@ export function MonthlyHoursReviewGrid({ grid, period }: { grid: EmployeeTimeGri
             <th>Total</th>
           </tr>
         </thead>
-        <tbody>
-          {grid.rows.map((row) => (
-            <tr key={row.concept.id}>
-              <td>
-                <b>{row.concept.name}</b>
-                <span className="table-sub">
-                  {row.role === "NORMAL_BASE" ? "Total trabajado · Base del sistema" : `Desglose · ${hourConceptLoadModeLabel(row.concept.loadMode)}`}
-                </span>
-              </td>
-              {monthDays.map((day) => {
-                const minutes = row.minutesByDay[String(day)] ?? 0;
-                const daySpecialHour = grid.specialHoursByDay[String(day)];
-                // El multiplicador de Hora Especial alcanza a cualquier fila ese
-                // día (11A.1); la novedad sólo se asocia visualmente a Hora
-                // normal, mismo criterio que EmployeeHoursPage.
-                const dayNovelties = row.role === "NORMAL_BASE" ? noveltiesForDay(grid.novelties, day) : [];
-                const cellClass = ["hour-cell", minutes ? "filled" : ""].filter(Boolean).join(" ");
-                const fullDuration = formatDurationMinutes(minutes);
-                const titleParts = minutes ? [fullDuration] : [];
-                if (dayNovelties.length) titleParts.push(dayNovelties.map((novelty) => `${novelty.type} · ${novelty.quantity}`).join(", "));
-                return (
-                  <td key={`${row.concept.id}-${day}`}>
-                    <span className={cellClass} title={titleParts.join(" · ") || undefined} aria-label={`${row.concept.name}, día ${day}: ${minutes ? fullDuration : "sin horas"}`}>
-                      <span>{minutes ? formatCompactDurationMinutes(minutes) : "—"}</span>
-                      {dayNovelties.length ? <span className="alert-dot purple" /> : null}
-                      {daySpecialHour ? (
-                        <span className="alert-dot orange" title={`Hora especial aplicada (${formatMultiplier(daySpecialHour.multiplier)})`} />
-                      ) : null}
-                    </span>
-                  </td>
-                );
-              })}
-              <td>
-                <b title={formatDurationMinutes(row.totalMinutes)}>{formatCompactDurationMinutes(row.totalMinutes)}</b>
-              </td>
-            </tr>
-          ))}
-        </tbody>
+        <MonthlyHoursTableSections rows={grid.rows} accounting={grid.accounting} monthDays={monthDays} renderRow={renderRow} />
       </table>
     </div>
   );
