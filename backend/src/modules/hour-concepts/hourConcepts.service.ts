@@ -91,6 +91,17 @@ export const hourConceptsService = {
   async update(id: string, data: UpdateHourConceptInput, audit?: AuditContext) {
     const current = await execute(() => hourConceptsRepository.findById(id));
     assertNotSystemManaged(current);
+    // docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md: cambiar si un concepto
+    // suma o no al total trabajado reinterpretaría en silencio todas sus
+    // horas ya cargadas (totales, cierres y exports históricos). Sólo se
+    // permite mientras el concepto no tenga horas cargadas.
+    if (data.workTreatment && data.workTreatment !== current.workTreatment && await hourConceptsRepository.countBreakdowns(id) > 0) {
+      throw new AppError(
+        "No se puede cambiar si el concepto suma al total trabajado porque ya tiene horas cargadas. Creá un concepto nuevo para el tratamiento distinto.",
+        409,
+        "HOUR_CONCEPT_WORK_TREATMENT_LOCKED",
+      );
+    }
     const item = await execute(() => hourConceptsRepository.update(id, data));
     invalidateHourConceptsCache();
     await auditChange("UPDATE", item, audit);

@@ -64,7 +64,11 @@ export const pendingService = {
       employeeId: item.employee.id,
       employeeLabel: formatEmployee(item.employee),
       title: item.hourConcept.name,
-      subtitle: "Desglose manual",
+      // docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md: quien revisa tiene
+      // que saber si aprobar esta carga cambia el total trabajado.
+      subtitle: item.hourConcept.workTreatment === "ADDITIVE_TO_WORKED_TOTAL"
+        ? "Carga manual · Hora adicional (suma al total trabajado)"
+        : "Carga manual · Dentro de la jornada (no suma al total)",
       quantity: (item.minutes / 60).toFixed(2),
       createdAt: item.createdAt,
     }));

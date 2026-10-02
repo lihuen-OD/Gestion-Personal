@@ -22,6 +22,14 @@ import { hourConceptsRepository } from "../hour-concepts/hourConcepts.repository
 import { classifyWorkShiftSegments } from "../hour-concepts/hourConceptClassification";
 import { automaticHourConceptBreakdownsService } from "../employees/automaticHourConceptBreakdowns.service";
 import {
+  accountEmployeePeriods,
+  emptyPeriodAccounting,
+  toAccountingBaseEntry,
+  toAccountingBreakdown,
+  type PeriodAccounting,
+  type WorkTreatment,
+} from "./workedTimeAccounting";
+import {
   argentinaCalendarDate,
   argentinaDateParts,
   argentinaDayRange,
@@ -139,18 +147,66 @@ async function syncAutomaticBreakdownsAfterProcessedShift({
   return { periods: [...periods] };
 }
 
-export type TimeEntriesExportRow = {
-  CUIL: string;
-  Apellido: string;
-  Nombre: string;
-  Legajo: string;
-  Empresa: string;
-  "Centro de costo": string;
-  "Horas normales": string;
-  "Horas especiales": string;
-  "Horas trabajadas totales": string;
-  Estado: string;
+// Export de horas (docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md): columnas
+// fijas + 2 columnas por concepto presente en el período (horas reales y para
+// liquidación). Los valores salen exclusivamente de PeriodAccounting.
+export type TimeEntriesExportColumn = { key: string; kind: "text" | "hours" };
+export type TimeEntriesExportRow = Record<string, string>;
+
+type HoursExportConcept = { id: string; name: string; code: string; treatment: WorkTreatment | null };
+type HoursExportPerson = {
+  identity: Record<"CUIL" | "Apellido" | "Nombre" | "Legajo" | "Empresa" | "Centro de costo", string>;
+  accounting: PeriodAccounting;
+  ruleNames: string[];
+  conflict: boolean;
+  status: string;
 };
+
+const exportHours = (minutes: number) => formatNumber(minutes / 60);
+
+export function buildHoursExportTable(people: HoursExportPerson[], concepts: HoursExportConcept[]) {
+  const ordered = [...concepts].sort((a, b) =>
+    (a.treatment === b.treatment ? 0 : a.treatment === "WITHIN_BASE" ? -1 : 1) || a.name.localeCompare(b.name, "es"));
+  const repeatedNames = new Set(ordered.filter((concept, index) => ordered.findIndex((item) => item.name === concept.name) !== index).map((concept) => concept.name));
+  const labels = new Map(ordered.map((concept) => [concept.id, repeatedNames.has(concept.name) ? `${concept.name} (${concept.code})` : concept.name]));
+  const text = (key: string): TimeEntriesExportColumn => ({ key, kind: "text" });
+  const hours = (key: string): TimeEntriesExportColumn => ({ key, kind: "hours" });
+  const columns: TimeEntriesExportColumn[] = [
+    ...["CUIL", "Apellido", "Nombre", "Legajo", "Empresa", "Centro de costo"].map(text),
+    hours("Horas base"),
+    hours("Horas normales"),
+    ...ordered.map((concept) => hours(`${labels.get(concept.id)} (horas reales)`)),
+    hours("Total trabajado"),
+    hours("Horas normales (para liquidación)"),
+    ...ordered.map((concept) => hours(`${labels.get(concept.id)} (para liquidación)`)),
+    hours("Equivalencia para liquidación"),
+    text("Reglas de horas especiales aplicadas"),
+    text("Conflicto de reglas"),
+    text("Estado"),
+  ];
+  const rows = people
+    .map(({ identity, accounting, ruleNames, conflict, status }) => {
+      const row: TimeEntriesExportRow = {
+        ...identity,
+        "Horas base": exportHours(accounting.baseMinutes),
+        "Horas normales": exportHours(accounting.normalResidualMinutes),
+        "Total trabajado": exportHours(accounting.totalWorkedMinutes),
+        "Horas normales (para liquidación)": exportHours(accounting.settlement.normalMinutes),
+        "Equivalencia para liquidación": exportHours(accounting.settlement.totalMinutes),
+        "Reglas de horas especiales aplicadas": ruleNames.join(", "),
+        "Conflicto de reglas": conflict ? "Sí" : "",
+        Estado: status,
+      };
+      for (const concept of ordered) {
+        const values = accounting.concepts.find((item) => item.hourConceptId === concept.id);
+        row[`${labels.get(concept.id)} (horas reales)`] = exportHours(values?.realMinutes ?? 0);
+        row[`${labels.get(concept.id)} (para liquidación)`] = exportHours(values?.settlementMinutes ?? 0);
+      }
+      return row;
+    })
+    .sort((a, b) => (a.Apellido ?? "").localeCompare(b.Apellido ?? "", "es") || (a.Nombre ?? "").localeCompare(b.Nombre ?? "", "es"));
+  return { columns, rows };
+}
 
 function mapPrismaError(error: unknown) {
   if (error instanceof Prisma.PrismaClientKnownRequestError) {
@@ -747,20 +803,9 @@ async function notifyOpenShiftAttempt(employeeId: string) {
   }
 }
 
-export function timeEntriesExportToCsv(rows: TimeEntriesExportRow[]) {
-  const headers: (keyof TimeEntriesExportRow)[] = [
-    "CUIL",
-    "Apellido",
-    "Nombre",
-    "Legajo",
-    "Empresa",
-    "Centro de costo",
-    "Horas normales",
-    "Horas especiales",
-    "Horas trabajadas totales",
-    "Estado",
-  ];
-  return [headers.join(";"), ...rows.map((row) => headers.map((header) => escapeCsv(row[header])).join(";"))].join("\r\n");
+export function timeEntriesExportToCsv(columns: TimeEntriesExportColumn[], rows: TimeEntriesExportRow[]) {
+  const headers = columns.map((column) => column.key);
+  return [headers.map(escapeCsv).join(";"), ...rows.map((row) => headers.map((header) => escapeCsv(row[header] ?? "")).join(";"))].join("\r\n");
 }
 
 export const timeEntriesService = {
@@ -1849,68 +1894,23 @@ export const timeEntriesService = {
   },
 
   async exportByPerson(query: TimeEntriesExportQuery, user: Express.AuthUser, audit?: AuditContext) {
-    const entries = await timeEntriesRepository.findForExport(query, employeeAccessWhere(user));
-    const grouped = new Map<string, {
-      normal: number; special: number; equivalent: number;
-      // Etapa 11B: equivalente liquidable de Conceptos Horarios adicionales
-      // (Sereno/Colectivo/etc.), separado del equivalente de Hora normal —
-      // antes de esta etapa el export ignoraba por completo que una Hora
-      // Especial también alcanza a los conceptos (ver 11A.1, ya corregido en
-      // la grilla; acá cerraba la misma inconsistencia en el export).
-      conceptEquivalent: number;
-      ruleNames: Set<string>;
-      conflict: boolean;
-      statuses: Set<string>;
-      // Multiplicador ganador por día — Hora normal es la única fuente de
-      // appliedMultiplier; los Conceptos Horarios no tienen uno propio
-      // porque DoubleHourRule no distingue por concepto (mismo criterio que
-      // 11A.1: el día completo dentro de la regla alcanza a todo lo cargado).
-      multiplierByDay: Map<number, number>;
-      entry: (typeof entries)[number];
-    }>();
-
-    for (const entry of entries) {
-      const current = grouped.get(entry.employeeId) || {
-        normal: 0, special: 0, equivalent: 0, conceptEquivalent: 0,
-        ruleNames: new Set<string>(), conflict: false, statuses: new Set<string>(),
-        multiplierByDay: new Map<number, number>(), entry,
-      };
-      // Etapa 6M: "Horas normales" = sólo systemRole NORMAL_BASE. Un
-      // TimeEntry no-Normal legacy (posible sólo en datos históricos
-      // previos a la Etapa 6L) no suma acá ni en el total — "Horas
-      // especiales" se completa abajo desde HourConceptBreakdown.
-      if (entry.hourConcept.systemRole === "NORMAL_BASE") {
-        // Etapa 8F: entry.hours es siempre real (desde esta etapa). El valor
-        // liquidable/equivalente de una Hora Especial (Domingo, Feriado, …)
-        // se deriva acá, por entrada, real × appliedMultiplier — nunca se
-        // vuelve a guardar inflado en hours/totalMinutes.
-        const realHours = Number(entry.hours.toString());
-        const multiplier = Number(entry.appliedMultiplier ?? 1);
-        current.normal += realHours;
-        current.equivalent += realHours * multiplier;
-        if (multiplier > 1) {
-          current.multiplierByDay.set(entry.day, Math.max(current.multiplierByDay.get(entry.day) ?? 1, multiplier));
-          for (const application of entry.timeSegment?.specialHourRuleApplications ?? []) {
-            current.ruleNames.add(application.doubleHourRule.name);
-            if (application.wasConflicting) current.conflict = true;
-          }
-        }
-      }
-      current.statuses.add(entry.status);
-      grouped.set(entry.employeeId, current);
-    }
-
-    const employeeIds = Array.from(grouped.keys());
+    const accessWhere = employeeAccessWhere(user);
+    const [entries, breakdowns] = await Promise.all([
+      timeEntriesRepository.findForExport(query, accessWhere),
+      timeEntriesRepository.findBreakdownsForExport(query, accessWhere),
+    ]);
+    const employeeIds = Array.from(new Set([...entries.map((entry) => entry.employeeId), ...breakdowns.map((breakdown) => breakdown.employeeId)]));
 
     // Etapa 15E.2 (docs/decisions/TIME_EXPORT_CLOSURE_GATE_15E2.md): la
     // exportación DEFINITIVA (includeInReview=false, el default) exige que
     // el cierre mensual de CADA empleado incluido esté APROBADO — si
     // alguno no lo está (o no tiene cierre), se bloquea el export
-    // COMPLETO antes de tocar HourConceptBreakdown o armar filas, nunca de
-    // forma parcial. includeInReview=true ya es la vía de preview
-    // existente (incluye filas EN_REVISION además de APROBADO) — ahí no se
-    // exige cierre aprobado, pero la respuesta queda marcada
-    // explícitamente como no definitiva (`definitive: false`, más abajo).
+    // COMPLETO antes de armar filas, nunca de forma parcial.
+    // includeInReview=true ya es la vía de preview existente (incluye filas
+    // EN_REVISION además de APROBADO) — ahí no se exige cierre aprobado, pero
+    // la respuesta queda marcada explícitamente como no definitiva
+    // (`definitive: false`, más abajo). Incluye a quienes sólo tienen
+    // conceptos adicionales en el período.
     if (!query.includeInReview && employeeIds.length) {
       const closures = await timeEntriesRepository.findClosuresForExport(employeeIds, query.period);
       const closuresByEmployeeId = new Map(closures.map((closure) => [closure.employeeId, closure]));
@@ -1924,47 +1924,65 @@ export const timeEntriesService = {
       }
     }
 
-    const breakdowns = await timeEntriesRepository.findBreakdownHoursForExport(employeeIds, query.period);
+    const employees = new Map(entries.map((entry) => [entry.employeeId, entry.employee]));
+    const missingEmployeeIds = employeeIds.filter((id) => !employees.has(id));
+    for (const employee of await timeEntriesRepository.findEmployeesForExport(missingEmployeeIds)) employees.set(employee.id, employee);
+
+    // Horas base = sólo NORMAL_BASE (un TimeEntry no-Normal legacy previo a
+    // 6L no cuenta). Todo lo demás lo deriva workedTimeAccounting.
+    const baseEntries = entries.filter((entry) => entry.hourConcept.systemRole === "NORMAL_BASE");
+    const accountingByEmployee = accountEmployeePeriods(baseEntries.map(toAccountingBaseEntry), breakdowns.map(toAccountingBreakdown));
+
+    const ruleNames = new Map<string, Set<string>>();
+    const conflicts = new Set<string>();
+    for (const entry of baseEntries) {
+      if (Number(entry.appliedMultiplier ?? 1) <= 1) continue;
+      const names = ruleNames.get(entry.employeeId) ?? new Set<string>();
+      for (const application of entry.timeSegment?.specialHourRuleApplications ?? []) {
+        names.add(application.doubleHourRule.name);
+        if (application.wasConflicting) conflicts.add(entry.employeeId);
+      }
+      ruleNames.set(entry.employeeId, names);
+    }
+    // Estado: el de los TimeEntry exportados (criterio previo); quien sólo
+    // tiene conceptos toma el estado de esos desgloses.
+    const statuses = new Map<string, Set<string>>();
+    const employeesWithEntries = new Set(entries.map((entry) => entry.employeeId));
+    for (const entry of entries) statuses.set(entry.employeeId, (statuses.get(entry.employeeId) ?? new Set<string>()).add(entry.status));
     for (const breakdown of breakdowns) {
-      const current = grouped.get(breakdown.employeeId);
-      if (!current) continue;
-      const hours = breakdown.minutes / 60;
-      current.special += hours;
-      // Etapa 11B: mismo multiplicador que ya ganó ese día para la Hora
-      // normal del empleado — 1 si ese día no tuvo ninguna Hora Especial, o
-      // si el desglose no tiene ningún TimeEntry de Hora normal ese mismo
-      // día (limitación aceptada, misma que documenta 11A.1 para la grilla).
-      current.conceptEquivalent += hours * (current.multiplierByDay.get(breakdown.day) ?? 1);
+      if (employeesWithEntries.has(breakdown.employeeId)) continue;
+      statuses.set(breakdown.employeeId, (statuses.get(breakdown.employeeId) ?? new Set<string>()).add(breakdown.status));
     }
 
-    const rows = Array.from(grouped.values()).map(({ normal, special, equivalent, conceptEquivalent, ruleNames, conflict, statuses, entry }) => {
-      const primaryCompany = entry.employee.companies.find((company) => company.isPrimary)?.company || entry.employee.companies[0]?.company;
-      // Etapa 11B: adicional/total liquidable ahora incluyen Conceptos
-      // Horarios además de Hora normal (antes "Adicional por horas
-      // especiales" sólo consideraba Hora normal) — mismo criterio que
-      // specialHourAdditionalHours/specialHourLiquidableTotal en la grilla
-      // (11A.1), para que ambos caminos den el mismo número (Caso 8+4x2=24).
-      const totalAdditional = (equivalent - normal) + (conceptEquivalent - special);
-      const totalLiquidable = normal + special + totalAdditional;
-      return {
-        CUIL: entry.employee.cuil,
-        Apellido: entry.employee.lastName,
-        Nombre: entry.employee.firstName,
-        Legajo: entry.employee.legajo,
-        Empresa: primaryCompany?.name || "",
-        "Centro de costo": entry.employee.costCenter?.code || "",
-        "Horas normales": formatNumber(normal),
-        "Horas especiales": formatNumber(special),
-        "Horas trabajadas totales": formatNumber(normal),
-        "Horas especiales (equivalente liquidable)": formatNumber(equivalent),
-        "Conceptos horarios (equivalente liquidable)": formatNumber(conceptEquivalent),
-        "Adicional por horas especiales": formatNumber(totalAdditional),
-        "Total liquidable": formatNumber(totalLiquidable),
-        "Reglas de horas especiales aplicadas": ruleNames.size ? Array.from(ruleNames).join(", ") : "",
-        "Conflicto de reglas": conflict ? "Sí" : "",
-        Estado: statuses.size === 1 ? Array.from(statuses)[0] || "" : "MIXTO",
-      };
-    });
+    const concepts = new Map(breakdowns.map((breakdown) => [breakdown.hourConceptId, {
+      id: breakdown.hourConceptId,
+      name: breakdown.hourConcept.name,
+      code: breakdown.hourConcept.code,
+      treatment: breakdown.hourConcept.workTreatment,
+    }]));
+    const { columns, rows } = buildHoursExportTable(
+      employeeIds.flatMap((employeeId) => {
+        const employee = employees.get(employeeId);
+        if (!employee) return [];
+        const primaryCompany = employee.companies.find((company) => company.isPrimary)?.company || employee.companies[0]?.company;
+        const employeeStatuses = statuses.get(employeeId) ?? new Set<string>();
+        return [{
+          identity: {
+            CUIL: employee.cuil,
+            Apellido: employee.lastName,
+            Nombre: employee.firstName,
+            Legajo: employee.legajo,
+            Empresa: primaryCompany?.name || "",
+            "Centro de costo": employee.costCenter?.code || "",
+          },
+          accounting: accountingByEmployee.get(employeeId) ?? emptyPeriodAccounting(),
+          ruleNames: Array.from(ruleNames.get(employeeId) ?? []),
+          conflict: conflicts.has(employeeId),
+          status: employeeStatuses.size === 1 ? Array.from(employeeStatuses)[0] || "" : "MIXTO",
+        }];
+      }),
+      Array.from(concepts.values()),
+    );
 
     await auditService.register({
       ...audit,
@@ -1979,6 +1997,6 @@ export const timeEntriesService = {
     // preview (includeInReview=true, incluye EN_REVISION, sin exigir
     // cierre) — campo aditivo en el JSON, no toca las columnas del CSV
     // (exportCsv sólo lee `.rows`).
-    return { total: rows.length, rows, definitive: !query.includeInReview };
+    return { total: rows.length, columns, rows, definitive: !query.includeInReview };
   },
 };

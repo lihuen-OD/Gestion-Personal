@@ -88,6 +88,10 @@ export const hourConceptsRepository = {
     return prisma.hourConcept.update({ where: { id }, data });
   },
 
+  countBreakdowns(hourConceptId: string) {
+    return prisma.hourConceptBreakdown.count({ where: { hourConceptId } });
+  },
+
   // Clasificación automática de jornadas (Motor A): devuelve exclusivamente
   // reglas activas de conceptos que también son elegibles para automatización.
   // Etapa 15M.7B: el mismo universo funcional que Motor B respecto de

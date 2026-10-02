@@ -48,7 +48,7 @@ export const automaticHourConceptBreakdownsRepository = {
     });
   },
 
-  replaceAutomatic(employeeId: string, period: string, rows: CalculatedAutomaticBreakdown[], createdByUserId?: string | null) {
+  replaceAutomatic(employeeId: string, period: string, rows: Array<CalculatedAutomaticBreakdown & { appliedMultiplier: number }>, createdByUserId?: string | null) {
     return prisma.$transaction(async (tx) => {
       const deleted = await tx.hourConceptBreakdown.deleteMany({ where: { employeeId, period, source: "AUTOMATIC" } });
       if (rows.length) {

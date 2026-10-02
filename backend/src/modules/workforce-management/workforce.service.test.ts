@@ -16,7 +16,8 @@ import { roles } from "../../shared/security/roles";
 vi.mock("../../shared/prisma/client", () => ({
   prisma: {
     employee: { count: vi.fn(), findMany: vi.fn() },
-    timeEntry: { groupBy: vi.fn(), findFirst: vi.fn(), update: vi.fn() },
+    timeEntry: { groupBy: vi.fn(), findFirst: vi.fn(), findMany: vi.fn().mockResolvedValue([]), update: vi.fn() },
+    hourConceptBreakdown: { findMany: vi.fn().mockResolvedValue([]) },
     monthlyTimeClosure: { findMany: vi.fn(), findUnique: vi.fn(), update: vi.fn(), updateMany: vi.fn(), upsert: vi.fn() },
     timeCorrectionRequest: { findMany: vi.fn(), findUnique: vi.fn(), findUniqueOrThrow: vi.fn(), update: vi.fn(), create: vi.fn() },
     shiftTemplate: { create: vi.fn(), findUnique: vi.fn(), update: vi.fn(), delete: vi.fn() },
@@ -39,7 +40,8 @@ vi.mock("../audit/audit.service", () => ({
 
 const mockedPrisma = prisma as unknown as {
   employee: { count: Mock; findMany: Mock };
-  timeEntry: { groupBy: Mock; findFirst: Mock; update: Mock };
+  timeEntry: { groupBy: Mock; findFirst: Mock; findMany: Mock; update: Mock };
+  hourConceptBreakdown: { findMany: Mock };
   monthlyTimeClosure: { findMany: Mock; findUnique: Mock; update: Mock; updateMany: Mock; upsert: Mock };
   timeCorrectionRequest: { findMany: Mock; findUnique: Mock; findUniqueOrThrow: Mock; update: Mock; create: Mock };
   shiftTemplate: { create: Mock; findUnique: Mock; update: Mock; delete: Mock };
@@ -73,7 +75,46 @@ describe("workforceService — auditoria en correcciones/cierres (hueco cerrado)
     expect(auditService.register).toHaveBeenCalledWith(expect.objectContaining({ action: "UPDATE", entity: "MonthlyTimeClosure", entityId: "closure-1" }));
   });
 
-  it("submitClosures snapshotea sólo Horas normales (systemRole NORMAL_BASE), no conceptos adicionales (Etapa 6M)", async () => {
+  // docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md: el snapshot congela la
+  // composición real (base, Horas normales residuales, dentro de la
+  // jornada, adicionales, total trabajado y equivalencia) con el mismo
+  // modelo y criterio de estado que la grilla por legajo.
+  it("submitClosures congela la contabilidad del período: base 8 + Sereno 3 + Colectivo 1 en domingo x2 → real 9, equivalencia 18", async () => {
+    mockedPrisma.employee.count.mockResolvedValue(1);
+    mockedPrisma.timeEntry.groupBy.mockResolvedValue([{ employeeId: "emp-1", status: "APROBADO", _sum: { hours: 8 }, _count: 1 }]);
+    mockedPrisma.timeEntry.findMany.mockResolvedValue([{ employeeId: "emp-1", day: 2, hours: 8, appliedMultiplier: 2 }]);
+    mockedPrisma.hourConceptBreakdown.findMany.mockResolvedValue([
+      { employeeId: "emp-1", day: 2, hourConceptId: "sereno", minutes: 180, appliedMultiplier: 2, startAt: null, endAt: null, hourConcept: { workTreatment: "WITHIN_BASE", code: "HOR-001", name: "Sereno" } },
+      { employeeId: "emp-1", day: 2, hourConceptId: "colectivo", minutes: 60, appliedMultiplier: 2, startAt: null, endAt: null, hourConcept: { workTreatment: "ADDITIVE_TO_WORKED_TOTAL", code: "HOR-002", name: "Colectivo" } },
+    ]);
+    mockedPrisma.monthlyTimeClosure.upsert.mockResolvedValue({ id: "closure-1", employeeId: "emp-1" });
+    mockedPrisma.$transaction.mockImplementation((operations: unknown[]) => Promise.all(operations));
+
+    await workforceService.submitClosures("2026-08", ["emp-1"], supervisor);
+
+    expect(mockedPrisma.timeEntry.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ status: { in: ["APROBADO", "EN_REVISION"] }, hourConcept: { systemRole: "NORMAL_BASE" } }),
+    }));
+    expect(mockedPrisma.hourConceptBreakdown.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ status: { not: "RECHAZADO" } }),
+    }));
+    const snapshot = mockedPrisma.monthlyTimeClosure.upsert.mock.calls[0]![0].create.snapshot;
+    expect(snapshot.accounting).toMatchObject({
+      model: "WORKED_TIME_ACCOUNTING_V1",
+      baseMinutes: 480,
+      normalResidualMinutes: 300,
+      withinBaseMinutes: 180,
+      additiveMinutes: 60,
+      totalWorkedMinutes: 540,
+      settlement: { normalMinutes: 600, withinBaseMinutes: 360, additiveMinutes: 120, totalMinutes: 1080 },
+    });
+    expect(snapshot.accounting.concepts).toEqual(expect.arrayContaining([
+      expect.objectContaining({ hourConceptId: "sereno", name: "Sereno", treatment: "WITHIN_BASE", realMinutes: 180, settlementMinutes: 360 }),
+      expect.objectContaining({ hourConceptId: "colectivo", name: "Colectivo", treatment: "ADDITIVE_TO_WORKED_TOTAL", realMinutes: 60, settlementMinutes: 120 }),
+    ]));
+  });
+
+  it("submitClosures snapshotea las Horas base por estado (systemRole NORMAL_BASE) sin inflarlas", async () => {
     mockedPrisma.employee.count.mockResolvedValue(1);
     mockedPrisma.timeEntry.groupBy.mockResolvedValue([]);
     mockedPrisma.$transaction.mockResolvedValue([{ id: "closure-1", employeeId: "emp-1" }]);

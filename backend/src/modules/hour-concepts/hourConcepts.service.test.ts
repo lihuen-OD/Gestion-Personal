@@ -13,6 +13,7 @@ vi.mock("./hourConcepts.repository", () => ({
     findById: vi.fn(),
     create: vi.fn(),
     update: vi.fn(),
+    countBreakdowns: vi.fn(),
     findEmployees: vi.fn(),
     countExistingEmployees: vi.fn(),
     findEmployeeHourConcept: vi.fn(),
@@ -35,6 +36,7 @@ const repo = hourConceptsRepository as unknown as {
   findById: Mock;
   create: Mock;
   update: Mock;
+  countBreakdowns: Mock;
   findEmployees: Mock;
   countExistingEmployees: Mock;
   findEmployeeHourConcept: Mock;
@@ -175,6 +177,34 @@ describe("update — concepto administrado por el sistema", () => {
       code: "HOUR_CONCEPT_SYSTEM_MANAGED",
     });
     expect(repo.update).not.toHaveBeenCalled();
+  });
+});
+
+// docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md: cambiar si un concepto suma
+// o no al total reinterpretaría en silencio horas ya cargadas.
+describe("update — tratamiento en el total trabajado", () => {
+  it("bloquea cambiar workTreatment si el concepto ya tiene horas cargadas", async () => {
+    repo.findById.mockResolvedValue({ id: "sereno", systemRole: null, workTreatment: "WITHIN_BASE" });
+    repo.countBreakdowns.mockResolvedValue(6);
+
+    await expect(hourConceptsService.update("sereno", { workTreatment: "ADDITIVE_TO_WORKED_TOTAL" }, { userId: "user-1" })).rejects.toMatchObject({
+      statusCode: 409,
+      code: "HOUR_CONCEPT_WORK_TREATMENT_LOCKED",
+    });
+    expect(repo.update).not.toHaveBeenCalled();
+  });
+
+  it("permite cambiarlo mientras no haya horas cargadas, y no consulta uso si el tratamiento no cambia", async () => {
+    repo.findById.mockResolvedValue({ id: "nuevo", systemRole: null, workTreatment: "WITHIN_BASE" });
+    repo.countBreakdowns.mockResolvedValue(0);
+    repo.update.mockResolvedValue({ id: "nuevo", name: "Nuevo", workTreatment: "ADDITIVE_TO_WORKED_TOTAL" });
+
+    await hourConceptsService.update("nuevo", { workTreatment: "ADDITIVE_TO_WORKED_TOTAL" }, { userId: "user-1" });
+    expect(repo.update).toHaveBeenCalledWith("nuevo", { workTreatment: "ADDITIVE_TO_WORKED_TOTAL" });
+
+    repo.countBreakdowns.mockClear();
+    await hourConceptsService.update("nuevo", { workTreatment: "WITHIN_BASE", name: "Renombrado" }, { userId: "user-1" });
+    expect(repo.countBreakdowns).not.toHaveBeenCalled();
   });
 });
 

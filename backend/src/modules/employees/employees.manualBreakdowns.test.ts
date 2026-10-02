@@ -21,6 +21,7 @@ const base = {
   period: "2026-08",
   day: 12,
   minutes: 120,
+  appliedMultiplier: 2,
   observation: "Traslado",
   createdByUserId: "user-1",
 };
@@ -35,7 +36,7 @@ describe("manual HourConceptBreakdown persistence", () => {
     };
     (prisma.$transaction as unknown as Mock).mockImplementation(async (callback: (client: typeof tx) => unknown) => callback(tx));
     await expect(employeesRepository.saveManualHourConceptBreakdown(base)).resolves.toMatchObject({ operation: "CREATE" });
-    expect(tx.hourConceptBreakdown.create).toHaveBeenCalledWith({ data: expect.objectContaining({ source: "MANUAL", status: "EN_REVISION", minutes: 120 }) });
+    expect(tx.hourConceptBreakdown.create).toHaveBeenCalledWith({ data: expect.objectContaining({ source: "MANUAL", status: "EN_REVISION", minutes: 120, appliedMultiplier: 2 }) });
     expect(tx.hourConceptBreakdown.create).toHaveBeenCalledWith({ data: expect.not.objectContaining({ approvedByUserId: expect.anything() }) });
   });
 

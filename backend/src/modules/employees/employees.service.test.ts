@@ -1,7 +1,8 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import type { Mock } from "vitest";
 import { employeesRepository } from "./employees.repository";
-import { buildAdditiveTimeGrid, employeesService } from "./employees.service";
+import { buildEmployeeTimeGrid, employeesService } from "./employees.service";
+import { resolveDoubleHourMultipliersByDate } from "../time-entries/timeEntries.repository";
 import { roles } from "../../shared/security/roles";
 import { Prisma } from "@prisma/client";
 import { calculateAutomaticBreakdowns } from "./automaticHourConceptBreakdowns";
@@ -28,6 +29,7 @@ vi.mock("./employees.repository", () => ({
     replaceHourConcepts: vi.fn(),
     findEmployeeForManualBreakdown: vi.fn(),
     findHourConceptForManualBreakdown: vi.fn(),
+    findWithinBaseDayContext: vi.fn(),
     isHourConceptEnabled: vi.fn(),
     findMonthlyClosure: vi.fn(),
     saveManualHourConceptBreakdown: vi.fn(),
@@ -39,6 +41,8 @@ vi.mock("./employees.repository", () => ({
 }));
 
 vi.mock("../audit/audit.service", () => ({ auditService: { register: vi.fn() } }));
+vi.mock("../time-entries/timeEntries.repository", () => ({ resolveDoubleHourMultipliersByDate: vi.fn() }));
+const mockedResolveMultipliers = resolveDoubleHourMultipliersByDate as unknown as Mock;
 
 const repo = employeesRepository as unknown as {
   findById: Mock;
@@ -53,6 +57,7 @@ const repo = employeesRepository as unknown as {
   replaceHourConcepts: Mock;
   findEmployeeForManualBreakdown: Mock;
   findHourConceptForManualBreakdown: Mock;
+  findWithinBaseDayContext: Mock;
   isHourConceptEnabled: Mock;
   findMonthlyClosure: Mock;
   saveManualHourConceptBreakdown: Mock;
@@ -84,153 +89,98 @@ function employeeFixture(overrides: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockedResolveMultipliers.mockResolvedValue(new Map());
 });
 
-describe("buildAdditiveTimeGrid", () => {
-  const normal = { id: "normal", code: "HC-NORMAL", name: "Hora normal", kind: "NORMAL", loadMode: null, status: "ACTIVO", systemRole: "NORMAL_BASE" } as const;
-  const sereno = { id: "sereno", code: "HC-SERENO", name: "Sereno", kind: "SERENO", loadMode: "AUTOMATIC", status: "ACTIVO", systemRole: null } as const;
-
-  it("presenta Normal primero y calcula el total trabajado sólo desde Normal", () => {
-    const result = buildAdditiveTimeGrid(
-      normal,
-      [sereno],
-      [
-        { day: 1, hours: 10 as never, status: "APROBADO", hourConcept: normal },
-        { day: 1, hours: 6 as never, status: "APROBADO", hourConcept: sereno },
-      ],
-      [{ day: 1, hourConceptId: "sereno", minutes: 360 }],
-    );
-
-    expect(result.totalWorkedMinutes).toBe(600);
-    expect(result.rows.map((row) => row.concept.id)).toEqual(["normal", "sereno"]);
-    expect(result.rows[1]).toMatchObject({ role: "ADDITIONAL", minutesByDay: { "1": 360 }, totalMinutes: 360 });
+// docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md — reemplaza el modelo 11B
+// donde todo desglose "nunca sumaba" y el liquidable era (base + conceptos)×m.
+describe("buildEmployeeTimeGrid", () => {
+  const normal = { id: "normal", code: "HC-NORMAL", name: "Hora normal", kind: "NORMAL", loadMode: null, status: "ACTIVO", systemRole: "NORMAL_BASE", workTreatment: null } as const;
+  const sereno = { id: "sereno", code: "HOR-001", name: "Sereno", kind: "SERENO", loadMode: "BOTH", status: "ACTIVO", systemRole: null, workTreatment: "WITHIN_BASE" } as const;
+  const colectivo = { id: "colectivo", code: "HOR-002", name: "Colectivo", kind: "TRANSPORTE", loadMode: "MANUAL", status: "ACTIVO", systemRole: null, workTreatment: "ADDITIVE_TO_WORKED_TOTAL" } as const;
+  const entry = (day: number, hours: number, overrides: Record<string, unknown> = {}) => ({ employeeId: "emp-1", day, hours: hours as never, status: "APROBADO", hourConcept: normal, appliedMultiplier: 1, ...overrides });
+  const breakdown = (concept: typeof sereno | typeof colectivo, day: number, minutes: number, multiplier = 1) => ({
+    employeeId: "emp-1", day, hourConceptId: concept.id, minutes, appliedMultiplier: multiplier, startAt: null, endAt: null, hourConcept: concept,
   });
 
-  it("muestra adicionales habilitados sin desglose con total cero", () => {
-    const result = buildAdditiveTimeGrid(normal, [sereno], [], []);
-    expect(result.rows[1]).toMatchObject({ concept: sereno, minutesByDay: {}, totalMinutes: 0 });
+  it("filas: Horas base primero, después dentro de la jornada y por último horas adicionales", () => {
+    const result = buildEmployeeTimeGrid(normal, [colectivo, sereno], [], []);
+    expect(result.rows.map((row) => row.concept.id)).toEqual(["normal", "sereno", "colectivo"]);
+    expect(result.rows[1]).toMatchObject({ role: "ADDITIONAL", enabled: true, minutesByDay: {}, totalMinutes: 0 });
   });
 
-  it("ignora desgloses de conceptos no habilitados y agrega los existentes por día", () => {
-    const result = buildAdditiveTimeGrid(normal, [sereno], [], [
-      { day: 2, hourConceptId: "sereno", minutes: 120 },
-      { day: 2, hourConceptId: "sereno", minutes: 60 },
-      { day: 2, hourConceptId: "colectivo-no-habilitado", minutes: 90 },
-    ]);
-    expect(result.rows).toHaveLength(2);
-    expect(result.rows[1]).toMatchObject({ minutesByDay: { "2": 180 }, totalMinutes: 180 });
+  it("día común — base 8 + Sereno 3 + Colectivo 1: Horas normales 5, total trabajado 9 (Sereno no se vuelve a sumar)", () => {
+    const result = buildEmployeeTimeGrid(normal, [sereno, colectivo], [entry(4, 8)], [breakdown(sereno, 4, 180), breakdown(colectivo, 4, 60)]);
+    expect(result.rows[0]).toMatchObject({ role: "NORMAL_BASE", minutesByDay: { "4": 480 }, totalMinutes: 480 });
+    expect(result.accounting.days["4"]).toMatchObject({ baseMinutes: 480, normalResidualMinutes: 300, withinBaseMinutes: 180, additiveMinutes: 60, totalWorkedMinutes: 540 });
+    expect(result.totalWorkedMinutes).toBe(540);
+    expect(result.specialHoursByDay).toEqual({});
+    expect(result.accounting.settlement.totalMinutes).toBe(540);
   });
 
-  // Etapa 11B: el detalle por legajo (EmployeeHoursPage) ignoraba por
-  // completo appliedMultiplier/SpecialHourRuleApplication — estos tests
-  // verifican que ahora expone lo mismo que ya expone la grilla principal
-  // (11A/11A.1), sin inflar totalWorkedMinutes ni minutesByDay reales.
-  describe("Horas Especiales sobre total y conceptos horarios (Etapa 11B)", () => {
-    it("sin ninguna regla: specialHoursByDay vacío, liquidable = real", () => {
-      const result = buildAdditiveTimeGrid(normal, [sereno], [
-        { day: 1, hours: 8 as never, status: "APROBADO", hourConcept: normal, appliedMultiplier: 1 },
-      ], []);
+  it("domingo x2 — base 8 + Sereno 3 + Colectivo 1: real 9, para liquidación 10 + 6 + 2 = 18 (nunca 22 ni 24)", () => {
+    const result = buildEmployeeTimeGrid(normal, [sereno, colectivo], [
+      entry(27, 8, { appliedMultiplier: 2, timeSegment: { specialHourRuleApplications: [{ wasConflicting: false, doubleHourRule: { name: "Domingos" } }] } }),
+    ], [breakdown(sereno, 27, 180, 2), breakdown(colectivo, 27, 60, 2)]);
 
-      expect(result.specialHoursByDay).toEqual({});
-      expect(result.specialHourAdditionalMinutes).toBe(0);
-      expect(result.specialHourLiquidableTotalMinutes).toBe(480);
-      expect(result.totalWorkedMinutes).toBe(480); // real, sin inflar
-    });
-
-    it("caso obligatorio — 8hs normales + 4hs Sereno en domingo x2: liquidable total 24hs (1440 min), reales intactas", () => {
-      const result = buildAdditiveTimeGrid(normal, [sereno], [
-        {
-          day: 27, hours: 8 as never, status: "APROBADO", hourConcept: normal, appliedMultiplier: 2,
-          timeSegment: { specialHourRuleApplications: [{ wasConflicting: false, doubleHourRule: { name: "Domingo" } }] },
-        },
-      ], [{ day: 27, hourConceptId: "sereno", minutes: 240 }]);
-
-      // Reales: nunca se inflan.
-      expect(result.totalWorkedMinutes).toBe(480); // 8hs reales de Hora normal
-      expect(result.rows[1]).toMatchObject({ minutesByDay: { "27": 240 }, totalMinutes: 240 }); // 4hs reales de Sereno
-
-      // Liquidable: 8*2 + 4*2 = 16 + 8 = 24hs = 1440 min.
-      expect(result.specialHoursByDay["27"]).toMatchObject({
-        multiplier: 2,
-        additionalMinutes: 720, // 480*(2-1) + 240*(2-1)
-        liquidableTotalMinutes: 1440,
-        ruleNames: ["Domingo"],
-        conflict: false,
-      });
-      expect(result.specialHourAdditionalMinutes).toBe(720);
-      expect(result.specialHourLiquidableTotalMinutes).toBe(1440);
-    });
-
-    it("conflicto de prioridad (empate): se refleja en specialHoursByDay sin bloquear el cálculo", () => {
-      const result = buildAdditiveTimeGrid(normal, [sereno], [
-        {
-          day: 16, hours: 8 as never, status: "APROBADO", hourConcept: normal, appliedMultiplier: 2.5,
-          timeSegment: {
-            specialHourRuleApplications: [
-              { wasConflicting: true, doubleHourRule: { name: "Domingo Odwyer" } },
-              { wasConflicting: true, doubleHourRule: { name: "Domingo Pañol" } },
-            ],
-          },
-        },
-      ], []);
-
-      expect(result.specialHoursByDay["16"]).toMatchObject({ multiplier: 2.5, conflict: true, ruleNames: ["Domingo Odwyer", "Domingo Pañol"] });
-    });
-
-    it("carga manual (sin timeSegment/trazabilidad de regla) igual expone el multiplicador y el liquidable, sin nombre de regla", () => {
-      const result = buildAdditiveTimeGrid(normal, [sereno], [
-        { day: 5, hours: 8 as never, status: "APROBADO", hourConcept: normal, appliedMultiplier: 2, timeSegment: null },
-      ], [{ day: 5, hourConceptId: "sereno", minutes: 120 }]);
-
-      expect(result.specialHoursByDay["5"]).toMatchObject({ multiplier: 2, ruleNames: [], liquidableTotalMinutes: 1200 }); // (480+120)*2
-    });
-
-    it("un TimeEntry EN_REVISION también cuenta (mismo gate que 'normal'), uno BORRADOR no", () => {
-      const result = buildAdditiveTimeGrid(normal, [sereno], [
-        { day: 1, hours: 8 as never, status: "EN_REVISION", hourConcept: normal, appliedMultiplier: 2 },
-        { day: 2, hours: 8 as never, status: "BORRADOR", hourConcept: normal, appliedMultiplier: 2 },
-      ], []);
-
-      expect(result.specialHoursByDay).toHaveProperty("1");
-      expect(result.specialHoursByDay).not.toHaveProperty("2");
-    });
+    expect(result.totalWorkedMinutes).toBe(540);
+    expect(result.accounting.settlement).toEqual({ normalMinutes: 600, withinBaseMinutes: 360, additiveMinutes: 120, totalMinutes: 1080 });
+    expect(result.specialHoursByDay["27"]).toEqual({ multiplier: 2, ruleNames: ["Domingos"], conflict: false });
   });
 
-  // Etapa 15M.2 (docs/decisions/ATTENDANCE_AUTO_BREAKDOWN_SYNC_15M2.md):
-  // reproduce el caso exacto reportado en 15M.1 de punta a punta a nivel de
-  // funciones puras — el motor de Motor B (`calculateAutomaticBreakdowns`,
-  // ya testeado por separado en automaticHourConceptBreakdowns.test.ts) y la
-  // grilla (`buildAdditiveTimeGrid`) son las dos piezas reales que hoy
-  // conecta la sincronización automática; encadenarlas acá prueba la
-  // invariante aditiva sin necesitar una base real (no hay tests de
-  // integración con DB en este repo — ver 15M.1 §23).
-  describe("invariante aditiva end-to-end (Motor B -> grilla) — Etapa 15M.2", () => {
-    const sereno = { id: "sereno", code: "HC-SERENO", name: "Sereno", kind: "SERENO", loadMode: "AUTOMATIC", status: "ACTIVO", systemRole: null } as const;
+  it("Colectivo de domingo sin Horas base ese día: conserva su x2 propio (snapshot), real 2 y equivalencia 4", () => {
+    const result = buildEmployeeTimeGrid(normal, [colectivo], [], [breakdown(colectivo, 6, 120, 2)]);
+    expect(result.accounting.days["6"]).toMatchObject({ baseMinutes: 0, totalWorkedMinutes: 120, settlement: expect.objectContaining({ totalMinutes: 240 }) });
+    expect(result.specialHoursByDay["6"]).toEqual({ multiplier: 2, ruleNames: [], conflict: false });
+  });
 
-    it("07:50-11:59 (249 min reales) con concepto automático 09:00-11:00 (120 min): Normal=249, adicional=120, total=249 (nunca 369)", () => {
-      const shift = { id: "shift-1", startAt: new Date("2026-09-10T10:50:00.000Z"), endAt: new Date("2026-09-10T14:59:00.000Z") }; // 07:50-11:59 ART
-      const rule = { id: "rule-sereno", hourConceptId: "sereno", startTime: "09:00", endTime: "11:00", crossesMidnight: false };
+  it("conflicto de prioridad (empate): se refleja en specialHoursByDay sin bloquear el cálculo", () => {
+    const result = buildEmployeeTimeGrid(normal, [sereno], [
+      entry(16, 8, {
+        appliedMultiplier: 2.5,
+        timeSegment: { specialHourRuleApplications: [{ wasConflicting: true, doubleHourRule: { name: "Domingo Odwyer" } }, { wasConflicting: true, doubleHourRule: { name: "Domingo Pañol" } }] },
+      }),
+    ], []);
+    expect(result.specialHoursByDay["16"]).toMatchObject({ multiplier: 2.5, conflict: true, ruleNames: ["Domingo Odwyer", "Domingo Pañol"] });
+    expect(result.accounting.settlement.totalMinutes).toBe(1200);
+  });
 
-      const breakdownRows = calculateAutomaticBreakdowns("2026-09", [shift], [rule]);
-      expect(breakdownRows).toEqual([expect.objectContaining({ hourConceptId: "sereno", minutes: 120, day: 10 })]);
+  it("Horas base: cuenta APROBADO y EN_REVISION, nunca BORRADOR ni otro concepto", () => {
+    const result = buildEmployeeTimeGrid(normal, [sereno], [
+      entry(1, 8, { status: "EN_REVISION" }),
+      entry(2, 8, { status: "BORRADOR", appliedMultiplier: 2 }),
+      entry(3, 6, { hourConcept: sereno }),
+    ], []);
+    expect(result.rows[0]).toMatchObject({ minutesByDay: { "1": 480 }, totalMinutes: 480 });
+    expect(result.specialHoursByDay).not.toHaveProperty("2");
+  });
 
-      const result = buildAdditiveTimeGrid(
-        normal,
-        [sereno],
-        [{ day: 10, hours: 4.15 as never, status: "APROBADO", hourConcept: normal }],
-        breakdownRows.map((row) => ({ day: row.day, hourConceptId: row.hourConceptId, minutes: row.minutes })),
-      );
+  it("un concepto con horas en el período que hoy no está habilitado se muestra (sólo lectura) para que la grilla explique el total", () => {
+    const result = buildEmployeeTimeGrid(normal, [sereno], [entry(2, 8)], [breakdown(sereno, 2, 120), breakdown(sereno, 2, 60), breakdown(colectivo, 2, 90)]);
+    expect(result.rows.map((row) => [row.concept.id, row.enabled, row.totalMinutes])).toEqual([["normal", true, 480], ["sereno", true, 180], ["colectivo", false, 90]]);
+    expect(result.totalWorkedMinutes).toBe(570);
+  });
 
-      expect(result.rows[0]).toMatchObject({ role: "NORMAL_BASE", totalMinutes: 249 });
-      expect(result.rows[1]).toMatchObject({ role: "ADDITIONAL", minutesByDay: { "10": 120 }, totalMinutes: 120 });
-      expect(result.totalWorkedMinutes).toBe(249); // nunca 249+120=369 — el adicional no se suma al total real.
-    });
+  // Etapa 15M.2 encadenada con el modelo nuevo: el desglose automático
+  // dentro de la jornada nunca infla el total y persiste su intervalo real.
+  it("Motor B -> grilla: 07:50-11:59 (249 min) con concepto automático 09:00-11:00 → base 249, Horas normales 129, total 249 (nunca 369)", () => {
+    const shift = { id: "shift-1", startAt: new Date("2026-09-10T10:50:00.000Z"), endAt: new Date("2026-09-10T14:59:00.000Z") }; // 07:50-11:59 ART
+    const rule = { id: "rule-prueba", hourConceptId: "sereno", startTime: "09:00", endTime: "11:00", crossesMidnight: false };
+
+    const rows = calculateAutomaticBreakdowns("2026-09", [shift], [rule]);
+    expect(rows).toEqual([expect.objectContaining({ hourConceptId: "sereno", minutes: 120, day: 10, startAt: new Date("2026-09-10T12:00:00.000Z"), endAt: new Date("2026-09-10T14:00:00.000Z") })]);
+
+    const result = buildEmployeeTimeGrid(normal, [sereno], [entry(10, 4.15)], rows.map((row) => ({ ...breakdown(sereno, row.day, row.minutes), startAt: row.startAt, endAt: row.endAt })));
+    expect(result.rows[0]).toMatchObject({ role: "NORMAL_BASE", totalMinutes: 249 });
+    expect(result.rows[1]).toMatchObject({ role: "ADDITIONAL", minutesByDay: { "10": 120 }, totalMinutes: 120 });
+    expect(result.accounting.normalResidualMinutes).toBe(129);
+    expect(result.totalWorkedMinutes).toBe(249);
   });
 });
 
 describe("employeesService manual hour concept breakdowns", () => {
   const input = { date: "2026-08-12", hourConceptId: "11111111-1111-4111-8111-111111111111", minutes: 120, observation: "Traslado" };
-  const concept = { id: input.hourConceptId, code: "COLECTIVO", name: "Colectivo", status: "ACTIVO", deletedAt: null, loadMode: "MANUAL", systemRole: null };
+  const concept = { id: input.hourConceptId, code: "COLECTIVO", name: "Colectivo", status: "ACTIVO", deletedAt: null, loadMode: "MANUAL", systemRole: null, workTreatment: "ADDITIVE_TO_WORKED_TOTAL" };
 
   beforeEach(() => {
     repo.findEmployeeForManualBreakdown.mockResolvedValue({ id: "emp-1" });
@@ -238,6 +188,61 @@ describe("employeesService manual hour concept breakdowns", () => {
     repo.isHourConceptEnabled.mockResolvedValue(true);
     repo.findMonthlyClosure.mockResolvedValue(null);
     repo.saveManualHourConceptBreakdown.mockResolvedValue({ item: { id: "breakdown-1", minutes: 120, status: "BORRADOR", source: "MANUAL" }, deleted: 0, operation: "CREATE" });
+  });
+
+  // docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md — semántica explícita,
+  // nunca deducida de loadMode.
+  describe("tratamiento en el total trabajado", () => {
+    const serenoConcept = { ...concept, code: "HOR-001", name: "Sereno", loadMode: "BOTH", workTreatment: "WITHIN_BASE" };
+
+    it("Colectivo (adicional) se guarda aunque no haya Horas base ese día — sin consultar el contexto de jornada", async () => {
+      await employeesService.upsertManualHourConceptBreakdown("emp-1", input, rrhhUser);
+      expect(repo.findWithinBaseDayContext).not.toHaveBeenCalled();
+      expect(repo.saveManualHourConceptBreakdown).toHaveBeenCalled();
+    });
+
+    it("congela el multiplicador de Hora Especial de la fecha en el desglose (Colectivo de domingo → x2)", async () => {
+      mockedResolveMultipliers.mockResolvedValue(new Map([["2026-08-12", 2]]));
+      await employeesService.upsertManualHourConceptBreakdown("emp-1", input, rrhhUser);
+      expect(mockedResolveMultipliers).toHaveBeenCalledWith("emp-1", [new Date("2026-08-12T00:00:00.000Z")]);
+      expect(repo.saveManualHourConceptBreakdown).toHaveBeenCalledWith(expect.objectContaining({ appliedMultiplier: 2 }));
+    });
+
+    it("Sereno (dentro de la jornada, loadMode BOTH) sin Horas base ese día: error de negocio, nunca se convierte en horas adicionales", async () => {
+      repo.findHourConceptForManualBreakdown.mockResolvedValue(serenoConcept);
+      repo.findWithinBaseDayContext.mockResolvedValue({ baseMinutes: 0, withinBaseBreakdowns: [] });
+      await expect(employeesService.upsertManualHourConceptBreakdown("emp-1", input, rrhhUser)).rejects.toMatchObject({
+        statusCode: 409,
+        code: "WITHIN_BASE_REQUIRES_BASE_HOURS",
+        message: "No se puede cargar Sereno dentro de la jornada porque no hay horas base registradas para ese día.",
+      });
+      expect(repo.saveManualHourConceptBreakdown).not.toHaveBeenCalled();
+    });
+
+    it("Sereno no puede superar la base junto con los demás conceptos dentro de la jornada (unión de cobertura)", async () => {
+      repo.findHourConceptForManualBreakdown.mockResolvedValue(serenoConcept);
+      repo.findWithinBaseDayContext.mockResolvedValue({
+        baseMinutes: 480,
+        withinBaseBreakdowns: [{ minutes: 420, startAt: new Date("2026-08-12T10:00:00.000Z"), endAt: new Date("2026-08-12T17:00:00.000Z") }],
+      });
+      await expect(employeesService.upsertManualHourConceptBreakdown("emp-1", input, rrhhUser)).rejects.toMatchObject({ code: "WITHIN_BASE_EXCEEDS_BASE_HOURS" });
+      expect(repo.findWithinBaseDayContext).toHaveBeenCalledWith("emp-1", new Date("2026-08-12T00:00:00.000Z"), input.hourConceptId);
+    });
+
+    it("Sereno dentro de la base se guarda", async () => {
+      repo.findHourConceptForManualBreakdown.mockResolvedValue(serenoConcept);
+      repo.findWithinBaseDayContext.mockResolvedValue({ baseMinutes: 480, withinBaseBreakdowns: [] });
+      await employeesService.upsertManualHourConceptBreakdown("emp-1", { ...input, minutes: 180 }, rrhhUser);
+      expect(repo.saveManualHourConceptBreakdown).toHaveBeenCalledWith(expect.objectContaining({ minutes: 180, appliedMultiplier: 1 }));
+    });
+
+    it("borrar (0 minutos) un concepto dentro de la jornada no exige base", async () => {
+      repo.findHourConceptForManualBreakdown.mockResolvedValue(serenoConcept);
+      repo.saveManualHourConceptBreakdown.mockResolvedValue({ item: null, deleted: 1, operation: "DELETE" });
+      await employeesService.upsertManualHourConceptBreakdown("emp-1", { ...input, minutes: 0 }, rrhhUser);
+      expect(repo.findWithinBaseDayContext).not.toHaveBeenCalled();
+      expect(mockedResolveMultipliers).not.toHaveBeenCalled();
+    });
   });
 
   it.each(["MANUAL", "BOTH"])("guarda un concepto %s habilitado como breakdown MANUAL BORRADOR", async (loadMode) => {

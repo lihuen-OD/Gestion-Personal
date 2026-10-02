@@ -5,6 +5,9 @@ import { queryBoolean } from "../../shared/validation/queryBoolean";
 export const hourConceptKindSchema = z.enum(["NORMAL", "EXTRA", "NOCTURNA", "GUARDIA", "SERENO", "TRANSPORTE", "FERIADO", "OTRO"]);
 export const additionalHourConceptKindSchema = z.enum(["EXTRA", "NOCTURNA", "GUARDIA", "SERENO", "TRANSPORTE", "FERIADO", "OTRO"]);
 export const hourConceptLoadModeSchema = z.enum(["MANUAL", "AUTOMATIC", "BOTH"]);
+// Semántica de negocio (docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md),
+// independiente de loadMode: obligatoria para todo concepto adicional.
+export const hourConceptWorkTreatmentSchema = z.enum(["WITHIN_BASE", "ADDITIVE_TO_WORKED_TOTAL"]);
 export const recordStatusSchema = z.enum(["ACTIVO", "INACTIVO"]);
 
 export const listHourConceptsQuerySchema = z.object({
@@ -31,6 +34,7 @@ export const createHourConceptSchema = z.object({
   kind: additionalHourConceptKindSchema,
   status: recordStatusSchema.default("ACTIVO"),
   loadMode: hourConceptLoadModeSchema,
+  workTreatment: hourConceptWorkTreatmentSchema,
 });
 
 export const updateHourConceptSchema = createHourConceptSchema.partial();

@@ -42,9 +42,16 @@ describe("automaticHourConceptBreakdownsRepository", () => {
       },
     };
     (prisma.$transaction as Mock).mockImplementation(async (callback: (value: typeof tx) => unknown) => callback(tx));
-    const row = { date: new Date("2026-08-10T00:00:00Z"), period: "2026-08", day: 10, hourConceptId: "sereno", minutes: 120, workShiftId: "shift-1", hourConceptRuleId: "rule-1" };
+    const row = {
+      date: new Date("2026-08-10T00:00:00Z"), period: "2026-08", day: 10, hourConceptId: "sereno", minutes: 120, workShiftId: "shift-1", hourConceptRuleId: "rule-1",
+      startAt: new Date("2026-08-10T02:00:00Z"), endAt: new Date("2026-08-10T04:00:00Z"), appliedMultiplier: 2,
+    };
     await expect(repository.replaceAutomatic("employee-1", "2026-08", [row], "user-1")).resolves.toEqual({ deleted: 2, created: 1 });
     expect(tx.hourConceptBreakdown.deleteMany).toHaveBeenCalledWith({ where: { employeeId: "employee-1", period: "2026-08", source: "AUTOMATIC" } });
-    expect(tx.hourConceptBreakdown.createMany).toHaveBeenCalledWith({ data: [expect.objectContaining({ source: "AUTOMATIC", status: "BORRADOR" })] });
+    // Persiste intervalo real y snapshot de multiplicador
+    // (docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md).
+    expect(tx.hourConceptBreakdown.createMany).toHaveBeenCalledWith({ data: [expect.objectContaining({
+      source: "AUTOMATIC", status: "BORRADOR", startAt: row.startAt, endAt: row.endAt, appliedMultiplier: 2,
+    })] });
   });
 });
