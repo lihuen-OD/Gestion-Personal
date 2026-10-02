@@ -15,6 +15,46 @@ ADD COLUMN "appliedMultiplier" DECIMAL(4,2) NOT NULL DEFAULT 1,
 ADD COLUMN "startAt" TIMESTAMPTZ(3),
 ADD COLUMN "endAt" TIMESTAMPTZ(3);
 
+-- HC-GUARDIA (Guardia) fue descartado por negocio: representa la misma idea
+-- que Sereno y no debe seguir existiendo. Se elimina físicamente ANTES del
+-- backfill (si no, el guard de abajo abortaría por un concepto sin
+-- tratamiento) y sólo si no tiene historial real; si lo tuviera, la
+-- migración aborta en vez de borrarlo o reinterpretarlo. Nunca se convierte
+-- a Sereno. Auditoría READ-ONLY del 2026-10-02 sobre staging: 0 TimeEntry,
+-- 0 TimeSegment, 0 WorkShift, 0 Novelty, 0 HourConceptBreakdown; sólo una
+-- regla inactiva propia y ninguna habilitación por legajo. El mismo bloque
+-- se repite en 20261002130000_remove_discarded_hc_guardia para las bases
+-- donde esta migración ya se había aplicado.
+DO $$
+DECLARE
+  guardia_id TEXT;
+BEGIN
+  SELECT "id" INTO guardia_id FROM "HourConcept" WHERE "code" = 'HC-GUARDIA' AND "systemRole" IS NULL;
+  IF guardia_id IS NULL THEN
+    RETURN;
+  END IF;
+  IF EXISTS (SELECT 1 FROM "TimeEntry" WHERE "hourConceptId" = guardia_id)
+    OR EXISTS (SELECT 1 FROM "TimeSegment" WHERE "hourConceptId" = guardia_id)
+    OR EXISTS (SELECT 1 FROM "WorkShift" WHERE "hourConceptId" = guardia_id)
+    OR EXISTS (SELECT 1 FROM "Novelty" WHERE "targetHourConceptId" = guardia_id)
+    OR EXISTS (SELECT 1 FROM "HourConceptBreakdown" WHERE "hourConceptId" = guardia_id)
+    OR EXISTS (
+      SELECT 1 FROM "TimeSegment" s JOIN "HourConceptRule" r ON r."id" = s."hourConceptRuleId"
+      WHERE r."hourConceptId" = guardia_id
+    )
+    OR EXISTS (
+      SELECT 1 FROM "HourConceptBreakdown" b JOIN "HourConceptRule" r ON r."id" = b."hourConceptRuleId"
+      WHERE r."hourConceptId" = guardia_id
+    )
+  THEN
+    RAISE EXCEPTION 'HC-GUARDIA tiene historial real (horas, segmentos, turnos, novedades o desgloses): no se elimina físicamente. Auditar antes de migrar.';
+  END IF;
+  -- Sólo configuración: habilitaciones por legajo y reglas horarias propias.
+  DELETE FROM "EmployeeHourConcept" WHERE "hourConceptId" = guardia_id;
+  DELETE FROM "HourConceptRule" WHERE "hourConceptId" = guardia_id;
+  DELETE FROM "HourConcept" WHERE "id" = guardia_id;
+END $$;
+
 -- Backfill de metadata del catálogo auditado (inspección READ-ONLY del
 -- 2026-10-02 sobre la base de desarrollo/staging, mapping confirmado por el
 -- usuario). Nunca se infiere por nombre en runtime: esto es sólo la
@@ -22,12 +62,11 @@ ADD COLUMN "endAt" TIMESTAMPTZ(3);
 -- 20260824170000_normalize_hour_concepts.
 --   HOR-001 Sereno (SERENO, BOTH, 21:00-03:00)     -> WITHIN_BASE
 --   HOR-004 Prueba (OTRO, AUTOMATIC, 09:00-11:00)  -> WITHIN_BASE
---   HC-GUARDIA Guardia (GUARDIA, eliminado)        -> WITHIN_BASE
 --   HOR-002 Colectivo (TRANSPORTE, MANUAL)         -> ADDITIVE_TO_WORKED_TOTAL
 --   HOR-003 Camioneta (TRANSPORTE, MANUAL)         -> ADDITIVE_TO_WORKED_TOTAL
 UPDATE "HourConcept"
 SET "workTreatment" = 'WITHIN_BASE'
-WHERE "systemRole" IS NULL AND "code" IN ('HOR-001', 'HOR-004', 'HC-GUARDIA');
+WHERE "systemRole" IS NULL AND "code" IN ('HOR-001', 'HOR-004');
 
 UPDATE "HourConcept"
 SET "workTreatment" = 'ADDITIVE_TO_WORKED_TOTAL'

@@ -13,7 +13,7 @@ La aplicación no calcula sueldos. Entrega tiempo real, su clasificación por co
 
 | Valor | Significado | Efecto |
 |---|---|---|
-| `WITHIN_BASE` ("Dentro de la jornada") | Clasifica minutos que ya están dentro de las Horas base (ej. Sereno, Guardia). | No suma al total trabajado. Reduce las Horas normales residuales. |
+| `WITHIN_BASE` ("Dentro de la jornada") | Clasifica minutos que ya están dentro de las Horas base (ej. Sereno). | No suma al total trabajado. Reduce las Horas normales residuales. |
 | `ADDITIVE_TO_WORKED_TOTAL` ("Horas adicionales") | Tiempo trabajado que no está en la fichada (ej. Colectivo, Camioneta). | Suma al total trabajado. Nunca se resta de la base. |
 
 - `NORMAL_BASE` no tiene tratamiento (columna `NULL`). Para todo concepto adicional es obligatorio: CHECK `HourConcept_work_treatment_check`, mismo patrón que `HourConcept_official_model_check` de `loadMode`.
@@ -56,7 +56,7 @@ Tampoco se aceptan 22 h (`(8+3)×2`) ni 24 h (`(8+4)×2`).
 ## 5. Superposición entre conceptos dentro de la jornada
 
 - **Datos al 2026-10-02:** ningún empleado/día tiene más de un concepto con horas (auditoría READ-ONLY), así que no había solapamientos reales.
-- **Estrategia:** las Horas normales residuales descuentan la **unión** de la cobertura, nunca la suma. Ejemplo: Sereno 23–02 + Guardia 01–03 sobre base 8 da cobertura 4 h, Horas normales 4 (no 3), Sereno 3 y Guardia 2 (cada concepto conserva su desglose), y el total real sigue en 8.
+- **Estrategia:** las Horas normales residuales descuentan la **unión** de la cobertura, nunca la suma. Ejemplo: Sereno 23–02 + otro concepto dentro de la jornada 01–03 sobre base 8 da cobertura 4 h, Horas normales 4 (no 3), 3 h y 2 h por concepto (cada uno conserva su desglose), y el total real sigue en 8.
 - Para que la unión sea exacta, los desgloses `AUTOMATIC` persisten su **intervalo real** (`HourConceptBreakdown.startAt/endAt`), que es la intersección fichada × regla ya partida por fecha Argentina.
 - Los desgloses `MANUAL` no tienen posición dentro de la jornada. Sus minutos se toman como una distribución declarada, y la protección es la validación al guardarlos (§7).
 - **Aviso:** la contabilidad expone `withinBaseOverlapMinutes` y la UI muestra una nota cuando hay superposición.
@@ -129,17 +129,25 @@ La migración es aditiva:
 |---|---|---|---|---|
 | HOR-001 | Sereno | SERENO / BOTH | 6 manuales | WITHIN_BASE |
 | HOR-004 | Prueba | OTRO / AUTOMATIC (09–11) | 9 automáticos, siempre ≤ base | WITHIN_BASE |
-| HC-GUARDIA | Guardia | GUARDIA / AUTOMATIC (eliminado) | sin uso | WITHIN_BASE |
 | HOR-002 | Colectivo | TRANSPORTE / MANUAL | sin uso | ADDITIVE_TO_WORKED_TOTAL |
 | HOR-003 | Camioneta | TRANSPORTE / MANUAL | sin uso | ADDITIVE_TO_WORKED_TOTAL |
 
 Si queda algún concepto adicional sin tratamiento (por ejemplo, en una base no auditada), la migración **aborta** en vez de inventarlo.
 
+**HC-GUARDIA (Guardia) se elimina físicamente.** El negocio lo descartó: es la misma idea que Sereno. No se mapea ni se convierte a Sereno.
+
+- **Auditoría READ-ONLY de 2026-10-02:** la fila existía con baja lógica (INACTIVO, `deletedAt` 2026-08-25) y tenía 0 TimeEntry, 0 TimeSegment, 0 WorkShift, 0 Novelty y 0 HourConceptBreakdown. Las referencias por regla también daban 0 y no había habilitaciones por legajo. Sólo quedaba 1 regla inactiva propia (21:00–03:00). El "uso histórico" que registraron sus bajas lógicas era únicamente configuración (1 legajo habilitado y 1 regla). La segunda baja (25/08) ocurrió porque el seed lo reactivaba.
+- **Cómo se borra:** `20261002120000` lo elimina antes del backfill y del guard, sólo si no tiene historial real; si lo tuviera, aborta. `20261002130000_remove_discarded_hc_guardia` repite el mismo bloque protegido para las bases donde `20261002120000` ya se había aplicado con la versión que lo mapeaba (staging); en una base nueva es un no-op.
+- **Qué se borra:** también sus habilitaciones y reglas. Las entradas de `AuditLog` que lo mencionan se conservan, porque `entityId` es texto y no FK.
+- **Seed:** se quitó del seed para que no vuelva a crearse.
+
 **Snapshot de multiplicador en desgloses existentes.** Se copia el mayor `appliedMultiplier` de la base APROBADO/EN_REVISION del mismo empleado y fecha, que es exactamente lo que leían las grillas antes. Los que no tienen base quedan en 1, igual que antes. Ningún número histórico cambia por la migración.
 
 **Desgloses automáticos previos.** Quedan sin intervalo hasta el próximo recálculo, que ocurre automáticamente al cerrar una jornada o con el endpoint de recálculo. Mientras tanto se tratan como distribución declarada, lo cual es exacto porque no hay superposiciones en los datos.
 
-**Orden de deploy.** Primero `prisma migrate deploy` (incluye `20260918100000_add_job_checkpoint`, que estaba pendiente) y después el backend y el frontend nuevos. El frontend nuevo requiere el contrato nuevo.
+**Orden de deploy.** Primero `prisma migrate deploy` (incluye `20260918100000_add_job_checkpoint`, que estaba pendiente, y `20261002130000_remove_discarded_hc_guardia`) y después el backend y el frontend nuevos. El frontend nuevo requiere el contrato nuevo.
+
+**Nota para staging.** Se editó `20261002120000` después de aplicarla, antes de mergear y sin tocar producción, para sacar a HC-GUARDIA del backfill. `migrate status` y `migrate deploy` no comparan checksums de migraciones ya aplicadas; sólo `migrate dev` lo señalaría, y este proyecto no lo usa contra Neon por la limitación de shadow DB documentada desde 10D.
 
 **Aplicación.** Se aplicó en Neon staging el 2026-10-02 con autorización explícita. `migrate status` quedó al día y `migrate diff` (base → schema) dio vacío. Producción no se tocó.
 

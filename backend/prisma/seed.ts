@@ -166,17 +166,9 @@ async function main() {
     },
   });
 
-  await prisma.hourConcept.upsert({
-    where: { code: "HC-GUARDIA" },
-    update: { name: "Guardia", kind: "GUARDIA", status: "ACTIVO", deletedAt: null, loadMode: "AUTOMATIC", systemRole: null, workTreatment: "WITHIN_BASE" },
-    create: {
-      code: "HC-GUARDIA",
-      name: "Guardia",
-      kind: "GUARDIA",
-      loadMode: "AUTOMATIC",
-      workTreatment: "WITHIN_BASE",
-    },
-  });
+  // HC-GUARDIA (Guardia) fue descartado por negocio (misma idea que Sereno)
+  // y eliminado físicamente (migración 20261002130000_remove_discarded_hc_guardia).
+  // No se vuelve a sembrar: el upsert anterior lo reactivaba en cada corrida.
 
   await prisma.hourConcept.upsert({
     where: { code: "HOR-001" },

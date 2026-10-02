@@ -637,7 +637,7 @@ This section is the primary source of truth for working-hour concepts. If anothe
 
 Since 2026-10-02 (`docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md`, which replaces the earlier rule "concepts never increase the worked total"):
 
-* `WITHIN_BASE` ("Dentro de la jornada", e.g. Sereno, Guardia): classifies minutes already contained in Horas base. It does not increase the worked total; it reduces Horas normales residuales. It cannot be loaded on a day without Horas base, and its coverage cannot exceed the base.
+* `WITHIN_BASE` ("Dentro de la jornada", e.g. Sereno): classifies minutes already contained in Horas base. It does not increase the worked total; it reduces Horas normales residuales. It cannot be loaded on a day without Horas base, and its coverage cannot exceed the base.
 * `ADDITIVE_TO_WORKED_TOTAL` ("Horas adicionales", e.g. Colectivo, Camioneta): worked time outside the fichada. It increases the worked total and is never subtracted from the base.
 * `loadMode` (Manual / Automático / Manual y automático) describes how a concept is loaded, never whether it adds to the total.
 * Each additional concept is enabled per employee from the legajo. Only enabled concepts appear or can be loaded for that employee.

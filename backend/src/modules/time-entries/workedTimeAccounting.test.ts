@@ -116,28 +116,28 @@ describe("workedTimeAccounting — fórmulas oficiales", () => {
     expect(day.totalWorkedMinutes).toBe(12 * H);
   });
 
-  it("solapamiento WITHIN_BASE: Sereno 23:00–02:00 + Guardia 01:00–03:00 sobre base 8 → cobertura 4 (unión), normal 4, no 3", () => {
+  it("solapamiento WITHIN_BASE: Sereno 23:00–02:00 + otro concepto dentro de la jornada 01:00–03:00 sobre base 8 → cobertura 4 (unión), normal 4, no 3", () => {
     // Fechas UTC equivalentes a la noche Argentina (UTC-3) — misma fecha
     // calendario para todos los tramos en este caso de prueba.
     const serenoInterval = sereno(3, 1, 1, ["2026-08-04T02:00:00.000Z", "2026-08-04T05:00:00.000Z"]);
-    const guardia: AccountingBreakdown = {
+    const nocturna: AccountingBreakdown = {
       employeeId: EMPLOYEE,
       day: 1,
-      hourConceptId: "guardia",
+      hourConceptId: "nocturna",
       treatment: "WITHIN_BASE",
       minutes: 2 * H,
       multiplier: 1,
       startAt: new Date("2026-08-04T04:00:00.000Z"),
       endAt: new Date("2026-08-04T06:00:00.000Z"),
     };
-    const day = accountDay(1, [base(8)], [serenoInterval, guardia]);
+    const day = accountDay(1, [base(8)], [serenoInterval, nocturna]);
     expect(day.withinBaseMinutes).toBe(5 * H);
     expect(day.withinBaseCoveredMinutes).toBe(4 * H);
     expect(day.withinBaseOverlapMinutes).toBe(1 * H);
     expect(day.normalResidualMinutes).toBe(4 * H);
     // Cada concepto conserva su desglose individual.
     expect(concept(day, "sereno")?.realMinutes).toBe(3 * H);
-    expect(concept(day, "guardia")?.realMinutes).toBe(2 * H);
+    expect(concept(day, "nocturna")?.realMinutes).toBe(2 * H);
     // El total real nunca suma conceptos dentro de la jornada.
     expect(day.totalWorkedMinutes).toBe(8 * H);
   });

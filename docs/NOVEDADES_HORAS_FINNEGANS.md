@@ -30,7 +30,6 @@ Ejemplos de novedades:
 No son novedades:
 
 - Sereno.
-- Guardia.
 - Manejo de colectivo.
 - Hora extra.
 - Nocturna.
