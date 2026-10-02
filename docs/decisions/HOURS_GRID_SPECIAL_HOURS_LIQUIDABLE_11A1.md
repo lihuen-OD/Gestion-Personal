@@ -1,5 +1,7 @@
 # Etapa 11A.1 — Liquidable de Horas Especiales sobre total y conceptos horarios
 
+> **Reemplazado parcialmente (2026-10-02) por [`WORKED_TIME_ACCOUNTING_MODEL.md`](WORKED_TIME_ACCOUNTING_MODEL.md).** El "total liquidable" `(normal + conceptos) × m` (ej. 8 + 4 Sereno ×2 = 24) duplicaba los conceptos dentro de la jornada. La equivalencia ahora parte de categorías sin duplicar (Normal residual + dentro de la jornada + adicionales, cada una × su multiplicador: 8 + 3 Sereno + 1 Colectivo ×2 = 18), y el multiplicador de un desglose es un snapshot propio (ya no queda en ×1 sin Hora normal ese día). Se conserva como registro histórico; no usar como fuente de verdad del cálculo.
+
 Fecha: 2026-08-28
 Estado: implementado, pendiente de aprobación para commitear
 Continúa: `docs/decisions/HOURS_GRID_REVIEW_SPECIAL_HOURS_AUDIT_11A.md` (11A cerró que la grilla marque la Hora Especial; 11A.1 corrige que ese marcado también impacte el total liquidable y alcance a los Conceptos Horarios adicionales)

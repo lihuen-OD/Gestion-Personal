@@ -81,6 +81,7 @@ Toda decisión de cache/paginación/refresh debe partir de identificar en qué c
 - Usar filtros por período/empresa/sector/centro de costo/estado cuando el dominio lo permita — nunca traer todo y filtrar en el cliente si el volumen puede crecer.
 - Evitar includes de más de 2-3 niveles de profundidad sin necesidad — confirmar que cada nivel se consume realmente en el frontend antes de aceptarlo.
 - Evitar N+1 queries — una consulta por fila dentro de un loop es una señal de alerta inmediata, resolver con `include`/`select`/agregación en una sola query.
+- Contabilidad de horas (`docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md`): los consumidores traen TimeEntry + HourConceptBreakdown del período en batch y llaman una vez a `workedTimeAccounting.ts` (un recorrido en memoria); el multiplicador de Hora Especial de los desgloses se resuelve con `resolveDoubleHourMultipliersByDate` (2 consultas por empleado, nunca una por desglose) y se persiste como snapshot, así las lecturas no vuelven a consultar `DoubleHourRule`.
 - Cache backend sólo con invalidación explícita — nunca agregar un cache de lectura sin, en el mismo cambio, agregar la invalidación en cada mutador relacionado (ver §5).
 - TTL corto (20-30s) para datos agregados/dashboard y para configuración con escritura frecuente; TTL medio/largo (5-10min) sólo para catálogos verdaderamente estáticos.
 - No cachear datos críticos (categoría D) si puede afectar trazabilidad o mostrar un estado incorrecto — ver §2.D.

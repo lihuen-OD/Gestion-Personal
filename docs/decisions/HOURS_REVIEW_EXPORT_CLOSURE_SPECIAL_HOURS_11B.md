@@ -1,5 +1,7 @@
 # Etapa 11B — Extender Horas Especiales a Detalle, Bandeja, Export y Cierre
 
+> **Reemplazado parcialmente (2026-10-02) por [`WORKED_TIME_ACCOUNTING_MODEL.md`](WORKED_TIME_ACCOUNTING_MODEL.md).** Las columnas "Horas especiales", "Conceptos horarios (equivalente liquidable)", "Adicional por horas especiales" y "Total liquidable" (8 + 4 ×2 = 24) fueron reemplazadas por Horas base, Horas normales, columnas reales y para liquidación por concepto, Total trabajado y Equivalencia para liquidación. Se conserva como registro histórico; no usar como fuente de verdad del cálculo.
+
 Fecha: 2026-08-28
 Estado: implementado, pendiente de aprobación para commitear
 Continúa: `docs/decisions/HOURS_GRID_REVIEW_SPECIAL_HOURS_AUDIT_11A.md`, `docs/decisions/HOURS_GRID_SPECIAL_HOURS_LIQUIDABLE_11A1.md`

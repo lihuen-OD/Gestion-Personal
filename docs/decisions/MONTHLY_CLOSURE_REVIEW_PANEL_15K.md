@@ -1,5 +1,7 @@
 # Etapa 15K — Panel de revisión visual previo al cierre de horas
 
+> **Reemplazado parcialmente (2026-10-02) por [`WORKED_TIME_ACCOUNTING_MODEL.md`](WORKED_TIME_ACCOUNTING_MODEL.md).** Los KPIs "Horas reales trabajadas", "Conceptos horarios adicionales" y "Valor liquidable" fueron reemplazados por "Total trabajado" (base + adicionales) y "Para liquidación", más el resumen de composición del período. Se conserva como registro histórico; no usar como fuente de verdad del cálculo.
+
 ## 1. Problema previo
 
 La auditoría read-only del módulo Cierre de Horas (previa a esta etapa)

@@ -1,5 +1,7 @@
 # Decisión: Conceptos Horarios Aditivos
 
+> **Reemplazado parcialmente (2026-10-02) por [`WORKED_TIME_ACCOUNTING_MODEL.md`](WORKED_TIME_ACCOUNTING_MODEL.md).** Ya no es cierto que todo `HourConceptBreakdown` sea un desglose que nunca incrementa el total trabajado: lo decide `HourConcept.workTreatment` (`WITHIN_BASE` clasifica horas de la base y reduce las Horas normales residuales; `ADDITIVE_TO_WORKED_TOTAL` —Colectivo, Camioneta— suma al total). Se conserva como registro histórico; no usar como fuente de verdad del cálculo.
+
 Fecha: 2026-08-24  
 Estado: aceptada; implementación pendiente por etapas
 

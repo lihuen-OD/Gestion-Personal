@@ -293,14 +293,17 @@ Incluye:
 GET /api/employees/:id/time-grid?period=YYYY-MM&includeDetails=false
 ```
 
-Además del contrato operativo histórico (`employee`, `entries`, novedades y catálogos opcionales), devuelve la presentación aditiva oficial:
+Además del contrato operativo histórico (`employee`, `entries`, novedades y catálogos opcionales), devuelve la grilla del modelo de tiempo trabajado (`docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md`):
 
-- `rows`: Normal canónica siempre primera y luego sólo conceptos adicionales habilitados para el legajo;
-- `rows[].concept`: identidad estable (`id`, `code`, `systemRole`) y datos de presentación (`name`, `kind`, `loadMode`, `status`);
-- `rows[].minutesByDay` y `rows[].totalMinutes`: minutos presentados por fila;
-- `totalWorkedMinutes`: total real derivado exclusivamente de la fila `NORMAL_BASE`.
+- `rows`: Horas base (`role: NORMAL_BASE`) siempre primera; luego un concepto por fila (`role: ADDITIONAL`), primero los `WITHIN_BASE` y después los `ADDITIVE_TO_WORKED_TOTAL`;
+- `rows[].concept`: identidad estable (`id`, `code`, `systemRole`) y presentación (`name`, `kind`, `loadMode`, `status`, `workTreatment`);
+- `rows[].enabled`: `false` para un concepto con horas en el período que hoy no está habilitado para el legajo (se muestra sólo lectura para que la grilla explique el total);
+- `rows[].minutesByDay` y `rows[].totalMinutes`: minutos reales por fila;
+- `accounting`: `PeriodAccounting` con `days[day]` — `baseMinutes`, `normalResidualMinutes`, `withinBaseMinutes`, `withinBaseCoveredMinutes`, `withinBaseOverlapMinutes`, `withinBaseExcessMinutes`, `additiveMinutes`, `totalWorkedMinutes`, `settlement { normalMinutes, withinBaseMinutes, additiveMinutes, totalMinutes }`, `concepts[{ hourConceptId, treatment, realMinutes, settlementMinutes }]`, `multiplier` (por día) y `hasSpecialMultiplier` (período);
+- `totalWorkedMinutes`: total real = Horas base + conceptos `ADDITIVE_TO_WORKED_TOTAL` (nunca + `WITHIN_BASE`);
+- `specialHoursByDay[day]`: `{ multiplier, ruleNames, conflict }` sólo para días con multiplicador > 1 (indicador visual; las horas del día viven en `accounting.days`).
 
-Las filas adicionales leen `HourConceptBreakdown` visibles y no se suman a `totalWorkedMinutes`. Los conceptos `AUTOMATIC` son de sólo lectura; desde 6H los conceptos `MANUAL` y `BOTH` admiten la operación manual documentada a continuación.
+Desde 2026-10-02 ya no existen `specialHourAdditionalMinutes`, `specialHourLiquidableTotalMinutes` ni `additionalMinutes`/`liquidableTotalMinutes` por día (duplicaban los conceptos dentro de la jornada). Los conceptos `AUTOMATIC` son de sólo lectura; los `MANUAL` y `BOTH` admiten la operación manual documentada a continuación.
 
 Cacheado 60s en backend por usuario+legajo+query string (`employeeTimeGridCache`, `employees.controller.ts`). Se invalida (`clearEmployeeReadCaches()`) al guardar un desglose manual y, desde la Etapa 6L.4, también al crear/editar/enviar/aprobar/rechazar/devolver un `TimeEntry` (`POST`/`PATCH`/`:id/submit`/`:id/approve`/`:id/reject`/`:id/return` de `/time-entries`) — antes de 6L.4 esos seis endpoints no invalidaban este cache, así que una hora podía guardarse bien y el siguiente `GET /time-grid` de esa misma sesión seguir devolviendo la respuesta cacheada hasta por 60s.
 
@@ -326,6 +329,12 @@ PUT con `minutes = 0` elimina el registro manual. No se expone DELETE porque el 
 Estado inicial (o resultante de sobrescribir un registro existente) según el rol de quien carga (Etapa 6L.3): **RRHH** deja el desglose `APROBADO` directo, con `approvedByUserId`/`approvedAt` propios. **Nivel 2/3** dejan el desglose `EN_REVISION` — a diferencia de `TimeEntry`, el desglose manual no tiene una acción separada de "enviar a revisión"; el único `PUT` ya es la carga completa, así que queda pendiente de una. RRHH ve esos desgloses `EN_REVISION` de Nivel 2/3 en `GET /pending` (ver más abajo) y los resuelve con los endpoints de abajo.
 
 Sólo admite conceptos adicionales habilitados, activos, no eliminados y con modo `MANUAL` o `BOTH`. Rechaza Normal, `AUTOMATIC`, conceptos fuera del legajo. Nivel 2/Nivel 3 conservan el alcance operativo por responsable de horas.
+
+Tratamiento del concepto (`docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md`), independiente de `loadMode`:
+
+- `WITHIN_BASE`: exige Horas base registradas ese día (TimeEntry `NORMAL_BASE` no rechazado) — si no hay, `409 WITHIN_BASE_REQUIRES_BASE_HOURS` ("No se puede cargar <Concepto> dentro de la jornada porque no hay horas base registradas para ese día."); la cobertura resultante (unión con los demás conceptos dentro de la jornada de ese día) no puede superar la base: `409 WITHIN_BASE_EXCEEDS_BASE_HOURS`. Nunca se convierte en horas adicionales.
+- `ADDITIVE_TO_WORKED_TOTAL`: puede cargarse sin Horas base.
+- Al guardar (minutes > 0) se congela `appliedMultiplier` con el motor de Hora Especial de esa fecha (mismo criterio que `TimeEntry.appliedMultiplier`).
 
 Período cerrado (`MonthlyTimeClosure` en `ENVIADO`/`APROBADO`/`CORRECCION_PENDIENTE`) — **Etapa 15E**, alineado con `TimeEntry` (`docs/decisions/TIME_CLOSURE_CONSISTENCY_15E.md`): Nivel 2/3 siguen recibiendo `409 PERIOD_CLOSED` sin excepción. RRHH puede corregir directo si manda `observation` no vacío (reutiliza el campo del body, no hay uno nuevo); sin `observation`, responde `400 HOUR_CONCEPT_BREAKDOWN_CORRECTION_REASON_REQUIRED`.
 
@@ -725,7 +734,7 @@ page
 
 ### Horas especiales
 
-> Estado de transición: esta sección describe el contrato que expone hoy la implementación. La regla de negocio objetivo es el modelo aditivo definido en `PROJECT_CONTEXT.md` y `decisions/CONCEPTOS_HORARIOS_ADITIVOS.md`: Horas normales es obligatoria y contiene el total real; los conceptos adicionales son desgloses que no lo reemplazan ni se suman a él. Los campos actuales todavía no representan por completo ese modelo.
+> Modelo vigente: `docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md`. Horas base (NORMAL_BASE) es obligatoria; cada concepto adicional declara `workTreatment` (`WITHIN_BASE` clasifica horas de la base; `ADDITIVE_TO_WORKED_TOTAL` suma al total trabajado).
 
 ```txt
 GET /api/hour-concepts
@@ -751,9 +760,12 @@ Campos principales:
   "name": "Hora normal",
   "kind": "NORMAL",
   "status": "ACTIVO",
-  "countsAsWorked": true
+  "countsAsWorked": true,
+  "workTreatment": null
 }
 ```
+
+`workTreatment` (`WITHIN_BASE` | `ADDITIVE_TO_WORKED_TOTAL`) es obligatorio en `POST` para todo concepto adicional y opcional en `PATCH`; `NORMAL_BASE` lo tiene en `null` (CHECK `HourConcept_work_treatment_check`). Cambiarlo en un concepto que ya tiene horas cargadas responde `409 HOUR_CONCEPT_WORK_TREATMENT_LOCKED`.
 
 `countsAsWorked` queda deprecado como criterio para calcular el total trabajado. Mientras continúe en el contrato por compatibilidad, no debe interpretarse como autorización para sumar un concepto adicional a Horas normales.
 
@@ -1194,7 +1206,7 @@ Reglas:
 - Respeta el alcance del rol autenticado.
 - Debe usarse para KPI cards del modulo Horas.
 - Evita traer todas las cargas del periodo solo para calcular contadores.
-- `countableHours` (Etapa 6M) suma exclusivamente `TimeEntry` con `hourConcept.systemRole = NORMAL_BASE`. Los conceptos adicionales (`HourConceptBreakdown`) no se suman acá — ver "Personas del periodo para tabla" para dónde se exponen.
+- `countableHours` ("Total trabajado" en la UI) = Horas base (`TimeEntry` `NORMAL_BASE` APROBADO/EN_REVISION) + horas de conceptos `ADDITIVE_TO_WORKED_TOTAL` (`HourConceptBreakdown` sin RECHAZADO). Nunca suma conceptos `WITHIN_BASE` (ver `docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md`).
 
 ### Personas del periodo para tabla
 
@@ -1245,7 +1257,7 @@ Reglas:
 - Devuelve empleados activos paginados.
 - Calcula total y estado solo para los empleados visibles.
 - Debe usarse para la tabla principal de Horas en lugar de descargar todos los legajos y todas las cargas del periodo.
-- `summary` trae además `normal`, `special`, `incidents` y `dailyBreakdown` (no incluidos en el JSON de ejemplo arriba, que está desactualizado en ese detalle desde antes de esta nota). Desde la Etapa 6M: `total` y `normal` sólo suman `TimeEntry` con `hourConcept.systemRole = NORMAL_BASE`; `special` (agregado y por día en `dailyBreakdown`) sale exclusivamente de `HourConceptBreakdown` con `status != RECHAZADO` y nunca se suma a `total`. Un `TimeEntry` especial legacy (sólo posible en datos previos a la Etapa 6L) queda excluido de `total`/`normal`/`special`.
+- Desde 2026-10-02 `summary = { incidents, status, accounting, dailyBreakdown }` (el JSON de ejemplo de arriba es anterior). `accounting` es el `PeriodAccounting` del legajo (ver time-grid) con `days`; Horas base = `TimeEntry` `NORMAL_BASE` APROBADO/EN_REVISION y conceptos = `HourConceptBreakdown` sin RECHAZADO. `dailyBreakdown[]` = `{ day, novelty, specialHourRuleNames, specialHourConflict }` sólo para días con horas o novedad. Ya no existen `total`, `normal`, `special`, `specialHourAdditionalHours` ni `specialHourLiquidableTotal`. La vista "Por persona" (`GET /time-entries?view=byEmployee`) devuelve `summary = { status, accounting (sin days), specialHourRuleNames, specialHourConflict }`.
 
 ## Exportaciones
 
@@ -1377,31 +1389,30 @@ includeInReview=false
 
 Antes de 15E.2, este endpoint filtraba sólo por `TimeEntry.status` y nunca consultaba `MonthlyTimeClosure` — quedó documentado como deuda en `docs/decisions/TIME_CLOSURE_CONSISTENCY_15E.md` §8 y cerrado acá.
 
+Respuesta JSON (desde 2026-10-02, `docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md`): `{ total, columns[{ key, kind: "text" | "hours" }], rows[Record<string,string>], definitive }`. El `.csv` usa exactamente `columns` en el mismo orden.
+
 Columnas:
 
 ```txt
-CUIL
-Apellido
-Nombre
-Legajo
-Empresa
-Centro de costo
+CUIL | Apellido | Nombre | Legajo | Empresa | Centro de costo
+Horas base
 Horas normales
-Horas especiales
-Horas trabajadas totales
-Horas especiales (equivalente liquidable)
-Adicional por horas especiales
+<Concepto> (horas reales)            -- una por concepto con horas en el período (dentro de la jornada primero)
+Total trabajado                      -- Horas base + conceptos ADDITIVE_TO_WORKED_TOTAL
+Horas normales (para liquidación)
+<Concepto> (para liquidación)        -- una por concepto
+Equivalencia para liquidación        -- suma de los componentes anteriores
 Reglas de horas especiales aplicadas
+Conflicto de reglas
 Estado
 ```
 
-Desde la Etapa 6M, el export cumple el modelo objetivo: `Horas trabajadas totales` = `Horas normales` (suma exclusiva de `TimeEntry` con `hourConcept.systemRole = NORMAL_BASE`); `Horas especiales` sale de `HourConceptBreakdown` (`status != RECHAZADO`) y se informa aparte, sin sumarse al total. Un `TimeEntry` especial legacy (sólo posible en datos previos a la Etapa 6L) queda excluido de ambas columnas.
-
-Desde la Etapa 8F, `TimeEntry.hours`/`totalMinutes` son siempre minutos reales — nunca se inflan por el multiplicador de una regla de Horas Especiales (`DoubleHourRule`, ver `docs/decisions/HORAS_ESPECIALES_AUDITORIA_8A.md`). El valor equivalente/liquidable de esas reglas (Domingo, Feriado, …) ya no vive en `Horas normales`/`Horas trabajadas totales`: se agrega en tres columnas nuevas, calculadas por entrada (real × `TimeEntry.appliedMultiplier`, nunca acumulando entre entradas de distintos días con multiplicadores distintos) y sumadas sólo sobre entradas `NORMAL_BASE`:
-
-- `Horas especiales (equivalente liquidable)`: suma de horas reales × `appliedMultiplier`. Sin regla aplicada (`appliedMultiplier = 1`) coincide con `Horas normales`.
-- `Adicional por horas especiales`: equivalente − `Horas normales` (el "extra" a liquidar, `0` si no aplicó ninguna regla).
-- `Reglas de horas especiales aplicadas`: nombres únicos (`DoubleHourRule.name`, vía `SpecialHourRuleApplication`) de las reglas que matchearon algún tramo del período, separados por coma; vacío si ninguna aplicó.
+- Todos los valores salen de la contabilidad única (`workedTimeAccounting.ts`); el multiplicador de cada desglose es su propio snapshot (`HourConceptBreakdown.appliedMultiplier`).
+- Conceptos con el mismo nombre se distinguen por código: `Traslado (TR-1) (horas reales)`.
+- Incluye a quienes sólo tienen horas adicionales en el período (sin `TimeEntry`), y el gate de cierre aprobado también los alcanza.
+- Ejemplo obligatorio (base 8, Sereno 3, Colectivo 1, domingo ×2): `Horas base 8`, `Horas normales 5`, `Sereno (horas reales) 3`, `Colectivo (horas reales) 1`, `Total trabajado 9`, `Horas normales (para liquidación) 10`, `Sereno (para liquidación) 6`, `Colectivo (para liquidación) 2`, `Equivalencia para liquidación 18`.
+- Se eliminaron `Horas especiales`, `Horas trabajadas totales`, `Horas especiales (equivalente liquidable)`, `Conceptos horarios (equivalente liquidable)`, `Adicional por horas especiales` y `Total liquidable` (8F/11B), que duplicaban los conceptos dentro de la jornada.
+- `TimeEntry.hours`/`totalMinutes` siguen siendo siempre minutos reales (Etapa 8F).
 
 ## Auditoría
 
@@ -1542,7 +1553,7 @@ Body de `POST`/`PATCH` (todos los campos de scope y `dates` son opcionales; `upd
 
 ### Dashboard (`dashboard`, montado en `/api/dashboard`)
 
-`GET /` (requiere auth) — métricas agregadas del home (empleados, altas/bajas, novedades, pendientes de carga horaria, alertas documentales, etc.). Cacheado ~30s en backend, ver `backend/src/modules/dashboard/dashboard.cache.ts`. El KPI `loadedHours` (Etapa 6M) suma exclusivamente `TimeEntry` con `hourConcept.systemRole = NORMAL_BASE`; no incluye conceptos adicionales de `HourConceptBreakdown`.
+`GET /` (requiere auth) — métricas agregadas del home (empleados, altas/bajas, novedades, pendientes de carga horaria, alertas documentales, etc.). Cacheado ~30s en backend, ver `backend/src/modules/dashboard/dashboard.cache.ts`. El KPI `loadedHours` ("Horas cargadas") es el total trabajado real del período: Horas base (`TimeEntry` `NORMAL_BASE` APROBADO/EN_REVISION) + conceptos `ADDITIVE_TO_WORKED_TOTAL` (`HourConceptBreakdown` sin RECHAZADO); nunca suma conceptos `WITHIN_BASE` (base 8 + Sereno 3 + Colectivo 1 → 9, no 8 ni 12). Ver `docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md`.
 
 ### Storage (`storage`, montado en `/api/storage`)
 
