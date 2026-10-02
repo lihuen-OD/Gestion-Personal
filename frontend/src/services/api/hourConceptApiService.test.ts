@@ -191,6 +191,16 @@ describe("buildHourConceptPath — endpoint real de update/updateStatus/remove (
   });
 });
 
+describe("getNextCode — código automático autoritativo", () => {
+  it("consulta el endpoint backend y no deriva el código del catálogo visible", async () => {
+    vi.mocked(apiRequest).mockResolvedValue({ data: { code: "HOR-006" } });
+
+    await expect(hourConceptApiService.getNextCode()).resolves.toBe("HOR-006");
+
+    expect(apiRequest).toHaveBeenCalledWith("/hour-concepts/next-code", { apiCache: false });
+  });
+});
+
 // docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md §12/§14: editar (sobre todo
 // corregir workTreatment) o eliminar un concepto cambia los números de
 // grillas, Carga de horas, Bandeja, dashboard y cierres — se invalidan todas

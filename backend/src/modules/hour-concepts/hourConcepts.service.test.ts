@@ -10,6 +10,7 @@ vi.mock("./hourConcepts.repository", () => ({
   invalidateHourConceptsCache: vi.fn(),
   hourConceptsRepository: {
     findMany: vi.fn(),
+    findGeneratedCodes: vi.fn(),
     findById: vi.fn(),
     create: vi.fn(),
     update: vi.fn(),
@@ -30,6 +31,7 @@ vi.mock("../audit/audit.service", () => ({
 
 const repo = hourConceptsRepository as unknown as {
   findMany: Mock;
+  findGeneratedCodes: Mock;
   findById: Mock;
   create: Mock;
   update: Mock;
@@ -79,6 +81,32 @@ describe("list — contrato 6E", () => {
       expect.objectContaining({ systemRole: "NORMAL_BASE", loadMode: null }),
       expect.objectContaining({ systemRole: null, loadMode: "AUTOMATIC" }),
     ]));
+  });
+});
+
+describe("nextCode — código automático desde la base", () => {
+  it("si el catálogo visible termina en HOR-004 pero HOR-005 está ocupado, devuelve HOR-006", async () => {
+    repo.findGeneratedCodes.mockResolvedValue(["001", "002", "003", "004", "005"].map((suffix) => ({ code: `HOR-${suffix}` })));
+
+    await expect(hourConceptsService.nextCode()).resolves.toEqual({ code: "HOR-006" });
+  });
+
+  it("reutiliza el primer hueco liberado por una eliminación definitiva", async () => {
+    repo.findGeneratedCodes.mockResolvedValue(["001", "002", "003", "004", "006"].map((suffix) => ({ code: `HOR-${suffix}` })));
+
+    await expect(hourConceptsService.nextCode()).resolves.toEqual({ code: "HOR-005" });
+  });
+});
+
+describe("create — carrera por código automático", () => {
+  it("mantiene UNIQUE como autoridad y traduce P2002 a un 409 accionable", async () => {
+    repo.create.mockRejectedValue(prismaKnownError("P2002"));
+
+    await expect(hourConceptsService.create({ code: "HOR-005" } as never)).rejects.toMatchObject({
+      statusCode: 409,
+      code: "HOUR_CONCEPT_UNIQUE_CONSTRAINT",
+      message: expect.stringContaining("código acaba de ser utilizado"),
+    });
   });
 });
 

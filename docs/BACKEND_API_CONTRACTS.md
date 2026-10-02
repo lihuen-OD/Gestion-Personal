@@ -738,6 +738,7 @@ page
 
 ```txt
 GET /api/hour-concepts
+GET /api/hour-concepts/next-code
 POST /api/hour-concepts
 PATCH /api/hour-concepts/:id
 DELETE /api/hour-concepts/:id
@@ -768,7 +769,11 @@ Campos principales:
 
 `workTreatment` (`WITHIN_BASE` | `ADDITIVE_TO_WORKED_TOTAL`) es obligatorio en `POST` para todo concepto adicional y opcional en `PATCH`; `NORMAL_BASE` lo tiene en `null` (CHECK `HourConcept_work_treatment_check`). Es una clasificación corregible por RRHH aunque el concepto ya tenga horas: el `PATCH` actualiza el concepto y, en la misma transacción, recalcula los snapshots de los cierres afectados. Los desgloses conservan sus minutos y toda lectura los interpreta con el tratamiento vigente. Queda auditado con el tratamiento anterior y el nuevo, el usuario y el alcance (desgloses, legajos, períodos y cierres). La respuesta sigue siendo `{ data: HourConcept }`.
 
+`GET /api/hour-concepts/next-code` (sólo RRHH) consulta directamente todos los códigos `HOR-*` físicamente existentes y devuelve `{ data: { code: "HOR-005" } }` con el **primer número libre**. No usa el listado cacheado/paginado del navegador; una eliminación definitiva vuelve reutilizable su hueco. `UNIQUE(code)` sigue siendo la autoridad ante dos altas concurrentes: `POST` responde `409 HOUR_CONCEPT_UNIQUE_CONSTRAINT` y la UI solicita otro código sin perder los demás campos del formulario.
+
 No hay baja lógica (`deletedAt` se eliminó en la migración `20261003100000`) ni `?includeDeleted`:
+
+La migración limpia todas las filas `deletedAt IS NOT NULL` de la política anterior con la misma preservación de jornadas de la eliminación definitiva. Si detecta un `TimeEntry` legacy asociado, aborta completa antes de modificar datos e informa los códigos implicados para auditoría manual.
 
 - **Deshabilitar** = `PATCH { status: "INACTIVO" }`. Conserva el concepto y su historia e impide nuevas cargas, asignaciones y clasificación automática.
 - **Eliminar** = `DELETE /api/hour-concepts/:id`. Es definitivo y no admite `?force`. En una transacción borra los desgloses, reglas y habilitaciones por legajo del concepto, reclasifica a Hora normal los `TimeSegment`/`WorkShift` que lo referenciaban, desvincula `Novelty.targetHourConceptId`, borra el concepto (el código queda libre) y recalcula los cierres afectados. Fichadas, jornadas y Horas base se conservan.

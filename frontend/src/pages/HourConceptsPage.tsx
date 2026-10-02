@@ -13,7 +13,7 @@ import { StatCard } from "../components/ui/StatCard";
 import { SortableHeader } from "../components/ui/SortableHeader";
 import { useAuth } from "../context/AuthContext";
 import { confirmAction } from "../services/appDialog";
-import { getUserErrorMessage } from "../services/api/apiClient";
+import { ApiError, getUserErrorMessage } from "../services/api/apiClient";
 import { hourConceptApiService } from "../services/api/hourConceptApiService";
 import type { AssociatedEmployeeFilters } from "../types/associatedEmployee.types";
 import type { HourConcept, HourConceptFilters, HourConceptKind, HourConceptLoadMode, HourConceptWorkTreatment } from "../types/hourConcept.types";
@@ -114,6 +114,7 @@ export function HourConceptsPage() {
   const [apiItems, setApiItems] = useState<HourConcept[] | null>(null);
   const [isLoadingApi, setIsLoadingApi] = useState(true);
   const [loadFailed, setLoadFailed] = useState(false);
+  const [isPreparingCreate, setIsPreparingCreate] = useState(false);
   const editorRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -152,6 +153,17 @@ export function HourConceptsPage() {
   ] as const, [all]);
   const isExistingConcept = Boolean(editing && apiItems?.some((item) => item.id === editing.id));
 
+  const startCreate = async () => {
+    setIsPreparingCreate(true);
+    try {
+      setEditing(emptyConcept(await hourConceptApiService.getNextCode()));
+    } catch (error) {
+      setNotice(getUserErrorMessage(error, "No pudimos obtener un código disponible. Intentá nuevamente."));
+    } finally {
+      setIsPreparingCreate(false);
+    }
+  };
+
   const { isRunning: isSaving, run: save } = useAsyncAction(async () => {
     if (!editing) return;
     if (!editing.name.trim()) {
@@ -186,6 +198,16 @@ export function HourConceptsPage() {
       setNotice(treatmentChanged ? "Concepto horario guardado. Las horas ya cargadas se leen con el nuevo tratamiento." : "Concepto horario guardado correctamente.");
       setTimeout(() => setNotice(""), TOAST_SUCCESS_MS);
     } catch (saveError) {
+      if (!stored && saveError instanceof ApiError && saveError.code === "HOUR_CONCEPT_UNIQUE_CONSTRAINT") {
+        try {
+          const code = await hourConceptApiService.getNextCode();
+          setEditing((current) => current ? { ...current, code } : current);
+          setNotice(`Ese código acaba de ser utilizado. Asignamos ${code} automáticamente.`);
+          return;
+        } catch {
+          // Si también falla el refresco, se muestra el conflicto original.
+        }
+      }
       setNotice(getUserErrorMessage(saveError, "No pudimos guardar el concepto horario. Revisá los datos e intentá nuevamente."));
       setTimeout(() => setNotice(""), 3000);
     }
@@ -245,7 +267,7 @@ export function HourConceptsPage() {
         eyebrow="CONFIGURACION"
         title="Conceptos horarios"
         description="Horas base es la jornada registrada. Cada concepto adicional clasifica horas dentro de esa jornada o suma horas trabajadas fuera de la fichada."
-        action={editable ? <Button variant="primary" icon={Plus} onClick={() => setEditing(emptyConcept(hourConceptApiService.getNextCode(all)))}>Crear concepto horario</Button> : undefined}
+        action={editable ? <Button variant="primary" icon={Plus} onClick={startCreate} disabled={isPreparingCreate}>{isPreparingCreate ? "Preparando..." : "Crear concepto horario"}</Button> : undefined}
       />
 
       {notice && <div className="toast">{notice}</div>}

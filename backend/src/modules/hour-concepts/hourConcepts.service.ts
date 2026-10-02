@@ -18,7 +18,7 @@ import type {
 function mapPrismaError(error: unknown) {
   if (error instanceof Prisma.PrismaClientKnownRequestError) {
     if (error.code === "P2002") {
-      throw new AppError("Hour concept code already exists", 409, "HOUR_CONCEPT_UNIQUE_CONSTRAINT");
+      throw new AppError("Ese código acaba de ser utilizado. Solicitá uno nuevo e intentá nuevamente.", 409, "HOUR_CONCEPT_UNIQUE_CONSTRAINT");
     }
     if (error.code === "P2025") {
       throw new AppError("Hour concept not found", 404, "HOUR_CONCEPT_NOT_FOUND");
@@ -119,6 +119,19 @@ export const hourConceptsService = {
         hasMore: query.page * query.take < total,
       },
     };
+  },
+
+  async nextCode() {
+    const rows = await hourConceptsRepository.findGeneratedCodes();
+    const occupied = new Set(
+      rows
+        .map(({ code }) => /^HOR-(\d+)$/.exec(code)?.[1])
+        .filter((value): value is string => value !== undefined)
+        .map(Number),
+    );
+    let next = 1;
+    while (occupied.has(next)) next += 1;
+    return { code: `HOR-${String(next).padStart(3, "0")}` };
   },
 
   async create(data: CreateHourConceptInput, audit?: AuditContext) {

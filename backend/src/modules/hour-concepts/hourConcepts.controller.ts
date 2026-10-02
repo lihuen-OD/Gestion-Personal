@@ -48,6 +48,10 @@ export const hourConceptsController = {
     res.json({ data: result.items, meta: result.meta });
   }) satisfies RequestHandler,
 
+  nextCode: (async (_req, res) => {
+    res.json({ data: await hourConceptsService.nextCode() });
+  }) satisfies RequestHandler,
+
   create: (async (req, res) => {
     const item = await hourConceptsService.create(req.body, requestAuditContext(req));
     hourConceptsReadCache.clear();

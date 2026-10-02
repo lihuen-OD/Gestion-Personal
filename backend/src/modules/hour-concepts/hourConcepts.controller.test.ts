@@ -30,6 +30,7 @@ vi.mock("./hourConcepts.service", () => ({
     disableEmployee: vi.fn().mockResolvedValue({ hourConceptId: "11111111-1111-1111-1111-111111111111", employeeId: "22222222-2222-2222-2222-222222222222" }),
     update: vi.fn().mockResolvedValue({ id: "11111111-1111-1111-1111-111111111111", workTreatment: "WITHIN_BASE" }),
     remove: vi.fn().mockResolvedValue({ concept: { id: "11111111-1111-1111-1111-111111111111" }, deletedBreakdowns: 1 }),
+    nextCode: vi.fn().mockResolvedValue({ code: "HOR-006" }),
   },
 }));
 
@@ -91,6 +92,12 @@ describe("hourConceptsController — invalidación de cache del Legajo (Etapa 6L
     const response = await fetch(`${baseUrl}/api/hour-concepts/11111111-1111-1111-1111-111111111111/employees/22222222-2222-2222-2222-222222222222`, { method: "DELETE" });
     expect(response.status).toBe(200);
     expect(clearEmployeeReadCaches).toHaveBeenCalledTimes(1);
+  });
+
+  it("GET /hour-concepts/next-code no se interpreta como un :id y devuelve el código de backend", async () => {
+    const response = await fetch(`${baseUrl}/api/hour-concepts/next-code`);
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ data: { code: "HOR-006" } });
   });
 
   describe("editar o eliminar un concepto refleja los números al instante (sin depender de TTL)", () => {

@@ -104,6 +104,16 @@ export const hourConceptsRepository = {
     return prisma.hourConcept.findUniqueOrThrow({ where: { id } });
   },
 
+  // Fuente autoritativa para el código automático. No usa el catálogo
+  // cacheado/paginado: consulta todos los códigos HOR-* físicamente
+  // existentes, incluso si una pantalla todavía conserva una lista vieja.
+  findGeneratedCodes() {
+    return prisma.hourConcept.findMany({
+      where: { code: { startsWith: "HOR-" } },
+      select: { code: true },
+    });
+  },
+
   create(data: CreateHourConceptInput) {
     return prisma.hourConcept.create({ data });
   },

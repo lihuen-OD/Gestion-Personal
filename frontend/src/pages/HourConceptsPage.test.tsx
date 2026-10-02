@@ -4,6 +4,7 @@ import { MemoryRouter } from "react-router-dom";
 import { HourConceptsPage } from "./HourConceptsPage";
 import { hourConceptApiService } from "../services/api/hourConceptApiService";
 import { confirmAction } from "../services/appDialog";
+import { ApiError } from "../services/api/apiClient";
 import type { HourConcept } from "../types/hourConcept.types";
 
 vi.mock("../services/appDialog", () => ({
@@ -31,7 +32,7 @@ vi.mock("../services/api/hourConceptApiService", async (importOriginal) => {
     hourConceptApiService: {
       ...actual.hourConceptApiService,
       getAll: vi.fn(),
-      getNextCode: vi.fn().mockReturnValue("001"),
+      getNextCode: vi.fn().mockResolvedValue("HOR-001"),
     },
   };
 });
@@ -53,6 +54,7 @@ function buildConcept(overrides: Partial<HourConcept> = {}): HourConcept {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(hourConceptApiService.getNextCode).mockResolvedValue("HOR-001");
   authAsRrhh();
 });
 
@@ -134,6 +136,30 @@ describe("HourConceptsPage — tratamiento en el total trabajado", () => {
     await user.click(screen.getByRole("button", { name: "Guardar" }));
 
     await waitFor(() => expect(create).toHaveBeenCalledWith(expect.objectContaining({ name: "Camioneta", workTreatment: "ADDITIVE_TO_WORKED_TOTAL" })));
+  });
+
+  it("si otro usuario ocupa el código al guardar, conserva el formulario y asigna el siguiente código", async () => {
+    const { default: userEvent } = await import("@testing-library/user-event");
+    const user = userEvent.setup();
+    Element.prototype.scrollIntoView = vi.fn();
+    vi.mocked(hourConceptApiService.getAll).mockResolvedValue([]);
+    vi.mocked(hourConceptApiService.getNextCode)
+      .mockResolvedValueOnce("HOR-005")
+      .mockResolvedValueOnce("HOR-006");
+    vi.spyOn(hourConceptApiService, "create").mockRejectedValue(
+      new ApiError("Ese código acaba de ser utilizado.", "HOUR_CONCEPT_UNIQUE_CONSTRAINT", 409),
+    );
+    render(<MemoryRouter><HourConceptsPage /></MemoryRouter>);
+
+    await user.click(await screen.findByRole("button", { name: "Crear concepto horario" }));
+    await user.type(screen.getByLabelText("Nombre *"), "Prueba 02");
+    await user.selectOptions(screen.getByLabelText(/Tratamiento en el total/), "WITHIN_BASE");
+    await user.click(screen.getByRole("button", { name: "Guardar" }));
+
+    expect(await screen.findByText("Ese código acaba de ser utilizado. Asignamos HOR-006 automáticamente.")).toBeInTheDocument();
+    expect(screen.getByLabelText("Nombre *")).toHaveValue("Prueba 02");
+    expect(screen.getByLabelText("Codigo")).toHaveValue("HOR-006");
+    expect(screen.getByLabelText(/Tratamiento en el total/)).toHaveValue("WITHIN_BASE");
   });
 
   it("la tabla muestra el tratamiento en lenguaje de negocio", async () => {

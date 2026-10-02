@@ -138,6 +138,19 @@ describe("findById", () => {
   });
 });
 
+describe("findGeneratedCodes — próximo código autoritativo", () => {
+  it("consulta directamente todos los HOR-* físicamente existentes", async () => {
+    mockedPrisma.hourConcept.findMany.mockResolvedValue([{ code: "HOR-005" }]);
+
+    await expect(hourConceptsRepository.findGeneratedCodes()).resolves.toEqual([{ code: "HOR-005" }]);
+
+    expect(mockedPrisma.hourConcept.findMany).toHaveBeenCalledWith({
+      where: { code: { startsWith: "HOR-" } },
+      select: { code: true },
+    });
+  });
+});
+
 describe("findActiveRules — universo automático de Motor A (Etapa 15M.7B)", () => {
   it("filtra regla activa + concepto ACTIVO + loadMode AUTOMATIC o BOTH", async () => {
     mockedPrisma.hourConceptRule.findMany.mockResolvedValue([]);

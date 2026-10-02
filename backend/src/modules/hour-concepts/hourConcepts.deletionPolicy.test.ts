@@ -13,10 +13,24 @@ describe("HourConcept sin baja lógica (migración 20261003100000)", () => {
     expect(model).not.toMatch(/^\s*deletedAt\s/m);
   });
 
-  it("las filas dadas de baja con la política anterior quedan como Deshabilitadas: no se borra ni reinterpreta nada", () => {
-    expect(sql).toMatch(/UPDATE "HourConcept"\s+SET "status" = 'INACTIVO'\s+WHERE "deletedAt" IS NOT NULL/);
-    expect(sql).not.toMatch(/DELETE FROM/i);
-    expect(sql).not.toMatch(/"HourConceptBreakdown"|"TimeEntry"|"TimeSegment"/);
+  it("limpia todas las bajas legacy y aborta antes de tocar datos si alguna tiene TimeEntry", () => {
+    expect(sql).toContain('WHERE hc."deletedAt" IS NOT NULL');
+    expect(sql).toContain("No se pueden limpiar conceptos horarios legacy con TimeEntry");
+    expect(sql).toContain('DELETE FROM "HourConceptBreakdown"');
+    expect(sql).toContain('DELETE FROM "HourConceptRule"');
+    expect(sql).toContain('DELETE FROM "EmployeeHourConcept"');
+    expect(sql).toContain('DELETE FROM "HourConcept" WHERE "deletedAt" IS NOT NULL');
+    expect(sql).not.toMatch(/WHERE\s+"code"\s*=\s*'HOR-005'/);
+  });
+
+  it("preserva jornadas: reclasifica segmentos/turnos y desvincula novedades", () => {
+    expect(sql).toContain('UPDATE "TimeSegment"');
+    expect(sql).toContain('UPDATE "WorkShift"');
+    expect(sql).toContain('UPDATE "Novelty"');
+    expect(sql).toContain("'SIN_CONCEPTO_COMPATIBLE'");
+    expect(sql).not.toContain('DELETE FROM "TimeEntry"');
+    expect(sql).not.toContain('DELETE FROM "WorkShift"');
+    expect(sql).not.toContain('DELETE FROM "AttendancePunch"');
   });
 
   it("recrea el CHECK del modelo oficial sin deletedAt antes de que Postgres lo descarte con la columna", () => {

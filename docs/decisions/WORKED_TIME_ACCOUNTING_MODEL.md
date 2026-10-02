@@ -236,6 +236,8 @@ Qué hacía el sistema antes de este cambio (auditado en código):
   - Sus horas siguen contando en grillas y cierres. La grilla las muestra en sólo lectura.
   - Corrección de un hueco encontrado al auditar: el recálculo automático (`replaceAutomatic`, que corre en cada jornada cerrada del período) borraba todos los desgloses AUTOMATIC del período, incluidos los de conceptos deshabilitados, y no los volvía a crear. Ahora sólo reemplaza los de conceptos activos.
 - **Eliminar definitivamente** es para una configuración creada por error. Borra el concepto y su historial específico y deja el código libre para reutilizarse.
+- **Código automático:** `GET /hour-concepts/next-code` consulta la base (no el catálogo cacheado del navegador) y devuelve el primer `HOR-NNN` libre. Por eso un código liberado puede reutilizarse. La restricción `UNIQUE(code)` permanece como defensa ante dos altas concurrentes; ante `P2002`, la UI conserva el formulario y solicita una nueva sugerencia.
+- **Deuda de bajas lógicas:** la migración `20261003100000_drop_hour_concept_deleted_at` elimina físicamente todas las filas antiguas con `deletedAt`, junto con su configuración/desgloses y preservando jornadas mediante reclasificación. Nunca está hardcodeada a `HOR-005`. Si alguna tiene `TimeEntry` legacy, la migración aborta antes de escribir y enumera el caso para revisión manual.
 
 ### 14.4 Relaciones de `HourConcept` y qué hace la eliminación
 

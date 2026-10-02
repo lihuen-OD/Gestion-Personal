@@ -78,11 +78,6 @@ function toQuery(filters?: Partial<HourConceptFilters>) {
   return query ? `?${query}` : "";
 }
 
-function nextCode(items: HourConcept[]) {
-  const max = items.reduce((value, item) => Math.max(value, Number(item.code.replace(/\D/g, "")) || 0), 0);
-  return `HOR-${String(max + 1).padStart(3, "0")}`;
-}
-
 // Etapa 8N/8O: extraídas como funciones puras (mismo criterio que
 // buildRulesByConceptPath en hourConceptRuleApiService.ts) para poder
 // confirmar el endpoint real sin mockear la red.
@@ -135,6 +130,11 @@ export const hourConceptApiService = {
     });
   },
 
+  async getNextCode() {
+    const response = await apiRequest<{ data: { code: string } }>("/hour-concepts/next-code", { apiCache: false });
+    return response.data.code;
+  },
+
   async create(item: HourConcept) {
     const response = await apiRequest<ApiItemResponse>("/hour-concepts", {
       method: "POST",
@@ -174,8 +174,6 @@ export const hourConceptApiService = {
     await invalidateHourConceptDependentCaches("hour concept deleted");
     return response.data;
   },
-
-  getNextCode: nextCode,
 
   // Empleados habilitados para el concepto, vistos desde el concepto (Etapa
   // 8G; dedupe/cache agregado en 14H.5) — envuelto con `cachedData` (misma

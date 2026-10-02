@@ -19,6 +19,9 @@ export const hourConceptsRouter = Router();
 hourConceptsRouter.use(requireAuth);
 
 hourConceptsRouter.get("/", validateQuery(listHourConceptsQuerySchema), asyncHandler(hourConceptsController.list));
+// Debe declararse antes de cualquier GET /:id futuro: "next-code" es una
+// operación de catálogo, no un identificador de concepto.
+hourConceptsRouter.get("/next-code", requireAnyRole(adminRoles), asyncHandler(hourConceptsController.nextCode));
 hourConceptsRouter.post("/", requireAnyRole(adminRoles), validateBody(createHourConceptSchema), asyncHandler(hourConceptsController.create));
 hourConceptsRouter.patch("/:id", requireAnyRole(adminRoles), validateBody(updateHourConceptSchema), asyncHandler(hourConceptsController.update));
 // Eliminación definitiva: borra el concepto y su historial específico en una
