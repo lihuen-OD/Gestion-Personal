@@ -21,7 +21,6 @@ export const automaticHourConceptBreakdownsRepository = {
         hourConcept: {
           systemRole: null,
           status: "ACTIVO",
-          deletedAt: null,
           loadMode: { in: ["AUTOMATIC", "BOTH"] },
         },
       },
@@ -48,9 +47,13 @@ export const automaticHourConceptBreakdownsRepository = {
     });
   },
 
+  // Deshabilitar un concepto conserva su historia (WORKED_TIME_ACCOUNTING_MODEL.md
+  // §14): sólo se regeneran los desgloses de conceptos activos. Los de un
+  // concepto INACTIVO quedan tal cual — sin esto, la próxima jornada cerrada
+  // en el período los borraba sin volver a crearlos.
   replaceAutomatic(employeeId: string, period: string, rows: Array<CalculatedAutomaticBreakdown & { appliedMultiplier: number }>, createdByUserId?: string | null) {
     return prisma.$transaction(async (tx) => {
-      const deleted = await tx.hourConceptBreakdown.deleteMany({ where: { employeeId, period, source: "AUTOMATIC" } });
+      const deleted = await tx.hourConceptBreakdown.deleteMany({ where: { employeeId, period, source: "AUTOMATIC", hourConcept: { status: "ACTIVO" } } });
       if (rows.length) {
         await tx.hourConceptBreakdown.createMany({
           data: rows.map((row) => ({ ...row, employeeId, source: "AUTOMATIC", status: "BORRADOR", createdByUserId: createdByUserId || null })),

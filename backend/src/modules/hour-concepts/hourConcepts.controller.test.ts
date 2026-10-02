@@ -28,12 +28,21 @@ vi.mock("./hourConcepts.service", () => ({
   hourConceptsService: {
     enableEmployees: vi.fn().mockResolvedValue({ hourConceptId: "11111111-1111-1111-1111-111111111111", employeeIds: ["22222222-2222-2222-2222-222222222222"] }),
     disableEmployee: vi.fn().mockResolvedValue({ hourConceptId: "11111111-1111-1111-1111-111111111111", employeeId: "22222222-2222-2222-2222-222222222222" }),
+    update: vi.fn().mockResolvedValue({ id: "11111111-1111-1111-1111-111111111111", workTreatment: "WITHIN_BASE" }),
+    remove: vi.fn().mockResolvedValue({ concept: { id: "11111111-1111-1111-1111-111111111111" }, deletedBreakdowns: 1 }),
   },
 }));
 
 vi.mock("../employees/employees.controller", () => ({
   clearEmployeeReadCaches: vi.fn(),
 }));
+
+// Lecturas derivadas que dependen del concepto (WORKED_TIME_ACCOUNTING_MODEL.md §12).
+vi.mock("../employees/employees.repository", () => ({ invalidateTimeGridCatalogCache: vi.fn() }));
+vi.mock("../time-entries/timeEntries.cache", () => ({ clearTimeEntriesReadCaches: vi.fn() }));
+vi.mock("../dashboard/dashboard.cache", () => ({ clearDashboardMetricsCache: vi.fn() }));
+vi.mock("../workforce-management/workforce.cache", () => ({ clearMonthlyClosuresReadCaches: vi.fn() }));
+vi.mock("../novelties/novelties.cache", () => ({ clearNoveltiesReadCaches: vi.fn() }));
 
 describe("hourConceptsController — invalidación de cache del Legajo (Etapa 6L.1)", () => {
   let server: Server;
@@ -82,5 +91,47 @@ describe("hourConceptsController — invalidación de cache del Legajo (Etapa 6L
     const response = await fetch(`${baseUrl}/api/hour-concepts/11111111-1111-1111-1111-111111111111/employees/22222222-2222-2222-2222-222222222222`, { method: "DELETE" });
     expect(response.status).toBe(200);
     expect(clearEmployeeReadCaches).toHaveBeenCalledTimes(1);
+  });
+
+  describe("editar o eliminar un concepto refleja los números al instante (sin depender de TTL)", () => {
+    async function dependentClears() {
+      const [repository, timeEntries, dashboard, workforce, novelties] = await Promise.all([
+        import("../employees/employees.repository"),
+        import("../time-entries/timeEntries.cache"),
+        import("../dashboard/dashboard.cache"),
+        import("../workforce-management/workforce.cache"),
+        import("../novelties/novelties.cache"),
+      ]);
+      return [
+        clearEmployeeReadCaches,
+        repository.invalidateTimeGridCatalogCache,
+        timeEntries.clearTimeEntriesReadCaches,
+        dashboard.clearDashboardMetricsCache,
+        workforce.clearMonthlyClosuresReadCaches,
+        novelties.clearNoveltiesReadCaches,
+      ] as unknown as Mock[];
+    }
+
+    it("PATCH /hour-concepts/:id (p. ej. corregir workTreatment) limpia grilla, Carga de horas, dashboard, cierres y legajo", async () => {
+      const clears = await dependentClears();
+      clears.forEach((clear) => clear.mockClear());
+      const response = await fetch(`${baseUrl}/api/hour-concepts/11111111-1111-1111-1111-111111111111`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ workTreatment: "WITHIN_BASE" }),
+      });
+      expect(response.status).toBe(200);
+      clears.forEach((clear) => expect(clear).toHaveBeenCalledTimes(1));
+    });
+
+    it("DELETE /hour-concepts/:id limpia las mismas lecturas y ya no acepta ni necesita ?force", async () => {
+      const clears = await dependentClears();
+      clears.forEach((clear) => clear.mockClear());
+      const { hourConceptsService } = await import("./hourConcepts.service");
+      const response = await fetch(`${baseUrl}/api/hour-concepts/11111111-1111-1111-1111-111111111111`, { method: "DELETE" });
+      expect(response.status).toBe(200);
+      expect(hourConceptsService.remove).toHaveBeenCalledWith("11111111-1111-1111-1111-111111111111", expect.anything());
+      clears.forEach((clear) => expect(clear).toHaveBeenCalledTimes(1));
+    });
   });
 });

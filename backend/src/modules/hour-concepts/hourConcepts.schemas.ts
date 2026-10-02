@@ -1,6 +1,5 @@
 import { z } from "zod";
 import { sortQueryShape } from "../../shared/validation/listSort";
-import { queryBoolean } from "../../shared/validation/queryBoolean";
 
 export const hourConceptKindSchema = z.enum(["NORMAL", "EXTRA", "NOCTURNA", "GUARDIA", "SERENO", "TRANSPORTE", "FERIADO", "OTRO"]);
 export const additionalHourConceptKindSchema = z.enum(["EXTRA", "NOCTURNA", "GUARDIA", "SERENO", "TRANSPORTE", "FERIADO", "OTRO"]);
@@ -14,18 +13,8 @@ export const listHourConceptsQuerySchema = z.object({
   search: z.string().trim().optional(),
   kind: hourConceptKindSchema.optional(),
   status: recordStatusSchema.optional(),
-  // Etapa 8P: por default el catálogo oculta los eliminados lógicamente
-  // (deletedAt != null) — "se siente eliminado" sin perder el historial.
-  includeDeleted: queryBoolean().default(false),
   page: z.coerce.number().int().positive().max(10000).default(1),
   take: z.coerce.number().int().positive().max(200).default(100),
-});
-
-// Eliminación forzada (Etapa 8P): force=true permite eliminar un concepto
-// con uso histórico real — ver hourConcepts.service.ts::remove para la
-// decisión completa (baja lógica, nunca toca TimeEntry/TimeSegment/WorkShift/Novelty).
-export const removeHourConceptQuerySchema = z.object({
-  force: z.coerce.boolean().default(false),
 });
 
 export const createHourConceptSchema = z.object({
@@ -62,7 +51,6 @@ export const enableHourConceptEmployeesSchema = z.object({
 });
 
 export type ListHourConceptsQuery = z.infer<typeof listHourConceptsQuerySchema>;
-export type RemoveHourConceptQuery = z.infer<typeof removeHourConceptQuerySchema>;
 export type CreateHourConceptInput = z.infer<typeof createHourConceptSchema>;
 export type UpdateHourConceptInput = z.infer<typeof updateHourConceptSchema>;
 export type ListHourConceptEmployeesQuery = z.infer<typeof listHourConceptEmployeesQuerySchema>;

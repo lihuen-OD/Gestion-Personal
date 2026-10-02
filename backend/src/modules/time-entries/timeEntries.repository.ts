@@ -1617,7 +1617,7 @@ export const timeEntriesRepository = {
     // legacy que este lookup reemplaza; podía desalinearse o no alcanzar
     // para identificar la base de forma única.
     const hourConcept = await prisma.hourConcept.findFirst({
-      where: { systemRole: "NORMAL_BASE", status: "ACTIVO", deletedAt: null },
+      where: { systemRole: "NORMAL_BASE", status: "ACTIVO" },
     });
     return hourConcept ? { hourConcept } : null;
   },

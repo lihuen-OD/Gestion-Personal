@@ -1,6 +1,6 @@
 # Modelo de contabilidad de tiempo trabajado
 
-**Estado:** vigente desde 2026-10-02. **Reemplaza** la regla "todo `HourConceptBreakdown` es un desglose que nunca incrementa el total trabajado" (`CONCEPTOS_HORARIOS_ADITIVOS.md`, Etapa 6M) y el cálculo de "Total liquidable" de las Etapas 8F/11A.1/11B/11C (`base + conceptos + (base + conceptos) × (m − 1)`, ejemplo histórico "8 normales + 4 Sereno ×2 = 24").
+**Estado:** vigente desde 2026-10-02. La corrección de tratamiento y la eliminación definitiva de conceptos (§14) se agregaron el mismo día, antes de mergear. **Reemplaza** la regla "todo `HourConceptBreakdown` es un desglose que nunca incrementa el total trabajado" (`CONCEPTOS_HORARIOS_ADITIVOS.md`, Etapa 6M) y el cálculo de "Total liquidable" de las Etapas 8F/11A.1/11B/11C (`base + conceptos + (base + conceptos) × (m − 1)`, ejemplo histórico "8 normales + 4 Sereno ×2 = 24").
 
 La aplicación no calcula sueldos. Entrega tiempo real, su clasificación por concepto y la equivalencia en horas para liquidación. Tarifas, valores monetarios y diferenciales los resuelve el sistema de liquidación.
 
@@ -19,7 +19,8 @@ La aplicación no calcula sueldos. Entrega tiempo real, su clasificación por co
 - `NORMAL_BASE` no tiene tratamiento (columna `NULL`). Para todo concepto adicional es obligatorio: CHECK `HourConcept_work_treatment_check`, mismo patrón que `HourConcept_official_model_check` de `loadMode`.
 - **`loadMode` no decide la semántica.** `loadMode` dice cómo se carga un concepto (MANUAL/AUTOMATIC/BOTH), y `workTreatment` dice si suma al total. Un concepto `WITHIN_BASE` con `loadMode = BOTH` sigue dentro de la jornada cuando se corrige a mano. Ninguna regla productiva usa `loadMode`, `source`, `name` ni `code` para decidir si un concepto suma.
 - `countsAsWorked` sigue deprecado y no participa. `priority` no se reactivó.
-- Cambiar `workTreatment` de un concepto que ya tiene horas cargadas se rechaza (`409 HOUR_CONCEPT_WORK_TREATMENT_LOCKED`) porque reinterpretaría en silencio totales, cierres y exports históricos. La alternativa es crear un concepto nuevo.
+- **`workTreatment` es una clasificación corregible por RRHH.** Si cambia, los breakdowns existentes conservan sus minutos pero toda la proyección histórica se reinterpreta con el tratamiento actual, con auditoría e invalidación de derivados. Ver §14.
+- El tratamiento no se copia a cada `HourConceptBreakdown`. Todos los consumidores lo leen del concepto al consultar: `accountingBreakdownSelect` → `toAccountingBreakdown`, `timeGridConceptSelect`, los filtros SQL `hourConcept.workTreatment` del resumen y el dashboard, y la Bandeja. Duplicarlo haría imposible una corrección retroactiva.
 
 ## 3. Fórmulas oficiales (por empleado + fecha)
 
@@ -113,8 +114,8 @@ Las vistas de resumen y el dashboard sólo necesitan totales: suman base + ADDIT
   - Incluye a quienes sólo tienen horas adicionales en el período, y el gate de cierre aprobado también los alcanza.
   - El CSV usa las mismas columnas.
   - El frontend ya no genera un export local de respaldo, porque sin conceptos ni multiplicadores produciría totales incorrectos.
-- **hour-concepts:** `workTreatment` es obligatorio en `POST` y opcional en `PATCH`.
-- **Cierre:** `snapshot.accounting = { model: "WORKED_TIME_ACCOUNTING_V1", ...PeriodAccounting, concepts[{ ..., code, name }] }`. Se conserva `snapshot.entries`.
+- **hour-concepts:** `workTreatment` es obligatorio en `POST` y opcional en `PATCH`, y se puede corregir aunque el concepto tenga horas (§14). `DELETE` es definitivo y devuelve un resumen de lo eliminado.
+- **Cierre:** `snapshot.accounting = { model: "WORKED_TIME_ACCOUNTING_V1", ...PeriodAccounting, concepts[{ ..., code, name }] }`. Se conserva `snapshot.entries`. Un snapshot recalculado por una corrección de concepto agrega `snapshot.recalculation = { reason, hourConceptId, hourConceptCode, at }`.
 
 ## 10. Migración `20261002120000_add_hour_concept_work_treatment`
 
@@ -157,8 +158,16 @@ Si queda algún concepto adicional sin tratamiento (por ejemplo, en una base no 
 
 ## 12. Cachés
 
-- **Backend:** toda mutación de desgloses (manual, aprobar, rechazar, devolver, recálculo) ya limpiaba las cachés de grilla y de time-entries en el controller, y la auditoría limpia la caché del dashboard. No hizo falta agregar invalidaciones.
-- **Frontend:** las mutaciones de desgloses ahora también invalidan la familia `dashboard`, porque las horas adicionales cambian "Horas cargadas".
+- **Backend:** toda mutación de desgloses (manual, aprobar, rechazar, devolver, recálculo) ya limpiaba las cachés de grilla y de time-entries en el controller, y la auditoría limpia la caché del dashboard.
+- **Backend, conceptos:** editar (nombre, estado, tratamiento) o eliminar un concepto llama a `clearHourConceptDependentReadCaches()` (`hourConcepts.controller.ts`). Limpia en el momento, sin depender del TTL:
+  - el catálogo (controller y repository);
+  - Legajo y `time-grid` (detalle por legajo y panel de cierre), y el catálogo embebido de la grilla (`invalidateTimeGridCatalogCache`, que antes sólo vencía por TTL de 120 s);
+  - `period-employees`, Bandeja "Por persona", resumen y asistencia (`clearTimeEntriesReadCaches`);
+  - el dashboard;
+  - los cierres (el payload incluye el snapshot recalculado);
+  - las novedades (al eliminar se desvincula su concepto destino).
+  - El export no tiene caché.
+- **Frontend:** las mutaciones de desgloses ahora también invalidan la familia `dashboard`, porque las horas adicionales cambian "Horas cargadas". Las mutaciones de concepto (`update`, `updateStatus`, `remove`) invalidan `HOUR_CONCEPT_DEPENDENT_CACHE_FAMILIES`: `hour-concepts`, `employees`, `time-entries`, `pending`, `dashboard`, `monthly-closures` y `novelties`. La grilla por legajo no tiene caché de frontend.
 - La edición optimista de una celda atenúa los valores calculados (Horas normales, total y equivalencia) hasta que llega la contabilidad recalculada. El frontend nunca los recalcula.
 
 ## 13. UI (lenguaje de negocio)
@@ -168,4 +177,100 @@ Si queda algún concepto adicional sin tratamiento (por ejemplo, en una base no 
   - `MonthlyHoursTableSections`: secciones de la grilla mensual, usadas por el detalle por legajo y el panel de cierre.
   - `HoursAccountingSummary`: composición real vs. para liquidación.
   - `AccountingStatCards`: tarjetas de Total trabajado y Para liquidación.
-- **Pantalla de conceptos horarios:** el campo "Tratamiento en el total" es obligatorio y no tiene default.
+- **Pantalla de conceptos horarios:**
+  - El campo "Tratamiento en el total" es obligatorio y no tiene default.
+  - Cambiarlo en un concepto existente pide confirmación ("Cambiar tratamiento del concepto"): las horas ya cargadas conservan sus minutos y pasan a leerse con el tratamiento nuevo.
+  - "Deshabilitar" y "Eliminar" son acciones distintas (§14). Eliminar usa una única confirmación fuerte: "Eliminar concepto definitivamente", con los botones Cancelar / Eliminar definitivamente.
+
+## 14. Corrección de tratamiento, cierres y eliminación definitiva
+
+**Estado:** vigente desde 2026-10-02 (antes de mergear `feat/worked-time-accounting`). Reemplaza el bloqueo `HOUR_CONCEPT_WORK_TREATMENT_LOCKED` y la eliminación de las Etapas 8O/8P (409 `HOUR_CONCEPT_IN_USE`, segundo `DELETE ?force=true` y baja lógica con `deletedAt`).
+
+**Caso real que lo motivó:** "Prueba 02" (HOR-005) se creó por error como `ADDITIVE_TO_WORKED_TOTAL` y se cargaron horas. Después no se pudo corregir porque tenía horas. Al eliminarlo quedó con baja lógica: conservó la fila y las horas, que seguían contando. Tampoco se pudo recrear HOR-005, porque la fila con baja lógica seguía ocupando `UNIQUE(code)`.
+
+### 14.1 Corregir `workTreatment`
+
+`hourConceptsRepository.updateReinterpretingHistory` corre en una transacción:
+
+1. Actualiza el concepto. No escribe ningún `HourConceptBreakdown`: mismos ids, minutos y multiplicadores.
+2. Calcula el alcance en 1 consulta (`groupBy` empleado + período de desgloses que cuentan).
+3. Recalcula los snapshots de los cierres afectados (§14.2).
+
+Después de la transacción, la auditoría registra:
+
+- `HourConcept` `UPDATE`, con el concepto, el tratamiento anterior (`before`) y el nuevo (`after`), el usuario, la fecha, la cantidad de desgloses, legajos y períodos reinterpretados y los ids de cierres recalculados;
+- un `MonthlyTimeClosure` `UPDATE` por cierre recalculado, con el snapshot anterior y el nuevo.
+
+Ejemplo (tests en `hourConcepts.workTreatmentCorrection.test.ts`):
+
+| Prueba | Base | Prueba | Horas normales | Total trabajado | Equivalencia (domingo ×2) |
+|---|---|---|---|---|---|
+| `ADDITIVE_TO_WORKED_TOTAL` (error) | 8 | 2 | 8 | 10 | 20 |
+| `WITHIN_BASE` (corregido, mismo desglose) | 8 | 2 | 6 | 8 | 16 |
+
+Si al pasar a `WITHIN_BASE` hay días cuya cobertura supera la base, la contabilidad los marca como `withinBaseExcessMinutes` (§5). Nunca se convierten en horas adicionales. Las validaciones de carga manual (§7) aplican a las cargas nuevas con el tratamiento vigente.
+
+### 14.2 Cierres mensuales
+
+Qué hacía el sistema antes de este cambio (auditado en código):
+
+- `MonthlyTimeClosure.snapshot` se escribe sólo en `submitClosures` (ENVIADO). Aprobar y devolver no lo tocan.
+- Aprobar una corrección (`approveCorrection`) cambia el `TimeEntry` y deja el cierre en APROBADO, sin rehacer el snapshot. Una corrección directa de RRHH en un período cerrado tampoco lo rehace.
+- Ninguna pantalla lee el snapshot. El panel de cierre (`MonthlyClosureReviewPanel`) usa el `time-grid` en vivo; el gate del export y Finnegans leen sólo `status`. El snapshot llega en el payload de `GET /workforce/closures`, pero el frontend no lo usa.
+- Por lo tanto, "grilla 8 h / cierre 10 h" sólo podía quedar en el JSON persistido, que es el registro de auditoría del cierre.
+
+**Solución.** Corregir el tratamiento o eliminar un concepto recalcula, dentro de la misma transacción, el snapshot de cada cierre afectado. Usa el mismo builder que el envío (`buildClosureSnapshots`, `workforce-management/closureSnapshot.ts`), así que el snapshot queda igual a lo que hoy congelaría un reenvío.
+
+- **Cierres afectados** (`findClosuresForHourConcept`, 1 consulta): los de cada empleado + período con desgloses que cuentan del concepto, más los cuyo snapshot ya menciona el concepto (`snapshot.accounting.concepts @> [{ hourConceptId }]`; cubre, por ejemplo, un desglose rechazado después del envío).
+- **Qué no cambia:** estado, autoría y fechas del cierre. Un APROBADO sigue APROBADO, igual que en una corrección directa de RRHH en un período cerrado (el flujo de correcciones existente no reabre cierres aprobados). No se inventó una política nueva para APROBADO.
+- **Trazabilidad:** el snapshot nuevo lleva `recalculation = { reason, hourConceptId, hourConceptCode, at }` y la auditoría conserva before/after.
+- **Alcance de los datos:** el recálculo usa los datos vigentes, igual que un reenvío. Si después del envío hubo otras correcciones de RRHH que ya se ven en la grilla, el snapshot recalculado también las incluye. El snapshot anterior queda en la auditoría.
+- **Costo:** 3 consultas por período afectado más 1 `update` por cierre, dentro de la transacción (timeout 30 s).
+- **Deuda conocida, sin cambios:** aprobar una corrección horaria o corregir directamente en un período cerrado sigue sin rehacer el snapshot.
+
+### 14.3 Deshabilitar vs. eliminar
+
+- **Deshabilitar** (`status: INACTIVO`) es para un concepto válido históricamente que ya no se va a usar.
+  - Conserva el concepto, sus desgloses, reglas, habilitaciones por legajo y auditoría.
+  - Impide nuevas cargas manuales (`HOUR_CONCEPT_INACTIVE`), asignaciones (`HOUR_CONCEPT_NOT_ASSIGNABLE`), reglas (`HOUR_CONCEPT_RULE_INACTIVE_CONCEPT`) y la clasificación automática.
+  - Sus horas siguen contando en grillas y cierres. La grilla las muestra en sólo lectura.
+  - Corrección de un hueco encontrado al auditar: el recálculo automático (`replaceAutomatic`, que corre en cada jornada cerrada del período) borraba todos los desgloses AUTOMATIC del período, incluidos los de conceptos deshabilitados, y no los volvía a crear. Ahora sólo reemplaza los de conceptos activos.
+- **Eliminar definitivamente** es para una configuración creada por error. Borra el concepto y su historial específico y deja el código libre para reutilizarse.
+
+### 14.4 Relaciones de `HourConcept` y qué hace la eliminación
+
+FK reales (auditadas en staging, 2026-10-02, sin triggers):
+
+| Relación | FK en la base | Qué es | Al eliminar |
+|---|---|---|---|
+| `HourConceptBreakdown.hourConceptId` | RESTRICT | Horas específicas del concepto | **Se borran todas** (cualquier estado) |
+| `HourConceptRule.hourConceptId` | CASCADE | Configuración | **Se borran** explícitamente |
+| `EmployeeHourConcept.hourConceptId` | CASCADE | Configuración (habilitación por legajo) | **Se borran** explícitamente |
+| `TimeSegment.hourConceptId` (obligatoria) / `hourConceptRuleId` | RESTRICT / SET NULL | Tramo de una jornada física (evidencia del clasificador) | **Se reclasifica** a Hora normal, `hourConceptRuleId = null`, `conceptStatus = SIN_CONCEPTO_COMPATIBLE`: lo mismo que deja el clasificador en un tramo sin regla. Minutos e intervalos intactos. |
+| `WorkShift.hourConceptId` / `hourConceptName` | SET NULL | Jornada física | **Se reclasifica** a Hora normal (como toda jornada desde 6L). La jornada y sus fichadas se conservan. |
+| `Novelty.targetHourConceptId` | SET NULL | Novedad del legajo (puede ir a Finnegans) | **Se desvincula** (`null`). La novedad se conserva. |
+| `TimeEntry.hourConceptId` | RESTRICT | Horas base (siempre `NORMAL_BASE` desde 6L) | Nunca se toca. Si existe un `TimeEntry` con el concepto adicional (modelo previo a 6L, cuando la jornada se guardaba con el concepto elegido), esos minutos pueden ser trabajo real: **409 `HOUR_CONCEPT_HAS_LEGACY_TIME_ENTRIES`** y no se borra nada. En staging hay 0. |
+| `AttendancePunch`, `TimeEntry` NORMAL_BASE, `WorkShift` | — | Evidencia física | Nunca se borran |
+| `AuditLog` (`entityId` texto) | — | Trazabilidad | Se conserva. Se agrega la auditoría de la eliminación. |
+| `MonthlyTimeClosure.snapshot` | — | Auditoría del cierre | Se recalcula (§14.2) |
+
+`hourConceptsRepository.deletePermanently` es una sola transacción, con las dependencias en orden explícito y sin depender de ningún `ON DELETE`:
+
+1. Busca los cierres afectados.
+2. Borra los desgloses.
+3. Reclasifica tramos y jornadas.
+4. Desvincula las novedades.
+5. Borra reglas y habilitaciones.
+6. Borra el concepto.
+7. Recalcula los snapshots.
+
+Si mientras tanto se carga una hora con el concepto, la FK RESTRICT aborta la transacción completa (`409 HOUR_CONCEPT_CHANGED_DURING_DELETE`).
+
+La respuesta resume lo eliminado: `deletedBreakdowns`, `deletedRules`, `deletedEmployeeAssignments`, `reclassifiedSegments`, `reclassifiedWorkShifts`, `unlinkedNovelties` y `recalculatedClosures`. La UI sólo muestra "Se eliminó definitivamente el concepto …".
+
+### 14.5 Migración `20261003100000_drop_hour_concept_deleted_at`
+
+- Normaliza a INACTIVO las filas con baja lógica. Es lo que la política vigente llama Deshabilitado, y la baja lógica ya lo hacía. Esas filas vuelven a verse en el catálogo, donde RRHH puede habilitarlas o eliminarlas definitivamente. No borra ni reinterpreta horas.
+- Recrea el CHECK `HourConcept_official_model_check` sin `deletedAt` y borra la columna.
+- **Orden de deploy:** el backend nuevo ya no lee ni escribe `deletedAt`, así que funciona antes y después de la migración. Antes de aplicarla, una fila con baja lógica se ve como Deshabilitada.
+- Staging al 2026-10-02: HOR-005 "Prueba 02" tenía baja lógica (1 desglose MANUAL APROBADO de 180 min en 2026-10 y 1 regla).

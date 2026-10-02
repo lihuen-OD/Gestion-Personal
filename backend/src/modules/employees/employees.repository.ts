@@ -87,7 +87,7 @@ const employeeListSelect = {
 // habilitaciones debe reusar este fragmento en vez de redeclarar el suyo.
 const assignableHourConceptsSelect = {
   where: {
-    hourConcept: { systemRole: null, status: "ACTIVO", deletedAt: null, loadMode: { not: null } },
+    hourConcept: { systemRole: null, status: "ACTIVO", loadMode: { not: null } },
   },
   select: {
     hourConceptId: true,
@@ -655,7 +655,7 @@ const timeGridEmployeeSelect = {
     },
   },
   hourConcepts: {
-    where: { hourConcept: { systemRole: null, status: "ACTIVO", deletedAt: null, loadMode: { not: null } } },
+    where: { hourConcept: { systemRole: null, status: "ACTIVO", loadMode: { not: null } } },
     select: { hourConcept: { select: timeGridConceptSelect } },
   },
 } satisfies Prisma.EmployeeSelect;
@@ -670,7 +670,7 @@ const timeGridCoreEmployeeSelect = {
   lastName: true,
   status: true,
   hourConcepts: {
-    where: { hourConcept: { systemRole: null, status: "ACTIVO", deletedAt: null, loadMode: { not: null } } },
+    where: { hourConcept: { systemRole: null, status: "ACTIVO", loadMode: { not: null } } },
     select: { hourConcept: { select: timeGridConceptSelect } },
   },
 } satisfies Prisma.EmployeeSelect;
@@ -728,6 +728,12 @@ type TimeGridCatalogs = {
 };
 let timeGridCatalogCache: { data: TimeGridCatalogs; expiresAt: number } | null = null;
 const TIME_GRID_CATALOG_CACHE_MS = 120_000;
+
+// Lo llama hourConcepts.controller al editar/eliminar un concepto: el
+// catálogo embebido lleva workTreatment y no debe sobrevivir a un cambio.
+export function invalidateTimeGridCatalogCache() {
+  timeGridCatalogCache = null;
+}
 
 async function getTimeGridCatalogs() {
   if (timeGridCatalogCache && Date.now() < timeGridCatalogCache.expiresAt) return timeGridCatalogCache.data;
@@ -1254,7 +1260,7 @@ export const employeesRepository = {
         },
       }),
       prisma.hourConcept.findFirst({
-        where: { systemRole: "NORMAL_BASE", status: "ACTIVO", deletedAt: null },
+        where: { systemRole: "NORMAL_BASE", status: "ACTIVO" },
         select: timeGridConceptSelect,
       }),
       prisma.hourConceptBreakdown.findMany({
@@ -1291,7 +1297,7 @@ export const employeesRepository = {
   findHourConceptForManualBreakdown(id: string) {
     return prisma.hourConcept.findUnique({
       where: { id },
-      select: { id: true, code: true, name: true, status: true, deletedAt: true, loadMode: true, systemRole: true, workTreatment: true },
+      select: { id: true, code: true, name: true, status: true, loadMode: true, systemRole: true, workTreatment: true },
     });
   },
 
@@ -1659,7 +1665,6 @@ export const employeesRepository = {
         id: { in: hourConceptIds },
         systemRole: null,
         status: "ACTIVO",
-        deletedAt: null,
         loadMode: { not: null },
       },
       select: { id: true },

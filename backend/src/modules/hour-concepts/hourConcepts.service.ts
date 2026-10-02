@@ -1,9 +1,11 @@
-import { Prisma } from "@prisma/client";
+import { Prisma, type HourConceptWorkTreatment } from "@prisma/client";
 import type { AuditContext } from "../audit/audit.service";
 import { auditService } from "../audit/audit.service";
 import { AppError } from "../../shared/errors/AppError";
+import { humanizePeriodEs } from "../../shared/datetime/argentinaTime";
 import { mapAssociatedEmployee } from "../../shared/prisma/employeeAssociationQuery";
 import { employeeAccessWhere } from "../employees/employeeAccess";
+import type { RebuiltClosureSnapshot } from "../workforce-management/closureSnapshot";
 import { hourConceptsRepository, invalidateHourConceptsCache } from "./hourConcepts.repository";
 import type {
   CreateHourConceptInput,
@@ -54,9 +56,9 @@ function assertAssignableAdditionalConcept(item: { systemRole?: string | null })
   }
 }
 
-function assertActiveAssignableAdditionalConcept(item: { systemRole?: string | null; status?: string; deletedAt?: Date | null }) {
+function assertActiveAssignableAdditionalConcept(item: { systemRole?: string | null; status?: string }) {
   assertAssignableAdditionalConcept(item);
-  if (item.status !== "ACTIVO" || item.deletedAt) {
+  if (item.status !== "ACTIVO") {
     throw new AppError("Sólo se pueden asignar conceptos adicionales activos", 409, "HOUR_CONCEPT_NOT_ASSIGNABLE");
   }
 }
@@ -65,6 +67,44 @@ function assertNotSystemManaged(item: { systemRole?: string | null }) {
   if (item.systemRole === "NORMAL_BASE") {
     throw new AppError("El concepto base Horas normales es administrado por el sistema", 409, "HOUR_CONCEPT_SYSTEM_MANAGED");
   }
+}
+
+// Mismo lenguaje de negocio que la UI (frontend/src/utils/workedTimeAccounting.ts).
+const workTreatmentLabels: Record<HourConceptWorkTreatment, string> = {
+  WITHIN_BASE: "Dentro de la jornada",
+  ADDITIVE_TO_WORKED_TOTAL: "Horas adicionales",
+};
+
+function treatmentLabel(treatment: HourConceptWorkTreatment | null) {
+  return treatment ? workTreatmentLabels[treatment] : "sin tratamiento";
+}
+
+// La eliminación corre en una transacción: si mientras tanto se cargó una
+// hora con este concepto, la FK RESTRICT la aborta entera (no borra nada).
+async function executeRemoval<T>(operation: () => Promise<T>) {
+  try {
+    return await operation();
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2003") {
+      throw new AppError("Se cargaron horas de este concepto mientras se eliminaba. No se borró nada; volvé a intentarlo.", 409, "HOUR_CONCEPT_CHANGED_DURING_DELETE");
+    }
+    mapPrismaError(error);
+    throw error;
+  }
+}
+
+// Un AuditLog por cierre recalculado, con el snapshot anterior y el nuevo
+// (mismo criterio que submitClosures: la historia del cierre vive en su entityId).
+async function auditClosureRecalculations(closures: RebuiltClosureSnapshot[], cause: string, audit?: AuditContext) {
+  await Promise.all(closures.map((closure) => auditService.register({
+    ...audit,
+    action: "UPDATE",
+    entity: "MonthlyTimeClosure",
+    entityId: closure.id,
+    description: `Se recalculó el snapshot del cierre de ${humanizePeriodEs(closure.period)} (legajo ${closure.employeeId}) por ${cause}. El estado del cierre no cambia.`,
+    before: { snapshot: closure.before } as Prisma.InputJsonValue,
+    after: { snapshot: closure.after } as Prisma.InputJsonValue,
+  })));
 }
 
 export const hourConceptsService = {
@@ -88,23 +128,43 @@ export const hourConceptsService = {
     return item;
   },
 
+  // workTreatment es una clasificación corregible por RRHH
+  // (docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md §2): si cambia, los
+  // desgloses conservan sus minutos y toda la historia se lee con el
+  // tratamiento nuevo; los snapshots de cierre afectados se recalculan.
   async update(id: string, data: UpdateHourConceptInput, audit?: AuditContext) {
     const current = await execute(() => hourConceptsRepository.findById(id));
     assertNotSystemManaged(current);
-    // docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md: cambiar si un concepto
-    // suma o no al total trabajado reinterpretaría en silencio todas sus
-    // horas ya cargadas (totales, cierres y exports históricos). Sólo se
-    // permite mientras el concepto no tenga horas cargadas.
-    if (data.workTreatment && data.workTreatment !== current.workTreatment && await hourConceptsRepository.countBreakdowns(id) > 0) {
-      throw new AppError(
-        "No se puede cambiar si el concepto suma al total trabajado porque ya tiene horas cargadas. Creá un concepto nuevo para el tratamiento distinto.",
-        409,
-        "HOUR_CONCEPT_WORK_TREATMENT_LOCKED",
-      );
+    const treatmentChanged = data.workTreatment !== undefined && data.workTreatment !== current.workTreatment;
+    if (!treatmentChanged) {
+      const item = await execute(() => hourConceptsRepository.update(id, data));
+      invalidateHourConceptsCache();
+      await auditChange("UPDATE", item, audit);
+      return item;
     }
-    const item = await execute(() => hourConceptsRepository.update(id, data));
+
+    const { item, reinterpreted, rebuiltClosures } = await execute(() =>
+      hourConceptsRepository.updateReinterpretingHistory(id, data, {
+        reason: "HOUR_CONCEPT_WORK_TREATMENT_CHANGED",
+        hourConceptId: id,
+        hourConceptCode: current.code,
+      }),
+    );
     invalidateHourConceptsCache();
-    await auditChange("UPDATE", item, audit);
+    const change = `de "${treatmentLabel(current.workTreatment)}" a "${treatmentLabel(item.workTreatment)}"`;
+    await auditService.register({
+      ...audit,
+      action: "UPDATE",
+      entity: "HourConcept",
+      entityId: item.id,
+      description:
+        `Se corrigió el tratamiento del concepto horario ${item.code} - ${item.name} ${change}. ` +
+        `${reinterpreted.breakdowns} desglose(s) de ${reinterpreted.employees} legajo(s) en ${reinterpreted.periods} período(s) conservan sus minutos ` +
+        `y se leen con el tratamiento nuevo; se recalcularon ${rebuiltClosures.length} cierre(s).`,
+      before: current as Prisma.InputJsonValue,
+      after: { ...item, reinterpreted, recalculatedClosureIds: rebuiltClosures.map((closure) => closure.id) } as Prisma.InputJsonValue,
+    });
+    await auditClosureRecalculations(rebuiltClosures, `corrección del tratamiento de ${item.code} - ${item.name} (${change})`, audit);
     return item;
   },
 
@@ -162,67 +222,45 @@ export const hourConceptsService = {
     return { hourConceptId, employeeId };
   },
 
-  // Eliminación (Etapa 8O/8P):
-  // - Sin uso real (las 6 relaciones en cero): delete físico, igual que 8O.
-  // - Con uso y force=false: 409, no borra nada — el frontend debe volver a
-  //   pedir confirmación explícita con force=true (nunca se decide solo).
-  // - Con uso y force=true: baja lógica (status INACTIVO + deletedAt). Nunca
-  //   toca TimeEntry/TimeSegment/WorkShift/Novelty — esas 4 relaciones son
-  //   historial real y dos de ellas (TimeEntry/TimeSegment) tienen FK
-  //   obligatoria sin onDelete explícito (Restrict por default de Prisma),
-  //   así que un delete físico ni siquiera podría ejecutarse mientras
-  //   existan filas ahí. Solo se desvincula lo que es configuración pura:
-  //   empleados habilitados (delete real, sin valor histórico) y reglas
-  //   horarias (desactivadas, no borradas).
-  async remove(id: string, force: boolean, audit?: AuditContext) {
+  // Eliminar definitivamente = configuración creada por error
+  // (docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md §14). Borra el concepto y
+  // su historial específico; conserva fichadas, jornadas y Horas base. Para
+  // conservar la historia de un concepto válido se deshabilita, no se elimina.
+  async remove(id: string, audit?: AuditContext) {
     const item = await execute(() => hourConceptsRepository.findWithUsage(id));
     assertNotSystemManaged(item);
-    const usageCount =
-      item._count.employees +
-      item._count.timeEntries +
-      item._count.novelties +
-      item._count.timeSegments +
-      item._count.workShifts +
-      item._count.rules;
-
-    if (usageCount === 0) {
-      await execute(() => hourConceptsRepository.delete(id));
-      invalidateHourConceptsCache();
-      await auditService.register({
-        ...audit,
-        action: "DELETE",
-        entity: "HourConcept",
-        entityId: item.id,
-        description: `Se eliminó el concepto horario ${item.code} - ${item.name} (sin uso histórico).`,
-        before: { id: item.id, code: item.code, name: item.name } as Prisma.InputJsonValue,
-      });
-      return { id: item.id, code: item.code, name: item.name, mode: "DELETED" as const };
-    }
-
-    if (!force) {
+    // Un TimeEntry de un concepto adicional es del modelo previo a 6L, cuando
+    // la jornada fichada se guardaba con el concepto elegido: esos minutos
+    // pueden ser trabajo real. No se borran ni se reclasifican a ciegas.
+    if (item._count.timeEntries > 0) {
       throw new AppError(
-        "Este concepto tiene uso histórico. Podés eliminarlo de todas formas (se conserva la trazabilidad de lo ya cargado) o deshabilitarlo.",
+        `Este concepto tiene ${item._count.timeEntries} carga(s) de horas del modelo anterior que pueden ser jornada trabajada. ` +
+          "No se puede eliminar definitivamente sin revisarlas; deshabilitalo para que no se use más.",
         409,
-        "HOUR_CONCEPT_IN_USE",
+        "HOUR_CONCEPT_HAS_LEGACY_TIME_ENTRIES",
       );
     }
 
-    await execute(() => hourConceptsRepository.disableAllEmployees(id));
-    await execute(() => hourConceptsRepository.deactivateAllRules(id));
-    const softDeleted = await execute(() => hourConceptsRepository.softDelete(id));
+    const result = await executeRemoval(() =>
+      hourConceptsRepository.deletePermanently(id, { reason: "HOUR_CONCEPT_DELETED", hourConceptId: id, hourConceptCode: item.code }),
+    );
     invalidateHourConceptsCache();
+    const { rebuiltClosures, ...summary } = result;
     await auditService.register({
       ...audit,
       action: "DELETE",
       entity: "HourConcept",
       entityId: item.id,
       description:
-        `Se eliminó (baja lógica) el concepto horario ${item.code} - ${item.name} con uso histórico: ` +
-        `se desvincularon ${item._count.employees} empleado(s) habilitado(s) y se desactivaron ${item._count.rules} regla(s). ` +
-        `El historial se conserva intacto (${item._count.timeEntries} entrada(s) de horas, ${item._count.timeSegments} segmento(s), ` +
-        `${item._count.workShifts} turno(s), ${item._count.novelties} novedad(es)).`,
-      before: { id: item.id, code: item.code, name: item.name, usage: item._count } as Prisma.InputJsonValue,
+        `Se eliminó definitivamente el concepto horario ${item.code} - ${item.name}: ` +
+        `${summary.deletedBreakdowns} desglose(s), ${summary.deletedRules} regla(s) y ${summary.deletedEmployeeAssignments} habilitación(es) por legajo borradas; ` +
+        `${summary.reclassifiedSegments} tramo(s) y ${summary.reclassifiedWorkShifts} jornada(s) reclasificados a Hora normal; ` +
+        `${summary.unlinkedNovelties} novedad(es) desvinculadas; ${rebuiltClosures.length} cierre(s) recalculados. ` +
+        "Fichadas, jornadas y Horas base se conservan.",
+      before: item as Prisma.InputJsonValue,
+      after: { ...summary, recalculatedClosureIds: rebuiltClosures.map((closure) => closure.id) } as Prisma.InputJsonValue,
     });
-    return { id: softDeleted.id, code: softDeleted.code, name: softDeleted.name, mode: "SOFT_DELETED" as const };
+    await auditClosureRecalculations(rebuiltClosures, `eliminación definitiva del concepto ${item.code} - ${item.name}`, audit);
+    return { ...summary, recalculatedClosures: rebuiltClosures.length };
   },
 };

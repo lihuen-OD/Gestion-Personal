@@ -11,7 +11,6 @@ import {
   enableHourConceptEmployeesSchema,
   listHourConceptEmployeesQuerySchema,
   listHourConceptsQuerySchema,
-  removeHourConceptQuerySchema,
   updateHourConceptSchema,
 } from "./hourConcepts.schemas";
 
@@ -22,10 +21,10 @@ hourConceptsRouter.use(requireAuth);
 hourConceptsRouter.get("/", validateQuery(listHourConceptsQuerySchema), asyncHandler(hourConceptsController.list));
 hourConceptsRouter.post("/", requireAnyRole(adminRoles), validateBody(createHourConceptSchema), asyncHandler(hourConceptsController.create));
 hourConceptsRouter.patch("/:id", requireAnyRole(adminRoles), validateBody(updateHourConceptSchema), asyncHandler(hourConceptsController.update));
-// Eliminación (Etapa 8O/8P) — sin uso: delete físico. Con uso y sin
-// ?force=true: 409 (el frontend debe volver a confirmar). Con uso y
-// force=true: baja lógica, ver hourConcepts.service.ts::remove.
-hourConceptsRouter.delete("/:id", requireAnyRole(adminRoles), validateQuery(removeHourConceptQuerySchema), asyncHandler(hourConceptsController.remove));
+// Eliminación definitiva: borra el concepto y su historial específico en una
+// transacción (hourConcepts.service.ts::remove). Para conservar la historia
+// se deshabilita (PATCH status INACTIVO), no se elimina.
+hourConceptsRouter.delete("/:id", requireAnyRole(adminRoles), asyncHandler(hourConceptsController.remove));
 // Empleados habilitados para el concepto (Etapa 8G) — mismo criterio de
 // lectura cruzada que /employees: RRHH/supervisión/carga horaria.
 hourConceptsRouter.get(

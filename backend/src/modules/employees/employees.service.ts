@@ -229,7 +229,6 @@ async function validateManualBreakdownContext(
   if (!concept) throw new AppError("Hour concept not found", 404, "HOUR_CONCEPT_NOT_FOUND");
   if (concept.systemRole === "NORMAL_BASE") throw new AppError("Normal cannot be loaded as a breakdown", 409, "NORMAL_BREAKDOWN_NOT_ALLOWED");
   if (concept.status !== "ACTIVO") throw new AppError("Hour concept is inactive", 409, "HOUR_CONCEPT_INACTIVE");
-  if (concept.deletedAt) throw new AppError("Hour concept is deleted", 409, "HOUR_CONCEPT_DELETED");
   if (!concept.loadMode) throw new AppError("Hour concept has no load mode", 409, "HOUR_CONCEPT_LOAD_MODE_REQUIRED");
   if (concept.loadMode === "AUTOMATIC") throw new AppError("Automatic concepts are read-only", 409, "MANUAL_BREAKDOWN_NOT_ALLOWED");
   if (!await employeesRepository.isHourConceptEnabled(employeeId, hourConceptId)) {

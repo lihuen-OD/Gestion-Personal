@@ -38,7 +38,7 @@ export const hourConceptRulesRepository = {
   findHourConceptConfiguration(hourConceptId: string) {
     return prisma.hourConcept.findUnique({
       where: { id: hourConceptId },
-      select: { id: true, status: true, deletedAt: true, loadMode: true, systemRole: true },
+      select: { id: true, status: true, loadMode: true, systemRole: true },
     });
   },
 

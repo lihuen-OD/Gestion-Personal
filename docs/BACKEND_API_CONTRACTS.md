@@ -740,6 +740,7 @@ page
 GET /api/hour-concepts
 POST /api/hour-concepts
 PATCH /api/hour-concepts/:id
+DELETE /api/hour-concepts/:id
 ```
 
 Query de listado:
@@ -765,7 +766,14 @@ Campos principales:
 }
 ```
 
-`workTreatment` (`WITHIN_BASE` | `ADDITIVE_TO_WORKED_TOTAL`) es obligatorio en `POST` para todo concepto adicional y opcional en `PATCH`; `NORMAL_BASE` lo tiene en `null` (CHECK `HourConcept_work_treatment_check`). Cambiarlo en un concepto que ya tiene horas cargadas responde `409 HOUR_CONCEPT_WORK_TREATMENT_LOCKED`.
+`workTreatment` (`WITHIN_BASE` | `ADDITIVE_TO_WORKED_TOTAL`) es obligatorio en `POST` para todo concepto adicional y opcional en `PATCH`; `NORMAL_BASE` lo tiene en `null` (CHECK `HourConcept_work_treatment_check`). Es una clasificación corregible por RRHH aunque el concepto ya tenga horas: el `PATCH` actualiza el concepto y, en la misma transacción, recalcula los snapshots de los cierres afectados. Los desgloses conservan sus minutos y toda lectura los interpreta con el tratamiento vigente. Queda auditado con el tratamiento anterior y el nuevo, el usuario y el alcance (desgloses, legajos, períodos y cierres). La respuesta sigue siendo `{ data: HourConcept }`.
+
+No hay baja lógica (`deletedAt` se eliminó en la migración `20261003100000`) ni `?includeDeleted`:
+
+- **Deshabilitar** = `PATCH { status: "INACTIVO" }`. Conserva el concepto y su historia e impide nuevas cargas, asignaciones y clasificación automática.
+- **Eliminar** = `DELETE /api/hour-concepts/:id`. Es definitivo y no admite `?force`. En una transacción borra los desgloses, reglas y habilitaciones por legajo del concepto, reclasifica a Hora normal los `TimeSegment`/`WorkShift` que lo referenciaban, desvincula `Novelty.targetHourConceptId`, borra el concepto (el código queda libre) y recalcula los cierres afectados. Fichadas, jornadas y Horas base se conservan.
+  - Respuesta: `{ data: { concept: { id, code, name }, deletedBreakdowns, deletedRules, deletedEmployeeAssignments, reclassifiedSegments, reclassifiedWorkShifts, unlinkedNovelties, recalculatedClosures } }`.
+  - Errores: `409 HOUR_CONCEPT_SYSTEM_MANAGED` (Hora normal), `409 HOUR_CONCEPT_HAS_LEGACY_TIME_ENTRIES` (hay `TimeEntry` del concepto del modelo previo a 6L; no se borra nada) y `409 HOUR_CONCEPT_CHANGED_DURING_DELETE` (se cargaron horas mientras se eliminaba; la transacción no borró nada).
 
 `countsAsWorked` queda deprecado como criterio para calcular el total trabajado. Mientras continúe en el contrato por compatibilidad, no debe interpretarse como autorización para sumar un concepto adicional a Horas normales.
 

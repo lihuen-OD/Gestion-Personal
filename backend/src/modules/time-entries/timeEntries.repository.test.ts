@@ -142,7 +142,7 @@ describe("findDefaultHourConcept — Hora normal es base universal, resuelta por
     const result = await timeEntriesRepository.findDefaultHourConcept("employee-1");
 
     expect(mockedPrisma.hourConcept.findFirst).toHaveBeenCalledWith({
-      where: { systemRole: "NORMAL_BASE", status: "ACTIVO", deletedAt: null },
+      where: { systemRole: "NORMAL_BASE", status: "ACTIVO" },
     });
     expect(mockedPrisma.employeeHourConcept.findFirst).not.toHaveBeenCalled();
     expect(result).toEqual({ hourConcept: { id: "concept-normal", systemRole: "NORMAL_BASE" } });

@@ -13,12 +13,13 @@ import { StatCard } from "../components/ui/StatCard";
 import { SortableHeader } from "../components/ui/SortableHeader";
 import { useAuth } from "../context/AuthContext";
 import { confirmAction } from "../services/appDialog";
-import { ApiError, getUserErrorMessage } from "../services/api/apiClient";
+import { getUserErrorMessage } from "../services/api/apiClient";
 import { hourConceptApiService } from "../services/api/hourConceptApiService";
 import type { AssociatedEmployeeFilters } from "../types/associatedEmployee.types";
 import type { HourConcept, HourConceptFilters, HourConceptKind, HourConceptLoadMode, HourConceptWorkTreatment } from "../types/hourConcept.types";
 import { roleLevel } from "../utils/roles";
 import { activoInactivoLabel } from "../utils/status";
+import { TOAST_SUCCESS_MS } from "../utils/toast";
 import { useAsyncAction } from "../utils/useAsyncAction";
 import { useSort, type SortAccessors } from "../utils/sort";
 import { workTreatmentDescriptions, workTreatmentLabels, workTreatmentOptions } from "../utils/workedTimeAccounting";
@@ -162,16 +163,28 @@ export function HourConceptsPage() {
       return;
     }
 
+    // Corregir el tratamiento de un concepto existente reinterpreta todas sus
+    // horas ya cargadas (docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md §2):
+    // se permite siempre, pero se confirma explícitamente.
+    const stored = apiItems?.find((item) => item.id === editing.id);
+    const treatmentChanged = Boolean(stored && stored.workTreatment !== editing.workTreatment);
+    if (treatmentChanged) {
+      const confirmed = await confirmAction(
+        `Las horas ya cargadas de "${editing.name}" conservan sus minutos y pasan a leerse como "${workTreatmentLabels[editing.workTreatment]}" en grillas, totales, exportaciones y cierres.`,
+        { title: "Cambiar tratamiento del concepto", confirmLabel: "Cambiar tratamiento" },
+      );
+      if (!confirmed) return;
+    }
+
     try {
-      const existsInApi = Boolean(apiItems?.some((item) => item.id === editing.id));
-      const saved = existsInApi
+      const saved = stored
         ? await hourConceptApiService.update(editing.id, editing)
         : await hourConceptApiService.create(editing);
 
       setEditing(saved || null);
       setRefresh((value) => value + 1);
-      setNotice("Concepto horario guardado correctamente.");
-      setTimeout(() => setNotice(""), 2200);
+      setNotice(treatmentChanged ? "Concepto horario guardado. Las horas ya cargadas se leen con el nuevo tratamiento." : "Concepto horario guardado correctamente.");
+      setTimeout(() => setNotice(""), TOAST_SUCCESS_MS);
     } catch (saveError) {
       setNotice(getUserErrorMessage(saveError, "No pudimos guardar el concepto horario. Revisá los datos e intentá nuevamente."));
       setTimeout(() => setNotice(""), 3000);
@@ -183,7 +196,7 @@ export function HourConceptsPage() {
     const confirmed = await confirmAction(
       activating
         ? `¿Querés habilitar el concepto horario "${item.name}"?`
-        : `¿Querés deshabilitar el concepto horario "${item.name}"? Deja de aplicarse en la clasificación automática y en el fichador; no se borra su historial.`,
+        : `¿Querés deshabilitar el concepto horario "${item.name}"? No se podrá usar en nuevas cargas ni en la clasificación automática; no se borra su historial (horas, reglas y legajos habilitados).`,
       {
         title: activating ? "Habilitar concepto horario" : "Deshabilitar concepto horario",
         confirmLabel: activating ? "Habilitar" : "Deshabilitar",
@@ -200,47 +213,26 @@ export function HourConceptsPage() {
     }
   };
 
-  // Eliminación (Etapa 8P): primero se confirma sin saber todavía si tiene
-  // uso histórico. Si el backend responde 409 HOUR_CONCEPT_IN_USE, se pide
-  // una segunda confirmación explícita con el texto exacto de la regla de
-  // negocio, y recién ahí se reintenta con force=true (baja lógica, conserva
-  // el historial). Si no tiene uso, la primera llamada ya lo elimina del todo.
+  // Eliminar definitivamente es para una configuración creada por error: un
+  // único DELETE borra el concepto y su historial específico (horas del
+  // concepto, reglas, legajos habilitados) y libera el código. Fichadas y
+  // jornadas reales se conservan. Para conservar la historia de un concepto
+  // válido se usa Deshabilitar.
   const removeConcept = async (item: HourConcept) => {
     const confirmed = await confirmAction(
-      `¿Querés eliminar el concepto horario "${item.name}"? Esta acción no se puede deshacer.`,
-      { title: "Eliminar concepto horario", confirmLabel: "Eliminar", tone: "danger" },
+      `Se eliminará el concepto "${item.name}" y las horas/configuración asociadas a él. Esta acción no se puede deshacer. Las fichadas y jornadas reales se conservarán. Si el concepto es válido pero ya no se usa, deshabilitalo para conservar su historial.`,
+      { title: "Eliminar concepto definitivamente", confirmLabel: "Eliminar definitivamente", cancelLabel: "Cancelar", tone: "danger" },
     );
     if (!confirmed) return;
 
     try {
       await hourConceptApiService.remove(item.id);
       if (editing?.id === item.id) setEditing(null);
-      setNotice("Este concepto fue eliminado definitivamente.");
+      setNotice(`Se eliminó definitivamente el concepto "${item.name}".`);
       setRefresh((value) => value + 1);
-      setTimeout(() => setNotice(""), 2500);
-      return;
+      setTimeout(() => setNotice(""), TOAST_SUCCESS_MS);
     } catch (removeError) {
-      if (!(removeError instanceof ApiError) || removeError.code !== "HOUR_CONCEPT_IN_USE") {
-        setNotice(getUserErrorMessage(removeError, "No pudimos eliminar el concepto horario."));
-        setTimeout(() => setNotice(""), 3500);
-        return;
-      }
-    }
-
-    const confirmedForced = await confirmAction(
-      "Este concepto tiene uso histórico. Si lo eliminás, dejará de estar disponible para nuevas cargas/asignaciones, pero el sistema conserva la trazabilidad de lo ya cargado. ¿Confirmás la eliminación?",
-      { title: "Eliminar concepto con uso histórico", confirmLabel: "Eliminar de todas formas", tone: "danger" },
-    );
-    if (!confirmedForced) return;
-
-    try {
-      await hourConceptApiService.remove(item.id, { force: true });
-      if (editing?.id === item.id) setEditing(null);
-      setNotice("Concepto horario eliminado. Se conserva el historial de lo ya cargado.");
-      setRefresh((value) => value + 1);
-      setTimeout(() => setNotice(""), 3000);
-    } catch (forceError) {
-      setNotice(getUserErrorMessage(forceError, "No pudimos eliminar el concepto horario."));
+      setNotice(getUserErrorMessage(removeError, "No pudimos eliminar el concepto horario."));
       setTimeout(() => setNotice(""), 3500);
     }
   };

@@ -65,7 +65,7 @@ describe("findHourConceptConfiguration", () => {
     await hourConceptRulesRepository.findHourConceptConfiguration("concept-1");
     expect(mockedPrisma.hourConcept.findUnique).toHaveBeenCalledWith({
       where: { id: "concept-1" },
-      select: { id: true, status: true, deletedAt: true, loadMode: true, systemRole: true },
+      select: { id: true, status: true, loadMode: true, systemRole: true },
     });
   });
 

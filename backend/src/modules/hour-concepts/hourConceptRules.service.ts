@@ -29,7 +29,7 @@ async function assertAutomaticAdditionalConcept(hourConceptId: string) {
   if (concept.systemRole === "NORMAL_BASE") {
     throw new AppError("Horas normales no admite reglas de desglose", 409, "HOUR_CONCEPT_RULE_BASE_NOT_ALLOWED");
   }
-  if (concept.status !== "ACTIVO" || concept.deletedAt) {
+  if (concept.status !== "ACTIVO") {
     throw new AppError("El concepto debe estar activo para configurar reglas", 409, "HOUR_CONCEPT_RULE_INACTIVE_CONCEPT");
   }
   if (concept.loadMode === "MANUAL") {

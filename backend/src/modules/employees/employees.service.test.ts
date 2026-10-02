@@ -180,7 +180,7 @@ describe("buildEmployeeTimeGrid", () => {
 
 describe("employeesService manual hour concept breakdowns", () => {
   const input = { date: "2026-08-12", hourConceptId: "11111111-1111-4111-8111-111111111111", minutes: 120, observation: "Traslado" };
-  const concept = { id: input.hourConceptId, code: "COLECTIVO", name: "Colectivo", status: "ACTIVO", deletedAt: null, loadMode: "MANUAL", systemRole: null, workTreatment: "ADDITIVE_TO_WORKED_TOTAL" };
+  const concept = { id: input.hourConceptId, code: "COLECTIVO", name: "Colectivo", status: "ACTIVO", loadMode: "MANUAL", systemRole: null, workTreatment: "ADDITIVE_TO_WORKED_TOTAL" };
 
   beforeEach(() => {
     repo.findEmployeeForManualBreakdown.mockResolvedValue({ id: "emp-1" });
@@ -258,7 +258,6 @@ describe("employeesService manual hour concept breakdowns", () => {
     ["Normal", { systemRole: "NORMAL_BASE", loadMode: null }, "NORMAL_BREAKDOWN_NOT_ALLOWED"],
     ["Automático", { loadMode: "AUTOMATIC" }, "MANUAL_BREAKDOWN_NOT_ALLOWED"],
     ["Inactivo", { status: "INACTIVO" }, "HOUR_CONCEPT_INACTIVE"],
-    ["Eliminado", { deletedAt: new Date() }, "HOUR_CONCEPT_DELETED"],
     ["Sin modo", { loadMode: null }, "HOUR_CONCEPT_LOAD_MODE_REQUIRED"],
   ])("rechaza %s", async (_label, overrides, code) => {
     repo.findHourConceptForManualBreakdown.mockResolvedValue({ ...concept, ...overrides });
@@ -320,7 +319,7 @@ describe("employeesService manual hour concept breakdowns", () => {
 
 describe("employeesService manual hour concept breakdowns — flujo de aprobación por rol (Etapa 6L.3)", () => {
   const input = { date: "2026-08-12", hourConceptId: "11111111-1111-4111-8111-111111111111", minutes: 120, observation: "Traslado" };
-  const concept = { id: input.hourConceptId, code: "COLECTIVO", name: "Colectivo", status: "ACTIVO", deletedAt: null, loadMode: "MANUAL", systemRole: null };
+  const concept = { id: input.hourConceptId, code: "COLECTIVO", name: "Colectivo", status: "ACTIVO", loadMode: "MANUAL", systemRole: null };
   const nivel2User = { id: "user-n2", role: roles.supervision } as unknown as Express.AuthUser;
   const nivel3User = { id: "user-n3", role: roles.cargaHoraria } as unknown as Express.AuthUser;
 

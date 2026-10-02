@@ -791,19 +791,13 @@ model HourConcept {
   systemRole     HourConceptSystemRole? @unique
   // Tratamiento en el total trabajado (ver enum). Nullable sólo porque
   // NORMAL_BASE no lo usa: el CHECK "HourConcept_work_treatment_check" de la
-  // migración 20261002120000 lo exige para todo concepto adicional.
+  // migración 20261002120000 lo exige para todo concepto adicional. Es una
+  // clasificación corregible por RRHH: los desgloses no lo copian, así que
+  // un cambio reinterpreta toda la historia (WORKED_TIME_ACCOUNTING_MODEL.md).
   workTreatment  HourConceptWorkTreatment?
-  // Eliminación lógica (Etapa 8P): se usa SOLO cuando el concepto tiene uso
-  // histórico real (TimeEntry/TimeSegment tienen FK obligatoria — Postgres
-  // rechaza el delete físico mientras existan filas, y aunque no las
-  // hubiera, Novelty.targetHourConceptId no tiene snapshot de nombre y
-  // perdería la trazabilidad). No se toca TimeEntry/TimeSegment/WorkShift/
-  // Novelty nunca: la fila de HourConcept sigue existiendo físicamente, así
-  // que todos sus joins históricos siguen resolviendo igual. deletedAt
-  // != null es lo que la UI usa para ocultarlo del catálogo activo; status
-  // ya vuelve a INACTIVO al mismo tiempo (misma semántica que "deshabilitado"
-  // para el fichador/clasificación, que ya filtran por status ACTIVO).
-  deletedAt      DateTime?              @db.Timestamptz(3)
+  // Sin baja lógica (migración 20261003100000): deshabilitar = status
+  // INACTIVO (conserva historia); eliminar = borrado físico del concepto y
+  // de su historial específico (hourConcepts.repository.ts::deletePermanently).
   createdAt      DateTime               @default(now()) @db.Timestamptz(3)
   updatedAt      DateTime               @updatedAt @db.Timestamptz(3)
 

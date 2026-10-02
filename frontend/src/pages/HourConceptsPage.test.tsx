@@ -3,6 +3,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { HourConceptsPage } from "./HourConceptsPage";
 import { hourConceptApiService } from "../services/api/hourConceptApiService";
+import { confirmAction } from "../services/appDialog";
 import type { HourConcept } from "../types/hourConcept.types";
 
 vi.mock("../services/appDialog", () => ({
@@ -146,5 +147,94 @@ describe("HourConceptsPage — tratamiento en el total trabajado", () => {
     expect(await screen.findByText("Dentro de la jornada")).toBeInTheDocument();
     expect(screen.getByText("Horas adicionales")).toBeInTheDocument();
     expect(container.textContent).not.toMatch(/WITHIN_BASE|ADDITIVE_TO_WORKED_TOTAL/);
+  });
+});
+
+// docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md §2/§14 — caso real: "Prueba 02"
+// se creó como horas adicionales por error y ya tiene horas cargadas.
+describe("HourConceptsPage — corregir tratamiento y eliminar definitivamente", () => {
+  const prueba = buildConcept({ id: "prueba", code: "HOR-005", name: "Prueba 02", kind: "OTRO", loadMode: "BOTH", systemRole: null, workTreatment: "ADDITIVE_TO_WORKED_TOTAL" });
+
+  async function renderWithPrueba() {
+    const { default: userEvent } = await import("@testing-library/user-event");
+    Element.prototype.scrollIntoView = vi.fn();
+    vi.mocked(hourConceptApiService.getAll).mockResolvedValue([buildConcept(), prueba]);
+    render(<MemoryRouter><HourConceptsPage /></MemoryRouter>);
+    await screen.findByText("Prueba 02");
+    return userEvent.setup();
+  }
+
+  it("cambiar el tratamiento de un concepto con horas se permite tras confirmar que reinterpreta lo ya cargado", async () => {
+    const user = await renderWithPrueba();
+    const update = vi.spyOn(hourConceptApiService, "update").mockResolvedValue({ ...prueba, workTreatment: "WITHIN_BASE" });
+
+    await user.click(screen.getByRole("button", { name: "Editar" }));
+    await user.selectOptions(screen.getByLabelText(/Tratamiento en el total/), "WITHIN_BASE");
+    await user.click(screen.getByRole("button", { name: "Guardar" }));
+
+    await waitFor(() => expect(update).toHaveBeenCalledWith("prueba", expect.objectContaining({ workTreatment: "WITHIN_BASE" })));
+    expect(confirmAction).toHaveBeenCalledWith(
+      expect.stringContaining('conservan sus minutos y pasan a leerse como "Dentro de la jornada"'),
+      expect.objectContaining({ title: "Cambiar tratamiento del concepto", confirmLabel: "Cambiar tratamiento" }),
+    );
+    expect(await screen.findByText("Concepto horario guardado. Las horas ya cargadas se leen con el nuevo tratamiento.")).toBeInTheDocument();
+  });
+
+  it("si RRHH cancela la confirmación, no guarda el cambio de tratamiento", async () => {
+    const user = await renderWithPrueba();
+    const update = vi.spyOn(hourConceptApiService, "update");
+    vi.mocked(confirmAction).mockResolvedValueOnce(false);
+
+    await user.click(screen.getByRole("button", { name: "Editar" }));
+    await user.selectOptions(screen.getByLabelText(/Tratamiento en el total/), "WITHIN_BASE");
+    await user.click(screen.getByRole("button", { name: "Guardar" }));
+
+    await waitFor(() => expect(confirmAction).toHaveBeenCalled());
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("editar otros datos sin tocar el tratamiento no pide confirmación", async () => {
+    const user = await renderWithPrueba();
+    const update = vi.spyOn(hourConceptApiService, "update").mockResolvedValue({ ...prueba, name: "Prueba 03" });
+
+    await user.click(screen.getByRole("button", { name: "Editar" }));
+    await user.clear(screen.getByLabelText("Nombre *"));
+    await user.type(screen.getByLabelText("Nombre *"), "Prueba 03");
+    await user.click(screen.getByRole("button", { name: "Guardar" }));
+
+    await waitFor(() => expect(update).toHaveBeenCalled());
+    expect(confirmAction).not.toHaveBeenCalled();
+  });
+
+  it("Eliminar: una única confirmación fuerte y un único DELETE (sin 409 ni force), y el concepto deja de listarse", async () => {
+    const user = await renderWithPrueba();
+    const remove = vi.spyOn(hourConceptApiService, "remove").mockResolvedValue({
+      concept: { id: "prueba", code: "HOR-005", name: "Prueba 02" },
+      deletedBreakdowns: 1, deletedRules: 1, deletedEmployeeAssignments: 0, reclassifiedSegments: 0, reclassifiedWorkShifts: 0, unlinkedNovelties: 0, recalculatedClosures: 0,
+    });
+    vi.mocked(hourConceptApiService.getAll).mockResolvedValue([buildConcept()]);
+
+    await user.click(screen.getByRole("button", { name: "Eliminar" }));
+
+    await waitFor(() => expect(remove).toHaveBeenCalledTimes(1));
+    expect(remove).toHaveBeenCalledWith("prueba");
+    expect(confirmAction).toHaveBeenCalledTimes(1);
+    expect(confirmAction).toHaveBeenCalledWith(
+      'Se eliminará el concepto "Prueba 02" y las horas/configuración asociadas a él. Esta acción no se puede deshacer. Las fichadas y jornadas reales se conservarán. Si el concepto es válido pero ya no se usa, deshabilitalo para conservar su historial.',
+      { title: "Eliminar concepto definitivamente", confirmLabel: "Eliminar definitivamente", cancelLabel: "Cancelar", tone: "danger" },
+    );
+    expect(await screen.findByText('Se eliminó definitivamente el concepto "Prueba 02".')).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByText("HOR-005")).not.toBeInTheDocument());
+  });
+
+  it("Cancelar en la confirmación de eliminar no borra nada", async () => {
+    const user = await renderWithPrueba();
+    const remove = vi.spyOn(hourConceptApiService, "remove");
+    vi.mocked(confirmAction).mockResolvedValueOnce(false);
+
+    await user.click(screen.getByRole("button", { name: "Eliminar" }));
+
+    await waitFor(() => expect(confirmAction).toHaveBeenCalled());
+    expect(remove).not.toHaveBeenCalled();
   });
 });

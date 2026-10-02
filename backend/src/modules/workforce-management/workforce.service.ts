@@ -9,15 +9,7 @@ import { auditService } from "../audit/audit.service";
 import { argentinaCalendarDate, humanizePeriodEs, todayArgentinaDateKey } from "../../shared/datetime/argentinaTime";
 import { buildActiveDatesByRule, resolveWinningRules, ruleMatchesDate, scopesCouldOverlap } from "./doubleHourRuleMatching";
 import type { CorrectionsQuery, ListNotificationsQuery } from "./workforce.schemas";
-import {
-  accountEmployeePeriods,
-  accountingBaseEntrySelect,
-  accountingBreakdownSelect,
-  countedBreakdownStatusWhere,
-  emptyPeriodAccounting,
-  toAccountingBaseEntry,
-  toAccountingBreakdown,
-} from "../time-entries/workedTimeAccounting";
+import { buildClosureSnapshots } from "./closureSnapshot";
 
 function mapPrismaError(error: unknown) {
   if (error instanceof Prisma.PrismaClientKnownRequestError) {
@@ -75,11 +67,6 @@ function computeExpectedMinutes(startTime: string, endTime: string, crossesMidni
   return crossesMidnight ? 24 * 60 - start + end : end - start;
 }
 
-function periodRange(period: string) {
-  const [year, month] = period.split("-").map(Number);
-  return { start: new Date(Date.UTC(year!, month! - 1, 1)), end: new Date(Date.UTC(year!, month!, 1)) };
-}
-
 // Etapa 8B: para recurrenceType FECHA, fromDate/toDate ya no son la
 // condición de matching (eso vive en `dates`) — pero siguen siendo columnas
 // NOT NULL usadas como pre-filtro de vigencia grueso antes de evaluar
@@ -100,48 +87,12 @@ export const workforceService = {
   async submitClosures(period: string, employeeIds: string[], user: Express.AuthUser, audit?: AuditContext) {
     if (user.role === roles.rrhh) throw new AppError("RH no envía cierres para aprobación", 400, "CLOSURE_SUBMIT_ROLE_INVALID");
     await ensureVisible(employeeIds, user);
-    const range = periodRange(period);
-    // Snapshot de auditoría del cierre. `entries` conserva el formato previo
-    // (Horas base NORMAL_BASE agrupadas por estado). `accounting` congela la
-    // composición real del período con el modelo único
-    // (docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md): base, Horas normales
-    // residuales, conceptos dentro de la jornada, horas adicionales, total
-    // trabajado y equivalencia para liquidación — mismo criterio de estado
-    // que la grilla por legajo (base APROBADO/EN_REVISION, conceptos sin
-    // RECHAZADO), así cierre y grilla nunca calculan distinto. 3 consultas
-    // batch para todos los legajos enviados.
-    const [rows, baseEntries, breakdowns] = await Promise.all([
-      prisma.timeEntry.groupBy({
-        by: ["employeeId", "status"],
-        where: { employeeId: { in: employeeIds }, period, hourConcept: { systemRole: "NORMAL_BASE" } },
-        _sum: { hours: true },
-        _count: true,
-      }),
-      prisma.timeEntry.findMany({
-        where: { employeeId: { in: employeeIds }, period, status: { in: ["APROBADO", "EN_REVISION"] }, hourConcept: { systemRole: "NORMAL_BASE" } },
-        select: accountingBaseEntrySelect,
-      }),
-      prisma.hourConceptBreakdown.findMany({
-        where: { employeeId: { in: employeeIds }, period, status: countedBreakdownStatusWhere },
-        select: { ...accountingBreakdownSelect, hourConcept: { select: { workTreatment: true, code: true, name: true } } },
-      }),
-    ]);
-    const accountingByEmployee = accountEmployeePeriods(baseEntries.map(toAccountingBaseEntry), breakdowns.map(toAccountingBreakdown));
-    const conceptNames = new Map(breakdowns.map((breakdown) => [breakdown.hourConceptId, { code: breakdown.hourConcept.code, name: breakdown.hourConcept.name }]));
-    const snapshotFor = (employeeId: string) => {
-      const accounting = accountingByEmployee.get(employeeId) ?? emptyPeriodAccounting();
-      return {
-        range,
-        entries: rows.filter((row) => row.employeeId === employeeId).map((row) => ({ status: row.status, hours: Number(row._sum.hours || 0), records: row._count })),
-        accounting: {
-          model: "WORKED_TIME_ACCOUNTING_V1",
-          ...accounting,
-          concepts: accounting.concepts.map((concept) => ({ ...concept, ...conceptNames.get(concept.hourConceptId) })),
-        },
-      } as Prisma.InputJsonValue;
-    };
+    // Snapshot de auditoría del cierre (closureSnapshot.ts): base, Horas
+    // normales residuales, conceptos, total trabajado y equivalencia con el
+    // mismo modelo y criterio de estado que la grilla por legajo.
+    const snapshots = await buildClosureSnapshots(prisma, employeeIds, period);
     const result = await execute(() => prisma.$transaction(employeeIds.map((employeeId) => {
-      const snapshot = snapshotFor(employeeId);
+      const snapshot = snapshots.get(employeeId)!;
       return prisma.monthlyTimeClosure.upsert({ where: { employeeId_period: { employeeId, period } }, create: { employeeId, period, status: "ENVIADO", snapshot, submittedByUserId: user.id, submittedAt: new Date() }, update: { status: "ENVIADO", snapshot, submittedByUserId: user.id, submittedAt: new Date(), reviewedAt: null, reviewedByUserId: null, reviewNote: null } });
     })));
     await Promise.all(result.map((item) => auditService.register({ ...audit, action: "UPDATE", entity: "MonthlyTimeClosure", entityId: item.id, description: `Se envió a revisión el cierre de ${humanizePeriodEs(period)} (legajo ${item.employeeId}).`, after: item as Prisma.InputJsonValue })));

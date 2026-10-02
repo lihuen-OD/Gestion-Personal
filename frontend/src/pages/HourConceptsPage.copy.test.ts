@@ -84,26 +84,24 @@ describe("HourConceptsPage — nomenclatura correcta (Etapa 8M)", () => {
       expect(source).toContain("Eliminar");
     });
 
-    it("el mensaje de confirmación de eliminar advierte que no se puede deshacer", () => {
-      expect(source).toMatch(/eliminar el concepto horario.*no se puede deshacer/i);
+    // docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md §14: Eliminar es
+    // definitivo (una sola confirmación fuerte); Deshabilitar conserva la historia.
+    it("eliminar usa una confirmación fuerte única: título, advertencia y botones exactos", () => {
+      expect(source).toContain('title: "Eliminar concepto definitivamente"');
+      expect(source).toContain("y las horas/configuración asociadas a él. Esta acción no se puede deshacer. Las fichadas y jornadas reales se conservarán.");
+      expect(source).toContain('confirmLabel: "Eliminar definitivamente"');
+      expect(source).toContain('cancelLabel: "Cancelar"');
+    });
+
+    it("ya no existe el flujo 409 → segunda confirmación → force (baja lógica)", () => {
+      expect(source).not.toContain("HOUR_CONCEPT_IN_USE");
+      expect(source).not.toContain("force");
+      expect(source).not.toContain("Eliminar de todas formas");
+      expect(source).not.toContain("conserva la trazabilidad de lo ya cargado");
     });
 
     it("el mensaje de confirmación de deshabilitar aclara que no borra el historial", () => {
       expect(source).toMatch(/no se borra su historial/i);
-    });
-
-    it("la segunda confirmación (con uso histórico) usa el texto exacto de la regla de negocio", () => {
-      expect(source).toContain(
-        "Este concepto tiene uso histórico. Si lo eliminás, dejará de estar disponible para nuevas cargas/asignaciones, pero el sistema conserva la trazabilidad de lo ya cargado.",
-      );
-    });
-
-    it('el label del botón de confirmación forzada dice "Eliminar de todas formas"', () => {
-      expect(source).toContain("Eliminar de todas formas");
-    });
-
-    it("distingue HOUR_CONCEPT_IN_USE del resto de los errores antes de pedir la segunda confirmación", () => {
-      expect(source).toContain("HOUR_CONCEPT_IN_USE");
     });
   });
 
