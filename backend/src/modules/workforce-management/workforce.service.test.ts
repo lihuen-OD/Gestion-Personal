@@ -62,6 +62,7 @@ const supervisor = { id: "user-2", role: roles.supervision } as unknown as Expre
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockedPrisma.employee.findMany.mockResolvedValue([]);
 });
 
 describe("workforceService — auditoria en correcciones/cierres (hueco cerrado)", () => {
@@ -201,6 +202,101 @@ describe("workforceService — auditoria en correcciones/cierres (hueco cerrado)
     await workforceService.rejectCorrection("correction-1", "no corresponde", user);
 
     expect(auditService.register).toHaveBeenCalledWith(expect.objectContaining({ action: "REJECT", entity: "TimeCorrectionRequest", entityId: "correction-1" }));
+  });
+});
+
+// Lenguaje de negocio en auditoría: "(legajo <employeeId>)" mostraba el UUID
+// interno en Dashboard/Auditoría. Ahora: "Apellido, Nombre · Legajo N".
+describe("workforceService — cierres y correcciones auditan identidad humana, nunca el employeeId", () => {
+  const juanId = "016dc01c-655d-4474-8319-67f1b8108c93";
+  const anaId = "5b0e6f0a-1c2d-4e3f-8a9b-0c1d2e3f4a5b";
+  const juan = { legajo: "30", firstName: "Juan", lastName: "Pérez" };
+  const ana = { legajo: "31", firstName: "Ana", lastName: "Gómez" };
+  const auditDescriptions = () => (auditService.register as Mock).mock.calls.map(([input]) => input.description as string);
+  const expectNoEmployeeUuid = () => {
+    for (const description of auditDescriptions()) {
+      expect(description).not.toContain(juanId);
+      expect(description).not.toContain(anaId);
+    }
+  };
+
+  it("submitClosures de varios legajos resuelve todas las identidades en UNA consulta (sin N+1)", async () => {
+    mockedPrisma.employee.count.mockResolvedValue(2);
+    mockedPrisma.timeEntry.groupBy.mockResolvedValue([]);
+    mockedPrisma.employee.findMany.mockResolvedValue([{ id: juanId, ...juan }, { id: anaId, ...ana }]);
+    mockedPrisma.$transaction.mockResolvedValue([
+      { id: "closure-1", employeeId: juanId },
+      { id: "closure-2", employeeId: anaId },
+    ]);
+
+    await workforceService.submitClosures("2026-09", [juanId, anaId], supervisor);
+
+    expect(mockedPrisma.employee.findMany).toHaveBeenCalledTimes(1);
+    expect(mockedPrisma.employee.findMany).toHaveBeenCalledWith({
+      where: { id: { in: [juanId, anaId] } },
+      select: { id: true, legajo: true, firstName: true, lastName: true },
+    });
+    expect(auditDescriptions()).toEqual([
+      "Se envió a revisión el cierre de septiembre de 2026 de Pérez, Juan · Legajo 30.",
+      "Se envió a revisión el cierre de septiembre de 2026 de Gómez, Ana · Legajo 31.",
+    ]);
+  });
+
+  it("approveClosures toma la identidad del mismo findMany que ya lee los cierres (sin consultas extra)", async () => {
+    mockedPrisma.monthlyTimeClosure.findMany.mockResolvedValue([
+      { id: "closure-1", employeeId: juanId, period: "2026-09", employee: juan },
+      { id: "closure-2", employeeId: anaId, period: "2026-09", employee: ana },
+    ]);
+    mockedPrisma.monthlyTimeClosure.updateMany.mockResolvedValue({ count: 2 });
+
+    await workforceService.approveClosures(["closure-1", "closure-2"], undefined, user);
+
+    expect(mockedPrisma.monthlyTimeClosure.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      include: { employee: { select: { legajo: true, firstName: true, lastName: true } } },
+    }));
+    expect(mockedPrisma.employee.findMany).not.toHaveBeenCalled();
+    expect(auditDescriptions()).toEqual([
+      "Se aprobó el cierre de septiembre de 2026 de Pérez, Juan · Legajo 30.",
+      "Se aprobó el cierre de septiembre de 2026 de Gómez, Ana · Legajo 31.",
+    ]);
+  });
+
+  it("returnClosure describe período, persona y motivo", async () => {
+    mockedPrisma.monthlyTimeClosure.findUnique.mockResolvedValue({ id: "closure-1", employeeId: juanId, period: "2026-09", employee: juan });
+    mockedPrisma.monthlyTimeClosure.update.mockResolvedValue({ id: "closure-1", employeeId: juanId, period: "2026-09", status: "DEVUELTO" });
+
+    await workforceService.returnClosure("closure-1", "faltan horas", user);
+
+    expect(auditDescriptions()).toEqual(["Se devolvió el cierre de septiembre de 2026 de Pérez, Juan · Legajo 30 — motivo: faltan horas."]);
+  });
+
+  it("createCorrection / approveCorrection / rejectCorrection describen a la persona, no su UUID", async () => {
+    mockedPrisma.timeEntry.findFirst.mockResolvedValue({ id: "entry-1", employeeId: juanId, period: "2026-09", hours: 8, employee: juan });
+    mockedPrisma.monthlyTimeClosure.findUnique.mockResolvedValue({ id: "closure-1", status: "APROBADO" });
+    mockedPrisma.$transaction.mockImplementationOnce((callback: (tx: unknown) => unknown) => callback({
+      timeCorrectionRequest: { create: vi.fn().mockResolvedValue({ id: "correction-1" }) },
+      monthlyTimeClosure: { update: vi.fn().mockResolvedValue({}) },
+    }));
+    await workforceService.createCorrection({ timeEntryId: "entry-1", proposedHours: 9, reason: "olvido" }, user);
+
+    const request = { id: "correction-1", status: "PENDIENTE", timeEntryId: "entry-1", closureId: null, employeeId: juanId, previousHours: 8, proposedHours: 9, employee: juan };
+    mockedPrisma.$transaction.mockImplementationOnce((callback: (tx: unknown) => unknown) => callback({
+      timeCorrectionRequest: { findUniqueOrThrow: vi.fn().mockResolvedValue(request), update: vi.fn().mockResolvedValue({ ...request, status: "APROBADA" }) },
+      timeEntry: { update: vi.fn().mockResolvedValue({}) },
+      monthlyTimeClosure: { update: vi.fn() },
+    }));
+    await workforceService.approveCorrection("correction-1", user);
+
+    mockedPrisma.timeCorrectionRequest.findUnique.mockResolvedValue({ id: "correction-2", employeeId: anaId, employee: ana });
+    mockedPrisma.timeCorrectionRequest.update.mockResolvedValue({ id: "correction-2", status: "RECHAZADA" });
+    await workforceService.rejectCorrection("correction-2", "no corresponde", user);
+
+    expect(auditDescriptions()).toEqual([
+      "Se solicitó una corrección de carga horaria de septiembre de 2026 para Pérez, Juan · Legajo 30 (de 8h a 9h).",
+      "Se aprobó la corrección de carga horaria de Pérez, Juan · Legajo 30 (de 8h a 9h).",
+      "Se rechazó la corrección de carga horaria de Gómez, Ana · Legajo 31.",
+    ]);
+    expectNoEmployeeUuid();
   });
 });
 

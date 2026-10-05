@@ -4,6 +4,7 @@ import { auditService } from "../audit/audit.service";
 import { AppError } from "../../shared/errors/AppError";
 import { humanizePeriodEs } from "../../shared/datetime/argentinaTime";
 import { mapAssociatedEmployee } from "../../shared/prisma/employeeAssociationQuery";
+import { formatEmployeeReference } from "../../shared/audit/employeeReference";
 import { employeeAccessWhere } from "../employees/employeeAccess";
 import type { RebuiltClosureSnapshot } from "../workforce-management/closureSnapshot";
 import { hourConceptsRepository, invalidateHourConceptsCache } from "./hourConcepts.repository";
@@ -96,12 +97,14 @@ async function executeRemoval<T>(operation: () => Promise<T>) {
 // Un AuditLog por cierre recalculado, con el snapshot anterior y el nuevo
 // (mismo criterio que submitClosures: la historia del cierre vive en su entityId).
 async function auditClosureRecalculations(closures: RebuiltClosureSnapshot[], cause: string, audit?: AuditContext) {
+  if (!closures.length) return;
+  const employeeReference = await hourConceptsRepository.employeeReferences(closures.map((closure) => closure.employeeId));
   await Promise.all(closures.map((closure) => auditService.register({
     ...audit,
     action: "UPDATE",
     entity: "MonthlyTimeClosure",
     entityId: closure.id,
-    description: `Se recalculó el snapshot del cierre de ${humanizePeriodEs(closure.period)} (legajo ${closure.employeeId}) por ${cause}. El estado del cierre no cambia.`,
+    description: `Se recalculó el snapshot del cierre de ${humanizePeriodEs(closure.period)} de ${employeeReference(closure.employeeId)} por ${cause}. El estado del cierre no cambia.`,
     before: { snapshot: closure.before } as Prisma.InputJsonValue,
     after: { snapshot: closure.after } as Prisma.InputJsonValue,
   })));
@@ -211,7 +214,7 @@ export const hourConceptsService = {
       action: "CREATE",
       entity: "EmployeeHourConcept",
       entityId: hourConceptId,
-      description: `Se habilitó el concepto horario para ${employeeIds.length} empleado(s).`,
+      description: `Se habilitó el concepto horario ${concept.name} para ${employeeIds.length} empleado(s).`,
       after: { hourConceptId, employeeIds } as Prisma.InputJsonValue,
     });
     return { hourConceptId, employeeIds };
@@ -229,7 +232,7 @@ export const hourConceptsService = {
       action: "DELETE",
       entity: "EmployeeHourConcept",
       entityId: hourConceptId,
-      description: `Se quitó el concepto horario del empleado ${employeeId}.`,
+      description: `Se quitó el concepto horario ${concept.name} de ${formatEmployeeReference(existing.employee)}.`,
       before: existing as Prisma.InputJsonValue,
     });
     return { hourConceptId, employeeId };

@@ -44,7 +44,7 @@ function publicRule<T extends { priority: number }>(item: T): Omit<T, "priority"
 
 async function auditRuleChange(
   action: "CREATE" | "UPDATE" | "ACTIVATE" | "DEACTIVATE",
-  item: { id: string; hourConceptId: string; startTime: string; endTime: string },
+  item: { id: string; startTime: string; endTime: string; hourConcept: { code: string; name: string } },
   audit: AuditContext | undefined,
   before?: unknown,
 ) {
@@ -54,7 +54,7 @@ async function auditRuleChange(
     action,
     entity: "HourConceptRule",
     entityId: item.id,
-    description: `${verb} la regla horaria ${item.startTime}-${item.endTime} del concepto ${item.hourConceptId}.`,
+    description: `${verb} la regla horaria ${item.startTime}-${item.endTime} del concepto ${item.hourConcept.code} - ${item.hourConcept.name}.`,
     before: before as Prisma.InputJsonValue | undefined,
     after: item as Prisma.InputJsonValue,
   });

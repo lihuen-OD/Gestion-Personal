@@ -46,7 +46,7 @@ async function execute<T>(operation: () => Promise<T>) {
   }
 }
 
-async function auditCatalogChange<T extends { id: string; code?: string; name?: string }>(
+async function auditCatalogChange<T extends { id: string; code: string; name: string }>(
   action: "CREATE" | "UPDATE",
   entity: string,
   item: T,
@@ -57,7 +57,7 @@ async function auditCatalogChange<T extends { id: string; code?: string; name?: 
     action,
     entity,
     entityId: item.id,
-    description: `${action === "CREATE" ? "Se creo" : "Se actualizo"} ${entity} ${item.code || item.name || item.id}.`,
+    description: `${action === "CREATE" ? "Se creo" : "Se actualizo"} ${entity} ${item.code || item.name}.`,
     after: item as Prisma.InputJsonValue,
   });
 }

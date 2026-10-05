@@ -3,6 +3,7 @@ import { prisma, type PrismaTransactionClient } from "../../shared/prisma/client
 import { resolveOrderBy } from "../../shared/validation/listSort";
 import { createRepositoryListCache, pageFromCappedList, REPOSITORY_LIST_CACHE_MAX_ROWS } from "../../shared/cache/repositoryListCache";
 import { associatedEmployeeSelect, buildEmployeeAssociationWhere } from "../../shared/prisma/employeeAssociationQuery";
+import { employeeReferenceSelect, loadEmployeeReferences } from "../../shared/audit/employeeReference";
 import { countedBreakdownStatusWhere } from "../time-entries/workedTimeAccounting";
 import { findClosuresForHourConcept, rebuildClosureSnapshots, type ClosureSnapshotRecalculation } from "../workforce-management/closureSnapshot";
 import type { CreateHourConceptInput, ListHourConceptEmployeesQuery, ListHourConceptsQuery, UpdateHourConceptInput } from "./hourConcepts.schemas";
@@ -213,8 +214,18 @@ export const hourConceptsRepository = {
     return prisma.employee.count({ where: { id: { in: employeeIds } } });
   },
 
+  // Incluye la identidad humana del empleado para la auditoría de "quitar".
   findEmployeeHourConcept(hourConceptId: string, employeeId: string) {
-    return prisma.employeeHourConcept.findUnique({ where: { employeeId_hourConceptId: { employeeId, hourConceptId } } });
+    return prisma.employeeHourConcept.findUnique({
+      where: { employeeId_hourConceptId: { employeeId, hourConceptId } },
+      include: { employee: { select: employeeReferenceSelect } },
+    });
+  },
+
+  // Identidades de los legajos de un recálculo de cierres: una sola consulta
+  // para todo el lote, nunca una por cierre.
+  employeeReferences(employeeIds: string[]) {
+    return loadEmployeeReferences(prisma, employeeIds);
   },
 
   // Habilitar (Etapa 8N) — reutiliza el mismo join EmployeeHourConcept que ya
