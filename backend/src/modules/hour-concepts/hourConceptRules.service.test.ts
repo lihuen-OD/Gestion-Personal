@@ -56,6 +56,15 @@ describe("contrato público sin prioridad", () => {
     expect(mockedAudit).toHaveBeenCalledWith(expect.objectContaining({ description: expect.not.stringContaining("priority") }));
   });
 
+  it("la descripción de auditoría nombra el concepto (código y nombre), nunca su id", async () => {
+    repo.findHourConceptConfiguration.mockResolvedValue(automaticConcept);
+    repo.create.mockResolvedValue(storedRule);
+    await hourConceptRulesService.create(createInput, { userId: "user-1" });
+    const { description } = mockedAudit.mock.calls[0]![0];
+    expect(description).toBe("Se creó la regla horaria 21:00-04:00 del concepto HOR-001 - Sereno.");
+    expect(description).not.toContain(storedRule.hourConceptId);
+  });
+
   it("lista y obtiene reglas sin priority", async () => {
     repo.findMany.mockResolvedValue([[storedRule], 1]);
     repo.findById.mockResolvedValue(storedRule);

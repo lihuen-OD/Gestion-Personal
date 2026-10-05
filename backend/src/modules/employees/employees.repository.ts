@@ -2,6 +2,7 @@ import { ApprovalStatus, EmployeeStatus, Prisma } from "@prisma/client";
 import { prisma } from "../../shared/prisma/client";
 import { resolveOrderBy, type SortOrderByMap } from "../../shared/validation/listSort";
 import { argentinaCalendarDate, todayArgentinaDateKey } from "../../shared/datetime/argentinaTime";
+import { employeeReferenceSelect } from "../../shared/audit/employeeReference";
 import type {
   CreateEmployeeDocumentInput,
   CreateEmployeeInput,
@@ -692,6 +693,13 @@ const timeGridTimeEntryInclude = {
   },
 } satisfies Prisma.TimeEntryInclude;
 
+// Resolución RRHH de un desglose manual: el empleado trae su identidad humana
+// para la auditoría (nunca el employeeId en el texto).
+const manualBreakdownResolutionInclude = {
+  employee: { select: { id: true, ...employeeReferenceSelect } },
+  hourConcept: { select: { id: true, name: true } },
+} satisfies Prisma.HourConceptBreakdownInclude;
+
 const timeGridNoveltyInclude = {
   employee: { select: { id: true, legajo: true, firstName: true, lastName: true } },
   noveltyType: {
@@ -1291,7 +1299,7 @@ export const employeesRepository = {
   },
 
   findEmployeeForManualBreakdown(id: string, accessWhere: Prisma.EmployeeWhereInput) {
-    return prisma.employee.findFirst({ where: { AND: [{ id }, accessWhere] }, select: { id: true } });
+    return prisma.employee.findFirst({ where: { AND: [{ id }, accessWhere] }, select: { id: true, ...employeeReferenceSelect } });
   },
 
   findHourConceptForManualBreakdown(id: string) {
@@ -1408,10 +1416,7 @@ export const employeesRepository = {
   findManualBreakdownById(id: string, accessWhere: Prisma.EmployeeWhereInput) {
     return prisma.hourConceptBreakdown.findFirst({
       where: { id, source: "MANUAL", employee: accessWhere },
-      include: {
-        employee: { select: { id: true, legajo: true } },
-        hourConcept: { select: { id: true, name: true } },
-      },
+      include: manualBreakdownResolutionInclude,
     });
   },
 
@@ -1419,10 +1424,7 @@ export const employeesRepository = {
     return prisma.hourConceptBreakdown.update({
       where: { id },
       data: { status: "APROBADO", approvedByUserId, approvedAt: new Date() },
-      include: {
-        employee: { select: { id: true, legajo: true } },
-        hourConcept: { select: { id: true, name: true } },
-      },
+      include: manualBreakdownResolutionInclude,
     });
   },
 
@@ -1430,10 +1432,7 @@ export const employeesRepository = {
     return prisma.hourConceptBreakdown.update({
       where: { id },
       data: { status: "RECHAZADO", approvedByUserId: null, approvedAt: null },
-      include: {
-        employee: { select: { id: true, legajo: true } },
-        hourConcept: { select: { id: true, name: true } },
-      },
+      include: manualBreakdownResolutionInclude,
     });
   },
 
@@ -1441,10 +1440,7 @@ export const employeesRepository = {
     return prisma.hourConceptBreakdown.update({
       where: { id },
       data: { status: "DEVUELTO", approvedByUserId: null, approvedAt: null },
-      include: {
-        employee: { select: { id: true, legajo: true } },
-        hourConcept: { select: { id: true, name: true } },
-      },
+      include: manualBreakdownResolutionInclude,
     });
   },
 

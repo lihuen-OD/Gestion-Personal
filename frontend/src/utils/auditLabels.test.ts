@@ -73,6 +73,43 @@ describe("auditDescription / auditChange — booleanos y campos crudos limpios",
   });
 });
 
+// Ningún texto de negocio visible (Dashboard > Actividad reciente, Auditoría,
+// Historial del legajo) muestra un UUID: red para eventos históricos que no
+// se pudieron reparar en el backend.
+describe("auditDescription / auditChange — nunca un id técnico visible", () => {
+  const employeeUuid = "016dc01c-655d-4474-8319-67f1b8108c93";
+
+  it("si llegara un UUID, lo reemplaza por lenguaje neutro completo, nunca por un placeholder", () => {
+    expect(auditDescription({ reason: `Se quitó el concepto horario del empleado ${employeeUuid}.`, next: "-" }))
+      .toBe("Se quitó el concepto horario del empleado correspondiente.");
+    expect(auditDescription({ reason: `Se guardó el desglose manual Prueba 02 del 03/10/2026 para el legajo ${employeeUuid}.`, next: "-" }))
+      .toBe("Se guardó el desglose manual Prueba 02 del 03/10/2026 para el legajo correspondiente.");
+    expect(auditDescription({ reason: `Reconciliación histórica 15M.4: retirada de cómputo (duplicado de ${employeeUuid})`, next: "-" }))
+      .toBe("Reconciliación histórica 15M.4: retirada de cómputo (duplicado de otro registro)");
+  });
+
+  it("enmascara los ids de una ruta como :id", () => {
+    expect(auditDescription({ reason: `Acceso denegado: GET /api/employees/${employeeUuid.toUpperCase()}/overview (FORBIDDEN)`, next: "-" }))
+      .toBe("Acceso denegado: GET /api/employees/:id/overview (FORBIDDEN)");
+  });
+
+  it("también en el resumen Antes/Después", () => {
+    const change = auditChange({ previous: `Empleado: ${employeeUuid}`, next: "Estado: APROBADO" });
+    expect(change).not.toContain(employeeUuid);
+    expect(change).not.toContain("—");
+  });
+
+  it("la nota legada de la reconciliación 15M.4 se muestra con su redacción actual, no enmascarada", () => {
+    const change = auditChange({ previous: "-", next: `Observación: Retirada de cómputo por reconciliación 15M.4 -- fusionada en TimeEntry ${employeeUuid}.` });
+    expect(change).toBe("Observación: Retirada de cómputo por reconciliación 15M.4 -- fusionada en la carga de Horas normales del mismo día.");
+  });
+
+  it("una descripción con identidad humana queda intacta", () => {
+    const description = "Se guardó y aplicó (RRHH) el desglose manual Colectivo del 03/10/2026 para Pérez, Juan · Legajo 30.";
+    expect(auditDescription({ reason: description, next: "-" })).toBe(description);
+  });
+});
+
 describe("auditRoleLabel — sin fugas de códigos de rol", () => {
   it("traduce el rol crudo del backend al mismo texto que usa el resto de la app", () => {
     expect(auditRoleLabel("NIVEL_1_RRHH")).toBe("Nivel 1 - RRHH");

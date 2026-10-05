@@ -1032,3 +1032,28 @@ describe("HoursPage — Bandeja 'Por persona' con el modelo de tiempo trabajado"
     expect(container.textContent).not.toMatch(/TimeEntry|HourConceptBreakdown|DoubleHourRule|SpecialHourRuleApplication|WITHIN_BASE|ADDITIVE_TO_WORKED_TOTAL|schema|payload/i);
   });
 });
+
+// Etapa audit-human-identity: las observaciones legadas de TimeEntry pueden
+// traer ids técnicos (reconciliación 15M.4, motor de fichadas viejo). La UI de
+// horas nunca debe mostrarlos.
+describe("HoursPage — la observación de una carga nunca muestra ids técnicos", () => {
+  it("las variantes legadas con UUID se ven como texto de negocio", async () => {
+    const mergedInto = "e92bb60e-cf14-47ba-a79b-ae0814163741";
+    const workShift = "5867bcd8-5e31-4cb7-89a9-ff27c2bd27a8";
+    vi.mocked(timeEntryApiService.list).mockResolvedValue({
+      items: [
+        buildReviewEntry({ id: "entry-merged", notes: `Generado por fichada de ingreso/salida.\nRetirada de cómputo por reconciliación 15M.4 -- fusionada en TimeEntry ${mergedInto}.` }),
+        buildReviewEntry({ id: "entry-shift", employeeLegajo: "101", notes: `Fichada ${workShift}: generado por ingreso/salida. Reglas aplicadas: Feriados.` }),
+      ],
+      meta: { total: 2, page: 1, pageSize: 25, hasMore: false },
+    });
+    authAs("Nivel 1 - RRHH");
+    const { container } = renderPending();
+
+    await screen.findByText("101");
+    const text = container.textContent ?? "";
+    expect(text).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+    expect(text).not.toContain("TimeEntry");
+    expect(text).toContain("fusionada en la carga de Horas normales del mismo día.");
+  });
+});

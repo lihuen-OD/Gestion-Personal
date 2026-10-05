@@ -63,6 +63,21 @@ describe("errorHandler", () => {
     );
   });
 
+  it("la descripción visible no expone el userId ni los UUID de la ruta (quedan en userId / se enmascaran)", () => {
+    const userId = "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b";
+    const employeeId = "016dc01c-655d-4474-8319-67f1b8108c93";
+    const req = fakeReq({
+      user: { id: userId, role: "NIVEL_3_CARGA_HORARIA" } as Request["user"],
+      originalUrl: `/api/employees/${employeeId}/overview?employeeId=${employeeId}`,
+    });
+
+    errorHandler(new AppError("Forbidden", 403, "FORBIDDEN"), req, fakeRes(), vi.fn());
+
+    const { description, userId: auditedUserId } = audit.register.mock.calls[0]![0];
+    expect(auditedUserId).toBe(userId);
+    expect(description).toBe("Acceso denegado: GET /api/employees/:id/overview?employeeId=:id (FORBIDDEN) — rol NIVEL_3_CARGA_HORARIA");
+  });
+
   it("no audita nada para errores que no son 403 (por ejemplo 404)", () => {
     const req = fakeReq();
     const res = fakeRes();

@@ -22,6 +22,7 @@ vi.mock("./hourConcepts.repository", () => ({
     disableForEmployee: vi.fn(),
     findWithUsage: vi.fn(),
     deletePermanently: vi.fn(),
+    employeeReferences: vi.fn(),
   },
 }));
 
@@ -43,11 +44,13 @@ const repo = hourConceptsRepository as unknown as {
   disableForEmployee: Mock;
   findWithUsage: Mock;
   deletePermanently: Mock;
+  employeeReferences: Mock;
 };
 const mockedAudit = auditService.register as unknown as Mock;
 
 beforeEach(() => {
   vi.clearAllMocks();
+  repo.employeeReferences.mockResolvedValue(() => "un legajo sin identificar");
 });
 
 function prismaKnownError(code: string) {
@@ -466,5 +469,62 @@ describe("remove — eliminación definitiva", () => {
       code: "HOUR_CONCEPT_CHANGED_DURING_DELETE",
     });
     expect(mockedAudit).not.toHaveBeenCalled();
+  });
+});
+
+// Lenguaje de negocio en auditoría: el employeeId (UUID) nunca va en el texto
+// visible; se usa la identidad humana "Apellido, Nombre · Legajo N".
+describe("auditoría — identidad humana del legajo, nunca el employeeId", () => {
+  const employeeUuid = "016dc01c-655d-4474-8319-67f1b8108c93";
+  const otherEmployeeUuid = "5b0e6f0a-1c2d-4e3f-8a9b-0c1d2e3f4a5b";
+
+  it("quitar un concepto a un empleado describe concepto y persona, sin el UUID", async () => {
+    repo.findById.mockResolvedValue({ id: "concept-1", name: "Sereno" });
+    repo.findEmployeeHourConcept.mockResolvedValue({
+      employeeId: employeeUuid,
+      hourConceptId: "concept-1",
+      employee: { legajo: "30", firstName: "Juan", lastName: "Pérez" },
+    });
+    repo.disableForEmployee.mockResolvedValue({});
+
+    await hourConceptsService.disableEmployee("concept-1", employeeUuid, { userId: "user-1" });
+
+    const { description } = mockedAudit.mock.calls[0]![0];
+    expect(description).toBe("Se quitó el concepto horario Sereno de Pérez, Juan · Legajo 30.");
+    expect(description).not.toContain(employeeUuid);
+  });
+
+  it("recalcular cierres de varios legajos resuelve todas las identidades en una sola consulta", async () => {
+    const references: Record<string, string> = {
+      [employeeUuid]: "Pérez, Juan · Legajo 30",
+      [otherEmployeeUuid]: "Gómez, Ana · Legajo 31",
+    };
+    repo.employeeReferences.mockResolvedValue((id: string) => references[id]);
+    repo.findById.mockResolvedValue({ id: "prueba", code: "HOR-005", name: "Prueba 02", systemRole: null, workTreatment: "ADDITIVE_TO_WORKED_TOTAL" });
+    repo.updateReinterpretingHistory.mockResolvedValue({
+      item: { id: "prueba", code: "HOR-005", name: "Prueba 02", workTreatment: "WITHIN_BASE" },
+      reinterpreted: { breakdowns: 2, employees: 2, periods: 1 },
+      rebuiltClosures: [
+        { id: "closure-1", employeeId: employeeUuid, period: "2026-10", before: null, after: {} },
+        { id: "closure-2", employeeId: otherEmployeeUuid, period: "2026-10", before: null, after: {} },
+      ],
+    });
+
+    await hourConceptsService.update("prueba", { workTreatment: "WITHIN_BASE" }, { userId: "user-1" });
+
+    expect(repo.employeeReferences).toHaveBeenCalledTimes(1);
+    expect(repo.employeeReferences).toHaveBeenCalledWith([employeeUuid, otherEmployeeUuid]);
+    const closureDescriptions = mockedAudit.mock.calls
+      .map(([input]) => input)
+      .filter((input) => input.entity === "MonthlyTimeClosure")
+      .map((input) => input.description as string);
+    expect(closureDescriptions).toEqual([
+      expect.stringContaining("Se recalculó el snapshot del cierre de octubre de 2026 de Pérez, Juan · Legajo 30 por"),
+      expect.stringContaining("Se recalculó el snapshot del cierre de octubre de 2026 de Gómez, Ana · Legajo 31 por"),
+    ]);
+    for (const description of closureDescriptions) {
+      expect(description).not.toContain(employeeUuid);
+      expect(description).not.toContain(otherEmployeeUuid);
+    }
   });
 });

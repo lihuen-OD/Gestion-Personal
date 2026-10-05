@@ -60,6 +60,32 @@ describe("auditApiService — resumen de before/after sin IDs crudos ni fechas I
     expect(previous).toContain("Estado");
   });
 
+  it("tampoco muestra ids técnicos dentro de objetos anidados (p. ej. el snapshot de un cierre)", async () => {
+    const employeeUuid = "016dc01c-655d-4474-8319-67f1b8108c93";
+    vi.mocked(apiRequest).mockResolvedValue({
+      data: [{
+        id: "audit-2",
+        action: "UPDATE",
+        entity: "MonthlyTimeClosure",
+        entityId: "closure-1",
+        description: "Se recalculó el snapshot del cierre de octubre de 2026 de Pérez, Juan · Legajo 30 por corrección.",
+        createdAt: "2026-10-05T12:00:00.000Z",
+        before: { snapshot: { employeeId: employeeUuid, id: employeeUuid, period: "2026-10" }, employeeIds: [employeeUuid], recalculatedClosureIds: [employeeUuid] },
+        after: { snapshot: { employeeId: employeeUuid, period: "2026-10" } },
+        user: { name: "Ana", role: "NIVEL_1_RRHH" },
+      }],
+      meta: { total: 1, page: 1, pageSize: 25, hasMore: false },
+    });
+
+    const [item] = (await auditApiService.list({ take: 25 })).items;
+
+    expect(item.previous).not.toContain(employeeUuid);
+    expect(item.next).not.toContain(employeeUuid);
+    expect(item.previous).toContain("Period");
+    // Las listas de ids (claves en plural) tampoco se muestran.
+    expect(item.previous).not.toMatch(/Employee Ids|Recalculated Closure Ids/);
+  });
+
   // Un campo `@db.Date` (calendario puro, ej. TimeEntry.date) llega
   // serializado como instante ISO a medianoche UTC. Tratarlo como TIMESTAMPTZ
   // (parsearlo con `new Date()` y convertir a horario de Argentina) lo corre

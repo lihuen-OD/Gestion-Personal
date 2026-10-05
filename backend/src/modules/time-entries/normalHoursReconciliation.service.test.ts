@@ -246,6 +246,13 @@ describe("normalHoursReconciliationService.repair", () => {
     // Nunca un delete -- sólo dos updates (canónica + retirada).
     expect(mockedTx.timeEntry.update).toHaveBeenCalledTimes(2);
     expect(mockedAuditRegister).toHaveBeenCalledTimes(2);
+    // Texto visible (descripción y observación de la retirada) sin el id de la
+    // canónica: identidad humana y fecha; el id queda en before/after.
+    const retiredAudit = mockedAuditRegister.mock.calls[1]![0];
+    expect(retiredAudit).toMatchObject({ entityId: "newer" });
+    expect(retiredAudit.description).toMatch(/^Reconciliación histórica 15M\.4: retirada de cómputo de una carga duplicada del \d{2}\/09\/2026 de Legajo 30\.$/);
+    const retiredUpdate = mockedTx.timeEntry.update.mock.calls.find(([args]) => args.where.id === "newer")![0];
+    expect(retiredUpdate.data.observation).not.toContain("older");
   });
 
   it("no toca fechas OK: si expected coincide con lo persistido, repair no hace ningún UPDATE/CREATE para esa fecha", async () => {

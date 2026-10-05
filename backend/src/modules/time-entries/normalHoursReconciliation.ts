@@ -60,6 +60,11 @@ const STATUS_RANK: Record<ApprovalStatus, number> = {
   RECHAZADO: 0,
 };
 
+// Nota visible (observación) de una carga duplicada retirada por la
+// reconciliación 15M.4. Sin el id de la canónica: ése queda en la auditoría.
+export const MERGED_INTO_CANONICAL_NOTE = "fusionada en la carga de Horas normales del mismo día.";
+export const RETIRED_DUPLICATE_NOTE = `Retirada de cómputo por reconciliación 15M.4 -- ${MERGED_INTO_CANONICAL_NOTE}`;
+
 export function rankApprovalStatus(status: ApprovalStatus): number {
   return STATUS_RANK[status];
 }

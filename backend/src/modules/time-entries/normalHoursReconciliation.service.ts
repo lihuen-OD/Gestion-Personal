@@ -10,12 +10,14 @@ import { normalHoursReconciliationRepository as repository } from "./normalHours
 import {
   classifyNormalHoursDiscrepancy,
   pickCanonicalEntry,
+  RETIRED_DUPLICATE_NOTE,
   requiresRepair,
   type NormalEntryRow,
   type NormalHoursDiscrepancy,
   type NormalHoursDiscrepancyKind,
 } from "./normalHoursReconciliation";
-import { argentinaCalendarDate, dayOfMonthFromCalendarDate, periodCalendarBounds, periodFromCalendarDate } from "../../shared/datetime/argentinaTime";
+import { argentinaCalendarDate, dayOfMonthFromCalendarDate, formatArgentinaDate, periodCalendarBounds, periodFromCalendarDate } from "../../shared/datetime/argentinaTime";
+import { formatEmployeeReference } from "../../shared/audit/employeeReference";
 
 export interface ReconciliationScope {
   legajo?: string;
@@ -361,7 +363,7 @@ async function repairEmployeeDate(
         if (duplicate.totalMinutes === 0) continue; // ya retirada por un repair anterior -- idempotencia.
         retiredAny = true;
         const duplicateBefore = freshRows.find((row) => row.id === duplicate.id)!;
-        const retireNote = `Retirada de cómputo por reconciliación 15M.4 -- fusionada en TimeEntry ${canonical.id}.`;
+        const retireNote = RETIRED_DUPLICATE_NOTE;
         const retired = await tx.timeEntry.update({
           where: { id: duplicate.id },
           data: {
@@ -375,7 +377,7 @@ async function repairEmployeeDate(
           action: "UPDATE",
           entity: "TimeEntry",
           entityId: duplicate.id,
-          description: `Reconciliación histórica 15M.4: retirada de cómputo (duplicado de ${canonical.id})`,
+          description: `Reconciliación histórica 15M.4: retirada de cómputo de una carga duplicada del ${formatArgentinaDate(dateReport.date)} de ${formatEmployeeReference(employee)}.`,
           before: duplicateBefore as unknown as Prisma.InputJsonValue,
           after: retired as unknown as Prisma.InputJsonValue,
         });

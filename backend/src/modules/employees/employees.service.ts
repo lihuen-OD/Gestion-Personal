@@ -8,6 +8,7 @@ import { redactPiiForRole } from "../../shared/security/piiRedaction";
 import { canAccessDocumentCategory } from "../../shared/security/documentCategoryAccess";
 import { isMonthlyClosureLocked } from "../../shared/monthlyClosure/closureLock";
 import { formatArgentinaDate } from "../../shared/datetime/argentinaTime";
+import { formatEmployeeReference } from "../../shared/audit/employeeReference";
 import { roles } from "../../shared/security/roles";
 import { employeeAccessWhere } from "./employeeAccess";
 import { employeesRepository } from "./employees.repository";
@@ -256,7 +257,7 @@ async function validateManualBreakdownContext(
       );
     }
   }
-  return concept;
+  return { employee, concept };
 }
 
 function formatMinutesEs(minutes: number) {
@@ -548,7 +549,7 @@ export const employeesService = {
     const period = input.date.slice(0, 7);
     const date = new Date(`${input.date}T00:00:00.000Z`);
     const day = Number(input.date.slice(8, 10));
-    const concept = await validateManualBreakdownContext(employeeId, input.hourConceptId, period, user, input.observation);
+    const { employee, concept } = await validateManualBreakdownContext(employeeId, input.hourConceptId, period, user, input.observation);
     if (input.minutes > 0 && concept.workTreatment === "WITHIN_BASE") {
       await assertWithinBaseFits(employeeId, date, concept, input.minutes, input.date);
     }
@@ -578,11 +579,8 @@ export const employeesService = {
       action: result.operation,
       entity: "HourConceptBreakdown",
       entityId: result.item?.id || null,
-      description: result.operation === "DELETE"
-        ? `Se eliminó el desglose manual ${concept.name} de ${formatArgentinaDate(input.date)} para el legajo ${employeeId}.`
-        : autoApprovedByUserId
-          ? `Se guardó y aplicó (RRHH) el desglose manual ${concept.name} de ${formatArgentinaDate(input.date)} para el legajo ${employeeId}.`
-          : `Se guardó el desglose manual ${concept.name} de ${formatArgentinaDate(input.date)} para el legajo ${employeeId}.`,
+      description: `${result.operation === "DELETE" ? "Se eliminó" : autoApprovedByUserId ? "Se guardó y aplicó (RRHH)" : "Se guardó"} ` +
+        `el desglose manual ${concept.name} del ${formatArgentinaDate(input.date)} para ${formatEmployeeReference(employee)}.`,
       after: result.item as Prisma.InputJsonValue | undefined,
     });
     return result.item;
@@ -600,7 +598,7 @@ export const employeesService = {
       action: "APPROVE",
       entity: "HourConceptBreakdown",
       entityId: item.id,
-      description: `Se aprobó el desglose manual ${item.hourConcept.name} del legajo ${item.employee.legajo}.`,
+      description: `Se aprobó el desglose manual ${item.hourConcept.name} de ${formatEmployeeReference(item.employee)}.`,
       before: before as Prisma.InputJsonValue,
       after: item as Prisma.InputJsonValue,
     });
@@ -616,7 +614,7 @@ export const employeesService = {
       action: "REJECT",
       entity: "HourConceptBreakdown",
       entityId: item.id,
-      description: `Se rechazó el desglose manual ${item.hourConcept.name} del legajo ${item.employee.legajo}. Motivo: ${input.reason}`,
+      description: `Se rechazó el desglose manual ${item.hourConcept.name} de ${formatEmployeeReference(item.employee)}. Motivo: ${input.reason}`,
       before: before as Prisma.InputJsonValue,
       after: { item, reason: input.reason } as Prisma.InputJsonValue,
     });
@@ -632,7 +630,7 @@ export const employeesService = {
       action: "RETURN",
       entity: "HourConceptBreakdown",
       entityId: item.id,
-      description: `Se devolvió el desglose manual ${item.hourConcept.name} del legajo ${item.employee.legajo}. Motivo: ${input.reason}`,
+      description: `Se devolvió el desglose manual ${item.hourConcept.name} de ${formatEmployeeReference(item.employee)}. Motivo: ${input.reason}`,
       before: before as Prisma.InputJsonValue,
       after: { item, reason: input.reason } as Prisma.InputJsonValue,
     });

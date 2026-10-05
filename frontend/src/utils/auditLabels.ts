@@ -1,4 +1,5 @@
 import { formatPeriodLabel } from "./period";
+import { translateLegacyMergeNote } from "./userFacingText";
 
 // Etapa 15M.20: punto único de traducción para lo que escribe el log de
 // auditoría del backend (`auditService.register()`), consumido hoy por
@@ -112,6 +113,23 @@ const shiftAlertTypeValueLabels: Record<string, string> = {
   CONCEPTO_NO_HABILITADO: "Concepto no habilitado", SEGMENTO_SIN_CLASIFICAR: "Segmento sin clasificar",
 };
 
+// Última defensa, no presentación: el backend persiste identidad humana
+// ("Apellido, Nombre · Legajo N") y los eventos históricos se repararon en
+// origen. Si igual llegara un UUID, se cambia por lenguaje neutro que siga
+// leyéndose bien — mismo criterio que backend/src/shared/audit/technicalIds.ts —
+// nunca por un placeholder ("legajo —").
+const uuid = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
+
+function hideTechnicalIds(value: string) {
+  return value
+    .replace(new RegExp(`/${uuid}`, "gi"), "/:id")
+    .replace(new RegExp(`=${uuid}`, "gi"), "=:id")
+    .replace(new RegExp(`\\b(de|a|para|por|en|con)\\s+${uuid}`, "gi"), "$1 otro registro")
+    .replace(new RegExp(`\\b(del|al)\\s+${uuid}`, "gi"), "$1 registro correspondiente")
+    .replace(new RegExp(`(\\p{L}+)\\s+${uuid}`, "giu"), "$1 correspondiente")
+    .replace(new RegExp(uuid, "gi"), "registro correspondiente");
+}
+
 function rawEnumFallback(token: string) {
   return token.toLowerCase().replace(/_/g, " ");
 }
@@ -133,8 +151,10 @@ function polishText(value: string) {
 
 export function cleanAuditValue(value: string) {
   if (!value || value === "-") return "";
-  return polishText(value)
-    .replace(/\s*\|\s*Id:\s*[a-f0-9-]{20,}/gi, "")
+  const withoutIdPairs = polishText(value).replace(/\s*\|\s*Id:\s*[a-f0-9-]{20,}/gi, "");
+  // La nota legada de la reconciliación 15M.4 queda guardada en el snapshot
+  // before/after de la carga retirada: se traduce, no se enmascara.
+  return hideTechnicalIds(translateLegacyMergeNote(withoutIdPairs))
     .replace(/\bDate:\s*(\d{4})-(\d{2})-(\d{2})T[^\s|]+/gi, "Fecha: $3/$2/$1")
     .replace(/\bDay:\s*/gi, "Día: ")
     .replace(/\bHours:\s*/gi, "Horas: ")

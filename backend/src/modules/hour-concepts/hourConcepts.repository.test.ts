@@ -248,13 +248,14 @@ describe("countExistingEmployees", () => {
 });
 
 describe("findEmployeeHourConcept", () => {
-  it("busca por la PK compuesta (employeeId_hourConceptId)", async () => {
+  it("busca por la PK compuesta (employeeId_hourConceptId) y trae la identidad humana del empleado para la auditoría", async () => {
     mockedPrisma.employeeHourConcept.findUnique.mockResolvedValue(null);
 
     await hourConceptsRepository.findEmployeeHourConcept("concept-1", "employee-1");
 
     expect(mockedPrisma.employeeHourConcept.findUnique).toHaveBeenCalledWith({
       where: { employeeId_hourConceptId: { employeeId: "employee-1", hourConceptId: "concept-1" } },
+      include: { employee: { select: { legajo: true, firstName: true, lastName: true } } },
     });
   });
 });

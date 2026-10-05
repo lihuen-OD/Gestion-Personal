@@ -61,8 +61,10 @@ const hiddenKeys = new Set([
 // workShiftId, hourConceptId, shiftTemplateId, startPunchId, endPunchId,
 // timeSegmentId, reviewedByUserId, approvedByUserId, etc. — y cualquier FK
 // nueva que se agregue en el futuro, sin tener que volver a esta lista.
+// También el plural (employeeIds, recalculatedClosureIds): una lista de ids
+// técnicos no es un dato de negocio.
 function isHiddenKey(key: string) {
-  return hiddenKeys.has(key) || /Id$/.test(key);
+  return hiddenKeys.has(key) || /Ids?$/.test(key);
 }
 
 const labels: Record<string, string> = {
@@ -225,7 +227,9 @@ function stringify(value: unknown): string {
       .join(" | ");
   }
   if (typeof value === "object") {
-    const entries = Object.entries(value as Record<string, unknown>).filter(([, entryValue]) => entryValue !== undefined);
+    // Mismo criterio que summarizeObject: un objeto anidado (p. ej. el
+    // snapshot de un cierre) tampoco muestra ids técnicos.
+    const entries = Object.entries(value as Record<string, unknown>).filter(([key, entryValue]) => !isHiddenKey(key) && entryValue !== undefined);
     if (!entries.length) return "-";
     return entries
       .slice(0, 8)

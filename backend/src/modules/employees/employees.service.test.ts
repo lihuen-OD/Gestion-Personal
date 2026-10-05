@@ -6,6 +6,7 @@ import { resolveDoubleHourMultipliersByDate } from "../time-entries/timeEntries.
 import { roles } from "../../shared/security/roles";
 import { Prisma } from "@prisma/client";
 import { calculateAutomaticBreakdowns } from "./automaticHourConceptBreakdowns";
+import { auditService } from "../audit/audit.service";
 
 /**
  * Regresion de la limpieza final de Position (2026-08-18): getPositionValidation
@@ -708,5 +709,67 @@ describe("employeesService.assertAccessible / historiales de campo y bloque — 
     expect(repo.existsWithAccess).toHaveBeenCalledWith("emp-1", {});
     expect(repo.findById).not.toHaveBeenCalled();
     expect(result).toBe(record);
+  });
+});
+
+// Lenguaje de negocio en auditoría: "para el legajo <employeeId>" mostraba el
+// UUID interno en Dashboard > Actividad reciente. La identidad sale del mismo
+// findEmployeeForManualBreakdown que ya valida el scope (sin consulta extra).
+describe("employeesService — auditoría del desglose manual con identidad humana, nunca el employeeId", () => {
+  const employeeUuid = "016dc01c-655d-4474-8319-67f1b8108c93";
+  const juan = { id: employeeUuid, legajo: "30", firstName: "Juan", lastName: "Pérez" };
+  const input = { date: "2026-10-03", hourConceptId: "11111111-1111-4111-8111-111111111111", minutes: 60, observation: "Traslado" };
+  const colectivo = { id: input.hourConceptId, code: "HOR-002", name: "Colectivo", status: "ACTIVO", loadMode: "MANUAL", systemRole: null, workTreatment: "ADDITIVE_TO_WORKED_TOTAL" };
+  const nivel2User = { id: "user-n2", role: roles.supervision } as unknown as Express.AuthUser;
+  const audited = () => (auditService.register as unknown as Mock).mock.calls.map(([call]) => call.description as string);
+
+  beforeEach(() => {
+    (auditService.register as unknown as Mock).mockClear();
+    repo.findEmployeeForManualBreakdown.mockClear();
+    repo.findEmployeeForManualBreakdown.mockResolvedValue(juan);
+    repo.findHourConceptForManualBreakdown.mockResolvedValue(colectivo);
+    repo.isHourConceptEnabled.mockResolvedValue(true);
+    repo.findMonthlyClosure.mockResolvedValue(null);
+    mockedResolveMultipliers.mockResolvedValue(new Map());
+  });
+
+  it("alta por RRHH: concepto, fecha y persona — el caso reportado en Actividad reciente", async () => {
+    repo.saveManualHourConceptBreakdown.mockResolvedValue({ item: { id: "breakdown-1" }, deleted: 0, operation: "CREATE" });
+
+    await employeesService.upsertManualHourConceptBreakdown(employeeUuid, input, rrhhUser);
+
+    expect(audited()).toEqual(["Se guardó y aplicó (RRHH) el desglose manual Colectivo del 03/10/2026 para Pérez, Juan · Legajo 30."]);
+    expect(repo.findEmployeeForManualBreakdown).toHaveBeenCalledTimes(1);
+  });
+
+  it("edición por Nivel 2 y eliminación (0 minutos) tampoco exponen el UUID", async () => {
+    repo.saveManualHourConceptBreakdown.mockResolvedValueOnce({ item: { id: "breakdown-1" }, deleted: 0, operation: "UPDATE" });
+    await employeesService.upsertManualHourConceptBreakdown(employeeUuid, input, nivel2User);
+    repo.saveManualHourConceptBreakdown.mockResolvedValueOnce({ item: null, deleted: 1, operation: "DELETE" });
+    await employeesService.upsertManualHourConceptBreakdown(employeeUuid, { ...input, minutes: 0 }, rrhhUser);
+
+    expect(audited()).toEqual([
+      "Se guardó el desglose manual Colectivo del 03/10/2026 para Pérez, Juan · Legajo 30.",
+      "Se eliminó el desglose manual Colectivo del 03/10/2026 para Pérez, Juan · Legajo 30.",
+    ]);
+  });
+
+  it("aprobar/rechazar/devolver describen a la persona con nombre y legajo", async () => {
+    const resolved = { id: "breakdown-1", employeeId: employeeUuid, status: "EN_REVISION", employee: juan, hourConcept: { id: colectivo.id, name: "Colectivo" } };
+    repo.findManualBreakdownById.mockResolvedValue(resolved);
+    repo.approveManualHourConceptBreakdown.mockResolvedValue(resolved);
+    repo.rejectManualHourConceptBreakdown.mockResolvedValue(resolved);
+    repo.returnManualHourConceptBreakdown.mockResolvedValue(resolved);
+
+    await employeesService.approveManualHourConceptBreakdown(employeeUuid, "breakdown-1", rrhhUser);
+    await employeesService.rejectManualHourConceptBreakdown(employeeUuid, "breakdown-1", { reason: "Sin comprobante" }, rrhhUser);
+    await employeesService.returnManualHourConceptBreakdown(employeeUuid, "breakdown-1", { reason: "Falta el destino" }, rrhhUser);
+
+    expect(audited()).toEqual([
+      "Se aprobó el desglose manual Colectivo de Pérez, Juan · Legajo 30.",
+      "Se rechazó el desglose manual Colectivo de Pérez, Juan · Legajo 30. Motivo: Sin comprobante",
+      "Se devolvió el desglose manual Colectivo de Pérez, Juan · Legajo 30. Motivo: Falta el destino",
+    ]);
+    for (const description of audited()) expect(description).not.toContain(employeeUuid);
   });
 });

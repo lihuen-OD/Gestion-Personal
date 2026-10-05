@@ -788,6 +788,38 @@ describe("createFromWorkShift — persistencia de segmentos clasificados (Turnos
     }));
   });
 
+  // Etapa audit-human-identity: la observación es texto de negocio; el vínculo
+  // con la jornada vive en workShiftId/timeSegmentId, nunca en el texto.
+  it("E/F — al sumar una jornada a una carga existente, la observación no incluye workShift.id ni ningún UUID", async () => {
+    const workShiftId = "b48a2ab5-9681-4fb5-b1bb-ce9f7e9982a6";
+    mockedPrisma.__tx.attendancePunch.create.mockResolvedValueOnce({ id: "punch-in" }).mockResolvedValueOnce({ id: "punch-out" });
+    mockedPrisma.__tx.workShift.create.mockResolvedValue({ id: workShiftId });
+    const existing = { id: "entry-1", totalMinutes: 300, actualMinutes: 300, status: "BORRADOR", observation: "Generado por marcación de entrada/salida." };
+    mockedPrisma.__tx.timeEntry.findFirst.mockResolvedValueOnce(existing);
+    mockedPrisma.__tx.timeEntry.update.mockResolvedValueOnce({ ...existing, totalMinutes: 480 });
+    const startAt = new Date("2026-08-18T18:00:00.000Z");
+    const endAt = new Date("2026-08-18T21:00:00.000Z");
+
+    await timeEntriesRepository.createFromWorkShift({
+      employeeId,
+      normalHourConceptId: "concept-normal",
+      normalHourConceptName: "Hora normal",
+      source: "ADMIN" as never,
+      startAt,
+      endAt,
+      totalMinutes: 180,
+      segments: [{ date: day, startAt, endAt, minutes: 180, hours: 3, hourConceptId: "concept-normal", hourConceptName: "Hora normal", conceptStatus: "SUGERIDO", hourConceptRuleId: "rule-normal" }],
+    });
+
+    const { data } = mockedPrisma.__tx.timeEntry.update.mock.calls[0]![0] as { data: { observation: string; workShiftId: string } };
+    expect(data.observation).toBe("Generado por marcación de entrada/salida.\nGenerado automáticamente a partir de la fichada.");
+    expect(data.observation).not.toContain(workShiftId);
+    expect(data.observation).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+    expect(data.observation).not.toMatch(/Marcación/);
+    // El vínculo técnico se conserva donde corresponde.
+    expect(data.workShiftId).toBe(workShiftId);
+  });
+
   it("marca conceptStatus SIN_CONCEPTO_COMPATIBLE / CONCEPTO_NO_HABILITADO cuando corresponde, sin bloquear la creación", async () => {
     mockedPrisma.__tx.attendancePunch.create.mockResolvedValueOnce({ id: "punch-in" }).mockResolvedValueOnce({ id: "punch-out" });
     mockedPrisma.__tx.workShift.create.mockResolvedValue({ id: "shift-2" });

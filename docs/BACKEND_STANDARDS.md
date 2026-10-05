@@ -102,3 +102,12 @@ Logs should:
 - not expose secrets
 - avoid excessive noise
 - distinguish errors from expected validation failures
+
+## Audit and notification text
+
+The `description` of `auditService.register(...)` and the `title`/`message` of a `SystemNotification` are shown verbatim in Dashboard > Actividad reciente, Auditoría, Historial del legajo and Notificaciones. They are business language:
+- never interpolate a technical id (`employeeId`, `userId`, `entityId`, any FK or UUID); ids belong in `entityId`/`before`/`after`
+- refer to an employee with `formatEmployeeReference()` from `backend/src/shared/audit/employeeReference.ts` ("Apellido, Nombre · Legajo N")
+- get that identity from data the service already reads (extend its `select`/`include` with `employeeReferenceSelect`); in batch operations use `loadEmployeeReferences()` — one query for the whole batch, never one per item
+
+`backend/src/shared/audit/visibleAuditText.test.ts` scans every such call and fails on an interpolated id; `auditService.register` masks any UUID that still slips through and logs `AUDIT_DESCRIPTION_TECHNICAL_ID`.
