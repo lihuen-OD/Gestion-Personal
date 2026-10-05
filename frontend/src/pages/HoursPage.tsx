@@ -154,7 +154,11 @@ function DayCell({
                             Hora especial aplicada — Multiplicador {formatMultiplier(accounting.multiplier)}
                             {day?.specialHourRuleNames.length ? `: ${day.specialHourRuleNames.join(", ")}` : ""}
                           </span>
-                          <span className="day-cell-liquidable-total"><b>Equivalencia para liquidación: {formatDurationMinutes(accounting.settlement.totalMinutes)}</b></span>
+                          {/* Para liquidación por componente (backend), nunca una única equivalencia que mezcle conceptos (§17). */}
+                          <span className="day-cell-liquidable-total"><b>Para liquidación</b></span>
+                          <span>Horas normales: {formatDurationMinutes(accounting.settlement.normalMinutes)}</span>
+                          {accounting.settlement.withinBaseMinutes > 0 ? <span>Dentro de la jornada: {formatDurationMinutes(accounting.settlement.withinBaseMinutes)}</span> : null}
+                          {accounting.settlement.additiveMinutes > 0 ? <span>Horas adicionales: {formatDurationMinutes(accounting.settlement.additiveMinutes)}</span> : null}
                         </>
                       ) : null}
                       {accounting.withinBaseExcessMinutes > 0 ? (
@@ -846,7 +850,7 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
                             {personSummary.accounting.hasSpecialMultiplier ? (
                               <Badge tone={personSummary.specialHourConflict ? "danger" : "warning"}>
                                 <span
-                                  title={`Hora especial aplicada${personSummary.specialHourRuleNames.length ? `: ${personSummary.specialHourRuleNames.join(", ")}` : ""}${personSummary.specialHourConflict ? " — Conflicto de reglas: se aplicó la de mayor prioridad" : ""}`}
+                                  title={`Hora especial aplicada${personSummary.specialHourRuleNames.length ? `: ${personSummary.specialHourRuleNames.join(", ")}` : ""}${personSummary.specialHourConflict ? " — Conflicto de reglas: se aplicó la de mayor prioridad" : ""} · Total de control: el detalle por concepto está en el legajo.`}
                                 >
                                   Para liquidación: {formatDurationMinutes(personSummary.accounting.settlement.totalMinutes)}
                                 </span>
@@ -1170,7 +1174,9 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
                         <span>{formatDurationMinutes(periodSummary.accounting.totalWorkedMinutes)}</span>
                         {periodSummary.accounting.hasSpecialMultiplier ? (
                           <Badge tone="warning">
-                            Para liquidación: {formatDurationMinutes(periodSummary.accounting.settlement.totalMinutes)}
+                            <span title="Total de control: suma conceptos que pueden liquidarse distinto. El detalle por concepto está en el legajo.">
+                              Para liquidación: {formatDurationMinutes(periodSummary.accounting.settlement.totalMinutes)}
+                            </span>
                           </Badge>
                         ) : null}
                       </span>

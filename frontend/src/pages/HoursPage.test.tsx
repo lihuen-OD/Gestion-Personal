@@ -845,8 +845,12 @@ describe("HoursPage — grilla de período con el modelo de tiempo trabajado", (
     expect(popover.getByText("Horas adicionales: 1 h")).toBeInTheDocument();
     expect(popover.getByText("Total trabajado: 9 h")).toBeInTheDocument();
     expect(popover.getByText(/Feriado/)).toBeInTheDocument();
-    expect(popover.getByText("Equivalencia para liquidación: 18 h")).toBeInTheDocument();
-    expect(popover.queryByText(/22 h|24 h|Total liquidable/)).not.toBeInTheDocument();
+    // §17: para liquidación por componente, nunca una única equivalencia que mezcle conceptos.
+    expect(popover.getByText("Para liquidación")).toBeInTheDocument();
+    expect(popover.getByText("Horas normales: 10 h")).toBeInTheDocument();
+    expect(popover.getByText("Dentro de la jornada: 6 h")).toBeInTheDocument();
+    expect(popover.getByText("Horas adicionales: 2 h")).toBeInTheDocument();
+    expect(popover.queryByText(/Equivalencia para liquidación|18 h|22 h|24 h|Total liquidable/)).not.toBeInTheDocument();
   });
 
   it("un día sin regla especial ni conceptos muestra sólo horas base y total trabajado", async () => {
@@ -869,7 +873,7 @@ describe("HoursPage — grilla de período con el modelo de tiempo trabajado", (
     expect(screen.queryByText(/Dentro de la jornada|Horas adicionales:/)).not.toBeInTheDocument();
   });
 
-  it("conflicto de reglas (empate de prioridad) se indica en el popover sin ocultar la equivalencia ya resuelta", async () => {
+  it("conflicto de reglas (empate de prioridad) se indica en el popover sin ocultar lo liquidable ya resuelto", async () => {
     const { default: userEvent } = await import("@testing-library/user-event");
     const user = userEvent.setup();
     authAs("Nivel 1 - RRHH");
@@ -886,7 +890,8 @@ describe("HoursPage — grilla de período con el modelo de tiempo trabajado", (
     await user.click(screen.getByLabelText(/ 16$/));
 
     expect(await screen.findByText(/conflicto/i)).toBeInTheDocument();
-    expect(screen.getByText("Equivalencia para liquidación: 20 h")).toBeInTheDocument();
+    // 8 h × 2,5 = 20 h, todas Horas normales (sin conceptos ese día).
+    expect(screen.getByText("Horas normales: 20 h")).toBeInTheDocument();
   });
 
   it("columnas del período: Horas base, Horas adicionales y Total trabajado (Sereno no se vuelve a sumar)", async () => {
