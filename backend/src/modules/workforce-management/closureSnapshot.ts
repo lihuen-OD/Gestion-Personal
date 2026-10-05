@@ -25,7 +25,11 @@ export type ClosureSnapshotRecalculation =
   // Una regla de Hora Especial (feriado, domingo...) se creó, cambió o se
   // quitó: la equivalencia de las horas ya cargadas se reinterpreta
   // (docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md §15).
-  | { reason: "SPECIAL_HOUR_RULE_CHANGED"; doubleHourRuleId: string; doubleHourRuleName: string };
+  | { reason: "SPECIAL_HOUR_RULE_CHANGED"; doubleHourRuleId: string; doubleHourRuleName: string }
+  // Cambió la convocatoria de un feriado (§16): define quién cobra el FERIADO.
+  | { reason: "HOLIDAY_WORK_ASSIGNMENT_CHANGED"; date: string }
+  // Reconciliación de cargas existentes con el estado vigente de reglas y convocatorias.
+  | { reason: "SPECIAL_HOUR_RECONCILIATION" };
 
 export type ClosureSnapshotTarget = { id: string; employeeId: string; period: string; snapshot: Prisma.JsonValue | null };
 

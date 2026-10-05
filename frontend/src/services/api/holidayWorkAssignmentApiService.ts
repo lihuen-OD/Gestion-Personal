@@ -1,6 +1,6 @@
 import { apiRequest } from "./apiClient";
 import { collectAllPages } from "./listQuery";
-import { cachePolicies, cachedData } from "../cache";
+import { cachePolicies, cachedData, invalidateCacheFamily, WORKED_TIME_DERIVED_CACHE_FAMILIES } from "../cache";
 
 // Etapa 12D: fechas de feriado — vienen siempre de Horas Especiales
 // (DoubleHourRule.kind=FERIADO, Etapa 12B), nunca se calculan ni se
@@ -53,9 +53,9 @@ export const holidayWorkAssignmentApiService = {
   // "workforce-config" compartida con doubleHourRulesCalendarByMonth -- ver
   // cachePolicy.ts) -- el journey 14H.1/14H.3 detectó 2 requests duplicadas
   // (StrictMode) al entrar a esta pantalla. Se invalida sola cuando cambia
-  // una regla de Horas Especiales (misma familia); no hace falta invalidarla
-  // desde saveAssignments (las convocatorias no cambian qué fechas son
-  // feriado).
+  // una regla de Horas Especiales (misma familia); saveAssignments no la
+  // invalida porque las convocatorias no cambian qué fechas son feriado (sí
+  // cambian quién cobra el feriado: ver saveAssignments).
   getHolidayDates(from: string, to: string) {
     const path = `/shifts/holiday-work/dates?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`;
     return cachedData({
@@ -85,7 +85,13 @@ export const holidayWorkAssignmentApiService = {
   getAssignmentsByDate(date: string) {
     return apiRequest<{ data: { date: string; assignments: HolidayWorkAssignment[] } }>(`/shifts/holiday-work/assignments?date=${encodeURIComponent(date)}`, { apiCache: false }).then((response) => response.data);
   },
-  saveAssignments(date: string, assignments: HolidayWorkAssignmentInput[]) {
-    return apiRequest<{ data: HolidayWorkAssignment[] }>("/shifts/holiday-work/assignments", { method: "PUT", body: { date, assignments } }).then((response) => response.data);
+  // La convocatoria define quién cobra un FERIADO (docs/decisions/
+  // WORKED_TIME_ACCOUNTING_MODEL.md §16): el backend reinterpreta las horas
+  // ya cargadas de la fecha, así que se invalidan todas las pantallas que
+  // muestran contabilidad de horas (no las fechas de feriado, que no cambian).
+  async saveAssignments(date: string, assignments: HolidayWorkAssignmentInput[]) {
+    const result = await apiRequest<{ data: HolidayWorkAssignment[] }>("/shifts/holiday-work/assignments", { method: "PUT", body: { date, assignments } }).then((response) => response.data);
+    await Promise.all(WORKED_TIME_DERIVED_CACHE_FAMILIES.map((family) => invalidateCacheFamily(family, "holiday work assignments saved")));
+    return result;
   },
 };

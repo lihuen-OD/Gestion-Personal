@@ -274,7 +274,7 @@ export function HolidayWorkAssignmentsPage() {
       <PageHeader
         eyebrow="TURNOS"
         title="Asignaciones de feriados"
-        description="Estas fechas vienen de Horas Especiales clasificadas como Feriado. La liquidación de las horas trabajadas la sigue resolviendo Horas Especiales — acá sólo se registra quiénes estaban convocados a trabajar."
+        description="Estas fechas vienen de Horas Especiales clasificadas como Feriado. Horas Especiales define cuánto vale trabajar el feriado; acá se define quiénes fueron convocados."
       />
 
       <Section className="holiday-work-section" title="Feriados disponibles" subtitle="Elegí una fecha para ver o cargar la convocatoria.">
@@ -433,7 +433,7 @@ export function HolidayWorkAssignmentsPage() {
 
           {canEdit ? (
             <div className="holiday-work-save-bar">
-              <small className="rule-scope-help">La liquidación de las horas trabajadas la sigue resolviendo Horas Especiales — acá sólo queda registrada la expectativa de quién debía trabajar.</small>
+              <small className="rule-scope-help">Si la fecha tiene convocados, el valor del feriado se aplica sólo a ellos. Al guardar, las horas ya cargadas de ese día se recalculan.</small>
               <Button variant="primary" onClick={() => void handleSave()} disabled={saving}>{saving ? "Guardando..." : "Guardar cambios"}</Button>
             </div>
           ) : null}

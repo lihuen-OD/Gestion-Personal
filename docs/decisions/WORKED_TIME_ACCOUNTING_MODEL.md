@@ -298,7 +298,7 @@ La respuesta resume lo eliminado: `deletedBreakdowns`, `deletedRules`, `deletedE
 
 **Eliminar vs. inactivar.** Una regla ya vigente se inactiva (conserva la regla) y las horas vuelven a su valor sin ella. Una regla futura se elimina: primero se retira su traza (`SpecialHourRuleApplication.doubleHourRuleId` es `RESTRICT`) y la reinterpretación la reconstruye sin ella.
 
-**Alcance por empleado.** El multiplicador lo decide exclusivamente el alcance de la regla. `HolidayWorkAssignment` (convocatoria a trabajar un feriado, 12D/12E) define la expectativa de asistencia y **no** interviene en la liquidación (`SPECIAL_HOUR_RULE_CLASSIFICATION_12A.md` §12). No se agregó ninguna política nueva.
+**Alcance por empleado.** El multiplicador lo decide el alcance de la regla y, para reglas FERIADO, también la convocatoria (§16).
 
 **Fuera de alcance.**
 - Finnegans no consume horas (§11).
@@ -306,3 +306,34 @@ La respuesta resume lo eliminado: `deletedBreakdowns`, `deletedRules`, `deletedE
 - Si una fichada se cierra en el mismo instante en que se guarda una regla, podría escribir con el estado anterior de la regla. Volver a guardar la regla lo corrige, porque la reinterpretación es idempotente.
 
 **Tests:** `specialHourReinterpretation.test.ts` (casos A–H, orden indistinto A ≡ B, cruce de medianoche, alcance, cambio de fecha, idempotencia, traza, minutos y estados intactos), `workforce.service.test.ts` (transacción, auditoría, inactivar/eliminar), `workforce.controller.test.ts` y `workforceApiService.test.ts` (cachés).
+
+## 16. FERIADO + convocatoria (HolidayWorkAssignment)
+
+**Estado:** vigente desde 2026-10-05. Reemplaza "HolidayWorkAssignment no interviene en la liquidación" (12A §12, 12D §5/§7/§9 y la primera versión de §15).
+
+**Regla conceptual (no volver a separarlas):**
+- La regla de Hora Especial **FERIADO** define **cuánto vale** trabajar ese día: fecha, multiplicador y demás configuración. El multiplicador vive sólo en `DoubleHourRule` y nunca se copia a la convocatoria.
+- La **Asignación de feriado** (`HolidayWorkAssignment` ACTIVA) define **quién fue convocado**.
+- En un FERIADO con convocatoria, ambas se combinan para decidir el tratamiento de cada empleado.
+
+**Política (decidida por negocio el 2026-10-05):**
+- **La fecha tiene al menos un convocado ACTIVO:** las reglas FERIADO aplican **sólo a los convocados**, aunque la regla tenga otro alcance. Quien trabajó sin convocatoria cobra esas horas sin el multiplicador del feriado.
+- **La fecha no tiene ninguna convocatoria ACTIVA:** cada regla usa su alcance, como antes. Los feriados globales sin convocatoria siguen funcionando igual.
+- **Quitar un convocado:** queda sin el feriado mientras la fecha tenga otros convocados. Si se quitan todos, la fecha vuelve al alcance de la regla.
+- **Otras clasificaciones** (DOMINGO, JORNADA_ESPECIAL, OTRO): nunca dependen de la convocatoria.
+
+**Implementación (motor único, sin segundo motor):**
+- `specialHourRulesForEmployeeOnDate` (`doubleHourRuleMatching.ts`, puro) aplica la política. `resolveSpecialHourRulesByDate` la usa con 4 consultas fijas: alcance del empleado, reglas en alcance, reglas FERIADO y convocatorias del rango.
+- El fichador (`createFromWorkShift`, `closeOpenWorkShift`), la carga manual, los desgloses y la reinterpretación usan **todos** ese resolver. Antes el fichador tenía sus propias consultas de reglas.
+- **Guardar convocatorias** (`holidayWorkAssignment.service.ts::save`) escribe las convocatorias y llama a `reinterpretSpecialHoursOnDates` sobre la fecha completa en la **misma transacción** (timeout 30 s). La fecha completa, porque el primer convocado restringe el FERIADO para todos. Si el recálculo falla, la convocatoria no queda guardada.
+- **Auditoría:** las altas, cancelaciones y reactivaciones de siempre, más "Convocatoria del feriado del 05/10/2026: Se recalcularon N carga(s) de M legajo(s) y K cierre(s) mensual(es)." y un `MonthlyTimeClosure` `UPDATE` por cierre (`recalculation.reason = "HOLIDAY_WORK_ASSIGNMENT_CHANGED"`).
+- **Cachés:** el backend llama a `clearWorkedTimeDerivedReadCaches()` al guardar. El frontend invalida `WORKED_TIME_DERIVED_CACHE_FAMILIES` en `saveAssignments`. Las fechas de feriado (`workforce-config`) no cambian por convocar.
+
+**Caso que lo motivó (staging, legajo 31, 05/10/2026):** la carga se escribió ×1 a las 10:23 ART. RRHH agregó el 05/10 a la regla global "Feriados" a las 10:30 ART, antes de que existiera la reinterpretación de §15 (pusheada a las 11:36), y ninguna reinterpretación corrigió la fila. No era un problema de alcance: la regla es global. La convocatoria de L31 se creó a las 10:32.
+
+**Reconciliación (backfill):** `npm run staging:special-hours:reconcile` (dry-run, `--report`) y `:apply -- --backup=<archivo>`. Sólo staging. Recorre todas las fechas con cargas con el mismo motor. El dry-run corre en una transacción que se revierte, y `--apply` aborta si los cambios ya no coinciden con el dry-run. En staging se aplicó el 2026-10-05: 15 cargas de 13 legajos y 1 cierre.
+- L31 05/10: 2 h 26 min reales → 4 h 52 min para liquidación.
+- Un domingo de agosto que había quedado desfasado.
+- Por la política: legajo 01 (02/09) y legajo 02 (27/08), que trabajaron sin convocatoria en feriados con convocatoria, pasaron a ×1.
+
+**Tests:** `doubleHourRuleMatching` vía `timeEntries.repository.test.ts` (convocado fuera de alcance, no convocado con convocatoria, sin convocatoria, DOMINGO), `specialHourReinterpretation.test.ts` (casos 1–8, orden indistinto), `holidayWorkAssignment.service.test.ts` (transacción, auditoría, fallo sin auditar), controller y `holidayWorkAssignmentApiService.test.ts` (cachés).

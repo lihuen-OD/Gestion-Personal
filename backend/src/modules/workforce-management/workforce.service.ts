@@ -14,6 +14,7 @@ import { employeeReferenceSelect, formatEmployeeReference, loadEmployeeReference
 import { formatArgentinaDate } from "../../shared/datetime/argentinaTime";
 import { auditClosureRecalculations } from "./closureRecalculationAudit";
 import { reinterpretSpecialHours, type RuleCalendar, type SpecialHourReinterpretation } from "./specialHourReinterpretation";
+import { describeReinterpretation, reinterpretationMetadata } from "./specialHourReinterpretationSummary";
 
 // Identidad humana para la descripción de auditoría (nunca el employeeId).
 const employeeReferenceInclude = { employee: { select: employeeReferenceSelect } } as const;
@@ -121,18 +122,6 @@ function describeRuleSchedule(rule: RuleForChange) {
   if (rule.recurrenceType === "RANGO") return range;
   const weekdays = [...rule.weekdays].sort().map((day) => WEEKDAY_PLURALS[day]).filter(Boolean).join(", ");
   return `los ${weekdays} ${range}`;
-}
-
-function describeReinterpretation(result: SpecialHourReinterpretation) {
-  const loads = result.timeEntries + result.breakdowns;
-  if (!loads) return "No había horas cargadas alcanzadas por el cambio.";
-  const closures = result.rebuiltClosures.length;
-  return `Se recalcularon ${loads} carga(s) de ${result.employees} legajo(s)${closures ? ` y ${closures} cierre(s) mensual(es)` : ""}.`;
-}
-
-function reinterpretationMetadata(result: SpecialHourReinterpretation) {
-  const { rebuiltClosures, ...summary } = result;
-  return { ...summary, recalculatedClosureIds: rebuiltClosures.map((closure) => closure.id) };
 }
 
 async function auditSpecialHourRuleClosures(rule: RuleForChange, result: SpecialHourReinterpretation, audit?: AuditContext) {

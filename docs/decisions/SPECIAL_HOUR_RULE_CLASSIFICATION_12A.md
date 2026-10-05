@@ -219,6 +219,8 @@ Además: badge/columna de clasificación en la tabla de reglas existente, y prec
 - (Cuando exista) el calendario de asignaciones de Turnos sólo muestra fechas de reglas `kind=FERIADO`.
 
 ## 12. Relación con Turnos
+> **Actualización 2026-10-05:** la convocatoria (`HolidayWorkAssignment`) **sí** interviene en la liquidación de reglas FERIADO: si la fecha tiene convocados, el feriado aplica sólo a ellos. Ver `WORKED_TIME_ACCOUNTING_MODEL.md` §16. Lo que sigue describe la decisión original de esta etapa.
+
 
 Turnos (`ShiftTemplate`/`ShiftAssignment`) define **horario habitual recurrente por día de semana** — confirmado que no existe hoy ninguna tabla de "quién debía trabajar tal fecha puntual de feriado". El diseño de esta etapa no toca ningún archivo de `backend/src/modules/shifts/` — sólo deja preparado el filtro (`kind=FERIADO`) que una futura pantalla de asignaciones de feriado en Turnos podría consumir. El contrato propuesto para ese futuro consumo (sin construirlo ahora): un endpoint fino dentro de `shifts.routes.ts` que llame a una función de `workforce-management` (ej. `workforceService.holidayDatesInRange(from, to)`, envolviendo `calendarPreview(from, to, "FERIADO")`) — mismo patrón cross-módulo que ya usa `timeEntries.repository.ts` al importar `doubleHourRuleMatching.ts` (workforce-management es dueño, otros módulos importan de acá, nunca al revés). La respuesta para Turnos debería ser deliberadamente más angosta que la de Horas Especiales (sólo `{date, rules: [{id, name}]}`, sin `multiplier`/`priority`/`hasOverlap`/`hasConflict`) — esos campos son de liquidación, no de expectativa de trabajo, y ocultarlos a nivel de contrato refuerza que "Hora Especial nunca implica obligación de trabajar" (regla 4 del pedido original).
 

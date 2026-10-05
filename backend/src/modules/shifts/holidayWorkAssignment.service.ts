@@ -2,11 +2,19 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "../../shared/prisma/client";
 import { AppError } from "../../shared/errors/AppError";
 import { formatArgentinaDate } from "../../shared/datetime/argentinaTime";
-import type { AuditContext } from "../audit/audit.service";
+import type { AuditContext, RegisterAuditInput } from "../audit/audit.service";
 import { auditService } from "../audit/audit.service";
 import { employeeAccessWhere } from "../employees/employeeAccess";
 import { workforceService } from "../workforce-management/workforce.service";
 import { holidayWorkAssignmentRepository } from "./holidayWorkAssignment.repository";
+import { loadEmployeeReferences } from "../../shared/audit/employeeReference";
+import { auditClosureRecalculations } from "../workforce-management/closureRecalculationAudit";
+import { reinterpretSpecialHoursOnDates } from "../workforce-management/specialHourReinterpretation";
+import { describeReinterpretation, reinterpretationMetadata } from "../workforce-management/specialHourReinterpretationSummary";
+
+// Mismo presupuesto que el cambio de una regla de Hora Especial: la
+// reinterpretación de la fecha corre dentro de la transacción del guardado.
+const HOLIDAY_WORK_TRANSACTION_OPTIONS = { timeout: 30_000 };
 import type { HolidayWorkCandidatesQuery, SaveHolidayWorkAssignmentsInput } from "./holidayWorkAssignment.schemas";
 
 function dateKey(date: Date) {
@@ -59,10 +67,14 @@ export const holidayWorkAssignmentService = {
 
   // Cada entrada del array es un upsert independiente por (date, employeeId)
   // — nunca "reemplaza todo lo cargado para la fecha" (ver justificación en
-  // holidayWorkAssignment.schemas.ts y en el doc de decisión 12D §6). Esto
-  // no crea TimeSegment/TimeEntry, no toca DoubleHourRule ni ninguna tabla
-  // de liquidación, y no dispara ninguna notificación — es sólo la
-  // expectativa de convocatoria.
+  // holidayWorkAssignment.schemas.ts y en el doc de decisión 12D §6). No crea
+  // TimeSegment/TimeEntry ni dispara notificaciones.
+  //
+  // Desde §16 (docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md) la convocatoria
+  // define quién cobra un FERIADO: en la MISMA transacción se reinterpretan
+  // las horas ya cargadas de la fecha (todas, porque el primer convocado
+  // restringe el FERIADO a los convocados) con el motor central. Si el
+  // recálculo falla, la convocatoria no queda guardada a medias.
   async save(input: SaveHolidayWorkAssignmentsInput, user: Express.AuthUser, audit?: AuditContext) {
     const employeeIds = input.assignments.map((item) => item.employeeId);
     const uniqueEmployeeIds = new Set(employeeIds);
@@ -73,44 +85,64 @@ export const holidayWorkAssignmentService = {
     if (existingEmployees !== uniqueEmployeeIds.size) throw new AppError("Uno o más empleados no existen", 404, "EMPLOYEE_NOT_FOUND");
 
     const dateLabel = formatArgentinaDate(input.date);
-    const results = [];
-    for (const item of input.assignments) {
-      const existing = await holidayWorkAssignmentRepository.findExisting(input.date, item.employeeId);
+    const { results, audits, reinterpretation } = await execute(() => prisma.$transaction(async (tx) => {
+      const saved = [];
+      const pendingAudits: RegisterAuditInput[] = [];
+      for (const item of input.assignments) {
+        const existing = await holidayWorkAssignmentRepository.findExisting(input.date, item.employeeId, tx);
 
-      if (!existing) {
-        // Nada que cancelar si la convocatoria nunca existió — evita crear
-        // filas CANCELADA "vacías" sólo porque el frontend mandó un item
-        // desmarcado que ya estaba desmarcado.
-        if (item.status === "CANCELADA") continue;
-        const created = await execute(() => holidayWorkAssignmentRepository.create(input.date, item.employeeId, item, user.id));
-        await auditService.register({
-          ...audit,
-          action: "CREATE",
+        if (!existing) {
+          // Nada que cancelar si la convocatoria nunca existió — evita crear
+          // filas CANCELADA "vacías" sólo porque el frontend mandó un item
+          // desmarcado que ya estaba desmarcado.
+          if (item.status === "CANCELADA") continue;
+          const created = await holidayWorkAssignmentRepository.create(input.date, item.employeeId, item, user.id, tx);
+          pendingAudits.push({
+            action: "CREATE",
+            entity: "HolidayWorkAssignment",
+            entityId: item.employeeId,
+            description: `Se convocó a ${created.employee.legajo} a trabajar el feriado del ${dateLabel}.`,
+            after: created as unknown as Prisma.InputJsonValue,
+          });
+          saved.push(created);
+          continue;
+        }
+
+        const statusChanged = existing.status !== item.status;
+        const updated = await holidayWorkAssignmentRepository.update(existing.id, item, user.id, tx);
+        pendingAudits.push({
+          action: statusChanged ? (item.status === "CANCELADA" ? "DEACTIVATE" : "ACTIVATE") : "UPDATE",
           entity: "HolidayWorkAssignment",
           entityId: item.employeeId,
-          description: `Se convocó a ${created.employee.legajo} a trabajar el feriado del ${dateLabel}.`,
-          after: created as unknown as Prisma.InputJsonValue,
+          description: statusChanged
+            ? `Se ${item.status === "CANCELADA" ? "canceló" : "reactivó"} la convocatoria de ${updated.employee.legajo} para el feriado del ${dateLabel}.`
+            : `Se actualizó la convocatoria de ${updated.employee.legajo} para el feriado del ${dateLabel}.`,
+          before: existing as unknown as Prisma.InputJsonValue,
+          after: updated as unknown as Prisma.InputJsonValue,
         });
-        results.push(created);
-        continue;
+        saved.push(updated);
       }
+      const result = await reinterpretSpecialHoursOnDates(tx, [input.date], { reason: "HOLIDAY_WORK_ASSIGNMENT_CHANGED", date: dateKey(input.date) });
+      return { results: saved, audits: pendingAudits, reinterpretation: result };
+    }, HOLIDAY_WORK_TRANSACTION_OPTIONS));
 
-      const statusChanged = existing.status !== item.status;
-      const updated = await execute(() => holidayWorkAssignmentRepository.update(existing.id, item, user.id));
+    // La auditoría se registra recién cuando la transacción confirmó.
+    for (const entry of audits) await auditService.register({ ...audit, ...entry });
+    if (reinterpretation.timeEntries + reinterpretation.breakdowns > 0) {
       await auditService.register({
         ...audit,
-        action: statusChanged ? (item.status === "CANCELADA" ? "DEACTIVATE" : "ACTIVATE") : "UPDATE",
+        action: "UPDATE",
         entity: "HolidayWorkAssignment",
-        entityId: item.employeeId,
-        description: statusChanged
-          ? `Se ${item.status === "CANCELADA" ? "canceló" : "reactivó"} la convocatoria de ${updated.employee.legajo} para el feriado del ${dateLabel}.`
-          : `Se actualizó la convocatoria de ${updated.employee.legajo} para el feriado del ${dateLabel}.`,
-        before: existing as unknown as Prisma.InputJsonValue,
-        after: updated as unknown as Prisma.InputJsonValue,
+        description: `Convocatoria del feriado del ${dateLabel}: ${describeReinterpretation(reinterpretation)}`,
+        after: reinterpretationMetadata(reinterpretation) as Prisma.InputJsonValue,
       });
-      results.push(updated);
+      await auditClosureRecalculations(
+        reinterpretation.rebuiltClosures,
+        `cambio de la convocatoria del feriado del ${dateLabel}`,
+        audit,
+        (ids) => loadEmployeeReferences(prisma, ids),
+      );
     }
-
     return results;
   },
 };

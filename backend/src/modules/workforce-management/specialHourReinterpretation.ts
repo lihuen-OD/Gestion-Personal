@@ -3,16 +3,15 @@ import type { PrismaTransactionClient } from "../../shared/prisma/client";
 import { calendarDateKey } from "../../shared/datetime/argentinaTime";
 import { resolveSpecialHourRulesByDate, type SpecialHourResolution } from "../time-entries/timeEntries.repository";
 import { buildActiveDatesByRule, ruleMatchesDate, specialHourApplicationRows, type DoubleHourRuleForMatching } from "./doubleHourRuleMatching";
-import { findClosuresForEmployeePeriods, rebuildClosureSnapshots, type RebuiltClosureSnapshot } from "./closureSnapshot";
+import { findClosuresForEmployeePeriods, rebuildClosureSnapshots, type ClosureSnapshotRecalculation, type RebuiltClosureSnapshot } from "./closureSnapshot";
 
 /**
  * Una regla de Hora Especial (feriado, domingo, ...) es una regla vigente
  * sobre la fecha, no una propiedad irreversible de la carga
- * (docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md §15). Cuando RRHH la crea,
- * edita (fechas, multiplicador, alcance, prioridad, estado) o la quita, todo
- * lo derivado de la historia se recalcula con el MISMO motor que usa una
- * carga nueva (resolveSpecialHourRulesByDate), dentro de la transacción del
- * cambio de regla:
+ * (docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md §15 y §16). Cuando RRHH crea,
+ * edita o quita una regla, o cambia la convocatoria de un feriado, todo lo
+ * derivado de la historia se recalcula con el MISMO motor que usa una carga
+ * nueva (resolveSpecialHourRulesByDate), dentro de la transacción del cambio:
  *
  * - TimeEntry.appliedMultiplier y HourConceptBreakdown.appliedMultiplier;
  * - la traza por tramo (SpecialHourRuleApplication y TimeSegment.isSpecial);
@@ -36,6 +35,12 @@ export type SpecialHourReinterpretation = {
   employees: number;
   periods: string[];
   rebuiltClosures: RebuiltClosureSnapshot[];
+  // Detalle antes → después (backup/reporte de una reconciliación).
+  changes: {
+    timeEntries: Array<{ id: string; employeeId: string; date: string; from: number; to: number }>;
+    breakdowns: Array<{ id: string; employeeId: string; date: string; from: number; to: number }>;
+    segments: Array<{ id: string; fromIsSpecial: boolean; toIsSpecial: boolean; fromTrace: string; toTrace: string }>;
+  };
 };
 
 type Row = { id: string; employeeId: string; date: Date; period: string; appliedMultiplier: Prisma.Decimal | number };
@@ -88,6 +93,11 @@ function groupByMultiplier(changes: Array<{ id: string; multiplier: number }>) {
   return groups;
 }
 
+function emptyReinterpretation(): SpecialHourReinterpretation {
+  return { timeEntries: 0, breakdowns: 0, segments: 0, employees: 0, periods: [], rebuiltClosures: [], changes: { timeEntries: [], breakdowns: [], segments: [] } };
+}
+
+/** Cambio de una regla: las fechas que matchea antes o después del cambio. */
 export async function reinterpretSpecialHours(
   db: Db,
   states: { before: RuleCalendar | null; after: RuleCalendar | null },
@@ -95,11 +105,29 @@ export async function reinterpretSpecialHours(
 ): Promise<SpecialHourReinterpretation> {
   const rules = [states.before, states.after].filter((rule): rule is RuleCalendar => rule !== null);
   const window = affectedWindow(rules);
-  const empty: SpecialHourReinterpretation = { timeEntries: 0, breakdowns: 0, segments: 0, employees: 0, periods: [], rebuiltClosures: [] };
-  if (!window) return empty;
+  if (!window) return emptyReinterpretation();
+  return reinterpretWindow(db, window, touchedByRule(rules), { reason: "SPECIAL_HOUR_RULE_CHANGED", ...recalculation });
+}
 
+/**
+ * Fechas concretas: cambio de convocatoria de un feriado (todas las cargas
+ * de la fecha, porque el primer convocado restringe el FERIADO a los
+ * convocados) o reconciliación de cargas existentes.
+ */
+export async function reinterpretSpecialHoursOnDates(db: Db, dates: Date[], recalculation: ClosureSnapshotRecalculation): Promise<SpecialHourReinterpretation> {
+  if (!dates.length) return emptyReinterpretation();
+  const keys = new Set(dates.map(calendarDateKey));
+  const times = dates.map((date) => date.getTime());
+  return reinterpretWindow(db, { from: new Date(Math.min(...times)), to: new Date(Math.max(...times)) }, (date) => keys.has(calendarDateKey(date)), recalculation);
+}
+
+async function reinterpretWindow(
+  db: Db,
+  window: { from: Date; to: Date | null },
+  touched: (date: Date) => boolean,
+  recalculation: ClosureSnapshotRecalculation,
+): Promise<SpecialHourReinterpretation> {
   const dateWhere = { gte: window.from, ...(window.to ? { lte: new Date(window.to.getTime() + DAY_MS - 1) } : {}) };
-  const touched = touchedByRule(rules);
   const [entries, breakdowns, segments] = await Promise.all([
     db.timeEntry.findMany({ where: { date: dateWhere }, select: { id: true, employeeId: true, date: true, period: true, appliedMultiplier: true } }),
     db.hourConceptBreakdown.findMany({ where: { date: dateWhere }, select: { id: true, employeeId: true, date: true, period: true, appliedMultiplier: true } }),
@@ -171,8 +199,10 @@ export async function reinterpretSpecialHours(
   const pairs = new Map<string, { employeeId: string; period: string }>();
   for (const row of [...changedEntries, ...changedBreakdowns]) pairs.set(`${row.employeeId}:${row.period}`, { employeeId: row.employeeId, period: row.period });
   const closures = await findClosuresForEmployeePeriods(db, [...pairs.values()]);
-  const rebuiltClosures = await rebuildClosureSnapshots(db, closures, { reason: "SPECIAL_HOUR_RULE_CHANGED", ...recalculation });
+  const rebuiltClosures = await rebuildClosureSnapshots(db, closures, recalculation);
 
+  const rowChange = (row: Row & { multiplier: number }) => ({ id: row.id, employeeId: row.employeeId, date: calendarDateKey(row.date), from: Number(row.appliedMultiplier), to: row.multiplier });
+  const segmentsById = new Map(candidates.segments.map((segment) => [segment.id, segment]));
   return {
     timeEntries: changedEntries.length,
     breakdowns: changedBreakdowns.length,
@@ -180,5 +210,13 @@ export async function reinterpretSpecialHours(
     employees: new Set([...changedEntries, ...changedBreakdowns].map((row) => row.employeeId)).size,
     periods: [...new Set([...pairs.values()].map((pair) => pair.period))].sort(),
     rebuiltClosures,
+    changes: {
+      timeEntries: changedEntries.map(rowChange),
+      breakdowns: changedBreakdowns.map(rowChange),
+      segments: changedSegments.map((segment) => {
+        const before = segmentsById.get(segment.id)!;
+        return { id: segment.id, fromIsSpecial: before.isSpecial, toIsSpecial: segment.isSpecial, fromTrace: traceSignature(before.specialHourRuleApplications), toTrace: traceSignature(segment.desired) };
+      }),
+    },
   };
 }

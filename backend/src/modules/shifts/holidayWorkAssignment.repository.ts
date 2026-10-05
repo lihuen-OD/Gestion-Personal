@@ -1,8 +1,12 @@
 import type { Prisma } from "@prisma/client";
-import { prisma } from "../../shared/prisma/client";
+import { prisma, type PrismaTransactionClient } from "../../shared/prisma/client";
 import type { HolidayWorkAssignmentItemInput, HolidayWorkCandidatesQuery } from "./holidayWorkAssignment.schemas";
 
 const employeeSelect = { id: true, legajo: true, firstName: true, lastName: true, status: true } as const;
+
+// Escrituras de convocatoria: aceptan la transacción que además reinterpreta
+// las horas del feriado (holidayWorkAssignment.service.ts, §16).
+type AssignmentWriter = Pick<PrismaTransactionClient, "holidayWorkAssignment">;
 const shiftTemplateSelect = { id: true, code: true, name: true } as const;
 
 // Mismo criterio de búsqueda ya usado (duplicado a propósito, no
@@ -65,12 +69,12 @@ export const holidayWorkAssignmentRepository = {
     });
   },
 
-  findExisting(date: Date, employeeId: string) {
-    return prisma.holidayWorkAssignment.findUnique({ where: { date_employeeId: { date, employeeId } } });
+  findExisting(date: Date, employeeId: string, db: AssignmentWriter = prisma) {
+    return db.holidayWorkAssignment.findUnique({ where: { date_employeeId: { date, employeeId } } });
   },
 
-  create(date: Date, employeeId: string, data: HolidayWorkAssignmentItemInput, userId: string | null) {
-    return prisma.holidayWorkAssignment.create({
+  create(date: Date, employeeId: string, data: HolidayWorkAssignmentItemInput, userId: string | null, db: AssignmentWriter = prisma) {
+    return db.holidayWorkAssignment.create({
       data: {
         date,
         employeeId,
@@ -86,8 +90,8 @@ export const holidayWorkAssignmentRepository = {
     });
   },
 
-  update(id: string, data: HolidayWorkAssignmentItemInput, userId: string | null) {
-    return prisma.holidayWorkAssignment.update({
+  update(id: string, data: HolidayWorkAssignmentItemInput, userId: string | null, db: AssignmentWriter = prisma) {
+    return db.holidayWorkAssignment.update({
       where: { id },
       data: {
         status: data.status,

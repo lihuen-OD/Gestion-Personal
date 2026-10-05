@@ -22,8 +22,8 @@ export type CacheFamily =
 // para liquidación, cierres): Legajo y grilla por legajo ("employees"), Carga
 // de horas y Por persona ("time-entries"), Bandeja ("pending"), dashboard y
 // cierres. Se invalidan juntas cuando algo reinterpreta horas ya cargadas: un
-// concepto horario o una regla de Hora Especial (docs/decisions/
-// WORKED_TIME_ACCOUNTING_MODEL.md §12 y §15). Mismo alcance que
+// concepto horario, una regla de Hora Especial o la convocatoria de un
+// feriado (docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md §12, §15 y §16). Mismo alcance que
 // backend/src/modules/time-entries/workedTimeReadCaches.ts.
 export const WORKED_TIME_DERIVED_CACHE_FAMILIES: readonly CacheFamily[] = [
   "employees",
@@ -367,8 +367,10 @@ export const cachePolicies = {
   // Especiales (los 3 mutadores de DoubleHourRule en workforceApiService.ts,
   // Etapa 14H.3), sin necesitar código de invalidación nuevo acá. Las
   // convocatorias en sí (HolidayWorkAssignment, guardadas vía
-  // saveAssignments) NO afectan qué fechas son feriado, así que no hace
-  // falta invalidar esta cache al guardar una convocatoria.
+  // saveAssignments) NO afectan qué fechas son feriado, así que esta cache no
+  // se invalida al guardar una convocatoria. Sí afectan quién cobra el
+  // FERIADO (WORKED_TIME_ACCOUNTING_MODEL.md §16): saveAssignments invalida
+  // WORKED_TIME_DERIVED_CACHE_FAMILIES.
   holidayDatesByMonth: {
     family: "workforce-config",
     ttlMs: 30_000,

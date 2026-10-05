@@ -1,5 +1,7 @@
 # Etapa 12D — Asignaciones de trabajo en feriados desde Turnos
 
+> **Actualización 2026-10-05:** la convocatoria (`HolidayWorkAssignment`) **sí** interviene en la liquidación de reglas FERIADO: si la fecha tiene convocados, el feriado aplica sólo a ellos. Ver `WORKED_TIME_ACCOUNTING_MODEL.md` §16. Lo que sigue describe la decisión original de esta etapa.
+
 Fecha: 2026-08-31
 Estado: implementado, validado, pendiente de aprobación para commitear
 Continúa: `docs/decisions/SPECIAL_HOUR_RULE_CLASSIFICATION_12A.md`, `docs/decisions/SPECIAL_HOUR_RULE_CLASSIFICATION_12B.md` (commit `c6864b0`), `docs/decisions/SPECIAL_HOUR_RULE_CLASSIFICATION_UX_12C.md` (commit `34aee9f`)
