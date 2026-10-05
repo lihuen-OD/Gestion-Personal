@@ -35,6 +35,7 @@ vi.mock("./hourConcepts.service", () => ({
 }));
 
 vi.mock("../employees/employees.controller", () => ({
+  clearEmployeeTimeGridCache: vi.fn(),
   clearEmployeeReadCaches: vi.fn(),
 }));
 

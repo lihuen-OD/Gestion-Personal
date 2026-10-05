@@ -6,6 +6,7 @@ import { workforceService } from "./workforce.service";
 import type { CorrectionsQuery, ListNotificationsQuery } from "./workforce.schemas";
 import { clearTimeEntriesReadCaches } from "../time-entries/timeEntries.cache";
 import { clearEmployeeReadCaches } from "../employees/employees.controller";
+import { clearWorkedTimeDerivedReadCaches } from "../time-entries/workedTimeReadCaches";
 import { clearDoubleRulesReadCache, clearMonthlyClosuresReadCaches, clearNotificationsListCache, clearShiftTemplatesReadCache, closuresCache, correctionsCache, doubleRulesCache, notificationsListCache, shiftTemplatesCache } from "./workforce.cache";
 
 // Etapa 9C: mismo patrón ya usado en novelties/documents/time-entries/employees
@@ -125,16 +126,22 @@ export const workforceController = {
   createDoubleRule: (async (req,res)=>{
     const data=await workforceService.createDoubleRule(req.body,req.user!,requestAuditContext(req));
     clearDoubleRulesReadCache();
+    // La regla reinterpreta horas ya cargadas: equivalencias, grillas y cierres.
+    clearWorkedTimeDerivedReadCaches();
     res.status(201).json({data});
   }) satisfies RequestHandler,
   updateDoubleRule: (async (req,res)=>{
     const data=await workforceService.updateDoubleRule(requireParam(req,"id"),req.body,requestAuditContext(req));
     clearDoubleRulesReadCache();
+    // La regla reinterpreta horas ya cargadas: equivalencias, grillas y cierres.
+    clearWorkedTimeDerivedReadCaches();
     res.json({data});
   }) satisfies RequestHandler,
   removeDoubleRule: (async (req,res)=>{
     const data=await workforceService.removeDoubleRule(requireParam(req,"id"),requestAuditContext(req));
     clearDoubleRulesReadCache();
+    // La regla reinterpreta horas ya cargadas: equivalencias, grillas y cierres.
+    clearWorkedTimeDerivedReadCaches();
     res.json({data});
   }) satisfies RequestHandler,
   // Etapa 12B: req.query.kind ya viene validado/coercido por

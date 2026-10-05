@@ -1,5 +1,5 @@
 import { apiRequest } from "./apiClient";
-import { cachePolicies, cachedData, invalidateCacheFamily } from "../cache";
+import { cachePolicies, cachedData, invalidateCacheFamily, WORKED_TIME_DERIVED_CACHE_FAMILIES } from "../cache";
 
 export type MonthlyClosure = {
   id: string;
@@ -148,6 +148,13 @@ export type DoubleHourRuleCalendarDay = {
   hasConflict: boolean;
 };
 
+// Una regla de Hora Especial reinterpreta horas ya cargadas (equivalencia,
+// grillas, cierres): además de la configuración, se invalidan todas las
+// familias que muestran contabilidad de horas (WORKED_TIME_ACCOUNTING_MODEL.md §15).
+async function invalidateDoubleHourRuleDependentCaches(reason: string) {
+  await Promise.all(["workforce-config" as const, ...WORKED_TIME_DERIVED_CACHE_FAMILIES].map((family) => invalidateCacheFamily(family, reason)));
+}
+
 export const workforceApiService = {
   // Etapa 14G.8: envuelto con `cachedData` (dedupe in-flight, familia
   // "monthly-closures" compartida con `corrections` -- ver cachePolicy.ts).
@@ -294,17 +301,17 @@ export const workforceApiService = {
   },
   async createDoubleHourRule(input: DoubleHourRuleInput) {
     const result = await apiRequest<{ data: DoubleHourRule }>("/workforce/double-hour-rules", { method: "POST", body: input }).then((response) => response.data);
-    await invalidateCacheFamily("workforce-config", "double hour rule created");
+    await invalidateDoubleHourRuleDependentCaches("double hour rule created");
     return result;
   },
   async updateDoubleHourRule(id: string, input: Partial<DoubleHourRuleInput>) {
     const result = await apiRequest<{ data: DoubleHourRule }>(`/workforce/double-hour-rules/${id}`, { method: "PATCH", body: input }).then((response) => response.data);
-    await invalidateCacheFamily("workforce-config", "double hour rule updated");
+    await invalidateDoubleHourRuleDependentCaches("double hour rule updated");
     return result;
   },
   async removeDoubleHourRule(id: string) {
     const result = await apiRequest<{ data: { mode: "DELETED" | "INACTIVATED"; id?: string; item?: DoubleHourRule } }>(`/workforce/double-hour-rules/${id}`, { method: "DELETE" }).then((response) => response.data);
-    await invalidateCacheFamily("workforce-config", "double hour rule removed");
+    await invalidateDoubleHourRuleDependentCaches("double hour rule removed");
     return result;
   },
   // Etapa 12B: `kind` opcional — sin pasarlo, comportamiento idéntico al de

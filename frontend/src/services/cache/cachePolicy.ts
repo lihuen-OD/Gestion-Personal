@@ -18,6 +18,21 @@ export type CacheFamily =
   | "monthly-closures"
   | "workforce-config";
 
+// Familias que muestran contabilidad de horas (total trabajado, equivalencia
+// para liquidación, cierres): Legajo y grilla por legajo ("employees"), Carga
+// de horas y Por persona ("time-entries"), Bandeja ("pending"), dashboard y
+// cierres. Se invalidan juntas cuando algo reinterpreta horas ya cargadas: un
+// concepto horario o una regla de Hora Especial (docs/decisions/
+// WORKED_TIME_ACCOUNTING_MODEL.md §12 y §15). Mismo alcance que
+// backend/src/modules/time-entries/workedTimeReadCaches.ts.
+export const WORKED_TIME_DERIVED_CACHE_FAMILIES: readonly CacheFamily[] = [
+  "employees",
+  "time-entries",
+  "pending",
+  "dashboard",
+  "monthly-closures",
+];
+
 export type CachePolicy = {
   family: CacheFamily;
   ttlMs: number;

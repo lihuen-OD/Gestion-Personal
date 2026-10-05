@@ -1,6 +1,6 @@
 import { apiRequest } from "./apiClient";
 import { collectAllPages } from "./listQuery";
-import { cachePolicies, cachedData, invalidateCacheFamily, type CacheFamily } from "../cache";
+import { cachePolicies, cachedData, invalidateCacheFamily, WORKED_TIME_DERIVED_CACHE_FAMILIES, type CacheFamily } from "../cache";
 import { associatedEmployeesQuery, mapAssociatedEmployeeFromApi, type ApiAssociatedEmployee } from "./associatedEmployeeMapper";
 import type { HourConcept, HourConceptDeletionSummary, HourConceptFilters, HourConceptKind, HourConceptLoadMode, HourConceptStatus, HourConceptSystemRole, HourConceptWorkTreatment } from "../../types/hourConcept.types";
 import type { AssociatedEmployeeFilters, AssociatedEmployeeStatus, AssociatedEmployeesResult, HourConceptEmployeeAssociation } from "../../types/associatedEmployee.types";
@@ -102,11 +102,7 @@ export function buildHourConceptEmployeePath(hourConceptId: string, employeeId: 
 // hourConcepts.controller.ts::clearHourConceptDependentReadCaches.
 export const HOUR_CONCEPT_DEPENDENT_CACHE_FAMILIES: readonly CacheFamily[] = [
   "hour-concepts",
-  "employees",
-  "time-entries",
-  "pending",
-  "dashboard",
-  "monthly-closures",
+  ...WORKED_TIME_DERIVED_CACHE_FAMILIES,
   "novelties",
 ];
 

@@ -2,12 +2,10 @@ import type { RequestHandler } from "express";
 import { requestAuditContext } from "../../shared/audit/requestAuditContext";
 import { createTtlCache } from "../../shared/cache/ttlCache";
 import { requireParam } from "../../shared/http/params";
-import { clearDashboardMetricsCache } from "../dashboard/dashboard.cache";
 import { clearEmployeeReadCaches } from "../employees/employees.controller";
 import { invalidateTimeGridCatalogCache } from "../employees/employees.repository";
 import { clearNoveltiesReadCaches } from "../novelties/novelties.cache";
-import { clearTimeEntriesReadCaches } from "../time-entries/timeEntries.cache";
-import { clearMonthlyClosuresReadCaches } from "../workforce-management/workforce.cache";
+import { clearWorkedTimeDerivedReadCaches } from "../time-entries/workedTimeReadCaches";
 import type { EnableHourConceptEmployeesInput, ListHourConceptEmployeesQuery, ListHourConceptsQuery } from "./hourConcepts.schemas";
 import { hourConceptsService } from "./hourConcepts.service";
 
@@ -33,9 +31,7 @@ function clearHourConceptDependentReadCaches() {
   hourConceptsReadCache.clear();
   clearEmployeeReadCaches();
   invalidateTimeGridCatalogCache();
-  clearTimeEntriesReadCaches();
-  clearDashboardMetricsCache();
-  clearMonthlyClosuresReadCaches();
+  clearWorkedTimeDerivedReadCaches();
   clearNoveltiesReadCaches();
 }
 

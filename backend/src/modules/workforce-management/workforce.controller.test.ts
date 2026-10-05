@@ -4,7 +4,7 @@ import type { Request, Response } from "express";
 import { workforceController } from "./workforce.controller";
 import { workforceService } from "./workforce.service";
 import { clearTimeEntriesReadCaches } from "../time-entries/timeEntries.cache";
-import { clearEmployeeReadCaches } from "../employees/employees.controller";
+import { clearEmployeeReadCaches, clearEmployeeTimeGridCache } from "../employees/employees.controller";
 import { closuresCache, correctionsCache, doubleRulesCache, notificationsListCache, shiftTemplatesCache } from "./workforce.cache";
 
 vi.mock("./workforce.service", () => ({
@@ -35,6 +35,7 @@ vi.mock("../time-entries/timeEntries.cache", () => ({
 }));
 
 vi.mock("../employees/employees.controller", () => ({
+  clearEmployeeTimeGridCache: vi.fn(),
   clearEmployeeReadCaches: vi.fn(),
 }));
 
@@ -546,5 +547,28 @@ describe("workforceController.corrections — cache backend (Etapa 14G.8)", () =
     await workforceController.closures(closuresReq, fakeRes());
 
     expect(mockedService.closures).toHaveBeenCalledTimes(2);
+  });
+});
+
+// docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md §15: una regla de Hora
+// Especial reinterpreta horas ya cargadas, así que además del listado de
+// reglas se limpian en el momento grilla por legajo, Carga de horas/Por
+// persona, dashboard y cierres (sin esperar TTL).
+describe("workforceController — reglas de Hora Especial limpian las lecturas de horas", () => {
+  it.each([
+    ["createDoubleRule", () => workforceController.createDoubleRule(fakeReq({ originalUrl: "/workforce/double-hour-rules", body: { name: "Feriado" } }), fakeRes())],
+    ["updateDoubleRule", () => workforceController.updateDoubleRule(fakeReq({ originalUrl: "/workforce/double-hour-rules/rule-1", params: { id: "rule-1" }, body: { multiplier: 2 } }), fakeRes())],
+    ["removeDoubleRule", () => workforceController.removeDoubleRule(fakeReq({ originalUrl: "/workforce/double-hour-rules/rule-1", params: { id: "rule-1" } }), fakeRes())],
+  ])("%s limpia time-grid, time-entries, dashboard y cierres", async (name, run) => {
+    (mockedService as unknown as Record<string, Mock>)[name]!.mockResolvedValue({ id: "rule-1" });
+    closuresCache.set("GET:/workforce/closures?period=2026-10", [] as never);
+    vi.mocked(clearTimeEntriesReadCaches).mockClear();
+    vi.mocked(clearEmployeeTimeGridCache).mockClear();
+
+    await run();
+
+    expect(clearEmployeeTimeGridCache).toHaveBeenCalledTimes(1);
+    expect(clearTimeEntriesReadCaches).toHaveBeenCalledTimes(1);
+    expect(closuresCache.get("GET:/workforce/closures?period=2026-10")).toBeUndefined();
   });
 });

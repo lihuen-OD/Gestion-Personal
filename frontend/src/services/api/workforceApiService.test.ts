@@ -456,3 +456,24 @@ describe("workforceApiService.shiftTemplates/doubleHourRules/doubleHourRulesCale
     expect(apiRequest).toHaveBeenCalledTimes(4);
   });
 });
+
+// docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md §15: crear/editar/quitar una
+// regla de Hora Especial reinterpreta horas ya cargadas en el backend, así
+// que ninguna pantalla de horas puede quedar mostrando la equivalencia vieja.
+describe("workforceApiService — reglas de Hora Especial invalidan las pantallas de horas", () => {
+  beforeEach(() => vi.clearAllMocks());
+  const expectedFamilies = ["workforce-config", "employees", "time-entries", "pending", "dashboard", "monthly-closures"];
+  const invalidatedFamilies = () => vi.mocked(invalidateCacheFamily).mock.calls.map(([family]) => family).sort();
+
+  it.each([
+    ["crear", () => workforceApiService.createDoubleHourRule({ name: "Feriado" } as DoubleHourRuleInput)],
+    ["editar", () => workforceApiService.updateDoubleHourRule("rule-1", { multiplier: 2 })],
+    ["quitar", () => workforceApiService.removeDoubleHourRule("rule-1")],
+  ])("al %s una regla invalida configuración, legajo, Carga de horas, Bandeja, dashboard y cierres", async (_label, run) => {
+    vi.mocked(apiRequest).mockResolvedValue({ data: { id: "rule-1" } });
+
+    await run();
+
+    expect(invalidatedFamilies()).toEqual([...expectedFamilies].sort());
+  });
+});
