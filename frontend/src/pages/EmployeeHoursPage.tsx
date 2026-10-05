@@ -29,11 +29,12 @@ import {
   timeGridRowSubtitle,
   upsertTimeEntry,
 } from "../utils/employeeHoursGrid";
-import { emptyPeriodAccounting, workTreatmentDescriptions, workTreatmentLabels } from "../utils/workedTimeAccounting";
+import { conceptDayAmount, conceptPeriodAmount, emptyPeriodAccounting, normalDayAmount, workTreatmentDescriptions, workTreatmentLabels } from "../utils/workedTimeAccounting";
 import type { PeriodAccounting } from "../types/workedTimeAccounting.types";
 import { AccountingStatCards } from "../components/hours/AccountingStatCards";
 import { HoursAccountingSummary } from "../components/hours/HoursAccountingSummary";
 import { MonthlyHoursTableSections } from "../components/hours/MonthlyHoursTableSections";
+import { amountDescription, amountMinutes, baseSpecialHourTitle, realLabel, SettlementTotalCell, SpecialHourDot } from "../components/hours/SettlementAmount";
 import { roleLevel } from "../utils/roles";
 import { useAsyncAction } from "../utils/useAsyncAction";
 import { Field } from "../components/ui/FormControls";
@@ -323,7 +324,10 @@ export function EmployeeHoursPage() {
   const isRrhh = Boolean(user && roleLevel(user.role) === 1);
   const manualRow = manualSelected ? rows.find((row) => row.concept.id === manualSelected.conceptId) : undefined;
   const manualDaySpecialHour = manualSelected ? specialHoursByDay[String(manualSelected.day)] : undefined;
-  const manualDayAccounting = manualSelected ? accounting.days[String(manualSelected.day)] : undefined;
+  // Lo que se liquida de ESE concepto ese día (backend), para la nota de Hora Especial del modal.
+  const manualAmount = manualSelected && manualRow
+    ? conceptDayAmount(accounting, manualSelected.day, manualRow.concept.id, manualRow.minutesByDay[String(manualSelected.day)] ?? 0)
+    : undefined;
   const { isRunning: isSavingManual, run: saveManualBreakdown } = useAsyncAction(async () => {
     if (!id || !manualSelected || !manualRow || !isManualBreakdownEditable(manualRow)) return;
     const numericHours = Number(manualHours);
@@ -588,6 +592,7 @@ export function EmployeeHoursPage() {
               accounting={accounting}
               monthDays={monthDays}
               syncing={syncing}
+              specialHoursByDay={specialHoursByDay}
               renderRow={(row) => {
                 const label = timeGridRowLabel(row);
                 return (
@@ -602,22 +607,25 @@ export function EmployeeHoursPage() {
                     const mainNovelty = novelties[0];
                     const breakdownMinutes = row.minutesByDay[String(day)] ?? 0;
                     const daySpecialHour = specialHoursByDay[String(day)];
+                    // Conceptos: la celda muestra lo que se liquida ese día
+                    // (backend), con el real en el indicador; editar sigue
+                    // trabajando en horas reales. Horas base: tiempo registrado.
+                    const amount = row.role === "NORMAL_BASE" ? null : conceptDayAmount(accounting, day, row.concept.id, breakdownMinutes);
                     const cellClass = [
                       "hour-cell",
                       entry || breakdownMinutes ? "filled" : "",
                       row.role === "NORMAL_BASE" && isBlocked(day) ? "blocked" : "",
                       noveltyVisualClass(mainNovelty),
+                      amount?.pending ? "is-syncing" : "",
                     ]
                       .filter(Boolean)
                       .join(" ");
-                    // El multiplicador de Hora Especial de un día alcanza a todas las
-                    // filas — el punto ámbar se muestra en cualquier fila.
-                    const specialHourDot = daySpecialHour ? (
-                      <span className="alert-dot orange" title={`Hora especial aplicada (${formatMultiplier(daySpecialHour.multiplier)})`} />
-                    ) : null;
-                    const minutes = entry ? entry.totalMinutes ?? hoursDecimalToMinutes(entry.hours) : breakdownMinutes;
+                    const specialHourDot = amount
+                      ? (breakdownMinutes ? <SpecialHourDot amount={amount} ruleNames={daySpecialHour?.ruleNames} /> : null)
+                      : daySpecialHour ? <span className="alert-dot orange" title={baseSpecialHourTitle(daySpecialHour.multiplier, daySpecialHour.ruleNames)} /> : null;
+                    const minutes = entry ? entry.totalMinutes ?? hoursDecimalToMinutes(entry.hours) : amount ? amountMinutes(amount) : breakdownMinutes;
                     const compactDuration = formatCompactDurationMinutes(minutes);
-                    const fullDuration = formatDurationMinutes(minutes);
+                    const fullDuration = amount ? amountDescription(amount, daySpecialHour?.ruleNames) : formatDurationMinutes(minutes);
                     return (
                       <td key={`${row.concept.id}-${day}`}>
                         {row.role === "NORMAL_BASE" ? (
@@ -655,9 +663,13 @@ export function EmployeeHoursPage() {
                       </td>
                     );
                   })}
-                  <td>
-                    <b title={formatDurationMinutes(row.totalMinutes)}>{formatCompactDurationMinutes(row.totalMinutes)}</b>
-                  </td>
+                  {row.role === "NORMAL_BASE" ? (
+                    <td>
+                      <b title={formatDurationMinutes(row.totalMinutes)}>{formatCompactDurationMinutes(row.totalMinutes)}</b>
+                    </td>
+                  ) : (
+                    <SettlementTotalCell amount={conceptPeriodAmount(accounting, row.concept.id, row.totalMinutes)} />
+                  )}
                 </tr>
                 );
               }}
@@ -685,8 +697,9 @@ export function EmployeeHoursPage() {
               <div className="info-note compact special-hour">
                 <b>Hora especial aplicada · Multiplicador {formatMultiplier(manualDaySpecialHour.multiplier)}{manualDaySpecialHour.ruleNames.length ? `: ${manualDaySpecialHour.ruleNames.join(", ")}` : ""}</b>
                 <p>
-                  Este concepto también queda alcanzado ese día.
-                  {manualDayAccounting ? ` Equivalencia del día para liquidación: ${formatDurationMinutes(manualDayAccounting.settlement.totalMinutes)}.` : ""}
+                  {manualAmount && manualAmount.realMinutes
+                    ? `${manualRow.concept.name} ese día: ${realLabel(manualAmount.realMinutes)} → ${formatDurationMinutes(manualAmount.settlementMinutes)} para liquidación.`
+                    : `Las horas de ${manualRow.concept.name} que cargues ese día se liquidan con este multiplicador.`}
                   {manualDaySpecialHour.conflict ? " · Hay más de una regla en conflicto — se aplicó la de mayor prioridad." : ""}
                 </p>
               </div>
@@ -742,8 +755,10 @@ export function EmployeeHoursPage() {
                 <div className="info-note compact special-hour">
                 <b>Hora especial aplicada · Multiplicador {formatMultiplier(selectedDaySpecialHour.multiplier)}{selectedDaySpecialHour.ruleNames.length ? `: ${selectedDaySpecialHour.ruleNames.join(", ")}` : ""}</b>
                 <p>
-                  Horas reales sin cambios.
-                  {selectedDayAccounting ? ` Equivalencia del día para liquidación: ${formatDurationMinutes(selectedDayAccounting.settlement.totalMinutes)} (total trabajado ${formatDurationMinutes(selectedDayAccounting.totalWorkedMinutes)}).` : ""}
+                  Las horas registradas no cambian.
+                  {selectedDayAccounting
+                    ? ` Horas normales ese día: ${realLabel(normalDayAmount(selectedDayAccounting).realMinutes)} → ${formatDurationMinutes(normalDayAmount(selectedDayAccounting).settlementMinutes)} para liquidación (total trabajado ${formatDurationMinutes(selectedDayAccounting.totalWorkedMinutes)}).`
+                    : ""}
                   {selectedDaySpecialHour.conflict ? " · Hay más de una regla en conflicto — se aplicó la de mayor prioridad." : ""}
                 </p>
                 </div>

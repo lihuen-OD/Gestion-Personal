@@ -1,11 +1,12 @@
 import type { EmployeeTimeGrid, EmployeeTimeGridRow } from "../../services/api/employeeApiService";
 import type { Novelty } from "../../types";
-import { formatMultiplier } from "../attendance/segmentDisplay";
 import { timeGridRowLabel, timeGridRowSubtitle } from "../../utils/employeeHoursGrid";
 import { formatCompactDurationMinutes, formatDurationMinutes } from "../../utils/hours";
 import { getMonthDays, getWeekdayAbbr } from "../../utils/period";
 import { EmptyState } from "../ui/EmptyState";
 import { MonthlyHoursTableSections } from "./MonthlyHoursTableSections";
+import { conceptDayAmount, conceptPeriodAmount } from "../../utils/workedTimeAccounting";
+import { amountDescription, amountMinutes, baseSpecialHourTitle, SettlementTotalCell, SpecialHourDot } from "./SettlementAmount";
 
 // Mismo criterio de asociación día↔novedad que EmployeeHoursPage.tsx
 // (dayNovelties, no exportado ahí) — se repite acá en vez de tocar esa
@@ -33,38 +34,45 @@ export function MonthlyHoursReviewGrid({ grid, period }: { grid: EmployeeTimeGri
   const monthDays = getMonthDays(period);
   const renderRow = (row: EmployeeTimeGridRow) => {
     const label = timeGridRowLabel(row);
+    const isBase = row.role === "NORMAL_BASE";
     return (
-      <tr key={row.concept.id} className={row.role === "NORMAL_BASE" ? "hours-base-row" : undefined}>
+      <tr key={row.concept.id} className={isBase ? "hours-base-row" : undefined}>
         <td>
           <b>{label}</b>
           <span className="table-sub" title={timeGridRowSubtitle(row)}>{timeGridRowSubtitle(row)}</span>
         </td>
         {monthDays.map((day) => {
-          const minutes = row.minutesByDay[String(day)] ?? 0;
+          const realMinutes = row.minutesByDay[String(day)] ?? 0;
           const daySpecialHour = grid.specialHoursByDay[String(day)];
-          // El multiplicador de Hora Especial alcanza a cualquier fila ese
-          // día; la novedad sólo se asocia visualmente a las Horas base, mismo
-          // criterio que EmployeeHoursPage.
-          const dayNovelties = row.role === "NORMAL_BASE" ? noveltiesForDay(grid.novelties, day) : [];
-          const cellClass = ["hour-cell", minutes ? "filled" : ""].filter(Boolean).join(" ");
-          const fullDuration = formatDurationMinutes(minutes);
-          const titleParts = minutes ? [fullDuration] : [];
+          // Horas base: tiempo registrado. Cada concepto: lo que se liquida
+          // ese día (real × Hora Especial, calculado por el backend), con el
+          // real en el indicador. La novedad sólo se asocia a las Horas base,
+          // mismo criterio que EmployeeHoursPage.
+          const amount = isBase ? null : conceptDayAmount(grid.accounting, day, row.concept.id, realMinutes);
+          const minutes = amount ? amountMinutes(amount) : realMinutes;
+          const dayNovelties = isBase ? noveltiesForDay(grid.novelties, day) : [];
+          const cellClass = ["hour-cell", minutes ? "filled" : "", amount?.pending ? "is-syncing" : ""].filter(Boolean).join(" ");
+          const description = amount ? amountDescription(amount, daySpecialHour?.ruleNames) : formatDurationMinutes(minutes);
+          const titleParts = minutes ? [description] : [];
           if (dayNovelties.length) titleParts.push(dayNovelties.map((novelty) => `${novelty.type} · ${novelty.quantity}`).join(", "));
           return (
             <td key={`${row.concept.id}-${day}`}>
-              <span className={cellClass} title={titleParts.join(" · ") || undefined} aria-label={`${label}, día ${day}: ${minutes ? fullDuration : "sin horas"}`}>
+              <span className={cellClass} title={titleParts.join(" · ") || undefined} aria-label={`${label}, día ${day}: ${minutes ? description : "sin horas"}`}>
                 <span>{minutes ? formatCompactDurationMinutes(minutes) : "—"}</span>
                 {dayNovelties.length ? <span className="alert-dot purple" /> : null}
-                {daySpecialHour ? (
-                  <span className="alert-dot orange" title={`Hora especial aplicada (${formatMultiplier(daySpecialHour.multiplier)})`} />
-                ) : null}
+                {isBase && daySpecialHour ? <span className="alert-dot orange" title={baseSpecialHourTitle(daySpecialHour.multiplier, daySpecialHour.ruleNames)} /> : null}
+                {amount && minutes ? <SpecialHourDot amount={amount} ruleNames={daySpecialHour?.ruleNames} /> : null}
               </span>
             </td>
           );
         })}
-        <td>
-          <b title={formatDurationMinutes(row.totalMinutes)}>{formatCompactDurationMinutes(row.totalMinutes)}</b>
-        </td>
+        {isBase ? (
+          <td>
+            <b title={formatDurationMinutes(row.totalMinutes)}>{formatCompactDurationMinutes(row.totalMinutes)}</b>
+          </td>
+        ) : (
+          <SettlementTotalCell amount={conceptPeriodAmount(grid.accounting, row.concept.id, row.totalMinutes)} />
+        )}
       </tr>
     );
   };
@@ -83,7 +91,7 @@ export function MonthlyHoursReviewGrid({ grid, period }: { grid: EmployeeTimeGri
             <th>Total</th>
           </tr>
         </thead>
-        <MonthlyHoursTableSections rows={grid.rows} accounting={grid.accounting} monthDays={monthDays} renderRow={renderRow} />
+        <MonthlyHoursTableSections rows={grid.rows} accounting={grid.accounting} monthDays={monthDays} renderRow={renderRow} specialHoursByDay={grid.specialHoursByDay} />
       </table>
     </div>
   );

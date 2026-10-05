@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import { MonthlyHoursReviewGrid } from "./MonthlyHoursReviewGrid";
 import type { Novelty } from "../../types";
-import { dayAccounting, timeGridFixture } from "../../test/workedTimeAccountingFixtures";
+import { dayAccounting, periodAccounting, timeGridFixture } from "../../test/workedTimeAccountingFixtures";
 
 function buildNovelty(overrides: Partial<Novelty> = {}): Novelty {
   return {
@@ -43,8 +43,10 @@ describe("MonthlyHoursReviewGrid — modelo de tiempo trabajado", () => {
     expect(screen.getByText("Horas adicionales")).toBeInTheDocument();
     expect(lastCell(rowNamed("Colectivo"))).toHaveTextContent("1h");
     expect(lastCell(rowNamed("Total trabajado"))).toHaveTextContent("9h");
-    // Sin Hora Especial no hay fila de equivalencia.
+    // Sin Hora Especial no hay fila de equivalencia ni ruido de liquidación (CASO A/G).
     expect(screen.queryByText("Equivalencia para liquidación")).not.toBeInTheDocument();
+    expect(document.querySelector(".hours-total-real")).not.toBeInTheDocument();
+    expect(document.querySelector(".alert-dot.orange")).not.toBeInTheDocument();
   });
 
   it("copy de negocio: cada fila dice si suma o no al total, sin enums técnicos", () => {
@@ -55,13 +57,80 @@ describe("MonthlyHoursReviewGrid — modelo de tiempo trabajado", () => {
     expect(container.textContent).not.toMatch(/WITHIN_BASE|ADDITIVE_TO_WORKED_TOTAL|NORMAL_BASE|HourConceptBreakdown/);
   });
 
-  it("domingo x2: total trabajado 9 y equivalencia para liquidación 18 (nunca 22 ni 24)", () => {
+  // docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md §17: cada fila que se
+  // liquida muestra su tiempo PARA LIQUIDACIÓN; no hay fila global que mezcle
+  // conceptos con valores distintos. Total trabajado sigue siendo tiempo real.
+  it("CASO B/E/F — día x2 (base 8, Sereno 3, Colectivo 1): Horas normales 10, Sereno 6, Colectivo 2 para liquidación; Total trabajado 9 real", () => {
     const { container } = render(<MonthlyHoursReviewGrid grid={timeGridFixture([dayAccounting(2, { multiplier: 2 })])} period="2026-08" />);
 
+    expect(lastCell(rowNamed("Horas normales"))).toHaveTextContent("10h");
+    expect(lastCell(rowNamed("Horas normales"))).toHaveTextContent("5h reales");
+    expect(lastCell(rowNamed("Sereno"))).toHaveTextContent("6h");
+    expect(lastCell(rowNamed("Sereno"))).toHaveTextContent("3h reales");
+    expect(lastCell(rowNamed("Colectivo"))).toHaveTextContent("2h");
+    expect(lastCell(rowNamed("Colectivo"))).toHaveTextContent("1h real");
     expect(lastCell(rowNamed("Total trabajado"))).toHaveTextContent("9h");
-    expect(lastCell(rowNamed("Equivalencia para liquidación"))).toHaveTextContent("18h");
-    expect(container.textContent).not.toMatch(/22h|24h/);
-    expect(container.querySelector(".alert-dot.orange")).toBeInTheDocument();
+    expect(lastCell(rowNamed("Total trabajado")).querySelector(".hours-total-real")).not.toBeInTheDocument();
+    // Horas base sigue siendo tiempo registrado.
+    expect(lastCell(rowNamed("Horas base"))).toHaveTextContent("8h");
+    expect(screen.queryByText("Equivalencia para liquidación")).not.toBeInTheDocument();
+    expect(container.textContent).not.toMatch(/18h|22h|24h/);
+  });
+
+  it("la celda del día especial muestra lo liquidable y el indicador explica el real y la regla", () => {
+    render(<MonthlyHoursReviewGrid grid={timeGridFixture([dayAccounting(2, { multiplier: 2 })])} period="2026-08" />);
+
+    const colectivoDay2 = within(rowNamed("Colectivo")).getByLabelText(/Colectivo, día 2:/);
+    expect(colectivoDay2).toHaveTextContent("2h");
+    expect(colectivoDay2).toHaveAttribute("aria-label", "Colectivo, día 2: Domingos x2 · 1 h real · 2 h para liquidación");
+    expect(colectivoDay2.querySelector(".alert-dot.orange")).toHaveAttribute("title", "Domingos x2 · 1 h real · 2 h para liquidación");
+    expect(within(rowNamed("Horas normales")).getByLabelText(/Horas normales, día 2:/)).toHaveTextContent("10h");
+    expect(within(rowNamed("Sereno")).getByLabelText(/Sereno, día 2:/)).toHaveAttribute("aria-label", "Sereno, día 2: Domingos x2 · 3 h reales · 6 h para liquidación");
+  });
+
+  it("CASO C/D — período mixto: TOTAL de cada concepto = suma de lo liquidable de cada día (real como subtexto)", () => {
+    const days = [
+      dayAccounting(1, { sereno: 2, colectivo: 2 }),
+      dayAccounting(2, { sereno: 2, colectivo: 2 }),
+      dayAccounting(3, { sereno: 2, colectivo: 2 }),
+      dayAccounting(5, { base: 2 + 26 / 60, sereno: 1, colectivo: 2, multiplier: 2 }),
+    ];
+    render(<MonthlyHoursReviewGrid grid={timeGridFixture(days)} period="2026-10" />);
+
+    // Sereno (dentro de la jornada): 2+2+2 + 1×2 = 8 para liquidación, 7 reales.
+    expect(lastCell(rowNamed("Sereno"))).toHaveTextContent("8h");
+    expect(lastCell(rowNamed("Sereno"))).toHaveTextContent("7h reales");
+    // Colectivo (adicional): 2+2+2 + 2×2 = 10 para liquidación, 8 reales.
+    expect(lastCell(rowNamed("Colectivo"))).toHaveTextContent("10h");
+    expect(lastCell(rowNamed("Colectivo"))).toHaveTextContent("8h reales");
+    // Horas normales: 6+6+6 + 1 h 26 min × 2 = 20 h 52 min para liquidación.
+    expect(lastCell(rowNamed("Horas normales"))).toHaveTextContent("20h 52m");
+  });
+
+  it("multiplicador x1.5: Colectivo 2 h reales → 3 h para liquidación", () => {
+    render(<MonthlyHoursReviewGrid grid={timeGridFixture([dayAccounting(6, { colectivo: 2, multiplier: 1.5 })])} period="2026-08" />);
+    expect(lastCell(rowNamed("Colectivo"))).toHaveTextContent("3h");
+    expect(lastCell(rowNamed("Colectivo"))).toHaveTextContent("2h reales");
+  });
+
+  it("sin conceptos dentro de la jornada pero con Hora Especial, igual muestra Horas normales para liquidación", () => {
+    render(<MonthlyHoursReviewGrid grid={timeGridFixture([dayAccounting(2, { sereno: 0, colectivo: 1, multiplier: 2 })])} period="2026-08" />);
+    expect(lastCell(rowNamed("Horas normales"))).toHaveTextContent("16h");
+    expect(lastCell(rowNamed("Colectivo"))).toHaveTextContent("2h");
+    expect(lastCell(rowNamed("Total trabajado"))).toHaveTextContent("9h");
+  });
+
+  it("el frontend no recalcula: muestra exactamente lo que liquida el backend", () => {
+    const day = dayAccounting(2, { multiplier: 2 });
+    // Valores del backend deliberadamente distintos de real × multiplicador.
+    day.concepts = day.concepts.map((concept) => (concept.hourConceptId === "colectivo" ? { ...concept, settlementMinutes: 97 } : concept));
+    day.settlement = { ...day.settlement, normalMinutes: 611 };
+    const grid = timeGridFixture([day]);
+    grid.accounting = periodAccounting([day]);
+    render(<MonthlyHoursReviewGrid grid={grid} period="2026-08" />);
+
+    expect(lastCell(rowNamed("Colectivo"))).toHaveTextContent("1h 37m");
+    expect(lastCell(rowNamed("Horas normales"))).toHaveTextContent("10h 11m");
   });
 
   it("muestra una columna por día del período", () => {

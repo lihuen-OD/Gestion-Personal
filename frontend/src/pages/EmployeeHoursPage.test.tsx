@@ -593,8 +593,14 @@ describe("EmployeeHoursPage — composición del período y Hora Especial", () =
     expect(composition).toHaveTextContent("Horas normales5 h10 h");
     expect(composition).toHaveTextContent("Sereno3 h6 h");
     expect(composition).toHaveTextContent("Colectivo1 h2 h");
+    // El resumen conserva la equivalencia total como control...
     expect(composition).toHaveTextContent("Total trabajado · Equivalencia9 h18 h");
-    expect(totalCellText(rowFor("Equivalencia para liquidación"))).toBe("18h");
+    // ...pero la grilla se lee por concepto: cada fila dice cuánto liquidar (§17).
+    expect(totalCellText(rowFor("Horas normales"))).toBe("10h5h reales");
+    expect(totalCellText(rowFor("Sereno"))).toBe("6h3h reales");
+    expect(totalCellText(rowFor("Colectivo"))).toBe("2h1h real");
+    expect(totalCellText(rowFor("Total trabajado"))).toBe("9h");
+    expect(screen.queryByText("Equivalencia para liquidación")).not.toBeInTheDocument();
     expect(container.textContent).not.toMatch(/22 h|24 h|22h|24h/);
   });
 
@@ -605,7 +611,7 @@ describe("EmployeeHoursPage — composición del período y Hora Especial", () =
     expect(container.textContent).not.toMatch(/WITHIN_BASE|ADDITIVE_TO_WORKED_TOTAL|NORMAL_BASE|HourConceptBreakdown|Valor liquidable|Desglose/);
   });
 
-  it("el modal de Horas base muestra el aviso de Hora especial con multiplicador, regla y equivalencia del día", async () => {
+  it("el modal de Horas base muestra el aviso de Hora especial con multiplicador, regla y las Horas normales para liquidación", async () => {
     const user = userEvent.setup();
     vi.mocked(employeeApiService.getTimeGrid).mockResolvedValue(buildGrid([dayAccounting(1, { multiplier: 2 })]));
     renderPage();
@@ -614,7 +620,7 @@ describe("EmployeeHoursPage — composición del período y Hora Especial", () =
     await user.click(within(rowFor("Horas base")).getAllByRole("button")[0]!);
 
     expect(await screen.findByText(/Hora especial aplicada.*Multiplicador x2.*Domingos/)).toBeInTheDocument();
-    expect(screen.getByText(/Equivalencia del día para liquidación: 18 h \(total trabajado 9 h\)/)).toBeInTheDocument();
+    expect(screen.getByText(/Horas normales ese día: 5 h reales → 10 h para liquidación \(total trabajado 9 h\)/)).toBeInTheDocument();
   });
 
   it("humaniza observaciones históricas y mantiene compacto el aviso administrativo", async () => {
@@ -643,7 +649,7 @@ describe("EmployeeHoursPage — composición del período y Hora Especial", () =
     expect(screen.getByDisplayValue(/2 h 26 min trabajadas/)).toBeInTheDocument();
     expect(screen.queryByDisplayValue(new RegExp(uuid))).not.toBeInTheDocument();
     expect(screen.getByText("Corrección administrativa").closest(".administrative-correction-callout")).toBeInTheDocument();
-    expect(screen.getByText(/Equivalencia del día para liquidación: 18 h/)).toBeInTheDocument();
+    expect(screen.getByText(/Horas normales ese día: 5 h reales → 10 h para liquidación/)).toBeInTheDocument();
     expect(document.querySelector(".time-entry-modal-summary .context-hour-card")).toBeInTheDocument();
     expect(document.querySelector(".time-entry-modal-summary .special-hour")).toBeInTheDocument();
     expect(document.querySelector(".time-entry-modal-content > .time-entry-fields")).toBeInTheDocument();
@@ -660,7 +666,7 @@ describe("EmployeeHoursPage — composición del período y Hora Especial", () =
     await user.click(within(rowFor("Colectivo")).getAllByRole("button")[0]!);
 
     expect(await screen.findByText(/Hora especial aplicada.*Multiplicador x2.*Domingos/)).toBeInTheDocument();
-    expect(screen.getByText(/también queda alcanzado ese día/)).toBeInTheDocument();
+    expect(screen.getByText(/Colectivo ese día: 1 h real → 2 h para liquidación\./)).toBeInTheDocument();
     expect(screen.getByText("Horas adicionales · Manual")).toBeInTheDocument();
     expect(screen.getByText(/Suma al total trabajado/)).toBeInTheDocument();
   });

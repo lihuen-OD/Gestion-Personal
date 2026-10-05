@@ -1509,6 +1509,10 @@ a.employee-hours-status-item:hover{border-color:var(--ds-blue-300);background:va
 .monthly-concept-table .hours-settlement-row .hour-cell.derived.filled{border-style:solid;border-color:var(--color-success-border);background:var(--color-success-bg);color:var(--color-success);font-weight:700}
 .monthly-concept-table .hours-settlement-row td:last-child b{color:var(--color-success)}
 .monthly-concept-table tr.is-syncing td:not(:first-child){opacity:.5;transition:opacity .15s ease}
+/* §17: columna TOTAL de filas que se liquidan — valor para liquidación arriba, real como subtexto (entra en la altura fija de 52px). */
+.monthly-concept-table .hours-total-cell b{display:block;line-height:1.2}
+.monthly-concept-table .hours-total-real{display:block;margin-top:2px;color:var(--ds-slate-400);font-size:11px;font-weight:400;line-height:1.2}
+.monthly-concept-table .hour-cell.is-syncing,.monthly-concept-table .hours-total-cell.is-syncing{opacity:.5;transition:opacity .15s ease}
 .hours-composition{min-width:0;overflow-x:auto}
 .hours-composition.is-syncing table{opacity:.5;transition:opacity .15s ease}
 /* La capa global de tablas fuerza padding/alineación con !important: se
