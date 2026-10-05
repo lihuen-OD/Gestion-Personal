@@ -61,8 +61,10 @@ const hiddenKeys = new Set([
 // workShiftId, hourConceptId, shiftTemplateId, startPunchId, endPunchId,
 // timeSegmentId, reviewedByUserId, approvedByUserId, etc. — y cualquier FK
 // nueva que se agregue en el futuro, sin tener que volver a esta lista.
+// También el plural (employeeIds, recalculatedClosureIds): una lista de ids
+// técnicos no es un dato de negocio.
 function isHiddenKey(key: string) {
-  return hiddenKeys.has(key) || /Id$/.test(key);
+  return hiddenKeys.has(key) || /Ids?$/.test(key);
 }
 
 const labels: Record<string, string> = {

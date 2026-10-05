@@ -112,15 +112,28 @@ const shiftAlertTypeValueLabels: Record<string, string> = {
   CONCEPTO_NO_HABILITADO: "Concepto no habilitado", SEGMENTO_SIN_CLASIFICAR: "Segmento sin clasificar",
 };
 
-// Ningún texto visible muestra un id técnico (todos los ids del backend son
-// UUID). El backend ya escribe identidad humana; esto cubre eventos
-// históricos que no se pudieron reparar sin ambigüedad.
-const uuidPattern = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
+// Última defensa, no presentación: el backend persiste identidad humana
+// ("Apellido, Nombre · Legajo N") y los eventos históricos se repararon en
+// origen. Si igual llegara un UUID, se cambia por lenguaje neutro que siga
+// leyéndose bien — mismo criterio que backend/src/shared/audit/technicalIds.ts —
+// nunca por un placeholder ("legajo —").
+const uuid = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
+
+// Textos legados conocidos que embebían un id: se traducen a su redacción
+// actual (no se enmascaran). La nota de la reconciliación 15M.4 queda
+// guardada así en el snapshot before/after de la carga retirada.
+function translateLegacyTechnicalText(value: string) {
+  return value.replace(new RegExp(`fusionada en TimeEntry ${uuid}`, "gi"), "fusionada en la carga de Horas normales del mismo día");
+}
 
 function hideTechnicalIds(value: string) {
   return value
-    .replace(new RegExp(`/${uuidPattern.source}`, "gi"), "/:id")
-    .replace(uuidPattern, "—");
+    .replace(new RegExp(`/${uuid}`, "gi"), "/:id")
+    .replace(new RegExp(`=${uuid}`, "gi"), "=:id")
+    .replace(new RegExp(`\\b(de|a|para|por|en|con)\\s+${uuid}`, "gi"), "$1 otro registro")
+    .replace(new RegExp(`\\b(del|al)\\s+${uuid}`, "gi"), "$1 registro correspondiente")
+    .replace(new RegExp(`(\\p{L}+)\\s+${uuid}`, "giu"), "$1 correspondiente")
+    .replace(new RegExp(uuid, "gi"), "registro correspondiente");
 }
 
 function rawEnumFallback(token: string) {
@@ -145,7 +158,7 @@ function polishText(value: string) {
 export function cleanAuditValue(value: string) {
   if (!value || value === "-") return "";
   const withoutIdPairs = polishText(value).replace(/\s*\|\s*Id:\s*[a-f0-9-]{20,}/gi, "");
-  return hideTechnicalIds(withoutIdPairs)
+  return hideTechnicalIds(translateLegacyTechnicalText(withoutIdPairs))
     .replace(/\bDate:\s*(\d{4})-(\d{2})-(\d{2})T[^\s|]+/gi, "Fecha: $3/$2/$1")
     .replace(/\bDay:\s*/gi, "Día: ")
     .replace(/\bHours:\s*/gi, "Horas: ")

@@ -79,10 +79,13 @@ describe("auditDescription / auditChange — booleanos y campos crudos limpios",
 describe("auditDescription / auditChange — nunca un id técnico visible", () => {
   const employeeUuid = "016dc01c-655d-4474-8319-67f1b8108c93";
 
-  it("oculta el UUID de un Employee embebido en una descripción histórica", () => {
-    const description = auditDescription({ reason: `Se quitó el concepto horario del empleado ${employeeUuid}.`, next: "-" });
-    expect(description).not.toContain(employeeUuid);
-    expect(description).toBe("Se quitó el concepto horario del empleado —.");
+  it("si llegara un UUID, lo reemplaza por lenguaje neutro completo, nunca por un placeholder", () => {
+    expect(auditDescription({ reason: `Se quitó el concepto horario del empleado ${employeeUuid}.`, next: "-" }))
+      .toBe("Se quitó el concepto horario del empleado correspondiente.");
+    expect(auditDescription({ reason: `Se guardó el desglose manual Prueba 02 del 03/10/2026 para el legajo ${employeeUuid}.`, next: "-" }))
+      .toBe("Se guardó el desglose manual Prueba 02 del 03/10/2026 para el legajo correspondiente.");
+    expect(auditDescription({ reason: `Reconciliación histórica 15M.4: retirada de cómputo (duplicado de ${employeeUuid})`, next: "-" }))
+      .toBe("Reconciliación histórica 15M.4: retirada de cómputo (duplicado de otro registro)");
   });
 
   it("enmascara los ids de una ruta como :id", () => {
@@ -91,7 +94,14 @@ describe("auditDescription / auditChange — nunca un id técnico visible", () =
   });
 
   it("también en el resumen Antes/Después", () => {
-    expect(auditChange({ previous: `Empleado: ${employeeUuid}`, next: "Estado: APROBADO" })).not.toContain(employeeUuid);
+    const change = auditChange({ previous: `Empleado: ${employeeUuid}`, next: "Estado: APROBADO" });
+    expect(change).not.toContain(employeeUuid);
+    expect(change).not.toContain("—");
+  });
+
+  it("la nota legada de la reconciliación 15M.4 se muestra con su redacción actual, no enmascarada", () => {
+    const change = auditChange({ previous: "-", next: `Observación: Retirada de cómputo por reconciliación 15M.4 -- fusionada en TimeEntry ${employeeUuid}.` });
+    expect(change).toBe("Observación: Retirada de cómputo por reconciliación 15M.4 -- fusionada en la carga de Horas normales del mismo día.");
   });
 
   it("una descripción con identidad humana queda intacta", () => {

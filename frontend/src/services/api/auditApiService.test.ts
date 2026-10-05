@@ -70,7 +70,7 @@ describe("auditApiService — resumen de before/after sin IDs crudos ni fechas I
         entityId: "closure-1",
         description: "Se recalculó el snapshot del cierre de octubre de 2026 de Pérez, Juan · Legajo 30 por corrección.",
         createdAt: "2026-10-05T12:00:00.000Z",
-        before: { snapshot: { employeeId: employeeUuid, id: employeeUuid, period: "2026-10" } },
+        before: { snapshot: { employeeId: employeeUuid, id: employeeUuid, period: "2026-10" }, employeeIds: [employeeUuid], recalculatedClosureIds: [employeeUuid] },
         after: { snapshot: { employeeId: employeeUuid, period: "2026-10" } },
         user: { name: "Ana", role: "NIVEL_1_RRHH" },
       }],
@@ -82,6 +82,8 @@ describe("auditApiService — resumen de before/after sin IDs crudos ni fechas I
     expect(item.previous).not.toContain(employeeUuid);
     expect(item.next).not.toContain(employeeUuid);
     expect(item.previous).toContain("Period");
+    // Las listas de ids (claves en plural) tampoco se muestran.
+    expect(item.previous).not.toMatch(/Employee Ids|Recalculated Closure Ids/);
   });
 
   // Un campo `@db.Date` (calendario puro, ej. TimeEntry.date) llega
