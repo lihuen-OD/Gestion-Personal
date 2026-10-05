@@ -10,6 +10,7 @@ import { normalHoursReconciliationRepository as repository } from "./normalHours
 import {
   classifyNormalHoursDiscrepancy,
   pickCanonicalEntry,
+  RETIRED_DUPLICATE_NOTE,
   requiresRepair,
   type NormalEntryRow,
   type NormalHoursDiscrepancy,
@@ -362,9 +363,7 @@ async function repairEmployeeDate(
         if (duplicate.totalMinutes === 0) continue; // ya retirada por un repair anterior -- idempotencia.
         retiredAny = true;
         const duplicateBefore = freshRows.find((row) => row.id === duplicate.id)!;
-        // Texto visible (observación de la carga): sin el id de la canónica,
-        // que queda en el before/after de la auditoría.
-        const retireNote = "Retirada de cómputo por reconciliación 15M.4 -- fusionada en la carga de Horas normales del mismo día.";
+        const retireNote = RETIRED_DUPLICATE_NOTE;
         const retired = await tx.timeEntry.update({
           where: { id: duplicate.id },
           data: {

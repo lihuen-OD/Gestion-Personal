@@ -1,4 +1,5 @@
 import { formatPeriodLabel } from "./period";
+import { translateLegacyMergeNote } from "./userFacingText";
 
 // Etapa 15M.20: punto único de traducción para lo que escribe el log de
 // auditoría del backend (`auditService.register()`), consumido hoy por
@@ -119,13 +120,6 @@ const shiftAlertTypeValueLabels: Record<string, string> = {
 // nunca por un placeholder ("legajo —").
 const uuid = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
 
-// Textos legados conocidos que embebían un id: se traducen a su redacción
-// actual (no se enmascaran). La nota de la reconciliación 15M.4 queda
-// guardada así en el snapshot before/after de la carga retirada.
-function translateLegacyTechnicalText(value: string) {
-  return value.replace(new RegExp(`fusionada en TimeEntry ${uuid}`, "gi"), "fusionada en la carga de Horas normales del mismo día");
-}
-
 function hideTechnicalIds(value: string) {
   return value
     .replace(new RegExp(`/${uuid}`, "gi"), "/:id")
@@ -158,7 +152,9 @@ function polishText(value: string) {
 export function cleanAuditValue(value: string) {
   if (!value || value === "-") return "";
   const withoutIdPairs = polishText(value).replace(/\s*\|\s*Id:\s*[a-f0-9-]{20,}/gi, "");
-  return hideTechnicalIds(translateLegacyTechnicalText(withoutIdPairs))
+  // La nota legada de la reconciliación 15M.4 queda guardada en el snapshot
+  // before/after de la carga retirada: se traduce, no se enmascara.
+  return hideTechnicalIds(translateLegacyMergeNote(withoutIdPairs))
     .replace(/\bDate:\s*(\d{4})-(\d{2})-(\d{2})T[^\s|]+/gi, "Fecha: $3/$2/$1")
     .replace(/\bDay:\s*/gi, "Día: ")
     .replace(/\bHours:\s*/gi, "Horas: ")
