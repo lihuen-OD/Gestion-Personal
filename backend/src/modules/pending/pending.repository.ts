@@ -82,7 +82,7 @@ export const pendingRepository = {
       where: pendingBreakdownsWhere(query, employeeAccessWhere),
       include: {
         employee: { select: { id: true, legajo: true, firstName: true, lastName: true, sectorId: true } },
-        hourConcept: { select: { id: true, code: true, name: true } },
+        hourConcept: { select: { id: true, code: true, name: true, workTreatment: true } },
       },
       orderBy: [{ date: "asc" }, { createdAt: "asc" }, { id: "asc" }],
       skip: skipOf(query),

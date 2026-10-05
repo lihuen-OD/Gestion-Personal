@@ -4,7 +4,8 @@ import { auditService } from "../audit/audit.service";
 import { AppError } from "../../shared/errors/AppError";
 import { employeeAccessWhere } from "./employeeAccess";
 import { isMonthlyClosureLocked } from "../../shared/monthlyClosure/closureLock";
-import { humanizePeriodEs } from "../../shared/datetime/argentinaTime";
+import { calendarDateKey, humanizePeriodEs } from "../../shared/datetime/argentinaTime";
+import { resolveDoubleHourMultipliersByDate } from "../time-entries/timeEntries.repository";
 import { argentinaPeriodBounds, calculateAutomaticBreakdowns } from "./automaticHourConceptBreakdowns";
 import { automaticHourConceptBreakdownsRepository as repository } from "./automaticHourConceptBreakdowns.repository";
 
@@ -60,7 +61,12 @@ async function recalculateForEmployeePeriod({ employeeId, period, createdByUserI
     assignments.some(({ hourConcept }) => hourConcept.id === rule.hourConceptId && ["AUTOMATIC", "BOTH"].includes(hourConcept.loadMode || "")),
   );
   const completeShifts = shifts.flatMap((shift) => shift.endAt ? [{ ...shift, endAt: shift.endAt }] : []);
-  const rows = calculateAutomaticBreakdowns(period, completeShifts, rules);
+  const calculated = calculateAutomaticBreakdowns(period, completeShifts, rules);
+  // Snapshot del multiplicador de Hora Especial por fecha (batch: 2 consultas
+  // por recálculo, nunca una por desglose) — misma filosofía que
+  // TimeEntry.appliedMultiplier.
+  const multipliers = await resolveDoubleHourMultipliersByDate(employeeId, calculated.map((row) => row.date));
+  const rows = calculated.map((row) => ({ ...row, appliedMultiplier: multipliers.get(calendarDateKey(row.date)) ?? 1 }));
 
   let result;
   try {

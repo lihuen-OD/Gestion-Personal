@@ -59,7 +59,7 @@ function mockAllDefaults() {
   ]);
   repo.countExitsThisYear.mockResolvedValue(1);
   repo.countTransported.mockResolvedValue(3);
-  repo.sumLoadedHours.mockResolvedValue({ _sum: { hours: { toString: () => "40" } } });
+  repo.sumLoadedHours.mockResolvedValue({ baseHours: 40, additiveMinutes: 0 });
   repo.countEmployeesWithEntries.mockResolvedValue(5);
   repo.countEmployeesInReview.mockResolvedValue(1);
   repo.findPeriodAbsenceDateRanges.mockResolvedValue([]);
@@ -93,6 +93,19 @@ beforeEach(() => {
   mockAllDefaults();
 });
 
+// docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md — Base 8 h + Sereno 3 h
+// (dentro de la jornada, nunca llega a este insumo) + Colectivo 1 h
+// (adicional, 60 min) → "Horas cargadas" = 9 h. Nunca 8 (sólo base) ni 12.
+describe("dashboardService.metrics — loadedHours es el total trabajado real", () => {
+  it("base 8 + Sereno 3 + Colectivo 1 → 9 h", async () => {
+    repo.sumLoadedHours.mockResolvedValue({ baseHours: 8, additiveMinutes: 60 });
+
+    const result = await dashboardService.metrics({}, user(roles.rrhh));
+
+    expect(result.loadedHours).toBe(9);
+  });
+});
+
 describe("dashboardService.metrics — 13 queries en lotes, no 15 en un unico Promise.all (Etapa 14E.1 + 14E.2)", () => {
   it("llama exactamente a las 13 funciones del repositorio (countTotal/countActive → groupBy en 14E.1; countEmployeesWithoutEntries eliminada en 14E.2)", async () => {
     await dashboardService.metrics({}, user(roles.rrhh));
@@ -110,7 +123,7 @@ describe("dashboardService.metrics — 13 queries en lotes, no 15 en un unico Pr
       countTotalAndActive: [{ status: "ACTIVO", _count: { _all: 1 } }],
       countExitsThisYear: 0,
       countTransported: 0,
-      sumLoadedHours: { _sum: { hours: { toString: () => "0" } } },
+      sumLoadedHours: { baseHours: 0, additiveMinutes: 0 },
       countEmployeesWithEntries: 0,
       countEmployeesInReview: 0,
       findPeriodAbsenceDateRanges: [],

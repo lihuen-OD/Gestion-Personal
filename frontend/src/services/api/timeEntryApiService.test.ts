@@ -32,14 +32,16 @@ describe("mapTimeEntryFromApi — Horas Especiales en la Bandeja de revisión (E
   it("appliedMultiplier=1 (o ausente): no agrega ningún campo de Hora Especial", () => {
     const entry = mapTimeEntryFromApi({ ...base, appliedMultiplier: 1 });
     expect(entry.specialHourMultiplier).toBeUndefined();
-    expect(entry.specialHourLiquidableHours).toBeUndefined();
+    expect(entry.specialHourRuleNames).toBeUndefined();
     expect(entry.specialHourRuleNames).toBeUndefined();
 
     const entryWithoutField = mapTimeEntryFromApi({ ...base });
     expect(entryWithoutField.specialHourMultiplier).toBeUndefined();
   });
 
-  it("appliedMultiplier > 1 con timeSegment (fichador): mapea multiplicador, liquidable y regla(s)", () => {
+  // docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md: un registro de Horas base
+  // aislado no tiene "liquidable" propio (depende de los conceptos del día).
+  it("appliedMultiplier > 1 con timeSegment (fichador): mapea multiplicador y regla(s), nunca un liquidable por registro", () => {
     const entry = mapTimeEntryFromApi({
       ...base,
       appliedMultiplier: 2,
@@ -47,16 +49,16 @@ describe("mapTimeEntryFromApi — Horas Especiales en la Bandeja de revisión (E
     });
 
     expect(entry.specialHourMultiplier).toBe(2);
-    expect(entry.specialHourLiquidableHours).toBe(16); // 8 real x2
+    expect(entry).not.toHaveProperty("specialHourLiquidableHours");
     expect(entry.specialHourRuleNames).toEqual(["Feriado"]);
     expect(entry.specialHourConflict).toBe(false);
   });
 
-  it("appliedMultiplier > 1 sin timeSegment (carga manual): mapea multiplicador/liquidable, sin nombre de regla", () => {
+  it("appliedMultiplier > 1 sin timeSegment (carga manual): mapea el multiplicador, sin nombre de regla", () => {
     const entry = mapTimeEntryFromApi({ ...base, appliedMultiplier: 2, timeSegment: null });
 
     expect(entry.specialHourMultiplier).toBe(2);
-    expect(entry.specialHourLiquidableHours).toBe(16);
+    expect(entry).not.toHaveProperty("specialHourLiquidableHours");
     expect(entry.specialHourRuleNames).toEqual([]);
   });
 

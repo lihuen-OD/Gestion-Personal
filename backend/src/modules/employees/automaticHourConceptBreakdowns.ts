@@ -24,6 +24,11 @@ export interface CalculatedAutomaticBreakdown {
   minutes: number;
   workShiftId: string;
   hourConceptRuleId: string | null;
+  // Intervalo real cubierto (ya partido por fecha Argentina): permite la
+  // unión de cobertura entre conceptos WITHIN_BASE
+  // (docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md).
+  startAt: Date;
+  endAt: Date;
 }
 
 export function argentinaPeriodBounds(period: string) {
@@ -105,6 +110,8 @@ export function calculateAutomaticBreakdowns(
             minutes,
             workShiftId,
             hourConceptRuleId: interval.ruleIds.size === 1 ? ([...interval.ruleIds][0] ?? null) : null,
+            startAt: cursor,
+            endAt,
           });
         }
         cursor = endAt;

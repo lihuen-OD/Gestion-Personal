@@ -4,7 +4,7 @@ import { Prisma } from "@prisma/client";
 import { AppError } from "../../shared/errors/AppError";
 import { prisma } from "../../shared/prisma/client";
 import { timeEntriesRepository } from "./timeEntries.repository";
-import { timeEntriesService, clockAttemptHash, resolveShiftConcept } from "./timeEntries.service";
+import { timeEntriesExportToCsv, timeEntriesService, clockAttemptHash, resolveShiftConcept } from "./timeEntries.service";
 import { employeeAccessWhere } from "../employees/employeeAccess";
 import type { AttendanceObservationsQuery } from "./timeEntries.schemas";
 import { evaluateShiftExit, flagOpenShiftOverflowForReview, notifyClassificationAlerts } from "../shifts/workShiftEvaluationRunner";
@@ -37,7 +37,8 @@ vi.mock("./timeEntries.repository", () => ({
     createFromWorkShift: vi.fn(),
     findForExport: vi.fn(),
     findClosuresForExport: vi.fn(),
-    findBreakdownHoursForExport: vi.fn(),
+    findBreakdownsForExport: vi.fn().mockResolvedValue([]),
+    findEmployeesForExport: vi.fn().mockResolvedValue([]),
     countEmployeeInScope: vi.fn(),
     findHourConceptById: vi.fn(),
     findEnabledHourConcept: vi.fn(),
@@ -156,7 +157,8 @@ type RepoMock = {
   createFromWorkShift: Mock;
   findForExport: Mock;
   findClosuresForExport: Mock;
-  findBreakdownHoursForExport: Mock;
+  findBreakdownsForExport: Mock;
+  findEmployeesForExport: Mock;
   countEmployeeInScope: Mock;
   findHourConceptById: Mock;
   findEnabledHourConcept: Mock;
@@ -210,6 +212,8 @@ beforeEach(() => {
   repo.findClosuresForExport.mockImplementation(async (employeeIds: string[]) =>
     employeeIds.map((employeeId) => ({ employeeId, status: "APROBADO" })),
   );
+  repo.findBreakdownsForExport.mockResolvedValue([]);
+  repo.findEmployeesForExport.mockResolvedValue([]);
 });
 
 describe("timeEntriesService DTO operativo Nivel 3", () => {
@@ -1286,204 +1290,137 @@ describe("clockPhotoPunchIdempotent", () => {
   });
 });
 
-describe("exportByPerson — 'Horas trabajadas totales' = Normal, 'Horas especiales' desde HourConceptBreakdown (Etapa 6M)", () => {
+// docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md — reemplaza las columnas
+// "Horas especiales"/"Total liquidable" (8 + 4 Sereno x2 = 24): el export sale
+// exclusivamente de la contabilidad única (mismo cálculo que grilla y cierre).
+describe("exportByPerson — contabilidad de tiempo trabajado", () => {
   const rrhhUser = { id: "user-1", role: "NIVEL_1_RRHH" } as Express.AuthUser;
+  const employee = {
+    id: "employee-1",
+    cuil: "20-1-1",
+    lastName: "Perez",
+    firstName: "Juan",
+    legajo: "0001",
+    costCenter: { code: "CC1" },
+    companies: [{ isPrimary: true, company: { name: "Empresa 1" } }],
+  };
 
-  function exportEntry(overrides: Partial<{ employeeId: string; hours: string; status: string; systemRole: string | null; appliedMultiplier: number; ruleNames: string[] }> = {}) {
+  function exportEntry(overrides: Partial<{ employeeId: string; day: number; hours: string; status: string; systemRole: string | null; appliedMultiplier: number; ruleNames: string[]; wasConflicting: boolean }> = {}) {
     return {
       employeeId: overrides.employeeId ?? "employee-1",
+      day: overrides.day ?? 1,
       hours: { toString: () => overrides.hours ?? "8" },
       status: overrides.status ?? "APROBADO",
-      hourConcept: { systemRole: overrides.systemRole ?? "NORMAL_BASE" },
-      // Etapa 8F: appliedMultiplier ya no infla hours/totalMinutes (que desde
-      // esta etapa son siempre reales) — es lo único de donde se deriva el
-      // equivalente liquidable en el export, junto con el nombre de la regla.
+      hourConcept: { systemRole: overrides.systemRole === undefined ? "NORMAL_BASE" : overrides.systemRole },
       appliedMultiplier: overrides.appliedMultiplier ?? 1,
       timeSegment: {
-        specialHourRuleApplications: (overrides.ruleNames ?? []).map((name) => ({ doubleHourRule: { name } })),
+        specialHourRuleApplications: (overrides.ruleNames ?? []).map((name) => ({ wasConflicting: overrides.wasConflicting ?? false, doubleHourRule: { name } })),
       },
-      employee: {
-        cuil: "20-1-1",
-        lastName: "Perez",
-        firstName: "Juan",
-        legajo: "0001",
-        costCenter: { code: "CC1" },
-        companies: [{ isPrimary: true, company: { name: "Empresa 1" } }],
-      },
+      employee: { ...employee, id: overrides.employeeId ?? "employee-1" },
     };
   }
 
-  it("'Horas trabajadas totales' usa sólo Normal — un TimeEntry legacy no-Normal no lo infla", async () => {
-    repo.findForExport.mockResolvedValue([
-      exportEntry({ hours: "8", systemRole: "NORMAL_BASE" }),
-      // Entrada especial legacy previa a la Etapa 6L: no debe sumar al total.
-      exportEntry({ hours: "2", systemRole: "COLECTIVO" }),
-    ]);
-    repo.findBreakdownHoursForExport.mockResolvedValue([]);
+  const sereno = { workTreatment: "WITHIN_BASE", name: "Sereno", code: "HOR-001" };
+  const colectivo = { workTreatment: "ADDITIVE_TO_WORKED_TOTAL", name: "Colectivo", code: "HOR-002" };
+  function exportBreakdown(concept: typeof sereno, day: number, minutes: number, appliedMultiplier = 1, employeeId = "employee-1") {
+    return { employeeId, day, hourConceptId: concept.code, minutes, appliedMultiplier, startAt: null, endAt: null, status: "APROBADO", hourConcept: concept };
+  }
+
+  it("caso obligatorio — base 8 + Sereno 3 + Colectivo 1 en domingo x2: permite reconstruir 8/5/3/1/9 y 10/6/2/18 (nunca 22 ni 24)", async () => {
+    repo.findForExport.mockResolvedValue([exportEntry({ day: 27, appliedMultiplier: 2, ruleNames: ["Domingos"] })]);
+    repo.findBreakdownsForExport.mockResolvedValue([exportBreakdown(sereno, 27, 180, 2), exportBreakdown(colectivo, 27, 60, 2)]);
 
     const result = await timeEntriesService.exportByPerson({ period: "2026-08", includeInReview: false }, rrhhUser);
 
-    expect(result.rows).toEqual([
-      expect.objectContaining({
-        "Horas normales": "8",
-        "Horas especiales": "0",
-        "Horas trabajadas totales": "8",
-      }),
+    expect(result.rows).toEqual([expect.objectContaining({
+      "Horas base": "8",
+      "Horas normales": "5",
+      "Sereno (horas reales)": "3",
+      "Colectivo (horas reales)": "1",
+      "Total trabajado": "9",
+      "Horas normales (para liquidación)": "10",
+      "Sereno (para liquidación)": "6",
+      "Colectivo (para liquidación)": "2",
+      "Equivalencia para liquidación": "18",
+      "Reglas de horas especiales aplicadas": "Domingos",
+    })]);
+    // Columnas en orden: identidad, reales (dentro de la jornada antes que adicionales), liquidación.
+    expect(result.columns.map((column) => column.key)).toEqual([
+      "CUIL", "Apellido", "Nombre", "Legajo", "Empresa", "Centro de costo",
+      "Horas base", "Horas normales", "Sereno (horas reales)", "Colectivo (horas reales)", "Total trabajado",
+      "Horas normales (para liquidación)", "Sereno (para liquidación)", "Colectivo (para liquidación)", "Equivalencia para liquidación",
+      "Reglas de horas especiales aplicadas", "Conflicto de reglas", "Estado",
     ]);
+    expect(result.columns.find((column) => column.key === "Total trabajado")?.kind).toBe("hours");
   });
 
-  it("'Horas especiales' sale de findBreakdownHoursForExport, no del TimeEntry, y no se suma al total", async () => {
-    repo.findForExport.mockResolvedValue([exportEntry({ hours: "8", systemRole: "NORMAL_BASE" })]);
-    repo.findBreakdownHoursForExport.mockResolvedValue([{ employeeId: "employee-1", minutes: 120 }]);
+  it("Horas base sólo desde NORMAL_BASE — un TimeEntry legacy no-Normal no infla nada", async () => {
+    repo.findForExport.mockResolvedValue([exportEntry({ hours: "8" }), exportEntry({ hours: "2", systemRole: null })]);
 
     const result = await timeEntriesService.exportByPerson({ period: "2026-08", includeInReview: false }, rrhhUser);
 
-    expect(repo.findBreakdownHoursForExport).toHaveBeenCalledWith(["employee-1"], "2026-08");
-    expect(result.rows).toEqual([
-      expect.objectContaining({
-        "Horas normales": "8",
-        "Horas especiales": "2",
-        "Horas trabajadas totales": "8",
-      }),
-    ]);
+    expect(result.rows).toEqual([expect.objectContaining({ "Horas base": "8", "Horas normales": "8", "Total trabajado": "8", "Equivalencia para liquidación": "8" })]);
   });
 
-  it("Etapa 8F — Domingo x2: 'Horas trabajadas totales' nunca se infla, el equivalente/adicional/regla van en columnas separadas", async () => {
-    repo.findForExport.mockResolvedValue([
-      exportEntry({ hours: "8", systemRole: "NORMAL_BASE", appliedMultiplier: 2, ruleNames: ["Domingo x2"] }),
-    ]);
-    repo.findBreakdownHoursForExport.mockResolvedValue([]);
+  it("una persona con sólo Colectivo (sin TimeEntry) en domingo x2 también se exporta: real 2, equivalencia 4", async () => {
+    repo.findForExport.mockResolvedValue([]);
+    repo.findBreakdownsForExport.mockResolvedValue([exportBreakdown(colectivo, 9, 120, 2, "employee-2")]);
+    repo.findEmployeesForExport.mockResolvedValue([{ ...employee, id: "employee-2", lastName: "Gomez" }]);
 
     const result = await timeEntriesService.exportByPerson({ period: "2026-08", includeInReview: false }, rrhhUser);
 
-    expect(result.rows).toEqual([
-      expect.objectContaining({
-        "Horas normales": "8",
-        "Horas trabajadas totales": "8", // real, nunca 16 — la persona no "trabajó" 16hs
-        "Horas especiales (equivalente liquidable)": "16", // 8 real x2, sólo el equivalente/liquidable
-        "Adicional por horas especiales": "8", // 16 - 8
-        "Reglas de horas especiales aplicadas": "Domingo x2",
-      }),
-    ]);
+    expect(repo.findEmployeesForExport).toHaveBeenCalledWith(["employee-2"]);
+    expect(repo.findClosuresForExport).toHaveBeenCalledWith(["employee-2"], "2026-08");
+    expect(result.rows).toEqual([expect.objectContaining({
+      Apellido: "Gomez", "Horas base": "0", "Total trabajado": "2", "Equivalencia para liquidación": "4", Estado: "APROBADO",
+    })]);
   });
 
-  it("Etapa 8F — sin regla especial (multiplicador 1): equivalente/adicional quedan en 0 y sin nombre de regla", async () => {
-    repo.findForExport.mockResolvedValue([exportEntry({ hours: "8", systemRole: "NORMAL_BASE", appliedMultiplier: 1 })]);
-    repo.findBreakdownHoursForExport.mockResolvedValue([]);
+  it("Domingo x2 sin conceptos: total trabajado real 8, equivalencia 16 en su propia columna", async () => {
+    repo.findForExport.mockResolvedValue([exportEntry({ appliedMultiplier: 2, ruleNames: ["Domingo x2"] })]);
 
     const result = await timeEntriesService.exportByPerson({ period: "2026-08", includeInReview: false }, rrhhUser);
 
-    expect(result.rows).toEqual([
-      expect.objectContaining({
-        "Horas trabajadas totales": "8",
-        "Horas especiales (equivalente liquidable)": "8",
-        "Adicional por horas especiales": "0",
-        "Reglas de horas especiales aplicadas": "",
-      }),
-    ]);
+    expect(result.rows).toEqual([expect.objectContaining({ "Total trabajado": "8", "Equivalencia para liquidación": "16", "Reglas de horas especiales aplicadas": "Domingo x2" })]);
   });
 
-  // Etapa 11B: antes de esta etapa, "Conceptos horarios (equivalente
-  // liquidable)"/"Total liquidable" no existían y "Adicional por horas
-  // especiales" ignoraba HourConceptBreakdown — el export daba 16, no 24,
-  // para el caso obligatorio del pedido (8 normales + 4 Sereno + x2).
-  describe("liquidable de Horas Especiales sobre Conceptos Horarios en el export (Etapa 11B)", () => {
-    it("caso obligatorio — 8hs normales + 4hs Sereno en domingo x2: Total liquidable = 24", async () => {
-      repo.findForExport.mockResolvedValue([
-        { ...exportEntry({ hours: "8", systemRole: "NORMAL_BASE", appliedMultiplier: 2, ruleNames: ["Domingo"] }), day: 27 },
-      ]);
-      repo.findBreakdownHoursForExport.mockResolvedValue([{ employeeId: "employee-1", day: 27, minutes: 240 }]);
+  it("conflicto de prioridad (empate): columna 'Conflicto de reglas' marca 'Sí'; sin conflicto queda vacía", async () => {
+    repo.findForExport.mockResolvedValue([exportEntry({ appliedMultiplier: 2.5, ruleNames: ["Domingo Odwyer", "Domingo Pañol"], wasConflicting: true })]);
+    const conflicted = await timeEntriesService.exportByPerson({ period: "2026-08", includeInReview: false }, rrhhUser);
+    expect(conflicted.rows).toEqual([expect.objectContaining({ "Conflicto de reglas": "Sí", "Reglas de horas especiales aplicadas": "Domingo Odwyer, Domingo Pañol" })]);
 
-      const result = await timeEntriesService.exportByPerson({ period: "2026-08", includeInReview: false }, rrhhUser);
+    repo.findForExport.mockResolvedValue([exportEntry()]);
+    const clean = await timeEntriesService.exportByPerson({ period: "2026-08", includeInReview: false }, rrhhUser);
+    expect(clean.rows).toEqual([expect.objectContaining({ "Conflicto de reglas": "" })]);
+  });
 
-      expect(result.rows).toEqual([
-        expect.objectContaining({
-          "Horas normales": "8",
-          "Horas especiales": "4", // Sereno real, nunca inflado
-          "Horas trabajadas totales": "8", // real, nunca 24
-          "Horas especiales (equivalente liquidable)": "16", // 8 x 2
-          "Conceptos horarios (equivalente liquidable)": "8", // 4 x 2
-          "Adicional por horas especiales": "12", // (16-8) + (8-4)
-          "Total liquidable": "24", // 8 + 4 + 12
-          "Reglas de horas especiales aplicadas": "Domingo",
-        }),
-      ]);
-    });
+  it("dos conceptos con el mismo nombre se distinguen por código en el encabezado", async () => {
+    repo.findForExport.mockResolvedValue([exportEntry()]);
+    repo.findBreakdownsForExport.mockResolvedValue([
+      exportBreakdown({ workTreatment: "ADDITIVE_TO_WORKED_TOTAL", name: "Traslado", code: "TR-1" }, 1, 60),
+      exportBreakdown({ workTreatment: "ADDITIVE_TO_WORKED_TOTAL", name: "Traslado", code: "TR-2" }, 1, 30),
+    ]);
 
-    it("un Concepto Horario en un día sin ninguna Hora Especial ese mismo empleado: equivalente = real (multiplicador 1 por default)", async () => {
-      repo.findForExport.mockResolvedValue([{ ...exportEntry({ hours: "8", systemRole: "NORMAL_BASE", appliedMultiplier: 1 }), day: 5 }]);
-      repo.findBreakdownHoursForExport.mockResolvedValue([{ employeeId: "employee-1", day: 5, minutes: 240 }]);
+    const result = await timeEntriesService.exportByPerson({ period: "2026-08", includeInReview: false }, rrhhUser);
 
-      const result = await timeEntriesService.exportByPerson({ period: "2026-08", includeInReview: false }, rrhhUser);
+    expect(result.rows[0]).toMatchObject({ "Traslado (TR-1) (horas reales)": "1", "Traslado (TR-2) (horas reales)": "0.5", "Total trabajado": "9.5" });
+  });
 
-      expect(result.rows).toEqual([
-        expect.objectContaining({
-          "Conceptos horarios (equivalente liquidable)": "4",
-          "Total liquidable": "12", // 8 + 4, sin adicional
-        }),
-      ]);
-    });
-
-    it("un Concepto Horario en un día distinto al de la Hora Especial (mismo empleado): sólo el día alcanzado multiplica", async () => {
-      repo.findForExport.mockResolvedValue([
-        { ...exportEntry({ hours: "8", systemRole: "NORMAL_BASE", appliedMultiplier: 2, ruleNames: ["Feriado"] }), day: 27 },
-      ]);
-      repo.findBreakdownHoursForExport.mockResolvedValue([{ employeeId: "employee-1", day: 10, minutes: 240 }]); // día 10, sin regla
-
-      const result = await timeEntriesService.exportByPerson({ period: "2026-08", includeInReview: false }, rrhhUser);
-
-      expect(result.rows).toEqual([
-        expect.objectContaining({
-          "Conceptos horarios (equivalente liquidable)": "4", // día 10 sin regla -> real, sin multiplicar
-          "Total liquidable": "20", // 8*2 + 4
-        }),
-      ]);
-    });
-
-    it("conflicto de prioridad (empate): columna 'Conflicto de reglas' marca 'Sí', sin bloquear el cálculo", async () => {
-      repo.findForExport.mockResolvedValue([{
-        ...exportEntry({ hours: "8", systemRole: "NORMAL_BASE", appliedMultiplier: 2.5 }),
-        day: 16,
-        timeSegment: {
-          specialHourRuleApplications: [
-            { wasConflicting: true, doubleHourRule: { name: "Domingo Odwyer" } },
-            { wasConflicting: true, doubleHourRule: { name: "Domingo Pañol" } },
-          ],
-        },
-      }]);
-      repo.findBreakdownHoursForExport.mockResolvedValue([]);
-
-      const result = await timeEntriesService.exportByPerson({ period: "2026-08", includeInReview: false }, rrhhUser);
-
-      expect(result.rows).toEqual([
-        expect.objectContaining({
-          "Conflicto de reglas": "Sí",
-          "Reglas de horas especiales aplicadas": "Domingo Odwyer, Domingo Pañol",
-        }),
-      ]);
-    });
-
-    it("sin ningún conflicto: columna 'Conflicto de reglas' queda vacía", async () => {
-      repo.findForExport.mockResolvedValue([exportEntry({ hours: "8", systemRole: "NORMAL_BASE", appliedMultiplier: 1 })]);
-      repo.findBreakdownHoursForExport.mockResolvedValue([]);
-
-      const result = await timeEntriesService.exportByPerson({ period: "2026-08", includeInReview: false }, rrhhUser);
-
-      expect(result.rows).toEqual([expect.objectContaining({ "Conflicto de reglas": "" })]);
-    });
+  it("CSV: usa exactamente las columnas del export (mismo orden)", () => {
+    const csv = timeEntriesExportToCsv([{ key: "Legajo", kind: "text" }, { key: "Total trabajado", kind: "hours" }], [{ Legajo: "0001", "Total trabajado": "9" }]);
+    expect(csv).toBe("Legajo;Total trabajado\r\n0001;9");
   });
 
   /**
    * Etapa 15E.2 (docs/decisions/TIME_EXPORT_CLOSURE_GATE_15E2.md): la
    * exportación DEFINITIVA (includeInReview=false, el default) exige que
-   * MonthlyTimeClosure esté APROBADO para cada empleado incluido. Sin
-   * cierre, o con cualquier otro estado, se bloquea el export completo
-   * antes de tocar HourConceptBreakdown o construir filas — nunca parcial.
+   * MonthlyTimeClosure esté APROBADO para cada empleado incluido (también
+   * quienes sólo tienen conceptos). Sin cierre, o con cualquier otro estado,
+   * se bloquea el export completo antes de construir filas — nunca parcial.
    */
   describe("gate de cierre mensual aprobado para exportación definitiva (Etapa 15E.2)", () => {
     it("cierre APROBADO: permite la exportación y la marca como definitiva", async () => {
-      repo.findForExport.mockResolvedValue([exportEntry({ hours: "8", systemRole: "NORMAL_BASE" })]);
-      repo.findBreakdownHoursForExport.mockResolvedValue([]);
+      repo.findForExport.mockResolvedValue([exportEntry()]);
       repo.findClosuresForExport.mockResolvedValue([{ employeeId: "employee-1", status: "APROBADO" }]);
 
       const result = await timeEntriesService.exportByPerson({ period: "2026-08", includeInReview: false }, rrhhUser);
@@ -1493,34 +1430,31 @@ describe("exportByPerson — 'Horas trabajadas totales' = Normal, 'Horas especia
       expect(repo.findClosuresForExport).toHaveBeenCalledWith(["employee-1"], "2026-08");
     });
 
-    it("sin ningún MonthlyTimeClosure para el período: bloquea", async () => {
-      repo.findForExport.mockResolvedValue([exportEntry({ hours: "8", systemRole: "NORMAL_BASE" })]);
+    it("sin ningún MonthlyTimeClosure para el período: bloquea sin armar filas", async () => {
+      repo.findForExport.mockResolvedValue([exportEntry()]);
       repo.findClosuresForExport.mockResolvedValue([]);
 
       await expect(
         timeEntriesService.exportByPerson({ period: "2026-08", includeInReview: false }, rrhhUser),
       ).rejects.toMatchObject({ statusCode: 409, code: "MONTHLY_CLOSURE_NOT_APPROVED" });
-      expect(repo.findBreakdownHoursForExport).not.toHaveBeenCalled();
+      expect(repo.findEmployeesForExport).not.toHaveBeenCalled();
     });
 
     it.each(["ABIERTO", "ENVIADO", "DEVUELTO", "CORRECCION_PENDIENTE"] as const)(
       "cierre en estado %s (no APROBADO): bloquea sin generar el archivo",
       async (status) => {
-        repo.findForExport.mockResolvedValue([exportEntry({ hours: "8", systemRole: "NORMAL_BASE" })]);
+        repo.findForExport.mockResolvedValue([exportEntry()]);
         repo.findClosuresForExport.mockResolvedValue([{ employeeId: "employee-1", status }]);
 
         await expect(
           timeEntriesService.exportByPerson({ period: "2026-08", includeInReview: false }, rrhhUser),
         ).rejects.toMatchObject({ statusCode: 409, code: "MONTHLY_CLOSURE_NOT_APPROVED" });
-        expect(repo.findBreakdownHoursForExport).not.toHaveBeenCalled();
       },
     );
 
-    it("multi-empleado: si uno solo no está aprobado, bloquea el export completo (nunca parcial)", async () => {
-      repo.findForExport.mockResolvedValue([
-        exportEntry({ employeeId: "employee-1", hours: "8", systemRole: "NORMAL_BASE" }),
-        exportEntry({ employeeId: "employee-2", hours: "6", systemRole: "NORMAL_BASE" }),
-      ]);
+    it("multi-empleado: si uno solo no está aprobado (aunque sólo tenga conceptos), bloquea el export completo", async () => {
+      repo.findForExport.mockResolvedValue([exportEntry({ employeeId: "employee-1" })]);
+      repo.findBreakdownsForExport.mockResolvedValue([exportBreakdown(colectivo, 3, 60, 1, "employee-2")]);
       repo.findClosuresForExport.mockResolvedValue([
         { employeeId: "employee-1", status: "APROBADO" },
         { employeeId: "employee-2", status: "ENVIADO" },
@@ -1529,11 +1463,10 @@ describe("exportByPerson — 'Horas trabajadas totales' = Normal, 'Horas especia
       await expect(
         timeEntriesService.exportByPerson({ period: "2026-08", includeInReview: false }, rrhhUser),
       ).rejects.toMatchObject({ code: "MONTHLY_CLOSURE_NOT_APPROVED" });
-      expect(repo.findBreakdownHoursForExport).not.toHaveBeenCalled();
     });
 
     it("no registra auditoría de EXPORT cuando el cierre no está aprobado (no hay export exitoso que auditar)", async () => {
-      repo.findForExport.mockResolvedValue([exportEntry({ hours: "8", systemRole: "NORMAL_BASE" })]);
+      repo.findForExport.mockResolvedValue([exportEntry()]);
       repo.findClosuresForExport.mockResolvedValue([{ employeeId: "employee-1", status: "ABIERTO" }]);
 
       await expect(
@@ -1543,8 +1476,7 @@ describe("exportByPerson — 'Horas trabajadas totales' = Normal, 'Horas especia
     });
 
     it("includeInReview=true (preview): no exige cierre aprobado y marca la respuesta como no definitiva", async () => {
-      repo.findForExport.mockResolvedValue([exportEntry({ hours: "8", systemRole: "NORMAL_BASE", status: "EN_REVISION" })]);
-      repo.findBreakdownHoursForExport.mockResolvedValue([]);
+      repo.findForExport.mockResolvedValue([exportEntry({ status: "EN_REVISION" })]);
       repo.findClosuresForExport.mockResolvedValue([]); // ni siquiera hay cierre — igual permite el preview
 
       const result = await timeEntriesService.exportByPerson({ period: "2026-08", includeInReview: true }, rrhhUser);
@@ -1556,7 +1488,6 @@ describe("exportByPerson — 'Horas trabajadas totales' = Normal, 'Horas especia
 
     it("sin filas para exportar (período vacío): no consulta cierres ni bloquea, devuelve vacío", async () => {
       repo.findForExport.mockResolvedValue([]);
-      repo.findBreakdownHoursForExport.mockResolvedValue([]);
 
       const result = await timeEntriesService.exportByPerson({ period: "2026-08", includeInReview: false }, rrhhUser);
 

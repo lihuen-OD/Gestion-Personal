@@ -258,7 +258,7 @@ export const timeEntriesController = {
   exportCsv: (async (req, res) => {
     const query = req.query as unknown as TimeEntriesExportQuery;
     const result = await timeEntriesService.exportByPerson(query, req.user!, requestAuditContext(req));
-    const csv = timeEntriesExportToCsv(result.rows);
+    const csv = timeEntriesExportToCsv(result.columns, result.rows);
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
     res.setHeader("Content-Disposition", `attachment; filename="horas_trabajadas_${query.period}.csv"`);
     res.send(`\uFEFF${csv}`);

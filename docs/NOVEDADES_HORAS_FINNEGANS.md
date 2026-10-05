@@ -6,8 +6,9 @@ La aplicación no liquida sueldos. Registra información operativa de legajos, h
 
 La separación queda definida así:
 
-- **Horas normales**: total real trabajado por la persona; es la grilla base obligatoria y la única fuente del total trabajado.
-- **Conceptos horarios adicionales / horas especiales**: desgloses de horas normales, como sereno, guardia, manejo de colectivo, nocturna, feriado trabajado u hora extra. No reemplazan ni incrementan el total trabajado.
+- **Horas base** (Hora normal, `NORMAL_BASE`): jornada real registrada por fichada o carga manual; grilla base obligatoria.
+- **Conceptos horarios adicionales**: cada uno declara su tratamiento (`docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md`). **Dentro de la jornada** (ej. sereno, guardia): clasifica horas ya incluidas en la base, no suma al total y reduce las Horas normales residuales. **Horas adicionales** (ej. manejo de colectivo, camioneta): tiempo trabajado fuera de la fichada, suma al total trabajado.
+- **Total trabajado** = Horas base + horas adicionales. La equivalencia para liquidación multiplica cada componente (Horas normales residuales, conceptos dentro de la jornada, horas adicionales) por su multiplicador de Hora Especial.
 - **Novedades**: eventos del legajo o del día, como vacaciones, enfermedad, llegada tarde, suspensión o accidente.
 - **Exportación Finnegans**: vista mensual de novedades exportables con códigos Finnegans.
 
@@ -29,7 +30,6 @@ Ejemplos de novedades:
 No son novedades:
 
 - Sereno.
-- Guardia.
 - Manejo de colectivo.
 - Hora extra.
 - Nocturna.
@@ -52,24 +52,27 @@ Cada concepto horario adicional define:
 
 Horas normales está disponible para todos los legajos sin asignación. Cada legajo habilita únicamente sus conceptos adicionales. En carga horaria siempre se muestra Horas normales y solo los conceptos adicionales habilitados para ese legajo.
 
-`priority` y la selección de un único concepto ganador pertenecen al modelo anterior y quedan deprecados. `countsAsWorked` no debe sumar conceptos adicionales al total real trabajado. La implementación actual puede no coincidir todavía y será corregida por etapas.
+`priority` y la selección de un único concepto ganador pertenecen al modelo anterior y quedan deprecados. `countsAsWorked` no decide si un concepto suma al total real trabajado: sólo lo decide `HourConcept.workTreatment`. La implementación actual puede no coincidir todavía y será corregida por etapas.
 
 ## Carga horaria
 
-La carga horaria se realiza por persona y día. Horas normales registra el total real; los conceptos adicionales registran desgloses que pueden superponerse con ese total.
+La carga horaria se realiza por persona y día. Horas base registra la jornada real; los conceptos dentro de la jornada clasifican parte de ella y las horas adicionales registran tiempo trabajado fuera de la fichada.
 
 Una misma persona puede tener el mismo día:
 
-- 10 horas normales trabajadas.
-- 2 horas de manejo de colectivo incluidas dentro de esas 10 horas.
+- 8 horas base (fichada 18:00–02:00).
+- 3 horas de sereno dentro de esa jornada (23:00–02:00).
+- 1 hora de manejo de colectivo, fuera de la fichada.
 - 1 novedad de llegada tarde.
 
-Cada registro se guarda separado para evitar mezclar el total trabajado, sus desgloses y los eventos administrativos. En este ejemplo el total trabajado es 10, no 12.
+Resultado: Horas normales 5 + Sereno 3 + Colectivo 1 = **9 h trabajadas** (no 8, porque Colectivo suma; no 12, porque Sereno ya está dentro de la base). Si el día es domingo ×2, la equivalencia para liquidación es 10 + 6 + 2 = 18 h. Cada registro se guarda separado y la novedad es un evento administrativo que no modifica horas.
 
 **Etapa 15G.1** (`docs/decisions/NOVELTIES_AS_ADMINISTRATIVE_JUSTIFICATION_15G1.md`, decisión funcional final): el fichador y la carga horaria manual son la única fuente de verdad de horas reales; Novedades es justificación administrativa. Una novedad **nunca** crea ni modifica un `TimeEntry`, en ningún estado (ni `PENDIENTE` ni `APROBADO`) ni para ningún tipo. Si una novedad `APROBADA` bloquea la carga horaria (`NoveltyType.timeEntryBehavior = BLOQUEA_NUEVA_CARGA`, única fuente desde la Etapa 15L.6, `docs/decisions/NOVELTY_TYPE_LEGACY_REMOVAL_15L6.md`), su único efecto es impedir que se cargue manualmente una hora **nueva** ese día — no genera ningún registro de 0 horas por sí misma. La app no calcula descuento ni sueldo.
 
 ## Exportación Finnegans
 
+> Reconfirmado el 2026-10-02 (`docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md` §11): `finnegans-export` lee sólo `Novelty`, el cierre mensual y su historial de lotes — no consume `TimeEntry` ni `HourConceptBreakdown`, así que el modelo de tiempo trabajado no lo modificó. El export de horas para liquidación es `GET /api/time-entries/export`.
+>
 > Confirmado en el diagnóstico de la Etapa 15E.2 (`docs/decisions/TIME_EXPORT_CLOSURE_GATE_15E2.md`): el módulo `finnegans-export` (`GET /api/finnegans-export/novelties[.csv]`) exporta exclusivamente novedades, tal como ya documentaba esta sección — nunca horas/liquidación. Por eso el requisito de cierre mensual `APROBADO` de 15E.2 se aplicó a `GET /api/time-entries/export(.csv)`; este módulo tiene, desde la Etapa 15L.3A (`docs/decisions/FINNEGANS_EXPORT_NORMALIZED_15L3A.md`), su **propio** gate de cierre mensual, independiente del de horas (ver más abajo).
 
 Exportación Finnegans reemplaza el enfoque de liquidación dentro de la app.

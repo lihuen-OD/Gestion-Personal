@@ -1,8 +1,8 @@
 import { apiRequest } from "./apiClient";
 import { collectAllPages } from "./listQuery";
-import { cachePolicies, cachedData, invalidateCacheFamily } from "../cache";
+import { cachePolicies, cachedData, invalidateCacheFamily, type CacheFamily } from "../cache";
 import { associatedEmployeesQuery, mapAssociatedEmployeeFromApi, type ApiAssociatedEmployee } from "./associatedEmployeeMapper";
-import type { HourConcept, HourConceptFilters, HourConceptKind, HourConceptLoadMode, HourConceptStatus, HourConceptSystemRole } from "../../types/hourConcept.types";
+import type { HourConcept, HourConceptDeletionSummary, HourConceptFilters, HourConceptKind, HourConceptLoadMode, HourConceptStatus, HourConceptSystemRole, HourConceptWorkTreatment } from "../../types/hourConcept.types";
 import type { AssociatedEmployeeFilters, AssociatedEmployeeStatus, AssociatedEmployeesResult, HourConceptEmployeeAssociation } from "../../types/associatedEmployee.types";
 
 type ApiHourConcept = {
@@ -13,8 +13,8 @@ type ApiHourConcept = {
   status: HourConceptStatus;
   loadMode: HourConceptLoadMode | null;
   systemRole: HourConceptSystemRole | null;
+  workTreatment?: HourConceptWorkTreatment | null;
   countsAsWorked?: boolean;
-  deletedAt: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -42,6 +42,7 @@ export function mapHourConceptFromApi(item: ApiHourConcept): HourConcept {
     status: item.status,
     loadMode: item.loadMode,
     systemRole: item.systemRole,
+    workTreatment: item.workTreatment ?? null,
     createdAt: item.createdAt,
     updatedAt: item.updatedAt,
   };
@@ -61,6 +62,9 @@ export function mapToApi(item: HourConcept) {
     kind: item.kind,
     status: item.status,
     loadMode: item.loadMode,
+    // Obligatorio para todo concepto adicional. RRHH puede corregirlo aunque
+    // el concepto tenga horas: el backend reinterpreta la historia completa.
+    ...(item.workTreatment ? { workTreatment: item.workTreatment } : {}),
   };
 }
 
@@ -74,23 +78,11 @@ function toQuery(filters?: Partial<HourConceptFilters>) {
   return query ? `?${query}` : "";
 }
 
-function nextCode(items: HourConcept[]) {
-  const max = items.reduce((value, item) => Math.max(value, Number(item.code.replace(/\D/g, "")) || 0), 0);
-  return `HOR-${String(max + 1).padStart(3, "0")}`;
-}
-
 // Etapa 8N/8O: extraídas como funciones puras (mismo criterio que
 // buildRulesByConceptPath en hourConceptRuleApiService.ts) para poder
 // confirmar el endpoint real sin mockear la red.
 export function buildHourConceptPath(hourConceptId: string) {
   return `/hour-concepts/${hourConceptId}`;
-}
-
-// Etapa 8P: force=true es la eliminación forzada (con uso histórico) — la
-// pantalla solo lo pasa después de una segunda confirmación explícita, tras
-// que el primer intento (sin force) respondió 409 HOUR_CONCEPT_IN_USE.
-export function buildHourConceptRemovePath(hourConceptId: string, force?: boolean) {
-  return force ? `${buildHourConceptPath(hourConceptId)}?force=true` : buildHourConceptPath(hourConceptId);
 }
 
 export function buildHourConceptEmployeesPath(hourConceptId: string) {
@@ -99,6 +91,27 @@ export function buildHourConceptEmployeesPath(hourConceptId: string) {
 
 export function buildHourConceptEmployeePath(hourConceptId: string, employeeId: string) {
   return `/hour-concepts/${hourConceptId}/employees/${employeeId}`;
+}
+
+// Editar o eliminar un concepto cambia lo que muestran todas las pantallas
+// que lo unen con sus horas — sobre todo workTreatment, que reinterpreta la
+// historia completa (docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md §12):
+// Legajo y grilla por legajo ("employees"), Carga de horas y Por persona
+// ("time-entries"), Bandeja ("pending"), dashboard, cierres y novedades
+// (al eliminar se desvincula su concepto destino). Mismo alcance que
+// hourConcepts.controller.ts::clearHourConceptDependentReadCaches.
+export const HOUR_CONCEPT_DEPENDENT_CACHE_FAMILIES: readonly CacheFamily[] = [
+  "hour-concepts",
+  "employees",
+  "time-entries",
+  "pending",
+  "dashboard",
+  "monthly-closures",
+  "novelties",
+];
+
+async function invalidateHourConceptDependentCaches(reason: string) {
+  await Promise.all(HOUR_CONCEPT_DEPENDENT_CACHE_FAMILIES.map((family) => invalidateCacheFamily(family, reason)));
 }
 
 function isHourConceptList(value: HourConcept[]) {
@@ -117,6 +130,11 @@ export const hourConceptApiService = {
     });
   },
 
+  async getNextCode() {
+    const response = await apiRequest<{ data: { code: string } }>("/hour-concepts/next-code", { apiCache: false });
+    return response.data.code;
+  },
+
   async create(item: HourConcept) {
     const response = await apiRequest<ApiItemResponse>("/hour-concepts", {
       method: "POST",
@@ -131,7 +149,7 @@ export const hourConceptApiService = {
       method: "PATCH",
       body: mapToApi(item),
     });
-    await invalidateCacheFamily("hour-concepts", "hour concept updated");
+    await invalidateHourConceptDependentCaches("hour concept updated");
     return mapHourConceptFromApi(response.data);
   },
 
@@ -144,21 +162,18 @@ export const hourConceptApiService = {
       method: "PATCH",
       body: { status },
     });
-    await invalidateCacheFamily("hour-concepts", "hour concept status updated");
+    await invalidateHourConceptDependentCaches("hour concept status updated");
     return mapHourConceptFromApi(response.data);
   },
 
-  // Eliminación (Etapa 8O/8P): sin uso histórico, delete físico directo. Con
-  // uso y force ausente/false, el backend responde 409 HOUR_CONCEPT_IN_USE —
-  // este método no lo atrapa, lo deja propagarse (la pantalla lo usa para
-  // decidir si debe volver a confirmar con force:true). Con force:true y uso
-  // real, el backend hace baja lógica (nunca delete físico ahí).
-  async remove(id: string, options?: { force?: boolean }) {
-    await apiRequest<{ data: unknown }>(buildHourConceptRemovePath(id, options?.force), { method: "DELETE" });
-    await invalidateCacheFamily("hour-concepts", "hour concept deleted");
+  // Eliminación definitiva: un solo DELETE borra el concepto y su historial
+  // específico (desgloses, reglas, habilitaciones) y conserva fichadas y
+  // jornadas. Para conservar la historia se deshabilita (updateStatus).
+  async remove(id: string) {
+    const response = await apiRequest<{ data: HourConceptDeletionSummary }>(buildHourConceptPath(id), { method: "DELETE" });
+    await invalidateHourConceptDependentCaches("hour concept deleted");
+    return response.data;
   },
-
-  getNextCode: nextCode,
 
   // Empleados habilitados para el concepto, vistos desde el concepto (Etapa
   // 8G; dedupe/cache agregado en 14H.5) — envuelto con `cachedData` (misma

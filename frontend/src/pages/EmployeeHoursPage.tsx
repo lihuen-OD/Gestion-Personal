@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
-import { AlertTriangle, Bell, CalendarDays, CheckCircle2, Clock3, ClipboardList, Coins, RefreshCcw } from "lucide-react";
+import { AlertTriangle, Bell, CalendarDays, CheckCircle2, ClipboardList, RefreshCcw } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { employeeApiService } from "../services/api/employeeApiService";
 import { ApiError, getUserErrorMessage } from "../services/api/apiClient";
@@ -20,15 +20,20 @@ import { currentMonthPeriod, formatPeriodDay, formatPeriodLabel, getMonthDays, g
 import { formatCompactDurationMinutes, formatDurationMinutes, hoursDecimalToMinutes } from "../utils/hours";
 import { formatTimeEntryObservation } from "../utils/userFacingText";
 import {
-  additionalBreakdownMinutes,
   applyBreakdownToRows,
   applyNormalEntryToRows,
   hourConceptLoadModeLabel,
   isManualBreakdownEditable,
   normalWorkedDays,
-  totalWorkedMinutesFromRows,
+  timeGridRowLabel,
+  timeGridRowSubtitle,
   upsertTimeEntry,
 } from "../utils/employeeHoursGrid";
+import { emptyPeriodAccounting, workTreatmentDescriptions, workTreatmentLabels } from "../utils/workedTimeAccounting";
+import type { PeriodAccounting } from "../types/workedTimeAccounting.types";
+import { AccountingStatCards } from "../components/hours/AccountingStatCards";
+import { HoursAccountingSummary } from "../components/hours/HoursAccountingSummary";
+import { MonthlyHoursTableSections } from "../components/hours/MonthlyHoursTableSections";
 import { roleLevel } from "../utils/roles";
 import { useAsyncAction } from "../utils/useAsyncAction";
 import { Field } from "../components/ui/FormControls";
@@ -80,11 +85,16 @@ function manualBreakdownSaveErrorMessage(error: unknown) {
       return "El período está cerrado y no admite edición directa.";
     }
     if (error.code === "MANUAL_BREAKDOWN_CONCURRENT_CONFLICT") {
-      return "Alguien más modificó este desglose al mismo tiempo. Volvé a intentar.";
+      return "Alguien más modificó esta carga al mismo tiempo. Volvé a intentar.";
     }
-    return "No pudimos guardar el desglose manual. Revisá los datos e intentá nuevamente.";
+    // docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md: el backend ya redacta
+    // estos dos rechazos de negocio en lenguaje de usuario (concepto y fecha).
+    if (error.code === "WITHIN_BASE_REQUIRES_BASE_HOURS" || error.code === "WITHIN_BASE_EXCEEDS_BASE_HOURS") {
+      return error.message;
+    }
+    return "No pudimos guardar la carga del concepto. Revisá los datos e intentá nuevamente.";
   }
-  return "No pudimos guardar el desglose manual. Intentá nuevamente.";
+  return "No pudimos guardar la carga del concepto. Intentá nuevamente.";
 }
 
 async function fetchPeriodNovelties(employeeId: string, forPeriod: string) {
@@ -133,15 +143,14 @@ export function EmployeeHoursPage() {
   const [entries, setEntries] = useState<TimeEntry[]>([]);
   const [periodNovelties, setPeriodNovelties] = useState<Novelty[]>([]);
   const [attendanceIssues, setAttendanceIssues] = useState(0);
-  // Etapa 11B: Horas Especiales en el detalle por legajo — mismo criterio ya
-  // usado en la grilla de período (11A/11A.1). Se sincroniza con el mismo
-  // refetch (inicial y silencioso) que ya usan `entries`/`rows`; no se
-  // recalcula localmente al guardar (ver comentario del efecto de refresh).
-  const [specialHours, setSpecialHours] = useState<{
-    byDay: Record<string, ApiTimeGridSpecialHourDay>;
-    additionalMinutes: number;
-    liquidableTotalMinutes: number;
-  }>({ byDay: {}, additionalMinutes: 0, liquidableTotalMinutes: 0 });
+  // Contabilidad del período (docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md)
+  // e indicador de Hora Especial por día: se sincronizan con el mismo refetch
+  // (inicial y silencioso) que `entries`/`rows`, nunca se recalculan acá.
+  // `syncing` marca la ventana entre un guardado optimista y la llegada de la
+  // contabilidad recalculada por el backend.
+  const [accounting, setAccounting] = useState<PeriodAccounting>(emptyPeriodAccounting);
+  const [specialHoursByDay, setSpecialHoursByDay] = useState<Record<string, ApiTimeGridSpecialHourDay>>({});
+  const [syncing, setSyncing] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const monthDays = getMonthDays(period);
@@ -164,7 +173,8 @@ export function EmployeeHoursPage() {
         setNoveltyTypes([]);
         setRows(grid.rows);
         setAttendanceIssues(grid.attendanceIssues);
-        setSpecialHours({ byDay: grid.specialHoursByDay, additionalMinutes: grid.specialHourAdditionalMinutes, liquidableTotalMinutes: grid.specialHourLiquidableTotalMinutes });
+        setAccounting(grid.accounting);
+        setSpecialHoursByDay(grid.specialHoursByDay);
         setLoading(false);
 
         fetchPeriodNovelties(id, period).then(({ novelties, noveltyTypes: apiNoveltyTypes }) => {
@@ -185,7 +195,8 @@ export function EmployeeHoursPage() {
         setNoveltyTypes([]);
         setRows([]);
         setAttendanceIssues(0);
-        setSpecialHours({ byDay: {}, additionalMinutes: 0, liquidableTotalMinutes: 0 });
+        setAccounting(emptyPeriodAccounting());
+        setSpecialHoursByDay({});
         setLoadError("No pudimos cargar la grilla horaria. Verificá el legajo e intentá nuevamente.");
       } finally {
         if (!cancelled) setLoading(false);
@@ -233,10 +244,13 @@ export function EmployeeHoursPage() {
       setEntries(grid.entries);
       setRows(grid.rows);
       setAttendanceIssues(grid.attendanceIssues);
-      setSpecialHours({ byDay: grid.specialHoursByDay, additionalMinutes: grid.specialHourAdditionalMinutes, liquidableTotalMinutes: grid.specialHourLiquidableTotalMinutes });
+      setAccounting(grid.accounting);
+      setSpecialHoursByDay(grid.specialHoursByDay);
     }).catch(() => {
       // Re-sincronización silenciosa: si falla, se conserva el último estado
       // local ya actualizado de forma optimista.
+    }).finally(() => {
+      if (!cancelled) setSyncing(false);
     });
     fetchPeriodNovelties(id, period).then(({ novelties, noveltyTypes: apiNoveltyTypes }) => {
       if (cancelled) return;
@@ -302,12 +316,14 @@ export function EmployeeHoursPage() {
   const selectedLocked = selectedEntry ? !timeEntryApiService.canEdit(selectedEntry) && !canCorrectApproved : false;
   // Etapa 11B: multiplicador de Hora Especial del día que se está editando —
   // aplica igual sea la fila de Hora normal o un concepto adicional (11A.1).
-  const selectedDaySpecialHour = selected ? specialHours.byDay[String(selected.day)] : undefined;
+  const selectedDaySpecialHour = selected ? specialHoursByDay[String(selected.day)] : undefined;
+  const selectedDayAccounting = selected ? accounting.days[String(selected.day)] : undefined;
   // Etapa 6L.3: RRHH ya es quien aprueba, así que su carga manual se aplica
   // directo — no tiene sentido mostrarle "Enviar a revisión" a sí mismo.
   const isRrhh = Boolean(user && roleLevel(user.role) === 1);
   const manualRow = manualSelected ? rows.find((row) => row.concept.id === manualSelected.conceptId) : undefined;
-  const manualDaySpecialHour = manualSelected ? specialHours.byDay[String(manualSelected.day)] : undefined;
+  const manualDaySpecialHour = manualSelected ? specialHoursByDay[String(manualSelected.day)] : undefined;
+  const manualDayAccounting = manualSelected ? accounting.days[String(manualSelected.day)] : undefined;
   const { isRunning: isSavingManual, run: saveManualBreakdown } = useAsyncAction(async () => {
     if (!id || !manualSelected || !manualRow || !isManualBreakdownEditable(manualRow)) return;
     const numericHours = Number(manualHours);
@@ -322,11 +338,12 @@ export function EmployeeHoursPage() {
         minutes,
         observation: manualObservation || null,
       });
-      // Etapa 6L.4: actualización local inmediata — no depende de esperar el
-      // refetch en segundo plano para reflejar el desglose recién guardado.
-      // No toca la fila NORMAL_BASE ni su total.
+      // Etapa 6L.4: actualización local inmediata de la celda — los valores
+      // calculados (Horas normales, total, equivalencia) quedan atenuados
+      // hasta que el refetch trae la contabilidad del backend.
       setRows((prevRows) => applyBreakdownToRows(prevRows, manualRow.concept.id, manualSelected.day, minutes));
       setManualSelected(undefined);
+      setSyncing(true);
       setRefresh((value) => value + 1);
     } catch (saveError) {
       setManualError(manualBreakdownSaveErrorMessage(saveError));
@@ -437,6 +454,7 @@ export function EmployeeHoursPage() {
           }
         }
       }
+      setSyncing(true);
       setRefresh((value) => value + 1);
       setSelected(undefined);
     } finally {
@@ -459,8 +477,6 @@ export function EmployeeHoursPage() {
       </Section>
     );
   }
-  const totalMinutes = totalWorkedMinutesFromRows(rows);
-  const additionalTotalMinutes = additionalBreakdownMinutes(rows);
   const daysWithNormalHours = normalWorkedDays(rows);
   const exportableNovelties = periodNovelties.filter(
     (novelty) =>
@@ -509,14 +525,8 @@ export function EmployeeHoursPage() {
         </div>
       </div>
 
-      <div className={specialHours.additionalMinutes > 0 ? "stat-grid five employee-hours-kpis" : "stat-grid employee-hours-kpis"}>
-        <StatCard label="Horas trabajadas" value={formatDurationMinutes(totalMinutes)} icon={Clock3} />
-        <StatCard
-          label="Desgloses adicionales"
-          value={formatDurationMinutes(additionalTotalMinutes)}
-          icon={AlertTriangle}
-          tone="orange"
-        />
+      <div className={accounting.hasSpecialMultiplier ? "stat-grid employee-hours-kpis" : "stat-grid three employee-hours-kpis"}>
+        <AccountingStatCards accounting={accounting} />
         <StatCard
           label="Dias con carga"
           value={daysWithNormalHours}
@@ -529,15 +539,6 @@ export function EmployeeHoursPage() {
           icon={Bell}
           tone="purple"
         />
-        {specialHours.additionalMinutes > 0 ? (
-          <StatCard
-            label="Valor liquidable"
-            value={formatDurationMinutes(specialHours.liquidableTotalMinutes)}
-            detail={`Incluye Hora especial: +${formatDurationMinutes(specialHours.additionalMinutes)}`}
-            icon={Coins}
-            tone="green"
-          />
-        ) : null}
       </div>
 
       <Section
@@ -560,8 +561,16 @@ export function EmployeeHoursPage() {
       </Section>
 
       <Section
+        title="Composición del período"
+        subtitle="Cuánto se trabajó realmente y cómo se compone para liquidación. Las horas dentro de la jornada no se vuelven a sumar al total."
+        className="employee-hours-composition"
+      >
+        <HoursAccountingSummary accounting={accounting} concepts={rows.map((row) => row.concept)} syncing={syncing} />
+      </Section>
+
+      <Section
         title="Grilla mensual por concepto"
-        subtitle={`Horas normales contiene el total real. Los conceptos adicionales son desgloses y no se suman al total (${formatPeriodLabel(period)}). Los automáticos se calculan por sistema.`}
+        subtitle={`Horas base registradas, su distribución dentro de la jornada y las horas adicionales fuera de la fichada (${formatPeriodLabel(period)}). Los conceptos automáticos se calculan por sistema.`}
       >
         <div className="hours-grid monthly-concept-grid" tabIndex={0} aria-label="Grilla mensual por concepto; desplazamiento horizontal disponible">
           <table className="monthly-concept-table">
@@ -574,21 +583,25 @@ export function EmployeeHoursPage() {
                 <th>Total</th>
               </tr>
             </thead>
-            <tbody>
-              {rows.map((row) => (
-                <tr key={row.concept.id}>
+            <MonthlyHoursTableSections
+              rows={rows}
+              accounting={accounting}
+              monthDays={monthDays}
+              syncing={syncing}
+              renderRow={(row) => {
+                const label = timeGridRowLabel(row);
+                return (
+                <tr key={row.concept.id} className={row.role === "NORMAL_BASE" ? "hours-base-row" : undefined}>
                   <td>
-                    <b>{row.concept.name}</b>
-                    <span className="table-sub">
-                      {row.role === "NORMAL_BASE" ? "Total trabajado · Base del sistema" : `Desglose · ${hourConceptLoadModeLabel(row.concept.loadMode)}`}
-                    </span>
+                    <b>{label}</b>
+                    <span className="table-sub" title={timeGridRowSubtitle(row)}>{timeGridRowSubtitle(row)}</span>
                   </td>
                   {monthDays.map((day) => {
                     const entry = row.role === "NORMAL_BASE" ? entryFor(day, row.concept.id, row.concept.name) : undefined;
                     const novelties = row.role === "NORMAL_BASE" ? conceptNovelties(day, row.concept.name) : [];
                     const mainNovelty = novelties[0];
                     const breakdownMinutes = row.minutesByDay[String(day)] ?? 0;
-                    const daySpecialHour = specialHours.byDay[String(day)];
+                    const daySpecialHour = specialHoursByDay[String(day)];
                     const cellClass = [
                       "hour-cell",
                       entry || breakdownMinutes ? "filled" : "",
@@ -597,9 +610,8 @@ export function EmployeeHoursPage() {
                     ]
                       .filter(Boolean)
                       .join(" ");
-                    // Etapa 11B: el multiplicador de Hora Especial de un día alcanza tanto a
-                    // la Hora normal como a los conceptos adicionales cargados ese día (11A.1)
-                    // — el punto ámbar se muestra en cualquier fila, no sólo en Hora normal.
+                    // El multiplicador de Hora Especial de un día alcanza a todas las
+                    // filas — el punto ámbar se muestra en cualquier fila.
                     const specialHourDot = daySpecialHour ? (
                       <span className="alert-dot orange" title={`Hora especial aplicada (${formatMultiplier(daySpecialHour.multiplier)})`} />
                     ) : null;
@@ -612,7 +624,7 @@ export function EmployeeHoursPage() {
                           <button
                             className={cellClass}
                             title={[entry || isBlocked(day) ? fullDuration : "Agregar horas", ...novelties.map((novelty) => novelty.type)].filter(Boolean).join(" · ")}
-                            aria-label={`${row.concept.name}, día ${day}: ${entry || isBlocked(day) ? fullDuration : "agregar horas"}`}
+                            aria-label={`${label}, día ${day}: ${entry || isBlocked(day) ? fullDuration : "agregar horas"}`}
                             onClick={() => openCell(day, row.concept.id, row.concept.name, entry)}
                           >
                             <span>{entry ? compactDuration : isBlocked(day) ? "0m" : "+"}</span>
@@ -622,8 +634,8 @@ export function EmployeeHoursPage() {
                         ) : isManualBreakdownEditable(row) ? (
                           <button
                             className={cellClass}
-                            title={`${breakdownMinutes ? `${fullDuration} · ` : ""}${hourConceptLoadModeLabel(row.concept.loadMode)} · editar desglose`}
-                            aria-label={`${row.concept.name}, día ${day}: ${breakdownMinutes ? fullDuration : "agregar desglose"}`}
+                            title={`${breakdownMinutes ? `${fullDuration} · ` : ""}${timeGridRowSubtitle(row)} · editar`}
+                            aria-label={`${label}, día ${day}: ${breakdownMinutes ? fullDuration : "agregar horas"}`}
                             onClick={() => {
                               setManualSelected({ day, conceptId: row.concept.id });
                               setManualHours(String(breakdownMinutes / 60));
@@ -635,7 +647,7 @@ export function EmployeeHoursPage() {
                             {specialHourDot}
                           </button>
                         ) : (
-                          <span className={cellClass} title={`${breakdownMinutes ? `${fullDuration} · ` : ""}${hourConceptLoadModeLabel(row.concept.loadMode)} · solo lectura`} aria-label={`${row.concept.name}, día ${day}: ${breakdownMinutes ? fullDuration : "sin horas"}`}>
+                          <span className={cellClass} title={`${breakdownMinutes ? `${fullDuration} · ` : ""}${timeGridRowSubtitle(row)} · solo lectura`} aria-label={`${label}, día ${day}: ${breakdownMinutes ? fullDuration : "sin horas"}`}>
                             {breakdownMinutes ? compactDuration : "—"}
                             {specialHourDot}
                           </span>
@@ -647,27 +659,34 @@ export function EmployeeHoursPage() {
                     <b title={formatDurationMinutes(row.totalMinutes)}>{formatCompactDurationMinutes(row.totalMinutes)}</b>
                   </td>
                 </tr>
-              ))}
-            </tbody>
+                );
+              }}
+            />
           </table>
         </div>
       </Section>
 
       {manualSelected && manualRow ? (
         <Modal
-          title={`Cargar desglose ${manualRow.concept.name} · ${formatPeriodDay(period, manualSelected.day)}`}
+          title={`Cargar ${manualRow.concept.name} · ${formatPeriodDay(period, manualSelected.day)}`}
           close={() => setManualSelected(undefined)}
         >
           <div className="form-stack time-entry-modal-stack">
-            <div className="info-note compact">
-              <b>Desglose adicional · {hourConceptLoadModeLabel(manualRow.concept.loadMode)}</b>
-              <p>Esta carga no modifica Horas normales ni el total trabajado.</p>
-            </div>
+            {manualRow.concept.workTreatment ? (
+              <div className="info-note compact">
+                <b>{workTreatmentLabels[manualRow.concept.workTreatment]} · {hourConceptLoadModeLabel(manualRow.concept.loadMode)}</b>
+                <p>
+                  {workTreatmentDescriptions[manualRow.concept.workTreatment]}
+                  {manualRow.concept.workTreatment === "WITHIN_BASE" ? " Reduce las horas normales de ese día y requiere horas base registradas." : ""}
+                </p>
+              </div>
+            ) : null}
             {manualDaySpecialHour ? (
               <div className="info-note compact special-hour">
                 <b>Hora especial aplicada · Multiplicador {formatMultiplier(manualDaySpecialHour.multiplier)}{manualDaySpecialHour.ruleNames.length ? `: ${manualDaySpecialHour.ruleNames.join(", ")}` : ""}</b>
                 <p>
-                  Este concepto también queda alcanzado ese día. Valor liquidable del día: {formatDurationMinutes(manualDaySpecialHour.liquidableTotalMinutes)}
+                  Este concepto también queda alcanzado ese día.
+                  {manualDayAccounting ? ` Equivalencia del día para liquidación: ${formatDurationMinutes(manualDayAccounting.settlement.totalMinutes)}.` : ""}
                   {manualDaySpecialHour.conflict ? " · Hay más de una regla en conflicto — se aplicó la de mayor prioridad." : ""}
                 </p>
               </div>
@@ -686,12 +705,12 @@ export function EmployeeHoursPage() {
                 <textarea value={manualObservation} onChange={(event) => setManualObservation(event.target.value)} />
               </label>
             </div>
-            <p className="table-sub">Guardar 0 horas elimina el desglose manual de ese día.</p>
+            <p className="table-sub">Guardar 0 horas elimina la carga manual de ese día.</p>
             {manualError ? <p className="error">{manualError}</p> : null}
             <div className="form-actions">
               <Button variant="subtle" onClick={() => setManualSelected(undefined)}>Cancelar</Button>
               <Button variant="primary" onClick={saveManualBreakdown} disabled={isSavingManual}>
-                {isSavingManual ? "Guardando..." : Number(manualHours) === 0 ? "Eliminar desglose" : "Guardar desglose"}
+                {isSavingManual ? "Guardando..." : Number(manualHours) === 0 ? "Eliminar carga" : "Guardar carga"}
               </Button>
             </div>
           </div>
@@ -700,14 +719,14 @@ export function EmployeeHoursPage() {
 
       {selected ? (
         <Modal
-          title={`Cargar ${selectedConceptName} · ${formatPeriodDay(period, selected.day)}`}
+          title={`Cargar ${selectedRow ? timeGridRowLabel(selectedRow) : "Horas base"} · ${formatPeriodDay(period, selected.day)}`}
           close={() => setSelected(undefined)}
         >
           <div className="form-stack time-entry-modal-layout">
             <div className="time-entry-modal-summary">
               <div className="context-hour-card">
               <div>
-                <b>{selectedConceptName}</b>
+                <b>{selectedRow ? timeGridRowLabel(selectedRow) : "Horas base"}</b>
                 <span>
                   {fullName(employee)} · {monthDate(period, selected.day)}
                 </span>
@@ -723,8 +742,8 @@ export function EmployeeHoursPage() {
                 <div className="info-note compact special-hour">
                 <b>Hora especial aplicada · Multiplicador {formatMultiplier(selectedDaySpecialHour.multiplier)}{selectedDaySpecialHour.ruleNames.length ? `: ${selectedDaySpecialHour.ruleNames.join(", ")}` : ""}</b>
                 <p>
-                  Horas reales sin cambios. Valor liquidable del día: {formatDurationMinutes(selectedDaySpecialHour.liquidableTotalMinutes)}{" "}
-                  (adicional +{formatDurationMinutes(selectedDaySpecialHour.additionalMinutes)})
+                  Horas reales sin cambios.
+                  {selectedDayAccounting ? ` Equivalencia del día para liquidación: ${formatDurationMinutes(selectedDayAccounting.settlement.totalMinutes)} (total trabajado ${formatDurationMinutes(selectedDayAccounting.totalWorkedMinutes)}).` : ""}
                   {selectedDaySpecialHour.conflict ? " · Hay más de una regla en conflicto — se aplicó la de mayor prioridad." : ""}
                 </p>
                 </div>

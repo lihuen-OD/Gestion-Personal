@@ -20,6 +20,7 @@ import type {
   UpsertEmployeeTransportInput,
 } from "./employees.schemas";
 import type { employeeListSortKeys } from "./employees.schemas";
+import { accountingBreakdownSelect, countedBreakdownStatusWhere } from "../time-entries/workedTimeAccounting";
 
 const employeeOptionSelect = {
   id: true,
@@ -86,7 +87,7 @@ const employeeListSelect = {
 // habilitaciones debe reusar este fragmento en vez de redeclarar el suyo.
 const assignableHourConceptsSelect = {
   where: {
-    hourConcept: { systemRole: null, status: "ACTIVO", deletedAt: null, loadMode: { not: null } },
+    hourConcept: { systemRole: null, status: "ACTIVO", loadMode: { not: null } },
   },
   select: {
     hourConceptId: true,
@@ -606,6 +607,20 @@ const overviewSectorChainSelect = {
   },
 } satisfies Prisma.SectorSelect;
 
+// Concepto tal como lo muestra la grilla por legajo: workTreatment decide si
+// la fila es "Dentro de la jornada" o "Horas adicionales"
+// (docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md).
+const timeGridConceptSelect = {
+  id: true,
+  code: true,
+  name: true,
+  kind: true,
+  loadMode: true,
+  status: true,
+  systemRole: true,
+  workTreatment: true,
+} satisfies Prisma.HourConceptSelect;
+
 const timeGridEmployeeSelect = {
   id: true,
   legajo: true,
@@ -640,8 +655,8 @@ const timeGridEmployeeSelect = {
     },
   },
   hourConcepts: {
-    where: { hourConcept: { systemRole: null, status: "ACTIVO", deletedAt: null, loadMode: { not: null } } },
-    select: { hourConcept: { select: { id: true, code: true, name: true, kind: true, loadMode: true, status: true, systemRole: true } } },
+    where: { hourConcept: { systemRole: null, status: "ACTIVO", loadMode: { not: null } } },
+    select: { hourConcept: { select: timeGridConceptSelect } },
   },
 } satisfies Prisma.EmployeeSelect;
 
@@ -655,14 +670,14 @@ const timeGridCoreEmployeeSelect = {
   lastName: true,
   status: true,
   hourConcepts: {
-    where: { hourConcept: { systemRole: null, status: "ACTIVO", deletedAt: null, loadMode: { not: null } } },
-    select: { hourConcept: { select: { id: true, code: true, name: true, kind: true, loadMode: true, status: true, systemRole: true } } },
+    where: { hourConcept: { systemRole: null, status: "ACTIVO", loadMode: { not: null } } },
+    select: { hourConcept: { select: timeGridConceptSelect } },
   },
 } satisfies Prisma.EmployeeSelect;
 
 const timeGridTimeEntryInclude = {
   employee: { select: { id: true, legajo: true, cuil: true, firstName: true, lastName: true, status: true } },
-  hourConcept: { select: { id: true, code: true, name: true, kind: true, loadMode: true, status: true, systemRole: true } },
+  hourConcept: { select: timeGridConceptSelect },
   // Etapa 11B: nombre de la/las regla(s) ganadora(s) de Hora Especial para el
   // detalle por legajo — mismo patrón ya usado en findPeriodEmployees (11A) y
   // findForExport (8F). `include` (no `select`) ya trae appliedMultiplier por
@@ -713,6 +728,12 @@ type TimeGridCatalogs = {
 };
 let timeGridCatalogCache: { data: TimeGridCatalogs; expiresAt: number } | null = null;
 const TIME_GRID_CATALOG_CACHE_MS = 120_000;
+
+// Lo llama hourConcepts.controller al editar/eliminar un concepto: el
+// catálogo embebido lleva workTreatment y no debe sobrevivir a un cambio.
+export function invalidateTimeGridCatalogCache() {
+  timeGridCatalogCache = null;
+}
 
 async function getTimeGridCatalogs() {
   if (timeGridCatalogCache && Date.now() < timeGridCatalogCache.expiresAt) return timeGridCatalogCache.data;
@@ -1239,16 +1260,19 @@ export const employeesRepository = {
         },
       }),
       prisma.hourConcept.findFirst({
-        where: { systemRole: "NORMAL_BASE", status: "ACTIVO", deletedAt: null },
-        select: { id: true, code: true, name: true, kind: true, loadMode: true, status: true, systemRole: true },
+        where: { systemRole: "NORMAL_BASE", status: "ACTIVO" },
+        select: timeGridConceptSelect,
       }),
       prisma.hourConceptBreakdown.findMany({
         where: {
           employeeId: id,
           period: query.period,
-          status: { in: ["BORRADOR", "PENDIENTE", "EN_REVISION", "APROBADO", "DEVUELTO", "CERRADO"] },
+          status: countedBreakdownStatusWhere,
         },
-        select: { date: true, day: true, hourConceptId: true, minutes: true, status: true },
+        // El concepto viaja completo para poder mostrar también conceptos
+        // con horas en el período que hoy ya no están habilitados (si no, la
+        // grilla no sumaría lo mismo que el total).
+        select: { ...accountingBreakdownSelect, date: true, status: true, hourConcept: { select: timeGridConceptSelect } },
         orderBy: [{ date: "asc" }, { createdAt: "asc" }],
       }),
     ]);
@@ -1273,8 +1297,33 @@ export const employeesRepository = {
   findHourConceptForManualBreakdown(id: string) {
     return prisma.hourConcept.findUnique({
       where: { id },
-      select: { id: true, code: true, name: true, status: true, deletedAt: true, loadMode: true, systemRole: true },
+      select: { id: true, code: true, name: true, status: true, loadMode: true, systemRole: true, workTreatment: true },
     });
+  },
+
+  // Contexto de un día para validar un desglose manual WITHIN_BASE
+  // (docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md): Horas base registradas
+  // (NORMAL_BASE sin RECHAZADO — incluye la base de fichada en BORRADOR) y los
+  // demás conceptos dentro de la jornada de ese día, excluyendo el desglose
+  // MANUAL que se está reemplazando. 2 consultas, siempre.
+  async findWithinBaseDayContext(employeeId: string, date: Date, replacingHourConceptId: string) {
+    const [base, others] = await Promise.all([
+      prisma.timeEntry.aggregate({
+        where: { employeeId, date, status: { not: ApprovalStatus.RECHAZADO }, hourConcept: { systemRole: "NORMAL_BASE" } },
+        _sum: { hours: true },
+      }),
+      prisma.hourConceptBreakdown.findMany({
+        where: {
+          employeeId,
+          date,
+          status: countedBreakdownStatusWhere,
+          hourConcept: { workTreatment: "WITHIN_BASE" },
+          NOT: { hourConceptId: replacingHourConceptId, source: "MANUAL" },
+        },
+        select: { minutes: true, startAt: true, endAt: true },
+      }),
+    ]);
+    return { baseMinutes: Math.round(Number(base._sum.hours ?? 0) * 60), withinBaseBreakdowns: others };
   },
 
   async isHourConceptEnabled(employeeId: string, hourConceptId: string) {
@@ -1303,6 +1352,7 @@ export const employeesRepository = {
     period: string;
     day: number;
     minutes: number;
+    appliedMultiplier: number;
     observation?: string | null;
     createdByUserId?: string | null;
     approvedByUserId?: string | null;
@@ -1321,6 +1371,7 @@ export const employeesRepository = {
           where: { id: existing.id },
           data: {
             minutes: input.minutes,
+            appliedMultiplier: input.appliedMultiplier,
             observation: input.observation || null,
             period: input.period,
             day: input.day,
@@ -1340,6 +1391,7 @@ export const employeesRepository = {
           period: input.period,
           day: input.day,
           minutes: input.minutes,
+          appliedMultiplier: input.appliedMultiplier,
           observation: input.observation || null,
           source: "MANUAL",
           status,
@@ -1613,7 +1665,6 @@ export const employeesRepository = {
         id: { in: hourConceptIds },
         systemRole: null,
         status: "ACTIVO",
-        deletedAt: null,
         loadMode: { not: null },
       },
       select: { id: true },

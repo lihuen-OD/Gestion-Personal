@@ -1,5 +1,7 @@
 # Etapa 11C — Bandeja por persona y consistencia final de revisión
 
+> **Reemplazado parcialmente (2026-10-02) por [`WORKED_TIME_ACCOUNTING_MODEL.md`](WORKED_TIME_ACCOUNTING_MODEL.md).** El resumen "Por persona" ya no calcula `total + special + adicional`: usa la misma contabilidad que la grilla (total trabajado = base + adicionales; equivalencia sin duplicar). Se conserva como registro histórico; no usar como fuente de verdad del cálculo.
+
 Fecha: 2026-08-28
 Estado: implementado, pendiente de aprobación para commitear
 Continúa: `docs/decisions/HOURS_GRID_REVIEW_SPECIAL_HOURS_AUDIT_11A.md`, `docs/decisions/HOURS_GRID_SPECIAL_HOURS_LIQUIDABLE_11A1.md`, `docs/decisions/HOURS_REVIEW_EXPORT_CLOSURE_SPECIAL_HOURS_11B.md`

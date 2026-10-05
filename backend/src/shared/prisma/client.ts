@@ -44,3 +44,10 @@ export const prisma = prismaClient.$extends({
     },
   },
 });
+
+// El cliente está extendido (métricas), así que su `tx` no es
+// Prisma.TransactionClient: se deriva del callback real de `prisma.$transaction`.
+// Sirve para funciones que corren dentro de la transacción de quien las llama
+// (o directo sobre `prisma`).
+type TransactionCallback = Extract<Parameters<typeof prisma.$transaction>[0], (...args: never[]) => unknown>;
+export type PrismaTransactionClient = Parameters<TransactionCallback>[0];

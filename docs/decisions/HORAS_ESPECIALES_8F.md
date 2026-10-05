@@ -1,5 +1,7 @@
 # Etapa 8F — Separar horas reales de horas liquidables en consumidores de Horas Especiales
 
+> **Reemplazado parcialmente (2026-10-02) por [`WORKED_TIME_ACCOUNTING_MODEL.md`](WORKED_TIME_ACCOUNTING_MODEL.md).** Sigue vigente que `hours/totalMinutes` son siempre reales y el multiplicador nunca infla lo persistido; el cálculo del equivalente liquidable en el export fue reemplazado por la contabilidad única. Se conserva como registro histórico; no usar como fuente de verdad del cálculo.
+
 Fecha: 2026-08-26
 Estado: implementado, pendiente de aprobación para commitear
 Continúa: `docs/decisions/HORAS_ESPECIALES_AUDITORIA_8A.md` (hallazgo §6, punto 1)

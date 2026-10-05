@@ -52,7 +52,10 @@ export function clearNotificationsListCache() {
 // exhaustivo. Por eso una sola `clearMonthlyClosuresReadCaches()`, llamada
 // desde las 6, cubre el 100% de los write paths reales -- sin ningún hueco
 // de invalidación aceptado como riesgo (a diferencia de los 2 casos
-// anteriores). Key scopeada por usuario+rol vía `userScopedCacheKey`
+// anteriores). Séptimo write path (2026-10): corregir el tratamiento o
+// eliminar un concepto horario recalcula `snapshot` (closureSnapshot.ts) y
+// hourConcepts.controller también llama a esta función. Key scopeada por
+// usuario+rol vía `userScopedCacheKey`
 // (workforce.controller.ts) -- el querystring de `closures` (`period`) ya
 // forma parte de `originalUrl`, así que cada período de cada usuario es una
 // entrada distinta; `corrections` no tiene query params, así que su key es

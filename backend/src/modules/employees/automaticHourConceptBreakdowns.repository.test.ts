@@ -12,13 +12,13 @@ vi.mock("../../shared/prisma/client", () => ({ prisma: {
 beforeEach(() => vi.clearAllMocks());
 
 describe("automaticHourConceptBreakdownsRepository", () => {
-  it("filtra asignación, modo, estado, baja lógica y reglas activas sin priority", async () => {
+  it("filtra asignación, modo, estado y reglas activas sin priority", async () => {
     (prisma.employeeHourConcept.findMany as Mock).mockResolvedValue([]);
     await repository.findEligibleConcepts("employee-1");
     const args = (prisma.employeeHourConcept.findMany as Mock).mock.calls.at(0)?.[0];
     expect(args).toBeDefined();
     expect(args!.where).toEqual({ employeeId: "employee-1", hourConcept: {
-      systemRole: null, status: "ACTIVO", deletedAt: null, loadMode: { in: ["AUTOMATIC", "BOTH"] },
+      systemRole: null, status: "ACTIVO", loadMode: { in: ["AUTOMATIC", "BOTH"] },
     } });
     expect(args!.select.hourConcept.select.rules.where).toEqual({ status: "ACTIVO" });
     expect(args!.select.hourConcept.select.rules.select).not.toHaveProperty("priority");
@@ -34,7 +34,9 @@ describe("automaticHourConceptBreakdownsRepository", () => {
     } }));
   });
 
-  it("reemplaza sólo AUTOMATIC y crea BORRADOR sin tocar MANUAL", async () => {
+  // Deshabilitar conserva la historia (WORKED_TIME_ACCOUNTING_MODEL.md §14):
+  // los AUTOMATIC de un concepto INACTIVO no se borran al regenerar el período.
+  it("reemplaza sólo AUTOMATIC de conceptos activos y crea BORRADOR sin tocar MANUAL ni la historia de conceptos deshabilitados", async () => {
     const tx = {
       hourConceptBreakdown: {
         deleteMany: vi.fn().mockResolvedValue({ count: 2 }),
@@ -42,9 +44,18 @@ describe("automaticHourConceptBreakdownsRepository", () => {
       },
     };
     (prisma.$transaction as Mock).mockImplementation(async (callback: (value: typeof tx) => unknown) => callback(tx));
-    const row = { date: new Date("2026-08-10T00:00:00Z"), period: "2026-08", day: 10, hourConceptId: "sereno", minutes: 120, workShiftId: "shift-1", hourConceptRuleId: "rule-1" };
+    const row = {
+      date: new Date("2026-08-10T00:00:00Z"), period: "2026-08", day: 10, hourConceptId: "sereno", minutes: 120, workShiftId: "shift-1", hourConceptRuleId: "rule-1",
+      startAt: new Date("2026-08-10T02:00:00Z"), endAt: new Date("2026-08-10T04:00:00Z"), appliedMultiplier: 2,
+    };
     await expect(repository.replaceAutomatic("employee-1", "2026-08", [row], "user-1")).resolves.toEqual({ deleted: 2, created: 1 });
-    expect(tx.hourConceptBreakdown.deleteMany).toHaveBeenCalledWith({ where: { employeeId: "employee-1", period: "2026-08", source: "AUTOMATIC" } });
-    expect(tx.hourConceptBreakdown.createMany).toHaveBeenCalledWith({ data: [expect.objectContaining({ source: "AUTOMATIC", status: "BORRADOR" })] });
+    expect(tx.hourConceptBreakdown.deleteMany).toHaveBeenCalledWith({
+      where: { employeeId: "employee-1", period: "2026-08", source: "AUTOMATIC", hourConcept: { status: "ACTIVO" } },
+    });
+    // Persiste intervalo real y snapshot de multiplicador
+    // (docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md).
+    expect(tx.hourConceptBreakdown.createMany).toHaveBeenCalledWith({ data: [expect.objectContaining({
+      source: "AUTOMATIC", status: "BORRADOR", startAt: row.startAt, endAt: row.endAt, appliedMultiplier: 2,
+    })] });
   });
 });

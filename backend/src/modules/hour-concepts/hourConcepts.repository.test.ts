@@ -2,6 +2,12 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import type { Mock } from "vitest";
 import { prisma } from "../../shared/prisma/client";
 import { hourConceptsRepository, invalidateHourConceptsCache } from "./hourConcepts.repository";
+import { findClosuresForHourConcept, rebuildClosureSnapshots } from "../workforce-management/closureSnapshot";
+
+vi.mock("../workforce-management/closureSnapshot", () => ({
+  findClosuresForHourConcept: vi.fn(),
+  rebuildClosureSnapshots: vi.fn(),
+}));
 
 vi.mock("../../shared/prisma/client", () => ({
   prisma: {
@@ -61,16 +67,15 @@ describe("findMany — rama filtrada, Etapa 14H.5", () => {
 // (backend/src/shared/cache/repositoryListCache.ts), para confirmar que la
 // migración no cambió el comportamiento observable.
 describe("findMany — rama sin filtros (listCache vía repositoryListCache), Etapa 14I.3", () => {
-  it("sin filtros, filtra deletedAt:null y no usa $transaction ni pide count", async () => {
+  it("sin filtros, trae todo el catálogo (activos y deshabilitados; no hay baja lógica) sin $transaction ni count", async () => {
     mockedPrisma.hourConcept.findMany.mockResolvedValue([{ id: "hc-1" }, { id: "hc-2" }]);
 
     const [page, total] = await hourConceptsRepository.findMany({ page: 1, take: 50 } as never);
 
     expect(mockedPrisma.$transaction).not.toHaveBeenCalled();
     expect(mockedPrisma.hourConcept.count).not.toHaveBeenCalled();
-    expect(mockedPrisma.hourConcept.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { deletedAt: null }, take: 501 }),
-    );
+    expect(mockedPrisma.hourConcept.findMany).toHaveBeenCalledWith(expect.objectContaining({ take: 501 }));
+    expect(mockedPrisma.hourConcept.findMany.mock.calls[0]![0]).not.toHaveProperty("where");
     expect(mockedPrisma.hourConcept.findMany).toHaveBeenCalledTimes(1);
     expect(total).toBe(2);
     expect(page).toHaveLength(2);
@@ -133,8 +138,21 @@ describe("findById", () => {
   });
 });
 
+describe("findGeneratedCodes — próximo código autoritativo", () => {
+  it("consulta directamente todos los HOR-* físicamente existentes", async () => {
+    mockedPrisma.hourConcept.findMany.mockResolvedValue([{ code: "HOR-005" }]);
+
+    await expect(hourConceptsRepository.findGeneratedCodes()).resolves.toEqual([{ code: "HOR-005" }]);
+
+    expect(mockedPrisma.hourConcept.findMany).toHaveBeenCalledWith({
+      where: { code: { startsWith: "HOR-" } },
+      select: { code: true },
+    });
+  });
+});
+
 describe("findActiveRules — universo automático de Motor A (Etapa 15M.7B)", () => {
-  it("filtra regla activa + concepto ACTIVO/no eliminado + loadMode AUTOMATIC o BOTH", async () => {
+  it("filtra regla activa + concepto ACTIVO + loadMode AUTOMATIC o BOTH", async () => {
     mockedPrisma.hourConceptRule.findMany.mockResolvedValue([]);
 
     await hourConceptsRepository.findActiveRules();
@@ -144,7 +162,6 @@ describe("findActiveRules — universo automático de Motor A (Etapa 15M.7B)", (
         status: "ACTIVO",
         hourConcept: {
           status: "ACTIVO",
-          deletedAt: null,
           loadMode: { in: ["AUTOMATIC", "BOTH"] },
         },
       },
@@ -270,14 +287,9 @@ describe("disableForEmployee — quitar un empleado del concepto (Etapa 8N)", ()
   });
 });
 
-describe("findWithUsage — conteo de uso real antes de eliminar (Etapa 8O)", () => {
-  it("selecciona id/code/name y el _count de las 6 relaciones reales de HourConcept", async () => {
-    mockedPrisma.hourConcept.findUniqueOrThrow.mockResolvedValue({
-      id: "concept-1",
-      code: "HOR-001",
-      name: "Sereno",
-      _count: { employees: 0, timeEntries: 0, novelties: 0, timeSegments: 0, workShifts: 0, rules: 0 },
-    });
+describe("findWithUsage — uso real antes de eliminar", () => {
+  it("selecciona el concepto completo para la auditoría y el _count de las 7 relaciones reales de HourConcept", async () => {
+    mockedPrisma.hourConcept.findUniqueOrThrow.mockResolvedValue({ id: "concept-1" });
 
     await hourConceptsRepository.findWithUsage("concept-1");
 
@@ -287,55 +299,149 @@ describe("findWithUsage — conteo de uso real antes de eliminar (Etapa 8O)", ()
         id: true,
         code: true,
         name: true,
+        kind: true,
+        status: true,
+        loadMode: true,
+        workTreatment: true,
         systemRole: true,
-        _count: { select: { employees: true, timeEntries: true, novelties: true, timeSegments: true, workShifts: true, rules: true } },
+        _count: { select: { employees: true, timeEntries: true, novelties: true, timeSegments: true, workShifts: true, rules: true, breakdowns: true } },
       },
     });
   });
 });
 
-describe("delete — eliminación física (Etapa 8O)", () => {
-  it("borra por id — solo se llama cuando el service ya confirmó cero uso", async () => {
-    mockedPrisma.hourConcept.delete.mockResolvedValue({ id: "concept-1" });
+// Cliente de transacción interactiva: cada modelo expone también las
+// operaciones destructivas que NUNCA deben usarse, para poder afirmarlo.
+function transactionClient() {
+  return {
+    hourConcept: { update: vi.fn(), delete: vi.fn(), findFirstOrThrow: vi.fn() },
+    hourConceptBreakdown: { groupBy: vi.fn(), deleteMany: vi.fn(), updateMany: vi.fn(), update: vi.fn(), create: vi.fn(), createMany: vi.fn() },
+    timeSegment: { updateMany: vi.fn(), deleteMany: vi.fn() },
+    workShift: { updateMany: vi.fn(), deleteMany: vi.fn(), delete: vi.fn() },
+    novelty: { updateMany: vi.fn(), deleteMany: vi.fn() },
+    hourConceptRule: { deleteMany: vi.fn(), updateMany: vi.fn() },
+    employeeHourConcept: { deleteMany: vi.fn() },
+    timeEntry: { deleteMany: vi.fn(), updateMany: vi.fn(), delete: vi.fn() },
+    attendancePunch: { deleteMany: vi.fn(), delete: vi.fn() },
+  };
+}
 
-    await hourConceptsRepository.delete("concept-1");
+function runInTransaction(tx: ReturnType<typeof transactionClient>) {
+  mockedPrisma.$transaction.mockImplementationOnce((callback: (client: typeof tx) => Promise<unknown>) => callback(tx));
+}
 
-    expect(mockedPrisma.hourConcept.delete).toHaveBeenCalledWith({ where: { id: "concept-1" } });
-  });
-});
+const pairs = [
+  { employeeId: "emp-1", period: "2026-09", _count: { _all: 4 } },
+  { employeeId: "emp-1", period: "2026-10", _count: { _all: 2 } },
+  { employeeId: "emp-2", period: "2026-10", _count: { _all: 3 } },
+];
+const closures = [{ id: "closure-1", employeeId: "emp-1", period: "2026-09", snapshot: {} }];
+const rebuilt = [{ id: "closure-1", employeeId: "emp-1", period: "2026-09", before: {}, after: {} }];
 
-describe("disableAllEmployees — desvincula empleados habilitados en batch (Etapa 8P)", () => {
-  it("borra todas las filas EmployeeHourConcept del concepto, no toca otros conceptos", async () => {
-    mockedPrisma.employeeHourConcept.deleteMany.mockResolvedValue({ count: 3 });
+describe("updateReinterpretingHistory — corrección de workTreatment", () => {
+  it("sólo actualiza el concepto: nunca escribe desgloses (mismos ids y minutos), y recalcula los cierres afectados en la misma transacción", async () => {
+    const tx = transactionClient();
+    runInTransaction(tx);
+    tx.hourConcept.update.mockResolvedValue({ id: "prueba", workTreatment: "WITHIN_BASE" });
+    tx.hourConceptBreakdown.groupBy.mockResolvedValue(pairs);
+    vi.mocked(findClosuresForHourConcept).mockResolvedValue(closures);
+    vi.mocked(rebuildClosureSnapshots).mockResolvedValue(rebuilt as never);
+    const recalculation = { reason: "HOUR_CONCEPT_WORK_TREATMENT_CHANGED" as const, hourConceptId: "prueba", hourConceptCode: "HOR-005" };
 
-    await hourConceptsRepository.disableAllEmployees("concept-1");
+    const result = await hourConceptsRepository.updateReinterpretingHistory("prueba", { workTreatment: "WITHIN_BASE" }, recalculation);
 
-    expect(mockedPrisma.employeeHourConcept.deleteMany).toHaveBeenCalledWith({ where: { hourConceptId: "concept-1" } });
-  });
-});
-
-describe("deactivateAllRules — desactiva reglas activas, no las borra (Etapa 8P)", () => {
-  it("actualiza status a INACTIVO solo para las reglas ACTIVO del concepto", async () => {
-    mockedPrisma.hourConceptRule.updateMany.mockResolvedValue({ count: 2 });
-
-    await hourConceptsRepository.deactivateAllRules("concept-1");
-
-    expect(mockedPrisma.hourConceptRule.updateMany).toHaveBeenCalledWith({
-      where: { hourConceptId: "concept-1", status: "ACTIVO" },
-      data: { status: "INACTIVO" },
+    expect(tx.hourConcept.update).toHaveBeenCalledWith({ where: { id: "prueba" }, data: { workTreatment: "WITHIN_BASE" } });
+    for (const write of [tx.hourConceptBreakdown.deleteMany, tx.hourConceptBreakdown.updateMany, tx.hourConceptBreakdown.update, tx.hourConceptBreakdown.create, tx.hourConceptBreakdown.createMany]) {
+      expect(write).not.toHaveBeenCalled();
+    }
+    expect(tx.hourConceptBreakdown.groupBy).toHaveBeenCalledWith({
+      by: ["employeeId", "period"],
+      where: { hourConceptId: "prueba", status: { not: "RECHAZADO" } },
+      _count: { _all: true },
     });
+    expect(findClosuresForHourConcept).toHaveBeenCalledWith(tx, "prueba", pairs);
+    expect(rebuildClosureSnapshots).toHaveBeenCalledWith(tx, closures, recalculation);
+    expect(result).toEqual({
+      item: { id: "prueba", workTreatment: "WITHIN_BASE" },
+      reinterpreted: { breakdowns: 9, employees: 2, periods: 2 },
+      rebuiltClosures: rebuilt,
+    });
+    expect(mockedPrisma.$transaction).toHaveBeenCalledWith(expect.any(Function), { timeout: 30_000 });
   });
 });
 
-describe("softDelete — baja lógica (Etapa 8P)", () => {
-  it("marca status INACTIVO y deletedAt, nunca borra la fila", async () => {
-    mockedPrisma.hourConcept.update.mockResolvedValue({ id: "concept-1", status: "INACTIVO" });
+describe("deletePermanently — eliminación definitiva transaccional", () => {
+  const recalculation = { reason: "HOUR_CONCEPT_DELETED" as const, hourConceptId: "prueba", hourConceptCode: "HOR-005" };
 
-    await hourConceptsRepository.softDelete("concept-1");
+  function arrange() {
+    const tx = transactionClient();
+    runInTransaction(tx);
+    tx.hourConcept.findFirstOrThrow.mockResolvedValue({ id: "normal", name: "Hora normal" });
+    tx.hourConceptBreakdown.groupBy.mockResolvedValue(pairs);
+    tx.hourConceptBreakdown.deleteMany.mockResolvedValue({ count: 12 });
+    tx.timeSegment.updateMany.mockResolvedValue({ count: 8 });
+    tx.workShift.updateMany.mockResolvedValue({ count: 1 });
+    tx.novelty.updateMany.mockResolvedValue({ count: 1 });
+    tx.hourConceptRule.deleteMany.mockResolvedValue({ count: 2 });
+    tx.employeeHourConcept.deleteMany.mockResolvedValue({ count: 3 });
+    tx.hourConcept.delete.mockResolvedValue({ id: "prueba", code: "HOR-005", name: "Prueba 02" });
+    vi.mocked(findClosuresForHourConcept).mockResolvedValue(closures);
+    vi.mocked(rebuildClosureSnapshots).mockResolvedValue(rebuilt as never);
+    return tx;
+  }
 
-    expect(mockedPrisma.hourConcept.update).toHaveBeenCalledWith({
-      where: { id: "concept-1" },
-      data: { status: "INACTIVO", deletedAt: expect.any(Date) },
+  it("borra desgloses, reglas, habilitaciones y el concepto (la fila no queda: el código se libera) y devuelve el resumen", async () => {
+    const tx = arrange();
+
+    const result = await hourConceptsRepository.deletePermanently("prueba", recalculation);
+
+    expect(tx.hourConceptBreakdown.deleteMany).toHaveBeenCalledWith({ where: { hourConceptId: "prueba" } });
+    expect(tx.hourConceptRule.deleteMany).toHaveBeenCalledWith({ where: { hourConceptId: "prueba" } });
+    expect(tx.employeeHourConcept.deleteMany).toHaveBeenCalledWith({ where: { hourConceptId: "prueba" } });
+    expect(tx.hourConcept.delete).toHaveBeenCalledWith({ where: { id: "prueba" }, select: { id: true, code: true, name: true } });
+    expect(result).toEqual({
+      concept: { id: "prueba", code: "HOR-005", name: "Prueba 02" },
+      deletedBreakdowns: 12,
+      deletedRules: 2,
+      deletedEmployeeAssignments: 3,
+      reclassifiedSegments: 8,
+      reclassifiedWorkShifts: 1,
+      unlinkedNovelties: 1,
+      rebuiltClosures: rebuilt,
     });
+    expect(mockedPrisma.$transaction).toHaveBeenCalledWith(expect.any(Function), { timeout: 30_000 });
+  });
+
+  it("conserva la evidencia física: tramos y jornadas se reclasifican a Hora normal y las novedades se desvinculan — nunca se borran fichadas, jornadas, tramos ni TimeEntry", async () => {
+    const tx = arrange();
+
+    await hourConceptsRepository.deletePermanently("prueba", recalculation);
+
+    expect(tx.hourConcept.findFirstOrThrow).toHaveBeenCalledWith({ where: { systemRole: "NORMAL_BASE" }, select: { id: true, name: true } });
+    expect(tx.timeSegment.updateMany).toHaveBeenCalledWith({
+      where: { hourConceptId: "prueba" },
+      data: { hourConceptId: "normal", hourConceptName: "Hora normal", hourConceptRuleId: null, conceptStatus: "SIN_CONCEPTO_COMPATIBLE" },
+    });
+    expect(tx.workShift.updateMany).toHaveBeenCalledWith({ where: { hourConceptId: "prueba" }, data: { hourConceptId: "normal", hourConceptName: "Hora normal" } });
+    expect(tx.novelty.updateMany).toHaveBeenCalledWith({ where: { targetHourConceptId: "prueba" }, data: { targetHourConceptId: null } });
+    for (const destructive of [tx.timeSegment.deleteMany, tx.workShift.deleteMany, tx.workShift.delete, tx.novelty.deleteMany, tx.timeEntry.deleteMany, tx.timeEntry.updateMany, tx.timeEntry.delete, tx.attendancePunch.deleteMany, tx.attendancePunch.delete]) {
+      expect(destructive).not.toHaveBeenCalled();
+    }
+  });
+
+  it("orden explícito de dependencias: cierres afectados se buscan antes de borrar y se recalculan después de borrar el concepto", async () => {
+    const tx = arrange();
+
+    await hourConceptsRepository.deletePermanently("prueba", recalculation);
+
+    const order = (mock: { mock: { invocationCallOrder: number[] } }) => mock.mock.invocationCallOrder[0]!;
+    expect(findClosuresForHourConcept).toHaveBeenCalledWith(tx, "prueba", pairs);
+    expect(order(vi.mocked(findClosuresForHourConcept))).toBeLessThan(order(tx.hourConceptBreakdown.deleteMany));
+    expect(order(tx.hourConceptBreakdown.deleteMany)).toBeLessThan(order(tx.hourConceptRule.deleteMany));
+    expect(order(tx.timeSegment.updateMany)).toBeLessThan(order(tx.hourConceptRule.deleteMany));
+    expect(order(tx.hourConceptRule.deleteMany)).toBeLessThan(order(tx.hourConcept.delete));
+    expect(order(tx.employeeHourConcept.deleteMany)).toBeLessThan(order(tx.hourConcept.delete));
+    expect(order(tx.hourConcept.delete)).toBeLessThan(order(vi.mocked(rebuildClosureSnapshots)));
+    expect(rebuildClosureSnapshots).toHaveBeenCalledWith(tx, closures, recalculation);
   });
 });

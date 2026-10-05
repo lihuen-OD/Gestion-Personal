@@ -1,15 +1,15 @@
 import { useEffect, useState } from "react";
-import { AlertTriangle, Bell, Clock3, Coins, ShieldAlert } from "lucide-react";
+import { Bell, ShieldAlert } from "lucide-react";
 import { employeeApiService, type EmployeeTimeGrid } from "../../services/api/employeeApiService";
 import type { MonthlyClosure } from "../../services/api/workforceApiService";
-import { additionalBreakdownMinutes, totalWorkedMinutesFromRows } from "../../utils/employeeHoursGrid";
-import { formatDurationMinutes } from "../../utils/hours";
 import { formatPeriodLabel } from "../../utils/period";
 import { monthlyClosureStatusText, monthlyClosureStatusTone } from "../../utils/monthlyClosureStatus";
 import { Badge } from "../ui/Badge";
 import { LoadingState } from "../ui/LoadingState";
 import { Modal } from "../ui/Modal";
 import { StatCard } from "../ui/StatCard";
+import { AccountingStatCards } from "./AccountingStatCards";
+import { HoursAccountingSummary } from "./HoursAccountingSummary";
 import { MonthlyHoursReviewGrid } from "./MonthlyHoursReviewGrid";
 
 // Etapa 15K: contenedor de carga — carga lazy (una sola llamada, sólo para
@@ -43,10 +43,7 @@ export function MonthlyClosureReviewPanel({ closure, period, close }: { closure:
     };
   }, [closure.employeeId, period]);
 
-  const totalMinutes = grid ? totalWorkedMinutesFromRows(grid.rows) : 0;
-  const additionalTotalMinutes = grid ? additionalBreakdownMinutes(grid.rows) : 0;
   const noveltyCount = grid?.novelties.length ?? 0;
-  const hasLiquidable = Boolean(grid && grid.specialHourAdditionalMinutes > 0);
 
   return (
     <Modal
@@ -65,21 +62,12 @@ export function MonthlyClosureReviewPanel({ closure, period, close }: { closure:
 
         {!loading && !error && grid ? (
           <>
-            <div className={hasLiquidable ? "stat-grid five" : "stat-grid"}>
-              <StatCard label="Horas reales trabajadas" value={formatDurationMinutes(totalMinutes)} icon={Clock3} />
-              <StatCard label="Conceptos horarios adicionales" value={formatDurationMinutes(additionalTotalMinutes)} icon={AlertTriangle} tone="orange" />
+            <div className={grid.accounting.hasSpecialMultiplier ? "stat-grid" : "stat-grid three"}>
+              <AccountingStatCards accounting={grid.accounting} />
               <StatCard label="Incidencias del período" value={grid.attendanceIssues} icon={ShieldAlert} tone="red" />
               <StatCard label="Novedades del período" value={noveltyCount} icon={Bell} tone="purple" />
-              {hasLiquidable ? (
-                <StatCard
-                  label="Valor liquidable"
-                  value={formatDurationMinutes(grid.specialHourLiquidableTotalMinutes)}
-                  detail={`Incluye Hora especial: +${formatDurationMinutes(grid.specialHourAdditionalMinutes)}`}
-                  icon={Coins}
-                  tone="green"
-                />
-              ) : null}
             </div>
+            <HoursAccountingSummary accounting={grid.accounting} concepts={grid.rows.map((row) => row.concept)} />
             <MonthlyHoursReviewGrid grid={grid} period={period} />
           </>
         ) : null}

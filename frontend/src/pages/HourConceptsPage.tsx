@@ -16,11 +16,13 @@ import { confirmAction } from "../services/appDialog";
 import { ApiError, getUserErrorMessage } from "../services/api/apiClient";
 import { hourConceptApiService } from "../services/api/hourConceptApiService";
 import type { AssociatedEmployeeFilters } from "../types/associatedEmployee.types";
-import type { HourConcept, HourConceptFilters, HourConceptKind, HourConceptLoadMode } from "../types/hourConcept.types";
+import type { HourConcept, HourConceptFilters, HourConceptKind, HourConceptLoadMode, HourConceptWorkTreatment } from "../types/hourConcept.types";
 import { roleLevel } from "../utils/roles";
 import { activoInactivoLabel } from "../utils/status";
+import { TOAST_SUCCESS_MS } from "../utils/toast";
 import { useAsyncAction } from "../utils/useAsyncAction";
 import { useSort, type SortAccessors } from "../utils/sort";
+import { workTreatmentDescriptions, workTreatmentLabels, workTreatmentOptions } from "../utils/workedTimeAccounting";
 
 const additionalKinds: HourConceptKind[] = ["EXTRA", "FERIADO", "NOCTURNA", "GUARDIA", "SERENO", "TRANSPORTE", "OTRO"];
 const loadModeLabels: Record<HourConceptLoadMode, string> = { MANUAL: "Manual", AUTOMATIC: "Automático", BOTH: "Manual y automático" };
@@ -44,6 +46,9 @@ export function emptyConcept(code: string): HourConcept {
     status: "ACTIVO",
     loadMode: "MANUAL",
     systemRole: null,
+    // Sin default a propósito: si suma o no al total es una decisión de
+    // negocio explícita, nunca deducida del modo de carga.
+    workTreatment: null,
     createdAt: "",
     updatedAt: "",
   };
@@ -80,6 +85,14 @@ function ConceptDataFields({ item, setItem }: { item: HourConcept; setItem: (ite
       <label>Nombre *<input value={item.name} onChange={(event) => setItem({ ...item, name: event.target.value })} /></label>
       <label>Tipo<select value={item.kind} onChange={(event) => setItem({ ...item, kind: event.target.value as HourConceptKind })}>{additionalKinds.map((kind) => <option key={kind} value={kind}>{hourConceptKindLabels[kind]}</option>)}</select></label>
       <label>Modo de carga *<select value={item.loadMode ?? "MANUAL"} onChange={(event) => setItem({ ...item, loadMode: event.target.value as HourConceptLoadMode })}>{Object.entries(loadModeLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+      <label>
+        Tratamiento en el total *
+        <select value={item.workTreatment ?? ""} onChange={(event) => setItem({ ...item, workTreatment: (event.target.value || null) as HourConceptWorkTreatment | null })}>
+          <option value="" disabled>Seleccioná una opción</option>
+          {workTreatmentOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+        </select>
+        {item.workTreatment ? <small className="field-help">{workTreatmentDescriptions[item.workTreatment]}</small> : null}
+      </label>
       <label>Estado<select value={item.status} onChange={(event) => setItem({ ...item, status: event.target.value as "ACTIVO" | "INACTIVO" })}><option value="ACTIVO">Activo</option><option value="INACTIVO">Inactivo</option></select></label>
     </div>
   );
@@ -101,6 +114,7 @@ export function HourConceptsPage() {
   const [apiItems, setApiItems] = useState<HourConcept[] | null>(null);
   const [isLoadingApi, setIsLoadingApi] = useState(true);
   const [loadFailed, setLoadFailed] = useState(false);
+  const [isPreparingCreate, setIsPreparingCreate] = useState(false);
   const editorRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -139,24 +153,61 @@ export function HourConceptsPage() {
   ] as const, [all]);
   const isExistingConcept = Boolean(editing && apiItems?.some((item) => item.id === editing.id));
 
+  const startCreate = async () => {
+    setIsPreparingCreate(true);
+    try {
+      setEditing(emptyConcept(await hourConceptApiService.getNextCode()));
+    } catch (error) {
+      setNotice(getUserErrorMessage(error, "No pudimos obtener un código disponible. Intentá nuevamente."));
+    } finally {
+      setIsPreparingCreate(false);
+    }
+  };
+
   const { isRunning: isSaving, run: save } = useAsyncAction(async () => {
     if (!editing) return;
     if (!editing.name.trim()) {
       setNotice("Completa el nombre.");
       return;
     }
+    if (!editing.workTreatment) {
+      setNotice("Elegí si el concepto está dentro de la jornada o suma horas adicionales.");
+      return;
+    }
+
+    // Corregir el tratamiento de un concepto existente reinterpreta todas sus
+    // horas ya cargadas (docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md §2):
+    // se permite siempre, pero se confirma explícitamente.
+    const stored = apiItems?.find((item) => item.id === editing.id);
+    const treatmentChanged = Boolean(stored && stored.workTreatment !== editing.workTreatment);
+    if (treatmentChanged) {
+      const confirmed = await confirmAction(
+        `Las horas ya cargadas de "${editing.name}" conservan sus minutos y pasan a leerse como "${workTreatmentLabels[editing.workTreatment]}" en grillas, totales, exportaciones y cierres.`,
+        { title: "Cambiar tratamiento del concepto", confirmLabel: "Cambiar tratamiento" },
+      );
+      if (!confirmed) return;
+    }
 
     try {
-      const existsInApi = Boolean(apiItems?.some((item) => item.id === editing.id));
-      const saved = existsInApi
+      const saved = stored
         ? await hourConceptApiService.update(editing.id, editing)
         : await hourConceptApiService.create(editing);
 
       setEditing(saved || null);
       setRefresh((value) => value + 1);
-      setNotice("Concepto horario guardado correctamente.");
-      setTimeout(() => setNotice(""), 2200);
+      setNotice(treatmentChanged ? "Concepto horario guardado. Las horas ya cargadas se leen con el nuevo tratamiento." : "Concepto horario guardado correctamente.");
+      setTimeout(() => setNotice(""), TOAST_SUCCESS_MS);
     } catch (saveError) {
+      if (!stored && saveError instanceof ApiError && saveError.code === "HOUR_CONCEPT_UNIQUE_CONSTRAINT") {
+        try {
+          const code = await hourConceptApiService.getNextCode();
+          setEditing((current) => current ? { ...current, code } : current);
+          setNotice(`Ese código acaba de ser utilizado. Asignamos ${code} automáticamente.`);
+          return;
+        } catch {
+          // Si también falla el refresco, se muestra el conflicto original.
+        }
+      }
       setNotice(getUserErrorMessage(saveError, "No pudimos guardar el concepto horario. Revisá los datos e intentá nuevamente."));
       setTimeout(() => setNotice(""), 3000);
     }
@@ -167,7 +218,7 @@ export function HourConceptsPage() {
     const confirmed = await confirmAction(
       activating
         ? `¿Querés habilitar el concepto horario "${item.name}"?`
-        : `¿Querés deshabilitar el concepto horario "${item.name}"? Deja de aplicarse en la clasificación automática y en el fichador; no se borra su historial.`,
+        : `¿Querés deshabilitar el concepto horario "${item.name}"? No se podrá usar en nuevas cargas ni en la clasificación automática; no se borra su historial (horas, reglas y legajos habilitados).`,
       {
         title: activating ? "Habilitar concepto horario" : "Deshabilitar concepto horario",
         confirmLabel: activating ? "Habilitar" : "Deshabilitar",
@@ -184,47 +235,26 @@ export function HourConceptsPage() {
     }
   };
 
-  // Eliminación (Etapa 8P): primero se confirma sin saber todavía si tiene
-  // uso histórico. Si el backend responde 409 HOUR_CONCEPT_IN_USE, se pide
-  // una segunda confirmación explícita con el texto exacto de la regla de
-  // negocio, y recién ahí se reintenta con force=true (baja lógica, conserva
-  // el historial). Si no tiene uso, la primera llamada ya lo elimina del todo.
+  // Eliminar definitivamente es para una configuración creada por error: un
+  // único DELETE borra el concepto y su historial específico (horas del
+  // concepto, reglas, legajos habilitados) y libera el código. Fichadas y
+  // jornadas reales se conservan. Para conservar la historia de un concepto
+  // válido se usa Deshabilitar.
   const removeConcept = async (item: HourConcept) => {
     const confirmed = await confirmAction(
-      `¿Querés eliminar el concepto horario "${item.name}"? Esta acción no se puede deshacer.`,
-      { title: "Eliminar concepto horario", confirmLabel: "Eliminar", tone: "danger" },
+      `Se eliminará el concepto "${item.name}" y las horas/configuración asociadas a él. Esta acción no se puede deshacer. Las fichadas y jornadas reales se conservarán. Si el concepto es válido pero ya no se usa, deshabilitalo para conservar su historial.`,
+      { title: "Eliminar concepto definitivamente", confirmLabel: "Eliminar definitivamente", cancelLabel: "Cancelar", tone: "danger" },
     );
     if (!confirmed) return;
 
     try {
       await hourConceptApiService.remove(item.id);
       if (editing?.id === item.id) setEditing(null);
-      setNotice("Este concepto fue eliminado definitivamente.");
+      setNotice(`Se eliminó definitivamente el concepto "${item.name}".`);
       setRefresh((value) => value + 1);
-      setTimeout(() => setNotice(""), 2500);
-      return;
+      setTimeout(() => setNotice(""), TOAST_SUCCESS_MS);
     } catch (removeError) {
-      if (!(removeError instanceof ApiError) || removeError.code !== "HOUR_CONCEPT_IN_USE") {
-        setNotice(getUserErrorMessage(removeError, "No pudimos eliminar el concepto horario."));
-        setTimeout(() => setNotice(""), 3500);
-        return;
-      }
-    }
-
-    const confirmedForced = await confirmAction(
-      "Este concepto tiene uso histórico. Si lo eliminás, dejará de estar disponible para nuevas cargas/asignaciones, pero el sistema conserva la trazabilidad de lo ya cargado. ¿Confirmás la eliminación?",
-      { title: "Eliminar concepto con uso histórico", confirmLabel: "Eliminar de todas formas", tone: "danger" },
-    );
-    if (!confirmedForced) return;
-
-    try {
-      await hourConceptApiService.remove(item.id, { force: true });
-      if (editing?.id === item.id) setEditing(null);
-      setNotice("Concepto horario eliminado. Se conserva el historial de lo ya cargado.");
-      setRefresh((value) => value + 1);
-      setTimeout(() => setNotice(""), 3000);
-    } catch (forceError) {
-      setNotice(getUserErrorMessage(forceError, "No pudimos eliminar el concepto horario."));
+      setNotice(getUserErrorMessage(removeError, "No pudimos eliminar el concepto horario."));
       setTimeout(() => setNotice(""), 3500);
     }
   };
@@ -236,8 +266,8 @@ export function HourConceptsPage() {
       <PageHeader
         eyebrow="CONFIGURACION"
         title="Conceptos horarios"
-        description="Horas normales representa el total trabajado. Los conceptos adicionales son desgloses para liquidación, análisis y control."
-        action={editable ? <Button variant="primary" icon={Plus} onClick={() => setEditing(emptyConcept(hourConceptApiService.getNextCode(all)))}>Crear concepto horario</Button> : undefined}
+        description="Horas base es la jornada registrada. Cada concepto adicional clasifica horas dentro de esa jornada o suma horas trabajadas fuera de la fichada."
+        action={editable ? <Button variant="primary" icon={Plus} onClick={startCreate} disabled={isPreparingCreate}>{isPreparingCreate ? "Preparando..." : "Crear concepto horario"}</Button> : undefined}
       />
 
       {notice && <div className="toast">{notice}</div>}
@@ -261,13 +291,13 @@ export function HourConceptsPage() {
           onRetry={() => setRefresh((value) => value + 1)}
         >
           <table>
-            <thead><tr><SortableHeader label="Codigo" sortKey="code" sort={sort} onSort={toggleSort} /><SortableHeader label="Concepto horario" sortKey="name" sort={sort} onSort={toggleSort} /><th>Rol</th><SortableHeader label="Tipo" sortKey="kind" sort={sort} onSort={toggleSort} /><th>Modo de carga</th><SortableHeader label="Estado" sortKey="status" sort={sort} onSort={toggleSort} /><th>Acción</th></tr></thead>
+            <thead><tr><SortableHeader label="Codigo" sortKey="code" sort={sort} onSort={toggleSort} /><SortableHeader label="Concepto horario" sortKey="name" sort={sort} onSort={toggleSort} /><th>Tratamiento</th><SortableHeader label="Tipo" sortKey="kind" sort={sort} onSort={toggleSort} /><th>Modo de carga</th><SortableHeader label="Estado" sortKey="status" sort={sort} onSort={toggleSort} /><th>Acción</th></tr></thead>
             <tbody>
               {sorted.map((item) => (
                 <tr key={item.id}>
                   <td><b>{item.code}</b></td>
                   <td><OverflowCell value={item.name} /></td>
-                  <td>{item.systemRole === "NORMAL_BASE" ? <Badge tone="neutral">Base del sistema</Badge> : "Adicional"}</td>
+                  <td>{item.systemRole === "NORMAL_BASE" ? <Badge tone="neutral">Base del sistema</Badge> : item.workTreatment ? workTreatmentLabels[item.workTreatment] : "Sin definir"}</td>
                   <td>{hourConceptKindLabels[item.kind]}</td>
                   <td>{item.loadMode ? loadModeLabels[item.loadMode] : "No aplica"}</td>
                   <td><Badge tone={item.status === "ACTIVO" ? "success" : "neutral"}>{activoInactivoLabel(item.status)}</Badge></td>
@@ -302,7 +332,7 @@ export function HourConceptsPage() {
         <div ref={editorRef} className="detail-section-stack">
           <Section
             title={isExistingConcept ? "Editar concepto horario" : "Nuevo concepto horario"}
-            subtitle="Configura un desglose adicional. No reemplaza ni incrementa Horas normales."
+            subtitle="Configurá el concepto y si clasifica horas dentro de la jornada o suma horas adicionales al total trabajado."
             action={<div className="hero-actions"><Button variant="subtle" onClick={() => setEditing(null)}>Cancelar</Button><Button variant="primary" onClick={save} disabled={isSaving}>{isSaving ? "Guardando..." : "Guardar"}</Button></div>}
           >
             <ConceptDataFields item={editing} setItem={setEditing} />

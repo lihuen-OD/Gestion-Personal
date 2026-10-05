@@ -418,7 +418,7 @@ The responsible user must only see employees assigned to them as responsible for
 
 ### Semántica de segmentos de conceptos horarios (Etapa 15M.7A)
 
-Hora normal es la base universal y conserva la duración real completa de la jornada. Los conceptos horarios adicionales son desgloses aditivos. Si ninguna regla adicional cubre un tramo, ese tramo sigue siendo Hora normal sin concepto adicional: no requiere revisión y no genera una nueva alerta `SEGMENTO_SIN_CLASIFICAR`. El estado interno `SIN_CONCEPTO_COMPATIBLE` permanece temporalmente como metadata neutral por compatibilidad; las alertas históricas siguen siendo legibles. Motor A aporta evidencia técnica y no determina totales pagables; Motor B continúa siendo el dueño de `HourConceptBreakdown`.
+Hora normal es la base universal y conserva la duración real completa de la jornada. Los conceptos horarios adicionales se rigen por `workTreatment` (dentro de la jornada o adicionales al total, ver "Modelo oficial de Conceptos Horarios"). Si ninguna regla adicional cubre un tramo, ese tramo sigue siendo Hora normal sin concepto adicional: no requiere revisión y no genera una nueva alerta `SEGMENTO_SIN_CLASIFICAR`. El estado interno `SIN_CONCEPTO_COMPATIBLE` permanece temporalmente como metadata neutral por compatibilidad; las alertas históricas siguen siendo legibles. Motor A aporta evidencia técnica y no determina totales pagables; Motor B continúa siendo el dueño de `HourConceptBreakdown`.
 
 ### Elegibilidad automática de conceptos (Etapa 15M.7B)
 
@@ -426,7 +426,7 @@ Motor A y Motor B comparten la misma semántica de elegibilidad automática: con
 
 Centro de costo can be displayed as information or secondary filter, but it must not be the main axis of the loading process.
 
-Working hour records must be prepared for future BioTime integration. The official functional model is additive: Horas normales is always the base grid and the only source for the real worked total; additional hour concepts are overlapping breakdowns and must never replace or increase that total.
+Working hour records must be prepared for future BioTime integration. The official functional model is described in "Modelo oficial de Conceptos Horarios" below: Horas base is always the base grid; within-the-workday concepts classify part of it, and additive concepts (worked time outside the fichada) increase the real worked total.
 
 Each time entry should support:
 
@@ -449,7 +449,7 @@ The current persisted/API shape may still express the previous per-concept class
 
 **Definitive export requires an approved closure (Etapa 15E.2, `docs/decisions/TIME_EXPORT_CLOSURE_GATE_15E2.md`):** `GET /time-entries/export(.csv)` — the export used for liquidación — only produces a file when every employee it would include has a `MonthlyTimeClosure` in `APROBADO` for that period; otherwise it rejects the whole request (`409 MONTHLY_CLOSURE_NOT_APPROVED`), never a partial file. The existing `includeInReview=true` query param is the preview path (includes `EN_REVISION` rows too) and is exempt from this gate; its response is explicitly marked `definitive: false`. Finnegans export (`/finnegans-export/*`) only exports novedades, never hours; since the Etapa 15L.3A below it has its own, separate monthly-closure gate (own error codes, own preview/definitive contract) — this rule (15E.2's) still does not apply there.
 
-**Panel de revisión visual previo al cierre (Etapa 15K, `docs/decisions/MONTHLY_CLOSURE_REVIEW_PANEL_15K.md`):** `MonthlyClosuresPage.tsx` (`/cierres`) agrega una acción "Revisar horas" por fila, para los 3 niveles, que abre un panel read-only (`MonthlyClosureReviewPanel` + `MonthlyHoursReviewGrid`, ambos en `frontend/src/components/hours/`) con KPIs (horas reales, conceptos adicionales, valor liquidable si aplica, incidencias y novedades del período) y la grilla mensual del legajo — misma fuente (`GET /employees/:id/time-grid`, carga lazy sólo al seleccionar un empleado) y mismos helpers que `EmployeeHoursPage.tsx`, que no se modificó. El panel es puramente informativo: no agrega ningún bloqueo ni acción de cierre nueva — enviar/aprobar/devolver siguen siendo exactamente las mismas acciones de antes de esta etapa.
+**Panel de revisión visual previo al cierre (Etapa 15K, `docs/decisions/MONTHLY_CLOSURE_REVIEW_PANEL_15K.md`):** `MonthlyClosuresPage.tsx` (`/cierres`) agrega una acción "Revisar horas" por fila, para los 3 niveles, que abre un panel read-only (`MonthlyClosureReviewPanel` + `MonthlyHoursReviewGrid`, ambos en `frontend/src/components/hours/`) con KPIs (total trabajado, equivalencia para liquidación si aplica, incidencias y novedades del período; desde 2026-10-02 también la composición del período, ver `docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md`) y la grilla mensual del legajo — misma fuente (`GET /employees/:id/time-grid`, carga lazy sólo al seleccionar un empleado) y mismos helpers que `EmployeeHoursPage.tsx`, que no se modificó. El panel es puramente informativo: no agrega ningún bloqueo ni acción de cierre nueva — enviar/aprobar/devolver siguen siendo exactamente las mismas acciones de antes de esta etapa.
 
 **Retiro controlado de campos legacy en Tipos de Novedad (Etapa 15L.6, `docs/decisions/NOVELTY_TYPE_LEGACY_REMOVAL_15L6.md`):** las etapas 15L.2A/B/C dejaron el modelo nuevo de `NoveltyType` (`timeEntryBehavior`/`allowsDateRange`/`finnegansValueUnit`/`finnegansRequiresValidity`) conviviendo con los campos legacy que reemplazaba, sincronizados por compatibilidad (`noveltyTypes.sync.ts`). Auditados uno por uno contra consumidores reales, se confirmó que ninguno tenía ya lectura productiva propia — se eliminaron `origin`, `allowsDateTo`, `hasValidity`, `blocksTimeEntry`, `setsWorkedHoursToZero`, `timeImpact` (campos y el enum `NoveltyTimeImpact`), y `noveltyTypes.sync.ts` completo (dead code sin nada más que sincronizar). `timeImpact="REGISTRA_HORAS_NO_TRABAJADAS"` se confirmó redundante con `allowsHours=true` en el único `NoveltyType` real que lo usaba — se eliminó la rama de UI (`NoveltyModal.tsx`/`EmployeeHoursPage.tsx`) sin inventar ningún reemplazo. `FinnegansNoveltyLink` (relación 1:N) se migró a 1:1 físico (`NoveltyType.finnegansCode`/`finnegansName`, mismo patrón que `finnegansValueUnit`/`finnegansRequiresValidity`) tras confirmar con datos reales que ningún tipo tenía más de un vínculo activo — la tabla se eliminó junto con `finnegansExport.principalLink.ts` (dead code). También se eliminaron, auditados como sin consumidor real: `Novelty.affectsSettlement` (frontend, alias puro de `exportsToFinnegans`) y `NoveltyType.history`/`NoveltyTypeHistoryRecord` (placeholder hardcodeado a `[]` desde 15L.2B, sin endpoint ni UI). Migración de Prisma generada pero no aplicada (mismo motivo que 15L.2A/15L.4: única base Neon real disponible) — copia primero el vínculo principal de cada tipo a las columnas nuevas antes de eliminar la tabla.
 
@@ -627,21 +627,28 @@ The backend has 22 modules under `backend/src/modules`. The following exist and 
 
 This section is the primary source of truth for working-hour concepts. If another document, an API contract, the current UI, or the current persistence model conflicts with it, this business decision prevails for future design and implementation. Existing behavior will be corrected incrementally; this documentation update does not claim that the application already complies.
 
-### Horas normales: base obligatoria
+### Horas base (Hora normal / NORMAL_BASE): jornada registrada obligatoria
 
-* Every employee always has Horas normales; it is not optional and is not enabled through the employee file.
-* Horas normales is the base grid and represents the employee's full real worked time.
-* It may come from the fichador or be entered manually for clock failures or authorized adjustments.
-* The worked total is calculated exclusively from Horas normales.
+* Every employee always has Horas base (`HourConcept.systemRole = NORMAL_BASE`); it is not optional and is not enabled through the employee file.
+* Horas base is the real registered workday (fichador or manual load for clock failures or authorized adjustments). It is persisted as-is (`TimeEntry.hours`) and is never rewritten to subtract concepts.
+* In the UI it is labelled "Horas base". "Horas normales" means the derived residual: Horas base minus the time classified by concepts inside the workday.
 
-### Conceptos horarios adicionales: desgloses aditivos
+### Conceptos horarios adicionales: tratamiento explícito (`HourConcept.workTreatment`)
 
-* Sereno, Colectivo, Camioneta, Guardia and similar concepts are additional grids or breakdowns of time already included in Horas normales.
-* They do not replace or compete with Horas normales and are not added to calculate the worked total.
-* They are used for payroll/export preparation, analysis and control.
+Since 2026-10-02 (`docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md`, which replaces the earlier rule "concepts never increase the worked total"):
+
+* `WITHIN_BASE` ("Dentro de la jornada", e.g. Sereno): classifies minutes already contained in Horas base. It does not increase the worked total; it reduces Horas normales residuales. It cannot be loaded on a day without Horas base, and its coverage cannot exceed the base.
+* `ADDITIVE_TO_WORKED_TOTAL` ("Horas adicionales", e.g. Colectivo, Camioneta): worked time outside the fichada. It increases the worked total and is never subtracted from the base.
+* `loadMode` (Manual / Automático / Manual y automático) describes how a concept is loaded, never whether it adds to the total.
 * Each additional concept is enabled per employee from the legajo. Only enabled concepts appear or can be loaded for that employee.
 
-Example: if an employee worked 10 real hours and 6 of them were Sereno, the correct result is `Horas normales: 10` and `Sereno: 6`. `Horas normales: 4` plus `Sereno: 6` is incorrect.
+Formulas (single implementation: `backend/src/modules/time-entries/workedTimeAccounting.ts`):
+
+* Total worked = Horas base + additive concepts (never + within-base concepts).
+* Horas normales = max(0, Horas base − union coverage of within-base concepts).
+* Settlement equivalent = Horas normales × multiplier + each concept × its own multiplier.
+
+Example: base 8 h, Sereno 3 h, Colectivo 1 h gives `Horas normales 5 + Sereno 3 + Colectivo 1 = 9 h` real. On a Sunday ×2 the settlement equivalent is `10 + 6 + 2 = 18 h`.
 
 ### Modos de carga y reglas automáticas
 
@@ -651,20 +658,20 @@ Every additional concept must support one of these loading modes:
 * Automático.
 * Manual y automático.
 
-Automatic concepts are derived from fichadas using an active/inactive time rule with hora desde, hora hasta and cruza medianoche. Sereno is a typical automatic case. Colectivo and Camioneta are typical manual cases: RRHH loads their breakdown in the grid, and doing so neither creates nor increases Horas normales.
+Automatic concepts are derived from fichadas using an active/inactive time rule with hora desde, hora hasta and cruza medianoche, and they persist the real covered interval. Sereno is a typical within-the-workday case. Colectivo and Camioneta are typical manual additive cases: RRHH loads them in the grid. They never create a TimeEntry, but they do increase the worked total.
 
-The fichador records the real worked interval in Horas normales. Active automatic rules may additionally derive one or more overlapping concept breakdowns from that same interval. Additional concepts may overlap each other because they are independent classifications, not exclusive segments.
+The fichador records the real worked interval in Horas base. Active automatic rules may additionally derive one or more concept breakdowns from that same interval. Within-base concepts may overlap each other, but an overlapping minute is subtracted from Horas normales only once (union coverage).
 
 ### Impacto en legajo, grilla, liquidación y cierres
 
 * Legajo enables only additional concepts; Horas normales is always available by default.
 * The grid always displays Horas normales plus the additional concepts enabled for that employee.
-* Grid, summaries, exports and monthly closures must calculate the real worked total only from Horas normales. Additional concepts are shown separately and may feed payroll/export rules without increasing that total.
+* Grid, summaries, review inbox, exports, monthly closure snapshots and the dashboard all read the same accounting projection: total worked = Horas base + additive concepts, with the settlement equivalent built from non-duplicated categories. No consumer re-implements the formula.
 * Novedades remain separate employee/day-or-period events; they are not hour concepts.
 
 ### Modelo anterior de prioridad/exclusividad queda deprecado
 
-The existing `priority` field and any rule where one concept “wins” a time overlap belong to the previous exclusive-classification model. They are deprecated and pending future removal. `countsAsWorked` must not be used to add additional concepts to the real worked total; under the official model that total comes from Horas normales. `hourConceptId` and `TimeSegment` may remain as current implementation details, but must not be interpreted as proof that a work interval can belong to only one concept.
+The existing `priority` field and any rule where one concept “wins” a time overlap belong to the previous exclusive-classification model. They are deprecated and pending future removal. `countsAsWorked` must not be used to decide whether a concept adds to the real worked total; `workTreatment` is the only source for that. `hourConceptId` and `TimeSegment` may remain as current implementation details, but must not be interpreted as proof that a work interval can belong to only one concept.
 
 Until the staged redesign is implemented, current backend, frontend, schema, migrations and historical technical documents may still reflect exclusive classification. Do not extend that behavior as if it were the target model. The migration path and compatibility decisions are recorded in `docs/decisions/CONCEPTOS_HORARIOS_ADITIVOS.md`.
 

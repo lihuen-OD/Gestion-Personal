@@ -55,13 +55,29 @@ describe("pendingService.list — bandeja de revisión incluye desgloses manuale
   it("un desglose manual de Nivel 2/3 en EN_REVISION aparece en la bandeja de RRHH como 'hourConceptBreakdown'", async () => {
     repo.findPendingHourConceptBreakdowns.mockResolvedValue([{
       id: "breakdown-1", status: "EN_REVISION", date: new Date("2026-08-12T00:00:00Z"), createdAt: new Date("2026-08-12T00:00:00Z"),
-      minutes: 120, employee, hourConcept: { id: "colectivo", code: "HC-COLECTIVO", name: "Colectivo" },
+      minutes: 120, employee, hourConcept: { id: "colectivo", code: "HC-COLECTIVO", name: "Colectivo", workTreatment: "ADDITIVE_TO_WORKED_TOTAL" },
     }]);
 
     const result = await pendingService.list({ kind: "all", take: 100 } as never, rrhhUser);
 
     expect(result.summary).toMatchObject({ total: 1, hourConceptBreakdowns: 1 });
-    expect(result.data[0]).toMatchObject({ kind: "hourConceptBreakdown", sourceId: "breakdown-1", title: "Colectivo", quantity: "2.00" });
+    expect(result.data[0]).toMatchObject({
+      kind: "hourConceptBreakdown", sourceId: "breakdown-1", title: "Colectivo", quantity: "2.00",
+      subtitle: "Carga manual · Hora adicional (suma al total trabajado)",
+    });
+  });
+
+  // docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md: quien revisa ve si aprobar
+  // la carga cambia el total trabajado.
+  it("un desglose dentro de la jornada aclara que no suma al total", async () => {
+    repo.findPendingHourConceptBreakdowns.mockResolvedValue([{
+      id: "breakdown-2", status: "EN_REVISION", date: new Date("2026-08-12T00:00:00Z"), createdAt: new Date("2026-08-12T00:00:00Z"),
+      minutes: 180, employee, hourConcept: { id: "sereno", code: "HOR-001", name: "Sereno", workTreatment: "WITHIN_BASE" },
+    }]);
+
+    const result = await pendingService.list({ kind: "hourConceptBreakdowns", take: 100 } as never, rrhhUser);
+
+    expect(result.data[0]).toMatchObject({ title: "Sereno", subtitle: "Carga manual · Dentro de la jornada (no suma al total)" });
   });
 
   it("un desglose aprobado directamente por RRHH nunca llega acá (la consulta ya filtra EN_REVISION, esto sólo confirma que la agregación no inventa datos)", async () => {

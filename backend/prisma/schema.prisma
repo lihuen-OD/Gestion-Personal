@@ -203,6 +203,18 @@ enum HourConceptBreakdownSource {
   AUTOMATIC
 }
 
+// Semántica de negocio del concepto respecto del tiempo trabajado real —
+// independiente de loadMode (que sólo describe CÓMO se carga). Ver
+// docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md.
+//   WITHIN_BASE: clasifica minutos ya contenidos en Horas base (ej. Sereno).
+//     No incrementa el total trabajado; reduce Horas normales residuales.
+//   ADDITIVE_TO_WORKED_TOTAL: tiempo trabajado adicional que no está en la
+//     fichada (ej. Colectivo, Camioneta). Incrementa el total trabajado.
+enum HourConceptWorkTreatment {
+  WITHIN_BASE
+  ADDITIVE_TO_WORKED_TOTAL
+}
+
 enum DocumentStatus {
   PENDIENTE
   VIGENTE
@@ -777,17 +789,15 @@ model HourConcept {
   // todos los demás conceptos son adicionales; @unique garantiza que exista
   // como máximo un NORMAL_BASE sin depender de code/name/kind mutables.
   systemRole     HourConceptSystemRole? @unique
-  // Eliminación lógica (Etapa 8P): se usa SOLO cuando el concepto tiene uso
-  // histórico real (TimeEntry/TimeSegment tienen FK obligatoria — Postgres
-  // rechaza el delete físico mientras existan filas, y aunque no las
-  // hubiera, Novelty.targetHourConceptId no tiene snapshot de nombre y
-  // perdería la trazabilidad). No se toca TimeEntry/TimeSegment/WorkShift/
-  // Novelty nunca: la fila de HourConcept sigue existiendo físicamente, así
-  // que todos sus joins históricos siguen resolviendo igual. deletedAt
-  // != null es lo que la UI usa para ocultarlo del catálogo activo; status
-  // ya vuelve a INACTIVO al mismo tiempo (misma semántica que "deshabilitado"
-  // para el fichador/clasificación, que ya filtran por status ACTIVO).
-  deletedAt      DateTime?              @db.Timestamptz(3)
+  // Tratamiento en el total trabajado (ver enum). Nullable sólo porque
+  // NORMAL_BASE no lo usa: el CHECK "HourConcept_work_treatment_check" de la
+  // migración 20261002120000 lo exige para todo concepto adicional. Es una
+  // clasificación corregible por RRHH: los desgloses no lo copian, así que
+  // un cambio reinterpreta toda la historia (WORKED_TIME_ACCOUNTING_MODEL.md).
+  workTreatment  HourConceptWorkTreatment?
+  // Sin baja lógica (migración 20261003100000): deshabilitar = status
+  // INACTIVO (conserva historia); eliminar = borrado físico del concepto y
+  // de su historial específico (hourConcepts.repository.ts::deletePermanently).
   createdAt      DateTime               @default(now()) @db.Timestamptz(3)
   updatedAt      DateTime               @updatedAt @db.Timestamptz(3)
 
@@ -1643,10 +1653,13 @@ model TimeSegment {
   @@index([hourConceptId])
 }
 
-// Desglose aditivo de un concepto horario adicional. Nunca representa Horas
-// normales ni incrementa el total real trabajado. La lógica funcional que
-// valida esa invariante y genera/carga desgloses se incorpora en etapas
-// posteriores; Etapa 6C agrega únicamente la base persistente compatible.
+// Minutos de un concepto horario adicional para un empleado+fecha. Nunca
+// representa Horas base (NORMAL_BASE vive en TimeEntry). Si incrementa o no el
+// total real trabajado lo decide HourConcept.workTreatment: WITHIN_BASE
+// clasifica minutos ya contenidos en la base (no suma); ADDITIVE_TO_WORKED_TOTAL
+// es tiempo trabajado adicional fuera de la fichada (sí suma). La agregación
+// vive únicamente en backend/src/modules/time-entries/workedTimeAccounting.ts
+// (docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md).
 model HourConceptBreakdown {
   id                String                     @id @default(uuid())
   employeeId        String
@@ -1655,6 +1668,17 @@ model HourConceptBreakdown {
   day               Int
   hourConceptId     String
   minutes           Int
+  // Snapshot del multiplicador de Hora Especial (DoubleHourRule) resuelto al
+  // crear/actualizar/recalcular el desglose — misma filosofía que
+  // TimeEntry.appliedMultiplier: no depende de que exista un TimeEntry ese
+  // día ni cambia si después se edita una regla.
+  appliedMultiplier Decimal                    @default(1) @db.Decimal(4, 2)
+  // Intervalo real cubierto (sólo AUTOMATIC: intersección fichada × regla,
+  // ya partido por fecha Argentina). Permite calcular la unión de cobertura
+  // entre conceptos WITHIN_BASE sin restar dos veces el mismo minuto. MANUAL
+  // no tiene intervalo: sus minutos son una distribución declarada.
+  startAt           DateTime?                  @db.Timestamptz(3)
+  endAt             DateTime?                  @db.Timestamptz(3)
   source            HourConceptBreakdownSource
   status            ApprovalStatus             @default(BORRADOR)
   workShiftId       String?

@@ -20,6 +20,5 @@ export const mockHourConcepts: HourConcept[] = [
   hourConcept({ id: "hc-feriado", code: "HOR-004", name: "Feriado trabajado", kind: "FERIADO" }),
   hourConcept({ id: "hc-nocturna", code: "HOR-005", name: "Hora nocturna", kind: "NOCTURNA" }),
   hourConcept({ id: "hc-sereno", code: "HOR-006", name: "Sereno", kind: "SERENO" }),
-  hourConcept({ id: "hc-guardia", code: "HOR-007", name: "Guardia", kind: "GUARDIA" }),
   hourConcept({ id: "hc-colectivo", code: "HOR-008", name: "Manejo de colectivo", kind: "TRANSPORTE" }),
 ];

@@ -15,7 +15,7 @@ vi.mock("../audit/audit.service", () => ({ auditService: { register: vi.fn().moc
 
 const repo = hourConceptRulesRepository as unknown as Record<"findMany" | "findById" | "findByConceptId" | "findHourConceptConfiguration" | "create" | "update", Mock>;
 const mockedAudit = auditService.register as unknown as Mock;
-const automaticConcept = { id: "automatic-1", status: "ACTIVO", deletedAt: null, loadMode: "AUTOMATIC", systemRole: null };
+const automaticConcept = { id: "automatic-1", status: "ACTIVO", loadMode: "AUTOMATIC", systemRole: null };
 const bothConcept = { ...automaticConcept, id: "both-1", loadMode: "BOTH" };
 const storedRule = { id: "rule-1", hourConceptId: "automatic-1", hourConcept: { id: "automatic-1", code: "HOR-001", name: "Sereno" }, startTime: "21:00", endTime: "04:00", crossesMidnight: true, priority: 0, status: "ACTIVO" };
 const createInput = { hourConceptId: "automatic-1", startTime: "21:00", endTime: "04:00", crossesMidnight: true, status: "ACTIVO" as const };

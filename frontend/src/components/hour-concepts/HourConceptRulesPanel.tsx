@@ -151,7 +151,7 @@ export function HourConceptRulesPanel({ hourConceptId, loadMode, canEdit }: { ho
       <div className="block-card-head">
         <div>
           <h4>Reglas horarias</h4>
-          <p>Franjas utilizadas para generar automáticamente este desglose.</p>
+          <p>Franjas utilizadas para clasificar automáticamente las horas de este concepto dentro de la jornada fichada.</p>
         </div>
         {canEdit ? (
           <div className="tracked-actions">

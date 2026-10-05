@@ -578,7 +578,7 @@ export function HoursSpecialBlock({ employee, user, canEdit, onSaved }: Employee
       <div className="block-card-head">
         <div>
           <h3>Conceptos horarios adicionales</h3>
-          <p>Horas normales se aplican siempre a todos los empleados. Los conceptos adicionales habilitan desgloses como Sereno, Colectivo o Camioneta.</p>
+          <p>Horas normales se aplican siempre a todos los empleados. Los conceptos adicionales clasifican horas dentro de la jornada o suman horas trabajadas fuera de la fichada.</p>
           <p>{hoursSummary(employee)}</p>
         </div>
         <div className="tracked-actions">

@@ -3,11 +3,13 @@ import { roles } from "../../shared/security/roles";
 import { auditService } from "../audit/audit.service";
 import { automaticHourConceptBreakdownsRepository as repository } from "./automaticHourConceptBreakdowns.repository";
 import { automaticHourConceptBreakdownsService as service } from "./automaticHourConceptBreakdowns.service";
+import { resolveDoubleHourMultipliersByDate } from "../time-entries/timeEntries.repository";
 
 vi.mock("./automaticHourConceptBreakdowns.repository", () => ({ automaticHourConceptBreakdownsRepository: {
   findEmployee: vi.fn(), findClosure: vi.fn(), findEligibleConcepts: vi.fn(), findProcessedShifts: vi.fn(), replaceAutomatic: vi.fn(),
 } }));
 vi.mock("../audit/audit.service", () => ({ auditService: { register: vi.fn() } }));
+vi.mock("../time-entries/timeEntries.repository", () => ({ resolveDoubleHourMultipliersByDate: vi.fn() }));
 
 const user = { id: "rrhh-1", role: roles.rrhh } as Express.AuthUser;
 const repo = vi.mocked(repository);
@@ -19,6 +21,7 @@ beforeEach(() => {
   repo.findEligibleConcepts.mockResolvedValue([]);
   repo.findProcessedShifts.mockResolvedValue([]);
   repo.replaceAutomatic.mockResolvedValue({ deleted: 0, created: 0 });
+  vi.mocked(resolveDoubleHourMultipliersByDate).mockResolvedValue(new Map());
 });
 
 describe("automaticHourConceptBreakdownsService", () => {
@@ -50,6 +53,23 @@ describe("automaticHourConceptBreakdownsService", () => {
     expect(repo.replaceAutomatic).toHaveBeenCalledWith("employee-1", "2026-08", expect.arrayContaining([
       expect.objectContaining({ hourConceptId: "sereno", workShiftId: "shift-1" }),
     ]), undefined);
+  });
+
+  // docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md: sábado 22:00 → domingo
+  // 03:00 se parte por fecha Argentina; cada tramo congela el multiplicador de
+  // SU fecha (sábado x1, domingo x2) y persiste su intervalo real.
+  it("cruce de medianoche sábado→domingo: intervalos por fecha y multiplicador por fecha (2 consultas, batch)", async () => {
+    repo.findEligibleConcepts.mockResolvedValue([{ hourConcept: { id: "sereno", loadMode: "BOTH", rules: [{ id: "rule-1", hourConceptId: "sereno", startTime: "21:00", endTime: "06:00", crossesMidnight: true }] } }] as never);
+    repo.findProcessedShifts.mockResolvedValue([{ id: "shift-1", startAt: new Date("2026-08-15T22:00:00-03:00"), endAt: new Date("2026-08-16T03:00:00-03:00") }] as never);
+    vi.mocked(resolveDoubleHourMultipliersByDate).mockResolvedValue(new Map([["2026-08-15", 1], ["2026-08-16", 2]]));
+
+    await service.recalculate("employee-1", "2026-08", user);
+
+    expect(resolveDoubleHourMultipliersByDate).toHaveBeenCalledTimes(1);
+    expect(repo.replaceAutomatic).toHaveBeenCalledWith("employee-1", "2026-08", [
+      expect.objectContaining({ day: 15, minutes: 120, appliedMultiplier: 1, startAt: new Date("2026-08-16T01:00:00.000Z"), endAt: new Date("2026-08-16T03:00:00.000Z") }),
+      expect.objectContaining({ day: 16, minutes: 180, appliedMultiplier: 2, startAt: new Date("2026-08-16T03:00:00.000Z"), endAt: new Date("2026-08-16T06:00:00.000Z") }),
+    ], undefined);
   });
 
   it("dos recálculos consecutivos del mismo employee/period producen el mismo resultado, sin duplicar (idempotencia)", async () => {

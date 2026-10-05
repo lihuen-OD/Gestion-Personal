@@ -3,7 +3,8 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MonthlyClosureReviewPanel } from "./MonthlyClosureReviewPanel";
 import { employeeApiService } from "../../services/api/employeeApiService";
-import type { EmployeeTimeGrid, EmployeeTimeGridRow } from "../../services/api/employeeApiService";
+import type { EmployeeTimeGrid } from "../../services/api/employeeApiService";
+import { dayAccounting, timeGridFixture } from "../../test/workedTimeAccountingFixtures";
 import type { MonthlyClosure } from "../../services/api/workforceApiService";
 
 vi.mock("../../services/api/employeeApiService", async (importOriginal) => {
@@ -11,34 +12,8 @@ vi.mock("../../services/api/employeeApiService", async (importOriginal) => {
   return { ...actual, employeeApiService: { ...actual.employeeApiService, getTimeGrid: vi.fn() } };
 });
 
-const CONCEPT_BASE = { createdAt: "2026-01-01", updatedAt: "2026-01-01" };
-
-function buildRows(): EmployeeTimeGridRow[] {
-  return [
-    {
-      concept: { ...CONCEPT_BASE, id: "normal", code: "HC-NORMAL", name: "Hora normal", kind: "NORMAL", status: "ACTIVO", loadMode: null, systemRole: "NORMAL_BASE" },
-      role: "NORMAL_BASE",
-      minutesByDay: { "1": 480 },
-      totalMinutes: 480,
-    },
-  ];
-}
-
-function buildGrid(overrides: Partial<EmployeeTimeGrid> = {}): EmployeeTimeGrid {
-  return {
-    employee: {} as EmployeeTimeGrid["employee"],
-    entries: [],
-    novelties: [],
-    noveltyTypes: [],
-    hourConcepts: [],
-    rows: buildRows(),
-    totalWorkedMinutes: 480,
-    attendanceIssues: 2,
-    specialHoursByDay: {},
-    specialHourAdditionalMinutes: 0,
-    specialHourLiquidableTotalMinutes: 480,
-    ...overrides,
-  };
+function buildGrid(overrides: Partial<EmployeeTimeGrid> = {}, days = [dayAccounting(4)]): EmployeeTimeGrid {
+  return timeGridFixture(days, { attendanceIssues: 2, ...overrides });
 }
 
 function buildClosure(overrides: Partial<MonthlyClosure> = {}): MonthlyClosure {
@@ -65,13 +40,13 @@ describe("MonthlyClosureReviewPanel — Etapa 15K", () => {
 
     expect(screen.getByText("Cargando horas del período...")).toBeInTheDocument();
     resolveGrid(buildGrid());
-    await screen.findByText("Hora normal");
+    await screen.findByText("Composición");
   });
 
   it("pide la grilla una sola vez, sólo para el empleado del cierre seleccionado", async () => {
     vi.mocked(employeeApiService.getTimeGrid).mockResolvedValue(buildGrid());
     render(<MonthlyClosureReviewPanel closure={buildClosure({ employeeId: "employee-1" })} period="2026-08" close={vi.fn()} />);
-    await screen.findByText("Hora normal");
+    await screen.findByText("Composición");
     expect(employeeApiService.getTimeGrid).toHaveBeenCalledTimes(1);
     expect(employeeApiService.getTimeGrid).toHaveBeenCalledWith("employee-1", "2026-08", { includeDetails: true });
   });
@@ -83,22 +58,39 @@ describe("MonthlyClosureReviewPanel — Etapa 15K", () => {
     expect(screen.queryByText("network down")).not.toBeInTheDocument();
   });
 
-  it("muestra los KPIs mínimos con los valores ya calculados por la grilla", async () => {
+  it("muestra los KPIs con los valores ya calculados por el backend: total trabajado = base + adicionales", async () => {
     vi.mocked(employeeApiService.getTimeGrid).mockResolvedValue(buildGrid({ attendanceIssues: 3, novelties: [] }));
     render(<MonthlyClosureReviewPanel closure={buildClosure()} period="2026-08" close={vi.fn()} />);
-    await screen.findByText("Hora normal");
-    expect(screen.getByText("Horas reales trabajadas")).toBeInTheDocument();
-    expect(screen.getByText("Conceptos horarios adicionales")).toBeInTheDocument();
+    await screen.findByText("Composición");
+    const kpis = document.querySelector(".stat-grid") as HTMLElement;
+    expect(kpis).toHaveTextContent("Total trabajado9 hBase 8 h + adicionales 1 h");
     expect(screen.getByText("Incidencias del período")).toBeInTheDocument();
     expect(screen.getByText("Novedades del período")).toBeInTheDocument();
     expect(screen.getByText("3")).toBeInTheDocument();
   });
 
-  it("no muestra el KPI de valor liquidable cuando no hay Horas Especiales en la grilla", async () => {
-    vi.mocked(employeeApiService.getTimeGrid).mockResolvedValue(buildGrid({ specialHourAdditionalMinutes: 0 }));
+  it("sin Horas Especiales no muestra la equivalencia para liquidación", async () => {
+    vi.mocked(employeeApiService.getTimeGrid).mockResolvedValue(buildGrid());
     render(<MonthlyClosureReviewPanel closure={buildClosure()} period="2026-08" close={vi.fn()} />);
-    await screen.findByText("Hora normal");
-    expect(screen.queryByText("Valor liquidable")).not.toBeInTheDocument();
+    await screen.findByText("Composición");
+    expect(screen.queryByText("Equivalencia para liquidación")).not.toBeInTheDocument();
+    expect(screen.queryByText("Para liquidación")).not.toBeInTheDocument();
+  });
+
+  // docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md — ejemplo obligatorio.
+  it("domingo x2 — base 8 + Sereno 3 + Colectivo 1: horas reales 9 y equivalencia 18 (el KPI usa la proyección nueva)", async () => {
+    vi.mocked(employeeApiService.getTimeGrid).mockResolvedValue(buildGrid({}, [dayAccounting(2, { multiplier: 2 })]));
+    render(<MonthlyClosureReviewPanel closure={buildClosure()} period="2026-08" close={vi.fn()} />);
+    await screen.findByText("Composición");
+    const kpis = document.querySelector(".stat-grid")!;
+    expect(kpis).toHaveTextContent("Total trabajado9 h");
+    expect(kpis).toHaveTextContent("Para liquidación18 hEquivalencia con Hora especial");
+    const composition = document.querySelector(".hours-composition")!;
+    expect(composition).toHaveTextContent("Horas normales5 h10 h");
+    expect(composition).toHaveTextContent("Sereno3 h6 h");
+    expect(composition).toHaveTextContent("Colectivo1 h2 h");
+    expect(composition).toHaveTextContent("Total trabajado · Equivalencia9 h18 h");
+    expect(document.body.textContent).not.toMatch(/22 h|24 h/);
   });
 
   it("cerrar el panel no ejecuta ninguna acción de cierre", async () => {
@@ -106,7 +98,7 @@ describe("MonthlyClosureReviewPanel — Etapa 15K", () => {
     const close = vi.fn();
     const user = userEvent.setup();
     render(<MonthlyClosureReviewPanel closure={buildClosure()} period="2026-08" close={close} />);
-    await screen.findByText("Hora normal");
+    await screen.findByText("Composición");
     await user.click(screen.getByRole("button", { name: "Cerrar" }));
     expect(close).toHaveBeenCalledTimes(1);
   });

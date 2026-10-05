@@ -11,6 +11,8 @@ import { formatArgentinaDate } from "../../shared/datetime/argentinaTime";
 import { roles } from "../../shared/security/roles";
 import { employeeAccessWhere } from "./employeeAccess";
 import { employeesRepository } from "./employees.repository";
+import { resolveDoubleHourMultipliersByDate } from "../time-entries/timeEntries.repository";
+import { accountEmployeePeriod, toAccountingBaseEntry, toAccountingBreakdown, withinBaseCoverageMinutes, type WorkTreatment } from "../time-entries/workedTimeAccounting";
 import type {
   CreateEmployeeDocumentInput,
   CreateEmployeeBlockHistoryInput,
@@ -99,37 +101,44 @@ type TimeGridConcept = {
   loadMode: string | null;
   status: string;
   systemRole: string | null;
+  workTreatment: WorkTreatment | null;
 };
 
 type TimeGridEntry = {
+  employeeId: string;
   day: number;
   hours: Prisma.Decimal;
   status: string;
   hourConcept: TimeGridConcept;
-  // Etapa 11B: Horas Especiales — mismos campos ya usados en findPeriodEmployees
-  // (11A/11A.1). appliedMultiplier siempre es un escalar real de TimeEntry (1
-  // por default); timeSegment sólo existe para entradas del fichador.
+  // appliedMultiplier siempre es un escalar real de TimeEntry (1 por
+  // default); timeSegment sólo existe para entradas del fichador.
   appliedMultiplier?: Prisma.Decimal | number | null;
   timeSegment?: {
     specialHourRuleApplications: Array<{ wasConflicting: boolean; doubleHourRule: { name: string } }>;
   } | null;
 };
 
-type TimeGridBreakdown = { day: number; hourConceptId: string; minutes: number };
+type TimeGridBreakdown = Parameters<typeof toAccountingBreakdown>[0] & { hourConcept: TimeGridConcept };
 
-// Etapa 11B: multiplicador/adicional/regla(s)/conflicto de Hora Especial para
-// un día del legajo — sólo se incluye la clave del día cuando hay un
-// multiplicador > 1 (mismo criterio que specialHourAdditionalHours en
-// findPeriodEmployees: nunca se infla nada, sólo se deriva en lectura).
+// Indicador de Hora Especial de un día del legajo (sólo presentación: punto y
+// nombre de regla). Las horas reales/para liquidación del día viven en
+// `accounting.days[day]` — una sola fuente.
 export type TimeGridSpecialHourDay = {
   multiplier: number;
-  additionalMinutes: number;
-  liquidableTotalMinutes: number;
   ruleNames: string[];
   conflict: boolean;
 };
 
-export function buildAdditiveTimeGrid(
+const treatmentOrder = (concept: TimeGridConcept) => (concept.workTreatment === "WITHIN_BASE" ? 0 : 1);
+
+/**
+ * Grilla mensual por legajo (docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md).
+ * Filas: Horas base (NORMAL_BASE, editable) + un concepto por fila, primero
+ * los de "Dentro de la jornada" y después las "Horas adicionales". Toda cifra
+ * derivada (Horas normales residuales, total trabajado, equivalencia para
+ * liquidación) sale de workedTimeAccounting, nunca de sumar filas.
+ */
+export function buildEmployeeTimeGrid(
   normalConcept: TimeGridConcept | null,
   enabledConcepts: TimeGridConcept[],
   entries: TimeGridEntry[],
@@ -139,81 +148,70 @@ export function buildAdditiveTimeGrid(
     throw new AppError("Canonical normal hour concept not found", 500, "NORMAL_HOUR_CONCEPT_NOT_FOUND");
   }
 
-  const normalMinutesByDay: Record<string, number> = {};
-  // Etapa 11B: multiplicador/regla(s)/conflicto resueltos desde la Hora
-  // normal de cada día (misma fuente que appliedMultiplier ya persiste desde
-  // 11A, tanto para fichador como para carga manual) — no se re-consulta
-  // DoubleHourRule acá, sólo se lee lo que ya quedó escrito.
-  const multiplierByDay: Record<string, { multiplier: number; ruleNames: string[]; conflict: boolean }> = {};
-  for (const entry of entries) {
-    if (entry.hourConcept.systemRole !== "NORMAL_BASE" || !["APROBADO", "EN_REVISION"].includes(entry.status)) continue;
-    const key = String(entry.day);
-    normalMinutesByDay[key] = (normalMinutesByDay[key] ?? 0) + Math.round(Number(entry.hours) * 60);
+  // Horas base = TimeEntry NORMAL_BASE APROBADO/EN_REVISION (criterio vigente).
+  const baseEntries = entries.filter((entry) => entry.hourConcept.systemRole === "NORMAL_BASE" && ["APROBADO", "EN_REVISION"].includes(entry.status));
+  const accounting = accountEmployeePeriod(baseEntries.map(toAccountingBaseEntry), breakdowns.map(toAccountingBreakdown));
 
-    const multiplier = Number(entry.appliedMultiplier ?? 1);
-    if (multiplier > 1) {
-      const current = multiplierByDay[key] ?? { multiplier: 1, ruleNames: [], conflict: false };
-      current.multiplier = Math.max(current.multiplier, multiplier);
-      for (const application of entry.timeSegment?.specialHourRuleApplications ?? []) {
-        if (!current.ruleNames.includes(application.doubleHourRule.name)) current.ruleNames.push(application.doubleHourRule.name);
-        if (application.wasConflicting) current.conflict = true;
-      }
-      multiplierByDay[key] = current;
+  const ruleInfoByDay = new Map<string, { ruleNames: string[]; conflict: boolean }>();
+  for (const entry of baseEntries) {
+    if (Number(entry.appliedMultiplier ?? 1) <= 1) continue;
+    const key = String(entry.day);
+    const current = ruleInfoByDay.get(key) ?? { ruleNames: [], conflict: false };
+    for (const application of entry.timeSegment?.specialHourRuleApplications ?? []) {
+      if (!current.ruleNames.includes(application.doubleHourRule.name)) current.ruleNames.push(application.doubleHourRule.name);
+      if (application.wasConflicting) current.conflict = true;
     }
+    ruleInfoByDay.set(key, current);
+  }
+  const specialHoursByDay: Record<string, TimeGridSpecialHourDay> = {};
+  for (const [day, dayAccounting] of Object.entries(accounting.days)) {
+    if (dayAccounting.multiplier <= 1) continue;
+    specialHoursByDay[day] = { multiplier: dayAccounting.multiplier, ruleNames: ruleInfoByDay.get(day)?.ruleNames ?? [], conflict: ruleInfoByDay.get(day)?.conflict ?? false };
   }
 
-  const additionalMinutes = new Map<string, Record<string, number>>();
-  // Etapa 11B: minutos de TODOS los conceptos adicionales, sumados por día
-  // (sin distinguir concepto) — es lo que necesita el multiplicador del día
-  // para derivar el liquidable total, igual criterio que findPeriodEmployees.
-  const conceptMinutesByDay: Record<string, number> = {};
+  const minutesByConcept = new Map<string, Record<string, number>>();
+  const conceptsWithHours = new Map<string, TimeGridConcept>();
   for (const breakdown of breakdowns) {
-    const byDay = additionalMinutes.get(breakdown.hourConceptId) ?? {};
+    const byDay = minutesByConcept.get(breakdown.hourConceptId) ?? {};
     const key = String(breakdown.day);
     byDay[key] = (byDay[key] ?? 0) + breakdown.minutes;
-    additionalMinutes.set(breakdown.hourConceptId, byDay);
-    conceptMinutesByDay[key] = (conceptMinutesByDay[key] ?? 0) + breakdown.minutes;
+    minutesByConcept.set(breakdown.hourConceptId, byDay);
+    conceptsWithHours.set(breakdown.hourConceptId, breakdown.hourConcept);
+  }
+  const normalMinutesByDay: Record<string, number> = {};
+  for (const [day, dayAccounting] of Object.entries(accounting.days)) {
+    if (dayAccounting.baseMinutes) normalMinutesByDay[day] = dayAccounting.baseMinutes;
   }
 
-  const specialHoursByDay: Record<string, TimeGridSpecialHourDay> = {};
-  let specialHourAdditionalMinutes = 0;
-  for (const [day, info] of Object.entries(multiplierByDay)) {
-    const normalMinutes = normalMinutesByDay[day] ?? 0;
-    const conceptMinutes = conceptMinutesByDay[day] ?? 0;
-    const additionalMinutesForDay = Math.round((normalMinutes + conceptMinutes) * (info.multiplier - 1));
-    specialHourAdditionalMinutes += additionalMinutesForDay;
-    specialHoursByDay[day] = {
-      multiplier: info.multiplier,
-      additionalMinutes: additionalMinutesForDay,
-      liquidableTotalMinutes: normalMinutes + conceptMinutes + additionalMinutesForDay,
-      ruleNames: info.ruleNames,
-      conflict: info.conflict,
-    };
-  }
-
-  const toRow = (concept: TimeGridConcept, role: "NORMAL_BASE" | "ADDITIONAL", minutesByDay: Record<string, number>) => ({
+  const toRow = (concept: TimeGridConcept, role: "NORMAL_BASE" | "ADDITIONAL", minutesByDay: Record<string, number>, enabled: boolean) => ({
     concept,
     role,
+    // Un concepto con horas en el período que hoy ya no está habilitado se
+    // sigue mostrando (sólo lectura) para que la grilla explique el total.
+    enabled,
     minutesByDay,
     totalMinutes: Object.values(minutesByDay).reduce((sum, minutes) => sum + minutes, 0),
   });
-  const normalRow = toRow(normalConcept, "NORMAL_BASE", normalMinutesByDay);
-  const additionalRows = enabledConcepts
-    .filter((concept) => concept.systemRole === null && concept.loadMode !== null)
-    .map((concept) => toRow(concept, "ADDITIONAL", additionalMinutes.get(concept.id) ?? {}));
-
-  const totalConceptMinutes = Object.values(conceptMinutesByDay).reduce((sum, minutes) => sum + minutes, 0);
+  const enabledIds = new Set<string>();
+  const additionalConcepts: TimeGridConcept[] = [];
+  for (const concept of enabledConcepts) {
+    if (concept.systemRole !== null || concept.loadMode === null || enabledIds.has(concept.id)) continue;
+    enabledIds.add(concept.id);
+    additionalConcepts.push(concept);
+  }
+  for (const concept of conceptsWithHours.values()) {
+    if (!enabledIds.has(concept.id)) additionalConcepts.push(concept);
+  }
+  const additionalRows = additionalConcepts
+    .map((concept, index) => ({ concept, index }))
+    .sort((a, b) => treatmentOrder(a.concept) - treatmentOrder(b.concept) || a.index - b.index)
+    .map(({ concept }) => toRow(concept, "ADDITIONAL", minutesByConcept.get(concept.id) ?? {}, enabledIds.has(concept.id)));
 
   return {
-    rows: [normalRow, ...additionalRows],
-    totalWorkedMinutes: normalRow.totalMinutes,
+    rows: [toRow(normalConcept, "NORMAL_BASE", normalMinutesByDay, true), ...additionalRows],
+    accounting,
+    totalWorkedMinutes: accounting.totalWorkedMinutes,
     specialHoursByDay,
-    specialHourAdditionalMinutes,
-    // Etapa 11B: total liquidable del período = reales (Normal + conceptos,
-    // nunca inflados) + adicional derivado. Sin ninguna Hora Especial en el
-    // período, coincide con normal+conceptos (mismo criterio ya documentado
-    // en 11A.1 para "sin regla, los conceptos igual liquidan como adicionales").
-    specialHourLiquidableTotalMinutes: normalRow.totalMinutes + totalConceptMinutes + specialHourAdditionalMinutes,
   };
 }
 
@@ -231,7 +229,6 @@ async function validateManualBreakdownContext(
   if (!concept) throw new AppError("Hour concept not found", 404, "HOUR_CONCEPT_NOT_FOUND");
   if (concept.systemRole === "NORMAL_BASE") throw new AppError("Normal cannot be loaded as a breakdown", 409, "NORMAL_BREAKDOWN_NOT_ALLOWED");
   if (concept.status !== "ACTIVO") throw new AppError("Hour concept is inactive", 409, "HOUR_CONCEPT_INACTIVE");
-  if (concept.deletedAt) throw new AppError("Hour concept is deleted", 409, "HOUR_CONCEPT_DELETED");
   if (!concept.loadMode) throw new AppError("Hour concept has no load mode", 409, "HOUR_CONCEPT_LOAD_MODE_REQUIRED");
   if (concept.loadMode === "AUTOMATIC") throw new AppError("Automatic concepts are read-only", 409, "MANUAL_BREAKDOWN_NOT_ALLOWED");
   if (!await employeesRepository.isHourConceptEnabled(employeeId, hourConceptId)) {
@@ -260,6 +257,39 @@ async function validateManualBreakdownContext(
     }
   }
   return concept;
+}
+
+function formatMinutesEs(minutes: number) {
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return rest ? `${hours} h ${rest} min` : `${hours} h`;
+}
+
+// docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md: un concepto "dentro de la
+// jornada" clasifica minutos que ya están en las Horas base de ese día — sin
+// base no se convierte en horas adicionales, y su cobertura (unión con los
+// demás conceptos dentro de la jornada) nunca puede superar la base.
+// Independiente de loadMode: aplica igual a un concepto BOTH corregido a mano.
+async function assertWithinBaseFits(employeeId: string, date: Date, concept: { id: string; name: string }, minutes: number, dateKey: string) {
+  const context = await employeesRepository.findWithinBaseDayContext(employeeId, date, concept.id);
+  if (context.baseMinutes <= 0) {
+    throw new AppError(
+      `No se puede cargar ${concept.name} dentro de la jornada porque no hay horas base registradas para ese día.`,
+      409,
+      "WITHIN_BASE_REQUIRES_BASE_HOURS",
+    );
+  }
+  const coverage = withinBaseCoverageMinutes([
+    ...context.withinBaseBreakdowns.map((breakdown) => ({ ...breakdown, treatment: "WITHIN_BASE" as const })),
+    { treatment: "WITHIN_BASE", minutes },
+  ]);
+  if (coverage > context.baseMinutes) {
+    throw new AppError(
+      `Las horas dentro de la jornada del ${formatArgentinaDate(dateKey)} (${formatMinutesEs(coverage)}) superan las horas base registradas (${formatMinutesEs(context.baseMinutes)}).`,
+      409,
+      "WITHIN_BASE_EXCEEDS_BASE_HOURS",
+    );
+  }
 }
 
 // Etapa 6L.3 (ajuste): igual que TimeEntry, la aprobación final de un
@@ -500,13 +530,13 @@ export const employeesService = {
   async getTimeGrid(id: string, query: EmployeeTimeGridQuery, user: Express.AuthUser) {
     const grid = await employeesRepository.findTimeGrid(id, query, employeeAccessWhere(user));
     if (!grid) throw new AppError("Employee not found", 404, "EMPLOYEE_NOT_FOUND");
-    const additiveGrid = buildAdditiveTimeGrid(
+    const timeGrid = buildEmployeeTimeGrid(
       grid.normalConcept,
       grid.employee.hourConcepts.map((link) => link.hourConcept),
       grid.entries,
       grid.breakdowns,
     );
-    return redactPiiForRole({ ...grid, ...additiveGrid }, user);
+    return redactPiiForRole({ ...grid, ...timeGrid }, user);
   },
 
   async upsertManualHourConceptBreakdown(
@@ -519,6 +549,15 @@ export const employeesService = {
     const date = new Date(`${input.date}T00:00:00.000Z`);
     const day = Number(input.date.slice(8, 10));
     const concept = await validateManualBreakdownContext(employeeId, input.hourConceptId, period, user, input.observation);
+    if (input.minutes > 0 && concept.workTreatment === "WITHIN_BASE") {
+      await assertWithinBaseFits(employeeId, date, concept, input.minutes, input.date);
+    }
+    // Snapshot del multiplicador de Hora Especial de la fecha (mismo motor y
+    // misma filosofía que TimeEntry.appliedMultiplier): un Colectivo de
+    // domingo conserva x2 aunque ese día no haya Horas base.
+    const appliedMultiplier = input.minutes > 0
+      ? (await resolveDoubleHourMultipliersByDate(employeeId, [date])).get(input.date) ?? 1
+      : 1;
     // Etapa 6L.3: mismo criterio que TimeEntry — RRHH aplica el desglose
     // directo (APROBADO); Nivel 2/3 lo dejan pendiente de revisión.
     const autoApprovedByUserId = user.role === roles.rrhh ? user.id : null;
@@ -529,6 +568,7 @@ export const employeesService = {
       period,
       day,
       minutes: input.minutes,
+      appliedMultiplier,
       observation: input.observation,
       createdByUserId: user.id,
       approvedByUserId: autoApprovedByUserId,

@@ -4,6 +4,7 @@ import { employeeAccessWhere } from "../employees/employeeAccess";
 import { todayArgentinaDateKey } from "../../shared/datetime/argentinaTime";
 import { dashboardMetricsCache } from "./dashboard.cache";
 import { dashboardRepository } from "./dashboard.repository";
+import { totalWorkedHours } from "../time-entries/workedTimeAccounting";
 import type { DashboardMetricsQuery } from "./dashboard.schemas";
 
 // Etapa 14E.1: `calculateMetrics` disparaba 15 queries Prisma en un único
@@ -43,10 +44,6 @@ function groupCount(values: string[]) {
 function dayCount(from: Date, to?: Date | null) {
   const end = to || from;
   return Math.max(1, Math.round((end.getTime() - from.getTime()) / dayMs) + 1);
-}
-
-function formatDecimal(value: unknown) {
-  return Number(value?.toString?.() || 0);
 }
 
 function upcomingBirthdays(
@@ -176,7 +173,7 @@ async function calculateMetrics(period: string, user: Express.AuthUser) {
       task("Employee.groupBy(status)", () => dashboardRepository.countTotalAndActive(accessWhere)),
       task("Employee.count(exitsThisYear)", () => dashboardRepository.countExitsThisYear(accessWhere, year)),
       task("Employee.count(transported)", () => dashboardRepository.countTransported(accessWhere)),
-      task("TimeEntry.aggregate(loadedHours)", () => dashboardRepository.sumLoadedHours(period, accessWhere)),
+      task("TimeEntry+HourConceptBreakdown.aggregate(loadedHours)", () => dashboardRepository.sumLoadedHours(period, accessWhere)),
       task("Employee.findMany(activeDashboardEmployees)", () => dashboardRepository.findActiveDashboardEmployees(accessWhere)),
       task("Employee.count(withEntries)", () => dashboardRepository.countEmployeesWithEntries(period, accessWhere)),
       task("Employee.count(inReview)", () => dashboardRepository.countEmployeesInReview(period, accessWhere)),
@@ -193,7 +190,7 @@ async function calculateMetrics(period: string, user: Express.AuthUser) {
   const total = statusGroups.reduce((sum, group) => sum + group._count._all, 0);
   const active = statusGroups.find((group) => group.status === EmployeeStatus.ACTIVO)?._count._all || 0;
   const inactive = total - active;
-  const loadedHours = formatDecimal(hoursResult._sum.hours);
+  const loadedHours = totalWorkedHours(hoursResult.baseHours, hoursResult.additiveMinutes);
   // Etapa 14E.2: complemento exacto de employeesWithEntries sobre el mismo
   // activeWhere — ver comentario en dashboard.repository.ts:countEmployeesWithEntries.
   const pendingLoads = Math.max(0, active - employeesWithEntries);

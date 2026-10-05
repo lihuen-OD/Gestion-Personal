@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { apiRequest } from "./apiClient";
 import { employeeApiService, employeeListRequest, mapEmployeeFromApi, orgChartReachedLimit } from "./employeeApiService";
 import * as cache from "../cache";
+import { dayAccounting, periodAccounting } from "../../test/workedTimeAccountingFixtures";
 
 vi.mock("./apiClient", () => ({ apiRequest: vi.fn() }));
 
@@ -47,23 +48,24 @@ describe("mapEmployeeFromApi — conceptos horarios adicionales 6F", () => {
 });
 
 describe("employeeApiService.getTimeGrid — grilla aditiva 6G", () => {
-  it("preserva filas por id, modo y total trabajado explícito del backend", async () => {
+  it("preserva filas por id, modo y tratamiento, y la contabilidad del backend tal cual (sin recalcular)", async () => {
     const base = { deletedAt: null, createdAt: "2026-01-01", updatedAt: "2026-01-01", status: "ACTIVO" };
     vi.mocked(apiRequest).mockResolvedValue({
       data: {
         employee: { id: "employee-1", legajo: "100", firstName: "Ana", lastName: "Prueba", status: "ACTIVO" },
         entries: [], novelties: [], noveltyTypes: [], hourConcepts: [], attendanceIssues: 0,
         rows: [
-          { concept: { ...base, id: "normal", code: "HC-NORMAL", name: "Hora normal", kind: "NORMAL", loadMode: null, systemRole: "NORMAL_BASE" }, role: "NORMAL_BASE", minutesByDay: { "1": 600 }, totalMinutes: 600 },
-          { concept: { ...base, id: "sereno", code: "HC-SERENO", name: "Sereno", kind: "SERENO", loadMode: "AUTOMATIC", systemRole: null }, role: "ADDITIONAL", minutesByDay: { "1": 360 }, totalMinutes: 360 },
+          { concept: { ...base, id: "normal", code: "HC-NORMAL", name: "Hora normal", kind: "NORMAL", loadMode: null, systemRole: "NORMAL_BASE", workTreatment: null }, role: "NORMAL_BASE", enabled: true, minutesByDay: { "1": 600 }, totalMinutes: 600 },
+          { concept: { ...base, id: "sereno", code: "HC-SERENO", name: "Sereno", kind: "SERENO", loadMode: "AUTOMATIC", systemRole: null, workTreatment: "WITHIN_BASE" }, role: "ADDITIONAL", enabled: true, minutesByDay: { "1": 360 }, totalMinutes: 360 },
         ],
-        totalWorkedMinutes: 600,
+        accounting: periodAccounting([dayAccounting(1, { base: 10, sereno: 6, colectivo: 0 })]),
       },
     } as never);
 
     const result = await employeeApiService.getTimeGrid("employee-1", "2026-08", { includeDetails: false });
-    expect(result.totalWorkedMinutes).toBe(600);
-    expect(result.rows.map((row) => [row.concept.id, row.concept.loadMode])).toEqual([["normal", null], ["sereno", "AUTOMATIC"]]);
+    expect(result.accounting.totalWorkedMinutes).toBe(600);
+    expect(result.accounting.normalResidualMinutes).toBe(240);
+    expect(result.rows.map((row) => [row.concept.id, row.concept.loadMode, row.concept.workTreatment])).toEqual([["normal", null, null], ["sereno", "AUTOMATIC", "WITHIN_BASE"]]);
   });
 });
 

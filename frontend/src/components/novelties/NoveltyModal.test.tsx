@@ -544,6 +544,9 @@ describe("NoveltyModal — Etapa 15L.5 (previsualización de Cantidad de días)"
     await screen.findByText("Suspension");
     expect(screen.getByText("Cantidad de días: 1")).toBeInTheDocument();
 
+    // "Desde" arranca en la fecha de hoy: se fija explícitamente para que el
+    // test no dependa del día en que corre (antes fallaba después del 5/9/2026).
+    fireEvent.change(screen.getByLabelText("Desde"), { target: { value: "2026-09-01" } });
     fireEvent.change(screen.getByLabelText("Hasta"), { target: { value: "2026-09-05" } });
     expect(screen.getByText(/Cantidad de días: \d+/)).toBeInTheDocument();
     expect(screen.queryByText("Cantidad de días: 1")).not.toBeInTheDocument();

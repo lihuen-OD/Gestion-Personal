@@ -152,7 +152,6 @@ async function main() {
       name: "Hora normal",
       kind: "NORMAL",
       status: "ACTIVO",
-      deletedAt: null,
       loadMode: null,
       systemRole: "NORMAL_BASE",
     },
@@ -166,27 +165,20 @@ async function main() {
     },
   });
 
-  await prisma.hourConcept.upsert({
-    where: { code: "HC-GUARDIA" },
-    update: { name: "Guardia", kind: "GUARDIA", status: "ACTIVO", deletedAt: null, loadMode: "AUTOMATIC", systemRole: null },
-    create: {
-      code: "HC-GUARDIA",
-      name: "Guardia",
-      kind: "GUARDIA",
-      loadMode: "AUTOMATIC",
-    },
-  });
+  // HC-GUARDIA (Guardia) fue descartado por negocio (misma idea que Sereno)
+  // y eliminado físicamente (migración 20261002130000_remove_discarded_hc_guardia).
+  // No se vuelve a sembrar: el upsert anterior lo reactivaba en cada corrida.
 
   await prisma.hourConcept.upsert({
     where: { code: "HOR-001" },
-    update: { name: "Sereno", kind: "SERENO", status: "ACTIVO", deletedAt: null, loadMode: "AUTOMATIC", systemRole: null },
-    create: { code: "HOR-001", name: "Sereno", kind: "SERENO", loadMode: "AUTOMATIC" },
+    update: { name: "Sereno", kind: "SERENO", status: "ACTIVO", loadMode: "AUTOMATIC", systemRole: null, workTreatment: "WITHIN_BASE" },
+    create: { code: "HOR-001", name: "Sereno", kind: "SERENO", loadMode: "AUTOMATIC", workTreatment: "WITHIN_BASE" },
   });
 
   await prisma.hourConcept.upsert({
     where: { code: "HOR-002" },
-    update: { name: "Colectivo", kind: "TRANSPORTE", status: "ACTIVO", deletedAt: null, loadMode: "MANUAL", systemRole: null },
-    create: { code: "HOR-002", name: "Colectivo", kind: "TRANSPORTE", loadMode: "MANUAL" },
+    update: { name: "Colectivo", kind: "TRANSPORTE", status: "ACTIVO", loadMode: "MANUAL", systemRole: null, workTreatment: "ADDITIVE_TO_WORKED_TOTAL" },
+    create: { code: "HOR-002", name: "Colectivo", kind: "TRANSPORTE", loadMode: "MANUAL", workTreatment: "ADDITIVE_TO_WORKED_TOTAL" },
   });
 
   const noveltyType = await prisma.noveltyType.upsert({

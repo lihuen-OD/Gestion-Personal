@@ -1,6 +1,7 @@
 import { ApprovalStatus, DocumentStatus, EmployeeStatus, LaborMovementType, NoveltyTypeKind } from "@prisma/client";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "../../shared/prisma/client";
+import { countedBreakdownStatusWhere } from "../time-entries/workedTimeAccounting";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -91,20 +92,34 @@ export const dashboardRepository = {
   // ── Time entries ──────────────────────────────────────────────────────────
 
   /**
-   * Sum of hours for APROBADO + EN_REVISION entries in the period.
+   * Insumos del KPI "Horas cargadas" = total trabajado del período
+   * (docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md): Horas base NORMAL_BASE
+   * APROBADO + EN_REVISION, más minutos de conceptos ADDITIVE_TO_WORKED_TOTAL
+   * (sin RECHAZADO — mismo criterio que la grilla de Carga de horas). Los
+   * conceptos WITHIN_BASE nunca se suman: ya están dentro de la base.
    */
-  sumLoadedHours(period: string, accessWhere: Prisma.EmployeeWhereInput) {
-    return prisma.timeEntry.aggregate({
-      where: {
-        period,
-        employee: accessWhere,
-        status: { in: [ApprovalStatus.APROBADO, ApprovalStatus.EN_REVISION] },
-        // Etapa 6M: el KPI de horas cargadas es Horas normales/base — los
-        // conceptos adicionales (HourConceptBreakdown) no se suman acá.
-        hourConcept: { systemRole: "NORMAL_BASE" },
-      },
-      _sum: { hours: true },
-    });
+  async sumLoadedHours(period: string, accessWhere: Prisma.EmployeeWhereInput) {
+    const [base, additive] = await Promise.all([
+      prisma.timeEntry.aggregate({
+        where: {
+          period,
+          employee: accessWhere,
+          status: { in: [ApprovalStatus.APROBADO, ApprovalStatus.EN_REVISION] },
+          hourConcept: { systemRole: "NORMAL_BASE" },
+        },
+        _sum: { hours: true },
+      }),
+      prisma.hourConceptBreakdown.aggregate({
+        where: {
+          period,
+          employee: accessWhere,
+          status: countedBreakdownStatusWhere,
+          hourConcept: { workTreatment: "ADDITIVE_TO_WORKED_TOTAL" },
+        },
+        _sum: { minutes: true },
+      }),
+    ]);
+    return { baseHours: Number(base._sum.hours?.toString() || 0), additiveMinutes: additive._sum.minutes ?? 0 };
   },
 
   /**

@@ -416,6 +416,7 @@ td b{color:#1d3148}
 .time-entry-fields textarea{min-height:88px}
 .time-entry-hours-field{display:grid;gap:5px;align-content:start;min-width:0}
 .time-entry-fields .field-help{color:var(--color-text-muted,#718196);font-size:11px;font-weight:500;line-height:1.4}
+.form-grid label .field-help{display:block;margin-top:5px;color:var(--color-text-muted,#718196);font-size:11px;font-weight:500;line-height:1.4}
 .time-entry-modal-content>.context-novelty-card{grid-area:novelty}
 @media(max-width:760px){
   .time-entry-modal-summary,.time-entry-modal-content{grid-template-columns:1fr}
@@ -596,6 +597,7 @@ a:focus-visible,button:focus-visible,input[type="checkbox"]:focus-visible,input[
 .icon-button:hover{background:var(--color-bg-subtle);color:var(--color-text-primary)}
 .stat-grid{gap:16px;margin-bottom:22px}
 .stat-grid.five{grid-template-columns:repeat(5,minmax(0,1fr))}
+.stat-grid.three{grid-template-columns:repeat(3,minmax(0,1fr))}
 .stat-card{min-height:108px;padding:18px;border:1px solid var(--color-border-light);border-radius:var(--radius-lg);background:#fff;box-shadow:var(--shadow-card)}
 .stat-card:before{background:var(--color-primary);opacity:.95}
 .stat-copy small,.stat-card small{color:var(--color-text-muted);font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.06em}
@@ -701,7 +703,7 @@ label{color:var(--color-text-secondary);font-size:12px;font-weight:700}
   .page-header{align-items:flex-start;flex-direction:column}
   .page-header .button{align-self:flex-start}
   .page-actions{width:100%;justify-content:flex-start}
-  .stat-grid,.stat-grid.five{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .stat-grid,.stat-grid.five,.stat-grid.three{grid-template-columns:repeat(2,minmax(0,1fr))}
   .form-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
   .panel-head{align-items:flex-start;display:grid}
 }
@@ -715,7 +717,7 @@ label{color:var(--color-text-secondary);font-size:12px;font-weight:700}
   .page-wrap{padding:16px 12px 28px}
   .topbar{height:auto;min-height:62px}
   .page-header{gap:12px}
-  .stat-grid,.stat-grid.five,.form-grid,.settings-grid{grid-template-columns:1fr}
+  .stat-grid,.stat-grid.five,.stat-grid.three,.form-grid,.settings-grid{grid-template-columns:1fr}
   .stat-card{min-height:auto}
   .filters,.position-filters,.org-filters,.catalog-filters{display:grid;grid-template-columns:1fr;padding:14px}
   .form-actions{display:grid;grid-template-columns:1fr;padding:0 16px 16px}
@@ -1491,6 +1493,43 @@ a.employee-hours-status-item:hover{border-color:var(--ds-blue-300);background:va
 .monthly-concept-table .hour-cell:focus-visible{outline:2px solid var(--ds-blue-500);outline-offset:1px}
 .monthly-concept-table td:first-child b,.monthly-concept-table td:first-child .table-sub{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .monthly-concept-table td:first-child .table-sub{display:block;margin-top:3px}
+/* Modelo de tiempo trabajado (docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md):
+   grupos "Distribución de la jornada"/"Horas adicionales", filas calculadas
+   (Horas normales, Total trabajado, Equivalencia) y resumen de composición. */
+.monthly-concept-table .hours-group-row td{height:44px!important;background:var(--ds-slate-50)}
+.monthly-concept-table .hours-group-row td:first-child{background:var(--ds-slate-50)}
+.monthly-concept-table .hours-group-row b{color:var(--ds-slate-600);font-size:11px;letter-spacing:.04em;text-transform:uppercase}
+.monthly-concept-table tbody tr.hours-group-row:hover td:first-child{background:var(--ds-slate-50)}
+.monthly-concept-table .hour-cell.derived{border:1px dashed var(--ds-slate-200);background:transparent;color:var(--ds-slate-400);box-shadow:none;cursor:default}
+.monthly-concept-table .hour-cell.derived.filled{border-color:var(--ds-slate-300);background:#fff;color:var(--ds-slate-700)}
+.monthly-concept-table .hour-cell.derived:hover{border-color:var(--ds-slate-300);background:#fff;color:var(--ds-slate-700)}
+.monthly-concept-table tfoot tr:first-child td{border-top:2px solid var(--ds-slate-200)}
+.monthly-concept-table tfoot td:first-child b{color:var(--ds-slate-900)}
+.monthly-concept-table .hours-total-row .hour-cell.derived.filled{border-style:solid;border-color:var(--ds-slate-300);background:var(--ds-slate-100);color:var(--ds-slate-900);font-weight:700}
+.monthly-concept-table .hours-settlement-row .hour-cell.derived.filled{border-style:solid;border-color:var(--color-success-border);background:var(--color-success-bg);color:var(--color-success);font-weight:700}
+.monthly-concept-table .hours-settlement-row td:last-child b{color:var(--color-success)}
+.monthly-concept-table tr.is-syncing td:not(:first-child){opacity:.5;transition:opacity .15s ease}
+.hours-composition{min-width:0;overflow-x:auto}
+.hours-composition.is-syncing table{opacity:.5;transition:opacity .15s ease}
+/* La capa global de tablas fuerza padding/alineación con !important: se
+   acota acá para que encabezados y valores numéricos queden alineados. */
+.hours-composition table{width:100%;border-collapse:collapse;font-size:13px!important}
+.hours-composition th,.hours-composition td{padding:10px 16px!important;border-bottom:1px solid var(--color-border-light);white-space:nowrap!important}
+.hours-composition thead th{background:var(--ds-slate-50)!important;color:var(--color-text-muted)!important;font-size:10px!important;font-weight:700!important;letter-spacing:.05em!important;text-align:right!important;text-transform:uppercase}
+.hours-composition thead th:first-child{text-align:left!important}
+.hours-composition thead th:not(:first-child),.hours-composition td{width:180px}
+.hours-composition tbody th,.hours-composition tfoot th{position:static;background:none;color:var(--color-text-primary);font-size:13px;font-weight:500;letter-spacing:0;text-align:left;text-transform:none}
+.hours-composition td{color:var(--color-text-primary)!important;font-size:13px!important;font-variant-numeric:tabular-nums;text-align:right}
+.hours-composition tbody tr:hover td{background:none!important}
+.hours-composition .is-base th{font-weight:700}
+.hours-composition .is-base .table-sub{display:block;margin-top:2px}
+.hours-composition .is-group th{padding:14px 16px 6px!important;border-bottom:0;color:var(--color-text-muted);font-size:10px;font-weight:700;letter-spacing:.05em;text-transform:uppercase}
+.hours-composition .is-child th{padding-left:30px!important;color:var(--color-text-secondary);font-weight:400}
+.hours-composition tfoot th,.hours-composition tfoot td{border-top:2px solid var(--color-border-default);border-bottom:0;font-weight:800!important}
+.hours-composition-note{margin:10px 16px 4px;color:var(--color-text-muted);font-size:12px;line-height:1.45;white-space:normal}
+.hours-composition-note.warning{color:var(--color-warning)}
+.monthly-hours-review-panel .hours-composition{margin-bottom:16px;border:1px solid var(--color-border-default);border-radius:var(--radius-lg)}
+@media(max-width:620px){.hours-composition th,.hours-composition td{padding:9px 8px!important}.hours-composition th{white-space:normal!important}.hours-composition thead th{font-size:9px!important;letter-spacing:.02em!important}.hours-composition thead th:not(:first-child),.hours-composition td{width:84px}.hours-composition .is-child th{padding-left:16px!important}}
 @media(max-width:620px){.monthly-concept-table th:first-child,.monthly-concept-table td:first-child{width:190px!important;min-width:190px!important;max-width:190px!important}.monthly-concept-table th:not(:first-child):not(:last-child),.monthly-concept-table td:not(:first-child):not(:last-child){width:84px!important;min-width:84px!important;max-width:84px!important}.monthly-concept-table .hour-cell{width:72px!important;min-width:72px}}
 .table-shell{
   --table-min-width:100%;
@@ -1612,6 +1651,12 @@ a.employee-hours-status-item:hover{border-color:var(--ds-blue-300);background:va
 .day-cell-liquidable-total{
   color:var(--color-success)!important;
   border-top:1px solid var(--color-warning-border)!important;
+  padding-top:6px!important;
+  margin-top:2px!important;
+}
+.day-cell-worked-total{
+  color:var(--color-text-primary)!important;
+  border-top:1px solid var(--color-border-default)!important;
   padding-top:6px!important;
   margin-top:2px!important;
 }

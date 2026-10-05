@@ -1,8 +1,10 @@
 import { Prisma } from "@prisma/client";
-import { prisma } from "../../shared/prisma/client";
+import { prisma, type PrismaTransactionClient } from "../../shared/prisma/client";
 import { resolveOrderBy } from "../../shared/validation/listSort";
 import { createRepositoryListCache, pageFromCappedList, REPOSITORY_LIST_CACHE_MAX_ROWS } from "../../shared/cache/repositoryListCache";
 import { associatedEmployeeSelect, buildEmployeeAssociationWhere } from "../../shared/prisma/employeeAssociationQuery";
+import { countedBreakdownStatusWhere } from "../time-entries/workedTimeAccounting";
+import { findClosuresForHourConcept, rebuildClosureSnapshots, type ClosureSnapshotRecalculation } from "../workforce-management/closureSnapshot";
 import type { CreateHourConceptInput, ListHourConceptEmployeesQuery, ListHourConceptsQuery, UpdateHourConceptInput } from "./hourConcepts.schemas";
 
 // Cache en memoria para listados sin filtros. Etapa 14I.3: helper compartido
@@ -18,13 +20,12 @@ export function invalidateHourConceptsCache() {
 }
 
 function hasActiveFilters(query: ListHourConceptsQuery): boolean {
-  return !!(query.kind || query.status || query.search?.trim() || query.includeDeleted);
+  return !!(query.kind || query.status || query.search?.trim());
 }
 
 function buildWhere(query: ListHourConceptsQuery): Prisma.HourConceptWhereInput {
   const search = query.search?.trim();
   return {
-    ...(query.includeDeleted ? {} : { deletedAt: null }),
     ...(query.kind ? { kind: query.kind } : {}),
     ...(query.status ? { status: query.status } : {}),
     ...(search
@@ -35,6 +36,30 @@ function buildWhere(query: ListHourConceptsQuery): Prisma.HourConceptWhereInput 
           ],
         }
       : {}),
+  };
+}
+
+// Corregir el tratamiento o eliminar un concepto recalcula snapshots de
+// cierre dentro de la misma transacción (3 consultas por período afectado):
+// más que el default de 5s de Prisma contra Neon si el concepto tiene varios
+// meses de historia.
+const HISTORY_TRANSACTION_OPTIONS = { timeout: 30_000 };
+
+// Desgloses que cuentan del concepto, por empleado+período: alcance de una
+// reinterpretación y pares cuyos cierres hay que recalcular. 1 consulta.
+function countedBreakdownPairs(db: PrismaTransactionClient, hourConceptId: string) {
+  return db.hourConceptBreakdown.groupBy({
+    by: ["employeeId", "period"],
+    where: { hourConceptId, status: countedBreakdownStatusWhere },
+    _count: { _all: true },
+  });
+}
+
+function summarizePairs(pairs: Array<{ employeeId: string; period: string; _count: { _all: number } }>) {
+  return {
+    breakdowns: pairs.reduce((sum, pair) => sum + pair._count._all, 0),
+    employees: new Set(pairs.map((pair) => pair.employeeId)).size,
+    periods: new Set(pairs.map((pair) => pair.period)).size,
   };
 }
 
@@ -67,7 +92,6 @@ export const hourConceptsRepository = {
 
     const data = await listCache.getOrLoad(() =>
       prisma.hourConcept.findMany({
-        where: { deletedAt: null },
         orderBy: [{ status: "asc" }, { kind: "asc" }, { name: "asc" }],
         take: REPOSITORY_LIST_CACHE_MAX_ROWS + 1,
       }),
@@ -80,6 +104,16 @@ export const hourConceptsRepository = {
     return prisma.hourConcept.findUniqueOrThrow({ where: { id } });
   },
 
+  // Fuente autoritativa para el código automático. No usa el catálogo
+  // cacheado/paginado: consulta todos los códigos HOR-* físicamente
+  // existentes, incluso si una pantalla todavía conserva una lista vieja.
+  findGeneratedCodes() {
+    return prisma.hourConcept.findMany({
+      where: { code: { startsWith: "HOR-" } },
+      select: { code: true },
+    });
+  },
+
   create(data: CreateHourConceptInput) {
     return prisma.hourConcept.create({ data });
   },
@@ -88,10 +122,27 @@ export const hourConceptsRepository = {
     return prisma.hourConcept.update({ where: { id }, data });
   },
 
+  // Corrección de workTreatment (docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md
+  // §2): los desgloses no se tocan. Toda lectura (grilla, Por persona,
+  // export, resumen, dashboard, panel de cierre) une HourConceptBreakdown con
+  // el HourConcept.workTreatment vigente (accountingBreakdownSelect), así que
+  // actualizar el concepto ya reinterpreta toda la historia. Lo único
+  // persistido con la lectura anterior son los snapshots de cierre: se
+  // recalculan en la misma transacción.
+  updateReinterpretingHistory(id: string, data: UpdateHourConceptInput, recalculation: ClosureSnapshotRecalculation) {
+    return prisma.$transaction(async (tx) => {
+      const item = await tx.hourConcept.update({ where: { id }, data });
+      const pairs = await countedBreakdownPairs(tx, id);
+      const closures = await findClosuresForHourConcept(tx, id, pairs);
+      const rebuiltClosures = await rebuildClosureSnapshots(tx, closures, recalculation);
+      return { item, reinterpreted: summarizePairs(pairs), rebuiltClosures };
+    }, HISTORY_TRANSACTION_OPTIONS);
+  },
+
   // Clasificación automática de jornadas (Motor A): devuelve exclusivamente
   // reglas activas de conceptos que también son elegibles para automatización.
   // Etapa 15M.7B: el mismo universo funcional que Motor B respecto de
-  // status/deletedAt/loadMode; la habilitación por empleado se intersecta
+  // status/loadMode; la habilitación por empleado se intersecta
   // después en classifySegmentsForEmployee (Etapa 15I).
   async findActiveRules() {
     const rules = await prisma.hourConceptRule.findMany({
@@ -99,7 +150,6 @@ export const hourConceptsRepository = {
         status: "ACTIVO",
         hourConcept: {
           status: "ACTIVO",
-          deletedAt: null,
           loadMode: { in: ["AUTOMATIC", "BOTH"] },
         },
       },
@@ -184,12 +234,8 @@ export const hourConceptsRepository = {
     return prisma.employeeHourConcept.delete({ where: { employeeId_hourConceptId: { employeeId, hourConceptId } } });
   },
 
-  // Eliminación segura (Etapa 8O): mismo criterio que positions.service.ts /
-  // workforce.service.ts::removeShiftTemplate — contar uso real antes de
-  // permitir el delete físico. Se cuentan las 6 relaciones reales de
-  // HourConcept en schema.prisma (no solo EmployeeHourConcept/HourConceptRule
-  // que pidió el usuario, también timeEntries/novelties/timeSegments/
-  // workShifts, que igual representan uso histórico real).
+  // Uso real antes de eliminar: las 7 relaciones de HourConcept en
+  // schema.prisma, para la auditoría y para detectar TimeEntry legacy.
   findWithUsage(id: string) {
     return prisma.hourConcept.findUniqueOrThrow({
       where: { id },
@@ -197,6 +243,10 @@ export const hourConceptsRepository = {
         id: true,
         code: true,
         name: true,
+        kind: true,
+        status: true,
+        loadMode: true,
+        workTreatment: true,
         systemRole: true,
         _count: {
           select: {
@@ -206,38 +256,56 @@ export const hourConceptsRepository = {
             timeSegments: true,
             workShifts: true,
             rules: true,
+            breakdowns: true,
           },
         },
       },
     });
   },
 
-  delete(id: string) {
-    return prisma.hourConcept.delete({ where: { id } });
-  },
-
-  // Las 3 operaciones de la eliminación forzada (Etapa 8P) — cada una toca
-  // solo relaciones de CONFIGURACIÓN (nunca TimeEntry/TimeSegment/WorkShift/
-  // Novelty, que son historial real):
-  // - EmployeeHourConcept no tiene status propio (pura existencia on/off),
-  //   así que "desvincular" es delete real de esas filas — reutiliza el
-  //   mismo criterio que disableForEmployee, en batch.
-  disableAllEmployees(hourConceptId: string) {
-    return prisma.employeeHourConcept.deleteMany({ where: { hourConceptId } });
-  },
-
-  // - HourConceptRule SÍ tiene status, así que se desactiva (no se borra):
-  //   TimeSegment.hourConceptRuleId ya es nullable con onDelete SetNull, con
-  //   lo cual borrar la regla sería técnicamente seguro, pero desactivar es
-  //   más conservador y no requiere confiar en ese detalle de FK.
-  deactivateAllRules(hourConceptId: string) {
-    return prisma.hourConceptRule.updateMany({ where: { hourConceptId, status: "ACTIVO" }, data: { status: "INACTIVO" } });
-  },
-
-  // - El concepto en sí queda INACTIVO (mismo efecto que "deshabilitado" en
-  //   fichador/clasificación, que ya filtran por status ACTIVO) + deletedAt
-  //   para que el catálogo lo oculte por default. Nunca se borra la fila.
-  softDelete(id: string) {
-    return prisma.hourConcept.update({ where: { id }, data: { status: "INACTIVO", deletedAt: new Date() } });
+  // Eliminación definitiva (docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md
+  // §14): una transacción con las dependencias en orden explícito, sin
+  // depender de ningún ON DELETE de la base.
+  //  1. Historial específico del concepto: todos sus desgloses.
+  //  2. Evidencia física que lo referencia: TimeSegment y WorkShift se
+  //     reclasifican a Hora normal, igual que deja el clasificador un tramo
+  //     sin regla (SIN_CONCEPTO_COMPATIBLE). Minutos, fichadas y TimeEntry de
+  //     Horas base no se tocan.
+  //  3. Novedades que lo tenían como destino: se desvinculan (la novedad es
+  //     un hecho del legajo, no del concepto).
+  //  4. Configuración: reglas y habilitaciones por legajo.
+  //  5. El concepto: el código queda libre.
+  //  6. Snapshots de cierre que lo incluían: se recalculan.
+  // Un TimeEntry con este concepto (modelo previo a 6L) nunca se borra acá:
+  // el service lo rechaza antes y la FK RESTRICT lo garantiza ante una carrera.
+  deletePermanently(id: string, recalculation: ClosureSnapshotRecalculation) {
+    return prisma.$transaction(async (tx) => {
+      const [fallback, pairs] = await Promise.all([
+        tx.hourConcept.findFirstOrThrow({ where: { systemRole: "NORMAL_BASE" }, select: { id: true, name: true } }),
+        countedBreakdownPairs(tx, id),
+      ]);
+      const closures = await findClosuresForHourConcept(tx, id, pairs);
+      const breakdowns = await tx.hourConceptBreakdown.deleteMany({ where: { hourConceptId: id } });
+      const segments = await tx.timeSegment.updateMany({
+        where: { hourConceptId: id },
+        data: { hourConceptId: fallback.id, hourConceptName: fallback.name, hourConceptRuleId: null, conceptStatus: "SIN_CONCEPTO_COMPATIBLE" },
+      });
+      const workShifts = await tx.workShift.updateMany({ where: { hourConceptId: id }, data: { hourConceptId: fallback.id, hourConceptName: fallback.name } });
+      const novelties = await tx.novelty.updateMany({ where: { targetHourConceptId: id }, data: { targetHourConceptId: null } });
+      const rules = await tx.hourConceptRule.deleteMany({ where: { hourConceptId: id } });
+      const assignments = await tx.employeeHourConcept.deleteMany({ where: { hourConceptId: id } });
+      const concept = await tx.hourConcept.delete({ where: { id }, select: { id: true, code: true, name: true } });
+      const rebuiltClosures = await rebuildClosureSnapshots(tx, closures, recalculation);
+      return {
+        concept,
+        deletedBreakdowns: breakdowns.count,
+        deletedRules: rules.count,
+        deletedEmployeeAssignments: assignments.count,
+        reclassifiedSegments: segments.count,
+        reclassifiedWorkShifts: workShifts.count,
+        unlinkedNovelties: novelties.count,
+        rebuiltClosures,
+      };
+    }, HISTORY_TRANSACTION_OPTIONS);
   },
 };

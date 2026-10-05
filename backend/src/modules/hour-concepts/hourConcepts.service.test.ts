@@ -10,19 +10,18 @@ vi.mock("./hourConcepts.repository", () => ({
   invalidateHourConceptsCache: vi.fn(),
   hourConceptsRepository: {
     findMany: vi.fn(),
+    findGeneratedCodes: vi.fn(),
     findById: vi.fn(),
     create: vi.fn(),
     update: vi.fn(),
+    updateReinterpretingHistory: vi.fn(),
     findEmployees: vi.fn(),
     countExistingEmployees: vi.fn(),
     findEmployeeHourConcept: vi.fn(),
     enableForEmployees: vi.fn(),
     disableForEmployee: vi.fn(),
     findWithUsage: vi.fn(),
-    delete: vi.fn(),
-    disableAllEmployees: vi.fn(),
-    deactivateAllRules: vi.fn(),
-    softDelete: vi.fn(),
+    deletePermanently: vi.fn(),
   },
 }));
 
@@ -32,19 +31,18 @@ vi.mock("../audit/audit.service", () => ({
 
 const repo = hourConceptsRepository as unknown as {
   findMany: Mock;
+  findGeneratedCodes: Mock;
   findById: Mock;
   create: Mock;
   update: Mock;
+  updateReinterpretingHistory: Mock;
   findEmployees: Mock;
   countExistingEmployees: Mock;
   findEmployeeHourConcept: Mock;
   enableForEmployees: Mock;
   disableForEmployee: Mock;
   findWithUsage: Mock;
-  delete: Mock;
-  disableAllEmployees: Mock;
-  deactivateAllRules: Mock;
-  softDelete: Mock;
+  deletePermanently: Mock;
 };
 const mockedAudit = auditService.register as unknown as Mock;
 
@@ -86,6 +84,32 @@ describe("list — contrato 6E", () => {
   });
 });
 
+describe("nextCode — código automático desde la base", () => {
+  it("si el catálogo visible termina en HOR-004 pero HOR-005 está ocupado, devuelve HOR-006", async () => {
+    repo.findGeneratedCodes.mockResolvedValue(["001", "002", "003", "004", "005"].map((suffix) => ({ code: `HOR-${suffix}` })));
+
+    await expect(hourConceptsService.nextCode()).resolves.toEqual({ code: "HOR-006" });
+  });
+
+  it("reutiliza el primer hueco liberado por una eliminación definitiva", async () => {
+    repo.findGeneratedCodes.mockResolvedValue(["001", "002", "003", "004", "006"].map((suffix) => ({ code: `HOR-${suffix}` })));
+
+    await expect(hourConceptsService.nextCode()).resolves.toEqual({ code: "HOR-005" });
+  });
+});
+
+describe("create — carrera por código automático", () => {
+  it("mantiene UNIQUE como autoridad y traduce P2002 a un 409 accionable", async () => {
+    repo.create.mockRejectedValue(prismaKnownError("P2002"));
+
+    await expect(hourConceptsService.create({ code: "HOR-005" } as never)).rejects.toMatchObject({
+      statusCode: 409,
+      code: "HOUR_CONCEPT_UNIQUE_CONSTRAINT",
+      message: expect.stringContaining("código acaba de ser utilizado"),
+    });
+  });
+});
+
 describe("listEmployees — empleados habilitados (Etapa 8G)", () => {
   it("rechaza concepto inexistente (404), sin llegar a consultar empleados", async () => {
     repo.findById.mockRejectedValue(prismaKnownError("P2025"));
@@ -97,7 +121,7 @@ describe("listEmployees — empleados habilitados (Etapa 8G)", () => {
   });
 
   it("lista empleados habilitados, mapeando employeeId y los datos del empleado", async () => {
-    repo.findById.mockResolvedValue({ id: "concept-1", status: "ACTIVO", deletedAt: null, systemRole: null });
+    repo.findById.mockResolvedValue({ id: "concept-1", status: "ACTIVO", systemRole: null });
     repo.findEmployees.mockResolvedValue([[employeeRow], 1]);
 
     const result = await hourConceptsService.listEmployees("concept-1", { page: 1, take: 50 } as never, rrhhUser);
@@ -122,7 +146,7 @@ describe("listEmployees — empleados habilitados (Etapa 8G)", () => {
   });
 
   it("no devuelve empleados no habilitados: si el repository no los trae, la lista queda vacía sin inventar filas", async () => {
-    repo.findById.mockResolvedValue({ id: "concept-1", status: "ACTIVO", deletedAt: null, systemRole: null });
+    repo.findById.mockResolvedValue({ id: "concept-1", status: "ACTIVO", systemRole: null });
     repo.findEmployees.mockResolvedValue([[], 0]);
 
     const result = await hourConceptsService.listEmployees("concept-1", { page: 1, take: 50 } as never, rrhhUser);
@@ -178,6 +202,87 @@ describe("update — concepto administrado por el sistema", () => {
   });
 });
 
+// docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md §2: workTreatment es una
+// clasificación corregible por RRHH aunque el concepto ya tenga horas.
+describe("update — corrección del tratamiento en el total trabajado", () => {
+  const prueba = { id: "prueba", code: "HOR-005", name: "Prueba 02", systemRole: null, workTreatment: "ADDITIVE_TO_WORKED_TOTAL" };
+  const rebuiltClosure = {
+    id: "closure-1",
+    employeeId: "emp-1",
+    period: "2026-10",
+    before: { accounting: { totalWorkedMinutes: 600 } },
+    after: { accounting: { totalWorkedMinutes: 480 } },
+  };
+
+  it("permite cambiarlo aunque el concepto tenga horas: actualiza el concepto (sin tocar desgloses) y recalcula cierres en la misma operación", async () => {
+    repo.findById.mockResolvedValue(prueba);
+    repo.updateReinterpretingHistory.mockResolvedValue({
+      item: { ...prueba, workTreatment: "WITHIN_BASE" },
+      reinterpreted: { breakdowns: 6, employees: 2, periods: 3 },
+      rebuiltClosures: [rebuiltClosure],
+    });
+
+    const item = await hourConceptsService.update("prueba", { workTreatment: "WITHIN_BASE" }, { userId: "user-1" });
+
+    expect(item).toMatchObject({ id: "prueba", workTreatment: "WITHIN_BASE" });
+    expect(repo.updateReinterpretingHistory).toHaveBeenCalledWith("prueba", { workTreatment: "WITHIN_BASE" }, {
+      reason: "HOUR_CONCEPT_WORK_TREATMENT_CHANGED",
+      hourConceptId: "prueba",
+      hourConceptCode: "HOR-005",
+    });
+    expect(repo.update).not.toHaveBeenCalled();
+    expect(invalidateHourConceptsCache).toHaveBeenCalled();
+  });
+
+  it("audita concepto, tratamiento anterior y nuevo, usuario y alcance (desgloses/legajos/períodos/cierres)", async () => {
+    repo.findById.mockResolvedValue(prueba);
+    repo.updateReinterpretingHistory.mockResolvedValue({
+      item: { ...prueba, workTreatment: "WITHIN_BASE" },
+      reinterpreted: { breakdowns: 6, employees: 2, periods: 3 },
+      rebuiltClosures: [rebuiltClosure],
+    });
+
+    await hourConceptsService.update("prueba", { workTreatment: "WITHIN_BASE" }, { userId: "user-1" });
+
+    expect(mockedAudit).toHaveBeenCalledWith(expect.objectContaining({
+      userId: "user-1",
+      action: "UPDATE",
+      entity: "HourConcept",
+      entityId: "prueba",
+      description: expect.stringMatching(/HOR-005 - Prueba 02 de "Horas adicionales" a "Dentro de la jornada"\. 6 desglose\(s\) de 2 legajo\(s\) en 3 período\(s\).*1 cierre\(s\)/),
+      before: expect.objectContaining({ workTreatment: "ADDITIVE_TO_WORKED_TOTAL" }),
+      after: expect.objectContaining({ workTreatment: "WITHIN_BASE", reinterpreted: { breakdowns: 6, employees: 2, periods: 3 }, recalculatedClosureIds: ["closure-1"] }),
+    }));
+    // Un AuditLog por cierre recalculado, con el snapshot anterior y el nuevo.
+    expect(mockedAudit).toHaveBeenCalledWith(expect.objectContaining({
+      userId: "user-1",
+      action: "UPDATE",
+      entity: "MonthlyTimeClosure",
+      entityId: "closure-1",
+      before: { snapshot: rebuiltClosure.before },
+      after: { snapshot: rebuiltClosure.after },
+    }));
+  });
+
+  it("sin cambio de tratamiento (o sin enviarlo) es una edición común: no reinterpreta ni recalcula cierres", async () => {
+    repo.findById.mockResolvedValue(prueba);
+    repo.update.mockResolvedValue({ ...prueba, name: "Renombrado" });
+
+    await hourConceptsService.update("prueba", { workTreatment: "ADDITIVE_TO_WORKED_TOTAL", name: "Renombrado" }, { userId: "user-1" });
+    await hourConceptsService.update("prueba", { status: "INACTIVO" }, { userId: "user-1" });
+
+    expect(repo.update).toHaveBeenCalledTimes(2);
+    expect(repo.updateReinterpretingHistory).not.toHaveBeenCalled();
+  });
+
+  it("también se corrige en el otro sentido (dentro de la jornada → horas adicionales) con horas cargadas", async () => {
+    repo.findById.mockResolvedValue({ ...prueba, workTreatment: "WITHIN_BASE" });
+    repo.updateReinterpretingHistory.mockResolvedValue({ item: prueba, reinterpreted: { breakdowns: 9, employees: 1, periods: 1 }, rebuiltClosures: [] });
+
+    await expect(hourConceptsService.update("prueba", { workTreatment: "ADDITIVE_TO_WORKED_TOTAL" })).resolves.toMatchObject({ id: "prueba" });
+  });
+});
+
 describe("enableEmployees — habilitar desde el concepto (Etapa 8N)", () => {
   it("rechaza asignar NORMAL_BASE porque Horas normales existe para todo legajo", async () => {
     repo.findById.mockResolvedValue({ id: "normal-1", systemRole: "NORMAL_BASE" });
@@ -199,7 +304,7 @@ describe("enableEmployees — habilitar desde el concepto (Etapa 8N)", () => {
   });
 
   it("rechaza si algún empleado no existe (404), sin llegar a habilitar nada", async () => {
-    repo.findById.mockResolvedValue({ id: "concept-1", status: "ACTIVO", deletedAt: null, systemRole: null });
+    repo.findById.mockResolvedValue({ id: "concept-1", status: "ACTIVO", systemRole: null });
     repo.countExistingEmployees.mockResolvedValue(1); // pidieron 2, solo existe 1
 
     await expect(
@@ -209,7 +314,7 @@ describe("enableEmployees — habilitar desde el concepto (Etapa 8N)", () => {
   });
 
   it("habilita a los empleados reales, deduplicando ids repetidos, y audita CREATE", async () => {
-    repo.findById.mockResolvedValue({ id: "concept-1", status: "ACTIVO", deletedAt: null, systemRole: null });
+    repo.findById.mockResolvedValue({ id: "concept-1", status: "ACTIVO", systemRole: null });
     repo.countExistingEmployees.mockResolvedValue(2);
     repo.enableForEmployees.mockResolvedValue({ count: 2 });
 
@@ -225,7 +330,7 @@ describe("enableEmployees — habilitar desde el concepto (Etapa 8N)", () => {
   });
 
   it("rechaza asignar un concepto adicional inactivo", async () => {
-    repo.findById.mockResolvedValue({ id: "concept-1", status: "INACTIVO", deletedAt: null, systemRole: null });
+    repo.findById.mockResolvedValue({ id: "concept-1", status: "INACTIVO", systemRole: null });
     await expect(
       hourConceptsService.enableEmployees("concept-1", { employeeIds: ["employee-1"] }),
     ).rejects.toMatchObject({ statusCode: 409, code: "HOUR_CONCEPT_NOT_ASSIGNABLE" });
@@ -266,111 +371,100 @@ describe("disableEmployee — quitar desde el concepto (Etapa 8N)", () => {
   });
 });
 
-const zeroUsage = { employees: 0, timeEntries: 0, novelties: 0, timeSegments: 0, workShifts: 0, rules: 0 };
-const realUsage = { employees: 2, timeEntries: 5, novelties: 1, timeSegments: 8, workShifts: 3, rules: 1 };
+const usage = { employees: 2, timeEntries: 0, novelties: 1, timeSegments: 8, workShifts: 0, rules: 1, breakdowns: 12 };
+const conceptWithUsage = { id: "concept-1", code: "HOR-005", name: "Prueba 02", kind: "OTRO", status: "ACTIVO", loadMode: "BOTH", workTreatment: "ADDITIVE_TO_WORKED_TOTAL", systemRole: null, _count: usage };
+const deletionResult = {
+  concept: { id: "concept-1", code: "HOR-005", name: "Prueba 02" },
+  deletedBreakdowns: 12,
+  deletedRules: 1,
+  deletedEmployeeAssignments: 2,
+  reclassifiedSegments: 8,
+  reclassifiedWorkShifts: 0,
+  unlinkedNovelties: 1,
+  rebuiltClosures: [{ id: "closure-1", employeeId: "emp-1", period: "2026-10", before: { a: 1 }, after: { a: 2 } }],
+};
 
-describe("remove — sin uso: delete físico (Etapa 8O)", () => {
-  it("no permite eliminar ni desactivar el NORMAL_BASE administrado por el sistema", async () => {
-    repo.findWithUsage.mockResolvedValue({
-      id: "normal-1",
-      code: "HC-NORMAL",
-      name: "Hora normal",
-      systemRole: "NORMAL_BASE",
-      _count: zeroUsage,
-    });
+// docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md §14: Eliminar es definitivo
+// (no hay baja lógica ni segunda confirmación con force); Deshabilitar es lo
+// que conserva la historia.
+describe("remove — eliminación definitiva", () => {
+  it("no permite eliminar el NORMAL_BASE administrado por el sistema", async () => {
+    repo.findWithUsage.mockResolvedValue({ ...conceptWithUsage, id: "normal-1", code: "HC-NORMAL", systemRole: "NORMAL_BASE" });
 
-    await expect(hourConceptsService.remove("normal-1", true, { userId: "user-1" })).rejects.toMatchObject({
+    await expect(hourConceptsService.remove("normal-1", { userId: "user-1" })).rejects.toMatchObject({
       statusCode: 409,
       code: "HOUR_CONCEPT_SYSTEM_MANAGED",
     });
-    expect(repo.delete).not.toHaveBeenCalled();
-    expect(repo.softDelete).not.toHaveBeenCalled();
+    expect(repo.deletePermanently).not.toHaveBeenCalled();
   });
 
   it("rechaza concepto inexistente (404), sin llegar a borrar nada", async () => {
     repo.findWithUsage.mockRejectedValue(prismaKnownError("P2025"));
 
-    await expect(hourConceptsService.remove("concept-inexistente", false, { userId: "user-1" })).rejects.toMatchObject({
+    await expect(hourConceptsService.remove("concept-inexistente", { userId: "user-1" })).rejects.toMatchObject({
       statusCode: 404,
       code: "HOUR_CONCEPT_NOT_FOUND",
     });
-    expect(repo.delete).not.toHaveBeenCalled();
+    expect(repo.deletePermanently).not.toHaveBeenCalled();
   });
 
-  it("elimina físicamente cuando no hay uso en ninguna relación, invalida cache y audita DELETE", async () => {
-    repo.findWithUsage.mockResolvedValue({ id: "concept-1", code: "HOR-001", name: "Sereno", _count: zeroUsage });
-    repo.delete.mockResolvedValue({ id: "concept-1" });
+  it("con historial (desgloses, reglas, habilitaciones, segmentos, novedades) elimina en un único paso, sin pedir force", async () => {
+    repo.findWithUsage.mockResolvedValue(conceptWithUsage);
+    repo.deletePermanently.mockResolvedValue(deletionResult);
 
-    const result = await hourConceptsService.remove("concept-1", false, { userId: "user-1" });
+    const result = await hourConceptsService.remove("concept-1", { userId: "user-1" });
 
-    expect(repo.delete).toHaveBeenCalledWith("concept-1");
-    expect(repo.disableAllEmployees).not.toHaveBeenCalled();
-    expect(repo.softDelete).not.toHaveBeenCalled();
+    expect(repo.deletePermanently).toHaveBeenCalledWith("concept-1", { reason: "HOUR_CONCEPT_DELETED", hourConceptId: "concept-1", hourConceptCode: "HOR-005" });
     expect(invalidateHourConceptsCache).toHaveBeenCalled();
-    expect(result).toEqual({ id: "concept-1", code: "HOR-001", name: "Sereno", mode: "DELETED" });
-    expect(mockedAudit).toHaveBeenCalledWith(expect.objectContaining({ action: "DELETE", entity: "HourConcept", entityId: "concept-1" }));
-  });
-
-  it("elimina físicamente aunque force=true si de todas formas no hay uso (force no cambia este camino)", async () => {
-    repo.findWithUsage.mockResolvedValue({ id: "concept-1", code: "HOR-001", name: "Sereno", _count: zeroUsage });
-    repo.delete.mockResolvedValue({ id: "concept-1" });
-
-    const result = await hourConceptsService.remove("concept-1", true, { userId: "user-1" });
-
-    expect(repo.delete).toHaveBeenCalledWith("concept-1");
-    expect(result.mode).toBe("DELETED");
-  });
-});
-
-describe("remove — con uso e force=false: bloquea (Etapa 8P)", () => {
-  it.each([
-    ["employees", { ...zeroUsage, employees: 1 }],
-    ["timeEntries", { ...zeroUsage, timeEntries: 3 }],
-    ["novelties", { ...zeroUsage, novelties: 1 }],
-    ["timeSegments", { ...zeroUsage, timeSegments: 5 }],
-    ["workShifts", { ...zeroUsage, workShifts: 1 }],
-    ["rules", { ...zeroUsage, rules: 2 }],
-  ])("bloquea con 409 HOUR_CONCEPT_IN_USE si hay uso en %s, sin borrar ni auditar", async (_relation, counts) => {
-    repo.findWithUsage.mockResolvedValue({ id: "concept-1", code: "HOR-001", name: "Sereno", _count: counts });
-
-    await expect(hourConceptsService.remove("concept-1", false, { userId: "user-1" })).rejects.toMatchObject({
-      statusCode: 409,
-      code: "HOUR_CONCEPT_IN_USE",
+    expect(result).toEqual({
+      concept: { id: "concept-1", code: "HOR-005", name: "Prueba 02" },
+      deletedBreakdowns: 12,
+      deletedRules: 1,
+      deletedEmployeeAssignments: 2,
+      reclassifiedSegments: 8,
+      reclassifiedWorkShifts: 0,
+      unlinkedNovelties: 1,
+      recalculatedClosures: 1,
     });
-    expect(repo.delete).not.toHaveBeenCalled();
-    expect(repo.disableAllEmployees).not.toHaveBeenCalled();
-    expect(repo.softDelete).not.toHaveBeenCalled();
+  });
+
+  it("audita el concepto completo y su uso antes de borrar, el resumen de lo borrado y cada cierre recalculado", async () => {
+    repo.findWithUsage.mockResolvedValue(conceptWithUsage);
+    repo.deletePermanently.mockResolvedValue(deletionResult);
+
+    await hourConceptsService.remove("concept-1", { userId: "user-1" });
+
+    expect(mockedAudit).toHaveBeenCalledWith(expect.objectContaining({
+      userId: "user-1",
+      action: "DELETE",
+      entity: "HourConcept",
+      entityId: "concept-1",
+      description: expect.stringContaining("Se eliminó definitivamente el concepto horario HOR-005 - Prueba 02"),
+      before: conceptWithUsage,
+      after: expect.objectContaining({ deletedBreakdowns: 12, deletedRules: 1, deletedEmployeeAssignments: 2, recalculatedClosureIds: ["closure-1"] }),
+    }));
+    expect(mockedAudit).toHaveBeenCalledWith(expect.objectContaining({ action: "UPDATE", entity: "MonthlyTimeClosure", entityId: "closure-1" }));
+  });
+
+  it("con TimeEntry legacy del concepto (modelo previo a 6L) no borra nada: 409, porque esos minutos pueden ser jornada trabajada", async () => {
+    repo.findWithUsage.mockResolvedValue({ ...conceptWithUsage, _count: { ...usage, timeEntries: 3 } });
+
+    await expect(hourConceptsService.remove("concept-1", { userId: "user-1" })).rejects.toMatchObject({
+      statusCode: 409,
+      code: "HOUR_CONCEPT_HAS_LEGACY_TIME_ENTRIES",
+    });
+    expect(repo.deletePermanently).not.toHaveBeenCalled();
     expect(mockedAudit).not.toHaveBeenCalled();
   });
-});
 
-describe("remove — con uso y force=true: baja lógica, nunca toca historial (Etapa 8P)", () => {
-  it("desvincula empleados, desactiva reglas, marca INACTIVO+deletedAt, invalida cache y audita — nunca llama a delete físico", async () => {
-    repo.findWithUsage.mockResolvedValue({ id: "concept-1", code: "HOR-001", name: "Sereno", _count: realUsage });
-    repo.disableAllEmployees.mockResolvedValue({ count: realUsage.employees });
-    repo.deactivateAllRules.mockResolvedValue({ count: realUsage.rules });
-    repo.softDelete.mockResolvedValue({ id: "concept-1", code: "HOR-001", name: "Sereno" });
+  it("si se cargaron horas del concepto durante la eliminación (FK RESTRICT), la transacción no borra nada y responde 409 claro", async () => {
+    repo.findWithUsage.mockResolvedValue(conceptWithUsage);
+    repo.deletePermanently.mockRejectedValue(prismaKnownError("P2003"));
 
-    const result = await hourConceptsService.remove("concept-1", true, { userId: "user-1" });
-
-    expect(repo.disableAllEmployees).toHaveBeenCalledWith("concept-1");
-    expect(repo.deactivateAllRules).toHaveBeenCalledWith("concept-1");
-    expect(repo.softDelete).toHaveBeenCalledWith("concept-1");
-    expect(repo.delete).not.toHaveBeenCalled();
-    expect(invalidateHourConceptsCache).toHaveBeenCalled();
-    expect(result).toEqual({ id: "concept-1", code: "HOR-001", name: "Sereno", mode: "SOFT_DELETED" });
-    expect(mockedAudit).toHaveBeenCalledWith(
-      expect.objectContaining({ action: "DELETE", entity: "HourConcept", entityId: "concept-1", description: expect.stringContaining("baja lógica") }),
-    );
-  });
-
-  it("rechaza concepto inexistente (404) antes de tocar ninguna relación", async () => {
-    repo.findWithUsage.mockRejectedValue(prismaKnownError("P2025"));
-
-    await expect(hourConceptsService.remove("concept-inexistente", true, { userId: "user-1" })).rejects.toMatchObject({
-      statusCode: 404,
-      code: "HOUR_CONCEPT_NOT_FOUND",
+    await expect(hourConceptsService.remove("concept-1", { userId: "user-1" })).rejects.toMatchObject({
+      statusCode: 409,
+      code: "HOUR_CONCEPT_CHANGED_DURING_DELETE",
     });
-    expect(repo.disableAllEmployees).not.toHaveBeenCalled();
+    expect(mockedAudit).not.toHaveBeenCalled();
   });
 });

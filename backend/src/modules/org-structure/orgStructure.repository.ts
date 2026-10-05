@@ -1,5 +1,5 @@
 import { Prisma } from "@prisma/client";
-import { prisma } from "../../shared/prisma/client";
+import { prisma, type PrismaTransactionClient } from "../../shared/prisma/client";
 import type { OrgDependencyKey, OrgEntityKind } from "./orgStructure.dependencies";
 import type {
   CreateAreaInput,
@@ -128,10 +128,7 @@ function costCenterData(input: CreateCostCenterInput | UpdateCostCenterInput) {
   return data;
 }
 
-// El cliente de este proyecto está extendido (métricas), así que su `tx` no es
-// Prisma.TransactionClient: se deriva del callback real de `prisma.$transaction`.
-type TransactionCallback = Extract<Parameters<typeof prisma.$transaction>[0], (...args: never[]) => unknown>;
-type Tx = Parameters<TransactionCallback>[0];
+type Tx = PrismaTransactionClient;
 type DeletableRecord = { id: string; code: string; name: string; counts: Partial<Record<OrgDependencyKey, number>> };
 
 // Lectura del registro + conteo de cada dependencia (ver orgStructure.dependencies.ts),

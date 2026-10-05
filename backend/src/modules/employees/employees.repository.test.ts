@@ -101,7 +101,7 @@ describe("employeesRepository.findById", () => {
     // propio, reusando el mismo where/select que findOverviewDetailsById.
     expect(call?.select?.hourConcepts).toBeUndefined();
     expect(prisma.employeeHourConcept.findMany).toHaveBeenCalledWith({
-      where: { employeeId: "emp-1", hourConcept: { systemRole: null, status: "ACTIVO", deletedAt: null, loadMode: { not: null } } },
+      where: { employeeId: "emp-1", hourConcept: { systemRole: null, status: "ACTIVO", loadMode: { not: null } } },
       select: {
         hourConceptId: true,
         hourConcept: { select: { id: true, code: true, name: true, kind: true, loadMode: true, status: true, systemRole: true } },
@@ -151,7 +151,7 @@ describe("employeesRepository.findOverviewDetailsById — Etapa 6L.1 / 14C.1 / 1
     expect(call).toEqual({
       where: {
         employeeId: "emp-1",
-        hourConcept: { systemRole: null, status: "ACTIVO", deletedAt: null, loadMode: { not: null } },
+        hourConcept: { systemRole: null, status: "ACTIVO", loadMode: { not: null } },
       },
       select: {
         hourConceptId: true,
@@ -699,7 +699,7 @@ describe("employeesRepository.summary — Etapa 14C.1", () => {
 });
 
 describe("employeesRepository.findAssignableHourConceptIds", () => {
-  it("filtra por identidad estable, estado, baja lógica y loadMode", async () => {
+  it("filtra por identidad estable, estado y loadMode", async () => {
     (prisma.hourConcept.findMany as Mock).mockResolvedValue([{ id: "colectivo" }]);
     await employeesRepository.findAssignableHourConceptIds(["colectivo", "normal"]);
     expect(prisma.hourConcept.findMany).toHaveBeenCalledWith({
@@ -707,7 +707,6 @@ describe("employeesRepository.findAssignableHourConceptIds", () => {
         id: { in: ["colectivo", "normal"] },
         systemRole: null,
         status: "ACTIVO",
-        deletedAt: null,
         loadMode: { not: null },
       },
       select: { id: true },

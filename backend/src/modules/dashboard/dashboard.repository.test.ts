@@ -6,31 +6,24 @@ import { dashboardRepository } from "./dashboard.repository";
 vi.mock("../../shared/prisma/client", () => ({
   prisma: {
     timeEntry: { aggregate: vi.fn() },
+    hourConceptBreakdown: { aggregate: vi.fn() },
     employee: { groupBy: vi.fn() },
   },
 }));
 
-const mockedPrisma = prisma as unknown as { timeEntry: { aggregate: Mock }; employee: { groupBy: Mock } };
+const mockedPrisma = prisma as unknown as { timeEntry: { aggregate: Mock }; hourConceptBreakdown: { aggregate: Mock }; employee: { groupBy: Mock } };
 
 beforeEach(() => {
   vi.clearAllMocks();
 });
 
-describe("sumLoadedHours — KPI 'horas cargadas' = sólo Horas normales (Etapa 6M)", () => {
-  it("filtra el aggregate por hourConcept.systemRole = NORMAL_BASE, excluyendo conceptos adicionales", async () => {
+// docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md: "Horas cargadas" es el total
+// trabajado real del período = Horas base + conceptos ADDITIVE_TO_WORKED_TOTAL.
+// Nunca suma conceptos WITHIN_BASE (ya están dentro de la base).
+describe("sumLoadedHours — KPI 'horas cargadas' = base + horas adicionales", () => {
+  it("base: TimeEntry NORMAL_BASE APROBADO/EN_REVISION, con período y scope del usuario", async () => {
     mockedPrisma.timeEntry.aggregate.mockResolvedValue({ _sum: { hours: { toString: () => "40" } } });
-
-    await dashboardRepository.sumLoadedHours("2026-08", { costCenterId: { in: ["cc-1"] } });
-
-    expect(mockedPrisma.timeEntry.aggregate).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({ hourConcept: { systemRole: "NORMAL_BASE" } }),
-      }),
-    );
-  });
-
-  it("preserva el filtro por período, estado contable (APROBADO/EN_REVISION) y scope del usuario", async () => {
-    mockedPrisma.timeEntry.aggregate.mockResolvedValue({ _sum: { hours: { toString: () => "40" } } });
+    mockedPrisma.hourConceptBreakdown.aggregate.mockResolvedValue({ _sum: { minutes: 0 } });
 
     await dashboardRepository.sumLoadedHours("2026-08", { costCenterId: { in: ["cc-1"] } });
 
@@ -45,13 +38,28 @@ describe("sumLoadedHours — KPI 'horas cargadas' = sólo Horas normales (Etapa 
     });
   });
 
-  it("Etapa 8F — no aplica ninguna multiplicación propia sobre el resultado: el KPI 'horas cargadas' es exactamente el _sum.hours de la base, que desde 8F ya es real (nunca inflado por appliedMultiplier de una Hora Especial)", async () => {
-    const aggregateResult = { _sum: { hours: { toString: () => "8" } } };
-    mockedPrisma.timeEntry.aggregate.mockResolvedValue(aggregateResult);
+  it("adicionales: sólo conceptos ADDITIVE_TO_WORKED_TOTAL sin RECHAZADO (nunca WITHIN_BASE)", async () => {
+    mockedPrisma.timeEntry.aggregate.mockResolvedValue({ _sum: { hours: null } });
+    mockedPrisma.hourConceptBreakdown.aggregate.mockResolvedValue({ _sum: { minutes: null } });
 
-    const result = await dashboardRepository.sumLoadedHours("2026-08", {});
+    await dashboardRepository.sumLoadedHours("2026-08", { costCenterId: { in: ["cc-1"] } });
 
-    expect(result).toBe(aggregateResult);
+    expect(mockedPrisma.hourConceptBreakdown.aggregate).toHaveBeenCalledWith({
+      where: {
+        period: "2026-08",
+        employee: { costCenterId: { in: ["cc-1"] } },
+        status: { not: "RECHAZADO" },
+        hourConcept: { workTreatment: "ADDITIVE_TO_WORKED_TOTAL" },
+      },
+      _sum: { minutes: true },
+    });
+  });
+
+  it("devuelve los insumos reales (nunca inflados por Hora Especial)", async () => {
+    mockedPrisma.timeEntry.aggregate.mockResolvedValue({ _sum: { hours: { toString: () => "8" } } });
+    mockedPrisma.hourConceptBreakdown.aggregate.mockResolvedValue({ _sum: { minutes: 60 } });
+
+    await expect(dashboardRepository.sumLoadedHours("2026-08", {})).resolves.toEqual({ baseHours: 8, additiveMinutes: 60 });
   });
 });
 
