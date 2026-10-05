@@ -4,7 +4,7 @@ import { FICHADA_ORIGIN_NOTE } from "./timeEntryObservationText";
 import { noveltyCoversDay } from "../novelties/novelties.dateRange";
 import { resolveActiveWorkRegime } from "../work-regimes/workRegimes.service";
 import { flagOpenShiftOverflowForReview, resolveOpenShiftOverflowAlert } from "../shifts/workShiftEvaluationRunner";
-import { buildActiveDatesByRule, resolveWinningRules, ruleMatchesDate, specialHourApplicationRows, type SpecialHourRuleResolution } from "../workforce-management/doubleHourRuleMatching";
+import { buildActiveDatesByRule, resolveWinningRules, ruleMatchesDate, specialHourApplicationRows, specialHourRulesForEmployeeOnDate, type SpecialHourRuleResolution } from "../workforce-management/doubleHourRuleMatching";
 import {
   accountEmployeePeriods,
   accountingBaseEntrySelect,
@@ -215,13 +215,10 @@ function scopeDimensionFilter(field: "sectorId" | "costCenterId" | "positionId",
 }
 
 // Filtro Prisma de alcance por empleado (empresa/sector/centro de
-// costo/puesto/empleados específicos, todos opcionales y combinados con AND)
-// — se arma con este helper en los dos únicos lugares que consultan
-// DoubleHourRule (createFromWorkShift/closeOpenWorkShift) porque ambos
-// necesitan un `tx` tipado por el contexto real de `prisma.$transaction`
-// (extendido con métricas — no coincide con el tipo genérico
-// Prisma.TransactionClient), así que no se puede extraer como función async
-// de nivel superior sin repetir esa anotación de tipo.
+// costo/puesto/empleados específicos, todos opcionales y combinados con AND).
+// Lo usa sólo el motor único resolveSpecialHourRulesByDate, que recibe el
+// cliente (`prisma` o el `tx` de la transacción) tipado como
+// PrismaTransactionClient.
 function doubleHourRuleScopeWhere(employeeId: string, employeeCompanyIds: string[], employeeSectorId: string | null | undefined, employeeCostCenterId: string | null | undefined, employeePositionId: string | null | undefined): Prisma.DoubleHourRuleWhereInput["AND"] {
   return [
     { OR: [{ employees: { none: {} } }, { employees: { some: { employeeId } } }] },
@@ -258,15 +255,23 @@ async function resolveDoubleHourMultiplierForManualEntry(employeeId: string, dat
 
 export type SpecialHourResolution = SpecialHourRuleResolution<DoubleHourRuleForEngine>;
 
-type SpecialHourRuleReader = Pick<PrismaTransactionClient, "employee" | "doubleHourRule">;
+type SpecialHourRuleReader = Pick<PrismaTransactionClient, "employee" | "doubleHourRule" | "holidayWorkAssignment">;
 
-// Motor de Hora Especial por empleado + fecha (docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md
-// §6 y §15): reglas ACTIVAS vigentes en la fecha y alcanzadas por el empleado
-// (empresa/sector/centro de costo/puesto/empleados), ganadoras por prioridad.
-// Siempre 2 consultas (alcance del empleado + reglas del rango) sin importar
-// cuántas fechas — nunca una por fecha. Clave = calendarDateKey del @db.Date
-// (mismo criterio UTC-calendario que ruleMatchesDate). `db` permite correrlo
-// dentro de la transacción que cambia una regla, para ver su estado nuevo.
+// Motor ÚNICO de Hora Especial por empleado + fecha (docs/decisions/
+// WORKED_TIME_ACCOUNTING_MODEL.md §6, §15 y §16). Lo usan la carga manual, los
+// desgloses, el fichador (createFromWorkShift/closeOpenWorkShift) y la
+// reinterpretación de la historia:
+// - reglas ACTIVAS vigentes en la fecha y alcanzadas por el empleado
+//   (empresa/sector/centro de costo/puesto/empleados);
+// - FERIADO + convocatoria: si la fecha tiene convocados (HolidayWorkAssignment
+//   ACTIVA), las reglas FERIADO aplican sólo a ellos
+//   (specialHourRulesForEmployeeOnDate);
+// - ganadoras por prioridad (resolveWinningRules).
+// Siempre 4 consultas (alcance del empleado, reglas en alcance, reglas FERIADO
+// y convocatorias del rango) sin importar cuántas fechas — nunca una por
+// fecha. Clave = calendarDateKey del @db.Date (mismo criterio UTC-calendario
+// que ruleMatchesDate). `db` permite correrlo dentro de la transacción que
+// cambia una regla o una convocatoria, para ver su estado nuevo.
 export async function resolveSpecialHourRulesByDate(employeeId: string, dates: Date[], db: SpecialHourRuleReader = prisma): Promise<Map<string, SpecialHourResolution>> {
   const result = new Map<string, SpecialHourResolution>();
   if (!dates.length) return result;
@@ -277,20 +282,36 @@ export async function resolveSpecialHourRulesByDate(employeeId: string, dates: D
     where: { id: employeeId },
     select: { sectorId: true, costCenterId: true, positionId: true, companies: { select: { companyId: true } } },
   });
-  const doubleHourRules = await db.doubleHourRule.findMany({
-    where: {
-      status: "ACTIVO",
-      fromDate: { lte: to },
-      OR: [{ toDate: null }, { toDate: { gte: from } }],
-      AND: doubleHourRuleScopeWhere(employeeId, employeeScope?.companies.map((item) => item.companyId) ?? [], employeeScope?.sectorId, employeeScope?.costCenterId, employeeScope?.positionId),
-    },
-    include: { dates: true },
-  });
+  const vigencyWhere = { status: "ACTIVO" as const, fromDate: { lte: to }, OR: [{ toDate: null }, { toDate: { gte: from } }] };
+  const [rulesInScope, feriadoRules, convocations] = await Promise.all([
+    db.doubleHourRule.findMany({
+      where: {
+        ...vigencyWhere,
+        AND: doubleHourRuleScopeWhere(employeeId, employeeScope?.companies.map((item) => item.companyId) ?? [], employeeScope?.sectorId, employeeScope?.costCenterId, employeeScope?.positionId),
+      },
+      include: { dates: true },
+    }),
+    // Sin filtro de alcance: con convocatoria, el convocado queda alcanzado
+    // aunque la regla FERIADO tenga otro alcance.
+    db.doubleHourRule.findMany({ where: { ...vigencyWhere, kind: "FERIADO" }, include: { dates: true } }),
+    db.holidayWorkAssignment.findMany({ where: { status: "ACTIVA", date: { gte: from, lte: to } }, select: { date: true, employeeId: true } }),
+  ]);
+  const convokedByDate = new Map<string, Set<string>>();
+  for (const convocation of convocations) {
+    const key = calendarDateKey(convocation.date);
+    convokedByDate.set(key, (convokedByDate.get(key) ?? new Set<string>()).add(convocation.employeeId));
+  }
+  const isVigent = (rule: DoubleHourRuleForEngine, date: Date) => rule.fromDate <= date && (!rule.toDate || rule.toDate >= date);
   for (const date of dates) {
     const key = calendarDateKey(date);
     if (result.has(key)) continue;
-    const vigent = doubleHourRules.filter((rule) => rule.fromDate <= date && (!rule.toDate || rule.toDate >= date));
-    const matchedRules = matchingDoubleHourRules(vigent, date);
+    const candidates = specialHourRulesForEmployeeOnDate({
+      employeeId,
+      rulesInEmployeeScope: rulesInScope.filter((rule) => isVigent(rule, date)),
+      feriadoRules: feriadoRules.filter((rule) => isVigent(rule, date)),
+      convokedEmployeeIds: convokedByDate.get(key) ?? new Set<string>(),
+    });
+    const matchedRules = matchingDoubleHourRules(candidates, date);
     const { winners, multiplier, conflicting } = resolveWinningRules(matchedRules);
     result.set(key, { multiplier, matchedRules, winners, conflicting });
   }
@@ -1798,27 +1819,15 @@ export const timeEntriesRepository = {
 
       const entries = [];
       const timeSegments = [];
-      const employeeScope = await tx.employee.findUnique({
-        where: { id: input.employeeId },
-        select: { sectorId: true, costCenterId: true, positionId: true, companies: { select: { companyId: true } } },
-      });
-      const doubleHourRules = await tx.doubleHourRule.findMany({
-        where: {
-          status: "ACTIVO",
-          fromDate: { lte: input.endAt },
-          OR: [{ toDate: null }, { toDate: { gte: input.segments[0]?.date } }],
-          AND: doubleHourRuleScopeWhere(input.employeeId, employeeScope?.companies.map((item) => item.companyId) ?? [], employeeScope?.sectorId, employeeScope?.costCenterId, employeeScope?.positionId),
-        },
-        include: { dates: true },
-      });
+      // Motor único de Hora Especial (alcance + FERIADO/convocatoria), por fecha de tramo.
+      const specialHours = await resolveSpecialHourRulesByDate(input.employeeId, input.segments.map((segment) => segment.date), tx);
       const nightHourConcepts = await tx.hourConcept.findMany({
         where: { id: { in: [...new Set(input.segments.map((segment) => segment.hourConceptId))] } },
         select: { id: true, kind: true },
       });
       const nightHourConceptIds = new Set(nightHourConcepts.filter((concept) => NIGHT_HOUR_CONCEPT_KINDS.has(concept.kind)).map((concept) => concept.id));
       for (const segment of input.segments) {
-        const matchedRules = matchingDoubleHourRules(doubleHourRules, segment.date);
-        const { winners, multiplier, conflicting } = resolveWinningRules(matchedRules);
+        const { matchedRules, winners, multiplier, conflicting } = specialHours.get(calendarDateKey(segment.date))!;
         const timeSegment = await tx.timeSegment.create({
           data: {
             workShiftId: workShift.id,
@@ -1955,20 +1964,9 @@ export const timeEntriesRepository = {
     // Fuera de la transacción: sólo lecturas de configuración de sistema
     // (Horas Especiales activas + su alcance, conceptos nocturnos) que no
     // dependen de nada que esta transacción vaya a escribir.
-    const employeeScope = await prisma.employee.findUnique({
-      where: { id: input.employeeId },
-      select: { sectorId: true, costCenterId: true, positionId: true, companies: { select: { companyId: true } } },
-    });
-    const [doubleHourRules, nightHourConcepts] = await Promise.all([
-      prisma.doubleHourRule.findMany({
-        where: {
-          status: "ACTIVO",
-          fromDate: { lte: input.endAt },
-          OR: [{ toDate: null }, { toDate: { gte: input.segments[0]?.date } }],
-          AND: doubleHourRuleScopeWhere(input.employeeId, employeeScope?.companies.map((item) => item.companyId) ?? [], employeeScope?.sectorId, employeeScope?.costCenterId, employeeScope?.positionId),
-        },
-        include: { dates: true },
-      }),
+    // Motor único de Hora Especial (alcance + FERIADO/convocatoria), por fecha de tramo.
+    const [specialHours, nightHourConcepts] = await Promise.all([
+      resolveSpecialHourRulesByDate(input.employeeId, input.segments.map((segment) => segment.date)),
       prisma.hourConcept.findMany({
         where: { id: { in: [...new Set(input.segments.map((segment) => segment.hourConceptId))] } },
         select: { id: true, kind: true },
@@ -2065,8 +2063,7 @@ export const timeEntriesRepository = {
       const dailyMultiplier = new Map<number, { multiplier: number; rulesNote: string }>();
 
       for (const segment of input.segments) {
-        const matchedRules = matchingDoubleHourRules(doubleHourRules, segment.date);
-        const { winners, multiplier, conflicting } = resolveWinningRules(matchedRules);
+        const { matchedRules, winners, multiplier, conflicting } = specialHours.get(calendarDateKey(segment.date))!;
         const timeSegment = await tx.timeSegment.create({
           data: {
             workShiftId: workShift.id,

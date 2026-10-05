@@ -17,6 +17,7 @@ vi.mock("../../shared/prisma/client", () => {
     attendancePunch: { create: vi.fn(), findMany: vi.fn() },
     timeSegment: { create: vi.fn() },
     doubleHourRule: { findMany: vi.fn() },
+    holidayWorkAssignment: { findMany: vi.fn() },
     hourConcept: { findMany: vi.fn() },
     specialHourRuleApplication: { create: vi.fn(), createMany: vi.fn() },
     employee: { findMany: vi.fn(), count: vi.fn(), findUnique: vi.fn() },
@@ -40,6 +41,7 @@ vi.mock("../../shared/prisma/client", () => {
       // mocks reutilizados, no uno nuevo por función.
       employee: { count: vi.fn(), findMany: vi.fn(), findUnique: vi.fn() },
       doubleHourRule: { findMany: vi.fn() },
+      holidayWorkAssignment: { findMany: vi.fn() },
       // Etapa 14G.2: `count` se agrega acá porque `homeCounts` (antes,
       // $transaction([...])) ahora corre sobre el cliente `prisma` global —
       // mismo criterio que `findPeriodEmployees` en 14C.2.
@@ -74,6 +76,7 @@ type TxMocks = {
   attendancePunch: { create: Mock; findMany: Mock };
   timeSegment: { create: Mock };
   doubleHourRule: { findMany: Mock };
+  holidayWorkAssignment: { findMany: Mock };
   hourConcept: { findMany: Mock };
   specialHourRuleApplication: { create: Mock; createMany: Mock };
   employee: { findMany: Mock; count: Mock; findUnique: Mock };
@@ -90,6 +93,7 @@ const mockedPrisma = prisma as unknown as {
   attendanceInactivityIncident: { findMany: Mock; count: Mock };
   employee: { count: Mock; findMany: Mock; findUnique: Mock };
   doubleHourRule: { findMany: Mock };
+  holidayWorkAssignment: { findMany: Mock };
   timeEntry: { aggregate: Mock; groupBy: Mock; findMany: Mock; create: Mock; update: Mock; count: Mock };
   hourConceptBreakdown: { findMany: Mock; aggregate: Mock };
   monthlyTimeClosure: { findMany: Mock };
@@ -111,6 +115,10 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockedPrisma.employeeWorkRegime.findFirst.mockResolvedValue(null); // sin régimen vigente: comportamiento igual que hoy (ver Etapa 5)
   mockedPrisma.__tx.doubleHourRule.findMany.mockResolvedValue([]);
+  // Etapa FERIADO+convocatoria (WORKED_TIME_ACCOUNTING_MODEL.md §16): sin
+  // convocatorias por default — cada regla usa su alcance, como hasta hoy.
+  mockedPrisma.__tx.holidayWorkAssignment.findMany.mockResolvedValue([]);
+  mockedPrisma.holidayWorkAssignment.findMany.mockResolvedValue([]);
   mockedPrisma.__tx.hourConcept.findMany.mockResolvedValue([]);
   mockedPrisma.__tx.timeEntry.findFirst.mockResolvedValue(null);
   // Etapa 8B: empleado "general" por default — sin sector/centro de
@@ -1552,12 +1560,15 @@ describe("closeOpenWorkShift — Etapa 13F (menos trabajo dentro del tx crítico
     await timeEntriesRepository.closeOpenWorkShift(closeInput());
 
     expect(mockedPrisma.employee.findUnique).toHaveBeenCalledWith(expect.objectContaining({ where: { id: employeeId } }));
-    expect(mockedPrisma.doubleHourRule.findMany).toHaveBeenCalledTimes(1);
+    // Motor único (§16): reglas en alcance + reglas FERIADO + convocatorias.
+    expect(mockedPrisma.doubleHourRule.findMany).toHaveBeenCalledTimes(2);
+    expect(mockedPrisma.holidayWorkAssignment.findMany).toHaveBeenCalledTimes(1);
     expect(mockedPrisma.hourConcept.findMany).toHaveBeenCalledTimes(1);
-    // Ninguna de las 3 corrió contra el `tx` mockeado -- confirma que ya no
-    // compiten por el timeout de la transacción.
+    // Ninguna corrió contra el `tx` mockeado -- confirma que no compiten por
+    // el timeout de la transacción.
     expect(mockedPrisma.__tx.employee.findUnique).not.toHaveBeenCalled();
     expect(mockedPrisma.__tx.doubleHourRule.findMany).not.toHaveBeenCalled();
+    expect(mockedPrisma.__tx.holidayWorkAssignment.findMany).not.toHaveBeenCalled();
     expect(mockedPrisma.__tx.hourConcept.findMany).not.toHaveBeenCalled();
   });
 
@@ -2523,7 +2534,7 @@ describe("resolveDoubleHourMultipliersByDate — batch por empleado", () => {
     companyId: null, sectorId: null, costCenterId: null, positionId: null, dates: [],
   };
 
-  it("resuelve N fechas con 2 consultas: domingo x2, sábado x1 (cruce de medianoche por fecha calendario)", async () => {
+  it("resuelve N fechas con un número fijo de consultas: domingo x2, sábado x1 (cruce de medianoche por fecha calendario)", async () => {
     mockedPrisma.doubleHourRule.findMany.mockResolvedValue([sundayRule]);
     const saturday = new Date("2026-08-15T00:00:00.000Z");
     const sunday = new Date("2026-08-16T00:00:00.000Z");
@@ -2532,11 +2543,60 @@ describe("resolveDoubleHourMultipliersByDate — batch por empleado", () => {
 
     expect(Number(result.get("2026-08-15"))).toBe(1);
     expect(Number(result.get("2026-08-16"))).toBe(2);
+    // 4 consultas sin importar cuántas fechas: alcance del empleado, reglas en
+    // alcance, reglas FERIADO y convocatorias del rango (§16).
     expect(mockedPrisma.employee.findUnique).toHaveBeenCalledTimes(1);
-    expect(mockedPrisma.doubleHourRule.findMany).toHaveBeenCalledTimes(1);
+    expect(mockedPrisma.doubleHourRule.findMany).toHaveBeenCalledTimes(2);
+    expect(mockedPrisma.holidayWorkAssignment.findMany).toHaveBeenCalledTimes(1);
     expect(mockedPrisma.doubleHourRule.findMany).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({ status: "ACTIVO", fromDate: { lte: sunday }, OR: [{ toDate: null }, { toDate: { gte: saturday } }] }),
     }));
+  });
+
+  // docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md §16: FERIADO + convocatoria.
+  describe("FERIADO + convocatoria (HolidayWorkAssignment ACTIVA)", () => {
+    const holiday = new Date("2026-10-05T00:00:00.000Z");
+    const feriado = { ...sundayRule, id: "rule-feriado", kind: "FERIADO", recurrenceType: "FECHA", weekdays: [], fromDate: holiday, toDate: holiday, dates: [{ date: holiday, isActive: true }] };
+    const domingo = { ...sundayRule, kind: "DOMINGO", fromDate: new Date("2026-01-01T00:00:00.000Z") };
+    // La consulta "en alcance" y la de reglas FERIADO (sin filtro de alcance) se distinguen por `kind`.
+    function rules({ inScope, feriadoAll }: { inScope: unknown[]; feriadoAll: unknown[] }) {
+      mockedPrisma.doubleHourRule.findMany.mockImplementation(async ({ where }: { where: { kind?: string } }) => (where.kind === "FERIADO" ? feriadoAll : inScope));
+    }
+    const convoked = (...employeeIds: string[]) => mockedPrisma.holidayWorkAssignment.findMany.mockResolvedValue(employeeIds.map((employeeId) => ({ date: holiday, employeeId })));
+    const multiplier = async (employeeId: string, date = holiday) => Number((await resolveDoubleHourMultipliersByDate(employeeId, [date])).get(date.toISOString().slice(0, 10)));
+
+    it("CASO 1 — convocado + feriado x2 → x2, aunque la regla tenga otro alcance", async () => {
+      rules({ inScope: [], feriadoAll: [feriado] });
+      convoked("employee-31");
+      expect(await multiplier("employee-31")).toBe(2);
+    });
+
+    it("CASO 5 — la fecha tiene convocados: quien no está convocado queda en x1 aunque la regla sea global", async () => {
+      rules({ inScope: [feriado], feriadoAll: [feriado] });
+      convoked("employee-31");
+      expect(await multiplier("employee-31")).toBe(2);
+      expect(await multiplier("employee-30")).toBe(1);
+    });
+
+    it("sin ninguna convocatoria en la fecha, la regla usa su alcance como hasta hoy (feriado global no se rompe)", async () => {
+      rules({ inScope: [feriado], feriadoAll: [feriado] });
+      convoked();
+      expect(await multiplier("employee-30")).toBe(2);
+    });
+
+    it("CASO 6 — DOMINGO no depende de la convocatoria", async () => {
+      const sunday = new Date("2026-10-04T00:00:00.000Z");
+      rules({ inScope: [domingo], feriadoAll: [] });
+      mockedPrisma.holidayWorkAssignment.findMany.mockResolvedValue([{ date: sunday, employeeId: "otro" }]);
+      expect(await multiplier("employee-30", sunday)).toBe(2);
+    });
+
+    it("sólo cuentan convocatorias ACTIVAS del rango", async () => {
+      rules({ inScope: [feriado], feriadoAll: [feriado] });
+      convoked();
+      await multiplier("employee-30");
+      expect(mockedPrisma.holidayWorkAssignment.findMany).toHaveBeenCalledWith({ where: { status: "ACTIVA", date: { gte: holiday, lte: holiday } }, select: { date: true, employeeId: true } });
+    });
   });
 
   it("sin fechas no consulta nada", async () => {
