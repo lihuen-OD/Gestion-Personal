@@ -3,7 +3,9 @@
  * (UUID) en vez de la identidad humana. Sólo reescribe familias conocidas y
  * obviamente incorrectas cuyo dato real se puede resolver sin ambigüedad
  * (UUID del texto == employeeId/userId del propio evento, y la entidad
- * existe). Todo lo demás queda como está y se reporta.
+ * existe), con el mismo texto que hoy escribe el código. Si el registro ya
+ * no existe, deja una frase neutra y correcta — nunca inventa un nombre.
+ * Todo lo demás queda como está y se reporta.
  *
  *   npm run staging:audit:technical-ids                       (dry-run)
  *   npm run staging:audit:technical-ids -- --report=<archivo.json>   (dry-run + todas las propuestas)
@@ -16,7 +18,7 @@
 import { writeFileSync } from "node:fs";
 import { env } from "../src/config/env";
 import { prisma } from "../src/shared/prisma/client";
-import { formatArgentinaDate } from "../src/shared/datetime/argentinaTime";
+import { formatArgentinaDate, humanizePeriodEs } from "../src/shared/datetime/argentinaTime";
 import { formatEmployeeReference, employeeReferenceSelect } from "../src/shared/audit/employeeReference";
 import { containsTechnicalId, describeRequestPath } from "../src/shared/audit/technicalIds";
 
@@ -25,7 +27,9 @@ const UUID_GLOBAL = new RegExp(UUID, "gi");
 
 type AuditRow = { id: string; entity: string; action: string; entityId: string | null; userId: string | null; description: string; before: unknown; after: unknown };
 type Lookups = { employees: Map<string, string>; hourConcepts: Map<string, { code: string; name: string }> };
-type Outcome = { repaired: string } | { skipped: string };
+// "identity": identidad humana real; "neutral": el registro ya no existe y se
+// deja una frase neutra, sin inventar nombres.
+type Outcome = { repaired: string; kind?: "identity" | "neutral" } | { skipped: string };
 
 function jsonField(value: unknown, key: string): unknown {
   return value && typeof value === "object" ? (value as Record<string, unknown>)[key] : undefined;
@@ -47,7 +51,13 @@ const rules: Array<{ name: string; matches: (row: AuditRow) => boolean; repair: 
       const employeeId = row.description.match(new RegExp(`(${UUID})\\.$`, "i"))![1]!;
       const reference = employeeReference(row, employeeId, lookups, [jsonField(row.after, "employeeId")]);
       if (!reference) return { skipped: "empleado no resoluble o distinto del registrado" };
-      return { repaired: row.description.replace(new RegExp(` para el legajo ${UUID}\\.$`, "i"), ` para ${reference}.`) };
+      // Mismo formato que employeesService.upsertManualHourConceptBreakdown:
+      // "… desglose manual <concepto> del dd/mm/aaaa para <persona>." (las
+      // filas viejas decían "de 2026-08-03" / "de 03/10/2026").
+      const parts = row.description.match(new RegExp(`^(Se (?:guardó y aplicó \\(RRHH\\)|guardó|eliminó) el desglose manual .+) de (\\d{4}-\\d{2}-\\d{2}|\\d{2}/\\d{2}/\\d{4}) para el legajo ${UUID}\\.$`, "i"));
+      if (!parts) return { repaired: row.description.replace(new RegExp(` para el legajo ${UUID}\\.$`, "i"), ` para ${reference}.`) };
+      const date = /^\d{4}-/.test(parts[2]!) ? formatArgentinaDate(parts[2]!) : parts[2]!;
+      return { repaired: `${parts[1]} del ${date} para ${reference}.` };
     },
   },
   {
@@ -73,7 +83,9 @@ const rules: Array<{ name: string; matches: (row: AuditRow) => boolean; repair: 
       return {
         repaired: row.description
           .replace(new RegExp(` \\(legajo ${UUID}, (de [^)]+)\\)`, "i"), ` de ${reference} ($1)`)
-          .replace(new RegExp(` \\(legajo ${UUID}\\)`, "i"), ` de ${reference}`),
+          .replace(new RegExp(` \\(legajo ${UUID}\\)`, "i"), ` de ${reference}`)
+          // Filas viejas: "cierre de 2026-08" -> "cierre de agosto de 2026" (formato actual).
+          .replace(/(?<![\d-])(\d{4}-\d{2})(?![\d-])/g, (period) => humanizePeriodEs(period)),
       };
     },
   },
@@ -82,11 +94,15 @@ const rules: Array<{ name: string; matches: (row: AuditRow) => boolean; repair: 
     matches: (row) => row.entity === "HourConceptRule" && new RegExp(`del concepto ${UUID}\\.$`, "i").test(row.description),
     repair: (row, lookups) => {
       const hourConceptId = row.description.match(new RegExp(`(${UUID})\\.$`, "i"))![1]!;
+      // "(priority N)" es un campo técnico que el texto actual ya no incluye.
+      const description = row.description.replace(/ \(priority \d+\)/, "");
       const recorded = jsonField(row.after, "hourConceptId");
       if (typeof recorded === "string" && recorded.toLowerCase() !== hourConceptId.toLowerCase()) return { skipped: "concepto distinto del registrado" };
       const concept = lookups.hourConcepts.get(hourConceptId.toLowerCase());
-      if (!concept) return { skipped: "el concepto ya no existe (eliminado definitivamente)" };
-      return { repaired: row.description.replace(new RegExp(`del concepto ${UUID}\\.$`, "i"), `del concepto ${concept.code} - ${concept.name}.`) };
+      // El concepto ya no existe (eliminado definitivamente): frase neutra y
+      // correcta, sin reconstruir ni inventar su nombre.
+      if (!concept) return { repaired: description.replace(new RegExp(` del concepto ${UUID}\\.$`, "i"), " de un concepto horario que ya fue eliminado."), kind: "neutral" };
+      return { repaired: description.replace(new RegExp(`del concepto ${UUID}\\.$`, "i"), `del concepto ${concept.code} - ${concept.name}.`) };
     },
   },
   {
@@ -142,7 +158,7 @@ async function main() {
     hourConcepts: new Map(hourConcepts.map((concept) => [concept.id.toLowerCase(), concept])),
   };
 
-  const repairs: Array<{ id: string; rule: string; before: string; after: string }> = [];
+  const repairs: Array<{ id: string; rule: string; kind: "identity" | "neutral"; before: string; after: string }> = [];
   const skipped: Array<{ id: string; rule: string; reason: string; description: string }> = [];
   for (const row of rows) {
     const rule = rules.find((candidate) => candidate.matches(row));
@@ -153,7 +169,8 @@ async function main() {
     const outcome = rule.repair(row, lookups);
     if ("skipped" in outcome) skipped.push({ id: row.id, rule: rule.name, reason: outcome.skipped, description: row.description });
     else if (containsTechnicalId(outcome.repaired)) skipped.push({ id: row.id, rule: rule.name, reason: "la reparación todavía tendría un id", description: row.description });
-    else repairs.push({ id: row.id, rule: rule.name, before: row.description, after: outcome.repaired });
+    else if (/(legajo|empleado|concepto|usuario) —/i.test(outcome.repaired)) skipped.push({ id: row.id, rule: rule.name, reason: "la reparación dejaría un placeholder", description: row.description });
+    else repairs.push({ id: row.id, rule: rule.name, kind: outcome.kind ?? "identity", before: row.description, after: outcome.repaired });
   }
 
   const countBy = <T extends { rule: string }>(items: T[]) => items.reduce<Record<string, number>>((acc, item) => ({ ...acc, [item.rule]: (acc[item.rule] ?? 0) + 1 }), {});
@@ -164,6 +181,7 @@ async function main() {
     repairable: repairs.length,
     skipped: skipped.length,
     repairableByRule: countBy(repairs),
+    repairableByKind: repairs.reduce<Record<string, number>>((acc, item) => ({ ...acc, [item.kind]: (acc[item.kind] ?? 0) + 1 }), {}),
     skippedByRule: countBy(skipped),
     skippedDetail: skipped,
     sample: Object.values(repairs.reduce<Record<string, (typeof repairs)[number]>>((acc, item) => ({ [item.rule]: item, ...acc }), {})),
