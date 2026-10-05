@@ -6,7 +6,7 @@ import { getMonthDays, getWeekdayAbbr } from "../../utils/period";
 import { EmptyState } from "../ui/EmptyState";
 import { MonthlyHoursTableSections } from "./MonthlyHoursTableSections";
 import { conceptDayAmount, conceptPeriodAmount } from "../../utils/workedTimeAccounting";
-import { amountDescription, amountMinutes, baseSpecialHourTitle, SettlementTotalCell, SpecialHourDot } from "./SettlementAmount";
+import { amountDescription, amountMinutes, SettlementTotalCell, SpecialHourDot } from "./SettlementAmount";
 
 // Mismo criterio de asociación día↔novedad que EmployeeHoursPage.tsx
 // (dayNovelties, no exportado ahí) — se repite acá en vez de tocar esa
@@ -44,9 +44,9 @@ export function MonthlyHoursReviewGrid({ grid, period }: { grid: EmployeeTimeGri
         {monthDays.map((day) => {
           const realMinutes = row.minutesByDay[String(day)] ?? 0;
           const daySpecialHour = grid.specialHoursByDay[String(day)];
-          // Horas base: tiempo registrado. Cada concepto: lo que se liquida
-          // ese día (real × Hora Especial, calculado por el backend), con el
-          // real en el indicador. La novedad sólo se asocia a las Horas base,
+          // Horas base: siempre tiempo real registrado, sin indicador de Hora
+          // Especial. Cada concepto: lo que se liquida ese día (calculado por
+          // el backend), con el real en el indicador. La novedad sólo se asocia a las Horas base,
           // mismo criterio que EmployeeHoursPage.
           const amount = isBase ? null : conceptDayAmount(grid.accounting, day, row.concept.id, realMinutes);
           const minutes = amount ? amountMinutes(amount) : realMinutes;
@@ -60,7 +60,6 @@ export function MonthlyHoursReviewGrid({ grid, period }: { grid: EmployeeTimeGri
               <span className={cellClass} title={titleParts.join(" · ") || undefined} aria-label={`${label}, día ${day}: ${minutes ? description : "sin horas"}`}>
                 <span>{minutes ? formatCompactDurationMinutes(minutes) : "—"}</span>
                 {dayNovelties.length ? <span className="alert-dot purple" /> : null}
-                {isBase && daySpecialHour ? <span className="alert-dot orange" title={baseSpecialHourTitle(daySpecialHour.multiplier, daySpecialHour.ruleNames)} /> : null}
                 {amount && minutes ? <SpecialHourDot amount={amount} ruleNames={daySpecialHour?.ruleNames} /> : null}
               </span>
             </td>

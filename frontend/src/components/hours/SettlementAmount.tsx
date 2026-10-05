@@ -51,11 +51,3 @@ export function SettlementTotalCell({ amount }: { amount: SettlementAmount }) {
     </td>
   );
 }
-
-/**
- * Indicador en "Horas base": la base es tiempo registrado; lo que se liquida
- * está en Horas normales y en cada concepto.
- */
-export function baseSpecialHourTitle(multiplier: number, ruleNames: string[] = []) {
-  return `${ruleNames.length ? ruleNames.join(", ") : "Hora especial"} ${formatMultiplier(multiplier)} · horas registradas; se liquidan en Horas normales y en cada concepto`;
-}

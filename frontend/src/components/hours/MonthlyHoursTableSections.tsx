@@ -8,12 +8,12 @@ import { amountDescription, amountMinutes, SettlementTotalCell, SpecialHourDot }
 
 type SpecialHoursByDay = Record<string, { ruleNames: string[] }>;
 
-const realAmount = (minutes: number): SettlementAmount => ({ realMinutes: minutes, settlementMinutes: minutes, multiplier: 1, pending: false });
+// Valor que se muestra tal cual (sin indicador ni subtexto real).
+const plainAmount = (minutes: number): SettlementAmount => ({ realMinutes: minutes, settlementMinutes: minutes, multiplier: 1, pending: false });
 
 // Fila calculada (sólo lectura): los valores vienen de la contabilidad del
 // backend (docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md), nunca de sumar
-// filas acá. `amount` decide qué se muestra: lo liquidable (Horas normales) o
-// el tiempo real (Total trabajado).
+// filas acá. `amount` decide qué se muestra en cada celda.
 function DerivedRow({
   className,
   label,
@@ -41,7 +41,7 @@ function DerivedRow({
       </td>
       {monthDays.map((dayNumber) => {
         const day = accounting.days[String(dayNumber)];
-        const value = day ? amount(day) : realAmount(0);
+        const value = day ? amount(day) : plainAmount(0);
         const minutes = amountMinutes(value);
         const ruleNames = specialHoursByDay[String(dayNumber)]?.ruleNames;
         const description = amountDescription(value, ruleNames);
@@ -77,15 +77,17 @@ function GroupRow({ label, hint, columnCount }: { label: string; hint: string; c
 
 /**
  * Cuerpo y pie compartidos de la grilla mensual por concepto (detalle por
- * legajo y panel de cierre): Horas base (registradas) → "Distribución de la
- * jornada" (Horas normales + conceptos dentro de la jornada) → "Horas
- * adicionales" → Total trabajado (tiempo real).
+ * legajo y panel de cierre): Horas base (tiempo real registrado) →
+ * "Distribución de la jornada" (Horas normales + conceptos dentro de la
+ * jornada) → "Horas adicionales" → Total para liquidación.
  *
  * Cada fila que se liquida (Horas normales y cada concepto) muestra en cada
  * día y en TOTAL el tiempo PARA LIQUIDACIÓN, con el real como contexto, así
  * liquidación lee directamente cuánto corresponde a cada concepto (§17). No
- * hay fila global de equivalencia: mezclaba conceptos que pueden tener
- * valores distintos (sigue como control en el resumen del período).
+ * fila final es la suma de esas filas para liquidación (backend
+ * settlement.totalMinutes): esta grilla se lee entera en clave de
+ * liquidación, salvo Horas base. El tiempo real trabajado está en la
+ * tarjeta y en el resumen "Total trabajado".
  * Cada pantalla decide cómo dibujar una fila de concepto (editable o sólo
  * lectura) con `renderRow`.
  */
@@ -143,12 +145,12 @@ export function MonthlyHoursTableSections({
       <tfoot>
         <DerivedRow
           className={`hours-total-row${derivedClass}`}
-          label="Total trabajado"
-          subtitle="Tiempo real · base + adicionales"
+          label="Total para liquidación"
+          subtitle="Suma de horas para liquidación"
           monthDays={monthDays}
           accounting={accounting}
-          amount={(day) => realAmount(day.totalWorkedMinutes)}
-          total={realAmount(accounting.totalWorkedMinutes)}
+          amount={(day) => plainAmount(day.settlement.totalMinutes)}
+          total={plainAmount(accounting.settlement.totalMinutes)}
           specialHoursByDay={specialHoursByDay}
         />
       </tfoot>

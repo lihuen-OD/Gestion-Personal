@@ -351,15 +351,15 @@ La respuesta resume lo eliminado: `deletedBreakdowns`, `deletedRules`, `deletedE
 El problema era sólo de presentación: las celdas y la columna TOTAL de cada concepto mostraban minutos reales (`row.minutesByDay`/`row.totalMinutes`), y la única lectura liquidable era la fila global "Equivalencia para liquidación". Además, "Horas normales" sólo aparecía si había conceptos dentro de la jornada. No hubo cambios de cálculo, contrato ni schema.
 
 **Grilla mensual por concepto** (detalle por legajo y revisión de cierre, `MonthlyHoursTableSections` + `components/hours/SettlementAmount.tsx`):
-- **Horas base:** tiempo registrado (editable), sin cambios. El indicador naranja aclara que se liquida en Horas normales y en cada concepto.
+- **Horas base:** siempre tiempo real registrado (editable). Nunca muestra lo liquidable y no lleva indicador de Hora Especial.
 - **Horas normales y cada concepto:** la celda muestra el tiempo **para liquidación** del día. En un día sin Hora Especial coincide con el real, sin ruido extra. El indicador naranja explica la regla, el real y lo liquidable, por ejemplo "Feriados x2 · 1 h real · 2 h para liquidación".
 - **Columna TOTAL:** el total **para liquidación** de la fila como valor principal, sumando cada día con su multiplicador. Debajo, el real como subtexto sólo cuando difiere (ej. "8h" / "7h reales").
 - **"Horas normales"** se muestra también cuando no hay conceptos dentro de la jornada pero sí Hora Especial en el período: es la fila que dice cuánto liquidar como horas normales.
-- **Total trabajado:** siempre tiempo real (base + adicionales), nunca multiplicado.
-- **Se eliminó** la fila global "Equivalencia para liquidación" de la grilla.
+- **Fila final "Total para liquidación"** ("Suma de horas para liquidación"): por día y en TOTAL, `settlement.totalMinutes` del backend, es decir Horas normales + dentro de la jornada + adicionales, todas para liquidación. Ej. lunes 05/10 ×2: base 2 h 26 min; Horas normales 2 h 52 min + Prueba 02 2 h + Colectivo 4 h = 8 h 52 min. La grilla no tiene una fila "Total trabajado": el tiempo real trabajado (base + adicionales, nunca multiplicado) está en la tarjeta y en el resumen "Total trabajado". Así "Total trabajado" significa siempre tiempo real, en cualquier pantalla y en el export.
+- **Indicador naranja:** sólo en las celdas cuyo valor visible cambia por Hora Especial: Horas normales y cada concepto.
 - **Edición:** los modales siguen trabajando en horas reales. La nota de Hora Especial dice lo que se liquida de esa fila (ej. "Colectivo ese día: 1 h real → 2 h para liquidación.").
 - **Optimismo:** si la contabilidad todavía no refleja una edición, la celda muestra el real atenuado hasta que llega la recalculada. Nunca se multiplica en el frontend.
 
-**Totales de control.** La tarjeta "Para liquidación", la fila "Total trabajado · Equivalencia" del resumen, las etiquetas "Para liquidación" de Carga de horas y Por persona, y la columna `Equivalencia para liquidación` del export se conservan como control general. El popover del día en Carga de horas muestra lo liquidable por componente (Horas normales / Dentro de la jornada / Horas adicionales).
+**Totales de control.** La tarjeta "Para liquidación", la fila "Total trabajado · Equivalencia" del resumen (real · para liquidación), las etiquetas "Para liquidación" de Carga de horas y Por persona, y la columna `Equivalencia para liquidación` del export se conservan como control general. El popover del día en Carga de horas muestra lo liquidable por componente (Horas normales / Dentro de la jornada / Horas adicionales).
 
 **Export y cierre.** Sin cambios: el export ya tenía `<Concepto> (horas reales)` y `<Concepto> (para liquidación)` por concepto, y el snapshot del cierre ya guarda `accounting.concepts` con real y para liquidación. La revisión del cierre usa la misma grilla.

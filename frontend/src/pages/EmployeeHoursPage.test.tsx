@@ -435,7 +435,7 @@ describe("EmployeeHoursPage — actualización local sin recarga completa (Etapa
     await waitFor(() => expect(screen.queryByText(/Cargar Horas base/i)).not.toBeInTheDocument());
     expect(totalCellText(rowFor("Horas base"))).toBe("13h");
     // El frontend no recalcula total ni Horas normales: quedan atenuados.
-    expect(rowFor("Total trabajado")).toHaveClass("is-syncing");
+    expect(rowFor("Total para liquidación")).toHaveClass("is-syncing");
     expect(rowFor("Horas normales")).toHaveClass("is-syncing");
     expect(document.querySelector(".hours-composition")).toHaveClass("is-syncing");
   });
@@ -459,7 +459,7 @@ describe("EmployeeHoursPage — actualización local sin recarga completa (Etapa
 
     await waitFor(() => expect(statCardValue("Total trabajado")).toBe("10 h"));
     expect(totalCellText(rowFor("Horas base"))).toBe("8h");
-    expect(rowFor("Total trabajado")).not.toHaveClass("is-syncing");
+    expect(rowFor("Total para liquidación")).not.toHaveClass("is-syncing");
   });
 
   it("guardar la carga manual de un concepto actualiza su celda de inmediato sin esperar un segundo getTimeGrid", async () => {
@@ -578,7 +578,7 @@ describe("EmployeeHoursPage — composición del período y Hora Especial", () =
     expect(composition).toHaveTextContent("Colectivo1 h");
     expect(composition).toHaveTextContent("Total trabajado9 h");
     expect(totalCellText(rowFor("Horas normales"))).toBe("5h");
-    expect(totalCellText(rowFor("Total trabajado"))).toBe("9h");
+    expect(totalCellText(rowFor("Total para liquidación"))).toBe("9h");
     expect(screen.queryByText("Equivalencia para liquidación")).not.toBeInTheDocument();
   });
 
@@ -599,7 +599,9 @@ describe("EmployeeHoursPage — composición del período y Hora Especial", () =
     expect(totalCellText(rowFor("Horas normales"))).toBe("10h5h reales");
     expect(totalCellText(rowFor("Sereno"))).toBe("6h3h reales");
     expect(totalCellText(rowFor("Colectivo"))).toBe("2h1h real");
-    expect(totalCellText(rowFor("Total trabajado"))).toBe("9h");
+    // La fila final de la grilla suma lo liquidable; el real queda en la tarjeta "Total trabajado".
+    expect(totalCellText(rowFor("Total para liquidación"))).toBe("18h");
+    expect(rowFor("Horas base").querySelector(".alert-dot.orange")).toBeNull();
     expect(screen.queryByText("Equivalencia para liquidación")).not.toBeInTheDocument();
     expect(container.textContent).not.toMatch(/22 h|24 h|22h|24h/);
   });

@@ -34,7 +34,7 @@ import type { PeriodAccounting } from "../types/workedTimeAccounting.types";
 import { AccountingStatCards } from "../components/hours/AccountingStatCards";
 import { HoursAccountingSummary } from "../components/hours/HoursAccountingSummary";
 import { MonthlyHoursTableSections } from "../components/hours/MonthlyHoursTableSections";
-import { amountDescription, amountMinutes, baseSpecialHourTitle, realLabel, SettlementTotalCell, SpecialHourDot } from "../components/hours/SettlementAmount";
+import { amountDescription, amountMinutes, realLabel, SettlementTotalCell, SpecialHourDot } from "../components/hours/SettlementAmount";
 import { roleLevel } from "../utils/roles";
 import { useAsyncAction } from "../utils/useAsyncAction";
 import { Field } from "../components/ui/FormControls";
@@ -609,7 +609,8 @@ export function EmployeeHoursPage() {
                     const daySpecialHour = specialHoursByDay[String(day)];
                     // Conceptos: la celda muestra lo que se liquida ese día
                     // (backend), con el real en el indicador; editar sigue
-                    // trabajando en horas reales. Horas base: tiempo registrado.
+                    // trabajando en horas reales. Horas base: siempre tiempo
+                    // real registrado.
                     const amount = row.role === "NORMAL_BASE" ? null : conceptDayAmount(accounting, day, row.concept.id, breakdownMinutes);
                     const cellClass = [
                       "hour-cell",
@@ -620,9 +621,8 @@ export function EmployeeHoursPage() {
                     ]
                       .filter(Boolean)
                       .join(" ");
-                    const specialHourDot = amount
-                      ? (breakdownMinutes ? <SpecialHourDot amount={amount} ruleNames={daySpecialHour?.ruleNames} /> : null)
-                      : daySpecialHour ? <span className="alert-dot orange" title={baseSpecialHourTitle(daySpecialHour.multiplier, daySpecialHour.ruleNames)} /> : null;
+                    // Horas base es tiempo real registrado: sin indicador de Hora Especial.
+                    const specialHourDot = amount && breakdownMinutes ? <SpecialHourDot amount={amount} ruleNames={daySpecialHour?.ruleNames} /> : null;
                     const minutes = entry ? entry.totalMinutes ?? hoursDecimalToMinutes(entry.hours) : amount ? amountMinutes(amount) : breakdownMinutes;
                     const compactDuration = formatCompactDurationMinutes(minutes);
                     const fullDuration = amount ? amountDescription(amount, daySpecialHour?.ruleNames) : formatDurationMinutes(minutes);
