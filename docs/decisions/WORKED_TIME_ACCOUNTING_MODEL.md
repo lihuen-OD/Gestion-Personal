@@ -174,7 +174,7 @@ Si queda algún concepto adicional sin tratamiento (por ejemplo, en una base no 
 
 ## 13. UI (lenguaje de negocio)
 
-- **Etiquetas:** "Horas base" (registradas), "Horas normales" (residual), "Distribución de la jornada", "Horas adicionales", "Total trabajado", "Para liquidación" y "Equivalencia para liquidación". Los enums técnicos no se muestran.
+- **Etiquetas:** "Horas base" (registradas), "Horas normales" (residual), "Distribución de la jornada", "Horas adicionales", "Total trabajado" y "Para liquidación". "Equivalencia para liquidación" ya no es una fila de la grilla (§17); queda como total de control en el resumen y el export. Los enums técnicos no se muestran.
 - **Componentes compartidos:**
   - `MonthlyHoursTableSections`: secciones de la grilla mensual, usadas por el detalle por legajo y el panel de cierre.
   - `HoursAccountingSummary`: composición real vs. para liquidación.
@@ -337,3 +337,29 @@ La respuesta resume lo eliminado: `deletedBreakdowns`, `deletedRules`, `deletedE
 - Por la política: legajo 01 (02/09) y legajo 02 (27/08), que trabajaron sin convocatoria en feriados con convocatoria, pasaron a ×1.
 
 **Tests:** `doubleHourRuleMatching` vía `timeEntries.repository.test.ts` (convocado fuera de alcance, no convocado con convocatoria, sin convocatoria, DOMINGO), `specialHourReinterpretation.test.ts` (casos 1–8, orden indistinto), `holidayWorkAssignment.service.test.ts` (transacción, auditoría, fallo sin auditar), controller y `holidayWorkAssignmentApiService.test.ts` (cachés).
+
+## 17. Presentación para liquidación por concepto
+
+**Estado:** vigente desde 2026-10-05.
+
+**Regla de negocio.** La Hora Especial se aplica y se muestra **por componente**. Cada concepto (Horas normales, Sereno, Colectivo, Prueba 02, ...) puede tener un valor monetario distinto, así que una equivalencia global que los mezcla no sirve para liquidar. El sistema no calcula dinero: entrega, por concepto, el tiempo real y el tiempo para liquidación.
+
+**Diagnóstico.** El backend ya calculaba y exponía todo (`accountDay` / `accountEmployeePeriods`):
+- por día, `settlement.normalMinutes` y `concepts[] = { hourConceptId, treatment, realMinutes, settlementMinutes }`;
+- por período, `concepts[]` y `settlement.*`.
+
+El problema era sólo de presentación: las celdas y la columna TOTAL de cada concepto mostraban minutos reales (`row.minutesByDay`/`row.totalMinutes`), y la única lectura liquidable era la fila global "Equivalencia para liquidación". Además, "Horas normales" sólo aparecía si había conceptos dentro de la jornada. No hubo cambios de cálculo, contrato ni schema.
+
+**Grilla mensual por concepto** (detalle por legajo y revisión de cierre, `MonthlyHoursTableSections` + `components/hours/SettlementAmount.tsx`):
+- **Horas base:** tiempo registrado (editable), sin cambios. El indicador naranja aclara que se liquida en Horas normales y en cada concepto.
+- **Horas normales y cada concepto:** la celda muestra el tiempo **para liquidación** del día. En un día sin Hora Especial coincide con el real, sin ruido extra. El indicador naranja explica la regla, el real y lo liquidable, por ejemplo "Feriados x2 · 1 h real · 2 h para liquidación".
+- **Columna TOTAL:** el total **para liquidación** de la fila como valor principal, sumando cada día con su multiplicador. Debajo, el real como subtexto sólo cuando difiere (ej. "8h" / "7h reales").
+- **"Horas normales"** se muestra también cuando no hay conceptos dentro de la jornada pero sí Hora Especial en el período: es la fila que dice cuánto liquidar como horas normales.
+- **Total trabajado:** siempre tiempo real (base + adicionales), nunca multiplicado.
+- **Se eliminó** la fila global "Equivalencia para liquidación" de la grilla.
+- **Edición:** los modales siguen trabajando en horas reales. La nota de Hora Especial dice lo que se liquida de esa fila (ej. "Colectivo ese día: 1 h real → 2 h para liquidación.").
+- **Optimismo:** si la contabilidad todavía no refleja una edición, la celda muestra el real atenuado hasta que llega la recalculada. Nunca se multiplica en el frontend.
+
+**Totales de control.** La tarjeta "Para liquidación", la fila "Total trabajado · Equivalencia" del resumen, las etiquetas "Para liquidación" de Carga de horas y Por persona, y la columna `Equivalencia para liquidación` del export se conservan como control general. El popover del día en Carga de horas muestra lo liquidable por componente (Horas normales / Dentro de la jornada / Horas adicionales).
+
+**Export y cierre.** Sin cambios: el export ya tenía `<Concepto> (horas reales)` y `<Concepto> (para liquidación)` por concepto, y el snapshot del cierre ya guarda `accounting.concepts` con real y para liquidación. La revisión del cierre usa la misma grilla.

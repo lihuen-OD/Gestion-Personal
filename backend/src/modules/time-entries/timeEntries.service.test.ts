@@ -1354,6 +1354,34 @@ describe("exportByPerson — contabilidad de tiempo trabajado", () => {
     expect(result.columns.find((column) => column.key === "Total trabajado")?.kind).toBe("hours");
   });
 
+  // §17: el export sirve para liquidar por concepto — cada concepto trae sus
+  // horas reales y sus horas para liquidación sumando cada día con su
+  // multiplicador; la equivalencia total queda como control.
+  it("período mixto por concepto: Colectivo 6 h x1 + 2 h x2 → 8 reales / 10 para liquidación; Sereno 6 x1 + 1 x2 → 7 / 8", async () => {
+    repo.findForExport.mockResolvedValue([
+      exportEntry({ day: 1, hours: "8" }), exportEntry({ day: 2, hours: "8" }), exportEntry({ day: 3, hours: "8" }),
+      exportEntry({ day: 5, hours: "2", appliedMultiplier: 2, ruleNames: ["Feriados"] }),
+    ]);
+    repo.findBreakdownsForExport.mockResolvedValue([
+      exportBreakdown(colectivo, 1, 120), exportBreakdown(colectivo, 2, 120), exportBreakdown(colectivo, 3, 120), exportBreakdown(colectivo, 5, 120, 2),
+      exportBreakdown(sereno, 1, 120), exportBreakdown(sereno, 2, 120), exportBreakdown(sereno, 3, 120), exportBreakdown(sereno, 5, 60, 2),
+    ]);
+
+    const result = await timeEntriesService.exportByPerson({ period: "2026-10", includeInReview: false }, rrhhUser);
+
+    expect(result.rows).toEqual([expect.objectContaining({
+      "Colectivo (horas reales)": "8",
+      "Colectivo (para liquidación)": "10",
+      "Sereno (horas reales)": "7",
+      "Sereno (para liquidación)": "8",
+      // Horas normales: (8−2)×3 + (2−1) = 19 reales; 18 x1 + 1 x2 = 20 para liquidación.
+      "Horas normales": "19",
+      "Horas normales (para liquidación)": "20",
+      // Total trabajado real: base 26 + adicionales 8.
+      "Total trabajado": "34",
+    })]);
+  });
+
   it("Horas base sólo desde NORMAL_BASE — un TimeEntry legacy no-Normal no infla nada", async () => {
     repo.findForExport.mockResolvedValue([exportEntry({ hours: "8" }), exportEntry({ hours: "2", systemRole: null })]);
 

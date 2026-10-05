@@ -181,6 +181,43 @@ describe("workedTimeAccounting — fórmulas oficiales", () => {
     expect(period.settlement.totalMinutes).toBe(18 * H + 8 * H);
   });
 
+  // §17: la grilla, el export y el cierre se leen por concepto. Cada fila
+  // (Horas normales y cada concepto) tiene real y para liquidación por día y
+  // por período; la equivalencia total queda sólo como control.
+  it("período mixto por concepto: Prueba 6 + 1×2 → real 7 / liquidación 8; Colectivo 6 + 2×2 → real 8 / liquidación 10", () => {
+    const prueba = (hours: number, multiplier: number, day: number): AccountingBreakdown => ({ ...sereno(hours, multiplier, day), hourConceptId: "prueba" });
+    const period = accountEmployeePeriod(
+      [base(8, 1, 1), base(8, 1, 2), base(8, 1, 3), base(2 + 26 / 60, 2, 5)],
+      [prueba(2, 1, 1), prueba(2, 1, 2), prueba(2, 1, 3), prueba(1, 2, 5), colectivo(2, 1, 1), colectivo(2, 1, 2), colectivo(2, 1, 3), colectivo(2, 2, 5)],
+    );
+
+    expect(period.concepts.find((item) => item.hourConceptId === "prueba")).toMatchObject({ realMinutes: 7 * H, settlementMinutes: 8 * H });
+    expect(period.concepts.find((item) => item.hourConceptId === "colectivo")).toMatchObject({ realMinutes: 8 * H, settlementMinutes: 10 * H });
+    // Horas normales: 6+6+6 reales x1 + 1 h 26 min x2.
+    expect(period.normalResidualMinutes).toBe(18 * H + 86);
+    expect(period.settlement.normalMinutes).toBe(18 * H + 172);
+    // El día especial expone cada componente por separado.
+    expect(period.days["5"]!.settlement).toMatchObject({ normalMinutes: 172, withinBaseMinutes: 2 * H, additiveMinutes: 4 * H });
+    expect(concept(period.days["5"]!, "prueba")).toMatchObject({ realMinutes: H, settlementMinutes: 2 * H });
+    expect(concept(period.days["5"]!, "colectivo")).toMatchObject({ realMinutes: 2 * H, settlementMinutes: 4 * H });
+    // Total trabajado nunca se multiplica: base + adicionales reales.
+    expect(period.totalWorkedMinutes).toBe(24 * H + 146 + 8 * H);
+  });
+
+  it("multiplicador x1.5 por concepto: base 8 + Sereno 3 + Colectivo 2 → normal 7.5, Sereno 4.5, Colectivo 3; real 10", () => {
+    const day = accountDay(1, [base(8, 1.5)], [sereno(3, 1.5), colectivo(2, 1.5)]);
+    expect(day.settlement).toEqual({ normalMinutes: 7.5 * H, withinBaseMinutes: 4.5 * H, additiveMinutes: 3 * H, totalMinutes: 15 * H });
+    expect(concept(day, "sereno")).toMatchObject({ realMinutes: 3 * H, settlementMinutes: 4.5 * H });
+    expect(concept(day, "colectivo")).toMatchObject({ realMinutes: 2 * H, settlementMinutes: 3 * H });
+    expect(day.totalWorkedMinutes).toBe(10 * H);
+  });
+
+  it("sin Hora Especial, real y para liquidación coinciden en cada concepto", () => {
+    const day = accountDay(1, [base(8)], [sereno(3), colectivo(1)]);
+    for (const item of day.concepts) expect(item.settlementMinutes).toBe(item.realMinutes);
+    expect(day.settlement.normalMinutes).toBe(day.normalResidualMinutes);
+  });
+
   it("adaptadores Prisma: horas decimales a minutos, multiplicador Decimal, tratamiento obligatorio", () => {
     expect(toAccountingBaseEntry({ employeeId: EMPLOYEE, day: 3, hours: "7.5", appliedMultiplier: "2.00" })).toEqual({ employeeId: EMPLOYEE, day: 3, minutes: 450, multiplier: 2 });
     expect(() => toAccountingBreakdown({ employeeId: EMPLOYEE, day: 1, hourConceptId: "x", minutes: 60, hourConcept: { workTreatment: null } })).toThrow();
