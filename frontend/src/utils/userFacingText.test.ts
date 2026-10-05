@@ -34,6 +34,11 @@ describe("formatTimeEntryObservation", () => {
     expect(result).not.toContain("TimeEntry");
   });
 
+  it("el texto que hoy persiste el backend se muestra tal cual (el formateador no necesita ocultar nada)", () => {
+    const persisted = "Generado automáticamente a partir de la fichada.\nRetirada de cómputo por reconciliación 15M.4 -- fusionada en la carga de Horas normales del mismo día.";
+    expect(formatTimeEntryObservation(persisted)).toBe(persisted);
+  });
+
   it("normaliza también la variante histórica sin UUID", () => {
     expect(formatTimeEntryObservation("Generado por fichada de ingreso/salida. Reglas aplicadas: Domingo."))
       .toBe("Generado automáticamente a partir de la fichada. Reglas aplicadas: Domingo.");

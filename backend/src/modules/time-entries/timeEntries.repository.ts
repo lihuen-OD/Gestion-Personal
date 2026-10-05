@@ -1,5 +1,6 @@
 import { ApprovalStatus, EmployeeStatus, Prisma, WorkShiftSource, WorkShiftStatus } from "@prisma/client";
 import { prisma } from "../../shared/prisma/client";
+import { FICHADA_ORIGIN_NOTE } from "./timeEntryObservationText";
 import { noveltyCoversDay } from "../novelties/novelties.dateRange";
 import { resolveActiveWorkRegime } from "../work-regimes/workRegimes.service";
 import { flagOpenShiftOverflowForReview, resolveOpenShiftOverflowAlert } from "../shifts/workShiftEvaluationRunner";
@@ -1872,7 +1873,10 @@ export const timeEntriesRepository = {
               source: input.source,
               segmentStartAt: segment.startAt,
               segmentEndAt: segment.endAt,
-              observation: `${currentObservation}Marcación ${workShift.id}: ${input.observation || "jornada registrada por entrada/salida"}`,
+              // Texto de negocio, nunca el id de la jornada (antes
+              // "Marcación <workShift.id>: ..."): el vínculo técnico ya queda
+              // en workShiftId/timeSegmentId.
+              observation: `${currentObservation}${input.observation || FICHADA_ORIGIN_NOTE}`,
             },
             include: timeEntryInclude,
           }));
@@ -2139,7 +2143,7 @@ export const timeEntriesRepository = {
               source: input.source,
               segmentStartAt: lastSegment.startAt,
               segmentEndAt: lastSegment.endAt,
-              observation: `${currentObservation}Generado automáticamente a partir de la fichada.${rulesNote}`,
+              observation: `${currentObservation}${FICHADA_ORIGIN_NOTE}${rulesNote}`,
               status: "APROBADO",
             },
             include: timeEntryInclude,
@@ -2162,7 +2166,7 @@ export const timeEntriesRepository = {
               segmentStartAt: lastSegment.startAt,
               segmentEndAt: lastSegment.endAt,
               source: input.source,
-              observation: `Generado automáticamente a partir de la fichada.${rulesNote}`,
+              observation: `${FICHADA_ORIGIN_NOTE}${rulesNote}`,
             },
             include: timeEntryInclude,
           }));

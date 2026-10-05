@@ -5,6 +5,7 @@ import {
   proposeObservationRepair,
   StaleObservationError,
   type ReferencedEntry,
+  type ReferencedWorkShift,
 } from "./legacyObservationRepair";
 import { RETIRED_DUPLICATE_NOTE } from "./normalHoursReconciliation";
 
@@ -13,9 +14,9 @@ const canonicalId = "e92bb60e-cf14-47ba-a79b-ae0814163741";
 const employeeId = "18775715-d7b9-40d1-9fee-6c23cacd50c2";
 const date = new Date("2026-09-02T00:00:00.000Z");
 const legacy = `Generado por fichada de ingreso/salida.\nRetirada de cómputo por reconciliación 15M.4 -- fusionada en TimeEntry ${canonicalId}.`;
-const row = { id: retiredId, employeeId, date, observation: legacy };
+const row = { id: retiredId, employeeId, date, workShiftId: null, observation: legacy };
 const canonical: ReferencedEntry = { id: canonicalId, employeeId, date, isNormalBase: true };
-const referencesWith = (...entries: ReferencedEntry[]) => new Map(entries.map((entry) => [entry.id, entry]));
+const referencesWith = (...entries: ReferencedEntry[]) => ({ timeEntries: new Map(entries.map((entry) => [entry.id, entry])), workShifts: new Map() });
 
 describe("proposeObservationRepair — observaciones legadas de TimeEntry", () => {
   it("A) id válido (canónica del mismo empleado/día, Horas normales) → texto vigente, sin ids", () => {
@@ -38,8 +39,8 @@ describe("proposeObservationRepair — observaciones legadas de TimeEntry", () =
     expect(proposeObservationRepair(row, referencesWith(reference))).toMatchObject({ status: "skip", reason });
   });
 
-  it("otro texto legado ('Fichada <id>: ...', id de una jornada) no coincide con el patrón → no se modifica", () => {
-    const observation = "Fichada 5867bcd8-5e31-4cb7-89a9-ff27c2bd27a8: generado por ingreso/salida.";
+  it("un texto con id que no coincide con ningún patrón conocido → no se modifica", () => {
+    const observation = "Revisado contra 5867bcd8-5e31-4cb7-89a9-ff27c2bd27a8 por el encargado.";
     expect(proposeObservationRepair({ ...row, observation }, referencesWith(canonical))).toMatchObject({ status: "skip", before: observation });
   });
 
@@ -96,5 +97,45 @@ describe("applyObservationRepairs — todo o nada", () => {
     expect(rolledBack).toBe(true);
     // La fila cambiada nunca se escribe sin la condición de "sin cambios".
     expect(updateMany).toHaveBeenLastCalledWith({ where: { id: "entry-2", observation: repairs[1]!.before }, data: { observation: "b ok" } });
+  });
+});
+
+// "Fichada <workShiftId>: generado por ingreso/salida." (motor de fichadas viejo).
+describe("proposeObservationRepair — 'Fichada <id>' apunta a una jornada (WorkShift)", () => {
+  const entryId = "59d57ec9-5077-41f9-9825-c0c14a01a940";
+  const workShiftId = "b48a2ab5-9681-4fb5-b1bb-ce9f7e9982a6";
+  const entryDate = new Date("2026-09-16T00:00:00.000Z");
+  const observation = `Generado por fichada de ingreso/salida.\nFichada ${workShiftId}: generado por ingreso/salida.\nReconciliación histórica 15M.4 (2026-09-17T13:33:43.550Z): total ajustado a 250 min reales desde WorkShift/TimeSegment.`;
+  const entry = { id: entryId, employeeId, date: entryDate, workShiftId, observation };
+  const shift: ReferencedWorkShift = { id: workShiftId, employeeId, segmentDates: [entryDate] };
+  const lookupsWith = (...shifts: ReferencedWorkShift[]) => ({ timeEntries: new Map(), workShifts: new Map(shifts.map((item) => [item.id, item])) });
+
+  it("A) jornada válida del mismo empleado que originó la carga → texto de negocio, resto intacto", () => {
+    const proposal = proposeObservationRepair(entry, lookupsWith(shift));
+
+    expect(proposal.status).toBe("repair");
+    const after = proposal.status === "repair" ? proposal.after : "";
+    expect(after).toBe("Generado por fichada de ingreso/salida.\nGenerado automáticamente a partir de la fichada.\nReconciliación histórica 15M.4 (2026-09-17T13:33:43.550Z): total ajustado a 250 min reales desde WorkShift/TimeSegment.");
+    // F) el texto generado nunca incluye el id de la jornada.
+    expect(after).not.toContain(workShiftId);
+  });
+
+  it("B) la jornada es de otro empleado → no se repara", () => {
+    expect(proposeObservationRepair(entry, lookupsWith({ ...shift, employeeId: "otro-empleado" })))
+      .toMatchObject({ status: "skip", reason: "la jornada referenciada es de otro empleado" });
+  });
+
+  it("C) la jornada no existe → no se repara", () => {
+    expect(proposeObservationRepair(entry, lookupsWith())).toMatchObject({ status: "skip", reason: "la jornada (WorkShift) referenciada no existe" });
+  });
+
+  it("del mismo empleado pero sin relación con esta carga (otro workShiftId y sin tramos en la fecha) → no se repara", () => {
+    const unrelated = { ...shift, segmentDates: [new Date("2026-09-20T00:00:00.000Z")] };
+    expect(proposeObservationRepair({ ...entry, workShiftId: "otra-jornada" }, lookupsWith(unrelated)))
+      .toMatchObject({ status: "skip", reason: "la jornada referenciada no originó esta carga (ni workShiftId ni tramos en la fecha)" });
+  });
+
+  it("basta una evidencia de origen: tramos en la fecha aunque workShiftId apunte a otra jornada (carga fusionada)", () => {
+    expect(proposeObservationRepair({ ...entry, workShiftId: "otra-jornada" }, lookupsWith(shift))).toMatchObject({ status: "repair" });
   });
 });

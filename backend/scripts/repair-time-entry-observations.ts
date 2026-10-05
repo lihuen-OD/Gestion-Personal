@@ -1,7 +1,8 @@
 /**
  * Repara observaciones legadas de TimeEntry con un id técnico
- * ("fusionada en TimeEntry <uuid>"), sólo cuando es inequívoco. La lógica y
- * sus reglas viven en src/modules/time-entries/legacyObservationRepair.ts.
+ * ("fusionada en TimeEntry <uuid>", "Fichada <uuid>: generado por
+ * ingreso/salida."), sólo cuando es inequívoco. La lógica y sus reglas viven
+ * en src/modules/time-entries/legacyObservationRepair.ts.
  *
  *   npm run staging:time-entry-observations                                  (dry-run)
  *   npm run staging:time-entry-observations -- --report=<archivo.json>      (dry-run + propuestas)
@@ -20,6 +21,7 @@ import {
   proposeObservationRepair,
   referencedTechnicalIds,
   type ReferencedEntry,
+  type ReferencedWorkShift,
 } from "../src/modules/time-entries/legacyObservationRepair";
 
 async function main() {
@@ -35,21 +37,34 @@ async function main() {
   const rows = await prisma.timeEntry.findMany({
     where: { id: { in: affected.map((row) => row.id) } },
     orderBy: [{ date: "asc" }, { id: "asc" }],
-    select: { id: true, employeeId: true, date: true, observation: true },
+    select: { id: true, employeeId: true, date: true, workShiftId: true, observation: true },
   });
 
-  // Una sola consulta para todos los TimeEntry referenciados.
+  // Una consulta por tabla para todos los ids referenciados (TimeEntry y
+  // WorkShift con las fechas de sus tramos), nunca una por fila.
   const referencedIds = Array.from(new Set(rows.flatMap((row) => referencedTechnicalIds(row.observation).map((id) => id.toLowerCase()))));
-  const references = await prisma.timeEntry.findMany({
-    where: { id: { in: referencedIds } },
-    select: { id: true, employeeId: true, date: true, hourConcept: { select: { systemRole: true } } },
-  });
-  const referencesById = new Map<string, ReferencedEntry>(references.map((entry) => [
-    entry.id.toLowerCase(),
-    { id: entry.id, employeeId: entry.employeeId, date: entry.date, isNormalBase: entry.hourConcept.systemRole === "NORMAL_BASE" },
-  ]));
+  const [timeEntries, workShifts] = await Promise.all([
+    prisma.timeEntry.findMany({
+      where: { id: { in: referencedIds } },
+      select: { id: true, employeeId: true, date: true, hourConcept: { select: { systemRole: true } } },
+    }),
+    prisma.workShift.findMany({
+      where: { id: { in: referencedIds } },
+      select: { id: true, employeeId: true, timeSegments: { select: { date: true } } },
+    }),
+  ]);
+  const lookups = {
+    timeEntries: new Map<string, ReferencedEntry>(timeEntries.map((entry) => [
+      entry.id.toLowerCase(),
+      { id: entry.id, employeeId: entry.employeeId, date: entry.date, isNormalBase: entry.hourConcept.systemRole === "NORMAL_BASE" },
+    ])),
+    workShifts: new Map<string, ReferencedWorkShift>(workShifts.map((shift) => [
+      shift.id.toLowerCase(),
+      { id: shift.id, employeeId: shift.employeeId, segmentDates: shift.timeSegments.map((segment) => segment.date) },
+    ])),
+  };
 
-  const proposals = rows.map((row) => proposeObservationRepair(row, referencesById));
+  const proposals = rows.map((row) => proposeObservationRepair(row, lookups));
   const repairs = proposals.flatMap((proposal) => (proposal.status === "repair" ? [proposal] : []));
   const skipped = proposals.filter((proposal) => proposal.status === "skip");
 
