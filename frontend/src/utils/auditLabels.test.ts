@@ -73,6 +73,33 @@ describe("auditDescription / auditChange — booleanos y campos crudos limpios",
   });
 });
 
+// Ningún texto de negocio visible (Dashboard > Actividad reciente, Auditoría,
+// Historial del legajo) muestra un UUID: red para eventos históricos que no
+// se pudieron reparar en el backend.
+describe("auditDescription / auditChange — nunca un id técnico visible", () => {
+  const employeeUuid = "016dc01c-655d-4474-8319-67f1b8108c93";
+
+  it("oculta el UUID de un Employee embebido en una descripción histórica", () => {
+    const description = auditDescription({ reason: `Se quitó el concepto horario del empleado ${employeeUuid}.`, next: "-" });
+    expect(description).not.toContain(employeeUuid);
+    expect(description).toBe("Se quitó el concepto horario del empleado —.");
+  });
+
+  it("enmascara los ids de una ruta como :id", () => {
+    expect(auditDescription({ reason: `Acceso denegado: GET /api/employees/${employeeUuid.toUpperCase()}/overview (FORBIDDEN)`, next: "-" }))
+      .toBe("Acceso denegado: GET /api/employees/:id/overview (FORBIDDEN)");
+  });
+
+  it("también en el resumen Antes/Después", () => {
+    expect(auditChange({ previous: `Empleado: ${employeeUuid}`, next: "Estado: APROBADO" })).not.toContain(employeeUuid);
+  });
+
+  it("una descripción con identidad humana queda intacta", () => {
+    const description = "Se guardó y aplicó (RRHH) el desglose manual Colectivo del 03/10/2026 para Pérez, Juan · Legajo 30.";
+    expect(auditDescription({ reason: description, next: "-" })).toBe(description);
+  });
+});
+
 describe("auditRoleLabel — sin fugas de códigos de rol", () => {
   it("traduce el rol crudo del backend al mismo texto que usa el resto de la app", () => {
     expect(auditRoleLabel("NIVEL_1_RRHH")).toBe("Nivel 1 - RRHH");
