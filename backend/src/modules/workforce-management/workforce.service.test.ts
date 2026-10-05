@@ -5,6 +5,7 @@ import { AppError } from "../../shared/errors/AppError";
 import { prisma } from "../../shared/prisma/client";
 import { auditService } from "../audit/audit.service";
 import { workforceService } from "./workforce.service";
+import { reinterpretSpecialHours } from "./specialHourReinterpretation";
 import { roles } from "../../shared/security/roles";
 
 /**
@@ -22,6 +23,7 @@ vi.mock("../../shared/prisma/client", () => ({
     timeCorrectionRequest: { findMany: vi.fn(), findUnique: vi.fn(), findUniqueOrThrow: vi.fn(), update: vi.fn(), create: vi.fn() },
     shiftTemplate: { create: vi.fn(), findUnique: vi.fn(), update: vi.fn(), delete: vi.fn() },
     doubleHourRule: { create: vi.fn(), findUnique: vi.fn(), findMany: vi.fn(), update: vi.fn(), delete: vi.fn() },
+    specialHourRuleApplication: { deleteMany: vi.fn() },
     systemNotification: { findMany: vi.fn(), count: vi.fn() },
     shiftAlert: { findMany: vi.fn() },
     workShift: { findMany: vi.fn() },
@@ -38,6 +40,22 @@ vi.mock("../audit/audit.service", () => ({
   auditService: { register: vi.fn().mockResolvedValue(null) },
 }));
 
+// La reinterpretación de la historia tiene su propio test
+// (specialHourReinterpretation.test.ts); acá sólo importa que el CRUD de
+// reglas la invoque dentro de la misma transacción.
+vi.mock("./specialHourReinterpretation", () => ({
+  reinterpretSpecialHours: vi.fn().mockResolvedValue({ timeEntries: 0, breakdowns: 0, segments: 0, employees: 0, periods: [], rebuiltClosures: [] }),
+}));
+
+// Fila completa de DoubleHourRule (las columnas son NOT NULL en schema.prisma).
+function ruleRow(overrides: Record<string, unknown>) {
+  return {
+    recurrenceType: "SEMANAL", fromDate: new Date("2026-01-01T00:00:00.000Z"), toDate: null, weekdays: [0], dates: [],
+    multiplier: 2, kind: "OTRO", status: "ACTIVO", employees: [],
+    ...overrides,
+  };
+}
+
 const mockedPrisma = prisma as unknown as {
   employee: { count: Mock; findMany: Mock };
   timeEntry: { groupBy: Mock; findFirst: Mock; findMany: Mock; update: Mock };
@@ -46,6 +64,7 @@ const mockedPrisma = prisma as unknown as {
   timeCorrectionRequest: { findMany: Mock; findUnique: Mock; findUniqueOrThrow: Mock; update: Mock; create: Mock };
   shiftTemplate: { create: Mock; findUnique: Mock; update: Mock; delete: Mock };
   doubleHourRule: { create: Mock; findUnique: Mock; findMany: Mock; update: Mock; delete: Mock };
+  specialHourRuleApplication: { deleteMany: Mock };
   systemNotification: { findMany: Mock; count: Mock };
   shiftAlert: { findMany: Mock };
   workShift: { findMany: Mock };
@@ -63,6 +82,8 @@ const supervisor = { id: "user-2", role: roles.supervision } as unknown as Expre
 beforeEach(() => {
   vi.clearAllMocks();
   mockedPrisma.employee.findMany.mockResolvedValue([]);
+  // Forma interactiva (callback con tx) o array, como Prisma.
+  mockedPrisma.$transaction.mockImplementation((arg: unknown) => (typeof arg === "function" ? (arg as (tx: unknown) => unknown)(mockedPrisma) : Promise.all(arg as unknown[])));
 });
 
 describe("workforceService — auditoria en correcciones/cierres (hueco cerrado)", () => {
@@ -420,12 +441,12 @@ describe("workforceService — FK reales sobre ShiftTemplate/DoubleHourRule", ()
   it("considera futura una regla del día UTC siguiente mientras en Argentina todavía es el día anterior", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-08-15T01:30:00.000Z")); // 14/08 22:30 en Argentina
-    mockedPrisma.doubleHourRule.findUnique.mockResolvedValue({
+    mockedPrisma.doubleHourRule.findUnique.mockResolvedValue(ruleRow({
       id: "rule-1",
       name: "Regla futura",
       fromDate: new Date("2026-08-15T00:00:00.000Z"),
       employees: [],
-    });
+    }));
     mockedPrisma.doubleHourRule.delete.mockResolvedValue({ id: "rule-1" });
 
     try {
@@ -439,13 +460,13 @@ describe("workforceService — FK reales sobre ShiftTemplate/DoubleHourRule", ()
   it("Etapa 8C — una regla cuya vigencia ya comenzó se inactiva en vez de borrarse (preserva la trazabilidad de SpecialHourRuleApplication ya generada)", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-08-15T12:00:00.000Z"));
-    mockedPrisma.doubleHourRule.findUnique.mockResolvedValue({
+    mockedPrisma.doubleHourRule.findUnique.mockResolvedValue(ruleRow({
       id: "rule-1",
       name: "Domingo",
       fromDate: new Date("2026-01-01T00:00:00.000Z"),
       employees: [],
-    });
-    mockedPrisma.doubleHourRule.update.mockResolvedValue({ id: "rule-1", name: "Domingo", status: "INACTIVO" });
+    }));
+    mockedPrisma.doubleHourRule.update.mockResolvedValue(ruleRow({ id: "rule-1", name: "Domingo", status: "INACTIVO" }));
 
     try {
       await expect(workforceService.removeDoubleRule("rule-1")).resolves.toMatchObject({ mode: "INACTIVATED" });
@@ -479,7 +500,7 @@ describe("workforceService — FK reales sobre ShiftTemplate/DoubleHourRule", ()
   });
 
   it("Etapa 8B (test 1) — crea una Hora Especial general (sin empresa/sector/centro de costo/puesto/empleados)", async () => {
-    mockedPrisma.doubleHourRule.create.mockResolvedValue({ id: "rule-1", name: "Domingo" });
+    mockedPrisma.doubleHourRule.create.mockResolvedValue(ruleRow({ id: "rule-1", name: "Domingo" }));
 
     await workforceService.createDoubleRule({ name: "Domingo", recurrenceType: "SEMANAL", weekdays: [0], employeeIds: [] }, user);
 
@@ -492,7 +513,7 @@ describe("workforceService — FK reales sobre ShiftTemplate/DoubleHourRule", ()
   });
 
   it("Etapa 8B (test 2) — crea una Hora Especial con empresa pero sin empleados", async () => {
-    mockedPrisma.doubleHourRule.create.mockResolvedValue({ id: "rule-2", name: "Domingo Odwyer" });
+    mockedPrisma.doubleHourRule.create.mockResolvedValue(ruleRow({ id: "rule-2", name: "Domingo Odwyer" }));
 
     await workforceService.createDoubleRule({ name: "Domingo Odwyer", recurrenceType: "SEMANAL", weekdays: [0], companyId: "company-odwyer", employeeIds: [] }, user);
 
@@ -502,7 +523,7 @@ describe("workforceService — FK reales sobre ShiftTemplate/DoubleHourRule", ()
   });
 
   it("Etapa 8B (test 3) — crea una Hora Especial con empresa + sector pero sin empleados", async () => {
-    mockedPrisma.doubleHourRule.create.mockResolvedValue({ id: "rule-3", name: "Domingo Pañol" });
+    mockedPrisma.doubleHourRule.create.mockResolvedValue(ruleRow({ id: "rule-3", name: "Domingo Pañol" }));
 
     await workforceService.createDoubleRule({ name: "Domingo Pañol", recurrenceType: "SEMANAL", weekdays: [0], companyId: "company-odwyer", sectorId: "sector-panol", employeeIds: [] }, user);
 
@@ -512,7 +533,7 @@ describe("workforceService — FK reales sobre ShiftTemplate/DoubleHourRule", ()
   });
 
   it("Etapa 8B (test 4) — crea una Hora Especial con empleados específicos (comportamiento preexistente, sigue igual)", async () => {
-    mockedPrisma.doubleHourRule.create.mockResolvedValue({ id: "rule-4", name: "Domingo Pañol" });
+    mockedPrisma.doubleHourRule.create.mockResolvedValue(ruleRow({ id: "rule-4", name: "Domingo Pañol" }));
 
     await workforceService.createDoubleRule({ name: "Domingo Pañol", recurrenceType: "SEMANAL", weekdays: [0], employeeIds: ["juan", "pedro", "carlos"] }, user);
 
@@ -522,7 +543,7 @@ describe("workforceService — FK reales sobre ShiftTemplate/DoubleHourRule", ()
   });
 
   it("Etapa 8B — crea una Hora Especial de fechas específicas (FECHA) con varias fechas cargadas (feriados)", async () => {
-    mockedPrisma.doubleHourRule.create.mockResolvedValue({ id: "rule-5", name: "Feriados 2026" });
+    mockedPrisma.doubleHourRule.create.mockResolvedValue(ruleRow({ id: "rule-5", name: "Feriados 2026" }));
     const navidad = new Date("2026-12-25");
     const anioNuevo = new Date("2027-01-01");
 
@@ -539,7 +560,7 @@ describe("workforceService — FK reales sobre ShiftTemplate/DoubleHourRule", ()
   });
 
   it("Etapa 12B — crea una regla con kind FERIADO", async () => {
-    mockedPrisma.doubleHourRule.create.mockResolvedValue({ id: "rule-feriado", name: "Feriado", kind: "FERIADO" });
+    mockedPrisma.doubleHourRule.create.mockResolvedValue(ruleRow({ id: "rule-feriado", name: "Feriado", kind: "FERIADO" }));
 
     await workforceService.createDoubleRule({ name: "Feriado", recurrenceType: "SEMANAL", weekdays: [0], employeeIds: [], kind: "FERIADO" }, user);
 
@@ -547,7 +568,7 @@ describe("workforceService — FK reales sobre ShiftTemplate/DoubleHourRule", ()
   });
 
   it("Etapa 12B — crea una regla con kind DOMINGO", async () => {
-    mockedPrisma.doubleHourRule.create.mockResolvedValue({ id: "rule-domingo", name: "Domingo", kind: "DOMINGO" });
+    mockedPrisma.doubleHourRule.create.mockResolvedValue(ruleRow({ id: "rule-domingo", name: "Domingo", kind: "DOMINGO" }));
 
     await workforceService.createDoubleRule({ name: "Domingo", recurrenceType: "SEMANAL", weekdays: [0], employeeIds: [], kind: "DOMINGO" }, user);
 
@@ -555,7 +576,7 @@ describe("workforceService — FK reales sobre ShiftTemplate/DoubleHourRule", ()
   });
 
   it("Etapa 12B — crea una regla con kind JORNADA_ESPECIAL", async () => {
-    mockedPrisma.doubleHourRule.create.mockResolvedValue({ id: "rule-jornada", name: "Jornada especial", kind: "JORNADA_ESPECIAL" });
+    mockedPrisma.doubleHourRule.create.mockResolvedValue(ruleRow({ id: "rule-jornada", name: "Jornada especial", kind: "JORNADA_ESPECIAL" }));
 
     await workforceService.createDoubleRule({ name: "Jornada especial", recurrenceType: "RANGO", employeeIds: [], kind: "JORNADA_ESPECIAL" }, user);
 
@@ -563,7 +584,7 @@ describe("workforceService — FK reales sobre ShiftTemplate/DoubleHourRule", ()
   });
 
   it("Etapa 12B — crea una regla con kind OTRO (explícito)", async () => {
-    mockedPrisma.doubleHourRule.create.mockResolvedValue({ id: "rule-otro", name: "Pedro", kind: "OTRO" });
+    mockedPrisma.doubleHourRule.create.mockResolvedValue(ruleRow({ id: "rule-otro", name: "Pedro", kind: "OTRO" }));
 
     await workforceService.createDoubleRule({ name: "Pedro", recurrenceType: "SEMANAL", weekdays: [0], employeeIds: [], kind: "OTRO" }, user);
 
@@ -572,7 +593,7 @@ describe("workforceService — FK reales sobre ShiftTemplate/DoubleHourRule", ()
 
   it("Etapa 12B — updateDoubleRule reclasifica el kind de una regla existente sin tocar el resto", async () => {
     mockedPrisma.doubleHourRule.findUnique.mockResolvedValue({ id: "rule-domingo", name: "Domingo", kind: "OTRO", employees: [], dates: [] });
-    mockedPrisma.doubleHourRule.update.mockResolvedValue({ id: "rule-domingo", name: "Domingo", kind: "DOMINGO" });
+    mockedPrisma.doubleHourRule.update.mockResolvedValue(ruleRow({ id: "rule-domingo", name: "Domingo", kind: "DOMINGO" }));
 
     await workforceService.updateDoubleRule("rule-domingo", { kind: "DOMINGO" });
 
@@ -729,7 +750,7 @@ describe("workforceService — FK reales sobre ShiftTemplate/DoubleHourRule", ()
       employees: [],
       dates: [{ id: "date-1", date: new Date("2026-12-25"), isActive: true }],
     });
-    mockedPrisma.doubleHourRule.update.mockResolvedValue({ id: "rule-feriado", name: "Feriado" });
+    mockedPrisma.doubleHourRule.update.mockResolvedValue(ruleRow({ id: "rule-feriado", name: "Feriado" }));
     const anioNuevo = new Date("2027-01-01");
     const nueveDeJulio = new Date("2026-07-09");
 
@@ -982,5 +1003,105 @@ describe("workforceService.notifications — Etapa 9I (paginación real, antes f
 
       expect(result.items[0]).not.toHaveProperty("eventDate");
     });
+  });
+});
+
+// docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md §15: crear/editar/quitar una
+// regla de Hora Especial reinterpreta las horas ya cargadas en la MISMA
+// transacción y lo audita en lenguaje de negocio.
+describe("workforceService — reglas de Hora Especial reinterpretan la historia", () => {
+  const reinterpretation = (overrides: Record<string, unknown> = {}) => ({
+    timeEntries: 23, breakdowns: 0, segments: 23, employees: 18, periods: ["2026-10"],
+    rebuiltClosures: [{ id: "closure-1", employeeId: "016dc01c-655d-4474-8319-67f1b8108c93", period: "2026-10", before: {}, after: {} }],
+    ...overrides,
+  });
+  const feriadoRow = (overrides: Record<string, unknown> = {}) => ruleRow({
+    id: "rule-feriado", name: "Día de la Raza", kind: "FERIADO", recurrenceType: "FECHA",
+    fromDate: new Date("2026-10-03T00:00:00.000Z"), toDate: new Date("2026-10-03T00:00:00.000Z"),
+    dates: [{ date: new Date("2026-10-03T00:00:00.000Z"), isActive: true }], multiplier: 1, ...overrides,
+  });
+  const auditDescriptions = () => (auditService.register as Mock).mock.calls.map(([input]) => input.description as string);
+
+  it("crear un feriado reinterpreta dentro de la transacción (before: null → after: la regla nueva) y lo audita en lenguaje humano", async () => {
+    vi.mocked(reinterpretSpecialHours).mockResolvedValueOnce(reinterpretation() as never);
+    mockedPrisma.doubleHourRule.create.mockResolvedValue(feriadoRow({ multiplier: 2 }));
+    mockedPrisma.employee.findMany.mockResolvedValue([{ id: "016dc01c-655d-4474-8319-67f1b8108c93", legajo: "30", firstName: "Juan", lastName: "Pérez" }]);
+
+    await workforceService.createDoubleRule({ name: "Día de la Raza", kind: "FERIADO", recurrenceType: "FECHA", dates: [{ date: new Date("2026-10-03T00:00:00.000Z") }], employeeIds: [] }, user);
+
+    expect(mockedPrisma.$transaction).toHaveBeenCalledWith(expect.any(Function), { timeout: 30_000 });
+    expect(reinterpretSpecialHours).toHaveBeenCalledWith(mockedPrisma, { before: null, after: expect.objectContaining({ id: "rule-feriado", recurrenceType: "FECHA" }) }, { doubleHourRuleId: "rule-feriado", doubleHourRuleName: "Día de la Raza" });
+    expect(auditDescriptions()).toEqual([
+      "Se creó el feriado Día de la Raza (03/10/2026, x2). Se recalcularon 23 carga(s) de 18 legajo(s) y 1 cierre(s) mensual(es).",
+      "Se recalculó el snapshot del cierre de octubre de 2026 de Pérez, Juan · Legajo 30 por cambio del feriado Día de la Raza. El estado del cierre no cambia.",
+    ]);
+    const ruleAudit = (auditService.register as Mock).mock.calls[0]![0];
+    expect(ruleAudit.after.reinterpretation).toEqual({ timeEntries: 23, breakdowns: 0, segments: 23, employees: 18, periods: ["2026-10"], recalculatedClosureIds: ["closure-1"] });
+    for (const description of auditDescriptions()) expect(description).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-/);
+  });
+
+  it("cambiar el multiplicador de x1 a x2 pasa before y after al recálculo y describe el cambio", async () => {
+    vi.mocked(reinterpretSpecialHours).mockResolvedValueOnce(reinterpretation({ rebuiltClosures: [] }) as never);
+    mockedPrisma.doubleHourRule.findUnique.mockResolvedValue(feriadoRow({ multiplier: 1 }));
+    mockedPrisma.doubleHourRule.update.mockResolvedValue(feriadoRow({ multiplier: 2 }));
+
+    await workforceService.updateDoubleRule("rule-feriado", { multiplier: 2 });
+
+    expect(reinterpretSpecialHours).toHaveBeenCalledWith(
+      mockedPrisma,
+      { before: expect.objectContaining({ id: "rule-feriado" }), after: expect.objectContaining({ id: "rule-feriado" }) },
+      { doubleHourRuleId: "rule-feriado", doubleHourRuleName: "Día de la Raza" },
+    );
+    expect(auditDescriptions()).toEqual(["Se actualizó el feriado Día de la Raza (03/10/2026) de x1 a x2. Se recalcularon 23 carga(s) de 18 legajo(s)."]);
+  });
+
+  it("sin horas alcanzadas lo dice explícitamente", async () => {
+    mockedPrisma.doubleHourRule.findUnique.mockResolvedValue(feriadoRow({ multiplier: 2 }));
+    mockedPrisma.doubleHourRule.update.mockResolvedValue(feriadoRow({ multiplier: 1.5 }));
+
+    await workforceService.updateDoubleRule("rule-feriado", { multiplier: 1.5 });
+
+    expect(auditDescriptions()).toEqual(["Se actualizó el feriado Día de la Raza (03/10/2026) de x2 a x1.5. No había horas cargadas alcanzadas por el cambio."]);
+  });
+
+  it("eliminar una regla futura retira su traza, la borra y reinterpreta (after: null), todo en la misma transacción", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-01T12:00:00.000Z"));
+    mockedPrisma.doubleHourRule.findUnique.mockResolvedValue(feriadoRow({ multiplier: 2 }));
+    try {
+      await expect(workforceService.removeDoubleRule("rule-feriado")).resolves.toEqual({ mode: "DELETED", id: "rule-feriado" });
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(mockedPrisma.specialHourRuleApplication.deleteMany).toHaveBeenCalledWith({ where: { doubleHourRuleId: "rule-feriado" } });
+    expect(mockedPrisma.doubleHourRule.delete).toHaveBeenCalledWith({ where: { id: "rule-feriado" } });
+    expect(reinterpretSpecialHours).toHaveBeenCalledWith(mockedPrisma, { before: expect.objectContaining({ id: "rule-feriado" }), after: null }, expect.any(Object));
+    expect(auditDescriptions()[0]).toBe("Se eliminó el feriado Día de la Raza (03/10/2026), que todavía no había entrado en vigencia. No había horas cargadas alcanzadas por el cambio.");
+  });
+
+  it("inactivar una regla ya vigente reinterpreta (after: null) y conserva la regla", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-05T12:00:00.000Z"));
+    vi.mocked(reinterpretSpecialHours).mockResolvedValueOnce(reinterpretation({ rebuiltClosures: [] }) as never);
+    mockedPrisma.doubleHourRule.findUnique.mockResolvedValue(feriadoRow({ multiplier: 2 }));
+    mockedPrisma.doubleHourRule.update.mockResolvedValue(feriadoRow({ multiplier: 2, status: "INACTIVO" }));
+    try {
+      await expect(workforceService.removeDoubleRule("rule-feriado")).resolves.toMatchObject({ mode: "INACTIVATED" });
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(mockedPrisma.doubleHourRule.delete).not.toHaveBeenCalled();
+    expect(reinterpretSpecialHours).toHaveBeenCalledWith(mockedPrisma, { before: expect.objectContaining({ id: "rule-feriado" }), after: null }, expect.any(Object));
+    expect(auditDescriptions()[0]).toBe("Se inactivó el feriado Día de la Raza (03/10/2026) porque su vigencia ya había comenzado. Se recalcularon 23 carga(s) de 18 legajo(s).");
+  });
+
+  it("si la reinterpretación falla, el error sale de la transacción (la regla no queda cambiada) y no se audita", async () => {
+    vi.mocked(reinterpretSpecialHours).mockRejectedValueOnce(new Error("boom"));
+    mockedPrisma.doubleHourRule.create.mockResolvedValue(feriadoRow({ multiplier: 2 }));
+
+    await expect(workforceService.createDoubleRule({ name: "Día de la Raza", employeeIds: [] }, user)).rejects.toThrow("boom");
+    expect(auditService.register).not.toHaveBeenCalled();
   });
 });

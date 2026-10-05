@@ -11,6 +11,9 @@ import { buildActiveDatesByRule, resolveWinningRules, ruleMatchesDate, scopesCou
 import type { CorrectionsQuery, ListNotificationsQuery } from "./workforce.schemas";
 import { buildClosureSnapshots } from "./closureSnapshot";
 import { employeeReferenceSelect, formatEmployeeReference, loadEmployeeReferences } from "../../shared/audit/employeeReference";
+import { formatArgentinaDate } from "../../shared/datetime/argentinaTime";
+import { auditClosureRecalculations } from "./closureRecalculationAudit";
+import { reinterpretSpecialHours, type RuleCalendar, type SpecialHourReinterpretation } from "./specialHourReinterpretation";
 
 // Identidad humana para la descripción de auditoría (nunca el employeeId).
 const employeeReferenceInclude = { employee: { select: employeeReferenceSelect } } as const;
@@ -82,6 +85,59 @@ function computeExpectedMinutes(startTime: string, endTime: string, crossesMidni
 function fechaVigencyFromDates(dates: Array<{ date: Date }>) {
   const timestamps = dates.map((entry) => new Date(entry.date).getTime());
   return { fromDate: new Date(Math.min(...timestamps)), toDate: new Date(Math.max(...timestamps)) };
+}
+
+// ── Reglas de Hora Especial: cambio + reinterpretación de la historia ──────
+// (docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md §15). Crear, editar,
+// inactivar o eliminar una regla corre en la misma transacción que el
+// recálculo de todo lo derivado: si el recálculo falla, la regla no cambia.
+const SPECIAL_HOUR_RULE_TRANSACTION_OPTIONS = { timeout: 30_000 };
+
+type RuleForChange = RuleCalendar & { name: string; kind: DoubleHourRuleKind; multiplier: Prisma.Decimal | number; status: string };
+
+function ruleCalendar(rule: RuleForChange): RuleCalendar {
+  return { id: rule.id, recurrenceType: rule.recurrenceType, fromDate: rule.fromDate, toDate: rule.toDate, weekdays: rule.weekdays, dates: rule.dates };
+}
+
+const WEEKDAY_PLURALS = ["domingos", "lunes", "martes", "miércoles", "jueves", "viernes", "sábados"];
+
+function ruleNoun(rule: Pick<RuleForChange, "kind">) {
+  return rule.kind === "FERIADO" ? "el feriado" : "la regla de horas especiales";
+}
+
+function formatMultiplierLabel(multiplier: Prisma.Decimal | number) {
+  return `x${Number(multiplier)}`;
+}
+
+// Calendario en lenguaje de negocio: "03/10/2026", "los domingos desde 01/09/2026"...
+function describeRuleSchedule(rule: RuleForChange) {
+  if (rule.recurrenceType === "FECHA") {
+    const dates = rule.dates.filter((entry) => entry.isActive).map((entry) => entry.date).sort((a, b) => a.getTime() - b.getTime());
+    if (!dates.length) return "sin fechas activas";
+    if (dates.length <= 3) return dates.map(formatArgentinaDate).join(", ");
+    return `${dates.length} fechas del ${formatArgentinaDate(dates[0]!)} al ${formatArgentinaDate(dates[dates.length - 1]!)}`;
+  }
+  const range = rule.toDate ? `del ${formatArgentinaDate(rule.fromDate)} al ${formatArgentinaDate(rule.toDate)}` : `desde el ${formatArgentinaDate(rule.fromDate)}`;
+  if (rule.recurrenceType === "RANGO") return range;
+  const weekdays = [...rule.weekdays].sort().map((day) => WEEKDAY_PLURALS[day]).filter(Boolean).join(", ");
+  return `los ${weekdays} ${range}`;
+}
+
+function describeReinterpretation(result: SpecialHourReinterpretation) {
+  const loads = result.timeEntries + result.breakdowns;
+  if (!loads) return "No había horas cargadas alcanzadas por el cambio.";
+  const closures = result.rebuiltClosures.length;
+  return `Se recalcularon ${loads} carga(s) de ${result.employees} legajo(s)${closures ? ` y ${closures} cierre(s) mensual(es)` : ""}.`;
+}
+
+function reinterpretationMetadata(result: SpecialHourReinterpretation) {
+  const { rebuiltClosures, ...summary } = result;
+  return { ...summary, recalculatedClosureIds: rebuiltClosures.map((closure) => closure.id) };
+}
+
+async function auditSpecialHourRuleClosures(rule: RuleForChange, result: SpecialHourReinterpretation, audit?: AuditContext) {
+  const ofRule = rule.kind === "FERIADO" ? "del feriado" : "de la regla de horas especiales";
+  await auditClosureRecalculations(result.rebuiltClosures, `cambio ${ofRule} ${rule.name}`, audit, (employeeIds) => loadEmployeeReferences(prisma, employeeIds));
 }
 
 export const workforceService = {
@@ -303,17 +359,26 @@ export const workforceService = {
   },
   async createDoubleRule(input: any, user: Express.AuthUser, audit?: AuditContext) {
     const { employeeIds, dates, ...data } = input;
-    const item = await execute(() => prisma.doubleHourRule.create({
-      data: {
-        ...data,
-        ...(data.recurrenceType === "FECHA" && dates?.length ? fechaVigencyFromDates(dates) : {}),
-        createdByUserId: user.id,
-        employees: { create: employeeIds.map((employeeId: string) => ({ employeeId })) },
-        ...(dates ? { dates: { create: dates.map((entry: { date: Date; isActive?: boolean }) => ({ date: entry.date, isActive: entry.isActive ?? true })) } } : {}),
-      },
-      include: { employees: true, dates: true },
-    }));
-    await auditService.register({ ...audit, action: "CREATE", entity: "DoubleHourRule", entityId: item.id, description: `Se creó la regla de horas especiales ${item.name}.`, after: item as Prisma.InputJsonValue });
+    const { item, reinterpretation } = await execute(() => prisma.$transaction(async (tx) => {
+      const created = await tx.doubleHourRule.create({
+        data: {
+          ...data,
+          ...(data.recurrenceType === "FECHA" && dates?.length ? fechaVigencyFromDates(dates) : {}),
+          createdByUserId: user.id,
+          employees: { create: employeeIds.map((employeeId: string) => ({ employeeId })) },
+          ...(dates ? { dates: { create: dates.map((entry: { date: Date; isActive?: boolean }) => ({ date: entry.date, isActive: entry.isActive ?? true })) } } : {}),
+        },
+        include: { employees: true, dates: true },
+      });
+      const result = await reinterpretSpecialHours(tx, { before: null, after: ruleCalendar(created) }, { doubleHourRuleId: created.id, doubleHourRuleName: created.name });
+      return { item: created, reinterpretation: result };
+    }, SPECIAL_HOUR_RULE_TRANSACTION_OPTIONS));
+    await auditService.register({
+      ...audit, action: "CREATE", entity: "DoubleHourRule", entityId: item.id,
+      description: `Se creó ${ruleNoun(item)} ${item.name} (${describeRuleSchedule(item)}, ${formatMultiplierLabel(item.multiplier)}). ${describeReinterpretation(reinterpretation)}`,
+      after: { ...item, reinterpretation: reinterpretationMetadata(reinterpretation) } as Prisma.InputJsonValue,
+    });
+    await auditSpecialHourRuleClosures(item, reinterpretation, audit);
     return item;
   },
   async updateDoubleRule(id: string, input: any, audit?: AuditContext) {
@@ -321,7 +386,8 @@ export const workforceService = {
     if (!before) throw new AppError("No encontramos la regla solicitada", 404, "DOUBLE_HOUR_RULE_NOT_FOUND");
     const { employeeIds, dates, ...data } = input;
     const recurrenceType = data.recurrenceType ?? before.recurrenceType;
-    const item = await prisma.doubleHourRule.update({
+    const { item, reinterpretation } = await execute(() => prisma.$transaction(async (tx) => {
+      const updated = await tx.doubleHourRule.update({
       where: { id },
       data: {
         ...data,
@@ -337,8 +403,23 @@ export const workforceService = {
         costCenter: { select: { id: true, name: true } },
         position: { select: { id: true, name: true } },
       },
+      });
+      // before y after: un cambio de fechas/alcance alcanza tanto lo que
+      // dejó de matchear como lo que empezó a matchear.
+      const result = await reinterpretSpecialHours(tx, { before: ruleCalendar(before), after: ruleCalendar(updated) }, { doubleHourRuleId: id, doubleHourRuleName: updated.name });
+      return { item: updated, reinterpretation: result };
+    }, SPECIAL_HOUR_RULE_TRANSACTION_OPTIONS));
+    const changes = [
+      Number(before.multiplier) !== Number(item.multiplier) ? `de ${formatMultiplierLabel(before.multiplier)} a ${formatMultiplierLabel(item.multiplier)}` : null,
+      before.status !== item.status ? (item.status === "ACTIVO" ? "reactivada" : "inactivada") : null,
+    ].filter(Boolean).join(", ");
+    await auditService.register({
+      ...audit, action: "UPDATE", entity: "DoubleHourRule", entityId: id,
+      description: `Se actualizó ${ruleNoun(item)} ${item.name} (${describeRuleSchedule(item)})${changes ? ` ${changes}` : ""}. ${describeReinterpretation(reinterpretation)}`,
+      before: before as Prisma.InputJsonValue,
+      after: { ...item, reinterpretation: reinterpretationMetadata(reinterpretation) } as Prisma.InputJsonValue,
     });
-    await auditService.register({ ...audit, action: "UPDATE", entity: "DoubleHourRule", entityId: id, description: `Se actualizó la regla de horas especiales ${item.name}.`, before: before as Prisma.InputJsonValue, after: item as Prisma.InputJsonValue });
+    await auditSpecialHourRuleClosures(item, reinterpretation, audit);
     return item;
   },
   // Etapa 8B: preview de calendario — de sólo configuración (no depende de
@@ -392,17 +473,42 @@ export const workforceService = {
     return days.map((day) => ({ date: day.date, rules: day.rules.map((rule) => ({ id: rule.id, name: rule.name })) }));
   },
   async removeDoubleRule(id: string, audit?: AuditContext) {
-    const before = await prisma.doubleHourRule.findUnique({ where: { id }, include: { employees: true } });
+    const before = await prisma.doubleHourRule.findUnique({ where: { id }, include: { employees: true, dates: true } });
     if (!before) throw new AppError("No encontramos la regla solicitada", 404, "DOUBLE_HOUR_RULE_NOT_FOUND");
     const today = argentinaCalendarDate(todayArgentinaDateKey());
     const hasStarted = before.fromDate <= today;
+    const recalculation = { doubleHourRuleId: id, doubleHourRuleName: before.name };
     if (hasStarted) {
-      const item = await prisma.doubleHourRule.update({ where: { id }, data: { status: "INACTIVO" }, include: { employees: true } });
-      await auditService.register({ ...audit, action: "DEACTIVATE", entity: "DoubleHourRule", entityId: id, description: `Se inactivó la regla ${before.name} porque su vigencia ya había comenzado.`, before: before as Prisma.InputJsonValue, after: item as Prisma.InputJsonValue });
+      // Ya empezó: se inactiva (conserva la historia de la regla) y las horas
+      // que alcanzaba vuelven a su valor sin ella.
+      const { item, reinterpretation } = await execute(() => prisma.$transaction(async (tx) => {
+        const inactivated = await tx.doubleHourRule.update({ where: { id }, data: { status: "INACTIVO" }, include: { employees: true } });
+        const result = await reinterpretSpecialHours(tx, { before: ruleCalendar(before), after: null }, recalculation);
+        return { item: inactivated, reinterpretation: result };
+      }, SPECIAL_HOUR_RULE_TRANSACTION_OPTIONS));
+      await auditService.register({
+        ...audit, action: "DEACTIVATE", entity: "DoubleHourRule", entityId: id,
+        description: `Se inactivó ${ruleNoun(before)} ${before.name} (${describeRuleSchedule(before)}) porque su vigencia ya había comenzado. ${describeReinterpretation(reinterpretation)}`,
+        before: before as Prisma.InputJsonValue,
+        after: { ...item, reinterpretation: reinterpretationMetadata(reinterpretation) } as Prisma.InputJsonValue,
+      });
+      await auditSpecialHourRuleClosures(before, reinterpretation, audit);
       return { mode: "INACTIVATED" as const, item };
     }
-    await prisma.doubleHourRule.delete({ where: { id } });
-    await auditService.register({ ...audit, action: "DELETE", entity: "DoubleHourRule", entityId: id, description: `Se eliminó la regla futura ${before.name}.`, before: before as Prisma.InputJsonValue });
+    // Regla futura: se elimina. Su traza (si alguna carga ya la tenía) se
+    // reconstruye sin ella; SpecialHourRuleApplication es RESTRICT hacia la regla.
+    const reinterpretation = await execute(() => prisma.$transaction(async (tx) => {
+      await tx.specialHourRuleApplication.deleteMany({ where: { doubleHourRuleId: id } });
+      await tx.doubleHourRule.delete({ where: { id } });
+      return reinterpretSpecialHours(tx, { before: ruleCalendar(before), after: null }, recalculation);
+    }, SPECIAL_HOUR_RULE_TRANSACTION_OPTIONS));
+    await auditService.register({
+      ...audit, action: "DELETE", entity: "DoubleHourRule", entityId: id,
+      description: `Se eliminó ${ruleNoun(before)} ${before.name} (${describeRuleSchedule(before)}), que todavía no había entrado en vigencia. ${describeReinterpretation(reinterpretation)}`,
+      before: before as Prisma.InputJsonValue,
+      after: { reinterpretation: reinterpretationMetadata(reinterpretation) } as Prisma.InputJsonValue,
+    });
+    await auditSpecialHourRuleClosures(before, reinterpretation, audit);
     return { mode: "DELETED" as const, id };
   },
 };

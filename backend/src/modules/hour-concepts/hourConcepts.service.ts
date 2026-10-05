@@ -2,11 +2,10 @@ import { Prisma, type HourConceptWorkTreatment } from "@prisma/client";
 import type { AuditContext } from "../audit/audit.service";
 import { auditService } from "../audit/audit.service";
 import { AppError } from "../../shared/errors/AppError";
-import { humanizePeriodEs } from "../../shared/datetime/argentinaTime";
 import { mapAssociatedEmployee } from "../../shared/prisma/employeeAssociationQuery";
 import { formatEmployeeReference } from "../../shared/audit/employeeReference";
 import { employeeAccessWhere } from "../employees/employeeAccess";
-import type { RebuiltClosureSnapshot } from "../workforce-management/closureSnapshot";
+import { auditClosureRecalculations } from "../workforce-management/closureRecalculationAudit";
 import { hourConceptsRepository, invalidateHourConceptsCache } from "./hourConcepts.repository";
 import type {
   CreateHourConceptInput,
@@ -94,22 +93,6 @@ async function executeRemoval<T>(operation: () => Promise<T>) {
   }
 }
 
-// Un AuditLog por cierre recalculado, con el snapshot anterior y el nuevo
-// (mismo criterio que submitClosures: la historia del cierre vive en su entityId).
-async function auditClosureRecalculations(closures: RebuiltClosureSnapshot[], cause: string, audit?: AuditContext) {
-  if (!closures.length) return;
-  const employeeReference = await hourConceptsRepository.employeeReferences(closures.map((closure) => closure.employeeId));
-  await Promise.all(closures.map((closure) => auditService.register({
-    ...audit,
-    action: "UPDATE",
-    entity: "MonthlyTimeClosure",
-    entityId: closure.id,
-    description: `Se recalculó el snapshot del cierre de ${humanizePeriodEs(closure.period)} de ${employeeReference(closure.employeeId)} por ${cause}. El estado del cierre no cambia.`,
-    before: { snapshot: closure.before } as Prisma.InputJsonValue,
-    after: { snapshot: closure.after } as Prisma.InputJsonValue,
-  })));
-}
-
 export const hourConceptsService = {
   async list(query: ListHourConceptsQuery) {
     const [items, total] = await hourConceptsRepository.findMany(query);
@@ -180,7 +163,7 @@ export const hourConceptsService = {
       before: current as Prisma.InputJsonValue,
       after: { ...item, reinterpreted, recalculatedClosureIds: rebuiltClosures.map((closure) => closure.id) } as Prisma.InputJsonValue,
     });
-    await auditClosureRecalculations(rebuiltClosures, `corrección del tratamiento de ${item.code} - ${item.name} (${change})`, audit);
+    await auditClosureRecalculations(rebuiltClosures, `corrección del tratamiento de ${item.code} - ${item.name} (${change})`, audit, hourConceptsRepository.employeeReferences);
     return item;
   },
 
@@ -276,7 +259,7 @@ export const hourConceptsService = {
       before: item as Prisma.InputJsonValue,
       after: { ...summary, recalculatedClosureIds: rebuiltClosures.map((closure) => closure.id) } as Prisma.InputJsonValue,
     });
-    await auditClosureRecalculations(rebuiltClosures, `eliminación definitiva del concepto ${item.code} - ${item.name}`, audit);
+    await auditClosureRecalculations(rebuiltClosures, `eliminación definitiva del concepto ${item.code} - ${item.name}`, audit, hourConceptsRepository.employeeReferences);
     return { ...summary, recalculatedClosures: rebuiltClosures.length };
   },
 };

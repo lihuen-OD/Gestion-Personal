@@ -20,11 +20,12 @@ import {
  */
 type Db = PrismaTransactionClient;
 
-export type ClosureSnapshotRecalculation = {
-  reason: "HOUR_CONCEPT_WORK_TREATMENT_CHANGED" | "HOUR_CONCEPT_DELETED";
-  hourConceptId: string;
-  hourConceptCode: string;
-};
+export type ClosureSnapshotRecalculation =
+  | { reason: "HOUR_CONCEPT_WORK_TREATMENT_CHANGED" | "HOUR_CONCEPT_DELETED"; hourConceptId: string; hourConceptCode: string }
+  // Una regla de Hora Especial (feriado, domingo...) se creó, cambió o se
+  // quitó: la equivalencia de las horas ya cargadas se reinterpreta
+  // (docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md §15).
+  | { reason: "SPECIAL_HOUR_RULE_CHANGED"; doubleHourRuleId: string; doubleHourRuleName: string };
 
 export type ClosureSnapshotTarget = { id: string; employeeId: string; period: string; snapshot: Prisma.JsonValue | null };
 
@@ -111,6 +112,17 @@ export async function findClosuresForHourConcept(db: Db, hourConceptId: string, 
   return closures.filter((closure) =>
     closure.snapshot !== null && (pairKeys.has(`${closure.employeeId}:${closure.period}`) || snapshotMentionsConcept(closure.snapshot, hourConceptId)),
   );
+}
+
+/** Cierres (con snapshot) de los pares empleado + período indicados, en 1 consulta. */
+export async function findClosuresForEmployeePeriods(db: Db, pairs: Array<{ employeeId: string; period: string }>): Promise<ClosureSnapshotTarget[]> {
+  if (!pairs.length) return [];
+  const pairKeys = new Set(pairs.map((pair) => `${pair.employeeId}:${pair.period}`));
+  const closures = await db.monthlyTimeClosure.findMany({
+    where: { employeeId: { in: [...new Set(pairs.map((pair) => pair.employeeId))] }, period: { in: [...new Set(pairs.map((pair) => pair.period))] } },
+    select: { id: true, employeeId: true, period: true, snapshot: true },
+  });
+  return closures.filter((closure) => closure.snapshot !== null && pairKeys.has(`${closure.employeeId}:${closure.period}`));
 }
 
 /**

@@ -1524,8 +1524,9 @@ model SpecialHourRuleApplication {
   timeSegmentId     String
   doubleHourRuleId  String
   multiplierApplied Decimal  @db.Decimal(4, 2)
-  // Etapa 8B: congelados al momento de aplicar — no se recalculan si la
-  // prioridad de la regla cambia después (trazabilidad histórica real).
+  // Traza del estado VIGENTE de las reglas para el tramo: se escribe al
+  // fichar y se reconstruye cuando una regla cambia (WORKED_TIME_ACCOUNTING_MODEL.md
+  // §15). El valor anterior queda en la auditoría de la regla.
   isWinner          Boolean  @default(false)
   wasConflicting    Boolean  @default(false)
   createdAt         DateTime @default(now()) @db.Timestamptz(3)

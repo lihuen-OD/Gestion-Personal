@@ -64,13 +64,14 @@ Tampoco se aceptan 22 h (`(8+3)×2`) ni 24 h (`(8+4)×2`).
 - **Limitación conocida:** un desglose manual y uno automático del mismo día no pueden detectar superposición entre sí. Se tratan como disjuntos, y la validación al cargar evita que superen la base.
 - `withinBaseExcessMinutes > 0` indica cobertura mayor que la base aprobada del día. Ejemplo: Sereno en BORRADOR sin base aprobada, como el caso histórico del legajo 03 el 03/08/2026. Se marca como inconsistencia a revisar, nunca como horas adicionales.
 
-## 6. Multiplicador de Hora Especial: snapshot también en el desglose
+## 6. Multiplicador de Hora Especial: persistido en la carga y en el desglose
 
-`HourConceptBreakdown.appliedMultiplier Decimal(4,2) default 1` sigue la misma filosofía que `TimeEntry.appliedMultiplier`:
+`HourConceptBreakdown.appliedMultiplier Decimal(4,2) default 1` sigue la misma filosofía que `TimeEntry.appliedMultiplier`: es el multiplicador **vigente** de la fecha, persistido para que todos los consumidores lean un único dato.
 
 - **Carga manual:** se resuelve con el motor de Hora Especial al crear o actualizar (`resolveDoubleHourMultipliersByDate`).
 - **Automáticos:** se resuelve en batch al regenerar el período, con 2 consultas por recálculo (alcance del empleado y reglas vigentes en el rango). Nunca hay una consulta por desglose.
-- **Consecuencias:** un Colectivo de domingo conserva su ×2 aunque ese día no haya TimeEntry, y editar una regla después no cambia la historia. Reemplaza la limitación documentada en 11A.1, donde un desglose "huérfano" quedaba en ×1.
+- **Consecuencias:** un Colectivo de domingo conserva su ×2 aunque ese día no haya TimeEntry. Reemplaza la limitación documentada en 11A.1, donde un desglose "huérfano" quedaba en ×1.
+- **Cambio de regla:** desde 2026-10-05 crear, editar o quitar una regla **sí** reinterpreta la historia (§15). Antes, editar una regla después no cambiaba nada y el multiplicador quedaba congelado como el de la carga.
 - **Cruce de medianoche:** TimeEntry y desgloses ya llegan partidos por fecha Argentina, y cada tramo usa el multiplicador de su fecha. Una jornada sábado 22:00 → domingo 03:00 queda con el sábado ×1 y el domingo ×2.
 - **Varias bases el mismo día:** si las bases de un día tienen multiplicadores distintos (caso raro), el residual se valoriza al promedio ponderado de la base.
 
@@ -167,7 +168,8 @@ Si queda algún concepto adicional sin tratamiento (por ejemplo, en una base no 
   - los cierres (el payload incluye el snapshot recalculado);
   - las novedades (al eliminar se desvincula su concepto destino).
   - El export no tiene caché.
-- **Frontend:** las mutaciones de desgloses ahora también invalidan la familia `dashboard`, porque las horas adicionales cambian "Horas cargadas". Las mutaciones de concepto (`update`, `updateStatus`, `remove`) invalidan `HOUR_CONCEPT_DEPENDENT_CACHE_FAMILIES`: `hour-concepts`, `employees`, `time-entries`, `pending`, `dashboard`, `monthly-closures` y `novelties`. La grilla por legajo no tiene caché de frontend.
+- **Backend, reglas de Hora Especial:** crear, editar o quitar una regla llama a `clearWorkedTimeDerivedReadCaches()` (`time-entries/workedTimeReadCaches.ts`, compartido con los conceptos): `time-grid`, `period-employees`/Por persona/resumen/asistencia, dashboard y cierres (§15).
+- **Frontend:** las mutaciones de desgloses ahora también invalidan la familia `dashboard`, porque las horas adicionales cambian "Horas cargadas". Las mutaciones de concepto (`update`, `updateStatus`, `remove`) invalidan `HOUR_CONCEPT_DEPENDENT_CACHE_FAMILIES`: `hour-concepts`, `employees`, `time-entries`, `pending`, `dashboard`, `monthly-closures` y `novelties`. La grilla por legajo no tiene caché de frontend. Las mutaciones de reglas de Hora Especial invalidan `workforce-config` más `WORKED_TIME_DERIVED_CACHE_FAMILIES` (`employees`, `time-entries`, `pending`, `dashboard`, `monthly-closures`), la misma lista que reutilizan los conceptos.
 - La edición optimista de una celda atenúa los valores calculados (Horas normales, total y equivalencia) hasta que llega la contabilidad recalculada. El frontend nunca los recalcula.
 
 ## 13. UI (lenguaje de negocio)
@@ -276,3 +278,31 @@ La respuesta resume lo eliminado: `deletedBreakdowns`, `deletedRules`, `deletedE
 - Recrea el CHECK `HourConcept_official_model_check` sin `deletedAt` y borra la columna.
 - **Orden de deploy:** el backend nuevo ya no lee ni escribe `deletedAt`, así que funciona antes y después de la migración. Antes de aplicarla, una fila con baja lógica se ve como Deshabilitada.
 - Staging al 2026-10-02: HOR-005 "Prueba 02" tenía baja lógica (1 desglose MANUAL APROBADO de 180 min en 2026-10 y 1 regla).
+
+## 15. Reglas de Hora Especial: reinterpretación de la historia
+
+**Estado:** vigente desde 2026-10-05. Reemplaza "editar una regla después no cambia la historia" (§6, 8F, 11B).
+
+**Regla de negocio.** Un feriado (o cualquier `DoubleHourRule`: domingo, jornada especial) es una regla vigente sobre la fecha, no una propiedad irreversible de la carga. Las horas y la regla pueden cargarse en cualquier orden: el resultado depende sólo del estado vigente de la regla y de los minutos reales. Ejemplo: 8 h reales el 03/10 → día normal equivalencia 8; se marca feriado ×2 → 16; se cambia a ×1,5 → 12; se quita → 8. Con base 8 + Sereno 3 (dentro de la jornada) + Colectivo 1 (adicional): 9 → 18 → 9. Nunca se borra ni recarga una hora.
+
+**Causa raíz del bug anterior.** El multiplicador se resolvía una sola vez, al escribir cada fila (`TimeEntry.appliedMultiplier`, `HourConceptBreakdown.appliedMultiplier`, la traza `SpecialHourRuleApplication` y `TimeSegment.isSpecial`), y `createDoubleRule`/`updateDoubleRule`/`removeDoubleRule` no recalculaban nada. Todos los consumidores leen el valor persistido.
+
+**Estrategia.** Se mantiene el valor persistido como fuente única de lectura (nada que recalcular en cada pantalla ni en las agregaciones SQL) y se reinterpreta al cambiar la regla: `reinterpretSpecialHours` (`workforce-management/specialHourReinterpretation.ts`) corre en la **misma transacción** que crear, editar, inactivar o eliminar la regla (timeout 30 s). Si el recálculo falla, la regla no cambia.
+
+1. **Alcance:** las fechas que matchean el calendario de la regla **antes o después** del cambio (`ruleMatchesDate` sobre ambas formas), dentro de la ventana de vigencia de ambas. Una regla sin fin deja la ventana abierta, y sólo existen cargas hasta hoy.
+2. **Motor único:** para cada empleado con cargas, desgloses o tramos en esas fechas, `resolveSpecialHourRulesByDate` (el mismo motor que usa una carga nueva: reglas ACTIVAS vigentes, alcance empresa/sector/centro de costo/puesto/empleados, ganadoras por prioridad). Son 2 consultas por empleado alcanzado, nunca una por fila. Un empleado fuera del alcance resuelve sin la regla y no cambia.
+3. **Escrituras:** `TimeEntry.appliedMultiplier` y `HourConceptBreakdown.appliedMultiplier` donde cambió, con un `updateMany` por valor. La traza por tramo (`SpecialHourRuleApplication` + `TimeSegment.isSpecial`) se reconstruye con `specialHourApplicationRows`, el mismo helper que usa el fichador. **Nunca** cambian minutos reales (TimeEntry, TimeSegment, desgloses), estado de aprobación, fecha, empleado ni concepto.
+4. **Cierres:** los cierres de cada empleado + período cuyo multiplicador cambió se recalculan con `rebuildClosureSnapshots` (§14.2), con `recalculation = { reason: "SPECIAL_HOUR_RULE_CHANGED", doubleHourRuleId, doubleHourRuleName, at }`. Es la misma política: el estado no cambia (un APROBADO sigue APROBADO), no hay estado terminal que bloquee, y el snapshot anterior queda en la auditoría.
+5. **Auditoría:** el `DoubleHourRule` lleva una descripción en lenguaje de negocio, por ejemplo "Se actualizó el feriado Día de la Raza (03/10/2026) de x1 a x2. Se recalcularon 23 carga(s) de 18 legajo(s) y 4 cierre(s) mensual(es).". El detalle técnico va en `after.reinterpretation` (cantidades, períodos, ids de cierres). Se registra además un `MonthlyTimeClosure` `UPDATE` por cierre recalculado.
+6. **Cachés:** backend `clearWorkedTimeDerivedReadCaches()` y frontend `WORKED_TIME_DERIVED_CACHE_FAMILIES` (§12).
+
+**Eliminar vs. inactivar.** Una regla ya vigente se inactiva (conserva la regla) y las horas vuelven a su valor sin ella. Una regla futura se elimina: primero se retira su traza (`SpecialHourRuleApplication.doubleHourRuleId` es `RESTRICT`) y la reinterpretación la reconstruye sin ella.
+
+**Alcance por empleado.** El multiplicador lo decide exclusivamente el alcance de la regla. `HolidayWorkAssignment` (convocatoria a trabajar un feriado, 12D/12E) define la expectativa de asistencia y **no** interviene en la liquidación (`SPECIAL_HOUR_RULE_CLASSIFICATION_12A.md` §12). No se agregó ninguna política nueva.
+
+**Fuera de alcance.**
+- Finnegans no consume horas (§11).
+- La observación de texto libre escrita al fichar ("Reglas aplicadas: Feriados. Multiplicador x2 · 3 h trabajadas.") es una nota histórica del momento de la fichada y no se reescribe. El multiplicador, la traza y la equivalencia sí se reinterpretan.
+- Si una fichada se cierra en el mismo instante en que se guarda una regla, podría escribir con el estado anterior de la regla. Volver a guardar la regla lo corrige, porque la reinterpretación es idempotente.
+
+**Tests:** `specialHourReinterpretation.test.ts` (casos A–H, orden indistinto A ≡ B, cruce de medianoche, alcance, cambio de fecha, idempotencia, traza, minutos y estados intactos), `workforce.service.test.ts` (transacción, auditoría, inactivar/eliminar), `workforce.controller.test.ts` y `workforceApiService.test.ts` (cachés).
