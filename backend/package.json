@@ -18,6 +18,8 @@
     "staging:clock:matrix": "tsx scripts/clock-staging-matrix.ts",
     "staging:normal-hours:dry-run": "tsx scripts/reconcile-normal-hours.ts --mode=dry-run",
     "staging:normal-hours:repair": "tsx scripts/reconcile-normal-hours.ts --mode=repair",
+    "staging:audit:technical-ids": "tsx scripts/repair-audit-technical-ids.ts",
+    "staging:audit:technical-ids:apply": "tsx scripts/repair-audit-technical-ids.ts --apply",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run"
   },
