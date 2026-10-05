@@ -1,10 +1,10 @@
 import { ApprovalStatus, EmployeeStatus, Prisma, WorkShiftSource, WorkShiftStatus } from "@prisma/client";
-import { prisma } from "../../shared/prisma/client";
+import { prisma, type PrismaTransactionClient } from "../../shared/prisma/client";
 import { FICHADA_ORIGIN_NOTE } from "./timeEntryObservationText";
 import { noveltyCoversDay } from "../novelties/novelties.dateRange";
 import { resolveActiveWorkRegime } from "../work-regimes/workRegimes.service";
 import { flagOpenShiftOverflowForReview, resolveOpenShiftOverflowAlert } from "../shifts/workShiftEvaluationRunner";
-import { buildActiveDatesByRule, resolveWinningRules, ruleMatchesDate } from "../workforce-management/doubleHourRuleMatching";
+import { buildActiveDatesByRule, resolveWinningRules, ruleMatchesDate, specialHourApplicationRows, type SpecialHourRuleResolution } from "../workforce-management/doubleHourRuleMatching";
 import {
   accountEmployeePeriods,
   accountingBaseEntrySelect,
@@ -256,23 +256,28 @@ async function resolveDoubleHourMultiplierForManualEntry(employeeId: string, dat
   return (await resolveDoubleHourMultipliersByDate(employeeId, [date])).get(calendarDateKey(date)) ?? 1;
 }
 
-// Versión batch del mismo motor (docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md):
-// snapshot de HourConceptBreakdown.appliedMultiplier al cargar un desglose
-// manual o regenerar los automáticos de un período. Siempre 2 consultas
-// (alcance del empleado + reglas vigentes en el rango) sin importar cuántas
-// fechas — nunca una consulta por desglose. Clave = calendarDateKey del
-// @db.Date (mismo criterio UTC-calendario que ruleMatchesDate).
-export async function resolveDoubleHourMultipliersByDate(employeeId: string, dates: Date[]): Promise<Map<string, number>> {
-  const result = new Map<string, number>();
+export type SpecialHourResolution = SpecialHourRuleResolution<DoubleHourRuleForEngine>;
+
+type SpecialHourRuleReader = Pick<PrismaTransactionClient, "employee" | "doubleHourRule">;
+
+// Motor de Hora Especial por empleado + fecha (docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md
+// §6 y §15): reglas ACTIVAS vigentes en la fecha y alcanzadas por el empleado
+// (empresa/sector/centro de costo/puesto/empleados), ganadoras por prioridad.
+// Siempre 2 consultas (alcance del empleado + reglas del rango) sin importar
+// cuántas fechas — nunca una por fecha. Clave = calendarDateKey del @db.Date
+// (mismo criterio UTC-calendario que ruleMatchesDate). `db` permite correrlo
+// dentro de la transacción que cambia una regla, para ver su estado nuevo.
+export async function resolveSpecialHourRulesByDate(employeeId: string, dates: Date[], db: SpecialHourRuleReader = prisma): Promise<Map<string, SpecialHourResolution>> {
+  const result = new Map<string, SpecialHourResolution>();
   if (!dates.length) return result;
   const times = dates.map((date) => date.getTime());
   const from = new Date(Math.min(...times));
   const to = new Date(Math.max(...times));
-  const employeeScope = await prisma.employee.findUnique({
+  const employeeScope = await db.employee.findUnique({
     where: { id: employeeId },
     select: { sectorId: true, costCenterId: true, positionId: true, companies: { select: { companyId: true } } },
   });
-  const doubleHourRules = await prisma.doubleHourRule.findMany({
+  const doubleHourRules = await db.doubleHourRule.findMany({
     where: {
       status: "ACTIVO",
       fromDate: { lte: to },
@@ -285,9 +290,17 @@ export async function resolveDoubleHourMultipliersByDate(employeeId: string, dat
     const key = calendarDateKey(date);
     if (result.has(key)) continue;
     const vigent = doubleHourRules.filter((rule) => rule.fromDate <= date && (!rule.toDate || rule.toDate >= date));
-    result.set(key, resolveWinningRules(matchingDoubleHourRules(vigent, date)).multiplier);
+    const matchedRules = matchingDoubleHourRules(vigent, date);
+    const { winners, multiplier, conflicting } = resolveWinningRules(matchedRules);
+    result.set(key, { multiplier, matchedRules, winners, conflicting });
   }
   return result;
+}
+
+// Sólo el multiplicador: carga manual de horas y desgloses (manual/automáticos).
+export async function resolveDoubleHourMultipliersByDate(employeeId: string, dates: Date[], db?: SpecialHourRuleReader): Promise<Map<string, number>> {
+  const resolutions = await resolveSpecialHourRulesByDate(employeeId, dates, db);
+  return new Map(Array.from(resolutions, ([key, resolution]) => [key, resolution.multiplier]));
 }
 
 function employeeSearchWhere(search?: string): Prisma.EmployeeWhereInput {
@@ -1806,7 +1819,6 @@ export const timeEntriesRepository = {
       for (const segment of input.segments) {
         const matchedRules = matchingDoubleHourRules(doubleHourRules, segment.date);
         const { winners, multiplier, conflicting } = resolveWinningRules(matchedRules);
-        const winningRuleIds = new Set(winners.map((rule) => rule.id));
         const timeSegment = await tx.timeSegment.create({
           data: {
             workShiftId: workShift.id,
@@ -1826,16 +1838,8 @@ export const timeEntriesRepository = {
         });
         timeSegments.push(timeSegment);
 
-        for (const rule of matchedRules) {
-          await tx.specialHourRuleApplication.create({
-            data: {
-              timeSegmentId: timeSegment.id,
-              doubleHourRuleId: rule.id,
-              multiplierApplied: rule.multiplier,
-              isWinner: winningRuleIds.has(rule.id),
-              wasConflicting: conflicting && winningRuleIds.has(rule.id),
-            },
-          });
+        for (const data of specialHourApplicationRows(timeSegment.id, { matchedRules, winners, conflicting })) {
+          await tx.specialHourRuleApplication.create({ data });
         }
 
         const existing = await tx.timeEntry.findFirst({
@@ -2063,7 +2067,6 @@ export const timeEntriesRepository = {
       for (const segment of input.segments) {
         const matchedRules = matchingDoubleHourRules(doubleHourRules, segment.date);
         const { winners, multiplier, conflicting } = resolveWinningRules(matchedRules);
-        const winningRuleIds = new Set(winners.map((rule) => rule.id));
         const timeSegment = await tx.timeSegment.create({
           data: {
             workShiftId: workShift.id,
@@ -2084,15 +2087,7 @@ export const timeEntriesRepository = {
 
         // Acumulado, no escrito acá -- un solo createMany después del loop
         // (ver más abajo) en vez de 1 round-trip por regla por segmento.
-        for (const rule of matchedRules) {
-          pendingRuleApplications.push({
-            timeSegmentId: timeSegment.id,
-            doubleHourRuleId: rule.id,
-            multiplierApplied: rule.multiplier,
-            isWinner: winningRuleIds.has(rule.id),
-            wasConflicting: conflicting && winningRuleIds.has(rule.id),
-          });
-        }
+        pendingRuleApplications.push(...specialHourApplicationRows(timeSegment.id, { matchedRules, winners, conflicting }));
 
         // DoubleHourRule matchea por fecha calendario completa, nunca por
         // franja horaria (ver docs/decisions/HOURS_GRID_SPECIAL_HOURS_LIQUIDABLE_11A1.md

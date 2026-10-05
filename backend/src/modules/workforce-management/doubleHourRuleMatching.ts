@@ -1,3 +1,4 @@
+import type { Prisma } from "@prisma/client";
 // Etapa 8B: funciones puras (sin Prisma) del motor de Horas Especiales,
 // compartidas entre el motor real (time-entries, al fichar) y el preview de
 // calendario (workforce-management, de sólo configuración). Viven acá y no
@@ -74,6 +75,27 @@ export function resolveWinningRules<T extends { priority: number; multiplier: un
   const topRules = matchedRules.filter((rule) => rule.priority === maxPriority);
   const multiplier = Math.max(...topRules.map((rule) => Number(rule.multiplier)));
   return { winners: topRules, multiplier, conflicting: topRules.length > 1 };
+}
+
+// Resultado del motor de Hora Especial para un empleado + fecha.
+export type SpecialHourRuleResolution<T extends { id: string; multiplier: unknown }> = WinningRulesResult<T> & { matchedRules: T[] };
+
+// Traza de Hora Especial de un tramo (SpecialHourRuleApplication): una fila
+// por regla que matcheó, marcando ganadoras y conflicto. Única definición,
+// usada al fichar (createFromWorkShift/closeOpenWorkShift) y al reinterpretar
+// la historia cuando cambia una regla (specialHourReinterpretation.ts).
+export function specialHourApplicationRows<T extends { id: string; multiplier: unknown }>(
+  timeSegmentId: string,
+  resolution: Pick<SpecialHourRuleResolution<T>, "matchedRules" | "winners" | "conflicting">,
+) {
+  const winningRuleIds = new Set(resolution.winners.map((rule) => rule.id));
+  return resolution.matchedRules.map((rule) => ({
+    timeSegmentId,
+    doubleHourRuleId: rule.id,
+    multiplierApplied: rule.multiplier as Prisma.Decimal | number,
+    isWinner: winningRuleIds.has(rule.id),
+    wasConflicting: resolution.conflicting && winningRuleIds.has(rule.id),
+  }));
 }
 
 export type ScopeShape = {
