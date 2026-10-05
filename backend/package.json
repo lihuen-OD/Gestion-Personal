@@ -22,6 +22,8 @@
     "staging:audit:technical-ids:apply": "tsx scripts/repair-audit-technical-ids.ts --apply",
     "staging:time-entry-observations": "tsx scripts/repair-time-entry-observations.ts",
     "staging:time-entry-observations:apply": "tsx scripts/repair-time-entry-observations.ts --apply",
+    "staging:special-hours:reconcile": "tsx scripts/reconcile-special-hours.ts",
+    "staging:special-hours:reconcile:apply": "tsx scripts/reconcile-special-hours.ts --apply",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run"
   },
