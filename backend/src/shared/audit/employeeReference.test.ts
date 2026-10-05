@@ -51,7 +51,18 @@ describe("technicalIds", () => {
   it("detecta y enmascara UUIDs en texto y rutas", () => {
     expect(containsTechnicalId(`para el legajo ${employeeUuid}.`)).toBe(true);
     expect(containsTechnicalId("para Pérez, Juan · Legajo 30.")).toBe(false);
-    expect(maskTechnicalIds(`legajo ${employeeUuid.toUpperCase()}`)).toBe("legajo —");
-    expect(describeRequestPath(`/api/employees/${employeeUuid}/overview`)).toBe("/api/employees/:id/overview");
+    expect(describeRequestPath(`/api/employees/${employeeUuid}/overview?employeeId=${employeeUuid}`)).toBe("/api/employees/:id/overview?employeeId=:id");
+  });
+
+  it("el fallback es lenguaje neutro que se lee completo, nunca un placeholder", () => {
+    expect(maskTechnicalIds(`Se guardó el desglose para el legajo ${employeeUuid.toUpperCase()}.`)).toBe("Se guardó el desglose para el legajo correspondiente.");
+    expect(maskTechnicalIds(`Se quitó el concepto horario del empleado ${employeeUuid}.`)).toBe("Se quitó el concepto horario del empleado correspondiente.");
+    expect(maskTechnicalIds(`Se aprobó el cierre (legajo ${employeeUuid}).`)).toBe("Se aprobó el cierre (legajo correspondiente).");
+    expect(maskTechnicalIds(`retirada de cómputo (duplicado de ${employeeUuid})`)).toBe("retirada de cómputo (duplicado de otro registro)");
+    expect(maskTechnicalIds(`Vinculado al ${employeeUuid}.`)).toBe("Vinculado al registro correspondiente.");
+    expect(maskTechnicalIds(employeeUuid)).toBe("registro correspondiente");
+    for (const masked of [maskTechnicalIds(`legajo ${employeeUuid}`), maskTechnicalIds(`empleado ${employeeUuid}.`)]) {
+      expect(masked).not.toMatch(/—|\s\.$|\s{2}/);
+    }
   });
 });

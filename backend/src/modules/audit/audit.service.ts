@@ -26,10 +26,10 @@ function toAuditJson(value: Prisma.InputJsonValue | undefined) {
 }
 
 // La descripción se muestra tal cual en Dashboard, Auditoría e Historial del
-// legajo: nunca debe llevar un id técnico. Cada llamador ya arma el texto con
-// identidad humana (shared/audit/employeeReference.ts); esto es la última red
-// para no persistir un UUID si un llamador nuevo se equivoca, y lo deja
-// visible en logs para corregirlo en el origen.
+// legajo: nunca debe llevar un id técnico. Cada llamador arma el texto con
+// identidad humana (shared/audit/employeeReference.ts). Esto es sólo la
+// última red de seguridad: si se dispara, es un bug del llamador (el log lo
+// señala) y se corrige en el origen, no se depende del texto neutro.
 function visibleDescription(input: RegisterAuditInput) {
   if (!containsTechnicalId(input.description)) return input.description;
   console.error("AUDIT_DESCRIPTION_TECHNICAL_ID", { action: input.action, entity: input.entity });

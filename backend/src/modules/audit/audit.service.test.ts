@@ -17,7 +17,7 @@ beforeEach(() => {
 // Última red: aunque un llamador nuevo arme mal el texto, la descripción que
 // llega a Dashboard/Auditoría/Historial nunca persiste un UUID de Employee.
 describe("auditService.register — descripción visible sin ids técnicos", () => {
-  it("una descripción con el UUID de un Employee se persiste enmascarada y se reporta en logs", async () => {
+  it("una descripción con el UUID de un Employee se persiste con texto neutro y se reporta como bug en logs", async () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
     await auditService.register({
@@ -30,7 +30,7 @@ describe("auditService.register — descripción visible sin ids técnicos", () 
 
     const persisted = create.mock.calls[0]![0];
     expect(persisted.description).not.toContain(employeeUuid);
-    expect(persisted.description).toBe("Se guardó el desglose manual Colectivo para el legajo —.");
+    expect(persisted.description).toBe("Se guardó el desglose manual Colectivo para el legajo correspondiente.");
     // El id técnico sigue disponible como metadata interna del evento.
     expect(persisted.after).toEqual({ employeeId: employeeUuid });
     expect(consoleError).toHaveBeenCalledWith("AUDIT_DESCRIPTION_TECHNICAL_ID", { action: "CREATE", entity: "HourConceptBreakdown" });
