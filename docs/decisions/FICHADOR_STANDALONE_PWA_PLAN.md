@@ -1,6 +1,6 @@
 # Fichador como app independiente (PWA) — Etapa 1: diagnóstico y plan
 
-> Estado: plan aprobado. **F0 cerrada para el entorno de desarrollo actual** (2026-10-06, ver [§18](#18-f0--implementación-y-resultado)); la medición de `TRUST_PROXY_HOPS` es requisito previo del primer deploy real del backend. F1 cerrada (2026-10-06, [§19](#19-f1--fichador-standalone-implementación)). **F2: READY FOR DEPLOY** (2026-10-06, [§20](#20-f2--despliegue-independiente)) — repo listo; la validación pública queda bloqueada porque no existe backend público ni sitio de hosting. F3 en adelante sin empezar.
+> Estado: plan aprobado. **F0 cerrada para el entorno de desarrollo actual** (2026-10-06, ver [§18](#18-f0--implementación-y-resultado)); la medición de `TRUST_PROXY_HOPS` es requisito previo del primer deploy real del backend. F1 cerrada (2026-10-06, [§19](#19-f1--fichador-standalone-implementación)). **F2 cerrada a nivel de repositorio: READY FOR DEPLOY — validación real de infraestructura diferida** (2026-10-06, [§20](#20-f2--despliegue-independiente), decisión en §20.12); no bloquea el desarrollo local. F3 en adelante, en local.
 > Los §1–§17 son el diagnóstico read-only original sobre `main @ 697968a` y describen el estado **previo** a F0 (por ejemplo, las rutas sin foto de §2 ya no existen).
 
 ---
@@ -874,7 +874,7 @@ El WASM y el modelo de MediaPipe se siguen bajando en runtime de los CDN (igual 
 
 ## 20. F2 — despliegue independiente
 
-**Estado: READY FOR DEPLOY.** Toda la parte del repo está hecha y validada localmente. La validación pública (criterios 3, 6 y 7 contra un deploy real) queda **bloqueada por infraestructura externa**: no existe un backend público ni un sitio de hosting. F2 no se declara cerrada hasta completar el checklist de §20.9.
+**Estado: cerrada a nivel de repositorio — READY FOR DEPLOY, validación real de infraestructura diferida** (decisión del 2026-10-06, §20.12). Toda la parte del repo está hecha y validada localmente. La validación contra infraestructura real (checklist de §20.9) se hace cuando se defina y contrate la infraestructura; no bloquea el desarrollo local ni las etapas siguientes.
 
 ### 20.1 Infraestructura encontrada (auditoría 2026-10-06)
 
@@ -959,7 +959,7 @@ Ver la tabla completa en `docs/DEVOPS_DEPLOYMENT_STANDARDS.md` → "Variables po
 
 No se versionó `frontend/netlify.toml`: si existiera un sitio del admin configurado desde el panel, un `netlify.toml` en su base directory pisaría esa configuración. La configuración recomendada para el sitio del admin (a confirmar antes de versionarla) es: base directory `frontend`, `npm run build`, publish `dist`, Node 22, SPA fallback `/*` → `/index.html` 200, y `Permissions-Policy` con `camera=(self)` mientras `/fichador` siga en el admin. El build, las rutas y las variables del admin no cambiaron en F2.
 
-### 20.9 Checklist manual para completar F2
+### 20.9 Checklist para la validación real (diferida, ver §20.12)
 
 **A. Backend público de testing (bloqueante).** Requiere una decisión y acceso tuyos; F2 no crea servicios.
 1. Crear el servicio (por ejemplo, Render web service sobre `backend/`, rama `main`) apuntando a una base **de testing** (no producción).
@@ -1014,3 +1014,20 @@ No se versionó `frontend/netlify.toml`: si existiera un sitio del admin configu
 - **CSP:** sigue en report-only hasta validarla en Safari/iPad.
 - **Recursos de CDN:** MediaPipe e Inter siguen bajando del CDN (F3).
 - **Body de 40 MB:** se sigue procesando antes de verificar el token (F12).
+
+### 20.12 Decisión: validación de infraestructura diferida (2026-10-06)
+
+Por decisión de producto, todavía no se crea infraestructura pública ni se contratan servicios. **F2 queda cerrada a nivel de repositorio con estado READY FOR DEPLOY — validación real de infraestructura diferida.**
+
+Se difiere, hasta que se defina y contrate la infraestructura:
+
+- HTTPS real del sitio del fichador;
+- CORS real entre los sitios desplegados y el backend;
+- cámara (`getUserMedia`) y detector en un dominio público;
+- medición de `TRUST_PROXY_HOPS` (sigue siendo **bloqueante para el primer deploy real del backend**, §18.5);
+- creación y configuración del hosting (Netlify u otro) y del backend público;
+- prueba real desde iPad/iPhone y decisión de pasar la CSP de Report-Only a enforced.
+
+No es un bloqueo para el desarrollo local: las etapas siguientes (F3 en adelante) se trabajan y validan en local hasta entonces. Se mantienen sin cambios todos los artefactos de F2: `fichador/netlify.toml`, la generación de `dist/_headers` (headers de seguridad, CSP Report-Only, política de cache), el guard de deploy, `backend/src/app.cors.test.ts` y esta documentación. Al momento de desplegar, el checklist de §20.9 es el punto de partida; si las etapas posteriores cambian los recursos externos (por ejemplo F3 al self-hostear MediaPipe y fuentes), la CSP y el checklist se actualizan en esa misma etapa.
+
+No se creó ningún servicio externo.
