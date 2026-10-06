@@ -714,13 +714,14 @@ Frontend:
 Fichador standalone (`fichador/`, since F1 of `docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md`):
 
 * Separate React 18 + TypeScript + Vite app with its own `package.json`/lockfile (no workspaces), port 5175. Only the time clock: no router, no `AuthContext`/JWT, no admin modules — enforced at build time by `fichador/scripts/check-bundle-isolation.mjs`.
-* Same four `/time-entries/clock/*` endpoints and the same temporary shared kiosk token as `/fichador` in the admin app, which stays during the transition and is removed at the cutover (F12).
+* Same four `/time-entries/clock/*` endpoints and the same temporary shared kiosk token as `/fichador` in the admin app, which stays during F5. F5 adds a separate individual identity used only for registration/status/pairing; F6 will apply it to punches.
 * Installable PWA since F3 (`vite-plugin-pwa`): precached app shell, self-hosted MediaPipe (SIMD WASM + model) and Inter, so it opens and runs the face detector offline; the API is never cached and punches require the backend. Updates apply automatically only while the kiosk is idle.
+* Enrolamiento since F5: explicit setup, `{id, secret}` in IndexedDB, pairing code only in memory, pending polling every 7.5 seconds and an UX gate for `PENDING`/`REVOKED`. Operational policy prefers installed standalone mode; browser mode remains available for local development.
 
 Backend:
 
 * Node.js + Express + TypeScript, under `backend/src`.
-* Modular monolith: 21 modules under `backend/src/modules`, each generally following controller → service → repository → schemas (zod) → routes.
+* Modular monolith: 23 modules under `backend/src/modules`, each generally following controller → service → repository → schemas (zod) → routes.
 * JWT auth (`backend/src/modules/auth`), role/employee-scope authorization enforced server-side (`backend/src/middlewares/authorization.ts` + per-module `employeeAccessWhere`), a generic audit-log helper (`backend/src/modules/audit`), and a shared TTL cache (`backend/src/shared/cache`).
 
 Database:
@@ -779,7 +780,8 @@ A few structural decisions worth knowing before you read the schema:
 * Position's location works the same way — `sectorId` is the official source, see `docs/DATABASE_STANDARDS.md`.
 * Position's salary category is a many-to-many via `PositionSalaryCategory`, not a single field.
 * Authorship fields (`createdByUserId`, `approvedByUserId`, `uploadedByUserId`, etc.) are real optional FKs to `User` with `onDelete: SetNull` — see `docs/DATABASE_STANDARDS.md`.
-* **Fichador F4:** `ClockDevice` deja modelada la identidad persistente individual con estados `PENDING`/`ACTIVE`/`REVOKED`, hashes de token/pairing, sector opcional y trazabilidad de activación/revocación. `AttendancePunch.deviceId` y `ClockPunchAttempt.deviceId` son FKs nullable con `onDelete: Restrict`; la historia previa queda en `NULL` y `kioskId` continúa como legado. **Modelo persistente listo; autenticación por dispositivo todavía no activa.** La migración está preparada pero no aplicada.
+* **Fichador F4/F5:** `ClockDevice` modela la identidad persistente individual con estados `PENDING`/`ACTIVE`/`REVOKED`, hashes de token/pairing, sector opcional y trazabilidad. La migración F4 fue aplicada y verificada sólo en staging. F5 implementa enrolamiento, estado, pairing y administración RRHH; los secretos nunca se guardan en claro. `AttendancePunch.deviceId` y `ClockPunchAttempt.deviceId` siguen nullable y sin escritura histórica; `kioskId` continúa legado. **Identidad enrolable lista; autenticación por dispositivo de las fichadas todavía no activa hasta F6.**
+* **Validación F5 staging (2026-10-06):** ciclo real completo sin fichar ni usar empleados; 79 `AttendancePunch`, 24 intentos, 85 horas y 46 jornadas sin cambios. Quedó un único dispositivo `TEST F5 ciclo completo` revocado para conservar su auditoría y 0 pendientes. Migraciones limpias; producción no fue tocada.
 
 ## Security rules specific to this project
 
@@ -797,7 +799,7 @@ Current state (backend already enforces this — see `docs/SECURITY_STANDARDS.md
 
 * Supervisión conserva PII completa por decisión actual; cualquier recorte requiere validar sus pantallas de gestión.
 * La evidencia fotográfica de asistencia sigue disponible para Nivel 3 y requiere una decisión específica de producto/seguridad.
-* El fichador mantiene una mitigación temporal mediante token compartido; `ClockDevice` ya está modelado desde F4, pero la autenticación individual se implementa en etapas posteriores y todavía no está activa.
+* El fichador mantiene una mitigación temporal mediante token compartido para las cuatro rutas de fichada. F5 ya autentica individualmente sólo estado/renovación de pairing; la autorización y atribución individual de una fichada se implementan en F6/F8.
 * El organigrama advierte cuando alcanza el límite de 1000 empleados, pero todavía no implementa paginación completa.
 * La regla de conceptos horarios aditivos ya está definida, pero su implementación continúa pendiente y puede no coincidir con backend, frontend o esquema actuales.
 * El tratamiento de solapamientos de novedades **entre tipos distintos** (p. ej. Ausencia + Llegada tarde, Vacaciones + Licencia médica) continúa pendiente de definición de negocio — la Etapa 15G.3 sólo resolvió el caso "mismo tipo" (ver bullet debajo).

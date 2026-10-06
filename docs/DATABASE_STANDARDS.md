@@ -155,3 +155,14 @@ todavía no está activa y el token compartido legacy continúa temporalmente.
 La migración de F4 aborta antes de crear estructura si detecta cualquier
 `AttendancePunch.deviceId` o `AttendancePunch.kioskId` histórico no nulo. Es
 aditiva: no contiene inserts, backfills ni actualizaciones de `source`.
+
+### Ciclo de vida operativo (F5)
+
+F5 usa el modelo existente sin otra migración. El registro crea exclusivamente
+un `ClockDevice(PENDING)`; nunca crea/backfillea fichadas ni intentos. La
+activación es una transición condicional y atómica que exige el hash del código
+vigente, asigna nombre/sector/autor y limpia `pairingCodeHash` y
+`pairingExpiresAt`. Sólo `ACTIVE` puede pasar a `REVOKED`; `REVOKED` es terminal.
+El único hard delete permitido es un `PENDING` sin `AttendancePunch` ni
+`ClockPunchAttempt`. La autenticación y atribución de fichadas continúa fuera
+del alcance hasta F6/F8.

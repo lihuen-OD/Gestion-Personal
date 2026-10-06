@@ -209,7 +209,28 @@ toca producción; funciona mientras tu PC y VS Code estén prendidos.
 ```bash
 cd backend && npm run dev     # http://localhost:4002/api
 cd frontend && npm run dev    # http://localhost:5174 -> API localhost
+cd fichador && npm run dev    # http://localhost:5175 -> API localhost
 ```
+
+### Enrolamiento local del fichador (F5)
+
+1. Abrir `http://localhost:5175` y pulsar **Configurar dispositivo**. No hay
+   registro automático al cargar.
+2. Ingresar el código mostrado desde el admin local:
+   **Configuración → Dispositivos de fichada** (`/configuracion/dispositivos-fichada`),
+   asignar nombre/sector y aprobar.
+3. La PWA consulta estado cada 7,5 segundos y muestra el fichador al quedar
+   `ACTIVE`.
+
+La identidad `{id, secret}` queda en IndexedDB del origin 5175. El código claro
+no se persiste: si se recarga una solicitud pendiente, usar **Generar código
+nuevo**. Para reiniciar deliberadamente un equipo revocado/inválido, usar
+**Borrar configuración local**; el registro revocado permanece en backend para
+auditoría. El modo navegador se permite para desarrollo local, aunque la
+política operativa futura es instalar la PWA en la pantalla de inicio.
+
+Esto no reemplaza todavía `VITE_CLOCK_DEVICE_TOKEN`: F5 no cambia la
+autenticación de las cuatro fichadas; esa integración es F6.
 
 ### Para mostrar la app con VS Code Tunnel
 

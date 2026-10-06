@@ -1,6 +1,6 @@
 # Fichador como app independiente (PWA) — Etapa 1: diagnóstico y plan
 
-> Estado: plan aprobado. **F0 cerrada para el entorno de desarrollo actual** (2026-10-06, ver [§18](#18-f0--implementación-y-resultado)); la medición de `TRUST_PROXY_HOPS` es requisito previo del primer deploy real del backend. F1 cerrada (2026-10-06, [§19](#19-f1--fichador-standalone-implementación)). **F2 cerrada a nivel de repositorio: READY FOR DEPLOY — validación real de infraestructura diferida** (2026-10-06, [§20](#20-f2--despliegue-independiente), decisión en §20.12); no bloquea el desarrollo local. **F3 implementada en local** (2026-10-06, [§21](#21-f3--pwa-local)). **F4 implementada a nivel de código y documentación, con la migración deliberadamente sin aplicar** (2026-10-06, [§22](#22-f4--modelo-persistente-clockdevice)).
+> Estado: plan aprobado. **F0 cerrada para el entorno de desarrollo actual** (2026-10-06, ver [§18](#18-f0--implementación-y-resultado)); la medición de `TRUST_PROXY_HOPS` es requisito previo del primer deploy real del backend. F1 cerrada (2026-10-06, [§19](#19-f1--fichador-standalone-implementación)). **F2 cerrada a nivel de repositorio: READY FOR DEPLOY — validación real de infraestructura diferida** (2026-10-06, [§20](#20-f2--despliegue-independiente), decisión en §20.12); no bloquea el desarrollo local. **F3 implementada en local** (2026-10-06, [§21](#21-f3--pwa-local)). **F4 cerrada y migrada únicamente en staging** (2026-10-06, [§22](#22-f4--modelo-persistente-clockdevice)). **F5 implementada: enrolamiento individual y administración RRHH; la autenticación individual de fichadas sigue diferida a F6** ([§23](#23-f5--enrolamiento-y-administración-de-dispositivos)).
 > Los §1–§17 son el diagnóstico read-only original sobre `main @ 697968a` y describen el estado **previo** a F0 (por ejemplo, las rutas sin foto de §2 ya no existen).
 
 ---
@@ -1156,7 +1156,7 @@ Trabajada y validada **completamente en local** (decisión §20.12). Sin `ClockD
 ## 22. F4 — Modelo persistente `ClockDevice`
 
 Implementada a nivel de código, tests y documentación el 2026-10-06. La
-migración queda deliberadamente sin aplicar hasta una aprobación separada.
+migración se aplicó después con aprobación explícita sólo sobre staging.
 **Modelo persistente listo; autenticación por dispositivo todavía no activa.**
 
 ### 22.1 Modelo y relaciones
@@ -1176,7 +1176,7 @@ migración queda deliberadamente sin aplicar hasta una aprobación separada.
 - `AttendancePunch.source` no cambia; ninguna fila histórica se convierte a
   `KIOSK`.
 
-### 22.2 Migración preparada, no aplicada
+### 22.2 Migración aplicada sólo en staging
 
 La migración `20261006150000_add_clock_device` es aditiva. Antes de crear el
 enum, tabla, columna, índices o FKs, cuenta valores históricos no nulos en
@@ -1184,10 +1184,11 @@ enum, tabla, columna, índices o FKs, cuenta valores históricos no nulos en
 aborta. No contiene `INSERT`, backfill, actualización de `source` ni borrado de
 `kioskId`, y nunca inventa dispositivos para datos anteriores.
 
-El diagnóstico read-only previo sobre la base configurada encontró 79
+El diagnóstico read-only previo sobre staging encontró 79
 `AttendancePunch`, con 0 `deviceId` y 0 `kioskId` no nulos, y 24
-`ClockPunchAttempt`. Esto habilita técnicamente la migración, pero no implica
-que haya sido aplicada.
+`ClockPunchAttempt`. La validación posterior conservó esos conteos, dejó todas
+las relaciones históricas en `NULL` y confirmó 0 filas `ClockDevice`. No se
+aplicó en producción.
 
 ### 22.3 Decisión criptográfica
 
@@ -1201,8 +1202,87 @@ guarda. El código de pairing sigue el mismo criterio: se persiste únicamente
 
 ### 22.4 Límites de F4
 
-F4 no agrega endpoints, middleware de autenticación por dispositivo, pairing
+F4 no agregó endpoints, middleware de autenticación por dispositivo, pairing
 funcional, heartbeat, panel de RRHH ni cambios en `frontend/` o `fichador/`.
-Las rutas existentes continúan usando temporalmente `CLOCK_DEVICE_TOKEN` hasta
-las etapas posteriores. F5 implementará el ciclo de enrolamiento y F8 empezará
-a escribir las relaciones y `WorkShiftSource.KIOSK`.
+La migración se aplicó y verificó sólo en staging; no se tocó producción. F5
+agrega el enrolamiento descrito a continuación. Las rutas de fichada existentes
+continúan usando temporalmente `CLOCK_DEVICE_TOKEN` hasta F6; F8 empezará a
+escribir las relaciones y `WorkShiftSource.KIOSK`.
+
+---
+
+## 23. F5 — Enrolamiento y administración de dispositivos
+
+F5 implementa el ciclo `PENDING → ACTIVE → REVOKED` sin migración adicional y
+sin cambiar la autenticación de los cuatro endpoints `/time-entries/clock/*`.
+Por lo tanto, el bloqueo visual del fichador para un equipo pendiente o revocado
+es UX y no un control de seguridad de fichadas hasta F6.
+
+### 23.1 Credencial y pairing
+
+- Formato individual: `Authorization: ClockDevice <deviceId>.<secret>` en
+  estado y renovación de pairing. No es JWT ni reemplaza todavía al header
+  compartido de las fichadas.
+- El secreto es `randomBytes(32)` en base64url; se entrega una vez y sólo se
+  persiste su SHA-256. La comparación usa `timingSafeEqual`.
+- Código de pairing de 8 caracteres legibles, sin ambiguos, vencimiento de 10
+  minutos y sólo SHA-256 persistido. Registro y renovación devuelven el código
+  claro únicamente en esa respuesta.
+- El registro público no crea auditoría para evitar ruido/abuso; tiene rate
+  limit y un máximo de solicitudes pendientes. Activación, revocación y borrado
+  pendiente sí se auditan con texto humano y sin UUID/secretos/hashes visibles.
+- Límites por ruta/IP: registro 5 cada 10 minutos, estado 120 cada 5 minutos,
+  renovación 10 cada 10 minutos y resolución RRHH 10 cada 5 minutos. Además,
+  el backend rechaza registros cuando ya hay 20 solicitudes `PENDING`.
+
+### 23.2 API y transiciones
+
+- Público: `POST /api/clock/device/register`, `GET /api/clock/device/status` y
+  `POST /api/clock/device/pairing-code/refresh`.
+- RRHH: listado/detalle en `/api/clock-devices`, resolución de código,
+  activación, revocación y borrado físico sólo de un `PENDING` sin historia.
+- Activar vuelve a validar el mismo código vigente dentro de la transición
+  atómica, asigna nombre/sector y consume los campos de pairing. `REVOKED` es
+  terminal; no se reactiva.
+- Los DTO públicos usan una selección segura que nunca contiene `tokenHash` ni
+  `pairingCodeHash`.
+
+### 23.3 PWA y RRHH
+
+- La PWA no se registra al cargar: exige el botón explícito **Configurar
+  dispositivo**. Guarda `{id, secret}` en IndexedDB y coordina pestañas con Web
+  Locks para evitar altas simultáneas.
+- El código claro vive sólo en memoria. Tras recargar, el equipo conserva su
+  identidad y debe generar un código nuevo; no crea otro dispositivo.
+- Mientras está `PENDING`, consulta estado cada 7,5 segundos. `ACTIVE` muestra
+  el fichador; `REVOKED` queda bloqueado. El service worker no cachea ninguna
+  ruta del API de enrolamiento.
+- RRHH usa un flujo de dos pasos: código → metadata segura → nombre/sector →
+  aprobación. La pantalla administrativa nunca muestra UUID, enums internos ni
+  credenciales.
+- Política operativa: instalar la PWA en la pantalla de inicio; el navegador se
+  permite para desarrollo local y muestra una advertencia informativa.
+
+### 23.4 Fuera de alcance
+
+F5 no implementa heartbeat, panel biométrico, fichadas offline, backfill,
+dispositivos históricos, escritura de `AttendancePunch.deviceId`/
+`ClockPunchAttempt.deviceId`, cambio de `AttendancePunch.source` ni retiro del
+token compartido. Todo uso de identidad individual para autorizar y atribuir
+una fichada pertenece a F6/F8.
+
+### 23.5 Validación staging (2026-10-06)
+
+Validada contra Neon staging (`APP_ENV=staging`, base `neondb`), nunca
+producción. Se recorrió el ciclo real sin empleados ni fichadas: registro,
+secreto entregado una vez y hash verificado en DB, `PENDING`, renovación sin
+duplicar, invalidación/expiración de código, resolución RRHH, activación,
+polling `ACTIVE`, revocación y polling `REVOKED`. Los DTO administrativos no
+expusieron hashes/secretos. Los pendientes de prueba se borraron y quedó, por
+trazabilidad de auditoría, un único `TEST F5 ciclo completo` revocado.
+
+Conteos antes/después: `AttendancePunch` 79/79, `ClockPunchAttempt` 24/24,
+`TimeEntry` 85/85 y `WorkShift` 46/46. La distribución de
+`AttendancePunch.source` permaneció `ADMIN=4`, `PORTAL_DNI=7`,
+`PUBLIC_CLOCK_PHOTO=68`; `deviceId`/`kioskId` históricos siguieron en `NULL`.
+El estado final de migraciones quedó limpio.

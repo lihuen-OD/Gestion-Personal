@@ -1604,6 +1604,39 @@ Capa compartida de archivos (documentos, evidencia fotográfica del fichador). T
 
 `preview`/`download` nunca redirigen a una URL pública del proveedor — resuelven por `StorageFile.storageProvider` persistido (Etapa 15D.1) y devuelven el archivo como respuesta autenticada del backend. Para Cloudinary esto es obligatorio desde la Etapa 15D.3 (`docs/decisions/CLOUDINARY_SECURE_DELIVERY_15D3.md`): `getPublicUrl` no entrega ninguna URL permanente utilizable por el cliente.
 
+### Dispositivos de fichada (`clock-devices`, F5)
+
+DTO seguro de dispositivo: `id`, `name`, `status`, `sectorId`, `sector`,
+timestamps de activación/revocación/última conexión/creación, última IP,
+user-agent y versión. Nunca incluye `tokenHash`, `pairingCodeHash` ni secreto.
+
+Rutas públicas, con rate limit independiente:
+
+| Método | Ruta | Auth | Descripción |
+|---|---|---|---|
+| POST | `/api/clock/device/register` | IP/rate limit | Crea `PENDING`; devuelve una vez `{ device, secret }`, con código claro y vencimiento dentro de `device` |
+| GET | `/api/clock/device/status` | `Authorization: ClockDevice <id>.<secret>` | Estado seguro y actualización de metadata de última conexión |
+| POST | `/api/clock/device/pairing-code/refresh` | idem | Sólo `PENDING`; invalida el código anterior y devuelve código/vencimiento nuevos |
+
+Rate limits por IP: registro `5/10 min`, estado `120/5 min`, refresh `10/10
+min`; además hay un máximo operativo de 20 solicitudes pendientes. La
+resolución RRHH usa `10/5 min`, separada de las anteriores.
+
+Rutas RRHH (`Bearer` JWT + Nivel 1):
+
+| Método | Ruta | Descripción |
+|---|---|---|
+| GET | `/api/clock-devices?status=&search=&sectorId=&page=&take=` | Listado paginado |
+| GET | `/api/clock-devices/:id` | Detalle seguro |
+| POST | `/api/clock-devices/resolve-pairing` | Resuelve `{ pairingCode }` a metadata segura de un pendiente vigente |
+| POST | `/api/clock-devices/:id/activate` | `{ pairingCode, name, sectorId? }`; consume pairing y activa atómicamente |
+| POST | `/api/clock-devices/:id/revoke` | Transición terminal `ACTIVE → REVOKED` |
+| DELETE | `/api/clock-devices/:id` | Sólo `PENDING` sin fichadas/intentos |
+
+Estas credenciales individuales no autentican todavía
+`/api/time-entries/clock/*`: esos cuatro contratos mantienen temporalmente el
+token compartido hasta F6. No hay heartbeat en F5.
+
 ### Health (`health`, montado en `/api/health`)
 
 `GET /` — healthcheck (sin auth). `GET /performance` — métricas de performance del proceso (sin auth). Uso operativo/monitoreo, no de negocio.

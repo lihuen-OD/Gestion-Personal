@@ -76,7 +76,33 @@ What exists today (`backend/src/middlewares/clockDeviceAuth.ts`): the four route
 - the token is **not a secret**: it is a `VITE_*` variable, so Vite inlines it into the JavaScript chunk of `TimeClockPage`, which the admin site serves without login. Anyone who can load that site can read it. Moving it to another env var or another `VITE_*` name would not change that
 - whoever has it can use exactly the four routes above (search active employees by name, read their open shift, punch **with a photo**, read attempts) and nothing else; it gives no access to any admin endpoint, and admin JWTs give no access to these routes
 - if `CLOCK_DEVICE_TOKEN` is unset in `NODE_ENV=production`, the middleware **fails closed** (`503 CLOCK_DEVICE_NOT_CONFIGURED`); in development/test/demo it lets requests through with a one-time warning
-- it cannot tell kiosks apart or revoke one of them; `AttendancePunch.deviceId`/`kioskId` stay unused until F4
+- it still cannot authorize a fichada by individual kiosk in F5;
+  `AttendancePunch.deviceId`/`kioskId` remain unwritten until F6/F8
+
+### Individual device enrollment (F5; not punch authorization yet)
+
+F5 adds a separate credential only for enrollment/status:
+`Authorization: ClockDevice <uuid>.<base64url-secret>`. The secret is 32 random
+bytes (`randomBytes(32)`), returned once at registration and stored by the PWA
+in IndexedDB. The database stores only its SHA-256; verification hashes the
+presented secret and uses `timingSafeEqual`. bcrypt/argon2 are intentionally not
+used because this is a high-entropy random secret, not a human password.
+
+Pairing codes have 8 non-ambiguous characters, expire after 10 minutes and are
+also stored only as SHA-256. Clear codes exist only in the register/refresh
+response and PWA memory. Admin DTOs are allow-listed and never include either
+hash or any secret. Registration, status, refresh and RRHH resolution have
+separate rate limits; registration also caps concurrent pending requests.
+
+Only Nivel 1 RRHH can list, resolve, activate, revoke or delete a pending
+device. Activation/revocation/deletion are audited with human text. Public
+registration deliberately does not create AuditLog rows to avoid an
+unauthenticated audit-spam vector.
+
+**Boundary:** the F5 PWA gate for `PENDING`/`REVOKED` is UX, not a security
+control. The four `/time-entries/clock/*` routes still use the temporary shared
+token above. F6 must enforce the individual credential server-side before a
+device state can be treated as authorization for a punch.
 
 ### Hosting headers of the fichador site
 
