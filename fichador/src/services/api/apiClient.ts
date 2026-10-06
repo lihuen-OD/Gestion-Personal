@@ -38,6 +38,10 @@ type ApiErrorPayload = { error?: { code?: string; message?: string } };
 // Los mensajes CLOCK_* del backend ya están escritos para la persona que
 // ficha; el resto se traduce a un texto de negocio sin detalle técnico.
 const messagesByCode: Record<string, string> = {
+  CLOCK_DEVICE_INVALID_CREDENTIAL: "La identidad guardada no es válida. Borrá la configuración local y volvé a vincular el equipo.",
+  CLOCK_DEVICE_NOT_PENDING: "Este dispositivo ya no tiene una aprobación pendiente.",
+  CLOCK_DEVICE_PENDING_LIMIT: "Hay demasiadas solicitudes pendientes. Pedile a RRHH que elimine las que no se usan.",
+  CLOCK_DEVICE_PAIRING_UNAVAILABLE: "No pudimos generar el código. Esperá un momento e intentá nuevamente.",
   CLOCK_DEVICE_UNAUTHORIZED: "Este dispositivo no está autorizado para fichar. Avisá a RRHH.",
   CLOCK_DEVICE_NOT_CONFIGURED: "El fichador no está disponible en este momento. Avisá a RRHH.",
   VALIDATION_ERROR: "No pudimos procesar la fichada. Intentá nuevamente.",

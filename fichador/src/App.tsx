@@ -1,5 +1,6 @@
 import { TimeClockPage } from "./pages/TimeClockPage";
 import { NotFoundPage } from "./pages/NotFoundPage";
+import { ClockDeviceGate } from "./features/device/ClockDeviceGate";
 
 // El fichador standalone tiene una sola pantalla. No hay router ni rutas
 // administrativas: cualquier otra URL (por ejemplo /legajos, /configuracion,
@@ -12,5 +13,5 @@ export function isKioskPath(pathname: string) {
 }
 
 export function App({ pathname = window.location.pathname }: { pathname?: string }) {
-  return isKioskPath(pathname) ? <TimeClockPage /> : <NotFoundPage />;
+  return isKioskPath(pathname) ? <ClockDeviceGate><TimeClockPage /></ClockDeviceGate> : <NotFoundPage />;
 }
