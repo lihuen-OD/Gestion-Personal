@@ -93,3 +93,36 @@ jobs:
       # cubierto por este mismo paso.
       - name: Build (incluye typecheck via tsc -b)
         run: npm run build
+
+  fichador:
+    # Fichador standalone (F1, docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md).
+    # El build incluye el chequeo de aislamiento: falla si el bundle arrastra
+    # modulos administrativos. El e2e (Playwright) no corre en CI, igual que
+    # los journeys del frontend.
+    name: Fichador (test, typecheck e2e, build + aislamiento)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: fichador
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: fichador/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Test
+        run: npm run test
+
+      - name: Typecheck e2e
+        run: npm run typecheck:e2e
+
+      - name: Build (tsc -b + vite build + aislamiento del bundle)
+        run: npm run build

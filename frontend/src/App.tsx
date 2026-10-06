@@ -55,6 +55,10 @@ export function App() {
     return (
       <Suspense fallback={<PageLoader />}>
         <Routes>
+          {/* F1 (docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md): el fichador ya
+              existe como app independiente (fichador/). Esta ruta se mantiene
+              durante la transición para comparar y validar, y se retira en el
+              cutover (F12) junto con TimeClockPage/FaceCaptureModal/timeClockApiService. */}
           <Route path="/fichador" element={<TimeClockPage />} />
           <Route path="*" element={<LoginPage />} />
         </Routes>
