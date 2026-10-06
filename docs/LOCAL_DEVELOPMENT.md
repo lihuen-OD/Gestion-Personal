@@ -202,10 +202,12 @@ variable `VITE_*`): usar sólo cuentas de prueba con contraseña exclusiva.
 La auth no usa cookies (Bearer + refresh en body, `sessionStorage`), así que
 cross-origin alcanza con CORS. Quienes entran por el tunnel comparten el rate
 limit de login (misma IP local).
-(Con `TRUST_PROXY_HOPS=0`, el default, Express ve a todos como `::1`: mismo
-bucket de rate limit y misma IP en auditoría y fichadas. Para distinguirlos,
-medir los saltos del tunnel con `GET /api/health/client-ip` — ver
-`docs/SECURITY_STANDARDS.md` → "Client IP behind proxies".)
+Dev Tunnels es sólo una herramienta temporal para mostrar la app local en una
+revisión; no forma parte de la arquitectura de despliegue. En desarrollo local
+(directo o por tunnel) `TRUST_PROXY_HOPS` queda en `0` y
+`CLIENT_IP_DIAGNOSTICS_ENABLED` en `false`: no se mide ni se ajusta nada para
+el tunnel. La medición de proxies se hace en el deploy real del backend (ver
+`docs/SECURITY_STANDARDS.md` → "Client IP behind proxies").
 
 ## Notas de seguridad
 

@@ -82,9 +82,10 @@ What exists today (`backend/src/middlewares/clockDeviceAuth.ts`): the four route
 
 `req.ip` feeds rate limiting, `AuditLog.ipAddress` and `AttendancePunch.ipAddress`. Express trusts exactly `TRUST_PROXY_HOPS` proxy hops (`backend/src/shared/http/clientIp.ts`, applied first thing in `createApp()`):
 
-- `0` (default) = do not trust `X-Forwarded-For`; `req.ip` is the socket address. Behind any proxy (Render, VS Code Dev Tunnels) that means **every client shares the proxy's IP** — one rate-limit bucket for everybody and the proxy's address in audit/punch records. Production logs a startup warning while it stays at 0
+- `0` (default) = do not trust `X-Forwarded-For`; `req.ip` is the socket address. This is the correct value for **direct local development**. Behind a proxy (e.g. the future backend deploy) it means **every client shares the proxy's IP** — one rate-limit bucket for everybody and the proxy's address in audit/punch records. Production logs a startup warning while it stays at 0
 - `N` = the exact number of proxies between the client and Express. Entries a client prepends to `X-Forwarded-For` never become `req.ip`. **A value above the real count lets a client choose its IP**, so the value is measured, never guessed, and `true` is never used
-- measure it per environment with `CLIENT_IP_DIAGNOSTICS_ENABLED=true` + `GET /api/health/client-ip` (own rate limit, returns only the caller's IP and proxy chain, never credentials), following the procedure in the plan's F0 section; turn the probe off afterwards
+- **measuring it is a prerequisite of the first real backend deploy** (and of any later proxy/CDN change in front of it). Do not take the value from external docs or examples (no assumed 1, 2 or 3). VS Code Dev Tunnels was only a temporary review tool and is not part of the deployment architecture: it is not measured or configured
+- measure it in the deployed environment with `CLIENT_IP_DIAGNOSTICS_ENABLED=true` + `GET /api/health/client-ip` (own rate limit, returns only the caller's IP and proxy chain, never credentials), following the procedure in the plan's F0 section; turn the probe off afterwards
 - nothing reads client IP headers manually; always use `req.ip`
 
 ## Input validation

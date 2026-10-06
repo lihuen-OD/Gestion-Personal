@@ -1,6 +1,6 @@
 # Fichador como app independiente (PWA) — Etapa 1: diagnóstico y plan
 
-> Estado: plan aprobado. **F0 implementada** (2026-10-06, ver [§18](#18-f0--implementación-y-resultado)); F1 en adelante pendiente de aprobación.
+> Estado: plan aprobado. **F0 cerrada para el entorno de desarrollo actual** (2026-10-06, ver [§18](#18-f0--implementación-y-resultado)); la medición de `TRUST_PROXY_HOPS` es requisito previo del primer deploy real del backend. F1 en adelante pendiente de aprobación.
 > Los §1–§17 son el diagnóstico read-only original sobre `main @ 697968a` y describen el estado **previo** a F0 (por ejemplo, las rutas sin foto de §2 ya no existen).
 
 ---
@@ -367,7 +367,7 @@ requireClockDevice({ allowPending?: boolean }): RequestHandler
 Reglas asociadas:
 
 - El kiosco **solo** borra su credencial local ante `CLOCK_DEVICE_REVOKED` o `CLOCK_DEVICE_UNAUTHORIZED` confirmados. Nunca ante 5xx o error de red: un bug transitorio no debe forzar re-enrolar todos los kioscos.
-- `app.set("trust proxy", 1)` (un salto, Render) para que `req.ip` sea la IP real. **Verificar el número de saltos en staging** antes de fijarlo: un valor incorrecto permite falsificar IP vía `X-Forwarded-For`.
+- `trust proxy` con el número de saltos **medido** en el deploy real (`TRUST_PROXY_HOPS`, implementado en F0, ver §18.5). No se toma ningún valor de documentación ni de ejemplos externos: un valor incorrecto deja la IP del proxy o permite falsificarla vía `X-Forwarded-For`.
 - Rate limiter de dispositivo con `keyGenerator: req => req.clockDevice.id`, montado **después** del middleware. Por IP solo para `register`.
 - Body parser: montar el router `/api/clock` **antes** del `express.json({limit: "40mb"})` global, con su propio parser de 6 MB aplicado **después** de `requireClockDevice` (en `register`, 1 KB). Así nadie no autenticado sube 40 MB.
 - **Aislamiento a testear explícitamente** (supertest sobre `createApp()`): credencial de dispositivo contra `/employees`, `/users`, `/workforce`, `/hour-concepts`, `/audit`, `/clock-devices` → 401; JWT válido de RRHH contra `/api/clock/punches` → 401.
@@ -676,9 +676,11 @@ Minimización aplicada en F0: DNI completo → `dniSuffix`; sin `hourConcepts` n
 
 ### 18.5 `trust proxy`
 
-**Topología.** Express no tenía `trust proxy`, así que `req.ip` era siempre la IP del socket. Render no documenta de forma fiable cuántos saltos agrega: su guía sugiere 1, y mediciones publicadas de servicios en Render detrás de Cloudflare muestran `X-Forwarded-For: <cliente>, <borde Cloudflare>, <Render 10.x>` más un proxy interno como socket (3 saltos). En el repo **no hay ningún despliegue en Render referenciado**: el entorno de prueba real es el backend local (`tsx watch`, puerto 4002) expuesto por VS Code Dev Tunnels contra Neon.
+**Topología.** Express no tenía `trust proxy`, así que `req.ip` era siempre la IP del socket. Todavía **no existe un deploy real del backend** (en el repo no hay ninguno referenciado; el destino previsto es Render, §15), así que no hay topología de producción para medir. Las fuentes externas sobre Render no coinciden entre sí en la cantidad de saltos, y por eso **ninguna se usa como valor**: no se asume 1, 2, 3 ni ningún otro número.
 
-**Evidencia del problema (consulta sólo lectura a la base de prueba, 2026-10-06):** las 68 fichadas `PUBLIC_CLOCK_PHOTO` de los últimos 120 días guardaron `ipAddress = ::1`, y los 1884 `AuditLog` con IP de los últimos 60 días guardaron `::1` o `::ffff:127.0.0.1`. Todos los dispositivos se ven como el mismo cliente.
+> **Dev Tunnels fue una herramienta temporal de revisión y no forma parte de la arquitectura de despliegue del Fichador.** Se usó sólo para compartir la app local con otra persona durante una revisión. No se mide ni se configura `TRUST_PROXY_HOPS` para él, y no es referencia para producción.
+
+**Entorno de desarrollo actual:** backend local directo (`tsx watch`, puerto 4002) contra Neon, con `TRUST_PROXY_HOPS=0`: sin proxy delante, `req.ip` es la IP real del socket (`::1` / `127.0.0.1`), que es lo correcto en local. Las IPs que hoy guarda la base de prueba (68 fichadas con foto en 120 días con `::1`; 1884 `AuditLog` en 60 días con `::1` o `::ffff:127.0.0.1`) reflejan ese backend local y **no** dicen nada sobre la topología de producción.
 
 **Configuración elegida:** número exacto de saltos, configurable por entorno, nunca `true`.
 
@@ -691,21 +693,21 @@ CLIENT_IP_DIAGNOSTICS_ENABLED=false   # sonda de medición apagada
 
 **Por qué no se fijó un número:** un valor menor al real deja la IP del proxy (el problema actual); uno **mayor** permite falsificar la IP con `X-Forwarded-For` (lo demuestra un test con 4 saltos sobre una cadena de 3). El valor se mide.
 
-**Procedimiento de medición (por entorno):**
+**Procedimiento de medición — requisito previo al primer deploy real del backend (y a cualquier cambio de proxy/CDN delante de él):**
 
-1. Configurar `CLIENT_IP_DIAGNOSTICS_ENABLED=true` y reiniciar el backend.
+1. En el entorno desplegado (nunca en local ni en Dev Tunnels), configurar `CLIENT_IP_DIAGNOSTICS_ENABLED=true` y reiniciar el backend.
 2. Desde fuera (celular con datos móviles y otra red), abrir `https://<api>/api/health/client-ip`.
 3. Leer `remoteAddress` (debe ser privada: es el proxy) y `xForwardedFor` / `xForwardedForEntries`. Si la cadena es `<tu IP pública>, <proxy>, …`, `TRUST_PROXY_HOPS` = cantidad de entradas que agregó la infraestructura (= `xForwardedForEntries` cuando el cliente no manda el header).
 4. Configurar `TRUST_PROXY_HOPS`, reiniciar y comprobar que `ip` = tu IP pública (comparar con `trueClientIp`/`cfConnectingIp` si existen).
 5. Prueba de falsificación: `curl -H "X-Forwarded-For: 6.6.6.6" https://<api>/api/health/client-ip` → `ip` **no** debe ser `6.6.6.6`.
 6. Volver `CLIENT_IP_DIAGNOSTICS_ENABLED=false`.
 
-**Resultado de los tests (app real `createApp()`, cadena simulada de Render + Cloudflare):**
+**Resultado de los tests (app real `createApp()` con cadenas de proxies simuladas; los números de saltos de los tests son ilustrativos, no el valor de ningún entorno):**
 
 | Caso | Resultado |
 |---|---|
 | Sin `trust proxy` | `req.ip` = socket (`127.0.0.1`) para cualquier `X-Forwarded-For` (comportamiento previo, documentado) |
-| A/C) 3 saltos, cadena real | `req.ip` = cliente (`203.0.113.7`) |
+| A/C) cadena simulada de 3 proxies con 3 saltos | `req.ip` = cliente (`203.0.113.7`) |
 | A/C) 1 salto | `req.ip` = entrada agregada por el proxy |
 | B) `X-Forwarded-For` falsificado (`6.6.6.6, …`) con el número exacto | ignorado: `req.ip` sigue siendo el cliente real |
 | Número mayor al real (4 sobre 3) | `req.ip` = `6.6.6.6` → por eso se mide |
@@ -726,14 +728,27 @@ Revisado: `requestLogger` / `performanceLogger` loguean método, path saneado (s
 ### 18.8 Riesgos residuales y deuda conocida
 
 - **Token compartido público** (R1): mitigado en alcance, no resuelto. Reemplazo: `ClockDevice` (F4–F6).
-- **IP real sin configurar en ningún entorno todavía:** el código está listo y probado, pero `TRUST_PROXY_HOPS` sigue en 0 hasta medir cada entorno (§18.5). Hasta entonces, rate limiting e IP auditada siguen agrupando a todos los clientes.
-- **Validación en staging del fix pendiente:** sin push no hay despliegue, y el entorno de prueba es local + Dev Tunnels. La medición y la prueba de falsificación de §18.5 son la validación de cierre.
+- **Validación real de proxy/IP pendiente hasta que exista el deploy del backend:** el código está listo y probado, y en local directo `TRUST_PROXY_HOPS=0` es el valor correcto. En el deploy real, mientras no se mida y configure (§18.5), rate limiting e IP auditada agruparían a todos los clientes bajo la IP del proxy; producción lo avisa al arrancar. La medición y la prueba de falsificación son condición para habilitar ese deploy.
 - **Fotos de otros:** con el token se puede fichar con una foto cualquiera por cualquier empleado; la validación facial sigue siendo del cliente (R10).
 - **Body de 40 MB** (R9): el parser JSON global corre antes de la verificación del token. No se cambió en F0 porque el límite es global (afecta también `/auth/login`) y moverlo toca el orden de todos los middlewares; queda para F12.
 - **Enumeración por nombre:** la búsqueda con 2 caracteres sigue permitiendo listar empleados activos (sin DNI completo), acotada por el rate limit por IP una vez configurado.
 - **Despliegue desfasado:** si el backend nuevo convive un rato con el frontend viejo, la línea de identificación muestra sólo el legajo (sin el sufijo de DNI). No afecta la fichada.
 
-### 18.9 Siguiente etapa recomendada
+### 18.9 Cierre de F0 (entorno de desarrollo actual)
 
-1. **Cerrar F0 operativamente:** medir y configurar `TRUST_PROXY_HOPS` en el entorno de prueba (Dev Tunnels) y, cuando exista, en Render, siguiendo §18.5.
-2. **F1** — app `fichador/` separada, sobre estos cuatro endpoints.
+| Criterio | Estado | Evidencia |
+|---|---|---|
+| Endpoints legacy sin foto eliminados | Cumplido | `2305f9a`; test HTTP: las 5 rutas → 404 con y sin token; smoke local directo: 404 |
+| No existe bypass equivalente | Cumplido | namespace `/clock` cerrado con 404 terminal (test + mutación); única escritura = `photo-punch` con foto obligatoria |
+| Exposición de datos del kiosco reducida | Cumplido | `a77300f`; tests de servicio y UI; smoke local: búsqueda devuelve `id, legajo, dniSuffix, firstName, lastName, name`, sin `dni` |
+| `trust proxy` configurable y seguro | Cumplido | `f20aab6`; número exacto, nunca `true`, default 0, warning en production con 0 |
+| Local funciona con `TRUST_PROXY_HOPS=0` | Cumplido | `.env` local no define la variable → 0 efectivo; diagnósticos apagados (sonda → 404); `/health` 200; `/clock/employees` 401 sin token, 200 con token |
+| Tests con distintos hops | Cumplido | `app.trustProxy.test.ts`: 0, 1, 3 y sobreconteo 4; spoofing; buckets por IP; IP hasta `AttendancePunch.ipAddress` |
+| Medición real documentada como requisito previo al deploy | Cumplido | §18.5, `SECURITY_STANDARDS.md` → "Client IP behind proxies", checklist de `DEVOPS_DEPLOYMENT_STANDARDS.md` |
+| `CLIENT_IP_DIAGNOSTICS_ENABLED=false` por defecto | Cumplido | default del schema de env y de `.env.example` |
+
+**Queda fuera de F0 por decisión:** medir `TRUST_PROXY_HOPS` (se hace en el primer deploy real del backend), cualquier configuración para Dev Tunnels, y producción.
+
+### 18.10 Siguiente etapa recomendada
+
+**F1** — app `fichador/` separada, sobre los cuatro endpoints vigentes. Pendiente de aprobación.

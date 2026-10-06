@@ -33,7 +33,8 @@ const envSchema = z.object({
   // Express. Express toma como req.ip la entrada de X-Forwarded-For que está
   // a ese número de saltos (el socket cuenta como el primero). 0 = no confiar
   // en X-Forwarded-For: req.ip es la IP del socket (comportamiento previo a
-  // F0; detrás de Render, la del proxy interno). Nunca se acepta "true":
+  // F0; correcto en desarrollo local directo; detrás de un proxy, sería la
+  // IP del proxy). Nunca se acepta "true":
   // confiar en toda la cadena deja que un cliente elija su IP. Un valor mayor
   // al real también es falsificable. Medirlo por entorno con
   // CLIENT_IP_DIAGNOSTICS_ENABLED antes de fijarlo.

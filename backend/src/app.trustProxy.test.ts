@@ -9,13 +9,13 @@ import { timeEntriesService } from "./modules/time-entries/timeEntries.service";
 
 /**
  * F0 del fichador standalone (docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md
- * §F0 / trust proxy). Prueba la app real (`createApp()`) con la topología
- * medida en Render detrás de Cloudflare: el socket es un proxy interno y
- * X-Forwarded-For llega como "<cliente>, <borde Cloudflare>, <Render 10.x>"
- * (TRUST_PROXY_HOPS=3). En el test el socket es 127.0.0.1 y cumple el papel
- * del proxy interno. El número de saltos real de cada entorno se mide con
- * GET /api/health/client-ip; estos tests fijan cómo se comporta Express con
- * cada valor, no cuál es el valor de staging/producción.
+ * §F0 / trust proxy). Prueba la app real (`createApp()`) con cadenas de
+ * proxies SIMULADAS: el socket (127.0.0.1) cumple el papel del proxy más
+ * cercano y X-Forwarded-For llega como "<cliente>, <proxy de borde>, <proxy
+ * interno>". Los números de saltos usados acá (0, 1, 3, 4) son ilustrativos:
+ * fijan cómo se comporta Express con cada valor, no cuál es el valor de
+ * ningún entorno. El valor real se mide en el deploy del backend con
+ * GET /api/health/client-ip antes de configurarlo.
  */
 
 vi.mock("./modules/time-entries/timeEntries.service", async (importOriginal) => {
@@ -39,8 +39,8 @@ type MutableEnv = {
 const TOKEN = "test-clock-device-token-0123456789";
 const CLIENT_A = "203.0.113.7";
 const CLIENT_B = "198.51.100.23";
-const CLOUDFLARE_EDGE = "104.16.0.1";
-const RENDER_INTERNAL = "10.0.0.5";
+const EDGE_PROXY = "104.16.0.1";
+const INTERNAL_PROXY = "10.0.0.5";
 const original = {
   TRUST_PROXY_HOPS: env.TRUST_PROXY_HOPS,
   CLIENT_IP_DIAGNOSTICS_ENABLED: env.CLIENT_IP_DIAGNOSTICS_ENABLED,
@@ -59,9 +59,9 @@ async function startApp(hops: number, options: { diagnostics?: boolean } = {}) {
   return `http://127.0.0.1:${(server.address() as AddressInfo).port}${env.API_PREFIX}`;
 }
 
-/** Cadena tal como la arma la infraestructura para un cliente real. */
+/** Cadena simulada tal como la armaría una infraestructura de 3 proxies. */
 function realChain(client: string) {
-  return `${client}, ${CLOUDFLARE_EDGE}, ${RENDER_INTERNAL}`;
+  return `${client}, ${EDGE_PROXY}, ${INTERNAL_PROXY}`;
 }
 
 async function seenIp(baseUrl: string, forwardedFor?: string) {
@@ -110,7 +110,7 @@ describe("1. sin trust proxy (TRUST_PROXY_HOPS=0, comportamiento previo a F0)", 
 });
 
 describe("2. con la cantidad exacta de proxies confiables", () => {
-  it("A/C) TRUST_PROXY_HOPS=3 (Render + Cloudflare): req.ip es el cliente real que agregó la infraestructura", async () => {
+  it("A/C) TRUST_PROXY_HOPS=3 sobre una cadena simulada de 3 proxies: req.ip es el cliente real que agregó la infraestructura", async () => {
     const baseUrl = await startApp(3);
     expect(await seenIp(baseUrl, realChain(CLIENT_A))).toBe(CLIENT_A);
     expect(await seenIp(baseUrl, realChain(CLIENT_B))).toBe(CLIENT_B);
