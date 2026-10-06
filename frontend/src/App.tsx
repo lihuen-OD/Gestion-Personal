@@ -43,6 +43,7 @@ const ShiftsPage = lazy(() => import("./pages/ShiftsPage").then((module) => ({ d
 const ShiftCreatePage = lazy(() => import("./pages/ShiftCreatePage").then((module) => ({ default: module.ShiftCreatePage })));
 const ShiftDetailPage = lazy(() => import("./pages/ShiftDetailPage").then((module) => ({ default: module.ShiftDetailPage })));
 const HolidayWorkAssignmentsPage = lazy(() => import("./pages/HolidayWorkAssignmentsPage").then((module) => ({ default: module.HolidayWorkAssignmentsPage })));
+const ClockDevicesPage = lazy(() => import("./pages/ClockDevicesPage").then((module) => ({ default: module.ClockDevicesPage })));
 
 function PageLoader() {
   return <LoadingState text="Cargando módulo..." />;
@@ -95,6 +96,7 @@ export function App() {
           <Route path="/configuracion/turnos/nuevo" element={<ShiftCreatePage />} />
           <Route path="/configuracion/turnos/:id" element={<ShiftDetailPage />} />
           <Route path="/configuracion/turnos-asignaciones-feriados" element={<HolidayWorkAssignmentsPage />} />
+          <Route path="/configuracion/dispositivos-fichada" element={<RoleRoute allowedLevels={[1]}><ClockDevicesPage /></RoleRoute>} />
           <Route path="/horas" element={<HoursPage />} />
           <Route path="/horas/:id" element={<EmployeeHoursPage />} />
           <Route path="/asistencia" element={<AttendancePage />} />

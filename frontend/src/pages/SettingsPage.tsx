@@ -1,4 +1,4 @@
-import { Building2, CalendarCheck, CalendarClock, ChevronRight, ClipboardList, Clock3, FolderOpen, ShieldCheck, Workflow } from "lucide-react";
+import { Building2, CalendarCheck, CalendarClock, ChevronRight, ClipboardList, Clock3, FolderOpen, MonitorSmartphone, ShieldCheck, Workflow } from "lucide-react";
 import { Link, Navigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { roleLevel } from "../utils/roles";
@@ -22,6 +22,7 @@ export function SettingsPage() {
     { name: "Conceptos horarios", icon: <Clock3 />, path: "/configuracion/conceptos-horarios" },
     { name: "Categorías documentales", icon: <FolderOpen />, path: "/configuracion/categorias-documentales" },
     { name: "Parámetros de auditoría", icon: <ShieldCheck />, path: "/configuracion/parametros-auditoria" },
+    { name: "Dispositivos de fichada", icon: <MonitorSmartphone />, path: "/configuracion/dispositivos-fichada" },
   ];
   return <><PageHeader eyebrow="CONFIGURACIÓN GENERAL" title="Parámetros del sistema" description="Administración de catálogos, reglas operativas y salidas del sistema." /><div className="settings-grid">{cards.map((card) => <div className="setting-card" key={card.name}><span>{card.icon}</span><h3>{card.name}</h3><p>Configurar catálogos, estados y reglas disponibles para la operación.</p>{card.path ? <Link className="table-link" to={card.path}>Administrar <ChevronRight size={15} /></Link> : <button className="table-link">Administrar <ChevronRight size={15} /></button>}</div>)}</div></>;
 }
