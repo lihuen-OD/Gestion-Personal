@@ -21,7 +21,7 @@ async function seedActiveIdentity(page: Page) {
     request.onerror = () => reject(request.error);
     request.onsuccess = () => {
       const tx = request.result.transaction("identity", "readwrite");
-      tx.objectStore("identity").put({ id: "00000000-0000-4000-8000-000000000001", secret: "e2e-secret" }, "current");
+      tx.objectStore("identity").put({ id: "00000000-0000-4000-8000-000000000001", secret: "e2e-individual-device-secret" }, "current");
       tx.oncomplete = () => resolve();
     };
   }));
@@ -76,11 +76,23 @@ test("sin red: la app abre, bloquea la fichada con un estado claro, el 404 sigue
   await page.getByRole("button", { name: "Cancelar" }).click();
 
   // La app abre sin red y bloquea antes de exponer el fichador porque no
-  // puede revalidar la identidad individual.
+  // puede revalidar la identidad individual. La identidad se conserva: sólo
+  // ofrece reintentar, nunca reconfigurar ante un error de red.
   await page.reload();
-  await expect(page.getByRole("heading", { name: "Configurar este dispositivo" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "No pudimos verificar el dispositivo" })).toBeVisible();
   await expect(page.getByText(/No hay conexión con el servidor/)).toBeVisible();
+  await expect(page.getByRole("button", { name: "Reintentar" })).toBeVisible();
+  await expect(page.getByRole("button", { name: /Reconfigurar|Configurar como nuevo/ })).toBeHidden();
   await expect(page.getByRole("heading", { name: "Fichador de personal" })).toBeHidden();
+
+  // F6: ninguna respuesta del API (ni la credencial que viaja en sus
+  // requests) quedó en Cache Storage.
+  const cachedApi = await page.evaluate(async () => {
+    const urls: string[] = [];
+    for (const name of await caches.keys()) for (const request of await (await caches.open(name)).keys()) urls.push(request.url);
+    return urls.filter((url) => url.includes("/clock") || url.includes("127.0.0.1:59999"));
+  });
+  expect(cachedApi).toEqual([]);
 
   // Una ruta inválida sigue resolviéndose dentro del fichador.
   await page.goto("/legajos");
