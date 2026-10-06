@@ -1,0 +1,10 @@
+node_modules
+dist
+*.log
+*.tsbuildinfo
+.env
+.env.local
+.env.*.local
+test-results
+playwright-report
+blob-report
