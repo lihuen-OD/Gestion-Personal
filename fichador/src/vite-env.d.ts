@@ -3,6 +3,6 @@
 
 interface ImportMetaEnv {
   readonly VITE_API_URL?: string;
-  /** Token compartido TEMPORAL del kiosco; se retira en F4–F6 (ClockDevice). */
-  readonly VITE_CLOCK_DEVICE_TOKEN?: string;
+  /** Versión informativa que el panel de RRHH ve por dispositivo; nunca autentica. */
+  readonly VITE_APP_VERSION?: string;
 }

@@ -70,13 +70,14 @@ export function hostingHeaders(apiUrl) {
 
 /**
  * En un build del hosting (Netlify define NETLIFY=true) el fichador no puede
- * salir apuntando a localhost, por HTTP ni sin el token: fallaría en las
- * tablets sin que nadie lo note hasta usarlo.
+ * salir apuntando a localhost ni por HTTP: fallaría en las tablets sin que
+ * nadie lo note hasta usarlo. Desde F6 no hay credencial de build: cada
+ * equipo se autentica con su propio ClockDevice.
  */
 export function assertDeployEnv(env) {
   if (env.NETLIFY !== "true") return;
   const problems = [];
   if (!env.VITE_API_URL || !env.VITE_API_URL.startsWith("https://")) problems.push("VITE_API_URL debe ser una URL https del backend del entorno");
-  if (!env.VITE_CLOCK_DEVICE_TOKEN || env.VITE_CLOCK_DEVICE_TOKEN.length < 16) problems.push("VITE_CLOCK_DEVICE_TOKEN debe estar definido (mínimo 16 caracteres, igual que CLOCK_DEVICE_TOKEN del backend)");
+  if (env.VITE_CLOCK_DEVICE_TOKEN) problems.push("VITE_CLOCK_DEVICE_TOKEN fue retirado en F6: borrarlo del sitio (el fichador ya no usa un token compartido)");
   if (problems.length) throw new Error(`Variables del fichador inválidas para deploy:\n  - ${problems.join("\n  - ")}`);
 }

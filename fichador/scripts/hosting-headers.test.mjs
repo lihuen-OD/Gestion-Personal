@@ -66,20 +66,22 @@ describe("_headers generado", () => {
 });
 
 describe("assertDeployEnv — variables del build en el hosting", () => {
-  const valid = { NETLIFY: "true", VITE_API_URL: "https://api-test.example.com/api", VITE_CLOCK_DEVICE_TOKEN: "x".repeat(32) };
+  const valid = { NETLIFY: "true", VITE_API_URL: "https://api-test.example.com/api" };
 
   it("fuera del hosting no exige nada (build local)", () => {
     expect(() => assertDeployEnv({})).not.toThrow();
   });
 
-  it("acepta un deploy con API https y token", () => {
+  it("acepta un deploy con API https y sin ninguna credencial de build", () => {
     expect(() => assertDeployEnv(valid)).not.toThrow();
   });
 
   it.each([
     [{ ...valid, VITE_API_URL: undefined }, /VITE_API_URL/],
     [{ ...valid, VITE_API_URL: "http://localhost:4002/api" }, /VITE_API_URL/],
-    [{ ...valid, VITE_CLOCK_DEVICE_TOKEN: "" }, /VITE_CLOCK_DEVICE_TOKEN/],
+    // F6: un sitio que todavía define el token compartido retirado falla el
+    // build, para que el valor viejo no quede olvidado en el hosting.
+    [{ ...valid, VITE_CLOCK_DEVICE_TOKEN: "x".repeat(32) }, /VITE_CLOCK_DEVICE_TOKEN fue retirado/],
   ])("rechaza un deploy mal configurado (%#)", (env, message) => {
     expect(() => assertDeployEnv(env)).toThrow(message);
   });

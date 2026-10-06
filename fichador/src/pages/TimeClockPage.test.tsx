@@ -234,16 +234,16 @@ describe("TimeClockPage standalone (F1) — flujo, errores e idempotencia", () =
     expect(screen.getByRole("button", { name: /Marcar ingreso/i })).toBeDisabled();
   });
 
-  it("401 (dispositivo no autorizado) en la búsqueda: mensaje de negocio, sin detalle técnico", async () => {
+  it("403 (dispositivo deshabilitado) en la búsqueda: mensaje de negocio, sin detalle técnico", async () => {
     vi.mocked(timeClockApiService.searchEmployees).mockRejectedValue(
-      new ApiError("Este dispositivo no está autorizado para fichar. Avisá a RRHH.", "CLOCK_DEVICE_UNAUTHORIZED", 401),
+      new ApiError("Este dispositivo fue deshabilitado por RRHH.", "CLOCK_DEVICE_REVOKED", 403),
     );
     const user = userEvent.setup();
     render(<TimeClockPage />);
 
     await user.type(screen.getByLabelText("Buscar por nombre o apellido"), "Gomez");
 
-    expect(await screen.findByText("Este dispositivo no está autorizado para fichar. Avisá a RRHH.")).toBeInTheDocument();
+    expect(await screen.findByText("Este dispositivo fue deshabilitado por RRHH.")).toBeInTheDocument();
   });
 
   it("429 al consultar el estado: avisa que hay demasiados intentos", async () => {

@@ -25,7 +25,7 @@ export default defineConfig({
     url: "http://localhost:5195",
     reuseExistingServer: false,
     timeout: 120_000,
-    env: { VITE_API_URL: "http://127.0.0.1:59999/api", VITE_CLOCK_DEVICE_TOKEN: "e2e-fake-token" },
+    env: { VITE_API_URL: "http://127.0.0.1:59999/api" },
   },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
 });

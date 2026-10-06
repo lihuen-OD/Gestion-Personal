@@ -3,8 +3,8 @@
 // frontend/src/services/api/apiClient.ts: ese cliente trae el JWT y el
 // refresh token del admin (sessionStorage), el mapa de errores de los
 // módulos administrativos y el evento global de errores. El fichador no
-// tiene sesión de usuario: sólo llama a /time-entries/clock/* con el header
-// del token compartido temporal (ver timeClockApiService.ts).
+// tiene sesión de usuario: se autentica como dispositivo, con un
+// ClockDevice individual (ver clockDeviceSession.ts).
 const API_URL = (import.meta.env.VITE_API_URL || "http://localhost:4002/api").replace(/\/$/, "");
 
 /** Error de una respuesta HTTP del backend (status != 2xx). */
@@ -38,12 +38,12 @@ type ApiErrorPayload = { error?: { code?: string; message?: string } };
 // Los mensajes CLOCK_* del backend ya están escritos para la persona que
 // ficha; el resto se traduce a un texto de negocio sin detalle técnico.
 const messagesByCode: Record<string, string> = {
-  CLOCK_DEVICE_INVALID_CREDENTIAL: "La identidad guardada no es válida. Borrá la configuración local y volvé a vincular el equipo.",
+  CLOCK_DEVICE_INVALID_CREDENTIAL: "Este dispositivo perdió su autorización. Volvé a configurarlo.",
+  CLOCK_DEVICE_NOT_ACTIVE: "Este dispositivo todavía no fue aprobado por RRHH.",
+  CLOCK_DEVICE_REVOKED: "Este dispositivo fue deshabilitado por RRHH.",
   CLOCK_DEVICE_NOT_PENDING: "Este dispositivo ya no tiene una aprobación pendiente.",
   CLOCK_DEVICE_PENDING_LIMIT: "Hay demasiadas solicitudes pendientes. Pedile a RRHH que elimine las que no se usan.",
   CLOCK_DEVICE_PAIRING_UNAVAILABLE: "No pudimos generar el código. Esperá un momento e intentá nuevamente.",
-  CLOCK_DEVICE_UNAUTHORIZED: "Este dispositivo no está autorizado para fichar. Avisá a RRHH.",
-  CLOCK_DEVICE_NOT_CONFIGURED: "El fichador no está disponible en este momento. Avisá a RRHH.",
   VALIDATION_ERROR: "No pudimos procesar la fichada. Intentá nuevamente.",
   ROUTE_NOT_FOUND: "La operación solicitada no está disponible.",
 };
@@ -63,7 +63,7 @@ export function getUserErrorMessage(error: unknown, fallback: string) {
   return fallback;
 }
 
-type RequestOptions = Omit<RequestInit, "body"> & { body?: unknown };
+export type RequestOptions = Omit<RequestInit, "body"> & { body?: unknown };
 
 export async function apiRequest<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const headers = new Headers(options.headers);

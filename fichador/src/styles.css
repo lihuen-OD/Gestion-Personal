@@ -50,7 +50,9 @@ body{background:radial-gradient(circle at top left,#eef8f8 0,#f4f7fb 34%,#eef3f7
 .device-policy{display:flex;align-items:flex-start;gap:9px;padding:12px;border:1px solid var(--color-border-default);border-radius:10px;background:var(--color-bg-subtle);color:var(--color-text-secondary);font-size:12px;line-height:1.45;text-align:left}.device-policy svg{flex:none;color:var(--color-primary)}
 .pairing-code{width:100%;display:grid;gap:7px;padding:20px;border:1px solid var(--color-primary);border-radius:12px;background:var(--color-primary-subtle)}.pairing-code small{font-size:10px;font-weight:800;letter-spacing:.1em;color:var(--color-primary)}.pairing-code strong{font-size:36px;letter-spacing:.13em;color:var(--color-text-primary)}.pairing-code span{font-size:12px;color:var(--color-text-secondary)}
 .spin{animation:device-spin 1s linear infinite}@keyframes device-spin{to{transform:rotate(360deg)}}
-@media(max-width:520px){.device-gate{padding:12px}.device-gate-card{padding:26px 18px}.pairing-code strong{font-size:29px}}
+.button.danger{background:var(--color-danger);border-color:var(--color-danger);color:#fff}.button.danger:hover{background:#991b1b;border-color:#991b1b}
+.device-confirm{width:100%;display:grid;gap:14px;padding:16px;border:1px solid var(--color-danger-border);border-radius:12px;background:var(--color-danger-bg);text-align:left;font-size:13px;line-height:1.5;color:var(--color-text-secondary)}.device-confirm strong{display:block;margin-bottom:2px;color:var(--color-text-primary)}.device-confirm-actions{display:flex;justify-content:flex-end;gap:8px}
+@media(max-width:520px){.device-gate{padding:12px}.device-gate-card{padding:26px 18px}.pairing-code strong{font-size:29px}.device-confirm-actions{display:grid;grid-template-columns:1fr}}
 :root{
   --font-family-base:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
   --color-primary:var(--ds-blue-600, #2563eb);

@@ -46,8 +46,12 @@ const adminMarkers = [
   // fichador sí usa /time-entries/clock/employees, que no debe contar.
   /["'`]\/employees\b/,
 ];
-// Prueba de vida: si el build no contiene el fichador, el chequeo no vale.
-const requiredMarkers = ["/time-entries/clock/photo-punch", "/time-entries/clock/attempts/"];
+// F6: el token compartido del kiosco fue retirado. Ningún rastro de esa
+// credencial (header ni variable) puede volver al bundle.
+const retiredCredentialMarkers = ["x-clock-device-token", "VITE_CLOCK_DEVICE_TOKEN"];
+// Prueba de vida: si el build no contiene el fichador y su autenticación por
+// dispositivo, el chequeo no vale.
+const requiredMarkers = ["/time-entries/clock/photo-punch", "/time-entries/clock/attempts/", "ClockDevice "];
 
 const assets = walk(join(root, "dist")).filter((path) => /\.(js|css|html)$/.test(path));
 const bundle = assets.map((path) => ({ path, text: readFileSync(path, "utf8") }));
@@ -55,6 +59,11 @@ for (const marker of adminMarkers) {
   for (const { path, text } of bundle) {
     const found = typeof marker === "string" ? text.includes(marker) : marker.test(text);
     if (found) failures.push(`${relative(root, path)} contiene una marca administrativa: ${marker}`);
+  }
+}
+for (const marker of retiredCredentialMarkers) {
+  for (const { path, text } of bundle) {
+    if (text.includes(marker)) failures.push(`${relative(root, path)} contiene la credencial compartida retirada: ${marker}`);
   }
 }
 for (const marker of requiredMarkers) {

@@ -1,25 +1,28 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError, NetworkError, apiRequest, formatClockErrorMessage, getUserErrorMessage } from "./apiClient";
+import { clockDeviceSession } from "./clockDeviceSession";
 import { timeClockApiService } from "./timeClockApiService";
 
 function jsonResponse(status: number, body: unknown) {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 }
 
+const IDENTITY = { id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", secret: "s".repeat(43) };
+
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
+  clockDeviceSession.end();
 });
 
 describe("apiClient del fichador — errores para la persona que ficha", () => {
-  it("401 CLOCK_DEVICE_UNAUTHORIZED: dispositivo no autorizado, sin detalle técnico", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(401, { error: { code: "CLOCK_DEVICE_UNAUTHORIZED", message: "Dispositivo no autorizado para fichar" } })));
-    await expect(apiRequest("/time-entries/clock/status")).rejects.toMatchObject({
-      name: "ApiError",
-      status: 401,
-      code: "CLOCK_DEVICE_UNAUTHORIZED",
-      message: "Este dispositivo no está autorizado para fichar. Avisá a RRHH.",
-    });
+  it.each([
+    [401, "CLOCK_DEVICE_INVALID_CREDENTIAL", "Este dispositivo perdió su autorización. Volvé a configurarlo."],
+    [403, "CLOCK_DEVICE_NOT_ACTIVE", "Este dispositivo todavía no fue aprobado por RRHH."],
+    [403, "CLOCK_DEVICE_REVOKED", "Este dispositivo fue deshabilitado por RRHH."],
+  ])("%i %s: mensaje humano, nunca el texto técnico del backend", async (status, code, message) => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(status, { error: { code, message: "Invalid device credentials" } })));
+    await expect(apiRequest("/time-entries/clock/status")).rejects.toMatchObject({ name: "ApiError", status, code, message });
   });
 
   it("429 (cuerpo de texto del rate limiter): pide esperar", async () => {
@@ -59,8 +62,9 @@ describe("apiClient del fichador — errores para la persona que ficha", () => {
 });
 
 describe("timeClockApiService del fichador — sólo los cuatro endpoints, sin JWT", () => {
-  it("manda el token compartido temporal y nunca un Authorization Bearer", async () => {
+  it("autentica con la identidad individual del equipo, nunca con Bearer ni con el token compartido retirado", async () => {
     vi.stubEnv("VITE_CLOCK_DEVICE_TOKEN", "temporary-shared-token");
+    clockDeviceSession.start(IDENTITY);
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, { data: [] }));
     vi.stubGlobal("fetch", fetchMock);
 
@@ -69,11 +73,14 @@ describe("timeClockApiService del fichador — sólo los cuatro endpoints, sin J
     const [url, init] = fetchMock.mock.calls[0]!;
     const headers = new Headers((init as RequestInit).headers);
     expect(String(url)).toMatch(/\/time-entries\/clock\/employees\?search=Gomez$/);
-    expect(headers.get("x-clock-device-token")).toBe("temporary-shared-token");
-    expect(headers.has("authorization")).toBe(false);
+    expect(headers.get("authorization")).toBe(`ClockDevice ${IDENTITY.id}.${IDENTITY.secret}`);
+    expect(headers.get("x-clock-app-version")).toBeTruthy();
+    expect(headers.has("x-clock-device-token")).toBe(false);
+    expect(JSON.stringify([...headers])).not.toContain("temporary-shared-token");
   });
 
-  it("usa exactamente los endpoints vigentes de F0", async () => {
+  it("usa exactamente los endpoints vigentes de F0, todos con la credencial del equipo", async () => {
+    clockDeviceSession.start(IDENTITY);
     const fetchMock = vi.fn().mockImplementation(async () => jsonResponse(200, { data: {} }));
     vi.stubGlobal("fetch", fetchMock);
 
@@ -87,5 +94,8 @@ describe("timeClockApiService del fichador — sólo los cuatro endpoints, sin J
       "POST /time-entries/clock/photo-punch",
       "GET /time-entries/clock/attempts/r-1?employeeId=employee-1",
     ]);
+    for (const [, init] of fetchMock.mock.calls) {
+      expect(new Headers((init as RequestInit).headers).get("authorization")).toBe(`ClockDevice ${IDENTITY.id}.${IDENTITY.secret}`);
+    }
   });
 });

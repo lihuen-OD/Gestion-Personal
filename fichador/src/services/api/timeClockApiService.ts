@@ -1,20 +1,9 @@
-import { apiRequest } from "./apiClient";
+import { clockDeviceRequest } from "./clockDeviceSession";
 
-// Copia del servicio de frontend/src/services/api/timeClockApiService.ts para
-// el fichador standalone (F1). Mismos cuatro endpoints y mismos contratos;
-// sólo cambia el cliente HTTP (el propio del fichador, sin JWT).
-//
-// El fichador no tiene sesion de usuario (kiosco publico), asi que en vez de
-// un Bearer token manda un secreto compartido — ver
-// backend/src/middlewares/clockDeviceAuth.ts. Esta credencial sigue siendo
-// temporal y será retirada en F4–F6: al ser una variable VITE_* queda
-// embebida en el bundle publico, asi que no es un secreto. Se reemplaza por
-// ClockDevice (identidad por dispositivo) segun
-// docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md.
-function clockDeviceHeaders(): HeadersInit {
-  const token = import.meta.env.VITE_CLOCK_DEVICE_TOKEN;
-  return token ? { "x-clock-device-token": token } : {};
-}
+// Los cuatro endpoints operativos del fichador. El fichador no tiene sesión
+// de usuario: cada request va autenticado como el ClockDevice ACTIVE de este
+// equipo (F6, docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md). La credencial
+// la agrega clockDeviceRequest; acá no se maneja ningún secreto.
 
 // El backend nunca devuelve el DNI completo al kiosco: sólo sus últimos 3
 // dígitos, para distinguir homónimos (F0 del fichador standalone).
@@ -108,36 +97,30 @@ function body(employeeId: string) {
 export const timeClockApiService = {
   async searchEmployees(search: string) {
     const params = new URLSearchParams({ search: search.trim() });
-    const response = await apiRequest<ClockSearchResponse>(`/time-entries/clock/employees?${params.toString()}`, {
-      headers: clockDeviceHeaders(),
-    });
+    const response = await clockDeviceRequest<ClockSearchResponse>(`/time-entries/clock/employees?${params.toString()}`);
     return response.data;
   },
 
   async status(employeeId: string) {
-    const response = await apiRequest<ClockStatusResponse>("/time-entries/clock/status", {
+    const response = await clockDeviceRequest<ClockStatusResponse>("/time-entries/clock/status", {
       method: "POST",
       body: body(employeeId),
-      headers: clockDeviceHeaders(),
     });
     return response.data;
   },
 
   async photoPunch(input: ClockPhotoPunchInput) {
-    const response = await apiRequest<ClockInResponse | ClockOutResponse>("/time-entries/clock/photo-punch", {
+    const response = await clockDeviceRequest<ClockInResponse | ClockOutResponse>("/time-entries/clock/photo-punch", {
       method: "POST",
       body: input,
       signal: AbortSignal.timeout(20_000),
-      headers: clockDeviceHeaders(),
     });
     return response.data;
   },
 
   async attemptStatus(requestId: string, employeeId: string) {
     const params = new URLSearchParams({ employeeId });
-    const response = await apiRequest<ClockAttemptStatusResponse>(`/time-entries/clock/attempts/${requestId}?${params.toString()}`, {
-      headers: clockDeviceHeaders(),
-    });
+    const response = await clockDeviceRequest<ClockAttemptStatusResponse>(`/time-entries/clock/attempts/${requestId}?${params.toString()}`);
     return response.data;
   },
 };
