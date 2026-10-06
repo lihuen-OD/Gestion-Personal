@@ -3,6 +3,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { TimeClockPage } from "./TimeClockPage";
 import { timeClockApiService } from "../services/api/timeClockApiService";
+import { ApiError, NetworkError } from "../services/api/apiClient";
 
 vi.mock("../services/api/timeClockApiService", () => ({
   timeClockApiService: {
@@ -182,5 +183,147 @@ describe("TimeClockPage — fichador sin selector de concepto horario (Etapa 6K)
 
     expect(await screen.findByText("Legajo 100 · DNI terminado en 456")).toBeInTheDocument();
     expect(screen.queryByText(/DNI \d{6,}/)).not.toBeInTheDocument();
+  });
+});
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+async function confirmCapture(user: ReturnType<typeof userEvent.setup>, punch: RegExp) {
+  await user.click(screen.getByRole("button", { name: punch }));
+  await screen.findByTestId("face-capture-modal");
+  await user.click(screen.getByRole("button", { name: /Confirmar captura/i }));
+}
+
+// F1 — fichador standalone: mismo flujo que /fichador del admin, ahora
+// cubierto también para errores de red/HTTP, verificación e idempotencia.
+describe("TimeClockPage standalone (F1) — flujo, errores e idempotencia", () => {
+  it("carga inicial: muestra sólo el fichador, con los botones deshabilitados hasta elegir empleado", () => {
+    render(<TimeClockPage />);
+
+    expect(screen.getByRole("heading", { name: "Fichador de personal" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Buscar por nombre o apellido")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Marcar ingreso/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /Marcar salida/i })).toBeDisabled();
+    expect(screen.queryByRole("navigation")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Cerrar sesión/i)).not.toBeInTheDocument();
+  });
+
+  it("búsqueda: no consulta con menos de 2 caracteres y muestra legajo + DNI terminado en", async () => {
+    const user = userEvent.setup();
+    render(<TimeClockPage />);
+    const input = screen.getByLabelText("Buscar por nombre o apellido");
+
+    await user.type(input, "G");
+    await new Promise((resolve) => setTimeout(resolve, 350));
+    expect(timeClockApiService.searchEmployees).not.toHaveBeenCalled();
+
+    await user.type(input, "o");
+    await waitFor(() => expect(timeClockApiService.searchEmployees).toHaveBeenCalledWith("Go"));
+    expect(await screen.findByText("Legajo 100 · DNI terminado en 456")).toBeInTheDocument();
+  });
+
+  it("sin conexión con el backend: la búsqueda muestra un estado claro y no permite fichar", async () => {
+    vi.mocked(timeClockApiService.searchEmployees).mockRejectedValue(new NetworkError());
+    const user = userEvent.setup();
+    render(<TimeClockPage />);
+
+    await user.type(screen.getByLabelText("Buscar por nombre o apellido"), "Gomez");
+
+    expect(await screen.findByText(/No hay conexión con el servidor/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Marcar ingreso/i })).toBeDisabled();
+  });
+
+  it("401 (dispositivo no autorizado) en la búsqueda: mensaje de negocio, sin detalle técnico", async () => {
+    vi.mocked(timeClockApiService.searchEmployees).mockRejectedValue(
+      new ApiError("Este dispositivo no está autorizado para fichar. Avisá a RRHH.", "CLOCK_DEVICE_UNAUTHORIZED", 401),
+    );
+    const user = userEvent.setup();
+    render(<TimeClockPage />);
+
+    await user.type(screen.getByLabelText("Buscar por nombre o apellido"), "Gomez");
+
+    expect(await screen.findByText("Este dispositivo no está autorizado para fichar. Avisá a RRHH.")).toBeInTheDocument();
+  });
+
+  it("429 al consultar el estado: avisa que hay demasiados intentos", async () => {
+    vi.mocked(timeClockApiService.status).mockRejectedValue(
+      new ApiError("Hay demasiados intentos seguidos desde este dispositivo. Esperá unos minutos y volvé a intentar.", "API_ERROR", 429),
+    );
+    await selectEmployee();
+
+    expect(await screen.findByText(/demasiados intentos/i)).toBeInTheDocument();
+  });
+
+  it("cada intención de fichar usa un requestId UUID nuevo", async () => {
+    mockNoOpenShift();
+    vi.mocked(timeClockApiService.photoPunch).mockResolvedValue({ employee: employeeMatch, workShift: { id: "shift-1", startAt: nowIso() } });
+    const user = await selectEmployee();
+
+    await confirmCapture(user, /Marcar ingreso/i);
+    await screen.findByText(/Ingreso registrado/i);
+    vi.mocked(timeClockApiService.photoPunch).mockResolvedValue({
+      employee: employeeMatch,
+      workShift: { id: "shift-1", startAt: isoHoursAgo(1), endAt: nowIso(), totalMinutes: 60, totalHours: 1 },
+      segments: [],
+    });
+    await confirmCapture(user, /Marcar salida/i);
+    await screen.findByText(/Salida registrada/i);
+
+    const [first, second] = vi.mocked(timeClockApiService.photoPunch).mock.calls.map(([input]) => input.requestId);
+    expect(first).toMatch(UUID_PATTERN);
+    expect(second).toMatch(UUID_PATTERN);
+    expect(second).not.toBe(first);
+  });
+
+  it("si la respuesta se pierde (red), verifica el MISMO requestId y aplica el resultado ya registrado, sin reenviar", async () => {
+    mockNoOpenShift();
+    vi.mocked(timeClockApiService.photoPunch).mockRejectedValue(new NetworkError());
+    vi.mocked(timeClockApiService.attemptStatus).mockResolvedValue({
+      requestId: "ignored",
+      status: "COMPLETED",
+      response: { employee: employeeMatch, workShift: { id: "shift-1", startAt: nowIso() } },
+      error: null,
+    });
+    const user = await selectEmployee();
+
+    await confirmCapture(user, /Marcar ingreso/i);
+
+    expect(await screen.findByText(/Ingreso registrado/i)).toBeInTheDocument();
+    const sentRequestId = vi.mocked(timeClockApiService.photoPunch).mock.calls[0]![0].requestId;
+    expect(timeClockApiService.attemptStatus).toHaveBeenCalledWith(sentRequestId, "employee-1");
+    expect(timeClockApiService.photoPunch).toHaveBeenCalledTimes(1);
+  });
+
+  it("409 de negocio confirmado por el intento: muestra el mensaje del backend y libera la pantalla", async () => {
+    mockNoOpenShift();
+    vi.mocked(timeClockApiService.photoPunch).mockRejectedValue(new ApiError("Ya existe un ingreso abierto para este empleado.", "CLOCK_ALREADY_OPEN", 409));
+    vi.mocked(timeClockApiService.attemptStatus).mockResolvedValue({
+      requestId: "ignored",
+      status: "FAILED",
+      response: null,
+      error: { code: "CLOCK_ALREADY_OPEN", message: "Ya existe un ingreso abierto para este empleado.", httpStatus: 409 },
+    });
+    const user = await selectEmployee();
+
+    await confirmCapture(user, /Marcar ingreso/i);
+
+    expect(await screen.findByText("Ya existe un ingreso abierto para este empleado.")).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByTestId("face-capture-modal")).not.toBeInTheDocument());
+    expect(screen.getByRole("button", { name: /Marcar ingreso/i })).toBeEnabled();
+  });
+
+  it("impide el doble envío: dos confirmaciones mientras la fichada está en curso mandan una sola", async () => {
+    mockNoOpenShift();
+    let resolvePunch: (value: Awaited<ReturnType<typeof timeClockApiService.photoPunch>>) => void = () => undefined;
+    vi.mocked(timeClockApiService.photoPunch).mockImplementation(() => new Promise((resolve) => { resolvePunch = resolve; }));
+    const user = await selectEmployee();
+
+    await confirmCapture(user, /Marcar ingreso/i);
+    await user.click(screen.getByRole("button", { name: /Confirmar captura/i }));
+    await user.click(screen.getByRole("button", { name: /Confirmar captura/i }));
+
+    expect(timeClockApiService.photoPunch).toHaveBeenCalledTimes(1);
+    resolvePunch({ employee: employeeMatch, workShift: { id: "shift-1", startAt: nowIso() } });
+    expect(await screen.findByText(/Ingreso registrado/i)).toBeInTheDocument();
   });
 });
