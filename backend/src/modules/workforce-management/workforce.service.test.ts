@@ -7,6 +7,8 @@ import { auditService } from "../audit/audit.service";
 import { workforceService } from "./workforce.service";
 import { reinterpretSpecialHours } from "./specialHourReinterpretation";
 import { roles } from "../../shared/security/roles";
+import { NOTIFICATION_ORDER_BY, parseNotificationCursor } from "./notificationListing";
+import type { ListNotificationsQuery } from "./workforce.schemas";
 
 /**
  * Trazabilidad de autoria (2026-08-18): cierra el hueco de auditoria en el
@@ -24,7 +26,7 @@ vi.mock("../../shared/prisma/client", () => ({
     shiftTemplate: { create: vi.fn(), findUnique: vi.fn(), update: vi.fn(), delete: vi.fn() },
     doubleHourRule: { create: vi.fn(), findUnique: vi.fn(), findMany: vi.fn(), update: vi.fn(), delete: vi.fn() },
     specialHourRuleApplication: { deleteMany: vi.fn() },
-    systemNotification: { findMany: vi.fn(), count: vi.fn() },
+    systemNotification: { findMany: vi.fn(), count: vi.fn(), findFirst: vi.fn() },
     shiftAlert: { findMany: vi.fn() },
     workShift: { findMany: vi.fn() },
     // Etapa 15G.2 (docs/decisions/ALERT_TO_NOVELTY_FLOW_15G2.md): enriquecimiento
@@ -65,7 +67,7 @@ const mockedPrisma = prisma as unknown as {
   shiftTemplate: { create: Mock; findUnique: Mock; update: Mock; delete: Mock };
   doubleHourRule: { create: Mock; findUnique: Mock; findMany: Mock; update: Mock; delete: Mock };
   specialHourRuleApplication: { deleteMany: Mock };
-  systemNotification: { findMany: Mock; count: Mock };
+  systemNotification: { findMany: Mock; count: Mock; findFirst: Mock };
   shiftAlert: { findMany: Mock };
   workShift: { findMany: Mock };
   attendanceInactivityIncident: { findMany: Mock };
@@ -766,122 +768,120 @@ describe("workforceService — FK reales sobre ShiftTemplate/DoubleHourRule", ()
   });
 });
 
-// Etapa 14G.6: `$transaction([...])` -> `Promise.all([...])`. Estos tests
-// mockean `systemNotification.findMany`/`count` directamente (antes,
-// `$transaction`) y agregan una aserción explícita de que `$transaction` ya
-// no se usa -- mismo criterio que shiftAlert.repository.test.ts (14G.5).
-describe("workforceService.notifications — Etapa 9I (paginación real, antes fetch-all take:200) + Etapa 14G.6 (sin $transaction)", () => {
-  beforeEach(() => {
-    mockedPrisma.systemNotification.findMany.mockResolvedValue([]);
-    mockedPrisma.systemNotification.count.mockResolvedValue(0);
-  });
+// Etapa 14G.6: `$transaction([...])` -> `Promise.all([...])` (listado + count
+// sobre el cliente global, sin $transaction).
+// Etapa "orden por fecha efectiva" (docs/decisions/NOTIFICATIONS_EVENT_ORDER.md):
+// orden (eventAt, createdAt, id) DESC, filtro Desde/Hasta y cursor estable se
+// resuelven en la DB. Para probar la SEMÁNTICA (no sólo la forma de la query),
+// `useNotificationTable` evalúa en memoria el mismo subconjunto de where/orderBy
+// de Prisma que usa el servicio sobre una tabla de filas fijas.
+type NotificationTableRow = { id: string; recipientUserId: string; status: "NO_LEIDA" | "LEIDA"; eventAt: Date; createdAt: Date; entityType: string | null; entityId: string | null };
 
-  it("no envuelve las 2 queries en $transaction — corren sobre el cliente prisma global (Promise.all real)", async () => {
-    await workforceService.notifications({ page: 1, take: 20 }, user);
+function compareValues(left: unknown, right: unknown) {
+  const a = left instanceof Date ? left.getTime() : (left as string | number);
+  const b = right instanceof Date ? right.getTime() : (right as string | number);
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+function matchesWhere(row: Record<string, unknown>, where: Record<string, unknown>): boolean {
+  return Object.entries(where).every(([key, condition]) => {
+    if (key === "AND") return (condition as Record<string, unknown>[]).every((item) => matchesWhere(row, item));
+    if (key === "OR") return (condition as Record<string, unknown>[]).some((item) => matchesWhere(row, item));
+    if (key === "NOT") return !matchesWhere(row, condition as Record<string, unknown>);
+    if (condition instanceof Date || typeof condition !== "object" || condition === null) return compareValues(row[key], condition) === 0;
+    return Object.entries(condition).every(([operator, operand]) => {
+      const order = compareValues(row[key], operand);
+      if (operator === "lt") return order < 0;
+      if (operator === "lte") return order <= 0;
+      if (operator === "gt") return order > 0;
+      if (operator === "gte") return order >= 0;
+      throw new Error(`Operador no soportado por la tabla en memoria: ${operator}`);
+    });
+  });
+}
+
+function useNotificationTable(rows: NotificationTableRow[]) {
+  const select = (where: Record<string, unknown>, orderBy: ReadonlyArray<Partial<Record<string, "asc" | "desc">>>) =>
+    rows.filter((row) => matchesWhere(row, where)).sort((left, right) => {
+      for (const clause of orderBy) {
+        const [field, direction] = Object.entries(clause)[0]!;
+        const order = compareValues(left[field as keyof NotificationTableRow], right[field as keyof NotificationTableRow]);
+        if (order) return direction === "desc" ? -order : order;
+      }
+      return 0;
+    });
+  mockedPrisma.systemNotification.findMany.mockImplementation(async ({ where, orderBy, skip = 0, take }) => select(where, orderBy).slice(skip, skip + take));
+  mockedPrisma.systemNotification.count.mockImplementation(async ({ where }) => select(where, []).length);
+  mockedPrisma.systemNotification.findFirst.mockImplementation(async ({ where }) => select(where, NOTIFICATION_ORDER_BY)[0] ?? null);
+}
+
+// UUID determinístico: el orden de los `n` coincide con el orden de los ids.
+function notificationId(n: number) {
+  return `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+}
+
+function notificationRow(n: number, overrides: Partial<NotificationTableRow> & { eventAt: Date; createdAt?: Date }): NotificationTableRow {
+  return { id: notificationId(n), recipientUserId: "user-1", status: "NO_LEIDA", entityType: null, entityId: null, createdAt: overrides.eventAt, ...overrides };
+}
+
+// 00:00 Argentina de un día — mismo valor que persiste un incidente (fecha calendario).
+const arDay = (dateKey: string) => new Date(`${dateKey}T00:00:00.000-03:00`);
+const arInstant = (dateKey: string, time: string) => new Date(`${dateKey}T${time}:00.000-03:00`);
+const ids = (result: { items: Array<{ id: string }> }) => result.items.map((item) => item.id);
+const query = (overrides: Partial<ListNotificationsQuery> = {}): ListNotificationsQuery => ({ page: 1, take: 20, ...overrides });
+
+describe("workforceService.notifications — Etapa 9I + 14G.6 (paginación server-side, sin $transaction)", () => {
+  beforeEach(() => useNotificationTable([]));
+
+  it("no envuelve las queries en $transaction — corren sobre el cliente prisma global", async () => {
+    await workforceService.notifications(query(), user);
 
     expect(mockedPrisma.$transaction).not.toHaveBeenCalled();
     expect(mockedPrisma.systemNotification.findMany).toHaveBeenCalledTimes(1);
     expect(mockedPrisma.systemNotification.count).toHaveBeenCalledTimes(1);
   });
 
-  it("filtra siempre por el usuario autenticado (recipientUserId)", async () => {
-    await workforceService.notifications({ page: 1, take: 20 }, user);
+  it("filtra siempre por el usuario autenticado — nunca mezcla notificaciones de otro usuario", async () => {
+    useNotificationTable([notificationRow(1, { eventAt: arDay("2026-10-05") }), notificationRow(2, { eventAt: arDay("2026-10-05"), recipientUserId: "user-2" })]);
 
-    expect(mockedPrisma.systemNotification.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { recipientUserId: "user-1" } }),
-    );
-    expect(mockedPrisma.systemNotification.count).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { recipientUserId: "user-1" } }),
-    );
+    expect(ids(await workforceService.notifications(query(), user))).toEqual([notificationId(1)]);
+    expect(ids(await workforceService.notifications(query(), supervisor))).toEqual([notificationId(2)]);
+    expect(mockedPrisma.systemNotification.count).toHaveBeenCalledWith({ where: { recipientUserId: "user-1" } });
   });
 
-  it("nunca mezcla notificaciones de otro usuario — supervisor y RH piden con su propio id", async () => {
-    await workforceService.notifications({ page: 1, take: 20 }, supervisor);
+  it("ordena en la DB por eventAt DESC, createdAt DESC, id DESC", async () => {
+    await workforceService.notifications(query(), user);
 
-    expect(mockedPrisma.systemNotification.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { recipientUserId: "user-2" } }),
-    );
+    expect(mockedPrisma.systemNotification.findMany).toHaveBeenCalledWith(expect.objectContaining({ orderBy: [{ eventAt: "desc" }, { createdAt: "desc" }, { id: "desc" }] }));
   });
 
-  it("ordena por fecha descendente", async () => {
-    await workforceService.notifications({ page: 1, take: 20 }, user);
+  it("page/take (compatibilidad, sin cursor) — page 3 con take 10 pide skip:20 take:10", async () => {
+    await workforceService.notifications(query({ page: 3, take: 10 }), user);
 
-    expect(mockedPrisma.systemNotification.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ orderBy: { createdAt: "desc" } }),
-    );
+    expect(mockedPrisma.systemNotification.findMany).toHaveBeenCalledWith(expect.objectContaining({ skip: 20, take: 10 }));
   });
 
-  it("respeta page/take — page 3 con take 10 pide skip:20 take:10", async () => {
-    await workforceService.notifications({ page: 3, take: 10 }, user);
+  it("sin resultados: items vacío y meta válida", async () => {
+    const result = await workforceService.notifications(query(), user);
 
-    expect(mockedPrisma.systemNotification.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ skip: 20, take: 10 }),
-    );
+    expect(result).toEqual({ items: [], meta: { total: 0, page: 1, pageSize: 20, hasMore: false, nextCursor: null } });
   });
 
-  it("sin filtro de status no agrega status al where (todas)", async () => {
-    await workforceService.notifications({ page: 1, take: 20 }, user);
+  it("enriquece con el empleado sólo las notificaciones de la página — la entidad de origen ya no aporta la fecha", async () => {
+    useNotificationTable([notificationRow(1, { eventAt: arDay("2026-10-05"), entityType: "ShiftAlert", entityId: "alert-1" })]);
+    mockedPrisma.shiftAlert.findMany.mockResolvedValue([{ id: "alert-1", actualAt: new Date("2026-10-07T12:00:00.000Z"), employee: { id: "emp-1", legajo: "100", firstName: "Ana", lastName: "Gomez" } }]);
 
-    expect(mockedPrisma.systemNotification.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { recipientUserId: "user-1" } }),
-    );
-  });
+    const result = await workforceService.notifications(query(), user);
 
-  it("filtro status=NO_LEIDA se traduce a where.status server-side", async () => {
-    await workforceService.notifications({ page: 1, take: 20, status: "NO_LEIDA" }, user);
-
-    expect(mockedPrisma.systemNotification.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { recipientUserId: "user-1", status: "NO_LEIDA" } }),
-    );
-    expect(mockedPrisma.systemNotification.count).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { recipientUserId: "user-1", status: "NO_LEIDA" } }),
-    );
-  });
-
-  it("devuelve meta correcta (total/page/pageSize/hasMore) cuando hay más páginas", async () => {
-    const rows = [{ id: "n-1", entityType: null, entityId: null }];
-    mockedPrisma.systemNotification.findMany.mockResolvedValue(rows);
-    mockedPrisma.systemNotification.count.mockResolvedValue(45);
-
-    const result = await workforceService.notifications({ page: 2, take: 20 }, user);
-
-    expect(result.meta).toEqual({ total: 45, page: 2, pageSize: 20, hasMore: true });
-  });
-
-  it("hasMore es false en la última página", async () => {
-    const rows = [{ id: "n-1", entityType: null, entityId: null }];
-    mockedPrisma.systemNotification.findMany.mockResolvedValue(rows);
-    mockedPrisma.systemNotification.count.mockResolvedValue(21);
-
-    const result = await workforceService.notifications({ page: 2, take: 20 }, user);
-
-    expect(result.meta).toEqual({ total: 21, page: 2, pageSize: 20, hasMore: false });
-  });
-
-  it("sin resultados: items vacío y meta válida (no rompe con 0 notificaciones)", async () => {
-    const result = await workforceService.notifications({ page: 1, take: 20 }, user);
-
-    expect(result).toEqual({ items: [], meta: { total: 0, page: 1, pageSize: 20, hasMore: false } });
-  });
-
-  it("enriquece con el legajo del empleado sólo para las notificaciones de la página actual (no re-consulta las 200 de antes)", async () => {
-    const rows = [{ id: "n-1", entityType: "ShiftAlert", entityId: "alert-1" }];
-    mockedPrisma.systemNotification.findMany.mockResolvedValue(rows);
-    mockedPrisma.systemNotification.count.mockResolvedValue(1);
-    mockedPrisma.shiftAlert.findMany.mockResolvedValue([{ id: "alert-1", employee: { id: "emp-1", legajo: "100", firstName: "Ana", lastName: "Gomez" } }]);
-
-    const result = await workforceService.notifications({ page: 1, take: 20 }, user);
-
-    expect(mockedPrisma.shiftAlert.findMany).toHaveBeenCalledWith({ where: { id: { in: ["alert-1"] } }, select: { id: true, actualAt: true, employee: { select: { id: true, legajo: true, firstName: true, lastName: true } } } });
-    expect(result.items[0]).toMatchObject({ id: "n-1", employee: { id: "emp-1", legajo: "100" } });
+    expect(mockedPrisma.shiftAlert.findMany).toHaveBeenCalledWith({ where: { id: { in: ["alert-1"] } }, select: { id: true, employee: { select: { id: true, legajo: true, firstName: true, lastName: true } } } });
+    expect(result.items[0]).toMatchObject({ id: notificationId(1), eventAt: arDay("2026-10-05"), employee: { id: "emp-1", legajo: "100" } });
+    expect(result.items[0]).not.toHaveProperty("eventDate");
   });
 
   it("no dispara ninguna query de enriquecimiento cuando ninguna notificación de la página tiene entityId", async () => {
-    const rows = [{ id: "n-1", entityType: null, entityId: null }];
-    mockedPrisma.systemNotification.findMany.mockResolvedValue(rows);
-    mockedPrisma.systemNotification.count.mockResolvedValue(1);
+    useNotificationTable([notificationRow(1, { eventAt: arDay("2026-10-05") })]);
 
-    await workforceService.notifications({ page: 1, take: 20 }, user);
+    await workforceService.notifications(query(), user);
 
     expect(mockedPrisma.shiftAlert.findMany).not.toHaveBeenCalled();
     expect(mockedPrisma.workShift.findMany).not.toHaveBeenCalled();
@@ -889,120 +889,242 @@ describe("workforceService.notifications — Etapa 9I (paginación real, antes f
     expect(mockedPrisma.attendanceInactivityIncident.findMany).not.toHaveBeenCalled();
   });
 
-  // Etapa 15G.2 (docs/decisions/ALERT_TO_NOVELTY_FLOW_15G2.md): "no asistió"
-  // (SIN_ACTIVIDAD_REGISTRADA) no llegaba con `employee` -- Notificaciones
-  // no podía ofrecer "Crear novedad" para ese caso. Mismo patrón exacto que
-  // el enriquecimiento de ShiftAlert de arriba, sólo agrega el 4to
-  // entityType.
-  it("enriquece notificaciones de AttendanceInactivityIncident ('no asistió') con employee mínimo — id/legajo/firstName/lastName, no el legajo completo", async () => {
-    const rows = [{ id: "n-2", entityType: "AttendanceInactivityIncident", entityId: "incident-1" }];
-    mockedPrisma.systemNotification.findMany.mockResolvedValue(rows);
-    mockedPrisma.systemNotification.count.mockResolvedValue(1);
-    mockedPrisma.attendanceInactivityIncident.findMany.mockResolvedValue([{ id: "incident-1", employee: { id: "emp-2", legajo: "200", firstName: "Beto", lastName: "Diaz" } }]);
-
-    const result = await workforceService.notifications({ page: 1, take: 20 }, user);
-
-    expect(mockedPrisma.attendanceInactivityIncident.findMany).toHaveBeenCalledWith({
-      where: { id: { in: ["incident-1"] } },
-      select: { id: true, operationalDate: true, employee: { select: { id: true, legajo: true, firstName: true, lastName: true } } },
-    });
-    expect(result.items[0]).toMatchObject({ id: "n-2", employee: { id: "emp-2", legajo: "200", firstName: "Beto", lastName: "Diaz" } });
-    // No se pide ningún otro campo del empleado (ni dni/cuil/dirección/etc.) —
-    // el select ya lo garantiza arriba, esto confirma que no se agregó un
-    // segundo fetch por separado para completarlo.
-    expect(mockedPrisma.employee.findMany).not.toHaveBeenCalled();
-  });
-
-  it("el enriquecimiento nuevo de AttendanceInactivityIncident no interfiere con el de ShiftAlert/WorkShift/Employee en la misma página", async () => {
-    const rows = [
-      { id: "n-1", entityType: "ShiftAlert", entityId: "alert-1" },
-      { id: "n-2", entityType: "AttendanceInactivityIncident", entityId: "incident-1" },
-      { id: "n-3", entityType: "WorkShift", entityId: "shift-1" },
-      { id: "n-4", entityType: "Employee", entityId: "emp-4" },
-    ];
-    mockedPrisma.systemNotification.findMany.mockResolvedValue(rows);
-    mockedPrisma.systemNotification.count.mockResolvedValue(4);
+  // Etapa 15G.2 (docs/decisions/ALERT_TO_NOVELTY_FLOW_15G2.md): los 4
+  // entityType con empleado conviven en la misma página.
+  it("enriquece ShiftAlert/AttendanceInactivityIncident/WorkShift/Employee en la misma página con employee mínimo", async () => {
+    useNotificationTable([
+      notificationRow(4, { eventAt: arDay("2026-10-05"), entityType: "ShiftAlert", entityId: "alert-1" }),
+      notificationRow(3, { eventAt: arDay("2026-10-05"), entityType: "AttendanceInactivityIncident", entityId: "incident-1" }),
+      notificationRow(2, { eventAt: arDay("2026-10-05"), entityType: "WorkShift", entityId: "shift-1" }),
+      notificationRow(1, { eventAt: arDay("2026-10-05"), entityType: "Employee", entityId: "emp-4" }),
+    ]);
     mockedPrisma.shiftAlert.findMany.mockResolvedValue([{ id: "alert-1", employee: { id: "emp-1", legajo: "100", firstName: "Ana", lastName: "Gomez" } }]);
     mockedPrisma.attendanceInactivityIncident.findMany.mockResolvedValue([{ id: "incident-1", employee: { id: "emp-2", legajo: "200", firstName: "Beto", lastName: "Diaz" } }]);
     mockedPrisma.workShift.findMany.mockResolvedValue([{ id: "shift-1", employee: { id: "emp-3", legajo: "300", firstName: "Cora", lastName: "Ruiz" } }]);
     mockedPrisma.employee.findMany.mockResolvedValue([{ id: "emp-4", legajo: "400", firstName: "Dino", lastName: "Paz" }]);
 
-    const result = await workforceService.notifications({ page: 1, take: 20 }, user);
+    const result = await workforceService.notifications(query(), user);
 
-    expect(result.items).toEqual([
-      expect.objectContaining({ id: "n-1", employee: { id: "emp-1", legajo: "100", firstName: "Ana", lastName: "Gomez" } }),
-      expect.objectContaining({ id: "n-2", employee: { id: "emp-2", legajo: "200", firstName: "Beto", lastName: "Diaz" } }),
-      expect.objectContaining({ id: "n-3", employee: { id: "emp-3", legajo: "300", firstName: "Cora", lastName: "Ruiz" } }),
-      expect.objectContaining({ id: "n-4", employee: { id: "emp-4", legajo: "400", firstName: "Dino", lastName: "Paz" } }),
+    expect(mockedPrisma.attendanceInactivityIncident.findMany).toHaveBeenCalledWith({ where: { id: { in: ["incident-1"] } }, select: { id: true, employee: { select: { id: true, legajo: true, firstName: true, lastName: true } } } });
+    expect(result.items.map((item) => (item as { employee?: { legajo: string } }).employee?.legajo)).toEqual(["100", "200", "300", "400"]);
+  });
+});
+
+describe("workforceService.notifications — orden por fecha efectiva (eventAt), no por creación de la fila", () => {
+  it("caso fundamental: A(05/10) creada primero y B(02/10)/C(04/10)/D(03/10) recuperadas después por catch-up → 05, 04, 03, 02", async () => {
+    useNotificationTable([
+      notificationRow(1, { eventAt: arDay("2026-10-05"), createdAt: arInstant("2026-10-05", "08:00") }), // A
+      notificationRow(2, { eventAt: arDay("2026-10-02"), createdAt: arInstant("2026-10-05", "10:00") }), // B
+      notificationRow(3, { eventAt: arDay("2026-10-04"), createdAt: arInstant("2026-10-05", "10:01") }), // C
+      notificationRow(4, { eventAt: arDay("2026-10-03"), createdAt: arInstant("2026-10-05", "10:02") }), // D
     ]);
+
+    expect(ids(await workforceService.notifications(query(), user))).toEqual([notificationId(1), notificationId(3), notificationId(4), notificationId(2)]);
   });
 
-  // Etapa 15M.19E: `SystemNotification.createdAt` sólo dice cuándo se
-  // insertó la fila — para una notificación recuperada por catch-up
-  // (15M.19A/B) días después del hecho real, eso mostraba "hoy" en vez del
-  // día real del evento. `eventDate` expone la fecha de negocio ya
-  // persistida en la entidad de origen, sin ningún campo/migración nueva.
-  describe("eventDate — fecha real del hecho, no de creación de la fila (Etapa 15M.19E)", () => {
-    it("para AttendanceInactivityIncident, eventDate es operationalDate — incluso si createdAt es muy posterior (recuperado por catch-up)", async () => {
-      const rows = [{ id: "n-1", entityType: "AttendanceInactivityIncident", entityId: "incident-1", createdAt: new Date("2026-09-21T10:00:00.000Z") }];
-      mockedPrisma.systemNotification.findMany.mockResolvedValue(rows);
-      mockedPrisma.systemNotification.count.mockResolvedValue(1);
-      mockedPrisma.attendanceInactivityIncident.findMany.mockResolvedValue([
-        { id: "incident-1", operationalDate: new Date("2026-09-19T00:00:00.000Z"), employee: { id: "emp-1", legajo: "100", firstName: "Ana", lastName: "Gomez" } },
-      ]);
+  it("catch-up (§17): evento 02/10 creado 05/10 10:00 queda DEBAJO del evento 05/10 creado 05/10 09:00", async () => {
+    useNotificationTable([
+      notificationRow(1, { eventAt: arDay("2026-10-02"), createdAt: arInstant("2026-10-05", "10:00") }),
+      notificationRow(2, { eventAt: arInstant("2026-10-05", "09:00"), createdAt: arInstant("2026-10-05", "09:00") }),
+    ]);
 
-      const result = await workforceService.notifications({ page: 1, take: 20 }, user);
+    expect(ids(await workforceService.notifications(query(), user))).toEqual([notificationId(2), notificationId(1)]);
+  });
 
-      expect(result.items[0]).toMatchObject({ eventDate: new Date("2026-09-19T00:00:00.000Z") });
+  it("sin hecho propio (eventAt = createdAt) se intercala por su instante de creación — nunca se pierde", async () => {
+    useNotificationTable([
+      notificationRow(1, { eventAt: arDay("2026-10-04") }),
+      notificationRow(2, { eventAt: arInstant("2026-10-04", "15:30") }), // cierre mensual, sin entidad
+      notificationRow(3, { eventAt: arDay("2026-10-05") }),
+    ]);
+
+    expect(ids(await workforceService.notifications(query(), user))).toEqual([notificationId(3), notificationId(2), notificationId(1)]);
+  });
+
+  it("mismo eventAt → createdAt DESC", async () => {
+    useNotificationTable([
+      notificationRow(1, { eventAt: arDay("2026-10-03"), createdAt: arInstant("2026-10-05", "10:00") }),
+      notificationRow(2, { eventAt: arDay("2026-10-03"), createdAt: arInstant("2026-10-05", "11:00") }),
+    ]);
+
+    expect(ids(await workforceService.notifications(query(), user))).toEqual([notificationId(2), notificationId(1)]);
+  });
+
+  it("mismo eventAt y createdAt → id DESC", async () => {
+    const same = { eventAt: arDay("2026-10-03"), createdAt: arInstant("2026-10-05", "10:00") };
+    useNotificationTable([notificationRow(1, same), notificationRow(3, same), notificationRow(2, same)]);
+
+    expect(ids(await workforceService.notifications(query(), user))).toEqual([notificationId(3), notificationId(2), notificationId(1)]);
+  });
+});
+
+describe("workforceService.notifications — filtros Desde/Hasta sobre la misma fecha visible (eventAt, días Argentina)", () => {
+  const catchUpWeek = [
+    notificationRow(1, { eventAt: arDay("2026-10-05"), createdAt: arInstant("2026-10-05", "08:00") }),
+    notificationRow(2, { eventAt: arDay("2026-10-02"), createdAt: arInstant("2026-10-05", "10:00") }),
+    notificationRow(3, { eventAt: arDay("2026-10-04"), createdAt: arInstant("2026-10-05", "10:01"), status: "LEIDA" }),
+    notificationRow(4, { eventAt: arDay("2026-10-03"), createdAt: arInstant("2026-10-05", "10:02") }),
+  ];
+
+  it("dateFrom=03/10 + dateTo=05/10 → 05, 04, 03 (no 02, aunque se creó el 05/10)", async () => {
+    useNotificationTable(catchUpWeek);
+
+    expect(ids(await workforceService.notifications(query({ dateFrom: "2026-10-03", dateTo: "2026-10-05" }), user))).toEqual([notificationId(1), notificationId(3), notificationId(4)]);
+  });
+
+  it("dateFrom solo: desde las 00:00 Argentina — 02/10 23:59 AR (03/10 02:59 UTC) queda afuera", async () => {
+    useNotificationTable([
+      notificationRow(1, { eventAt: arInstant("2026-10-02", "23:59") }),
+      notificationRow(2, { eventAt: arDay("2026-10-03") }),
+    ]);
+
+    expect(ids(await workforceService.notifications(query({ dateFrom: "2026-10-03" }), user))).toEqual([notificationId(2)]);
+  });
+
+  it("dateTo solo: hasta el final del día Argentina — 05/10 23:59 AR (06/10 02:59 UTC) entra, 06/10 00:00 AR no", async () => {
+    useNotificationTable([
+      notificationRow(1, { eventAt: arInstant("2026-10-05", "23:59") }),
+      notificationRow(2, { eventAt: arDay("2026-10-06") }),
+    ]);
+
+    expect(ids(await workforceService.notifications(query({ dateTo: "2026-10-05" }), user))).toEqual([notificationId(1)]);
+  });
+
+  it("status + rango se combinan: No leídas entre 01/10 y 05/10", async () => {
+    useNotificationTable(catchUpWeek);
+
+    const result = await workforceService.notifications(query({ status: "NO_LEIDA", dateFrom: "2026-10-01", dateTo: "2026-10-05" }), user);
+
+    expect(ids(result)).toEqual([notificationId(1), notificationId(4), notificationId(2)]);
+    expect(result.meta.total).toBe(3);
+  });
+
+  it("el filtro se aplica ANTES de paginar: total y count usan el mismo where que el listado", async () => {
+    useNotificationTable(catchUpWeek);
+
+    await workforceService.notifications(query({ dateFrom: "2026-10-03", dateTo: "2026-10-05" }), user);
+
+    expect(mockedPrisma.systemNotification.count).toHaveBeenCalledWith({
+      where: { recipientUserId: "user-1", eventAt: { gte: new Date("2026-10-03T03:00:00.000Z"), lt: new Date("2026-10-06T03:00:00.000Z") } },
     });
+  });
+});
 
-    it("para ShiftAlert, eventDate es actualAt", async () => {
-      const rows = [{ id: "n-1", entityType: "ShiftAlert", entityId: "alert-1" }];
-      mockedPrisma.systemNotification.findMany.mockResolvedValue(rows);
-      mockedPrisma.systemNotification.count.mockResolvedValue(1);
-      mockedPrisma.shiftAlert.findMany.mockResolvedValue([
-        { id: "alert-1", actualAt: new Date("2026-09-19T08:11:00.000Z"), employee: { id: "emp-1", legajo: "100", firstName: "Ana", lastName: "Gomez" } },
-      ]);
+describe("workforceService.notifications — cursor estable (eventAt, createdAt, id) y refresco de ventana", () => {
+  // 25 filas con EXACTAMENTE el mismo eventAt y createdAt: sólo el id desempata.
+  const sameInstant = { eventAt: arDay("2026-10-03"), createdAt: arInstant("2026-10-05", "10:00") };
+  const tied = Array.from({ length: 25 }, (_, index) => notificationRow(index + 1, sameInstant));
 
-      const result = await workforceService.notifications({ page: 1, take: 20 }, user);
+  async function walk(take: number, extra: Partial<ListNotificationsQuery> = {}) {
+    const seen: string[] = [];
+    let page = await workforceService.notifications(query({ take, ...extra }), user);
+    seen.push(...ids(page));
+    // Tope: un cursor que no avanza (ej. `lte` en vez de `lt`) repetiría la última fila para siempre.
+    for (let guard = 0; page.meta.hasMore; guard += 1) {
+      if (guard > 50) throw new Error("El cursor no avanza: la paginación no termina");
+      page = await workforceService.notifications(query({ take, after: parseNotificationCursor(page.meta.nextCursor!)!, ...extra }), user);
+      seen.push(...ids(page));
+    }
+    return seen;
+  }
 
-      expect(result.items[0]).toMatchObject({ eventDate: new Date("2026-09-19T08:11:00.000Z") });
-    });
+  it("recorre 25 filas empatadas en eventAt+createdAt de a 10: sin duplicados, sin pérdidas, en orden id DESC", async () => {
+    useNotificationTable(tied);
 
-    it("para WorkShift, eventDate es startAt (no closedAt/endAt — sería la fecha del cierre automático, no de la jornada)", async () => {
-      const rows = [{ id: "n-1", entityType: "WorkShift", entityId: "shift-1" }];
-      mockedPrisma.systemNotification.findMany.mockResolvedValue(rows);
-      mockedPrisma.systemNotification.count.mockResolvedValue(1);
-      mockedPrisma.workShift.findMany.mockResolvedValue([
-        { id: "shift-1", startAt: new Date("2026-09-19T08:00:00.000Z"), employee: { id: "emp-1", legajo: "100", firstName: "Ana", lastName: "Gomez" } },
-      ]);
+    const seen = await walk(10);
 
-      const result = await workforceService.notifications({ page: 1, take: 20 }, user);
+    expect(seen).toHaveLength(25);
+    expect(new Set(seen).size).toBe(25);
+    expect(seen).toEqual(tied.map((row) => row.id).reverse());
+  });
 
-      expect(result.items[0]).toMatchObject({ eventDate: new Date("2026-09-19T08:00:00.000Z") });
-      expect(mockedPrisma.workShift.findMany).toHaveBeenCalledWith(expect.objectContaining({ select: expect.objectContaining({ startAt: true }) }));
-    });
+  it("nextCursor codifica las tres claves de la última fila y la página siguiente arranca justo después", async () => {
+    useNotificationTable(tied);
 
-    it("para Employee (sin fecha de negocio natural), no agrega eventDate", async () => {
-      const rows = [{ id: "n-1", entityType: "Employee", entityId: "emp-4" }];
-      mockedPrisma.systemNotification.findMany.mockResolvedValue(rows);
-      mockedPrisma.systemNotification.count.mockResolvedValue(1);
-      mockedPrisma.employee.findMany.mockResolvedValue([{ id: "emp-4", legajo: "400", firstName: "Dino", lastName: "Paz" }]);
+    const first = await workforceService.notifications(query({ take: 10 }), user);
+    const second = await workforceService.notifications(query({ take: 10, after: parseNotificationCursor(first.meta.nextCursor!)! }), user);
 
-      const result = await workforceService.notifications({ page: 1, take: 20 }, user);
+    expect(first.meta).toMatchObject({ hasMore: true, nextCursor: `2026-10-03T03:00:00.000Z_2026-10-05T13:00:00.000Z_${notificationId(16)}` });
+    expect(second.meta.hasMore).toBe(true);
+    expect(ids(second)).toEqual(tied.slice(5, 15).map((row) => row.id).reverse());
+  });
 
-      expect(result.items[0]).not.toHaveProperty("eventDate");
-    });
+  it("una notificación atrasada que entra por encima del cursor entre páginas no duplica ni corre la página siguiente (con offset, la 2da página repetiría la fila 9)", async () => {
+    const rows = [
+      notificationRow(10, { eventAt: arDay("2026-10-05") }),
+      notificationRow(9, { eventAt: arDay("2026-10-04") }),
+      notificationRow(8, { eventAt: arDay("2026-10-03") }),
+      notificationRow(7, { eventAt: arDay("2026-10-01") }),
+    ];
+    useNotificationTable(rows);
+    const first = await workforceService.notifications(query({ take: 2 }), user);
+    rows.push(notificationRow(11, { eventAt: arDay("2026-10-04"), createdAt: arInstant("2026-10-05", "12:00") })); // queda entre 10 y 9
 
-    it("sin entityId, no agrega eventDate (mismo camino que ya devuelve la fila sin tocar)", async () => {
-      const rows = [{ id: "n-1", entityType: null, entityId: null }];
-      mockedPrisma.systemNotification.findMany.mockResolvedValue(rows);
-      mockedPrisma.systemNotification.count.mockResolvedValue(1);
+    const next = await workforceService.notifications(query({ take: 2, after: parseNotificationCursor(first.meta.nextCursor!)! }), user);
 
-      const result = await workforceService.notifications({ page: 1, take: 20 }, user);
+    expect(ids(first)).toEqual([notificationId(10), notificationId(9)]);
+    expect(ids(next)).toEqual([notificationId(8), notificationId(7)]);
+  });
 
-      expect(result.items[0]).not.toHaveProperty("eventDate");
-    });
+  it("refresco de ventana (through): devuelve la ventana visible con la atrasada nueva en su posición cronológica", async () => {
+    const rows = [
+      notificationRow(1, { eventAt: arDay("2026-10-05"), createdAt: arInstant("2026-10-05", "08:00") }),
+      notificationRow(3, { eventAt: arDay("2026-10-04"), createdAt: arInstant("2026-10-05", "10:01") }),
+      notificationRow(4, { eventAt: arDay("2026-10-03"), createdAt: arInstant("2026-10-05", "10:02") }),
+      notificationRow(5, { eventAt: arDay("2026-10-01") }),
+    ];
+    useNotificationTable(rows);
+    const visible = await workforceService.notifications(query({ take: 3 }), user);
+    rows.push(notificationRow(2, { eventAt: arDay("2026-10-04"), createdAt: arInstant("2026-10-05", "10:00") })); // B tardía, mismo día que C
+
+    const refreshed = await workforceService.notifications(query({ take: 100, through: parseNotificationCursor(visible.meta.nextCursor!)! }), user);
+
+    expect(ids(refreshed)).toEqual([notificationId(1), notificationId(3), notificationId(2), notificationId(4)]);
+    expect(refreshed.meta).toMatchObject({ hasMore: true, nextCursor: visible.meta.nextCursor });
+    const after = await workforceService.notifications(query({ take: 3, after: parseNotificationCursor(refreshed.meta.nextCursor!)! }), user);
+    expect(ids(after)).toEqual([notificationId(5)]);
+  });
+
+  it("refresco de ventana acotado por take: si entraron más filas que el máximo, corta ahí y 'Cargar más' sigue desde la última", async () => {
+    const rows = Array.from({ length: 5 }, (_, index) => notificationRow(index + 1, { eventAt: arDay(`2026-10-0${index + 1}`) }));
+    useNotificationTable(rows);
+    const visible = await workforceService.notifications(query({ take: 2 }), user); // 05, 04
+    rows.push(...Array.from({ length: 3 }, (_, index) => notificationRow(10 + index, { eventAt: arDay("2026-10-06") })));
+
+    const refreshed = await workforceService.notifications(query({ take: 3, through: parseNotificationCursor(visible.meta.nextCursor!)! }), user);
+
+    expect(ids(refreshed)).toEqual([notificationId(12), notificationId(11), notificationId(10)]);
+    expect(refreshed.meta.hasMore).toBe(true);
+    const next = await workforceService.notifications(query({ take: 10, after: parseNotificationCursor(refreshed.meta.nextCursor!)! }), user);
+    expect(ids(next)).toEqual([notificationId(5), notificationId(4), notificationId(3), notificationId(2), notificationId(1)]);
+  });
+
+  it("refresco bajo No leídas: las que se leyeron en otro lado salen; si la ventana queda vacía, el cursor sigue siendo el borde y hasMore ve lo de abajo", async () => {
+    const rows = [
+      notificationRow(3, { eventAt: arDay("2026-10-05") }),
+      notificationRow(2, { eventAt: arDay("2026-10-04") }),
+      notificationRow(1, { eventAt: arDay("2026-10-03") }),
+    ];
+    useNotificationTable(rows);
+    const visible = await workforceService.notifications(query({ take: 2, status: "NO_LEIDA" }), user);
+    rows[0]!.status = "LEIDA";
+    rows[1]!.status = "LEIDA";
+
+    const refreshed = await workforceService.notifications(query({ take: 100, status: "NO_LEIDA", through: parseNotificationCursor(visible.meta.nextCursor!)! }), user);
+
+    expect(ids(refreshed)).toEqual([]);
+    expect(refreshed.meta).toMatchObject({ total: 1, hasMore: true, nextCursor: visible.meta.nextCursor });
+  });
+
+  it("cursor + filtros: 'Cargar más' conserva status y rango", async () => {
+    useNotificationTable([
+      notificationRow(4, { eventAt: arDay("2026-10-05") }),
+      notificationRow(3, { eventAt: arDay("2026-10-04"), status: "LEIDA" }),
+      notificationRow(2, { eventAt: arDay("2026-10-03") }),
+      notificationRow(1, { eventAt: arDay("2026-10-01") }),
+    ]);
+
+    expect(await walk(1, { status: "NO_LEIDA", dateFrom: "2026-10-02" })).toEqual([notificationId(4), notificationId(2)]);
   });
 });
 

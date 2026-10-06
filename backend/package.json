@@ -24,7 +24,8 @@
     "staging:time-entry-observations:apply": "tsx scripts/repair-time-entry-observations.ts --apply",
     "staging:special-hours:reconcile": "tsx scripts/reconcile-special-hours.ts",
     "staging:special-hours:reconcile:apply": "tsx scripts/reconcile-special-hours.ts --apply",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "staging:notifications:event-at": "tsx scripts/diagnose-notification-event-at.ts",
+    "typecheck":"tsc -p tsconfig.json --noEmit",
     "test": "vitest run"
   },
   "dependencies": {

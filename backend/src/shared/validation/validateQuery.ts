@@ -1,8 +1,10 @@
 import type { RequestHandler } from "express";
-import type { ZodSchema } from "zod";
+import type { ZodType, ZodTypeDef } from "zod";
 import { AppError } from "../errors/AppError";
 
-export function validateQuery<T>(schema: ZodSchema<T>): RequestHandler {
+// Input `unknown`: el query string crudo puede diferir del tipo validado
+// (defaults, coerce, transform — ej. un cursor que se parsea a objeto).
+export function validateQuery<T>(schema: ZodType<T, ZodTypeDef, unknown>): RequestHandler {
   return (req, _res, next) => {
     const result = schema.safeParse(req.query);
     if (!result.success) {

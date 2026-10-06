@@ -754,7 +754,9 @@ function faceStatusObservation(status: ClockPhotoPunchInput["faceValidationStatu
   return labels[status];
 }
 
-export async function notifyMissingExit(employeeId: string, workShiftId: string) {
+// `startAt`: eventAt de la notificación — la jornada que quedó sin salida, no
+// el momento en que se detectó/cerró (docs/decisions/NOTIFICATIONS_EVENT_ORDER.md).
+export async function notifyMissingExit(employeeId: string, workShiftId: string, startAt: Date) {
   // Etapa 10E: best-effort — 3 de los 4 llamadores (clockInResolved/clockIn
   // por foto y por app) corren dentro de la request en vivo del fichador; un
   // fallo acá (ej. problema transitorio de DB) no debe tirar abajo una
@@ -768,6 +770,7 @@ export async function notifyMissingExit(employeeId: string, workShiftId: string)
       message: "La jornada venció sin salida registrada y requiere revisión.",
       entityType: "WorkShift",
       entityId: workShiftId,
+      eventAt: startAt,
       link: "/asistencia",
       priority: "ALTA",
     });
@@ -1432,7 +1435,7 @@ export const timeEntriesService = {
             }
             throw error;
           }
-          await notifyMissingExit(employee.id, openShift.id);
+          await notifyMissingExit(employee.id, openShift.id, openShift.startAt);
           scheduleClockAudit({
             ...audit,
             action: "CREATE",
@@ -1632,7 +1635,7 @@ export const timeEntriesService = {
           }
           throw error;
         }
-        await notifyMissingExit(employee.id, openShift.id);
+        await notifyMissingExit(employee.id, openShift.id, openShift.startAt);
         await evaluateShiftEntry(employee.id, workShift.id, now);
         return {
           employee: publicEmployeeLabel(employee),

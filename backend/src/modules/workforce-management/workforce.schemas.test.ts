@@ -37,6 +37,45 @@ describe("listNotificationsQuerySchema — Etapa 9I", () => {
   });
 });
 
+describe("listNotificationsQuerySchema — fecha efectiva: Desde/Hasta y cursor", () => {
+  const cursor = "2026-10-02T03:00:00.000Z_2026-10-05T13:00:00.000Z_0b6a1f7e-3c2d-4e5f-8a9b-0c1d2e3f4a5b";
+  const messages = (input: Record<string, unknown>) => {
+    const result = listNotificationsQuerySchema.safeParse(input);
+    return result.success ? [] : result.error.issues.map((issue) => issue.message);
+  };
+
+  it("acepta dateFrom/dateTo AAAA-MM-DD combinados con status", () => {
+    const result = listNotificationsQuerySchema.safeParse({ status: "NO_LEIDA", dateFrom: "2026-10-01", dateTo: "2026-10-05" });
+    expect(result.success && result.data).toEqual({ status: "NO_LEIDA", dateFrom: "2026-10-01", dateTo: "2026-10-05", page: 1, take: 20 });
+  });
+
+  it("dateFrom = dateTo es un rango válido (un solo día)", () => {
+    expect(listNotificationsQuerySchema.safeParse({ dateFrom: "2026-10-05", dateTo: "2026-10-05" }).success).toBe(true);
+  });
+
+  it("dateFrom > dateTo: error de negocio claro", () => {
+    expect(messages({ dateFrom: "2026-10-05", dateTo: "2026-10-03" })).toEqual(["La fecha «Desde» no puede ser posterior a «Hasta»."]);
+  });
+
+  it.each([["05/10/2026", "debe tener el formato AAAA-MM-DD"], ["2026-02-30", "no es una fecha válida"]])("rechaza dateFrom=%s", (value, message) => {
+    expect(messages({ dateFrom: value })[0]).toContain(message);
+  });
+
+  it("parsea `after`/`through` a la tupla (eventAt, createdAt, id)", () => {
+    const result = listNotificationsQuerySchema.safeParse({ after: cursor });
+    expect(result.success && result.data.after).toEqual({ eventAt: new Date("2026-10-02T03:00:00.000Z"), createdAt: new Date("2026-10-05T13:00:00.000Z"), id: "0b6a1f7e-3c2d-4e5f-8a9b-0c1d2e3f4a5b" });
+  });
+
+  it("rechaza un cursor mal formado (ej. un offset)", () => {
+    expect(messages({ after: "40" })).toEqual(["La posición de la lista no es válida. Recargá la página."]);
+  });
+
+  it("after y through son excluyentes; page>1 no se combina con cursor", () => {
+    expect(listNotificationsQuerySchema.safeParse({ after: cursor, through: cursor }).success).toBe(false);
+    expect(listNotificationsQuerySchema.safeParse({ after: cursor, page: "2" }).success).toBe(false);
+  });
+});
+
 describe("doubleRuleSchema — Etapa 8B", () => {
   const base = { name: "Domingo", recurrenceType: "SEMANAL" as const, fromDate: "2026-01-01", reason: "Domingo" };
 

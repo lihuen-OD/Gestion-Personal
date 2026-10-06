@@ -4,6 +4,7 @@ import { argentinaCalendarDate, argentinaDateParts, argentinaDayRange, formatArg
 import { noveltyCoversDay } from "../novelties/novelties.dateRange";
 import { resolveWorkObligationCandidates, type WorkObligationCandidate } from "../shifts/workObligation.service";
 import { closestOccurrence } from "../shifts/workShiftEvaluation.service";
+import { calendarDayEventAt } from "../workforce-management/notificationListing";
 
 export function previousOperationalDateKey(value = new Date()) {
   const { year, month, day } = argentinaDateParts(value);
@@ -224,6 +225,7 @@ export async function persistAndNotifyInactivityIncidents(
             message: buildMessage(incident.employee),
             entityType: "AttendanceInactivityIncident",
             entityId: incident.id,
+            eventAt: calendarDayEventAt(dateKey),
             link: `/asistencia?observationDate=${dateKey}`,
           })),
         });

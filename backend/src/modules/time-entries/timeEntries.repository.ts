@@ -1460,7 +1460,7 @@ export const timeEntriesRepository = {
 
     const observation = "0 h — Falta registrar la salida. La jornada venció y requiere revisión del encargado.";
     let count = 0;
-    const items: Array<{ employeeId: string; workShiftId: string }> = [];
+    const items: Array<{ employeeId: string; workShiftId: string; startAt: Date }> = [];
 
     await prisma.$transaction(async (tx) => {
       for (const [index, shift] of expired.entries()) {
@@ -1488,7 +1488,7 @@ export const timeEntriesRepository = {
           },
         });
         count += 1;
-        items.push({ employeeId: shift.employeeId, workShiftId: shift.id });
+        items.push({ employeeId: shift.employeeId, workShiftId: shift.id, startAt: shift.startAt });
       }
     });
 
