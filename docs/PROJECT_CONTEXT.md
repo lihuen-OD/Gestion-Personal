@@ -779,6 +779,7 @@ A few structural decisions worth knowing before you read the schema:
 * Position's location works the same way — `sectorId` is the official source, see `docs/DATABASE_STANDARDS.md`.
 * Position's salary category is a many-to-many via `PositionSalaryCategory`, not a single field.
 * Authorship fields (`createdByUserId`, `approvedByUserId`, `uploadedByUserId`, etc.) are real optional FKs to `User` with `onDelete: SetNull` — see `docs/DATABASE_STANDARDS.md`.
+* **Fichador F4:** `ClockDevice` deja modelada la identidad persistente individual con estados `PENDING`/`ACTIVE`/`REVOKED`, hashes de token/pairing, sector opcional y trazabilidad de activación/revocación. `AttendancePunch.deviceId` y `ClockPunchAttempt.deviceId` son FKs nullable con `onDelete: Restrict`; la historia previa queda en `NULL` y `kioskId` continúa como legado. **Modelo persistente listo; autenticación por dispositivo todavía no activa.** La migración está preparada pero no aplicada.
 
 ## Security rules specific to this project
 
@@ -796,7 +797,7 @@ Current state (backend already enforces this — see `docs/SECURITY_STANDARDS.md
 
 * Supervisión conserva PII completa por decisión actual; cualquier recorte requiere validar sus pantallas de gestión.
 * La evidencia fotográfica de asistencia sigue disponible para Nivel 3 y requiere una decisión específica de producto/seguridad.
-* El fichador mantiene una mitigación temporal mediante token de dispositivo; no constituye seguridad final de producción.
+* El fichador mantiene una mitigación temporal mediante token compartido; `ClockDevice` ya está modelado desde F4, pero la autenticación individual se implementa en etapas posteriores y todavía no está activa.
 * El organigrama advierte cuando alcanza el límite de 1000 empleados, pero todavía no implementa paginación completa.
 * La regla de conceptos horarios aditivos ya está definida, pero su implementación continúa pendiente y puede no coincidir con backend, frontend o esquema actuales.
 * El tratamiento de solapamientos de novedades **entre tipos distintos** (p. ej. Ausencia + Llegada tarde, Vacaciones + Licencia médica) continúa pendiente de definición de negocio — la Etapa 15G.3 sólo resolvió el caso "mismo tipo" (ver bullet debajo).

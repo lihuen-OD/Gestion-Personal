@@ -123,3 +123,35 @@ Audit should capture:
 - new value
 - when it changed
 - reason if applicable
+
+## ClockDevice: identidad persistente del fichador (F4, 2026-10-06)
+
+`ClockDevice` representa la identidad individual y revocable de cada equipo de
+fichada. F4 deja listo el modelo persistente; la autenticación por dispositivo
+todavía no está activa y el token compartido legacy continúa temporalmente.
+
+- Estados exactos: `PENDING`, `ACTIVE`, `REVOKED`. `REVOKED` es terminal; un
+  nuevo enrolamiento crea otro registro.
+- Los secretos futuros son 256 bits aleatorios. Nunca se persisten en claro:
+  `tokenHash` guarda SHA-256 y es único. La comparación futura usa
+  `crypto.timingSafeEqual` sobre hashes. No se usa bcrypt/argon2 porque el
+  secreto tiene alta entropía y no es una contraseña humana.
+- El código de pairing tampoco se persiste en claro: sólo
+  `pairingCodeHash` (SHA-256, unique) y su vencimiento. Ningún DTO público
+  devuelve el hash.
+- `sectorId` es metadata opcional, no un límite de autorización. Usa
+  `onDelete: SetNull`: eliminar un sector conserva el dispositivo y su
+  historia, pero lo deja sin ubicación.
+- `activatedByUserId` y `revokedByUserId` son autoría opcional con
+  `onDelete: SetNull`.
+- `AttendancePunch.deviceId` y `ClockPunchAttempt.deviceId` son FKs nullable
+  con `onDelete: Restrict`. La historia anterior a F4 permanece en `NULL` y no
+  se inventan dispositivos históricos.
+- `AttendancePunch.kioskId` permanece temporalmente como columna legacy. F4 no
+  la elimina ni la completa.
+- F4 no cambia `AttendancePunch.source`; `WorkShiftSource.KIOSK` empezará a
+  usarse cuando se implemente el flujo autenticado posterior.
+
+La migración de F4 aborta antes de crear estructura si detecta cualquier
+`AttendancePunch.deviceId` o `AttendancePunch.kioskId` histórico no nulo. Es
+aditiva: no contiene inserts, backfills ni actualizaciones de `source`.

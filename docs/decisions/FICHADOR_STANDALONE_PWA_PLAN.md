@@ -1,6 +1,6 @@
 # Fichador como app independiente (PWA) — Etapa 1: diagnóstico y plan
 
-> Estado: plan aprobado. **F0 cerrada para el entorno de desarrollo actual** (2026-10-06, ver [§18](#18-f0--implementación-y-resultado)); la medición de `TRUST_PROXY_HOPS` es requisito previo del primer deploy real del backend. F1 cerrada (2026-10-06, [§19](#19-f1--fichador-standalone-implementación)). **F2 cerrada a nivel de repositorio: READY FOR DEPLOY — validación real de infraestructura diferida** (2026-10-06, [§20](#20-f2--despliegue-independiente), decisión en §20.12); no bloquea el desarrollo local. **F3 implementada en local** (2026-10-06, [§21](#21-f3--pwa-local)), pendiente de aprobación.
+> Estado: plan aprobado. **F0 cerrada para el entorno de desarrollo actual** (2026-10-06, ver [§18](#18-f0--implementación-y-resultado)); la medición de `TRUST_PROXY_HOPS` es requisito previo del primer deploy real del backend. F1 cerrada (2026-10-06, [§19](#19-f1--fichador-standalone-implementación)). **F2 cerrada a nivel de repositorio: READY FOR DEPLOY — validación real de infraestructura diferida** (2026-10-06, [§20](#20-f2--despliegue-independiente), decisión en §20.12); no bloquea el desarrollo local. **F3 implementada en local** (2026-10-06, [§21](#21-f3--pwa-local)). **F4 implementada a nivel de código y documentación, con la migración deliberadamente sin aplicar** (2026-10-06, [§22](#22-f4--modelo-persistente-clockdevice)).
 > Los §1–§17 son el diagnóstico read-only original sobre `main @ 697968a` y describen el estado **previo** a F0 (por ejemplo, las rutas sin foto de §2 ya no existen).
 
 ---
@@ -195,11 +195,11 @@ enum ClockDeviceStatus {
 model ClockDevice {
   id                String            @id @default(uuid())
   name              String?           // lo pone RRHH al aprobar; null mientras PENDING
-  establishmentId   String?           // ubicación física (ver nota)
   status            ClockDeviceStatus @default(PENDING)
   tokenHash         String            @unique   // SHA-256 hex del deviceSecret
-  pairingCode       String?           @unique   // "J7K4P9QR"; null después de aprobar
+  pairingCodeHash   String?           @unique   // SHA-256 hex; nunca el código en claro
   pairingExpiresAt  DateTime?         @db.Timestamptz(3)
+  sectorId          String?           // metadata opcional; no autoriza fichadas
   activatedAt       DateTime?         @db.Timestamptz(3)
   activatedByUserId String?
   revokedAt         DateTime?         @db.Timestamptz(3)
@@ -211,14 +211,14 @@ model ClockDevice {
   createdAt         DateTime          @default(now()) @db.Timestamptz(3)
   updatedAt         DateTime          @updatedAt @db.Timestamptz(3)
 
-  establishment Establishment?      @relation(fields: [establishmentId], references: [id], onDelete: SetNull)
+  sector        Sector?             @relation(fields: [sectorId], references: [id], onDelete: SetNull)
   activatedBy   User?               @relation("ClockDeviceActivatedBy", fields: [activatedByUserId], references: [id], onDelete: SetNull)
   revokedBy     User?               @relation("ClockDeviceRevokedBy", fields: [revokedByUserId], references: [id], onDelete: SetNull)
   punches       AttendancePunch[]
   attempts      ClockPunchAttempt[]
 
-  @@index([status])
-  @@index([establishmentId])
+  @@index([status, lastSeenAt])
+  @@index([sectorId])
 }
 ```
 
@@ -237,7 +237,7 @@ Campos evaluados y **descartados**:
 | `registeredAt` | Es `createdAt` |
 | `lastTokenRotationAt` | No hay rotación automática en v1. Si un secreto se compromete: revocar y re-enrolar (1 minuto de RRHH). La rotación en caliente requiere handover en dos fases para no dejar kioscos bloqueados; no se justifica todavía |
 | `revokeReason` | Va en la descripción del `AuditLog` de la revocación |
-| `sectorId` | Un kiosco está en un lugar físico (= `Establishment` en la cadena Company → BU → Establishment → Area → Sector), no en un sector funcional. `establishmentId` es opcional y en v1 **no** se usa para autorización (solo panel y trazabilidad). Si RRHH no lo va a cargar, se puede omitir también |
+| `establishmentId` | F4 adoptó `sectorId` nullable como ubicación opcional pedida por producto. No se usa para autorización. Si el sector se elimina, `ON DELETE SET NULL` conserva el dispositivo y su historia sin ubicación |
 | estado `EXPIRED` | Un PENDING vencido no tiene historial: se **borra físicamente** en el job de mantenimiento; el kiosco vuelve a registrarse |
 
 Campo incluido que no estaba en la propuesta original: `lastAppVersion` — en PWA de iOS un service worker viejo puede quedar sirviendo una versión desactualizada durante días; el panel necesita verlo.
@@ -253,8 +253,8 @@ iPad (PWA instalada)                Backend                         RRHH (gestio
 ────────────────────                ───────                         ────────────────
 1. abre fichador.*; IndexedDB vacío
 2. POST /api/clock/device/register ─► crea ClockDevice PENDING
-                                     genera deviceId, deviceSecret,
-                                     pairingCode, expira en 10 min
+                                     genera deviceId, deviceSecret y pairingCode;
+                                     persiste sólo sus hashes; expira en 10 min
    ◄─ {deviceId, deviceSecret, pairingCode, pairingExpiresAt}
 3. guarda {deviceId, deviceSecret} en IndexedDB
 4. muestra "Dispositivo no registrado / Código J7K4-P9QR / vence en 9:59"
@@ -264,8 +264,9 @@ iPad (PWA instalada)                Backend                         RRHH (gestio
                                                                        ingresa J7K4-P9QR + nombre
                                                                        (+ establecimiento)
                                      7. UPDATE ... WHERE status=PENDING ◄─ POST /api/clock-devices/approve
-                                        AND pairingCode=? AND pairingExpiresAt>now()
-                                        → ACTIVE, pairingCode=NULL, activatedAt/By
+                                        AND pairingCodeHash=sha256(?)
+                                        AND pairingExpiresAt>now()
+                                        → ACTIVE, pairingCodeHash=NULL, activatedAt/By
                                         + AuditLog
 8. status → ACTIVE ◄──────────────────
 9. entra a la pantalla de fichada; en adelante arranca directo
@@ -276,7 +277,7 @@ Decisiones:
 - **Quién genera el secreto:** el backend (`crypto.randomBytes(32)`, base64url, 43 caracteres) y lo devuelve **una sola vez** en la respuesta de `register`. El secreto ya existe en el dispositivo desde el paso 3, pero es **inerte** hasta la aprobación. Así "entregar la credencial definitiva" no requiere un segundo canal ni un endpoint de "retiro de token" (que sería otra ventana de ataque): aprobar = cambiar `status`.
 - **Código:** 8 caracteres de alfabeto Crockford base32 sin ambiguos (`0123456789ABCDEFGHJKMNPQRSTVWXYZ`), generado con `crypto.randomInt`, mostrado como `XXXX-XXXX`, normalizado al ingresar (mayúsculas, sin guion, `O→0`, `I/L→1`). Espacio 32⁸ ≈ 10¹²; colisión entre PENDING imposible en la práctica y además bloqueada por el `@unique`.
 - **Duración:** 10 minutos. Si vence, el kiosco muestra "Código vencido — generar nuevo" y vuelve a `register` (registro nuevo; el viejo lo borra el job).
-- **Evitar reutilización:** el `UPDATE` condicional es atómico (`count === 1` o error) y pone `pairingCode = NULL`. Un código aprobado o vencido no matchea nunca más.
+- **Evitar reutilización:** el `UPDATE` condicional es atómico (`count === 1` o error) y pone `pairingCodeHash = NULL`. Un código aprobado o vencido no matchea nunca más. El código en claro sólo se devuelve al registrarlo; nunca se persiste ni se expone como `pairingCodeHash` en un DTO público.
 - **Spam de registros:** `register` es público → rate limit propio por IP (por ejemplo 5 / 10 min) + tope global de PENDING simultáneos (por ejemplo 20; si se excede, `429`) + borrado de PENDING vencidos en el scheduler existente.
 - **Ingeniería social** ("aprobame el código X" desde un teléfono ajeno): RRHH solo aprueba códigos que ve físicamente en el dispositivo. El panel muestra IP, user agent y antigüedad del PENDING para contrastar. Documentarlo en el instructivo del panel.
 - **iOS — punto crítico:** una web app agregada a la pantalla de inicio tiene **almacenamiento separado de Safari**. Si se enrola en Safari y después se instala, la app instalada arranca sin credencial. La app debe detectar si corre standalone (`matchMedia("(display-mode: standalone)")` / `navigator.standalone`) y, si no, mostrar "Instalá la app desde Compartir → Agregar a inicio" **antes** de permitir el enrolamiento (con override de desarrollo).
@@ -339,8 +340,8 @@ Notas:
 | Método y ruta | Uso |
 |---|---|
 | `GET /api/clock-devices` | Listado con conectividad derivada (§13) |
-| `POST /api/clock-devices/approve` `{pairingCode, name, establishmentId?}` | Aprobación |
-| `PATCH /api/clock-devices/:id` `{name?, establishmentId?}` | Renombrar o reubicar |
+| `POST /api/clock-devices/approve` `{pairingCode, name, sectorId?}` | Aprobación |
+| `PATCH /api/clock-devices/:id` `{name?, sectorId?}` | Renombrar o reubicar |
 | `POST /api/clock-devices/:id/revoke` | Revocación |
 | `DELETE /api/clock-devices/:id` | Solo para `PENDING` (409 en cualquier otro estado) |
 
@@ -361,7 +362,7 @@ requireClockDevice({ allowPending?: boolean }): RequestHandler
 3. `timingSafeEqual(sha256(secret), tokenHash)`; distinto → `401 CLOCK_DEVICE_UNAUTHORIZED`.
 4. `REVOKED` → `403 CLOCK_DEVICE_REVOKED`.
 5. `PENDING` y `!allowPending` → `403 CLOCK_DEVICE_PENDING`.
-6. `req.clockDevice = { id, name, establishmentId, status }` (augmentación de tipos de Express; **nunca** setea `req.user`).
+6. `req.clockDevice = { id, name, sectorId, status }` (augmentación de tipos de Express; **nunca** setea `req.user`).
 7. Toque de presencia con throttle: si `lastSeenAt` tiene más de 60 s, `UPDATE lastSeenAt, lastIp, lastUserAgent` sin bloquear la respuesta (con `catch` logueado).
 
 Reglas asociadas:
@@ -1149,3 +1150,59 @@ Trabajada y validada **completamente en local** (decisión §20.12). Sin `ClockD
 - **Íconos definitivos** cuando haya logo oficial.
 - **Fuera de F3:** detección de standalone e instrucciones de instalación (F7); Wake Lock y Acceso guiado (F11).
 - `/fichador` del admin sigue con CDNs hasta el cutover (F12).
+
+---
+
+## 22. F4 — Modelo persistente `ClockDevice`
+
+Implementada a nivel de código, tests y documentación el 2026-10-06. La
+migración queda deliberadamente sin aplicar hasta una aprobación separada.
+**Modelo persistente listo; autenticación por dispositivo todavía no activa.**
+
+### 22.1 Modelo y relaciones
+
+- `ClockDeviceStatus` tiene exactamente `PENDING`, `ACTIVE` y `REVOKED`.
+- `ClockDevice` conserva `tokenHash` único, `pairingCodeHash` único y nullable,
+  `pairingExpiresAt`, timestamps/usuarios de activación y revocación, última
+  conexión, IP, user-agent y versión de app.
+- `sectorId` es nullable y usa `ON DELETE SET NULL`: es metadata de ubicación,
+  no autorización, y no bloquea la eliminación del sector.
+- `AttendancePunch.deviceId` pasa a ser FK nullable con `ON DELETE RESTRICT` e
+  índice por dispositivo/fecha. Las fichadas históricas permanecen en `NULL`.
+- `ClockPunchAttempt.deviceId` se agrega nullable con `ON DELETE RESTRICT` e
+  índice por dispositivo/inicio. Los intentos históricos permanecen en
+  `NULL`; la asociación empezará a escribirse en F8.
+- `AttendancePunch.kioskId` se conserva como legado. No se borra ni completa.
+- `AttendancePunch.source` no cambia; ninguna fila histórica se convierte a
+  `KIOSK`.
+
+### 22.2 Migración preparada, no aplicada
+
+La migración `20261006150000_add_clock_device` es aditiva. Antes de crear el
+enum, tabla, columna, índices o FKs, cuenta valores históricos no nulos en
+`AttendancePunch.deviceId` y `AttendancePunch.kioskId`; si cualquiera existe,
+aborta. No contiene `INSERT`, backfill, actualización de `source` ni borrado de
+`kioskId`, y nunca inventa dispositivos para datos anteriores.
+
+El diagnóstico read-only previo sobre la base configurada encontró 79
+`AttendancePunch`, con 0 `deviceId` y 0 `kioskId` no nulos, y 24
+`ClockPunchAttempt`. Esto habilita técnicamente la migración, pero no implica
+que haya sido aplicada.
+
+### 22.3 Decisión criptográfica
+
+El enrolamiento de F5 generará secretos de dispositivo de 256 bits con un CSPRNG.
+Sólo se persistirá `SHA-256(secret)` en `tokenHash`; la comparación futura se
+hará con `crypto.timingSafeEqual`. bcrypt/argon2 no aportan protección útil en
+este caso porque el secreto es aleatorio y de alta entropía, no una contraseña
+elegida por una persona. El secreto en claro se entrega una sola vez y nunca se
+guarda. El código de pairing sigue el mismo criterio: se persiste únicamente
+`pairingCodeHash`; el hash no forma parte de ningún DTO público.
+
+### 22.4 Límites de F4
+
+F4 no agrega endpoints, middleware de autenticación por dispositivo, pairing
+funcional, heartbeat, panel de RRHH ni cambios en `frontend/` o `fichador/`.
+Las rutas existentes continúan usando temporalmente `CLOCK_DEVICE_TOKEN` hasta
+las etapas posteriores. F5 implementará el ciclo de enrolamiento y F8 empezará
+a escribir las relaciones y `WorkShiftSource.KIOSK`.
