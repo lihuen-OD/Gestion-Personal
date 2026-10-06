@@ -13,6 +13,10 @@ declare global {
 
     interface Request {
       user?: AuthUser;
+      clockDevice?: {
+        id: string;
+        status: "PENDING" | "ACTIVE" | "REVOKED";
+      };
     }
   }
 }
