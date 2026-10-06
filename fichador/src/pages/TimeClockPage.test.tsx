@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { TimeClockPage } from "./TimeClockPage";
 import { timeClockApiService } from "../services/api/timeClockApiService";
 import { ApiError, NetworkError } from "../services/api/apiClient";
+import { kioskActivity } from "../pwa/kioskActivity";
 
 vi.mock("../services/api/timeClockApiService", () => ({
   timeClockApiService: {
@@ -325,5 +326,27 @@ describe("TimeClockPage standalone (F1) — flujo, errores e idempotencia", () =
     expect(timeClockApiService.photoPunch).toHaveBeenCalledTimes(1);
     resolvePunch({ employee: employeeMatch, workShift: { id: "shift-1", startAt: nowIso() } });
     expect(await screen.findByText(/Ingreso registrado/i)).toBeInTheDocument();
+  });
+});
+
+// F3 — una actualización de la app nunca recarga en medio de una fichada.
+describe("TimeClockPage — kiosco ocupado/ocioso para las actualizaciones (F3)", () => {
+  it("ocupado con un empleado elegido; vuelve a ocioso al cambiar de empleado", async () => {
+    mockNoOpenShift();
+    expect(kioskActivity.isIdle()).toBe(true);
+    const user = await selectEmployee();
+
+    expect(kioskActivity.isIdle()).toBe(false);
+    await user.click(screen.getByRole("button", { name: "Cambiar empleado" }));
+    await waitFor(() => expect(kioskActivity.isIdle()).toBe(true));
+  });
+
+  it("ocupado mientras la cámara está abierta y la fichada se envía", async () => {
+    mockNoOpenShift();
+    vi.mocked(timeClockApiService.photoPunch).mockImplementation(() => new Promise(() => undefined));
+    const user = await selectEmployee();
+
+    await confirmCapture(user, /Marcar ingreso/i);
+    expect(kioskActivity.isIdle()).toBe(false);
   });
 });

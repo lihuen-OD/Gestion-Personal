@@ -1,8 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
-  MEDIAPIPE_MODEL_BASE,
-  MEDIAPIPE_WASM_BASE,
   assertDeployEnv,
   contentSecurityPolicy,
   hostingHeaders,
@@ -31,14 +29,11 @@ describe("CSP del fichador", () => {
     expect(directive(csp, "frame-ancestors")).toBe("frame-ancestors 'none'");
   });
 
-  it("las URLs de MediaPipe de la CSP coinciden con las que usa FaceCaptureModal", () => {
-    const modal = read("../src/components/time-clock/FaceCaptureModal.tsx");
-    const wasmUrl = modal.match(/const WASM_URL = "([^"]+)"/)[1];
-    const modelUrl = modal.match(/const MODEL_URL = "([^"]+)"/)[1];
-    expect(`${wasmUrl}/`).toBe(MEDIAPIPE_WASM_BASE);
-    expect(modelUrl.startsWith(MEDIAPIPE_MODEL_BASE)).toBe(true);
-    const installed = JSON.parse(read("../node_modules/@mediapipe/tasks-vision/package.json")).version;
-    expect(MEDIAPIPE_WASM_BASE).toContain(`@mediapipe/tasks-vision@${installed}/`);
+  it("F3: sin ningún origin de terceros (MediaPipe e Inter son self-hosted); sólo 'self' y el backend", () => {
+    const origins = csp.match(/https?:\/\/[^\s;]+/g) || [];
+    expect(origins).toEqual(["https://api-test.example.com"]);
+    expect(directive(csp, "worker-src")).toContain("'self'");
+    expect(directive(csp, "manifest-src")).toBe("manifest-src 'self'");
   });
 });
 
@@ -55,6 +50,12 @@ describe("_headers generado", () => {
   it("la CSP sale en modo Report-Only hasta validarla en Safari/iPad sobre HTTPS", () => {
     expect(headers).toContain("Content-Security-Policy-Report-Only: ");
     expect(headers).not.toMatch(/^\s+Content-Security-Policy: /m);
+  });
+
+  it("service worker, manifest y MediaPipe se revalidan siempre (F3)", () => {
+    expect(headers).toMatch(/\/sw\.js\n\s+Cache-Control: no-cache/);
+    expect(headers).toMatch(/\/manifest\.webmanifest\n\s+Cache-Control: no-cache/);
+    expect(headers).toMatch(/\/mediapipe\/\*\n\s+Cache-Control: no-cache/);
   });
 
   it("assets con hash cacheados como immutable y el documento siempre revalidado", () => {

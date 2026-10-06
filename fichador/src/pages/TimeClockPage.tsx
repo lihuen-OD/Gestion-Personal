@@ -1,10 +1,11 @@
 // Fichador standalone (F1, docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md).
 // Copia de frontend/src/pages/TimeClockPage.tsx con el mismo flujo, la misma
 // orquestación del intento (requestId, verificación por polling) y los
-// mismos endpoints. Única diferencia: los errores de búsqueda/estado muestran
-// el mensaje del cliente HTTP (sin conexión, dispositivo no autorizado,
-// demasiados intentos) en lugar de un texto fijo. La copia del admin se
-// retira en el cutover (F12).
+// mismos endpoints. Diferencias: los errores de búsqueda/estado muestran el
+// mensaje del cliente HTTP (sin conexión, dispositivo no autorizado,
+// demasiados intentos) en lugar de un texto fijo (F1), y la página informa
+// cuándo está ocupada para no aplicar una actualización de la app en medio
+// de una fichada (F3). La copia del admin se retira en el cutover (F12).
 import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { LogIn, LogOut, Search } from "lucide-react";
 import { ApiError, getUserErrorMessage } from "../services/api/apiClient";
@@ -13,6 +14,7 @@ import { Button } from "../components/ui/Button";
 import { LoadingState } from "../components/ui/LoadingState";
 import type { FaceCaptureResult } from "../components/time-clock/FaceCaptureModal";
 import { formatDateTime } from "../utils/date";
+import { kioskActivity } from "../pwa/kioskActivity";
 
 const FaceCaptureModal = lazy(() =>
   import("../components/time-clock/FaceCaptureModal").then((module) => ({ default: module.FaceCaptureModal })),
@@ -71,6 +73,14 @@ export function TimeClockPage() {
       window.clearTimeout(timer);
     };
   }, [search, selected]);
+
+  // F3: una actualización de la app sólo se aplica con el kiosco ocioso
+  // (src/pwa/kioskUpdates.ts): nunca con un empleado elegido, una búsqueda
+  // escrita, la cámara abierta o una fichada en curso.
+  useEffect(() => {
+    kioskActivity.setBusy(Boolean(search.trim() || selected || pendingPunch || loading || attemptLocked));
+    return () => kioskActivity.setBusy(false);
+  }, [search, selected, pendingPunch, loading, attemptLocked]);
 
   const canSubmit = Boolean(selected?.id) && !loading && !attemptLocked;
   const employeeLabel = useMemo(() => status?.employee || result?.employee, [result, status]);

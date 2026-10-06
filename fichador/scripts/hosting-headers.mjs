@@ -3,12 +3,8 @@
 // build. Se genera en vez de versionarse fijo porque la CSP necesita el
 // origin del backend de cada entorno (VITE_API_URL), igual que el bundle.
 
-// Recursos externos que el fichador carga hoy en runtime (F1), acotados por
-// ruta. F3 los pasa a self-hosted y esta lista se achica.
-export const MEDIAPIPE_WASM_BASE = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/wasm/";
-export const MEDIAPIPE_MODEL_BASE = "https://storage.googleapis.com/mediapipe-models/face_detector/";
-export const FONT_STYLESHEET_ORIGIN = "https://fonts.googleapis.com";
-export const FONT_FILES_ORIGIN = "https://fonts.gstatic.com";
+// F3: MediaPipe (WASM + modelo) e Inter son self-hosted, así que la CSP ya
+// no tiene ningún origin de terceros: sólo 'self' y el backend del entorno.
 
 export function apiOrigin(apiUrl) {
   return new URL(apiUrl).origin;
@@ -19,17 +15,19 @@ export function apiOrigin(apiUrl) {
  * no tiene scripts ni estilos inline (React aplica `style` vía CSSOM, que CSP
  * no bloquea) y el loader de MediaPipe no usa eval/new Function.
  * 'wasm-unsafe-eval' es lo mínimo que exige compilar el WASM de MediaPipe.
+ * worker-src/manifest-src 'self': service worker y manifest de la PWA (F3).
  */
 export function contentSecurityPolicy(apiUrl) {
   return [
     "default-src 'self'",
-    `script-src 'self' 'wasm-unsafe-eval' ${MEDIAPIPE_WASM_BASE}`,
-    `connect-src 'self' ${apiOrigin(apiUrl)} ${MEDIAPIPE_WASM_BASE} ${MEDIAPIPE_MODEL_BASE}`,
-    `style-src 'self' ${FONT_STYLESHEET_ORIGIN}`,
-    `font-src ${FONT_FILES_ORIGIN}`,
+    "script-src 'self' 'wasm-unsafe-eval'",
+    `connect-src 'self' ${apiOrigin(apiUrl)}`,
+    "style-src 'self'",
+    "font-src 'self'",
     "img-src 'self' data: blob:",
     "media-src 'self' blob: mediastream:",
     "worker-src 'self' blob:",
+    "manifest-src 'self'",
     "object-src 'none'",
     "base-uri 'self'",
     "form-action 'self'",
@@ -56,6 +54,16 @@ export function hostingHeaders(apiUrl) {
 /
   Cache-Control: no-cache
 /index.html
+  Cache-Control: no-cache
+
+# PWA (F3): el navegador tiene que ver siempre el service worker y el
+# manifest actuales para detectar una versión nueva. MediaPipe no lleva hash
+# en el nombre: lo versiona el precache del service worker.
+/sw.js
+  Cache-Control: no-cache
+/manifest.webmanifest
+  Cache-Control: no-cache
+/mediapipe/*
   Cache-Control: no-cache
 `;
 }

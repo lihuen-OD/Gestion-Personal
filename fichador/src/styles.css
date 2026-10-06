@@ -6,8 +6,10 @@
  * Copia controlada y temporal: mientras /fichador siga vivo en el admin, un
  * cambio visual del fichador se aplica en ambos lados. A partir del cutover
  * (F12) este archivo es la única fuente y puede evolucionar por su cuenta.
+ *
+ * F3: Inter ya no se importa de Google Fonts; viene self-hosted de
+ * @fontsource/inter (importado en main.tsx) y entra al precache del SW.
  */
-@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap");
 :root{font-family:"DM Sans",Arial,sans-serif;color:#172033;background:#f5f7fb;font-synthesis:none}*{box-sizing:border-box}body{margin:0}h1,h2,h3,p{margin:0}h1,h2,h3{font-family:Manrope,Arial,sans-serif}button,input{font:inherit}button{cursor:pointer}a{text-decoration:none;color:inherit}.eyebrow{font-size:11px;font-weight:700;letter-spacing:1.4px;color:#5d7894}.muted{color:#718096;font-size:13px;line-height:1.5}label{display:grid;gap:7px;color:#42526a;font-size:12px;font-weight:700}input{border:1px solid #dce4ed;border-radius:8px;background:#fff;padding:11px 12px;color:#26364e;outline:none;min-width:0}.error{color:#bf3e47;font-size:13px;font-weight:600}
 .button{display:inline-flex;align-items:center;justify-content:center;gap:7px;border:1px solid transparent;border-radius:8px;padding:10px 13px;font-weight:700;font-size:13px}.button.primary{background:#14767d;color:#fff}.button.primary:hover{background:#0f6066}.button.subtle{background:#fff;border-color:#dfe5ec;color:#476078}.button.subtle:hover{background:#f7f9fb}.icon-button{display:inline-grid;place-items:center;padding:7px;border:0;background:transparent;color:#60758b}.icon-button svg{width:20px;height:20px}.table-link{display:inline-flex;align-items:center;gap:3px;border:0;background:none;color:#14767d;font-size:12px;font-weight:700}.empty{padding:28px;display:flex;justify-content:center;align-items:center;gap:9px;color:#8492a0}.form-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:8px;padding:0 18px 18px}.modal-backdrop{position:fixed;inset:0;display:grid;place-items:center;padding:16px;background:#05152588;z-index:20}.modal{width:min(860px,calc(100vw - 32px));max-height:calc(100vh - 32px);display:flex;flex-direction:column;border-radius:11px;background:#fff;box-shadow:0 22px 55px #0004;overflow:hidden}.modal-head{display:flex;justify-content:space-between;align-items:center;padding:16px 18px 12px;border-bottom:1px solid #ebeff2;flex:none}.modal-head h3{font-size:17px}.modal-body{padding:18px;overflow:auto;min-height:0}.modal-body .form-actions{position:sticky;bottom:-18px;margin:8px -18px -18px;padding:12px 18px;background:#fff;border-top:1px solid #edf0f4;z-index:2}@media(max-width:520px){.form-actions{padding:0;flex-wrap:wrap}.modal .form-actions{padding:0}}
 .modal-body label{min-width:0}
@@ -451,3 +453,9 @@ html,body{
 .not-found-text{text-align:center}
 .not-found-actions{display:grid;margin-top:4px}
 .not-found-actions .button{min-height:48px;font-size:15px}
+
+/* Propio del fichador standalone (F3): safe areas del iPad/iPhone instalado
+   como app (viewport-fit=cover). Con insets en 0 (navegador, escritorio) el
+   padding queda igual que antes. */
+.clock-page{padding:max(24px,env(safe-area-inset-top)) max(24px,env(safe-area-inset-right)) max(24px,env(safe-area-inset-bottom)) max(24px,env(safe-area-inset-left))!important}
+.modal-backdrop{padding:max(16px,env(safe-area-inset-top)) max(16px,env(safe-area-inset-right)) max(16px,env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left))}

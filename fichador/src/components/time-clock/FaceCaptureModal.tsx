@@ -26,8 +26,11 @@ type FaceState = {
   score?: number;
 };
 
-const MODEL_URL = "https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/latest/blaze_face_short_range.tflite";
-const WASM_URL = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/wasm";
+// F3: MediaPipe self-hosted (mismo origin, precacheado por el service
+// worker): el detector funciona sin depender de jsDelivr ni de Google. Ver
+// scripts/mediapipe-assets.mjs.
+const MODEL_URL = "/mediapipe/models/blaze_face_short_range.tflite";
+const WASM_URL = "/mediapipe/wasm";
 
 // F1 (fichador standalone): el modal del admin mostraba "Permití el acceso
 // a la cámara" ante cualquier falla, incluso si lo que fallaba era la carga

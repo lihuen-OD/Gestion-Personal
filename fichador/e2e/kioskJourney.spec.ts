@@ -1,9 +1,10 @@
 import { expect, test, type Page } from "@playwright/test";
 
 // F1 — journey del fichador standalone con el API mockeado: nada sale a un
-// backend real ni escribe datos. La captura+envío de la foto necesita un
-// rostro real para que MediaPipe la valide, así que acá el detector se
-// bloquea (estado determinístico) y el envío/resultado se cubren en
+// backend real ni escribe datos. Desde F3 MediaPipe es self-hosted: el
+// detector real carga del mismo origin y, con la cámara falsa de Chromium
+// (sin rostro), informa "No se detectó una cara". La captura+envío de la
+// foto necesita un rostro real, así que el envío/resultado se cubren en
 // src/pages/TimeClockPage.test.tsx con la cámara mockeada.
 const employee = { id: "employee-1", legajo: "100", dniSuffix: "456", firstName: "Ana", lastName: "Gomez", name: "Gomez, Ana" };
 
@@ -17,8 +18,6 @@ async function mockApi(page: Page) {
     if (path === "/time-entries/clock/status") return route.fulfill({ json: { data: { employee, openShift: null } } });
     return route.fulfill({ status: 404, json: { error: { code: "ROUTE_NOT_FOUND" } } });
   });
-  // Detector de rostros (CDN de MediaPipe) bloqueado: estado determinístico.
-  await page.route(/(cdn\.jsdelivr\.net|storage\.googleapis\.com)/, (route) => route.abort());
   return apiCalls;
 }
 
@@ -36,7 +35,7 @@ test("abre, busca, selecciona, abre la cámara, cancela y vuelve al inicio sin f
   await page.getByRole("button", { name: /Marcar ingreso/ }).click();
   await expect(page.getByRole("heading", { name: "Confirmar fichada con foto" })).toBeVisible();
   await expect.poll(() => page.locator("video.face-video").evaluate((video: HTMLVideoElement) => Boolean(video.srcObject))).toBe(true);
-  await expect(page.getByText("No se pudo iniciar la validación de rostro")).toBeVisible();
+  await expect(page.getByText("No se detectó una cara.")).toBeVisible({ timeout: 30_000 });
   await expect(page.getByRole("button", { name: "Confirmar ingreso" })).toBeDisabled();
 
   await page.getByRole("button", { name: "Cancelar" }).click();

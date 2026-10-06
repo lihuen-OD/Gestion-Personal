@@ -7,15 +7,19 @@
     "dev": "vite",
     "build": "tsc -b && vite build && node scripts/write-hosting-headers.mjs && node scripts/check-bundle-isolation.mjs",
     "preview": "vite preview",
+    "icons": "node scripts/generate-icons.mjs",
     "test": "vitest run",
     "e2e": "playwright test",
+    "e2e:pwa": "playwright test --config=playwright.pwa.config.ts",
     "typecheck:e2e": "tsc -p tsconfig.e2e.json --noEmit"
   },
   "dependencies": {
+    "@fontsource/inter": "5.3.0",
     "@mediapipe/tasks-vision": "0.10.35",
     "lucide-react": "0.468.0",
     "react": "18.3.1",
-    "react-dom": "18.3.1"
+    "react-dom": "18.3.1",
+    "workbox-window": "7.4.1"
   },
   "devDependencies": {
     "@playwright/test": "1.62.1",
@@ -28,6 +32,7 @@
     "jsdom": "30.0.1",
     "typescript": "5.9.3",
     "vite": "6.4.3",
+    "vite-plugin-pwa": "2.0.0",
     "vitest": "4.1.10"
   }
 }
