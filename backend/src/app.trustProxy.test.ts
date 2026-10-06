@@ -3,7 +3,8 @@ import type { Server } from "node:http";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "./app";
 import { env } from "./config/env";
-import { CLOCK_DEVICE_TOKEN_HEADER } from "./middlewares/clockDeviceAuth";
+import { clockDevicesRepository } from "./modules/clock-devices/clockDevices.repository";
+import { generateClockDeviceSecret, hashClockDeviceSecret } from "./shared/security/clockDeviceCredentials";
 import { trustProxySetting } from "./shared/http/clientIp";
 import { timeEntriesService } from "./modules/time-entries/timeEntries.service";
 
@@ -30,13 +31,20 @@ vi.mock("./modules/time-entries/timeEntries.service", async (importOriginal) => 
   };
 });
 
+vi.mock("./modules/clock-devices/clockDevices.repository", () => ({
+  clockDevicesRepository: { findCredentialById: vi.fn(), touchIfStale: vi.fn() },
+}));
+
 type MutableEnv = {
   TRUST_PROXY_HOPS: number;
   CLIENT_IP_DIAGNOSTICS_ENABLED: boolean;
-  CLOCK_DEVICE_TOKEN?: string;
+  RATE_LIMIT_MAX: number;
 };
 
-const TOKEN = "test-clock-device-token-0123456789";
+// F6: el fichador se autentica con su propio ClockDevice ACTIVE.
+const DEVICE_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const DEVICE_SECRET = generateClockDeviceSecret();
+const DEVICE_AUTHORIZATION = `ClockDevice ${DEVICE_ID}.${DEVICE_SECRET}`;
 const CLIENT_A = "203.0.113.7";
 const CLIENT_B = "198.51.100.23";
 const EDGE_PROXY = "104.16.0.1";
@@ -44,7 +52,7 @@ const INTERNAL_PROXY = "10.0.0.5";
 const original = {
   TRUST_PROXY_HOPS: env.TRUST_PROXY_HOPS,
   CLIENT_IP_DIAGNOSTICS_ENABLED: env.CLIENT_IP_DIAGNOSTICS_ENABLED,
-  CLOCK_DEVICE_TOKEN: env.CLOCK_DEVICE_TOKEN,
+  RATE_LIMIT_MAX: env.RATE_LIMIT_MAX,
 };
 
 let server: Server | undefined;
@@ -52,7 +60,9 @@ let server: Server | undefined;
 async function startApp(hops: number, options: { diagnostics?: boolean } = {}) {
   (env as MutableEnv).TRUST_PROXY_HOPS = hops;
   (env as MutableEnv).CLIENT_IP_DIAGNOSTICS_ENABLED = options.diagnostics ?? true;
-  (env as MutableEnv).CLOCK_DEVICE_TOKEN = TOKEN;
+  // El limitador global de la API no debe ser el que corte en estos tests:
+  // así cualquier 429 sale del limitador propio de /clock/*.
+  (env as MutableEnv).RATE_LIMIT_MAX = 100_000;
   vi.spyOn(console, "warn").mockImplementation(() => {});
   server = createApp().listen(0);
   await new Promise<void>((resolve) => server!.once("listening", () => resolve()));
@@ -72,14 +82,20 @@ async function seenIp(baseUrl: string, forwardedFor?: string) {
   return ((await response.json()) as { data: { ip: string } }).data.ip;
 }
 
+// Sin credencial: el límite por IP corre ANTES de autenticar, así que cada
+// intento consume el cupo de la IP efectiva (401 mientras queda cupo, 429
+// después). Es la capa que frena la fuerza bruta de credenciales.
 async function searchAs(baseUrl: string, forwardedFor: string) {
   const response = await fetch(`${baseUrl}/time-entries/clock/employees?search=ana`, {
-    headers: { "x-forwarded-for": forwardedFor, [CLOCK_DEVICE_TOKEN_HEADER]: TOKEN },
+    headers: { "x-forwarded-for": forwardedFor },
   });
   return response.status;
 }
 
 beforeEach(() => {
+  vi.mocked(clockDevicesRepository.findCredentialById).mockResolvedValue({
+    id: DEVICE_ID, tokenHash: hashClockDeviceSecret(DEVICE_SECRET), status: "ACTIVE", name: "Kiosco", sectorId: null, lastSeenAt: new Date(),
+  });
   vi.mocked(timeEntriesService.clockSearch).mockResolvedValue([]);
   vi.mocked(timeEntriesService.clockPhotoPunchIdempotent).mockResolvedValue({ workShift: { id: "shift-1" } } as never);
 });
@@ -140,11 +156,11 @@ describe("3. X-Forwarded-For falsificado por el cliente", () => {
   });
 });
 
-describe("4/5. rate limiting del fichador por IP real", () => {
+describe("4/5. rate limiting del fichador por IP real (capa previa a la autenticación)", () => {
   it("sin trust proxy, dos clientes distintos comparten el mismo bucket (problema previo a F0)", async () => {
     const baseUrl = await startApp(0);
-    for (let index = 0; index < env.CLOCK_RATE_LIMIT_MAX; index += 1) {
-      expect(await searchAs(baseUrl, realChain("192.0.2.10"))).toBe(200);
+    for (let index = 0; index < env.CLOCK_IP_RATE_LIMIT_MAX; index += 1) {
+      expect(await searchAs(baseUrl, realChain("192.0.2.10"))).toBe(401);
     }
     expect(await searchAs(baseUrl, realChain("192.0.2.11"))).toBe(429);
   });
@@ -153,12 +169,12 @@ describe("4/5. rate limiting del fichador por IP real", () => {
     const baseUrl = await startApp(3);
     const clientC = "192.0.2.20";
     const clientD = "192.0.2.21";
-    for (let index = 0; index < env.CLOCK_RATE_LIMIT_MAX; index += 1) {
-      expect(await searchAs(baseUrl, realChain(clientC))).toBe(200);
+    for (let index = 0; index < env.CLOCK_IP_RATE_LIMIT_MAX; index += 1) {
+      expect(await searchAs(baseUrl, realChain(clientC))).toBe(401);
     }
     expect(await searchAs(baseUrl, realChain(clientC))).toBe(429);
     expect(await searchAs(baseUrl, `6.6.6.6, ${realChain(clientC)}`)).toBe(429);
-    expect(await searchAs(baseUrl, realChain(clientD))).toBe(200);
+    expect(await searchAs(baseUrl, realChain(clientD))).toBe(401);
   });
 });
 
@@ -170,7 +186,7 @@ describe("6. IP que llega a AttendancePunch.ipAddress", () => {
       headers: {
         "content-type": "application/json",
         "x-forwarded-for": `6.6.6.6, ${realChain(CLIENT_A)}`,
-        [CLOCK_DEVICE_TOKEN_HEADER]: TOKEN,
+        authorization: DEVICE_AUTHORIZATION,
       },
       body: JSON.stringify({
         requestId: "22222222-2222-4222-8222-222222222222",
@@ -202,16 +218,15 @@ describe("GET /health/client-ip — sonda de medición", () => {
       headers: {
         "x-forwarded-for": realChain(CLIENT_A),
         "cf-connecting-ip": CLIENT_A,
-        authorization: "Bearer secret-jwt-value",
-        [CLOCK_DEVICE_TOKEN_HEADER]: TOKEN,
+        authorization: DEVICE_AUTHORIZATION,
         cookie: "session=secret-cookie-value",
       },
     });
     const text = await response.text();
 
     expect(JSON.parse(text).data).toMatchObject({ ip: CLIENT_A, trustProxy: 3, xForwardedForEntries: 3, cfConnectingIp: CLIENT_A });
-    expect(text).not.toContain("secret-jwt-value");
-    expect(text).not.toContain(TOKEN);
+    expect(text).not.toContain(DEVICE_SECRET);
+    expect(text).not.toContain(DEVICE_ID);
     expect(text).not.toContain("secret-cookie-value");
   });
 });

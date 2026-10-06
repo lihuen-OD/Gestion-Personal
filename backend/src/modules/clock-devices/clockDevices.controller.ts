@@ -1,12 +1,9 @@
-import type { Request, RequestHandler } from "express";
+import type { RequestHandler } from "express";
 import { requestAuditContext } from "../../shared/audit/requestAuditContext";
 import { requireParam } from "../../shared/http/params";
 import type { ListClockDevicesQuery } from "./clockDevices.schemas";
+import { clockDeviceRequestMetadata as metadata } from "./clockDeviceAuthentication";
 import { clockDevicesService } from "./clockDevices.service";
-
-function metadata(req: Request) {
-  return { ip: req.ip || null, userAgent: req.get("user-agent") || null, appVersion: req.get("x-clock-app-version") || undefined };
-}
 
 export const clockDevicesController = {
   register: (async (req, res) => res.status(201).json({ data: await clockDevicesService.register(req.body, { ...metadata(req), appVersion: req.body.appVersion }) })) satisfies RequestHandler,

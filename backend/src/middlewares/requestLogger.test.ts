@@ -5,9 +5,9 @@ import { env } from "../config/env";
 import { _resetSlowEndpointStatsForTests, getSlowEndpointStats, requestLogger } from "./requestLogger";
 
 /**
- * Etapa 14B.2. Mismo patrón de mutación directa de `env` que ya usa
- * `clockDeviceAuth.test.ts` — el middleware lee `env.*` en cada request, no
- * cachea nada al importar, así que mutar acá alcanza para simular cada
+ * Etapa 14B.2. Mutación directa de `env`: el middleware lee `env.*` en
+ * cada request, no cachea nada al importar, así que mutar acá alcanza para
+ * simular cada
  * configuración sin reiniciar el proceso.
  */
 type MutableEnv = {

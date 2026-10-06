@@ -45,8 +45,28 @@ export const clockDevicesRepository = {
     return prisma.clockDevice.findUnique({ where: { id }, select: clockDevicePublicSelect });
   },
 
+  // Única lectura que trae tokenHash: la usa sólo requireClockDevice para
+  // comparar y nunca sale de ese middleware. Un lookup por PK por request.
   findCredentialById(id: string) {
-    return prisma.clockDevice.findUnique({ where: { id }, select: { id: true, tokenHash: true, status: true } });
+    return prisma.clockDevice.findUnique({
+      where: { id },
+      select: { id: true, tokenHash: true, status: true, name: true, sectorId: true, lastSeenAt: true },
+    });
+  },
+
+  // Toque de presencia con throttle (F6): la condición sobre lastSeenAt vive
+  // en el WHERE para que dos requests concurrentes no escriban dos veces y
+  // un dispositivo revocado entre medio no se marque como visto.
+  touchIfStale(id: string, staleBefore: Date, metadata: { ip: string | null; userAgent: string | null; appVersion?: string }) {
+    return prisma.clockDevice.updateMany({
+      where: { id, status: "ACTIVE", OR: [{ lastSeenAt: null }, { lastSeenAt: { lt: staleBefore } }] },
+      data: {
+        lastSeenAt: new Date(),
+        lastIp: metadata.ip,
+        lastUserAgent: metadata.userAgent,
+        ...(metadata.appVersion ? { lastAppVersion: metadata.appVersion } : {}),
+      },
+    });
   },
 
   findPendingByPairingHash(hash: string) {

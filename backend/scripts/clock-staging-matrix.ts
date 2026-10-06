@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { env } from "../src/config/env";
 import { prisma } from "../src/shared/prisma/client";
 import { storageService } from "../src/shared/storage/storage.service";
+import { generateClockDeviceSecret, hashClockDeviceSecret } from "../src/shared/security/clockDeviceCredentials";
 
 const baseUrl = process.env.CLOCK_TEST_BASE_URL || "http://127.0.0.1:4003/api";
 const storageDownBaseUrl = process.env.CLOCK_STORAGE_DOWN_BASE_URL;
@@ -11,6 +12,19 @@ const employeeIds: string[] = [];
 const noveltyTypeIds: string[] = [];
 const results: Array<Record<string, unknown>> = [];
 let photo = "";
+// F6: las rutas del fichador exigen un ClockDevice ACTIVE propio. La matriz
+// crea uno de prueba (prefijo STG-CLOCK) y lo elimina en cleanup.
+let clockDeviceId = "";
+let clockAuthorization = "";
+
+async function createTestClockDevice() {
+  const secret = generateClockDeviceSecret();
+  const device = await prisma.clockDevice.create({
+    data: { name: `${prefix} matriz`, status: "ACTIVE", tokenHash: hashClockDeviceSecret(secret), activatedAt: new Date() },
+  });
+  clockDeviceId = device.id;
+  clockAuthorization = `ClockDevice ${device.id}.${secret}`;
+}
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -55,7 +69,7 @@ function payload(employeeId: string, punchType: "IN" | "OUT", requestId = random
 function postPunch(body: ReturnType<typeof payload>, signal?: AbortSignal) {
   return request("/time-entries/clock/photo-punch", {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", authorization: clockAuthorization },
     body: JSON.stringify(body),
     signal,
   });
@@ -63,7 +77,7 @@ function postPunch(body: ReturnType<typeof payload>, signal?: AbortSignal) {
 
 async function pollAttempt(requestId: string, employeeId: string) {
   for (let i = 0; i < 30; i += 1) {
-    const response = await request(`/time-entries/clock/attempts/${requestId}?employeeId=${employeeId}`);
+    const response = await request(`/time-entries/clock/attempts/${requestId}?employeeId=${employeeId}`, { headers: { authorization: clockAuthorization } });
     const data = (response.body as { data?: { status?: string } })?.data;
     if (data?.status === "COMPLETED" || data?.status === "FAILED") return response;
     await new Promise((resolve) => setTimeout(resolve, 500));
@@ -76,7 +90,9 @@ async function cleanup() {
   for (const file of files) await storageService.deleteManaged(file.id).catch((error) => console.error("TEST_STORAGE_CLEANUP_FAILED", file.id, error));
   const shifts = await prisma.workShift.findMany({ where: { employeeId: { in: employeeIds } }, select: { id: true } });
   await prisma.auditLog.deleteMany({ where: { OR: [{ entityId: { in: employeeIds } }, { entityId: { in: shifts.map((item) => item.id) } }] } });
+  await prisma.clockPunchAttempt.deleteMany({ where: { employeeId: { in: employeeIds } } });
   await prisma.employee.deleteMany({ where: { id: { in: employeeIds } } });
+  if (clockDeviceId) await prisma.clockDevice.delete({ where: { id: clockDeviceId } });
   await prisma.noveltyType.deleteMany({ where: { id: { in: noveltyTypeIds } } });
   await prisma.storageFile.deleteMany({ where: { id: { in: files.map((file) => file.id) }, status: "DELETED" } });
   const leftovers = await prisma.employee.count({ where: { id: { in: employeeIds } } });
@@ -90,6 +106,7 @@ async function main() {
   assert(health.status === 200 && healthBody.appEnv === "staging", "Target API is not explicitly staging");
   const image = await readFile(new URL("../../docs/reference-ui/form-reference.png", import.meta.url));
   photo = `data:image/png;base64,${image.toString("base64")}`;
+  await createTestClockDevice();
 
   const invalid = await createEmployee("VALIDATION");
   const invalidResponse = await postPunch({ ...payload(invalid.employee.id, "IN"), faceValidationStatus: "NO_FACE" });
@@ -139,7 +156,7 @@ async function main() {
   const storageStarted = performance.now();
   const storageResponse = await fetch(`${storageDownBaseUrl}/time-entries/clock/photo-punch`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", authorization: clockAuthorization },
     body: JSON.stringify(payload(storageDown.employee.id, "IN")),
   });
   const storageMs = Number((performance.now() - storageStarted).toFixed(1));

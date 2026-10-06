@@ -18,7 +18,7 @@ export function trustProxySetting(hops: number): number | false {
 /**
  * Lo que GET /api/health/client-ip devuelve para medir la topología real de
  * proxies de un entorno. Sólo headers de IP en una lista cerrada: nunca
- * Authorization, cookies ni x-clock-device-token.
+ * Authorization (JWT ni credencial ClockDevice) ni cookies.
  */
 export function describeClientIp(req: Request) {
   const header = (name: string) => req.get(name) ?? null;

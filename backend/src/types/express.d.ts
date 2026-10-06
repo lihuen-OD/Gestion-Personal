@@ -13,9 +13,13 @@ declare global {
 
     interface Request {
       user?: AuthUser;
+      // Lo setea sólo requireClockDevice (modules/clock-devices). Nunca
+      // incluye tokenHash ni pairingCodeHash y nunca convive con req.user.
       clockDevice?: {
         id: string;
         status: "PENDING" | "ACTIVE" | "REVOKED";
+        name: string | null;
+        sectorId: string | null;
       };
     }
   }

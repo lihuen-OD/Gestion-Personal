@@ -2,8 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { env, isPerformanceLoggingEnabled, shouldRecordQueryMetrics } from "./env";
 
 /**
- * Etapa 14B.2. Mismo patrón ya usado por
- * `middlewares/clockDeviceAuth.test.ts`: `env` es el objeto ya parseado
+ * Etapa 14B.2. `env` es el objeto ya parseado
  * (singleton de módulo), así que mutarlo acá alcanza para testear los
  * helpers — ambos leen `env.*` en cada llamada, no cachean nada al importar.
  */

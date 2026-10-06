@@ -26,8 +26,11 @@ const envSchema = z.object({
   RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(15 * 60 * 1000),
   RATE_LIMIT_MAX: z.coerce.number().int().positive().default(300),
   CLOCK_RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(5 * 60 * 1000),
+  // F6: cupo de /time-entries/clock/* POR DISPOSITIVO autenticado (ClockDevice).
   CLOCK_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(30),
-  CLOCK_DEVICE_TOKEN: z.string().min(16).optional(),
+  // F6: cupo por IP previo a la autenticación (fuerza bruta de credenciales).
+  // Más alto que el de dispositivo: varios kioscos pueden salir por la misma IP.
+  CLOCK_IP_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(300),
   // F0 del fichador standalone (docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md
   // §F0 / trust proxy): cantidad EXACTA de proxies propios entre el cliente y
   // Express. Express toma como req.ip la entrada de X-Forwarded-For que está
@@ -125,9 +128,7 @@ export const isProduction = env.NODE_ENV === "production";
 
 /**
  * Etapa 14B.2 — helpers leídos en cada llamada (no cacheados en una const de
- * módulo) a propósito, para que los tests puedan mutar `env.*` en caliente,
- * mismo patrón ya usado por `clockDeviceAuth.ts` con `env.NODE_ENV`/
- * `env.CLOCK_DEVICE_TOKEN`.
+ * módulo) a propósito, para que los tests puedan mutar `env.*` en caliente.
  */
 export function isPerformanceLoggingEnabled(): boolean {
   return env.PERFORMANCE_LOGGING_ENABLED ?? env.NODE_ENV !== "production";

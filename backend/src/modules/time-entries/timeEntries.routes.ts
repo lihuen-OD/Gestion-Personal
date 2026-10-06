@@ -2,11 +2,11 @@ import { Router } from "express";
 import { requireAuth } from "../../middlewares/auth";
 import { requireAnyRole } from "../../middlewares/authorization";
 import { createRateLimiter } from "../../middlewares/rateLimiter";
-import { requireClockDeviceToken } from "../../middlewares/clockDeviceAuth";
 import { asyncHandler } from "../../shared/http/asyncHandler";
 import { notFoundHandler } from "../../shared/errors/notFoundHandler";
 import { env } from "../../config/env";
 import { roles } from "../../shared/security/roles";
+import { authenticatedClockDevice, requireClockDevice } from "../clock-devices/clockDeviceAuthentication";
 import { validateBody } from "../../shared/validation/validateRequest";
 import { validateQuery } from "../../shared/validation/validateQuery";
 import { timeEntriesController } from "./timeEntries.controller";
@@ -32,22 +32,30 @@ import {
 
 export const timeEntriesRouter = Router();
 
-const clockRateLimiter = createRateLimiter({
-  windowMs: env.CLOCK_RATE_LIMIT_WINDOW_MS,
-  max: env.CLOCK_RATE_LIMIT_MAX,
-});
-
-// Los endpoints /clock/* no tienen sesion de usuario (kiosco/fichador
-// publico), asi que en vez de requireAuth exigen un secreto por dispositivo.
-// Ver middlewares/clockDeviceAuth.ts para el detalle y sus limites reales.
+// Los endpoints /clock/* no tienen sesion de usuario (kiosco), asi que en vez
+// de requireAuth exigen un ClockDevice ACTIVE autenticado individualmente
+// (F6 de docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md). Orden de guardas:
+// 1. limite por IP, antes de autenticar: frena fuerza bruta de credenciales
+//    sin tocar la base; generoso para que varios kioscos detras de la misma
+//    red no compartan un cupo chico;
+// 2. requireClockDevice(): 401/403 antes de cualquier validacion o lectura;
+// 3. limite por dispositivo, keyed por el id YA autenticado: un deviceId
+//    inventado nunca crea un bucket.
 //
-// F0 del fichador standalone (docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md):
-// estas cuatro rutas son TODO lo que el fichador actual necesita. Las
-// guardas van por ruta (no con un use("/clock") global) y el namespace se
-// cierra con un 404 explicito: cualquier otro /clock/* -- incluidas las
-// rutas sin foto retiradas en F0 -- responde 404 con o sin token, y nunca
-// cae en el requireAuth ni en las rutas parametricas (/:id) de abajo.
-const clockGuards = [clockRateLimiter, requireClockDeviceToken];
+// F0: estas cuatro rutas son TODO lo que el fichador necesita. Las guardas
+// van por ruta (no con un use("/clock") global) y el namespace se cierra con
+// un 404 explicito: cualquier otro /clock/* -- incluidas las rutas sin foto
+// retiradas en F0 -- responde 404 con o sin credencial, y nunca cae en el
+// requireAuth ni en las rutas parametricas (/:id) de abajo.
+const clockGuards = [
+  createRateLimiter({ windowMs: env.CLOCK_RATE_LIMIT_WINDOW_MS, max: env.CLOCK_IP_RATE_LIMIT_MAX }),
+  requireClockDevice({ recordPresence: true }),
+  createRateLimiter({
+    windowMs: env.CLOCK_RATE_LIMIT_WINDOW_MS,
+    max: env.CLOCK_RATE_LIMIT_MAX,
+    keyGenerator: (req) => `clock-device:${authenticatedClockDevice(req).id}`,
+  }),
+];
 
 timeEntriesRouter.get("/clock/employees", ...clockGuards, validateQuery(clockEmployeeSearchQuerySchema), asyncHandler(timeEntriesController.clockSearch));
 timeEntriesRouter.post("/clock/status", ...clockGuards, validateBody(clockByEmployeeSchema), asyncHandler(timeEntriesController.clockStatusByEmployee));
