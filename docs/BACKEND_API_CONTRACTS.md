@@ -1549,6 +1549,11 @@ El resto de `entityType` (cierres, correcciones, novedades pendientes) no trae `
 
 #### Horas Especiales (`/double-hour-rules*`) — Etapa 8B (extendido en 12B)
 
+`DELETE /double-hour-rules/:id` **siempre** elimina físicamente la regla, sin importar su vigencia ni su estado, y responde `{ data: { mode: "DELETED", id } }`.
+- En la misma transacción retira su traza, la borra y reinterpreta las horas afectadas (cierres incluidos, sin cambiar su estado).
+- Para conservar una regla sin que aplique se usa `PATCH` con `status: "INACTIVO"`.
+- El modo `INACTIVATED` del DELETE ya no existe. Ver `docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md` §15, "Eliminar vs. inactivar".
+
 Body de `POST`/`PATCH` (todos los campos de scope y `dates` son opcionales; `updateDoubleRuleSchema` acepta un subconjunto parcial):
 
 ```json

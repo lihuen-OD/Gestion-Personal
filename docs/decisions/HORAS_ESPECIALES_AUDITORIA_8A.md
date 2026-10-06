@@ -151,7 +151,7 @@ La pantalla `WorkScheduleSettingsPage.tsx` (ruta bajo Configuración, sólo visi
 - Cruce de medianoche resuelto correctamente a nivel de `TimeSegment`.
 - Superposición entre reglas resuelta con una política explícita y testeada (mayor multiplicador, nunca se acumula).
 - Trazabilidad de auditoría (`SpecialHourRuleApplication`) existe y no se pierde información aunque no se lea en reportes: registra *todas* las reglas que matchearon, no sólo la ganadora.
-- CRUD de reglas con mapeo de errores FK prolijo, soft-delete correcto (inactiva si ya empezó, borra si es futura, igual que `ShiftTemplate`) — reutiliza un patrón ya validado en el proyecto.
+- CRUD de reglas con mapeo de errores FK prolijo, soft-delete correcto (inactiva si ya empezó, borra si es futura, igual que `ShiftTemplate`; **para `DoubleHourRule` reemplazado el 2026-10-06**: eliminar siempre borra físicamente, ver `WORKED_TIME_ACCOUNTING_MODEL.md` §15) — reutiliza un patrón ya validado en el proyecto.
 - RBAC correcto: lectura para `rrhh`/`supervision`/`cargaHoraria`, escritura sólo `rrhh`.
 - El fichador (`TimeClockPage.tsx`/`timeClockApiService.ts`) no pregunta nada sobre horas especiales — cumple el requisito central sin que haya que tocar nada ahí.
 

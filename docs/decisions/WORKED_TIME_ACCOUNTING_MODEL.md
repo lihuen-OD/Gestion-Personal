@@ -296,7 +296,23 @@ La respuesta resume lo eliminado: `deletedBreakdowns`, `deletedRules`, `deletedE
 5. **Auditoría:** el `DoubleHourRule` lleva una descripción en lenguaje de negocio, por ejemplo "Se actualizó el feriado Día de la Raza (03/10/2026) de x1 a x2. Se recalcularon 23 carga(s) de 18 legajo(s) y 4 cierre(s) mensual(es).". El detalle técnico va en `after.reinterpretation` (cantidades, períodos, ids de cierres). Se registra además un `MonthlyTimeClosure` `UPDATE` por cierre recalculado.
 6. **Cachés:** backend `clearWorkedTimeDerivedReadCaches()` y frontend `WORKED_TIME_DERIVED_CACHE_FAMILIES` (§12).
 
-**Eliminar vs. inactivar.** Una regla ya vigente se inactiva (conserva la regla) y las horas vuelven a su valor sin ella. Una regla futura se elimina: primero se retira su traza (`SpecialHourRuleApplication.doubleHourRuleId` es `RESTRICT`) y la reinterpretación la reconstruye sin ella.
+**Eliminar vs. inactivar (2026-10-06, reemplaza la política de Etapa 8C).** Son dos acciones distintas.
+
+- **Inactivar** (botón Power, `PATCH /double-hour-rules/:id` con `status`): la regla fue válida pero ya no debe aplicar.
+  - Se conserva con su identidad y configuración, y es reversible con Activar.
+  - Las horas que alcanzaba vuelven a su valor sin ella.
+- **Eliminar** (tacho, `DELETE /double-hour-rules/:id`): la regla se creó o configuró por error y se **borra físicamente**.
+  - Siempre devuelve `{ mode: "DELETED", id }`.
+  - No importa si su vigencia todavía no empezó, ya empezó o ya terminó, ni si está ACTIVA o INACTIVA. Ya no existe la vieja regla "si ya comenzó, se inactiva".
+  - Todo ocurre en una transacción:
+    1. se retira su traza (`SpecialHourRuleApplication.doubleHourRuleId` es `RESTRICT`);
+    2. se borra la regla, y `DoubleHourRuleEmployee` y `SpecialHourRuleDate` caen por `CASCADE`;
+    3. `reinterpretSpecialHours({ before, after: null })` recalcula las fechas que alcanzaba, como si la regla nunca hubiera existido. Si otra regla sigue matcheando, gana la siguiente vigente por prioridad (no vuelve a x1).
+  - Si el recálculo falla, la regla y su traza se revierten y no se audita.
+  - Nunca borra fichadas, jornadas, minutos reales, desgloses ni convocatorias.
+  - `HolidayWorkAssignment` no tiene FK a la regla y queda como dato de Turnos. Sin una regla FERIADO vigente no aporta multiplicador por sí sola (§16), y la fecha deja de listarse en Asignaciones de feriados.
+  - La historia administrativa queda en el `AuditLog`: acción `DELETE`, `before` con la configuración completa y `after.reinterpretation`, por ejemplo "Se eliminó definitivamente el feriado Feriados (…, x2). Se recalcularon 15 carga(s) de 13 legajo(s) y 1 cierre(s) mensual(es).".
+  - No hay soft delete (`deletedAt`, estado `ELIMINADO`): INACTIVO conserva, DELETE elimina.
 
 **Alcance por empleado.** El multiplicador lo decide el alcance de la regla y, para reglas FERIADO, también la convocatoria (§16).
 

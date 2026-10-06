@@ -74,7 +74,7 @@ Los 5 de la sección anterior. Ver diffs en `backend/src/modules/workforce-manag
 **Backend** (+13 tests, 668 → 681, todos verdes):
 - Nuevo `workforce.schemas.test.ts` (7 tests): `doubleRuleSchema` (general sin empleados, FECHA sin fechas falla, FECHA con fechas pasa) y `updateDoubleRuleSchema` (payload vacío falla, cambiar sólo `priority` pasa, cambiar a FECHA sin fechas ahora falla — cierra el bug #1, cambiar a FECHA con fechas pasa).
 - `timeEntries.repository.test.ts` — 5 casos nuevos: Caso U (centro de costo), Caso V (puesto), Caso W (empleados + empresa + sector combinados en el mismo `AND`), Caso X (filtro `status: "ACTIVO"` asertado), Caso Y (regla FECHA cruzando medianoche hacia un día normal, sólo el tramo del feriado recibe la regla).
-- `workforce.service.test.ts` — 1 caso nuevo: `removeDoubleRule` inactiva (no borra) una regla cuya vigencia ya comenzó, específicamente para `DoubleHourRule`.
+- `workforce.service.test.ts` — 1 caso nuevo: `removeDoubleRule` inactiva (no borra) una regla cuya vigencia ya comenzó, específicamente para `DoubleHourRule`. **Reemplazado el 2026-10-06** (`WORKED_TIME_ACCOUNTING_MODEL.md` §15, "Eliminar vs. inactivar"): eliminar ahora borra físicamente siempre, e inactivar es sólo el botón Power.
 
 **Frontend** (+1 test, 330 → 331, todos verdes):
 - `WorkScheduleSettingsPage.test.tsx` — nuevo describe "Etapa 8C": los 3 botones de acción de una fila quedan deshabilitados mientras una mutación está en curso y se rehabilitan al terminar (cierra el bug #3).
