@@ -1,5 +1,13 @@
 # Project Context
 
+> Notificaciones por fecha efectiva (`docs/decisions/NOTIFICATIONS_EVENT_ORDER.md`,
+> 2026-10-06): `SystemNotification.eventAt` (fecha del hecho de negocio,
+> persistida e inmutable) es la que la pantalla muestra, ordena y filtra
+> (Desde/Hasta). `createdAt` queda como metadata y desempate. Orden
+> `eventAt, createdAt, id DESC`, "Cargar más" por cursor y refresco de la
+> ventana visible: una notificación atrasada por catch-up aparece en su lugar
+> cronológico. Migración aplicada sólo en staging.
+
 > Etapa 15M.19D (`docs/decisions/NOTIFICATIONS_END_TO_END_ACCEPTANCE_15M19D.md`):
 > cierre de aceptación/regresión de la serie 15M.19 (A: scheduler durable,
 > B: obligación real + falta de ingreso, C: refresco automático). Sin

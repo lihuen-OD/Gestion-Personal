@@ -1523,9 +1523,22 @@ Todas las rutas requieren `requireAuth`.
 | GET / POST / PATCH / DELETE | `/double-hour-rules*` | RRHH (escritura) | Reglas de Horas Especiales (`DoubleHourRule`) |
 | GET | `/double-hour-rules/calendar?from&to&kind` | todos los operativos | Preview de calendario de Horas Especiales (ver abajo) |
 
-#### Notificaciones (`/notifications`) — enriquecimiento de `employee`
+#### Notificaciones (`/notifications`) — fecha efectiva, filtros, cursor y enriquecimiento de `employee`
 
-`GET /notifications` siempre filtra por `recipientUserId` del usuario autenticado (nunca notificaciones de otro usuario). Cada item trae `id, type, priority, title, message, entityType?, entityId?, link?, status, createdAt` y, sólo para 4 valores de `entityType`, un `employee` ya resuelto (`{ id, legajo, firstName, lastName }`, select liviano — nunca el legajo completo):
+`GET /notifications` siempre filtra por `recipientUserId` del usuario autenticado (nunca notificaciones de otro usuario). Query (docs/decisions/NOTIFICATIONS_EVENT_ORDER.md):
+
+- `status?=NO_LEIDA|LEIDA`
+- `dateFrom?`/`dateTo?` = `AAAA-MM-DD`, días calendario Argentina inclusive, sobre `eventAt`. `dateFrom > dateTo` → 400 con mensaje de negocio.
+- `after?=<cursor>` (página siguiente) o `through?=<cursor>` (ventana visible hasta esa fila inclusive), excluyentes.
+- `page?` (compatibilidad, sólo sin cursor) y `take?` (default 20, máximo 100).
+
+Orden: `eventAt DESC, createdAt DESC, id DESC`. El cursor es el `meta.nextCursor` de una respuesta anterior (`"<eventAt>_<createdAt>_<id>"`). Respuesta: `{ data, meta: { total, page, pageSize, hasMore, nextCursor } }`.
+
+Cada item trae `id, type, priority, title, message, entityType?, entityId?, link?, status, eventAt, createdAt`:
+- `eventAt` es la fecha efectiva del hecho (inmutable, fijada al crear la notificación). Es la que se muestra, ordena y filtra.
+- `createdAt` es solo la creación técnica de la fila. Reemplaza al `eventDate` derivado de 15M.19E.
+
+Sólo para 4 valores de `entityType` llega además un `employee` ya resuelto (`{ id, legajo, firstName, lastName }`, select liviano — nunca el legajo completo):
 
 - `ShiftAlert` (alertas de turno: llegada tarde, salida anticipada, etc. — `type: "ALERTA_FICHADA"`).
 - `WorkShift` (falta de salida/olvido — `type: "FALTA_SALIDA"`).
