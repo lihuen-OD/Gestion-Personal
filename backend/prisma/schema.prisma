@@ -138,6 +138,18 @@ enum ClockPunchAttemptStatus {
   FAILED
 }
 
+// F4 del fichador standalone (docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md
+// §22): ciclo de vida de un dispositivo de fichada. Mismo idioma que el
+// resto de los enums del fichador (ClockPunchAttemptStatus).
+// PENDING: registrado, esperando aprobación de RRHH. ACTIVE: puede fichar.
+// REVOKED: terminal, nunca vuelve a ACTIVE (re-enrolar = registro nuevo). No
+// hay EXPIRED: un PENDING vencido no tiene historia y se borra físicamente.
+enum ClockDeviceStatus {
+  PENDING
+  ACTIVE
+  REVOKED
+}
+
 enum StorageProvider {
   LOCAL
   CLOUDINARY
@@ -394,6 +406,8 @@ model User {
   workRegimesUpdated            WorkRegime[]                   @relation("WorkRegimeUpdatedBy")
   workRegimesAssigned           EmployeeWorkRegime[]
   finnegansExportBatchesCreated FinnegansExportBatch[]         @relation("FinnegansExportBatchCreatedBy")
+  clockDevicesActivated         ClockDevice[]                  @relation("ClockDeviceActivatedBy")
+  clockDevicesRevoked           ClockDevice[]                  @relation("ClockDeviceRevokedBy")
 
   @@index([role])
   @@index([status])
@@ -488,6 +502,7 @@ model Sector {
   positions       Position[]
   costCenterLinks CostCenterSector[]
   doubleHourRules DoubleHourRule[]
+  clockDevices    ClockDevice[]
 
   @@index([areaId])
 }
@@ -1552,7 +1567,12 @@ model AttendancePunch {
   type                 AttendancePunchType
   timestamp            DateTime               @db.Timestamptz(3)
   source               WorkShiftSource        @default(PORTAL_DNI)
+  // F4: FK a ClockDevice (columna existente, siempre NULL hasta F8, que la
+  // empieza a escribir). Restrict: un dispositivo con fichadas nunca se
+  // borra; se revoca.
   deviceId             String?
+  // Legado sin consumidores (siempre NULL). Lo reemplaza deviceId; se elimina
+  // en el cutover (F12) tras verificar que sigue NULL en cada entorno.
   kioskId              String?
   ipAddress            String?
   userAgent            String?
@@ -1576,6 +1596,7 @@ model AttendancePunch {
   createdAt            DateTime               @default(now()) @db.Timestamptz(3)
 
   employee        Employee     @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  device          ClockDevice? @relation(fields: [deviceId], references: [id], onDelete: Restrict)
   photoFile       StorageFile? @relation("AttendancePunchPhotoFile", fields: [photoFileId], references: [id], onDelete: SetNull)
   thumbnailFile   StorageFile? @relation("AttendancePunchThumbnailFile", fields: [thumbnailFileId], references: [id], onDelete: SetNull)
   startWorkShifts WorkShift[]  @relation("WorkShiftStartPunch")
@@ -1590,12 +1611,57 @@ model AttendancePunch {
   @@index([externalPunchId])
   @@index([photoFileId])
   @@index([thumbnailFileId])
+  @@index([deviceId, timestamp])
+}
+
+// F4 del fichador standalone (docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md
+// §22): identidad individual de cada dispositivo de fichada (iPad/tablet).
+// El identificador público es `id`; el secreto del dispositivo nunca se
+// guarda: sólo su SHA-256 (`tokenHash`). Un dispositivo ACTIVE o REVOKED con
+// historia nunca se borra físicamente: se revoca. Todavía no autentica
+// ningún endpoint (el token compartido sigue vigente hasta F6).
+model ClockDevice {
+  id                String            @id @default(uuid())
+  // Lo define RRHH al aprobar; NULL mientras está PENDING.
+  name              String?
+  status            ClockDeviceStatus @default(PENDING)
+  // SHA-256 hex del secreto del dispositivo (32 bytes aleatorios).
+  tokenHash         String            @unique
+  // SHA-256 hex del código de enrolamiento corto (F5). NULL fuera de PENDING.
+  pairingCodeHash   String?           @unique
+  pairingExpiresAt  DateTime?         @db.Timestamptz(3)
+  sectorId          String?
+  activatedAt       DateTime?         @db.Timestamptz(3)
+  activatedByUserId String?
+  revokedAt         DateTime?         @db.Timestamptz(3)
+  revokedByUserId   String?
+  lastSeenAt        DateTime?         @db.Timestamptz(3)
+  lastIp            String?
+  lastUserAgent     String?
+  lastAppVersion    String?
+  createdAt         DateTime          @default(now()) @db.Timestamptz(3)
+  updatedAt         DateTime          @updatedAt @db.Timestamptz(3)
+
+  // La ubicación es metadata opcional: si se elimina el Sector, el dispositivo
+  // conserva su identidad y queda sin sector; nunca se borra en cadena.
+  sector      Sector?             @relation(fields: [sectorId], references: [id], onDelete: SetNull)
+  activatedBy User?               @relation("ClockDeviceActivatedBy", fields: [activatedByUserId], references: [id], onDelete: SetNull)
+  revokedBy   User?               @relation("ClockDeviceRevokedBy", fields: [revokedByUserId], references: [id], onDelete: SetNull)
+  punches     AttendancePunch[]
+  attempts    ClockPunchAttempt[]
+
+  // Listado de RRHH: filtrar por estado (pendientes, activos) y ordenar por
+  // última conexión. El prefijo `status` cubre también los filtros sólo por
+  // estado.
+  @@index([status, lastSeenAt])
+  @@index([sectorId])
 }
 
 model ClockPunchAttempt {
   id           String                  @id @default(uuid())
   requestId    String                  @unique
   employeeId   String
+  deviceId     String?
   punchType    AttendancePunchType
   status       ClockPunchAttemptStatus @default(PROCESSING)
   requestHash  String
@@ -1607,10 +1673,12 @@ model ClockPunchAttempt {
   completedAt  DateTime?               @db.Timestamptz(3)
   updatedAt    DateTime                @updatedAt @db.Timestamptz(3)
 
-  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  employee Employee     @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  device   ClockDevice? @relation(fields: [deviceId], references: [id], onDelete: Restrict)
 
   @@index([employeeId, startedAt])
   @@index([status, startedAt])
+  @@index([deviceId, startedAt])
 }
 
 // Etapa 15M.19A (docs/decisions/DURABLE_ATTENDANCE_INACTIVITY_SCHEDULER_15M19A.md):
