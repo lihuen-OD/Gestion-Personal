@@ -28,6 +28,19 @@ const envSchema = z.object({
   CLOCK_RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(5 * 60 * 1000),
   CLOCK_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(30),
   CLOCK_DEVICE_TOKEN: z.string().min(16).optional(),
+  // F0 del fichador standalone (docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md
+  // §F0 / trust proxy): cantidad EXACTA de proxies propios entre el cliente y
+  // Express. Express toma como req.ip la entrada de X-Forwarded-For que está
+  // a ese número de saltos (el socket cuenta como el primero). 0 = no confiar
+  // en X-Forwarded-For: req.ip es la IP del socket (comportamiento previo a
+  // F0; detrás de Render, la del proxy interno). Nunca se acepta "true":
+  // confiar en toda la cadena deja que un cliente elija su IP. Un valor mayor
+  // al real también es falsificable. Medirlo por entorno con
+  // CLIENT_IP_DIAGNOSTICS_ENABLED antes de fijarlo.
+  TRUST_PROXY_HOPS: z.coerce.number().int().min(0).max(5).default(0),
+  // Habilita GET /api/health/client-ip (sólo para medir TRUST_PROXY_HOPS en
+  // un entorno). Apagado por defecto; apagarlo de nuevo después de medir.
+  CLIENT_IP_DIAGNOSTICS_ENABLED: envBoolean.default(false),
   LOGIN_RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(15 * 60 * 1000),
   LOGIN_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(10),
   REFRESH_RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(15 * 60 * 1000),

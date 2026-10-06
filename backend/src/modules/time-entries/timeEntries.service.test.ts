@@ -949,6 +949,24 @@ describe("F0 — datos que el fichador expone al kiosco", () => {
     expect(result.employee).not.toHaveProperty("dni");
   });
 
+  it("la evidencia de la fichada lleva la IP del contexto de la request (req.ip), no una enviada en el payload", async () => {
+    repo.findDefaultHourConcept.mockResolvedValue({ hourConcept: normalConcept });
+    repo.createOpenWorkShift.mockResolvedValueOnce({ id: "shift-1", startAt: new Date(), startPunchId: null });
+    const input = {
+      requestId: "99999999-9999-9999-9999-999999999999",
+      employeeId: activeEmployee.id,
+      punchType: "IN" as const,
+      photo: bigPhotoDataUrl(),
+      faceValidationStatus: "VALID" as const,
+    };
+
+    await timeEntriesService.clockPhotoPunch(input, { ipAddress: "203.0.113.7", userAgent: "kiosk-agent" }, { ...activeEmployee, workShifts: [], hourConcepts: [] } as never);
+
+    expect(repo.createOpenWorkShift).toHaveBeenCalledWith(expect.objectContaining({
+      punchEvidence: expect.objectContaining({ ipAddress: "203.0.113.7", userAgent: "kiosk-agent" }),
+    }));
+  });
+
   it("un intento guardado antes de F0 se proyecta al contrato público (sin DNI completo ni datos internos)", async () => {
     repo.findClockPunchAttempt.mockResolvedValueOnce({
       requestId: "88888888-8888-8888-8888-888888888888",

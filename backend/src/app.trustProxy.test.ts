@@ -1,0 +1,217 @@
+import type { AddressInfo } from "node:net";
+import type { Server } from "node:http";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createApp } from "./app";
+import { env } from "./config/env";
+import { CLOCK_DEVICE_TOKEN_HEADER } from "./middlewares/clockDeviceAuth";
+import { trustProxySetting } from "./shared/http/clientIp";
+import { timeEntriesService } from "./modules/time-entries/timeEntries.service";
+
+/**
+ * F0 del fichador standalone (docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md
+ * §F0 / trust proxy). Prueba la app real (`createApp()`) con la topología
+ * medida en Render detrás de Cloudflare: el socket es un proxy interno y
+ * X-Forwarded-For llega como "<cliente>, <borde Cloudflare>, <Render 10.x>"
+ * (TRUST_PROXY_HOPS=3). En el test el socket es 127.0.0.1 y cumple el papel
+ * del proxy interno. El número de saltos real de cada entorno se mide con
+ * GET /api/health/client-ip; estos tests fijan cómo se comporta Express con
+ * cada valor, no cuál es el valor de staging/producción.
+ */
+
+vi.mock("./modules/time-entries/timeEntries.service", async (importOriginal) => {
+  const original = await importOriginal<typeof import("./modules/time-entries/timeEntries.service")>();
+  return {
+    ...original,
+    timeEntriesService: {
+      ...original.timeEntriesService,
+      clockSearch: vi.fn(),
+      clockPhotoPunchIdempotent: vi.fn(),
+    },
+  };
+});
+
+type MutableEnv = {
+  TRUST_PROXY_HOPS: number;
+  CLIENT_IP_DIAGNOSTICS_ENABLED: boolean;
+  CLOCK_DEVICE_TOKEN?: string;
+};
+
+const TOKEN = "test-clock-device-token-0123456789";
+const CLIENT_A = "203.0.113.7";
+const CLIENT_B = "198.51.100.23";
+const CLOUDFLARE_EDGE = "104.16.0.1";
+const RENDER_INTERNAL = "10.0.0.5";
+const original = {
+  TRUST_PROXY_HOPS: env.TRUST_PROXY_HOPS,
+  CLIENT_IP_DIAGNOSTICS_ENABLED: env.CLIENT_IP_DIAGNOSTICS_ENABLED,
+  CLOCK_DEVICE_TOKEN: env.CLOCK_DEVICE_TOKEN,
+};
+
+let server: Server | undefined;
+
+async function startApp(hops: number, options: { diagnostics?: boolean } = {}) {
+  (env as MutableEnv).TRUST_PROXY_HOPS = hops;
+  (env as MutableEnv).CLIENT_IP_DIAGNOSTICS_ENABLED = options.diagnostics ?? true;
+  (env as MutableEnv).CLOCK_DEVICE_TOKEN = TOKEN;
+  vi.spyOn(console, "warn").mockImplementation(() => {});
+  server = createApp().listen(0);
+  await new Promise<void>((resolve) => server!.once("listening", () => resolve()));
+  return `http://127.0.0.1:${(server.address() as AddressInfo).port}${env.API_PREFIX}`;
+}
+
+/** Cadena tal como la arma la infraestructura para un cliente real. */
+function realChain(client: string) {
+  return `${client}, ${CLOUDFLARE_EDGE}, ${RENDER_INTERNAL}`;
+}
+
+async function seenIp(baseUrl: string, forwardedFor?: string) {
+  const response = await fetch(`${baseUrl}/health/client-ip`, {
+    headers: forwardedFor ? { "x-forwarded-for": forwardedFor } : {},
+  });
+  expect(response.status).toBe(200);
+  return ((await response.json()) as { data: { ip: string } }).data.ip;
+}
+
+async function searchAs(baseUrl: string, forwardedFor: string) {
+  const response = await fetch(`${baseUrl}/time-entries/clock/employees?search=ana`, {
+    headers: { "x-forwarded-for": forwardedFor, [CLOCK_DEVICE_TOKEN_HEADER]: TOKEN },
+  });
+  return response.status;
+}
+
+beforeEach(() => {
+  vi.mocked(timeEntriesService.clockSearch).mockResolvedValue([]);
+  vi.mocked(timeEntriesService.clockPhotoPunchIdempotent).mockResolvedValue({ workShift: { id: "shift-1" } } as never);
+});
+
+afterEach(async () => {
+  if (server) await new Promise<void>((resolve) => server!.close(() => resolve()));
+  server = undefined;
+  Object.assign(env as MutableEnv, original);
+  vi.restoreAllMocks();
+});
+
+describe("trustProxySetting", () => {
+  it("nunca devuelve true: 0, negativos o no enteros desactivan la confianza", () => {
+    expect(trustProxySetting(0)).toBe(false);
+    expect(trustProxySetting(-1)).toBe(false);
+    expect(trustProxySetting(1.5)).toBe(false);
+    expect(trustProxySetting(Number.NaN)).toBe(false);
+    expect(trustProxySetting(3)).toBe(3);
+  });
+});
+
+describe("1. sin trust proxy (TRUST_PROXY_HOPS=0, comportamiento previo a F0)", () => {
+  it("req.ip es la IP del socket (el proxy) e ignora X-Forwarded-For", async () => {
+    const baseUrl = await startApp(0);
+    expect(await seenIp(baseUrl, realChain(CLIENT_A))).toMatch(/127\.0\.0\.1$/);
+    expect(await seenIp(baseUrl, realChain(CLIENT_B))).toMatch(/127\.0\.0\.1$/);
+  });
+});
+
+describe("2. con la cantidad exacta de proxies confiables", () => {
+  it("A/C) TRUST_PROXY_HOPS=3 (Render + Cloudflare): req.ip es el cliente real que agregó la infraestructura", async () => {
+    const baseUrl = await startApp(3);
+    expect(await seenIp(baseUrl, realChain(CLIENT_A))).toBe(CLIENT_A);
+    expect(await seenIp(baseUrl, realChain(CLIENT_B))).toBe(CLIENT_B);
+  });
+
+  it("A/C) TRUST_PROXY_HOPS=1 (un solo proxy): req.ip es la entrada que agregó ese proxy", async () => {
+    const baseUrl = await startApp(1);
+    expect(await seenIp(baseUrl, CLIENT_A)).toBe(CLIENT_A);
+  });
+});
+
+describe("3. X-Forwarded-For falsificado por el cliente", () => {
+  it("B) con 3 saltos, lo que el cliente antepone nunca se convierte en req.ip", async () => {
+    const baseUrl = await startApp(3);
+    expect(await seenIp(baseUrl, `6.6.6.6, ${realChain(CLIENT_A)}`)).toBe(CLIENT_A);
+    expect(await seenIp(baseUrl, `1.1.1.1, 6.6.6.6, ${realChain(CLIENT_A)}`)).toBe(CLIENT_A);
+  });
+
+  it("B) con 1 salto, igual: la IP falsa queda a la izquierda de la que agrega el proxy", async () => {
+    const baseUrl = await startApp(1);
+    expect(await seenIp(baseUrl, `6.6.6.6, ${CLIENT_A}`)).toBe(CLIENT_A);
+  });
+
+  it("por qué el valor se mide y no se adivina: un número MAYOR al real sí deja falsificar la IP", async () => {
+    const baseUrl = await startApp(4);
+    expect(await seenIp(baseUrl, `6.6.6.6, ${realChain(CLIENT_A)}`)).toBe("6.6.6.6");
+  });
+});
+
+describe("4/5. rate limiting del fichador por IP real", () => {
+  it("sin trust proxy, dos clientes distintos comparten el mismo bucket (problema previo a F0)", async () => {
+    const baseUrl = await startApp(0);
+    for (let index = 0; index < env.CLOCK_RATE_LIMIT_MAX; index += 1) {
+      expect(await searchAs(baseUrl, realChain("192.0.2.10"))).toBe(200);
+    }
+    expect(await searchAs(baseUrl, realChain("192.0.2.11"))).toBe(429);
+  });
+
+  it("con trust proxy, cada IP tiene su bucket; la misma IP comparte el suyo aunque cambie lo que antepone", async () => {
+    const baseUrl = await startApp(3);
+    const clientC = "192.0.2.20";
+    const clientD = "192.0.2.21";
+    for (let index = 0; index < env.CLOCK_RATE_LIMIT_MAX; index += 1) {
+      expect(await searchAs(baseUrl, realChain(clientC))).toBe(200);
+    }
+    expect(await searchAs(baseUrl, realChain(clientC))).toBe(429);
+    expect(await searchAs(baseUrl, `6.6.6.6, ${realChain(clientC)}`)).toBe(429);
+    expect(await searchAs(baseUrl, realChain(clientD))).toBe(200);
+  });
+});
+
+describe("6. IP que llega a AttendancePunch.ipAddress", () => {
+  it("la fichada recibe como ipAddress la IP efectiva del cliente, no la del proxy ni una enviada por el cliente", async () => {
+    const baseUrl = await startApp(3);
+    const response = await fetch(`${baseUrl}/time-entries/clock/photo-punch`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-forwarded-for": `6.6.6.6, ${realChain(CLIENT_A)}`,
+        [CLOCK_DEVICE_TOKEN_HEADER]: TOKEN,
+      },
+      body: JSON.stringify({
+        requestId: "22222222-2222-4222-8222-222222222222",
+        employeeId: "11111111-1111-4111-8111-111111111111",
+        punchType: "IN",
+        photo: `data:image/jpeg;base64,${"A".repeat(400)}`,
+        faceValidationStatus: "VALID",
+      }),
+    });
+
+    expect(response.status).toBe(201);
+    expect(timeEntriesService.clockPhotoPunchIdempotent).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ ipAddress: CLIENT_A }),
+    );
+  });
+});
+
+describe("GET /health/client-ip — sonda de medición", () => {
+  it("no existe si CLIENT_IP_DIAGNOSTICS_ENABLED=false", async () => {
+    const baseUrl = await startApp(3, { diagnostics: false });
+    const response = await fetch(`${baseUrl}/health/client-ip`);
+    expect(response.status).toBe(404);
+  });
+
+  it("devuelve la cadena de proxies pero nunca headers de credenciales", async () => {
+    const baseUrl = await startApp(3);
+    const response = await fetch(`${baseUrl}/health/client-ip`, {
+      headers: {
+        "x-forwarded-for": realChain(CLIENT_A),
+        "cf-connecting-ip": CLIENT_A,
+        authorization: "Bearer secret-jwt-value",
+        [CLOCK_DEVICE_TOKEN_HEADER]: TOKEN,
+        cookie: "session=secret-cookie-value",
+      },
+    });
+    const text = await response.text();
+
+    expect(JSON.parse(text).data).toMatchObject({ ip: CLIENT_A, trustProxy: 3, xForwardedForEntries: 3, cfConnectingIp: CLIENT_A });
+    expect(text).not.toContain("secret-jwt-value");
+    expect(text).not.toContain(TOKEN);
+    expect(text).not.toContain("secret-cookie-value");
+  });
+});

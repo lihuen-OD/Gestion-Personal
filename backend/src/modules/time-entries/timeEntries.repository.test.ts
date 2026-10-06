@@ -1686,6 +1686,27 @@ describe("closeOpenWorkShift — Etapa 13F (menos trabajo dentro del tx crítico
   });
 });
 
+// F0 del fichador standalone (docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md
+// §F0 / trust proxy): la IP de la fichada viaja en la evidencia y se persiste
+// tal cual en AttendancePunch.ipAddress — nunca se lee de un header acá.
+describe("createOpenWorkShift — AttendancePunch.ipAddress", () => {
+  it("persiste en AttendancePunch la ipAddress de la evidencia (la IP efectiva que resolvió Express)", async () => {
+    mockedPrisma.__tx.attendancePunch.create.mockResolvedValue({ id: "punch-1" });
+    mockedPrisma.__tx.workShift.create.mockResolvedValue({ id: "shift-new" });
+
+    await timeEntriesRepository.createOpenWorkShift({
+      employeeId: "employee-1",
+      source: "PUBLIC_CLOCK_PHOTO" as never,
+      startAt: new Date("2026-10-06T11:00:00.000Z"),
+      punchEvidence: { faceDetected: true, faceValidationStatus: "VALID", ipAddress: "203.0.113.7", userAgent: "kiosk-agent", rawPayload: {} },
+    });
+
+    expect(mockedPrisma.__tx.attendancePunch.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ type: "INGRESO", ipAddress: "203.0.113.7", userAgent: "kiosk-agent" }),
+    });
+  });
+});
+
 describe("rolloverExpiredOpenWorkShift — regresión de atribución de día/período (Etapa 2)", () => {
   it("la jornada anterior que arrancó a las 23:30 hora Argentina se atribuye a agosto/día 14, no a septiembre/día 1 en UTC", async () => {
     // 2026-08-14 23:30 ART = 2026-08-15 02:30 UTC.

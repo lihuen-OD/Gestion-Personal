@@ -4,6 +4,7 @@ import rateLimit from "express-rate-limit";
 import helmet from "helmet";
 import { parseCorsOrigins } from "./config/corsOrigins";
 import { env } from "./config/env";
+import { trustProxySetting } from "./shared/http/clientIp";
 import { requestLogger } from "./middlewares/requestLogger";
 import { apiRouter } from "./routes";
 import { errorHandler } from "./shared/errors/errorHandler";
@@ -13,6 +14,15 @@ export function createApp() {
   const app = express();
 
   app.disable("x-powered-by");
+  // Antes que cualquier middleware que lea req.ip (rate limiting, auditoría,
+  // AttendancePunch.ipAddress). Ver shared/http/clientIp.ts y
+  // TRUST_PROXY_HOPS en config/env.ts.
+  app.set("trust proxy", trustProxySetting(env.TRUST_PROXY_HOPS));
+  if (env.NODE_ENV === "production" && env.TRUST_PROXY_HOPS === 0) {
+    console.warn(
+      "[trustProxy] TRUST_PROXY_HOPS=0 en production: req.ip es la IP del proxy, asi que el rate limiting y la IP auditada agrupan a todos los clientes. Medir y configurar TRUST_PROXY_HOPS.",
+    );
+  }
   app.use(helmet());
   app.use(
     cors({
