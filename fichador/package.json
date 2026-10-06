@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build && node scripts/check-bundle-isolation.mjs",
+    "build": "tsc -b && vite build && node scripts/write-hosting-headers.mjs && node scripts/check-bundle-isolation.mjs",
     "preview": "vite preview",
     "test": "vitest run",
     "e2e": "playwright test",

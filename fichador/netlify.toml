@@ -1,0 +1,37 @@
+# Fichador standalone — sitio de hosting propio (F2,
+# docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md §20). Netlify lee este
+# archivo cuando el "Base directory" del sitio es `fichador`; las rutas de
+# acá son relativas a esa carpeta. No construye ni publica el admin.
+#
+# Con base directory definido, Netlify ya omite el build cuando un commit no
+# toca `fichador/` (ignore por defecto), así que no se redefine `ignore` en
+# [build].
+
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+[build.environment]
+  # Misma versión mayor que CI (.github/workflows/ci.yml).
+  NODE_VERSION = "22"
+
+# Sin deploy previews ni branch deploys: mientras exista el token compartido
+# temporal (hasta F4–F6), cada build publica una URL que lo lleva embebido.
+# `ignore` con salida 0 cancela el build en esos contextos. Desactivarlos
+# también en el panel (Deploy contexts → Deploy previews: None).
+[context.deploy-preview]
+  ignore = "exit 0"
+
+[context.branch-deploy]
+  ignore = "exit 0"
+
+# SPA fallback: cualquier ruta que no sea un archivo (p. ej. /legajos) sirve
+# index.html y el fichador muestra su propio 404. Nunca redirige al admin.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+# Los headers (seguridad, CSP report-only, cache) los genera el build en
+# dist/_headers: la CSP depende del origin del backend de cada entorno.
+# Ver scripts/hosting-headers.mjs.
