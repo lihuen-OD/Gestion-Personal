@@ -23,6 +23,7 @@ vi.mock("./timeEntries.repository", () => ({
     findDefaultHourConcept: vi.fn(),
     findBlockingNovelty: vi.fn(),
     findClockValidationContext: vi.fn(),
+    searchEmployeesForClock: vi.fn(),
     createClockPunchAttempt: vi.fn(),
     findClockPunchAttempt: vi.fn(),
     completeClockPunchAttempt: vi.fn(),
@@ -139,6 +140,7 @@ type RepoMock = {
   findDefaultHourConcept: Mock;
   findBlockingNovelty: Mock;
   findClockValidationContext: Mock;
+  searchEmployeesForClock: Mock;
   createClockPunchAttempt: Mock;
   findClockPunchAttempt: Mock;
   completeClockPunchAttempt: Mock;
@@ -885,6 +887,89 @@ describe("clockPhotoPunch — reglas de ingreso y salida (F0: antes probadas só
 
       expect(result.workShift.id).toBe("shift-open");
       errorSpy.mockRestore();
+    });
+  });
+});
+
+// F0 del fichador standalone: todo lo que devuelve /clock/* lo puede leer
+// cualquiera con el token compartido del kiosco. Se fija el contrato mínimo.
+describe("F0 — datos que el fichador expone al kiosco", () => {
+  const normalConcept = { id: "concept-normal", name: "Hora normal", code: "NORMAL", kind: "NORMAL", status: "ACTIVO", systemRole: "NORMAL_BASE" };
+
+  it("clockSearch devuelve sólo los últimos 3 dígitos del DNI, nunca el DNI completo ni el CUIL", async () => {
+    repo.searchEmployeesForClock.mockResolvedValueOnce([activeEmployee]);
+
+    const [employee] = await timeEntriesService.clockSearch({ search: "Gomez" });
+
+    expect(employee).toEqual({ id: activeEmployee.id, legajo: "100", dniSuffix: "000", firstName: "Ana", lastName: "Gomez", name: "Gomez, Ana" });
+    expect(JSON.stringify(employee)).not.toContain(activeEmployee.dni);
+    expect(JSON.stringify(employee)).not.toContain(activeEmployee.cuil);
+  });
+
+  it("clockStatusByEmployee no expone conceptos horarios ni el DNI completo", async () => {
+    repo.findClockValidationContext.mockResolvedValueOnce({
+      ...activeEmployee,
+      workShifts: [{ id: "shift-open", startAt: new Date("2026-10-06T11:00:00.000Z"), hourConcept: normalConcept }],
+      hourConcepts: [{ hourConcept: normalConcept }],
+    });
+
+    const status = await timeEntriesService.clockStatusByEmployee({ employeeId: activeEmployee.id });
+
+    expect(status).toEqual({
+      employee: expect.objectContaining({ dniSuffix: "000" }),
+      openShift: { id: "shift-open", startAt: new Date("2026-10-06T11:00:00.000Z") },
+    });
+    expect(status).not.toHaveProperty("hourConcepts");
+    expect(status.employee).not.toHaveProperty("dni");
+  });
+
+  it("la respuesta de una salida no incluye los TimeEntry/TimeSegment internos", async () => {
+    repo.findDefaultHourConcept.mockResolvedValue({ hourConcept: normalConcept });
+    repo.findBlockingNovelty.mockResolvedValue(null);
+    repo.findLockedTimeEntry.mockResolvedValue(null);
+    repo.closeOpenWorkShift.mockResolvedValueOnce({
+      workShift: { id: "shift-open", startAt: new Date(Date.now() - 60 * 60_000), endAt: new Date(), totalMinutes: 60, endPunchId: null },
+      entries: [{ id: "entry-internal" }],
+      timeSegments: [{ id: "segment-internal" }],
+    });
+    const input = {
+      requestId: "77777777-7777-7777-7777-777777777777",
+      employeeId: activeEmployee.id,
+      punchType: "OUT" as const,
+      photo: bigPhotoDataUrl(),
+      faceValidationStatus: "VALID" as const,
+    };
+    const context = { ...activeEmployee, workShifts: [{ id: "shift-open", startAt: new Date(Date.now() - 60 * 60_000), hourConcept: normalConcept }], hourConcepts: [] };
+
+    const result = await timeEntriesService.clockPhotoPunch(input, undefined, context as never);
+
+    expect(result).not.toHaveProperty("entries");
+    expect(result).not.toHaveProperty("timeSegments");
+    expect(result.employee).toEqual(expect.objectContaining({ dniSuffix: "000" }));
+    expect(result.employee).not.toHaveProperty("dni");
+  });
+
+  it("un intento guardado antes de F0 se proyecta al contrato público (sin DNI completo ni datos internos)", async () => {
+    repo.findClockPunchAttempt.mockResolvedValueOnce({
+      requestId: "88888888-8888-8888-8888-888888888888",
+      employeeId: activeEmployee.id,
+      status: "COMPLETED",
+      startedAt: new Date(),
+      response: {
+        employee: { id: activeEmployee.id, legajo: "100", dni: "30123456", firstName: "Ana", lastName: "Gomez", name: "Gomez, Ana" },
+        workShift: { id: "shift-open", startAt: "2026-10-06T11:00:00.000Z", endAt: "2026-10-06T12:00:00.000Z", totalMinutes: 60, totalHours: 1 },
+        segments: [],
+        entries: [{ id: "entry-internal" }],
+        timeSegments: [{ id: "segment-internal" }],
+      },
+    });
+
+    const state = await timeEntriesService.clockPunchAttemptStatus("88888888-8888-8888-8888-888888888888", activeEmployee.id);
+
+    expect(state.response).toEqual({
+      employee: { id: activeEmployee.id, legajo: "100", dniSuffix: "456", firstName: "Ana", lastName: "Gomez", name: "Gomez, Ana" },
+      workShift: { id: "shift-open", startAt: "2026-10-06T11:00:00.000Z", endAt: "2026-10-06T12:00:00.000Z", totalMinutes: 60, totalHours: 1 },
+      segments: [],
     });
   });
 });

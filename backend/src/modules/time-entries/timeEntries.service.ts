@@ -495,11 +495,21 @@ async function validateShift(input: PreviewWorkShiftInput, user: Express.AuthUse
   return { employee, hourConcept, ...calculation };
 }
 
-function publicEmployeeLabel(employee: { id?: string; firstName: string; lastName: string; legajo: string; dni?: string }) {
+// F0 del fichador standalone (docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md):
+// todo lo que devuelve /clock/* lo puede leer cualquiera que tenga el token
+// compartido del kiosco (embebido en el bundle público). Para distinguir
+// homónimos en pantalla alcanzan legajo + últimos 3 dígitos del DNI; el DNI
+// completo no sale del backend por este camino.
+function clockDniSuffix(dni?: string | null) {
+  const digits = (dni || "").replace(/\D/g, "");
+  return digits ? digits.slice(-3) : null;
+}
+
+function publicEmployeeLabel(employee: { id?: string; firstName: string; lastName: string; legajo: string; dni?: string | null }) {
   return {
     id: employee.id,
     legajo: employee.legajo,
-    dni: employee.dni,
+    dniSuffix: clockDniSuffix(employee.dni),
     firstName: employee.firstName,
     lastName: employee.lastName,
     name: `${employee.lastName}, ${employee.firstName}`,
@@ -724,8 +734,30 @@ async function cleanupClockEvidence(evidence: ClockPhotoEvidence) {
   });
 }
 
+function isJsonObject(value: Prisma.JsonValue | undefined): value is Prisma.JsonObject {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+// F0: un intento guardado antes de F0 (se retienen
+// CLOCK_ATTEMPT_RETENTION_DAYS) puede traer el DNI completo y los
+// TimeEntry/TimeSegment internos de la salida. Se proyecta al mismo contrato
+// público que una respuesta nueva antes de devolverlo al kiosco.
 function storedAttemptResponse(value: Prisma.JsonValue | null) {
-  return value && typeof value === "object" ? value : null;
+  if (!isJsonObject(value)) return null;
+  const { entries: _entries, timeSegments: _timeSegments, employee, ...rest } = value;
+  if (!isJsonObject(employee)) return rest;
+  const text = (key: string) => (typeof employee[key] === "string" ? (employee[key] as string) : "");
+  return {
+    ...rest,
+    employee: {
+      id: text("id") || undefined,
+      legajo: text("legajo"),
+      dniSuffix: text("dniSuffix") || clockDniSuffix(text("dni")),
+      firstName: text("firstName"),
+      lastName: text("lastName"),
+      name: text("name"),
+    },
+  };
 }
 
 function faceStatusObservation(status: ClockPhotoPunchInput["faceValidationStatus"]) {
@@ -1185,21 +1217,12 @@ export const timeEntriesService = {
   async clockStatusByEmployee(input: ClockByEmployeeInput) {
     const employee = await resolveClockValidationContext(input.employeeId);
     const openShift = employee.workShifts[0] || null;
+    // F0: el fichador no elige concepto horario desde la Etapa 6K, así que
+    // ni los conceptos habilitados ni el concepto de la jornada abierta se
+    // exponen al kiosco.
     return {
       employee: publicEmployeeLabel(employee),
-      openShift: openShift ? {
-        id: openShift.id,
-        startAt: openShift.startAt,
-        hourConcept: openShift.hourConcept ? {
-          id: openShift.hourConcept.id,
-          code: openShift.hourConcept.code,
-          name: openShift.hourConcept.name,
-          kind: openShift.hourConcept.kind,
-        } : null,
-      } : null,
-      hourConcepts: employee.hourConcepts
-        .map(({ hourConcept }) => ({ id: hourConcept.id, code: hourConcept.code, name: hourConcept.name, kind: hourConcept.kind }))
-        .sort((a, b) => (a.kind === "NORMAL" ? -1 : b.kind === "NORMAL" ? 1 : a.name.localeCompare(b.name))),
+      openShift: openShift ? { id: openShift.id, startAt: openShift.startAt } : null,
     };
   },
 
@@ -1532,8 +1555,6 @@ export const timeEntriesService = {
           hours: segment.hours,
           label: segment.label,
         })),
-        entries: created.entries,
-        timeSegments: created.timeSegments,
       };
     } catch (error) {
       await cleanupClockEvidence(evidence);

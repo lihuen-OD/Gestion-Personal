@@ -8,8 +8,6 @@ vi.mock("../services/api/timeClockApiService", () => ({
   timeClockApiService: {
     searchEmployees: vi.fn(),
     status: vi.fn(),
-    clockIn: vi.fn(),
-    clockOut: vi.fn(),
     photoPunch: vi.fn(),
     attemptStatus: vi.fn(),
   },
@@ -37,7 +35,7 @@ vi.mock("../components/time-clock/FaceCaptureModal", () => ({
   ),
 }));
 
-const employeeMatch = { id: "employee-1", legajo: "100", dni: "30000000", firstName: "Ana", lastName: "Gomez", name: "Ana Gomez" };
+const employeeMatch = { id: "employee-1", legajo: "100", dniSuffix: "456", firstName: "Ana", lastName: "Gomez", name: "Gomez, Ana" };
 
 // Fechas relativas al reloj real de la corrida, no hardcodeadas: un turno
 // abierto hace 8 horas nunca "expira" (supera las 20h de
@@ -55,15 +53,13 @@ function mockNoOpenShift() {
   vi.mocked(timeClockApiService.status).mockResolvedValue({
     employee: employeeMatch,
     openShift: null,
-    hourConcepts: [],
   });
 }
 
 function mockOpenShift() {
   vi.mocked(timeClockApiService.status).mockResolvedValue({
     employee: employeeMatch,
-    openShift: { id: "shift-1", startAt: isoHoursAgo(8), hourConcept: null },
-    hourConcepts: [],
+    openShift: { id: "shift-1", startAt: isoHoursAgo(8) },
   });
 }
 
@@ -178,5 +174,13 @@ describe("TimeClockPage — fichador sin selector de concepto horario (Etapa 6K)
     await user.click(await screen.findByText("Gomez, Ana"));
 
     expect(await screen.findByText("No pudimos consultar el estado del legajo seleccionado.")).toBeInTheDocument();
+  });
+
+  it("identifica al empleado por legajo y los últimos 3 dígitos del DNI (F0: el DNI completo no llega al kiosco)", async () => {
+    mockNoOpenShift();
+    await selectEmployee();
+
+    expect(await screen.findByText("Legajo 100 · DNI terminado en 456")).toBeInTheDocument();
+    expect(screen.queryByText(/DNI \d{6,}/)).not.toBeInTheDocument();
   });
 });

@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { LogIn, LogOut, Search } from "lucide-react";
 import { ApiError } from "../services/api/apiClient";
-import { timeClockApiService } from "../services/api/timeClockApiService";
+import { timeClockApiService, type ClockEmployee } from "../services/api/timeClockApiService";
 import { Button } from "../components/ui/Button";
 import { LoadingState } from "../components/ui/LoadingState";
 import type { FaceCaptureResult } from "../components/time-clock/FaceCaptureModal";
@@ -12,6 +12,10 @@ const FaceCaptureModal = lazy(() =>
 );
 
 const MAX_CLOCK_SHIFT_MINUTES = 20 * 60;
+
+function employeeIdentity(employee: ClockEmployee) {
+  return employee.dniSuffix ? `Legajo ${employee.legajo} · DNI terminado en ${employee.dniSuffix}` : `Legajo ${employee.legajo}`;
+}
 
 function formatCurrentTime(value: Date) {
   return value.toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
@@ -130,9 +134,9 @@ export function TimeClockPage() {
   const applyPunchResponse = (response: Awaited<ReturnType<typeof timeClockApiService.photoPunch>>) => {
     setResult(response);
     if ("totalHours" in response.workShift) {
-      setStatus((current) => ({ employee: response.employee, openShift: null, hourConcepts: current?.hourConcepts || [] }));
+      setStatus({ employee: response.employee, openShift: null });
     } else {
-      setStatus((current) => ({ employee: response.employee, openShift: { ...response.workShift, hourConcept: null }, hourConcepts: current?.hourConcepts || [] }));
+      setStatus({ employee: response.employee, openShift: { id: response.workShift.id, startAt: response.workShift.startAt } });
     }
     setPendingPunch(undefined);
     setAttemptId("");
@@ -240,7 +244,7 @@ export function TimeClockPage() {
             {matches.map((employee) => (
               <button key={employee.id} type="button" onClick={() => selectEmployee(employee)}>
                 <b>{employee.lastName}, {employee.firstName}</b>
-                <span>DNI {employee.dni} · Legajo {employee.legajo}</span>
+                <span>{employeeIdentity(employee)}</span>
               </button>
             ))}
           </div>
@@ -249,7 +253,7 @@ export function TimeClockPage() {
         {employeeLabel ? (
           <div className="clock-employee">
             <b>{employeeLabel.lastName}, {employeeLabel.firstName}</b>
-            <span>DNI {employeeLabel.dni} · Legajo {employeeLabel.legajo}</span>
+            <span>{employeeIdentity(employeeLabel)}</span>
             <button type="button" className="table-link" onClick={clearEmployee}>Cambiar empleado</button>
           </div>
         ) : null}

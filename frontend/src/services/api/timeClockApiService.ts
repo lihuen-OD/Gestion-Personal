@@ -11,20 +11,15 @@ function clockDeviceHeaders(): HeadersInit {
   return token ? { "x-clock-device-token": token } : {};
 }
 
-type ClockEmployee = {
+// El backend nunca devuelve el DNI completo al kiosco: sólo sus últimos 3
+// dígitos, para distinguir homónimos (F0 del fichador standalone).
+export type ClockEmployee = {
   id: string;
   legajo: string;
-  dni: string;
+  dniSuffix: string | null;
   firstName: string;
   lastName: string;
   name: string;
-};
-
-export type ClockHourConcept = {
-  id: string;
-  code: string;
-  name: string;
-  kind: "NORMAL" | "ESPECIAL" | "FERIADO" | "LICENCIA" | "AUSENCIA" | "OTRO";
 };
 
 type ClockStatusResponse = {
@@ -33,9 +28,7 @@ type ClockStatusResponse = {
     openShift: {
       id: string;
       startAt: string;
-      hourConcept: ClockHourConcept | null;
     } | null;
-    hourConcepts: ClockHourConcept[];
   };
 };
 
