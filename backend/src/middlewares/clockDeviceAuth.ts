@@ -23,16 +23,15 @@ function timingSafeEqual(a: string, b: string) {
  * el fichador), asi que no pueden usar requireAuth. Este middleware exige en
  * su lugar un secreto por dispositivo (header CLOCK_DEVICE_TOKEN_HEADER).
  *
- * IMPORTANTE: esto es una mitigacion minima viable y temporal, no seguridad
- * final de produccion. El token viaja embebido en el bundle publico del
- * kiosco (VITE_CLOCK_DEVICE_TOKEN en el frontend), asi que no es un secreto
- * fuerte: no reemplaza biometria, VPN/IP allowlist a nivel de infraestructura,
- * ni una eventual app de kiosco separada que consuma la API de legajos/
- * fichadas con su propia autenticacion de dispositivo (decision pendiente,
- * no encarada en esta etapa). Decision de producto: el fichador queda asi
- * para demo/uso interno controlado; ver docs/SECURITY_STANDARDS.md ->
- * "Public clock endpoints (fichador)" para el detalle y los riesgos
- * pendientes antes de un uso de produccion real.
+ * IMPORTANTE: esto es una solucion TEMPORAL, no seguridad final de
+ * produccion. El token viaja embebido en el bundle publico del kiosco
+ * (VITE_CLOCK_DEVICE_TOKEN en el frontend), asi que no es un secreto: quien
+ * pueda cargar el sitio puede leerlo. Se reemplaza por identidad por
+ * dispositivo (ClockDevice, enrolamiento aprobado por RRHH, revocable) en
+ * F4-F6 de docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md. Desde F0 solo
+ * habilita las cuatro rutas /clock que usa el fichador actual (ninguna ficha
+ * sin foto); ver docs/SECURITY_STANDARDS.md -> "Public clock endpoints
+ * (fichador)".
  *
  * Comportamiento si CLOCK_DEVICE_TOKEN no esta configurado:
  * - en production (NODE_ENV=production): falla cerrado, rechaza toda request

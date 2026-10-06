@@ -1,11 +1,11 @@
 import { apiRequest } from "./apiClient";
 
 // El fichador no tiene sesion de usuario (kiosco publico), asi que en vez de
-// un Bearer token manda un secreto por dispositivo — ver
-// backend/src/middlewares/clockDeviceAuth.ts. Es una proteccion minima
-// contra abuso anonimo de la API: al quedar embebido en el bundle publico
-// del kiosco no es un secreto realmente inaccesible, no reemplaza una
-// restriccion de red real.
+// un Bearer token manda un secreto compartido — ver
+// backend/src/middlewares/clockDeviceAuth.ts. Es TEMPORAL: al ser una
+// variable VITE_* queda embebido en el bundle publico, asi que no es un
+// secreto. Se reemplaza por ClockDevice (identidad por dispositivo) en F4-F6
+// de docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md.
 function clockDeviceHeaders(): HeadersInit {
   const token = import.meta.env.VITE_CLOCK_DEVICE_TOKEN;
   return token ? { "x-clock-device-token": token } : {};

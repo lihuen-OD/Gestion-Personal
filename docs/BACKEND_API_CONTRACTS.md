@@ -980,10 +980,15 @@ Rechazo:
 ### Fichador público (clock)
 
 ```txt
+GET  /api/time-entries/clock/employees?search=
+POST /api/time-entries/clock/status
 POST /api/time-entries/clock/photo-punch
+GET  /api/time-entries/clock/attempts/:requestId?employeeId=
 ```
 
-Kiosco público sin sesión de usuario: protegido por `x-clock-device-token` (`requireClockDeviceToken`) y rate limit (`clockRateLimiter`), montados sobre todo el sub-router `/clock`. No requiere `requireAuth`.
+Kiosco público sin sesión de usuario: cada una de estas cuatro rutas lleva `x-clock-device-token` (`requireClockDeviceToken`, secreto compartido **temporal**, a reemplazar por `ClockDevice` en F4–F6) y rate limit por IP (`clockRateLimiter`). No requieren `requireAuth`. Son las únicas rutas `/clock`: cualquier otra `/api/time-entries/clock/*` responde `404 ROUTE_NOT_FOUND` con o sin token (F0 del fichador standalone retiró `POST /clock/in`, `/clock/out`, `/clock/status-by-dni`, `/clock/in-by-dni` y `/clock/out-by-dni`, que fichaban sin foto). Ver `docs/SECURITY_STANDARDS.md` → "Public clock endpoints (fichador)".
+
+Contrato de empleado en las cuatro respuestas (F0): `{ id, legajo, dniSuffix, firstName, lastName, name }` — `dniSuffix` son los últimos 3 dígitos del DNI; el DNI completo nunca se devuelve. `clock/status` devuelve `{ employee, openShift: { id, startAt } | null }` (sin conceptos horarios). La respuesta de salida de `photo-punch` devuelve `employee`, `workShift` (`id`, `startAt`, `endAt`, `totalMinutes`, `totalHours`) y `segments` (etiquetas para pantalla), sin las filas internas de `TimeEntry`/`TimeSegment`.
 
 ```json
 {
@@ -1602,6 +1607,8 @@ Capa compartida de archivos (documentos, evidencia fotográfica del fichador). T
 ### Health (`health`, montado en `/api/health`)
 
 `GET /` — healthcheck (sin auth). `GET /performance` — métricas de performance del proceso (sin auth). Uso operativo/monitoreo, no de negocio.
+
+`GET /client-ip` — sonda de medición de proxies (F0 del fichador standalone): sólo existe con `CLIENT_IP_DIAGNOSTICS_ENABLED=true` (si no, 404), sin auth, rate limit propio (20 / 5 min). Devuelve `{ ip, ips, remoteAddress, trustProxy, xForwardedFor, xForwardedForEntries, xRealIp, forwarded, trueClientIp, cfConnectingIp }` del propio llamador, nunca headers de credenciales. Se usa para fijar `TRUST_PROXY_HOPS` y se apaga después.
 
 ## Pendientes técnicos de contrato
 

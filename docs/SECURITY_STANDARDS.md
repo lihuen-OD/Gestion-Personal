@@ -51,26 +51,41 @@ Check:
 
 ## Public clock endpoints (fichador)
 
-`POST /time-entries/clock/*` and `GET /time-entries/clock/employees` are intentionally unauthenticated (public kiosk flow). Because of that:
-- they carry their own rate limiter (`CLOCK_RATE_LIMIT_*` env vars), separate from the global API limiter
-- `GET /clock/employees` only returns `ACTIVO` employees, never inactive/terminated ones
-- **`faceValidationStatus` on the photo-punch endpoint is a client-reported result (MediaPipe running in the browser), not a server-side biometric verification.** The backend only checks that the client claims a valid detection — it never re-validates the uploaded photo against the employee's identity. Treat it as an anti-mistake UX signal, not a security control, until real server-side face matching is implemented.
-- idempotency for the photo-punch path is enforced via `ClockPunchAttempt.requestId` (unique); the legacy DNI/employee-id clock-in/out paths have no request-level idempotency key, but concurrent double-submits are still blocked at the database level by the partial unique index `WorkShift_one_open_per_employee` (mapped to a clean 409, not a 500)
+The fichador has no user session, so its four routes are not behind `requireAuth`. After F0 of the standalone fichador plan (`docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md`) these are the **only** routes reachable with the kiosk credential:
 
-### Device token (`x-clock-device-token`) — status and pending risks
+| Route | Purpose | Exposes |
+|---|---|---|
+| `GET /time-entries/clock/employees?search=` | Search `ACTIVO` employees by name (min 2 chars, max 12 results) | id, legajo, first/last name, **last 3 DNI digits** (`dniSuffix`) |
+| `POST /time-entries/clock/status` | Open shift of the selected employee | same employee label + open shift `{id, startAt}` |
+| `POST /time-entries/clock/photo-punch` | Clock in/out **with photo**, idempotent by `requestId` | employee label, shift times/totals, segment labels |
+| `GET /time-entries/clock/attempts/:requestId?employeeId=` | State of a punch attempt (network-failure recovery) | same as photo-punch |
 
-Product decision (2026-08): the fichador does not need a final production security solution at this stage. It stays functional for **demo / controlled internal use**; whether it later becomes a separate kiosk app consuming the legajos/fichadas API is a future decision, not implemented now. Do not build biometrics, VPN, IP allowlisting, or a separate kiosk app for this until that decision is made.
+Rules:
+- each route carries the kiosk token check and its own rate limiter (`CLOCK_RATE_LIMIT_*`, one bucket per client IP), separate from the global API limiter. Per-IP buckets only work with a correct `TRUST_PROXY_HOPS` (see "Client IP behind proxies")
+- the `/clock` namespace is closed: any other `/time-entries/clock/*` path answers `404 ROUTE_NOT_FOUND` with or without the token and never falls through to `requireAuth` or the `/:id` routes. **There is no photo-less punch path** — `POST /clock/in`, `/clock/out`, `/clock/status-by-dni`, `/clock/in-by-dni` and `/clock/out-by-dni` were removed in F0 (they let anyone clock any employee in/out by id or DNI)
+- the full DNI, CUIL, enabled hour concepts and internal `TimeEntry`/`TimeSegment` rows never leave the backend through these routes; attempts stored before F0 are projected to the same public shape when read back
+- **`faceValidationStatus` on the photo-punch endpoint is a client-reported result (MediaPipe running in the browser), not a server-side biometric verification.** The backend only checks that the client claims a valid detection — it never re-validates the uploaded photo against the employee's identity. Treat it as an anti-mistake UX signal, not a security control, until real server-side face matching is implemented
+- idempotency is enforced via `ClockPunchAttempt.requestId` (unique); concurrent double ingress is also blocked at the database level by the partial unique index `WorkShift_one_open_per_employee` (mapped to a clean 409, not a 500)
 
-What exists today (`backend/src/middlewares/clockDeviceAuth.ts`): all `/clock/*` routes require a shared secret in the `x-clock-device-token` header (`CLOCK_DEVICE_TOKEN` / `VITE_CLOCK_DEVICE_TOKEN`), compared with `crypto.timingSafeEqual`. **This is an explicitly temporary mitigation, not final production security.**
+### Device token (`x-clock-device-token`) — temporary, to be replaced by `ClockDevice`
 
-- If `CLOCK_DEVICE_TOKEN` is unset in `NODE_ENV=production`, the middleware **fails closed**: every `/clock/*` request is rejected (`503 CLOCK_DEVICE_NOT_CONFIGURED`) instead of silently running the fichador with no device control.
-- If unset in development/test/demo, requests are still allowed through (logged once as a warning) so local/demo setup isn't blocked.
-- Legacy `POST /clock/in` and `/clock/out` remain in place alongside `/clock/in-by-dni` and `/clock/out-by-dni` — not retired yet.
+What exists today (`backend/src/middlewares/clockDeviceAuth.ts`): the four routes above require one shared secret in the `x-clock-device-token` header (`CLOCK_DEVICE_TOKEN` / `VITE_CLOCK_DEVICE_TOKEN`), compared with `crypto.timingSafeEqual`.
 
-Pending risks, left open on purpose for this stage:
-- The fichador may migrate to a separate kiosk app later — this token scheme is not meant to survive that migration as-is.
-- The token embedded in the frontend bundle is **not a strong secret**: anyone with access to the kiosk's served bundle or network traffic can read it.
-- For real production use, device authentication, network restriction (VPN/IP allowlist), or a separate kiosk architecture still needs to be defined — none of that is implemented yet.
+**The shared secret is a temporary solution and will be replaced by `ClockDevice` (per-device identity, enrollment approved by RRHH, revocable) in stages F4–F6 of `docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md`.** Until then:
+
+- the token is **not a secret**: it is a `VITE_*` variable, so Vite inlines it into the JavaScript chunk of `TimeClockPage`, which the admin site serves without login. Anyone who can load that site can read it. Moving it to another env var or another `VITE_*` name would not change that
+- whoever has it can use exactly the four routes above (search active employees by name, read their open shift, punch **with a photo**, read attempts) and nothing else; it gives no access to any admin endpoint, and admin JWTs give no access to these routes
+- if `CLOCK_DEVICE_TOKEN` is unset in `NODE_ENV=production`, the middleware **fails closed** (`503 CLOCK_DEVICE_NOT_CONFIGURED`); in development/test/demo it lets requests through with a one-time warning
+- it cannot tell kiosks apart or revoke one of them; `AttendancePunch.deviceId`/`kioskId` stay unused until F4
+
+## Client IP behind proxies (`trust proxy`)
+
+`req.ip` feeds rate limiting, `AuditLog.ipAddress` and `AttendancePunch.ipAddress`. Express trusts exactly `TRUST_PROXY_HOPS` proxy hops (`backend/src/shared/http/clientIp.ts`, applied first thing in `createApp()`):
+
+- `0` (default) = do not trust `X-Forwarded-For`; `req.ip` is the socket address. Behind any proxy (Render, VS Code Dev Tunnels) that means **every client shares the proxy's IP** — one rate-limit bucket for everybody and the proxy's address in audit/punch records. Production logs a startup warning while it stays at 0
+- `N` = the exact number of proxies between the client and Express. Entries a client prepends to `X-Forwarded-For` never become `req.ip`. **A value above the real count lets a client choose its IP**, so the value is measured, never guessed, and `true` is never used
+- measure it per environment with `CLIENT_IP_DIAGNOSTICS_ENABLED=true` + `GET /api/health/client-ip` (own rate limit, returns only the caller's IP and proxy chain, never credentials), following the procedure in the plan's F0 section; turn the probe off afterwards
+- nothing reads client IP headers manually; always use `req.ip`
 
 ## Input validation
 

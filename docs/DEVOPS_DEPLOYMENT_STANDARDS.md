@@ -118,6 +118,7 @@ Check:
 - database connection
 - migrations
 - CORS origins
+- `TRUST_PROXY_HOPS` measured for this environment's proxy chain (never guessed; see `docs/SECURITY_STANDARDS.md` → "Client IP behind proxies") and `CLIENT_IP_DIAGNOSTICS_ENABLED` back to `false` afterwards
 - file upload storage
 - external service credentials
 - health endpoint if available
