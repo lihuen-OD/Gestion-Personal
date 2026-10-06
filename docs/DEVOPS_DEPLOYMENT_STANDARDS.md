@@ -30,7 +30,7 @@ Before deploy:
 
 ### Where it lives
 
-`.github/workflows/ci.yml` — two independent jobs, `backend` and `frontend`, run in parallel on every GitHub Actions run.
+`.github/workflows/ci.yml` — three independent jobs, `backend`, `frontend` and `fichador`, run in parallel on every GitHub Actions run.
 
 ### When it runs
 
@@ -52,7 +52,13 @@ Before deploy:
 2. `npm run test` — the Vitest suite.
 3. `npm run build` — runs `tsc -b && vite build`; there is no separate `typecheck` script in the frontend, so type-checking happens as the first half of this same step.
 
-If either job fails, the run is reported as failed on the commit/PR. **A failing CI run must be fixed before merging** — it means one of the checks above broke, not that anything was deployed or changed on any real environment (this workflow never deploys and never touches a real database, see below).
+**`fichador` job** (working directory `fichador/`, standalone kiosk app since F1 of `docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md`):
+1. `npm ci`.
+2. `npm run test` — the Vitest suite.
+3. `npm run typecheck:e2e` — the Playwright spec compiles (the e2e itself is not run in CI, same as the frontend journeys).
+4. `npm run build` — `tsc -b && vite build`, then `scripts/check-bundle-isolation.mjs`, which fails the job if the kiosk imports anything outside `fichador/src` or its bundle contains admin modules.
+
+If any job fails, the run is reported as failed on the commit/PR. **A failing CI run must be fixed before merging** — it means one of the checks above broke, not that anything was deployed or changed on any real environment (this workflow never deploys and never touches a real database, see below).
 
 ### No real database, no real secrets, no migrations
 

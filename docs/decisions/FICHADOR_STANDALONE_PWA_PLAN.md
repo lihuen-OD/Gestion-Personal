@@ -1,6 +1,6 @@
 # Fichador como app independiente (PWA) — Etapa 1: diagnóstico y plan
 
-> Estado: plan aprobado. **F0 cerrada para el entorno de desarrollo actual** (2026-10-06, ver [§18](#18-f0--implementación-y-resultado)); la medición de `TRUST_PROXY_HOPS` es requisito previo del primer deploy real del backend. F1 en adelante pendiente de aprobación.
+> Estado: plan aprobado. **F0 cerrada para el entorno de desarrollo actual** (2026-10-06, ver [§18](#18-f0--implementación-y-resultado)); la medición de `TRUST_PROXY_HOPS` es requisito previo del primer deploy real del backend. **F1 implementada** (2026-10-06, ver [§19](#19-f1--fichador-standalone-implementación)), pendiente de aprobación. F2 en adelante sin empezar.
 > Los §1–§17 son el diagnóstico read-only original sobre `main @ 697968a` y describen el estado **previo** a F0 (por ejemplo, las rutas sin foto de §2 ya no existen).
 
 ---
@@ -752,3 +752,120 @@ Revisado: `requestLogger` / `performanceLogger` loguean método, path saneado (s
 ### 18.10 Siguiente etapa recomendada
 
 **F1** — app `fichador/` separada, sobre los cuatro endpoints vigentes. Pendiente de aprobación.
+
+---
+
+## 19. F1 — fichador standalone (implementación)
+
+Sin cambios de backend, schema ni endpoints. Mismos cuatro endpoints de F0 y mismo token compartido temporal.
+
+### 19.1 Arquitectura obtenida
+
+```
+Gestion-Personal/
+├── backend/    API compartida (sin cambios en F1, salvo CORS_ORIGIN de ejemplo)
+├── frontend/   Gestión Personal (admin); /fichador sigue vivo durante la transición
+└── fichador/   app React/Vite independiente: sólo el fichador
+```
+
+El repo no tiene `package.json` raíz ni workspaces: `fichador/` sigue el mismo patrón que `frontend/` y `backend/` (paquete propio con su lockfile). Build independiente: `cd fichador && npm run build` → `fichador/dist`, sin compilar el admin.
+
+```
+fichador/
+├── .env.example                 VITE_API_URL, VITE_CLOCK_DEVICE_TOKEN
+├── .gitignore
+├── index.html                   título "Fichador | Los O'Dwyer"
+├── package.json / package-lock.json
+├── vite.config.ts               puerto 5175 (strictPort), Vitest jsdom
+├── tsconfig.json / tsconfig.app.json / tsconfig.e2e.json
+├── playwright.config.ts         journey e2e en 5185, API mockeado, cámara falsa
+├── e2e/kioskJourney.spec.ts
+├── scripts/check-bundle-isolation.mjs
+└── src/
+    ├── main.tsx                 sin AuthProvider, router ni providers admin
+    ├── App.tsx (+ test)         "/" → fichador; cualquier otra URL → 404 propio
+    ├── styles.css               subconjunto del CSS admin (20 KB) + reglas del 404
+    ├── pages/TimeClockPage.tsx (+ test), NotFoundPage.tsx
+    ├── components/time-clock/FaceCaptureModal.tsx (+ test)
+    ├── components/ui/Button.tsx, Modal.tsx, LoadingState.tsx
+    ├── services/api/apiClient.ts (+ test), timeClockApiService.ts
+    ├── utils/date.ts, argentinaDateKey.ts
+    └── test/setupTests.ts
+```
+
+No hay `public/`: F1 no necesita assets propios (manifest e íconos son F3).
+
+### 19.2 Qué se movió, copió o extrajo
+
+Las rutas internas replican las del admin para que `diff` entre ambas copias sea directo mientras convivan.
+
+| Archivo del fichador | Origen | Tipo | Diferencia con el admin |
+|---|---|---|---|
+| `pages/TimeClockPage.tsx` | `frontend/src/pages/TimeClockPage.tsx` | copia | errores de búsqueda/estado muestran el mensaje del cliente (sin conexión, 401, 429) con el texto anterior como fallback; `role="alert"` en el error. Flujo, `requestId` y verificación idénticos |
+| `components/time-clock/FaceCaptureModal.tsx` | `frontend/src/components/time-clock/` | copia | distingue permiso denegado, sin cámara, cámara ocupada, sin HTTPS, falla de reproducción y falla de carga del detector (antes todo era "Permití el acceso a la cámara"); `role="status"` en el estado. Captura, compresión, detección, cleanup sin cambios |
+| `services/api/timeClockApiService.ts` | `frontend/src/services/api/` | copia | sin las opciones `auth`/`apiCache` del cliente admin |
+| `services/api/apiClient.ts` | — | **nuevo** | cliente propio sin JWT, refresh ni `sessionStorage`; `ApiError` (HTTP) y `NetworkError` (sin respuesta, a propósito no es `ApiError` para no cortar la verificación del intento); mensajes de negocio para 401/429/5xx |
+| `components/ui/Button.tsx` | `frontend/src/components/ui/` | copia reducida | sin la variante `to` (`Link` de react-router-dom) |
+| `components/ui/Modal.tsx` | `frontend/src/components/ui/` | copia | `role="dialog"`, `aria-modal`, `aria-label` |
+| `components/ui/LoadingState.tsx` | `frontend/src/components/ui/` | copia reducida | sólo la variante `block` |
+| `utils/date.ts`, `utils/argentinaDateKey.ts` | `frontend/src/utils/` | copia reducida | sólo `formatDateTime` y lo que necesita |
+| `styles.css` | `frontend/src/styles.css` | **extraído** | 183 reglas cuyos selectores aplican al DOM del fichador, mismo orden de cascada (180 KB → 20 KB) + 3 reglas propias del 404 |
+| `pages/TimeClockPage.test.tsx` | `frontend/src/pages/TimeClockPage.test.tsx` | copia + ampliado | 7 tests originales + 9 nuevos |
+
+**Compartido:** nada a nivel de código. Siguiendo §5, no se creó paquete compartido: lo común es chico y la copia del admin se elimina en el cutover. **Deuda controlada:** mientras `/fichador` siga en el admin, un cambio funcional o visual del fichador se aplica en ambas copias.
+
+**No se trajo:** `AuthContext`, `AppShell`, `navigation`, `RoleRoute`, `LoginPage`, `ApiErrorNotice`, `AppDialogHost`, cachés (`services/cache`), `react-router-dom`, `leaflet`, `xlsx`.
+
+### 19.3 Dependencias npm
+
+Mismas versiones exactas que el admin. Producción: `react`, `react-dom`, `lucide-react` (íconos usados), `@mediapipe/tasks-vision` (detector). Desarrollo: `vite`, `@vitejs/plugin-react`, `typescript`, `vitest`, `jsdom`, `@testing-library/react`, `@testing-library/user-event`, `@testing-library/jest-dom`, `@types/react`, `@types/react-dom`, `@playwright/test`.
+
+### 19.4 `/fichador` del admin
+
+Se mantiene sin cambios funcionales (opción A): es la referencia para comparar y validar el standalone, y retirarlo ahora no reduce ningún riesgo (los dos usan el mismo token y los mismos endpoints). Sólo se agregó un comentario en `frontend/src/App.tsx` que indica que se retira en el cutover (F12) junto con `TimeClockPage`, `FaceCaptureModal` y `timeClockApiService` del admin.
+
+### 19.5 Configuración local
+
+- **Variables** (`fichador/.env`, gitignoreado; ver `.env.example`): `VITE_API_URL` (local `http://localhost:4002/api`) y `VITE_CLOCK_DEVICE_TOKEN` (mismo valor que `CLOCK_DEVICE_TOKEN` del backend). **Esta credencial sigue siendo temporal y será retirada en F4–F6.** No hay valores versionados.
+- **CORS:** el backend necesita `http://localhost:5175` en `CORS_ORIGIN` (lista explícita). `backend/.env.example` pasó de `http://localhost:5173` (desactualizado) a `http://localhost:5174,http://localhost:5175`. El `backend/.env` local no se modificó: hay que agregar el origin y reiniciar el backend. El dominio productivo se define en F2.
+- **Puertos:** backend 4002, admin 5174, fichador 5175 (`strictPort`), e2e del fichador 5185.
+- **Comandos:** `npm run dev`, `npm run test`, `npm run build` (incluye aislamiento), `npm run e2e`, `npm run typecheck:e2e`. Detalle en `docs/LOCAL_DEVELOPMENT.md`.
+- **CI:** nuevo job `fichador` (test, typecheck del e2e, build con aislamiento).
+
+### 19.6 Aislamiento
+
+- **Rutas:** sin router. `/` (e `/index.html`) muestran el fichador; cualquier otra URL (`/legajos`, `/configuracion`, `/usuarios`, `/auditoria`, `/fichador`, …) muestra un 404 propio con "Ir al fichador" y no llama al API. Cubierto por test de componente y e2e.
+- **Bundle:** `scripts/check-bundle-isolation.mjs` corre en cada `npm run build` y falla si (a) un import sale de `fichador/src` o usa `react-router-dom`/`leaflet`/`xlsx`, o (b) `dist` contiene marcas administrativas (nombres de páginas, rutas `/legajos`, `/configuracion`, `/usuarios`, `/auditoria`, `/cierres`, …, claves `losod_access_token`/`losod_refresh_token`, `/auth/login`, `/auth/refresh`, endpoints admin). Exige además los endpoints del fichador, para no dar un falso verde con un build vacío. Verificado con una mutación: importar el cliente admin desde `main.tsx` hace fallar el chequeo por las dos vías.
+
+### 19.7 Tamaño del bundle (`fichador/dist`)
+
+| Archivo | Tamaño | gzip |
+|---|---|---|
+| `index-*.js` (React + app) | 158,1 KB | 51,6 KB |
+| `FaceCaptureModal-*.js` (lazy, MediaPipe JS) | 135,3 KB | 42,1 KB |
+| `index-*.css` | 19,0 KB | 4,6 KB |
+| `index.html` | 0,4 KB | 0,3 KB |
+| **Total JS** | **293,3 KB** | **93,7 KB** |
+
+El WASM y el modelo de MediaPipe se siguen bajando en runtime de los CDN (igual que en el admin); se precachean en F3. Sin dependencias administrativas en el bundle.
+
+### 19.8 Validación
+
+- **Tests:** fichador 47 (Vitest: flujo, búsqueda, DNI terminado en, estado, ingreso/salida, `requestId` nuevo por intención, verificación del mismo `requestId` tras perder la respuesta sin reenviar, 409 confirmado, doble envío, sin conexión, 401, 429, 5xx, timeout, errores de cámara, rutas) + 5 e2e (Playwright). Admin: 1182 sin cambios. Backend: 2143 sin cambios.
+- **Visual:** capturas del admin `/fichador` y del standalone con el API mockeado y el reloj congelado, comparadas píxel a píxel a 1024, 820, 768 y 390 px. Pantalla inicial y resultados: 0 píxeles distintos en los cuatro anchos. Empleado seleccionado: 0 en 820, 1 en 390, y diferencias sólo dentro del input de búsqueda en 1024/768 (anillo de foco en transición al momento de la captura, no CSS). Modal de cámara: sólo cambia la línea de estado (nuevo mensaje del detector). 390 px: botones apilados, sin desborde.
+- **Manual contra el API real, sin el admin levantado** (backend propio en 4003 sin schedulers, sólo lecturas): abre; búsqueda real 200 con legajo + "DNI terminado en" y ningún DNI completo; estado real 200 con exactamente un botón habilitado; cámara (falsa de Chromium) con stream activo y MediaPipe real cargado ("No se detectó una cara", confirmación deshabilitada); cancelar y volver al inicio; `/legajos` → 404; token inválido → 401 real → "Este dispositivo no está autorizado para fichar. Avisá a RRHH."; backend apagado → "No hay conexión con el servidor…" con ingreso deshabilitado; sin errores de consola. **No se envió ninguna fichada.**
+- **Accesibilidad básica:** labels en input y botones (incluidos los de ícono), `role="dialog"` en el modal, `role="alert"` en errores, `role="status"`/`aria-live` en el estado de cámara y de envío, estados deshabilitados nativos. Contraste igual al admin.
+
+### 19.9 Deuda y pendientes
+
+- **Duplicación temporal** de `TimeClockPage`, `FaceCaptureModal`, `timeClockApiService` y del CSS del fichador entre admin y standalone hasta el cutover (F12).
+- **Token compartido temporal** (F4–F6) y **body de 40 MB** antes de la verificación del token (F12), sin cambios.
+- **No probado de punta a punta:** el envío real de una fichada (POST `photo-punch`) desde el standalone, para no escribir en la base compartida; el contrato y la orquestación están cubiertos por tests, y es el mismo servicio que usa el admin. Requiere autorización para hacerlo con un empleado de prueba.
+- **Sin vuelta automática al inicio** tras una fichada exitosa: igual que hoy, se vuelve con "Cambiar empleado" (F9).
+- **Verificación de 45 s** y bloqueo si el intento nunca llegó al servidor: igual que hoy (F9).
+- **Fuente Inter y MediaPipe desde CDN:** igual que hoy; se resuelven con el precache de F3.
+- **Sin chequeo de conectividad continuo:** la falta de backend se detecta al buscar (F10 heartbeat).
+
+### 19.10 Siguiente etapa recomendada
+
+**F2** — deploy independiente en staging (`netlify.toml` por app, CORS del origin real). Pendiente de aprobación.

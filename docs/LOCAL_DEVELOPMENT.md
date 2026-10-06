@@ -137,14 +137,52 @@ cd frontend
 npm run dev
 ```
 
+## Fichador standalone (`fichador/`)
+
+App React/Vite independiente que sólo contiene el fichador (F1 de
+`docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md`). No necesita el frontend
+administrativo levantado. Mientras dure la transición, `/fichador` sigue
+existiendo también en el admin.
+
+Crear `fichador/.env` (gitignoreado) a partir de `fichador/.env.example`:
+
+```bash
+VITE_API_URL=http://localhost:4002/api
+# Mismo valor que CLOCK_DEVICE_TOKEN del backend. Credencial TEMPORAL: se
+# retira en F4–F6 (ClockDevice). No es un secreto (queda en el bundle).
+VITE_CLOCK_DEVICE_TOKEN=
+```
+
+El backend tiene que aceptar el origin del fichador: en `backend/.env`,
+`CORS_ORIGIN` debe incluir `http://localhost:5175` (lista explícita, sin `*`),
+por ejemplo `CORS_ORIGIN=http://localhost:5174,http://localhost:5175`.
+Reiniciar el backend después de cambiarlo.
+
+```bash
+cd fichador
+npm install
+npm run dev          # http://localhost:5175 (puerto fijo, strictPort)
+npm run test         # unit/componente (Vitest)
+npm run build        # tsc + vite build + chequeo de aislamiento del bundle
+npm run e2e          # journey Playwright con el API mockeado (no toca datos)
+```
+
+`npm run build` falla si el fichador importa algo de fuera de `fichador/src` o
+si el bundle contiene marcas de módulos administrativos
+(`fichador/scripts/check-bundle-isolation.mjs`).
+
 ## Puertos
 
 Recomendado:
 
 ```txt
-Frontend: http://localhost:5173
-Backend:  http://localhost:4002/api
+Backend:            http://localhost:4002/api
+Frontend (admin):   http://localhost:5174
+Fichador:           http://localhost:5175
 ```
+
+Los tres pueden correr a la vez. El e2e del fichador levanta su propio Vite en
+`5185` con el API mockeado.
 
 Si el backend usa otro puerto, actualizar ambos valores con el mismo puerto:
 

@@ -711,6 +711,11 @@ Frontend:
 * `frontend/src/services/cache` implements a stale-while-revalidate cache (LRU memory + IndexedDB) used by most API services.
 * Route-level code splitting (`React.lazy`) for every page; heavy libs (`xlsx`, `leaflet`/`react-leaflet`, `@mediapipe/tasks-vision`) are dynamically imported only where used.
 
+Fichador standalone (`fichador/`, since F1 of `docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md`):
+
+* Separate React 18 + TypeScript + Vite app with its own `package.json`/lockfile (no workspaces), port 5175. Only the time clock: no router, no `AuthContext`/JWT, no admin modules — enforced at build time by `fichador/scripts/check-bundle-isolation.mjs`.
+* Same four `/time-entries/clock/*` endpoints and the same temporary shared kiosk token as `/fichador` in the admin app, which stays during the transition and is removed at the cutover (F12).
+
 Backend:
 
 * Node.js + Express + TypeScript, under `backend/src`.
