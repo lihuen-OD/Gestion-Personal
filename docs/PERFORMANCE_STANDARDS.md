@@ -47,7 +47,7 @@ Toda decisión de cache/paginación/refresh debe partir de identificar en qué c
 
 **Estrategia**: consistencia antes que velocidad aparente. Nunca optimistic update riesgoso. Nunca cache sin invalidación 100% segura y testeada — si hay cualquier duda sobre si la invalidación cubre todos los write paths, **no cachear**. Confirmación del backend siempre obligatoria antes de mostrar cualquier resultado. Trazabilidad (auditoría) por sobre todo.
 
-**Ejemplo real del proyecto**: el fichador (`TimeClockPage.tsx`/`timeClockApiService.ts`) — confirmado en 9A/9G que no tiene ningún optimistic update (cada confirmación espera la respuesta real del servidor, con polling a un endpoint de sólo lectura si la red falla, nunca asume éxito) y ningún dato sensible al timestamp está cacheado. Ver §10.
+**Ejemplo real del proyecto**: el fichador (hoy `fichador/src/pages/TimeClockPage.tsx`/`fichador/src/services/api/timeClockApiService.ts`; hasta F6 también existía en el admin) — confirmado en 9A/9G que no tiene ningún optimistic update (cada confirmación espera la respuesta real del servidor, con polling a un endpoint de sólo lectura si la red falla, nunca asume éxito) y ningún dato sensible al timestamp está cacheado. Ver §10.
 
 ### E) Datos agregados
 

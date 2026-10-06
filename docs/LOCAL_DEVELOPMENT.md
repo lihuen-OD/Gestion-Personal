@@ -141,17 +141,19 @@ npm run dev
 
 App React/Vite independiente que sólo contiene el fichador (F1 de
 `docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md`). No necesita el frontend
-administrativo levantado. Mientras dure la transición, `/fichador` sigue
-existiendo también en el admin.
+administrativo levantado. Desde F6 el `/fichador` del admin ya no ficha: sólo
+informa que se usa esta app.
 
 Crear `fichador/.env` (gitignoreado) a partir de `fichador/.env.example`:
 
 ```bash
 VITE_API_URL=http://localhost:4002/api
-# Mismo valor que CLOCK_DEVICE_TOKEN del backend. Credencial TEMPORAL: se
-# retira en F4–F6 (ClockDevice). No es un secreto (queda en el bundle).
-VITE_CLOCK_DEVICE_TOKEN=
 ```
+
+No hay credencial de build: cada navegador/equipo se enrola con **Configurar
+dispositivo** y RRHH lo aprueba (ver abajo). Si un `.env` local viejo todavía
+tiene `VITE_CLOCK_DEVICE_TOKEN` (fichador/frontend) o `CLOCK_DEVICE_TOKEN`
+(backend), se puede borrar: ya nadie los lee.
 
 El backend tiene que aceptar el origin del fichador: en `backend/.env`,
 `CORS_ORIGIN` debe incluir `http://localhost:5175` (lista explícita, sin `*`),
@@ -224,13 +226,18 @@ cd fichador && npm run dev    # http://localhost:5175 -> API localhost
 
 La identidad `{id, secret}` queda en IndexedDB del origin 5175. El código claro
 no se persiste: si se recarga una solicitud pendiente, usar **Generar código
-nuevo**. Para reiniciar deliberadamente un equipo revocado/inválido, usar
-**Borrar configuración local**; el registro revocado permanece en backend para
-auditoría. El modo navegador se permite para desarrollo local, aunque la
-política operativa futura es instalar la PWA en la pantalla de inicio.
+nuevo**. Para reiniciar deliberadamente un equipo revocado o con la
+autorización perdida, usar **Configurar como nuevo dispositivo** /
+**Reconfigurar dispositivo** (piden confirmación); el registro revocado
+permanece en backend para auditoría. El modo navegador se permite para
+desarrollo local, aunque la política operativa es instalar la PWA en la
+pantalla de inicio.
 
-Esto no reemplaza todavía `VITE_CLOCK_DEVICE_TOKEN`: F5 no cambia la
-autenticación de las cuatro fichadas; esa integración es F6.
+Desde F6 sólo un equipo `ACTIVE` puede buscar empleados, consultar estado o
+fichar: sin aprobar, el backend responde `403` aunque la pantalla se forzara.
+Para probar la revocación en caliente: con el fichador abierto, revocar el
+equipo desde **Configuración → Dispositivos de fichada** y escribir una
+búsqueda: el fichador se cierra y muestra "Dispositivo deshabilitado".
 
 ### Para mostrar la app con VS Code Tunnel
 

@@ -986,7 +986,19 @@ POST /api/time-entries/clock/photo-punch
 GET  /api/time-entries/clock/attempts/:requestId?employeeId=
 ```
 
-Kiosco público sin sesión de usuario: cada una de estas cuatro rutas lleva `x-clock-device-token` (`requireClockDeviceToken`, secreto compartido **temporal**, a reemplazar por `ClockDevice` en F4–F6) y rate limit por IP (`clockRateLimiter`). No requieren `requireAuth`. Son las únicas rutas `/clock`: cualquier otra `/api/time-entries/clock/*` responde `404 ROUTE_NOT_FOUND` con o sin token (F0 del fichador standalone retiró `POST /clock/in`, `/clock/out`, `/clock/status-by-dni`, `/clock/in-by-dni` y `/clock/out-by-dni`, que fichaban sin foto). Ver `docs/SECURITY_STANDARDS.md` → "Public clock endpoints (fichador)".
+Kiosco sin sesión de usuario. Desde F6 cada una de estas cuatro rutas exige un `ClockDevice` **ACTIVE** autenticado individualmente con `Authorization: ClockDevice <deviceId>.<secret>` (`requireClockDevice()`); no existe token compartido y `x-clock-device-token` ya no autentica nada. Orden de guardas: límite por IP previo a autenticar (`CLOCK_IP_RATE_LIMIT_MAX`), `requireClockDevice()`, límite por dispositivo autenticado (`CLOCK_RATE_LIMIT_MAX`), y recién después validación del body. No requieren `requireAuth` (y un JWT no las abre). Son las únicas rutas `/clock`: cualquier otra `/api/time-entries/clock/*` responde `404 ROUTE_NOT_FOUND` con o sin credencial (F0 del fichador standalone retiró `POST /clock/in`, `/clock/out`, `/clock/status-by-dni`, `/clock/in-by-dni` y `/clock/out-by-dni`, que fichaban sin foto). Ver `docs/SECURITY_STANDARDS.md` → "Public clock endpoints (fichador)".
+
+Errores de dispositivo (comunes a las cuatro rutas):
+
+| Status | Código | Cuándo |
+|---|---|---|
+| 401 | `CLOCK_DEVICE_INVALID_CREDENTIAL` | Header ausente o mal formado, id inexistente o secreto incorrecto (respuesta idéntica en los tres casos) |
+| 403 | `CLOCK_DEVICE_NOT_ACTIVE` | Credencial válida de un dispositivo `PENDING` |
+| 403 | `CLOCK_DEVICE_REVOKED` | Credencial válida de un dispositivo `REVOKED` |
+| 404 | `CLOCK_ATTEMPT_NOT_FOUND` | `attempts/:requestId` inexistente, de otro dispositivo, histórico sin dispositivo o de otro empleado |
+| 429 | (rate limiter) | Cupo por IP o por dispositivo agotado |
+
+Atribución (F6): la fichada y el intento guardan `deviceId = req.clockDevice.id` (`AttendancePunch.deviceId`, `ClockPunchAttempt.deviceId`); cualquier `deviceId` del body se descarta. IP y user-agent persistidos salen de la request, nunca del body (`device.*` es sólo contexto informativo de la cámara). `requestId` sigue siendo único global: reutilizarlo desde otro dispositivo responde `409 CLOCK_IDEMPOTENCY_KEY_REUSED` sin exponer el resultado guardado. `source` sigue siendo `PUBLIC_CLOCK_PHOTO` hasta F8.
 
 Contrato de empleado en las cuatro respuestas (F0): `{ id, legajo, dniSuffix, firstName, lastName, name }` — `dniSuffix` son los últimos 3 dígitos del DNI; el DNI completo nunca se devuelve. `clock/status` devuelve `{ employee, openShift: { id, startAt } | null }` (sin conceptos horarios). La respuesta de salida de `photo-punch` devuelve `employee`, `workShift` (`id`, `startAt`, `endAt`, `totalMinutes`, `totalHours`) y `segments` (etiquetas para pantalla), sin las filas internas de `TimeEntry`/`TimeSegment`.
 
@@ -1615,7 +1627,7 @@ Rutas públicas, con rate limit independiente:
 | Método | Ruta | Auth | Descripción |
 |---|---|---|---|
 | POST | `/api/clock/device/register` | IP/rate limit | Crea `PENDING`; devuelve una vez `{ device, secret }`, con código claro y vencimiento dentro de `device` |
-| GET | `/api/clock/device/status` | `Authorization: ClockDevice <id>.<secret>` | Estado seguro y actualización de metadata de última conexión |
+| GET | `/api/clock/device/status` | `Authorization: ClockDevice <id>.<secret>`, cualquier estado | Estado seguro y actualización de metadata de última conexión; un `REVOKED` recibe `200` con su estado para poder mostrarlo |
 | POST | `/api/clock/device/pairing-code/refresh` | idem | Sólo `PENDING`; invalida el código anterior y devuelve código/vencimiento nuevos |
 
 Rate limits por IP: registro `5/10 min`, estado `120/5 min`, refresh `10/10
@@ -1633,9 +1645,10 @@ Rutas RRHH (`Bearer` JWT + Nivel 1):
 | POST | `/api/clock-devices/:id/revoke` | Transición terminal `ACTIVE → REVOKED` |
 | DELETE | `/api/clock-devices/:id` | Sólo `PENDING` sin fichadas/intentos |
 
-Estas credenciales individuales no autentican todavía
-`/api/time-entries/clock/*`: esos cuatro contratos mantienen temporalmente el
-token compartido hasta F6. No hay heartbeat en F5.
+Desde F6 la misma credencial individual es la única que autentica
+`/api/time-entries/clock/*` (sólo `ACTIVE`; ver "Fichador público (clock)").
+No hay heartbeat todavía: la presencia se actualiza en `status` y, con
+throttle de 1 minuto, en las rutas operativas.
 
 ### Health (`health`, montado en `/api/health`)
 

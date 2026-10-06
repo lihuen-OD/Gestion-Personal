@@ -8,7 +8,7 @@ The sections below are a generic design-system template shared across projects a
 * **Legajos** — employee list/detail/create, with tabs for contact, address, transport, labor data, assignments, documents, field history (`EmployeesPage.tsx`, `EmployeeDetailPage.tsx`, `EmployeeCreatePage.tsx`).
 * **Carga Horaria / Horas** — period review, approval, export (`HoursPage.tsx`, `EmployeeHoursPage.tsx`).
 * **Asistencia** — attendance summary and observations (`AttendancePage.tsx`).
-* **Fichador** — public, unauthenticated time-clock kiosk UI, by name search + photo/DNI (`TimeClockPage.tsx`).
+* **Fichador** — time-clock kiosk UI without user session, by name search + photo. Since F6 it lives only in the standalone app (`fichador/`), authenticated per device (`ClockDevice`); the admin route `/fichador` is an informative page (`TimeClockMovedPage.tsx`).
 * **Turnos** — shift templates, assignment, alerts (`ShiftsPage.tsx`, `ShiftDetailPage.tsx`, `ShiftAlertsPage.tsx`, `ShiftCreatePage.tsx`).
 * **Novedades** — novelty create/approve/reject workflow, novelty types config (`NoveltiesPage.tsx`, `NoveltyTypesPage.tsx`, `NoveltyTypeDetailPage.tsx`).
 * **Documentación** — document list/upload/category config (`DocumentsPage.tsx`, `DocumentCategoriesPage.tsx`).

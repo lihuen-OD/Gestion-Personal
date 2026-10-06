@@ -1286,3 +1286,186 @@ Conteos antes/después: `AttendancePunch` 79/79, `ClockPunchAttempt` 24/24,
 `AttendancePunch.source` permaneció `ADMIN=4`, `PORTAL_DNI=7`,
 `PUBLIC_CLOCK_PHOTO=68`; `deviceId`/`kioskId` históricos siguieron en `NULL`.
 El estado final de migraciones quedó limpio.
+
+---
+
+## 24. F6 — Autenticación individual obligatoria en las fichadas
+
+Implementada el 2026-10-06 sobre `main`, validada en staging, sin migración y
+sin tocar producción. **El token compartido dejó de ser una credencial: cada
+operación de fichada exige un `ClockDevice ACTIVE` autenticado
+individualmente.** Comprometer un iPad ya no compromete a los demás.
+
+Numeración: la etapa F6 original de §17 (panel RRHH) y la F7 (enrolamiento en
+la PWA) se completaron dentro de F5. Esta F6 adelanta de la F8 original la
+autenticación de las rutas operativas, la atribución `deviceId` y el rate
+limit por dispositivo. F8 conserva `source = KIOSK`, el namespace
+`/api/clock/*`, el cooldown y la auditoría con el dispositivo como actor.
+
+### 24.1 Endpoints y middleware
+
+- Rutas reales migradas (sin duplicar endpoints): `GET /time-entries/clock/employees`,
+  `POST /time-entries/clock/status`, `POST /time-entries/clock/photo-punch` y
+  `GET /time-entries/clock/attempts/:requestId`.
+- Un único middleware, `requireClockDevice(options)` en
+  `backend/src/modules/clock-devices/clockDeviceAuthentication.ts`, para
+  enrolamiento y operación. Por defecto sólo `ACTIVE`; las rutas de
+  enrolamiento declaran `allow: ALL_CLOCK_DEVICE_STATUSES`.
+- Formato único, el de F5: `Authorization: ClockDevice <uuid>.<secret43>`.
+- Errores: `401 CLOCK_DEVICE_INVALID_CREDENTIAL` (header ausente o mal
+  formado, id inexistente o secreto incorrecto, respuesta idéntica),
+  `403 CLOCK_DEVICE_NOT_ACTIVE` (`PENDING`), `403 CLOCK_DEVICE_REVOKED`,
+  `404 CLOCK_ATTEMPT_NOT_FOUND`, `429` del limitador.
+- Timing: un id bien formado siempre hace el lookup por PK y la comparación
+  SHA-256 + `timingSafeEqual` (contra un hash señuelo si no existe). Un header
+  mal formado se rechaza sin tocar la base (el formato no es secreto).
+- `req.clockDevice = { id, status, name, sectorId }`; nunca `tokenHash`,
+  `pairingCodeHash` ni `req.user`.
+
+### 24.2 Atribución e idempotencia
+
+- `AttendancePunch.deviceId` y `ClockPunchAttempt.deviceId` salen sólo de
+  `req.clockDevice.id`. El body no puede elegirlos.
+- IP y user-agent persistidos salen de la request. El fallback que tomaba
+  `device.userAgent` del body si faltaba el header se eliminó.
+- `kioskId` sigue como legado sin uso. `source` sigue en `PUBLIC_CLOCK_PHOTO`:
+  el plan asigna `KIOSK` a F8 y F6 no lo adelanta.
+- `requestId` sigue `@unique` global; no hubo cambio de schema. Aislamiento:
+  - `GET attempts/:requestId` exige `attempt.deviceId === req.clockDevice.id`.
+    Si es de otro dispositivo, histórico (`NULL`), de otro empleado o no
+    existe, responde el mismo 404. Un `PROCESSING` vencido ajeno no se toca.
+  - Un `photo-punch` que choca con un `requestId` de otro dispositivo
+    responde `409 CLOCK_IDEMPOTENCY_KEY_REUSED`, igual que una clave reusada,
+    sin devolver el resultado ni el error guardados.
+
+### 24.3 Rate limit y presencia
+
+- Orden de guardas:
+  1. límite por IP **antes** de autenticar (`CLOCK_IP_RATE_LIMIT_MAX`,
+     default 300 / 5 min), contra la fuerza bruta;
+  2. `requireClockDevice()`;
+  3. límite por dispositivo con clave = id **ya autenticado**
+     (`CLOCK_RATE_LIMIT_MAX`, default 30 / 5 min, el mismo valor que antes era
+     por IP).
+- Un id inventado nunca crea bucket: lo verifica un test por el header
+  `RateLimit-Limit`. Kioscos detrás de la misma IP ya no comparten el cupo
+  chico.
+- Presencia: en rutas operativas, `lastSeenAt/lastIp/lastUserAgent/lastAppVersion`
+  se actualizan como máximo una vez por minuto por dispositivo. Es un
+  `updateMany` condicionado y fire-and-forget, y un fallo nunca rechaza la
+  request. El lookup ya trae `lastSeenAt`, así que decidir no cuesta otra
+  consulta. No hay heartbeat (F10).
+- `X-Clock-App-Version` (ya enviado en F5) es informativo, validado como
+  versión corta y nunca autentica.
+
+### 24.4 Retiro del token compartido
+
+- Backend: borrados `middlewares/clockDeviceAuth.ts` y su test;
+  `CLOCK_DEVICE_TOKEN` ya no está en `env.ts` ni en `.env.example`. El header
+  `x-clock-device-token` no autentica nada (test explícito).
+- `scripts/clock-staging-matrix.ts` pasa a crear su propio `ClockDevice ACTIVE`
+  de prueba y a borrarlo en cleanup.
+- Standalone:
+  - sin `VITE_CLOCK_DEVICE_TOKEN` en código, tipos, `.env.example` ni configs
+    de Playwright;
+  - el guard de deploy **falla** si el hosting todavía lo define, para que el
+    valor viejo no quede olvidado;
+  - `check-bundle-isolation.mjs` falla si el bundle contiene
+    `x-clock-device-token` o `VITE_CLOCK_DEVICE_TOKEN`, y exige `ClockDevice `.
+- CORS: sin cambios de código. `cors` refleja los headers pedidos y los tests
+  fijan el preflight `authorization, content-type` de `OPTIONS
+  /clock/photo-punch` y de los GET con `authorization, x-clock-app-version`.
+  CSP: sin cambios.
+
+### 24.5 Admin `/fichador`
+
+Decisión (opción B de la etapa): **deshabilitar**. La ruta, pública y
+autenticada, renderiza `TimeClockMovedPage`, que:
+
+- explica que las fichadas se hacen desde la app instalada;
+- para RRHH, enlaza a Dispositivos de fichada;
+- no busca empleados, no abre la cámara y no llama al API.
+
+Como era código muerto con el header viejo, se borraron:
+
+- `TimeClockPage` (+ test), `FaceCaptureModal` y `timeClockApiService`;
+- el link "Fichador" del menú;
+- el CSS `.clock-*`/`.face-*`/`.spin-icon` (sólo los usaba ese código);
+- `@mediapipe/tasks-vision` del admin y `VITE_CLOCK_DEVICE_TOKEN` de
+  `frontend/.env.example`.
+
+La ruta se conserva por accesos directos viejos; su retiro o redirect final
+sigue en F12. No queda ningún camino alternativo: el backend rechaza el token
+viejo para cualquier cliente.
+
+### 24.6 PWA
+
+- `services/api/clockDeviceSession.ts` es el único lugar que arma la
+  credencial. El Gate abre la sesión en memoria sólo cuando el backend
+  confirma `ACTIVE`; `timeClockApiService` usa `clockDeviceRequest` y ningún
+  componente maneja id/secret.
+- Sin sesión, ningún request operativo sale a la red
+  (`CLOCK_DEVICE_SESSION_MISSING` local).
+- Ante `401/403` de dispositivo, la sesión se cierra **antes** de avisar al
+  Gate. Así, la verificación de una fichada en curso no reintenta con la
+  credencial rechazada.
+- Comportamiento del Gate:
+  - **REVOKED en medio de la sesión:** desmonta el fichador (sin empleados ni
+    reintentos) y muestra "Este dispositivo fue deshabilitado por RRHH."
+  - **INVALID_CREDENTIAL:** muestra "Este dispositivo perdió su autorización.
+    Volvé a configurarlo."
+  - **NOT_ACTIVE:** bloquea y vuelve a consultar el estado real.
+  - **Red caída o 5xx:** muestra "Reintentar" y nunca ofrece borrar la
+    identidad.
+- La identidad local se borra sólo desde "Configurar como nuevo dispositivo"
+  o "Reconfigurar dispositivo", con confirmación explícita.
+- El service worker no maneja `/api`. El e2e PWA verifica que Cache Storage
+  no contiene nada de `/clock` ni del origin del API.
+
+### 24.7 Validación
+
+- **Tests:**
+  - backend 2250 (`typecheck`, `build` y `prisma validate` verdes);
+  - fichador 103 unit + 7 e2e + 2 e2e PWA y build con chequeo de bundle;
+  - admin 1183 + build, con el bundle sin `x-clock-device-token`,
+    `/time-entries/clock` ni MediaPipe.
+- **Staging (Neon `neondb`, `APP_ENV=staging`):** 25/25 verificaciones.
+  - Dispositivos de prueba: `TEST F6 A/B` registrados y aprobados por el
+    camino real y `TEST F6 C pendiente`.
+  - `ACTIVE` busca (dataset mínimo) y consulta el estado de "32 Prueba".
+    `PENDING` → 403. Credencial ausente, mal formada, de id inexistente o con
+    secreto ajeno → 401. El token viejo → 401 en las rutas.
+  - Un `photo-punch` `NO_FACE` del empleado de prueba (falla antes de foto,
+    turno o alertas) grabó `ClockPunchAttempt.deviceId = A` aunque el body
+    mandaba B, y no creó ninguna `AttendancePunch`.
+  - Intentos: A lee el suyo; B recibe 404 y, al reusar el `requestId`, 409.
+    Un intento histórico → 404.
+  - La FK `AttendancePunch.deviceId` se probó con rollback (acepta A, rechaza
+    un id inexistente).
+  - Throttle de presencia verificado. Revocar A deja employees, photo-punch y
+    attempts en 403 `REVOKED` y `/clock/device/status` en 200 `REVOKED`.
+  - Cierre: A/B quedan `REVOKED` (trazabilidad, como F5), C se borró por el
+    camino RRHH y el único intento escrito se eliminó.
+- **Datos:** sin `AttendancePunch` real persistida, porque una entrada real
+  dispara alertas de turno y notificaciones a usuarios de staging. Conteos
+  idénticos antes y después:
+  - `AttendancePunch` 79, `ClockPunchAttempt` 24, `TimeEntry` 85,
+    `WorkShift` 46;
+  - fuentes ADMIN 4 / PORTAL_DNI 7 / PUBLIC_CLOCK_PHOTO 68;
+  - `deviceId` no nulo: 0 en ambas tablas.
+- **Performance:** el middleware cuesta exactamente un round-trip a la base
+  (mediana 174 ms desde la máquina local contra Neon us-east-1, idéntica a
+  `SELECT 1`) más ~2 µs de SHA-256 + `timingSafeEqual`. No hay N+1 ni
+  consultas extra. La presencia agrega como máximo una escritura por minuto
+  por dispositivo, fuera del camino de la respuesta.
+
+### 24.8 Operación pendiente (manual, no ejecutada)
+
+Antes o junto con el próximo deploy de staging:
+
+- borrar `CLOCK_DEVICE_TOKEN` del backend en Render;
+- borrar `VITE_CLOCK_DEVICE_TOKEN` del sitio del fichador (su build falla si
+  sigue definido) y del admin;
+- enrolar los kioscos de prueba por pairing.
+
+Los `.env` locales viejos pueden conservar esas líneas sin efecto.

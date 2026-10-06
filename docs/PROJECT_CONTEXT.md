@@ -183,7 +183,7 @@ The objective of this project is to build an internal enterprise system to centr
 
 The system is intended to replace fragmented Excel/Google Sheets workflows with a structured, scalable and auditable application.
 
-**Current state (updated after the 2026-08 technical audit): the system is no longer a frontend-only/mock prototype.** There is a real, production backend (Node/Express + TypeScript + Prisma + PostgreSQL, 21 modules under `backend/src/modules`) that the frontend consumes over HTTP. It includes JWT auth, backend-enforced role/employee-scope permissions, a real audit log, file storage (Google Drive/Cloudinary/local), and a public unauthenticated fichador (time clock) flow. A handful of `*MockService.ts` files remain in `frontend/src/services` as leftovers from the original mock-only phase — they are legacy, not the current data source, and most have already been removed once confirmed unused (see `docs/BACKEND_API_CONTRACTS.md` for the real endpoints). Before assuming any part of the system is "mock only", check `backend/src/modules` and `frontend/src/services/api` first.
+**Current state (updated after the 2026-08 technical audit): the system is no longer a frontend-only/mock prototype.** There is a real, production backend (Node/Express + TypeScript + Prisma + PostgreSQL, 21 modules under `backend/src/modules`) that the frontend consumes over HTTP. It includes JWT auth, backend-enforced role/employee-scope permissions, a real audit log, file storage (Google Drive/Cloudinary/local), and a fichador (time clock) flow without user session, authenticated per device (`ClockDevice`, since F6). A handful of `*MockService.ts` files remain in `frontend/src/services` as leftovers from the original mock-only phase — they are legacy, not the current data source, and most have already been removed once confirmed unused (see `docs/BACKEND_API_CONTRACTS.md` for the real endpoints). Before assuming any part of the system is "mock only", check `backend/src/modules` and `frontend/src/services/api` first.
 
 ## Users and roles
 
@@ -709,14 +709,14 @@ Frontend:
 * No global state library — a single `AuthContext` plus page-local state.
 * `frontend/src/services/api/*ApiService.ts` are the real data layer (calls the backend over HTTP).
 * `frontend/src/services/cache` implements a stale-while-revalidate cache (LRU memory + IndexedDB) used by most API services.
-* Route-level code splitting (`React.lazy`) for every page; heavy libs (`xlsx`, `leaflet`/`react-leaflet`, `@mediapipe/tasks-vision`) are dynamically imported only where used.
+* Route-level code splitting (`React.lazy`) for every page; heavy libs (`xlsx`, `leaflet`/`react-leaflet`) are dynamically imported only where used. Since F6 the admin app no longer ships MediaPipe nor any punch code (`/fichador` is an informative page).
 
 Fichador standalone (`fichador/`, since F1 of `docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md`):
 
 * Separate React 18 + TypeScript + Vite app with its own `package.json`/lockfile (no workspaces), port 5175. Only the time clock: no router, no `AuthContext`/JWT, no admin modules — enforced at build time by `fichador/scripts/check-bundle-isolation.mjs`.
-* Same four `/time-entries/clock/*` endpoints and the same temporary shared kiosk token as `/fichador` in the admin app, which stays during F5. F5 adds a separate individual identity used only for registration/status/pairing; F6 will apply it to punches.
+* Same four `/time-entries/clock/*` endpoints, each authenticated since F6 with the device's own `ClockDevice` credential (`Authorization: ClockDevice <id>.<secret>`, kept in IndexedDB); only `ACTIVE` devices operate. There is no shared kiosk token anymore. The admin app's `/fichador` no longer punches: it only points to this app (and, for RRHH, to Dispositivos de fichada).
 * Installable PWA since F3 (`vite-plugin-pwa`): precached app shell, self-hosted MediaPipe (SIMD WASM + model) and Inter, so it opens and runs the face detector offline; the API is never cached and punches require the backend. Updates apply automatically only while the kiosk is idle.
-* Enrolamiento since F5: explicit setup, `{id, secret}` in IndexedDB, pairing code only in memory, pending polling every 7.5 seconds and an UX gate for `PENDING`/`REVOKED`. Operational policy prefers installed standalone mode; browser mode remains available for local development.
+* Enrolamiento since F5: explicit setup, `{id, secret}` in IndexedDB, pairing code only in memory, pending polling every 7.5 seconds and an UX gate for `PENDING`/`REVOKED`. Since F6 the gate opens an in-memory device session only on `ACTIVE`; every operational request carries `Authorization: ClockDevice …` (`fichador/src/services/api/clockDeviceSession.ts`), and a `401`/`403` device rejection mid-session closes the fichador immediately (revoked → "deshabilitado por RRHH", lost credential → reconfigure with confirmation). Operational policy prefers installed standalone mode; browser mode remains available for local development.
 
 Backend:
 
@@ -780,7 +780,7 @@ A few structural decisions worth knowing before you read the schema:
 * Position's location works the same way — `sectorId` is the official source, see `docs/DATABASE_STANDARDS.md`.
 * Position's salary category is a many-to-many via `PositionSalaryCategory`, not a single field.
 * Authorship fields (`createdByUserId`, `approvedByUserId`, `uploadedByUserId`, etc.) are real optional FKs to `User` with `onDelete: SetNull` — see `docs/DATABASE_STANDARDS.md`.
-* **Fichador F4/F5:** `ClockDevice` modela la identidad persistente individual con estados `PENDING`/`ACTIVE`/`REVOKED`, hashes de token/pairing, sector opcional y trazabilidad. La migración F4 fue aplicada y verificada sólo en staging. F5 implementa enrolamiento, estado, pairing y administración RRHH; los secretos nunca se guardan en claro. `AttendancePunch.deviceId` y `ClockPunchAttempt.deviceId` siguen nullable y sin escritura histórica; `kioskId` continúa legado. **Identidad enrolable lista; autenticación por dispositivo de las fichadas todavía no activa hasta F6.**
+* **Fichador F4/F5:** `ClockDevice` modela la identidad persistente individual con estados `PENDING`/`ACTIVE`/`REVOKED`, hashes de token/pairing, sector opcional y trazabilidad. La migración F4 fue aplicada y verificada sólo en staging. F5 implementa enrolamiento, estado, pairing y administración RRHH; los secretos nunca se guardan en claro. `AttendancePunch.deviceId` y `ClockPunchAttempt.deviceId` siguen nullable y sin escritura histórica; `kioskId` continúa legado. **Desde F6 la autenticación individual es obligatoria en las cuatro rutas de fichada** (sólo `ACTIVE`; `PENDING`/`REVOKED` → 403) y las fichadas/intentos nuevos guardan `deviceId` desde la autenticación; el histórico queda en `NULL` y `source` no cambia hasta F8.
 * **Validación F5 staging (2026-10-06):** ciclo real completo sin fichar ni usar empleados; 79 `AttendancePunch`, 24 intentos, 85 horas y 46 jornadas sin cambios. Quedó un único dispositivo `TEST F5 ciclo completo` revocado para conservar su auditoría y 0 pendientes. Migraciones limpias; producción no fue tocada.
 
 ## Security rules specific to this project
@@ -789,7 +789,7 @@ Current state (backend already enforces this — see `docs/SECURITY_STANDARDS.md
 
 * Roles and employee-scope access are enforced server-side (`backend/src/middlewares/authorization.ts` + `employeeAccessWhere` per module), not only hidden in the UI.
 * Do not expose sensitive employee data unnecessarily in UI, even though the backend already scopes it.
-* The public fichador endpoints (`/time-entries/clock/*`) are intentionally unauthenticated but carry their own rate limiter and only expose active employees — see `docs/SECURITY_STANDARDS.md` → "Public clock endpoints".
+* The fichador endpoints (`/time-entries/clock/*`) have no user session: they require an individually authenticated `ClockDevice` in `ACTIVE`, carry per-IP and per-device rate limiters and only expose active employees — see `docs/SECURITY_STANDARDS.md` → "Public clock endpoints" and "Clock device authentication".
 * Face-liveness validation on the photo-punch flow is client-reported (MediaPipe in the browser), not a server-side biometric verification — do not treat it as a security control.
 * Sensitive changes (employee edits, time-entry corrections, novelty approvals, monthly closures, correction requests, login, permission-denied attempts, document access) go through `auditService.register` — see `backend/src/modules/audit`.
 * Employee documents/photos are stored via the storage module (Google Drive/Cloudinary/local) with server-side mime/extension/size validation; do not bypass it with ad-hoc upload handling.
@@ -799,7 +799,7 @@ Current state (backend already enforces this — see `docs/SECURITY_STANDARDS.md
 
 * Supervisión conserva PII completa por decisión actual; cualquier recorte requiere validar sus pantallas de gestión.
 * La evidencia fotográfica de asistencia sigue disponible para Nivel 3 y requiere una decisión específica de producto/seguridad.
-* El fichador mantiene una mitigación temporal mediante token compartido para las cuatro rutas de fichada. F5 ya autentica individualmente sólo estado/renovación de pairing; la autorización y atribución individual de una fichada se implementan en F6/F8.
+* El fichador ya no usa token compartido (retirado en F6): cada request de fichada se autentica y atribuye a su `ClockDevice`. Quedan para F8 `source = KIOSK` y el namespace `/api/clock/*`; para F10 el heartbeat.
 * El organigrama advierte cuando alcanza el límite de 1000 empleados, pero todavía no implementa paginación completa.
 * La regla de conceptos horarios aditivos ya está definida, pero su implementación continúa pendiente y puede no coincidir con backend, frontend o esquema actuales.
 * El tratamiento de solapamientos de novedades **entre tipos distintos** (p. ej. Ausencia + Llegada tarde, Vacaciones + Licencia médica) continúa pendiente de definición de negocio — la Etapa 15G.3 sólo resolvió el caso "mismo tipo" (ver bullet debajo).

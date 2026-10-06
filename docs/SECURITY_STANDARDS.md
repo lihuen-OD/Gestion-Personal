@@ -51,42 +51,41 @@ Check:
 
 ## Public clock endpoints (fichador)
 
-The fichador has no user session, so its four routes are not behind `requireAuth`. After F0 of the standalone fichador plan (`docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md`) these are the **only** routes reachable with the kiosk credential:
+The fichador has no user session, so its four routes are not behind `requireAuth`. Since F6 of the standalone fichador plan (`docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md`) each of them requires an individually authenticated **`ClockDevice` in status `ACTIVE`** (see "Clock device authentication" below). These are the **only** routes reachable with a device credential:
 
 | Route | Purpose | Exposes |
 |---|---|---|
 | `GET /time-entries/clock/employees?search=` | Search `ACTIVO` employees by name (min 2 chars, max 12 results) | id, legajo, first/last name, **last 3 DNI digits** (`dniSuffix`) |
 | `POST /time-entries/clock/status` | Open shift of the selected employee | same employee label + open shift `{id, startAt}` |
 | `POST /time-entries/clock/photo-punch` | Clock in/out **with photo**, idempotent by `requestId` | employee label, shift times/totals, segment labels |
-| `GET /time-entries/clock/attempts/:requestId?employeeId=` | State of a punch attempt (network-failure recovery) | same as photo-punch |
+| `GET /time-entries/clock/attempts/:requestId?employeeId=` | State of a punch attempt **of the same device** (network-failure recovery) | same as photo-punch |
 
 Rules:
-- each route carries the kiosk token check and its own rate limiter (`CLOCK_RATE_LIMIT_*`, one bucket per client IP), separate from the global API limiter. Per-IP buckets only work with a correct `TRUST_PROXY_HOPS` (see "Client IP behind proxies")
-- the `/clock` namespace is closed: any other `/time-entries/clock/*` path answers `404 ROUTE_NOT_FOUND` with or without the token and never falls through to `requireAuth` or the `/:id` routes. **There is no photo-less punch path** — `POST /clock/in`, `/clock/out`, `/clock/status-by-dni`, `/clock/in-by-dni` and `/clock/out-by-dni` were removed in F0 (they let anyone clock any employee in/out by id or DNI)
+- guard order per route: a per-IP limiter **before** authentication (`CLOCK_IP_RATE_LIMIT_MAX`, slows credential brute force without touching the database), then `requireClockDevice()`, then a per-device limiter keyed by the **already authenticated** device id (`CLOCK_RATE_LIMIT_MAX`), so an invented device id never creates a bucket and kiosks behind the same NAT do not share one small quota. All of them are separate from the global API limiter. The per-IP layer only works with a correct `TRUST_PROXY_HOPS` (see "Client IP behind proxies")
+- the `/clock` namespace is closed: any other `/time-entries/clock/*` path answers `404 ROUTE_NOT_FOUND` with or without a credential and never falls through to `requireAuth` or the `/:id` routes. **There is no photo-less punch path** — `POST /clock/in`, `/clock/out`, `/clock/status-by-dni`, `/clock/in-by-dni` and `/clock/out-by-dni` were removed in F0 (they let anyone clock any employee in/out by id or DNI)
 - the full DNI, CUIL, enabled hour concepts and internal `TimeEntry`/`TimeSegment` rows never leave the backend through these routes; attempts stored before F0 are projected to the same public shape when read back
 - **`faceValidationStatus` on the photo-punch endpoint is a client-reported result (MediaPipe running in the browser), not a server-side biometric verification.** The backend only checks that the client claims a valid detection — it never re-validates the uploaded photo against the employee's identity. Treat it as an anti-mistake UX signal, not a security control, until real server-side face matching is implemented
 - idempotency is enforced via `ClockPunchAttempt.requestId` (unique); concurrent double ingress is also blocked at the database level by the partial unique index `WorkShift_one_open_per_employee` (mapped to a clean 409, not a 500)
 
-### Device token (`x-clock-device-token`) — temporary, to be replaced by `ClockDevice`
+### Clock device authentication (`ClockDevice`, F5 enrollment + F6 enforcement)
 
-What exists today (`backend/src/middlewares/clockDeviceAuth.ts`): the four routes above require one shared secret in the `x-clock-device-token` header (`CLOCK_DEVICE_TOKEN` / `VITE_CLOCK_DEVICE_TOKEN`), compared with `crypto.timingSafeEqual`.
+There is **no shared kiosk secret anymore**. The former `x-clock-device-token` header and the `CLOCK_DEVICE_TOKEN` / `VITE_CLOCK_DEVICE_TOKEN` variables were removed in F6: the header authenticates nothing (`401`), and the fichador build fails if the hosting still defines the retired variable. Compromising one iPad no longer compromises every kiosk.
 
-**The shared secret is a temporary solution and will be replaced by `ClockDevice` (per-device identity, enrollment approved by RRHH, revocable) in stages F4–F6 of `docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md`.** Until then:
+Credential, the only accepted format: `Authorization: ClockDevice <uuid>.<base64url-secret>`. The secret is 32 random bytes (`randomBytes(32)`), returned once at registration and stored by the PWA in IndexedDB (never in Cache Storage: `/api` is never handled by the service worker). The database stores only its SHA-256 (`tokenHash`); verification hashes the presented secret and uses `timingSafeEqual`. bcrypt/argon2 are intentionally not used because this is a high-entropy random secret, not a human password.
 
-- the token is **not a secret**: it is a `VITE_*` variable, so Vite inlines it into the JavaScript chunk of `TimeClockPage`, which the admin site serves without login. Anyone who can load that site can read it. Moving it to another env var or another `VITE_*` name would not change that
-- whoever has it can use exactly the four routes above (search active employees by name, read their open shift, punch **with a photo**, read attempts) and nothing else; it gives no access to any admin endpoint, and admin JWTs give no access to these routes
-- if `CLOCK_DEVICE_TOKEN` is unset in `NODE_ENV=production`, the middleware **fails closed** (`503 CLOCK_DEVICE_NOT_CONFIGURED`); in development/test/demo it lets requests through with a one-time warning
-- it still cannot authorize a fichada by individual kiosk in F5;
-  `AttendancePunch.deviceId`/`kioskId` remain unwritten until F6/F8
+`requireClockDevice()` (`backend/src/modules/clock-devices/clockDeviceAuthentication.ts`) is the single middleware for every device route:
+- malformed header, unknown id and wrong secret answer the same `401 CLOCK_DEVICE_INVALID_CREDENTIAL`; a well-formed id always performs the primary-key lookup and the hash comparison (against a dummy hash when the id does not exist), so the response never says which part failed
+- valid credential in a non-allowed state: `403 CLOCK_DEVICE_REVOKED` or `403 CLOCK_DEVICE_NOT_ACTIVE`. Operational routes allow only `ACTIVE`; the enrollment routes (`/clock/device/status`, `/clock/device/pairing-code/refresh`) explicitly allow every state so a `PENDING` device can poll and a `REVOKED` one can learn it was revoked
+- it attaches `req.clockDevice = { id, status, name, sectorId }` and never `tokenHash`, `pairingCodeHash` or `req.user`. A JWT never opens a device route and a device credential never opens an admin route (both directions covered by `app.clockDeviceIsolation.test.ts`)
+- cost: one indexed lookup by primary key plus a SHA-256 (~2 µs); no cache, so a revocation is effective on the very next request
 
-### Individual device enrollment (F5; not punch authorization yet)
+Attribution: `AttendancePunch.deviceId` and `ClockPunchAttempt.deviceId` are written **only** from `req.clockDevice.id`; the request body cannot choose them, and the punch IP / user-agent come from the request (`req.ip`, `User-Agent`), never from the body. Historical rows keep `deviceId = NULL`; there is no backfill. `requestId` stays globally unique: an attempt can only be read (`GET …/attempts/:requestId`) or replayed (`POST …/photo-punch` with the same key) by the device that created it — another device, or a pre-F6 attempt without a device, gets the same `404` / `409 CLOCK_IDEMPOTENCY_KEY_REUSED` as an unknown key, never the stored result.
 
-F5 adds a separate credential only for enrollment/status:
-`Authorization: ClockDevice <uuid>.<base64url-secret>`. The secret is 32 random
-bytes (`randomBytes(32)`), returned once at registration and stored by the PWA
-in IndexedDB. The database stores only its SHA-256; verification hashes the
-presented secret and uses `timingSafeEqual`. bcrypt/argon2 are intentionally not
-used because this is a high-entropy random secret, not a human password.
+Presence: on operational routes the middleware refreshes `lastSeenAt`, `lastIp`, `lastUserAgent` and `lastAppVersion` at most once per minute per device, conditionally and without blocking the response. `X-Clock-App-Version` is informative only and validated as a short version string; it never takes part in authentication.
+
+Logging: request logs never include headers; `/health/client-ip` never echoes `Authorization`; the presence-update failure log carries only the device id and the error message. A rejected device request (`403`) is recorded by the global "Acceso denegado" audit rule like any other forbidden request; searches and successful operations add no audit noise (each punch is already traced by `AttendancePunch` / `ClockPunchAttempt`).
+
+### Individual device enrollment (F5)
 
 Pairing codes have 8 non-ambiguous characters, expire after 10 minutes and are
 also stored only as SHA-256. Clear codes exist only in the register/refresh
@@ -99,10 +98,7 @@ device. Activation/revocation/deletion are audited with human text. Public
 registration deliberately does not create AuditLog rows to avoid an
 unauthenticated audit-spam vector.
 
-**Boundary:** the F5 PWA gate for `PENDING`/`REVOKED` is UX, not a security
-control. The four `/time-entries/clock/*` routes still use the temporary shared
-token above. F6 must enforce the individual credential server-side before a
-device state can be treated as authorization for a punch.
+**Boundary:** since F6 the device state is enforced server-side on every punch route; the PWA lock screens for `PENDING`/`REVOKED` are UX on top of that control, not the control itself. The admin app no longer has a working fichador: `/fichador` only points to the standalone app.
 
 ### Hosting headers of the fichador site
 
