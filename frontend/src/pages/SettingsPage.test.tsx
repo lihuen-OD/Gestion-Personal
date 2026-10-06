@@ -52,6 +52,7 @@ describe("SettingsPage — Etapa 15M.17 (sin duplicar el acceso operativo de Exp
       ["Conceptos horarios", "/configuracion/conceptos-horarios"],
       ["Categorías documentales", "/configuracion/categorias-documentales"],
       ["Parámetros de auditoría", "/configuracion/parametros-auditoria"],
+      ["Dispositivos de fichada", "/configuracion/dispositivos-fichada"],
     ];
 
     for (const [name, path] of expectedCards) {
@@ -60,7 +61,7 @@ describe("SettingsPage — Etapa 15M.17 (sin duplicar el acceso operativo de Exp
       expect(card).not.toBeNull();
       expect(card.querySelector("a")).toHaveAttribute("href", path);
     }
-    // Ninguna card "de más" además de las 9 esperadas -- confirma que no
+    // Ninguna card "de más" además de las esperadas -- confirma que no
     // quedó ningún acceso operativo duplicado sin nombrar acá arriba.
     expect(document.querySelectorAll(".setting-card")).toHaveLength(expectedCards.length);
   });

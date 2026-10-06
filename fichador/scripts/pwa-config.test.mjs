@@ -52,6 +52,9 @@ describe("service worker (Workbox)", () => {
     for (const url of [
       "http://localhost:4002/api/time-entries/clock/status",
       "https://api-test.example.com/api/time-entries/clock/photo-punch",
+      "https://api-test.example.com/api/clock/device/register",
+      "https://api-test.example.com/api/clock/device/status",
+      "https://api-test.example.com/api/clock/device/pairing-code/refresh",
       "http://localhost:5175/mediapipe/wasm/vision_wasm_internal.wasm",
     ]) expect(rule.urlPattern.test(url)).toBe(false);
   });

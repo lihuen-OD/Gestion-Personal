@@ -8,9 +8,23 @@ const employee = { id: "employee-1", legajo: "100", dniSuffix: "456", firstName:
 async function mockApi(page: Page) {
   await page.route("http://127.0.0.1:59999/**", (route) => {
     const path = new URL(route.request().url()).pathname;
+    if (path.endsWith("/clock/device/status")) return route.fulfill({ json: { data: { id: "00000000-0000-4000-8000-000000000001", name: "TEST E2E", status: "ACTIVE" } } });
     if (path.endsWith("/clock/employees")) return route.fulfill({ json: { data: [employee] } });
     return route.fulfill({ json: { data: { employee, openShift: null } } });
   });
+}
+
+async function seedActiveIdentity(page: Page) {
+  await page.addInitScript(() => new Promise<void>((resolve, reject) => {
+    const request = indexedDB.open("fichador-device", 1);
+    request.onupgradeneeded = () => request.result.createObjectStore("identity");
+    request.onerror = () => reject(request.error);
+    request.onsuccess = () => {
+      const tx = request.result.transaction("identity", "readwrite");
+      tx.objectStore("identity").put({ id: "00000000-0000-4000-8000-000000000001", secret: "e2e-secret" }, "current");
+      tx.oncomplete = () => resolve();
+    };
+  }));
 }
 
 async function waitForServiceWorkerControl(page: Page) {
@@ -21,6 +35,7 @@ async function waitForServiceWorkerControl(page: Page) {
 
 test("instalable: manifest enlazado y service worker activo con el shell y MediaPipe precacheados", async ({ page }) => {
   await mockApi(page);
+  await seedActiveIdentity(page);
   await page.goto("/");
 
   const manifestHref = await page.locator('link[rel="manifest"]').getAttribute("href");
@@ -44,6 +59,7 @@ test("sin red: la app abre, bloquea la fichada con un estado claro, el 404 sigue
     if (!["localhost", "127.0.0.1"].includes(hostname)) external.push(request.url());
   });
   await mockApi(page);
+  await seedActiveIdentity(page);
   await page.goto("/");
   await waitForServiceWorkerControl(page);
 
@@ -59,12 +75,12 @@ test("sin red: la app abre, bloquea la fichada con un estado claro, el 404 sigue
   await expect(page.getByText("No se detectó una cara.")).toBeVisible({ timeout: 30_000 });
   await page.getByRole("button", { name: "Cancelar" }).click();
 
-  // La app abre sin red y bloquea la operación con un estado claro.
+  // La app abre sin red y bloquea antes de exponer el fichador porque no
+  // puede revalidar la identidad individual.
   await page.reload();
-  await expect(page.getByRole("heading", { name: "Fichador de personal" })).toBeVisible();
-  await page.getByLabel("Buscar por nombre o apellido").fill("Gomez");
-  await expect(page.getByRole("alert")).toHaveText(/No hay conexión con el servidor/);
-  await expect(page.getByRole("button", { name: /Marcar ingreso/ })).toBeDisabled();
+  await expect(page.getByRole("heading", { name: "Configurar este dispositivo" })).toBeVisible();
+  await expect(page.getByText(/No hay conexión con el servidor/)).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Fichador de personal" })).toBeHidden();
 
   // Una ruta inválida sigue resolviéndose dentro del fichador.
   await page.goto("/legajos");

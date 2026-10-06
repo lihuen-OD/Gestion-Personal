@@ -3,6 +3,7 @@ import { render, screen } from "@testing-library/react";
 import { App, isKioskPath } from "./App";
 
 vi.mock("./pages/TimeClockPage", () => ({ TimeClockPage: () => <h1>Fichador de personal</h1> }));
+vi.mock("./features/device/ClockDeviceGate", () => ({ ClockDeviceGate: ({ children }: { children: React.ReactNode }) => children }));
 
 // F1 — el fichador standalone no tiene rutas administrativas: escribirlas a
 // mano muestra el 404 propio, nunca una pantalla del admin.
