@@ -288,13 +288,15 @@ export function WorkScheduleSettingsPage() {
   };
 
   const removeRule = async (item: DoubleHourRule) => {
-    if (!(await confirmAction(`Si la regla "${item.name}" ya comenzó, quedará inactiva para conservar la trazabilidad. Si todavía es futura, se eliminará.`, { title: "Eliminar regla", confirmLabel: "Continuar", tone: "danger" }))) return;
+    // Eliminar ≠ Inactivar: borra físicamente la regla (creada por error),
+    // haya empezado o no. Para conservarla sin que aplique está el botón Power.
+    if (!(await confirmAction(`Esta acción eliminará definitivamente la regla "${item.name}" y recalculará las horas afectadas como si la regla no existiera. Las horas reales y las fichadas no se eliminarán.`, { title: "Eliminar regla", confirmLabel: "Eliminar definitivamente", tone: "danger" }))) return;
     setWorking(true);
     setTableError("");
     setNotice("");
     try {
-      const result = await workforceApiService.removeDoubleHourRule(item.id);
-      setNotice(result.mode === "DELETED" ? "Regla eliminada correctamente." : "La regla ya había comenzado y quedó inactiva para preservar los cálculos históricos.");
+      await workforceApiService.removeDoubleHourRule(item.id);
+      setNotice("Regla eliminada definitivamente. Las horas afectadas se recalcularon.");
       if (editingRuleId === item.id) resetRule();
       await load();
       notifyRulesMutated();

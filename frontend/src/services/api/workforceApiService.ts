@@ -326,7 +326,8 @@ export const workforceApiService = {
     return result;
   },
   async removeDoubleHourRule(id: string) {
-    const result = await apiRequest<{ data: { mode: "DELETED" | "INACTIVATED"; id?: string; item?: DoubleHourRule } }>(`/workforce/double-hour-rules/${id}`, { method: "DELETE" }).then((response) => response.data);
+    // Siempre borrado físico (nunca inactiva): Inactivar es updateDoubleHourRule({ status }).
+    const result = await apiRequest<{ data: { mode: "DELETED"; id: string } }>(`/workforce/double-hour-rules/${id}`, { method: "DELETE" }).then((response) => response.data);
     await invalidateDoubleHourRuleDependentCaches("double hour rule removed");
     return result;
   },
