@@ -1304,21 +1304,6 @@ export const timeEntriesRepository = {
     });
   },
 
-  findEmployeeByDniForClock(dni: string) {
-    return prisma.employee.findFirst({
-      where: { dni },
-      select: {
-        id: true,
-        legajo: true,
-        dni: true,
-        cuil: true,
-        firstName: true,
-        lastName: true,
-        status: true,
-      },
-    });
-  },
-
   searchEmployeesForClock(search: string) {
     const words = search.split(/\s+/).filter(Boolean);
     return prisma.employee.findMany({
@@ -1351,21 +1336,6 @@ export const timeEntriesRepository = {
       },
       orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
       take: 12,
-    });
-  },
-
-  findEmployeeByIdForClock(employeeId: string) {
-    return prisma.employee.findFirst({
-      where: { id: employeeId },
-      select: {
-        id: true,
-        legajo: true,
-        dni: true,
-        cuil: true,
-        firstName: true,
-        lastName: true,
-        status: true,
-      },
     });
   },
 
@@ -1407,17 +1377,6 @@ export const timeEntriesRepository = {
       prisma.attendancePunch.update({ where: { id: attendancePunchId }, data: { thumbnailFileId } }),
       prisma.storageFile.update({ where: { id: thumbnailFileId }, data: { attendancePunchId } }),
     ]);
-  },
-
-  findOpenWorkShift(employeeId: string) {
-    return prisma.workShift.findFirst({
-      where: {
-        employeeId,
-        status: WorkShiftStatus.ABIERTO,
-        endAt: null,
-      },
-      orderBy: { startAt: "desc" },
-    });
   },
 
   async expireOpenWorkShifts(now: Date) {
@@ -1617,20 +1576,6 @@ export const timeEntriesRepository = {
     }
 
     return newShift;
-  },
-
-  createObservedPunch(input: { employeeId: string; type: "INGRESO" | "SALIDA"; source: WorkShiftSource; timestamp: Date; observation: string; punchEvidence?: PunchEvidenceInput }) {
-    return prisma.attendancePunch.create({
-      data: {
-        employeeId: input.employeeId,
-        type: input.type,
-        timestamp: input.timestamp,
-        source: input.source,
-        status: "OBSERVADA",
-        observation: input.observation,
-        ...punchEvidenceData(input.punchEvidence),
-      },
-    });
   },
 
   countEmployeeInScope(employeeId: string, employeeAccessWhere: Prisma.EmployeeWhereInput) {

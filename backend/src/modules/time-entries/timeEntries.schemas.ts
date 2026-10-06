@@ -105,10 +105,6 @@ export const createWorkShiftSchema = workShiftBaseSchema.extend({
   path: ["employeeId"],
 });
 
-export const clockByDniSchema = z.object({
-  dni: z.string().trim().min(6).max(20),
-});
-
 export const clockEmployeeSearchQuerySchema = z.object({
   search: z.string().trim().min(2).max(80),
 });
@@ -174,7 +170,6 @@ export type RejectTimeEntryInput = z.infer<typeof rejectTimeEntrySchema>;
 export type TimeEntriesExportQuery = z.infer<typeof timeEntriesExportQuerySchema>;
 export type PreviewWorkShiftInput = z.infer<typeof previewWorkShiftSchema>;
 export type CreateWorkShiftInput = z.infer<typeof createWorkShiftSchema>;
-export type ClockByDniInput = z.infer<typeof clockByDniSchema>;
 export type ClockEmployeeSearchQuery = z.infer<typeof clockEmployeeSearchQuerySchema>;
 export type ClockByEmployeeInput = z.infer<typeof clockByEmployeeSchema>;
 export type ClockPhotoPunchInput = z.infer<typeof clockPhotoPunchSchema>;

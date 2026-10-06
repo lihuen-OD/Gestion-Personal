@@ -23,7 +23,7 @@ export function TimeClockPage() {
   const [matches, setMatches] = useState<Awaited<ReturnType<typeof timeClockApiService.searchEmployees>>>([]);
   const [now, setNow] = useState(new Date());
   const [status, setStatus] = useState<Awaited<ReturnType<typeof timeClockApiService.status>>>();
-  const [result, setResult] = useState<Awaited<ReturnType<typeof timeClockApiService.clockOut>> | Awaited<ReturnType<typeof timeClockApiService.clockIn>>>();
+  const [result, setResult] = useState<Awaited<ReturnType<typeof timeClockApiService.photoPunch>>>();
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [pendingPunch, setPendingPunch] = useState<"IN" | "OUT">();

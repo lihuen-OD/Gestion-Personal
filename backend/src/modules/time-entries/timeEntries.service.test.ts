@@ -13,15 +13,12 @@ import { notifyUsers } from "../workforce-management/workforce.service";
 import { auditService } from "../audit/audit.service";
 import { hourConceptsRepository } from "../hour-concepts/hourConcepts.repository";
 import { automaticHourConceptBreakdownsService } from "../employees/automaticHourConceptBreakdowns.service";
+import { storageService } from "../../shared/storage/storage.service";
 
 vi.mock("./timeEntries.repository", () => ({
   timeEntriesRepository: {
-    findEmployeeByDniForClock: vi.fn(),
-    findEmployeeByIdForClock: vi.fn(),
-    findOpenWorkShift: vi.fn(),
     createOpenWorkShift: vi.fn(),
     rolloverExpiredOpenWorkShift: vi.fn(),
-    createObservedPunch: vi.fn(),
     closeOpenWorkShift: vi.fn(),
     findDefaultHourConcept: vi.fn(),
     findBlockingNovelty: vi.fn(),
@@ -78,7 +75,7 @@ vi.mock("../../shared/storage/storagePathBuilder", () => ({
 }));
 
 // Etapa 15M.2 (docs/decisions/ATTENDANCE_AUTO_BREAKDOWN_SYNC_15M2.md): Motor B
-// se mockea completo acá — este archivo prueba que los 4 caminos de cierre
+// se mockea completo acá — este archivo prueba que los caminos de cierre
 // LLAMAN al core de sincronización con los datos correctos (employeeId,
 // período(s) derivados) y que un fallo suyo nunca se propaga, no el cálculo
 // interno de Motor B en sí (ya cubierto por
@@ -136,12 +133,8 @@ vi.mock("../hour-concepts/hourConcepts.repository", () => ({
 }));
 
 type RepoMock = {
-  findEmployeeByDniForClock: Mock;
-  findEmployeeByIdForClock: Mock;
-  findOpenWorkShift: Mock;
   createOpenWorkShift: Mock;
   rolloverExpiredOpenWorkShift: Mock;
-  createObservedPunch: Mock;
   closeOpenWorkShift: Mock;
   findDefaultHourConcept: Mock;
   findBlockingNovelty: Mock;
@@ -187,6 +180,8 @@ const mockedAuditRegister = auditService.register as unknown as Mock;
 const mockedNotifyClassificationAlerts = notifyClassificationAlerts as unknown as Mock;
 const mockedFindActiveRules = hourConceptsRepository.findActiveRules as unknown as Mock;
 const mockedFindEnabledConceptIds = hourConceptsRepository.findEnabledConceptIds as unknown as Mock;
+const mockedUploadManaged = storageService.uploadManaged as unknown as Mock;
+const mockedDeleteManaged = storageService.deleteManaged as unknown as Mock;
 
 function prismaKnownError(code: string) {
   return new Prisma.PrismaClientKnownRequestError("mock prisma error", { code, clientVersion: "0.0.0" });
@@ -687,250 +682,210 @@ describe("approve/reject/return — la aprobación final es exclusiva de RRHH (E
   });
 });
 
-describe("clockInByEmployee", () => {
-  it("crea un turno abierto cuando el empleado no tiene ninguno (camino feliz)", async () => {
-    repo.findEmployeeByIdForClock.mockResolvedValue(activeEmployee);
-    repo.findOpenWorkShift.mockResolvedValue(null);
-    repo.createOpenWorkShift.mockResolvedValue({ id: "shift-1", startAt: new Date() });
+// F0 del fichador standalone (docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md):
+// se retiraron los caminos legacy sin foto (clockInByEmployee/clockOutByEmployee
+// y sus variantes por DNI, sin consumidores). Las reglas de ingreso/salida que
+// sólo se probaban por esos caminos se prueban ahora sobre clockPhotoPunch, el
+// único camino vivo — usa los mismos helpers compartidos (rollover por régimen,
+// notifyMissingExit, mapeo de P2002 / WORK_SHIFT_ALREADY_CLOSED,
+// evaluateShiftExitSafely), así que la cobertura no se pierde con el borrado.
+describe("clockPhotoPunch — reglas de ingreso y salida (F0: antes probadas sólo por los caminos sin foto)", () => {
+  const normalConcept = { id: "concept-normal", name: "Hora normal", status: "ACTIVO", systemRole: "NORMAL_BASE" };
+  const excedidaShift = { id: "shift-excedida", startAt: new Date(Date.now() - 21 * 60 * 60 * 1000), hourConcept: normalConcept };
+  const alertOnlyRegime = { kind: "TURNO_FLEXIBLE", alertOnOutOfShift: false, openShiftOverflowAction: "ALERT_ONLY" };
 
-    const result = await timeEntriesService.clockInByEmployee({ employeeId: activeEmployee.id });
+  function punch(punchType: "IN" | "OUT") {
+    return {
+      requestId: "44444444-4444-4444-4444-444444444444",
+      employeeId: activeEmployee.id,
+      punchType,
+      photo: bigPhotoDataUrl(),
+      faceValidationStatus: "VALID" as const,
+    };
+  }
 
-    expect(result.workShift.id).toBe("shift-1");
-    expect(repo.createOpenWorkShift).toHaveBeenCalledTimes(1);
-  });
+  function context(workShifts: unknown[] = []) {
+    return { ...activeEmployee, workShifts, hourConcepts: [] } as never;
+  }
 
-  it("registra una fichada observada y responde 409 si ya hay un turno abierto reciente", async () => {
-    repo.findEmployeeByIdForClock.mockResolvedValue(activeEmployee);
-    repo.findOpenWorkShift.mockResolvedValue({ id: "shift-open", startAt: new Date() });
+  function recentOpenShift() {
+    return { id: "shift-open", startAt: new Date(Date.now() - 60 * 60_000), hourConcept: normalConcept };
+  }
 
-    await expect(timeEntriesService.clockInByEmployee({ employeeId: activeEmployee.id })).rejects.toMatchObject({
-      statusCode: 409,
-      code: "CLOCK_ALREADY_OPEN",
-    });
-    expect(repo.createObservedPunch).toHaveBeenCalledTimes(1);
-    expect(repo.createOpenWorkShift).not.toHaveBeenCalled();
-  });
-
-  it("mapea una violacion de unicidad concurrente (P2002) a un 409 prolijo en vez de un 500 (regresion Bloque 1)", async () => {
-    repo.findEmployeeByIdForClock.mockResolvedValue(activeEmployee);
-    repo.findOpenWorkShift.mockResolvedValue(null);
-    repo.createOpenWorkShift.mockRejectedValue(prismaKnownError("P2002"));
-
-    await expect(timeEntriesService.clockInByEmployee({ employeeId: activeEmployee.id })).rejects.toMatchObject({
-      statusCode: 409,
-      code: "CLOCK_ALREADY_OPEN",
-    });
-  });
-
-  it("no mapea otros errores de Prisma distintos de P2002 (deben seguir propagandose sin transformarse en AppError)", async () => {
-    repo.findEmployeeByIdForClock.mockResolvedValue(activeEmployee);
-    repo.findOpenWorkShift.mockResolvedValue(null);
-    repo.createOpenWorkShift.mockRejectedValue(prismaKnownError("P2003"));
-
-    let caught: unknown;
-    try {
-      await timeEntriesService.clockInByEmployee({ employeeId: activeEmployee.id });
-    } catch (error) {
-      caught = error;
-    }
-    expect(caught).toBeInstanceOf(Prisma.PrismaClientKnownRequestError);
-    expect(caught).not.toBeInstanceOf(AppError);
-  });
-});
-
-describe("clockInByEmployee — política de rollover por régimen (jornada abierta excedida)", () => {
-  const excedidaShift = { id: "shift-excedida", startAt: new Date(Date.now() - 21 * 60 * 60 * 1000) };
-
-  it("Caso A — sin régimen vigente: conserva el rollover automático (comportamiento actual)", async () => {
-    repo.findEmployeeByIdForClock.mockResolvedValue(activeEmployee);
-    repo.findOpenWorkShift.mockResolvedValue(excedidaShift);
-    mockedResolveActiveWorkRegime.mockResolvedValueOnce(null);
-    repo.rolloverExpiredOpenWorkShift.mockResolvedValue({ id: "shift-new", startAt: new Date() });
-
-    const result = await timeEntriesService.clockInByEmployee({ employeeId: activeEmployee.id });
-
-    expect(repo.rolloverExpiredOpenWorkShift).toHaveBeenCalledTimes(1);
-    expect(repo.createObservedPunch).not.toHaveBeenCalled();
-    expect(result.previousOpenShift?.status).toBe("FALTA_SALIDA");
-  });
-
-  it("Caso E — régimen ROLLOVER: conserva el rollover automático (comportamiento actual)", async () => {
-    repo.findEmployeeByIdForClock.mockResolvedValue(activeEmployee);
-    repo.findOpenWorkShift.mockResolvedValue(excedidaShift);
-    mockedResolveActiveWorkRegime.mockResolvedValueOnce({ kind: "TURNO_OBLIGATORIO", alertOnOutOfShift: true, openShiftOverflowAction: "ROLLOVER" });
-    repo.rolloverExpiredOpenWorkShift.mockResolvedValue({ id: "shift-new", startAt: new Date() });
-
-    const result = await timeEntriesService.clockInByEmployee({ employeeId: activeEmployee.id });
-
-    expect(repo.rolloverExpiredOpenWorkShift).toHaveBeenCalledTimes(1);
-    expect(mockedFlagOpenShiftOverflowForReview).not.toHaveBeenCalled();
-    expect(result.previousOpenShift?.status).toBe("FALTA_SALIDA");
-  });
-
-  it("Caso D — régimen ALERT_ONLY: no hace rollover, no crea una segunda jornada, responde 409 compatible y marca para revisión", async () => {
-    repo.findEmployeeByIdForClock.mockResolvedValue(activeEmployee);
-    repo.findOpenWorkShift.mockResolvedValue(excedidaShift);
-    mockedResolveActiveWorkRegime.mockResolvedValueOnce({ kind: "TURNO_FLEXIBLE", alertOnOutOfShift: false, openShiftOverflowAction: "ALERT_ONLY" });
-
-    await expect(timeEntriesService.clockInByEmployee({ employeeId: activeEmployee.id })).rejects.toMatchObject({
-      statusCode: 409,
-      code: "CLOCK_ALREADY_OPEN",
-    });
-
-    expect(repo.rolloverExpiredOpenWorkShift).not.toHaveBeenCalled();
-    expect(repo.createOpenWorkShift).not.toHaveBeenCalled();
-    expect(repo.createObservedPunch).toHaveBeenCalledTimes(1);
-    expect(mockedFlagOpenShiftOverflowForReview).toHaveBeenCalledTimes(1);
-    expect(mockedFlagOpenShiftOverflowForReview).toHaveBeenCalledWith(activeEmployee.id, excedidaShift.id, expect.any(Number), expect.any(Date));
-  });
-
-  it("Caso G — idempotencia: dos intentos de ingreso seguidos bajo ALERT_ONLY nunca hacen rollover ni crean una segunda jornada", async () => {
-    repo.findEmployeeByIdForClock.mockResolvedValue(activeEmployee);
-    repo.findOpenWorkShift.mockResolvedValue(excedidaShift);
-    mockedResolveActiveWorkRegime.mockResolvedValue({ kind: "TURNO_FLEXIBLE", alertOnOutOfShift: false, openShiftOverflowAction: "ALERT_ONLY" });
-
-    await expect(timeEntriesService.clockInByEmployee({ employeeId: activeEmployee.id })).rejects.toMatchObject({ code: "CLOCK_ALREADY_OPEN" });
-    await expect(timeEntriesService.clockInByEmployee({ employeeId: activeEmployee.id })).rejects.toMatchObject({ code: "CLOCK_ALREADY_OPEN" });
-
-    expect(repo.rolloverExpiredOpenWorkShift).not.toHaveBeenCalled();
-    expect(repo.createOpenWorkShift).not.toHaveBeenCalled();
-    expect(mockedFlagOpenShiftOverflowForReview).toHaveBeenCalledTimes(2); // createShiftAlert (mockeado acá) es quien deduplica por upsert
-  });
-});
-
-describe("notifyMissingExit/notifyOpenShiftAttempt — Etapa 10E (best-effort: un fallo de notificación no rompe la fichada en vivo)", () => {
-  const excedidaShift = { id: "shift-excedida", startAt: new Date(Date.now() - 21 * 60 * 60 * 1000) };
-
-  it("si notifyUsers falla durante el rollover automático, el ingreso igual se completa (no propaga la excepción)", async () => {
-    repo.findEmployeeByIdForClock.mockResolvedValue(activeEmployee);
-    repo.findOpenWorkShift.mockResolvedValue(excedidaShift);
-    mockedResolveActiveWorkRegime.mockResolvedValueOnce(null);
-    repo.rolloverExpiredOpenWorkShift.mockResolvedValue({ id: "shift-new", startAt: new Date() });
-    mockedNotifyUsers.mockRejectedValueOnce(new Error("db hiccup"));
-    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-
-    const result = await timeEntriesService.clockInByEmployee({ employeeId: activeEmployee.id });
-
-    expect(result.previousOpenShift?.status).toBe("FALTA_SALIDA");
-    expect(errorSpy).toHaveBeenCalledWith("MISSING_EXIT_NOTIFY_FAILED", expect.objectContaining({ workShiftId: excedidaShift.id }));
-    errorSpy.mockRestore();
-  });
-
-  it("la notificación de falta de salida nace con eventAt = inicio de la jornada (no el momento del cierre automático)", async () => {
-    repo.findEmployeeByIdForClock.mockResolvedValue(activeEmployee);
-    repo.findOpenWorkShift.mockResolvedValue(excedidaShift);
-    mockedResolveActiveWorkRegime.mockResolvedValueOnce(null);
-    repo.rolloverExpiredOpenWorkShift.mockResolvedValue({ id: "shift-new", startAt: new Date() });
-
-    await timeEntriesService.clockInByEmployee({ employeeId: activeEmployee.id });
-
-    expect(mockedNotifyUsers).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ type: "FALTA_SALIDA", entityType: "WorkShift", entityId: excedidaShift.id, eventAt: excedidaShift.startAt }));
-  });
-
-  it("si notifyUsers falla al intentar ingresar con una jornada ya abierta (no excedida), el 409 sigue respondiendo igual", async () => {
-    repo.findEmployeeByIdForClock.mockResolvedValue(activeEmployee);
-    repo.findOpenWorkShift.mockResolvedValue({ id: "shift-open", startAt: new Date() });
-    mockedNotifyUsers.mockRejectedValueOnce(new Error("db hiccup"));
-    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-
-    await expect(timeEntriesService.clockInByEmployee({ employeeId: activeEmployee.id })).rejects.toMatchObject({
-      statusCode: 409,
-      code: "CLOCK_ALREADY_OPEN",
-    });
-
-    expect(errorSpy).toHaveBeenCalledWith("OPEN_SHIFT_ATTEMPT_NOTIFY_FAILED", expect.objectContaining({ employeeId: activeEmployee.id }));
-    errorSpy.mockRestore();
-  });
-});
-
-describe("clockOutByEmployee", () => {
-  it("registra una fichada observada y responde 409 si no hay turno abierto", async () => {
-    repo.findEmployeeByIdForClock.mockResolvedValue(activeEmployee);
-    repo.findOpenWorkShift.mockResolvedValue(null);
-
-    await expect(timeEntriesService.clockOutByEmployee({ employeeId: activeEmployee.id })).rejects.toMatchObject({
-      statusCode: 409,
-      code: "CLOCK_NO_OPEN_SHIFT",
-    });
-    expect(repo.createObservedPunch).toHaveBeenCalledTimes(1);
-  });
-
-  it("cierra el turno abierto (camino feliz)", async () => {
+  function closedShiftResult() {
     const startAt = new Date(Date.now() - 60 * 60_000);
-    repo.findEmployeeByIdForClock.mockResolvedValue(activeEmployee);
-    repo.findOpenWorkShift.mockResolvedValue({ id: "shift-open", startAt });
-    repo.findDefaultHourConcept.mockResolvedValue({ hourConcept: { id: "concept-1", name: "Normal", status: "ACTIVO" } });
+    return { workShift: { id: "shift-open", startAt, endAt: new Date(), totalMinutes: 60, endPunchId: null }, entries: [], timeSegments: [] };
+  }
+
+  beforeEach(() => {
+    repo.findDefaultHourConcept.mockResolvedValue({ hourConcept: normalConcept });
     repo.findBlockingNovelty.mockResolvedValue(null);
-    repo.closeOpenWorkShift.mockResolvedValue({
-      workShift: { id: "shift-open", startAt, endAt: new Date(), totalMinutes: 60 },
-      entries: [],
-      timeSegments: [],
-    });
-
-    const result = await timeEntriesService.clockOutByEmployee({ employeeId: activeEmployee.id });
-
-    expect(result.workShift.id).toBe("shift-open");
-    expect(repo.closeOpenWorkShift).toHaveBeenCalledTimes(1);
+    repo.findLockedTimeEntry.mockResolvedValue(null);
   });
 
-  it("mapea un cierre concurrente (WORK_SHIFT_ALREADY_CLOSED) a un 409 prolijo (regresion Bloque 1)", async () => {
-    const startAt = new Date(Date.now() - 60 * 60_000);
-    repo.findEmployeeByIdForClock.mockResolvedValue(activeEmployee);
-    repo.findOpenWorkShift.mockResolvedValue({ id: "shift-open", startAt });
-    repo.findDefaultHourConcept.mockResolvedValue({ hourConcept: { id: "concept-1", name: "Normal", status: "ACTIVO" } });
-    repo.findBlockingNovelty.mockResolvedValue(null);
-    repo.closeOpenWorkShift.mockRejectedValue(new Error("WORK_SHIFT_ALREADY_CLOSED"));
+  describe("ingreso", () => {
+    it("crea la jornada abierta con source PUBLIC_CLOCK_PHOTO cuando no hay ninguna abierta (camino feliz)", async () => {
+      repo.createOpenWorkShift.mockResolvedValueOnce({ id: "shift-1", startAt: new Date(), startPunchId: null });
 
-    await expect(timeEntriesService.clockOutByEmployee({ employeeId: activeEmployee.id })).rejects.toMatchObject({
-      statusCode: 409,
-      code: "CLOCK_ALREADY_CLOSED",
+      const result = await timeEntriesService.clockPhotoPunch(punch("IN"), undefined, context());
+
+      expect(result.workShift.id).toBe("shift-1");
+      expect(repo.createOpenWorkShift).toHaveBeenCalledWith(expect.objectContaining({ employeeId: activeEmployee.id, source: "PUBLIC_CLOCK_PHOTO" }));
+    });
+
+    it("responde 409 CLOCK_ALREADY_OPEN si ya hay una jornada abierta reciente, sin crear otra ni guardar evidencia", async () => {
+      await expect(timeEntriesService.clockPhotoPunch(punch("IN"), undefined, context([recentOpenShift()]))).rejects.toMatchObject({
+        statusCode: 409,
+        code: "CLOCK_ALREADY_OPEN",
+      });
+      expect(repo.createOpenWorkShift).not.toHaveBeenCalled();
+      expect(repo.rolloverExpiredOpenWorkShift).not.toHaveBeenCalled();
+      expect(mockedUploadManaged).not.toHaveBeenCalled();
+    });
+
+    it("mapea una violación de unicidad concurrente (P2002) a 409 CLOCK_ALREADY_OPEN y compensa la evidencia ya guardada (regresión Bloque 1)", async () => {
+      repo.createOpenWorkShift.mockRejectedValueOnce(prismaKnownError("P2002"));
+
+      await expect(timeEntriesService.clockPhotoPunch(punch("IN"), undefined, context())).rejects.toMatchObject({
+        statusCode: 409,
+        code: "CLOCK_ALREADY_OPEN",
+      });
+      expect(mockedDeleteManaged).toHaveBeenCalledWith("file-1");
+    });
+
+    it("no mapea otros errores de Prisma distintos de P2002 (siguen propagándose sin transformarse en AppError)", async () => {
+      repo.createOpenWorkShift.mockRejectedValueOnce(prismaKnownError("P2003"));
+
+      let caught: unknown;
+      try {
+        await timeEntriesService.clockPhotoPunch(punch("IN"), undefined, context());
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(Prisma.PrismaClientKnownRequestError);
+      expect(caught).not.toBeInstanceOf(AppError);
     });
   });
 
-  // Etapa 13B (docs/decisions/SHIFT_EXIT_CLASSIFICATION_13B.md)
-  it("llama a evaluateShiftExit una sola vez con los segmentos clasificados, sin un notifyClassificationAlerts separado (evita el aviso duplicado)", async () => {
-    const startAt = new Date(Date.now() - 60 * 60_000);
-    repo.findEmployeeByIdForClock.mockResolvedValue(activeEmployee);
-    repo.findOpenWorkShift.mockResolvedValue({ id: "shift-open", startAt });
-    repo.findDefaultHourConcept.mockResolvedValue({ hourConcept: { id: "concept-1", name: "Normal", status: "ACTIVO" } });
-    repo.findBlockingNovelty.mockResolvedValue(null);
-    repo.closeOpenWorkShift.mockResolvedValue({
-      workShift: { id: "shift-open", startAt, endAt: new Date(), totalMinutes: 60 },
-      entries: [],
-      timeSegments: [],
+  describe("política de rollover por régimen (jornada abierta excedida)", () => {
+    it("Caso A — sin régimen vigente: conserva el rollover automático", async () => {
+      mockedResolveActiveWorkRegime.mockResolvedValueOnce(null);
+      repo.rolloverExpiredOpenWorkShift.mockResolvedValueOnce({ id: "shift-new", startAt: new Date(), startPunchId: null });
+
+      const result = await timeEntriesService.clockPhotoPunch(punch("IN"), undefined, context([excedidaShift]));
+
+      expect(repo.rolloverExpiredOpenWorkShift).toHaveBeenCalledTimes(1);
+      expect(repo.rolloverExpiredOpenWorkShift).toHaveBeenCalledWith(expect.objectContaining({ openWorkShiftId: excedidaShift.id, source: "PUBLIC_CLOCK_PHOTO" }));
+      expect(result).toMatchObject({ previousOpenShift: { id: excedidaShift.id, status: "FALTA_SALIDA" } });
     });
 
-    await timeEntriesService.clockOutByEmployee({ employeeId: activeEmployee.id });
+    it("Caso E — régimen ROLLOVER: conserva el rollover automático y no marca para revisión", async () => {
+      mockedResolveActiveWorkRegime.mockResolvedValueOnce({ kind: "TURNO_OBLIGATORIO", alertOnOutOfShift: true, openShiftOverflowAction: "ROLLOVER" });
+      repo.rolloverExpiredOpenWorkShift.mockResolvedValueOnce({ id: "shift-new", startAt: new Date(), startPunchId: null });
 
-    expect(evaluateShiftExit).toHaveBeenCalledTimes(1);
-    const call = vi.mocked(evaluateShiftExit).mock.calls[0]!;
-    expect(call[0]).toBe(activeEmployee.id);
-    expect(call[1]).toBe("shift-open");
-    expect(call[3]).toEqual(expect.any(Array));
-    expect(notifyClassificationAlerts).not.toHaveBeenCalled();
+      const result = await timeEntriesService.clockPhotoPunch(punch("IN"), undefined, context([excedidaShift]));
+
+      expect(repo.rolloverExpiredOpenWorkShift).toHaveBeenCalledTimes(1);
+      expect(mockedFlagOpenShiftOverflowForReview).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ previousOpenShift: { status: "FALTA_SALIDA" } });
+    });
+
+    it("Caso D — régimen ALERT_ONLY: no hace rollover, no crea una segunda jornada, responde 409, marca para revisión y compensa la evidencia", async () => {
+      mockedResolveActiveWorkRegime.mockResolvedValueOnce(alertOnlyRegime);
+
+      await expect(timeEntriesService.clockPhotoPunch(punch("IN"), undefined, context([excedidaShift]))).rejects.toMatchObject({
+        statusCode: 409,
+        code: "CLOCK_ALREADY_OPEN",
+      });
+
+      expect(repo.rolloverExpiredOpenWorkShift).not.toHaveBeenCalled();
+      expect(repo.createOpenWorkShift).not.toHaveBeenCalled();
+      expect(mockedFlagOpenShiftOverflowForReview).toHaveBeenCalledTimes(1);
+      expect(mockedFlagOpenShiftOverflowForReview).toHaveBeenCalledWith(activeEmployee.id, excedidaShift.id, expect.any(Number), expect.any(Date));
+      expect(mockedDeleteManaged).toHaveBeenCalledWith("file-1");
+    });
+
+    it("Caso G — dos intentos seguidos bajo ALERT_ONLY nunca hacen rollover ni crean una segunda jornada", async () => {
+      mockedResolveActiveWorkRegime.mockResolvedValueOnce(alertOnlyRegime).mockResolvedValueOnce(alertOnlyRegime);
+
+      await expect(timeEntriesService.clockPhotoPunch(punch("IN"), undefined, context([excedidaShift]))).rejects.toMatchObject({ code: "CLOCK_ALREADY_OPEN" });
+      await expect(timeEntriesService.clockPhotoPunch(punch("IN"), undefined, context([excedidaShift]))).rejects.toMatchObject({ code: "CLOCK_ALREADY_OPEN" });
+
+      expect(repo.rolloverExpiredOpenWorkShift).not.toHaveBeenCalled();
+      expect(repo.createOpenWorkShift).not.toHaveBeenCalled();
+      expect(mockedFlagOpenShiftOverflowForReview).toHaveBeenCalledTimes(2); // createShiftAlert (mockeado acá) es quien deduplica por upsert
+    });
   });
 
-  // Causa raíz del 503 reportado en POST /clock/photo-punch (mismo camino de
-  // cierre que clockOutByEmployee, sin necesitar mockear storage/evidencia
-  // fotográfica para probar el punto exacto de la falla): un fallo evaluando
-  // alertas de salida ya NO debe convertir una salida guardada con éxito en
-  // un error hacia el cliente.
-  it("Caso 9 del pedido / causa raíz del 503: si evaluateShiftExit falla, la salida igual se confirma (no propaga el error, no lo convierte en 503)", async () => {
-    const startAt = new Date(Date.now() - 60 * 60_000);
-    repo.findEmployeeByIdForClock.mockResolvedValue(activeEmployee);
-    repo.findOpenWorkShift.mockResolvedValue({ id: "shift-open", startAt });
-    repo.findDefaultHourConcept.mockResolvedValue({ hourConcept: { id: "concept-1", name: "Normal", status: "ACTIVO" } });
-    repo.findBlockingNovelty.mockResolvedValue(null);
-    repo.closeOpenWorkShift.mockResolvedValue({
-      workShift: { id: "shift-open", startAt, endAt: new Date(), totalMinutes: 60 },
-      entries: [],
-      timeSegments: [],
+  describe("notifyMissingExit — Etapa 10E (best-effort: un fallo de notificación no rompe la fichada en vivo)", () => {
+    it("si notifyUsers falla durante el rollover automático, el ingreso igual se completa (no propaga la excepción)", async () => {
+      mockedResolveActiveWorkRegime.mockResolvedValueOnce(null);
+      repo.rolloverExpiredOpenWorkShift.mockResolvedValueOnce({ id: "shift-new", startAt: new Date(), startPunchId: null });
+      mockedNotifyUsers.mockRejectedValueOnce(new Error("db hiccup"));
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+      const result = await timeEntriesService.clockPhotoPunch(punch("IN"), undefined, context([excedidaShift]));
+
+      expect(result).toMatchObject({ previousOpenShift: { status: "FALTA_SALIDA" } });
+      expect(errorSpy).toHaveBeenCalledWith("MISSING_EXIT_NOTIFY_FAILED", expect.objectContaining({ workShiftId: excedidaShift.id }));
+      errorSpy.mockRestore();
     });
-    vi.mocked(evaluateShiftExit).mockRejectedValueOnce(new Error("fallo inesperado evaluando la salida"));
 
-    const result = await timeEntriesService.clockOutByEmployee({ employeeId: activeEmployee.id });
+    it("la notificación de falta de salida nace con eventAt = inicio de la jornada (no el momento del rollover)", async () => {
+      mockedResolveActiveWorkRegime.mockResolvedValueOnce(null);
+      repo.rolloverExpiredOpenWorkShift.mockResolvedValueOnce({ id: "shift-new", startAt: new Date(), startPunchId: null });
 
-    expect(result.workShift.id).toBe("shift-open");
+      await timeEntriesService.clockPhotoPunch(punch("IN"), undefined, context([excedidaShift]));
+
+      expect(mockedNotifyUsers).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ type: "FALTA_SALIDA", entityType: "WorkShift", entityId: excedidaShift.id, eventAt: excedidaShift.startAt }));
+    });
+  });
+
+  describe("salida", () => {
+    it("responde 409 CLOCK_NO_OPEN_SHIFT si no hay jornada abierta, sin guardar evidencia ni cerrar nada", async () => {
+      await expect(timeEntriesService.clockPhotoPunch(punch("OUT"), undefined, context())).rejects.toMatchObject({
+        statusCode: 409,
+        code: "CLOCK_NO_OPEN_SHIFT",
+      });
+      expect(repo.closeOpenWorkShift).not.toHaveBeenCalled();
+      expect(mockedUploadManaged).not.toHaveBeenCalled();
+      expect(mockedRecalculateForEmployeePeriod).not.toHaveBeenCalled();
+    });
+
+    it("mapea un cierre concurrente (WORK_SHIFT_ALREADY_CLOSED) a 409 CLOCK_ALREADY_CLOSED y compensa la evidencia (regresión Bloque 1)", async () => {
+      repo.closeOpenWorkShift.mockRejectedValueOnce(new Error("WORK_SHIFT_ALREADY_CLOSED"));
+
+      await expect(timeEntriesService.clockPhotoPunch(punch("OUT"), undefined, context([recentOpenShift()]))).rejects.toMatchObject({
+        statusCode: 409,
+        code: "CLOCK_ALREADY_CLOSED",
+      });
+      expect(mockedDeleteManaged).toHaveBeenCalledWith("file-1");
+    });
+
+    // Etapa 13B (docs/decisions/SHIFT_EXIT_CLASSIFICATION_13B.md)
+    it("llama a evaluateShiftExit una sola vez con los segmentos clasificados, sin un notifyClassificationAlerts separado (evita el aviso duplicado)", async () => {
+      repo.closeOpenWorkShift.mockResolvedValueOnce(closedShiftResult());
+
+      await timeEntriesService.clockPhotoPunch(punch("OUT"), undefined, context([recentOpenShift()]));
+
+      expect(evaluateShiftExit).toHaveBeenCalledTimes(1);
+      const call = vi.mocked(evaluateShiftExit).mock.calls[0]!;
+      expect(call[0]).toBe(activeEmployee.id);
+      expect(call[1]).toBe("shift-open");
+      expect(call[3]).toEqual(expect.any(Array));
+      expect(notifyClassificationAlerts).not.toHaveBeenCalled();
+    });
+
+    it("causa raíz del 503 reportado en POST /clock/photo-punch: si evaluateShiftExit falla, la salida igual se confirma", async () => {
+      repo.closeOpenWorkShift.mockResolvedValueOnce(closedShiftResult());
+      vi.mocked(evaluateShiftExit).mockRejectedValueOnce(new Error("fallo inesperado evaluando la salida"));
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+      const result = await timeEntriesService.clockPhotoPunch(punch("OUT"), undefined, context([recentOpenShift()]));
+
+      expect(result.workShift.id).toBe("shift-open");
+      errorSpy.mockRestore();
+    });
   });
 });
 
@@ -1727,7 +1682,7 @@ function bigPhotoDataUrl() {
 // Etapa 15M.2 (docs/decisions/ATTENDANCE_AUTO_BREAKDOWN_SYNC_15M2.md): 15M.1
 // (auditoría read-only) confirmó que cerrar una jornada nunca disparaba
 // Motor B (automaticHourConceptBreakdownsService) — estos tests prueban que
-// los 4 caminos reales que terminan un WorkShift en PROCESADO ahora llaman a
+// los caminos reales que terminan un WorkShift en PROCESADO ahora llaman a
 // syncAutomaticBreakdownsAfterProcessedShift (mockeado vía
 // recalculateForEmployeePeriod), que ningún camino que NO cierra jornada lo
 // hace, que el período se deriva correctamente (incluido cruce de mes) y que
@@ -1847,48 +1802,40 @@ describe("Etapa 15M.2 — sincronización automática de HourConceptBreakdown al
     });
   });
 
-  describe("D) clockOutResolved (clockOutByEmployee) — SALIDA termina PROCESADO", () => {
-    it("dispara la sincronización tras cerrar la jornada", async () => {
-      const startAt = new Date(Date.now() - 60 * 60_000);
-      repo.findEmployeeByIdForClock.mockResolvedValue(activeEmployee);
-      repo.findOpenWorkShift.mockResolvedValue({ id: "shift-open", startAt });
-      repo.closeOpenWorkShift.mockResolvedValue({ workShift: { id: "shift-open" }, entries: [], timeSegments: [] });
-
-      await timeEntriesService.clockOutByEmployee({ employeeId: activeEmployee.id });
-
-      expect(mockedRecalculateForEmployeePeriod).toHaveBeenCalledTimes(1);
-      expect(mockedRecalculateForEmployeePeriod).toHaveBeenCalledWith(expect.objectContaining({ employeeId: activeEmployee.id }));
-    });
-
-    it("un fallo de Motor B no bloquea la salida (sigue devolviendo éxito)", async () => {
-      const startAt = new Date(Date.now() - 60 * 60_000);
-      repo.findEmployeeByIdForClock.mockResolvedValue(activeEmployee);
-      repo.findOpenWorkShift.mockResolvedValue({ id: "shift-open", startAt });
-      repo.closeOpenWorkShift.mockResolvedValue({ workShift: { id: "shift-open" }, entries: [], timeSegments: [] });
+  describe("D) clockPhotoPunch — un fallo de Motor B no bloquea la salida", () => {
+    it("PERIOD_CLOSED de Motor B: la salida igual se confirma (sigue devolviendo éxito)", async () => {
+      repo.closeOpenWorkShift.mockResolvedValueOnce({ workShift: { id: "shift-open" }, entries: [], timeSegments: [] });
       mockedRecalculateForEmployeePeriod.mockRejectedValueOnce(new AppError("The period is closed for recalculation", 409, "PERIOD_CLOSED"));
+      const input = {
+        requestId: "55555555-5555-5555-5555-555555555555",
+        employeeId: activeEmployee.id,
+        punchType: "OUT" as const,
+        photo: bigPhotoDataUrl(),
+        faceValidationStatus: "VALID" as const,
+      };
+      const context = {
+        ...activeEmployee,
+        workShifts: [{ id: "shift-open", startAt: new Date(Date.now() - 60 * 60_000), hourConcept: normalConcept }],
+        hourConcepts: [],
+      };
 
-      const result = await timeEntriesService.clockOutByEmployee({ employeeId: activeEmployee.id });
+      const result = await timeEntriesService.clockPhotoPunch(input, undefined, context as never);
 
       expect(result.workShift.id).toBe("shift-open");
     });
   });
 
-  describe("F/G) caminos que NO cierran jornada — nunca sincronizan", () => {
-    it("F) clockInByEmployee (ingreso): la jornada queda ABIERTA, nunca sincroniza", async () => {
-      repo.findEmployeeByIdForClock.mockResolvedValue(activeEmployee);
-      repo.findOpenWorkShift.mockResolvedValue(null);
-      repo.createOpenWorkShift.mockResolvedValue({ id: "shift-new", startAt: new Date() });
+  describe("G) intento de salida sin ingreso abierto — nunca sincroniza", () => {
+    it("nunca llega a cerrar un WorkShift, no sincroniza", async () => {
+      const input = {
+        requestId: "66666666-6666-6666-6666-666666666666",
+        employeeId: activeEmployee.id,
+        punchType: "OUT" as const,
+        photo: bigPhotoDataUrl(),
+        faceValidationStatus: "VALID" as const,
+      };
 
-      await timeEntriesService.clockInByEmployee({ employeeId: activeEmployee.id });
-
-      expect(mockedRecalculateForEmployeePeriod).not.toHaveBeenCalled();
-    });
-
-    it("G) intento de salida sin ingreso abierto: nunca llega a cerrar un WorkShift, no sincroniza", async () => {
-      repo.findEmployeeByIdForClock.mockResolvedValue(activeEmployee);
-      repo.findOpenWorkShift.mockResolvedValue(null);
-
-      await expect(timeEntriesService.clockOutByEmployee({ employeeId: activeEmployee.id })).rejects.toMatchObject({ code: "CLOCK_NO_OPEN_SHIFT" });
+      await expect(timeEntriesService.clockPhotoPunch(input, undefined, { ...activeEmployee, workShifts: [], hourConcepts: [] } as never)).rejects.toMatchObject({ code: "CLOCK_NO_OPEN_SHIFT" });
 
       expect(repo.closeOpenWorkShift).not.toHaveBeenCalled();
       expect(mockedRecalculateForEmployeePeriod).not.toHaveBeenCalled();

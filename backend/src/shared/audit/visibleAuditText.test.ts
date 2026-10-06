@@ -97,8 +97,11 @@ describe("textos visibles de auditoría/notificaciones — nunca un id técnico"
     }
 
     // Guarda contra un falso verde: el escaneo tiene que estar viendo los
-    // llamados reales (hay más de cien en el backend).
-    expect(sinks).toBeGreaterThan(100);
+    // llamados reales (alrededor de cien en el backend; un escáner roto
+    // vería ~0). El piso deja margen para retirar código muerto sin romper
+    // esta guarda — F0 del fichador standalone eliminó notifyOpenShiftAttempt
+    // junto con los caminos de fichada sin foto y el total quedó en 100.
+    expect(sinks).toBeGreaterThanOrEqual(90);
     expect(findings.map((finding) => `${finding.file}:${finding.line} ${finding.key} <- \${${finding.expression}}`)).toEqual([]);
   });
 

@@ -128,26 +128,6 @@ export const timeClockApiService = {
     return response.data;
   },
 
-  async clockIn(employeeId: string) {
-    const response = await apiRequest<ClockInResponse>("/time-entries/clock/in", {
-      method: "POST",
-      auth: false,
-      body: body(employeeId),
-      headers: clockDeviceHeaders(),
-    });
-    return response.data;
-  },
-
-  async clockOut(employeeId: string) {
-    const response = await apiRequest<ClockOutResponse>("/time-entries/clock/out", {
-      method: "POST",
-      auth: false,
-      body: body(employeeId),
-      headers: clockDeviceHeaders(),
-    });
-    return response.data;
-  },
-
   async photoPunch(input: ClockPhotoPunchInput) {
     const response = await apiRequest<ClockInResponse | ClockOutResponse>("/time-entries/clock/photo-punch", {
       method: "POST",

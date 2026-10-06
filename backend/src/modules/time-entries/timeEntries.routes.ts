@@ -4,6 +4,7 @@ import { requireAnyRole } from "../../middlewares/authorization";
 import { createRateLimiter } from "../../middlewares/rateLimiter";
 import { requireClockDeviceToken } from "../../middlewares/clockDeviceAuth";
 import { asyncHandler } from "../../shared/http/asyncHandler";
+import { notFoundHandler } from "../../shared/errors/notFoundHandler";
 import { env } from "../../config/env";
 import { roles } from "../../shared/security/roles";
 import { validateBody } from "../../shared/validation/validateRequest";
@@ -18,7 +19,6 @@ import {
   createTimeEntrySchema,
   createWorkShiftSchema,
   clockByEmployeeSchema,
-  clockByDniSchema,
   clockEmployeeSearchQuerySchema,
   clockPhotoPunchSchema,
   listTimeEntriesQuerySchema,
@@ -40,17 +40,20 @@ const clockRateLimiter = createRateLimiter({
 // Los endpoints /clock/* no tienen sesion de usuario (kiosco/fichador
 // publico), asi que en vez de requireAuth exigen un secreto por dispositivo.
 // Ver middlewares/clockDeviceAuth.ts para el detalle y sus limites reales.
-timeEntriesRouter.use("/clock", clockRateLimiter, requireClockDeviceToken);
+//
+// F0 del fichador standalone (docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md):
+// estas cuatro rutas son TODO lo que el fichador actual necesita. Las
+// guardas van por ruta (no con un use("/clock") global) y el namespace se
+// cierra con un 404 explicito: cualquier otro /clock/* -- incluidas las
+// rutas sin foto retiradas en F0 -- responde 404 con o sin token, y nunca
+// cae en el requireAuth ni en las rutas parametricas (/:id) de abajo.
+const clockGuards = [clockRateLimiter, requireClockDeviceToken];
 
-timeEntriesRouter.get("/clock/employees", validateQuery(clockEmployeeSearchQuerySchema), asyncHandler(timeEntriesController.clockSearch));
-timeEntriesRouter.post("/clock/status", validateBody(clockByEmployeeSchema), asyncHandler(timeEntriesController.clockStatusByEmployee));
-timeEntriesRouter.post("/clock/in", validateBody(clockByEmployeeSchema), asyncHandler(timeEntriesController.clockInByEmployee));
-timeEntriesRouter.post("/clock/out", validateBody(clockByEmployeeSchema), asyncHandler(timeEntriesController.clockOutByEmployee));
-timeEntriesRouter.post("/clock/photo-punch", validateBody(clockPhotoPunchSchema), asyncHandler(timeEntriesController.clockPhotoPunch));
-timeEntriesRouter.get("/clock/attempts/:requestId", asyncHandler(timeEntriesController.clockPunchAttemptStatus));
-timeEntriesRouter.post("/clock/status-by-dni", validateBody(clockByDniSchema), asyncHandler(timeEntriesController.clockStatus));
-timeEntriesRouter.post("/clock/in-by-dni", validateBody(clockByDniSchema), asyncHandler(timeEntriesController.clockIn));
-timeEntriesRouter.post("/clock/out-by-dni", validateBody(clockByDniSchema), asyncHandler(timeEntriesController.clockOut));
+timeEntriesRouter.get("/clock/employees", ...clockGuards, validateQuery(clockEmployeeSearchQuerySchema), asyncHandler(timeEntriesController.clockSearch));
+timeEntriesRouter.post("/clock/status", ...clockGuards, validateBody(clockByEmployeeSchema), asyncHandler(timeEntriesController.clockStatusByEmployee));
+timeEntriesRouter.post("/clock/photo-punch", ...clockGuards, validateBody(clockPhotoPunchSchema), asyncHandler(timeEntriesController.clockPhotoPunch));
+timeEntriesRouter.get("/clock/attempts/:requestId", ...clockGuards, asyncHandler(timeEntriesController.clockPunchAttemptStatus));
+timeEntriesRouter.all(["/clock", "/clock/*"], notFoundHandler);
 
 timeEntriesRouter.use(requireAuth);
 
