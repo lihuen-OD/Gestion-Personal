@@ -165,7 +165,15 @@ npm run dev          # http://localhost:5175 (puerto fijo, strictPort)
 npm run test         # unit/componente (Vitest)
 npm run build        # tsc + vite build + dist/_headers + chequeo de aislamiento
 npm run e2e          # journey Playwright con el API mockeado (no toca datos)
+npm run e2e:pwa      # PWA contra build + preview: SW, precache y offline (puerto 5195)
+npm run icons        # regenera los íconos placeholder de la PWA
 ```
+
+El service worker (F3) sólo existe en el build: `npm run dev` no lo registra.
+Para probar la PWA a mano: `npm run build && npx vite preview` y abrir
+`http://localhost:5175`. MediaPipe (WASM y modelo) e Inter son self-hosted, así
+que el fichador no necesita Internet para abrir ni para la cámara; sí lo
+necesita para buscar y fichar contra el backend.
 
 `npm run build` falla si el fichador importa algo de fuera de `fichador/src` o
 si el bundle contiene marcas de módulos administrativos

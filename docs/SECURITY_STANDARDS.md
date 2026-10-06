@@ -80,7 +80,7 @@ What exists today (`backend/src/middlewares/clockDeviceAuth.ts`): the four route
 
 ### Hosting headers of the fichador site
 
-`fichador/scripts/hosting-headers.mjs` generates `dist/_headers`: `nosniff`, `strict-origin-when-cross-origin`, `X-Frame-Options: DENY`, HSTS, `Permissions-Policy` with the camera for its own origin only, and a CSP scoped to the environment's API origin and the exact MediaPipe/font paths (no `unsafe-inline`/`unsafe-eval`, only `'wasm-unsafe-eval'`). The CSP ships as **Report-Only** until it is validated on Safari/iPad over HTTPS (it is already validated enforced in Chromium). Details: plan §20.3.
+`fichador/scripts/hosting-headers.mjs` generates `dist/_headers`: `nosniff`, `strict-origin-when-cross-origin`, `X-Frame-Options: DENY`, HSTS, `Permissions-Policy` with the camera for its own origin only, and a CSP limited to `'self'` and the environment's API origin (since F3 MediaPipe and Inter are self-hosted; no `unsafe-inline`/`unsafe-eval`, only `'wasm-unsafe-eval'`). The CSP ships as **Report-Only** until it is validated on Safari/iPad over HTTPS (it is already validated enforced in Chromium). Details: plan §20.3.
 
 ## Client IP behind proxies (`trust proxy`)
 

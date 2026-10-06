@@ -1,6 +1,6 @@
 # Fichador como app independiente (PWA) — Etapa 1: diagnóstico y plan
 
-> Estado: plan aprobado. **F0 cerrada para el entorno de desarrollo actual** (2026-10-06, ver [§18](#18-f0--implementación-y-resultado)); la medición de `TRUST_PROXY_HOPS` es requisito previo del primer deploy real del backend. F1 cerrada (2026-10-06, [§19](#19-f1--fichador-standalone-implementación)). **F2 cerrada a nivel de repositorio: READY FOR DEPLOY — validación real de infraestructura diferida** (2026-10-06, [§20](#20-f2--despliegue-independiente), decisión en §20.12); no bloquea el desarrollo local. F3 en adelante, en local.
+> Estado: plan aprobado. **F0 cerrada para el entorno de desarrollo actual** (2026-10-06, ver [§18](#18-f0--implementación-y-resultado)); la medición de `TRUST_PROXY_HOPS` es requisito previo del primer deploy real del backend. F1 cerrada (2026-10-06, [§19](#19-f1--fichador-standalone-implementación)). **F2 cerrada a nivel de repositorio: READY FOR DEPLOY — validación real de infraestructura diferida** (2026-10-06, [§20](#20-f2--despliegue-independiente), decisión en §20.12); no bloquea el desarrollo local. **F3 implementada en local** (2026-10-06, [§21](#21-f3--pwa-local)), pendiente de aprobación.
 > Los §1–§17 son el diagnóstico read-only original sobre `main @ 697968a` y describen el estado **previo** a F0 (por ejemplo, las rutas sin foto de §2 ya no existen).
 
 ---
@@ -922,14 +922,16 @@ Headers generados en `dist/_headers` por `scripts/hosting-headers.mjs` (la CSP n
 | `Cache-Control` `/assets/*` | `public, max-age=31536000, immutable` | nombres con hash de Vite |
 | `Cache-Control` `/`, `/index.html` | `no-cache` | una tablet nunca queda con un index viejo |
 
-CSP: `default-src 'self'; script-src 'self' 'wasm-unsafe-eval' https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/wasm/; connect-src 'self' <origin del API> <misma ruta de jsDelivr> https://storage.googleapis.com/mediapipe-models/face_detector/; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob:; media-src 'self' blob: mediastream:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'`.
+CSP de F2 (en F3 se reduce a `'self'` + API, ver §21.6): `default-src 'self'; script-src 'self' 'wasm-unsafe-eval' https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/wasm/; connect-src 'self' <origin del API> <misma ruta de jsDelivr> https://storage.googleapis.com/mediapipe-models/face_detector/; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob:; media-src 'self' blob: mediastream:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'`.
 
 - Sin `'unsafe-inline'` ni `'unsafe-eval'`: el bundle no tiene inline, React aplica `style` vía CSSOM y el loader de MediaPipe no usa `eval`/`new Function` (auditado). `'wasm-unsafe-eval'` es lo mínimo para compilar su WASM.
 - **Validada en modo enforcing en Chromium** con un emulador local del hosting y el MediaPipe real del CDN: flujo completo con 0 violaciones, detector cargado ("No se detectó una cara" con la cámara falsa), Inter cargada. Control negativo: sin `'wasm-unsafe-eval'` el detector falla y aparecen las violaciones.
 - **Se publica como Report-Only** porque no pudo validarse en Safari/iPad sobre HTTPS. Pasa a enforced cuando se valide en el deploy real; en F3 los recursos de CDN pasan a self-hosted y la política se simplifica.
 - Un test exige que las URLs de MediaPipe de la CSP coincidan con las de `FaceCaptureModal` y con la versión instalada.
 
-### 20.4 Recursos externos que necesita el fichador (medidos en navegador)
+### 20.4 Recursos externos que necesitaba el fichador en F2 (medidos en navegador)
+
+> **Actualizado en F3 (§21):** MediaPipe e Inter pasaron a self-hosted. El fichador ya no carga nada de terceros y la CSP quedó en `'self'` + el origin del API. Esta tabla queda como registro de F2.
 
 | Origen | Recurso | Directiva |
 |---|---|---|
@@ -1031,3 +1033,119 @@ Se difiere, hasta que se defina y contrate la infraestructura:
 No es un bloqueo para el desarrollo local: las etapas siguientes (F3 en adelante) se trabajan y validan en local hasta entonces. Se mantienen sin cambios todos los artefactos de F2: `fichador/netlify.toml`, la generación de `dist/_headers` (headers de seguridad, CSP Report-Only, política de cache), el guard de deploy, `backend/src/app.cors.test.ts` y esta documentación. Al momento de desplegar, el checklist de §20.9 es el punto de partida; si las etapas posteriores cambian los recursos externos (por ejemplo F3 al self-hostear MediaPipe y fuentes), la CSP y el checklist se actualizan en esa misma etapa.
 
 No se creó ningún servicio externo.
+
+---
+
+## 21. F3 — PWA (local)
+
+Trabajada y validada **completamente en local** (decisión §20.12). Sin `ClockDevice`, enrolamiento, IndexedDB, heartbeat, fichadas offline, cambios de backend ni de schema. El `/fichador` del admin no cambió (sigue cargando MediaPipe e Inter de CDN hasta el cutover).
+
+### 21.1 Decisiones tomadas
+
+| Tema | Decisión | Motivo |
+|---|---|---|
+| Íconos | **Placeholder propio**: reloj blanco sobre el primario `#2563eb` | No hay logo oficial en el repo. Se reemplaza sin tocar código (`npm run icons` o PNG con los mismos nombres) |
+| Orientación | **`any`** | El layout funciona en vertical y horizontal; se decide en el piloto |
+| MediaPipe en precache | **Sólo la variante SIMD** (~11,5 MB con el modelo) | iOS 16.4+ y los navegadores actuales usan SIMD. La variante sin SIMD queda self-hosted con cache en runtime sólo si un equipo viejo la pide |
+| Actualizaciones | **Automáticas cuando el kiosco está ocioso** | Un kiosco no tiene a quién preguntar "¿actualizar?" y nunca debe recargar en medio de una fichada |
+| Service worker | `vite-plugin-pwa` 2.0.0 (Workbox `generateSW`) | Ya previsto en §12. Sin SW en `npm run dev` |
+
+### 21.2 Manifest e instalación
+
+- `manifest.webmanifest` generado desde `fichador/scripts/pwa-config.mjs`:
+  - `name: "Fichador | Los O'Dwyer"`, `short_name: "Fichador"`, `lang: "es-AR"`;
+  - `start_url`/`scope` `/`, `display: standalone`, `orientation: any`;
+  - colores `#f8fafc`;
+  - íconos 192, 512 y 512 maskable (dentro de la zona segura).
+- `index.html`:
+  - `apple-touch-icon` 180 y `apple-mobile-web-app-capable`/`-title`/`-status-bar-style`;
+  - `mobile-web-app-capable`, `theme-color` y favicon SVG;
+  - `viewport-fit=cover`.
+- **Safe areas:** el padding de la página y del modal usan `max(<valor actual>, env(safe-area-inset-*))`. En navegador y escritorio (insets en 0) el layout queda igual.
+- **Íconos placeholder:** los genera `scripts/generate-icons.mjs` con el Chromium de Playwright (sin dependencias nuevas). Fuente SVG en el script y PNG versionados en `public/icons/`.
+- **iOS no tiene `beforeinstallprompt`.** Detectar el modo standalone y mostrar "Agregar a inicio" queda para F7 (enrolamiento, §8): el enrolamiento es el que lo exige.
+
+### 21.3 Service worker y precache
+
+`dist/sw.js` (Workbox), registrado manualmente (`src/pwa/registerServiceWorker.ts`, `registerType: prompt`). Precache de **20 entradas, 11,93 MB**:
+
+| Grupo | Archivos | Tamaño |
+|---|---|---|
+| App | `index.html`, `index-*.js` (156 KB), `FaceCaptureModal-*.js` (132 KB), `index-*.css` (20 KB), `workbox-window` (6 KB) | ~315 KB |
+| Fuente | Inter latin 400–900 `.woff2` (6 archivos) | ~142 KB |
+| Íconos y manifest | favicon, 4 PNG, manifest | ~45 KB |
+| MediaPipe | `vision_wasm_internal.js` (322 KB) + `.wasm` (11,15 MB) | ~11,5 MB |
+| Modelo | `blaze_face_short_range.tflite` | 230 KB |
+
+- `maximumFileSizeToCacheInBytes` = 12 MB (el WASM supera el default de 2 MB).
+- `navigateFallback: index.html`: offline, cualquier ruta sigue cayendo en el 404 propio del fichador.
+- **El API nunca se cachea:** está en otro origin y el único runtime cache es la variante MediaPipe sin SIMD (`CacheFirst`, 4 entradas). Un test verifica que la regla no matchea URLs del API.
+- `cleanupOutdatedCaches`, sin `skipWaiting` ni `clientsClaim` automáticos.
+- **Por qué no choca con la regla de caching del repo** (CLAUDE.md: revisar `frontend/src/services/cache` y `backend/src/shared/cache` antes de agregar uno): el SW sólo cachea assets estáticos versionados del fichador. No es un cache de datos y no se superpone con el cache SWR del admin (que el fichador no usa). Respeta `PERFORMANCE_STANDARDS.md`: los datos del fichador (estado, fichadas) siguen sin cache.
+
+### 21.4 Recursos self-hosted
+
+- **MediaPipe WASM:**
+  - `scripts/mediapipe-assets.mjs` (plugin de Vite) lo sirve en dev y lo emite en `dist/mediapipe/wasm/` desde `node_modules/@mediapipe/tasks-vision/wasm`, la misma versión que el JS (0.10.35). No se copian ~21 MB al repo.
+  - `FaceCaptureModal` usa `WASM_URL = "/mediapipe/wasm"`.
+- **Modelo:**
+  - versionado en `fichador/public/mediapipe/models/blaze_face_short_range.tflite` (230 KB, Apache-2.0, descargado de `storage.googleapis.com/mediapipe-models/...`);
+  - un test verifica su SHA-256 `b4578f35…0152f`.
+- **Inter:** `@fontsource/inter` 5.3.0 (OFL-1.1), sólo subset latin, pesos 400–900 en archivos estáticos (como antes con Google Fonts, porque el CSS usa 650 y 750). Se quitó el `@import` de Google Fonts.
+
+### 21.5 Actualizaciones del kiosco
+
+- `src/pwa/kioskUpdates.ts`: cuando el SW avisa que hay versión nueva (`onNeedRefresh`), la aplica (`updateServiceWorker(true)`: skipWaiting + recarga) en cuanto el kiosco está ocioso, chequeando cada 15 s. El SW consulta si hay versión nueva una vez por hora.
+- **Ocioso** = sin texto de búsqueda, sin empleado elegido, sin cámara abierta, sin fichada en curso. `TimeClockPage` lo informa a `src/pwa/kioskActivity.ts` y lo libera al desmontarse.
+- **Validado de punta a punta:**
+  - build A servido y kiosco ocupado;
+  - se publica el build B: durante 20 s ocupado no recargó;
+  - al tocar "Cambiar empleado" recargó solo y quedó en la versión B.
+- Los headers sirven `sw.js`, `manifest.webmanifest` y `/mediapipe/*` con `no-cache`, para que una tablet siempre detecte la versión nueva.
+
+### 21.6 CSP y headers
+
+- Sin terceros. La CSP queda en:
+
+  ```
+  default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self' <API>; style-src 'self'; font-src 'self'; img-src 'self' data: blob:; media-src 'self' blob: mediastream:; worker-src 'self' blob:; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'
+  ```
+
+- **Validada en modo enforcing en Chromium** (emulador local del hosting):
+  - el SW controla la página;
+  - Inter carga;
+  - el detector carga;
+  - 0 violaciones y **ningún request a hosts externos**.
+- Sigue publicándose como Report-Only hasta la prueba en Safari/iPad (§20.12).
+
+### 21.7 Offline
+
+- **Sin red, la app abre desde el precache.** La búsqueda muestra "No hay conexión con el servidor…" con la fichada bloqueada, `/legajos` muestra el 404 propio, y la cámara con el detector funcionan (WASM y modelo desde el precache).
+- **No hay fichadas offline ni cola** (fuera de alcance, §14.4).
+
+### 21.8 Validación
+
+- **Tests:** fichador 80 (Vitest), que suman a los de F1/F2 los de manifest, íconos reales, precache, API nunca cacheado, hash del modelo, actualizador e indicador ocupado/ocioso.
+- **E2E dev:** 5, con el detector **real** cargado del mismo origin.
+- **E2E PWA:** 2, contra `vite build` + `vite preview` (`npm run e2e:pwa`):
+  - manifest y SW activos;
+  - precache con WASM SIMD y modelo, sin la variante sin SIMD;
+  - offline: shell, error claro, 404 y detector;
+  - 0 requests externos.
+- **Visual vs. `/fichador` del admin** (1024/820/768/390, API mockeado):
+  - mismas posiciones y layout;
+  - diferencias de antialiasing en el texto porque el archivo de Inter de `@fontsource` no es byte a byte el de Google, imperceptibles en un recorte ampliado 3x;
+  - en el modal de cámara, el detector del standalone carga y el mensaje es más corto.
+- **Admin:** 1182 tests y build sin cambios. **Backend:** 2150 tests, typecheck y build sin cambios.
+
+### 21.9 Pendiente y diferido
+
+- **Prueba en iPad/iPhone real** (diferida junto con la infraestructura, §20.12): requiere HTTPS en un host accesible desde el dispositivo. Cubre:
+  - instalación en la pantalla de inicio;
+  - storage separado de Safari;
+  - permiso de cámara en standalone;
+  - safe areas;
+  - CSP enforced en WebKit.
+- **Íconos definitivos** cuando haya logo oficial.
+- **Fuera de F3:** detección de standalone e instrucciones de instalación (F7); Wake Lock y Acceso guiado (F11).
+- `/fichador` del admin sigue con CDNs hasta el cutover (F12).
