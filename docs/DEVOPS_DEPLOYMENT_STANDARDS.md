@@ -96,6 +96,28 @@ Document every required variable:
 
 Never commit real secrets.
 
+### Variables por app y entorno (F2 del fichador standalone)
+
+Tres apps desplegadas por separado (`docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md` §20): admin (`frontend/`), fichador (`fichador/`), backend (`backend/`). Cada frontend tiene sus propias variables en su propio sitio; cambiar una sólo requiere redeploy de ese sitio. **Toda variable `VITE_*` es pública** (Vite la inlinea en el JavaScript). Sin valores reales acá.
+
+| App | Variable | Local | Testing | Producción futura | Notas |
+|---|---|---|---|---|---|
+| Admin | `VITE_API_URL` | `http://localhost:4002/api` | `https://<backend-test>/api` | `https://<api>/api` | URL absoluta del backend compartido |
+| Admin | `VITE_DEMO_MODE` | `false` (`true` sólo en `.env.local` para accesos rápidos) | `false` | `false` | `true` publica credenciales demo en el bundle |
+| Admin | `VITE_DEMO_*_EMAIL` / `_PASSWORD` | sólo `.env.local` | no definir | no definir | ídem |
+| Admin | `VITE_CLOCK_DEVICE_TOKEN` | = `CLOCK_DEVICE_TOKEN` local | = token de testing | no definir después de F12 | sólo mientras `/fichador` siga en el admin; temporal y público |
+| Fichador | `VITE_API_URL` | `http://localhost:4002/api` | `https://<backend-test>/api` | `https://<api>/api` | en el hosting el build exige `https://` |
+| Fichador | `VITE_CLOCK_DEVICE_TOKEN` | = `CLOCK_DEVICE_TOKEN` local | **exclusivo de testing** | propio de producción | temporal hasta F4–F6; no es secreto; nunca compartir valor entre entornos |
+| Fichador | `NODE_VERSION` | — | `22` (en `fichador/netlify.toml`) | `22` | misma mayor que CI |
+| Backend | `CORS_ORIGIN` | `http://localhost:5174,http://localhost:5175` | `https://<admin-test>,https://<fichador-test>` | `https://gestion.<dominio>,https://fichador.<dominio>` | lista explícita, sin `*` ni comodines de subdominio |
+| Backend | `CLOCK_DEVICE_TOKEN` | valor local | exclusivo de testing | propio de producción | debe coincidir con el `VITE_CLOCK_DEVICE_TOKEN` de los frontends del mismo entorno |
+| Backend | `TRUST_PROXY_HOPS` | `0` | medido (§18.5) | medido | nunca copiado de documentación |
+| Backend | `CLIENT_IP_DIAGNOSTICS_ENABLED` | `false` | `false` (`true` sólo durante la medición) | `false` | |
+| Backend | `NODE_ENV` / `APP_ENV` | `development` / `local` o `staging` | `production` / `staging` | `production` / `production` | con `NODE_ENV=production` el token del fichador falla cerrado si falta |
+| Backend | resto (`DATABASE_URL`, `JWT_*`, `TZ`, almacenamiento, límites) | ver `backend/.env.example` | base de testing | base de producción | |
+
+`APP_ENV` y `VITE_APP_ENV` en `frontend/.env.example` no los lee el código del admin.
+
 ### `TZ` (backend, added 2026-08-14)
 
 - **Purpose:** process timezone. Defense-in-depth mitigation found during the Fechas/Timezone audit: `backend/src/shared/datetime/argentinaTime.ts` already uses an explicit `America/Argentina/Cordoba` timezone for every Argentina-aware calculation and does not depend on this variable, but setting it protects against any future code that uses process-local `Date` methods (`setHours`, `getDate`, `toLocaleDateString` without an explicit `timeZone`) instead of the shared helper.
@@ -105,6 +127,8 @@ Never commit real secrets.
 - **Production notes:** set it in the actual process/container environment (Docker `ENV`, systemd unit, hosting platform's environment config panel), not only in a `.env` file loaded by `dotenv` at runtime — some Node.js/V8 versions do not reliably re-resolve the process timezone from a value set after the process has already started reading dates. Most cloud/container base images default to UTC, not Argentina time, if this is left unset.
 
 ## Frontend deploy
+
+Two independent static sites (F2 of `docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md`): the admin (base directory `frontend`) and the fichador (base directory `fichador`, versioned config in `fichador/netlify.toml`, headers generated into `dist/_headers`). Never build both in one site nor serve the fichador under an admin path. Fichador deploy previews and branch deploys stay off while the temporary shared token is in its bundle.
 
 Check:
 - correct build command

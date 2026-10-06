@@ -78,6 +78,10 @@ What exists today (`backend/src/middlewares/clockDeviceAuth.ts`): the four route
 - if `CLOCK_DEVICE_TOKEN` is unset in `NODE_ENV=production`, the middleware **fails closed** (`503 CLOCK_DEVICE_NOT_CONFIGURED`); in development/test/demo it lets requests through with a one-time warning
 - it cannot tell kiosks apart or revoke one of them; `AttendancePunch.deviceId`/`kioskId` stay unused until F4
 
+### Hosting headers of the fichador site
+
+`fichador/scripts/hosting-headers.mjs` generates `dist/_headers`: `nosniff`, `strict-origin-when-cross-origin`, `X-Frame-Options: DENY`, HSTS, `Permissions-Policy` with the camera for its own origin only, and a CSP scoped to the environment's API origin and the exact MediaPipe/font paths (no `unsafe-inline`/`unsafe-eval`, only `'wasm-unsafe-eval'`). The CSP ships as **Report-Only** until it is validated on Safari/iPad over HTTPS (it is already validated enforced in Chromium). Details: plan §20.3.
+
 ## Client IP behind proxies (`trust proxy`)
 
 `req.ip` feeds rate limiting, `AuditLog.ipAddress` and `AttendancePunch.ipAddress`. Express trusts exactly `TRUST_PROXY_HOPS` proxy hops (`backend/src/shared/http/clientIp.ts`, applied first thing in `createApp()`):

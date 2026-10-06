@@ -1,6 +1,6 @@
 # Fichador como app independiente (PWA) — Etapa 1: diagnóstico y plan
 
-> Estado: plan aprobado. **F0 cerrada para el entorno de desarrollo actual** (2026-10-06, ver [§18](#18-f0--implementación-y-resultado)); la medición de `TRUST_PROXY_HOPS` es requisito previo del primer deploy real del backend. **F1 implementada** (2026-10-06, ver [§19](#19-f1--fichador-standalone-implementación)), pendiente de aprobación. F2 en adelante sin empezar.
+> Estado: plan aprobado. **F0 cerrada para el entorno de desarrollo actual** (2026-10-06, ver [§18](#18-f0--implementación-y-resultado)); la medición de `TRUST_PROXY_HOPS` es requisito previo del primer deploy real del backend. F1 cerrada (2026-10-06, [§19](#19-f1--fichador-standalone-implementación)). **F2: READY FOR DEPLOY** (2026-10-06, [§20](#20-f2--despliegue-independiente)) — repo listo; la validación pública queda bloqueada porque no existe backend público ni sitio de hosting. F3 en adelante sin empezar.
 > Los §1–§17 son el diagnóstico read-only original sobre `main @ 697968a` y describen el estado **previo** a F0 (por ejemplo, las rutas sin foto de §2 ya no existen).
 
 ---
@@ -869,3 +869,148 @@ El WASM y el modelo de MediaPipe se siguen bajando en runtime de los CDN (igual 
 ### 19.10 Siguiente etapa recomendada
 
 **F2** — deploy independiente en staging (`netlify.toml` por app, CORS del origin real). Pendiente de aprobación.
+
+---
+
+## 20. F2 — despliegue independiente
+
+**Estado: READY FOR DEPLOY.** Toda la parte del repo está hecha y validada localmente. La validación pública (criterios 3, 6 y 7 contra un deploy real) queda **bloqueada por infraestructura externa**: no existe un backend público ni un sitio de hosting. F2 no se declara cerrada hasta completar el checklist de §20.9.
+
+### 20.1 Infraestructura encontrada (auditoría 2026-10-06)
+
+| Pregunta | Respuesta | Evidencia |
+|---|---|---|
+| ¿Cómo se despliega hoy el admin? | **No se despliega.** Corre en local (`npm run dev`, 5174); se mostró una vez por VS Code Dev Tunnels (herramienta temporal, fuera de la arquitectura) | Sin `netlify.toml`, `vercel.json`, `render.yaml`, Dockerfile, `_redirects`/`_headers` ni scripts de deploy en el repo |
+| ¿Hay backend público de testing/staging? | **No.** El backend corre local (4002) contra Neon; `APP_ENV=staging` en el `.env` local es el nombre de la base, no un deploy | Ninguna URL pública en el repo; las IPs guardadas son `::1` (§18.5); la mención a Render en `PROJECT_CONTEXT.md` es anticipatoria |
+| ¿Netlify/Render configurados sólo desde paneles? | **No hay rastro.** Ninguna integración publica estados ni checks en GitHub | Los PRs #1–#3 sólo tienen los checks de GitHub Actions; sin statuses ni comentarios de bots de Netlify/Render |
+| ¿Deploy previews? | **No existen** | Ídem |
+| Dominios/orígenes reales | Sólo `http://localhost:5174`, `http://localhost:5175` y una URL temporal de Dev Tunnels | `backend/.env` local, `frontend/.env.tunnel.local` |
+| CLIs de proveedores | Ninguna (`netlify`, `render`, `vercel`, `gh` no instaladas) | — |
+| Node | CI usa 22 en los tres jobs; ningún `engines`/`.nvmrc`; local 24 | `.github/workflows/ci.yml` |
+
+No se creó ningún sitio ni servicio: no hay acceso autorizado a ningún proveedor.
+
+### 20.2 Estrategia
+
+- **Proveedor de los frontends: Netlify**, un sitio por app (la preferencia del plan, §15; no contradice ninguna infraestructura existente porque no hay ninguna). Cada sitio con su base directory, build, variables, dominio y deploy propios.
+- **Backend: un único servicio** (destino previsto Render, §15), compartido por los dos frontends, con una sola base. F2 no lo crea.
+- **Resolución del API:** URL absoluta por sitio con `VITE_API_URL` (el admin ya lo hace así). Es el enfoque correcto para dos sitios en dominios distintos: sin proxy ni same-origin, cada frontend apunta explícitamente al mismo backend y el backend autoriza ambos origins por CORS. Un proxy `/api/*` en cada sitio de Netlify agregaría un salto más a la cadena de IPs (§18.5) y escondería el CORS real; no se usa.
+
+### 20.3 Configuración versionada del fichador (`fichador/netlify.toml`)
+
+| Item | Valor |
+|---|---|
+| Base directory (panel) | `fichador` |
+| Build | `npm run build` (Netlify instala dependencias desde `package-lock.json` antes) = `tsc -b && vite build && write-hosting-headers && check-bundle-isolation` |
+| Publish | `dist` |
+| Node | `NODE_VERSION = "22"` (misma mayor que CI; un test lo verifica) |
+| Builds omitidos | Netlify ya omite el build si el commit no toca el base directory |
+| Deploy previews / branch deploys | cancelados (`ignore = "exit 0"` por contexto); además desactivarlos en el panel |
+| SPA fallback | `/*` → `/index.html` 200: `/legajos` (y su recarga) muestran el 404 propio del fichador; nunca redirige al admin |
+| Guard de deploy | dentro de Netlify (`NETLIFY=true`) el build falla si `VITE_API_URL` no es `https://` o falta `VITE_CLOCK_DEVICE_TOKEN` |
+
+Headers generados en `dist/_headers` por `scripts/hosting-headers.mjs` (la CSP necesita el origin del backend de cada entorno):
+
+| Header | Valor | Motivo |
+|---|---|---|
+| `X-Content-Type-Options` | `nosniff` | — |
+| `Referrer-Policy` | `strict-origin-when-cross-origin` | no filtra paths al API ni a CDNs |
+| `X-Frame-Options` | `DENY` | el kiosco no se embebe (enforced; `frame-ancestors` de la CSP report-only no bloquea) |
+| `Strict-Transport-Security` | `max-age=31536000` | HTTPS obligatorio (cámara, PWA) |
+| `Permissions-Policy` | `camera=(self), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()` | cámara sólo para el propio origin |
+| `Content-Security-Policy-Report-Only` | ver abajo | |
+| `Cache-Control` `/assets/*` | `public, max-age=31536000, immutable` | nombres con hash de Vite |
+| `Cache-Control` `/`, `/index.html` | `no-cache` | una tablet nunca queda con un index viejo |
+
+CSP: `default-src 'self'; script-src 'self' 'wasm-unsafe-eval' https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/wasm/; connect-src 'self' <origin del API> <misma ruta de jsDelivr> https://storage.googleapis.com/mediapipe-models/face_detector/; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob:; media-src 'self' blob: mediastream:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'`.
+
+- Sin `'unsafe-inline'` ni `'unsafe-eval'`: el bundle no tiene inline, React aplica `style` vía CSSOM y el loader de MediaPipe no usa `eval`/`new Function` (auditado). `'wasm-unsafe-eval'` es lo mínimo para compilar su WASM.
+- **Validada en modo enforcing en Chromium** con un emulador local del hosting y el MediaPipe real del CDN: flujo completo con 0 violaciones, detector cargado ("No se detectó una cara" con la cámara falsa), Inter cargada. Control negativo: sin `'wasm-unsafe-eval'` el detector falla y aparecen las violaciones.
+- **Se publica como Report-Only** porque no pudo validarse en Safari/iPad sobre HTTPS. Pasa a enforced cuando se valide en el deploy real; en F3 los recursos de CDN pasan a self-hosted y la política se simplifica.
+- Un test exige que las URLs de MediaPipe de la CSP coincidan con las de `FaceCaptureModal` y con la versión instalada.
+
+### 20.4 Recursos externos que necesita el fichador (medidos en navegador)
+
+| Origen | Recurso | Directiva |
+|---|---|---|
+| `cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/wasm/` | loader JS (`<script>`) y `.wasm` | `script-src`, `connect-src` |
+| `storage.googleapis.com/mediapipe-models/face_detector/` | modelo `blaze_face_short_range.tflite` | `connect-src` |
+| `fonts.googleapis.com` | hoja de estilos de Inter (`@import`) | `style-src` |
+| `fonts.gstatic.com` | archivos `.woff2` | `font-src` |
+
+Todos son HTTPS y funcionan desde un origin HTTPS. Pasan a self-hosted en F3 (precache PWA).
+
+### 20.5 CORS, preflight y credentials
+
+- `CORS_ORIGIN` ya es una allowlist explícita separada por comas (`parseCorsOrigins`): soporta varios origins, normaliza la `/` final y un `*` queda literal (no es comodín). **No hizo falta cambiar el backend.**
+- Preflight del fichador (`OPTIONS` con `POST`, `content-type`, `x-clock-device-token`): `204`, `Access-Control-Allow-Origin` = su origin, el header propio permitido (el paquete `cors` refleja los headers pedidos). Origins con sufijo (`fichador-test.example.com.evil.com`), subdominio, otro esquema o no listados no reciben permiso. Fijado por `backend/src/app.cors.test.ts`.
+- **Credentials:** la configuración CORS es global y queda con `credentials: true`. El fichador no manda cookies (`fetch` cross-origin sin `credentials`) y el admin tampoco las usa (Bearer en header), así que `true` hoy no habilita nada; cambiarlo es una decisión global del backend, fuera de F2.
+- Para el deploy, el backend necesita en `CORS_ORIGIN` los dos origins exactos (admin y fichador del entorno).
+
+### 20.6 Aislamiento de sesión (validado en navegador)
+
+Con una "sesión admin" simulada en el origin del admin (`losod_access_token` en `sessionStorage`), el fichador (otro origin) no ve `sessionStorage` ni `localStorage`, no manda `Authorization` ni cookies, sólo `x-clock-device-token`, y después de "cerrar sesión" en el admin sigue funcionando. El código del fichador no usa storage, cookies ni credentials. En local las cookies sí se ven entre `localhost:5174` y `:5175` (las cookies se aíslan por host, no por puerto); en el deploy son hosts distintos y el fichador no usa cookies.
+
+### 20.7 Variables por app
+
+Ver la tabla completa en `docs/DEVOPS_DEPLOYMENT_STANDARDS.md` → "Variables por app y entorno". Resumen del fichador: sólo `VITE_API_URL` y `VITE_CLOCK_DEVICE_TOKEN` (más `NODE_VERSION` en `netlify.toml`). **`VITE_CLOCK_DEVICE_TOKEN` no es secreto: Vite lo inlinea en el JavaScript. Es una credencial temporal hasta F4–F6**, y cada entorno público usa su propio valor (nunca el de un entorno productivo). Las variables de cada sitio son independientes: cambiar una sólo requiere redeploy de ese sitio.
+
+### 20.8 Admin
+
+No se versionó `frontend/netlify.toml`: si existiera un sitio del admin configurado desde el panel, un `netlify.toml` en su base directory pisaría esa configuración. La configuración recomendada para el sitio del admin (a confirmar antes de versionarla) es: base directory `frontend`, `npm run build`, publish `dist`, Node 22, SPA fallback `/*` → `/index.html` 200, y `Permissions-Policy` con `camera=(self)` mientras `/fichador` siga en el admin. El build, las rutas y las variables del admin no cambiaron en F2.
+
+### 20.9 Checklist manual para completar F2
+
+**A. Backend público de testing (bloqueante).** Requiere una decisión y acceso tuyos; F2 no crea servicios.
+1. Crear el servicio (por ejemplo, Render web service sobre `backend/`, rama `main`) apuntando a una base **de testing** (no producción).
+2. Variables: `NODE_ENV=production` (el token falla cerrado si falta), `APP_ENV=staging`, `TZ=America/Argentina/Cordoba`, `DATABASE_URL`, `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET`, almacenamiento, `CLOCK_DEVICE_TOKEN` **nuevo y exclusivo de testing** (`node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`), `CORS_ORIGIN=<origin admin test>,<origin fichador test>`, `TRUST_PROXY_HOPS=0` y `CLIENT_IP_DIAGNOSTICS_ENABLED=false` hasta medir.
+3. **Antes de usarlo de verdad:** medir `TRUST_PROXY_HOPS` con el procedimiento de §18.5 (sonda activada sólo durante la medición) y volver a apagar la sonda.
+
+**B. Sitio Netlify del fichador.**
+1. Add new site → Import from Git → `lihuen-OD/Gestion-Personal`.
+2. Site name: `gestion-personal-fichador-test`. Production branch: `main`. **Base directory: `fichador`** (build command y publish salen de `fichador/netlify.toml`; dejar vacíos en el panel).
+3. Environment variables (scope Builds, contexto Production): `VITE_API_URL=https://<backend-test>/api` y `VITE_CLOCK_DEVICE_TOKEN=<el mismo CLOCK_DEVICE_TOKEN de testing>`. No cargar ninguna variable del admin.
+4. Deploy contexts → Deploy previews: **None**; Branch deploys: **None**.
+5. Sin dominio propio: usar la URL `https://gestion-personal-fichador-test.netlify.app`. No tocar DNS corporativo.
+6. Agregar ese origin exacto a `CORS_ORIGIN` del backend de testing y redeployarlo.
+
+**C. (Opcional) Sitio del admin de testing.** Mismo procedimiento con base directory `frontend` y la configuración de §20.8, con sus propias variables (`VITE_API_URL`, `VITE_DEMO_MODE=false`, `VITE_CLOCK_DEVICE_TOKEN` de testing mientras exista `/fichador`).
+
+**D. Validación (la corro yo con la URL, sin fichar):**
+1. HTTPS en la URL publicada.
+2. Headers de §20.3 presentes.
+3. Abrir sin sesión admin.
+4. Buscar empleado y consultar estado (200, preflight 204 con `x-clock-device-token`).
+5. Abrir la cámara: pide permiso, abre y carga el detector.
+6. Cancelar.
+7. `/legajos` y su recarga muestran el 404 del fichador.
+8. Volver a `/`.
+9. Token inválido muestra el mensaje de 401.
+10. Backend caído muestra el mensaje de sin conexión.
+11. Network sin errores CORS/CSP.
+12. Revisar a 1024/820/768/390 y en un iPad/iPhone real; con eso, decidir si la CSP pasa a enforced.
+
+### 20.10 Validación hecha (local)
+
+- **Build aislado desde clon limpio** (sin `node_modules`, `dist` ni `.env` del admin): `npm ci && npm run build` y tests OK.
+- **Guard de deploy simulando Netlify:**
+  - sin variables, falla con el detalle de qué falta;
+  - con `http://`, falla;
+  - con https y token, genera `_headers` con el origin correcto y el bundle apunta a ese API.
+- **Emulador local del hosting** (`_headers` + SPA fallback):
+  - `/` con `no-cache`, assets `immutable`;
+  - `X-Frame-Options`, `Permissions-Policy`;
+  - `/legajos` y su recarga en el 404 propio;
+  - CSP enforced sin violaciones.
+- **CORS y preflight:** ver §20.5. **Sesión:** ver §20.6.
+- **Tests:**
+  - fichador: 63 unit/componente y 5 e2e, más typecheck, build y aislamiento;
+  - admin: 1182 y build;
+  - backend: 2143 + 7 de CORS, typecheck y build.
+
+### 20.11 Fuera de F2 y pendientes
+
+- **No incluido:** sin service worker, manifest ni PWA (F3), sin `ClockDevice` (F4–F6), sin cambios de schema, y `/fichador` sigue en el admin.
+- **CSP:** sigue en report-only hasta validarla en Safari/iPad.
+- **Recursos de CDN:** MediaPipe e Inter siguen bajando del CDN (F3).
+- **Body de 40 MB:** se sigue procesando antes de verificar el token (F12).

@@ -163,7 +163,7 @@ cd fichador
 npm install
 npm run dev          # http://localhost:5175 (puerto fijo, strictPort)
 npm run test         # unit/componente (Vitest)
-npm run build        # tsc + vite build + chequeo de aislamiento del bundle
+npm run build        # tsc + vite build + dist/_headers + chequeo de aislamiento
 npm run e2e          # journey Playwright con el API mockeado (no toca datos)
 ```
 
