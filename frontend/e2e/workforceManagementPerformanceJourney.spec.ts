@@ -645,19 +645,18 @@ test("workforce management performance journey — recorrido macro de Gestión h
   skip("Marcar como leída / Ver detalle", ZONE.notificaciones, "Prohibido por defecto — ambos disparan POST /workforce/notifications/:id/read (el link \"Ver detalle\" también, como efecto colateral de su onClick).", true);
 
   // ---------------------------------------------------------------------
-  // I. Fichador — perfil de riesgo alto (kiosco sin auth de usuario,
-  // cámara, rate-limit compartido con uso real). Sólo se mide la carga
-  // inicial, tal como pide la Parte 6 del pedido para esta zona.
+  // I. Fichador — desde F6 /fichador del admin es sólo una pantalla
+  // informativa: las fichadas exigen un ClockDevice individual y se hacen
+  // desde la app fichador/. Se mide la carga; el resto ya no existe acá.
   // ---------------------------------------------------------------------
   await measure("Entrar a Fichador (carga inicial)", ZONE.fichador, false, async () => {
     await page.goto("/fichador");
     return { visibleLocator: page.locator("h1").first() };
   });
 
-  skip("Buscar empleado en Fichador", ZONE.fichador, "Fuera del alcance mínimo pedido para Fichador (Parte 6, Zona I sólo pide \"entrar\" y \"medir carga inicial\", dado el perfil de riesgo del kiosco: sin auth de usuario, cámara, rate-limit compartido con uso real de 30/5min).");
-  skip("Marcar ingreso", ZONE.fichador, "Prohibido por defecto — fichada real de un empleado real.", true);
-  skip("Marcar salida", ZONE.fichador, "Prohibido por defecto.", true);
-  skip("Capturar foto / enviar punch", ZONE.fichador, "Prohibido por defecto — el pedido prohíbe explícitamente aceptar permisos de cámara o ejecutar la acción.", true);
+  for (const action of ["Buscar empleado en Fichador", "Marcar ingreso", "Marcar salida", "Capturar foto / enviar punch"]) {
+    skip(action, ZONE.fichador, "F6: /fichador del admin ya no ficha; la acción vive en la app fichador/ con un ClockDevice individual.");
+  }
 
   // ---------------------------------------------------------------------
   // J. Exportación

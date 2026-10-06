@@ -1961,130 +1961,6 @@ a.employee-hours-status-item:hover{border-color:var(--ds-blue-300);background:va
   color:var(--ds-slate-600)!important;
   font-size:13px!important;
 }
-.clock-page{
-  min-height:100vh!important;
-  display:grid!important;
-  place-items:center!important;
-  padding:24px!important;
-  background:var(--ds-slate-50)!important;
-}
-.clock-panel{
-  width:min(560px,100%)!important;
-  display:grid!important;
-  gap:18px!important;
-  padding:28px!important;
-  border:1px solid var(--ds-slate-200)!important;
-  border-radius:16px!important;
-  background:#fff!important;
-  box-shadow:0 24px 70px rgb(15 23 42 / .14)!important;
-}
-.clock-heading{
-  display:grid!important;
-  gap:6px!important;
-  text-align:center!important;
-}
-.clock-heading h1{
-  color:var(--ds-slate-900)!important;
-  font-size:28px!important;
-  font-weight:700!important;
-}
-.clock-heading strong{
-  margin-top:8px!important;
-  color:var(--ds-blue-600)!important;
-  font-size:32px!important;
-  font-weight:700!important;
-}
-.clock-dni-field>div{
-  display:grid!important;
-  grid-template-columns:1fr 44px!important;
-  gap:8px!important;
-}
-.clock-dni-field input{
-  height:48px!important;
-  font-size:20px!important;
-  font-weight:600!important;
-  letter-spacing:.04em!important;
-}
-.clock-dni-field .icon-button{
-  height:48px!important;
-  border:1px solid var(--ds-slate-200)!important;
-  border-radius:10px!important;
-  background:#fff!important;
-}
-.clock-employee,
-.clock-open,
-.clock-result{
-  display:grid!important;
-  gap:4px!important;
-  padding:14px!important;
-  border:1px solid var(--ds-slate-200)!important;
-  border-radius:12px!important;
-  background:var(--ds-slate-50)!important;
-}
-.clock-results-list{
-  display:grid!important;
-  gap:8px!important;
-  max-height:260px!important;
-  overflow:auto!important;
-}
-.clock-results-list button{
-  display:grid!important;
-  gap:3px!important;
-  padding:12px 14px!important;
-  border:1px solid var(--ds-slate-200)!important;
-  border-radius:10px!important;
-  background:#fff!important;
-  text-align:left!important;
-}
-.clock-results-list button:hover{
-  border-color:var(--ds-blue-200)!important;
-  background:var(--ds-blue-50)!important;
-}
-.clock-results-list b{
-  color:var(--ds-slate-900)!important;
-  font-size:14px!important;
-}
-.clock-results-list span{
-  color:var(--ds-slate-500)!important;
-  font-size:12px!important;
-}
-.clock-employee b,
-.clock-open b,
-.clock-result b{
-  color:var(--ds-slate-900)!important;
-  font-size:15px!important;
-}
-.clock-employee span,
-.clock-open span{
-  color:var(--ds-slate-500)!important;
-  font-size:13px!important;
-}
-.clock-open{
-  border-color:var(--ds-orange-200)!important;
-  background:var(--ds-orange-50)!important;
-}
-.clock-result{
-  border-color:var(--ds-emerald-200)!important;
-  background:var(--ds-emerald-50)!important;
-}
-.clock-result ul{
-  margin:8px 0 0!important;
-  padding-left:18px!important;
-}
-.clock-result li{
-  color:var(--ds-slate-700)!important;
-  font-size:13px!important;
-  line-height:1.35!important;
-}
-.clock-actions{
-  display:grid!important;
-  grid-template-columns:1fr 1fr!important;
-  gap:12px!important;
-}
-.clock-actions .button{
-  min-height:56px!important;
-  font-size:15px!important;
-}
 .attendance-page .date-filter{
   height:38px!important;
   display:inline-flex!important;
@@ -2173,77 +2049,6 @@ a.employee-hours-status-item:hover{border-color:var(--ds-blue-300);background:va
   max-height:70vh!important;
   display:block!important;
   object-fit:contain!important;
-}
-.face-capture{
-  display:grid!important;
-  gap:14px!important;
-}
-.face-subtitle{
-  margin:0!important;
-  color:var(--ds-slate-600)!important;
-  font-size:13px!important;
-  line-height:1.45!important;
-}
-.face-video-shell{
-  position:relative!important;
-  width:100%!important;
-  aspect-ratio:4/3!important;
-  overflow:hidden!important;
-  border:1px solid var(--ds-slate-200)!important;
-  border-radius:12px!important;
-  background:#0f172a!important;
-}
-.face-video{
-  width:100%!important;
-  height:100%!important;
-  display:block!important;
-  object-fit:cover!important;
-  transform:scaleX(-1)!important;
-}
-.face-guide{
-  position:absolute!important;
-  left:24%!important;
-  top:14%!important;
-  width:52%!important;
-  height:72%!important;
-  border:3px solid rgb(255 255 255 / .92)!important;
-  border-radius:42% 42% 36% 36%!important;
-  box-shadow:0 0 0 999px rgb(15 23 42 / .34), 0 0 0 1px rgb(37 99 235 / .5)!important;
-}
-.face-status{
-  min-height:44px!important;
-  display:flex!important;
-  align-items:center!important;
-  gap:10px!important;
-  padding:11px 13px!important;
-  border-radius:10px!important;
-  font-size:13px!important;
-  font-weight:650!important;
-}
-.face-status.valid{
-  border:1px solid var(--ds-emerald-200)!important;
-  background:var(--ds-emerald-50)!important;
-  color:var(--ds-emerald-700)!important;
-}
-.face-status.invalid{
-  border:1px solid var(--ds-orange-200)!important;
-  background:var(--ds-orange-50)!important;
-  color:var(--ds-orange-700)!important;
-}
-.spin-icon{
-  animation:spin .9s linear infinite!important;
-}
-@keyframes spin{
-  to{transform:rotate(360deg)}
-}
-@media(max-width:620px){
-  .clock-actions{grid-template-columns:1fr!important}
-  .face-video-shell{aspect-ratio:3/4!important}
-  .face-guide{left:19%!important;top:17%!important;width:62%!important;height:64%!important}
-}
-@media(max-width:560px){
-  .clock-panel{padding:20px!important}
-  .clock-actions{grid-template-columns:1fr!important}
 }
 /* Card "Nueva regla / Editar regla" — secciones internas separadas por un
    borde suave (no un fondo gris pesado), cada una con su propio título
@@ -2564,3 +2369,8 @@ a.employee-hours-status-item:hover{border-color:var(--ds-blue-300);background:va
 .org-editor-anchor{scroll-margin-top:84px}
 @media(max-width:1100px){.org-tree-layout{grid-template-columns:1fr;min-height:0}.org-tree{border-right:0;border-bottom:1px solid var(--color-border-light)}.org-detail{position:static}}
 @media(max-width:720px){.org-tree{padding:14px 12px}.org-tree-toolbar{flex-direction:column;align-items:stretch}.org-tree-toolbar-actions{width:100%}.org-tree-toolbar-actions .button{flex:1;min-width:0;padding-inline:8px}.org-tree-item{--indent:14px;gap:8px;padding-right:6px}.org-tree-item .org-tree-pill.shared,.org-tree-meta .badge.success{display:none!important}.org-node-icon{width:26px;height:26px}}
+/* F6: /fichador del admin (TimeClockMovedPage, vista pública). Reusa el
+   layout del login; sólo fija el titular claro sobre el fondo oscuro y una
+   card de altura natural en una columna. */
+.clock-moved-page .login-brand h1{color:#fff}
+.clock-moved-page .login-card{align-self:center}

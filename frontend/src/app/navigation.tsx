@@ -60,7 +60,6 @@ const hourlyManagement = (level: number) =>
     ...(level === 3 ? [] : [link("Bandeja de revisión", "/pendientes", CalendarDays)]),
     link(level === 3 ? "Novedades horarias" : "Novedades", "/novedades", ClipboardList),
     link("Notificaciones", "/notificaciones", Bell),
-    link("Fichador", "/fichador", Clock3),
     ...(level === 1 ? [link("Exportación", "/configuracion/liquidacion", FileBarChart)] : []),
   ]);
 
