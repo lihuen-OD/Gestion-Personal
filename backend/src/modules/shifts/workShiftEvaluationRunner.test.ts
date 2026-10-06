@@ -1054,6 +1054,22 @@ describe("Etapa 10D — evaluateShiftExit consulta el régimen para ajustar el u
   });
 });
 
+describe("createShiftAlert — eventAt de la notificación (docs/decisions/NOTIFICATIONS_EVENT_ORDER.md)", () => {
+  it("cada notificación nace con el actualAt del hecho que la origina — un upsert posterior con otro actualAt genera la suya, sin tocar la anterior", async () => {
+    mockedPrisma.shiftAlert.upsert.mockResolvedValue({ id: "alert-1" });
+    const first = new Date("2026-10-02T11:10:00.000Z");
+    const second = new Date("2026-10-02T11:25:00.000Z");
+
+    await createShiftAlert({ employeeId: "employee-1", workShiftId: "shift-1", type: "INGRESO_TARDE", actualAt: first });
+    await createShiftAlert({ employeeId: "employee-1", workShiftId: "shift-1", type: "INGRESO_TARDE", actualAt: second });
+
+    expect(vi.mocked(notifyUsers).mock.calls.map((call) => call[1])).toEqual([
+      expect.objectContaining({ entityType: "ShiftAlert", entityId: "alert-1", eventAt: first }),
+      expect.objectContaining({ entityType: "ShiftAlert", entityId: "alert-1", eventAt: second }),
+    ]);
+  });
+});
+
 describe("createShiftAlert — Etapa 10E (la notificación es best-effort, nunca bloquea la fichada/alerta real)", () => {
   it("si notifyUsers falla, la alerta igual se crea/actualiza y se devuelve normalmente (no propaga la excepción)", async () => {
     mockedPrisma.shiftAlert.upsert.mockResolvedValue({ id: "alert-1" });

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Bell, Check, Eye, FilePlus2 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { PageHeader } from "../components/ui/PageHeader";
@@ -8,75 +8,37 @@ import { ErrorState } from "../components/ui/ErrorState";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { FilterPanel } from "../components/ui/FilterPanel";
-import { NOTIFICATIONS_POLL_INTERVAL_MS, workforceApiService, type SystemNotification, type SystemNotificationListMeta } from "../services/api/workforceApiService";
+import { NOTIFICATIONS_POLL_INTERVAL_MS, NOTIFICATIONS_REFRESH_WINDOW_MAX, workforceApiService, type SystemNotification, type SystemNotificationListMeta, type SystemNotificationListParams } from "../services/api/workforceApiService";
 import { NoveltyFromContextModal } from "../components/novelties/NoveltyFromContextModal";
 import { buildNoveltyPrefillFromNotification, type NoveltyPrefillContext } from "../utils/noveltyFromAlert";
 import { TOAST_SUCCESS_MS } from "../utils/toast";
-import { formatCalendarDate, formatDateTime } from "../utils/date";
+import { formatDateTime, formatInstantDate } from "../utils/date";
 
 const PAGE_SIZE = 20;
 type StatusFilter = "" | "NO_LEIDA" | "LEIDA";
+type Filters = { status: StatusFilter; dateFrom: string; dateTo: string };
 
-const emptyMeta: SystemNotificationListMeta = { total: 0, page: 1, pageSize: PAGE_SIZE, hasMore: false };
+const emptyFilters: Filters = { status: "", dateFrom: "", dateTo: "" };
+const emptyMeta: SystemNotificationListMeta = { total: 0, page: 1, pageSize: PAGE_SIZE, hasMore: false, nextCursor: null };
+const INVALID_RANGE_MESSAGE = "La fecha «Desde» no puede ser posterior a «Hasta».";
 
-// Etapa 15M.19E: `createdAt` es cuándo se insertó la fila, no cuándo pasó el
-// hecho de negocio — para una notificación recuperada por catch-up
-// (15M.19A/B) días después, mostrar sólo `createdAt` la hace parecer que
-// ocurrió "hoy". `eventDate` (nuevo en el DTO) trae la fecha real ya
-// persistida en la entidad de origen. `AttendanceInactivityIncident.
-// operationalDate` es `@db.Date` (calendario puro) — se formatea con
-// `formatCalendarDate` (sin `new Date().toLocaleDateString()`, que corre la
-// fecha un día para atrás en Argentina, mismo riesgo ya corregido en la
-// Etapa 15M.20 para este mismo tipo de campo). `ShiftAlert.actualAt`/
-// `WorkShift.startAt` son instantes reales — se formatean con fecha y hora.
-function notificationEventDateLabel(item: SystemNotification): string | null {
-  if (!item.eventDate) return null;
-  if (item.entityType === "AttendanceInactivityIncident") return formatCalendarDate(item.eventDate);
-  const date = new Date(item.eventDate);
-  if (Number.isNaN(date.getTime())) return null;
-  return formatDateTime(date);
+function filterParams(filters: Filters): SystemNotificationListParams {
+  return { status: filters.status || undefined, dateFrom: filters.dateFrom || undefined, dateTo: filters.dateTo || undefined };
 }
 
-/**
- * Etapa 15M.19C: fusiona un refresco silencioso (siempre página 1, hasta
- * PAGE_SIZE notificaciones — las más recientes por createdAt desc) con lo
- * que ya está en pantalla, sin perder páginas cargadas con "Cargar más" ni
- * duplicar filas. Las filas frescas (nuevas o con campos actualizados) van
- * primero; lo que ya estaba cargado y no vino en esta página 1 fresca se
- * conserva después, en su orden relativo — nunca se descarta por el sólo
- * hecho de no reaparecer en una ventana de sólo 20 elementos.
- *
- * El estado "leída" es monótono (el producto no tiene "marcar como no
- * leída"): si el estado local de una fila ya avanzó a LEIDA, un refresco que
- * todavía no vio esa escritura (carrera de red entre el POST de lectura y un
- * poll en vuelo) nunca la revierte.
- *
- * Etapa 15M.19D (docs/decisions/NOTIFICATIONS_END_TO_END_ACCEPTANCE_15M19D.md
- * §26): esta conservación de "lo que no reapareció" sólo es válida para un
- * filtro cuya pertenencia es monótona no decreciente — "" (Todas) y "LEIDA"
- * nunca pierden una fila que ya matcheaba (una vez leída, nunca vuelve a
- * NO_LEIDA). Bajo el filtro "NO_LEIDA" la pertenencia SÍ puede pasar a falsa
- * (otro cliente la marca como leída) — ahí "ausente de la página 1 fresca"
- * ya no distingue "está más abajo, sin re-pedir todavía" de "dejó de
- * pertenecer al filtro". Ver `refreshSilently` para el tratamiento distinto
- * de ese caso.
- */
-function mergeNotifications(current: SystemNotification[], fresh: SystemNotification[]): SystemNotification[] {
-  const currentById = new Map(current.map((item) => [item.id, item]));
-  const freshIds = new Set(fresh.map((item) => item.id));
-  const reconciled = fresh.map((item) => {
-    const existing = currentById.get(item.id);
-    if (existing?.status === "LEIDA" && item.status !== "LEIDA") return { ...item, status: existing.status };
-    return item;
-  });
-  const remaining = current.filter((item) => !freshIds.has(item.id));
-  return [...reconciled, ...remaining];
+// docs/decisions/NOTIFICATIONS_EVENT_ORDER.md: `eventAt` es la única fuente
+// de la fecha visible — la misma con la que el backend ordena y filtra
+// Desde/Hasta. Sólo cambia el FORMATO: "sin actividad registrada" es un
+// hecho de día calendario (eventAt = 00:00 Argentina de ese día), mostrar
+// "00:00" sugeriría una hora que no existe.
+function notificationDateLabel(item: SystemNotification): string {
+  return item.entityType === "AttendanceInactivityIncident" ? formatInstantDate(item.eventAt) : formatDateTime(item.eventAt);
 }
 
 export function NotificationsPage() {
   const [items, setItems] = useState<SystemNotification[]>([]);
   const [meta, setMeta] = useState<SystemNotificationListMeta>(emptyMeta);
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>("");
+  const [filters, setFilters] = useState<Filters>(emptyFilters);
   const [status, setStatus] = useState<"loading" | "success" | "error">("loading");
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState("");
@@ -88,21 +50,57 @@ export function NotificationsPage() {
   // sigue siendo "Marcar leída", una acción manual aparte.
   const [noveltyContext, setNoveltyContext] = useState<NoveltyPrefillContext>();
   const [noveltyNotice, setNoveltyNotice] = useState("");
+  // La lista visible es siempre un prefijo exacto del orden del backend
+  // (eventAt, createdAt, id DESC) que termina en `cursorRef` (meta.nextCursor).
+  // Refs y no estado: el polling y "Cargar más" corren desde closures viejas
+  // y necesitan el valor vigente, no el del render en que se crearon.
+  const cursorRef = useRef<string | null>(null);
+  // Sube con cada cambio de filtros/reintento: descarta respuestas de una
+  // consulta anterior aunque su cursor coincida por casualidad.
+  const generationRef = useRef(0);
+  const loadingMoreRef = useRef(false);
+  // "Leída" es monótono (no existe "marcar como no leída"): una respuesta
+  // pedida antes del POST de lectura nunca revierte lo que ya se marcó acá.
+  const readIdsRef = useRef(new Set<string>());
+
+  const invalidRange = Boolean(filters.dateFrom && filters.dateTo && filters.dateFrom > filters.dateTo);
+
+  function commitMeta(next: SystemNotificationListMeta) {
+    cursorRef.current = next.nextCursor;
+    setMeta(next);
+  }
+
+  function reconcileReads(fresh: SystemNotification[], statusFilter: StatusFilter) {
+    return fresh.flatMap((item) => {
+      if (!readIdsRef.current.has(item.id) || item.status === "LEIDA") return [item];
+      return statusFilter === "NO_LEIDA" ? [] : [{ ...item, status: "LEIDA" as const }];
+    });
+  }
 
   useEffect(() => {
     let mounted = true;
-    // Etapa 9I: sólo mostrar el skeleton de página completa cuando todavía no
-    // hay notificaciones en pantalla — cambiar el filtro con la lista ya
-    // poblada no debe blanquearla (mismo patrón ya usado en EmployeesPage/
-    // NoveltiesPage).
-    if (!items.length) setStatus("loading");
+    const generation = ++generationRef.current;
+    // Cambiar un filtro descarta el cursor y lo acumulado con "Cargar más":
+    // la lista se reemplaza entera por la primera página del filtro nuevo.
+    // Etapa 9I: sin blanquear la lista ya poblada mientras llega la respuesta
+    // ("Cargar más" queda oculto hasta entonces — no hay cursor).
+    cursorRef.current = null;
+    setMeta((current) => ({ ...current, hasMore: false, nextCursor: null }));
     setError("");
+    if (invalidRange) {
+      setItems([]);
+      setMeta(emptyMeta);
+      setStatus("success");
+      return () => { mounted = false; };
+    }
+    if (!items.length) setStatus("loading");
+    const params = filterParams(filters);
     workforceApiService
-      .notifications({ page: 1, take: PAGE_SIZE, status: statusFilter || undefined })
+      .notifications({ ...params, page: 1, take: PAGE_SIZE })
       .then((result) => {
         if (!mounted) return;
-        setItems(result.items);
-        setMeta(result.meta);
+        setItems(reconcileReads(result.items, filters.status));
+        commitMeta(result.meta);
         setStatus("success");
       })
       .catch(() => {
@@ -112,42 +110,27 @@ export function NotificationsPage() {
       });
 
     // Etapa 15M.19C (docs/decisions/NOTIFICATIONS_PAGE_LIVE_REFRESH_15M19C.md):
-    // refresco silencioso — misma capa de acceso (workforceApiService), mismo
-    // endpoint y filtro activo, pero NUNCA toca loading/error ni reemplaza la
-    // lista entera (fusiona vía mergeNotifications). Un fallo acá se ignora a
-    // propósito: la lista visible no se toca, y el próximo tick/evento
-    // reintenta solo — nunca tapa contenido ya visible con una pantalla de
-    // error por un refresh de fondo.
+    // refresco silencioso, nunca toca loading/error. Desde la etapa de orden
+    // por fecha efectiva vuelve a pedir la VENTANA VISIBLE COMPLETA (`through`
+    // = última fila cargada, con los mismos filtros) y la reemplaza: una
+    // notificación atrasada por catch-up puede caer en el medio de la lista,
+    // no sólo arriba, y sólo así aparece en su lugar cronológico. Acotado a
+    // NOTIFICATIONS_REFRESH_WINDOW_MAX: si la ventana creció por encima, la
+    // respuesta corta ahí (prefijo correcto) y "Cargar más" sigue desde su
+    // última fila — nunca crece indefinidamente ni pierde filas. Un fallo se
+    // ignora: el próximo tick/evento reintenta.
     function refreshSilently() {
-      workforceApiService
-        .notifications({ page: 1, take: PAGE_SIZE, status: statusFilter || undefined })
+      if (loadingMoreRef.current) return;
+      const through = cursorRef.current;
+      const request = through
+        ? workforceApiService.notifications({ ...params, through, take: NOTIFICATIONS_REFRESH_WINDOW_MAX })
+        : workforceApiService.notifications({ ...params, page: 1, take: PAGE_SIZE });
+      request
         .then((result) => {
-          if (!mounted) return;
-          // Etapa 15M.19D §26: bajo "NO_LEIDA" la pertenencia al filtro puede
-          // pasar a falsa (otro cliente marcó la fila como leída) — la página
-          // 1 fresca YA es, en ese caso, la verdad completa (el backlog de no
-          // leídas rara vez supera PAGE_SIZE, y aunque lo superara, preferir
-          // una bandeja "No leídas" correcta sobre preservar páginas
-          // profundas de un filtro que puede encogerse). Reemplazo completo,
-          // sigue sin loading/error — sigue siendo un refresco silencioso.
-          // "" y "LEIDA" son monótonos (una fila que ya matcheaba nunca deja
-          // de hacerlo) — ahí sí vale la fusión que preserva páginas
-          // profundas (mergeNotifications).
-          if (statusFilter === "NO_LEIDA") {
-            setItems(result.items);
-            setMeta(result.meta);
-            return;
-          }
-          let mergedLength = 0;
-          setItems((current) => {
-            const merged = mergeNotifications(current, result.items);
-            mergedLength = merged.length;
-            return merged;
-          });
-          // Sólo total/hasMore se actualizan acá — page/pageSize quedan
-          // intactos: pisarlos con el page=1 de este refresco silencioso
-          // rompería "Cargar más" (siempre pediría la página siguiente a 1).
-          setMeta((current) => ({ ...current, total: result.meta.total, hasMore: mergedLength < result.meta.total }));
+          // La ventana cambió mientras tanto ("Cargar más", otro refresco o filtros).
+          if (!mounted || generation !== generationRef.current || cursorRef.current !== through) return;
+          setItems(reconcileReads(result.items, filters.status));
+          commitMeta(result.meta);
         })
         .catch(() => undefined);
     }
@@ -166,25 +149,29 @@ export function NotificationsPage() {
       window.removeEventListener("app:notifications-changed", refreshSilently);
       window.removeEventListener("focus", refreshSilently);
     };
-  }, [statusFilter, refresh]);
+  }, [filters.status, filters.dateFrom, filters.dateTo, refresh]);
 
   const loadMore = async () => {
-    if (!meta.hasMore || loadingMore) return;
+    const after = cursorRef.current;
+    if (!meta.hasMore || loadingMoreRef.current || !after) return;
+    const generation = generationRef.current;
+    loadingMoreRef.current = true;
     setLoadingMore(true);
     setError("");
     try {
-      const result = await workforceApiService.notifications({ page: meta.page + 1, take: PAGE_SIZE, status: statusFilter || undefined });
-      // Etapa 15M.19C: de-dup por id — si un refresco silencioso de la
-      // página 1 ya trajo alguna de estas filas (offset movido por
-      // notificaciones nuevas insertadas entre medio), no se duplica.
+      // Cursor (eventAt, createdAt, id) de la última fila, mismos filtros:
+      // estable aunque entren notificaciones nuevas o atrasadas entre medio.
+      const result = await workforceApiService.notifications({ ...filterParams(filters), after, take: PAGE_SIZE });
+      if (generation !== generationRef.current || cursorRef.current !== after) return;
       setItems((current) => {
         const existingIds = new Set(current.map((row) => row.id));
-        return [...current, ...result.items.filter((row) => !existingIds.has(row.id))];
+        return [...current, ...reconcileReads(result.items, filters.status).filter((row) => !existingIds.has(row.id))];
       });
-      setMeta(result.meta);
+      commitMeta(result.meta);
     } catch {
       setError("No se pudieron cargar las notificaciones.");
     } finally {
+      loadingMoreRef.current = false;
       setLoadingMore(false);
     }
   };
@@ -193,16 +180,18 @@ export function NotificationsPage() {
     if (item.status === "LEIDA") return;
     try {
       await workforceApiService.readNotification(item.id);
+      readIdsRef.current.add(item.id);
       setItems((current) =>
         // Etapa 15M.19C §12: bajo el filtro "No leídas", una fila recién
         // marcada como leída deja de pertenecer a la vista actual — se
         // quita de inmediato en vez de quedar visible con el badge "Leída"
-        // hasta el próximo refresco.
-        statusFilter === "NO_LEIDA"
+        // hasta el próximo refresco. El cursor no cambia: sigue marcando el
+        // mismo punto del orden aunque esa fila ya no se vea.
+        filters.status === "NO_LEIDA"
           ? current.filter((row) => row.id !== item.id)
           : current.map((row) => (row.id === item.id ? { ...row, status: "LEIDA" } : row)),
       );
-      if (statusFilter === "NO_LEIDA") setMeta((current) => ({ ...current, total: Math.max(0, current.total - 1) }));
+      if (filters.status === "NO_LEIDA") setMeta((current) => ({ ...current, total: Math.max(0, current.total - 1) }));
       window.dispatchEvent(new Event("app:notifications-changed"));
     } catch {
       setError("No se pudo marcar la notificación como leída.");
@@ -211,22 +200,26 @@ export function NotificationsPage() {
 
   const subtitle = status === "loading"
     ? "Consultando notificaciones..."
-    : statusFilter === "NO_LEIDA" ? `${meta.total} sin leer`
-    : statusFilter === "LEIDA" ? `${meta.total} leídas`
+    : filters.status === "NO_LEIDA" ? `${meta.total} sin leer`
+    : filters.status === "LEIDA" ? `${meta.total} leídas`
     : `${meta.total} notificaciones`;
 
-  const emptyText = statusFilter === "NO_LEIDA" ? "No tenés notificaciones sin leer." : "No hay notificaciones todavía.";
+  const hasFilters = Boolean(filters.status || filters.dateFrom || filters.dateTo);
+  const emptyText = hasFilters ? "No hay notificaciones para los filtros seleccionados." : "Todavía no hay notificaciones.";
 
   return <>
     <PageHeader eyebrow="SEGUIMIENTO" title="Notificaciones" description="Alertas de fichada, novedades, cierres mensuales y solicitudes que requieren atención." />
     <Section title="Historial" subtitle={subtitle}>
-      <FilterPanel title="Filtros" onClear={() => setStatusFilter("")}>
-        <label>Estado<select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as StatusFilter)}>
+      <FilterPanel title="Filtros" onClear={hasFilters ? () => setFilters(emptyFilters) : undefined}>
+        <label>Desde<input type="date" value={filters.dateFrom} max={filters.dateTo || undefined} onChange={(event) => setFilters((current) => ({ ...current, dateFrom: event.target.value }))} /></label>
+        <label>Hasta<input type="date" value={filters.dateTo} min={filters.dateFrom || undefined} onChange={(event) => setFilters((current) => ({ ...current, dateTo: event.target.value }))} /></label>
+        <label>Estado<select value={filters.status} onChange={(event) => setFilters((current) => ({ ...current, status: event.target.value as StatusFilter }))}>
           <option value="">Todas</option>
           <option value="NO_LEIDA">No leídas</option>
           <option value="LEIDA">Leídas</option>
         </select></label>
       </FilterPanel>
+      {invalidRange ? <div className="form-error" role="alert">{INVALID_RANGE_MESSAGE}</div> : null}
       {error && status !== "error" ? <div className="form-error">{error}</div> : null}
       <div className="notification-list">
         {status === "loading" ? <LoadingState text="Cargando notificaciones..." /> : null}
@@ -234,7 +227,7 @@ export function NotificationsPage() {
         {status === "success" ? items.map((item) => {
           const employee = item.employee;
           return <article className={`notification-row ${item.status === "NO_LEIDA" ? "unread" : ""}`} key={item.id}>
-          <div className="notification-icon"><Bell size={17}/></div><div><b>{item.title}</b>{employee ? <span className="notification-person">{employee.lastName}, {employee.firstName} · Legajo {employee.legajo}</span> : null}<p>{item.message}</p><small>{notificationEventDateLabel(item) ?? formatDateTime(item.createdAt)}</small></div>
+          <div className="notification-icon"><Bell size={17}/></div><div><b>{item.title}</b>{employee ? <span className="notification-person">{employee.lastName}, {employee.firstName} · Legajo {employee.legajo}</span> : null}<p>{item.message}</p><small>{notificationDateLabel(item)}</small></div>
           {/* Etapa 14G.6: "Ver detalle" antes marcaba como leída como efecto
               colateral de la navegación (además del botón explícito "Marcar
               leída", que hacía lo mismo) -- sin ninguna distinción visual
@@ -252,7 +245,7 @@ export function NotificationsPage() {
           </div>
         </article>;
         }) : null}
-        {status === "success" && !items.length ? <div className="empty">{emptyText}</div> : null}
+        {status === "success" && !items.length && !invalidRange ? <div className="empty">{emptyText}</div> : null}
       </div>
       {status === "success" && meta.hasMore ? <div className="attendance-load-more"><Button variant="subtle" onClick={() => void loadMore()} loading={loadingMore}>Cargar {Math.min(PAGE_SIZE, meta.total - items.length)} más</Button></div> : null}
     </Section>

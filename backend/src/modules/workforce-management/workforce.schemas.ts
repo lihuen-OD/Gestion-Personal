@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { parseNotificationCursor } from "./notificationListing";
 
 export const periodQuerySchema = z.object({ period: z.string().regex(/^\d{4}-\d{2}$/) });
 // Correcciones de Cierre mensual: período y estado se resuelven en el where
@@ -14,11 +15,37 @@ export const correctionReviewSchema = z.object({ note: z.string().trim().max(600
 // Etapa 9I: page/take real (antes take:200 fijo, sin paginación) — mismo
 // tope máximo de take que shiftAlerts/otras listas chicas de la app (no hace
 // falta un take grande acá, la campanita sólo necesita las últimas 10-20).
+// Etapa "orden por fecha efectiva" (docs/decisions/NOTIFICATIONS_EVENT_ORDER.md):
+// dateFrom/dateTo filtran por SystemNotification.eventAt (días Argentina,
+// inclusive); `after` pide la página siguiente por cursor estable y
+// `through` refresca la ventana ya visible. `page` queda para compatibilidad
+// (sólo sin cursor). `take` máximo = NOTIFICATIONS_MAX_TAKE, que también
+// acota el refresco de ventana.
+export const NOTIFICATIONS_MAX_TAKE = 100;
+const notificationDateKeySchema = (label: string) => z.string().regex(/^\d{4}-\d{2}-\d{2}$/, `La fecha «${label}» debe tener el formato AAAA-MM-DD.`).refine((value) => {
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}, `La fecha «${label}» no es una fecha válida.`);
+const notificationCursorSchema = z.string().transform((value, ctx) => {
+  const cursor = parseNotificationCursor(value);
+  if (!cursor) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "La posición de la lista no es válida. Recargá la página." });
+    return z.NEVER;
+  }
+  return cursor;
+});
 export const listNotificationsQuerySchema = z.object({
   status: z.enum(["NO_LEIDA", "LEIDA"]).optional(),
+  dateFrom: notificationDateKeySchema("Desde").optional(),
+  dateTo: notificationDateKeySchema("Hasta").optional(),
+  after: notificationCursorSchema.optional(),
+  through: notificationCursorSchema.optional(),
   page: z.coerce.number().int().positive().max(10000).default(1),
-  take: z.coerce.number().int().positive().max(100).default(20),
-});
+  take: z.coerce.number().int().positive().max(NOTIFICATIONS_MAX_TAKE).default(20),
+})
+  .refine((value) => !value.dateFrom || !value.dateTo || value.dateFrom <= value.dateTo, { message: "La fecha «Desde» no puede ser posterior a «Hasta»." })
+  .refine((value) => !(value.after && value.through), { message: "No se puede pedir la página siguiente y refrescar la lista a la vez." })
+  .refine((value) => value.page === 1 || (!value.after && !value.through), { message: "La paginación por número de página no se combina con la posición de la lista." });
 export type ListNotificationsQuery = z.infer<typeof listNotificationsQuerySchema>;
 export const shiftTemplateSchema = z.object({
   code: z.string().trim().min(2).max(30),

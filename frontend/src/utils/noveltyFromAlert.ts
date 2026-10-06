@@ -74,9 +74,9 @@ export function buildNoveltyPrefillFromAttendanceShiftProblem(shift: AttendanceS
  *   anticipada, etc. por igual; "SIN_ACTIVIDAD_REGISTRADA" tampoco tiene un
  *   NoveltyType de "Ausencia" garantizado en todos los entornos — no se
  *   crea un tipo nuevo para esto, el usuario elige en el modal).
- * - `fromDate` usa `createdAt` de la notificación como aproximación (se
- *   genera en el mismo momento que el evento que la origina, pero no es el
- *   instante exacto del evento como si tenía la alerta/incidente original).
+ * - `fromDate` es el día Argentina de `eventAt`, la fecha efectiva del hecho
+ *   (docs/decisions/NOTIFICATIONS_EVENT_ORDER.md) — nunca `createdAt`, que
+ *   para una notificación recuperada por catch-up es días posterior.
  *
  * Sólo se debe llamar cuando `notification.employee` existe — si no, no
  * hay datos suficientes para precargar nada.
@@ -84,7 +84,7 @@ export function buildNoveltyPrefillFromAttendanceShiftProblem(shift: AttendanceS
 export function buildNoveltyPrefillFromNotification(notification: SystemNotification & { employee: NoveltyPrefillEmployee }): NoveltyPrefillContext {
   return {
     employee: { id: notification.employee.id, legajo: notification.employee.legajo, firstName: notification.employee.firstName, lastName: notification.employee.lastName },
-    fromDate: argentinaDateKey(notification.createdAt),
+    fromDate: argentinaDateKey(notification.eventAt),
     observation: `Origen: alerta del fichador. Detalle detectado: ${notification.message} Las horas reales se mantienen según fichador/carga horaria.`,
   };
 }

@@ -105,13 +105,14 @@ describe("buildNoveltyPrefillFromNotification", () => {
       title: "Llegada tarde",
       message: "Ana Gomez llegó 1h 30m tarde.",
       status: "NO_LEIDA",
+      eventAt: "2026-08-20T12:00:00.000Z",
       createdAt: "2026-08-20T12:00:00.000Z",
       employee: { id: "employee-1", legajo: "100", firstName: "Ana", lastName: "Gomez" },
       ...overrides,
     };
   }
 
-  it("precarga empleado (subconjunto mínimo, ya resuelto por el backend), fecha aproximada (createdAt) y observación humana con el mensaje, sin id técnico", () => {
+  it("precarga empleado (subconjunto mínimo, ya resuelto por el backend), fecha del hecho (eventAt) y observación humana con el mensaje, sin id técnico", () => {
     const context = buildNoveltyPrefillFromNotification(buildNotification());
 
     expect(context.employee).toEqual({ id: "employee-1", legajo: "100", firstName: "Ana", lastName: "Gomez" });
@@ -127,6 +128,12 @@ describe("buildNoveltyPrefillFromNotification", () => {
     expect(context.observation).not.toContain("204bd1dc-ea7c-4b7b-a029-264faf5796ac");
     expect(context.observation).not.toContain("notif-1");
     expect(context.observation.toLowerCase()).not.toMatch(/\bid\b|uuid|entityid|entitytype|código|shiftalert|workshift|attendanceinactivityincident/);
+  });
+
+  it("notificación recuperada por catch-up: la fecha es la del hecho (eventAt, 02/10), no la de creación (05/10)", () => {
+    const context = buildNoveltyPrefillFromNotification(buildNotification({ eventAt: "2026-10-02T03:00:00.000Z", createdAt: "2026-10-05T13:00:00.000Z" }));
+
+    expect(context.fromDate).toBe("2026-10-02");
   });
 
   it("no sugiere tipo ni cantidad de horas — el type de la notificación es genérico, sin distinguir la anomalía exacta", () => {

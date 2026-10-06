@@ -1,6 +1,7 @@
 # Etapa 15M.19E — Reconciliación histórica de notificaciones automáticas
 
 Fecha: 2026-09-21
+> **Reemplazado parcialmente (2026-10-06, `NOTIFICATIONS_EVENT_ORDER.md`)**: el `eventDate` derivado en cada lectura se sustituyó por `SystemNotification.eventAt`, persistido e inmutable. Ahora la fecha visible es también la que ordena y filtra.
 Estado: auditoría completa + 1 fix implementado, validado (typecheck/tests/build verdes en ambos repos, `prisma validate`/`migrate status` verdes — sin migración nueva), pendiente de aprobación para commitear — no commiteado, no pusheado
 Continúa: `docs/decisions/DURABLE_ATTENDANCE_INACTIVITY_SCHEDULER_15M19A.md`, `MISSING_EXPECTED_ENTRY_15M19B.md`, `NOTIFICATIONS_PAGE_LIVE_REFRESH_15M19C.md`, `NOTIFICATIONS_END_TO_END_ACCEPTANCE_15M19D.md`, `ATTENDANCE_SHIFT_ALERTS_NOTIFICATIONS_AUDIT_10E.md`
 

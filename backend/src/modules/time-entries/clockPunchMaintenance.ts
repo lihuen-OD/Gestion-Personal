@@ -24,7 +24,7 @@ export async function maintainClockPunchAttempts() {
       });
       for (const item of expiredShifts.items) {
         try {
-          await notifyMissingExit(item.employeeId, item.workShiftId);
+          await notifyMissingExit(item.employeeId, item.workShiftId, item.startAt);
         } catch (error) {
           console.error("CLOCK_WORK_SHIFT_NOTIFY_FAILED", {
             severity: "critical",

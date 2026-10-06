@@ -229,4 +229,23 @@ describe("detectAttendanceInactivity — Etapa 15M.19B (universo de candidatos p
       expect(capturedNotification?.message).toBe("Pérez, Juan · Legajo 100 no registra actividad para el 27/08/2026.");
     });
   });
+
+  // docs/decisions/NOTIFICATIONS_EVENT_ORDER.md: la notificación nace con la
+  // fecha del día operativo, aunque se cree días después por catch-up.
+  it("eventAt de la notificación = 00:00 Argentina del día operativo (03:00 UTC), nunca 00:00 UTC (día anterior en Argentina)", async () => {
+    mockedObligation.mockResolvedValue({ isHoliday: false, candidates: [obligationCandidate("employee-1")] });
+    mockedPrisma.employee.findMany.mockResolvedValue([employeeRow()]);
+    mockedPrisma.attendanceInactivityIncident.findMany.mockResolvedValue([{ id: "incident-1", employeeId: "employee-1", employee: employeeRow() }]);
+    mockedPrisma.user.findMany.mockResolvedValue([{ id: "user-rrhh" }]);
+    let captured: { eventAt: Date; entityType: string } | undefined;
+    const tx = {
+      systemNotification: { createMany: vi.fn((args: { data: Array<{ eventAt: Date; entityType: string }> }) => { captured = args.data[0]; }) },
+      attendanceInactivityIncident: { update: vi.fn() },
+    };
+    mockedPrisma.$transaction.mockImplementation(async (callback: (client: typeof tx) => unknown) => callback(tx));
+
+    await detectAttendanceInactivity(dateKey);
+
+    expect(captured).toMatchObject({ entityType: "AttendanceInactivityIncident", eventAt: new Date("2026-08-27T03:00:00.000Z") });
+  });
 });

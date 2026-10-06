@@ -169,6 +169,8 @@ export async function createShiftAlert(input: {
       message: messageByAlertType[input.type] ?? DEFAULT_ALERT_NOTIFICATION_MESSAGE,
       entityType: "ShiftAlert",
       entityId: alert.id,
+      // Congelado al crear: un upsert posterior de la alerta no mueve esta notificación.
+      eventAt: input.actualAt,
       link: "/asistencia",
       priority: "ALTA",
     });

@@ -816,6 +816,17 @@ describe("notifyMissingExit/notifyOpenShiftAttempt — Etapa 10E (best-effort: u
     errorSpy.mockRestore();
   });
 
+  it("la notificación de falta de salida nace con eventAt = inicio de la jornada (no el momento del cierre automático)", async () => {
+    repo.findEmployeeByIdForClock.mockResolvedValue(activeEmployee);
+    repo.findOpenWorkShift.mockResolvedValue(excedidaShift);
+    mockedResolveActiveWorkRegime.mockResolvedValueOnce(null);
+    repo.rolloverExpiredOpenWorkShift.mockResolvedValue({ id: "shift-new", startAt: new Date() });
+
+    await timeEntriesService.clockInByEmployee({ employeeId: activeEmployee.id });
+
+    expect(mockedNotifyUsers).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ type: "FALTA_SALIDA", entityType: "WorkShift", entityId: excedidaShift.id, eventAt: excedidaShift.startAt }));
+  });
+
   it("si notifyUsers falla al intentar ingresar con una jornada ya abierta (no excedida), el 409 sigue respondiendo igual", async () => {
     repo.findEmployeeByIdForClock.mockResolvedValue(activeEmployee);
     repo.findOpenWorkShift.mockResolvedValue({ id: "shift-open", startAt: new Date() });

@@ -1216,10 +1216,19 @@ model SystemNotification {
   link            String?
   status          NotificationStatus @default(NO_LEIDA)
   readAt          DateTime?          @db.Timestamptz(3)
+  // Fecha efectiva del hecho de negocio que originó ESTA notificación (no de
+  // la fila). La fija el productor al crearla y es inmutable: no se vuelve a
+  // derivar de la entidad de origen. Sin hecho propio = default, el mismo
+  // instante que createdAt. Es la única fecha que la pantalla muestra, ordena
+  // y filtra (docs/decisions/NOTIFICATIONS_EVENT_ORDER.md).
+  eventAt         DateTime           @default(now()) @db.Timestamptz(3)
+  // Cuándo se creó la fila técnica: tie-breaker, auditoría y diagnóstico de catch-up.
   createdAt       DateTime           @default(now()) @db.Timestamptz(3)
   recipient       User               @relation("NotificationRecipient", fields: [recipientUserId], references: [id], onDelete: Cascade)
 
   @@index([recipientUserId, status, createdAt])
+  @@index([recipientUserId, status, eventAt])
+  @@index([recipientUserId, eventAt])
 }
 
 model ShiftTemplate {

@@ -15,6 +15,7 @@ import { formatArgentinaDate } from "../../shared/datetime/argentinaTime";
 import { auditClosureRecalculations } from "./closureRecalculationAudit";
 import { reinterpretSpecialHours, type RuleCalendar, type SpecialHourReinterpretation } from "./specialHourReinterpretation";
 import { describeReinterpretation, reinterpretationMetadata } from "./specialHourReinterpretationSummary";
+import { afterNotificationCursor, formatNotificationCursor, NOTIFICATION_ORDER_BY, notificationEventDateWhere, throughNotificationCursor } from "./notificationListing";
 
 // Identidad humana para la descripción de auditoría (nunca el employeeId).
 const employeeReferenceInclude = { employee: { select: employeeReferenceSelect } } as const;
@@ -42,7 +43,11 @@ async function ensureVisible(employeeIds: string[], user: Express.AuthUser) {
   if (count !== new Set(employeeIds).size) throw new AppError("Uno o más legajos están fuera de tu alcance", 403, "EMPLOYEE_SCOPE_FORBIDDEN");
 }
 
-export async function notifyUsers(userIds: string[], input: { type: string; title: string; message: string; entityType?: string; entityId?: string; link?: string; priority?: string }) {
+// `eventAt`: fecha efectiva del hecho que origina la notificación, la pasa el
+// productor que la conoce (ShiftAlert.actualAt, WorkShift.startAt, ...). Se
+// persiste una sola vez y no se vuelve a derivar. Sin hecho propio se omite y
+// la DB usa el mismo instante que createdAt (docs/decisions/NOTIFICATIONS_EVENT_ORDER.md).
+export async function notifyUsers(userIds: string[], input: { type: string; title: string; message: string; entityType?: string; entityId?: string; link?: string; priority?: string; eventAt?: Date }) {
   const recipients = Array.from(new Set(userIds.filter(Boolean)));
   if (!recipients.length) return;
   await prisma.systemNotification.createMany({ data: recipients.map((recipientUserId) => ({ recipientUserId, ...input })) });
@@ -219,13 +224,31 @@ export const workforceService = {
   // WORKFORCE_MANAGEMENT_NOTIFICATIONS_PERFORMANCE_14G6.md §9 para el riesgo
   // aceptado explícitamente (mismo criterio ya usado en 14G.5 para
   // shiftAlertListCache, acotado por un TTL más corto todavía).
+  //
+  // Etapa "orden por fecha efectiva" (docs/decisions/NOTIFICATIONS_EVENT_ORDER.md):
+  // orden, filtro de fechas y paginación se resuelven en la DB sobre
+  // `eventAt` (persistido e inmutable) — antes se paginaba por createdAt y la
+  // fecha del hecho se derivaba después, sólo para la página. `after` pide lo
+  // que sigue a una fila; `through` devuelve la ventana visible completa
+  // (hasta esa fila inclusive, acotada por `take`). `meta.nextCursor` es la
+  // última fila cubierta y `hasMore` dice si existe algo después de ella.
   async notifications(query: ListNotificationsQuery, user: Express.AuthUser) {
-    const where: Prisma.SystemNotificationWhereInput = { recipientUserId: user.id, ...(query.status ? { status: query.status } : {}) };
-    const skip = (query.page - 1) * query.take;
+    const where: Prisma.SystemNotificationWhereInput = {
+      recipientUserId: user.id,
+      ...(query.status ? { status: query.status } : {}),
+      ...notificationEventDateWhere(query.dateFrom, query.dateTo),
+    };
+    const position = query.after ? afterNotificationCursor(query.after) : query.through ? throughNotificationCursor(query.through) : undefined;
+    const skip = position ? 0 : (query.page - 1) * query.take;
     const [notifications, total] = await Promise.all([
-      prisma.systemNotification.findMany({ where, orderBy: { createdAt: "desc" }, skip, take: query.take }),
+      prisma.systemNotification.findMany({ where: position ? { AND: [where, position] } : where, orderBy: NOTIFICATION_ORDER_BY, skip, take: query.take }),
       prisma.systemNotification.count({ where }),
     ]);
+    const lastRow = notifications.at(-1);
+    const boundary = lastRow ?? query.through ?? query.after;
+    const hasMore = boundary
+      ? Boolean(await prisma.systemNotification.findFirst({ where: { AND: [where, afterNotificationCursor(boundary)] }, select: { id: true } }))
+      : false;
     const shiftAlertIds = notifications.filter((item) => item.entityType === "ShiftAlert" && item.entityId).map((item) => item.entityId!);
     const workShiftIds = notifications.filter((item) => item.entityType === "WorkShift" && item.entityId).map((item) => item.entityId!);
     const employeeIds = notifications.filter((item) => item.entityType === "Employee" && item.entityId).map((item) => item.entityId!);
@@ -237,40 +260,27 @@ export const workforceService = {
     const employeeSelect = { id: true, legajo: true, firstName: true, lastName: true } as const;
     const [alerts, shifts, employees, incidents] = shiftAlertIds.length || workShiftIds.length || employeeIds.length || inactivityIncidentIds.length
       ? await Promise.all([
-          shiftAlertIds.length ? prisma.shiftAlert.findMany({ where: { id: { in: shiftAlertIds } }, select: { id: true, actualAt: true, employee: { select: employeeSelect } } }) : Promise.resolve([]),
-          // Etapa 15M.19E: `startAt` (no `closedAt`/`endAt`) -- para una
-          // jornada que el mantenimiento de 60s cierra automáticamente
-          // (expireOpenWorkShifts), `closedAt` sería justamente la fecha
-          // "equivocada" (cuándo se detectó/cerró) que esta etapa busca dejar
-          // de mostrar; `startAt` es cuándo ocurrió la jornada de negocio.
-          workShiftIds.length ? prisma.workShift.findMany({ where: { id: { in: workShiftIds } }, select: { id: true, startAt: true, employee: { select: employeeSelect } } }) : Promise.resolve([]),
+          shiftAlertIds.length ? prisma.shiftAlert.findMany({ where: { id: { in: shiftAlertIds } }, select: { id: true, employee: { select: employeeSelect } } }) : Promise.resolve([]),
+          workShiftIds.length ? prisma.workShift.findMany({ where: { id: { in: workShiftIds } }, select: { id: true, employee: { select: employeeSelect } } }) : Promise.resolve([]),
           employeeIds.length ? prisma.employee.findMany({ where: { id: { in: employeeIds } }, select: employeeSelect }) : Promise.resolve([]),
-          inactivityIncidentIds.length ? prisma.attendanceInactivityIncident.findMany({ where: { id: { in: inactivityIncidentIds } }, select: { id: true, operationalDate: true, employee: { select: employeeSelect } } }) : Promise.resolve([]),
+          inactivityIncidentIds.length ? prisma.attendanceInactivityIncident.findMany({ where: { id: { in: inactivityIncidentIds } }, select: { id: true, employee: { select: employeeSelect } } }) : Promise.resolve([]),
         ])
       : [[], [], [], []];
     const employeeByAlert = new Map(alerts.map((alert) => [alert.id, alert.employee]));
     const employeeByShift = new Map(shifts.map((shift) => [shift.id, shift.employee]));
     const employeeById = new Map(employees.map((employee) => [employee.id, employee]));
     const employeeByIncident = new Map(incidents.map((incident) => [incident.id, incident.employee]));
-    // Etapa 15M.19E: `SystemNotification` sólo tiene `createdAt` (cuándo se
-    // insertó la fila) -- para una notificación recuperada por catch-up
-    // (15M.19A/B) días después del hecho real, eso muestra "hoy" en vez del
-    // día real del evento. Las tres entidades de origen ya tienen la fecha
-    // real persistida (`ShiftAlert.actualAt`, `WorkShift.startAt`,
-    // `AttendanceInactivityIncident.operationalDate`); acá sólo se expone,
-    // mismo patrón exacto que `employeeByX` de arriba.
-    const dateByAlert = new Map(alerts.map((alert) => [alert.id, alert.actualAt]));
-    const dateByShift = new Map(shifts.map((shift) => [shift.id, shift.startAt]));
-    const dateByIncident = new Map(incidents.map((incident) => [incident.id, incident.operationalDate]));
+    // La fecha a mostrar es `eventAt` de la propia fila (fijada al crearla);
+    // la entidad de origen sólo aporta el empleado, nunca la fecha.
     const items = notifications.map((item) => {
       if (!item.entityId) return item;
-      if (item.entityType === "ShiftAlert") return { ...item, employee: employeeByAlert.get(item.entityId), eventDate: dateByAlert.get(item.entityId) ?? null };
-      if (item.entityType === "WorkShift") return { ...item, employee: employeeByShift.get(item.entityId), eventDate: dateByShift.get(item.entityId) ?? null };
+      if (item.entityType === "ShiftAlert") return { ...item, employee: employeeByAlert.get(item.entityId) };
+      if (item.entityType === "WorkShift") return { ...item, employee: employeeByShift.get(item.entityId) };
       if (item.entityType === "Employee") return { ...item, employee: employeeById.get(item.entityId) };
-      if (item.entityType === "AttendanceInactivityIncident") return { ...item, employee: employeeByIncident.get(item.entityId), eventDate: dateByIncident.get(item.entityId) ?? null };
+      if (item.entityType === "AttendanceInactivityIncident") return { ...item, employee: employeeByIncident.get(item.entityId) };
       return item;
     });
-    return { items, meta: { total, page: query.page, pageSize: query.take, hasMore: query.page * query.take < total } };
+    return { items, meta: { total, page: query.page, pageSize: query.take, hasMore, nextCursor: boundary ? formatNotificationCursor(boundary) : null } };
   },
   unreadNotificationCount(user: Express.AuthUser) { return prisma.systemNotification.count({ where: { recipientUserId: user.id, status: "NO_LEIDA" } }); },
   markNotificationRead(id: string, user: Express.AuthUser) { return prisma.systemNotification.updateMany({ where: { id, recipientUserId: user.id }, data: { status: "LEIDA", readAt: new Date() } }); },
