@@ -8,8 +8,8 @@ import { env } from "./config/env";
  * F2 del fichador standalone (docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md
  * §20): admin y fichador son dos sitios con origins distintos que consumen el
  * mismo backend. CORS_ORIGIN es una lista explícita; este test fija que el
- * preflight del fichador (POST con el header propio x-clock-device-token)
- * pasa para su origin y que nada fuera de la lista recibe permiso — ni por
+ * preflight del fichador (POST con `Authorization: ClockDevice …`, F6) pasa
+ * para su origin y que nada fuera de la lista recibe permiso — ni por
  * comodín ni por sufijo.
  */
 const ADMIN = "https://gestion-test.example.com";
@@ -38,21 +38,32 @@ function preflight(origin: string, path = "/time-entries/clock/photo-punch") {
     headers: {
       origin,
       "access-control-request-method": "POST",
-      "access-control-request-headers": "content-type,x-clock-device-token",
+      "access-control-request-headers": "authorization, content-type",
     },
   });
 }
 
 describe("CORS para dos sitios independientes (admin + fichador)", () => {
-  it("el preflight del fichador permite su origin, POST, Content-Type y x-clock-device-token", async () => {
+  it("el preflight de OPTIONS /clock/photo-punch permite su origin, POST, Authorization y Content-Type", async () => {
     const response = await preflight(FICHADOR);
 
     expect(response.status).toBe(204);
     expect(response.headers.get("access-control-allow-origin")).toBe(FICHADOR);
     expect(response.headers.get("access-control-allow-methods")).toContain("POST");
-    expect(response.headers.get("access-control-allow-headers")?.split(",")).toEqual(
-      expect.arrayContaining(["content-type", "x-clock-device-token"]),
+    expect(response.headers.get("access-control-allow-headers")?.split(",").map((header) => header.trim().toLowerCase())).toEqual(
+      expect.arrayContaining(["authorization", "content-type"]),
     );
+  });
+
+  it("el preflight de las demás rutas del fichador (GET con Authorization) también pasa", async () => {
+    for (const path of ["/time-entries/clock/employees", "/time-entries/clock/attempts/22222222-2222-4222-8222-222222222222", "/clock/device/status"]) {
+      const response = await fetch(`${baseUrl}${path}`, {
+        method: "OPTIONS",
+        headers: { origin: FICHADOR, "access-control-request-method": "GET", "access-control-request-headers": "authorization, x-clock-app-version" },
+      });
+      expect(response.status).toBe(204);
+      expect(response.headers.get("access-control-allow-origin")).toBe(FICHADOR);
+    }
   });
 
   it("el origin del admin y los locales (5174/5175) siguen permitidos", async () => {
