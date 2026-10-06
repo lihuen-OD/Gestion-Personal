@@ -203,6 +203,23 @@ describe("workforceApiService.notifications — dedupe/cache frontend (Etapa 14G
     expect(apiRequest).toHaveBeenCalledTimes(3);
   });
 
+  it("status/dateFrom/dateTo/after/through viajan en la URL y forman parte de la key — nunca se mezclan respuestas de filtros distintos", async () => {
+    vi.mocked(apiRequest).mockResolvedValue(sampleResult);
+    const cursor = "2026-10-02T03:00:00.000Z_2026-10-05T13:00:00.000Z_0b6a1f7e-3c2d-4e5f-8a9b-0c1d2e3f4a5b";
+
+    await workforceApiService.notifications({ take: 20, status: "NO_LEIDA", dateFrom: "2026-10-01", dateTo: "2026-10-05" });
+    await workforceApiService.notifications({ take: 20, status: "NO_LEIDA", dateFrom: "2026-10-02", dateTo: "2026-10-05" });
+    await workforceApiService.notifications({ take: 20, status: "NO_LEIDA", dateFrom: "2026-10-01", dateTo: "2026-10-05", after: cursor });
+    await workforceApiService.notifications({ take: 100, status: "NO_LEIDA", dateFrom: "2026-10-01", dateTo: "2026-10-05", through: cursor });
+
+    expect(vi.mocked(apiRequest).mock.calls.map((call) => call[0])).toEqual([
+      "/workforce/notifications?page=1&take=20&status=NO_LEIDA&dateFrom=2026-10-01&dateTo=2026-10-05",
+      "/workforce/notifications?page=1&take=20&status=NO_LEIDA&dateFrom=2026-10-02&dateTo=2026-10-05",
+      `/workforce/notifications?page=1&take=20&status=NO_LEIDA&dateFrom=2026-10-01&dateTo=2026-10-05&after=${encodeURIComponent(cursor)}`,
+      `/workforce/notifications?page=1&take=100&status=NO_LEIDA&dateFrom=2026-10-01&dateTo=2026-10-05&through=${encodeURIComponent(cursor)}`,
+    ]);
+  });
+
   it("después de invalidar la familia 'notifications' (readNotification), vuelve a pedir", async () => {
     vi.mocked(apiRequest)
       .mockResolvedValueOnce(sampleResult)

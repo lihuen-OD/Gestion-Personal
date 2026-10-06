@@ -1234,6 +1234,8 @@ body{background:var(--ds-slate-50)!important;color:var(--ds-slate-700)!important
 .filter-panel select,.filter-panel input{width:100%;min-width:0}
 .filter-panel label>select,.filter-panel label>input{margin-top:5px}
 .filter-panel .search-field{grid-column:1/-1;min-width:0}
+/* Sin buscador no hay campo que merezca la columna ancha (2fr): todas las columnas iguales, mismo ancho que los filtros de los paneles con buscador. Sólo desktop; debajo rigen los breakpoints de abajo. */
+@media(min-width:1181px){.filter-panel:not(:has(> .search-field)){grid-template-columns:repeat(5,minmax(130px,1fr))}}
 @media(max-width:1180px){.filter-panel{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:760px){.filter-panel{grid-template-columns:1fr}}
 input,select,textarea{min-height:40px!important;padding:10px 12px!important;border:1px solid var(--ds-slate-200)!important;border-radius:8px!important;background:#fff!important;color:var(--ds-slate-800)!important;font-size:14px!important;font-weight:400!important;transition:border-color .15s ease,box-shadow .15s ease,background .15s ease!important}

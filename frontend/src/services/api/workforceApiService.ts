@@ -34,18 +34,30 @@ export type SystemNotification = {
   message: string;
   link?: string | null;
   status: "NO_LEIDA" | "LEIDA";
+  // Fecha efectiva del hecho de negocio (fijada al crear la notificación,
+  // inmutable): la ÚNICA fecha que la pantalla muestra, y la misma con la que
+  // el backend ordena y filtra. `createdAt` es sólo la creación técnica de la
+  // fila — ver docs/decisions/NOTIFICATIONS_EVENT_ORDER.md.
+  eventAt: string;
   createdAt: string;
-  // Etapa 15M.19E: cuándo ocurrió el hecho de negocio real, no cuándo se
-  // creó esta fila — importante para una notificación recuperada por
-  // catch-up (15M.19A/B) días después. `entityType` decide, en pantalla,
-  // si `eventDate` es un instante (ShiftAlert/WorkShift) o una fecha
-  // calendario pura (AttendanceInactivityIncident) — ver NotificationsPage.tsx.
   entityType?: string | null;
-  eventDate?: string | null;
   employee?: { id: string; legajo: string; firstName: string; lastName: string };
 };
-export type SystemNotificationListParams = { page?: number; take?: number; status?: "NO_LEIDA" | "LEIDA" };
-export type SystemNotificationListMeta = { total: number; page: number; pageSize: number; hasMore: boolean };
+export type SystemNotificationListParams = {
+  status?: "NO_LEIDA" | "LEIDA";
+  // Días calendario Argentina "AAAA-MM-DD", inclusive, sobre `eventAt`.
+  dateFrom?: string;
+  dateTo?: string;
+  // Cursor opaco que devuelve el backend (`meta.nextCursor`): `after` pide lo
+  // que sigue; `through` vuelve a pedir la ventana visible hasta esa fila.
+  after?: string;
+  through?: string;
+  page?: number;
+  take?: number;
+};
+export type SystemNotificationListMeta = { total: number; page: number; pageSize: number; hasMore: boolean; nextCursor: string | null };
+// Tope del refresco de ventana — mismo máximo `take` que acepta el backend.
+export const NOTIFICATIONS_REFRESH_WINDOW_MAX = 100;
 
 // Etapa 15M.19C: único intervalo de polling de notificaciones, compartido
 // entre la campana del topbar (AppShell.tsx) y NotificationsPage — antes de
@@ -229,6 +241,10 @@ export const workforceApiService = {
     query.set("page", String(params.page || 1));
     query.set("take", String(params.take || 20));
     if (params.status) query.set("status", params.status);
+    if (params.dateFrom) query.set("dateFrom", params.dateFrom);
+    if (params.dateTo) query.set("dateTo", params.dateTo);
+    if (params.after) query.set("after", params.after);
+    if (params.through) query.set("through", params.through);
     const key = `/workforce/notifications?${query.toString()}`;
     return cachedData({
       requestKey: `GET:${key}`,
