@@ -200,6 +200,7 @@ describe("6. IP que llega a AttendancePunch.ipAddress", () => {
     expect(response.status).toBe(201);
     expect(timeEntriesService.clockPhotoPunchIdempotent).toHaveBeenCalledWith(
       expect.anything(),
+      DEVICE_ID,
       expect.objectContaining({ ipAddress: CLIENT_A }),
     );
   });

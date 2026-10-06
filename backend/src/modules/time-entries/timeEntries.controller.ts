@@ -6,6 +6,7 @@ import type { AdminCloseWorkShiftInput, AdminWorkShiftReasonInput, AttendanceObs
 import { attendanceObservationsCache, attendanceSummaryCache, clearTimeEntriesReadCaches, homeSummaryCache, timeEntriesListCache, timeEntriesPeriodEmployeesCache, timeEntriesSummaryCache } from "./timeEntries.cache";
 import { timeEntriesExportToCsv, timeEntriesService } from "./timeEntries.service";
 import { clearEmployeeReadCaches, clearEmployeeTimeGridCache } from "../employees/employees.controller";
+import { authenticatedClockDevice } from "../clock-devices/clockDeviceAuthentication";
 
 function userScopedCacheKey(req: Parameters<RequestHandler>[0]) {
   return `${req.user?.id || "anon"}:${req.user?.role || "none"}:${req.originalUrl}`;
@@ -32,7 +33,8 @@ export const timeEntriesController = {
   // `clearEmployeeReadCaches()` completo porque una fichada no toca legajo,
   // listado, resumen ni organigrama.
   clockPhotoPunch: (async (req, res) => {
-    const result = await timeEntriesService.clockPhotoPunchIdempotent(req.body as ClockPhotoPunchInput, requestAuditContext(req));
+    // deviceId sale sólo de requireClockDevice; el body no puede elegirlo.
+    const result = await timeEntriesService.clockPhotoPunchIdempotent(req.body as ClockPhotoPunchInput, authenticatedClockDevice(req).id, requestAuditContext(req));
     clearTimeEntriesReadCaches();
     clearEmployeeTimeGridCache();
     res.status(201).json({ data: result });
@@ -41,7 +43,7 @@ export const timeEntriesController = {
   clockPunchAttemptStatus: (async (req, res) => {
     const employeeId = typeof req.query.employeeId === "string" ? req.query.employeeId : "";
     if (!employeeId) throw new AppError("employeeId is required", 400, "CLOCK_ATTEMPT_EMPLOYEE_REQUIRED");
-    const result = await timeEntriesService.clockPunchAttemptStatus(requireParam(req, "requestId"), employeeId);
+    const result = await timeEntriesService.clockPunchAttemptStatus(requireParam(req, "requestId"), employeeId, authenticatedClockDevice(req).id);
     res.json({ data: result });
   }) satisfies RequestHandler,
 

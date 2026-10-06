@@ -189,6 +189,10 @@ function prismaKnownError(code: string) {
   return new Prisma.PrismaClientKnownRequestError("mock prisma error", { code, clientVersion: "0.0.0" });
 }
 
+// F6: id del ClockDevice autenticado; en producción sale de requireClockDevice.
+const CLOCK_DEVICE_ID = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+const OTHER_CLOCK_DEVICE_ID = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
+
 const activeEmployee = {
   id: "employee-1",
   legajo: "100",
@@ -729,14 +733,14 @@ describe("clockPhotoPunch — reglas de ingreso y salida (F0: antes probadas só
     it("crea la jornada abierta con source PUBLIC_CLOCK_PHOTO cuando no hay ninguna abierta (camino feliz)", async () => {
       repo.createOpenWorkShift.mockResolvedValueOnce({ id: "shift-1", startAt: new Date(), startPunchId: null });
 
-      const result = await timeEntriesService.clockPhotoPunch(punch("IN"), undefined, context());
+      const result = await timeEntriesService.clockPhotoPunch(punch("IN"), CLOCK_DEVICE_ID, undefined, context());
 
       expect(result.workShift.id).toBe("shift-1");
       expect(repo.createOpenWorkShift).toHaveBeenCalledWith(expect.objectContaining({ employeeId: activeEmployee.id, source: "PUBLIC_CLOCK_PHOTO" }));
     });
 
     it("responde 409 CLOCK_ALREADY_OPEN si ya hay una jornada abierta reciente, sin crear otra ni guardar evidencia", async () => {
-      await expect(timeEntriesService.clockPhotoPunch(punch("IN"), undefined, context([recentOpenShift()]))).rejects.toMatchObject({
+      await expect(timeEntriesService.clockPhotoPunch(punch("IN"), CLOCK_DEVICE_ID, undefined, context([recentOpenShift()]))).rejects.toMatchObject({
         statusCode: 409,
         code: "CLOCK_ALREADY_OPEN",
       });
@@ -748,7 +752,7 @@ describe("clockPhotoPunch — reglas de ingreso y salida (F0: antes probadas só
     it("mapea una violación de unicidad concurrente (P2002) a 409 CLOCK_ALREADY_OPEN y compensa la evidencia ya guardada (regresión Bloque 1)", async () => {
       repo.createOpenWorkShift.mockRejectedValueOnce(prismaKnownError("P2002"));
 
-      await expect(timeEntriesService.clockPhotoPunch(punch("IN"), undefined, context())).rejects.toMatchObject({
+      await expect(timeEntriesService.clockPhotoPunch(punch("IN"), CLOCK_DEVICE_ID, undefined, context())).rejects.toMatchObject({
         statusCode: 409,
         code: "CLOCK_ALREADY_OPEN",
       });
@@ -760,7 +764,7 @@ describe("clockPhotoPunch — reglas de ingreso y salida (F0: antes probadas só
 
       let caught: unknown;
       try {
-        await timeEntriesService.clockPhotoPunch(punch("IN"), undefined, context());
+        await timeEntriesService.clockPhotoPunch(punch("IN"), CLOCK_DEVICE_ID, undefined, context());
       } catch (error) {
         caught = error;
       }
@@ -774,7 +778,7 @@ describe("clockPhotoPunch — reglas de ingreso y salida (F0: antes probadas só
       mockedResolveActiveWorkRegime.mockResolvedValueOnce(null);
       repo.rolloverExpiredOpenWorkShift.mockResolvedValueOnce({ id: "shift-new", startAt: new Date(), startPunchId: null });
 
-      const result = await timeEntriesService.clockPhotoPunch(punch("IN"), undefined, context([excedidaShift]));
+      const result = await timeEntriesService.clockPhotoPunch(punch("IN"), CLOCK_DEVICE_ID, undefined, context([excedidaShift]));
 
       expect(repo.rolloverExpiredOpenWorkShift).toHaveBeenCalledTimes(1);
       expect(repo.rolloverExpiredOpenWorkShift).toHaveBeenCalledWith(expect.objectContaining({ openWorkShiftId: excedidaShift.id, source: "PUBLIC_CLOCK_PHOTO" }));
@@ -785,7 +789,7 @@ describe("clockPhotoPunch — reglas de ingreso y salida (F0: antes probadas só
       mockedResolveActiveWorkRegime.mockResolvedValueOnce({ kind: "TURNO_OBLIGATORIO", alertOnOutOfShift: true, openShiftOverflowAction: "ROLLOVER" });
       repo.rolloverExpiredOpenWorkShift.mockResolvedValueOnce({ id: "shift-new", startAt: new Date(), startPunchId: null });
 
-      const result = await timeEntriesService.clockPhotoPunch(punch("IN"), undefined, context([excedidaShift]));
+      const result = await timeEntriesService.clockPhotoPunch(punch("IN"), CLOCK_DEVICE_ID, undefined, context([excedidaShift]));
 
       expect(repo.rolloverExpiredOpenWorkShift).toHaveBeenCalledTimes(1);
       expect(mockedFlagOpenShiftOverflowForReview).not.toHaveBeenCalled();
@@ -795,7 +799,7 @@ describe("clockPhotoPunch — reglas de ingreso y salida (F0: antes probadas só
     it("Caso D — régimen ALERT_ONLY: no hace rollover, no crea una segunda jornada, responde 409, marca para revisión y compensa la evidencia", async () => {
       mockedResolveActiveWorkRegime.mockResolvedValueOnce(alertOnlyRegime);
 
-      await expect(timeEntriesService.clockPhotoPunch(punch("IN"), undefined, context([excedidaShift]))).rejects.toMatchObject({
+      await expect(timeEntriesService.clockPhotoPunch(punch("IN"), CLOCK_DEVICE_ID, undefined, context([excedidaShift]))).rejects.toMatchObject({
         statusCode: 409,
         code: "CLOCK_ALREADY_OPEN",
       });
@@ -810,8 +814,8 @@ describe("clockPhotoPunch — reglas de ingreso y salida (F0: antes probadas só
     it("Caso G — dos intentos seguidos bajo ALERT_ONLY nunca hacen rollover ni crean una segunda jornada", async () => {
       mockedResolveActiveWorkRegime.mockResolvedValueOnce(alertOnlyRegime).mockResolvedValueOnce(alertOnlyRegime);
 
-      await expect(timeEntriesService.clockPhotoPunch(punch("IN"), undefined, context([excedidaShift]))).rejects.toMatchObject({ code: "CLOCK_ALREADY_OPEN" });
-      await expect(timeEntriesService.clockPhotoPunch(punch("IN"), undefined, context([excedidaShift]))).rejects.toMatchObject({ code: "CLOCK_ALREADY_OPEN" });
+      await expect(timeEntriesService.clockPhotoPunch(punch("IN"), CLOCK_DEVICE_ID, undefined, context([excedidaShift]))).rejects.toMatchObject({ code: "CLOCK_ALREADY_OPEN" });
+      await expect(timeEntriesService.clockPhotoPunch(punch("IN"), CLOCK_DEVICE_ID, undefined, context([excedidaShift]))).rejects.toMatchObject({ code: "CLOCK_ALREADY_OPEN" });
 
       expect(repo.rolloverExpiredOpenWorkShift).not.toHaveBeenCalled();
       expect(repo.createOpenWorkShift).not.toHaveBeenCalled();
@@ -826,7 +830,7 @@ describe("clockPhotoPunch — reglas de ingreso y salida (F0: antes probadas só
       mockedNotifyUsers.mockRejectedValueOnce(new Error("db hiccup"));
       const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
-      const result = await timeEntriesService.clockPhotoPunch(punch("IN"), undefined, context([excedidaShift]));
+      const result = await timeEntriesService.clockPhotoPunch(punch("IN"), CLOCK_DEVICE_ID, undefined, context([excedidaShift]));
 
       expect(result).toMatchObject({ previousOpenShift: { status: "FALTA_SALIDA" } });
       expect(errorSpy).toHaveBeenCalledWith("MISSING_EXIT_NOTIFY_FAILED", expect.objectContaining({ workShiftId: excedidaShift.id }));
@@ -837,7 +841,7 @@ describe("clockPhotoPunch — reglas de ingreso y salida (F0: antes probadas só
       mockedResolveActiveWorkRegime.mockResolvedValueOnce(null);
       repo.rolloverExpiredOpenWorkShift.mockResolvedValueOnce({ id: "shift-new", startAt: new Date(), startPunchId: null });
 
-      await timeEntriesService.clockPhotoPunch(punch("IN"), undefined, context([excedidaShift]));
+      await timeEntriesService.clockPhotoPunch(punch("IN"), CLOCK_DEVICE_ID, undefined, context([excedidaShift]));
 
       expect(mockedNotifyUsers).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ type: "FALTA_SALIDA", entityType: "WorkShift", entityId: excedidaShift.id, eventAt: excedidaShift.startAt }));
     });
@@ -845,7 +849,7 @@ describe("clockPhotoPunch — reglas de ingreso y salida (F0: antes probadas só
 
   describe("salida", () => {
     it("responde 409 CLOCK_NO_OPEN_SHIFT si no hay jornada abierta, sin guardar evidencia ni cerrar nada", async () => {
-      await expect(timeEntriesService.clockPhotoPunch(punch("OUT"), undefined, context())).rejects.toMatchObject({
+      await expect(timeEntriesService.clockPhotoPunch(punch("OUT"), CLOCK_DEVICE_ID, undefined, context())).rejects.toMatchObject({
         statusCode: 409,
         code: "CLOCK_NO_OPEN_SHIFT",
       });
@@ -857,7 +861,7 @@ describe("clockPhotoPunch — reglas de ingreso y salida (F0: antes probadas só
     it("mapea un cierre concurrente (WORK_SHIFT_ALREADY_CLOSED) a 409 CLOCK_ALREADY_CLOSED y compensa la evidencia (regresión Bloque 1)", async () => {
       repo.closeOpenWorkShift.mockRejectedValueOnce(new Error("WORK_SHIFT_ALREADY_CLOSED"));
 
-      await expect(timeEntriesService.clockPhotoPunch(punch("OUT"), undefined, context([recentOpenShift()]))).rejects.toMatchObject({
+      await expect(timeEntriesService.clockPhotoPunch(punch("OUT"), CLOCK_DEVICE_ID, undefined, context([recentOpenShift()]))).rejects.toMatchObject({
         statusCode: 409,
         code: "CLOCK_ALREADY_CLOSED",
       });
@@ -868,7 +872,7 @@ describe("clockPhotoPunch — reglas de ingreso y salida (F0: antes probadas só
     it("llama a evaluateShiftExit una sola vez con los segmentos clasificados, sin un notifyClassificationAlerts separado (evita el aviso duplicado)", async () => {
       repo.closeOpenWorkShift.mockResolvedValueOnce(closedShiftResult());
 
-      await timeEntriesService.clockPhotoPunch(punch("OUT"), undefined, context([recentOpenShift()]));
+      await timeEntriesService.clockPhotoPunch(punch("OUT"), CLOCK_DEVICE_ID, undefined, context([recentOpenShift()]));
 
       expect(evaluateShiftExit).toHaveBeenCalledTimes(1);
       const call = vi.mocked(evaluateShiftExit).mock.calls[0]!;
@@ -883,7 +887,7 @@ describe("clockPhotoPunch — reglas de ingreso y salida (F0: antes probadas só
       vi.mocked(evaluateShiftExit).mockRejectedValueOnce(new Error("fallo inesperado evaluando la salida"));
       const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
-      const result = await timeEntriesService.clockPhotoPunch(punch("OUT"), undefined, context([recentOpenShift()]));
+      const result = await timeEntriesService.clockPhotoPunch(punch("OUT"), CLOCK_DEVICE_ID, undefined, context([recentOpenShift()]));
 
       expect(result.workShift.id).toBe("shift-open");
       errorSpy.mockRestore();
@@ -941,7 +945,7 @@ describe("F0 — datos que el fichador expone al kiosco", () => {
     };
     const context = { ...activeEmployee, workShifts: [{ id: "shift-open", startAt: new Date(Date.now() - 60 * 60_000), hourConcept: normalConcept }], hourConcepts: [] };
 
-    const result = await timeEntriesService.clockPhotoPunch(input, undefined, context as never);
+    const result = await timeEntriesService.clockPhotoPunch(input, CLOCK_DEVICE_ID, undefined, context as never);
 
     expect(result).not.toHaveProperty("entries");
     expect(result).not.toHaveProperty("timeSegments");
@@ -949,7 +953,7 @@ describe("F0 — datos que el fichador expone al kiosco", () => {
     expect(result.employee).not.toHaveProperty("dni");
   });
 
-  it("la evidencia de la fichada lleva la IP del contexto de la request (req.ip), no una enviada en el payload", async () => {
+  it("la evidencia de la fichada lleva IP, user-agent y deviceId de la request autenticada, nunca del payload", async () => {
     repo.findDefaultHourConcept.mockResolvedValue({ hourConcept: normalConcept });
     repo.createOpenWorkShift.mockResolvedValueOnce({ id: "shift-1", startAt: new Date(), startPunchId: null });
     const input = {
@@ -958,12 +962,37 @@ describe("F0 — datos que el fichador expone al kiosco", () => {
       punchType: "IN" as const,
       photo: bigPhotoDataUrl(),
       faceValidationStatus: "VALID" as const,
-    };
+      // Un cliente malicioso podría mandar esto: el schema lo descarta y el
+      // servicio nunca lo lee como identidad del dispositivo ni de la red.
+      deviceId: OTHER_CLOCK_DEVICE_ID,
+      ipAddress: "6.6.6.6",
+      device: { userAgent: "spoofed-agent", platform: "iPad" },
+    } as never;
 
-    await timeEntriesService.clockPhotoPunch(input, { ipAddress: "203.0.113.7", userAgent: "kiosk-agent" }, { ...activeEmployee, workShifts: [], hourConcepts: [] } as never);
+    await timeEntriesService.clockPhotoPunch(input, CLOCK_DEVICE_ID, { ipAddress: "203.0.113.7", userAgent: "kiosk-agent" }, { ...activeEmployee, workShifts: [], hourConcepts: [] } as never);
 
     expect(repo.createOpenWorkShift).toHaveBeenCalledWith(expect.objectContaining({
-      punchEvidence: expect.objectContaining({ ipAddress: "203.0.113.7", userAgent: "kiosk-agent" }),
+      punchEvidence: expect.objectContaining({ ipAddress: "203.0.113.7", userAgent: "kiosk-agent", deviceId: CLOCK_DEVICE_ID }),
+    }));
+    expect(JSON.stringify(repo.createOpenWorkShift.mock.calls[0]![0])).not.toMatch(/spoofed-agent|6\.6\.6\.6|eeeeeeee/);
+  });
+
+  it("sin user-agent en la request no toma el del body", async () => {
+    repo.findDefaultHourConcept.mockResolvedValue({ hourConcept: normalConcept });
+    repo.createOpenWorkShift.mockResolvedValueOnce({ id: "shift-1", startAt: new Date(), startPunchId: null });
+    const input = {
+      requestId: "99999999-9999-9999-9999-999999999998",
+      employeeId: activeEmployee.id,
+      punchType: "IN" as const,
+      photo: bigPhotoDataUrl(),
+      faceValidationStatus: "VALID" as const,
+      device: { userAgent: "spoofed-agent" },
+    };
+
+    await timeEntriesService.clockPhotoPunch(input, CLOCK_DEVICE_ID, { ipAddress: "203.0.113.7", userAgent: null }, { ...activeEmployee, workShifts: [], hourConcepts: [] } as never);
+
+    expect(repo.createOpenWorkShift).toHaveBeenCalledWith(expect.objectContaining({
+      punchEvidence: expect.objectContaining({ userAgent: null, deviceId: CLOCK_DEVICE_ID }),
     }));
   });
 
@@ -971,6 +1000,7 @@ describe("F0 — datos que el fichador expone al kiosco", () => {
     repo.findClockPunchAttempt.mockResolvedValueOnce({
       requestId: "88888888-8888-8888-8888-888888888888",
       employeeId: activeEmployee.id,
+      deviceId: CLOCK_DEVICE_ID,
       status: "COMPLETED",
       startedAt: new Date(),
       response: {
@@ -982,7 +1012,7 @@ describe("F0 — datos que el fichador expone al kiosco", () => {
       },
     });
 
-    const state = await timeEntriesService.clockPunchAttemptStatus("88888888-8888-8888-8888-888888888888", activeEmployee.id);
+    const state = await timeEntriesService.clockPunchAttemptStatus("88888888-8888-8888-8888-888888888888", activeEmployee.id, CLOCK_DEVICE_ID);
 
     expect(state.response).toEqual({
       employee: { id: activeEmployee.id, legajo: "100", dniSuffix: "456", firstName: "Ana", lastName: "Gomez", name: "Gomez, Ana" },
@@ -1284,13 +1314,14 @@ describe("clockPhotoPunchIdempotent", () => {
     repo.findClockPunchAttempt.mockResolvedValue({
       requestId: input.requestId,
       employeeId: input.employeeId,
+      deviceId: CLOCK_DEVICE_ID,
       punchType: "INGRESO",
       requestHash,
       status: "COMPLETED",
       response: { workShift: { id: "shift-stored" } },
     });
 
-    const result = await timeEntriesService.clockPhotoPunchIdempotent(input);
+    const result = await timeEntriesService.clockPhotoPunchIdempotent(input, CLOCK_DEVICE_ID);
 
     expect(result).toEqual({ workShift: { id: "shift-stored" } });
     expect(repo.createOpenWorkShift).not.toHaveBeenCalled();
@@ -1304,6 +1335,7 @@ describe("clockPhotoPunchIdempotent", () => {
     repo.findClockPunchAttempt.mockResolvedValue({
       requestId: input.requestId,
       employeeId: input.employeeId,
+      deviceId: CLOCK_DEVICE_ID,
       punchType: "INGRESO",
       requestHash,
       status: "FAILED",
@@ -1313,7 +1345,7 @@ describe("clockPhotoPunchIdempotent", () => {
       httpStatus: 503,
     });
 
-    await expect(timeEntriesService.clockPhotoPunchIdempotent(input)).rejects.toMatchObject({
+    await expect(timeEntriesService.clockPhotoPunchIdempotent(input, CLOCK_DEVICE_ID)).rejects.toMatchObject({
       statusCode: 503,
       code: "CLOCK_PHOTO_STORAGE_FAILED",
     });
@@ -1327,13 +1359,14 @@ describe("clockPhotoPunchIdempotent", () => {
     repo.findClockPunchAttempt.mockResolvedValue({
       requestId: input.requestId,
       employeeId: input.employeeId,
+      deviceId: CLOCK_DEVICE_ID,
       punchType: "INGRESO",
       requestHash,
       status: "PROCESSING",
       response: null,
     });
 
-    await expect(timeEntriesService.clockPhotoPunchIdempotent(input)).rejects.toMatchObject({
+    await expect(timeEntriesService.clockPhotoPunchIdempotent(input, CLOCK_DEVICE_ID)).rejects.toMatchObject({
       statusCode: 409,
       code: "CLOCK_ATTEMPT_PROCESSING",
     });
@@ -1346,15 +1379,98 @@ describe("clockPhotoPunchIdempotent", () => {
     repo.findClockPunchAttempt.mockResolvedValue({
       requestId: input.requestId,
       employeeId: input.employeeId,
+      deviceId: CLOCK_DEVICE_ID,
       punchType: "INGRESO",
       requestHash: "un-hash-completamente-distinto",
       status: "COMPLETED",
       response: { workShift: { id: "shift-otro" } },
     });
 
-    await expect(timeEntriesService.clockPhotoPunchIdempotent(input)).rejects.toMatchObject({
+    await expect(timeEntriesService.clockPhotoPunchIdempotent(input, CLOCK_DEVICE_ID)).rejects.toMatchObject({
       statusCode: 409,
       code: "CLOCK_IDEMPOTENCY_KEY_REUSED",
+    });
+  });
+
+  describe("F6 — intentos atados al ClockDevice autenticado", () => {
+    it("crea el intento con el deviceId autenticado", async () => {
+      const input = clockPhotoPunchInput();
+      repo.findClockValidationContext.mockResolvedValue({ ...activeEmployee, workShifts: [], hourConcepts: [] });
+      repo.createClockPunchAttempt.mockRejectedValue(prismaKnownError("P2002"));
+      repo.findClockPunchAttempt.mockResolvedValue({
+        requestId: input.requestId, employeeId: input.employeeId, deviceId: CLOCK_DEVICE_ID, punchType: "INGRESO",
+        requestHash: clockAttemptHash(input), status: "COMPLETED", response: { workShift: { id: "shift-stored" } },
+      });
+
+      await timeEntriesService.clockPhotoPunchIdempotent(input, CLOCK_DEVICE_ID);
+
+      expect(repo.createClockPunchAttempt).toHaveBeenCalledWith(expect.objectContaining({ requestId: input.requestId, deviceId: CLOCK_DEVICE_ID }));
+    });
+
+    it("un requestId de OTRO dispositivo (mismo payload) no devuelve su resultado: 409 como clave reutilizada", async () => {
+      const input = clockPhotoPunchInput();
+      repo.findClockValidationContext.mockResolvedValue({ ...activeEmployee, workShifts: [], hourConcepts: [] });
+      repo.createClockPunchAttempt.mockRejectedValue(prismaKnownError("P2002"));
+      repo.findClockPunchAttempt.mockResolvedValue({
+        requestId: input.requestId, employeeId: input.employeeId, deviceId: OTHER_CLOCK_DEVICE_ID, punchType: "INGRESO",
+        requestHash: clockAttemptHash(input), status: "COMPLETED", response: { workShift: { id: "shift-ajeno" } },
+      });
+
+      const error = await timeEntriesService.clockPhotoPunchIdempotent(input, CLOCK_DEVICE_ID).catch((caught: unknown) => caught);
+
+      expect(error).toMatchObject({ statusCode: 409, code: "CLOCK_IDEMPOTENCY_KEY_REUSED" });
+      expect(JSON.stringify(error)).not.toContain("shift-ajeno");
+      expect(repo.createOpenWorkShift).not.toHaveBeenCalled();
+    });
+
+    it("un intento histórico sin dispositivo (deviceId NULL) tampoco se reutiliza", async () => {
+      const input = clockPhotoPunchInput();
+      repo.findClockValidationContext.mockResolvedValue({ ...activeEmployee, workShifts: [], hourConcepts: [] });
+      repo.createClockPunchAttempt.mockRejectedValue(prismaKnownError("P2002"));
+      repo.findClockPunchAttempt.mockResolvedValue({
+        requestId: input.requestId, employeeId: input.employeeId, deviceId: null, punchType: "INGRESO",
+        requestHash: clockAttemptHash(input), status: "COMPLETED", response: { workShift: { id: "shift-historico" } },
+      });
+
+      await expect(timeEntriesService.clockPhotoPunchIdempotent(input, CLOCK_DEVICE_ID)).rejects.toMatchObject({ code: "CLOCK_IDEMPOTENCY_KEY_REUSED" });
+    });
+
+    it("si la fichada falla, el intento ya quedó creado con el dispositivo y se marca FAILED", async () => {
+      const input = { ...clockPhotoPunchInput(), faceValidationStatus: "NO_FACE" as const };
+      repo.findClockValidationContext.mockResolvedValue({ ...activeEmployee, workShifts: [], hourConcepts: [] });
+      repo.createClockPunchAttempt.mockResolvedValue({});
+      repo.failClockPunchAttempt.mockResolvedValue({});
+
+      await expect(timeEntriesService.clockPhotoPunchIdempotent(input, CLOCK_DEVICE_ID)).rejects.toMatchObject({ code: "CLOCK_FACE_VALIDATION_FAILED" });
+
+      expect(repo.createClockPunchAttempt).toHaveBeenCalledWith(expect.objectContaining({ deviceId: CLOCK_DEVICE_ID }));
+      expect(repo.failClockPunchAttempt).toHaveBeenCalledWith(input.requestId, expect.objectContaining({ code: "CLOCK_FACE_VALIDATION_FAILED" }));
+    });
+
+    const storedAttempt = (deviceId: string | null) => ({
+      requestId: "88888888-8888-8888-8888-888888888888",
+      employeeId: activeEmployee.id,
+      deviceId,
+      status: "COMPLETED",
+      startedAt: new Date(),
+      response: { workShift: { id: "shift-1", startAt: "2026-10-06T11:00:00.000Z" } },
+    });
+
+    it("el mismo dispositivo puede consultar su intento", async () => {
+      repo.findClockPunchAttempt.mockResolvedValueOnce(storedAttempt(CLOCK_DEVICE_ID));
+      const state = await timeEntriesService.clockPunchAttemptStatus("88888888-8888-8888-8888-888888888888", activeEmployee.id, CLOCK_DEVICE_ID);
+      expect(state.status).toBe("COMPLETED");
+    });
+
+    it.each([
+      ["otro dispositivo", OTHER_CLOCK_DEVICE_ID],
+      ["intento histórico sin dispositivo", null],
+    ])("%s → el mismo 404 que un intento inexistente, sin tocar el intento", async (_label, ownerDeviceId) => {
+      repo.findClockPunchAttempt.mockResolvedValueOnce({ ...storedAttempt(ownerDeviceId), status: "PROCESSING", startedAt: new Date(0) });
+      await expect(timeEntriesService.clockPunchAttemptStatus("88888888-8888-8888-8888-888888888888", activeEmployee.id, CLOCK_DEVICE_ID))
+        .rejects.toMatchObject({ statusCode: 404, code: "CLOCK_ATTEMPT_NOT_FOUND" });
+      // Un PROCESSING vencido de otro dispositivo no se marca FAILED desde acá.
+      expect(repo.failClockPunchAttempt).not.toHaveBeenCalled();
     });
   });
 });
@@ -1883,7 +1999,7 @@ describe("Etapa 15M.2 — sincronización automática de HourConceptBreakdown al
         faceValidationStatus: "VALID" as const,
       };
 
-      await timeEntriesService.clockPhotoPunch(input, undefined, exitValidationContext() as never);
+      await timeEntriesService.clockPhotoPunch(input, CLOCK_DEVICE_ID, undefined, exitValidationContext() as never);
 
       expect(mockedRecalculateForEmployeePeriod).toHaveBeenCalledTimes(1);
       expect(mockedRecalculateForEmployeePeriod).toHaveBeenCalledWith(expect.objectContaining({ employeeId: activeEmployee.id }));
@@ -1899,7 +2015,7 @@ describe("Etapa 15M.2 — sincronización automática de HourConceptBreakdown al
         faceValidationStatus: "VALID" as const,
       };
 
-      await timeEntriesService.clockPhotoPunch(input, undefined, { ...activeEmployee, workShifts: [], hourConcepts: [] } as never);
+      await timeEntriesService.clockPhotoPunch(input, CLOCK_DEVICE_ID, undefined, { ...activeEmployee, workShifts: [], hourConcepts: [] } as never);
 
       expect(mockedRecalculateForEmployeePeriod).not.toHaveBeenCalled();
     });
@@ -1922,7 +2038,7 @@ describe("Etapa 15M.2 — sincronización automática de HourConceptBreakdown al
         hourConcepts: [],
       };
 
-      const result = await timeEntriesService.clockPhotoPunch(input, undefined, context as never);
+      const result = await timeEntriesService.clockPhotoPunch(input, CLOCK_DEVICE_ID, undefined, context as never);
 
       expect(result.workShift.id).toBe("shift-open");
     });
@@ -1938,7 +2054,7 @@ describe("Etapa 15M.2 — sincronización automática de HourConceptBreakdown al
         faceValidationStatus: "VALID" as const,
       };
 
-      await expect(timeEntriesService.clockPhotoPunch(input, undefined, { ...activeEmployee, workShifts: [], hourConcepts: [] } as never)).rejects.toMatchObject({ code: "CLOCK_NO_OPEN_SHIFT" });
+      await expect(timeEntriesService.clockPhotoPunch(input, CLOCK_DEVICE_ID, undefined, { ...activeEmployee, workShifts: [], hourConcepts: [] } as never)).rejects.toMatchObject({ code: "CLOCK_NO_OPEN_SHIFT" });
 
       expect(repo.closeOpenWorkShift).not.toHaveBeenCalled();
       expect(mockedRecalculateForEmployeePeriod).not.toHaveBeenCalled();

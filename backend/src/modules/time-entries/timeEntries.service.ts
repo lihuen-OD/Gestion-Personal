@@ -539,6 +539,7 @@ type ClockPhotoEvidence = {
   faceDetectionScore?: number | null;
   ipAddress?: string | null;
   userAgent?: string | null;
+  deviceId: string;
   rawPayload: Prisma.InputJsonValue;
   performance: { originalMs: number; thumbnailMs: number; totalMs: number; thumbnailDeferred: boolean };
 };
@@ -582,7 +583,7 @@ function decodeClockPhoto(dataUrl: string, options?: { minBytes?: number; maxByt
   return { buffer, mimeType };
 }
 
-async function storeClockPunchPhoto(input: ClockPhotoPunchInput, timestamp: Date, audit?: AuditContext): Promise<{ evidence: ClockPhotoEvidence; thumbnail: DeferredClockThumbnail }> {
+async function storeClockPunchPhoto(input: ClockPhotoPunchInput, deviceId: string, timestamp: Date, audit?: AuditContext): Promise<{ evidence: ClockPhotoEvidence; thumbnail: DeferredClockThumbnail }> {
   const storageStarted = performance.now();
   const { buffer, mimeType } = decodeClockPhoto(input.photo, { label: "foto de fichada" });
   const thumbnailData = input.thumbnail || input.photo;
@@ -621,7 +622,8 @@ async function storeClockPunchPhoto(input: ClockPhotoPunchInput, timestamp: Date
   };
   console.info("CLOCK_PHOTO_STORAGE_TIMING", { requestId: input.requestId, ...storagePerformance });
 
-  const userAgent = audit?.userAgent || input.device?.userAgent || null;
+  // IP, user-agent y dispositivo salen de la request autenticada, nunca del
+  // body: `input.device` es sólo contexto informativo de la cámara.
   return { evidence: {
     photoUrl: stored.driveWebViewLink || null,
     photoStoragePath: stored.storageKey,
@@ -631,7 +633,8 @@ async function storeClockPunchPhoto(input: ClockPhotoPunchInput, timestamp: Date
     faceValidationStatus: input.faceValidationStatus,
     faceDetectionScore: input.faceDetectionScore ?? null,
     ipAddress: audit?.ipAddress || null,
-    userAgent,
+    userAgent: audit?.userAgent || null,
+    deviceId,
     rawPayload: {
       device: {
         platform: input.device?.platform || null,
@@ -1226,10 +1229,14 @@ export const timeEntriesService = {
     };
   },
 
-  async clockPunchAttemptStatus(requestId: string, employeeId: string) {
+  // F6: un intento sólo existe para el dispositivo que lo creó. Inexistente,
+  // de otro dispositivo, histórico sin dispositivo o de otro empleado
+  // responden el mismo 404, sin revelar que el requestId existe.
+  async clockPunchAttemptStatus(requestId: string, employeeId: string, deviceId: string) {
     let attempt = await timeEntriesRepository.findClockPunchAttempt(requestId);
-    if (!attempt) throw new AppError("No se encontró el intento de fichada.", 404, "CLOCK_ATTEMPT_NOT_FOUND");
-    if (attempt.employeeId !== employeeId) throw new AppError("No se encontró el intento de fichada.", 404, "CLOCK_ATTEMPT_NOT_FOUND");
+    if (!attempt || attempt.deviceId !== deviceId || attempt.employeeId !== employeeId) {
+      throw new AppError("No se encontró el intento de fichada.", 404, "CLOCK_ATTEMPT_NOT_FOUND");
+    }
     if (attempt.status === "PROCESSING" && Date.now() - attempt.startedAt.getTime() > env.CLOCK_ATTEMPT_PROCESSING_TTL_MS) {
       attempt = await timeEntriesRepository.failClockPunchAttempt(requestId, {
         code: "CLOCK_ATTEMPT_TIMEOUT",
@@ -1249,7 +1256,7 @@ export const timeEntriesService = {
     };
   },
 
-  async clockPhotoPunchIdempotent(input: ClockPhotoPunchInput, audit?: AuditContext) {
+  async clockPhotoPunchIdempotent(input: ClockPhotoPunchInput, deviceId: string, audit?: AuditContext) {
     const totalStarted = performance.now();
     const validationStarted = performance.now();
     const validationContext = await resolveClockValidationContext(input.employeeId);
@@ -1260,13 +1267,17 @@ export const timeEntriesService = {
       await timeEntriesRepository.createClockPunchAttempt({
         requestId: input.requestId,
         employeeId: input.employeeId,
+        deviceId,
         punchType,
         requestHash,
       });
     } catch (error) {
       if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== "P2002") throw error;
       const existing = await timeEntriesRepository.findClockPunchAttempt(input.requestId);
-      if (!existing || existing.requestHash !== requestHash || existing.employeeId !== input.employeeId || existing.punchType !== punchType) {
+      // requestId es global (@unique): si pertenece a otro dispositivo se
+      // responde exactamente como una clave reutilizada, sin devolver nunca
+      // el resultado ni el error guardado de un intento ajeno.
+      if (!existing || existing.deviceId !== deviceId || existing.requestHash !== requestHash || existing.employeeId !== input.employeeId || existing.punchType !== punchType) {
         throw new AppError("La clave de fichada ya fue utilizada para otra operación.", 409, "CLOCK_IDEMPOTENCY_KEY_REUSED");
       }
       if (existing.status === "COMPLETED" && existing.response) return storedAttemptResponse(existing.response);
@@ -1277,7 +1288,7 @@ export const timeEntriesService = {
     }
 
     try {
-      const result = await timeEntriesService.clockPhotoPunch(input, audit, validationContext, contextMs);
+      const result = await timeEntriesService.clockPhotoPunch(input, deviceId, audit, validationContext, contextMs);
       const serialized = JSON.parse(JSON.stringify(result)) as Prisma.InputJsonValue;
       const completionStarted = performance.now();
       await timeEntriesRepository.completeClockPunchAttempt(input.requestId, serialized).catch((error) => {
@@ -1310,7 +1321,7 @@ export const timeEntriesService = {
     }
   },
 
-  async clockPhotoPunch(input: ClockPhotoPunchInput, audit?: AuditContext, preparedContext?: ClockValidationContext, contextMs = 0) {
+  async clockPhotoPunch(input: ClockPhotoPunchInput, deviceId: string, audit?: AuditContext, preparedContext?: ClockValidationContext, contextMs = 0) {
     const coreStarted = performance.now();
     const context = preparedContext || await resolveClockValidationContext(input.employeeId);
     const employee = context;
@@ -1360,7 +1371,7 @@ export const timeEntriesService = {
     let evidence: ClockPhotoEvidence;
     let deferredThumbnail: DeferredClockThumbnail;
     try {
-      const storedPhoto = await storeClockPunchPhoto(input, now, audit);
+      const storedPhoto = await storeClockPunchPhoto(input, deviceId, now, audit);
       evidence = storedPhoto.evidence;
       deferredThumbnail = storedPhoto.thumbnail;
     } catch (error) {

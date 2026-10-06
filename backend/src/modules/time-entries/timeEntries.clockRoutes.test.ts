@@ -199,6 +199,26 @@ describe.each(operationalRoutes)("F6 — $name exige un ClockDevice ACTIVE indiv
   });
 });
 
+describe("F6 — el dispositivo autenticado es la única fuente de deviceId", () => {
+  it("photo-punch pasa al servicio el id autenticado aunque el body intente otro", async () => {
+    const result = await call("POST", "/clock/photo-punch", { authorization: credential(ACTIVE), body: { ...validPunch, deviceId: OTHER_ACTIVE.id } });
+    expect(result.status).toBe(201);
+    const [input, deviceId] = vi.mocked(timeEntriesService.clockPhotoPunchIdempotent).mock.calls[0]!;
+    expect(deviceId).toBe(ACTIVE.id);
+    expect(input).not.toHaveProperty("deviceId");
+  });
+
+  it("attempts consulta en nombre del dispositivo autenticado", async () => {
+    await call("GET", `/clock/attempts/${REQUEST_ID}?employeeId=${EMPLOYEE_ID}`, { authorization: credential(OTHER_ACTIVE) });
+    expect(timeEntriesService.clockPunchAttemptStatus).toHaveBeenCalledWith(REQUEST_ID, EMPLOYEE_ID, OTHER_ACTIVE.id);
+  });
+
+  it("la autenticación corre antes que la validación: un body inválido sin credencial es 401, no 400", async () => {
+    expect(await call("POST", "/clock/photo-punch", { body: { ...validPunch, photo: undefined } })).toMatchObject({ status: 401 });
+    expect((await call("POST", "/clock/photo-punch", { authorization: credential(ACTIVE), body: { ...validPunch, photo: undefined } })).status).toBe(400);
+  });
+});
+
 describe("F6 — presencia con throttle", () => {
   it("un dispositivo visto hace más de 60 s actualiza lastSeen una vez, con IP/UA de la request", async () => {
     await call("GET", "/clock/employees?search=ana", { authorization: credential(STALE) });

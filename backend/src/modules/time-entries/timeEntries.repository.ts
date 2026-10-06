@@ -154,6 +154,10 @@ type PunchEvidenceInput = {
   faceDetectionScore?: number | null;
   ipAddress?: string | null;
   userAgent?: string | null;
+  // F6: ClockDevice autenticado que registró la fichada. Sale sólo de
+  // requireClockDevice (nunca del body); las fichadas sin dispositivo
+  // (ADMIN, PORTAL_DNI, históricas) quedan en NULL.
+  deviceId?: string | null;
   rawPayload?: Prisma.InputJsonValue;
 };
 
@@ -186,6 +190,7 @@ function punchEvidenceData(evidence?: PunchEvidenceInput) {
     faceDetectionScore: evidence.faceDetectionScore ?? null,
     ipAddress: evidence.ipAddress || null,
     userAgent: evidence.userAgent || null,
+    deviceId: evidence.deviceId || null,
     rawPayload: evidence.rawPayload,
   };
 }
@@ -495,7 +500,7 @@ function resolvePeriodStatus(statuses: string[]) {
 }
 
 export const timeEntriesRepository = {
-  createClockPunchAttempt(input: { requestId: string; employeeId: string; punchType: "INGRESO" | "SALIDA"; requestHash: string }) {
+  createClockPunchAttempt(input: { requestId: string; employeeId: string; deviceId: string; punchType: "INGRESO" | "SALIDA"; requestHash: string }) {
     return prisma.clockPunchAttempt.create({ data: input });
   },
 
