@@ -256,7 +256,7 @@ describe("workforceController.doubleRules — cache de lectura TTL (Etapa 9C)", 
     expect(mockedService.doubleRules).toHaveBeenCalledTimes(2);
   });
 
-  it("activar/desactivar una regla (updateDoubleRule con status, y removeDoubleRule) invalida el cache en ambos casos", async () => {
+  it("activar/desactivar una regla (updateDoubleRule con status) y eliminarla (removeDoubleRule) invalidan el cache en ambos casos", async () => {
     mockedService.doubleRules.mockResolvedValue(rules);
     const req = fakeReq({ originalUrl: "/workforce/double-hour-rules" });
     await workforceController.doubleRules(req, fakeRes());
@@ -272,7 +272,7 @@ describe("workforceController.doubleRules — cache de lectura TTL (Etapa 9C)", 
     await workforceController.doubleRules(req, fakeRes()); // miss tras updateDoubleRule -> vuelve a cachear
     expect(mockedService.doubleRules).toHaveBeenCalledTimes(2);
 
-    mockedService.removeDoubleRule.mockResolvedValue({ mode: "INACTIVATED", item: { id: "rule-1", status: "INACTIVO" } });
+    mockedService.removeDoubleRule.mockResolvedValue({ mode: "DELETED", id: "rule-1" });
     await workforceController.removeDoubleRule(fakeReq({
       originalUrl: "/workforce/double-hour-rules/rule-1",
       params: { id: "rule-1" },

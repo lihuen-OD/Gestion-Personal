@@ -6,7 +6,7 @@ import { roles } from "../../shared/security/roles";
 import { isMonthlyClosureLocked } from "../../shared/monthlyClosure/closureLock";
 import type { AuditContext } from "../audit/audit.service";
 import { auditService } from "../audit/audit.service";
-import { argentinaCalendarDate, humanizePeriodEs, todayArgentinaDateKey } from "../../shared/datetime/argentinaTime";
+import { humanizePeriodEs } from "../../shared/datetime/argentinaTime";
 import { buildActiveDatesByRule, resolveWinningRules, ruleMatchesDate, scopesCouldOverlap } from "./doubleHourRuleMatching";
 import type { CorrectionsQuery, ListNotificationsQuery } from "./workforce.schemas";
 import { buildClosureSnapshots } from "./closureSnapshot";
@@ -471,39 +471,26 @@ export const workforceService = {
     const days = await workforceService.calendarPreview(from, to, "FERIADO");
     return days.map((day) => ({ date: day.date, rules: day.rules.map((rule) => ({ id: rule.id, name: rule.name })) }));
   },
+  // Eliminar = la regla se creó por error: se borra físicamente, haya o no
+  // empezado/terminado su vigencia y esté ACTIVA o INACTIVA. Conservar una
+  // regla válida que ya no debe aplicar es Inactivar (PATCH status), no esto.
+  // En una transacción: se retira su traza (SpecialHourRuleApplication es
+  // RESTRICT hacia la regla; empleados y fechas caen por CASCADE), se borra y
+  // se reinterpretan las horas que alcanzaba como si nunca hubiera existido
+  // (las reglas que quedan resuelven el multiplicador). Nunca toca minutos,
+  // fichadas ni jornadas. Si el recálculo falla, la regla sigue existiendo.
+  // El AuditLog (before = configuración completa) conserva la historia.
   async removeDoubleRule(id: string, audit?: AuditContext) {
     const before = await prisma.doubleHourRule.findUnique({ where: { id }, include: { employees: true, dates: true } });
     if (!before) throw new AppError("No encontramos la regla solicitada", 404, "DOUBLE_HOUR_RULE_NOT_FOUND");
-    const today = argentinaCalendarDate(todayArgentinaDateKey());
-    const hasStarted = before.fromDate <= today;
-    const recalculation = { doubleHourRuleId: id, doubleHourRuleName: before.name };
-    if (hasStarted) {
-      // Ya empezó: se inactiva (conserva la historia de la regla) y las horas
-      // que alcanzaba vuelven a su valor sin ella.
-      const { item, reinterpretation } = await execute(() => prisma.$transaction(async (tx) => {
-        const inactivated = await tx.doubleHourRule.update({ where: { id }, data: { status: "INACTIVO" }, include: { employees: true } });
-        const result = await reinterpretSpecialHours(tx, { before: ruleCalendar(before), after: null }, recalculation);
-        return { item: inactivated, reinterpretation: result };
-      }, SPECIAL_HOUR_RULE_TRANSACTION_OPTIONS));
-      await auditService.register({
-        ...audit, action: "DEACTIVATE", entity: "DoubleHourRule", entityId: id,
-        description: `Se inactivó ${ruleNoun(before)} ${before.name} (${describeRuleSchedule(before)}) porque su vigencia ya había comenzado. ${describeReinterpretation(reinterpretation)}`,
-        before: before as Prisma.InputJsonValue,
-        after: { ...item, reinterpretation: reinterpretationMetadata(reinterpretation) } as Prisma.InputJsonValue,
-      });
-      await auditSpecialHourRuleClosures(before, reinterpretation, audit);
-      return { mode: "INACTIVATED" as const, item };
-    }
-    // Regla futura: se elimina. Su traza (si alguna carga ya la tenía) se
-    // reconstruye sin ella; SpecialHourRuleApplication es RESTRICT hacia la regla.
     const reinterpretation = await execute(() => prisma.$transaction(async (tx) => {
       await tx.specialHourRuleApplication.deleteMany({ where: { doubleHourRuleId: id } });
       await tx.doubleHourRule.delete({ where: { id } });
-      return reinterpretSpecialHours(tx, { before: ruleCalendar(before), after: null }, recalculation);
+      return reinterpretSpecialHours(tx, { before: ruleCalendar(before), after: null }, { doubleHourRuleId: id, doubleHourRuleName: before.name });
     }, SPECIAL_HOUR_RULE_TRANSACTION_OPTIONS));
     await auditService.register({
       ...audit, action: "DELETE", entity: "DoubleHourRule", entityId: id,
-      description: `Se eliminó ${ruleNoun(before)} ${before.name} (${describeRuleSchedule(before)}), que todavía no había entrado en vigencia. ${describeReinterpretation(reinterpretation)}`,
+      description: `Se eliminó definitivamente ${ruleNoun(before)} ${before.name} (${describeRuleSchedule(before)}, ${formatMultiplierLabel(before.multiplier)}). ${describeReinterpretation(reinterpretation)}`,
       before: before as Prisma.InputJsonValue,
       after: { reinterpretation: reinterpretationMetadata(reinterpretation) } as Prisma.InputJsonValue,
     });

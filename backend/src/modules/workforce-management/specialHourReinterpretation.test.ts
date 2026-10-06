@@ -514,6 +514,101 @@ describe("FERIADO + convocatoria (HolidayWorkAssignment) reinterpreta las horas"
   });
 });
 
+// Eliminar definitivamente una regla (workforceService.removeDoubleRule): en la
+// misma transacción se retira su traza, se borra la regla y se reinterpreta con
+// after: null. Acá se simula ese borrado tal cual (la regla y su traza
+// desaparecen del mundo) y se corre el mismo motor: las horas quedan como si la
+// regla nunca hubiera existido, resueltas por las reglas que quedan.
+describe("Eliminar definitivamente una regla reinterpreta como si nunca hubiera existido", () => {
+  const OCT_5 = new Date("2026-10-05T00:00:00.000Z");
+  const feriados = () => feriado({ id: "rule-feriados", name: "Feriados", fromDate: OCT_5, toDate: OCT_5, dates: [{ date: OCT_5, isActive: true }] });
+  const jornadaEspecial = () => feriado({ id: "rule-jornada", name: "Jornada especial", kind: "JORNADA_ESPECIAL", fromDate: OCT_5, toDate: OCT_5, dates: [{ date: OCT_5, isActive: true }], multiplier: 1.5 });
+  async function deleteRule(rule: Rule) {
+    world.rules = world.rules.filter((item) => item.id !== rule.id);
+    world.applications = world.applications.filter((item) => item.doubleHourRuleId !== rule.id);
+    return reinterpret(rule, null);
+  }
+
+  it("§8 — base 8 + Prueba 02 3 h (dentro) + Colectivo 1 h (adicional) con feriado x2: normales 10/Prueba 6/Colectivo 2 → al eliminarlo 5/3/1, total real 9 intacto", async () => {
+    world.rules.push(feriados());
+    loadHours(JUAN, OCT_5, 8);
+    loadConcept(JUAN, OCT_5, "prueba-02", 180, "WITHIN_BASE");
+    loadConcept(JUAN, OCT_5, "colectivo", 60, "ADDITIVE_TO_WORKED_TOTAL");
+    const minutesBefore = { entries: world.entries.map((row) => row.totalMinutes), breakdowns: world.breakdowns.map((row) => row.minutes) };
+    expect(dayAccounting(JUAN, OCT_5).settlement).toMatchObject({ normalMinutes: 600, withinBaseMinutes: 360, additiveMinutes: 120 });
+
+    const result = await deleteRule(feriados());
+    const day = dayAccounting(JUAN, OCT_5);
+
+    expect(day.settlement).toMatchObject({ normalMinutes: 300, withinBaseMinutes: 180, additiveMinutes: 60, totalMinutes: 540 });
+    expect(day.concepts).toEqual(expect.arrayContaining([
+      { hourConceptId: "prueba-02", treatment: "WITHIN_BASE", realMinutes: 180, settlementMinutes: 180 },
+      { hourConceptId: "colectivo", treatment: "ADDITIVE_TO_WORKED_TOTAL", realMinutes: 60, settlementMinutes: 60 },
+    ]));
+    expect(hours(day.totalWorkedMinutes)).toBe(9);
+    expect({ entries: world.entries.map((row) => row.totalMinutes), breakdowns: world.breakdowns.map((row) => row.minutes) }).toEqual(minutesBefore);
+    expect(result).toMatchObject({ timeEntries: 1, breakdowns: 2 });
+  });
+
+  it("reglas superpuestas: Feriado x2 + Jornada especial x1.5 el mismo día → eliminar el feriado deja x1.5 (no x1), con la traza de la que queda", async () => {
+    world.rules = [{ ...feriados(), priority: 10 }, jornadaEspecial()]; // el feriado gana por prioridad
+    loadHours(JUAN, OCT_5, 8);
+    world.segments.push({ id: "segment-5", employeeId: JUAN, date: OCT_5, minutes: 480, isSpecial: false });
+    await reinterpret(null, world.rules[0]!);
+    expect(world.entries[0]!.appliedMultiplier).toBe(2);
+
+    await deleteRule(world.rules[0]!);
+
+    expect(world.entries[0]!.appliedMultiplier).toBe(1.5);
+    expect(hours(dayAccounting(JUAN, OCT_5).settlement.totalMinutes)).toBe(12);
+    expect(world.applications).toEqual([{ timeSegmentId: "segment-5", doubleHourRuleId: "rule-jornada", multiplierApplied: 1.5, isWinner: true, wasConflicting: false }]);
+    expect(world.segments[0]).toMatchObject({ isSpecial: true, minutes: 480 });
+  });
+
+  it("feriado con convocatoria: eliminarlo quita el multiplicador del convocado; la convocatoria sigue existiendo y no da multiplicador por sí sola", async () => {
+    world.rules.push(feriados());
+    world.convocations.push({ employeeId: JUAN, date: OCT_5, status: "ACTIVA" });
+    loadHours(JUAN, OCT_5, 8);
+    world.segments.push({ id: "segment-5", employeeId: JUAN, date: OCT_5, minutes: 480, isSpecial: false });
+    await reinterpret(null, feriados());
+    expect(hours(dayAccounting(JUAN, OCT_5).settlement.totalMinutes)).toBe(16);
+
+    await deleteRule(feriados());
+
+    expect(world.convocations).toEqual([{ employeeId: JUAN, date: OCT_5, status: "ACTIVA" }]);
+    expect(world.entries[0]!.appliedMultiplier).toBe(1);
+    expect(hours(dayAccounting(JUAN, OCT_5).totalWorkedMinutes)).toBe(8);
+    expect(hours(dayAccounting(JUAN, OCT_5).settlement.totalMinutes)).toBe(8);
+    expect(world.applications).toEqual([]);
+    expect(world.segments[0]).toMatchObject({ isSpecial: false, minutes: 480 });
+  });
+
+  it("feriado ya finalizado con cierre APROBADO: el snapshot se reconstruye y el estado no cambia", async () => {
+    world.rules.push(feriados());
+    loadHours(JUAN, OCT_5, 8);
+    world.closures.push({ id: "closure-juan", employeeId: JUAN, period: "2026-10", status: "APROBADO", snapshot: { accounting: { settlement: { totalMinutes: 960 } } } });
+
+    const result = await deleteRule(feriados());
+
+    expect(result.rebuiltClosures.map((closure) => closure.id)).toEqual(["closure-juan"]);
+    expect(world.closures[0]!.status).toBe("APROBADO");
+    expect(hours(dayAccounting(JUAN, OCT_5).settlement.totalMinutes)).toBe(8);
+  });
+
+  it("una regla ya INACTIVA no tenía efecto: eliminarla no cambia ninguna hora", async () => {
+    world.rules.push(feriados());
+    loadHours(JUAN, OCT_5, 8);
+    world.rules = [{ ...feriados(), status: "INACTIVO" }];
+    await reinterpret(feriados(), world.rules[0]!);
+    expect(world.entries[0]!.appliedMultiplier).toBe(1);
+
+    const result = await deleteRule(world.rules[0]!);
+
+    expect(result.timeEntries).toBe(0);
+    expect(world.entries[0]!.appliedMultiplier).toBe(1);
+  });
+});
+
 describe("affectedWindow", () => {
   it("une el calendario de antes y después; una regla sin fin deja la ventana abierta", () => {
     expect(affectedWindow([feriado(), feriado({ fromDate: OCT_4, toDate: OCT_4, dates: [{ date: OCT_4, isActive: true }] })])).toEqual({ from: OCT_3, to: OCT_4 });

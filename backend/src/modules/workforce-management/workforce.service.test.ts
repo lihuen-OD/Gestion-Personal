@@ -440,43 +440,36 @@ describe("workforceService — FK reales sobre ShiftTemplate/DoubleHourRule", ()
     expect(mockedPrisma.shiftTemplate.delete).toHaveBeenCalledWith({ where: { id: "template-1" } });
   });
 
-  it("considera futura una regla del día UTC siguiente mientras en Argentina todavía es el día anterior", async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-08-15T01:30:00.000Z")); // 14/08 22:30 en Argentina
-    mockedPrisma.doubleHourRule.findUnique.mockResolvedValue(ruleRow({
-      id: "rule-1",
-      name: "Regla futura",
-      fromDate: new Date("2026-08-15T00:00:00.000Z"),
-      employees: [],
-    }));
-    mockedPrisma.doubleHourRule.delete.mockResolvedValue({ id: "rule-1" });
-
-    try {
-      await expect(workforceService.removeDoubleRule("rule-1")).resolves.toEqual({ mode: "DELETED", id: "rule-1" });
-      expect(mockedPrisma.doubleHourRule.update).not.toHaveBeenCalled();
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("Etapa 8C — una regla cuya vigencia ya comenzó se inactiva en vez de borrarse (preserva la trazabilidad de SpecialHourRuleApplication ya generada)", async () => {
+  // Eliminar = borrado físico SIEMPRE, sin importar vigencia ni estado. La
+  // política anterior (regla ya iniciada → se inactivaba) se quitó: Inactivar
+  // es el botón Power (PATCH status), no el tacho.
+  it.each([
+    ["A — futura", { fromDate: new Date("2026-12-01T00:00:00.000Z"), toDate: null, status: "ACTIVO" }],
+    ["B — activa y ya iniciada", { fromDate: new Date("2026-01-01T00:00:00.000Z"), toDate: null, status: "ACTIVO" }],
+    ["C — inactiva y ya iniciada", { fromDate: new Date("2026-01-01T00:00:00.000Z"), toDate: null, status: "INACTIVO" }],
+    ["D — ya finalizada", { fromDate: new Date("2026-01-01T00:00:00.000Z"), toDate: new Date("2026-03-31T00:00:00.000Z"), status: "ACTIVO" }],
+  ])("regla %s → se elimina físicamente (DELETED), nunca se inactiva", async (_label, vigency) => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-08-15T12:00:00.000Z"));
-    mockedPrisma.doubleHourRule.findUnique.mockResolvedValue(ruleRow({
-      id: "rule-1",
-      name: "Domingo",
-      fromDate: new Date("2026-01-01T00:00:00.000Z"),
-      employees: [],
-    }));
-    mockedPrisma.doubleHourRule.update.mockResolvedValue(ruleRow({ id: "rule-1", name: "Domingo", status: "INACTIVO" }));
-
+    mockedPrisma.doubleHourRule.findUnique.mockResolvedValue(ruleRow({ id: "rule-1", name: "Domingo", recurrenceType: "RANGO", employees: [], ...vigency }));
     try {
-      await expect(workforceService.removeDoubleRule("rule-1")).resolves.toMatchObject({ mode: "INACTIVATED" });
-      expect(mockedPrisma.doubleHourRule.delete).not.toHaveBeenCalled();
-      expect(mockedPrisma.doubleHourRule.update).toHaveBeenCalledWith({ where: { id: "rule-1" }, data: { status: "INACTIVO" }, include: { employees: true } });
+      await expect(workforceService.removeDoubleRule("rule-1")).resolves.toEqual({ mode: "DELETED", id: "rule-1" });
     } finally {
       vi.useRealTimers();
     }
+
+    expect(mockedPrisma.specialHourRuleApplication.deleteMany).toHaveBeenCalledWith({ where: { doubleHourRuleId: "rule-1" } });
+    expect(mockedPrisma.doubleHourRule.delete).toHaveBeenCalledWith({ where: { id: "rule-1" } });
+    expect(mockedPrisma.doubleHourRule.update).not.toHaveBeenCalled();
+    expect(auditService.register).toHaveBeenCalledWith(expect.objectContaining({ action: "DELETE", entity: "DoubleHourRule", entityId: "rule-1" }));
+  });
+
+  it("regla inexistente → 404, sin borrar ni auditar", async () => {
+    mockedPrisma.doubleHourRule.findUnique.mockResolvedValue(null);
+
+    await expect(workforceService.removeDoubleRule("rule-x")).rejects.toMatchObject({ statusCode: 404, code: "DOUBLE_HOUR_RULE_NOT_FOUND" });
+    expect(mockedPrisma.doubleHourRule.delete).not.toHaveBeenCalled();
+    expect(auditService.register).not.toHaveBeenCalled();
   });
 
   it("createDoubleRule mapea un userId inexistente (P2003) a un 400 prolijo", async () => {
@@ -1186,37 +1179,43 @@ describe("workforceService — reglas de Hora Especial reinterpretan la historia
     expect(auditDescriptions()).toEqual(["Se actualizó el feriado Día de la Raza (03/10/2026) de x2 a x1.5. No había horas cargadas alcanzadas por el cambio."]);
   });
 
-  it("eliminar una regla futura retira su traza, la borra y reinterpreta (after: null), todo en la misma transacción", async () => {
+  it("eliminar un feriado ya vigente, con horas y cierre: retira su traza, lo borra y reinterpreta (after: null) en la misma transacción; audita en lenguaje humano", async () => {
     vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-09-01T12:00:00.000Z"));
-    mockedPrisma.doubleHourRule.findUnique.mockResolvedValue(feriadoRow({ multiplier: 2 }));
+    vi.setSystemTime(new Date("2026-10-05T12:00:00.000Z"));
+    mockedPrisma.doubleHourRule.findUnique.mockResolvedValue(feriadoRow({ multiplier: 2, employees: [] }));
+    mockedPrisma.employee.findMany.mockResolvedValue([{ id: "016dc01c-655d-4474-8319-67f1b8108c93", legajo: "30", firstName: "Juan", lastName: "Pérez" }]);
+    const order: string[] = [];
+    mockedPrisma.specialHourRuleApplication.deleteMany.mockImplementationOnce(async () => { order.push("traza"); return { count: 23 }; });
+    mockedPrisma.doubleHourRule.delete.mockImplementationOnce(async () => { order.push("regla"); return { id: "rule-feriado" }; });
+    vi.mocked(reinterpretSpecialHours).mockImplementationOnce(async () => { order.push("reinterpretación"); return reinterpretation() as never; });
     try {
       await expect(workforceService.removeDoubleRule("rule-feriado")).resolves.toEqual({ mode: "DELETED", id: "rule-feriado" });
     } finally {
       vi.useRealTimers();
     }
 
-    expect(mockedPrisma.specialHourRuleApplication.deleteMany).toHaveBeenCalledWith({ where: { doubleHourRuleId: "rule-feriado" } });
-    expect(mockedPrisma.doubleHourRule.delete).toHaveBeenCalledWith({ where: { id: "rule-feriado" } });
-    expect(reinterpretSpecialHours).toHaveBeenCalledWith(mockedPrisma, { before: expect.objectContaining({ id: "rule-feriado" }), after: null }, expect.any(Object));
-    expect(auditDescriptions()[0]).toBe("Se eliminó el feriado Día de la Raza (03/10/2026), que todavía no había entrado en vigencia. No había horas cargadas alcanzadas por el cambio.");
+    expect(mockedPrisma.$transaction).toHaveBeenCalledWith(expect.any(Function), { timeout: 30_000 });
+    expect(order).toEqual(["traza", "regla", "reinterpretación"]);
+    expect(reinterpretSpecialHours).toHaveBeenCalledWith(mockedPrisma, { before: expect.objectContaining({ id: "rule-feriado" }), after: null }, { doubleHourRuleId: "rule-feriado", doubleHourRuleName: "Día de la Raza" });
+    expect(auditDescriptions()).toEqual([
+      "Se eliminó definitivamente el feriado Día de la Raza (03/10/2026, x2). Se recalcularon 23 carga(s) de 18 legajo(s) y 1 cierre(s) mensual(es).",
+      "Se recalculó el snapshot del cierre de octubre de 2026 de Pérez, Juan · Legajo 30 por cambio del feriado Día de la Raza. El estado del cierre no cambia.",
+    ]);
+    const ruleAudit = (auditService.register as Mock).mock.calls[0]![0];
+    expect(ruleAudit).toMatchObject({ action: "DELETE", entity: "DoubleHourRule", entityId: "rule-feriado" });
+    expect(ruleAudit.before).toMatchObject({ id: "rule-feriado", name: "Día de la Raza", kind: "FERIADO", multiplier: 2 });
+    expect(ruleAudit.after).toEqual({ reinterpretation: { timeEntries: 23, breakdowns: 0, segments: 23, employees: 18, periods: ["2026-10"], recalculatedClosureIds: ["closure-1"] } });
+    for (const description of auditDescriptions()) expect(description).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-/);
   });
 
-  it("inactivar una regla ya vigente reinterpreta (after: null) y conserva la regla", async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-10-05T12:00:00.000Z"));
-    vi.mocked(reinterpretSpecialHours).mockResolvedValueOnce(reinterpretation({ rebuiltClosures: [] }) as never);
-    mockedPrisma.doubleHourRule.findUnique.mockResolvedValue(feriadoRow({ multiplier: 2 }));
-    mockedPrisma.doubleHourRule.update.mockResolvedValue(feriadoRow({ multiplier: 2, status: "INACTIVO" }));
-    try {
-      await expect(workforceService.removeDoubleRule("rule-feriado")).resolves.toMatchObject({ mode: "INACTIVATED" });
-    } finally {
-      vi.useRealTimers();
-    }
+  it("J — si la reinterpretación falla al eliminar, el error sale de la transacción (la regla y su traza se revierten) y no se audita", async () => {
+    mockedPrisma.doubleHourRule.findUnique.mockResolvedValue(feriadoRow({ multiplier: 2, employees: [] }));
+    vi.mocked(reinterpretSpecialHours).mockRejectedValueOnce(new Error("boom"));
 
-    expect(mockedPrisma.doubleHourRule.delete).not.toHaveBeenCalled();
-    expect(reinterpretSpecialHours).toHaveBeenCalledWith(mockedPrisma, { before: expect.objectContaining({ id: "rule-feriado" }), after: null }, expect.any(Object));
-    expect(auditDescriptions()[0]).toBe("Se inactivó el feriado Día de la Raza (03/10/2026) porque su vigencia ya había comenzado. Se recalcularon 23 carga(s) de 18 legajo(s).");
+    await expect(workforceService.removeDoubleRule("rule-feriado")).rejects.toThrow("boom");
+    // El borrado ocurrió dentro del callback de $transaction: al rechazar, Prisma lo revierte.
+    expect(mockedPrisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(auditService.register).not.toHaveBeenCalled();
   });
 
   it("si la reinterpretación falla, el error sale de la transacción (la regla no queda cambiada) y no se audita", async () => {
