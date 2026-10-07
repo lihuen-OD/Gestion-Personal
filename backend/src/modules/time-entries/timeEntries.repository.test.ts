@@ -338,7 +338,7 @@ describe("carga manual aplica Horas Especiales (Etapa 11A)", () => {
         where: expect.objectContaining({
           AND: expect.arrayContaining([
             { OR: [{ companyId: null }, { companyId: { in: ["odwyer"] } }] },
-            { OR: [{ sectorId: null }, { sectorId: "panol" }] },
+            { OR: [{ sectorId: null }, { sectorId: "panol" }, { sector: { businessUnitId: { not: null } } }] },
           ]),
         }),
       }),
@@ -1185,7 +1185,7 @@ describe("SpecialHourRuleApplication y multiplicador efectivo (Etapa 3)", () => 
         where: expect.objectContaining({
           AND: expect.arrayContaining([
             { companyId: null },
-            { sectorId: null },
+            { OR: [{ sectorId: null }, { sector: { businessUnitId: { not: null } } }] },
             { costCenterId: null },
             { positionId: null },
           ]),
@@ -1237,7 +1237,7 @@ describe("SpecialHourRuleApplication y multiplicador efectivo (Etapa 3)", () => 
         where: expect.objectContaining({
           AND: expect.arrayContaining([
             { OR: [{ companyId: null }, { companyId: { in: ["odwyer"] } }] },
-            { OR: [{ sectorId: null }, { sectorId: "panol" }] },
+            { OR: [{ sectorId: null }, { sectorId: "panol" }, { sector: { businessUnitId: { not: null } } }] },
           ]),
         }),
       }),
@@ -1416,7 +1416,7 @@ describe("SpecialHourRuleApplication y multiplicador efectivo (Etapa 3)", () => 
           AND: [
             { OR: [{ employees: { none: {} } }, { employees: { some: { employeeId } } }] },
             { OR: [{ companyId: null }, { companyId: { in: ["odwyer"] } }] },
-            { OR: [{ sectorId: null }, { sectorId: "panol" }] },
+            { OR: [{ sectorId: null }, { sectorId: "panol" }, { sector: { businessUnitId: { not: null } } }] },
             { costCenterId: null },
             { positionId: null },
           ],
@@ -2657,4 +2657,3 @@ describe("timeEntriesRepository — períodos protegidos (D-5)", () => {
     mockedPrisma.__tx.monthlyTimeClosure.findMany.mockResolvedValue([]);
   });
 });
-

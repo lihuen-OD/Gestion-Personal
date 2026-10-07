@@ -136,24 +136,13 @@ async function auditSpecialHourRuleClosures(rule: RuleForChange, result: Special
   await auditClosureRecalculations(result.rebuiltClosures, `cambio ${ofRule} ${rule.name}`, audit, (employeeIds) => loadEmployeeReferences(prisma, employeeIds));
 }
 
-// A7 (docs/decisions/ORG_LOCATION_REORGANIZATION.md §17.1): el motor de horas
-// especiales compara la dimensión sector contra el sector ANTERIOR del legajo
-// (doubleHourRuleScopeWhere). Un sector del árbol nuevo no lo tiene ningún
-// legajo recargado, así que una regla limitada a él no alcanzaría a nadie.
-// Mientras D-4 no defina la pertenencia, no se puede crear ni CAMBIAR una
-// regla hacia un sector nuevo. Conservar el sector actual de una regla
-// existente sigue permitido: no se amplía ni se reduce su alcance.
+// D-4: tanto sectores anteriores como nuevos son válidos. El motor distingue
+// su semántica: anterior = FK legacy del legajo; nuevo = “Ubicado dentro de”
+// sobre los alcances del puesto.
 async function assertRuleSectorSupported(sectorId: string | null | undefined, currentSectorId: string | null = null) {
   if (!sectorId || sectorId === currentSectorId) return;
   const sector = await prisma.sector.findUnique({ where: { id: sectorId }, select: { name: true, businessUnitId: true } });
   if (!sector) throw new AppError("El sector seleccionado no existe.", 400, "DOUBLE_HOUR_RULE_SECTOR_INVALID");
-  if (sector.businessUnitId) {
-    throw new AppError(
-      `“${sector.name}” pertenece a la nueva estructura organizacional. Las reglas de horas especiales todavía se aplican por el sector anterior del legajo, así que una regla limitada a este sector no alcanzaría a nadie. Usá otra dimensión (empresa empleadora, centro de costo, puesto o empleados específicos) hasta que se defina cómo aplicar sectores nuevos.`,
-      409,
-      "DOUBLE_HOUR_RULE_SECTOR_NOT_SUPPORTED",
-    );
-  }
 }
 
 export const workforceService = {

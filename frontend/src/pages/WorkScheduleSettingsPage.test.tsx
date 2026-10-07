@@ -177,8 +177,8 @@ describe("WorkScheduleSettingsPage — Etapa 8B", () => {
 
     await fillRequiredBaseFields(user);
     await user.selectOptions(screen.getByLabelText("Empresa empleadora"), "company-odwyer");
-    expect(Array.from((screen.getByLabelText("Sector anterior") as HTMLSelectElement).options).map((option) => option.value)).toEqual(["", "sector-panol"]);
-    await user.selectOptions(screen.getByLabelText("Sector anterior"), "sector-panol");
+    expect(Array.from((screen.getByLabelText("Sector organizacional") as HTMLSelectElement).options).map((option) => option.value)).toEqual(["", "sector-panol", "sector-agro"]);
+    await user.selectOptions(screen.getByLabelText("Sector organizacional"), "sector-panol");
     await user.click(screen.getByRole("button", { name: /crear regla/i }));
 
     await waitFor(() => expect(workforceApiService.createDoubleHourRule).toHaveBeenCalled());
@@ -876,11 +876,10 @@ describe("ruleSectorOptions — sectores admitidos en reglas (A7)", () => {
     { id: "old-off", name: "Viejo inactivo", status: "INACTIVO" },
     { id: "new", name: "Agricultura", status: "ACTIVO", businessUnitId: "bu-1" },
   ];
-  it("ofrece sólo sectores anteriores activos", () => {
-    expect(ruleSectorOptions(sectors, "").map((sector) => sector.id)).toEqual(["old"]);
+  it("ofrece sectores anteriores y nuevos activos", () => {
+    expect(ruleSectorOptions(sectors, "").map((sector) => sector.id)).toEqual(["old", "new"]);
   });
   it("conserva el sector que la regla ya tiene, aunque no sería elegible hoy", () => {
-    expect(ruleSectorOptions(sectors, "old-off").map((sector) => sector.id)).toEqual(["old", "old-off"]);
+    expect(ruleSectorOptions(sectors, "old-off").map((sector) => sector.id)).toEqual(["old", "old-off", "new"]);
   });
 });
-

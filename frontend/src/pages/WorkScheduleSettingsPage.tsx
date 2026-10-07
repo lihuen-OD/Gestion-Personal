@@ -97,12 +97,10 @@ function scopeLabel(item: DoubleHourRule) {
   return parts.length ? parts.join(" · ") : "General (todos los que trabajen)";
 }
 
-// A7 (ORG_LOCATION_REORGANIZATION.md §17.1): el motor compara el sector
-// ANTERIOR del legajo. Sólo se ofrecen sectores del modelo anterior activos,
-// más el sector que la regla ya tenga (para conservarlo sin cambiar su
-// alcance). El backend rechaza igual cualquier cambio hacia un sector nuevo.
+// D-4: sectores nuevos y anteriores activos son configurables. Para los
+// nuevos, el motor usa “Ubicado dentro de” sobre el alcance del puesto.
 export function ruleSectorOptions(sectors: Array<{ id: string; name: string; status: string; businessUnitId?: string }>, currentSectorId: string) {
-  return sectors.filter((sector) => sector.id === currentSectorId || (!sector.businessUnitId && sector.status === "ACTIVO"));
+  return sectors.filter((sector) => sector.id === currentSectorId || sector.status === "ACTIVO");
 }
 
 export function WorkScheduleSettingsPage() {
@@ -470,7 +468,7 @@ export function WorkScheduleSettingsPage() {
                 </select>
               </label>
               <label className="field">
-                <span>Sector anterior</span>
+                <span>Sector organizacional</span>
                 <select value={rule.sectorId} onChange={(e) => setRule({ ...rule, sectorId: e.target.value })}>
                   <option value="">Todos</option>
                   {ruleSectorOptions(catalog?.sectors ?? [], rule.sectorId).map((sector) => (

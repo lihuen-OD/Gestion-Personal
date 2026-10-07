@@ -1,5 +1,6 @@
 import { ApprovalStatus, EmployeeStatus, Prisma, WorkShiftSource, WorkShiftStatus } from "@prisma/client";
 import { prisma, type PrismaTransactionClient } from "../../shared/prisma/client";
+import { AppError } from "../../shared/errors/AppError";
 import { FICHADA_ORIGIN_NOTE } from "./timeEntryObservationText";
 import { assertClosurePeriodsWritable, employeePeriodKey, findProtectedClosurePeriods } from "../../shared/monthlyClosure/closurePeriodGuard";
 import { noveltyCoversDay } from "../novelties/novelties.dateRange";
@@ -220,6 +221,18 @@ function scopeDimensionFilter(field: "sectorId" | "costCenterId" | "positionId",
   return employeeValue ? { OR: [{ [field]: null }, { [field]: employeeValue }] } : { [field]: null };
 }
 
+function sectorScopeCandidateFilter(employeeSectorId: string | null | undefined): Prisma.DoubleHourRuleWhereInput {
+  return {
+    OR: [
+      { sectorId: null },
+      ...(employeeSectorId ? [{ sectorId: employeeSectorId }] : []),
+      // Los sectores del árbol nuevo se resuelven después contra el alcance
+      // del puesto; no se pueden descartar en SQL usando Employee.sectorId.
+      { sector: { businessUnitId: { not: null } } },
+    ],
+  };
+}
+
 // Filtro Prisma de alcance por empleado (empresa/sector/centro de
 // costo/puesto/empleados específicos, todos opcionales y combinados con AND).
 // Lo usa sólo el motor único resolveSpecialHourRulesByDate, que recibe el
@@ -228,11 +241,11 @@ function scopeDimensionFilter(field: "sectorId" | "costCenterId" | "positionId",
 // Exportada sólo para el test de caracterización de A7
 // (doubleHourRuleScope.characterization.test.ts): fija el criterio vigente
 // antes de cualquier decisión D-4/D-5. No cambiar sin esa decisión.
-export function doubleHourRuleScopeWhere(employeeId: string, employeeCompanyIds: string[], employeeSectorId: string | null | undefined, employeeCostCenterId: string | null | undefined, employeePositionId: string | null | undefined): Prisma.DoubleHourRuleWhereInput["AND"] {
+export function doubleHourRuleScopeWhere(employeeId: string, employeeCompanyIds: string[], employeeSectorId: string | null | undefined, employeeCostCenterId: string | null | undefined, employeePositionId: string | null | undefined, includeSector = true): Prisma.DoubleHourRuleWhereInput["AND"] {
   return [
     { OR: [{ employees: { none: {} } }, { employees: { some: { employeeId } } }] },
     employeeCompanyIds.length ? { OR: [{ companyId: null }, { companyId: { in: employeeCompanyIds } }] } : { companyId: null },
-    scopeDimensionFilter("sectorId", employeeSectorId),
+    ...(includeSector ? [scopeDimensionFilter("sectorId", employeeSectorId)] : [sectorScopeCandidateFilter(employeeSectorId)]),
     scopeDimensionFilter("costCenterId", employeeCostCenterId),
     scopeDimensionFilter("positionId", employeePositionId),
   ];
@@ -266,6 +279,25 @@ export type SpecialHourResolution = SpecialHourRuleResolution<DoubleHourRuleForE
 
 type SpecialHourRuleReader = Pick<PrismaTransactionClient, "employee" | "doubleHourRule" | "holidayWorkAssignment">;
 
+type EmployeeRuleScope = {
+  sectorId: string | null;
+  costCenterId: string | null;
+  positionId: string | null;
+  companies: Array<{ companyId: string }>;
+  position: null | { orgScopes: Array<{ level: string; sectorId: string | null; area: null | { sectorId: string | null }; createdAt: Date }> };
+};
+
+function ruleSectorMatchesEmployee(rule: DoubleHourRuleForEngine & { sector: null | { businessUnitId: string | null } }, employee: EmployeeRuleScope | null) {
+  if (!rule.sectorId) return true;
+  if (!rule.sector?.businessUnitId) return employee?.sectorId === rule.sectorId;
+  // D-4 “Ubicado dentro de”: sólo un alcance situado en el sector elegido o
+  // en una de sus áreas. Un alcance superior (empresa/UN) no hereda todas las
+  // reglas sectoriales.
+  return employee?.position?.orgScopes.some((scope) =>
+    (scope.level === "SECTOR" && scope.sectorId === rule.sectorId)
+    || (scope.level === "AREA" && scope.area?.sectorId === rule.sectorId)) ?? false;
+}
+
 // Motor ÚNICO de Hora Especial por empleado + fecha (docs/decisions/
 // WORKED_TIME_ACCOUNTING_MODEL.md §6, §15 y §16). Lo usan la carga manual, los
 // desgloses, el fichador (createFromWorkShift/closeOpenWorkShift) y la
@@ -289,20 +321,24 @@ export async function resolveSpecialHourRulesByDate(employeeId: string, dates: D
   const to = new Date(Math.max(...times));
   const employeeScope = await db.employee.findUnique({
     where: { id: employeeId },
-    select: { sectorId: true, costCenterId: true, positionId: true, companies: { select: { companyId: true } } },
+    select: {
+      sectorId: true, costCenterId: true, positionId: true,
+      companies: { select: { companyId: true } },
+      position: { select: { orgScopes: { select: { level: true, sectorId: true, area: { select: { sectorId: true } }, createdAt: true } } } },
+    },
   });
   const vigencyWhere = { status: "ACTIVO" as const, fromDate: { lte: to }, OR: [{ toDate: null }, { toDate: { gte: from } }] };
   const [rulesInScope, feriadoRules, convocations] = await Promise.all([
     db.doubleHourRule.findMany({
       where: {
         ...vigencyWhere,
-        AND: doubleHourRuleScopeWhere(employeeId, employeeScope?.companies.map((item) => item.companyId) ?? [], employeeScope?.sectorId, employeeScope?.costCenterId, employeeScope?.positionId),
+        AND: doubleHourRuleScopeWhere(employeeId, employeeScope?.companies.map((item) => item.companyId) ?? [], employeeScope?.sectorId, employeeScope?.costCenterId, employeeScope?.positionId, false),
       },
-      include: { dates: true },
+      include: { dates: true, sector: { select: { businessUnitId: true } } },
     }),
     // Sin filtro de alcance: con convocatoria, el convocado queda alcanzado
     // aunque la regla FERIADO tenga otro alcance.
-    db.doubleHourRule.findMany({ where: { ...vigencyWhere, kind: "FERIADO" }, include: { dates: true } }),
+    db.doubleHourRule.findMany({ where: { ...vigencyWhere, kind: "FERIADO" }, include: { dates: true, sector: { select: { businessUnitId: true } } } }),
     db.holidayWorkAssignment.findMany({ where: { status: "ACTIVA", date: { gte: from, lte: to } }, select: { date: true, employeeId: true } }),
   ]);
   const convokedByDate = new Map<string, Set<string>>();
@@ -314,9 +350,25 @@ export async function resolveSpecialHourRulesByDate(employeeId: string, dates: D
   for (const date of dates) {
     const key = calendarDateKey(date);
     if (result.has(key)) continue;
+    const newSectorRules = rulesInScope.filter((rule) => rule.sector?.businessUnitId && isVigent(rule, date));
+    if (newSectorRules.length) {
+      const scopeRevisionAt = employeeScope?.position?.orgScopes.reduce<Date | null>((latest, scope) => !latest || scope.createdAt > latest ? scope.createdAt : latest, null) ?? null;
+      const revisionDate = scopeRevisionAt ? calendarDateKey(scopeRevisionAt) : null;
+      if (!revisionDate || key < revisionDate) {
+        // D-5: PositionOrgScope sólo conserva el estado vigente. Si la fecha
+        // precede a la revisión actual no inventamos qué alcance tenía el
+        // puesto ni usamos silenciosamente el actual.
+        throw new AppError(
+          `No hay historia suficiente del alcance del puesto para resolver horas especiales del período ${key.slice(0, 7)}. El período queda sin reinterpretar; cargá la vigencia histórica antes de recalcular.`,
+          409,
+          "SPECIAL_HOUR_SCOPE_HISTORY_MISSING",
+          { employeeId, date: key, period: key.slice(0, 7) },
+        );
+      }
+    }
     const candidates = specialHourRulesForEmployeeOnDate({
       employeeId,
-      rulesInEmployeeScope: rulesInScope.filter((rule) => isVigent(rule, date)),
+      rulesInEmployeeScope: rulesInScope.filter((rule) => isVigent(rule, date) && ruleSectorMatchesEmployee(rule, employeeScope)),
       feriadoRules: feriadoRules.filter((rule) => isVigent(rule, date)),
       convokedEmployeeIds: convokedByDate.get(key) ?? new Set<string>(),
     });
