@@ -1,5 +1,5 @@
 import { Prisma } from "@prisma/client";
-import { prisma } from "../../shared/prisma/client";
+import { prisma, type PrismaTransactionClient } from "../../shared/prisma/client";
 import { createRepositoryListCache, pageFromCappedList, REPOSITORY_LIST_CACHE_MAX_ROWS } from "../../shared/cache/repositoryListCache";
 import type { CreatePositionInput, ListPositionEmployeesQuery, ListPositionOptionsQuery, ListPositionsQuery, positionListSortKeys, UpdatePositionInput } from "./positions.schemas";
 import { resolveOrderBy, type SortOrderByMap } from "../../shared/validation/listSort";
@@ -304,7 +304,45 @@ export const positionsRepository = {
     });
   },
 
-  delete(id: string) {
-    return prisma.position.delete({ where: { id } });
+  /**
+   * Baja de un puesto (ORG_LOCATION_REORGANIZATION.md §6). Un puesto con
+   * personas o referenciado por una regla de horas especiales NO se borra:
+   * se inactiva. Borrarlo dejaba `DoubleHourRule.positionId` en NULL (SET NULL
+   * antes de M1), y NULL significa "sin restricción": la regla se ampliaba a
+   * todos en silencio. Desde M1 la FK es RESTRICT además de este chequeo.
+   *
+   * Sin dependencias, borra explícitamente sus filas propias (categorías y
+   * alcances organizativos) antes del puesto, sin depender de CASCADE.
+   * Serializable: una asignación concurrente hace abortar una de las dos
+   * transacciones (P2034) en vez de borrar un puesto recién referenciado.
+   * `onDone` corre dentro de la misma transacción (auditoría).
+   */
+  removeOrInactivate(id: string, onDone: (tx: PrismaTransactionClient, outcome: Exclude<PositionRemovalOutcome, { kind: "NOT_FOUND" }>) => Promise<unknown>) {
+    return prisma.$transaction(async (tx): Promise<PositionRemovalOutcome> => {
+      const current = await tx.position.findUnique({
+        where: { id },
+        select: { id: true, code: true, name: true, status: true, _count: { select: { employees: true, doubleHourRules: true } } },
+      });
+      if (!current) return { kind: "NOT_FOUND" };
+      const { employees, doubleHourRules } = current._count;
+      const position = { id: current.id, code: current.code, name: current.name, status: current.status };
+      const outcome: Exclude<PositionRemovalOutcome, { kind: "NOT_FOUND" }> = employees > 0 || doubleHourRules > 0
+        ? { kind: "INACTIVATED", position, employees, doubleHourRules }
+        : { kind: "DELETED", position };
+      if (outcome.kind === "INACTIVATED") {
+        await tx.position.update({ where: { id }, data: { status: "INACTIVO" } });
+      } else {
+        await tx.positionOrgScope.deleteMany({ where: { positionId: id } });
+        await tx.positionSalaryCategory.deleteMany({ where: { positionId: id } });
+        await tx.position.delete({ where: { id } });
+      }
+      await onDone(tx, outcome);
+      return outcome;
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
   },
 };
+
+export type PositionRemovalOutcome =
+  | { kind: "NOT_FOUND" }
+  | { kind: "INACTIVATED"; position: { id: string; code: string; name: string; status: string }; employees: number; doubleHourRules: number }
+  | { kind: "DELETED"; position: { id: string; code: string; name: string; status: string } };

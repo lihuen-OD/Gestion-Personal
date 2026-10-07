@@ -4,135 +4,123 @@ import { prisma } from "../../shared/prisma/client";
 import { orgStructureRepository, invalidateOverviewCache } from "./orgStructure.repository";
 
 /**
- * Regresion de la simplificacion de jerarquia organizacional (2026-08-14):
- * BusinessUnit/Establishment/Area/Sector deben leer y escribir SOLO el FK
- * legado singular — sin doble-write ni lectura de las tablas M:N que se
- * eliminaron (BusinessUnitCompany, EstablishmentCompany,
- * EstablishmentBusinessUnit, AreaEstablishment, AreaBusinessUnit, SectorArea,
- * SectorEstablishment). CostCenter sigue usando sus tablas M:N sin cambios.
+ * Modelo objetivo (docs/decisions/ORG_LOCATION_REORGANIZATION.md): las altas y
+ * ediciones escriben SOLO el padre del modelo objetivo (Empresa → UN → Sector
+ * → Área; Zona → Establecimiento). Las columnas del modelo anterior (areaId,
+ * establishmentId, companyId/businessUnitId del establecimiento) no se
+ * escriben; se leen en el overview hasta M2. Prisma se mockea: los tests nunca
+ * tocan una base real.
  */
-vi.mock("../../shared/prisma/client", () => {
-  const tx = {
-    costCenter: { create: vi.fn(), update: vi.fn() },
-    costCenterCompany: { createMany: vi.fn(), deleteMany: vi.fn() },
-    costCenterBusinessUnit: { createMany: vi.fn(), deleteMany: vi.fn() },
-    costCenterEstablishment: { createMany: vi.fn(), deleteMany: vi.fn() },
-    costCenterArea: { createMany: vi.fn(), deleteMany: vi.fn() },
-    costCenterSector: { createMany: vi.fn(), deleteMany: vi.fn() },
-  };
+const { tx } = vi.hoisted(() => {
+  const model = () => ({ create: vi.fn(), update: vi.fn(), findUnique: vi.fn(), findFirst: vi.fn(), findMany: vi.fn(), delete: vi.fn() });
+  const links = () => ({ createMany: vi.fn(), deleteMany: vi.fn() });
   return {
-    prisma: {
-      company: { findMany: vi.fn() },
-      businessUnit: { create: vi.fn(), update: vi.fn(), findMany: vi.fn() },
-      establishment: { create: vi.fn(), update: vi.fn(), findMany: vi.fn() },
-      area: { create: vi.fn(), update: vi.fn(), findMany: vi.fn() },
-      sector: { create: vi.fn(), update: vi.fn(), findMany: vi.fn() },
-      costCenter: { findMany: vi.fn() },
-      $transaction: vi.fn((callback: (tx: unknown) => unknown) => callback(tx)),
-      __tx: tx,
+    tx: {
+      company: model(),
+      businessUnit: model(),
+      sector: model(),
+      area: model(),
+      zone: model(),
+      establishment: model(),
+      costCenter: model(),
+      costCenterCompany: links(),
+      costCenterBusinessUnit: links(),
+      costCenterEstablishment: links(),
+      costCenterArea: links(),
+      costCenterSector: links(),
     },
   };
 });
 
-const mockedPrisma = prisma as unknown as {
-  company: { findMany: Mock };
-  businessUnit: { create: Mock; update: Mock; findMany: Mock };
-  establishment: { create: Mock; update: Mock; findMany: Mock };
-  area: { create: Mock; update: Mock; findMany: Mock };
-  sector: { create: Mock; update: Mock; findMany: Mock };
-  costCenter: { findMany: Mock };
-};
+vi.mock("../../shared/prisma/client", () => ({
+  prisma: { ...tx, $transaction: vi.fn((callback: (client: unknown) => unknown) => callback(tx)) },
+}));
+
+const mockedPrisma = prisma as unknown as typeof tx & { $transaction: Mock };
 
 beforeEach(() => {
   vi.clearAllMocks();
   invalidateOverviewCache();
 });
 
-describe("orgStructureRepository — BusinessUnit", () => {
-  it("createBusinessUnit escribe solo companyId (FK), sin ninguna tabla M:N", async () => {
-    mockedPrisma.businessUnit.create.mockResolvedValue({ id: "bu-1", companyId: "comp-1" });
-    await orgStructureRepository.createBusinessUnit({ code: "UN-1", name: "Unidad 1", status: "ACTIVO", companyId: "comp-1" });
-    expect(mockedPrisma.businessUnit.create).toHaveBeenCalledWith({
-      data: { code: "UN-1", name: "Unidad 1", status: "ACTIVO", companyId: "comp-1" },
-    });
+describe("orgStructureRepository — altas con el padre del modelo objetivo", () => {
+  it("sector: escribe businessUnitId, nunca areaId", async () => {
+    tx.sector.create.mockResolvedValue({ id: "sec-1" });
+    await orgStructureRepository.createNode(tx as never, "sector", { code: "SEC-1", name: "Cocina", status: "ACTIVO", businessUnitId: "bu-1" });
+    expect(tx.sector.create).toHaveBeenCalledWith({ data: { code: "SEC-1", name: "Cocina", status: "ACTIVO", businessUnitId: "bu-1" } });
   });
 
-  it("updateBusinessUnit actualiza companyId directamente, sin doble-write", async () => {
-    mockedPrisma.businessUnit.update.mockResolvedValue({ id: "bu-1", companyId: "comp-2" });
-    await orgStructureRepository.updateBusinessUnit("bu-1", { companyId: "comp-2" });
-    expect(mockedPrisma.businessUnit.update).toHaveBeenCalledWith({ where: { id: "bu-1" }, data: { companyId: "comp-2" } });
+  it("área: escribe sectorId, nunca establishmentId", async () => {
+    tx.area.create.mockResolvedValue({ id: "area-1" });
+    await orgStructureRepository.createNode(tx as never, "area", { code: "AREA-1", name: "Parrilla", status: "ACTIVO", sectorId: "sec-1" });
+    expect(tx.area.create).toHaveBeenCalledWith({ data: { code: "AREA-1", name: "Parrilla", status: "ACTIVO", sectorId: "sec-1" } });
   });
-});
 
-describe("orgStructureRepository — Establishment", () => {
-  it("createEstablishment escribe companyId y businessUnitId como FK simples", async () => {
-    mockedPrisma.establishment.create.mockResolvedValue({ id: "est-1" });
-    await orgStructureRepository.createEstablishment({
-      code: "EST-1", name: "Establecimiento 1", status: "ACTIVO", companyId: "comp-1", businessUnitId: "bu-1",
-    });
-    expect(mockedPrisma.establishment.create).toHaveBeenCalledWith({
-      data: { code: "EST-1", name: "Establecimiento 1", status: "ACTIVO", companyId: "comp-1", businessUnitId: "bu-1" },
-    });
+  it("establecimiento: escribe zoneId y domicilio, sin companyId ni businessUnitId", async () => {
+    tx.establishment.create.mockResolvedValue({ id: "est-1" });
+    await orgStructureRepository.createNode(tx as never, "establishment", { code: "EST-1", name: "Local Centro", status: "ACTIVO", zoneId: "zone-1", city: "Rosario" });
+    expect(tx.establishment.create).toHaveBeenCalledWith({ data: { code: "EST-1", name: "Local Centro", status: "ACTIVO", zoneId: "zone-1", city: "Rosario" } });
+  });
+
+  it("la búsqueda de código duplicado de establecimientos considera sólo los del modelo objetivo (con zona)", async () => {
+    await orgStructureRepository.findZonedEstablishmentByCode(tx as never, "EST-1", "est-9");
+    expect(tx.establishment.findFirst).toHaveBeenCalledWith({ where: { code: "EST-1", zoneId: { not: null }, id: { not: "est-9" } }, select: { id: true } });
   });
 });
 
-describe("orgStructureRepository — Area", () => {
-  it("createArea escribe solo establishmentId (FK), no hay campo de unidad de negocio", async () => {
-    mockedPrisma.area.create.mockResolvedValue({ id: "area-1" });
-    await orgStructureRepository.createArea({ code: "AREA-1", name: "Area 1", status: "ACTIVO", establishmentId: "est-1" });
-    expect(mockedPrisma.area.create).toHaveBeenCalledWith({
-      data: { code: "AREA-1", name: "Area 1", status: "ACTIVO", establishmentId: "est-1" },
-    });
+describe("orgStructureRepository.findNode — registro legado", () => {
+  it("un sector sin unidad de negocio es del modelo anterior", async () => {
+    tx.sector.findUnique.mockResolvedValue({ id: "s1", code: "SEC-1", name: "Depósito", status: "ACTIVO", businessUnitId: null, _count: {} });
+    await expect(orgStructureRepository.findNode(tx as never, "sector", "s1")).resolves.toMatchObject({ parentId: null, isLegacy: true });
   });
 
-  it("updateArea permite desasignar el establecimiento (null)", async () => {
-    mockedPrisma.area.update.mockResolvedValue({ id: "area-1" });
-    await orgStructureRepository.updateArea("area-1", { establishmentId: null });
-    expect(mockedPrisma.area.update).toHaveBeenCalledWith({ where: { id: "area-1" }, data: { establishmentId: null } });
+  it("un establecimiento con zona es del modelo objetivo", async () => {
+    tx.establishment.findUnique.mockResolvedValue({ id: "e1", code: "EST-1", name: "Centro", status: "ACTIVO", zoneId: "z1", _count: {} });
+    await expect(orgStructureRepository.findNode(tx as never, "establishment", "e1")).resolves.toMatchObject({ parentId: "z1", isLegacy: false });
   });
 });
 
-describe("orgStructureRepository — Sector", () => {
-  it("createSector escribe solo areaId (FK), no hay campo de establecimiento", async () => {
-    mockedPrisma.sector.create.mockResolvedValue({ id: "sec-1" });
-    await orgStructureRepository.createSector({ code: "SEC-1", name: "Sector 1", status: "ACTIVO", areaId: "area-1" });
-    expect(mockedPrisma.sector.create).toHaveBeenCalledWith({
-      data: { code: "SEC-1", name: "Sector 1", status: "ACTIVO", areaId: "area-1" },
-    });
+describe("orgStructureRepository.deleteIfUnused", () => {
+  it("borra un centro de costo eliminando explícitamente sus vínculos (no depende del CASCADE) y audita dentro de la transacción", async () => {
+    tx.costCenter.findUnique.mockResolvedValue({ id: "cc1", code: "CC-9", name: "Error", status: "ACTIVO", _count: { employees: 0, doubleHourRules: 0 } });
+    const onDeleted = vi.fn();
+
+    await orgStructureRepository.deleteIfUnused("costCenter", "cc1", () => false, onDeleted);
+
+    for (const links of [tx.costCenterCompany, tx.costCenterBusinessUnit, tx.costCenterEstablishment, tx.costCenterArea, tx.costCenterSector]) {
+      expect(links.deleteMany).toHaveBeenCalledWith({ where: { costCenterId: "cc1" } });
+    }
+    expect(tx.costCenter.delete).toHaveBeenCalledWith({ where: { id: "cc1" } });
+    expect(onDeleted).toHaveBeenCalledWith(tx, expect.objectContaining({ id: "cc1" }));
+  });
+
+  it("no borra ni audita si está bloqueado", async () => {
+    tx.zone.findUnique.mockResolvedValue({ id: "z1", code: "ZN-1", name: "Norte", status: "ACTIVO", _count: { establishments: 2 } });
+    const onDeleted = vi.fn();
+
+    const result = await orgStructureRepository.deleteIfUnused("zone", "z1", () => true, onDeleted);
+
+    expect(result.status).toBe("BLOCKED");
+    expect(tx.zone.delete).not.toHaveBeenCalled();
+    expect(onDeleted).not.toHaveBeenCalled();
   });
 });
 
 describe("orgStructureRepository.getOverview", () => {
-  it("devuelve datos coherentes: BusinessUnit/Establishment/Area/Sector solo con FK singular, CostCenter con sus arrays M:N", async () => {
+  it("devuelve ambos árboles con los padres del modelo objetivo y, hasta M2, los padres legados sólo de lectura", async () => {
     mockedPrisma.company.findMany.mockResolvedValue([{ id: "comp-1", code: "EMP-1", name: "Empresa 1", status: "ACTIVO" }]);
     mockedPrisma.businessUnit.findMany.mockResolvedValue([{ id: "bu-1", code: "UN-1", name: "Unidad 1", status: "ACTIVO", companyId: "comp-1" }]);
-    mockedPrisma.establishment.findMany.mockResolvedValue([{ id: "est-1", code: "EST-1", name: "Est 1", status: "ACTIVO", companyId: "comp-1", businessUnitId: "bu-1" }]);
-    mockedPrisma.area.findMany.mockResolvedValue([{ id: "area-1", code: "AREA-1", name: "Area 1", status: "ACTIVO", establishmentId: "est-1" }]);
-    mockedPrisma.sector.findMany.mockResolvedValue([{ id: "sec-1", code: "SEC-1", name: "Sector 1", status: "ACTIVO", areaId: "area-1" }]);
-    mockedPrisma.costCenter.findMany.mockResolvedValue([{
-      id: "cc-1", code: "CC-1", name: "CC 1", status: "ACTIVO",
-      companies: [{ companyId: "comp-1" }], businessUnits: [{ businessUnitId: "bu-1" }],
-      establishments: [{ establishmentId: "est-1" }], areas: [{ areaId: "area-1" }], sectors: [{ sectorId: "sec-1" }],
-    }]);
+    mockedPrisma.establishment.findMany.mockResolvedValue([{ id: "est-1", code: "EST-1", name: "Est 1", status: "ACTIVO", zoneId: "zone-1", companyId: null, businessUnitId: null }]);
+    mockedPrisma.area.findMany.mockResolvedValue([{ id: "area-1", code: "AREA-1", name: "Area 1", status: "ACTIVO", sectorId: "sec-1", establishmentId: null }]);
+    mockedPrisma.sector.findMany.mockResolvedValue([{ id: "sec-1", code: "SEC-1", name: "Sector 1", status: "ACTIVO", businessUnitId: "bu-1", areaId: null }]);
+    mockedPrisma.costCenter.findMany.mockResolvedValue([]);
+    mockedPrisma.zone.findMany.mockResolvedValue([{ id: "zone-1", code: "ZN-1", name: "Norte", status: "ACTIVO" }]);
 
-    const [companies, businessUnits, establishments, areas, sectors, costCenters] = await orgStructureRepository.getOverview();
+    const [, , , , , , zones] = await orgStructureRepository.getOverview();
 
-    expect(businessUnits.at(0)).toEqual({ id: "bu-1", code: "UN-1", name: "Unidad 1", status: "ACTIVO", companyId: "comp-1" });
-    expect(establishments.at(0)).toMatchObject({ companyId: "comp-1", businessUnitId: "bu-1" });
-    expect(areas.at(0)).toEqual({ id: "area-1", code: "AREA-1", name: "Area 1", status: "ACTIVO", establishmentId: "est-1" });
-    expect(sectors.at(0)).toEqual({ id: "sec-1", code: "SEC-1", name: "Sector 1", status: "ACTIVO", areaId: "area-1" });
-    expect(costCenters.at(0)?.companies).toEqual([{ companyId: "comp-1" }]);
-    expect(companies.at(0)?.code).toBe("EMP-1");
-
-    // Confirma que ninguno de los selects usados para BusinessUnit/Establishment/Area/Sector
-    // pide relaciones M:N (esos campos ya no existen en el cliente Prisma generado).
-    const businessUnitSelect = mockedPrisma.businessUnit.findMany.mock.calls.at(0)?.[0]?.select;
-    expect(businessUnitSelect).not.toHaveProperty("companies");
-    const areaSelect = mockedPrisma.area.findMany.mock.calls.at(0)?.[0]?.select;
-    expect(areaSelect).not.toHaveProperty("businessUnits");
-    expect(areaSelect).not.toHaveProperty("establishments");
-    const sectorSelect = mockedPrisma.sector.findMany.mock.calls.at(0)?.[0]?.select;
-    expect(sectorSelect).not.toHaveProperty("areas");
-    expect(sectorSelect).not.toHaveProperty("establishments");
+    expect(zones).toEqual([{ id: "zone-1", code: "ZN-1", name: "Norte", status: "ACTIVO" }]);
+    expect(mockedPrisma.sector.findMany.mock.calls.at(0)?.[0]?.select).toMatchObject({ businessUnitId: true, areaId: true });
+    expect(mockedPrisma.area.findMany.mock.calls.at(0)?.[0]?.select).toMatchObject({ sectorId: true, establishmentId: true });
+    expect(mockedPrisma.establishment.findMany.mock.calls.at(0)?.[0]?.select).toMatchObject({ zoneId: true, companyId: true, businessUnitId: true });
   });
 });

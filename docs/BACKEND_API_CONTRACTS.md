@@ -578,57 +578,96 @@ Reglas:
 
 ### Estructura organizacional
 
+> Etapa A2 de `docs/decisions/ORG_LOCATION_REORGANIZATION.md`: contrato **en código** en la rama `feat/org-location-reorg`, junto con la migración M1. **Todavía no está aplicado a ninguna base ni desplegado.** El frontend actual (`OrgStructurePage`) se adapta en A4. Hasta entonces, sus altas de sector, área y establecimiento con los padres anteriores responden 400.
+
+Dos árboles independientes, cada nodo con un único padre obligatorio:
+
+- **Organización:** Empresa → Unidad de negocio → Sector → Área.
+- **Ubicaciones:** Zona → Establecimiento.
+
 ```txt
 GET /api/org-structure
 ```
 
-Devuelve:
+Devuelve `companies`, `businessUnits`, `sectors`, `areas`, `zones`, `establishments` y `costCenters`.
 
-- companies;
-- businessUnits;
-- establishments;
-- areas;
-- sectors;
-- costCenters.
+**Padre del modelo objetivo** de cada nodo:
 
-Nota: este endpoint se mantiene como overview completo para alimentar selects y formularios. Si estructura crece mucho, se agregarán endpoints específicos paginados por entidad sin romper este contrato.
+| Nodo | Campo de padre |
+|---|---|
+| Unidad de negocio | `companyId` |
+| Sector | `businessUnitId` |
+| Área | `sectorId` |
+| Establecimiento | `zoneId` (más el domicilio) |
 
-Altas/ediciones admin:
+**Padres del modelo anterior**: hasta M2 se devuelven además, **sólo de lectura**, `sectors[].areaId`, `areas[].establishmentId` y `establishments[].companyId/businessUnitId`. Un sector sin `businessUnitId`, un área sin `sectorId` o un establecimiento sin `zoneId` es un registro **legado**, que la limpieza controlada va a eliminar.
+
+**Cost centers:** traen sus vínculos M:N (`companies`, `businessUnits`, `sectors`, `areas`, `establishments`).
+
+Nota: este endpoint se mantiene como overview completo para alimentar selects y formularios. Si la estructura crece mucho, se agregarán endpoints específicos paginados por entidad sin romper este contrato.
+
+Altas/ediciones admin (sólo `NIVEL_1_RRHH`):
 
 ```txt
-POST/PATCH /api/org-structure/companies
-POST/PATCH /api/org-structure/business-units
-POST/PATCH /api/org-structure/establishments
-POST/PATCH /api/org-structure/areas
-POST/PATCH /api/org-structure/sectors
-POST/PATCH /api/org-structure/cost-centers
+POST/PATCH /api/org-structure/companies        { code, name, status }
+POST/PATCH /api/org-structure/business-units   { code, name, status, companyId }
+POST/PATCH /api/org-structure/sectors          { code, name, status, businessUnitId }
+POST/PATCH /api/org-structure/areas            { code, name, status, sectorId }
+POST/PATCH /api/org-structure/zones            { code, name, status }
+POST/PATCH /api/org-structure/establishments   { code, name, status, zoneId, province?, department?, city?, street?, streetNumber?, postalCode? }
+POST/PATCH /api/org-structure/cost-centers     { code, name, status, companyIds[], businessUnitIds[], sectorIds[], areaIds[], establishmentIds[] }
 ```
+
+Reglas:
+
+- **Padre en el alta:** obligatorio en POST. En PATCH es opcional y nunca `null`.
+  - El padre debe existir, estar `ACTIVO` y pertenecer al modelo objetivo. Si no, responde `400 ORG_STRUCTURE_INVALID_PARENT`, con el motivo en lenguaje de negocio.
+  - Las altas no aceptan los padres del modelo anterior (`areaId`, `establishmentId`, `companyId`/`businessUnitId` del establecimiento): zod los descarta.
+- **Cambio de padre:**
+  - Un registro **legado** no se reubica en el árbol nuevo (`409 ORG_STRUCTURE_LEGACY_RECORD`). Sí puede corregir código, nombre y estado.
+  - Un nodo **en uso** no cambia de padre (`409 ORG_STRUCTURE_PARENT_IN_USE`, con `details.dependencies`). Decisión D-9 del ADR, ratificada el 2026-10-07. Para reorganizar nodos en uso hará falta una operación explícita que contemple sus referencias; hoy no existe.
+- **Centros de costo:** no agregan vínculos nuevos a sectores, áreas o establecimientos legados (`400 ORG_STRUCTURE_LEGACY_LINK`). Los vínculos que ya tenían se conservan.
+- **Código de establecimiento:** único entre los establecimientos con zona (`409 UNIQUE_CONSTRAINT`). Hasta M2 la base conserva la unicidad legada por empresa.
+- **Transacción y auditoría:**
+  - Cada escritura corre en una transacción `Serializable`. Un cambio concurrente responde `409 ORG_STRUCTURE_CONCURRENT_CHANGE`.
+  - La auditoría (`CREATE`/`UPDATE`/`DELETE`, con estado previo en `before`) se escribe **en la misma transacción**: si falla, el cambio se revierte.
+  - Los cachés se limpian después del commit.
 
 Eliminación definitiva (sólo `NIVEL_1_RRHH`, mismo permiso que altas/ediciones):
 
 ```txt
 DELETE /api/org-structure/companies/:id
 DELETE /api/org-structure/business-units/:id
-DELETE /api/org-structure/establishments/:id
-DELETE /api/org-structure/areas/:id
 DELETE /api/org-structure/sectors/:id
+DELETE /api/org-structure/areas/:id
+DELETE /api/org-structure/zones/:id
+DELETE /api/org-structure/establishments/:id
 DELETE /api/org-structure/cost-centers/:id
 ```
 
-Pensada para corregir registros creados por error; la baja normal sigue siendo pasar `status` a `INACTIVO` (reversible). Sólo borra si el registro no tiene ninguna dependencia de negocio; si tiene alguna responde `409 ORG_STRUCTURE_HAS_DEPENDENCIES` con el motivo en lenguaje de negocio (`message`) y el detalle (`details.dependencies: [{ key, count, label }]`). Nunca borra ni desvincula en cadena.
+**Uso:** está pensada para corregir registros creados por error. La baja normal sigue siendo pasar `status` a `INACTIVO`, que es reversible.
+
+**Condición:** sólo borra si el registro no tiene ninguna dependencia de negocio. Si tiene alguna, responde `409 ORG_STRUCTURE_HAS_DEPENDENCIES` con el motivo en lenguaje de negocio (`message`) y el detalle (`details.dependencies: [{ key, count, label }]`). Nunca borra ni desvincula en cadena.
+
+**Dependencias:** se cuentan las del modelo objetivo y, hasta M2, también las del modelo anterior.
 
 | Entidad | Bloquean la eliminación |
 |---|---|
-| Empresa | unidades de negocio, establecimientos, empleados (`EmployeeCompany`), usuarios con alcance, centros de costo asociados, reglas de horas dobles |
-| Unidad de negocio | establecimientos, centros de costo asociados |
-| Establecimiento | áreas, centros de costo asociados |
-| Área | sectores, centros de costo asociados |
-| Sector | empleados, puestos, usuarios con alcance, centros de costo asociados, reglas de horas dobles |
-| Centro de costo | empleados, reglas de horas dobles (sus propios vínculos de ubicación se eliminan con él) |
+| Empresa | unidades de negocio, establecimientos (legado), empleados (`EmployeeCompany`), usuarios con alcance, centros de costo asociados, reglas de horas especiales, alcances de puestos |
+| Unidad de negocio | sectores, establecimientos (legado), centros de costo asociados, alcances de puestos |
+| Sector | áreas, empleados (legado), puestos (legado), usuarios con alcance (legado), centros de costo asociados, reglas de horas especiales, alcances de puestos |
+| Área | sectores (legado), centros de costo asociados, alcances de puestos |
+| Zona | establecimientos |
+| Establecimiento | áreas (legado), centros de costo asociados, ubicaciones de trabajo de legajos, dispositivos de fichada |
+| Centro de costo | empleados, reglas de horas especiales. Sus propios vínculos se borran explícitamente con él, no por CASCADE |
 
-Lo anterior describe el **modelo actual**. La reorganización aprobada y **no implementada** (`docs/decisions/ORG_LOCATION_REORGANIZATION.md`) separa Organización (Empresa → UN → Sector → Área) de Ubicaciones (Zona → Establecimiento). Cuando se implemente, este contrato cambiará en su etapa correspondiente: zonas nuevas, padres nuevos y FKs nuevas `Restrict`. Hasta entonces rige lo de arriba.
+**Protección en la base:** la base no protege todos los casos del modelo anterior por sí sola (varias FK son `ON DELETE SET NULL` y `EmployeeCompany` es `CASCADE`). Las FKs nuevas de M1 sí son `RESTRICT`: los padres nuevos, los alcances de puestos, las ubicaciones de legajos, `ClockDevice.establishmentId` y las cuatro dimensiones de `DoubleHourRule`. Por eso el conteo y el borrado corren en una transacción `Serializable`, y un alta concurrente de una dependencia hace fallar la operación (`409 ORG_STRUCTURE_CONCURRENT_CHANGE`).
 
-La base no protege estos casos por sí sola (varias FK son `ON DELETE SET NULL` y `EmployeeCompany`/`CostCenter*` son `CASCADE`), por eso el conteo y el borrado corren en una transacción `Serializable`: un alta concurrente de una dependencia hace fallar la operación (`409 ORG_STRUCTURE_CONCURRENT_CHANGE`) en vez de dejar registros huérfanos. Inexistente → `404 RECORD_NOT_FOUND`. Cada eliminación queda en auditoría (`action: DELETE`). Ver `backend/src/modules/org-structure/orgStructure.dependencies.ts`.
+**Resultado:**
+- Inexistente → `404 RECORD_NOT_FOUND`.
+- Cada eliminación queda en auditoría (`action: DELETE`) dentro de la misma transacción.
+
+Ver `backend/src/modules/org-structure/orgStructure.dependencies.ts`.
 
 ### Usuarios
 
@@ -901,6 +940,13 @@ page
 `areaId`, `establishmentId` y `businessUnitId` (Etapa 9E, `positions.schemas.ts`) filtran recorriendo la cadena desde `sectorId`. Antes no estaban documentados aquí.
 
 `sectorId` es, en el **modelo actual**, la única fuente de ubicación de un puesto (no existen `businessUnitName`/`establishmentName`/`areaDepartment`/`sector` como query params ni como columnas de `Position` — fueron eliminados en la limpieza final de Position, ver `docs/DATABASE_STANDARDS.md`). El body de creación/edición usa `sectorId` y `salaryCategoryIds` (array de IDs contra `PositionSalaryCategory`), no un único "suggested category". En el modelo objetivo, aprobado y no implementado (`docs/decisions/ORG_LOCATION_REORGANIZATION.md`), `sectorId` se reemplaza por un alcance organizativo de uno o varios nodos de Organización, en su etapa correspondiente.
+
+`DELETE /api/positions/:id` (etapa A2 de la reorganización, en código y no desplegado):
+
+- **Se inactiva, no se borra,** si el puesto tiene personas asignadas o una regla de horas especiales lo referencia (`DoubleHourRule.positionId`). Responde con el puesto inactivo.
+  - Antes, un puesto sin personas se borraba aunque una regla lo referenciara. La FK `SET NULL` dejaba esa regla sin restricción de puesto: aplicaba a todos.
+- **Se borra** si no tiene dependencias. Primero se borran explícitamente sus alcances organizativos y sus categorías. Responde `null`.
+- **Transacción y auditoría:** corre en una transacción `Serializable` (`409 POSITION_CONCURRENT_CHANGE`), con la auditoría dentro de ella.
 
 `GET /api/positions/:id/employees` devuelve los legajos activos asignados al puesto para la solapa de personas asignadas, incluyendo legajo, nombre, empresas, sector, centro de costo, categoria interna y estado. Paginado (`page`, `take` default 25 / máx. 100, `sortBy=legajo|employee`, `sortOrder`) con `meta` real — antes `take: 500` fijo sin meta. `meta.total` es la cantidad real de personas asignadas.
 

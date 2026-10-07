@@ -14,15 +14,19 @@ import { orgStructureService } from "./orgStructure.service";
 
 const { tx, prismaMock } = vi.hoisted(() => {
   const model = () => ({ findUnique: vi.fn(), delete: vi.fn() });
-  const tx = { company: model(), businessUnit: model(), establishment: model(), area: model(), sector: model(), costCenter: model() };
+  const links = () => ({ deleteMany: vi.fn() });
+  const tx = {
+    company: model(), businessUnit: model(), sector: model(), area: model(), zone: model(), establishment: model(), costCenter: model(),
+    costCenterCompany: links(), costCenterBusinessUnit: links(), costCenterEstablishment: links(), costCenterArea: links(), costCenterSector: links(),
+  };
   return { tx, prismaMock: { $transaction: vi.fn(async (callback: (client: typeof tx) => unknown) => callback(tx)) } };
 });
 
 vi.mock("../../shared/prisma/client", () => ({ prisma: prismaMock }));
-vi.mock("../audit/audit.service", () => ({ auditService: { register: vi.fn() } }));
+vi.mock("../audit/audit.service", () => ({ auditService: { registerWithin: vi.fn() }, clearAuditDerivedCaches: vi.fn() }));
 
 
-const zeroCompanyCounts = { businessUnits: 0, establishments: 0, employees: 0, users: 0, costCenterLinks: 0, doubleHourRules: 0 };
+const zeroCompanyCounts = { businessUnits: 0, establishments: 0, employees: 0, users: 0, costCenterLinks: 0, doubleHourRules: 0, positionScopes: 0 };
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -39,15 +43,15 @@ describe("mensajes de dependencias", () => {
 });
 
 describe("orgStructureService.deleteEntity", () => {
-  it("elimina una entidad sin dependencias, dentro de una transacción Serializable, y lo audita", async () => {
-    tx.company.findUnique.mockResolvedValue({ id: "c1", code: "EMP-9", name: "Creada por error", _count: zeroCompanyCounts });
+  it("elimina una entidad sin dependencias, dentro de una transacción Serializable, y la audita en esa misma transacción", async () => {
+    tx.company.findUnique.mockResolvedValue({ id: "c1", code: "EMP-9", name: "Creada por error", status: "ACTIVO", _count: zeroCompanyCounts });
 
     const result = await orgStructureService.deleteEntity("company", "c1", { userId: "u1" });
 
     expect(result).toEqual({ id: "c1", code: "EMP-9", name: "Creada por error" });
     expect(tx.company.delete).toHaveBeenCalledWith({ where: { id: "c1" } });
     expect(prismaMock.$transaction).toHaveBeenCalledWith(expect.any(Function), { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
-    expect(auditService.register).toHaveBeenCalledWith(expect.objectContaining({
+    expect(auditService.registerWithin).toHaveBeenCalledWith(tx, expect.objectContaining({
       action: "DELETE",
       entity: "Company",
       entityId: "c1",
@@ -56,18 +60,18 @@ describe("orgStructureService.deleteEntity", () => {
   });
 
   it("bloquea una entidad con hijos en la estructura: no borra y devuelve 409 con el motivo", async () => {
-    tx.area.findUnique.mockResolvedValue({ id: "a1", code: "AREA-1", name: "Administración", _count: { sectors: 2, costCenterLinks: 0 } });
+    tx.area.findUnique.mockResolvedValue({ id: "a1", code: "AREA-1", name: "Administración", status: "ACTIVO", sectorId: null, _count: { sectors: 2, costCenterLinks: 0, positionScopes: 0 } });
 
     const error = await orgStructureService.deleteEntity("area", "a1").catch((reason: unknown) => reason);
 
     expect(error).toBeInstanceOf(AppError);
     expect(error).toMatchObject({ statusCode: 409, code: "ORG_STRUCTURE_HAS_DEPENDENCIES", message: expect.stringContaining("2 sectores") });
     expect(tx.area.delete).not.toHaveBeenCalled();
-    expect(auditService.register).not.toHaveBeenCalled();
+    expect(auditService.registerWithin).not.toHaveBeenCalled();
   });
 
   it("bloquea un sector asignado a empleados y puestos (la base haría SET NULL en silencio)", async () => {
-    tx.sector.findUnique.mockResolvedValue({ id: "s1", code: "SEC-1", name: "Depósito", _count: { employees: 3, positions: 1, users: 0, costCenterLinks: 0, doubleHourRules: 0 } });
+    tx.sector.findUnique.mockResolvedValue({ id: "s1", code: "SEC-1", name: "Depósito", status: "ACTIVO", businessUnitId: null, _count: { areas: 0, employees: 3, positions: 1, users: 0, costCenterLinks: 0, doubleHourRules: 0, positionScopes: 0 } });
 
     await expect(orgStructureService.deleteEntity("sector", "s1")).rejects.toMatchObject({
       statusCode: 409,
@@ -77,18 +81,31 @@ describe("orgStructureService.deleteEntity", () => {
   });
 
   it("bloquea una empresa con legajos vinculados (EmployeeCompany haría CASCADE)", async () => {
-    tx.company.findUnique.mockResolvedValue({ id: "c1", code: "EMP-1", name: "Los O'Dwyer", _count: { ...zeroCompanyCounts, employees: 12 } });
+    tx.company.findUnique.mockResolvedValue({ id: "c1", code: "EMP-1", name: "Los O'Dwyer", status: "ACTIVO", _count: { ...zeroCompanyCounts, employees: 12 } });
 
     await expect(orgStructureService.deleteEntity("company", "c1")).rejects.toMatchObject({ statusCode: 409, message: expect.stringContaining("12 empleados") });
     expect(tx.company.delete).not.toHaveBeenCalled();
   });
 
-  it("un centro de costo sin empleados ni reglas se elimina (sus propios vínculos de ubicación caen con él)", async () => {
-    tx.costCenter.findUnique.mockResolvedValue({ id: "cc1", code: "CC-9", name: "Error", _count: { employees: 0, doubleHourRules: 0 } });
+  it("un centro de costo sin empleados ni reglas se elimina (sus propios vínculos se borran explícitamente con él)", async () => {
+    tx.costCenter.findUnique.mockResolvedValue({ id: "cc1", code: "CC-9", name: "Error", status: "ACTIVO", _count: { employees: 0, doubleHourRules: 0 } });
 
     await orgStructureService.deleteEntity("costCenter", "cc1");
 
     expect(tx.costCenter.delete).toHaveBeenCalledWith({ where: { id: "cc1" } });
+  });
+
+  it("una zona con establecimientos o un establecimiento con ubicaciones de legajos no se eliminan", async () => {
+    tx.zone.findUnique.mockResolvedValue({ id: "z1", code: "ZN-1", name: "Norte", status: "ACTIVO", _count: { establishments: 4 } });
+    await expect(orgStructureService.deleteEntity("zone", "z1")).rejects.toMatchObject({ statusCode: 409, message: expect.stringContaining("4 establecimientos") });
+
+    tx.establishment.findUnique.mockResolvedValue({ id: "e1", code: "EST-1", name: "Centro", status: "ACTIVO", zoneId: "z1", _count: { areas: 0, costCenterLinks: 0, workLocations: 2, clockDevices: 1 } });
+    await expect(orgStructureService.deleteEntity("establishment", "e1")).rejects.toMatchObject({
+      statusCode: 409,
+      message: "No se puede eliminar el establecimiento “Centro” porque tiene elementos asociados: 2 ubicaciones de trabajo de legajos y 1 dispositivo de fichada. Podés inactivarlo si ya no debe utilizarse.",
+    });
+    expect(tx.zone.delete).not.toHaveBeenCalled();
+    expect(tx.establishment.delete).not.toHaveBeenCalled();
   });
 
   it("entidad inexistente → 404 legible", async () => {
@@ -117,7 +134,7 @@ describe("permisos de DELETE", () => {
     return next.mock.calls[0]?.[0] as AppError | undefined;
   }
 
-  for (const path of ["/companies/:id", "/business-units/:id", "/establishments/:id", "/areas/:id", "/sectors/:id", "/cost-centers/:id"]) {
+  for (const path of ["/companies/:id", "/business-units/:id", "/sectors/:id", "/areas/:id", "/zones/:id", "/establishments/:id", "/cost-centers/:id"]) {
     it(`DELETE ${path}: sólo RRHH (mismo nivel que crear/editar estructura)`, () => {
       expect(invoke(authorizationFor(path), roles.rrhh)).toBeUndefined();
       expect(invoke(authorizationFor(path), roles.supervision)).toMatchObject({ statusCode: 403 });

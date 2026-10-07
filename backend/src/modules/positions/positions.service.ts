@@ -1,6 +1,6 @@
 import { Prisma } from "@prisma/client";
 import type { AuditContext } from "../audit/audit.service";
-import { auditService } from "../audit/audit.service";
+import { auditService, clearAuditDerivedCaches } from "../audit/audit.service";
 import { AppError } from "../../shared/errors/AppError";
 import { invalidatePositionsCache, positionsRepository } from "./positions.repository";
 import type { CreatePositionInput, ListPositionEmployeesQuery, ListPositionOptionsQuery, ListPositionsQuery, UpdatePositionInput } from "./positions.schemas";
@@ -11,6 +11,7 @@ function mapPrismaError(error: unknown) {
     if (error.code === "P2002") throw new AppError("Position code already exists", 409, "POSITION_UNIQUE_CONSTRAINT");
     if (error.code === "P2025") throw new AppError("Position not found", 404, "POSITION_NOT_FOUND");
     if (error.code === "P2003") throw new AppError("Related sector or salary category not found", 400, "POSITION_RELATION_CONSTRAINT");
+    if (error.code === "P2034") throw new AppError("Otra operación modificó el puesto al mismo tiempo. Actualizá la pantalla e intentá nuevamente.", 409, "POSITION_CONCURRENT_CHANGE");
   }
   throw error;
 }
@@ -81,17 +82,31 @@ export const positionsService = {
     return positionsRepository.findById(item.id);
   },
 
+  // Con personas o reglas de horas especiales que lo referencian, el puesto se
+  // inactiva (nunca se borra: ver positionsRepository.removeOrInactivate). La
+  // auditoría se escribe en la misma transacción; los cachés, después.
   async remove(id: string, audit?: AuditContext) {
-    const current = await execute(() => positionsRepository.findById(id));
-    if (current._count.employees > 0) {
-      const item = await execute(() => positionsRepository.update(id, { status: "INACTIVO" }));
-      invalidatePositionsCache();
-      await auditChange("UPDATE", item, audit);
-      return positionsRepository.findById(item.id);
-    }
-    const item = await execute(() => positionsRepository.delete(id));
+    const outcome = await execute(() => positionsRepository.removeOrInactivate(id, (tx, result) => {
+      const { position } = result;
+      const inactivated = result.kind === "INACTIVATED";
+      const reasons = inactivated
+        ? [result.employees > 0 ? `${result.employees} ${result.employees === 1 ? "persona asignada" : "personas asignadas"}` : null, result.doubleHourRules > 0 ? `${result.doubleHourRules} ${result.doubleHourRules === 1 ? "regla de horas especiales" : "reglas de horas especiales"}` : null].filter(Boolean).join(" y ")
+        : "";
+      return auditService.registerWithin(tx, {
+        ...audit,
+        action: inactivated ? "UPDATE" : "DELETE",
+        entity: "Position",
+        entityId: position.id,
+        description: inactivated
+          ? `Se inactivó puesto ${position.code} - ${position.name} en lugar de eliminarlo (tiene ${reasons}).`
+          : `Se elimino puesto ${position.code} - ${position.name}.`,
+        before: position as Prisma.InputJsonValue,
+        ...(inactivated ? { after: { ...position, status: "INACTIVO" } as Prisma.InputJsonValue } : {}),
+      });
+    }));
+    if (outcome.kind === "NOT_FOUND") throw new AppError("Position not found", 404, "POSITION_NOT_FOUND");
     invalidatePositionsCache();
-    await auditChange("DELETE", item, audit);
-    return null;
+    clearAuditDerivedCaches();
+    return outcome.kind === "INACTIVATED" ? positionsRepository.findById(id) : null;
   },
 };

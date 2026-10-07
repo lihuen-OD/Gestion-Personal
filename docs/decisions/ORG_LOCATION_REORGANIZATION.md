@@ -1,7 +1,7 @@
 # Reorganización — Organización, Ubicaciones, Puestos y Legajos
 
 Fecha: 2026-10-07
-Estado: **plan aprobado como base; NO implementado.** Etapa A1, solo documentación. El esquema Prisma, el código y los datos **no cambiaron**. Mientras este documento no indique otra cosa, el modelo vigente en código y base es el de §2.
+Estado: **plan aprobado como base; en desarrollo en la rama `feat/org-location-reorg`, sin aplicar a ninguna base ni desplegar.** Avance por etapa en §11. Mientras §11 no indique otra cosa, el modelo vigente en las bases (development, producción) es el de §2.
 Reemplaza, cuando se implemente: las secciones "Organizational hierarchy" y "Position: sectorId…" de `docs/DATABASE_STANDARDS.md` (hoy marcadas como modelo actual en transición).
 
 Marcas usadas: **[H]** = hecho comprobado en código o esquema · **[P]** = propuesta aprobada como plan, no implementada · **[D-n]** = decisión pendiente.
@@ -94,7 +94,7 @@ Employee ─ costCenterId ─► CostCenter    (sin cambios)
   - `Zone` es nueva.
 - **Árboles independientes:** cada uno se administra sin depender del otro. Un establecimiento **no tiene empresa**, porque la propiedad legal del lugar no equivale al alcance del puesto [D-10].
 - **FKs nuevas `Restrict`:** borrar un nodo con hijos o referencias devuelve 409, sin `SetNull` silencioso.
-- **Cambio de padre** de un nodo en uso: se propone bloquearlo y mostrar el impacto [D-9].
+- **Cambio de padre** de un nodo en uso: se bloquea y se muestra el impacto (D-9, **ratificada** el 2026-10-07). Si hace falta reorganizar nodos en uso, se resolverá con una operación explícita que contemple sus referencias.
 
 ### 3.2 Alcance organizativo del puesto
 - **`PositionOrgScope`:** `positionId`, `level` (`COMPANY|BUSINESS_UNIT|SECTOR|AREA`) y exactamente una FK no nula, garantizado por un CHECK SQL. Índices únicos parciales y FKs Restrict.
@@ -151,9 +151,12 @@ Se retira `Employee.sectorId`. Se conservan la empresa empleadora (`EmployeeComp
 - Alcance de la limpieza en **development**: §5.
 - Trabajar y ensayar en una **copia aislada** antes de tocar development.
 - No tocar producción.
+- **D-9 (2026-10-07):** bloquear el cambio de padre de nodos en uso. Reorganizar nodos en uso requerirá una operación explícita que contemple sus referencias.
 
 **Respuestas preliminares, a ratificar (no vigentes):**
-- [D-1] **Empresas:** se respondió "conservar Company". La autorización original permite eliminarlas. Los efectos de cada opción están en §5.2.
+- [D-1] **Empresas:** se respondió "conservar Company".
+  - El 2026-10-07 el usuario reiteró que la limpieza **puede incluir** las empresas actuales, porque se recargan.
+  - Ambas opciones están autorizadas; falta elegir C1 o C2 (efectos en §5.2). El inventario de A3 cuantifica las dos.
 - [D-2] **Ubicaciones:** solo establecimientos explícitos, sin "zona completa".
 - [D-3] **Rastro de la limpieza:** solo `AuditLog`, sin filas en el historial visible del legajo.
 
@@ -170,7 +173,6 @@ Se retira `Employee.sectorId`. Se conservan la empresa empleadora (`EmployeeComp
 | D-6 | Funciones que necesitan puestos distintos por alcance | A5 |
 | D-7 | Modo de filtrado por defecto; banda "Alcance superior" en el organigrama | A7 |
 | D-8 | Reemplazo de "Dotación por sector" | A7 |
-| D-9 | Cambio de padre de un nodo en uso | — |
 | D-10 | Empresa propietaria de un establecimiento | — |
 | D-11 | Múltiples encargados en la vista funcional (hoy se usa el primero; no se cambia en silencio) | — |
 | D-12 | Merge y despliegue frente a producción | B5 |
@@ -330,3 +332,72 @@ La inactivación solo puede **combinarse** con R1, R2 o R3. **Nunca se deja una 
 - Razón social, CUIT y código Finnegans de la empresa se editan en la UI pero no se guardan.
 - Lista fija `salaryOrder` en `employees.service.ts`, distinta del catálogo `SalaryCategory`.
 - La auditoría del código existente se escribe fuera de las transacciones.
+
+## 11. Estado de implementación
+
+| Etapa | Estado |
+|---|---|
+| A1 | Hecha: este ADR y las normas (commit `7918455`) |
+| A2 | Código hecho en la rama; **M1 aplicada y verificada sólo en la copia aislada** `org-location-reorg` (ver abajo). Development y producción sin tocar |
+| A3–A8, B0–B5 | Pendientes |
+
+### A2 — qué quedó en código
+
+**Esquema M1**
+- Archivos: `backend/prisma/schema.prisma` y la migración `backend/prisma/migrations/20261007120000_org_location_expand/migration.sql`.
+- Contenido según §7: tablas `Zone`, `PositionOrgScope`, `EmployeeWorkLocation` y `EmployeeWorkLocationEstablishment`; padres nuevos nulos con FKs RESTRICT; `Establishment.companyId` nulo; FKs de `DoubleHourRule` en RESTRICT; CHECKs; `btree_gist` y exclusión de superposición.
+- Unicidad de alcances: se resuelve con `@@unique([positionId, <fk>])`, sin índices parciales.
+- El SQL se generó con `prisma migrate diff` sin conexión y luego se completó a mano.
+
+**Reversión**
+- Script: `backend/prisma/rollbacks/20261007120000_org_location_expand.down.sql`, en una sola transacción.
+- Aborta si ya hay datos del modelo nuevo.
+
+**Backend de árboles (`org-structure`)**
+- Zonas y padres nuevos obligatorios en el servicio; el padre debe estar activo y pertenecer al modelo objetivo.
+- Registros legados: no se reubican.
+- Cambio de padre de un nodo en uso: bloqueado (D-9, ratificada).
+- Centros de costo: no se vinculan a registros legados.
+- Dependencias de borrado: ampliadas a los vínculos nuevos.
+- Vínculos de centros de costo: se borran explícitamente.
+- Auditoría: dentro de la transacción. Los cachés se limpian después del commit.
+
+**Auditoría transaccional**
+- `auditRepository.create(data, db)` y `auditService.registerWithin(tx, input)`, que propaga errores.
+- `clearAuditDerivedCaches()`, que se llama después del commit.
+- `auditService.register` existente no cambia de comportamiento.
+
+**Puestos**
+- `DELETE` inactiva el puesto si tiene personas o reglas de horas especiales.
+- Si se borra, primero borra explícitamente sus alcances y categorías.
+- Todo en una transacción Serializable, con la auditoría dentro.
+
+**Seed**
+- Crea la estructura del modelo objetivo.
+- Sólo crea lo que falta: nunca reubica registros existentes.
+
+**Verificado sin base**
+- `prisma validate`, typecheck, la suite de tests del backend y build.
+
+**Verificado en la copia aislada** (2026-10-07)
+- Rama Neon `org-location-reorg`, creada desde development. Host efectivo `ep-rough-river-aioy7xp9-pooler…`, comprobado antes de cada escritura.
+- `migrate status` previo: sólo M1 pendiente.
+- `migrate deploy` aplicó sólo M1. Manifiesto por tabla (conteo + hash sobre las columnas originales):
+  - 57 de 58 tablas de datos idénticas;
+  - `_prisma_migrations` +1;
+  - las 4 tablas nuevas, vacías.
+- Drift entre la base y `schema.prisma`: vacío. Prisma no intenta eliminar los CHECK ni la exclusión.
+- `btree_gist` 1.8 instalada. Las FKs de `DoubleHourRule` quedan en RESTRICT.
+- 12 pruebas de constraints en una transacción revertida, todas OK:
+  - superposición futura y del mismo día → `23P01`;
+  - zonas distintas simultáneas → OK;
+  - intervalo inverso → `23514`;
+  - alcance duplicado → `23505`;
+  - alcance con dos FKs o con `level` incoherente → `23514`;
+  - borrado de un padre o una zona en uso → `23001`.
+  - Manifiesto posterior idéntico: no quedó nada persistido.
+- Reversión probada:
+  - el esquema volvió a ser idéntico al previo (diff vacío) y M1 volvió a quedar pendiente;
+  - las 58 tablas quedaron idénticas al manifiesto previo.
+- M1 re-aplicada: `migrate status` al día y mismas verificaciones.
+- Reportes en `../backups/org-location-m1-copy-2026-10-07.*`, fuera del repositorio. Contienen sólo conteos, hashes y nombres de columnas; ninguna credencial.

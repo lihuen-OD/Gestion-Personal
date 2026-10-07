@@ -39,39 +39,54 @@ async function main() {
     },
   });
 
-  const establishment = await prisma.establishment.upsert({
-    where: { companyId_code: { companyId: company.id, code: "CASA-CENTRAL" } },
+  // Modelo objetivo (docs/decisions/ORG_LOCATION_REORGANIZATION.md):
+  // Organización Empresa → UN → Sector → Área y Ubicaciones Zona →
+  // Establecimiento, independientes. Sólo crea lo que falta (`update: {}` /
+  // findFirst): nunca reubica registros existentes.
+  const sector = await prisma.sector.upsert({
+    where: { code: "RRHH" },
     update: {},
     create: {
-      companyId: company.id,
       businessUnitId: businessUnit.id,
-      code: "CASA-CENTRAL",
-      name: "Casa Central",
-      province: "Entre Rios",
-      department: "Colon",
-      city: "Colon",
+      code: "RRHH",
+      name: "RRHH",
     },
   });
 
-  const area = await prisma.area.upsert({
+  await prisma.area.upsert({
     where: { code: "ADM-GRAL" },
     update: {},
     create: {
-      establishmentId: establishment.id,
+      sectorId: sector.id,
       code: "ADM-GRAL",
       name: "Administracion General",
     },
   });
 
-  const sector = await prisma.sector.upsert({
-    where: { code: "RRHH" },
+  const zone = await prisma.zone.upsert({
+    where: { code: "CENTRO" },
     update: {},
     create: {
-      areaId: area.id,
-      code: "RRHH",
-      name: "RRHH",
+      code: "CENTRO",
+      name: "Centro",
     },
   });
+
+  // Hasta M2 el código de establecimiento conserva la unicidad legada por
+  // empresa, que no admite companyId NULL en un upsert: se busca por zona.
+  const existingEstablishment = await prisma.establishment.findFirst({ where: { code: "CASA-CENTRAL", zoneId: zone.id } });
+  if (!existingEstablishment) {
+    await prisma.establishment.create({
+      data: {
+        zoneId: zone.id,
+        code: "CASA-CENTRAL",
+        name: "Casa Central",
+        province: "Entre Rios",
+        department: "Colon",
+        city: "Colon",
+      },
+    });
+  }
 
   const supervisor = await prisma.user.upsert({
     where: { email: "supervisor@losod.local" },

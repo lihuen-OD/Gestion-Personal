@@ -43,3 +43,18 @@ describe("auditService.register — descripción visible sin ids técnicos", () 
     expect(create.mock.calls[0]![0].description).toBe(description);
   });
 });
+
+describe("auditService.registerWithin — auditoría dentro de la transacción del llamador", () => {
+  it("escribe con el cliente de transacción recibido y no limpia cachés", async () => {
+    const { clearAuditListCache } = await import("./audit.cache");
+    const tx = { marker: "tx" } as never;
+    await auditService.registerWithin(tx, { action: "CREATE", entity: "Zone", entityId: "zone-1", description: "Se creó la zona ZN-01 - Norte." });
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({ entity: "Zone", entityId: "zone-1" }), tx);
+    expect(clearAuditListCache).not.toHaveBeenCalled();
+  });
+
+  it("propaga el error (no lo traga) para que la transacción se revierta", async () => {
+    create.mockRejectedValueOnce(new Error("db down"));
+    await expect(auditService.registerWithin({} as never, { action: "DELETE", entity: "Zone", description: "Se eliminó la zona ZN-01 - Norte." })).rejects.toThrow("db down");
+  });
+});

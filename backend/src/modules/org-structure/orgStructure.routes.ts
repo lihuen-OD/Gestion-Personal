@@ -12,12 +12,14 @@ import {
   createCostCenterSchema,
   createEstablishmentSchema,
   createSectorSchema,
+  createZoneSchema,
   updateAreaSchema,
   updateBusinessUnitSchema,
   updateCompanySchema,
   updateCostCenterSchema,
   updateEstablishmentSchema,
   updateSectorSchema,
+  updateZoneSchema,
 } from "./orgStructure.schemas";
 
 export const orgStructureRouter = Router();
@@ -45,6 +47,11 @@ orgStructureRouter.delete("/areas/:id", requireAnyRole(adminRoles), asyncHandler
 orgStructureRouter.post("/sectors", requireAnyRole(adminRoles), validateBody(createSectorSchema), asyncHandler(orgStructureController.createSector));
 orgStructureRouter.patch("/sectors/:id", requireAnyRole(adminRoles), validateBody(updateSectorSchema), asyncHandler(orgStructureController.updateSector));
 orgStructureRouter.delete("/sectors/:id", requireAnyRole(adminRoles), asyncHandler(orgStructureController.deleteSector));
+
+// Árbol de Ubicaciones (modelo objetivo): Zona → Establecimiento.
+orgStructureRouter.post("/zones", requireAnyRole(adminRoles), validateBody(createZoneSchema), asyncHandler(orgStructureController.createZone));
+orgStructureRouter.patch("/zones/:id", requireAnyRole(adminRoles), validateBody(updateZoneSchema), asyncHandler(orgStructureController.updateZone));
+orgStructureRouter.delete("/zones/:id", requireAnyRole(adminRoles), asyncHandler(orgStructureController.deleteZone));
 
 orgStructureRouter.post("/cost-centers", requireAnyRole(adminRoles), validateBody(createCostCenterSchema), asyncHandler(orgStructureController.createCostCenter));
 orgStructureRouter.patch("/cost-centers/:id", requireAnyRole(adminRoles), validateBody(updateCostCenterSchema), asyncHandler(orgStructureController.updateCostCenter));

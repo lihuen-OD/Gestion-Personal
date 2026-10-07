@@ -1,4 +1,4 @@
-import { Prisma } from "@prisma/client";
+import { Prisma, type RecordStatus } from "@prisma/client";
 import { prisma, type PrismaTransactionClient } from "../../shared/prisma/client";
 import type { OrgDependencyKey, OrgEntityKind } from "./orgStructure.dependencies";
 import type {
@@ -8,12 +8,14 @@ import type {
   CreateCostCenterInput,
   CreateEstablishmentInput,
   CreateSectorInput,
+  CreateZoneInput,
   UpdateAreaInput,
   UpdateBusinessUnitInput,
   UpdateCompanyInput,
   UpdateCostCenterInput,
   UpdateEstablishmentInput,
   UpdateSectorInput,
+  UpdateZoneInput,
 } from "./orgStructure.schemas";
 
 // ---------------------------------------------------------------------------
@@ -32,14 +34,16 @@ interface OverviewCache {
 let overviewCache: OverviewCache | null = null;
 
 // Catálogo completo explícito (docs/PERFORMANCE_STANDARDS.md §6, "fetch-all
-// permitido"): la estructura organizacional es un vocabulario administrado a
-// mano por RRHH que no crece con headcount ni con el tiempo (volumen real
-// confirmado: 6 empresas, 12 unidades, 16 establecimientos, 34 áreas, 15
-// sectores, 2 centros de costo). Antes cada entidad tenía `take: 500` sin
-// señal de corte: con la 501ª fila, selects, filtros, legajos y el
-// organigrama la perdían en silencio. Sin tope, la respuesta es siempre el
-// catálogo completo; está cacheada (overviewCache) e invalidada en cada
-// escritura.
+// permitido"): la estructura es un vocabulario administrado a mano por RRHH
+// que no crece con headcount ni con el tiempo. Sin tope, la respuesta es
+// siempre el catálogo completo; está cacheada (overviewCache) e invalidada en
+// cada escritura.
+//
+// Transición (ORG_LOCATION_REORGANIZATION.md): cada nodo trae su padre del
+// modelo objetivo (businessUnitId del sector, sectorId del área, zoneId del
+// establecimiento) y, hasta M2, también los padres del modelo anterior
+// (areaId, establishmentId, companyId/businessUnitId del establecimiento) sólo
+// para lectura. Un nodo sin padre del modelo objetivo es un registro LEGADO.
 function fetchOverview() {
   return Promise.all([
     prisma.company.findMany({
@@ -48,13 +52,7 @@ function fetchOverview() {
     }),
     prisma.businessUnit.findMany({
       orderBy: { name: "asc" },
-      select: {
-        id: true,
-        code: true,
-        name: true,
-        status: true,
-        companyId: true,
-      },
+      select: { id: true, code: true, name: true, status: true, companyId: true },
     }),
     prisma.establishment.findMany({
       orderBy: { name: "asc" },
@@ -63,6 +61,7 @@ function fetchOverview() {
         code: true,
         name: true,
         status: true,
+        zoneId: true,
         companyId: true,
         businessUnitId: true,
         province: true,
@@ -75,23 +74,11 @@ function fetchOverview() {
     }),
     prisma.area.findMany({
       orderBy: { name: "asc" },
-      select: {
-        id: true,
-        code: true,
-        name: true,
-        status: true,
-        establishmentId: true,
-      },
+      select: { id: true, code: true, name: true, status: true, sectorId: true, establishmentId: true },
     }),
     prisma.sector.findMany({
       orderBy: { name: "asc" },
-      select: {
-        id: true,
-        code: true,
-        name: true,
-        status: true,
-        areaId: true,
-      },
+      select: { id: true, code: true, name: true, status: true, businessUnitId: true, areaId: true },
     }),
     prisma.costCenter.findMany({
       orderBy: { code: "asc" },
@@ -106,6 +93,10 @@ function fetchOverview() {
         areas: { select: { areaId: true } },
         sectors: { select: { sectorId: true } },
       },
+    }),
+    prisma.zone.findMany({
+      orderBy: { name: "asc" },
+      select: { id: true, code: true, name: true, status: true },
     }),
   ]);
 }
@@ -123,165 +114,270 @@ export function invalidateOverviewCache(): void {
   overviewCache = null;
 }
 
+// ---------------------------------------------------------------------------
+// Nodos de los árboles
+// ---------------------------------------------------------------------------
+
+type Tx = PrismaTransactionClient;
+
+export type NodeKind = Exclude<OrgEntityKind, "costCenter">;
+
+/** Estado de un registro leído dentro de la transacción de escritura. */
+export interface OrgRecord {
+  id: string;
+  code: string;
+  name: string;
+  status: RecordStatus;
+  /** Padre del modelo objetivo (null para empresas y zonas, o registro legado). */
+  parentId: string | null;
+  /** Registro del modelo anterior: sector/área/establecimiento sin padre del modelo objetivo. */
+  isLegacy: boolean;
+  counts: Partial<Record<OrgDependencyKey, number>>;
+}
+
+export type CatalogRow = { id: string; code: string; name: string; status: RecordStatus };
+
+export interface NodeInputs {
+  company: [CreateCompanyInput, UpdateCompanyInput];
+  businessUnit: [CreateBusinessUnitInput, UpdateBusinessUnitInput];
+  sector: [CreateSectorInput, UpdateSectorInput];
+  area: [CreateAreaInput, UpdateAreaInput];
+  zone: [CreateZoneInput, UpdateZoneInput];
+  establishment: [CreateEstablishmentInput, UpdateEstablishmentInput];
+}
+
+interface NodeOps<K extends NodeKind> {
+  find: (tx: Tx, id: string) => Promise<OrgRecord | null>;
+  create: (tx: Tx, data: NodeInputs[K][0]) => Promise<CatalogRow>;
+  update: (tx: Tx, id: string, data: NodeInputs[K][1]) => Promise<CatalogRow>;
+  remove: (tx: Tx, id: string) => Promise<unknown>;
+}
+
+const nodes: { [K in NodeKind]: NodeOps<K> } = {
+  company: {
+    find: async (tx, id) => {
+      const row = await tx.company.findUnique({ where: { id }, select: { id: true, code: true, name: true, status: true, _count: { select: { businessUnits: true, establishments: true, employees: true, users: true, costCenterLinks: true, doubleHourRules: true, positionScopes: true } } } });
+      return row && { id: row.id, code: row.code, name: row.name, status: row.status, parentId: null, isLegacy: false, counts: row._count };
+    },
+    create: (tx, data) => tx.company.create({ data }),
+    update: (tx, id, data) => tx.company.update({ where: { id }, data }),
+    remove: (tx, id) => tx.company.delete({ where: { id } }),
+  },
+  businessUnit: {
+    find: async (tx, id) => {
+      const row = await tx.businessUnit.findUnique({ where: { id }, select: { id: true, code: true, name: true, status: true, companyId: true, _count: { select: { sectors: true, establishments: true, costCenterLinks: true, positionScopes: true } } } });
+      return row && { id: row.id, code: row.code, name: row.name, status: row.status, parentId: row.companyId, isLegacy: false, counts: row._count };
+    },
+    create: (tx, data) => tx.businessUnit.create({ data }),
+    update: (tx, id, data) => tx.businessUnit.update({ where: { id }, data }),
+    remove: (tx, id) => tx.businessUnit.delete({ where: { id } }),
+  },
+  sector: {
+    find: async (tx, id) => {
+      const row = await tx.sector.findUnique({ where: { id }, select: { id: true, code: true, name: true, status: true, businessUnitId: true, _count: { select: { areas: true, employees: true, positions: true, users: true, costCenterLinks: true, doubleHourRules: true, positionScopes: true } } } });
+      return row && { id: row.id, code: row.code, name: row.name, status: row.status, parentId: row.businessUnitId, isLegacy: row.businessUnitId === null, counts: row._count };
+    },
+    create: (tx, data) => tx.sector.create({ data }),
+    update: (tx, id, data) => tx.sector.update({ where: { id }, data }),
+    remove: (tx, id) => tx.sector.delete({ where: { id } }),
+  },
+  area: {
+    find: async (tx, id) => {
+      const row = await tx.area.findUnique({ where: { id }, select: { id: true, code: true, name: true, status: true, sectorId: true, _count: { select: { sectors: true, costCenterLinks: true, positionScopes: true } } } });
+      return row && { id: row.id, code: row.code, name: row.name, status: row.status, parentId: row.sectorId, isLegacy: row.sectorId === null, counts: row._count };
+    },
+    create: (tx, data) => tx.area.create({ data }),
+    update: (tx, id, data) => tx.area.update({ where: { id }, data }),
+    remove: (tx, id) => tx.area.delete({ where: { id } }),
+  },
+  zone: {
+    find: async (tx, id) => {
+      const row = await tx.zone.findUnique({ where: { id }, select: { id: true, code: true, name: true, status: true, _count: { select: { establishments: true } } } });
+      return row && { id: row.id, code: row.code, name: row.name, status: row.status, parentId: null, isLegacy: false, counts: row._count };
+    },
+    create: (tx, data) => tx.zone.create({ data }),
+    update: (tx, id, data) => tx.zone.update({ where: { id }, data }),
+    remove: (tx, id) => tx.zone.delete({ where: { id } }),
+  },
+  establishment: {
+    find: async (tx, id) => {
+      const row = await tx.establishment.findUnique({ where: { id }, select: { id: true, code: true, name: true, status: true, zoneId: true, _count: { select: { areas: true, costCenterLinks: true, workLocations: true, clockDevices: true } } } });
+      return row && { id: row.id, code: row.code, name: row.name, status: row.status, parentId: row.zoneId, isLegacy: row.zoneId === null, counts: row._count };
+    },
+    create: (tx, data) => tx.establishment.create({ data }),
+    update: (tx, id, data) => tx.establishment.update({ where: { id }, data }),
+    remove: (tx, id) => tx.establishment.delete({ where: { id } }),
+  },
+};
+
+const costCenterOps = {
+  find: async (tx: Tx, id: string): Promise<OrgRecord | null> => {
+    const row = await tx.costCenter.findUnique({ where: { id }, select: { id: true, code: true, name: true, status: true, _count: { select: { employees: true, doubleHourRules: true } } } });
+    return row && { id: row.id, code: row.code, name: row.name, status: row.status, parentId: null, isLegacy: false, counts: row._count };
+  },
+  // Sus vínculos propios se borran explícitamente antes que él (no se depende
+  // del ON DELETE CASCADE de la base) — ver orgStructure.dependencies.ts.
+  remove: async (tx: Tx, id: string) => {
+    await tx.costCenterCompany.deleteMany({ where: { costCenterId: id } });
+    await tx.costCenterBusinessUnit.deleteMany({ where: { costCenterId: id } });
+    await tx.costCenterEstablishment.deleteMany({ where: { costCenterId: id } });
+    await tx.costCenterArea.deleteMany({ where: { costCenterId: id } });
+    await tx.costCenterSector.deleteMany({ where: { costCenterId: id } });
+    return tx.costCenter.delete({ where: { id } });
+  },
+};
+
+function findAny(tx: Tx, kind: OrgEntityKind, id: string) {
+  return kind === "costCenter" ? costCenterOps.find(tx, id) : nodes[kind].find(tx, id);
+}
+
+function removeAny(tx: Tx, kind: OrgEntityKind, id: string) {
+  return kind === "costCenter" ? costCenterOps.remove(tx, id) : nodes[kind].remove(tx, id);
+}
+
+export interface CostCenterLinks {
+  companyIds: string[];
+  businessUnitIds: string[];
+  establishmentIds: string[];
+  areaIds: string[];
+  sectorIds: string[];
+}
+
 function costCenterData(input: CreateCostCenterInput | UpdateCostCenterInput) {
   const { companyIds: _companyIds, businessUnitIds: _businessUnitIds, establishmentIds: _establishmentIds, areaIds: _areaIds, sectorIds: _sectorIds, ...data } = input;
   return data;
 }
 
-type Tx = PrismaTransactionClient;
-type DeletableRecord = { id: string; code: string; name: string; counts: Partial<Record<OrgDependencyKey, number>> };
-
-// Lectura del registro + conteo de cada dependencia (ver orgStructure.dependencies.ts),
-// y borrado — ambos dentro de la misma transacción.
-const deletableEntities: Record<OrgEntityKind, { find: (tx: Tx, id: string) => Promise<DeletableRecord | null>; remove: (tx: Tx, id: string) => Promise<unknown> }> = {
-  company: {
-    find: async (tx, id) => {
-      const row = await tx.company.findUnique({ where: { id }, select: { id: true, code: true, name: true, _count: { select: { businessUnits: true, establishments: true, employees: true, users: true, costCenterLinks: true, doubleHourRules: true } } } });
-      return row && { id: row.id, code: row.code, name: row.name, counts: row._count };
-    },
-    remove: (tx, id) => tx.company.delete({ where: { id } }),
-  },
-  businessUnit: {
-    find: async (tx, id) => {
-      const row = await tx.businessUnit.findUnique({ where: { id }, select: { id: true, code: true, name: true, _count: { select: { establishments: true, costCenterLinks: true } } } });
-      return row && { id: row.id, code: row.code, name: row.name, counts: row._count };
-    },
-    remove: (tx, id) => tx.businessUnit.delete({ where: { id } }),
-  },
-  establishment: {
-    find: async (tx, id) => {
-      const row = await tx.establishment.findUnique({ where: { id }, select: { id: true, code: true, name: true, _count: { select: { areas: true, costCenterLinks: true } } } });
-      return row && { id: row.id, code: row.code, name: row.name, counts: row._count };
-    },
-    remove: (tx, id) => tx.establishment.delete({ where: { id } }),
-  },
-  area: {
-    find: async (tx, id) => {
-      const row = await tx.area.findUnique({ where: { id }, select: { id: true, code: true, name: true, _count: { select: { sectors: true, costCenterLinks: true } } } });
-      return row && { id: row.id, code: row.code, name: row.name, counts: row._count };
-    },
-    remove: (tx, id) => tx.area.delete({ where: { id } }),
-  },
-  sector: {
-    find: async (tx, id) => {
-      const row = await tx.sector.findUnique({ where: { id }, select: { id: true, code: true, name: true, _count: { select: { employees: true, positions: true, users: true, costCenterLinks: true, doubleHourRules: true } } } });
-      return row && { id: row.id, code: row.code, name: row.name, counts: row._count };
-    },
-    remove: (tx, id) => tx.sector.delete({ where: { id } }),
-  },
-  costCenter: {
-    find: async (tx, id) => {
-      const row = await tx.costCenter.findUnique({ where: { id }, select: { id: true, code: true, name: true, _count: { select: { employees: true, doubleHourRules: true } } } });
-      return row && { id: row.id, code: row.code, name: row.name, counts: row._count };
-    },
-    // Sus vínculos CostCenter* (su propia ubicación) caen con él por FK CASCADE — ver orgStructure.dependencies.ts.
-    remove: (tx, id) => tx.costCenter.delete({ where: { id } }),
-  },
-};
+async function replaceCostCenterLinks(tx: Tx, id: string, input: Partial<CostCenterLinks>) {
+  if (input.companyIds !== undefined) {
+    await tx.costCenterCompany.deleteMany({ where: { costCenterId: id } });
+    if (input.companyIds.length) await tx.costCenterCompany.createMany({ data: input.companyIds.map((companyId) => ({ costCenterId: id, companyId })), skipDuplicates: true });
+  }
+  if (input.businessUnitIds !== undefined) {
+    await tx.costCenterBusinessUnit.deleteMany({ where: { costCenterId: id } });
+    if (input.businessUnitIds.length) await tx.costCenterBusinessUnit.createMany({ data: input.businessUnitIds.map((businessUnitId) => ({ costCenterId: id, businessUnitId })), skipDuplicates: true });
+  }
+  if (input.establishmentIds !== undefined) {
+    await tx.costCenterEstablishment.deleteMany({ where: { costCenterId: id } });
+    if (input.establishmentIds.length) await tx.costCenterEstablishment.createMany({ data: input.establishmentIds.map((establishmentId) => ({ costCenterId: id, establishmentId })), skipDuplicates: true });
+  }
+  if (input.areaIds !== undefined) {
+    await tx.costCenterArea.deleteMany({ where: { costCenterId: id } });
+    if (input.areaIds.length) await tx.costCenterArea.createMany({ data: input.areaIds.map((areaId) => ({ costCenterId: id, areaId })), skipDuplicates: true });
+  }
+  if (input.sectorIds !== undefined) {
+    await tx.costCenterSector.deleteMany({ where: { costCenterId: id } });
+    if (input.sectorIds.length) await tx.costCenterSector.createMany({ data: input.sectorIds.map((sectorId) => ({ costCenterId: id, sectorId })), skipDuplicates: true });
+  }
+}
 
 export type DeleteIfUnusedResult =
   | { status: "NOT_FOUND" }
-  | { status: "BLOCKED"; record: DeletableRecord }
-  | { status: "DELETED"; record: DeletableRecord };
+  | { status: "BLOCKED"; record: OrgRecord }
+  | { status: "DELETED"; record: OrgRecord };
+
+const serializable = { isolationLevel: Prisma.TransactionIsolationLevel.Serializable };
 
 export const orgStructureRepository = {
   /**
+   * Toda escritura de la estructura corre en una transacción Serializable que
+   * incluye validaciones, cambio y auditoría (ORG_LOCATION_REORGANIZATION.md
+   * §3.5): si otra transacción cambia el árbol en medio, una de las dos aborta
+   * (P2034) en vez de dejar un estado inconsistente.
+   */
+  transaction<T>(operation: (tx: Tx) => Promise<T>): Promise<T> {
+    return prisma.$transaction(operation, serializable);
+  },
+
+  findNode(tx: Tx, kind: NodeKind, id: string) {
+    return nodes[kind].find(tx, id);
+  },
+
+  createNode<K extends NodeKind>(tx: Tx, kind: K, data: NodeInputs[K][0]) {
+    return nodes[kind].create(tx, data);
+  },
+
+  updateNode<K extends NodeKind>(tx: Tx, kind: K, id: string, data: NodeInputs[K][1]) {
+    return nodes[kind].update(tx, id, data);
+  },
+
+  /**
+   * Hasta M2, `Establishment` conserva la unicidad legada `(companyId, code)`,
+   * que no protege a los establecimientos nuevos (companyId NULL). En el
+   * modelo objetivo el código es único entre establecimientos con zona.
+   */
+  findZonedEstablishmentByCode(tx: Tx, code: string, excludeId?: string) {
+    return tx.establishment.findFirst({
+      where: { code, zoneId: { not: null }, ...(excludeId ? { id: { not: excludeId } } : {}) },
+      select: { id: true },
+    });
+  },
+
+  /**
    * Borra sólo si ninguna dependencia existe. Serializable: si otra
    * transacción agrega un hijo/empleado entre el conteo y el delete, una de
-   * las dos aborta (P2034) en vez de dejar un registro huérfano por el
-   * ON DELETE SET NULL de la base.
+   * las dos aborta (P2034) en vez de dejar un registro huérfano. `onDeleted`
+   * corre dentro de la misma transacción (auditoría).
    */
-  deleteIfUnused(kind: OrgEntityKind, id: string, isBlocked: (record: DeletableRecord) => boolean): Promise<DeleteIfUnusedResult> {
-    const entity = deletableEntities[kind];
+  deleteIfUnused(
+    kind: OrgEntityKind,
+    id: string,
+    isBlocked: (record: OrgRecord) => boolean,
+    onDeleted: (tx: Tx, record: OrgRecord) => Promise<unknown>,
+  ): Promise<DeleteIfUnusedResult> {
     return prisma.$transaction(async (tx) => {
-      const record = await entity.find(tx, id);
+      const record = await findAny(tx, kind, id);
       if (!record) return { status: "NOT_FOUND" as const };
       if (isBlocked(record)) return { status: "BLOCKED" as const, record };
-      await entity.remove(tx, id);
+      await removeAny(tx, kind, id);
+      await onDeleted(tx, record);
       return { status: "DELETED" as const, record };
-    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+    }, serializable);
   },
 
   getOverview() {
     return getCachedOverview();
   },
 
-  createCompany(data: CreateCompanyInput) {
-    return prisma.company.create({ data });
-  },
-
-  updateCompany(id: string, data: UpdateCompanyInput) {
-    return prisma.company.update({ where: { id }, data });
-  },
-
-  createBusinessUnit(input: CreateBusinessUnitInput) {
-    return prisma.businessUnit.create({ data: input });
-  },
-
-  updateBusinessUnit(id: string, input: UpdateBusinessUnitInput) {
-    return prisma.businessUnit.update({ where: { id }, data: input });
-  },
-
-  createEstablishment(input: CreateEstablishmentInput) {
-    return prisma.establishment.create({ data: input });
-  },
-
-  updateEstablishment(id: string, input: UpdateEstablishmentInput) {
-    return prisma.establishment.update({ where: { id }, data: input });
-  },
-
-  createArea(input: CreateAreaInput) {
-    return prisma.area.create({ data: input });
-  },
-
-  updateArea(id: string, input: UpdateAreaInput) {
-    return prisma.area.update({ where: { id }, data: input });
-  },
-
-  createSector(input: CreateSectorInput) {
-    return prisma.sector.create({ data: input });
-  },
-
-  updateSector(id: string, input: UpdateSectorInput) {
-    return prisma.sector.update({ where: { id }, data: input });
-  },
-
-  createCostCenter(input: CreateCostCenterInput) {
-    return prisma.$transaction(async (tx) => {
-      const item = await tx.costCenter.create({ data: { code: input.code, name: input.name, status: input.status } });
-      if (input.companyIds.length) await tx.costCenterCompany.createMany({ data: input.companyIds.map((companyId) => ({ costCenterId: item.id, companyId })), skipDuplicates: true });
-      if (input.businessUnitIds.length) await tx.costCenterBusinessUnit.createMany({ data: input.businessUnitIds.map((businessUnitId) => ({ costCenterId: item.id, businessUnitId })), skipDuplicates: true });
-      if (input.establishmentIds.length) await tx.costCenterEstablishment.createMany({ data: input.establishmentIds.map((establishmentId) => ({ costCenterId: item.id, establishmentId })), skipDuplicates: true });
-      if (input.areaIds.length) await tx.costCenterArea.createMany({ data: input.areaIds.map((areaId) => ({ costCenterId: item.id, areaId })), skipDuplicates: true });
-      if (input.sectorIds.length) await tx.costCenterSector.createMany({ data: input.sectorIds.map((sectorId) => ({ costCenterId: item.id, sectorId })), skipDuplicates: true });
-      return item;
+  async findCostCenterLinks(tx: Tx, id: string): Promise<CostCenterLinks | null> {
+    const row = await tx.costCenter.findUnique({
+      where: { id },
+      select: {
+        companies: { select: { companyId: true } },
+        businessUnits: { select: { businessUnitId: true } },
+        establishments: { select: { establishmentId: true } },
+        areas: { select: { areaId: true } },
+        sectors: { select: { sectorId: true } },
+      },
     });
+    return row && {
+      companyIds: row.companies.map((link) => link.companyId),
+      businessUnitIds: row.businessUnits.map((link) => link.businessUnitId),
+      establishmentIds: row.establishments.map((link) => link.establishmentId),
+      areaIds: row.areas.map((link) => link.areaId),
+      sectorIds: row.sectors.map((link) => link.sectorId),
+    };
   },
 
-  updateCostCenter(id: string, input: UpdateCostCenterInput) {
-    return prisma.$transaction(async (tx) => {
-      const item = await tx.costCenter.update({ where: { id }, data: costCenterData(input) });
-      if (input.companyIds !== undefined) {
-        await tx.costCenterCompany.deleteMany({ where: { costCenterId: id } });
-        if (input.companyIds.length) await tx.costCenterCompany.createMany({ data: input.companyIds.map((companyId) => ({ costCenterId: id, companyId })), skipDuplicates: true });
-      }
-      if (input.businessUnitIds !== undefined) {
-        await tx.costCenterBusinessUnit.deleteMany({ where: { costCenterId: id } });
-        if (input.businessUnitIds.length) await tx.costCenterBusinessUnit.createMany({ data: input.businessUnitIds.map((businessUnitId) => ({ costCenterId: id, businessUnitId })), skipDuplicates: true });
-      }
-      if (input.establishmentIds !== undefined) {
-        await tx.costCenterEstablishment.deleteMany({ where: { costCenterId: id } });
-        if (input.establishmentIds.length) await tx.costCenterEstablishment.createMany({ data: input.establishmentIds.map((establishmentId) => ({ costCenterId: id, establishmentId })), skipDuplicates: true });
-      }
-      if (input.areaIds !== undefined) {
-        await tx.costCenterArea.deleteMany({ where: { costCenterId: id } });
-        if (input.areaIds.length) await tx.costCenterArea.createMany({ data: input.areaIds.map((areaId) => ({ costCenterId: id, areaId })), skipDuplicates: true });
-      }
-      if (input.sectorIds !== undefined) {
-        await tx.costCenterSector.deleteMany({ where: { costCenterId: id } });
-        if (input.sectorIds.length) await tx.costCenterSector.createMany({ data: input.sectorIds.map((sectorId) => ({ costCenterId: id, sectorId })), skipDuplicates: true });
-      }
-      return item;
-    });
+  /** Nombres de sectores/áreas/establecimientos del modelo anterior entre los IDs dados. */
+  async findLegacyNames(tx: Tx, ids: { sectorIds: string[]; areaIds: string[]; establishmentIds: string[] }) {
+    const [sectors, areas, establishments] = await Promise.all([
+      ids.sectorIds.length ? tx.sector.findMany({ where: { id: { in: ids.sectorIds }, businessUnitId: null }, select: { name: true } }) : [],
+      ids.areaIds.length ? tx.area.findMany({ where: { id: { in: ids.areaIds }, sectorId: null }, select: { name: true } }) : [],
+      ids.establishmentIds.length ? tx.establishment.findMany({ where: { id: { in: ids.establishmentIds }, zoneId: null }, select: { name: true } }) : [],
+    ]);
+    return [...sectors, ...areas, ...establishments].map((row) => row.name);
+  },
+
+  async createCostCenter(tx: Tx, input: CreateCostCenterInput) {
+    const item = await tx.costCenter.create({ data: { code: input.code, name: input.name, status: input.status } });
+    await replaceCostCenterLinks(tx, item.id, input);
+    return item;
+  },
+
+  async updateCostCenter(tx: Tx, id: string, input: UpdateCostCenterInput) {
+    const item = await tx.costCenter.update({ where: { id }, data: costCenterData(input) });
+    await replaceCostCenterLinks(tx, id, input);
+    return item;
   },
 };

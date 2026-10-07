@@ -1,23 +1,29 @@
 import { Prisma } from "@prisma/client";
 import type { AuditContext } from "../audit/audit.service";
-import { auditService } from "../audit/audit.service";
+import { auditService, clearAuditDerivedCaches } from "../audit/audit.service";
 import { AppError } from "../../shared/errors/AppError";
-import { invalidateOverviewCache, orgStructureRepository } from "./orgStructure.repository";
-import { dependencyBlockedMessage, describeDependencies, orgEntityLabels, type OrgEntityKind } from "./orgStructure.dependencies";
+import type { PrismaTransactionClient } from "../../shared/prisma/client";
+import { invalidateOverviewCache, orgStructureRepository, type CatalogRow, type NodeInputs, type NodeKind, type OrgRecord } from "./orgStructure.repository";
+import {
+  dependencyBlockedMessage,
+  describeDependencies,
+  orgEntityLabels,
+  parentChangeBlockedMessage,
+  type OrgEntityKind,
+} from "./orgStructure.dependencies";
 import type {
-  CreateAreaInput,
-  CreateBusinessUnitInput,
-  CreateCompanyInput,
   CreateCostCenterInput,
-  CreateEstablishmentInput,
-  CreateSectorInput,
-  UpdateAreaInput,
-  UpdateBusinessUnitInput,
-  UpdateCompanyInput,
   UpdateCostCenterInput,
-  UpdateEstablishmentInput,
-  UpdateSectorInput,
 } from "./orgStructure.schemas";
+
+// Árboles del modelo objetivo (docs/decisions/ORG_LOCATION_REORGANIZATION.md
+// §3.1): cada nodo tiene un único padre obligatorio. Empresa y Zona son raíces.
+const parentOf: Partial<Record<NodeKind, { kind: NodeKind; field: string }>> = {
+  businessUnit: { kind: "company", field: "companyId" },
+  sector: { kind: "businessUnit", field: "businessUnitId" },
+  area: { kind: "sector", field: "sectorId" },
+  establishment: { kind: "zone", field: "zoneId" },
+};
 
 function mapPrismaError(error: unknown) {
   if (error instanceof Prisma.PrismaClientKnownRequestError) {
@@ -46,129 +52,213 @@ async function execute<T>(operation: () => Promise<T>) {
   }
 }
 
-async function auditCatalogChange<T extends { id: string; code: string; name: string }>(
-  action: "CREATE" | "UPDATE",
-  entity: string,
-  item: T,
-  audit?: AuditContext,
+// Cachés en memoria: se limpian después del commit, nunca dentro de la
+// transacción (si se revierte, no deben haber reaccionado a un cambio que no
+// existe).
+function afterCommit() {
+  invalidateOverviewCache();
+  clearAuditDerivedCaches();
+}
+
+function describe(kind: OrgEntityKind, item: { code: string; name: string }) {
+  const { article, noun } = orgEntityLabels[kind];
+  return `${article} ${noun} ${item.code} - ${item.name}`;
+}
+
+function snapshot(record: OrgRecord) {
+  return { id: record.id, code: record.code, name: record.name, status: record.status, parentId: record.parentId };
+}
+
+function notFound(): never {
+  throw new AppError("No encontramos el registro solicitado.", 404, "RECORD_NOT_FOUND");
+}
+
+function capitalized(kind: OrgEntityKind) {
+  const { noun } = orgEntityLabels[kind];
+  return `${noun[0]!.toUpperCase()}${noun.slice(1)}`;
+}
+
+// Concordancia de género: "el área" es femenino; el pronombre lo indica.
+function gendered(kind: OrgEntityKind, stem: string) {
+  return `${stem}${orgEntityLabels[kind].pronoun === "la" ? "a" : "o"}`;
+}
+
+function invalidParent(kind: NodeKind, message: string): never {
+  throw new AppError(message, 400, "ORG_STRUCTURE_INVALID_PARENT", { kind });
+}
+
+// El padre debe existir, estar activo y pertenecer al modelo objetivo: un
+// nodo nuevo nunca cuelga de un registro del modelo anterior, que la limpieza
+// controlada va a eliminar.
+async function assertParent(tx: PrismaTransactionClient, kind: NodeKind, parentId: string) {
+  const relation = parentOf[kind];
+  if (!relation) return;
+  const parent = await orgStructureRepository.findNode(tx, relation.kind, parentId);
+  const { article, noun } = orgEntityLabels[relation.kind];
+  if (!parent) invalidParent(kind, `No encontramos ${article} ${noun} ${gendered(relation.kind, "seleccionad")}.`);
+  if (parent.isLegacy) invalidParent(kind, `${capitalized(relation.kind)} “${parent.name}” pertenece a la estructura anterior y no puede recibir elementos nuevos.`);
+  if (parent.status !== "ACTIVO") invalidParent(kind, `${capitalized(relation.kind)} “${parent.name}” está ${gendered(relation.kind, "inactiv")}.`);
+}
+
+async function assertUniqueEstablishmentCode(tx: PrismaTransactionClient, code: string | undefined, excludeId?: string) {
+  if (code === undefined) return;
+  const conflict = await orgStructureRepository.findZonedEstablishmentByCode(tx, code, excludeId);
+  if (conflict) throw new AppError("A record with the same unique value already exists", 409, "UNIQUE_CONSTRAINT");
+}
+
+// Un centro de costo no agrega vínculos nuevos a registros del modelo anterior
+// (impedirían su limpieza). Los vínculos que ya tenía se conservan tal cual.
+async function assertNoNewLegacyLinks(
+  tx: PrismaTransactionClient,
+  input: Partial<Record<"sectorIds" | "areaIds" | "establishmentIds", string[]>>,
+  current?: Record<"sectorIds" | "areaIds" | "establishmentIds", string[]>,
 ) {
-  await auditService.register({
-    ...audit,
-    action,
-    entity,
-    entityId: item.id,
-    description: `${action === "CREATE" ? "Se creo" : "Se actualizo"} ${entity} ${item.code || item.name}.`,
-    after: item as Prisma.InputJsonValue,
-  });
+  const added = (key: "sectorIds" | "areaIds" | "establishmentIds") => (input[key] ?? []).filter((id) => !current?.[key].includes(id));
+  const legacyNames = await orgStructureRepository.findLegacyNames(tx, { sectorIds: added("sectorIds"), areaIds: added("areaIds"), establishmentIds: added("establishmentIds") });
+  if (legacyNames.length) {
+    throw new AppError(
+      `No se puede vincular el centro de costo a elementos de la estructura anterior: ${legacyNames.join(", ")}.`,
+      400,
+      "ORG_STRUCTURE_LEGACY_LINK",
+    );
+  }
 }
 
 export const orgStructureService = {
   async getOverview() {
-    const [companies, businessUnits, establishments, areas, sectors, costCenters] =
+    const [companies, businessUnits, establishments, areas, sectors, costCenters, zones] =
       await orgStructureRepository.getOverview();
 
-    return { companies, businessUnits, establishments, areas, sectors, costCenters };
+    return { companies, businessUnits, sectors, areas, zones, establishments, costCenters };
   },
 
-  async createCompany(data: CreateCompanyInput, audit?: AuditContext) {
-    const item = await execute(() => orgStructureRepository.createCompany(data));
-    invalidateOverviewCache();
-    await auditCatalogChange("CREATE", "Company", item, audit);
-    return item;
-  },
-  async updateCompany(id: string, data: UpdateCompanyInput, audit?: AuditContext) {
-    const item = await execute(() => orgStructureRepository.updateCompany(id, data));
-    invalidateOverviewCache();
-    await auditCatalogChange("UPDATE", "Company", item, audit);
-    return item;
-  },
-
-  async createBusinessUnit(data: CreateBusinessUnitInput, audit?: AuditContext) {
-    const item = await execute(() => orgStructureRepository.createBusinessUnit(data));
-    invalidateOverviewCache();
-    await auditCatalogChange("CREATE", "BusinessUnit", item, audit);
-    return item;
-  },
-  async updateBusinessUnit(id: string, data: UpdateBusinessUnitInput, audit?: AuditContext) {
-    const item = await execute(() => orgStructureRepository.updateBusinessUnit(id, data));
-    invalidateOverviewCache();
-    await auditCatalogChange("UPDATE", "BusinessUnit", item, audit);
+  async createNode<K extends NodeKind>(kind: K, input: NodeInputs[K][0], audit?: AuditContext): Promise<CatalogRow> {
+    const item = await execute(() => orgStructureRepository.transaction(async (tx) => {
+      const relation = parentOf[kind];
+      if (relation) await assertParent(tx, kind, (input as Record<string, string>)[relation.field]!);
+      if (kind === "establishment") await assertUniqueEstablishmentCode(tx, input.code);
+      const created = await orgStructureRepository.createNode(tx, kind, input);
+      await auditService.registerWithin(tx, {
+        ...audit,
+        action: "CREATE",
+        entity: orgEntityLabels[kind].auditEntity,
+        entityId: created.id,
+        description: `Se creó ${describe(kind, created)}.`,
+        after: created as Prisma.InputJsonValue,
+      });
+      return created;
+    }));
+    afterCommit();
     return item;
   },
 
-  async createEstablishment(data: CreateEstablishmentInput, audit?: AuditContext) {
-    const item = await execute(() => orgStructureRepository.createEstablishment(data));
-    invalidateOverviewCache();
-    await auditCatalogChange("CREATE", "Establishment", item, audit);
-    return item;
-  },
-  async updateEstablishment(id: string, data: UpdateEstablishmentInput, audit?: AuditContext) {
-    const item = await execute(() => orgStructureRepository.updateEstablishment(id, data));
-    invalidateOverviewCache();
-    await auditCatalogChange("UPDATE", "Establishment", item, audit);
+  async updateNode<K extends NodeKind>(kind: K, id: string, input: NodeInputs[K][1], audit?: AuditContext): Promise<CatalogRow> {
+    const item = await execute(() => orgStructureRepository.transaction(async (tx) => {
+      const current = await orgStructureRepository.findNode(tx, kind, id);
+      if (!current) notFound();
+
+      const relation = parentOf[kind];
+      const nextParentId = relation ? (input as Record<string, string | undefined>)[relation.field] : undefined;
+      if (relation && nextParentId !== undefined && nextParentId !== current.parentId) {
+        // Un registro del modelo anterior no se reubica en el árbol nuevo: se
+        // crea uno nuevo (ORG_LOCATION_REORGANIZATION.md §4, sin
+        // correspondencias). Nombre, código y estado sí se pueden corregir.
+        if (current.isLegacy) {
+          throw new AppError(
+            `${capitalized(kind)} “${current.name}” pertenece a la estructura anterior: no se reubica en la nueva. Creá ${orgEntityLabels[kind].pronoun === "la" ? "una nueva" : "uno nuevo"}.`,
+            409,
+            "ORG_STRUCTURE_LEGACY_RECORD",
+          );
+        }
+        const dependencies = describeDependencies(kind, current.counts);
+        if (dependencies.length) {
+          throw new AppError(parentChangeBlockedMessage(kind, current.name, dependencies), 409, "ORG_STRUCTURE_PARENT_IN_USE", { dependencies });
+        }
+        await assertParent(tx, kind, nextParentId);
+      }
+      if (kind === "establishment" && input.code !== undefined && input.code !== current.code) await assertUniqueEstablishmentCode(tx, input.code, id);
+
+      const updated = await orgStructureRepository.updateNode(tx, kind, id, input);
+      await auditService.registerWithin(tx, {
+        ...audit,
+        action: "UPDATE",
+        entity: orgEntityLabels[kind].auditEntity,
+        entityId: updated.id,
+        description: `Se actualizó ${describe(kind, updated)}.`,
+        before: snapshot(current) as Prisma.InputJsonValue,
+        after: updated as Prisma.InputJsonValue,
+      });
+      return updated;
+    }));
+    afterCommit();
     return item;
   },
 
-  async createArea(data: CreateAreaInput, audit?: AuditContext) {
-    const item = await execute(() => orgStructureRepository.createArea(data));
-    invalidateOverviewCache();
-    await auditCatalogChange("CREATE", "Area", item, audit);
-    return item;
-  },
-  async updateArea(id: string, data: UpdateAreaInput, audit?: AuditContext) {
-    const item = await execute(() => orgStructureRepository.updateArea(id, data));
-    invalidateOverviewCache();
-    await auditCatalogChange("UPDATE", "Area", item, audit);
-    return item;
-  },
-
-  async createSector(data: CreateSectorInput, audit?: AuditContext) {
-    const item = await execute(() => orgStructureRepository.createSector(data));
-    invalidateOverviewCache();
-    await auditCatalogChange("CREATE", "Sector", item, audit);
-    return item;
-  },
-  async updateSector(id: string, data: UpdateSectorInput, audit?: AuditContext) {
-    const item = await execute(() => orgStructureRepository.updateSector(id, data));
-    invalidateOverviewCache();
-    await auditCatalogChange("UPDATE", "Sector", item, audit);
+  async createCostCenter(input: CreateCostCenterInput, audit?: AuditContext) {
+    const item = await execute(() => orgStructureRepository.transaction(async (tx) => {
+      await assertNoNewLegacyLinks(tx, input);
+      const created = await orgStructureRepository.createCostCenter(tx, input);
+      await auditService.registerWithin(tx, {
+        ...audit,
+        action: "CREATE",
+        entity: "CostCenter",
+        entityId: created.id,
+        description: `Se creó ${describe("costCenter", created)}.`,
+        after: { ...created, links: { companyIds: input.companyIds, businessUnitIds: input.businessUnitIds, sectorIds: input.sectorIds, areaIds: input.areaIds, establishmentIds: input.establishmentIds } } as Prisma.InputJsonValue,
+      });
+      return created;
+    }));
+    afterCommit();
     return item;
   },
 
-  async createCostCenter(data: CreateCostCenterInput, audit?: AuditContext) {
-    const item = await execute(() => orgStructureRepository.createCostCenter(data));
-    invalidateOverviewCache();
-    await auditCatalogChange("CREATE", "CostCenter", item, audit);
-    return item;
-  },
-  async updateCostCenter(id: string, data: UpdateCostCenterInput, audit?: AuditContext) {
-    const item = await execute(() => orgStructureRepository.updateCostCenter(id, data));
-    invalidateOverviewCache();
-    await auditCatalogChange("UPDATE", "CostCenter", item, audit);
+  async updateCostCenter(id: string, input: UpdateCostCenterInput, audit?: AuditContext) {
+    const item = await execute(() => orgStructureRepository.transaction(async (tx) => {
+      const currentLinks = await orgStructureRepository.findCostCenterLinks(tx, id);
+      if (!currentLinks) notFound();
+      await assertNoNewLegacyLinks(tx, input, currentLinks);
+      const updated = await orgStructureRepository.updateCostCenter(tx, id, input);
+      await auditService.registerWithin(tx, {
+        ...audit,
+        action: "UPDATE",
+        entity: "CostCenter",
+        entityId: updated.id,
+        description: `Se actualizó ${describe("costCenter", updated)}.`,
+        before: { links: { ...currentLinks } } as Prisma.InputJsonValue,
+        after: updated as Prisma.InputJsonValue,
+      });
+      return updated;
+    }));
+    afterCommit();
     return item;
   },
 
   // Eliminación definitiva de un registro creado por error. Sólo si no tiene
   // ninguna dependencia de negocio; si la tiene, 409 con el motivo y la
-  // sugerencia de inactivarlo (Inactivar sigue siendo la baja normal).
+  // sugerencia de inactivarlo (Inactivar sigue siendo la baja normal). La
+  // auditoría se escribe en la misma transacción que el borrado.
   async deleteEntity(kind: OrgEntityKind, id: string, audit?: AuditContext) {
-    const result = await execute(() => orgStructureRepository.deleteIfUnused(kind, id, (record) => describeDependencies(kind, record.counts).length > 0));
-    if (result.status === "NOT_FOUND") throw new AppError("No encontramos el registro solicitado.", 404, "RECORD_NOT_FOUND");
+    const { noun, auditEntity } = orgEntityLabels[kind];
+    const result = await execute(() => orgStructureRepository.deleteIfUnused(
+      kind,
+      id,
+      (record) => describeDependencies(kind, record.counts).length > 0,
+      (tx, record) => auditService.registerWithin(tx, {
+        ...audit,
+        action: "DELETE",
+        entity: auditEntity,
+        entityId: record.id,
+        description: `Se eliminó definitivamente ${noun} ${record.code} - ${record.name} (sin dependencias).`,
+        before: snapshot(record) as Prisma.InputJsonValue,
+      }),
+    ));
+    if (result.status === "NOT_FOUND") notFound();
     if (result.status === "BLOCKED") {
       const dependencies = describeDependencies(kind, result.record.counts);
       throw new AppError(dependencyBlockedMessage(kind, result.record.name, dependencies), 409, "ORG_STRUCTURE_HAS_DEPENDENCIES", { dependencies });
     }
-    invalidateOverviewCache();
+    afterCommit();
     const { record } = result;
-    const { noun, auditEntity } = orgEntityLabels[kind];
-    await auditService.register({
-      ...audit,
-      action: "DELETE",
-      entity: auditEntity,
-      entityId: record.id,
-      description: `Se eliminó definitivamente ${noun} ${record.code} - ${record.name} (sin dependencias).`,
-      before: { id: record.id, code: record.code, name: record.name } as Prisma.InputJsonValue,
-    });
     return { id: record.id, code: record.code, name: record.name };
   },
 };

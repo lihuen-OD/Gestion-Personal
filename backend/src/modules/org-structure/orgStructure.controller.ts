@@ -1,35 +1,49 @@
-import type { RequestHandler } from "express";
+import type { Request, RequestHandler, Response } from "express";
 import { requestAuditContext } from "../../shared/audit/requestAuditContext";
 import { requireParam } from "../../shared/http/params";
+import type { OrgEntityKind } from "./orgStructure.dependencies";
+import type { NodeKind } from "./orgStructure.repository";
 import { orgStructureService } from "./orgStructure.service";
+
+// El body ya llegó validado por el schema zod de la ruta (validateBody).
+type AsyncHandler = (req: Request, res: Response) => Promise<void>;
+
+const createNode = (kind: NodeKind): AsyncHandler => async (req, res) => {
+  res.status(201).json({ data: await orgStructureService.createNode(kind, req.body, requestAuditContext(req)) });
+};
+const updateNode = (kind: NodeKind): AsyncHandler => async (req, res) => {
+  res.json({ data: await orgStructureService.updateNode(kind, requireParam(req, "id"), req.body, requestAuditContext(req)) });
+};
+const deleteEntity = (kind: OrgEntityKind): AsyncHandler => async (req, res) => {
+  res.json({ data: await orgStructureService.deleteEntity(kind, requireParam(req, "id"), requestAuditContext(req)) });
+};
 
 export const orgStructureController = {
   overview: (async (_req, res) => {
     res.json({ data: await orgStructureService.getOverview() });
   }) satisfies RequestHandler,
 
-  createCompany: (async (req, res) => res.status(201).json({ data: await orgStructureService.createCompany(req.body, requestAuditContext(req)) })) satisfies RequestHandler,
-  updateCompany: (async (req, res) => res.json({ data: await orgStructureService.updateCompany(requireParam(req, "id"), req.body, requestAuditContext(req)) })) satisfies RequestHandler,
-
-  createBusinessUnit: (async (req, res) => res.status(201).json({ data: await orgStructureService.createBusinessUnit(req.body, requestAuditContext(req)) })) satisfies RequestHandler,
-  updateBusinessUnit: (async (req, res) => res.json({ data: await orgStructureService.updateBusinessUnit(requireParam(req, "id"), req.body, requestAuditContext(req)) })) satisfies RequestHandler,
-
-  createEstablishment: (async (req, res) => res.status(201).json({ data: await orgStructureService.createEstablishment(req.body, requestAuditContext(req)) })) satisfies RequestHandler,
-  updateEstablishment: (async (req, res) => res.json({ data: await orgStructureService.updateEstablishment(requireParam(req, "id"), req.body, requestAuditContext(req)) })) satisfies RequestHandler,
-
-  createArea: (async (req, res) => res.status(201).json({ data: await orgStructureService.createArea(req.body, requestAuditContext(req)) })) satisfies RequestHandler,
-  updateArea: (async (req, res) => res.json({ data: await orgStructureService.updateArea(requireParam(req, "id"), req.body, requestAuditContext(req)) })) satisfies RequestHandler,
-
-  createSector: (async (req, res) => res.status(201).json({ data: await orgStructureService.createSector(req.body, requestAuditContext(req)) })) satisfies RequestHandler,
-  updateSector: (async (req, res) => res.json({ data: await orgStructureService.updateSector(requireParam(req, "id"), req.body, requestAuditContext(req)) })) satisfies RequestHandler,
+  createCompany: createNode("company"),
+  updateCompany: updateNode("company"),
+  createBusinessUnit: createNode("businessUnit"),
+  updateBusinessUnit: updateNode("businessUnit"),
+  createSector: createNode("sector"),
+  updateSector: updateNode("sector"),
+  createArea: createNode("area"),
+  updateArea: updateNode("area"),
+  createZone: createNode("zone"),
+  updateZone: updateNode("zone"),
+  createEstablishment: createNode("establishment"),
+  updateEstablishment: updateNode("establishment"),
 
   createCostCenter: (async (req, res) => res.status(201).json({ data: await orgStructureService.createCostCenter(req.body, requestAuditContext(req)) })) satisfies RequestHandler,
   updateCostCenter: (async (req, res) => res.json({ data: await orgStructureService.updateCostCenter(requireParam(req, "id"), req.body, requestAuditContext(req)) })) satisfies RequestHandler,
 
-  deleteCompany: (async (req, res) => res.json({ data: await orgStructureService.deleteEntity("company", requireParam(req, "id"), requestAuditContext(req)) })) satisfies RequestHandler,
-  deleteBusinessUnit: (async (req, res) => res.json({ data: await orgStructureService.deleteEntity("businessUnit", requireParam(req, "id"), requestAuditContext(req)) })) satisfies RequestHandler,
-  deleteEstablishment: (async (req, res) => res.json({ data: await orgStructureService.deleteEntity("establishment", requireParam(req, "id"), requestAuditContext(req)) })) satisfies RequestHandler,
-  deleteArea: (async (req, res) => res.json({ data: await orgStructureService.deleteEntity("area", requireParam(req, "id"), requestAuditContext(req)) })) satisfies RequestHandler,
-  deleteSector: (async (req, res) => res.json({ data: await orgStructureService.deleteEntity("sector", requireParam(req, "id"), requestAuditContext(req)) })) satisfies RequestHandler,
-  deleteCostCenter: (async (req, res) => res.json({ data: await orgStructureService.deleteEntity("costCenter", requireParam(req, "id"), requestAuditContext(req)) })) satisfies RequestHandler,
+  deleteCompany: deleteEntity("company"),
+  deleteBusinessUnit: deleteEntity("businessUnit"),
+  deleteSector: deleteEntity("sector"),
+  deleteArea: deleteEntity("area"),
+  deleteZone: deleteEntity("zone"),
+  deleteEstablishment: deleteEntity("establishment"),
+  deleteCostCenter: deleteEntity("costCenter"),
 };

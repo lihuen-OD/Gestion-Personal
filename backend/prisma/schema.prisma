@@ -408,6 +408,8 @@ model User {
   finnegansExportBatchesCreated FinnegansExportBatch[]         @relation("FinnegansExportBatchCreatedBy")
   clockDevicesActivated         ClockDevice[]                  @relation("ClockDeviceActivatedBy")
   clockDevicesRevoked           ClockDevice[]                  @relation("ClockDeviceRevokedBy")
+  positionOrgScopesCreated      PositionOrgScope[]             @relation("PositionOrgScopeCreatedBy")
+  employeeWorkLocationsCreated  EmployeeWorkLocation[]         @relation("EmployeeWorkLocationCreatedBy")
 
   @@index([role])
   @@index([status])
@@ -427,6 +429,7 @@ model Company {
   employees       EmployeeCompany[]
   costCenterLinks CostCenterCompany[]
   doubleHourRules DoubleHourRule[]
+  positionScopes  PositionOrgScope[]
 }
 
 model BusinessUnit {
@@ -439,20 +442,31 @@ model BusinessUnit {
   updatedAt DateTime     @updatedAt @db.Timestamptz(3)
 
   company         Company                  @relation(fields: [companyId], references: [id])
+  // LEGADO (modelo actual): establecimientos colgados de la UN. Se retira en
+  // M2 — docs/decisions/ORG_LOCATION_REORGANIZATION.md.
   establishments  Establishment[]
+  // Modelo objetivo: Empresa → UN → Sector → Área.
+  sectors         Sector[]                 @relation("BusinessUnitSectors")
   costCenterLinks CostCenterBusinessUnit[]
+  positionScopes  PositionOrgScope[]
 
   @@unique([companyId, code])
   @@index([companyId])
 }
 
+// Modelo objetivo (ORG_LOCATION_REORGANIZATION.md): Zona → Establecimiento,
+// independiente de la Organización. `companyId`/`businessUnitId` son LEGADO
+// del modelo actual (sólo lectura para registros previos; ningún alta nueva
+// los usa) y se eliminan en M2. Durante la transición `zoneId` es nullable en
+// la base y obligatorio en el servicio.
 model Establishment {
   id             String       @id @default(uuid())
   name           String
   code           String
   status         RecordStatus @default(ACTIVO)
-  companyId      String
+  companyId      String?
   businessUnitId String?
+  zoneId         String?
   province       String?
   department     String?
   city           String?
@@ -462,41 +476,60 @@ model Establishment {
   createdAt      DateTime     @default(now()) @db.Timestamptz(3)
   updatedAt      DateTime     @updatedAt @db.Timestamptz(3)
 
-  company         Company                   @relation(fields: [companyId], references: [id])
-  businessUnit    BusinessUnit?             @relation(fields: [businessUnitId], references: [id])
+  // M1 relaja NOT NULL de companyId, pero conserva ON DELETE RESTRICT
+  // explícito (sin onDelete, Prisma pasaría una relación opcional a SET NULL).
+  company         Company?                            @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  businessUnit    BusinessUnit?                       @relation(fields: [businessUnitId], references: [id])
+  zone            Zone?                               @relation(fields: [zoneId], references: [id], onDelete: Restrict)
+  // LEGADO: áreas colgadas del establecimiento (modelo actual).
   areas           Area[]
   costCenterLinks CostCenterEstablishment[]
+  workLocations   EmployeeWorkLocationEstablishment[]
+  clockDevices    ClockDevice[]
 
   @@unique([companyId, code])
   @@index([businessUnitId])
+  @@index([zoneId])
 }
 
+// Modelo objetivo: Sector → Área. `establishmentId` y `sectors` son LEGADO del
+// modelo actual (Establecimiento → Área → Sector) y se eliminan en M2.
 model Area {
   id              String       @id @default(uuid())
   name            String
   code            String       @unique
   status          RecordStatus @default(ACTIVO)
   establishmentId String?
+  sectorId        String?
   createdAt       DateTime     @default(now()) @db.Timestamptz(3)
   updatedAt       DateTime     @updatedAt @db.Timestamptz(3)
 
-  establishment   Establishment?   @relation(fields: [establishmentId], references: [id])
-  sectors         Sector[]
+  establishment   Establishment?     @relation(fields: [establishmentId], references: [id])
+  sector          Sector?            @relation("SectorAreas", fields: [sectorId], references: [id], onDelete: Restrict)
+  sectors         Sector[]           @relation("LegacyAreaSectors")
   costCenterLinks CostCenterArea[]
+  positionScopes  PositionOrgScope[]
 
   @@index([establishmentId])
+  @@index([sectorId])
 }
 
+// Modelo objetivo: UN → Sector → Área. `areaId` (y la relación `area`) es
+// LEGADO del modelo actual (Área → Sector) y se elimina en M2.
 model Sector {
-  id        String       @id @default(uuid())
-  name      String
-  code      String       @unique
-  status    RecordStatus @default(ACTIVO)
-  areaId    String?
-  createdAt DateTime     @default(now()) @db.Timestamptz(3)
-  updatedAt DateTime     @updatedAt @db.Timestamptz(3)
+  id             String       @id @default(uuid())
+  name           String
+  code           String       @unique
+  status         RecordStatus @default(ACTIVO)
+  areaId         String?
+  businessUnitId String?
+  createdAt      DateTime     @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime     @updatedAt @db.Timestamptz(3)
 
-  area            Area?              @relation(fields: [areaId], references: [id])
+  area            Area?              @relation("LegacyAreaSectors", fields: [areaId], references: [id])
+  businessUnit    BusinessUnit?      @relation("BusinessUnitSectors", fields: [businessUnitId], references: [id], onDelete: Restrict)
+  areas           Area[]             @relation("SectorAreas")
+  positionScopes  PositionOrgScope[]
   users           User[]
   employees       Employee[]
   positions       Position[]
@@ -505,6 +538,23 @@ model Sector {
   clockDevices    ClockDevice[]
 
   @@index([areaId])
+  @@index([businessUnitId])
+}
+
+// Modelo objetivo: raíz del árbol de Ubicaciones (Zona → Establecimiento),
+// independiente de la Organización.
+model Zone {
+  id        String       @id @default(uuid())
+  name      String
+  code      String       @unique
+  status    RecordStatus @default(ACTIVO)
+  createdAt DateTime     @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime     @updatedAt @db.Timestamptz(3)
+
+  establishments Establishment[]
+  workLocations  EmployeeWorkLocation[]
+
+  @@index([status])
 }
 
 model CostCenter {
@@ -612,13 +662,59 @@ model Position {
   createdAt             DateTime     @default(now()) @db.Timestamptz(3)
   updatedAt             DateTime     @updatedAt @db.Timestamptz(3)
 
+  // LEGADO: `sectorId` es la ubicación del modelo actual; lo reemplaza
+  // `orgScopes` (modelo objetivo) y se elimina en M2.
   sector           Sector?                  @relation(fields: [sectorId], references: [id])
   employees        Employee[]
   salaryCategories PositionSalaryCategory[]
   doubleHourRules  DoubleHourRule[]
+  orgScopes        PositionOrgScope[]
 
   @@index([sectorId])
   @@index([status])
+}
+
+enum OrgScopeLevel {
+  COMPANY
+  BUSINESS_UNIT
+  SECTOR
+  AREA
+}
+
+// Alcance organizativo de un puesto (ORG_LOCATION_REORGANIZATION.md §3.2):
+// cada fila es un nodo del árbol de Organización; un nodo abarca a todos sus
+// descendientes (se calcula al leer, nunca se materializa). Exactamente una FK
+// no nula y coincidente con `level` (CHECK SQL en la migración), sin
+// duplicados por puesto (@@unique por FK: Postgres no considera iguales los
+// NULL, y el CHECK garantiza que sólo una FK es no nula). Todas las
+// FKs son RESTRICT: ni el puesto ni el nodo se borran dejando alcances
+// colgados — el repositorio borra explícitamente los alcances de un puesto.
+model PositionOrgScope {
+  id              String        @id @default(uuid())
+  positionId      String
+  level           OrgScopeLevel
+  companyId       String?
+  businessUnitId  String?
+  sectorId        String?
+  areaId          String?
+  createdByUserId String?
+  createdAt       DateTime      @default(now()) @db.Timestamptz(3)
+
+  position     Position      @relation(fields: [positionId], references: [id], onDelete: Restrict)
+  company      Company?      @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  businessUnit BusinessUnit? @relation(fields: [businessUnitId], references: [id], onDelete: Restrict)
+  sector       Sector?       @relation(fields: [sectorId], references: [id], onDelete: Restrict)
+  area         Area?         @relation(fields: [areaId], references: [id], onDelete: Restrict)
+  createdBy    User?         @relation("PositionOrgScopeCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@unique([positionId, companyId])
+  @@unique([positionId, businessUnitId])
+  @@unique([positionId, sectorId])
+  @@unique([positionId, areaId])
+  @@index([companyId])
+  @@index([businessUnitId])
+  @@index([sectorId])
+  @@index([areaId])
 }
 
 model PositionSalaryCategory {
@@ -690,6 +786,7 @@ model Employee {
   shiftAssignments       ShiftAssignment[]
   holidayWorkAssignments HolidayWorkAssignment[]
   workRegimeAssignments  EmployeeWorkRegime[]
+  workLocations          EmployeeWorkLocation[]
   userAccount            User?                          @relation("EmployeeUserAccount")
   finnegansExportBatchItems FinnegansExportBatchItem[]
 
@@ -713,6 +810,47 @@ model EmployeeCompany {
   @@id([employeeId, companyId])
   @@index([companyId])
   @@index([companyId, employeeId])
+}
+
+// Ubicación de trabajo de un legajo (ORG_LOCATION_REORGANIZATION.md §3.3):
+// una zona con los establecimientos elegidos dentro de ella, vigente en el
+// intervalo cerrado de días [effectiveFrom, effectiveTo] (effectiveTo NULL =
+// abierto). La migración agrega: CHECK effectiveTo >= effectiveFrom y una
+// constraint de exclusión (btree_gist) que impide superponer asignaciones de
+// la misma persona y zona, incluidas las futuras. Un cambio cierra la vigente
+// y crea otra; nunca se borra historia.
+model EmployeeWorkLocation {
+  id              String    @id @default(uuid())
+  employeeId      String
+  zoneId          String
+  effectiveFrom   DateTime  @db.Date
+  effectiveTo     DateTime? @db.Date
+  reason          String
+  notes           String?
+  createdByUserId String?
+  createdAt       DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime  @updatedAt @db.Timestamptz(3)
+
+  employee       Employee                            @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  zone           Zone                                @relation(fields: [zoneId], references: [id], onDelete: Restrict)
+  createdBy      User?                               @relation("EmployeeWorkLocationCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  establishments EmployeeWorkLocationEstablishment[]
+
+  @@index([employeeId, zoneId])
+  @@index([zoneId])
+}
+
+// Establecimientos de una ubicación de trabajo. Deben pertenecer a la zona de
+// la asignación (validado en el servicio dentro de la transacción).
+model EmployeeWorkLocationEstablishment {
+  workLocationId  String
+  establishmentId String
+
+  workLocation  EmployeeWorkLocation @relation(fields: [workLocationId], references: [id], onDelete: Restrict)
+  establishment Establishment        @relation(fields: [establishmentId], references: [id], onDelete: Restrict)
+
+  @@id([workLocationId, establishmentId])
+  @@index([establishmentId])
 }
 
 model EmployeeAddress {
@@ -1501,10 +1639,13 @@ model DoubleHourRule {
   updatedAt                   DateTime                     @updatedAt @db.Timestamptz(3)
   employees                   DoubleHourRuleEmployee[]
   dates                       SpecialHourRuleDate[]
-  company                     Company?                     @relation(fields: [companyId], references: [id])
-  sector                      Sector?                      @relation(fields: [sectorId], references: [id])
-  costCenter                  CostCenter?                  @relation(fields: [costCenterId], references: [id])
-  position                    Position?                    @relation(fields: [positionId], references: [id])
+  // ORG_LOCATION_REORGANIZATION.md §6: RESTRICT (antes SET NULL). Un NULL en
+  // estas dimensiones significa "sin restricción": dejar que la base las
+  // anule al borrar el destino ampliaba la regla en silencio.
+  company                     Company?                     @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  sector                      Sector?                      @relation(fields: [sectorId], references: [id], onDelete: Restrict)
+  costCenter                  CostCenter?                  @relation(fields: [costCenterId], references: [id], onDelete: Restrict)
+  position                    Position?                    @relation(fields: [positionId], references: [id], onDelete: Restrict)
   createdBy                   User?                        @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
   specialHourRuleApplications SpecialHourRuleApplication[]
 
@@ -1632,6 +1773,9 @@ model ClockDevice {
   pairingCodeHash   String?           @unique
   pairingExpiresAt  DateTime?         @db.Timestamptz(3)
   sectorId          String?
+  // Modelo objetivo: ubicación del dispositivo en el árbol de Ubicaciones.
+  // Metadata, no autorización. `sectorId` es LEGADO y se elimina en M2.
+  establishmentId   String?
   activatedAt       DateTime?         @db.Timestamptz(3)
   activatedByUserId String?
   revokedAt         DateTime?         @db.Timestamptz(3)
@@ -1646,6 +1790,7 @@ model ClockDevice {
   // La ubicación es metadata opcional: si se elimina el Sector, el dispositivo
   // conserva su identidad y queda sin sector; nunca se borra en cadena.
   sector      Sector?             @relation(fields: [sectorId], references: [id], onDelete: SetNull)
+  establishment Establishment?    @relation(fields: [establishmentId], references: [id], onDelete: Restrict)
   activatedBy User?               @relation("ClockDeviceActivatedBy", fields: [activatedByUserId], references: [id], onDelete: SetNull)
   revokedBy   User?               @relation("ClockDeviceRevokedBy", fields: [revokedByUserId], references: [id], onDelete: SetNull)
   punches     AttendancePunch[]
@@ -1656,6 +1801,7 @@ model ClockDevice {
   // estado.
   @@index([status, lastSeenAt])
   @@index([sectorId])
+  @@index([establishmentId])
 }
 
 model ClockPunchAttempt {

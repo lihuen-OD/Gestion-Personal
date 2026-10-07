@@ -1,5 +1,5 @@
 import type { AuditAction, Prisma } from "@prisma/client";
-import { prisma } from "../../shared/prisma/client";
+import { prisma, type PrismaTransactionClient } from "../../shared/prisma/client";
 import type { ListAuditQuery } from "./audit.schemas";
 import { resolveOrderBy } from "../../shared/validation/listSort";
 
@@ -44,7 +44,9 @@ export const auditRepository = {
     ]);
   },
 
-  create(data: CreateAuditLogInput) {
-    return prisma.auditLog.create({ data });
+  // `db` permite escribir dentro de la transacción del llamador (la fila de
+  // auditoría se confirma o se revierte junto con el cambio que describe).
+  create(data: CreateAuditLogInput, db: PrismaTransactionClient = prisma) {
+    return db.auditLog.create({ data });
   },
 };

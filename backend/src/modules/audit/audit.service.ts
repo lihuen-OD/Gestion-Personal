@@ -1,4 +1,5 @@
 import type { AuditAction, Prisma } from "@prisma/client";
+import type { PrismaTransactionClient } from "../../shared/prisma/client";
 import { clearAuditListCache } from "./audit.cache";
 import { auditRepository } from "./audit.repository";
 import type { ListAuditQuery } from "./audit.schemas";
@@ -36,6 +37,28 @@ function visibleDescription(input: RegisterAuditInput) {
   return maskTechnicalIds(input.description);
 }
 
+function auditLogData(input: RegisterAuditInput) {
+  return {
+    action: input.action,
+    entity: input.entity,
+    entityId: input.entityId || null,
+    description: visibleDescription(input),
+    before: toAuditJson(input.before),
+    after: toAuditJson(input.after),
+    userId: input.userId || null,
+    ipAddress: input.ipAddress || null,
+    userAgent: input.userAgent || null,
+  };
+}
+
+// Cachés derivados de la auditoría. Para registerWithin se limpian recién
+// después del commit (nunca dentro de la transacción: si se revierte, el
+// caché no debe haber reaccionado a una fila que no existe).
+export function clearAuditDerivedCaches() {
+  clearAuditListCache();
+  clearDashboardMetricsCache();
+}
+
 export const auditService = {
   async list(query: ListAuditQuery) {
     const [items, total] = await auditRepository.findMany(query);
@@ -52,19 +75,8 @@ export const auditService = {
 
   async register(input: RegisterAuditInput) {
     try {
-      const created = await auditRepository.create({
-        action: input.action,
-        entity: input.entity,
-        entityId: input.entityId || null,
-        description: visibleDescription(input),
-        before: toAuditJson(input.before),
-        after: toAuditJson(input.after),
-        userId: input.userId || null,
-        ipAddress: input.ipAddress || null,
-        userAgent: input.userAgent || null,
-      });
-      clearAuditListCache();
-      clearDashboardMetricsCache();
+      const created = await auditRepository.create(auditLogData(input));
+      clearAuditDerivedCaches();
       return created;
     } catch (error) {
       console.error("AUDIT_REGISTER_FAILED", {
@@ -75,5 +87,15 @@ export const auditService = {
       });
       return null;
     }
+  },
+
+  /**
+   * Auditoría transaccional (ORG_LOCATION_REORGANIZATION.md §3.5): escribe en
+   * la transacción `db` del llamador y NO traga errores — si la auditoría
+   * falla, la operación auditada se revierte. No limpia cachés: el llamador
+   * invoca clearAuditDerivedCaches() después del commit.
+   */
+  registerWithin(db: PrismaTransactionClient, input: RegisterAuditInput) {
+    return auditRepository.create(auditLogData(input), db);
   },
 };
