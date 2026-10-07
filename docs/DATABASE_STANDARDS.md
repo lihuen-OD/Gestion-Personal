@@ -50,21 +50,53 @@ The schema draws a deliberate line between "something that happened at a specifi
 - `backend/src/shared/datetime/argentinaTime.ts` is the single shared helper for every Argentina-aware date/time calculation (current date/time in `America/Argentina/Cordoba`, day boundaries, formatting). Do not call `new Date()` + manual offset math, `toLocaleDateString` with an implicit timezone, or write a second helper in a module — import this one. If you find a module that still does its own date math, consolidate it into this helper rather than adding a fourth implementation.
 - The backend process also sets `TZ=America/Argentina/Cordoba` (see `docs/DEVOPS_DEPLOYMENT_STANDARDS.md`) as defense-in-depth, but code must not rely on the process timezone instead of the explicit helper — the helper is authoritative even if `TZ` is ever misconfigured in some environment.
 
-## Organizational hierarchy: singular FK chain, CostCenter as the M:N exception (added 2026-08-18)
+## Organizational structure: current model, target model and transition (updated 2026-10-07)
 
-`Company → BusinessUnit → Establishment → Area → Sector` is modeled as a singular-FK chain: each level has exactly one parent FK, and the chain is the single source of truth for "where does this sector/position/employee sit in the org." There is no separate join table duplicating this chain, and no second parent FK on any of these five models.
+The organizational model is under an approved reorganization that is **not implemented yet**. The full decision record — current vs. target model, pending decisions, authorized cleanup scope, migration and rollout strategy — is `docs/decisions/ORG_LOCATION_REORGANIZATION.md`. Until its stages land, the schema and code still implement the **current model** below, and this section must be read together with that ADR.
 
-- `Employee.sectorId` and `Position.sectorId` are each a single FK into this chain — company/business unit/establishment/area are derived by walking up from `sectorId`, not stored as separate redundant FKs on `Employee`/`Position`.
-- `CostCenter` is the one deliberate exception: it uses real many-to-many join tables against the other five levels (a cost center can legitimately apply across multiple business units/establishments/areas/sectors at once). This is not an inconsistency — a cost center is a cross-cutting financial tag, not a duplicate of an existing FK, so M:N is the correct shape for it specifically. Do not "simplify" `CostCenter` back into a singular FK, and do not add a second parent FK to `Company`/`BusinessUnit`/`Establishment`/`Area`/`Sector` to solve a problem that `CostCenter`'s M:N tables already solve correctly.
+### Current model (what `schema.prisma` and the code implement today)
 
-## Position: sectorId and PositionSalaryCategory as the official sources (added 2026-08-18)
+- Chain: `Company → BusinessUnit → Establishment → Area → Sector` (added 2026-08-18 as a "singular-FK chain"). In reality:
+  - `Establishment` has **two** parent FKs, `companyId` (required) and `businessUnitId?`.
+  - `Area.establishmentId` and `Sector.areaId` are nullable, so walking up from a sector can stop partway.
+- `Employee.sectorId` and `Position.sectorId` are single FKs into this chain.
+- An employee's companies do **not** come from walking up the chain. They come from the M:N `EmployeeCompany` (employer company + `isPrimary`).
+- `onDelete` rules today:
+  - `EmployeeCompany.companyId`, `PositionSalaryCategory` and every `CostCenter*` join are `CASCADE`.
+  - `User.companyId/sectorId`, `Employee.positionId/sectorId/costCenterId`, `Position.sectorId`, `ClockDevice.sectorId` and **`DoubleHourRule.companyId/sectorId/costCenterId/positionId`** are `SET NULL`.
+  - For a `DoubleHourRule`, `NULL` means "no restriction", so a `SET NULL` silently **widens** the rule.
+- Do not extend the current model: no new consumers of the old chain, and no additional parent FK on these models.
 
-`Position` previously stored denormalized location text (`areaDepartment`, `sectorName`, `businessUnitName`, `establishmentName`, and their plural/array variants) and a `salaryRangeCategories` array, in parallel with real relations. These legacy fields have been removed from the schema (migration `20260818090000_drop_position_legacy_fields`).
+### Target model (approved plan, not implemented)
 
-- `Position.sectorId` is the only source of a position's location; area/establishment/business unit/company are derived from the sector's parent chain (see the org-hierarchy section above).
-- `PositionSalaryCategory` (a join table against `SalaryCategory`) is the only source of a position's salary category/categories — a position can have more than one. There is no single "suggested category" scalar field on `Position`.
-- `Position.areaId` was also removed as vestigial: the business decision is that an operational position belongs to a `Sector`, not directly to an `Area`.
-- Do not reintroduce any denormalized name/array field on `Position` to "make a query easier" — join through `sectorId`/`PositionSalaryCategory` instead.
+- Two independent trees, each node with exactly **one required parent**:
+  - **Organization:** `Company → BusinessUnit → Sector → Area`.
+  - **Locations:** `Zone → Establishment`.
+- An establishment has no company. Legal ownership of a place is not the organizational scope of a position.
+- New parent FKs use `onDelete: Restrict`.
+- Multi-parent relations are not introduced without a proven business need.
+- `CostCenter` remains the only approved many-to-many against the structure (now against both trees). Do not "simplify" it into a singular FK.
+
+### Rules that apply during the transition
+
+- Schema changes to these models follow the ADR's staged expand (M1) / contract (M2) migrations, applied per environment via separate code releases (`prisma migrate deploy` cannot pick a single pending migration).
+- Never use `CASCADE` or `SET NULL` as a cleanup shortcut.
+- Never free a `DoubleHourRule` reference by setting its scope to `NULL`, and never delete the rule to free it. Both widen or erase special-hour history. See the ADR §6 for the only valid treatments.
+- Legacy cleanup is authorized only on `development`, only for old-model records in a frozen inventory, and only through the ADR's gated transactional script. It never deletes or re-keys employees or touches person-related records (hours, novelties, documents, labor movements, histories). Production is out of scope.
+
+## Position: salary categories and organizational scope (updated 2026-10-07)
+
+`Position` previously stored denormalized location text (`areaDepartment`, `sectorName`, `businessUnitName`, `establishmentName`, and their plural/array variants) and a `salaryRangeCategories` array, in parallel with real relations. These legacy fields have been removed from the schema (migration `20260818090000_drop_position_legacy_fields`). `Position.areaId` was removed as vestigial at the same time.
+
+- `PositionSalaryCategory` (a join table against `SalaryCategory`) is the only source of a position's salary category/categories. A position can have more than one. There is no single "suggested category" scalar field on `Position`.
+- **Current model:** `Position.sectorId` is still the only stored location of a position. Area, establishment, business unit and company are derived from the sector's parent chain.
+- **Target model (not implemented):** `Position.sectorId` is replaced by an organizational **scope**, `PositionOrgScope`.
+  - A position has one or more nodes of the Organization tree.
+  - A selected node covers its descendants, computed on read and never materialized.
+  - Ancestor/descendant pairs are rejected as redundant.
+  - Zones and establishments are never part of a position's scope.
+  - All occupants of a position share exactly its scope. People with the same role but different scopes need different positions.
+- Do not reintroduce any denormalized name/array field on `Position`, and do not copy a position's scope into editable employee fields.
 
 ## Authorship fields: real FK to User, never Cascade from User (added 2026-08-18)
 
@@ -141,7 +173,10 @@ todavía no está activa y el token compartido legacy continúa temporalmente.
   devuelve el hash.
 - `sectorId` es metadata opcional, no un límite de autorización. Usa
   `onDelete: SetNull`: eliminar un sector conserva el dispositivo y su
-  historia, pero lo deja sin ubicación.
+  historia, pero lo deja sin ubicación. En el modelo objetivo (no
+  implementado, `docs/decisions/ORG_LOCATION_REORGANIZATION.md`) esta
+  ubicación pasa a `establishmentId?` del árbol de Ubicaciones, con el mismo
+  carácter de metadata y sin restringir fichadas.
 - `activatedByUserId` y `revokedByUserId` son autoría opcional con
   `onDelete: SetNull`.
 - `AttendancePunch.deviceId` y `ClockPunchAttempt.deviceId` son FKs nullable

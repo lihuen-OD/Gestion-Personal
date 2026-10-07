@@ -184,7 +184,7 @@ NIVEL_3_CARGA_HORARIA
 Regla general:
 
 - `NIVEL_1_RRHH`: alcance global.
-- `NIVEL_2_SUPERVISION`: alcance por sector asignado.
+- `NIVEL_2_SUPERVISION`: alcance por legajos con un `EmployeeAssignment` `TIME_RESPONSIBLE` vigente para el usuario (misma regla que Nivel 3, `backend/src/modules/employees/employeeAccess.ts`). **No** se limita por sector ni por otro nodo de la estructura, y `User.companyId/sectorId` no filtran datos. La reorganización de estructura (`docs/decisions/ORG_LOCATION_REORGANIZATION.md`) no cambia esta regla.
 - `NIVEL_3_CARGA_HORARIA`: alcance por legajos asignados como responsable de carga horaria.
 
 ## Legajos
@@ -626,6 +626,8 @@ Pensada para corregir registros creados por error; la baja normal sigue siendo p
 | Sector | empleados, puestos, usuarios con alcance, centros de costo asociados, reglas de horas dobles |
 | Centro de costo | empleados, reglas de horas dobles (sus propios vínculos de ubicación se eliminan con él) |
 
+Lo anterior describe el **modelo actual**. La reorganización aprobada y **no implementada** (`docs/decisions/ORG_LOCATION_REORGANIZATION.md`) separa Organización (Empresa → UN → Sector → Área) de Ubicaciones (Zona → Establecimiento). Cuando se implemente, este contrato cambiará en su etapa correspondiente: zonas nuevas, padres nuevos y FKs nuevas `Restrict`. Hasta entonces rige lo de arriba.
+
 La base no protege estos casos por sí sola (varias FK son `ON DELETE SET NULL` y `EmployeeCompany`/`CostCenter*` son `CASCADE`), por eso el conteo y el borrado corren en una transacción `Serializable`: un alta concurrente de una dependencia hace fallar la operación (`409 ORG_STRUCTURE_CONCURRENT_CHANGE`) en vez de dejar registros huérfanos. Inexistente → `404 RECORD_NOT_FOUND`. Cada eliminación queda en auditoría (`action: DELETE`). Ver `backend/src/modules/org-structure/orgStructure.dependencies.ts`.
 
 ### Usuarios
@@ -888,12 +890,17 @@ Query de listado:
 search
 status
 sectorId
+areaId
+establishmentId
+businessUnitId
 salaryRangeCategory
 take
 page
 ```
 
-`sectorId` es la única fuente de ubicación de un puesto (no existen `businessUnitName`/`establishmentName`/`areaDepartment`/`sector` como query params ni como columnas de `Position` — fueron eliminados en la limpieza final de Position, ver `docs/DATABASE_STANDARDS.md`). El body de creación/edición usa `sectorId` y `salaryCategoryIds` (array de IDs contra `PositionSalaryCategory`), no un único "suggested category".
+`areaId`, `establishmentId` y `businessUnitId` (Etapa 9E, `positions.schemas.ts`) filtran recorriendo la cadena desde `sectorId`. Antes no estaban documentados aquí.
+
+`sectorId` es, en el **modelo actual**, la única fuente de ubicación de un puesto (no existen `businessUnitName`/`establishmentName`/`areaDepartment`/`sector` como query params ni como columnas de `Position` — fueron eliminados en la limpieza final de Position, ver `docs/DATABASE_STANDARDS.md`). El body de creación/edición usa `sectorId` y `salaryCategoryIds` (array de IDs contra `PositionSalaryCategory`), no un único "suggested category". En el modelo objetivo, aprobado y no implementado (`docs/decisions/ORG_LOCATION_REORGANIZATION.md`), `sectorId` se reemplaza por un alcance organizativo de uno o varios nodos de Organización, en su etapa correspondiente.
 
 `GET /api/positions/:id/employees` devuelve los legajos activos asignados al puesto para la solapa de personas asignadas, incluyendo legajo, nombre, empresas, sector, centro de costo, categoria interna y estado. Paginado (`page`, `take` default 25 / máx. 100, `sortBy=legajo|employee`, `sortOrder`) con `meta` real — antes `take: 500` fijo sin meta. `meta.total` es la cantidad real de personas asignadas.
 
@@ -1593,7 +1600,7 @@ Body de `POST`/`PATCH` (todos los campos de scope y `dates` son opcionales; `upd
 }
 ```
 
-- `employeeIds` ya no es obligatorio (antes exigía `.min(1)`) — `[]` significa "sin restricción por persona". `companyId`/`sectorId`/`costCenterId`/`positionId` son independientes y opcionales; todas las dimensiones configuradas (incluida `employeeIds` cuando no está vacío) combinan con **AND**. Sin ninguna configurada, la regla alcanza a cualquier empleado que efectivamente trabaje/fiche.
+- `employeeIds` ya no es obligatorio (antes exigía `.min(1)`) — `[]` significa "sin restricción por persona". `companyId`/`sectorId`/`costCenterId`/`positionId` son independientes y opcionales; todas las dimensiones configuradas (incluida `employeeIds` cuando no está vacío) combinan con **AND**. Sin ninguna configurada, la regla alcanza a cualquier empleado que efectivamente trabaje/fiche. Por eso un `null` **amplía** la regla. Hoy esas cuatro FK son `ON DELETE SET NULL`: borrar el destino amplía la regla en silencio. La reorganización (`docs/decisions/ORG_LOCATION_REORGANIZATION.md` §6) las lleva a `RESTRICT` y prohíbe liberar una referencia dejando el alcance en `null` o borrando la regla. Cómo se evalúa `sectorId` sin `Employee.sectorId` es una decisión pendiente (D-4) que se toma con el inventario de reglas afectadas.
 - `priority` (default `0`, mayor gana) resuelve superposición: si 2+ reglas activas matchean el mismo tramo, gana la de mayor prioridad; si empatan en la mayor, se marca conflicto (`SpecialHourRuleApplication.wasConflicting = true`) y se aplica el multiplicador mayor entre las empatadas como resolución determinística — no bloquea la fichada. Política fija por ahora (no configurable por regla); ver `docs/decisions/HORAS_ESPECIALES_8B.md` para lo que queda pendiente.
 - `dates` sólo aplica cuando `recurrenceType = "FECHA"` — reemplaza el uso de `fromDate` como "la única fecha": una regla FECHA puede tener muchas fechas (feriados) o una sola. `fromDate`/`toDate` enviados para una regla FECHA se ignoran — el backend los recalcula como min/max de `dates`.
 - `kind` (`FERIADO | DOMINGO | JORNADA_ESPECIAL | OTRO`, default `OTRO` — Etapa 12B): clasificación estructurada, independiente de `name` (que sigue siendo sólo texto visible, nunca se usa para lógica ni de matching ni de liquidación). Reglas creadas antes de esta etapa quedaron en `OTRO` por default de la migración, sin inferencia por nombre — requieren reclasificación explícita desde la UI. Ver `docs/decisions/SPECIAL_HOUR_RULE_CLASSIFICATION_12A.md`/`SPECIAL_HOUR_RULE_CLASSIFICATION_12B.md`.
