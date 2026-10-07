@@ -35,7 +35,7 @@ export type DashboardMetrics = {
   missingResponsible: number;
   pendingNovelties: number;
   headcountByCompany: DashboardMetricRow[];
-  headcountBySector: DashboardMetricRow[];
+  headcountByZone: DashboardMetricRow[];
 };
 
 type ApiMetricsResponse = { data: DashboardMetrics };

@@ -226,7 +226,7 @@ export const dashboardRepository = {
    * Filtering for the 30-day window is done in the service (requires local
    * date arithmetic that Prisma cannot express portably).
    */
-  findActiveDashboardEmployees(accessWhere: Prisma.EmployeeWhereInput) {
+  findActiveDashboardEmployees(accessWhere: Prisma.EmployeeWhereInput, locationDate: Date) {
     return prisma.employee.findMany({
       where: activeWhere(accessWhere),
       select: {
@@ -236,6 +236,10 @@ export const dashboardRepository = {
         birthDate: true,
         createdAt: true,
         sector: { select: { name: true } },
+        workLocations: {
+          where: { effectiveFrom: { lte: locationDate }, OR: [{ effectiveTo: null }, { effectiveTo: { gte: locationDate } }] },
+          select: { zone: { select: { id: true, name: true } } },
+        },
         companies: {
           select: { isPrimary: true, company: { select: { name: true } } },
         },

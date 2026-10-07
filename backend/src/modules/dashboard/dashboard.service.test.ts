@@ -106,6 +106,25 @@ describe("dashboardService.metrics — loadedHours es el total trabajado real", 
   });
 });
 
+describe("dashboardService.metrics — dotación por zona vigente (D-8)", () => {
+  it("cuenta personas únicas por zona, permite múltiples zonas y separa sin ubicación", async () => {
+    repo.findActiveDashboardEmployees.mockResolvedValue([
+      { id: "e1", birthDate: null, createdAt: new Date(), laborMovements: [], companies: [], workLocations: [{ zone: { id: "n", name: "Norte" } }, { zone: { id: "s", name: "Sur" } }] },
+      { id: "e2", birthDate: null, createdAt: new Date(), laborMovements: [], companies: [], workLocations: [{ zone: { id: "n", name: "Norte" } }, { zone: { id: "n", name: "Norte" } }] },
+      { id: "e3", birthDate: null, createdAt: new Date(), laborMovements: [], companies: [], workLocations: [] },
+    ]);
+
+    const result = await dashboardService.metrics({}, user(roles.rrhh));
+
+    expect(result.headcountByZone).toEqual([
+      { label: "Norte", value: 2 },
+      { label: "Sur", value: 1 },
+      { label: "Sin ubicación vigente", value: 1 },
+    ]);
+    expect(result.active).toBe(8);
+  });
+});
+
 describe("dashboardService.metrics — 13 queries en lotes, no 15 en un unico Promise.all (Etapa 14E.1 + 14E.2)", () => {
   it("llama exactamente a las 13 funciones del repositorio (countTotal/countActive → groupBy en 14E.1; countEmployeesWithoutEntries eliminada en 14E.2)", async () => {
     await dashboardService.metrics({}, user(roles.rrhh));
@@ -302,11 +321,11 @@ describe("dashboardService.metrics — cache TTL por usuario/rol/scope (Etapa 14
     expect(repo.countTotalAndActive).toHaveBeenCalledTimes(2);
   });
 
-  it("un companyId/sectorId distinto no comparte cache (key incluye scope)", async () => {
+  it("sectorId legacy no separa cache porque ya no tiene efecto funcional (D-14)", async () => {
     await dashboardService.metrics({ period: "2026-08" }, user(roles.rrhh, { id: "user-scope", sectorId: "sec-1" }));
     await dashboardService.metrics({ period: "2026-08" }, user(roles.rrhh, { id: "user-scope", sectorId: "sec-2" }));
 
-    expect(repo.countTotalAndActive).toHaveBeenCalledTimes(2);
+    expect(repo.countTotalAndActive).toHaveBeenCalledTimes(1);
   });
 });
 

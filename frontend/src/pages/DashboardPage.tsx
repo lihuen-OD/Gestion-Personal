@@ -32,7 +32,7 @@ export function DashboardPage() {
     () => (level === 2 ? (employee: Employee) => employee.sector === user!.sector : undefined),
     [level, user],
   );
-  const [metrics, setMetrics] = useState<DashboardMetrics>({ active: 0, inactive: 0, total: 0, absenceRate: "0", absenceDays: 0, turnoverRate: "0", exits: 0, averageAge: "0", averageTenure: "0", transported: 0, loadedHours: 0, loadCoverage: 0, pendingLoads: 0, reviewLoads: 0, expiredDocuments: 0, expiringDocuments: 0, missingResponsible: 0, pendingNovelties: 0, headcountByCompany: [], headcountBySector: [], transportByCity: [], transportRoutes: [], upcomingBirthdays: [], period: "" });
+  const [metrics, setMetrics] = useState<DashboardMetrics>({ active: 0, inactive: 0, total: 0, absenceRate: "0", absenceDays: 0, turnoverRate: "0", exits: 0, averageAge: "0", averageTenure: "0", transported: 0, loadedHours: 0, loadCoverage: 0, pendingLoads: 0, reviewLoads: 0, expiredDocuments: 0, expiringDocuments: 0, missingResponsible: 0, pendingNovelties: 0, headcountByCompany: [], headcountByZone: [], transportByCity: [], transportRoutes: [], upcomingBirthdays: [], period: "" });
   const [metricsStatus, setMetricsStatus] = useState<"loading" | "success" | "error">("loading");
   const [metricsRetry, setMetricsRetry] = useState(0);
   // Etapa 14F.2: separado del estado de metrics — antes ambos compartían un
@@ -109,7 +109,7 @@ export function DashboardPage() {
       <StatCard label="Documentación crítica" value={metrics.expiredDocuments + metrics.expiringDocuments} detail={`${metrics.expiredDocuments} vencidos · ${metrics.expiringDocuments} por vencer`} icon={FolderOpen} tone="orange" />
     </div>
     <div className="dashboard-grid">
-      <Section title={level === 2 ? "Dotación por sector anterior" : "Dotación activa por empresa empleadora"} subtitle={level === 2 ? "Sector del modelo anterior, uno por legajo. Los legajos recargados sin sector anterior figuran como “Sin cargar”. Reemplazo pendiente (D-8)." : "Distribución calculada sobre legajos activos"}><DashboardBars rows={level === 2 ? metrics.headcountBySector : metrics.headcountByCompany} /></Section>
+      <Section title={level === 2 ? "Dotación por zona vigente" : "Dotación activa por empresa empleadora"} subtitle={level === 2 ? `Total general: ${metrics.active} personas únicas. Una persona puede aparecer en varias zonas; las cantidades por zona no se suman.` : "Distribución calculada sobre legajos activos"}><DashboardBars rows={level === 2 ? metrics.headcountByZone : metrics.headcountByCompany} /></Section>
       <Section title="Alertas que requieren atención" subtitle="Generadas desde el estado actual del sistema"><div className="alerts"><Alert label="Documentación vencida" value={`${metrics.expiredDocuments} documentos`} tone="red" /><Alert label="Documentación por vencer" value={`${metrics.expiringDocuments} documentos`} tone="orange" /><Alert label="Sin responsable de carga" value={`${metrics.missingResponsible} legajos`} tone="blue" /><Alert label="Cargas horarias pendientes" value={`${metrics.pendingLoads} personas`} tone="orange" /><Alert label="Novedades pendientes" value={`${metrics.pendingNovelties} registros`} tone="purple" /></div></Section>
     </div>
     <div className="dashboard-grid">

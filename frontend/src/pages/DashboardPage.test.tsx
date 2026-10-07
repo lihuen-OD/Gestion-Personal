@@ -60,7 +60,7 @@ const baseMetrics: DashboardMetrics = {
   missingResponsible: 1,
   pendingNovelties: 2,
   headcountByCompany: [],
-  headcountBySector: [],
+  headcountByZone: [],
   transportByCity: [],
   transportRoutes: [],
   upcomingBirthdays: [],

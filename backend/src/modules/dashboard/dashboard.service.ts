@@ -1,7 +1,7 @@
 import { EmployeeStatus } from "@prisma/client";
 import { runInBatches } from "../../shared/prisma/runInBatches";
 import { employeeAccessWhere } from "../employees/employeeAccess";
-import { todayArgentinaDateKey } from "../../shared/datetime/argentinaTime";
+import { argentinaCalendarDate, todayArgentinaDateKey } from "../../shared/datetime/argentinaTime";
 import { dashboardMetricsCache } from "./dashboard.cache";
 import { dashboardRepository } from "./dashboard.repository";
 import { totalWorkedHours } from "../time-entries/workedTimeAccounting";
@@ -94,7 +94,6 @@ export const dashboardService = {
       userId: user.id,
       role: user.role,
       companyId: user.companyId || null,
-      sectorId: user.sectorId || null,
     });
     const cached = dashboardMetricsCache.get(cacheKey);
     if (cached) return cached;
@@ -174,7 +173,7 @@ async function calculateMetrics(period: string, user: Express.AuthUser) {
       task("Employee.count(exitsThisYear)", () => dashboardRepository.countExitsThisYear(accessWhere, year)),
       task("Employee.count(transported)", () => dashboardRepository.countTransported(accessWhere)),
       task("TimeEntry+HourConceptBreakdown.aggregate(loadedHours)", () => dashboardRepository.sumLoadedHours(period, accessWhere)),
-      task("Employee.findMany(activeDashboardEmployees)", () => dashboardRepository.findActiveDashboardEmployees(accessWhere)),
+      task("Employee.findMany(activeDashboardEmployees)", () => dashboardRepository.findActiveDashboardEmployees(accessWhere, argentinaCalendarDate(todayArgentinaDateKey()))),
       task("Employee.count(withEntries)", () => dashboardRepository.countEmployeesWithEntries(period, accessWhere)),
       task("Employee.count(inReview)", () => dashboardRepository.countEmployeesInReview(period, accessWhere)),
       task("Novelty.findMany(absenceRanges)", () => dashboardRepository.findPeriodAbsenceDateRanges(period, accessWhere)),
@@ -219,7 +218,14 @@ async function calculateMetrics(period: string, user: Express.AuthUser) {
     transportedEmployees.map((e) => e.address?.city || e.transport?.locality || ""),
   );
   const transportRoutes = groupCount(transportedEmployees.map((e) => e.transport?.busLine || ""));
-  const headcountBySector = groupCount(activeDashboardEmployees.map((e) => e.sector?.name || ""));
+  // D-8: una persona cuenta una sola vez por cada zona vigente. Puede estar
+  // en varias zonas, por eso estas barras no son sumables; el total general
+  // sigue siendo `active` (personas únicas y mismo universo/permisos).
+  const zoneMemberships = activeDashboardEmployees.flatMap((employee) => {
+    const zones = [...new Map(employee.workLocations.map((location) => [location.zone.id, location.zone])).values()];
+    return zones.length ? zones.map((zone) => zone.name) : [""];
+  });
+  const headcountByZone = groupCount(zoneMemberships).map((row) => ({ ...row, label: row.label === "Sin cargar" ? "Sin ubicación vigente" : row.label }));
   const headcountByCompany = groupCount(
     activeDashboardEmployees.map((e) => {
       const primary = e.companies.find((link) => link.isPrimary) ?? e.companies[0];
@@ -251,7 +257,7 @@ async function calculateMetrics(period: string, user: Express.AuthUser) {
     missingResponsible,
     pendingNovelties,
     headcountByCompany,
-    headcountBySector,
+    headcountByZone,
   };
 }
 
