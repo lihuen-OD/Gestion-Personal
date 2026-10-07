@@ -988,3 +988,34 @@ No se ejecutó ninguna reconciliación ni recálculo.
 
 Después de detenerla (§16.1), `npm run dev` se volvió a iniciar a las 13:43 desde la misma terminal. Sigue cargando `backend/.env` (development, sin M1) y recarga en caliente el código de esta rama. Se tomó como un reinicio deliberado: no se detuvo ni se usó. Conviene no correrla sobre esta rama, o apuntarla a la copia.
 
+## 18. A7 — decisiones ratificadas y continuación
+
+Se ratificaron D-4, D-5, D-7, D-8, D-13, D-14 y D-15. D-1, D-2, D-3 y D-6 continúan abiertas; en particular, conservar `Company` sigue siendo una recomendación, no una decisión aprobada.
+
+### 18.1 Protección de cierres (D-5)
+
+- `ENVIADO`, `APROBADO` y `CORRECCION_PENDIENTE` son estados protegidos.
+- Todas las escrituras de horas, desgloses, tramos y reinterpretaciones toman un advisory lock compartido por `employeeId + period` y vuelven a leer el cierre dentro de la transacción. Enviar/aprobar/devolver y el procedimiento de corrección toman el lock exclusivo.
+- Reglas, convocatorias, reconciliación, recálculos automáticos y fichadas atrasadas no reconstruyen ni reabren cierres protegidos. Informan los pares omitidos. Eliminar una regla se rechaza si perdería la traza de uno de esos períodos.
+- La corrección explícita de RRHH conserva motivo, auditoría y lock exclusivo.
+
+### 18.2 Motor de sector (D-4) y falta de historia
+
+- Empresa sigue significando empresa empleadora (`EmployeeCompany`).
+- Un sector nuevo usa “Ubicado dentro de”: matchea un alcance del puesto en ese sector o en un área hija. Un alcance en empresa o unidad de negocio no hereda reglas de todos sus sectores. Múltiples alcances se evalúan con `some`.
+- Sectores anteriores conservan la comparación con `Employee.sectorId`; no se convierten automáticamente. “Domingos” conserva empresa LOSOD y sus referencias.
+- Si una regla de sector nuevo intenta evaluar una fecha anterior a la revisión vigente de `PositionOrgScope`, el motor responde `409 SPECIAL_HOUR_SCOPE_HISTORY_MISSING`, identifica fecha/período y no reinterpreta con valores actuales.
+- La auditoría de Puestos conserva los snapshots antes/después de cada cambio de alcance. Falta una historia normalizada y consultable por fecha para posición, empresa empleadora y centro de costo; por eso A7 no puede considerarse cerrada todavía.
+
+### 18.3 Filtros, organigrama y dotación (D-7/D-8)
+
+- Legajos y Puestos usan `WITHIN` (“Ubicado dentro de”) por defecto; `COVERS` (“Abarca”) es alternativo explícito.
+- El organigrama puede devolver encargados directos vinculados a un usuario/legajo fuera del filtro en `context`; vuelve a aplicar `employeeAccessWhere`, no los incluye en `meta.total` ni en exportaciones.
+- Dotación se calcula por zona vigente, con personas únicas por zona, grupo “Sin ubicación vigente” y total general de personas únicas. Una persona puede figurar en varias zonas, por lo que las barras no se suman. Se conserva el mismo universo activo y los mismos permisos.
+
+### 18.4 Usuarios, dispositivos y establecimientos (D-13/D-14/D-15)
+
+- Usuarios ya no expone ni acepta sector. `User.sectorId` se conserva como columna legacy; empresa continúa como dato administrativo y no interviene en permisos ni en la clave de caché.
+- Dispositivos exponen, filtran y asignan `establishmentId`, mostrando `Zona · Establecimiento`. No cambia autenticación, autorización ni procesamiento de fichadas y no se infiere la ubicación laboral de personas.
+- `ClockDevice.establishmentId` ya existía en M1, por lo que no fue necesaria otra migración.
+- D-13 se aplicará en M2 como unicidad `(zoneId, code)`. La restricción anterior no se elimina en A7.

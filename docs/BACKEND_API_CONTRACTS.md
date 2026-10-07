@@ -1737,9 +1737,7 @@ El resto de `entityType` (cierres, correcciones, novedades pendientes) no trae `
 
 #### Horas Especiales (`/double-hour-rules*`) — Etapa 8B (extendido en 12B)
 
-**Sector en reglas (A7, `docs/decisions/ORG_LOCATION_REORGANIZATION.md` §17.1).** `sectorId` es el sector **anterior** del legajo: es lo que compara el motor.
-- `POST` con un `sectorId` del árbol nuevo (sector con `businessUnitId`) → `409 DOUBLE_HOUR_RULE_SECTOR_NOT_SUPPORTED`, con un mensaje que explica que la regla no alcanzaría a nadie.
-- `PATCH` que **cambia** `sectorId` hacia un sector nuevo → el mismo `409`.
+**Sector en reglas (A7, D-4).** Un sector anterior compara `Employee.sectorId`; un sector nuevo usa “Ubicado dentro de” sobre los alcances del puesto (sector igual o área hija). Un alcance superior no hereda reglas sectoriales.
 - Un sector inexistente → `400 DOUBLE_HOUR_RULE_SECTOR_INVALID`.
 - La validación ocurre antes de la transacción: un rechazo no escribe ni reinterpreta horas.
 - Reenviar el sector que la regla ya tiene, o editar otras dimensiones (por ejemplo "Domingos", por empresa empleadora), no cambia su alcance.
@@ -1797,7 +1795,7 @@ Capa compartida de archivos (documentos, evidencia fotográfica del fichador). T
 
 ### Dispositivos de fichada (`clock-devices`, F5)
 
-DTO seguro de dispositivo: `id`, `name`, `status`, `sectorId`, `sector`,
+DTO seguro de dispositivo: `id`, `name`, `status`, `establishmentId`, `establishment` (con `zone`),
 timestamps de activación/revocación/última conexión/creación, última IP,
 user-agent y versión. Nunca incluye `tokenHash`, `pairingCodeHash` ni secreto.
 
@@ -1817,10 +1815,10 @@ Rutas RRHH (`Bearer` JWT + Nivel 1):
 
 | Método | Ruta | Descripción |
 |---|---|---|
-| GET | `/api/clock-devices?status=&search=&sectorId=&page=&take=` | Listado paginado |
+| GET | `/api/clock-devices?status=&search=&establishmentId=&page=&take=` | Listado paginado |
 | GET | `/api/clock-devices/:id` | Detalle seguro |
 | POST | `/api/clock-devices/resolve-pairing` | Resuelve `{ pairingCode }` a metadata segura de un pendiente vigente |
-| POST | `/api/clock-devices/:id/activate` | `{ pairingCode, name, sectorId? }`; consume pairing y activa atómicamente |
+| POST | `/api/clock-devices/:id/activate` | `{ pairingCode, name, establishmentId? }`; consume pairing y activa atómicamente |
 | POST | `/api/clock-devices/:id/revoke` | Transición terminal `ACTIVE → REVOKED` |
 | DELETE | `/api/clock-devices/:id` | Sólo `PENDING` sin fichadas/intentos |
 
