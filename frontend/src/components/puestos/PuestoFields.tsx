@@ -37,6 +37,8 @@ export function emptyPosition(): Omit<Position, "id" | "history" | "createdAt" |
     lastUpdatedAt: new Date().toISOString().slice(0, 10),
     status: "ACTIVO",
     sectorId: undefined,
+    orgScopes: [],
+    pendingScopeReload: false,
     derivedSectorName: "",
     derivedAreaName: "",
     derivedEstablishmentName: "",

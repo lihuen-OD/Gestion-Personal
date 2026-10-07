@@ -2,8 +2,9 @@ import { Prisma } from "@prisma/client";
 import type { AuditContext } from "../audit/audit.service";
 import { auditService, clearAuditDerivedCaches } from "../audit/audit.service";
 import { AppError } from "../../shared/errors/AppError";
+import type { PrismaTransactionClient } from "../../shared/prisma/client";
 import { invalidatePositionsCache, positionsRepository } from "./positions.repository";
-import type { CreatePositionInput, ListPositionEmployeesQuery, ListPositionOptionsQuery, ListPositionsQuery, UpdatePositionInput } from "./positions.schemas";
+import type { CreatePositionInput, ListPositionEmployeesQuery, ListPositionOptionsQuery, ListPositionsQuery, PositionOrgScopeInput, UpdatePositionInput } from "./positions.schemas";
 import { employeeAccessWhere } from "../employees/employeeAccess";
 
 function mapPrismaError(error: unknown) {
@@ -25,15 +26,46 @@ async function execute<T>(operation: () => Promise<T>) {
   }
 }
 
-async function auditChange(action: "CREATE" | "UPDATE" | "DELETE", item: { id: string; code: string; name: string }, audit?: AuditContext) {
-  await auditService.register({
-    ...audit,
-    action,
-    entity: "Position",
-    entityId: item.id,
-    description: `${action === "CREATE" ? "Se creo" : action === "UPDATE" ? "Se actualizo" : "Se elimino"} puesto ${item.code} - ${item.name}.`,
-    after: item as Prisma.InputJsonValue,
-  });
+type ScopeNode = { level: PositionOrgScopeInput["level"]; id: string; name: string; status: string; companyId?: string; businessUnitId?: string; sectorId?: string };
+
+function scopeKey(scope: PositionOrgScopeInput) { return `${scope.level}:${scope.nodeId}`; }
+
+async function validateScopes(tx: PrismaTransactionClient, scopes: PositionOrgScopeInput[], currentKeys = new Set<string>()) {
+  const resolved = await positionsRepository.resolveScopeNodes(tx, scopes);
+  const nodes: ScopeNode[] = [
+    ...resolved.companies.map((node) => ({ level: "COMPANY" as const, id: node.id, name: node.name, status: node.status })),
+    ...resolved.businessUnits.map((node) => ({ level: "BUSINESS_UNIT" as const, id: node.id, name: node.name, status: node.status, companyId: node.companyId })),
+    ...resolved.sectors.map((node) => ({ level: "SECTOR" as const, id: node.id, name: node.name, status: node.status, businessUnitId: node.businessUnitId || undefined, companyId: node.businessUnit?.companyId })),
+    ...resolved.areas.map((node) => ({ level: "AREA" as const, id: node.id, name: node.name, status: node.status, sectorId: node.sectorId || undefined, businessUnitId: node.sector?.businessUnitId || undefined, companyId: node.sector?.businessUnit?.companyId })),
+  ];
+  const byKey = new Map(nodes.map((node) => [`${node.level}:${node.id}`, node]));
+  for (const scope of scopes) {
+    const node = byKey.get(scopeKey(scope));
+    if (!node) throw new AppError("Uno de los nodos organizacionales seleccionados no existe.", 400, "POSITION_SCOPE_INVALID");
+    if ((node.level === "SECTOR" && !node.businessUnitId) || (node.level === "AREA" && (!node.sectorId || !node.businessUnitId))) {
+      throw new AppError(`“${node.name}” pertenece a la estructura anterior y no puede asignarse como alcance nuevo.`, 409, "POSITION_SCOPE_LEGACY");
+    }
+    if (node.status !== "ACTIVO" && !currentKeys.has(scopeKey(scope))) {
+      throw new AppError(`“${node.name}” está inactivo y no puede agregarse al alcance.`, 409, "POSITION_SCOPE_INACTIVE");
+    }
+  }
+  const unique = new Set<string>();
+  for (const scope of scopes) {
+    const key = scopeKey(scope);
+    if (unique.has(key)) throw new AppError("El mismo nodo organizacional fue seleccionado más de una vez.", 409, "POSITION_SCOPE_REDUNDANT");
+    unique.add(key);
+  }
+  const isAncestor = (ancestor: ScopeNode, descendant: ScopeNode) =>
+    (ancestor.level === "COMPANY" && descendant.companyId === ancestor.id)
+    || (ancestor.level === "BUSINESS_UNIT" && descendant.businessUnitId === ancestor.id)
+    || (ancestor.level === "SECTOR" && descendant.sectorId === ancestor.id);
+  for (let left = 0; left < nodes.length; left += 1) for (let right = left + 1; right < nodes.length; right += 1) {
+    if (isAncestor(nodes[left]!, nodes[right]!) || isAncestor(nodes[right]!, nodes[left]!)) {
+      const ancestor = isAncestor(nodes[left]!, nodes[right]!) ? nodes[left]! : nodes[right]!;
+      const descendant = ancestor === nodes[left] ? nodes[right]! : nodes[left]!;
+      throw new AppError(`No selecciones “${descendant.name}”: ya está incluido por “${ancestor.name}”.`, 409, "POSITION_SCOPE_REDUNDANT", { ancestor: ancestor.name, descendant: descendant.name });
+    }
+  }
 }
 
 export const positionsService = {
@@ -69,16 +101,32 @@ export const positionsService = {
   },
 
   async create(data: CreatePositionInput, audit?: AuditContext) {
-    const item = await execute(() => positionsRepository.create(data));
+    const item = await execute(() => positionsRepository.transaction(async (tx) => {
+      await validateScopes(tx, data.orgScopes);
+      const created = await positionsRepository.createWithin(tx, data, audit?.userId || undefined);
+      await auditService.registerWithin(tx, { ...audit, action: "CREATE", entity: "Position", entityId: created.id, description: `Se creó puesto ${created.code} - ${created.name}.`, after: { ...created, orgScopes: data.orgScopes } as Prisma.InputJsonValue });
+      return created;
+    }));
     invalidatePositionsCache();
-    await auditChange("CREATE", item, audit);
+    clearAuditDerivedCaches();
     return positionsRepository.findById(item.id);
   },
 
   async update(id: string, data: UpdatePositionInput, audit?: AuditContext) {
-    const item = await execute(() => positionsRepository.update(id, data));
+    const item = await execute(() => positionsRepository.transaction(async (tx) => {
+      const before = await tx.position.findUniqueOrThrow({ where: { id }, select: { id: true, code: true, name: true, status: true } });
+      let currentScopes: Awaited<ReturnType<typeof positionsRepository.findScopeKeys>> = [];
+      if (data.orgScopes) {
+        currentScopes = await positionsRepository.findScopeKeys(tx, id);
+        const currentKeys = new Set(currentScopes.map((scope) => `${scope.level}:${scope.companyId || scope.businessUnitId || scope.sectorId || scope.areaId}`));
+        await validateScopes(tx, data.orgScopes, currentKeys);
+      }
+      const updated = await positionsRepository.updateWithin(tx, id, data, audit?.userId || undefined);
+      await auditService.registerWithin(tx, { ...audit, action: "UPDATE", entity: "Position", entityId: updated.id, description: `Se actualizó puesto ${updated.code} - ${updated.name}.`, before: { ...before, ...(data.orgScopes ? { orgScopes: currentScopes } : {}) } as Prisma.InputJsonValue, after: { ...updated, ...(data.orgScopes ? { orgScopes: data.orgScopes } : {}) } as Prisma.InputJsonValue });
+      return updated;
+    }));
     invalidatePositionsCache();
-    await auditChange("UPDATE", item, audit);
+    clearAuditDerivedCaches();
     return positionsRepository.findById(item.id);
   },
 

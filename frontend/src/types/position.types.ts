@@ -2,6 +2,8 @@ import type { Employee } from "./index";
 
 export type PositionStatus = "ACTIVO" | "INACTIVO";
 export type WorkModality = "PRESENCIAL" | "HIBRIDA" | "REMOTA" | "OTRA";
+export type PositionOrgScopeLevel = "COMPANY" | "BUSINESS_UNIT" | "SECTOR" | "AREA";
+export type PositionOrgScope = { id?: string; level: PositionOrgScopeLevel; nodeId: string; code?: string; name: string; status?: PositionStatus };
 
 export type PositionResponsibility = { id: string; description: string; order: number };
 export type PositionRelation = { id: string; name: string; description?: string };
@@ -43,6 +45,9 @@ export type Position = {
   suggestedInternalCategoryName?: string;
   /** Fuente oficial de ubicacion (limpieza final de Position, 2026-08-18). */
   sectorId?: string;
+  orgScopes?: PositionOrgScope[];
+  /** Un puesto con sector legado y sin alcances A5 requiere recarga manual. */
+  pendingScopeReload?: boolean;
   /** Derivados de solo lectura via sectorId -> area -> establishment -> businessUnit -> company. */
   derivedSectorName?: string;
   derivedAreaId?: string;
@@ -79,11 +84,9 @@ export type Position = {
 
 export type PositionFilters = {
   search: string;
-  /** Filtran por id real (catalogo de Estructura Organizacional), no por string legado. */
-  businessUnitId: string;
-  establishmentId: string;
-  areaId: string;
-  sectorId: string;
+  scopeLevel: "" | PositionOrgScopeLevel;
+  scopeNodeId: string;
+  scopeMode: "WITHIN" | "COVERS";
   salaryRangeCategory: string;
   status: "" | PositionStatus;
 };

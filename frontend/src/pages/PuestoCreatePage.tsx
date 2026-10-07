@@ -18,6 +18,7 @@ import { useAsyncAction } from "../utils/useAsyncAction";
 import { PageHeader } from "../components/ui/PageHeader";
 import { Section } from "../components/ui/Section";
 import { Button } from "../components/ui/Button";
+import { getUserErrorMessage } from "../services/api/apiClient";
 
 export function PuestoCreatePage() {
   const { user } = useAuth();
@@ -43,12 +44,12 @@ export function PuestoCreatePage() {
 
   const { isRunning: isSaving, run: save } = useAsyncAction(async (event: FormEvent) => {
     event.preventDefault();
-    if (!position.name.trim() || !position.sectorId || !position.status || !position.mission.trim() || !position.lastUpdatedAt) return setError("Completa nombre, sector, estado, mision y fecha de actualizacion.");
+    if (!position.name.trim() || !position.orgScopes?.length || !position.status || !position.mission.trim() || !position.lastUpdatedAt) return setError("Completá nombre, al menos un alcance organizacional, estado, misión y fecha de actualización.");
     try {
       const created = await positionApiService.create(position);
       if (created) navigate(`/puestos/${created.id}`, { state: { created: true, usesApi } });
-    } catch {
-      setError("No pudimos guardar el puesto. Revisá si el código ya existe e intentá nuevamente.");
+    } catch (error) {
+      setError(getUserErrorMessage(error, "No pudimos guardar el puesto. Revisá si el código ya existe e intentá nuevamente."));
     }
   });
 

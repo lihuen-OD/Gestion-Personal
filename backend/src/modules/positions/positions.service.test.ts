@@ -3,6 +3,9 @@ import type { Mock } from "vitest";
 import { positionsRepository } from "./positions.repository";
 import { positionsService } from "./positions.service";
 import { roles } from "../../shared/security/roles";
+import { auditService } from "../audit/audit.service";
+
+vi.mock("../audit/audit.service", () => ({ auditService: { registerWithin: vi.fn() }, clearAuditDerivedCaches: vi.fn() }));
 
 // Auditoria 2026-08-24 (critico): GET /positions/:id/employees solo tenia
 // requireAuth (ver positions.routes.ts) y ademas no filtraba por alcance de
@@ -17,11 +20,16 @@ vi.mock("./positions.repository", () => ({
     findAssignedEmployees: vi.fn(),
     findMany: vi.fn(),
     findOptions: vi.fn(),
+    transaction: vi.fn(),
+    resolveScopeNodes: vi.fn(),
+    createWithin: vi.fn(),
+    updateWithin: vi.fn(),
+    findScopeKeys: vi.fn(),
   },
   invalidatePositionsCache: vi.fn(),
 }));
 
-const repo = positionsRepository as unknown as { findById: Mock; existsById: Mock; findAssignedEmployees: Mock; findMany: Mock; findOptions: Mock };
+const repo = positionsRepository as unknown as { findById: Mock; existsById: Mock; findAssignedEmployees: Mock; findMany: Mock; findOptions: Mock; transaction: Mock; resolveScopeNodes: Mock; createWithin: Mock; updateWithin: Mock; findScopeKeys: Mock };
 
 const rrhhUser = { id: "user-rrhh", role: roles.rrhh } as unknown as Express.AuthUser;
 const supervisionUser = { id: "user-sup", role: roles.supervision } as unknown as Express.AuthUser;
@@ -34,6 +42,11 @@ beforeEach(() => {
   repo.findById.mockResolvedValue({ id: "pos-1", code: "PUE-1", name: "Puesto 1", _count: { employees: 1 } });
   repo.existsById.mockResolvedValue({ id: "pos-1" });
   repo.findAssignedEmployees.mockResolvedValue([[], 0]);
+  repo.transaction.mockImplementation((operation: (tx: object) => unknown) => operation({ position: { findUniqueOrThrow: vi.fn().mockResolvedValue({ id: "pos-1", code: "PUE-1", name: "Puesto 1", status: "ACTIVO" }) } }));
+  repo.resolveScopeNodes.mockResolvedValue({ companies: [], businessUnits: [], sectors: [], areas: [] });
+  repo.createWithin.mockResolvedValue({ id: "pos-new", code: "PUE-2", name: "Director" });
+  repo.updateWithin.mockResolvedValue({ id: "pos-1", code: "PUE-1", name: "Puesto 1" });
+  repo.findScopeKeys.mockResolvedValue([]);
 });
 
 describe("positionsService.listAssignedEmployees", () => {
@@ -135,5 +148,36 @@ describe("positionsService.listOptions — Etapa 14D.4", () => {
     const result = await positionsService.listAssignedEmployees("pos-1", { page: 2, take: 25 }, rrhhUser);
 
     expect(result).toEqual({ items: [{ id: "emp-1" }], meta: { total: 612, page: 2, pageSize: 25, hasMore: true } });
+  });
+});
+
+describe("positionsService — alcances organizacionales A5", () => {
+  const input = { code: "PUE-2", name: "Director", status: "ACTIVO", responsibilities: [], internalRelations: [], externalRelations: [], competencies: [], workConditions: { modality: "PRESENCIAL", workload: "", workplace: "", relationType: "", observations: "" }, performanceIndicators: [], evaluationCriteria: [], salaryCategoryIds: [], orgScopes: [{ level: "COMPANY", nodeId: "c1" }] };
+
+  it("crea alcance múltiple válido y auditoría dentro de la misma transacción", async () => {
+    repo.resolveScopeNodes.mockResolvedValue({ companies: [{ id: "c1", name: "LOSOD", status: "ACTIVO" }, { id: "c2", name: "Tropa", status: "ACTIVO" }], businessUnits: [], sectors: [], areas: [] });
+    repo.findById.mockResolvedValue({ id: "pos-new" });
+    await positionsService.create({ ...input, orgScopes: [{ level: "COMPANY", nodeId: "c1" }, { level: "COMPANY", nodeId: "c2" }] } as never, { userId: "u1" });
+    expect(repo.createWithin).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ orgScopes: expect.any(Array) }), "u1");
+    expect(auditService.registerWithin).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ action: "CREATE", entity: "Position" }));
+  });
+
+  it("rechaza ancestro y descendiente con mensaje claro", async () => {
+    repo.resolveScopeNodes.mockResolvedValue({ companies: [{ id: "c1", name: "LOSOD", status: "ACTIVO" }], businessUnits: [{ id: "bu1", name: "Servicios", status: "ACTIVO", companyId: "c1" }], sectors: [], areas: [] });
+    await expect(positionsService.create({ ...input, orgScopes: [{ level: "COMPANY", nodeId: "c1" }, { level: "BUSINESS_UNIT", nodeId: "bu1" }] } as never)).rejects.toMatchObject({ code: "POSITION_SCOPE_REDUNDANT", message: expect.stringContaining("incluido por") });
+    expect(repo.createWithin).not.toHaveBeenCalled();
+  });
+
+  it("rechaza referencia inexistente y nodo legado", async () => {
+    await expect(positionsService.create(input as never)).rejects.toMatchObject({ code: "POSITION_SCOPE_INVALID" });
+    repo.resolveScopeNodes.mockResolvedValue({ companies: [], businessUnits: [], sectors: [{ id: "s0", name: "Anterior", status: "ACTIVO", businessUnitId: null, businessUnit: null }], areas: [] });
+    await expect(positionsService.create({ ...input, orgScopes: [{ level: "SECTOR", nodeId: "s0" }] } as never)).rejects.toMatchObject({ code: "POSITION_SCOPE_LEGACY" });
+  });
+
+  it("permite conservar un alcance inactivo existente, pero no agregarlo", async () => {
+    repo.resolveScopeNodes.mockResolvedValue({ companies: [{ id: "c1", name: "LOSOD", status: "INACTIVO" }], businessUnits: [], sectors: [], areas: [] });
+    await expect(positionsService.create(input as never)).rejects.toMatchObject({ code: "POSITION_SCOPE_INACTIVE" });
+    repo.findScopeKeys.mockResolvedValue([{ level: "COMPANY", companyId: "c1", businessUnitId: null, sectorId: null, areaId: null }]);
+    await expect(positionsService.update("pos-1", { orgScopes: [{ level: "COMPANY", nodeId: "c1" }] } as never)).resolves.toBeDefined();
   });
 });

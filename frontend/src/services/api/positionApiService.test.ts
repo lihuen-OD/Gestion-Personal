@@ -116,4 +116,19 @@ describe("positionApiService.getAssignedEmployees — dedupe/cache frontend (Eta
     await positionApiService.getAssignedEmployees("pos-1");
     expect(apiRequest).toHaveBeenCalledTimes(2);
   });
+
+  it("envía alcances A5 y nunca convierte sectorId legado", async () => {
+    vi.mocked(apiRequest).mockResolvedValue({ data: null });
+    await positionApiService.update({ id: "pos-1", code: "PUE-1", name: "Director", sectorId: "sector-legado", orgScopes: [{ level: "COMPANY", nodeId: "company-1", name: "LOSOD" }], status: "ACTIVO" } as never);
+    expect(apiRequest).toHaveBeenCalledWith("/positions/pos-1", expect.objectContaining({ body: expect.objectContaining({ orgScopes: [{ level: "COMPANY", nodeId: "company-1" }] }) }));
+    expect(vi.mocked(apiRequest).mock.calls.at(-1)?.[1]?.body).not.toHaveProperty("sectorId");
+  });
+
+  it("al editar un puesto pendiente omite orgScopes vacío y conserva el legado", async () => {
+    vi.mocked(apiRequest).mockResolvedValue({ data: null });
+    await positionApiService.update({ id: "pos-old", code: "PUE-OLD", name: "Anterior", sectorId: "sector-legado", orgScopes: [], pendingScopeReload: true, status: "INACTIVO" } as never);
+    const body = vi.mocked(apiRequest).mock.calls.at(-1)?.[1]?.body;
+    expect(body).not.toHaveProperty("orgScopes");
+    expect(body).not.toHaveProperty("sectorId");
+  });
 });

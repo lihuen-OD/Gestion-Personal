@@ -16,6 +16,7 @@ vi.mock("../../shared/prisma/client", () => {
   const tx = {
     position: { create: vi.fn(), update: vi.fn() },
     positionSalaryCategory: { createMany: vi.fn(), deleteMany: vi.fn() },
+    positionOrgScope: { createMany: vi.fn(), deleteMany: vi.fn() },
   };
   return {
     prisma: {
@@ -29,7 +30,7 @@ vi.mock("../../shared/prisma/client", () => {
   };
 });
 
-const mockedTx = (prisma as unknown as { __tx: { position: { create: Mock; update: Mock }; positionSalaryCategory: { createMany: Mock; deleteMany: Mock } } }).__tx;
+const mockedTx = (prisma as unknown as { __tx: { position: { create: Mock; update: Mock }; positionSalaryCategory: { createMany: Mock; deleteMany: Mock }; positionOrgScope: { createMany: Mock; deleteMany: Mock } } }).__tx;
 
 function baseQuery(overrides: Partial<ListPositionsQuery> = {}): ListPositionsQuery {
   return { page: 1, take: 25, ...overrides } as ListPositionsQuery;
@@ -97,7 +98,7 @@ function baseCreateInput(overrides: Record<string, unknown> = {}) {
     workConditions: { modality: "PRESENCIAL", workload: "", workplace: "", relationType: "", observations: "" },
     performanceIndicators: [],
     evaluationCriteria: [],
-    sectorId: null,
+    orgScopes: [{ level: "COMPANY", nodeId: "comp-1" }],
     salaryCategoryIds: [] as string[],
     ...overrides,
   } as Parameters<typeof positionsRepository.create>[0];
@@ -126,16 +127,14 @@ describe("positionsRepository.create — categoria salarial (PositionSalaryCateg
     expect(mockedTx.positionSalaryCategory.createMany).not.toHaveBeenCalled();
   });
 
-  it("create usa sectorId como unico dato de ubicacion (no hay areaId/strings legado en el input)", async () => {
+  it("create persiste PositionOrgScope y no escribe sectorId legado", async () => {
     mockedTx.position.create.mockResolvedValue({ id: "pos-3", code: "PUE-102" });
 
-    await positionsRepository.create(baseCreateInput({ sectorId: "sec-1" }));
+    await positionsRepository.create(baseCreateInput({ orgScopes: [{ level: "SECTOR", nodeId: "sec-1" }] }));
 
     const createData = mockedTx.position.create.mock.calls.at(0)?.[0]?.data;
-    expect(createData).toMatchObject({ sectorId: "sec-1" });
-    expect(createData).not.toHaveProperty("areaId");
-    expect(createData).not.toHaveProperty("areaDepartment");
-    expect(createData).not.toHaveProperty("sectorName");
+    expect(createData).not.toHaveProperty("sectorId");
+    expect(mockedTx.positionOrgScope.createMany).toHaveBeenCalledWith({ data: [expect.objectContaining({ positionId: "pos-3", level: "SECTOR", sectorId: "sec-1" })] });
   });
 });
 
@@ -161,13 +160,15 @@ describe("positionsRepository.update — categoria salarial (PositionSalaryCateg
     expect(mockedTx.positionSalaryCategory.createMany).not.toHaveBeenCalled();
   });
 
-  it("update usando sectorId no escribe ningun campo legado eliminado", async () => {
+  it("update reemplaza alcances sin tocar sectorId legado", async () => {
     mockedTx.position.update.mockResolvedValue({ id: "pos-1", code: "PUE-100" });
 
-    await positionsRepository.update("pos-1", { sectorId: "sec-2" } as Parameters<typeof positionsRepository.update>[1]);
+    await positionsRepository.update("pos-1", { orgScopes: [{ level: "AREA", nodeId: "area-2" }] } as Parameters<typeof positionsRepository.update>[1]);
 
     const updateData = mockedTx.position.update.mock.calls.at(0)?.[0]?.data;
-    expect(updateData).toEqual({ sectorId: "sec-2" });
+    expect(updateData).toEqual({});
+    expect(mockedTx.positionOrgScope.deleteMany).toHaveBeenCalledWith({ where: { positionId: "pos-1" } });
+    expect(mockedTx.positionOrgScope.createMany).toHaveBeenCalledWith({ data: [expect.objectContaining({ positionId: "pos-1", level: "AREA", areaId: "area-2" })] });
   });
 });
 
@@ -203,44 +204,29 @@ describe("positionsRepository.findMany — Etapa 9E (paginación real)", () => {
     expect(total).toBe(1);
   });
 
-  it("respeta el filtro de areaId, navegando sector->area (antes no se aplicaba server-side)", async () => {
+  it("'dentro de' una empresa incluye alcances directos y descendientes", async () => {
     (prisma.position.findMany as Mock).mockResolvedValue([]);
     (prisma.position.count as Mock).mockResolvedValue(0);
 
-    await positionsRepository.findMany(baseQuery({ areaId: "area-1" }));
+    await positionsRepository.findMany(baseQuery({ scopeLevel: "COMPANY", scopeNodeId: "comp-1", scopeMode: "WITHIN" }));
 
     const where = (prisma.position.findMany as Mock).mock.calls.at(0)?.[0]?.where;
-    expect(where).toMatchObject({ AND: [{ sector: { areaId: "area-1" } }] });
+    expect(where.orgScopes.some.OR).toEqual(expect.arrayContaining([
+      { companyId: "comp-1" },
+      { businessUnit: { companyId: "comp-1" } },
+      { sector: { businessUnit: { companyId: "comp-1" } } },
+    ]));
   });
 
-  it("respeta el filtro de establishmentId, navegando sector->area->establishment", async () => {
+  it("'abarca' un área incluye alcances directos y ancestros", async () => {
     (prisma.position.findMany as Mock).mockResolvedValue([]);
     (prisma.position.count as Mock).mockResolvedValue(0);
 
-    await positionsRepository.findMany(baseQuery({ establishmentId: "est-1" }));
+    await positionsRepository.findMany(baseQuery({ scopeLevel: "AREA", scopeNodeId: "area-1", scopeMode: "COVERS" }));
 
     const where = (prisma.position.findMany as Mock).mock.calls.at(0)?.[0]?.where;
-    expect(where).toMatchObject({ AND: [{ sector: { area: { establishmentId: "est-1" } } }] });
-  });
-
-  it("respeta el filtro de businessUnitId, navegando sector->area->establishment->businessUnit", async () => {
-    (prisma.position.findMany as Mock).mockResolvedValue([]);
-    (prisma.position.count as Mock).mockResolvedValue(0);
-
-    await positionsRepository.findMany(baseQuery({ businessUnitId: "bu-1" }));
-
-    const where = (prisma.position.findMany as Mock).mock.calls.at(0)?.[0]?.where;
-    expect(where).toMatchObject({ AND: [{ sector: { area: { establishment: { businessUnitId: "bu-1" } } } }] });
-  });
-
-  it("combina Área + Unidad de negocio (antes el último filtro sobre `sector` pisaba al anterior)", async () => {
-    (prisma.position.findMany as Mock).mockResolvedValue([]);
-    (prisma.position.count as Mock).mockResolvedValue(0);
-
-    await positionsRepository.findMany(baseQuery({ areaId: "area-1", businessUnitId: "bu-1" }));
-
-    const where = (prisma.position.findMany as Mock).mock.calls.at(0)?.[0]?.where;
-    expect(where.AND).toEqual([{ sector: { areaId: "area-1" } }, { sector: { area: { establishment: { businessUnitId: "bu-1" } } } }]);
+    expect(where.orgScopes.some.OR[0]).toEqual({ areaId: "area-1" });
+    expect(where.orgScopes.some.OR).toHaveLength(4);
   });
 
   it("sin filtros pero con sortBy: no usa el cache (ordena en la base, sobre todo el dataset)", async () => {
@@ -277,14 +263,14 @@ describe("positionsRepository.findMany — Etapa 9E (paginación real)", () => {
     expect(where).toMatchObject({ salaryCategories: { some: { salaryCategory: { name: "Categoría A" } } } });
   });
 
-  it("combina search + status + sectorId con AND implícito (todos dentro del mismo where)", async () => {
+  it("combina search + status + alcance con AND implícito", async () => {
     (prisma.position.findMany as Mock).mockResolvedValue([]);
     (prisma.position.count as Mock).mockResolvedValue(0);
 
-    await positionsRepository.findMany(baseQuery({ search: "jefe", status: "ACTIVO", sectorId: "sec-1" }));
+    await positionsRepository.findMany(baseQuery({ search: "jefe", status: "ACTIVO", scopeLevel: "SECTOR", scopeNodeId: "sec-1", scopeMode: "WITHIN" }));
 
     const where = (prisma.position.findMany as Mock).mock.calls.at(0)?.[0]?.where;
-    expect(where).toMatchObject({ status: "ACTIVO", sectorId: "sec-1" });
+    expect(where).toMatchObject({ status: "ACTIVO", orgScopes: { some: { OR: [{ sectorId: "sec-1" }, { area: { sectorId: "sec-1" } }] } } });
     expect(where.OR).toBeDefined();
   });
 

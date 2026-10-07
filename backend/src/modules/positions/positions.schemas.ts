@@ -7,24 +7,30 @@ export const recordStatusSchema = z.enum(["ACTIVO", "INACTIVO"]);
 const jsonArraySchema = z.array(z.unknown()).default([]);
 const nullableText = z.string().trim().max(1000).optional().nullable();
 
-// Etapa 9E: businessUnitId/establishmentId/areaId se agregan para que
-// PuestosPage.tsx pueda paginar de verdad con los 6 filtros que ya expone en
-// UI (antes sólo sectorId/salaryRangeCategory se resolvían server-side; los
-// otros 3 se filtraban en el cliente sobre un fetch-all, lo que hubiera dado
-// resultados incorrectos al combinarlos con paginación real).
+// A5 reemplaza la cadena de filtros basada en sectorId legado por un nodo y
+// una relación explícita: WITHIN (igual/descendiente) o COVERS
+// (igual/ancestro). Los tres parámetros deben viajar juntos.
 export const positionListSortKeys = ["name", "status"] as const;
+
+export const orgScopeLevelSchema = z.enum(["COMPANY", "BUSINESS_UNIT", "SECTOR", "AREA"]);
+export const positionOrgScopeInputSchema = z.object({
+  level: orgScopeLevelSchema,
+  nodeId: z.string().uuid(),
+});
 
 export const listPositionsQuerySchema = z.object({
   search: z.string().trim().optional(),
   status: recordStatusSchema.optional(),
-  sectorId: z.string().uuid().optional(),
-  areaId: z.string().uuid().optional(),
-  establishmentId: z.string().uuid().optional(),
-  businessUnitId: z.string().uuid().optional(),
+  scopeLevel: orgScopeLevelSchema.optional(),
+  scopeNodeId: z.string().uuid().optional(),
+  scopeMode: z.enum(["WITHIN", "COVERS"]).optional(),
   salaryRangeCategory: z.string().trim().optional(),
   page: z.coerce.number().int().positive().max(10000).default(1),
   take: z.coerce.number().int().positive().max(300).default(200),
   ...sortQueryShape(positionListSortKeys),
+}).superRefine((value, context) => {
+  const supplied = [value.scopeLevel, value.scopeNodeId, value.scopeMode].filter(Boolean).length;
+  if (supplied !== 0 && supplied !== 3) context.addIssue({ code: "custom", message: "Indicá nivel, nodo y modo del filtro de alcance." });
 });
 
 // Etapa 14D.4: query del catálogo liviano (`GET /positions/options`) — sólo
@@ -79,14 +85,17 @@ export const createPositionSchema = z.object({
   workConditions: positionWorkConditionsSchema.default({ modality: "PRESENCIAL", workload: "", workplace: "", relationType: "", observations: "" }),
   performanceIndicators: jsonArraySchema,
   evaluationCriteria: jsonArraySchema,
-  sectorId: z.string().uuid().optional().nullable(),
+  orgScopes: z.array(positionOrgScopeInputSchema).min(1, "Seleccioná al menos un alcance organizacional."),
   salaryCategoryIds: z.array(z.string().uuid()).default([]),
 });
 
-export const updatePositionSchema = createPositionSchema.partial();
+export const updatePositionSchema = createPositionSchema.partial().extend({
+  orgScopes: z.array(positionOrgScopeInputSchema).min(1, "Seleccioná al menos un alcance organizacional.").optional(),
+});
 
 export type ListPositionsQuery = z.infer<typeof listPositionsQuerySchema>;
 export type ListPositionOptionsQuery = z.infer<typeof listPositionOptionsQuerySchema>;
 export type CreatePositionInput = z.infer<typeof createPositionSchema>;
 export type UpdatePositionInput = z.infer<typeof updatePositionSchema>;
 export type ListPositionEmployeesQuery = z.infer<typeof listPositionEmployeesQuerySchema>;
+export type PositionOrgScopeInput = z.infer<typeof positionOrgScopeInputSchema>;

@@ -341,7 +341,8 @@ La inactivación solo puede **combinarse** con R1, R2 o R3. **Nunca se deja una 
 | A2 | Código hecho en la rama; **M1 aplicada y verificada sólo en la copia aislada** `org-location-reorg` (ver abajo). Development y producción sin tocar |
 | A3 | Herramientas preparadas e inventario de sólo lectura corrido en la copia (§12). **Limpieza y restauración no ejecutadas** |
 | A4 | Hecha: UI separada de Organización, Ubicaciones y Centros de costo; QA visual contra la copia aislada (§13) |
-| A5–A8, B0–B5 | Pendientes |
+| A5 | Hecha en `feat/org-location-reorg`: alcance múltiple de puestos con validación, filtros y QA (§14) |
+| A6–A8, B0–B5 | Pendientes |
 
 ### A2 — qué quedó en código
 
@@ -590,3 +591,57 @@ Antes de incorporar la compuerta, el primer arranque de QA ejecutó el chequeo i
 - `cb629b88-8504-4643-a904-cbccc3693e63` → incidente `660c92a9-f8ae-4433-9526-6c9125caddf0`
 
 Una consulta final de sólo lectura confirmó las cinco filas y `0` incidencias / `0` notificaciones `FALTA_INGRESO` nuevas después de `2026-10-07T13:33:12Z`.
+
+## 14. A5 — alcance organizacional de puestos (2026-10-07)
+
+### 14.1 Implementación
+
+- `PositionOrgScope` es la fuente de verdad para altas A5. El contrato usa uno o más `{ level, nodeId }`, con niveles `COMPANY`, `BUSINESS_UNIT`, `SECTOR` y `AREA`.
+- Cada nodo incluye sus descendientes. Se permiten varios alcances independientes y se rechazan duplicados o combinaciones ancestro/descendiente con `POSITION_SCOPE_REDUNDANT` y un mensaje que identifica qué nodo ya incluye al otro.
+- Backend y frontend excluyen zonas, establecimientos, nodos inactivos nuevos y sectores/áreas de la estructura anterior. Un alcance inactivo ya guardado puede conservarse al editar.
+- Crear o reemplazar alcances y categorías salariales, junto con la auditoría, corre en una transacción `Serializable`. Las invalidaciones del listado, opciones y auditoría ocurren después del commit.
+- El listado muestra los alcances y marca los puestos anteriores como **Pendiente de recarga**. `Position.sectorId` permanece; no se convierte ni se elimina. Editar otros datos de un puesto pendiente omite `orgScopes` y conserva ese estado.
+- El formulario advierte que todos los legajos asignados al puesto comparten exactamente el mismo alcance. No crea variantes ni cambia asignaciones.
+- La categoría salarial sigue independiente del alcance y de la jerarquía.
+- Los filtros son explícitos: **Ubicado dentro de** busca un alcance igual al nodo o descendiente; **Abarca** busca uno igual o ancestro. La UI exige un único nodo y muestra la diferencia; no combina ambos conceptos.
+
+### 14.2 QA integrado en la copia aislada
+
+El backend arrancó con `backend/.env.reorg` e informó `AUTOMATIC_JOBS_DISABLED`. Se autenticó con el acceso rápido de prueba existente de Nivel 1, sin cambiar ni omitir la autenticación.
+
+Se verificó en 1440×900 y 390×844:
+
+- alta con dos empresas independientes (LOSOD y Brasitas);
+- rechazo visual y backend de LOSOD + su UN Administración central;
+- rechazo backend de un UUID inexistente (`400 POSITION_SCOPE_INVALID`);
+- edición del segundo alcance de Brasitas a Tropa y persistencia después de recargar;
+- detalle, listado, mensajes, tabla horizontal, selector y advertencia de impacto compartido;
+- los tres puestos anteriores continúan pendientes, con su sector legado sin convertir;
+- semántica distinta de filtros: para Administración central, `WITHIN` devolvió 0 y `COVERS` devolvió el puesto cubierto por LOSOD.
+
+Durante el recorrido se corrigió el encabezado de detalle, que todavía mostraba “Sin área · Sin sector”, y el corrimiento de un día de `lastUpdatedAt`. Ahora resume alcances A5 y trata esa fecha como día calendario.
+
+### 14.3 Escrituras de QA documentadas
+
+Sólo en `org-location-reorg` se creó el registro identificable `QA-A5-ALCANCE-MULTIPLE`:
+
+- Position `ab2b54d4-3859-480c-994b-ab70e53aa096`, código `PUE-004`, sin `sectorId` y sin legajos asignados.
+- Alcances finales de empresa: `63f6211b-6bd3-480b-84d8-97383ac49b91` y `ace7b6b0-6c1d-47a2-81d3-8a9910668bf9` (LOSOD y Tropa).
+- AuditLog de creación `3e910a59-dd39-4de1-b5c3-e9c8284a815c` y de edición `c017c3e7-d6db-49c4-ab4d-efe1578fc1c0`.
+
+Los dos POST negativos abortaron antes de escribir. No se ejecutó limpieza, restauración, seed, reconciliación, M2 ni cambios de Datos Laborales. Una lectura final confirmó que las 2 `AttendanceInactivityIncident` y las 3 `SystemNotification` de §13.3 siguen presentes con los mismos identificadores.
+
+### 14.4 Capturas
+
+- `docs/qa/a5-puestos-listado-desktop.png`
+- `docs/qa/a5-puestos-listado-mobile.png`
+- `docs/qa/a5-puestos-listado-mobile-full.png`
+- `docs/qa/a5-puesto-detalle-desktop.png`
+- `docs/qa/a5-puesto-detalle-mobile.png`
+- `docs/qa/a5-puesto-form-redundancia-desktop.png`
+- `docs/qa/a5-puesto-legado-pendiente-desktop.png`
+
+### 14.5 Decisiones que siguen pendientes
+
+- **D-6 sigue abierta:** no se definieron funciones que requieran variantes por alcance. A5 no crea variantes ni reasigna legajos automáticamente.
+- **D-7 sigue abierta para A7:** A5 usa `WITHIN` como valor inicial del filtro de puestos y permite cambiarlo explícitamente a `COVERS`; esto no decide la banda “Alcance superior” del organigrama ni el comportamiento futuro de otros filtros.

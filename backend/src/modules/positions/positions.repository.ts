@@ -1,7 +1,7 @@
 import { Prisma } from "@prisma/client";
 import { prisma, type PrismaTransactionClient } from "../../shared/prisma/client";
 import { createRepositoryListCache, pageFromCappedList, REPOSITORY_LIST_CACHE_MAX_ROWS } from "../../shared/cache/repositoryListCache";
-import type { CreatePositionInput, ListPositionEmployeesQuery, ListPositionOptionsQuery, ListPositionsQuery, positionListSortKeys, UpdatePositionInput } from "./positions.schemas";
+import type { CreatePositionInput, ListPositionEmployeesQuery, ListPositionOptionsQuery, ListPositionsQuery, PositionOrgScopeInput, positionListSortKeys, UpdatePositionInput } from "./positions.schemas";
 import { resolveOrderBy, type SortOrderByMap } from "../../shared/validation/listSort";
 
 const positionListOrderBy: SortOrderByMap<(typeof positionListSortKeys)[number], Prisma.PositionOrderByWithRelationInput> = {
@@ -26,6 +26,15 @@ const positionInclude = {
     },
   },
   salaryCategories: { include: { salaryCategory: true } },
+  orgScopes: {
+    include: {
+      company: { select: { id: true, code: true, name: true, status: true } },
+      businessUnit: { select: { id: true, code: true, name: true, status: true, companyId: true } },
+      sector: { select: { id: true, code: true, name: true, status: true, businessUnitId: true } },
+      area: { select: { id: true, code: true, name: true, status: true, sectorId: true } },
+    },
+    orderBy: { createdAt: "asc" },
+  },
   _count: { select: { employees: true } },
 } satisfies Prisma.PositionInclude;
 
@@ -75,9 +84,27 @@ const positionOptionSelect = {
   salaryCategories: {
     select: { salaryCategory: { select: { id: true, name: true, order: true } } },
   },
+  orgScopes: {
+    select: {
+      id: true, level: true, companyId: true, businessUnitId: true, sectorId: true, areaId: true,
+      company: { select: { id: true, code: true, name: true, status: true } },
+      businessUnit: { select: { id: true, code: true, name: true, status: true, companyId: true } },
+      sector: { select: { id: true, code: true, name: true, status: true, businessUnitId: true } },
+      area: { select: { id: true, code: true, name: true, status: true, sectorId: true } },
+    },
+  },
 } satisfies Prisma.PositionSelect;
 
 const json = (value: unknown): Prisma.InputJsonValue => value as Prisma.InputJsonValue;
+const scopeData = (positionId: string, scopes: PositionOrgScopeInput[], createdByUserId?: string) => scopes.map((scope) => ({
+  positionId,
+  level: scope.level,
+  companyId: scope.level === "COMPANY" ? scope.nodeId : null,
+  businessUnitId: scope.level === "BUSINESS_UNIT" ? scope.nodeId : null,
+  sectorId: scope.level === "SECTOR" ? scope.nodeId : null,
+  areaId: scope.level === "AREA" ? scope.nodeId : null,
+  createdByUserId: createdByUserId || null,
+}));
 type PositionRow = Awaited<ReturnType<typeof prisma.position.findMany<{ include: typeof positionInclude }>>>[number];
 const POSITION_CACHE_TTL_MS = 120_000;
 // Etapa 14I.3: helper compartido (backend/src/shared/cache/
@@ -93,19 +120,32 @@ export function invalidatePositionsCache() {
 // misma cadena sector->area->establishment->businessUnit que ya usa
 // positionInclude para mostrar los derivados — sin agregar ninguna columna
 // nueva, sólo filtros anidados sobre relaciones existentes.
+function scopeWhere(query: ListPositionsQuery): Prisma.PositionWhereInput | undefined {
+  const { scopeLevel: level, scopeNodeId: id, scopeMode } = query;
+  if (!level || !id || !scopeMode) return undefined;
+  const direct = level === "COMPANY" ? { companyId: id } : level === "BUSINESS_UNIT" ? { businessUnitId: id } : level === "SECTOR" ? { sectorId: id } : { areaId: id };
+  if (scopeMode === "WITHIN") {
+    const descendants = level === "COMPANY"
+      ? [{ businessUnit: { companyId: id } }, { sector: { businessUnit: { companyId: id } } }, { area: { sector: { businessUnit: { companyId: id } } } }]
+      : level === "BUSINESS_UNIT"
+        ? [{ sector: { businessUnitId: id } }, { area: { sector: { businessUnitId: id } } }]
+        : level === "SECTOR" ? [{ area: { sectorId: id } }] : [];
+    return { orgScopes: { some: { OR: [direct, ...descendants] } } };
+  }
+  const ancestors = level === "AREA"
+    ? [{ sector: { areas: { some: { id } } } }, { businessUnit: { sectors: { some: { areas: { some: { id } } } } } }, { company: { businessUnits: { some: { sectors: { some: { areas: { some: { id } } } } } } } }]
+    : level === "SECTOR"
+      ? [{ businessUnit: { sectors: { some: { id } } } }, { company: { businessUnits: { some: { sectors: { some: { id } } } } } }]
+      : level === "BUSINESS_UNIT" ? [{ company: { businessUnits: { some: { id } } } }] : [];
+  return { orgScopes: { some: { OR: [direct, ...ancestors] } } };
+}
+
 function buildWhere(query: ListPositionsQuery): Prisma.PositionWhereInput {
   const search = query.search?.trim();
+  const scope = scopeWhere(query);
   return {
     ...(query.status ? { status: query.status } : {}),
-    ...(query.sectorId ? { sectorId: query.sectorId } : {}),
-    // AND explícito: los 3 filtros navegan la misma relación `sector` — como
-    // spreads separados de la misma key, el último pisaba a los anteriores y
-    // combinar p. ej. Área + Unidad de negocio filtraba sólo por la unidad.
-    AND: [
-      ...(query.areaId ? [{ sector: { areaId: query.areaId } }] : []),
-      ...(query.establishmentId ? [{ sector: { area: { establishmentId: query.establishmentId } } }] : []),
-      ...(query.businessUnitId ? [{ sector: { area: { establishment: { businessUnitId: query.businessUnitId } } } }] : []),
-    ],
+    ...(scope || {}),
     ...(query.salaryRangeCategory ? { salaryCategories: { some: { salaryCategory: { name: query.salaryRangeCategory } } } } : {}),
     ...(search
       ? {
@@ -114,6 +154,12 @@ function buildWhere(query: ListPositionsQuery): Prisma.PositionWhereInput {
             { name: { contains: search, mode: "insensitive" } },
             { mission: { contains: search, mode: "insensitive" } },
             { sector: { name: { contains: search, mode: "insensitive" } } },
+            { orgScopes: { some: { OR: [
+              { company: { name: { contains: search, mode: "insensitive" } } },
+              { businessUnit: { name: { contains: search, mode: "insensitive" } } },
+              { sector: { name: { contains: search, mode: "insensitive" } } },
+              { area: { name: { contains: search, mode: "insensitive" } } },
+            ] } } },
           ],
         }
       : {}),
@@ -123,6 +169,7 @@ function buildWhere(query: ListPositionsQuery): Prisma.PositionWhereInput {
 function dataFromInput(input: CreatePositionInput | UpdatePositionInput): Prisma.PositionUncheckedCreateInput | Prisma.PositionUncheckedUpdateInput {
   const {
     salaryCategoryIds: _salaryCategoryIds,
+    orgScopes: _orgScopes,
     responsibilities,
     internalRelations,
     externalRelations,
@@ -145,15 +192,31 @@ function dataFromInput(input: CreatePositionInput | UpdatePositionInput): Prisma
 }
 
 export const positionsRepository = {
+  transaction<T>(operation: (tx: PrismaTransactionClient) => Promise<T>) {
+    return prisma.$transaction(operation, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+  },
+
+  async resolveScopeNodes(tx: PrismaTransactionClient, scopes: PositionOrgScopeInput[]) {
+    const ids = (level: PositionOrgScopeInput["level"]) => scopes.filter((scope) => scope.level === level).map((scope) => scope.nodeId);
+    const [companies, businessUnits, sectors, areas] = await Promise.all([
+      tx.company.findMany({ where: { id: { in: ids("COMPANY") } }, select: { id: true, code: true, name: true, status: true } }),
+      tx.businessUnit.findMany({ where: { id: { in: ids("BUSINESS_UNIT") } }, select: { id: true, code: true, name: true, status: true, companyId: true } }),
+      tx.sector.findMany({ where: { id: { in: ids("SECTOR") } }, select: { id: true, code: true, name: true, status: true, businessUnitId: true, businessUnit: { select: { companyId: true } } } }),
+      tx.area.findMany({ where: { id: { in: ids("AREA") } }, select: { id: true, code: true, name: true, status: true, sectorId: true, sector: { select: { businessUnitId: true, businessUnit: { select: { companyId: true } } } } } }),
+    ]);
+    return { companies, businessUnits, sectors, areas };
+  },
+
+  findScopeKeys(tx: PrismaTransactionClient, positionId: string) {
+    return tx.positionOrgScope.findMany({ where: { positionId }, select: { level: true, companyId: true, businessUnitId: true, sectorId: true, areaId: true } });
+  },
+
   async findMany(query: ListPositionsQuery) {
     const where = buildWhere(query);
     const skip = (query.page - 1) * query.take;
     const hasFilters = Boolean(
       query.status ||
-        query.sectorId ||
-        query.areaId ||
-        query.establishmentId ||
-        query.businessUnitId ||
+        query.scopeNodeId ||
         query.salaryRangeCategory ||
         query.search?.trim() ||
         query.sortBy,
@@ -275,8 +338,7 @@ export const positionsRepository = {
     ]);
   },
 
-  create(input: CreatePositionInput) {
-    return prisma.$transaction(async (tx) => {
+  async createWithin(tx: PrismaTransactionClient, input: CreatePositionInput, createdByUserId?: string) {
       const item = await tx.position.create({ data: dataFromInput(input) as Prisma.PositionUncheckedCreateInput });
       if (input.salaryCategoryIds.length) {
         await tx.positionSalaryCategory.createMany({
@@ -284,12 +346,15 @@ export const positionsRepository = {
           skipDuplicates: true,
         });
       }
+      await tx.positionOrgScope.createMany({ data: scopeData(item.id, input.orgScopes, createdByUserId) });
       return item;
-    });
   },
 
-  update(id: string, input: UpdatePositionInput) {
-    return prisma.$transaction(async (tx) => {
+  create(input: CreatePositionInput) {
+    return prisma.$transaction((tx) => positionsRepository.createWithin(tx, input));
+  },
+
+  async updateWithin(tx: PrismaTransactionClient, id: string, input: UpdatePositionInput, createdByUserId?: string) {
       const item = await tx.position.update({ where: { id }, data: dataFromInput(input) as Prisma.PositionUncheckedUpdateInput });
       if (input.salaryCategoryIds !== undefined) {
         await tx.positionSalaryCategory.deleteMany({ where: { positionId: id } });
@@ -300,8 +365,15 @@ export const positionsRepository = {
           });
         }
       }
+      if (input.orgScopes !== undefined) {
+        await tx.positionOrgScope.deleteMany({ where: { positionId: id } });
+        await tx.positionOrgScope.createMany({ data: scopeData(id, input.orgScopes, createdByUserId) });
+      }
       return item;
-    });
+  },
+
+  update(id: string, input: UpdatePositionInput) {
+    return prisma.$transaction((tx) => positionsRepository.updateWithin(tx, id, input));
   },
 
   /**

@@ -23,6 +23,7 @@ import { ErrorState } from "../components/ui/ErrorState";
 import { Tabs } from "../components/ui/Tabs";
 import { Button } from "../components/ui/Button";
 import { confirmAction } from "../services/appDialog";
+import { getUserErrorMessage } from "../services/api/apiClient";
 
 const tabs = ["Identificacion", "Proposito / Mision", "Rango Salarial", "Responsabilidades", "Relaciones", "Competencias", "Condiciones", "Indicadores", "Criterios", "Personas Asignadas", "Historial"];
 
@@ -83,13 +84,17 @@ export function PuestoDetailPage() {
 
   const { isRunning: isSaving, run: save } = useAsyncAction(async () => {
     if (!position) return;
+    if (!position.pendingScopeReload && !position.orgScopes?.length) {
+      setNotice("Seleccioná al menos un alcance organizacional.");
+      return;
+    }
     try {
       const saved = await positionApiService.update(position);
       if (saved) setPosition(saved);
       setNotice("Cambios guardados correctamente.");
       setTimeout(() => setNotice(""), 2200);
-    } catch {
-      setNotice("No pudimos guardar el puesto. Revisá los datos e intentá nuevamente.");
+    } catch (error) {
+      setNotice(getUserErrorMessage(error, "No pudimos guardar el puesto. Revisá los datos e intentá nuevamente."));
     }
   });
 

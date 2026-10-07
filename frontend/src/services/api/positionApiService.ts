@@ -37,6 +37,15 @@ type ApiPosition = {
   evaluationCriteria?: unknown;
   sectorId?: string | null;
   sector?: ApiSectorChain | null;
+  orgScopes?: Array<{
+    id: string;
+    level: "COMPANY" | "BUSINESS_UNIT" | "SECTOR" | "AREA";
+    companyId?: string | null; businessUnitId?: string | null; sectorId?: string | null; areaId?: string | null;
+    company?: { id: string; code: string; name: string; status: PositionStatus } | null;
+    businessUnit?: { id: string; code: string; name: string; status: PositionStatus } | null;
+    sector?: { id: string; code: string; name: string; status: PositionStatus } | null;
+    area?: { id: string; code: string; name: string; status: PositionStatus } | null;
+  }>;
   salaryCategories?: Array<{ salaryCategory: { id: string; name: string; order: number } }>;
   createdAt: string;
   updatedAt: string;
@@ -73,6 +82,10 @@ function mapFromApi(item: ApiPosition): Position {
   const salaryCategories = [...(item.salaryCategories || [])]
     .map((link) => link.salaryCategory)
     .sort((a, b) => a.order - b.order);
+  const orgScopes = (item.orgScopes || []).map((scope) => {
+    const node = scope.company || scope.businessUnit || scope.sector || scope.area;
+    return { id: scope.id, level: scope.level, nodeId: node?.id || scope.companyId || scope.businessUnitId || scope.sectorId || scope.areaId || "", code: node?.code, name: node?.name || "Nodo no disponible", status: node?.status };
+  });
   return {
     id: item.id,
     code: item.code,
@@ -81,6 +94,8 @@ function mapFromApi(item: ApiPosition): Position {
     lastUpdatedAt: item.lastUpdatedAt ? item.lastUpdatedAt.slice(0, 10) : item.updatedAt.slice(0, 10),
     status: item.status,
     sectorId: item.sectorId || undefined,
+    orgScopes,
+    pendingScopeReload: orgScopes.length === 0 && Boolean(item.sectorId),
     derivedSectorName: item.sector?.name || "",
     derivedAreaId: item.sector?.area?.id || undefined,
     derivedAreaName: item.sector?.area?.name || "",
@@ -141,8 +156,9 @@ function mapToApi(position: Position) {
     status: position.status,
     mission: position.mission || null,
     lastUpdatedAt: position.lastUpdatedAt || null,
-    // Fuente oficial de ubicacion: sectorId (limpieza final de Position, 2026-08-18).
-    sectorId: position.sectorId || null,
+    // Los puestos anteriores sin alcances se pueden editar sin convertirlos:
+    // omitir evita escribir [] y preserva sectorId hasta su recarga manual.
+    ...(!position.orgScopes?.length && position.pendingScopeReload ? {} : { orgScopes: (position.orgScopes || []).map(({ level, nodeId }) => ({ level, nodeId })) }),
     // Fuente oficial de categoria salarial: relacion real PositionSalaryCategory.
     salaryCategoryIds: position.salaryCategoryIds || [],
     responsibilities: position.responsibilities || [],
@@ -160,10 +176,12 @@ function toQuery(filters?: Partial<PositionFilters>) {
   params.set("take", "300");
   if (filters?.search?.trim()) params.set("search", filters.search.trim());
   if (filters?.status) params.set("status", filters.status);
-  // businessUnitId/establishmentId/areaId todavia no tienen filtro server-side
-  // real (el backend solo resuelve sectorId); el filtrado de esos 3 niveles
-  // se hace client-side en PuestosPage contra los derivados del catalogo.
-  if (filters?.sectorId) params.set("sectorId", filters.sectorId);
+  // A5: filtro organizacional explícito; ubicaciones no forman parte del puesto.
+  if (filters?.scopeNodeId && filters.scopeLevel) {
+    params.set("scopeLevel", filters.scopeLevel);
+    params.set("scopeNodeId", filters.scopeNodeId);
+    params.set("scopeMode", filters.scopeMode || "WITHIN");
+  }
   if (filters?.salaryRangeCategory) params.set("salaryRangeCategory", filters.salaryRangeCategory);
   const query = params.toString();
   return query ? `?${query}` : "";
@@ -193,10 +211,8 @@ function isPositionListResponse(value: { items: Position[]; meta?: unknown }) {
   return Boolean(value && Array.isArray(value.items) && value.items.every(isPosition));
 }
 
-// Etapa 9E: query separada de toQuery() (que sigue siendo la de getAll(),
-// take:300 fijo, usada por selects/catálogos) — acá page/take vienen del
-// caller (Pagination.tsx) y se agregan los 3 filtros de jerarquía
-// organizacional que el backend ahora sí resuelve server-side.
+// Query paginada del listado. El backend resuelve el modo de alcance sobre
+// PositionOrgScope para que meta.total y la página sean correctos.
 // Whitelist server-side de GET /positions (positions.schemas.ts::positionListSortKeys).
 export type PositionListSortKey = "name" | "status";
 
@@ -206,10 +222,11 @@ function toListQuery(filters?: Partial<PositionFilters> & { page?: number; take?
   params.set("take", String(filters?.take || 25));
   if (filters?.search?.trim()) params.set("search", filters.search.trim());
   if (filters?.status) params.set("status", filters.status);
-  if (filters?.sectorId) params.set("sectorId", filters.sectorId);
-  if (filters?.areaId) params.set("areaId", filters.areaId);
-  if (filters?.establishmentId) params.set("establishmentId", filters.establishmentId);
-  if (filters?.businessUnitId) params.set("businessUnitId", filters.businessUnitId);
+  if (filters?.scopeNodeId && filters.scopeLevel) {
+    params.set("scopeLevel", filters.scopeLevel);
+    params.set("scopeNodeId", filters.scopeNodeId);
+    params.set("scopeMode", filters.scopeMode || "WITHIN");
+  }
   if (filters?.salaryRangeCategory) params.set("salaryRangeCategory", filters.salaryRangeCategory);
   appendSortParams(params, filters?.sort);
   return `?${params.toString()}`;

@@ -33,12 +33,8 @@ const norm = (value: unknown) => String(value || "").trim().toLowerCase();
  */
 export function matches(position: Position, filters: PositionFilters) {
   const query = norm(filters.search);
-  const text = norm(`${position.code} ${position.name} ${position.derivedBusinessUnitName || ""} ${position.derivedEstablishmentName || ""} ${position.derivedAreaName || ""} ${position.derivedSectorName || ""} ${(position.salaryCategoryNames || []).join(" ")}`);
+  const text = norm(`${position.code} ${position.name} ${(position.orgScopes || []).map((scope) => scope.name).join(" ")} ${(position.salaryCategoryNames || []).join(" ")}`);
   return (!query || text.includes(query))
-    && (!filters.businessUnitId || position.derivedBusinessUnitId === filters.businessUnitId)
-    && (!filters.establishmentId || position.derivedEstablishmentId === filters.establishmentId)
-    && (!filters.areaId || position.derivedAreaId === filters.areaId)
-    && (!filters.sectorId || position.sectorId === filters.sectorId)
     && (!filters.salaryRangeCategory || position.salaryCategoryNames?.includes(filters.salaryRangeCategory))
     && (!filters.status || position.status === filters.status);
 }
@@ -55,10 +51,12 @@ export function options(items: Position[], catalog: OrgStructureCatalog | undefi
     entries.filter((entry) => entry.status === "ACTIVO").map((entry) => ({ id: entry.id, name: entry.name })).sort((a, b) => a.name.localeCompare(b.name, "es"));
   const uniqueStrings = (values: (string | undefined)[]) => Array.from(new Set(values.filter(Boolean) as string[])).sort((a, b) => a.localeCompare(b, "es"));
   return {
-    businessUnitId: activeIdName(catalog?.businessUnits || []),
-    establishmentId: activeIdName(catalog?.establishments || []),
-    areaId: activeIdName(catalog?.areas || []),
-    sectorId: activeIdName(catalog?.sectors || []),
+    scopeNodes: {
+      COMPANY: activeIdName(catalog?.companies || []),
+      BUSINESS_UNIT: activeIdName(catalog?.businessUnits || []),
+      SECTOR: activeIdName((catalog?.sectors || []).filter((item) => item.businessUnitId)),
+      AREA: activeIdName((catalog?.areas || []).filter((item) => item.sectorId)),
+    },
     salaryRangeCategory: uniqueStrings(items.flatMap((position) => position.salaryCategoryNames || [])),
   };
 }
@@ -70,7 +68,7 @@ function summary(items: Position[]): PositionSummary {
     active: items.filter((position) => position.status === "ACTIVO").length,
     inactive: items.filter((position) => position.status === "INACTIVO").length,
     withoutPeople: items.filter((position) => (position.assignedCount || 0) === 0).length,
-    pendingUpdate: 0,
+    pendingUpdate: items.filter((position) => position.pendingScopeReload).length,
     linkedToEmployees,
   };
 }
@@ -81,10 +79,9 @@ function getAssignedCount(position: Position) {
 
 const emptyFilters: PositionFilters = {
   search: "",
-  businessUnitId: "",
-  establishmentId: "",
-  areaId: "",
-  sectorId: "",
+  scopeLevel: "",
+  scopeNodeId: "",
+  scopeMode: "WITHIN",
   salaryRangeCategory: "",
   status: "",
 };
@@ -146,10 +143,9 @@ export function PuestosPage() {
       take: pageSize,
       search: debouncedSearch,
       status: filters.status,
-      sectorId: filters.sectorId,
-      areaId: filters.areaId,
-      establishmentId: filters.establishmentId,
-      businessUnitId: filters.businessUnitId,
+      scopeLevel: filters.scopeLevel,
+      scopeNodeId: filters.scopeNodeId,
+      scopeMode: filters.scopeMode,
       salaryRangeCategory: filters.salaryRangeCategory,
       sort,
     })
@@ -166,7 +162,7 @@ export function PuestosPage() {
         setListStatus("error");
       });
     return () => { alive = false; };
-  }, [page, debouncedSearch, filters.status, filters.sectorId, filters.areaId, filters.establishmentId, filters.businessUnitId, filters.salaryRangeCategory, refresh, sort]);
+  }, [page, debouncedSearch, filters.status, filters.scopeLevel, filters.scopeNodeId, filters.scopeMode, filters.salaryRangeCategory, refresh, sort]);
 
   if (level === 3) return <Navigate to="/gestion-horaria" />;
 
@@ -206,7 +202,7 @@ export function PuestosPage() {
           <StatCard label="Puestos activos" value={positionSummary.active} detail="Disponibles para vincular" tone="green" icon={CheckCircle2} />
           <StatCard label="Puestos inactivos" value={positionSummary.inactive} detail="Conservan historial" tone="red" icon={Archive} />
           <StatCard label="Sin personas asignadas" value={positionSummary.withoutPeople} detail="Calculado desde legajos" tone="orange" icon={AlertTriangle} />
-          <StatCard label="Actualizacion pendiente" value={positionSummary.pendingUpdate} detail="Mas de 12 meses" tone="purple" icon={AlertTriangle} />
+          <StatCard label="Alcance pendiente" value={positionSummary.pendingUpdate} detail="Puestos anteriores a recargar" tone="purple" icon={AlertTriangle} />
           <StatCard label="Vinculados a legajos" value={positionSummary.linkedToEmployees} detail="Con personas activas" tone="green" icon={Link2} />
         </div>
       ) : null}

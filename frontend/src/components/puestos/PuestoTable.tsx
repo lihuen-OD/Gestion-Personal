@@ -16,14 +16,7 @@ import { activoInactivoLabel } from "../../utils/status";
  * (limpieza final de Position, 2026-08-18) — no hay fallback a strings
  * legado, esas columnas ya no existen.
  */
-export function positionLocationCells(position: Position) {
-  return {
-    businessUnit: position.derivedBusinessUnitName || null,
-    establishment: position.derivedEstablishmentName || null,
-    area: position.derivedAreaName || null,
-    sector: position.derivedSectorName || null,
-  };
-}
+const scopeLevelLabel = { COMPANY: "Empresa", BUSINESS_UNIT: "UN", SECTOR: "Sector", AREA: "Área" } as const;
 
 function SalaryRangeCell({ categories }: { categories?: string[] }) {
   if (!categories?.length) return <span className="position-muted">Sin rango</span>;
@@ -34,13 +27,10 @@ function SalaryRangeCell({ categories }: { categories?: string[] }) {
 // ubicación son derivadas de una relación opcional (sector) y no se ordenan.
 export function PuestoTable({ positions, assignedCount, canEdit, onRemove, onToggleStatus, sort, onSort }: { positions: Position[]; assignedCount: (id: string) => number; canEdit: boolean; onRemove: (position: Position) => void; onToggleStatus: (position: Position) => void; sort: SortState<PositionListSortKey>; onSort: (key: PositionListSortKey) => void }) {
   if (!positions.length) return <EmptyState text="No hay puestos para los filtros seleccionados." />;
-  return <TableShell className="position-table-wrap" minWidth={1120}><table className="position-table"><thead><tr><SortableHeader label="Nombre del puesto" sortKey="name" sort={sort} onSort={onSort} /><th>Unidad de negocio</th><th>Establecimiento</th><th>Area / Departamento</th><th>Sector</th><th>Rango salarial</th><th>Personas</th><SortableHeader label="Estado" sortKey="status" sort={sort} onSort={onSort} /><th>Acciones</th></tr></thead><tbody>
-    {positions.map((position) => { const location = positionLocationCells(position); return <tr key={position.id}>
+  return <TableShell className="position-table-wrap" minWidth={980}><table className="position-table"><thead><tr><SortableHeader label="Nombre del puesto" sortKey="name" sort={sort} onSort={onSort} /><th>Alcance organizacional</th><th>Rango salarial</th><th>Personas</th><SortableHeader label="Estado" sortKey="status" sort={sort} onSort={onSort} /><th>Acciones</th></tr></thead><tbody>
+    {positions.map((position) => <tr key={position.id}>
       <td className="position-name-cell"><b>{position.name}</b><small className="table-sub">{position.code || "Sin codigo"}</small></td>
-      <td className="position-text-cell">{location.businessUnit ? <OverflowCell value={location.businessUnit} /> : <span className="position-muted">Sin definir</span>}</td>
-      <td className="position-text-cell">{location.establishment ? <OverflowCell value={location.establishment} /> : <span className="position-muted">Sin definir</span>}</td>
-      <td className="position-text-cell">{location.area ? <OverflowCell value={location.area} /> : <span className="position-muted">Sin definir</span>}</td>
-      <td className="position-text-cell">{location.sector ? <OverflowCell value={location.sector} /> : <span className="position-muted">Sin definir</span>}</td>
+      <td className="position-text-cell">{position.orgScopes?.length ? <div className="position-table-scopes">{position.orgScopes.map((scope) => <span key={`${scope.level}:${scope.nodeId}`}><small>{scopeLevelLabel[scope.level]}</small><OverflowCell value={scope.name} /></span>)}</div> : <Badge tone="warning">Pendiente de recarga</Badge>}</td>
       <td className="position-range-cell"><SalaryRangeCell categories={position.salaryCategoryNames} /></td>
       <td><span className="position-count">{assignedCount(position.id)}</span></td>
       <td><Badge tone={position.status === "ACTIVO" ? "success" : "neutral"}>{activoInactivoLabel(position.status)}</Badge></td>
@@ -49,6 +39,6 @@ export function PuestoTable({ positions, assignedCount, canEdit, onRemove, onTog
         {canEdit && <button className="table-icon-action" title={position.status === "ACTIVO" ? "Inactivar" : "Activar"} aria-label={position.status === "ACTIVO" ? "Inactivar" : "Activar"} onClick={() => onToggleStatus(position)}><Power size={14} /><span>{position.status === "ACTIVO" ? "Inactivar" : "Activar"}</span></button>}
         {canEdit && <button className="table-icon-action danger-link" title="Eliminar" aria-label="Eliminar" onClick={() => onRemove(position)}><Trash2 size={14} /><span>Eliminar</span></button>}
       </div></td>
-    </tr>; })}
+    </tr>)}
   </tbody></table></TableShell>;
 }

@@ -928,18 +928,19 @@ Query de listado:
 ```txt
 search
 status
-sectorId
-areaId
-establishmentId
-businessUnitId
+scopeLevel=COMPANY|BUSINESS_UNIT|SECTOR|AREA
+scopeNodeId=<uuid>
+scopeMode=WITHIN|COVERS
 salaryRangeCategory
 take
 page
 ```
 
-`areaId`, `establishmentId` y `businessUnitId` (Etapa 9E, `positions.schemas.ts`) filtran recorriendo la cadena desde `sectorId`. Antes no estaban documentados aquí.
+Los tres parámetros de alcance se envían juntos. `WITHIN` significa que algún alcance del puesto es el nodo o un descendiente; `COVERS`, que es el nodo o un ancestro. No son equivalentes. Zonas y establecimientos no son niveles válidos.
 
-`sectorId` es, en el **modelo actual**, la única fuente de ubicación de un puesto (no existen `businessUnitName`/`establishmentName`/`areaDepartment`/`sector` como query params ni como columnas de `Position` — fueron eliminados en la limpieza final de Position, ver `docs/DATABASE_STANDARDS.md`). El body de creación/edición usa `sectorId` y `salaryCategoryIds` (array de IDs contra `PositionSalaryCategory`), no un único "suggested category". En el modelo objetivo, aprobado y no implementado (`docs/decisions/ORG_LOCATION_REORGANIZATION.md`), `sectorId` se reemplaza por un alcance organizativo de uno o varios nodos de Organización, en su etapa correspondiente.
+El body A5 usa `orgScopes: [{ level, nodeId }]` (uno o más) y `salaryCategoryIds`. Un nodo abarca sus descendientes. El backend rechaza referencias inexistentes (`POSITION_SCOPE_INVALID`), nodos legados (`POSITION_SCOPE_LEGACY`), nodos inactivos agregados por primera vez (`POSITION_SCOPE_INACTIVE`) y duplicados/ancestro+descendiente (`POSITION_SCOPE_REDUNDANT`). Crear y reemplazar alcances, categorías y auditoría ocurre en una transacción `Serializable`; los cachés se invalidan después del commit.
+
+`Position.sectorId` continúa como columna y dato de lectura legado. Los puestos anteriores con `sectorId` y sin `orgScopes` se informan como pendientes de recarga: una edición que no toca alcance los conserva, sin conversión automática. Las altas nuevas no aceptan ni escriben `sectorId`.
 
 `DELETE /api/positions/:id` (etapa A2 de la reorganización, en código y no desplegado):
 
