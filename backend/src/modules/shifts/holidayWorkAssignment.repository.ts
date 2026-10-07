@@ -1,4 +1,5 @@
 import type { Prisma } from "@prisma/client";
+import { employeeStructureWhere } from "../../shared/prisma/employeeStructureWhere";
 import { prisma, type PrismaTransactionClient } from "../../shared/prisma/client";
 import type { HolidayWorkAssignmentItemInput, HolidayWorkCandidatesQuery } from "./holidayWorkAssignment.schemas";
 
@@ -43,7 +44,7 @@ export const holidayWorkAssignmentRepository = {
   // de contrato. Este era, además, el endpoint más lento medido en esta
   // pantalla (candidates, ~811ms en el journey 14H.1/14H.3).
   findCandidates(query: HolidayWorkCandidatesQuery, accessWhere: Prisma.EmployeeWhereInput) {
-    const where: Prisma.EmployeeWhereInput = { AND: [candidatesWhere(query), accessWhere] };
+    const where: Prisma.EmployeeWhereInput = { AND: [candidatesWhere(query), ...employeeStructureWhere(query), accessWhere] };
     const skip = (query.page - 1) * query.take;
     return Promise.all([
       prisma.employee.findMany({

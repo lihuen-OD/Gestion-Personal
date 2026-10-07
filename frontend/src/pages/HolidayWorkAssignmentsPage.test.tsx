@@ -50,7 +50,9 @@ const catalog = {
   businessUnits: [],
   establishments: [],
   areas: [],
-  sectors: [{ id: "sector-panol", code: "PAN", name: "Pañol", status: "ACTIVO" as const }],
+  // Pañol es un sector del modelo anterior (sin businessUnitId); Agricultura, del nuevo.
+  sectors: [{ id: "sector-panol", code: "PAN", name: "Pañol", status: "ACTIVO" as const }, { id: "sector-agro", code: "AGR", name: "Agricultura", status: "ACTIVO" as const, businessUnitId: "bu-1" }],
+  zones: [{ id: "zone-north", code: "ZN", name: "Zona Norte", status: "ACTIVO" as const }],
   costCenters: [],
 };
 
@@ -143,15 +145,28 @@ describe("HolidayWorkAssignmentsPage — Etapa 12D", () => {
     await waitFor(() => expect(holidayWorkAssignmentApiService.getCandidates).toHaveBeenCalledWith(expect.objectContaining({ shiftTemplateId: "template-manana" })));
   });
 
-  it("6 — filtrar por sector pide candidatos con sectorId", async () => {
+  it("6 — filtrar por sector ANTERIOR pide candidatos con sectorId y sólo ofrece sectores anteriores (A7)", async () => {
     vi.mocked(holidayWorkAssignmentApiService.getCandidates).mockResolvedValue({ items: [candidate()], meta: { total: 1, page: 1, pageSize: 300, hasMore: false } });
     const user = userEvent.setup();
     await openFirstDate(user);
     await screen.findByText("Pérez, Juan");
 
-    await user.selectOptions(screen.getByLabelText("Sector"), "sector-panol");
+    const select = screen.getByLabelText("Sector anterior");
+    expect(Array.from((select as HTMLSelectElement).options).map((option) => option.value)).toEqual(["", "sector-panol"]);
+    await user.selectOptions(select, "sector-panol");
 
     await waitFor(() => expect(holidayWorkAssignmentApiService.getCandidates).toHaveBeenCalledWith(expect.objectContaining({ sectorId: "sector-panol" })));
+  });
+
+  it("6b — filtrar por zona pide candidatos con la ubicación vigente el día del feriado (A7)", async () => {
+    vi.mocked(holidayWorkAssignmentApiService.getCandidates).mockResolvedValue({ items: [candidate()], meta: { total: 1, page: 1, pageSize: 300, hasMore: false } });
+    const user = userEvent.setup();
+    await openFirstDate(user);
+    await screen.findByText("Pérez, Juan");
+
+    await user.selectOptions(screen.getByLabelText("Zona (vigente ese día)"), "zone-north");
+
+    await waitFor(() => expect(holidayWorkAssignmentApiService.getCandidates).toHaveBeenLastCalledWith(expect.objectContaining({ locationZoneId: "zone-north", locationDate: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/) })));
   });
 
   it("7 — activar 'Mostrar empleados sin turno' pide candidatos con withoutShift", async () => {

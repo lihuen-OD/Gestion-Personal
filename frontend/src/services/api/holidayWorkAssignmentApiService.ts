@@ -45,7 +45,8 @@ export type HolidayWorkAssignmentInput = {
   notes?: string | null;
 };
 
-export type HolidayWorkCandidatesFilters = { sectorId?: string; shiftTemplateId?: string; withoutShift?: boolean; search?: string; page?: number; take?: number };
+// A7: `sectorId` = sector ANTERIOR; `locationZoneId` + `locationDate` (día del feriado).
+export type HolidayWorkCandidatesFilters = { sectorId?: string; locationZoneId?: string; locationDate?: string; shiftTemplateId?: string; withoutShift?: boolean; search?: string; page?: number; take?: number };
 export type HolidayWorkCandidatesMeta = { total: number; page: number; pageSize: number; hasMore: boolean };
 
 export const holidayWorkAssignmentApiService = {
@@ -75,6 +76,10 @@ export const holidayWorkAssignmentApiService = {
     const params = new URLSearchParams();
     params.set("take", String(filters.take || 300));
     if (filters.sectorId) params.set("sectorId", filters.sectorId);
+    if (filters.locationZoneId) {
+      params.set("locationZoneId", filters.locationZoneId);
+      if (filters.locationDate) params.set("locationDate", filters.locationDate);
+    }
     if (filters.shiftTemplateId) params.set("shiftTemplateId", filters.shiftTemplateId);
     if (filters.withoutShift) params.set("withoutShift", "true");
     if (filters.search?.trim()) params.set("search", filters.search.trim());

@@ -11,7 +11,10 @@ export type AssociatedEmployee = {
   firstName: string;
   lastName: string;
   status: AssociatedEmployeeStatus;
+  /** Sector ANTERIOR (sólo consulta, A7). */
   sector: { id: string; name: string } | null;
+  /** Puesto con su cantidad de alcances (A7); ausente en respuestas antiguas. */
+  position?: { id: string; name: string; scopeCount: number } | null;
   costCenter: { id: string; name: string } | null;
   companies: { id: string; name: string }[];
 };
@@ -38,6 +41,8 @@ export type AssociatedEmployeeFilters = {
   sectorId?: string;
   costCenterId?: string;
   companyId?: string;
+  /** A7: alcance/ubicación/recarga/sector anterior (structureFilterParams). */
+  structure?: Record<string, string>;
   page?: number;
   take?: number;
   // Orden server-side (whitelist: legajo, employee) de /hour-concepts/:id/employees y /work-regimes/:id/employees.

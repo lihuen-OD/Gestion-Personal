@@ -53,6 +53,7 @@ describe("mapHourConceptEmployeeAssociationFromApi — empleados habilitados par
         lastName: "Prueba",
         status: "ACTIVO",
         sector: null,
+        position: null,
         costCenter: { id: "cc-1", name: "Administración" },
         companies: [{ id: "company-1", name: "OD" }],
       },

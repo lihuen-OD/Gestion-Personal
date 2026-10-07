@@ -1,4 +1,5 @@
 import { ApprovalStatus, EmployeeStatus, Prisma } from "@prisma/client";
+import { employeeStructureWhere, workLocationNotEndedWhere, workLocationOnDateWhere } from "../../shared/prisma/employeeStructureWhere";
 import { prisma } from "../../shared/prisma/client";
 import { resolveOrderBy, type SortOrderByMap } from "../../shared/validation/listSort";
 import { argentinaCalendarDate, todayArgentinaDateKey } from "../../shared/datetime/argentinaTime";
@@ -60,6 +61,9 @@ const employeeListSelect = {
   lastName: true,
   status: true,
   costCenter: { select: { id: true, name: true, code: true } },
+  // A7: puesto (con cantidad de alcances, para marcar "pendiente de recarga")
+  // y zonas vigentes. Dos relaciones batch por página, no por fila.
+  position: { select: { id: true, name: true, _count: { select: { orgScopes: true } } } },
   laborMovements: {
     select: {
       id: true,
@@ -807,9 +811,49 @@ const employeeOrgChartSelect = {
     },
   },
   costCenter: { select: { id: true, name: true, code: true } },
-  position: { select: { id: true, name: true, code: true } },
+  // A7: contexto organizacional del puesto (sólo consulta; la relación del
+  // organigrama sigue siendo el encargado directo).
+  position: {
+    select: {
+      id: true,
+      name: true,
+      code: true,
+      orgScopes: {
+        select: {
+          level: true,
+          company: { select: { id: true, name: true } },
+          businessUnit: { select: { id: true, name: true } },
+          sector: { select: { id: true, name: true } },
+          area: { select: { id: true, name: true } },
+        },
+        orderBy: { createdAt: "asc" },
+      },
+    },
+  },
   assignments: { select: { type: true, personName: true } },
 } satisfies Prisma.EmployeeSelect;
+
+// A7: contexto de ubicación de listado/organigrama: ubicaciones vigentes hoy
+// y cantidad de vigentes o futuras (mismo criterio de "pendiente de recarga"
+// que el filtro, ver shared/prisma/employeeStructureWhere.ts).
+function workLocationContextSelect(todayKey: string) {
+  return {
+    workLocations: currentWorkLocationsSelect(todayKey),
+    _count: { select: { workLocations: { where: workLocationNotEndedWhere(todayKey) } } },
+  } satisfies Prisma.EmployeeSelect;
+}
+
+// A7: ubicaciones vigentes a un día calendario (por defecto hoy, Argentina).
+function currentWorkLocationsSelect(dateKey: string) {
+  return {
+    where: workLocationOnDateWhere(dateKey),
+    select: {
+      zone: { select: { id: true, name: true } },
+      establishments: { select: { establishment: { select: { id: true, name: true } } } },
+    },
+    orderBy: { zone: { name: "asc" as const } },
+  } satisfies Prisma.Employee$workLocationsArgs;
+}
 
 export function resolveLaborStatus(
   movements: Array<{ type: "ALTA" | "BAJA"; effectiveFrom: Date }>,
@@ -1003,14 +1047,14 @@ export const employeesRepository = {
   // entre medio — no necesitan una foto transaccional consistente entre sí,
   // el mismo criterio ya aplicado a las otras 3 correcciones de este patrón.
   async findMany(query: ListEmployeesQuery, accessWhere: Prisma.EmployeeWhereInput) {
-    const where = { AND: [buildWhere(query), accessWhere, ...(query.status ? [{ status: query.status }] : [])] };
+    const where = { AND: [buildWhere(query), ...employeeStructureWhere(query), accessWhere, ...(query.status ? [{ status: query.status }] : [])] };
     const skip = (query.page - 1) * query.take;
     // WHERE + ORDER BY + OFFSET/LIMIT en la misma consulta: el orden se
     // aplica sobre todo el dataset filtrado, nunca sobre la página ya cortada.
     return Promise.all([
       prisma.employee.findMany({
         where,
-        select: employeeListSelect,
+        select: { ...employeeListSelect, ...workLocationContextSelect(todayArgentinaDateKey()) },
         orderBy: resolveOrderBy(query, employeeListOrderBy, [{ status: "asc" }, { lastName: "asc" }, { firstName: "asc" }], { id: "asc" }),
         skip,
         take: query.take,
@@ -1069,12 +1113,12 @@ export const employeesRepository = {
   // -> `Promise.all([...])`, misma justificación (dos lecturas independientes
   // para paginar un catálogo, sin escritura entre medio).
   findOrgChart(query: ListEmployeeOrgChartQuery, accessWhere: Prisma.EmployeeWhereInput) {
-    const where = { AND: [buildOrgChartWhere(query), accessWhere] };
+    const where = { AND: [buildOrgChartWhere(query), ...employeeStructureWhere(query), accessWhere] };
     const skip = (query.page - 1) * query.take;
     return Promise.all([
       prisma.employee.findMany({
         where,
-        select: employeeOrgChartSelect,
+        select: { ...employeeOrgChartSelect, ...workLocationContextSelect(todayArgentinaDateKey()) },
         orderBy: [{ internalCategory: "asc" }, { lastName: "asc" }, { firstName: "asc" }],
         skip,
         take: query.take,
@@ -1085,7 +1129,7 @@ export const employeesRepository = {
 
   // Etapa 14C.3: mismo cambio, misma justificación que `findMany`/`findOrgChart`.
   findOptions(query: ListEmployeeOptionsQuery, accessWhere: Prisma.EmployeeWhereInput) {
-    const where = { AND: [buildOptionsWhere(query), accessWhere] };
+    const where = { AND: [buildOptionsWhere(query), ...employeeStructureWhere(query), accessWhere] };
     const skip = (query.page - 1) * query.take;
     return Promise.all([
       prisma.employee.findMany({

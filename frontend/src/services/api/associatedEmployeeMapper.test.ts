@@ -9,6 +9,7 @@ const apiEmployee = {
   lastName: "Prueba",
   status: "ACTIVO" as const,
   sector: { id: "sector-1", name: "Campo" },
+  position: { id: "position-1", name: "Encargado de campo", scopeCount: 2 },
   costCenter: null,
   companies: [{ id: "company-1", name: "OD" }],
 };
@@ -63,3 +64,16 @@ describe("associatedEmployeesQuery — filtros reales, no traer todo para filtra
     expect(associatedEmployeesQuery({ page: 3, take: 20 })).toBe("?page=3&take=20");
   });
 });
+
+describe("associatedEmployeesQuery — filtros de estructura (A7)", () => {
+  it("agrega alcance, ubicación, recarga y sector anterior en orden estable", () => {
+    const query = associatedEmployeesQuery({ page: 1, take: 20, structure: { scopeMode: "WITHIN", scopeLevel: "SECTOR", scopeNodeId: "s1", reloadStatus: "PENDING", sectorId: "legacy-1" } });
+    expect(query).toBe("?page=1&take=20&reloadStatus=PENDING&scopeLevel=SECTOR&scopeMode=WITHIN&scopeNodeId=s1&sectorId=legacy-1");
+  });
+
+  it("una respuesta sin puesto queda en null, no undefined", () => {
+    const { position: _position, ...withoutPosition } = apiEmployee;
+    expect(mapAssociatedEmployeeFromApi(withoutPosition).position).toBeNull();
+  });
+});
+

@@ -11,12 +11,12 @@ export interface OrgCategory {
   nodeColor: string;
 }
 
+// A7: la cadena anterior (unidad de negocio / establecimiento / sector
+// derivados del sector del legajo) dejó de filtrarse acá; alcance del puesto,
+// ubicación y sector anterior se filtran en el backend (EmployeeStructureFilterValue).
 export interface OrgChartFilters {
   company: string;
-  businessUnit: string;
-  establishment: string;
   costCenter: string;
-  sector: string;
   position: string;
   internalCategory: string;
   receiptCategory: string;

@@ -151,7 +151,7 @@ function ShiftRows({ items, emptyText, showSegments = false, showRisk = false, o
         <tr>
           <th>Empleado</th>
           <th>Legajo</th>
-          <th>Sector</th>
+          <th>Puesto</th>
           <th>Ingreso</th>
           <th>Salida</th>
           <th>Total</th>
@@ -172,7 +172,7 @@ function ShiftRows({ items, emptyText, showSegments = false, showRisk = false, o
               <span className="muted-line">Legajo {shift.employee.legajo}</span>
             </td>
             <td>{shift.employee.legajo}</td>
-            <td>{shift.employee.sector?.name || "-"}</td>
+            <td>{shift.employee.position?.name || "-"}</td>
             <td>
               {formatDateTime(shift.startAt)}
               <PunchEvidence punch={shift.startPunch} label="Ver foto" onViewPhoto={onViewPhoto} />
@@ -544,7 +544,7 @@ export function AttendancePage() {
             <span>Empleado</span>
             <div className="attendance-filter-control">
               <Search size={16} />
-              <input value={observedQuery} onChange={(event) => setObservedQuery(event.target.value)} placeholder="Nombre, legajo o sector" />
+              <input value={observedQuery} onChange={(event) => setObservedQuery(event.target.value)} placeholder="Nombre, legajo, puesto o sector anterior" />
             </div>
           </label>
           <label>

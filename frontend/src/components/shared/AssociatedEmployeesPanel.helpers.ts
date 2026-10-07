@@ -35,11 +35,13 @@ export function buildAssociatedEmployeesRequest(filters: {
   sectorId?: string;
   costCenterId?: string;
   companyId?: string;
+  structure?: Record<string, string>;
   page: number;
   take: number;
   sort?: AssociatedEmployeeFilters["sort"];
 }): AssociatedEmployeeFilters {
   return {
+    ...(filters.structure && Object.keys(filters.structure).length ? { structure: filters.structure } : {}),
     search: filters.search.trim() || undefined,
     sectorId: filters.sectorId || undefined,
     costCenterId: filters.costCenterId || undefined,

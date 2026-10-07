@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { sortQueryShape } from "../../shared/validation/listSort";
+import { employeeStructureQueryShape, refineEmployeeStructureQuery } from "../../shared/validation/employeeStructureQuery";
 
 export const employeeStatusSchema = z.enum(["ACTIVO", "INACTIVO"]);
 
@@ -8,16 +9,21 @@ export const employeeStatusSchema = z.enum(["ACTIVO", "INACTIVO"]);
 // sin centro de costo quedarían primero, rompiendo la regla de vacíos al final.
 export const employeeListSortKeys = ["legajo", "cuil", "lastName", "firstName", "status"] as const;
 
+// A7 (ORG_LOCATION_REORGANIZATION.md §16): `companyId` = empresa empleadora
+// (EmployeeCompany); `sectorId` = sector ANTERIOR del legajo (sólo consulta
+// para legajos pendientes de recarga); alcance/ubicación/recarga, con
+// employeeStructureQueryShape.
 export const listEmployeesQuerySchema = z.object({
   search: z.string().trim().optional(),
   status: employeeStatusSchema.optional(),
   companyId: z.string().uuid().optional(),
   sectorId: z.string().uuid().optional(),
   costCenterId: z.string().uuid().optional(),
+  ...employeeStructureQueryShape,
   page: z.coerce.number().int().positive().max(10000).default(1),
   take: z.coerce.number().int().positive().max(200).default(100),
   ...sortQueryShape(employeeListSortKeys),
-});
+}).superRefine(refineEmployeeStructureQuery);
 
 export const listEmployeeOrgChartQuerySchema = z.object({
   search: z.string().trim().optional(),
@@ -26,18 +32,20 @@ export const listEmployeeOrgChartQuerySchema = z.object({
   sectorId: z.string().uuid().optional(),
   positionId: z.string().uuid().optional(),
   costCenterId: z.string().uuid().optional(),
+  ...employeeStructureQueryShape,
   page: z.coerce.number().int().positive().max(10000).default(1),
   take: z.coerce.number().int().positive().max(1000).default(500),
-});
+}).superRefine(refineEmployeeStructureQuery);
 
 export const listEmployeeOptionsQuerySchema = z.object({
   search: z.string().trim().optional(),
   status: employeeStatusSchema.optional(),
   companyId: z.string().uuid().optional(),
   sectorId: z.string().uuid().optional(),
+  ...employeeStructureQueryShape,
   page: z.coerce.number().int().positive().max(10000).default(1),
   take: z.coerce.number().int().positive().max(1000).default(250),
-});
+}).superRefine(refineEmployeeStructureQuery);
 
 export const employeeAddressSchema = z.object({
   province: z.string().trim().max(120).optional().nullable(),

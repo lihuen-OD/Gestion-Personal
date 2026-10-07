@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { employeeStructureQueryShape, refineEmployeeStructureQuery } from "../../shared/validation/employeeStructureQuery";
 import { sortQueryShape } from "../../shared/validation/listSort";
 
 export const hourConceptKindSchema = z.enum(["NORMAL", "EXTRA", "NOCTURNA", "GUARDIA", "SERENO", "TRANSPORTE", "FERIADO", "OTRO"]);
@@ -37,11 +38,12 @@ export const listHourConceptEmployeesQuerySchema = z.object({
   sectorId: z.string().uuid().optional(),
   costCenterId: z.string().uuid().optional(),
   companyId: z.string().uuid().optional(),
+  ...employeeStructureQueryShape,
   status: recordStatusSchema.optional(),
   page: z.coerce.number().int().positive().max(10000).default(1),
   take: z.coerce.number().int().positive().max(200).default(50),
   ...sortQueryShape(["legajo", "employee"] as const),
-});
+}).superRefine(refineEmployeeStructureQuery);
 
 // Habilitar empleados para el concepto desde la propia pantalla de
 // Conceptos Horarios (Etapa 8N) — mismo límite que createShiftAssignmentSchema

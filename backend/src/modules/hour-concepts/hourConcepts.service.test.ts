@@ -140,6 +140,7 @@ describe("listEmployees — empleados habilitados (Etapa 8G)", () => {
           lastName: "Prueba",
           status: "ACTIVO",
           sector: { id: "sector-1", name: "Campo" },
+          position: null,
           costCenter: null,
           companies: [{ id: "company-1", name: "OD" }],
         },

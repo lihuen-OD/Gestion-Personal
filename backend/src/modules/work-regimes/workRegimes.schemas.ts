@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { employeeStructureQueryShape, refineEmployeeStructureQuery } from "../../shared/validation/employeeStructureQuery";
 import { sortQueryShape } from "../../shared/validation/listSort";
 
 // Comportamientos genéricos (ver schema.prisma) — Cosecha/Riego/Campaña/etc.
@@ -78,11 +79,12 @@ export const listWorkRegimeEmployeesQuerySchema = z.object({
   sectorId: z.string().uuid().optional(),
   costCenterId: z.string().uuid().optional(),
   companyId: z.string().uuid().optional(),
+  ...employeeStructureQueryShape,
   date: z.coerce.date().optional(),
   page: z.coerce.number().int().positive().max(10000).default(1),
   take: z.coerce.number().int().positive().max(200).default(50),
   ...sortQueryShape(["legajo", "employee"] as const),
-});
+}).superRefine(refineEmployeeStructureQuery);
 
 export type ListWorkRegimesQuery = z.infer<typeof listWorkRegimesQuerySchema>;
 export type CreateWorkRegimeInput = z.infer<typeof createWorkRegimeSchema>;

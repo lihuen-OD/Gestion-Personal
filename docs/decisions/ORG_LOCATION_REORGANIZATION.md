@@ -171,8 +171,8 @@ Se retira `Employee.sectorId`. Se conservan la empresa empleadora (`EmployeeComp
 | D-5 | Recálculo histórico ante cambios de alcance o puesto (H1-H3), con el mismo reporte | B y A7 |
 | D-2 | Zona completa en ubicaciones. A6 implementó sólo establecimientos explícitos; una selección vacía se rechaza y nunca significa "todos" | Ampliación de ubicaciones |
 | D-6 | Funciones que necesitan puestos distintos por alcance | A5 |
-| D-7 | Modo de filtrado por defecto; banda "Alcance superior" en el organigrama | A7 |
-| D-8 | Reemplazo de "Dotación por sector" | A7 |
+| D-7 | Modo de filtrado por defecto; banda "Alcance superior" en el organigrama. A7 implementó ambos modos sin valor por defecto en Legajos/Organigrama (Puestos usa `WITHIN` inicial); ejemplos en §16.4 | Cierre de A7 |
+| D-8 | Reemplazo de "Dotación por sector" (hoy rotulada "por sector anterior"; opciones en §16.4) | Cierre de A7 |
 | D-10 | Empresa propietaria de un establecimiento | — |
 | D-11 | Múltiples encargados en la vista funcional (hoy se usa el primero; no se cambia en silencio) | — |
 | D-12 | Merge y despliegue frente a producción | B5 |
@@ -343,7 +343,8 @@ La inactivación solo puede **combinarse** con R1, R2 o R3. **Nunca se deja una 
 | A4 | Hecha: UI separada de Organización, Ubicaciones y Centros de costo; QA visual contra la copia aislada (§13) |
 | A5 | Hecha en `feat/org-location-reorg`: alcance múltiple de puestos con validación, filtros y QA (§14) |
 | A6 | Hecha en `feat/org-location-reorg`: Datos Laborales con puesto y alcance de consulta, ubicaciones con vigencia y transición de legajos anteriores; QA en la copia aislada (§15) |
-| A7–A8, B0–B5 | Pendientes |
+| A7 | **En curso, no cerrada.** Consumidores con semántica acordada adaptados y verificados en la copia (§16). Faltan D-4, D-5, D-7 y D-8 |
+| A8, B0–B5 | Pendientes |
 
 ### A2 — qué quedó en código
 
@@ -744,4 +745,144 @@ No se ejecutó M2, seed, limpieza, restauración ni reconciliación; development
 - **Observado fuera de alcance:**
   - las casillas de "Empresa empleadora" en el alta de legajo se ven sobredimensionadas (estilo previo, no modificado);
   - la tabla de movimientos laborales se desplaza horizontalmente dentro de su contenedor en anchos chicos.
+
+## 16. A7 — consumidores (2026-10-07, en curso)
+
+### 16.1 Instancia local del puerto 4002
+
+- **Proceso:** `npm run dev` → `tsx watch src/server.ts` (iniciado 07:28), servidor hijo en el puerto 4002, con directorio `Gestion-Personal/backend`. Es de este proyecto.
+- **Configuración efectiva:**
+  - El proceso no heredaba `DATABASE_URL` ni `PORT`, así que `dotenv` cargaba `backend/.env`.
+  - `PORT=4002` coincide con ese archivo (el valor por defecto sería 4001) y `DATABASE_URL` apunta a `ep-gentle-resonance…` (development, sin M1).
+  - Las IP de conexión no distinguen la rama: ambos hosts resuelven al mismo proxy de Neon.
+- **Riesgo:** al recargar en caliente, ejecutaba el código de A6/A7 contra una base sin las tablas de M1.
+- **Acción:** se detuvo el árbol completo (3 procesos) el 2026-10-07. No se aplicaron migraciones ni se escribió en development. El Vite del 5174 se dejó corriendo.
+- Para QA se usó una instancia propia (puerto 4012) cargando `backend/.env.reorg` explícitamente: host `ep-rough-river…`, `AUTOMATIC_JOBS_DISABLED`. Además, un Vite propio en 5184. Ambos se detuvieron al terminar.
+
+### 16.2 Inventario de lecturas del sector del legajo y de la cadena anterior
+
+| Consumidor | Lectura anterior | Tratamiento A7 |
+|---|---|---|
+| Legajos — filtros (`GET /employees`) | `sectorId` exacto; el selector mezclaba sectores nuevos y anteriores (un sector nuevo nunca devolvía resultados) | Filtros de estructura (§16.3). `sectorId` queda como **Sector anterior** con sólo sectores del modelo anterior |
+| Legajos — tabla | No mostraba estructura | Columnas "Puesto y alcance" (pendiente de recarga marcado) y "Ubicaciones vigentes" |
+| Opciones (`/employees/options`) | `sectorId` | Mismos filtros de estructura |
+| Organigrama — datos (`/employees/org-chart`) | Cadena sector→área→establecimiento→UN; búsqueda por nombre de sector | Alcances del puesto y ubicaciones vigentes como contexto; filtros de estructura del lado del servidor. La búsqueda sigue incluyendo el nombre del sector anterior |
+| Organigrama — pantalla | Filtros por UN, establecimiento y sector (nombres derivados); **Nivel 2 recortado en el cliente comparando el ID del sector del usuario con el NOMBRE del sector del legajo**, por lo que quedaba vacío (bug de §2.2) | Filtros de la cadena anterior retirados. Nivel 2 ve lo que el backend autoriza por responsable de carga. Nodo y resumen muestran empresa empleadora, alcance del puesto, ubicaciones y "Sector anterior". La exportación separa esas columnas |
+| Paneles de empleados asociados (regímenes, conceptos horarios) | Filtro y columna "Sector" | Filtros de estructura; columna "Puesto" (pendiente marcado); "Sector anterior" sólo en el detalle móvil |
+| Convocatorias a feriados (candidatos) | Filtro "Sector" con todos los sectores | "Zona (vigente ese día)", evaluada en la fecha del feriado, más "Sector anterior". **No cambia quién cobra ni la reinterpretación** |
+| Asistencia (observados) | Columna "Sector"; búsqueda por nombre de sector | Columna "Puesto"; la búsqueda agrega el puesto y conserva el sector anterior |
+| Grilla horaria del legajo (encabezado) | "empresa · centro de costo · sector · puesto" | Sin sector |
+| Dashboard Nivel 2 y Reportes — "Dotación por sector" | `groupCount(sector)`, exclusivo, uno por legajo | **Sin cambio de cálculo (D-8).** Rotulado "Dotación por sector anterior", con aclaración. Se corrigió la descripción del dashboard de Nivel 2, que mostraba el **UUID** del sector del usuario |
+| Dashboard — caché | Clave con `User.companyId/sectorId` | Sin cambio (inocuo) |
+| Permisos (`employeeAccessWhere`) | Por responsable de carga | Sin cambio. Todos los filtros nuevos se combinan con el filtro de acceso (test y QA) |
+| Cachés backend/frontend | Clave = URL | Los parámetros nuevos forman parte de la URL (orden estable) |
+| Horas especiales (`doubleHourRuleScopeWhere`) | Empresa **empleadora**, sector **anterior**, centro de costo y puesto del legajo | **Sin cambio (D-4/D-5).** Test de caracterización `doubleHourRuleScope.characterization.test.ts` como base de comparación. "Domingos" se conserva intacta |
+| Configuración de reglas (`WorkScheduleSettingsPage`) | Selector de sector con sectores nuevos y anteriores | **Sin cambio (D-4).** Ver ejemplo en §16.4 |
+| Exportación Finnegans / horas | Centro de costo; no usan sector | Sin cambio |
+| Usuarios (`User.sectorId`) | Alcance editable en la UI; sólo se usa en la clave de caché del dashboard | Pendiente (A8/M2) |
+| Dispositivos de fichado | `ClockDevice.sectorId` (anterior); M1 agregó `establishmentId` | Pendiente (etapa de fichador; fuera de los consumidores pedidos) |
+| Bandeja de pendientes | Selecciona `employee.sectorId` sin usarlo | Sin cambio |
+
+### 16.3 Implementado
+
+- **Filtro compartido** (`shared/prisma/orgScopeWhere.ts`, `employeeStructureWhere.ts`, `shared/validation/employeeStructureQuery.ts`). Puestos (A5) y Legajos usan la misma semántica, sin duplicarla.
+- **Alcance:** `WITHIN` y `COVERS` con `some`. El modo **no tiene valor por defecto** en Legajos, Organigrama ni paneles: sin modo, la UI avisa y el backend rechaza. Esto no decide D-7.
+- **Ubicación:** zona y/o establecimiento evaluados en la misma asignación y vigentes a una fecha calendario (por defecto hoy).
+- **Recarga** (`PENDING`/`COMPLETE`): mismo criterio que el aviso de A6, sin puesto con alcance o sin ubicación vigente o futura. La UI usa el conteo que devuelve el backend, no infiere.
+- **Sector anterior** como filtro de consulta explícito.
+- **Empresa empleadora**, rotulada así en todos los filtros y exportaciones adaptados.
+- **Organigrama:** sigue por encargado directo; el alcance y las ubicaciones son contexto. La vista por categorías sigue ordenando por categoría salarial, sin definir la jerarquía.
+
+### 16.4 Decisiones abiertas — ejemplos concretos sobre datos de prueba de la copia
+
+Datos usados:
+- `QA-A6-001`: puesto con alcance en el sector QA-A6 Agricultura (bajo LOSOD › Administración central).
+- `QA-A6-002`: puesto multiempresa, alcance LOSOD + Tropa.
+- `QA-A7-001`: puesto con alcance en dos UN de LOSOD (Administración central y Agricultura), con ubicaciones en Zona Norte y Zona Sur.
+
+**D-7 — modo por defecto y banda "Alcance superior".**
+- Para el sector QA-A6 Agricultura:
+  - `WITHIN` devuelve sólo `QA-A6-001`;
+  - `COVERS` devuelve `QA-A6-001`, `QA-A6-002` y `QA-A7-001`.
+- Para LOSOD:
+  - `WITHIN` devuelve los tres;
+  - `COVERS` sólo `QA-A6-002`.
+- Opciones:
+  - (a) `WITHIN` por defecto (es el valor inicial que hoy usa Puestos, A5);
+  - (b) `COVERS` por defecto;
+  - (c) sin valor por defecto, como hace A7 en Legajos;
+  - (d) mostrar ambos grupos separados.
+- Si se elige (a) o (d), hay que alinear Puestos y Legajos.
+- Banda en el organigrama: al filtrar `WITHIN` Agricultura, ¿se muestran `QA-A6-002` y `QA-A7-001` en una banda "Alcance superior" aparte, sin contarlos como integrantes? ¿Se agregan como contexto los encargados por línea directa fuera del filtro? Hoy no se agregan; la pantalla lo avisa.
+
+**D-8 — reemplazo de "Dotación por sector".**
+- Hoy, para Supervisión, `QA-A7-001` aparece como "Sin cargar" porque no tiene sector anterior.
+- Opciones:
+  - (a) por zona vigente: no sumable, porque `QA-A7-001` cuenta en Norte y en Sur (suma 2, personas únicas 1). Requiere mostrar el total de personas por separado;
+  - (b) por alcance del puesto: no exclusiva; depende de D-7 (un director que abarca LOSOD, ¿suma en cada sector?);
+  - (c) por empresa empleadora principal: exclusiva y sumable;
+  - (d) conservar el sector anterior hasta M2 y luego retirarlo.
+
+**D-4 — pertenencia a un sector en reglas de horas especiales** (sin cambios en el motor).
+- Hoy la dimensión sector usa el sector **anterior**. Una regla nueva limitada a un sector del árbol nuevo (el selector de la configuración lo permite) **no alcanza a nadie**, porque ningún legajo recargado tiene sector anterior.
+- Ejemplo con una regla hipotética "x1,5 en QA-A6 Agricultura":
+  - S1 (dentro): sólo `QA-A6-001`;
+  - S2 (abarca): además `QA-A6-002` y `QA-A7-001`;
+  - S3: la unión de S1 y S2;
+  - S4: un sector propio por legajo;
+  - S5: lista explícita.
+- La dimensión **empresa** usa hoy la empresa **empleadora**: "Domingos" (LOSOD) alcanza a los tres legajos de prueba porque su empleadora es LOSOD. Falta decidir si una regla por empresa significa empleadora o alcance del puesto. Por ejemplo, `QA-A6-002` también abarca Tropa.
+- Mientras no se decida, convendría que la configuración de reglas no ofrezca sectores del árbol nuevo, o que avise. **No se cambió.**
+
+**D-5 — recálculo histórico.** Sin cambios. Cualquier adaptación requiere la comparación antes/después del motor real en la copia, sin escribir horas, desgloses ni cierres; el test de caracterización es el punto de partida.
+
+**No se decidió:** si un director que abarca una empresa integra cada sector; conteos por sector no exclusivos; zona completa (D-2); variantes de puestos (D-6).
+
+### 16.5 QA integrado en la copia aislada
+
+- **API:** 27/27 escenarios (`WITHIN` vs. `COVERS`, sin duplicados ni en `meta.total`, vigencias hoy/pasadas/futuras, recarga, sector anterior, organigrama, opciones, paneles, convocatorias, permisos).
+- **Permisos:**
+  - Supervisión con `WITHIN` LOSOD ve sólo `QA-A7-001`, el legajo a su cargo; `QA-A6-001` y `QA-A6-002` no, aunque estén dentro del filtro;
+  - su organigrama pasó de vacío a mostrar ese legajo;
+  - Carga horaria sigue en 403 en el listado y sus opciones no devuelven legajos de prueba.
+- **Visual:**
+  - Legajos en 1440, 1366, 1920 y 390;
+  - Organigrama (funcional filtrado, resumen, Supervisión, móvil);
+  - panel de asociados, convocatorias a feriados y dashboard de Nivel 2.
+
+  Sin desborde horizontal. Durante el QA se corrigieron:
+  - filtros sin rótulo que se estiraban;
+  - el CUIL partido en varias líneas.
+- **Lectura final:**
+  - los 32 legajos originales no se modificaron desde antes de A6;
+  - todas las ubicaciones son de legajos `QA-`;
+  - 0 incidencias y 0 notificaciones nuevas durante el QA de A7;
+  - las 5 filas incidentales de §13.3 siguen presentes.
+
+### 16.6 Escrituras de QA (sólo `org-location-reorg`, vía API)
+
+- Puesto `PUE-006` "QA-A7 Gerente multiunidad" `cd204673-0cb7-45c8-87f6-e5c8a5c15b55` (alcances: UN Administración central y UN Agricultura de LOSOD).
+- Legajo `QA-A7-001` `e4b4502c-c329-40e6-a155-155a93483c52`, con:
+  - ubicaciones en Zona Norte (2 establecimientos) y Zona Sur, desde el 01/09/2026;
+  - el supervisor de prueba (`3414677e-de69-441b-9ae0-a712257dc25c`) como responsable de carga;
+  - el concepto horario "Sereno" habilitado.
+- `AuditLog` de esas operaciones, de los logins de QA y de un rechazo de ruta de la prueba de permisos.
+- Ninguna escritura sobre los 32 legajos originales.
+- No se guardó ninguna convocatoria a feriado.
+
+No se ejecutó M2, seed, limpieza, restauración ni reconciliación.
+
+### 16.7 Capturas
+
+`docs/qa/a7-*.png`:
+- Legajos: `within-losod`, `covers-losod`, `filtro-sin-modo`, `pendientes-recarga`, `zona-fecha`, `1366`, `1920`, `mobile`, `tabla-mobile`.
+- Organigrama: `funcional-within`, `popover`, `supervision`, `mobile`.
+- `panel-asociados`, `feriados-filtros` y `dashboard-supervision`.
+
+### 16.8 Pendiente para cerrar A7
+
+- Decidir D-7, D-8, D-4 y D-5; luego adaptar el dashboard y reportes, el organigrama (banda y contexto) y, con comparación previa, el motor de horas especiales.
+- Configuración de reglas de horas especiales: tratamiento del selector de sector según D-4.
+- `User.sectorId` (alcance de usuarios) y `ClockDevice` (sector → establecimiento): fuera de este corte.
+- Observado: el resumen del organigrama muestra el responsable de carga sólo por `personName`, así que una asignación por usuario aparece como "-". Es previo a esta etapa y no se modificó.
 

@@ -62,6 +62,7 @@ export function HolidayWorkAssignmentsPage() {
   const [shiftTemplates, setShiftTemplates] = useState<ShiftTemplate[]>([]);
 
   const [sectorFilter, setSectorFilter] = useState("");
+  const [zoneFilter, setZoneFilter] = useState("");
   const [shiftFilter, setShiftFilter] = useState("");
   const [withoutShift, setWithoutShift] = useState(false);
   const [search, setSearch] = useState("");
@@ -160,7 +161,7 @@ export function HolidayWorkAssignmentsPage() {
     let alive = true;
     if (!candidates) setCandidatesStatus("loading");
     holidayWorkAssignmentApiService
-      .getCandidates({ sectorId: sectorFilter || undefined, shiftTemplateId: shiftFilter || undefined, withoutShift: withoutShift || undefined, search: debouncedSearch || undefined })
+      .getCandidates({ sectorId: sectorFilter || undefined, locationZoneId: zoneFilter || undefined, locationDate: selectedDate, shiftTemplateId: shiftFilter || undefined, withoutShift: withoutShift || undefined, search: debouncedSearch || undefined })
       .then((result) => {
         if (!alive) return;
         setCandidates(result.items);
@@ -173,7 +174,7 @@ export function HolidayWorkAssignmentsPage() {
       alive = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedDate, sectorFilter, shiftFilter, withoutShift, debouncedSearch, candidatesRetryToken]);
+  }, [selectedDate, sectorFilter, zoneFilter, shiftFilter, withoutShift, debouncedSearch, candidatesRetryToken]);
 
   const openDate = (dateKey: string) => {
     setSelectedDate(dateKey);
@@ -329,10 +330,19 @@ export function HolidayWorkAssignmentsPage() {
               </select>
             </label>
             <label className="field">
-              <span>Sector</span>
+              <span>Zona (vigente ese día)</span>
+              <select value={zoneFilter} onChange={(event) => setZoneFilter(event.target.value)}>
+                <option value="">Todas</option>
+                {catalog?.zones.map((zone) => (
+                  <option key={zone.id} value={zone.id}>{zone.name}</option>
+                ))}
+              </select>
+            </label>
+            <label className="field">
+              <span>Sector anterior</span>
               <select value={sectorFilter} onChange={(event) => setSectorFilter(event.target.value)}>
                 <option value="">Todos</option>
-                {catalog?.sectors.filter((sector) => sector.status === "ACTIVO").map((sector) => (
+                {catalog?.sectors.filter((sector) => !sector.businessUnitId).map((sector) => (
                   <option key={sector.id} value={sector.id}>{sector.name}</option>
                 ))}
               </select>
@@ -366,7 +376,7 @@ export function HolidayWorkAssignmentsPage() {
                     {canEdit ? <th>Trabaja</th> : null}
                     <th>Legajo</th>
                     <th>Empleado</th>
-                    <th>Sector</th>
+                    <th>Sector anterior</th>
                     <th>Turno habitual</th>
                     <th>Horario esperado</th>
                     <th>Observación</th>

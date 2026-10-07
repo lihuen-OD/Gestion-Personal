@@ -3,6 +3,7 @@ import { prisma, type PrismaTransactionClient } from "../../shared/prisma/client
 import { createRepositoryListCache, pageFromCappedList, REPOSITORY_LIST_CACHE_MAX_ROWS } from "../../shared/cache/repositoryListCache";
 import type { CreatePositionInput, ListPositionEmployeesQuery, ListPositionOptionsQuery, ListPositionsQuery, PositionOrgScopeInput, positionListSortKeys, UpdatePositionInput } from "./positions.schemas";
 import { resolveOrderBy, type SortOrderByMap } from "../../shared/validation/listSort";
+import { orgScopeRowWhere } from "../../shared/prisma/orgScopeWhere";
 
 const positionListOrderBy: SortOrderByMap<(typeof positionListSortKeys)[number], Prisma.PositionOrderByWithRelationInput> = {
   name: (order) => [{ name: order }],
@@ -116,28 +117,11 @@ export function invalidatePositionsCache() {
   listCache.clear();
 }
 
-// Etapa 9E: areaId/establishmentId/businessUnitId se resuelven navegando la
-// misma cadena sector->area->establishment->businessUnit que ya usa
-// positionInclude para mostrar los derivados — sin agregar ninguna columna
-// nueva, sólo filtros anidados sobre relaciones existentes.
+// A5/A7: semántica compartida con Legajos (shared/prisma/orgScopeWhere.ts).
 function scopeWhere(query: ListPositionsQuery): Prisma.PositionWhereInput | undefined {
   const { scopeLevel: level, scopeNodeId: id, scopeMode } = query;
   if (!level || !id || !scopeMode) return undefined;
-  const direct = level === "COMPANY" ? { companyId: id } : level === "BUSINESS_UNIT" ? { businessUnitId: id } : level === "SECTOR" ? { sectorId: id } : { areaId: id };
-  if (scopeMode === "WITHIN") {
-    const descendants = level === "COMPANY"
-      ? [{ businessUnit: { companyId: id } }, { sector: { businessUnit: { companyId: id } } }, { area: { sector: { businessUnit: { companyId: id } } } }]
-      : level === "BUSINESS_UNIT"
-        ? [{ sector: { businessUnitId: id } }, { area: { sector: { businessUnitId: id } } }]
-        : level === "SECTOR" ? [{ area: { sectorId: id } }] : [];
-    return { orgScopes: { some: { OR: [direct, ...descendants] } } };
-  }
-  const ancestors = level === "AREA"
-    ? [{ sector: { areas: { some: { id } } } }, { businessUnit: { sectors: { some: { areas: { some: { id } } } } } }, { company: { businessUnits: { some: { sectors: { some: { areas: { some: { id } } } } } } } }]
-    : level === "SECTOR"
-      ? [{ businessUnit: { sectors: { some: { id } } } }, { company: { businessUnits: { some: { sectors: { some: { id } } } } } }]
-      : level === "BUSINESS_UNIT" ? [{ company: { businessUnits: { some: { id } } } }] : [];
-  return { orgScopes: { some: { OR: [direct, ...ancestors] } } };
+  return { orgScopes: { some: orgScopeRowWhere(level, id, scopeMode) } };
 }
 
 function buildWhere(query: ListPositionsQuery): Prisma.PositionWhereInput {

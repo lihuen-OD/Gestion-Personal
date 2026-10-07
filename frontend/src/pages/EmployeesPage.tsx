@@ -1,6 +1,6 @@
 import { Link } from "react-router-dom";
 import { AlertTriangle, Archive, CheckCircle2, Clock3, Eye, Plus, RefreshCcw, SlidersHorizontal, Users } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "../context/AuthContext";
 import { employeeApiService, type EmployeeListSortKey, type EmployeeSummary } from "../services/api/employeeApiService";
 import { orgStructureApiService } from "../services/api/orgStructureApiService";
@@ -20,6 +20,10 @@ import { Badge } from "../components/ui/Badge";
 import { DataTable } from "../components/ui/DataTable";
 import { Pagination } from "../components/ui/Pagination";
 import { SortableHeader } from "../components/ui/SortableHeader";
+import { EmployeeStructureFilterControls } from "../components/employees/structureFilters/EmployeeStructureFilterControls";
+import { EmployeeStructureCells } from "../components/employees/structureFilters/EmployeeStructureCells";
+import { emptyStructureFilters, hasStructureFilters, structureFilterParams, type EmployeeStructureFilterValue } from "../components/employees/structureFilters/employeeStructureFilters";
+import { useOrgStructureCatalog } from "../components/employees/structureFilters/useOrgStructureCatalog";
 
 const pageSize = 25;
 const emptySummary: EmployeeSummary = {
@@ -36,7 +40,9 @@ export function EmployeesPage() {
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebouncedValue(search);
   const [company, setCompany] = useState("");
-  const [sector, setSector] = useState("");
+  const [structure, setStructure] = useState<EmployeeStructureFilterValue>(emptyStructureFilters);
+  const [showStructureFilters, setShowStructureFilters] = useState(false);
+  const catalog = useOrgStructureCatalog();
   const [costCenter, setCostCenter] = useState("");
   const [page, setPage] = useState(1);
   // Orden server-side: cambiarlo vuelve a la página 1 (el backend ordena el
@@ -50,19 +56,18 @@ export function EmployeesPage() {
   const [all, setAll] = useState<Employee[]>(initialList?.items || []);
   const [listStatus, setListStatus] = useState<"loading" | "success" | "error">(initialList ? "success" : "loading");
   const [structureCompanies, setStructureCompanies] = useState<Array<{ id: string; name: string }>>([]);
-  const [structureSectors, setStructureSectors] = useState<Array<{ id: string; name: string }>>([]);
   const [structureCostCenters, setStructureCostCenters] = useState<Array<{ id: string; name: string }>>([]);
   const [summary, setSummary] = useState<EmployeeSummary>(emptySummary);
   const [meta, setMeta] = useState(initialList?.meta || { total: 0, page: 1, pageSize, hasMore: false });
   const selectedCompanyId = structureCompanies.find((item) => item.name === company)?.id;
-  const selectedSectorId = structureSectors.find((item) => item.name === sector)?.id;
+  const structureParams = useMemo(() => structureFilterParams(structure), [structure]);
   const selectedCostCenterId = structureCostCenters.find((item) => item.name === costCenter)?.id;
 
   useEffect(() => {
     let mounted = true;
     if (!all.length) setListStatus("loading");
     employeeApiService
-      .list({ search: debouncedSearch, companyId: selectedCompanyId, sectorId: selectedSectorId, costCenterId: selectedCostCenterId, page, take: pageSize, sort })
+      .list({ search: debouncedSearch, companyId: selectedCompanyId, costCenterId: selectedCostCenterId, structure: structureParams, page, take: pageSize, sort })
       .then((result) => {
         if (!mounted) return;
         setAll(result.items);
@@ -77,7 +82,7 @@ export function EmployeesPage() {
         // no la pasa, la entrada expira sola con el TTL normal (30s).
         if (result.meta.hasMore) {
           employeeApiService
-            .list({ search: debouncedSearch, companyId: selectedCompanyId, sectorId: selectedSectorId, costCenterId: selectedCostCenterId, page: page + 1, take: pageSize, sort })
+            .list({ search: debouncedSearch, companyId: selectedCompanyId, costCenterId: selectedCostCenterId, structure: structureParams, page: page + 1, take: pageSize, sort })
             .catch(() => {});
         }
       })
@@ -90,7 +95,7 @@ export function EmployeesPage() {
     return () => {
       mounted = false;
     };
-  }, [debouncedSearch, page, refresh, selectedCompanyId, selectedSectorId, selectedCostCenterId, sort]);
+  }, [debouncedSearch, page, refresh, selectedCompanyId, structureParams, selectedCostCenterId, sort]);
 
   useEffect(() => {
     let mounted = true;
@@ -115,7 +120,6 @@ export function EmployeesPage() {
       .then((catalog) => {
         if (!mounted) return;
         setStructureCompanies(catalog.companies.filter((item) => item.status === "ACTIVO").map((item) => ({ id: item.id, name: item.name })));
-        setStructureSectors(catalog.sectors.filter((item) => item.status === "ACTIVO").map((item) => ({ id: item.id, name: item.name })));
         setStructureCostCenters(catalog.costCenters.filter((item) => item.status === "ACTIVO").map((item) => ({ id: item.id, name: item.name })));
       })
       .catch(() => {});
@@ -173,7 +177,11 @@ export function EmployeesPage() {
       <Section
         title="Listado de legajos"
         subtitle={`${meta.total} resultados`}
-        action={<Button variant="subtle" icon={SlidersHorizontal}>Mas filtros</Button>}
+        action={
+          <Button variant="subtle" icon={SlidersHorizontal} onClick={() => setShowStructureFilters((value) => !value)} aria-expanded={showStructureFilters || hasStructureFilters(structure)}>
+            {showStructureFilters || hasStructureFilters(structure) ? "Ocultar estructura" : "Alcance y ubicación"}
+          </Button>
+        }
       >
         <FilterPanel
           search={{
@@ -185,47 +193,44 @@ export function EmployeesPage() {
             },
           }}
         >
-          <select
-            value={company}
-            onChange={(event) => {
-              setCompany(event.target.value);
-              setPage(1);
-            }}
-          >
-            <option value="">Todas las empresas</option>
-            {companyOptions.map((item) => (
-              <option key={item}>{item}</option>
-            ))}
-          </select>
-          <select
-            value={sector}
-            onChange={(event) => {
-              setSector(event.target.value);
-              setPage(1);
-            }}
-          >
-            <option value="">Todos los sectores</option>
-            {structureSectors.map((item) => (
-              <option key={item.id}>{item.name}</option>
-            ))}
-          </select>
-          <select
-            value={costCenter}
-            onChange={(event) => {
-              setCostCenter(event.target.value);
-              setPage(1);
-            }}
-          >
-            <option value="">Todos los centros de costo</option>
-            {structureCostCenters.map((item) => (
-              <option key={item.id}>{item.name}</option>
-            ))}
-          </select>
+          <label>
+            Empresa empleadora
+            <select
+              value={company}
+              onChange={(event) => {
+                setCompany(event.target.value);
+                setPage(1);
+              }}
+            >
+              <option value="">Todas</option>
+              {companyOptions.map((item) => (
+                <option key={item}>{item}</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Centro de costo
+            <select
+              value={costCenter}
+              onChange={(event) => {
+                setCostCenter(event.target.value);
+                setPage(1);
+              }}
+            >
+              <option value="">Todos</option>
+              {structureCostCenters.map((item) => (
+                <option key={item.id}>{item.name}</option>
+              ))}
+            </select>
+          </label>
+          {showStructureFilters || hasStructureFilters(structure) ? (
+            <EmployeeStructureFilterControls value={structure} catalog={catalog} onChange={(next) => { setStructure(next); setPage(1); }} />
+          ) : null}
         </FilterPanel>
 
         <DataTable
           status={listStatus === "loading" ? "loading" : listStatus === "error" ? "error" : employees.length === 0 ? "empty" : "ready"}
-          minWidth={980}
+          minWidth={1240}
           emptyText="No se encontraron legajos con los filtros aplicados."
           errorMessage="No se pudieron cargar los legajos. Intentá nuevamente."
           onRetry={() => setRefresh((value) => value + 1)}
@@ -238,6 +243,8 @@ export function EmployeesPage() {
                 <SortableHeader label="Apellido" sortKey="lastName" sort={sort} onSort={toggleSort} />
                 <SortableHeader label="Nombre" sortKey="firstName" sort={sort} onSort={toggleSort} />
                 <th>Centro de costo</th>
+                <th>Puesto y alcance</th>
+                <th>Ubicaciones vigentes</th>
                 <SortableHeader label="Estado" sortKey="status" sort={sort} onSort={toggleSort} />
                 <th>Accion</th>
               </tr>
@@ -245,15 +252,16 @@ export function EmployeesPage() {
             <tbody>
               {employees.map((employee) => (
                 <tr key={employee.id}>
-                  <td>
+                  <td className="cell-nowrap">
                     <b>{displayLegajo(employee)}</b>
                   </td>
-                  <td>{employee.cuil}</td>
+                  <td className="cell-nowrap">{employee.cuil}</td>
                   <td>{employee.lastName}</td>
                   <td>{employee.firstName}</td>
                   <td>
                     <OverflowCell value={employee.costCenter} />
                   </td>
+                  <EmployeeStructureCells employee={employee} />
                   <td>
                     <Badge tone={statusTone(employee.status)}>{employee.status}</Badge>
                   </td>

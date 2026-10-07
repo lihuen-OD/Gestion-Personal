@@ -387,6 +387,7 @@ describe("WorkRegime.listEmployees — empleados asociados (Etapa 8G)", () => {
           lastName: "Prueba",
           status: "ACTIVO",
           sector: null,
+          position: null,
           costCenter: null,
           companies: [],
         },

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { employeeStructureQueryShape, refineEmployeeStructureQuery } from "../../shared/validation/employeeStructureQuery";
 import { queryBoolean } from "../../shared/validation/queryBoolean";
 
 // Etapa 12D: mismo límite/criterio que calendarRangeQuerySchema
@@ -12,14 +13,17 @@ export const holidayDatesQuerySchema = z
 
 export const holidayWorkAssignmentsByDateQuerySchema = z.object({ date: z.coerce.date() });
 
+// A7: `sectorId` = sector ANTERIOR; la ubicación se evalúa vigente a
+// `locationDate` (el frontend envía el día del feriado).
 export const holidayWorkCandidatesQuerySchema = z.object({
   sectorId: z.string().uuid().optional(),
+  ...employeeStructureQueryShape,
   shiftTemplateId: z.string().uuid().optional(),
   withoutShift: queryBoolean().optional(),
   search: z.string().trim().optional(),
   page: z.coerce.number().int().positive().max(10000).default(1),
   take: z.coerce.number().int().positive().max(500).default(100),
-});
+}).superRefine(refineEmployeeStructureQuery);
 
 export const holidayWorkAssignmentStatusSchema = z.enum(["ACTIVA", "CANCELADA"]);
 

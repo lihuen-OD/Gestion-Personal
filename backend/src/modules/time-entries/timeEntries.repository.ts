@@ -224,7 +224,10 @@ function scopeDimensionFilter(field: "sectorId" | "costCenterId" | "positionId",
 // Lo usa sólo el motor único resolveSpecialHourRulesByDate, que recibe el
 // cliente (`prisma` o el `tx` de la transacción) tipado como
 // PrismaTransactionClient.
-function doubleHourRuleScopeWhere(employeeId: string, employeeCompanyIds: string[], employeeSectorId: string | null | undefined, employeeCostCenterId: string | null | undefined, employeePositionId: string | null | undefined): Prisma.DoubleHourRuleWhereInput["AND"] {
+// Exportada sólo para el test de caracterización de A7
+// (doubleHourRuleScope.characterization.test.ts): fija el criterio vigente
+// antes de cualquier decisión D-4/D-5. No cambiar sin esa decisión.
+export function doubleHourRuleScopeWhere(employeeId: string, employeeCompanyIds: string[], employeeSectorId: string | null | undefined, employeeCostCenterId: string | null | undefined, employeePositionId: string | null | undefined): Prisma.DoubleHourRuleWhereInput["AND"] {
   return [
     { OR: [{ employees: { none: {} } }, { employees: { some: { employeeId } } }] },
     employeeCompanyIds.length ? { OR: [{ companyId: null }, { companyId: { in: employeeCompanyIds } }] } : { companyId: null },
@@ -1118,6 +1121,8 @@ export const timeEntriesRepository = {
           { lastName: { contains: input.search, mode: "insensitive" as const } },
           { legajo: { contains: input.search, mode: "insensitive" as const } },
           { dni: { contains: input.search, mode: "insensitive" as const } },
+          // A7: puesto actual y sector ANTERIOR (consulta de legajos pendientes de recarga).
+          { position: { name: { contains: input.search, mode: "insensitive" as const } } },
           { sector: { name: { contains: input.search, mode: "insensitive" as const } } },
         ] }] : []),
       ],

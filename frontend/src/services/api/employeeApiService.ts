@@ -17,6 +17,7 @@ import type { HourConcept } from "../../types/hourConcept.types";
 import type { NoveltyType } from "../../types/noveltyType.types";
 
 type ApiEmployeeStatus = "ACTIVO" | "INACTIVO";
+type ApiNamedNode = { id: string; name: string };
 
 type ApiEmployee = {
   id: string;
@@ -50,7 +51,15 @@ type ApiEmployee = {
     } | null;
   } | null;
   costCenter?: { id: string; name: string; code?: string | null } | null;
-  position?: { id: string; name: string; code?: string | null } | null;
+  position?: {
+    id: string;
+    name: string;
+    code?: string | null;
+    _count?: { orgScopes: number };
+    orgScopes?: Array<{ level: "COMPANY" | "BUSINESS_UNIT" | "SECTOR" | "AREA"; company?: ApiNamedNode | null; businessUnit?: ApiNamedNode | null; sector?: ApiNamedNode | null; area?: ApiNamedNode | null }>;
+  } | null;
+  workLocations?: Array<{ zone: ApiNamedNode; establishments: Array<{ establishment: ApiNamedNode }> }>;
+  _count?: { workLocations?: number };
   companies?: Array<{ isPrimary?: boolean; company: { id: string; name: string } }>;
   address?: {
     province?: string | null;
@@ -192,12 +201,15 @@ export type EmployeeListFilters = {
   // El backend ya soporta estos dos con WHERE indexado (ver auditoría 8E) —
   // antes no estaban conectados acá, así que ningún filtro de sector/centro
   // de costo llegaba nunca a /employees.
+  // A7: `sectorId` = sector ANTERIOR (consulta de legajos pendientes de recarga).
   sectorId?: string;
   costCenterId?: string;
   status?: "ACTIVO" | "INACTIVO";
   page?: number;
   take?: number;
   sort?: SortState<EmployeeListSortKey>;
+  /** A7: alcance/ubicación/recarga ya armados por `structureFilterParams`. */
+  structure?: Record<string, string>;
 };
 
 // Whitelist server-side de GET /employees (employees.schemas.ts::employeeListSortKeys).
@@ -320,6 +332,7 @@ export function mapEmployeeFromApi(item: ApiEmployee): Employee {
     positionId: item.position?.id,
     puestoId: item.position?.id,
     puestoNombre: item.position?.name || "",
+    ...structureContextFromApi(item),
     receiptCategory: item.receiptCategory || "",
     internalCategory: item.internalCategory || "",
     agreement: item.agreement || "",
@@ -361,6 +374,21 @@ export function mapEmployeeFromApi(item: ApiEmployee): Employee {
     historyEvents: [],
     audit: [],
     routeHistory: [],
+  };
+}
+
+// A7: contexto de estructura que sólo traen listado y organigrama. Ausente
+// en otros endpoints: los campos quedan `undefined` (desconocido), nunca 0.
+function structureContextFromApi(item: ApiEmployee): Pick<Employee, "positionScopeCount" | "positionScopes" | "currentWorkLocations" | "openWorkLocationCount"> {
+  const scopes = item.position?.orgScopes?.map((scope) => {
+    const node = scope.company || scope.businessUnit || scope.sector || scope.area;
+    return { level: scope.level, nodeId: node?.id || "", name: node?.name || "Nodo no disponible" };
+  });
+  return {
+    ...(item.position?._count ? { positionScopeCount: item.position._count.orgScopes } : scopes ? { positionScopeCount: scopes.length } : {}),
+    ...(scopes ? { positionScopes: scopes } : {}),
+    ...(item._count?.workLocations !== undefined ? { openWorkLocationCount: item._count.workLocations } : {}),
+    ...(item.workLocations ? { currentWorkLocations: item.workLocations.map((location) => ({ zoneId: location.zone.id, zoneName: location.zone.name, establishments: location.establishments.map((link) => link.establishment.name) })) } : {}),
   };
 }
 
@@ -623,6 +651,7 @@ export function employeeListRequest(filters: EmployeeListFilters = {}) {
   if (filters.sectorId) params.set("sectorId", filters.sectorId);
   if (filters.costCenterId) params.set("costCenterId", filters.costCenterId);
   if (filters.status) params.set("status", filters.status);
+  for (const [key, value] of Object.entries(filters.structure || {}).sort(([a], [b]) => a.localeCompare(b))) params.set(key, value);
   appendSortParams(params, filters.sort);
   const path = `/employees?${params.toString()}`;
   return { path, snapshotKey: `${currentCacheScope()}:${path}` };
@@ -708,11 +737,16 @@ export const employeeApiService = {
       validate: isEmployeeSummary,
     });
   },
-  async getOrgChart() {
+  // A7: `structure` (alcance/ubicación/recarga) se resuelve en el backend,
+  // única implementación de la semántica; el resto de filtros sigue local.
+  async getOrgChart(structure: Record<string, string> = {}) {
+    const params = new URLSearchParams({ take: String(ORG_CHART_EMPLOYEE_LIMIT) });
+    for (const [key, value] of Object.entries(structure).sort(([a], [b]) => a.localeCompare(b))) params.set(key, value);
+    const path = `/employees/org-chart?${params.toString()}`;
     return cachedData({
-      requestKey: `GET:/employees/org-chart?take=${ORG_CHART_EMPLOYEE_LIMIT}`,
+      requestKey: `GET:${path}`,
       policy: cachePolicies.employeesOrgChart,
-      fetcher: () => apiRequest<ApiEmployeePaginatedResponse>(`/employees/org-chart?take=${ORG_CHART_EMPLOYEE_LIMIT}`, { apiCache: false }).then((response) => ({
+      fetcher: () => apiRequest<ApiEmployeePaginatedResponse>(path, { apiCache: false }).then((response) => ({
         items: response.data.map(mapEmployeeFromApi),
         meta: response.meta,
       })),

@@ -1,11 +1,11 @@
 import { mockOrgCategories } from "../data/mockOrgCategories";
-import type { Employee, Role } from "../types";
+import type { Employee } from "../types";
 import type { OrgCategory, OrgChartFilters, OrgChartModel, OrgEdge, OrgEmployeeNode } from "../types/organizationChart.types";
 import { calculateEmployeeStatus } from "./employeeStatusService";
 import { fullName } from "../utils/employee";
 
 const emptyFilters: OrgChartFilters = {
-  company: "", businessUnit: "", establishment: "", costCenter: "", sector: "", position: "",
+  company: "", costCenter: "", position: "",
   internalCategory: "", receiptCategory: "", status: "", directManager: "", timeResponsible: "", search: "",
 };
 
@@ -21,18 +21,11 @@ const employeeCompanies = (employee: Employee) => employee.companies?.length ? e
 const employeeManagers = (employee: Employee) => employee.directManagers?.length ? employee.directManagers : [employee.directManager].filter(Boolean);
 const employeeTimeResponsibles = (employee: Employee) => employee.timeResponsibles?.length ? employee.timeResponsibles : [employee.timeResponsible].filter(Boolean);
 
-function scopedEmployeesFrom(employees: Employee[], role: Role, userSector?: string) {
-  return role.startsWith("Nivel 2") ? employees.filter((employee) => employee.sector === userSector) : employees;
-}
-
 function employeeMatches(employee: Employee, filters: OrgChartFilters) {
   const query = text(filters.search).trim();
   const haystack = `${employee.firstName} ${employee.lastName} ${employee.legajoInterno} ${employee.legajoFinnegans} ${employee.legajo} ${employee.cuil} ${employee.dni}`.toLowerCase();
   return (!filters.company || employeeCompanies(employee).includes(filters.company))
-    && (!filters.businessUnit || employee.businessUnit === filters.businessUnit)
-    && (!filters.establishment || employee.establishment === filters.establishment)
     && (!filters.costCenter || employee.costCenter === filters.costCenter)
-    && (!filters.sector || employee.sector === filters.sector)
     && (!filters.position || employee.positionId === filters.position || employeePositionName(employee) === filters.position)
     && (!filters.internalCategory || employee.internalCategory === filters.internalCategory)
     && (!filters.receiptCategory || employee.receiptCategory === filters.receiptCategory)
@@ -60,15 +53,15 @@ function categoryBaseY(category: OrgCategory) {
 export const organizationChartMockService = {
   getEmptyFilters: () => ({ ...emptyFilters }),
   getCategories: () => [...mockOrgCategories].sort((a, b) => a.order - b.order),
-  getEmployeesFrom: (employees: Employee[], role: Role, userSector?: string, filters: OrgChartFilters = emptyFilters) => scopedEmployeesFrom(employees, role, userSector).filter((employee) => employeeMatches(employee, filters)),
-  getFilterOptionsFrom: (employeesInput: Employee[], role: Role, userSector?: string) => {
-    const employees = scopedEmployeesFrom(employeesInput, role, userSector);
+  // A7: el alcance de Nivel 2 lo aplica el backend (employeeAccessWhere, por
+  // responsable de carga). Antes se filtraba acá por sector comparando el ID
+  // del sector del usuario contra el NOMBRE del sector del legajo
+  // (ORG_LOCATION_REORGANIZATION.md §2.2), lo que dejaba el organigrama vacío.
+  getEmployeesFrom: (employees: Employee[], filters: OrgChartFilters = emptyFilters) => employees.filter((employee) => employeeMatches(employee, filters)),
+  getFilterOptionsFrom: (employees: Employee[]) => {
     return {
       company: unique(employees.flatMap(employeeCompanies)),
-      businessUnit: unique(employees.map((employee) => employee.businessUnit)),
-      establishment: unique(employees.map((employee) => employee.establishment)),
       costCenter: unique(employees.map((employee) => employee.costCenter)),
-      sector: unique(employees.map((employee) => employee.sector)),
       position: unique(employees.map(employeePositionName)),
       internalCategory: unique(employees.map((employee) => employee.internalCategory)),
       receiptCategory: unique(employees.map((employee) => employee.receiptCategory)),

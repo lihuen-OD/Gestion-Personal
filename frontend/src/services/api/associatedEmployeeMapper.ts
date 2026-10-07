@@ -9,6 +9,7 @@ export type ApiAssociatedEmployee = {
   lastName: string;
   status: "ACTIVO" | "INACTIVO";
   sector: { id: string; name: string } | null;
+  position?: { id: string; name: string; scopeCount: number } | null;
   costCenter: { id: string; name: string } | null;
   companies: { id: string; name: string }[];
 };
@@ -22,6 +23,7 @@ export function mapAssociatedEmployeeFromApi(item: ApiAssociatedEmployee): Assoc
     lastName: item.lastName,
     status: item.status,
     sector: item.sector,
+    position: item.position ?? null,
     costCenter: item.costCenter,
     companies: item.companies,
   };
@@ -39,6 +41,7 @@ export function associatedEmployeesQuery(filters?: AssociatedEmployeeFilters, ex
   if (filters?.sectorId) params.set("sectorId", filters.sectorId);
   if (filters?.costCenterId) params.set("costCenterId", filters.costCenterId);
   if (filters?.companyId) params.set("companyId", filters.companyId);
+  for (const [key, value] of Object.entries(filters?.structure || {}).sort(([a], [b]) => a.localeCompare(b))) params.set(key, value);
   appendSortParams(params, filters?.sort);
   if (extraParams) {
     for (const [key, value] of Object.entries(extraParams)) {

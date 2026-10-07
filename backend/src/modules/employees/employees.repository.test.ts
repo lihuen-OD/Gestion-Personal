@@ -285,7 +285,7 @@ describe("employeesRepository.findMany (listado de Legajos) — Etapa 14C.1 / 14
     expect(total).toBe(0);
   });
 
-  it("no carga sector/position/companies (relaciones no usadas por el listado)", async () => {
+  it("no carga sector/companies; A7 agrega sólo puesto liviano y ubicaciones vigentes", async () => {
     (prisma.employee.findMany as Mock).mockReturnValue(Promise.resolve([]));
     (prisma.employee.count as Mock).mockReturnValue(Promise.resolve(0));
 
@@ -293,7 +293,8 @@ describe("employeesRepository.findMany (listado de Legajos) — Etapa 14C.1 / 14
 
     const call = (prisma.employee.findMany as Mock).mock.calls.at(0)?.[0];
     expect(call.select.sector).toBeUndefined();
-    expect(call.select.position).toBeUndefined();
+    expect(call.select.position).toEqual({ select: { id: true, name: true, _count: { select: { orgScopes: true } } } });
+    expect(call.select.workLocations.where.effectiveFrom.lte).toBeInstanceOf(Date);
     expect(call.select.companies).toBeUndefined();
     expect(call.select.dni).toBeUndefined();
     expect(call.select.birthDate).toBeUndefined();
@@ -387,8 +388,26 @@ describe("employeesRepository.findOrgChart / findOptions — Etapa 14C.3", () =>
         },
       },
       costCenter: { select: { id: true, name: true, code: true } },
-      position: { select: { id: true, name: true, code: true } },
+      position: {
+        select: {
+          id: true,
+          name: true,
+          code: true,
+          orgScopes: {
+            select: {
+              level: true,
+              company: { select: { id: true, name: true } },
+              businessUnit: { select: { id: true, name: true } },
+              sector: { select: { id: true, name: true } },
+              area: { select: { id: true, name: true } },
+            },
+            orderBy: { createdAt: "asc" },
+          },
+        },
+      },
       assignments: { select: { type: true, personName: true } },
+      workLocations: expect.objectContaining({ select: { zone: { select: { id: true, name: true } }, establishments: { select: { establishment: { select: { id: true, name: true } } } } } }),
+      _count: { select: { workLocations: { where: { OR: [{ effectiveTo: null }, { effectiveTo: { gte: expect.any(Date) } }] } } } },
     });
   });
 });
@@ -846,5 +865,29 @@ describe("resolveLaborStatus", () => {
     const movements = [{ type: "ALTA" as const, effectiveFrom: new Date("2026-08-15T00:00:00.000Z") }];
 
     expect(resolveLaborStatus(movements, reference)).toBe(EmployeeStatus.INACTIVO);
+  });
+});
+
+// A7 (ORG_LOCATION_REORGANIZATION.md §16): los filtros de estructura se
+// suman al filtro de acceso; nunca lo reemplazan. El alcance del puesto no
+// concede acceso a un legajo.
+describe("employeesRepository — filtros de estructura combinados con el acceso (A7)", () => {
+  const supervisionAccess = { assignments: { some: { type: "TIME_RESPONSIBLE", userId: "user-sup" } } };
+
+  it.each([
+    ["findMany", () => employeesRepository.findMany({ page: 1, take: 25, scopeLevel: "COMPANY", scopeNodeId: "c1", scopeMode: "COVERS", locationZoneId: "z1" } as never, supervisionAccess)],
+    ["findOrgChart", () => employeesRepository.findOrgChart({ page: 1, take: 25, scopeLevel: "COMPANY", scopeNodeId: "c1", scopeMode: "COVERS", locationZoneId: "z1" } as never, supervisionAccess)],
+    ["findOptions", () => employeesRepository.findOptions({ page: 1, take: 25, scopeLevel: "COMPANY", scopeNodeId: "c1", scopeMode: "COVERS", locationZoneId: "z1" } as never, supervisionAccess)],
+  ])("%s conserva el filtro de acceso junto a alcance y ubicación (some, sin duplicar personas)", async (_name, run) => {
+    (prisma.employee.findMany as Mock).mockReturnValue(Promise.resolve([]));
+    (prisma.employee.count as Mock).mockReturnValue(Promise.resolve(0));
+
+    await run();
+
+    const where = (prisma.employee.findMany as Mock).mock.calls.at(-1)![0].where as { AND: unknown[] };
+    expect(where.AND).toContainEqual(supervisionAccess);
+    expect(where.AND).toContainEqual({ position: { orgScopes: { some: { OR: [{ companyId: "c1" }] } } } });
+    expect(JSON.stringify(where.AND)).toContain('"workLocations":{"some"');
+    expect((prisma.employee.count as Mock).mock.calls.at(-1)![0].where).toEqual(where);
   });
 });

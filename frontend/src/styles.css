@@ -2447,3 +2447,18 @@ a.employee-hours-status-item:hover{border-color:var(--ds-blue-300);background:va
 .labor-bare-slot>.info-note.compact{margin:0}
 @media(max-width:900px){.position-scope-grid{grid-template-columns:1fr}.org-scope-path-list li{grid-template-columns:1fr auto}.org-scope-level{grid-column:1/-1}}
 @media(max-width:620px){.modal-body .work-location-establishments-field .check-grid{grid-template-columns:1fr}.labor-pending-reload{margin:14px 14px 0}.labor-block-wrap{padding:0 14px}.work-location-list{padding:12px}.work-location-item{flex-direction:column}.work-location-actions{justify-content:flex-start;width:100%}.work-location-dates{grid-template-columns:1fr}}
+/* A7: filtros de estructura y celdas de puesto/ubicación en listados. */
+.structure-filter-hint{grid-column:1/-1;margin:0;color:var(--color-text-muted);font-size:12px;line-height:1.5}
+.structure-filter-hint[role=status]{color:var(--color-warning);font-weight:600}
+.structure-cell{max-width:260px;white-space:normal!important}
+.structure-cell b,.structure-cell small,.structure-cell span{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.structure-cell b{color:var(--color-text-primary);font-weight:600}
+.structure-cell small{margin-top:2px;color:var(--color-text-muted);font-size:11px}
+.structure-cell .badge{margin-top:4px}
+.org-reload-pending{display:inline-block;margin-top:5px;padding:2px 7px;border-radius:999px;background:var(--color-warning-bg);color:var(--color-warning);font-size:10px;font-style:normal;font-weight:700}
+.associated-structure-filters{margin:0 16px 12px;grid-template-columns:repeat(4,minmax(150px,1fr))}
+.associated-position{display:inline-flex;flex-wrap:wrap;align-items:center;gap:6px}
+@media(max-width:900px){.associated-structure-filters{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:620px){.associated-structure-filters{grid-template-columns:1fr;margin:0 12px 12px}}
+/* Identificadores (legajo, CUIL) en una sola línea dentro de .table-shell. */
+.table-shell>table tbody td.cell-nowrap{white-space:nowrap!important;overflow-wrap:normal!important}

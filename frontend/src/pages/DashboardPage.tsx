@@ -97,7 +97,7 @@ export function DashboardPage() {
     </>;
   }
 
-  return <><PageHeader eyebrow={level === 2 ? "PANEL DE GESTIÓN" : "DASHBOARD RRHH"} title={`Buen día, ${user!.name.split(" ")[0]}`} description={level === 2 ? `Indicadores calculados para tu área: ${user!.sector}.` : "Indicadores integrales de personas, novedades y control horario calculados desde los datos demo."} action={<Button variant="subtle" icon={FileBarChart}>Exportar resumen</Button>} />
+  return <><PageHeader eyebrow={level === 2 ? "PANEL DE GESTIÓN" : "DASHBOARD RRHH"} title={`Buen día, ${user!.name.split(" ")[0]}`} description={level === 2 ? "Indicadores calculados sobre los legajos a tu cargo como responsable de carga." : "Indicadores integrales de personas, novedades y control horario calculados desde los datos demo."} action={<Button variant="subtle" icon={FileBarChart}>Exportar resumen</Button>} />
     <div className="stat-grid kpi-grid">
       <StatCard label={level === 2 ? "Dotación de mi área" : "Dotación activa"} value={metrics.active} detail={`${metrics.inactive} inactivos · ${metrics.total} legajos`} icon={Users} />
       <StatCard label="Ausentismo mensual" value={`${metrics.absenceRate}%`} detail={`${metrics.absenceDays} días registrados`} icon={Activity} tone="red" />
@@ -109,14 +109,14 @@ export function DashboardPage() {
       <StatCard label="Documentación crítica" value={metrics.expiredDocuments + metrics.expiringDocuments} detail={`${metrics.expiredDocuments} vencidos · ${metrics.expiringDocuments} por vencer`} icon={FolderOpen} tone="orange" />
     </div>
     <div className="dashboard-grid">
-      <Section title={level === 2 ? "Dotación por sector" : "Dotación activa por empresa"} subtitle="Distribución calculada sobre legajos activos"><DashboardBars rows={level === 2 ? metrics.headcountBySector : metrics.headcountByCompany} /></Section>
+      <Section title={level === 2 ? "Dotación por sector anterior" : "Dotación activa por empresa empleadora"} subtitle={level === 2 ? "Sector del modelo anterior, uno por legajo. Los legajos recargados sin sector anterior figuran como “Sin cargar”. Reemplazo pendiente (D-8)." : "Distribución calculada sobre legajos activos"}><DashboardBars rows={level === 2 ? metrics.headcountBySector : metrics.headcountByCompany} /></Section>
       <Section title="Alertas que requieren atención" subtitle="Generadas desde el estado actual del sistema"><div className="alerts"><Alert label="Documentación vencida" value={`${metrics.expiredDocuments} documentos`} tone="red" /><Alert label="Documentación por vencer" value={`${metrics.expiringDocuments} documentos`} tone="orange" /><Alert label="Sin responsable de carga" value={`${metrics.missingResponsible} legajos`} tone="blue" /><Alert label="Cargas horarias pendientes" value={`${metrics.pendingLoads} personas`} tone="orange" /><Alert label="Novedades pendientes" value={`${metrics.pendingNovelties} registros`} tone="purple" /></div></Section>
     </div>
     <div className="dashboard-grid">
       <Section title="Transporte por localidad" subtitle={`${metrics.transported} personas utilizan transporte de la empresa`}><DashboardBars rows={metrics.transportByCity} /></Section>
       <Section title="Próximos cumpleaños" subtitle="Cumpleaños durante los próximos 30 días">
         <DataTable status={metrics.upcomingBirthdays.length ? "ready" : "empty"} minWidth={720} emptyText="No hay cumpleaños en los próximos 30 días.">
-          <table><thead><tr><th>Empleado</th><th>Fecha</th><th>Sector</th></tr></thead><tbody>{metrics.upcomingBirthdays.map((employee) => <tr key={employee.id}><td><b>{employee.lastName}, {employee.firstName}</b></td><td>{new Date(`${employee.birthDate}T12:00:00`).toLocaleDateString("es-AR", { day: "2-digit", month: "long" })}</td><td><OverflowCell value={employee.sector} /></td></tr>)}</tbody></table>
+          <table><thead><tr><th>Empleado</th><th>Fecha</th><th>Sector anterior</th></tr></thead><tbody>{metrics.upcomingBirthdays.map((employee) => <tr key={employee.id}><td><b>{employee.lastName}, {employee.firstName}</b></td><td>{new Date(`${employee.birthDate}T12:00:00`).toLocaleDateString("es-AR", { day: "2-digit", month: "long" })}</td><td><OverflowCell value={employee.sector} /></td></tr>)}</tbody></table>
         </DataTable>
       </Section>
     </div>

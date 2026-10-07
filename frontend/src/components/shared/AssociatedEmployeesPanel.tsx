@@ -1,6 +1,6 @@
 import { Eye, UserPlus, X } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { EmployeeRemoteSelector } from "../employees/EmployeeRemoteSelector";
@@ -24,6 +24,15 @@ import { statusTone } from "../../utils/status";
 import { buildAssociatedEmployeesRequest, employeeCompanyNames, employeeStatusLabel } from "./AssociatedEmployeesPanel.helpers";
 import { SortableHeader } from "../ui/SortableHeader";
 import { useSortState } from "../../utils/sort";
+import { EmployeeStructureFilterControls } from "../employees/structureFilters/EmployeeStructureFilterControls";
+import { emptyStructureFilters, hasStructureFilters, structureFilterParams, type EmployeeStructureFilterValue } from "../employees/structureFilters/employeeStructureFilters";
+import { useOrgStructureCatalog } from "../employees/structureFilters/useOrgStructureCatalog";
+
+// A7: puesto del legajo asociado; sin alcance → pendiente de recarga.
+function AssociatedPositionCell({ employee }: { employee: AssociatedEmployee }) {
+  if (!employee.position) return <>-</>;
+  return <span className="associated-position">{employee.position.name}{employee.position.scopeCount === 0 ? <Badge tone="warning">Pendiente de recarga</Badge> : null}</span>;
+}
 
 export type AssociatedEmployeesColumn<T> = {
   header: string;
@@ -162,10 +171,12 @@ export function AssociatedEmployeesPanel<T extends { employeeId: string; employe
 }) {
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebouncedValue(search);
-  const [sector, setSector] = useState("");
+  const [structure, setStructure] = useState<EmployeeStructureFilterValue>(emptyStructureFilters);
+  const structureParams = useMemo(() => structureFilterParams(structure), [structure]);
+  const [showStructure, setShowStructure] = useState(false);
+  const catalog = useOrgStructureCatalog();
   const [costCenter, setCostCenter] = useState("");
   const [company, setCompany] = useState("");
-  const [structureSectors, setStructureSectors] = useState<Array<{ id: string; name: string }>>([]);
   const [structureCostCenters, setStructureCostCenters] = useState<Array<{ id: string; name: string }>>([]);
   const [structureCompanies, setStructureCompanies] = useState<Array<{ id: string; name: string }>>([]);
   const [page, setPage] = useState(1);
@@ -186,7 +197,6 @@ export function AssociatedEmployeesPanel<T extends { employeeId: string; employe
   // incrusta como un módulo gigante dentro de otra card.
   const [addOpen, setAddOpen] = useState(false);
 
-  const selectedSectorId = structureSectors.find((item) => item.name === sector)?.id;
   const selectedCostCenterId = structureCostCenters.find((item) => item.name === costCenter)?.id;
   const selectedCompanyId = structureCompanies.find((item) => item.name === company)?.id;
 
@@ -196,7 +206,6 @@ export function AssociatedEmployeesPanel<T extends { employeeId: string; employe
       .getCatalog()
       .then((catalog) => {
         if (!mounted) return;
-        setStructureSectors(catalog.sectors.filter((item) => item.status === "ACTIVO").map((item) => ({ id: item.id, name: item.name })));
         setStructureCostCenters(catalog.costCenters.filter((item) => item.status === "ACTIVO").map((item) => ({ id: item.id, name: item.name })));
         setStructureCompanies(catalog.companies.filter((item) => item.status === "ACTIVO").map((item) => ({ id: item.id, name: item.name })));
       })
@@ -212,7 +221,7 @@ export function AssociatedEmployeesPanel<T extends { employeeId: string; employe
     hadItemsRef.current = items.length > 0;
     const request = buildAssociatedEmployeesRequest({
       search: debouncedSearch,
-      sectorId: selectedSectorId,
+      structure: structureParams,
       costCenterId: selectedCostCenterId,
       companyId: selectedCompanyId,
       page,
@@ -242,7 +251,7 @@ export function AssociatedEmployeesPanel<T extends { employeeId: string; employe
     // <AssociatedEmployeesPanel> para forzar un remount limpio en vez de
     // depender de la identidad de fetcher.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [debouncedSearch, selectedSectorId, selectedCostCenterId, selectedCompanyId, page, retry, refreshKey, sort]);
+  }, [debouncedSearch, structureParams, selectedCostCenterId, selectedCompanyId, page, retry, refreshKey, sort]);
 
   const resetPage = () => setPage(1);
   const reload = () => setRetry((value) => value + 1);
@@ -300,7 +309,7 @@ export function AssociatedEmployeesPanel<T extends { employeeId: string; employe
   const resolveRowKey = rowKey ?? ((item: T) => item.employeeId);
 
   const canAdd = canEdit && Boolean(onAddEmployees);
-  const hasActiveFilters = Boolean(debouncedSearch || selectedSectorId || selectedCostCenterId || selectedCompanyId);
+  const hasActiveFilters = Boolean(debouncedSearch || hasStructureFilters(structure) || selectedCostCenterId || selectedCompanyId);
   const resolvedEmptyText = typeof emptyText === "function" ? emptyText(hasActiveFilters) : emptyText;
 
   const addDisabled = isAdding || !selected.length || addExtraDisabled;
@@ -377,12 +386,6 @@ export function AssociatedEmployeesPanel<T extends { employeeId: string; employe
             resetPage();
           }}
         />
-        <select value={sector} onChange={(event) => { setSector(event.target.value); resetPage(); }}>
-          <option value="">Todos los sectores</option>
-          {structureSectors.map((item) => (
-            <option key={item.id}>{item.name}</option>
-          ))}
-        </select>
         <select value={costCenter} onChange={(event) => { setCostCenter(event.target.value); resetPage(); }}>
           <option value="">Todos los centros de costo</option>
           {structureCostCenters.map((item) => (
@@ -390,13 +393,21 @@ export function AssociatedEmployeesPanel<T extends { employeeId: string; employe
           ))}
         </select>
         <select value={company} onChange={(event) => { setCompany(event.target.value); resetPage(); }}>
-          <option value="">Todas las empresas</option>
+          <option value="">Todas las empresas empleadoras</option>
           {structureCompanies.map((item) => (
             <option key={item.id}>{item.name}</option>
           ))}
         </select>
         {renderFilterExtra ? renderFilterExtra() : null}
+        <Button variant="subtle" type="button" onClick={() => setShowStructure((value) => !value)} aria-expanded={showStructure || hasStructureFilters(structure)}>
+          {showStructure || hasStructureFilters(structure) ? "Ocultar alcance y ubicación" : "Alcance y ubicación"}
+        </Button>
       </div>
+      {showStructure || hasStructureFilters(structure) ? (
+        <div className="filter-panel associated-structure-filters">
+          <EmployeeStructureFilterControls value={structure} catalog={catalog} onChange={(next) => { setStructure(next); resetPage(); }} />
+        </div>
+      ) : null}
 
       {status === "loading" ? <LoadingState variant="table" /> : null}
       {status === "error" ? (
@@ -416,9 +427,9 @@ export function AssociatedEmployeesPanel<T extends { employeeId: string; employe
                     <SortableHeader label="Legajo" sortKey="legajo" sort={sort} onSort={toggleSort} />
                     <SortableHeader label="Empleado" sortKey="employee" sort={sort} onSort={toggleSort} />
                     {showCuilColumn ? <th>CUIL</th> : null}
-                    <th>Sector</th>
+                    <th>Puesto</th>
                     <th>Centro de costo</th>
-                    <th>Empresa</th>
+                    <th>Empresa empleadora</th>
                     {showEmployeeStatusColumn ? <th>Estado</th> : null}
                     {extraColumns.map((column) => (
                       <th key={column.header}>{column.header}</th>
@@ -435,7 +446,7 @@ export function AssociatedEmployeesPanel<T extends { employeeId: string; employe
                         <td>{item.employee.legajo}</td>
                         <td>{item.employee.lastName}, {item.employee.firstName}</td>
                         {showCuilColumn ? <td>{item.employee.cuil}</td> : null}
-                        <td>{item.employee.sector?.name || "-"}</td>
+                        <td><AssociatedPositionCell employee={item.employee} /></td>
                         <td>{item.employee.costCenter?.name || "-"}</td>
                         <td>{employeeCompanyNames(item.employee)}</td>
                         {showEmployeeStatusColumn ? (
@@ -485,9 +496,10 @@ export function AssociatedEmployeesPanel<T extends { employeeId: string; employe
                       <span className="table-sub">Legajo {item.employee.legajo}</span>
                     </div>
                     <dl className="aec-card-fields">
-                      <div><dt>Sector</dt><dd>{item.employee.sector?.name || "-"}</dd></div>
+                      <div><dt>Puesto</dt><dd><AssociatedPositionCell employee={item.employee} /></dd></div>
+                      {item.employee.sector ? <div><dt>Sector anterior</dt><dd>{item.employee.sector.name}</dd></div> : null}
                       <div><dt>Centro de costo</dt><dd>{item.employee.costCenter?.name || "-"}</dd></div>
-                      <div><dt>Empresa</dt><dd>{employeeCompanyNames(item.employee)}</dd></div>
+                      <div><dt>Empresa empleadora</dt><dd>{employeeCompanyNames(item.employee)}</dd></div>
                       {showCuilColumn ? <div><dt>CUIL</dt><dd>{item.employee.cuil}</dd></div> : null}
                       {showEmployeeStatusColumn ? (
                         <div><dt>Estado</dt><dd><Badge tone={statusTone(employeeStatusLabel(item.employee.status))}>{employeeStatusLabel(item.employee.status)}</Badge></dd></div>

@@ -203,6 +203,9 @@ status
 companyId
 sectorId
 costCenterId
+scopeLevel scopeNodeId scopeMode
+locationZoneId locationEstablishmentId locationDate
+reloadStatus
 take
 page
 sortBy     legajo | cuil | lastName | firstName | status
@@ -210,6 +213,28 @@ sortOrder  asc | desc
 ```
 
 Devuelve `meta` de paginacion. Las pantallas de listado deben consumir este endpoint de forma paginada y no pedir todos los legajos para calcular tarjetas. Ver "Contrato de listados paginados" arriba.
+
+#### Filtros de estructura (A7, `docs/decisions/ORG_LOCATION_REORGANIZATION.md` §16)
+
+Compartidos por `GET /api/employees`, `/api/employees/org-chart`, `/api/employees/options`, `/api/hour-concepts/:id/employees`, `/api/work-regimes/:id/employees` y `/api/shifts/holiday-work/candidates` (`shared/validation/employeeStructureQuery.ts` + `shared/prisma/employeeStructureWhere.ts`). Organización, ubicación y empresa empleadora son filtros distintos:
+
+- `companyId`: empresa **empleadora** (`EmployeeCompany`).
+- `scopeLevel` (`COMPANY|BUSINESS_UNIT|SECTOR|AREA`) + `scopeNodeId` + `scopeMode`: alcance del **puesto** asignado.
+  - `WITHIN` ("Ubicado dentro de"): algún alcance es el nodo o un descendiente.
+  - `COVERS` ("Abarca"): algún alcance es el nodo o un ancestro.
+  - Los tres viajan juntos; **no hay modo por defecto** (D-7). Un filtro incompleto responde `400 VALIDATION_ERROR`.
+- `locationZoneId` / `locationEstablishmentId`: una ubicación de trabajo con esa zona y/o establecimiento **vigente** el día `locationDate` (`YYYY-MM-DD`, por defecto hoy en Argentina). Zona y establecimiento se evalúan en la misma asignación. `locationDate` sin zona ni establecimiento → `400`.
+- `reloadStatus`:
+  - `PENDING`: sin puesto, puesto sin alcance o sin ninguna ubicación vigente o futura.
+  - `COMPLETE`: lo contrario.
+- `sectorId`: sector **anterior** del legajo; sólo consulta de legajos pendientes de recarga.
+- Todos usan `some`/`none`: una persona con varios alcances o ubicaciones aparece una sola vez y `meta.total` cuenta personas.
+- Se combinan siempre con el filtro de acceso del rol (`employeeAccessWhere`). El alcance del puesto **no** concede acceso.
+
+Respuesta del listado, además de lo anterior:
+- `position: { id, name, _count: { orgScopes } }`;
+- `workLocations`: ubicaciones vigentes hoy, con zona y establecimientos;
+- `_count.workLocations`: cantidad de ubicaciones vigentes o futuras.
 
 ### Resumen de legajos
 
@@ -254,9 +279,19 @@ companyId
 sectorId
 positionId
 costCenterId
+scopeLevel scopeNodeId scopeMode
+locationZoneId locationEstablishmentId locationDate
+reloadStatus
 take
 page
 ```
+
+Filtros de estructura: ver "Filtros de estructura (A7)". Cada fila agrega:
+- `position.orgScopes`: nivel y nodo, como contexto organizacional;
+- `workLocations`: vigentes hoy;
+- `_count.workLocations`: vigentes o futuras.
+
+La relación del organigrama sigue siendo el encargado directo. El alcance de Nivel 2 lo aplica sólo el backend: el frontend ya no filtra por sector.
 
 Reglas:
 

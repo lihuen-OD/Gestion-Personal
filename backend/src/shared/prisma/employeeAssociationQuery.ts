@@ -1,4 +1,5 @@
 import type { Prisma } from "@prisma/client";
+import { employeeStructureWhere, type EmployeeStructureFilters } from "./employeeStructureWhere";
 
 // Forma compartida de "empleado asociado" para los listados de Régimen
 // Laboral -> empleados y Concepto Horario -> empleados habilitados (Etapa
@@ -13,14 +14,16 @@ export const associatedEmployeeSelect = {
   firstName: true,
   lastName: true,
   status: true,
+  // Sector ANTERIOR (sólo consulta) y puesto con su cantidad de alcances (A7).
   sector: { select: { id: true, name: true } },
+  position: { select: { id: true, name: true, _count: { select: { orgScopes: true } } } },
   costCenter: { select: { id: true, name: true } },
   companies: { select: { company: { select: { id: true, name: true } } } },
 } satisfies Prisma.EmployeeSelect;
 
 export type AssociatedEmployeeRow = Prisma.EmployeeGetPayload<{ select: typeof associatedEmployeeSelect }>;
 
-export type EmployeeAssociationFilters = {
+export type EmployeeAssociationFilters = EmployeeStructureFilters & {
   search?: string;
   sectorId?: string;
   costCenterId?: string;
@@ -32,7 +35,8 @@ export type EmployeeAssociationFilters = {
 // una columna companyId propia) — se reutiliza el criterio, no se reinventa.
 export function buildEmployeeAssociationWhere(filters: EmployeeAssociationFilters): Prisma.EmployeeWhereInput {
   const search = filters.search?.trim();
-  return {
+  const structure = employeeStructureWhere(filters);
+  const base: Prisma.EmployeeWhereInput = {
     ...(filters.sectorId ? { sectorId: filters.sectorId } : {}),
     ...(filters.costCenterId ? { costCenterId: filters.costCenterId } : {}),
     ...(filters.companyId ? { companies: { some: { companyId: filters.companyId } } } : {}),
@@ -47,6 +51,7 @@ export function buildEmployeeAssociationWhere(filters: EmployeeAssociationFilter
         }
       : {}),
   };
+  return structure.length ? { AND: [base, ...structure] } : base;
 }
 
 export function mapAssociatedEmployee(employee: AssociatedEmployeeRow) {
@@ -58,6 +63,7 @@ export function mapAssociatedEmployee(employee: AssociatedEmployeeRow) {
     lastName: employee.lastName,
     status: employee.status,
     sector: employee.sector,
+    position: employee.position ? { id: employee.position.id, name: employee.position.name, scopeCount: employee.position._count.orgScopes } : null,
     costCenter: employee.costCenter,
     companies: employee.companies.map((item) => item.company),
   };

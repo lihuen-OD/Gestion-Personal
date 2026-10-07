@@ -2,6 +2,14 @@ import { useState } from "react";
 import type { Employee } from "../../types";
 import { EmployeeOrgPopover } from "./EmployeeOrgPopover";
 import { Button } from "../ui/Button";
+import { isReloadPending } from "../employees/structureFilters/employeeStructureFilters";
+
+// A7: la relación sigue siendo el encargado directo; el alcance del puesto y
+// la empresa empleadora son sólo contexto (no sector único del legajo).
+function functionalContext(employee: Employee) {
+  const scopes = employee.positionScopes?.map((scope) => scope.name).join(", ");
+  return [employee.company, scopes ? `Alcance: ${scopes}` : employee.positionId ? "Puesto sin alcance" : ""].filter(Boolean).join(" · ");
+}
 
 const normalize = (value: string) => value.normalize("NFD").replace(/[̀-ͯ]/g, "").toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_|_$/g, "");
 const key = (employee: Employee) => normalize(`${employee.firstName} ${employee.lastName}`);
@@ -18,7 +26,7 @@ function buildFunctionalRoots(employees: Employee[]): { roots: Employee[]; byMan
 function FunctionalNode({ employee, byManager, collapsed, toggle, select }: { employee: Employee; byManager: Map<string, Employee[]>; collapsed: Set<string>; toggle: (id: string) => void; select: (employee: Employee) => void }) {
   const children = byManager.get(key(employee)) || [];
   const closed = collapsed.has(employee.id);
-  return <li><div className="functional-node"><button onClick={() => select(employee)}><b>{employee.lastName}, {employee.firstName}</b><span>{employee.position || employee.internalCategory}</span><small>{employee.company} · {employee.sector}</small></button>{children.length > 0 && <Button variant="subtle" onClick={() => toggle(employee.id)}>{closed ? "Expandir" : "Colapsar"} ({children.length})</Button>}</div>{children.length > 0 && !closed && <ul>{children.map((child) => <FunctionalNode key={child.id} employee={child} byManager={byManager} collapsed={collapsed} toggle={toggle} select={select} />)}</ul>}</li>;
+  return <li><div className="functional-node"><button onClick={() => select(employee)}><b>{employee.lastName}, {employee.firstName}</b><span>{employee.position || employee.internalCategory}</span><small>{functionalContext(employee)}</small>{isReloadPending(employee) ? <em className="org-reload-pending">Pendiente de recarga</em> : null}</button>{children.length > 0 && <Button variant="subtle" onClick={() => toggle(employee.id)}>{closed ? "Expandir" : "Colapsar"} ({children.length})</Button>}</div>{children.length > 0 && !closed && <ul>{children.map((child) => <FunctionalNode key={child.id} employee={child} byManager={byManager} collapsed={collapsed} toggle={toggle} select={select} />)}</ul>}</li>;
 }
 
 export function FunctionalOrgChart({ employees, onExport }: { employees: Employee[]; onExport: () => void }) {
