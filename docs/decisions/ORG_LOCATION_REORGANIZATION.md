@@ -346,7 +346,7 @@ La inactivación solo puede **combinarse** con R1, R2 o R3. **Nunca se deja una 
 | A4 | Hecha: UI separada de Organización, Ubicaciones y Centros de costo; QA visual contra la copia aislada (§13) |
 | A5 | Hecha en `feat/org-location-reorg`: alcance múltiple de puestos con validación, filtros y QA (§14) |
 | A6 | Hecha en `feat/org-location-reorg`: Datos Laborales con puesto y alcance de consulta, ubicaciones con vigencia y transición de legajos anteriores; QA en la copia aislada (§15) |
-| A7 | **En curso, no cerrada.** Consumidores con semántica acordada adaptados y verificados en la copia (§16). Además: guarda de sectores en reglas, inventario previo a M2 y análisis de recálculo (§17). Faltan D-4, D-5, D-7, D-8 y las decisiones nuevas D-13 a D-15 |
+| A7 | **En curso, no cerrada.** D-4, D-5, D-7, D-8 y D-13 a D-15 fueron ratificadas e implementadas con las salvaguardas de §18. Falta el historial temporal normalizado y consultable por fecha para alcance de puesto, empresa y centro de costo; el motor bloquea con `SPECIAL_HOUR_SCOPE_HISTORY_MISSING` cuando no puede demostrar la semántica histórica sin reinterpretar datos |
 | A8, B0–B5 | Pendientes |
 
 ### A2 — qué quedó en código
