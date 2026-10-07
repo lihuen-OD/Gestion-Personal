@@ -5,7 +5,7 @@
 // mensaje del cliente HTTP (sin conexión, dispositivo no autorizado,
 // demasiados intentos) en lugar de un texto fijo (F1), y la página informa
 // cuándo está ocupada para no aplicar una actualización de la app en medio
-// de una fichada (F3). La copia del admin se retira en el cutover (F12).
+// de una fichada (F3). La copia del admin se retiró en F6: ésta es la única.
 import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { LogIn, LogOut, Search } from "lucide-react";
 import { ApiError, getUserErrorMessage } from "../services/api/apiClient";

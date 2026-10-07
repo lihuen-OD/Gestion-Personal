@@ -64,8 +64,11 @@ audit, audit-parameters, auth, clock-devices, dashboard, document-categories, do
 
 `clock-devices` expone dos routers del mismo bounded context: enrolamiento
 público bajo `/api/clock` y administración RRHH bajo `/api/clock-devices`.
-No se mezcla con `time-entries`: F5 no autoriza ni persiste fichadas; esa
-integración corresponde a F6/F8.
+No se mezcla con `time-entries`: `clock-devices` sólo exporta el middleware
+`requireClockDevice`, que desde F6 autentica las rutas de fichada; el núcleo
+de la fichada sigue en `time-entries`. El namespace operativo `/api/clock/*`
+y `source = KIOSK` corresponden a F7 (secuencia vigente en
+`docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md` §25).
 
 Known deviation: `workforce-management` does not have its own repository layer yet (calls Prisma directly from the service) — do not copy that pattern for new modules.
 

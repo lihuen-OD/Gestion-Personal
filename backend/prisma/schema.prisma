@@ -1567,12 +1567,13 @@ model AttendancePunch {
   type                 AttendancePunchType
   timestamp            DateTime               @db.Timestamptz(3)
   source               WorkShiftSource        @default(PORTAL_DNI)
-  // F4: FK a ClockDevice (columna existente, siempre NULL hasta F8, que la
-  // empieza a escribir). Restrict: un dispositivo con fichadas nunca se
-  // borra; se revoca.
+  // F4: FK a ClockDevice. Desde F6 se escribe con el dispositivo autenticado;
+  // las fichadas históricas quedan en NULL. Restrict: un dispositivo con
+  // fichadas nunca se borra; se revoca.
   deviceId             String?
   // Legado sin consumidores (siempre NULL). Lo reemplaza deviceId; se elimina
-  // en el cutover (F12) tras verificar que sigue NULL en cada entorno.
+  // en el retiro del legado (F11, plan §25) tras verificar que sigue NULL en
+  // cada entorno.
   kioskId              String?
   ipAddress            String?
   userAgent            String?

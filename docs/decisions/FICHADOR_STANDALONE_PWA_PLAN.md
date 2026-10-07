@@ -1,7 +1,8 @@
 # Fichador como app independiente (PWA) — Etapa 1: diagnóstico y plan
 
-> Estado: plan aprobado. **F0 cerrada para el entorno de desarrollo actual** (2026-10-06, ver [§18](#18-f0--implementación-y-resultado)); la medición de `TRUST_PROXY_HOPS` es requisito previo del primer deploy real del backend. F1 cerrada (2026-10-06, [§19](#19-f1--fichador-standalone-implementación)). **F2 cerrada a nivel de repositorio: READY FOR DEPLOY — validación real de infraestructura diferida** (2026-10-06, [§20](#20-f2--despliegue-independiente), decisión en §20.12); no bloquea el desarrollo local. **F3 implementada en local** (2026-10-06, [§21](#21-f3--pwa-local)). **F4 cerrada y migrada únicamente en staging** (2026-10-06, [§22](#22-f4--modelo-persistente-clockdevice)). **F5 implementada: enrolamiento individual y administración RRHH; la autenticación individual de fichadas sigue diferida a F6** ([§23](#23-f5--enrolamiento-y-administración-de-dispositivos)).
+> Estado: plan aprobado. **F0 cerrada para el entorno de desarrollo actual** (2026-10-06, ver [§18](#18-f0--implementación-y-resultado)); la medición de `TRUST_PROXY_HOPS` es requisito previo del primer deploy real del backend. F1 cerrada (2026-10-06, [§19](#19-f1--fichador-standalone-implementación)). **F2 cerrada a nivel de repositorio: READY FOR DEPLOY — validación real de infraestructura diferida** (2026-10-06, [§20](#20-f2--despliegue-independiente), decisión en §20.12); no bloquea el desarrollo local. **F3 implementada en local** (2026-10-06, [§21](#21-f3--pwa-local)). **F4 cerrada y migrada únicamente en staging** (2026-10-06, [§22](#22-f4--modelo-persistente-clockdevice)). **F5 implementada: enrolamiento individual y administración RRHH** ([§23](#23-f5--enrolamiento-y-administración-de-dispositivos)). **F6 cerrada definitivamente** (2026-10-07): autenticación individual obligatoria, validada con una fichada real controlada en staging ([§24](#24-f6--autenticación-individual-obligatoria-en-las-fichadas), §24.9). **Próxima etapa: F7, pendiente de aprobación.**
 > Los §1–§17 son el diagnóstico read-only original sobre `main @ 697968a` y describen el estado **previo** a F0 (por ejemplo, las rutas sin foto de §2 ya no existen).
+> **Numeración:** la secuencia vigente de etapas es la de [§25](#25-secuencia-vigente-de-etapas-reconciliada-el-2026-10-07). Los números F6–F15 de §17 y las referencias a etapas futuras dentro de §12–§23 usan la numeración **original** y se leen con la tabla de equivalencias de §25.1.
 
 ---
 
@@ -498,6 +499,8 @@ Neon    base única
 ---
 
 ## 17. Etapas propuestas
+
+> **Plan original, conservado como registro.** F0–F5 se ejecutaron con estos números; desde ahí la ejecución reagrupó etapas (F5 absorbió las F6 y F7 de abajo; F6 adelantó partes de F8 y F12). La secuencia vigente, con el alcance real de cada etapa pendiente, es la de [§25](#25-secuencia-vigente-de-etapas-reconciliada-el-2026-10-07).
 
 Cada etapa cierra con `typecheck`, `test` y `build` en verde en backend, frontend y (desde F1) fichador, sin commit hasta revisión, sin push hasta confirmación y sin tocar producción. Las etapas que tocan `schema.prisma` aplican la migración **solo en staging**.
 
@@ -1299,8 +1302,11 @@ individualmente.** Comprometer un iPad ya no compromete a los demás.
 Numeración: la etapa F6 original de §17 (panel RRHH) y la F7 (enrolamiento en
 la PWA) se completaron dentro de F5. Esta F6 adelanta de la F8 original la
 autenticación de las rutas operativas, la atribución `deviceId` y el rate
-limit por dispositivo. F8 conserva `source = KIOSK`, el namespace
-`/api/clock/*`, el cooldown y la auditoría con el dispositivo como actor.
+limit por dispositivo (que §18.5 asignaba a la F10 original), y de la F12
+original el retiro del token compartido y de la copia del fichador en el
+admin. Lo que quedaba de la F8 original (`source = KIOSK`, `/api/clock/*`,
+cooldown y auditoría con el dispositivo como actor) es la **F7 vigente**
+(§25.1).
 
 ### 24.1 Endpoints y middleware
 
@@ -1459,13 +1465,316 @@ viejo para cualquier cliente.
   consultas extra. La presencia agrega como máximo una escritura por minuto
   por dispositivo, fuera del camino de la respuesta.
 
-### 24.8 Operación pendiente (manual, no ejecutada)
+### 24.8 Variables legacy en infraestructura (auditado el 2026-10-07)
 
-Antes o junto con el próximo deploy de staging:
+**No hay infraestructura real donde borrarlas.** La auditoría de §20.1 sigue
+vigente:
 
-- borrar `CLOCK_DEVICE_TOKEN` del backend en Render;
-- borrar `VITE_CLOCK_DEVICE_TOKEN` del sitio del fichador (su build falla si
-  sigue definido) y del admin;
-- enrolar los kioscos de prueba por pairing.
+- el repo no tiene configuración de Render, Vercel, Docker ni Procfile; el
+  único archivo de hosting es `fichador/netlify.toml`, versionado y nunca
+  conectado a un sitio;
+- ningún commit ni PR tiene statuses o checks de Netlify/Render: sólo los de
+  GitHub Actions (CI de `5c96865` en verde);
+- no hay CLIs de proveedores instaladas ni acceso autorizado a sus paneles;
+- el backend de staging es el proceso local contra Neon (`APP_ENV=staging`).
 
-Los `.env` locales viejos pueden conservar esas líneas sin efecto.
+Por eso la limpieza de `CLOCK_DEVICE_TOKEN` y `VITE_CLOCK_DEVICE_TOKEN` en el
+hosting **queda diferida junto con la infraestructura** (§20.12). No bloquea
+F6. Cuando se cree el hosting, va como parte del checklist de §20.9:
+
+- **Backend (Render u otro):** no definir `CLOCK_DEVICE_TOKEN`. El backend la
+  ignora, porque `env.ts` ya no la declara.
+- **Sitio del fichador (Netlify):** no definir `VITE_CLOCK_DEVICE_TOKEN`. El
+  guard de deploy (`fichador/scripts/hosting-headers.mjs`, `assertDeployEnv`)
+  hace **fallar** el build si está definida. Se verificó el 2026-10-07
+  simulando Netlify: con la variable, `write-hosting-headers.mjs` sale con
+  código 1; sin ella, sale con 0.
+- **Sitio del admin:** no definir `VITE_CLOCK_DEVICE_TOKEN`. El admin ya no la
+  lee y su bundle no contiene `x-clock-device-token`.
+- **Kioscos:** se enrolan por pairing (§23); no hay credencial de build.
+
+**Únicos restos:** los `.env` locales e ignorados por git siguen teniendo las
+claves viejas (`backend/.env`: `CLOCK_DEVICE_TOKEN`; `frontend/.env`:
+`VITE_CLOCK_DEVICE_TOKEN`). Ningún código las lee y pueden borrarse a mano. El
+fichador no tiene `.env` local.
+
+### 24.9 Cierre operativo: fichada real controlada en staging (2026-10-07)
+
+**Resultado: 36/36 verificaciones. F6 queda cerrada definitivamente.** Se hizo
+una sola fichada real, en staging (Neon `neondb`, `APP_ENV=staging`). Nunca
+producción.
+
+**Diseño de la prueba.**
+
+- **Empleado:** "29 Prueba" (legajo 29). Es empleado de prueba, estaba sin
+  jornada abierta y tiene asignado el turno "Prueba" (08:00–12:00, tolerancia
+  ±15 min, todos los días).
+- **Por qué este empleado y este horario:**
+  - "32 Prueba" no tiene turno: su ingreso habría generado
+    `TURNO_NO_IDENTIFICADO` y una notificación.
+  - Un ingreso dentro de la tolerancia del turno propio no genera ninguna
+    alerta de puntualidad.
+- **Por qué un ingreso:** ningún empleado de prueba tenía jornada abierta, así
+  que una salida exigía fabricar una.
+- **Hora:** 07:55:51 ART, 4 min antes del turno, dentro de la tolerancia.
+
+**Partes reales y partes simuladas.**
+
+| Parte | Real o simulada |
+|---|---|
+| HTTP contra `createApp()` real (Express, CORS, helmet, limitadores, `requireClockDevice`, validación, controller, servicio, repositorio) | Real |
+| Base de datos de staging | Real |
+| Almacenamiento real de foto y thumbnail (2 `StorageFile` `ACTIVE`; el thumbnail diferido también se subió) | Real |
+| Auditoría | Real |
+| Enrolamiento (`register` → `status` → `resolve-pairing` → `activate`) y revocación por las rutas reales | Real |
+| Backend levantado en `127.0.0.1:4003` **sin** `startClockPunchMaintenance` (sin scheduler propio) | Real, configuración de prueba |
+| Captura de cámara y detector MediaPipe: no hay cámara en esta máquina. Se usó un JPEG del mismo formato que produce la PWA (`canvas.toDataURL("image/jpeg")`) y `faceValidationStatus = VALID`, que en producción también reporta el cliente (§3, R10) | Simulada |
+| Cliente: un script con el mismo contrato de headers que `clockDeviceSession.ts` (`Authorization: ClockDevice <id>.<secret>`, `X-Clock-App-Version`), no la UI de la PWA | Simulado |
+| Aprobación de RRHH: no hay credenciales en el entorno, así que se firmó un access token de 10 min para el usuario "Administrador RRHH" con el secreto JWT de staging y se usaron las rutas admin reales (`requireAuth` + rol); se salteó sólo el login | Parcialmente simulada |
+
+**Dispositivos.**
+
+- `TEST F6 E2E REAL`: hizo la fichada.
+- `TEST F6 E2E REAL (aislamiento)`: se usó sólo para la prueba de
+  aislamiento.
+
+Los dos se enrolaron por pairing, se aprobaron sin sector y terminaron
+`REVOKED`. No se reutilizó ningún dispositivo ni el token viejo.
+
+**Verificado.**
+
+- **`PENDING` en ruta operativa:** 403 `CLOCK_DEVICE_NOT_ACTIVE`.
+- **Secuencia operativa:** `ACTIVE` →
+  `GET /time-entries/clock/employees` (encuentra a 29 Prueba con
+  `dniSuffix`, sin DNI) → `POST /status` (sin jornada abierta) →
+  `POST /photo-punch` IN → `GET /attempts/:requestId` `COMPLETED`.
+- **Body falsificado:** el body mandaba `deviceId` del otro dispositivo,
+  `ipAddress: "6.6.6.6"`, `source: "KIOSK"` y `device.userAgent` falso, y la
+  request agregaba `X-Forwarded-For: 6.6.6.6`. Nada de eso se usó:
+  - `ClockPunchAttempt.deviceId` y `AttendancePunch.deviceId` quedaron con el
+    dispositivo autenticado;
+  - `ipAddress` quedó `127.0.0.1` (la IP del socket, con
+    `TRUST_PROXY_HOPS=0`);
+  - `userAgent` quedó el header real.
+- **`source`:** `PUBLIC_CLOCK_PHOTO`. `KIOSK` corresponde a F7 (§25.5).
+- **`kioskId`:** `NULL`.
+- **Aislamiento entre dispositivos:**
+  - el otro dispositivo consulta el intento → 404 `CLOCK_ATTEMPT_NOT_FOUND`;
+  - el otro dispositivo reusa el `requestId` → 409
+    `CLOCK_IDEMPOTENCY_KEY_REUSED`, sin `data`.
+- **Idempotencia:** el reintento del mismo dispositivo devolvió la misma
+  jornada.
+- **Sin duplicados:** 1 `AttendancePunch`, 1 `WorkShift` y 1
+  `ClockPunchAttempt`.
+- **Jornada:** `WorkShift` `ABIERTO`, con el turno propio "Prueba" adoptado
+  (`maxAllowedMinutes` 1200), 0 `TimeEntry` y 0 `TimeSegment`. Es lo esperado
+  en un ingreso.
+- **Presencia:** `lastSeenAt`, user-agent y `lastAppVersion` registrados.
+- **Revocación:** revocado → 403 `CLOCK_DEVICE_REVOKED`.
+
+**Efectos laterales.**
+
+- **Esperados:**
+  - `AttendancePunch`, `WorkShift`, `ClockPunchAttempt` y 2 `StorageFile`;
+  - 11 `AuditLog`, todos de la prueba:
+    - aprobación ×2;
+    - `CREATE WorkShift`;
+    - `UPDATE WorkShift` (falta de salida);
+    - revocación ×2;
+    - borrado del pendiente;
+    - 4 `REJECT Route` de los 403 esperados (el `errorHandler` audita los
+      403).
+- **No hubo:** `ShiftAlert` ni `SystemNotification` por la prueba.
+- **Inesperados de la prueba:** ninguno.
+- **Concurrente, no de la prueba:** a las 07:28 el usuario levantó su backend
+  local (:4002, con scheduler) contra staging. Ese scheduler generó 19
+  notificaciones "Falta de ingreso" (07/10) y 5 "Sin actividad registrada"
+  (06/10), antes y fuera de la prueba. Los efectos se atribuyeron por entidad
+  (jornada, fichada, dispositivos, alertas) y por user-agent de prueba.
+- **Efecto derivado, esperado y observado a las 08:20:** al vencer la
+  tolerancia (08:15), ese scheduler creó "Falta de ingreso" del 07/10 para
+  "30 Prueba", que tiene el mismo turno y no fichó, pero **no** para
+  "29 Prueba". Esto confirma, de punta a punta, que la fichada del
+  dispositivo cuenta como ingreso real para los monitores. La jornada de
+  prueba siguió `FALTA_SALIDA`, sin alertas.
+
+**Limpieza.**
+
+- **Jornada abierta:** se cerró por el camino de RRHH "Marcar falta de
+  salida" (`POST /time-entries/work-shifts/:id/missing-out`), con el motivo
+  "TEST F6 E2E REAL: jornada de prueba del cierre operativo de F6 (no es
+  asistencia real)…". Así ningún monitor (posible olvido de salida, cierre
+  automático a las 20 h) genera alertas ni notificaciones sobre ella. No crea
+  `TimeEntry`.
+- **Dispositivos:** los dos quedan `REVOKED`. La FK `RESTRICT` impide borrar
+  uno con fichadas, y la política de F5 conserva los revocados.
+- **Dispositivo `PENDING` sobrante:** lo dejó un primer intento del script,
+  que abortó por leer mal la forma del error (`error.code`) antes de escribir
+  nada más. Se borró por la ruta RRHH de borrado de pendientes sin historia.
+- **Lo que se conserva, identificado como prueba:**
+  - la fichada, el intento (el scheduler lo borra por retención a los 30
+    días), la jornada `FALTA_SALIDA`, las 2 fotos y la auditoría;
+  - motivo: no existe una política explícita de borrado de fichadas reales,
+    y borrarlas rompería la trazabilidad de la auditoría y del dispositivo.
+- **Sin SQL destructivo.**
+
+**Conteos antes y después.**
+
+| Tabla | Antes | Después |
+|---|---|---|
+| `AttendancePunch` | 79 | 80 |
+| `ClockPunchAttempt` | 24 | 25 |
+| `TimeEntry` | 85 | 85 |
+| `WorkShift` | 46 | 47 |
+| `ShiftAlert` | 91 | 91 |
+| `SystemNotification` | 1016 | 1016 |
+| `ClockDevice` | 3 | 5 |
+| `AuditLog` | 2098 | 2109 |
+| `StorageFile` | 163 | 165 |
+| `TimeSegment` | 56 | 56 |
+| `deviceId` no nulo (fichadas / intentos) | 0 / 0 | 1 / 1 |
+| `source` | `ADMIN` 4, `PORTAL_DNI` 7, `PUBLIC_CLOCK_PHOTO` 68 | `ADMIN` 4, `PORTAL_DNI` 7, `PUBLIC_CLOCK_PHOTO` 69 |
+
+Ningún dato histórico cambió.
+
+**Herramientas.** `backend/scripts/clock-staging-matrix.ts` no se usó: crea
+empleados descartables y borra todo en su cleanup. Además tiene un error de
+tipos preexistente: crea un `NoveltyType` con `origin`, un campo que el modelo
+ya no tiene (TS2353). `scripts/` está fuera del `tsconfig`, así que no rompe
+`npm run typecheck` ni CI. Con `tsx` fallaría en runtime en el escenario
+"novelty-blocked-day". No se corrigió porque no impedía esta validación; queda
+como deuda de tooling.
+
+---
+
+## 25. Secuencia vigente de etapas (reconciliada el 2026-10-07)
+
+Ésta es la **única** numeración válida. §17 queda como registro del plan
+original: F0–F5 se ejecutaron con sus números, pero F5 y F6 reagruparon
+alcance. Por eso, desde F6, los números de §17 ya no coinciden con lo
+ejecutado. No se implementó ninguna etapa nueva al reconciliar.
+
+### 25.1 Etapas
+
+| Etapa | Alcance | Origen en §17 | Estado |
+|---|---|---|---|
+| F0 | Higiene de seguridad del backend (rutas sin foto, minimización, `trust proxy`) | F0 | Cerrada (§18) |
+| F1 | App `fichador/` separada | F1 | Cerrada (§19) |
+| F2 | Deploy independiente (`netlify.toml`, headers, CORS) | F2 | Cerrada a nivel repo; infraestructura real diferida (§20.12) |
+| F3 | PWA (manifest, SW, self-hosting, CSP) | F3 | Cerrada en local; iPad real diferido (§21.9) |
+| F4 | Modelo `ClockDevice` | F4 | Cerrada; migración sólo en staging (§22) |
+| F5 | Enrolamiento backend, panel RRHH (aprobar por código, revocar, borrar pendiente) y enrolamiento en la PWA | F5 + F6 + F7 | Cerrada (§23) |
+| F6 | Autenticación individual obligatoria en `/time-entries/clock/*`, `deviceId` en fichadas e intentos, rate limit por dispositivo, retiro del token compartido y de la copia del fichador en el admin | autenticación y atribución de F8; rate limit por dispositivo de F10 (§18.5); retiro de token y copia admin de F12 | **Cerrada definitivamente** el 2026-10-07 (§24.9) |
+| **F7** | **Contrato operativo de kiosco (backend):** `/api/clock/*` convive con `/time-entries/clock/*`; `source = KIOSK` en las fichadas nuevas de dispositivo; cooldown entre fichadas distintas; auditoría con el dispositivo como actor; Asistencia muestra "Kiosco · <dispositivo>"; matriz de staging en el namespace nuevo | resto de F8 | Pendiente. **Próxima etapa, requiere aprobación** |
+| F8 | Cutover del cliente: la PWA usa sólo `/api/clock/*`; reenvío con el mismo `requestId` ante 404 (§14.3); el kiosco nunca queda bloqueado; confirmación con la hora del servidor y retorno automático | F9 | Pendiente |
+| F9 | Heartbeat y gestión operativa de dispositivos: ping con `serverTime` y estado sin conexión (§13, §14.4); conectividad derivada en el panel; renombrar y cambiar sector; limpieza automática de `PENDING` vencidos | F10 + lo pendiente de la gestión de F5/F6 originales (`rename`, limpieza de pendientes, conectividad) | Pendiente |
+| F10 | Cámara y operación de kiosco: Wake Lock, cámara abierta vs. por fichada, permiso en standalone, instrucciones de instalación ("Agregar a inicio") y de Acceso guiado | F11 + instrucciones de instalación de F7 (hoy sólo hay un aviso genérico en el Gate) | Pendiente |
+| F11 | Hardening y retiro del legado: retirar `/time-entries/clock/*` tras 7 días sin tráfico; retirar la ruta `/fichador` del admin y `AttendancePunch.kioskId`; límite de body antes de autenticar (R9); CSP enforced; auditoría de fichada no diferida; evaluar `CryptoKey` no exportable; store compartido de rate limit si hay más de una instancia (§25.3) | resto de F12 | Pendiente |
+| F12 | Piloto: 1 iPad, 1 establecimiento, 2 semanas. Prerrequisitos: infraestructura real (§20.9) y `TRUST_PROXY_HOPS` medido (§18.5) | F13 | Pendiente |
+| F13 | Rollout a producción, con aprobación explícita para migraciones | F14 | Pendiente |
+| F14 | Reconocimiento facial: proyecto aparte, requiere definición legal | F15 | Fuera de esta iniciativa |
+
+**Equivalencias** para leer §12–§23 y los comentarios históricos:
+
+| Número en §12–§23 | Número vigente |
+|---|---|
+| F6, F7 | dentro de F5 |
+| F8 | F7; su autenticación y atribución ya se hicieron en F6 |
+| F9 | F8 |
+| F10 | F9; su rate limit por dispositivo ya se hizo en F6 |
+| F11 | F10 |
+| F12 | F11; el retiro del token y de la copia admin ya se hizo en F6 |
+| F13 | F12 |
+| F14 | F13 |
+| F15 | F14 |
+
+La migración `20261006150000_add_clock_device` dice "legado hasta F12". Es
+inmutable (cambiarla altera su checksum), así que ese "F12" se lee como F11.
+
+**Dónde queda cada tema:**
+
+| Tema | Etapa |
+|---|---|
+| Gestión operativa de dispositivos: aprobar y revocar | F5 (hecha) |
+| Gestión operativa de dispositivos: renombrar, cambiar sector, limpiar pendientes, conectividad | F9 |
+| Instrucciones de instalación | F10 |
+| Namespace `/api/clock/*`: crear | F7 |
+| Namespace `/api/clock/*`: el cliente lo usa | F8 |
+| Retiro de `/time-entries/clock/*` | F11 |
+| `WorkShiftSource.KIOSK` | F7 |
+| Cooldown | F7 |
+| Heartbeat | F9 |
+| Retiro definitivo del legado (rutas, `/fichador` del admin, `kioskId`) | F11 |
+
+### 25.2 Decisión vigente: el sector del dispositivo no autoriza
+
+`ClockDevice.sectorId` describe **dónde está instalado** el dispositivo. RRHH lo
+elige al aprobar y es opcional. **No restringe nada:**
+
+- un dispositivo `ACTIVE` puede buscar y fichar a cualquier empleado `ACTIVO`,
+  también a los de otros sectores;
+- `requireClockDevice` lo expone en `req.clockDevice.sectorId`, pero ninguna
+  ruta lo usa para filtrar;
+- borrar el sector lo deja en `NULL` (`ON DELETE SET NULL`, §22.1).
+
+Que un dispositivo sólo pueda fichar a empleados de su sector (o de su
+establecimiento) es una **decisión de negocio futura, sin etapa asignada**.
+Implementarla cambiaría la búsqueda y el estado del kiosco, y necesita
+definir qué pasa con empleados sin sector, rotativos o con más de un lugar de
+trabajo. Hasta entonces, nadie debe asumir que sector = permiso.
+
+### 25.3 Deuda conocida: rate limit en memoria por proceso
+
+Los cuatro limitadores del fichador usan el store por defecto de
+`express-rate-limit`, que es memoria del proceso:
+
+- el límite por IP previo a la autenticación;
+- el límite por dispositivo;
+- los del enrolamiento;
+- el global.
+
+Con **una sola instancia** del backend (lo previsto) los cupos configurados
+son exactos. Con **N instancias**, cada una cuenta por separado:
+
+- el límite efectivo por IP y por dispositivo pasa a ser N veces el
+  configurado;
+- cada deploy o reinicio pone los contadores en cero.
+
+Se registra como hardening futuro (F11, o antes si se escala
+horizontalmente): un store compartido, por ejemplo Redis. **No se implementa
+ahora.** Ya figuraba como riesgo en §16.2.
+
+### 25.4 Decisiones de infraestructura pendientes
+
+- **Deploy previews y branch deploys del fichador:** siguen apagados
+  (`fichador/netlify.toml`). El motivo original (token en el bundle) ya no
+  existe. Los motivos actuales están en `DEVOPS_DEPLOYMENT_STANDARDS.md`:
+  - CORS sin comodines;
+  - no hay backend de previews;
+  - hace falta un enrolamiento por origin.
+
+  Se decide cuando exista el hosting.
+- **Variables legacy del hosting:** no se definen al crear la infraestructura
+  (§24.8).
+- **`TRUST_PROXY_HOPS`:** se mide en el primer deploy real del backend (§18.5).
+  Es bloqueante para el piloto.
+
+### 25.5 Alcance confirmado de F7 (sin implementar)
+
+- **`source`:** hoy toda fichada nueva de dispositivo se guarda como
+  `PUBLIC_CLOCK_PHOTO`, y así se verificó en la fichada real de §24.9. F7 la
+  cambia a `KIOSK` sólo para las fichadas nuevas autenticadas por
+  `ClockDevice`. El histórico no se convierte (§16.1). El valor `KIOSK` ya
+  existe en el enum, así que no hace falta migración.
+- **Idempotencia vs. cooldown.** No mezclar los dos conceptos:
+  - La **idempotencia ya existe**: es *la misma request* (mismo `requestId` y
+    mismo payload) reintentada. Devuelve el resultado guardado y no crea otra
+    fichada. Desde F6, un `requestId` sólo vale para el dispositivo que lo
+    creó.
+  - El **cooldown no existe todavía**: son *fichadas distintas* (otro
+    `requestId`) del mismo empleado demasiado cerca en el tiempo, por ejemplo
+    un ingreso seguido de una salida a los 20 s. F7 lo agrega en el backend
+    (`CLOCK_PUNCH_COOLDOWN_SECONDS`, `409 CLOCK_PUNCH_COOLDOWN`, §14.3),
+    evaluado antes de guardar la foto.
+- **Namespace:** F7 crea `/api/clock/*` en paralelo, sin romper la PWA actual.
+  F8 migra el cliente. F11 retira `/time-entries/clock/*`.

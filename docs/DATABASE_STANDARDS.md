@@ -164,5 +164,6 @@ activación es una transición condicional y atómica que exige el hash del cód
 vigente, asigna nombre/sector/autor y limpia `pairingCodeHash` y
 `pairingExpiresAt`. Sólo `ACTIVE` puede pasar a `REVOKED`; `REVOKED` es terminal.
 El único hard delete permitido es un `PENDING` sin `AttendancePunch` ni
-`ClockPunchAttempt`. La autenticación y atribución de fichadas continúa fuera
-del alcance hasta F6/F8.
+`ClockPunchAttempt`. Desde F6 las fichadas e intentos nuevos guardan
+`deviceId` del dispositivo autenticado (el histórico sigue en `NULL`); el
+cambio de `AttendancePunch.source` a `KIOSK` corresponde a F7 (plan §25).

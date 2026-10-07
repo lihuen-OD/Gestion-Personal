@@ -127,7 +127,14 @@ Tres apps desplegadas por separado (`docs/decisions/FICHADOR_STANDALONE_PWA_PLAN
 
 ## Frontend deploy
 
-Two independent static sites (F2 of `docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md`): the admin (base directory `frontend`) and the fichador (base directory `fichador`, versioned config in `fichador/netlify.toml`, headers generated into `dist/_headers`). Never build both in one site nor serve the fichador under an admin path. Fichador deploy previews and branch deploys stay off while the temporary shared token is in its bundle.
+Two independent static sites (F2 of `docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md`): the admin (base directory `frontend`) and the fichador (base directory `fichador`, versioned config in `fichador/netlify.toml`, headers generated into `dist/_headers`). Never build both in one site nor serve the fichador under an admin path.
+
+Fichador deploy previews and branch deploys stay **off** (`ignore = "exit 0"` per context in `fichador/netlify.toml`). The original reason — the temporary shared token embedded in every published bundle — no longer exists: F6 removed it and the build fails if `VITE_CLOCK_DEVICE_TOKEN` is defined. The current reasons are:
+- `CORS_ORIGIN` is an exact allowlist with no wildcards, so a preview URL (a new origin per build) cannot reach the backend unless it is added explicitly;
+- there is no separate preview backend, and pointing previews at the shared testing backend would expose unreviewed code to its data;
+- each origin needs its own `ClockDevice` enrollment (IndexedDB is per origin), so a preview kiosk is never the enrolled kiosk.
+
+Enabling previews is a **pending infrastructure decision** (FICHADOR_STANDALONE_PWA_PLAN.md §25.4), to be taken when the real hosting exists (§20.12). Do not enable them just because the token is gone.
 
 Check:
 - correct build command

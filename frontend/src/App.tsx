@@ -58,7 +58,7 @@ export function App() {
         <Routes>
           {/* F6 (docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md): las fichadas
               exigen un ClockDevice individual, así que /fichador sólo informa
-              dónde se ficha ahora. La ruta se retira en F12. */}
+              dónde se ficha ahora. La ruta se retira en F11 (plan §25). */}
           <Route path="/fichador" element={<TimeClockMovedPage variant="public" />} />
           <Route path="*" element={<LoginPage />} />
         </Routes>

@@ -15,10 +15,13 @@
   # Misma versión mayor que CI (.github/workflows/ci.yml).
   NODE_VERSION = "22"
 
-# Sin deploy previews ni branch deploys: mientras exista el token compartido
-# temporal (hasta F4–F6), cada build publica una URL que lo lleva embebido.
-# `ignore` con salida 0 cancela el build en esos contextos. Desactivarlos
-# también en el panel (Deploy contexts → Deploy previews: None).
+# Sin deploy previews ni branch deploys. El token compartido que los motivó
+# se retiró en F6; hoy siguen apagados porque CORS_ORIGIN es una allowlist
+# exacta (una URL de preview no llega al backend), no hay backend de previews
+# y cada origin necesita su propio ClockDevice. Habilitarlos es una decisión
+# de infraestructura pendiente (plan §25.4). `ignore` con salida 0 cancela el
+# build en esos contextos. Desactivarlos también en el panel (Deploy
+# contexts → Deploy previews: None).
 [context.deploy-preview]
   ignore = "exit 0"
 

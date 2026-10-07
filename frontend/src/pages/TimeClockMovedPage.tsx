@@ -8,7 +8,7 @@ import { Section } from "../components/ui/Section";
 // deja de ser un fichador. Sólo informa dónde se ficha ahora; no carga
 // cámara, no busca empleados y no llama a ningún endpoint de /clock. La ruta
 // se conserva (marcadores y accesos directos viejos) hasta el retiro final
-// de F12.
+// de F11 (plan §25).
 const MESSAGE = "Las fichadas se registran desde la app Fichador instalada en cada equipo habilitado por RRHH. Esta pantalla ya no registra ingresos ni salidas.";
 
 export function TimeClockMovedPage({ variant, canManageDevices = false }: { variant: "public" | "app"; canManageDevices?: boolean }) {

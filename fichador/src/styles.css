@@ -3,9 +3,8 @@
  * Subconjunto de frontend/src/styles.css: sólo las reglas cuyos selectores
  * aplican al DOM del fichador, en el mismo orden de cascada, para que se vea
  * igual que /fichador del admin sin cargar los ~180 KB del CSS administrativo.
- * Copia controlada y temporal: mientras /fichador siga vivo en el admin, un
- * cambio visual del fichador se aplica en ambos lados. A partir del cutover
- * (F12) este archivo es la única fuente y puede evolucionar por su cuenta.
+ * Desde F6 el admin ya no tiene fichador (sus estilos de reloj y cámara se
+ * borraron): este archivo es la única fuente y evoluciona por su cuenta.
  *
  * F3: Inter ya no se importa de Google Fonts; viene self-hosted de
  * @fontsource/inter (importado en main.tsx) y entra al precache del SW.
