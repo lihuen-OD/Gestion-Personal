@@ -45,13 +45,13 @@ function emptyUserDraft(): UserDraft {
   };
 }
 
-// Empresa / Area: sin empresa (se muestra "Acceso global") queda al final, como cualquier vacío.
+// La empresa es un dato administrativo existente; no concede permisos.
 const sortAccessors: SortAccessors<User, "name" | "email" | "role" | "status" | "scope" | "employee"> = {
   name: (user) => user.name,
   email: (user) => user.email,
   role: (user) => user.role,
   status: (user) => user.status,
-  scope: (user) => [user.company, user.sector].filter(Boolean).join(" - "),
+  scope: (user) => user.company || "",
   employee: (user) => user.employeeName,
 };
 
@@ -59,7 +59,6 @@ export function UsersPage() {
   const { user: currentUser } = useAuth();
   const [users, setUsers] = useState<User[]>([]);
   const [companyOptions, setCompanyOptions] = useState<string[]>([]);
-  const [sectorOptions, setSectorOptions] = useState<string[]>([]);
   const [employeeOptions, setEmployeeOptions] = useState<Employee[]>([]);
   const [refresh, setRefresh] = useState(0);
   const [listStatus, setListStatus] = useState<"loading" | "success" | "error">("loading");
@@ -67,7 +66,7 @@ export function UsersPage() {
   const [editingUserId, setEditingUserId] = useState<string | null>(null);
   const [draft, setDraft] = useState<UserDraft>(() => emptyUserDraft());
   const [error, setError] = useState("");
-  // Etapa 9E: catálogo de empresas/sectores y los hasta 1000 empleados sólo
+  // Etapa 9E: catálogo de empresas y los hasta 1000 empleados sólo
   // los usa el modal de crear/editar (selects de alcance y empleado
   // vinculado) — antes se pedían en el mount de la pantalla, bloqueando la
   // tabla hasta que resolvieran, aunque la tabla nunca los muestra. Se
@@ -99,7 +98,6 @@ export function UsersPage() {
     Promise.all([orgStructureApiService.getCatalog(), employeeApiService.getAllOptions()])
       .then(([catalog, apiEmployeeOptions]) => {
         setCompanyOptions(catalog.companies.map((item) => item.name));
-        setSectorOptions(catalog.sectors.map((item) => item.name));
         setEmployeeOptions(apiEmployeeOptions);
         setCatalogStatus("ready");
       })
@@ -153,7 +151,7 @@ export function UsersPage() {
       email,
       password,
       company: draft.company || undefined,
-      sector: draft.sector || undefined,
+      sector: undefined,
     };
 
     try {
@@ -200,7 +198,7 @@ export function UsersPage() {
     <PageHeader
       eyebrow="SEGURIDAD Y ACCESOS"
       title="Usuarios y roles"
-      description="Administra usuarios reales de acceso, roles y alcance organizacional."
+      description="Administra usuarios reales de acceso, roles y su empresa administrativa. Los permisos se resuelven por responsable de carga."
       action={<Button variant="primary" icon={Plus} onClick={openCreate}>Crear usuario</Button>}
     />
 
@@ -219,7 +217,7 @@ export function UsersPage() {
               <SortableHeader label="Email" sortKey="email" sort={sort} onSort={toggleSort} />
               <SortableHeader label="Rol" sortKey="role" sort={sort} onSort={toggleSort} />
               <SortableHeader label="Estado" sortKey="status" sort={sort} onSort={toggleSort} />
-              <SortableHeader label="Empresa / Area" sortKey="scope" sort={sort} onSort={toggleSort} />
+              <SortableHeader label="Empresa administrativa" sortKey="scope" sort={sort} onSort={toggleSort} />
               <SortableHeader label="Empleado vinculado" sortKey="employee" sort={sort} onSort={toggleSort} />
               <th>Acciones</th>
             </tr>
@@ -231,7 +229,7 @@ export function UsersPage() {
                 <td>{user.email}</td>
                 <td><OverflowCell value={user.role} /></td>
                 <td><Badge tone={statusTone(user.status)}>{user.status}</Badge></td>
-                <td><OverflowCell value={`${user.company || "Acceso global"} ${user.sector ? `- ${user.sector}` : ""}`.trim()} /></td>
+                <td><OverflowCell value={user.company || "Sin empresa"} /></td>
                 <td><OverflowCell value={user.employeeName || "-"} /></td>
                 <td>
                   <div className="table-actions">
@@ -254,7 +252,7 @@ export function UsersPage() {
             <b>{editingUserId ? "Edicion de usuario" : "Alta de usuario"}</b>
             <p>
               {editingUserId
-                ? "Podes actualizar datos, rol, alcance y estado. Si completas contrasena, se resetea el acceso."
+                ? "Podes actualizar datos, rol, empresa administrativa y estado. Si completas contrasena, se resetea el acceso."
                 : "Este usuario podra ingresar con el email y contrasena definidos. El rol determina permisos y visibilidad."}
             </p>
           </div>
@@ -264,10 +262,9 @@ export function UsersPage() {
           <Field label={editingUserId ? "Nueva contrasena (opcional)" : "Contrasena inicial *"} type="password" value={draft.password} set={(password) => setDraft({ ...draft, password })} />
           <Select label="Rol *" value={draft.role} set={(role) => setDraft({ ...draft, role: role as Role })} options={userRoleOptions(draft.role)} />
           <Select label="Estado" value={draft.status} set={(status) => setDraft({ ...draft, status: status as User["status"] })} options={["Activo", "Inactivo"]} />
-          {catalogStatus === "loading" ? <p className="muted small">Cargando opciones de empresa, sector y empleados...</p> : null}
-          {catalogStatus === "error" ? <p className="muted small">No pudimos cargar empresa/sector/empleados. Podés guardar igual sin esos datos, o cerrar y volver a intentar.</p> : null}
-          <Select label="Empresa / alcance" value={draft.company || ""} set={(company) => setDraft({ ...draft, company })} options={companyOptions} disabled={catalogStatus === "loading"} />
-          <Select label="Sector / area" value={draft.sector || ""} set={(sector) => setDraft({ ...draft, sector })} options={sectorOptions} disabled={catalogStatus === "loading"} />
+          {catalogStatus === "loading" ? <p className="muted small">Cargando opciones de empresa y empleados...</p> : null}
+          {catalogStatus === "error" ? <p className="muted small">No pudimos cargar empresa/empleados. Podés guardar igual sin esos datos, o cerrar y volver a intentar.</p> : null}
+          <Select label="Empresa administrativa" value={draft.company || ""} set={(company) => setDraft({ ...draft, company })} options={companyOptions} disabled={catalogStatus === "loading"} />
           <label>
             Empleado vinculado
             <select

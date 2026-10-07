@@ -8,7 +8,6 @@ export const publicUserSelect = {
   role: true,
   status: true,
   companyId: true,
-  sectorId: true,
 } satisfies Prisma.UserSelect;
 
 export const authRepository = {

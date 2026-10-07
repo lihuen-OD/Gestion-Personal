@@ -115,9 +115,9 @@ describe("UsersPage — Etapa 9E (catálogo diferido al abrir el modal)", () => 
 
     await user.click(screen.getByRole("button", { name: "Crear usuario" }));
 
-    expect(screen.getByLabelText("Empresa / alcance")).toBeDisabled();
+    expect(screen.getByLabelText("Empresa administrativa")).toBeDisabled();
     resolveCatalog(emptyCatalog);
-    await waitFor(() => expect(screen.getByLabelText("Empresa / alcance")).not.toBeDisabled());
+    await waitFor(() => expect(screen.getByLabelText("Empresa administrativa")).not.toBeDisabled());
   });
 
   it("crear un usuario sigue funcionando (acción existente intacta)", async () => {

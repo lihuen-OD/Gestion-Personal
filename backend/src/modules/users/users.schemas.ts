@@ -18,7 +18,6 @@ export const createUserSchema = z.object({
   role: roleSchema,
   status: statusSchema.default("ACTIVO"),
   companyId: z.string().uuid().optional().nullable(),
-  sectorId: z.string().uuid().optional().nullable(),
   employeeId: z.string().uuid().optional().nullable(),
 });
 
@@ -28,7 +27,6 @@ export const updateUserSchema = z.object({
   role: roleSchema.optional(),
   status: statusSchema.optional(),
   companyId: z.string().uuid().optional().nullable(),
-  sectorId: z.string().uuid().optional().nullable(),
   employeeId: z.string().uuid().optional().nullable(),
 });
 

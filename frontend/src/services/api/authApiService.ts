@@ -11,7 +11,6 @@ interface BackendUser {
   role: BackendRole;
   status: BackendStatus;
   companyId?: string | null;
-  sectorId?: string | null;
 }
 
 interface LoginResponse {
@@ -35,7 +34,7 @@ function mapUser(user: BackendUser): User {
     role: roleMap[user.role],
     status: user.status === "ACTIVO" ? "Activo" : "Inactivo",
     company: user.companyId || undefined,
-    sector: user.sectorId || undefined,
+    sector: undefined,
   };
 }
 

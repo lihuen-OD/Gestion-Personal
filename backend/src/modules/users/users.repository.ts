@@ -9,12 +9,10 @@ export const userSelect = {
   role: true,
   status: true,
   companyId: true,
-  sectorId: true,
   employeeId: true,
   createdAt: true,
   updatedAt: true,
   company: { select: { id: true, name: true, code: true } },
-  sector: { select: { id: true, name: true, code: true } },
   employee: { select: { id: true, legajo: true, firstName: true, lastName: true } },
 } satisfies Prisma.UserSelect;
 
@@ -72,7 +70,6 @@ export const usersRepository = {
         role: input.role,
         status: input.status,
         companyId: input.companyId || null,
-        sectorId: input.sectorId || null,
         employeeId: input.employeeId || null,
       },
       select: userSelect,
@@ -88,7 +85,6 @@ export const usersRepository = {
         ...(input.role !== undefined ? { role: input.role } : {}),
         ...(input.status !== undefined ? { status: input.status } : {}),
         ...(input.companyId !== undefined ? { companyId: input.companyId || null } : {}),
-        ...(input.sectorId !== undefined ? { sectorId: input.sectorId || null } : {}),
         ...(input.employeeId !== undefined ? { employeeId: input.employeeId || null } : {}),
       },
       select: userSelect,

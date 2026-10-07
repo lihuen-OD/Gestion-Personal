@@ -13,10 +13,8 @@ type ApiUser = {
   role: ApiRole;
   status: ApiStatus;
   companyId?: string | null;
-  sectorId?: string | null;
   employeeId?: string | null;
   company?: { id: string; name: string; code: string } | null;
-  sector?: { id: string; name: string; code: string } | null;
   employee?: { id: string; legajo: string; firstName: string; lastName: string } | null;
 };
 
@@ -52,7 +50,7 @@ function mapFromApi(item: ApiUser): User {
     role: roleFromApi[item.role],
     status: statusFromApi(item.status),
     company: item.company?.name || "",
-    sector: item.sector?.name || "",
+    sector: "",
     employeeId: item.employeeId || item.employee?.id || "",
     employeeName: item.employee ? `${item.employee.firstName} ${item.employee.lastName}` : "",
   };
@@ -62,7 +60,6 @@ async function resolveScope(user: Omit<User, "id"> | User) {
   const catalog = await orgStructureApiService.getCatalog().catch(() => null);
   return {
     companyId: user.company ? catalog?.companies.find((item) => item.name === user.company)?.id || null : null,
-    sectorId: user.sector ? catalog?.sectors.find((item) => item.name === user.sector)?.id || null : null,
   };
 }
 
@@ -91,7 +88,6 @@ export const userApiService = {
         role: roleToApi[user.role],
         status: statusToApi(user.status),
         companyId: scope.companyId,
-        sectorId: scope.sectorId,
         employeeId: user.employeeId || null,
       },
     });
@@ -108,7 +104,6 @@ export const userApiService = {
         role: roleToApi[user.role],
         status: statusToApi(user.status),
         companyId: scope.companyId,
-        sectorId: scope.sectorId,
         employeeId: user.employeeId || null,
       },
     });
