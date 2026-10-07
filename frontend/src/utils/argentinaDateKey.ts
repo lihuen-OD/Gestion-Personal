@@ -29,3 +29,10 @@ export function calendarDateKey(value: string | Date): string {
   const date = typeof value === "string" ? new Date(value) : value;
   return date.toLocaleDateString("sv-SE", { timeZone: "UTC" });
 }
+
+/** Día calendario siguiente a `dateKey` ("YYYY-MM-DD"), sin corrimiento de huso horario. */
+export function nextCalendarDateKey(dateKey: string): string {
+  const date = new Date(`${dateKey}T00:00:00.000Z`);
+  date.setUTCDate(date.getUTCDate() + 1);
+  return date.toISOString().slice(0, 10);
+}

@@ -375,17 +375,14 @@ async function resolveRelations(employee: Employee) {
   const companyNames = compact([...(employee.companies || []), employee.company]);
   const companyIds = compact(companyNames.map((name) => catalog?.companies.find((item) => item.name === name)?.id));
   const primaryCompanyId = companyIds[0] || undefined;
-  const sectorId = catalog?.sectors.find((item) => item.name === employee.sector)?.id;
   const costCenterId = catalog?.costCenters.find((item) => item.name === employee.costCenter || item.code === employee.costCenter)?.id;
   const positionId = employee.positionId || employee.puestoId || positions.find((item) => item.name === employee.puestoNombre || item.name === employee.position)?.id;
   return {
     companyIds,
     primaryCompanyId,
-    sectorId,
     costCenterId,
     positionId,
     companiesResolved: Boolean(catalog) && (!companyNames.length || companyIds.length === companyNames.length),
-    sectorResolved: Boolean(catalog) && (!employee.sector || Boolean(sectorId)),
     costCenterResolved: Boolean(catalog) && (!employee.costCenter || Boolean(costCenterId)),
     positionResolved: Boolean(employee.positionId || employee.puestoId) || !(employee.puestoNombre || employee.position) || Boolean(positionId),
   };
@@ -414,7 +411,9 @@ async function mapEmployeeToApi(employee: Employee, mode: "create" | "update" = 
     emergencyPhone: employee.emergencyPhone || null,
     status: toApiStatus(employee.status),
     ...(shouldSendAllRelations || relations.positionResolved ? { positionId: relations.positionId || null } : {}),
-    ...(shouldSendAllRelations || relations.sectorResolved ? { sectorId: relations.sectorId || null } : {}),
+    // A6 (ORG_LOCATION_REORGANIZATION.md §3.3): el sector del legajo es del
+    // modelo anterior y de sólo lectura; nunca se envía. Antes se resolvía por
+    // nombre y podía reasignar en silencio un sector homónimo del árbol nuevo.
     ...(shouldSendAllRelations || relations.costCenterResolved ? { costCenterId: relations.costCenterId || null } : {}),
     healthInsurance: employee.healthInsurance || null,
     agreement: employee.agreement || null,

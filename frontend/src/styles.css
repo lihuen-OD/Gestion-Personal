@@ -2387,3 +2387,63 @@ a.employee-hours-status-item:hover{border-color:var(--ds-blue-300);background:va
    card de altura natural en una columna. */
 .clock-moved-page .login-brand h1{color:#fff}
 .clock-moved-page .login-card{align-self:center}
+/* A6 (ORG_LOCATION_REORGANIZATION.md §3.3): Datos Laborales — puesto y
+   alcance de sólo lectura, ubicaciones con vigencia e información anterior
+   pendiente de recarga. */
+.labor-pending-reload{margin:16px 18px 0;border-color:var(--color-warning-border);border-left-color:var(--color-warning);background:var(--color-warning-bg)}
+.labor-pending-reload b{color:var(--color-warning)}
+.labor-pending-reload ul{margin:6px 0 4px;padding-left:18px;color:var(--color-text-primary);font-size:12px;line-height:1.6}
+.labor-pending-reload p{margin:0;color:var(--color-text-secondary);font-size:12px}
+.position-scope-grid{grid-template-columns:minmax(260px,1fr) minmax(0,2fr)}
+.position-scope-grid .tracked-field:has(.tracked-history){grid-column:auto}
+.position-scope-grid>.position-scope-summary{align-self:start}
+.position-scope-summary{display:grid;gap:10px;min-width:0;padding:13px 15px;border:1px solid var(--color-border-light);border-radius:10px;background:#fff}
+.position-scope-summary small{color:var(--color-text-muted);font-size:11px;font-weight:800;letter-spacing:.03em;text-transform:uppercase}
+.position-scope-summary p{margin:0;color:var(--color-text-secondary);font-size:12px;line-height:1.5}
+.position-scope-summary p.muted{color:var(--color-text-muted);font-size:11px}
+.position-scope-summary.pending{border-color:var(--color-warning-border);background:var(--color-warning-bg)}
+.position-scope-summary.pending b{color:var(--color-warning)}
+.position-scope-summary.neutral{background:var(--color-bg-subtle)}
+.position-scope-summary-head{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.position-scope-summary-head a{color:var(--color-primary);font-size:12px;font-weight:700;white-space:nowrap}
+.org-scope-path-list{display:grid;gap:6px;margin:0;padding:0;list-style:none}
+.org-scope-path-list li{display:grid;grid-template-columns:132px minmax(0,1fr) auto;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--color-border-light);border-radius:8px;background:var(--color-bg-subtle)}
+.org-scope-level{color:var(--color-text-muted);font-size:10px;font-weight:800;letter-spacing:.04em;text-transform:uppercase}
+.org-scope-path{display:flex;flex-wrap:wrap;gap:4px;min-width:0;color:var(--color-text-secondary);font-size:12px}
+.org-scope-path span{overflow-wrap:anywhere}
+.org-scope-path span+span::before{content:"›";margin-right:4px;color:var(--color-text-disabled)}
+.org-scope-path span.current{color:var(--color-text-primary);font-weight:700}
+.org-scope-inactive{padding:2px 7px;border-radius:999px;background:var(--color-bg-muted);color:var(--color-text-muted);font-size:10px;font-weight:700}
+.labor-block-wrap{padding:0 18px}
+.work-locations-card .block-card-head{border-bottom:1px solid var(--color-border-light)}
+.work-location-list{display:grid;gap:10px;padding:14px 18px 18px}
+.work-location-item{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;padding:12px 14px;border:1px solid var(--color-border-light);border-left:3px solid var(--color-success);border-radius:10px;background:#fff}
+.work-location-item.future{border-left-color:var(--color-warning)}
+.work-location-item.ended{border-left-color:var(--color-border-strong);background:var(--color-bg-subtle)}
+.work-location-main{display:grid;gap:6px;min-width:0}
+.work-location-title{display:flex;align-items:center;flex-wrap:wrap;gap:8px}
+.work-location-title b{color:var(--color-text-primary);font-size:14px}
+.work-location-period{color:var(--color-text-secondary);font-size:12px;font-weight:600}
+.work-location-establishments{display:flex;flex-wrap:wrap;gap:6px}
+.work-location-establishments span{padding:4px 9px;border-radius:999px;background:var(--color-primary-subtle);color:var(--color-primary);font-size:11px;font-weight:600}
+.work-location-item.ended .work-location-establishments span{background:var(--color-bg-muted);color:var(--color-text-secondary)}
+.work-locations-card .work-location-main small{margin:0;color:var(--color-text-muted);font-size:11px;overflow-wrap:anywhere}
+.work-location-actions{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:6px;flex:none}
+.work-location-actions .button{height:auto!important;padding:7px 10px!important;font-size:11px!important}
+/* Grilla explícita de una columna: sin ella, la regla global
+   .form-stack>.form-actions{grid-column:span 2} crea dos columnas implícitas
+   y en mobile los establecimientos quedaban aplastados. */
+.modal-body .work-location-form{grid-template-columns:minmax(0,1fr)}
+.work-location-form>.form-actions{grid-column:1/-1}
+.work-location-form legend{margin-bottom:7px;color:#42526a;font-size:12px;font-weight:700}
+.work-location-establishments-field{display:grid;gap:8px;min-width:0;margin:0;padding:0;border:0}
+.work-location-establishments-field .check-card span{display:grid;gap:2px}
+.work-location-establishments-field .check-card small{color:var(--color-text-muted);font-size:11px}
+.work-location-hint{color:var(--color-text-muted);font-size:11px}
+.work-location-dates{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.tracked-field.legacy{background:var(--color-bg-subtle)}
+/* Alta de legajo: el alcance del puesto ya es una tarjeta; sin la caja de .form-wide. */
+.form-grid>.form-wide.labor-bare-slot{display:grid;gap:10px;padding:0;border:0;background:none}
+.labor-bare-slot>.info-note.compact{margin:0}
+@media(max-width:900px){.position-scope-grid{grid-template-columns:1fr}.org-scope-path-list li{grid-template-columns:1fr auto}.org-scope-level{grid-column:1/-1}}
+@media(max-width:620px){.modal-body .work-location-establishments-field .check-grid{grid-template-columns:1fr}.labor-pending-reload{margin:14px 14px 0}.labor-block-wrap{padding:0 14px}.work-location-list{padding:12px}.work-location-item{flex-direction:column}.work-location-actions{justify-content:flex-start;width:100%}.work-location-dates{grid-template-columns:1fr}}

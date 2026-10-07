@@ -24,6 +24,20 @@ describe("employee detail route security", () => {
     });
   }
 
+  it("A6: ubicaciones de trabajo — lectura RRHH/Supervisión, escritura sólo RRHH", () => {
+    const read = authorizationFor(employeesRouter, "/:id/work-locations");
+    expect(invoke(read, roles.rrhh)).toBeUndefined();
+    expect(invoke(read, roles.supervision)).toBeUndefined();
+    expect(invoke(read, roles.cargaHoraria)).toMatchObject({ statusCode: 403 });
+    for (const [method, path] of [["post", "/:id/work-locations"], ["post", "/:id/work-locations/:locationId/change"], ["post", "/:id/work-locations/:locationId/end"], ["patch", "/:id/work-locations/:locationId"]] as const) {
+      const layer = employeesRouter.stack.find((item) => item.route?.path === path && (item.route as unknown as { methods: Record<string, boolean> }).methods[method]);
+      const handler = layer!.route!.stack[0]!.handle;
+      expect(invoke(handler, roles.rrhh)).toBeUndefined();
+      expect(invoke(handler, roles.supervision)).toMatchObject({ statusCode: 403 });
+      expect(invoke(handler, roles.cargaHoraria)).toMatchObject({ statusCode: 403 });
+    }
+  });
+
   it("Nivel 3 conserva acceso a options y time-grid", () => {
     expect(invoke(authorizationFor(employeesRouter, "/options"), roles.cargaHoraria)).toBeUndefined();
     expect(invoke(authorizationFor(employeesRouter, "/:id/time-grid"), roles.cargaHoraria)).toBeUndefined();

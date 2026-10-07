@@ -2,10 +2,8 @@ import { useEffect, useState } from "react";
 import { employeeApiService } from "../../services/api/employeeApiService";
 import { employeeHistoryApiService } from "../../services/api/employeeHistoryApiService";
 import { orgStructureApiService } from "../../services/api/orgStructureApiService";
-import { positionApiService } from "../../services/api/positionApiService";
 import { getUserErrorMessage } from "../../services/api/apiClient";
 import type { Employee, EmployeeFieldHistoryRecord, FieldHistorySection, User } from "../../types";
-import type { Position } from "../../types/position.types";
 import { useAsyncAction } from "../../utils/useAsyncAction";
 import { requiredLaborChangeError } from "../../utils/laborFieldValidation";
 import { formatCalendarDate, formatDateTime } from "../../utils/date";
@@ -15,6 +13,7 @@ import { EmptyState } from "../ui/EmptyState";
 import { ErrorState } from "../ui/ErrorState";
 import { Field } from "../ui/FormControls";
 import { LoadingState } from "../ui/LoadingState";
+import { isAssignablePosition, usePositionOptions } from "./options/positionOptions";
 
 async function persistTrackedEmployee(updated: Employee, onSaved: (employee: Employee) => void) {
   try {
@@ -92,29 +91,6 @@ function useCompanyOptions() {
   return options;
 }
 
-// Etapa 14D.4: getAll() -> getOptions() (catálogo liviano, mismo Position/
-// mapFromApi de salida) — ver docs/decisions/
-// POSITIONS_PERFORMANCE_FOR_EMPLOYEES_14D4.md.
-function useActivePositions() {
-  const [positions, setPositions] = useState<Position[]>([]);
-
-  useEffect(() => {
-    let mounted = true;
-    positionApiService
-      .getOptions()
-      .then((items) => {
-        if (mounted) setPositions(items.filter((position) => position.status === "ACTIVO"));
-      })
-      .catch(() => {
-      });
-    return () => {
-      mounted = false;
-    };
-  }, []);
-
-  return positions;
-}
-
 type TrackedFieldProps = {
   employee: Employee;
   canEdit: boolean;
@@ -176,9 +152,9 @@ export function MultiCompanyField({ employee, canEdit, user, onSaved }: TrackedF
   return (
     <div className="tracked-field">
       <div className="tracked-main" onClick={() => setOpen(!open)}>
-        <small>Empresa</small>
+        <small>Empresa empleadora</small>
         <b>{label}</b>
-        <span>Puede pertenecer a una o varias empresas</span>
+        <span>Relación laboral; distinta del alcance del puesto</span>
       </div>
       <div className="tracked-actions">
         <Button type="button" variant="subtle" onClick={() => setOpen(!open)}>
@@ -200,7 +176,7 @@ export function MultiCompanyField({ employee, canEdit, user, onSaved }: TrackedF
       </div>
       {open ? (
         <div className="tracked-history">
-          <h4>Historial de Empresa</h4>
+          <h4>Historial de Empresa empleadora</h4>
           {historyStatus === "loading" ? (
             <LoadingState text="Cargando historial..." />
           ) : historyStatus === "error" ? (
@@ -258,10 +234,13 @@ export function MultiCompanyField({ employee, canEdit, user, onSaved }: TrackedF
 }
 
 export function EmployeePositionField({ employee, canEdit, user, onSaved }: TrackedFieldProps) {
-  const positions = useActivePositions();
+  const positions = usePositionOptions();
   const current =
     positions.find((position) => position.id === employee.positionId) ||
     positions.find((position) => position.name === (employee.puestoNombre || employee.position));
+  // A6: para una asignación nueva sólo se ofrecen puestos activos con alcance.
+  const assignable = positions.filter(isAssignablePosition);
+  const currentScopes = current?.orgScopes || [];
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(false);
   const [selectedId, setSelectedId] = useState(current?.id || "");
@@ -269,11 +248,12 @@ export function EmployeePositionField({ employee, canEdit, user, onSaved }: Trac
   const [reason, setReason] = useState("");
   const [error, setError] = useState("");
   const { history, setHistory, status: historyStatus, retry: retryHistory, markLoaded: markHistoryLoaded } = useBackendFieldHistory(employee.id, "positionId", open);
-  const selected = positions.find((position) => position.id === selectedId);
+  const selected = assignable.find((position) => position.id === selectedId);
 
   const { isRunning: isSaving, run: save } = useAsyncAction(async () => {
     const validationError = requiredLaborChangeError(from, reason);
     if (validationError) return setError(validationError);
+    if (selectedId && !selected) return setError("Seleccioná un puesto activo con alcance organizacional.");
     const updated = selected
       ? {
           ...employee,
@@ -313,7 +293,15 @@ export function EmployeePositionField({ employee, canEdit, user, onSaved }: Trac
       <div className="tracked-main" onClick={() => setOpen(!open)}>
         <small>Puesto</small>
         <b>{current?.name || employee.puestoNombre || employee.position || "Sin cargar"}</b>
-        <span>{current ? `${current.derivedAreaName || "Sin area"} · ${current.derivedSectorName || "Sin sector"}` : "Texto anterior sin vinculo"}</span>
+        <span>
+          {current
+            ? currentScopes.length
+              ? `${currentScopes.length} ${currentScopes.length === 1 ? "alcance" : "alcances"}: ${currentScopes.map((scope) => scope.name).join(", ")}`
+              : "Pendiente de recarga: sin alcance organizacional"
+            : employee.puestoNombre || employee.position
+              ? "Texto anterior sin vínculo"
+              : "Sin puesto asignado"}
+        </span>
       </div>
       <div className="tracked-actions">
         <Button type="button" variant="subtle" onClick={() => setOpen(!open)}>
@@ -326,7 +314,7 @@ export function EmployeePositionField({ employee, canEdit, user, onSaved }: Trac
             onClick={() => {
               setEditing(true);
               setOpen(true);
-              setSelectedId(current?.id || "");
+              setSelectedId(current && isAssignablePosition(current) ? current.id : "");
             }}
           >
             Modificar
@@ -359,16 +347,21 @@ export function EmployeePositionField({ employee, canEdit, user, onSaved }: Trac
           {editing ? (
             <div className="tracked-edit">
               <label>
-                Puesto existente
+                Puesto con alcance organizacional
                 <select value={selectedId} onChange={(event) => setSelectedId(event.target.value)}>
-                  <option value="">Seleccionar</option>
-                  {positions.map((position) => (
+                  <option value="">Sin puesto</option>
+                  {assignable.map((position) => (
                     <option key={position.id} value={position.id}>
                       {position.name}
                     </option>
                   ))}
                 </select>
               </label>
+              {current && !isAssignablePosition(current) ? (
+                <p className="muted small">
+                  El puesto actual “{current.name}” está {current.status === "ACTIVO" ? "pendiente de recarga" : "inactivo"} y no se ofrece para nuevas asignaciones. Cancelá para conservarlo.
+                </p>
+              ) : null}
               <Field label="Fecha desde" type="date" value={from} set={setFrom} />
               <Field label="Motivo del cambio" value={reason} set={setReason} />
               {error ? <p className="error">{error}</p> : null}

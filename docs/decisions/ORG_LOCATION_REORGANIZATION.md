@@ -169,7 +169,7 @@ Se retira `Employee.sectorId`. Se conservan la empresa empleadora (`EmployeeComp
 | D-3 | Rastro visible en historial del legajo | B |
 | D-4 | Semántica del sector en `DoubleHourRule` (S1-S5) y tratamiento de cada regla existente (R1-R3). **Se decide con el inventario y el reporte de impacto, nada se adopta automáticamente** | B y A7 |
 | D-5 | Recálculo histórico ante cambios de alcance o puesto (H1-H3), con el mismo reporte | B y A7 |
-| D-2 | Zona completa en ubicaciones | A6 |
+| D-2 | Zona completa en ubicaciones. A6 implementó sólo establecimientos explícitos; una selección vacía se rechaza y nunca significa "todos" | Ampliación de ubicaciones |
 | D-6 | Funciones que necesitan puestos distintos por alcance | A5 |
 | D-7 | Modo de filtrado por defecto; banda "Alcance superior" en el organigrama | A7 |
 | D-8 | Reemplazo de "Dotación por sector" | A7 |
@@ -342,7 +342,8 @@ La inactivación solo puede **combinarse** con R1, R2 o R3. **Nunca se deja una 
 | A3 | Herramientas preparadas e inventario de sólo lectura corrido en la copia (§12). **Limpieza y restauración no ejecutadas** |
 | A4 | Hecha: UI separada de Organización, Ubicaciones y Centros de costo; QA visual contra la copia aislada (§13) |
 | A5 | Hecha en `feat/org-location-reorg`: alcance múltiple de puestos con validación, filtros y QA (§14) |
-| A6–A8, B0–B5 | Pendientes |
+| A6 | Hecha en `feat/org-location-reorg`: Datos Laborales con puesto y alcance de consulta, ubicaciones con vigencia y transición de legajos anteriores; QA en la copia aislada (§15) |
+| A7–A8, B0–B5 | Pendientes |
 
 ### A2 — qué quedó en código
 
@@ -645,3 +646,102 @@ Los dos POST negativos abortaron antes de escribir. No se ejecutó limpieza, res
 
 - **D-6 sigue abierta:** no se definieron funciones que requieran variantes por alcance. A5 no crea variantes ni reasigna legajos automáticamente.
 - **D-7 sigue abierta para A7:** A5 usa `WITHIN` como valor inicial del filtro de puestos y permite cambiarlo explícitamente a `COVERS`; esto no decide la banda “Alcance superior” del organigrama ni el comportamiento futuro de otros filtros.
+
+## 15. A6 — Datos Laborales y ubicaciones con vigencia (2026-10-07)
+
+### 15.1 Implementación
+
+**Puesto y alcance (bloque A)**
+- El legajo conserva un único `positionId`. El alcance se lee de `PositionOrgScope` y se muestra como consulta, con la ruta completa de cada alcance (por ejemplo `Los O'Dwyer › Administración central › Agricultura`). No hay campos editables de alcance en el legajo ni se deriva o exige un sector único.
+- Asignar un puesto **nuevo** exige que esté `ACTIVO` y tenga al menos un alcance (`EMPLOYEE_POSITION_PENDING_SCOPE` / `EMPLOYEE_POSITION_INACTIVE`). Conservar el puesto actual, aunque sea anterior, no exige nada.
+- Validación contra el puesto: con alcance A5 sólo se compara la categoría salarial; un puesto sin alcance conserva las comparaciones anteriores como consulta y queda "Puesto pendiente de recarga".
+- No se crearon variantes de puestos ni se reasignaron legajos (D-6 sigue abierta).
+
+**Ubicaciones (bloque B)**
+- Backend en el módulo `employees` (`employeeWorkLocations.{rules,repository,service}.ts`) sobre las tablas de M1, sin cambios de esquema.
+- Cuatro operaciones distintas: alta, **cambio con nueva vigencia** (cierra la vigente en `D − 1` y abre la nueva en `D`), finalización y **corrección** del mismo registro. No hay borrado.
+- Establecimientos explícitos (D-2), validados contra la zona; se rechazan duplicados, establecimientos del modelo anterior y nodos inactivos nuevos.
+- Sin superposición por persona y zona, incluidas las futuras: validación legible en el servicio más la exclusión de M1 como respaldo ante concurrencia. Zonas distintas pueden superponerse.
+- Fechas como clave de calendario `YYYY-MM-DD` de punta a punta; el estado (vigente/futura/finalizada) se calcula con el día de Argentina (`argentinaTime.ts`, se agregó `previousCalendarDateKey`).
+- Filas, historial visible (`EmployeeBlockHistory`, bloque `UBICACIONES_TRABAJO`) y `AuditLog` en una transacción `Serializable` (`auditService.registerWithin`); cachés derivados después del commit. El motivo queda en la fila; el de finalización y el de corrección, en historial y auditoría.
+- Contratos: `docs/BACKEND_API_CONTRACTS.md`, sección "Ubicaciones de trabajo (A6)".
+
+**Datos laborales conservados (bloque C)**
+- Empresa empleadora (rotulada así, distinta del alcance), centro de costo, categorías de recibo e interna, validación salarial, convenio, obra social, movimientos laborales y responsables, sin cambios de comportamiento. Jornada y responsables siguen en sus pestañas.
+
+**Transición**
+- `Employee.sectorId` queda de sólo lectura: la API rechaza cualquier cambio (`EMPLOYEE_LEGACY_SECTOR_READ_ONLY`) y el frontend dejó de enviarlo. Antes lo resolvía por nombre contra el catálogo y podía reasignar en silencio un sector homónimo del árbol nuevo.
+- El sector anterior (con su historial), la unidad de negocio y el establecimiento derivados se muestran en "Estructura anterior · sólo consulta". Un aviso "Pendiente de recarga" lista qué falta: puesto sin alcance, ninguna ubicación vigente o futura, y estructura anterior presente.
+- Nada se convierte automáticamente; no se borraron datos ni columnas.
+- El alta de legajo ya no ofrece unidad de negocio, establecimiento ni sector; ofrece sólo puestos con alcance y muestra el alcance elegido. Las ubicaciones se cargan después, desde el legajo.
+
+### 15.2 QA integrado en la copia aislada
+
+Instancia propia del backend en el puerto 4012 con `backend/.env.reorg` (host `ep-rough-river-aioy7xp9-pooler`, verificado antes de escribir), que informó `AUTOMATIC_JOBS_DISABLED`, más Vite en 5184. Se autenticó con el acceso rápido de prueba existente. El backend de desarrollo que ya corría en 4002 no se usó.
+
+API, 46 verificaciones (todas como se esperaba):
+- Varias zonas simultáneas con varios establecimientos; establecimiento de otra zona, del modelo anterior, duplicado y lista vacía rechazados; intervalo inverso y fecha inexistente rechazados.
+- Superposición con una vigencia futura de la misma zona → 409. Cambio desde 01/10/2026: la anterior quedó `01/01/2026 → 30/09/2026` (finalizada) y la nueva vigente desde el 01/10/2026. Cambio futuro desde 01/02/2027: vigente hasta 31/01/2027 y futura desde 01/02/2027.
+- Corrección que pisaba la futura → 409; corrección sin cambios → 400; corrección de inicio con motivo → auditoría con antes/después y motivo, historial "Corrección ·".
+- Finalización y doble finalización (→ 409).
+- 5 eventos de auditoría y 5 filas de historial para el legajo de prueba principal, sin IDs técnicos en el texto.
+- Editar la categoría interna conserva puesto, centro de costo, empresa, convenio, obra social, categoría de recibo y ubicaciones. Cambiar el sector anterior y asignar un puesto anterior se rechazan.
+- Legajo de prueba con puesto y sector anteriores: guarda otros datos conservándolos, recibe una ubicación nueva y no permite vaciar el sector.
+- Un legajo existente (legajo `01`, sólo lectura): sin ubicaciones y con su puesto marcado "pendiente de recarga".
+- Permisos: Supervisión recibe 404 en un legajo fuera de su alcance y 403 al escribir; Carga horaria, 403 al leer y escribir.
+- Una expectativa del guion estaba mal planteada y se corrigió: el legajo anterior mostró `danger` por su categoría interna fuera del rango del puesto. Es la precedencia existente; las tres comparaciones anteriores salieron OK.
+
+Visual (1440×900, 1366×768, 1920×1080, 820×1180 y 390×844): sin desborde horizontal de página. Durante el recorrido se corrigieron dos problemas:
+- el modal se partía en dos columnas implícitas en mobile y aplastaba los establecimientos;
+- el alcance aparecía dentro de una caja doble en el alta de legajo.
+
+También se alineó el texto del error de superposición con el botón “Cambiar desde…”.
+
+### 15.3 Escrituras de QA documentadas (sólo `org-location-reorg`)
+
+Todas identificables con `QA-A6`, vía API salvo donde se indica:
+- Zonas `QA-A6-ZN` `3783619e-d768-43a7-9839-c6bb48bfb7fd` y `QA-A6-ZS` `f33d942d-27bf-47ff-ae06-5be4d1c35ba7`.
+- Establecimientos `QA-A6-EN1` `4349bca3-f55c-4ced-890d-c0f0e29e965b`, `QA-A6-EN2` `99368ff7-b04c-46df-b62e-346719238d24`, `QA-A6-ES1` `e78dd245-6616-4cfe-bffe-48ff6824179e` y `QA-A6-ES2` `13d0307d-7148-4f61-9e56-58eff433e834`.
+- Sector `QA-A6-AGRO` `2be86792-3a31-4252-8de4-2bf66836b566` (UN Administración central de LOSOD).
+- Puesto `PUE-005` "QA-A6 Encargado de Agricultura" `a9a6f458-2fe2-46de-98fa-f0c3c15ba3ba` (alcance: el sector anterior).
+- Legajos:
+  - `QA-A6-001` `0166af0c-ff0a-4ba5-9f8f-d99da5489749` (puesto PUE-005);
+  - `QA-A6-002` `3ad5e85e-c2f5-46a1-9617-4982e070d758` (puesto multiempresa `PUE-004` de A5);
+  - `QA-A6-003` `8f39aac6-b141-46ad-abe3-06206417abc4`. Se creó por API y luego, **por script directo sobre la copia** con verificación de host, recibió el puesto `PUE-002` y su sector anterior para reproducir un legajo pendiente de recarga. El script dejó su propia fila de `AuditLog` en la misma transacción.
+- 7 `EmployeeWorkLocation` (9 establecimientos vinculados) y 9 filas de historial, todas de legajos `QA-A6`.
+- `AuditLog` desde las 15:40 UTC: 41 filas (incluye logins, rechazos de ruta de las pruebas de permisos y la fila del script).
+
+Lectura final:
+- los 32 legajos existentes, sin modificaciones;
+- 0 incidencias y 0 notificaciones nuevas;
+- las 5 filas incidentales de §13.3 siguen presentes.
+
+No se ejecutó M2, seed, limpieza, restauración ni reconciliación; development y producción no se tocaron.
+
+### 15.4 Capturas
+
+`docs/qa/a6-*.png`:
+- Datos Laborales: `a6-datos-laborales-desktop` (sección completa), `-1366`, `-1920`, `-tablet`.
+- Alcance: `a6-puesto-alcance-sector-desktop`, `a6-puesto-multiempresa-desktop`, `a6-puesto-alcance-mobile`.
+- Ubicaciones: `a6-ubicaciones-historial-desktop`, `a6-ubicaciones-mobile`.
+- Modales: `a6-modal-alta-superposicion-desktop`, `a6-modal-cambio-desktop`, `a6-modal-correccion-desktop`, `a6-modal-alta-mobile`.
+- Transición: `a6-legajo-pendiente-recarga-desktop`, `a6-legajo-pendiente-recarga-mobile`, `a6-alta-legajo-alcance-desktop`.
+
+### 15.5 Pendientes concretos
+
+- **D-2 (zona completa):** sin ratificar. Si se aprueba, hace falta definir cómo se representa (por ejemplo, una marca explícita en la asignación) sin reinterpretar una lista vacía.
+- **D-6:** sin definir qué funciones necesitan puestos distintos por alcance.
+- **A7 (consumidores):**
+  - filtros de Legajos y del organigrama por sector (`sectorId`);
+  - la columna sector de listados;
+  - "Dotación por sector" (D-8);
+  - reglas de horas especiales (D-4/D-5).
+
+  Todos siguen leyendo `Employee.sectorId`; ninguno lee todavía ubicaciones ni alcance.
+- **Alta con ubicaciones:** el alta de legajo no carga ubicaciones. Requeriría crear legajo y ubicaciones en una sola transacción.
+- **Historial de puesto y de campos:** el historial de puesto, empresa y demás campos de Datos Laborales sigue escribiéndose en una segunda llamada del cliente, no atómica (deuda §10, sin cambios).
+- **A8/M2:** retirar `Employee.sectorId` y las vistas "Estructura anterior" cuando la recarga termine.
+- **Observado fuera de alcance:**
+  - las casillas de "Empresa empleadora" en el alta de legajo se ven sobredimensionadas (estilo previo, no modificado);
+  - la tabla de movimientos laborales se desplaza horizontalmente dentro de su contenedor en anchos chicos.
+

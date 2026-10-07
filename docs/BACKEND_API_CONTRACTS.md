@@ -374,6 +374,11 @@ POST /api/employees
 
 Uso actual: `NIVEL_1_RRHH`.
 
+A6 (`docs/decisions/ORG_LOCATION_REORGANIZATION.md` §15):
+- `positionId`, si se envía, debe ser un puesto `ACTIVO` con al menos un alcance organizacional (`PositionOrgScope`). Si no: `400 EMPLOYEE_POSITION_INVALID`, `409 EMPLOYEE_POSITION_INACTIVE` o `409 EMPLOYEE_POSITION_PENDING_SCOPE`.
+- `sectorId` pertenece al modelo anterior: un valor no nulo responde `409 EMPLOYEE_LEGACY_SECTOR_READ_ONLY`. El alcance se lee del puesto; no se copia al legajo.
+- Las ubicaciones de trabajo no se cargan en el alta: se asignan después con `/api/employees/:id/work-locations`.
+
 ### Actualizar legajo
 
 ```txt
@@ -381,6 +386,81 @@ PATCH /api/employees/:id
 ```
 
 Uso actual: `NIVEL_1_RRHH`.
+
+A6:
+- Los requisitos de puesto se aplican sólo a un puesto **nuevo** (`positionId` distinto del actual). Un legajo que conserva su puesto anterior sin alcance puede seguir editando el resto de sus datos; quitar el puesto (`null`) no exige requisitos.
+- `sectorId` es de sólo lectura: omitirlo o reenviar el mismo valor es válido; cualquier cambio (incluido `null`) responde `409 EMPLOYEE_LEGACY_SECTOR_READ_ONLY`. El frontend ya no lo envía.
+
+### Validación contra el puesto
+
+```txt
+GET /api/employees/:id/position-validation[?positionId=]
+```
+
+Uso actual: `NIVEL_1_RRHH`, `NIVEL_2_SUPERVISION`, `NIVEL_3_CARGA_HORARIA` (con alcance de legajo). A6:
+- Puesto con alcance A5: `checks` vacío (no se exige ni compara un sector del legajo); el tono depende sólo de la categoría salarial.
+- Puesto sin alcance (anterior): conserva las tres comparaciones de unidad de negocio, establecimiento y sector para consulta, y como mínimo queda `warning` con `title: "Puesto pendiente de recarga"`. Una discrepancia de categoría o estructura sigue siendo `danger`.
+
+### Ubicaciones de trabajo (A6)
+
+```txt
+GET   /api/employees/:id/work-locations
+POST  /api/employees/:id/work-locations
+POST  /api/employees/:id/work-locations/:locationId/change
+POST  /api/employees/:id/work-locations/:locationId/end
+PATCH /api/employees/:id/work-locations/:locationId
+```
+
+Permisos: lectura `NIVEL_1_RRHH` y `NIVEL_2_SUPERVISION` con el mismo alcance que el detalle del legajo (fuera de alcance → `404 EMPLOYEE_NOT_FOUND`); escrituras sólo `NIVEL_1_RRHH`. `NIVEL_3_CARGA_HORARIA` → `403`.
+
+Fechas: siempre clave de calendario `"YYYY-MM-DD"` (fechas inválidas como `2026-02-30` → `400 VALIDATION_ERROR`). Vigencia = intervalo cerrado `[effectiveFrom, effectiveTo]`; `effectiveTo: null` = abierta. `state` se calcula con el día de hoy en Argentina: `CURRENT`, `FUTURE` o `ENDED`.
+
+Respuesta de lectura y de toda escritura (lista completa del legajo, ordenada por `effectiveFrom` descendente):
+
+```json
+{
+  "data": [
+    {
+      "id": "uuid",
+      "zone": { "id": "uuid", "code": "ZN", "name": "Zona Norte", "status": "ACTIVO" },
+      "establishments": [{ "id": "uuid", "code": "EN1", "name": "Campo La Esperanza", "status": "ACTIVO", "zoneId": "uuid" }],
+      "effectiveFrom": "2026-10-01",
+      "effectiveTo": null,
+      "state": "CURRENT",
+      "reason": "Reasignación",
+      "notes": null,
+      "createdAt": "2026-10-07T15:48:00.000Z",
+      "createdByName": "Administrador RRHH"
+    }
+  ]
+}
+```
+
+Alta (`POST .../work-locations`, `201`) y cambio con nueva vigencia (`POST .../:locationId/change`, `201`) usan el mismo cuerpo:
+
+```json
+{
+  "zoneId": "uuid",
+  "establishmentIds": ["uuid", "uuid"],
+  "effectiveFrom": "2026-10-01",
+  "effectiveTo": null,
+  "reason": "Motivo (2-600)",
+  "notes": "Observación opcional"
+}
+```
+
+- **Cambio desde D:** la ubicación indicada se cierra en `D − 1` y la nueva empieza en `D`, en una transacción. `D` debe ser posterior al inicio de la vigente (`409 WORK_LOCATION_CHANGE_DATE_INVALID`: eso es una corrección) y no posterior a su fin (`409 WORK_LOCATION_CHANGE_OUTSIDE_PERIOD`). Puede cambiar de zona. Misma zona y mismos establecimientos → `409 WORK_LOCATION_CHANGE_EMPTY`.
+- **Finalización** (`POST .../:locationId/end`, `200`): `{ "effectiveTo": "2026-12-31", "reason": "..." }`. Sólo para una vigencia abierta; si ya tiene fin → `409 WORK_LOCATION_ALREADY_ENDED` (usar corrección).
+- **Corrección** (`PATCH .../:locationId`, `200`): corrige el mismo registro sin crear vigencia nueva. Campos opcionales `zoneId`, `establishmentIds`, `effectiveFrom`, `effectiveTo` (admite `null` para reabrir), `reason`, `notes`; `correctionReason` obligatorio. Sin diferencias → `400 WORK_LOCATION_CORRECTION_EMPTY`.
+
+Validaciones comunes (servicio, dentro de la transacción; la base además tiene CHECK y exclusión `btree_gist`):
+- Selección explícita: al menos un establecimiento (`400`); no existe "zona completa" (D-2 sigue pendiente).
+- `WORK_LOCATION_ZONE_INVALID` (400), `WORK_LOCATION_ZONE_INACTIVE`, `WORK_LOCATION_ESTABLISHMENT_INVALID` (400), `WORK_LOCATION_ESTABLISHMENT_DUPLICATE`, `WORK_LOCATION_ESTABLISHMENT_ZONE_MISMATCH`, `WORK_LOCATION_ESTABLISHMENT_LEGACY` (establecimiento sin zona, del modelo anterior), `WORK_LOCATION_ESTABLISHMENT_INACTIVE` (409). Al corregir se conservan la zona y los establecimientos inactivos que ya tenía el registro.
+- `400 WORK_LOCATION_INVALID_INTERVAL` si `effectiveTo < effectiveFrom`.
+- `409 WORK_LOCATION_OVERLAP`: misma persona y zona superpuestas, incluidas vigencias futuras; el mensaje indica el período en conflicto. Zonas distintas pueden superponerse. Una violación de la exclusión por escritura concurrente devuelve el mismo código; un conflicto de serialización, `409 WORK_LOCATION_CONCURRENT_CHANGE`.
+- `404 WORK_LOCATION_NOT_FOUND` si la ubicación no pertenece al legajo.
+
+Cada escritura graba, en una única transacción `Serializable`: las filas, una fila de historial visible (`EmployeeBlockHistory`, sección `DATOS_LABORALES`, bloque `UBICACIONES_TRABAJO`, con valor anterior/nuevo y motivo; en la corrección, el motivo de la corrección) y un `AuditLog` (`entity: "EmployeeWorkLocation"`, `entityId` = legajo, `before`/`after` con nombres y fechas). Si la auditoría falla, todo se revierte. Los cachés derivados de auditoría se limpian después del commit. Ninguna escritura borra filas.
 
 ### Contacto
 

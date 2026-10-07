@@ -7,6 +7,7 @@ import { clearTimeEntriesReadCaches } from "../time-entries/timeEntries.cache";
 import type { EmployeeTimeGridQuery, ListEmployeeHistoryQuery, ListEmployeeOptionsQuery, ListEmployeeOrgChartQuery, ListEmployeesQuery, PositionValidationQuery } from "./employees.schemas";
 import { employeesService } from "./employees.service";
 import { automaticHourConceptBreakdownsService } from "./automaticHourConceptBreakdowns.service";
+import { employeeWorkLocationsService } from "./employeeWorkLocations.service";
 
 const employeeDetailCache = createTtlCache<unknown>(30_000);
 const employeeTimeGridCache = createTtlCache<unknown>(60_000);
@@ -232,6 +233,33 @@ export const employeesController = {
     clearEmployeeReadCaches();
     clearDocumentsReadCaches();
     res.status(201).json({ data: employee });
+  }) satisfies RequestHandler,
+
+  // A6: las ubicaciones no forman parte de los cachés de lectura del legajo;
+  // el servicio limpia los derivados de auditoría después del commit.
+  listWorkLocations: (async (req, res) => {
+    const rows = await employeeWorkLocationsService.list(requireParam(req, "id"), req.user!);
+    res.json({ data: rows });
+  }) satisfies RequestHandler,
+
+  createWorkLocation: (async (req, res) => {
+    const rows = await employeeWorkLocationsService.create(requireParam(req, "id"), req.body, requestAuditContext(req));
+    res.status(201).json({ data: rows });
+  }) satisfies RequestHandler,
+
+  changeWorkLocation: (async (req, res) => {
+    const rows = await employeeWorkLocationsService.change(requireParam(req, "id"), requireParam(req, "locationId"), req.body, requestAuditContext(req));
+    res.status(201).json({ data: rows });
+  }) satisfies RequestHandler,
+
+  endWorkLocation: (async (req, res) => {
+    const rows = await employeeWorkLocationsService.end(requireParam(req, "id"), requireParam(req, "locationId"), req.body, requestAuditContext(req));
+    res.json({ data: rows });
+  }) satisfies RequestHandler,
+
+  correctWorkLocation: (async (req, res) => {
+    const rows = await employeeWorkLocationsService.correct(requireParam(req, "id"), requireParam(req, "locationId"), req.body, requestAuditContext(req));
+    res.json({ data: rows });
   }) satisfies RequestHandler,
 
   listFieldHistory: (async (req, res) => {

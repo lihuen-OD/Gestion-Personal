@@ -12,6 +12,8 @@ import {
 } from "../components/employees/EmployeeLaborFields";
 import { ContactAddressFields } from "../components/employees/ContactAddressFields";
 import { PeopleMultiSearch } from "../components/employees/PeopleMultiSearch";
+import { PositionScopeCard } from "../components/employees/PositionScopeCard";
+import { usePositionOptions } from "../components/employees/options/positionOptions";
 import { useLaborSelectOptions } from "../components/employees/options/laborOptions";
 import { useHourOptions } from "../components/employees/options/roleHourOptions";
 import { useStructureSelectOptions } from "../components/employees/options/structureOptions";
@@ -135,6 +137,7 @@ export function EmployeeCreatePage() {
   const [entryReason, setEntryReason] = useState(entryReasons[0]);
   const [entryObservation, setEntryObservation] = useState("");
   const laborOptions = useLaborSelectOptions(value);
+  const selectedPosition = usePositionOptions().find((position) => position.id === value.positionId);
   const structureOptions = useStructureSelectOptions({ costCenter: value.costCenter });
   const enabledHourOptions = useHourOptions();
   const timeResponsibleNames = value.timeResponsibles?.length
@@ -328,31 +331,20 @@ export function EmployeeCreatePage() {
               </div>
               <div className="form-grid">
                 <CompanyMultiCreateField value={value} setValue={setValue} />
-                <Select
-                  label="Unidad de negocio"
-                  value={value.businessUnit}
-                  set={(next) => upd("businessUnit", next)}
-                  options={laborOptions.businessUnit}
-                />
-                <Select
-                  label="Establecimiento"
-                  value={value.establishment}
-                  set={(next) => upd("establishment", next)}
-                  options={laborOptions.establishment}
-                />
+                <EmployeePositionCreateField value={value} setValue={setValue} />
+                <div className="form-wide labor-bare-slot">
+                  <PositionScopeCard position={selectedPosition} hasPositionId={Boolean(value.positionId)} />
+                  <p className="info-note compact">
+                    Las ubicaciones de trabajo (zonas y establecimientos con vigencia) se asignan desde Datos Laborales una
+                    vez creado el legajo.
+                  </p>
+                </div>
                 <Select
                   label="Centro de costo *"
                   value={value.costCenter}
                   set={(next) => upd("costCenter", next)}
                   options={structureOptions.costCenter}
                 />
-                <Select
-                  label="Sector"
-                  value={value.sector}
-                  set={(next) => upd("sector", next)}
-                  options={laborOptions.sector}
-                />
-                <EmployeePositionCreateField value={value} setValue={setValue} />
                 <Select
                   label="Categoría de recibo"
                   value={value.receiptCategory}

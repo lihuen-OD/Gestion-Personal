@@ -1,11 +1,11 @@
 import { useEffect, useState } from "react";
 import { employeeApiService, type EmployeePositionValidation } from "../../services/api/employeeApiService";
 import { orgStructureApiService } from "../../services/api/orgStructureApiService";
-import { positionApiService } from "../../services/api/positionApiService";
 import { salaryCategoryApiService } from "../../services/api/salaryCategoryApiService";
 import { salaryRangeMockService } from "../../services/salaryRangeMockService";
 import type { Employee } from "../../types";
 import type { Position } from "../../types/position.types";
+import { isAssignablePosition, usePositionOptions } from "./options/positionOptions";
 
 function useCompanyNames() {
   const [items, setItems] = useState<string[]>([]);
@@ -21,29 +21,6 @@ function useCompanyNames() {
       mounted = false;
     };
   }, []);
-
-  return items;
-}
-
-// Etapa 14D.4: getAll() (registro completo de Position, ~10 columnas
-// pesadas de más para Legajos) -> getOptions() (catálogo liviano, mismo
-// Position/mapFromApi de salida). Ver docs/decisions/
-// POSITIONS_PERFORMANCE_FOR_EMPLOYEES_14D4.md.
-function usePositions(activeOnly = false) {
-  const [items, setItems] = useState<Position[]>([]);
-
-  useEffect(() => {
-    let mounted = true;
-    positionApiService.getOptions()
-      .then((positions) => {
-        if (!mounted) return;
-        setItems(activeOnly ? positions.filter((position) => position.status === "ACTIVO") : positions);
-      })
-      .catch(() => {});
-    return () => {
-      mounted = false;
-    };
-  }, [activeOnly]);
 
   return items;
 }
@@ -86,7 +63,7 @@ export function CompanyMultiCreateField({
 
   return (
     <div className="form-wide">
-      <small>Empresa *</small>
+      <small>Empresa empleadora *</small>
       <div className="check-grid inline">
         {companyNames.map((company) => (
           <label className="check-card" key={company}>
@@ -96,8 +73,8 @@ export function CompanyMultiCreateField({
         ))}
       </div>
       <p className="info-note compact">
-        Podes seleccionar mas de una empresa para directivos y gerentes. La primera seleccionada queda como
-        referencia principal del legajo.
+        Empresa con la que la persona tiene la relación laboral. Es distinta del alcance organizacional, que se
+        obtiene del puesto. La primera seleccionada queda como referencia principal del legajo.
       </p>
     </div>
   );
@@ -110,7 +87,7 @@ export function EmployeePositionCreateField({
   value: Employee;
   setValue: (employee: Employee) => void;
 }) {
-  const positions = usePositions(true);
+  const positions = usePositionOptions().filter(isAssignablePosition);
   const selected = positions.find((position) => position.id === value.positionId);
   const select = (id: string) => {
     const position = positions.find((item) => item.id === id);
@@ -132,7 +109,7 @@ export function EmployeePositionCreateField({
       <label>
         Puesto
         <select value={selected?.id || ""} onChange={(event) => select(event.target.value)}>
-          <option value="">Seleccionar puesto existente</option>
+          <option value="">Seleccionar puesto con alcance</option>
           {positions.map((position) => (
             <option key={position.id} value={position.id}>
               {position.name}
@@ -153,7 +130,7 @@ export function SalaryRangeValidationCard({
   employee,
   useBackendValidation = true,
 }: SalaryRangeValidationCardProps) {
-  const positions = usePositions();
+  const positions = usePositionOptions();
   const [backendValidation, setBackendValidation] = useState<EmployeePositionValidation | null>(null);
   // Etapa 14D.2.1: la validación local (`localValidation`, abajo) es una
   // aproximación optimista — puede diferir de la oficial en el rango
@@ -173,19 +150,25 @@ export function SalaryRangeValidationCard({
     ok: !position || !allowed.length || allowed.includes(value),
     missing: !value,
   });
-  const rows = [
-    check("Unidad de negocio", employee.businessUnit, positionAllowedValues(position, "businessUnit")),
-    check("Establecimiento", employee.establishment, positionAllowedValues(position, "establishment")),
-    check("Sector", employee.sector, positionAllowedValues(position, "sector")),
-  ];
-  const structuralMismatch = rows.some((row) => position && row.allowed.length && !row.ok && !row.missing);
+  // A6: misma regla que el backend (employees.service.getPositionValidation).
+  // Con alcance A5 no se compara ningún sector del legajo; un puesto sin
+  // alcance conserva la comparación anterior y queda pendiente de recarga.
+  const positionPendingScope = Boolean(position) && !position?.orgScopes?.length;
+  const rows = positionPendingScope
+    ? [
+        check("Unidad de negocio", employee.businessUnit, positionAllowedValues(position, "businessUnit")),
+        check("Establecimiento", employee.establishment, positionAllowedValues(position, "establishment")),
+        check("Sector", employee.sector, positionAllowedValues(position, "sector")),
+      ]
+    : [];
+  const structuralMismatch = rows.some((row) => row.allowed.length && !row.ok && !row.missing);
   const categoryMismatch = ["BELOW_RANGE", "ABOVE_RANGE", "UNKNOWN_CATEGORY"].includes(categoryResult.status);
   const categoryPending = ["NO_POSITION", "NO_RANGE"].includes(categoryResult.status) || !employee.internalCategory;
   const tone = !position
     ? "neutral"
     : structuralMismatch || categoryMismatch
       ? "danger"
-      : categoryPending || rows.some((row) => row.missing)
+      : categoryPending || positionPendingScope || rows.some((row) => row.missing)
         ? "warning"
         : "success";
   const title = !position
@@ -194,7 +177,9 @@ export function SalaryRangeValidationCard({
       ? "Datos laborales dentro del puesto"
       : tone === "danger"
         ? "Hay datos fuera del puesto"
-        : "Validacion pendiente";
+        : positionPendingScope
+          ? "Puesto pendiente de recarga"
+          : "Validacion pendiente";
   const categoryText = {
     IN_RANGE: `${employee.internalCategory} esta dentro del rango salarial.`,
     BELOW_RANGE: `${employee.internalCategory} esta por debajo del rango salarial.`,

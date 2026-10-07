@@ -13,6 +13,7 @@ import {
   nextArgentinaMidnightUtc,
   nextCalendarDateKey,
   periodFromCalendarDate,
+  previousCalendarDateKey,
   periodFromInstant,
   scheduledInstantForShiftTime,
 } from "./argentinaTime";
@@ -178,6 +179,16 @@ describe("nextCalendarDateKey — Etapa 15M.19A (catch-up de attendanceInactivit
 
   it("año NO bisiesto salta directo de 28/02 a 01/03", () => {
     expect(nextCalendarDateKey("2026-02-28")).toBe("2026-03-01");
+  });
+});
+
+describe("previousCalendarDateKey — A6 (cierre de una ubicación en D − 1)", () => {
+  it("resta un día calendario cruzando mes, año y bisiesto, sin corrimiento de huso horario", () => {
+    expect(previousCalendarDateKey("2026-10-07")).toBe("2026-10-06");
+    expect(previousCalendarDateKey("2026-10-01")).toBe("2026-09-30");
+    expect(previousCalendarDateKey("2027-01-01")).toBe("2026-12-31");
+    expect(previousCalendarDateKey("2028-03-01")).toBe("2028-02-29");
+    expect(previousCalendarDateKey("2026-03-01")).toBe("2026-02-28");
   });
 });
 

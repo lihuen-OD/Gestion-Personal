@@ -23,17 +23,13 @@ import {
   employeeDetailTabSections,
   SectionChangeHistory,
 } from "../components/employees/SectionChangeHistory";
-import { LaborStatusCard } from "../components/employees/LaborStatusCard";
-import { FieldWithHistory } from "../components/employees/FieldHistoryControls";
-import { EmployeePositionField, MultiCompanyField } from "../components/employees/LaborTrackedFields";
-import { LaborMovementPanel } from "../components/employees/LaborMovementPanel";
 import {
   AddressEditBlock,
   AssignmentBlock,
   HoursSpecialBlock,
   TransportBlock,
 } from "../components/employees/EmployeeDetailBlocks";
-import { SalaryRangeValidationCard } from "../components/employees/EmployeeLaborFields";
+import { EmployeeLaborDataTab } from "../components/employees/EmployeeLaborDataTab";
 import { useLaborSelectOptions } from "../components/employees/options/laborOptions";
 import { useStructureSelectOptions } from "../components/employees/options/structureOptions";
 import type { Employee, User } from "../types";
@@ -346,29 +342,15 @@ function renderEmployeeTab(
 
   if (tab === 2) {
     return (
-      <>
-        <LaborStatusCard employee={employee} />
-        <LaborMovementPanel employee={employee} user={user} canEdit={editable} onSaved={setEmployee} />
-
-        <p className="eyebrow tracked-grid-label">EMPRESA / ESTRUCTURA</p>
-        <div className="tracked-grid">
-          <MultiCompanyField employee={employee} canEdit={editable} user={user} onSaved={setEmployee} />
-          <DerivedLaborField label="Unidad de negocio" value={employee.businessUnit} />
-          <DerivedLaborField label="Establecimiento" value={employee.establishment} />
-          <FieldWithHistory employee={employee} section="DATOS_LABORALES" field="costCenter" label="Centro de costo" value={employee.costCenter} canEdit={editable} user={user} options={structureOptions.costCenter} onSaved={setEmployee} />
-          <FieldWithHistory employee={employee} section="DATOS_LABORALES" field="sector" label="Sector" value={employee.sector} canEdit={editable} user={user} options={laborOptions.sector} onSaved={setEmployee} />
-        </div>
-
-        <p className="eyebrow tracked-grid-label">PUESTO / CATEGORÍA</p>
-        <div className="tracked-grid">
-          <EmployeePositionField employee={employee} canEdit={editable} user={user} onSaved={setEmployee} />
-          <FieldWithHistory employee={employee} section="DATOS_LABORALES" field="receiptCategory" label="Categoría de recibo" value={employee.receiptCategory} canEdit={editable} user={user} options={laborOptions.receiptCategory} onSaved={setEmployee} />
-          <FieldWithHistory employee={employee} section="DATOS_LABORALES" field="internalCategory" label="Categoría interna" value={employee.internalCategory} canEdit={editable} user={user} options={laborOptions.internalCategory} onSaved={setEmployee} />
-          <SalaryRangeValidationCard employee={employee} />
-          <FieldWithHistory employee={employee} section="DATOS_LABORALES" field="agreement" label="Convenio" value={employee.agreement} canEdit={editable} user={user} onSaved={setEmployee} />
-          <FieldWithHistory employee={employee} section="DATOS_LABORALES" field="healthInsurance" label="Obra Social" value={employee.healthInsurance} canEdit={editable} user={user} onSaved={setEmployee} />
-        </div>
-      </>
+      <EmployeeLaborDataTab
+        employee={employee}
+        user={user}
+        editable={editable}
+        onSaved={setEmployee}
+        costCenterOptions={structureOptions.costCenter}
+        receiptCategoryOptions={laborOptions.receiptCategory}
+        internalCategoryOptions={laborOptions.internalCategory}
+      />
     );
   }
 
@@ -416,16 +398,4 @@ function renderEmployeeTab(
   if (tab === 11) return <EmployeeWorkRegimePanel employee={employee} user={user} canEdit={editable} onSaved={setEmployee} />;
 
   return <EmployeeAuditPanel employeeId={employee.id} />;
-}
-
-function DerivedLaborField({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="tracked-field">
-      <div className="tracked-main">
-        <small>{label}</small>
-        <b>{value || "Sin cargar"}</b>
-        <span>Dato derivado del sector seleccionado</span>
-      </div>
-    </div>
-  );
 }

@@ -489,6 +489,8 @@ const positionValidationSectorSelect = {
 
 const positionValidationPositionSelect = {
   sector: { select: positionValidationSectorSelect },
+  // A6: un puesto sin alcance A5 queda pendiente de recarga.
+  _count: { select: { orgScopes: true } },
   salaryCategories: {
     select: { salaryCategory: { select: { id: true, name: true, order: true } } },
   },
@@ -1107,6 +1109,15 @@ export const employeesRepository = {
 
   findPositionValidationById(id: string, accessWhere: Prisma.EmployeeWhereInput = {}, positionId?: string) {
     return findPositionValidationById(id, accessWhere, positionId);
+  },
+
+  // A6: requisitos para asignar un puesto NUEVO a un legajo (activo y con
+  // alcance organizacional A5).
+  findPositionForAssignment(positionId: string) {
+    return prisma.position.findUnique({
+      where: { id: positionId },
+      select: { id: true, name: true, status: true, _count: { select: { orgScopes: true } } },
+    });
   },
 
   findUpdateAuditSnapshot(id: string) {

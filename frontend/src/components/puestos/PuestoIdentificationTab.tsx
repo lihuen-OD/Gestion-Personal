@@ -4,23 +4,17 @@ import type { OrgStructureCatalog } from "../../types/orgStructure.types";
 import type { Position, PositionOrgScope, PositionOrgScopeLevel } from "../../types/position.types";
 import { PuestoField, PuestoSelect } from "./PuestoFields";
 import { activoInactivoLabel } from "../../utils/status";
+import { orgScopeLineage } from "../org-structure/orgScopePath";
 
 const statusOptionLabels: Record<string, string> = { ACTIVO: activoInactivoLabel("ACTIVO"), INACTIVO: activoInactivoLabel("INACTIVO") };
 
 const levelLabels: Record<PositionOrgScopeLevel, string> = { COMPANY: "Empresa", BUSINESS_UNIT: "Unidad de negocio", SECTOR: "Sector", AREA: "Área" };
 
-function nodeLineage(catalog: OrgStructureCatalog, scope: Pick<PositionOrgScope, "level" | "nodeId">) {
-  if (scope.level === "COMPANY") return { companyId: scope.nodeId };
-  if (scope.level === "BUSINESS_UNIT") { const node = catalog.businessUnits.find((item) => item.id === scope.nodeId); return { companyId: node?.companyId, businessUnitId: node?.id }; }
-  if (scope.level === "SECTOR") { const node = catalog.sectors.find((item) => item.id === scope.nodeId); const unit = catalog.businessUnits.find((item) => item.id === node?.businessUnitId); return { companyId: unit?.companyId, businessUnitId: node?.businessUnitId, sectorId: node?.id }; }
-  const node = catalog.areas.find((item) => item.id === scope.nodeId); const sector = catalog.sectors.find((item) => item.id === node?.sectorId); const unit = catalog.businessUnits.find((item) => item.id === sector?.businessUnitId); return { companyId: unit?.companyId, businessUnitId: sector?.businessUnitId, sectorId: node?.sectorId, areaId: node?.id };
-}
-
 export function scopeRedundancyMessage(catalog: OrgStructureCatalog, scopes: PositionOrgScope[], candidate: PositionOrgScope) {
-  const candidatePath = nodeLineage(catalog, candidate);
+  const candidatePath = orgScopeLineage(catalog, candidate);
   for (const current of scopes) {
     if (current.level === candidate.level && current.nodeId === candidate.nodeId) return `“${candidate.name}” ya está seleccionado.`;
-    const currentPath = nodeLineage(catalog, current);
+    const currentPath = orgScopeLineage(catalog, current);
     const currentCoversCandidate = current.nodeId === (current.level === "COMPANY" ? candidatePath.companyId : current.level === "BUSINESS_UNIT" ? candidatePath.businessUnitId : current.level === "SECTOR" ? candidatePath.sectorId : candidatePath.areaId);
     if (currentCoversCandidate) return `No selecciones “${candidate.name}”: ya está incluido por “${current.name}”.`;
     const candidateCoversCurrent = candidate.nodeId === (candidate.level === "COMPANY" ? currentPath.companyId : candidate.level === "BUSINESS_UNIT" ? currentPath.businessUnitId : candidate.level === "SECTOR" ? currentPath.sectorId : currentPath.areaId);

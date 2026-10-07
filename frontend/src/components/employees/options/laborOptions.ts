@@ -1,36 +1,26 @@
 import { useEffect, useMemo, useState } from "react";
 import { salaryCategoryApiService } from "../../../services/api/salaryCategoryApiService";
-import { orgStructureApiService } from "../../../services/api/orgStructureApiService";
 import { salaryRangeMockService } from "../../../services/salaryRangeMockService";
 import type { Employee } from "../../../types";
 import { uniqueOptions } from "./sharedOptions";
 
+// A6 (ORG_LOCATION_REORGANIZATION.md §3.3): las opciones de unidad de
+// negocio, establecimiento y sector del modelo anterior se retiraron — el
+// alcance sale del puesto y las ubicaciones se asignan con vigencia.
 export function useLaborSelectOptions(employee?: Employee) {
   const [salaryCategories, setSalaryCategories] = useState<string[]>([]);
-  const [structure, setStructure] = useState<{ companies: string[]; businessUnits: string[]; establishments: string[]; areas: string[]; sectors: string[]; costCenters: string[] }>({ companies: [], businessUnits: [], establishments: [], areas: [], sectors: [], costCenters: [] });
 
   useEffect(() => {
     let mounted = true;
-    Promise.allSettled([salaryCategoryApiService.getGroups(), orgStructureApiService.getCatalog()]).then((results) => {
-      if (!mounted) return;
-      const [salaryResult, structureResult] = results;
-      if (salaryResult.status === "fulfilled" && salaryResult.value.length) {
-        salaryRangeMockService.setApiGroups(salaryResult.value);
-      }
-      setSalaryCategories(salaryRangeMockService.getOrderedCategories());
-
-      if (structureResult.status === "fulfilled") {
-        const catalog = structureResult.value;
-        setStructure({
-          companies: catalog.companies.filter((item) => item.status === "ACTIVO").map((item) => item.name),
-          businessUnits: catalog.businessUnits.filter((item) => item.status === "ACTIVO").map((item) => item.name),
-          establishments: catalog.establishments.filter((item) => item.status === "ACTIVO").map((item) => item.name),
-          areas: catalog.areas.filter((item) => item.status === "ACTIVO").map((item) => item.name),
-          sectors: catalog.sectors.filter((item) => item.status === "ACTIVO").map((item) => item.name),
-          costCenters: catalog.costCenters.filter((item) => item.status === "ACTIVO").map((item) => item.name),
-        });
-      }
-    });
+    salaryCategoryApiService.getGroups()
+      .then((groups) => {
+        if (!mounted) return;
+        if (groups.length) salaryRangeMockService.setApiGroups(groups);
+        setSalaryCategories(salaryRangeMockService.getOrderedCategories());
+      })
+      .catch(() => {
+        if (mounted) setSalaryCategories(salaryRangeMockService.getOrderedCategories());
+      });
     return () => {
       mounted = false;
     };
@@ -39,19 +29,8 @@ export function useLaborSelectOptions(employee?: Employee) {
   return useMemo(() => {
     const receiptBase = salaryCategories.map((category) => category.replace(/\s+[A-I]$/, ""));
     return {
-      businessUnit: uniqueOptions([employee?.businessUnit || "", ...structure.businessUnits]),
-      establishment: uniqueOptions([employee?.establishment || "", ...structure.establishments]),
-      sector: uniqueOptions([employee?.sector || "", ...structure.sectors]),
       receiptCategory: uniqueOptions([employee?.receiptCategory || "", ...receiptBase]),
       internalCategory: uniqueOptions([employee?.internalCategory || "", ...salaryCategories]),
     };
-  }, [
-    employee?.businessUnit,
-    employee?.establishment,
-    employee?.sector,
-    employee?.receiptCategory,
-    employee?.internalCategory,
-    salaryCategories,
-    structure,
-  ]);
+  }, [employee?.receiptCategory, employee?.internalCategory, salaryCategories]);
 }

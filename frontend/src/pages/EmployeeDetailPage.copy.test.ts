@@ -5,11 +5,18 @@ import { describe, expect, it } from "vitest";
 // jsdom/RTL, se lee el código fuente (?raw) para confirmar la estructura.
 import pageSource from "./EmployeeDetailPage.tsx?raw";
 import blocksSource from "../components/employees/EmployeeDetailBlocks.tsx?raw";
+import laborTabSource from "../components/employees/EmployeeLaborDataTab.tsx?raw";
 
 describe("EmployeeDetailPage — Datos Laborales agrupado (Etapa UI-3)", () => {
-  it('agrupa el tracked-grid en "Empresa / estructura" y "Puesto / categoría"', () => {
-    expect(pageSource).toContain("EMPRESA / ESTRUCTURA");
-    expect(pageSource).toContain("PUESTO / CATEGORÍA");
+  // A6 (ORG_LOCATION_REORGANIZATION.md §3.3): bloques Puesto y alcance,
+  // Ubicaciones, Empresa empleadora/categorías y estructura anterior de consulta.
+  it("Datos Laborales se agrupa en los bloques A6 y ya no edita sector/UN/establecimiento", () => {
+    expect(pageSource).toContain("<EmployeeLaborDataTab");
+    expect(laborTabSource).toContain("PUESTO Y ALCANCE ORGANIZACIONAL");
+    expect(laborTabSource).toContain("UBICACIONES DE TRABAJO");
+    expect(laborTabSource).toContain("EMPRESA EMPLEADORA Y CATEGORÍAS");
+    expect(laborTabSource).toContain('field="sector" label="Sector anterior" value={employee.sector} canEdit={false}');
+    expect(pageSource).not.toContain("EMPRESA / ESTRUCTURA");
   });
 
   it("Contacto y Domicilio ya no envuelve AddressEditBlock en block-wrap suelto (usa detail-section-stack)", () => {

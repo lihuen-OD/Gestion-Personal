@@ -156,6 +156,11 @@ export function nextCalendarDateKey(dateKey: string): string {
   return calendarDateKey(new Date(argentinaCalendarDate(dateKey).getTime() + MS_PER_DAY));
 }
 
+/** Día calendario anterior a `dateKey` (ambos "YYYY-MM-DD"), sin corrimiento de huso horario. */
+export function previousCalendarDateKey(dateKey: string): string {
+  return calendarDateKey(new Date(argentinaCalendarDate(dateKey).getTime() - MS_PER_DAY));
+}
+
 /**
  * Etapa 15L.5 (docs/decisions/NOVELTY_QUANTITY_SEMANTICS_15L5.md): cantidad
  * de días CALENDARIO, inclusive, entre dos FECHAS CALENDARIO ya normalizadas

@@ -28,6 +28,7 @@ const entityLabels: Record<string, string> = {
   EmployeeFieldHistory: "Historial de legajo",
   EmployeeHourConcept: "Concepto horario del legajo",
   EmployeeTransport: "Transporte del legajo",
+  EmployeeWorkLocation: "Ubicación de trabajo del legajo",
   EmployeeWorkRegime: "Régimen laboral del legajo",
   FinnegansExport: "Exportación a Finnegans",
   HolidayWorkAssignment: "Asignación de feriado",

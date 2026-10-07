@@ -7,6 +7,10 @@ import { validateBody } from "../../shared/validation/validateRequest";
 import { validateQuery } from "../../shared/validation/validateQuery";
 import { employeesController } from "./employees.controller";
 import {
+  changeEmployeeWorkLocationSchema,
+  correctEmployeeWorkLocationSchema,
+  createEmployeeWorkLocationSchema,
+  endEmployeeWorkLocationSchema,
   createEmployeeDocumentSchema,
   createEmployeeBlockHistorySchema,
   createEmployeeFieldHistorySchema,
@@ -172,6 +176,44 @@ employeesRouter.put(
   requireAnyRole([roles.rrhh]),
   validateBody(replaceEmployeeAssignmentsSchema),
   asyncHandler(employeesController.replaceAssignments),
+);
+
+// A6 (ORG_LOCATION_REORGANIZATION.md §3.3): ubicaciones de trabajo con
+// vigencia. Lectura con el mismo alcance que el detalle del legajo; escritura
+// exclusiva de RRHH, igual que el resto de Datos Laborales. Alta, cambio con
+// nueva vigencia, finalización y corrección son operaciones distintas.
+employeesRouter.get(
+  "/:id/work-locations",
+  requireAnyRole([roles.rrhh, roles.supervision]),
+  asyncHandler(employeesController.listWorkLocations),
+);
+
+employeesRouter.post(
+  "/:id/work-locations",
+  requireAnyRole([roles.rrhh]),
+  validateBody(createEmployeeWorkLocationSchema),
+  asyncHandler(employeesController.createWorkLocation),
+);
+
+employeesRouter.post(
+  "/:id/work-locations/:locationId/change",
+  requireAnyRole([roles.rrhh]),
+  validateBody(changeEmployeeWorkLocationSchema),
+  asyncHandler(employeesController.changeWorkLocation),
+);
+
+employeesRouter.post(
+  "/:id/work-locations/:locationId/end",
+  requireAnyRole([roles.rrhh]),
+  validateBody(endEmployeeWorkLocationSchema),
+  asyncHandler(employeesController.endWorkLocation),
+);
+
+employeesRouter.patch(
+  "/:id/work-locations/:locationId",
+  requireAnyRole([roles.rrhh]),
+  validateBody(correctEmployeeWorkLocationSchema),
+  asyncHandler(employeesController.correctWorkLocation),
 );
 
 employeesRouter.put(

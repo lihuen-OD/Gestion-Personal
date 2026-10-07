@@ -214,13 +214,51 @@ export const employeeTimeGridQuerySchema = z.object({
   includeDetails: z.preprocess((value) => (value === "false" ? false : value), z.coerce.boolean()).default(true),
 });
 
-const manualBreakdownDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((value) => {
+const calendarDateKeySchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((value) => {
   const parsed = new Date(`${value}T00:00:00.000Z`);
   return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
 }, "Fecha inválida");
 
+// A6 (ORG_LOCATION_REORGANIZATION.md §3.3): ubicaciones de trabajo con
+// vigencia. Fechas siempre como clave de calendario "YYYY-MM-DD" (nunca
+// `z.coerce.date()`, que interpreta huso horario). La lista de
+// establecimientos no se deduplica acá: un duplicado se rechaza en el servicio.
+const workLocationReasonSchema = z.string().trim().min(2).max(600);
+const workLocationNotesSchema = z.string().trim().max(600).optional().nullable();
+const workLocationEstablishmentIdsSchema = z.array(z.string().uuid()).min(1).max(100);
+
+export const createEmployeeWorkLocationSchema = z.object({
+  zoneId: z.string().uuid(),
+  establishmentIds: workLocationEstablishmentIdsSchema,
+  effectiveFrom: calendarDateKeySchema,
+  effectiveTo: calendarDateKeySchema.optional().nullable(),
+  reason: workLocationReasonSchema,
+  notes: workLocationNotesSchema,
+});
+
+// Cambio con nueva vigencia: la ubicación indicada se cierra en D − 1 y la
+// nueva arranca en D (`effectiveFrom`).
+export const changeEmployeeWorkLocationSchema = createEmployeeWorkLocationSchema;
+
+export const endEmployeeWorkLocationSchema = z.object({
+  effectiveTo: calendarDateKeySchema,
+  reason: workLocationReasonSchema,
+});
+
+// Corrección de un registro mal cargado: no crea vigencia nueva. Motivo de la
+// corrección obligatorio; sólo se envían los datos a corregir.
+export const correctEmployeeWorkLocationSchema = z.object({
+  zoneId: z.string().uuid().optional(),
+  establishmentIds: workLocationEstablishmentIdsSchema.optional(),
+  effectiveFrom: calendarDateKeySchema.optional(),
+  effectiveTo: calendarDateKeySchema.optional().nullable(),
+  reason: workLocationReasonSchema.optional(),
+  notes: workLocationNotesSchema,
+  correctionReason: workLocationReasonSchema,
+});
+
 export const upsertManualHourConceptBreakdownSchema = z.object({
-  date: manualBreakdownDateSchema,
+  date: calendarDateKeySchema,
   hourConceptId: z.string().uuid(),
   minutes: z.number().int().min(0).max(1440),
   observation: z.string().trim().max(600).optional().nullable(),
@@ -275,5 +313,9 @@ export type PositionValidationQuery = z.infer<typeof positionValidationQuerySche
 export type EmployeeTimeGridQuery = z.infer<typeof employeeTimeGridQuerySchema>;
 export type UpsertManualHourConceptBreakdownInput = z.infer<typeof upsertManualHourConceptBreakdownSchema>;
 export type ResolveManualHourConceptBreakdownInput = z.infer<typeof resolveManualHourConceptBreakdownSchema>;
-export type CreateEmployeeFieldHistoryInput = z.infer<typeof createEmployeeFieldHistorySchema>;
+export type CreateEmployeeWorkLocationInput = z.infer<typeof createEmployeeWorkLocationSchema>;
+export type ChangeEmployeeWorkLocationInput = z.infer<typeof changeEmployeeWorkLocationSchema>;
+export type EndEmployeeWorkLocationInput = z.infer<typeof endEmployeeWorkLocationSchema>;
+export type CorrectEmployeeWorkLocationInput = z.infer<typeof correctEmployeeWorkLocationSchema>;
+export type CreateEmployeeFieldHistoryInput =z.infer<typeof createEmployeeFieldHistorySchema>;
 export type CreateEmployeeBlockHistoryInput = z.infer<typeof createEmployeeBlockHistorySchema>;

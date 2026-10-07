@@ -407,3 +407,32 @@ describe("employeeApiService.replaceAssignments — ya no envía 'role' para TIM
     expect(timeResponsibleAssignment?.userId).toBe("user-1");
   });
 });
+
+// A6 (ORG_LOCATION_REORGANIZATION.md §3.3): el sector del legajo es del
+// modelo anterior y de sólo lectura. Antes se resolvía por nombre contra el
+// catálogo y podía reasignar en silencio un sector homónimo del árbol nuevo.
+describe("employeeApiService.update — no envía el sector anterior (A6)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    cache.invalidateCacheFamily("org-structure", "test");
+  });
+
+  it("guardar otros datos de un legajo con sector anterior no manda sectorId", async () => {
+    vi.mocked(apiRequest).mockImplementation(async (url: unknown) => {
+      if (url === "/org-structure") {
+        return { data: { companies: [], businessUnits: [], sectors: [{ id: "sector-new", code: "SEC-1", name: "Agricultura", status: "ACTIVO", businessUnitId: "bu-1" }], areas: [], zones: [], establishments: [], costCenters: [] } } as never;
+      }
+      if (typeof url === "string" && url.startsWith("/positions/options")) return { data: [] } as never;
+      return { data: {} } as never;
+    });
+    const employee = { ...mapEmployeeFromApi({ id: "employee-1", legajo: "100", firstName: "Ana", lastName: "Prueba", status: "ACTIVO" }), sector: "Agricultura", internalCategory: "Administrativo B" };
+
+    await employeeApiService.update(employee);
+
+    const patch = vi.mocked(apiRequest).mock.calls.find(([calledUrl, options]) => calledUrl === "/employees/employee-1" && (options as { method?: string })?.method === "PATCH");
+    expect(patch).toBeDefined();
+    const body = (patch![1] as { body: Record<string, unknown> }).body;
+    expect(body).not.toHaveProperty("sectorId");
+    expect(body.internalCategory).toBe("Administrativo B");
+  });
+});

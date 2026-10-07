@@ -1,0 +1,134 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { Mock } from "vitest";
+import { employeesRepository } from "./employees.repository";
+import { employeesService } from "./employees.service";
+
+/**
+ * A6 (docs/decisions/ORG_LOCATION_REORGANIZATION.md §3.3): el legajo tiene
+ * un puesto; el alcance se lee del puesto. Asignar un puesto NUEVO exige que
+ * esté activo y tenga alcance, pero un legajo que conserva su puesto o sector
+ * anterior sigue pudiendo editar el resto de sus datos laborales.
+ */
+vi.mock("./employees.repository", () => ({
+  employeesRepository: {
+    findUpdateAuditSnapshot: vi.fn(),
+    findConflictingUniqueFields: vi.fn(),
+    findByUniqueFields: vi.fn(),
+    findPositionForAssignment: vi.fn(),
+    findAssignableHourConceptIds: vi.fn(),
+    update: vi.fn(),
+    create: vi.fn(),
+  },
+}));
+vi.mock("../audit/audit.service", () => ({ auditService: { register: vi.fn() } }));
+vi.mock("../time-entries/timeEntries.repository", () => ({ resolveDoubleHourMultipliersByDate: vi.fn() }));
+
+const repo = employeesRepository as unknown as Record<"findUpdateAuditSnapshot" | "findConflictingUniqueFields" | "findByUniqueFields" | "findPositionForAssignment" | "update" | "create", Mock>;
+
+const legacySnapshot = {
+  id: "emp-1",
+  legajo: "30",
+  firstName: "Juan",
+  lastName: "Pérez",
+  positionId: "pos-legacy",
+  sectorId: "sector-legacy",
+  costCenterId: "cc-1",
+  internalCategory: "Administrativo A",
+  address: null,
+  companies: [{ companyId: "company-1", isPrimary: true }],
+};
+
+const createInput = {
+  legajo: "99", cuil: "20-11111111-1", dni: "11111111", firstName: "Ana", lastName: "Gómez",
+  birthDate: new Date("1990-01-01T00:00:00.000Z"), gender: "Femenino", nationality: "Argentina",
+  status: "ACTIVO" as const, companyIds: [],
+};
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  repo.findUpdateAuditSnapshot.mockResolvedValue(legacySnapshot);
+  repo.findConflictingUniqueFields.mockResolvedValue(null);
+  repo.findByUniqueFields.mockResolvedValue(null);
+  repo.update.mockImplementation((id: string, input: Record<string, unknown>) => Promise.resolve({ ...legacySnapshot, ...input, id }));
+  repo.create.mockResolvedValue({ id: "emp-new", legajo: "99", firstName: "Ana", lastName: "Gómez" });
+});
+
+describe("employeesService.update — legajo pendiente de recarga", () => {
+  it("edita otros datos laborales conservando el puesto y el sector anteriores, sin validar el puesto", async () => {
+    await employeesService.update("emp-1", { internalCategory: "Administrativo B", positionId: "pos-legacy", sectorId: "sector-legacy", costCenterId: "cc-1" });
+
+    expect(repo.findPositionForAssignment).not.toHaveBeenCalled();
+    expect(repo.update).toHaveBeenCalledWith("emp-1", expect.objectContaining({ internalCategory: "Administrativo B" }));
+  });
+
+  it("rechaza cambiar el sector anterior: el alcance sale del puesto (409, sin escribir)", async () => {
+    await expect(employeesService.update("emp-1", { sectorId: "11111111-1111-4111-8111-111111111111" }))
+      .rejects.toMatchObject({ statusCode: 409, code: "EMPLOYEE_LEGACY_SECTOR_READ_ONLY" });
+    expect(repo.update).not.toHaveBeenCalled();
+  });
+
+  it("rechaza vaciar el sector anterior: no se borra ni convierte en silencio", async () => {
+    await expect(employeesService.update("emp-1", { sectorId: null }))
+      .rejects.toMatchObject({ code: "EMPLOYEE_LEGACY_SECTOR_READ_ONLY" });
+  });
+
+  it("asignar un puesto nuevo con alcance A5 y activo es válido", async () => {
+    repo.findPositionForAssignment.mockResolvedValue({ id: "pos-new", name: "Encargado de campo", status: "ACTIVO", _count: { orgScopes: 2 } });
+
+    await employeesService.update("emp-1", { positionId: "pos-new" });
+
+    expect(repo.findPositionForAssignment).toHaveBeenCalledWith("pos-new");
+    expect(repo.update).toHaveBeenCalledWith("emp-1", expect.objectContaining({ positionId: "pos-new" }));
+  });
+
+  it("rechaza asignar un puesto nuevo pendiente de recarga (sin alcance)", async () => {
+    repo.findPositionForAssignment.mockResolvedValue({ id: "pos-other-legacy", name: "Administrativo", status: "ACTIVO", _count: { orgScopes: 0 } });
+
+    await expect(employeesService.update("emp-1", { positionId: "pos-other-legacy" }))
+      .rejects.toMatchObject({ statusCode: 409, code: "EMPLOYEE_POSITION_PENDING_SCOPE" });
+    expect(repo.update).not.toHaveBeenCalled();
+  });
+
+  it("rechaza asignar un puesto inactivo", async () => {
+    repo.findPositionForAssignment.mockResolvedValue({ id: "pos-off", name: "Director", status: "INACTIVO", _count: { orgScopes: 1 } });
+
+    await expect(employeesService.update("emp-1", { positionId: "pos-off" }))
+      .rejects.toMatchObject({ code: "EMPLOYEE_POSITION_INACTIVE" });
+  });
+
+  it("rechaza un puesto inexistente", async () => {
+    repo.findPositionForAssignment.mockResolvedValue(null);
+
+    await expect(employeesService.update("emp-1", { positionId: "pos-missing" }))
+      .rejects.toMatchObject({ statusCode: 400, code: "EMPLOYEE_POSITION_INVALID" });
+  });
+
+  it("quitar el puesto (null) no exige requisitos de asignación", async () => {
+    await employeesService.update("emp-1", { positionId: null });
+
+    expect(repo.findPositionForAssignment).not.toHaveBeenCalled();
+    expect(repo.update).toHaveBeenCalled();
+  });
+});
+
+describe("employeesService.create — nuevas asignaciones", () => {
+  it("no acepta un sector del modelo anterior en el alta", async () => {
+    await expect(employeesService.create({ ...createInput, sectorId: "11111111-1111-4111-8111-111111111111" }))
+      .rejects.toMatchObject({ code: "EMPLOYEE_LEGACY_SECTOR_READ_ONLY" });
+    expect(repo.create).not.toHaveBeenCalled();
+  });
+
+  it("exige que el puesto asignado en el alta tenga alcance", async () => {
+    repo.findPositionForAssignment.mockResolvedValue({ id: "pos-legacy", name: "Administrativo", status: "ACTIVO", _count: { orgScopes: 0 } });
+
+    await expect(employeesService.create({ ...createInput, positionId: "pos-legacy" }))
+      .rejects.toMatchObject({ code: "EMPLOYEE_POSITION_PENDING_SCOPE" });
+    expect(repo.create).not.toHaveBeenCalled();
+  });
+
+  it("alta sin puesto ni sector sigue siendo válida", async () => {
+    await employeesService.create({ ...createInput, sectorId: null });
+
+    expect(repo.create).toHaveBeenCalled();
+  });
+});
