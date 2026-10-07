@@ -76,6 +76,10 @@ const envSchema = z.object({
   CLOCK_ATTEMPT_PROCESSING_TTL_MS: z.coerce.number().int().positive().default(60_000),
   CLOCK_ATTEMPT_RETENTION_DAYS: z.coerce.number().int().positive().default(30),
   CLOCK_ATTEMPT_MAINTENANCE_INTERVAL_MS: z.coerce.number().int().positive().default(60_000),
+  // Compuerta única para los trabajos automáticos iniciados con el proceso
+  // HTTP. Por compatibilidad queda activa salvo opt-out explícito. Las copias
+  // de QA que no deben mutar datos la fijan en false en su env no versionado.
+  AUTOMATIC_JOBS_ENABLED: envBoolean.default(true),
   ATTENDANCE_INACTIVITY_CHECK_HOUR: z.coerce.number().int().min(0).max(23).default(1),
   ATTENDANCE_INACTIVITY_CHECK_MINUTE: z.coerce.number().int().min(0).max(59).default(0),
   // Etapa 15M.19A (docs/decisions/DURABLE_ATTENDANCE_INACTIVITY_SCHEDULER_15M19A.md):
