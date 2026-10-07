@@ -6,16 +6,17 @@ import { SearchInput } from "../ui/SearchInput";
 import { StructureTreeNode } from "./StructureTreeNode";
 import { collectParentKeys, filterOrgTree, flattenVisible, normalizeSearch, type OrgTreeNode } from "./orgStructureTree";
 
-// Niveles abiertos al cargar: Empresa y Unidad de negocio (se ven los
-// establecimientos de cada unidad sin abrir nada a mano).
+// Niveles abiertos al cargar: los dos primeros de cada árbol (Empresa y
+// Unidad de negocio; Zona y Establecimiento). Los grupos de la estructura
+// anterior quedan cerrados: son listas largas pendientes de recarga.
 const INITIAL_OPEN_LEVELS = 2;
 
 function initialExpanded(nodes: OrgTreeNode[], levels: number, depth = 1): string[] {
   if (depth > levels) return [];
-  return nodes.flatMap((node) => (node.children.length ? [node.key, ...initialExpanded(node.children, levels, depth + 1)] : []));
+  return nodes.flatMap((node) => (node.children.length && node.type !== "GROUP" ? [node.key, ...initialExpanded(node.children, levels, depth + 1)] : []));
 }
 
-export function StructureTreeView({ nodes, selectedKey, onSelect, label = "Estructura organizacional" }: { nodes: OrgTreeNode[]; selectedKey: string | null; onSelect: (node: OrgTreeNode) => void; label?: string }) {
+export function StructureTreeView({ nodes, selectedKey, onSelect, label = "Estructura organizacional", emptyText = "Todavía no hay estructura cargada." }: { nodes: OrgTreeNode[]; selectedKey: string | null; onSelect: (node: OrgTreeNode) => void; label?: string; emptyText?: string }) {
   const [query, setQuery] = useState("");
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(initialExpanded(nodes, INITIAL_OPEN_LEVELS)));
   const [focusedKey, setFocusedKey] = useState<string | null>(null);
@@ -95,7 +96,7 @@ export function StructureTreeView({ nodes, selectedKey, onSelect, label = "Estru
   };
 
   const totalNodes = useMemo(() => {
-    const count = (items: OrgTreeNode[]): number => items.reduce((sum, item) => sum + 1 + count(item.children), 0);
+    const count = (items: OrgTreeNode[]): number => items.reduce((sum, item) => sum + (item.type === "GROUP" ? 0 : 1) + count(item.children), 0);
     return count(nodes);
   }, [nodes]);
 
@@ -109,7 +110,7 @@ export function StructureTreeView({ nodes, selectedKey, onSelect, label = "Estru
         </div>
       </div>
       <p className="org-tree-caption" aria-live="polite">
-        {normalizedQuery ? `${filtered.matches} coincidencia${filtered.matches === 1 ? "" : "s"} para “${query.trim()}”` : `${totalNodes} elementos en la estructura`}
+        {normalizedQuery ? `${filtered.matches} coincidencia${filtered.matches === 1 ? "" : "s"} para “${query.trim()}”` : `${totalNodes} elementos`}
       </p>
       {rows.length ? (
         <ul className="org-tree-list" role="tree" aria-label={label} onKeyDown={onKeyDown}>
@@ -129,7 +130,7 @@ export function StructureTreeView({ nodes, selectedKey, onSelect, label = "Estru
           ))}
         </ul>
       ) : (
-        <EmptyState text={normalizedQuery ? `No hay elementos que coincidan con “${query.trim()}”.` : "Todavía no hay estructura organizacional cargada."} />
+        <EmptyState text={normalizedQuery ? `No hay elementos que coincidan con “${query.trim()}”.` : emptyText} />
       )}
     </div>
   );

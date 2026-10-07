@@ -1,320 +1,79 @@
-import { Pencil, Plus, Trash2 } from "lucide-react";
+import { Plus } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Navigate } from "react-router-dom";
-import { GeoAddressFields } from "../components/GeoAddressFields";
-import { OverflowCell } from "../components/ui/OverflowCell";
 import { DataTable } from "../components/ui/DataTable";
 import { LoadingState } from "../components/ui/LoadingState";
 import { PageHeader } from "../components/ui/PageHeader";
 import { Section } from "../components/ui/Section";
 import { StatCard } from "../components/ui/StatCard";
 import { Tabs } from "../components/ui/Tabs";
+import { Button } from "../components/ui/Button";
 import { StructureTreeView } from "../components/org-structure/StructureTreeView";
 import { StructureNodeDetail } from "../components/org-structure/StructureNodeDetail";
-import { buildOrgStructureTree, findNode, orgNodeTypeLabels, type OrgTreeNode } from "../components/org-structure/orgStructureTree";
+import { OrgStructureEditor, editorValidationError } from "../components/org-structure/OrgStructureEditor";
+import { OrgStructureTable } from "../components/org-structure/OrgStructureTable";
+import { buildLocationTree, buildOrganizationTree, findNode, orgNodeTypeLabels, type OrgTreeKind, type OrgTreeNode } from "../components/org-structure/orgStructureTree";
+import { blankEntity, catalogListKey, deletedMessages, itemsOf, newButtonLabels, orgSections, orgTypeTabLabels, savedMessages, sectionOf, type OrgSectionKey } from "../components/org-structure/orgStructureEntities";
 import { confirmAction } from "../services/appDialog";
 import { ApiError, getUserErrorMessage } from "../services/api/apiClient";
-import { SortableHeader } from "../components/ui/SortableHeader";
-import { Button } from "../components/ui/Button";
-import { Badge } from "../components/ui/Badge";
 import { useAuth } from "../context/AuthContext";
 import { orgStructureApiService } from "../services/api/orgStructureApiService";
 import { subscribeCacheEvent } from "../services/cache";
-import type { EmployeeAddress, Role } from "../types";
-import type { OrgArea, OrgBusinessUnit, OrgCompany, OrgCostCenter, OrgEstablishment, OrgSector, OrgStructureCatalog, OrgStructureEntity, OrgStructureEntityType, OrgStructureStatus } from "../types/orgStructure.types";
-import { activoInactivoLabel } from "../utils/status";
+import type { Role } from "../types";
+import type { OrgArea, OrgBusinessUnit, OrgCompany, OrgCostCenter, OrgEstablishment, OrgSector, OrgStructureCatalog, OrgStructureEntity, OrgStructureEntityType, OrgZone } from "../types/orgStructure.types";
 import { useAsyncAction } from "../utils/useAsyncAction";
-import { useSort, type SortAccessors, type SortValue } from "../utils/sort";
 
-type Tab = OrgStructureEntityType;
-type Editable = OrgStructureEntity;
 type View = "tree" | "table";
+type Editing = { type: OrgStructureEntityType; item: OrgStructureEntity; isNew: boolean };
 
 const views: Array<{ key: View; label: string }> = [
   { key: "tree", label: "Vista árbol" },
   { key: "table", label: "Vista tabla" },
 ];
 
-const deletedMessages: Record<Tab, string> = {
-  COMPANY: "Empresa eliminada correctamente.",
-  BUSINESS_UNIT: "Unidad de negocio eliminada correctamente.",
-  ESTABLISHMENT: "Establecimiento eliminado correctamente.",
-  AREA: "Área eliminada correctamente.",
-  SECTOR: "Sector eliminado correctamente.",
-  COST_CENTER: "Centro de costo eliminado correctamente.",
-};
-
-const catalogListKey: Record<Tab, keyof OrgStructureCatalog> = {
-  COMPANY: "companies",
-  BUSINESS_UNIT: "businessUnits",
-  ESTABLISHMENT: "establishments",
-  AREA: "areas",
-  SECTOR: "sectors",
-  COST_CENTER: "costCenters",
-};
+const emptyCatalog: OrgStructureCatalog = { companies: [], businessUnits: [], sectors: [], areas: [], zones: [], establishments: [], costCenters: [] };
 
 // Tras un DELETE exitoso el registro se quita del catálogo en memoria antes de
-// que llegue el refetch: árbol y tabla quedan consistentes al instante. Es
-// seguro porque el backend sólo borra registros sin dependencias (nada en el
-// catálogo lo referencia).
-function withoutEntity(catalog: OrgStructureCatalog, type: Tab, id: string): OrgStructureCatalog {
+// que llegue el refetch. Es seguro porque el backend sólo borra registros sin
+// dependencias (nada en el catálogo lo referencia).
+function withoutEntity(catalog: OrgStructureCatalog, type: OrgStructureEntityType, id: string): OrgStructureCatalog {
   const key = catalogListKey[type];
-  return { ...catalog, [key]: (catalog[key] as Editable[]).filter((item) => item.id !== id) };
+  return { ...catalog, [key]: (catalog[key] as OrgStructureEntity[]).filter((item) => item.id !== id) };
 }
-
-const emptyCatalog: OrgStructureCatalog = { companies: [], businessUnits: [], establishments: [], areas: [], sectors: [], costCenters: [] };
-
-// Relación con el padre que se precarga al "Agregar ..." desde un nodo del árbol.
-function childPrefill(childType: Tab, parentId: string): Partial<Editable> {
-  if (childType === "BUSINESS_UNIT") return { companyId: parentId };
-  if (childType === "ESTABLISHMENT") return { businessUnitId: parentId };
-  if (childType === "AREA") return { establishmentId: parentId };
-  if (childType === "SECTOR") return { areaId: parentId };
-  if (childType === "COST_CENTER") return { sectorIds: [parentId] };
-  return {};
-}
-
-const tabs: Array<{ id: Tab; label: string }> = [
-  { id: "COMPANY", label: "Empresas" },
-  { id: "BUSINESS_UNIT", label: "Unidades de negocio" },
-  { id: "ESTABLISHMENT", label: "Establecimientos" },
-  { id: "AREA", label: "Areas / Departamentos" },
-  { id: "SECTOR", label: "Sectores" },
-  { id: "COST_CENTER", label: "Centros de costo" },
-];
 
 const roleLevel = (role: Role) => role.startsWith("Nivel 1") ? 1 : role.startsWith("Nivel 2") ? 2 : 3;
-const uid = () => crypto.randomUUID();
 
-function nextCodeFromCatalog(type: Tab, catalog: OrgStructureCatalog) {
-  const list = type === "COMPANY" ? catalog.companies : type === "BUSINESS_UNIT" ? catalog.businessUnits : type === "ESTABLISHMENT" ? catalog.establishments : type === "AREA" ? catalog.areas : type === "SECTOR" ? catalog.sectors : catalog.costCenters;
-  const prefix = type === "COMPANY" ? "EMP" : type === "BUSINESS_UNIT" ? "UN" : type === "ESTABLISHMENT" ? "EST" : type === "AREA" ? "AREA" : type === "SECTOR" ? "SEC" : "CC";
-  const max = list.reduce((value, item) => Math.max(value, Number(item.code.replace(/\D/g, "")) || 0), 0);
-  return `${prefix}-${String(max + 1).padStart(3, "0")}`;
-}
+// Los errores 400/409/422 de escritura (padre inválido, registro anterior,
+// nodo en uso, dependencias) los muestra el aviso global de la app con el
+// motivo del backend: acá no se duplican.
+const shownGlobally = (error: unknown) => error instanceof ApiError && [400, 409, 422].includes(error.status);
 
-function blank(type: Tab, catalog: OrgStructureCatalog): Editable {
-  const code = nextCodeFromCatalog(type, catalog);
-  if (type === "COMPANY") return { id: uid(), code, name: "", legalName: "", cuit: "", status: "ACTIVO" };
-  if (type === "BUSINESS_UNIT") return { id: uid(), code, name: "", companyId: "", status: "ACTIVO" };
-  if (type === "ESTABLISHMENT") return { id: uid(), code, name: "", companyId: "", businessUnitId: undefined, province: "", department: "", locality: "", address: "", streetNumber: "", postalCode: "", status: "ACTIVO" };
-  if (type === "AREA") return { id: uid(), code, name: "", establishmentId: undefined, status: "ACTIVO" };
-  if (type === "SECTOR") return { id: uid(), code, name: "", areaId: undefined, status: "ACTIVO" };
-  return { id: uid(), code, name: "", companyIds: [], businessUnitIds: [], establishmentIds: [], areaIds: [], sectorIds: [], finnegansCode: "", status: "ACTIVO" };
-}
-
-function namesOf(items: { id: string; name: string }[], ids: string[] = []) {
-  return ids.map((id) => items.find((item) => item.id === id)?.name).filter(Boolean).join(", ");
-}
-
-function nameById(items: { id: string; name: string }[], ids: string[] = []) {
-  return namesOf(items, ids) || "-";
-}
-
-function nameByOne(items: { id: string; name: string }[], id: string | undefined) {
-  return nameById(items, id ? [id] : []);
-}
-
-function deriveCompanyId(catalog: OrgStructureCatalog, businessUnitId: string | undefined) {
-  return catalog.businessUnits.find((item) => item.id === businessUnitId)?.companyId;
-}
-
-function deriveAreaBusinessUnitId(catalog: OrgStructureCatalog, establishmentId: string | undefined) {
-  const establishment = catalog.establishments.find((item) => item.id === establishmentId);
-  return establishment?.businessUnitId;
-}
-
-function deriveSectorEstablishmentId(catalog: OrgStructureCatalog, areaId: string | undefined) {
-  const area = catalog.areas.find((item) => item.id === areaId);
-  return area?.establishmentId;
-}
-
-function normalizeDerivedRelations(type: Tab, item: Editable, catalog: OrgStructureCatalog): Editable {
-  if (type === "ESTABLISHMENT" && "businessUnitId" in item) return { ...item, companyId: deriveCompanyId(catalog, item.businessUnitId) || "" } as Editable;
-  return item;
-}
-
-function SingleRelation({ label, options, value, onChange }: { label: string; options: { id: string; name: string }[]; value: string | undefined; onChange: (value: string | undefined) => void }) {
-  return <label>{label}<select value={value || ""} onChange={(event) => onChange(event.target.value || undefined)}>
-    <option value="">-- Sin asignar --</option>
-    {options.map((option) => <option key={option.id} value={option.id}>{option.name}</option>)}
-  </select></label>;
-}
-
-function MultiRelation({ label, options, value, onChange }: { label: string; options: { id: string; name: string }[]; value: string[]; onChange: (value: string[]) => void }) {
-  const toggle = (id: string) => onChange(value.includes(id) ? value.filter((item) => item !== id) : [...value, id]);
-  return <div className="catalog-check-block"><small>{label}</small><div className="check-grid inline">{options.map((option) => <label className="check-card" key={option.id}><input type="checkbox" checked={value.includes(option.id)} onChange={() => toggle(option.id)} />{option.name}</label>)}</div></div>;
-}
-
-function DerivedRelation({ label, value }: { label: string; value: string }) {
-  return <div className="derived-relation-card"><small>{label}</small><b>{value}</b><span>Se calcula automaticamente segun la relacion seleccionada.</span></div>;
-}
-
-function TextField({ label, value, onChange, disabled }: { label: string; value: string; onChange: (value: string) => void; disabled?: boolean }) {
-  return <label>{label}<input value={value} disabled={disabled} onChange={(event) => onChange(event.target.value)} /></label>;
-}
-
-function StatusField({ value, onChange }: { value: OrgStructureStatus; onChange: (value: OrgStructureStatus) => void }) {
-  return <label>Estado<select value={value} onChange={(event) => onChange(event.target.value as OrgStructureStatus)}><option value="ACTIVO">Activo</option><option value="INACTIVO">Inactivo</option></select></label>;
-}
-
-function Editor({ type, item, catalog, onChange }: { type: Tab; item: Editable; catalog: OrgStructureCatalog; onChange: (item: Editable) => void }) {
-  const normalizedItem = normalizeDerivedRelations(type, item, catalog);
-  const set = (patch: Partial<Editable>) => onChange(normalizeDerivedRelations(type, { ...item, ...patch } as Editable, catalog));
-  const establishmentAddress: EmployeeAddress | undefined = "province" in item ? {
-    calle: item.address,
-    numero: item.streetNumber || "",
-    provinciaId: "",
-    provinciaNombre: item.province,
-    departamentoId: "",
-    departamentoNombre: item.department,
-    localidadId: "",
-    localidadNombre: item.locality,
-    codigoPostal: item.postalCode || "",
-    ubicacionMapa: { lat: null, lng: null, source: "MOCK", label: "" },
-  } : undefined;
-  const setEstablishmentAddress = (address: EmployeeAddress) => set({
-    province: address.provinciaNombre,
-    department: address.departamentoNombre,
-    locality: address.localidadNombre,
-    address: address.calle,
-    streetNumber: address.numero,
-    postalCode: address.codigoPostal,
-  } as Partial<Editable>);
-
-  return <div className="org-structure-editor">
-    <div className="form-grid">
-      <TextField label="Codigo" value={item.code} disabled onChange={() => undefined} />
-      <TextField label="Nombre *" value={item.name} onChange={(name) => set({ name } as Partial<Editable>)} />
-      <StatusField value={item.status} onChange={(status) => set({ status } as Partial<Editable>)} />
-      {"legalName" in item && <TextField label="Razon social" value={item.legalName} onChange={(legalName) => set({ legalName } as Partial<Editable>)} />}
-      {"cuit" in item && <TextField label="CUIT" value={item.cuit} onChange={(cuit) => set({ cuit } as Partial<Editable>)} />}
-      {"finnegansCode" in item && <TextField label="Codigo Finnegans" value={item.finnegansCode || ""} onChange={(finnegansCode) => set({ finnegansCode } as Partial<Editable>)} />}
-      <div className="form-wide"><label>Observaciones<textarea value={item.notes || ""} onChange={(event) => set({ notes: event.target.value } as Partial<Editable>)} /></label></div>
-    </div>
-    {establishmentAddress && <div className="form-wide org-geo-panel"><GeoAddressFields value={establishmentAddress} onChange={setEstablishmentAddress} showGeoActions={false} /></div>}
-
-    {"companyId" in item && type === "BUSINESS_UNIT" && <SingleRelation label="Empresa asociada" options={catalog.companies} value={item.companyId} onChange={(companyId) => set({ companyId: companyId || "" } as Partial<Editable>)} />}
-
-    {type === "ESTABLISHMENT" && "companyId" in normalizedItem && <DerivedRelation label="Empresa asociada" value={nameByOne(catalog.companies, normalizedItem.companyId)} />}
-    {"businessUnitId" in item && type === "ESTABLISHMENT" && <SingleRelation label="Unidad de negocio asociada" options={catalog.businessUnits} value={item.businessUnitId} onChange={(businessUnitId) => set({ businessUnitId } as Partial<Editable>)} />}
-
-    {"establishmentId" in item && type === "AREA" && <SingleRelation label="Establecimiento asociado" options={catalog.establishments} value={item.establishmentId} onChange={(establishmentId) => set({ establishmentId } as Partial<Editable>)} />}
-    {type === "AREA" && "establishmentId" in item && <DerivedRelation label="Unidad de negocio (segun establecimiento)" value={nameByOne(catalog.businessUnits, deriveAreaBusinessUnitId(catalog, item.establishmentId))} />}
-
-    {"areaId" in item && type === "SECTOR" && <SingleRelation label="Area / Departamento asociado" options={catalog.areas} value={item.areaId} onChange={(areaId) => set({ areaId } as Partial<Editable>)} />}
-    {type === "SECTOR" && "areaId" in item && <DerivedRelation label="Establecimiento (segun area)" value={nameByOne(catalog.establishments, deriveSectorEstablishmentId(catalog, item.areaId))} />}
-
-    {"companyIds" in item && type === "COST_CENTER" && <MultiRelation label="Empresas asociadas" options={catalog.companies} value={item.companyIds} onChange={(companyIds) => set({ companyIds } as Partial<Editable>)} />}
-    {"businessUnitIds" in item && type === "COST_CENTER" && <MultiRelation label="Unidades de negocio asociadas" options={catalog.businessUnits} value={item.businessUnitIds} onChange={(businessUnitIds) => set({ businessUnitIds } as Partial<Editable>)} />}
-    {"establishmentIds" in item && type === "COST_CENTER" && <MultiRelation label="Establecimientos asociados" options={catalog.establishments} value={item.establishmentIds} onChange={(establishmentIds) => set({ establishmentIds } as Partial<Editable>)} />}
-    {"areaIds" in item && type === "COST_CENTER" && <MultiRelation label="Areas / Departamentos asociados" options={catalog.areas} value={item.areaIds} onChange={(areaIds) => set({ areaIds } as Partial<Editable>)} />}
-    {"sectorIds" in item && <MultiRelation label="Sectores asociados" options={catalog.sectors} value={item.sectorIds} onChange={(sectorIds) => set({ sectorIds } as Partial<Editable>)} />}
-
-    <div className="info-note compact"><b>Uso en modulos</b><p>Estos valores alimentan Legajos, Puestos, Organigrama, Carga Horaria, Reportes y Dashboard. En Establecimientos, las empresas se calculan automaticamente desde las unidades de negocio asociadas.</p></div>
-  </div>;
-}
-
-function EditAction({ item, readOnly, onEdit, onDelete }: { item: Editable; readOnly: boolean; onEdit: (item: Editable) => void; onDelete: (item: Editable) => void }) {
-  if (readOnly) return <Badge tone="neutral">Solo lectura</Badge>;
-  return <div className="table-actions">
-    <button className="table-icon-action" title="Editar" aria-label={`Editar ${item.name}`} onClick={() => onEdit(item)}><Pencil size={14}/><span>Editar</span></button>
-    <button className="table-icon-action danger-link" title="Eliminar" aria-label={`Eliminar ${item.name}`} onClick={() => onDelete(item)}><Trash2 size={14}/><span>Eliminar</span></button>
-  </div>;
-}
-
-function StatusBadge({ status }: { status: OrgStructureStatus }) {
-  return <Badge tone={status === "ACTIVO" ? "success" : "neutral"}>{activoInactivoLabel(status)}</Badge>;
-}
-
-function Rows({ type, catalog, items, readOnly, onEdit, onDelete }: { type: Tab; catalog: OrgStructureCatalog; items: readonly Editable[]; readOnly: boolean; onEdit: (item: Editable) => void; onDelete: (item: Editable) => void }) {
-  if (type === "COMPANY") return <tbody>{(items as OrgCompany[]).map((item) => <tr key={item.id}><td><b>{item.code}</b></td><td><OverflowCell value={item.name} /><span className="table-sub">{item.legalName}</span></td><td>{item.cuit || "-"}</td><td>-</td><td><StatusBadge status={item.status} /></td><td><EditAction item={item} readOnly={readOnly} onEdit={onEdit} onDelete={onDelete} /></td></tr>)}</tbody>;
-  if (type === "BUSINESS_UNIT") return <tbody>{(items as OrgBusinessUnit[]).map((item) => <tr key={item.id}><td><b>{item.code}</b></td><td><OverflowCell value={item.name} /></td><td><OverflowCell value={nameByOne(catalog.companies, item.companyId)} /></td><td>-</td><td><StatusBadge status={item.status} /></td><td><EditAction item={item} readOnly={readOnly} onEdit={onEdit} onDelete={onDelete} /></td></tr>)}</tbody>;
-  if (type === "ESTABLISHMENT") return <tbody>{(items as OrgEstablishment[]).map((item) => <tr key={item.id}><td><b>{item.code}</b></td><td><OverflowCell value={item.name} /><span className="table-sub">{item.locality}, {item.department}</span></td><td><OverflowCell value={nameByOne(catalog.companies, item.companyId)} /></td><td><OverflowCell value={nameByOne(catalog.businessUnits, item.businessUnitId)} /></td><td><StatusBadge status={item.status} /></td><td><EditAction item={item} readOnly={readOnly} onEdit={onEdit} onDelete={onDelete} /></td></tr>)}</tbody>;
-  if (type === "AREA") return <tbody>{(items as OrgArea[]).map((item) => <tr key={item.id}><td><b>{item.code}</b></td><td><OverflowCell value={item.name} /></td><td><OverflowCell value={nameByOne(catalog.establishments, item.establishmentId)} /></td><td><OverflowCell value={nameByOne(catalog.businessUnits, deriveAreaBusinessUnitId(catalog, item.establishmentId))} /></td><td><StatusBadge status={item.status} /></td><td><EditAction item={item} readOnly={readOnly} onEdit={onEdit} onDelete={onDelete} /></td></tr>)}</tbody>;
-  if (type === "SECTOR") return <tbody>{(items as OrgSector[]).map((item) => <tr key={item.id}><td><b>{item.code}</b></td><td><OverflowCell value={item.name} /></td><td><OverflowCell value={nameByOne(catalog.areas, item.areaId)} /></td><td><OverflowCell value={nameByOne(catalog.establishments, deriveSectorEstablishmentId(catalog, item.areaId))} /></td><td><StatusBadge status={item.status} /></td><td><EditAction item={item} readOnly={readOnly} onEdit={onEdit} onDelete={onDelete} /></td></tr>)}</tbody>;
-  return <tbody>{(items as OrgCostCenter[]).map((item) => <tr key={item.id}><td><b>{item.code}</b></td><td><OverflowCell value={item.name} /><span className="table-sub">{item.finnegansCode || "Sin codigo Finnegans"}</span></td><td><OverflowCell value={nameById(catalog.companies, item.companyIds)} /></td><td><OverflowCell value={nameById(catalog.sectors, item.sectorIds)} /></td><td><StatusBadge status={item.status} /></td><td><EditAction item={item} readOnly={readOnly} onEdit={onEdit} onDelete={onDelete} /></td></tr>)}</tbody>;
-}
-
-type OrgColumnKey = "code" | "name" | "primary" | "secondary" | "status";
-type RelationColumnKey = Extract<OrgColumnKey, "primary" | "secondary">;
-type OrgSortAccessors = SortAccessors<Editable, OrgColumnKey>;
-
-const orgColumns: Array<{ key: OrgColumnKey; label: string }> = [
-  { key: "code", label: "Codigo" },
-  { key: "name", label: "Nombre" },
-  { key: "primary", label: "Relacion principal" },
-  { key: "secondary", label: "Relacion secundaria" },
-  { key: "status", label: "Estado" },
-];
-
-// Relaciones ordenables por pestaña, por el nombre resuelto (vacío si no hay
-// relación, nunca el "-" renderizado). Sin accessor = columna no ordenable
-// (ej. "Relacion secundaria" de Empresas/Unidades, siempre "-").
-function relationSortAccessors(type: Tab, catalog: OrgStructureCatalog): Partial<Pick<OrgSortAccessors, RelationColumnKey>> {
-  const one = (items: { id: string; name: string }[], id: string | undefined) => namesOf(items, id ? [id] : []);
-  if (type === "COMPANY") return { primary: (item) => (item as OrgCompany).cuit };
-  if (type === "BUSINESS_UNIT") return { primary: (item) => one(catalog.companies, (item as OrgBusinessUnit).companyId) };
-  if (type === "ESTABLISHMENT") return {
-    primary: (item) => one(catalog.companies, (item as OrgEstablishment).companyId),
-    secondary: (item) => one(catalog.businessUnits, (item as OrgEstablishment).businessUnitId),
-  };
-  if (type === "AREA") return {
-    primary: (item) => one(catalog.establishments, (item as OrgArea).establishmentId),
-    secondary: (item) => one(catalog.businessUnits, deriveAreaBusinessUnitId(catalog, (item as OrgArea).establishmentId)),
-  };
-  if (type === "SECTOR") return {
-    primary: (item) => one(catalog.areas, (item as OrgSector).areaId),
-    secondary: (item) => one(catalog.establishments, deriveSectorEstablishmentId(catalog, (item as OrgSector).areaId)),
-  };
-  return {
-    primary: (item) => namesOf(catalog.companies, (item as OrgCostCenter).companyIds),
-    secondary: (item) => namesOf(catalog.sectors, (item as OrgCostCenter).sectorIds),
-  };
-}
-
-const notSortable = (): SortValue => null;
-
-// Montado con `key={tab}`: el orden arranca sin interacción en cada pestaña.
-function OrgStructureTable({ type, catalog, items, onEdit, onDelete }: { type: Tab; catalog: OrgStructureCatalog; items: readonly Editable[]; onEdit: (item: Editable) => void; onDelete: (item: Editable) => void }) {
-  const relations = useMemo(() => relationSortAccessors(type, catalog), [type, catalog]);
-  const accessors = useMemo<OrgSortAccessors>(() => ({
-    code: (item) => item.code,
-    name: (item) => item.name,
-    primary: relations.primary ?? notSortable,
-    secondary: relations.secondary ?? notSortable,
-    status: (item) => activoInactivoLabel(item.status),
-  }), [relations]);
-  const { sorted, sort, toggleSort } = useSort(items, accessors);
-  const isSortable = (key: OrgColumnKey) => (key !== "primary" && key !== "secondary") || Boolean(relations[key]);
-  return <table>
-    <thead><tr>
-      {orgColumns.map((column) => isSortable(column.key)
-        ? <SortableHeader key={column.key} label={column.label} sortKey={column.key} sort={sort} onSort={toggleSort} />
-        : <th key={column.key}>{column.label}</th>)}
-      <th>Accion</th>
-    </tr></thead>
-    <Rows type={type} catalog={catalog} items={sorted} readOnly={false} onEdit={onEdit} onDelete={onDelete} />
-  </table>;
+async function persist(type: OrgStructureEntityType, item: OrgStructureEntity, isNew: boolean) {
+  const api = orgStructureApiService;
+  if (type === "COMPANY") return isNew ? api.createCompany(item as OrgCompany) : api.updateCompany(item as OrgCompany);
+  if (type === "BUSINESS_UNIT") return isNew ? api.createBusinessUnit(item as OrgBusinessUnit) : api.updateBusinessUnit(item as OrgBusinessUnit);
+  if (type === "SECTOR") return isNew ? api.createSector(item as OrgSector) : api.updateSector(item as OrgSector);
+  if (type === "AREA") return isNew ? api.createArea(item as OrgArea) : api.updateArea(item as OrgArea);
+  if (type === "ZONE") return isNew ? api.createZone(item as OrgZone) : api.updateZone(item as OrgZone);
+  if (type === "ESTABLISHMENT") return isNew ? api.createEstablishment(item as OrgEstablishment) : api.updateEstablishment(item as OrgEstablishment);
+  return isNew ? api.createCostCenter(item as OrgCostCenter) : api.updateCostCenter(item as OrgCostCenter);
 }
 
 export function OrgStructurePage() {
   const { user } = useAuth();
-  const [tab, setTab] = useState<Tab>("COMPANY");
-  const [editing, setEditing] = useState<Editable | null>(null);
+  const [section, setSection] = useState<OrgSectionKey>("ORGANIZATION");
+  const [view, setView] = useState<View>("tree");
+  const [tabByType, setTabByType] = useState<Record<OrgSectionKey, OrgStructureEntityType>>({ ORGANIZATION: "COMPANY", LOCATION: "ZONE", COST_CENTERS: "COST_CENTER" });
+  const [editing, setEditing] = useState<Editing | null>(null);
   const [refresh, setRefresh] = useState(0);
   const [notice, setNotice] = useState("");
   const [apiCatalog, setApiCatalog] = useState<OrgStructureCatalog | null>(null);
   const [isLoadingApi, setIsLoadingApi] = useState(true);
   const [apiWarning, setApiWarning] = useState("");
-  // El árbol es la vista principal para explorar; la tabla queda como vista operativa por tipo.
-  const [view, setView] = useState<View>("tree");
-  const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const [selectedKey, setSelectedKey] = useState<Record<OrgTreeKind, string | null>>({ ORGANIZATION: null, LOCATION: null });
 
   useEffect(() => subscribeCacheEvent("updated", (event) => {
-    if (event.family === "org-structure") {
-      setRefresh((value) => value + 1);
-    }
+    if (event.family === "org-structure") setRefresh((value) => value + 1);
   }), []);
 
   useEffect(() => {
@@ -329,7 +88,7 @@ export function OrgStructurePage() {
       .catch(() => {
         if (!alive) return;
         setApiCatalog(null);
-        setApiWarning("No pudimos actualizar la estructura compartida. Los cambios de esta sesión se mantendrán localmente.");
+        setApiWarning("No pudimos cargar la estructura. Reintentá en unos minutos; mientras tanto no se pueden guardar cambios.");
       })
       .finally(() => {
         if (alive) setIsLoadingApi(false);
@@ -338,70 +97,63 @@ export function OrgStructurePage() {
   }, [refresh]);
 
   const catalog = useMemo(() => apiCatalog ?? emptyCatalog, [apiCatalog]);
-  const tree = useMemo(() => buildOrgStructureTree(catalog), [catalog]);
-  const selectedNode = useMemo(() => findNode(tree, selectedKey), [tree, selectedKey]);
-  const isExisting = useCallback((id: string) => [
-    ...catalog.companies,
-    ...catalog.businessUnits,
-    ...catalog.establishments,
-    ...catalog.areas,
-    ...catalog.sectors,
-    ...catalog.costCenters,
-  ].some((item) => item.id === id), [catalog]);
-  const usesApiCatalog = Boolean(apiCatalog);
-  const counts = useMemo(() => [
-    ["Empresas", catalog.companies.length],
-    ["Unidades", catalog.businessUnits.length],
-    ["Establecimientos", catalog.establishments.length],
-    ["Sectores", catalog.sectors.length],
-  ] as const, [catalog]);
-  // Única vía de escritura (editor y Activar/Inactivar del árbol): crea o actualiza según exista.
-  const persist = async (type: Tab, item: Editable) => {
-    const normalized = normalizeDerivedRelations(type, item, catalog);
-    if (!usesApiCatalog) return;
-    const exists = isExisting(normalized.id);
-    if (type === "COMPANY") exists ? await orgStructureApiService.updateCompany(normalized as OrgCompany) : await orgStructureApiService.createCompany(normalized as OrgCompany);
-    if (type === "BUSINESS_UNIT") exists ? await orgStructureApiService.updateBusinessUnit(normalized as OrgBusinessUnit) : await orgStructureApiService.createBusinessUnit(normalized as OrgBusinessUnit);
-    if (type === "ESTABLISHMENT") exists ? await orgStructureApiService.updateEstablishment(normalized as OrgEstablishment) : await orgStructureApiService.createEstablishment(normalized as OrgEstablishment);
-    if (type === "AREA") exists ? await orgStructureApiService.updateArea(normalized as OrgArea) : await orgStructureApiService.createArea(normalized as OrgArea);
-    if (type === "SECTOR") exists ? await orgStructureApiService.updateSector(normalized as OrgSector) : await orgStructureApiService.createSector(normalized as OrgSector);
-    if (type === "COST_CENTER") exists ? await orgStructureApiService.updateCostCenter(normalized as OrgCostCenter) : await orgStructureApiService.createCostCenter(normalized as OrgCostCenter);
-  };
+  const trees = useMemo(() => ({ ORGANIZATION: buildOrganizationTree(catalog), LOCATION: buildLocationTree(catalog) }), [catalog]);
+  const treeKind: OrgTreeKind | null = section === "COST_CENTERS" ? null : section;
+  const selectedNode = useMemo(() => (treeKind ? findNode(trees[treeKind], selectedKey[treeKind]) : undefined), [trees, treeKind, selectedKey]);
+  const pendingReload = catalog.sectors.filter((item) => item.pendingReload).length + catalog.areas.filter((item) => item.pendingReload).length + catalog.establishments.filter((item) => item.pendingReload).length;
+  const counts = [
+    { label: "Empresas", value: catalog.companies.length, detail: `${catalog.businessUnits.length} unidades de negocio` },
+    { label: "Sectores y áreas", value: catalog.sectors.filter((item) => !item.pendingReload).length + catalog.areas.filter((item) => !item.pendingReload).length, detail: "Estructura nueva" },
+    { label: "Zonas", value: catalog.zones.length, detail: `${catalog.establishments.filter((item) => !item.pendingReload).length} establecimientos nuevos` },
+    { label: "Pendientes de recarga", value: pendingReload, detail: "Estructura anterior" },
+  ];
+
   const flashNotice = (message: string) => {
     setNotice(message);
     setTimeout(() => setNotice(""), 2200);
   };
+
+  const editorRef = useRef<HTMLDivElement>(null);
+  const openEditor = useCallback((type: OrgStructureEntityType, item: OrgStructureEntity, isNew: boolean) => {
+    setSection(sectionOf(type));
+    setTabByType((current) => ({ ...current, [sectionOf(type)]: type }));
+    setEditing({ type, item, isNew });
+    requestAnimationFrame(() => editorRef.current?.scrollIntoView?.({ behavior: "smooth", block: "start" }));
+  }, []);
+
   const { isRunning: isSaving, run: save } = useAsyncAction(async () => {
-    if (!editing?.name.trim()) return setNotice("Completa el nombre antes de guardar.");
+    if (!editing) return;
+    const invalid = editorValidationError(editing.type, editing.item);
+    if (invalid) return setNotice(invalid);
+    if (!apiCatalog) return setNotice("No se puede guardar sin la estructura cargada.");
     try {
-      await persist(tab, editing);
+      await persist(editing.type, editing.item, editing.isNew);
       setRefresh((value) => value + 1);
       setEditing(null);
-      flashNotice("Estructura guardada correctamente.");
-    } catch {
-      setNotice("No se pudo guardar la estructura. Revisa relaciones obligatorias o codigos duplicados.");
-    }
-  });
-  const { isRunning: isTogglingStatus, run: toggleNodeStatus } = useAsyncAction(async (node: OrgTreeNode) => {
-    if (!node.entity || node.type === "UNASSIGNED") return;
-    const activating = node.status === "INACTIVO";
-    const verb = activating ? "activar" : "inactivar";
-    const confirmed = await confirmAction(`¿Querés ${verb} ${orgNodeTypeLabels[node.type].toLowerCase()} “${node.name}”? Los elementos dependientes no se modifican.`, { title: `${activating ? "Activar" : "Inactivar"} ${orgNodeTypeLabels[node.type].toLowerCase()}`, confirmLabel: activating ? "Activar" : "Inactivar", tone: activating ? "primary" : "danger" });
-    if (!confirmed) return;
-    try {
-      await persist(node.type, { ...node.entity, status: activating ? "ACTIVO" : "INACTIVO" } as Editable);
-      setRefresh((value) => value + 1);
-      flashNotice(`${node.name} quedó ${activating ? "activo" : "inactivo"}.`);
-    } catch {
-      setNotice("No se pudo cambiar el estado. Intentá nuevamente.");
+      flashNotice(savedMessages[editing.type]);
+    } catch (error) {
+      if (!shownGlobally(error)) setNotice(getUserErrorMessage(error, "No se pudo guardar. Intentá nuevamente."));
     }
   });
 
-  // Eliminar (árbol y tabla comparten este único flujo): confirmación explícita
-  // y borrado definitivo sólo si el backend no encuentra dependencias. Si las
-  // hay, el 409 trae el motivo de negocio y lo muestra el aviso global de
-  // errores de la app (ApiErrorNotice) — no se duplica acá.
-  const { isRunning: isDeleting, run: removeEntity } = useAsyncAction(async (type: Tab, item: Editable) => {
+  const { isRunning: isTogglingStatus, run: toggleNodeStatus } = useAsyncAction(async (node: OrgTreeNode) => {
+    if (!node.entity || node.type === "GROUP") return;
+    const activating = node.status === "INACTIVO";
+    const typeLabel = orgNodeTypeLabels[node.type].toLowerCase();
+    const confirmed = await confirmAction(`¿Querés ${activating ? "activar" : "inactivar"} ${typeLabel} “${node.name}”? Los elementos dependientes no se modifican.`, { title: `${activating ? "Activar" : "Inactivar"} ${typeLabel}`, confirmLabel: activating ? "Activar" : "Inactivar", tone: activating ? "primary" : "danger" });
+    if (!confirmed) return;
+    try {
+      await persist(node.type, { ...node.entity, status: activating ? "ACTIVO" : "INACTIVO" } as OrgStructureEntity, false);
+      setRefresh((value) => value + 1);
+      flashNotice(`${node.name} quedó ${activating ? "activo" : "inactivo"}.`);
+    } catch (error) {
+      if (!shownGlobally(error)) setNotice(getUserErrorMessage(error, "No se pudo cambiar el estado. Intentá nuevamente."));
+    }
+  });
+
+  // Eliminar (árbol y tabla comparten este flujo): confirmación explícita y
+  // borrado definitivo sólo si el backend no encuentra dependencias.
+  const { isRunning: isDeleting, run: removeEntity } = useAsyncAction(async (type: OrgStructureEntityType, item: OrgStructureEntity) => {
     const confirmed = await confirmAction("Esta acción elimina el registro de forma permanente y no se puede deshacer. Si sólo ya no debe utilizarse, inactivalo.", {
       title: `¿Eliminar definitivamente “${item.name}”?`,
       confirmLabel: "Eliminar definitivamente",
@@ -411,76 +163,90 @@ export function OrgStructurePage() {
     try {
       await orgStructureApiService.deleteEntity(type, item.id);
       setApiCatalog((current) => (current ? withoutEntity(current, type, item.id) : current));
-      setSelectedKey((current) => (current && findNode(tree, current)?.id === item.id ? null : current));
-      setEditing((current) => (current?.id === item.id ? null : current));
+      setSelectedKey((current) => ({ ORGANIZATION: findNode(trees.ORGANIZATION, current.ORGANIZATION)?.id === item.id ? null : current.ORGANIZATION, LOCATION: findNode(trees.LOCATION, current.LOCATION)?.id === item.id ? null : current.LOCATION }));
+      setEditing((current) => (current?.item.id === item.id ? null : current));
       setRefresh((value) => value + 1);
       flashNotice(deletedMessages[type]);
     } catch (error) {
-      const shownGlobally = error instanceof ApiError && [400, 409, 422].includes(error.status);
-      if (!shownGlobally) setNotice(getUserErrorMessage(error, "No se pudo eliminar el registro. Intentá nuevamente."));
+      if (!shownGlobally(error)) setNotice(getUserErrorMessage(error, "No se pudo eliminar el registro. Intentá nuevamente."));
     }
   });
-  const deleteNode = useCallback((node: OrgTreeNode) => {
-    if (node.entity && node.type !== "UNASSIGNED") void removeEntity(node.type, node.entity);
-  }, [removeEntity]);
 
-  // Abrir el editor (desde el árbol o la tabla) lo trae a la vista.
-  const editorRef = useRef<HTMLDivElement>(null);
-  const openEditor = useCallback((type: Tab, item: Editable) => {
-    setTab(type);
-    setEditing(item);
-    requestAnimationFrame(() => editorRef.current?.scrollIntoView?.({ behavior: "smooth", block: "start" }));
-  }, []);
   const editNode = useCallback((node: OrgTreeNode) => {
-    if (node.entity && node.type !== "UNASSIGNED") openEditor(node.type, node.entity);
+    if (node.entity && node.type !== "GROUP") openEditor(node.type, node.entity, false);
   }, [openEditor]);
-  const addChild = (node: OrgTreeNode, childType: Tab) => openEditor(childType, { ...blank(childType, catalog), ...childPrefill(childType, node.id) } as Editable);
-  const selectNode = useCallback((node: OrgTreeNode) => setSelectedKey(node.key), []);
+  const deleteNode = useCallback((node: OrgTreeNode) => {
+    if (node.entity && node.type !== "GROUP") void removeEntity(node.type, node.entity);
+  }, [removeEntity]);
+  const addChild = (node: OrgTreeNode, childType: OrgStructureEntityType) => openEditor(childType, blankEntity(childType, catalog, node.id), true);
+  const selectNode = useCallback((node: OrgTreeNode) => setSelectedKey((current) => (treeKind ? { ...current, [treeKind]: node.key } : current)), [treeKind]);
+
   if (roleLevel(user!.role) !== 1) return <Navigate to="/configuracion" />;
-  const activeRows = tab === "COMPANY" ? catalog.companies : tab === "BUSINESS_UNIT" ? catalog.businessUnits : tab === "ESTABLISHMENT" ? catalog.establishments : tab === "AREA" ? catalog.areas : tab === "SECTOR" ? catalog.sectors : catalog.costCenters;
+
+  const sectionConfig = orgSections.find((item) => item.key === section)!;
+  const tab = tabByType[section];
+  const rootType: OrgStructureEntityType = section === "ORGANIZATION" ? "COMPANY" : section === "LOCATION" ? "ZONE" : "COST_CENTER";
+  const effectiveView: View = section === "COST_CENTERS" ? "table" : view;
+  const activeRows = itemsOf(catalog, tab);
+  const newType = effectiveView === "tree" ? rootType : tab;
+
   return <>
-    <PageHeader eyebrow="CONFIGURACION" title="Empresas y estructura" description="Catalogo maestro de estructura organizacional para alimentar seleccionables, filtros, legajos, puestos y organigrama." action={view === "tree"
-      ? <Button variant="primary" icon={Plus} onClick={() => openEditor("COMPANY", blank("COMPANY", catalog))}>Nueva empresa</Button>
-      : <Button variant="primary" icon={Plus} onClick={() => openEditor(tab, blank(tab, catalog))}>Nuevo registro</Button>} />
+    <PageHeader
+      eyebrow="CONFIGURACION"
+      title="Empresas y estructura"
+      description="Organización y ubicaciones se administran por separado. Alimentan puestos, legajos, filtros, organigrama y reportes."
+      action={<Button variant="primary" icon={Plus} onClick={() => openEditor(newType, blankEntity(newType, catalog), true)}>{newButtonLabels[newType]}</Button>}
+    />
     {notice && <div className="toast">{notice}</div>}
-    {apiWarning && <div className="info-note compact"><b>Modo local</b><p>{apiWarning}</p></div>}
-    {usesApiCatalog && <div className="info-note compact"><b>Información sincronizada</b><p>Los cambios se guardan y quedan disponibles para los usuarios autorizados.</p></div>}
-    <div className="stat-grid org-structure-summary">{counts.map(([label, value]) => <StatCard key={label} label={label} value={value} detail="Catalogo maestro" />)}</div>
-    {view === "tree" ? (
+    {apiWarning && <div className="info-note compact"><b>Sin conexión con la estructura</b><p>{apiWarning}</p></div>}
+    {pendingReload > 0 && <div className="info-note compact"><b>Estructura en transición</b><p>{pendingReload} registros de la estructura anterior figuran como <b>pendientes de recarga</b>. No reciben elementos nuevos ni se reubican: cargá la estructura nueva y la limpieza controlada los eliminará más adelante.</p></div>}
+    <div className="stat-grid org-structure-summary">{counts.map((item) => <StatCard key={item.label} label={item.label} value={item.value} detail={item.detail} />)}</div>
+
+    <Tabs className="org-section-switch" tabs={orgSections.map((item) => ({ key: item.key, label: item.label }))} active={section} onChange={(key) => { setSection(key as OrgSectionKey); setEditing(null); }} />
+
+    {treeKind && effectiveView === "tree" ? (
       <Section
-        title="Estructura organizacional"
-        subtitle={isLoadingApi ? "Cargando estructura..." : "Empresa → Unidad de negocio → Establecimiento → Área → Sector → Centro de costo."}
+        title={sectionConfig.label}
+        subtitle={isLoadingApi ? "Cargando estructura..." : sectionConfig.subtitle}
         action={<Tabs className="view-switch" tabs={views} active={view} onChange={(key) => setView(key as View)} />}
       >
         {isLoadingApi && !apiCatalog ? <LoadingState variant="table" rows={6} columns={3} /> : (
           <div className="org-tree-layout">
-            <StructureTreeView nodes={tree} selectedKey={selectedKey} onSelect={selectNode} />
-            <StructureNodeDetail node={selectedNode} onEdit={editNode} onAddChild={addChild} onToggleStatus={toggleNodeStatus} onDelete={deleteNode} busy={isTogglingStatus || isDeleting} />
+            <StructureTreeView
+              key={treeKind}
+              nodes={trees[treeKind]}
+              selectedKey={selectedKey[treeKind]}
+              onSelect={selectNode}
+              label={treeKind === "ORGANIZATION" ? "Organización" : "Ubicaciones"}
+              emptyText={treeKind === "ORGANIZATION" ? "Todavía no hay empresas cargadas." : "Todavía no hay zonas cargadas. Creá una zona para empezar a cargar establecimientos."}
+            />
+            <StructureNodeDetail kind={treeKind} node={selectedNode} onEdit={editNode} onAddChild={addChild} onToggleStatus={toggleNodeStatus} onDelete={deleteNode} busy={isTogglingStatus || isDeleting} />
           </div>
         )}
       </Section>
     ) : (
       <>
-        <Tabs tabs={tabs.map((item) => ({ key: item.id, label: item.label }))} active={tab} onChange={(key) => { setTab(key as Tab); setEditing(null); }} />
+        {sectionConfig.types.length > 1 && <Tabs tabs={sectionConfig.types.map((type) => ({ key: type, label: orgTypeTabLabels[type] }))} active={tab} onChange={(key) => { setTabByType((current) => ({ ...current, [section]: key as OrgStructureEntityType })); setEditing(null); }} />}
         <Section
-          title={tabs.find((item) => item.id === tab)?.label || ""}
-          subtitle={isLoadingApi ? "Cargando estructura..." : "Administracion de relaciones y estados disponibles para operacion."}
-          action={<Tabs className="view-switch" tabs={views} active={view} onChange={(key) => setView(key as View)} />}
+          title={orgTypeTabLabels[tab]}
+          subtitle={isLoadingApi ? "Cargando estructura..." : sectionConfig.subtitle}
+          action={treeKind ? <Tabs className="view-switch" tabs={views} active={view} onChange={(key) => setView(key as View)} /> : undefined}
         >
-          <DataTable status={isLoadingApi ? "loading" : activeRows.length === 0 ? "empty" : "ready"} minWidth={940} emptyText="No hay registros cargados para esta categoria.">
-            <OrgStructureTable key={tab} type={tab} catalog={catalog} items={activeRows} onEdit={(item) => openEditor(tab, item)} onDelete={(item) => void removeEntity(tab, item)} />
+          <DataTable status={isLoadingApi ? "loading" : activeRows.length === 0 ? "empty" : "ready"} minWidth={940} emptyText="No hay registros cargados para esta categoría.">
+            <OrgStructureTable key={tab} type={tab} catalog={catalog} items={activeRows} onEdit={(item) => openEditor(tab, item, false)} onDelete={(item) => void removeEntity(tab, item)} />
           </DataTable>
         </Section>
       </>
     )}
+
     {editing && (
       <div ref={editorRef} className="org-editor-anchor">
         <Section
-          title={isExisting(editing.id) ? `Editar ${orgNodeTypeLabels[tab].toLowerCase()}` : `Nuevo registro · ${orgNodeTypeLabels[tab]}`}
-          subtitle="Los cambios quedan disponibles para los modulos conectados."
-          action={<div className="table-actions"><Button type="button" onClick={() => setEditing(null)}>Cancelar</Button><Button variant="primary" onClick={save} disabled={isSaving}>{isSaving ? "Guardando..." : "Guardar estructura"}</Button></div>}
+          title={editing.isNew ? `Nuevo registro · ${orgNodeTypeLabels[editing.type]}` : `Editar ${orgNodeTypeLabels[editing.type].toLowerCase()}`}
+          subtitle="Los cambios quedan disponibles para los módulos conectados."
+          action={<div className="table-actions"><Button type="button" onClick={() => setEditing(null)}>Cancelar</Button><Button variant="primary" onClick={save} disabled={isSaving}>{isSaving ? "Guardando..." : "Guardar"}</Button></div>}
         >
-          <Editor type={tab} item={editing} catalog={catalog} onChange={setEditing} />
+          <OrgStructureEditor type={editing.type} item={editing.item} catalog={catalog} isNew={editing.isNew} onChange={(item) => setEditing((current) => (current ? { ...current, item } : current))} />
         </Section>
       </div>
     )}

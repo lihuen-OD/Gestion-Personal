@@ -87,6 +87,7 @@ describe("PuestosPage.options", () => {
         { id: "bu-2", code: "UN-2", name: "Unidad Inactiva", companyId: "comp-1", status: "INACTIVO" },
       ],
       establishments: [],
+      zones: [],
       areas: [],
       sectors: [
         { id: "sec-1", code: "SEC-1", name: "Ventas", status: "ACTIVO" },

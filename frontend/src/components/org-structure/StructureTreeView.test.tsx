@@ -2,10 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { StructureTreeView } from "./StructureTreeView";
-import { buildOrgStructureTree } from "./orgStructureTree";
+import { buildOrganizationTree } from "./orgStructureTree";
 import { treeCatalog } from "./orgStructureTree.fixtures";
 
-const tree = buildOrgStructureTree(treeCatalog);
+const tree = buildOrganizationTree(treeCatalog);
 const item = (name: RegExp) => screen.getByRole("treeitem", { name });
 const queryItem = (name: RegExp) => screen.queryByRole("treeitem", { name });
 
@@ -15,40 +15,41 @@ function renderTree(onSelect = vi.fn()) {
 }
 
 describe("StructureTreeView", () => {
-  it("renderiza la jerarquía con Empresa y Unidad abiertas por defecto", () => {
+  it("renderiza la jerarquía con Empresa y Unidad abiertas; el grupo de la estructura anterior queda cerrado", () => {
     renderTree();
     expect(screen.getByRole("tree", { name: "Estructura organizacional" })).toBeInTheDocument();
     expect(item(/^Empresa Los O'Dwyer/)).toHaveAttribute("aria-expanded", "true");
     expect(item(/^Empresa Los O'Dwyer/)).toHaveAttribute("aria-level", "1");
     expect(item(/^Unidad de negocio Producción/)).toHaveAttribute("aria-level", "2");
-    expect(item(/^Establecimiento Planta 1/)).toHaveAttribute("aria-expanded", "false");
-    expect(queryItem(/^Área \/ Departamento Administración/)).toBeNull();
+    expect(item(/^Sector Recursos Humanos/)).toHaveAttribute("aria-expanded", "false");
+    expect(queryItem(/^Área Liquidaciones/)).toBeNull();
+    expect(item(/^Estructura anterior · pendiente de recarga/)).toHaveAttribute("aria-expanded", "false");
   });
 
   it("abre y cierra un nodo con click en el indicador y con las flechas del teclado", async () => {
     renderTree();
     const user = userEvent.setup();
-    const planta = item(/^Establecimiento Planta 1/);
+    const rrhh = item(/^Sector Recursos Humanos/);
 
-    await user.click(planta.querySelector(".org-tree-toggle")!);
-    expect(planta).toHaveAttribute("aria-expanded", "true");
-    expect(item(/^Área \/ Departamento Administración/)).toBeInTheDocument();
+    await user.click(rrhh.querySelector(".org-tree-toggle")!);
+    expect(rrhh).toHaveAttribute("aria-expanded", "true");
+    expect(item(/^Área Liquidaciones/)).toBeInTheDocument();
 
-    planta.focus();
+    rrhh.focus();
     await user.keyboard("{ArrowLeft}");
-    expect(planta).toHaveAttribute("aria-expanded", "false");
+    expect(rrhh).toHaveAttribute("aria-expanded", "false");
     await user.keyboard("{ArrowRight}");
-    expect(planta).toHaveAttribute("aria-expanded", "true");
+    expect(rrhh).toHaveAttribute("aria-expanded", "true");
     await user.keyboard("{ArrowDown}");
-    expect(item(/^Área \/ Departamento Administración/)).toHaveFocus();
+    expect(item(/^Área Liquidaciones/)).toHaveFocus();
   });
 
-  it("Expandir todo muestra hasta los centros de costo; Contraer todo deja sólo las raíces", async () => {
+  it("Expandir todo muestra los registros pendientes de recarga marcados; Contraer todo deja sólo las raíces", async () => {
     renderTree();
     const user = userEvent.setup();
 
     await user.click(screen.getByRole("button", { name: "Expandir todo" }));
-    expect(screen.getAllByRole("treeitem", { name: /^Centro de costo Compartido/ })).toHaveLength(2);
+    expect(item(/^Sector Depósito anterior, código SEC-90, pendiente de recarga/)).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Contraer todo" }));
     expect(screen.getAllByRole("treeitem").map((row) => row.getAttribute("aria-level"))).toEqual(["1", "1"]);
@@ -62,7 +63,7 @@ describe("StructureTreeView", () => {
     expect(onSelect).toHaveBeenLastCalledWith(expect.objectContaining({ type: "BUSINESS_UNIT", id: "bu1" }));
 
     await user.keyboard("{ArrowDown}{Enter}");
-    expect(onSelect).toHaveBeenLastCalledWith(expect.objectContaining({ type: "ESTABLISHMENT", id: "e1" }));
+    expect(onSelect).toHaveBeenLastCalledWith(expect.objectContaining({ type: "SECTOR", id: "s2" }));
   });
 
   it("la búsqueda filtra, abre los ancestros y resalta la coincidencia", async () => {

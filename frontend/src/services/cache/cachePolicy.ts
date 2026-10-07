@@ -41,7 +41,9 @@ export type CachePolicy = {
   schemaVersion: number;
 };
 
-export const CACHE_SCHEMA_VERSION = 1;
+// 2: el catálogo de estructura (persistido en IndexedDB) suma zonas y los
+// padres del modelo nuevo (docs/decisions/ORG_LOCATION_REORGANIZATION.md, A4).
+export const CACHE_SCHEMA_VERSION = 2;
 
 export const cachePolicies = {
   orgStructureCatalog: {

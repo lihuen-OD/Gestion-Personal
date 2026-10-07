@@ -340,7 +340,8 @@ La inactivación solo puede **combinarse** con R1, R2 o R3. **Nunca se deja una 
 | A1 | Hecha: este ADR y las normas (commit `7918455`) |
 | A2 | Código hecho en la rama; **M1 aplicada y verificada sólo en la copia aislada** `org-location-reorg` (ver abajo). Development y producción sin tocar |
 | A3 | Herramientas preparadas e inventario de sólo lectura corrido en la copia (§12). **Limpieza y restauración no ejecutadas** |
-| A4–A8, B0–B5 | Pendientes |
+| A4 | Hecha: UI separada de Organización, Ubicaciones y Centros de costo; QA visual contra la copia aislada (§13) |
+| A5–A8, B0–B5 | Pendientes |
 
 ### A2 — qué quedó en código
 
@@ -556,3 +557,36 @@ npx tsx scripts/org-reorg-restore.ts --env-file=<env> --expected-host=<host> --n
 npx tsx scripts/org-reorg-manifest.ts verify-v2 --baseline=<manifiesto tras limpieza> --current=<manifiesto tras recarga> --report=<v2.json>
 ```
 
+## 13. A4 — UI y QA visual en la copia aislada (2026-10-07)
+
+### 13.1 Resultado
+
+- La pantalla separa **Organización**, **Ubicaciones** y **Centros de costo**.
+- Organización representa `Empresa → Unidad de negocio → Sector → Área`; Ubicaciones representa `Zona → Establecimiento`.
+- Árbol, tabla, búsqueda, formularios, estados vacíos y navegación responsive fueron revisados con datos reales de la copia `org-location-reorg`.
+- Los 103 nodos del modelo anterior (42 sectores, 43 áreas y 18 establecimientos) aparecen como **Pendiente de recarga**, fuera de los árboles nuevos. No pueden recibir hijos ni elegir un padre nuevo.
+- D-9 se muestra antes de guardar cuando la UI conoce dependencias. Por ejemplo, el padre de la unidad `ADM` queda deshabilitado por su vínculo con un centro de costo y explica el impacto. El backend sigue siendo la autoridad para dependencias no contenidas en el catálogo visible y responde 409.
+- Los centros de costo conservan sus vínculos anteriores, los identifican y permiten quitarlos, pero no volver a agregarlos una vez removidos.
+- Se revisaron 1440×900 y 390×844 sin solapamientos ni desbordes funcionales. Las capturas se adjuntaron al reporte de cierre de la etapa.
+- No se crearon nodos ni se guardaron cambios de estructura durante el QA.
+
+### 13.2 Tareas automáticas durante QA
+
+El backend tenía un único arranque automático, `startClockPunchMaintenance()`, que reúne vencimientos, alertas, falta de ingreso, retención y catch-ups. Se agregó la compuerta `AUTOMATIC_JOBS_ENABLED`, activa por default para conservar el comportamiento habitual. Sólo `backend/.env.reorg` (ignorado por Git) la fija en `false`.
+
+La instancia de QA informó `AUTOMATIC_JOBS_DISABLED` antes de escuchar y permaneció activa durante más de un intervalo completo de 60 segundos sin iniciar el mantenimiento ni producir filas nuevas. El test de bootstrap comprueba ambos caminos (apagado no invoca el scheduler; encendido conserva el arranque).
+
+### 13.3 Filas incidentales conservadas
+
+Antes de incorporar la compuerta, el primer arranque de QA ejecutó el chequeo intradía. Estas filas pertenecen exclusivamente a la copia `org-location-reorg`; se conservaron sin borrar ni modificar:
+
+**AttendanceInactivityIncident**
+- `6fc49c14-47c0-44d7-9e51-490dc297267b`
+- `660c92a9-f8ae-4433-9526-6c9125caddf0`
+
+**SystemNotification** (`FALTA_INGRESO`)
+- `2d107ebb-e291-440a-b878-4d4adfe4d59c` → incidente `6fc49c14-47c0-44d7-9e51-490dc297267b`
+- `7e844420-41bc-444d-8fc7-e0ad10702a2e` → incidente `6fc49c14-47c0-44d7-9e51-490dc297267b`
+- `cb629b88-8504-4643-a904-cbccc3693e63` → incidente `660c92a9-f8ae-4433-9526-6c9125caddf0`
+
+Una consulta final de sólo lectura confirmó las cinco filas y `0` incidencias / `0` notificaciones `FALTA_INGRESO` nuevas después de `2026-10-07T13:33:12Z`.

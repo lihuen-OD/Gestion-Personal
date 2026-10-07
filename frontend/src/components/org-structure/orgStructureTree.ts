@@ -1,7 +1,5 @@
 import type {
   OrgArea,
-  OrgBusinessUnit,
-  OrgCostCenter,
   OrgEstablishment,
   OrgSector,
   OrgStructureCatalog,
@@ -11,18 +9,21 @@ import type {
 } from "../../types/orgStructure.types";
 import { sortItems } from "../../utils/sort";
 
-// Árbol jerárquico de la estructura organizacional, armado sólo con las
-// relaciones que ya existen en el catálogo (GET /org-structure):
-// Empresa → Unidad de negocio → Establecimiento → Área → Sector (cadena de FK
-// singulares) y Centro de costo, la única relación M:N (docs/DATABASE_STANDARDS.md):
-// un centro de costo cuelga de cada sector al que está asociado; si no tiene
-// sectores, del nivel más profundo que tenga cargado. Lo que no tiene padre
-// válido se agrupa en "Sin asignar" en vez de desaparecer del árbol.
+// Dos árboles independientes (docs/decisions/ORG_LOCATION_REORGANIZATION.md
+// §3.1), armados sólo con los padres del modelo nuevo que trae el catálogo
+// (GET /org-structure):
+//   Organización: Empresa → Unidad de negocio → Sector → Área
+//   Ubicaciones:  Zona → Establecimiento
+// Los registros de la estructura anterior (sector sin unidad de negocio, área
+// sin sector, establecimiento sin zona) no se ubican en el árbol nuevo: se
+// agrupan como "pendientes de recarga" para que sigan visibles hasta la
+// limpieza controlada. Los centros de costo no cuelgan del árbol: se
+// administran en su propia sección y cada nodo informa cuántos lo vinculan.
 
-export type OrgTreeNodeType = OrgStructureEntityType | "UNASSIGNED";
+export type OrgTreeNodeType = OrgStructureEntityType | "GROUP";
+export type OrgTreeKind = "ORGANIZATION" | "LOCATION";
 
 export interface OrgTreeNode {
-  /** Única por posición: un centro de costo compartido aparece con una key por cada ubicación. */
   key: string;
   type: OrgTreeNodeType;
   id: string;
@@ -33,30 +34,55 @@ export interface OrgTreeNode {
   /** Nombres de los ancestros, de la raíz al padre. */
   path: string[];
   children: OrgTreeNode[];
-  /** Cantidad de ubicaciones del mismo registro en el árbol (>1 sólo en centros de costo compartidos). */
-  placements: number;
+  /** Registro de la estructura anterior, pendiente de recarga. */
+  pendingReload?: boolean;
+  /** Centros de costo vinculados a este nodo. */
+  costCenterCount?: number;
+  /** Explicación de un nodo agrupador. */
+  note?: string;
 }
 
 export const orgNodeTypeLabels: Record<OrgTreeNodeType, string> = {
   COMPANY: "Empresa",
   BUSINESS_UNIT: "Unidad de negocio",
-  ESTABLISHMENT: "Establecimiento",
-  AREA: "Área / Departamento",
   SECTOR: "Sector",
+  AREA: "Área",
+  ZONE: "Zona",
+  ESTABLISHMENT: "Establecimiento",
   COST_CENTER: "Centro de costo",
-  UNASSIGNED: "Sin asignar",
+  GROUP: "Grupo",
 };
 
-/** Hijo directo que se crea desde cada nivel ("Agregar ..."). */
+export const orgNodeTypePlurals: Record<OrgTreeNodeType, string> = {
+  COMPANY: "empresas",
+  BUSINESS_UNIT: "unidades de negocio",
+  SECTOR: "sectores",
+  AREA: "áreas",
+  ZONE: "zonas",
+  ESTABLISHMENT: "establecimientos",
+  COST_CENTER: "centros de costo",
+  GROUP: "grupos",
+};
+
+/** Hijo directo que se crea desde cada nivel ("Agregar ..."). Un registro anterior no recibe hijos. */
 export const orgChildType: Partial<Record<OrgStructureEntityType, OrgStructureEntityType>> = {
   COMPANY: "BUSINESS_UNIT",
-  BUSINESS_UNIT: "ESTABLISHMENT",
-  ESTABLISHMENT: "AREA",
-  AREA: "SECTOR",
-  SECTOR: "COST_CENTER",
+  BUSINESS_UNIT: "SECTOR",
+  SECTOR: "AREA",
+  ZONE: "ESTABLISHMENT",
 };
 
-export const UNASSIGNED_KEY = "UNASSIGNED";
+/** Padre del modelo nuevo de cada tipo. */
+export const orgParentType: Partial<Record<OrgStructureEntityType, OrgStructureEntityType>> = {
+  BUSINESS_UNIT: "COMPANY",
+  SECTOR: "BUSINESS_UNIT",
+  AREA: "SECTOR",
+  ESTABLISHMENT: "ZONE",
+};
+
+export const LEGACY_ORGANIZATION_KEY = "LEGACY_ORGANIZATION";
+export const LEGACY_LOCATION_KEY = "LEGACY_LOCATION";
+export const PENDING_RELOAD_LABEL = "Pendiente de recarga";
 
 function groupBy<T>(items: readonly T[], parentId: (item: T) => string | undefined) {
   const map = new Map<string, T[]>();
@@ -70,80 +96,72 @@ function groupBy<T>(items: readonly T[], parentId: (item: T) => string | undefin
 
 const byName = <T extends { name: string }>(items: readonly T[]) => sortItems(items, (item) => item.name, "asc");
 
-export function buildOrgStructureTree(catalog: OrgStructureCatalog): OrgTreeNode[] {
-  const ids = {
-    COMPANY: new Set(catalog.companies.map((item) => item.id)),
-    BUSINESS_UNIT: new Set(catalog.businessUnits.map((item) => item.id)),
-    ESTABLISHMENT: new Set(catalog.establishments.map((item) => item.id)),
-    AREA: new Set(catalog.areas.map((item) => item.id)),
-    SECTOR: new Set(catalog.sectors.map((item) => item.id)),
-  };
-  const unitsByCompany = groupBy(catalog.businessUnits, (item) => item.companyId);
-  const establishmentsByUnit = groupBy(catalog.establishments, (item) => item.businessUnitId);
-  const areasByEstablishment = groupBy(catalog.areas, (item) => item.establishmentId);
-  const sectorsByArea = groupBy(catalog.sectors, (item) => item.areaId);
-
-  // Centro de costo → nivel más profundo con relaciones válidas.
-  const costCentersAt = new Map<string, OrgCostCenter[]>();
-  const placementsOf = new Map<string, number>();
-  const unplacedCostCenters: OrgCostCenter[] = [];
+/** Cantidad de centros de costo vinculados a cada id de la estructura. */
+export function costCenterLinkCounts(catalog: OrgStructureCatalog) {
+  const counts = new Map<string, number>();
   for (const costCenter of catalog.costCenters) {
-    const levels: Array<[keyof typeof ids, string[]]> = [
-      ["SECTOR", costCenter.sectorIds],
-      ["AREA", costCenter.areaIds],
-      ["ESTABLISHMENT", costCenter.establishmentIds],
-      ["BUSINESS_UNIT", costCenter.businessUnitIds],
-      ["COMPANY", costCenter.companyIds],
-    ];
-    const placement = levels.map(([type, list]) => [type, list.filter((id) => ids[type].has(id))] as const).find(([, list]) => list.length);
-    if (!placement) {
-      unplacedCostCenters.push(costCenter);
-      continue;
-    }
-    placementsOf.set(costCenter.id, placement[1].length);
-    for (const id of placement[1]) {
-      const key = `${placement[0]}:${id}`;
-      costCentersAt.set(key, [...(costCentersAt.get(key) ?? []), costCenter]);
+    for (const id of new Set([...costCenter.companyIds, ...costCenter.businessUnitIds, ...costCenter.sectorIds, ...costCenter.areaIds, ...costCenter.establishmentIds])) {
+      counts.set(id, (counts.get(id) ?? 0) + 1);
     }
   }
+  return counts;
+}
 
-  function node(type: OrgStructureEntityType, entity: OrgStructureEntity, parentKey: string, path: string[]): OrgTreeNode {
-    const key = `${parentKey}/${type}:${entity.id}`;
-    const childPath = [...path, entity.name];
-    const structural: OrgTreeNode[] =
-      type === "COMPANY" ? byName(unitsByCompany.get(entity.id) ?? []).map((item) => node("BUSINESS_UNIT", item, key, childPath))
-      : type === "BUSINESS_UNIT" ? byName(establishmentsByUnit.get(entity.id) ?? []).map((item) => node("ESTABLISHMENT", item, key, childPath))
-      : type === "ESTABLISHMENT" ? byName(areasByEstablishment.get(entity.id) ?? []).map((item) => node("AREA", item, key, childPath))
-      : type === "AREA" ? byName(sectorsByArea.get(entity.id) ?? []).map((item) => node("SECTOR", item, key, childPath))
-      : [];
-    const costCenters = type === "COST_CENTER" ? [] : sortItems(costCentersAt.get(`${type}:${entity.id}`) ?? [], (item) => item.code, "asc").map((item) => node("COST_CENTER", item, key, childPath));
-    return {
-      key,
-      type,
-      id: entity.id,
-      name: entity.name,
-      code: entity.code,
-      status: entity.status,
-      entity,
-      path,
-      children: [...structural, ...costCenters],
-      placements: type === "COST_CENTER" ? placementsOf.get(entity.id) ?? 1 : 1,
-    };
-  }
+function makeNode(type: OrgStructureEntityType, entity: OrgStructureEntity, parentKey: string, path: string[], children: (key: string, path: string[]) => OrgTreeNode[], costCenters: Map<string, number>): OrgTreeNode {
+  const key = `${parentKey}/${type}:${entity.id}`;
+  const pendingReload = "pendingReload" in entity && entity.pendingReload;
+  return {
+    key,
+    type,
+    id: entity.id,
+    name: entity.name,
+    code: entity.code,
+    status: entity.status,
+    entity,
+    path,
+    children: children(key, [...path, entity.name]),
+    ...(pendingReload ? { pendingReload: true } : {}),
+    costCenterCount: costCenters.get(entity.id) ?? 0,
+  };
+}
 
-  const roots = byName(catalog.companies).map((item) => node("COMPANY", item, "", []));
+function groupNode(key: string, name: string, note: string, path: string[], children: OrgTreeNode[]): OrgTreeNode {
+  return { key, type: "GROUP", id: key, name, code: "", path, children, note };
+}
 
-  // Registros sin padre válido: se muestran (con sus propios hijos) bajo "Sin asignar".
-  const unassignedPath = [orgNodeTypeLabels.UNASSIGNED];
-  const orphans: OrgTreeNode[] = [
-    ...byName(catalog.businessUnits.filter((item: OrgBusinessUnit) => !ids.COMPANY.has(item.companyId))).map((item) => node("BUSINESS_UNIT", item, UNASSIGNED_KEY, unassignedPath)),
-    ...byName(catalog.establishments.filter((item: OrgEstablishment) => !item.businessUnitId || !ids.BUSINESS_UNIT.has(item.businessUnitId))).map((item) => node("ESTABLISHMENT", item, UNASSIGNED_KEY, unassignedPath)),
-    ...byName(catalog.areas.filter((item: OrgArea) => !item.establishmentId || !ids.ESTABLISHMENT.has(item.establishmentId))).map((item) => node("AREA", item, UNASSIGNED_KEY, unassignedPath)),
-    ...byName(catalog.sectors.filter((item: OrgSector) => !item.areaId || !ids.AREA.has(item.areaId))).map((item) => node("SECTOR", item, UNASSIGNED_KEY, unassignedPath)),
-    ...sortItems(unplacedCostCenters, (item) => item.code, "asc").map((item) => node("COST_CENTER", item, UNASSIGNED_KEY, unassignedPath)),
-  ];
-  if (!orphans.length) return roots;
-  return [...roots, { key: UNASSIGNED_KEY, type: "UNASSIGNED", id: UNASSIGNED_KEY, name: "Sin asignar", code: "", path: [], children: orphans, placements: 1 }];
+const LEGACY_NOTE = "Registros de la estructura anterior. Quedan visibles hasta la limpieza controlada y se vuelven a cargar en la estructura nueva: no reciben elementos nuevos ni se reubican. Se puede corregir su código, nombre o estado.";
+
+export function buildOrganizationTree(catalog: OrgStructureCatalog): OrgTreeNode[] {
+  const costCenters = costCenterLinkCounts(catalog);
+  const unitsByCompany = groupBy(catalog.businessUnits, (item) => item.companyId);
+  const sectorsByUnit = groupBy(catalog.sectors.filter((item) => !item.pendingReload), (item) => item.businessUnitId);
+  const areasBySector = groupBy(catalog.areas.filter((item) => !item.pendingReload), (item) => item.sectorId);
+
+  const areaNodes = (sectorId: string) => (key: string, path: string[]) => byName(areasBySector.get(sectorId) ?? []).map((area) => makeNode("AREA", area, key, path, () => [], costCenters));
+  const sectorNodes = (unitId: string) => (key: string, path: string[]) => byName(sectorsByUnit.get(unitId) ?? []).map((sector) => makeNode("SECTOR", sector, key, path, areaNodes(sector.id), costCenters));
+  const unitNodes = (companyId: string) => (key: string, path: string[]) => byName(unitsByCompany.get(companyId) ?? []).map((unit) => makeNode("BUSINESS_UNIT", unit, key, path, sectorNodes(unit.id), costCenters));
+  const roots = byName(catalog.companies).map((company) => makeNode("COMPANY", company, "", [], unitNodes(company.id), costCenters));
+
+  const legacySectors: OrgSector[] = catalog.sectors.filter((item) => item.pendingReload);
+  const legacyAreas: OrgArea[] = catalog.areas.filter((item) => item.pendingReload);
+  if (!legacySectors.length && !legacyAreas.length) return roots;
+  const legacyName = "Estructura anterior · pendiente de recarga";
+  const legacyPath = [legacyName];
+  const subgroups = [
+    legacySectors.length ? groupNode(`${LEGACY_ORGANIZATION_KEY}/SECTOR`, `Sectores anteriores (${legacySectors.length})`, LEGACY_NOTE, legacyPath, byName(legacySectors).map((item) => makeNode("SECTOR", item, `${LEGACY_ORGANIZATION_KEY}/SECTOR`, [...legacyPath, "Sectores anteriores"], () => [], costCenters))) : null,
+    legacyAreas.length ? groupNode(`${LEGACY_ORGANIZATION_KEY}/AREA`, `Áreas anteriores (${legacyAreas.length})`, LEGACY_NOTE, legacyPath, byName(legacyAreas).map((item) => makeNode("AREA", item, `${LEGACY_ORGANIZATION_KEY}/AREA`, [...legacyPath, "Áreas anteriores"], () => [], costCenters))) : null,
+  ].filter((item): item is OrgTreeNode => Boolean(item));
+  return [...roots, groupNode(LEGACY_ORGANIZATION_KEY, legacyName, LEGACY_NOTE, [], subgroups)];
+}
+
+export function buildLocationTree(catalog: OrgStructureCatalog): OrgTreeNode[] {
+  const costCenters = costCenterLinkCounts(catalog);
+  const establishmentsByZone = groupBy(catalog.establishments.filter((item) => !item.pendingReload), (item) => item.zoneId);
+  const roots = byName(catalog.zones).map((zone) => makeNode("ZONE", zone, "", [], (key, path) => byName(establishmentsByZone.get(zone.id) ?? []).map((item) => makeNode("ESTABLISHMENT", item, key, path, () => [], costCenters)), costCenters));
+  const legacy: OrgEstablishment[] = catalog.establishments.filter((item) => item.pendingReload);
+  if (!legacy.length) return roots;
+  const legacyName = `Establecimientos anteriores · pendientes de recarga (${legacy.length})`;
+  return [...roots, groupNode(LEGACY_LOCATION_KEY, legacyName, LEGACY_NOTE, [], byName(legacy).map((item) => makeNode("ESTABLISHMENT", item, LEGACY_LOCATION_KEY, [legacyName], () => [], costCenters)))];
 }
 
 export function normalizeSearch(value: string) {
@@ -165,7 +183,7 @@ export function filterOrgTree(nodes: OrgTreeNode[], rawQuery: string): { nodes: 
   const expandKeys: string[] = [];
   let matches = 0;
   const visit = (items: OrgTreeNode[]): OrgTreeNode[] => items.flatMap((item) => {
-    if (nodeMatches(item, query)) {
+    if (item.type !== "GROUP" && nodeMatches(item, query)) {
       matches += 1;
       // Conserva el subárbol completo; si adentro hay más coincidencias, se abre
       // también este nodo para que todas las contadas queden visibles.
@@ -211,3 +229,27 @@ export function childSummary(node: OrgTreeNode) {
   return [...counts.entries()].map(([type, count]) => ({ type, count }));
 }
 
+function countLabel(count: number, type: OrgTreeNodeType) {
+  return `${count} ${count === 1 ? orgNodeTypeLabels[type].toLowerCase() : orgNodeTypePlurals[type]}`;
+}
+
+/**
+ * Elementos asociados que el catálogo conoce y que impiden mover un nodo
+ * (D-9, ratificada): sus hijos del modelo nuevo y los centros de costo que lo
+ * vinculan. El backend además cuenta alcances de puestos y reglas de horas
+ * especiales; si alguno existe, responde 409 con el detalle.
+ */
+export function knownMoveBlockers(type: OrgStructureEntityType, id: string, catalog: OrgStructureCatalog): string[] {
+  const children =
+    type === "COMPANY" ? catalog.businessUnits.filter((item) => item.companyId === id).length
+    : type === "BUSINESS_UNIT" ? catalog.sectors.filter((item) => item.businessUnitId === id).length
+    : type === "SECTOR" ? catalog.areas.filter((item) => item.sectorId === id).length
+    : type === "ZONE" ? catalog.establishments.filter((item) => item.zoneId === id).length
+    : 0;
+  const child = orgChildType[type];
+  const costCenters = costCenterLinkCounts(catalog).get(id) ?? 0;
+  return [
+    children && child ? countLabel(children, child) : null,
+    costCenters ? countLabel(costCenters, "COST_CENTER") : null,
+  ].filter((item): item is string => Boolean(item));
+}

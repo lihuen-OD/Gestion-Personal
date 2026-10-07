@@ -72,6 +72,7 @@ const catalog = {
   companies: [{ id: "company-odwyer", code: "ODW", name: "Odwyer", legalName: "Odwyer SA", cuit: "1", status: "ACTIVO" as const }],
   businessUnits: [],
   establishments: [],
+  zones: [],
   areas: [],
   sectors: [{ id: "sector-panol", code: "PAN", name: "Pañol", status: "ACTIVO" as const }],
   costCenters: [],

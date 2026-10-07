@@ -10,7 +10,14 @@ import type {
   OrgStructureCatalog,
   OrgStructureEntityType,
   OrgStructureStatus,
+  OrgZone,
 } from "../../types/orgStructure.types";
+
+// Contrato de GET/POST/PATCH /api/org-structure (docs/BACKEND_API_CONTRACTS.md,
+// etapa A2 de docs/decisions/ORG_LOCATION_REORGANIZATION.md). El overview
+// trae el padre del modelo nuevo de cada nodo y, hasta M2, los padres del
+// modelo anterior sólo de lectura. Las altas/ediciones envían únicamente el
+// padre del modelo nuevo.
 
 type ApiCompany = {
   id: string;
@@ -27,19 +34,13 @@ type ApiBusinessUnit = {
   companyId: string;
 };
 
-type ApiEstablishment = {
+type ApiSector = {
   id: string;
   code: string;
   name: string;
   status: OrgStructureStatus;
-  companyId: string;
   businessUnitId?: string | null;
-  province?: string | null;
-  department?: string | null;
-  city?: string | null;
-  street?: string | null;
-  streetNumber?: string | null;
-  postalCode?: string | null;
+  areaId?: string | null;
 };
 
 type ApiArea = {
@@ -47,15 +48,31 @@ type ApiArea = {
   code: string;
   name: string;
   status: OrgStructureStatus;
+  sectorId?: string | null;
   establishmentId?: string | null;
 };
 
-type ApiSector = {
+type ApiZone = {
   id: string;
   code: string;
   name: string;
   status: OrgStructureStatus;
-  areaId?: string | null;
+};
+
+type ApiEstablishment = {
+  id: string;
+  code: string;
+  name: string;
+  status: OrgStructureStatus;
+  zoneId?: string | null;
+  companyId?: string | null;
+  businessUnitId?: string | null;
+  province?: string | null;
+  department?: string | null;
+  city?: string | null;
+  street?: string | null;
+  streetNumber?: string | null;
+  postalCode?: string | null;
 };
 
 type ApiCostCenter = {
@@ -74,9 +91,10 @@ type ApiOrgStructureResponse = {
   data: {
     companies: ApiCompany[];
     businessUnits: ApiBusinessUnit[];
-    establishments: ApiEstablishment[];
-    areas: ApiArea[];
     sectors: ApiSector[];
+    areas: ApiArea[];
+    zones?: ApiZone[];
+    establishments: ApiEstablishment[];
     costCenters: ApiCostCenter[];
   };
 };
@@ -106,19 +124,14 @@ function mapBusinessUnit(item: ApiBusinessUnit): OrgBusinessUnit {
   };
 }
 
-function mapEstablishment(item: ApiEstablishment): OrgEstablishment {
+function mapSector(item: ApiSector): OrgSector {
   return {
     id: item.id,
     code: item.code,
     name: item.name,
-    companyId: item.companyId,
     businessUnitId: item.businessUnitId || undefined,
-    province: item.province || "",
-    department: item.department || "",
-    locality: item.city || "",
-    address: item.street || "",
-    streetNumber: item.streetNumber || "",
-    postalCode: item.postalCode || "",
+    areaId: item.areaId || undefined,
+    pendingReload: !item.businessUnitId,
     status: item.status,
   };
 }
@@ -128,17 +141,32 @@ function mapArea(item: ApiArea): OrgArea {
     id: item.id,
     code: item.code,
     name: item.name,
+    sectorId: item.sectorId || undefined,
     establishmentId: item.establishmentId || undefined,
+    pendingReload: !item.sectorId,
     status: item.status,
   };
 }
 
-function mapSector(item: ApiSector): OrgSector {
+function mapZone(item: ApiZone): OrgZone {
+  return { id: item.id, code: item.code, name: item.name, status: item.status };
+}
+
+function mapEstablishment(item: ApiEstablishment): OrgEstablishment {
   return {
     id: item.id,
     code: item.code,
     name: item.name,
-    areaId: item.areaId || undefined,
+    zoneId: item.zoneId || undefined,
+    companyId: item.companyId || undefined,
+    businessUnitId: item.businessUnitId || undefined,
+    pendingReload: !item.zoneId,
+    province: item.province || "",
+    department: item.department || "",
+    locality: item.city || "",
+    address: item.street || "",
+    streetNumber: item.streetNumber || "",
+    postalCode: item.postalCode || "",
     status: item.status,
   };
 }
@@ -162,9 +190,10 @@ function mapCatalog(response: ApiOrgStructureResponse): OrgStructureCatalog {
   return {
     companies: response.data.companies.map(mapCompany),
     businessUnits: response.data.businessUnits.map(mapBusinessUnit),
-    establishments: response.data.establishments.map(mapEstablishment),
-    areas: response.data.areas.map(mapArea),
     sectors: response.data.sectors.map(mapSector),
+    areas: response.data.areas.map(mapArea),
+    zones: (response.data.zones ?? []).map(mapZone),
+    establishments: response.data.establishments.map(mapEstablishment),
     costCenters: response.data.costCenters.map(mapCostCenter),
   };
 }
@@ -177,6 +206,7 @@ function isOrgStructureCatalog(value: OrgStructureCatalog): boolean {
       && Array.isArray(value.establishments)
       && Array.isArray(value.areas)
       && Array.isArray(value.sectors)
+      && Array.isArray(value.zones)
       && Array.isArray(value.costCenters),
   );
 }
@@ -190,6 +220,17 @@ async function writeAndRefresh<T>(request: Promise<T>) {
     await invalidateCacheFamily("employees", "org-structure mutation");
     await invalidateCacheFamily("dashboard", "org-structure mutation");
   }
+}
+
+// PATCH: el padre del modelo nuevo se envía sólo si el registro lo tiene. Un
+// registro de la estructura anterior (sin padre nuevo) puede corregir código,
+// nombre o estado sin enviar padre; el backend no lo reubica (409).
+function parentPatch(field: "businessUnitId" | "sectorId" | "zoneId", value: string | undefined) {
+  return value ? { [field]: value } : {};
+}
+
+function establishmentAddress(item: OrgEstablishment) {
+  return { province: item.province, department: item.department, city: item.locality, street: item.address, streetNumber: item.streetNumber || null, postalCode: item.postalCode || null };
 }
 
 export const orgStructureApiService = {
@@ -210,14 +251,17 @@ export const orgStructureApiService = {
   createBusinessUnit: (item: OrgBusinessUnit) => writeAndRefresh(apiRequest("/org-structure/business-units", { method: "POST", body: { code: item.code, name: item.name, status: item.status, companyId: item.companyId } })),
   updateBusinessUnit: (item: OrgBusinessUnit) => writeAndRefresh(apiRequest(`/org-structure/business-units/${item.id}`, { method: "PATCH", body: { code: item.code, name: item.name, status: item.status, companyId: item.companyId } })),
 
-  createEstablishment: (item: OrgEstablishment) => writeAndRefresh(apiRequest("/org-structure/establishments", { method: "POST", body: { code: item.code, name: item.name, status: item.status, companyId: item.companyId, businessUnitId: item.businessUnitId || null, province: item.province, department: item.department, city: item.locality, street: item.address, streetNumber: item.streetNumber || null, postalCode: item.postalCode || null } })),
-  updateEstablishment: (item: OrgEstablishment) => writeAndRefresh(apiRequest(`/org-structure/establishments/${item.id}`, { method: "PATCH", body: { code: item.code, name: item.name, status: item.status, companyId: item.companyId, businessUnitId: item.businessUnitId || null, province: item.province, department: item.department, city: item.locality, street: item.address, streetNumber: item.streetNumber || null, postalCode: item.postalCode || null } })),
+  createSector: (item: OrgSector) => writeAndRefresh(apiRequest("/org-structure/sectors", { method: "POST", body: { code: item.code, name: item.name, status: item.status, businessUnitId: item.businessUnitId } })),
+  updateSector: (item: OrgSector) => writeAndRefresh(apiRequest(`/org-structure/sectors/${item.id}`, { method: "PATCH", body: { code: item.code, name: item.name, status: item.status, ...parentPatch("businessUnitId", item.businessUnitId) } })),
 
-  createArea: (item: OrgArea) => writeAndRefresh(apiRequest("/org-structure/areas", { method: "POST", body: { code: item.code, name: item.name, status: item.status, establishmentId: item.establishmentId || null } })),
-  updateArea: (item: OrgArea) => writeAndRefresh(apiRequest(`/org-structure/areas/${item.id}`, { method: "PATCH", body: { code: item.code, name: item.name, status: item.status, establishmentId: item.establishmentId || null } })),
+  createArea: (item: OrgArea) => writeAndRefresh(apiRequest("/org-structure/areas", { method: "POST", body: { code: item.code, name: item.name, status: item.status, sectorId: item.sectorId } })),
+  updateArea: (item: OrgArea) => writeAndRefresh(apiRequest(`/org-structure/areas/${item.id}`, { method: "PATCH", body: { code: item.code, name: item.name, status: item.status, ...parentPatch("sectorId", item.sectorId) } })),
 
-  createSector: (item: OrgSector) => writeAndRefresh(apiRequest("/org-structure/sectors", { method: "POST", body: { code: item.code, name: item.name, status: item.status, areaId: item.areaId || null } })),
-  updateSector: (item: OrgSector) => writeAndRefresh(apiRequest(`/org-structure/sectors/${item.id}`, { method: "PATCH", body: { code: item.code, name: item.name, status: item.status, areaId: item.areaId || null } })),
+  createZone: (item: OrgZone) => writeAndRefresh(apiRequest("/org-structure/zones", { method: "POST", body: { code: item.code, name: item.name, status: item.status } })),
+  updateZone: (item: OrgZone) => writeAndRefresh(apiRequest(`/org-structure/zones/${item.id}`, { method: "PATCH", body: { code: item.code, name: item.name, status: item.status } })),
+
+  createEstablishment: (item: OrgEstablishment) => writeAndRefresh(apiRequest("/org-structure/establishments", { method: "POST", body: { code: item.code, name: item.name, status: item.status, zoneId: item.zoneId, ...establishmentAddress(item) } })),
+  updateEstablishment: (item: OrgEstablishment) => writeAndRefresh(apiRequest(`/org-structure/establishments/${item.id}`, { method: "PATCH", body: { code: item.code, name: item.name, status: item.status, ...parentPatch("zoneId", item.zoneId), ...establishmentAddress(item) } })),
 
   createCostCenter: (item: OrgCostCenter) => writeAndRefresh(apiRequest("/org-structure/cost-centers", { method: "POST", body: { code: item.code, name: item.name, status: item.status, companyIds: item.companyIds, businessUnitIds: item.businessUnitIds, establishmentIds: item.establishmentIds, areaIds: item.areaIds, sectorIds: item.sectorIds } })),
   updateCostCenter: (item: OrgCostCenter) => writeAndRefresh(apiRequest(`/org-structure/cost-centers/${item.id}`, { method: "PATCH", body: { code: item.code, name: item.name, status: item.status, companyIds: item.companyIds, businessUnitIds: item.businessUnitIds, establishmentIds: item.establishmentIds, areaIds: item.areaIds, sectorIds: item.sectorIds } })),
@@ -230,8 +274,9 @@ export const orgStructureApiService = {
 const orgEntityPaths: Record<OrgStructureEntityType, string> = {
   COMPANY: "companies",
   BUSINESS_UNIT: "business-units",
-  ESTABLISHMENT: "establishments",
-  AREA: "areas",
   SECTOR: "sectors",
+  AREA: "areas",
+  ZONE: "zones",
+  ESTABLISHMENT: "establishments",
   COST_CENTER: "cost-centers",
 };

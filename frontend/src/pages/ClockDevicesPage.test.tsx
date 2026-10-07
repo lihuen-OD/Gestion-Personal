@@ -20,7 +20,7 @@ describe("ClockDevicesPage", () => {
     vi.mocked(clockDeviceApiService.list).mockResolvedValue({ data: [pending], meta: { total: 1, page: 1, pageSize: 25, hasMore: false } });
     vi.mocked(clockDeviceApiService.resolvePairing).mockResolvedValue(pending);
     vi.mocked(clockDeviceApiService.activate).mockResolvedValue({ ...pending, name: "iPad Recepción", status: "ACTIVE" });
-    vi.mocked(orgStructureApiService.getCatalog).mockResolvedValue({ sectors: [{ id: "sector-1", code: "REC", name: "Recepción", status: "ACTIVO", areaId: "area-1" }], companies: [], businessUnits: [], establishments: [], areas: [], costCenters: [] });
+    vi.mocked(orgStructureApiService.getCatalog).mockResolvedValue({ sectors: [{ id: "sector-1", code: "REC", name: "Recepción", status: "ACTIVO", areaId: "area-1" }], companies: [], businessUnits: [], establishments: [], areas: [], zones: [], costCenters: [] });
   });
 
   it("aprueba en dos pasos: código, metadata, nombre/sector y activación", async () => {

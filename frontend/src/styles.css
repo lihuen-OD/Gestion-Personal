@@ -157,6 +157,13 @@
 .org-structure-editor{display:grid;gap:14px;padding:0 0 18px}
 .org-structure-editor>.catalog-check-block{margin:0 18px}
 .org-structure-editor>.info-note{margin:0 18px}
+.org-parent-block{display:grid;gap:8px;margin:0 18px;padding:14px;border:1px solid #e1e8ee;border-radius:10px;background:#fbfdfe}
+.org-parent-block>small{color:#31485a;font-weight:800;text-transform:uppercase;letter-spacing:.03em}
+.org-parent-block select{width:100%;max-width:560px}
+.org-parent-hint{color:#718295;font-size:12px;line-height:1.5}
+.org-parent-hint.blocked{color:var(--color-warning);font-weight:600}
+.org-legacy-links{display:flex;flex-wrap:wrap;gap:6px}
+.org-section-switch{margin-bottom:14px}
 .org-structure-editor textarea{width:100%;min-height:72px}
 .geo-address-fields{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
 .geo-address-fields label{min-width:0}
@@ -2333,7 +2340,8 @@ a.employee-hours-status-item:hover{border-color:var(--ds-blue-300);background:va
 .org-node-icon.type-area{background:#fef3c7;color:#b45309}
 .org-node-icon.type-sector{background:#fce7f3;color:#be185d}
 .org-node-icon.type-cost_center{background:#d1fae5;color:#047857}
-.org-node-icon.type-unassigned{background:var(--color-bg-subtle);color:var(--color-text-muted)}
+.org-node-icon.type-zone{background:#e0f2fe;color:#0369a1}
+.org-node-icon.type-group{background:var(--color-warning-bg);color:var(--color-warning)}
 .org-tree-text{flex:1;min-width:0}
 .org-tree-text b,.org-tree-text small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .org-tree-text b{color:var(--color-text-primary);font-size:13px;font-weight:700}
@@ -2342,7 +2350,8 @@ a.employee-hours-status-item:hover{border-color:var(--ds-blue-300);background:va
 .org-tree-text mark{padding:0 1px;border-radius:3px;background:#fef08a;color:inherit}
 .org-tree-meta{flex:none;display:flex;align-items:center;gap:6px}
 .org-tree-pill{display:inline-flex;align-items:center;justify-content:center;min-width:22px;height:20px;padding:0 7px;border-radius:999px;background:var(--color-bg-subtle);color:var(--color-text-secondary);font-size:11px;font-weight:700;white-space:nowrap}
-.org-tree-pill.shared{background:var(--color-success-bg);color:var(--color-success)}
+.org-tree-pill.pending{background:var(--color-warning-bg);color:var(--color-warning)}
+.org-tree-item.group .org-tree-text b{color:var(--color-text-secondary)}
 .org-tree-item.inactive .org-tree-text,.org-tree-item.inactive .org-node-icon{opacity:.55}
 .org-detail{position:sticky;top:0;align-self:start;display:grid;gap:16px;padding:20px}
 .org-detail.empty{justify-items:center;padding:56px 26px;color:var(--color-text-muted);text-align:center}
@@ -2360,6 +2369,8 @@ a.employee-hours-status-item:hover{border-color:var(--ds-blue-300);background:va
 .org-detail-children div{display:flex;flex-wrap:wrap;gap:6px}
 .org-detail-children p{color:var(--color-text-muted);font-size:12px}
 .org-detail-note{padding:10px 12px;border-radius:8px;background:var(--color-bg-subtle);color:var(--color-text-secondary);font-size:12px;line-height:1.5}
+.org-detail-note.pending{border:1px solid var(--color-warning-border);background:var(--color-warning-bg)}
+.org-detail-note.pending b{display:block;margin-bottom:3px;color:var(--color-warning);font-size:12px}
 .org-detail-actions{display:grid;gap:8px;padding-top:4px;border-top:1px solid var(--color-border-light)}
 .org-detail-actions .button{justify-content:flex-start;width:100%}
 .org-detail-actions .button:first-child{margin-top:12px}
@@ -2368,7 +2379,7 @@ a.employee-hours-status-item:hover{border-color:var(--ds-blue-300);background:va
 .org-tree-toolbar-actions .button svg{flex:none}
 .org-editor-anchor{scroll-margin-top:84px}
 @media(max-width:1100px){.org-tree-layout{grid-template-columns:1fr;min-height:0}.org-tree{border-right:0;border-bottom:1px solid var(--color-border-light)}.org-detail{position:static}}
-@media(max-width:720px){.org-tree{padding:14px 12px}.org-tree-toolbar{flex-direction:column;align-items:stretch}.org-tree-toolbar-actions{width:100%}.org-tree-toolbar-actions .button{flex:1;min-width:0;padding-inline:8px}.org-tree-item{--indent:14px;gap:8px;padding-right:6px}.org-tree-item .org-tree-pill.shared,.org-tree-meta .badge.success{display:none!important}.org-node-icon{width:26px;height:26px}}
+@media(max-width:720px){.org-tree{padding:14px 12px}.org-tree-toolbar{flex-direction:column;align-items:stretch}.org-tree-toolbar-actions{width:100%}.org-tree-toolbar-actions .button{flex:1;min-width:0;padding-inline:8px}.org-tree-item{--indent:14px;gap:8px;padding-right:6px}.org-tree-meta .badge.success{display:none!important}.org-node-icon{width:26px;height:26px}}
 /* F6: /fichador del admin (TimeClockMovedPage, vista pública). Reusa el
    layout del login; sólo fija el titular claro sobre el fondo oscuro y una
    card de altura natural en una columna. */

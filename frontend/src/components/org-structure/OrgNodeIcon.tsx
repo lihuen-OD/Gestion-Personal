@@ -1,14 +1,15 @@
-import { Building2, Factory, FolderOpen, Layers, LayoutGrid, Users, Wallet, type LucideIcon } from "lucide-react";
+import { Archive, Building2, Factory, LayoutGrid, Layers, MapPin, Users, Wallet, type LucideIcon } from "lucide-react";
 import type { OrgTreeNodeType } from "./orgStructureTree";
 
 const icons: Record<OrgTreeNodeType, LucideIcon> = {
   COMPANY: Building2,
   BUSINESS_UNIT: Layers,
-  ESTABLISHMENT: Factory,
-  AREA: LayoutGrid,
   SECTOR: Users,
+  AREA: LayoutGrid,
+  ZONE: MapPin,
+  ESTABLISHMENT: Factory,
   COST_CENTER: Wallet,
-  UNASSIGNED: FolderOpen,
+  GROUP: Archive,
 };
 
 // Chip de color por tipo de nodo (paleta en .org-node-icon.type-*, styles.css).

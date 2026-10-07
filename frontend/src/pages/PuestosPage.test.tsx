@@ -58,7 +58,7 @@ function buildPosition(overrides: Partial<Position> = {}): Position {
   };
 }
 
-const emptyCatalog = { companies: [], businessUnits: [], establishments: [], areas: [], sectors: [], costCenters: [] };
+const emptyCatalog = { companies: [], businessUnits: [], establishments: [], areas: [], sectors: [], zones: [], costCenters: [] };
 
 function renderPage() {
   return render(

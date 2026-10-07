@@ -3,7 +3,7 @@ import { memo, type CSSProperties } from "react";
 import { Badge } from "../ui/Badge";
 import { activoInactivoLabel } from "../../utils/status";
 import { OrgNodeIcon } from "./OrgNodeIcon";
-import { normalizeSearch, orgNodeTypeLabels, type OrgTreeNode, type VisibleTreeRow } from "./orgStructureTree";
+import { normalizeSearch, orgNodeTypeLabels, PENDING_RELOAD_LABEL, type OrgTreeNode, type VisibleTreeRow } from "./orgStructureTree";
 
 function Highlight({ text, query }: { text: string; query: string }) {
   if (!query) return <>{text}</>;
@@ -44,9 +44,9 @@ export const StructureTreeNode = memo(function StructureTreeNode({ row, expanded
       aria-posinset={row.position}
       aria-expanded={hasChildren ? expanded : undefined}
       aria-selected={selected}
-      aria-label={`${typeLabel} ${node.name}${node.code ? `, código ${node.code}` : ""}${node.status ? `, ${activoInactivoLabel(node.status)}` : ""}`}
+      aria-label={`${node.type === "GROUP" ? "" : `${typeLabel} `}${node.name}${node.code ? `, código ${node.code}` : ""}${node.pendingReload ? `, ${PENDING_RELOAD_LABEL.toLowerCase()}` : ""}${node.status ? `, ${activoInactivoLabel(node.status)}` : ""}`}
       tabIndex={focusable ? 0 : -1}
-      className={`org-tree-item${selected ? " selected" : ""}${inactive ? " inactive" : ""}`}
+      className={`org-tree-item${selected ? " selected" : ""}${inactive ? " inactive" : ""}${node.pendingReload ? " pending-reload" : ""}${node.type === "GROUP" ? " group" : ""}`}
       style={{ "--depth": level - 1 } as CSSProperties}
       onClick={() => onSelect(node)}
       // Cualquier forma de foco (click en el indicador, Tab, programático) mueve el cursor del teclado a esta fila.
@@ -67,12 +67,12 @@ export const StructureTreeNode = memo(function StructureTreeNode({ row, expanded
       <span className="org-tree-text">
         <b><Highlight text={node.name} query={query} /></b>
         <small>
-          {typeLabel}
+          {node.type === "GROUP" ? "Estructura anterior" : typeLabel}
           {node.code ? <> · <Highlight text={node.code} query={query} /></> : null}
         </small>
       </span>
       <span className="org-tree-meta">
-        {node.placements > 1 ? <span className="org-tree-pill shared" title={`Asociado a ${node.placements} ubicaciones de la estructura`}>{node.placements} ubicaciones</span> : null}
+        {node.pendingReload ? <span className="org-tree-pill pending" title="Registro de la estructura anterior: se vuelve a cargar en la estructura nueva">{PENDING_RELOAD_LABEL}</span> : null}
         {hasChildren ? <span className="org-tree-pill" title={`${node.children.length} elementos dependientes`}>{node.children.length}</span> : null}
         {node.status ? <Badge tone={inactive ? "neutral" : "success"}>{activoInactivoLabel(node.status)}</Badge> : null}
       </span>

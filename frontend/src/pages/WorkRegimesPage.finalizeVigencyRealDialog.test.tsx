@@ -105,7 +105,7 @@ function withinTable() {
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(workRegimeApiService.getAll).mockResolvedValue({ items: [buildRegime()], meta: { total: 1, page: 1, pageSize: 200, hasMore: false } });
-  vi.mocked(orgStructureApiService.getCatalog).mockResolvedValue({ sectors: [], costCenters: [], companies: [], businessUnits: [], establishments: [], areas: [] });
+  vi.mocked(orgStructureApiService.getCatalog).mockResolvedValue({ sectors: [], costCenters: [], companies: [], businessUnits: [], establishments: [], areas: [], zones: [] });
 });
 
 describe("WorkRegimesPage + AppDialogHost reales — Finalizar vigencia end-to-end (Etapa 13J.3)", () => {
