@@ -293,6 +293,8 @@ Filtros de estructura: ver "Filtros de estructura (A7)". Cada fila agrega:
 
 La relación del organigrama sigue siendo el encargado directo. El alcance de Nivel 2 lo aplica sólo el backend: el frontend ya no filtra por sector.
 
+`assignments[]` trae `type`, `personName` y `user: { name }`. Una asignación hecha sólo por usuario muestra el nombre del usuario; nunca se expone su email.
+
 Reglas:
 
 - Por defecto devuelve legajos `ACTIVO`.
@@ -1734,6 +1736,14 @@ Sólo para 4 valores de `entityType` llega además un `employee` ya resuelto (`{
 El resto de `entityType` (cierres, correcciones, novedades pendientes) no trae `employee`. El enriquecimiento sólo consulta el entityId de la página actual (nunca recorre todo el histórico) y usa un `select` mínimo — no dispara ningún fetch de legajo completo.
 
 #### Horas Especiales (`/double-hour-rules*`) — Etapa 8B (extendido en 12B)
+
+**Sector en reglas (A7, `docs/decisions/ORG_LOCATION_REORGANIZATION.md` §17.1).** `sectorId` es el sector **anterior** del legajo: es lo que compara el motor.
+- `POST` con un `sectorId` del árbol nuevo (sector con `businessUnitId`) → `409 DOUBLE_HOUR_RULE_SECTOR_NOT_SUPPORTED`, con un mensaje que explica que la regla no alcanzaría a nadie.
+- `PATCH` que **cambia** `sectorId` hacia un sector nuevo → el mismo `409`.
+- Un sector inexistente → `400 DOUBLE_HOUR_RULE_SECTOR_INVALID`.
+- La validación ocurre antes de la transacción: un rechazo no escribe ni reinterpreta horas.
+- Reenviar el sector que la regla ya tiene, o editar otras dimensiones (por ejemplo "Domingos", por empresa empleadora), no cambia su alcance.
+- `companyId` es la empresa **empleadora** del legajo (`EmployeeCompany`).
 
 `DELETE /double-hour-rules/:id` **siempre** elimina físicamente la regla, sin importar su vigencia ni su estado, y responde `{ data: { mode: "DELETED", id } }`.
 - En la misma transacción retira su traza, la borra y reinterpreta las horas afectadas (cierres incluidos, sin cambiar su estado).

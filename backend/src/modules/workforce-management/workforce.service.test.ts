@@ -25,6 +25,7 @@ vi.mock("../../shared/prisma/client", () => ({
     timeCorrectionRequest: { findMany: vi.fn(), findUnique: vi.fn(), findUniqueOrThrow: vi.fn(), update: vi.fn(), create: vi.fn() },
     shiftTemplate: { create: vi.fn(), findUnique: vi.fn(), update: vi.fn(), delete: vi.fn() },
     doubleHourRule: { create: vi.fn(), findUnique: vi.fn(), findMany: vi.fn(), update: vi.fn(), delete: vi.fn() },
+    sector: { findUnique: vi.fn() },
     specialHourRuleApplication: { deleteMany: vi.fn() },
     systemNotification: { findMany: vi.fn(), count: vi.fn(), findFirst: vi.fn() },
     shiftAlert: { findMany: vi.fn() },
@@ -66,6 +67,7 @@ const mockedPrisma = prisma as unknown as {
   timeCorrectionRequest: { findMany: Mock; findUnique: Mock; findUniqueOrThrow: Mock; update: Mock; create: Mock };
   shiftTemplate: { create: Mock; findUnique: Mock; update: Mock; delete: Mock };
   doubleHourRule: { create: Mock; findUnique: Mock; findMany: Mock; update: Mock; delete: Mock };
+  sector: { findUnique: Mock };
   specialHourRuleApplication: { deleteMany: Mock };
   systemNotification: { findMany: Mock; count: Mock; findFirst: Mock };
   shiftAlert: { findMany: Mock };
@@ -519,6 +521,7 @@ describe("workforceService — FK reales sobre ShiftTemplate/DoubleHourRule", ()
 
   it("Etapa 8B (test 3) — crea una Hora Especial con empresa + sector pero sin empleados", async () => {
     mockedPrisma.doubleHourRule.create.mockResolvedValue(ruleRow({ id: "rule-3", name: "Domingo Pañol" }));
+    mockedPrisma.sector.findUnique.mockResolvedValue({ name: "Pañol", businessUnitId: null });
 
     await workforceService.createDoubleRule({ name: "Domingo Pañol", recurrenceType: "SEMANAL", weekdays: [0], companyId: "company-odwyer", sectorId: "sector-panol", employeeIds: [] }, user);
 
@@ -1226,3 +1229,64 @@ describe("workforceService — reglas de Hora Especial reinterpretan la historia
     expect(auditService.register).not.toHaveBeenCalled();
   });
 });
+
+// A7 (docs/decisions/ORG_LOCATION_REORGANIZATION.md §17.1): mientras D-4 no
+// defina la pertenencia a un sector del árbol nuevo, el motor sólo compara el
+// sector ANTERIOR del legajo. Se impide crear o cambiar una regla hacia un
+// sector nuevo (no alcanzaría a nadie); las reglas existentes no cambian.
+describe("workforceService — reglas de horas especiales y sectores del modelo nuevo (A7)", () => {
+  const newSector = { name: "Agricultura", businessUnitId: "bu-1" };
+  const legacySector = { name: "Pañol", businessUnitId: null };
+
+  it("rechaza crear una regla limitada a un sector nuevo, sin escribir ni reinterpretar", async () => {
+    mockedPrisma.sector.findUnique.mockResolvedValue(newSector);
+
+    await expect(workforceService.createDoubleRule({ name: "Cosecha", recurrenceType: "SEMANAL", weekdays: [6], sectorId: "sector-agro", employeeIds: [] }, user))
+      .rejects.toMatchObject({ statusCode: 409, code: "DOUBLE_HOUR_RULE_SECTOR_NOT_SUPPORTED", message: expect.stringContaining("“Agricultura” pertenece a la nueva estructura") });
+    expect(mockedPrisma.$transaction).not.toHaveBeenCalled();
+    expect(mockedPrisma.doubleHourRule.create).not.toHaveBeenCalled();
+    expect(reinterpretSpecialHours).not.toHaveBeenCalled();
+  });
+
+  it("rechaza cambiar una regla existente hacia un sector nuevo", async () => {
+    mockedPrisma.doubleHourRule.findUnique.mockResolvedValue(ruleRow({ id: "rule-1", name: "Domingos", sectorId: null, companyId: "losod" }));
+    mockedPrisma.sector.findUnique.mockResolvedValue(newSector);
+
+    await expect(workforceService.updateDoubleRule("rule-1", { sectorId: "sector-agro" }))
+      .rejects.toMatchObject({ code: "DOUBLE_HOUR_RULE_SECTOR_NOT_SUPPORTED" });
+    expect(mockedPrisma.doubleHourRule.update).not.toHaveBeenCalled();
+    expect(reinterpretSpecialHours).not.toHaveBeenCalled();
+  });
+
+  it("una regla por empresa (como “Domingos”) se edita sin consultar sectores: su alcance no cambia", async () => {
+    mockedPrisma.doubleHourRule.findUnique.mockResolvedValue(ruleRow({ id: "rule-domingos", name: "Domingos", sectorId: null, companyId: "losod" }));
+    mockedPrisma.doubleHourRule.update.mockResolvedValue(ruleRow({ id: "rule-domingos", name: "Domingos", sectorId: null, companyId: "losod", multiplier: 2 }));
+
+    await workforceService.updateDoubleRule("rule-domingos", { multiplier: 2 });
+
+    expect(mockedPrisma.sector.findUnique).not.toHaveBeenCalled();
+    expect(mockedPrisma.doubleHourRule.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.not.objectContaining({ sectorId: expect.anything(), companyId: expect.anything() }) }));
+  });
+
+  it("conservar el sector actual de una regla existente no se valida (no se amplía ni se reduce)", async () => {
+    mockedPrisma.doubleHourRule.findUnique.mockResolvedValue(ruleRow({ id: "rule-2", name: "Regla sector", sectorId: "sector-x" }));
+    mockedPrisma.doubleHourRule.update.mockResolvedValue(ruleRow({ id: "rule-2", name: "Regla sector", sectorId: "sector-x" }));
+
+    await workforceService.updateDoubleRule("rule-2", { sectorId: "sector-x", priority: 3 });
+
+    expect(mockedPrisma.sector.findUnique).not.toHaveBeenCalled();
+    expect(mockedPrisma.doubleHourRule.update).toHaveBeenCalled();
+  });
+
+  it("un sector del modelo anterior sigue permitido; un sector inexistente es 400", async () => {
+    mockedPrisma.sector.findUnique.mockResolvedValueOnce(legacySector);
+    mockedPrisma.doubleHourRule.create.mockResolvedValue(ruleRow({ id: "rule-5", name: "Domingo Pañol" }));
+    await workforceService.createDoubleRule({ name: "Domingo Pañol", recurrenceType: "SEMANAL", weekdays: [0], sectorId: "sector-panol", employeeIds: [] }, user);
+    expect(mockedPrisma.doubleHourRule.create).toHaveBeenCalled();
+
+    mockedPrisma.sector.findUnique.mockResolvedValueOnce(null);
+    await expect(workforceService.createDoubleRule({ name: "X", recurrenceType: "SEMANAL", weekdays: [0], sectorId: "missing", employeeIds: [] }, user))
+      .rejects.toMatchObject({ statusCode: 400, code: "DOUBLE_HOUR_RULE_SECTOR_INVALID" });
+  });
+});
+

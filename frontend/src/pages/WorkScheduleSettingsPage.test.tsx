@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
-import { WorkScheduleSettingsPage } from "./WorkScheduleSettingsPage";
+import { ruleSectorOptions, WorkScheduleSettingsPage } from "./WorkScheduleSettingsPage";
 import { ApiError } from "../services/api/apiClient";
 import { workforceApiService, type DoubleHourRule } from "../services/api/workforceApiService";
 import { orgStructureApiService } from "../services/api/orgStructureApiService";
@@ -74,7 +74,8 @@ const catalog = {
   establishments: [],
   zones: [],
   areas: [],
-  sectors: [{ id: "sector-panol", code: "PAN", name: "Pañol", status: "ACTIVO" as const }],
+  // Pañol: sector del modelo anterior; Agricultura: del árbol nuevo (A7).
+  sectors: [{ id: "sector-panol", code: "PAN", name: "Pañol", status: "ACTIVO" as const }, { id: "sector-agro", code: "AGR", name: "Agricultura", status: "ACTIVO" as const, businessUnitId: "bu-1" }],
   costCenters: [],
 };
 
@@ -160,7 +161,7 @@ describe("WorkScheduleSettingsPage — Etapa 8B", () => {
     await waitFor(() => expect(orgStructureApiService.getCatalog).toHaveBeenCalled());
 
     await fillRequiredBaseFields(user);
-    await user.selectOptions(screen.getByLabelText("Empresa"), "company-odwyer");
+    await user.selectOptions(screen.getByLabelText("Empresa empleadora"), "company-odwyer");
     await user.click(screen.getByRole("button", { name: /crear regla/i }));
 
     await waitFor(() => expect(workforceApiService.createDoubleHourRule).toHaveBeenCalled());
@@ -175,8 +176,9 @@ describe("WorkScheduleSettingsPage — Etapa 8B", () => {
     await waitFor(() => expect(orgStructureApiService.getCatalog).toHaveBeenCalled());
 
     await fillRequiredBaseFields(user);
-    await user.selectOptions(screen.getByLabelText("Empresa"), "company-odwyer");
-    await user.selectOptions(screen.getByLabelText("Sector"), "sector-panol");
+    await user.selectOptions(screen.getByLabelText("Empresa empleadora"), "company-odwyer");
+    expect(Array.from((screen.getByLabelText("Sector anterior") as HTMLSelectElement).options).map((option) => option.value)).toEqual(["", "sector-panol"]);
+    await user.selectOptions(screen.getByLabelText("Sector anterior"), "sector-panol");
     await user.click(screen.getByRole("button", { name: /crear regla/i }));
 
     await waitFor(() => expect(workforceApiService.createDoubleHourRule).toHaveBeenCalled());
@@ -867,3 +869,18 @@ describe("WorkScheduleSettingsPage — Eliminar regla es borrado definitivo", ()
     expect(screen.getByRole("button", { name: "Eliminar Validación en staging" })).toBeInTheDocument();
   });
 });
+
+describe("ruleSectorOptions — sectores admitidos en reglas (A7)", () => {
+  const sectors = [
+    { id: "old", name: "Pañol", status: "ACTIVO" },
+    { id: "old-off", name: "Viejo inactivo", status: "INACTIVO" },
+    { id: "new", name: "Agricultura", status: "ACTIVO", businessUnitId: "bu-1" },
+  ];
+  it("ofrece sólo sectores anteriores activos", () => {
+    expect(ruleSectorOptions(sectors, "").map((sector) => sector.id)).toEqual(["old"]);
+  });
+  it("conserva el sector que la regla ya tiene, aunque no sería elegible hoy", () => {
+    expect(ruleSectorOptions(sectors, "old-off").map((sector) => sector.id)).toEqual(["old", "old-off"]);
+  });
+});
+

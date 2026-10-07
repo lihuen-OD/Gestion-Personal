@@ -85,6 +85,7 @@ type ApiEmployee = {
     type: "DIRECT_MANAGER" | "TIME_RESPONSIBLE";
     userId?: string | null;
     personName?: string | null;
+    user?: { id?: string; name?: string | null } | null;
     role?: string | null;
     effectiveFrom?: string | null;
     effectiveTo?: string | null;
@@ -267,8 +268,11 @@ function mapLaborMovements(items: ApiEmployee["laborMovements"] = [], employeeId
 export function mapEmployeeFromApi(item: ApiEmployee): Employee {
   const companies = compact((item.companies || []).map((link) => link.company?.name));
   const primaryCompany = item.companies?.find((link) => link.isPrimary)?.company.name || companies[0] || "";
-  const directManagers = compact((item.assignments || []).filter((link) => link.type === "DIRECT_MANAGER").map((link) => link.personName));
-  const timeResponsibles = compact((item.assignments || []).filter((link) => link.type === "TIME_RESPONSIBLE").map((link) => link.personName));
+  // A7: una asignación puede existir sólo por usuario (sin personName); en ese
+  // caso se muestra el nombre del usuario vinculado.
+  const assignmentName = (link: NonNullable<ApiEmployee["assignments"]>[number]) => link.personName || link.user?.name || "";
+  const directManagers = compact((item.assignments || []).filter((link) => link.type === "DIRECT_MANAGER").map(assignmentName));
+  const timeResponsibles = compact((item.assignments || []).filter((link) => link.type === "TIME_RESPONSIBLE").map(assignmentName));
   const directManagerAssignment = item.assignments?.find((link) => link.type === "DIRECT_MANAGER");
   const timeResponsibleAssignment = item.assignments?.find((link) => link.type === "TIME_RESPONSIBLE");
   const address = item.address;

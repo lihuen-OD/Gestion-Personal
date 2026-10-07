@@ -436,3 +436,28 @@ describe("employeeApiService.update — no envía el sector anterior (A6)", () =
     expect(body.internalCategory).toBe("Administrativo B");
   });
 });
+
+// A7: el resumen del organigrama mostraba "-" cuando el responsable de carga
+// estaba asignado sólo por usuario (userId, sin personName).
+describe("mapEmployeeFromApi — responsables asignados por usuario (A7)", () => {
+  const base = { id: "employee-1", legajo: "100", firstName: "Ana", lastName: "Prueba", status: "ACTIVO" as const };
+
+  it("usa el nombre del usuario vinculado cuando no hay personName", () => {
+    const employee = mapEmployeeFromApi({ ...base, assignments: [{ type: "TIME_RESPONSIBLE", personName: null, user: { name: "Supervisor Demo" } }] });
+    expect(employee.timeResponsible).toBe("Supervisor Demo");
+    expect(employee.timeResponsibles).toEqual(["Supervisor Demo"]);
+  });
+
+  it("personName sigue teniendo prioridad y no se duplica", () => {
+    const employee = mapEmployeeFromApi({ ...base, assignments: [
+      { type: "TIME_RESPONSIBLE", personName: "15 Taller", user: { name: "15taller@losodwyer.com" } },
+      { type: "DIRECT_MANAGER", personName: "Gerente Uno", user: null },
+    ] });
+    expect(employee.timeResponsibles).toEqual(["15 Taller"]);
+    expect(employee.directManager).toBe("Gerente Uno");
+  });
+
+  it("sin nombre ni usuario no inventa responsables", () => {
+    expect(mapEmployeeFromApi({ ...base, assignments: [{ type: "TIME_RESPONSIBLE", personName: null, user: null }] }).timeResponsibles).toEqual([]);
+  });
+});

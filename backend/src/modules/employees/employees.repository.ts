@@ -830,7 +830,9 @@ const employeeOrgChartSelect = {
       },
     },
   },
-  assignments: { select: { type: true, personName: true } },
+  // A7: el responsable puede estar asignado sólo por usuario (userId); se
+  // expone únicamente su nombre visible, nunca email ni otros datos.
+  assignments: { select: { type: true, personName: true, user: { select: { name: true } } } },
 } satisfies Prisma.EmployeeSelect;
 
 // A7: contexto de ubicación de listado/organigrama: ubicaciones vigentes hoy

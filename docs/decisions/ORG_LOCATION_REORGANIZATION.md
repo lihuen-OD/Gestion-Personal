@@ -176,6 +176,9 @@ Se retira `Employee.sectorId`. Se conservan la empresa empleadora (`EmployeeComp
 | D-10 | Empresa propietaria de un establecimiento | — |
 | D-11 | Múltiples encargados en la vista funcional (hoy se usa el primero; no se cambia en silencio) | — |
 | D-12 | Merge y despliegue frente a producción | B5 |
+| D-13 | Unicidad del código de establecimiento tras M2: hoy es `@@unique([companyId, code])` y M2 elimina `companyId` (§17.2) | A8/M2 |
+| D-14 | Alcance de usuarios (`User.companyId/sectorId`): retirar, conservar sólo la empresa o reemplazarlo por un nodo nuevo. No interviene en permisos hoy (§17.2) | A8/M2 |
+| D-15 | Ubicación de dispositivos de fichado: establecimiento del árbol de ubicaciones en lugar de sector (§17.2) | Etapa de fichador, antes de M2 |
 
 ## 5. Alcance autorizado de la limpieza y protecciones
 
@@ -343,7 +346,7 @@ La inactivación solo puede **combinarse** con R1, R2 o R3. **Nunca se deja una 
 | A4 | Hecha: UI separada de Organización, Ubicaciones y Centros de costo; QA visual contra la copia aislada (§13) |
 | A5 | Hecha en `feat/org-location-reorg`: alcance múltiple de puestos con validación, filtros y QA (§14) |
 | A6 | Hecha en `feat/org-location-reorg`: Datos Laborales con puesto y alcance de consulta, ubicaciones con vigencia y transición de legajos anteriores; QA en la copia aislada (§15) |
-| A7 | **En curso, no cerrada.** Consumidores con semántica acordada adaptados y verificados en la copia (§16). Faltan D-4, D-5, D-7 y D-8 |
+| A7 | **En curso, no cerrada.** Consumidores con semántica acordada adaptados y verificados en la copia (§16). Además: guarda de sectores en reglas, inventario previo a M2 y análisis de recálculo (§17). Faltan D-4, D-5, D-7, D-8 y las decisiones nuevas D-13 a D-15 |
 | A8, B0–B5 | Pendientes |
 
 ### A2 — qué quedó en código
@@ -885,4 +888,103 @@ No se ejecutó M2, seed, limpieza, restauración ni reconciliación.
 - Configuración de reglas de horas especiales: tratamiento del selector de sector según D-4.
 - `User.sectorId` (alcance de usuarios) y `ClockDevice` (sector → establecimiento): fuera de este corte.
 - Observado: el resumen del organigrama muestra el responsable de carga sólo por `personName`, así que una asignación por usuario aparece como "-". Es previo a esta etapa y no se modificó.
+
+## 17. A7 — continuación (2026-10-07)
+
+### 17.1 Reglas de horas especiales y sectores del modelo nuevo
+
+- **Backend** (`workforce.service.ts`, `assertRuleSectorSupported`):
+  - Crear una regla con un sector del árbol nuevo, o **cambiar** una existente hacia uno, responde `409 DOUBLE_HOUR_RULE_SECTOR_NOT_SUPPORTED`. El mensaje explica que la regla no alcanzaría a nadie y sugiere otras dimensiones.
+  - Se valida **antes** de la transacción: no se escribe ni se reinterpreta.
+  - Reenviar el sector actual de una regla, o editar otras dimensiones, no se valida ni cambia su alcance. Un sector anterior sigue permitido.
+- **Pantalla** (`WorkScheduleSettingsPage`):
+  - El selector se llama "Sector anterior" y ofrece sólo sectores anteriores activos, más el sector que la regla ya tenga.
+  - "Empresa empleadora" está rotulada así porque es la empresa que compara el motor.
+  - Una nota explica por qué los sectores nuevos no se pueden usar.
+- "Domingos" (empresa LOSOD, sin sector) no se modificó.
+- Esto **no decide D-4**: sólo impide configurar reglas que hoy no tendrían efecto.
+
+### 17.2 Inventario de dependencias antes de M2
+
+M2 elimina las columnas del modelo anterior y vuelve obligatorios los padres nuevos (§7). Ninguna se eliminó ni se adaptó en esta etapa.
+
+| Dependencia | Uso actual | Tratamiento propuesto | Etapa | Decisión pendiente |
+|---|---|---|---|---|
+| `Employee.sectorId` (FK SET NULL) | Estructura anterior en Datos Laborales; filtro "Sector anterior"; búsqueda y resumen del organigrama; convocatorias y paneles; dashboard de Nivel 2 y Reportes; selects de grilla horaria, asistencia y validación anterior; **motor de horas especiales** (dimensión sector) | La limpieza (B3) lo pone en NULL, pero antes hay que retirar todas sus lecturas y M2 elimina la columna. Ya es de sólo lectura (A6) | A8 + M2 | D-4 (motor), D-8 (dashboard) |
+| `Position.sectorId` (FK SET NULL) | Puestos anteriores "pendientes de recarga"; cadena derivada en `positionInclude`/`positionOptionSelect`; búsqueda por nombre de sector; validación anterior del legajo | Retirar la cadena derivada y las comparaciones anteriores cuando no queden puestos sin alcance | A8 + M2 | — (la recarga de puestos depende de D-6) |
+| `Sector.areaId`, `Area.establishmentId`, `Establishment.companyId`/`businessUnitId` | Catálogo de Organización (marca "Pendiente de recarga", `legacyLocation`); vínculos anteriores de centros de costo; cadenas derivadas de legajo y puesto; herramientas A3 | M2 los elimina y vuelve obligatorios `Sector.businessUnitId`, `Area.sectorId` y `Establishment.zoneId`. La guarda SQL de M2 aborta si queda un valor anterior | M2 | D-1 (empresas) |
+| `Establishment @@unique([companyId, code])` | Unicidad del código por empresa | Al eliminar `companyId` hay que definir otra unicidad: código global o `(zoneId, code)` | M2 | **D-13** |
+| `User.sectorId`, `User.companyId` (FK sin `onDelete`) | Usuarios muestra y edita un "alcance" (empresa - sector); `userApiService` resuelve el sector **por nombre** (mismo riesgo de homónimos que tenía el legajo); `AuthUser.sectorId`; clave de caché del dashboard (backend) y del frontend. **No se usa para permisos**: el acceso es por responsable de carga | La limpieza pone `User.sectorId` en NULL (y `companyId` en C2). Hasta decidir, no cambiar permisos ni el concepto | A8 + M2 | **D-14** |
+| `ClockDevice.sectorId` (FK SET NULL) y `ClockDevice.establishmentId` (M1, RESTRICT) | Al activar un dispositivo se elige un sector, incluidos los del árbol nuevo; el listado muestra el sector; filtro `sectorId`; el contexto de credencial incluye `sectorId` sin usarlo. Metadato: no autoriza ni ubica fichadas. Inventario A3: 0 filas con sector | Pasar el formulario y el listado a establecimiento (zona derivada); dejar de leer `sectorId` antes de M2 | Etapa de fichador, antes de M2 | **D-15** |
+| `DoubleHourRule.sectorId` (FK RESTRICT desde M1) | Dimensión sector del motor (sector anterior). Hoy 0 reglas la usan; guarda §17.1 | Se conserva la columna (§6). Tras la limpieza, toda regla que apunte a un sector anterior bloquea M2/limpieza (R1/R2/R3) | B / A7 | D-4 |
+| Vínculos anteriores de `CostCenter*` | La UI de A4 los identifica y permite quitarlos | La limpieza los borra explícitamente. Las tablas se conservan | B3 | D-1 |
+| `EmployeeFieldHistory`/`EmployeeBlockHistory`, `AuditLog` | Copias en texto de nombres de sector y cadena | Se conservan sin cambios (sin FK) | — | — |
+| Frontend: datos de demostración (`mockData`, `mockOrgStructure`, `employeeMockService`), `structureOptions` (UN/establecimiento/área/sector por nombre), campos derivados de `positionApiService`, `positionAllowedValues` | Modo demostración y validación anterior | Retirar o adaptar junto con las lecturas anteriores | A8 | — |
+| Herramientas A3 (`org-reorg-*`) | Dependen del modelo anterior por diseño | Se retiran después de B4 | Después de B | — |
+| `DashboardPage`: el filtro de Nivel 2 compara `employee.sector` con `user.sector` (ID) | Se pasa a `getMetrics(_scope)`, que lo ignora: código muerto | Eliminar en A8 | A8 | — |
+
+### 17.3 Responsable de carga asignado por usuario en el organigrama
+
+- El select del organigrama ahora trae `assignments.user.name`. Sólo el nombre visible: nunca email ni otros datos.
+- `mapEmployeeFromApi` usa `personName` y, si falta, el nombre del usuario vinculado. Esto también corrige la pestaña Responsables del legajo, que ya traía el usuario pero no lo mostraba.
+- Los permisos no cambian: el endpoint sigue siendo de RRHH y Supervisión, y está acotado por `employeeAccessWhere`. Supervisión ve el dato sólo de sus legajos.
+- Efecto conocido: si RRHH guarda luego la pestaña Responsables de ese legajo, la asignación se reenvía con `personName` igual al nombre del usuario y conserva el `userId` (resolución existente por nombre).
+
+### 17.4 Cambios de puesto, alcance o ubicación frente a horas, desgloses y cierres
+
+**Garantía vigente.** Ninguna de estas operaciones recalcula nada en el momento:
+- cambiar el puesto, el centro de costo o la empresa empleadora del legajo;
+- editar el alcance de un puesto;
+- cambiar la estructura de Organización o Ubicaciones;
+- cargar, cambiar, finalizar o corregir ubicaciones.
+
+Lo fijan dos tests:
+- `structureChanges.noRecalculation.test.ts`: el `update` del legajo no resuelve multiplicadores, y los módulos de ubicaciones, puestos y estructura no importan el motor, los cierres ni los desgloses;
+- `doubleHourRuleScope.characterization.test.ts`: el criterio actual del motor.
+
+**Entradas del motor** (`resolveSpecialHourRulesByDate`): `Employee.positionId`, `costCenterId`, `sectorId` (anterior) y `EmployeeCompany` (empleadora), leídos con su valor **actual**, sin historia por fecha. `PositionOrgScope` y `EmployeeWorkLocation` **no** son entradas.
+
+**Caminos que recalculan filas pasadas** (los que resuelven horas especiales lo hacen con el alcance actual):
+
+| Camino | Disparador | Qué reescribe | Cierres |
+|---|---|---|---|
+| `reinterpretSpecialHours` | Crear, editar o eliminar una regla de horas especiales | `TimeEntry.appliedMultiplier`, multiplicador de desgloses, `TimeSegment` especial y `SpecialHourRuleApplication`, en la ventana del calendario anterior y nuevo de la regla, para **todos** los legajos | Reconstruye los snapshots de cierres afectados, incluidos `ENVIADO`/`APROBADO`, con auditoría |
+| `reinterpretSpecialHoursOnDates` | Guardar una convocatoria a feriado | Lo mismo, para esa fecha | Igual |
+| `reconcile-special-hours` (script) | Manual, dry-run o `--apply` con respaldo | Lo mismo, por ventanas | Igual |
+| `reconcile-normal-hours` (script) | Manual, dry-run o `repair` con snapshot | Sólo Horas base (`NORMAL_BASE`) derivadas de jornadas fichadas (reparación 15M.4). **No lee el alcance del legajo** | No los reconstruye |
+| Recalcular desgloses automáticos | Manual por legajo y período | Desgloses `AUTOMATIC` del período, con el multiplicador resuelto en ese momento | Bloqueado con período cerrado (`409 PERIOD_CLOSED`) |
+| Alta o edición de una carga o de un desglose manual | Usuario | Sólo la fila, con el multiplicador resuelto al guardar | RRHH puede corregir un período cerrado con motivo |
+| Procesamiento del fichador y sus catch-ups | Fichada o tarea automática | Snapshot al procesar; un catch-up puede procesar días después | — |
+
+**Limitaciones.**
+- Tras cambiar puesto, centro de costo o empresa empleadora, cualquiera de esos disparadores aplica el alcance **nuevo** a fechas anteriores. Esto ya ocurría antes de la reorganización.
+- Ejemplos:
+  - una regla por puesto que se edita después de reasignar a una persona cambia sus horas pasadas;
+  - una convocatoria a feriado reinterpreta esa fecha con la empresa empleadora actual.
+- Hoy el alcance del puesto y las ubicaciones no afectan, porque el motor no los lee. Si D-4 los incorpora sin historia, heredarían la misma limitación.
+
+**Qué falta para garantizarlo** (requiere D-5; nada se implementó ni ejecutó):
+- H2: historia con vigencias de las entradas del motor (puesto, centro de costo, empleadora y, si D-4 lo decide, alcance o ubicación), o un snapshot del alcance en cada carga o segmento al procesar. Así la reinterpretación usaría el valor vigente en cada fecha.
+- H3: excluir de la reinterpretación los períodos cerrados (`ENVIADO`/`APROBADO`), o exigir una reapertura explícita.
+- Antes de cualquier adaptación, un comparador antes/después en la copia, con el motor real dentro de una transacción revertida, como el dry-run de `reconcile-special-hours`, aceptando sólo cambios esperados.
+- Opcional: avisar al editar una regla o convocatoria si la ventana incluye fechas anteriores a un cambio de puesto, centro de costo o empleadora de algún legajo alcanzado.
+
+No se ejecutó ninguna reconciliación ni recálculo.
+
+### 17.5 QA en la copia aislada
+
+- Instancia propia (4012) cargando `backend/.env.reorg` (host `ep-rough-river…`), `AUTOMATIC_JOBS_DISABLED`, más un Vite en 5184. Ambos se detuvieron al terminar.
+- **API, 7/7:**
+  - crear una regla con sector nuevo y cambiar "Domingos" hacia uno: ambos `409`, sin reglas nuevas, con "Domingos" sin cambios (mismo `updatedAt`);
+  - Supervisión no puede crear reglas;
+  - el organigrama trae `user.name` (sin email) para `QA-A7-001`;
+  - Supervisión ve el dato sólo en su legajo.
+- **Huella de sólo lectura antes/después** (conteo + hash): idénticas en `TimeEntry` (85), `HourConceptBreakdown` (26), `MonthlyTimeClosure` (7), `DoubleHourRule` (2), `SpecialHourRuleApplication` (22), `TimeSegment` (56) y "Domingos".
+- **Visual:** el selector ofrece 42 sectores anteriores y no el nuevo; nota en 1440 y 390 sin desborde; el resumen del organigrama muestra "Supervisor Demo".
+- Capturas: `docs/qa/a7-reglas-alcance-desktop.png`, `a7-reglas-alcance-mobile.png` y `a7-organigrama-responsable-usuario-desktop.png`.
+- Escrituras: ninguna salvo `AuditLog` de logins y de los rechazos de ruta. Las pruebas de reglas fueron sólo rechazos.
+
+### 17.6 Instancia local del puerto 4002
+
+Después de detenerla (§16.1), `npm run dev` se volvió a iniciar a las 13:43 desde la misma terminal. Sigue cargando `backend/.env` (development, sin M1) y recarga en caliente el código de esta rama. Se tomó como un reinicio deliberado: no se detuvo ni se usó. Conviene no correrla sobre esta rama, o apuntarla a la copia.
 

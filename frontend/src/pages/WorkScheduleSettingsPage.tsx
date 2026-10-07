@@ -97,6 +97,14 @@ function scopeLabel(item: DoubleHourRule) {
   return parts.length ? parts.join(" · ") : "General (todos los que trabajen)";
 }
 
+// A7 (ORG_LOCATION_REORGANIZATION.md §17.1): el motor compara el sector
+// ANTERIOR del legajo. Sólo se ofrecen sectores del modelo anterior activos,
+// más el sector que la regla ya tenga (para conservarlo sin cambiar su
+// alcance). El backend rechaza igual cualquier cambio hacia un sector nuevo.
+export function ruleSectorOptions(sectors: Array<{ id: string; name: string; status: string; businessUnitId?: string }>, currentSectorId: string) {
+  return sectors.filter((sector) => sector.id === currentSectorId || (!sector.businessUnitId && sector.status === "ACTIVO"));
+}
+
 export function WorkScheduleSettingsPage() {
   const { user } = useAuth();
   const [rules, setRules] = useState<DoubleHourRule[]>([]);
@@ -447,9 +455,13 @@ export function WorkScheduleSettingsPage() {
               <h4>Alcance</h4>
               <p>A quién alcanza esta regla.</p>
             </div>
+            <p className="info-note compact rule-sector-note">
+              Empresa = empresa empleadora del legajo. Sector = sector <b>anterior</b> del legajo: los sectores de la nueva
+              estructura todavía no se pueden usar en reglas, porque ningún legajo recargado los tiene y la regla no alcanzaría a nadie.
+            </p>
             <div className="form-grid">
               <label className="field">
-                <span>Empresa</span>
+                <span>Empresa empleadora</span>
                 <select value={rule.companyId} onChange={(e) => setRule({ ...rule, companyId: e.target.value })}>
                   <option value="">Todas</option>
                   {catalog?.companies.filter((company) => company.status === "ACTIVO").map((company) => (
@@ -458,10 +470,10 @@ export function WorkScheduleSettingsPage() {
                 </select>
               </label>
               <label className="field">
-                <span>Sector</span>
+                <span>Sector anterior</span>
                 <select value={rule.sectorId} onChange={(e) => setRule({ ...rule, sectorId: e.target.value })}>
                   <option value="">Todos</option>
-                  {catalog?.sectors.filter((sector) => sector.status === "ACTIVO").map((sector) => (
+                  {ruleSectorOptions(catalog?.sectors ?? [], rule.sectorId).map((sector) => (
                     <option key={sector.id} value={sector.id}>{sector.name}</option>
                   ))}
                 </select>
