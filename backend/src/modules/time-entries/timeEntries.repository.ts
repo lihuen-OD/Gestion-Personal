@@ -1,6 +1,7 @@
 import { ApprovalStatus, EmployeeStatus, Prisma, WorkShiftSource, WorkShiftStatus } from "@prisma/client";
 import { prisma, type PrismaTransactionClient } from "../../shared/prisma/client";
 import { FICHADA_ORIGIN_NOTE } from "./timeEntryObservationText";
+import { assertClosurePeriodsWritable, employeePeriodKey, findProtectedClosurePeriods } from "../../shared/monthlyClosure/closurePeriodGuard";
 import { noveltyCoversDay } from "../novelties/novelties.dateRange";
 import { resolveActiveWorkRegime } from "../work-regimes/workRegimes.service";
 import { flagOpenShiftOverflowForReview, resolveOpenShiftOverflowAlert } from "../shifts/workShiftEvaluationRunner";
@@ -501,6 +502,10 @@ function buildPeriodEmployeeWhere(query: TimeEntriesPeriodEmployeesQuery, employ
 function resolvePeriodStatus(statuses: string[]) {
   return statusPriority.find((status) => statuses.includes(status)) || "PENDIENTE";
 }
+
+// D-5 (ORG_LOCATION_REORGANIZATION.md §18.1): texto de negocio para jornadas
+// cuyas horas caen en un período protegido.
+const CLOSED_PERIOD_SHIFT_NOTE = "Período enviado o aprobado: la fichada se registró pero sus horas no se cargaron automáticamente. Requiere corrección explícita de RRHH.";
 
 export const timeEntriesRepository = {
   createClockPunchAttempt(input: { requestId: string; employeeId: string; deviceId: string; punchType: "INGRESO" | "SALIDA"; requestHash: string }) {
@@ -1435,11 +1440,19 @@ export const timeEntriesRepository = {
       for (const [index, shift] of expired.entries()) {
         const concept = resolvedConcepts[index];
         if (!concept) continue;
+        // D-5: una tarea automática nunca escribe en un período protegido.
+        const shiftPeriod = { employeeId: shift.employeeId, period: periodFromInstant(shift.startAt) };
+        const isProtected = (await findProtectedClosurePeriods(tx, [shiftPeriod])).size > 0;
         const updated = await tx.workShift.updateMany({
           where: { id: shift.id, status: WorkShiftStatus.ABIERTO, endAt: null },
-          data: { status: WorkShiftStatus.FALTA_SALIDA, totalMinutes: 0, hourConceptId: concept.id, hourConceptName: concept.name, observation, closedAt: now },
+          data: { status: WorkShiftStatus.FALTA_SALIDA, totalMinutes: 0, hourConceptId: concept.id, hourConceptName: concept.name, observation: isProtected ? `${observation} ${CLOSED_PERIOD_SHIFT_NOTE}` : observation, closedAt: now },
         });
         if (updated.count !== 1) continue;
+        if (isProtected) {
+          count += 1;
+          items.push({ employeeId: shift.employeeId, workShiftId: shift.id, startAt: shift.startAt });
+          continue;
+        }
         await tx.timeEntry.create({
           data: {
             employeeId: shift.employeeId,
@@ -1519,15 +1532,17 @@ export const timeEntriesRepository = {
         where: { employeeId: input.employeeId, hourConcept: { kind: "NORMAL", status: "ACTIVO" } },
         include: { hourConcept: true },
       }))?.hourConcept;
+      // D-5: la jornada anterior cae en un período protegido → sin carga automática.
+      const previousProtected = previous ? (await findProtectedClosurePeriods(tx, [{ employeeId: input.employeeId, period: periodFromInstant(previous.startAt) }])).size > 0 : false;
       const claimed = await tx.workShift.updateMany({
         where: { id: input.openWorkShiftId, employeeId: input.employeeId, status: WorkShiftStatus.ABIERTO, endAt: null },
         data: {
           status: WorkShiftStatus.FALTA_SALIDA,
-          observation: input.missingOutObservation,
+          observation: previousProtected ? `${input.missingOutObservation} ${CLOSED_PERIOD_SHIFT_NOTE}` : input.missingOutObservation,
         },
       });
       if (claimed.count !== 1) throw new Error("WORK_SHIFT_ALREADY_CLOSED");
-      if (previous && previousConcept) {
+      if (previous && previousConcept && !previousProtected) {
         await tx.timeEntry.create({
           data: {
             employeeId: input.employeeId,
@@ -1696,7 +1711,13 @@ export const timeEntriesRepository = {
     // liquidable se derive bien en grilla/export, igual que ya pasaba con el
     // fichador desde la Etapa 8F.
     const appliedMultiplier = await resolveDoubleHourMultiplierForManualEntry(input.employeeId, input.date);
-    return prisma.timeEntry.create({
+    // D-5: verificación del cierre DENTRO de la transacción de escritura (un
+    // alta nunca entra en un período enviado/aprobado, sin excepción de rol).
+    return prisma.$transaction(async (tx) => {
+      await assertClosurePeriodsWritable(tx, [{ employeeId: input.employeeId, period: periodFromCalendarDate(input.date) }], {
+        message: "El período ya fue enviado a cierre. No se pueden cargar horas nuevas — pedile a RRHH que reabra el cierre si hace falta agregar algo.",
+      });
+      return tx.timeEntry.create({
       data: {
         employeeId: input.employeeId,
         hourConceptId: input.hourConceptId,
@@ -1712,6 +1733,7 @@ export const timeEntriesRepository = {
         ...(autoApprovedByUserId ? { approvedByUserId: autoApprovedByUserId, approvedAt: new Date() } : {}),
       },
       include: timeEntryInclude,
+    });
     });
   },
 
@@ -1734,6 +1756,8 @@ export const timeEntriesRepository = {
     createdByUserId?: string | null;
   }) {
     return prisma.$transaction(async (tx) => {
+      // D-5: jornada manual de administración — nunca escribe en un período protegido.
+      await assertClosurePeriodsWritable(tx, input.segments.map((segment) => ({ employeeId: input.employeeId, period: periodFromCalendarDate(segment.date) })));
       const startPunch = await tx.attendancePunch.create({
         data: {
           employeeId: input.employeeId,
@@ -1934,6 +1958,11 @@ export const timeEntriesRepository = {
     const uniqueDates = [...new Map(input.segments.map((segment) => [segment.date.getTime(), segment.date])).values()];
 
     return prisma.$transaction(async (tx) => {
+      // D-5: la salida se registra siempre, pero nunca carga horas en un
+      // período enviado/aprobado: esas fechas quedan observadas para RRHH.
+      const protectedPeriods = await findProtectedClosurePeriods(tx, uniqueDates.map((date) => ({ employeeId: input.employeeId, period: periodFromCalendarDate(date) })));
+      const isProtectedDate = (date: Date) => protectedPeriods.has(employeePeriodKey({ employeeId: input.employeeId, period: periodFromCalendarDate(date) }));
+      const touchesProtected = uniqueDates.some(isProtectedDate);
       const claimed = await tx.workShift.updateMany({
         where: {
           id: input.workShiftId,
@@ -1942,14 +1971,14 @@ export const timeEntriesRepository = {
           endAt: null,
         },
         data: {
-          status: "PROCESADO",
+          status: touchesProtected ? "OBSERVADO" : "PROCESADO",
           hourConceptId: input.normalHourConceptId,
           hourConceptName: input.normalHourConceptName,
           endAt: input.endAt,
           totalMinutes: input.totalMinutes,
           crossesMidnight: new Set(input.segments.map((segment) => segment.date.getTime())).size > 1,
           closedAt: input.endAt,
-          observation: input.observation || undefined,
+          observation: touchesProtected ? [input.observation, CLOSED_PERIOD_SHIFT_NOTE].filter(Boolean).join(" · ") : input.observation || undefined,
         },
       });
       if (claimed.count !== 1) {
@@ -2062,6 +2091,7 @@ export const timeEntriesRepository = {
 
       const entries = [];
       for (const [dateKey, minutes] of dailyNormalMinutes) {
+        if (isProtectedDate(new Date(dateKey))) continue;
         const existing = existingByDate.get(dateKey) ?? null;
 
         if (existing && existing.status !== "APROBADO" && !editableStatuses.includes(existing.status)) {
@@ -2148,7 +2178,15 @@ export const timeEntriesRepository = {
     // así una corrección de una carga manual ya existente también queda
     // alineada con las reglas de Horas Especiales vigentes hoy.
     const appliedMultiplier = await resolveDoubleHourMultiplierForManualEntry(before.employeeId, date);
-    return prisma.timeEntry.update({
+    // D-5: en un período protegido sólo pasa la corrección explícita de RRHH
+    // con motivo (el servicio ya lo exige); el lock compartido se toma igual.
+    const explicitCorrection = Boolean(autoApprovedByUserId && input.correctionReason);
+    return prisma.$transaction(async (tx) => {
+      await assertClosurePeriodsWritable(tx, [
+        { employeeId: before.employeeId, period: periodFromCalendarDate(before.date) },
+        { employeeId: before.employeeId, period: periodFromCalendarDate(date) },
+      ], { explicitCorrection, message: "El período ya fue enviado a cierre. Solicitá la corrección para que RH la revise." });
+      return tx.timeEntry.update({
       where: { id },
       data: {
         ...(input.hourConceptId !== undefined ? { hourConceptId: input.hourConceptId } : {}),
@@ -2159,6 +2197,7 @@ export const timeEntriesRepository = {
         ...(autoApprovedByUserId ? { status: "APROBADO", approvedByUserId: autoApprovedByUserId, approvedAt: new Date(), rejectedAt: null } : {}),
       },
       include: timeEntryInclude,
+    });
     });
   },
 

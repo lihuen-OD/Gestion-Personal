@@ -28,6 +28,9 @@ vi.mock("./timeEntries.cache", () => ({ clearTimeEntriesReadCaches: vi.fn() }));
 
 vi.mock("../../shared/prisma/client", () => {
   const tx = {
+    // D-5: closurePeriodGuard (lock + estado del cierre dentro de la transacción).
+    $executeRaw: vi.fn().mockResolvedValue(0),
+    monthlyTimeClosure: { findMany: vi.fn().mockResolvedValue([]) },
     timeSegment: { findMany: vi.fn(), findFirst: vi.fn() },
     timeEntry: { findMany: vi.fn(), findFirst: vi.fn(), update: vi.fn(), create: vi.fn() },
   };

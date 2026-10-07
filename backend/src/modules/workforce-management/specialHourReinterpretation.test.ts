@@ -37,6 +37,7 @@ type Closure = { id: string; employeeId: string; period: string; status: string;
 
 const JUAN = "employee-juan";
 const ANA = "employee-ana";
+const PEDRO = "employee-pedro";
 const OCT_3 = new Date("2026-10-03T00:00:00.000Z"); // sábado
 const OCT_4 = new Date("2026-10-04T00:00:00.000Z"); // domingo
 
@@ -112,6 +113,8 @@ function fakeDb() {
     monthlyTimeClosure: {
       findMany: vi.fn(async ({ where }) => world.closures.filter((row) => where.employeeId.in.includes(row.employeeId) && where.period.in.includes(row.period))),
     },
+    // D-5: advisory lock del closurePeriodGuard.
+    $executeRaw: vi.fn(async () => 0),
   };
 }
 
@@ -248,23 +251,34 @@ describe("Hora Especial reinterpreta las horas ya cargadas (orden indistinto)", 
     expect(hours(dayAccounting(JUAN, OCT_3).totalWorkedMinutes)).toBe(9);
   });
 
-  it("CASO G — período con cierre: el snapshot se recalcula con la regla nueva, sin cambiar el estado del cierre", async () => {
+  // D-5 (ORG_LOCATION_REORGANIZATION.md §18.1): un período enviado o aprobado
+  // queda protegido — ni sus filas ni su snapshot se modifican; se informa
+  // cuánto diferiría. Un cierre DEVUELTO (reabierto por RRHH) sí se recalcula.
+  it("CASO G — período ENVIADO/APROBADO protegido: filas y snapshot intactos, diferencia informada; DEVUELTO se recalcula", async () => {
     loadHours(JUAN, OCT_3, 8);
-    loadHours(ANA, OCT_4, 8);
+    loadHours(ANA, OCT_3, 8);
+    loadHours(PEDRO, OCT_3, 8);
     world.closures.push(
       { id: "closure-juan", employeeId: JUAN, period: "2026-10", status: "APROBADO", snapshot: { accounting: { settlement: { totalMinutes: 480 } } } },
       { id: "closure-ana", employeeId: ANA, period: "2026-10", status: "ENVIADO", snapshot: { accounting: {} } },
+      { id: "closure-pedro", employeeId: PEDRO, period: "2026-10", status: "DEVUELTO", snapshot: { accounting: {} } },
     );
 
     world.rules.push(feriado());
     const result = await reinterpret(null, feriado());
 
-    expect(rebuildClosureSnapshots).toHaveBeenCalledTimes(1);
+    expect(world.entries.find((row) => row.employeeId === JUAN)!.appliedMultiplier).toBe(1);
+    expect(world.entries.find((row) => row.employeeId === ANA)!.appliedMultiplier).toBe(1);
+    expect(world.entries.find((row) => row.employeeId === PEDRO)!.appliedMultiplier).toBe(2);
     const [, closures, recalculation] = (rebuildClosureSnapshots as unknown as Mock).mock.calls[0]!;
-    expect(closures.map((closure: Closure) => closure.id)).toEqual(["closure-juan"]); // Ana no tenía horas el 03/10
+    expect(closures.map((closure: Closure) => closure.id)).toEqual(["closure-pedro"]);
     expect(recalculation).toEqual({ reason: "SPECIAL_HOUR_RULE_CHANGED", doubleHourRuleId: "rule-feriado", doubleHourRuleName: "Feriado 3 de octubre" });
-    expect(result.rebuiltClosures.map((closure) => closure.id)).toEqual(["closure-juan"]);
-    expect(world.closures.map((closure) => closure.status)).toEqual(["APROBADO", "ENVIADO"]);
+    expect(result.protectedPeriods).toEqual([
+      { employeeId: ANA, period: "2026-10", status: "ENVIADO", timeEntries: 1, breakdowns: 0, segments: 0 },
+      { employeeId: JUAN, period: "2026-10", status: "APROBADO", timeEntries: 1, breakdowns: 0, segments: 0 },
+    ].sort((a, b) => `${a.employeeId}:${a.period}`.localeCompare(`${b.employeeId}:${b.period}`)));
+    expect(world.closures.map((closure) => closure.status)).toEqual(["APROBADO", "ENVIADO", "DEVUELTO"]);
+    expect(db.$executeRaw).toHaveBeenCalled();
   });
 
   it("CASO H — varios empleados, la regla alcanza sólo a algunos → sólo ésos se recalculan", async () => {
@@ -487,19 +501,19 @@ describe("FERIADO + convocatoria (HolidayWorkAssignment) reinterpreta las horas"
     expect(minutes(L31).settlement).toEqual({ normalMinutes: 600, withinBaseMinutes: 360, additiveMinutes: 120, totalMinutes: 1080 });
   });
 
-  it("CASO 8 — con cierre mensual existente, guardar la convocatoria recalcula su snapshot sin cambiar el estado", async () => {
+  it("CASO 8 — convocatoria sobre un período APROBADO: no modifica horas ni snapshot (D-5) y lo informa", async () => {
     world.rules.push(feriado5());
     world.convocations.push({ employeeId: "other", date: OCT_5, status: "ACTIVA" });
     loadHours(L31, OCT_5, 8);
     world.closures.push({ id: "closure-31", employeeId: L31, period: "2026-10", status: "APROBADO", snapshot: { accounting: {} } });
+    const before = world.entries[0]!.appliedMultiplier;
 
     convoke(L31);
     const result = await saveConvocation();
 
-    const [, closures, recalculation] = (rebuildClosureSnapshots as unknown as Mock).mock.calls[0]!;
-    expect(closures.map((closure: Closure) => closure.id)).toEqual(["closure-31"]);
-    expect(recalculation).toEqual({ reason: "HOLIDAY_WORK_ASSIGNMENT_CHANGED", date: "2026-10-05" });
-    expect(result.rebuiltClosures).toHaveLength(1);
+    expect(world.entries[0]!.appliedMultiplier).toBe(before);
+    expect(result.rebuiltClosures).toHaveLength(0);
+    expect(result.protectedPeriods).toEqual([{ employeeId: L31, period: "2026-10", status: "APROBADO", timeEntries: 1, breakdowns: 0, segments: 0 }]);
     expect(world.closures[0]!.status).toBe("APROBADO");
   });
 
@@ -583,16 +597,18 @@ describe("Eliminar definitivamente una regla reinterpreta como si nunca hubiera 
     expect(world.segments[0]).toMatchObject({ isSpecial: false, minutes: 480 });
   });
 
-  it("feriado ya finalizado con cierre APROBADO: el snapshot se reconstruye y el estado no cambia", async () => {
+  it("feriado ya finalizado con cierre APROBADO: eliminar la regla no toca ese período (D-5)", async () => {
     world.rules.push(feriados());
     loadHours(JUAN, OCT_5, 8);
+    world.entries[0]!.appliedMultiplier = 2;
     world.closures.push({ id: "closure-juan", employeeId: JUAN, period: "2026-10", status: "APROBADO", snapshot: { accounting: { settlement: { totalMinutes: 960 } } } });
 
     const result = await deleteRule(feriados());
 
-    expect(result.rebuiltClosures.map((closure) => closure.id)).toEqual(["closure-juan"]);
+    expect(result.rebuiltClosures).toHaveLength(0);
+    expect(world.entries[0]!.appliedMultiplier).toBe(2);
+    expect(result.protectedPeriods[0]).toMatchObject({ employeeId: JUAN, status: "APROBADO", timeEntries: 1 });
     expect(world.closures[0]!.status).toBe("APROBADO");
-    expect(hours(dayAccounting(JUAN, OCT_5).settlement.totalMinutes)).toBe(8);
   });
 
   it("una regla ya INACTIVA no tenía efecto: eliminarla no cambia ninguna hora", async () => {

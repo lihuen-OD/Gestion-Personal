@@ -1,6 +1,7 @@
 import { Prisma, type DoubleHourRuleKind } from "@prisma/client";
 import { prisma } from "../../shared/prisma/client";
 import { AppError } from "../../shared/errors/AppError";
+import { lockClosurePeriods } from "../../shared/monthlyClosure/closurePeriodGuard";
 import { employeeAccessWhere } from "../employees/employeeAccess";
 import { roles } from "../../shared/security/roles";
 import { isMonthlyClosureLocked } from "../../shared/monthlyClosure/closureLock";
@@ -98,6 +99,7 @@ function fechaVigencyFromDates(dates: Array<{ date: Date }>) {
 // inactivar o eliminar una regla corre en la misma transacción que el
 // recálculo de todo lo derivado: si el recálculo falla, la regla no cambia.
 const SPECIAL_HOUR_RULE_TRANSACTION_OPTIONS = { timeout: 30_000 };
+const CLOSURE_TRANSACTION_OPTIONS = { timeout: 30_000 };
 
 type RuleForChange = RuleCalendar & { name: string; kind: DoubleHourRuleKind; multiplier: Prisma.Decimal | number; status: string };
 
@@ -164,11 +166,19 @@ export const workforceService = {
     // Snapshot de auditoría del cierre (closureSnapshot.ts): base, Horas
     // normales residuales, conceptos, total trabajado y equivalencia con el
     // mismo modelo y criterio de estado que la grilla por legajo.
-    const snapshots = await buildClosureSnapshots(prisma, employeeIds, period);
-    const result = await execute(() => prisma.$transaction(employeeIds.map((employeeId) => {
-      const snapshot = snapshots.get(employeeId)!;
-      return prisma.monthlyTimeClosure.upsert({ where: { employeeId_period: { employeeId, period } }, create: { employeeId, period, status: "ENVIADO", snapshot, submittedByUserId: user.id, submittedAt: new Date() }, update: { status: "ENVIADO", snapshot, submittedByUserId: user.id, submittedAt: new Date(), reviewedAt: null, reviewedByUserId: null, reviewNote: null } });
-    })));
+    // D-5 (ORG_LOCATION_REORGANIZATION.md §18.1): lock EXCLUSIVO por empleado +
+    // período y snapshot armado DENTRO de la transacción: ninguna escritura
+    // (carga, fichada, reinterpretación) puede intercalarse con el envío.
+    const result = await execute(() => prisma.$transaction(async (tx) => {
+      await lockClosurePeriods(tx, employeeIds.map((employeeId) => ({ employeeId, period })), "EXCLUSIVE");
+      const snapshots = await buildClosureSnapshots(tx, employeeIds, period);
+      const saved = [];
+      for (const employeeId of employeeIds) {
+        const snapshot = snapshots.get(employeeId)!;
+        saved.push(await tx.monthlyTimeClosure.upsert({ where: { employeeId_period: { employeeId, period } }, create: { employeeId, period, status: "ENVIADO", snapshot, submittedByUserId: user.id, submittedAt: new Date() }, update: { status: "ENVIADO", snapshot, submittedByUserId: user.id, submittedAt: new Date(), reviewedAt: null, reviewedByUserId: null, reviewNote: null } }));
+      }
+      return saved;
+    }, CLOSURE_TRANSACTION_OPTIONS));
     // Una sola consulta de identidades para todo el lote (no una por legajo).
     const employeeReference = await loadEmployeeReferences(prisma, employeeIds);
     await Promise.all(result.map((item) => auditService.register({ ...audit, action: "UPDATE", entity: "MonthlyTimeClosure", entityId: item.id, description: `Se envió a revisión el cierre de ${humanizePeriodEs(period)} de ${employeeReference(item.employeeId)}.`, after: item as Prisma.InputJsonValue })));
@@ -176,15 +186,23 @@ export const workforceService = {
     return result;
   },
   async approveClosures(ids: string[], note: string | undefined, user: Express.AuthUser, audit?: AuditContext) {
-    const before = await prisma.monthlyTimeClosure.findMany({ where: { id: { in: ids }, status: "ENVIADO" }, include: employeeReferenceInclude });
-    const result = await execute(() => prisma.monthlyTimeClosure.updateMany({ where: { id: { in: ids }, status: "ENVIADO" }, data: { status: "APROBADO", reviewedByUserId: user.id, reviewedAt: new Date(), reviewNote: note || null } }));
+    const { before, result } = await execute(() => prisma.$transaction(async (tx) => {
+      const targets = await tx.monthlyTimeClosure.findMany({ where: { id: { in: ids } }, select: { employeeId: true, period: true } });
+      await lockClosurePeriods(tx, targets, "EXCLUSIVE");
+      const pending = await tx.monthlyTimeClosure.findMany({ where: { id: { in: ids }, status: "ENVIADO" }, include: employeeReferenceInclude });
+      const updated = await tx.monthlyTimeClosure.updateMany({ where: { id: { in: ids }, status: "ENVIADO" }, data: { status: "APROBADO", reviewedByUserId: user.id, reviewedAt: new Date(), reviewNote: note || null } });
+      return { before: pending, result: updated };
+    }, CLOSURE_TRANSACTION_OPTIONS));
     await Promise.all(before.map((item) => auditService.register({ ...audit, action: "APPROVE", entity: "MonthlyTimeClosure", entityId: item.id, description: `Se aprobó el cierre de ${humanizePeriodEs(item.period)} de ${formatEmployeeReference(item.employee)}.`, before: item as Prisma.InputJsonValue })));
     return result;
   },
   async returnClosure(id: string, reason: string, user: Express.AuthUser, audit?: AuditContext) {
     const before = await prisma.monthlyTimeClosure.findUnique({ where: { id }, include: employeeReferenceInclude });
     if (!before) throw new AppError("No encontramos el cierre solicitado", 404, "MONTHLY_CLOSURE_NOT_FOUND");
-    const item = await execute(() => prisma.monthlyTimeClosure.update({ where: { id }, data: { status: "DEVUELTO", reviewedByUserId: user.id, reviewedAt: new Date(), reviewNote: reason } }));
+    const item = await execute(() => prisma.$transaction(async (tx) => {
+      await lockClosurePeriods(tx, [before], "EXCLUSIVE");
+      return tx.monthlyTimeClosure.update({ where: { id }, data: { status: "DEVUELTO", reviewedByUserId: user.id, reviewedAt: new Date(), reviewNote: reason } });
+    }, CLOSURE_TRANSACTION_OPTIONS));
     await auditService.register({ ...audit, action: "RETURN", entity: "MonthlyTimeClosure", entityId: id, description: `Se devolvió el cierre de ${humanizePeriodEs(item.period)} de ${formatEmployeeReference(before.employee)} — motivo: ${reason}.`, before: before as Prisma.InputJsonValue, after: item as Prisma.InputJsonValue });
     return item;
   },
@@ -194,6 +212,7 @@ export const workforceService = {
     const closure = await prisma.monthlyTimeClosure.findUnique({ where: { employeeId_period: { employeeId: entry.employeeId, period: entry.period } } });
     if (!closure || !isMonthlyClosureLocked(closure)) throw new AppError("El período todavía permite edición directa", 400, "PERIOD_NOT_CLOSED");
     const result = await execute(() => prisma.$transaction(async (tx) => {
+      await lockClosurePeriods(tx, [closure], "EXCLUSIVE");
       const request = await tx.timeCorrectionRequest.create({ data: { employeeId: entry.employeeId, timeEntryId: entry.id, closureId: closure.id, previousHours: entry.hours, proposedHours: input.proposedHours, reason: input.reason, createdByUserId: user.id } });
       await tx.monthlyTimeClosure.update({ where: { id: closure.id }, data: { status: "CORRECCION_PENDIENTE" } });
       return request;
@@ -206,8 +225,10 @@ export const workforceService = {
   corrections(user: Express.AuthUser, query: CorrectionsQuery) { return prisma.timeCorrectionRequest.findMany({ where: { employee: employeeAccessWhere(user), timeEntry: { period: query.period }, ...(query.status ? { status: query.status } : {}) }, include: { employee: { select: { legajo: true, firstName: true, lastName: true } }, timeEntry: { include: { hourConcept: true } }, createdBy: { select: { name: true } } }, orderBy: [{ createdAt: "desc" }, { id: "asc" }] }); },
   async approveCorrection(id: string, user: Express.AuthUser, audit?: AuditContext) {
     const { before, after } = await execute(() => prisma.$transaction(async (tx) => {
-      const request = await tx.timeCorrectionRequest.findUniqueOrThrow({ where: { id }, include: employeeReferenceInclude });
+      const request = await tx.timeCorrectionRequest.findUniqueOrThrow({ where: { id }, include: { ...employeeReferenceInclude, timeEntry: { select: { period: true } } } });
       if (request.status !== "PENDIENTE") throw new AppError("La corrección ya fue revisada", 400, "CORRECTION_ALREADY_REVIEWED");
+      // Procedimiento explícito y auditado de corrección de un período cerrado (D-5).
+      await lockClosurePeriods(tx, [{ employeeId: request.employeeId, period: request.timeEntry.period }], "EXCLUSIVE");
       const hours = Number(request.proposedHours);
       await tx.timeEntry.update({ where: { id: request.timeEntryId }, data: { hours, totalMinutes: Math.round(hours * 60), approvedByUserId: user.id, approvedAt: new Date() } });
       const updated = await tx.timeCorrectionRequest.update({ where: { id }, data: { status: "APROBADA", reviewedByUserId: user.id, reviewedAt: new Date() } });
@@ -506,9 +527,22 @@ export const workforceService = {
     const before = await prisma.doubleHourRule.findUnique({ where: { id }, include: { employees: true, dates: true } });
     if (!before) throw new AppError("No encontramos la regla solicitada", 404, "DOUBLE_HOUR_RULE_NOT_FOUND");
     const reinterpretation = await execute(() => prisma.$transaction(async (tx) => {
+      const result = await reinterpretSpecialHours(tx, { before: ruleCalendar(before), after: null }, { doubleHourRuleId: id, doubleHourRuleName: before.name });
+      // Borrar la regla también borraría su traza histórica. Si hay un cierre
+      // protegido que cambiaría, abortamos toda la transacción: ni la regla ni
+      // sus aplicaciones pueden desaparecer por fuera de una corrección
+      // explícita y auditada (D-5).
+      if (result.protectedPeriods.some((period) => period.timeEntries + period.breakdowns + period.segments > 0)) {
+        throw new AppError(
+          "La regla tiene resultados en períodos enviados o aprobados. No se puede eliminar porque se perdería su traza histórica; inactivala o corregí esos períodos mediante el procedimiento explícito de RRHH.",
+          409,
+          "DOUBLE_HOUR_RULE_PROTECTED_HISTORY",
+          { protectedPeriods: result.protectedPeriods },
+        );
+      }
       await tx.specialHourRuleApplication.deleteMany({ where: { doubleHourRuleId: id } });
       await tx.doubleHourRule.delete({ where: { id } });
-      return reinterpretSpecialHours(tx, { before: ruleCalendar(before), after: null }, { doubleHourRuleId: id, doubleHourRuleName: before.name });
+      return result;
     }, SPECIAL_HOUR_RULE_TRANSACTION_OPTIONS));
     await auditService.register({
       ...audit, action: "DELETE", entity: "DoubleHourRule", entityId: id,

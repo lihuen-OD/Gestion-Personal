@@ -47,7 +47,7 @@ vi.mock("../workforce-management/workforce.service", () => ({
 const repo = holidayWorkAssignmentRepository as unknown as { findCandidates: Mock; findByDate: Mock; findExisting: Mock; create: Mock; update: Mock };
 const mockedPrisma = prisma as unknown as { employee: { count: Mock }; $transaction: Mock };
 const TX = { holidayWorkAssignment: {} };
-const noChanges = { timeEntries: 0, breakdowns: 0, segments: 0, employees: 0, periods: [], rebuiltClosures: [], changes: { timeEntries: [], breakdowns: [], segments: [] } };
+const noChanges = { timeEntries: 0, breakdowns: 0, segments: 0, employees: 0, periods: [], rebuiltClosures: [], protectedPeriods: [], changes: { timeEntries: [], breakdowns: [], segments: [] } };
 const mockedAudit = auditService.register as unknown as Mock;
 const mockedHolidayDates = workforceService.holidayDatesInRange as unknown as Mock;
 

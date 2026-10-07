@@ -6,6 +6,7 @@ import { associatedEmployeeSelect, buildEmployeeAssociationWhere } from "../../s
 import { employeeReferenceSelect, loadEmployeeReferences } from "../../shared/audit/employeeReference";
 import { countedBreakdownStatusWhere } from "../time-entries/workedTimeAccounting";
 import { findClosuresForHourConcept, rebuildClosureSnapshots, type ClosureSnapshotRecalculation } from "../workforce-management/closureSnapshot";
+import { assertClosurePeriodsWritable } from "../../shared/monthlyClosure/closurePeriodGuard";
 import type { CreateHourConceptInput, ListHourConceptEmployeesQuery, ListHourConceptsQuery, UpdateHourConceptInput } from "./hourConcepts.schemas";
 
 // Cache en memoria para listados sin filtros. Etapa 14I.3: helper compartido
@@ -53,6 +54,17 @@ function countedBreakdownPairs(db: PrismaTransactionClient, hourConceptId: strin
     by: ["employeeId", "period"],
     where: { hourConceptId, status: countedBreakdownStatusWhere },
     _count: { _all: true },
+  });
+}
+
+// D-5 (ORG_LOCATION_REORGANIZATION.md §18.1): cambiar la lectura de un
+// concepto (tratamiento) o eliminarlo reinterpreta TODA su historia, también la
+// de períodos enviados/aprobados (no hay filas que saltear: la lectura es en
+// vivo). Por eso se rechaza si el concepto tiene desgloses en un período
+// protegido; corregir esos períodos requiere el procedimiento explícito.
+async function assertConceptHistoryWritable(db: PrismaTransactionClient, pairs: Array<{ employeeId: string; period: string }>) {
+  await assertClosurePeriodsWritable(db, pairs, {
+    message: "El concepto tiene horas en períodos enviados o aprobados, que están protegidos: no se puede cambiar su tratamiento ni eliminarlo. Inactivalo o creá un concepto nuevo; corregir esos períodos requiere el procedimiento explícito de RRHH.",
   });
 }
 
@@ -134,6 +146,7 @@ export const hourConceptsRepository = {
     return prisma.$transaction(async (tx) => {
       const item = await tx.hourConcept.update({ where: { id }, data });
       const pairs = await countedBreakdownPairs(tx, id);
+      await assertConceptHistoryWritable(tx, pairs);
       const closures = await findClosuresForHourConcept(tx, id, pairs);
       const rebuiltClosures = await rebuildClosureSnapshots(tx, closures, recalculation);
       return { item, reinterpreted: summarizePairs(pairs), rebuiltClosures };
@@ -295,6 +308,9 @@ export const hourConceptsRepository = {
         tx.hourConcept.findFirstOrThrow({ where: { systemRole: "NORMAL_BASE" }, select: { id: true, name: true } }),
         countedBreakdownPairs(tx, id),
       ]);
+      // Todos los desgloses del concepto (no sólo los que cuentan) se borran: se verifican todos.
+      const allPairs = await tx.hourConceptBreakdown.groupBy({ by: ["employeeId", "period"], where: { hourConceptId: id } });
+      await assertConceptHistoryWritable(tx, allPairs);
       const closures = await findClosuresForHourConcept(tx, id, pairs);
       const breakdowns = await tx.hourConceptBreakdown.deleteMany({ where: { hourConceptId: id } });
       const segments = await tx.timeSegment.updateMany({

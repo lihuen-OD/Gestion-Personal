@@ -1,6 +1,7 @@
 import type { Prisma } from "@prisma/client";
 import type { PrismaTransactionClient } from "../../shared/prisma/client";
-import { calendarDateKey } from "../../shared/datetime/argentinaTime";
+import { calendarDateKey, periodFromCalendarDate } from "../../shared/datetime/argentinaTime";
+import { employeePeriodKey, findProtectedClosurePeriods } from "../../shared/monthlyClosure/closurePeriodGuard";
 import { resolveSpecialHourRulesByDate, type SpecialHourResolution } from "../time-entries/timeEntries.repository";
 import { buildActiveDatesByRule, ruleMatchesDate, specialHourApplicationRows, type DoubleHourRuleForMatching } from "./doubleHourRuleMatching";
 import { findClosuresForEmployeePeriods, rebuildClosureSnapshots, type ClosureSnapshotRecalculation, type RebuiltClosureSnapshot } from "./closureSnapshot";
@@ -35,6 +36,10 @@ export type SpecialHourReinterpretation = {
   employees: number;
   periods: string[];
   rebuiltClosures: RebuiltClosureSnapshot[];
+  // D-5 (ORG_LOCATION_REORGANIZATION.md §18.1): pares empleado + período con
+  // cierre ENVIADO/APROBADO/CORRECCION_PENDIENTE. No se modificaron; se informa
+  // cuántas filas habrían cambiado para que RRHH decida una corrección explícita.
+  protectedPeriods: Array<{ employeeId: string; period: string; status: string; timeEntries: number; breakdowns: number; segments: number }>;
   // Detalle antes → después (backup/reporte de una reconciliación).
   changes: {
     timeEntries: Array<{ id: string; employeeId: string; date: string; from: number; to: number }>;
@@ -94,7 +99,7 @@ function groupByMultiplier(changes: Array<{ id: string; multiplier: number }>) {
 }
 
 function emptyReinterpretation(): SpecialHourReinterpretation {
-  return { timeEntries: 0, breakdowns: 0, segments: 0, employees: 0, periods: [], rebuiltClosures: [], changes: { timeEntries: [], breakdowns: [], segments: [] } };
+  return { timeEntries: 0, breakdowns: 0, segments: 0, employees: 0, periods: [], rebuiltClosures: [], protectedPeriods: [], changes: { timeEntries: [], breakdowns: [], segments: [] } };
 }
 
 /** Cambio de una regla: las fechas que matchea antes o después del cambio. */
@@ -140,10 +145,26 @@ async function reinterpretWindow(
     }),
   ]) as [Row[], Row[], SegmentRow[]];
 
-  const candidates = {
+  const touchedRows = {
     entries: entries.filter((row) => touched(row.date)),
     breakdowns: breakdowns.filter((row) => touched(row.date)),
     segments: segments.filter((row) => touched(row.date)),
+  };
+
+  // D-5: lock compartido + estado del cierre dentro de esta transacción. Lo
+  // protegido no se lee para escribir: se resuelve sólo para informar.
+  const segmentPeriod = (row: { employeeId: string; date: Date }) => ({ employeeId: row.employeeId, period: periodFromCalendarDate(row.date) });
+  const protectedPairs = await findProtectedClosurePeriods(db, [...touchedRows.entries, ...touchedRows.breakdowns, ...touchedRows.segments.map(segmentPeriod)]);
+  const isProtected = (pair: { employeeId: string; period: string }) => protectedPairs.has(employeePeriodKey(pair));
+  const candidates = {
+    entries: touchedRows.entries.filter((row) => !isProtected(row)),
+    breakdowns: touchedRows.breakdowns.filter((row) => !isProtected(row)),
+    segments: touchedRows.segments.filter((row) => !isProtected(segmentPeriod(row))),
+  };
+  const protectedRows = {
+    entries: touchedRows.entries.filter((row) => isProtected(row)),
+    breakdowns: touchedRows.breakdowns.filter((row) => isProtected(row)),
+    segments: touchedRows.segments.filter((row) => isProtected(segmentPeriod(row))),
   };
 
   // Fechas por empleado → motor vigente, 2 consultas por empleado alcanzado
@@ -151,7 +172,7 @@ async function reinterpretWindow(
   // decide el motor: un empleado fuera del alcance resuelve su multiplicador
   // sin la regla y no cambia.
   const datesByEmployee = new Map<string, Map<string, Date>>();
-  for (const row of [...candidates.entries, ...candidates.breakdowns, ...candidates.segments]) {
+  for (const row of [...touchedRows.entries, ...touchedRows.breakdowns, ...touchedRows.segments]) {
     const dates = datesByEmployee.get(row.employeeId) ?? new Map<string, Date>();
     dates.set(calendarDateKey(row.date), row.date);
     datesByEmployee.set(row.employeeId, dates);
@@ -195,11 +216,28 @@ async function reinterpretWindow(
     }
   }
 
-  // La equivalencia sólo cambia donde cambió un multiplicador.
+  // La equivalencia sólo cambia donde cambió un multiplicador. Nunca se
+  // reconstruye el snapshot de un cierre protegido (esos pares ya se excluyeron).
   const pairs = new Map<string, { employeeId: string; period: string }>();
   for (const row of [...changedEntries, ...changedBreakdowns]) pairs.set(`${row.employeeId}:${row.period}`, { employeeId: row.employeeId, period: row.period });
-  const closures = await findClosuresForEmployeePeriods(db, [...pairs.values()]);
+  const closures = (await findClosuresForEmployeePeriods(db, [...pairs.values()])).filter((closure) => !isProtected(closure));
   const rebuiltClosures = await rebuildClosureSnapshots(db, closures, recalculation);
+
+  // Informe de lo que habría cambiado en períodos protegidos (sin escribir).
+  const pendingByPair = new Map<string, { employeeId: string; period: string; status: string; timeEntries: number; breakdowns: number; segments: number }>();
+  const pending = (pair: { employeeId: string; period: string }) => {
+    const key = employeePeriodKey(pair);
+    const current = pendingByPair.get(key) ?? { employeeId: pair.employeeId, period: pair.period, status: protectedPairs.get(key)!, timeEntries: 0, breakdowns: 0, segments: 0 };
+    pendingByPair.set(key, current);
+    return current;
+  };
+  for (const row of protectedRows.entries) if (!sameMultiplier(row.appliedMultiplier, resolutionFor(row).multiplier)) pending(row).timeEntries += 1;
+  for (const row of protectedRows.breakdowns) if (!sameMultiplier(row.appliedMultiplier, resolutionFor(row).multiplier)) pending(row).breakdowns += 1;
+  for (const row of protectedRows.segments) {
+    const resolution = resolutionFor(row);
+    const desired = specialHourApplicationRows(row.id, resolution);
+    if (row.isSpecial !== resolution.matchedRules.length > 0 || traceSignature(row.specialHourRuleApplications) !== traceSignature(desired)) pending(segmentPeriod(row)).segments += 1;
+  }
 
   const rowChange = (row: Row & { multiplier: number }) => ({ id: row.id, employeeId: row.employeeId, date: calendarDateKey(row.date), from: Number(row.appliedMultiplier), to: row.multiplier });
   const segmentsById = new Map(candidates.segments.map((segment) => [segment.id, segment]));
@@ -210,6 +248,7 @@ async function reinterpretWindow(
     employees: new Set([...changedEntries, ...changedBreakdowns].map((row) => row.employeeId)).size,
     periods: [...new Set([...pairs.values()].map((pair) => pair.period))].sort(),
     rebuiltClosures,
+    protectedPeriods: [...pendingByPair.values()].sort((a, b) => employeePeriodKey(a).localeCompare(employeePeriodKey(b))),
     changes: {
       timeEntries: changedEntries.map(rowChange),
       breakdowns: changedBreakdowns.map(rowChange),

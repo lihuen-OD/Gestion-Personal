@@ -1,5 +1,6 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "../../shared/prisma/client";
+import { assertClosurePeriodsWritable } from "../../shared/monthlyClosure/closurePeriodGuard";
 import type { CalculatedAutomaticBreakdown } from "./automaticHourConceptBreakdowns";
 
 export const automaticHourConceptBreakdownsRepository = {
@@ -53,6 +54,9 @@ export const automaticHourConceptBreakdownsRepository = {
   // en el período los borraba sin volver a crearlos.
   replaceAutomatic(employeeId: string, period: string, rows: Array<CalculatedAutomaticBreakdown & { appliedMultiplier: number }>, createdByUserId?: string | null) {
     return prisma.$transaction(async (tx) => {
+      // D-5: un recálculo automático nunca modifica un período protegido;
+      // verificado dentro de la transacción (contempla un envío concurrente).
+      await assertClosurePeriodsWritable(tx, [{ employeeId, period }], { message: "The period is closed for recalculation" });
       const deleted = await tx.hourConceptBreakdown.deleteMany({ where: { employeeId, period, source: "AUTOMATIC", hourConcept: { status: "ACTIVO" } } });
       if (rows.length) {
         await tx.hourConceptBreakdown.createMany({

@@ -1,6 +1,7 @@
 import { ApprovalStatus, EmployeeStatus, Prisma } from "@prisma/client";
 import { employeeStructureWhere, workLocationNotEndedWhere, workLocationOnDateWhere } from "../../shared/prisma/employeeStructureWhere";
 import { prisma } from "../../shared/prisma/client";
+import { assertClosurePeriodsWritable } from "../../shared/monthlyClosure/closurePeriodGuard";
 import { resolveOrderBy, type SortOrderByMap } from "../../shared/validation/listSort";
 import { argentinaCalendarDate, todayArgentinaDateKey } from "../../shared/datetime/argentinaTime";
 import { employeeReferenceSelect } from "../../shared/audit/employeeReference";
@@ -1423,6 +1424,13 @@ export const employeesRepository = {
     approvedByUserId?: string | null;
   }) {
     return prisma.$transaction(async (tx) => {
+      // D-5: dentro de la transacción. En un período protegido sólo pasa la
+      // corrección explícita de RRHH con motivo (observación obligatoria, ver
+      // validateManualBreakdownContext).
+      await assertClosurePeriodsWritable(tx, [{ employeeId: input.employeeId, period: input.period }], {
+        explicitCorrection: Boolean(input.approvedByUserId && input.observation?.trim()),
+        message: "The period is closed for direct editing",
+      });
       const where = { employeeId: input.employeeId, hourConceptId: input.hourConceptId, date: input.date, source: "MANUAL" as const };
       if (input.minutes === 0) {
         const deleted = await tx.hourConceptBreakdown.deleteMany({ where });

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { closureGuardMocks } from "../../shared/testing/closureGuardMocks";
 import type { Mock } from "vitest";
 import { prisma } from "../../shared/prisma/client";
 import { automaticHourConceptBreakdownsRepository as repository } from "./automaticHourConceptBreakdowns.repository";
@@ -38,6 +39,7 @@ describe("automaticHourConceptBreakdownsRepository", () => {
   // los AUTOMATIC de un concepto INACTIVO no se borran al regenerar el período.
   it("reemplaza sólo AUTOMATIC de conceptos activos y crea BORRADOR sin tocar MANUAL ni la historia de conceptos deshabilitados", async () => {
     const tx = {
+      ...closureGuardMocks(),
       hourConceptBreakdown: {
         deleteMany: vi.fn().mockResolvedValue({ count: 2 }),
         createMany: vi.fn().mockResolvedValue({ count: 1 }),

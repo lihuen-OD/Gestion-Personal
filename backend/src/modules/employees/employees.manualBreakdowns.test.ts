@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { closureGuardMocks } from "../../shared/testing/closureGuardMocks";
 import type { Mock } from "vitest";
 import { readFileSync } from "node:fs";
 import { prisma } from "../../shared/prisma/client";
@@ -29,6 +30,7 @@ const base = {
 describe("manual HourConceptBreakdown persistence", () => {
   it("crea un registro MANUAL EN_REVISION cuando todavía no existe y no viene de RRHH (Etapa 6L.3)", async () => {
     const tx = {
+      ...closureGuardMocks(),
       hourConceptBreakdown: {
         findFirst: vi.fn().mockResolvedValue(null),
         create: vi.fn().mockResolvedValue({ id: "breakdown-1", source: "MANUAL", status: "EN_REVISION" }),
@@ -42,6 +44,7 @@ describe("manual HourConceptBreakdown persistence", () => {
 
   it("crea un registro MANUAL APROBADO cuando lo carga RRHH (approvedByUserId presente)", async () => {
     const tx = {
+      ...closureGuardMocks(),
       hourConceptBreakdown: {
         findFirst: vi.fn().mockResolvedValue(null),
         create: vi.fn().mockResolvedValue({ id: "breakdown-1", source: "MANUAL", status: "APROBADO" }),
@@ -56,6 +59,7 @@ describe("manual HourConceptBreakdown persistence", () => {
 
   it("actualiza el registro existente a EN_REVISION y elimina duplicados defensivamente cuando no viene de RRHH", async () => {
     const tx = {
+      ...closureGuardMocks(),
       hourConceptBreakdown: {
         findFirst: vi.fn().mockResolvedValue({ id: "breakdown-1" }),
         update: vi.fn().mockResolvedValue({ id: "breakdown-1", minutes: 120 }),
@@ -76,6 +80,7 @@ describe("manual HourConceptBreakdown persistence", () => {
 
   it("actualiza el registro existente a APROBADO cuando lo corrige RRHH", async () => {
     const tx = {
+      ...closureGuardMocks(),
       hourConceptBreakdown: {
         findFirst: vi.fn().mockResolvedValue({ id: "breakdown-1" }),
         update: vi.fn().mockResolvedValue({ id: "breakdown-1", minutes: 120 }),
@@ -94,7 +99,8 @@ describe("manual HourConceptBreakdown persistence", () => {
   });
 
   it("minutes cero elimina todos los registros MANUAL del día", async () => {
-    const tx = { hourConceptBreakdown: { deleteMany: vi.fn().mockResolvedValue({ count: 1 }) } };
+    const tx = {
+      ...closureGuardMocks(), hourConceptBreakdown: { deleteMany: vi.fn().mockResolvedValue({ count: 1 }) } };
     (prisma.$transaction as unknown as Mock).mockImplementation(async (callback: (client: typeof tx) => unknown) => callback(tx));
     await expect(employeesRepository.saveManualHourConceptBreakdown({ ...base, minutes: 0 })).resolves.toMatchObject({ item: null, deleted: 1, operation: "DELETE" });
     expect(tx.hourConceptBreakdown.deleteMany).toHaveBeenCalledWith({ where: expect.objectContaining({ source: "MANUAL" }) });

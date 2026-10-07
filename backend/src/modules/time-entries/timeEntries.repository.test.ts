@@ -23,6 +23,9 @@ vi.mock("../../shared/prisma/client", () => {
     employee: { findMany: vi.fn(), count: vi.fn(), findUnique: vi.fn() },
     hourConceptBreakdown: { findMany: vi.fn() },
     novelty: { findMany: vi.fn() },
+    // D-5: closurePeriodGuard (lock + estado del cierre dentro de la transacción).
+    $executeRaw: vi.fn().mockResolvedValue(0),
+    monthlyTimeClosure: { findMany: vi.fn().mockResolvedValue([]) },
   };
   return {
     prisma: {
@@ -70,6 +73,8 @@ vi.mock("../../shared/prisma/client", () => {
 });
 
 type TxMocks = {
+  $executeRaw: Mock;
+  monthlyTimeClosure: { findMany: Mock };
   workShift: { findFirst: Mock; findMany: Mock; updateMany: Mock; create: Mock; update: Mock };
   employeeHourConcept: { findFirst: Mock };
   timeEntry: { create: Mock; findFirst: Mock; update: Mock; findMany: Mock };
@@ -182,56 +187,56 @@ describe("create/update TimeEntry — aplicación directa por rol (Etapa 6L.3)",
   const input = { employeeId: "employee-1", hourConceptId: "concept-normal", date, hours: 8 } as never;
 
   it("create sin autoApprovedByUserId (Nivel 2/3) crea en BORRADOR sin approvedByUserId/approvedAt", async () => {
-    mockedPrisma.timeEntry.create.mockResolvedValue({ id: "entry-1" });
+    mockedPrisma.__tx.timeEntry.create.mockResolvedValue({ id: "entry-1" });
 
     await timeEntriesRepository.create(input, "user-nivel3");
 
-    const call = mockedPrisma.timeEntry.create.mock.calls[0]![0] as { data: Record<string, unknown> };
+    const call = mockedPrisma.__tx.timeEntry.create.mock.calls[0]![0] as { data: Record<string, unknown> };
     expect(call.data).toMatchObject({ status: "BORRADOR", createdByUserId: "user-nivel3" });
     expect(call.data).not.toHaveProperty("approvedByUserId");
     expect(call.data).not.toHaveProperty("approvedAt");
   });
 
   it("create con autoApprovedByUserId (RRHH) crea en APROBADO con approvedByUserId/approvedAt", async () => {
-    mockedPrisma.timeEntry.create.mockResolvedValue({ id: "entry-1" });
+    mockedPrisma.__tx.timeEntry.create.mockResolvedValue({ id: "entry-1" });
 
     await timeEntriesRepository.create(input, "user-rrhh", "user-rrhh");
 
-    const call = mockedPrisma.timeEntry.create.mock.calls[0]![0] as { data: Record<string, unknown> };
+    const call = mockedPrisma.__tx.timeEntry.create.mock.calls[0]![0] as { data: Record<string, unknown> };
     expect(call.data).toMatchObject({ status: "APROBADO", approvedByUserId: "user-rrhh" });
     expect(call.data.approvedAt).toBeInstanceOf(Date);
   });
 
   it("update sin autoApprovedByUserId (Nivel 2/3) no toca el status ni el aprobador", async () => {
-    mockedPrisma.timeEntry.update.mockResolvedValue({ id: "entry-1" });
+    mockedPrisma.__tx.timeEntry.update.mockResolvedValue({ id: "entry-1" });
 
     await timeEntriesRepository.update("entry-1", { employeeId: "employee-1", hourConceptId: "concept-normal", date }, { hours: 6 } as never);
 
-    const call = mockedPrisma.timeEntry.update.mock.calls[0]![0] as { data: Record<string, unknown> };
+    const call = mockedPrisma.__tx.timeEntry.update.mock.calls[0]![0] as { data: Record<string, unknown> };
     expect(call.data).not.toHaveProperty("status");
     expect(call.data).not.toHaveProperty("approvedByUserId");
   });
 
   it("update con autoApprovedByUserId (RRHH) fuerza APROBADO sin importar el status anterior", async () => {
-    mockedPrisma.timeEntry.update.mockResolvedValue({ id: "entry-1" });
+    mockedPrisma.__tx.timeEntry.update.mockResolvedValue({ id: "entry-1" });
 
     await timeEntriesRepository.update("entry-1", { employeeId: "employee-1", hourConceptId: "concept-normal", date }, { hours: 6 } as never, "user-rrhh");
 
-    const call = mockedPrisma.timeEntry.update.mock.calls[0]![0] as { data: Record<string, unknown> };
+    const call = mockedPrisma.__tx.timeEntry.update.mock.calls[0]![0] as { data: Record<string, unknown> };
     expect(call.data).toMatchObject({ status: "APROBADO", approvedByUserId: "user-rrhh", rejectedAt: null });
     expect(call.data.approvedAt).toBeInstanceOf(Date);
   });
 
   it("create/update piden el registro completo (empleado + concepto) para que el frontend pueda actualizar la celda sin otro request (Etapa 6L.4)", async () => {
-    mockedPrisma.timeEntry.create.mockResolvedValue({ id: "entry-1" });
-    mockedPrisma.timeEntry.update.mockResolvedValue({ id: "entry-1" });
+    mockedPrisma.__tx.timeEntry.create.mockResolvedValue({ id: "entry-1" });
+    mockedPrisma.__tx.timeEntry.update.mockResolvedValue({ id: "entry-1" });
 
     await timeEntriesRepository.create(input, "user-rrhh", "user-rrhh");
     await timeEntriesRepository.update("entry-1", { employeeId: "employee-1", hourConceptId: "concept-normal", date }, { hours: 6 } as never, "user-rrhh");
 
     const expectedInclude = { include: { employee: { select: expect.objectContaining({ legajo: true }) }, hourConcept: true } };
-    expect(mockedPrisma.timeEntry.create.mock.calls[0]![0]).toMatchObject(expectedInclude);
-    expect(mockedPrisma.timeEntry.update.mock.calls[0]![0]).toMatchObject(expectedInclude);
+    expect(mockedPrisma.__tx.timeEntry.create.mock.calls[0]![0]).toMatchObject(expectedInclude);
+    expect(mockedPrisma.__tx.timeEntry.update.mock.calls[0]![0]).toMatchObject(expectedInclude);
   });
 });
 
@@ -270,41 +275,41 @@ describe("carga manual aplica Horas Especiales (Etapa 11A)", () => {
 
   it("create — sin ninguna regla activa: appliedMultiplier queda en 1, hours/totalMinutes nunca se inflan", async () => {
     mockedPrisma.doubleHourRule.findMany.mockResolvedValue([]);
-    mockedPrisma.timeEntry.create.mockResolvedValue({ id: "entry-1" });
+    mockedPrisma.__tx.timeEntry.create.mockResolvedValue({ id: "entry-1" });
 
     await timeEntriesRepository.create({ employeeId: "employee-1", hourConceptId: "concept-normal", date: monday, hours: 8 } as never, "user-1");
 
-    const call = mockedPrisma.timeEntry.create.mock.calls[0]![0] as { data: Record<string, unknown> };
+    const call = mockedPrisma.__tx.timeEntry.create.mock.calls[0]![0] as { data: Record<string, unknown> };
     expect(call.data).toMatchObject({ appliedMultiplier: 1, hours: 8, totalMinutes: 480 });
   });
 
   it("create — regla FECHA activa que matchea el día 27 (feriado x2): appliedMultiplier=2, horas reales siguen en 8", async () => {
     mockedPrisma.doubleHourRule.findMany.mockResolvedValue([manualRule({ id: "rule-feriado", recurrenceType: "FECHA", fromDate: holiday, multiplier: 2 })]);
-    mockedPrisma.timeEntry.create.mockResolvedValue({ id: "entry-1" });
+    mockedPrisma.__tx.timeEntry.create.mockResolvedValue({ id: "entry-1" });
 
     await timeEntriesRepository.create({ employeeId: "employee-1", hourConceptId: "concept-normal", date: holiday, hours: 8 } as never, "user-1");
 
-    const call = mockedPrisma.timeEntry.create.mock.calls[0]![0] as { data: Record<string, unknown> };
+    const call = mockedPrisma.__tx.timeEntry.create.mock.calls[0]![0] as { data: Record<string, unknown> };
     expect(call.data).toMatchObject({ appliedMultiplier: 2, hours: 8, totalMinutes: 480 });
   });
 
   it("create — regla SEMANAL domingo activa: appliedMultiplier=2 para una carga manual un domingo", async () => {
     mockedPrisma.doubleHourRule.findMany.mockResolvedValue([manualRule({ id: "rule-domingo", recurrenceType: "SEMANAL", fromDate: new Date("2026-01-01T00:00:00.000Z"), weekdays: [0], multiplier: 2 })]);
-    mockedPrisma.timeEntry.create.mockResolvedValue({ id: "entry-1" });
+    mockedPrisma.__tx.timeEntry.create.mockResolvedValue({ id: "entry-1" });
 
     await timeEntriesRepository.create({ employeeId: "employee-1", hourConceptId: "concept-normal", date: sunday, hours: 8 } as never, "user-1");
 
-    const call = mockedPrisma.timeEntry.create.mock.calls[0]![0] as { data: Record<string, unknown> };
+    const call = mockedPrisma.__tx.timeEntry.create.mock.calls[0]![0] as { data: Record<string, unknown> };
     expect(call.data).toMatchObject({ appliedMultiplier: 2 });
   });
 
   it("create — misma fecha de feriado pero regla con fecha inactiva: no aplica, appliedMultiplier=1", async () => {
     mockedPrisma.doubleHourRule.findMany.mockResolvedValue([manualRule({ id: "rule-feriado-inactivo", recurrenceType: "FECHA", fromDate: holiday, dates: [{ date: holiday, isActive: false }], multiplier: 2 })]);
-    mockedPrisma.timeEntry.create.mockResolvedValue({ id: "entry-1" });
+    mockedPrisma.__tx.timeEntry.create.mockResolvedValue({ id: "entry-1" });
 
     await timeEntriesRepository.create({ employeeId: "employee-1", hourConceptId: "concept-normal", date: holiday, hours: 8 } as never, "user-1");
 
-    const call = mockedPrisma.timeEntry.create.mock.calls[0]![0] as { data: Record<string, unknown> };
+    const call = mockedPrisma.__tx.timeEntry.create.mock.calls[0]![0] as { data: Record<string, unknown> };
     expect(call.data).toMatchObject({ appliedMultiplier: 1 });
   });
 
@@ -313,18 +318,18 @@ describe("carga manual aplica Horas Especiales (Etapa 11A)", () => {
       manualRule({ id: "rule-feriado-x2", recurrenceType: "FECHA", fromDate: holiday, multiplier: 2 }),
       manualRule({ id: "rule-feriado-x3", recurrenceType: "FECHA", fromDate: holiday, multiplier: 3 }),
     ]);
-    mockedPrisma.timeEntry.create.mockResolvedValue({ id: "entry-1" });
+    mockedPrisma.__tx.timeEntry.create.mockResolvedValue({ id: "entry-1" });
 
     await timeEntriesRepository.create({ employeeId: "employee-1", hourConceptId: "concept-normal", date: holiday, hours: 8 } as never, "user-1");
 
-    const call = mockedPrisma.timeEntry.create.mock.calls[0]![0] as { data: Record<string, unknown> };
+    const call = mockedPrisma.__tx.timeEntry.create.mock.calls[0]![0] as { data: Record<string, unknown> };
     expect(call.data).toMatchObject({ appliedMultiplier: 3 });
   });
 
   it("create — resuelve el scope del empleado (sector) y lo pasa al AND de la query, igual que el fichador", async () => {
     mockedPrisma.employee.findUnique.mockResolvedValue({ sectorId: "panol", costCenterId: null, positionId: null, companies: [{ companyId: "odwyer" }] });
     mockedPrisma.doubleHourRule.findMany.mockResolvedValue([]);
-    mockedPrisma.timeEntry.create.mockResolvedValue({ id: "entry-1" });
+    mockedPrisma.__tx.timeEntry.create.mockResolvedValue({ id: "entry-1" });
 
     await timeEntriesRepository.create({ employeeId: "employee-1", hourConceptId: "concept-normal", date: holiday, hours: 8 } as never, "user-1");
 
@@ -343,17 +348,17 @@ describe("carga manual aplica Horas Especiales (Etapa 11A)", () => {
   it("create — si la base ya excluyó la regla por scope (mock simula 'sin coincidencias'), appliedMultiplier queda en 1", async () => {
     mockedPrisma.employee.findUnique.mockResolvedValue({ sectorId: "panol", costCenterId: null, positionId: null, companies: [] });
     mockedPrisma.doubleHourRule.findMany.mockResolvedValue([]); // "Feriado Tropa" no matchea a un empleado de Pañol
-    mockedPrisma.timeEntry.create.mockResolvedValue({ id: "entry-1" });
+    mockedPrisma.__tx.timeEntry.create.mockResolvedValue({ id: "entry-1" });
 
     await timeEntriesRepository.create({ employeeId: "employee-1", hourConceptId: "concept-normal", date: holiday, hours: 8 } as never, "user-1");
 
-    const call = mockedPrisma.timeEntry.create.mock.calls[0]![0] as { data: Record<string, unknown> };
+    const call = mockedPrisma.__tx.timeEntry.create.mock.calls[0]![0] as { data: Record<string, unknown> };
     expect(call.data).toMatchObject({ appliedMultiplier: 1 });
   });
 
   it("create — no crea TimeSegment ni SpecialHourRuleApplication (no hay jornada real que partir en tramos)", async () => {
     mockedPrisma.doubleHourRule.findMany.mockResolvedValue([manualRule({ id: "rule-feriado", recurrenceType: "FECHA", fromDate: holiday, multiplier: 2 })]);
-    mockedPrisma.timeEntry.create.mockResolvedValue({ id: "entry-1" });
+    mockedPrisma.__tx.timeEntry.create.mockResolvedValue({ id: "entry-1" });
 
     await timeEntriesRepository.create({ employeeId: "employee-1", hourConceptId: "concept-normal", date: holiday, hours: 8 } as never, "user-1");
 
@@ -363,11 +368,11 @@ describe("carga manual aplica Horas Especiales (Etapa 11A)", () => {
 
   it("update — re-resuelve el multiplicador contra la fecha nueva al editar una carga existente", async () => {
     mockedPrisma.doubleHourRule.findMany.mockResolvedValue([manualRule({ id: "rule-feriado", recurrenceType: "FECHA", fromDate: holiday, multiplier: 2 })]);
-    mockedPrisma.timeEntry.update.mockResolvedValue({ id: "entry-1" });
+    mockedPrisma.__tx.timeEntry.update.mockResolvedValue({ id: "entry-1" });
 
     await timeEntriesRepository.update("entry-1", { employeeId: "employee-1", hourConceptId: "concept-normal", date: monday }, { date: holiday, hours: 8 } as never);
 
-    const call = mockedPrisma.timeEntry.update.mock.calls[0]![0] as { data: Record<string, unknown> };
+    const call = mockedPrisma.__tx.timeEntry.update.mock.calls[0]![0] as { data: Record<string, unknown> };
     expect(call.data).toMatchObject({ appliedMultiplier: 2 });
   });
 });
@@ -2625,3 +2630,31 @@ describe("resolveDoubleHourMultipliersByDate — batch por empleado", () => {
     expect(mockedPrisma.doubleHourRule.findMany).not.toHaveBeenCalled();
   });
 });
+
+// D-5 (ORG_LOCATION_REORGANIZATION.md §18.1): las escrituras verifican el
+// cierre DENTRO de su transacción, después de tomar el lock compartido.
+describe("timeEntriesRepository — períodos protegidos (D-5)", () => {
+  const protectedClosure = (period: string) => [{ employeeId: "employee-1", period, status: "APROBADO" }];
+
+  it("create toma el lock compartido y rechaza un período aprobado sin escribir", async () => {
+    mockedPrisma.__tx.monthlyTimeClosure.findMany.mockResolvedValueOnce(protectedClosure("2026-09"));
+
+    await expect(timeEntriesRepository.create({ employeeId: "employee-1", hourConceptId: "concept-1", date: new Date("2026-09-10T00:00:00.000Z"), hours: 8 } as never, "user-1"))
+      .rejects.toMatchObject({ statusCode: 409, code: "PERIOD_CLOSED" });
+    expect(mockedPrisma.__tx.$executeRaw).toHaveBeenCalled();
+    expect(mockedPrisma.__tx.timeEntry.create).not.toHaveBeenCalled();
+  });
+
+  it("update en período protegido sólo pasa como corrección explícita de RRHH con motivo", async () => {
+    const before = { employeeId: "employee-1", hourConceptId: "concept-1", date: new Date("2026-09-10T00:00:00.000Z") };
+    mockedPrisma.__tx.monthlyTimeClosure.findMany.mockResolvedValue(protectedClosure("2026-09"));
+    mockedPrisma.__tx.timeEntry.update.mockResolvedValue({ id: "entry-1" });
+
+    await expect(timeEntriesRepository.update("entry-1", before, { hours: 7 } as never, null)).rejects.toMatchObject({ code: "PERIOD_CLOSED" });
+    await expect(timeEntriesRepository.update("entry-1", before, { hours: 7 } as never, "user-rrhh")).rejects.toMatchObject({ code: "PERIOD_CLOSED" });
+    await timeEntriesRepository.update("entry-1", before, { hours: 7, correctionReason: "Error de carga" } as never, "user-rrhh");
+    expect(mockedPrisma.__tx.timeEntry.update).toHaveBeenCalledTimes(1);
+    mockedPrisma.__tx.monthlyTimeClosure.findMany.mockResolvedValue([]);
+  });
+});
+

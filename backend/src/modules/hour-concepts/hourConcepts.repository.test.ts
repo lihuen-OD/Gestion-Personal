@@ -1,4 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
+import { closureGuardMocks } from "../../shared/testing/closureGuardMocks";
 import type { Mock } from "vitest";
 import { prisma } from "../../shared/prisma/client";
 import { hourConceptsRepository, invalidateHourConceptsCache } from "./hourConcepts.repository";
@@ -315,6 +316,7 @@ describe("findWithUsage — uso real antes de eliminar", () => {
 // operaciones destructivas que NUNCA deben usarse, para poder afirmarlo.
 function transactionClient() {
   return {
+    ...closureGuardMocks(),
     hourConcept: { update: vi.fn(), delete: vi.fn(), findFirstOrThrow: vi.fn() },
     hourConceptBreakdown: { groupBy: vi.fn(), deleteMany: vi.fn(), updateMany: vi.fn(), update: vi.fn(), create: vi.fn(), createMany: vi.fn() },
     timeSegment: { updateMany: vi.fn(), deleteMany: vi.fn() },

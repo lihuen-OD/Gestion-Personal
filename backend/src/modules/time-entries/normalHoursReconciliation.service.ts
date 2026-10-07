@@ -1,4 +1,5 @@
 import { Prisma } from "@prisma/client";
+import { findProtectedClosurePeriods } from "../../shared/monthlyClosure/closurePeriodGuard";
 import type { ApprovalStatus } from "@prisma/client";
 import { prisma } from "../../shared/prisma/client";
 import { AppError } from "../../shared/errors/AppError";
@@ -63,6 +64,9 @@ export type RepairAction =
   | "SKIPPED_ALREADY_OK"
   | "SKIPPED_CONCURRENT_MODIFICATION"
   | "SKIPPED_UNLINKED_ENTRY_EXISTS"
+  // D-5 (ORG_LOCATION_REORGANIZATION.md §18.1): el período está enviado o
+  // aprobado; una reparación automática nunca lo modifica.
+  | "SKIPPED_PROTECTED_PERIOD"
   | "ERROR";
 
 export interface RepairOutcome {
@@ -226,6 +230,13 @@ async function repairEmployeeDate(
 
   try {
     return await prisma.$transaction(async (tx) => {
+      const protectedPeriods = await findProtectedClosurePeriods(tx, [{ employeeId: employee.id, period: periodFromCalendarDate(date) }]);
+      if (protectedPeriods.size) {
+        return {
+          employeeId: employee.id, legajo: employee.legajo, date: dateReport.date,
+          action: "SKIPPED_PROTECTED_PERIOD", before: snapshotRows, after: { closureStatus: [...protectedPeriods.values()][0] },
+        } satisfies RepairOutcome;
+      }
       const [freshSegments, freshRows] = await Promise.all([
         tx.timeSegment.findMany({
           where: { employeeId: employee.id, date, workShift: { status: "PROCESADO" } },

@@ -35,6 +35,8 @@ vi.mock("../../shared/prisma/client", () => ({
     // con el mismo patrón ya usado para ShiftAlert/WorkShift/Employee.
     attendanceInactivityIncident: { findMany: vi.fn() },
     user: { findMany: vi.fn().mockResolvedValue([]) },
+    // D-5: advisory locks del closurePeriodGuard dentro de las transacciones.
+    $executeRaw: vi.fn().mockResolvedValue(0),
     $transaction: vi.fn(),
   },
 }));
@@ -47,7 +49,7 @@ vi.mock("../audit/audit.service", () => ({
 // (specialHourReinterpretation.test.ts); acá sólo importa que el CRUD de
 // reglas la invoque dentro de la misma transacción.
 vi.mock("./specialHourReinterpretation", () => ({
-  reinterpretSpecialHours: vi.fn().mockResolvedValue({ timeEntries: 0, breakdowns: 0, segments: 0, employees: 0, periods: [], rebuiltClosures: [] }),
+  reinterpretSpecialHours: vi.fn().mockResolvedValue({ timeEntries: 0, breakdowns: 0, segments: 0, employees: 0, periods: [], rebuiltClosures: [], protectedPeriods: [] }),
 }));
 
 // Fila completa de DoubleHourRule (las columnas son NOT NULL en schema.prisma).
@@ -73,6 +75,7 @@ const mockedPrisma = prisma as unknown as {
   shiftAlert: { findMany: Mock };
   workShift: { findMany: Mock };
   attendanceInactivityIncident: { findMany: Mock };
+  $executeRaw: Mock;
   $transaction: Mock;
 };
 
@@ -94,7 +97,7 @@ describe("workforceService — auditoria en correcciones/cierres (hueco cerrado)
   it("submitClosures registra un AuditLog por cada cierre enviado", async () => {
     mockedPrisma.employee.count.mockResolvedValue(1);
     mockedPrisma.timeEntry.groupBy.mockResolvedValue([]);
-    mockedPrisma.$transaction.mockResolvedValue([{ id: "closure-1", employeeId: "emp-1" }]);
+    mockedPrisma.monthlyTimeClosure.upsert.mockResolvedValue({ id: "closure-1", employeeId: "emp-1" });
 
     await workforceService.submitClosures("2026-08", ["emp-1"], supervisor);
 
@@ -114,7 +117,6 @@ describe("workforceService — auditoria en correcciones/cierres (hueco cerrado)
       { employeeId: "emp-1", day: 2, hourConceptId: "colectivo", minutes: 60, appliedMultiplier: 2, startAt: null, endAt: null, hourConcept: { workTreatment: "ADDITIVE_TO_WORKED_TOTAL", code: "HOR-002", name: "Colectivo" } },
     ]);
     mockedPrisma.monthlyTimeClosure.upsert.mockResolvedValue({ id: "closure-1", employeeId: "emp-1" });
-    mockedPrisma.$transaction.mockImplementation((operations: unknown[]) => Promise.all(operations));
 
     await workforceService.submitClosures("2026-08", ["emp-1"], supervisor);
 
@@ -143,7 +145,7 @@ describe("workforceService — auditoria en correcciones/cierres (hueco cerrado)
   it("submitClosures snapshotea las Horas base por estado (systemRole NORMAL_BASE) sin inflarlas", async () => {
     mockedPrisma.employee.count.mockResolvedValue(1);
     mockedPrisma.timeEntry.groupBy.mockResolvedValue([]);
-    mockedPrisma.$transaction.mockResolvedValue([{ id: "closure-1", employeeId: "emp-1" }]);
+    mockedPrisma.monthlyTimeClosure.upsert.mockResolvedValue({ id: "closure-1", employeeId: "emp-1" });
 
     await workforceService.submitClosures("2026-08", ["emp-1"], supervisor);
 
@@ -158,7 +160,6 @@ describe("workforceService — auditoria en correcciones/cierres (hueco cerrado)
     mockedPrisma.employee.count.mockResolvedValue(1);
     mockedPrisma.timeEntry.groupBy.mockResolvedValue([{ employeeId: "emp-1", status: "APROBADO", _sum: { hours: 8 }, _count: 3 }]);
     mockedPrisma.monthlyTimeClosure.upsert.mockResolvedValue({ id: "closure-1", employeeId: "emp-1" });
-    mockedPrisma.$transaction.mockImplementation((operations: unknown[]) => Promise.all(operations));
 
     await workforceService.submitClosures("2026-08", ["emp-1"], supervisor);
 
@@ -193,6 +194,7 @@ describe("workforceService — auditoria en correcciones/cierres (hueco cerrado)
     mockedPrisma.timeEntry.findFirst.mockResolvedValue({ id: "entry-1", employeeId: "emp-1", period: "2026-08", hours: 8 });
     mockedPrisma.monthlyTimeClosure.findUnique.mockResolvedValue({ id: "closure-1", status: "APROBADO" });
     mockedPrisma.$transaction.mockImplementation((callback: (tx: unknown) => unknown) => callback({
+      $executeRaw: vi.fn().mockResolvedValue(0),
       timeCorrectionRequest: { create: vi.fn().mockResolvedValue({ id: "correction-1" }) },
       monthlyTimeClosure: { update: vi.fn().mockResolvedValue({}) },
     }));
@@ -203,9 +205,10 @@ describe("workforceService — auditoria en correcciones/cierres (hueco cerrado)
   });
 
   it("approveCorrection registra un AuditLog y sigue escribiendo TimeEntry.approvedByUserId", async () => {
-    const request = { id: "correction-1", status: "PENDIENTE", timeEntryId: "entry-1", closureId: null, employeeId: "emp-1", previousHours: 8, proposedHours: 9 };
+    const request = { id: "correction-1", status: "PENDIENTE", timeEntryId: "entry-1", closureId: null, employeeId: "emp-1", previousHours: 8, proposedHours: 9, timeEntry: { period: "2026-08" } };
     const txTimeEntryUpdate = vi.fn().mockResolvedValue({});
     mockedPrisma.$transaction.mockImplementation((callback: (tx: unknown) => unknown) => callback({
+      $executeRaw: vi.fn().mockResolvedValue(0),
       timeCorrectionRequest: {
         findUniqueOrThrow: vi.fn().mockResolvedValue(request),
         update: vi.fn().mockResolvedValue({ ...request, status: "APROBADA" }),
@@ -299,13 +302,15 @@ describe("workforceService — cierres y correcciones auditan identidad humana, 
     mockedPrisma.timeEntry.findFirst.mockResolvedValue({ id: "entry-1", employeeId: juanId, period: "2026-09", hours: 8, employee: juan });
     mockedPrisma.monthlyTimeClosure.findUnique.mockResolvedValue({ id: "closure-1", status: "APROBADO" });
     mockedPrisma.$transaction.mockImplementationOnce((callback: (tx: unknown) => unknown) => callback({
+      $executeRaw: vi.fn().mockResolvedValue(0),
       timeCorrectionRequest: { create: vi.fn().mockResolvedValue({ id: "correction-1" }) },
       monthlyTimeClosure: { update: vi.fn().mockResolvedValue({}) },
     }));
     await workforceService.createCorrection({ timeEntryId: "entry-1", proposedHours: 9, reason: "olvido" }, user);
 
-    const request = { id: "correction-1", status: "PENDIENTE", timeEntryId: "entry-1", closureId: null, employeeId: juanId, previousHours: 8, proposedHours: 9, employee: juan };
+    const request = { id: "correction-1", status: "PENDIENTE", timeEntryId: "entry-1", closureId: null, employeeId: juanId, previousHours: 8, proposedHours: 9, employee: juan, timeEntry: { period: "2026-09" } };
     mockedPrisma.$transaction.mockImplementationOnce((callback: (tx: unknown) => unknown) => callback({
+      $executeRaw: vi.fn().mockResolvedValue(0),
       timeCorrectionRequest: { findUniqueOrThrow: vi.fn().mockResolvedValue(request), update: vi.fn().mockResolvedValue({ ...request, status: "APROBADA" }) },
       timeEntry: { update: vi.fn().mockResolvedValue({}) },
       monthlyTimeClosure: { update: vi.fn() },
@@ -1131,6 +1136,7 @@ describe("workforceService — reglas de Hora Especial reinterpretan la historia
   const reinterpretation = (overrides: Record<string, unknown> = {}) => ({
     timeEntries: 23, breakdowns: 0, segments: 23, employees: 18, periods: ["2026-10"],
     rebuiltClosures: [{ id: "closure-1", employeeId: "016dc01c-655d-4474-8319-67f1b8108c93", period: "2026-10", before: {}, after: {} }],
+    protectedPeriods: [],
     ...overrides,
   });
   const feriadoRow = (overrides: Record<string, unknown> = {}) => ruleRow({
@@ -1154,7 +1160,7 @@ describe("workforceService — reglas de Hora Especial reinterpretan la historia
       "Se recalculó el snapshot del cierre de octubre de 2026 de Pérez, Juan · Legajo 30 por cambio del feriado Día de la Raza. El estado del cierre no cambia.",
     ]);
     const ruleAudit = (auditService.register as Mock).mock.calls[0]![0];
-    expect(ruleAudit.after.reinterpretation).toEqual({ timeEntries: 23, breakdowns: 0, segments: 23, employees: 18, periods: ["2026-10"], recalculatedClosureIds: ["closure-1"] });
+    expect(ruleAudit.after.reinterpretation).toEqual({ timeEntries: 23, breakdowns: 0, segments: 23, employees: 18, periods: ["2026-10"], protectedPeriods: [], recalculatedClosureIds: ["closure-1"] });
     for (const description of auditDescriptions()) expect(description).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-/);
   });
 
@@ -1198,7 +1204,7 @@ describe("workforceService — reglas de Hora Especial reinterpretan la historia
     }
 
     expect(mockedPrisma.$transaction).toHaveBeenCalledWith(expect.any(Function), { timeout: 30_000 });
-    expect(order).toEqual(["traza", "regla", "reinterpretación"]);
+    expect(order).toEqual(["reinterpretación", "traza", "regla"]);
     expect(reinterpretSpecialHours).toHaveBeenCalledWith(mockedPrisma, { before: expect.objectContaining({ id: "rule-feriado" }), after: null }, { doubleHourRuleId: "rule-feriado", doubleHourRuleName: "Día de la Raza" });
     expect(auditDescriptions()).toEqual([
       "Se eliminó definitivamente el feriado Día de la Raza (03/10/2026, x2). Se recalcularon 23 carga(s) de 18 legajo(s) y 1 cierre(s) mensual(es).",
@@ -1207,7 +1213,7 @@ describe("workforceService — reglas de Hora Especial reinterpretan la historia
     const ruleAudit = (auditService.register as Mock).mock.calls[0]![0];
     expect(ruleAudit).toMatchObject({ action: "DELETE", entity: "DoubleHourRule", entityId: "rule-feriado" });
     expect(ruleAudit.before).toMatchObject({ id: "rule-feriado", name: "Día de la Raza", kind: "FERIADO", multiplier: 2 });
-    expect(ruleAudit.after).toEqual({ reinterpretation: { timeEntries: 23, breakdowns: 0, segments: 23, employees: 18, periods: ["2026-10"], recalculatedClosureIds: ["closure-1"] } });
+    expect(ruleAudit.after).toEqual({ reinterpretation: { timeEntries: 23, breakdowns: 0, segments: 23, employees: 18, periods: ["2026-10"], protectedPeriods: [], recalculatedClosureIds: ["closure-1"] } });
     for (const description of auditDescriptions()) expect(description).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-/);
   });
 
@@ -1218,6 +1224,22 @@ describe("workforceService — reglas de Hora Especial reinterpretan la historia
     await expect(workforceService.removeDoubleRule("rule-feriado")).rejects.toThrow("boom");
     // El borrado ocurrió dentro del callback de $transaction: al rechazar, Prisma lo revierte.
     expect(mockedPrisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(auditService.register).not.toHaveBeenCalled();
+  });
+
+  it("D-5 — no elimina una regla si perdería la traza de un período protegido", async () => {
+    mockedPrisma.doubleHourRule.findUnique.mockResolvedValue(feriadoRow({ multiplier: 2, employees: [] }));
+    vi.mocked(reinterpretSpecialHours).mockResolvedValueOnce(reinterpretation({
+      rebuiltClosures: [],
+      protectedPeriods: [{ employeeId: "emp-1", period: "2026-10", status: "APROBADO", timeEntries: 0, breakdowns: 0, segments: 1 }],
+    }) as never);
+
+    await expect(workforceService.removeDoubleRule("rule-feriado")).rejects.toMatchObject({
+      statusCode: 409,
+      code: "DOUBLE_HOUR_RULE_PROTECTED_HISTORY",
+    });
+    expect(mockedPrisma.specialHourRuleApplication.deleteMany).not.toHaveBeenCalled();
+    expect(mockedPrisma.doubleHourRule.delete).not.toHaveBeenCalled();
     expect(auditService.register).not.toHaveBeenCalled();
   });
 
@@ -1289,4 +1311,3 @@ describe("workforceService — reglas de horas especiales y sectores del modelo 
       .rejects.toMatchObject({ statusCode: 400, code: "DOUBLE_HOUR_RULE_SECTOR_INVALID" });
   });
 });
-
