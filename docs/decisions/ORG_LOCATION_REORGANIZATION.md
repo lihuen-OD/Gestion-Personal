@@ -339,7 +339,8 @@ La inactivación solo puede **combinarse** con R1, R2 o R3. **Nunca se deja una 
 |---|---|
 | A1 | Hecha: este ADR y las normas (commit `7918455`) |
 | A2 | Código hecho en la rama; **M1 aplicada y verificada sólo en la copia aislada** `org-location-reorg` (ver abajo). Development y producción sin tocar |
-| A3–A8, B0–B5 | Pendientes |
+| A3 | Herramientas preparadas e inventario de sólo lectura corrido en la copia (§12). **Limpieza y restauración no ejecutadas** |
+| A4–A8, B0–B5 | Pendientes |
 
 ### A2 — qué quedó en código
 
@@ -401,3 +402,157 @@ La inactivación solo puede **combinarse** con R1, R2 o R3. **Nunca se deja una 
   - las 58 tablas quedaron idénticas al manifiesto previo.
 - M1 re-aplicada: `migrate status` al día y mismas verificaciones.
 - Reportes en `../backups/org-location-m1-copy-2026-10-07.*`, fuera del repositorio. Contienen sólo conteos, hashes y nombres de columnas; ninguna credencial.
+
+## 12. A3 — inventario, bloqueos y procedimiento de limpieza
+
+### 12.1 Herramientas (preparadas; la limpieza y la restauración NO se ejecutaron)
+
+**Dónde está cada cosa**
+- **Lógica pura con tests**, en `backend/src/modules/org-structure/reorg/`:
+  - `targetIdentity.ts`: compuerta de destino.
+  - `cleanupPlan.ts`: clasificación de dependencias, decisiones R1/R2/R3, retención de ancestros y plan.
+  - `manifest.ts`: verificaciones V1 y V2 por ID y contenido.
+- **Scripts de E/S**, en `backend/scripts/`:
+  - `org-reorg/lib.ts`
+  - `org-reorg-inventory.ts` y `org-reorg-manifest.ts`: sólo lectura.
+  - `org-reorg-cleanup.ts` y `org-reorg-restore.ts`: escriben; no ejecutados.
+
+**Conexión.** Siempre explícita: `--env-file` y `--expected-host`. Nunca se toma el `.env` habitual, y `DATABASE_URL` se fija antes de importar la app.
+
+**Dos credenciales, dos comprobaciones distintas**
+- **Conexión PostgreSQL** (`DATABASE_URL`): permite consultar datos y su host se compara con el esperado. No prueba qué rama es.
+- **Credencial administrativa de Neon** (`NEON_API_KEY` más `--neon-project-id`, `--expected-branch-id`, `--expected-branch-name`): la API de Neon confirma tres cosas:
+  - el endpoint pertenece al proyecto y a la rama esperados;
+  - el host coincide;
+  - la rama no es la rama por defecto.
+- **Modos de lectura:** pueden correr con la identidad NO VERIFICADA y lo dejan escrito en su reporte.
+- **Limpieza y restauración** (también en dry-run): exigen identidad VERIFICADA. No hay flag para saltearlo.
+- **Pendiente:** con la credencial, comprobar en la primera ejecución que la forma de respuesta de la API coincide con la esperada:
+  - `GET /projects/{projectId}/endpoints/{endpointId}` → `endpoint.branch_id`, `endpoint.host`;
+  - `GET /projects/{projectId}/branches/{branchId}` → `branch.name`, `branch.default`.
+
+**Dependencias.** Se descubren en el catálogo de Postgres, no en una lista escrita a mano. Toda FK hacia la estructura sin tratamiento autorizado bloquea (fail closed).
+
+**Garantías de la limpieza.** Corre en una única transacción Serializable que, antes del commit, verifica:
+1. Inventario congelado idéntico.
+2. Plan sin bloqueos.
+3. Respaldo escrito antes de la primera escritura.
+4. Reglas tratadas, ninguna con referencias pendientes.
+5. Re-chequeo de todas las FKs.
+6. Borrado explícito en orden.
+7. **Equivalencia del motor de horas especiales**: el motor real antes y después; cualquier cambio no aceptado aborta.
+8. **V1 por fila.**
+
+La auditoría se escribe en la misma transacción, sólo en `AuditLog` según D-3 preliminar.
+
+**Restauración.**
+- Reinserta con los mismos IDs, repone sólo valores que sigan vacíos y vuelve a verificar contra el manifiesto previo.
+- Sólo es válida antes de M2.
+
+### 12.2 Inventario de la copia `org-location-reorg` (2026-10-07, sólo lectura)
+
+Reporte en `../backups/org-reorg-inventory-copy-2026-10-07.json`. Contiene IDs, códigos, nombres de catálogo y legajos; ninguna credencial.
+
+**Estado general**
+- 62 tablas y 5098 filas. M1 aplicada; no hay registros del modelo nuevo.
+- La copia quedó idéntica después del inventario: 62 de 62 tablas sin cambios.
+- **Legajos:** 32, todos activos. Los 32 tienen:
+  - puesto, sector, centro de costo y categorías interna y de recibo;
+  - empresa empleadora (33 vínculos, 32 principales).
+- **Convenio y obra social:** 3 y 4 legajos. Se conservan.
+- **Responsables:** 1 `DIRECT_MANAGER`, guardado sólo por nombre, y 3 `TIME_RESPONSIBLE`. No se tocan.
+
+**Candidatos al inventario**
+
+| Tabla | C1 (conserva empresas) | C2 (elimina empresas) |
+|---|---|---|
+| Company | 0 | 6 |
+| BusinessUnit | 12 | 12 |
+| Establishment | 18 | 18 |
+| Area | 43 | 43 |
+| Sector | 42 | 42 |
+| Position | 3 | 3 |
+
+**Dependencias con filas** (todas las demás FKs hacia la estructura tienen 0 filas, incluida `ClockDevice.sectorId`):
+
+| Dependencia | onDelete | Filas | Tratamiento |
+|---|---|---|---|
+| `Employee.positionId` | SET NULL | 32 | Vaciar (autorizado) |
+| `Employee.sectorId` | SET NULL | 32 | Vaciar (autorizado) |
+| `User.sectorId` | SET NULL | 1 | Vaciar |
+| `User.companyId` | SET NULL | 1 (sólo C2) | Vaciar |
+| `EmployeeCompany.companyId` | CASCADE | 33 (sólo C2) | Borrar explícitamente, auditado por legajo; se recarga la empresa empleadora |
+| `PositionSalaryCategory.positionId` | CASCADE | 14 | Borrar vínculos |
+| `CostCenterArea` / `BusinessUnit` / `Establishment` / `Sector` | CASCADE | 4 / 2 / 2 / 2 | Borrar vínculos (los centros de costo se conservan) |
+| `CostCenterCompany.companyId` | CASCADE | 3 (sólo C2) | Borrar vínculos |
+| Cadena interna (`Position.sectorId`, `Sector.areaId`, `Area.establishmentId`, `Establishment.businessUnitId` y, en C2, `.companyId` y `BusinessUnit.companyId`) | SET NULL / RESTRICT | 3 / 42 / 43 / 18 / 18 / 12 | Borrado en orden; ningún registro fuera del inventario depende de ellos |
+| `DoubleHourRule.companyId` | RESTRICT (M1) | 1 (sólo C2) | **Requiere decisión R1/R2/R3** |
+
+**Copias en texto que se preservan sin cambios**
+- `EmployeeFieldHistory`: sector 3, puesto 4, centro de costo 1, empresas 4.
+- `AuditLog` de la estructura y los legajos.
+
+**Reglas de horas especiales con alcance de estructura**
+- Hay una sola: **"Domingos"**.
+  - Tipo OTRO, ACTIVO, semanal, x2, vigente del 2026-01-01 al 2028-12-31.
+  - Alcance: empresa LOSOD (Los O'Dwyer). Población actual: los 32 legajos.
+  - Sin trazas `SpecialHourRuleApplication`: se aplicó sobre cargas manuales.
+- Ninguna regla usa sector ni puesto.
+
+**Impacto en el motor si se limpiara sin tratar reglas** (motor real, lector simulado, 21 legajos con horas, 78 fechas-legajo):
+- **C1: 0 cambios.**
+- **C2:** 5 fechas-legajo de 4 legajos pasarían de x2 a x1, porque "Domingos" dejaría de alcanzarlos.
+  - Filas en esas fechas: 5 `TimeEntry` (40 h) y 2 desgloses (360 min).
+  - Incluye un cierre en estado **ENVIADO**.
+
+### 12.3 Bloqueos concretos
+
+1. **Credencial administrativa de Neon** (D-0). Mientras falte, `org-reorg-cleanup` y `org-reorg-restore` no corren, ni siquiera en dry-run. Hace falta:
+   - `NEON_API_KEY` en el entorno, de sólo lectura si el plan de Neon lo permite;
+   - el `projectId`;
+   - los IDs de la rama de ensayo y de `development`.
+2. **D-1, C1 o C2.**
+   - **C1:** 0 bloqueos y 0 impacto en horas.
+   - **C2:** bloqueado por "Domingos" hasta decidir su tratamiento. El inventario muestra los efectos de cada opción:
+     - **R1** (reasignarla a la empresa recargada): exige crear la empresa nueva y recargar la empresa empleadora de los 32 legajos **antes** de limpiar. Si no, la verificación de equivalencia aborta por las 5 fechas.
+     - **R2** (lista explícita de los 32 legajos): congela la población; los ingresos futuros no reciben "Domingos" solos.
+     - **R3** (retener LOSOD): en la práctica conserva esa empresa, igual que C1 para ella.
+   - Ninguna opción se adopta sin tu decisión.
+3. **D-3** (rastro sólo en `AuditLog`, preliminar). El script lo implementa así. Si se decide historial visible, hay que ampliarlo antes de B1.
+4. **Línea base de reconciliación.** `staging:special-hours:reconcile` en dry-run usa una transacción de escritura que se revierte. No se corrió en A3 por la restricción de sólo lectura. Va en B1 si se autoriza.
+5. **Actor.** La limpieza exige `--actor-user-id` de un usuario RRHH activo: hay que indicar quién figura en la auditoría.
+
+### 12.4 Procedimiento propuesto (cada paso con aprobación explícita)
+
+1. **B0, en development, sólo lectura salvo los respaldos:**
+   - identidad vía Neon API;
+   - respaldo doble (rama Neon más `pg_dump`) y restauración probada;
+   - `org-reorg-inventory` y `org-reorg-manifest capture` sobre development, comparados con la copia.
+2. **Decisiones:**
+   - elegir D-1;
+   - escribir `decisions.json` con una entrada por regla que requiera decisión. Formato: `[{ "ruleId": "...", "treatment": "R1" | "R2" | "R3", "targets": {...} (sólo R1), "inactivate": false, "approvedBy": "...", "note": "..." }]`. Con C1 sobre los datos actuales es `[]`.
+3. **B1 — ensayo en una rama aislada nueva** creada desde el respaldo:
+   1. `reorg-r1` → M1.
+   2. Inventario (congelado).
+   3. Línea base de reconciliación.
+   4. `org-reorg-cleanup` en dry-run → revisión del reporte.
+   5. `--apply --backup`.
+   6. `manifest capture`.
+   7. `org-reorg-restore` en dry-run y `--apply` (prueba de reversión) → nueva limpieza.
+   8. `reorg-r2` → M2 (A8).
+   9. Recarga de muestra.
+   10. `manifest verify-v2`.
+4. **Revisión del reporte de B1** antes de tocar development.
+5. **B2/B3 en development**, con el backend detenido, igual que el ensayo.
+6. **B4:** recarga manual y V2.
+
+Comandos (las rutas de reportes y respaldos van siempre fuera del repositorio):
+
+```
+npx tsx scripts/org-reorg-inventory.ts --env-file=<env> --expected-host=<host> [--neon-project-id=… --expected-branch-id=… --expected-branch-name=…] --report=<inventario.json>
+npx tsx scripts/org-reorg-manifest.ts capture --env-file=<env> --expected-host=<host> --out=<manifiesto.json>
+npx tsx scripts/org-reorg-cleanup.ts --env-file=<env> --expected-host=<host> --neon-project-id=… --expected-branch-id=… --expected-branch-name=… --company-mode=C1|C2 --inventory=<inventario.json> --decisions=<decisiones.json> --actor-user-id=<uuid> --report=<reporte.json> [--apply --backup=<respaldo.json>]
+npx tsx scripts/org-reorg-restore.ts --env-file=<env> --expected-host=<host> --neon-project-id=… --expected-branch-id=… --expected-branch-name=… --backup=<respaldo.json> --actor-user-id=<uuid> --report=<reporte.json> [--apply]
+npx tsx scripts/org-reorg-manifest.ts verify-v2 --baseline=<manifiesto tras limpieza> --current=<manifiesto tras recarga> --report=<v2.json>
+```
+
