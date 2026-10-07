@@ -7,7 +7,8 @@ import { orgScopePathNames } from "../../org-structure/orgScopePath";
  * A7 (ORG_LOCATION_REORGANIZATION.md §16): filtros de estructura para
  * listados de legajos. Organización (alcance del puesto), ubicación (vigente
  * a una fecha) y empresa empleadora son conceptos separados. El modo de
- * alcance no tiene valor por defecto (D-7): sin modo, el filtro no se aplica.
+ * D-7: “Ubicado dentro de” es el modo por defecto; “Abarca” queda como
+ * alternativa explícita.
  */
 export type ScopeMode = "WITHIN" | "COVERS";
 
@@ -23,7 +24,7 @@ export type EmployeeStructureFilterValue = {
 };
 
 export const emptyStructureFilters: EmployeeStructureFilterValue = {
-  scopeLevel: "", scopeNodeId: "", scopeMode: "", locationZoneId: "", locationEstablishmentId: "", locationDate: "", reloadStatus: "", legacySectorId: "",
+  scopeLevel: "", scopeNodeId: "", scopeMode: "WITHIN", locationZoneId: "", locationEstablishmentId: "", locationDate: "", reloadStatus: "", legacySectorId: "",
 };
 
 export const scopeModeLabels: Record<ScopeMode, string> = { WITHIN: "Ubicado dentro de", COVERS: "Abarca" };

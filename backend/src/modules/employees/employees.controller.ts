@@ -59,10 +59,10 @@ export const employeesController = {
   listOrgChart: (async (req, res) => {
     const key = userScopedCacheKey(req);
     const cached = employeeOrgChartCache.get(key);
-    if (cached) return res.json({ data: cached.items, meta: cached.meta });
+    if (cached) return res.json({ data: cached.items, context: cached.contextItems, meta: cached.meta });
     const result = await employeesService.listOrgChart(req.query as unknown as ListEmployeeOrgChartQuery, req.user!);
     employeeOrgChartCache.set(key, result);
-    res.json({ data: result.items, meta: result.meta });
+    res.json({ data: result.items, context: result.contextItems, meta: result.meta });
   }) satisfies RequestHandler,
 
   listOptions: (async (req, res) => {

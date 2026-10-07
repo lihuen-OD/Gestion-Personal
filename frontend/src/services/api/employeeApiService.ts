@@ -116,6 +116,7 @@ type ApiEmployeeItemResponse = { data: ApiEmployee };
 type ApiLaborStatusSyncResponse = { data: { scanned: number; updated: number } };
 type ApiListMeta = { total: number; page: number; pageSize: number; hasMore: boolean };
 type ApiEmployeePaginatedResponse = ApiEmployeeListResponse & { meta: ApiListMeta };
+type ApiEmployeeOrgChartResponse = ApiEmployeePaginatedResponse & { context?: ApiEmployee[] };
 type ApiEmployeeSummaryResponse = {
   data: {
     total: number;
@@ -750,8 +751,9 @@ export const employeeApiService = {
     return cachedData({
       requestKey: `GET:${path}`,
       policy: cachePolicies.employeesOrgChart,
-      fetcher: () => apiRequest<ApiEmployeePaginatedResponse>(path, { apiCache: false }).then((response) => ({
+      fetcher: () => apiRequest<ApiEmployeeOrgChartResponse>(path, { apiCache: false }).then((response) => ({
         items: response.data.map(mapEmployeeFromApi),
+        contextItems: (response.context ?? []).map(mapEmployeeFromApi),
         meta: response.meta,
       })),
       validate: isEmployeeOptionsResponse,

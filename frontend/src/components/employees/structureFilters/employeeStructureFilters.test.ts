@@ -23,10 +23,10 @@ const catalog = {
 } as unknown as OrgStructureCatalog;
 
 describe("structureFilterParams", () => {
-  it("el alcance sólo viaja con nivel, nodo y modo (sin modo por defecto, D-7)", () => {
+  it("el alcance usa Ubicado dentro de por defecto y permite Abarca explícito (D-7)", () => {
     const partial = { ...emptyStructureFilters, scopeLevel: "SECTOR" as const, scopeNodeId: "s-new" };
-    expect(structureFilterParams(partial)).toEqual({});
-    expect(scopeFilterPending(partial)).toBe(true);
+    expect(structureFilterParams(partial)).toEqual({ scopeLevel: "SECTOR", scopeNodeId: "s-new", scopeMode: "WITHIN" });
+    expect(scopeFilterPending(partial)).toBe(false);
     expect(structureFilterParams({ ...partial, scopeMode: "COVERS" })).toEqual({ scopeLevel: "SECTOR", scopeNodeId: "s-new", scopeMode: "COVERS" });
   });
 

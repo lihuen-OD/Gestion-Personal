@@ -63,6 +63,7 @@ export function OrganigramasPage() {
   const catalog = useOrgStructureCatalog();
   const [toast, setToast] = useState("");
   const [sourceEmployees, setSourceEmployees] = useState<Employee[]>([]);
+  const [managerContext, setManagerContext] = useState<Employee[]>([]);
   const [usesBackend, setUsesBackend] = useState(false);
   const [reachedEmployeeLimit, setReachedEmployeeLimit] = useState(false);
   const [loadError, setLoadError] = useState("");
@@ -77,6 +78,7 @@ export function OrganigramasPage() {
       .then((result) => {
         if (!mounted) return;
         setSourceEmployees(result.items);
+        setManagerContext(result.contextItems ?? []);
         setReachedEmployeeLimit(orgChartReachedLimit(result));
         setUsesBackend(true);
         setLoadStatus("success");
@@ -88,6 +90,7 @@ export function OrganigramasPage() {
         if (Object.keys(structureParams).length) {
           if (!mounted) return;
           setSourceEmployees([]);
+          setManagerContext([]);
           setLoadError("No pudimos aplicar los filtros de alcance o ubicación. Intentá nuevamente.");
           setLoadStatus("error");
           return;
@@ -125,6 +128,7 @@ export function OrganigramasPage() {
   const options = useMemo(() => organizationChartMockService.getFilterOptionsFrom(sourceEmployees), [sourceEmployees]);
   const categories = useMemo(() => organizationChartMockService.getCategories(), []);
   const employees = useMemo(() => organizationChartMockService.getEmployeesFrom(sourceEmployees, filters), [filters, sourceEmployees]);
+  const functionalEmployees = useMemo(() => [...employees, ...managerContext.filter((manager) => !employees.some((employee) => employee.id === manager.id))], [employees, managerContext]);
   const model = useMemo(() => organizationChartMockService.buildCategoryModel(employees, categories), [categories, employees]);
   const exportView = () => {
     exportOrganigramWorkbook(employees, tab);
@@ -142,9 +146,9 @@ export function OrganigramasPage() {
     {loadStatus === "loading" ? <LoadingState text="Cargando organigrama..." /> : null}
     {loadStatus === "error" ? <ErrorState message={loadError} onRetry={() => setRetry((value) => value + 1)} /> : null}
     {loadStatus === "success" && reachedEmployeeLimit ? <div className="info-note compact">Se alcanzó el límite de 1000 empleados. El organigrama puede estar incompleto.</div> : null}
-    {loadStatus === "success" && hasStructureFilters(structure) ? <div className="info-note compact">Filtro de alcance o ubicación activo: se muestran sólo las personas que lo cumplen. Sus encargados fuera del filtro no se agregan como contexto (pendiente D-7).</div> : null}
+    {loadStatus === "success" && hasStructureFilters(structure) ? <div className="info-note compact">Filtro de alcance o ubicación activo: los encargados externos visibles por tus permisos se muestran sólo como contexto y no se cuentan como resultados.</div> : null}
     {toast && <div className="toast">{toast}</div>}
     {loadStatus === "success" ? <>
-    {tab === "CATEGORIES" ? <CategoryOrgChart model={model} onExport={exportView} filterControls={filterControls} /> : <FunctionalOrgChart employees={employees} onExport={exportView} />}</> : null}
+    {tab === "CATEGORIES" ? <CategoryOrgChart model={model} onExport={exportView} filterControls={filterControls} /> : <FunctionalOrgChart employees={functionalEmployees} onExport={exportView} />}</> : null}
   </>;
 }

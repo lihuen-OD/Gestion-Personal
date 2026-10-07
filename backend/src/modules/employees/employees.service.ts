@@ -509,9 +509,12 @@ export const employeesService = {
   },
 
   async listOrgChart(query: ListEmployeeOrgChartQuery, user: Express.AuthUser) {
-    const [items, total] = await employeesRepository.findOrgChart(query, employeeAccessWhere(user));
+    const accessWhere = employeeAccessWhere(user);
+    const [items, total] = await employeesRepository.findOrgChart(query, accessWhere);
+    const contextItems = await employeesRepository.findOrgChartManagerContext(items, accessWhere);
     return {
       items,
+      contextItems,
       meta: {
         total,
         page: query.page,

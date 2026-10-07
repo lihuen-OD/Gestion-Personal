@@ -833,7 +833,7 @@ const employeeOrgChartSelect = {
   },
   // A7: el responsable puede estar asignado sólo por usuario (userId); se
   // expone únicamente su nombre visible, nunca email ni otros datos.
-  assignments: { select: { type: true, personName: true, user: { select: { name: true } } } },
+  assignments: { select: { type: true, personName: true, user: { select: { id: true, name: true, employeeId: true } } } },
 } satisfies Prisma.EmployeeSelect;
 
 // A7: contexto de ubicación de listado/organigrama: ubicaciones vigentes hoy
@@ -1128,6 +1128,20 @@ export const employeesRepository = {
       }),
       prisma.employee.count({ where }),
     ]);
+  },
+
+  async findOrgChartManagerContext(items: Array<{ id: string; assignments: Array<{ type: string; user: null | { employeeId: string | null } }> }>, accessWhere: Prisma.EmployeeWhereInput) {
+    const resultIds = new Set(items.map((item) => item.id));
+    const managerEmployeeIds = [...new Set(items.flatMap((item) => item.assignments
+      .filter((assignment) => assignment.type === "DIRECT_MANAGER")
+      .map((assignment) => assignment.user?.employeeId)
+      .filter((id): id is string => Boolean(id))))].filter((id) => !resultIds.has(id));
+    if (!managerEmployeeIds.length) return [];
+    return prisma.employee.findMany({
+      where: { AND: [{ id: { in: managerEmployeeIds } }, accessWhere] },
+      select: { ...employeeOrgChartSelect, ...workLocationContextSelect(todayArgentinaDateKey()) },
+      orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
+    });
   },
 
   // Etapa 14C.3: mismo cambio, misma justificación que `findMany`/`findOrgChart`.
