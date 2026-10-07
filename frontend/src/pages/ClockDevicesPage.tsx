@@ -28,8 +28,8 @@ export function ClockDevicesPage() {
   const [pairingCode, setPairingCode] = useState("");
   const [candidate, setCandidate] = useState<ClockDevice | null>(null);
   const [deviceName, setDeviceName] = useState("");
-  const [sectorId, setSectorId] = useState("");
-  const [sectors, setSectors] = useState<Array<{ id: string; name: string }>>([]);
+  const [establishmentId, setEstablishmentId] = useState("");
+  const [establishments, setEstablishments] = useState<Array<{ id: string; name: string; zoneName: string }>>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -45,7 +45,7 @@ export function ClockDevicesPage() {
   }, [filter, search, page, refresh]);
 
   const reload = () => setRefresh((value) => value + 1);
-  const closePairing = () => { setPairingOpen(false); setPairingCode(""); setCandidate(null); setDeviceName(""); setSectorId(""); setError(""); };
+  const closePairing = () => { setPairingOpen(false); setPairingCode(""); setCandidate(null); setDeviceName(""); setEstablishmentId(""); setError(""); };
 
   const resolve = async () => {
     setBusy(true); setError("");
@@ -53,7 +53,7 @@ export function ClockDevicesPage() {
       const resolved = await clockDeviceApiService.resolvePairing(pairingCode);
       setCandidate(resolved);
       const catalog = await orgStructureApiService.getCatalog();
-      setSectors(catalog.sectors.filter((item) => item.status === "ACTIVO").map(({ id, name }) => ({ id, name })));
+      setEstablishments(catalog.establishments.filter((item) => item.status === "ACTIVO" && item.zoneId).map(({ id, name, zoneId }) => ({ id, name, zoneName: catalog.zones.find((zone) => zone.id === zoneId)?.name || "Zona" })));
     } catch (resolveError) { setError(getUserErrorMessage(resolveError, "El código no existe o venció.")); }
     finally { setBusy(false); }
   };
@@ -62,7 +62,7 @@ export function ClockDevicesPage() {
     if (!candidate || deviceName.trim().length < 2) return setError("Ingresá un nombre para identificar el dispositivo.");
     setBusy(true); setError("");
     try {
-      await clockDeviceApiService.activate(candidate.id, { pairingCode, name: deviceName.trim(), sectorId: sectorId || null });
+      await clockDeviceApiService.activate(candidate.id, { pairingCode, name: deviceName.trim(), establishmentId: establishmentId || null });
       closePairing(); reload();
     } catch (activateError) { setError(getUserErrorMessage(activateError, "No pudimos aprobar el dispositivo.")); }
     finally { setBusy(false); }
@@ -86,14 +86,14 @@ export function ClockDevicesPage() {
         <label>Estado<select value={filter} onChange={(event) => { setFilter(event.target.value as ClockDeviceStatus | ""); setPage(1); }}><option value="">Todos</option><option value="PENDING">Pendientes</option><option value="ACTIVE">Activos</option><option value="REVOKED">Revocados</option></select></label>
       </div>
       <DataTable status={status === "loading" ? "loading" : status === "error" ? "error" : items.length ? "ready" : "empty"} minWidth={980} emptyText="No hay dispositivos con estos filtros." errorMessage="No se pudieron cargar los dispositivos." onRetry={reload}>
-        <table><thead><tr><th>Dispositivo</th><th>Estado</th><th>Sector</th><th>Última conexión</th><th>Versión</th><th>Registrado</th><th>Acciones</th></tr></thead>
-          <tbody>{items.map((device) => <tr key={device.id}><td><b>{device.name || "Solicitud pendiente"}</b></td><td><Badge tone={statusTone[device.status]}>{statusLabel[device.status]}</Badge></td><td>{device.sector?.name || "Sin sector"}</td><td>{device.lastSeenAt ? formatDateTime(device.lastSeenAt) : "Nunca"}</td><td>{device.lastAppVersion || "-"}</td><td>{formatDateTime(device.createdAt)}</td><td><div className="table-actions">{device.status === "ACTIVE" ? <button className="table-icon-action" title="Revocar" onClick={() => void revoke(device)}><ShieldOff size={15} /></button> : null}{device.status === "PENDING" ? <button className="table-icon-action danger-link" title="Eliminar solicitud" onClick={() => void remove(device)}><Trash2 size={15} /></button> : null}</div></td></tr>)}</tbody></table>
+        <table><thead><tr><th>Dispositivo</th><th>Estado</th><th>Establecimiento</th><th>Última conexión</th><th>Versión</th><th>Registrado</th><th>Acciones</th></tr></thead>
+          <tbody>{items.map((device) => <tr key={device.id}><td><b>{device.name || "Solicitud pendiente"}</b></td><td><Badge tone={statusTone[device.status]}>{statusLabel[device.status]}</Badge></td><td>{device.establishment ? `${device.establishment.zone.name} · ${device.establishment.name}` : "Sin establecimiento"}</td><td>{device.lastSeenAt ? formatDateTime(device.lastSeenAt) : "Nunca"}</td><td>{device.lastAppVersion || "-"}</td><td>{formatDateTime(device.createdAt)}</td><td><div className="table-actions">{device.status === "ACTIVE" ? <button className="table-icon-action" title="Revocar" onClick={() => void revoke(device)}><ShieldOff size={15} /></button> : null}{device.status === "PENDING" ? <button className="table-icon-action danger-link" title="Eliminar solicitud" onClick={() => void remove(device)}><Trash2 size={15} /></button> : null}</div></td></tr>)}</tbody></table>
       </DataTable>
       {meta.total > meta.pageSize ? <div className="form-actions"><Button disabled={page === 1} onClick={() => setPage((value) => value - 1)}>Anterior</Button><span className="muted small">Página {page}</span><Button disabled={!meta.hasMore} onClick={() => setPage((value) => value + 1)}>Siguiente</Button></div> : null}
     </Section>
     {pairingOpen ? <Modal title={candidate ? "Completar aprobación" : "Vincular dispositivo"} subtitle={candidate ? "Verificá los datos antes de habilitar el equipo." : "Ingresá el código que muestra el fichador."} close={closePairing} closeDisabled={busy}>
       <div className="form-stack">
-        {!candidate ? <><Field label="Código de vinculación" value={pairingCode} set={setPairingCode} /><div className="info-note compact"><b>Validación en dos pasos</b><p>Primero verificamos el código. Luego podrás asignar nombre y sector.</p></div></> : <><div className="info-note compact"><b>Solicitud encontrada</b><p>Registrada {formatDateTime(candidate.createdAt)} · última conexión {candidate.lastSeenAt ? formatDateTime(candidate.lastSeenAt) : "sin conexión"} · versión {candidate.lastAppVersion || "no informada"}.</p></div><Field label="Nombre del dispositivo *" value={deviceName} set={setDeviceName} /><label>Sector (opcional)<select value={sectorId} onChange={(event) => setSectorId(event.target.value)}><option value="">Sin sector</option>{sectors.map((sector) => <option key={sector.id} value={sector.id}>{sector.name}</option>)}</select></label></>}
+        {!candidate ? <><Field label="Código de vinculación" value={pairingCode} set={setPairingCode} /><div className="info-note compact"><b>Validación en dos pasos</b><p>Primero verificamos el código. Luego podrás asignar nombre y establecimiento.</p></div></> : <><div className="info-note compact"><b>Solicitud encontrada</b><p>Registrada {formatDateTime(candidate.createdAt)} · última conexión {candidate.lastSeenAt ? formatDateTime(candidate.lastSeenAt) : "sin conexión"} · versión {candidate.lastAppVersion || "no informada"}.</p></div><Field label="Nombre del dispositivo *" value={deviceName} set={setDeviceName} /><label>Establecimiento (opcional)<select value={establishmentId} onChange={(event) => setEstablishmentId(event.target.value)}><option value="">Sin establecimiento</option>{establishments.map((establishment) => <option key={establishment.id} value={establishment.id}>{establishment.zoneName} · {establishment.name}</option>)}</select></label></>}
         {error ? <p className="create-error">{error}</p> : null}
         <FormActions><Button onClick={closePairing} disabled={busy}>Cancelar</Button><Button variant="primary" loading={busy} onClick={() => void (candidate ? activate() : resolve())}>{candidate ? "Aprobar dispositivo" : "Verificar código"}</Button></FormActions>
       </div>

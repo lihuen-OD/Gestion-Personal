@@ -41,7 +41,7 @@ describe("clockDevicesService", () => {
   it("activa y revoca mediante transiciones del repositorio, con auditoría humana", async () => {
     const active = { ...pending, name: "iPad Recepción", status: "ACTIVE" };
     vi.mocked(repository.activate).mockResolvedValue(active as never);
-    await clockDevicesService.activate(pending.id, { pairingCode: "ABCD-2345", name: active.name, sectorId: null }, "user-1");
+    await clockDevicesService.activate(pending.id, { pairingCode: "ABCD-2345", name: active.name, establishmentId: null }, "user-1");
     expect(auditService.register).toHaveBeenCalledWith(expect.objectContaining({ action: "ACTIVATE", description: "Se aprobó el dispositivo de fichada iPad Recepción." }));
 
     vi.mocked(repository.findSafeById).mockResolvedValue(active as never);

@@ -15,13 +15,13 @@ export const resolvePairingSchema = z.object({
 export const activateClockDeviceSchema = z.object({
   pairingCode: z.string().trim().min(8).max(12),
   name: z.string().trim().min(2).max(120),
-  sectorId: z.string().uuid().nullable().optional(),
+  establishmentId: z.string().uuid().nullable().optional(),
 });
 
 export const listClockDevicesQuerySchema = z.object({
   search: z.string().trim().max(120).optional(),
   status: clockDeviceStatusSchema.optional(),
-  sectorId: z.string().uuid().optional(),
+  establishmentId: z.string().uuid().optional(),
   page: z.coerce.number().int().positive().max(10000).default(1),
   take: z.coerce.number().int().positive().max(100).default(25),
 });

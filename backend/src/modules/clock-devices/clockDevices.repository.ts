@@ -6,7 +6,7 @@ export const clockDevicePublicSelect = {
   id: true,
   name: true,
   status: true,
-  sectorId: true,
+  establishmentId: true,
   activatedAt: true,
   revokedAt: true,
   lastSeenAt: true,
@@ -15,13 +15,13 @@ export const clockDevicePublicSelect = {
   lastAppVersion: true,
   createdAt: true,
   updatedAt: true,
-  sector: { select: { id: true, name: true } },
+  establishment: { select: { id: true, name: true, zone: { select: { id: true, name: true } } } },
 } satisfies Prisma.ClockDeviceSelect;
 
 function whereFor(query: ListClockDevicesQuery): Prisma.ClockDeviceWhereInput {
   return {
     ...(query.status ? { status: query.status } : {}),
-    ...(query.sectorId ? { sectorId: query.sectorId } : {}),
+    ...(query.establishmentId ? { establishmentId: query.establishmentId } : {}),
     ...(query.search ? { name: { contains: query.search, mode: "insensitive" } } : {}),
   };
 }
@@ -105,18 +105,18 @@ export const clockDevicesRepository = {
     });
   },
 
-  async activate(id: string, pairingHash: string, input: { name: string; sectorId?: string | null }, userId: string) {
+  async activate(id: string, pairingHash: string, input: { name: string; establishmentId?: string | null }, userId: string) {
     return prisma.$transaction(async (tx) => {
-      if (input.sectorId) {
-        const sector = await tx.sector.findUnique({ where: { id: input.sectorId }, select: { id: true } });
-        if (!sector) return null;
+      if (input.establishmentId) {
+        const establishment = await tx.establishment.findFirst({ where: { id: input.establishmentId, zoneId: { not: null }, status: "ACTIVO" }, select: { id: true } });
+        if (!establishment) return null;
       }
       const changed = await tx.clockDevice.updateMany({
         where: { id, status: "PENDING", pairingCodeHash: pairingHash, pairingExpiresAt: { gt: new Date() } },
         data: {
           status: "ACTIVE",
           name: input.name,
-          sectorId: input.sectorId ?? null,
+          establishmentId: input.establishmentId ?? null,
           activatedAt: new Date(),
           activatedByUserId: userId,
           pairingCodeHash: null,

@@ -6,8 +6,8 @@ export type ClockDevice = {
   id: string;
   name: string | null;
   status: ClockDeviceStatus;
-  sectorId: string | null;
-  sector: { id: string; name: string } | null;
+  establishmentId: string | null;
+  establishment: { id: string; name: string; zone: { id: string; name: string } } | null;
   activatedAt: string | null;
   revokedAt: string | null;
   lastSeenAt: string | null;
@@ -27,7 +27,7 @@ export const clockDeviceApiService = {
     return apiRequest<ListResponse>(`/clock-devices?${params}`).then((response) => response);
   },
   resolvePairing: (pairingCode: string) => apiRequest<{ data: ClockDevice }>("/clock-devices/resolve-pairing", { method: "POST", body: { pairingCode } }).then((response) => response.data),
-  activate: (id: string, input: { pairingCode: string; name: string; sectorId: string | null }) => apiRequest<{ data: ClockDevice }>(`/clock-devices/${id}/activate`, { method: "POST", body: input }).then((response) => response.data),
+  activate: (id: string, input: { pairingCode: string; name: string; establishmentId: string | null }) => apiRequest<{ data: ClockDevice }>(`/clock-devices/${id}/activate`, { method: "POST", body: input }).then((response) => response.data),
   revoke: (id: string) => apiRequest<{ data: ClockDevice }>(`/clock-devices/${id}/revoke`, { method: "POST" }).then((response) => response.data),
   deletePending: (id: string) => apiRequest<void>(`/clock-devices/${id}`, { method: "DELETE" }),
 };

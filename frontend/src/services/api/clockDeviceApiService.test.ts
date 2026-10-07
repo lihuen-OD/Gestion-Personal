@@ -10,9 +10,9 @@ describe("clockDeviceApiService administrativo", () => {
   it("resuelve el código antes de activar y nunca envía hashes", async () => {
     vi.mocked(apiRequest).mockResolvedValueOnce({ data: { id: "d1", status: "PENDING" } }).mockResolvedValueOnce({ data: { id: "d1", status: "ACTIVE" } });
     await clockDeviceApiService.resolvePairing("ABCD-2345");
-    await clockDeviceApiService.activate("d1", { pairingCode: "ABCD-2345", name: "iPad Recepción", sectorId: null });
+    await clockDeviceApiService.activate("d1", { pairingCode: "ABCD-2345", name: "iPad Recepción", establishmentId: null });
     expect(apiRequest).toHaveBeenNthCalledWith(1, "/clock-devices/resolve-pairing", { method: "POST", body: { pairingCode: "ABCD-2345" } });
-    expect(apiRequest).toHaveBeenNthCalledWith(2, "/clock-devices/d1/activate", { method: "POST", body: { pairingCode: "ABCD-2345", name: "iPad Recepción", sectorId: null } });
+    expect(apiRequest).toHaveBeenNthCalledWith(2, "/clock-devices/d1/activate", { method: "POST", body: { pairingCode: "ABCD-2345", name: "iPad Recepción", establishmentId: null } });
     expect(JSON.stringify(vi.mocked(apiRequest).mock.calls)).not.toMatch(/tokenHash|pairingCodeHash|secret/);
   });
 
