@@ -63,9 +63,9 @@ las siete tablas de historia (incl. `EmployeeLegacySectorPeriod`), `EmployeeComp
 > Alerta derivada del hallazgo 1 (§3.4): el NOT NULL de `Sector.businessUnitId` no es sólo DDL:
 > cambia la clasificación histórica legado/nuevo de las reglas. **Mitigado por A8-3 (2026-10-08):**
 > la clasificación vive ahora en `Sector.isLegacy` y el motor ya no deriva nada del padre actual.
-> **Especificación §12:** si se aprueba **D-B1**, los tres `NOT NULL` de la tabla se sustituyen por
-> CHECKs condicionales por forma de fila (`archivedAt`, §12.3): el padre nuevo sigue obligatorio para
-> toda fila activa, pero no para la fila archivada.
+> **Especificación §12 (D-B1 aprobada, 2026-10-08):** los tres `NOT NULL` de la tabla se sustituyen
+> por CHECKs condicionales por forma de fila (`archivedAt`, §12.3): el padre nuevo sigue obligatorio
+> para toda fila activa, pero no para la fila archivada. Falta implementar y validar §12 (§12.11).
 
 ### 2.3 Consumidores — backend [C]
 
@@ -191,14 +191,18 @@ retirarse sin romper la resolución histórica: la dimensión "sector anterior" 
   ruta histórica idéntica, semántica de reglas sin cambio), con pruebas de equivalencia antes/después
   sobre la copia. **Si la neutralidad no puede demostrarse, el nodo se conserva y M2 queda bloqueada.**
   **Nunca se inventa un padre para satisfacer el NOT NULL de M2.**
-  *(Especificación §12: si D-B1 se aprueba e implementa, no hay conversión que demostrar — el nodo
-  retenido se **archiva** con su forma vieja (`archivedAt`, §12.1) y M2 no queda bloqueada; mientras
-  tanto sigue vigente la frase anterior.)*
+  *(**D-B1 aprobada (2026-10-08):** no hay conversión que demostrar — el nodo retenido se **archiva**
+  con su forma vieja (`archivedAt`, §12.1) y la frase anterior queda sólo como registro del criterio
+  previo. El bloqueo pasa a ser técnico: hasta implementar y validar §12 no hay M2.)*
 - **HT-3 — Puestos retenidos [D]:** se conserva la fila y se vacía `Position.sectorId` (columna autorizada
   a NULL). **[C]** Desde D-5 esa columna no es entrada del motor (las vigencias viven en
   `EmployeePositionPeriod`), por lo que el vaciado debería ser neutro — igual se exige la prueba de
   equivalencia antes/después, no el razonamiento. El puesto queda "Pendiente de recarga" hasta que la
   recarga manual lo reemplace; la guarda de M2 debe admitir puestos sin alcance.
+  *(**D-B1/D-B2 aprobadas (2026-10-08):** el puesto retenido por historia se **archiva** con su forma
+  vieja y `Position.sectorId` se conserva **sin vaciar ni dropear** en esta transición; la variante de
+  vaciado queda para la etapa futura de purga (§12.3, §12.11). Lo que sigue vigente es la guarda de
+  puestos activos sin alcance.)*
 - **HT-4 — Empresas referenciadas por historia [D]:** **R1 no es tratamiento de referencias históricas a
   `Company`.** Una empresa referenciada por `EmployeeEmployerPeriodCompany` o por
   `PositionOrgScopePeriodNode.companyId` **conserva su ID**: se excluye del inventario de borrado.
@@ -206,9 +210,10 @@ retirarse sin romper la resolución histórica: la dimensión "sector anterior" 
   redefinición posterior y aprobada de C2 (que conserve explícitamente las empresas históricas) podría
   habilitarla. **Nunca se reasigna una FK histórica** para liberar el borrado. Para la referencia de
   catálogo de `DoubleHourRule` siguen disponibles R1/R2/R3 (§3.2).
-  *(Especificación §12: archivar esa empresa en C2 es una **capacidad futura condicionada** (§12.7) —
-  sólo se implementa y activa con el contrato de raíces históricas (§12.2), el marcado `archivedAt`
-  y G4/G7/G8 verdes sobre la copia; mientras tanto C2 **sigue abortando** como se describe.)*
+  *(**D-B1 aprobada (2026-10-08):** archivar esa empresa en C2 es una **capacidad futura
+  condicionada** (§12.7) — sólo se implementa y activa con el contrato de raíces históricas (§12.2),
+  el marcado `archivedAt`, G4/G7/G8 verdes sobre la copia y **D-1 elegido en C2** con el significado
+  actualizado; mientras tanto C2 **sigue abortando** como se describe.)*
 - **HT-5 — Divergencia de la copia [C/R]:** en la copia de ensayo hay filas de QA que referencian
   registros del inventario (`PositionOrgScope` → UN antigua; 4 filas de `EmployeeEmployerPeriodCompany`
   → empresas en C2; reporte `d5-org-reorg-inventory-copy-2026-10-08.json`). Se resuelven excluyendo los
@@ -337,11 +342,11 @@ de datos** con los scripts corregidos y reprodujeron el mismo resultado [R]: **7
 
 ### 4.1 DDL de la migración (archivo único, en `reorg-r2`) y guarda por clases de fila
 
-> **Especificación registrada (2026-10-08, §12):** si se aprueba **D-B1**, esta tabla se reemplaza
-> por la especificación de §12.1-§12.5 — archivo explícito (`archivedAt`) con formas y CHECKs
-> condicionales, raíces históricas como contrato del inventario y guardas G1-G9, en vez de `NOT NULL`
-> global y de abortar con "Retenidas por historia". Hasta esa aprobación, **este §4.1 sigue
-> rigiendo**.
+> **D-B1 aprobada (2026-10-08):** esta tabla queda **reemplazada** por la especificación de
+> §12 (§12.1-§12.13) — archivo explícito (`archivedAt`) con formas y CHECKs condicionales, raíces
+> históricas como contrato del inventario y guardas G1-G9, en vez de `NOT NULL` global y de abortar
+> con "Retenidas por historia". Se conserva aquí como **registro del plan previo**; no se ejecuta
+> M2 sin implementar y validar §12 (§12.11).
 
 La guarda previa clasifica las filas antes de cualquier DDL y **aborta** si alguna queda en una clase
 incompatible. Nunca exige `User.companyId NOT NULL` (sigue siendo nullable y administrativo).
@@ -409,11 +414,14 @@ sincronización de `schema.prisma` + `prisma validate` + regeneración del clien
   backfill con el criterio previo, motor y frontend desde el dato persistido); **migración aplicada y
   equivalencia antes/después verificada en la copia el 2026-10-08** [R] (78 pares únicos iguales
   entre `ff1565f` y `8a2985e`, 0 diferencias, 5 `MISSING` intactos, cierres por ID y contenido iguales). Deja de bloquear M2
-  por sí solo; el resto de A8 (A8-1/A8-2/A8-5) sigue abierto.
-- **Nodos históricos (hallazgo 2)** — §3.3 HT-2: sin conversión neutra demostrada, el nodo se conserva
-  y M2 queda bloqueada.
+  por sí solo; A8-1/A8-2 están especificados en §12 con **D-B1/D-B2 resueltas** y sólo falta
+  **validación técnica**; siguen abiertos A8-5 y las decisiones de la lista de abajo.
+- **Nodos históricos (hallazgo 2)** — §3.3 HT-2: con **D-B1 aprobada** no hay conversión que
+  demostrar — el nodo se **archiva** con su forma vieja (§12.1). El bloqueo que queda es técnico:
+  implementar y validar §12 antes de M2.
 - **Empresas históricas (hallazgo 4)** — §3.3 HT-4: en C2, aborto si hay historia que referencie una
-  empresa del inventario.
+  empresa del inventario. **D-B1 aprobada** la vuelve capacidad condicionada (§12.7): se activa sólo
+  al implementar el contrato de raíces y elegir D-1 en C2.
 - **D-0** — sin `NEON_API_KEY`/project/branch ids, `org-reorg-cleanup` y `org-reorg-restore` no corren
   ni en dry-run (identidad NO VERIFICADA) [C].
 - **D-1** — modo C1/C2 sin elegir: inventario, guarda de M2 y tratamiento de "Domingos".
@@ -500,10 +508,12 @@ clasificación, cobertura).
 4. `migrate status` en solo lectura muestra exactamente las aditivas esperadas de `reorg-r1`
    (`org_location_expand` + `labor_history_periods` + `sector_org_classification`, ésta **ya aplicada**
    en la copia el 2026-10-08, §3.4) y **ninguna M2**.
-5. Inventario congelado con las **tres clases de fila** separadas: eliminables / retenidas por historia /
-   nuevas (§4.1); 0 FKs sin clasificar.
-6. Historia: HT-1 corrido; toda referencia histórica a `Company` implica retener esa empresa (HT-4) y,
-   en C2, aborto explícito.
+5. Inventario congelado con las **clases de fila** por §12.2 (`borrable` / `conservada` / `nueva` si
+   la ampliación la incorpora) y con `retained` / `deletable` separados; **F0** en verde antes de
+   escribir (§12.3); 0 FKs sin clasificar.
+6. Historia: HT-1 corrido; `outsideInventory` = ∅ sólo por ampliación (sin reconocimiento, §12.2);
+   toda referencia histórica a `Company` implica retener esa empresa (HT-4); en C2, aborto hasta que
+   §12.7 esté implementada y D-1 así lo decida.
 7. **Clasificación legado/nuevo persistente** (§3.4) implementada y con **equivalencia antes/después
    verificada en la copia** (2026-10-08, 78 pares únicos, 0 diferencias) [R]; soporte legado intacto
    mientras haya evidencia que lo necesite.
@@ -519,18 +529,23 @@ clasificación, cobertura).
 
 1. **Respaldo** doble + restauración probada (B0).
 2. **Migraciones aditivas** (`reorg-r1`: M1 + historia) → manifiesto previo/posterior → drift vacío.
-3. **Inventario congelado** + clasificación por clases de fila (historia, `PositionOrgScope`, reglas).
-4. **Tratamiento de dependencias:** R1/R2/R3 sólo sobre catálogo; retenciones por historia resueltas
-   (HT-2/HT-3/HT-4); `decisions.json` firmado.
-5. **Limpieza autorizada:** dry-run → revisión → `--apply --backup` → **V1** (ADR §5.4) →
-   prueba de restauración → limpieza final. Dentro de la misma transacción: equivalencia del motor
-   **histórico** (0 cambios; los 5 `MISSING` siguen `MISSING`) [D].
-6. **M2** (`reorg-r2`): `migrate status` → `deploy` → guarda por clases de fila (§4.1) → DROP, NOT NULL
-   y `(zoneId, code)`.
+3. **Inventario congelado** + clasificación por clases de fila (historia, `PositionOrgScope`, reglas)
+   + **F0** (formas transicionales sin mirar `archivedAt`, §12.3).
+4. **Tratamiento de dependencias:** raíces y retención (`outsideInventory` sólo se resuelve por
+   ampliación, §12.2); R1/R2/R3 sólo sobre catálogo — **sólo R3 aprobados** quedan referenciando
+   archivados —; retenciones por historia resueltas (HT-2/HT-3/HT-4); borrados autorizados enumerados
+   (§12.4); `decisions.json` firmado.
+5. **Limpieza autorizada + archivo:** dry-run → revisión → `--apply --backup` → **V1** (ADR §5.4) →
+   prueba de restauración → limpieza final con `archivedAt = retained` → **F1** al cerrar (§12.3).
+   Dentro de la misma transacción: equivalencia del motor **histórico** (0 cambios; los 5 `MISSING`
+   siguen `MISSING`) [D].
+6. **M2** (`reorg-r2`): `migrate status` → `deploy` → CHECKs de forma (§12.3) → DROP de
+   `Employee/User/ClockDevice.sectorId` (conteo 0), `NOT NULL` y `(zoneId, code)`; **sin purga**
+   (D-B2).
 7. **Recarga manual:** Organización → Ubicaciones → Puestos → Legajos (con ubicaciones de trabajo) y
    **apertura de historia auditada desde la fecha de corte** para las dimensiones aplicables, incluidos
    alcances de puestos (§6.1); antes de la corte, `MISSING` donde falte evidencia.
-8. **Verificaciones:** V2 por ID y contenido; **cobertura por intervalos** `[corte, hoy]` y coherencia
+8. **Verificaciones:** **F2** (§12.3) + V2 por ID y contenido; **cobertura por intervalos** `[corte, hoy]` y coherencia
    con los datos actuales (§6.1.3-4); motor en dry-run sin cambios de valor; `migrate status` al día;
    typecheck/test/build verdes en `reorg-r2`; equivalencia de clasificación legado/nuevo (§3.4);
    QA visual contra `docs/reference-ui/`; contratos de §2.6 actualizados; **A8-4** (`EXPLAIN` de
@@ -538,13 +553,18 @@ clasificación, cobertura).
 
 ### 7.3 Qué cambió respecto del plan de ADR §12.4
 
-- Paso 3: clasificación en tres clases de fila + historia y `PositionOrgScope`.
-- Paso 4: R1/R2/R3 sólo para catálogo; referencias históricas a `Company` retienen ID (HT-4).
-- Paso 5: motor **histórico**; acepta sólo los 5 `MISSING` preexistentes [R].
+- Paso 3: clasificación por clases de fila + historia y `PositionOrgScope` + **F0** (§12.3).
+- Paso 4: raíces/retención con `outsideInventory` sólo por ampliación (§12.2); R1/R2/R3 sólo para
+  catálogo — **sólo R3 aprobados** hacia archivados —; borrados autorizados enumerados (§12.4);
+  referencias históricas a `Company` retienen ID (HT-4).
+- Paso 5: motor **histórico**; acepta sólo los 5 `MISSING` preexistentes [R]; la limpieza incluye el
+  archivo (`archivedAt = retained`) y cierra con **F1** (§12.3).
 - Paso 5½ (nuevo): clasificación legado/nuevo persistente con equivalencia antes/después (§3.4).
-- Paso 6: guarda por clases; ningún registro con forma vieja sobrevive sin conversión neutra demostrada.
+- Paso 6: CHECKs de forma (§12.3); ningún registro con forma vieja queda activo — se **archiva**
+  (F1) en vez de convertirse; sin purga de columnas ni de filas (D-B2).
 - Paso 7: recarga + apertura de historia **desde la fecha de corte**, con verificación por intervalos.
-- La restauración (`org-reorg-restore`) sigue siendo válida **sólo antes de M2** (`LEGACY_COLUMNS`).
+- La restauración (`org-reorg-restore`) sigue siendo válida **sólo antes de M2** (`LEGACY_COLUMNS`)
+  y debe reponer `archivedAt` además de filas y columnas (§12.9.7).
 
 ## 8. Separación del trabajo
 
@@ -552,8 +572,9 @@ clasificación, cobertura).
 
 - Este documento y sus correcciones en el ADR (§6, §11, §19.3, §20).
 - Inventario de dependencias (§2) con marcas de evidencia [C]/[R]/[D].
-- Diseño: guarda por clases de fila (§4.1), HT-1…HT-5 (§3.3), procedimiento de cobertura desde el corte
-  (§6.1) — a ratificar; clasificación persistente (§3.4) ya **implementada** como A8-3.
+- Diseño: especificación **§12** (D-B1 aprobada; diseño técnico pendiente de validación), HT-1…HT-5
+  (§3.3), procedimiento de cobertura desde el corte (§6.1) — a ratificar; clasificación persistente
+  (§3.4) ya **implementada** como A8-3. §4.1 queda como registro del plan previo.
 - Lista de cambios de código por archivo (§4.2) como plan de A8.
 - Corridas de solo lectura en la copia ya realizadas (2026-10-08, archivos de §1).
 - Actualizar `decisions.json` cuando se decidan D-1/D-3, y elegir la fecha de corte.
@@ -562,7 +583,7 @@ clasificación, cobertura).
 
 | Decisión | Qué bloquea |
 |---|---|
-| **D-1** (C1/C2) | modo del inventario, contenido de la guarda (clase "eliminables"), `EmployeeCompany`/`CostCenterCompany`, tratamiento de "Domingos"; en C2, aborto por empresas históricas (HT-4) |
+| **D-1** (C1/C2) | modo del inventario, clases `borrable`/`conservada` y `retained`/`deletable` (§12.2), `EmployeeCompany`/`CostCenterCompany`, tratamiento de "Domingos"; en C2, aborto por empresas históricas hasta implementar §12.7 (HT-4) |
 | **D-2** (zona completa) | ampliación de ubicaciones y su recarga (no el DDL de M2) |
 | **D-3** (rastro visible vs `AuditLog`) | salida del script de limpieza; si se elige historial visible, ampliarlo antes de B1 |
 | **D-6** (variantes de puestos por alcance) | redacción de la recarga de puestos y el cierre de B4 |
@@ -583,7 +604,8 @@ El usuario autoriza, **durante el procedimiento posterior de prueba** (no en est
 
 - estructura del modelo anterior y puestos actuales;
 - dependencias de configuración que acompañan a esos registros (vínculos `CostCenter*`,
-  `PositionSalaryCategory` y demás filas de configuración en cascada), para recargarlos a mano.
+  `PositionSalaryCategory`, `EmployeeCompany`, alcances actuales y demás filas de configuración en
+  cascada), para recargarlos a mano — familias, condiciones y conteos en **§12.4**.
 
 La autorización **no** alcanza a:
 
@@ -599,14 +621,16 @@ de forma explícita y ordenada, con manifiesto V1).
 
 ## 10. Decisiones pendientes con ejemplos breves
 
+*(Resueltas el 2026-10-08: **D-B1**, **D-B2** y **D-14** — §12.11; ya no figuran como pendientes.)*
+
 | Id | Decisión | Ejemplo |
 |---|---|---|
 | D-1 | C1 o C2 | C1 conserva LOSOD y "Domingos"; C2 exige R1/R2 para la regla **y aborta** si la historia referencia una empresa del inventario (HT-4). *Si se implementa el archivo de §12.7, el alcance de C2 pasa a "todas las empresas del inventario **salvo las archivadas por historia**" (aclaración, no decisión nueva).* |
 | D-2 | Zona completa | ¿"Todos los establecimientos de Zona Norte" se marca explícitamente o una lista vacía lo significa? (Hoy: lista vacía se rechaza) |
 | D-3 | Rastro de la limpieza | Sólo `AuditLog` (script actual) vs filas en el historial visible del legajo |
 | D-6 | Puestos por alcance | ¿Un "Gerente de O'Dwyer" y uno "de Tropa" son dos puestos o uno con dos alcances? (Hoy: una función con alcance distinto = puesto distinto) |
-| **A8-1** | Nodo retenido por historia con forma vieja | **Especificación entregada (§12), pendiente de aprobación D-B1:** archivo explícito `archivedAt` en las 6 tablas de `DELETE_ORDER` con invariantes I1-I6 (§12.1) y raíces históricas como contrato del inventario (§12.2); sin inventar padres y sin conversión. Mientras D-B1 no se apruebe sigue rigiendo lo anterior: si `EmployeeLegacySectorPeriod` apunta a un Sector del inventario y no se demuestra una conversión neutra, **se conserva y M2 queda bloqueada** |
-| **A8-2** | Alcance exacto de la guarda de M2 | **Especificación entregada (§12):** formas nueva/archivada por catálogo con aborto ante estados mixtos (§12.3), lista cerrada de relaciones que rechazan archivados (§12.4), guardas G1-G9 con G7 de comparación profunda de las 7 tablas (§12.5-§12.6), columnas retirar-vs-conservar y cambios por componente (§12.3, §12.9), pruebas AT-1..AT-9 (§12.10); pendiente de D-B1. Sin aprobación, rige §4.1: clases eliminable/retenida/nueva; `User.companyId` **no** se exige NOT NULL; puestos sin alcance admitidos |
+| **A8-1** | Nodo retenido por historia con forma vieja | **D-B1 aprobada (2026-10-08); diseño técnico pendiente de validación:** archivo explícito `archivedAt` en las 6 tablas de `DELETE_ORDER` con invariantes I1-I6 (§12.1) y raíces históricas con ampliación obligatoria del inventario (§12.2); sin inventar padres ni conversión. Falta implementar + AT + corrida en la copia; hasta entonces no se ejecuta M2 |
+| **A8-2** | Alcance exacto de la guarda de M2 | **D-B1/D-B2 aprobadas; especificación corregida (§12):** fases F0/F1/F2 con condiciones separadas (§12.3), lista cerrada de relaciones + borrados autorizados de configuración (§12.4), guardas G1-G9 con G7 profunda (§12.5-§12.6), cambios por componente (§12.9), pruebas AT-1..AT-9 (§12.10) y cadena extremo a extremo (§12.12). `User.companyId` **no** se exige NOT NULL (D-14); puestos sin alcance admitidos; sin purga (D-B2) |
 | **A8-3** | Clasificación legado/nuevo persistente | **Cerrado (2026-10-08):** `Sector.isLegacy` (sin `@default`) sustituye a `!rule.sector.businessUnitId` (§3.4); backfill con el criterio previo en la migración aditiva `20261008110000` (**aplicada sólo a la copia `org-location-reorg`**), motor y frontend desde el dato persistido, pruebas con motor real; **equivalencia antes/después [R]**: 78 pares únicos idénticos (`ff1565f` vs `8a2985e`), 0 diferencias, 5 `MISSING` intactos, manifiesto con única diferencia `Sector.isLegacy` + `_prisma_migrations +1`, cierres por ID y contenido iguales. Mientras haya evidencia legada, el soporte legado se conserva |
 | **A8-4** | Índices y planes de consulta tras el DROP | `EXPLAIN` de listados antes de eliminar `[status, sectorId]` y `[sectorId]`; cobertura de `@@index([status])` (schema 817) |
 | **A8-5** | Fecha de corte de cobertura | Fecha desde la que la recarga abre períodos auditados (§6.1). Hoy **no elegida ni ejecutada**; hasta decidirla, `MISSING` se conserva |
@@ -633,21 +657,30 @@ de forma explícita y ordenada, con manifiesto V1).
   `{id, nombre}` y límites del snapshot lógico documentados; comparaciones `.summary.json`
   re-ejecutadas **sin base de datos** con los mismos resultados (78 únicos, 0 diferencias, 5
   `MISSING`, 8 cierres intactos).
-- [x] **A8-1/A8-2 especificados** (§12, revisado tras hallazgos de Codex): archivo explícito
-  `archivedAt` con invariantes I1-I6, contrato de raíces históricas del inventario, formas
-  nueva/archivada con aborto ante estados mixtos, lista cerrada de relaciones que rechazan
-  archivados, guardas G1-G9 (G7 con comparación profunda de las 7 tablas de historia), C2 como
-  capacidad futura condicionada, unicidad archivado/nuevo, cambios por componente y pruebas
-  AT-1..AT-9. **Pendiente: aprobación D-B1** (§12.11); hasta entonces siguen rigiendo §4.1 y HT-2.
-- Siguiente paso: aprobar o rechazar D-B1 sobre la especificación de §12; luego, en `reorg-r2`,
-  implementar M2 y el retiro de consumidores, probarlos en la copia aislada, y recién entonces
-  ejecutar el ensayo de §7 (la clasificación A8-3 ya no está pendiente).
+- [x] **A8-1/A8-2 especificados y corregidos** (§12): diseño inicial en `f183e3a`, reescrito como
+  especificación en `e4fb4f0` y corregido tras la revisión de Codex sobre `e4fb4f0` (§12.13) —
+  `archivedAt` con invariantes I1-I6, raíces con ampliación obligatoria sin reconocimiento, fases
+  F0/F1/F2 con condiciones separadas, lista cerrada de relaciones + borrados autorizados de
+  configuración, guardas G1-G9 (G7 con comparación profunda), `DoubleHourRule` sólo con R3
+  aprobado, C2 como capacidad condicionada, unicidad D-13, cadena extremo a extremo (§12.12) y
+  pruebas AT-1..AT-9.
+- [x] **Decisiones de este bloque resueltas** (§12.11): **D-B1 aprobada**, **D-B2 aprobada sin purga
+  en esta transición** y **D-14 ratificada** (empresa administrativa nullable; retiro funcional del
+  sector). Siguen abiertas D-1 (con la aclaración de §12.7), D-2, D-3, D-6, A8-5 y D-0 — ninguna
+  nueva por esta especificación.
+- Siguiente paso: **validar el diseño técnico** de §12 (implementación + AT-1..AT-9 sobre la copia
+  aislada, con `typecheck`/`test`/`build` verdes); recién entonces, en `reorg-r2`, ejecutar M2 y el
+  resto del ensayo de §7 (D-B1/D-B2/D-14 ya no están pendientes).
 
 ## 12. A8-1 y A8-2 — especificación de archivo legado, raíces históricas y guarda de M2 (2026-10-08) [D]
 
-**Estado: especificación implementable, pendiente de aprobación (D-B1).** Este commit sólo corrige
-la propuesta `f183e3a` según los hallazgos de Codex: no hay migraciones, código ni escrituras en
-bases. Si D-B1 se rechaza, §12 queda anulado y siguen rigiendo §4.1 y HT-2.
+**Estado (2026-10-08): decisiones de producto resueltas — D-B1 **aprobada**, D-B2 **aprobada** (sin
+purga durante esta transición) y D-14 **ratificada** — y diseño técnico **pendiente de validación**
+(implementación + pruebas AT + corrida en la copia aislada).** Este commit sólo corrige la
+especificación según la revisión de Codex sobre `e4fb4f0`: no hay migraciones, código ni escrituras
+en bases. Con D-B1 aprobada, §12 **reemplaza** a §4.1 como diseño vigente (§4.1 queda como registro
+del plan previo); HT-2 y HT-4 dejan de plantear un bloqueo de producto y pasan a depender de
+implementar y validar este §12 antes de M2.
 
 Tres niveles de garantía se usan en toda la especificación y no se mezclan:
 
@@ -657,9 +690,11 @@ Tres niveles de garantía se usan en toda la especificación y no se mezclan:
   §7.2 y abortan el proceso si fallan.
 
 Elecciones técnicas ya tomadas acá (no son decisiones de producto): representación `archivedAt`,
-escritor único, contrato de raíces del inventario, G7 con comparación profunda, NULLIFY ampliado a
-objetivos archivados, coexistencia de los dos únicos de `Establishment` y excepción de
-`DoubleHourRule`.
+escritor único, contrato de raíces del inventario con **ampliación obligatoria** cuando hay
+referencias fuera de él (sin reconocimiento ni flag), fases F0/F1/F2 con condiciones separadas,
+G7 con comparación profunda, NULLIFY ampliado a objetivos archivados, borrados autorizados de
+configuración enumerados (§12.4), `DoubleHourRule` sólo con R3 aprobado y coexistencia de los dos
+únicos de `Establishment`.
 
 ### 12.1 Modelo elegido: archivo explícito (`archivedAt`)
 
@@ -686,9 +721,9 @@ Invariantes:
   manifiesto (raíces históricas + R3 + closure de ancestros, §12.2). La guarda G4 exige que el
   conjunto archivado en la base sea **idéntico** al `retained` del manifiesto (diferencia simétrica
   0). Ningún alta puede declararse archivada porque ninguna ruta de alta escribe la columna.
-- **I3 — De un solo sentido:** no existe servicio, script ni endpoint de desarchivar. La única
-  operación que revierte el archivo es borrar la fila, y sólo en la etapa de purga (D-B2, si se
-  decide).
+- **I3 — De un solo sentido:** no existe servicio, script ni endpoint de desarchivar. **D-B2
+  aprobada sin purga durante esta transición:** nada previsto revierte el archivo; retirar filas
+  archivadas será una etapa futura, con su propia decisión, respaldo y prueba de restauración.
 - **I4 — Inmutabilidad:** `updateNode`/`deleteNode` sobre un registro archivado → 409
   `ORG_STRUCTURE_ARCHIVED_RECORD`. Es más estricto que el tratamiento legacy actual (que permite
   corregir nombre/código/estado): el contenido archivado es evidencia de G4/G7 y no se toca.
@@ -736,45 +771,91 @@ de inventario con los IDs, **no sólo conteos**.
 
 1. cargar `records` (candidatos a borrar);
 2. cargar `history` (IDs exactos por fuente);
-3. `roots` = `history.insideInventory` ∪ destinos R3 ∪ retenciones de clase 4;
+3. `roots` = (`history.insideInventory` ∩ borrables) ∪ destinos R3 ∪ retenciones de clase 4;
 4. `retained = retainedClosure(inventory, roots)` — **antes de calcular `deletable`**;
 5. `deletable[table] = records[table] − retained[table]`;
 6. aserción fail-closed: `∪ referencedIds ∩ ∪ deletable = ∅` (viola → aborta el plan; no es sólo
    una guarda externa);
-7. `outsideInventory` de cada fuente → issue `HISTORY_REFERENCE_OUTSIDE_INVENTORY` con los IDs
-   exactos.
+7. `outsideInventory` de cada fuente ≠ ∅ → issue `HISTORY_REFERENCE_OUTSIDE_INVENTORY` con los IDs
+   exactos y **bloqueo duro** (única salida: ampliación, ver abajo).
 
-**Referencias fuera del inventario: nunca se ignoran.** Su destino está fuera del alcance (no se
-borra), pero el proceso **aborta** salvo que el operador reconozca explícitamente la lista en el run
-report (IDs + fecha + responsable). Esperado en `development`: 0 (expectativa HT-1); cualquier no-cero
-obliga a revisar si el inventario quedó incompleto (re-congelar) o a reconocer el caso. Con este
-contrato, el issue `HISTORY_REFERENCES_INVENTORY` deja de pedir "retener o decidir": las raíces ya
-entraron en `retained` y el issue es informativo, salvo conflicto con una fila de clase 4 apuntando al
-mismo ID (eso sigue abortando).
+El congelado registra además, por fila, su **clase**: `borrable` (`records`), `conservada` (en
+alcance y activa por el modo elegido — p. ej. empresas bajo C1) o, sólo si la ampliación la
+incorpora, `nueva` (fuera de la transición). Sólo un **borrable** referenciado por historia se
+promueve a raíz → `retained` → archivado: un registro `conservada` o `nueva` referenciado por
+historia **no** se archiva.
+
+**Membresía de la transición (explícita).** Pertenecen a la transición sólo los registros que cumple
+el criterio del inventario congelado del modo elegido (candidatos a borrado de ADR §12.2 / A8 §7.2
+paso 3), más sus dependencias necesarias (ancestros para el closure de retención y filas hijas que
+deben clasificarse), junto con los registros en alcance que el modo **conserva activos**. Una
+referencia en historia **no crea membresía**: un registro del modelo nuevo o fuera de alcance que
+aparezca en alguna fuente de la tabla no entra en la transición, no se archiva ni se borra.
+
+**`outsideInventory` bloquea sin reconocimiento ni flag de bypass.** Único camino de continuación:
+**ampliar el inventario con esos destinos y sus dependencias, re-congelar y recalcular `roots`,
+`retained` y `deletable`**, aplicando a cada destino incorporado el criterio de membresía de arriba:
+
+- cumple el criterio (registro de la transición que faltó) → entra como `borrable`; al estar
+  referenciado por historia se promueve a raíz → `retained` → archivado;
+- no lo cumple (catálogo nuevo válido o registro conservado fuera de alcance) → se registra como
+  `nueva`/`conservada`, **sin archivar ni borrar**, con la referencia intacta.
+
+El ciclo (ampliación → re-congelado → F0 → recálculo de raíces y retención) se repite hasta que
+`outsideInventory` quede vacío. Esperado en `development`: 0 desde el primer congelado (expectativa
+HT-1); un no-cero nunca se "reconoce": se resuelve ampliando. Con este contrato el issue
+`HISTORY_REFERENCES_INVENTORY` queda informativo (las raíces ya entran en `retained`), salvo conflicto
+con una fila de clase 4 apuntando al mismo ID (eso sigue abortando).
 
 ### 12.3 Formas y validaciones
 
-**Formas por catálogo** (`archivedAt` es la llave; "tal cual" = no se modifica el valor existente):
+**Formas por fila** (una sola tabla; "tal cual" = no se modifica el valor existente). **F0** la
+evalúa **ignorando `archivedAt`**: sólo clasifica cada fila como vieja (legado) o nueva.
+**F1** la evalúa **con `archivedAt`**: `archivedAt IS NULL` ⇔ forma nueva; `archivedAt NOT NULL`
+⇒ forma vieja (con `tal cual` sólo donde la tabla lo admite).
 
-| Tabla | Forma nueva (activo) | Forma archivada | Estado mixto → **aborta** |
+| Tabla | Forma vieja (legado) | Forma nueva (activa) | Estado mixto → **aborta** |
 |---|---|---|---|
-| Company | `archivedAt IS NULL` | `archivedAt NOT NULL` (demás columnas tal cual; sin padres) | n/a (sin padres) |
-| BusinessUnit | `archivedAt IS NULL ∧ companyId NOT NULL` | `archivedAt NOT NULL ∧ companyId NOT NULL` | n/a (misma forma en ambos casos) |
-| Establishment | `archivedAt IS NULL ∧ zoneId NOT NULL ∧ companyId IS NULL ∧ businessUnitId IS NULL` | `archivedAt NOT NULL ∧ zoneId IS NULL ∧ companyId NOT NULL` (`businessUnitId` tal cual) | ni una ni otra: `zoneId` y `companyId` ambos `NULL` (huérfano) o ambos `NOT NULL` (doble padre) |
-| Area | `archivedAt IS NULL ∧ sectorId NOT NULL ∧ establishmentId IS NULL` | `archivedAt NOT NULL ∧ sectorId IS NULL ∧ establishmentId NOT NULL` | ambos padres `NULL` o ambos `NOT NULL` |
-| Sector | `archivedAt IS NULL ∧ isLegacy = false ∧ businessUnitId NOT NULL ∧ areaId IS NULL` | `archivedAt NOT NULL ∧ isLegacy = true ∧ businessUnitId IS NULL` (`areaId` tal cual) | `isLegacy` y `businessUnitId` contradictorios (bicondicional de G1) |
-| Position | `archivedAt IS NULL ∧ sectorId IS NULL` | `archivedAt NOT NULL` (`sectorId` tal cual) | `sectorId NOT NULL` **y** `PositionOrgScope` activos a la vez (la fila pertenece a los dos mundos) |
+| Company | única forma: sin padres | idem | n/a |
+| BusinessUnit | `companyId NOT NULL` | idem | n/a (misma forma) |
+| Establishment | `zoneId IS NULL ∧ companyId NOT NULL` (`businessUnitId` tal cual) | `zoneId NOT NULL ∧ companyId IS NULL ∧ businessUnitId IS NULL` | ni una ni otra: `zoneId` y `companyId` ambos `NULL` (huérfano) o ambos `NOT NULL` (doble padre) |
+| Area | `sectorId IS NULL ∧ establishmentId NOT NULL` | `sectorId NOT NULL ∧ establishmentId IS NULL` | ambos padres `NULL` o ambos `NOT NULL` |
+| Sector | `isLegacy = true ∧ businessUnitId IS NULL` (`areaId` tal cual) | `isLegacy = false ∧ businessUnitId NOT NULL ∧ areaId IS NULL` | `isLegacy` y `businessUnitId` contradictorios (bicondicional de G1) o `isLegacy = false` con `areaId NOT NULL` |
+| Position | `sectorId NOT NULL` (sin alcance activo) | `sectorId IS NULL` | `sectorId NOT NULL` **y** `PositionOrgScope` activos a la vez (la fila pertenece a los dos mundos) |
 
-Fases de validación:
+En `Position`, la fila archivada conserva el resto **tal cual** (típicamente `sectorId NOT NULL`;
+se admite `NULL` heredado) — la equivalencia estricta `archivedAt` ⇔ forma aplica a las otras cinco
+tablas.
 
-- **F0 — pre-limpieza, antes de cualquier backfill de `archivedAt`:** escaneo por tabla de filas que
-  no caen en exactamente una forma. **Cualquier estado mixto aborta** con tabla + IDs; no se rellena
-  `archivedAt` ni se borra nada hasta que F0 = 0. Las resoluciones son puntuales, manuales y sobre la
-  copia (no son decisiones de producto).
-- **F1 — post-limpieza:** formas completas con `archivedAt` (tabla de arriba), conjunto archivado ==
-  `retained` del manifiesto, eliminables = 0, junto con la verificación **V1** de ADR §5.4 (contenido
-  idéntico salvo el whitelist de `archivedAt`) — G2-G5 y G7.
-- **F2 — post-M2 y post-recarga:** invariantes activas + `migrate diff` vacío (G6, G8-G9).
+Fases de validación, con condiciones separadas (ninguna fase sustituye a otra):
+
+- **F0 — formas transicionales, paso 3, antes de escribir.** La columna `archivedAt` se agregó en el
+  paso 2 pero está **vacía**: F0 **no la exige ni la mira**. Condiciones:
+  1. cada fila de las 6 tablas cae en exactamente una forma de la tabla, evaluada **sin
+     `archivedAt`** (vieja o nueva); cualquier estado mixto → aborta con tabla + IDs;
+  2. G1 sin violaciones (`Sector.isLegacy ⇔ businessUnitId IS NULL`).
+  Cero tratamiento y cero limpieza hasta que F0 = 0; se vuelve a correr tras cada re-congelado por
+  ampliación (§12.2). Las resoluciones de mezcla son puntuales, manuales y sobre la copia (no son
+  decisiones de producto).
+- **F1 — después de calcular `retained`/`deletable`, aplicar el tratamiento y ejecutar la
+  transacción de archivo + limpieza (cierre del paso 5).** Condiciones:
+  1. **archivo exacto:** IDs con `archivedAt NOT NULL` == `retained` del manifiesto (diferencia
+     simétrica = 0, G4);
+  2. **sin eliminables:** filas de las 6 tablas con ID ∈ `deletable` → 0 (G3);
+  3. **formas finales:** equivalencia `archivedAt` ⇔ forma de la tabla (arriba), sin estados
+     mezclados;
+  4. **contenido:** idéntico al previo salvo `archivedAt` en `retained` y los borrados autorizados
+     enumerados del §12.4 — verificación **V1** de ADR §5.4;
+  5. **historia intacta:** las 7 tablas idénticas columna por columna (G7);
+  6. **sin vínculos activos hacia archivados:** G5 — salvo la propia fila archivada (forma
+     `tal cual`) y `DoubleHourRule` con R3 aprobado; los borrados autorizados del §12.4 ya no existen
+     desde el paso 5 (§12.4).
+  **F1 es la compuerta de M2:** sin F1 verde no hay paso 6.
+- **F2 — post-M2 y post-recarga (paso 8).** Condiciones:
+  1. invariantes I1-I6 activas en servicio (sin endpoint de archivo, 409 en filas archivadas);
+  2. CHECKs presentes y `validated` en `information_schema` + `prisma migrate diff` vacío (G6);
+  3. unicidad `(zoneId, code)` operativa y lookup de zona sin archivados (§12.8);
+  4. G9 (rendimiento) y el resto de las verificaciones del paso 8.
 
 (F0/F1/F2 son las fases de validación de formas de esta especificación; no confundir con la
 verificación V1 por ID y contenido de ADR §5.4, que sigue llamándose V1.)
@@ -792,41 +873,90 @@ A2): se verifican con G6.
 `ClockDevice.sectorId` (+ índice), con precondición de conteo 0; el NULLIFY de la limpieza se amplía
 para vaciar también los valores que apunten a filas **archivadas** (`Employee.sectorId` es estado
 actual, no evidencia: la evidencia del sector anterior vive en `EmployeeLegacySectorPeriod`). Se
-**conservan** hasta la purga (D-B2) `Sector.areaId`, `Area.establishmentId`,
-`Establishment.companyId`, `Establishment.businessUnitId` y `Position.sectorId`: son la forma
-archivada; dropearlos mutilaría el archivo. `User.companyId` no se exige NOT NULL (nullable y
-administrativo, §4.1).
+**conservan sin DROP ni vaciado durante toda esta transición** — D-B2 aprobada sin purga —
+`Sector.areaId`, `Area.establishmentId`, `Establishment.companyId`, `Establishment.businessUnitId`
+y `Position.sectorId`: son la forma archivada; dropearlos mutilaría el archivo. Su retiro queda para
+la etapa futura (nueva decisión + respaldo + prueba). `User.companyId` no se exige NOT NULL (nullable
+y administrativo, D-14 ratificada).
 
 Garantías de **servicio** y de **guardas**: capa servicio en §12.4 (lista cerrada de relaciones) y
 §12.1 (invariantes I1-I4); capa guardas en §12.5 (G1-G9).
 
-### 12.4 Relaciones nuevas que rechazan archivados (lista cerrada)
+### 12.4 Relaciones y vínculos: qué rechaza archivados y qué se borra autorizadamente
 
 | Familia | Relación / operación | Mecanismo de rechazo |
 |---|---|---|
 | **Padres organizacionales** | `Area.sectorId` (alta/edición de área), `Sector.businessUnitId` (alta/edición de sector), `Establishment.zoneId` (alta/edición de establecimiento), `BusinessUnit.companyId` (alta/edición de UN) | `assertParent` pasa a rechazar por `archivedAt NOT NULL` (hoy rechaza por `isLegacy`/padre-NULL, que no cubre Company/BusinessUnit) → 400/409 |
 | **Alcances** | `PositionOrgScope.{companyId,businessUnitId,sectorId,areaId}` (alta/edición) y apertura de `PositionOrgScopePeriodNode` | `validateScopes` agrega rechazo de nodo archivado → 409, junto al `POSITION_SCOPE_LEGACY` actual |
 | **Ubicaciones** | `EmployeeWorkLocationEstablishment.establishmentId` (alta/edición de ubicación) y `ClockDevice.establishmentId` (colocación de dispositivo, D-15) | establecimiento archivado → 400 |
-| **Centros de costo** | vínculos `CostCenterCompany/BusinessUnit/Establishment/Area/Sector` | `assertNoNewLegacyLinks` migra de detección legacy a `archivedAt NOT NULL`; los vínculos previos se conservan, los nuevos hacia archivados se rechazan |
+| **Centros de costo** | vínculos `CostCenterCompany/BusinessUnit/Establishment/Area/Sector` | `assertNoNewLegacyLinks` migra de detección legacy a `archivedAt NOT NULL` y rechaza **vínculos nuevos** hacia archivados; los vínculos existentes hacia registros retirados **no se conservan**: son borrado autorizado en la limpieza (bloque de abajo) |
 | **Legajos** | `Employee.positionId` (asignación de puesto) y `EmployeeCompany` (vínculo nuevo) | destino archivado → 400; el motor no se afecta (resuelve el pasado con las 7 tablas) |
-| **Usuarios** | `User.companyId` / `User.sectorId` en edición de alcance | destino archivado → 400 mientras esas columnas existan (retiro final sujeto a D-14) |
-| **Excepción documentada** | `DoubleHourRule.companyId/sectorId/positionId` | **se permiten** hacia archivados: es exactamente R3 y el motor ya distingue legado/nuevo por `isLegacy` (§17.1). No cambia |
+| **Usuarios** | `User.companyId` en edición de alcance | destino archivado → 400 mientras la columna exista; `User.companyId` se conserva **nullable y administrativa** (D-14 ratificada) y nunca se exige NOT NULL; `User.sectorId` está **retirada funcionalmente** (no se expone ni se acepta) y se dropea en M2 con conteo 0 |
+| **Reglas de horas** | `DoubleHourRule.companyId/sectorId/positionId` | **Alta:** destino archivado → rechazado (400/409). **Edición:** sólo se conserva **sin cambio** una FK que la regla ya apuntara a un registro hoy archivado; cualquier asignación **nueva** hacia un archivado → rechazada. **Limpieza:** de las reglas que referencian registros del inventario sólo sobreviven las referencias con **R3 aprobada** en `decisions.json` (R1/R2 se aplican antes del marcado). Es la única fila no-historia admitida por G5; el motor distingue legado/nuevo por `isLegacy` (§17.1) |
 
 Complemento de servicio: todos los listados, selectores y filtros del modelo nuevo agregan
-`archivedAt IS NULL` (además de `status`); no existe endpoint de archivo.
+`archivedAt IS NULL` (además de `status`); no existe endpoint de archivo. Las referencias
+**históricas** no se rechazan nunca: apuntan a IDs conservados (§3.1).
+
+**Borrados autorizados de configuración (resuelve la contradicción con G5).** Los vínculos de
+configuración cuyo destino **sale del catálogo activo** — destino ∈ `deletable` (borrado) **o**
+destino ∈ `retained` (archivado) — **se borran en la misma transacción de limpieza (paso 5), antes de
+F1 y de G5**: por eso G5 exige 0 vínculos activos hacia archivados sin contradecir nada — lo
+prohibido es que **quede** un vínculo, no que se borre el autorizado. Alcance: sólo filas,
+**nunca tablas**, y sólo si no son evidencia protegida (la autorización de §9 ya los cubre):
+
+| Familia | Condición de borrado | Origen del tratamiento | Filas afectadas en la copia [R] |
+|---|---|---|---|
+| `CostCenterCompany.companyId` | destino ∈ `deletable` ∪ `retained` | `DELETE_LINKS` (`cleanupPlan.ts:58`) ampliado a destinos archivados | C1: 0 · C2: 3 |
+| `CostCenterBusinessUnit.businessUnitId` | ídem | `cleanupPlan.ts:59` | 1 (ambos modos) |
+| `CostCenterEstablishment.establishmentId` | ídem | `cleanupPlan.ts:60` | 2 |
+| `CostCenterArea.areaId` | ídem | `cleanupPlan.ts:61` | 4 |
+| `CostCenterSector.sectorId` | ídem | `cleanupPlan.ts:62` | 2 |
+| `EmployeeCompany.companyId` | ídem (la historia del vínculo vive en `EmployeeEmployerPeriodCompany`) | `cleanupPlan.ts:56` | C1: 0 · C2: 40 |
+| `PositionSalaryCategory.positionId` | ídem (asociación de puesto activo, no evidencia; no existe vigencia para esta asociación) | `cleanupPlan.ts:57` | 14 |
+| `PositionOrgScope.*` (alcances actuales) | fila nueva que depende de un registro retirado (clase 4) → se retira la fila (§3.2) | `BLOCK` + clasificación | C1: 1 (`businessUnitId`) · C2: 3 (1 + 2 `companyId`) |
+
+**[R]** `../backups/d5-org-reorg-inventory-copy-2026-10-08.json` (`references[].rowsToInventory`,
+2026-10-08) — esas cifras sólo cubren destinos **a borrar**; las filas con destino **archivado**
+(`retained`) se suman al congelar. Los conteos exactos se **re-miden al congelar** (paso 3) y el
+reporte del ensayo los lista por familia **con IDs y destino (`deletable`/`retained`)**; este
+documento no fija números. En el mismo reporte, `tableRowCounts` y `plan.deleteLinks` confirman el
+mecanismo (p. ej. `EmployeeCompany` 40 filas totales, `PositionSalaryCategory` 15,
+`PositionOrgScope` 7).
+
+**Evidencia protegida — nunca se borra ni se vacía (§3.2, §9):** las 7 tablas de historia (incl.
+`EmployeeEmployerPeriodCompany`, `EmployeeLegacySectorPeriod`, `PositionOrgScopePeriod` y
+`PositionOrgScopePeriodNode`), `EmployeeFieldHistory`/`EmployeeBlockHistory`, `AuditLog`,
+`SpecialHourRuleApplication`, horas, desgloses, cierres y documentos. **Tablas operativas
+conservadas:** `CostCenter*`, `PositionSalaryCategory`, `PositionOrgScope(+Period+Node)`,
+`EmployeeCompany` y todo el catálogo — ni la limpieza ni M2 hacen DROP de tablas; sólo se borran
+las filas de la tabla de arriba.
+
+**Adaptaciones exigidas:**
+- **Manifiesto (V1):** el whitelist acepta exactamente `archivedAt` en los IDs de `retained` y las
+  filas borradas de las familias de arriba, por tabla e ID; cualquier otra diferencia aborta
+  (§12.9.4).
+- **Respaldo:** `org-reorg-cleanup --apply --backup` captura cada familia borrada en
+  `backup.deleted["<Tabla>.<columna>"]` con ID y contenido íntegro (mecanismo `DELETE_LINKS`
+  existente); el `pg_dump` de B0 sigue siendo la segunda copia; el reporte imprime el conteo por
+  familia.
+- **Restauración:** `org-reorg-restore.ts` reinserta esas familias desde `backup.deleted` y además
+  debe **reponer `archivedAt` a `NULL`** en los IDs archivados del respaldo (hoy no lo haría y
+  `verifyV1` fallaría contra el manifiesto previo). La ventana "sólo antes de M2" no cambia
+  (`LEGACY_COLUMNS` sigue trippando por `Employee.sectorId`).
 
 ### 12.5 Guardas del ensayo (G1-G9)
 
 | Guarda | Qué verifica | Punto del §7.2 |
 |---|---|---|
 | **G1** clasificación | bicondicional `isLegacy ⇔ businessUnitId IS NULL` en `Sector` → 0 violaciones | 3 y 8 |
-| **G2** formas | F0: 0 estados mixtos (tabla de §12.3); F1: formas completas en las 6 tablas | 3 y 5 |
+| **G2** formas | F0: formas transicionales sin mezclas (condiciones F0.1-F0.2, §12.3); F1: condiciones F1.1-F1.6 | 3 y 5 |
 | **G3** eliminables | por tabla de `DELETE_ORDER`, IDs del inventario deletable presentes → 0 | 5 |
-| **G4** conjunto de archivo | IDs archivados en la base == `retained` del manifiesto (diferencia simétrica = 0); contenido idéntico salvo `archivedAt` (único cambio whitelisted) | 5 |
-| **G5** relaciones vivas | filas **no** históricas y **no** `DoubleHourRule` que referencien un archivado → 0 (lista cerrada de §12.4) | 5 y 8 |
+| **G4** conjunto de archivo | IDs archivados en la base == `retained` del manifiesto (diferencia simétrica = 0); contenido idéntico salvo `archivedAt` en `retained` y los borrados autorizados del §12.4 (único whitelist admitido) | 5 |
+| **G5** vínculos a archivados | filas **no históricas** que referencien un archivado y **no sean ellas mismas una fila archivada** de las 6 tablas de `DELETE_ORDER` → 0. Admisiones: (a) la propia fila archivada (conserva su FK vieja `tal cual`, §12.3); (b) `DoubleHourRule` con **R3 aprobada** en `decisions.json` (verificada contra el manifiesto). Los borrados autorizados del §12.4 no cuentan: se borran en el paso 5, antes de esta guarda | 5 y 8 |
 | **G6** restricciones | CHECKs de forma presentes y `validated` en `information_schema`; `prisma migrate diff` vacío | 8 |
 | **G7** historia | snapshot profundo idéntico de las 7 tablas, columna por columna (§12.6) | 5 y 8 |
-| **G8** raíces | `referencedIds ∩ deletable = ∅` (ya fail-closed en el plan) y `outsideInventory` == lista reconocida en el run report | 3, 5 y 8 |
+| **G8** raíces | `referencedIds ∩ deletable = ∅` (ya fail-closed en el plan) y `outsideInventory = ∅` tras el ciclo de ampliación — **sin** lista reconocida ni flag (§12.2) | 3, 5 y 8 |
 | **G9** rendimiento | `EXPLAIN` de listados y cobertura de `@@index([status])` (A8-4, `docs/PERFORMANCE_STANDARDS.md`) | 8 |
 
 ### 12.6 Conservación: G7 (comparación profunda de las siete tablas de historia)
@@ -856,15 +986,17 @@ G7 **no** es un conteo ni se apoya sólo en las FK `RESTRICT`:
   1. contrato de raíces históricas (§12.2) consumido por `buildCleanupPlan`;
   2. `archivedAt` + marcado en la transacción de limpieza (§12.1);
   3. G4, G7 y G8 en verde en un ensayo completo (§7.2);
-  4. aprobación de D-B1 y de C2 con el significado actualizado de abajo.
+  4. decisión **D-1** en modo C2 con el significado actualizado de abajo (D-B1 ya aprobada).
 - **Cambio de significado de C2:** pasa de "se eliminan todas las empresas del inventario" a
   "**se eliminan todas salvo las archivadas por historia**". Consecuencias:
   - el inventario de empresas **no termina necesariamente vacío**: queda con las filas archivadas,
     que siguen ocupando `code`/`name` (§12.8);
   - las verificaciones que esperaban "0 empresas del inventario restantes" pasan a esperar
     "0 empresas del inventario **sin archivar** restantes";
-  - los vínculos `EmployeeCompany` a esas empresas se siguen vaciando (estado actual; el motor
-    resuelve el pasado con `EmployeeEmployerPeriodCompany`);
+  - los vínculos `EmployeeCompany` a esas empresas **se borran** (cascade al borrar la empresa; y,
+    si la empresa queda archivada en vez de borrada, como **borrado autorizado** del §12.4) — la
+    historia del vínculo vive en `EmployeeEmployerPeriodCompany` y el motor resuelve el pasado con
+    las 7 tablas;
   - el organigrama activo no las muestra (`archivedAt IS NULL`).
 
 Esto aclara el alcance de **D-1**; no es una decisión nueva.
@@ -883,9 +1015,15 @@ Esto aclara el alcance de **D-1**; no es una decisión nueva.
   nuevas (`zoneId` set, `companyId NULL`); Postgres no colisiona `NULL`, así que ambos aplican a su
   población sin impedirse mutuamente. Caso posible: el mismo `code` una vez archivado (por
   `companyId`) y otra vez activo (por `zoneId`, en otra zona o la misma). Se distingue siempre:
-  - **consultas del modelo nuevo** (selectores, filtros, alta): `archivedAt IS NULL` y
-    `zoneId NOT NULL`; `findZonedEstablishmentByCode` agrega `archivedAt IS NULL`; las altas nuevas
-    las rige `(zoneId, code)`;
+  - **lookup por zona y código:** `findZonedEstablishmentByCode(tx, zoneId, code, excludeId?)`
+    **recibe la zona** y busca `zoneId` + `code` + `archivedAt IS NULL` (excluye archivados); se usa
+    en alta **y** en edición;
+  - **colisión al cambiar de zona:** la validación de `(zoneId, code)` corre **siempre que cambie
+    `zoneId` o `code`** (hoy sólo cuando cambia `code`): mover un establecimiento a otra zona con el
+    mismo código choca contra el único de la zona destino;
+  - el índice `@@unique([zoneId, code])` (D-13, M2) es la garantía SQL; antes de M2 la garantía es
+    de servicio, y AT-8 cubre ambos. Las consultas del modelo nuevo (selectores, filtros, alta)
+    agregan `archivedAt IS NULL` y `zoneId NOT NULL`; las altas nuevas las rige `(zoneId, code)`;
   - **consultas históricas, motor y vigencias:** resuelven **por ID**, nunca por `code`;
   - **pantallas:** árbol y selects activos excluyen archivados; las vistas de diagnóstico los
     muestran con la etiqueta **"Archivado"**, distinta de "Pendiente de recarga" (puesto activo sin
@@ -905,21 +1043,29 @@ Esto aclara el alcance de **D-1**; no es una decisión nueva.
 2. **Inventario (`backend/scripts/org-reorg/*`):** producir y persistir `history` (§12.2) con IDs
    exactos; HT-1 pasa a medir exactamente esto.
 3. **`cleanupPlan.ts`:** orden del §12.2 (roots → closure → deletable + aserción); `HISTORY` aporta
-   raíces en vez de único bloqueo; issue nuevo `HISTORY_REFERENCE_OUTSIDE_INVENTORY` con IDs y
-   reconocimiento; preflight F0 de estados mixtos; generación de los UPDATE de archivo +
-   `AuditLog`; NULLIFY ampliado a objetivos archivados; clase 4 debe llegar a 0 incluyendo el retiro
-   de la fila nueva; reporte por clases.
+   raíces sólo de **borrables**; `outsideInventory` → bloqueo **sin reconocimiento ni flag**, con el
+   ciclo de ampliación (destinos + dependencias → re-congelado → recalcular raíces/retención) y la
+   clasificación de membresía por clase; F0 de formas transicionales; UPDATE de archivo = `retained`
+   + `AuditLog`; borrados autorizados por familia con IDs (§12.4); NULLIFY ampliado a objetivos
+   archivados; sólo R3 aprobados dejan referencias de `DoubleHourRule` hacia archivados; clase 4
+   debe llegar a 0 incluyendo el retiro de la fila nueva; reporte por clases.
 4. **Manifiesto / V1 (`manifest.ts`):** set `archived`, whitelist de cambio permitido (`archivedAt`
-   sólo en IDs `retained`) y snapshot de G7 de las 7 tablas.
+   sólo en IDs `retained` **y** filas borradas de las familias autorizadas del §12.4, por tabla e
+   ID) y snapshot de G7 de las 7 tablas.
 5. **Servicios / repositorios:** `assertNotArchived` y los rechazos de §12.4; 409
    `ORG_STRUCTURE_ARCHIVED_RECORD` en update/delete de archivados; `archivedAt IS NULL` en todos los
-   listados del modelo nuevo; `assertParent`, `validateScopes`, `assertNoNewLegacyLinks`, alta y
-   edición de ubicaciones, colocación de dispositivos, asignación de puesto/empresa de legajo.
+   listados del modelo nuevo; `assertParent`, `validateScopes`, `assertNoNewLegacyLinks` (sólo
+   rechaza vínculos **nuevos**; el comentario "los vínculos que ya tenía se conservan" queda acotado
+   a los no retirados), alta y edición de ubicaciones, colocación de dispositivos, asignación de
+   puesto/empresa de legajo; `findZonedEstablishmentByCode` con `zoneId` y `archivedAt IS NULL` más
+   la validación de colisión al cambiar de zona (§12.8); creación y edición de `DoubleHourRule` con
+   las reglas de §12.4.
 6. **Frontend:** excluye archivados de árboles, selects y filtros activos; etiqueta "Archivado" en
    vistas de diagnóstico; **ninguna** UI de archivar/desarchivar; claves de caché sin cambios.
-7. **Restauración (`org-reorg-restore.ts`):** al revertir la limpieza revierte también `archivedAt`
-   a los valores del respaldo (`NULL`) además de reinsertar los borrados; la ventana "sólo antes de
-   M2" no cambia (`LEGACY_COLUMNS` sigue trippando por `Employee.sectorId`).
+7. **Restauración (`org-reorg-restore.ts`):** reinserta los borrados de `DELETE_ORDER` **y** de las
+   familias `backup.deleted["<Tabla>.<columna>"]`, revierte `archivedAt` a los valores del respaldo
+   (`NULL` en los IDs archivados) y repone columnas vaciadas; la ventana "sólo antes de M2" no
+   cambia (`LEGACY_COLUMNS` sigue trippando por `Employee.sectorId`).
 8. **Contratos / docs (§2.6):** `DATABASE_STANDARDS.md` (columna y semántica de archivo),
    `BACKEND_API_CONTRACTS.md` (se documenta que **no** existe endpoint de archivo),
    `ARCHITECTURE_STANDARDS.md`, `PROJECT_CONTEXT.md`, y este §12.
@@ -933,43 +1079,92 @@ existentes; las de datos corren sobre la copia aislada en los pasos del §7.2. E
 
 - **AT-1 contrato de raíces:** fixture de filas de historia → `referencedIds` exactos por fuente; una
   fila de historia que apunte a un ID deletable hace fallar la aserción `∩ deletable = ∅` (el plan
-  aborta); IDs fuera del inventario aparecen en `outsideInventory` y el plan aborta sin
-  reconocimiento / continúa con la lista reconocida.
-- **AT-2 estados mixtos:** por cada celda de la tabla de §12.3, fixture mixta → F0 aborta con
-  tabla + ID; fixture limpia → F0 = 0.
+  aborta); IDs fuera del inventario → `outsideInventory` ≠ ∅ y el plan **aborta sin
+  reconocimiento ni flag**. Se ensaya el único camino de salida: ampliación con destino + dependencias
+  → re-congelado → recálculo de raíces/retención; destino que cumple el criterio de membresía entra
+  como borrable-raíz (archivado) y destino que no lo cumple queda `nueva`/`conservada`, sin archivar,
+  hasta que `outsideInventory` = ∅.
+- **AT-2 formas por fase:** F0 — por cada celda de la tabla de §12.3, fixtures en forma vieja y en
+  forma nueva pasan **sin exigir `archivedAt`**; fixture mezclada → F0 aborta con tabla + ID.
+  F1 — archivo distinto de `retained` → falla (F1.1); ID eliminable presente → falla (F1.2); fila con
+  forma vieja y `archivedAt` NULL (o al revés) → falla (F1.3); diff fuera del whitelist → falla
+  (F1.4).
 - **AT-3 archivo de un solo escritor:** payload con `archivedAt` en create/update → 400 (schema);
   update/delete de fila archivada → 409 `ORG_STRUCTURE_ARCHIVED_RECORD`; no existe endpoint ni
   servicio de desarchivar.
-- **AT-4 matriz de relaciones (§12.4):** parametrizada — cada relación con destino archivado →
+- **AT-4 matriz de relaciones y reglas (§12.4):** parametrizada — cada relación con destino archivado →
   rechazo con su código; con destino activo → éxito (regresión). Cubre padres organizacionales,
-  alcances, ubicaciones, centros de costo, legajos y usuarios.
-- **AT-5 conjunto de archivo:** el plan produce `retained` = raíces + closure; aplicado el marcado
-  sobre la copia, G4 da diferencia simétrica 0 y V1 sólo acepta el cambio `archivedAt` de esos IDs.
+  alcances, ubicaciones, centros de costo, legajos y usuarios (D-14). **`DoubleHourRule`:** alta con
+  destino archivado → rechazo; edición que conserva **sin cambio** una FK ya apuntando a un archivado
+  → éxito; edición que asigna **por primera vez** una FK hacia un archivado → rechazo; en el plan,
+  regla con referencia al inventario sin R1/R2/R3 → aborto y con R3 aprobado → la referencia
+  sobrevive a la limpieza y G5 la admite.
+- **AT-5 conjunto de archivo y F1:** el plan produce `retained` = raíces + closure; aplicado el
+  marcado sobre la copia, G4 da diferencia simétrica 0, F1.1-F1.2 quedan en verde y V1 sólo acepta
+  el cambio `archivedAt` de esos IDs **y** los borrados autorizados del §12.4 (con ID fuera de esa
+  lista el diff aborta).
 - **AT-6 G7:** snapshot → alterar una celda de una tabla de historia → el compare falla indicando
   tabla/fila/columna; sin alteraciones → diff 0.
 - **AT-7 C2 condicionada:** con el comportamiento actual, empresa del inventario referenciada por
-  historia → sigue emitiendo `HISTORY_REFERENCES_INVENTORY` y C2 aborta; con la capacidad
-  implementada, esa empresa entra a `retained`/archivo, sale de `deletable` y el reporte refleja el
-  significado de §12.7.
-- **AT-8 unicidad:** alta nueva con `code` de un archivado → rechazada por único en
+  historia → sigue emitiendo `HISTORY_REFERENCES_INVENTORY` y C2 aborta; con las condiciones de
+  §12.7 implementadas y **D-1 elegido en C2**, esa empresa entra a `retained`/archivo, sale de
+  `deletable` y el reporte refleja el significado de §12.7.
+- **AT-8 unicidad y D-13:** alta nueva con `code` de un archivado → rechazada por único en
   `Company`/`Sector`/`Area`/`Position`; en `Establishment` la coexistencia se permite y las dos
-  filas se distinguen por `archivedAt`/`zoneId`; los lookups activos no devuelven archivados; si se
+  filas se distinguen por `archivedAt`/`zoneId`. `findZonedEstablishmentByCode` recibe `zoneId`,
+  busca por zona + código y **no devuelve archivados**; edición que cambia `zoneId` con un código que
+  ya existe en la zona destino (código sin cambios) → rechazada, e ídem cuando cambian zona y código;
+  antes de M2 la validación es de servicio y después la respalda `@@unique([zoneId, code])`. Si se
   toca código del motor o de lecturas, rerun de `a8-3-compare` (equivalencia A8-3 intacta).
 - **AT-9 guardas como script:** G1-G9 implementadas como consultas del reporte del ensayo (formato
   tipo `a8-3-*`), con `exit` ≠ 0 ante violación, corridas en los puntos de la columna "Punto del
   §7.2".
 
-### 12.11 Decisiones de producto pendientes
+### 12.11 Decisiones: resueltas y pendientes
 
-Éstas sí requieren decisión del usuario; todo lo demás de §12 es una elección técnica ya tomada.
+**Resueltas el 2026-10-08 (no están abiertas):**
+
+| Id | Resolución |
+|---|---|
+| **D-B1** | **Aprobada:** rige esta especificación de §12 (archivo `archivedAt`, raíces, formas F0/F1/F2, guardas G1-G9). §4.1 queda como registro del plan previo y HT-2/HT-4 dejan de ser bloqueos de producto (dependen de implementar y validar §12) |
+| **D-B2** | **Aprobada sin purga durante esta transición:** no se borran filas archivadas ni se retiran `Sector.areaId`, `Area.establishmentId`, `Establishment.companyId/businessUnitId`, `Position.sectorId` ni `@@unique([companyId, code])`; la variante HT-3 de vaciar `Position.sectorId` **no** aplica (forma archivada tal cual, §12.3). El retiro del archivo queda para una etapa futura, con su propia decisión, respaldo y prueba de restauración |
+| **D-14** | **Ratificada:** `User.companyId` se conserva **nullable y administrativa** (nunca se exige NOT NULL); `User.sectorId` **retirada funcionalmente** (no se expone ni se acepta) y dropeada en M2 con conteo 0 (§2.1, §12.4) |
+
+El **diseño técnico** de §12 sigue **pendiente de validación** (implementación + AT-1..AT-9 +
+corrida en la copia aislada): eso es ingeniería, no una decisión de producto. No se abren decisiones
+nuevas para asuntos técnicos ya definidos en este documento.
+
+**Pendientes (decisiones de producto que siguen abiertas):**
 
 | Id | Decisión | Alcance |
 |---|---|---|
-| **D-B1** | Aprobar esta especificación: reemplaza §4.1 y la condición de bloqueo de HT-2, y habilita redactar la migración aditiva de `archivedAt` y el DDL de M2 | Sin ella sigue rigiendo el plan A |
-| **D-B2** | Purga del archivo: borrar filas archivadas y retirar `Sector.areaId`, `Area.establishmentId`, `Establishment.companyId/businessUnitId`, `Position.sectorId` y `@@unique([companyId, code])` con conteo 0; incluye si `Position.sectorId` se vacía en M2 (variante HT-3) o se conserva hasta la purga | Decide si el archivo es permanente o hay etapa futura con sus respaldos |
-| **D-1 (ampliado)** | C1/C2 con el significado de §12.7 para C2 (no elimina todas las empresas si hay históricas) | Junto con R1/R2 de la regla "Domingos" |
-| **D-14** | Alcance de usuarios: cuánto dura el rechazo de `User.companyId/sectorId` hacia archivados y cuándo se retiran esas columnas | §12.4 |
-| Ya abiertos | D-2, D-3, D-6, A8-5 (fecha de corte), D-0 (Neon): sin cambios por esta especificación | — |
+| **D-1 (con la aclaración de §12.7)** | C1/C2; si C2, con el significado actualizado: "todas las empresas del inventario **salvo las archivadas por historia**" | Junto con R1/R2 de la regla "Domingos" |
+| Ya abiertas | D-2, D-3, D-6, A8-5 (fecha de corte), D-0 (Neon): sin cambios por esta especificación | — |
 
-Mientras D-B1 no esté resuelta, A8-1 y A8-2 siguen **abiertos** en §10 y §12 no tiene efecto sobre
-el plan.
+### 12.12 Cadena de coherencia extremo a extremo (F0 → recarga)
+
+| # | Etapa (paso del §7.2) | Qué se calcula / hace | Compuerta que debe pasar |
+|---|---|---|---|
+| 1 | Congelado (3) | inventario con clases (`borrable` / `conservada`) + `history` con IDs exactos por fuente | reporte de inventario con IDs, no sólo conteos |
+| 2 | **F0** (3, antes de escribir) | formas vieja/nueva por fila **sin mirar `archivedAt`** | F0.1-F0.2 + G1 + G2/F0 (§12.3) |
+| 3 | Raíces (3-4) | membresía de la transición; `outsideInventory` → ciclo de ampliación hasta ∅; `roots = (history ∩ borrables) ∪ R3 ∪ clase 4` | G8: fail-closed `∩ deletable = ∅` y `outsideInventory = ∅` (§12.2) |
+| 4 | Retención / borrables (4) | `retained = retainedClosure(...)`, `deletable = records − retained` | aserción del plan; G3 se cobra en F1 |
+| 5 | Tratamiento (4) | R1/R2/R3 sólo de catálogo (**sobreviven sólo los R3 aprobados** hacia archivados), retiro de filas clase 4, borrados autorizados enumerados (§12.4), `decisions.json` | sin `RULE_WITHOUT_DECISION` ni `BLOCK` sin clasificar |
+| 6 | Archivo + limpieza (5) | DELETE de `deletable` + borrados autorizados; UPDATE `archivedAt = retained`; NULLIFY ampliado; `AuditLog`; V1 | **F1** (F1.1-F1.6) + G4 + G5 + G7 |
+| 7 | M2 (6) | CHECKs de forma, DROP de `Employee/User/ClockDevice.sectorId` (conteo 0), `@@unique([zoneId, code])`; **sin purga** (D-B2) | G6 + `migrate diff` vacío |
+| 8 | Recarga + verificaciones (7-8) | organización, ubicaciones, puestos, legajos; apertura de historia desde la fecha de corte | **F2** (I1-I6 activas, G9, A8-4, D-13) |
+
+Ninguna etapa se salta: **F0 es compuerta del tratamiento** (paso 4 no empieza con formas mezcladas),
+**F1 es compuerta de M2** (el paso 6 no corre sin archivo exacto y sin eliminables) y **F2 cierra el
+ensayo**. Cualquier compuerta fallida aborta antes de escribir más.
+
+### 12.13 Revisión de Codex sobre `e4fb4f0`: hallazgos y correcciones (2026-10-08)
+
+| # | Hallazgo | Corrección | Dónde |
+|---|---|---|---|
+| 1 | Las fases estaban mezcladas: F0 exigía `archivedAt` y F1 no separaba condiciones | **F0** valida las formas transicionales vieja/nueva **ignorando `archivedAt`**; **F1** (después de calcular `retained`/`deletable` y ejecutar el tratamiento) exige archivo exacto == `retained`, ausencia de eliminables, formas finales, V1, historia intacta y sin vínculos activos; **F2** post-M2. Condiciones numeradas y compuertas separadas | §12.3, G2/G4 (§12.5), AT-2/AT-5 (§12.10), §12.12 |
+| 2 | `outsideInventory` se levantaba con "reconocimiento" en el run report y no definía quién pertenece a la transición | Bloqueo **sin reconocimiento ni flag de bypass**; única salida = **ampliar el inventario con destinos y dependencias, re-congelar y recalcular raíces y retención**; membresía = criterio del inventario (nunca la aparición en historia): catálogos nuevos válidos se registran `nueva`/`conservada` y **no se archivan** | §12.2, G8 (§12.5), AT-1 (§12.10) |
+| 3 | `DoubleHourRule` figuraba como excepción total hacia archivados | **Alta** rechaza destinos archivados; **edición** sólo conserva sin cambio una FK ya existente (ninguna asignación nueva); la **limpieza** conserva únicamente referencias con **R3 aprobada**; G5 y AT-4 actualizados | §12.4, G5 (§12.5), AT-4 (§12.10), §12.9.3 |
+| 4 | "Conservar los vínculos previos" contradecía G5 | Los vínculos `CostCenter*`, `EmployeeCompany`, `PositionSalaryCategory` y los alcances actuales de registros retirados pasan a **borrados autorizados** en la transacción de limpieza (previa a G5), sólo filas y sólo si no son evidencia protegida; tablas históricas y operativas **conservadas**; familias y conteos [R] enumerados + adaptaciones de manifiesto, respaldo y restauración | §12.4 (bloque nuevo), §12.9.4/§12.9.7, G4/G5, AT-5 |
+| 5 | Lookup, índice y pruebas no estaban alineados con D-13 ni con el archivo | `findZonedEstablishmentByCode` **recibe `zoneId`** y busca por zona + código **excluyendo archivados**; colisión `(zoneId, code)` validada **también al cambiar de zona** sin cambiar código; servicio, `@@unique([zoneId, code])` y AT-8 alineados | §12.8, §12.9.5, AT-8 (§12.10) |
+| 6 | Decisiones figuraban abiertas o condicionadas | **D-B1 aprobada**, **D-B2 aprobada sin purga en esta transición**, **D-14 ratificada** (empresa administrativa nullable; retiro funcional del sector); el diseño técnico queda **pendiente de validación**, no de decisión; sin decisiones nuevas para asuntos técnicos ya definidos | §12.11, §12.1 (I3), §12.3 (columnas), §4.1/HT-2/HT-3/HT-4, ADR §6/§11/§21 |

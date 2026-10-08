@@ -177,8 +177,15 @@ Se retira `Employee.sectorId`. Se conservan la empresa empleadora (`EmployeeComp
 | D-11 | Múltiples encargados en la vista funcional (hoy se usa el primero; no se cambia en silencio) | — |
 | D-12 | Merge y despliegue frente a producción | B5 |
 | D-13 | Unicidad del código de establecimiento tras M2: hoy es `@@unique([companyId, code])` y M2 elimina `companyId` (§17.2) | A8/M2 |
-| D-14 | Alcance de usuarios (`User.companyId/sectorId`): retirar, conservar sólo la empresa o reemplazarlo por un nodo nuevo. No interviene en permisos hoy (§17.2) | A8/M2 |
 | D-15 | Ubicación de dispositivos de fichado: establecimiento del árbol de ubicaciones en lugar de sector (§17.2) | Etapa de fichador, antes de M2 |
+
+**Resueltas el 2026-10-08 (A8 §12.11):** **D-14** — `User.companyId` se conserva **nullable y
+administrativa** (nunca NOT NULL); `User.sectorId` está **retirada funcionalmente** (no se expone ni
+se acepta) y se dropea en M2 con conteo 0 (§17.2). **D-B1** — aprobada: rige la especificación de A8
+§12 (reemplaza al A8 §4.1). **D-B2** — aprobada **sin purga durante esta transición**: no se borran
+filas archivadas ni se retiran `Sector.areaId`, `Area.establishmentId`,
+`Establishment.companyId/businessUnitId`, `Position.sectorId` ni `@@unique([companyId, code])`; la
+purga queda para una etapa futura con su propia decisión, respaldo y prueba de restauración.
 
 ## 5. Alcance autorizado de la limpieza y protecciones
 
@@ -264,7 +271,7 @@ Si alguna falla, el script aborta:
 **Reglas existentes que referencian estructura vieja.** Inactivar una regla **no libera** su referencia, porque M1 lleva estas FKs a `RESTRICT`. Formas válidas:
 - **R1 — Reasignar** al destino nuevo, cargado antes de borrar el viejo.
 - **R2 — Convertir** a lista explícita de legajos que hoy la cumplen, solo si la lista **no** queda vacía; recién después se quita la dimensión.
-- **R3 — Retener** el destino viejo, excluyéndolo de la limpieza; M2 queda bloqueada hasta resolverlo. *(Especificación A8 §12: si se aprueba **e implementa** D-B1, un destino retenido se **archiva** con su forma vieja y deja de bloquear M2 — capacidad condicionada a las verificaciones de A8 §12.7; mientras D-B1 no se apruebe, la frase anterior sigue vigente.)*
+- **R3 — Retener** el destino viejo, excluyéndolo de la limpieza; M2 queda bloqueada hasta resolverlo. *(**D-B1 aprobada (2026-10-08):** un destino retenido se **archiva** con su forma vieja (`archivedAt`, A8 §12) y la regla sobrevive a la limpieza sólo con **R3 aprobada** en `decisions.json` — la creación y edición de `DoubleHourRule` rechazan cualquier asignación **nueva** hacia un archivado (A8 §12.4). "M2 queda bloqueada" queda como criterio previo hasta implementar y validar A8 §12.)*
 
 La inactivación solo puede **combinarse** con R1, R2 o R3. **Nunca se deja una restricción en NULL**, porque ampliaría la regla.
 
@@ -349,7 +356,7 @@ La inactivación solo puede **combinarse** con R1, R2 o R3. **Nunca se deja una 
 | A5 | Hecha en `feat/org-location-reorg`: alcance múltiple de puestos con validación, filtros y QA (§14) |
 | A6 | Hecha en `feat/org-location-reorg`: Datos Laborales con puesto y alcance de consulta, ubicaciones con vigencia y transición de legajos anteriores; QA en la copia aislada (§15) |
 | A7 | **Cerrada en `feat/org-location-reorg`.** D-4, D-5, D-7, D-8 y D-13 a D-15 están implementadas y verificadas en la copia aislada. D-5 agrega historia temporal normalizada para todas las entradas mutables del motor; no inicializa datos anteriores y mantiene `SPECIAL_HOUR_SCOPE_HISTORY_MISSING` cuando falta evidencia real (§19) |
-| A8 | **En curso (2026-10-08):** diagnóstico y diseño previos a M2 en `docs/decisions/A8_M2_PREPARATION.md`, corregido tras la revisión de Codex sobre `b826dba` (§20). **A8-3 cerrado:** clasificación legado/nuevo persistente (`Sector.isLegacy`, migración aditiva `20261008110000_sector_org_classification` con backfill del criterio previo, **aplicada sólo a la copia `org-location-reorg` el 2026-10-08**; motor y frontend desde el dato persistido; pruebas con motor real) y **equivalencia antes/después verificada con datos reales** (78 pares únicos idénticos, 0 diferencias, `ff1565f` vs `8a2985e`, 5 `MISSING` intactos, cierres por ID y contenido iguales, A8 §3.4). **A8-1/A8-2: especificación entregada (A8 §12, §21), revisada tras los hallazgos de Codex sobre `f183e3a` y pendiente de aprobación D-B1** — archivo `archivedAt` con invariantes I1-I6, contrato de raíces históricas del inventario, formas con aborto ante estados mixtos, guardas G1-G9 (G7 de comparación profunda) y C2 como capacidad condicionada. Sin ejecución destructiva |
+| A8 | **En curso (2026-10-08):** diagnóstico y diseño previos a M2 en `docs/decisions/A8_M2_PREPARATION.md`, corregido tras la revisión de Codex sobre `b826dba` (§20). **A8-3 cerrado:** clasificación legado/nuevo persistente (`Sector.isLegacy`, migración aditiva `20261008110000_sector_org_classification` con backfill del criterio previo, **aplicada sólo a la copia `org-location-reorg` el 2026-10-08**; motor y frontend desde el dato persistido; pruebas con motor real) y **equivalencia antes/después verificada con datos reales** (78 pares únicos idénticos, 0 diferencias, `ff1565f` vs `8a2985e`, 5 `MISSING` intactos, cierres por ID y contenido iguales, A8 §3.4). **A8-1/A8-2: especificación corregida tras la segunda revisión de Codex (sobre `e4fb4f0`; A8 §12, §21, hallazgos en A8 §12.13) — D-B1 aprobada, D-B2 aprobada sin purga y D-14 ratificada; diseño técnico pendiente de validación** — `archivedAt` con invariantes I1-I6, raíces con ampliación obligatoria del inventario, fases F0/F1/F2 con condiciones separadas, borrados autorizados de configuración, `DoubleHourRule` sólo con R3 aprobado, guardas G1-G9 (G7 de comparación profunda), C2 condicionada a D-1 y cadena de coherencia (A8 §12.12). Sin ejecución destructiva |
 | B0–B5 | Pendientes |
 
 ### A2 — qué quedó en código
@@ -917,7 +924,7 @@ M2 elimina las columnas del modelo anterior y vuelve obligatorios los padres nue
 | `Position.sectorId` (FK SET NULL) | Puestos anteriores "pendientes de recarga"; cadena derivada en `positionInclude`/`positionOptionSelect`; búsqueda por nombre de sector; validación anterior del legajo | Retirar la cadena derivada y las comparaciones anteriores cuando no queden puestos sin alcance | A8 + M2 | — (la recarga de puestos depende de D-6) |
 | `Sector.areaId`, `Area.establishmentId`, `Establishment.companyId`/`businessUnitId` | Catálogo de Organización (marca "Pendiente de recarga", `legacyLocation`); vínculos anteriores de centros de costo; cadenas derivadas de legajo y puesto; herramientas A3 | M2 los elimina y vuelve obligatorios `Sector.businessUnitId`, `Area.sectorId` y `Establishment.zoneId`. La guarda SQL de M2 aborta si queda un valor anterior | M2 | D-1 (empresas) |
 | `Establishment @@unique([companyId, code])` | Unicidad del código por empresa | Al eliminar `companyId` hay que definir otra unicidad: código global o `(zoneId, code)` | M2 | **D-13** |
-| `User.sectorId`, `User.companyId` (FK sin `onDelete`) | Usuarios muestra y edita un "alcance" (empresa - sector); `userApiService` resuelve el sector **por nombre** (mismo riesgo de homónimos que tenía el legajo); `AuthUser.sectorId`; clave de caché del dashboard (backend) y del frontend. **No se usa para permisos**: el acceso es por responsable de carga | La limpieza pone `User.sectorId` en NULL (y `companyId` en C2). Hasta decidir, no cambiar permisos ni el concepto | A8 + M2 | **D-14** |
+| `User.sectorId`, `User.companyId` (FK sin `onDelete`) | Usuarios muestra y edita un "alcance" (empresa - sector); `userApiService` resuelve el sector **por nombre** (mismo riesgo de homónimos que tenía el legajo); `AuthUser.sectorId`; clave de caché del dashboard (backend) y del frontend. **No se usa para permisos**: el acceso es por responsable de carga | **D-14 ratificada (2026-10-08):** `User.companyId` se conserva **nullable y administrativa**; `User.sectorId` queda sólo como columna legacy, se **retira funcionalmente** y M2 la dropea (conteo 0). No se cambian permisos ni el concepto | A8 + M2 | — |
 | `ClockDevice.sectorId` (FK SET NULL) y `ClockDevice.establishmentId` (M1, RESTRICT) | Al activar un dispositivo se elige un sector, incluidos los del árbol nuevo; el listado muestra el sector; filtro `sectorId`; el contexto de credencial incluye `sectorId` sin usarlo. Metadato: no autoriza ni ubica fichadas. Inventario A3: 0 filas con sector | Pasar el formulario y el listado a establecimiento (zona derivada); dejar de leer `sectorId` antes de M2 | Etapa de fichador, antes de M2 | **D-15** |
 | `DoubleHourRule.sectorId` (FK RESTRICT desde M1) | Dimensión sector del motor (sector anterior). Hoy 0 reglas la usan; guarda §17.1 | Se conserva la columna (§6). Tras la limpieza, toda regla que apunte a un sector anterior bloquea M2/limpieza (R1/R2/R3) | B / A7 | D-4 |
 | Vínculos anteriores de `CostCenter*` | La UI de A4 los identifica y permite quitarlos | La limpieza los borra explícitamente. Las tablas se conservan | B3 | D-1 |
@@ -1018,7 +1025,7 @@ Se ratificaron D-4, D-5, D-7, D-8, D-13, D-14 y D-15. D-1, D-2, D-3 y D-6 contin
 
 ### 18.4 Usuarios, dispositivos y establecimientos (D-13/D-14/D-15)
 
-- Usuarios ya no expone ni acepta sector. `User.sectorId` se conserva como columna legacy; empresa continúa como dato administrativo y no interviene en permisos ni en la clave de caché.
+- Usuarios ya no expone ni acepta sector. `User.sectorId` se conserva como columna legacy (se retira funcionalmente y se dropea en M2, conteo 0); empresa continúa como dato administrativo y no interviene en permisos ni en la clave de caché. **D-14 ratificada y resuelta (2026-10-08, §4)**.
 - Dispositivos exponen, filtran y asignan `establishmentId`, mostrando `Zona · Establecimiento`. No cambia autenticación, autorización ni procesamiento de fichadas y no se infiere la ubicación laboral de personas.
 - `ClockDevice.establishmentId` ya existía en M1, por lo que no fue necesaria otra migración.
 - D-13 se aplicará en M2 como unicidad `(zoneId, code)`. La restricción anterior no se elimina en A7.
@@ -1093,12 +1100,15 @@ resultados (78 pares únicos, 0 diferencias, 5 `MISSING`, 8 cierres intactos). V
 Sin M2, limpieza, restauración, seed, reconciliación, escritura en bases fuera de la copia ni
 despliegues.
 
-## 21. A8 — especificación de A8-1/A8-2: archivo legado con invariantes, raíces históricas y guardas (2026-10-08, revisada tras hallazgos de Codex, pendiente de D-B1) [D]
+## 21. A8 — especificación de A8-1/A8-2: archivo legado con invariantes, raíces históricas y guardas (2026-10-08; corregida tras la segunda revisión de Codex) [D]
 
 Documento completo: `A8_M2_PREPARATION.md` §12. Sólo documentación: sin migraciones, código ni datos.
-Sustituye al diseño anterior de §21 (`f183e3a`), reescrito como especificación implementable tras
-la revisión de Codex; los seis hallazgos se resolvieron como elecciones técnicas dentro de la
-especificación, sin abrir nuevas decisiones de producto.
+Sustituye al diseño de `f183e3a` y a la primera reescritura de `e4fb4f0`; esta versión incorpora los
+seis hallazgos de la segunda revisión de Codex (tabla hallazgo→corrección en A8 §12.13). Decisiones
+**ya resueltas el 2026-10-08**: **D-B1 aprobada**, **D-B2 aprobada sin purga en esta transición** y
+**D-14 ratificada** (§4 "Resueltas"); el **diseño técnico sigue pendiente de validación**
+(implementación + AT-1..AT-9 + corrida en la copia aislada), no de decisión. Sin decisiones nuevas
+para asuntos técnicos ya definidos.
 
 - **Modelo de archivo (A8-1):** columna `archivedAt TIMESTAMPTZ NULL` (sin `@default`) en las seis
   tablas de `DELETE_ORDER` (`Company`, `BusinessUnit`, `Establishment`, `Area`, `Sector`,
@@ -1108,39 +1118,55 @@ especificación, sin abrir nuevas decisiones de producto.
   `ORG_STRUCTURE_ARCHIVED_RECORD`), `AuditLog` del marcado y orden fijo (columna en la migración
   aditiva del §7.2 paso 2, backfill en el paso 5, CHECKs en M2 paso 6). El padre nuevo sigue
   obligatorio para toda fila activa; sólo la fila archivada conserva su forma vieja (CHECKs
-  bicondicionales por fila, A8 §12.1 y §12.3).
-- **Raíces históricas (A8-2):** contrato `FrozenInventory.history: HistoryReference[]` con los nueve
-  orígenes FK reales (`EmployeePositionPeriod.positionId`, `EmployeeLegacySectorPeriod.sectorId`,
-  `EmployeeEmployerPeriodCompany.companyId`, `PositionOrgScopePeriod.positionId`,
-  `PositionOrgScopePeriodNode` × 5), orden de evaluación roots → `retainedClosure` → `deletable` y
-  aserción fail-closed `referencedIds ∩ deletable = ∅`; referencias fuera del inventario abortan con
-  `HISTORY_REFERENCE_OUTSIDE_INVENTORY` (IDs listados) salvo reconocimiento explícito en el run
-  report (A8 §12.2).
+  bicondicionales por fila, A8 §12.1 y §12.3). D-B2 aprobada: **sin purga** en esta transición.
+- **Raíces históricas y fases (A8-2):** contrato `FrozenInventory.history: HistoryReference[]` con
+  los nueve orígenes FK reales (`EmployeePositionPeriod.positionId`,
+  `EmployeeLegacySectorPeriod.sectorId`, `EmployeeEmployerPeriodCompany.companyId`,
+  `PositionOrgScopePeriod.positionId`, `PositionOrgScopePeriodNode` × 5), orden de evaluación
+  roots → `retainedClosure` → `deletable` y aserción fail-closed `referencedIds ∩ deletable = ∅`.
+  Membresía de la transición por criterio del inventario, nunca por aparición en historia: referencias
+  fuera del inventario **bloquean sin reconocimiento ni flag** y sólo salen por **ampliación** (destino
+  + dependencias → re-congelado → recalcular raíces/retención) hasta `outsideInventory = ∅`;
+  `roots = (history ∩ borrables) ∪ R3 ∪ clase 4`. Fases separadas: **F0** valida formas
+  vieja/nueva **sin mirar `archivedAt`**; **F1** (después del tratamiento) exige archivo exacto ==
+  `retained`, sin eliminables, formas finales, V1, historia intacta y 0 vínculos activos; **F2**
+  cierra el ensayo post-M2 (A8 §12.2, §12.3, §12.12).
 - **Formas y validación:** cada catálogo declara filas nueva/archivada; estado mixto **aborta** con
-  tabla + IDs en el preflight F0, antes de cualquier backfill; fases F0/F1/F2. Tres capas separadas:
-  CHECKs de la base, validación de servicio y guardas G1-G9. Lista **cerrada** de relaciones que
-  rechazan archivados — padres organizacionales, alcances, ubicaciones, centros de costo, legajos y
-  usuarios — con única excepción `DoubleHourRule` (R3); las columnas `Employee/User/ClockDevice.sectorId`
-  se dropean en M2 con NULLIFY ampliado a archivados (conteo 0). G7 pasa a comparación profunda,
-  columna por columna, de las siete tablas de historia (A8 §12.3-§12.6).
+  tabla + IDs en el preflight F0, antes de cualquier backfill. Tres capas separadas: CHECKs de la
+  base, validación de servicio y guardas G1-G9. Lista **cerrada** de relaciones que rechazan
+  archivados — padres organizacionales, alcances, ubicaciones, centros de costo, legajos y usuarios
+  (D-14: `User.companyId` administrativa nullable) — y, en la misma transacción de limpieza y **antes
+  de G5**, **borrados autorizados** de los vínculos `CostCenter*`, `EmployeeCompany`,
+  `PositionSalaryCategory` y alcances actuales hacia registros retirados (sólo filas, sólo si no son
+  evidencia protegida; familias y conteos [R] en A8 §12.4). `DoubleHourRule` es la única admisión en
+  G5: alta rechaza archivados, edición sólo conserva una FK ya existente sin cambio y la limpieza
+  deja únicamente las referencias con **R3 aprobada**. Las columnas
+  `Employee/User/ClockDevice.sectorId` se dropean en M2 con NULLIFY ampliado a archivados (conteo 0).
+  G7 pasa a comparación profunda, columna por columna, de las siete tablas de historia (A8
+  §12.3-§12.6).
 - **C2 como capacidad condicionada:** el comportamiento vigente **no cambia** — C2 sigue abortando con
   `HISTORY_REFERENCES_INVENTORY` si la historia referencia una empresa del inventario. Archivar en
-  vez de abortar es una capacidad futura, sólo tras implementar el contrato de raíces, `archivedAt`
-  y G4/G7/G8 verdes sobre la copia; es una aclaración del alcance de D-1 ("todas las empresas del
-  inventario **salvo las archivadas por historia**"), no una decisión nueva (A8 §12.7).
+  vez de abortar es una capacidad futura, sólo tras implementar el contrato de raíces, `archivedAt`,
+  G4/G7/G8 verdes sobre la copia y **D-1 elegido en C2** con el significado actualizado de §18.4
+  ("todas las empresas del inventario **salvo las archivadas por historia**"); es una aclaración de
+  alcance de D-1, no una decisión nueva (A8 §12.7).
 - **Unicidad:** los únicos globales (`Company.name/code`) y `(companyId, code)` de `BusinessUnit`
   siguen ocupados por lo archivado — sin reciclaje de códigos; `Establishment` coexiste
-  `(companyId, code)` para archivados y `(zoneId, code)` para nuevas (D-13); se distingue por
-  `archivedAt IS NULL` / `zoneId` en consultas activas, por ID en motor e historia, y las etiquetas
-  "Archivado" ≠ "Pendiente de recarga" ≠ "Inactivo" no se mezclan (A8 §12.8).
-- **Efectos si se aprueba (D-B1):** HT-2 deja de bloquear M2 (no hay conversión que demostrar); R3
-  (§6) deja de ser "M2 bloqueada" cuando el destino retenido se archive; las columnas de la cadena
-  organizacional se **conservan** en M2 y su retiro queda como etapa posterior con conteo 0 (D-B2);
-  `Employee/User/ClockDevice.sectorId` se dropean igual; `LEGACY_COLUMNS` de la restauración
-  (`org-reorg-restore.ts`) no cambia. Guardas, columnas retirar-vs-conservar, cambios por componente
-  y pruebas AT-1..AT-9 en A8 §12.3-§12.10.
-- **Estado:** **especificación, no aprobada.** Mientras D-B1 no se resuelva siguen vigentes HT-2
-  ("si no, se conserva y M2 queda bloqueada"), el §4.1 del A8 y la frase de §6 sobre R3. Decisiones
-  de producto pendientes: **D-B1** (aprobar esta especificación), **D-B2** (purga del archivo),
-  **D-1 ampliado** (alcance de C2) y **D-14**, junto con las ya abiertas (D-2, D-3, D-6, A8-5,
-  D-0); todo lo demás de A8 §12 es elección técnica, no decisión (A8 §12.11).
+  `(companyId, code)` para archivados y `(zoneId, code)` para nuevas (D-13). El lookup
+  `findZonedEstablishmentByCode` **recibe `zoneId`** y busca por zona + código **excluyendo
+  archivados**, y la colisión `(zoneId, code)` se valida también al **cambiar de zona** sin cambiar
+  código; antes de M2 la garantía es de servicio y después la respalda `@@unique([zoneId, code])`.
+  Se distingue por `archivedAt IS NULL` / `zoneId` en consultas activas, por ID en motor e historia, y
+  las etiquetas "Archivado" ≠ "Pendiente de recarga" ≠ "Inactivo" no se mezclan (A8 §12.8).
+- **Efectos de las decisiones resueltas:** **D-B1** — HT-2 deja de bloquear M2 (no hay conversión que
+  demostrar; el nodo retenido se archiva con su forma vieja); R3 (§6) deja de ser "M2 bloqueada"
+  cuando el destino retenido se archive. **D-B2** — las columnas de la cadena organizacional se
+  **conservan** en M2 y su retiro queda como etapa posterior con conteo 0; `Employee/User/
+  ClockDevice.sectorId` se dropean igual; `LEGACY_COLUMNS` de la restauración (`org-reorg-restore.ts`)
+  no cambia. **D-14** — empresa administrativa nullable, retiro funcional del sector. Guardas, columnas
+  retirar-vs-conservar, cambios por componente y pruebas AT-1..AT-9 en A8 §12.3-§12.10; cadena de
+  coherencia extremo a extremo en A8 §12.12.
+- **Estado:** **especificación corregida y decisiones resueltas, diseño técnico pendiente de
+  validación.** No se ejecuta M2 ni ningún paso destructivo hasta implementar §12, correr AT-1..AT-9
+  y verificar G1-G9 + F0/F1/F2 verdes sobre la copia aislada. Decisiones de producto que siguen
+  abiertas: **D-1** (con la aclaración de §18.4), D-2, D-3, D-6, A8-5 y D-0 (A8 §12.11).
