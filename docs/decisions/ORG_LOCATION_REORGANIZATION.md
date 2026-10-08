@@ -347,7 +347,8 @@ La inactivación solo puede **combinarse** con R1, R2 o R3. **Nunca se deja una 
 | A5 | Hecha en `feat/org-location-reorg`: alcance múltiple de puestos con validación, filtros y QA (§14) |
 | A6 | Hecha en `feat/org-location-reorg`: Datos Laborales con puesto y alcance de consulta, ubicaciones con vigencia y transición de legajos anteriores; QA en la copia aislada (§15) |
 | A7 | **Cerrada en `feat/org-location-reorg`.** D-4, D-5, D-7, D-8 y D-13 a D-15 están implementadas y verificadas en la copia aislada. D-5 agrega historia temporal normalizada para todas las entradas mutables del motor; no inicializa datos anteriores y mantiene `SPECIAL_HOUR_SCOPE_HISTORY_MISSING` cuando falta evidencia real (§19) |
-| A8, B0–B5 | Pendientes |
+| A8 | **Preparación en curso (2026-10-08):** diagnóstico y diseño previos a M2 en `docs/decisions/A8_M2_PREPARATION.md`. Sin ejecución destructiva ni cambios de código |
+| B0–B5 | Pendientes |
 
 ### A2 — qué quedó en código
 
