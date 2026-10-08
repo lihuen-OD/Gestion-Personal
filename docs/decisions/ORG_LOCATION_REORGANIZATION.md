@@ -264,7 +264,7 @@ Si alguna falla, el script aborta:
 **Reglas existentes que referencian estructura vieja.** Inactivar una regla **no libera** su referencia, porque M1 lleva estas FKs a `RESTRICT`. Formas válidas:
 - **R1 — Reasignar** al destino nuevo, cargado antes de borrar el viejo.
 - **R2 — Convertir** a lista explícita de legajos que hoy la cumplen, solo si la lista **no** queda vacía; recién después se quita la dimensión.
-- **R3 — Retener** el destino viejo, excluyéndolo de la limpieza; M2 queda bloqueada hasta resolverlo.
+- **R3 — Retener** el destino viejo, excluyéndolo de la limpieza; M2 queda bloqueada hasta resolverlo. *(Propuesta A8 §21 / A8 §12: bajo D-B1, un destino retenido se **archiva** con su forma vieja y deja de bloquear M2; esta frase sigue vigente mientras D-B1 no se apruebe.)*
 
 La inactivación solo puede **combinarse** con R1, R2 o R3. **Nunca se deja una restricción en NULL**, porque ampliaría la regla.
 
@@ -349,7 +349,7 @@ La inactivación solo puede **combinarse** con R1, R2 o R3. **Nunca se deja una 
 | A5 | Hecha en `feat/org-location-reorg`: alcance múltiple de puestos con validación, filtros y QA (§14) |
 | A6 | Hecha en `feat/org-location-reorg`: Datos Laborales con puesto y alcance de consulta, ubicaciones con vigencia y transición de legajos anteriores; QA en la copia aislada (§15) |
 | A7 | **Cerrada en `feat/org-location-reorg`.** D-4, D-5, D-7, D-8 y D-13 a D-15 están implementadas y verificadas en la copia aislada. D-5 agrega historia temporal normalizada para todas las entradas mutables del motor; no inicializa datos anteriores y mantiene `SPECIAL_HOUR_SCOPE_HISTORY_MISSING` cuando falta evidencia real (§19) |
-| A8 | **En curso (2026-10-08):** diagnóstico y diseño previos a M2 en `docs/decisions/A8_M2_PREPARATION.md`, corregido tras la revisión de Codex sobre `b826dba` (§20). **A8-3 cerrado:** clasificación legado/nuevo persistente (`Sector.isLegacy`, migración aditiva `20261008110000_sector_org_classification` con backfill del criterio previo, **aplicada sólo a la copia `org-location-reorg` el 2026-10-08**; motor y frontend desde el dato persistido; pruebas con motor real) y **equivalencia antes/después verificada con datos reales** (78 pares únicos idénticos, 0 diferencias, `ff1565f` vs `8a2985e`, 5 `MISSING` intactos, cierres por ID y contenido iguales, A8 §3.4). Sin ejecución destructiva |
+| A8 | **En curso (2026-10-08):** diagnóstico y diseño previos a M2 en `docs/decisions/A8_M2_PREPARATION.md`, corregido tras la revisión de Codex sobre `b826dba` (§20). **A8-3 cerrado:** clasificación legado/nuevo persistente (`Sector.isLegacy`, migración aditiva `20261008110000_sector_org_classification` con backfill del criterio previo, **aplicada sólo a la copia `org-location-reorg` el 2026-10-08**; motor y frontend desde el dato persistido; pruebas con motor real) y **equivalencia antes/después verificada con datos reales** (78 pares únicos idénticos, 0 diferencias, `ff1565f` vs `8a2985e`, 5 `MISSING` intactos, cierres por ID y contenido iguales, A8 §3.4). **A8-1/A8-2: diseño entregado (A8 §12, §21), pendiente de aprobación D-B1** — archivo en su tabla con CHECKs condicionales en vez de NOT NULL global. Sin ejecución destructiva |
 | B0–B5 | Pendientes |
 
 ### A2 — qué quedó en código
@@ -1092,3 +1092,31 @@ reemplaza `pg_dump`); los dos `*.summary.json` se re-compararon **sin base de da
 resultados (78 pares únicos, 0 diferencias, 5 `MISSING`, 8 cierres intactos). Ver A8 §3.4.
 Sin M2, limpieza, restauración, seed, reconciliación, escritura en bases fuera de la copia ni
 despliegues.
+
+## 21. A8 — diseño de A8-1/A8-2: archivo legado con restricciones condicionales (2026-10-08, pendiente de aprobación) [D]
+
+Documento completo: `A8_M2_PREPARATION.md` §12. Sólo documentación: sin migraciones, código ni datos.
+
+- **Propuesta (B):** los registros retenidos por historia con forma vieja **no se convierten**: se
+  archivan en su tabla tal cual (padre nuevo `NULL`, cadena vieja intacta, ID intacto) y M2 sustituye
+  los `NOT NULL` globales de `Sector.businessUnitId` / `Area.sectorId` / `Establishment.zoneId` por
+  **CHECKs bicondicionales por fila** — fila nueva exige padre nuevo, fila archivada exige padre nuevo
+  `NULL`. La exclusión de nuevas selecciones ya está implementada en servicio (`orgStructure.service.ts`
+  `assertParent`/`updateNode`, `positions.service.ts` `POSITION_SCOPE_LEGACY`); los CHECKs sólo la
+  sostienen en la base.
+- **Viabilidad:** precedente de CHECK escritos a mano en M1 (`PositionOrgScope_level_target_check`,
+  `EmployeeWorkLocation_*`, estables ante drift — A2); clasificación persistente ya existe
+  (`Sector.isLegacy`, A8-3) y coincide con el criterio de lectura actual de `Area`/`Establishment`
+  (`sectorId IS NULL` / `zoneId IS NULL`); las FKs `RESTRICT` de las siete tablas de historia
+  garantizan a nivel base que nada archivado se borra; el closure de ancestros ya existe en
+  `cleanupPlan.ts`.
+- **Efectos si se aprueba (D-B1):** HT-2 deja de bloquear M2 con "conversión no neutral" (no hay
+  conversión); HT-4/archivo de empresas en C2 pasa de aborto a clase archivada; R3 (§6) deja de ser
+  "M2 bloqueada" cuando el destino retenido se archive; `cleanupPlan.ts` clasifica referencias de
+  historia como retención en vez de único bloqueo; las cinco columnas de la cadena se **conservan**
+  en M2 y su retiro queda como etapa posterior con conteo 0 (D-B2); `Employee/User/ClockDevice.sectorId`
+  se dropean igual; la restauración (`LEGACY_COLUMNS`) no cambia. Guardas G1-G8 y columnas
+  retirar-vs-conservar en A8 §12.5-§12.6.
+- **Estado:** **propuesta, no aprobada.** Mientras D-B1 no se resuelva, siguen vigentes HT-2
+  ("si no, se conserva y M2 queda bloqueada"), el §4.1 del A8 y la frase de §6 sobre R3. Pendientes
+  de decisión en A8 §12.9 (D-B1 a D-B4) junto con los ya abiertos (D-1, D-2, D-3, D-6, A8-5, D-0).

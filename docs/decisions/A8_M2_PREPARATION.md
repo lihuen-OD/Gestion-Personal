@@ -63,6 +63,9 @@ las siete tablas de historia (incl. `EmployeeLegacySectorPeriod`), `EmployeeComp
 > Alerta derivada del hallazgo 1 (§3.4): el NOT NULL de `Sector.businessUnitId` no es sólo DDL:
 > cambia la clasificación histórica legado/nuevo de las reglas. **Mitigado por A8-3 (2026-10-08):**
 > la clasificación vive ahora en `Sector.isLegacy` y el motor ya no deriva nada del padre actual.
+> **Propuesta alternativa (§12):** bajo D-B1, los tres `NOT NULL` de la tabla se sustituyen por
+> CHECKs condicionales por clase de fila; los padres nuevos siguen siendo obligatorios **para filas
+> nuevas**, pero no para filas archivadas.
 
 ### 2.3 Consumidores — backend [C]
 
@@ -188,6 +191,9 @@ retirarse sin romper la resolución histórica: la dimensión "sector anterior" 
   ruta histórica idéntica, semántica de reglas sin cambio), con pruebas de equivalencia antes/después
   sobre la copia. **Si la neutralidad no puede demostrarse, el nodo se conserva y M2 queda bloqueada.**
   **Nunca se inventa un padre para satisfacer el NOT NULL de M2.**
+  *(Propuesta alternativa §12: bajo D-B1 no hay conversión que demostrar — el nodo se archiva con su
+  forma vieja y M2 no queda bloqueada; esta última frase pasaría a estar vigente sólo si D-B1 se
+  rechaza.)*
 - **HT-3 — Puestos retenidos [D]:** se conserva la fila y se vacía `Position.sectorId` (columna autorizada
   a NULL). **[C]** Desde D-5 esa columna no es entrada del motor (las vigencias viven en
   `EmployeePositionPeriod`), por lo que el vaciado debería ser neutro — igual se exige la prueba de
@@ -200,6 +206,8 @@ retirarse sin romper la resolución histórica: la dimensión "sector anterior" 
   redefinición posterior y aprobada de C2 (que conserve explícitamente las empresas históricas) podría
   habilitarla. **Nunca se reasigna una FK histórica** para liberar el borrado. Para la referencia de
   catálogo de `DoubleHourRule` siguen disponibles R1/R2/R3 (§3.2).
+  *(Propuesta alternativa §12: bajo D-B1, esa empresa se **archiva** —clase 2— en C2 en vez de
+  abortar, y el texto de "aborta" quedaría actualizado al aprobarse; ver §12.7.)*
 - **HT-5 — Divergencia de la copia [C/R]:** en la copia de ensayo hay filas de QA que referencian
   registros del inventario (`PositionOrgScope` → UN antigua; 4 filas de `EmployeeEmployerPeriodCompany`
   → empresas en C2; reporte `d5-org-reorg-inventory-copy-2026-10-08.json`). Se resuelven excluyendo los
@@ -327,6 +335,11 @@ de datos** con los scripts corregidos y reprodujeron el mismo resultado [R]: **7
 ## 4. Cambios propuestos para M2 (diseño; aún no implementar) [D]
 
 ### 4.1 DDL de la migración (archivo único, en `reorg-r2`) y guarda por clases de fila
+
+> **Propuesta alternativa registrada (2026-10-08, §12):** si se aprueba **D-B1**, esta tabla se
+> reemplaza por el diseño de §12.4/§12.6 — archivo en su tabla con CHECKs condicionales, en vez de
+> `NOT NULL` global y de abortar con "Retenidas por historia" cuando la forma vieja no se puede hacer
+> nueva. Hasta esa aprobación, **este §4.1 sigue rigiendo**.
 
 La guarda previa clasifica las filas antes de cualquier DDL y **aborta** si alguna queda en una clase
 incompatible. Nunca exige `User.companyId NOT NULL` (sigue siendo nullable y administrativo).
@@ -521,7 +534,7 @@ cobertura).
    QA visual contra `docs/reference-ui/`; contratos de §2.6 actualizados; **A8-4** (`EXPLAIN` de
    listados, §5.2).
 
-### 7.3 Qué cambió respecto del plan de §12.4
+### 7.3 Qué cambió respecto del plan de ADR §12.4
 
 - Paso 3: clasificación en tres clases de fila + historia y `PositionOrgScope`.
 - Paso 4: R1/R2/R3 sólo para catálogo; referencias históricas a `Company` retienen ID (HT-4).
@@ -590,8 +603,8 @@ de forma explícita y ordenada, con manifiesto V1).
 | D-2 | Zona completa | ¿"Todos los establecimientos de Zona Norte" se marca explícitamente o una lista vacía lo significa? (Hoy: lista vacía se rechaza) |
 | D-3 | Rastro de la limpieza | Sólo `AuditLog` (script actual) vs filas en el historial visible del legajo |
 | D-6 | Puestos por alcance | ¿Un "Gerente de O'Dwyer" y uno "de Tropa" son dos puestos o uno con dos alcances? (Hoy: una función con alcance distinto = puesto distinto) |
-| **A8-1** | Nodo retenido por historia con forma vieja | Si `EmployeeLegacySectorPeriod` apunta a un Sector del inventario: ¿se **demuestra** una conversión neutra (identidad, ruta histórica, semántica de reglas intactas) con equivalencia antes/después? Si no, **se conserva y M2 queda bloqueada**. Nunca inventar el `businessUnitId` para pasar la guarda |
-| **A8-2** | Alcance exacto de la guarda de M2 | Clases eliminable/retenida/nueva (§4.1); `User.companyId` **no** se exige NOT NULL (nullable, administrativo); puestos sin alcance admitidos |
+| **A8-1** | Nodo retenido por historia con forma vieja | **Diseño entregado (§12), pendiente de aprobación D-B1:** archivo en su tabla con forma vieja + CHECKs condicionales (§12.3-§12.4), sin inventar padres y sin conversión. Mientras D-B1 no se apruebe sigue rigiendo lo anterior: si `EmployeeLegacySectorPeriod` apunta a un Sector del inventario y no se demuestra una conversión neutra, **se conserva y M2 queda bloqueada** |
+| **A8-2** | Alcance exacto de la guarda de M2 | **Diseño entregado (§12):** cuatro clases (nuevas / archivadas / eliminables / dependencias pendientes) con guardas G1-G8 verificables (§12.6), columnas a retirar vs. conservar (§12.5) y efectos sobre limpieza/restauración (§12.7); pendiente de D-B1. Sin B aprobada, rige §4.1: clases eliminable/retenida/nueva; `User.companyId` **no** se exige NOT NULL (nullable, administrativo); puestos sin alcance admitidos |
 | **A8-3** | Clasificación legado/nuevo persistente | **Cerrado (2026-10-08):** `Sector.isLegacy` (sin `@default`) sustituye a `!rule.sector.businessUnitId` (§3.4); backfill con el criterio previo en la migración aditiva `20261008110000` (**aplicada sólo a la copia `org-location-reorg`**), motor y frontend desde el dato persistido, pruebas con motor real; **equivalencia antes/después [R]**: 78 pares únicos idénticos (`ff1565f` vs `8a2985e`), 0 diferencias, 5 `MISSING` intactos, manifiesto con única diferencia `Sector.isLegacy` + `_prisma_migrations +1`, cierres por ID y contenido iguales. Mientras haya evidencia legada, el soporte legado se conserva |
 | **A8-4** | Índices y planes de consulta tras el DROP | `EXPLAIN` de listados antes de eliminar `[status, sectorId]` y `[sectorId]`; cobertura de `@@index([status])` (schema 817) |
 | **A8-5** | Fecha de corte de cobertura | Fecha desde la que la recarga abre períodos auditados (§6.1). Hoy **no elegida ni ejecutada**; hasta decidirla, `MISSING` se conserva |
@@ -618,5 +631,223 @@ de forma explícita y ordenada, con manifiesto V1).
   `{id, nombre}` y límites del snapshot lógico documentados; comparaciones `.summary.json`
   re-ejecutadas **sin base de datos** con los mismos resultados (78 únicos, 0 diferencias, 5
   `MISSING`, 8 cierres intactos).
-- Siguiente paso: en `reorg-r2`, implementar M2 y el retiro de consumidores, probarlos en la copia
-  aislada, y recién entonces ejecutar el ensayo de §7 (la clasificación A8-3 ya no está pendiente).
+- [x] **A8-1/A8-2 diseñados** (§12): archivo en su tabla con restricciones condicionales en vez de
+  NOT NULL global, columnas a retirar vs. conservar, guardas G1-G8 y efectos sobre limpieza y
+  restauración. **Pendiente: aprobación de la propuesta** (§12.9); hasta entonces siguen rigiendo
+  §4.1 y HT-2.
+- Siguiente paso: aprobar o rechazar la propuesta de §12; luego, en `reorg-r2`, implementar M2 y el
+  retiro de consumidores, probarlos en la copia aislada, y recién entonces ejecutar el ensayo de §7
+  (la clasificación A8-3 ya no está pendiente).
+
+## 12. A8-1 y A8-2 — diseño de nodos históricos y guarda de M2 (2026-10-08) [D]
+
+**Estado: propuesta de diseño, pendiente de aprobación.** No implementa nada: sólo documenta qué se
+haría y qué exige aprobar. Sustituiría el párrafo "Retenidas por historia" de §4.1 y la condición de
+bloqueo de HT-2 (§3.3) **si se aprueba**; mientras tanto, esas reglas siguen vigentes sin cambios.
+
+### 12.1 La pregunta
+
+Con el plan vigente (§4.1, HT-2), un registro retenido por historia con forma vieja
+(`Sector.businessUnitId IS NULL`, `Area.sectorId IS NULL`, `Establishment.zoneId IS NULL`) debe
+convertirse a la forma nueva sin inventar padres; si la conversión no es neutra demostrable, **M2
+queda bloqueada**. La pregunta de A8-1 es si existe una salida que conserve el registro sin
+convertirlo; la de A8-2 es cuál es el alcance exacto de la guarda que lo permite.
+
+### 12.2 Alternativas evaluadas
+
+| | A — plan vigente (§4.1 / HT-2) | **B — archivo en su tabla (propuesta)** | C — "reubicar como INACTIVO" |
+|---|---|---|---|
+| Qué hace con un nodo retenido | exige convertirlo a forma nueva | lo deja donde está, con su forma vieja, protegido por CHECKs condicionales | lo mueve/reclasifica en el árbol nuevo |
+| M2 con archivo no vacío | **bloqueada** | **procede** | no aplica |
+| Evidencia exigida | neutralidad demostrada en 4 planos | viabilidad técnica (§12.3-§12.6) | — |
+| Estado | vigente si B no se aprueba | **recomendada, pendiente de aprobación** | **rechazada** (ADR §20 hallazgo 2) |
+
+- **A** sigue siendo el plan hasta que B se apruebe. Es correcto pero conservador: hace de una fila
+  histórica potencial un bloqueo duro de M2 (HT-2).
+- **B** es la alternativa pedida para evaluar. No se da por aprobada: §12.3-§12.6 demuestran viabilidad
+  y §12.8 lista los límites; §12.9 lista lo que el usuario debe decidir.
+- **C** no se reconsidera (rechazo ratificado en ADR §20).
+
+### 12.3 Propuesta B — archivo en su tabla con restricciones condicionales
+
+**Idea central:** los registros retenidos por historia **no se convierten**. Se quedan en sus tablas,
+con su forma vieja (padre nuevo `NULL`, como hoy), y M2 deja de exigir `NOT NULL` global sobre los
+padres nuevos: en su lugar agrega CHECKs **bicondicionales por fila**, de modo que cada fila sólo
+está sujeta a la forma que le corresponde (asumiendo D-B3 de §12.9, `isLegacy` también en `Area` y
+`Establishment`; si D-B3 se rechaza, los CHECKs de esas dos tablas se reducen a la forma descrita en
+la nota al pie):
+
+```sql
+-- M2 (reorg-r2), sólo si se aprueba la propuesta B [D]
+-- Fila nueva: su padre nuevo NO puede ser NULL.
+-- Fila archivada: su padre nuevo DEBE ser NULL (nadie le inventa un padre).
+ALTER TABLE "Sector" ADD CONSTRAINT "Sector_parent_class_check"
+  CHECK (( "isLegacy" = false AND "businessUnitId" IS NOT NULL )
+      OR ( "isLegacy" = true  AND "businessUnitId" IS NULL     ));
+
+ALTER TABLE "Area" ADD CONSTRAINT "Area_parent_class_check"
+  CHECK (( "isLegacy" = false AND "sectorId" IS NOT NULL )
+      OR ( "isLegacy" = true  AND "sectorId" IS NULL     ));
+
+ALTER TABLE "Establishment" ADD CONSTRAINT "Establishment_parent_class_check"
+  CHECK (( "isLegacy" = false AND "zoneId" IS NOT NULL )
+      OR ( "isLegacy" = true  AND "zoneId" IS NULL     ));
+```
+
+(Sin D-B3, `Area`/`Establishment` no tienen `isLegacy` y el CHECK sólo puede exigir "cada fila tiene
+al menos un padre" — `sectorId IS NOT NULL OR establishmentId IS NOT NULL` en `Area`, `zoneId IS NOT
+NULL OR companyId IS NOT NULL` en `Establishment` —; la regla "archivado no gana padre nuevo" queda
+entonces sólo en servicio, sin sostén en la base. Por eso D-B3 está vinculada a D-B1.)
+Los CHECKs **no** fuerzan la cadena vieja del archivado (un sector legado pudo nacer sin `areaId`):
+la preservación de la cadena es la guarda de datos G2 de §12.6, no una restricción SQL.
+
+Características de la propuesta:
+
+1. **La clasificación donde ya existe no cambia.** La clasificación ya existe en `Sector.isLegacy` (A8-3);
+   `Area`/`Establishment` se clasifican hoy en lectura por `sectorId IS NULL` / `zoneId IS NULL`
+   (`orgStructure.repository.ts:192,210`), criterio que coincide con el backfill de A8-3
+   (`isLegacy = (padre nuevo IS NULL)`). No se agrega `isLegacy` a esas dos tablas salvo que se
+   quiera la misma persistencia que en `Sector` (decisión D-B3 de §12.9).
+2. **La identidad histórica no se toca:** los IDs, las FKs `RESTRICT` de las siete tablas de D-5 y el
+   closure de ancestros siguen garantizando que nada referenciado se borra
+   (`schema.prisma` historia, `cleanupPlan.ts:189-205`).
+3. **La exclusión de nuevas selecciones ya está implementada** [C]: `assertParent`
+   (`orgStructure.service.ts:99`) rechaza colgar hijos de un legado; `updateNode`
+   (`orgStructure.service.ts:166`) rechaza reubicar un legado; `assertNoNewLegacyLinks`
+   (`:111`) rechaza vínculos nuevos de centros de costo; `positions.service.ts:74`
+   (`POSITION_SCOPE_LEGACY`) excluye sectores legados de nuevos alcances. La propuesta sólo
+   **sostiene** estas reglas en la base con los CHECKs, no las reemplaza.
+4. **Sin inventar padres nunca:** el CHECK de clase impide que una fila archivada gane un padre
+   nuevo (que sería reubicación, rechazada por servicio) y que una fila nueva nazca sin padre.
+
+### 12.4 DDL previsto en M2 bajo la propuesta B [D]
+
+Archivo único en `reorg-r2` (patrón: aditivo primero, luego restricciones, luego DROP):
+
+1. **CHECKs condicionales** (§12.3) en `Sector`, `Area`, `Establishment` — sustituyen los tres
+   `NOT NULL` de §2.2. Los CHECK escritos a mano **no se modelan en Prisma** y `schema.prisma` no
+   gana campos NOT NULL nuevos por este motivo (precedente: `PositionOrgScope_level_target_check` y
+   `EmployeeWorkLocation_*` en `migration.sql` de M1, líneas 204/215/221; verificados como
+   estables ante `migrate diff` en A2 del ADR); el único `@@unique` nuevo es el de D-13, punto 3.
+2. **Sin `NOT NULL` global sobre los tres padres nuevos:** el NOT NULL global es exactamente lo que
+   una fila archivada (padre nuevo `NULL`) no puede cumplir; lo que sí exige es que **cada fila nueva**
+   tenga padre, y eso lo dan los CHECKs de §12.3. `BusinessUnit.companyId` ya es NOT NULL y no cambia.
+3. **D-13:** `CREATE UNIQUE INDEX` por `(zoneId, code)` sobre `Establishment`, **conservando**
+   `@@unique([companyId, code])` mientras existan filas archivadas que lo usen; en `schema.prisma`
+   se modela como `@@unique([zoneId, code])`. Ambos conviven sin impedir altas nuevas: en Postgres
+   los `NULL` no colisionan, de modo que las filas legadas (`zoneId NULL`) siguen regidas por el
+   único viejo y las nuevas (`companyId NULL`) por el nuevo.
+4. **DROP de columnas** según la tabla de §12.5, con precondición de conteo `= 0` (DO-block que
+   aborta si alguna fila aún usa la columna, mismo patrón fall-closed que `org-reorg-restore.ts:65`).
+5. Sincronización de `schema.prisma`, `prisma validate`, regeneración del cliente y
+   `migrate diff` vacío (guarda de deriva).
+
+**No toca:** tablas de historia, `AuditLog`, legajos, horas, cierres, documentos, historiales,
+`DoubleHourRule.*` (salvo retiro ya autorizado), `EmployeeCompany`, `CostCenter*`.
+
+### 12.5 Columnas: retirar vs. conservar
+
+| Grupo | Columnas | Tratimiento en M2 | Condición |
+|---|---|---|---|
+| **Retirar** | `Employee.sectorId` (+ índices `[status, sectorId]`, `[sectorId]`), `User.sectorId`, `ClockDevice.sectorId` (+ índice) | **DROP** | Se ejecuta en M2, en este orden: A8 retira sus consumidores (§4.2, incluye D-15 para dispositivos), la limpieza B3 las pone en NULL, conteo `= 0` (DO-block que aborta si queda algún valor), y A8-4 valida planes de consulta tras el DROP |
+| **Conservar mientras haya archivo** | `Sector.areaId`, `Area.establishmentId`, `Establishment.companyId`, `Establishment.businessUnitId`, `Position.sectorId` (+ `@@unique([companyId, code])`) | **No se dropean en M2** | Se retiran en una etapa posterior (purga del archivo) con su propio conteo `= 0`; hasta entonces son la "ruta histórica" del archivo (HT-2 plano 2) |
+| **Conservar siempre** | `Sector.isLegacy`, padres nuevos (`businessUnitId`, `sectorId` de Area, `zoneId`), FKs `RESTRICT` de historia | intactas | — |
+
+Justificación de la diferencia: `Employee/User/ClockDevice.sectorId` apuntan a un legajo, un usuario
+o un dispositivo — su valor es estado actual, no evidencia, y A8 retira sus consumidores en §4.2
+antes de que M2 los dropee; las
+columnas de la cadena interna, en cambio, **son** la forma archivada del registro: dropearlas
+mutilaría el archivo que la propuesta existe para conservar. Bajo el plan A (sin B aprobada) esas
+cinco sí caían en M2 con la condición de §4.1. Nota sobre HT-3: bajo B, vaciar `Position.sectorId`
+deja de ser necesario (la columna se conserva con el archivo); si se prefiere vaciarla igual — sigue
+siendo neutral según el propio HT-3, porque desde D-5 no es entrada del motor — es una variante de
+D-B2, no un requisito del diseño.
+
+### 12.6 Guardas verificables (A8-2) — cuatro clases de fila
+
+| Cla­se | Definición | Condición que exige la guarda (aborta si no) |
+|---|---|---|
+| **1. Nuevas / modelo nuevo** | filas creadas por el modelo nuevo (incl. QA) | Padre nuevo NOT NULL (o, bajo B, CHECK de clase nueva cumplido); ninguna apunta a un ID eliminable; ninguna tiene forma vieja |
+| **2. Archivadas (retenidas por historia o R3)** | IDs excluidos del inventario porque evidencia los referencia | **Forma vieja preservada** (padre nuevo `NULL`, cadena vieja intacta), identidad y contenido idénticos a los previos a la limpieza (V1 por ID y contenido), CHECK de clase archivada cumplido, closure de ancestros también archivado |
+| **3. Eliminables** | IDs del inventario congelado destinados a borrado | **0 restantes** tras la limpieza, ni borrados parcialmente ni con forma nueva |
+| **4. Dependencias operativas pendientes** | referencias de catálogo/modelo nuevo sin decisión (`RULE_WITHOUT_DECISION`, `UNCLASSIFIED_OR_NEW_DEPENDENCY`, `OUTSIDE_RECORD_DEPENDS_ON_INVENTORY`) | **0 sin resolver**: cada una tiene R1/R2/R3, retención o retiro de la fila nueva aplicado y registrado antes de limpiar |
+
+Verificaciones concretas [D] (se escriben al implementar; todas son consultas deterministas sobre la
+copia, sin escritura):
+
+- **G1 — clasificación:** `COUNT(*)` de sectores con `isLegacy = true AND businessUnitId IS NOT NULL`
+  o `isLegacy = false AND businessUnitId IS NULL` → **0** (equivalente al CHECK; sirve como precondición
+  antes de M2 y como verificación de backfill si se extiende a Area/Establishment).
+- **G2 — forma archivada:** `COUNT(*)` de filas de la clase 2 con padre nuevo no `NULL` o cadena vieja
+  rota (p. ej. un sector archivado con `areaId` apuntando a un área eliminable) → **0**.
+- **G3 — eliminables:** por cada tabla de `DELETE_ORDER`, `COUNT(*)` de IDs del inventario deletable
+  presentes → **0**.
+- **G4 — contenido del archivo:** hash/`compare` por ID y contenido de las filas de la clase 2 contra
+  el manifiesto V1 previo a la limpieza → **idénticos** (mismo mecanismo de V1, ADR §5.4).
+- **G5 — selecciones nuevas:** `COUNT(*)` de filas de `PositionOrgScope`, `EmployeeWorkLocation`,
+  `EmployeeWorkLocationEstablishment`, vínculos nuevos de `CostCenter*` y altas de servicio que apunten
+  a un legado → **0** (hoy ya garantizado por servicio; G5 lo confirma en datos).
+- **G6 — restricciones activas:** en `information_schema.check_constraints`, los CHECKs de clase de
+  M2 presentes y `validated` → **true**; `prisma migrate diff` vacío contra `schema.prisma`.
+- **G7 — historias intactas:** `COUNT(*)` de filas de las 7 tablas de D-5 que referenciaban IDs del
+  inventario y ahora apuntan a IDs de la clase 2 → **idéntico al previo** (las FKs `RESTRICT` lo
+  garantizan a nivel DB; G7 sólo lo constata).
+- **G8 — índices y planes (A8-4):** `EXPLAIN` de listados de legajos tras los DROP, cobertura de
+  `@@index([status])` según `docs/PERFORMANCE_STANDARDS.md`.
+
+### 12.7 Efectos sobre limpieza y restauración
+
+- **`cleanupPlan.ts`:** `HISTORY` deja de emitir sólo bloqueo (`cleanupPlan.ts:116-118`) para, bajo
+  B, **clasificar la referencia como retención**: la fila referenciada pasa a la clase 2 (se agrega
+  como raíz de `retainedClosure`, `cleanupPlan.ts:189-205`) y deja de estar en `deletable`. El issue
+  pasa a informativo (`HISTORY_ARCHIVED`, `blocking: false`) salvo cuando la retención entre en
+  conflicto con otra clase (p. ej. una fila de la clase 4 apuntando al mismo ID), que sigue abortando.
+- **HT-4 / C2:** una empresa del inventario referenciada por historia **se archiva** en vez de abortar
+  la limpieza; el texto de §3.3 HT-4 y de ADR §6 (aclaración de A8) quedaría actualizado al aprobarse
+  B. **R1/R2 siguen sin aplicarse a historia** (no se reasigna ninguna FK histórica).
+- **R3:** una regla que referencia un destino retenido ya no bloquea M2 (§6 del ADR: "M2 queda
+  bloqueada hasta resolverlo" pasaría a "el destino se archiva y la regla sigue refiriéndolo");
+  R1/R2 siguen aplicándose cuando el destino **sí** es eliminable.
+- **Orden y transacción:** `DELETE_ORDER`, respaldo previo, manifiesto V1 y verificación por ID y
+  contenido (ADR §5.4) no cambian. La única variante es el tamaño de `deletable` (clase 3) vs.
+  `retained` (clase 2).
+- **Restauración (`org-reorg-restore.ts`):** **sin cambio.** `LEGACY_COLUMNS` (línea 38) exige las
+  cinco columnas de la cadena y aborta con "M2 ya se aplicó" si falta alguna (línea 65). Bajo B,
+  cuatro de ellas se conservan en M2 (§12.5) pero `Employee.sectorId` **sí** se dropea, así que el
+  chequeo sigue distinguiendo "antes" de "después de M2" exactamente igual que hoy. El alcance de la
+  restauración (sólo antes de la limpieza, mismos respaldos, re-inserción por ID con la forma previa)
+  no cambia.
+- **Seed / fixtures / contratos (§2.5, §2.6):** bajo B, `Employee.sectorId` y `User.sectorId` se
+  dropean igual y siguen aplicándose los cambios de §4.2; lo que cambia es que el seed **no necesita
+  convertir** sectores/áreas/establecimientos archivados: no los toca. El workaround de unicidad de
+  `seed.ts:76-88` caduca igual con D-13; bajo B, como `(companyId, code)` se conserva hasta la purga
+  (§12.5), ese workaround caduca en la etapa de purga, no en M2.
+
+### 12.8 Límites de la propuesta (por qué no es gratis)
+
+- **La convivencia es permanente:** el modelo queda con dos formas de fila en tres tablas. Todos los
+  consumidores nuevos deben seguir respetando la exclusión de legados; los CHECKs sólo impiden
+  reubicar/crear mal, no garantizan por sí solos que una pantalla futura no muestre un archivado como
+  nodo activo (eso lo siguen haciendo los filtros y `isLegacy`).
+- **No libera las decisiones pendientes:** D-1 (C1/C2), D-2, D-3, D-6, A8-5 (fecha de corte) y D-0
+  siguen bloqueando B1/B4 de igual manera; HT-5 (QA que referencia inventario) se resuelve igual.
+- **El archivo no se purga nunca de forma automática:** retirar las cinco columnas y borrar filas
+  archivadas es una etapa propia, con sus propias decisiones y respaldos; si nadie la ordena, el
+  archivo queda indefinidamente (costo aceptado y documentado, no deuda oculta).
+- **Riesgo de CHECK escritos a mano:** son SQL fuera del modelo Prisma. Mitigación: precedente M1 ya
+  verificado estable (A2), G6 en cada entorno y `migrate diff` vacío.
+- **Riesgo de divergencia HT-1:** si en `development` hay historia que referencia inventario (esperado
+  0), bajo B eso ya no bloquea M2, pero **sí** cambia el tamaño de `deletable` y activa las clases 2/4;
+  HT-1 sigue siendo la medición previa obligatoria.
+
+### 12.9 Decisiones que exige la propuesta B (pendientes del usuario)
+
+| Id | Decisión | Si se aprueba / si se rechaza |
+|---|---|---|
+| **D-B1** | **Aprobar la propuesta B** (archivo en su tabla + CHECKs condicionales) y con ella: levantar la condición de bloqueo de HT-2, actualizar §4.1/§3.3 y ADR §6/§20-hallazgo-2 | Aprueba ⇒ se redacta el DDL de M2 bajo §12.4. Rechaza ⇒ sigue rigiendo el plan A (M2 bloqueada con archivo no vacío) |
+| **D-B2** | Retiro de las cinco columnas de la cadena que sí sobreviven a M2 (`Sector.areaId`, `Area.establishmentId`, `Establishment.companyId/businessUnitId`, `Position.sectorId`) y del `@@unique([companyId, code])`: **etapa posterior con conteo 0** (§12.5); incluye si `Position.sectorId` se vacía ya en M2 (variante HT-3) o se conserva con el archivo | Aprueba ⇒ se agrega una etapa de purga al plan de etapas. Rechaza ⇒ se vuelve a la condición de §4.1 (DROP en M2 con abort si hay archivo) |
+| **D-B3** | Persistir `isLegacy` también en `Area` y `Establishment` (mismo patrón A8-3) o mantener la clasificación en lectura actual (`orgStructure.repository.ts:192,210`) | Aprueba ⇒ las dos columnas se agregan en la fase aditiva de M2 (§12.4) con backfill `isLegacy = (padre nuevo IS NULL)`, patrón A8-3, y los CHECKs quedan bicondicionales completos; rechaza ⇒ CHECKs reducidos a "al menos un padre" (§12.3) y la regla de archivado queda sólo en servicio |
+| **D-B4** | Excluir los archivados de nuevas selecciones **a nivel de base** además de servicio (p. ej. filtro `WHERE "isLegacy" = false` obligatorio en vistas/repositorio) o sólo mantener los CHECKs de forma | Se decide junto con D-B1; sólo-servicio es el mínimo, base-da-defensa-en-profundidad |
+
+Mientras D-B1 no esté resuelta, A8-1 y A8-2 siguen **abiertos** en §10 y el diseño de §12 queda como
+propuesta registrada, sin efecto sobre el plan.
