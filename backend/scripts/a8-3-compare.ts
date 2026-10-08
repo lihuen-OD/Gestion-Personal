@@ -1,12 +1,14 @@
 /**
  * Verificación de la etapa A8-3 sobre la copia `org-location-reorg`
- * (docs/decisions/A8_M2_PREPARATION.md §3.4). Tres modos, todos de datos ya
- * capturados salvo `verify-sector`, que sólo lee:
+ * (docs/decisions/A8_M2_PREPARATION.md §3.4). Tres modos, todos sobre archivos
+ * ya capturados salvo `verify-sector`, que sólo lee:
  *
  *   npx tsx scripts/a8-3-compare.ts engine --before=<reporte> --after=<reporte> --out=<resumen.json>
- *     Equivalencia del motor por par fecha-legajo: mismas claves y misma
- *     etiqueta/detalle. MISSING = MISSING sigue siendo igual (no se completa
- *     historia). Exit 2 si algún par cambió o falta.
+ *     Equivalencia del motor por par fecha-legajo: mismas claves y mismo
+ *     detalle, con `matchedRules` comparado por `{id, nombre}` (un cambio de
+ *     nombre es diferencia) y cobertura declarada vs claves de resultado.
+ *     MISSING = MISSING sigue siendo igual (no se completa historia). Exit 2
+ *     si algún par cambió, falta o sobra.
  *
  *   npx tsx scripts/a8-3-compare.ts manifest --before=<manifiesto> --after=<manifiesto> --out=<resumen.json>
  *     Manifiesto por ID/contenido: única incorporación permitida = columna
@@ -14,27 +16,19 @@
  *     (mismas filas existentes intactas). Todo lo demás idéntico, con los
  *     cierres informados por ID y contenido. Exit 2 ante cualquier violación.
  *
- *   npx tsx scripts/a8-3-compare.ts verify-sector --env-file=<archivo> --expected-host=<host> --backup-pre=<respaldo> --out=<reporte.json>
+ *   npx tsx scripts/a8-3-compare.ts verify-sector --env-file=<archivo> --expected-host=<host> --backup-pre=<snapshot> --out=<reporte.json>
  *     La columna clasifica con el criterio previo, es NOT NULL y sin DEFAULT;
  *     padres/datos de cada sector y el conjunto de migraciones aplicadas son
- *     idénticos al respaldo previo. Exit 2 ante cualquier discrepancia.
+ *     idénticos al snapshot lógico previo. Exit 2 ante cualquier discrepancia.
  */
 import { readFileSync, writeFileSync } from "node:fs";
 import { arg, connectTarget, readOnly } from "./org-reorg/lib";
 import type { RowManifest } from "../src/modules/org-structure/reorg/manifest";
+import { compareEnginePairResults, type EnginePairResult } from "../src/modules/time-entries/specialHourEvidence";
 
 const AUTHORIZED_MIGRATION = "20261008110000_sector_org_classification";
 
-interface PairResult {
-  label: string;
-  multiplier: number | null;
-  winners: string[];
-  matchedRules: Array<{ id: string; name: string }>;
-  conflicting: boolean;
-  missingHistory: { dimensions: string[]; ruleId: string; ruleName: string } | null;
-}
-
-interface EngineReport { host: string; engine: string; pairs: number; missingPairs: string[]; result: Record<string, PairResult> }
+interface EngineReport { host: string; engine: string; pairs: number; missingPairs: string[]; result: Record<string, EnginePairResult> }
 
 function load<T>(name: string): T {
   const path = arg(name);
@@ -72,23 +66,25 @@ function compareEngines() {
     if (!b) continue;
     if (a.label.startsWith("MISSING:")) missingBefore += 1;
     if (b.label.startsWith("MISSING:")) missingAfter += 1;
-    const detail: string[] = [];
-    if (a.multiplier !== b.multiplier) detail.push(`multiplier ${a.multiplier} → ${b.multiplier}`);
-    if (a.winners.join(",") !== b.winners.join(",")) detail.push(`winners ${a.winners.join(",")} → ${b.winners.join(",")}`);
-    const matchedA = a.matchedRules.map((rule) => rule.id).join(",");
-    const matchedB = b.matchedRules.map((rule) => rule.id).join(",");
-    if (matchedA !== matchedB) detail.push(`matchedRules ${matchedA} → ${matchedB}`);
-    if (a.conflicting !== b.conflicting) detail.push(`conflicting ${a.conflicting} → ${b.conflicting}`);
-    if (JSON.stringify(a.missingHistory) !== JSON.stringify(b.missingHistory)) detail.push("missingHistory cambió");
-    if (a.label === b.label && !detail.length) {
+    // matchedRules comparado por {id, nombre}: un cambio de nombre es diferencia.
+    const outcome = compareEnginePairResults(a, b);
+    if (outcome.equal) {
       equal += 1;
       if (a.label.startsWith("MISSING:")) missingStillMissing += 1;
     } else {
-      changed.push({ key, before: a.label, after: b.label, detail });
+      changed.push({ key, before: a.label, after: b.label, detail: outcome.detail });
     }
   }
+  // Cobertura interna de cada reporte: pares declarados vs claves de resultado.
+  const selfConsistency = {
+    pairsDeclaredBefore: before.pairs,
+    resultKeysBefore: keysBefore.length,
+    pairsDeclaredAfter: after.pairs,
+    resultKeysAfter: keysAfter.length,
+    ok: before.pairs === keysBefore.length && after.pairs === keysAfter.length,
+  };
   const hostMismatch = before.host !== after.host;
-  const ok = !changed.length && !onlyBefore.length && !onlyAfter.length && !hostMismatch;
+  const ok = !changed.length && !onlyBefore.length && !onlyAfter.length && !hostMismatch && selfConsistency.ok;
   writeOut({
     takenAt: new Date().toISOString(),
     mode: "engine",
@@ -105,6 +101,7 @@ function compareEngines() {
     missingBefore,
     missingAfter,
     missingStillMissing,
+    selfConsistency,
     changedPairs: changed,
     ok,
   }, ok);

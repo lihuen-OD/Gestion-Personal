@@ -18,9 +18,9 @@ Estado: **diagnóstico y diseño previos. Sin ejecución destructiva ni cambios 
   y `20261008090000_labor_history_periods` (D-5). **No existe ninguna migración M2** (ni reversión).
 - Reportes de solo lectura sobre la copia `org-location-reorg`, en `../backups/` (fuera del repositorio):
   `d5-org-reorg-inventory-copy-2026-10-08.json`, `d5-coverage-pre-qa-2026-10-08.json`,
-  `d5-engine-before-vs-after-qa.summary.json`, `d5-engine-after-qa-2026-10-08.json`, y los de A8-3
-  (`a8-3-*-2026-10-08.json`: respaldo con SHA-256, manifiestos pre/post, verificación de la columna,
-  motor antes/después y comparaciones; §3.4).
+  `d5-engine-before-vs-after-qa.summary.json`, `d5-engine-after-qa-2026-10-08.json`,   y los de A8-3
+  (`a8-3-*-2026-10-08.json`: snapshot lógico de filas con SHA-256, manifiestos pre/post, verificación
+  de la columna, motor antes/después y comparaciones; §3.4, incl. límites del snapshot).
 
 **Criterio de evidencia (usado en todo el documento)**
 - **[R] Medido:** número o resultado proveniente de un reporte de solo lectura identificable
@@ -286,19 +286,19 @@ Destino: copia Neon `org-location-reorg` (`backend/.env.reorg`; host
 `ep-rough-river-aioy7xp9-pooler.c-4.us-east-1.aws.neon.tech` comprobado antes de cada operación con
 `--expected-host`; `AUTOMATIC_JOBS_ENABLED=false`; identidad administrativa Neon `NOT_VERIFIED`, igual que
 en D-5, sin API key). Sólo lectura salvo la migración autorizada: sin servidor, sin tareas automáticas,
-sin escrituras fuera de `20261008110000`. Reportes y respaldo en `../backups/` (fuera del repositorio);
+sin escrituras fuera de `20261008110000`. Reportes y snapshot lógico en `../backups/` (fuera del repositorio);
 scripts reproducibles `backend/scripts/a8-3-logical-backup.ts`, `a8-3-engine-report.ts` y
 `a8-3-compare.ts`.
 
 | Paso | Evidencia [R] |
 |---|---|
 | `migrate status` previo | 62 migraciones en el repo, **única pendiente** `20261008110000_sector_org_classification` (`../backups/a8-3-migrate-status-pre-2026-10-08.log`) |
-| Respaldo lógico pre | `../backups/a8-3-pre-2026-10-08.backup.json` (69 tablas, 5341 filas, 61 migraciones) + SHA-256 `112b427375ce9cc4a9475bdbc1118ec7adc0fb4883ed694f512d5c57a494fecd` (`…backup.json.sha256`) |
+| Snapshot lógico pre | `../backups/a8-3-pre-2026-10-08.backup.json` (69 tablas, 5341 filas, 61 migraciones) + SHA-256 `112b427375ce9cc4a9475bdbc1118ec7adc0fb4883ed694f512d5c57a494fecd` (`…backup.json.sha256`). **Snapshot lógico de filas** para verificación y eventual reconstrucción: **no** incluye el esquema completo (sólo columnas y filas, sin índices/constraints/funciones), **no** restaura por sí mismo (sin procedimiento de restauración probado) y **no** reemplaza un `pg_dump` restaurable |
 | Manifiesto pre/post | `a8-3-pre-2026-10-08.manifest.json` / `a8-3-post-2026-10-08.manifest.json` (69 tablas; 5341 → 5342 filas) |
 | `migrate deploy` | aplicó **sólo** `20261008110000_sector_org_classification` en el host correcto (`a8-3-migrate-deploy-2026-10-08.log`) |
 | Verificación de la columna | `a8-3-sector-verification-2026-10-08.json`: 44 sectores; 42 `isLegacy=true` = 42 `businessUnitId IS NULL`; **0** discrepancias contra el criterio previo ni contra el respaldo pre (padres, nombre, código, estado y timestamps idénticos); `is_nullable=NO`, `column_default=NULL`; migraciones: **+1 exacta, 0 quitadas** |
 | Manifiesto pre vs post | `a8-3-manifest-pre-vs-post-2026-10-08.summary.json`: **0 violaciones**; única tabla con contenido cambiado = `Sector` (44/44 filas, set de IDs sin cambios: `isLegacy` entra en el hash); `_prisma_migrations +1` con las existentes intactas; **cierres** `MonthlyTimeClosure`: 8 filas, **IDs y contenido idénticos** |
-| Motor anterior vs nuevo | mismo script `a8-3-engine-report.ts` sobre los **78 pares fecha-legajo** de `d5-engine-before-2026-10-08.json`, antes y después de la migración: motor anterior = `ff1565f` (checkout aislado con `git worktree`), motor nuevo = `8a2985e`. `a8-3-engine-before-vs-after-2026-10-08.summary.json`: **equal 78, changed 0, onlyBefore 0, onlyAfter 0**; multiplicadores, ganadoras, `matchedRules` (con nombre), conflicto e historia faltante idénticos par a par; `missingBefore 5 = missingAfter 5 = missingStillMissing 5` |
+| Motor anterior vs nuevo | mismo script `a8-3-engine-report.ts` sobre los **78 pares fecha-legajo únicos** de `d5-engine-before-2026-10-08.json` (sin duplicados; pares únicos = claves de resultado, sin faltantes ni sobrantes), antes y después de la migración: motor anterior = `ff1565f` (checkout aislado con `git worktree`), motor nuevo = `8a2985e`. `a8-3-engine-before-vs-after-2026-10-08.summary.json`: **equal 78, changed 0, onlyBefore 0, onlyAfter 0, selfConsistency ok**; multiplicadores, ganadoras, `matchedRules` comparados por **`{id, nombre}`**, conflicto e historia faltante idénticos par a par; `missingBefore 5 = missingAfter 5 = missingStillMissing 5` |
 
 El motor anterior (`ff1565f`) sobre los 78 pares reproduce el estado documentado post-D-5 (ADR
 §19.3-§19.4, §6): **73 resueltos + 5 `MISSING:EMPLOYER:c96b0fe1…`**. Frente al reporte base
@@ -310,6 +310,19 @@ Conclusión: el requisito 2 (equivalencia antes/después con datos reales) y la 
 por ID y contenido** quedan **cumplidos [R]**; la única diferencia de esquema es `Sector.isLegacy` y la
 única diferencia de filas es `_prisma_migrations +1`. El requisito 3 sigue intacto: el soporte legado
 (`LEGACY_SECTOR`) no se retiró.
+
+**Revisión de Codex sobre `d2c7f71` (2026-10-08)** — tres hallazgos corregidos en un commit
+separado, sin tocar la migración ni la base: (1) `a8-3-engine-report.ts` rechaza pares
+`employeeId|fecha` duplicados **antes** de agrupar y verifica que los pares únicos coincidan con las
+claves de resultado (sin faltantes ni sobrantes; `exit 2` si no); (2) `a8-3-compare.ts` compara
+`matchedRules` normalizado por **`{id, nombre}`**, de modo que un cambio de nombre de la misma regla
+aparece como diferencia; (3) `a8-3-logical-backup.ts` se describe explícitamente como **snapshot
+lógico de filas** con sus límites (no esquema completo, sin restauración probada, no reemplaza
+`pg_dump`). La lógica vive en el módulo puro
+`backend/src/modules/time-entries/specialHourEvidence.ts`, con pruebas focalizadas (duplicados,
+cobertura y cambios de nombre de reglas). Los dos `*.summary.json` se volvieron a comparar **sin base
+de datos** con los scripts corregidos y reprodujeron el mismo resultado [R]: **78 pares únicos
+(0 duplicados), 0 diferencias, 5 `MISSING` intactos, 8 cierres por ID y contenido idénticos**.
 
 ## 4. Cambios propuestos para M2 (diseño; aún no implementar) [D]
 
@@ -379,8 +392,8 @@ sincronización de `schema.prisma` + `prisma validate` + regeneración del clien
 
 - **Clasificación LEGACY_SECTOR (hallazgo 1)** — §3.4: **A8-3 cerrado** (columna `Sector.isLegacy`,
   backfill con el criterio previo, motor y frontend desde el dato persistido); **migración aplicada y
-  equivalencia antes/después verificada en la copia el 2026-10-08** [R] (78/78 pares iguales entre
-  `ff1565f` y `8a2985e`, 5 `MISSING` intactos, cierres por ID y contenido iguales). Deja de bloquear M2
+  equivalencia antes/después verificada en la copia el 2026-10-08** [R] (78 pares únicos iguales
+  entre `ff1565f` y `8a2985e`, 0 diferencias, 5 `MISSING` intactos, cierres por ID y contenido iguales). Deja de bloquear M2
   por sí solo; el resto de A8 (A8-1/A8-2/A8-5) sigue abierto.
 - **Nodos históricos (hallazgo 2)** — §3.3 HT-2: sin conversión neutra demostrada, el nodo se conserva
   y M2 queda bloqueada.
@@ -477,8 +490,8 @@ cobertura).
 6. Historia: HT-1 corrido; toda referencia histórica a `Company` implica retener esa empresa (HT-4) y,
    en C2, aborto explícito.
 7. **Clasificación legado/nuevo persistente** (§3.4) implementada y con **equivalencia antes/después
-   verificada en la copia** (2026-10-08, 78/78 pares) [R]; soporte legado intacto mientras haya
-   evidencia que lo necesite.
+   verificada en la copia** (2026-10-08, 78 pares únicos, 0 diferencias) [R]; soporte legado intacto
+   mientras haya evidencia que lo necesite.
 8. `decisions.json` completo: modo C1/C2 (D-1), R1/R2/R3 por regla **de catálogo** (nunca sobre
    historia), D-3 decidido.
 9. Backend detenido, ventana sin escrituras, actor humano (`--actor-user-id` RRHH activo).
@@ -579,7 +592,7 @@ de forma explícita y ordenada, con manifiesto V1).
 | D-6 | Puestos por alcance | ¿Un "Gerente de O'Dwyer" y uno "de Tropa" son dos puestos o uno con dos alcances? (Hoy: una función con alcance distinto = puesto distinto) |
 | **A8-1** | Nodo retenido por historia con forma vieja | Si `EmployeeLegacySectorPeriod` apunta a un Sector del inventario: ¿se **demuestra** una conversión neutra (identidad, ruta histórica, semántica de reglas intactas) con equivalencia antes/después? Si no, **se conserva y M2 queda bloqueada**. Nunca inventar el `businessUnitId` para pasar la guarda |
 | **A8-2** | Alcance exacto de la guarda de M2 | Clases eliminable/retenida/nueva (§4.1); `User.companyId` **no** se exige NOT NULL (nullable, administrativo); puestos sin alcance admitidos |
-| **A8-3** | Clasificación legado/nuevo persistente | **Cerrado (2026-10-08):** `Sector.isLegacy` (sin `@default`) sustituye a `!rule.sector.businessUnitId` (§3.4); backfill con el criterio previo en la migración aditiva `20261008110000` (**aplicada sólo a la copia `org-location-reorg`**), motor y frontend desde el dato persistido, pruebas con motor real; **equivalencia antes/después [R]**: 78/78 pares idénticos (`ff1565f` vs `8a2985e`), 5 `MISSING` intactos, manifiesto con única diferencia `Sector.isLegacy` + `_prisma_migrations +1`, cierres por ID y contenido iguales. Mientras haya evidencia legada, el soporte legado se conserva |
+| **A8-3** | Clasificación legado/nuevo persistente | **Cerrado (2026-10-08):** `Sector.isLegacy` (sin `@default`) sustituye a `!rule.sector.businessUnitId` (§3.4); backfill con el criterio previo en la migración aditiva `20261008110000` (**aplicada sólo a la copia `org-location-reorg`**), motor y frontend desde el dato persistido, pruebas con motor real; **equivalencia antes/después [R]**: 78 pares únicos idénticos (`ff1565f` vs `8a2985e`), 0 diferencias, 5 `MISSING` intactos, manifiesto con única diferencia `Sector.isLegacy` + `_prisma_migrations +1`, cierres por ID y contenido iguales. Mientras haya evidencia legada, el soporte legado se conserva |
 | **A8-4** | Índices y planes de consulta tras el DROP | `EXPLAIN` de listados antes de eliminar `[status, sectorId]` y `[sectorId]`; cobertura de `@@index([status])` (schema 817) |
 | **A8-5** | Fecha de corte de cobertura | Fecha desde la que la recarga abre períodos auditados (§6.1). Hoy **no elegida ni ejecutada**; hasta decidirla, `MISSING` se conserva |
 
@@ -597,7 +610,13 @@ de forma explícita y ordenada, con manifiesto V1).
   del criterio previo, motor, consumidores, frontend y pruebas con motor real; `typecheck`/`test`/`build`
   verdes en ambos paquetes.
 - [x] **A8-3 migración aplicada y equivalencia verificada en la copia** (2026-10-08, §3.4): único destino
-  `org-location-reorg`; 78/78 pares idénticos entre `ff1565f` y `8a2985e`; 5 `MISSING` intactos; manifiesto
-  y cierres por ID/contenido sin cambios fuera de `Sector.isLegacy` y `_prisma_migrations +1`.
+  `org-location-reorg`; 78 pares únicos idénticos (0 diferencias) entre `ff1565f` y `8a2985e`; 5
+  `MISSING` intactos; manifiesto y cierres por ID/contenido sin cambios fuera de `Sector.isLegacy` y
+  `_prisma_migrations +1`.
+- [x] **Hallazgos de Codex sobre `d2c7f71` corregidos** (§3.4): pares duplicados y cobertura
+  únicos↔resultado verificados en el reporte del motor (con `exit 2`), `matchedRules` comparado por
+  `{id, nombre}` y límites del snapshot lógico documentados; comparaciones `.summary.json`
+  re-ejecutadas **sin base de datos** con los mismos resultados (78 únicos, 0 diferencias, 5
+  `MISSING`, 8 cierres intactos).
 - Siguiente paso: en `reorg-r2`, implementar M2 y el retiro de consumidores, probarlos en la copia
   aislada, y recién entonces ejecutar el ensayo de §7 (la clasificación A8-3 ya no está pendiente).

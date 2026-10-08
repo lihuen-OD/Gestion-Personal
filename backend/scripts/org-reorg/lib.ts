@@ -11,8 +11,14 @@ import { readFileSync } from "node:fs";
 import { parse } from "dotenv";
 import { PrismaClient } from "@prisma/client";
 import { assertExpectedHost, verifyNeonIdentity, type NeonIdentity } from "../../src/modules/org-structure/reorg/targetIdentity";
+import { engineOutcomeLabel, type EngineEvaluation } from "../../src/modules/time-entries/specialHourEvidence";
 import { DELETE_ORDER, type CompanyMode, type FrozenInventory, type InventoryRecord, type ReferenceCount, type RuleReference, type TargetTable } from "../../src/modules/org-structure/reorg/cleanupPlan";
 import { stableColumns, WATCHED_COLUMNS, type RowManifest, type TableManifest } from "../../src/modules/org-structure/reorg/manifest";
+
+// `EngineEvaluation` y `engineOutcomeLabel` viven en el módulo puro de
+// evidencia (src) y se re-exportan acá para los scripts D5/A8.
+export { engineOutcomeLabel };
+export type { EngineEvaluation };
 
 export type Tx = Omit<PrismaClient, "$connect" | "$disconnect" | "$on" | "$transaction" | "$extends">;
 
@@ -230,21 +236,7 @@ export async function captureRowManifest(tx: Tx, host: string): Promise<RowManif
 // Motor de horas especiales (D-5): resultado por legajo + fecha
 // ---------------------------------------------------------------------------
 
-export type EngineEvaluation = {
-  resolution?: { multiplier: unknown; winners: Array<{ id: string }> };
-  missingHistory?: { dimensions: string[]; ruleId: string };
-};
 export type EngineEvaluator = (employeeId: string, dates: Date[], db: unknown) => Promise<Map<string, EngineEvaluation>>;
-
-/**
- * Etiqueta comparable de un resultado: "multiplicador:ganadoras" (mismo
- * formato que los reportes anteriores) o "MISSING:dimensiones:regla" cuando
- * la fecha no se puede resolver sin inventar historia.
- */
-export function engineOutcomeLabel(evaluation: EngineEvaluation) {
-  if (evaluation.missingHistory) return `MISSING:${[...evaluation.missingHistory.dimensions].sort().join("+")}:${evaluation.missingHistory.ruleId}`;
-  return `${Number(evaluation.resolution!.multiplier)}:${evaluation.resolution!.winners.map((rule) => rule.id).sort().join(",")}`;
-}
 
 /** Fechas con horas, desgloses o tramos, por legajo. */
 export async function employeeDatesWithHours(tx: Tx) {

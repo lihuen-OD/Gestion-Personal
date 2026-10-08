@@ -1,7 +1,14 @@
 /**
- * Respaldo lógico completo (SÓLO LECTURA) de una base declarada, en el mismo
- * formato del respaldo D5 (`kind: "logical-json-full"`): metadatos de columna
- * y TODAS las filas por tabla, más el estado de `_prisma_migrations`.
+ * Snapshot lógico completo de filas (SÓLO LECTURA) de una base declarada, en
+ * el mismo formato del snapshot D5 (`kind: "logical-json-full"`): metadatos de
+ * columna y TODAS las filas de cada tabla base de `public`, más el estado de
+ * `_prisma_migrations`. Sirve para verificar la equivalencia antes/después
+ * (A8-3) y como insumo de una eventual reconstrucción manual de filas.
+ *
+ * Límites: NO es un backup de base. No incluye el esquema completo (sólo
+ * columnas y filas; sin índices, constraints, triggers, funciones, extensiones
+ * ni roles), no restaura por sí mismo —no hay procedimiento de restauración
+ * probado— y no reemplaza un `pg_dump` restaurable.
  *
  *   npx tsx scripts/a8-3-logical-backup.ts --env-file=<archivo> --expected-host=<host> --out=<archivo.json>
  *
