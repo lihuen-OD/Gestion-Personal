@@ -200,7 +200,7 @@ retirarse sin romper la resolución histórica: la dimensión "sector anterior" 
 - **HT-5 — Divergencia de la copia [C/R]:** en la copia de ensayo hay filas de QA que referencian
   registros del inventario (`PositionOrgScope` → UN antigua; 4 filas de `EmployeeEmployerPeriodCompany`
   → empresas en C2; reporte `d5-org-reorg-inventory-copy-2026-10-08.json`). Se resuelven excluyendo los
-  IDs QA del inventario congelado o retentiendo sus destinos. Que en `development` no existan es una
+  IDs QA del inventario congelado o reteniendo sus destinos. Que en `development` no existan es una
   **expectativa a verificar con HT-1**, no un dato medido.
 
 ### 3.4 Clasificación legado/nuevo del sector — bloqueo funcional [C]→[D]
