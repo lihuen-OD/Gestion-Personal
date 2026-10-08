@@ -60,6 +60,8 @@ async function main() {
     update: {},
     create: {
       sectorId: sector.id,
+      // A8-3 extensión: alta con clasificación explícita (con padre del modelo objetivo = nuevo).
+      isLegacy: false,
       code: "ADM-GRAL",
       name: "Administracion General",
     },
@@ -81,6 +83,8 @@ async function main() {
     await prisma.establishment.create({
       data: {
         zoneId: zone.id,
+        // A8-3 extensión: alta con clasificación explícita (con padre del modelo objetivo = nuevo).
+        isLegacy: false,
         code: "CASA-CENTRAL",
         name: "Casa Central",
         province: "Entre Rios",

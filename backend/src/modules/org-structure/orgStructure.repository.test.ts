@@ -62,16 +62,34 @@ describe("orgStructureRepository — altas con el padre del modelo objetivo", ()
     expect(tx.sector.update).toHaveBeenCalledWith({ where: { id: "sec-1" }, data: expect.not.objectContaining({ isLegacy: true }) });
   });
 
-  it("área: escribe sectorId, nunca establishmentId", async () => {
+  it("área: escribe sectorId, nunca establishmentId, y clasifica con el criterio previo (A8-3)", async () => {
     tx.area.create.mockResolvedValue({ id: "area-1" });
     await orgStructureRepository.createNode(tx as never, "area", { code: "AREA-1", name: "Parrilla", status: "ACTIVO", sectorId: "sec-1" });
-    expect(tx.area.create).toHaveBeenCalledWith({ data: { code: "AREA-1", name: "Parrilla", status: "ACTIVO", sectorId: "sec-1" } });
+    expect(tx.area.create).toHaveBeenCalledWith({ data: { code: "AREA-1", name: "Parrilla", status: "ACTIVO", sectorId: "sec-1", isLegacy: false } });
   });
 
-  it("establecimiento: escribe zoneId y domicilio, sin companyId ni businessUnitId", async () => {
+  it("área: creada sin sector del modelo objetivo queda clasificada como legada (A8-3)", async () => {
+    tx.area.create.mockResolvedValue({ id: "area-2" });
+    await orgStructureRepository.createNode(tx as never, "area", { code: "AREA-2", name: "Otra", status: "ACTIVO", sectorId: undefined } as never);
+    expect(tx.area.create).toHaveBeenCalledWith({ data: expect.objectContaining({ isLegacy: true }) });
+  });
+
+  it("área: una edición común no puede cambiar la clasificación persistida (A8-3)", async () => {
+    tx.area.update.mockResolvedValue({ id: "area-1" });
+    await orgStructureRepository.updateNode(tx as never, "area", "area-1", { code: "AREA-9", name: "Parrilla", status: "ACTIVO", sectorId: "sec-1", isLegacy: true } as never);
+    expect(tx.area.update).toHaveBeenCalledWith({ where: { id: "area-1" }, data: expect.not.objectContaining({ isLegacy: true }) });
+  });
+
+  it("establecimiento: escribe zoneId y domicilio, sin companyId ni businessUnitId, con clasificación de origen (A8-3)", async () => {
     tx.establishment.create.mockResolvedValue({ id: "est-1" });
     await orgStructureRepository.createNode(tx as never, "establishment", { code: "EST-1", name: "Local Centro", status: "ACTIVO", zoneId: "zone-1", city: "Rosario" });
-    expect(tx.establishment.create).toHaveBeenCalledWith({ data: { code: "EST-1", name: "Local Centro", status: "ACTIVO", zoneId: "zone-1", city: "Rosario" } });
+    expect(tx.establishment.create).toHaveBeenCalledWith({ data: { code: "EST-1", name: "Local Centro", status: "ACTIVO", zoneId: "zone-1", city: "Rosario", isLegacy: false } });
+  });
+
+  it("establecimiento: una edición común no puede cambiar la clasificación persistida (A8-3)", async () => {
+    tx.establishment.update.mockResolvedValue({ id: "est-1" });
+    await orgStructureRepository.updateNode(tx as never, "establishment", "est-1", { code: "EST-1", name: "Local", status: "ACTIVO", zoneId: "zone-2", isLegacy: true } as never);
+    expect(tx.establishment.update).toHaveBeenCalledWith({ where: { id: "est-1" }, data: expect.not.objectContaining({ isLegacy: true }) });
   });
 
   it("la búsqueda de código duplicado de establecimientos considera sólo los del modelo objetivo (con zona)", async () => {
@@ -92,8 +110,13 @@ describe("orgStructureRepository.findNode — registro legado", () => {
   });
 
   it("un establecimiento con zona es del modelo objetivo", async () => {
-    tx.establishment.findUnique.mockResolvedValue({ id: "e1", code: "EST-1", name: "Centro", status: "ACTIVO", zoneId: "z1", _count: {} });
+    tx.establishment.findUnique.mockResolvedValue({ id: "e1", code: "EST-1", name: "Centro", status: "ACTIVO", zoneId: "z1", isLegacy: false, _count: {} });
     await expect(orgStructureRepository.findNode(tx as never, "establishment", "e1")).resolves.toMatchObject({ parentId: "z1", isLegacy: false });
+  });
+
+  it("el área usa la columna persistida y no deriva la clasificación de su padre actual (A8-3)", async () => {
+    tx.area.findUnique.mockResolvedValue({ id: "a1", code: "AREA-1", name: "Parrilla", status: "ACTIVO", sectorId: "sec-nuevo", isLegacy: true, _count: {} });
+    await expect(orgStructureRepository.findNode(tx as never, "area", "a1")).resolves.toMatchObject({ parentId: "sec-nuevo", isLegacy: true });
   });
 });
 

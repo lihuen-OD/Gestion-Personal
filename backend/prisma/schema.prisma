@@ -425,6 +425,13 @@ model Company {
   name      String       @unique
   code      String       @unique
   status    RecordStatus @default(ACTIVO)
+
+  // A8-1 (A8_M2_PREPARATION.md §12.1): archivo de un solo sentido, separado
+  // de `isLegacy` (origen) y de `status` (estado operativo). Sólo la
+  // transacción de limpieza (B3) lo escribe; sin @default y sin ruta de alta
+  // que lo setee. D-B1 aprobada; la purga de filas archivadas es una etapa
+  // futura (D-B2, sin purga en esta transición).
+  archivedAt DateTime? @db.Timestamptz(3)
   createdAt DateTime     @default(now()) @db.Timestamptz(3)
   updatedAt DateTime     @updatedAt @db.Timestamptz(3)
 
@@ -446,6 +453,13 @@ model BusinessUnit {
   code      String
   status    RecordStatus @default(ACTIVO)
   companyId String
+
+  // A8-1 (A8_M2_PREPARATION.md §12.1): archivo de un solo sentido, separado
+  // de `isLegacy` (origen) y de `status` (estado operativo). Sólo la
+  // transacción de limpieza (B3) lo escribe; sin @default y sin ruta de alta
+  // que lo setee. D-B1 aprobada; la purga de filas archivadas es una etapa
+  // futura (D-B2, sin purga en esta transición).
+  archivedAt DateTime? @db.Timestamptz(3)
   createdAt DateTime     @default(now()) @db.Timestamptz(3)
   updatedAt DateTime     @updatedAt @db.Timestamptz(3)
 
@@ -473,6 +487,20 @@ model Establishment {
   name           String
   code           String
   status         RecordStatus @default(ACTIVO)
+  // A8-3 / A8 §12: clasificación legado/nuevo PERSISTENTE (igual que
+  // `Sector.isLegacy`), fijada en el alta con el criterio previo (¿tenía
+  // padre del modelo objetivo al crearse?) y sin default: el alta la
+  // clasifica explícitamente. No se rederiva de `zoneId`/`companyId` ni se
+  // expone a ediciones; M2 cambia esos padres y la derivación dejaría de
+  // significar origen.
+  isLegacy       Boolean
+
+  // A8-1 (A8_M2_PREPARATION.md §12.1): archivo de un solo sentido, separado
+  // de `isLegacy` (origen) y de `status` (estado operativo). Sólo la
+  // transacción de limpieza (B3) lo escribe; sin @default y sin ruta de alta
+  // que lo setee. D-B1 aprobada; la purga de filas archivadas es una etapa
+  // futura (D-B2, sin purga en esta transición).
+  archivedAt DateTime? @db.Timestamptz(3)
   companyId      String?
   businessUnitId String?
   zoneId         String?
@@ -508,6 +536,16 @@ model Area {
   name            String
   code            String       @unique
   status          RecordStatus @default(ACTIVO)
+  // Ver comentario de `Establishment.isLegacy`: origen fijado en el alta
+  // (criterio: sin `sectorId` del modelo objetivo al crearse), sin default.
+  isLegacy        Boolean
+
+  // A8-1 (A8_M2_PREPARATION.md §12.1): archivo de un solo sentido, separado
+  // de `isLegacy` (origen) y de `status` (estado operativo). Sólo la
+  // transacción de limpieza (B3) lo escribe; sin @default y sin ruta de alta
+  // que lo setee. D-B1 aprobada; la purga de filas archivadas es una etapa
+  // futura (D-B2, sin purga en esta transición).
+  archivedAt DateTime? @db.Timestamptz(3)
   establishmentId String?
   sectorId        String?
   createdAt       DateTime     @default(now()) @db.Timestamptz(3)
@@ -533,6 +571,14 @@ model Sector {
   status         RecordStatus @default(ACTIVO)
   areaId         String?
   businessUnitId String?
+
+  // A8-1 (A8_M2_PREPARATION.md §12.1): archivo de un solo sentido, separado
+  // de `isLegacy` (origen) y de `status` (estado operativo). Sólo la
+  // transacción de limpieza (B3) lo escribe; sin @default y sin ruta de alta
+  // que lo setee. D-B1 aprobada; la purga de filas archivadas es una etapa
+  // futura (D-B2, sin purga en esta transición).
+  archivedAt DateTime? @db.Timestamptz(3)
+
   // A8-3 (A8_M2_PREPARATION.md §3.4, ADR §20 hallazgo 1): clasificación
   // legado/nuevo PERSISTENTE, independiente de businessUnitId y de cualquier
   // otro padre actual. Se fija en el alta con el criterio previo (¿tenía padre
@@ -682,6 +728,14 @@ model Position {
   performanceIndicators Json?
   evaluationCriteria    Json?
   sectorId              String?
+
+  // A8-1 (A8_M2_PREPARATION.md §12.1): archivo de un solo sentido, separado
+  // de `isLegacy` (origen) y de `status` (estado operativo). Sólo la
+  // transacción de limpieza (B3) lo escribe; sin @default y sin ruta de alta
+  // que lo setee. D-B1 aprobada; la purga de filas archivadas es una etapa
+  // futura (D-B2, sin purga en esta transición).
+  archivedAt DateTime? @db.Timestamptz(3)
+
   createdAt             DateTime     @default(now()) @db.Timestamptz(3)
   updatedAt             DateTime     @updatedAt @db.Timestamptz(3)
 

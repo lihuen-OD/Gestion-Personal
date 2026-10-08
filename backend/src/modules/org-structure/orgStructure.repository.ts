@@ -44,8 +44,8 @@ let overviewCache: OverviewCache | null = null;
 // establecimiento) y, hasta M2, también los padres del modelo anterior
 // (areaId, establishmentId, companyId/businessUnitId del establecimiento) sólo
 // para lectura. Un nodo sin padre del modelo objetivo es un registro LEGADO;
-// para los sectores, la clasificación legado/nuevo es además PERSISTENTE
-// (`Sector.isLegacy`, A8-3): no se deriva del padre actual.
+// para sectores, áreas y establecimientos, la clasificación legado/nuevo es
+// además PERSISTENTE (`*.isLegacy`, A8-3): no se deriva del padre actual.
 function fetchOverview() {
   return Promise.all([
     prisma.company.findMany({
@@ -132,7 +132,7 @@ export interface OrgRecord {
   status: RecordStatus;
   /** Padre del modelo objetivo (null para empresas y zonas, o registro legado). */
   parentId: string | null;
-  /** Registro del modelo anterior: para sectores, clasificación persistida (`Sector.isLegacy`, A8-3); para el resto, ausencia de padre del modelo objetivo. */
+  /** Registro del modelo anterior: clasificación persistida (`Sector`/`Area`/`Establishment.isLegacy`, A8-3); para el resto (nodos sin columna propia), false. */
   isLegacy: boolean;
   counts: Partial<Record<OrgDependencyKey, number>>;
 }
@@ -188,11 +188,14 @@ const nodes: { [K in NodeKind]: NodeOps<K> } = {
   },
   area: {
     find: async (tx, id) => {
-      const row = await tx.area.findUnique({ where: { id }, select: { id: true, code: true, name: true, status: true, sectorId: true, _count: { select: { sectors: true, costCenterLinks: true, positionScopes: true, scopeHistoryNodes: true } } } });
-      return row && { id: row.id, code: row.code, name: row.name, status: row.status, parentId: row.sectorId, isLegacy: row.sectorId === null, counts: { ...row._count, scopeHistory: row._count.scopeHistoryNodes } };
+      const row = await tx.area.findUnique({ where: { id }, select: { id: true, code: true, name: true, status: true, sectorId: true, isLegacy: true, _count: { select: { sectors: true, costCenterLinks: true, positionScopes: true, scopeHistoryNodes: true } } } });
+      return row && { id: row.id, code: row.code, name: row.name, status: row.status, parentId: row.sectorId, isLegacy: row.isLegacy, counts: { ...row._count, scopeHistory: row._count.scopeHistoryNodes } };
     },
-    create: (tx, data) => tx.area.create({ data }),
-    update: (tx, id, data) => tx.area.update({ where: { id }, data }),
+    // A8-3 extensión: como en Sector, el alta clasifica con el criterio previo
+    // (área sin sector del modelo objetivo = legado) y la edición no recibe el
+    // campo: la clasificación no se cambia después del alta.
+    create: (tx, data) => tx.area.create({ data: { ...data, isLegacy: !data.sectorId } }),
+    update: (tx, id, data) => tx.area.update({ where: { id }, data: { ...data, isLegacy: undefined } }),
     remove: (tx, id) => tx.area.delete({ where: { id } }),
   },
   zone: {
@@ -206,11 +209,13 @@ const nodes: { [K in NodeKind]: NodeOps<K> } = {
   },
   establishment: {
     find: async (tx, id) => {
-      const row = await tx.establishment.findUnique({ where: { id }, select: { id: true, code: true, name: true, status: true, zoneId: true, _count: { select: { areas: true, costCenterLinks: true, workLocations: true, clockDevices: true } } } });
-      return row && { id: row.id, code: row.code, name: row.name, status: row.status, parentId: row.zoneId, isLegacy: row.zoneId === null, counts: row._count };
+      const row = await tx.establishment.findUnique({ where: { id }, select: { id: true, code: true, name: true, status: true, zoneId: true, isLegacy: true, _count: { select: { areas: true, costCenterLinks: true, workLocations: true, clockDevices: true } } } });
+      return row && { id: row.id, code: row.code, name: row.name, status: row.status, parentId: row.zoneId, isLegacy: row.isLegacy, counts: row._count };
     },
-    create: (tx, data) => tx.establishment.create({ data }),
-    update: (tx, id, data) => tx.establishment.update({ where: { id }, data }),
+    // Ver comentario de `area.create`: alta con criterio previo (sin zona del
+    // modelo objetivo = legado), edición sin el campo.
+    create: (tx, data) => tx.establishment.create({ data: { ...data, isLegacy: !data.zoneId } }),
+    update: (tx, id, data) => tx.establishment.update({ where: { id }, data: { ...data, isLegacy: undefined } }),
     remove: (tx, id) => tx.establishment.delete({ where: { id } }),
   },
 };
@@ -368,8 +373,8 @@ export const orgStructureRepository = {
   async findLegacyNames(tx: Tx, ids: { sectorIds: string[]; areaIds: string[]; establishmentIds: string[] }) {
     const [sectors, areas, establishments] = await Promise.all([
       ids.sectorIds.length ? tx.sector.findMany({ where: { id: { in: ids.sectorIds }, isLegacy: true }, select: { name: true } }) : [],
-      ids.areaIds.length ? tx.area.findMany({ where: { id: { in: ids.areaIds }, sectorId: null }, select: { name: true } }) : [],
-      ids.establishmentIds.length ? tx.establishment.findMany({ where: { id: { in: ids.establishmentIds }, zoneId: null }, select: { name: true } }) : [],
+      ids.areaIds.length ? tx.area.findMany({ where: { id: { in: ids.areaIds }, isLegacy: true }, select: { name: true } }) : [],
+      ids.establishmentIds.length ? tx.establishment.findMany({ where: { id: { in: ids.establishmentIds }, isLegacy: true }, select: { name: true } }) : [],
     ]);
     return [...sectors, ...areas, ...establishments].map((row) => row.name);
   },
