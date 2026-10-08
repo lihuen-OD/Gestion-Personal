@@ -128,6 +128,8 @@ function buildWhere(query: ListPositionsQuery): Prisma.PositionWhereInput {
   const search = query.search?.trim();
   const scope = scopeWhere(query);
   return {
+    // A8 §12.4: los listados/selectores del modelo nuevo excluyen archivados.
+    archivedAt: null,
     ...(query.status ? { status: query.status } : {}),
     ...(scope || {}),
     ...(query.salaryRangeCategory ? { salaryCategories: { some: { salaryCategory: { name: query.salaryRangeCategory } } } } : {}),
@@ -186,10 +188,10 @@ export const positionsRepository = {
   async resolveScopeNodes(tx: PrismaTransactionClient, scopes: PositionOrgScopeInput[]) {
     const ids = (level: PositionOrgScopeInput["level"]) => scopes.filter((scope) => scope.level === level).map((scope) => scope.nodeId);
     const [companies, businessUnits, sectors, areas] = await Promise.all([
-      tx.company.findMany({ where: { id: { in: ids("COMPANY") } }, select: { id: true, code: true, name: true, status: true } }),
-      tx.businessUnit.findMany({ where: { id: { in: ids("BUSINESS_UNIT") } }, select: { id: true, code: true, name: true, status: true, companyId: true } }),
-      tx.sector.findMany({ where: { id: { in: ids("SECTOR") } }, select: { id: true, code: true, name: true, status: true, businessUnitId: true, isLegacy: true, businessUnit: { select: { companyId: true } } } }),
-      tx.area.findMany({ where: { id: { in: ids("AREA") } }, select: { id: true, code: true, name: true, status: true, sectorId: true, sector: { select: { businessUnitId: true, isLegacy: true, businessUnit: { select: { companyId: true } } } } } }),
+      tx.company.findMany({ where: { id: { in: ids("COMPANY") } }, select: { id: true, code: true, name: true, status: true, archivedAt: true } }),
+      tx.businessUnit.findMany({ where: { id: { in: ids("BUSINESS_UNIT") } }, select: { id: true, code: true, name: true, status: true, companyId: true, archivedAt: true } }),
+      tx.sector.findMany({ where: { id: { in: ids("SECTOR") } }, select: { id: true, code: true, name: true, status: true, businessUnitId: true, isLegacy: true, archivedAt: true, businessUnit: { select: { companyId: true } } } }),
+      tx.area.findMany({ where: { id: { in: ids("AREA") } }, select: { id: true, code: true, name: true, status: true, sectorId: true, archivedAt: true, sector: { select: { businessUnitId: true, isLegacy: true, businessUnit: { select: { companyId: true } } } } } }),
     ]);
     return { companies, businessUnits, sectors, areas };
   },
@@ -278,7 +280,7 @@ export const positionsRepository = {
   // defecto). Ver docs/decisions/POSITIONS_MODULE_PERFORMANCE_14H7.md.
   findOptions(query: ListPositionOptionsQuery) {
     return prisma.position.findMany({
-      where: query.status ? { status: query.status } : {},
+      where: { archivedAt: null, ...(query.status ? { status: query.status } : {}) },
       select: query.includeAssignedCount
         ? { ...positionOptionSelect, _count: { select: { employees: true } } }
         : positionOptionSelect,
@@ -380,9 +382,15 @@ export const positionsRepository = {
     return prisma.$transaction(async (tx): Promise<PositionRemovalOutcome> => {
       const current = await tx.position.findUnique({
         where: { id },
-        select: { id: true, code: true, name: true, status: true, _count: { select: { employees: true, doubleHourRules: true, employeePeriods: true, scopePeriods: true } } },
+        select: { id: true, code: true, name: true, status: true, archivedAt: true, _count: { select: { employees: true, doubleHourRules: true, employeePeriods: true, scopePeriods: true } } },
       });
       if (!current) return { kind: "NOT_FOUND" };
+      // A8-1 (§12.1 I4): un puesto archivado no se borra ni se inactiva.
+      // Sin auditoría ni escritura: el servicio la convierte en 409.
+      if (current.archivedAt) {
+        const archived = { id: current.id, code: current.code, name: current.name, status: current.status };
+        return { kind: "ARCHIVED", position: archived };
+      }
       const { employees, doubleHourRules } = current._count;
       // D-5: la historia temporal (asignaciones a legajos o alcance por fecha)
       // nunca se borra; un puesto con historia sólo se inactiva.
@@ -406,5 +414,6 @@ export const positionsRepository = {
 
 export type PositionRemovalOutcome =
   | { kind: "NOT_FOUND" }
+  | { kind: "ARCHIVED"; position: { id: string; code: string; name: string; status: string } }
   | { kind: "INACTIVATED"; position: { id: string; code: string; name: string; status: string }; employees: number; doubleHourRules: number; history: number }
   | { kind: "DELETED"; position: { id: string; code: string; name: string; status: string } };

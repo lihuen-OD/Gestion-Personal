@@ -79,6 +79,10 @@ export const positionWorkConditionsSchema = z.object({
 });
 
 export const createPositionSchema = z.object({
+  // A8-1 (A8_M2_PREPARATION.md §12.1 I1, AT-3): `archivedAt` sólo lo escribe
+  // la transacción de limpieza. Ninguna entrada de API lo admite: si el
+  // payload lo trae, la validación falla con 400 en vez de ignorarlo.
+  archivedAt: z.never().optional(),
   code: z.string().trim().min(2).max(40),
   name: z.string().trim().min(2).max(180),
   status: recordStatusSchema.default("ACTIVO"),

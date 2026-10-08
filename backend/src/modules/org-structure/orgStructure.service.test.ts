@@ -20,6 +20,7 @@ vi.mock("./orgStructure.repository", () => ({
     findZonedEstablishmentByCode: vi.fn(),
     findCostCenterLinks: vi.fn(),
     findLegacyNames: vi.fn(),
+    findArchivedNames: vi.fn(),
     createCostCenter: vi.fn(),
     updateCostCenter: vi.fn(),
   },
@@ -30,12 +31,13 @@ const repo = orgStructureRepository as unknown as Record<keyof typeof orgStructu
 const registerWithin = auditService.registerWithin as unknown as Mock;
 
 function record(overrides: Partial<OrgRecord>): OrgRecord {
-  return { id: "id", code: "CODE", name: "Nombre", status: "ACTIVO", parentId: null, isLegacy: false, counts: {}, ...overrides };
+  return { id: "id", code: "CODE", name: "Nombre", status: "ACTIVO", parentId: null, isLegacy: false, archivedAt: null, counts: {}, ...overrides };
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
   repo.findLegacyNames.mockResolvedValue([]);
+  repo.findArchivedNames.mockResolvedValue([]);
   repo.findZonedEstablishmentByCode.mockResolvedValue(null);
 });
 
@@ -168,5 +170,66 @@ describe("centros de costo", () => {
 
     expect(repo.findLegacyNames).toHaveBeenCalledWith(tx, { sectorIds: ["new-sec"], areaIds: [], establishmentIds: [] });
     expect(registerWithin).toHaveBeenCalledWith(tx, expect.objectContaining({ entity: "CostCenter", action: "UPDATE" }));
+  });
+});
+
+describe("archivo A8-1 — I4 y §12.4 (rechazos con destino archivado)", () => {
+  it("no edita un registro archivado: 409 ORG_STRUCTURE_ARCHIVED_RECORD sin escribir", async () => {
+    repo.findNode.mockResolvedValue(record({ id: "c1", name: "Los OD", archivedAt: new Date("2026-10-08") }));
+
+    await expect(orgStructureService.updateNode("company", "c1", { name: "Otro nombre" }))
+      .rejects.toMatchObject({ statusCode: 409, code: "ORG_STRUCTURE_ARCHIVED_RECORD", message: expect.stringContaining("archivado") });
+    expect(repo.updateNode).not.toHaveBeenCalled();
+    expect(registerWithin).not.toHaveBeenCalled();
+  });
+
+  it("no recibe hijos nuevos: un padre archivado rechaza el alta con 409 (§12.4)", async () => {
+    repo.findNode.mockResolvedValue(record({ id: "sec-1", name: "Cocina", archivedAt: new Date("2026-10-08") }));
+
+    await expect(orgStructureService.createNode("area", { code: "AREA-1", name: "Parrilla", status: "ACTIVO", sectorId: "sec-1" }))
+      .rejects.toMatchObject({ statusCode: 409, code: "ORG_STRUCTURE_ARCHIVED_RECORD", message: expect.stringContaining("no puede recibir elementos nuevos") });
+    expect(repo.createNode).not.toHaveBeenCalled();
+  });
+
+  it("un vínculo NUEVO de centro de costo hacia un archivado se rechaza con 409 (§12.4)", async () => {
+    repo.findArchivedNames.mockResolvedValue(["Los OD"]);
+
+    await expect(orgStructureService.createCostCenter({ code: "CC-1", name: "Compras", status: "ACTIVO", companyIds: ["c1"], businessUnitIds: [], sectorIds: [], areaIds: [], establishmentIds: [] }))
+      .rejects.toMatchObject({ statusCode: 409, code: "ORG_STRUCTURE_ARCHIVED_RECORD", message: expect.stringContaining("Los OD") });
+    expect(repo.createCostCenter).not.toHaveBeenCalled();
+  });
+
+  it("un vínculo existente hacia un archivado no se toca: sólo se chequean los IDs nuevos", async () => {
+    repo.createCostCenter.mockResolvedValue({ id: "cc1", code: "CC-1", name: "Compras", status: "ACTIVO" });
+    await orgStructureService.createCostCenter({ code: "CC-1", name: "Compras", status: "ACTIVO", companyIds: [], businessUnitIds: [], sectorIds: [], areaIds: [], establishmentIds: [] });
+    expect(repo.findArchivedNames).toHaveBeenCalledWith(tx, { companyIds: [], businessUnitIds: [], sectorIds: [], areaIds: [], establishmentIds: [] });
+  });
+
+  it("edición de establecimiento: cambiar de ZONA con el mismo código valida (zoneId, code) en la zona destino (§12.8)", async () => {
+    repo.findNode.mockResolvedValue(record({ id: "est-1", code: "EST-1", parentId: "z1", archivedAt: null }));
+    repo.findZonedEstablishmentByCode.mockResolvedValue(null);
+    repo.updateNode.mockResolvedValue({ id: "est-1", code: "EST-1", name: "Local", status: "ACTIVO" });
+
+    await orgStructureService.updateNode("establishment", "est-1", { zoneId: "z2" });
+
+    expect(repo.findZonedEstablishmentByCode).toHaveBeenCalledWith(tx, "z2", "EST-1", "est-1");
+  });
+
+  it("edición de establecimiento: el código repetido en la zona destino choca aunque el código no cambie (AT-8)", async () => {
+    repo.findNode.mockResolvedValue(record({ id: "est-1", parentId: "z1", archivedAt: null }));
+    repo.findZonedEstablishmentByCode.mockResolvedValue({ id: "est-otro" });
+
+    await expect(orgStructureService.updateNode("establishment", "est-1", { zoneId: "z2" }))
+      .rejects.toMatchObject({ statusCode: 409, code: "UNIQUE_CONSTRAINT" });
+    expect(repo.updateNode).not.toHaveBeenCalled();
+  });
+
+  it("edición que no toca zona ni código no consulta el lookup de unicidad", async () => {
+    repo.findNode.mockResolvedValue(record({ id: "est-1", parentId: "z1", archivedAt: null }));
+    repo.updateNode.mockResolvedValue({ id: "est-1", code: "EST-1", name: "Local", status: "ACTIVO" });
+
+    await orgStructureService.updateNode("establishment", "est-1", { city: "Rosario" });
+
+    expect(repo.findZonedEstablishmentByCode).not.toHaveBeenCalled();
   });
 });

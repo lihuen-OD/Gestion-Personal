@@ -13,7 +13,9 @@ import {
 } from "./orgStructure.dependencies";
 import type {
   CreateCostCenterInput,
+  CreateEstablishmentInput,
   UpdateCostCenterInput,
+  UpdateEstablishmentInput,
 } from "./orgStructure.schemas";
 
 // Árboles del modelo objetivo (docs/decisions/ORG_LOCATION_REORGANIZATION.md
@@ -83,6 +85,14 @@ function gendered(kind: OrgEntityKind, stem: string) {
   return `${stem}${orgEntityLabels[kind].pronoun === "la" ? "a" : "o"}`;
 }
 
+// A8-1 (§12.1 I4, AT-3): el registro archivado es evidencia de G4/G7: no se
+// edita, no se borra y no recibe relaciones nuevas. Un solo código para todas
+// las causas "registro archivado" en este módulo.
+function assertNotArchived(kind: OrgEntityKind, record: { name: string; archivedAt: Date | null }, detail = "no se edita ni se elimina") {
+  if (!record.archivedAt) return;
+  throw new AppError(`${capitalized(kind)} “${record.name}” está archivado: ${detail}.`, 409, "ORG_STRUCTURE_ARCHIVED_RECORD", { kind });
+}
+
 function invalidParent(kind: NodeKind, message: string): never {
   throw new AppError(message, 400, "ORG_STRUCTURE_INVALID_PARENT", { kind });
 }
@@ -96,24 +106,48 @@ async function assertParent(tx: PrismaTransactionClient, kind: NodeKind, parentI
   const parent = await orgStructureRepository.findNode(tx, relation.kind, parentId);
   const { article, noun } = orgEntityLabels[relation.kind];
   if (!parent) invalidParent(kind, `No encontramos ${article} ${noun} ${gendered(relation.kind, "seleccionad")}.`);
+  // A8 §12.4: archivado manda sobre legacy/inactivo — es la causa más específica.
+  if (parent.archivedAt) {
+    throw new AppError(`${capitalized(relation.kind)} “${parent.name}” está archivado y no puede recibir elementos nuevos.`, 409, "ORG_STRUCTURE_ARCHIVED_RECORD", { kind: relation.kind });
+  }
   if (parent.isLegacy) invalidParent(kind, `${capitalized(relation.kind)} “${parent.name}” pertenece a la estructura anterior y no puede recibir elementos nuevos.`);
   if (parent.status !== "ACTIVO") invalidParent(kind, `${capitalized(relation.kind)} “${parent.name}” está ${gendered(relation.kind, "inactiv")}.`);
 }
 
-async function assertUniqueEstablishmentCode(tx: PrismaTransactionClient, code: string | undefined, excludeId?: string) {
-  if (code === undefined) return;
-  const conflict = await orgStructureRepository.findZonedEstablishmentByCode(tx, code, excludeId);
+// A8 §12.8: unicidad de servicio por (zoneId, code) excluyendo archivados.
+// `zoneId === null` es un establecimiento del modelo anterior: su unicidad la
+// gobierna el único legado de la base, no este lookup del modelo objetivo.
+async function assertUniqueEstablishmentCode(tx: PrismaTransactionClient, zoneId: string | null | undefined, code: string | undefined, excludeId?: string) {
+  if (code === undefined || zoneId === null || zoneId === undefined) return;
+  const conflict = await orgStructureRepository.findZonedEstablishmentByCode(tx, zoneId, code, excludeId);
   if (conflict) throw new AppError("A record with the same unique value already exists", 409, "UNIQUE_CONSTRAINT");
 }
 
-// Un centro de costo no agrega vínculos nuevos a registros del modelo anterior
-// (impedirían su limpieza). Los vínculos que ya tenía se conservan tal cual.
+// Un centro de costo no agrega vínculos NUEVOS a registros del modelo
+// anterior ni a registros archivados (§12.4). Los vínculos ya existentes no se
+// tocan acá: los que apunten a destinos retirados son borrado autorizado en la
+// limpieza (§12.4, bloque de borrados), no conservación.
 async function assertNoNewLegacyLinks(
   tx: PrismaTransactionClient,
-  input: Partial<Record<"sectorIds" | "areaIds" | "establishmentIds", string[]>>,
-  current?: Record<"sectorIds" | "areaIds" | "establishmentIds", string[]>,
+  input: Partial<Record<"companyIds" | "businessUnitIds" | "sectorIds" | "areaIds" | "establishmentIds", string[]>>,
+  current?: Partial<Record<"companyIds" | "businessUnitIds" | "sectorIds" | "areaIds" | "establishmentIds", string[]>>,
 ) {
-  const added = (key: "sectorIds" | "areaIds" | "establishmentIds") => (input[key] ?? []).filter((id) => !current?.[key].includes(id));
+  const families = ["companyIds", "businessUnitIds", "sectorIds", "areaIds", "establishmentIds"] as const;
+  const added = (key: (typeof families)[number]) => (input[key] ?? []).filter((id) => !current?.[key]?.includes(id));
+  const archivedNames = await orgStructureRepository.findArchivedNames(tx, {
+    companyIds: added("companyIds"),
+    businessUnitIds: added("businessUnitIds"),
+    sectorIds: added("sectorIds"),
+    areaIds: added("areaIds"),
+    establishmentIds: added("establishmentIds"),
+  });
+  if (archivedNames.length) {
+    throw new AppError(
+      `No se puede vincular el centro de costo a un registro archivado: ${archivedNames.join(", ")}.`,
+      409,
+      "ORG_STRUCTURE_ARCHIVED_RECORD",
+    );
+  }
   const legacyNames = await orgStructureRepository.findLegacyNames(tx, { sectorIds: added("sectorIds"), areaIds: added("areaIds"), establishmentIds: added("establishmentIds") });
   if (legacyNames.length) {
     throw new AppError(
@@ -135,8 +169,8 @@ export const orgStructureService = {
   async createNode<K extends NodeKind>(kind: K, input: NodeInputs[K][0], audit?: AuditContext): Promise<CatalogRow> {
     const item = await execute(() => orgStructureRepository.transaction(async (tx) => {
       const relation = parentOf[kind];
-      if (relation) await assertParent(tx, kind, (input as Record<string, string>)[relation.field]!);
-      if (kind === "establishment") await assertUniqueEstablishmentCode(tx, input.code);
+      if (relation) await assertParent(tx, kind, (input as unknown as Record<string, string>)[relation.field]!);
+      if (kind === "establishment") await assertUniqueEstablishmentCode(tx, (input as CreateEstablishmentInput).zoneId, (input as CreateEstablishmentInput).code);
       const created = await orgStructureRepository.createNode(tx, kind, input);
       await auditService.registerWithin(tx, {
         ...audit,
@@ -156,6 +190,7 @@ export const orgStructureService = {
     const item = await execute(() => orgStructureRepository.transaction(async (tx) => {
       const current = await orgStructureRepository.findNode(tx, kind, id);
       if (!current) notFound();
+      assertNotArchived(kind, current);
 
       const relation = parentOf[kind];
       const nextParentId = relation ? (input as Record<string, string | undefined>)[relation.field] : undefined;
@@ -176,7 +211,16 @@ export const orgStructureService = {
         }
         await assertParent(tx, kind, nextParentId);
       }
-      if (kind === "establishment" && input.code !== undefined && input.code !== current.code) await assertUniqueEstablishmentCode(tx, input.code, id);
+      // A8 §12.8: la validación (zoneId, code) corre siempre que cambie la
+      // ZONA o el CÓDIGO — mover el establecimiento a otra zona con el mismo
+      // código choca contra el único de la zona destino.
+      if (kind === "establishment") {
+        const establishment = input as UpdateEstablishmentInput;
+        const nextZoneId = establishment.zoneId !== undefined ? establishment.zoneId : current.parentId;
+        const zoneChanged = establishment.zoneId !== undefined && establishment.zoneId !== current.parentId;
+        const codeChanged = establishment.code !== undefined && establishment.code !== current.code;
+        if (zoneChanged || codeChanged) await assertUniqueEstablishmentCode(tx, nextZoneId, establishment.code ?? current.code, id);
+      }
 
       const updated = await orgStructureRepository.updateNode(tx, kind, id, input);
       await auditService.registerWithin(tx, {
@@ -242,7 +286,7 @@ export const orgStructureService = {
     const result = await execute(() => orgStructureRepository.deleteIfUnused(
       kind,
       id,
-      (record) => describeDependencies(kind, record.counts).length > 0,
+      (record) => Boolean(record.archivedAt) || describeDependencies(kind, record.counts).length > 0,
       (tx, record) => auditService.registerWithin(tx, {
         ...audit,
         action: "DELETE",
@@ -254,6 +298,7 @@ export const orgStructureService = {
     ));
     if (result.status === "NOT_FOUND") notFound();
     if (result.status === "BLOCKED") {
+      assertNotArchived(kind, result.record);
       const dependencies = describeDependencies(kind, result.record.counts);
       throw new AppError(dependencyBlockedMessage(kind, result.record.name, dependencies), 409, "ORG_STRUCTURE_HAS_DEPENDENCIES", { dependencies });
     }

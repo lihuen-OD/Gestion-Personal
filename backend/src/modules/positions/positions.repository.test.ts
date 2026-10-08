@@ -14,7 +14,7 @@ import type { ListPositionOptionsQuery, ListPositionsQuery } from "./positions.s
  */
 vi.mock("../../shared/prisma/client", () => {
   const tx = {
-    position: { create: vi.fn(), update: vi.fn() },
+    position: { create: vi.fn(), update: vi.fn(), findUnique: vi.fn(), delete: vi.fn() },
     positionSalaryCategory: { createMany: vi.fn(), deleteMany: vi.fn() },
     positionOrgScope: { createMany: vi.fn(), deleteMany: vi.fn() },
   };
@@ -30,7 +30,7 @@ vi.mock("../../shared/prisma/client", () => {
   };
 });
 
-const mockedTx = (prisma as unknown as { __tx: { position: { create: Mock; update: Mock }; positionSalaryCategory: { createMany: Mock; deleteMany: Mock }; positionOrgScope: { createMany: Mock; deleteMany: Mock } } }).__tx;
+const mockedTx = (prisma as unknown as { __tx: { position: { create: Mock; update: Mock; findUnique: Mock; delete: Mock }; positionSalaryCategory: { createMany: Mock; deleteMany: Mock }; positionOrgScope: { createMany: Mock; deleteMany: Mock } } }).__tx;
 
 function baseQuery(overrides: Partial<ListPositionsQuery> = {}): ListPositionsQuery {
   return { page: 1, take: 25, ...overrides } as ListPositionsQuery;
@@ -350,14 +350,14 @@ describe("positionsRepository.findOptions — Etapa 14D.4", () => {
     await positionsRepository.findOptions(baseOptionsQuery());
 
     const call = (prisma.position.findMany as Mock).mock.calls.at(0)?.[0];
-    expect(call.where).toEqual({});
+    expect(call.where).toEqual({ archivedAt: null });
   });
 
   it("con status en la query: filtra server-side (uso opcional, hoy ningún caller de Legajos lo pasa)", async () => {
     await positionsRepository.findOptions(baseOptionsQuery({ status: "ACTIVO" }));
 
     const call = (prisma.position.findMany as Mock).mock.calls.at(0)?.[0];
-    expect(call.where).toEqual({ status: "ACTIVO" });
+    expect(call.where).toEqual({ archivedAt: null, status: "ACTIVO" });
   });
 
   it("respeta el take pedido", async () => {
@@ -384,5 +384,29 @@ describe("positionsRepository.findOptions — Etapa 14D.4", () => {
 
     const call = (prisma.position.findMany as Mock).mock.calls.at(0)?.[0];
     expect(call.select._count).toBeUndefined();
+  });
+});
+
+describe("archivo A8-1 — listados y baja de puestos", () => {
+  it("el listado del modelo nuevo excluye archivados (§12.4: archivedAt IS NULL)", async () => {
+    (prisma.position.findMany as Mock).mockResolvedValue([]);
+    (prisma.position.count as Mock).mockResolvedValue(0);
+
+    await positionsRepository.findMany(baseQuery({ page: 2, take: 10, search: "puesto" }));
+
+    const where = (prisma.position.findMany as Mock).mock.calls.at(-1)?.[0]?.where;
+    expect(where.archivedAt).toBeNull();
+  });
+
+  it("removeOrInactivate de un puesto archivado devuelve ARCHIVED sin tocar la fila (§12.1 I4)", async () => {
+    mockedTx.position.findUnique.mockResolvedValue({ id: "pos-1", code: "PUE-1", name: "Puesto viejo", status: "ACTIVO", archivedAt: new Date("2026-10-08"), _count: { employees: 0, doubleHourRules: 0, employeePeriods: 0, scopePeriods: 0 } });
+    const onDone = vi.fn();
+
+    const outcome = await positionsRepository.removeOrInactivate("pos-1", onDone);
+
+    expect(outcome).toEqual({ kind: "ARCHIVED", position: { id: "pos-1", code: "PUE-1", name: "Puesto viejo", status: "ACTIVO" } });
+    expect(mockedTx.position.delete).not.toHaveBeenCalled();
+    expect(mockedTx.position.update).not.toHaveBeenCalled();
+    expect(onDone).not.toHaveBeenCalled();
   });
 });

@@ -92,9 +92,34 @@ describe("orgStructureRepository — altas con el padre del modelo objetivo", ()
     expect(tx.establishment.update).toHaveBeenCalledWith({ where: { id: "est-1" }, data: expect.not.objectContaining({ isLegacy: true }) });
   });
 
-  it("la búsqueda de código duplicado de establecimientos considera sólo los del modelo objetivo (con zona)", async () => {
-    await orgStructureRepository.findZonedEstablishmentByCode(tx as never, "EST-1", "est-9");
-    expect(tx.establishment.findFirst).toHaveBeenCalledWith({ where: { code: "EST-1", zoneId: { not: null }, id: { not: "est-9" } }, select: { id: true } });
+  it("el lookup de unicidad recibe la zona, busca (zoneId, code) y excluye archivados (A8 §12.8)", async () => {
+    await orgStructureRepository.findZonedEstablishmentByCode(tx as never, "zone-1", "EST-1", "est-9");
+    expect(tx.establishment.findFirst).toHaveBeenCalledWith({ where: { zoneId: "zone-1", code: "EST-1", archivedAt: null, id: { not: "est-9" } }, select: { id: true } });
+  });
+
+  it("findArchivedNames consulta cada familia por archivedAt NOT NULL (§12.4)", async () => {
+    tx.company.findMany.mockResolvedValue([{ name: "Los OD" }]);
+    tx.businessUnit.findMany.mockResolvedValue([]);
+    tx.sector.findMany.mockResolvedValue([]);
+    tx.area.findMany.mockResolvedValue([]);
+    tx.establishment.findMany.mockResolvedValue([]);
+    await expect(orgStructureRepository.findArchivedNames(tx as never, { companyIds: ["c1"], businessUnitIds: [], sectorIds: [], areaIds: [], establishmentIds: [] }))
+      .resolves.toEqual(["Los OD"]);
+    expect(tx.company.findMany).toHaveBeenCalledWith({ where: { id: { in: ["c1"] }, archivedAt: { not: null } }, select: { name: true } });
+  });
+
+  it("el overview excluye archivados en los listados del modelo nuevo (§12.4)", async () => {
+    mockedPrisma.company.findMany.mockResolvedValue([]);
+    mockedPrisma.businessUnit.findMany.mockResolvedValue([]);
+    mockedPrisma.establishment.findMany.mockResolvedValue([]);
+    mockedPrisma.area.findMany.mockResolvedValue([]);
+    mockedPrisma.sector.findMany.mockResolvedValue([]);
+    mockedPrisma.costCenter.findMany.mockResolvedValue([]);
+    mockedPrisma.zone.findMany.mockResolvedValue([]);
+    await orgStructureRepository.getOverview();
+    expect(mockedPrisma.company.findMany.mock.calls.at(0)?.[0]?.where).toEqual({ archivedAt: null });
+    expect(mockedPrisma.sector.findMany.mock.calls.at(0)?.[0]?.where).toEqual({ archivedAt: null });
+    expect(mockedPrisma.zone.findMany.mock.calls.at(0)?.[0]?.where).toBeUndefined();
   });
 });
 

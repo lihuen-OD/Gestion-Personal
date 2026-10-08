@@ -32,7 +32,7 @@ async function execute<T>(operation: () => Promise<T>) {
   }
 }
 
-type ScopeNode = { level: PositionOrgScopeInput["level"]; id: string; name: string; status: string; companyId?: string; businessUnitId?: string; sectorId?: string; isLegacy?: boolean };
+type ScopeNode = { level: PositionOrgScopeInput["level"]; id: string; name: string; status: string; companyId?: string; businessUnitId?: string; sectorId?: string; isLegacy?: boolean; archivedAt?: boolean };
 
 function scopeKey(scope: PositionOrgScopeInput) { return `${scope.level}:${scope.nodeId}`; }
 
@@ -45,10 +45,10 @@ function scopeKey(scope: PositionOrgScopeInput) { return `${scope.level}:${scope
 async function validateScopes(tx: PrismaTransactionClient, scopes: PositionOrgScopeInput[], currentKeys = new Set<string>()): Promise<ScopeNodeSnapshot[]> {
   const resolved = await positionsRepository.resolveScopeNodes(tx, scopes);
   const nodes: ScopeNode[] = [
-    ...resolved.companies.map((node) => ({ level: "COMPANY" as const, id: node.id, name: node.name, status: node.status })),
-    ...resolved.businessUnits.map((node) => ({ level: "BUSINESS_UNIT" as const, id: node.id, name: node.name, status: node.status, companyId: node.companyId })),
-    ...resolved.sectors.map((node) => ({ level: "SECTOR" as const, id: node.id, name: node.name, status: node.status, businessUnitId: node.businessUnitId || undefined, isLegacy: node.isLegacy, companyId: node.businessUnit?.companyId })),
-    ...resolved.areas.map((node) => ({ level: "AREA" as const, id: node.id, name: node.name, status: node.status, sectorId: node.sectorId || undefined, businessUnitId: node.sector?.businessUnitId || undefined, isLegacy: node.sector?.isLegacy, companyId: node.sector?.businessUnit?.companyId })),
+    ...resolved.companies.map((node) => ({ level: "COMPANY" as const, id: node.id, name: node.name, status: node.status, archivedAt: Boolean(node.archivedAt) })),
+    ...resolved.businessUnits.map((node) => ({ level: "BUSINESS_UNIT" as const, id: node.id, name: node.name, status: node.status, companyId: node.companyId, archivedAt: Boolean(node.archivedAt) })),
+    ...resolved.sectors.map((node) => ({ level: "SECTOR" as const, id: node.id, name: node.name, status: node.status, businessUnitId: node.businessUnitId || undefined, isLegacy: node.isLegacy, companyId: node.businessUnit?.companyId, archivedAt: Boolean(node.archivedAt) })),
+    ...resolved.areas.map((node) => ({ level: "AREA" as const, id: node.id, name: node.name, status: node.status, sectorId: node.sectorId || undefined, businessUnitId: node.sector?.businessUnitId || undefined, isLegacy: node.sector?.isLegacy, companyId: node.sector?.businessUnit?.companyId, archivedAt: Boolean(node.archivedAt) })),
   ];
   const byKey = new Map(nodes.map((node) => [`${node.level}:${node.id}`, node]));
   for (const scope of scopes) {
@@ -60,6 +60,12 @@ async function validateScopes(tx: PrismaTransactionClient, scopes: PositionOrgSc
     // clasificación). Si la lectura vino INCOMPLETA — un nodo de sector sin su
     // clasificación — no se adivina: es un error de integridad del dato (500),
     // diferenciado de POSITION_SCOPE_LEGACY, y detiene la escritura.
+    // A8 §12.4: un nodo archivado no puede ser destino de un alcance NUEVO;
+    // un alcance vigente que ya apuntaba al nodo se conserva sin cambio
+    // (misma admisión que los inactivos: no es una relación nueva).
+    if (node.archivedAt && !currentKeys.has(scopeKey(scope))) {
+      throw new AppError(`“${node.name}” está archivado y no puede agregarse como alcance nuevo.`, 409, "POSITION_SCOPE_ARCHIVED");
+    }
     const legacyMessage = `“${node.name}” pertenece a la estructura anterior y no puede asignarse como alcance nuevo.`;
     const areaWithoutSector = node.level === "AREA" && !node.sectorId;
     const sectorScoped = node.level === "SECTOR" || node.level === "AREA";
@@ -157,7 +163,11 @@ export const positionsService = {
 
   async update(id: string, data: UpdatePositionInput, audit?: AuditContext) {
     const item = await execute(() => positionsRepository.transaction(async (tx) => {
-      const before = await tx.position.findUniqueOrThrow({ where: { id }, select: { id: true, code: true, name: true, status: true } });
+      const before = await tx.position.findUniqueOrThrow({ where: { id }, select: { id: true, code: true, name: true, status: true, archivedAt: true } });
+      // A8-1 (§12.1 I4, AT-3): el contenido archivado es evidencia de G4/G7.
+      if (before.archivedAt) {
+        throw new AppError(`El puesto “${before.name}” está archivado: no se edita.`, 409, "POSITION_ARCHIVED");
+      }
       let currentScopes: Awaited<ReturnType<typeof positionsRepository.findScopeKeys>> = [];
       let scopesChanged = false;
       let scopeChange: RecordedHistoryChange | null = null;
@@ -212,6 +222,7 @@ export const positionsService = {
       });
     }));
     if (outcome.kind === "NOT_FOUND") throw new AppError("Position not found", 404, "POSITION_NOT_FOUND");
+    if (outcome.kind === "ARCHIVED") throw new AppError(`El puesto “${outcome.position.name}” está archivado: no se edita ni se elimina.`, 409, "POSITION_ARCHIVED");
     invalidatePositionsCache();
     clearAuditDerivedCaches();
     return outcome.kind === "INACTIVATED" ? positionsRepository.findById(id) : null;

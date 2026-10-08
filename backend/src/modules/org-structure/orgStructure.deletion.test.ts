@@ -59,6 +59,18 @@ describe("orgStructureService.deleteEntity", () => {
     }));
   });
 
+  it("no borra ni audita un registro ARCHIVADO: 409 ORG_STRUCTURE_ARCHIVED_RECORD (§12.1 I4)", async () => {
+    tx.company.findUnique.mockResolvedValue({ id: "c1", code: "EMP-1", name: "Los OD", status: "ACTIVO", archivedAt: new Date("2026-10-08"), _count: zeroCompanyCounts });
+
+    await expect(orgStructureService.deleteEntity("company", "c1")).rejects.toMatchObject({
+      statusCode: 409,
+      code: "ORG_STRUCTURE_ARCHIVED_RECORD",
+      message: expect.stringContaining("archivado"),
+    });
+    expect(tx.company.delete).not.toHaveBeenCalled();
+    expect(auditService.registerWithin).not.toHaveBeenCalled();
+  });
+
   it("bloquea una entidad con hijos en la estructura: no borra y devuelve 409 con el motivo", async () => {
     tx.area.findUnique.mockResolvedValue({ id: "a1", code: "AREA-1", name: "Administración", status: "ACTIVO", sectorId: null, _count: { sectors: 2, costCenterLinks: 0, positionScopes: 0 } });
 

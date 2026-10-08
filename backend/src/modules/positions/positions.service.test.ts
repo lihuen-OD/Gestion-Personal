@@ -30,11 +30,12 @@ vi.mock("./positions.repository", () => ({
     createWithin: vi.fn(),
     updateWithin: vi.fn(),
     findScopeKeys: vi.fn(),
+    removeOrInactivate: vi.fn(),
   },
   invalidatePositionsCache: vi.fn(),
 }));
 
-const repo = positionsRepository as unknown as { findById: Mock; existsById: Mock; findAssignedEmployees: Mock; findMany: Mock; findOptions: Mock; transaction: Mock; resolveScopeNodes: Mock; createWithin: Mock; updateWithin: Mock; findScopeKeys: Mock };
+const repo = positionsRepository as unknown as { findById: Mock; existsById: Mock; findAssignedEmployees: Mock; findMany: Mock; findOptions: Mock; transaction: Mock; resolveScopeNodes: Mock; createWithin: Mock; updateWithin: Mock; findScopeKeys: Mock; removeOrInactivate: Mock };
 
 const rrhhUser = { id: "user-rrhh", role: roles.rrhh } as unknown as Express.AuthUser;
 const supervisionUser = { id: "user-sup", role: roles.supervision } as unknown as Express.AuthUser;
@@ -268,5 +269,41 @@ describe("positionsService — historia temporal del alcance (D-5)", () => {
     expect(recordScope).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ positionId: "pos-1", effectiveFrom: "2026-10-01", nodes: [{ level: "SECTOR", nodeId: "s1", areaSectorId: null }], reason: "Reorganización" }));
     expect(repo.updateWithin).toHaveBeenCalledWith(expect.anything(), "pos-1", expect.objectContaining({ orgScopes: [{ level: "SECTOR", nodeId: "s1" }] }), "u1");
     expect(auditService.registerWithin).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ description: expect.stringContaining("Alcance vigente desde el 01/10/2026") }));
+  });
+});
+
+describe("archivo A8-1 — §12.1 I4 y §12.4 en puestos", () => {
+  const input = { code: "PUE-7", name: "Archivado test", status: "ACTIVO", responsibilities: [], internalRelations: [], externalRelations: [], competencies: [], workConditions: { modality: "PRESENCIAL", workload: "", workplace: "", relationType: "", observations: "" }, performanceIndicators: [], evaluationCriteria: [], salaryCategoryIds: [], orgScopes: [{ level: "COMPANY", nodeId: "c1" }] };
+
+  it("un nodo archivado no puede ser destino de un alcance nuevo (409 POSITION_SCOPE_ARCHIVED)", async () => {
+    repo.resolveScopeNodes.mockResolvedValue({ companies: [{ id: "c1", name: "Los OD", status: "ACTIVO", archivedAt: new Date("2026-10-08") }], businessUnits: [], sectors: [], areas: [] });
+
+    await expect(positionsService.create(input as never)).rejects.toMatchObject({ statusCode: 409, code: "POSITION_SCOPE_ARCHIVED" });
+    expect(repo.createWithin).not.toHaveBeenCalled();
+    expect(auditService.registerWithin).not.toHaveBeenCalled();
+  });
+
+  it("conserva sin cambio un alcance vigente que ya apuntaba al nodo hoy archivado (AT-4)", async () => {
+    repo.resolveScopeNodes.mockResolvedValue({ companies: [{ id: "c1", name: "Los OD", status: "ACTIVO", archivedAt: new Date("2026-10-08") }], businessUnits: [], sectors: [], areas: [] });
+    repo.findScopeKeys.mockResolvedValue([{ level: "COMPANY", companyId: "c1", businessUnitId: null, sectorId: null, areaId: null }]);
+
+    await expect(positionsService.update("pos-1", { orgScopes: [{ level: "COMPANY", nodeId: "c1" }] } as never)).resolves.toBeDefined();
+    expect(repo.updateWithin).toHaveBeenCalled();
+  });
+
+  it("no edita un puesto archivado: 409 POSITION_ARCHIVED sin escribir (§12.1 I4)", async () => {
+    repo.transaction.mockImplementation((operation: (tx: object) => unknown) => operation({ position: { findUniqueOrThrow: vi.fn().mockResolvedValue({ id: "pos-1", code: "PUE-1", name: "Puesto archivado", status: "ACTIVO", archivedAt: new Date("2026-10-08") }) } }));
+
+    await expect(positionsService.update("pos-1", { name: "Otro" } as never))
+      .rejects.toMatchObject({ statusCode: 409, code: "POSITION_ARCHIVED" });
+    expect(repo.updateWithin).not.toHaveBeenCalled();
+    expect(auditService.registerWithin).not.toHaveBeenCalled();
+  });
+
+  it("no borra ni inactiva un puesto archivado: 409 POSITION_ARCHIVED (AT-3)", async () => {
+    repo.removeOrInactivate.mockResolvedValue({ kind: "ARCHIVED", position: { id: "pos-1", code: "PUE-1", name: "Puesto archivado", status: "ACTIVO" } });
+
+    await expect(positionsService.remove("pos-1")).rejects.toMatchObject({ statusCode: 409, code: "POSITION_ARCHIVED" });
+    expect(auditService.registerWithin).not.toHaveBeenCalled();
   });
 });

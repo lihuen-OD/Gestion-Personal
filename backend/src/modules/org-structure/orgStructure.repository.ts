@@ -49,14 +49,18 @@ let overviewCache: OverviewCache | null = null;
 function fetchOverview() {
   return Promise.all([
     prisma.company.findMany({
+      // A8 §12.4: los listados/selectores del modelo nuevo excluyen archivados.
+      where: { archivedAt: null },
       orderBy: { name: "asc" },
       select: { id: true, code: true, name: true, status: true },
     }),
     prisma.businessUnit.findMany({
+      where: { archivedAt: null },
       orderBy: { name: "asc" },
       select: { id: true, code: true, name: true, status: true, companyId: true },
     }),
     prisma.establishment.findMany({
+      where: { archivedAt: null },
       orderBy: { name: "asc" },
       select: {
         id: true,
@@ -75,10 +79,12 @@ function fetchOverview() {
       },
     }),
     prisma.area.findMany({
+      where: { archivedAt: null },
       orderBy: { name: "asc" },
       select: { id: true, code: true, name: true, status: true, sectorId: true, establishmentId: true },
     }),
     prisma.sector.findMany({
+      where: { archivedAt: null },
       orderBy: { name: "asc" },
       select: { id: true, code: true, name: true, status: true, businessUnitId: true, areaId: true, isLegacy: true },
     }),
@@ -134,6 +140,8 @@ export interface OrgRecord {
   parentId: string | null;
   /** Registro del modelo anterior: clasificación persistida (`Sector`/`Area`/`Establishment.isLegacy`, A8-3); para el resto (nodos sin columna propia), false. */
   isLegacy: boolean;
+  /** A8-1 (§12.1): archivado ⇔ `archivedAt IS NOT NULL`. Sólo lo escribe la limpieza; `null` en los modelos sin la columna (centros de costo, zonas). */
+  archivedAt: Date | null;
   counts: Partial<Record<OrgDependencyKey, number>>;
 }
 
@@ -158,8 +166,8 @@ interface NodeOps<K extends NodeKind> {
 const nodes: { [K in NodeKind]: NodeOps<K> } = {
   company: {
     find: async (tx, id) => {
-      const row = await tx.company.findUnique({ where: { id }, select: { id: true, code: true, name: true, status: true, _count: { select: { businessUnits: true, establishments: true, employees: true, users: true, costCenterLinks: true, doubleHourRules: true, positionScopes: true, employerPeriodLinks: true, scopeHistoryNodes: true } } } });
-      return row && { id: row.id, code: row.code, name: row.name, status: row.status, parentId: null, isLegacy: false, counts: { ...row._count, laborHistory: row._count.employerPeriodLinks, scopeHistory: row._count.scopeHistoryNodes } };
+      const row = await tx.company.findUnique({ where: { id }, select: { id: true, code: true, name: true, status: true, archivedAt: true, _count: { select: { businessUnits: true, establishments: true, employees: true, users: true, costCenterLinks: true, doubleHourRules: true, positionScopes: true, employerPeriodLinks: true, scopeHistoryNodes: true } } } });
+      return row && { id: row.id, code: row.code, name: row.name, status: row.status, parentId: null, isLegacy: false, archivedAt: row.archivedAt, counts: { ...row._count, laborHistory: row._count.employerPeriodLinks, scopeHistory: row._count.scopeHistoryNodes } };
     },
     create: (tx, data) => tx.company.create({ data }),
     update: (tx, id, data) => tx.company.update({ where: { id }, data }),
@@ -167,8 +175,8 @@ const nodes: { [K in NodeKind]: NodeOps<K> } = {
   },
   businessUnit: {
     find: async (tx, id) => {
-      const row = await tx.businessUnit.findUnique({ where: { id }, select: { id: true, code: true, name: true, status: true, companyId: true, _count: { select: { sectors: true, establishments: true, costCenterLinks: true, positionScopes: true, scopeHistoryNodes: true } } } });
-      return row && { id: row.id, code: row.code, name: row.name, status: row.status, parentId: row.companyId, isLegacy: false, counts: { ...row._count, scopeHistory: row._count.scopeHistoryNodes } };
+      const row = await tx.businessUnit.findUnique({ where: { id }, select: { id: true, code: true, name: true, status: true, companyId: true, archivedAt: true, _count: { select: { sectors: true, establishments: true, costCenterLinks: true, positionScopes: true, scopeHistoryNodes: true } } } });
+      return row && { id: row.id, code: row.code, name: row.name, status: row.status, parentId: row.companyId, isLegacy: false, archivedAt: row.archivedAt, counts: { ...row._count, scopeHistory: row._count.scopeHistoryNodes } };
     },
     create: (tx, data) => tx.businessUnit.create({ data }),
     update: (tx, id, data) => tx.businessUnit.update({ where: { id }, data }),
@@ -176,8 +184,8 @@ const nodes: { [K in NodeKind]: NodeOps<K> } = {
   },
   sector: {
     find: async (tx, id) => {
-      const row = await tx.sector.findUnique({ where: { id }, select: { id: true, code: true, name: true, status: true, businessUnitId: true, isLegacy: true, _count: { select: { areas: true, employees: true, positions: true, users: true, costCenterLinks: true, doubleHourRules: true, positionScopes: true, legacySectorPeriods: true, scopeHistoryNodes: true, scopeHistoryAreaParentOf: true } } } });
-      return row && { id: row.id, code: row.code, name: row.name, status: row.status, parentId: row.businessUnitId, isLegacy: row.isLegacy, counts: { ...row._count, laborHistory: row._count.legacySectorPeriods, scopeHistory: row._count.scopeHistoryNodes + row._count.scopeHistoryAreaParentOf } };
+      const row = await tx.sector.findUnique({ where: { id }, select: { id: true, code: true, name: true, status: true, businessUnitId: true, isLegacy: true, archivedAt: true, _count: { select: { areas: true, employees: true, positions: true, users: true, costCenterLinks: true, doubleHourRules: true, positionScopes: true, legacySectorPeriods: true, scopeHistoryNodes: true, scopeHistoryAreaParentOf: true } } } });
+      return row && { id: row.id, code: row.code, name: row.name, status: row.status, parentId: row.businessUnitId, isLegacy: row.isLegacy, archivedAt: row.archivedAt, counts: { ...row._count, laborHistory: row._count.legacySectorPeriods, scopeHistory: row._count.scopeHistoryNodes + row._count.scopeHistoryAreaParentOf } };
     },
     // A8-3: el alta clasifica explícitamente con el criterio previo (sector sin
     // padre del modelo objetivo = legado); la clasificación no es un default y
@@ -188,8 +196,8 @@ const nodes: { [K in NodeKind]: NodeOps<K> } = {
   },
   area: {
     find: async (tx, id) => {
-      const row = await tx.area.findUnique({ where: { id }, select: { id: true, code: true, name: true, status: true, sectorId: true, isLegacy: true, _count: { select: { sectors: true, costCenterLinks: true, positionScopes: true, scopeHistoryNodes: true } } } });
-      return row && { id: row.id, code: row.code, name: row.name, status: row.status, parentId: row.sectorId, isLegacy: row.isLegacy, counts: { ...row._count, scopeHistory: row._count.scopeHistoryNodes } };
+      const row = await tx.area.findUnique({ where: { id }, select: { id: true, code: true, name: true, status: true, sectorId: true, isLegacy: true, archivedAt: true, _count: { select: { sectors: true, costCenterLinks: true, positionScopes: true, scopeHistoryNodes: true } } } });
+      return row && { id: row.id, code: row.code, name: row.name, status: row.status, parentId: row.sectorId, isLegacy: row.isLegacy, archivedAt: row.archivedAt, counts: { ...row._count, scopeHistory: row._count.scopeHistoryNodes } };
     },
     // A8-3 extensión: como en Sector, el alta clasifica con el criterio previo
     // (área sin sector del modelo objetivo = legado) y la edición no recibe el
@@ -201,7 +209,8 @@ const nodes: { [K in NodeKind]: NodeOps<K> } = {
   zone: {
     find: async (tx, id) => {
       const row = await tx.zone.findUnique({ where: { id }, select: { id: true, code: true, name: true, status: true, _count: { select: { establishments: true } } } });
-      return row && { id: row.id, code: row.code, name: row.name, status: row.status, parentId: null, isLegacy: false, counts: row._count };
+      // La Zona no está en DELETE_ORDER: no tiene columna de archivo.
+      return row && { id: row.id, code: row.code, name: row.name, status: row.status, parentId: null, isLegacy: false, archivedAt: null, counts: row._count };
     },
     create: (tx, data) => tx.zone.create({ data }),
     update: (tx, id, data) => tx.zone.update({ where: { id }, data }),
@@ -209,8 +218,8 @@ const nodes: { [K in NodeKind]: NodeOps<K> } = {
   },
   establishment: {
     find: async (tx, id) => {
-      const row = await tx.establishment.findUnique({ where: { id }, select: { id: true, code: true, name: true, status: true, zoneId: true, isLegacy: true, _count: { select: { areas: true, costCenterLinks: true, workLocations: true, clockDevices: true } } } });
-      return row && { id: row.id, code: row.code, name: row.name, status: row.status, parentId: row.zoneId, isLegacy: row.isLegacy, counts: row._count };
+      const row = await tx.establishment.findUnique({ where: { id }, select: { id: true, code: true, name: true, status: true, zoneId: true, isLegacy: true, archivedAt: true, _count: { select: { areas: true, costCenterLinks: true, workLocations: true, clockDevices: true } } } });
+      return row && { id: row.id, code: row.code, name: row.name, status: row.status, parentId: row.zoneId, isLegacy: row.isLegacy, archivedAt: row.archivedAt, counts: row._count };
     },
     // Ver comentario de `area.create`: alta con criterio previo (sin zona del
     // modelo objetivo = legado), edición sin el campo.
@@ -223,7 +232,7 @@ const nodes: { [K in NodeKind]: NodeOps<K> } = {
 const costCenterOps = {
   find: async (tx: Tx, id: string): Promise<OrgRecord | null> => {
     const row = await tx.costCenter.findUnique({ where: { id }, select: { id: true, code: true, name: true, status: true, _count: { select: { employees: true, doubleHourRules: true, employeePeriods: true } } } });
-    return row && { id: row.id, code: row.code, name: row.name, status: row.status, parentId: null, isLegacy: false, counts: { ...row._count, laborHistory: row._count.employeePeriods } };
+    return row && { id: row.id, code: row.code, name: row.name, status: row.status, parentId: null, isLegacy: false, archivedAt: null, counts: { ...row._count, laborHistory: row._count.employeePeriods } };
   },
   // Sus vínculos propios se borran explícitamente antes que él (no se depende
   // del ON DELETE CASCADE de la base) — ver orgStructure.dependencies.ts.
@@ -316,9 +325,12 @@ export const orgStructureRepository = {
    * que no protege a los establecimientos nuevos (companyId NULL). En el
    * modelo objetivo el código es único entre establecimientos con zona.
    */
-  findZonedEstablishmentByCode(tx: Tx, code: string, excludeId?: string) {
+  // A8 §12.8: el lookup de unicidad de servicio recibe la ZONA, busca por
+  // (zoneId, code) y excluye archivados — un archivado ocupa su código en su
+  // población, pero no bloquea un alta nueva del modelo objetivo.
+  findZonedEstablishmentByCode(tx: Tx, zoneId: string, code: string, excludeId?: string) {
     return tx.establishment.findFirst({
-      where: { code, zoneId: { not: null }, ...(excludeId ? { id: { not: excludeId } } : {}) },
+      where: { zoneId, code, archivedAt: null, ...(excludeId ? { id: { not: excludeId } } : {}) },
       select: { id: true },
     });
   },
@@ -367,6 +379,18 @@ export const orgStructureRepository = {
       areaIds: row.areas.map((link) => link.areaId),
       sectorIds: row.sectors.map((link) => link.sectorId),
     };
+  },
+
+  /** Nombres de registros ARCHIVADOS entre los IDs dados (§12.4: toda familia con `archivedAt`). */
+  async findArchivedNames(tx: Tx, ids: { companyIds: string[]; businessUnitIds: string[]; sectorIds: string[]; areaIds: string[]; establishmentIds: string[] }) {
+    const [companies, businessUnits, sectors, areas, establishments] = await Promise.all([
+      ids.companyIds.length ? tx.company.findMany({ where: { id: { in: ids.companyIds }, archivedAt: { not: null } }, select: { name: true } }) : [],
+      ids.businessUnitIds.length ? tx.businessUnit.findMany({ where: { id: { in: ids.businessUnitIds }, archivedAt: { not: null } }, select: { name: true } }) : [],
+      ids.sectorIds.length ? tx.sector.findMany({ where: { id: { in: ids.sectorIds }, archivedAt: { not: null } }, select: { name: true } }) : [],
+      ids.areaIds.length ? tx.area.findMany({ where: { id: { in: ids.areaIds }, archivedAt: { not: null } }, select: { name: true } }) : [],
+      ids.establishmentIds.length ? tx.establishment.findMany({ where: { id: { in: ids.establishmentIds }, archivedAt: { not: null } }, select: { name: true } }) : [],
+    ]);
+    return [...companies, ...businessUnits, ...sectors, ...areas, ...establishments].map((row) => row.name);
   },
 
   /** Nombres de sectores/áreas/establecimientos del modelo anterior entre los IDs dados. */
