@@ -11,6 +11,15 @@
 // En `Employee`, `stable` es el hash personal/protegido: nunca puede cambiar.
 
 export const WATCHED_COLUMNS: Readonly<Record<string, readonly string[]>> = {
+  // A8 §12.9.4: `archivedAt` es la única columna de las 6 tablas de
+  // DELETE_ORDER cuyo cambio puede estar autorizado en V1 (sólo en los IDs
+  // `retained` del manifiesto; cualquier otro diff aborta).
+  Company: ["archivedAt"],
+  BusinessUnit: ["archivedAt"],
+  Establishment: ["archivedAt"],
+  Area: ["archivedAt"],
+  Sector: ["archivedAt"],
+  Position: ["archivedAt"],
   Employee: ["positionId", "sectorId", "costCenterId", "receiptCategory", "internalCategory", "agreement", "healthInsurance"],
   User: ["sectorId", "companyId"],
   ClockDevice: ["sectorId", "establishmentId"],
@@ -50,6 +59,8 @@ export interface V1Expectation {
   newRows: Record<string, string[]>;
   /** Cantidad exacta de filas nuevas de AuditLog, o "ANY" (restauración: la auditoría nunca se borra). */
   newAuditRows: number | "ANY";
+  /** A8 §12.1/§12.9.4: tablas → claves que DEBEN haber quedado con `archivedAt` NOT NULL (`retained`). */
+  archived?: Record<string, string[]>;
 }
 
 export function verifyV1(pre: RowManifest, post: RowManifest, expected: V1Expectation): Violation[] {
@@ -68,8 +79,14 @@ export function verifyV1(pre: RowManifest, post: RowManifest, expected: V1Expect
       if (now.stable !== row.stable) violations.push({ table, key, code: "CONTENT_CHANGED", message: "Cambió contenido no autorizado." });
       const nullified = new Set(expected.nullified[table]?.[key] ?? []);
       const ruleChange = table === "DoubleHourRule" ? expected.ruleChanges[key] ?? {} : {};
+      const archived = new Set(expected.archived?.[table] ?? []);
+      const mustBeArchived = archived.has(key);
+      if (mustBeArchived && !now.watched?.archivedAt) {
+        violations.push({ table, key, code: "NOT_ARCHIVED", message: "Debía quedar archivado (archivedAt NOT NULL) y no lo está." });
+      }
       for (const [column, value] of Object.entries(row.watched ?? {})) {
         const current = now.watched?.[column] ?? null;
+        if (column === "archivedAt" && mustBeArchived) continue; // exactamente el whitelist de §12.9.4
         if (nullified.has(column)) {
           if (current !== null) violations.push({ table, key, code: "NOT_NULLIFIED", message: `${column} debía quedar vacío.` });
         } else if (column in ruleChange) {

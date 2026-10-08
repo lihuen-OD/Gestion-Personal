@@ -102,3 +102,38 @@ describe("verifyV2", () => {
     expect(codes).toEqual(expect.arrayContaining(["UNAUDITED_LABOR_CHANGE", "PROTECTED_CHANGED"]));
   });
 });
+
+describe("verifyV1 — whitelist de archivo A8 §12.9.4", () => {
+  const archivedPre = manifest({
+    Sector: {
+      key: ["id"], columns: [],
+      rows: {
+        "sec-keep": { stable: "s1", watched: { archivedAt: null } },
+        "sec-other": { stable: "s2", watched: { archivedAt: null } },
+        "sec-del": { stable: "s3", watched: { archivedAt: null } },
+      },
+    },
+  });
+
+  it("acepta exactamente archivedAt en los IDs retained, con borrado autorizado, y exige que queden archivados", () => {
+    const post = clone(archivedPre);
+    post.tables.Sector!.rows["sec-keep"]!.watched!.archivedAt = "2026-10-08T00:00:00.000Z";
+    delete post.tables.Sector!.rows["sec-del"];
+
+    const violations = verifyV1(archivedPre, post, { ...empty, archived: { Sector: ["sec-keep"] }, deleted: { Sector: ["sec-del"] } });
+    expect(violations).toEqual([]);
+  });
+
+  it("archivar un ID fuera de la lista retained y no archivar el esperado aborta (F1.1 + diff fuera del whitelist)", () => {
+    const post = clone(archivedPre);
+    post.tables.Sector!.rows["sec-other"]!.watched!.archivedAt = "2026-10-08T00:00:00.000Z";
+
+    const codes = verifyV1(archivedPre, post, { ...empty, archived: { Sector: ["sec-keep"] } }).map((violation) => violation.code);
+    expect(codes).toEqual(expect.arrayContaining(["WATCHED_CHANGED", "NOT_ARCHIVED"]));
+  });
+
+  it("un ID retained que no quedó archivado viola F1.1 con su clave exacta", () => {
+    const violations = verifyV1(archivedPre, clone(archivedPre), { ...empty, archived: { Sector: ["sec-keep"] } });
+    expect(violations).toContainEqual(expect.objectContaining({ table: "Sector", key: "sec-keep", code: "NOT_ARCHIVED" }));
+  });
+});

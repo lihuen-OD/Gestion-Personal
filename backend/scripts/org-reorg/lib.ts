@@ -12,7 +12,7 @@ import { parse } from "dotenv";
 import { PrismaClient } from "@prisma/client";
 import { assertExpectedHost, verifyNeonIdentity, type NeonIdentity } from "../../src/modules/org-structure/reorg/targetIdentity";
 import { engineOutcomeLabel, type EngineEvaluation } from "../../src/modules/time-entries/specialHourEvidence";
-import { DELETE_ORDER, type CompanyMode, type FrozenInventory, type InventoryRecord, type ReferenceCount, type RuleReference, type TargetTable } from "../../src/modules/org-structure/reorg/cleanupPlan";
+import { DELETE_ORDER, partitionHistoryReference, type CompanyMode, type FrozenInventory, type HistoryReference, type InventoryRecord, type ReferenceCount, type RuleReference, type TargetTable } from "../../src/modules/org-structure/reorg/cleanupPlan";
 import { stableColumns, WATCHED_COLUMNS, type RowManifest, type TableManifest } from "../../src/modules/org-structure/reorg/manifest";
 
 // `EngineEvaluation` y `engineOutcomeLabel` viven en el módulo puro de
@@ -127,18 +127,49 @@ export async function countReferences(tx: Tx, foreignKeys: ForeignKey[], ids: Re
     const targetIds = ids[fk.target];
     if (!targetIds.length) { result.push({ ...fk, rowsToInventory: 0, rowsOutsideInventory: 0 }); continue; }
     const ownIds = (DELETE_ORDER as readonly string[]).includes(fk.table) ? ids[fk.table as TargetTable] : null;
-    const [row] = await tx.$queryRawUnsafe<Array<{ total: number; outside: number }>>(
-      `SELECT count(*)::int AS total, ${ownIds ? `count(*) FILTER (WHERE NOT (t."id" = ANY($2::text[])))::int` : "count(*)::int"} AS outside
+    const [row] = await tx.$queryRawUnsafe<Array<{ total: number; outside: number; ids: string[] | null }>>(
+      `SELECT count(*)::int AS total, ${ownIds ? `count(*) FILTER (WHERE NOT (t."id" = ANY($2::text[])))::int` : "count(*)::int"} AS outside,
+              array_agg(DISTINCT t.${quoteIdent(fk.column)}::text) AS ids
        FROM ${quoteIdent(fk.table)} t WHERE t.${quoteIdent(fk.column)} = ANY($1::text[])`,
       targetIds, ...(ownIds ? [ownIds] : []),
     );
-    result.push({ ...fk, rowsToInventory: row!.total, rowsOutsideInventory: row!.outside });
+    // IDs exactos (A8 §12.2/§12.4): los reportes listan destinos, no sólo conteos.
+    result.push({ ...fk, rowsToInventory: row!.total, rowsOutsideInventory: row!.outside, targetIds: [...(row!.ids ?? [])].sort() });
   }
   return result;
 }
 
 export function inventoryIds(inventory: FrozenInventory): Record<TargetTable, string[]> {
   return Object.fromEntries(DELETE_ORDER.map((table) => [table, inventory.records[table].map((record) => record.id)])) as Record<TargetTable, string[]>;
+}
+
+// ---------------------------------------------------------------------------
+// Historia temporal (A8 §12.2): IDs exactos por fuente
+// ---------------------------------------------------------------------------
+
+/** Las 9 FKs de las 7 tablas de D-5 cuyo destino es una tabla de DELETE_ORDER (A8 §12.2). */
+export const HISTORY_SOURCES: ReadonlyArray<{ table: string; column: string; source: string; targetTable: TargetTable }> = [
+  { table: "EmployeePositionPeriod", column: "positionId", source: "EmployeePositionPeriod.positionId", targetTable: "Position" },
+  { table: "EmployeeLegacySectorPeriod", column: "sectorId", source: "EmployeeLegacySectorPeriod.sectorId", targetTable: "Sector" },
+  { table: "EmployeeEmployerPeriodCompany", column: "companyId", source: "EmployeeEmployerPeriodCompany.companyId", targetTable: "Company" },
+  { table: "PositionOrgScopePeriod", column: "positionId", source: "PositionOrgScopePeriod.positionId", targetTable: "Position" },
+  { table: "PositionOrgScopePeriodNode", column: "companyId", source: "PositionOrgScopePeriodNode.companyId", targetTable: "Company" },
+  { table: "PositionOrgScopePeriodNode", column: "businessUnitId", source: "PositionOrgScopePeriodNode.businessUnitId", targetTable: "BusinessUnit" },
+  { table: "PositionOrgScopePeriodNode", column: "sectorId", source: "PositionOrgScopePeriodNode.sectorId", targetTable: "Sector" },
+  { table: "PositionOrgScopePeriodNode", column: "areaId", source: "PositionOrgScopePeriodNode.areaId", targetTable: "Area" },
+  { table: "PositionOrgScopePeriodNode", column: "areaSectorId", source: "PositionOrgScopePeriodNode.areaSectorId", targetTable: "Sector" },
+];
+
+/** IDs EXACTOS (ordenados, sin duplicados) que la historia referencia hacia el inventario. Sólo lectura. */
+export async function loadHistoryReferences(tx: Tx, inventory: FrozenInventory): Promise<HistoryReference[]> {
+  const result: HistoryReference[] = [];
+  for (const { table, column, source, targetTable } of HISTORY_SOURCES) {
+    const rows = await tx.$queryRawUnsafe<Array<{ id: string }>>(
+      `SELECT DISTINCT t.${quoteIdent(column)}::text AS id FROM ${quoteIdent(table)} t WHERE t.${quoteIdent(column)} IS NOT NULL ORDER BY 1`,
+    );
+    result.push(partitionHistoryReference(source, targetTable, rows.map((row) => row.id), inventory));
+  }
+  return result;
 }
 
 // ---------------------------------------------------------------------------

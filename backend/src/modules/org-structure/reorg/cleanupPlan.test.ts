@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildCleanupPlan, classifyReference, retainedClosure, type FrozenInventory, type ReferenceCount, type RuleReference } from "./cleanupPlan";
+import { buildCleanupPlan, classifyReference, partitionHistoryReference, retainedClosure, type FrozenInventory, type HistoryReference, type ReferenceCount, type RuleReference } from "./cleanupPlan";
 
 const rec = (id: string, parents: Record<string, string | null> = {}) => ({ id, code: id.toUpperCase(), name: id, status: "ACTIVO", parents });
 
@@ -17,8 +17,11 @@ function inventory(companyMode: "C1" | "C2" = "C1"): FrozenInventory {
   };
 }
 
-const ref = (table: string, column: string, target: ReferenceCount["target"], rowsToInventory = 1, rowsOutsideInventory = 0): ReferenceCount =>
-  ({ constraint: `${table}_${column}_fkey`, table, column, target, onDelete: "n", rowsToInventory, rowsOutsideInventory });
+const ref = (table: string, column: string, target: ReferenceCount["target"], rowsToInventory = 1, rowsOutsideInventory = 0, targetIds?: string[]): ReferenceCount =>
+  ({ constraint: `${table}_${column}_fkey`, table, column, target, onDelete: "n", rowsToInventory, rowsOutsideInventory, ...(targetIds ? { targetIds } : {}) });
+
+const historyRef = (source: string, target: HistoryReference["targetTable"], ids: string[], inside: string[], outside: string[] = []): HistoryReference =>
+  ({ source, targetTable: target, referencedIds: ids, insideInventory: inside, outsideInventory: outside });
 
 const rule = (overrides: Partial<RuleReference>): RuleReference =>
   ({ ruleId: "rule-1", name: "x2 Cocina", status: "ACTIVO", companyId: null, sectorId: null, positionId: null, currentPopulation: ["emp-1"], ...overrides });
@@ -33,7 +36,7 @@ describe("classifyReference", () => {
     expect(classifyReference(ref("PositionOrgScope", "sectorId", "Sector", 1)).issue).toMatchObject({ code: "UNCLASSIFIED_OR_NEW_DEPENDENCY", blocking: true });
   });
 
-  it("D-5: la historia temporal es una dependencia conocida que bloquea y nunca se trata (ni NULL ni DELETE)", () => {
+  it("D-5: la historia temporal nunca se trata (ni NULL ni DELETE); con §12.2 implementado queda informativa salvo el aborto C2 (§12.7)", () => {
     for (const [table, column, target] of [
       ["EmployeePositionPeriod", "positionId", "Position"],
       ["EmployeeLegacySectorPeriod", "sectorId", "Sector"],
@@ -41,7 +44,9 @@ describe("classifyReference", () => {
       ["PositionOrgScopePeriod", "positionId", "Position"],
       ["PositionOrgScopePeriodNode", "areaSectorId", "Sector"],
     ] as const) {
-      expect(classifyReference(ref(table, column, target, 2)).issue).toMatchObject({ code: "HISTORY_REFERENCES_INVENTORY", blocking: true });
+      const informative = classifyReference(ref(table, column, target, 2));
+      expect(informative.issue).toMatchObject({ code: "HISTORY_REFERENCES_INVENTORY", blocking: false });
+      expect(classifyReference(ref(table, column, target, 2), { historyBlocking: true }).issue).toMatchObject({ code: "HISTORY_REFERENCES_INVENTORY", blocking: true });
       expect(classifyReference(ref(table, column, target, 0)).issue).toBeUndefined();
     }
     expect(classifyReference(ref("TablaFutura", "sectorId", "Sector", 1)).issue?.blocking).toBe(true);
@@ -140,5 +145,182 @@ describe("buildCleanupPlan — operaciones sobre referencias", () => {
   it("retainedClosure incluye todos los ancestros legados", () => {
     const keys = [...retainedClosure(inventory("C2"), [{ table: "Position", id: "pos-1" }]).keys()];
     expect(keys).toEqual(["Position:pos-1", "Sector:sec-1", "Area:area-1", "Establishment:est-1", "BusinessUnit:bu-1", "Company:comp-1"]);
+  });
+});
+
+describe("A8 §12.2 — contrato de raíces históricas (AT-1)", () => {
+  it("partitionHistoryReference produce referencedIds exactos por fuente, ordenados y sin duplicados", () => {
+    const partitioned = partitionHistoryReference("EmployeeLegacySectorPeriod.sectorId", "Sector", ["sec-2", "sec-1", "sec-2"], inventory());
+    expect(partitioned.referencedIds).toEqual(["sec-1", "sec-2"]);
+    expect(partitioned.insideInventory).toEqual(["sec-1", "sec-2"]);
+    expect(partitioned.outsideInventory).toEqual([]);
+  });
+
+  it("partitionHistoryReference lista uno a uno los IDs fuera del inventario", () => {
+    const partitioned = partitionHistoryReference("EmployeeLegacySectorPeriod.sectorId", "Sector", ["sec-9", "sec-1"], inventory());
+    expect(partitioned.insideInventory).toEqual(["sec-1"]);
+    expect(partitioned.outsideInventory).toEqual(["sec-9"]);
+  });
+
+  it("una fila de historia que apunta a un ID deletable lo promueve a raíz: sale de deletable y entra a retained con sus ancestros", () => {
+    const plan = buildCleanupPlan({
+      inventory: inventory(),
+      references: [ref("EmployeeLegacySectorPeriod", "sectorId", "Sector", 1)],
+      rules: [],
+      decisions: [],
+      history: [historyRef("EmployeeLegacySectorPeriod.sectorId", "Sector", ["sec-1"], ["sec-1"])],
+    });
+    expect(plan.blocking).toBe(false);
+    expect(plan.retained).toContainEqual({ table: "Sector", id: "sec-1" });
+    expect(plan.retained).toContainEqual({ table: "Area", id: "area-1" });
+    expect(plan.deletable.Sector).toEqual(["sec-2"]);
+    expect(plan.issues).toContainEqual(expect.objectContaining({ code: "HISTORY_REFERENCES_INVENTORY", blocking: false }));
+    expect(plan.issues).not.toContainEqual(expect.objectContaining({ code: "HISTORY_REFERENCE_STILL_DELETABLE" }));
+  });
+
+  it("aserción fail-closed: si un ID referenciado por historia sigue deletable, el plan aborta con los IDs exactos", () => {
+    const plan = buildCleanupPlan({
+      inventory: inventory(),
+      references: [],
+      rules: [],
+      decisions: [],
+      history: [historyRef("EmployeePositionPeriod.positionId", "Position", ["pos-1"], [])],
+    });
+    expect(plan.blocking).toBe(true);
+    expect(plan.issues).toContainEqual(expect.objectContaining({ code: "HISTORY_REFERENCE_STILL_DELETABLE", blocking: true, message: expect.stringContaining("pos-1") }));
+  });
+
+  it("outsideInventory bloquea SIN reconocimiento ni flag: el plan aborta con los IDs exactos", () => {
+    const plan = buildCleanupPlan({
+      inventory: inventory(),
+      references: [],
+      rules: [],
+      decisions: [],
+      history: [historyRef("PositionOrgScopePeriodNode.companyId", "Company", ["comp-9"], [], ["comp-9"])],
+    });
+    expect(plan.blocking).toBe(true);
+    expect(plan.issues).toContainEqual(expect.objectContaining({ code: "HISTORY_REFERENCE_OUTSIDE_INVENTORY", blocking: true, ref: "PositionOrgScopePeriodNode.companyId", message: expect.stringContaining("comp-9") }));
+  });
+
+  it("un ID referenciado que el congelado ya no contiene también bloquea (defensa, sin fiarse sólo del reporte)", () => {
+    const plan = buildCleanupPlan({
+      inventory: inventory(),
+      references: [],
+      rules: [],
+      decisions: [],
+      history: [historyRef("EmployeePositionPeriod.positionId", "Position", ["pos-9"], [])],
+    });
+    expect(plan.blocking).toBe(true);
+    expect(plan.issues).toContainEqual(expect.objectContaining({ code: "HISTORY_REFERENCE_OUTSIDE_INVENTORY", message: expect.stringContaining("pos-9") }));
+  });
+
+  it("ciclo de ampliación: el destino incorporado como borrable queda archivado y outsideInventory queda vacío", () => {
+    const amplified = inventory();
+    amplified.records.Sector.push({ id: "sec-9", code: "SEC-9", name: "Sector ampliado", status: "ACTIVO", parents: { Area: "area-1" } });
+    const plan = buildCleanupPlan({
+      inventory: amplified,
+      references: [],
+      rules: [],
+      decisions: [],
+      history: [historyRef("EmployeeLegacySectorPeriod.sectorId", "Sector", ["sec-9"], ["sec-9"])],
+    });
+    expect(plan.blocking).toBe(false);
+    expect(plan.retained).toContainEqual({ table: "Sector", id: "sec-9" });
+    expect(plan.deletable.Sector).toEqual(["sec-1", "sec-2"]);
+  });
+
+  it("ciclo de ampliación: el destino que no cumple el criterio entra como conservada y NO se archiva ni se borra", () => {
+    const amplified = inventory();
+    amplified.records.Sector.push({ id: "sec-9", code: "SEC-9", name: "Sector conservado", status: "ACTIVO", parents: { Area: "area-1" }, class: "conservada" });
+    const plan = buildCleanupPlan({
+      inventory: amplified,
+      references: [],
+      rules: [],
+      decisions: [],
+      history: [historyRef("EmployeeLegacySectorPeriod.sectorId", "Sector", ["sec-9"], ["sec-9"])],
+    });
+    expect(plan.blocking).toBe(false);
+    expect(plan.retained).not.toContainEqual({ table: "Sector", id: "sec-9" });
+    expect(plan.deletable.Sector).toEqual(["sec-1", "sec-2"]);
+    expect(plan.issues).not.toContainEqual(expect.objectContaining({ code: "HISTORY_REFERENCE_OUTSIDE_INVENTORY" }));
+  });
+});
+
+describe("A8 §12.7 / AT-7 — C2 condicionada por el gate archiveHistoryCompanies", () => {
+  const c2WithCompanyHistory = () => ({
+    inventory: inventory("C2"),
+    references: [ref("EmployeeEmployerPeriodCompany", "companyId", "Company", 1)],
+    rules: [],
+    decisions: [],
+    history: [historyRef("EmployeeEmployerPeriodCompany.companyId", "Company", ["comp-1"], ["comp-1"])],
+  });
+
+  it("comportamiento actual (gate apagado): C2 aborta con HISTORY_REFERENCES_INVENTORY y la empresa sigue deletable", () => {
+    const plan = buildCleanupPlan(c2WithCompanyHistory());
+    expect(plan.blocking).toBe(true);
+    expect(plan.issues).toContainEqual(expect.objectContaining({ code: "HISTORY_REFERENCES_INVENTORY", blocking: true }));
+    expect(plan.issues).toContainEqual(expect.objectContaining({ code: "HISTORY_REFERENCE_STILL_DELETABLE" }));
+    expect(plan.deletable.Company).toEqual(["comp-1"]);
+  });
+
+  it("con las condiciones de §12.7 activadas: la empresa entra a retained/archivo, sale de deletable y el plan no bloquea", () => {
+    const plan = buildCleanupPlan({ ...c2WithCompanyHistory(), archiveHistoryCompanies: true });
+    expect(plan.blocking).toBe(false);
+    expect(plan.retained).toContainEqual({ table: "Company", id: "comp-1" });
+    expect(plan.deletable.Company).toEqual([]);
+    expect(plan.issues).toContainEqual(expect.objectContaining({ code: "HISTORY_REFERENCES_INVENTORY", blocking: false }));
+    expect(plan.issues).not.toContainEqual(expect.objectContaining({ code: "HISTORY_REFERENCE_STILL_DELETABLE" }));
+  });
+});
+
+describe("A8 §12.4 — filas clase 4: retención de destino o retiro de la fila", () => {
+  it("una fila clase 4 SIN resolución bloquea con UNCLASSIFIED_OR_NEW_DEPENDENCY y los IDs exactos", () => {
+    const plan = buildCleanupPlan({
+      inventory: inventory(),
+      references: [ref("PositionOrgScope", "businessUnitId", "BusinessUnit", 1, 0, ["bu-1"])],
+      rules: [],
+      decisions: [],
+    });
+    expect(plan.blocking).toBe(true);
+    expect(plan.issues).toContainEqual(expect.objectContaining({ code: "UNCLASSIFIED_OR_NEW_DEPENDENCY", blocking: true, message: expect.stringContaining("bu-1") }));
+  });
+
+  it("retirar la fila nueva (borrado autorizado) resuelve la referencia y se planifica", () => {
+    const plan = buildCleanupPlan({
+      inventory: inventory(),
+      references: [ref("PositionOrgScope", "businessUnitId", "BusinessUnit", 1, 0, ["bu-1"])],
+      rules: [],
+      decisions: [],
+      classFour: [{ table: "PositionOrgScope", column: "businessUnitId", target: "BusinessUnit", retain: [], retire: ["bu-1"] }],
+    });
+    expect(plan.blocking).toBe(false);
+    expect(plan.retireRows).toEqual([{ table: "PositionOrgScope", column: "businessUnitId", target: "BusinessUnit", ids: ["bu-1"] }]);
+    expect(plan.issues).not.toContainEqual(expect.objectContaining({ code: "UNCLASSIFIED_OR_NEW_DEPENDENCY" }));
+  });
+
+  it("retener el destino lo promueve a raíz (archivado) y resuelve la referencia", () => {
+    const plan = buildCleanupPlan({
+      inventory: inventory(),
+      references: [ref("PositionOrgScope", "businessUnitId", "BusinessUnit", 1, 0, ["bu-1"])],
+      rules: [],
+      decisions: [],
+      classFour: [{ table: "PositionOrgScope", column: "businessUnitId", target: "BusinessUnit", retain: ["bu-1"], retire: [] }],
+    });
+    expect(plan.blocking).toBe(false);
+    expect(plan.retained).toContainEqual({ table: "BusinessUnit", id: "bu-1" });
+    expect(plan.deletable.BusinessUnit).toEqual([]);
+    expect(plan.retireRows).toEqual([]);
+  });
+
+  it("un destino fuera del inventario en una resolución clase 4 bloquea (fail closed)", () => {
+    const plan = buildCleanupPlan({
+      inventory: inventory(),
+      references: [],
+      rules: [],
+      decisions: [],
+      classFour: [{ table: "PositionOrgScope", column: "companyId", target: "Company", retain: ["comp-9"], retire: [] }],
+    });
+    expect(plan.blocking).toBe(true);
+    expect(plan.issues).toContainEqual(expect.objectContaining({ code: "CLASS_FOUR_TARGET_MISSING", blocking: true, message: expect.stringContaining("comp-9") }));
   });
 });

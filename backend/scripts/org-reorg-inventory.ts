@@ -23,7 +23,7 @@
  * No imprime credenciales; sólo identificadores, códigos y nombres de catálogo.
  */
 import { writeFileSync } from "node:fs";
-import { arg, captureRowManifest, connectTarget, countReferences, discoverForeignKeys, employeeDatesWithHours, engineOutcomes, inventoryIds, loadInventory, loadRules, readOnly, ruleReferences, type EngineEvaluator, type Tx } from "./org-reorg/lib";
+import { arg, captureRowManifest, connectTarget, countReferences, discoverForeignKeys, employeeDatesWithHours, engineOutcomes, inventoryIds, loadHistoryReferences, loadInventory, loadRules, readOnly, ruleReferences, type EngineEvaluator, type Tx } from "./org-reorg/lib";
 import { historyWithoutReferences } from "./labor-history/simulatedReaders";
 import { buildCleanupPlan, classifyReference, inventoryDimensions, type CompanyMode, type FrozenInventory } from "../src/modules/org-structure/reorg/cleanupPlan";
 
@@ -91,11 +91,14 @@ async function ruleApplications(tx: Tx, ruleId: string) {
 
 async function inventoryFor(tx: Tx, companyMode: CompanyMode, evaluate: EngineEvaluator) {
   const inventory = await loadInventory(tx, companyMode);
+  // A8 §12.2: historia con los IDs EXACTOS por fuente (no sólo conteos).
+  const history = await loadHistoryReferences(tx, inventory);
+  const inventoryWithHistory = { ...inventory, history };
   const foreignKeys = await discoverForeignKeys(tx);
   const references = await countReferences(tx, foreignKeys, inventoryIds(inventory));
   const rules = await loadRules(tx);
   const refs = await ruleReferences(tx, rules);
-  const plan = buildCleanupPlan({ inventory, references, rules: refs, decisions: [] });
+  const plan = buildCleanupPlan({ inventory: inventoryWithHistory, references, rules: refs, decisions: [] });
   const names = await catalogNames(tx);
   const affectedRules = [];
   for (const rule of rules) {
@@ -121,9 +124,10 @@ async function inventoryFor(tx: Tx, companyMode: CompanyMode, evaluate: EngineEv
   }
   return {
     companyMode,
-    inventory: Object.fromEntries(Object.entries(inventory.records).map(([table, records]) => [table, { count: records.length, records }])),
+    inventory: { ...Object.fromEntries(Object.entries(inventory.records).map(([table, records]) => [table, { count: records.length, records }])), history },
     references: references.map((reference) => {
-      const { treatment, issue } = classifyReference(reference);
+      // §12.7 (gate apagado por defecto): en C2 la historia hacia Company sigue bloqueando (HT-4).
+      const { treatment, issue } = classifyReference(reference, { historyBlocking: reference.target === "Company" && companyMode === "C2" });
       return { ...reference, treatment, blocking: issue?.blocking ?? (treatment === "RULE_DECISION" && reference.rowsToInventory > 0) };
     }),
     plan: { blocking: plan.blocking, issues: plan.issues, nullify: plan.nullify, deleteLinks: plan.deleteLinks, deletable: Object.fromEntries(Object.entries(plan.deletable).map(([table, ids]) => [table, ids.length])) },
@@ -232,7 +236,12 @@ async function main() {
     });
     writeFileSync(reportPath, JSON.stringify(report, null, 2));
     const brief = (mode: "C1" | "C2") => ({
-      inventario: Object.fromEntries(Object.entries(report[mode].inventory).map(([table, data]) => [table, (data as { count: number }).count])),
+      inventario: Object.fromEntries(
+        Object.entries(report[mode].inventory).map(([entry, data]) => [
+          entry,
+          Array.isArray(data) ? { historialFuentes: (data as unknown[]).length } : (data as { count: number }).count,
+        ]),
+      ),
       bloqueos: report[mode].plan.issues.filter((issue) => issue.blocking).map((issue) => `${issue.code}: ${issue.message}`),
       reglasQueRequierenDecision: report[mode].rules.filter((rule) => rule.requiresDecision).length,
       impactoMotorSinTratar: { fechasLegajoQueCambian: report[mode].engineImpactWithoutRuleTreatment.changedEmployeeDates, legajos: report[mode].engineImpactWithoutRuleTreatment.employeesAffected, cierres: report[mode].engineImpactWithoutRuleTreatment.closuresByStatus },

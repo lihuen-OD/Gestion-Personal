@@ -35,7 +35,7 @@
  */
 import { readFileSync, writeFileSync } from "node:fs";
 import type { Prisma } from "@prisma/client";
-import { arg, captureRowManifest, connectTarget, countReferences, discoverForeignKeys, engineOutcomes, flag, loadRules, quoteIdent, ruleReferences, type EngineEvaluator, type Tx } from "./org-reorg/lib";
+import { arg, captureRowManifest, connectTarget, countReferences, discoverForeignKeys, engineOutcomes, flag, loadHistoryReferences, loadRules, quoteIdent, ruleReferences, type EngineEvaluator, type Tx } from "./org-reorg/lib";
 import { requireVerifiedIdentity } from "../src/modules/org-structure/reorg/targetIdentity";
 import { buildCleanupPlan, DELETE_ORDER, treatmentOf, type CompanyMode, type FrozenInventory, type R1TargetState, type RuleDecision, type TargetTable } from "../src/modules/org-structure/reorg/cleanupPlan";
 import { verifyV1, type V1Expectation, type WatchedValues } from "../src/modules/org-structure/reorg/manifest";
@@ -99,9 +99,16 @@ async function main() {
   const target = await connectTarget();
   requireVerifiedIdentity(target.identity);
 
-  const inventoryReport = readJson<Record<string, { inventory: Record<TargetTable, { records: FrozenInventory["records"][TargetTable] }> }> & { target: { host: string } }>(arg("inventory"), "--inventory=<reporte de inventario>");
+  const inventoryReport = readJson<Record<string, { inventory: Record<TargetTable, { records: FrozenInventory["records"][TargetTable] }> & { history?: FrozenInventory["history"] } }> & { target: { host: string } }>(arg("inventory"), "--inventory=<reporte de inventario>");
   if (inventoryReport.target.host !== target.host) throw new Error(`El inventario se tomó en ${inventoryReport.target.host}, no en ${target.host}.`);
-  const frozen: FrozenInventory = { companyMode, records: Object.fromEntries(DELETE_ORDER.map((table) => [table, inventoryReport[companyMode]!.inventory[table].records])) as FrozenInventory["records"] };
+  if (!inventoryReport[companyMode]!.inventory.history) {
+    throw new Error("El inventario congelado no tiene `history` con IDs exactos (A8 §12.2). Re-inventariar con el script actualizado.");
+  }
+  const frozen: FrozenInventory = {
+    companyMode,
+    records: Object.fromEntries(DELETE_ORDER.map((table) => [table, inventoryReport[companyMode]!.inventory[table].records])) as FrozenInventory["records"],
+    history: inventoryReport[companyMode]!.inventory.history,
+  };
   const decisions = readJson<RuleDecision[]>(arg("decisions"), "--decisions=<archivo.json> (puede ser [] si el inventario no tiene reglas que decidir)");
   const accepted = new Set(arg("accept-engine-changes") ? readJson<Array<{ employeeId: string; date: string }>>(arg("accept-engine-changes"), "cambios aceptados").map((item) => `${item.employeeId}|${item.date}`) : []);
 
@@ -129,22 +136,34 @@ async function main() {
       const frozenByTable = Object.fromEntries(DELETE_ORDER.map((table) => [table, frozen.records[table].map((record) => record.id)])) as Record<TargetTable, string[]>;
       const references = await countReferences(tx, foreignKeys, frozenByTable);
       const rules = await ruleReferences(tx, await loadRules(tx));
-      const plan = buildCleanupPlan({ inventory: frozen, references, rules, decisions, r1Targets: await r1TargetStates(tx, decisions, frozenIds) });
-      summary.plan = { issues: plan.issues, retained: plan.retained, deletable: Object.fromEntries(Object.entries(plan.deletable).map(([table, ids]) => [table, ids.length])), ruleOperations: plan.ruleOperations };
+      // A8 §12.2: la historia se re-verifica en la transacción contra el
+      // congelado (fail closed): si divergieron, el inventario está viejo.
+      const liveHistory = await loadHistoryReferences(tx, frozen);
+      if (JSON.stringify(liveHistory) !== JSON.stringify(frozen.history)) {
+        throw new Error("La historia (§12.2) del inventario congelado no coincide con la base. Re-inventariar.");
+      }
+      const plan = buildCleanupPlan({ inventory: frozen, references, rules, decisions, history: liveHistory, r1Targets: await r1TargetStates(tx, decisions, frozenIds) });
+      summary.plan = { issues: plan.issues, retained: plan.retained, deletable: Object.fromEntries(Object.entries(plan.deletable).map(([table, ids]) => [table, ids.length])), retireRows: plan.retireRows, ruleOperations: plan.ruleOperations };
       if (plan.blocking) throw new Error(`Plan bloqueado: ${plan.issues.filter((issue) => issue.blocking).map((issue) => issue.code).join(", ")}. No se escribió nada.`);
       const deletable = plan.deletable;
+      // A8 §12.1: conjunto autorizado de archivo (I2) = retained del manifiesto.
+      const retainedByTable = Object.fromEntries(DELETE_ORDER.map((table) => [table, plan.retained.filter((entry) => entry.table === table).map((entry) => entry.id)])) as Record<TargetTable, string[]>;
+      // A8 §12.4: los vínculos de configuración se borran hacia destinos
+      // deletable ∪ retained (archivado), antes de F1 y de G5.
+      const linkTargets = (target: TargetTable) => [...deletable[target], ...retainedByTable[target]];
 
       // 2. Estado previo: manifiesto, motor y respaldo (antes de cualquier escritura).
       const pre = await captureRowManifest(tx, target.host);
       // D-5: el motor resuelve con la historia temporal; una fecha sin historia
       // suficiente queda como MISSING antes y después (la limpieza no la cambia).
       const enginePre = await engineOutcomes(tx, evaluate);
-      const expectation: V1Expectation = { deleted: {}, nullified: {}, ruleChanges: {}, newRows: {}, newAuditRows: 0 };
-      const backup: Record<string, unknown> = { takenAt: new Date().toISOString(), host: target.host, companyMode, deleted: {}, nullified: [], rules: [] };
+      const expectation: V1Expectation = { deleted: {}, nullified: {}, ruleChanges: {}, newRows: {}, newAuditRows: 0, archived: {} };
+      const backup: Record<string, unknown> = { takenAt: new Date().toISOString(), host: target.host, companyMode, deleted: {}, nullified: [], rules: [], archived: plan.retained };
       for (const table of DELETE_ORDER) (backup.deleted as Record<string, unknown>)[table] = await rowsAsJson(tx, table, "id", deletable[table]);
-      for (const op of plan.deleteLinks) (backup.deleted as Record<string, unknown>)[`${op.table}.${op.column}`] = await rowsAsJson(tx, op.table, op.column, deletable[op.target]);
+      for (const op of plan.deleteLinks) (backup.deleted as Record<string, unknown>)[`${op.table}.${op.column}`] = await rowsAsJson(tx, op.table, op.column, linkTargets(op.target));
+      for (const op of plan.retireRows) (backup.deleted as Record<string, unknown>)[`${op.table}.${op.column}`] = await rowsAsJson(tx, op.table, op.column, op.ids);
       for (const op of plan.nullify) {
-        const rows = deletable[op.target].length ? await tx.$queryRawUnsafe<Array<{ id: string; value: string }>>(`SELECT id, ${quoteIdent(op.column)} AS value FROM ${quoteIdent(op.table)} WHERE ${quoteIdent(op.column)} = ANY($1::text[])`, deletable[op.target]) : [];
+        const rows = linkTargets(op.target).length ? await tx.$queryRawUnsafe<Array<{ id: string; value: string }>>(`SELECT id, ${quoteIdent(op.column)} AS value FROM ${quoteIdent(op.table)} WHERE ${quoteIdent(op.column)} = ANY($1::text[])`, linkTargets(op.target)) : [];
         (backup.nullified as unknown[]).push({ table: op.table, column: op.column, rows });
       }
       const touchedRules = [...new Set(plan.ruleOperations.map((op) => op.ruleId))];
@@ -183,9 +202,10 @@ async function main() {
       if (stillReferenced) throw new Error(`${stillReferenced} regla(s) siguen referenciando registros a borrar después del tratamiento. No se borra nada.`);
 
       // 4. Vínculos de legajos/usuarios/dispositivos y filas de vínculo.
-      const employeeRefs = await loadEmployeeReferences(tx as never, (await tx.employee.findMany({ where: { OR: [{ positionId: { in: deletable.Position } }, { sectorId: { in: deletable.Sector } }] }, select: { id: true } })).map((row) => row.id));
+      const employeeRefs = await loadEmployeeReferences(tx as never, (await tx.employee.findMany({ where: { OR: [{ positionId: { in: linkTargets("Position") } }, { sectorId: { in: linkTargets("Sector") } }] }, select: { id: true } })).map((row) => row.id));
       for (const op of plan.nullify) {
-        const rows = deletable[op.target].length ? await tx.$queryRawUnsafe<Array<{ id: string; value: string }>>(`SELECT id, ${quoteIdent(op.column)} AS value FROM ${quoteIdent(op.table)} WHERE ${quoteIdent(op.column)} = ANY($1::text[])`, deletable[op.target]) : [];
+        const targets = linkTargets(op.target);
+        const rows = targets.length ? await tx.$queryRawUnsafe<Array<{ id: string; value: string }>>(`SELECT id, ${quoteIdent(op.column)} AS value FROM ${quoteIdent(op.table)} WHERE ${quoteIdent(op.column)} = ANY($1::text[])`, targets) : [];
         for (const row of rows) {
           await tx.$executeRawUnsafe(`UPDATE ${quoteIdent(op.table)} SET ${quoteIdent(op.column)} = NULL WHERE id = $1`, row.id);
           expectation.nullified[op.table] = { ...(expectation.nullified[op.table] ?? {}), [row.id]: [...(expectation.nullified[op.table]?.[row.id] ?? []), op.column] };
@@ -195,8 +215,8 @@ async function main() {
       }
       for (const op of plan.deleteLinks) {
         // C2: la empresa empleadora es un dato visible del legajo; se audita por legajo.
-        if (op.table === "EmployeeCompany" && deletable.Company.length) {
-          const links = await tx.employeeCompany.findMany({ where: { companyId: { in: deletable.Company } }, select: { employeeId: true, companyId: true, isPrimary: true } });
+        if (op.table === "EmployeeCompany" && linkTargets("Company").length) {
+          const links = await tx.employeeCompany.findMany({ where: { companyId: { in: linkTargets("Company") } }, select: { employeeId: true, companyId: true, isPrimary: true } });
           const byEmployee = new Map<string, typeof links>();
           for (const link of links) byEmployee.set(link.employeeId, [...(byEmployee.get(link.employeeId) ?? []), link]);
           const refs = await loadEmployeeReferences(tx as never, [...byEmployee.keys()]);
@@ -205,8 +225,18 @@ async function main() {
           }
         }
         const key = pre.tables[op.table]!.key;
-        const keys = await keysWhere(tx, op.table, key, op.column, deletable[op.target]);
-        if (keys.length) await tx.$executeRawUnsafe(`DELETE FROM ${quoteIdent(op.table)} WHERE ${quoteIdent(op.column)} = ANY($1::text[])`, deletable[op.target]);
+        const targets = linkTargets(op.target);
+        const keys = await keysWhere(tx, op.table, key, op.column, targets);
+        if (keys.length) await tx.$executeRawUnsafe(`DELETE FROM ${quoteIdent(op.table)} WHERE ${quoteIdent(op.column)} = ANY($1::text[])`, targets);
+        expectation.deleted[op.table] = [...(expectation.deleted[op.table] ?? []), ...keys];
+      }
+
+      // 4b. Retiro de filas clase 4 (fila nueva que dependía de un registro
+      // retirado): borrado autorizado de fila, con respaldo (A8 §12.4).
+      for (const op of plan.retireRows) {
+        const key = pre.tables[op.table]!.key;
+        const keys = await keysWhere(tx, op.table, key, op.column, op.ids);
+        if (keys.length) await tx.$executeRawUnsafe(`DELETE FROM ${quoteIdent(op.table)} WHERE ${quoteIdent(op.column)} = ANY($1::text[])`, op.ids);
         expectation.deleted[op.table] = [...(expectation.deleted[op.table] ?? []), ...keys];
       }
 
@@ -223,6 +253,21 @@ async function main() {
           await auditOf({ action: "DELETE", entity: table, entityId: record.id, description: `Se eliminó ${record.code} - ${record.name} de la estructura anterior (${REASON}).`, before: record as unknown as Prisma.InputJsonValue });
         }
         expectation.deleted[table] = [...(expectation.deleted[table] ?? []), ...deletable[table]];
+      }
+
+      // 5b. Archivo de retained (A8 §12.1): único escritor (I1), conjunto
+      // autorizado = retained del manifiesto (I2), AuditLog en la misma
+      // transacción (I5). Ningún input de API escribe esta columna.
+      for (const entry of plan.retained) {
+        const record = frozen.records[entry.table].find((item) => item.id === entry.id)!;
+        const updated = await tx.$executeRawUnsafe(`UPDATE ${quoteIdent(entry.table)} SET "archivedAt" = now() WHERE id = $1 AND "archivedAt" IS NULL`, entry.id);
+        if (!updated) throw new Error(`No se pudo archivar ${entry.table} ${entry.id}: la fila no existe o ya estaba archivada.`);
+        expectation.archived![entry.table] = [...(expectation.archived![entry.table] ?? []), entry.id];
+        await auditOf({
+          action: "UPDATE", entity: entry.table, entityId: entry.id,
+          description: `Se archivó ${record.code} - ${record.name} (A8 §12.1, conjunto retained del manifiesto de reorganización).`,
+          before: { archivedAt: null }, after: { archivedAt: "now()" },
+        });
       }
 
       // 6. Equivalencia del motor de horas especiales.
