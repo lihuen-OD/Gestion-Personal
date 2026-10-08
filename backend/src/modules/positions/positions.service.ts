@@ -55,11 +55,24 @@ async function validateScopes(tx: PrismaTransactionClient, scopes: PositionOrgSc
     const node = byKey.get(scopeKey(scope));
     if (!node) throw new AppError("Uno de los nodos organizacionales seleccionados no existe.", 400, "POSITION_SCOPE_INVALID");
     // A8-3: "estructura anterior" se decide por la clasificación persistida
-    // del sector (Sector.isLegacy), no por sus padres actuales. Un sector sin
-    // fila clasificada (imposible: la columna es NOT NULL) sigue contando como
-    // anterior, como antes.
-    if ((node.level === "SECTOR" && node.isLegacy !== false) || (node.level === "AREA" && (!node.sectorId || node.isLegacy !== false))) {
-      throw new AppError(`“${node.name}” pertenece a la estructura anterior y no puede asignarse como alcance nuevo.`, 409, "POSITION_SCOPE_LEGACY");
+    // del sector (Sector.isLegacy), nunca por un padre actual. Un área sin
+    // sector sigue siendo del modelo anterior (criterio previo, sin consultar
+    // clasificación). Si la lectura vino INCOMPLETA — un nodo de sector sin su
+    // clasificación — no se adivina: es un error de integridad del dato (500),
+    // diferenciado de POSITION_SCOPE_LEGACY, y detiene la escritura.
+    const legacyMessage = `“${node.name}” pertenece a la estructura anterior y no puede asignarse como alcance nuevo.`;
+    const areaWithoutSector = node.level === "AREA" && !node.sectorId;
+    const sectorScoped = node.level === "SECTOR" || node.level === "AREA";
+    if (sectorScoped && !areaWithoutSector && typeof node.isLegacy !== "boolean") {
+      throw new AppError(
+        `No pudimos leer la clasificación legado/nuevo (Sector.isLegacy) del sector de “${node.name}”. Éste es un error de integridad del dato del servidor, no una validación de estructura: la operación se detiene hasta que la clasificación esté disponible.`,
+        500,
+        "POSITION_SCOPE_SECTOR_INTEGRITY",
+        { level: node.level, id: node.id },
+      );
+    }
+    if (areaWithoutSector || (sectorScoped && node.isLegacy)) {
+      throw new AppError(legacyMessage, 409, "POSITION_SCOPE_LEGACY");
     }
     if (node.status !== "ACTIVO" && !currentKeys.has(scopeKey(scope))) {
       throw new AppError(`“${node.name}” está inactivo y no puede agregarse al alcance.`, 409, "POSITION_SCOPE_INACTIVE");

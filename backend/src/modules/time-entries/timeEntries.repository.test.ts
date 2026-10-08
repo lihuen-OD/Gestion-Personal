@@ -274,7 +274,7 @@ describe("carga manual aplica Horas Especiales (Etapa 11A)", () => {
   const sunday = new Date("2026-08-16T00:00:00.000Z"); // domingo (weekday 0)
   const monday = new Date("2026-08-17T00:00:00.000Z"); // lunes, sin regla
 
-  function manualRule(overrides: Partial<{ id: string; recurrenceType: string; fromDate: Date; toDate: Date | null; weekdays: number[]; multiplier: number; priority: number; dates: Array<{ date: Date; isActive: boolean }>; companyId: string | null; sectorId: string | null; costCenterId: string | null; positionId: string | null }>) {
+  function manualRule(overrides: Partial<{ id: string; recurrenceType: string; fromDate: Date; toDate: Date | null; weekdays: number[]; multiplier: number; priority: number; dates: Array<{ date: Date; isActive: boolean }>; companyId: string | null; sectorId: string | null; costCenterId: string | null; positionId: string | null; sector: { isLegacy: boolean } | null }>) {
     const recurrenceType = overrides.recurrenceType ?? "FECHA";
     const fromDate = overrides.fromDate ?? holiday;
     return {
@@ -289,6 +289,8 @@ describe("carga manual aplica Horas Especiales (Etapa 11A)", () => {
       sectorId: null,
       costCenterId: null,
       positionId: null,
+      // Como el include real del motor: la relación viene con su clasificación.
+      sector: null,
       dates: recurrenceType === "FECHA" ? [{ date: fromDate, isActive: true }] : [],
       ...overrides,
     };
@@ -350,7 +352,7 @@ describe("carga manual aplica Horas Especiales (Etapa 11A)", () => {
   it("create — evalúa el alcance de la regla con la historia del legajo en esa fecha, igual que el fichador (D-5)", async () => {
     mockedPrisma.employee.findUnique.mockResolvedValue({ sectorId: "panol", costCenterId: null, positionId: null, companies: [{ companyId: "odwyer" }] });
     mockedPrisma.doubleHourRule.findMany.mockResolvedValue([
-      manualRule({ id: "feriado-odwyer-panol", companyId: "odwyer", sectorId: "panol", multiplier: 2 }),
+      manualRule({ id: "feriado-odwyer-panol", companyId: "odwyer", sectorId: "panol", sector: { isLegacy: true }, multiplier: 2 }),
       manualRule({ id: "feriado-tropa", companyId: "tropa", multiplier: 3 }),
     ]);
     mockedPrisma.__tx.timeEntry.create.mockResolvedValue({ id: "entry-1" });
@@ -900,7 +902,7 @@ describe("SpecialHourRuleApplication y multiplicador efectivo (Etapa 3)", () => 
   const sunday = new Date("2026-08-16T00:00:00.000Z"); // domingo (weekday 0)
   const monday = new Date("2026-08-17T00:00:00.000Z"); // lunes (weekday 1)
 
-  function rule(overrides: Partial<{ id: string; name: string; recurrenceType: string; fromDate: Date; toDate: Date | null; weekdays: number[]; multiplier: number; priority: number; dates: Array<{ date: Date; isActive: boolean }>; companyId: string | null; sectorId: string | null; costCenterId: string | null; positionId: string | null }>) {
+  function rule(overrides: Partial<{ id: string; name: string; recurrenceType: string; fromDate: Date; toDate: Date | null; weekdays: number[]; multiplier: number; priority: number; dates: Array<{ date: Date; isActive: boolean }>; companyId: string | null; sectorId: string | null; costCenterId: string | null; positionId: string | null; sector: { isLegacy: boolean } | null }>) {
     const recurrenceType = overrides.recurrenceType ?? "SEMANAL";
     const fromDate = overrides.fromDate ?? new Date("2026-01-01T00:00:00.000Z");
     return {
@@ -918,6 +920,8 @@ describe("SpecialHourRuleApplication y multiplicador efectivo (Etapa 3)", () => 
       positionId: null,
       status: "ACTIVO",
       reason: "Domingo",
+      // Como el include real del motor: la relación viene con su clasificación.
+      sector: null,
       // Etapa 8B: FECHA ya no matchea por fromDate — si no se pasa `dates`
       // explícito, se asume que la única fecha alcanzada es fromDate (mismo
       // comportamiento observable que antes de 8B para estos tests).
@@ -1234,7 +1238,7 @@ describe("SpecialHourRuleApplication y multiplicador efectivo (Etapa 3)", () => 
     mockedPrisma.__tx.attendancePunch.create.mockResolvedValueOnce({ id: "punch-in" }).mockResolvedValueOnce({ id: "punch-out" });
     mockedPrisma.__tx.workShift.create.mockResolvedValue({ id: "shift-n" });
     mockedPrisma.__tx.employee.findUnique.mockResolvedValue({ sectorId: "panol", costCenterId: null, positionId: null, companies: [{ companyId: "odwyer" }] });
-    mockedPrisma.__tx.doubleHourRule.findMany.mockResolvedValue([rule({ id: "odwyer-panol", companyId: "odwyer", sectorId: "panol" }), rule({ id: "odwyer-cocina", companyId: "odwyer", sectorId: "cocina", priority: 9 })]);
+    mockedPrisma.__tx.doubleHourRule.findMany.mockResolvedValue([rule({ id: "odwyer-panol", companyId: "odwyer", sectorId: "panol", sector: { isLegacy: true } }), rule({ id: "odwyer-cocina", companyId: "odwyer", sectorId: "cocina", sector: { isLegacy: true }, priority: 9 })]);
 
     await timeEntriesRepository.createFromWorkShift(oneSegmentInput(sunday));
 
@@ -1397,7 +1401,7 @@ describe("SpecialHourRuleApplication y multiplicador efectivo (Etapa 3)", () => 
     mockedPrisma.__tx.attendancePunch.create.mockResolvedValueOnce({ id: "punch-in" }).mockResolvedValueOnce({ id: "punch-out" });
     mockedPrisma.__tx.workShift.create.mockResolvedValue({ id: "shift-w" });
     mockedPrisma.__tx.employee.findUnique.mockResolvedValue({ sectorId: "panol", costCenterId: null, positionId: null, companies: [{ companyId: "odwyer" }] });
-    mockedPrisma.__tx.doubleHourRule.findMany.mockResolvedValue([rule({ id: "lista-odwyer-panol", companyId: "odwyer", sectorId: "panol" }), rule({ id: "lista-tropa-panol", companyId: "tropa", sectorId: "panol", priority: 9 })]);
+    mockedPrisma.__tx.doubleHourRule.findMany.mockResolvedValue([rule({ id: "lista-odwyer-panol", companyId: "odwyer", sectorId: "panol", sector: { isLegacy: true } }), rule({ id: "lista-tropa-panol", companyId: "tropa", sectorId: "panol", sector: { isLegacy: true }, priority: 9 })]);
 
     await timeEntriesRepository.createFromWorkShift(oneSegmentInput(sunday));
 

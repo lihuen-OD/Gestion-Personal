@@ -244,12 +244,21 @@ y esa bandera decide la ruta de evaluación en `laborHistory.scope.ts:85`
 - **Alta:** `orgStructureRepository.create` (sector) fija `isLegacy = !businessUnitId` (criterio previo)
   e **ignora** cualquier `isLegacy` entrante; **edición:** el `update` de sector hace strip del campo
   (una edición común nunca re-clasifica; además Zod hace strip en la ruta). Seed crea con `isLegacy: false`.
-- **Motor:** `ruleScopeOf` usa `Boolean(rule.sectorId) && rule.sector?.isLegacy !== false` (fila sin
-  seleccionar = criterio previo "legado por defecto"); `ruleInclude` sólo selecciona `sector.isLegacy`.
-  `laborHistory.scope.ts` **no cambia**: sigue recibiendo la bandera.
+- **Motor:** `ruleScopeOf` valida explícitamente los tres estados de una regla (revisión Codex sobre
+  `8eac1d7`): **sin `sectorId`** → regla sin sector, sin clasificación que leer; **con `sectorId` e
+  `isLegacy` booleano** → se usa tal cual; **con `sectorId` y relación o clasificación ausentes** →
+  `SpecialHourRuleSectorIntegrityError` (`SPECIAL_HOUR_RULE_SECTOR_INTEGRITY`, 500). No hay fallback
+  sobre `businessUnitId` ni "legado por defecto", y el error **no** se confunde con
+  `SPECIAL_HOUR_SCOPE_HISTORY_MISSING` (409, historia del legajo): son problemas distintos con
+  responsables y correcciones distintos. El error se lanza al construir el alcance, antes de resolver,
+  de modo que ninguna escritura que dependa de la resolución continúa. `ruleInclude` sólo selecciona
+  `sector.isLegacy`; `laborHistory.scope.ts` **no cambia**: sigue recibiendo la bandera.
 - **Resto del backend:** `findLegacyNames` filtra `isLegacy: true`; overview y `findNode` clasifican desde
-  la columna; `resolveScopeNodes` y la validación de alcances (`positions.service`) usan
-  `node.isLegacy !== false`; `assertRuleSectorSupported` ya no necesita leer `businessUnitId`.
+  la columna; `assertRuleSectorSupported` ya no necesita leer `businessUnitId`. La validación de alcances
+  de puestos (`positions.service.validateScopes`) aplica el mismo patrón: un área sin sector sigue siendo
+  estructura anterior (criterio previo, sin consultar clasificación); un nodo de sector con la lectura
+  **incompleta** (`isLegacy` no booleano) lanza `POSITION_SCOPE_SECTOR_INTEGRITY` (500), diferenciado de
+  `POSITION_SCOPE_LEGACY` (409), y detiene el alta/edición sin tocar la validación normal.
 - **Frontend:** `ApiSector.isLegacy` → `mapSector` escribe `pendingReload: item.isLegacy` (ya no
   `!businessUnitId`); los cinco filtros "legado/nuevo" pasan de `businessUnitId` a `pendingReload`
   (`HolidayWorkAssignmentsPage`, `PuestosPage`, `PuestoIdentificationTab`, `employeeStructureFilters` ×2).
@@ -258,13 +267,23 @@ y esa bandera decide la ruta de evaluación en `laborHistory.scope.ts:85`
   sector no cambia clasificación ni resolución histórica; el criterio previo **habría** re-interpretado de
   2 a 1), caso inverso (sector nuevo sin padre no se reclasifica), legado/nuevo con historia por fecha,
   historia insuficiente (`MISSING` de la dimensión restringida), reglas sin sector, equivalencia
-  antes/después de la migración, lectura del SQL de backfill y conservación de cierres protegidos
-  (multiplicadores idénticos ⇒ 0 filas pendientes). Más tests de repositorio (alta/edición) y del mapper
-  de frontend. `typecheck`/`test`/`build` verdes en backend (2477 tests) y frontend (1230 tests).
+  antes/después de la migración y lectura del SQL de backfill; estados de clasificación e integridad
+  (regla sin sector, `isLegacy` true/false, relación ausente, campo ausente, y `resolveSpecialHourRulesByDate`
+  rechazando antes de escribir); **equivalencia de resolución en las fechas de un período ya cerrado**
+  (no protección transaccional del cierre: ésa es de `shared/monthlyClosure` y
+  `workforce/specialHourReinterpretation`, con sus propias pruebas). Más tests de repositorio
+  (alta/edición), de `positions.service` (lectura incompleta de sector y de área del sector → integridad,
+  sin escritura) y del mapper de frontend. `typecheck`/`build` verdes; suites focalizadas en verde.
 
-**Pendiente del requisito 2:** la **equivalencia antes/después sobre la copia** (pares fecha-legajo +
-reglas, ADR §19.4) sigue sin ejecutarse: la migración no se aplicó a ninguna base. El requisito 3 queda
-intacto: el soporte legado (`LEGACY_SECTOR`) no se retiró.
+**Pendientes del requisito 2 (siguen abiertos):**
+- **Equivalencia antes/después sobre la copia** con datos **reales** (pares fecha-legajo + reglas,
+  ADR §19.4): comparar el código anterior y el nuevo sobre los mismos datos de la copia. La migración
+  todavía no se aplicó a ninguna base y las pruebas con fixtures no la sustituyen.
+- **Verificación de cierres por ID y contenido**, además de multiplicadores: confirmar sobre la copia que
+  los períodos cerrados conservan sus cierres (ID y contenido), no sólo que la resolución de sus fechas
+  es equivalente.
+
+El requisito 3 queda intacto: el soporte legado (`LEGACY_SECTOR`) no se retiró.
 
 ## 4. Cambios propuestos para M2 (diseño; aún no implementar) [D]
 

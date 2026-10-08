@@ -225,19 +225,21 @@ function ruleEmployeeListWhere(employeeId: string): Prisma.DoubleHourRuleWhereIn
 }
 
 function ruleScopeOf(rule: DoubleHourRuleWithSector): RuleScope {
-  return {
-    companyId: rule.companyId,
-    sectorId: rule.sectorId,
-    // A8-3 (A8_M2_PREPARATION.md §3.4): la clasificación legado/nuevo es
-    // PERSISTENTE (Sector.isLegacy, fijada en el alta) y no se deriva de
-    // businessUnitId ni de ningún otro padre actual, de modo que M2 o un
-    // re-padreamiento no reinterpretan la historia de la regla. La regla sin
-    // sector sigue sin clasificación; sin fila seleccionada (imposible con FK
-    // RESTRICT) se conserva el criterio previo de "legado por defecto".
-    sectorIsLegacy: Boolean(rule.sectorId) && rule.sector?.isLegacy !== false,
-    costCenterId: rule.costCenterId,
-    positionId: rule.positionId,
-  };
+  const base = { companyId: rule.companyId, costCenterId: rule.costCenterId, positionId: rule.positionId };
+  // Sin sector: la regla no restringe la dimensión de sector (sin historia que
+  // exigir ni clasificación que leer).
+  if (!rule.sectorId) return { ...base, sectorId: null, sectorIsLegacy: false };
+  // A8-3: la clasificación legado/nuevo es PERSISTIDA (Sector.isLegacy,
+  // fijada en el alta); nunca se deriva de businessUnitId ni de ningún otro
+  // padre actual. Tres y sólo tres estados válidos para una regla con sector:
+  //   * sin sectorId → sin clasificación que aplicar (arriba);
+  //   * con sectorId e isLegacy booleano → se usa tal cual;
+  //   * con sectorId y relación o clasificación ausentes → integridad rota.
+  // El último caso es un error del servidor, distinto de
+  // SPECIAL_HOUR_SCOPE_HISTORY_MISSING: no se resuelve con historia del legajo.
+  const sectorIsLegacy = rule.sector?.isLegacy;
+  if (typeof sectorIsLegacy !== "boolean") throw new SpecialHourRuleSectorIntegrityError({ id: rule.id, name: rule.name, sectorId: rule.sectorId });
+  return { ...base, sectorId: rule.sectorId, sectorIsLegacy };
 }
 
 // De las reglas ya alcanzadas por scope, cuáles matchean la fecha calendario
@@ -287,6 +289,26 @@ export class SpecialHourScopeHistoryMissingError extends AppError {
       409,
       "SPECIAL_HOUR_SCOPE_HISTORY_MISSING",
       missing,
+    );
+  }
+}
+
+/**
+ * A8-3: si una regla referencia un sector pero su clasificación persistida
+ * (Sector.isLegacy) no vino en la lectura, el servidor no puede decidir la ruta
+ * de evaluación de esa regla. Éste es un error de INTEGRIDAD del dato (500),
+ * de responsabilidad del servidor: NO es historia laboral faltante del legajo
+ * (SPECIAL_HOUR_SCOPE_HISTORY_MISSING, 409) y no se corrige registrando
+ * historia — se corrige leyendo/clasificando el sector. Se lanza antes de
+ * resolver, de modo que ninguna escritura dependiente continúa.
+ */
+export class SpecialHourRuleSectorIntegrityError extends AppError {
+  constructor(public readonly rule: { id: string; name: string; sectorId: string }) {
+    super(
+      `La regla “${rule.name}” referencia un sector cuya clasificación legado/nuevo (Sector.isLegacy) no se pudo leer. Éste es un error de integridad del dato del servidor, no historia laboral faltante: la operación se detiene hasta que la clasificación del sector esté disponible.`,
+      500,
+      "SPECIAL_HOUR_RULE_SECTOR_INTEGRITY",
+      { ruleId: rule.id, sectorId: rule.sectorId },
     );
   }
 }

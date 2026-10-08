@@ -177,6 +177,27 @@ describe("positionsService — alcances organizacionales A5", () => {
     await expect(positionsService.create(input as never)).rejects.toMatchObject({ code: "POSITION_SCOPE_INVALID" });
     repo.resolveScopeNodes.mockResolvedValue({ companies: [], businessUnits: [], sectors: [{ id: "s0", name: "Anterior", status: "ACTIVO", businessUnitId: null, isLegacy: true, businessUnit: null }], areas: [] });
     await expect(positionsService.create({ ...input, orgScopes: [{ level: "SECTOR", nodeId: "s0" }] } as never)).rejects.toMatchObject({ code: "POSITION_SCOPE_LEGACY" });
+    expect(repo.createWithin).not.toHaveBeenCalled();
+  });
+
+  it("lectura incompleta de un sector: error de integridad diferenciado, sin escribir", async () => {
+    // Resolución sin el campo isLegacy (lectura incompleta): NO es
+    // POSITION_SCOPE_LEGACY (no se adivina la clasificación) ni una
+    // validación de estructura normal.
+    repo.resolveScopeNodes.mockResolvedValue({ companies: [], businessUnits: [], sectors: [{ id: "s9", name: "Sin clasificar", status: "ACTIVO", businessUnitId: "bu1", businessUnit: null }], areas: [] });
+    const error = await positionsService.create({ ...input, orgScopes: [{ level: "SECTOR", nodeId: "s9" }] } as never).catch((cause: unknown) => cause);
+    expect(error).toMatchObject({ statusCode: 500, code: "POSITION_SCOPE_SECTOR_INTEGRITY" });
+    expect(error).not.toMatchObject({ code: "POSITION_SCOPE_LEGACY" });
+    expect(repo.createWithin).not.toHaveBeenCalled();
+  });
+
+  it("lectura incompleta del sector de un área: error de integridad, sin escribir", async () => {
+    repo.resolveScopeNodes.mockResolvedValue({ companies: [], businessUnits: [], sectors: [], areas: [{ id: "a9", name: "Riego nuevo", status: "ACTIVO", sectorId: "s1", sector: { businessUnitId: "bu1", businessUnit: null } }] });
+    const error = await positionsService.create({ ...input, orgScopes: [{ level: "AREA", nodeId: "a9" }] } as never).catch((cause: unknown) => cause);
+    expect(error).toMatchObject({ statusCode: 500, code: "POSITION_SCOPE_SECTOR_INTEGRITY" });
+    expect(error).not.toMatchObject({ code: "POSITION_SCOPE_LEGACY" });
+    expect(repo.createWithin).not.toHaveBeenCalled();
+    expect(auditService.registerWithin).not.toHaveBeenCalled();
   });
 
   it("permite conservar un alcance inactivo existente, pero no agregarlo", async () => {

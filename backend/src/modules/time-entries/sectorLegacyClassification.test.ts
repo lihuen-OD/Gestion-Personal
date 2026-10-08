@@ -1,6 +1,10 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
-import { evaluateSpecialHourRulesByDate } from "./timeEntries.repository";
+import {
+  evaluateSpecialHourRulesByDate,
+  resolveSpecialHourRulesByDate,
+  SpecialHourRuleSectorIntegrityError,
+} from "./timeEntries.repository";
 
 vi.mock("../../shared/prisma/client", () => ({ prisma: {} }));
 
@@ -198,22 +202,71 @@ describe("A8-3 — clasificación legado/nuevo persistida (motor real, fixtures)
   });
 
   // -------------------------------------------------------------------------
-  // Conservación de cierres protegidos
+  // Estados de la clasificación e integridad de la lectura (revisión Codex)
   // -------------------------------------------------------------------------
 
-  it("cierres protegidos: los multiplicadores del período ENVIADO no cambian antes/después del cambio de padre", async () => {
-    const cerrado = ["2026-09-06", "2026-09-13", "2026-09-20", "2026-09-27"].map((date) => ({ date, appliedMultiplier: 2 }));
-    const dates = cerrado.map((row) => d(row.date));
+  describe("clasificación: estados válidos e integridad de lectura", () => {
+    it("regla sin sector: sin clasificación que leer y sin historia de sector que exigir", async () => {
+      expect(await outcome({ rules: [rule({ id: "general", name: "General" })] }, [SUN])).toEqual({ "2026-09-27": 2 });
+    });
+
+    it("isLegacy booleano: true evalúa la ruta legada y false la ruta nueva", async () => {
+      const legado = await outcome({ ...worldFor(PANOL, () => ({ isLegacy: true })) }, [SUN]);
+      const nuevo = await outcome({ ...worldFor(PANOL, () => ({ isLegacy: false })) }, [SUN]);
+      // true: compara contra el sector anterior del legajo (coincide → 2).
+      expect(legado).toEqual({ "2026-09-27": 2 });
+      // false: “Ubicado dentro de” sobre el alcance del puesto (no contiene a panol → 1).
+      expect(nuevo).toEqual({ "2026-09-27": 1 });
+    });
+
+    it("con sectorId y relación ausente: error de integridad del servidor, con la historia completa", async () => {
+      // Historia legada y de alcance COMPLETAS: el fallo no depende del legajo,
+      // es el dato de la regla lo que no se pudo leer.
+      const world: World = { ...worldFor(PANOL, flagDespues), rules: [rule({ id: "dom-panol", name: "Domingos Pañol", sectorId: "panol", sector: null })] };
+      await expect(evaluateSpecialHourRulesByDate("emp-1", [SUN], db(world)))
+        .rejects.toMatchObject({ statusCode: 500, code: "SPECIAL_HOUR_RULE_SECTOR_INTEGRITY" });
+    });
+
+    it("con sectorId y campo isLegacy ausente: error de integridad, no historia faltante", async () => {
+      const world: World = { ...worldFor(PANOL, flagDespues), rules: [rule({ id: "dom-panol", name: "Domingos Pañol", sectorId: "panol", sector: { isLegacy: undefined } })] };
+      const error = await evaluateSpecialHourRulesByDate("emp-1", [SUN], db(world)).catch((cause: unknown) => cause);
+      expect(error).toBeInstanceOf(SpecialHourRuleSectorIntegrityError);
+      expect(error).toMatchObject({ statusCode: 500, code: "SPECIAL_HOUR_RULE_SECTOR_INTEGRITY" });
+      // Explícitamente distinto del 409 de historia laboral faltante.
+      expect(error).not.toMatchObject({ code: "SPECIAL_HOUR_SCOPE_HISTORY_MISSING" });
+    });
+
+    it("la resolución previa a la escritura se detiene: resolveSpecialHourRulesByDate rechaza antes de que quien llama escriba", async () => {
+      const world: World = { ...worldFor(PANOL, flagDespues), rules: [rule({ id: "dom-panol", name: "Domingos Pañol", sectorId: "panol", sector: null })] };
+      const error = await resolveSpecialHourRulesByDate("emp-1", [SUN], db(world)).catch((cause: unknown) => cause);
+      expect(error).toBeInstanceOf(SpecialHourRuleSectorIntegrityError);
+      expect(error).toMatchObject({ statusCode: 500, code: "SPECIAL_HOUR_RULE_SECTOR_INTEGRITY" });
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Fechas de un período ya cerrado: sólo equivalencia de resolución
+  // -------------------------------------------------------------------------
+
+  it("período cerrado: la resolución de sus fechas es idéntica antes/después del cambio de padre", async () => {
+    // Fechas de un período de cierre ya cerrado (ENVIADO) con los multiplicadores
+    // aplicados al cerrar. Lo único que aquí se demuestra con el motor real es
+    // EQUIVALENCIA DE RESOLUCIÓN: la resolución vigente de cada fecha reproduce
+    // el multiplicador con que se cerró y no cambia por un cambio de padre del
+    // sector. La protección transaccional de un cierre (locks, períodos
+    // protegidos, prohibición de reescribir) es otro subsistema con sus propias
+    // pruebas (shared/monthlyClosure, workforce/specialHourReinterpretation):
+    // no se toca ni se afirma acá.
+    const fechasDelPeriodo = ["2026-09-06", "2026-09-13", "2026-09-20", "2026-09-27"].map((date) => ({ date, appliedMultiplier: 2 }));
+    const dates = fechasDelPeriodo.map((row) => d(row.date));
+    const aplicados = Object.fromEntries(fechasDelPeriodo.map((row) => [row.date, row.appliedMultiplier]));
     const rePadreado = { ...PANOL, businessUnitId: "bu-administracion" };
 
-    const antes = await outcome(worldFor(PANOL, flagAntes), dates);
-    const despues = await outcome(worldFor(rePadreado, flagDespues), dates);
-    expect(despues).toEqual(antes);
-
-    // Un período protegido nunca se reescribe: sólo se informan filas cuyo
-    // multiplicador difiere (specialHourReinterpretation.ts). Con resolución
-    // idéntica no hay ninguna fila pendiente → el cierre queda conservado.
-    const pendientes = cerrado.filter((row) => Number(despues[row.date]) !== row.appliedMultiplier);
-    expect(pendientes).toEqual([]);
+    const resolucionActual = await outcome(worldFor(PANOL, flagAntes), dates);
+    const resolucionTrasElCambio = await outcome(worldFor(rePadreado, flagDespues), dates);
+    // La resolución vigente reproduce los multiplicadores con que se cerró…
+    expect(resolucionActual).toEqual(aplicados);
+    // …y el cambio de padre no altera ninguna de esas fechas.
+    expect(resolucionTrasElCambio).toEqual(resolucionActual);
   });
 });
