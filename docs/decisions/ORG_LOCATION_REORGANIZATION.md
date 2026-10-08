@@ -268,6 +268,8 @@ Si alguna falla, el script aborta:
 
 La inactivación solo puede **combinarse** con R1, R2 o R3. **Nunca se deja una restricción en NULL**, porque ampliaría la regla.
 
+**Alcance de R1 (aclaración de A8, 2026-10-08):** R1/R2/R3 son tratamientos de **referencias de catálogo** (`DoubleHourRule`). **No aplican a referencias históricas**: una empresa (u otro registro) referenciado por las tablas de vigencias de §19 **conserva su ID**, no se reasigna su FK y no se borra su historia; si el modo de limpieza exige eliminarlo, la limpieza **aborta** (en particular C2 con una empresa referenciada por historia), salvo una redefinición posterior y aprobada que conserve explícitamente esas empresas.
+
 **Inventario previo obligatorio.** Antes de modificar cualquier lógica de cálculo se obtiene, con consultas de solo lectura en la copia aislada, el inventario de reglas afectadas: alcance, legajos alcanzados, horas, desgloses, trazas y cierres donde ganaron. Con él se presenta el impacto concreto de cada S, H y R.
 
 ## 7. Migraciones y despliegue
@@ -347,7 +349,7 @@ La inactivación solo puede **combinarse** con R1, R2 o R3. **Nunca se deja una 
 | A5 | Hecha en `feat/org-location-reorg`: alcance múltiple de puestos con validación, filtros y QA (§14) |
 | A6 | Hecha en `feat/org-location-reorg`: Datos Laborales con puesto y alcance de consulta, ubicaciones con vigencia y transición de legajos anteriores; QA en la copia aislada (§15) |
 | A7 | **Cerrada en `feat/org-location-reorg`.** D-4, D-5, D-7, D-8 y D-13 a D-15 están implementadas y verificadas en la copia aislada. D-5 agrega historia temporal normalizada para todas las entradas mutables del motor; no inicializa datos anteriores y mantiene `SPECIAL_HOUR_SCOPE_HISTORY_MISSING` cuando falta evidencia real (§19) |
-| A8 | **Preparación en curso (2026-10-08):** diagnóstico y diseño previos a M2 en `docs/decisions/A8_M2_PREPARATION.md`. Sin ejecución destructiva ni cambios de código |
+| A8 | **Preparación en curso (2026-10-08):** diagnóstico y diseño previos a M2 en `docs/decisions/A8_M2_PREPARATION.md`, corregido tras la revisión de Codex sobre `b826dba` (§20). Sin ejecución destructiva ni cambios de código |
 | B0–B5 | Pendientes |
 
 ### A2 — qué quedó en código
@@ -1045,7 +1047,7 @@ La ausencia de cobertura devuelve `SPECIAL_HOUR_SCOPE_HISTORY_MISSING`; nunca us
 
 - Legajos exige fecha y motivo al cambiar puesto, centro de costo o empresas; Puestos los exige al cambiar `orgScopes`.
 - La UI muestra los controles junto al campo modificado y explica que no recalcula fechas anteriores.
-- Inventario, limpieza y restauración reconocen las siete tablas nuevas. Cualquier referencia histórica hacia el inventario bloquea la limpieza; no se elimina historia.
+- Inventario, limpieza y restauración reconocen las siete tablas nuevas. Cualquier referencia histórica hacia el inventario bloquea la limpieza; no se elimina historia. En particular, una **empresa referenciada por historia conserva su ID** (R1 no aplica, ver §6) y C2 aborta si le corresponde borrarla.
 - No se inicializaron masivamente los 32 legajos originales ni puestos anteriores. La cobertura inicial se resolverá con el procedimiento posterior y evidencia verificable. Hasta entonces, las cinco fechas originales que dependen de “Domingos” permanecen deliberadamente en `MISSING:EMPLOYER`.
 
 ### 19.4 Migración y QA de copia
@@ -1059,3 +1061,22 @@ La comparación post-migración/post-QA mostró `0` filas preexistentes modifica
 ### 19.5 Límite real antes de M2
 
 A7 queda cerrada en código y copia, pero no completa historia inexistente. Antes de B/M2 siguen pendientes: decidir D-1/D-2/D-3/D-6; obtener verificación administrativa Neon para los scripts destructivos; ejecutar el procedimiento aprobado de respaldo/ensayo/limpieza/recarga; cargar historia sólo con evidencia; y retirar columnas legacy en A8. No se ejecutó limpieza, restauración, seed, reconciliación general ni M2.
+
+## 20. A8 — correcciones tras la revisión de Codex (2026-10-08)
+
+Revisión de Codex sobre la preparación A8 (`b826dba`). Correcciones aplicadas sólo en documentación
+(`docs/decisions/A8_M2_PREPARATION.md` y este ADR); sin migraciones, código ni datos.
+Marcas del A8: **[R]** medido en reporte identificable · **[C]** verificado en código · **[D]** diseño pendiente.
+
+| # | Hallazgo | Corrección |
+|---|---|---|
+| 1 | **LEGACY_SECTOR.** La clasificación de una regla como sector legado se deriva del padre actual (`sectorIsLegacy = !rule.sector.businessUnitId`, `timeEntries.repository.ts:231`). Hacer `Sector.businessUnitId` NOT NULL (M2) o asignarlo a un sector retenido **reinterpreta históricamente** la regla (pasa de comparar `EmployeeLegacySectorPeriod` a evaluar alcances con `WITHIN`) | Registrado como **bloqueo funcional** (A8 §3.4): exige **clasificación persistente e independiente del padre actual** (A8-3) y **pruebas de equivalencia antes/después** con el motor real antes de autorizar M2. **El soporte legado no se retira** mientras exista evidencia que lo necesite (`EmployeeLegacySectorPeriod`) |
+| 2 | **Nodos históricos.** "Reubicar como INACTIVO" no es una solución general | Retirada. HT-2 (A8 §3.3) distingue **identidad del registro**, **ruta histórica conservada**, **ruta administrativa actual** y **semántica usada por reglas**. Sólo se admite una conversión **demostradamente neutra** en esos cuatro planos, con equivalencia antes/después; si no puede demostrarse, **el nodo se conserva y M2 queda bloqueada**. **Nunca se inventa un padre para satisfacer el NOT NULL** |
+| 3 | **Cobertura desde el corte.** Los 78 pares históricos (73 iguales, 5 `MISSING`, 0 cambios de valor [R]) no bastan | Nuevo procedimiento A8 §6.1 con **fecha de corte obligatoria** (hoy **sin elegir ni ejecutar**): la recarga abre **períodos auditados desde esa fecha** para las dimensiones aplicables, **incluidos los alcances de puestos**; verificación de cobertura **por intervalos** `[corte, hoy]` y de **coherencia con los datos actuales**; **antes de la corte se conserva `MISSING`** donde falte evidencia real |
+| 4 | **Empresas históricas.** R1 no puede usarse para liberar referencias históricas a `Company` | **R1 acotado a referencias de catálogo** (§6, aclaración) y aclarado en §19.3: una empresa referenciada por historia **conserva su ID**, su FK **no se reasigna** y su historia **no se borra**; **C2 aborta** en ese caso, salvo redefinición posterior aprobada que conserve empresas históricas |
+| 5 | **Guardas y pendientes** | La guarda de M2 se reescribió **por clases de fila** (eliminables / retenidas por historia / nuevas, A8 §4.1). **`User.companyId` no se exige NOT NULL**: sigue nullable y administrativo. **D-15 está ratificada** y su retiro de `ClockDevice.sectorId` de autenticación y tipos (`clockDevices.repository.ts:53`, `clockDeviceAuthentication.ts`, `express.d.ts:24`) queda como **pendiente de implementación** (A8 §5.2). **A8-4** se conserva como validación pendiente de índices y planes de consulta (`EXPLAIN` de listados) |
+| 6 | **Evidencia** | A8 §1 define el criterio **[R]/[C]/[D]**; todos los conteos quedan ligados a su reporte (`../backups/d5-*-2026-10-08.json`), el impacto de las 5 fechas se atribuye a ADR §12.2 (reporte 2026-10-07, previo a D-5 y **no re-medido**) y los comportamientos se presentan como verificación de código, **no como medición** |
+
+Pendientes derivados: A8-3 (clasificación persistente), A8-5 (fecha de corte), D-0, D-1, D-2, D-3, D-6.
+Nada de lo anterior se ejecutó: sin M2, limpieza, restauración, seed, reconciliación, escritura en bases
+ni despliegues.
