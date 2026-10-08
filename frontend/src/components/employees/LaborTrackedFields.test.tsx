@@ -3,6 +3,8 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { EmployeePositionField, MultiCompanyField } from "./LaborTrackedFields";
 import { employeeHistoryApiService } from "../../services/api/employeeHistoryApiService";
+import { employeeApiService } from "../../services/api/employeeApiService";
+import { argentinaDateKey } from "../../utils/argentinaDateKey";
 import { orgStructureApiService } from "../../services/api/orgStructureApiService";
 import { positionApiService } from "../../services/api/positionApiService";
 import type { Employee, User } from "../../types";
@@ -156,5 +158,29 @@ describe("MultiCompanyField — historial de Empresa bajo demanda (Etapa 14D.2)"
     await user.click(toggle);
 
     expect(employeeHistoryApiService.getFieldHistory).toHaveBeenCalledTimes(1);
+  });
+});
+
+// D-5 (ORG_LOCATION_REORGANIZATION.md §19): el cambio viaja con su fecha desde
+// y motivo; el backend escribe vigencia, historial visible y auditoría en una
+// transacción. El cliente ya no escribe el historial en una segunda llamada.
+describe("MultiCompanyField — cambio con vigencia (D-5)", () => {
+  it("envía fecha desde y motivo con el PATCH, no escribe historial aparte y relee el historial del backend", async () => {
+    vi.mocked(orgStructureApiService.getCatalog).mockResolvedValue({ companies: [{ id: "c1", name: "Los Odwyer" }, { id: "c2", name: "Tropa" }], sectors: [], costCenters: [] } as never);
+    vi.mocked(employeeHistoryApiService.getFieldHistory).mockResolvedValue([]);
+    vi.mocked(employeeApiService.update).mockImplementation(async (employee) => employee);
+    const user = userEvent.setup();
+    render(<MultiCompanyField employee={buildEmployee()} canEdit user={rrhhUser} onSaved={() => {}} />);
+
+    await user.click(screen.getByRole("button", { name: "Modificar" }));
+    await user.click(await screen.findByRole("checkbox", { name: "Tropa" }));
+    await user.type(screen.getByLabelText("Motivo del cambio"), "Pasa a Tropa");
+    expect(screen.getByText(/No modifica fechas anteriores ni recalcula horas/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Guardar modificación" }));
+
+    await waitFor(() => expect(employeeApiService.update).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(employeeApiService.update).mock.calls[0]![1]).toEqual({ laborChange: { effectiveFrom: argentinaDateKey(new Date()), reason: "Pasa a Tropa" } });
+    expect(employeeHistoryApiService.createFieldHistory).not.toHaveBeenCalled();
+    await waitFor(() => expect(employeeHistoryApiService.getFieldHistory).toHaveBeenCalledTimes(2));
   });
 });

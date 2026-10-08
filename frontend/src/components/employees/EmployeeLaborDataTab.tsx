@@ -67,7 +67,7 @@ export function EmployeeLaborDataTab({ employee, user, editable, onSaved, costCe
       <p className="eyebrow tracked-grid-label">EMPRESA EMPLEADORA Y CATEGORÍAS</p>
       <div className="tracked-grid">
         <MultiCompanyField employee={employee} canEdit={editable} user={user} onSaved={onSaved} />
-        <FieldWithHistory employee={employee} section="DATOS_LABORALES" field="costCenter" label="Centro de costo" value={employee.costCenter} canEdit={editable} user={user} options={costCenterOptions} onSaved={onSaved} />
+        <FieldWithHistory employee={employee} section="DATOS_LABORALES" field="costCenter" label="Centro de costo" value={employee.costCenter} canEdit={editable} user={user} options={costCenterOptions} laborTracked onSaved={onSaved} />
         <FieldWithHistory employee={employee} section="DATOS_LABORALES" field="receiptCategory" label="Categoría de recibo" value={employee.receiptCategory} canEdit={editable} user={user} options={receiptCategoryOptions} onSaved={onSaved} />
         <FieldWithHistory employee={employee} section="DATOS_LABORALES" field="internalCategory" label="Categoría interna" value={employee.internalCategory} canEdit={editable} user={user} options={internalCategoryOptions} onSaved={onSaved} />
         <SalaryRangeValidationCard employee={employee} />

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { scopeRedundancyMessage } from "./PuestoIdentificationTab";
+import { scopeKeys, scopeRedundancyMessage, scopesDiffer } from "./PuestoIdentificationTab";
 import type { OrgStructureCatalog } from "../../types/orgStructure.types";
 
 const catalog: OrgStructureCatalog = {
@@ -19,5 +19,16 @@ describe("scopeRedundancyMessage", () => {
   });
   it("permite alcances independientes", () => {
     expect(scopeRedundancyMessage(catalog, [{ level: "AREA", nodeId: "a1", name: "Turno día" }], { level: "COMPANY", nodeId: "c2", name: "Tropa" })).toBe("");
+  });
+});
+
+describe("scopesDiffer — D-5: fecha y motivo sólo si el alcance cambió", () => {
+  const saved = scopeKeys([{ level: "SECTOR", nodeId: "s1", name: "Operaciones" }, { level: "COMPANY", nodeId: "c2", name: "Tropa" }]);
+  it("el mismo alcance en otro orden no es un cambio", () => {
+    expect(scopesDiffer([{ level: "COMPANY", nodeId: "c2", name: "Tropa" }, { level: "SECTOR", nodeId: "s1", name: "Operaciones" }], saved)).toBe(false);
+  });
+  it("agregar, quitar o reemplazar un nodo sí lo es", () => {
+    expect(scopesDiffer([{ level: "SECTOR", nodeId: "s1", name: "Operaciones" }], saved)).toBe(true);
+    expect(scopesDiffer([{ level: "SECTOR", nodeId: "s1", name: "Operaciones" }, { level: "COMPANY", nodeId: "c1", name: "LOSOD" }], saved)).toBe(true);
   });
 });

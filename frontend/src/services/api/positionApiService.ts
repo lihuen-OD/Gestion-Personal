@@ -159,6 +159,9 @@ function mapToApi(position: Position) {
     // Los puestos anteriores sin alcances se pueden editar sin convertirlos:
     // omitir evita escribir [] y preserva sectorId hasta su recarga manual.
     ...(!position.orgScopes?.length && position.pendingScopeReload ? {} : { orgScopes: (position.orgScopes || []).map(({ level, nodeId }) => ({ level, nodeId })) }),
+    // D-5 (ORG_LOCATION_REORGANIZATION.md §19): vigencia del alcance.
+    ...(position.orgScopesEffectiveFrom ? { orgScopesEffectiveFrom: position.orgScopesEffectiveFrom } : {}),
+    ...(position.orgScopesChange ? { orgScopesChange: position.orgScopesChange } : {}),
     // Fuente oficial de categoria salarial: relacion real PositionSalaryCategory.
     salaryCategoryIds: position.salaryCategoryIds || [],
     responsibilities: position.responsibilities || [],

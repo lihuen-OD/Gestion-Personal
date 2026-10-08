@@ -16,6 +16,7 @@ import type { Position } from "../types/position.types";
 import { roleLevel } from "../utils/roles";
 import { useAsyncAction } from "../utils/useAsyncAction";
 import { PageHeader } from "../components/ui/PageHeader";
+import { argentinaDateKey } from "../utils/argentinaDateKey";
 import { Section } from "../components/ui/Section";
 import { Button } from "../components/ui/Button";
 import { getUserErrorMessage } from "../services/api/apiClient";
@@ -24,7 +25,7 @@ export function PuestoCreatePage() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [usesApi, setUsesApi] = useState(false);
-  const [position, setPosition] = useState<Position>({ ...emptyPosition(), id: crypto.randomUUID(), history: [], createdAt: "", updatedAt: "" });
+  const [position, setPosition] = useState<Position>({ ...emptyPosition(), orgScopesEffectiveFrom: argentinaDateKey(new Date()), id: crypto.randomUUID(), history: [], createdAt: "", updatedAt: "" });
   const [error, setError] = useState("");
 
   // Etapa 14H.7: getAll() (positionInclude completo) -> getOptions() (select
@@ -57,7 +58,7 @@ export function PuestoCreatePage() {
 
   return <form onSubmit={save}>
     <PageHeader eyebrow="PUESTOS" title="Crear nuevo puesto" description="Descripcion funcional reutilizable para legajos, organigramas, dashboard y evaluaciones futuras." />
-    <Section title="1. Identificacion del puesto" subtitle="Datos base y estructura sugerida."><PuestoIdentificationTab position={position} setPosition={setPosition} /></Section>
+    <Section title="1. Identificacion del puesto" subtitle="Datos base y estructura sugerida."><PuestoIdentificationTab position={position} setPosition={setPosition} isCreate /></Section>
     <Section title="2. Proposito / Mision"><PuestoMissionTab position={position} setPosition={setPosition} /></Section>
     <Section title="3. Rango salarial"><PuestoSalaryRangeTab position={position} setPosition={setPosition} /></Section>
     <Section title="4. Responsabilidades"><PuestoResponsibilitiesTab position={position} setPosition={setPosition} /></Section>

@@ -124,6 +124,16 @@ describe("positionApiService.getAssignedEmployees — dedupe/cache frontend (Eta
     expect(vi.mocked(apiRequest).mock.calls.at(-1)?.[1]?.body).not.toHaveProperty("sectorId");
   });
 
+  it("D-5: envía la vigencia del alcance (alta) y la fecha y motivo de un cambio (edición) sólo si existen", async () => {
+    vi.mocked(apiRequest).mockResolvedValue({ data: null });
+    await positionApiService.create({ code: "PUE-9", name: "Encargado", orgScopes: [{ level: "SECTOR", nodeId: "s1", name: "Agricultura" }], orgScopesEffectiveFrom: "2026-09-01", status: "ACTIVO" } as never);
+    expect(vi.mocked(apiRequest).mock.calls.at(-1)?.[1]?.body).toMatchObject({ orgScopesEffectiveFrom: "2026-09-01" });
+    await positionApiService.update({ id: "pos-1", code: "PUE-1", name: "Encargado", orgScopes: [{ level: "SECTOR", nodeId: "s2", name: "Ganadería" }], orgScopesChange: { effectiveFrom: "2026-10-01", reason: "Reorganización" }, status: "ACTIVO" } as never);
+    expect(vi.mocked(apiRequest).mock.calls.at(-1)?.[1]?.body).toMatchObject({ orgScopesChange: { effectiveFrom: "2026-10-01", reason: "Reorganización" } });
+    await positionApiService.update({ id: "pos-1", code: "PUE-1", name: "Encargado", orgScopes: [{ level: "SECTOR", nodeId: "s2", name: "Ganadería" }], status: "ACTIVO" } as never);
+    expect(vi.mocked(apiRequest).mock.calls.at(-1)?.[1]?.body).not.toHaveProperty("orgScopesChange");
+  });
+
   it("al editar un puesto pendiente omite orgScopes vacío y conserva el legado", async () => {
     vi.mocked(apiRequest).mockResolvedValue({ data: null });
     await positionApiService.update({ id: "pos-old", code: "PUE-OLD", name: "Anterior", sectorId: "sector-legado", orgScopes: [], pendingScopeReload: true, status: "INACTIVO" } as never);

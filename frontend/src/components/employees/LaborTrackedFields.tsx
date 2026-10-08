@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
-import { employeeApiService } from "../../services/api/employeeApiService";
+import { employeeApiService, type EmployeeLaborChange } from "../../services/api/employeeApiService";
 import { employeeHistoryApiService } from "../../services/api/employeeHistoryApiService";
 import { orgStructureApiService } from "../../services/api/orgStructureApiService";
 import { getUserErrorMessage } from "../../services/api/apiClient";
-import type { Employee, EmployeeFieldHistoryRecord, FieldHistorySection, User } from "../../types";
+import type { Employee, EmployeeFieldHistoryRecord, User } from "../../types";
 import { useAsyncAction } from "../../utils/useAsyncAction";
 import { requiredLaborChangeError } from "../../utils/laborFieldValidation";
 import { formatCalendarDate, formatDateTime } from "../../utils/date";
@@ -15,24 +15,16 @@ import { Field } from "../ui/FormControls";
 import { LoadingState } from "../ui/LoadingState";
 import { isAssignablePosition, usePositionOptions } from "./options/positionOptions";
 
-async function persistTrackedEmployee(updated: Employee, onSaved: (employee: Employee) => void) {
-  try {
-    onSaved(await employeeApiService.update(updated));
-  } catch (error) {
-    throw error;
-  }
+// D-5 (ORG_LOCATION_REORGANIZATION.md §19): el cambio viaja con su fecha
+// desde y motivo; el backend registra la vigencia, el historial visible y la
+// auditoría en la misma transacción que el dato (antes el historial era una
+// segunda llamada del cliente que podía quedar sin escribir).
+async function persistTrackedEmployee(updated: Employee, onSaved: (employee: Employee) => void, laborChange: EmployeeLaborChange) {
+  onSaved(await employeeApiService.update(updated, { laborChange }));
 }
 
-type CreateFieldHistoryInput = { employeeId: string; section: FieldHistorySection; field: string; fieldLabel: string; oldValue: string | null; newValue: string; effectiveFrom: string; reason: string; };
-
-async function recordFieldHistory(
-  record: CreateFieldHistoryInput,
-) {
-  try {
-    return await employeeHistoryApiService.createFieldHistory(record);
-  } catch (error) {
-    throw error;
-  }
+export function LaborChangeNote() {
+  return <p className="muted small">Rige desde la fecha indicada. No modifica fechas anteriores ni recalcula horas ya cargadas.</p>;
 }
 
 // Etapa 14D.2: mismo cambio que `FieldWithHistory` (FieldHistoryControls.tsx)
@@ -68,7 +60,12 @@ function useBackendFieldHistory(employeeId: string, field: string, open: boolean
     };
   }, [open, loaded, employeeId, field, retry]);
 
-  return { history, setHistory, status, retry: () => setRetry((value) => value + 1), markLoaded: () => setStatus("success") };
+  // Tras guardar, el historial se vuelve a leer del backend (lo escribió él).
+  const reload = () => {
+    setLoaded(false);
+    setRetry((value) => value + 1);
+  };
+  return { history, status, retry: () => setRetry((value) => value + 1), reload };
 }
 
 function useCompanyOptions() {
@@ -107,7 +104,7 @@ export function MultiCompanyField({ employee, canEdit, user, onSaved }: TrackedF
   const [from, setFrom] = useState(argentinaDateKey(new Date()));
   const [reason, setReason] = useState("");
   const [error, setError] = useState("");
-  const { history, setHistory, status: historyStatus, retry: retryHistory, markLoaded: markHistoryLoaded } = useBackendFieldHistory(employee.id, "companies", open);
+  const { history, status: historyStatus, retry: retryHistory, reload: reloadHistory } = useBackendFieldHistory(employee.id, "companies", open);
   const label = value.join(", ") || "Sin cargar";
 
   const toggle = (company: string) =>
@@ -125,21 +122,8 @@ export function MultiCompanyField({ employee, canEdit, user, onSaved }: TrackedF
       company: selected.includes(employee.company) ? employee.company : selected[0],
     };
     try {
-      await persistTrackedEmployee(updated, onSaved);
-      const historyRow = await recordFieldHistory(
-        {
-          employeeId: employee.id,
-          section: "DATOS_LABORALES",
-          field: "companies",
-          fieldLabel: "Empresa",
-          oldValue: label || null,
-          newValue: selected.join(", "),
-          effectiveFrom: from,
-          reason,
-        },
-      );
-      setHistory((rows) => [historyRow, ...rows.filter((row) => row.id !== historyRow.id)]);
-      markHistoryLoaded();
+      await persistTrackedEmployee(updated, onSaved, { effectiveFrom: from, reason });
+      reloadHistory();
       setEditing(false);
       setOpen(true);
       setError("");
@@ -216,6 +200,7 @@ export function MultiCompanyField({ employee, canEdit, user, onSaved }: TrackedF
               </div>
               <Field label="Fecha desde" type="date" value={from} set={setFrom} />
               <Field label="Motivo del cambio" value={reason} set={setReason} />
+              <LaborChangeNote />
               {error ? <p className="error">{error}</p> : null}
               <div className="form-actions">
                 <Button type="button" variant="subtle" onClick={() => setEditing(false)}>
@@ -247,7 +232,7 @@ export function EmployeePositionField({ employee, canEdit, user, onSaved }: Trac
   const [from, setFrom] = useState(argentinaDateKey(new Date()));
   const [reason, setReason] = useState("");
   const [error, setError] = useState("");
-  const { history, setHistory, status: historyStatus, retry: retryHistory, markLoaded: markHistoryLoaded } = useBackendFieldHistory(employee.id, "positionId", open);
+  const { history, status: historyStatus, retry: retryHistory, reload: reloadHistory } = useBackendFieldHistory(employee.id, "positionId", open);
   const selected = assignable.find((position) => position.id === selectedId);
 
   const { isRunning: isSaving, run: save } = useAsyncAction(async () => {
@@ -264,21 +249,8 @@ export function EmployeePositionField({ employee, canEdit, user, onSaved }: Trac
         }
       : { ...employee, positionId: "", puestoId: "", puestoNombre: "", position: "" };
     try {
-      await persistTrackedEmployee(updated, onSaved);
-      const historyRow = await recordFieldHistory(
-        {
-          employeeId: employee.id,
-          section: "DATOS_LABORALES",
-          field: "positionId",
-          fieldLabel: "Puesto",
-          oldValue: employee.puestoNombre || employee.position || null,
-          newValue: selected?.name || "Sin puesto vinculado",
-          effectiveFrom: from,
-          reason,
-        },
-      );
-      setHistory((rows) => [historyRow, ...rows.filter((row) => row.id !== historyRow.id)]);
-      markHistoryLoaded();
+      await persistTrackedEmployee(updated, onSaved, { effectiveFrom: from, reason });
+      reloadHistory();
       setEditing(false);
       setOpen(true);
       setError("");
@@ -364,6 +336,7 @@ export function EmployeePositionField({ employee, canEdit, user, onSaved }: Trac
               ) : null}
               <Field label="Fecha desde" type="date" value={from} set={setFrom} />
               <Field label="Motivo del cambio" value={reason} set={setReason} />
+              <LaborChangeNote />
               {error ? <p className="error">{error}</p> : null}
               <div className="form-actions">
                 <Button type="button" variant="subtle" onClick={() => setEditing(false)}>

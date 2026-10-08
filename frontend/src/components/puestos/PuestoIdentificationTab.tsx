@@ -5,6 +5,7 @@ import type { Position, PositionOrgScope, PositionOrgScopeLevel } from "../../ty
 import { PuestoField, PuestoSelect } from "./PuestoFields";
 import { activoInactivoLabel } from "../../utils/status";
 import { orgScopeLineage } from "../org-structure/orgScopePath";
+import { argentinaDateKey } from "../../utils/argentinaDateKey";
 
 const statusOptionLabels: Record<string, string> = { ACTIVO: activoInactivoLabel("ACTIVO"), INACTIVO: activoInactivoLabel("INACTIVO") };
 
@@ -23,7 +24,26 @@ export function scopeRedundancyMessage(catalog: OrgStructureCatalog, scopes: Pos
   return "";
 }
 
-export function PuestoIdentificationTab({ position, setPosition, disabled = false }: { position: Position; setPosition: (position: Position) => void; disabled?: boolean }) {
+export const scopeKeys = (scopes: PositionOrgScope[] = []) => scopes.map((scope) => `${scope.level}:${scope.nodeId}`).sort();
+
+/** D-5: el alcance editado difiere del guardado (orden indistinto). */
+export function scopesDiffer(scopes: PositionOrgScope[] | undefined, savedKeys: string[]) {
+  const current = scopeKeys(scopes);
+  const saved = [...savedKeys].sort();
+  return current.length !== saved.length || current.some((key, index) => key !== saved[index]);
+}
+
+type Props = {
+  position: Position;
+  setPosition: (position: Position) => void;
+  disabled?: boolean;
+  /** Alta: se elige desde cuándo rige el alcance inicial. */
+  isCreate?: boolean;
+  /** Edición: alcance guardado, para pedir fecha y motivo sólo si cambia. */
+  savedScopeKeys?: string[];
+};
+
+export function PuestoIdentificationTab({ position, setPosition, disabled = false, isCreate = false, savedScopeKeys }: Props) {
   const [catalog, setCatalog] = useState<OrgStructureCatalog | undefined>(undefined);
   const [level, setLevel] = useState<PositionOrgScopeLevel>("COMPANY");
   const [nodeId, setNodeId] = useState("");
@@ -38,6 +58,9 @@ export function PuestoIdentificationTab({ position, setPosition, disabled = fals
   }, []);
 
   const set = (field: keyof Position, value: string) => setPosition({ ...position, [field]: value });
+  const today = argentinaDateKey(new Date());
+  const scopeChanged = !disabled && savedScopeKeys !== undefined && scopesDiffer(position.orgScopes, savedScopeKeys);
+  const change = position.orgScopesChange ?? { effectiveFrom: today, reason: "" };
   const entries = level === "COMPANY" ? catalog?.companies : level === "BUSINESS_UNIT" ? catalog?.businessUnits : level === "SECTOR" ? catalog?.sectors.filter((item) => item.businessUnitId) : catalog?.areas.filter((item) => item.sectorId);
   const options = (entries || []).filter((item) => item.status === "ACTIVO").sort((a, b) => a.name.localeCompare(b.name, "es"));
   const addScope = () => {
@@ -67,6 +90,16 @@ export function PuestoIdentificationTab({ position, setPosition, disabled = fals
       </div>}
       {scopeError && <p className="error position-scope-error">{scopeError}</p>}
       <div className="position-scope-list">{(position.orgScopes || []).length ? (position.orgScopes || []).map((scope) => <div className="position-scope-item" key={`${scope.level}:${scope.nodeId}`}><span><small>{levelLabels[scope.level]}</small><b>{scope.code ? `${scope.code} · ` : ""}{scope.name}</b></span>{!disabled && <button type="button" aria-label={`Quitar ${scope.name}`} onClick={() => setPosition({ ...position, orgScopes: position.orgScopes?.filter((item) => item.level !== scope.level || item.nodeId !== scope.nodeId) })}>Quitar</button>}</div>) : <p className="position-muted">Sin alcances cargados.</p>}</div>
+      {isCreate && !disabled && <div className="position-scope-change-fields">
+        <PuestoField label="Alcance vigente desde *" type="date" value={position.orgScopesEffectiveFrom || today} onChange={(value) => setPosition({ ...position, orgScopesEffectiveFrom: value })} />
+      </div>}
+      {scopeChanged && <div className="position-scope-change">
+        <div><strong>Cambio de alcance</strong><small>Rige para todas las personas con este puesto desde la fecha indicada. No modifica fechas anteriores ni recalcula horas ya cargadas.</small></div>
+        <div className="position-scope-change-fields">
+          <PuestoField label="Rige desde *" type="date" value={change.effectiveFrom} onChange={(value) => setPosition({ ...position, orgScopesChange: { ...change, effectiveFrom: value } })} />
+          <PuestoField label="Motivo del cambio *" value={change.reason} onChange={(value) => setPosition({ ...position, orgScopesChange: { ...change, reason: value } })} />
+        </div>
+      </div>}
     </div>
   </div>;
 }

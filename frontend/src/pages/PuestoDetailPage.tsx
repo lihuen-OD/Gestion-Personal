@@ -5,7 +5,8 @@ import { PuestoCompetenciesTab } from "../components/puestos/PuestoCompetenciesT
 import { PuestoEvaluationCriteriaTab } from "../components/puestos/PuestoEvaluationCriteriaTab";
 import { PuestoHeader } from "../components/puestos/PuestoHeader";
 import { PuestoHistoryTab } from "../components/puestos/PuestoHistoryTab";
-import { PuestoIdentificationTab } from "../components/puestos/PuestoIdentificationTab";
+import { PuestoIdentificationTab, scopeKeys, scopesDiffer } from "../components/puestos/PuestoIdentificationTab";
+import { argentinaDateKey } from "../utils/argentinaDateKey";
 import { PuestoIndicatorsTab } from "../components/puestos/PuestoIndicatorsTab";
 import { PuestoMissionTab } from "../components/puestos/PuestoMissionTab";
 import { PuestoRelationsTab } from "../components/puestos/PuestoRelationsTab";
@@ -33,6 +34,8 @@ export function PuestoDetailPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const [position, setPosition] = useState<Position | undefined>(undefined);
+  // D-5: alcance guardado, para pedir fecha y motivo sólo cuando cambia.
+  const [savedScopeKeys, setSavedScopeKeys] = useState<string[]>([]);
   const [loadStatus, setLoadStatus] = useState<"loading" | "success" | "error">("loading");
   const [loadRetry, setLoadRetry] = useState(0);
   const [assignedCount, setAssignedCount] = useState(0);
@@ -47,6 +50,7 @@ export function PuestoDetailPage() {
       .then((source) => {
         if (!alive) return;
         setPosition(source ?? undefined);
+        setSavedScopeKeys(scopeKeys(source?.orgScopes));
         setLoadStatus("success");
       })
       .catch(() => {
@@ -88,9 +92,18 @@ export function PuestoDetailPage() {
       setNotice("Seleccioná al menos un alcance organizacional.");
       return;
     }
+    const scopeChanged = scopesDiffer(position.orgScopes, savedScopeKeys);
+    const scopeChange = position.orgScopesChange ?? { effectiveFrom: argentinaDateKey(new Date()), reason: "" };
+    if (scopeChanged && (!scopeChange.effectiveFrom || scopeChange.reason.trim().length < 2)) {
+      setNotice("Indicá desde qué fecha rige el cambio de alcance y su motivo.");
+      return;
+    }
     try {
-      const saved = await positionApiService.update(position);
-      if (saved) setPosition(saved);
+      const saved = await positionApiService.update({ ...position, orgScopesChange: scopeChanged ? { effectiveFrom: scopeChange.effectiveFrom, reason: scopeChange.reason.trim() } : undefined });
+      if (saved) {
+        setPosition(saved);
+        setSavedScopeKeys(scopeKeys(saved.orgScopes));
+      }
       setNotice("Cambios guardados correctamente.");
       setTimeout(() => setNotice(""), 2200);
     } catch (error) {
@@ -122,7 +135,7 @@ export function PuestoDetailPage() {
   };
 
   const render = () => {
-    if (tab === 0) return <PuestoIdentificationTab position={position} setPosition={setPosition} disabled={!canEdit} />;
+    if (tab === 0) return <PuestoIdentificationTab position={position} setPosition={setPosition} disabled={!canEdit} savedScopeKeys={savedScopeKeys} />;
     if (tab === 1) return <PuestoMissionTab position={position} setPosition={setPosition} disabled={!canEdit} />;
     if (tab === 2) return <PuestoSalaryRangeTab position={position} setPosition={setPosition} disabled={!canEdit} />;
     if (tab === 3) return <PuestoResponsibilitiesTab position={position} setPosition={setPosition} disabled={!canEdit} />;

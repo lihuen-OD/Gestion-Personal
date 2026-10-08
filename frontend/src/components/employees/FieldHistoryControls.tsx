@@ -23,6 +23,9 @@ type FieldWithHistoryProps = {
   canEdit: boolean;
   user: User;
   options?: string[];
+  // D-5: dato con vigencia (centro de costo). El cambio viaja con fecha desde y
+  // motivo; el backend escribe historia, historial visible y auditoría juntos.
+  laborTracked?: boolean;
   onSaved: (employee: Employee) => void;
 };
 
@@ -48,6 +51,7 @@ export function FieldWithHistory({
   canEdit,
   user,
   options,
+  laborTracked = false,
   onSaved,
 }: FieldWithHistoryProps) {
   const [open, setOpen] = useState(false);
@@ -106,6 +110,20 @@ export function FieldWithHistory({
       effectiveFrom: from,
       reason,
     };
+    if (laborTracked) {
+      try {
+        const saved = await employeeApiService.update(updated, { laborChange: { effectiveFrom: from, reason } });
+        setHistoryLoaded(false);
+        setHistoryRetry((value) => value + 1);
+        onSaved(saved);
+        setEditing(false);
+        setOpen(true);
+        setError("");
+      } catch (error) {
+        setError(getUserErrorMessage(error, "No pudimos guardar el cambio. Intentá nuevamente."));
+      }
+      return;
+    }
     const saved = await employeeApiService
       .update(updated)
       .then(async (employeeFromApi) => {
@@ -185,6 +203,7 @@ export function FieldWithHistory({
               )}
               <Field label="Fecha desde" type="date" value={from} set={setFrom} />
               <Field label="Motivo del cambio" value={reason} set={setReason} />
+              {laborTracked ? <p className="muted small">Rige desde la fecha indicada. No modifica fechas anteriores ni recalcula horas ya cargadas.</p> : null}
               {error ? <p className="error">{error}</p> : null}
               <div className="form-actions">
                 <Button type="button" variant="subtle" onClick={() => setEditing(false)}>

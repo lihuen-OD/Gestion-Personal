@@ -434,6 +434,26 @@ describe("employeeApiService.update — no envía el sector anterior (A6)", () =
     const body = (patch![1] as { body: Record<string, unknown> }).body;
     expect(body).not.toHaveProperty("sectorId");
     expect(body.internalCategory).toBe("Administrativo B");
+    expect(body).not.toHaveProperty("laborChange");
+  });
+
+  it("D-5: envía laborChange y conserva la empresa principal real (no la primera del orden de la API)", async () => {
+    vi.mocked(apiRequest).mockImplementation(async (url: unknown) => {
+      if (url === "/org-structure") {
+        return { data: { companies: [{ id: "c-tropa", code: "TR", name: "Tropa", status: "ACTIVO" }, { id: "c-losod", code: "LO", name: "Los Odwyer", status: "ACTIVO" }], businessUnits: [], sectors: [], areas: [], zones: [], establishments: [], costCenters: [] } } as never;
+      }
+      if (typeof url === "string" && url.startsWith("/positions/options")) return { data: [] } as never;
+      return { data: {} } as never;
+    });
+    const employee = { ...mapEmployeeFromApi({ id: "employee-1", legajo: "100", firstName: "Ana", lastName: "Prueba", status: "ACTIVO" }), companies: ["Tropa", "Los Odwyer"], company: "Los Odwyer" };
+
+    await employeeApiService.update(employee, { laborChange: { effectiveFrom: "2026-10-01", reason: "Alta en Tropa" } });
+
+    const patch = vi.mocked(apiRequest).mock.calls.find(([calledUrl, options]) => calledUrl === "/employees/employee-1" && (options as { method?: string })?.method === "PATCH");
+    const body = (patch![1] as { body: Record<string, unknown> }).body;
+    expect(body.laborChange).toEqual({ effectiveFrom: "2026-10-01", reason: "Alta en Tropa" });
+    expect(body.companyIds).toEqual(["c-tropa", "c-losod"]);
+    expect(body.primaryCompanyId).toBe("c-losod");
   });
 });
 

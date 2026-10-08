@@ -48,6 +48,10 @@ export type Position = {
   orgScopes?: PositionOrgScope[];
   /** Un puesto con sector legado y sin alcances A5 requiere recarga manual. */
   pendingScopeReload?: boolean;
+  /** D-5: desde cuándo rige el alcance inicial. Sólo en el alta (por defecto, hoy). */
+  orgScopesEffectiveFrom?: string;
+  /** D-5: fecha desde y motivo de un cambio de alcance. Sólo se envía si el alcance cambió. */
+  orgScopesChange?: { effectiveFrom: string; reason: string };
   /** Derivados de solo lectura via sectorId -> area -> establishment -> businessUnit -> company. */
   derivedSectorName?: string;
   derivedAreaId?: string;

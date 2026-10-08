@@ -397,6 +397,8 @@ function structureContextFromApi(item: ApiEmployee): Pick<Employee, "positionSco
   };
 }
 
+export type EmployeeLaborChange = { effectiveFrom: string; reason: string };
+
 async function resolveRelations(employee: Employee) {
   // Etapa 14D.4: sólo hace falta id/name para resolver positionId por
   // nombre (`puestoNombre`) al guardar — getOptions() (catálogo liviano)
@@ -407,7 +409,9 @@ async function resolveRelations(employee: Employee) {
   ]);
   const companyNames = compact([...(employee.companies || []), employee.company]);
   const companyIds = compact(companyNames.map((name) => catalog?.companies.find((item) => item.name === name)?.id));
-  const primaryCompanyId = companyIds[0] || undefined;
+  // La empresa principal es `employee.company`; antes se tomaba la primera
+  // del orden de la API y un guardado ajeno podía cambiarla en silencio.
+  const primaryCompanyId = catalog?.companies.find((item) => item.name === employee.company && companyIds.includes(item.id))?.id || companyIds[0] || undefined;
   const costCenterId = catalog?.costCenters.find((item) => item.name === employee.costCenter || item.code === employee.costCenter)?.id;
   const positionId = employee.positionId || employee.puestoId || positions.find((item) => item.name === employee.puestoNombre || item.name === employee.position)?.id;
   return {
@@ -874,10 +878,14 @@ export const employeeApiService = {
     await invalidateEmployeeDependentCaches("employee created");
     return mapEmployeeFromApi(response.data);
   },
-  async update(employee: Employee) {
+  // D-5 (ORG_LOCATION_REORGANIZATION.md §19): `laborChange` = fecha desde y
+  // motivo de un cambio de puesto, centro de costo o empresas empleadoras. El
+  // backend registra la vigencia, el historial visible y la auditoría en la
+  // misma transacción; el cliente ya no escribe ese historial por separado.
+  async update(employee: Employee, options: { laborChange?: EmployeeLaborChange } = {}) {
     await apiRequest(`/employees/${employee.id}`, {
       method: "PATCH",
-      body: await mapEmployeeToApi(employee, "update"),
+      body: { ...(await mapEmployeeToApi(employee, "update")), ...(options.laborChange ? { laborChange: options.laborChange } : {}) },
     });
     await invalidateEmployeeDependentCaches("employee updated");
     // El PATCH confirma y audita los campos modificables. La pantalla ya tiene
