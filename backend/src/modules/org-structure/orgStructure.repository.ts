@@ -156,8 +156,8 @@ interface NodeOps<K extends NodeKind> {
 const nodes: { [K in NodeKind]: NodeOps<K> } = {
   company: {
     find: async (tx, id) => {
-      const row = await tx.company.findUnique({ where: { id }, select: { id: true, code: true, name: true, status: true, _count: { select: { businessUnits: true, establishments: true, employees: true, users: true, costCenterLinks: true, doubleHourRules: true, positionScopes: true } } } });
-      return row && { id: row.id, code: row.code, name: row.name, status: row.status, parentId: null, isLegacy: false, counts: row._count };
+      const row = await tx.company.findUnique({ where: { id }, select: { id: true, code: true, name: true, status: true, _count: { select: { businessUnits: true, establishments: true, employees: true, users: true, costCenterLinks: true, doubleHourRules: true, positionScopes: true, employerPeriodLinks: true, scopeHistoryNodes: true } } } });
+      return row && { id: row.id, code: row.code, name: row.name, status: row.status, parentId: null, isLegacy: false, counts: { ...row._count, laborHistory: row._count.employerPeriodLinks, scopeHistory: row._count.scopeHistoryNodes } };
     },
     create: (tx, data) => tx.company.create({ data }),
     update: (tx, id, data) => tx.company.update({ where: { id }, data }),
@@ -165,8 +165,8 @@ const nodes: { [K in NodeKind]: NodeOps<K> } = {
   },
   businessUnit: {
     find: async (tx, id) => {
-      const row = await tx.businessUnit.findUnique({ where: { id }, select: { id: true, code: true, name: true, status: true, companyId: true, _count: { select: { sectors: true, establishments: true, costCenterLinks: true, positionScopes: true } } } });
-      return row && { id: row.id, code: row.code, name: row.name, status: row.status, parentId: row.companyId, isLegacy: false, counts: row._count };
+      const row = await tx.businessUnit.findUnique({ where: { id }, select: { id: true, code: true, name: true, status: true, companyId: true, _count: { select: { sectors: true, establishments: true, costCenterLinks: true, positionScopes: true, scopeHistoryNodes: true } } } });
+      return row && { id: row.id, code: row.code, name: row.name, status: row.status, parentId: row.companyId, isLegacy: false, counts: { ...row._count, scopeHistory: row._count.scopeHistoryNodes } };
     },
     create: (tx, data) => tx.businessUnit.create({ data }),
     update: (tx, id, data) => tx.businessUnit.update({ where: { id }, data }),
@@ -174,8 +174,8 @@ const nodes: { [K in NodeKind]: NodeOps<K> } = {
   },
   sector: {
     find: async (tx, id) => {
-      const row = await tx.sector.findUnique({ where: { id }, select: { id: true, code: true, name: true, status: true, businessUnitId: true, _count: { select: { areas: true, employees: true, positions: true, users: true, costCenterLinks: true, doubleHourRules: true, positionScopes: true } } } });
-      return row && { id: row.id, code: row.code, name: row.name, status: row.status, parentId: row.businessUnitId, isLegacy: row.businessUnitId === null, counts: row._count };
+      const row = await tx.sector.findUnique({ where: { id }, select: { id: true, code: true, name: true, status: true, businessUnitId: true, _count: { select: { areas: true, employees: true, positions: true, users: true, costCenterLinks: true, doubleHourRules: true, positionScopes: true, legacySectorPeriods: true, scopeHistoryNodes: true, scopeHistoryAreaParentOf: true } } } });
+      return row && { id: row.id, code: row.code, name: row.name, status: row.status, parentId: row.businessUnitId, isLegacy: row.businessUnitId === null, counts: { ...row._count, laborHistory: row._count.legacySectorPeriods, scopeHistory: row._count.scopeHistoryNodes + row._count.scopeHistoryAreaParentOf } };
     },
     create: (tx, data) => tx.sector.create({ data }),
     update: (tx, id, data) => tx.sector.update({ where: { id }, data }),
@@ -183,8 +183,8 @@ const nodes: { [K in NodeKind]: NodeOps<K> } = {
   },
   area: {
     find: async (tx, id) => {
-      const row = await tx.area.findUnique({ where: { id }, select: { id: true, code: true, name: true, status: true, sectorId: true, _count: { select: { sectors: true, costCenterLinks: true, positionScopes: true } } } });
-      return row && { id: row.id, code: row.code, name: row.name, status: row.status, parentId: row.sectorId, isLegacy: row.sectorId === null, counts: row._count };
+      const row = await tx.area.findUnique({ where: { id }, select: { id: true, code: true, name: true, status: true, sectorId: true, _count: { select: { sectors: true, costCenterLinks: true, positionScopes: true, scopeHistoryNodes: true } } } });
+      return row && { id: row.id, code: row.code, name: row.name, status: row.status, parentId: row.sectorId, isLegacy: row.sectorId === null, counts: { ...row._count, scopeHistory: row._count.scopeHistoryNodes } };
     },
     create: (tx, data) => tx.area.create({ data }),
     update: (tx, id, data) => tx.area.update({ where: { id }, data }),
@@ -212,8 +212,8 @@ const nodes: { [K in NodeKind]: NodeOps<K> } = {
 
 const costCenterOps = {
   find: async (tx: Tx, id: string): Promise<OrgRecord | null> => {
-    const row = await tx.costCenter.findUnique({ where: { id }, select: { id: true, code: true, name: true, status: true, _count: { select: { employees: true, doubleHourRules: true } } } });
-    return row && { id: row.id, code: row.code, name: row.name, status: row.status, parentId: null, isLegacy: false, counts: row._count };
+    const row = await tx.costCenter.findUnique({ where: { id }, select: { id: true, code: true, name: true, status: true, _count: { select: { employees: true, doubleHourRules: true, employeePeriods: true } } } });
+    return row && { id: row.id, code: row.code, name: row.name, status: row.status, parentId: null, isLegacy: false, counts: { ...row._count, laborHistory: row._count.employeePeriods } };
   },
   // Sus vínculos propios se borran explícitamente antes que él (no se depende
   // del ON DELETE CASCADE de la base) — ver orgStructure.dependencies.ts.

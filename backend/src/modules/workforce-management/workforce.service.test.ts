@@ -1231,7 +1231,7 @@ describe("workforceService — reglas de Hora Especial reinterpretan la historia
     mockedPrisma.doubleHourRule.findUnique.mockResolvedValue(feriadoRow({ multiplier: 2, employees: [] }));
     vi.mocked(reinterpretSpecialHours).mockResolvedValueOnce(reinterpretation({
       rebuiltClosures: [],
-      protectedPeriods: [{ employeeId: "emp-1", period: "2026-10", status: "APROBADO", timeEntries: 0, breakdowns: 0, segments: 1 }],
+      protectedPeriods: [{ employeeId: "emp-1", period: "2026-10", status: "APROBADO", timeEntries: 0, breakdowns: 0, segments: 1, missingHistory: 0 }],
     }) as never);
 
     await expect(workforceService.removeDoubleRule("rule-feriado")).rejects.toMatchObject({
@@ -1241,6 +1241,17 @@ describe("workforceService — reglas de Hora Especial reinterpretan la historia
     expect(mockedPrisma.specialHourRuleApplication.deleteMany).not.toHaveBeenCalled();
     expect(mockedPrisma.doubleHourRule.delete).not.toHaveBeenCalled();
     expect(auditService.register).not.toHaveBeenCalled();
+  });
+
+  it("D-5 — tampoco elimina la regla si un período protegido no se puede evaluar por falta de historia laboral", async () => {
+    mockedPrisma.doubleHourRule.findUnique.mockResolvedValue(feriadoRow({ multiplier: 2, employees: [] }));
+    vi.mocked(reinterpretSpecialHours).mockResolvedValueOnce(reinterpretation({
+      rebuiltClosures: [],
+      protectedPeriods: [{ employeeId: "emp-1", period: "2026-10", status: "ENVIADO", timeEntries: 0, breakdowns: 0, segments: 0, missingHistory: 2 }],
+    }) as never);
+
+    await expect(workforceService.removeDoubleRule("rule-feriado")).rejects.toMatchObject({ statusCode: 409, code: "DOUBLE_HOUR_RULE_PROTECTED_HISTORY" });
+    expect(mockedPrisma.doubleHourRule.delete).not.toHaveBeenCalled();
   });
 
   it("si la reinterpretación falla, el error sale de la transacción (la regla no queda cambiada) y no se audita", async () => {

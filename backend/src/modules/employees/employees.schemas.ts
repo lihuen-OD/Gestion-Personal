@@ -59,6 +59,11 @@ export const employeeAddressSchema = z.object({
   mapLabel: z.string().trim().max(240).optional().nullable(),
 });
 
+const calendarDateKeySchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((value) => {
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}, "Fecha inválida");
+
 export const laborMovementTypeSchema = z.enum(["ALTA", "BAJA"]);
 
 const initialLaborMovementSchema = z.object({
@@ -100,7 +105,18 @@ export const createEmployeeSchema = z.object({
   initialLaborMovement: initialLaborMovementSchema.optional(),
 });
 
-export const updateEmployeeSchema = createEmployeeSchema.partial();
+// D-5 (ORG_LOCATION_REORGANIZATION.md §19): cambiar puesto, centro de costo o
+// el conjunto de empresas empleadoras exige la fecha desde la que rige y su
+// motivo. Se registran, con la historia y la auditoría, en la misma
+// transacción que el cambio. Sin cambios en esas dimensiones se ignora.
+export const employeeLaborChangeSchema = z.object({
+  effectiveFrom: calendarDateKeySchema,
+  reason: z.string().trim().min(2).max(600),
+});
+
+export const updateEmployeeSchema = createEmployeeSchema.partial().extend({
+  laborChange: employeeLaborChangeSchema.optional(),
+});
 
 export const updateEmployeeContactSchema = z.object({
   email: z.string().trim().email().max(160).optional().nullable(),
@@ -221,11 +237,6 @@ export const employeeTimeGridQuerySchema = z.object({
   // TIME_GRID_CATALOG_CACHE_INVALIDATION_DIAGNOSTIC_14I8.md.
   includeDetails: z.preprocess((value) => (value === "false" ? false : value), z.coerce.boolean()).default(true),
 });
-
-const calendarDateKeySchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((value) => {
-  const parsed = new Date(`${value}T00:00:00.000Z`);
-  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
-}, "Fecha inválida");
 
 // A6 (ORG_LOCATION_REORGANIZATION.md §3.3): ubicaciones de trabajo con
 // vigencia. Fechas siempre como clave de calendario "YYYY-MM-DD" (nunca

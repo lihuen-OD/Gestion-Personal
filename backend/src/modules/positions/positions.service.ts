@@ -6,8 +6,14 @@ import type { PrismaTransactionClient } from "../../shared/prisma/client";
 import { invalidatePositionsCache, positionsRepository } from "./positions.repository";
 import type { CreatePositionInput, ListPositionEmployeesQuery, ListPositionOptionsQuery, ListPositionsQuery, PositionOrgScopeInput, UpdatePositionInput } from "./positions.schemas";
 import { employeeAccessWhere } from "../employees/employeeAccess";
+import { formatArgentinaDate, todayArgentinaDateKey } from "../../shared/datetime/argentinaTime";
+import { isLaborHistoryOverlapError, laborHistoryService, type RecordedHistoryChange } from "../labor-history/laborHistory.service";
+import type { ScopeNodeSnapshot } from "../labor-history/laborHistory.scope";
 
 function mapPrismaError(error: unknown) {
+  if (isLaborHistoryOverlapError(error)) {
+    throw new AppError("Otra operación registró al mismo tiempo una vigencia de alcance que se superpone. Actualizá la pantalla e intentá nuevamente.", 409, "LABOR_HISTORY_OVERLAP");
+  }
   if (error instanceof Prisma.PrismaClientKnownRequestError) {
     if (error.code === "P2002") throw new AppError("Position code already exists", 409, "POSITION_UNIQUE_CONSTRAINT");
     if (error.code === "P2025") throw new AppError("Position not found", 404, "POSITION_NOT_FOUND");
@@ -30,7 +36,13 @@ type ScopeNode = { level: PositionOrgScopeInput["level"]; id: string; name: stri
 
 function scopeKey(scope: PositionOrgScopeInput) { return `${scope.level}:${scope.nodeId}`; }
 
-async function validateScopes(tx: PrismaTransactionClient, scopes: PositionOrgScopeInput[], currentKeys = new Set<string>()) {
+/**
+ * Valida el alcance pedido y devuelve los nodos para la historia temporal
+ * (D-5): un área guarda el sector padre que tiene HOY, al registrar la
+ * vigencia, para que la pertenencia histórica no se deduzca después de la
+ * estructura vigente.
+ */
+async function validateScopes(tx: PrismaTransactionClient, scopes: PositionOrgScopeInput[], currentKeys = new Set<string>()): Promise<ScopeNodeSnapshot[]> {
   const resolved = await positionsRepository.resolveScopeNodes(tx, scopes);
   const nodes: ScopeNode[] = [
     ...resolved.companies.map((node) => ({ level: "COMPANY" as const, id: node.id, name: node.name, status: node.status })),
@@ -66,6 +78,17 @@ async function validateScopes(tx: PrismaTransactionClient, scopes: PositionOrgSc
       throw new AppError(`No selecciones “${descendant.name}”: ya está incluido por “${ancestor.name}”.`, 409, "POSITION_SCOPE_REDUNDANT", { ancestor: ancestor.name, descendant: descendant.name });
     }
   }
+  return scopes.map((scope) => {
+    const node = byKey.get(scopeKey(scope))!;
+    return { level: scope.level, nodeId: scope.nodeId, areaSectorId: scope.level === "AREA" ? node.sectorId ?? null : null };
+  });
+}
+
+const sameScopeKeys = (current: Set<string>, scopes: PositionOrgScopeInput[]) => current.size === new Set(scopes.map(scopeKey)).size && scopes.every((scope) => current.has(scopeKey(scope)));
+
+function scopeChangeSummary(change: RecordedHistoryChange | null, reason?: string) {
+  if (!change) return "";
+  return ` Alcance vigente desde el ${formatArgentinaDate(change.effectiveFrom)}${change.kind === "REPLACE" ? " (corrección de la vigencia que empieza ese día)" : ""}. Motivo: ${reason}`;
 }
 
 export const positionsService = {
@@ -101,10 +124,13 @@ export const positionsService = {
   },
 
   async create(data: CreatePositionInput, audit?: AuditContext) {
+    const scopesFrom = data.orgScopesEffectiveFrom ?? todayArgentinaDateKey();
     const item = await execute(() => positionsRepository.transaction(async (tx) => {
-      await validateScopes(tx, data.orgScopes);
+      const nodes = await validateScopes(tx, data.orgScopes);
       const created = await positionsRepository.createWithin(tx, data, audit?.userId || undefined);
-      await auditService.registerWithin(tx, { ...audit, action: "CREATE", entity: "Position", entityId: created.id, description: `Se creó puesto ${created.code} - ${created.name}.`, after: { ...created, orgScopes: data.orgScopes } as Prisma.InputJsonValue });
+      // D-5: el alcance inicial abre su historia por fecha en la misma transacción.
+      await laborHistoryService.openPositionScopeWithin(tx, { positionId: created.id, effectiveFrom: scopesFrom, nodes, reason: "Alta del puesto", createdByUserId: audit?.userId || null });
+      await auditService.registerWithin(tx, { ...audit, action: "CREATE", entity: "Position", entityId: created.id, description: `Se creó puesto ${created.code} - ${created.name}. Alcance vigente desde el ${formatArgentinaDate(scopesFrom)}.`, after: { ...created, orgScopes: data.orgScopes, orgScopesEffectiveFrom: scopesFrom } as Prisma.InputJsonValue });
       return created;
     }));
     invalidatePositionsCache();
@@ -116,13 +142,25 @@ export const positionsService = {
     const item = await execute(() => positionsRepository.transaction(async (tx) => {
       const before = await tx.position.findUniqueOrThrow({ where: { id }, select: { id: true, code: true, name: true, status: true } });
       let currentScopes: Awaited<ReturnType<typeof positionsRepository.findScopeKeys>> = [];
+      let scopesChanged = false;
+      let scopeChange: RecordedHistoryChange | null = null;
       if (data.orgScopes) {
         currentScopes = await positionsRepository.findScopeKeys(tx, id);
         const currentKeys = new Set(currentScopes.map((scope) => `${scope.level}:${scope.companyId || scope.businessUnitId || scope.sectorId || scope.areaId}`));
-        await validateScopes(tx, data.orgScopes, currentKeys);
+        const nodes = await validateScopes(tx, data.orgScopes, currentKeys);
+        // Reenviar el mismo alcance no es un cambio: no se reescriben las filas
+        // vigentes ni se abre una vigencia nueva.
+        scopesChanged = !sameScopeKeys(currentKeys, data.orgScopes);
+        if (scopesChanged) {
+          if (!data.orgScopesChange) {
+            throw new AppError("Para cambiar el alcance del puesto indicá la fecha desde la que rige y el motivo. El cambio alcanza a todas las personas que tengan este puesto.", 400, "POSITION_SCOPE_CHANGE_DATE_REQUIRED");
+          }
+          // D-5: historia por fecha + protección de cierres de los ocupantes, antes de tocar el alcance vigente.
+          scopeChange = await laborHistoryService.recordPositionScopeChangeWithin(tx, { positionId: id, effectiveFrom: data.orgScopesChange.effectiveFrom, nodes, reason: data.orgScopesChange.reason, createdByUserId: audit?.userId || null });
+        }
       }
-      const updated = await positionsRepository.updateWithin(tx, id, data, audit?.userId || undefined);
-      await auditService.registerWithin(tx, { ...audit, action: "UPDATE", entity: "Position", entityId: updated.id, description: `Se actualizó puesto ${updated.code} - ${updated.name}.`, before: { ...before, ...(data.orgScopes ? { orgScopes: currentScopes } : {}) } as Prisma.InputJsonValue, after: { ...updated, ...(data.orgScopes ? { orgScopes: data.orgScopes } : {}) } as Prisma.InputJsonValue });
+      const updated = await positionsRepository.updateWithin(tx, id, { ...data, orgScopes: scopesChanged ? data.orgScopes : undefined }, audit?.userId || undefined);
+      await auditService.registerWithin(tx, { ...audit, action: "UPDATE", entity: "Position", entityId: updated.id, description: `Se actualizó puesto ${updated.code} - ${updated.name}.${scopeChangeSummary(scopeChange, data.orgScopesChange?.reason)}`, before: { ...before, ...(scopesChanged ? { orgScopes: currentScopes } : {}) } as Prisma.InputJsonValue, after: { ...updated, ...(scopesChanged ? { orgScopes: data.orgScopes, orgScopesChange: data.orgScopesChange, scopeHistory: scopeChange } : {}) } as Prisma.InputJsonValue });
       return updated;
     }));
     invalidatePositionsCache();
@@ -138,7 +176,11 @@ export const positionsService = {
       const { position } = result;
       const inactivated = result.kind === "INACTIVATED";
       const reasons = inactivated
-        ? [result.employees > 0 ? `${result.employees} ${result.employees === 1 ? "persona asignada" : "personas asignadas"}` : null, result.doubleHourRules > 0 ? `${result.doubleHourRules} ${result.doubleHourRules === 1 ? "regla de horas especiales" : "reglas de horas especiales"}` : null].filter(Boolean).join(" y ")
+        ? [
+            result.employees > 0 ? `${result.employees} ${result.employees === 1 ? "persona asignada" : "personas asignadas"}` : null,
+            result.doubleHourRules > 0 ? `${result.doubleHourRules} ${result.doubleHourRules === 1 ? "regla de horas especiales" : "reglas de horas especiales"}` : null,
+            result.history > 0 ? "historia laboral registrada" : null,
+          ].filter(Boolean).join(" y ")
         : "";
       return auditService.registerWithin(tx, {
         ...audit,

@@ -142,3 +142,15 @@ describe("permisos de DELETE", () => {
     });
   }
 });
+
+describe("D-5 — la historia temporal bloquea el borrado de nodos (§19)", () => {
+  it("empresa, sector y centro de costo con historia laboral o alcances históricos no se borran: se explica y se sugiere inactivar", () => {
+    const company = describeDependencies("company", { laborHistory: 3, scopeHistory: 1 });
+    expect(company.map((item) => item.label)).toEqual(["3 registros de historia laboral de legajos", "1 alcance histórico de puestos"]);
+    expect(dependencyBlockedMessage("company", "Los O'Dwyer", company)).toContain("Podés inactivarla");
+    expect(describeDependencies("sector", { scopeHistory: 2 }).map((item) => item.key)).toEqual(["scopeHistory"]);
+    expect(describeDependencies("costCenter", { laborHistory: 1 }).map((item) => item.label)).toEqual(["1 registro de historia laboral de legajos"]);
+    expect(describeDependencies("area", { scopeHistory: 1 })).toHaveLength(1);
+    expect(describeDependencies("businessUnit", { scopeHistory: 1 })).toHaveLength(1);
+  });
+});

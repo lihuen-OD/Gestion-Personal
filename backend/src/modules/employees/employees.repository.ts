@@ -1,6 +1,6 @@
 import { ApprovalStatus, EmployeeStatus, Prisma } from "@prisma/client";
 import { employeeStructureWhere, workLocationNotEndedWhere, workLocationOnDateWhere } from "../../shared/prisma/employeeStructureWhere";
-import { prisma } from "../../shared/prisma/client";
+import { prisma, type PrismaTransactionClient } from "../../shared/prisma/client";
 import { assertClosurePeriodsWritable } from "../../shared/monthlyClosure/closurePeriodGuard";
 import { resolveOrderBy, type SortOrderByMap } from "../../shared/validation/listSort";
 import { argentinaCalendarDate, todayArgentinaDateKey } from "../../shared/datetime/argentinaTime";
@@ -1181,8 +1181,49 @@ export const employeesRepository = {
     });
   },
 
-  findUpdateAuditSnapshot(id: string) {
-    return prisma.employee.findUnique({ where: { id }, select: employeeUpdateAuditSelect });
+  findUpdateAuditSnapshot(id: string, db: PrismaTransactionClient = prisma) {
+    return db.employee.findUnique({ where: { id }, select: employeeUpdateAuditSelect });
+  },
+
+  /**
+   * D-5 (ORG_LOCATION_REORGANIZATION.md §19): alta y edición de legajos
+   * escriben la columna vigente, la historia temporal, el historial visible y
+   * la auditoría en una sola transacción Serializable. Timeout amplio: son
+   * ~20 consultas cortas y Neon tiene latencia alta (ver Etapa 6Q).
+   */
+  transaction<T>(operation: (tx: PrismaTransactionClient) => Promise<T>) {
+    return prisma.$transaction(operation, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, timeout: 30_000, maxWait: 10_000 });
+  },
+
+  /** Nombres de negocio para historial visible y auditoría (nunca ids técnicos). */
+  async findLaborNamesWithin(db: PrismaTransactionClient, ids: { positionIds: string[]; costCenterIds: string[]; companyIds: string[] }) {
+    const [positions, costCenters, companies] = await Promise.all([
+      ids.positionIds.length ? db.position.findMany({ where: { id: { in: ids.positionIds } }, select: { id: true, name: true } }) : [],
+      ids.costCenterIds.length ? db.costCenter.findMany({ where: { id: { in: ids.costCenterIds } }, select: { id: true, name: true } }) : [],
+      ids.companyIds.length ? db.company.findMany({ where: { id: { in: ids.companyIds } }, select: { id: true, name: true } }) : [],
+    ]);
+    return {
+      positions: new Map(positions.map((item) => [item.id, item.name])),
+      costCenters: new Map(costCenters.map((item) => [item.id, item.name])),
+      companies: new Map(companies.map((item) => [item.id, item.name])),
+    };
+  },
+
+  createFieldHistoryWithin(db: PrismaTransactionClient, employeeId: string, entry: { field: string; fieldLabel: string; oldValue: string | null; newValue: string; effectiveFrom: string; reason: string }, createdByUserId?: string | null) {
+    return db.employeeFieldHistory.create({
+      data: {
+        employeeId,
+        section: "DATOS_LABORALES",
+        field: entry.field,
+        fieldLabel: entry.fieldLabel,
+        oldValue: entry.oldValue,
+        newValue: entry.newValue,
+        effectiveFrom: argentinaCalendarDate(entry.effectiveFrom),
+        reason: entry.reason,
+        createdByUserId: createdByUserId || null,
+      },
+      select: { id: true },
+    });
   },
 
   findAssignmentsAuditSnapshot(id: string) {
@@ -1581,7 +1622,7 @@ export const employeesRepository = {
     return { scanned: totalScanned, updated: totalUpdated };
   },
 
-  create(input: CreateEmployeeInput, createdByUserId?: string | null) {
+  create(input: CreateEmployeeInput, createdByUserId?: string | null, db: PrismaTransactionClient = prisma) {
     const companies = companyLinks(input.companyIds, input.primaryCompanyId);
     const hourConceptIds = Array.from(new Set((input.hourConceptIds || []).filter(Boolean)));
     const initialMovements = input.initialLaborMovement
@@ -1593,7 +1634,7 @@ export const employeesRepository = {
           createdByUserId: createdByUserId || null,
         }]
       : [];
-    return prisma.employee.create({
+    return db.employee.create({
       data: {
         ...createEmployeeData(input),
         ...(initialMovements.length ? { status: resolveLaborStatus(initialMovements) } : {}),
@@ -1609,11 +1650,11 @@ export const employeesRepository = {
     });
   },
 
-  update(id: string, input: UpdateEmployeeInput) {
+  update(id: string, input: UpdateEmployeeInput, db: PrismaTransactionClient = prisma) {
     const shouldReplaceCompanies = input.companyIds !== undefined || input.primaryCompanyId !== undefined;
     const companies = companyLinks(input.companyIds || [], input.primaryCompanyId);
 
-    return prisma.employee.update({
+    return db.employee.update({
       where: { id },
       data: {
         ...updateEmployeeData(input),

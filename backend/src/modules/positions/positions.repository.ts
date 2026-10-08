@@ -151,9 +151,12 @@ function buildWhere(query: ListPositionsQuery): Prisma.PositionWhereInput {
 }
 
 function dataFromInput(input: CreatePositionInput | UpdatePositionInput): Prisma.PositionUncheckedCreateInput | Prisma.PositionUncheckedUpdateInput {
+  // Relaciones y datos de historia (D-5) no son columnas del puesto.
   const {
     salaryCategoryIds: _salaryCategoryIds,
     orgScopes: _orgScopes,
+    orgScopesEffectiveFrom: _orgScopesEffectiveFrom,
+    orgScopesChange: _orgScopesChange,
     responsibilities,
     internalRelations,
     externalRelations,
@@ -162,7 +165,7 @@ function dataFromInput(input: CreatePositionInput | UpdatePositionInput): Prisma
     performanceIndicators,
     evaluationCriteria,
     ...data
-  } = input;
+  } = input as Partial<CreatePositionInput> & UpdatePositionInput;
   return {
     ...data,
     ...(responsibilities !== undefined ? { responsibilities: json(responsibilities) } : {}),
@@ -177,7 +180,7 @@ function dataFromInput(input: CreatePositionInput | UpdatePositionInput): Prisma
 
 export const positionsRepository = {
   transaction<T>(operation: (tx: PrismaTransactionClient) => Promise<T>) {
-    return prisma.$transaction(operation, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+    return prisma.$transaction(operation, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, timeout: 30_000, maxWait: 10_000 });
   },
 
   async resolveScopeNodes(tx: PrismaTransactionClient, scopes: PositionOrgScopeInput[]) {
@@ -361,9 +364,9 @@ export const positionsRepository = {
   },
 
   /**
-   * Baja de un puesto (ORG_LOCATION_REORGANIZATION.md §6). Un puesto con
-   * personas o referenciado por una regla de horas especiales NO se borra:
-   * se inactiva. Borrarlo dejaba `DoubleHourRule.positionId` en NULL (SET NULL
+   * Baja de un puesto (ORG_LOCATION_REORGANIZATION.md §6 y §19). Un puesto con
+   * personas, referenciado por una regla de horas especiales o con historia
+   * temporal (alcance por fecha o asignaciones pasadas) NO se borra: se inactiva. Borrarlo dejaba `DoubleHourRule.positionId` en NULL (SET NULL
    * antes de M1), y NULL significa "sin restricción": la regla se ampliaba a
    * todos en silencio. Desde M1 la FK es RESTRICT además de este chequeo.
    *
@@ -377,13 +380,16 @@ export const positionsRepository = {
     return prisma.$transaction(async (tx): Promise<PositionRemovalOutcome> => {
       const current = await tx.position.findUnique({
         where: { id },
-        select: { id: true, code: true, name: true, status: true, _count: { select: { employees: true, doubleHourRules: true } } },
+        select: { id: true, code: true, name: true, status: true, _count: { select: { employees: true, doubleHourRules: true, employeePeriods: true, scopePeriods: true } } },
       });
       if (!current) return { kind: "NOT_FOUND" };
       const { employees, doubleHourRules } = current._count;
+      // D-5: la historia temporal (asignaciones a legajos o alcance por fecha)
+      // nunca se borra; un puesto con historia sólo se inactiva.
+      const history = current._count.employeePeriods + current._count.scopePeriods;
       const position = { id: current.id, code: current.code, name: current.name, status: current.status };
-      const outcome: Exclude<PositionRemovalOutcome, { kind: "NOT_FOUND" }> = employees > 0 || doubleHourRules > 0
-        ? { kind: "INACTIVATED", position, employees, doubleHourRules }
+      const outcome: Exclude<PositionRemovalOutcome, { kind: "NOT_FOUND" }> = employees > 0 || doubleHourRules > 0 || history > 0
+        ? { kind: "INACTIVATED", position, employees, doubleHourRules, history }
         : { kind: "DELETED", position };
       if (outcome.kind === "INACTIVATED") {
         await tx.position.update({ where: { id }, data: { status: "INACTIVO" } });
@@ -400,5 +406,5 @@ export const positionsRepository = {
 
 export type PositionRemovalOutcome =
   | { kind: "NOT_FOUND" }
-  | { kind: "INACTIVATED"; position: { id: string; code: string; name: string; status: string }; employees: number; doubleHourRules: number }
+  | { kind: "INACTIVATED"; position: { id: string; code: string; name: string; status: string }; employees: number; doubleHourRules: number; history: number }
   | { kind: "DELETED"; position: { id: string; code: string; name: string; status: string } };

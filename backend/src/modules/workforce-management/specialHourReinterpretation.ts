@@ -2,7 +2,7 @@ import type { Prisma } from "@prisma/client";
 import type { PrismaTransactionClient } from "../../shared/prisma/client";
 import { calendarDateKey, periodFromCalendarDate } from "../../shared/datetime/argentinaTime";
 import { employeePeriodKey, findProtectedClosurePeriods } from "../../shared/monthlyClosure/closurePeriodGuard";
-import { resolveSpecialHourRulesByDate, type SpecialHourResolution } from "../time-entries/timeEntries.repository";
+import { evaluateSpecialHourRulesByDate, SpecialHourScopeHistoryMissingError, type SpecialHourEvaluation } from "../time-entries/timeEntries.repository";
 import { buildActiveDatesByRule, ruleMatchesDate, specialHourApplicationRows, type DoubleHourRuleForMatching } from "./doubleHourRuleMatching";
 import { findClosuresForEmployeePeriods, rebuildClosureSnapshots, type ClosureSnapshotRecalculation, type RebuiltClosureSnapshot } from "./closureSnapshot";
 
@@ -12,7 +12,7 @@ import { findClosuresForEmployeePeriods, rebuildClosureSnapshots, type ClosureSn
  * (docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md §15 y §16). Cuando RRHH crea,
  * edita o quita una regla, o cambia la convocatoria de un feriado, todo lo
  * derivado de la historia se recalcula con el MISMO motor que usa una carga
- * nueva (resolveSpecialHourRulesByDate), dentro de la transacción del cambio:
+ * nueva (evaluateSpecialHourRulesByDate), dentro de la transacción del cambio:
  *
  * - TimeEntry.appliedMultiplier y HourConceptBreakdown.appliedMultiplier;
  * - la traza por tramo (SpecialHourRuleApplication y TimeSegment.isSpecial);
@@ -22,6 +22,12 @@ import { findClosuresForEmployeePeriods, rebuildClosureSnapshots, type ClosureSn
  * minutos de desgloses o tramos), estados, fechas ni conceptos. Así cargar
  * primero y crear el feriado después da exactamente lo mismo que cargar con
  * el feriado ya configurado.
+ *
+ * D-5 (ORG_LOCATION_REORGANIZATION.md §19): el alcance se evalúa con la
+ * historia vigente en cada fecha. Si una fila que se reescribiría no tiene
+ * historia suficiente, la operación completa se rechaza
+ * (SPECIAL_HOUR_SCOPE_HISTORY_MISSING) antes de escribir. En períodos
+ * protegidos, que nunca se reescriben, la falta de historia sólo se informa.
  */
 
 type Db = PrismaTransactionClient;
@@ -39,7 +45,9 @@ export type SpecialHourReinterpretation = {
   // D-5 (ORG_LOCATION_REORGANIZATION.md §18.1): pares empleado + período con
   // cierre ENVIADO/APROBADO/CORRECCION_PENDIENTE. No se modificaron; se informa
   // cuántas filas habrían cambiado para que RRHH decida una corrección explícita.
-  protectedPeriods: Array<{ employeeId: string; period: string; status: string; timeEntries: number; breakdowns: number; segments: number }>;
+  // `missingHistory`: filas de ese período cuyo resultado no se puede evaluar
+  // por falta de historia (no se sabe si diferirían).
+  protectedPeriods: Array<{ employeeId: string; period: string; status: string; timeEntries: number; breakdowns: number; segments: number; missingHistory: number }>;
   // Detalle antes → después (backup/reporte de una reconciliación).
   changes: {
     timeEntries: Array<{ id: string; employeeId: string; date: string; from: number; to: number }>;
@@ -177,11 +185,18 @@ async function reinterpretWindow(
     dates.set(calendarDateKey(row.date), row.date);
     datesByEmployee.set(row.employeeId, dates);
   }
-  const resolutions = new Map<string, Map<string, SpecialHourResolution>>();
+  const evaluations = new Map<string, Map<string, SpecialHourEvaluation>>();
   for (const [employeeId, dates] of datesByEmployee) {
-    resolutions.set(employeeId, await resolveSpecialHourRulesByDate(employeeId, [...dates.values()], db));
+    evaluations.set(employeeId, await evaluateSpecialHourRulesByDate(employeeId, [...dates.values()], db));
   }
-  const resolutionFor = (row: { employeeId: string; date: Date }) => resolutions.get(row.employeeId)!.get(calendarDateKey(row.date))!;
+  const evaluationFor = (row: { employeeId: string; date: Date }) => evaluations.get(row.employeeId)!.get(calendarDateKey(row.date))!;
+  // Sin escrituras parciales: si alguna fila que se reescribiría no tiene
+  // historia suficiente, se rechaza todo antes del primer update.
+  const missing = [...candidates.entries, ...candidates.breakdowns, ...candidates.segments]
+    .flatMap((row) => evaluationFor(row).missingHistory ?? [])
+    .sort((a, b) => a.date.localeCompare(b.date) || a.employeeId.localeCompare(b.employeeId));
+  if (missing.length) throw new SpecialHourScopeHistoryMissingError(missing[0]!);
+  const resolutionFor = (row: { employeeId: string; date: Date }) => evaluationFor(row).resolution!;
 
   const changedEntries = candidates.entries.flatMap((row) => {
     const { multiplier } = resolutionFor(row);
@@ -224,16 +239,22 @@ async function reinterpretWindow(
   const rebuiltClosures = await rebuildClosureSnapshots(db, closures, recalculation);
 
   // Informe de lo que habría cambiado en períodos protegidos (sin escribir).
-  const pendingByPair = new Map<string, { employeeId: string; period: string; status: string; timeEntries: number; breakdowns: number; segments: number }>();
+  const pendingByPair = new Map<string, SpecialHourReinterpretation["protectedPeriods"][number]>();
   const pending = (pair: { employeeId: string; period: string }) => {
     const key = employeePeriodKey(pair);
-    const current = pendingByPair.get(key) ?? { employeeId: pair.employeeId, period: pair.period, status: protectedPairs.get(key)!, timeEntries: 0, breakdowns: 0, segments: 0 };
+    const current = pendingByPair.get(key) ?? { employeeId: pair.employeeId, period: pair.period, status: protectedPairs.get(key)!, timeEntries: 0, breakdowns: 0, segments: 0, missingHistory: 0 };
     pendingByPair.set(key, current);
     return current;
   };
-  for (const row of protectedRows.entries) if (!sameMultiplier(row.appliedMultiplier, resolutionFor(row).multiplier)) pending(row).timeEntries += 1;
-  for (const row of protectedRows.breakdowns) if (!sameMultiplier(row.appliedMultiplier, resolutionFor(row).multiplier)) pending(row).breakdowns += 1;
+  const evaluable = <T extends { employeeId: string; date: Date }>(row: T, pairOf: (item: T) => { employeeId: string; period: string }) => {
+    if (!evaluationFor(row).missingHistory) return true;
+    pending(pairOf(row)).missingHistory += 1;
+    return false;
+  };
+  for (const row of protectedRows.entries) if (evaluable(row, (item) => item) && !sameMultiplier(row.appliedMultiplier, resolutionFor(row).multiplier)) pending(row).timeEntries += 1;
+  for (const row of protectedRows.breakdowns) if (evaluable(row, (item) => item) && !sameMultiplier(row.appliedMultiplier, resolutionFor(row).multiplier)) pending(row).breakdowns += 1;
   for (const row of protectedRows.segments) {
+    if (!evaluable(row, segmentPeriod)) continue;
     const resolution = resolutionFor(row);
     const desired = specialHourApplicationRows(row.id, resolution);
     if (row.isSpecial !== resolution.matchedRules.length > 0 || traceSignature(row.specialHourRuleApplications) !== traceSignature(desired)) pending(segmentPeriod(row)).segments += 1;

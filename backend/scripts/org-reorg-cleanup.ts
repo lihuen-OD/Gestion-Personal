@@ -35,7 +35,7 @@
  */
 import { readFileSync, writeFileSync } from "node:fs";
 import type { Prisma } from "@prisma/client";
-import { arg, captureRowManifest, connectTarget, countReferences, discoverForeignKeys, flag, loadRules, quoteIdent, ruleReferences, type Tx } from "./org-reorg/lib";
+import { arg, captureRowManifest, connectTarget, countReferences, discoverForeignKeys, engineOutcomes, flag, loadRules, quoteIdent, ruleReferences, type EngineEvaluator, type Tx } from "./org-reorg/lib";
 import { requireVerifiedIdentity } from "../src/modules/org-structure/reorg/targetIdentity";
 import { buildCleanupPlan, DELETE_ORDER, treatmentOf, type CompanyMode, type FrozenInventory, type R1TargetState, type RuleDecision, type TargetTable } from "../src/modules/org-structure/reorg/cleanupPlan";
 import { verifyV1, type V1Expectation, type WatchedValues } from "../src/modules/org-structure/reorg/manifest";
@@ -43,28 +43,11 @@ import { verifyV1, type V1Expectation, type WatchedValues } from "../src/modules
 class DryRunRollback extends Error {}
 const REASON = "Reorganización de estructura (ORG_LOCATION_REORGANIZATION.md)";
 
-type Resolution = { multiplier: unknown; winners: Array<{ id: string }> };
-type Resolver = (employeeId: string, dates: Date[], db: unknown) => Promise<Map<string, Resolution>>;
 type AuditWriter = (db: unknown, input: { action: "UPDATE" | "DELETE"; entity: string; entityId: string; description: string; userId: string; before?: Prisma.InputJsonValue; after?: Prisma.InputJsonValue }) => Promise<unknown>;
 
 function readJson<T>(path: string | undefined, what: string): T {
   if (!path) throw new Error(`Falta ${what}.`);
   return JSON.parse(readFileSync(path, "utf8")) as T;
-}
-
-async function resolveAll(tx: Tx, resolve: Resolver) {
-  const rows = await tx.$queryRawUnsafe<Array<{ employeeId: string; date: Date }>>(
-    `SELECT "employeeId", date FROM "TimeEntry" UNION SELECT "employeeId", date FROM "HourConceptBreakdown" UNION SELECT "employeeId", date FROM "TimeSegment"`,
-  );
-  const byEmployee = new Map<string, Date[]>();
-  for (const row of rows) byEmployee.set(row.employeeId, [...(byEmployee.get(row.employeeId) ?? []), row.date]);
-  const result = new Map<string, string>();
-  for (const [employeeId, dates] of byEmployee) {
-    for (const [day, resolution] of await resolve(employeeId, dates, tx)) {
-      result.set(`${employeeId}|${day}`, `${Number(resolution.multiplier)}:${resolution.winners.map((rule) => rule.id).sort().join(",")}`);
-    }
-  }
-  return result;
 }
 
 async function keysWhere(tx: Tx, table: string, key: string[], column: string, ids: string[]) {
@@ -123,10 +106,10 @@ async function main() {
   const accepted = new Set(arg("accept-engine-changes") ? readJson<Array<{ employeeId: string; date: string }>>(arg("accept-engine-changes"), "cambios aceptados").map((item) => `${item.employeeId}|${item.date}`) : []);
 
   // Importados después de fijar DATABASE_URL al destino verificado.
-  const { resolveSpecialHourRulesByDate } = await import("../src/modules/time-entries/timeEntries.repository");
+  const { evaluateSpecialHourRulesByDate } = await import("../src/modules/time-entries/timeEntries.repository");
   const { auditService } = await import("../src/modules/audit/audit.service");
   const { loadEmployeeReferences } = await import("../src/shared/audit/employeeReference");
-  const resolve = resolveSpecialHourRulesByDate as unknown as Resolver;
+  const evaluate = evaluateSpecialHourRulesByDate as unknown as EngineEvaluator;
   const audit = auditService.registerWithin as unknown as AuditWriter;
 
   const summary: Record<string, unknown> = { mode: apply ? "apply" : "dry-run", companyMode, host: target.host, identity: target.identity, startedAt: new Date().toISOString() };
@@ -153,7 +136,9 @@ async function main() {
 
       // 2. Estado previo: manifiesto, motor y respaldo (antes de cualquier escritura).
       const pre = await captureRowManifest(tx, target.host);
-      const enginePre = await resolveAll(tx, resolve);
+      // D-5: el motor resuelve con la historia temporal; una fecha sin historia
+      // suficiente queda como MISSING antes y después (la limpieza no la cambia).
+      const enginePre = await engineOutcomes(tx, evaluate);
       const expectation: V1Expectation = { deleted: {}, nullified: {}, ruleChanges: {}, newRows: {}, newAuditRows: 0 };
       const backup: Record<string, unknown> = { takenAt: new Date().toISOString(), host: target.host, companyMode, deleted: {}, nullified: [], rules: [] };
       for (const table of DELETE_ORDER) (backup.deleted as Record<string, unknown>)[table] = await rowsAsJson(tx, table, "id", deletable[table]);
@@ -241,7 +226,7 @@ async function main() {
       }
 
       // 6. Equivalencia del motor de horas especiales.
-      const enginePost = await resolveAll(tx, resolve);
+      const enginePost = await engineOutcomes(tx, evaluate);
       const engineChanges = [...enginePre].filter(([key, value]) => enginePost.get(key) !== value).map(([key, value]) => ({ key, before: value, after: enginePost.get(key) ?? null }));
       const unaccepted = engineChanges.filter((change) => !accepted.has(change.key));
       summary.engineChanges = engineChanges;

@@ -63,6 +63,13 @@ export const listPositionOptionsQuerySchema = z.object({
   take: z.coerce.number().int().positive().max(500).optional(),
 });
 
+// D-5 (ORG_LOCATION_REORGANIZATION.md §19): el alcance de un puesto tiene
+// historia por fecha. Clave de calendario "YYYY-MM-DD" (nunca coerce.date).
+const calendarDateKeySchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((value) => {
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}, "Fecha inválida");
+
 export const positionWorkConditionsSchema = z.object({
   modality: z.string().trim().default("PRESENCIAL"),
   workload: z.string().trim().default(""),
@@ -86,11 +93,19 @@ export const createPositionSchema = z.object({
   performanceIndicators: jsonArraySchema,
   evaluationCriteria: jsonArraySchema,
   orgScopes: z.array(positionOrgScopeInputSchema).min(1, "Seleccioná al menos un alcance organizacional."),
+  // Desde cuándo rige el alcance inicial. Por defecto, hoy (Argentina); nunca futura.
+  orgScopesEffectiveFrom: calendarDateKeySchema.optional(),
   salaryCategoryIds: z.array(z.string().uuid()).default([]),
 });
 
-export const updatePositionSchema = createPositionSchema.partial().extend({
+export const updatePositionSchema = createPositionSchema.omit({ orgScopesEffectiveFrom: true }).partial().extend({
   orgScopes: z.array(positionOrgScopeInputSchema).min(1, "Seleccioná al menos un alcance organizacional.").optional(),
+  // Obligatorio sólo si `orgScopes` difiere del alcance vigente: fecha desde la
+  // que rige el alcance nuevo para TODOS los ocupantes y motivo del cambio.
+  orgScopesChange: z.object({
+    effectiveFrom: calendarDateKeySchema,
+    reason: z.string().trim().min(2).max(600),
+  }).optional(),
 });
 
 export type ListPositionsQuery = z.infer<typeof listPositionsQuerySchema>;

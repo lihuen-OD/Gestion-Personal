@@ -159,11 +159,13 @@ export function loadRules(tx: Tx): Promise<RuleRow[]> {
 }
 
 /**
- * Legajos que HOY cumplen el alcance de la regla, con la misma semántica que
- * doubleHourRuleScopeWhere (timeEntries.repository.ts): todas las dimensiones
- * configuradas con AND, NULL = sin restricción, lista vacía = sin restricción
- * por persona. No incluye la excepción FERIADO + convocatoria (se informa
- * aparte), porque depende de la fecha.
+ * Legajos que HOY cumplen el alcance de la regla según sus valores VIGENTES
+ * (columnas del legajo): todas las dimensiones configuradas con AND, NULL =
+ * sin restricción, lista vacía = sin restricción por persona. Es un dato de
+ * consulta para decidir R2: el motor resuelve cada fecha con la historia
+ * temporal (D-5, §19). Para sectores del modelo anterior compara el sector
+ * anterior del legajo. No incluye la excepción FERIADO + convocatoria (se
+ * informa aparte), porque depende de la fecha.
  */
 export async function currentPopulation(tx: Tx, rule: Pick<RuleRow, "companyId" | "sectorId" | "costCenterId" | "positionId" | "employees">): Promise<string[]> {
   const rows = await tx.employee.findMany({
@@ -222,4 +224,44 @@ export async function captureRowManifest(tx: Tx, host: string): Promise<RowManif
     manifest.tables[table] = tableManifest;
   }
   return manifest;
+}
+
+// ---------------------------------------------------------------------------
+// Motor de horas especiales (D-5): resultado por legajo + fecha
+// ---------------------------------------------------------------------------
+
+export type EngineEvaluation = {
+  resolution?: { multiplier: unknown; winners: Array<{ id: string }> };
+  missingHistory?: { dimensions: string[]; ruleId: string };
+};
+export type EngineEvaluator = (employeeId: string, dates: Date[], db: unknown) => Promise<Map<string, EngineEvaluation>>;
+
+/**
+ * Etiqueta comparable de un resultado: "multiplicador:ganadoras" (mismo
+ * formato que los reportes anteriores) o "MISSING:dimensiones:regla" cuando
+ * la fecha no se puede resolver sin inventar historia.
+ */
+export function engineOutcomeLabel(evaluation: EngineEvaluation) {
+  if (evaluation.missingHistory) return `MISSING:${[...evaluation.missingHistory.dimensions].sort().join("+")}:${evaluation.missingHistory.ruleId}`;
+  return `${Number(evaluation.resolution!.multiplier)}:${evaluation.resolution!.winners.map((rule) => rule.id).sort().join(",")}`;
+}
+
+/** Fechas con horas, desgloses o tramos, por legajo. */
+export async function employeeDatesWithHours(tx: Tx) {
+  const rows = await tx.$queryRawUnsafe<Array<{ employeeId: string; date: Date }>>(
+    `SELECT "employeeId", date FROM "TimeEntry" UNION SELECT "employeeId", date FROM "HourConceptBreakdown" UNION SELECT "employeeId", date FROM "TimeSegment"`,
+  );
+  const byEmployee = new Map<string, Date[]>();
+  for (const row of rows) byEmployee.set(row.employeeId, [...(byEmployee.get(row.employeeId) ?? []), row.date]);
+  return { rows: rows.length, byEmployee };
+}
+
+/** Resultado del motor real para cada legajo + fecha con horas, sin escribir nada. */
+export async function engineOutcomes(tx: Tx, evaluate: EngineEvaluator, db: unknown = tx): Promise<Map<string, string>> {
+  const { byEmployee } = await employeeDatesWithHours(tx);
+  const result = new Map<string, string>();
+  for (const [employeeId, dates] of byEmployee) {
+    for (const [day, evaluation] of await evaluate(employeeId, dates, db)) result.set(`${employeeId}|${day}`, engineOutcomeLabel(evaluation));
+  }
+  return result;
 }

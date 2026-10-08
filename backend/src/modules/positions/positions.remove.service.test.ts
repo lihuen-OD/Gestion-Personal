@@ -33,7 +33,7 @@ beforeEach(() => {
 
 describe("positionsService.remove", () => {
   it("un puesto referenciado por reglas de horas especiales se inactiva, no se borra, y se audita en la transacción", async () => {
-    outcome = { kind: "INACTIVATED", position, employees: 0, doubleHourRules: 2 };
+    outcome = { kind: "INACTIVATED", position, employees: 0, doubleHourRules: 2, history: 0 };
 
     const result = await positionsService.remove("pos-1", { userId: "u1" });
 
@@ -49,9 +49,15 @@ describe("positionsService.remove", () => {
   });
 
   it("con personas y reglas, el motivo menciona ambas", async () => {
-    outcome = { kind: "INACTIVATED", position, employees: 1, doubleHourRules: 1 };
+    outcome = { kind: "INACTIVATED", position, employees: 1, doubleHourRules: 1, history: 0 };
     await positionsService.remove("pos-1");
     expect(registerWithin).toHaveBeenCalledWith(tx, expect.objectContaining({ description: expect.stringContaining("1 persona asignada y 1 regla de horas especiales") }));
+  });
+
+  it("D-5: un puesto con historia temporal (alcance o asignaciones pasadas) se inactiva; la historia nunca se borra", async () => {
+    outcome = { kind: "INACTIVATED", position, employees: 0, doubleHourRules: 0, history: 3 };
+    await positionsService.remove("pos-1");
+    expect(registerWithin).toHaveBeenCalledWith(tx, expect.objectContaining({ action: "UPDATE", description: expect.stringContaining("historia laboral registrada") }));
   });
 
   it("sin dependencias se elimina y se audita como DELETE", async () => {

@@ -4,8 +4,13 @@ import { positionsRepository } from "./positions.repository";
 import { positionsService } from "./positions.service";
 import { roles } from "../../shared/security/roles";
 import { auditService } from "../audit/audit.service";
+import { laborHistoryService } from "../labor-history/laborHistory.service";
 
 vi.mock("../audit/audit.service", () => ({ auditService: { registerWithin: vi.fn() }, clearAuditDerivedCaches: vi.fn() }));
+vi.mock("../labor-history/laborHistory.service", () => ({
+  laborHistoryService: { openPositionScopeWithin: vi.fn(), recordPositionScopeChangeWithin: vi.fn().mockResolvedValue({ dimension: "POSITION_SCOPE", kind: "SPLIT", effectiveFrom: "2026-10-01", effectiveTo: null, value: [] }) },
+  isLaborHistoryOverlapError: () => false,
+}));
 
 // Auditoria 2026-08-24 (critico): GET /positions/:id/employees solo tenia
 // requireAuth (ver positions.routes.ts) y ademas no filtraba por alcance de
@@ -179,5 +184,68 @@ describe("positionsService — alcances organizacionales A5", () => {
     await expect(positionsService.create(input as never)).rejects.toMatchObject({ code: "POSITION_SCOPE_INACTIVE" });
     repo.findScopeKeys.mockResolvedValue([{ level: "COMPANY", companyId: "c1", businessUnitId: null, sectorId: null, areaId: null }]);
     await expect(positionsService.update("pos-1", { orgScopes: [{ level: "COMPANY", nodeId: "c1" }] } as never)).resolves.toBeDefined();
+  });
+});
+
+describe("positionsService — historia temporal del alcance (D-5)", () => {
+  const input = { code: "PUE-3", name: "Encargado", status: "ACTIVO", responsibilities: [], internalRelations: [], externalRelations: [], competencies: [], workConditions: { modality: "PRESENCIAL", workload: "", workplace: "", relationType: "", observations: "" }, performanceIndicators: [], evaluationCriteria: [], salaryCategoryIds: [], orgScopes: [{ level: "AREA", nodeId: "a1" }] };
+  const openScope = laborHistoryService.openPositionScopeWithin as unknown as Mock;
+  const recordScope = laborHistoryService.recordPositionScopeChangeWithin as unknown as Mock;
+
+  beforeEach(() => {
+    // Como el repositorio real: sólo los nodos pedidos.
+    repo.resolveScopeNodes.mockImplementation(async (_tx: unknown, scopes: Array<{ level: string; nodeId: string }>) => {
+      const wants = (level: string, id: string) => scopes.some((scope) => scope.level === level && scope.nodeId === id);
+      return {
+        companies: [],
+        businessUnits: [],
+        sectors: wants("SECTOR", "s1") ? [{ id: "s1", name: "Agricultura", status: "ACTIVO", businessUnitId: "bu1", businessUnit: { companyId: "c1" } }] : [],
+        areas: wants("AREA", "a1") ? [{ id: "a1", name: "Riego", status: "ACTIVO", sectorId: "s1", sector: { businessUnitId: "bu1", businessUnit: { companyId: "c1" } } }] : [],
+      };
+    });
+  });
+
+  it("el alta abre la historia del alcance en la misma transacción, con el sector padre de cada área registrado", async () => {
+    await positionsService.create({ ...input, orgScopesEffectiveFrom: "2026-09-01" } as never, { userId: "u1" });
+
+    expect(openScope).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      positionId: "pos-new",
+      effectiveFrom: "2026-09-01",
+      nodes: [{ level: "AREA", nodeId: "a1", areaSectorId: "s1" }],
+      createdByUserId: "u1",
+    }));
+    expect(auditService.registerWithin).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ description: expect.stringContaining("Alcance vigente desde el 01/09/2026") }));
+  });
+
+  it("reenviar el mismo alcance no abre vigencia ni reescribe los alcances vigentes", async () => {
+    repo.findScopeKeys.mockResolvedValue([{ level: "AREA", companyId: null, businessUnitId: null, sectorId: null, areaId: "a1" }]);
+
+    await positionsService.update("pos-1", { name: "Encargado de riego", orgScopes: [{ level: "AREA", nodeId: "a1" }] } as never);
+
+    expect(recordScope).not.toHaveBeenCalled();
+    expect(repo.updateWithin).toHaveBeenCalledWith(expect.anything(), "pos-1", expect.objectContaining({ orgScopes: undefined }), undefined);
+  });
+
+  it("cambiar el alcance exige fecha desde y motivo (400, sin escribir)", async () => {
+    repo.findScopeKeys.mockResolvedValue([{ level: "AREA", companyId: null, businessUnitId: null, sectorId: null, areaId: "a1" }]);
+
+    await expect(positionsService.update("pos-1", { orgScopes: [{ level: "SECTOR", nodeId: "s1" }] } as never))
+      .rejects.toMatchObject({ statusCode: 400, code: "POSITION_SCOPE_CHANGE_DATE_REQUIRED" });
+    expect(recordScope).not.toHaveBeenCalled();
+    expect(repo.updateWithin).not.toHaveBeenCalled();
+  });
+
+  it("un cambio de alcance registra la vigencia ANTES de reemplazar el alcance vigente y lo audita", async () => {
+    repo.findScopeKeys.mockResolvedValue([{ level: "AREA", companyId: null, businessUnitId: null, sectorId: null, areaId: "a1" }]);
+    const order: string[] = [];
+    recordScope.mockImplementationOnce(async () => { order.push("history"); return { dimension: "POSITION_SCOPE", kind: "SPLIT", effectiveFrom: "2026-10-01", effectiveTo: null, value: [] }; });
+    repo.updateWithin.mockImplementationOnce(async () => { order.push("current"); return { id: "pos-1", code: "PUE-1", name: "Puesto 1" }; });
+
+    await positionsService.update("pos-1", { orgScopes: [{ level: "SECTOR", nodeId: "s1" }], orgScopesChange: { effectiveFrom: "2026-10-01", reason: "Reorganización" } } as never, { userId: "u1" });
+
+    expect(order).toEqual(["history", "current"]);
+    expect(recordScope).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ positionId: "pos-1", effectiveFrom: "2026-10-01", nodes: [{ level: "SECTOR", nodeId: "s1", areaSectorId: null }], reason: "Reorganización" }));
+    expect(repo.updateWithin).toHaveBeenCalledWith(expect.anything(), "pos-1", expect.objectContaining({ orgScopes: [{ level: "SECTOR", nodeId: "s1" }] }), "u1");
+    expect(auditService.registerWithin).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ description: expect.stringContaining("Alcance vigente desde el 01/10/2026") }));
   });
 });

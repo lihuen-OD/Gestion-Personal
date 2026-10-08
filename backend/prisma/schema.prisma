@@ -365,51 +365,56 @@ model User {
   createdAt           DateTime     @default(now()) @db.Timestamptz(3)
   updatedAt           DateTime     @updatedAt @db.Timestamptz(3)
 
-  company                       Company?                       @relation(fields: [companyId], references: [id])
-  sector                        Sector?                        @relation(fields: [sectorId], references: [id])
-  employee                      Employee?                      @relation("EmployeeUserAccount", fields: [employeeId], references: [id])
-  createdEmployees              Employee[]                     @relation("EmployeeCreatedBy")
-  employeeAssignments           EmployeeAssignment[]
-  laborMovements                LaborMovement[]
-  fieldHistory                  EmployeeFieldHistory[]
-  blockHistory                  EmployeeBlockHistory[]
-  noveltiesCreated              Novelty[]                      @relation("NoveltyCreatedBy")
-  timeEntriesCreated            TimeEntry[]                    @relation("TimeEntryCreatedBy")
-  hourConceptBreakdownsCreated  HourConceptBreakdown[]         @relation("HourConceptBreakdownCreatedBy")
-  documentsUploaded             EmployeeDocument[]
-  storageFilesUploaded          StorageFile[]                  @relation("StorageFileUploadedBy")
-  storageFilesDeleted           StorageFile[]                  @relation("StorageFileDeletedBy")
-  auditLogs                     AuditLog[]
-  notifications                 SystemNotification[]           @relation("NotificationRecipient")
-  closuresSubmitted             MonthlyTimeClosure[]           @relation("ClosureSubmittedBy")
-  closuresReviewed              MonthlyTimeClosure[]           @relation("ClosureReviewedBy")
-  correctionsCreated            TimeCorrectionRequest[]        @relation("CorrectionCreatedBy")
-  correctionsReviewed           TimeCorrectionRequest[]        @relation("CorrectionReviewedBy")
-  inactivityIncidentsReviewed   AttendanceInactivityIncident[] @relation("InactivityIncidentReviewedBy")
-  noveltiesApproved             Novelty[]                      @relation("NoveltyApprovedBy")
-  timeEntriesApproved           TimeEntry[]                    @relation("TimeEntryApprovedBy")
-  hourConceptBreakdownsApproved HourConceptBreakdown[]         @relation("HourConceptBreakdownApprovedBy")
-  workShiftsCreated             WorkShift[]                    @relation("WorkShiftCreatedBy")
-  workShiftsReviewed            WorkShift[]                    @relation("WorkShiftReviewedBy")
-  shiftTemplatesCreated         ShiftTemplate[]                @relation("ShiftTemplateCreatedBy")
-  shiftTemplatesUpdated         ShiftTemplate[]                @relation("ShiftTemplateUpdatedBy")
-  shiftAssignmentsAssigned      ShiftAssignment[]              @relation("ShiftAssignmentAssignedBy")
-  shiftAssignmentsDisabled      ShiftAssignment[]              @relation("ShiftAssignmentDisabledBy")
-  holidayWorkAssignmentsCreated HolidayWorkAssignment[]        @relation("HolidayWorkAssignmentCreatedBy")
-  holidayWorkAssignmentsUpdated HolidayWorkAssignment[]        @relation("HolidayWorkAssignmentUpdatedBy")
-  shiftAlertsResolved           ShiftAlert[]
-  doubleHourRulesCreated        DoubleHourRule[]
-  attendancePunchesReviewed     AttendancePunch[]
-  auditParametersCreated        AuditParameter[]               @relation("AuditParameterCreatedBy")
-  auditParametersUpdated        AuditParameter[]               @relation("AuditParameterUpdatedBy")
-  workRegimesCreated            WorkRegime[]                   @relation("WorkRegimeCreatedBy")
-  workRegimesUpdated            WorkRegime[]                   @relation("WorkRegimeUpdatedBy")
-  workRegimesAssigned           EmployeeWorkRegime[]
-  finnegansExportBatchesCreated FinnegansExportBatch[]         @relation("FinnegansExportBatchCreatedBy")
-  clockDevicesActivated         ClockDevice[]                  @relation("ClockDeviceActivatedBy")
-  clockDevicesRevoked           ClockDevice[]                  @relation("ClockDeviceRevokedBy")
-  positionOrgScopesCreated      PositionOrgScope[]             @relation("PositionOrgScopeCreatedBy")
-  employeeWorkLocationsCreated  EmployeeWorkLocation[]         @relation("EmployeeWorkLocationCreatedBy")
+  company                            Company?                       @relation(fields: [companyId], references: [id])
+  sector                             Sector?                        @relation(fields: [sectorId], references: [id])
+  employee                           Employee?                      @relation("EmployeeUserAccount", fields: [employeeId], references: [id])
+  createdEmployees                   Employee[]                     @relation("EmployeeCreatedBy")
+  employeeAssignments                EmployeeAssignment[]
+  laborMovements                     LaborMovement[]
+  fieldHistory                       EmployeeFieldHistory[]
+  blockHistory                       EmployeeBlockHistory[]
+  noveltiesCreated                   Novelty[]                      @relation("NoveltyCreatedBy")
+  timeEntriesCreated                 TimeEntry[]                    @relation("TimeEntryCreatedBy")
+  hourConceptBreakdownsCreated       HourConceptBreakdown[]         @relation("HourConceptBreakdownCreatedBy")
+  documentsUploaded                  EmployeeDocument[]
+  storageFilesUploaded               StorageFile[]                  @relation("StorageFileUploadedBy")
+  storageFilesDeleted                StorageFile[]                  @relation("StorageFileDeletedBy")
+  auditLogs                          AuditLog[]
+  notifications                      SystemNotification[]           @relation("NotificationRecipient")
+  closuresSubmitted                  MonthlyTimeClosure[]           @relation("ClosureSubmittedBy")
+  closuresReviewed                   MonthlyTimeClosure[]           @relation("ClosureReviewedBy")
+  correctionsCreated                 TimeCorrectionRequest[]        @relation("CorrectionCreatedBy")
+  correctionsReviewed                TimeCorrectionRequest[]        @relation("CorrectionReviewedBy")
+  inactivityIncidentsReviewed        AttendanceInactivityIncident[] @relation("InactivityIncidentReviewedBy")
+  noveltiesApproved                  Novelty[]                      @relation("NoveltyApprovedBy")
+  timeEntriesApproved                TimeEntry[]                    @relation("TimeEntryApprovedBy")
+  hourConceptBreakdownsApproved      HourConceptBreakdown[]         @relation("HourConceptBreakdownApprovedBy")
+  workShiftsCreated                  WorkShift[]                    @relation("WorkShiftCreatedBy")
+  workShiftsReviewed                 WorkShift[]                    @relation("WorkShiftReviewedBy")
+  shiftTemplatesCreated              ShiftTemplate[]                @relation("ShiftTemplateCreatedBy")
+  shiftTemplatesUpdated              ShiftTemplate[]                @relation("ShiftTemplateUpdatedBy")
+  shiftAssignmentsAssigned           ShiftAssignment[]              @relation("ShiftAssignmentAssignedBy")
+  shiftAssignmentsDisabled           ShiftAssignment[]              @relation("ShiftAssignmentDisabledBy")
+  holidayWorkAssignmentsCreated      HolidayWorkAssignment[]        @relation("HolidayWorkAssignmentCreatedBy")
+  holidayWorkAssignmentsUpdated      HolidayWorkAssignment[]        @relation("HolidayWorkAssignmentUpdatedBy")
+  shiftAlertsResolved                ShiftAlert[]
+  doubleHourRulesCreated             DoubleHourRule[]
+  attendancePunchesReviewed          AttendancePunch[]
+  auditParametersCreated             AuditParameter[]               @relation("AuditParameterCreatedBy")
+  auditParametersUpdated             AuditParameter[]               @relation("AuditParameterUpdatedBy")
+  workRegimesCreated                 WorkRegime[]                   @relation("WorkRegimeCreatedBy")
+  workRegimesUpdated                 WorkRegime[]                   @relation("WorkRegimeUpdatedBy")
+  workRegimesAssigned                EmployeeWorkRegime[]
+  finnegansExportBatchesCreated      FinnegansExportBatch[]         @relation("FinnegansExportBatchCreatedBy")
+  clockDevicesActivated              ClockDevice[]                  @relation("ClockDeviceActivatedBy")
+  clockDevicesRevoked                ClockDevice[]                  @relation("ClockDeviceRevokedBy")
+  positionOrgScopesCreated           PositionOrgScope[]             @relation("PositionOrgScopeCreatedBy")
+  employeeWorkLocationsCreated       EmployeeWorkLocation[]         @relation("EmployeeWorkLocationCreatedBy")
+  employeePositionPeriodsCreated     EmployeePositionPeriod[]       @relation("EmployeePositionPeriodCreatedBy")
+  employeeCostCenterPeriodsCreated   EmployeeCostCenterPeriod[]     @relation("EmployeeCostCenterPeriodCreatedBy")
+  employeeLegacySectorPeriodsCreated EmployeeLegacySectorPeriod[]   @relation("EmployeeLegacySectorPeriodCreatedBy")
+  employeeEmployerPeriodsCreated     EmployeeEmployerPeriod[]       @relation("EmployeeEmployerPeriodCreatedBy")
+  positionOrgScopePeriodsCreated     PositionOrgScopePeriod[]       @relation("PositionOrgScopePeriodCreatedBy")
 
   @@index([role])
   @@index([status])
@@ -423,13 +428,16 @@ model Company {
   createdAt DateTime     @default(now()) @db.Timestamptz(3)
   updatedAt DateTime     @updatedAt @db.Timestamptz(3)
 
-  users           User[]
-  businessUnits   BusinessUnit[]
-  establishments  Establishment[]
-  employees       EmployeeCompany[]
-  costCenterLinks CostCenterCompany[]
-  doubleHourRules DoubleHourRule[]
-  positionScopes  PositionOrgScope[]
+  users               User[]
+  businessUnits       BusinessUnit[]
+  establishments      Establishment[]
+  employees           EmployeeCompany[]
+  costCenterLinks     CostCenterCompany[]
+  doubleHourRules     DoubleHourRule[]
+  positionScopes      PositionOrgScope[]
+  // Historia temporal (D-5): nunca se borra; bloquea el borrado del nodo.
+  employerPeriodLinks EmployeeEmployerPeriodCompany[]
+  scopeHistoryNodes   PositionOrgScopePeriodNode[]
 }
 
 model BusinessUnit {
@@ -441,14 +449,15 @@ model BusinessUnit {
   createdAt DateTime     @default(now()) @db.Timestamptz(3)
   updatedAt DateTime     @updatedAt @db.Timestamptz(3)
 
-  company         Company                  @relation(fields: [companyId], references: [id])
+  company           Company                      @relation(fields: [companyId], references: [id])
   // LEGADO (modelo actual): establecimientos colgados de la UN. Se retira en
   // M2 — docs/decisions/ORG_LOCATION_REORGANIZATION.md.
-  establishments  Establishment[]
+  establishments    Establishment[]
   // Modelo objetivo: Empresa → UN → Sector → Área.
-  sectors         Sector[]                 @relation("BusinessUnitSectors")
-  costCenterLinks CostCenterBusinessUnit[]
-  positionScopes  PositionOrgScope[]
+  sectors           Sector[]                     @relation("BusinessUnitSectors")
+  costCenterLinks   CostCenterBusinessUnit[]
+  positionScopes    PositionOrgScope[]
+  scopeHistoryNodes PositionOrgScopePeriodNode[]
 
   @@unique([companyId, code])
   @@index([companyId])
@@ -504,11 +513,12 @@ model Area {
   createdAt       DateTime     @default(now()) @db.Timestamptz(3)
   updatedAt       DateTime     @updatedAt @db.Timestamptz(3)
 
-  establishment   Establishment?     @relation(fields: [establishmentId], references: [id])
-  sector          Sector?            @relation("SectorAreas", fields: [sectorId], references: [id], onDelete: Restrict)
-  sectors         Sector[]           @relation("LegacyAreaSectors")
-  costCenterLinks CostCenterArea[]
-  positionScopes  PositionOrgScope[]
+  establishment     Establishment?               @relation(fields: [establishmentId], references: [id])
+  sector            Sector?                      @relation("SectorAreas", fields: [sectorId], references: [id], onDelete: Restrict)
+  sectors           Sector[]                     @relation("LegacyAreaSectors")
+  costCenterLinks   CostCenterArea[]
+  positionScopes    PositionOrgScope[]
+  scopeHistoryNodes PositionOrgScopePeriodNode[]
 
   @@index([establishmentId])
   @@index([sectorId])
@@ -526,16 +536,20 @@ model Sector {
   createdAt      DateTime     @default(now()) @db.Timestamptz(3)
   updatedAt      DateTime     @updatedAt @db.Timestamptz(3)
 
-  area            Area?              @relation("LegacyAreaSectors", fields: [areaId], references: [id])
-  businessUnit    BusinessUnit?      @relation("BusinessUnitSectors", fields: [businessUnitId], references: [id], onDelete: Restrict)
-  areas           Area[]             @relation("SectorAreas")
-  positionScopes  PositionOrgScope[]
-  users           User[]
-  employees       Employee[]
-  positions       Position[]
-  costCenterLinks CostCenterSector[]
-  doubleHourRules DoubleHourRule[]
-  clockDevices    ClockDevice[]
+  area                     Area?                        @relation("LegacyAreaSectors", fields: [areaId], references: [id])
+  businessUnit             BusinessUnit?                @relation("BusinessUnitSectors", fields: [businessUnitId], references: [id], onDelete: Restrict)
+  areas                    Area[]                       @relation("SectorAreas")
+  positionScopes           PositionOrgScope[]
+  users                    User[]
+  employees                Employee[]
+  positions                Position[]
+  costCenterLinks          CostCenterSector[]
+  doubleHourRules          DoubleHourRule[]
+  clockDevices             ClockDevice[]
+  // Historia temporal (D-5): nunca se borra; bloquea el borrado del nodo.
+  legacySectorPeriods      EmployeeLegacySectorPeriod[]
+  scopeHistoryNodes        PositionOrgScopePeriodNode[] @relation("PositionOrgScopePeriodNodeSector")
+  scopeHistoryAreaParentOf PositionOrgScopePeriodNode[] @relation("PositionOrgScopePeriodNodeAreaSector")
 
   @@index([areaId])
   @@index([businessUnitId])
@@ -572,6 +586,7 @@ model CostCenter {
   areas           CostCenterArea[]
   sectors         CostCenterSector[]
   doubleHourRules DoubleHourRule[]
+  employeePeriods EmployeeCostCenterPeriod[]
 }
 
 model CostCenterCompany {
@@ -669,6 +684,10 @@ model Position {
   salaryCategories PositionSalaryCategory[]
   doubleHourRules  DoubleHourRule[]
   orgScopes        PositionOrgScope[]
+  // Historia temporal (D-5): `orgScopes` es el estado vigente; la historia por
+  // fecha vive en `scopePeriods` y las asignaciones a legajos en `employeePeriods`.
+  scopePeriods     PositionOrgScopePeriod[]
+  employeePeriods  EmployeePositionPeriod[]
 
   @@index([sectorId])
   @@index([status])
@@ -757,37 +776,41 @@ model Employee {
   createdAt         DateTime       @default(now()) @db.Timestamptz(3)
   updatedAt         DateTime       @updatedAt @db.Timestamptz(3)
 
-  position               Position?                      @relation(fields: [positionId], references: [id])
-  sector                 Sector?                        @relation(fields: [sectorId], references: [id])
-  costCenter             CostCenter?                    @relation(fields: [costCenterId], references: [id])
-  createdBy              User?                          @relation("EmployeeCreatedBy", fields: [createdByUserId], references: [id])
-  address                EmployeeAddress?
-  companies              EmployeeCompany[]
-  laborMovements         LaborMovement[]
-  assignments            EmployeeAssignment[]
-  hourConcepts           EmployeeHourConcept[]
-  transport              EmployeeTransport?
-  fieldHistory           EmployeeFieldHistory[]
-  blockHistory           EmployeeBlockHistory[]
-  novelties              Novelty[]
-  timeEntries            TimeEntry[]
-  hourConceptBreakdowns  HourConceptBreakdown[]
-  workShifts             WorkShift[]
-  attendancePunches      AttendancePunch[]
-  clockPunchAttempts     ClockPunchAttempt[]
-  timeSegments           TimeSegment[]
-  documents              EmployeeDocument[]
-  storageFiles           StorageFile[]
-  monthlyClosures        MonthlyTimeClosure[]
-  correctionRequests     TimeCorrectionRequest[]
-  shiftAlerts            ShiftAlert[]
-  inactivityIncidents    AttendanceInactivityIncident[]
-  doubleHourAssignments  DoubleHourRuleEmployee[]
-  shiftAssignments       ShiftAssignment[]
-  holidayWorkAssignments HolidayWorkAssignment[]
-  workRegimeAssignments  EmployeeWorkRegime[]
-  workLocations          EmployeeWorkLocation[]
-  userAccount            User?                          @relation("EmployeeUserAccount")
+  position                  Position?                      @relation(fields: [positionId], references: [id])
+  sector                    Sector?                        @relation(fields: [sectorId], references: [id])
+  costCenter                CostCenter?                    @relation(fields: [costCenterId], references: [id])
+  createdBy                 User?                          @relation("EmployeeCreatedBy", fields: [createdByUserId], references: [id])
+  address                   EmployeeAddress?
+  companies                 EmployeeCompany[]
+  laborMovements            LaborMovement[]
+  assignments               EmployeeAssignment[]
+  hourConcepts              EmployeeHourConcept[]
+  transport                 EmployeeTransport?
+  fieldHistory              EmployeeFieldHistory[]
+  blockHistory              EmployeeBlockHistory[]
+  novelties                 Novelty[]
+  timeEntries               TimeEntry[]
+  hourConceptBreakdowns     HourConceptBreakdown[]
+  workShifts                WorkShift[]
+  attendancePunches         AttendancePunch[]
+  clockPunchAttempts        ClockPunchAttempt[]
+  timeSegments              TimeSegment[]
+  documents                 EmployeeDocument[]
+  storageFiles              StorageFile[]
+  monthlyClosures           MonthlyTimeClosure[]
+  correctionRequests        TimeCorrectionRequest[]
+  shiftAlerts               ShiftAlert[]
+  inactivityIncidents       AttendanceInactivityIncident[]
+  doubleHourAssignments     DoubleHourRuleEmployee[]
+  shiftAssignments          ShiftAssignment[]
+  holidayWorkAssignments    HolidayWorkAssignment[]
+  workRegimeAssignments     EmployeeWorkRegime[]
+  workLocations             EmployeeWorkLocation[]
+  positionPeriods           EmployeePositionPeriod[]
+  costCenterPeriods         EmployeeCostCenterPeriod[]
+  legacySectorPeriods       EmployeeLegacySectorPeriod[]
+  employerPeriods           EmployeeEmployerPeriod[]
+  userAccount               User?                          @relation("EmployeeUserAccount")
   finnegansExportBatchItems FinnegansExportBatchItem[]
 
   @@index([lastName, firstName])
@@ -851,6 +874,165 @@ model EmployeeWorkLocationEstablishment {
 
   @@id([workLocationId, establishmentId])
   @@index([establishmentId])
+}
+
+// ---------------------------------------------------------------------------
+// Historia temporal de las entradas del motor de horas especiales (D-5,
+// ORG_LOCATION_REORGANIZATION.md §19). Cada tabla guarda, por legajo o por
+// puesto, el valor vigente en el intervalo cerrado de días
+// [effectiveFrom, effectiveTo] (effectiveTo NULL = abierto). La migración
+// agrega: CHECK effectiveTo >= effectiveFrom y una exclusión btree_gist que
+// impide dos vigencias superpuestas del mismo legajo/puesto, incluidas las
+// futuras. Un cambio desde D cierra la vigente en D − 1 y abre la nueva en D,
+// en la transacción del cambio y con su auditoría; nunca se borra historia.
+// Las columnas `Employee.positionId/costCenterId/sectorId`, `EmployeeCompany` y
+// `PositionOrgScope` siguen siendo el estado VIGENTE (filtros, permisos,
+// pantallas); el motor resuelve fechas sólo con estas tablas. Un valor NULL en
+// la vigencia es un dato conocido ("sin puesto"); la ausencia de vigencia que
+// cubra una fecha es falta de evidencia y el motor no la completa.
+// ---------------------------------------------------------------------------
+
+model EmployeePositionPeriod {
+  id              String    @id @default(uuid())
+  employeeId      String
+  positionId      String?
+  effectiveFrom   DateTime  @db.Date
+  effectiveTo     DateTime? @db.Date
+  reason          String
+  createdByUserId String?
+  createdAt       DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime  @updatedAt @db.Timestamptz(3)
+
+  employee  Employee  @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  position  Position? @relation(fields: [positionId], references: [id], onDelete: Restrict)
+  createdBy User?     @relation("EmployeePositionPeriodCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@index([employeeId, effectiveFrom])
+  @@index([positionId, effectiveFrom])
+}
+
+model EmployeeCostCenterPeriod {
+  id              String    @id @default(uuid())
+  employeeId      String
+  costCenterId    String?
+  effectiveFrom   DateTime  @db.Date
+  effectiveTo     DateTime? @db.Date
+  reason          String
+  createdByUserId String?
+  createdAt       DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime  @updatedAt @db.Timestamptz(3)
+
+  employee   Employee    @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  costCenter CostCenter? @relation(fields: [costCenterId], references: [id], onDelete: Restrict)
+  createdBy  User?       @relation("EmployeeCostCenterPeriodCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@index([employeeId, effectiveFrom])
+  @@index([costCenterId])
+}
+
+// Sector ANTERIOR del legajo (modelo actual, sólo lectura desde A6): la
+// dimensión que el motor sigue comparando para reglas con un sector anterior
+// (D-4). Ningún camino de la app lo cambia; el alta registra "sin sector".
+model EmployeeLegacySectorPeriod {
+  id              String    @id @default(uuid())
+  employeeId      String
+  sectorId        String?
+  effectiveFrom   DateTime  @db.Date
+  effectiveTo     DateTime? @db.Date
+  reason          String
+  createdByUserId String?
+  createdAt       DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime  @updatedAt @db.Timestamptz(3)
+
+  employee  Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  sector    Sector?  @relation(fields: [sectorId], references: [id], onDelete: Restrict)
+  createdBy User?    @relation("EmployeeLegacySectorPeriodCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@index([employeeId, effectiveFrom])
+  @@index([sectorId])
+}
+
+// Conjunto de empresas empleadoras vigente en el intervalo (misma semántica
+// que `EmployeeCompany` para el motor: alcanza si alguna coincide). La empresa
+// principal no es una entrada del motor y queda sólo en `EmployeeCompany`.
+// Un conjunto vacío es un dato conocido ("sin empresa empleadora").
+model EmployeeEmployerPeriod {
+  id              String    @id @default(uuid())
+  employeeId      String
+  effectiveFrom   DateTime  @db.Date
+  effectiveTo     DateTime? @db.Date
+  reason          String
+  createdByUserId String?
+  createdAt       DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime  @updatedAt @db.Timestamptz(3)
+
+  employee  Employee                        @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  createdBy User?                           @relation("EmployeeEmployerPeriodCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  companies EmployeeEmployerPeriodCompany[]
+
+  @@index([employeeId, effectiveFrom])
+}
+
+model EmployeeEmployerPeriodCompany {
+  periodId  String
+  companyId String
+
+  period  EmployeeEmployerPeriod @relation(fields: [periodId], references: [id], onDelete: Restrict)
+  company Company                @relation(fields: [companyId], references: [id], onDelete: Restrict)
+
+  @@id([periodId, companyId])
+  @@index([companyId])
+}
+
+// Alcance organizacional de un puesto vigente en el intervalo. Todos los
+// ocupantes lo comparten (§3.2). Los nodos guardan, además, el sector padre de
+// un área AL REGISTRAR la vigencia: la pertenencia histórica a un sector no se
+// deduce de la estructura actual.
+model PositionOrgScopePeriod {
+  id              String    @id @default(uuid())
+  positionId      String
+  effectiveFrom   DateTime  @db.Date
+  effectiveTo     DateTime? @db.Date
+  reason          String
+  createdByUserId String?
+  createdAt       DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime  @updatedAt @db.Timestamptz(3)
+
+  position  Position                     @relation(fields: [positionId], references: [id], onDelete: Restrict)
+  createdBy User?                        @relation("PositionOrgScopePeriodCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  nodes     PositionOrgScopePeriodNode[]
+
+  @@index([positionId, effectiveFrom])
+}
+
+// Mismo CHECK que PositionOrgScope (exactamente una FK de destino coincidente
+// con `level`) más `areaSectorId` obligatorio sólo para nivel AREA.
+model PositionOrgScopePeriodNode {
+  id             String        @id @default(uuid())
+  periodId       String
+  level          OrgScopeLevel
+  companyId      String?
+  businessUnitId String?
+  sectorId       String?
+  areaId         String?
+  areaSectorId   String?
+
+  period       PositionOrgScopePeriod @relation(fields: [periodId], references: [id], onDelete: Restrict)
+  company      Company?               @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  businessUnit BusinessUnit?          @relation(fields: [businessUnitId], references: [id], onDelete: Restrict)
+  sector       Sector?                @relation("PositionOrgScopePeriodNodeSector", fields: [sectorId], references: [id], onDelete: Restrict)
+  area         Area?                  @relation(fields: [areaId], references: [id], onDelete: Restrict)
+  areaSector   Sector?                @relation("PositionOrgScopePeriodNodeAreaSector", fields: [areaSectorId], references: [id], onDelete: Restrict)
+
+  @@unique([periodId, companyId])
+  @@unique([periodId, businessUnitId])
+  @@unique([periodId, sectorId])
+  @@unique([periodId, areaId])
+  @@index([companyId])
+  @@index([businessUnitId])
+  @@index([sectorId])
+  @@index([areaId])
+  @@index([areaSectorId])
 }
 
 model EmployeeAddress {
@@ -928,12 +1110,12 @@ model EmployeeAssignment {
 }
 
 model HourConcept {
-  id             String                 @id @default(uuid())
-  code           String                 @unique
+  id             String                    @id @default(uuid())
+  code           String                    @unique
   name           String
   kind           HourConceptKind
-  status         RecordStatus           @default(ACTIVO)
-  countsAsWorked Boolean                @default(true)
+  status         RecordStatus              @default(ACTIVO)
+  countsAsWorked Boolean                   @default(true)
   // Etapa 6C: nullable para no asignar semántica nueva a conceptos legacy.
   // En etapas posteriores será obligatorio para conceptos adicionales;
   // Horas normales no usa HourConceptBreakdown.
@@ -941,7 +1123,7 @@ model HourConcept {
   // Rol estable reservado al concepto base del sistema. Es nullable porque
   // todos los demás conceptos son adicionales; @unique garantiza que exista
   // como máximo un NORMAL_BASE sin depender de code/name/kind mutables.
-  systemRole     HourConceptSystemRole? @unique
+  systemRole     HourConceptSystemRole?    @unique
   // Tratamiento en el total trabajado (ver enum). Nullable sólo porque
   // NORMAL_BASE no lo usa: el CHECK "HourConcept_work_treatment_check" de la
   // migración 20261002120000 lo exige para todo concepto adicional. Es una
@@ -951,8 +1133,8 @@ model HourConcept {
   // Sin baja lógica (migración 20261003100000): deshabilitar = status
   // INACTIVO (conserva historia); eliminar = borrado físico del concepto y
   // de su historial específico (hourConcepts.repository.ts::deletePermanently).
-  createdAt      DateTime               @default(now()) @db.Timestamptz(3)
-  updatedAt      DateTime               @updatedAt @db.Timestamptz(3)
+  createdAt      DateTime                  @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime                  @updatedAt @db.Timestamptz(3)
 
   employees    EmployeeHourConcept[]
   timeEntries  TimeEntry[]
@@ -1109,12 +1291,12 @@ model Novelty {
   createdAt           DateTime       @default(now()) @db.Timestamptz(3)
   updatedAt           DateTime       @updatedAt @db.Timestamptz(3)
 
-  employee          Employee           @relation(fields: [employeeId], references: [id], onDelete: Restrict)
-  noveltyType       NoveltyType        @relation(fields: [noveltyTypeId], references: [id])
-  targetHourConcept HourConcept?       @relation(fields: [targetHourConceptId], references: [id])
-  createdBy         User?              @relation("NoveltyCreatedBy", fields: [createdByUserId], references: [id])
-  approvedBy        User?              @relation("NoveltyApprovedBy", fields: [approvedByUserId], references: [id], onDelete: SetNull)
-  documents         EmployeeDocument[]
+  employee                  Employee                   @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  noveltyType               NoveltyType                @relation(fields: [noveltyTypeId], references: [id])
+  targetHourConcept         HourConcept?               @relation(fields: [targetHourConceptId], references: [id])
+  createdBy                 User?                      @relation("NoveltyCreatedBy", fields: [createdByUserId], references: [id])
+  approvedBy                User?                      @relation("NoveltyApprovedBy", fields: [approvedByUserId], references: [id], onDelete: SetNull)
+  documents                 EmployeeDocument[]
   // Etapa 15L.4: onDelete: SetNull en FinnegansExportBatchItem.novelty -- el
   // snapshot exportado debe sobrevivir aunque esta Novelty se borre (hard
   // delete, ver novelties.repository.ts::remove).
@@ -1189,7 +1371,7 @@ model FinnegansExportBatchItem {
   // Nullable + onDelete: SetNull -- una Novelty puede borrarse (hard delete,
   // política existente, no modificada en esta etapa) sin que el snapshot ya
   // exportado desaparezca ni pierda su fila.
-  noveltyId String?
+  noveltyId  String?
   // Employee nunca se borra en este sistema (sin endpoint de hard delete,
   // confirmado) -- Restrict, mismo criterio que Novelty.employee.
   employeeId String
@@ -1789,12 +1971,12 @@ model ClockDevice {
 
   // La ubicación es metadata opcional: si se elimina el Sector, el dispositivo
   // conserva su identidad y queda sin sector; nunca se borra en cadena.
-  sector      Sector?             @relation(fields: [sectorId], references: [id], onDelete: SetNull)
-  establishment Establishment?    @relation(fields: [establishmentId], references: [id], onDelete: Restrict)
-  activatedBy User?               @relation("ClockDeviceActivatedBy", fields: [activatedByUserId], references: [id], onDelete: SetNull)
-  revokedBy   User?               @relation("ClockDeviceRevokedBy", fields: [revokedByUserId], references: [id], onDelete: SetNull)
-  punches     AttendancePunch[]
-  attempts    ClockPunchAttempt[]
+  sector        Sector?             @relation(fields: [sectorId], references: [id], onDelete: SetNull)
+  establishment Establishment?      @relation(fields: [establishmentId], references: [id], onDelete: Restrict)
+  activatedBy   User?               @relation("ClockDeviceActivatedBy", fields: [activatedByUserId], references: [id], onDelete: SetNull)
+  revokedBy     User?               @relation("ClockDeviceRevokedBy", fields: [revokedByUserId], references: [id], onDelete: SetNull)
+  punches       AttendancePunch[]
+  attempts      ClockPunchAttempt[]
 
   // Listado de RRHH: filtrar por estado (pendientes, activos) y ordenar por
   // última conexión. El prefijo `status` cubre también los filtros sólo por

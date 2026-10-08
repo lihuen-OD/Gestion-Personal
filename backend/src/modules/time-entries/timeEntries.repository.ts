@@ -7,6 +7,9 @@ import { noveltyCoversDay } from "../novelties/novelties.dateRange";
 import { resolveActiveWorkRegime } from "../work-regimes/workRegimes.service";
 import { flagOpenShiftOverflowForReview, resolveOpenShiftOverflowAlert } from "../shifts/workShiftEvaluationRunner";
 import { buildActiveDatesByRule, resolveWinningRules, ruleMatchesDate, specialHourApplicationRows, specialHourRulesForEmployeeOnDate, type SpecialHourRuleResolution } from "../workforce-management/doubleHourRuleMatching";
+import { laborHistoryService } from "../labor-history/laborHistory.service";
+import type { HistoryReader } from "../labor-history/laborHistory.repository";
+import { evaluateRuleScope, scopeDimensionLabels, type RuleScope, type ScopeDimension } from "../labor-history/laborHistory.scope";
 import {
   accountEmployeePeriods,
   accountingBaseEntrySelect,
@@ -23,6 +26,7 @@ import {
   calendarDateKey,
   dayOfMonthFromCalendarDate,
   dayOfMonthFromInstant,
+  formatArgentinaDate,
   periodFromCalendarDate,
   periodFromInstant,
 } from "../../shared/datetime/argentinaTime";
@@ -208,54 +212,32 @@ function minutesFromHours(hours: number) {
 const NIGHT_HOUR_CONCEPT_KINDS = new Set(["NOCTURNA", "GUARDIA", "SERENO"]);
 
 type DoubleHourRuleForEngine = Prisma.DoubleHourRuleGetPayload<{ include: { dates: true } }>;
+type DoubleHourRuleWithSector = DoubleHourRuleForEngine & { sector: null | { businessUnitId: string | null } };
 
-// Filtro de una dimensión de alcance (sector/centro de costo/puesto): la
-// regla matchea si no restringe esa dimensión (null) o si restringe
-// exactamente al valor del empleado. OJO: no se puede escribir como
-// `{ OR: [{ [field]: null }, { [field]: employeeValue ?? undefined }] }` —
-// `undefined` hace que Prisma OMITA esa condición del OR (no que no
-// matchee), y un objeto `{}` dentro de un OR matchea cualquier fila. Por eso,
-// si el empleado no tiene valor en esa dimensión, la única condición posible
-// es "la regla tampoco la restringe" — nunca "vale cualquier cosa".
-function scopeDimensionFilter(field: "sectorId" | "costCenterId" | "positionId", employeeValue: string | null | undefined): Prisma.DoubleHourRuleWhereInput {
-  return employeeValue ? { OR: [{ [field]: null }, { [field]: employeeValue }] } : { [field]: null };
+// Filtro SQL de candidatas por empleado: sólo la lista explícita de legajos de
+// la regla (configuración de la regla, no dato del legajo). Las dimensiones
+// empresa/sector/centro de costo/puesto se evalúan en memoria contra la
+// HISTORIA del legajo para cada fecha (laborHistory.scope.ts): no se pueden
+// descartar en SQL con los valores vigentes, porque una fecha anterior puede
+// haber tenido otros.
+function ruleEmployeeListWhere(employeeId: string): Prisma.DoubleHourRuleWhereInput {
+  return { OR: [{ employees: { none: {} } }, { employees: { some: { employeeId } } }] };
 }
 
-function sectorScopeCandidateFilter(employeeSectorId: string | null | undefined): Prisma.DoubleHourRuleWhereInput {
+function ruleScopeOf(rule: DoubleHourRuleWithSector): RuleScope {
   return {
-    OR: [
-      { sectorId: null },
-      ...(employeeSectorId ? [{ sectorId: employeeSectorId }] : []),
-      // Los sectores del árbol nuevo se resuelven después contra el alcance
-      // del puesto; no se pueden descartar en SQL usando Employee.sectorId.
-      { sector: { businessUnitId: { not: null } } },
-    ],
+    companyId: rule.companyId,
+    sectorId: rule.sectorId,
+    sectorIsLegacy: Boolean(rule.sectorId) && !rule.sector?.businessUnitId,
+    costCenterId: rule.costCenterId,
+    positionId: rule.positionId,
   };
 }
 
-// Filtro Prisma de alcance por empleado (empresa/sector/centro de
-// costo/puesto/empleados específicos, todos opcionales y combinados con AND).
-// Lo usa sólo el motor único resolveSpecialHourRulesByDate, que recibe el
-// cliente (`prisma` o el `tx` de la transacción) tipado como
-// PrismaTransactionClient.
-// Exportada sólo para el test de caracterización de A7
-// (doubleHourRuleScope.characterization.test.ts): fija el criterio vigente
-// antes de cualquier decisión D-4/D-5. No cambiar sin esa decisión.
-export function doubleHourRuleScopeWhere(employeeId: string, employeeCompanyIds: string[], employeeSectorId: string | null | undefined, employeeCostCenterId: string | null | undefined, employeePositionId: string | null | undefined, includeSector = true): Prisma.DoubleHourRuleWhereInput["AND"] {
-  return [
-    { OR: [{ employees: { none: {} } }, { employees: { some: { employeeId } } }] },
-    employeeCompanyIds.length ? { OR: [{ companyId: null }, { companyId: { in: employeeCompanyIds } }] } : { companyId: null },
-    ...(includeSector ? [scopeDimensionFilter("sectorId", employeeSectorId)] : [sectorScopeCandidateFilter(employeeSectorId)]),
-    scopeDimensionFilter("costCenterId", employeeCostCenterId),
-    scopeDimensionFilter("positionId", employeePositionId),
-  ];
-}
-
-// De las reglas ya alcanzadas por scope (doubleHourRuleScopeWhere), cuáles
-// matchean la fecha calendario de este tramo puntual — mismo criterio de
-// fecha para todos los tramos de la jornada, evaluado por separado en cada
-// uno (cruce de medianoche: el tramo del día siguiente puede matchear una
-// regla que el tramo anterior no).
+// De las reglas ya alcanzadas por scope, cuáles matchean la fecha calendario
+// de este tramo puntual — mismo criterio de fecha para todos los tramos de la
+// jornada, evaluado por separado en cada uno (cruce de medianoche: el tramo del
+// día siguiente puede matchear una regla que el tramo anterior no).
 function matchingDoubleHourRules(rules: DoubleHourRuleForEngine[], segmentDate: Date): DoubleHourRuleForEngine[] {
   const activeDatesByRule = buildActiveDatesByRule(rules);
   return rules.filter((rule) => ruleMatchesDate(rule, segmentDate, activeDatesByRule));
@@ -263,82 +245,76 @@ function matchingDoubleHourRules(rules: DoubleHourRuleForEngine[], segmentDate: 
 
 // Etapa 11A: carga manual (create()/update()) no corre dentro de la
 // transacción con `tx` extendido que usan createFromWorkShift/
-// closeOpenWorkShift (ver comentario de doubleHourRuleScopeWhere sobre por
-// qué ese `tx` no se puede tipar como función async de nivel superior) — acá
-// alcanza con `prisma` directo, que sí tiene un tipo estable. A diferencia
-// del fichador, una carga manual no tiene jornada real que partir en tramos:
-// no crea TimeSegment ni SpecialHourRuleApplication (no hay a qué tramo
-// asociar la trazabilidad), sólo resuelve el multiplicador efectivo para que
-// TimeEntry.appliedMultiplier quede correcto — hours/totalMinutes siguen
-// siendo siempre minutos reales, igual que en el fichador desde la Etapa 8F.
+// closeOpenWorkShift — acá alcanza con `prisma` directo, que sí tiene un tipo
+// estable. A diferencia del fichador, una carga manual no tiene jornada real
+// que partir en tramos: no crea TimeSegment ni SpecialHourRuleApplication (no
+// hay a qué tramo asociar la trazabilidad), sólo resuelve el multiplicador
+// efectivo para que TimeEntry.appliedMultiplier quede correcto —
+// hours/totalMinutes siguen siendo siempre minutos reales, igual que en el
+// fichador desde la Etapa 8F.
 async function resolveDoubleHourMultiplierForManualEntry(employeeId: string, date: Date): Promise<number> {
   return (await resolveDoubleHourMultipliersByDate(employeeId, [date])).get(calendarDateKey(date)) ?? 1;
 }
 
 export type SpecialHourResolution = SpecialHourRuleResolution<DoubleHourRuleForEngine>;
 
-type SpecialHourRuleReader = Pick<PrismaTransactionClient, "employee" | "doubleHourRule" | "holidayWorkAssignment">;
+type SpecialHourRuleReader = Pick<PrismaTransactionClient, "doubleHourRule" | "holidayWorkAssignment"> & HistoryReader;
 
-type EmployeeRuleScope = {
-  sectorId: string | null;
-  costCenterId: string | null;
-  positionId: string | null;
-  companies: Array<{ companyId: string }>;
-  position: null | { orgScopes: Array<{ level: string; sectorId: string | null; area: null | { sectorId: string | null }; createdAt: Date }> };
+/** Fecha que el motor no puede resolver sin inventar: falta la vigencia de alguna dimensión que la regla restringe. */
+export type MissingScopeHistory = {
+  employeeId: string;
+  date: string;
+  period: string;
+  dimensions: ScopeDimension[];
+  ruleId: string;
+  ruleName: string;
 };
 
-function ruleSectorMatchesEmployee(rule: DoubleHourRuleForEngine & { sector: null | { businessUnitId: string | null } }, employee: EmployeeRuleScope | null) {
-  if (!rule.sectorId) return true;
-  if (!rule.sector?.businessUnitId) return employee?.sectorId === rule.sectorId;
-  // D-4 “Ubicado dentro de”: sólo un alcance situado en el sector elegido o
-  // en una de sus áreas. Un alcance superior (empresa/UN) no hereda todas las
-  // reglas sectoriales.
-  return employee?.position?.orgScopes.some((scope) =>
-    (scope.level === "SECTOR" && scope.sectorId === rule.sectorId)
-    || (scope.level === "AREA" && scope.area?.sectorId === rule.sectorId)) ?? false;
+export type SpecialHourEvaluation =
+  | { resolution: SpecialHourResolution; missingHistory?: undefined }
+  | { resolution?: undefined; missingHistory: MissingScopeHistory };
+
+export class SpecialHourScopeHistoryMissingError extends AppError {
+  constructor(public readonly missing: MissingScopeHistory) {
+    super(
+      `No hay historia laboral registrada para el ${formatArgentinaDate(missing.date)} (${missing.dimensions.map((dimension) => scopeDimensionLabels[dimension]).join(", ")}), que necesita la regla “${missing.ruleName}”. Las horas especiales de esa fecha no se resuelven con los datos actuales: primero hay que registrar la historia desde esa fecha.`,
+      409,
+      "SPECIAL_HOUR_SCOPE_HISTORY_MISSING",
+      missing,
+    );
+  }
 }
 
 // Motor ÚNICO de Hora Especial por empleado + fecha (docs/decisions/
-// WORKED_TIME_ACCOUNTING_MODEL.md §6, §15 y §16). Lo usan la carga manual, los
-// desgloses, el fichador (createFromWorkShift/closeOpenWorkShift) y la
-// reinterpretación de la historia:
-// - reglas ACTIVAS vigentes en la fecha y alcanzadas por el empleado
-//   (empresa/sector/centro de costo/puesto/empleados);
+// WORKED_TIME_ACCOUNTING_MODEL.md §6, §15 y §16; ORG_LOCATION_REORGANIZATION.md
+// §18-§19). Lo usan la carga manual, los desgloses, el fichador
+// (createFromWorkShift/closeOpenWorkShift) y la reinterpretación de la historia:
+// - reglas ACTIVAS vigentes en la fecha cuyo alcance (empresa empleadora,
+//   sector, centro de costo, puesto) se cumple con la HISTORIA del legajo
+//   vigente ESE día, y lista explícita de legajos;
 // - FERIADO + convocatoria: si la fecha tiene convocados (HolidayWorkAssignment
 //   ACTIVA), las reglas FERIADO aplican sólo a ellos
 //   (specialHourRulesForEmployeeOnDate);
 // - ganadoras por prioridad (resolveWinningRules).
-// Siempre 4 consultas (alcance del empleado, reglas en alcance, reglas FERIADO
-// y convocatorias del rango) sin importar cuántas fechas — nunca una por
-// fecha. Clave = calendarDateKey del @db.Date (mismo criterio UTC-calendario
-// que ruleMatchesDate). `db` permite correrlo dentro de la transacción que
+// Una fecha cuya resolución depende de una dimensión sin vigencia registrada
+// queda como `missingHistory`: nunca se completa con el valor actual. Consultas
+// fijas por llamada (historia del rango, reglas, FERIADO y convocatorias), sin
+// importar cuántas fechas. `db` permite correrlo dentro de la transacción que
 // cambia una regla o una convocatoria, para ver su estado nuevo.
-export async function resolveSpecialHourRulesByDate(employeeId: string, dates: Date[], db: SpecialHourRuleReader = prisma): Promise<Map<string, SpecialHourResolution>> {
-  const result = new Map<string, SpecialHourResolution>();
+export async function evaluateSpecialHourRulesByDate(employeeId: string, dates: Date[], db: SpecialHourRuleReader = prisma): Promise<Map<string, SpecialHourEvaluation>> {
+  const result = new Map<string, SpecialHourEvaluation>();
   if (!dates.length) return result;
   const times = dates.map((date) => date.getTime());
   const from = new Date(Math.min(...times));
   const to = new Date(Math.max(...times));
-  const employeeScope = await db.employee.findUnique({
-    where: { id: employeeId },
-    select: {
-      sectorId: true, costCenterId: true, positionId: true,
-      companies: { select: { companyId: true } },
-      position: { select: { orgScopes: { select: { level: true, sectorId: true, area: { select: { sectorId: true } }, createdAt: true } } } },
-    },
-  });
   const vigencyWhere = { status: "ACTIVO" as const, fromDate: { lte: to }, OR: [{ toDate: null }, { toDate: { gte: from } }] };
-  const [rulesInScope, feriadoRules, convocations] = await Promise.all([
-    db.doubleHourRule.findMany({
-      where: {
-        ...vigencyWhere,
-        AND: doubleHourRuleScopeWhere(employeeId, employeeScope?.companies.map((item) => item.companyId) ?? [], employeeScope?.sectorId, employeeScope?.costCenterId, employeeScope?.positionId, false),
-      },
-      include: { dates: true, sector: { select: { businessUnitId: true } } },
-    }),
+  const ruleInclude = { dates: true, sector: { select: { businessUnitId: true } } } as const;
+  const [history, rulesForEmployee, feriadoRules, convocations] = await Promise.all([
+    laborHistoryService.loadEngineScopeHistory(db, employeeId, { fromKey: calendarDateKey(from), toKey: calendarDateKey(to) }),
+    db.doubleHourRule.findMany({ where: { ...vigencyWhere, AND: [ruleEmployeeListWhere(employeeId)] }, include: ruleInclude }),
     // Sin filtro de alcance: con convocatoria, el convocado queda alcanzado
     // aunque la regla FERIADO tenga otro alcance.
-    db.doubleHourRule.findMany({ where: { ...vigencyWhere, kind: "FERIADO" }, include: { dates: true, sector: { select: { businessUnitId: true } } } }),
+    db.doubleHourRule.findMany({ where: { ...vigencyWhere, kind: "FERIADO" }, include: ruleInclude }),
     db.holidayWorkAssignment.findMany({ where: { status: "ACTIVA", date: { gte: from, lte: to } }, select: { date: true, employeeId: true } }),
   ]);
   const convokedByDate = new Map<string, Set<string>>();
@@ -346,37 +322,53 @@ export async function resolveSpecialHourRulesByDate(employeeId: string, dates: D
     const key = calendarDateKey(convocation.date);
     convokedByDate.set(key, (convokedByDate.get(key) ?? new Set<string>()).add(convocation.employeeId));
   }
+  const activeDates = buildActiveDatesByRule(rulesForEmployee);
   const isVigent = (rule: DoubleHourRuleForEngine, date: Date) => rule.fromDate <= date && (!rule.toDate || rule.toDate >= date);
   for (const date of dates) {
     const key = calendarDateKey(date);
     if (result.has(key)) continue;
-    const newSectorRules = rulesInScope.filter((rule) => rule.sector?.businessUnitId && isVigent(rule, date));
-    if (newSectorRules.length) {
-      const scopeRevisionAt = employeeScope?.position?.orgScopes.reduce<Date | null>((latest, scope) => !latest || scope.createdAt > latest ? scope.createdAt : latest, null) ?? null;
-      const revisionDate = scopeRevisionAt ? calendarDateKey(scopeRevisionAt) : null;
-      if (!revisionDate || key < revisionDate) {
-        // D-5: PositionOrgScope sólo conserva el estado vigente. Si la fecha
-        // precede a la revisión actual no inventamos qué alcance tenía el
-        // puesto ni usamos silenciosamente el actual.
-        throw new AppError(
-          `No hay historia suficiente del alcance del puesto para resolver horas especiales del período ${key.slice(0, 7)}. El período queda sin reinterpretar; cargá la vigencia histórica antes de recalcular.`,
-          409,
-          "SPECIAL_HOUR_SCOPE_HISTORY_MISSING",
-          { employeeId, date: key, period: key.slice(0, 7) },
-        );
+    const convoked = convokedByDate.get(key) ?? new Set<string>();
+    // Sólo importa el alcance de reglas vigentes que caen en la fecha por
+    // calendario; con convocatoria, el FERIADO lo decide la convocatoria.
+    const inScope: DoubleHourRuleWithSector[] = [];
+    let missingHistory: MissingScopeHistory | null = null;
+    for (const rule of rulesForEmployee) {
+      if (!isVigent(rule, date) || !ruleMatchesDate(rule, date, activeDates)) continue;
+      if (convoked.size && rule.kind === "FERIADO") continue;
+      const evaluation = evaluateRuleScope(ruleScopeOf(rule), history, key);
+      if (evaluation.kind === "MATCH") inScope.push(rule);
+      else if (evaluation.kind === "MISSING" && !missingHistory) {
+        missingHistory = { employeeId, date: key, period: key.slice(0, 7), dimensions: evaluation.dimensions, ruleId: rule.id, ruleName: rule.name };
       }
+    }
+    if (missingHistory) {
+      result.set(key, { missingHistory });
+      continue;
     }
     const candidates = specialHourRulesForEmployeeOnDate({
       employeeId,
-      rulesInEmployeeScope: rulesInScope.filter((rule) => isVigent(rule, date) && ruleSectorMatchesEmployee(rule, employeeScope)),
+      rulesInEmployeeScope: inScope,
       feriadoRules: feriadoRules.filter((rule) => isVigent(rule, date)),
-      convokedEmployeeIds: convokedByDate.get(key) ?? new Set<string>(),
+      convokedEmployeeIds: convoked,
     });
     const matchedRules = matchingDoubleHourRules(candidates, date);
     const { winners, multiplier, conflicting } = resolveWinningRules(matchedRules);
-    result.set(key, { multiplier, matchedRules, winners, conflicting });
+    result.set(key, { resolution: { multiplier, matchedRules, winners, conflicting } });
   }
   return result;
+}
+
+/**
+ * Igual que evaluateSpecialHourRulesByDate, pero exige poder resolver TODAS
+ * las fechas: si alguna no tiene historia suficiente lanza
+ * SPECIAL_HOUR_SCOPE_HISTORY_MISSING (409) por la primera, antes de que quien
+ * llama escriba nada.
+ */
+export async function resolveSpecialHourRulesByDate(employeeId: string, dates: Date[], db: SpecialHourRuleReader = prisma): Promise<Map<string, SpecialHourResolution>> {
+  const evaluations = await evaluateSpecialHourRulesByDate(employeeId, dates, db);
+  const missing = [...evaluations.values()].flatMap((evaluation) => (evaluation.missingHistory ? [evaluation.missingHistory] : [])).sort((a, b) => a.date.localeCompare(b.date));
+  if (missing.length) throw new SpecialHourScopeHistoryMissingError(missing[0]!);
+  return new Map([...evaluations].map(([key, evaluation]) => [key, evaluation.resolution!]));
 }
 
 // Sólo el multiplicador: carga manual de horas y desgloses (manual/automáticos).

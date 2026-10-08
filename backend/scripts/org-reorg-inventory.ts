@@ -12,63 +12,43 @@
  *   filas afectadas y tratamiento (o bloqueo);
  * - reglas de horas especiales que referencian la estructura: alcance,
  *   población actual, trazas ganadoras y cierres alcanzados;
- * - impacto exacto en el motor de horas especiales si se vaciaran sector,
- *   puesto (y empresas en C2) de los legajos SIN tratar las reglas: se usa el
- *   motor real (resolveSpecialHourRulesByDate) con un lector que simula el
- *   legajo limpio, dentro de la misma transacción de sólo lectura;
+ * - historia temporal de D-5 (§19): filas por tabla, cobertura de hoy por
+ *   dimensión y referencias a registros del inventario (bloquean la limpieza);
+ * - impacto en el motor de horas especiales si desaparecieran las referencias
+ *   al inventario SIN tratar las reglas: motor real
+ *   (evaluateSpecialHourRulesByDate) con un lector que simula esa historia,
+ *   dentro de la misma transacción de sólo lectura; las fechas sin historia
+ *   suficiente se informan como MISSING;
  * - el plan de limpieza resultante sin decisiones (bloqueos concretos).
  * No imprime credenciales; sólo identificadores, códigos y nombres de catálogo.
  */
 import { writeFileSync } from "node:fs";
-import { arg, captureRowManifest, connectTarget, countReferences, discoverForeignKeys, inventoryIds, loadInventory, loadRules, readOnly, ruleReferences, type Tx } from "./org-reorg/lib";
+import { arg, captureRowManifest, connectTarget, countReferences, discoverForeignKeys, employeeDatesWithHours, engineOutcomes, inventoryIds, loadInventory, loadRules, readOnly, ruleReferences, type EngineEvaluator, type Tx } from "./org-reorg/lib";
+import { historyWithoutReferences } from "./labor-history/simulatedReaders";
 import { buildCleanupPlan, classifyReference, inventoryDimensions, type CompanyMode, type FrozenInventory } from "../src/modules/org-structure/reorg/cleanupPlan";
-
-type Resolution = { multiplier: unknown; winners: Array<{ id: string; name?: string }> };
-type Resolver = (employeeId: string, dates: Date[], db: unknown) => Promise<Map<string, Resolution>>;
 
 const dayKey = (date: Date) => date.toISOString().slice(0, 10);
 
-/** Lector para el motor: igual a la transacción, pero el legajo aparece sin los vínculos que la limpieza vaciaría. */
-function simulatedReader(tx: Tx, inventory: FrozenInventory) {
-  const sectors = new Set(inventory.records.Sector.map((record) => record.id));
-  const positions = new Set(inventory.records.Position.map((record) => record.id));
-  const companies = new Set(inventory.records.Company.map((record) => record.id));
-  return {
-    doubleHourRule: tx.doubleHourRule,
-    holidayWorkAssignment: tx.holidayWorkAssignment,
-    employee: {
-      findUnique: async (args: Parameters<Tx["employee"]["findUnique"]>[0]) => {
-        const row = (await tx.employee.findUnique(args)) as { sectorId: string | null; positionId: string | null; companies?: Array<{ companyId: string }> } | null;
-        if (!row) return row;
-        return {
-          ...row,
-          sectorId: row.sectorId && sectors.has(row.sectorId) ? null : row.sectorId,
-          positionId: row.positionId && positions.has(row.positionId) ? null : row.positionId,
-          companies: (row.companies ?? []).filter((company) => !companies.has(company.companyId)),
-        };
-      },
-    },
-  };
-}
-
-async function engineImpact(tx: Tx, resolve: Resolver, inventory: FrozenInventory) {
-  const rows = await tx.$queryRawUnsafe<Array<{ employeeId: string; date: Date }>>(
-    `SELECT "employeeId", date FROM "TimeEntry" UNION SELECT "employeeId", date FROM "HourConceptBreakdown" UNION SELECT "employeeId", date FROM "TimeSegment"`,
-  );
-  const datesByEmployee = new Map<string, Date[]>();
-  for (const row of rows) datesByEmployee.set(row.employeeId, [...(datesByEmployee.get(row.employeeId) ?? []), row.date]);
-  const reader = simulatedReader(tx, inventory);
-  const changes: Array<{ employeeId: string; date: string; before: { multiplier: number; winners: string[] }; after: { multiplier: number; winners: string[] } }> = [];
-  for (const [employeeId, dates] of datesByEmployee) {
-    const [current, simulated] = [await resolve(employeeId, dates, tx), await resolve(employeeId, dates, reader)];
-    for (const [key, now] of current) {
-      const then = simulated.get(key);
-      const winnersNow = now.winners.map((rule) => rule.id).sort();
-      const winnersThen = (then?.winners ?? []).map((rule) => rule.id).sort();
-      if (Number(now.multiplier) !== Number(then?.multiplier ?? 1) || winnersNow.join() !== winnersThen.join()) {
-        changes.push({ employeeId, date: key, before: { multiplier: Number(now.multiplier), winners: winnersNow }, after: { multiplier: Number(then?.multiplier ?? 1), winners: winnersThen } });
-      }
-    }
+/**
+ * Impacto en el motor si desaparecieran las referencias a registros del
+ * inventario. Desde D-5 el motor no lee las columnas vigentes del legajo sino
+ * su historia temporal (§19): se simula en memoria una historia sin esas
+ * referencias. Una fecha sin historia suficiente figura como MISSING tanto
+ * antes como después (no es un cambio de la limpieza).
+ */
+async function engineImpact(tx: Tx, evaluate: EngineEvaluator, inventory: FrozenInventory) {
+  const { rows } = await employeeDatesWithHours(tx);
+  const reader = historyWithoutReferences(tx, {
+    sectors: new Set(inventory.records.Sector.map((record) => record.id)),
+    positions: new Set(inventory.records.Position.map((record) => record.id)),
+    companies: new Set(inventory.records.Company.map((record) => record.id)),
+  });
+  const [current, simulated] = [await engineOutcomes(tx, evaluate), await engineOutcomes(tx, evaluate, reader)];
+  const missingNow = [...current.values()].filter((value) => value.startsWith("MISSING")).length;
+  const changes: Array<{ employeeId: string; date: string; before: string; after: string }> = [];
+  for (const [key, now] of current) {
+    const then = simulated.get(key) ?? "1:";
+    if (now !== then) changes.push({ employeeId: key.split("|")[0]!, date: key.split("|")[1]!, before: now, after: then });
   }
   // Filas existentes en esas fechas (las que una reinterpretación recalcularía) y cierres alcanzados.
   const keys = changes.map((change) => `${change.employeeId}|${change.date}`);
@@ -82,8 +62,9 @@ async function engineImpact(tx: Tx, resolve: Resolver, inventory: FrozenInventor
     ? await tx.$queryRawUnsafe<Array<{ status: string; n: number }>>(`SELECT status::text, count(*)::int AS n FROM "MonthlyTimeClosure" WHERE ("employeeId" || '|' || period) = ANY($1::text[]) GROUP BY status`, periods)
     : [];
   return {
-    employeesWithHours: datesByEmployee.size,
-    employeeDatesEvaluated: rows.length,
+    employeesWithHours: new Set([...current.keys()].map((key) => key.split("|")[0])).size,
+    employeeDatesEvaluated: rows,
+    employeeDatesWithoutHistory: missingNow,
     changedEmployeeDates: changes.length,
     employeesAffected: new Set(changes.map((change) => change.employeeId)).size,
     rowsOnChangedDates: { timeEntries: entries[0]!.n, hours: entries[0]!.hours, breakdowns: breakdowns[0]!.n, breakdownMinutes: breakdowns[0]!.minutes, segments: segments[0]!.n },
@@ -108,7 +89,7 @@ async function ruleApplications(tx: Tx, ruleId: string) {
   return { ...stats!, first: stats!.first ? dayKey(stats!.first) : null, last: stats!.last ? dayKey(stats!.last) : null, closuresWithWins: Object.fromEntries(closures.map((row) => [row.status, row.n])) };
 }
 
-async function inventoryFor(tx: Tx, companyMode: CompanyMode, resolve: Resolver) {
+async function inventoryFor(tx: Tx, companyMode: CompanyMode, evaluate: EngineEvaluator) {
   const inventory = await loadInventory(tx, companyMode);
   const foreignKeys = await discoverForeignKeys(tx);
   const references = await countReferences(tx, foreignKeys, inventoryIds(inventory));
@@ -147,7 +128,7 @@ async function inventoryFor(tx: Tx, companyMode: CompanyMode, resolve: Resolver)
     }),
     plan: { blocking: plan.blocking, issues: plan.issues, nullify: plan.nullify, deleteLinks: plan.deleteLinks, deletable: Object.fromEntries(Object.entries(plan.deletable).map(([table, ids]) => [table, ids.length])) },
     rules: affectedRules,
-    engineImpactWithoutRuleTreatment: await engineImpact(tx, resolve, inventory),
+    engineImpactWithoutRuleTreatment: await engineImpact(tx, evaluate, inventory),
   };
 }
 
@@ -194,13 +175,36 @@ async function employeeBaseline(tx: Tx) {
   return { summary, assignments, reloadList, textCopies };
 }
 
+/** Historia temporal (D-5): filas por tabla y cobertura del día de hoy por dimensión. Sólo lectura. */
+async function laborHistoryBaseline(tx: Tx) {
+  const [counts] = await tx.$queryRawUnsafe<Array<Record<string, number>>>(`SELECT
+    (SELECT count(*)::int FROM "EmployeePositionPeriod") AS "employeePositionPeriods",
+    (SELECT count(*)::int FROM "EmployeeCostCenterPeriod") AS "employeeCostCenterPeriods",
+    (SELECT count(*)::int FROM "EmployeeLegacySectorPeriod") AS "employeeLegacySectorPeriods",
+    (SELECT count(*)::int FROM "EmployeeEmployerPeriod") AS "employeeEmployerPeriods",
+    (SELECT count(*)::int FROM "EmployeeEmployerPeriodCompany") AS "employeeEmployerPeriodCompanies",
+    (SELECT count(*)::int FROM "PositionOrgScopePeriod") AS "positionOrgScopePeriods",
+    (SELECT count(*)::int FROM "PositionOrgScopePeriodNode") AS "positionOrgScopePeriodNodes"`);
+  const [coverage] = await tx.$queryRawUnsafe<Array<Record<string, number>>>(`
+    WITH today AS (SELECT (now() AT TIME ZONE 'America/Argentina/Cordoba')::date AS d)
+    SELECT
+      (SELECT count(*)::int FROM "Employee") AS employees,
+      (SELECT count(DISTINCT p."employeeId")::int FROM "EmployeePositionPeriod" p, today WHERE p."effectiveFrom" <= today.d AND (p."effectiveTo" IS NULL OR p."effectiveTo" >= today.d)) AS "coveredPositionToday",
+      (SELECT count(DISTINCT p."employeeId")::int FROM "EmployeeCostCenterPeriod" p, today WHERE p."effectiveFrom" <= today.d AND (p."effectiveTo" IS NULL OR p."effectiveTo" >= today.d)) AS "coveredCostCenterToday",
+      (SELECT count(DISTINCT p."employeeId")::int FROM "EmployeeLegacySectorPeriod" p, today WHERE p."effectiveFrom" <= today.d AND (p."effectiveTo" IS NULL OR p."effectiveTo" >= today.d)) AS "coveredLegacySectorToday",
+      (SELECT count(DISTINCT p."employeeId")::int FROM "EmployeeEmployerPeriod" p, today WHERE p."effectiveFrom" <= today.d AND (p."effectiveTo" IS NULL OR p."effectiveTo" >= today.d)) AS "coveredEmployerToday",
+      (SELECT count(*)::int FROM "Position") AS positions,
+      (SELECT count(DISTINCT p."positionId")::int FROM "PositionOrgScopePeriod" p, today WHERE p."effectiveFrom" <= today.d AND (p."effectiveTo" IS NULL OR p."effectiveTo" >= today.d)) AS "positionsWithScopeHistoryToday"`);
+  return { rows: counts, coverage };
+}
+
 async function main() {
   const reportPath = arg("report");
   if (!reportPath) throw new Error("Falta --report=<archivo.json> (fuera del repositorio).");
   const target = await connectTarget();
   // Importado después de fijar DATABASE_URL al destino verificado.
-  const { resolveSpecialHourRulesByDate } = await import("../src/modules/time-entries/timeEntries.repository");
-  const resolve = resolveSpecialHourRulesByDate as unknown as Resolver;
+  const { evaluateSpecialHourRulesByDate } = await import("../src/modules/time-entries/timeEntries.repository");
+  const evaluate = evaluateSpecialHourRulesByDate as unknown as EngineEvaluator;
   try {
     const report = await readOnly(target.prisma, async (tx) => {
       const [meta] = await tx.$queryRawUnsafe<Array<{ database: string; now: string; server: string }>>("SELECT current_database() AS database, now()::text AS now, current_setting('server_version') AS server");
@@ -221,8 +225,9 @@ async function main() {
         newModelRows: newModel[0],
         tableRowCounts: Object.fromEntries(Object.entries(manifest.tables).map(([table, data]) => [table, Object.keys(data.rows).length])),
         employees: await employeeBaseline(tx),
-        C1: await inventoryFor(tx, "C1", resolve),
-        C2: await inventoryFor(tx, "C2", resolve),
+        laborHistory: await laborHistoryBaseline(tx),
+        C1: await inventoryFor(tx, "C1", evaluate),
+        C2: await inventoryFor(tx, "C2", evaluate),
       };
     });
     writeFileSync(reportPath, JSON.stringify(report, null, 2));

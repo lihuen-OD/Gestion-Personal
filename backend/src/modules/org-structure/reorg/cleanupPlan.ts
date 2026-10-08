@@ -14,6 +14,9 @@
 //   ampliaría) ni se borra: sólo R1 (reasignar), R2 (lista explícita no
 //   vacía) o R3 (retener el destino viejo). Inactivar sólo se combina.
 // - Toda FK desconocida hacia la estructura bloquea (fail closed).
+// - La historia temporal de D-5 (§19) nunca se borra ni se vacía para liberar
+//   un registro: si referencia algo del inventario, la limpieza se bloquea
+//   hasta retener ese registro o resolverlo con una decisión explícita.
 
 export type TargetTable = "Company" | "BusinessUnit" | "Establishment" | "Area" | "Sector" | "Position";
 export type CompanyMode = "C1" | "C2";
@@ -35,7 +38,7 @@ export interface FrozenInventory {
   records: Record<TargetTable, InventoryRecord[]>;
 }
 
-export type TreatmentKind = "NULLIFY" | "DELETE_LINKS" | "CHAIN" | "RULE_DECISION" | "BLOCK";
+export type TreatmentKind = "NULLIFY" | "DELETE_LINKS" | "CHAIN" | "RULE_DECISION" | "HISTORY" | "BLOCK";
 
 /**
  * Tratamiento de cada FK hacia la estructura, por `Tabla.columna`. Lo no
@@ -68,6 +71,16 @@ export const REFERENCE_TREATMENTS: Readonly<Record<string, TreatmentKind>> = {
   "DoubleHourRule.companyId": "RULE_DECISION",
   "DoubleHourRule.sectorId": "RULE_DECISION",
   "DoubleHourRule.positionId": "RULE_DECISION",
+  // Historia temporal (D-5): conocida, pero nunca tratable por la limpieza.
+  "EmployeePositionPeriod.positionId": "HISTORY",
+  "EmployeeLegacySectorPeriod.sectorId": "HISTORY",
+  "EmployeeEmployerPeriodCompany.companyId": "HISTORY",
+  "PositionOrgScopePeriod.positionId": "HISTORY",
+  "PositionOrgScopePeriodNode.companyId": "HISTORY",
+  "PositionOrgScopePeriodNode.businessUnitId": "HISTORY",
+  "PositionOrgScopePeriodNode.sectorId": "HISTORY",
+  "PositionOrgScopePeriodNode.areaId": "HISTORY",
+  "PositionOrgScopePeriodNode.areaSectorId": "HISTORY",
 };
 
 export interface ReferenceCount {
@@ -99,6 +112,9 @@ export function classifyReference(ref: ReferenceCount): { treatment: TreatmentKi
   const label = `${ref.table}.${ref.column} → ${ref.target}`;
   if (treatment === "BLOCK" && ref.rowsToInventory > 0) {
     return { treatment, issue: { code: "UNCLASSIFIED_OR_NEW_DEPENDENCY", blocking: true, ref: label, message: `${ref.rowsToInventory} fila(s) de ${ref.table}.${ref.column} dependen de registros a borrar y la dependencia no tiene tratamiento autorizado (registro nuevo o FK no clasificada).` } };
+  }
+  if (treatment === "HISTORY" && ref.rowsToInventory > 0) {
+    return { treatment, issue: { code: "HISTORY_REFERENCES_INVENTORY", blocking: true, ref: label, message: `${ref.rowsToInventory} fila(s) de historia temporal (${ref.table}.${ref.column}) referencian registros a borrar. La historia nunca se borra ni se vacía: hay que retener esos registros (excluirlos del inventario) o resolverlos con una decisión explícita antes de limpiar.` } };
   }
   if (treatment === "CHAIN" && ref.rowsOutsideInventory > 0) {
     return { treatment, issue: { code: "OUTSIDE_RECORD_DEPENDS_ON_INVENTORY", blocking: true, ref: label, message: `${ref.rowsOutsideInventory} registro(s) de ${ref.table} fuera del inventario dependen de registros a borrar.` } };

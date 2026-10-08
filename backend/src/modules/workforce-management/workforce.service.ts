@@ -520,8 +520,9 @@ export const workforceService = {
       // Borrar la regla también borraría su traza histórica. Si hay un cierre
       // protegido que cambiaría, abortamos toda la transacción: ni la regla ni
       // sus aplicaciones pueden desaparecer por fuera de una corrección
-      // explícita y auditada (D-5).
-      if (result.protectedPeriods.some((period) => period.timeEntries + period.breakdowns + period.segments > 0)) {
+      // explícita y auditada (D-5). Un período protegido sin historia
+      // suficiente para evaluarlo también bloquea: no se sabe si cambiaría.
+      if (result.protectedPeriods.some((period) => period.timeEntries + period.breakdowns + period.segments + period.missingHistory > 0)) {
         throw new AppError(
           "La regla tiene resultados en períodos enviados o aprobados. No se puede eliminar porque se perdería su traza histórica; inactivala o corregí esos períodos mediante el procedimiento explícito de RRHH.",
           409,

@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Mock } from "vitest";
 import type { PrismaTransactionClient } from "../../shared/prisma/client";
 import { accountDay, toAccountingBaseEntry, toAccountingBreakdown } from "../time-entries/workedTimeAccounting";
-import { resolveSpecialHourRulesByDate } from "../time-entries/timeEntries.repository";
+import { evaluateSpecialHourRulesByDate } from "../time-entries/timeEntries.repository";
 import { buildActiveDatesByRule, resolveWinningRules, ruleMatchesDate, specialHourRulesForEmployeeOnDate } from "./doubleHourRuleMatching";
 import { rebuildClosureSnapshots } from "./closureSnapshot";
 import { affectedWindow, reinterpretSpecialHours, reinterpretSpecialHoursOnDates, type RuleCalendar } from "./specialHourReinterpretation";
@@ -15,13 +15,21 @@ import { affectedWindow, reinterpretSpecialHours, reinterpretSpecialHoursOnDates
  *
  * El motor de reglas se reemplaza por uno en memoria que usa EXACTAMENTE las
  * mismas piezas de matching (ruleMatchesDate/buildActiveDatesByRule/
- * resolveWinningRules); el alcance por SQL (doubleHourRuleScopeWhere) ya está
- * cubierto en timeEntries.repository.test.ts y acá se modela como lista de
- * empleados alcanzados. La contabilidad es la real (workedTimeAccounting).
+ * resolveWinningRules); el alcance con historia (D-5) ya está cubierto en
+ * timeEntries.repository.test.ts y laborHistory.scope.test.ts, y acá se
+ * modela como lista de empleados alcanzados más un conjunto de
+ * legajo + fecha sin historia suficiente. La contabilidad es la real
+ * (workedTimeAccounting).
  */
 
 vi.mock("../../shared/prisma/client", () => ({ prisma: {} }));
-vi.mock("../time-entries/timeEntries.repository", () => ({ resolveSpecialHourRulesByDate: vi.fn() }));
+vi.mock("../time-entries/timeEntries.repository", () => ({
+  evaluateSpecialHourRulesByDate: vi.fn(),
+  SpecialHourScopeHistoryMissingError: class extends Error {
+    code = "SPECIAL_HOUR_SCOPE_HISTORY_MISSING";
+    constructor(public readonly missing: { employeeId: string; date: string }) { super(`missing ${missing.employeeId} ${missing.date}`); }
+  },
+}));
 vi.mock("./closureSnapshot", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./closureSnapshot")>();
   return { ...actual, rebuildClosureSnapshots: vi.fn() };
@@ -41,8 +49,9 @@ const PEDRO = "employee-pedro";
 const OCT_3 = new Date("2026-10-03T00:00:00.000Z"); // sábado
 const OCT_4 = new Date("2026-10-04T00:00:00.000Z"); // domingo
 
-let world: { rules: Rule[]; convocations: Convocation[]; entries: Entry[]; breakdowns: Breakdown[]; segments: Segment[]; applications: Application[]; closures: Closure[] };
-const emptyWorld = (): typeof world => ({ rules: [], convocations: [], entries: [], breakdowns: [], segments: [], applications: [], closures: [] });
+// `missingHistory`: claves "legajo|YYYY-MM-DD" sin historia suficiente (D-5).
+let world: { rules: Rule[]; convocations: Convocation[]; entries: Entry[]; breakdowns: Breakdown[]; segments: Segment[]; applications: Application[]; closures: Closure[]; missingHistory: Set<string> };
+const emptyWorld = (): typeof world => ({ rules: [], convocations: [], entries: [], breakdowns: [], segments: [], applications: [], closures: [], missingHistory: new Set() });
 
 function feriado(overrides: Partial<Rule> = {}): Rule {
   return {
@@ -137,7 +146,12 @@ beforeEach(() => {
   vi.clearAllMocks();
   world = emptyWorld();
   db = fakeDb();
-  (resolveSpecialHourRulesByDate as unknown as Mock).mockImplementation(async (employeeId: string, dates: Date[]) => engine(employeeId, dates));
+  (evaluateSpecialHourRulesByDate as unknown as Mock).mockImplementation(async (employeeId: string, dates: Date[]) => new Map([...engine(employeeId, dates)].map(([key, resolution]) => [
+    key,
+    world.missingHistory.has(`${employeeId}|${key}`)
+      ? { missingHistory: { employeeId, date: key, period: key.slice(0, 7), dimensions: ["EMPLOYER"], ruleId: "rule-x", ruleName: "Regla" } }
+      : { resolution },
+  ])));
   (rebuildClosureSnapshots as unknown as Mock).mockImplementation(async (_db, closures: Closure[]) =>
     closures.map((closure) => ({ id: closure.id, employeeId: closure.employeeId, period: closure.period, before: closure.snapshot, after: { recalculated: true } })));
 });
@@ -274,8 +288,8 @@ describe("Hora Especial reinterpreta las horas ya cargadas (orden indistinto)", 
     expect(closures.map((closure: Closure) => closure.id)).toEqual(["closure-pedro"]);
     expect(recalculation).toEqual({ reason: "SPECIAL_HOUR_RULE_CHANGED", doubleHourRuleId: "rule-feriado", doubleHourRuleName: "Feriado 3 de octubre" });
     expect(result.protectedPeriods).toEqual([
-      { employeeId: ANA, period: "2026-10", status: "ENVIADO", timeEntries: 1, breakdowns: 0, segments: 0 },
-      { employeeId: JUAN, period: "2026-10", status: "APROBADO", timeEntries: 1, breakdowns: 0, segments: 0 },
+      { employeeId: ANA, period: "2026-10", status: "ENVIADO", timeEntries: 1, breakdowns: 0, segments: 0, missingHistory: 0 },
+      { employeeId: JUAN, period: "2026-10", status: "APROBADO", timeEntries: 1, breakdowns: 0, segments: 0, missingHistory: 0 },
     ].sort((a, b) => `${a.employeeId}:${a.period}`.localeCompare(`${b.employeeId}:${b.period}`)));
     expect(world.closures.map((closure) => closure.status)).toEqual(["APROBADO", "ENVIADO", "DEVUELTO"]);
     expect(db.$executeRaw).toHaveBeenCalled();
@@ -380,7 +394,7 @@ describe("Hora Especial reinterpreta las horas ya cargadas (orden indistinto)", 
     const result = await reinterpret(null, feriado());
 
     expect(result.timeEntries).toBe(0);
-    expect(resolveSpecialHourRulesByDate).not.toHaveBeenCalled();
+    expect(evaluateSpecialHourRulesByDate).not.toHaveBeenCalled();
   });
 });
 
@@ -513,7 +527,7 @@ describe("FERIADO + convocatoria (HolidayWorkAssignment) reinterpreta las horas"
 
     expect(world.entries[0]!.appliedMultiplier).toBe(before);
     expect(result.rebuiltClosures).toHaveLength(0);
-    expect(result.protectedPeriods).toEqual([{ employeeId: L31, period: "2026-10", status: "APROBADO", timeEntries: 1, breakdowns: 0, segments: 0 }]);
+    expect(result.protectedPeriods).toEqual([{ employeeId: L31, period: "2026-10", status: "APROBADO", timeEntries: 1, breakdowns: 0, segments: 0, missingHistory: 0 }]);
     expect(world.closures[0]!.status).toBe("APROBADO");
   });
 
@@ -630,5 +644,34 @@ describe("affectedWindow", () => {
     expect(affectedWindow([feriado(), feriado({ fromDate: OCT_4, toDate: OCT_4, dates: [{ date: OCT_4, isActive: true }] })])).toEqual({ from: OCT_3, to: OCT_4 });
     expect(affectedWindow([feriado({ recurrenceType: "SEMANAL", toDate: null, weekdays: [0], dates: [] })])).toEqual({ from: OCT_3, to: null });
     expect(affectedWindow([])).toBeNull();
+  });
+});
+
+describe("D-5 — historia laboral insuficiente (ORG_LOCATION_REORGANIZATION.md §19)", () => {
+  it("si una fila que se reescribiría no tiene historia, rechaza el cambio completo sin escrituras parciales", async () => {
+    loadHours(JUAN, OCT_3, 8);
+    loadHours(ANA, OCT_3, 8);
+    world.missingHistory.add(`${ANA}|2026-10-03`);
+    world.rules.push(feriado());
+
+    await expect(reinterpret(null, feriado())).rejects.toMatchObject({ code: "SPECIAL_HOUR_SCOPE_HISTORY_MISSING" });
+
+    expect(world.entries.map((row) => row.appliedMultiplier)).toEqual([1, 1]);
+    expect(db.timeEntry.updateMany).not.toHaveBeenCalled();
+    expect(db.specialHourRuleApplication.createMany).not.toHaveBeenCalled();
+    expect(rebuildClosureSnapshots).not.toHaveBeenCalled();
+  });
+
+  it("en un período protegido no rechaza ni escribe: informa cuántas filas no se pudieron evaluar", async () => {
+    loadHours(JUAN, OCT_3, 8);
+    world.closures.push({ id: "closure-juan", employeeId: JUAN, period: "2026-10", status: "APROBADO", snapshot: { accounting: {} } });
+    world.missingHistory.add(`${JUAN}|2026-10-03`);
+    world.rules.push(feriado());
+
+    const result = await reinterpret(null, feriado());
+
+    expect(result.protectedPeriods).toEqual([{ employeeId: JUAN, period: "2026-10", status: "APROBADO", timeEntries: 0, breakdowns: 0, segments: 0, missingHistory: 1 }]);
+    expect(world.entries[0]!.appliedMultiplier).toBe(1);
+    expect(world.closures[0]!.status).toBe("APROBADO");
   });
 });

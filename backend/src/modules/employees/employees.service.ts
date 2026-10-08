@@ -1,18 +1,20 @@
 import { Prisma } from "@prisma/client";
 import type { AuditContext } from "../audit/audit.service";
-import { auditService } from "../audit/audit.service";
+import { auditService, clearAuditDerivedCaches } from "../audit/audit.service";
 import { AppError } from "../../shared/errors/AppError";
 import { storageService } from "../../shared/storage/storage.service";
 import { storagePathBuilder } from "../../shared/storage/storagePathBuilder";
 import { redactPiiForRole } from "../../shared/security/piiRedaction";
 import { canAccessDocumentCategory } from "../../shared/security/documentCategoryAccess";
 import { isMonthlyClosureLocked } from "../../shared/monthlyClosure/closureLock";
-import { formatArgentinaDate } from "../../shared/datetime/argentinaTime";
+import { calendarDateKey, formatArgentinaDate, todayArgentinaDateKey } from "../../shared/datetime/argentinaTime";
 import { formatEmployeeReference } from "../../shared/audit/employeeReference";
 import { roles } from "../../shared/security/roles";
 import { employeeAccessWhere } from "./employeeAccess";
 import { employeesRepository } from "./employees.repository";
 import { resolveDoubleHourMultipliersByDate } from "../time-entries/timeEntries.repository";
+import { laborHistoryService, mapLaborHistoryPersistenceError, type EmployeeLaborChanges, type RecordedHistoryChange } from "../labor-history/laborHistory.service";
+import { sameIdSet } from "../labor-history/laborHistory.periods";
 import { accountEmployeePeriod, toAccountingBaseEntry, toAccountingBreakdown, withinBaseCoverageMinutes, type WorkTreatment } from "../time-entries/workedTimeAccounting";
 import type {
   CreateEmployeeDocumentInput,
@@ -477,6 +479,97 @@ function desiredCompanies(input: UpdateEmployeeInput) {
     .sort((a, b) => a.companyId.localeCompare(b.companyId));
 }
 
+type LaborSnapshot = { positionId: string | null; costCenterId: string | null; companies: Array<{ companyId: string }> };
+
+/**
+ * D-5: dimensiones del motor que cambian con este guardado, comparadas contra
+ * la columna vigente. La empresa principal no es una entrada del motor: sólo
+ * cuenta el conjunto de empresas empleadoras.
+ */
+function laborChangesOf(input: UpdateEmployeeInput, current: LaborSnapshot): EmployeeLaborChanges {
+  const changes: EmployeeLaborChanges = {};
+  if (input.positionId !== undefined && (input.positionId || null) !== current.positionId) changes.positionId = input.positionId || null;
+  if (input.costCenterId !== undefined && (input.costCenterId || null) !== current.costCenterId) changes.costCenterId = input.costCenterId || null;
+  if (input.companyIds !== undefined || input.primaryCompanyId !== undefined) {
+    const companyIds = Array.from(new Set((input.companyIds || []).filter(Boolean))).sort();
+    if (!sameIdSet(companyIds, current.companies.map((link) => link.companyId))) changes.companyIds = companyIds;
+  }
+  return changes;
+}
+
+const hasLaborChanges = (changes: EmployeeLaborChanges) => Object.keys(changes).length > 0;
+
+function assertLaborChangeProvided(changes: EmployeeLaborChanges, laborChange: UpdateEmployeeInput["laborChange"]) {
+  if (!hasLaborChanges(changes) || laborChange) return;
+  throw new AppError(
+    "Para cambiar el puesto, el centro de costo o las empresas empleadoras indicá la fecha desde la que rige y el motivo del cambio.",
+    400,
+    "EMPLOYEE_LABOR_CHANGE_DATE_REQUIRED",
+  );
+}
+
+// Historial visible de Datos Laborales: los mismos campos y textos que antes
+// escribía el cliente en una segunda llamada, ahora en la transacción del cambio.
+async function recordLaborFieldHistoryWithin(
+  tx: Parameters<Parameters<typeof employeesRepository.transaction>[0]>[0],
+  employeeId: string,
+  current: LaborSnapshot,
+  changes: EmployeeLaborChanges,
+  laborChange: NonNullable<UpdateEmployeeInput["laborChange"]>,
+  createdByUserId: string | null,
+) {
+  const names = await employeesRepository.findLaborNamesWithin(tx, {
+    positionIds: [current.positionId, changes.positionId].filter((id): id is string => Boolean(id)),
+    costCenterIds: [current.costCenterId, changes.costCenterId].filter((id): id is string => Boolean(id)),
+    companyIds: [...current.companies.map((link) => link.companyId), ...(changes.companyIds ?? [])],
+  });
+  const companyNames = (ids: string[]) => ids.map((id) => names.companies.get(id) ?? "Empresa sin nombre").sort((a, b) => a.localeCompare(b, "es")).join(", ");
+  const entries: Array<{ field: string; fieldLabel: string; oldValue: string | null; newValue: string }> = [];
+  if (changes.positionId !== undefined) {
+    entries.push({
+      field: "positionId",
+      fieldLabel: "Puesto",
+      oldValue: current.positionId ? names.positions.get(current.positionId) ?? null : null,
+      newValue: changes.positionId ? names.positions.get(changes.positionId) ?? "Puesto sin nombre" : "Sin puesto vinculado",
+    });
+  }
+  if (changes.costCenterId !== undefined) {
+    entries.push({
+      field: "costCenter",
+      fieldLabel: "Centro de costo",
+      oldValue: current.costCenterId ? names.costCenters.get(current.costCenterId) ?? null : null,
+      newValue: changes.costCenterId ? names.costCenters.get(changes.costCenterId) ?? "Centro de costo sin nombre" : "Sin centro de costo",
+    });
+  }
+  if (changes.companyIds !== undefined) {
+    entries.push({
+      field: "companies",
+      fieldLabel: "Empresa",
+      oldValue: companyNames(current.companies.map((link) => link.companyId)) || null,
+      newValue: companyNames(changes.companyIds) || "Sin empresa empleadora",
+    });
+  }
+  for (const entry of entries) {
+    await employeesRepository.createFieldHistoryWithin(tx, employeeId, { ...entry, effectiveFrom: laborChange.effectiveFrom, reason: laborChange.reason }, createdByUserId);
+  }
+  return entries;
+}
+
+// Fecha desde la que rige la historia de un legajo nuevo: el ingreso declarado
+// (movimiento inicial ALTA) o, sin él, el día del alta en el sistema.
+function initialHistoryDate(input: CreateEmployeeInput) {
+  return input.initialLaborMovement?.type === "ALTA" ? calendarDateKey(input.initialLaborMovement.effectiveFrom) : todayArgentinaDateKey();
+}
+
+async function inLaborTransaction<T>(operation: Parameters<typeof employeesRepository.transaction<T>>[0]) {
+  try {
+    return await employeesRepository.transaction(operation);
+  } catch (error) {
+    mapLaborHistoryPersistenceError(error);
+    throw error;
+  }
+}
+
 function omitUnchangedEmployeeRelations(
   input: UpdateEmployeeInput,
   before: { address: Record<string, unknown> | null; companies: Array<{ companyId: string; isPrimary: boolean }> },
@@ -764,46 +857,90 @@ export const employeesService = {
     await ensureUniqueEmployee(input);
     await assertAssignablePosition(input.positionId, null);
     const hourConceptIds = await assertAssignableHourConceptIds(input.hourConceptIds ?? []);
-    const employee = await execute(() => employeesRepository.create({ ...input, hourConceptIds }, audit?.userId));
-    await auditService.register({
-      ...audit,
-      action: "CREATE",
-      entity: "Employee",
-      entityId: employee.id,
-      description: `Se creo el legajo ${employee.legajo} - ${employee.lastName}, ${employee.firstName}.`,
-      after: employee as Prisma.InputJsonValue,
-    });
+    const historyFrom = initialHistoryDate(input);
+    // D-5: legajo, historia temporal inicial y auditoría en una transacción.
+    const employee = await execute(() => inLaborTransaction(async (tx) => {
+      const created = await employeesRepository.create({ ...input, hourConceptIds }, audit?.userId, tx);
+      await laborHistoryService.openEmployeeHistoryWithin(tx, {
+        employeeId: created.id,
+        effectiveFrom: historyFrom,
+        positionId: input.positionId || null,
+        costCenterId: input.costCenterId || null,
+        companyIds: input.companyIds,
+        reason: "Alta del legajo",
+        createdByUserId: audit?.userId || null,
+      });
+      await auditService.registerWithin(tx, {
+        ...audit,
+        action: "CREATE",
+        entity: "Employee",
+        entityId: created.id,
+        description: `Se creo el legajo ${created.legajo} - ${created.lastName}, ${created.firstName}. Historia laboral desde el ${formatArgentinaDate(historyFrom)}.`,
+        after: { ...created, laborHistoryFrom: historyFrom } as Prisma.InputJsonValue,
+      });
+      return created;
+    }));
+    clearAuditDerivedCaches();
     return employee;
   },
 
   async update(id: string, input: UpdateEmployeeInput, audit?: AuditContext) {
-    const [, before] = await Promise.all([
-      ensureNoEmployeeConflict(id, input),
+    const { laborChange, ...fields } = input;
+    const [, snapshot] = await Promise.all([
+      ensureNoEmployeeConflict(id, fields),
       employeesRepository.findUpdateAuditSnapshot(id),
     ]);
-    if (!before) throw new AppError("Employee not found", 404, "EMPLOYEE_NOT_FOUND");
-    assertLegacySectorUnchanged(input.sectorId, before.sectorId);
-    await assertAssignablePosition(input.positionId, before.positionId);
-    const effectiveInput = omitUnchangedEmployeeRelations(input, before);
-    const employee = await execute(() => employeesRepository.update(id, effectiveInput));
-    const after = {
-      ...before,
-      ...employee,
-      address: input.address ? { ...(before.address || {}), ...input.address } : before.address,
-      companies:
-        input.companyIds !== undefined || input.primaryCompanyId !== undefined
-          ? desiredCompanies(input)
-          : before.companies,
-    };
-    await auditService.register({
-      ...audit,
-      action: "UPDATE",
-      entity: "Employee",
-      entityId: employee.id,
-      description: `Se actualizo el legajo ${employee.legajo} - ${employee.lastName}, ${employee.firstName}.`,
-      before: before as Prisma.InputJsonValue,
-      after: after as Prisma.InputJsonValue,
-    });
+    if (!snapshot) throw new AppError("Employee not found", 404, "EMPLOYEE_NOT_FOUND");
+    assertLegacySectorUnchanged(fields.sectorId, snapshot.sectorId);
+    await assertAssignablePosition(fields.positionId, snapshot.positionId);
+    const effectiveInput = omitUnchangedEmployeeRelations(fields, snapshot);
+    assertLaborChangeProvided(laborChangesOf(effectiveInput, snapshot), laborChange);
+    // D-5: columna vigente, historia temporal desde la fecha indicada,
+    // historial visible y auditoría en una sola transacción. El estado previo
+    // se relee dentro de ella para comparar contra lo que realmente se reemplaza.
+    const employee = await execute(() => inLaborTransaction(async (tx) => {
+      const before = await employeesRepository.findUpdateAuditSnapshot(id, tx);
+      if (!before) throw new AppError("Employee not found", 404, "EMPLOYEE_NOT_FOUND");
+      const changes = laborChangesOf(effectiveInput, before);
+      assertLaborChangeProvided(changes, laborChange);
+      const updated = await employeesRepository.update(id, effectiveInput, tx);
+      let laborHistory: RecordedHistoryChange[] = [];
+      let laborFields: Array<{ fieldLabel: string; oldValue: string | null; newValue: string }> = [];
+      if (laborChange && hasLaborChanges(changes)) {
+        laborHistory = await laborHistoryService.recordEmployeeChangesWithin(tx, {
+          employeeId: id,
+          effectiveFrom: laborChange.effectiveFrom,
+          reason: laborChange.reason,
+          createdByUserId: audit?.userId || null,
+          changes,
+        });
+        laborFields = await recordLaborFieldHistoryWithin(tx, id, before, changes, laborChange, audit?.userId || null);
+      }
+      const after = {
+        ...before,
+        ...updated,
+        address: fields.address ? { ...(before.address || {}), ...fields.address } : before.address,
+        companies:
+          fields.companyIds !== undefined || fields.primaryCompanyId !== undefined
+            ? desiredCompanies(fields)
+            : before.companies,
+        ...(laborFields.length ? { laborChange, laborHistory } : {}),
+      };
+      const laborSummary = laborFields.length
+        ? ` Datos laborales desde el ${formatArgentinaDate(laborChange!.effectiveFrom)}: ${laborFields.map((entry) => `${entry.fieldLabel} ${entry.oldValue || "sin dato"} → ${entry.newValue}`).join("; ")}. Motivo: ${laborChange!.reason}`
+        : "";
+      await auditService.registerWithin(tx, {
+        ...audit,
+        action: "UPDATE",
+        entity: "Employee",
+        entityId: updated.id,
+        description: `Se actualizo el legajo ${updated.legajo} - ${updated.lastName}, ${updated.firstName}.${laborSummary}`,
+        before: before as Prisma.InputJsonValue,
+        after: after as Prisma.InputJsonValue,
+      });
+      return updated;
+    }));
+    clearAuditDerivedCaches();
     return employee;
   },
 

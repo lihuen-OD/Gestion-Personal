@@ -31,6 +31,19 @@ describe("classifyReference", () => {
 
   it("una FK no clasificada o de un registro nuevo bloquea si tiene filas (fail closed)", () => {
     expect(classifyReference(ref("PositionOrgScope", "sectorId", "Sector", 1)).issue).toMatchObject({ code: "UNCLASSIFIED_OR_NEW_DEPENDENCY", blocking: true });
+  });
+
+  it("D-5: la historia temporal es una dependencia conocida que bloquea y nunca se trata (ni NULL ni DELETE)", () => {
+    for (const [table, column, target] of [
+      ["EmployeePositionPeriod", "positionId", "Position"],
+      ["EmployeeLegacySectorPeriod", "sectorId", "Sector"],
+      ["EmployeeEmployerPeriodCompany", "companyId", "Company"],
+      ["PositionOrgScopePeriod", "positionId", "Position"],
+      ["PositionOrgScopePeriodNode", "areaSectorId", "Sector"],
+    ] as const) {
+      expect(classifyReference(ref(table, column, target, 2)).issue).toMatchObject({ code: "HISTORY_REFERENCES_INVENTORY", blocking: true });
+      expect(classifyReference(ref(table, column, target, 0)).issue).toBeUndefined();
+    }
     expect(classifyReference(ref("TablaFutura", "sectorId", "Sector", 1)).issue?.blocking).toBe(true);
     expect(classifyReference(ref("TablaFutura", "sectorId", "Sector", 0)).issue).toBeUndefined();
   });

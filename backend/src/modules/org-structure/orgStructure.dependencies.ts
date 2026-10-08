@@ -14,7 +14,9 @@
 // Por eso cada dependencia se cuenta antes de borrar y, si hay alguna, el
 // borrado se rechaza — nunca se deja que la base desvincule o borre en cadena.
 // Las FKs nuevas (padres del modelo objetivo, alcances de puestos, ubicaciones
-// de legajos, DoubleHourRule desde M1) son RESTRICT además del conteo.
+// de legajos, DoubleHourRule desde M1, historia temporal de D-5) son RESTRICT
+// además del conteo. La historia temporal (§19) nunca se borra para liberar
+// un nodo: un nodo con historia sólo se inactiva.
 //
 // Excepción deliberada: los vínculos propios de un centro de costo
 // (CostCenterCompany/BusinessUnit/Establishment/Area/Sector) son su propia
@@ -35,16 +37,18 @@ export type OrgDependencyKey =
   | "doubleHourRules"
   | "positionScopes"
   | "workLocations"
-  | "clockDevices";
+  | "clockDevices"
+  | "laborHistory"
+  | "scopeHistory";
 
 export const orgEntityDependencies: Record<OrgEntityKind, readonly OrgDependencyKey[]> = {
-  company: ["businessUnits", "establishments", "employees", "users", "costCenterLinks", "doubleHourRules", "positionScopes"],
-  businessUnit: ["sectors", "establishments", "costCenterLinks", "positionScopes"],
-  sector: ["areas", "employees", "positions", "users", "costCenterLinks", "doubleHourRules", "positionScopes"],
-  area: ["sectors", "costCenterLinks", "positionScopes"],
+  company: ["businessUnits", "establishments", "employees", "users", "costCenterLinks", "doubleHourRules", "positionScopes", "laborHistory", "scopeHistory"],
+  businessUnit: ["sectors", "establishments", "costCenterLinks", "positionScopes", "scopeHistory"],
+  sector: ["areas", "employees", "positions", "users", "costCenterLinks", "doubleHourRules", "positionScopes", "laborHistory", "scopeHistory"],
+  area: ["sectors", "costCenterLinks", "positionScopes", "scopeHistory"],
   zone: ["establishments"],
   establishment: ["areas", "costCenterLinks", "workLocations", "clockDevices"],
-  costCenter: ["employees", "doubleHourRules"],
+  costCenter: ["employees", "doubleHourRules", "laborHistory"],
 };
 
 const dependencyLabels: Record<OrgDependencyKey, [singular: string, plural: string]> = {
@@ -60,6 +64,8 @@ const dependencyLabels: Record<OrgDependencyKey, [singular: string, plural: stri
   positionScopes: ["alcance de puesto", "alcances de puestos"],
   workLocations: ["ubicación de trabajo de un legajo", "ubicaciones de trabajo de legajos"],
   clockDevices: ["dispositivo de fichada", "dispositivos de fichada"],
+  laborHistory: ["registro de historia laboral de legajos", "registros de historia laboral de legajos"],
+  scopeHistory: ["alcance histórico de puestos", "alcances históricos de puestos"],
 };
 
 // Etiqueta de negocio (sin nombres de modelo) + pronombre para "Podés inactivarla/o".

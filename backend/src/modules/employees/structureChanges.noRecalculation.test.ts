@@ -19,10 +19,17 @@ vi.mock("./employees.repository", () => ({
     findConflictingUniqueFields: vi.fn(),
     findPositionForAssignment: vi.fn(),
     update: vi.fn(),
+    transaction: vi.fn((operation: (tx: unknown) => unknown) => operation({})),
+    findLaborNamesWithin: vi.fn().mockResolvedValue({ positions: new Map(), costCenters: new Map(), companies: new Map() }),
+    createFieldHistoryWithin: vi.fn(),
   },
 }));
-vi.mock("../audit/audit.service", () => ({ auditService: { register: vi.fn() } }));
+vi.mock("../audit/audit.service", () => ({ auditService: { register: vi.fn(), registerWithin: vi.fn() }, clearAuditDerivedCaches: vi.fn() }));
 vi.mock("../time-entries/timeEntries.repository", () => ({ resolveDoubleHourMultipliersByDate: vi.fn() }));
+vi.mock("../labor-history/laborHistory.service", () => ({
+  laborHistoryService: { recordEmployeeChangesWithin: vi.fn().mockResolvedValue([]) },
+  mapLaborHistoryPersistenceError: vi.fn(),
+}));
 
 const repo = employeesRepository as unknown as Record<"findUpdateAuditSnapshot" | "findConflictingUniqueFields" | "findPositionForAssignment" | "update", Mock>;
 
@@ -36,7 +43,7 @@ beforeEach(() => {
 
 describe("cambios de estructura del legajo no recalculan horas (A7)", () => {
   it("cambiar puesto, centro de costo y empresa empleadora no resuelve multiplicadores ni reinterpreta", async () => {
-    await employeesService.update("emp-1", { positionId: "pos-new", costCenterId: "cc-2", companyIds: ["c2"], primaryCompanyId: "c2" });
+    await employeesService.update("emp-1", { positionId: "pos-new", costCenterId: "cc-2", companyIds: ["c2"], primaryCompanyId: "c2", laborChange: { effectiveFrom: "2026-10-01", reason: "Reasignación" } });
 
     expect(repo.update).toHaveBeenCalled();
     expect(resolveDoubleHourMultipliersByDate).not.toHaveBeenCalled();
@@ -52,6 +59,10 @@ describe("módulos de estructura sin dependencia del motor de horas (A7)", () =>
     "positions/positions.repository.ts",
     "org-structure/orgStructure.service.ts",
     "org-structure/orgStructure.repository.ts",
+    // D-5: registrar historia temporal tampoco recalcula nada (§19).
+    "labor-history/laborHistory.service.ts",
+    "labor-history/laborHistory.repository.ts",
+    "labor-history/laborHistory.periods.ts",
   ];
   it.each(files)("%s no importa ni invoca el motor de horas especiales, cierres ni desgloses", (file) => {
     const source = fs.readFileSync(path.join(__dirname, "..", file), "utf8");

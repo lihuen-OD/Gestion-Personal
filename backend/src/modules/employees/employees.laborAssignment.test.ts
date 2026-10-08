@@ -18,10 +18,19 @@ vi.mock("./employees.repository", () => ({
     findAssignableHourConceptIds: vi.fn(),
     update: vi.fn(),
     create: vi.fn(),
+    transaction: vi.fn((operation: (tx: unknown) => unknown) => operation({})),
+    findLaborNamesWithin: vi.fn().mockResolvedValue({ positions: new Map(), costCenters: new Map(), companies: new Map() }),
+    createFieldHistoryWithin: vi.fn(),
   },
 }));
-vi.mock("../audit/audit.service", () => ({ auditService: { register: vi.fn() } }));
+vi.mock("../audit/audit.service", () => ({ auditService: { register: vi.fn(), registerWithin: vi.fn() }, clearAuditDerivedCaches: vi.fn() }));
 vi.mock("../time-entries/timeEntries.repository", () => ({ resolveDoubleHourMultipliersByDate: vi.fn() }));
+vi.mock("../labor-history/laborHistory.service", () => ({
+  laborHistoryService: { recordEmployeeChangesWithin: vi.fn().mockResolvedValue([]), openEmployeeHistoryWithin: vi.fn() },
+  mapLaborHistoryPersistenceError: vi.fn(),
+}));
+
+const laborChange = { effectiveFrom: "2026-10-01", reason: "Reasignación" };
 
 const repo = employeesRepository as unknown as Record<"findUpdateAuditSnapshot" | "findConflictingUniqueFields" | "findByUniqueFields" | "findPositionForAssignment" | "update" | "create", Mock>;
 
@@ -58,7 +67,7 @@ describe("employeesService.update — legajo pendiente de recarga", () => {
     await employeesService.update("emp-1", { internalCategory: "Administrativo B", positionId: "pos-legacy", sectorId: "sector-legacy", costCenterId: "cc-1" });
 
     expect(repo.findPositionForAssignment).not.toHaveBeenCalled();
-    expect(repo.update).toHaveBeenCalledWith("emp-1", expect.objectContaining({ internalCategory: "Administrativo B" }));
+    expect(repo.update).toHaveBeenCalledWith("emp-1", expect.objectContaining({ internalCategory: "Administrativo B" }), expect.anything());
   });
 
   it("rechaza cambiar el sector anterior: el alcance sale del puesto (409, sin escribir)", async () => {
@@ -75,10 +84,10 @@ describe("employeesService.update — legajo pendiente de recarga", () => {
   it("asignar un puesto nuevo con alcance A5 y activo es válido", async () => {
     repo.findPositionForAssignment.mockResolvedValue({ id: "pos-new", name: "Encargado de campo", status: "ACTIVO", _count: { orgScopes: 2 } });
 
-    await employeesService.update("emp-1", { positionId: "pos-new" });
+    await employeesService.update("emp-1", { positionId: "pos-new", laborChange });
 
     expect(repo.findPositionForAssignment).toHaveBeenCalledWith("pos-new");
-    expect(repo.update).toHaveBeenCalledWith("emp-1", expect.objectContaining({ positionId: "pos-new" }));
+    expect(repo.update).toHaveBeenCalledWith("emp-1", expect.objectContaining({ positionId: "pos-new" }), expect.anything());
   });
 
   it("rechaza asignar un puesto nuevo pendiente de recarga (sin alcance)", async () => {
@@ -104,7 +113,7 @@ describe("employeesService.update — legajo pendiente de recarga", () => {
   });
 
   it("quitar el puesto (null) no exige requisitos de asignación", async () => {
-    await employeesService.update("emp-1", { positionId: null });
+    await employeesService.update("emp-1", { positionId: null, laborChange });
 
     expect(repo.findPositionForAssignment).not.toHaveBeenCalled();
     expect(repo.update).toHaveBeenCalled();
