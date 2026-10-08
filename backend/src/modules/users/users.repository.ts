@@ -57,6 +57,11 @@ export const usersRepository = {
     return prisma.user.findUnique({ where: { id }, select: userSelect });
   },
 
+  /** Empresa para validación de asignación del usuario (A8 §12.4). */
+  findCompany(companyId: string) {
+    return prisma.company.findUnique({ where: { id: companyId }, select: { id: true, name: true, archivedAt: true } });
+  },
+
   findByEmail(email: string) {
     return prisma.user.findUnique({ where: { email }, select: { id: true } });
   },

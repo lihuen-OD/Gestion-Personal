@@ -56,6 +56,8 @@ describe("assertZoneAndEstablishments — selección explícita (D-2)", () => {
     { id: "e2", name: "Planta Sur", status: "ACTIVO", zoneId: "south" },
     { id: "e3", name: "Establecimiento anterior", status: "ACTIVO", zoneId: null },
     { id: "e4", name: "Campo cerrado", status: "INACTIVO", zoneId: "north" },
+    { id: "e5", name: "Planta Archivada", status: "ACTIVO", zoneId: "north", archivedAt: new Date("2026-10-01T00:00:00.000Z") },
+    { id: "e6", name: "Archivo sin zona", status: "ACTIVO", zoneId: null, archivedAt: new Date("2026-10-01T00:00:00.000Z") },
   ];
   const check = (overrides: Partial<Parameters<typeof assertZoneAndEstablishments>[0]>) => () =>
     assertZoneAndEstablishments({ zoneId: "north", establishmentIds: ["e1"], zone, establishments, ...overrides });
@@ -66,6 +68,13 @@ describe("assertZoneAndEstablishments — selección explícita (D-2)", () => {
   it("rechaza un establecimiento de otra zona", () => expect(check({ establishmentIds: ["e1", "e2"] })).toThrow(expect.objectContaining({ code: "WORK_LOCATION_ESTABLISHMENT_ZONE_MISMATCH", message: "“Planta Sur” no pertenece a la zona “Zona Norte”." })));
   it("rechaza un establecimiento de la estructura anterior", () => expect(check({ establishmentIds: ["e3"] })).toThrow(expect.objectContaining({ code: "WORK_LOCATION_ESTABLISHMENT_LEGACY" })));
   it("rechaza un establecimiento inexistente", () => expect(check({ establishmentIds: ["missing"] })).toThrow(expect.objectContaining({ code: "WORK_LOCATION_ESTABLISHMENT_INVALID" })));
+  it("rechaza un establecimiento ARCHIVADO con su propio código (A8 §12.4), incluso si ya estaba en el registro", () => {
+    expect(check({ establishmentIds: ["e5"] })).toThrow(expect.objectContaining({ code: "WORK_LOCATION_ESTABLISHMENT_ARCHIVED" }));
+    expect(check({ establishmentIds: ["e5"], keepEstablishmentIds: new Set(["e5"]) })).toThrow(expect.objectContaining({ code: "WORK_LOCATION_ESTABLISHMENT_ARCHIVED" }));
+  });
+  it("lo archivado se evalúa antes que legado: un archivado sin zona da ARCHIVED, no LEGACY", () => {
+    expect(check({ establishmentIds: ["e6"] })).toThrow(expect.objectContaining({ code: "WORK_LOCATION_ESTABLISHMENT_ARCHIVED" }));
+  });
   it("rechaza zona inexistente", () => expect(check({ zone: null })).toThrow(expect.objectContaining({ code: "WORK_LOCATION_ZONE_INVALID" })));
   it("rechaza un nodo inactivo nuevo", () => {
     expect(check({ establishmentIds: ["e4"] })).toThrow(expect.objectContaining({ code: "WORK_LOCATION_ESTABLISHMENT_INACTIVE" }));

@@ -25,7 +25,9 @@ vi.mock("../../shared/prisma/client", () => ({
     timeCorrectionRequest: { findMany: vi.fn(), findUnique: vi.fn(), findUniqueOrThrow: vi.fn(), update: vi.fn(), create: vi.fn() },
     shiftTemplate: { create: vi.fn(), findUnique: vi.fn(), update: vi.fn(), delete: vi.fn() },
     doubleHourRule: { create: vi.fn(), findUnique: vi.fn(), findMany: vi.fn(), update: vi.fn(), delete: vi.fn() },
-    sector: { findUnique: vi.fn() },
+    sector: { findUnique: vi.fn(), findMany: vi.fn().mockResolvedValue([]) },
+    company: { findMany: vi.fn().mockResolvedValue([]) },
+    position: { findMany: vi.fn().mockResolvedValue([]) },
     specialHourRuleApplication: { deleteMany: vi.fn() },
     systemNotification: { findMany: vi.fn(), count: vi.fn(), findFirst: vi.fn() },
     shiftAlert: { findMany: vi.fn() },
@@ -69,7 +71,9 @@ const mockedPrisma = prisma as unknown as {
   timeCorrectionRequest: { findMany: Mock; findUnique: Mock; findUniqueOrThrow: Mock; update: Mock; create: Mock };
   shiftTemplate: { create: Mock; findUnique: Mock; update: Mock; delete: Mock };
   doubleHourRule: { create: Mock; findUnique: Mock; findMany: Mock; update: Mock; delete: Mock };
-  sector: { findUnique: Mock };
+  sector: { findUnique: Mock; findMany: Mock };
+  company: { findMany: Mock };
+  position: { findMany: Mock };
   specialHourRuleApplication: { deleteMany: Mock };
   systemNotification: { findMany: Mock; count: Mock; findFirst: Mock };
   shiftAlert: { findMany: Mock };
@@ -592,6 +596,49 @@ describe("workforceService — FK reales sobre ShiftTemplate/DoubleHourRule", ()
     await workforceService.createDoubleRule({ name: "Pedro", recurrenceType: "SEMANAL", weekdays: [0], employeeIds: [], kind: "OTRO" }, user);
 
     expect(mockedPrisma.doubleHourRule.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ kind: "OTRO" }) }));
+  });
+
+  it("A8 §12.4 — createDoubleRule rechaza una empresa archivada con su propio código", async () => {
+    mockedPrisma.company.findMany.mockResolvedValueOnce([{ name: "Odwyer Vieja" }]);
+
+    await expect(
+      workforceService.createDoubleRule({ name: "Domingo", recurrenceType: "SEMANAL", weekdays: [0], companyId: "c-arch", employeeIds: [] }, user),
+    ).rejects.toMatchObject({
+      statusCode: 400,
+      code: "DOUBLE_HOUR_RULE_DESTINATION_ARCHIVED",
+      message: expect.stringContaining("Odwyer Vieja"),
+    });
+    expect(mockedPrisma.doubleHourRule.create).not.toHaveBeenCalled();
+  });
+
+  it("A8 §12.4 — createDoubleRule rechaza un puesto archivado", async () => {
+    mockedPrisma.position.findMany.mockResolvedValueOnce([{ name: "Encargado Archivado" }]);
+
+    await expect(
+      workforceService.createDoubleRule({ name: "Rango", recurrenceType: "RANGO", weekdays: [1], positionId: "p-arch", employeeIds: [] }, user),
+    ).rejects.toMatchObject({ statusCode: 400, code: "DOUBLE_HOUR_RULE_DESTINATION_ARCHIVED", message: expect.stringContaining("Encargado Archivado") });
+    expect(mockedPrisma.doubleHourRule.create).not.toHaveBeenCalled();
+  });
+
+  it("A8 §12.4 — updateDoubleRule CONSERVA sin cambio una FK ya apuntando a un archivado", async () => {
+    mockedPrisma.doubleHourRule.findUnique.mockResolvedValue({ id: "rule-arch", name: "Domingo", multiplier: 2, companyId: "c-arch", employees: [], dates: [] });
+    mockedPrisma.doubleHourRule.update.mockResolvedValue(ruleRow({ id: "rule-arch", name: "Domingo", multiplier: 3 }));
+
+    await workforceService.updateDoubleRule("rule-arch", { multiplier: 3 });
+
+    expect(mockedPrisma.company.findMany).not.toHaveBeenCalled();
+    expect(mockedPrisma.doubleHourRule.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ multiplier: 3 }) }));
+  });
+
+  it("A8 §12.4 — updateDoubleRule RECHAZA asignar por primera vez una empresa archivada", async () => {
+    mockedPrisma.doubleHourRule.findUnique.mockResolvedValue({ id: "rule-new", name: "Domingo", multiplier: 2, companyId: null, employees: [], dates: [] });
+    mockedPrisma.company.findMany.mockResolvedValueOnce([{ name: "Odwyer Vieja" }]);
+
+    await expect(workforceService.updateDoubleRule("rule-new", { companyId: "c-arch" })).rejects.toMatchObject({
+      statusCode: 400,
+      code: "DOUBLE_HOUR_RULE_DESTINATION_ARCHIVED",
+    });
+    expect(mockedPrisma.doubleHourRule.update).not.toHaveBeenCalled();
   });
 
   it("Etapa 12B — updateDoubleRule reclasifica el kind de una regla existente sin tocar el resto", async () => {

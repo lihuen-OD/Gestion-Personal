@@ -12,7 +12,8 @@ export type WorkLocationState = "CURRENT" | "FUTURE" | "ENDED";
 
 type NamedNode = { id: string; name: string; status: string };
 export type ResolvedZone = NamedNode;
-export type ResolvedEstablishment = NamedNode & { zoneId: string | null };
+// A8 §12.1: `archivedAt` alimenta el rechazo de asignación a un establecimiento archivado.
+export type ResolvedEstablishment = NamedNode & { zoneId: string | null; archivedAt?: Date | null };
 
 export function workLocationState(period: Pick<WorkLocationPeriod, "effectiveFrom" | "effectiveTo">, todayKey: string): WorkLocationState {
   if (period.effectiveFrom > todayKey) return "FUTURE";
@@ -85,6 +86,10 @@ export function assertZoneAndEstablishments(input: {
   for (const id of input.establishmentIds) {
     const establishment = byId.get(id);
     if (!establishment) throw new AppError("Uno de los establecimientos seleccionados no existe.", 400, "WORK_LOCATION_ESTABLISHMENT_INVALID");
+    // A8 §12.4: primero lo archivado (causa más específica), después legado/inactivo.
+    if (establishment.archivedAt) {
+      throw new AppError(`“${establishment.name}” está archivado y no puede asignarse.`, 400, "WORK_LOCATION_ESTABLISHMENT_ARCHIVED");
+    }
     if (establishment.zoneId === null) {
       throw new AppError(`“${establishment.name}” pertenece a la estructura anterior y no tiene zona: no puede asignarse.`, 409, "WORK_LOCATION_ESTABLISHMENT_LEGACY");
     }

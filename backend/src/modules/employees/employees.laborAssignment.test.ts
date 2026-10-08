@@ -15,6 +15,7 @@ vi.mock("./employees.repository", () => ({
     findConflictingUniqueFields: vi.fn(),
     findByUniqueFields: vi.fn(),
     findPositionForAssignment: vi.fn(),
+    findArchivedCompanyNames: vi.fn().mockResolvedValue([]),
     findAssignableHourConceptIds: vi.fn(),
     update: vi.fn(),
     create: vi.fn(),
@@ -32,7 +33,7 @@ vi.mock("../labor-history/laborHistory.service", () => ({
 
 const laborChange = { effectiveFrom: "2026-10-01", reason: "Reasignación" };
 
-const repo = employeesRepository as unknown as Record<"findUpdateAuditSnapshot" | "findConflictingUniqueFields" | "findByUniqueFields" | "findPositionForAssignment" | "update" | "create", Mock>;
+const repo = employeesRepository as unknown as Record<"findUpdateAuditSnapshot" | "findConflictingUniqueFields" | "findByUniqueFields" | "findPositionForAssignment" | "findArchivedCompanyNames" | "update" | "create", Mock>;
 
 const legacySnapshot = {
   id: "emp-1",
@@ -112,6 +113,32 @@ describe("employeesService.update — legajo pendiente de recarga", () => {
       .rejects.toMatchObject({ statusCode: 400, code: "EMPLOYEE_POSITION_INVALID" });
   });
 
+  it("rechaza asignar un puesto ARCHIVADO (A8 §12.4), sin escribir", async () => {
+    repo.findPositionForAssignment.mockResolvedValue({
+      id: "pos-arch", name: "Puesto Archivado", status: "ACTIVO",
+      archivedAt: new Date("2026-10-01T00:00:00.000Z"), _count: { orgScopes: 2 },
+    });
+
+    await expect(employeesService.update("emp-1", { positionId: "pos-arch", laborChange }))
+      .rejects.toMatchObject({ statusCode: 400, code: "EMPLOYEE_POSITION_ARCHIVED", message: expect.stringContaining("Puesto Archivado") });
+    expect(repo.update).not.toHaveBeenCalled();
+  });
+
+  it("rechaza vincular una empresa ARCHIVADA al editar (A8 §12.4), sin escribir", async () => {
+    repo.findArchivedCompanyNames.mockResolvedValueOnce(["Odwyer Vieja"]);
+
+    await expect(employeesService.update("emp-1", { companyIds: ["c-arch"] }))
+      .rejects.toMatchObject({ statusCode: 400, code: "EMPLOYEE_COMPANY_ARCHIVED", message: expect.stringContaining("Odwyer Vieja") });
+    expect(repo.update).not.toHaveBeenCalled();
+  });
+
+  it("una edición que NO cambia las empresas no consulta el chequeo de archivado", async () => {
+    await employeesService.update("emp-1", { internalCategory: "Administrativo C", positionId: "pos-legacy", sectorId: "sector-legacy", costCenterId: "cc-1" });
+
+    expect(repo.findArchivedCompanyNames).not.toHaveBeenCalled();
+    expect(repo.update).toHaveBeenCalled();
+  });
+
   it("quitar el puesto (null) no exige requisitos de asignación", async () => {
     await employeesService.update("emp-1", { positionId: null, laborChange });
 
@@ -139,5 +166,25 @@ describe("employeesService.create — nuevas asignaciones", () => {
     await employeesService.create({ ...createInput, sectorId: null });
 
     expect(repo.create).toHaveBeenCalled();
+  });
+
+  it("rechaza el alta con una empresa ARCHIVADA (A8 §12.4), sin escribir", async () => {
+    repo.findArchivedCompanyNames.mockResolvedValueOnce(["Odwyer Vieja"]);
+
+    await expect(employeesService.create({ ...createInput, companyIds: ["c-arch"] }))
+      .rejects.toMatchObject({ statusCode: 400, code: "EMPLOYEE_COMPANY_ARCHIVED", message: expect.stringContaining("Odwyer Vieja") });
+    expect(repo.create).not.toHaveBeenCalled();
+    expect(repo.findArchivedCompanyNames).toHaveBeenCalledWith(["c-arch"]);
+  });
+
+  it("rechaza el alta con un puesto ARCHIVADO (A8 §12.4), sin escribir", async () => {
+    repo.findPositionForAssignment.mockResolvedValue({
+      id: "pos-arch", name: "Puesto Archivado", status: "ACTIVO",
+      archivedAt: new Date("2026-10-01T00:00:00.000Z"), _count: { orgScopes: 2 },
+    });
+
+    await expect(employeesService.create({ ...createInput, positionId: "pos-arch" }))
+      .rejects.toMatchObject({ statusCode: 400, code: "EMPLOYEE_POSITION_ARCHIVED" });
+    expect(repo.create).not.toHaveBeenCalled();
   });
 });

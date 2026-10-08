@@ -19,6 +19,7 @@ vi.mock("./employees.repository", () => ({
     findConflictingUniqueFields: vi.fn(),
     findByUniqueFields: vi.fn(),
     findPositionForAssignment: vi.fn(),
+    findArchivedCompanyNames: vi.fn().mockResolvedValue([]),
     update: vi.fn(),
     create: vi.fn(),
     transaction: vi.fn(),

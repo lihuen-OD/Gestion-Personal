@@ -14,6 +14,16 @@ async function ensureUniqueEmail(email: string, currentUserId?: string) {
   }
 }
 
+// A8 §12.4: `User.companyId` es administrativa (D-14) pero no puede apuntar a
+// un registro archivado mientras la columna exista.
+async function assertAssignableCompany(companyId: string | null | undefined) {
+  if (!companyId) return;
+  const company = await usersRepository.findCompany(companyId);
+  if (company?.archivedAt) {
+    throw new AppError(`La empresa “${company.name}” está archivada y no puede asignarse al usuario.`, 400, "USER_COMPANY_ARCHIVED");
+  }
+}
+
 export const usersService = {
   async list(query: ListUsersQuery) {
     const [items, total] = await usersRepository.findMany(query);
@@ -37,6 +47,7 @@ export const usersService = {
   async create(input: CreateUserInput, audit?: AuditContext) {
     const email = input.email.toLowerCase().trim();
     await ensureUniqueEmail(email);
+    await assertAssignableCompany(input.companyId);
     const passwordHash = await bcrypt.hash(input.password, 12);
 
     const user = await usersRepository.create({ ...input, email, passwordHash });
@@ -63,6 +74,7 @@ export const usersService = {
     }
     const email = input.email?.toLowerCase().trim();
     if (email) await ensureUniqueEmail(email, id);
+    if (input.companyId !== undefined) await assertAssignableCompany(input.companyId);
 
     const user = await usersRepository.update(id, { ...input, ...(email !== undefined ? { email } : {}) });
     invalidateCurrentUserCache(user.id);

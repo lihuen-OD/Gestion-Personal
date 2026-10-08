@@ -146,6 +146,33 @@ async function assertRuleSectorSupported(sectorId: string | null | undefined, cu
   if (!sector) throw new AppError("El sector seleccionado no existe.", 400, "DOUBLE_HOUR_RULE_SECTOR_INVALID");
 }
 
+// A8 §12.4 (AT-4): alta rechaza cualquier destino archivado; edición sólo
+// conserva SIN CAMBIO una FK que la regla ya apuntara a un registro hoy
+// archivado — toda asignación nueva hacia un archivado se rechaza.
+async function assertRuleDestinationsNotArchived(
+  input: { companyId?: string | null; sectorId?: string | null; positionId?: string | null },
+  current?: { companyId?: string | null; sectorId?: string | null; positionId?: string | null } | null,
+) {
+  const keys = ["companyId", "sectorId", "positionId"] as const;
+  const labels: Record<(typeof keys)[number], string> = { companyId: "empresa", sectorId: "sector", positionId: "puesto" };
+  const changed = keys.filter((key) => input[key] !== undefined && (input[key] ?? null) !== (current?.[key] ?? null) && Boolean(input[key]));
+  if (!changed.length) return;
+  const idsOf = (key: (typeof keys)[number]) => (changed.includes(key) ? [input[key]!] : []);
+  const [companies, sectors, positions] = await Promise.all([
+    idsOf("companyId").length ? prisma.company.findMany({ where: { id: { in: idsOf("companyId") }, archivedAt: { not: null } }, select: { name: true } }) : Promise.resolve([]),
+    idsOf("sectorId").length ? prisma.sector.findMany({ where: { id: { in: idsOf("sectorId") }, archivedAt: { not: null } }, select: { name: true } }) : Promise.resolve([]),
+    idsOf("positionId").length ? prisma.position.findMany({ where: { id: { in: idsOf("positionId") }, archivedAt: { not: null } }, select: { name: true } }) : Promise.resolve([]),
+  ]);
+  const archived = [
+    ...companies.map((row) => `${labels.companyId} “${row.name}”`),
+    ...sectors.map((row) => `${labels.sectorId} “${row.name}”`),
+    ...positions.map((row) => `${labels.positionId} “${row.name}”`),
+  ];
+  if (archived.length) {
+    throw new AppError(`No se puede asignar la regla a un registro archivado: ${archived.join(", ")}.`, 400, "DOUBLE_HOUR_RULE_DESTINATION_ARCHIVED");
+  }
+}
+
 export const workforceService = {
   async closures(period: string, user: Express.AuthUser) {
     return prisma.monthlyTimeClosure.findMany({ where: { period, employee: employeeAccessWhere(user) }, include: { employee: { select: { id: true, legajo: true, firstName: true, lastName: true } }, submittedBy: { select: { name: true } }, reviewedBy: { select: { name: true } } }, orderBy: { employee: { lastName: "asc" } } });
@@ -388,6 +415,7 @@ export const workforceService = {
     });
   },
   async createDoubleRule(input: any, user: Express.AuthUser, audit?: AuditContext) {
+    await assertRuleDestinationsNotArchived(input);
     await assertRuleSectorSupported(input.sectorId);
     const { employeeIds, dates, ...data } = input;
     const { item, reinterpretation } = await execute(() => prisma.$transaction(async (tx) => {
@@ -415,6 +443,9 @@ export const workforceService = {
   async updateDoubleRule(id: string, input: any, audit?: AuditContext) {
     const before = await prisma.doubleHourRule.findUnique({ where: { id }, include: { employees: true, dates: true } });
     if (!before) throw new AppError("No encontramos la regla solicitada", 404, "DOUBLE_HOUR_RULE_NOT_FOUND");
+    // Sólo se rechazan asignaciones NUEVAS: conservar sin cambio una FK ya
+    // apuntando a un archivado es admitido (§12.4).
+    await assertRuleDestinationsNotArchived(input, before);
     await assertRuleSectorSupported(input.sectorId, before.sectorId);
     const { employeeIds, dates, ...data } = input;
     const recurrenceType = data.recurrenceType ?? before.recurrenceType;

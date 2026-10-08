@@ -52,7 +52,7 @@ export const employeeWorkLocationsRepository = {
   },
 
   findEstablishments(db: PrismaTransactionClient, ids: string[]) {
-    return db.establishment.findMany({ where: { id: { in: Array.from(new Set(ids)) } }, select: { id: true, name: true, status: true, zoneId: true } });
+    return db.establishment.findMany({ where: { id: { in: Array.from(new Set(ids)) } }, select: { id: true, name: true, status: true, zoneId: true, archivedAt: true } });
   },
 
   async createWithin(db: PrismaTransactionClient, employeeId: string, data: WorkLocationWrite, createdByUserId?: string | null) {

@@ -1,4 +1,5 @@
 import type { ClockDeviceStatus, Prisma } from "@prisma/client";
+import { AppError } from "../../shared/errors/AppError";
 import { prisma } from "../../shared/prisma/client";
 import type { ListClockDevicesQuery } from "./clockDevices.schemas";
 
@@ -108,8 +109,14 @@ export const clockDevicesRepository = {
   async activate(id: string, pairingHash: string, input: { name: string; establishmentId?: string | null }, userId: string) {
     return prisma.$transaction(async (tx) => {
       if (input.establishmentId) {
-        const establishment = await tx.establishment.findFirst({ where: { id: input.establishmentId, zoneId: { not: null }, status: "ACTIVO" }, select: { id: true } });
-        if (!establishment) return null;
+        // A8 §12.4 (D-15): colocar el dispositivo en un establecimiento
+        // archivado se rechaza con su propio código; fuera de eso sigue
+        // exigiendo zona del modelo objetivo y estado activo.
+        const establishment = await tx.establishment.findFirst({ where: { id: input.establishmentId }, select: { id: true, name: true, status: true, zoneId: true, archivedAt: true } });
+        if (establishment?.archivedAt) {
+          throw new AppError(`El establecimiento “${establishment.name}” está archivado y no puede asignarse.`, 400, "CLOCK_DEVICE_ESTABLISHMENT_ARCHIVED");
+        }
+        if (!establishment || establishment.zoneId === null || establishment.status !== "ACTIVO") return null;
       }
       const changed = await tx.clockDevice.updateMany({
         where: { id, status: "PENDING", pairingCodeHash: pairingHash, pairingExpiresAt: { gt: new Date() } },

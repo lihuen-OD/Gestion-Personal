@@ -396,6 +396,10 @@ async function assertAssignablePosition(positionId: string | null | undefined, c
   if (!positionId || positionId === currentPositionId) return;
   const position = await employeesRepository.findPositionForAssignment(positionId);
   if (!position) throw new AppError("El puesto seleccionado no existe.", 400, "EMPLOYEE_POSITION_INVALID");
+  // A8 §12.4: un puesto archivado no puede ser destino de una asignación.
+  if (position.archivedAt) {
+    throw new AppError(`El puesto “${position.name}” está archivado y no puede asignarse.`, 400, "EMPLOYEE_POSITION_ARCHIVED");
+  }
   if (position.status !== "ACTIVO") {
     throw new AppError(`El puesto “${position.name}” está inactivo y no puede asignarse.`, 409, "EMPLOYEE_POSITION_INACTIVE");
   }
@@ -405,6 +409,18 @@ async function assertAssignablePosition(positionId: string | null | undefined, c
       409,
       "EMPLOYEE_POSITION_PENDING_SCOPE",
     );
+  }
+}
+
+// A8 §12.4: un vínculo NUEVO de empresa empleadora no puede apuntar a un
+// registro archivado. Se evalúa sobre el set efectivo (una edición que no
+// cambia las empresas no rechaza el vínculo preexistente).
+async function assertAssignableCompanies(companyIds?: Array<string | null>) {
+  const ids = Array.from(new Set((companyIds || []).filter((id): id is string => Boolean(id))));
+  if (!ids.length) return;
+  const archived = await employeesRepository.findArchivedCompanyNames(ids);
+  if (archived.length) {
+    throw new AppError(`No se puede vincular el legajo a un registro archivado: ${archived.join(", ")}.`, 400, "EMPLOYEE_COMPANY_ARCHIVED");
   }
 }
 
@@ -856,6 +872,7 @@ export const employeesService = {
     assertLegacySectorUnchanged(input.sectorId, null);
     await ensureUniqueEmployee(input);
     await assertAssignablePosition(input.positionId, null);
+    await assertAssignableCompanies(input.companyIds);
     const hourConceptIds = await assertAssignableHourConceptIds(input.hourConceptIds ?? []);
     const historyFrom = initialHistoryDate(input);
     // D-5: legajo, historia temporal inicial y auditoría en una transacción.
@@ -894,6 +911,7 @@ export const employeesService = {
     assertLegacySectorUnchanged(fields.sectorId, snapshot.sectorId);
     await assertAssignablePosition(fields.positionId, snapshot.positionId);
     const effectiveInput = omitUnchangedEmployeeRelations(fields, snapshot);
+    await assertAssignableCompanies(effectiveInput.companyIds);
     assertLaborChangeProvided(laborChangesOf(effectiveInput, snapshot), laborChange);
     // D-5: columna vigente, historia temporal desde la fecha indicada,
     // historial visible y auditoría en una sola transacción. El estado previo

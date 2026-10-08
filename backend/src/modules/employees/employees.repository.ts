@@ -1177,8 +1177,17 @@ export const employeesRepository = {
   findPositionForAssignment(positionId: string) {
     return prisma.position.findUnique({
       where: { id: positionId },
-      select: { id: true, name: true, status: true, _count: { select: { orgScopes: true } } },
+      // A8 §12.4: `archivedAt` alimenta el rechazo de asignación a un puesto archivado.
+      select: { id: true, name: true, status: true, archivedAt: true, _count: { select: { orgScopes: true } } },
     });
+  },
+
+  /** Nombres de empresas ARCHIVADS entre los IDs dados (A8 §12.4). */
+  findArchivedCompanyNames(companyIds: string[]) {
+    if (!companyIds.length) return Promise.resolve<string[]>([]);
+    return prisma.company
+      .findMany({ where: { id: { in: companyIds }, archivedAt: { not: null } }, select: { name: true } })
+      .then((rows) => rows.map((row) => row.name));
   },
 
   findUpdateAuditSnapshot(id: string, db: PrismaTransactionClient = prisma) {
