@@ -137,11 +137,12 @@ async function auditSpecialHourRuleClosures(rule: RuleForChange, result: Special
 }
 
 // D-4: tanto sectores anteriores como nuevos son válidos. El motor distingue
-// su semántica: anterior = FK legacy del legajo; nuevo = “Ubicado dentro de”
-// sobre los alcances del puesto.
+// su semántica con la clasificación persistida del sector (Sector.isLegacy,
+// A8-3): anterior = FK legacy del legajo; nuevo = “Ubicado dentro de” sobre
+// los alcances del puesto.
 async function assertRuleSectorSupported(sectorId: string | null | undefined, currentSectorId: string | null = null) {
   if (!sectorId || sectorId === currentSectorId) return;
-  const sector = await prisma.sector.findUnique({ where: { id: sectorId }, select: { name: true, businessUnitId: true } });
+  const sector = await prisma.sector.findUnique({ where: { id: sectorId } });
   if (!sector) throw new AppError("El sector seleccionado no existe.", 400, "DOUBLE_HOUR_RULE_SECTOR_INVALID");
 }
 

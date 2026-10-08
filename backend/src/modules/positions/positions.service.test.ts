@@ -175,7 +175,7 @@ describe("positionsService — alcances organizacionales A5", () => {
 
   it("rechaza referencia inexistente y nodo legado", async () => {
     await expect(positionsService.create(input as never)).rejects.toMatchObject({ code: "POSITION_SCOPE_INVALID" });
-    repo.resolveScopeNodes.mockResolvedValue({ companies: [], businessUnits: [], sectors: [{ id: "s0", name: "Anterior", status: "ACTIVO", businessUnitId: null, businessUnit: null }], areas: [] });
+    repo.resolveScopeNodes.mockResolvedValue({ companies: [], businessUnits: [], sectors: [{ id: "s0", name: "Anterior", status: "ACTIVO", businessUnitId: null, isLegacy: true, businessUnit: null }], areas: [] });
     await expect(positionsService.create({ ...input, orgScopes: [{ level: "SECTOR", nodeId: "s0" }] } as never)).rejects.toMatchObject({ code: "POSITION_SCOPE_LEGACY" });
   });
 
@@ -199,8 +199,8 @@ describe("positionsService — historia temporal del alcance (D-5)", () => {
       return {
         companies: [],
         businessUnits: [],
-        sectors: wants("SECTOR", "s1") ? [{ id: "s1", name: "Agricultura", status: "ACTIVO", businessUnitId: "bu1", businessUnit: { companyId: "c1" } }] : [],
-        areas: wants("AREA", "a1") ? [{ id: "a1", name: "Riego", status: "ACTIVO", sectorId: "s1", sector: { businessUnitId: "bu1", businessUnit: { companyId: "c1" } } }] : [],
+        sectors: wants("SECTOR", "s1") ? [{ id: "s1", name: "Agricultura", status: "ACTIVO", businessUnitId: "bu1", isLegacy: false, businessUnit: { companyId: "c1" } }] : [],
+        areas: wants("AREA", "a1") ? [{ id: "a1", name: "Riego", status: "ACTIVO", sectorId: "s1", sector: { businessUnitId: "bu1", isLegacy: false, businessUnit: { companyId: "c1" } } }] : [],
       };
     });
   });

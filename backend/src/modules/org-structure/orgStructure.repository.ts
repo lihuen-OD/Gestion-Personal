@@ -43,7 +43,9 @@ let overviewCache: OverviewCache | null = null;
 // modelo objetivo (businessUnitId del sector, sectorId del área, zoneId del
 // establecimiento) y, hasta M2, también los padres del modelo anterior
 // (areaId, establishmentId, companyId/businessUnitId del establecimiento) sólo
-// para lectura. Un nodo sin padre del modelo objetivo es un registro LEGADO.
+// para lectura. Un nodo sin padre del modelo objetivo es un registro LEGADO;
+// para los sectores, la clasificación legado/nuevo es además PERSISTENTE
+// (`Sector.isLegacy`, A8-3): no se deriva del padre actual.
 function fetchOverview() {
   return Promise.all([
     prisma.company.findMany({
@@ -78,7 +80,7 @@ function fetchOverview() {
     }),
     prisma.sector.findMany({
       orderBy: { name: "asc" },
-      select: { id: true, code: true, name: true, status: true, businessUnitId: true, areaId: true },
+      select: { id: true, code: true, name: true, status: true, businessUnitId: true, areaId: true, isLegacy: true },
     }),
     prisma.costCenter.findMany({
       orderBy: { code: "asc" },
@@ -130,7 +132,7 @@ export interface OrgRecord {
   status: RecordStatus;
   /** Padre del modelo objetivo (null para empresas y zonas, o registro legado). */
   parentId: string | null;
-  /** Registro del modelo anterior: sector/área/establecimiento sin padre del modelo objetivo. */
+  /** Registro del modelo anterior: para sectores, clasificación persistida (`Sector.isLegacy`, A8-3); para el resto, ausencia de padre del modelo objetivo. */
   isLegacy: boolean;
   counts: Partial<Record<OrgDependencyKey, number>>;
 }
@@ -174,11 +176,14 @@ const nodes: { [K in NodeKind]: NodeOps<K> } = {
   },
   sector: {
     find: async (tx, id) => {
-      const row = await tx.sector.findUnique({ where: { id }, select: { id: true, code: true, name: true, status: true, businessUnitId: true, _count: { select: { areas: true, employees: true, positions: true, users: true, costCenterLinks: true, doubleHourRules: true, positionScopes: true, legacySectorPeriods: true, scopeHistoryNodes: true, scopeHistoryAreaParentOf: true } } } });
-      return row && { id: row.id, code: row.code, name: row.name, status: row.status, parentId: row.businessUnitId, isLegacy: row.businessUnitId === null, counts: { ...row._count, laborHistory: row._count.legacySectorPeriods, scopeHistory: row._count.scopeHistoryNodes + row._count.scopeHistoryAreaParentOf } };
+      const row = await tx.sector.findUnique({ where: { id }, select: { id: true, code: true, name: true, status: true, businessUnitId: true, isLegacy: true, _count: { select: { areas: true, employees: true, positions: true, users: true, costCenterLinks: true, doubleHourRules: true, positionScopes: true, legacySectorPeriods: true, scopeHistoryNodes: true, scopeHistoryAreaParentOf: true } } } });
+      return row && { id: row.id, code: row.code, name: row.name, status: row.status, parentId: row.businessUnitId, isLegacy: row.isLegacy, counts: { ...row._count, laborHistory: row._count.legacySectorPeriods, scopeHistory: row._count.scopeHistoryNodes + row._count.scopeHistoryAreaParentOf } };
     },
-    create: (tx, data) => tx.sector.create({ data }),
-    update: (tx, id, data) => tx.sector.update({ where: { id }, data }),
+    // A8-3: el alta clasifica explícitamente con el criterio previo (sector sin
+    // padre del modelo objetivo = legado); la clasificación no es un default y
+    // tampoco es un campo de entrada: no puede cambiarla una edición común.
+    create: (tx, data) => tx.sector.create({ data: { ...data, isLegacy: !data.businessUnitId } }),
+    update: (tx, id, data) => tx.sector.update({ where: { id }, data: { ...data, isLegacy: undefined } }),
     remove: (tx, id) => tx.sector.delete({ where: { id } }),
   },
   area: {
@@ -362,7 +367,7 @@ export const orgStructureRepository = {
   /** Nombres de sectores/áreas/establecimientos del modelo anterior entre los IDs dados. */
   async findLegacyNames(tx: Tx, ids: { sectorIds: string[]; areaIds: string[]; establishmentIds: string[] }) {
     const [sectors, areas, establishments] = await Promise.all([
-      ids.sectorIds.length ? tx.sector.findMany({ where: { id: { in: ids.sectorIds }, businessUnitId: null }, select: { name: true } }) : [],
+      ids.sectorIds.length ? tx.sector.findMany({ where: { id: { in: ids.sectorIds }, isLegacy: true }, select: { name: true } }) : [],
       ids.areaIds.length ? tx.area.findMany({ where: { id: { in: ids.areaIds }, sectorId: null }, select: { name: true } }) : [],
       ids.establishmentIds.length ? tx.establishment.findMany({ where: { id: { in: ids.establishmentIds }, zoneId: null }, select: { name: true } }) : [],
     ]);

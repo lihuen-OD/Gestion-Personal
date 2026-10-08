@@ -32,7 +32,7 @@ async function execute<T>(operation: () => Promise<T>) {
   }
 }
 
-type ScopeNode = { level: PositionOrgScopeInput["level"]; id: string; name: string; status: string; companyId?: string; businessUnitId?: string; sectorId?: string };
+type ScopeNode = { level: PositionOrgScopeInput["level"]; id: string; name: string; status: string; companyId?: string; businessUnitId?: string; sectorId?: string; isLegacy?: boolean };
 
 function scopeKey(scope: PositionOrgScopeInput) { return `${scope.level}:${scope.nodeId}`; }
 
@@ -47,14 +47,18 @@ async function validateScopes(tx: PrismaTransactionClient, scopes: PositionOrgSc
   const nodes: ScopeNode[] = [
     ...resolved.companies.map((node) => ({ level: "COMPANY" as const, id: node.id, name: node.name, status: node.status })),
     ...resolved.businessUnits.map((node) => ({ level: "BUSINESS_UNIT" as const, id: node.id, name: node.name, status: node.status, companyId: node.companyId })),
-    ...resolved.sectors.map((node) => ({ level: "SECTOR" as const, id: node.id, name: node.name, status: node.status, businessUnitId: node.businessUnitId || undefined, companyId: node.businessUnit?.companyId })),
-    ...resolved.areas.map((node) => ({ level: "AREA" as const, id: node.id, name: node.name, status: node.status, sectorId: node.sectorId || undefined, businessUnitId: node.sector?.businessUnitId || undefined, companyId: node.sector?.businessUnit?.companyId })),
+    ...resolved.sectors.map((node) => ({ level: "SECTOR" as const, id: node.id, name: node.name, status: node.status, businessUnitId: node.businessUnitId || undefined, isLegacy: node.isLegacy, companyId: node.businessUnit?.companyId })),
+    ...resolved.areas.map((node) => ({ level: "AREA" as const, id: node.id, name: node.name, status: node.status, sectorId: node.sectorId || undefined, businessUnitId: node.sector?.businessUnitId || undefined, isLegacy: node.sector?.isLegacy, companyId: node.sector?.businessUnit?.companyId })),
   ];
   const byKey = new Map(nodes.map((node) => [`${node.level}:${node.id}`, node]));
   for (const scope of scopes) {
     const node = byKey.get(scopeKey(scope));
     if (!node) throw new AppError("Uno de los nodos organizacionales seleccionados no existe.", 400, "POSITION_SCOPE_INVALID");
-    if ((node.level === "SECTOR" && !node.businessUnitId) || (node.level === "AREA" && (!node.sectorId || !node.businessUnitId))) {
+    // A8-3: "estructura anterior" se decide por la clasificación persistida
+    // del sector (Sector.isLegacy), no por sus padres actuales. Un sector sin
+    // fila clasificada (imposible: la columna es NOT NULL) sigue contando como
+    // anterior, como antes.
+    if ((node.level === "SECTOR" && node.isLegacy !== false) || (node.level === "AREA" && (!node.sectorId || node.isLegacy !== false))) {
       throw new AppError(`“${node.name}” pertenece a la estructura anterior y no puede asignarse como alcance nuevo.`, 409, "POSITION_SCOPE_LEGACY");
     }
     if (node.status !== "ACTIVO" && !currentKeys.has(scopeKey(scope))) {

@@ -48,6 +48,8 @@ async function main() {
     update: {},
     create: {
       businessUnitId: businessUnit.id,
+      // A8-3: alta con clasificación explícita (con padre del modelo objetivo = nuevo).
+      isLegacy: false,
       code: "RRHH",
       name: "RRHH",
     },

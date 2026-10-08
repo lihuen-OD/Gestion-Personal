@@ -60,6 +60,7 @@ The organizational model is under an approved reorganization that is **not imple
   - `Establishment` has **two** parent FKs, `companyId` (required) and `businessUnitId?`.
   - `Area.establishmentId` and `Sector.areaId` are nullable, so walking up from a sector can stop partway.
 - `Employee.sectorId` and `Position.sectorId` are single FKs into this chain.
+- A sector's legacy/new classification is the persisted `Sector.isLegacy` column (A8-3, added 2026-10-08): frozen at creation with the criterion that applied at the time (`businessUnitId IS NULL`), backfilled once by migration `20261008110000_sector_org_classification` (not yet applied to any shared database), never editable through a common update. Do not re-derive it from `businessUnitId` or any other current parent — M2 changes those parents and would silently re-interpret special-hour history (ADR §20, hallazgo 1).
 - An employee's companies do **not** come from walking up the chain. They come from the M:N `EmployeeCompany` (employer company + `isPrimary`).
 - `onDelete` rules today:
   - `EmployeeCompany.companyId`, `PositionSalaryCategory` and every `CostCenter*` join are `CASCADE`.

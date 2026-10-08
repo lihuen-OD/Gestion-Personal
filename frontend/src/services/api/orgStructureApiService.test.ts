@@ -18,12 +18,19 @@ beforeEach(async () => {
 // Contrato de A2 (docs/BACKEND_API_CONTRACTS.md → Estructura organizacional):
 // el overview trae el padre del modelo nuevo y, hasta M2, los padres anteriores
 // sólo de lectura; las escrituras envían sólo el padre del modelo nuevo.
+// A8-3: la clasificación legado/nuevo viene persistida en `sectors[].isLegacy`
+// y ya no se deriva de businessUnitId.
 describe("orgStructureApiService — catálogo", () => {
-  it("mapea zonas y padres nuevos, y marca pendiente de recarga lo que no tiene padre nuevo", async () => {
+  it("mapea zonas y padres nuevos, y marca pendiente de recarga según isLegacy persistido", async () => {
     request.mockResolvedValueOnce({
       data: {
         companies: [], businessUnits: [], costCenters: [],
-        sectors: [{ id: "s1", code: "SEC-1", name: "Cocina", status: "ACTIVO", businessUnitId: "bu1", areaId: null }, { id: "s0", code: "SEC-0", name: "Viejo", status: "ACTIVO", businessUnitId: null, areaId: "a0" }],
+        sectors: [
+          { id: "s1", code: "SEC-1", name: "Cocina", status: "ACTIVO", businessUnitId: "bu1", areaId: null, isLegacy: false },
+          { id: "s0", code: "SEC-0", name: "Viejo", status: "ACTIVO", businessUnitId: null, areaId: "a0", isLegacy: true },
+          // Re-padreado post-A8-3: tiene unidad de negocio pero sigue legado.
+          { id: "s2", code: "SEC-2", name: "Reubicado", status: "ACTIVO", businessUnitId: "bu1", areaId: "a0", isLegacy: true },
+        ],
         areas: [{ id: "a1", code: "AREA-1", name: "Parrilla", status: "ACTIVO", sectorId: "s1", establishmentId: null }],
         zones: [{ id: "z1", code: "ZN-1", name: "Litoral", status: "ACTIVO" }],
         establishments: [{ id: "e0", code: "EST-0", name: "Viejo", status: "ACTIVO", zoneId: null, companyId: "c1", businessUnitId: null }],
@@ -33,7 +40,7 @@ describe("orgStructureApiService — catálogo", () => {
     const catalog = await orgStructureApiService.getCatalog();
 
     expect(catalog.zones).toEqual([{ id: "z1", code: "ZN-1", name: "Litoral", status: "ACTIVO" }]);
-    expect(catalog.sectors.map((item) => [item.id, item.pendingReload])).toEqual([["s1", false], ["s0", true]]);
+    expect(catalog.sectors.map((item) => [item.id, item.pendingReload])).toEqual([["s1", false], ["s0", true], ["s2", true]]);
     expect(catalog.sectors[1]).toMatchObject({ areaId: "a0", businessUnitId: undefined });
     expect(catalog.areas[0]).toMatchObject({ sectorId: "s1", pendingReload: false });
     expect(catalog.establishments[0]).toMatchObject({ zoneId: undefined, companyId: "c1", pendingReload: true });

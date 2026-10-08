@@ -15,7 +15,7 @@ describe("PuestosPage", () => {
     const catalog: OrgStructureCatalog = {
       companies: [{ id: "c1", code: "C1", name: "LOSOD", legalName: "", cuit: "", status: "ACTIVO" }],
       businessUnits: [{ id: "bu1", code: "BU1", name: "Servicios", companyId: "c1", status: "ACTIVO" }],
-      sectors: [{ id: "legacy", code: "S0", name: "Anterior", status: "ACTIVO" }, { id: "s1", code: "S1", name: "Operaciones", businessUnitId: "bu1", status: "ACTIVO" }],
+      sectors: [{ id: "legacy", code: "S0", name: "Anterior", status: "ACTIVO", pendingReload: true }, { id: "s1", code: "S1", name: "Operaciones", businessUnitId: "bu1", status: "ACTIVO", pendingReload: false }],
       areas: [], zones: [], establishments: [], costCenters: [],
     };
     const result = options([], catalog);

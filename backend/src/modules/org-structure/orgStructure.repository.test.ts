@@ -44,10 +44,22 @@ beforeEach(() => {
 });
 
 describe("orgStructureRepository — altas con el padre del modelo objetivo", () => {
-  it("sector: escribe businessUnitId, nunca areaId", async () => {
+  it("sector: escribe businessUnitId, nunca areaId, y clasifica con el criterio previo (A8-3)", async () => {
     tx.sector.create.mockResolvedValue({ id: "sec-1" });
     await orgStructureRepository.createNode(tx as never, "sector", { code: "SEC-1", name: "Cocina", status: "ACTIVO", businessUnitId: "bu-1" });
-    expect(tx.sector.create).toHaveBeenCalledWith({ data: { code: "SEC-1", name: "Cocina", status: "ACTIVO", businessUnitId: "bu-1" } });
+    expect(tx.sector.create).toHaveBeenCalledWith({ data: { code: "SEC-1", name: "Cocina", status: "ACTIVO", businessUnitId: "bu-1", isLegacy: false } });
+  });
+
+  it("sector: el alta ignora cualquier isLegacy entrante y clasifica con el criterio previo (A8-3)", async () => {
+    tx.sector.create.mockResolvedValue({ id: "sec-1" });
+    await orgStructureRepository.createNode(tx as never, "sector", { code: "SEC-1", name: "Cocina", status: "ACTIVO", businessUnitId: "bu-1", isLegacy: true } as never);
+    expect(tx.sector.create).toHaveBeenCalledWith({ data: expect.objectContaining({ businessUnitId: "bu-1", isLegacy: false }) });
+  });
+
+  it("sector: una edición común no puede cambiar la clasificación persistida (A8-3)", async () => {
+    tx.sector.update.mockResolvedValue({ id: "sec-1" });
+    await orgStructureRepository.updateNode(tx as never, "sector", "sec-1", { code: "SEC-9", name: "Cocina", status: "ACTIVO", businessUnitId: "bu-2", isLegacy: true } as never);
+    expect(tx.sector.update).toHaveBeenCalledWith({ where: { id: "sec-1" }, data: expect.not.objectContaining({ isLegacy: true }) });
   });
 
   it("área: escribe sectorId, nunca establishmentId", async () => {
@@ -69,9 +81,14 @@ describe("orgStructureRepository — altas con el padre del modelo objetivo", ()
 });
 
 describe("orgStructureRepository.findNode — registro legado", () => {
-  it("un sector sin unidad de negocio es del modelo anterior", async () => {
-    tx.sector.findUnique.mockResolvedValue({ id: "s1", code: "SEC-1", name: "Depósito", status: "ACTIVO", businessUnitId: null, _count: {} });
+  it("un sector clasificado como del modelo anterior (A8-3, columna persistida)", async () => {
+    tx.sector.findUnique.mockResolvedValue({ id: "s1", code: "SEC-1", name: "Depósito", status: "ACTIVO", businessUnitId: null, isLegacy: true, _count: {} });
     await expect(orgStructureRepository.findNode(tx as never, "sector", "s1")).resolves.toMatchObject({ parentId: null, isLegacy: true });
+  });
+
+  it("la clasificación no depende del padre actual: un sector re-padreado sigue siendo legado (A8-3)", async () => {
+    tx.sector.findUnique.mockResolvedValue({ id: "s1", code: "SEC-1", name: "Depósito", status: "ACTIVO", businessUnitId: "bu-nuevo", isLegacy: true, _count: {} });
+    await expect(orgStructureRepository.findNode(tx as never, "sector", "s1")).resolves.toMatchObject({ parentId: "bu-nuevo", isLegacy: true });
   });
 
   it("un establecimiento con zona es del modelo objetivo", async () => {

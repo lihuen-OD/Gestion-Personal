@@ -188,8 +188,8 @@ export const positionsRepository = {
     const [companies, businessUnits, sectors, areas] = await Promise.all([
       tx.company.findMany({ where: { id: { in: ids("COMPANY") } }, select: { id: true, code: true, name: true, status: true } }),
       tx.businessUnit.findMany({ where: { id: { in: ids("BUSINESS_UNIT") } }, select: { id: true, code: true, name: true, status: true, companyId: true } }),
-      tx.sector.findMany({ where: { id: { in: ids("SECTOR") } }, select: { id: true, code: true, name: true, status: true, businessUnitId: true, businessUnit: { select: { companyId: true } } } }),
-      tx.area.findMany({ where: { id: { in: ids("AREA") } }, select: { id: true, code: true, name: true, status: true, sectorId: true, sector: { select: { businessUnitId: true, businessUnit: { select: { companyId: true } } } } } }),
+      tx.sector.findMany({ where: { id: { in: ids("SECTOR") } }, select: { id: true, code: true, name: true, status: true, businessUnitId: true, isLegacy: true, businessUnit: { select: { companyId: true } } } }),
+      tx.area.findMany({ where: { id: { in: ids("AREA") } }, select: { id: true, code: true, name: true, status: true, sectorId: true, sector: { select: { businessUnitId: true, isLegacy: true, businessUnit: { select: { companyId: true } } } } } }),
     ]);
     return { companies, businessUnits, sectors, areas };
   },

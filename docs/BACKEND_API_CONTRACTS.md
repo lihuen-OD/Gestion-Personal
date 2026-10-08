@@ -717,7 +717,9 @@ Devuelve `companies`, `businessUnits`, `sectors`, `areas`, `zones`, `establishme
 | Área | `sectorId` |
 | Establecimiento | `zoneId` (más el domicilio) |
 
-**Padres del modelo anterior**: hasta M2 se devuelven además, **sólo de lectura**, `sectors[].areaId`, `areas[].establishmentId` y `establishments[].companyId/businessUnitId`. Un sector sin `businessUnitId`, un área sin `sectorId` o un establecimiento sin `zoneId` es un registro **legado**, que la limpieza controlada va a eliminar.
+**Padres del modelo anterior**: hasta M2 se devuelven además, **sólo de lectura**, `sectors[].areaId`, `areas[].establishmentId` y `establishments[].companyId/businessUnitId`.
+
+**Clasificación legado/nuevo del sector (A8-3)**: `sectors[].isLegacy` es un dato **persistido** (`Sector.isLegacy`, fijado en el alta y backfilleado por la migración `20261008110000_sector_org_classification` con el criterio previo). El frontend lo recibe como `pendingReload`. Un sector **no** se clasifica por la ausencia de `businessUnitId`: M2 puede cambiar el padre sin re-interpretar la historia. El campo **no es editable**: `PATCH /org-structure/sectors/:id` lo ignora. Un área sin `sectorId` o un establecimiento sin `zoneId` sigue marcándose por la ausencia de su padre del modelo objetivo: es un registro **legado**, que la limpieza controlada va a eliminar.
 
 **Cost centers:** traen sus vínculos M:N (`companies`, `businessUnits`, `sectors`, `areas`, `establishments`).
 

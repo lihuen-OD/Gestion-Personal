@@ -233,6 +233,39 @@ y esa bandera decide la ruta de evaluación en `laborHistory.scope.ts:85`
    hoy comparan contra el sector anterior. Retirarlo es una decisión propia con plan de evidencia, no un
    subproducto de M2.
 
+#### Implementación de A8-3 (2026-10-08) [C] — requisito 1 cumplido en código
+
+- **Columna persistente:** `Sector.isLegacy Boolean` obligatoria, **sin `@default`** (nada se clasifica
+  por omisión), comentada A8-3 en `schema.prisma`.
+- **Migración aditiva** `20261008110000_sector_org_classification`: `ADD COLUMN` →
+  `UPDATE … SET "isLegacy" = ("businessUnitId" IS NULL)` (**el criterio previo**, fijado una sola vez)
+  → `SET NOT NULL`. Sin `DEFAULT`, sin `INSERT`/`DELETE`, sin asignar padres. **No se aplicó a Neon ni a
+  ninguna base compartida**: correrá en el ensayo de §7 con el resto.
+- **Alta:** `orgStructureRepository.create` (sector) fija `isLegacy = !businessUnitId` (criterio previo)
+  e **ignora** cualquier `isLegacy` entrante; **edición:** el `update` de sector hace strip del campo
+  (una edición común nunca re-clasifica; además Zod hace strip en la ruta). Seed crea con `isLegacy: false`.
+- **Motor:** `ruleScopeOf` usa `Boolean(rule.sectorId) && rule.sector?.isLegacy !== false` (fila sin
+  seleccionar = criterio previo "legado por defecto"); `ruleInclude` sólo selecciona `sector.isLegacy`.
+  `laborHistory.scope.ts` **no cambia**: sigue recibiendo la bandera.
+- **Resto del backend:** `findLegacyNames` filtra `isLegacy: true`; overview y `findNode` clasifican desde
+  la columna; `resolveScopeNodes` y la validación de alcances (`positions.service`) usan
+  `node.isLegacy !== false`; `assertRuleSectorSupported` ya no necesita leer `businessUnitId`.
+- **Frontend:** `ApiSector.isLegacy` → `mapSector` escribe `pendingReload: item.isLegacy` (ya no
+  `!businessUnitId`); los cinco filtros "legado/nuevo" pasan de `businessUnitId` a `pendingReload`
+  (`HolidayWorkAssignmentsPage`, `PuestosPage`, `PuestoIdentificationTab`, `employeeStructureFilters` ×2).
+- **Pruebas** (motor real sobre cliente en memoria, fixtures; sin escribir en ninguna base) —
+  `backend/src/modules/time-entries/sectorLegacyClassification.test.ts`: prueba principal (re-padrear el
+  sector no cambia clasificación ni resolución histórica; el criterio previo **habría** re-interpretado de
+  2 a 1), caso inverso (sector nuevo sin padre no se reclasifica), legado/nuevo con historia por fecha,
+  historia insuficiente (`MISSING` de la dimensión restringida), reglas sin sector, equivalencia
+  antes/después de la migración, lectura del SQL de backfill y conservación de cierres protegidos
+  (multiplicadores idénticos ⇒ 0 filas pendientes). Más tests de repositorio (alta/edición) y del mapper
+  de frontend. `typecheck`/`test`/`build` verdes en backend (2477 tests) y frontend (1230 tests).
+
+**Pendiente del requisito 2:** la **equivalencia antes/después sobre la copia** (pares fecha-legajo +
+reglas, ADR §19.4) sigue sin ejecutarse: la migración no se aplicó a ninguna base. El requisito 3 queda
+intacto: el soporte legado (`LEGACY_SECTOR`) no se retiró.
+
 ## 4. Cambios propuestos para M2 (diseño; aún no implementar) [D]
 
 ### 4.1 DDL de la migración (archivo único, en `reorg-r2`) y guarda por clases de fila
@@ -268,8 +301,8 @@ sincronización de `schema.prisma` + `prisma validate` + regeneración del clien
   caché (D-14); `pending.repository.ts` sin `employee.sectorId`; filtros de convocatorias/régimenes/
   conceptos sin `sectorId` (o acotados a sector anterior mientras exista).
 - **Motor:** conservar `DoubleHourRule.sectorId` (ADR §6) y **todo el soporte legado de clasificación**
-  mientras haya evidencia que lo necesite (§3.4, hallazgo 1); la clasificación legado/nuevo debe pasar a
-  ser persistente antes de M2.
+  mientras haya evidencia que lo necesite (§3.4, hallazgo 1); la clasificación legado/nuevo **ya es
+  persistente** (A8-3 implementado 2026-10-08) antes de M2.
 - **Frontend:** filtros y selects "Sector anterior" (§2.4), campos `derived*` de puestos, etiquetas de
   padres legacy de Organización, columna "Sector anterior" y filtro de Nivel 2 del dashboard,
   `cacheKey.ts` sin `sectorId`, datos demo/fixtures, etiquetas de error de `apiClient`.
@@ -299,8 +332,9 @@ sincronización de `schema.prisma` + `prisma validate` + regeneración del clien
 
 **Bloqueos funcionales y de decisión:**
 
-- **Clasificación LEGACY_SECTOR (hallazgo 1)** — §3.4: clasificación persistente + equivalencia
-  antes/después exigidas antes de M2.
+- **Clasificación LEGACY_SECTOR (hallazgo 1)** — §3.4: **A8-3 implementado en código** (columna
+  `Sector.isLegacy`, backfill con el criterio previo, motor y frontend desde el dato persistido);
+  queda pendiente la **equivalencia antes/después en la copia** antes de autorizar M2.
 - **Nodos históricos (hallazgo 2)** — §3.3 HT-2: sin conversión neutra demostrada, el nodo se conserva
   y M2 queda bloqueada.
 - **Empresas históricas (hallazgo 4)** — §3.3 HT-4: en C2, aborto si hay historia que referencie una
@@ -441,8 +475,8 @@ cobertura).
 
 - Este documento y sus correcciones en el ADR (§6, §11, §19.3, §20).
 - Inventario de dependencias (§2) con marcas de evidencia [C]/[R]/[D].
-- Diseño: guarda por clases de fila (§4.1), HT-1…HT-5 (§3.3), clasificación persistente (§3.4),
-  procedimiento de cobertura desde el corte (§6.1) — todos a ratificar.
+- Diseño: guarda por clases de fila (§4.1), HT-1…HT-5 (§3.3), procedimiento de cobertura desde el corte
+  (§6.1) — a ratificar; clasificación persistente (§3.4) ya **implementada** como A8-3.
 - Lista de cambios de código por archivo (§4.2) como plan de A8.
 - Corridas de solo lectura en la copia ya realizadas (2026-10-08, archivos de §1).
 - Actualizar `decisions.json` cuando se decidan D-1/D-3, y elegir la fecha de corte.
@@ -496,7 +530,7 @@ de forma explícita y ordenada, con manifiesto V1).
 | D-6 | Puestos por alcance | ¿Un "Gerente de O'Dwyer" y uno "de Tropa" son dos puestos o uno con dos alcances? (Hoy: una función con alcance distinto = puesto distinto) |
 | **A8-1** | Nodo retenido por historia con forma vieja | Si `EmployeeLegacySectorPeriod` apunta a un Sector del inventario: ¿se **demuestra** una conversión neutra (identidad, ruta histórica, semántica de reglas intactas) con equivalencia antes/después? Si no, **se conserva y M2 queda bloqueada**. Nunca inventar el `businessUnitId` para pasar la guarda |
 | **A8-2** | Alcance exacto de la guarda de M2 | Clases eliminable/retenida/nueva (§4.1); `User.companyId` **no** se exige NOT NULL (nullable, administrativo); puestos sin alcance admitidos |
-| **A8-3** | Clasificación legado/nuevo persistente | Sustituir `!rule.sector.businessUnitId` (derivada, §3.4) por un dato guardado; mientras haya evidencia legada, el soporte legado se conserva |
+| **A8-3** | Clasificación legado/nuevo persistente | **Implementado en código (2026-10-08):** `Sector.isLegacy` (sin `@default`) sustituye a `!rule.sector.businessUnitId` (§3.4); backfill con el criterio previo en la migración aditiva `20261008110000` (**sin aplicar a ninguna base**), motor y frontend desde el dato persistido, pruebas con motor real. Pendiente: equivalencia antes/después en la copia. Mientras haya evidencia legada, el soporte legado se conserva |
 | **A8-4** | Índices y planes de consulta tras el DROP | `EXPLAIN` de listados antes de eliminar `[status, sectorId]` y `[sectorId]`; cobertura de `@@index([status])` (schema 817) |
 | **A8-5** | Fecha de corte de cobertura | Fecha desde la que la recarga abre períodos auditados (§6.1). Hoy **no elegida ni ejecutada**; hasta decidirla, `MISSING` se conserva |
 
@@ -510,5 +544,9 @@ de forma explícita y ordenada, con manifiesto V1).
 - [x] Trabajo separado en ahora / dependiente de decisiones / Neon (§8).
 - [x] Autorización de limpieza registrada con sus límites (§9).
 - [ ] A8 en revisión (este documento + correcciones en el ADR).
-- Siguiente paso tras la revisión: implementar clasificación persistente, M2 y el retiro de consumidores
-  en `reorg-r2`, probarlos en la copia aislada, y recién entonces ejecutar el ensayo de §7.
+- [x] **A8-3 implementado en código** (§3.4): columna `Sector.isLegacy`, migración aditiva con backfill
+  del criterio previo (**sin aplicar a ninguna base**), motor, consumidores, frontend y pruebas con motor
+  real; `typecheck`/`test`/`build` verdes en ambos paquetes.
+- Siguiente paso: aplicar la migración de A8-3 **en la copia** y correr la equivalencia antes/después
+  (§3.4 req-2); después, en `reorg-r2`, implementar M2 y el retiro de consumidores, probarlos en la copia
+  aislada, y recién entonces ejecutar el ensayo de §7.

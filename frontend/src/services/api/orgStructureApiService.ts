@@ -41,6 +41,9 @@ type ApiSector = {
   status: OrgStructureStatus;
   businessUnitId?: string | null;
   areaId?: string | null;
+  // A8-3: clasificación legado/nuevo persistida en el backend (Sector.isLegacy),
+  // ya no derivada de businessUnitId (que M2 puede cambiar).
+  isLegacy: boolean;
 };
 
 type ApiArea = {
@@ -131,7 +134,7 @@ function mapSector(item: ApiSector): OrgSector {
     name: item.name,
     businessUnitId: item.businessUnitId || undefined,
     areaId: item.areaId || undefined,
-    pendingReload: !item.businessUnitId,
+    pendingReload: item.isLegacy,
     status: item.status,
   };
 }

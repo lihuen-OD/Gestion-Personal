@@ -54,7 +54,7 @@ export function options(items: Position[], catalog: OrgStructureCatalog | undefi
     scopeNodes: {
       COMPANY: activeIdName(catalog?.companies || []),
       BUSINESS_UNIT: activeIdName(catalog?.businessUnits || []),
-      SECTOR: activeIdName((catalog?.sectors || []).filter((item) => item.businessUnitId)),
+      SECTOR: activeIdName((catalog?.sectors || []).filter((item) => !item.pendingReload)),
       AREA: activeIdName((catalog?.areas || []).filter((item) => item.sectorId)),
     },
     salaryRangeCategory: uniqueStrings(items.flatMap((position) => position.salaryCategoryNames || [])),

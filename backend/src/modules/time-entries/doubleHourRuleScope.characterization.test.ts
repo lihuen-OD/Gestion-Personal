@@ -75,7 +75,7 @@ describe("motor de horas especiales con historia temporal (D-5)", () => {
   });
 
   it("sector nuevo: “Ubicado dentro de” con el alcance del puesto vigente ese día (cambio de alcance del puesto compartido)", async () => {
-    const agro = rule({ id: "agro", sectorId: "agro", sector: { businessUnitId: "bu-1" } });
+    const agro = rule({ id: "agro", sectorId: "agro", sector: { isLegacy: false } });
     const world: World = {
       rules: [agro],
       position: [{ ...period("2026-01-01"), positionId: "pos-shared" }],

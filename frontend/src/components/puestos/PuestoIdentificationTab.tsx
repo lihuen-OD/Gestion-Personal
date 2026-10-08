@@ -61,7 +61,7 @@ export function PuestoIdentificationTab({ position, setPosition, disabled = fals
   const today = argentinaDateKey(new Date());
   const scopeChanged = !disabled && savedScopeKeys !== undefined && scopesDiffer(position.orgScopes, savedScopeKeys);
   const change = position.orgScopesChange ?? { effectiveFrom: today, reason: "" };
-  const entries = level === "COMPANY" ? catalog?.companies : level === "BUSINESS_UNIT" ? catalog?.businessUnits : level === "SECTOR" ? catalog?.sectors.filter((item) => item.businessUnitId) : catalog?.areas.filter((item) => item.sectorId);
+  const entries = level === "COMPANY" ? catalog?.companies : level === "BUSINESS_UNIT" ? catalog?.businessUnits : level === "SECTOR" ? catalog?.sectors.filter((item) => !item.pendingReload) : catalog?.areas.filter((item) => item.sectorId);
   const options = (entries || []).filter((item) => item.status === "ACTIVO").sort((a, b) => a.name.localeCompare(b.name, "es"));
   const addScope = () => {
     if (!catalog || !nodeId) return setScopeError("Seleccioná un nodo organizacional.");

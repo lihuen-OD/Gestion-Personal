@@ -342,7 +342,7 @@ export function HolidayWorkAssignmentsPage() {
               <span>Sector anterior</span>
               <select value={sectorFilter} onChange={(event) => setSectorFilter(event.target.value)}>
                 <option value="">Todos</option>
-                {catalog?.sectors.filter((sector) => !sector.businessUnitId).map((sector) => (
+                {catalog?.sectors.filter((sector) => sector.pendingReload).map((sector) => (
                   <option key={sector.id} value={sector.id}>{sector.name}</option>
                 ))}
               </select>

@@ -65,7 +65,7 @@ export function scopeNodeOptions(catalog: OrgStructureCatalog, level: "" | Posit
   if (!level) return [];
   const nodes = level === "COMPANY" ? catalog.companies
     : level === "BUSINESS_UNIT" ? catalog.businessUnits
-      : level === "SECTOR" ? catalog.sectors.filter((item) => item.businessUnitId)
+      : level === "SECTOR" ? catalog.sectors.filter((item) => !item.pendingReload)
         : catalog.areas.filter((item) => item.sectorId);
   return nodes
     .filter((node) => node.status === "ACTIVO")
@@ -86,7 +86,7 @@ export function establishmentFilterOptions(catalog: OrgStructureCatalog, zoneId:
 
 /** Sectores del modelo anterior: sólo para consultar legajos pendientes de recarga. */
 export function legacySectorOptions(catalog: OrgStructureCatalog): NodeOption[] {
-  return catalog.sectors.filter((item) => !item.businessUnitId).map((item) => ({ id: item.id, label: item.name })).sort((a, b) => a.label.localeCompare(b.label, "es"));
+  return catalog.sectors.filter((item) => item.pendingReload).map((item) => ({ id: item.id, label: item.name })).sort((a, b) => a.label.localeCompare(b.label, "es"));
 }
 
 /**

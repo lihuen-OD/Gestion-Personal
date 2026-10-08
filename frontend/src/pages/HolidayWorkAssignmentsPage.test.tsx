@@ -50,8 +50,9 @@ const catalog = {
   businessUnits: [],
   establishments: [],
   areas: [],
-  // Pañol es un sector del modelo anterior (sin businessUnitId); Agricultura, del nuevo.
-  sectors: [{ id: "sector-panol", code: "PAN", name: "Pañol", status: "ACTIVO" as const }, { id: "sector-agro", code: "AGR", name: "Agricultura", status: "ACTIVO" as const, businessUnitId: "bu-1" }],
+  // Pañol es un sector del modelo anterior (isLegacy persistido → pendingReload);
+  // Agricultura, del nuevo.
+  sectors: [{ id: "sector-panol", code: "PAN", name: "Pañol", status: "ACTIVO" as const, pendingReload: true }, { id: "sector-agro", code: "AGR", name: "Agricultura", status: "ACTIVO" as const, businessUnitId: "bu-1", pendingReload: false }],
   zones: [{ id: "zone-north", code: "ZN", name: "Zona Norte", status: "ACTIVO" as const }],
   costCenters: [],
 };

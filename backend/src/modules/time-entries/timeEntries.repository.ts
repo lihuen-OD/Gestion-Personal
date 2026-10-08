@@ -212,7 +212,7 @@ function minutesFromHours(hours: number) {
 const NIGHT_HOUR_CONCEPT_KINDS = new Set(["NOCTURNA", "GUARDIA", "SERENO"]);
 
 type DoubleHourRuleForEngine = Prisma.DoubleHourRuleGetPayload<{ include: { dates: true } }>;
-type DoubleHourRuleWithSector = DoubleHourRuleForEngine & { sector: null | { businessUnitId: string | null } };
+type DoubleHourRuleWithSector = DoubleHourRuleForEngine & { sector: null | { isLegacy: boolean } };
 
 // Filtro SQL de candidatas por empleado: sólo la lista explícita de legajos de
 // la regla (configuración de la regla, no dato del legajo). Las dimensiones
@@ -228,7 +228,13 @@ function ruleScopeOf(rule: DoubleHourRuleWithSector): RuleScope {
   return {
     companyId: rule.companyId,
     sectorId: rule.sectorId,
-    sectorIsLegacy: Boolean(rule.sectorId) && !rule.sector?.businessUnitId,
+    // A8-3 (A8_M2_PREPARATION.md §3.4): la clasificación legado/nuevo es
+    // PERSISTENTE (Sector.isLegacy, fijada en el alta) y no se deriva de
+    // businessUnitId ni de ningún otro padre actual, de modo que M2 o un
+    // re-padreamiento no reinterpretan la historia de la regla. La regla sin
+    // sector sigue sin clasificación; sin fila seleccionada (imposible con FK
+    // RESTRICT) se conserva el criterio previo de "legado por defecto".
+    sectorIsLegacy: Boolean(rule.sectorId) && rule.sector?.isLegacy !== false,
     costCenterId: rule.costCenterId,
     positionId: rule.positionId,
   };
@@ -308,7 +314,7 @@ export async function evaluateSpecialHourRulesByDate(employeeId: string, dates: 
   const from = new Date(Math.min(...times));
   const to = new Date(Math.max(...times));
   const vigencyWhere = { status: "ACTIVO" as const, fromDate: { lte: to }, OR: [{ toDate: null }, { toDate: { gte: from } }] };
-  const ruleInclude = { dates: true, sector: { select: { businessUnitId: true } } } as const;
+  const ruleInclude = { dates: true, sector: { select: { isLegacy: true } } } as const;
   const [history, rulesForEmployee, feriadoRules, convocations] = await Promise.all([
     laborHistoryService.loadEngineScopeHistory(db, employeeId, { fromKey: calendarDateKey(from), toKey: calendarDateKey(to) }),
     db.doubleHourRule.findMany({ where: { ...vigencyWhere, AND: [ruleEmployeeListWhere(employeeId)] }, include: ruleInclude }),

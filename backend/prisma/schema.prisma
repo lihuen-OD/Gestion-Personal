@@ -533,6 +533,14 @@ model Sector {
   status         RecordStatus @default(ACTIVO)
   areaId         String?
   businessUnitId String?
+  // A8-3 (A8_M2_PREPARATION.md §3.4, ADR §20 hallazgo 1): clasificación
+  // legado/nuevo PERSISTENTE, independiente de businessUnitId y de cualquier
+  // otro padre actual. Se fija en el alta con el criterio previo (¿tenía padre
+  // del modelo objetivo al crearse?) y no se expone a ediciones: cambiar el
+  // padre de un sector no cambia esta clasificación ni reinterpretar la
+  // historia de las reglas. Sin @default: el alta debe clasificar
+  // explícitamente, nunca se asume un valor.
+  isLegacy       Boolean
   createdAt      DateTime     @default(now()) @db.Timestamptz(3)
   updatedAt      DateTime     @updatedAt @db.Timestamptz(3)
 
