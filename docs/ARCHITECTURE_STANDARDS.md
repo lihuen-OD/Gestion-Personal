@@ -60,7 +60,9 @@ Suggested separation:
 
 Each module generally follows `*.routes.ts` → `*.controller.ts` → `*.service.ts` → `*.repository.ts` + `*.schemas.ts`. When adding a new module, add it here and to `docs/BACKEND_API_CONTRACTS.md` in the same change.
 
-audit, audit-parameters, auth, clock-devices, dashboard, document-categories, documents, employees, finnegans-export, health, hour-concepts, novelties, novelty-types, org-structure, pending, positions, salary-categories, shifts, storage, time-entries, users, work-regimes, workforce-management.
+audit, audit-parameters, auth, clock-devices, dashboard, document-categories, documents, employees, finnegans-export, health, hour-concepts, labor-history, novelties, novelty-types, org-structure, pending, positions, salary-categories, shifts, storage, time-entries, users, work-regimes, workforce-management.
+
+`labor-history` es un módulo interno sin rutas propias. Normaliza las vigencias que consume el motor de horas especiales (puesto, centro de costo, sector legado, empresas empleadoras y alcance organizacional del puesto). Sus servicios sólo escriben mediante la transacción dueña de `employees` o `positions`; sus repositorios reciben siempre el cliente Prisma/tx.
 
 `clock-devices` expone dos routers del mismo bounded context: enrolamiento
 público bajo `/api/clock` y administración RRHH bajo `/api/clock-devices`.

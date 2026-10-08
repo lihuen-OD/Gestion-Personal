@@ -1737,6 +1737,16 @@ El resto de `entityType` (cierres, correcciones, novedades pendientes) no trae `
 
 #### Horas Especiales (`/double-hour-rules*`) — Etapa 8B (extendido en 12B)
 
+**Historia temporal del alcance (A7/D-5; módulo interno `labor-history`).** No agrega rutas propias. Las altas/ediciones de Legajos y Puestos amplían sus contratos existentes:
+
+- Si cambia `positionId`, `costCenterId` o `companies`, el body debe incluir `laborChange: { effectiveFrom: "YYYY-MM-DD", reason: string }`.
+- Si cambia `orgScopes` de un puesto, el body debe incluir `scopeChange: { effectiveFrom: "YYYY-MM-DD", reason: string }`.
+- El cambio de columna vigente, la nueva vigencia, el historial visible y `AuditLog` se escriben en la misma transacción `Serializable`. Una superposición concurrente responde `409 LABOR_HISTORY_CONCURRENT_CHANGE`.
+- Fechas futuras no se programan (`409 LABOR_HISTORY_FUTURE_DATE_NOT_SUPPORTED`) y una fecha anterior al inicio de la vigencia actual no reescribe historia (`409 LABOR_HISTORY_DATE_BEFORE_CURRENT_PERIOD`).
+- Si el intervalo alcanzado contiene un cierre `ENVIADO`, `APROBADO` o `CORRECCION_PENDIENTE`, se rechaza dentro de la transacción (`409 PERIOD_CLOSED`).
+- El motor resuelve cada dimensión según la fecha trabajada. Si una regla restringe una dimensión sin cobertura histórica, responde `409 SPECIAL_HOUR_SCOPE_HISTORY_MISSING`; nunca completa el pasado con el valor actual.
+- No hay inicialización automática de filas anteriores. Las cargas normales o atrasadas funcionan cuando todas las dimensiones que la regla necesita tienen cobertura real para esa fecha.
+
 **Sector en reglas (A7, D-4).** Un sector anterior compara `Employee.sectorId`; un sector nuevo usa “Ubicado dentro de” sobre los alcances del puesto (sector igual o área hija). Un alcance superior no hereda reglas sectoriales.
 - Un sector inexistente → `400 DOUBLE_HOUR_RULE_SECTOR_INVALID`.
 - La validación ocurre antes de la transacción: un rechazo no escribe ni reinterpreta horas.

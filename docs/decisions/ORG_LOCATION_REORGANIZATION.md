@@ -346,7 +346,7 @@ La inactivación solo puede **combinarse** con R1, R2 o R3. **Nunca se deja una 
 | A4 | Hecha: UI separada de Organización, Ubicaciones y Centros de costo; QA visual contra la copia aislada (§13) |
 | A5 | Hecha en `feat/org-location-reorg`: alcance múltiple de puestos con validación, filtros y QA (§14) |
 | A6 | Hecha en `feat/org-location-reorg`: Datos Laborales con puesto y alcance de consulta, ubicaciones con vigencia y transición de legajos anteriores; QA en la copia aislada (§15) |
-| A7 | **En curso, no cerrada.** D-4, D-5, D-7, D-8 y D-13 a D-15 fueron ratificadas e implementadas con las salvaguardas de §18. Falta el historial temporal normalizado y consultable por fecha para alcance de puesto, empresa y centro de costo; el motor bloquea con `SPECIAL_HOUR_SCOPE_HISTORY_MISSING` cuando no puede demostrar la semántica histórica sin reinterpretar datos |
+| A7 | **Cerrada en `feat/org-location-reorg`.** D-4, D-5, D-7, D-8 y D-13 a D-15 están implementadas y verificadas en la copia aislada. D-5 agrega historia temporal normalizada para todas las entradas mutables del motor; no inicializa datos anteriores y mantiene `SPECIAL_HOUR_SCOPE_HISTORY_MISSING` cuando falta evidencia real (§19) |
 | A8, B0–B5 | Pendientes |
 
 ### A2 — qué quedó en código
@@ -1019,3 +1019,42 @@ Se ratificaron D-4, D-5, D-7, D-8, D-13, D-14 y D-15. D-1, D-2, D-3 y D-6 contin
 - Dispositivos exponen, filtran y asignan `establishmentId`, mostrando `Zona · Establecimiento`. No cambia autenticación, autorización ni procesamiento de fichadas y no se infiere la ubicación laboral de personas.
 - `ClockDevice.establishmentId` ya existía en M1, por lo que no fue necesaria otra migración.
 - D-13 se aplicará en M2 como unicidad `(zoneId, code)`. La restricción anterior no se elimina en A7.
+
+## 19. A7 — historia temporal normalizada (D-5, 2026-10-08)
+
+### 19.1 Modelo y semántica
+
+La migración aditiva `20261008090000_labor_history_periods` agrega vigencias cerradas de días `[effectiveFrom, effectiveTo]` (`NULL` = abierta) para:
+
+- puesto, centro de costo y sector anterior del legajo;
+- conjunto de empresas empleadoras del legajo;
+- alcance organizacional del puesto, incluyendo en cada nodo AREA el sector padre vigente al registrar el snapshot.
+
+Los `CHECK` validan el intervalo y la coherencia nivel/FK; exclusiones GiST con `btree_gist` impiden superposiciones incluso bajo concurrencia. Las FKs de historia usan `RESTRICT` hacia legajo, puesto, estructura y centro de costo; autoría usa `User onDelete: SetNull`. La historia no se borra ni se debilita para liberar dependencias.
+
+Un cambio desde D cierra la vigencia que contiene D en D−1 y abre la nueva en D. Si D coincide con el inicio, corrige esa vigencia con auditoría. No se aceptan programaciones futuras ni fechas anteriores al inicio de la vigencia actual. La columna vigente, vigencias, historial visible y auditoría comparten la misma transacción `Serializable`.
+
+### 19.2 Motor y cierres
+
+`resolveSpecialHourRulesByDate` evalúa por fecha las dimensiones que cada regla realmente restringe. Empresa conserva la semántica de empleadora; puesto, centro de costo y sector legado usan la vigencia del legajo; un sector nuevo usa WITHIN sobre el snapshot del alcance del puesto. Una dimensión no restringida no exige historia.
+
+La ausencia de cobertura devuelve `SPECIAL_HOUR_SCOPE_HISTORY_MISSING`; nunca usa valores actuales para inventar pasado. Las cargas normales y atrasadas funcionan cuando existe cobertura suficiente. Los cambios de legajo o alcance que alcanzarían cierres `ENVIADO`, `APROBADO` o `CORRECCION_PENDIENTE` toman los locks compartidos y se rechazan dentro de la transacción. Los demás disparadores automáticos conservan las protecciones de §18.1.
+
+### 19.3 Integración y transición
+
+- Legajos exige fecha y motivo al cambiar puesto, centro de costo o empresas; Puestos los exige al cambiar `orgScopes`.
+- La UI muestra los controles junto al campo modificado y explica que no recalcula fechas anteriores.
+- Inventario, limpieza y restauración reconocen las siete tablas nuevas. Cualquier referencia histórica hacia el inventario bloquea la limpieza; no se elimina historia.
+- No se inicializaron masivamente los 32 legajos originales ni puestos anteriores. La cobertura inicial se resolverá con el procedimiento posterior y evidencia verificable. Hasta entonces, las cinco fechas originales que dependen de “Domingos” permanecen deliberadamente en `MISSING:EMPLOYER`.
+
+### 19.4 Migración y QA de copia
+
+Destino: copia Neon `org-location-reorg`, host `ep-rough-river-aioy7xp9-pooler.c-4.us-east-1.aws.neon.tech`, con `AUTOMATIC_JOBS_ENABLED=false`. Antes de migrar se guardó un respaldo lógico con SHA-256 y un manifiesto. `migrate status` mostró sólo `20261008090000_labor_history_periods`; `migrate deploy` aplicó sólo esa migración. La comparación pre/post dejó 61 tablas existentes idénticas, `_prisma_migrations +1` y siete tablas nuevas vacías. M2 no se creó ni aplicó.
+
+Las 18 pruebas SQL de constraints corrieron dentro de una transacción revertida: intervalos, superposición presente/futura, concurrencia, coherencia de nodos y FKs `RESTRICT`, todas con el SQLSTATE esperado. El QA API verificó cambios laborales con vigencia, alcance de puesto compartido, resolución antes/después, cargas atrasadas, falta de cobertura sin escrituras parciales, fechas límite/futuras, concurrencia y cierre ENVIADO intacto.
+
+La comparación post-migración/post-QA mostró `0` filas preexistentes modificadas o eliminadas. Para los 78 pares fecha-legajo originales: 73 conservaron exactamente el resultado y 5 quedaron `SPECIAL_HOUR_SCOPE_HISTORY_MISSING`; hubo `0` cambios de valor. Se conservaron “Domingos”, horas, desgloses, cierres, los 32 legajos originales y las cinco filas incidentales de §13.3. El QA visual nuevo revisó Legajo/Datos Laborales y Puesto/Identificación en desktop, sin desbordes ni solapamientos; los controles de fecha/motivo y el aviso de alcance compartido respetan el sistema visual existente.
+
+### 19.5 Límite real antes de M2
+
+A7 queda cerrada en código y copia, pero no completa historia inexistente. Antes de B/M2 siguen pendientes: decidir D-1/D-2/D-3/D-6; obtener verificación administrativa Neon para los scripts destructivos; ejecutar el procedimiento aprobado de respaldo/ensayo/limpieza/recarga; cargar historia sólo con evidencia; y retirar columnas legacy en A8. No se ejecutó limpieza, restauración, seed, reconciliación general ni M2.

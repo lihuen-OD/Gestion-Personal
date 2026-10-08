@@ -183,7 +183,7 @@ The objective of this project is to build an internal enterprise system to centr
 
 The system is intended to replace fragmented Excel/Google Sheets workflows with a structured, scalable and auditable application.
 
-**Current state (updated after the 2026-08 technical audit): the system is no longer a frontend-only/mock prototype.** There is a real, production backend (Node/Express + TypeScript + Prisma + PostgreSQL, 21 modules under `backend/src/modules`) that the frontend consumes over HTTP. It includes JWT auth, backend-enforced role/employee-scope permissions, a real audit log, file storage (Google Drive/Cloudinary/local), and a fichador (time clock) flow without user session, authenticated per device (`ClockDevice`, since F6). A handful of `*MockService.ts` files remain in `frontend/src/services` as leftovers from the original mock-only phase — they are legacy, not the current data source, and most have already been removed once confirmed unused (see `docs/BACKEND_API_CONTRACTS.md` for the real endpoints). Before assuming any part of the system is "mock only", check `backend/src/modules` and `frontend/src/services/api` first.
+**Current state (updated after the 2026-08 technical audit): the system is no longer a frontend-only/mock prototype.** There is a real, production backend (Node/Express + TypeScript + Prisma + PostgreSQL, 24 modules under `backend/src/modules`) that the frontend consumes over HTTP. It includes JWT auth, backend-enforced role/employee-scope permissions, a real audit log, file storage (Google Drive/Cloudinary/local), and a fichador (time clock) flow without user session, authenticated per device (`ClockDevice`, since F6). A handful of `*MockService.ts` files remain in `frontend/src/services` as leftovers from the original mock-only phase — they are legacy, not the current data source, and most have already been removed once confirmed unused (see `docs/BACKEND_API_CONTRACTS.md` for the real endpoints). Before assuming any part of the system is "mock only", check `backend/src/modules` and `frontend/src/services/api` first.
 
 ## Users and roles
 
@@ -619,7 +619,7 @@ Domicilio must be handled as a single block history, not field-by-field.
 
 ### Modules implemented since this list was written
 
-The backend has 22 modules under `backend/src/modules`. The following exist and are in production use but were missing from the numbered list above — check `backend/src/modules/<name>` and `docs/BACKEND_API_CONTRACTS.md` before assuming a module doesn't exist:
+The backend has 24 modules under `backend/src/modules`. The following exist and are in production use but were missing from the numbered list above — check `backend/src/modules/<name>` and `docs/BACKEND_API_CONTRACTS.md` before assuming a module doesn't exist:
 
 * **shifts** (`shiftTemplate`, `shiftAssignment`, `shiftAlert`) — turnos: plantillas de turno, asignación a empleados, alertas de jornada abierta/vencida. Added 2026-07-23.
 * **work-regimes** (`WorkRegime`, `EmployeeWorkRegime`) — régimen laboral configurable por RRHH (turno obligatorio/flexible/sin turno; rollover automático o alerta crítica ante jornada abierta excedida) y su asignación a empleados con vigencia histórica. Instancias como Cosecha/Riego/Campaña son datos, no código. Added 2026-08-19.
@@ -631,6 +631,7 @@ The backend has 22 modules under `backend/src/modules`. The following exist and 
 * **storage** — capa de almacenamiento de archivos (Google Drive/Cloudinary/local) compartida por documentos y evidencia fotográfica del fichador.
 * **health** — endpoint de healthcheck.
 * **dashboard** — métricas agregadas del home.
+* **labor-history** — módulo interno, sin rutas HTTP, que registra y consulta por fecha las vigencias de puesto, centro de costo, sector legado, empresas empleadoras y alcance del puesto para el motor de horas especiales (A7/D-5).
 
 ## Main business rules
 
@@ -740,7 +741,7 @@ Fichador standalone (`fichador/`, since F1 of `docs/decisions/FICHADOR_STANDALON
 Backend:
 
 * Node.js + Express + TypeScript, under `backend/src`.
-* Modular monolith: 23 modules under `backend/src/modules`, each generally following controller → service → repository → schemas (zod) → routes.
+* Modular monolith: 24 modules under `backend/src/modules`, each generally following controller → service → repository → schemas (zod) → routes. `labor-history` is intentionally internal and has no HTTP router: it owns dated engine-scope history used transactionally by `employees`, `positions` and `time-entries`.
 * JWT auth (`backend/src/modules/auth`), role/employee-scope authorization enforced server-side (`backend/src/middlewares/authorization.ts` + per-module `employeeAccessWhere`), a generic audit-log helper (`backend/src/modules/audit`), and a shared TTL cache (`backend/src/shared/cache`).
 
 Database:
