@@ -19,25 +19,37 @@
  * la primera escritura. Ambos modos exigen identidad Neon VERIFICADA (sin
  * NEON_API_KEY no corre: no hay flag para saltearlo).
  *
+ * `--decisions` acepta el formato del ADR §12.4 (`[{ ruleId, treatment, … }]`)
+ * o `{ "rules": [...], "classFour": [{ table, column, target, retain, retire }] }`
+ * cuando hay filas clase 4 que retirar (A8 §12.4: sólo `PositionOrgScope`).
+ *
  * Una única transacción Serializable:
- *  1. Actor humano RRHH; inventario congelado vs base (ningún ID congelado
- *     puede faltar); catálogo de FKs y plan (cualquier bloqueo aborta).
- *  2. Manifiesto por fila y resolución del motor de horas especiales (antes).
+ *  1. Actor humano RRHH; inventario congelado (con clases) vs base; F0 + G1
+ *     (formas sin mirar archivedAt, A8 §12.3); historia viva == congelada;
+ *     catálogo de FKs y plan (cualquier bloqueo aborta).
+ *  2. Manifiesto por fila, snapshot profundo de la historia (G7) y resolución
+ *     del motor de horas especiales (antes).
  *  3. Tratamiento de reglas (R1/R2/inactivar), auditado. Verifica que ninguna
  *     regla referencie un ID a borrar; si queda alguna, aborta.
- *  4. Vacía vínculos de legajos/usuarios/dispositivos y borra filas de
- *     vínculo, sólo para IDs a borrar, auditado.
+ *  4. Vacía vínculos de legajos/usuarios/dispositivos y borra las familias de
+ *     borrado autorizado (A8 §12.4) hacia destinos deletable ∪ retained, y
+ *     retira las filas clase 4 resueltas, auditado.
  *  5. Re-chequea TODAS las FKs del catálogo contra los IDs a borrar y borra la
  *     cadena en orden (Position → … → Company), auditado. Ningún CASCADE ni
- *     SET NULL de la base llega a dispararse.
+ *     SET NULL de la base llega a dispararse. Archiva `retained` (único
+ *     escritor de archivedAt, un mismo instante), auditado.
  *  6. Resolución del motor (después): cualquier cambio no aceptado aborta.
- *  7. Manifiesto (después) y V1: sólo cambió lo autorizado; si no, aborta.
+ *  7. F1 (A8 §12.3): G3, G4, formas finales, G5, G7, G8; y V1 (F1.4) por
+ *     manifiesto: sólo cambió lo autorizado. Cualquier falla aborta sin
+ *     cambios.
  */
 import { readFileSync, writeFileSync } from "node:fs";
 import type { Prisma } from "@prisma/client";
-import { arg, captureRowManifest, connectTarget, countReferences, discoverForeignKeys, engineOutcomes, flag, loadHistoryReferences, loadRules, quoteIdent, ruleReferences, type EngineEvaluator, type Tx } from "./org-reorg/lib";
+import { arg, captureHistorySnapshot, captureRowManifest, connectTarget, countReferences, discoverForeignKeys, engineOutcomes, flag, loadArchivedIds, loadArchivedLinks, loadHistoryReferences, loadLiveHistoryIds, loadPresentIds, loadRules, loadShapeRows, quoteIdent, ruleReferences, type EngineEvaluator, type Tx } from "./org-reorg/lib";
 import { requireVerifiedIdentity } from "../src/modules/org-structure/reorg/targetIdentity";
-import { buildCleanupPlan, DELETE_ORDER, treatmentOf, type CompanyMode, type FrozenInventory, type R1TargetState, type RuleDecision, type TargetTable } from "../src/modules/org-structure/reorg/cleanupPlan";
+import { borrableIds, buildCleanupPlan, DELETE_ORDER, treatmentOf, type ClassFourResolution, type CompanyMode, type FrozenInventory, type R1TargetState, type RuleDecision, type TargetTable } from "../src/modules/org-structure/reorg/cleanupPlan";
+import { evaluateF0, evaluateF1Shapes } from "../src/modules/org-structure/reorg/shapes";
+import { evaluateG3, evaluateG4, evaluateG5, evaluateG7, evaluateG8, type GuardResult } from "../src/modules/org-structure/reorg/guards";
 import { verifyV1, type V1Expectation, type WatchedValues } from "../src/modules/org-structure/reorg/manifest";
 
 class DryRunRollback extends Error {}
@@ -109,7 +121,9 @@ async function main() {
     records: Object.fromEntries(DELETE_ORDER.map((table) => [table, inventoryReport[companyMode]!.inventory[table].records])) as FrozenInventory["records"],
     history: inventoryReport[companyMode]!.inventory.history,
   };
-  const decisions = readJson<RuleDecision[]>(arg("decisions"), "--decisions=<archivo.json> (puede ser [] si el inventario no tiene reglas que decidir)");
+  const decisionsFile = readJson<RuleDecision[] | { rules: RuleDecision[]; classFour?: ClassFourResolution[] }>(arg("decisions"), "--decisions=<archivo.json> (puede ser [] si el inventario no tiene reglas que decidir)");
+  const decisions = Array.isArray(decisionsFile) ? decisionsFile : decisionsFile.rules;
+  const classFour = Array.isArray(decisionsFile) ? [] : decisionsFile.classFour ?? [];
   const accepted = new Set(arg("accept-engine-changes") ? readJson<Array<{ employeeId: string; date: string }>>(arg("accept-engine-changes"), "cambios aceptados").map((item) => `${item.employeeId}|${item.date}`) : []);
 
   // Importados después de fijar DATABASE_URL al destino verificado.
@@ -126,14 +140,19 @@ async function main() {
       // 1. Actor, inventario congelado y plan.
       const actor = await tx.user.findUnique({ where: { id: actorUserId }, select: { id: true, role: true, status: true, name: true } });
       if (!actor || actor.status !== "ACTIVO" || actor.role !== "NIVEL_1_RRHH") throw new Error("--actor-user-id debe ser un usuario RRHH activo.");
-      const frozenIds = new Set(DELETE_ORDER.flatMap((table) => frozen.records[table].map((record) => record.id)));
+      // Sólo `borrable` es "inventario" para destinos R1 y conteo de dependencias (A8 §12.2).
+      const frozenByTable = borrableIds(frozen);
+      const frozenIds = new Set(DELETE_ORDER.flatMap((table) => frozenByTable[table]));
       for (const table of DELETE_ORDER) {
         const ids = frozen.records[table].map((record) => record.id);
         const existing = ids.length ? await tx.$queryRawUnsafe<Array<{ n: number }>>(`SELECT count(*)::int AS n FROM ${quoteIdent(table)} WHERE id = ANY($1::text[])`, ids) : [{ n: 0 }];
         if (existing[0]!.n !== ids.length) throw new Error(`El inventario congelado de ${table} ya no coincide con la base (${existing[0]!.n}/${ids.length}). Volver a inventariar.`);
       }
+      // F0 + G1 (A8 §12.3): compuerta del tratamiento — con formas mezcladas no se escribe nada.
+      const f0 = evaluateF0(await loadShapeRows(tx));
+      summary.f0 = f0;
+      if (!f0.ok) throw new Error(`F0 detectó ${f0.violations.length} fila(s) con forma mezclada o G1 violado (ver reporte). No se escribió nada.`);
       const foreignKeys = await discoverForeignKeys(tx);
-      const frozenByTable = Object.fromEntries(DELETE_ORDER.map((table) => [table, frozen.records[table].map((record) => record.id)])) as Record<TargetTable, string[]>;
       const references = await countReferences(tx, foreignKeys, frozenByTable);
       const rules = await ruleReferences(tx, await loadRules(tx));
       // A8 §12.2: la historia se re-verifica en la transacción contra el
@@ -142,8 +161,8 @@ async function main() {
       if (JSON.stringify(liveHistory) !== JSON.stringify(frozen.history)) {
         throw new Error("La historia (§12.2) del inventario congelado no coincide con la base. Re-inventariar.");
       }
-      const plan = buildCleanupPlan({ inventory: frozen, references, rules, decisions, history: liveHistory, r1Targets: await r1TargetStates(tx, decisions, frozenIds) });
-      summary.plan = { issues: plan.issues, retained: plan.retained, deletable: Object.fromEntries(Object.entries(plan.deletable).map(([table, ids]) => [table, ids.length])), retireRows: plan.retireRows, ruleOperations: plan.ruleOperations };
+      const plan = buildCleanupPlan({ inventory: frozen, references, rules, decisions, classFour, history: liveHistory, r1Targets: await r1TargetStates(tx, decisions, frozenIds) });
+      summary.plan = { issues: plan.issues, roots: plan.roots, retained: plan.retained, deletable: plan.deletable, r3References: plan.r3References, retireRows: plan.retireRows, ruleOperations: plan.ruleOperations };
       if (plan.blocking) throw new Error(`Plan bloqueado: ${plan.issues.filter((issue) => issue.blocking).map((issue) => issue.code).join(", ")}. No se escribió nada.`);
       const deletable = plan.deletable;
       // A8 §12.1: conjunto autorizado de archivo (I2) = retained del manifiesto.
@@ -154,11 +173,20 @@ async function main() {
 
       // 2. Estado previo: manifiesto, motor y respaldo (antes de cualquier escritura).
       const pre = await captureRowManifest(tx, target.host);
+      // G7 (§12.6): snapshot completo de las siete tablas de historia, antes de escribir.
+      const historyBefore = await captureHistorySnapshot(tx);
       // D-5: el motor resuelve con la historia temporal; una fecha sin historia
       // suficiente queda como MISSING antes y después (la limpieza no la cambia).
       const enginePre = await engineOutcomes(tx, evaluate);
       const expectation: V1Expectation = { deleted: {}, nullified: {}, ruleChanges: {}, newRows: {}, newAuditRows: 0, archived: {} };
-      const backup: Record<string, unknown> = { takenAt: new Date().toISOString(), host: target.host, companyMode, deleted: {}, nullified: [], rules: [], archived: plan.retained };
+      // Un único instante de archivo para todo `retained` (I2/I5).
+      const archivedAt = new Date();
+      const backup: Record<string, unknown> = {
+        takenAt: new Date().toISOString(), host: target.host, companyMode, deleted: {}, nullified: [], rules: [],
+        archived: plan.retained, archivedAt: archivedAt.toISOString(),
+        plan: { deletable: plan.deletable, retained: plan.retained, r3References: plan.r3References, retireRows: plan.retireRows },
+        historySnapshot: historyBefore,
+      };
       for (const table of DELETE_ORDER) (backup.deleted as Record<string, unknown>)[table] = await rowsAsJson(tx, table, "id", deletable[table]);
       for (const op of plan.deleteLinks) (backup.deleted as Record<string, unknown>)[`${op.table}.${op.column}`] = await rowsAsJson(tx, op.table, op.column, linkTargets(op.target));
       for (const op of plan.retireRows) (backup.deleted as Record<string, unknown>)[`${op.table}.${op.column}`] = await rowsAsJson(tx, op.table, op.column, op.ids);
@@ -260,13 +288,13 @@ async function main() {
       // transacción (I5). Ningún input de API escribe esta columna.
       for (const entry of plan.retained) {
         const record = frozen.records[entry.table].find((item) => item.id === entry.id)!;
-        const updated = await tx.$executeRawUnsafe(`UPDATE ${quoteIdent(entry.table)} SET "archivedAt" = now() WHERE id = $1 AND "archivedAt" IS NULL`, entry.id);
+        const updated = await tx.$executeRawUnsafe(`UPDATE ${quoteIdent(entry.table)} SET "archivedAt" = $2 WHERE id = $1 AND "archivedAt" IS NULL`, entry.id, archivedAt);
         if (!updated) throw new Error(`No se pudo archivar ${entry.table} ${entry.id}: la fila no existe o ya estaba archivada.`);
         expectation.archived![entry.table] = [...(expectation.archived![entry.table] ?? []), entry.id];
         await auditOf({
           action: "UPDATE", entity: entry.table, entityId: entry.id,
           description: `Se archivó ${record.code} - ${record.name} (A8 §12.1, conjunto retained del manifiesto de reorganización).`,
-          before: { archivedAt: null }, after: { archivedAt: "now()" },
+          before: { archivedAt: null }, after: { archivedAt: archivedAt.toISOString() },
         });
       }
 
@@ -277,7 +305,22 @@ async function main() {
       summary.engineChanges = engineChanges;
       if (unaccepted.length) throw new Error(`La limpieza cambiaría ${unaccepted.length} resolución(es) de horas especiales no aceptadas (ver reporte). No se aplicó nada.`);
 
-      // 7. V1 antes del commit.
+      // 7. F1 (A8 §12.3) antes del commit: compuerta de M2.
+      const archivedNow = await loadArchivedIds(tx);
+      const shapes = evaluateF1Shapes(await loadShapeRows(tx));
+      const f1: GuardResult[] = [
+        evaluateG4(plan.retained, archivedNow), // F1.1
+        evaluateG3(deletable, await loadPresentIds(tx, deletable)), // F1.2
+        { guard: "F1.3", ok: shapes.ok, detail: { violations: shapes.violations, counts: shapes.counts } },
+        evaluateG7(historyBefore, await captureHistorySnapshot(tx)), // F1.5
+        evaluateG5(await loadArchivedLinks(tx, foreignKeys, archivedNow), plan.r3References), // F1.6
+        evaluateG8(liveHistory, deletable, await loadLiveHistoryIds(tx)),
+      ];
+      summary.f1 = f1;
+      const failed = f1.filter((result) => !result.ok).map((result) => result.guard);
+      if (failed.length) throw new Error(`F1 falló (${failed.join(", ")}; ver reporte). No se aplicó nada.`);
+
+      // V1 (F1.4) antes del commit.
       const post = await captureRowManifest(tx, target.host);
       expectation.newAuditRows = auditRows;
       const violations = verifyV1(pre, post, expectation);

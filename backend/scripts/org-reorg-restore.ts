@@ -13,11 +13,15 @@
  *     --report=<archivo.json> [--apply]
  *
  * Sin --apply es dry-run (transacción revertida). Una transacción Serializable:
- * reinserta con los mismos IDs los registros y vínculos borrados, repone las
- * columnas vaciadas SÓLO si siguen vacías (si la recarga ya les asignó otro
- * valor, aborta y lo lista), repone el alcance, estado y lista de las reglas
- * tratadas, y verifica contra el manifiesto previo a la limpieza que todo
- * quedó idéntico (salvo auditoría nueva, que nunca se borra).
+ * reinserta con los mismos IDs los registros y las familias de borrado
+ * autorizado (`backup.deleted["<Tabla>.<columna>"]`, A8 §12.4), revierte el
+ * archivo (`archivedAt = NULL` en exactamente los IDs archivados del respaldo,
+ * A8 §12.9.7), repone las columnas vaciadas SÓLO si siguen vacías (si la
+ * recarga ya les asignó otro valor, aborta y lo lista), repone el alcance,
+ * estado y lista de las reglas tratadas, y verifica contra el manifiesto
+ * previo a la limpieza que todo quedó idéntico (salvo auditoría nueva, que
+ * nunca se borra). Es la ÚNICA vía para revertir un archivo usado: la
+ * reversión SQL de 20261008150000 se niega mientras haya filas archivadas.
  */
 import { readFileSync, writeFileSync } from "node:fs";
 import { arg, captureRowManifest, connectTarget, flag, quoteIdent, type Tx } from "./org-reorg/lib";
@@ -32,6 +36,8 @@ interface Backup {
   deleted: Record<string, Array<Record<string, unknown>>>;
   nullified: Array<{ table: string; column: string; rows: Array<{ id: string; value: string }> }>;
   rules: Array<{ rule: Record<string, unknown>; employees: Array<{ ruleId: string; employeeId: string }> }>;
+  /** A8 §12.1: conjunto archivado por la limpieza (`retained` del plan). */
+  archived?: Array<{ table: string; id: string }>;
   preManifest: RowManifest;
 }
 
@@ -87,6 +93,14 @@ async function main() {
         }
       }
       if (conflicts.length) throw new Error(`No se puede reponer ${conflicts.length} valor(es) porque ya no están vacíos (la recarga los cambió): ${conflicts.slice(0, 10).join("; ")}.`);
+      // A8 §12.9.7: revertir el archivo — exactamente los IDs archivados por la limpieza.
+      const notArchived: string[] = [];
+      for (const entry of backup.archived ?? []) {
+        if (!(DELETE_ORDER as readonly string[]).includes(entry.table)) throw new Error(`Respaldo inválido: ${entry.table} no es una tabla de archivo.`);
+        const updated = await tx.$executeRawUnsafe(`UPDATE ${quoteIdent(entry.table)} SET "archivedAt" = NULL WHERE id = $1 AND "archivedAt" IS NOT NULL`, entry.id);
+        if (updated !== 1) notArchived.push(`${entry.table} ${entry.id}`);
+      }
+      if (notArchived.length) throw new Error(`No se puede revertir el archivo de ${notArchived.length} registro(s) que ya no están archivados (o no existen): ${notArchived.slice(0, 10).join("; ")}.`);
       for (const { rule, employees } of backup.rules) {
         await tx.doubleHourRule.update({ where: { id: String(rule.id) }, data: { companyId: (rule.companyId as string | null) ?? null, sectorId: (rule.sectorId as string | null) ?? null, positionId: (rule.positionId as string | null) ?? null, status: rule.status as "ACTIVO" | "INACTIVO" } });
         await tx.doubleHourRuleEmployee.deleteMany({ where: { ruleId: String(rule.id) } });
@@ -96,7 +110,7 @@ async function main() {
         userId: actor.id,
         action: "UPDATE",
         entity: "OrgStructureCleanup",
-        description: `Se restauró la limpieza de la estructura anterior desde su respaldo (${restored} registros, ${backup.nullified.reduce((sum, group) => sum + group.rows.length, 0)} vínculos, ${backup.rules.length} reglas).`,
+        description: `Se restauró la limpieza de la estructura anterior desde su respaldo (${restored} registros, ${backup.nullified.reduce((sum, group) => sum + group.rows.length, 0)} vínculos, ${backup.rules.length} reglas, ${(backup.archived ?? []).length} registros desarchivados).`,
       });
 
       const post = await captureRowManifest(tx, target.host);

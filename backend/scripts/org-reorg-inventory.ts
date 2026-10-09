@@ -13,7 +13,13 @@
  * - reglas de horas especiales que referencian la estructura: alcance,
  *   población actual, trazas ganadoras y cierres alcanzados;
  * - historia temporal de D-5 (§19): filas por tabla, cobertura de hoy por
- *   dimensión y referencias a registros del inventario (bloquean la limpieza);
+ *   dimensión y, por fuente, los IDs exactos referenciados (A8 §12.2);
+ * - congelado con clases (`borrable`/`conservada`/`nueva`) y el ciclo de
+ *   ampliación: cada destino de historia fuera del inventario se incorpora
+ *   con el mismo criterio de membresía, ronda por ronda, hasta
+ *   `outsideInventory = ∅` (sin reconocimiento ni flag); G8 del paso 3;
+ * - F0 + G1 (formas vieja/nueva sin mirar archivedAt, A8 §12.3): con formas
+ *   mezcladas el reporte se escribe igual y el proceso sale con exit 2;
  * - impacto en el motor de horas especiales si desaparecieran las referencias
  *   al inventario SIN tratar las reglas: motor real
  *   (evaluateSpecialHourRulesByDate) con un lector que simula esa historia,
@@ -23,9 +29,11 @@
  * No imprime credenciales; sólo identificadores, códigos y nombres de catálogo.
  */
 import { writeFileSync } from "node:fs";
-import { arg, captureRowManifest, connectTarget, countReferences, discoverForeignKeys, employeeDatesWithHours, engineOutcomes, inventoryIds, loadHistoryReferences, loadInventory, loadRules, readOnly, ruleReferences, type EngineEvaluator, type Tx } from "./org-reorg/lib";
+import { amplifyInventory, arg, captureRowManifest, connectTarget, countReferences, discoverForeignKeys, employeeDatesWithHours, engineOutcomes, inventoryIds, loadInventory, loadRules, loadShapeRows, readOnly, ruleReferences, type EngineEvaluator, type Tx } from "./org-reorg/lib";
 import { historyWithoutReferences } from "./labor-history/simulatedReaders";
-import { buildCleanupPlan, classifyReference, inventoryDimensions, type CompanyMode, type FrozenInventory } from "../src/modules/org-structure/reorg/cleanupPlan";
+import { borrableIds, buildCleanupPlan, classifyReference, inventoryDimensions, type CompanyMode, type FrozenInventory } from "../src/modules/org-structure/reorg/cleanupPlan";
+import { evaluateF0 } from "../src/modules/org-structure/reorg/shapes";
+import { evaluateG8 } from "../src/modules/org-structure/reorg/guards";
 
 const dayKey = (date: Date) => date.toISOString().slice(0, 10);
 
@@ -38,10 +46,11 @@ const dayKey = (date: Date) => date.toISOString().slice(0, 10);
  */
 async function engineImpact(tx: Tx, evaluate: EngineEvaluator, inventory: FrozenInventory) {
   const { rows } = await employeeDatesWithHours(tx);
+  const candidates = borrableIds(inventory);
   const reader = historyWithoutReferences(tx, {
-    sectors: new Set(inventory.records.Sector.map((record) => record.id)),
-    positions: new Set(inventory.records.Position.map((record) => record.id)),
-    companies: new Set(inventory.records.Company.map((record) => record.id)),
+    sectors: new Set(candidates.Sector),
+    positions: new Set(candidates.Position),
+    companies: new Set(candidates.Company),
   });
   const [current, simulated] = [await engineOutcomes(tx, evaluate), await engineOutcomes(tx, evaluate, reader)];
   const missingNow = [...current.values()].filter((value) => value.startsWith("MISSING")).length;
@@ -90,15 +99,16 @@ async function ruleApplications(tx: Tx, ruleId: string) {
 }
 
 async function inventoryFor(tx: Tx, companyMode: CompanyMode, evaluate: EngineEvaluator) {
-  const inventory = await loadInventory(tx, companyMode);
-  // A8 §12.2: historia con los IDs EXACTOS por fuente (no sólo conteos).
-  const history = await loadHistoryReferences(tx, inventory);
-  const inventoryWithHistory = { ...inventory, history };
+  // A8 §12.2: congelado con clases + historia con los IDs EXACTOS por fuente;
+  // `outsideInventory` sólo se vacía por ampliación (mismo criterio de
+  // membresía, rondas registradas con IDs), nunca por reconocimiento.
+  const { inventory, rounds } = await amplifyInventory(tx, await loadInventory(tx, companyMode));
+  const history = inventory.history!;
   const foreignKeys = await discoverForeignKeys(tx);
   const references = await countReferences(tx, foreignKeys, inventoryIds(inventory));
   const rules = await loadRules(tx);
   const refs = await ruleReferences(tx, rules);
-  const plan = buildCleanupPlan({ inventory: inventoryWithHistory, references, rules: refs, decisions: [] });
+  const plan = buildCleanupPlan({ inventory, references, rules: refs, decisions: [] });
   const names = await catalogNames(tx);
   const affectedRules = [];
   for (const rule of rules) {
@@ -124,13 +134,23 @@ async function inventoryFor(tx: Tx, companyMode: CompanyMode, evaluate: EngineEv
   }
   return {
     companyMode,
-    inventory: { ...Object.fromEntries(Object.entries(inventory.records).map(([table, records]) => [table, { count: records.length, records }])), history },
+    inventory: {
+      ...Object.fromEntries(Object.entries(inventory.records).map(([table, records]) => [table, {
+        count: records.length,
+        byClass: Object.fromEntries((["borrable", "conservada", "nueva"] as const).map((cls) => [cls, records.filter((record) => (record.class ?? "borrable") === cls).length])),
+        records,
+      }])),
+      history,
+    },
+    amplification: rounds,
+    // G8 en el paso 3 (§12.5): outsideInventory = ∅ tras la ampliación y ningún referenciado entre los eliminables del plan.
+    g8: evaluateG8(history, plan.deletable),
     references: references.map((reference) => {
       // §12.7 (gate apagado por defecto): en C2 la historia hacia Company sigue bloqueando (HT-4).
       const { treatment, issue } = classifyReference(reference, { historyBlocking: reference.target === "Company" && companyMode === "C2" });
       return { ...reference, treatment, blocking: issue?.blocking ?? (treatment === "RULE_DECISION" && reference.rowsToInventory > 0) };
     }),
-    plan: { blocking: plan.blocking, issues: plan.issues, nullify: plan.nullify, deleteLinks: plan.deleteLinks, deletable: Object.fromEntries(Object.entries(plan.deletable).map(([table, ids]) => [table, ids.length])) },
+    plan: { blocking: plan.blocking, issues: plan.issues, nullify: plan.nullify, deleteLinks: plan.deleteLinks, roots: plan.roots, retained: plan.retained, deletable: plan.deletable },
     rules: affectedRules,
     engineImpactWithoutRuleTreatment: await engineImpact(tx, evaluate, inventory),
   };
@@ -221,6 +241,8 @@ async function main() {
         (SELECT count(*)::int FROM "PositionOrgScope") AS "positionScopes",
         (SELECT count(*)::int FROM "EmployeeWorkLocation") AS "workLocations"`);
       const manifest = await captureRowManifest(tx, target.host);
+      // F0 (+ G1) en el paso 3, antes de escribir: formas vieja/nueva sin mirar archivedAt (§12.3).
+      const f0 = evaluateF0(await loadShapeRows(tx));
       return {
         generatedAt: new Date().toISOString(),
         readOnly: true,
@@ -230,6 +252,7 @@ async function main() {
         tableRowCounts: Object.fromEntries(Object.entries(manifest.tables).map(([table, data]) => [table, Object.keys(data.rows).length])),
         employees: await employeeBaseline(tx),
         laborHistory: await laborHistoryBaseline(tx),
+        f0,
         C1: await inventoryFor(tx, "C1", evaluate),
         C2: await inventoryFor(tx, "C2", evaluate),
       };
@@ -239,14 +262,18 @@ async function main() {
       inventario: Object.fromEntries(
         Object.entries(report[mode].inventory).map(([entry, data]) => [
           entry,
-          Array.isArray(data) ? { historialFuentes: (data as unknown[]).length } : (data as { count: number }).count,
+          Array.isArray(data) ? { historialFuentes: (data as unknown[]).length } : (data as { byClass: unknown }).byClass,
         ]),
       ),
+      ampliacion: report[mode].amplification.map((round) => ({ ronda: round.round, incorporados: round.added.length })),
+      g8: report[mode].g8.ok,
       bloqueos: report[mode].plan.issues.filter((issue) => issue.blocking).map((issue) => `${issue.code}: ${issue.message}`),
       reglasQueRequierenDecision: report[mode].rules.filter((rule) => rule.requiresDecision).length,
       impactoMotorSinTratar: { fechasLegajoQueCambian: report[mode].engineImpactWithoutRuleTreatment.changedEmployeeDates, legajos: report[mode].engineImpactWithoutRuleTreatment.employeesAffected, cierres: report[mode].engineImpactWithoutRuleTreatment.closuresByStatus },
     });
-    console.log(JSON.stringify({ host: target.host, identidadNeon: target.identity.status, C1: brief("C1"), C2: brief("C2"), reporte: reportPath }, null, 2));
+    console.log(JSON.stringify({ host: target.host, identidadNeon: target.identity.status, f0: { ok: report.f0.ok, violaciones: report.f0.violations.length }, C1: brief("C1"), C2: brief("C2"), reporte: reportPath }, null, 2));
+    // F0 es compuerta del tratamiento (§12.12): con formas mezcladas el reporte se escribe igual, pero el exit marca el bloqueo.
+    if (!report.f0.ok) process.exitCode = 2;
   } finally {
     await target.prisma.$disconnect();
   }

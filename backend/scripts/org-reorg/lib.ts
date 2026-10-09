@@ -12,8 +12,10 @@ import { parse } from "dotenv";
 import { PrismaClient } from "@prisma/client";
 import { assertExpectedHost, verifyNeonIdentity, type NeonIdentity } from "../../src/modules/org-structure/reorg/targetIdentity";
 import { engineOutcomeLabel, type EngineEvaluation } from "../../src/modules/time-entries/specialHourEvidence";
-import { DELETE_ORDER, partitionHistoryReference, type CompanyMode, type FrozenInventory, type HistoryReference, type InventoryRecord, type ReferenceCount, type RuleReference, type TargetTable } from "../../src/modules/org-structure/reorg/cleanupPlan";
+import { borrableIds, DELETE_ORDER, partitionHistoryReference, type CompanyMode, type FrozenInventory, type HistoryReference, type InventoryClass, type InventoryRecord, type ReferenceCount, type RuleReference, type TargetTable } from "../../src/modules/org-structure/reorg/cleanupPlan";
 import { stableColumns, WATCHED_COLUMNS, type RowManifest, type TableManifest } from "../../src/modules/org-structure/reorg/manifest";
+import type { ShapeRows } from "../../src/modules/org-structure/reorg/shapes";
+import { HISTORY_TABLES, normalizeSnapshotRow, type ArchivedLink, type HistorySnapshot, type IndexInfo } from "../../src/modules/org-structure/reorg/guards";
 
 // `EngineEvaluation` y `engineOutcomeLabel` viven en el módulo puro de
 // evidencia (src) y se re-exportan acá para los scripts D5/A8.
@@ -64,35 +66,127 @@ export const quoteIdent = (name: string) => `"${name.replace(/"/g, '""')}"`;
 // Inventario del modelo anterior
 // ---------------------------------------------------------------------------
 
-type Row = { id: string; code: string; name: string; status: string };
+/** Fila de catálogo con lo necesario para clasificar su membresía en la transición. */
+export type CatalogRow = {
+  id: string; code: string; name: string; status: string;
+  companyId?: string | null; businessUnitId?: string | null; establishmentId?: string | null; areaId?: string | null;
+  sectorId?: string | null; zoneId?: string | null;
+  /** BusinessUnit: tiene sectores del modelo nuevo. Position: tiene alcances (PositionOrgScope). */
+  inNewModelUse?: boolean;
+};
 
-/** Registros del modelo anterior. C1 conserva empresas (no entran al inventario). */
+/**
+ * Criterio de membresía de la transición (A8 §12.2, ADR §12.2), ÚNICA fuente
+ * para el congelado inicial y para la ampliación: `borrable` = registro del
+ * modelo anterior candidato a borrado; `conservada` = en alcance y activo por
+ * el modo (empresas en C1); `nueva` = catálogo del modelo nuevo, que sólo
+ * entra al congelado si la historia lo referencia (ampliación) y nunca se
+ * borra ni se archiva.
+ */
+export function transitionClass(table: TargetTable, row: CatalogRow, companyMode: CompanyMode): InventoryClass {
+  switch (table) {
+    case "Company": return companyMode === "C2" ? "borrable" : "conservada";
+    // Una UN que ya tenga sectores del modelo nuevo es un registro nuevo en uso.
+    case "BusinessUnit": return row.inNewModelUse ? "nueva" : "borrable";
+    case "Establishment": return row.zoneId ? "nueva" : "borrable";
+    case "Area": return row.sectorId ? "nueva" : "borrable";
+    case "Sector": return row.businessUnitId ? "nueva" : "borrable";
+    // Puestos: todos los actuales se recargan, salvo los que ya tengan alcance del modelo nuevo.
+    case "Position": return row.inNewModelUse ? "nueva" : "borrable";
+  }
+}
+
+/** Padres del modelo anterior de una fila (para el cierre de retención). */
+function legacyParents(table: TargetTable, row: CatalogRow): InventoryRecord["parents"] {
+  switch (table) {
+    case "Company": return {};
+    case "BusinessUnit": return { Company: row.companyId ?? null };
+    case "Establishment": return { Company: row.companyId ?? null, BusinessUnit: row.businessUnitId ?? null };
+    case "Area": return { Establishment: row.establishmentId ?? null };
+    case "Sector": return { Area: row.areaId ?? null };
+    case "Position": return { Sector: row.sectorId ?? null };
+  }
+}
+
+const toRecord = (table: TargetTable, row: CatalogRow, companyMode: CompanyMode): InventoryRecord => {
+  const cls = transitionClass(table, row, companyMode);
+  return { id: row.id, code: row.code, name: row.name, status: row.status, parents: legacyParents(table, row), ...(cls === "borrable" ? {} : { class: cls }) };
+};
+
+/** Filas de catálogo de una tabla (todas o por IDs), con los datos de membresía. Sólo lectura. */
+export async function loadCatalogRows(tx: Tx, table: TargetTable, ids?: string[]): Promise<CatalogRow[]> {
+  const where = ids ? { id: { in: ids } } : {};
+  const base = { id: true, code: true, name: true, status: true } as const;
+  switch (table) {
+    case "Company": return tx.company.findMany({ where, select: base, orderBy: { code: "asc" } });
+    case "BusinessUnit": {
+      const rows = await tx.businessUnit.findMany({ where, select: { ...base, companyId: true, _count: { select: { sectors: true } } }, orderBy: { code: "asc" } });
+      // `sectors` = sectores del modelo nuevo (Sector.businessUnitId).
+      return rows.map(({ _count, ...row }) => ({ ...row, inNewModelUse: _count.sectors > 0 }));
+    }
+    case "Establishment": return tx.establishment.findMany({ where, select: { ...base, companyId: true, businessUnitId: true, zoneId: true }, orderBy: { code: "asc" } });
+    case "Area": return tx.area.findMany({ where, select: { ...base, establishmentId: true, sectorId: true }, orderBy: { code: "asc" } });
+    case "Sector": return tx.sector.findMany({ where, select: { ...base, areaId: true, businessUnitId: true }, orderBy: { code: "asc" } });
+    case "Position": {
+      const rows = await tx.position.findMany({ where, select: { ...base, sectorId: true, _count: { select: { orgScopes: true } } }, orderBy: { code: "asc" } });
+      return rows.map(({ _count, ...row }) => ({ ...row, inNewModelUse: _count.orgScopes > 0 }));
+    }
+  }
+}
+
+/**
+ * Inventario congelado inicial: registros `borrable` del modelo anterior y,
+ * en C1, las empresas como `conservada` (para que la historia que las
+ * referencia quede dentro del inventario sin tratarlas).
+ */
 export async function loadInventory(tx: Tx, companyMode: CompanyMode): Promise<FrozenInventory> {
-  const [companies, businessUnits, establishments, areas, sectors, positions] = await Promise.all([
-    companyMode === "C2" ? tx.company.findMany({ select: { id: true, code: true, name: true, status: true }, orderBy: { code: "asc" } }) : Promise.resolve([] as Row[]),
-    tx.businessUnit.findMany({ select: { id: true, code: true, name: true, status: true, companyId: true }, orderBy: { code: "asc" } }),
-    // Modelo anterior: establecimientos sin zona. Los nuevos (con zona) no se tocan.
-    tx.establishment.findMany({ where: { zoneId: null }, select: { id: true, code: true, name: true, status: true, companyId: true, businessUnitId: true }, orderBy: { code: "asc" } }),
-    tx.area.findMany({ where: { sectorId: null }, select: { id: true, code: true, name: true, status: true, establishmentId: true }, orderBy: { code: "asc" } }),
-    tx.sector.findMany({ where: { businessUnitId: null }, select: { id: true, code: true, name: true, status: true, areaId: true }, orderBy: { code: "asc" } }),
-    tx.position.findMany({ select: { id: true, code: true, name: true, status: true, sectorId: true, _count: { select: { orgScopes: true } } }, orderBy: { code: "asc" } }),
-  ]);
-  const record = (row: Row, parents: InventoryRecord["parents"]): InventoryRecord => ({ id: row.id, code: row.code, name: row.name, status: row.status, parents });
-  // Unidades de negocio: el concepto se mantiene, pero las actuales se recargan.
-  // Una UN que ya tenga sectores del modelo nuevo no entra (registro nuevo en uso).
-  const businessUnitsWithNewSectors = new Set((await tx.sector.findMany({ where: { businessUnitId: { not: null } }, select: { businessUnitId: true } })).map((row) => row.businessUnitId!));
-  return {
-    companyMode,
-    records: {
-      Company: companies.map((row) => record(row, {})),
-      BusinessUnit: businessUnits.filter((row) => !businessUnitsWithNewSectors.has(row.id)).map((row) => record(row, { Company: row.companyId })),
-      Establishment: establishments.map((row) => record(row, { Company: row.companyId, BusinessUnit: row.businessUnitId })),
-      Area: areas.map((row) => record(row, { Establishment: row.establishmentId })),
-      Sector: sectors.map((row) => record(row, { Area: row.areaId })),
-      // Puestos: todos los actuales se recargan, salvo los que ya tengan alcance del modelo nuevo.
-      Position: positions.filter((row) => row._count.orgScopes === 0).map((row) => record(row, { Sector: row.sectorId })),
-    },
-  };
+  const records = {} as FrozenInventory["records"];
+  for (const table of DELETE_ORDER) {
+    records[table] = (await loadCatalogRows(tx, table))
+      .map((row) => toRecord(table, row, companyMode))
+      .filter((record) => (record.class ?? "borrable") === "borrable" || (table === "Company" && record.class === "conservada"));
+  }
+  return { companyMode, records };
+}
+
+export interface AmplificationRound { round: number; added: Array<{ table: TargetTable; id: string; class: InventoryClass; reason: string }> }
+
+/**
+ * Ciclo de ampliación (A8 §12.2): mientras alguna fuente de historia tenga
+ * `outsideInventory`, incorpora esos destinos (y, si son `borrable`, sus
+ * ancestros) clasificados con el MISMO criterio de membresía, re-congela y
+ * vuelve a particionar la historia. No hay reconocimiento ni flag: un destino
+ * que no existe en la base aborta. Devuelve el inventario con `history` y el
+ * registro de cada ronda (IDs exactos) para el reporte.
+ */
+export async function amplifyInventory(tx: Tx, initial: FrozenInventory, maxRounds = 10): Promise<{ inventory: FrozenInventory; rounds: AmplificationRound[] }> {
+  const records = Object.fromEntries(DELETE_ORDER.map((table) => [table, [...initial.records[table]]])) as FrozenInventory["records"];
+  const rounds: AmplificationRound[] = [];
+  for (let round = 1; round <= maxRounds; round += 1) {
+    const history = await loadHistoryReferences(tx, { records });
+    const pending = new Map<string, { table: TargetTable; id: string; reason: string }>();
+    for (const entry of history) for (const id of entry.outsideInventory) pending.set(`${entry.targetTable}:${id}`, { table: entry.targetTable, id, reason: `referenciado por ${entry.source}` });
+    if (!pending.size) return { inventory: { companyMode: initial.companyMode, records, history }, rounds };
+    const added: AmplificationRound["added"] = [];
+    while (pending.size) {
+      const [key, item] = pending.entries().next().value as [string, { table: TargetTable; id: string; reason: string }];
+      pending.delete(key);
+      if (records[item.table].some((record) => record.id === item.id)) continue;
+      const [row] = await loadCatalogRows(tx, item.table, [item.id]);
+      if (!row) throw new Error(`Ampliación: ${item.table} ${item.id} (${item.reason}) no existe en la base. No se reconoce: revisar la historia.`);
+      const record = toRecord(item.table, row, initial.companyMode);
+      records[item.table].push(record);
+      added.push({ table: item.table, id: item.id, class: record.class ?? "borrable", reason: item.reason });
+      // Dependencias: un borrable necesita sus ancestros en el congelado para el cierre de retención.
+      if ((record.class ?? "borrable") === "borrable") {
+        for (const [parentTable, parentId] of Object.entries(record.parents) as Array<[TargetTable, string | null]>) {
+          if (parentId && !records[parentTable].some((existing) => existing.id === parentId)) pending.set(`${parentTable}:${parentId}`, { table: parentTable, id: parentId, reason: `ancestro de ${item.table} ${item.id}` });
+        }
+      }
+    }
+    rounds.push({ round, added });
+  }
+  throw new Error(`La ampliación del inventario no convergió en ${maxRounds} rondas.`);
 }
 
 // ---------------------------------------------------------------------------
@@ -139,8 +233,13 @@ export async function countReferences(tx: Tx, foreignKeys: ForeignKey[], ids: Re
   return result;
 }
 
+/**
+ * IDs contra los que se cuentan las dependencias: sólo `borrable` (los únicos
+ * que se borran o archivan). Una FK hacia un `conservada`/`nueva` no requiere
+ * tratamiento.
+ */
 export function inventoryIds(inventory: FrozenInventory): Record<TargetTable, string[]> {
-  return Object.fromEntries(DELETE_ORDER.map((table) => [table, inventory.records[table].map((record) => record.id)])) as Record<TargetTable, string[]>;
+  return borrableIds(inventory);
 }
 
 // ---------------------------------------------------------------------------
@@ -161,7 +260,7 @@ export const HISTORY_SOURCES: ReadonlyArray<{ table: string; column: string; sou
 ];
 
 /** IDs EXACTOS (ordenados, sin duplicados) que la historia referencia hacia el inventario. Sólo lectura. */
-export async function loadHistoryReferences(tx: Tx, inventory: FrozenInventory): Promise<HistoryReference[]> {
+export async function loadHistoryReferences(tx: Tx, inventory: Pick<FrozenInventory, "records">): Promise<HistoryReference[]> {
   const result: HistoryReference[] = [];
   for (const { table, column, source, targetTable } of HISTORY_SOURCES) {
     const rows = await tx.$queryRawUnsafe<Array<{ id: string }>>(
@@ -287,4 +386,126 @@ export async function engineOutcomes(tx: Tx, evaluate: EngineEvaluator, db: unkn
     for (const [day, evaluation] of await evaluate(employeeId, dates, db)) result.set(`${employeeId}|${day}`, engineOutcomeLabel(evaluation));
   }
   return result;
+}
+
+// ---------------------------------------------------------------------------
+// Formas y guardas (A8 §12.3-§12.6). Todo de sólo lectura.
+// ---------------------------------------------------------------------------
+
+/** Filas de los seis catálogos con las columnas que deciden su forma (F0/F1, G1). */
+export async function loadShapeRows(tx: Tx): Promise<ShapeRows> {
+  const q = <T>(sql: string) => tx.$queryRawUnsafe<T[]>(sql);
+  return {
+    Company: await q(`SELECT id, "archivedAt"::text AS "archivedAt" FROM "Company" ORDER BY id`),
+    BusinessUnit: await q(`SELECT id, "companyId", "archivedAt"::text AS "archivedAt" FROM "BusinessUnit" ORDER BY id`),
+    Establishment: await q(`SELECT id, "zoneId", "companyId", "businessUnitId", "archivedAt"::text AS "archivedAt" FROM "Establishment" ORDER BY id`),
+    Area: await q(`SELECT id, "sectorId", "establishmentId", "archivedAt"::text AS "archivedAt" FROM "Area" ORDER BY id`),
+    Sector: await q(`SELECT id, "isLegacy", "businessUnitId", "areaId", "archivedAt"::text AS "archivedAt" FROM "Sector" ORDER BY id`),
+    Position: await q(`SELECT p.id, p."sectorId", p."archivedAt"::text AS "archivedAt", (SELECT count(*)::int FROM "PositionOrgScope" s WHERE s."positionId" = p.id) AS "activeScopes" FROM "Position" p ORDER BY p.id`),
+  };
+}
+
+async function primaryKey(tx: Tx, table: string): Promise<string[]> {
+  const key = (await tx.$queryRawUnsafe<Array<{ column_name: string }>>(
+    `SELECT a.attname AS column_name FROM pg_index i JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
+     WHERE i.indrelid = $1::regclass AND i.indisprimary ORDER BY array_position(i.indkey, a.attnum)`, quoteIdent(table),
+  )).map((row) => row.column_name);
+  if (!key.length) throw new Error(`La tabla ${table} no tiene clave primaria.`);
+  return key;
+}
+
+/** G7 (§12.6): snapshot COMPLETO de las siete tablas de historia — todas las columnas, ordenado por PK. */
+export async function captureHistorySnapshot(tx: Tx): Promise<HistorySnapshot> {
+  const snapshot: HistorySnapshot = {};
+  for (const table of HISTORY_TABLES) {
+    const key = await primaryKey(tx, table);
+    const rows = await tx.$queryRawUnsafe<Array<{ row: Record<string, unknown> }>>(
+      `SELECT row_to_json(t) AS row FROM ${quoteIdent(table)} t ORDER BY ${key.map((column) => `t.${quoteIdent(column)}`).join(", ")}`,
+    );
+    snapshot[table] = { key, rows: rows.map((item) => normalizeSnapshotRow(item.row)) };
+  }
+  return snapshot;
+}
+
+/** IDs con `archivedAt NOT NULL`, por tabla (G4). */
+export async function loadArchivedIds(tx: Tx): Promise<Record<TargetTable, string[]>> {
+  const result = {} as Record<TargetTable, string[]>;
+  for (const table of DELETE_ORDER) {
+    result[table] = (await tx.$queryRawUnsafe<Array<{ id: string }>>(`SELECT id FROM ${quoteIdent(table)} WHERE "archivedAt" IS NOT NULL ORDER BY id`)).map((row) => row.id);
+  }
+  return result;
+}
+
+/** De los IDs dados, cuáles siguen existiendo (G3). */
+export async function loadPresentIds(tx: Tx, ids: Record<TargetTable, string[]>): Promise<Record<TargetTable, string[]>> {
+  const result = {} as Record<TargetTable, string[]>;
+  for (const table of DELETE_ORDER) {
+    result[table] = ids[table]?.length
+      ? (await tx.$queryRawUnsafe<Array<{ id: string }>>(`SELECT id FROM ${quoteIdent(table)} WHERE id = ANY($1::text[]) ORDER BY id`, ids[table])).map((row) => row.id)
+      : [];
+  }
+  return result;
+}
+
+/** IDs que la historia referencia HOY, por tabla destino (G8 después de escribir). */
+export async function loadLiveHistoryIds(tx: Tx): Promise<Record<TargetTable, string[]>> {
+  const result = Object.fromEntries(DELETE_ORDER.map((table) => [table, [] as string[]])) as Record<TargetTable, string[]>;
+  for (const { table, column, targetTable } of HISTORY_SOURCES) {
+    const rows = await tx.$queryRawUnsafe<Array<{ id: string }>>(`SELECT DISTINCT t.${quoteIdent(column)}::text AS id FROM ${quoteIdent(table)} t WHERE t.${quoteIdent(column)} IS NOT NULL`);
+    result[targetTable] = [...new Set([...result[targetTable], ...rows.map((row) => row.id)])].sort();
+  }
+  return result;
+}
+
+/**
+ * G5: filas que referencian un archivado, por cada FK del catálogo de Postgres
+ * hacia las seis tablas, EXCEPTO las nueve fuentes de historia (§12.2). Marca
+ * si la fila de origen es ella misma un archivado de las seis tablas.
+ */
+export async function loadArchivedLinks(tx: Tx, foreignKeys: ForeignKey[], archived: Record<TargetTable, string[]>): Promise<ArchivedLink[]> {
+  const historySources = new Set(HISTORY_SOURCES.map((source) => source.source));
+  const links: ArchivedLink[] = [];
+  for (const fk of foreignKeys) {
+    if (historySources.has(`${fk.table}.${fk.column}`) || !archived[fk.target].length) continue;
+    const key = await primaryKey(tx, fk.table);
+    const ownArchive = (DELETE_ORDER as readonly string[]).includes(fk.table);
+    const rows = await tx.$queryRawUnsafe<Array<{ key: string; targetId: string; sourceArchived: boolean }>>(
+      `SELECT concat_ws('|', ${key.map((column) => `t.${quoteIdent(column)}::text`).join(", ")}) AS key, t.${quoteIdent(fk.column)}::text AS "targetId",
+              ${ownArchive ? `t."archivedAt" IS NOT NULL` : "false"} AS "sourceArchived"
+       FROM ${quoteIdent(fk.table)} t WHERE t.${quoteIdent(fk.column)} = ANY($1::text[]) ORDER BY 1`,
+      archived[fk.target],
+    );
+    for (const row of rows) links.push({ table: fk.table, column: fk.column, target: fk.target, key: row.key, targetId: row.targetId, sourceArchived: row.sourceArchived });
+  }
+  return links;
+}
+
+/** G6: CHECKs de las seis tablas con su estado de validación. */
+export async function loadCheckConstraints(tx: Tx): Promise<Array<{ table: string; name: string; validated: boolean }>> {
+  return tx.$queryRawUnsafe(
+    `SELECT rel.relname AS table, con.conname AS name, con.convalidated AS validated
+     FROM pg_constraint con JOIN pg_class rel ON rel.oid = con.conrelid JOIN pg_namespace ns ON ns.oid = rel.relnamespace
+     WHERE con.contype = 'c' AND ns.nspname = 'public' AND rel.relname IN ('Company', 'BusinessUnit', 'Establishment', 'Area', 'Sector', 'Position')
+     ORDER BY 1, 2`,
+  );
+}
+
+/** G9: índices de Employee (columnas en orden) y planes EXPLAIN (sin ANALYZE: no ejecuta la consulta) de los listados. */
+export async function loadListingPerformance(tx: Tx): Promise<{ indexes: IndexInfo[]; plans: Record<string, unknown> }> {
+  const indexes = await tx.$queryRawUnsafe<IndexInfo[]>(
+    `SELECT t.relname AS table, i.relname AS name, array_agg(a.attname ORDER BY k.ord)::text[] AS columns
+     FROM pg_index x JOIN pg_class t ON t.oid = x.indrelid JOIN pg_class i ON i.oid = x.indexrelid
+     JOIN LATERAL unnest(x.indkey) WITH ORDINALITY AS k(attnum, ord) ON true
+     JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum
+     WHERE t.relname = 'Employee' GROUP BY t.relname, i.relname ORDER BY 2`,
+  );
+  const explain = async (sql: string) => (await tx.$queryRawUnsafe<Array<{ "QUERY PLAN": unknown }>>(`EXPLAIN (FORMAT JSON) ${sql}`))[0]?.["QUERY PLAN"];
+  return {
+    indexes,
+    plans: {
+      employeesActiveByName: await explain(`SELECT id FROM "Employee" WHERE status = 'ACTIVO' ORDER BY "lastName", "firstName" LIMIT 25`),
+      employeesCountByStatus: await explain(`SELECT status, count(*) FROM "Employee" GROUP BY status`),
+      positionsActiveList: await explain(`SELECT id FROM "Position" WHERE "archivedAt" IS NULL ORDER BY status, name LIMIT 25`),
+    },
+  };
 }
