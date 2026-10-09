@@ -807,11 +807,11 @@ Ver `backend/src/modules/org-structure/orgStructure.dependencies.ts`.
 | Vínculo nuevo de centro de costo | `409 ORG_STRUCTURE_ARCHIVED_RECORD` |
 | Alcance nuevo de puesto (`PositionOrgScope`) | `409 POSITION_SCOPE_ARCHIVED` |
 | Puesto asignado a un legajo (alta/edición; revalidado dentro de la transacción del guardado) | `400 EMPLOYEE_POSITION_ARCHIVED` |
-| Empresa empleadora nueva del legajo (`EmployeeCompany`) | `400 EMPLOYEE_COMPANY_ARCHIVED` |
+| Empresa empleadora nueva del legajo (`EmployeeCompany`; sólo las que el legajo no tenía, revalidadas dentro de la transacción del guardado con `FOR SHARE`) | `400 EMPLOYEE_COMPANY_ARCHIVED` |
 | Establecimiento de una ubicación de trabajo | `400 WORK_LOCATION_ESTABLISHMENT_ARCHIVED` |
 | Establecimiento de un dispositivo de fichada | `400 CLOCK_DEVICE_ESTABLISHMENT_ARCHIVED` |
 | Empresa del alcance de un usuario (`User.companyId`, nullable y administrativa, D-14) | `400 USER_COMPANY_ARCHIVED` |
-| `DoubleHourRule.companyId/sectorId/positionId` en alta, o asignación **nueva** en edición | `400 DOUBLE_HOUR_RULE_DESTINATION_ARCHIVED`; una FK que la regla ya tenía se conserva sin cambio (sólo sobreviven a la limpieza las referencias con R3 aprobada) |
+| `DoubleHourRule.companyId/sectorId/positionId` en alta, o asignación **nueva** en edición (revalidada dentro de la transacción con `FOR SHARE`, contra las FKs leídas allí) | `400 DOUBLE_HOUR_RULE_DESTINATION_ARCHIVED`; una FK que la regla ya tenía se conserva sin cambio (sólo sobreviven a la limpieza las referencias con R3 aprobada) |
 
 - **Códigos:** un archivado sigue ocupando su `code` (y `name` en empresas): reusarlo choca con el único de la base (`409 UNIQUE_CONSTRAINT`). Los establecimientos nuevos se validan por `(zoneId, code)` excluyendo archivados, también al cambiar de zona sin cambiar el código.
 - Historia, motor de horas especiales y vigencias resuelven siempre **por ID**: las referencias históricas a un archivado nunca se rechazan.

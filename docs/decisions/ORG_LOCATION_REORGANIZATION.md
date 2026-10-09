@@ -1172,6 +1172,13 @@ para asuntos técnicos ya definidos.
   puesto en Legajos y reversión de `20261008150000` que no pierde archivo ni clasificación. **Ninguna
   migración aplicada a Neon; limpieza y restauración no ejecutadas** (requieren D-0). Pendiente: ensayo
   real en la copia (D-0, D-1, `decisions.json`) y M2.
+- **Correcciones tras la revisión de Codex hasta `b199732` (2026-10-09, A8 §12.14.8):** respaldo de
+  filas retiradas por tabla + PK (cada fila una vez, verificado contra lo que se borra), clase 4
+  limitada a una lista cerrada y a destinos `borrable`, población de R2 con la semántica del motor (A7)
+  y bloqueo por historia faltante, empresas empleadoras y destinos de `DoubleHourRule` revalidados en
+  la transacción con `FOR SHARE`. La transacción de limpieza y la de restauración están **verificadas
+  en integración local** (PostgreSQL desechable); los **comandos operativos** siguen detrás de D-0 y
+  **no se ejecutaron**. R1 sobre sector sigue bloqueado (cambiaría LEGACY_SECTOR → WITHIN).
 - **Estado:** **especificación corregida y decisiones resueltas; implementado y verificado
   localmente, validación sobre la copia aislada pendiente.** No se ejecuta M2 ni ningún paso
   destructivo hasta verificar G1-G9 + F0/F1 verdes sobre la copia aislada (AT pendientes de ensayo
