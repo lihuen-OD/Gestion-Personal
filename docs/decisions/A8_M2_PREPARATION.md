@@ -1367,3 +1367,42 @@ C1 real) → `org-reorg-guards --phase=F0` → `org-reorg-cleanup` dry-run con
 `a8-rehearsal-c1-decisions.json` (re-verificar que el bloqueo siga siendo sólo esa fila) →
 `--apply --backup` → `org-reorg-guards --phase=F1` → `org-reorg-restore` → manifiesto y comparación.
 Ninguna decisión de producto adicional es necesaria para C1.
+
+#### 12.14.10 D-0 y respaldo de rama: preparación (2026-10-09)
+
+**Datos a obtener en la consola de Neon** (documentación vigente: [API keys](https://neon.com/docs/manage/api-keys),
+[ramas](https://neon.com/docs/manage/branches), [crear rama por API](https://api-docs.neon.tech/reference/createprojectbranch)):
+
+| Dato | Dónde | Notas |
+|---|---|---|
+| `NEON_API_KEY` | Organización → **Settings → API keys → Create new → Project-scoped**, elegir el proyecto de la copia | Mínimo privilegio: Editor sobre UN proyecto (lee y modifica sus recursos; no borra el proyecto ni opera la organización). Requiere admin de la organización; si no, clave personal (Perfil → Settings → API keys), más amplia. Se muestra una sola vez. Revocarla al cerrar el ensayo |
+| `NEON_PROJECT_ID` | Proyecto → **Settings → General → Project ID** (también en la URL del proyecto) | Formato `palabra-palabra-12345678` |
+| `NEON_BRANCH_ID` | Proyecto → **Branches** → `org-location-reorg` → campo **ID** | Empieza con `br-`. Debe ser la rama cuyo endpoint es `ep-rough-river-aioy7xp9`; el script lo verifica |
+
+**Configuración local:** `backend/.env.neon-admin` (creado con placeholders, permisos 600, ignorado por
+`backend/.gitignore` `.env.*`). Completar sólo `NEON_API_KEY`, `NEON_PROJECT_ID` y `NEON_BRANCH_ID`;
+`NEON_BRANCH_NAME`, `REORG_ENV_FILE=.env.reorg` y `REORG_EXPECTED_HOST` ya están. Los scripts se
+corren con el lanzador `scripts/org-reorg/neon-admin.ts`, que pasa la clave sólo por el entorno del
+proceso hijo y los IDs como los flags que ya exigen los scripts. `backend/.env` no se toca.
+
+**Respaldo de rama (mitad "rama Neon" de B0):** los snapshots manuales de Neon sólo se toman de ramas
+raíz; `org-location-reorg` es una rama de ensayo, así que el mecanismo es una **rama hija sin compute**
+(`init_source: parent-data`, sin `endpoints`), nombre `org-location-reorg-a8-backup-AAAAMMDD`: copia
+copy-on-write que no cambia con las escrituras del ensayo en la rama de origen. Herramienta:
+`scripts/org-reorg-branch-backup.ts` (plan de sólo lectura por defecto; `--apply` crea, verifica
+`parent_id` y estado `ready`, y registra IDs y LSN fuera del repo). Estado: **preparado, no creado**
+(faltan las credenciales). Para atar las dos mitades de B0, justo después de crearla se captura el
+manifiesto de la copia y se compara con `a8-rehearsal-copy-pre-2026-10-09.manifest.json` (el del
+`pg_dump`): igualdad ⇒ rama y dump representan el mismo estado; si difiere, se toma un dump nuevo.
+
+**Secuencia del ensayo en la copia, con D-0 completo** (`L` = `npx tsx scripts/org-reorg/neon-admin.ts`):
+1. `L scripts/org-reorg-branch-backup.ts --record=../backups/a8-copy-branch-plan.json` (sólo lectura: identidad verificada y plan).
+2. `L scripts/org-reorg-branch-backup.ts --record=../backups/a8-copy-branch-backup.json --apply` + manifiesto y comparación con el del dump.
+3. `migrate status` (sólo lectura) → aplicar **sólo** `20261008150000` en la copia → `migrate status`.
+4. `L scripts/org-reorg-inventory.ts --report=../backups/a8-copy-inventory-c1.json` (congelado C1 real) → **re-comprobar** que el único bloqueo de C1 siga siendo el alcance `3299daab…` de `PUE-006` → `UN-005` (`15598eb2…`) y que ninguna regla requiera decisión; si aparece otro caso, se detiene y se presenta.
+5. `L scripts/org-reorg-guards.ts --phase=F0 --company-mode=C1 --inventory=… --report=…`.
+6. `L scripts/org-reorg-cleanup.ts --company-mode=C1 --inventory=… --decisions=../backups/a8-rehearsal-c1-decisions.json --actor-user-id=<RRHH activo> --report=…` (dry-run) → revisión.
+7. `… --apply --backup=…` → `L scripts/org-reorg-guards.ts --phase=F1 …`.
+8. `L scripts/org-reorg-restore.ts --backup=… --actor-user-id=… --report=… --apply` → manifiesto y comparación completa con el previo.
+
+Sin M2 ni limpieza final en este bloque.
