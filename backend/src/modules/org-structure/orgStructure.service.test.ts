@@ -1,3 +1,4 @@
+import { Prisma } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Mock } from "vitest";
 import { auditService, clearAuditDerivedCaches } from "../audit/audit.service";
@@ -231,5 +232,73 @@ describe("archivo A8-1 — I4 y §12.4 (rechazos con destino archivado)", () => 
     await orgStructureService.updateNode("establishment", "est-1", { city: "Rosario" });
 
     expect(repo.findZonedEstablishmentByCode).not.toHaveBeenCalled();
+  });
+});
+
+describe("AT-4 — matriz de padres organizacionales (§12.4): archivado → 409 con su código; activo → éxito", () => {
+  const ARCHIVED = new Date("2026-10-09");
+  // Zone no tiene archivo (no está en DELETE_ORDER): establishment → zone queda fuera de la matriz.
+  const cases = [
+    { kind: "businessUnit", parentKind: "company", field: "companyId" },
+    { kind: "sector", parentKind: "businessUnit", field: "businessUnitId" },
+    { kind: "area", parentKind: "sector", field: "sectorId" },
+  ] as const;
+
+  it.each(cases)("alta de $kind bajo $parentKind archivado → 409 ORG_STRUCTURE_ARCHIVED_RECORD, sin escribir", async ({ kind, parentKind, field }) => {
+    repo.findNode.mockResolvedValue(record({ id: "parent", name: "Padre viejo", archivedAt: ARCHIVED }));
+
+    await expect(orgStructureService.createNode(kind, { code: "N-1", name: "Nuevo", status: "ACTIVO", [field]: "parent" } as never))
+      .rejects.toMatchObject({ statusCode: 409, code: "ORG_STRUCTURE_ARCHIVED_RECORD" });
+    expect(repo.findNode).toHaveBeenCalledWith(tx, parentKind, "parent");
+    expect(repo.createNode).not.toHaveBeenCalled();
+    expect(registerWithin).not.toHaveBeenCalled();
+  });
+
+  it.each(cases)("reubicar $kind hacia $parentKind archivado → 409, sin escribir", async ({ kind, field }) => {
+    repo.findNode
+      .mockResolvedValueOnce(record({ id: "node", parentId: "old-parent", counts: {} }))
+      .mockResolvedValueOnce(record({ id: "parent", name: "Padre viejo", archivedAt: ARCHIVED }));
+
+    await expect(orgStructureService.updateNode(kind, "node", { [field]: "parent" } as never))
+      .rejects.toMatchObject({ statusCode: 409, code: "ORG_STRUCTURE_ARCHIVED_RECORD" });
+    expect(repo.updateNode).not.toHaveBeenCalled();
+  });
+
+  it.each(cases)("regresión: alta de $kind bajo $parentKind activo sigue funcionando", async ({ kind, field }) => {
+    repo.findNode.mockResolvedValue(record({ id: "parent", name: "Padre activo" }));
+    repo.createNode.mockResolvedValue({ id: "n-1", code: "N-1", name: "Nuevo", status: "ACTIVO" });
+
+    await orgStructureService.createNode(kind, { code: "N-1", name: "Nuevo", status: "ACTIVO", [field]: "parent" } as never);
+
+    expect(repo.createNode).toHaveBeenCalled();
+  });
+
+  it("archivado manda sobre legado e inactivo: un padre archivado, legado e inactivo da ARCHIVED", async () => {
+    repo.findNode.mockResolvedValue(record({ id: "parent", isLegacy: true, status: "INACTIVO", archivedAt: ARCHIVED }));
+
+    await expect(orgStructureService.createNode("area", { code: "N-1", name: "Nueva", status: "ACTIVO", sectorId: "parent" }))
+      .rejects.toMatchObject({ code: "ORG_STRUCTURE_ARCHIVED_RECORD" });
+  });
+});
+
+describe("AT-8 — un código ocupado por un archivado no se recicla (§12.8)", () => {
+  it.each(["company", "sector", "area"] as const)("alta de %s con el código de un archivado → 409 UNIQUE_CONSTRAINT (único de la base, sin excepción)", async (kind) => {
+    repo.findNode.mockResolvedValue(record({ id: "parent" }));
+    repo.createNode.mockRejectedValue(new Prisma.PrismaClientKnownRequestError("Unique constraint failed", { code: "P2002", clientVersion: "test" }));
+
+    await expect(orgStructureService.createNode(kind, { code: "OCUPADO", name: "Nuevo", status: "ACTIVO", businessUnitId: "parent", sectorId: "parent" } as never))
+      .rejects.toMatchObject({ statusCode: 409, code: "UNIQUE_CONSTRAINT" });
+    expect(registerWithin).not.toHaveBeenCalled();
+  });
+
+  it("establecimiento: el lookup de alta busca (zoneId, code) y no colisiona con el archivado del mismo código (gobernado por companyId)", async () => {
+    repo.findNode.mockResolvedValue(record({ id: "z1" }));
+    repo.findZonedEstablishmentByCode.mockResolvedValue(null); // el repositorio excluye archivados (orgStructure.repository.test)
+    repo.createNode.mockResolvedValue({ id: "est-new", code: "E1", name: "Local", status: "ACTIVO" });
+
+    await orgStructureService.createNode("establishment", { code: "E1", name: "Local", status: "ACTIVO", zoneId: "z1" } as never);
+
+    expect(repo.findZonedEstablishmentByCode).toHaveBeenCalledWith(tx, "z1", "E1", undefined);
+    expect(repo.createNode).toHaveBeenCalled();
   });
 });
