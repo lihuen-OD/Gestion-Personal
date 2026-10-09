@@ -131,26 +131,6 @@ const employeeDetailSelect = {
   createdByUserId: true,
   address: true,
   transport: true,
-  sector: {
-    select: {
-      id: true,
-      name: true,
-      code: true,
-      area: {
-        select: {
-          id: true,
-          name: true,
-          establishment: {
-            select: {
-              id: true,
-              name: true,
-              businessUnit: { select: { id: true, name: true } },
-            },
-          },
-        },
-      },
-    },
-  },
   costCenter: { select: { id: true, name: true, code: true } },
   position: {
     select: {
@@ -243,7 +223,6 @@ const employeeUpdateAuditSelect = {
   emergencyPhone: true,
   status: true,
   positionId: true,
-  sectorId: true,
   costCenterId: true,
   healthInsurance: true,
   agreement: true,
@@ -278,7 +257,6 @@ const employeeUpdateWriteSelect = {
   emergencyPhone: true,
   status: true,
   positionId: true,
-  sectorId: true,
   costCenterId: true,
   healthInsurance: true,
   agreement: true,
@@ -331,26 +309,6 @@ const employeeDetailCoreSelect = {
   ...employeeOverviewCoreSelect,
   address: true,
   transport: true,
-  sector: {
-    select: {
-      id: true,
-      name: true,
-      code: true,
-      area: {
-        select: {
-          id: true,
-          name: true,
-          establishment: {
-            select: {
-              id: true,
-              name: true,
-              businessUnit: { select: { id: true, name: true } },
-            },
-          },
-        },
-      },
-    },
-  },
   costCenter: { select: { id: true, name: true, code: true } },
   position: {
     select: {
@@ -474,26 +432,10 @@ async function existsWithAccess(id: string, accessWhere: Prisma.EmployeeWhereInp
 // round-trips extra) y ni siquiera pide `address`/`transport`/`costCenter`
 // (que sí necesita `employeeDetailCoreSelect`, pero acá no hacen falta) —
 // más liviano incluso que el núcleo genérico de detalle.
-const positionValidationSectorSelect = {
-  id: true,
-  name: true,
-  area: {
-    select: {
-      id: true,
-      name: true,
-      establishment: {
-        select: {
-          id: true,
-          name: true,
-          businessUnit: { select: { id: true, name: true } },
-        },
-      },
-    },
-  },
-} satisfies Prisma.SectorSelect;
-
+// M2 (A8 §12): el legajo ya no tiene sector y los puestos sin alcance del
+// modelo anterior salen del catálogo activo en la limpieza: la validación
+// compara sólo la categoría contra el rango del puesto.
 const positionValidationPositionSelect = {
-  sector: { select: positionValidationSectorSelect },
   // A6: un puesto sin alcance A5 queda pendiente de recarga.
   _count: { select: { orgScopes: true } },
   salaryCategories: {
@@ -503,7 +445,6 @@ const positionValidationPositionSelect = {
 
 const employeePositionValidationSelect = {
   internalCategory: true,
-  sector: { select: positionValidationSectorSelect },
   position: { select: positionValidationPositionSelect },
 } satisfies Prisma.EmployeeSelect;
 
@@ -530,7 +471,7 @@ async function findPositionValidationByIdParallel(
   const [employeeCore, hintedPosition] = await Promise.all([
     prisma.employee.findFirst({
       where: { AND: [{ id }, accessWhere] },
-      select: { internalCategory: true, positionId: true, sector: { select: positionValidationSectorSelect } },
+      select: { internalCategory: true, positionId: true },
       relationLoadStrategy: "join",
     }),
     prisma.position.findUnique({
@@ -546,7 +487,7 @@ async function findPositionValidationByIdParallel(
       : employeeCore.positionId
         ? await prisma.position.findUnique({ where: { id: employeeCore.positionId }, select: positionValidationPositionSelect, relationLoadStrategy: "join" })
         : null;
-  return { internalCategory: employeeCore.internalCategory, sector: employeeCore.sector, position };
+  return { internalCategory: employeeCore.internalCategory, position };
 }
 
 function findPositionValidationById(id: string, accessWhere: Prisma.EmployeeWhereInput = {}, positionId?: string) {
@@ -575,45 +516,15 @@ function findPositionValidationById(id: string, accessWhere: Prisma.EmployeeWher
 //    mapper completo, ningún otro campo de Position se lee de acá). Recortado
 //    a esos 2 escalares — menos payload, sin ningún cambio de shape para lo
 //    que el frontend sí consume.
-// 2) `sector` (con su cadena `area→establishment→businessUnit` de 4 niveles)
-//    salía del `findFirst` del núcleo — la causa real de que este endpoint
-//    siguiera en ~4.5-4.9s después de la Etapa 14C.1 (ver docs/decisions/
-//    EMPLOYEE_OVERVIEW_DETAILS_PERFORMANCE_14D3.md). Se movió a una consulta
-//    de nivel superior aparte (`prisma.sector.findUnique`, por `sectorId`),
-//    ejecutada en el mismo `Promise.all` que ya usan `companies`/
-//    `laborMovements`/`assignments`/`hourConcepts` — la cadena de 4 niveles
-//    sigue pagando sus propios round-trips, pero ahora SOLAPADOS con esas 4
-//    consultas en vez de sumados en serie antes de ellas. `sectorId` se pide
-//    como escalar (gratis, viene con la fila del empleado) sólo para saber
-//    qué sector pedir en la consulta paralela — no forma parte del shape
-//    final devuelto (se descarta antes de devolver, ver `findOverviewDetailsById`).
+// 2) M2 retiró el sector anterior del legajo: este núcleo ya no lo pide ni
+//    lanza la consulta paralela de su cadena.
 const employeeOverviewDetailsCoreSelect = {
   ...employeeOverviewCoreSelect,
   address: true,
   transport: true,
-  sectorId: true,
   costCenter: { select: { id: true, name: true, code: true } },
   position: { select: { id: true, name: true } },
 } satisfies Prisma.EmployeeSelect;
-
-const overviewSectorChainSelect = {
-  id: true,
-  name: true,
-  code: true,
-  area: {
-    select: {
-      id: true,
-      name: true,
-      establishment: {
-        select: {
-          id: true,
-          name: true,
-          businessUnit: { select: { id: true, name: true } },
-        },
-      },
-    },
-  },
-} satisfies Prisma.SectorSelect;
 
 // Concepto tal como lo muestra la grilla por legajo: workTreatment decide si
 // la fila es "Dentro de la jornada" o "Horas adicionales"
@@ -638,22 +549,6 @@ const timeGridEmployeeSelect = {
   firstName: true,
   lastName: true,
   status: true,
-  sector: {
-    select: {
-      id: true,
-      name: true,
-      area: {
-        select: {
-          establishment: {
-            select: {
-              name: true,
-              businessUnit: { select: { name: true } },
-            },
-          },
-        },
-      },
-    },
-  },
   costCenter: { select: { id: true, name: true, code: true } },
   position: { select: { id: true, name: true, code: true } },
   companies: {
@@ -798,19 +693,6 @@ const employeeOrgChartSelect = {
   receiptCategory: true,
   internalCategory: true,
   companies: { include: { company: { select: { id: true, name: true, code: true } } } },
-  sector: {
-    select: {
-      id: true,
-      name: true,
-      code: true,
-      area: {
-        select: {
-          name: true,
-          establishment: { select: { name: true, businessUnit: { select: { name: true } } } },
-        },
-      },
-    },
-  },
   costCenter: { select: { id: true, name: true, code: true } },
   // A7: contexto organizacional del puesto (sólo consulta; la relación del
   // organigrama sigue siendo el encargado directo).
@@ -891,7 +773,6 @@ const employeeListOrderBy: SortOrderByMap<(typeof employeeListSortKeys)[number],
 function buildWhere(query: ListEmployeesQuery): Prisma.EmployeeWhereInput {
   const search = query.search?.trim();
   return {
-    ...(query.sectorId ? { sectorId: query.sectorId } : {}),
     ...(query.costCenterId ? { costCenterId: query.costCenterId } : {}),
     ...(query.companyId ? { companies: { some: { companyId: query.companyId } } } : {}),
     ...(search
@@ -913,7 +794,6 @@ function buildOrgChartWhere(query: ListEmployeeOrgChartQuery): Prisma.EmployeeWh
   const search = query.search?.trim();
   return {
     status: query.status,
-    ...(query.sectorId ? { sectorId: query.sectorId } : {}),
     ...(query.costCenterId ? { costCenterId: query.costCenterId } : {}),
     ...(query.positionId ? { positionId: query.positionId } : {}),
     ...(query.companyId ? { companies: { some: { companyId: query.companyId } } } : {}),
@@ -927,7 +807,6 @@ function buildOrgChartWhere(query: ListEmployeeOrgChartQuery): Prisma.EmployeeWh
             { firstName: { contains: search, mode: "insensitive" } },
             { lastName: { contains: search, mode: "insensitive" } },
             { position: { name: { contains: search, mode: "insensitive" } } },
-            { sector: { name: { contains: search, mode: "insensitive" } } },
           ],
         }
       : {}),
@@ -938,7 +817,6 @@ function buildOptionsWhere(query: ListEmployeeOptionsQuery): Prisma.EmployeeWher
   const search = query.search?.trim();
   return {
     ...(query.status ? { status: query.status } : {}),
-    ...(query.sectorId ? { sectorId: query.sectorId } : {}),
     ...(query.companyId ? { companies: { some: { companyId: query.companyId } } } : {}),
     ...(search
       ? {
@@ -975,7 +853,6 @@ function createEmployeeData(input: CreateEmployeeInput) {
     emergencyPhone: input.emergencyPhone || null,
     status: input.status,
     positionId: input.positionId || null,
-    sectorId: input.sectorId || null,
     costCenterId: input.costCenterId || null,
     healthInsurance: input.healthInsurance || null,
     agreement: input.agreement || null,
@@ -1004,7 +881,6 @@ function updateEmployeeData(input: UpdateEmployeeInput) {
     ...(input.emergencyPhone !== undefined ? { emergencyPhone: input.emergencyPhone || null } : {}),
     ...(input.status !== undefined ? { status: input.status } : {}),
     ...(input.positionId !== undefined ? { positionId: input.positionId || null } : {}),
-    ...(input.sectorId !== undefined ? { sectorId: input.sectorId || null } : {}),
     ...(input.costCenterId !== undefined ? { costCenterId: input.costCenterId || null } : {}),
     ...(input.healthInsurance !== undefined ? { healthInsurance: input.healthInsurance || null } : {}),
     ...(input.agreement !== undefined ? { agreement: input.agreement || null } : {}),
@@ -1340,9 +1216,7 @@ export const employeesRepository = {
       select: employeeOverviewDetailsCoreSelect,
     });
     if (!core) return null;
-    const { sectorId, ...coreWithoutSectorId } = core;
-
-    const [companies, laborMovements, assignments, hourConcepts, sector] = await Promise.all([
+    const [companies, laborMovements, assignments, hourConcepts] = await Promise.all([
       prisma.employeeCompany.findMany({
         where: { employeeId: id },
         select: { isPrimary: true, company: { select: { id: true, name: true, code: true } } },
@@ -1361,17 +1235,9 @@ export const employeesRepository = {
         where: { employeeId: id, ...assignableHourConceptsSelect.where },
         select: assignableHourConceptsSelect.select,
       }),
-      // Etapa 14D.7: `relationLoadStrategy: "join"` — única query de este
-      // Promise.all tocada (la cadena sector→area→establishment→businessUnit
-      // medida y aprobada en 14D.6, mejora ~59-60%). Las otras 4 queries de
-      // este batch no tienen cadena profunda (§2 del diagnóstico) y quedan
-      // sin cambio. Ver docs/decisions/PRISMA_RELATION_JOINS_LIMITED_ROLLOUT_14D7.md.
-      sectorId
-        ? prisma.sector.findUnique({ where: { id: sectorId }, select: overviewSectorChainSelect, relationLoadStrategy: "join" })
-        : Promise.resolve(null),
     ]);
 
-    return { ...coreWithoutSectorId, sector, companies, laborMovements, assignments, hourConcepts };
+    return { ...core, companies, laborMovements, assignments, hourConcepts };
   },
 
   async findTimeGrid(id: string, query: EmployeeTimeGridQuery, accessWhere: Prisma.EmployeeWhereInput) {

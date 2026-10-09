@@ -184,7 +184,7 @@ const nodes: { [K in NodeKind]: NodeOps<K> } = {
   },
   sector: {
     find: async (tx, id) => {
-      const row = await tx.sector.findUnique({ where: { id }, select: { id: true, code: true, name: true, status: true, businessUnitId: true, isLegacy: true, archivedAt: true, _count: { select: { areas: true, employees: true, positions: true, users: true, costCenterLinks: true, doubleHourRules: true, positionScopes: true, legacySectorPeriods: true, scopeHistoryNodes: true, scopeHistoryAreaParentOf: true } } } });
+      const row = await tx.sector.findUnique({ where: { id }, select: { id: true, code: true, name: true, status: true, businessUnitId: true, isLegacy: true, archivedAt: true, _count: { select: { areas: true, positions: true, costCenterLinks: true, doubleHourRules: true, positionScopes: true, legacySectorPeriods: true, scopeHistoryNodes: true, scopeHistoryAreaParentOf: true } } } });
       return row && { id: row.id, code: row.code, name: row.name, status: row.status, parentId: row.businessUnitId, isLegacy: row.isLegacy, archivedAt: row.archivedAt, counts: { ...row._count, laborHistory: row._count.legacySectorPeriods, scopeHistory: row._count.scopeHistoryNodes + row._count.scopeHistoryAreaParentOf } };
     },
     // A8-3: el alta clasifica explícitamente con el criterio previo (sector sin

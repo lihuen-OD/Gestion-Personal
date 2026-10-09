@@ -1452,3 +1452,37 @@ rama de respaldo `br-late-frog-ai7hd0kw` conservada. Sin M2 ni limpieza final.
 pasan a **verificadas en la copia Neon** para C1 (sin archivo: en C1 la copia no tiene registros
 borrables referenciados por historia, así que `retained` = ∅ y el marcado de archivo se ejerció sólo
 en la integración local).
+
+#### 12.14.13 M2 implementada en la rama y verificada localmente (2026-10-09)
+
+**Migración** `20261009150000_org_location_contract_m2` (no aplicada a ninguna base compartida):
+guarda previa (aborta sin cambios si quedan `Employee/User/ClockDevice.sectorId` con valor, filas sin
+forma final en Sector/Área/Establecimiento o `(zoneId, code)` repetido) → DROP de esas tres columnas
+con FKs e índices → CHECKs `Sector/Area/Establishment_archive_shape_check` → único
+`Establishment_zoneId_code_key`. Se conservan la cadena legada y `@@unique([companyId, code])` (D-B2).
+**Consumidores retirados:** selects/filtros/búsqueda por sector del legajo (legajos, organigrama,
+opciones, convocatorias, asistencia, conceptos, regímenes, pendientes, puestos, dashboard),
+`assertLegacySectorUnchanged`, comparación estructural legada de la validación contra el puesto,
+`sectorId` del dispositivo en autenticación y tipos (D-15), del usuario (D-14), conteos de
+dependencias del sector; frontend: filtro "Sector anterior"; seed sin `sectorId`.
+Nota: un `sectorId` dentro de un spread condicional (`...(x ? { sectorId } : {})`) **no lo detecta
+el compilador** y Prisma lo rechazaría en ejecución: se barrió textualmente además de compilar.
+
+**Recuperación después de M2:**
+1. Antes de la recarga: `prisma/rollbacks/20261009150000_org_location_contract_m2.down.sql` (sin
+   pérdida: recrea vacías las columnas que M2 sólo pudo retirar vacías, retira CHECKs/único y borra la
+   fila de M2 de `_prisma_migrations`; `migrate resolve --rolled-back` no sirve para una migración
+   aplicada, P3012) → `org-reorg-restore` con el respaldo de la limpieza → comparación.
+   `org-reorg-restore` **se niega** sobre el esquema post-M2 (`LEGACY_COLUMNS` incluye ahora las tres
+   columnas retiradas).
+2. Después de la recarga, o como último recurso: rama de respaldo (`br-late-frog-ai7hd0kw`) o
+   `pg_dump` (`a8-rehearsal-copy-pre-2026-10-09.dump`).
+
+**Verificación local [I]** (restauración del `pg_dump` de la copia, PostgreSQL desechable): limpieza
+C1 (F1/V1 verdes) → M2 → **F2 verde** (G1, G5, G6 con CHECKs validados y `migrate diff` vacío, G7, G8,
+G9) → a través de M2 sólo cambian las tres columnas y `_prisma_migrations` (+1); el resto, incluidas
+las 7 tablas de historia, idéntico por ID y contenido → backend local (schedulers deshabilitados): 25
+endpoints principales en 200, 0 errores 5xx → CHECKs y único rechazan altas inválidas → reversión de
+M2 + restauración: base idéntica al estado previo a la limpieza (sólo auditoría nueva).
+**Pendiente en la copia Neon [P]:** limpieza C1 aplicada + M2 + F2 + recarga; documentos de §2.6
+(AGENTS/CLAUDE "modelo actual", SECURITY_STANDARDS, PERFORMANCE…) cuando M2 se aplique.

@@ -350,7 +350,6 @@ describe("WorkRegime.listEmployees — empleados asociados (Etapa 8G)", () => {
       firstName: "Ana",
       lastName: "Prueba",
       status: "ACTIVO",
-      sector: null,
       costCenter: null,
       companies: [],
     },
@@ -386,7 +385,6 @@ describe("WorkRegime.listEmployees — empleados asociados (Etapa 8G)", () => {
           firstName: "Ana",
           lastName: "Prueba",
           status: "ACTIVO",
-          sector: null,
           position: null,
           costCenter: null,
           companies: [],
@@ -411,11 +409,11 @@ describe("WorkRegime.listEmployees — empleados asociados (Etapa 8G)", () => {
     expect(result.items.map((item) => item.vigencyStatus)).toEqual(["future", "current", "historical"]);
   });
 
-  it("pasa los filtros (status/search/sectorId/costCenterId/companyId/page/take) al repository sin transformarlos", async () => {
+  it("pasa los filtros (status/search/costCenterId/companyId/page/take) al repository sin transformarlos", async () => {
     repo.findById.mockResolvedValue(baseRegime);
     repo.findEmployees.mockResolvedValue([[], 0]);
 
-    const query = { status: "future", search: "perez", sectorId: "sector-1", costCenterId: "cc-1", companyId: "company-1", page: 2, take: 25 } as never;
+    const query = { status: "future", search: "perez", costCenterId: "cc-1", companyId: "company-1", page: 2, take: 25 } as never;
     await workRegimesService.listEmployees("regime-1", query, rrhhUser);
 
     expect(repo.findEmployees).toHaveBeenCalledWith("regime-1", query, expect.any(Date), {});

@@ -93,9 +93,9 @@ describe("employeesRepository.findById", () => {
     const findFirstMock = prisma.employee.findFirst as Mock;
     expect(findFirstMock).toHaveBeenCalledWith(expect.objectContaining({ where: { AND: [{ id: "emp-1" }, {}] } }));
     const call = findFirstMock.mock.calls.at(0)?.[0];
-    expect(call?.select?.sector?.select?.area?.select?.establishment?.select?.businessUnit).toEqual({
-      select: { id: true, name: true },
-    });
+    // M2: el legajo ya no tiene sector; el detalle no pide su cadena.
+    expect(call?.select).not.toHaveProperty("sector");
+    expect(call?.select).not.toHaveProperty("sectorId");
     // hourConcepts ya no viaja anidado en el core (ver comentario arriba de
     // employeeDetailCoreSelect) — se resuelve como employeeHourConcept.findMany
     // propio, reusando el mismo where/select que findOverviewDetailsById.
@@ -112,10 +112,10 @@ describe("employeesRepository.findById", () => {
   it("respeta el accessWhere adicional sin alterar la forma de la cadena", async () => {
     (prisma.employee.findFirst as Mock).mockResolvedValue(null);
 
-    const result = await employeesRepository.findById("emp-2", { sectorId: { in: ["sec-1"] } });
+    const result = await employeesRepository.findById("emp-2", { costCenterId: { in: ["sec-1"] } });
 
     expect(prisma.employee.findFirst as Mock).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { AND: [{ id: "emp-2" }, { sectorId: { in: ["sec-1"] } }] } }),
+      expect.objectContaining({ where: { AND: [{ id: "emp-2" }, { costCenterId: { in: ["sec-1"] } }] } }),
     );
     // No accesible/no existe: nunca dispara las 6 consultas hijas.
     expect(result).toBeNull();
@@ -161,12 +161,11 @@ describe("employeesRepository.findOverviewDetailsById — Etapa 6L.1 / 14C.1 / 1
   });
 
   it("Etapa 14C.1: resuelve companies/laborMovements/assignments/hourConcepts en paralelo (Promise.all), no dentro del findFirst", async () => {
-    (prisma.employee.findFirst as Mock).mockResolvedValue({ id: "emp-1", legajo: "100", sectorId: "sec-1" });
+    (prisma.employee.findFirst as Mock).mockResolvedValue({ id: "emp-1", legajo: "100" });
     (prisma.employeeCompany.findMany as Mock).mockResolvedValue([{ isPrimary: true, company: { id: "c1", name: "OD", code: "OD" } }]);
     (prisma.laborMovement.findMany as Mock).mockResolvedValue([{ id: "mov-1", type: "ALTA" }]);
     (prisma.employeeAssignment.findMany as Mock).mockResolvedValue([{ id: "asg-1", type: "DIRECT_MANAGER" }]);
     (prisma.employeeHourConcept.findMany as Mock).mockResolvedValue([{ hourConceptId: "hc-1" }]);
-    (prisma.sector.findUnique as Mock).mockResolvedValue({ id: "sec-1", name: "Ventas", code: "VEN" });
 
     const result = await employeesRepository.findOverviewDetailsById("emp-1");
 
@@ -187,7 +186,7 @@ describe("employeesRepository.findOverviewDetailsById — Etapa 6L.1 / 14C.1 / 1
     // `position` se recortó de "todo el registro" a sólo id/name (únicos
     // campos que el frontend consume — mapEmployeeFromApi).
     expect(coreCall?.select?.sector).toBeUndefined();
-    expect(coreCall?.select?.sectorId).toBe(true);
+    expect(coreCall?.select?.sectorId).toBeUndefined();
     expect(coreCall?.select?.position).toEqual({ select: { id: true, name: true } });
 
     // Las 4 consultas hijas filtran únicamente por employeeId (el control de
@@ -198,26 +197,12 @@ describe("employeesRepository.findOverviewDetailsById — Etapa 6L.1 / 14C.1 / 1
     // movimientos viejos sobre los que se calcula el estado laboral).
     expect((prisma.laborMovement.findMany as Mock).mock.calls[0]?.[0]).not.toHaveProperty("take");
     expect(prisma.employeeAssignment.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { employeeId: "emp-1" }, take: 100 }));
-    // Etapa 14D.3: la cadena de sector corre en el MISMO Promise.all que las
-    // 4 anteriores — se pide por el sectorId leído del core, no anidada.
-    // Etapa 14D.7: `relationLoadStrategy: "join"` agregado a esta query
-    // puntual (medida y aprobada en 14D.6/14D.7, ver docs/decisions/
-    // PRISMA_RELATION_JOINS_LIMITED_ROLLOUT_14D7.md) — se agrega acá como
-    // parte esperada explícita, no se relaja la aserción del resto.
-    expect(prisma.sector.findUnique).toHaveBeenCalledWith({
-      where: { id: "sec-1" },
-      select: expect.objectContaining({ id: true, name: true, code: true, area: expect.anything() }),
-      relationLoadStrategy: "join",
-    });
+    // M2: sin sector del legajo no hay consulta paralela de su cadena.
+    expect(prisma.sector.findUnique).not.toHaveBeenCalled();
 
-    // El shape final del objeto devuelto es idéntico al de antes de esta
-    // etapa (mismos campos, `sector` ensamblado en vez de anidado;
-    // `sectorId` NO queda expuesto en el resultado final — era sólo un dato
-    // interno para saber qué sector pedir).
     expect(result).toEqual({
       id: "emp-1",
       legajo: "100",
-      sector: { id: "sec-1", name: "Ventas", code: "VEN" },
       companies: [{ isPrimary: true, company: { id: "c1", name: "OD", code: "OD" } }],
       laborMovements: [{ id: "mov-1", type: "ALTA" }],
       assignments: [{ id: "asg-1", type: "DIRECT_MANAGER" }],
@@ -225,32 +210,31 @@ describe("employeesRepository.findOverviewDetailsById — Etapa 6L.1 / 14C.1 / 1
     });
   });
 
-  // Etapa 14D.3: caso borde explícito — un legajo sin sector asignado no
-  // debe disparar ninguna consulta de más (ni siquiera con un id vacío).
-  it("si el empleado no tiene sector asignado (sectorId null), no pide ningún sector — sector queda null en el resultado", async () => {
-    (prisma.employee.findFirst as Mock).mockResolvedValue({ id: "emp-1", sectorId: null });
+  // M2: el legajo ya no tiene sector; el detalle nunca consulta la cadena del sector.
+  it("el detalle no pide ningún sector ni devuelve `sector` (Employee.sectorId retirado)", async () => {
+    (prisma.employee.findFirst as Mock).mockResolvedValue({ id: "emp-1" });
 
     const result = await employeesRepository.findOverviewDetailsById("emp-1");
 
     expect(prisma.sector.findUnique).not.toHaveBeenCalled();
-    expect((result as { sector: unknown }).sector).toBeNull();
+    expect(result).not.toHaveProperty("sector");
   });
 
   // Parte 6, ítem 8 del pedido: companies/laborMovements/assignments/
   // hourConcepts vacíos no rompen el shape — quedan como arrays vacíos, no
   // `undefined`/`null`, igual que antes de esta etapa.
   it("con companies/laborMovements/assignments/hourConcepts vacíos, el shape final mantiene arrays vacíos (no undefined/null)", async () => {
-    (prisma.employee.findFirst as Mock).mockResolvedValue({ id: "emp-1", sectorId: null });
+    (prisma.employee.findFirst as Mock).mockResolvedValue({ id: "emp-1" });
 
     const result = await employeesRepository.findOverviewDetailsById("emp-1");
 
-    expect(result).toEqual({ id: "emp-1", sector: null, companies: [], laborMovements: [], assignments: [], hourConcepts: [] });
+    expect(result).toEqual({ id: "emp-1", companies: [], laborMovements: [], assignments: [], hourConcepts: [] });
   });
 
   it("Etapa 14C.1 — permisos: si el core no existe/no es accesible, nunca dispara las 4 consultas hijas ni la del sector", async () => {
     (prisma.employee.findFirst as Mock).mockResolvedValue(null);
 
-    const result = await employeesRepository.findOverviewDetailsById("emp-2", { sectorId: { in: ["sec-ajeno"] } });
+    const result = await employeesRepository.findOverviewDetailsById("emp-2", { costCenterId: { in: ["sec-ajeno"] } });
 
     expect(result).toBeNull();
     expect(prisma.employeeCompany.findMany).not.toHaveBeenCalled();
@@ -259,7 +243,7 @@ describe("employeesRepository.findOverviewDetailsById — Etapa 6L.1 / 14C.1 / 1
     expect(prisma.employeeHourConcept.findMany).not.toHaveBeenCalled();
     expect(prisma.sector.findUnique).not.toHaveBeenCalled();
     expect((prisma.employee.findFirst as Mock).mock.calls.at(0)?.[0]).toEqual(
-      expect.objectContaining({ where: { AND: [{ id: "emp-2" }, { sectorId: { in: ["sec-ajeno"] } }] } }),
+      expect.objectContaining({ where: { AND: [{ id: "emp-2" }, { costCenterId: { in: ["sec-ajeno"] } }] } }),
     );
   });
 });
@@ -315,12 +299,12 @@ describe("employeesRepository.findMany (listado de Legajos) — Etapa 14C.1 / 14
     (prisma.employee.findMany as Mock).mockReturnValue(Promise.resolve([]));
     (prisma.employee.count as Mock).mockReturnValue(Promise.resolve(0));
 
-    await employeesRepository.findMany({ page: 3, take: 10 } as never, { sectorId: { in: ["sec-1"] } });
+    await employeesRepository.findMany({ page: 3, take: 10 } as never, { costCenterId: { in: ["sec-1"] } });
 
     const call = (prisma.employee.findMany as Mock).mock.calls.at(0)?.[0];
     expect(call.skip).toBe(20);
     expect(call.take).toBe(10);
-    expect(call.where.AND).toContainEqual({ sectorId: { in: ["sec-1"] } });
+    expect(call.where.AND).toContainEqual({ costCenterId: { in: ["sec-1"] } });
   });
 });
 
@@ -358,7 +342,7 @@ describe("employeesRepository.findOrgChart / findOptions — Etapa 14C.3", () =>
   // confirmado consumido campo por campo por `EmployeeOrgPopover.tsx`/
   // `organizationChartMockService.ts`/`employeeApiService.ts`), sin modificar
   // el select en sí — 14I.5 es diagnóstico, no optimización.
-  it("findOrgChart pide exactamente el select confirmado en uso (cadena sector->area->establishment->businessUnit incluida)", async () => {
+  it("findOrgChart pide exactamente el select confirmado en uso (M2: sin la cadena del sector del legajo)", async () => {
     await employeesRepository.findOrgChart({ page: 1, take: 25 } as never, {});
 
     const call = (prisma.employee.findMany as Mock).mock.calls[0]![0] as { select: Record<string, unknown> };
@@ -374,19 +358,6 @@ describe("employeesRepository.findOrgChart / findOptions — Etapa 14C.3", () =>
       receiptCategory: true,
       internalCategory: true,
       companies: { include: { company: { select: { id: true, name: true, code: true } } } },
-      sector: {
-        select: {
-          id: true,
-          name: true,
-          code: true,
-          area: {
-            select: {
-              name: true,
-              establishment: { select: { name: true, businessUnit: { select: { name: true } } } },
-            },
-          },
-        },
-      },
       costCenter: { select: { id: true, name: true, code: true } },
       position: {
         select: {
@@ -488,11 +459,11 @@ describe("employeesRepository.existsWithAccess — Etapa 14C.3", () => {
   it("consulta sólo { id: true }, sin relaciones, con el mismo where que findById", async () => {
     (prisma.employee.findFirst as Mock).mockResolvedValue({ id: "emp-1" });
 
-    const result = await employeesRepository.existsWithAccess("emp-1", { sectorId: { in: ["sec-1"] } });
+    const result = await employeesRepository.existsWithAccess("emp-1", { costCenterId: { in: ["sec-1"] } });
 
     expect(result).toBe(true);
     expect(prisma.employee.findFirst).toHaveBeenCalledWith({
-      where: { AND: [{ id: "emp-1" }, { sectorId: { in: ["sec-1"] } }] },
+      where: { AND: [{ id: "emp-1" }, { costCenterId: { in: ["sec-1"] } }] },
       select: { id: true },
     });
     expect(prisma.employeeCompany.findMany).not.toHaveBeenCalled();
@@ -522,16 +493,16 @@ describe("employeesRepository.findPositionValidationById — Etapa 14D.2", () =>
     vi.clearAllMocks();
   });
 
-  it("consulta sólo internalCategory/sector/position (sin companies/laborMovements/assignments/hourConcepts/novelties/documents)", async () => {
-    (prisma.employee.findFirst as Mock).mockResolvedValue({ internalCategory: "Administrativo A", sector: null, position: null });
+  it("consulta sólo internalCategory/position (sin sector del legajo — M2 — ni companies/laborMovements/assignments/hourConcepts/novelties/documents)", async () => {
+    (prisma.employee.findFirst as Mock).mockResolvedValue({ internalCategory: "Administrativo A", position: null });
 
-    const result = await employeesRepository.findPositionValidationById("emp-1", { sectorId: { in: ["sec-1"] } });
+    const result = await employeesRepository.findPositionValidationById("emp-1", { costCenterId: { in: ["sec-1"] } });
 
-    expect(result).toEqual({ internalCategory: "Administrativo A", sector: null, position: null });
+    expect(result).toEqual({ internalCategory: "Administrativo A", position: null });
     const call = (prisma.employee.findFirst as Mock).mock.calls.at(0)?.[0];
-    expect(call.where).toEqual({ AND: [{ id: "emp-1" }, { sectorId: { in: ["sec-1"] } }] });
+    expect(call.where).toEqual({ AND: [{ id: "emp-1" }, { costCenterId: { in: ["sec-1"] } }] });
     expect(call.select.internalCategory).toBe(true);
-    expect(call.select.sector).toBeDefined();
+    expect(call.select.sector).toBeUndefined();
     expect(call.select.position).toBeDefined();
     // Ninguna de las 6 relaciones batch de employeeDetailSelect — la causa
     // real de los 12s medidos en 14D.1.
@@ -551,14 +522,15 @@ describe("employeesRepository.findPositionValidationById — Etapa 14D.2", () =>
     expect(prisma.employeeDocument.findMany).not.toHaveBeenCalled();
   });
 
-  it("trae la cadena sector -> area -> establecimiento -> unidad de negocio completa, tanto del empleado como del puesto", async () => {
-    (prisma.employee.findFirst as Mock).mockResolvedValue({ internalCategory: null, sector: null, position: null });
+  it("del puesto trae sólo cantidad de alcances y categorías salariales (M2: sin cadenas de sector)", async () => {
+    (prisma.employee.findFirst as Mock).mockResolvedValue({ internalCategory: null, position: null });
 
     await employeesRepository.findPositionValidationById("emp-1", {});
 
     const call = (prisma.employee.findFirst as Mock).mock.calls.at(0)?.[0];
-    expect(call.select.sector.select.area.select.establishment.select.businessUnit).toEqual({ select: { id: true, name: true } });
-    expect(call.select.position.select.sector.select.area.select.establishment.select.businessUnit).toEqual({ select: { id: true, name: true } });
+    expect(call.select.sector).toBeUndefined();
+    expect(call.select.position.select.sector).toBeUndefined();
+    expect(call.select.position.select._count).toEqual({ select: { orgScopes: true } });
     expect(call.select.position.select.salaryCategories).toBeDefined();
   });
 
@@ -581,17 +553,17 @@ describe("employeesRepository.findPositionValidationById — camino paralelo con
   });
 
   it("con positionId conocido: resuelve empleado y puesto en paralelo (Promise.all), no un único findFirst anidado", async () => {
-    (prisma.employee.findFirst as Mock).mockResolvedValue({ internalCategory: "Administrativo A", positionId: "pos-1", sector: { name: "Ventas" } });
-    (prisma.position.findUnique as Mock).mockResolvedValue({ sector: { name: "Ventas" }, salaryCategories: [] });
+    (prisma.employee.findFirst as Mock).mockResolvedValue({ internalCategory: "Administrativo A", positionId: "pos-1" });
+    (prisma.position.findUnique as Mock).mockResolvedValue({ salaryCategories: [] });
 
-    const result = await employeesRepository.findPositionValidationById("emp-1", { sectorId: { in: ["sec-1"] } }, "pos-1");
+    const result = await employeesRepository.findPositionValidationById("emp-1", { costCenterId: { in: ["sec-1"] } }, "pos-1");
 
-    expect(result).toEqual({ internalCategory: "Administrativo A", sector: { name: "Ventas" }, position: { sector: { name: "Ventas" }, salaryCategories: [] } });
+    expect(result).toEqual({ internalCategory: "Administrativo A", position: { salaryCategories: [] } });
     // El select del empleado ya NO pide `position` anidado (eso se resuelve
     // en la consulta paralela aparte) — sólo lo mínimo: internalCategory,
     // positionId (para el chequeo de seguridad) y su propia cadena de sector.
     const employeeCall = (prisma.employee.findFirst as Mock).mock.calls.at(0)?.[0];
-    expect(employeeCall.where).toEqual({ AND: [{ id: "emp-1" }, { sectorId: { in: ["sec-1"] } }] });
+    expect(employeeCall.where).toEqual({ AND: [{ id: "emp-1" }, { costCenterId: { in: ["sec-1"] } }] });
     expect(employeeCall.select.position).toBeUndefined();
     expect(employeeCall.select.positionId).toBe(true);
     const positionCall = (prisma.position.findUnique as Mock).mock.calls.at(0)?.[0];
@@ -615,11 +587,11 @@ describe("employeesRepository.findPositionValidationById — camino paralelo con
   });
 
   it("si el empleado no tiene puesto asignado (positionId null), no pide ningún puesto de más", async () => {
-    (prisma.employee.findFirst as Mock).mockResolvedValue({ internalCategory: null, positionId: null, sector: null });
+    (prisma.employee.findFirst as Mock).mockResolvedValue({ internalCategory: null, positionId: null });
 
     const result = await employeesRepository.findPositionValidationById("emp-1", {}, "pos-cliente-obsoleto");
 
-    expect(result).toEqual({ internalCategory: null, sector: null, position: null });
+    expect(result).toEqual({ internalCategory: null, position: null });
     // La consulta con el positionId del cliente sí se dispara en paralelo
     // (no hay forma de saber de antemano que está desactualizado), pero no
     // se hace una SEGUNDA consulta de más una vez confirmado que el

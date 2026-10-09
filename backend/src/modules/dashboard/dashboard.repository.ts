@@ -235,7 +235,6 @@ export const dashboardRepository = {
         lastName: true,
         birthDate: true,
         createdAt: true,
-        sector: { select: { name: true } },
         workLocations: {
           where: { effectiveFrom: { lte: locationDate }, OR: [{ effectiveTo: null }, { effectiveTo: { gte: locationDate } }] },
           select: { zone: { select: { id: true, name: true } } },

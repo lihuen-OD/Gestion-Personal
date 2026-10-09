@@ -501,15 +501,14 @@ describe("employeesService.replaceHourConcepts", () => {
 });
 
 describe("employeesService.getPositionValidation", () => {
-  it("puesto anterior con cadena coincidente: conserva la comparación de consulta pero queda pendiente de recarga (A6)", async () => {
+  it("puesto sin alcance: pendiente de recarga, sin comparación estructural (M2: el legajo ya no tiene sector)", async () => {
     repo.findPositionValidationById.mockResolvedValue(employeeFixture());
 
     const result = await employeesService.getPositionValidation("emp-1", rrhhUser);
 
     expect(result.tone).toBe("warning");
     expect(result.title).toBe("Puesto pendiente de recarga");
-    expect(result.checks.map((check) => check.label)).toEqual(["Unidad de negocio", "Establecimiento", "Sector"]);
-    expect(result.checks.every((check) => check.ok)).toBe(true);
+    expect(result.checks).toEqual([]);
   });
 
   it("puesto con alcance A5: no exige ni compara un sector del legajo; success con categoría en rango (A6)", async () => {
@@ -547,7 +546,7 @@ describe("employeesService.getPositionValidation", () => {
     expect(result.category.status).toBe("ABOVE_RANGE");
   });
 
-  it("cadena distinta: tone danger cuando el sector real del puesto no coincide con el del empleado", async () => {
+  it("un puesto con sector legado distinto ya no genera discrepancia estructural: queda pendiente de recarga (M2)", async () => {
     repo.findPositionValidationById.mockResolvedValue(employeeFixture({
       position: {
         id: "pos-1",
@@ -559,9 +558,8 @@ describe("employeesService.getPositionValidation", () => {
 
     const result = await employeesService.getPositionValidation("emp-1", rrhhUser);
 
-    expect(result.tone).toBe("danger");
-    const sectorCheck = result.checks.find((check) => check.label === "Sector");
-    expect(sectorCheck?.ok).toBe(false);
+    expect(result.tone).toBe("warning");
+    expect(result.checks).toEqual([]);
   });
 
   it("puesto sin sectorId: no hay cadena real para comparar, tone warning (no success, no danger)", async () => {

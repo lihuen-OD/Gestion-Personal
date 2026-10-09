@@ -360,13 +360,11 @@ model User {
   role                RoleName
   status              RecordStatus @default(ACTIVO)
   companyId           String?
-  sectorId            String?
   employeeId          String?      @unique
   createdAt           DateTime     @default(now()) @db.Timestamptz(3)
   updatedAt           DateTime     @updatedAt @db.Timestamptz(3)
 
   company                            Company?                       @relation(fields: [companyId], references: [id])
-  sector                             Sector?                        @relation(fields: [sectorId], references: [id])
   employee                           Employee?                      @relation("EmployeeUserAccount", fields: [employeeId], references: [id])
   createdEmployees                   Employee[]                     @relation("EmployeeCreatedBy")
   employeeAssignments                EmployeeAssignment[]
@@ -524,7 +522,11 @@ model Establishment {
   workLocations   EmployeeWorkLocationEstablishment[]
   clockDevices    ClockDevice[]
 
+  // Los dos únicos conviven (A8 §12.8): (companyId, code) gobierna las filas
+  // archivadas del modelo anterior y (zoneId, code) las del modelo nuevo
+  // (D-13, M2). Postgres no colisiona NULL, así que no se impiden entre sí.
   @@unique([companyId, code])
+  @@unique([zoneId, code])
   @@index([businessUnitId])
   @@index([zoneId])
 }
@@ -594,12 +596,9 @@ model Sector {
   businessUnit             BusinessUnit?                @relation("BusinessUnitSectors", fields: [businessUnitId], references: [id], onDelete: Restrict)
   areas                    Area[]                       @relation("SectorAreas")
   positionScopes           PositionOrgScope[]
-  users                    User[]
-  employees                Employee[]
   positions                Position[]
   costCenterLinks          CostCenterSector[]
   doubleHourRules          DoubleHourRule[]
-  clockDevices             ClockDevice[]
   // Historia temporal (D-5): nunca se borra; bloquea el borrado del nodo.
   legacySectorPeriods      EmployeeLegacySectorPeriod[]
   scopeHistoryNodes        PositionOrgScopePeriodNode[] @relation("PositionOrgScopePeriodNodeSector")
@@ -828,7 +827,6 @@ model Employee {
   emergencyPhone    String?
   status            EmployeeStatus @default(ACTIVO)
   positionId        String?
-  sectorId          String?
   costCenterId      String?
   healthInsurance   String?
   agreement         String?
@@ -839,7 +837,6 @@ model Employee {
   updatedAt         DateTime       @updatedAt @db.Timestamptz(3)
 
   position                  Position?                      @relation(fields: [positionId], references: [id])
-  sector                    Sector?                        @relation(fields: [sectorId], references: [id])
   costCenter                CostCenter?                    @relation(fields: [costCenterId], references: [id])
   createdBy                 User?                          @relation("EmployeeCreatedBy", fields: [createdByUserId], references: [id])
   address                   EmployeeAddress?
@@ -878,9 +875,7 @@ model Employee {
   @@index([lastName, firstName])
   @@index([status])
   @@index([status, lastName, firstName])
-  @@index([status, sectorId])
   @@index([status, costCenterId])
-  @@index([sectorId])
   @@index([costCenterId])
 }
 
@@ -2016,9 +2011,8 @@ model ClockDevice {
   // SHA-256 hex del código de enrolamiento corto (F5). NULL fuera de PENDING.
   pairingCodeHash   String?           @unique
   pairingExpiresAt  DateTime?         @db.Timestamptz(3)
-  sectorId          String?
-  // Modelo objetivo: ubicación del dispositivo en el árbol de Ubicaciones.
-  // Metadata, no autorización. `sectorId` es LEGADO y se elimina en M2.
+  // Ubicación del dispositivo en el árbol de Ubicaciones. Metadata, no
+  // autorización (M2 retiró el `sectorId` legado).
   establishmentId   String?
   activatedAt       DateTime?         @db.Timestamptz(3)
   activatedByUserId String?
@@ -2031,9 +2025,6 @@ model ClockDevice {
   createdAt         DateTime          @default(now()) @db.Timestamptz(3)
   updatedAt         DateTime          @updatedAt @db.Timestamptz(3)
 
-  // La ubicación es metadata opcional: si se elimina el Sector, el dispositivo
-  // conserva su identidad y queda sin sector; nunca se borra en cadena.
-  sector        Sector?             @relation(fields: [sectorId], references: [id], onDelete: SetNull)
   establishment Establishment?      @relation(fields: [establishmentId], references: [id], onDelete: Restrict)
   activatedBy   User?               @relation("ClockDeviceActivatedBy", fields: [activatedByUserId], references: [id], onDelete: SetNull)
   revokedBy     User?               @relation("ClockDeviceRevokedBy", fields: [revokedByUserId], references: [id], onDelete: SetNull)
@@ -2044,7 +2035,6 @@ model ClockDevice {
   // última conexión. El prefijo `status` cubre también los filtros sólo por
   // estado.
   @@index([status, lastSeenAt])
-  @@index([sectorId])
   @@index([establishmentId])
 }
 

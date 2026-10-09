@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { OrgStructureCatalog } from "../../../types/orgStructure.types";
 import type { Employee } from "../../../types";
 import { organizationChartMockService } from "../../../services/organizationChartMockService";
-import { emptyStructureFilters, establishmentFilterOptions, isReloadPending, legacySectorOptions, scopeFilterPending, scopeNodeOptions, structureFilterParams } from "./employeeStructureFilters";
+import { emptyStructureFilters, establishmentFilterOptions, isReloadPending, scopeFilterPending, scopeNodeOptions, structureFilterParams } from "./employeeStructureFilters";
 
 const catalog = {
   companies: [{ id: "c1", name: "Los O'Dwyer", status: "ACTIVO" }],
@@ -30,20 +30,16 @@ describe("structureFilterParams", () => {
     expect(structureFilterParams({ ...partial, scopeMode: "COVERS" })).toEqual({ scopeLevel: "SECTOR", scopeNodeId: "s-new", scopeMode: "COVERS" });
   });
 
-  it("la fecha de vigencia sólo acompaña a una zona o establecimiento; el sector anterior viaja como sectorId", () => {
+  it("la fecha de vigencia sólo acompaña a una zona o establecimiento; nunca viaja un sector anterior (M2)", () => {
     expect(structureFilterParams({ ...emptyStructureFilters, locationDate: "2027-02-01" })).toEqual({});
-    expect(structureFilterParams({ ...emptyStructureFilters, locationZoneId: "z1", locationDate: "2027-02-01", legacySectorId: "s-old", reloadStatus: "PENDING" }))
-      .toEqual({ locationZoneId: "z1", locationDate: "2027-02-01", sectorId: "s-old", reloadStatus: "PENDING" });
+    expect(structureFilterParams({ ...emptyStructureFilters, locationZoneId: "z1", locationDate: "2027-02-01", reloadStatus: "PENDING" }))
+      .toEqual({ locationZoneId: "z1", locationDate: "2027-02-01", reloadStatus: "PENDING" });
   });
 });
 
 describe("opciones de catálogo", () => {
   it("nodos de alcance: sólo del árbol nuevo y activos, rotulados con su ruta", () => {
     expect(scopeNodeOptions(catalog, "SECTOR")).toEqual([{ id: "s-new", label: "Los O'Dwyer › Agro › Agricultura" }]);
-  });
-
-  it("sector anterior: sólo sectores del modelo anterior", () => {
-    expect(legacySectorOptions(catalog).map((item) => item.id)).toEqual(["s-old"]);
   });
 
   it("establecimientos: sólo con zona; filtrados por zona si se eligió una", () => {

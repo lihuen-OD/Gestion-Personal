@@ -3,7 +3,6 @@ import type { PositionOrgScopeLevel } from "../../../types/position.types";
 import { orgNodeTypeLabels } from "../../org-structure/orgStructureTree";
 import {
   establishmentFilterOptions,
-  legacySectorOptions,
   scopeFilterPending,
   scopeModeHelp,
   scopeModeLabels,
@@ -32,7 +31,6 @@ export function EmployeeStructureFilterControls({ value, catalog, onChange }: Pr
   const nodes = catalog ? scopeNodeOptions(catalog, value.scopeLevel) : [];
   const zones = catalog ? zoneFilterOptions(catalog) : [];
   const establishments = catalog ? establishmentFilterOptions(catalog, value.locationZoneId) : [];
-  const legacySectors = catalog ? legacySectorOptions(catalog) : [];
   const hasLocation = Boolean(value.locationZoneId || value.locationEstablishmentId);
 
   return (
@@ -82,13 +80,6 @@ export function EmployeeStructureFilterControls({ value, catalog, onChange }: Pr
           <option value="">Todos</option>
           <option value="PENDING">Pendiente de recarga</option>
           <option value="COMPLETE">Recarga completa</option>
-        </select>
-      </label>
-      <label>
-        Sector anterior
-        <select value={value.legacySectorId} onChange={(event) => set({ legacySectorId: event.target.value })}>
-          <option value="">Todos</option>
-          {legacySectors.map((sector) => <option key={sector.id} value={sector.id}>{sector.label}</option>)}
         </select>
       </label>
       <p className="structure-filter-hint" id="structure-scope-mode-help" role={scopeFilterPending(value) ? "status" : undefined}>

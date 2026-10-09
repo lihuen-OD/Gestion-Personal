@@ -10,14 +10,12 @@ export const employeeStatusSchema = z.enum(["ACTIVO", "INACTIVO"]);
 export const employeeListSortKeys = ["legajo", "cuil", "lastName", "firstName", "status"] as const;
 
 // A7 (ORG_LOCATION_REORGANIZATION.md §16): `companyId` = empresa empleadora
-// (EmployeeCompany); `sectorId` = sector ANTERIOR del legajo (sólo consulta
-// para legajos pendientes de recarga); alcance/ubicación/recarga, con
-// employeeStructureQueryShape.
+// (EmployeeCompany); alcance/ubicación/recarga, con employeeStructureQueryShape.
+// M2 retiró el sector anterior del legajo (`Employee.sectorId`).
 export const listEmployeesQuerySchema = z.object({
   search: z.string().trim().optional(),
   status: employeeStatusSchema.optional(),
   companyId: z.string().uuid().optional(),
-  sectorId: z.string().uuid().optional(),
   costCenterId: z.string().uuid().optional(),
   ...employeeStructureQueryShape,
   page: z.coerce.number().int().positive().max(10000).default(1),
@@ -29,7 +27,6 @@ export const listEmployeeOrgChartQuerySchema = z.object({
   search: z.string().trim().optional(),
   status: employeeStatusSchema.optional(),
   companyId: z.string().uuid().optional(),
-  sectorId: z.string().uuid().optional(),
   positionId: z.string().uuid().optional(),
   costCenterId: z.string().uuid().optional(),
   ...employeeStructureQueryShape,
@@ -41,7 +38,6 @@ export const listEmployeeOptionsQuerySchema = z.object({
   search: z.string().trim().optional(),
   status: employeeStatusSchema.optional(),
   companyId: z.string().uuid().optional(),
-  sectorId: z.string().uuid().optional(),
   ...employeeStructureQueryShape,
   page: z.coerce.number().int().positive().max(10000).default(1),
   take: z.coerce.number().int().positive().max(1000).default(250),
@@ -92,7 +88,6 @@ export const createEmployeeSchema = z.object({
   emergencyPhone: z.string().trim().max(80).optional().nullable(),
   status: employeeStatusSchema.default("ACTIVO"),
   positionId: z.string().uuid().optional().nullable(),
-  sectorId: z.string().uuid().optional().nullable(),
   costCenterId: z.string().uuid().optional().nullable(),
   healthInsurance: z.string().trim().max(120).optional().nullable(),
   agreement: z.string().trim().max(120).optional().nullable(),

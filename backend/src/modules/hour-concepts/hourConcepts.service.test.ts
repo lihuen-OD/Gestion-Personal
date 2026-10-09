@@ -67,7 +67,6 @@ const employeeRow = {
     firstName: "Ana",
     lastName: "Prueba",
     status: "ACTIVO",
-    sector: { id: "sector-1", name: "Campo" },
     costCenter: null,
     companies: [{ company: { id: "company-1", name: "OD" } }],
   },
@@ -139,7 +138,6 @@ describe("listEmployees — empleados habilitados (Etapa 8G)", () => {
           firstName: "Ana",
           lastName: "Prueba",
           status: "ACTIVO",
-          sector: { id: "sector-1", name: "Campo" },
           position: null,
           costCenter: null,
           companies: [{ id: "company-1", name: "OD" }],
@@ -159,11 +157,11 @@ describe("listEmployees — empleados habilitados (Etapa 8G)", () => {
     expect(result.meta.total).toBe(0);
   });
 
-  it("pasa los filtros (search/sectorId/costCenterId/companyId/status/page/take) al repository sin transformarlos", async () => {
+  it("pasa los filtros (search/costCenterId/companyId/status/page/take) al repository sin transformarlos", async () => {
     repo.findById.mockResolvedValue({ id: "concept-1" });
     repo.findEmployees.mockResolvedValue([[], 0]);
 
-    const query = { search: "perez", sectorId: "sector-1", costCenterId: "cc-1", companyId: "company-1", status: "ACTIVO", page: 2, take: 25 } as never;
+    const query = { search: "perez", costCenterId: "cc-1", companyId: "company-1", status: "ACTIVO", page: 2, take: 25 } as never;
     await hourConceptsService.listEmployees("concept-1", query, rrhhUser);
 
     expect(repo.findEmployees).toHaveBeenCalledWith("concept-1", query, {});

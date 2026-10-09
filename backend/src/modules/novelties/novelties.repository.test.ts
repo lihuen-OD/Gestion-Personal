@@ -55,7 +55,7 @@ describe("noveltiesRepository.findMany — Etapa 14I.2", () => {
   it("findMany y count reciben exactamente el mismo where (incluye employeeAccessWhere y filtros)", async () => {
     mockedPrisma.novelty.findMany.mockResolvedValue([]);
     mockedPrisma.novelty.count.mockResolvedValue(0);
-    const employeeAccessWhere = { sectorId: { in: ["sector-1"] } };
+    const employeeAccessWhere = { costCenterId: { in: ["sector-1"] } };
 
     await noveltiesRepository.findMany(baseQuery({ employeeId: "11111111-1111-1111-1111-111111111111", status: "PENDIENTE" }), employeeAccessWhere);
 

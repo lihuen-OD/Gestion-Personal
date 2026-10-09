@@ -1031,7 +1031,6 @@ export const timeEntriesRepository = {
       firstName: true,
       lastName: true,
       status: true,
-      sector: { select: { id: true, name: true, code: true } },
       position: { select: { id: true, name: true, code: true } },
     } satisfies Prisma.EmployeeSelect;
 
@@ -1168,16 +1167,14 @@ export const timeEntriesRepository = {
           { lastName: { contains: input.search, mode: "insensitive" as const } },
           { legajo: { contains: input.search, mode: "insensitive" as const } },
           { dni: { contains: input.search, mode: "insensitive" as const } },
-          // A7: puesto actual y sector ANTERIOR (consulta de legajos pendientes de recarga).
+          // A7: puesto actual (M2 retiró el sector anterior del legajo).
           { position: { name: { contains: input.search, mode: "insensitive" as const } } },
-          { sector: { name: { contains: input.search, mode: "insensitive" as const } } },
         ] }] : []),
       ],
     };
     const reviewWhere = input.reviewStatus === "ALL" ? {} : { reviewStatus: input.reviewStatus };
     const employeeSelect = {
       id: true, legajo: true, dni: true, firstName: true, lastName: true, status: true,
-      sector: { select: { id: true, name: true, code: true } },
       position: { select: { id: true, name: true, code: true } },
     } satisfies Prisma.EmployeeSelect;
     const shiftTotalWhere: Prisma.WorkShiftWhereInput = {

@@ -17,7 +17,7 @@ const SECRET = credentials.generateClockDeviceSecret();
 const TOKEN_HASH = credentials.hashClockDeviceSecret(SECRET);
 
 function stored(status: "PENDING" | "ACTIVE" | "REVOKED", lastSeenAt: Date | null = new Date()) {
-  return { id: ID, tokenHash: TOKEN_HASH, status, name: "Recepción", sectorId: "sector-1", lastSeenAt };
+  return { id: ID, tokenHash: TOKEN_HASH, status, name: "Recepción", lastSeenAt };
 }
 
 function fakeReq(authorization?: string, headers: Record<string, string> = {}): Request {
@@ -42,7 +42,7 @@ describe("requireClockDevice", () => {
     const req = fakeReq(`ClockDevice ${ID}.${SECRET}`);
 
     expect(await run(requireClockDevice(), req)).toBeUndefined();
-    expect(req.clockDevice).toEqual({ id: ID, status: "ACTIVE", name: "Recepción", sectorId: "sector-1" });
+    expect(req.clockDevice).toEqual({ id: ID, status: "ACTIVE", name: "Recepción" });
     expect(JSON.stringify(req.clockDevice)).not.toMatch(/tokenHash|pairingCodeHash|lastSeenAt/);
     expect(JSON.stringify(req.clockDevice)).not.toContain(TOKEN_HASH);
   });

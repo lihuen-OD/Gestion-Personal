@@ -46,7 +46,7 @@ export const pendingRepository = {
     return prisma.novelty.findMany({
       where: pendingNoveltiesWhere(query, employeeAccessWhere),
       include: {
-        employee: { select: { id: true, legajo: true, firstName: true, lastName: true, sectorId: true } },
+        employee: { select: { id: true, legajo: true, firstName: true, lastName: true } },
         noveltyType: { select: { id: true, code: true, name: true } },
         targetHourConcept: { select: { id: true, code: true, name: true } },
       },
@@ -64,7 +64,7 @@ export const pendingRepository = {
     return prisma.timeEntry.findMany({
       where: pendingTimeEntriesWhere(query, employeeAccessWhere),
       include: {
-        employee: { select: { id: true, legajo: true, firstName: true, lastName: true, sectorId: true } },
+        employee: { select: { id: true, legajo: true, firstName: true, lastName: true } },
         hourConcept: { select: { id: true, code: true, name: true } },
       },
       orderBy: [{ date: "asc" }, { createdAt: "asc" }, { id: "asc" }],
@@ -81,7 +81,7 @@ export const pendingRepository = {
     return prisma.hourConceptBreakdown.findMany({
       where: pendingBreakdownsWhere(query, employeeAccessWhere),
       include: {
-        employee: { select: { id: true, legajo: true, firstName: true, lastName: true, sectorId: true } },
+        employee: { select: { id: true, legajo: true, firstName: true, lastName: true } },
         hourConcept: { select: { id: true, code: true, name: true, workTreatment: true } },
       },
       orderBy: [{ date: "asc" }, { createdAt: "asc" }, { id: "asc" }],

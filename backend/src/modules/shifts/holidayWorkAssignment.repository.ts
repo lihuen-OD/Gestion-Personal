@@ -18,7 +18,6 @@ function candidatesWhere(query: HolidayWorkCandidatesQuery): Prisma.EmployeeWher
   const search = query.search?.trim();
   return {
     status: "ACTIVO",
-    ...(query.sectorId ? { sectorId: query.sectorId } : {}),
     ...(query.shiftTemplateId ? { shiftAssignments: { some: { shiftTemplateId: query.shiftTemplateId, status: "HABILITADO" } } } : {}),
     ...(query.withoutShift ? { shiftAssignments: { none: { status: "HABILITADO" } } } : {}),
     ...(search
@@ -51,7 +50,6 @@ export const holidayWorkAssignmentRepository = {
         where,
         select: {
           ...employeeSelect,
-          sector: { select: { id: true, name: true } },
           shiftAssignments: { where: { status: "HABILITADO" }, select: { shiftTemplate: { select: shiftTemplateSelect } } },
         },
         orderBy: [{ lastName: "asc" }, { firstName: "asc" }],

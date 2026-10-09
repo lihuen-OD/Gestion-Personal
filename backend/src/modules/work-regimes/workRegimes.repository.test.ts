@@ -215,11 +215,11 @@ describe("WorkRegime.findEmployees — empleados asociados al régimen (Etapa 8G
     expect(call.where.OR).toBeUndefined();
   });
 
-  it("combina filtros de empleado (sectorId/costCenterId/companyId/search) y accessWhere bajo employee.AND", async () => {
+  it("combina filtros de empleado (costCenterId/companyId/search) y accessWhere bajo employee.AND", async () => {
     const accessWhere = { id: "__NO_ACCESS__" };
     await workRegimesRepository.findEmployees(
       "regime-1",
-      { status: "all", sectorId: "sector-1", costCenterId: "cc-1", companyId: "company-1", search: "perez", page: 1, take: 50 } as never,
+      { status: "all", costCenterId: "cc-1", companyId: "company-1", search: "perez", page: 1, take: 50 } as never,
       referenceDate,
       accessWhere,
     );
@@ -228,7 +228,6 @@ describe("WorkRegime.findEmployees — empleados asociados al régimen (Etapa 8G
     expect(call.where.employee.AND[1]).toBe(accessWhere);
     expect(call.where.employee.AND[0]).toEqual(
       expect.objectContaining({
-        sectorId: "sector-1",
         costCenterId: "cc-1",
         companies: { some: { companyId: "company-1" } },
       }),

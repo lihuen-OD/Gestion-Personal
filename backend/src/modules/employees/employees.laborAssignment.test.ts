@@ -70,22 +70,11 @@ beforeEach(() => {
 });
 
 describe("employeesService.update — legajo pendiente de recarga", () => {
-  it("edita otros datos laborales conservando el puesto y el sector anteriores, sin validar el puesto", async () => {
-    await employeesService.update("emp-1", { internalCategory: "Administrativo B", positionId: "pos-legacy", sectorId: "sector-legacy", costCenterId: "cc-1" });
+  it("edita otros datos laborales conservando el puesto anterior, sin validar el puesto", async () => {
+    await employeesService.update("emp-1", { internalCategory: "Administrativo B", positionId: "pos-legacy", costCenterId: "cc-1" });
 
     expect(repo.findPositionForAssignment).not.toHaveBeenCalled();
     expect(repo.update).toHaveBeenCalledWith("emp-1", expect.objectContaining({ internalCategory: "Administrativo B" }), expect.anything());
-  });
-
-  it("rechaza cambiar el sector anterior: el alcance sale del puesto (409, sin escribir)", async () => {
-    await expect(employeesService.update("emp-1", { sectorId: "11111111-1111-4111-8111-111111111111" }))
-      .rejects.toMatchObject({ statusCode: 409, code: "EMPLOYEE_LEGACY_SECTOR_READ_ONLY" });
-    expect(repo.update).not.toHaveBeenCalled();
-  });
-
-  it("rechaza vaciar el sector anterior: no se borra ni convierte en silencio", async () => {
-    await expect(employeesService.update("emp-1", { sectorId: null }))
-      .rejects.toMatchObject({ code: "EMPLOYEE_LEGACY_SECTOR_READ_ONLY" });
   });
 
   it("asignar un puesto nuevo con alcance A5 y activo es válido", async () => {
@@ -139,7 +128,7 @@ describe("employeesService.update — legajo pendiente de recarga", () => {
   });
 
   it("una edición que NO cambia las empresas no consulta el chequeo de archivado", async () => {
-    await employeesService.update("emp-1", { internalCategory: "Administrativo C", positionId: "pos-legacy", sectorId: "sector-legacy", costCenterId: "cc-1" });
+    await employeesService.update("emp-1", { internalCategory: "Administrativo C", positionId: "pos-legacy", costCenterId: "cc-1" });
 
     expect(repo.findArchivedCompanyNames).not.toHaveBeenCalled();
     expect(repo.update).toHaveBeenCalled();
@@ -154,12 +143,6 @@ describe("employeesService.update — legajo pendiente de recarga", () => {
 });
 
 describe("employeesService.create — nuevas asignaciones", () => {
-  it("no acepta un sector del modelo anterior en el alta", async () => {
-    await expect(employeesService.create({ ...createInput, sectorId: "11111111-1111-4111-8111-111111111111" }))
-      .rejects.toMatchObject({ code: "EMPLOYEE_LEGACY_SECTOR_READ_ONLY" });
-    expect(repo.create).not.toHaveBeenCalled();
-  });
-
   it("exige que el puesto asignado en el alta tenga alcance", async () => {
     repo.findPositionForAssignment.mockResolvedValue({ id: "pos-legacy", name: "Administrativo", status: "ACTIVO", _count: { orgScopes: 0 } });
 
@@ -168,8 +151,8 @@ describe("employeesService.create — nuevas asignaciones", () => {
     expect(repo.create).not.toHaveBeenCalled();
   });
 
-  it("alta sin puesto ni sector sigue siendo válida", async () => {
-    await employeesService.create({ ...createInput, sectorId: null });
+  it("alta sin puesto sigue siendo válida", async () => {
+    await employeesService.create({ ...createInput });
 
     expect(repo.create).toHaveBeenCalled();
   });

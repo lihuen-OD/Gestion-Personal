@@ -208,17 +208,17 @@ describe("findEmployees — empleados habilitados para el concepto (Etapa 8G)", 
     expect(mockedPrisma.employeeHourConcept.findMany).toHaveBeenCalled();
   });
 
-  it("combina filtros de empleado (sectorId/costCenterId/companyId/search/status) y accessWhere bajo employee.AND", async () => {
+  it("combina filtros de empleado (costCenterId/companyId/search/status) y accessWhere bajo employee.AND", async () => {
     const accessWhere = { id: "__NO_ACCESS__" };
     await hourConceptsRepository.findEmployees(
       "concept-1",
-      { sectorId: "sector-1", costCenterId: "cc-1", companyId: "company-1", search: "perez", status: "ACTIVO", page: 1, take: 50 } as never,
+      { costCenterId: "cc-1", companyId: "company-1", search: "perez", status: "ACTIVO", page: 1, take: 50 } as never,
       accessWhere,
     );
 
     const call = mockedPrisma.employeeHourConcept.findMany.mock.calls.at(0)?.[0];
     expect(call.where.employee.AND).toContainEqual(accessWhere);
-    expect(call.where.employee.AND).toContainEqual(expect.objectContaining({ sectorId: "sector-1", costCenterId: "cc-1" }));
+    expect(call.where.employee.AND).toContainEqual(expect.objectContaining({ costCenterId: "cc-1" }));
     expect(call.where.employee.AND).toContainEqual({ status: "ACTIVO" });
   });
 

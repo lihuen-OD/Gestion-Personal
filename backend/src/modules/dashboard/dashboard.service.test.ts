@@ -321,12 +321,6 @@ describe("dashboardService.metrics — cache TTL por usuario/rol/scope (Etapa 14
     expect(repo.countTotalAndActive).toHaveBeenCalledTimes(2);
   });
 
-  it("sectorId legacy no separa cache porque ya no tiene efecto funcional (D-14)", async () => {
-    await dashboardService.metrics({ period: "2026-08" }, user(roles.rrhh, { id: "user-scope", sectorId: "sec-1" }));
-    await dashboardService.metrics({ period: "2026-08" }, user(roles.rrhh, { id: "user-scope", sectorId: "sec-2" }));
-
-    expect(repo.countTotalAndActive).toHaveBeenCalledTimes(1);
-  });
 });
 
 describe("dashboardService.metrics — RBAC/scope real pasado a las queries (Etapa 14E.1)", () => {

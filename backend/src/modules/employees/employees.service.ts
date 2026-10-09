@@ -336,16 +336,6 @@ async function saveManualBreakdownWithRetry(input: Parameters<typeof employeesRe
   }
 }
 
-function structureCheck(label: string, value: string, allowed: string[], hasPosition: boolean) {
-  return {
-    label,
-    value: value || "Sin cargar",
-    allowed,
-    ok: !hasPosition || !allowed.length || allowed.includes(value),
-    missing: !value,
-  };
-}
-
 function mapPrismaError(error: unknown) {
   if (error instanceof Prisma.PrismaClientKnownRequestError) {
     if (error.code === "P2002") {
@@ -433,18 +423,6 @@ async function assertAssignableCompanies(companyIds?: Array<string | null>, curr
   if (archived.length) {
     throw new AppError(`No se puede vincular el legajo a un registro archivado: ${archived.join(", ")}.`, 400, "EMPLOYEE_COMPANY_ARCHIVED");
   }
-}
-
-// A6: `Employee.sectorId` pertenece al modelo anterior. Se conserva para
-// consulta, pero no se asigna ni se cambia: el alcance sale del puesto y no se
-// copia al legajo. Reenviar el mismo valor (o no enviarlo) es válido.
-function assertLegacySectorUnchanged(sectorId: string | null | undefined, currentSectorId: string | null) {
-  if (sectorId === undefined || (sectorId || null) === currentSectorId) return;
-  throw new AppError(
-    "El sector del legajo pertenece a la estructura anterior y es de solo lectura. El alcance organizacional se obtiene del puesto asignado.",
-    409,
-    "EMPLOYEE_LEGACY_SECTOR_READ_ONLY",
-  );
 }
 
 async function assertAssignableHourConceptIds(hourConceptIds: string[]) {
@@ -813,31 +791,13 @@ export const employeesService = {
     const employee = await employeesRepository.findPositionValidationById(id, employeeAccessWhere(user), positionId);
     if (!employee) throw new AppError("Employee not found", 404, "EMPLOYEE_NOT_FOUND");
     const position = employee.position;
-    const businessUnit = employee.sector?.area?.establishment?.businessUnit?.name || "";
-    const establishment = employee.sector?.area?.establishment?.name || "";
-    const sector = employee.sector?.name || "";
-    // Fuente de verdad desde el saneamiento de Puestos (2026-08-18):
-    // sectorId es el unico origen oficial de ubicacion del puesto. Area,
-    // establecimiento y unidad de negocio se derivan de esa cadena real
-    // (position.sector.area.establishment.businessUnit) en vez de los
-    // strings/JSON legado (areaDepartment, sectorName, businessUnitNames...).
-    // A6: con alcance A5, la estructura sale del puesto y no se compara contra
-    // datos propios del legajo (no hay sector único que exigir). Un puesto
-    // sin alcance (anterior) conserva su comparación de consulta y queda
-    // pendiente de recarga.
+    // M2 (A8 §12): sin sector en el legajo no hay comparación estructural; un
+    // puesto sin alcance A5 sigue marcándose pendiente de recarga.
     const positionPendingScope = Boolean(position) && !position?._count.orgScopes;
-    const positionBusinessUnit = position?.sector?.area?.establishment?.businessUnit?.name || "";
-    const positionEstablishment = position?.sector?.area?.establishment?.name || "";
-    const positionSector = position?.sector?.name || "";
     const range = categoryRangeFromPosition(position);
     const categoryResult = position ? compareCategory(range, employee.internalCategory) : { status: "NO_POSITION", range: [] };
-    const checks = positionPendingScope
-      ? [
-          structureCheck("Unidad de negocio", businessUnit, positionBusinessUnit ? [positionBusinessUnit] : [], true),
-          structureCheck("Establecimiento", establishment, positionEstablishment ? [positionEstablishment] : [], true),
-          structureCheck("Sector", sector, positionSector ? [positionSector] : [], true),
-        ]
-      : [];
+    // Se conserva el campo del contrato; ya no hay chequeos estructurales que informar.
+    const checks: Array<{ label: string; value: string; allowed: string[]; ok: boolean; missing: boolean }> = [];
     const structuralMismatch = checks.some((row) => row.allowed.length && !row.ok && !row.missing);
     const categoryMismatch = ["BELOW_RANGE", "ABOVE_RANGE", "UNKNOWN_CATEGORY"].includes(categoryResult.status);
     const categoryPending = ["NO_POSITION", "NO_RANGE"].includes(categoryResult.status) || !employee.internalCategory;
@@ -880,7 +840,6 @@ export const employeesService = {
   },
 
   async create(input: CreateEmployeeInput, audit?: AuditContext) {
-    assertLegacySectorUnchanged(input.sectorId, null);
     await ensureUniqueEmployee(input);
     await assertAssignablePosition(input.positionId, null);
     await assertAssignableCompanies(input.companyIds);
@@ -921,7 +880,6 @@ export const employeesService = {
       employeesRepository.findUpdateAuditSnapshot(id),
     ]);
     if (!snapshot) throw new AppError("Employee not found", 404, "EMPLOYEE_NOT_FOUND");
-    assertLegacySectorUnchanged(fields.sectorId, snapshot.sectorId);
     await assertAssignablePosition(fields.positionId, snapshot.positionId);
     const effectiveInput = omitUnchangedEmployeeRelations(fields, snapshot);
     await assertAssignableCompanies(effectiveInput.companyIds, snapshot.companies.map((company) => company.companyId));

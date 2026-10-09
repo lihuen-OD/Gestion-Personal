@@ -201,7 +201,6 @@ Query:
 search
 status
 companyId
-sectorId
 costCenterId
 scopeLevel scopeNodeId scopeMode
 locationZoneId locationEstablishmentId locationDate
@@ -227,7 +226,7 @@ Compartidos por `GET /api/employees`, `/api/employees/org-chart`, `/api/employee
 - `reloadStatus`:
   - `PENDING`: sin puesto, puesto sin alcance o sin ninguna ubicación vigente o futura.
   - `COMPLETE`: lo contrario.
-- `sectorId`: sector **anterior** del legajo; sólo consulta de legajos pendientes de recarga.
+- M2 (`20261009150000`, en la rama; no aplicada a ninguna base compartida) retiró `Employee.sectorId`: no hay filtro por sector anterior (un `sectorId` en la query se ignora) y las respuestas de legajos ya no traen `sector`/`sectorId`. La evidencia del sector anterior vive en `EmployeeLegacySectorPeriod`.
 - Todos usan `some`/`none`: una persona con varios alcances o ubicaciones aparece una sola vez y `meta.total` cuenta personas.
 - Se combinan siempre con el filtro de acceso del rol (`employeeAccessWhere`). El alcance del puesto **no** concede acceso.
 
@@ -276,7 +275,6 @@ Query:
 search
 status
 companyId
-sectorId
 positionId
 costCenterId
 scopeLevel scopeNodeId scopeMode
@@ -413,7 +411,7 @@ Uso actual: `NIVEL_1_RRHH`.
 
 A6 (`docs/decisions/ORG_LOCATION_REORGANIZATION.md` §15):
 - `positionId`, si se envía, debe ser un puesto `ACTIVO` con al menos un alcance organizacional (`PositionOrgScope`). Si no: `400 EMPLOYEE_POSITION_INVALID`, `409 EMPLOYEE_POSITION_INACTIVE` o `409 EMPLOYEE_POSITION_PENDING_SCOPE`.
-- `sectorId` pertenece al modelo anterior: un valor no nulo responde `409 EMPLOYEE_LEGACY_SECTOR_READ_ONLY`. El alcance se lee del puesto; no se copia al legajo.
+- El legajo no tiene sector propio (M2 retiró `Employee.sectorId`; un `sectorId` en el cuerpo se ignora). El alcance se lee del puesto; no se copia al legajo.
 - Las ubicaciones de trabajo no se cargan en el alta: se asignan después con `/api/employees/:id/work-locations`.
 
 ### Actualizar legajo
@@ -427,7 +425,7 @@ Uso actual: `NIVEL_1_RRHH`.
 A6:
 - Los requisitos de puesto se aplican sólo a un puesto **nuevo** (`positionId` distinto del actual). Un legajo que conserva su puesto anterior sin alcance puede seguir editando el resto de sus datos; quitar el puesto (`null`) no exige requisitos.
 - Los requisitos (existe, no archivado, `ACTIVO`, con alcance) se **revalidan dentro de la transacción del guardado**, con la fila del puesto bloqueada (`FOR SHARE`) y contra el puesto vigente del legajo leído en esa transacción: un puesto inactivado entre la validación temprana y el guardado responde `409 EMPLOYEE_POSITION_INACTIVE` (o el código que corresponda) y no se escribe nada. Lo mismo en `POST /api/employees`.
-- `sectorId` es de sólo lectura: omitirlo o reenviar el mismo valor es válido; cualquier cambio (incluido `null`) responde `409 EMPLOYEE_LEGACY_SECTOR_READ_ONLY`. El frontend ya no lo envía.
+- `sectorId` ya no existe en el legajo (M2): se ignora si se envía.
 
 ### Validación contra el puesto
 
@@ -1716,7 +1714,7 @@ Todas las rutas requieren `requireAuth`.
 | GET | `/alerts` | RRHH/Supervisión/Carga Horaria | Listar alertas de jornada abierta/vencida |
 | POST | `/alerts/:id/resolve` | RRHH/Supervisión | Resolver una alerta |
 | GET | `/holiday-work/dates?from&to` | RRHH/Supervisión/Carga Horaria | Fechas de feriado disponibles para convocar (Etapa 12D) |
-| GET | `/holiday-work/candidates?sectorId&shiftTemplateId&withoutShift&search&page&take` | RRHH/Supervisión/Carga Horaria | Empleados candidatos a convocar (con o sin turno habitual) |
+| GET | `/holiday-work/candidates?shiftTemplateId&withoutShift&search&page&take` | RRHH/Supervisión/Carga Horaria | Empleados candidatos a convocar (con o sin turno habitual) |
 | GET | `/holiday-work/assignments?date` | RRHH/Supervisión/Carga Horaria | Convocatorias activas para una fecha |
 | PUT | `/holiday-work/assignments` | RRHH | Guardar convocatorias (upsert por empleado, ver abajo) |
 
@@ -1779,7 +1777,7 @@ El resto de `entityType` (cierres, correcciones, novedades pendientes) no trae `
 - El motor resuelve cada dimensión según la fecha trabajada. Si una regla restringe una dimensión sin cobertura histórica, responde `409 SPECIAL_HOUR_SCOPE_HISTORY_MISSING`; nunca completa el pasado con el valor actual.
 - No hay inicialización automática de filas anteriores. Las cargas normales o atrasadas funcionan cuando todas las dimensiones que la regla necesita tienen cobertura real para esa fecha.
 
-**Sector en reglas (A7, D-4).** Un sector anterior compara `Employee.sectorId`; un sector nuevo usa “Ubicado dentro de” sobre los alcances del puesto (sector igual o área hija). Un alcance superior no hereda reglas sectoriales.
+**Sector en reglas (A7, D-4).** Un sector anterior compara el sector anterior vigente ese día según `EmployeeLegacySectorPeriod` (nunca una columna actual del legajo); un sector nuevo usa “Ubicado dentro de” sobre los alcances del puesto (sector igual o área hija). Un alcance superior no hereda reglas sectoriales.
 - Un sector inexistente → `400 DOUBLE_HOUR_RULE_SECTOR_INVALID`.
 - La validación ocurre antes de la transacción: un rechazo no escribe ni reinterpreta horas.
 - Reenviar el sector que la regla ya tiene, o editar otras dimensiones (por ejemplo "Domingos", por empresa empleadora), no cambia su alcance.

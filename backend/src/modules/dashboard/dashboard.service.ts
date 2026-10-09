@@ -82,7 +82,6 @@ function upcomingBirthdays(
       firstName: employee.firstName,
       lastName: employee.lastName,
       birthDate: employee.birthDate?.toISOString().slice(0, 10) || "",
-      sector: employee.sector?.name || "",
     }));
 }
 

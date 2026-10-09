@@ -76,7 +76,6 @@ export const workRegimeEmployeesVigencyStatusSchema = z.enum(["current", "histor
 export const listWorkRegimeEmployeesQuerySchema = z.object({
   status: workRegimeEmployeesVigencyStatusSchema.default("current"),
   search: z.string().trim().optional(),
-  sectorId: z.string().uuid().optional(),
   costCenterId: z.string().uuid().optional(),
   companyId: z.string().uuid().optional(),
   ...employeeStructureQueryShape,

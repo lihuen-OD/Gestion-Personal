@@ -38,7 +38,9 @@ describe("mensajes de dependencias", () => {
     expect(dependencyBlockedMessage("businessUnit", "Producción", dependencies)).toBe(
       "No se puede eliminar la unidad de negocio “Producción” porque tiene elementos asociados: 2 establecimientos y 1 centro de costo. Podés inactivarla si ya no debe utilizarse.",
     );
-    expect(dependencyBlockedMessage("sector", "RRHH", describeDependencies("sector", { employees: 1 }))).toMatch(/1 empleado\. Podés inactivarlo/);
+    expect(dependencyBlockedMessage("sector", "RRHH", describeDependencies("sector", { positions: 1 }))).toMatch(/1 puesto\. Podés inactivarlo/);
+    // M2: un sector ya no tiene legajos ni usuarios propios.
+    expect(describeDependencies("sector", { employees: 3, users: 2 })).toEqual([]);
   });
 });
 
@@ -82,12 +84,12 @@ describe("orgStructureService.deleteEntity", () => {
     expect(auditService.registerWithin).not.toHaveBeenCalled();
   });
 
-  it("bloquea un sector asignado a empleados y puestos (la base haría SET NULL en silencio)", async () => {
-    tx.sector.findUnique.mockResolvedValue({ id: "s1", code: "SEC-1", name: "Depósito", status: "ACTIVO", businessUnitId: null, _count: { areas: 0, employees: 3, positions: 1, users: 0, costCenterLinks: 0, doubleHourRules: 0, positionScopes: 0 } });
+  it("bloquea un sector con puestos y áreas (la base haría SET NULL en silencio)", async () => {
+    tx.sector.findUnique.mockResolvedValue({ id: "s1", code: "SEC-1", name: "Depósito", status: "ACTIVO", businessUnitId: null, _count: { areas: 2, positions: 1, costCenterLinks: 0, doubleHourRules: 0, positionScopes: 0 } });
 
     await expect(orgStructureService.deleteEntity("sector", "s1")).rejects.toMatchObject({
       statusCode: 409,
-      message: "No se puede eliminar el sector “Depósito” porque tiene elementos asociados: 3 empleados y 1 puesto. Podés inactivarlo si ya no debe utilizarse.",
+      message: "No se puede eliminar el sector “Depósito” porque tiene elementos asociados: 2 áreas y 1 puesto. Podés inactivarlo si ya no debe utilizarse.",
     });
     expect(tx.sector.delete).not.toHaveBeenCalled();
   });

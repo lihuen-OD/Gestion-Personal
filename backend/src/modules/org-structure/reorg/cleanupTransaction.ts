@@ -230,7 +230,13 @@ export async function runCleanup(prisma: PrismaClient, input: CleanupInput, deps
       if (stillReferenced) throw new Error(`${stillReferenced} regla(s) siguen referenciando registros a borrar después del tratamiento. No se borra nada.`);
 
       // 4. Vaciados de legajos/usuarios/dispositivos, auditados.
-      const employeeRefs = await deps.loadEmployeeReferences(tx as never, (await tx.employee.findMany({ where: { OR: [{ positionId: { in: linkTargets("Position") } }, { sectorId: { in: linkTargets("Sector") } }] }, select: { id: true } })).map((row) => row.id));
+      // Legajos a vaciar según las FKs que el catálogo de Postgres expone HOY (antes de M2 incluye
+      // Employee.sectorId; después ya no existe): SQL derivado del plan, no del cliente Prisma.
+      const employeeIds = new Set<string>();
+      for (const op of plan.nullify.filter((entry) => entry.table === "Employee" && linkTargets(entry.target).length)) {
+        for (const row of await tx.$queryRawUnsafe<Array<{ id: string }>>(`SELECT id FROM "Employee" WHERE ${quoteIdent(op.column)} = ANY($1::text[])`, linkTargets(op.target))) employeeIds.add(row.id);
+      }
+      const employeeRefs = await deps.loadEmployeeReferences(tx as never, [...employeeIds]);
       for (const op of plan.nullify) {
         const targets = linkTargets(op.target);
         const rows = targets.length ? await tx.$queryRawUnsafe<Array<{ id: string; value: string }>>(`SELECT id, ${quoteIdent(op.column)} AS value FROM ${quoteIdent(op.table)} WHERE ${quoteIdent(op.column)} = ANY($1::text[])`, targets) : [];

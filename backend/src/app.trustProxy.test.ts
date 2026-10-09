@@ -94,7 +94,7 @@ async function searchAs(baseUrl: string, forwardedFor: string) {
 
 beforeEach(() => {
   vi.mocked(clockDevicesRepository.findCredentialById).mockResolvedValue({
-    id: DEVICE_ID, tokenHash: hashClockDeviceSecret(DEVICE_SECRET), status: "ACTIVE", name: "Kiosco", sectorId: null, lastSeenAt: new Date(),
+    id: DEVICE_ID, tokenHash: hashClockDeviceSecret(DEVICE_SECRET), status: "ACTIVE", name: "Kiosco", lastSeenAt: new Date(),
   });
   vi.mocked(timeEntriesService.clockSearch).mockResolvedValue([]);
   vi.mocked(timeEntriesService.clockPhotoPunchIdempotent).mockResolvedValue({ workShift: { id: "shift-1" } } as never);

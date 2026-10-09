@@ -47,7 +47,7 @@ describe("documentsRepository.findMany — Etapa 14I.2", () => {
   it("findMany y count reciben exactamente el mismo where (incluye employeeAccessWhere y filtros)", async () => {
     mockedPrisma.employeeDocument.findMany.mockResolvedValue([]);
     mockedPrisma.employeeDocument.count.mockResolvedValue(0);
-    const employeeAccessWhere = { sectorId: { in: ["sector-1"] } };
+    const employeeAccessWhere = { costCenterId: { in: ["sector-1"] } };
 
     await documentsRepository.findMany(
       baseQuery({ categoryId: "11111111-1111-1111-1111-111111111111", status: "VIGENTE" }),

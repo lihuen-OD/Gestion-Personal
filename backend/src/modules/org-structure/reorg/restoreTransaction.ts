@@ -22,7 +22,10 @@ import { verifyV1, type RowManifest } from "./manifest";
 import { normalizeBackupRetired, restoreTableOrder, retiredCount, type BackupRetiredSource } from "./retirement";
 import { DryRunRollback } from "./cleanupTransaction";
 
-export const LEGACY_COLUMNS: Array<[string, string]> = [["Sector", "areaId"], ["Area", "establishmentId"], ["Establishment", "businessUnitId"], ["Position", "sectorId"], ["Employee", "sectorId"]];
+// Columnas que la restauración necesita (repone vaciados y reinserta forma vieja). Si M2 ya se
+// aplicó, faltan Employee/User/ClockDevice.sectorId y la restauración se NIEGA: primero hay que
+// revertir M2 (prisma/rollbacks/20261009150000_org_location_contract_m2.down.sql, sin pérdida).
+export const LEGACY_COLUMNS: Array<[string, string]> = [["Sector", "areaId"], ["Area", "establishmentId"], ["Establishment", "businessUnitId"], ["Position", "sectorId"], ["Employee", "sectorId"], ["User", "sectorId"], ["ClockDevice", "sectorId"]];
 
 export interface RestoreBackup extends BackupRetiredSource {
   host: string;
@@ -47,7 +50,7 @@ export async function runRestore(prisma: PrismaClient, backup: RestoreBackup, in
       if (!actor || actor.status !== "ACTIVO" || actor.role !== "NIVEL_1_RRHH") throw new Error("--actor-user-id debe ser un usuario RRHH activo.");
       for (const [table, column] of LEGACY_COLUMNS) {
         const [exists] = await tx.$queryRawUnsafe<Array<{ n: number }>>(`SELECT count(*)::int AS n FROM information_schema.columns WHERE table_schema = 'public' AND table_name = $1 AND column_name = $2`, table, column);
-        if (!exists!.n) throw new Error(`Falta ${table}.${column}: M2 ya se aplicó. La reversión es restaurar la rama o el respaldo completo.`);
+        if (!exists!.n) throw new Error(`Falta ${table}.${column}: M2 ya se aplicó. Revertir M2 primero (prisma/rollbacks/20261009150000_org_location_contract_m2.down.sql) o restaurar la rama/el pg_dump de respaldo.`);
       }
 
       // Cada fila retirada, una sola vez: catálogo de padres a hijos, después vínculos.

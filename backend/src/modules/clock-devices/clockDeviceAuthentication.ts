@@ -16,7 +16,7 @@ const APP_VERSION_PATTERN = /^[0-9A-Za-z.+_-]{1,40}$/;
 export const ALL_CLOCK_DEVICE_STATUSES: readonly ClockDeviceStatus[] = ["PENDING", "ACTIVE", "REVOKED"];
 
 /** Lo único que el resto del backend ve del dispositivo: nunca tokenHash ni pairingCodeHash. */
-export type ClockDeviceContext = { id: string; status: ClockDeviceStatus; name: string | null; sectorId: string | null };
+export type ClockDeviceContext = { id: string; status: ClockDeviceStatus; name: string | null };
 
 /**
  * Metadata informativa de conexión. IP y user-agent salen de la request (la
@@ -68,7 +68,7 @@ export function requireClockDevice(options: { allow?: readonly ClockDeviceStatus
       if (!credential || !valid) throw invalidCredential();
       if (!allowed.has(credential.status)) throw statusError(credential.status);
 
-      req.clockDevice = { id: credential.id, status: credential.status, name: credential.name, sectorId: credential.sectorId };
+      req.clockDevice = { id: credential.id, status: credential.status, name: credential.name };
       if (options.recordPresence && credential.status === "ACTIVE" && (!credential.lastSeenAt || Date.now() - credential.lastSeenAt.getTime() >= PRESENCE_THROTTLE_MS)) {
         void clockDevicesRepository
           .touchIfStale(credential.id, new Date(Date.now() - PRESENCE_THROTTLE_MS), clockDeviceRequestMetadata(req))

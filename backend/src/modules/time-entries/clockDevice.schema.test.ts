@@ -51,10 +51,11 @@ describe("F4 ClockDevice — contrato estructural", () => {
     expect(clockPunchAttempt).toMatch(/^\s*deviceId\s+String\?\s*$/m);
   });
 
-  it("usa Restrict para historia y SetNull para Sector y autoría", () => {
+  it("usa Restrict para historia y SetNull para autoría; M2 retiró el sector legado", () => {
     expect(attendancePunch).toMatch(/device\s+ClockDevice\?.*onDelete: Restrict/);
     expect(clockPunchAttempt).toMatch(/device\s+ClockDevice\?.*onDelete: Restrict/);
-    expect(clockDevice).toMatch(/sector\s+Sector\?.*onDelete: SetNull/);
+    expect(clockDevice).not.toMatch(/^\s*sectorId\s/m);
+    expect(clockDevice).not.toMatch(/^\s*sector\s+Sector\?/m);
     expect(clockDevice).toMatch(/activatedBy\s+User\?.*onDelete: SetNull/);
     expect(clockDevice).toMatch(/revokedBy\s+User\?.*onDelete: SetNull/);
   });

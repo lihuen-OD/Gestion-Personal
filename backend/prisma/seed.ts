@@ -96,13 +96,12 @@ async function main() {
 
   const supervisor = await prisma.user.upsert({
     where: { email: "supervisor@losod.local" },
-    update: { sectorId: sector.id },
+    update: {},
     create: {
       name: "Supervisor Demo",
       email: "supervisor@losod.local",
       passwordHash,
       role: "NIVEL_2_SUPERVISION",
-      sectorId: sector.id,
     },
   });
 
@@ -352,7 +351,8 @@ async function main() {
     create: {
       code: "PUESTO-RRHH-ADMIN",
       name: "Administrativo RRHH",
-      sectorId: sector.id,
+      // Modelo nuevo (A5): el puesto se ubica por alcance, no por sectorId.
+      orgScopes: { create: { level: "SECTOR", sectorId: sector.id } },
       mission: "Gestionar informacion administrativa del personal.",
     },
   });
@@ -369,7 +369,6 @@ async function main() {
       lastName: "Demo",
       status: "ACTIVO",
       positionId: position.id,
-      sectorId: sector.id,
       costCenterId: costCenter.id,
       healthInsurance: "OSPRERA",
       createdByUserId: admin.id,

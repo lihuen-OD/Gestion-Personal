@@ -6,11 +6,8 @@ describe("buildEmployeeAssociationWhere", () => {
     expect(buildEmployeeAssociationWhere({})).toEqual({});
   });
 
-  it("sectorId/costCenterId se pasan como columna directa (igual que employees.repository.ts)", () => {
-    expect(buildEmployeeAssociationWhere({ sectorId: "sector-1", costCenterId: "cc-1" })).toEqual({
-      sectorId: "sector-1",
-      costCenterId: "cc-1",
-    });
+  it("costCenterId se pasa como columna directa (igual que employees.repository.ts)", () => {
+    expect(buildEmployeeAssociationWhere({ costCenterId: "cc-1" })).toEqual({ costCenterId: "cc-1" });
   });
 
   it("companyId se traduce a companies.some.companyId (Employee no tiene columna companyId propia)", () => {
@@ -69,12 +66,11 @@ describe("mapAssociatedEmployee", () => {
       firstName: "Ana",
       lastName: "Prueba",
       status: "ACTIVO",
-      sector: null,
       costCenter: null,
       companies: [],
     } as never);
 
-    expect(mapped.sector).toBeNull();
+    expect(mapped).not.toHaveProperty("sector");
     expect(mapped.costCenter).toBeNull();
     expect(mapped.companies).toEqual([]);
   });

@@ -13,10 +13,9 @@ export const holidayDatesQuerySchema = z
 
 export const holidayWorkAssignmentsByDateQuerySchema = z.object({ date: z.coerce.date() });
 
-// A7: `sectorId` = sector ANTERIOR; la ubicación se evalúa vigente a
-// `locationDate` (el frontend envía el día del feriado).
+// A7: la ubicación se evalúa vigente a `locationDate` (el frontend envía el
+// día del feriado). M2 retiró el filtro por sector anterior del legajo.
 export const holidayWorkCandidatesQuerySchema = z.object({
-  sectorId: z.string().uuid().optional(),
   ...employeeStructureQueryShape,
   shiftTemplateId: z.string().uuid().optional(),
   withoutShift: queryBoolean().optional(),

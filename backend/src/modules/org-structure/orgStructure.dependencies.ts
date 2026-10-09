@@ -9,8 +9,8 @@
 // Área, Área → Sector, sector de legajos/puestos/usuarios).
 //
 // La base no protege todos estos casos: varias FK del modelo anterior son
-// ON DELETE SET NULL (Employee.sectorId/costCenterId, Position.sectorId,
-// User.companyId/sectorId y los padres legados) y EmployeeCompany es CASCADE.
+// ON DELETE SET NULL (Employee.costCenterId, Position.sectorId, User.companyId
+// y los padres legados) y EmployeeCompany es CASCADE.
 // Por eso cada dependencia se cuenta antes de borrar y, si hay alguna, el
 // borrado se rechaza — nunca se deja que la base desvincule o borre en cadena.
 // Las FKs nuevas (padres del modelo objetivo, alcances de puestos, ubicaciones
@@ -44,7 +44,8 @@ export type OrgDependencyKey =
 export const orgEntityDependencies: Record<OrgEntityKind, readonly OrgDependencyKey[]> = {
   company: ["businessUnits", "establishments", "employees", "users", "costCenterLinks", "doubleHourRules", "positionScopes", "laborHistory", "scopeHistory"],
   businessUnit: ["sectors", "establishments", "costCenterLinks", "positionScopes", "scopeHistory"],
-  sector: ["areas", "employees", "positions", "users", "costCenterLinks", "doubleHourRules", "positionScopes", "laborHistory", "scopeHistory"],
+  // M2: un sector ya no tiene legajos ni usuarios propios (Employee/User.sectorId retirados).
+  sector: ["areas", "positions", "costCenterLinks", "doubleHourRules", "positionScopes", "laborHistory", "scopeHistory"],
   area: ["sectors", "costCenterLinks", "positionScopes", "scopeHistory"],
   zone: ["establishments"],
   establishment: ["areas", "costCenterLinks", "workLocations", "clockDevices"],

@@ -20,11 +20,10 @@ export type EmployeeStructureFilterValue = {
   locationEstablishmentId: string;
   locationDate: string;
   reloadStatus: "" | "PENDING" | "COMPLETE";
-  legacySectorId: string;
 };
 
 export const emptyStructureFilters: EmployeeStructureFilterValue = {
-  scopeLevel: "", scopeNodeId: "", scopeMode: "WITHIN", locationZoneId: "", locationEstablishmentId: "", locationDate: "", reloadStatus: "", legacySectorId: "",
+  scopeLevel: "", scopeNodeId: "", scopeMode: "WITHIN", locationZoneId: "", locationEstablishmentId: "", locationDate: "", reloadStatus: "",
 };
 
 export const scopeModeLabels: Record<ScopeMode, string> = { WITHIN: "Ubicado dentro de", COVERS: "Abarca" };
@@ -46,7 +45,6 @@ export function structureFilterParams(value: EmployeeStructureFilterValue): Reco
   if (value.locationEstablishmentId) params.locationEstablishmentId = value.locationEstablishmentId;
   if (value.locationDate && (value.locationZoneId || value.locationEstablishmentId)) params.locationDate = value.locationDate;
   if (value.reloadStatus) params.reloadStatus = value.reloadStatus;
-  if (value.legacySectorId) params.sectorId = value.legacySectorId;
   return params;
 }
 
@@ -82,11 +80,6 @@ export function establishmentFilterOptions(catalog: OrgStructureCatalog, zoneId:
     .filter((item) => item.zoneId && (!zoneId || item.zoneId === zoneId))
     .map((item) => ({ id: item.id, label: zoneId ? item.name : `${catalog.zones.find((zone) => zone.id === item.zoneId)?.name || "Zona"} › ${item.name}` }))
     .sort((a, b) => a.label.localeCompare(b.label, "es"));
-}
-
-/** Sectores del modelo anterior: sólo para consultar legajos pendientes de recarga. */
-export function legacySectorOptions(catalog: OrgStructureCatalog): NodeOption[] {
-  return catalog.sectors.filter((item) => item.pendingReload).map((item) => ({ id: item.id, label: item.name })).sort((a, b) => a.label.localeCompare(b.label, "es"));
 }
 
 /**

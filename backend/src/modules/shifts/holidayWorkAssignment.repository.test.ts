@@ -21,14 +21,15 @@ beforeEach(() => {
 });
 
 describe("findCandidates — Etapa 12D", () => {
-  it("filtra por sectorId cuando se pasa", async () => {
+  it("no filtra ni selecciona el sector anterior del legajo (retirado en M2)", async () => {
     mockedPrisma.employee.findMany.mockResolvedValue([]);
     mockedPrisma.employee.count.mockResolvedValue(0);
 
-    await holidayWorkAssignmentRepository.findCandidates({ sectorId: "sector-panol", page: 1, take: 100 }, {});
+    await holidayWorkAssignmentRepository.findCandidates({ page: 1, take: 100 }, {});
 
-    const where = mockedPrisma.employee.findMany.mock.calls[0]![0].where;
-    expect(where.AND[0].sectorId).toBe("sector-panol");
+    const args = mockedPrisma.employee.findMany.mock.calls[0]![0];
+    expect(JSON.stringify(args.where)).not.toContain("sectorId");
+    expect(args.select).not.toHaveProperty("sector");
   });
 
   it("filtra por shiftTemplateId vía la relación shiftAssignments HABILITADO", async () => {

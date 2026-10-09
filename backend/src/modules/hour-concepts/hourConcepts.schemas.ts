@@ -35,7 +35,6 @@ export const updateHourConceptSchema = createHourConceptSchema.partial();
 // mismos, no porque sean el mismo concepto de dominio.
 export const listHourConceptEmployeesQuerySchema = z.object({
   search: z.string().trim().optional(),
-  sectorId: z.string().uuid().optional(),
   costCenterId: z.string().uuid().optional(),
   companyId: z.string().uuid().optional(),
   ...employeeStructureQueryShape,

@@ -14,8 +14,7 @@ export const associatedEmployeeSelect = {
   firstName: true,
   lastName: true,
   status: true,
-  // Sector ANTERIOR (sólo consulta) y puesto con su cantidad de alcances (A7).
-  sector: { select: { id: true, name: true } },
+  // Puesto con su cantidad de alcances (A7). M2 retiró el sector anterior.
   position: { select: { id: true, name: true, _count: { select: { orgScopes: true } } } },
   costCenter: { select: { id: true, name: true } },
   companies: { select: { company: { select: { id: true, name: true } } } },
@@ -25,19 +24,17 @@ export type AssociatedEmployeeRow = Prisma.EmployeeGetPayload<{ select: typeof a
 
 export type EmployeeAssociationFilters = EmployeeStructureFilters & {
   search?: string;
-  sectorId?: string;
   costCenterId?: string;
   companyId?: string;
 };
 
-// Mismo idioma que buildWhere en employees.repository.ts (sectorId/costCenterId
-// como columna directa, companyId vía EmployeeCompany porque Employee no tiene
+// Mismo idioma que buildWhere en employees.repository.ts (costCenterId como
+// columna directa, companyId vía EmployeeCompany porque Employee no tiene
 // una columna companyId propia) — se reutiliza el criterio, no se reinventa.
 export function buildEmployeeAssociationWhere(filters: EmployeeAssociationFilters): Prisma.EmployeeWhereInput {
   const search = filters.search?.trim();
   const structure = employeeStructureWhere(filters);
   const base: Prisma.EmployeeWhereInput = {
-    ...(filters.sectorId ? { sectorId: filters.sectorId } : {}),
     ...(filters.costCenterId ? { costCenterId: filters.costCenterId } : {}),
     ...(filters.companyId ? { companies: { some: { companyId: filters.companyId } } } : {}),
     ...(search
@@ -62,7 +59,6 @@ export function mapAssociatedEmployee(employee: AssociatedEmployeeRow) {
     firstName: employee.firstName,
     lastName: employee.lastName,
     status: employee.status,
-    sector: employee.sector,
     position: employee.position ? { id: employee.position.id, name: employee.position.name, scopeCount: employee.position._count.orgScopes } : null,
     costCenter: employee.costCenter,
     companies: employee.companies.map((item) => item.company),

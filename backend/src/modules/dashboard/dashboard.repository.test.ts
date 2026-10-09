@@ -71,11 +71,11 @@ describe("countTotalAndActive — colapsa countTotal+countActive en 1 groupBy (E
   it("agrupa por status con _count._all, respetando el accessWhere recibido", async () => {
     mockedPrisma.employee.groupBy.mockResolvedValue([]);
 
-    await dashboardRepository.countTotalAndActive({ sectorId: { in: ["sec-1"] } });
+    await dashboardRepository.countTotalAndActive({ costCenterId: { in: ["sec-1"] } });
 
     expect(mockedPrisma.employee.groupBy).toHaveBeenCalledWith({
       by: ["status"],
-      where: { sectorId: { in: ["sec-1"] } },
+      where: { costCenterId: { in: ["sec-1"] } },
       _count: { _all: true },
     });
   });

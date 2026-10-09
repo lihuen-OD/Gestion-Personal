@@ -51,7 +51,7 @@ export const clockDevicesRepository = {
   findCredentialById(id: string) {
     return prisma.clockDevice.findUnique({
       where: { id },
-      select: { id: true, tokenHash: true, status: true, name: true, sectorId: true, lastSeenAt: true },
+      select: { id: true, tokenHash: true, status: true, name: true, lastSeenAt: true },
     });
   },
 

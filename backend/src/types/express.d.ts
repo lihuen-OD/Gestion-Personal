@@ -8,9 +8,6 @@ declare global {
       name: string;
       role: RoleName;
       companyId?: string | null;
-      // Columna legacy conservada durante la transición; no se expone en los
-      // contratos de auth/usuarios ni concede permisos (D-14).
-      sectorId?: string | null;
     }
 
     interface Request {
@@ -21,7 +18,6 @@ declare global {
         id: string;
         status: "PENDING" | "ACTIVE" | "REVOKED";
         name: string | null;
-        sectorId: string | null;
       };
     }
   }

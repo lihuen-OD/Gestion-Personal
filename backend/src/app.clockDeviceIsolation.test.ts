@@ -50,7 +50,7 @@ afterAll(async () => {
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(clockDevicesRepository.findCredentialById).mockResolvedValue({
-    id: DEVICE_ID, tokenHash: hashClockDeviceSecret(DEVICE_SECRET), status: "ACTIVE", name: "Kiosco", sectorId: null, lastSeenAt: new Date(),
+    id: DEVICE_ID, tokenHash: hashClockDeviceSecret(DEVICE_SECRET), status: "ACTIVE", name: "Kiosco", lastSeenAt: new Date(),
   });
 });
 

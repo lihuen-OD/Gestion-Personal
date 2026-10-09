@@ -637,7 +637,7 @@ describe("attendanceSummary / attendanceObservations — select unificado de Tim
   it("attendanceSummary preserva employeeAccessWhere en ambas queries", async () => {
     mockedPrisma.workShift.findMany.mockResolvedValue([]);
     mockedPrisma.attendancePunch.findMany.mockResolvedValue([]);
-    const employeeAccessWhere = { sectorId: { in: ["sector-1"] } };
+    const employeeAccessWhere = { costCenterId: { in: ["sector-1"] } };
 
     await timeEntriesRepository.attendanceSummary({ ...baseInput, employeeAccessWhere });
 
@@ -667,7 +667,7 @@ describe("attendanceSummary / attendanceObservations — select unificado de Tim
     expect(punchCall.where.reviewStatus).toBe("PENDIENTE");
   });
 
-  it("attendanceSummary preserva el select de employee/sector/position en ambas queries", async () => {
+  it("attendanceSummary preserva el select de employee/position en ambas queries (M2: sin sector del legajo)", async () => {
     mockedPrisma.workShift.findMany.mockResolvedValue([]);
     mockedPrisma.attendancePunch.findMany.mockResolvedValue([]);
 
@@ -680,7 +680,6 @@ describe("attendanceSummary / attendanceObservations — select unificado de Tim
       firstName: true,
       lastName: true,
       status: true,
-      sector: { select: { id: true, name: true, code: true } },
       position: { select: { id: true, name: true, code: true } },
     };
     const shiftCall = mockedPrisma.workShift.findMany.mock.calls[0]![0] as { select: { employee: { select: unknown } } };
@@ -2054,7 +2053,7 @@ describe("findPeriodEmployees — total=Normal, adicionales desde HourConceptBre
     });
 
     it("mantiene el filtro de permisos por rol (accessWhere) en el where de la DB, no en memoria", async () => {
-      const scopedAccessWhere = { sectorId: { in: ["sec-1"] } };
+      const scopedAccessWhere = { costCenterId: { in: ["sec-1"] } };
 
       await timeEntriesRepository.findPeriodEmployees(baseQuery, scopedAccessWhere);
 
@@ -2266,10 +2265,10 @@ describe("findBreakdownsForExport / findEmployeesForExport — conceptos del exp
   it("scopea por employeeAccessWhere (no por los empleados con TimeEntry), período, legajo opcional y excluye RECHAZADO", async () => {
     mockedPrisma.hourConceptBreakdown.findMany.mockResolvedValue([]);
 
-    await timeEntriesRepository.findBreakdownsForExport({ period: "2026-08", employeeId: "employee-1", includeInReview: false }, { sectorId: { in: ["sec-1"] } });
+    await timeEntriesRepository.findBreakdownsForExport({ period: "2026-08", employeeId: "employee-1", includeInReview: false }, { costCenterId: { in: ["sec-1"] } });
 
     expect(mockedPrisma.hourConceptBreakdown.findMany).toHaveBeenCalledWith({
-      where: { employee: { sectorId: { in: ["sec-1"] } }, period: "2026-08", employeeId: "employee-1", status: { not: "RECHAZADO" } },
+      where: { employee: { costCenterId: { in: ["sec-1"] } }, period: "2026-08", employeeId: "employee-1", status: { not: "RECHAZADO" } },
       select: expect.objectContaining({
         appliedMultiplier: true,
         startAt: true,
@@ -2302,7 +2301,7 @@ describe("homeCounts — Etapa 14G.2, sin $transaction (home-summary)", () => {
   });
 
   it("mantiene el filtro de permisos (accessWhere) en las 3 queries", async () => {
-    const scopedAccessWhere = { sectorId: { in: ["sec-1"] } };
+    const scopedAccessWhere = { costCenterId: { in: ["sec-1"] } };
     mockedPrisma.employee.count.mockResolvedValue(0);
     mockedPrisma.timeEntry.count.mockResolvedValue(0);
 
@@ -2357,7 +2356,7 @@ describe("attendanceObservedCount — Etapa 14G.2, sin $transaction (home-summar
   });
 
   it("mantiene el filtro de permisos (accessWhere) en las 3 queries", async () => {
-    const scopedAccessWhere = { sectorId: { in: ["sec-1"] } };
+    const scopedAccessWhere = { costCenterId: { in: ["sec-1"] } };
     mockedPrisma.workShift.count.mockResolvedValue(0);
     mockedPrisma.attendancePunch.count.mockResolvedValue(0);
     mockedPrisma.attendanceInactivityIncident.count.mockResolvedValue(0);
@@ -2482,7 +2481,7 @@ describe("attendanceObservations — Etapa 14G.3, sin $transaction y sin queries
   });
 
   it("mantiene el filtro de permisos (accessWhere) en el where de empleado de las 3 categorías", async () => {
-    const scopedAccessWhere = { sectorId: { in: ["sec-1"] } };
+    const scopedAccessWhere = { costCenterId: { in: ["sec-1"] } };
 
     await timeEntriesRepository.attendanceObservations({ ...baseInput, employeeAccessWhere: scopedAccessWhere });
 

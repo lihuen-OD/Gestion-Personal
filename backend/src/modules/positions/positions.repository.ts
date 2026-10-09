@@ -307,7 +307,6 @@ export const positionsRepository = {
         receiptCategory: true,
         internalCategory: true,
         position: { select: { id: true, name: true, code: true } },
-        sector: { select: { id: true, name: true } },
         costCenter: { select: { id: true, name: true } },
         companies: {
           include: { company: { select: { id: true, name: true } } },
