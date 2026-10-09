@@ -46,7 +46,8 @@ function verify() {
   if (summary.violations.length) process.exitCode = 2;
 }
 
-const mode = process.argv[2];
+// Primer argumento que no es un flag: el lanzador neon-admin.ts antepone los flags de identidad.
+const mode = process.argv.slice(2).find((value) => !value.startsWith("--"));
 (mode === "capture" ? capture() : mode === "verify-v2" ? Promise.resolve(verify()) : Promise.reject(new Error("Modo: capture | verify-v2"))).catch((error: unknown) => {
   console.error(error instanceof Error ? error.message : error);
   process.exit(1);

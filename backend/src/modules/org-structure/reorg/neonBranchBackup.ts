@@ -46,7 +46,11 @@ async function call(fetchImpl: Fetch, apiKey: string, method: "GET" | "POST", pa
     headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json", ...(body ? { "Content-Type": "application/json" } : {}) },
     ...(body ? { body: JSON.stringify(body) } : {}),
   });
-  if (!response.ok) throw new Error(`API de Neon respondió ${response.status} en ${method} ${path}.`);
+  if (!response.ok) {
+    // El cuerpo de error de Neon trae `code`/`message` (nunca la credencial): se incluye para diagnosticar.
+    const detail = await response.text().then((text) => { try { const body = JSON.parse(text) as { code?: string; message?: string }; return [body.code, body.message].filter(Boolean).join(": "); } catch { return text.slice(0, 300); } }).catch(() => "");
+    throw new Error(`API de Neon respondió ${response.status} en ${method} ${path}${detail ? ` — ${detail}` : ""}.`);
+  }
   return (await response.json()) as Record<string, unknown>;
 }
 

@@ -61,6 +61,7 @@ describe("respaldo de rama Neon (B0)", () => {
     expect(await verifyBranchBackup(record, { apiKey: "k", fetchImpl: api({ "GET /projects/proj-1/branches/br-backup": () => json({ branch: { id: "br-backup", name: "b", parent_id: "br-reorg", parent_lsn: "0/1", current_state: "ready" } }) }) }))
       .toEqual({ id: "br-backup", name: "b", parentId: "br-reorg", parentLsn: "0/1", currentState: "ready", ready: true });
     await expect(verifyBranchBackup(record, { apiKey: "k", fetchImpl: api({ "GET /projects/proj-1/branches/br-backup": () => json({}, 403) }) })).rejects.toThrow("403");
+    await expect(verifyBranchBackup(record, { apiKey: "k", fetchImpl: api({ "GET /projects/proj-1/branches/br-backup": () => json({ code: "", message: "branch limit exceeded" }, 400) }) })).rejects.toThrow("400 en GET /projects/proj-1/branches/br-backup — branch limit exceeded");
   });
 
   it("nombre del respaldo", () => {
