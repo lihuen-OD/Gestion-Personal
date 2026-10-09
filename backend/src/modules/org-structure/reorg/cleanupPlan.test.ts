@@ -546,3 +546,25 @@ describe("A8 §12.4 — clase 4 limitada al alcance autorizado (hallazgo de revi
       .toEqual([expect.objectContaining({ code: "CLASS_FOUR_RETIRE_NOT_AUTHORIZED" })]);
   });
 });
+
+describe("R2 con la población del motor (hallazgo de revisión, A7)", () => {
+  const population = (overrides: Partial<NonNullable<RuleReference["population"]>> = {}) => ({ date: "2026-10-09", sectorSemantics: "WITHIN" as const, candidates: "ALL_EMPLOYEES" as const, missing: [], holidayConvocations: "NOT_APPLICABLE" as const, ...overrides });
+
+  it("historia faltante para decidir la población bloquea R2 con legajos y dimensiones; no se congela una lista parcial", () => {
+    const plan = buildCleanupPlan({ inventory: inventory(), references: [], rules: [rule({ sectorId: "sec-1", currentPopulation: ["emp-1"], population: population({ missing: [{ employeeId: "emp-9", dimensions: ["POSITION_SCOPE"] }] }) })], decisions: [{ ruleId: "rule-1", treatment: "R2" }] });
+    expect(plan.issues).toContainEqual(expect.objectContaining({ code: "R2_POPULATION_HISTORY_MISSING", blocking: true, message: expect.stringContaining("emp-9: POSITION_SCOPE") }));
+    expect(plan.ruleOperations).toEqual([]);
+  });
+
+  it("FERIADO: R2 informa que las convocatorias siguen aparte (no bloqueante) y congela la población por alcance", () => {
+    const plan = buildCleanupPlan({ inventory: inventory(), references: [], rules: [rule({ positionId: "pos-1", currentPopulation: ["emp-2", "emp-1"], population: population({ holidayConvocations: "RESOLVED_SEPARATELY" }) })], decisions: [{ ruleId: "rule-1", treatment: "R2" }] });
+    expect(plan.blocking).toBe(false);
+    expect(plan.issues).toContainEqual(expect.objectContaining({ code: "R2_HOLIDAY_CONVOCATIONS_SEPARATE", blocking: false }));
+    expect(plan.ruleOperations).toEqual([{ ruleId: "rule-1", kind: "R2", employeeIds: ["emp-1", "emp-2"], clear: ["positionId"] }]);
+  });
+
+  it("R1 sobre sector sigue bloqueado: explica el cambio LEGACY_SECTOR → WITHIN (no la falta de D-4)", () => {
+    const plan = buildCleanupPlan({ inventory: inventory(), references: [], rules: [rule({ sectorId: "sec-1" })], decisions: [{ ruleId: "rule-1", treatment: "R1", targets: { sectorId: "new-sec" } }], r1Targets: { "new-sec": { exists: true, legacyOrInventory: false } } });
+    expect(plan.issues).toContainEqual(expect.objectContaining({ code: "R1_SECTOR_REQUIRES_SEMANTICS", blocking: true, message: expect.stringContaining("WITHIN") }));
+  });
+});

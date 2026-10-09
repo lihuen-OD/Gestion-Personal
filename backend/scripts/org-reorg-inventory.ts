@@ -33,6 +33,7 @@ import { amplifyInventory, arg, captureRowManifest, connectTarget, countReferenc
 import { historyWithoutReferences } from "./labor-history/simulatedReaders";
 import { borrableIds, buildCleanupPlan, classifyReference, inventoryDimensions, type CompanyMode, type FrozenInventory } from "../src/modules/org-structure/reorg/cleanupPlan";
 import { evaluateF0 } from "../src/modules/org-structure/reorg/shapes";
+import { todayArgentinaDateKey } from "../src/shared/datetime/argentinaTime";
 import { evaluateG8 } from "../src/modules/org-structure/reorg/guards";
 
 const dayKey = (date: Date) => date.toISOString().slice(0, 10);
@@ -107,7 +108,9 @@ async function inventoryFor(tx: Tx, companyMode: CompanyMode, evaluate: EngineEv
   const foreignKeys = await discoverForeignKeys(tx);
   const references = await countReferences(tx, foreignKeys, inventoryIds(inventory));
   const rules = await loadRules(tx);
-  const refs = await ruleReferences(tx, rules);
+  // Población de R2 con la semántica del motor (A7), a la fecha civil argentina de la corrida.
+  const populationDate = todayArgentinaDateKey();
+  const refs = await ruleReferences(tx, rules, { populationDate, inventory });
   const plan = buildCleanupPlan({ inventory, references, rules: refs, decisions: [] });
   const names = await catalogNames(tx);
   const affectedRules = [];
@@ -127,7 +130,8 @@ async function inventoryFor(tx: Tx, companyMode: CompanyMode, evaluate: EngineEv
       },
       referencesInventory: dimensions,
       requiresDecision: dimensions.length > 0,
-      currentPopulation: ref.currentPopulation.length,
+      currentPopulation: ref.population ? ref.currentPopulation.length : null,
+      population: ref.population ? { ...ref.population, employeeIds: ref.currentPopulation } : null,
       activeDates: rule.dates.filter((date) => date.isActive).length,
       applications: await ruleApplications(tx, rule.id),
     });

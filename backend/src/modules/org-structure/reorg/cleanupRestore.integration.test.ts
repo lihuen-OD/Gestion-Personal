@@ -17,6 +17,7 @@ import type { CleanupBackup, CleanupDeps, CleanupInput } from "./cleanupTransact
 import type { FrozenInventory } from "./cleanupPlan";
 import { verifyV1, type RowManifest } from "./manifest";
 import type { RestoreBackup } from "./restoreTransaction";
+import { rulePopulationAt, type PopulationReader } from "./rulePopulation";
 
 const url = process.env.REORG_IT_DATABASE_URL;
 
@@ -104,6 +105,19 @@ describe.skipIf(!url)("A8 — captura, retiro y restauración contra PostgreSQL 
   }, 60_000);
 
   afterAll(async () => { await prisma?.$disconnect(); });
+
+  it("hallazgo 3: población de R2 con el cargador REAL de historia del motor (WITHIN y LEGACY_SECTOR, faltantes informados)", async () => {
+    const base = { id: "tmp", name: "tmp", kind: "ESPECIAL", companyId: null, costCenterId: null, positionId: null, employees: [] };
+    const classification = async (id: string) => prisma.sector.findUniqueOrThrow({ where: { id }, select: { isLegacy: true } });
+    const within = await readOnly(async (tx) => rulePopulationAt(tx as unknown as PopulationReader, { ...base, sectorId: "sec-new", sector: await classification("sec-new") }, "2026-10-09"));
+    expect(within).toMatchObject({ sectorSemantics: "WITHIN", employeeIds: ["e2"], missing: [{ employeeId: "e1", dimensions: ["POSITION_SCOPE"] }] });
+    const legacy = await readOnly(async (tx) => rulePopulationAt(tx as unknown as PopulationReader, { ...base, sectorId: "sec-old-1", sector: await classification("sec-old-1") }, "2026-10-09"));
+    expect(legacy).toMatchObject({ sectorSemantics: "LEGACY_SECTOR", employeeIds: ["e1"], missing: [{ employeeId: "e2", dimensions: ["LEGACY_SECTOR"] }] });
+    // Antes de la vigencia del alcance (2026-09-01) el puesto nuevo no tiene alcance registrado: falta evidencia, no "no cumple".
+    const before = await readOnly(async (tx) => rulePopulationAt(tx as unknown as PopulationReader, { ...base, sectorId: "sec-new", sector: await classification("sec-new") }, "2026-08-15"));
+    expect(before.employeeIds).toEqual([]);
+    expect(before.missing).toEqual([{ employeeId: "e1", dimensions: ["POSITION_SCOPE"] }, { employeeId: "e2", dimensions: ["POSITION"] }]);
+  }, 60_000);
 
   it("inventario real: empresa conservada, ampliación de nuevos y raíces históricas", () => {
     expect(frozen.records.Company).toEqual([expect.objectContaining({ id: "comp-1", class: "conservada" })]);

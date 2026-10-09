@@ -30,6 +30,8 @@ import {
 import { borrableIds, buildCleanupPlan, classFourOutsidePlan, DELETE_ORDER, treatmentOf, type ClassFourResolution, type CompanyMode, type FrozenInventory, type R1TargetState, type RuleDecision, type TargetTable } from "./cleanupPlan";
 import { evaluateF0, evaluateF1Shapes } from "./shapes";
 import { evaluateG3, evaluateG4, evaluateG5, evaluateG7, evaluateG8, type GuardResult, type HistorySnapshot } from "./guards";
+import { todayArgentinaDateKey } from "../../../shared/datetime/argentinaTime";
+import type { DateKey } from "../../labor-history/laborHistory.periods";
 import { verifyV1, type RowManifest, type V1Expectation, type WatchedValues } from "./manifest";
 import { addRetiredRows, BACKUP_FORMAT, retiredCount, retiredKeys, retirementPredicates, restoreTableOrder, rowKeyOf, verifyRetiredRows, type RetiredRows } from "./retirement";
 
@@ -65,6 +67,11 @@ export interface CleanupInput {
   actorUserId: string;
   apply: boolean;
   host: string;
+  /**
+   * Fecha civil (America/Argentina) a la que se congela la población de R2.
+   * Por defecto, la de la corrida; queda en el reporte y en `ruleOperations`.
+   */
+  populationDate?: DateKey;
   /** Persistir el respaldo (con `apply`): se llama ANTES de la primera escritura. */
   writeBackup?: (backup: CleanupBackup) => void;
 }
@@ -141,7 +148,9 @@ export async function runCleanup(prisma: PrismaClient, input: CleanupInput, deps
       if (!f0.ok) throw new Error(`F0 detectó ${f0.violations.length} fila(s) con forma mezclada o G1 violado (ver reporte). No se escribió nada.`);
       const foreignKeys = await discoverForeignKeys(tx);
       const references = await countReferences(tx, foreignKeys, frozenByTable);
-      const rules = await ruleReferences(tx, await loadRules(tx));
+      const populationDate = input.populationDate ?? todayArgentinaDateKey();
+      summary.populationDate = populationDate;
+      const rules = await ruleReferences(tx, await loadRules(tx), { populationDate, inventory: frozen });
       // A8 §12.2: la historia se re-verifica contra el congelado (fail closed).
       const liveHistory = await loadHistoryReferences(tx, frozen);
       if (JSON.stringify(liveHistory) !== JSON.stringify(frozen.history)) throw new Error("La historia (§12.2) del inventario congelado no coincide con la base. Re-inventariar.");

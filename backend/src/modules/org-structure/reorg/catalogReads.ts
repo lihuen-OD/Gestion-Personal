@@ -9,9 +9,11 @@
  */
 import type { PrismaClient } from "@prisma/client";
 import { engineOutcomeLabel, type EngineEvaluation } from "../../time-entries/specialHourEvidence";
-import { borrableIds, DELETE_ORDER, partitionHistoryReference, type CompanyMode, type FrozenInventory, type HistoryReference, type InventoryClass, type InventoryRecord, type ReferenceCount, type RuleReference, type TargetTable } from "./cleanupPlan";
+import { borrableIds, DELETE_ORDER, inventoryDimensions, partitionHistoryReference, type CompanyMode, type FrozenInventory, type HistoryReference, type InventoryClass, type InventoryRecord, type ReferenceCount, type RuleReference, type TargetTable } from "./cleanupPlan";
 import { stableColumns, WATCHED_COLUMNS, type RowManifest, type TableManifest } from "./manifest";
 import type { ShapeRows } from "./shapes";
+import type { DateKey } from "../../labor-history/laborHistory.periods";
+import { rulePopulationAt, type PopulationReader } from "./rulePopulation";
 import { HISTORY_TABLES, normalizeSnapshotRow, type ArchivedLink, type HistorySnapshot, type IndexInfo } from "./guards";
 
 export type Tx = Omit<PrismaClient, "$connect" | "$disconnect" | "$on" | "$transaction" | "$extends">;
@@ -234,6 +236,8 @@ export async function loadHistoryReferences(tx: Tx, inventory: Pick<FrozenInvent
 export interface RuleRow {
   id: string; name: string; kind: string; status: string; recurrenceType: string; fromDate: Date; toDate: Date | null;
   priority: number; multiplier: unknown; companyId: string | null; sectorId: string | null; costCenterId: string | null; positionId: string | null;
+  /** Clasificación PERSISTIDA del sector (A8-3); `null` si la regla no tiene sector. */
+  sector: { isLegacy: boolean } | null;
   employees: Array<{ employeeId: string }>;
   dates: Array<{ date: Date; isActive: boolean }>;
 }
@@ -243,6 +247,7 @@ export function loadRules(tx: Tx): Promise<RuleRow[]> {
     select: {
       id: true, name: true, kind: true, status: true, recurrenceType: true, fromDate: true, toDate: true, priority: true, multiplier: true,
       companyId: true, sectorId: true, costCenterId: true, positionId: true,
+      sector: { select: { isLegacy: true } },
       employees: { select: { employeeId: true } },
       dates: { select: { date: true, isActive: true } },
     },
@@ -251,33 +256,19 @@ export function loadRules(tx: Tx): Promise<RuleRow[]> {
 }
 
 /**
- * Legajos que HOY cumplen el alcance de la regla según sus valores VIGENTES
- * (columnas del legajo): todas las dimensiones configuradas con AND, NULL =
- * sin restricción, lista vacía = sin restricción por persona. Es un dato de
- * consulta para decidir R2: el motor resuelve cada fecha con la historia
- * temporal (D-5, §19). Para sectores del modelo anterior compara el sector
- * anterior del legajo. No incluye la excepción FERIADO + convocatoria (se
- * informa aparte), porque depende de la fecha.
+ * Referencias de reglas para el plan. La población (R2) se calcula con la
+ * semántica del MOTOR a la fecha `populationDate` (reorg/rulePopulation.ts) y
+ * sólo para las reglas que referencian registros `borrable` del inventario —
+ * las únicas que pueden necesitar R2. Las demás quedan con población vacía y
+ * `populationDate` sin definir: no se usan.
  */
-export async function currentPopulation(tx: Tx, rule: Pick<RuleRow, "companyId" | "sectorId" | "costCenterId" | "positionId" | "employees">): Promise<string[]> {
-  const rows = await tx.employee.findMany({
-    where: {
-      ...(rule.employees.length ? { id: { in: rule.employees.map((item) => item.employeeId) } } : {}),
-      ...(rule.companyId ? { companies: { some: { companyId: rule.companyId } } } : {}),
-      ...(rule.sectorId ? { sectorId: rule.sectorId } : {}),
-      ...(rule.costCenterId ? { costCenterId: rule.costCenterId } : {}),
-      ...(rule.positionId ? { positionId: rule.positionId } : {}),
-    },
-    select: { id: true },
-    orderBy: { id: "asc" },
-  });
-  return rows.map((row) => row.id);
-}
-
-export async function ruleReferences(tx: Tx, rules: RuleRow[]): Promise<RuleReference[]> {
+export async function ruleReferences(tx: Tx, rules: RuleRow[], options: { populationDate: DateKey; inventory: FrozenInventory }): Promise<RuleReference[]> {
   const result: RuleReference[] = [];
   for (const rule of rules) {
-    result.push({ ruleId: rule.id, name: rule.name, status: rule.status, companyId: rule.companyId, sectorId: rule.sectorId, positionId: rule.positionId, currentPopulation: await currentPopulation(tx, rule) });
+    const base: RuleReference = { ruleId: rule.id, name: rule.name, status: rule.status, companyId: rule.companyId, sectorId: rule.sectorId, positionId: rule.positionId, currentPopulation: [] };
+    if (!inventoryDimensions(base, options.inventory).length) { result.push(base); continue; }
+    const population = await rulePopulationAt(tx as unknown as PopulationReader, rule, options.populationDate);
+    result.push({ ...base, currentPopulation: population.employeeIds, population: { date: population.date, sectorSemantics: population.sectorSemantics, candidates: population.candidates, missing: population.missing, holidayConvocations: population.holidayConvocations } });
   }
   return result;
 }

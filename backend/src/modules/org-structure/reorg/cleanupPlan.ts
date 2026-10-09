@@ -227,8 +227,21 @@ export interface RuleReference {
   companyId: string | null;
   sectorId: string | null;
   positionId: string | null;
-  /** Legajos que HOY cumplen el alcance completo de la regla (todas sus dimensiones y lista). */
+  /**
+   * Legajos que cumplen el alcance completo de la regla (todas sus dimensiones
+   * y su lista) a la fecha de congelado, con la semántica del motor
+   * (reorg/rulePopulation.ts).
+   */
   currentPopulation: string[];
+  /** Detalle de la población calculada (sólo reglas que referencian el inventario). */
+  population?: {
+    date: string;
+    sectorSemantics: "NONE" | "LEGACY_SECTOR" | "WITHIN";
+    candidates: "EXPLICIT_LIST" | "ALL_EMPLOYEES";
+    /** Legajos sin historia suficiente para decidir: R2 bloquea, nunca se asume pertenencia. */
+    missing: Array<{ employeeId: string; dimensions: string[] }>;
+    holidayConvocations: "NOT_APPLICABLE" | "RESOLVED_SEPARATELY";
+  };
 }
 
 export type RuleDecision =
@@ -522,7 +535,10 @@ export function buildCleanupPlan(input: CleanupPlanInput): CleanupPlan {
         continue;
       }
       if (dimensions.includes("sectorId")) {
-        issues.push({ code: "R1_SECTOR_REQUIRES_SEMANTICS", blocking: true, ref: rule.ruleId, message: `${label}: reasignar la dimensión sector requiere la decisión S (D-4) implementada en el motor (A7); hoy un legajo no tendría sector con qué coincidir.` });
+        // D-4/A7 ya está implementada, pero la reasignación sigue sin ser neutra:
+        // la regla pasaría de LEGACY_SECTOR (sector anterior del legajo) a WITHIN
+        // (alcances del puesto) y reinterpretaría fechas pasadas (A8 §3.4).
+        issues.push({ code: "R1_SECTOR_REQUIRES_SEMANTICS", blocking: true, ref: rule.ruleId, message: `${label}: reasignar la dimensión sector a un sector del modelo nuevo cambia su semántica de "sector anterior del legajo" (LEGACY_SECTOR) a "ubicado dentro de" los alcances del puesto (WITHIN, A7) y reinterpretaría la historia (A8 §3.4). Usar R2 (lista con la población a la fecha) o R3.` });
       }
       for (const dimension of dimensions) {
         const target = decision.targets[dimension]!;
@@ -535,9 +551,17 @@ export function buildCleanupPlan(input: CleanupPlanInput): CleanupPlan {
       }
       ruleOperations.push({ ruleId: rule.ruleId, kind: "R1", set: Object.fromEntries(dimensions.map((dimension) => [dimension, decision.targets[dimension]!])) });
     } else if (decision.treatment === "R2") {
+      // A7: la población se decide con la historia; sin historia suficiente no se asume pertenencia.
+      if (rule.population?.missing.length) {
+        issues.push({ code: "R2_POPULATION_HISTORY_MISSING", blocking: true, ref: rule.ruleId, message: `${label}: al ${rule.population.date} falta historia para decidir si ${rule.population.missing.length} legajo(s) la cumplen (${rule.population.missing.slice(0, 10).map((entry) => `${entry.employeeId}: ${entry.dimensions.join("/")}`).join("; ")}). R2 no congela una lista sin esa evidencia.` });
+        continue;
+      }
       if (!rule.currentPopulation.length) {
         issues.push({ code: "R2_EMPTY_POPULATION", blocking: true, ref: rule.ruleId, message: `${label}: hoy no alcanza a ningún legajo. Convertirla a lista vacía y quitar la dimensión la ampliaría a todos: R2 no aplica.` });
         continue;
+      }
+      if (rule.population?.holidayConvocations === "RESOLVED_SEPARATELY") {
+        issues.push({ code: "R2_HOLIDAY_CONVOCATIONS_SEPARATE", blocking: false, ref: rule.ruleId, message: `${label}: la lista de R2 es la población POR ALCANCE; las convocatorias de feriado siguen resolviéndose aparte y R2 no las cambia.` });
       }
       ruleOperations.push({ ruleId: rule.ruleId, kind: "R2", employeeIds: [...rule.currentPopulation].sort(), clear: dimensions });
     } else {
