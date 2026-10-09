@@ -1468,6 +1468,8 @@ dependencias del sector; frontend: filtro "Sector anterior"; seed sin `sectorId`
 Nota: un `sectorId` dentro de un spread condicional (`...(x ? { sectorId } : {})`) **no lo detecta
 el compilador** y Prisma lo rechazaría en ejecución: se barrió textualmente además de compilar.
 
+**Concurrencia (2026-10-09):** la migración bloquea las seis tablas (`ACCESS EXCLUSIVE`) antes de la guarda; sin eso, una escritura de `sectorId` confirmada entre la guarda y el `DROP` se perdía en silencio (reproducido). Prueba opt-in `reorg/m2Migration.integration.test.ts` (`REORG_IT_M2_DATABASE_URL`, base `reorg_it_m2*` migrada hasta antes de M2), con control sin bloqueo.
+
 **Recuperación después de M2:**
 1. Antes de la recarga: `prisma/rollbacks/20261009150000_org_location_contract_m2.down.sql` (sin
    pérdida: recrea vacías las columnas que M2 sólo pudo retirar vacías, retira CHECKs/único y borra la

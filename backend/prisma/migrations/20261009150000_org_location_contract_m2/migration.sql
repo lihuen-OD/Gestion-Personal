@@ -14,6 +14,11 @@
 -- Guarda previa: aborta SIN cambios si algún dato no cumple. Reversión (sólo antes de la recarga):
 -- prisma/rollbacks/20261009150000_org_location_contract_m2.down.sql, sin pérdida porque las columnas
 -- retiradas estaban vacías; después, org-reorg-restore con el respaldo de la limpieza.
+-- Bloqueo ANTES de la guarda: sin él, una escritura concurrente confirmada entre la guarda y el
+-- DROP (p. ej. un Employee.sectorId) se perdería en silencio. Con él, la guarda espera a que termine
+-- y la ve; durante M2 nada escribe en estas tablas.
+LOCK TABLE "Employee", "User", "ClockDevice", "Sector", "Area", "Establishment" IN ACCESS EXCLUSIVE MODE;
+
 DO $$
 DECLARE
   problems text;
