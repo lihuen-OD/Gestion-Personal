@@ -1319,3 +1319,51 @@ desechables. M2 no está escrita. Sin seed, reconciliación ni recálculos.
 | 4b | Misma ventana en destinos archivados de `DoubleHourRule` | Revalidación en la transacción con `FOR SHARE` contra las FKs leídas allí; la FK preexistente sin cambio se conserva | `721679c` | **[U]** |
 
 `8bf1412` corrige tipos en las pruebas de `3b817e7` (vitest pasaba; `typecheck` no).
+
+#### 12.14.9 Ensayo A8 en modo C1 (2026-10-09): preparación sobre la copia, ensayo sobre su restauración local
+
+**D-1 = C1** (conservar empresas), indicado por el usuario el 2026-10-09. C2 no se ejecutó.
+
+**Destino.** Copia `org-location-reorg`: `backend/.env.reorg` → endpoint `ep-rough-river-aioy7xp9`
+(host registrado para la copia desde el 2026-10-08; distinto del de development). **D-0 no
+satisfecho:** faltan `NEON_API_KEY`, el ID del proyecto Neon (`--neon-project-id`) y el ID de la rama
+`org-location-reorg` (`--expected-branch-id`); no están en la configuración local ni en el entorno.
+Sin ellos los comandos de limpieza y restauración se niegan (no se salteó la compuerta), y tampoco se
+puede tomar la mitad "rama Neon" del respaldo doble de B0 (§7.1.3).
+
+**Sobre la copia en Neon — sólo lectura, nada escrito:**
+- `prisma migrate status`: pendiente exactamente `20261008150000_org_catalog_archive_classification`
+  (la aditiva prevista). **No se aplicó**: falta el respaldo doble exigido antes de escribir.
+- `pg_dump` (host directo, formato custom) `backups/a8-rehearsal-copy-pre-2026-10-09.dump`, SHA-256
+  `5a67d5ae1e04d1ff794958c1a0cff49a18a4dd56f9bbbff61800267c2fcc8251`, y manifiesto por fila
+  `backups/a8-rehearsal-copy-pre-2026-10-09.manifest.json` (69 tablas, 5342 filas).
+- **Restaurabilidad probada:** el dump restaurado en una base local coincide con el manifiesto de la
+  copia en las 69 tablas y 5342 filas, por ID y contenido (0 diferencias). Hallazgo y corrección
+  (`a31074d`): el hash del manifiesto dependía del `TimeZone` de la sesión.
+
+**Ensayo sobre la restauración local del dump [I] (datos reales de la copia; no es el ensayo en Neon):**
+migración `20261008150000` aplicada sólo en local; `runCleanup`/`runRestore` (las funciones de los
+comandos operativos) mediante un arnés limitado a `localhost`; guardas F1 con el comando real.
+
+| Paso | Resultado |
+|---|---|
+| Inventario C1 congelado + F0 | F0 verde (0 formas mezcladas, G1 0). 6 empresas `conservada`; `borrable`: 11 UN, 18 establecimientos, 43 áreas, 42 sectores, 3 puestos; ampliación de 1 ronda: 2 puestos y 2 sectores `nueva`. G8 verde. 0 raíces históricas → `retained` vacío (nada borrable referenciado por historia) |
+| Bloqueos del plan | Sólo `UNCLASSIFIED_OR_NEW_DEPENDENCY`: alcance `3299daab…` de `PUE-006` (2 alcances, 1 legajo) → UN legada `UN-005 Agricultura` (QA de A5, HT-5). Ninguna regla requiere decisión en C1 ("Domingos" y "QA-D5 x1,5 Agricultura" no tocan registros borrables) |
+| `decisions.json` | `backups/a8-rehearsal-c1-decisions.json`: 0 reglas; retiro de esa fila — familia y caso enumerados como borrado autorizado en §12.4 (C1: 1 `businessUnitId`). No se eligió `retain` (sería una decisión adicional y no hace falta) |
+| Dry-run | `DRY_RUN_OK`: 141 filas a retirar (117 de catálogo, 4 `CostCenterArea`, 1 `CostCenterBusinessUnit`, 2 `CostCenterEstablishment`, 2 `CostCenterSector`, 14 `PositionSalaryCategory`, 1 `PositionOrgScope`), 67 vaciados, 184 filas de auditoría; motor de horas especiales: 0 cambios (población a 2026-10-09); F1 (G4, G3, formas, G7, G5, G8) verde; V1 0 violaciones |
+| Aplicación con respaldo | `APPLIED`, mismos resultados; respaldo formato 2 con las 141 filas una vez cada una |
+| Guardas F1 (comando) | G2/F1, G3, G4, G5, G7, G8 verdes |
+| Conservación (antes vs después de aplicar) | Idénticas por ID y contenido: `TimeEntry` 94, `TimeSegment` 56, `HourConceptBreakdown` 26, `MonthlyTimeClosure` 8, `Novelty` 14, `StorageFile` 165, `LaborMovement` 39, `EmployeeFieldHistory` 25, `EmployeeBlockHistory` 20, `SpecialHourRuleApplication` 22, `AttendancePunch` 80, `WorkShift` 47, `EmployeeAssignment` 6, `DoubleHourRule` 3, las 7 tablas de historia, `Company` 6, `EmployeeCompany` 40. `Employee` 39: hash personal igual; sólo `positionId`/`sectorId` vaciados en 33 legajos (autorizado) |
+| Restauración | `RESTORED`: 141 filas reinsertadas, 67 vaciados repuestos; V1 interna 0 |
+| Comparación completa | Manifiesto previo a la limpieza vs posterior a la restauración: 69 tablas, 0 diferencias por ID y contenido; únicas filas nuevas: 185 de `AuditLog` (184 limpieza + 1 restauración), que nunca se borran |
+
+Evidencia (fuera del repo, con SHA-256): `backups/a8-rehearsal-local-*` y
+`backups/a8-rehearsal-local-2026-10-09.sha256`. La base local se descartó al terminar.
+
+**Para el ensayo en la copia Neon faltan sólo:** (1) los tres datos de D-0; (2) el respaldo de rama
+Neon (con D-0, o creado por el usuario en la consola) para completar B0 — el `pg_dump` ya está tomado
+y probado. Con eso, en orden: aplicar `20261008150000` en la copia → `org-reorg-inventory` (congelado
+C1 real) → `org-reorg-guards --phase=F0` → `org-reorg-cleanup` dry-run con
+`a8-rehearsal-c1-decisions.json` (re-verificar que el bloqueo siga siendo sólo esa fila) →
+`--apply --backup` → `org-reorg-guards --phase=F1` → `org-reorg-restore` → manifiesto y comparación.
+Ninguna decisión de producto adicional es necesaria para C1.
