@@ -20,8 +20,11 @@
 //   inventario bloquea SIN reconocimiento ni flag: la única salida es ampliar
 //   el inventario y re-congelar (§12.2).
 // - La historia temporal de D-5 (§19) nunca se borra ni se vacía para liberar
-//   un registro: si referencia algo del inventario, la limpieza se bloquea
-//   hasta retener ese registro o resolverlo con una decisión explícita.
+//   un registro: lo que referencia se retiene y se archiva (o, en C2 con el
+//   gate de §12.7 apagado, la limpieza aborta).
+// - Clases del congelado (§12.2): sólo `borrable` se borra o archiva;
+//   `conservada`/`nueva` están para que la historia quede dentro del
+//   inventario y nunca exigen tratamiento.
 
 export type TargetTable = "Company" | "BusinessUnit" | "Establishment" | "Area" | "Sector" | "Position";
 export type CompanyMode = "C1" | "C2";
@@ -64,9 +67,12 @@ export interface HistoryReference {
 
 /**
  * Resolución de una fila de CLASE 4 (fila del modelo nuevo que apunta a un ID
- * del inventario, A8 §3.2): `retain` promueve el destino a raíz (queda
- * archivado), `retire` retira la fila nueva (borrado autorizado de fila, §12.4).
- * Sin resolución, la referencia sigue bloqueando con `UNCLASSIFIED_OR_NEW_DEPENDENCY`.
+ * del inventario, A8 §3.2), por destino: `retire` retira la fila nueva
+ * (borrado autorizado, sólo en `CLASS_FOUR_RETIRABLE_TABLES`, §12.4) y es lo
+ * único que resuelve la referencia; `retain` además promueve el destino a raíz
+ * (queda archivado en vez de borrado). Retener sin retirar no resuelve: la fila
+ * seguiría apuntando a un archivado (G5). Sin retiro, la referencia sigue
+ * bloqueando con `UNCLASSIFIED_OR_NEW_DEPENDENCY`.
  */
 export interface ClassFourResolution {
   table: string;
@@ -242,13 +248,27 @@ export type RuleOperation =
   | { ruleId: string; kind: "R2"; employeeIds: string[]; clear: RuleDimension[] }
   | { ruleId: string; kind: "INACTIVATE" };
 
-function inventoryIdSet(inventory: FrozenInventory) {
-  const sets = {} as Record<TargetTable, Set<string>>;
-  for (const table of DELETE_ORDER) sets[table] = new Set(inventory.records[table].map((record) => record.id));
-  return sets;
+/** Clase efectiva de un registro del congelado: sin clase explícita es `borrable`. */
+export function classOf(record: InventoryRecord): InventoryClass {
+  return record.class ?? "borrable";
 }
 
-/** Dimensiones de la regla que apuntan a un ID del inventario. */
+/**
+ * IDs `borrable` por tabla: los únicos candidatos a borrar o archivar. Los
+ * registros `conservada`/`nueva` están en el congelado sólo para que la
+ * historia que los referencia quede dentro del inventario (§12.2); nunca se
+ * borran, archivan ni exigen tratamiento.
+ */
+export function borrableIds(inventory: Pick<FrozenInventory, "records">): Record<TargetTable, string[]> {
+  return Object.fromEntries(DELETE_ORDER.map((table) => [table, inventory.records[table].filter((record) => classOf(record) === "borrable").map((record) => record.id)])) as Record<TargetTable, string[]>;
+}
+
+function inventoryIdSet(inventory: FrozenInventory) {
+  const ids = borrableIds(inventory);
+  return Object.fromEntries(DELETE_ORDER.map((table) => [table, new Set(ids[table])])) as Record<TargetTable, Set<string>>;
+}
+
+/** Dimensiones de la regla que apuntan a un registro `borrable` del inventario. */
 export function inventoryDimensions(rule: RuleReference, inventory: FrozenInventory): RuleDimension[] {
   const ids = inventoryIdSet(inventory);
   return (Object.keys(DIMENSION_TARGET) as RuleDimension[]).filter((dimension) => {
@@ -270,7 +290,12 @@ const PARENT_TABLES: Record<TargetTable, TargetTable[]> = {
   Company: [],
 };
 
-/** Retiene los IDs pedidos y todos sus ancestros del modelo anterior (no se puede borrar el padre de algo retenido). */
+/**
+ * Retiene los IDs pedidos y todos sus ancestros `borrable` del modelo anterior
+ * (no se puede borrar el padre de algo retenido). Un ancestro `conservada`
+ * (p. ej. la empresa en C1) o `nueva` sigue activo: no se retiene ni se
+ * archiva, y la fila archivada lo referencia tal cual.
+ */
 export function retainedClosure(inventory: FrozenInventory, roots: Array<{ table: TargetTable; id: string }>): Map<string, { table: TargetTable; id: string }> {
   const byId = {} as Record<TargetTable, Map<string, InventoryRecord>>;
   for (const table of DELETE_ORDER) byId[table] = new Map(inventory.records[table].map((record) => [record.id, record]));
@@ -278,7 +303,7 @@ export function retainedClosure(inventory: FrozenInventory, roots: Array<{ table
   const visit = (table: TargetTable, id: string) => {
     const key = `${table}:${id}`;
     const record = byId[table].get(id);
-    if (!record || retained.has(key)) return;
+    if (!record || classOf(record) !== "borrable" || retained.has(key)) return;
     retained.set(key, { table, id });
     for (const parentTable of PARENT_TABLES[table]) {
       const parentId = record.parents[parentTable];
@@ -289,10 +314,26 @@ export function retainedClosure(inventory: FrozenInventory, roots: Array<{ table
   return retained;
 }
 
+
+/**
+ * Familias de filas clase 4 cuyo retiro es borrado AUTORIZADO (A8 §12.4: los
+ * alcances actuales de un puesto hacia un registro retirado). Cualquier otra
+ * fila nueva que dependa del inventario (ubicaciones, dispositivos, nodos
+ * nuevos) no se borra: bloquea hasta resolverse en los datos.
+ */
+export const CLASS_FOUR_RETIRABLE_TABLES: readonly string[] = ["PositionOrgScope"];
+
+/** Referencia de una regla R3 aprobada que sobrevive hacia un destino retenido (única admisión no histórica de G5). */
+export interface R3Reference { ruleId: string; column: RuleDimension; targetTable: TargetTable; targetId: string }
+
 export interface CleanupPlan {
   companyMode: CompanyMode;
   deletable: Record<TargetTable, string[]>;
   retained: Array<{ table: TargetTable; id: string }>;
+  /** Origen de las raíces de retención (§12.2 orden 3), para el reporte por clases. */
+  roots: { history: Array<{ table: TargetTable; id: string }>; r3: Array<{ table: TargetTable; id: string }>; classFour: Array<{ table: TargetTable; id: string }> };
+  /** Referencias de `DoubleHourRule` que G5 admite hacia archivados: sólo R3 aprobadas. */
+  r3References: R3Reference[];
   ruleOperations: RuleOperation[];
   nullify: Array<{ table: string; column: string; target: TargetTable }>;
   deleteLinks: Array<{ table: string; column: string; target: TargetTable }>;
@@ -311,54 +352,54 @@ export interface CleanupPlanInput {
   r1Targets?: Record<string, R1TargetState>;
   /** Historia temporal (§12.2); si no se pasa, se toma `inventory.history`. */
   history?: HistoryReference[];
-  /** Resoluciones de clase 4 (retener destino / retirar fila, §12.4). */
+  /** Resoluciones de clase 4 (retirar fila y, opcionalmente, retener destino; §12.4). */
   classFour?: ClassFourResolution[];
   /**
    * A8 §12.7: capacidad de archivar en C2 las empresas referenciadas por
    * historia. `false` (default) = comportamiento actual: C2 aborta con
    * `HISTORY_REFERENCES_INVENTORY` (HT-4). Sólo se activa cuando las
-   * condiciones de §12.7 están implementadas y D-1 lo decide en C2.
+   * condiciones de §12.7 están implementadas y verificadas sobre la copia y
+   * D-1 lo decide en C2; ningún script la expone hoy.
    */
   archiveHistoryCompanies?: boolean;
 }
+
+const isApproved = (decision: RuleDecision) => Boolean(decision.approvedBy?.trim());
 
 export function buildCleanupPlan(input: CleanupPlanInput): CleanupPlan {
   const { inventory, references, rules, decisions } = input;
   const history = input.history ?? inventory.history ?? [];
   const issues: Issue[] = [];
   const ruleOperations: RuleOperation[] = [];
-  const retainRoots: Array<{ table: TargetTable; id: string }> = [];
+  const r3Roots: Array<{ table: TargetTable; id: string }> = [];
+  const classFourRoots: Array<{ table: TargetTable; id: string }> = [];
+  const r3References: R3Reference[] = [];
   const retireRows: CleanupPlan["retireRows"] = [];
   const decisionOf = new Map(decisions.map((decision) => [decision.ruleId, decision]));
 
-  if (inventory.companyMode === "C1" && inventory.records.Company.length) {
-    issues.push({ code: "COMPANIES_IN_C1", blocking: true, message: "Modo C1 (conservar empresas) con empresas en el inventario: el inventario no corresponde al modo." });
+  if (inventory.companyMode === "C1" && inventory.records.Company.some((record) => classOf(record) === "borrable")) {
+    issues.push({ code: "COMPANIES_IN_C1", blocking: true, message: "Modo C1 (conservar empresas) con empresas borrables en el inventario: el inventario no corresponde al modo." });
   }
 
   const recordByTable = {} as Record<TargetTable, Map<string, InventoryRecord>>;
   for (const table of DELETE_ORDER) recordByTable[table] = new Map(inventory.records[table].map((record) => [record.id, record]));
   const isBorrable = (table: TargetTable, id: string) => {
     const record = recordByTable[table].get(id);
-    return Boolean(record) && (record!.class ?? "borrable") === "borrable";
+    return Boolean(record) && classOf(record!) === "borrable";
   };
 
   // §12.2 orden 2-3: raíces desde la historia. Un destino del inventario se
   // promueve (sólo si es borrable); conservada/nueva nunca se archiva; fuera
   // del inventario bloquea sin reconocimiento ni flag (única salida: ampliar).
   const historyRoots: Array<{ table: TargetTable; id: string }> = [];
-  const archiveCompaniesByHistory =
-    inventory.companyMode === "C1" || Boolean(input.archiveHistoryCompanies);
+  const archiveCompaniesByHistory = inventory.companyMode === "C1" || Boolean(input.archiveHistoryCompanies);
   for (const entry of history) {
-    const inside = new Set(entry.insideInventory);
     const unknown = new Set<string>(entry.outsideInventory);
-    for (const id of new Set(entry.referencedIds)) {
-      if (!recordByTable[entry.targetTable].get(id)) { unknown.add(id); continue; }
-    }
-    // insideInventory que el congelado ya no contiene: inconsistencia → bloquea.
-    for (const id of inside) {
+    // Defensa: no fiarse sólo de la partición del reporte.
+    for (const id of new Set([...entry.referencedIds, ...entry.insideInventory])) {
       if (!recordByTable[entry.targetTable].get(id)) unknown.add(id);
     }
-    for (const id of inside) {
+    for (const id of new Set(entry.insideInventory)) {
       if (!isBorrable(entry.targetTable, id)) continue; // conservada/nueva: sin archivar
       if (entry.targetTable === "Company" && !archiveCompaniesByHistory) continue; // §12.7 gate off: C2 aborta
       historyRoots.push({ table: entry.targetTable, id });
@@ -373,34 +414,47 @@ export function buildCleanupPlan(input: CleanupPlanInput): CleanupPlan {
     }
   }
 
-  // §12.2 orden 3: retenciones de clase 4 (destino retenido) y retiro de la
-  // fila nueva (borrado autorizado, §12.4). Sin resolución, la referencia
-  // sigue bloqueando en la clasificación de abajo.
-  const classFourCovered = new Map<string, Set<string>>();
-  for (const resolution of input.classFour ?? []) {
-    const key = `${resolution.table}.${resolution.column}`;
-    const covered = classFourCovered.get(`${key}:${resolution.target}`) ?? new Set<string>();
-    for (const id of [...new Set(resolution.retain)]) {
-      covered.add(id);
-      const record = recordByTable[resolution.target].get(id);
-      if (!record) {
-        issues.push({ code: "CLASS_FOUR_TARGET_MISSING", blocking: true, ref: key, message: `${key}: el destino retenido ${id} no está en el inventario congelado.` });
-      } else if (isBorrable(resolution.target, id)) {
-        retainRoots.push({ table: resolution.target, id });
-      }
+  // §12.7: con el gate apagado en C2 tampoco se archiva una empresa a la que
+  // se llega por el cierre de ancestros de una raíz histórica (p. ej. la
+  // empresa de una UN retenida por historia): sería archivar empresas por
+  // historia por la puerta de atrás.
+  if (inventory.companyMode === "C2" && !input.archiveHistoryCompanies) {
+    const viaHistory = [...retainedClosure(inventory, historyRoots).values()].filter((entry) => entry.table === "Company").map((entry) => entry.id).sort();
+    if (viaHistory.length) {
+      issues.push({ code: "HISTORY_RETAINS_COMPANY_C2", blocking: true, message: `En C2, la historia retiene (por ancestros) la(s) empresa(s) ${viaHistory.join(", ")}. Archivar empresas por historia es la capacidad condicionada de A8 §12.7 (D-1): hasta activarla, C2 aborta.` });
     }
-    const retire = [...new Set(resolution.retire)].filter((id) => recordByTable[resolution.target].has(id));
-    for (const id of retire) covered.add(id);
-    for (const id of [...new Set(resolution.retire)]) {
-      if (!recordByTable[resolution.target].has(id)) {
-        issues.push({ code: "CLASS_FOUR_TARGET_MISSING", blocking: true, ref: key, message: `${key}: la fila clase 4 apunta a ${id}, que no está en el inventario congelado.` });
-      }
-    }
-    if (retire.length) retireRows.push({ table: resolution.table, column: resolution.column, target: resolution.target, ids: retire });
-    classFourCovered.set(`${key}:${resolution.target}`, covered);
   }
 
-  // §12.2 orden 3: destinos R3.
+  // §12.2 orden 3 + §12.4: filas clase 4. Sólo las familias autorizadas se
+  // retiran (borrado de fila); retener el destino es opcional y adicional —
+  // por sí solo no resuelve nada, porque la fila seguiría apuntando a un
+  // archivado (G5). Sin retiro, la referencia sigue bloqueando abajo.
+  const classFourRetired = new Map<string, Set<string>>();
+  for (const resolution of input.classFour ?? []) {
+    const key = `${resolution.table}.${resolution.column}`;
+    if (!CLASS_FOUR_RETIRABLE_TABLES.includes(resolution.table) && resolution.retire.length) {
+      issues.push({ code: "CLASS_FOUR_RETIRE_NOT_AUTHORIZED", blocking: true, ref: key, message: `${key}: retirar filas de ${resolution.table} no es un borrado autorizado (A8 §12.4: sólo ${CLASS_FOUR_RETIRABLE_TABLES.join(", ")}). Resolver la dependencia en los datos.` });
+      continue;
+    }
+    for (const id of [...new Set(resolution.retain)]) {
+      const record = recordByTable[resolution.target].get(id);
+      if (!record) issues.push({ code: "CLASS_FOUR_TARGET_MISSING", blocking: true, ref: key, message: `${key}: el destino retenido ${id} no está en el inventario congelado.` });
+      else if (classOf(record) === "borrable") classFourRoots.push({ table: resolution.target, id });
+    }
+    const retire: string[] = [];
+    for (const id of [...new Set(resolution.retire)]) {
+      if (recordByTable[resolution.target].has(id)) retire.push(id);
+      else issues.push({ code: "CLASS_FOUR_TARGET_MISSING", blocking: true, ref: key, message: `${key}: la fila clase 4 apunta a ${id}, que no está en el inventario congelado.` });
+    }
+    if (retire.length) {
+      retireRows.push({ table: resolution.table, column: resolution.column, target: resolution.target, ids: retire.sort() });
+      const retired = classFourRetired.get(`${key}:${resolution.target}`) ?? new Set<string>();
+      for (const id of retire) retired.add(id);
+      classFourRetired.set(`${key}:${resolution.target}`, retired);
+    }
+  }
+
+  // §12.2 orden 3: destinos R3 (sólo aprobados) y tratamiento de reglas.
   for (const rule of rules) {
     const dimensions = inventoryDimensions(rule, inventory);
     if (!dimensions.length) continue;
@@ -436,18 +490,28 @@ export function buildCleanupPlan(input: CleanupPlanInput): CleanupPlan {
       }
       ruleOperations.push({ ruleId: rule.ruleId, kind: "R2", employeeIds: [...rule.currentPopulation].sort(), clear: dimensions });
     } else {
-      for (const dimension of dimensions) retainRoots.push({ table: DIMENSION_TARGET[dimension], id: rule[dimension]! });
-      issues.push({ code: "R3_RETAINED", blocking: false, ref: rule.ruleId, message: `${label}: se retiene su destino del modelo anterior (y sus ancestros). M2 queda bloqueada hasta resolverla con R1 o R2.` });
+      // §12.4: la referencia de una regla hacia un archivado sólo sobrevive con
+      // R3 APROBADA (approvedBy en decisions.json); es la única admisión de G5.
+      if (!isApproved(decision)) {
+        issues.push({ code: "R3_NOT_APPROVED", blocking: true, ref: rule.ruleId, message: `${label}: R3 sin aprobación (approvedBy) en decisions.json. Sólo una R3 aprobada conserva referencias hacia registros archivados.` });
+        continue;
+      }
+      for (const dimension of dimensions) {
+        const targetTable = DIMENSION_TARGET[dimension];
+        r3Roots.push({ table: targetTable, id: rule[dimension]! });
+        r3References.push({ ruleId: rule.ruleId, column: dimension, targetTable, targetId: rule[dimension]! });
+      }
+      issues.push({ code: "R3_RETAINED", blocking: false, ref: rule.ruleId, message: `${label}: R3 aprobada — se retiene su destino del modelo anterior (y sus ancestros), que queda archivado; la referencia de la regla es la única admitida por G5 (A8 §12.4).` });
     }
     if (decision.inactivate) ruleOperations.push({ ruleId: rule.ruleId, kind: "INACTIVATE" });
   }
 
   // §12.2 orden 4-5: retained antes que deletable.
-  const retained = retainedClosure(inventory, [...historyRoots, ...retainRoots]);
+  const retained = retainedClosure(inventory, [...historyRoots, ...r3Roots, ...classFourRoots]);
   const deletable = {} as Record<TargetTable, string[]>;
   for (const table of DELETE_ORDER) {
     deletable[table] = inventory.records[table]
-      .filter((record) => (record.class ?? "borrable") === "borrable")
+      .filter((record) => classOf(record) === "borrable")
       .map((record) => record.id)
       .filter((id) => !retained.has(`${table}:${id}`));
   }
@@ -466,12 +530,12 @@ export function buildCleanupPlan(input: CleanupPlanInput): CleanupPlan {
   }
 
   // §12.2 orden 7 + clasificación de referencias (la historia sólo bloquea en
-  // C2 con el gate de §12.7 apagado; clase 4 sin resolver bloquea con IDs).
+  // C2 con el gate de §12.7 apagado; clase 4 sin retirar bloquea con IDs).
   for (const reference of references) {
     const historyBlocking = reference.target === "Company" && inventory.companyMode === "C2" && !input.archiveHistoryCompanies;
-    const covered = classFourCovered.get(`${reference.table}.${reference.column}:${reference.target}`);
+    const retired = classFourRetired.get(`${reference.table}.${reference.column}:${reference.target}`);
     const unresolvedIds = treatmentOf(reference.table, reference.column) === "BLOCK" && reference.targetIds
-      ? reference.targetIds.filter((id) => isBorrable(reference.target as TargetTable, id) && !covered?.has(id))
+      ? reference.targetIds.filter((id) => isBorrable(reference.target, id) && !retired?.has(id))
       : undefined;
     const { treatment, issue } = classifyReference(reference, { historyBlocking, unresolvedIds });
     if (issue && treatment !== "RULE_DECISION") issues.push(issue);
@@ -481,6 +545,8 @@ export function buildCleanupPlan(input: CleanupPlanInput): CleanupPlan {
     companyMode: inventory.companyMode,
     deletable,
     retained: [...retained.values()],
+    roots: { history: historyRoots, r3: r3Roots, classFour: classFourRoots },
+    r3References,
     ruleOperations,
     nullify: references.filter((reference) => treatmentOf(reference.table, reference.column) === "NULLIFY").map((reference) => ({ table: reference.table, column: reference.column, target: reference.target })),
     deleteLinks: references.filter((reference) => treatmentOf(reference.table, reference.column) === "DELETE_LINKS").map((reference) => ({ table: reference.table, column: reference.column, target: reference.target })),

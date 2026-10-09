@@ -27,6 +27,21 @@ export const WATCHED_COLUMNS: Readonly<Record<string, readonly string[]>> = {
   AuditLog: ["entity", "entityId", "createdAt"],
 };
 
+/**
+ * Tablas cuyas filas la limpieza puede borrar (V1, A8 §12.4 y §12.9.4): las
+ * seis de DELETE_ORDER, las familias de configuración de borrado autorizado
+ * (`CostCenter*`, `EmployeeCompany`, `PositionSalaryCategory`, alcances
+ * actuales `PositionOrgScope`) y la lista de una regla convertida por R2
+ * (`DoubleHourRuleEmployee`). Un borrado esperado en cualquier otra tabla —en
+ * particular las siete de historia o `AuditLog`— es una violación aunque el
+ * script lo haya pedido.
+ */
+export const AUTHORIZED_DELETE_TABLES: readonly string[] = [
+  "Company", "BusinessUnit", "Establishment", "Area", "Sector", "Position",
+  "CostCenterCompany", "CostCenterBusinessUnit", "CostCenterEstablishment", "CostCenterArea", "CostCenterSector",
+  "EmployeeCompany", "PositionSalaryCategory", "PositionOrgScope", "DoubleHourRuleEmployee",
+];
+
 /** Columnas que una escritura vía Prisma actualiza solas: se excluyen del hash estable de las tablas vigiladas. */
 export const VOLATILE_COLUMNS: readonly string[] = ["updatedAt"];
 
@@ -65,6 +80,12 @@ export interface V1Expectation {
 
 export function verifyV1(pre: RowManifest, post: RowManifest, expected: V1Expectation): Violation[] {
   const violations: Violation[] = [];
+  for (const [table, keys] of Object.entries(expected.deleted)) {
+    if (keys.length && !AUTHORIZED_DELETE_TABLES.includes(table)) violations.push({ table, code: "DELETE_NOT_AUTHORIZED", message: `Borrado de ${keys.length} fila(s) en una tabla fuera de las familias autorizadas (A8 §12.4).` });
+  }
+  for (const [table, keys] of Object.entries(expected.archived ?? {})) {
+    if (keys.length && !(WATCHED_COLUMNS[table] ?? []).includes("archivedAt")) violations.push({ table, code: "ARCHIVE_NOT_AUTHORIZED", message: "Archivo esperado en una tabla sin columna de archivo." });
+  }
   for (const [table, before] of Object.entries(pre.tables)) {
     const after = post.tables[table];
     if (!after) { violations.push({ table, code: "TABLE_MISSING", message: "La tabla desapareció." }); continue; }

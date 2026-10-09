@@ -137,3 +137,30 @@ describe("verifyV1 — whitelist de archivo A8 §12.9.4", () => {
     expect(violations).toContainEqual(expect.objectContaining({ table: "Sector", key: "sec-keep", code: "NOT_ARCHIVED" }));
   });
 });
+
+describe("verifyV1 — sólo familias de borrado autorizado (A8 §12.4, F1.4)", () => {
+  it("un borrado esperado en una tabla de historia (o cualquier otra fuera de la lista) es una violación aunque se haya pedido", () => {
+    const historyPre = manifest({ EmployeeLegacySectorPeriod: { key: ["id"], columns: [], rows: { h1: { stable: "h" } } } });
+    const post = clone(historyPre);
+    delete post.tables.EmployeeLegacySectorPeriod!.rows.h1;
+
+    const violations = verifyV1(historyPre, post, { ...empty, deleted: { EmployeeLegacySectorPeriod: ["h1"] } });
+    expect(violations).toContainEqual(expect.objectContaining({ table: "EmployeeLegacySectorPeriod", code: "DELETE_NOT_AUTHORIZED" }));
+  });
+
+  it("acepta los borrados de las familias autorizadas por tabla e ID", () => {
+    const linksPre = manifest({
+      CostCenterSector: { key: ["costCenterId", "sectorId"], columns: [], rows: { "cc-1|sec-1": { stable: "l" } } },
+      PositionOrgScope: { key: ["id"], columns: [], rows: { "scope-1": { stable: "s" } } },
+    });
+    const post = clone(linksPre);
+    delete post.tables.CostCenterSector!.rows["cc-1|sec-1"];
+    delete post.tables.PositionOrgScope!.rows["scope-1"];
+
+    expect(verifyV1(linksPre, post, { ...empty, deleted: { CostCenterSector: ["cc-1|sec-1"], PositionOrgScope: ["scope-1"] } })).toEqual([]);
+  });
+
+  it("archivar en una tabla sin columna de archivo es una violación", () => {
+    expect(verifyV1(pre, clone(pre), { ...empty, archived: { TimeEntry: ["t1"] } })).toContainEqual(expect.objectContaining({ table: "TimeEntry", code: "ARCHIVE_NOT_AUTHORIZED" }));
+  });
+});
