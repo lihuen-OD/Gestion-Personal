@@ -136,6 +136,18 @@ describe.skipIf(!url)("A8 — captura, retiro y restauración contra PostgreSQL 
     }
   }, 60_000);
 
+  it("el manifiesto por fila no depende del TimeZone de la sesión y repone la zona previa", async () => {
+    const at = (zone: string) => prisma.$transaction(async (tx) => {
+      await tx.$executeRawUnsafe(`SET LOCAL TIME ZONE '${zone}'`);
+      const manifest = await captureRowManifest(tx as Tx, "localhost");
+      const [row] = await tx.$queryRawUnsafe<Array<{ timezone: string }>>("SELECT current_setting('TimeZone') AS timezone");
+      return { manifest, timezone: row!.timezone };
+    });
+    const [utc, cordoba] = [await at("UTC"), await at("America/Argentina/Cordoba")];
+    expect(cordoba.timezone).toBe("America/Argentina/Cordoba");
+    expect(verifyV1(utc.manifest, cordoba.manifest, { deleted: {}, nullified: {}, ruleChanges: {}, newRows: {}, newAuditRows: 0 })).toEqual([]);
+  }, 60_000);
+
   it("hallazgo 3: población de R2 con el cargador REAL de historia del motor (WITHIN y LEGACY_SECTOR, faltantes informados)", async () => {
     const base = { id: "tmp", name: "tmp", kind: "ESPECIAL", companyId: null, costCenterId: null, positionId: null, employees: [] };
     const classification = async (id: string) => prisma.sector.findUniqueOrThrow({ where: { id }, select: { isLegacy: true } });

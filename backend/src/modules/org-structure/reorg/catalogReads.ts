@@ -279,6 +279,22 @@ export async function ruleReferences(tx: Tx, rules: RuleRow[], options: { popula
 
 /** Manifiesto id → hash por fila de todas las tablas, con columnas vigiladas en claro. Sólo lectura. */
 export async function captureRowManifest(tx: Tx, host: string): Promise<RowManifest> {
+  // `ROW(...)::text` escribe los TIMESTAMPTZ con la zona de la SESIÓN: dos
+  // capturas del mismo dato con distinto TimeZone darían hashes distintos. Se
+  // fija UTC sólo durante la captura (SET LOCAL, dentro de la transacción del
+  // llamador) y se repone la zona previa al terminar, para no alterar nada que
+  // la misma transacción haga después.
+  const [current] = await tx.$queryRawUnsafe<Array<{ timezone: string }>>("SELECT current_setting('TimeZone') AS timezone");
+  const timezone = current!.timezone;
+  await tx.$queryRawUnsafe("SELECT set_config('TimeZone', 'UTC', true)");
+  try {
+    return await captureRowManifestUtc(tx, host);
+  } finally {
+    await tx.$queryRawUnsafe("SELECT set_config('TimeZone', $1, true)", timezone);
+  }
+}
+
+async function captureRowManifestUtc(tx: Tx, host: string): Promise<RowManifest> {
   const tables = await tx.$queryRawUnsafe<Array<{ table_name: string }>>(
     "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE' ORDER BY table_name",
   );
