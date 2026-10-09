@@ -1,5 +1,5 @@
 import { Prisma, type DoubleHourRuleKind } from "@prisma/client";
-import { prisma } from "../../shared/prisma/client";
+import { prisma, type PrismaTransactionClient } from "../../shared/prisma/client";
 import { AppError } from "../../shared/errors/AppError";
 import { lockClosurePeriods } from "../../shared/monthlyClosure/closurePeriodGuard";
 import { employeeAccessWhere } from "../employees/employeeAccess";
@@ -148,25 +148,42 @@ async function assertRuleSectorSupported(sectorId: string | null | undefined, cu
 
 // A8 §12.4 (AT-4): alta rechaza cualquier destino archivado; edición sólo
 // conserva SIN CAMBIO una FK que la regla ya apuntara a un registro hoy
-// archivado — toda asignación nueva hacia un archivado se rechaza.
+// archivado — toda asignación nueva hacia un archivado se rechaza. Con
+// `lock` (dentro de la transacción del guardado) es la comprobación
+// AUTORITATIVA: bloquea los destinos nuevos (FOR SHARE) antes de leer su
+// archivo, así el UPDATE de archivo de la limpieza no se cuela entre la
+// comprobación y la escritura; `current` son las FKs leídas en esa misma
+// transacción. Sin `lock` es el rechazo temprano.
+type RuleTargetKey = "companyId" | "sectorId" | "positionId";
+const RULE_TARGETS: Record<RuleTargetKey, { table: "Company" | "Sector" | "Position"; label: string }> = {
+  companyId: { table: "Company", label: "empresa" },
+  sectorId: { table: "Sector", label: "sector" },
+  positionId: { table: "Position", label: "puesto" },
+};
+type RuleTargetReader = Pick<PrismaTransactionClient, "company" | "sector" | "position" | "$queryRawUnsafe">;
+
 async function assertRuleDestinationsNotArchived(
+  db: RuleTargetReader,
   input: { companyId?: string | null; sectorId?: string | null; positionId?: string | null },
   current?: { companyId?: string | null; sectorId?: string | null; positionId?: string | null } | null,
+  options: { lock?: boolean } = {},
 ) {
-  const keys = ["companyId", "sectorId", "positionId"] as const;
-  const labels: Record<(typeof keys)[number], string> = { companyId: "empresa", sectorId: "sector", positionId: "puesto" };
+  const keys = Object.keys(RULE_TARGETS) as RuleTargetKey[];
   const changed = keys.filter((key) => input[key] !== undefined && (input[key] ?? null) !== (current?.[key] ?? null) && Boolean(input[key]));
   if (!changed.length) return;
-  const idsOf = (key: (typeof keys)[number]) => (changed.includes(key) ? [input[key]!] : []);
+  if (options.lock) {
+    for (const key of changed) await db.$queryRawUnsafe(`SELECT "id" FROM "${RULE_TARGETS[key].table}" WHERE "id" = $1 FOR SHARE`, input[key]);
+  }
+  const idsOf = (key: RuleTargetKey) => (changed.includes(key) ? [input[key]!] : []);
   const [companies, sectors, positions] = await Promise.all([
-    idsOf("companyId").length ? prisma.company.findMany({ where: { id: { in: idsOf("companyId") }, archivedAt: { not: null } }, select: { name: true } }) : Promise.resolve([]),
-    idsOf("sectorId").length ? prisma.sector.findMany({ where: { id: { in: idsOf("sectorId") }, archivedAt: { not: null } }, select: { name: true } }) : Promise.resolve([]),
-    idsOf("positionId").length ? prisma.position.findMany({ where: { id: { in: idsOf("positionId") }, archivedAt: { not: null } }, select: { name: true } }) : Promise.resolve([]),
+    idsOf("companyId").length ? db.company.findMany({ where: { id: { in: idsOf("companyId") }, archivedAt: { not: null } }, select: { name: true } }) : Promise.resolve([]),
+    idsOf("sectorId").length ? db.sector.findMany({ where: { id: { in: idsOf("sectorId") }, archivedAt: { not: null } }, select: { name: true } }) : Promise.resolve([]),
+    idsOf("positionId").length ? db.position.findMany({ where: { id: { in: idsOf("positionId") }, archivedAt: { not: null } }, select: { name: true } }) : Promise.resolve([]),
   ]);
   const archived = [
-    ...companies.map((row) => `${labels.companyId} “${row.name}”`),
-    ...sectors.map((row) => `${labels.sectorId} “${row.name}”`),
-    ...positions.map((row) => `${labels.positionId} “${row.name}”`),
+    ...companies.map((row) => `${RULE_TARGETS.companyId.label} “${row.name}”`),
+    ...sectors.map((row) => `${RULE_TARGETS.sectorId.label} “${row.name}”`),
+    ...positions.map((row) => `${RULE_TARGETS.positionId.label} “${row.name}”`),
   ];
   if (archived.length) {
     throw new AppError(`No se puede asignar la regla a un registro archivado: ${archived.join(", ")}.`, 400, "DOUBLE_HOUR_RULE_DESTINATION_ARCHIVED");
@@ -415,10 +432,11 @@ export const workforceService = {
     });
   },
   async createDoubleRule(input: any, user: Express.AuthUser, audit?: AuditContext) {
-    await assertRuleDestinationsNotArchived(input);
+    await assertRuleDestinationsNotArchived(prisma, input);
     await assertRuleSectorSupported(input.sectorId);
     const { employeeIds, dates, ...data } = input;
     const { item, reinterpretation } = await execute(() => prisma.$transaction(async (tx) => {
+      await assertRuleDestinationsNotArchived(tx, input, null, { lock: true });
       const created = await tx.doubleHourRule.create({
         data: {
           ...data,
@@ -445,11 +463,15 @@ export const workforceService = {
     if (!before) throw new AppError("No encontramos la regla solicitada", 404, "DOUBLE_HOUR_RULE_NOT_FOUND");
     // Sólo se rechazan asignaciones NUEVAS: conservar sin cambio una FK ya
     // apuntando a un archivado es admitido (§12.4).
-    await assertRuleDestinationsNotArchived(input, before);
+    await assertRuleDestinationsNotArchived(prisma, input, before);
     await assertRuleSectorSupported(input.sectorId, before.sectorId);
     const { employeeIds, dates, ...data } = input;
     const recurrenceType = data.recurrenceType ?? before.recurrenceType;
     const { item, reinterpretation } = await execute(() => prisma.$transaction(async (tx) => {
+      // Autoritativa: contra las FKs de la regla leídas en esta transacción.
+      const current = await tx.doubleHourRule.findUnique({ where: { id }, select: { companyId: true, sectorId: true, positionId: true } });
+      if (!current) throw new AppError("No encontramos la regla solicitada", 404, "DOUBLE_HOUR_RULE_NOT_FOUND");
+      await assertRuleDestinationsNotArchived(tx, input, current, { lock: true });
       const updated = await tx.doubleHourRule.update({
       where: { id },
       data: {

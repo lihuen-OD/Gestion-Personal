@@ -39,6 +39,8 @@ vi.mock("../../shared/prisma/client", () => ({
     user: { findMany: vi.fn().mockResolvedValue([]) },
     // D-5: advisory locks del closurePeriodGuard dentro de las transacciones.
     $executeRaw: vi.fn().mockResolvedValue(0),
+    // A8 §12.4: bloqueo FOR SHARE de destinos de reglas dentro de la transacción.
+    $queryRawUnsafe: vi.fn().mockResolvedValue([]),
     $transaction: vi.fn(),
   },
 }));
@@ -80,6 +82,7 @@ const mockedPrisma = prisma as unknown as {
   workShift: { findMany: Mock };
   attendanceInactivityIncident: { findMany: Mock };
   $executeRaw: Mock;
+  $queryRawUnsafe: Mock;
   $transaction: Mock;
 };
 
@@ -639,6 +642,42 @@ describe("workforceService — FK reales sobre ShiftTemplate/DoubleHourRule", ()
       code: "DOUBLE_HOUR_RULE_DESTINATION_ARCHIVED",
     });
     expect(mockedPrisma.doubleHourRule.update).not.toHaveBeenCalled();
+  });
+
+  it("A8 §12.4 — createDoubleRule: empresa archivada entre el rechazo temprano y el guardado → 400 sin crear (bloqueo FOR SHARE antes de leer)", async () => {
+    mockedPrisma.company.findMany.mockResolvedValueOnce([]).mockResolvedValueOnce([{ name: "Odwyer Vieja" }]);
+
+    await expect(
+      workforceService.createDoubleRule({ name: "Domingo", recurrenceType: "SEMANAL", weekdays: [0], companyId: "c-1", employeeIds: [] }, user),
+    ).rejects.toMatchObject({ statusCode: 400, code: "DOUBLE_HOUR_RULE_DESTINATION_ARCHIVED" });
+    expect(mockedPrisma.$queryRawUnsafe).toHaveBeenCalledWith(expect.stringContaining('FROM "Company" WHERE "id" = $1 FOR SHARE'), "c-1");
+    expect(mockedPrisma.$queryRawUnsafe.mock.invocationCallOrder[0]).toBeLessThan(mockedPrisma.company.findMany.mock.invocationCallOrder[1]!);
+    expect(mockedPrisma.doubleHourRule.create).not.toHaveBeenCalled();
+  });
+
+  it("A8 §12.4 — updateDoubleRule compara contra las FKs leídas DENTRO de la transacción: una asignación que allí resulta nueva hacia un archivado se rechaza", async () => {
+    // Fuera: la regla ya apuntaba a c-arch (se conservaría). Dentro: otra edición la había quitado.
+    mockedPrisma.doubleHourRule.findUnique
+      .mockResolvedValueOnce({ id: "rule-1", name: "Domingo", multiplier: 2, companyId: "c-arch", employees: [], dates: [] })
+      .mockResolvedValueOnce({ companyId: null, sectorId: null, positionId: null });
+    mockedPrisma.company.findMany.mockResolvedValueOnce([{ name: "Odwyer Vieja" }]);
+
+    await expect(workforceService.updateDoubleRule("rule-1", { companyId: "c-arch" })).rejects.toMatchObject({ code: "DOUBLE_HOUR_RULE_DESTINATION_ARCHIVED" });
+    expect(mockedPrisma.$queryRawUnsafe).toHaveBeenCalledWith(expect.stringContaining("FOR SHARE"), "c-arch");
+    expect(mockedPrisma.doubleHourRule.update).not.toHaveBeenCalled();
+  });
+
+  it("A8 §12.4 — updateDoubleRule conserva sin cambio la FK preexistente leída en la transacción: no bloquea ni consulta archivo", async () => {
+    mockedPrisma.doubleHourRule.findUnique
+      .mockResolvedValueOnce({ id: "rule-arch", name: "Domingo", multiplier: 2, companyId: "c-arch", employees: [], dates: [] })
+      .mockResolvedValueOnce({ companyId: "c-arch", sectorId: null, positionId: null });
+    mockedPrisma.doubleHourRule.update.mockResolvedValue(ruleRow({ id: "rule-arch", name: "Domingo", multiplier: 3 }));
+
+    await workforceService.updateDoubleRule("rule-arch", { companyId: "c-arch", multiplier: 3 });
+
+    expect(mockedPrisma.$queryRawUnsafe).not.toHaveBeenCalled();
+    expect(mockedPrisma.company.findMany).not.toHaveBeenCalled();
+    expect(mockedPrisma.doubleHourRule.update).toHaveBeenCalled();
   });
 
   it("Etapa 12B — updateDoubleRule reclasifica el kind de una regla existente sin tocar el resto", async () => {
