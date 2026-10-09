@@ -226,7 +226,7 @@ Compartidos por `GET /api/employees`, `/api/employees/org-chart`, `/api/employee
 - `reloadStatus`:
   - `PENDING`: sin puesto, puesto sin alcance o sin ninguna ubicación vigente o futura.
   - `COMPLETE`: lo contrario.
-- M2 (`20261009150000`, en la rama; no aplicada a ninguna base compartida) retiró `Employee.sectorId`: no hay filtro por sector anterior (un `sectorId` en la query se ignora) y las respuestas de legajos ya no traen `sector`/`sectorId`. La evidencia del sector anterior vive en `EmployeeLegacySectorPeriod`.
+- M2 (`20261009150000`, aplicada a `development` el 2026-10-09) retiró `Employee.sectorId`: no hay filtro por sector anterior (un `sectorId` en la query se ignora) y las respuestas de legajos ya no traen `sector`/`sectorId`. La evidencia del sector anterior vive en `EmployeeLegacySectorPeriod`.
 - Todos usan `some`/`none`: una persona con varios alcances o ubicaciones aparece una sola vez y `meta.total` cuenta personas.
 - Se combinan siempre con el filtro de acceso del rol (`employeeAccessWhere`). El alcance del puesto **no** concede acceso.
 
@@ -789,7 +789,7 @@ Ver `backend/src/modules/org-structure/orgStructure.dependencies.ts`.
 
 #### Registros archivados (A8-1, `docs/decisions/A8_M2_PREPARATION.md` §12)
 
-> En código en `feat/org-location-reorg`; la columna llega con la migración aditiva `20261008150000_org_catalog_archive_classification`, **no aplicada a ninguna base compartida**. Hasta que la limpieza controlada se ejecute no existe ningún registro archivado.
+> La columna llega con la migración aditiva `20261008150000_org_catalog_archive_classification` (aplicada a `development` el 2026-10-09). En `development` no hay registros archivados: la limpieza autorizada retiró la estructura anterior en lugar de archivarla (`A8_M2_PREPARATION.md` §12.15).
 
 `archivedAt` (en `Company`, `BusinessUnit`, `Establishment`, `Area`, `Sector`, `Position`) marca un registro del modelo anterior que la historia necesita conservar. Es distinto de `isLegacy` (origen, inmutable) y de `status` (`INACTIVO` es un nodo vivo y reactivable; archivado es congelado y de un solo sentido).
 
@@ -1087,9 +1087,9 @@ Los tres parámetros de alcance se envían juntos. `WITHIN` significa que algún
 
 El body A5 usa `orgScopes: [{ level, nodeId }]` (uno o más) y `salaryCategoryIds`. Un nodo abarca sus descendientes. El backend rechaza referencias inexistentes (`POSITION_SCOPE_INVALID`), nodos legados (`POSITION_SCOPE_LEGACY`), nodos inactivos agregados por primera vez (`POSITION_SCOPE_INACTIVE`) y duplicados/ancestro+descendiente (`POSITION_SCOPE_REDUNDANT`). Crear y reemplazar alcances, categorías y auditoría ocurre en una transacción `Serializable`; los cachés se invalidan después del commit.
 
-`Position.sectorId` continúa como columna y dato de lectura legado. Los puestos anteriores con `sectorId` y sin `orgScopes` se informan como pendientes de recarga: una edición que no toca alcance los conserva, sin conversión automática. Las altas nuevas no aceptan ni escriben `sectorId`.
+`Position.sectorId` continúa sólo como forma de los puestos archivados (CHECK de M2). Los puestos anteriores con `sectorId` y sin `orgScopes` se informan como pendientes de recarga: una edición que no toca alcance los conserva, sin conversión automática. Las altas nuevas no aceptan ni escriben `sectorId`.
 
-`DELETE /api/positions/:id` (etapa A2 de la reorganización, en código y no desplegado):
+`DELETE /api/positions/:id` (etapa A2 de la reorganización):
 
 - **Se inactiva, no se borra,** si el puesto tiene personas asignadas o una regla de horas especiales lo referencia (`DoubleHourRule.positionId`). Responde con el puesto inactivo.
   - Antes, un puesto sin personas se borraba aunque una regla lo referenciara. La FK `SET NULL` dejaba esa regla sin restricción de puesto: aplicaba a todos.

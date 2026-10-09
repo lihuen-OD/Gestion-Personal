@@ -338,7 +338,7 @@ test("workforce management performance journey — recorrido macro de Gestión h
     .catch(() => null);
   if (observedFirstName?.trim()) {
     await measure("Buscar en problemas de fichada", ZONE.asistencia, false, async () => {
-      await page.getByPlaceholder("Nombre, legajo o sector").fill(observedFirstName.trim());
+      await page.getByPlaceholder("Nombre, legajo o puesto").fill(observedFirstName.trim());
       return { visibleLocator: page.locator(".attendance-observed-panel").first(), notes: ["término tomado de un problema de fichada real — no se registra el valor buscado en este reporte"], preNetworkIdleWaitMs: 400 };
     });
   } else {

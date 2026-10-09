@@ -497,7 +497,6 @@ export function AssociatedEmployeesPanel<T extends { employeeId: string; employe
                     </div>
                     <dl className="aec-card-fields">
                       <div><dt>Puesto</dt><dd><AssociatedPositionCell employee={item.employee} /></dd></div>
-                      {item.employee.sector ? <div><dt>Sector anterior</dt><dd>{item.employee.sector.name}</dd></div> : null}
                       <div><dt>Centro de costo</dt><dd>{item.employee.costCenter?.name || "-"}</dd></div>
                       <div><dt>Empresa empleadora</dt><dd>{employeeCompanyNames(item.employee)}</dd></div>
                       {showCuilColumn ? <div><dt>CUIL</dt><dd>{item.employee.cuil}</dd></div> : null}

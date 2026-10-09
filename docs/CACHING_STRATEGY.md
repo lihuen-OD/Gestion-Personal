@@ -19,7 +19,7 @@ Se cachea:
 | `dashboard` | `GET /dashboard/metrics` | Métricas operativas agregadas | 30 segundos | Memoria LRU | Mutaciones de empleados, horas, novedades, documentos, logout, cambio de cuenta |
 | `time-entries` | `GET /time-entries/summary`, `GET /time-entries/period-employees` | Resúmenes y filas agregadas de carga horaria | 30 segundos | Memoria LRU | Mutaciones de horas, novedades, logout, cambio de cuenta |
 
-**Reorganización de estructura** (aprobada, no implementada; `docs/decisions/ORG_LOCATION_REORGANIZATION.md`). El catálogo `org-structure` se persiste en IndexedDB, así que cambiar su forma (zonas, padres nuevos) exige subir `CACHE_SCHEMA_VERSION` (`frontend/src/services/cache/cachePolicy.ts`) en la misma etapa. Además:
+**Reorganización de estructura** (implementada; `docs/decisions/ORG_LOCATION_REORGANIZATION.md`). El catálogo `org-structure` se persiste en IndexedDB, así que cambiar su forma (zonas, padres nuevos) exige subir `CACHE_SCHEMA_VERSION` (`frontend/src/services/cache/cachePolicy.ts`) en la misma etapa. Además:
 
 - Hoy las mutaciones de estructura no invalidan `time-entries` ni la configuración de horas especiales en el frontend.
 - En el backend no limpian los cachés de lectura de empleados, puestos ni reglas. Esos cachés expiran solos por TTL, entre 5 y 120 segundos.

@@ -2442,7 +2442,7 @@ a.employee-hours-status-item:hover{border-color:var(--ds-blue-300);background:va
 .work-location-establishments-field .check-card small{color:var(--color-text-muted);font-size:11px}
 .work-location-hint{color:var(--color-text-muted);font-size:11px}
 .work-location-dates{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-.tracked-field.legacy{background:var(--color-bg-subtle)}
+
 /* Alta de legajo: el alcance del puesto ya es una tarjeta; sin la caja de .form-wide. */
 .form-grid>.form-wide.labor-bare-slot{display:grid;gap:10px;padding:0;border:0;background:none}
 .labor-bare-slot>.info-note.compact{margin:0}

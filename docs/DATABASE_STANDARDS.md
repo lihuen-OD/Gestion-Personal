@@ -50,44 +50,33 @@ The schema draws a deliberate line between "something that happened at a specifi
 - `backend/src/shared/datetime/argentinaTime.ts` is the single shared helper for every Argentina-aware date/time calculation (current date/time in `America/Argentina/Cordoba`, day boundaries, formatting). Do not call `new Date()` + manual offset math, `toLocaleDateString` with an implicit timezone, or write a second helper in a module — import this one. If you find a module that still does its own date math, consolidate it into this helper rather than adding a fourth implementation.
 - The backend process also sets `TZ=America/Argentina/Cordoba` (see `docs/DEVOPS_DEPLOYMENT_STANDARDS.md`) as defense-in-depth, but code must not rely on the process timezone instead of the explicit helper — the helper is authoritative even if `TZ` is ever misconfigured in some environment.
 
-## Organizational structure: current model, target model and transition (updated 2026-10-07)
+## Organizational structure: model in effect (updated 2026-10-09)
 
-The organizational model is under an approved reorganization that is **not implemented yet**. The full decision record — current vs. target model, pending decisions, authorized cleanup scope, migration and rollout strategy — is `docs/decisions/ORG_LOCATION_REORGANIZATION.md`. Until its stages land, the schema and code still implement the **current model** below, and this section must be read together with that ADR.
+The reorganization in `docs/decisions/ORG_LOCATION_REORGANIZATION.md` is **implemented**: code through M2 (`20261009150000_org_location_contract_m2`), applied to `development` on 2026-10-09 (`docs/decisions/A8_M2_PREPARATION.md` §12.15). Production and demo are not migrated.
 
-### Current model (what `schema.prisma` and the code implement today)
+### Model in effect
 
-- Chain: `Company → BusinessUnit → Establishment → Area → Sector` (added 2026-08-18 as a "singular-FK chain"). In reality:
-  - `Establishment` has **two** parent FKs, `companyId` (required) and `businessUnitId?`.
-  - `Area.establishmentId` and `Sector.areaId` are nullable, so walking up from a sector can stop partway.
-- `Employee.sectorId` and `Position.sectorId` are single FKs into this chain.
-- A sector's legacy/new classification is the persisted `Sector.isLegacy` column (A8-3, added 2026-10-08): frozen at creation with the criterion that applied at the time (`businessUnitId IS NULL`), backfilled once by migration `20261008110000_sector_org_classification` (not yet applied to any shared database), never editable through a common update. Do not re-derive it from `businessUnitId` or any other current parent — M2 changes those parents and would silently re-interpret special-hour history (ADR §20, hallazgo 1).
-- An employee's companies do **not** come from walking up the chain. They come from the M:N `EmployeeCompany` (employer company + `isPrimary`).
-- `onDelete` rules today:
-  - `EmployeeCompany.companyId`, `PositionSalaryCategory` and every `CostCenter*` join are `CASCADE`.
-  - `User.companyId/sectorId`, `Employee.positionId/sectorId/costCenterId`, `Position.sectorId`, `ClockDevice.sectorId` and **`DoubleHourRule.companyId/sectorId/costCenterId/positionId`** are `SET NULL`.
-  - For a `DoubleHourRule`, `NULL` means "no restriction", so a `SET NULL` silently **widens** the rule.
-- Do not extend the current model: no new consumers of the old chain, and no additional parent FK on these models.
+- Two independent trees, each active node with exactly **one required parent**:
+  - **Organization:** `Company → BusinessUnit → Sector → Area` (`BusinessUnit.companyId`, `Sector.businessUnitId`, `Area.sectorId`).
+  - **Locations:** `Zone → Establishment` (`Establishment.zoneId`). An establishment has no company: legal ownership of a place is not the organizational scope of a position.
+- Position scope: `PositionOrgScope` (see "Position" below). Employee work locations: `EmployeeWorkLocation` (+ `EmployeeWorkLocationEstablishment`). Labor history over time: `EmployeePositionPeriod`, `EmployeeCostCenterPeriod`, `EmployeeEmployerPeriod(+Company)` and `EmployeeLegacySectorPeriod` (evidence of the retired employee sector).
+- `Employee.sectorId`, `User.sectorId` and `ClockDevice.sectorId` were **dropped** by M2. A `ClockDevice` location is `establishmentId`.
+- An employee's companies come from the M:N `EmployeeCompany` (employer company + `isPrimary`), not from the tree.
+- **Legacy columns kept only as the shape of archived rows (D-B2, no purge):** `Sector.areaId`, `Area.establishmentId`, `Establishment.companyId/businessUnitId`, `Position.sectorId` and `@@unique([companyId, code])`. Row CHECKs (`*_archive_shape_check`, not modeled by Prisma) enforce archived ⇒ no new parent, active ⇒ new parent. Do not add readers or writers of these columns for active rows, and do not add a second parent FK.
+- A sector's legacy/new classification is the persisted `Sector.isLegacy` (A8-3), never re-derived from a current parent (ADR §20, hallazgo 1).
+- New parent FKs and the history FKs use `onDelete: Restrict`; `DoubleHourRule.companyId/sectorId/costCenterId/positionId` are `RESTRICT`. `EmployeeCompany.companyId`, `PositionSalaryCategory` and the `CostCenter*` joins remain `CASCADE`.
+- Multi-parent relations are not introduced without a proven business need. `CostCenter` remains the only approved many-to-many against the structure (against both trees). Do not "simplify" it into a singular FK.
 
-### Target model (approved plan, not implemented)
+### Rules for data changes on these models
 
-- Two independent trees, each node with exactly **one required parent**:
-  - **Organization:** `Company → BusinessUnit → Sector → Area`.
-  - **Locations:** `Zone → Establishment`.
-- An establishment has no company. Legal ownership of a place is not the organizational scope of a position.
-- New parent FKs use `onDelete: Restrict`.
-- Multi-parent relations are not introduced without a proven business need.
-- `CostCenter` remains the only approved many-to-many against the structure (now against both trees). Do not "simplify" it into a singular FK.
-
-### Rules that apply during the transition
-
-- Schema changes to these models follow the ADR's staged expand (M1) / contract (M2) migrations, applied per environment via separate code releases (`prisma migrate deploy` cannot pick a single pending migration).
+- Schema changes follow staged expand/contract migrations applied per environment (`prisma migrate deploy` cannot pick a single pending migration).
 - Never use `CASCADE` or `SET NULL` as a cleanup shortcut.
-- Never free a `DoubleHourRule` reference by setting its scope to `NULL`, and never delete the rule to free it. Both widen or erase special-hour history. See the ADR §6 for the only valid treatments.
-- Legacy cleanup is authorized only on `development`, only for old-model records in a frozen inventory, and only through the ADR's gated transactional script. It never deletes or re-keys employees or touches person-related records (hours, novelties, documents, labor movements, histories). Production is out of scope.
+- For a `DoubleHourRule`, `NULL` scope means "no restriction". Never free a reference by setting its scope to `NULL`, and never delete the rule to free it. Both widen or erase special-hour history. See the ADR §6 for the only valid treatments.
+- Any destructive data operation needs explicit authorization, a verified restorable backup and a gated transactional script with in-transaction conservation checks. It never deletes or re-keys employees or touches person-related records outside the authorized scope. Production and demo are out of scope.
 
 ### Catalog archive: `archivedAt` vs `isLegacy` vs `status` (added 2026-10-09, A8-1)
 
-Migration `20261008150000_org_catalog_archive_classification` (additive; **not applied to any shared database yet**) adds `archivedAt TIMESTAMPTZ NULL` (no default) to `Company`, `BusinessUnit`, `Establishment`, `Area`, `Sector` and `Position`, and persists `isLegacy` on `Area` and `Establishment` (as A8-3 did for `Sector`). Spec: `docs/decisions/A8_M2_PREPARATION.md` §12.
+Migration `20261008150000_org_catalog_archive_classification` (additive; applied to `development` on 2026-10-09) adds `archivedAt TIMESTAMPTZ NULL` (no default) to `Company`, `BusinessUnit`, `Establishment`, `Area`, `Sector` and `Position`, and persists `isLegacy` on `Area` and `Establishment` (as A8-3 did for `Sector`). Spec: `docs/decisions/A8_M2_PREPARATION.md` §12.
 
 - Three separate axes, never derived from each other:
   - `archivedAt IS NOT NULL` = archived: an old-model row kept only because history references it. Frozen, one-way, excluded from every active listing/selector, never the target of a new relation.
@@ -103,8 +92,7 @@ Migration `20261008150000_org_catalog_archive_classification` (additive; **not a
 `Position` previously stored denormalized location text (`areaDepartment`, `sectorName`, `businessUnitName`, `establishmentName`, and their plural/array variants) and a `salaryRangeCategories` array, in parallel with real relations. These legacy fields have been removed from the schema (migration `20260818090000_drop_position_legacy_fields`). `Position.areaId` was removed as vestigial at the same time.
 
 - `PositionSalaryCategory` (a join table against `SalaryCategory`) is the only source of a position's salary category/categories. A position can have more than one. There is no single "suggested category" scalar field on `Position`.
-- **Current model:** `Position.sectorId` is still the only stored location of a position. Area, establishment, business unit and company are derived from the sector's parent chain.
-- **Target model (not implemented):** `Position.sectorId` is replaced by an organizational **scope**, `PositionOrgScope`.
+- A position's location is its organizational **scope**, `PositionOrgScope` (implemented). `Position.sectorId` survives only as the shape of archived positions.
   - A position has one or more nodes of the Organization tree.
   - A selected node covers its descendants, computed on read and never materialized.
   - Ancestor/descendant pairs are rejected as redundant.

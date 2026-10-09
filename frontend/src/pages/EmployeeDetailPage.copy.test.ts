@@ -9,13 +9,13 @@ import laborTabSource from "../components/employees/EmployeeLaborDataTab.tsx?raw
 
 describe("EmployeeDetailPage — Datos Laborales agrupado (Etapa UI-3)", () => {
   // A6 (ORG_LOCATION_REORGANIZATION.md §3.3): bloques Puesto y alcance,
-  // Ubicaciones, Empresa empleadora/categorías y estructura anterior de consulta.
+  // Ubicaciones y Empresa empleadora/categorías. M2 retiró el sector del legajo.
   it("Datos Laborales se agrupa en los bloques A6 y ya no edita sector/UN/establecimiento", () => {
     expect(pageSource).toContain("<EmployeeLaborDataTab");
     expect(laborTabSource).toContain("PUESTO Y ALCANCE ORGANIZACIONAL");
     expect(laborTabSource).toContain("UBICACIONES DE TRABAJO");
     expect(laborTabSource).toContain("EMPRESA EMPLEADORA Y CATEGORÍAS");
-    expect(laborTabSource).toContain('field="sector" label="Sector anterior" value={employee.sector} canEdit={false}');
+    expect(laborTabSource).not.toContain('label="Sector anterior"');
     expect(pageSource).not.toContain("EMPRESA / ESTRUCTURA");
   });
 

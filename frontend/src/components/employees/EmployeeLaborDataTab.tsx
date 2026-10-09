@@ -25,19 +25,17 @@ type Props = {
  *  A. Puesto y alcance (alcance de sólo lectura, desde el puesto).
  *  B. Ubicaciones de trabajo con vigencia.
  *  C. Empresa empleadora, categorías y demás datos laborales (sin cambios).
- * La información del modelo anterior queda visible para consulta y marcada
- * como pendiente de recarga; nunca se convierte automáticamente.
+ * Lo que falta cargar en la estructura nueva se marca como pendiente de
+ * recarga; nunca se convierte automáticamente. M2 retiró el sector del legajo.
  */
 export function EmployeeLaborDataTab({ employee, user, editable, onSaved, costCenterOptions, receiptCategoryOptions, internalCategoryOptions }: Props) {
   const positions = usePositionOptions();
   const [locations, setLocations] = useState<EmployeeWorkLocation[] | null>(null);
   const position = positions.find((item) => item.id === employee.positionId);
-  const hasLegacyStructure = Boolean(employee.sector || employee.businessUnit || employee.establishment);
 
   const pending = [
     position && !position.orgScopes?.length ? `El puesto “${position.name}” no tiene alcance organizacional.` : "",
     locations && !locations.some((row) => row.state !== "ENDED") ? "No hay ubicaciones de trabajo vigentes ni futuras cargadas." : "",
-    hasLegacyStructure ? "Conserva sector, unidad de negocio y establecimiento de la estructura anterior (sólo consulta)." : "",
   ].filter(Boolean);
 
   return (
@@ -74,29 +72,6 @@ export function EmployeeLaborDataTab({ employee, user, editable, onSaved, costCe
         <FieldWithHistory employee={employee} section="DATOS_LABORALES" field="agreement" label="Convenio" value={employee.agreement} canEdit={editable} user={user} onSaved={onSaved} />
         <FieldWithHistory employee={employee} section="DATOS_LABORALES" field="healthInsurance" label="Obra Social" value={employee.healthInsurance} canEdit={editable} user={user} onSaved={onSaved} />
       </div>
-
-      {hasLegacyStructure ? (
-        <>
-          <p className="eyebrow tracked-grid-label">ESTRUCTURA ANTERIOR · SÓLO CONSULTA</p>
-          <div className="tracked-grid">
-            <FieldWithHistory employee={employee} section="DATOS_LABORALES" field="sector" label="Sector anterior" value={employee.sector} canEdit={false} user={user} onSaved={onSaved} />
-            <LegacyLaborField label="Unidad de negocio anterior" value={employee.businessUnit} />
-            <LegacyLaborField label="Establecimiento anterior" value={employee.establishment} />
-          </div>
-        </>
-      ) : null}
     </>
-  );
-}
-
-function LegacyLaborField({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="tracked-field legacy">
-      <div className="tracked-main">
-        <small>{label}</small>
-        <b>{value || "Sin cargar"}</b>
-        <span>Derivado del sector anterior. No se convierte en alcance ni en ubicación.</span>
-      </div>
-    </div>
   );
 }

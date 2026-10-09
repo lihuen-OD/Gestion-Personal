@@ -264,7 +264,7 @@ Must show:
 * Employees without direct manager.
 * Documentation alerts.
 * Transport indicators.
-* Distribution by company, establishment, cost center, sector, category and position. Under the organizational reorganization (not implemented), "by sector" must be redefined. Employees no longer have their own sector, and multi-location headcounts are non-additive: see decision D-8 in `docs/decisions/ORG_LOCATION_REORGANIZATION.md`.
+* Distribution by company, establishment, cost center, sector, category and position. Under the organizational reorganization (implemented), "by sector" must be redefined. Employees no longer have their own sector, and multi-location headcounts are non-additive: see decision D-8 in `docs/decisions/ORG_LOCATION_REORGANIZATION.md`.
 
 Dashboard data must come from the real backend (`GET /dashboard`, backend-computed from Prisma queries — see "Main business rules" below), not from isolated hardcoded numbers or mock/localStorage services.
 
@@ -303,12 +303,10 @@ Employee detail tabs:
 
 Must include:
 
-* Empresa
-* Unidad de negocio
-* Establecimiento
+* Empresa (empleadora)
 * Centro de costo
-* Sector
-* Puesto
+* Puesto (con su alcance organizacional, sólo lectura)
+* Ubicaciones de trabajo (zona + establecimientos)
 * Categoría de recibo
 * Categoría interna
 * Convenio
@@ -317,9 +315,9 @@ Must include:
 
 These fields must not be plain text if the value exists in a main catalog or module. They must be selected from the real backend catalogs (`org-structure`, `positions`, `salary-categories` — see `docs/BACKEND_API_CONTRACTS.md`), not typed as free text or sourced from a mock service.
 
-**The list above is the current model.** Business unit and establishment are derived from the employee's sector. "Empresa" is the employer company (`EmployeeCompany`, with a primary flag).
+"Empresa" is the employer company (`EmployeeCompany`, with a primary flag). The employee has no business unit, establishment or sector field of its own.
 
-**Target model** (approved plan, not implemented; `docs/decisions/ORG_LOCATION_REORGANIZATION.md`). Datos Laborales is organized in blocks:
+**Model in effect** (implemented; `docs/decisions/ORG_LOCATION_REORGANIZATION.md`). Datos Laborales is organized in blocks:
 - **A. Position and scope:** the position's organizational scope is shown read-only from the position and never copied into editable fields.
 - **B. Work locations:** one or more dated assignments, each a zone plus selected establishments of that zone, with no overlapping assignments for the same person and zone.
 - **C. Categories and labor data:** kept as today, including employer company, cost center, receipt/internal category, agreement and health insurance.
@@ -354,8 +352,7 @@ The position module must include:
 
 * Position name / code / status
 * Location/scope:
-  * **Current model:** Sector (`sectorId`) is the only stored location of a position. Area, establishment, business unit and company are derived from the sector's hierarchy.
-  * **Target model** (not implemented; `docs/decisions/ORG_LOCATION_REORGANIZATION.md`): an organizational **scope** of one or more Organization nodes (company, business unit, sector or area). A selected node covers its descendants, including future ones, and redundant ancestor/descendant pairs are rejected. Zones and establishments are not part of a position's scope. All occupants of a position share exactly its scope, so the same role with different scopes needs different positions. See `docs/DATABASE_STANDARDS.md`.
+  * Organizational **scope** (implemented, `PositionOrgScope`; `docs/decisions/ORG_LOCATION_REORGANIZATION.md`): an organizational **scope** of one or more Organization nodes (company, business unit, sector or area). A selected node covers its descendants, including future ones, and redundant ancestor/descendant pairs are rejected. Zones and establishments are not part of a position's scope. All occupants of a position share exactly its scope, so the same role with different scopes needs different positions. See `docs/DATABASE_STANDARDS.md`.
 * Salary categories, via `PositionSalaryCategory` (a position can have more than one associated category; there is no single "suggested category" field)
 * Mission/purpose
 * Responsibilities
@@ -385,13 +382,11 @@ The organizational structure must support:
 
 These values must be managed as selectable data through the real `org-structure` backend module (`GET/POST/PATCH /api/org-structure/*`), not mocks.
 
-**Current model** (implemented): Company → BusinessUnit → Establishment → Area → Sector. Note that `Establishment` actually has two parent FKs (`companyId` and an optional `businessUnitId`), and `Area`/`Sector` parents are nullable. CostCenter uses many-to-many join tables against the five levels.
-
-**Target model** (approved plan, not implemented; `docs/decisions/ORG_LOCATION_REORGANIZATION.md`): two independent sections, each with a single required parent per node and its own administration:
+**Model in effect** (implemented through M2 and applied to `development` on 2026-10-09; `docs/decisions/ORG_LOCATION_REORGANIZATION.md`): two independent sections, each with a single required parent per active node and its own administration:
 * **A. Organization:** Company → Business unit → Sector → Area.
 * **B. Locations:** Zone → Establishment.
 
-CostCenter remains the only many-to-many against the structure. See `docs/DATABASE_STANDARDS.md` for the rules that apply during the transition.
+CostCenter remains the only many-to-many against the structure. The old-chain columns survive only as the shape of archived rows. See `docs/DATABASE_STANDARDS.md`.
 
 They must feed:
 
@@ -590,7 +585,7 @@ There must be two conceptual views:
 
 Hierarchy must come from the employee's direct manager. As implemented, that is `EmployeeAssignment` rows of type `DIRECT_MANAGER`, stored by `personName`. There are no `directManagerId`/`directManagerName` fields. When an employee has several direct managers, the functional view uses the first one. That treatment must not change silently.
 
-It must not use working hour responsible as hierarchy. The category-based view is a salary view. It does not replace the real hierarchy. Under the reorganization (not implemented), the functional view keeps the direct-manager hierarchy; the position's organizational scope does not replace it (see `docs/decisions/ORG_LOCATION_REORGANIZATION.md` §3.4).
+It must not use working hour responsible as hierarchy. The category-based view is a salary view. It does not replace the real hierarchy. Under the reorganization (implemented), the functional view keeps the direct-manager hierarchy; the position's organizational scope does not replace it (see `docs/decisions/ORG_LOCATION_REORGANIZATION.md` §3.4).
 
 Category-based layout must use:
 
@@ -796,18 +791,14 @@ Field-level model shapes are not duplicated here — they drift from the real sc
 
 A few structural decisions worth knowing before you read the schema:
 
-* **Current model:**
-  * An employee's organizational placement comes from a single `sectorId` FK. Business unit, establishment and area are derived by walking the sector's parent chain.
-  * The employee's companies come from `EmployeeCompany` (employer company, with `isPrimary`), not from that chain.
-  * A position's location is `Position.sectorId`.
-* **Target model** (approved, not implemented): `docs/decisions/ORG_LOCATION_REORGANIZATION.md`.
-  * Separate Organization and Locations trees.
-  * Position scope via `PositionOrgScope`.
-  * Employee work locations via `EmployeeWorkLocation`.
-  * `Employee.sectorId` and `Position.sectorId` are retired only in its contract stage.
+* **Organizational model in effect** (`docs/decisions/ORG_LOCATION_REORGANIZATION.md`, implemented through M2):
+  * Separate Organization (`Company → BusinessUnit → Sector → Area`) and Locations (`Zone → Establishment`) trees.
+  * Position scope via `PositionOrgScope`; employee work locations via `EmployeeWorkLocation`; labor history over time via the `Employee*Period` tables.
+  * The employee has no sector of its own: `Employee.sectorId` (and `User.sectorId`, `ClockDevice.sectorId`) were dropped by M2. The employee's companies come from `EmployeeCompany` (employer company, with `isPrimary`).
+  * `Position.sectorId` and the other old-chain parent columns survive only as the shape of archived rows.
 * Position's salary category is a many-to-many via `PositionSalaryCategory`, not a single field.
 * Authorship fields (`createdByUserId`, `approvedByUserId`, `uploadedByUserId`, etc.) are real optional FKs to `User` with `onDelete: SetNull` — see `docs/DATABASE_STANDARDS.md`.
-* **Fichador F4/F5:** `ClockDevice` modela la identidad persistente individual con estados `PENDING`/`ACTIVE`/`REVOKED`, hashes de token/pairing, sector opcional y trazabilidad. La migración F4 fue aplicada y verificada sólo en staging. F5 implementa enrolamiento, estado, pairing y administración RRHH; los secretos nunca se guardan en claro. `AttendancePunch.deviceId` y `ClockPunchAttempt.deviceId` siguen nullable y sin escritura histórica; `kioskId` continúa legado. **Desde F6 la autenticación individual es obligatoria en las cuatro rutas de fichada** (sólo `ACTIVE`; `PENDING`/`REVOKED` → 403) y las fichadas/intentos nuevos guardan `deviceId` desde la autenticación; el histórico queda en `NULL` y `source` no cambia hasta F7.
+* **Fichador F4/F5:** `ClockDevice` modela la identidad persistente individual con estados `PENDING`/`ACTIVE`/`REVOKED`, hashes de token/pairing, establecimiento opcional (el sector se retiró en M2) y trazabilidad. La migración F4 fue aplicada y verificada sólo en staging. F5 implementa enrolamiento, estado, pairing y administración RRHH; los secretos nunca se guardan en claro. `AttendancePunch.deviceId` y `ClockPunchAttempt.deviceId` siguen nullable y sin escritura histórica; `kioskId` continúa legado. **Desde F6 la autenticación individual es obligatoria en las cuatro rutas de fichada** (sólo `ACTIVE`; `PENDING`/`REVOKED` → 403) y las fichadas/intentos nuevos guardan `deviceId` desde la autenticación; el histórico queda en `NULL` y `source` no cambia hasta F7.
 * **Validación F5 staging (2026-10-06):** ciclo real completo sin fichar ni usar empleados; 79 `AttendancePunch`, 24 intentos, 85 horas y 46 jornadas sin cambios. Quedó un único dispositivo `TEST F5 ciclo completo` revocado para conservar su auditoría y 0 pendientes. Migraciones limpias; producción no fue tocada.
 
 ## Security rules specific to this project
@@ -935,15 +926,14 @@ npm run build            # tsc -b && vite build
 * No change to `employees`, `time-entries`, `novelties`, or `auth` business logic is complete without an accompanying test (see the patterns in each module's `*.service.test.ts`).
 * Before adding a new `*MockService.ts`, check whether a real `*ApiService.ts` already covers it, and whether an existing mock with the same purpose has zero real importers (in which case delete it instead of adding a parallel one).
 * Do not reimplement date/time/timezone math per module — `backend/src/shared/datetime/argentinaTime.ts` is the single shared helper for Argentina-aware date/time handling; reuse it instead of writing a new implementation. Real instants (things that happened at a point in time, e.g. clock punches) are stored as `TIMESTAMPTZ`; calendar-only fields (e.g. a novelty's `fromDate`/`toDate`) are stored as `@db.Date`. See `docs/DATABASE_STANDARDS.md`.
-* The organizational model is in an approved but **not implemented** reorganization. Read `docs/decisions/ORG_LOCATION_REORGANIZATION.md` before touching org structure, positions, employee labor data, `CostCenter*`, `DoubleHourRule` scope or `ClockDevice` location.
-  * The code still implements the current chain (`Company → BusinessUnit → Establishment → Area → Sector`, `Position.sectorId`, `Employee.sectorId`). Do not extend it or add parent FKs to it.
-  * Do not present the target model (Organization and Locations trees, position scope, employee work locations) as implemented before its stage lands.
+* The organizational reorganization is **implemented** (code through M2, applied to `development` on 2026-10-09; production and demo not migrated). Read `docs/decisions/ORG_LOCATION_REORGANIZATION.md` and `docs/decisions/A8_M2_PREPARATION.md` §12.15 before touching org structure, positions, employee labor data, `CostCenter*`, `DoubleHourRule` scope or `ClockDevice` location.
+  * Model in effect: Organization and Locations trees, `PositionOrgScope`, `EmployeeWorkLocation`, `Employee*Period` history. Old-chain columns (`Sector.areaId`, `Area.establishmentId`, `Establishment.companyId/businessUnitId`, `Position.sectorId`) exist only as the shape of archived rows: no new readers or writers for active rows, no second parent FK.
   * `CostCenter` stays the only many-to-many against the structure. See `docs/DATABASE_STANDARDS.md`.
-  * Catalog archive (A8-1, in code on `feat/org-location-reorg`, migration not applied to any shared database): `archivedAt` on the six catalog tables is written only by the cleanup script, never by the API; archived rows are excluded from active listings and rejected as targets of new relations. It is a separate axis from `isLegacy` (origin) and `status` (operational). See `docs/DATABASE_STANDARDS.md` and `docs/decisions/A8_M2_PREPARATION.md` §12.
+  * Catalog archive (A8-1, migration applied to `development`): `archivedAt` on the six catalog tables is written only by the cleanup script, never by the API; archived rows are excluded from active listings and rejected as targets of new relations. It is a separate axis from `isLegacy` (origin) and `status` (operational). See `docs/DATABASE_STANDARDS.md` and `docs/decisions/A8_M2_PREPARATION.md` §12.
 * `PositionSalaryCategory` is the official source of a position's salary category/categories. Do not reintroduce a denormalized area/establishment/business-unit/company name or a single "suggested category" field on `Position`, and do not copy a position's scope into editable employee fields. See `docs/DATABASE_STANDARDS.md`.
-* Legacy org-structure cleanup:
-  * **Authorized only:** on `development`, for old-model records in a frozen inventory, through the ADR's gated transactional script, after a verified backup and a reviewed rehearsal.
-  * **Never:** delete or re-key legajos; delete hours, novelties, documents, labor movements, histories or other person-related records; touch production; free a `DoubleHourRule` reference by nulling its scope or deleting the rule.
+* Legacy org-structure cleanup already ran on `development` (2026-10-09, `backend/scripts/dev-org-wipe.ts`, `A8_M2_PREPARATION.md` §12.15):
+  * **Any further destructive data operation** needs new explicit authorization, a verified restorable backup and a gated transactional script with in-transaction conservation checks.
+  * **Never:** delete or re-key legajos; delete hours, novelties, documents, fichadas, audit or other person-related records outside the authorized scope; touch production or demo; free a `DoubleHourRule` reference by nulling its scope or deleting the rule.
 * Authorship fields (`createdByUserId`, `approvedByUserId`, `uploadedByUserId`, etc.) are real optional FKs to `User` with `onDelete: SetNull` — never `Cascade` from `User` to a historical record, and never delete a `User` row that has related history. See `docs/DATABASE_STANDARDS.md`.
 * Do not add a new frontend caching mechanism without checking `frontend/src/services/cache` (SWR) and `backend/src/shared/cache` (TTL) first.
 * Any public (unauthenticated) endpoint must declare its own abuse protection (rate limiting at minimum) — the global API rate limiter is not sufficient on its own.

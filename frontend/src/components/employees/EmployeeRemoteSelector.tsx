@@ -163,7 +163,7 @@ export function EmployeeRemoteSelector({
             </div>
           ) : null}
           {visibleResults.length ? visibleResults.map((employee) => {
-            const detail = [employee.sector, employee.company].filter(Boolean).join(" · ");
+            const detail = employee.company || "";
             return (
               <button key={employee.id} type="button" className={selectedIds.has(employee.id) ? "is-selected" : ""} aria-pressed={selectedIds.has(employee.id)} onClick={() => choose(employee)}>
                 <span className="people-result-check">{selectedIds.has(employee.id) ? <Check size={14}/> : null}</span>

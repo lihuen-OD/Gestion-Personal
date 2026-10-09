@@ -57,8 +57,6 @@ function toDto(row: WorkLocationRow, todayKey: string) {
   };
 }
 
-export type EmployeeWorkLocationDto = ReturnType<typeof toDto>;
-
 // Texto de negocio para historial visible y auditoría: nombres y fechas
 // DD/MM/AAAA, nunca ids técnicos.
 const summarize = (resolved: Resolved, period: Pick<WorkLocationPeriod, "effectiveFrom" | "effectiveTo">) =>

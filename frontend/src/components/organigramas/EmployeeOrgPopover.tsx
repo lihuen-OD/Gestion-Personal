@@ -15,7 +15,6 @@ export function EmployeeOrgPopover({ employee, onClose }: { employee: Employee; 
     ["Puesto", employee.position || "Sin puesto"], ["Alcance del puesto", scopes || (employee.positionId ? "Pendiente de recarga: el puesto no tiene alcance" : "-")],
     ["Ubicaciones vigentes", locations || "Sin ubicación vigente"],
     ["Categoría", employee.internalCategory || employee.receiptCategory || "Sin categoría"], ["Encargado directo", employee.directManager || "-"], ["Responsable de carga", employee.timeResponsible || "-"],
-    ...(employee.sector ? [["Sector anterior", `${employee.sector} (sólo consulta)`]] : []),
   ];
   return <div className="org-popover-backdrop" onClick={onClose}><article className="org-popover" onClick={(event) => event.stopPropagation()}>
     <button className="icon-button" onClick={onClose}>×</button>

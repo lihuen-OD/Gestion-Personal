@@ -61,7 +61,6 @@ export function HolidayWorkAssignmentsPage() {
   const [catalog, setCatalog] = useState<OrgStructureCatalog | null>(null);
   const [shiftTemplates, setShiftTemplates] = useState<ShiftTemplate[]>([]);
 
-  const [sectorFilter, setSectorFilter] = useState("");
   const [zoneFilter, setZoneFilter] = useState("");
   const [shiftFilter, setShiftFilter] = useState("");
   const [withoutShift, setWithoutShift] = useState(false);
@@ -161,7 +160,7 @@ export function HolidayWorkAssignmentsPage() {
     let alive = true;
     if (!candidates) setCandidatesStatus("loading");
     holidayWorkAssignmentApiService
-      .getCandidates({ sectorId: sectorFilter || undefined, locationZoneId: zoneFilter || undefined, locationDate: selectedDate, shiftTemplateId: shiftFilter || undefined, withoutShift: withoutShift || undefined, search: debouncedSearch || undefined })
+      .getCandidates({ locationZoneId: zoneFilter || undefined, locationDate: selectedDate, shiftTemplateId: shiftFilter || undefined, withoutShift: withoutShift || undefined, search: debouncedSearch || undefined })
       .then((result) => {
         if (!alive) return;
         setCandidates(result.items);
@@ -174,7 +173,7 @@ export function HolidayWorkAssignmentsPage() {
       alive = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedDate, sectorFilter, zoneFilter, shiftFilter, withoutShift, debouncedSearch, candidatesRetryToken]);
+  }, [selectedDate, zoneFilter, shiftFilter, withoutShift, debouncedSearch, candidatesRetryToken]);
 
   const openDate = (dateKey: string) => {
     setSelectedDate(dateKey);
@@ -338,15 +337,6 @@ export function HolidayWorkAssignmentsPage() {
                 ))}
               </select>
             </label>
-            <label className="field">
-              <span>Sector anterior</span>
-              <select value={sectorFilter} onChange={(event) => setSectorFilter(event.target.value)}>
-                <option value="">Todos</option>
-                {catalog?.sectors.filter((sector) => sector.pendingReload).map((sector) => (
-                  <option key={sector.id} value={sector.id}>{sector.name}</option>
-                ))}
-              </select>
-            </label>
             <label className="holiday-work-without-shift-toggle">
               <input type="checkbox" checked={withoutShift} onChange={(event) => setWithoutShift(event.target.checked)} />
               Mostrar empleados sin turno
@@ -376,7 +366,6 @@ export function HolidayWorkAssignmentsPage() {
                     {canEdit ? <th>Trabaja</th> : null}
                     <th>Legajo</th>
                     <th>Empleado</th>
-                    <th>Sector anterior</th>
                     <th>Turno habitual</th>
                     <th>Horario esperado</th>
                     <th>Observación</th>
@@ -400,7 +389,6 @@ export function HolidayWorkAssignmentsPage() {
                         ) : null}
                         <td>{candidate.legajo}</td>
                         <td>{candidate.lastName}, {candidate.firstName}</td>
-                        <td>{candidate.sector?.name || "-"}</td>
                         <td>{habitualShiftLabel(candidate)}</td>
                         <td>
                           {checked && canEdit ? (

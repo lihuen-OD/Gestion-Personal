@@ -1623,6 +1623,6 @@ Autorizado por el usuario: código y base en `development`, con la limpieza acot
   - `/auth/me`, `/org-structure` (6 empresas, resto 0), `/positions` (0), `/employees` (32) con
     detalle, overview y overview-details sin puesto, centro de costo ni empresas, horas, novedades,
     dispositivos y usuarios → 200.
-  - El organigrama del frontend usa `organizationChartMockService` (no lee la API): deuda previa.
+  - El organigrama lee los legajos de la API (`/employees`); `employeeMockService` sólo se usa como respaldo en modo demo, y `organizationChartMockService` sólo arma filtros y vistas en el cliente.
   - La verificación visual en navegador sigue a cargo del operador.
 - **Pendientes:** recarga de datos del cliente y fecha de corte.

@@ -104,6 +104,3 @@ export const sameIdSet = (a: readonly string[], b: readonly string[]) => {
   return left.length === right.length && left.every((item, index) => item === right[index]);
 };
 
-export function describeInterval(effectiveFrom: DateKey, effectiveTo: DateKey | null) {
-  return effectiveTo ? `${formatArgentinaDate(effectiveFrom)} → ${formatArgentinaDate(effectiveTo)}` : `desde ${formatArgentinaDate(effectiveFrom)}`;
-}

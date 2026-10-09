@@ -1,8 +1,8 @@
 # Reorganización — Organización, Ubicaciones, Puestos y Legajos
 
 Fecha: 2026-10-07
-Estado: **plan aprobado como base; en desarrollo en la rama `feat/org-location-reorg`, sin aplicar a development ni producción ni desplegar.** Única escritura hasta ahora en una base: la migración aditiva A8-3 (`20261008110000_sector_org_classification`) aplicada el 2026-10-08 **sólo a la copia aislada `org-location-reorg`** (§11 A8, §20 hallazgo 1). Avance por etapa en §11. Mientras §11 no indique otra cosa, el modelo vigente en las bases (development, producción) es el de §2.
-Reemplaza, cuando se implemente: las secciones "Organizational hierarchy" y "Position: sectorId…" de `docs/DATABASE_STANDARDS.md` (hoy marcadas como modelo actual en transición).
+Estado: **implementado hasta M2 y aplicado a `development` el 2026-10-09** (integrado en `development` y `main`; producción y demo sin migrar). Registro de la ejecución en `docs/decisions/A8_M2_PREPARATION.md` §12.15. Las marcas [P] de este documento describen el plan original; el modelo vigente es el de `docs/DATABASE_STANDARDS.md` ("Organizational structure: model in effect").
+Reemplazó las secciones "Organizational hierarchy" y "Position: sectorId…" de `docs/DATABASE_STANDARDS.md`.
 
 Marcas usadas: **[H]** = hecho comprobado en código o esquema · **[P]** = propuesta aprobada como plan, no implementada · **[D-n]** = decisión pendiente.
 

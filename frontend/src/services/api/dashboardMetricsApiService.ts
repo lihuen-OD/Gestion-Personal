@@ -8,7 +8,6 @@ export type DashboardBirthday = {
   firstName: string;
   lastName: string;
   birthDate: string;
-  sector: string;
 };
 
 export type DashboardMetrics = {

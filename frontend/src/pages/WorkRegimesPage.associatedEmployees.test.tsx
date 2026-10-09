@@ -578,7 +578,7 @@ describe("WorkRegimesPage — cards de mobile en Empleados asociados (Etapa 13J.
     expect(document.querySelector(".associated-employees-cards")).toBeInTheDocument();
   });
 
-  it("cada card muestra nombre, legajo, sector, centro de costo, empresa y vigencia — no una tabla de una sola columna", async () => {
+  it("cada card muestra nombre, legajo, centro de costo, empresa y vigencia — no una tabla de una sola columna", async () => {
     vi.mocked(workRegimeApiService.getWorkRegimeEmployees).mockResolvedValue({
       items: [
         buildAssociation({
@@ -591,7 +591,7 @@ describe("WorkRegimesPage — cards de mobile en Empleados asociados (Etapa 13J.
             firstName: "27 Agricultura",
             lastName: "27 Agricultura",
             status: "ACTIVO",
-            sector: { id: "s1", name: "Taller" },
+            sector: null,
             costCenter: { id: "c1", name: "Administracion Central" },
             companies: [{ id: "co1", name: "Los O'Dwyer" }],
           },
@@ -606,7 +606,8 @@ describe("WorkRegimesPage — cards de mobile en Empleados asociados (Etapa 13J.
     const card = withinCards();
     expect(card.getByText("27 Agricultura, 27 Agricultura")).toBeInTheDocument();
     expect(card.getByText("Legajo 27")).toBeInTheDocument();
-    expect(card.getByText("Taller")).toBeInTheDocument();
+    // M2 retiró el sector del legajo: la card ya no muestra "Sector anterior".
+    expect(card.queryByText("Sector anterior")).not.toBeInTheDocument();
     expect(card.getByText("Administracion Central")).toBeInTheDocument();
     expect(card.getByText("Los O'Dwyer")).toBeInTheDocument();
     expect(card.getByText("Vigente")).toBeInTheDocument();

@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { Activity, BriefcaseBusiness, Bus, Cake, Clock3, FileBarChart, FolderOpen, UserRoundMinus, Users } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { dashboardMetricsApiService, type DashboardMetrics } from "../services/api/dashboardMetricsApiService";
-import type { AuditEntry, Employee } from "../types";
+import type { AuditEntry } from "../types";
 import { OverflowCell } from "../components/ui/OverflowCell";
 import { PageHeader } from "../components/ui/PageHeader";
 import { Section } from "../components/ui/Section";
@@ -28,10 +28,6 @@ export function Alert({ label, value, tone }: { label: string; value: string; to
 export function DashboardPage() {
   const { user } = useAuth();
   const level = roleLevel(user!.role);
-  const fallbackScope = useMemo(
-    () => (level === 2 ? (employee: Employee) => employee.sector === user!.sector : undefined),
-    [level, user],
-  );
   const [metrics, setMetrics] = useState<DashboardMetrics>({ active: 0, inactive: 0, total: 0, absenceRate: "0", absenceDays: 0, turnoverRate: "0", exits: 0, averageAge: "0", averageTenure: "0", transported: 0, loadedHours: 0, loadCoverage: 0, pendingLoads: 0, reviewLoads: 0, expiredDocuments: 0, expiringDocuments: 0, missingResponsible: 0, pendingNovelties: 0, headcountByCompany: [], headcountByZone: [], transportByCity: [], transportRoutes: [], upcomingBirthdays: [], period: "" });
   const [metricsStatus, setMetricsStatus] = useState<"loading" | "success" | "error">("loading");
   const [metricsRetry, setMetricsRetry] = useState(0);
@@ -48,7 +44,7 @@ export function DashboardPage() {
     async function load() {
       setMetricsStatus("loading");
       try {
-        const apiMetrics = await dashboardMetricsApiService.getMetrics(level === 2 ? (employee: Employee) => employee.sector === user!.sector : undefined);
+        const apiMetrics = await dashboardMetricsApiService.getMetrics();
         if (cancelled) return;
         setMetrics(apiMetrics);
         setMetricsStatus("success");
@@ -61,7 +57,7 @@ export function DashboardPage() {
     return () => {
       cancelled = true;
     };
-  }, [fallbackScope, level, user, metricsRetry]);
+  }, [level, user, metricsRetry]);
 
   useEffect(() => {
     // Sólo Nivel 1 - RRHH ve el widget de actividad reciente — para el resto
@@ -116,7 +112,7 @@ export function DashboardPage() {
       <Section title="Transporte por localidad" subtitle={`${metrics.transported} personas utilizan transporte de la empresa`}><DashboardBars rows={metrics.transportByCity} /></Section>
       <Section title="Próximos cumpleaños" subtitle="Cumpleaños durante los próximos 30 días">
         <DataTable status={metrics.upcomingBirthdays.length ? "ready" : "empty"} minWidth={720} emptyText="No hay cumpleaños en los próximos 30 días.">
-          <table><thead><tr><th>Empleado</th><th>Fecha</th><th>Sector anterior</th></tr></thead><tbody>{metrics.upcomingBirthdays.map((employee) => <tr key={employee.id}><td><b>{employee.lastName}, {employee.firstName}</b></td><td>{new Date(`${employee.birthDate}T12:00:00`).toLocaleDateString("es-AR", { day: "2-digit", month: "long" })}</td><td><OverflowCell value={employee.sector} /></td></tr>)}</tbody></table>
+          <table><thead><tr><th>Empleado</th><th>Fecha</th></tr></thead><tbody>{metrics.upcomingBirthdays.map((employee) => <tr key={employee.id}><td><b>{employee.lastName}, {employee.firstName}</b></td><td>{new Date(`${employee.birthDate}T12:00:00`).toLocaleDateString("es-AR", { day: "2-digit", month: "long" })}</td></tr>)}</tbody></table>
         </DataTable>
       </Section>
     </div>

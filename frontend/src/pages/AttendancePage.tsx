@@ -544,7 +544,7 @@ export function AttendancePage() {
             <span>Empleado</span>
             <div className="attendance-filter-control">
               <Search size={16} />
-              <input value={observedQuery} onChange={(event) => setObservedQuery(event.target.value)} placeholder="Nombre, legajo, puesto o sector anterior" />
+              <input value={observedQuery} onChange={(event) => setObservedQuery(event.target.value)} placeholder="Nombre, legajo o puesto" />
             </div>
           </label>
           <label>

@@ -22,10 +22,10 @@ const roleLevel = (role: Role) => role.startsWith("Nivel 1") ? 1 : role.startsWi
 const emptyFilters = (): OrgChartFilters => organizationChartMockService.getEmptyFilters();
 
 // A7: la exportación separa empresa empleadora, alcance del puesto,
-// ubicaciones vigentes y la información anterior (sector) pendiente de recarga.
+// ubicaciones vigentes y el estado de recarga (M2 retiró el sector del legajo).
 async function exportOrganigramWorkbook(employees: Employee[], tab: OrgChartTab) {
   const XLSX = await import("xlsx");
-  const headers = ["Legajo", "CUIL", "Apellido", "Nombre", "Empresa empleadora", "Puesto", "Alcance del puesto", "Ubicaciones vigentes", "Categoria", "Encargado directo", "Responsable carga", "Centro de costo", "Estado", "Recarga", "Sector anterior"];
+  const headers = ["Legajo", "CUIL", "Apellido", "Nombre", "Empresa empleadora", "Puesto", "Alcance del puesto", "Ubicaciones vigentes", "Categoria", "Encargado directo", "Responsable carga", "Centro de costo", "Estado", "Recarga"];
   const rows = employees.map((employee) => [
     employee.legajoInterno || employee.legajo,
     employee.cuil,
@@ -41,12 +41,11 @@ async function exportOrganigramWorkbook(employees: Employee[], tab: OrgChartTab)
     employee.costCenter,
     employee.status,
     isReloadPending(employee) ? "Pendiente" : isReloadPending(employee) === false ? "Completa" : "",
-    employee.sector,
   ]);
   const worksheet = XLSX.utils.aoa_to_sheet([headers, ...rows]);
   worksheet["!cols"] = [
     { wch: 14 }, { wch: 16 }, { wch: 18 }, { wch: 18 }, { wch: 28 }, { wch: 28 }, { wch: 34 }, { wch: 40 },
-    { wch: 18 }, { wch: 26 }, { wch: 26 }, { wch: 18 }, { wch: 12 }, { wch: 12 }, { wch: 22 },
+    { wch: 18 }, { wch: 26 }, { wch: 26 }, { wch: 18 }, { wch: 12 }, { wch: 12 },
   ];
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, worksheet, "Organigrama");

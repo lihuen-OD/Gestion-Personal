@@ -17,7 +17,6 @@ export type HolidayWorkAssignmentCandidate = {
   firstName: string;
   lastName: string;
   status: string;
-  sector?: { id: string; name: string } | null;
   shiftAssignments: Array<{ shiftTemplate: { id: string; code: string; name: string } }>;
 };
 
@@ -45,8 +44,8 @@ export type HolidayWorkAssignmentInput = {
   notes?: string | null;
 };
 
-// A7: `sectorId` = sector ANTERIOR; `locationZoneId` + `locationDate` (día del feriado).
-export type HolidayWorkCandidatesFilters = { sectorId?: string; locationZoneId?: string; locationDate?: string; shiftTemplateId?: string; withoutShift?: boolean; search?: string; page?: number; take?: number };
+// A7: `locationZoneId` + `locationDate` (día del feriado). M2 retiró el filtro por sector anterior.
+export type HolidayWorkCandidatesFilters = { locationZoneId?: string; locationDate?: string; shiftTemplateId?: string; withoutShift?: boolean; search?: string; page?: number; take?: number };
 export type HolidayWorkCandidatesMeta = { total: number; page: number; pageSize: number; hasMore: boolean };
 
 export const holidayWorkAssignmentApiService = {
@@ -75,7 +74,6 @@ export const holidayWorkAssignmentApiService = {
   async getCandidates(filters: HolidayWorkCandidatesFilters = {}) {
     const params = new URLSearchParams();
     params.set("take", String(filters.take || 300));
-    if (filters.sectorId) params.set("sectorId", filters.sectorId);
     if (filters.locationZoneId) {
       params.set("locationZoneId", filters.locationZoneId);
       if (filters.locationDate) params.set("locationDate", filters.locationDate);

@@ -720,10 +720,17 @@ test("admin configuration performance journey — recorrido macro de Configuraci
     skip("Buscar en Puestos", ZONE.puestosListado, "no hay ningún puesto en el entorno actual para tomar un término real de búsqueda");
   }
 
-  await measure("Filtrar Puestos por Sector", ZONE.puestosListado, false, async () => {
-    await page.getByLabel("Sector").selectOption({ index: 1 });
-    return { visibleLocator: page.locator("table.position-table tbody tr, .empty").first() };
-  });
+  // A5: el filtro por sector del puesto se reemplazó por el alcance (Nivel + Nodo).
+  await page.getByLabel("Nivel").selectOption("SECTOR");
+  const scopeNodeOptions = await page.getByLabel("Nodo").locator("option").count();
+  if (scopeNodeOptions > 1) {
+    await measure("Filtrar Puestos por alcance", ZONE.puestosListado, false, async () => {
+      await page.getByLabel("Nodo").selectOption({ index: 1 });
+      return { visibleLocator: page.locator("table.position-table tbody tr, .empty").first() };
+    });
+  } else {
+    skip("Filtrar Puestos por alcance", ZONE.puestosListado, "no hay sectores activos en el entorno actual para filtrar por alcance");
+  }
 
   const clearPuestoFilters = page.getByRole("button", { name: "Limpiar" });
   if (await clearPuestoFilters.count()) {
