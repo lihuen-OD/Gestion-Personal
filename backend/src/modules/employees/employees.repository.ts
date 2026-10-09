@@ -1182,6 +1182,21 @@ export const employeesRepository = {
     });
   },
 
+  /**
+   * Revalidación autoritativa del puesto DENTRO de la transacción del legajo.
+   * `FOR SHARE` bloquea la fila del puesto hasta el commit: una inactivación,
+   * un archivo o un cambio de alcance concurrentes esperan (o la transacción
+   * Serializable falla por conflicto) en lugar de colarse entre la
+   * comprobación y el guardado.
+   */
+  async findPositionForAssignmentWithin(db: PrismaTransactionClient, positionId: string) {
+    await db.$queryRaw`SELECT "id" FROM "Position" WHERE "id" = ${positionId} FOR SHARE`;
+    return db.position.findUnique({
+      where: { id: positionId },
+      select: { id: true, name: true, status: true, archivedAt: true, _count: { select: { orgScopes: true } } },
+    });
+  },
+
   /** Nombres de empresas ARCHIVADS entre los IDs dados (A8 §12.4). */
   findArchivedCompanyNames(companyIds: string[]) {
     if (!companyIds.length) return Promise.resolve<string[]>([]);

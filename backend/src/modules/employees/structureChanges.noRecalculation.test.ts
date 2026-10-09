@@ -18,6 +18,7 @@ vi.mock("./employees.repository", () => ({
     findUpdateAuditSnapshot: vi.fn(),
     findConflictingUniqueFields: vi.fn(),
     findPositionForAssignment: vi.fn(),
+    findPositionForAssignmentWithin: vi.fn(),
     findArchivedCompanyNames: vi.fn().mockResolvedValue([]),
     update: vi.fn(),
     transaction: vi.fn((operation: (tx: unknown) => unknown) => operation({})),
@@ -32,13 +33,15 @@ vi.mock("../labor-history/laborHistory.service", () => ({
   mapLaborHistoryPersistenceError: vi.fn(),
 }));
 
-const repo = employeesRepository as unknown as Record<"findUpdateAuditSnapshot" | "findConflictingUniqueFields" | "findPositionForAssignment" | "update", Mock>;
+const repo = employeesRepository as unknown as Record<"findUpdateAuditSnapshot" | "findConflictingUniqueFields" | "findPositionForAssignment" | "findPositionForAssignmentWithin" | "update", Mock>;
 
 beforeEach(() => {
   vi.clearAllMocks();
   repo.findUpdateAuditSnapshot.mockResolvedValue({ id: "emp-1", legajo: "1", firstName: "A", lastName: "B", positionId: "pos-old", sectorId: null, costCenterId: "cc-1", address: null, companies: [{ companyId: "c1", isPrimary: true }] });
   repo.findConflictingUniqueFields.mockResolvedValue(null);
   repo.findPositionForAssignment.mockResolvedValue({ id: "pos-new", name: "Nuevo", status: "ACTIVO", _count: { orgScopes: 1 } });
+  // Revalidación dentro de la transacción: por defecto ve el mismo puesto.
+  repo.findPositionForAssignmentWithin.mockImplementation((_tx: unknown, id: string) => repo.findPositionForAssignment(id));
   repo.update.mockImplementation((id: string, input: object) => Promise.resolve({ id, legajo: "1", firstName: "A", lastName: "B", ...input }));
 });
 

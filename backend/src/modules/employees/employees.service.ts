@@ -2,6 +2,7 @@ import { Prisma } from "@prisma/client";
 import type { AuditContext } from "../audit/audit.service";
 import { auditService, clearAuditDerivedCaches } from "../audit/audit.service";
 import { AppError } from "../../shared/errors/AppError";
+import type { PrismaTransactionClient } from "../../shared/prisma/client";
 import { storageService } from "../../shared/storage/storage.service";
 import { storagePathBuilder } from "../../shared/storage/storagePathBuilder";
 import { redactPiiForRole } from "../../shared/security/piiRedaction";
@@ -392,9 +393,16 @@ async function ensureNoEmployeeConflict(id: string, input: UpdateEmployeeInput) 
 // del puesto. Para ASIGNAR un puesto nuevo, éste tiene que estar activo y
 // tener alcance; un legajo que conserva su puesto anterior (pendiente de
 // recarga) sigue pudiendo editar el resto de sus datos.
-async function assertAssignablePosition(positionId: string | null | undefined, currentPositionId: string | null) {
+//
+// Con `tx`, la comprobación es la AUTORITATIVA: corre dentro de la transacción
+// del guardado, contra el puesto vigente del legajo leído en ella y con la
+// fila del puesto bloqueada (FOR SHARE). Sin `tx` es sólo el rechazo temprano
+// previo a abrir la transacción.
+async function assertAssignablePosition(positionId: string | null | undefined, currentPositionId: string | null, tx?: PrismaTransactionClient) {
   if (!positionId || positionId === currentPositionId) return;
-  const position = await employeesRepository.findPositionForAssignment(positionId);
+  const position = tx
+    ? await employeesRepository.findPositionForAssignmentWithin(tx, positionId)
+    : await employeesRepository.findPositionForAssignment(positionId);
   if (!position) throw new AppError("El puesto seleccionado no existe.", 400, "EMPLOYEE_POSITION_INVALID");
   // A8 §12.4: un puesto archivado no puede ser destino de una asignación.
   if (position.archivedAt) {
@@ -877,6 +885,7 @@ export const employeesService = {
     const historyFrom = initialHistoryDate(input);
     // D-5: legajo, historia temporal inicial y auditoría en una transacción.
     const employee = await execute(() => inLaborTransaction(async (tx) => {
+      await assertAssignablePosition(input.positionId, null, tx);
       const created = await employeesRepository.create({ ...input, hourConceptIds }, audit?.userId, tx);
       await laborHistoryService.openEmployeeHistoryWithin(tx, {
         employeeId: created.id,
@@ -919,6 +928,10 @@ export const employeesService = {
     const employee = await execute(() => inLaborTransaction(async (tx) => {
       const before = await employeesRepository.findUpdateAuditSnapshot(id, tx);
       if (!before) throw new AppError("Employee not found", 404, "EMPLOYEE_NOT_FOUND");
+      // Revalidación autoritativa contra el puesto vigente leído en esta
+      // transacción: conservar el puesto que el legajo ya tiene no exige los
+      // requisitos de una asignación nueva.
+      await assertAssignablePosition(fields.positionId, before.positionId, tx);
       const changes = laborChangesOf(effectiveInput, before);
       assertLaborChangeProvided(changes, laborChange);
       const updated = await employeesRepository.update(id, effectiveInput, tx);

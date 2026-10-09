@@ -891,3 +891,19 @@ describe("employeesRepository — filtros de estructura combinados con el acceso
     expect((prisma.employee.count as Mock).mock.calls.at(-1)![0].where).toEqual(where);
   });
 });
+
+describe("employeesRepository.findPositionForAssignmentWithin — revalidación transaccional del puesto", () => {
+  it("bloquea la fila del puesto (FOR SHARE) y lo lee con el cliente de la transacción, no con el global", async () => {
+    const position = { id: "pos-1", name: "Encargado", status: "ACTIVO", archivedAt: null, _count: { orgScopes: 1 } };
+    const tx = { $queryRaw: vi.fn().mockResolvedValue([{ id: "pos-1" }]), position: { findUnique: vi.fn().mockResolvedValue(position) } };
+
+    const result = await employeesRepository.findPositionForAssignmentWithin(tx as never, "pos-1");
+
+    expect(result).toBe(position);
+    const [strings, ...values] = tx.$queryRaw.mock.calls[0]!;
+    expect((strings as string[]).join("?")).toContain("FOR SHARE");
+    expect(values).toEqual(["pos-1"]);
+    expect(tx.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(tx.position.findUnique.mock.invocationCallOrder[0]!);
+    expect(tx.position.findUnique).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "pos-1" } }));
+  });
+});

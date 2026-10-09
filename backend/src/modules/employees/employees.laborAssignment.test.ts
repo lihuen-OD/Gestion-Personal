@@ -15,6 +15,7 @@ vi.mock("./employees.repository", () => ({
     findConflictingUniqueFields: vi.fn(),
     findByUniqueFields: vi.fn(),
     findPositionForAssignment: vi.fn(),
+    findPositionForAssignmentWithin: vi.fn(),
     findArchivedCompanyNames: vi.fn().mockResolvedValue([]),
     findAssignableHourConceptIds: vi.fn(),
     update: vi.fn(),
@@ -33,7 +34,7 @@ vi.mock("../labor-history/laborHistory.service", () => ({
 
 const laborChange = { effectiveFrom: "2026-10-01", reason: "Reasignación" };
 
-const repo = employeesRepository as unknown as Record<"findUpdateAuditSnapshot" | "findConflictingUniqueFields" | "findByUniqueFields" | "findPositionForAssignment" | "findArchivedCompanyNames" | "update" | "create", Mock>;
+const repo = employeesRepository as unknown as Record<"findUpdateAuditSnapshot" | "findConflictingUniqueFields" | "findByUniqueFields" | "findPositionForAssignment" | "findPositionForAssignmentWithin" | "findArchivedCompanyNames" | "update" | "create", Mock>;
 
 const legacySnapshot = {
   id: "emp-1",
@@ -61,6 +62,8 @@ beforeEach(() => {
   repo.findByUniqueFields.mockResolvedValue(null);
   repo.update.mockImplementation((id: string, input: Record<string, unknown>) => Promise.resolve({ ...legacySnapshot, ...input, id }));
   repo.create.mockResolvedValue({ id: "emp-new", legajo: "99", firstName: "Ana", lastName: "Gómez" });
+  // Revalidación dentro de la transacción: por defecto ve el mismo puesto que el rechazo temprano.
+  repo.findPositionForAssignmentWithin.mockImplementation((_tx: unknown, id: string) => repo.findPositionForAssignment(id));
 });
 
 describe("employeesService.update — legajo pendiente de recarga", () => {
@@ -186,5 +189,56 @@ describe("employeesService.create — nuevas asignaciones", () => {
     await expect(employeesService.create({ ...createInput, positionId: "pos-arch" }))
       .rejects.toMatchObject({ statusCode: 400, code: "EMPLOYEE_POSITION_ARCHIVED" });
     expect(repo.create).not.toHaveBeenCalled();
+  });
+});
+
+describe("employeesService — revalidación del puesto dentro de la transacción del guardado", () => {
+  const tx = { marker: "labor-tx" };
+  const activeWithScope = { id: "pos-new", name: "Encargado de campo", status: "ACTIVO", archivedAt: null, _count: { orgScopes: 2 } };
+  const inactivatedMeanwhile = { ...activeWithScope, status: "INACTIVO" };
+
+  beforeEach(() => {
+    (employeesRepository.transaction as unknown as Mock).mockImplementation((operation: (client: unknown) => unknown) => operation(tx));
+  });
+
+  it("update: el puesto se inactiva entre el rechazo temprano y el guardado → 409 y no escribe", async () => {
+    repo.findPositionForAssignment.mockResolvedValue(activeWithScope);
+    repo.findPositionForAssignmentWithin.mockResolvedValue(inactivatedMeanwhile);
+
+    await expect(employeesService.update("emp-1", { positionId: "pos-new", laborChange }))
+      .rejects.toMatchObject({ statusCode: 409, code: "EMPLOYEE_POSITION_INACTIVE" });
+    expect(repo.findPositionForAssignmentWithin).toHaveBeenCalledWith(tx, "pos-new");
+    expect(repo.update).not.toHaveBeenCalled();
+  });
+
+  it("create: el puesto pierde su alcance entre el rechazo temprano y el guardado → 409 y no crea", async () => {
+    repo.findPositionForAssignment.mockResolvedValue(activeWithScope);
+    repo.findPositionForAssignmentWithin.mockResolvedValue({ ...activeWithScope, _count: { orgScopes: 0 } });
+
+    await expect(employeesService.create({ ...createInput, positionId: "pos-new" }))
+      .rejects.toMatchObject({ statusCode: 409, code: "EMPLOYEE_POSITION_PENDING_SCOPE" });
+    expect(repo.findPositionForAssignmentWithin).toHaveBeenCalledWith(tx, "pos-new");
+    expect(repo.create).not.toHaveBeenCalled();
+  });
+
+  it("la comparación usa el puesto del legajo leído DENTRO de la transacción: conservarlo no exige requisitos aunque esté inactivo", async () => {
+    // Fuera de la transacción el legajo tenía otro puesto; dentro ya tiene pos-new (inactivo hoy).
+    repo.findUpdateAuditSnapshot.mockImplementation((_id: string, client?: unknown) =>
+      Promise.resolve(client === tx ? { ...legacySnapshot, positionId: "pos-new" } : legacySnapshot));
+    repo.findPositionForAssignment.mockResolvedValue(activeWithScope);
+    repo.findPositionForAssignmentWithin.mockResolvedValue(inactivatedMeanwhile);
+
+    await employeesService.update("emp-1", { positionId: "pos-new", internalCategory: "Administrativo B", laborChange });
+
+    expect(repo.findPositionForAssignmentWithin).not.toHaveBeenCalled();
+    expect(repo.update).toHaveBeenCalledWith("emp-1", expect.objectContaining({ positionId: "pos-new" }), tx);
+  });
+
+  it("mantener el puesto anterior (pendiente de recarga) no consulta el puesto ni dentro ni fuera de la transacción", async () => {
+    await employeesService.update("emp-1", { positionId: "pos-legacy", internalCategory: "Administrativo B" });
+
+    expect(repo.findPositionForAssignment).not.toHaveBeenCalled();
+    expect(repo.findPositionForAssignmentWithin).not.toHaveBeenCalled();
+    expect(repo.update).toHaveBeenCalled();
   });
 });
