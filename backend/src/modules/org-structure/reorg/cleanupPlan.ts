@@ -68,7 +68,7 @@ export interface HistoryReference {
 /**
  * Resolución de una fila de CLASE 4 (fila del modelo nuevo que apunta a un ID
  * del inventario, A8 §3.2), por destino: `retire` retira la fila nueva
- * (borrado autorizado, sólo en `CLASS_FOUR_RETIRABLE_TABLES`, §12.4) y es lo
+ * (borrado autorizado, sólo en `CLASS_FOUR_RETIREMENTS`, §12.4) y es lo
  * único que resuelve la referencia; `retain` además promueve el destino a raíz
  * (queda archivado en vez de borrado). Retener sin retirar no resuelve: la fila
  * seguiría apuntando a un archivado (G5). Sin retiro, la referencia sigue
@@ -321,7 +321,17 @@ export function retainedClosure(inventory: FrozenInventory, roots: Array<{ table
  * fila nueva que dependa del inventario (ubicaciones, dispositivos, nodos
  * nuevos) no se borra: bloquea hasta resolverse en los datos.
  */
-export const CLASS_FOUR_RETIRABLE_TABLES: readonly string[] = ["PositionOrgScope"];
+export const CLASS_FOUR_RETIREMENTS: ReadonlyArray<{ table: string; column: string; target: TargetTable }> = [
+  { table: "PositionOrgScope", column: "companyId", target: "Company" },
+  { table: "PositionOrgScope", column: "businessUnitId", target: "BusinessUnit" },
+  { table: "PositionOrgScope", column: "sectorId", target: "Sector" },
+  { table: "PositionOrgScope", column: "areaId", target: "Area" },
+];
+export const CLASS_FOUR_RETIRABLE_TABLES: readonly string[] = [...new Set(CLASS_FOUR_RETIREMENTS.map((entry) => entry.table))];
+
+export function isAuthorizedClassFour(table: string, column: string, target: string): boolean {
+  return CLASS_FOUR_RETIREMENTS.some((entry) => entry.table === table && entry.column === column && entry.target === target);
+}
 
 /** Referencia de una regla R3 aprobada que sobrevive hacia un destino retenido (única admisión no histórica de G5). */
 export interface R3Reference { ruleId: string; column: RuleDimension; targetTable: TargetTable; targetId: string }
@@ -362,6 +372,27 @@ export interface CleanupPlanInput {
    * D-1 lo decide en C2; ningún script la expone hoy.
    */
   archiveHistoryCompanies?: boolean;
+}
+
+/**
+ * Validación final de §12.4: cada destino de un retiro de clase 4 debe salir
+ * del catálogo activo en ESTE plan (deletable ∪ retained) y la combinación
+ * debe estar en la lista cerrada. La usan el plan y la transacción de
+ * limpieza (antes de capturar y de borrar).
+ */
+export function classFourOutsidePlan(retireRows: CleanupPlan["retireRows"], deletable: Record<TargetTable, string[]>, retained: Array<{ table: TargetTable; id: string }>): Issue[] {
+  const issues: Issue[] = [];
+  for (const entry of retireRows) {
+    const ref = `${entry.table}.${entry.column}`;
+    if (!isAuthorizedClassFour(entry.table, entry.column, entry.target)) {
+      issues.push({ code: "CLASS_FOUR_RETIRE_NOT_AUTHORIZED", blocking: true, ref, message: `${ref} → ${entry.target} no es una combinación de borrado autorizado.` });
+      continue;
+    }
+    const leaving = new Set([...(deletable[entry.target] ?? []), ...retained.filter((item) => item.table === entry.target).map((item) => item.id)]);
+    const outside = entry.ids.filter((id) => !leaving.has(id));
+    if (outside.length) issues.push({ code: "CLASS_FOUR_RETIRE_OUTSIDE_PLAN", blocking: true, ref, message: `${ref}: retira filas hacia ${outside.join(", ")}, que no están en deletable ∪ retained.` });
+  }
+  return issues;
 }
 
 const isApproved = (decision: RuleDecision) => Boolean(decision.approvedBy?.trim());
@@ -425,34 +456,54 @@ export function buildCleanupPlan(input: CleanupPlanInput): CleanupPlan {
     }
   }
 
-  // §12.2 orden 3 + §12.4: filas clase 4. Sólo las familias autorizadas se
-  // retiran (borrado de fila); retener el destino es opcional y adicional —
-  // por sí solo no resuelve nada, porque la fila seguiría apuntando a un
-  // archivado (G5). Sin retiro, la referencia sigue bloqueando abajo.
+  // §12.2 orden 3 + §12.4: filas clase 4. Lista cerrada de combinaciones
+  // tabla/columna/destino; sólo se retiran filas hacia destinos `borrable`
+  // (los que terminan en deletable ∪ retained) y sólo si esas filas existen.
+  // Retener el destino es opcional y adicional — exige retirar también la
+  // fila, porque por sí solo la dejaría apuntando a un archivado (G5). Una
+  // entrada inválida no aporta nada al plan: se rechaza entera.
   const classFourRetired = new Map<string, Set<string>>();
+  const retireByKey = new Map<string, { table: string; column: string; target: TargetTable; ids: Set<string> }>();
+  const referencedByKey = new Map(references.map((reference) => [`${reference.table}.${reference.column}:${reference.target}`, reference]));
   for (const resolution of input.classFour ?? []) {
     const key = `${resolution.table}.${resolution.column}`;
-    if (!CLASS_FOUR_RETIRABLE_TABLES.includes(resolution.table) && resolution.retire.length) {
-      issues.push({ code: "CLASS_FOUR_RETIRE_NOT_AUTHORIZED", blocking: true, ref: key, message: `${key}: retirar filas de ${resolution.table} no es un borrado autorizado (A8 §12.4: sólo ${CLASS_FOUR_RETIRABLE_TABLES.join(", ")}). Resolver la dependencia en los datos.` });
+    const reject = (code: string, message: string) => issues.push({ code, blocking: true, ref: key, message: `${key} → ${resolution.target}: ${message}` });
+    if (!isAuthorizedClassFour(resolution.table, resolution.column, resolution.target)) {
+      reject("CLASS_FOUR_RETIRE_NOT_AUTHORIZED", `no es una combinación de borrado autorizado (A8 §12.4: ${CLASS_FOUR_RETIREMENTS.map((entry) => `${entry.table}.${entry.column} → ${entry.target}`).join(", ")}). Resolver la dependencia en los datos.`);
       continue;
     }
-    for (const id of [...new Set(resolution.retain)]) {
+    const retain = [...new Set(resolution.retain ?? [])];
+    const retire = [...new Set(resolution.retire ?? [])];
+    if (!retire.length) {
+      reject("CLASS_FOUR_EMPTY", "la resolución no retira ninguna fila: retener sin retirar dejaría la fila apuntando a un archivado (G5).");
+      continue;
+    }
+    const problems: string[] = [];
+    for (const id of new Set([...retain, ...retire])) {
       const record = recordByTable[resolution.target].get(id);
-      if (!record) issues.push({ code: "CLASS_FOUR_TARGET_MISSING", blocking: true, ref: key, message: `${key}: el destino retenido ${id} no está en el inventario congelado.` });
-      else if (classOf(record) === "borrable") classFourRoots.push({ table: resolution.target, id });
+      if (!record) problems.push(`${id} no está en el inventario congelado`);
+      else if (classOf(record) !== "borrable") problems.push(`${id} es un registro ${classOf(record)} (no sale del catálogo activo: sus filas no se retiran)`);
     }
-    const retire: string[] = [];
-    for (const id of [...new Set(resolution.retire)]) {
-      if (recordByTable[resolution.target].has(id)) retire.push(id);
-      else issues.push({ code: "CLASS_FOUR_TARGET_MISSING", blocking: true, ref: key, message: `${key}: la fila clase 4 apunta a ${id}, que no está en el inventario congelado.` });
+    const retainWithoutRetire = retain.filter((id) => !retire.includes(id));
+    if (retainWithoutRetire.length) problems.push(`retiene sin retirar ${retainWithoutRetire.join(", ")}`);
+    const reference = referencedByKey.get(`${key}:${resolution.target}`);
+    if (!reference || reference.rowsToInventory === 0) problems.push("no hay filas de esa columna hacia el inventario");
+    else if (reference.targetIds) {
+      const withoutRows = retire.filter((id) => !reference.targetIds!.includes(id));
+      if (withoutRows.length) problems.push(`no hay filas hacia ${withoutRows.join(", ")}`);
     }
-    if (retire.length) {
-      retireRows.push({ table: resolution.table, column: resolution.column, target: resolution.target, ids: retire.sort() });
-      const retired = classFourRetired.get(`${key}:${resolution.target}`) ?? new Set<string>();
-      for (const id of retire) retired.add(id);
-      classFourRetired.set(`${key}:${resolution.target}`, retired);
+    if (problems.length) {
+      reject("CLASS_FOUR_INVALID", `${problems.join("; ")}.`);
+      continue;
     }
+    for (const id of retain) classFourRoots.push({ table: resolution.target, id });
+    const entry = retireByKey.get(`${key}:${resolution.target}`) ?? { table: resolution.table, column: resolution.column, target: resolution.target, ids: new Set<string>() };
+    for (const id of retire) entry.ids.add(id);
+    retireByKey.set(`${key}:${resolution.target}`, entry);
+    classFourRetired.set(`${key}:${resolution.target}`, entry.ids);
   }
+  // Una entrada por tabla/columna/destino aunque haya varias resoluciones.
+  for (const entry of retireByKey.values()) retireRows.push({ table: entry.table, column: entry.column, target: entry.target, ids: [...entry.ids].sort() });
 
   // §12.2 orden 3: destinos R3 (sólo aprobados) y tratamiento de reglas.
   for (const rule of rules) {
@@ -515,6 +566,11 @@ export function buildCleanupPlan(input: CleanupPlanInput): CleanupPlan {
       .map((record) => record.id)
       .filter((id) => !retained.has(`${table}:${id}`));
   }
+
+  // §12.4: validación FINAL de los retiros de clase 4 contra el conjunto ya
+  // calculado — todo destino retirado sale del catálogo activo
+  // (deletable ∪ retained).
+  issues.push(...classFourOutsidePlan(retireRows, deletable, [...retained.values()]));
 
   // §12.2 orden 6: aserción fail-closed — ningún ID referenciado por historia
   // puede seguir en deletable. (En C2 con el gate de §12.7 apagado las

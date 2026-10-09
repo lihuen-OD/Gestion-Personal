@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { borrableIds, buildCleanupPlan, classifyReference, partitionHistoryReference, retainedClosure, type FrozenInventory, type HistoryReference, type ReferenceCount, type RuleReference } from "./cleanupPlan";
+import { borrableIds, buildCleanupPlan, classFourOutsidePlan, classifyReference, partitionHistoryReference, retainedClosure, type FrozenInventory, type HistoryReference, type ReferenceCount, type RuleReference } from "./cleanupPlan";
 
 const rec = (id: string, parents: Record<string, string | null> = {}) => ({ id, code: id.toUpperCase(), name: id, status: "ACTIVO", parents });
 
@@ -357,10 +357,11 @@ describe("A8 §12.4 — filas clase 4: retención de destino o retiro de la fila
       references: [],
       rules: [],
       decisions: [],
-      classFour: [{ table: "PositionOrgScope", column: "companyId", target: "Company", retain: ["comp-9"], retire: [] }],
+      classFour: [{ table: "PositionOrgScope", column: "companyId", target: "Company", retain: [], retire: ["comp-9"] }],
     });
     expect(plan.blocking).toBe(true);
-    expect(plan.issues).toContainEqual(expect.objectContaining({ code: "CLASS_FOUR_TARGET_MISSING", blocking: true, message: expect.stringContaining("comp-9") }));
+    expect(plan.issues).toContainEqual(expect.objectContaining({ code: "CLASS_FOUR_INVALID", blocking: true, message: expect.stringContaining("comp-9 no está en el inventario congelado") }));
+    expect(plan.retireRows).toEqual([]);
   });
 });
 
@@ -442,5 +443,106 @@ describe("A8 §12.7 / AT-7 — C2 con gate apagado: tampoco archiva empresas por
     expect(plan.blocking).toBe(false);
     expect(plan.retained).toContainEqual({ table: "Company", id: "comp-1" });
     expect(plan.issues).not.toContainEqual(expect.objectContaining({ code: "HISTORY_RETAINS_COMPANY_C2" }));
+  });
+});
+
+describe("A8 §12.4 — clase 4 limitada al alcance autorizado (hallazgo de revisión)", () => {
+  const scopeRef = (column: string, target: ReferenceCount["target"], targetIds: string[]) => ref("PositionOrgScope", column, target, targetIds.length, 0, targetIds);
+  function c1WithConservedAndNew(): FrozenInventory {
+    const base = inventory("C1");
+    return {
+      ...base,
+      records: {
+        ...base.records,
+        Company: [{ ...rec("comp-1"), class: "conservada" }],
+        BusinessUnit: [...base.records.BusinessUnit, { ...rec("bu-new", { Company: "comp-1" }), class: "nueva" }],
+      },
+    };
+  }
+
+  it("rechaza retirar alcances hacia una empresa CONSERVADA de C1 (reproducción): bloquea y no planifica ningún retiro", () => {
+    const plan = buildCleanupPlan({
+      inventory: c1WithConservedAndNew(),
+      references: [scopeRef("companyId", "Company", ["comp-1"])],
+      rules: [],
+      decisions: [],
+      classFour: [{ table: "PositionOrgScope", column: "companyId", target: "Company", retain: [], retire: ["comp-1"] }],
+    });
+    expect(plan.blocking).toBe(true);
+    expect(plan.issues).toContainEqual(expect.objectContaining({ code: "CLASS_FOUR_INVALID", message: expect.stringContaining("comp-1 es un registro conservada") }));
+    expect(plan.retireRows).toEqual([]);
+  });
+
+  it("rechaza retirar alcances hacia un registro NUEVO incorporado por ampliación", () => {
+    const plan = buildCleanupPlan({
+      inventory: c1WithConservedAndNew(),
+      references: [scopeRef("businessUnitId", "BusinessUnit", ["bu-new"])],
+      rules: [],
+      decisions: [],
+      classFour: [{ table: "PositionOrgScope", column: "businessUnitId", target: "BusinessUnit", retain: [], retire: ["bu-new"] }],
+    });
+    expect(plan.issues).toContainEqual(expect.objectContaining({ code: "CLASS_FOUR_INVALID", message: expect.stringContaining("bu-new es un registro nueva") }));
+    expect(plan.retireRows).toEqual([]);
+  });
+
+  it.each([
+    [{ table: "PositionOrgScope", column: "companyId", target: "Sector" as const }, "CLASS_FOUR_RETIRE_NOT_AUTHORIZED"],
+    [{ table: "PositionOrgScope", column: "positionId", target: "Position" as const }, "CLASS_FOUR_RETIRE_NOT_AUTHORIZED"],
+    [{ table: "EmployeeWorkLocationEstablishment", column: "establishmentId", target: "Establishment" as const }, "CLASS_FOUR_RETIRE_NOT_AUTHORIZED"],
+  ])("rechaza combinaciones fuera de la lista cerrada: %o", (combination, code) => {
+    const plan = buildCleanupPlan({ inventory: inventory(), references: [], rules: [], decisions: [], classFour: [{ ...combination, retain: [], retire: ["sec-1"] }] });
+    expect(plan.issues).toContainEqual(expect.objectContaining({ code, blocking: true }));
+    expect(plan.retireRows).toEqual([]);
+  });
+
+  it("rechaza entradas contradictorias o vacías: retener sin retirar, sin retiros, retiro sin filas", () => {
+    const plan = buildCleanupPlan({
+      inventory: inventory(),
+      references: [scopeRef("businessUnitId", "BusinessUnit", ["bu-1"])],
+      rules: [],
+      decisions: [],
+      classFour: [
+        { table: "PositionOrgScope", column: "businessUnitId", target: "BusinessUnit", retain: ["bu-1"], retire: [] },
+        { table: "PositionOrgScope", column: "sectorId", target: "Sector", retain: ["sec-2"], retire: ["sec-1"] },
+        { table: "PositionOrgScope", column: "areaId", target: "Area", retain: [], retire: ["area-1"] },
+      ],
+    });
+    const codes = plan.issues.filter((issue) => issue.code.startsWith("CLASS_FOUR")).map((issue) => `${issue.code}:${issue.message}`);
+    expect(codes).toEqual(expect.arrayContaining([
+      expect.stringContaining("CLASS_FOUR_EMPTY"),
+      expect.stringMatching(/CLASS_FOUR_INVALID:.*retiene sin retirar sec-2/),
+      expect.stringMatching(/CLASS_FOUR_INVALID:.*PositionOrgScope.areaId → Area: .*no hay filas/),
+    ]));
+    expect(plan.retireRows).toEqual([]);
+    expect(plan.roots.classFour).toEqual([]);
+  });
+
+  it("dos resoluciones de la misma tabla/columna con destinos distintos se consolidan en un único retiro legítimo", () => {
+    const inv = inventory();
+    inv.records.BusinessUnit.push(rec("bu-2", { Company: "comp-1" }));
+    const plan = buildCleanupPlan({
+      inventory: inv,
+      references: [scopeRef("businessUnitId", "BusinessUnit", ["bu-1", "bu-2"])],
+      rules: [],
+      decisions: [],
+      classFour: [
+        { table: "PositionOrgScope", column: "businessUnitId", target: "BusinessUnit", retain: [], retire: ["bu-2"] },
+        { table: "PositionOrgScope", column: "businessUnitId", target: "BusinessUnit", retain: ["bu-1"], retire: ["bu-1"] },
+      ],
+    });
+    expect(plan.blocking).toBe(false);
+    expect(plan.retireRows).toEqual([{ table: "PositionOrgScope", column: "businessUnitId", target: "BusinessUnit", ids: ["bu-1", "bu-2"] }]);
+    expect(plan.retained).toContainEqual({ table: "BusinessUnit", id: "bu-1" });
+    expect(plan.deletable.BusinessUnit).toEqual(["bu-2"]);
+  });
+
+  it("validación final: un retiro hacia un ID fuera de deletable ∪ retained, o una combinación no autorizada, bloquea", () => {
+    const deletable = { Company: [], BusinessUnit: ["bu-2"], Establishment: [], Area: [], Sector: [], Position: [] };
+    const retained = [{ table: "BusinessUnit" as const, id: "bu-1" }];
+    expect(classFourOutsidePlan([{ table: "PositionOrgScope", column: "businessUnitId", target: "BusinessUnit", ids: ["bu-1", "bu-2"] }], deletable, retained)).toEqual([]);
+    expect(classFourOutsidePlan([{ table: "PositionOrgScope", column: "businessUnitId", target: "BusinessUnit", ids: ["bu-9"] }], deletable, retained))
+      .toEqual([expect.objectContaining({ code: "CLASS_FOUR_RETIRE_OUTSIDE_PLAN", message: expect.stringContaining("bu-9") })]);
+    expect(classFourOutsidePlan([{ table: "ClockDevice", column: "establishmentId", target: "Establishment", ids: ["x"] }], deletable, retained))
+      .toEqual([expect.objectContaining({ code: "CLASS_FOUR_RETIRE_NOT_AUTHORIZED" })]);
   });
 });
