@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
+import type { Period } from "../../labor-history/laborHistory.periods";
 import type { EngineScopeHistory, ScopeNodeSnapshot } from "../../labor-history/laborHistory.scope";
 import { SpecialHourRuleSectorIntegrityError } from "../../time-entries/specialHourRuleScope";
 import { rulePopulationAt, type PopulationReader, type PopulationRule } from "./rulePopulation";
 
 const DATE = "2026-10-09";
-const open = <T>(value: T) => [{ effectiveFrom: "2026-01-01", effectiveTo: null, value }];
+const open = <T>(value: T): Period<T>[] => [{ id: "period-1", effectiveFrom: "2026-01-01", effectiveTo: null, value }];
 const empty = (): EngineScopeHistory => ({ position: [], costCenter: [], legacySector: [], employer: [], scopes: new Map() });
 const withPosition = (positionId: string, nodes: ScopeNodeSnapshot[] | null): EngineScopeHistory => ({
   ...empty(),
