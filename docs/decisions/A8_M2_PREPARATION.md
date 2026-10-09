@@ -1498,9 +1498,12 @@ datos nuevos). **Respaldo previo:** `pg_dump` `../../backups/a8-copy2-pre-2026-1
 `br-dark-moon-aijz7ln0` (`org-location-reorg-a8-backup-20261009-b`, parent `br-green-bonus-aixba3xg`
 en LSN `0/1DE03B20`, creada 13:50:38Z, **antes** de la primera escritura a las 14:05:46Z).
 Restauración del dump sobre la base local desechable `a8_copy2_restore_check2` (PostgreSQL 18.4,
-socket local): log de `pg_restore` en `a8-copy2-pg-restore-2026-10-09.log` (exit=1 sólo por permisos
-de Neon inexistentes en el host local), destino real certificado desde esa conexión en
-`a8-copy2-restore-local-identity-2026-10-09.txt` y manifiesto **capturado desde esa misma conexión**
+socket local): log de `pg_restore` en `a8-copy2-pg-restore-2026-10-09.log`. Sus 115 líneas de error son
+**exclusivamente de roles/permisos inexistentes en el host local**, sin ningún efecto sobre esquema,
+constraints ni datos: **113 × `OWNER TO neondb_owner`** y **2 × `ALTER DEFAULT PRIVILEGES … TO
+neon_superuser`** (todas las líneas del log corresponden a esas dos familias). Destino real certificado
+desde esa conexión en `a8-copy2-restore-local-identity-2026-10-09.txt` y manifiesto **capturado desde
+esa misma conexión**
 (`a8-copy2-post-restore-local-2026-10-09b.manifest.json`, con la conexión local registrada dentro).
 Comparación por tablas/columnas/filas contra el manifiesto previo → **IDENTICO**, 69 tablas / 5528
 filas (`a8-copy2-restore-check-2026-10-09b.json`; la base local se eliminó). Los archivos de la
@@ -1528,11 +1531,13 @@ Existencia y metadatos de ambas ramas, por GET de la API Neon, en
   tres columnas retiradas, CHECKs de archivo validados y `Establishment_zoneId_code_key` creado;
   conservados la cadena legada y `@@unique([companyId, code])` (D-B2).
 - **F2 verde** (G1, G5, G6, G7, G8, G9 → `a8-copy2-guards-f2-2026-10-09.json`). Diferencias reales de
-  M2, medidas contra `a8-copy2-post-m2-2026-10-09.manifest.json` (baseline: manifiesto post-limpieza):
-  **`_prisma_migrations` +1**; **columnas modificadas**: `Employee -sectorId`, `User -sectorId`,
-  `ClockDevice -sectorId` (sólo esas tres); **hashes de fila**: `Employee` `stableDiffs=0` y
-  `watchedDiffs=39`, `User` 3 y `ClockDevice` 5 — el hash se recalcula sin la columna retirada, cuyo
-  valor era NULL en toda la base antes del deploy (medido); ninguna otra tabla cambió.
+  M2, medidas contra `a8-copy2-post-m2-2026-10-09.manifest.json` (baseline: manifiesto post-limpieza),
+  **`stableDiffs=0`; `watchedDiffs=39/3/5`** — `stable` son hashes de los datos protegidos y `watched`
+  son los campos vigilados que figuran en claro en el manifiesto (`Employee`: 39 filas; `User`: 3;
+  `ClockDevice`: 5). Única columna retirada: **`sectorId` de `Employee`, `User` y `ClockDevice`**
+  (lista de columnas modificada por tabla: `Employee -sectorId`, `User -sectorId`,
+  `ClockDevice -sectorId`; ninguna otra) y **`_prisma_migrations` +1**. El valor de esa columna era
+  NULL en toda la base antes del deploy (medido), por lo que ningún dato cambió.
 - **Arranque y smoke HTTP (evidencia saneada en `a8-copy2-app-smoke-2026-10-09.json`):** backend sobre
   la copia en 4002 con `AUTOMATIC_JOBS_ENABLED=false` (`AUTOMATIC_JOBS_DISABLED` en el log de arranque)
   y Vite en 5174 → login RRHH, `/org-structure` (6 empresas, 1 unidad, 2 sectores, 0 áreas, 2 zonas,
@@ -1552,7 +1557,8 @@ Existencia y metadatos de ambas ramas, por GET de la API Neon, en
   auditorías `UPDATE`; el total de puestos sigue en 5. El resto de las diferencias: **AuditLog +11**
   (esas 3 más 8 `LOGIN` del usuario `fd872d5a…`) y **31 notificaciones** marcadas `LEIDA` con
   `readAt`. **Sin filas borradas en ninguna tabla.** Lecturas del smoke separadas de estas
-  escrituras en el reporte. **Pendiente de decisión:** conservar o no estos artefactos de uso de
-  prueba (logins, notificaciones leídas, 2 puestos inactivados) hasta la recarga de datos.
+  escrituras en el reporte. **Aceptada:** la conservación de estos artefactos de uso de prueba en la
+  copia (8 logins auditados, 31 notificaciones leídas y los 2 puestos inactivados) hasta la recarga
+  de datos del cliente, que los reemplazará.
 - **Recuperación posible en cualquier momento:** `prisma/rollbacks/…m2.down.sql` + `org-reorg-restore`
   con `a8-copy2-cleanup-backup-2026-10-09.json`, o el `pg_dump` previo / la rama de respaldo.
