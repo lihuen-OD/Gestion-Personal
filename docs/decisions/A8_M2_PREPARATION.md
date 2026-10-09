@@ -1421,3 +1421,34 @@ Sin M2 ni limpieza final en este bloque.
   ventana de historia del proyecto es de 6 h (`history_retention_seconds = 21600`).
 - **No se escribió nada en la copia:** sin respaldo doble (§7.1.3) no se aplica la migración ni se
   ejecuta la limpieza. Opciones (decisión del usuario): ver la entrega del 2026-10-09.
+
+#### 12.14.12 Ensayo A8 C1 en la copia Neon `org-location-reorg` — completado y restaurado (2026-10-09)
+
+Primer ensayo **real** en la copia Neon con los comandos operativos (`scripts/org-reorg/neon-admin.ts`
++ `org-reorg-*`), identidad D-0 **VERIFICADA** en cada paso (proyecto `solitary-scene-44555429`,
+rama `br-green-bonus-aixba3xg` = `org-location-reorg`, endpoint `ep-rough-river-aioy7xp9`, no es la
+rama por defecto). Schedulers deshabilitados (`AUTOMATIC_JOBS_ENABLED=false`). development, demo y
+production no se tocaron. Evidencia en `backups/a8-copy-*-2026-10-09*` con
+`backups/a8-copy-rehearsal-2026-10-09.sha256` (fuera del repo; sin credenciales).
+
+| Paso (§7.2) | Resultado |
+|---|---|
+| Expiración de la rama (autorizado por el usuario) | `PATCH expires_at: null` sólo sobre `br-green-bonus-aixba3xg`: `2026-10-14T12:23:10Z` → sin expiración (releído) |
+| 1. Respaldo doble (B0) | Rama hija `org-location-reorg-a8-backup-20261009` (`br-late-frog-ai7hd0kw`), origen `org-location-reorg`, LSN `0/1DC9BE50`, `ready`, sin compute + `pg_dump` `a8-rehearsal-copy-pre-2026-10-09.dump` (SHA-256 `5a67d5ae…`, restauración probada). Manifiesto de la copia == manifiesto del dump antes y después de crear la rama (0 diferencias): **ambos respaldos representan el mismo estado** |
+| 2. Migración aditiva | `migrate status`: sólo `20261008150000` pendiente → `migrate deploy` → al día. Manifiesto: únicamente columnas nuevas en las 6 tablas de catálogo y +1 `_prisma_migrations`; backfill `isLegacy` coherente (0 discrepancias), 0 archivados |
+| 3. Inventario C1 + F0 | F0 verde; 6 empresas `conservada`, 117 `borrable`, 4 `nueva` (1 ronda de ampliación); G8 verde; `retained` vacío. **Idéntico** (registros, clases e historia) al del ensayo sobre la restauración local. Guardas F0 (comando): G1, G2/F0, G8 verdes |
+| 4. `decisions.json` | Revalidado sin cambios: 0 reglas; único bloqueo C1 = alcance QA `PUE-006` → `UN-005` (`15598eb2…`), retiro autorizado (§12.4) |
+| 5. Dry-run | `DRY-RUN OK (revertido)`: 141 filas a retirar, 67 vaciados, 184 auditorías, motor 0 cambios (población 2026-10-09), F1 verde, V1 0 |
+| 6. Aplicación con respaldo | `APLICADO`: F1 (G4, G3, formas, G7, G5, G8) verde en la transacción y con el comando de guardas F1; V1 0 violaciones. Respaldo `a8-copy-cleanup-backup-2026-10-09.json` (formato 2) con SHA-256 |
+| Conservación (antes → después de aplicar) | Idénticas por ID y contenido: `TimeEntry` 94, `TimeSegment` 56, `HourConceptBreakdown` 26, `MonthlyTimeClosure` 8, `Novelty` 14, `StorageFile` 165, `LaborMovement` 39, `EmployeeFieldHistory` 25, `EmployeeBlockHistory` 20, `SpecialHourRuleApplication` 22, `AttendancePunch` 80, `WorkShift` 47, `EmployeeAssignment` 6, `DoubleHourRule` 3, las 7 tablas de historia, `Company` 6, `EmployeeCompany` 40. `Employee` 39: datos personales iguales; sólo puesto/sector anteriores vaciados en 33 legajos (autorizado) |
+| 7. Restauración | `RESTAURADO`: 141 filas reinsertadas una vez cada una, 67 vaciados repuestos; verificación interna 0 |
+| Comparación completa | Línea base previa a la limpieza vs posterior a la restauración: 69 tablas, 0 diferencias por ID y contenido; únicas filas nuevas: 185 en `AuditLog` (184 limpieza + 1 restauración) |
+
+**Estado final de la copia:** datos restaurados al estado previo a la limpieza, con la migración
+aditiva `20261008150000` aplicada (paso 2 del §7.2, previsto que permanezca), sin expiración y con la
+rama de respaldo `br-late-frog-ai7hd0kw` conservada. Sin M2 ni limpieza final.
+
+**Verificación por nivel actualizada:** AT-5, AT-6, AT-9 y la transacción de limpieza/restauración
+pasan a **verificadas en la copia Neon** para C1 (sin archivo: en C1 la copia no tiene registros
+borrables referenciados por historia, así que `retained` = ∅ y el marcado de archivo se ejerció sólo
+en la integración local).
