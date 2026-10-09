@@ -106,6 +106,36 @@ describe.skipIf(!url)("A8 — captura, retiro y restauración contra PostgreSQL 
 
   afterAll(async () => { await prisma?.$disconnect(); });
 
+  it("bloqueos de Legajos: con la empresa/puesto bloqueados (FOR SHARE) por la revalidación, el UPDATE de archivo concurrente espera; sin bloqueo pasa", async () => {
+    const { employeesRepository } = await import("../../employees/employees.repository");
+    const other = new PrismaClient({ datasourceUrl: url });
+    const tryArchive = (table: "Company" | "Position", id: string) => other.$transaction(async (tx) => {
+      await tx.$executeRawUnsafe("SET LOCAL lock_timeout = '300ms'");
+      await tx.$executeRawUnsafe(`UPDATE "${table}" SET "archivedAt" = now() WHERE id = $1`, id);
+      throw new Error("ROLLBACK_CONTROL"); // nunca deja nada escrito
+    });
+    try {
+      for (const [table, id, check] of [
+        ["Company", "comp-1", (tx: unknown) => employeesRepository.findArchivedCompanyNamesWithin(tx as never, ["comp-1"])],
+        ["Position", "pos-new", (tx: unknown) => employeesRepository.findPositionForAssignmentWithin(tx as never, "pos-new")],
+      ] as const) {
+        // Control: sin la revalidación abierta, el archivo concurrente llega a escribir (se revierte igual).
+        await expect(tryArchive(table, id)).rejects.toThrow("ROLLBACK_CONTROL");
+        let release!: () => void;
+        const held = new Promise<void>((resolve) => { release = resolve; });
+        const holder = prisma.$transaction(async (tx) => { await check(tx); await held; }, { timeout: 10_000 });
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        await expect(tryArchive(table, id)).rejects.toThrow(/lock timeout|55P03/);
+        release();
+        await holder;
+      }
+      expect(await count(`"Company" WHERE "archivedAt" IS NOT NULL`)).toBe(0);
+      expect(await count(`"Position" WHERE "archivedAt" IS NOT NULL`)).toBe(0);
+    } finally {
+      await other.$disconnect();
+    }
+  }, 60_000);
+
   it("hallazgo 3: población de R2 con el cargador REAL de historia del motor (WITHIN y LEGACY_SECTOR, faltantes informados)", async () => {
     const base = { id: "tmp", name: "tmp", kind: "ESPECIAL", companyId: null, costCenterId: null, positionId: null, employees: [] };
     const classification = async (id: string) => prisma.sector.findUniqueOrThrow({ where: { id }, select: { isLegacy: true } });

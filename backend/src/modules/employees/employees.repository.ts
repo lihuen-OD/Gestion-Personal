@@ -1197,7 +1197,20 @@ export const employeesRepository = {
     });
   },
 
-  /** Nombres de empresas ARCHIVADS entre los IDs dados (A8 §12.4). */
+  /**
+   * Versión AUTORITATIVA dentro de la transacción del legajo: bloquea las
+   * empresas (`FOR SHARE`) antes de leer su archivo, así el `UPDATE` de
+   * archivo de la limpieza espera al commit (o la transacción Serializable
+   * falla) en lugar de colarse entre la comprobación y el guardado.
+   */
+  async findArchivedCompanyNamesWithin(db: PrismaTransactionClient, companyIds: string[]) {
+    if (!companyIds.length) return [];
+    await db.$queryRaw`SELECT "id" FROM "Company" WHERE "id" = ANY(${companyIds}::text[]) FOR SHARE`;
+    const rows = await db.company.findMany({ where: { id: { in: companyIds }, archivedAt: { not: null } }, select: { name: true } });
+    return rows.map((row) => row.name);
+  },
+
+  /** Nombres de empresas ARCHIVADAS entre los IDs dados (A8 §12.4). */
   findArchivedCompanyNames(companyIds: string[]) {
     if (!companyIds.length) return Promise.resolve<string[]>([]);
     return prisma.company

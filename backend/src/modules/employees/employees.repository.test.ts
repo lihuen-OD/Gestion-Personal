@@ -907,3 +907,22 @@ describe("employeesRepository.findPositionForAssignmentWithin — revalidación 
     expect(tx.position.findUnique).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "pos-1" } }));
   });
 });
+
+describe("employeesRepository.findArchivedCompanyNamesWithin — revalidación transaccional de empresas", () => {
+  it("bloquea las empresas (FOR SHARE) y lee el archivo con el cliente de la transacción", async () => {
+    const tx = { $queryRaw: vi.fn().mockResolvedValue([]), company: { findMany: vi.fn().mockResolvedValue([{ name: "Vieja" }]) } };
+
+    expect(await employeesRepository.findArchivedCompanyNamesWithin(tx as never, ["c-1", "c-2"])).toEqual(["Vieja"]);
+    const [strings, ...values] = tx.$queryRaw.mock.calls[0]!;
+    expect((strings as string[]).join("?")).toContain("FOR SHARE");
+    expect(values).toEqual([["c-1", "c-2"]]);
+    expect(tx.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(tx.company.findMany.mock.invocationCallOrder[0]!);
+    expect(tx.company.findMany).toHaveBeenCalledWith({ where: { id: { in: ["c-1", "c-2"] }, archivedAt: { not: null } }, select: { name: true } });
+  });
+
+  it("sin empresas nuevas no consulta ni bloquea", async () => {
+    const tx = { $queryRaw: vi.fn(), company: { findMany: vi.fn() } };
+    expect(await employeesRepository.findArchivedCompanyNamesWithin(tx as never, [])).toEqual([]);
+    expect(tx.$queryRaw).not.toHaveBeenCalled();
+  });
+});

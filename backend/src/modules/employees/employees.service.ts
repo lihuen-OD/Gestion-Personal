@@ -421,12 +421,15 @@ async function assertAssignablePosition(positionId: string | null | undefined, c
 }
 
 // A8 §12.4: un vínculo NUEVO de empresa empleadora no puede apuntar a un
-// registro archivado. Se evalúa sobre el set efectivo (una edición que no
-// cambia las empresas no rechaza el vínculo preexistente).
-async function assertAssignableCompanies(companyIds?: Array<string | null>) {
-  const ids = Array.from(new Set((companyIds || []).filter((id): id is string => Boolean(id))));
+// registro archivado. Sólo se validan las empresas que el legajo no tenía
+// (`currentCompanyIds`): conservar sin cambios un vínculo preexistente no
+// exige requisitos nuevos. Con `tx` la comprobación es la AUTORITATIVA: corre
+// en la transacción del guardado, contra los vínculos leídos en ella y con las
+// empresas bloqueadas (FOR SHARE); sin `tx` es el rechazo temprano.
+async function assertAssignableCompanies(companyIds?: Array<string | null>, currentCompanyIds: string[] = [], tx?: PrismaTransactionClient) {
+  const ids = Array.from(new Set((companyIds || []).filter((id): id is string => Boolean(id)))).filter((id) => !currentCompanyIds.includes(id));
   if (!ids.length) return;
-  const archived = await employeesRepository.findArchivedCompanyNames(ids);
+  const archived = tx ? await employeesRepository.findArchivedCompanyNamesWithin(tx, ids) : await employeesRepository.findArchivedCompanyNames(ids);
   if (archived.length) {
     throw new AppError(`No se puede vincular el legajo a un registro archivado: ${archived.join(", ")}.`, 400, "EMPLOYEE_COMPANY_ARCHIVED");
   }
@@ -886,6 +889,7 @@ export const employeesService = {
     // D-5: legajo, historia temporal inicial y auditoría en una transacción.
     const employee = await execute(() => inLaborTransaction(async (tx) => {
       await assertAssignablePosition(input.positionId, null, tx);
+      await assertAssignableCompanies(input.companyIds, [], tx);
       const created = await employeesRepository.create({ ...input, hourConceptIds }, audit?.userId, tx);
       await laborHistoryService.openEmployeeHistoryWithin(tx, {
         employeeId: created.id,
@@ -920,7 +924,7 @@ export const employeesService = {
     assertLegacySectorUnchanged(fields.sectorId, snapshot.sectorId);
     await assertAssignablePosition(fields.positionId, snapshot.positionId);
     const effectiveInput = omitUnchangedEmployeeRelations(fields, snapshot);
-    await assertAssignableCompanies(effectiveInput.companyIds);
+    await assertAssignableCompanies(effectiveInput.companyIds, snapshot.companies.map((company) => company.companyId));
     assertLaborChangeProvided(laborChangesOf(effectiveInput, snapshot), laborChange);
     // D-5: columna vigente, historia temporal desde la fecha indicada,
     // historial visible y auditoría en una sola transacción. El estado previo
@@ -928,10 +932,11 @@ export const employeesService = {
     const employee = await execute(() => inLaborTransaction(async (tx) => {
       const before = await employeesRepository.findUpdateAuditSnapshot(id, tx);
       if (!before) throw new AppError("Employee not found", 404, "EMPLOYEE_NOT_FOUND");
-      // Revalidación autoritativa contra el puesto vigente leído en esta
-      // transacción: conservar el puesto que el legajo ya tiene no exige los
-      // requisitos de una asignación nueva.
+      // Revalidación autoritativa contra el puesto y las empresas vigentes
+      // leídos en esta transacción, ANTES de cualquier escritura: conservar lo
+      // que el legajo ya tiene no exige los requisitos de una asignación nueva.
       await assertAssignablePosition(fields.positionId, before.positionId, tx);
+      if (effectiveInput.companyIds !== undefined) await assertAssignableCompanies(effectiveInput.companyIds, before.companies.map((company) => company.companyId), tx);
       const changes = laborChangesOf(effectiveInput, before);
       assertLaborChangeProvided(changes, laborChange);
       const updated = await employeesRepository.update(id, effectiveInput, tx);

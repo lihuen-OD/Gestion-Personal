@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Mock } from "vitest";
 import { employeesRepository } from "./employees.repository";
 import { employeesService } from "./employees.service";
+import { auditService } from "../audit/audit.service";
+import { laborHistoryService } from "../labor-history/laborHistory.service";
 
 /**
  * A6 (docs/decisions/ORG_LOCATION_REORGANIZATION.md §3.3): el legajo tiene
@@ -17,6 +19,7 @@ vi.mock("./employees.repository", () => ({
     findPositionForAssignment: vi.fn(),
     findPositionForAssignmentWithin: vi.fn(),
     findArchivedCompanyNames: vi.fn().mockResolvedValue([]),
+    findArchivedCompanyNamesWithin: vi.fn().mockResolvedValue([]),
     findAssignableHourConceptIds: vi.fn(),
     update: vi.fn(),
     create: vi.fn(),
@@ -34,7 +37,7 @@ vi.mock("../labor-history/laborHistory.service", () => ({
 
 const laborChange = { effectiveFrom: "2026-10-01", reason: "Reasignación" };
 
-const repo = employeesRepository as unknown as Record<"findUpdateAuditSnapshot" | "findConflictingUniqueFields" | "findByUniqueFields" | "findPositionForAssignment" | "findPositionForAssignmentWithin" | "findArchivedCompanyNames" | "update" | "create", Mock>;
+const repo = employeesRepository as unknown as Record<"findUpdateAuditSnapshot" | "findConflictingUniqueFields" | "findByUniqueFields" | "findPositionForAssignment" | "findPositionForAssignmentWithin" | "findArchivedCompanyNames" | "findArchivedCompanyNamesWithin" | "update" | "create", Mock>;
 
 const legacySnapshot = {
   id: "emp-1",
@@ -240,5 +243,71 @@ describe("employeesService — revalidación del puesto dentro de la transacció
     expect(repo.findPositionForAssignment).not.toHaveBeenCalled();
     expect(repo.findPositionForAssignmentWithin).not.toHaveBeenCalled();
     expect(repo.update).toHaveBeenCalled();
+  });
+});
+
+describe("employeesService — revalidación de empresas empleadoras dentro de la transacción del guardado (A8 §12.4)", () => {
+  const tx = { marker: "labor-tx" };
+
+  beforeEach(() => {
+    (employeesRepository.transaction as unknown as Mock).mockImplementation((operation: (client: unknown) => unknown) => operation(tx));
+    repo.findArchivedCompanyNames.mockResolvedValue([]);
+    repo.findArchivedCompanyNamesWithin.mockResolvedValue([]);
+  });
+
+  const noWrites = () => {
+    expect(repo.update).not.toHaveBeenCalled();
+    expect(repo.create).not.toHaveBeenCalled();
+    expect(auditService.registerWithin).not.toHaveBeenCalled();
+    expect(laborHistoryService.recordEmployeeChangesWithin).not.toHaveBeenCalled();
+    expect(laborHistoryService.openEmployeeHistoryWithin).not.toHaveBeenCalled();
+  };
+
+  it("update: la empresa se archiva entre el rechazo temprano y el guardado → 400 y la transacción no escribe nada", async () => {
+    repo.findArchivedCompanyNamesWithin.mockResolvedValueOnce(["Empresa archivada"]);
+
+    await expect(employeesService.update("emp-1", { companyIds: ["company-1", "c-new"], laborChange }))
+      .rejects.toMatchObject({ statusCode: 400, code: "EMPLOYEE_COMPANY_ARCHIVED", message: expect.stringContaining("Empresa archivada") });
+    expect(repo.findArchivedCompanyNames).toHaveBeenCalledWith(["c-new"]);
+    // Sólo el vínculo NUEVO, con el cliente de la transacción.
+    expect(repo.findArchivedCompanyNamesWithin).toHaveBeenCalledWith(tx, ["c-new"]);
+    noWrites();
+  });
+
+  it("create: la empresa se archiva entre el rechazo temprano y el guardado → 400 sin alta, historia ni auditoría", async () => {
+    repo.findArchivedCompanyNamesWithin.mockResolvedValueOnce(["Empresa archivada"]);
+
+    await expect(employeesService.create({ ...createInput, companyIds: ["c-new"] }))
+      .rejects.toMatchObject({ statusCode: 400, code: "EMPLOYEE_COMPANY_ARCHIVED" });
+    expect(repo.findArchivedCompanyNamesWithin).toHaveBeenCalledWith(tx, ["c-new"]);
+    noWrites();
+  });
+
+  it("compara contra los vínculos leídos DENTRO de la transacción: lo que el legajo ya tenía allí no se revalida", async () => {
+    // Fuera: sólo company-1. Dentro: además c-kept (vínculo preexistente, aunque hoy archivado).
+    repo.findUpdateAuditSnapshot.mockImplementation((_id: string, client?: unknown) =>
+      Promise.resolve(client === tx ? { ...legacySnapshot, companies: [{ companyId: "company-1", isPrimary: true }, { companyId: "c-kept", isPrimary: false }] } : legacySnapshot));
+
+    await employeesService.update("emp-1", { companyIds: ["company-1", "c-kept", "c-new"], laborChange });
+
+    expect(repo.findArchivedCompanyNamesWithin).toHaveBeenCalledWith(tx, ["c-new"]);
+    expect(repo.update).toHaveBeenCalledWith("emp-1", expect.objectContaining({ companyIds: ["company-1", "c-kept", "c-new"] }), tx);
+  });
+
+  it("conservar sin cambios las empresas no consulta archivo ni dentro ni fuera de la transacción", async () => {
+    await employeesService.update("emp-1", { companyIds: ["company-1"], primaryCompanyId: "company-1", internalCategory: "Administrativo B" });
+
+    expect(repo.findArchivedCompanyNames).not.toHaveBeenCalled();
+    expect(repo.findArchivedCompanyNamesWithin).not.toHaveBeenCalled();
+    expect(repo.update).toHaveBeenCalled();
+  });
+
+  it("la corrección previa del puesto (FOR SHARE) se mantiene junto a la de empresas", async () => {
+    repo.findPositionForAssignment.mockResolvedValue({ id: "pos-new", name: "Encargado", status: "ACTIVO", archivedAt: null, _count: { orgScopes: 1 } });
+    repo.findPositionForAssignmentWithin.mockResolvedValue({ id: "pos-new", name: "Encargado", status: "INACTIVO", archivedAt: null, _count: { orgScopes: 1 } });
+
+    await expect(employeesService.update("emp-1", { positionId: "pos-new", companyIds: ["company-1", "c-new"], laborChange }))
+      .rejects.toMatchObject({ code: "EMPLOYEE_POSITION_INACTIVE" });
+    noWrites();
   });
 });
