@@ -939,6 +939,7 @@ npm run build            # tsc -b && vite build
   * The code still implements the current chain (`Company → BusinessUnit → Establishment → Area → Sector`, `Position.sectorId`, `Employee.sectorId`). Do not extend it or add parent FKs to it.
   * Do not present the target model (Organization and Locations trees, position scope, employee work locations) as implemented before its stage lands.
   * `CostCenter` stays the only many-to-many against the structure. See `docs/DATABASE_STANDARDS.md`.
+  * Catalog archive (A8-1, in code on `feat/org-location-reorg`, migration not applied to any shared database): `archivedAt` on the six catalog tables is written only by the cleanup script, never by the API; archived rows are excluded from active listings and rejected as targets of new relations. It is a separate axis from `isLegacy` (origin) and `status` (operational). See `docs/DATABASE_STANDARDS.md` and `docs/decisions/A8_M2_PREPARATION.md` §12.
 * `PositionSalaryCategory` is the official source of a position's salary category/categories. Do not reintroduce a denormalized area/establishment/business-unit/company name or a single "suggested category" field on `Position`, and do not copy a position's scope into editable employee fields. See `docs/DATABASE_STANDARDS.md`.
 * Legacy org-structure cleanup:
   * **Authorized only:** on `development`, for old-model records in a frozen inventory, through the ADR's gated transactional script, after a verified backup and a reviewed rehearsal.

@@ -668,15 +668,32 @@ de forma explícita y ordenada, con manifiesto V1).
   en esta transición** y **D-14 ratificada** (empresa administrativa nullable; retiro funcional del
   sector). Siguen abiertas D-1 (con la aclaración de §12.7), D-2, D-3, D-6, A8-5 y D-0 — ninguna
   nueva por esta especificación.
-- Siguiente paso: **validar el diseño técnico** de §12 (implementación + AT-1..AT-9 sobre la copia
-  aislada, con `typecheck`/`test`/`build` verdes); recién entonces, en `reorg-r2`, ejecutar M2 y el
-  resto del ensayo de §7 (D-B1/D-B2/D-14 ya no están pendientes).
+- [x] **A8-1/A8-2 implementados en código** (2026-10-09, §12.14): archivo de escritor único, clases
+  del congelado y ampliación, plan raíces → cierre → eliminables, clase 4 con retiro autorizado, R3
+  aprobada, F0/F1, G1-G9, manifiesto/V1 con familias autorizadas, restauración que revierte el
+  archivo, rechazos de servicio; `typecheck`/`test`/`build` verdes; ensayo **local** de inventario y
+  guardas.
+- [x] Hallazgos de la revisión independiente: revalidación transaccional del puesto en Legajos y
+  reversión de `20261008150000` que no pierde archivo ni clasificación (§12.14.5).
+- [ ] **Ensayo real sobre la copia aislada** (§7.2 pasos 3-5 con F0/F1 y G1-G8): bloqueado por D-0
+  (identidad Neon) y D-1 (modo C1/C2); `decisions.json` además necesita R1/R2/R3 aprobadas y las
+  resoluciones de clase 4.
+- [ ] M2 (CHECKs de forma con los nombres de G6, DROP de `Employee/User/ClockDevice.sectorId`,
+  `@@unique([zoneId, code])`) — no escrita.
+- Siguiente paso: resolver D-0 y D-1, congelar el inventario en la copia y correr el ensayo de §7.2
+  (pasos 3-5) con `org-reorg-guards` en F0 y F1; recién con F1 verde, escribir y ensayar M2 en
+  `reorg-r2` (D-B1/D-B2/D-14 ya no están pendientes).
 
 ## 12. A8-1 y A8-2 — especificación de archivo legado, raíces históricas y guarda de M2 (2026-10-08) [D]
 
-**Estado (2026-10-08): decisiones de producto resueltas — D-B1 **aprobada**, D-B2 **aprobada** (sin
-purga durante esta transición) y D-14 **ratificada** — y diseño técnico **pendiente de validación**
-(implementación + pruebas AT + corrida en la copia aislada).** Este commit sólo corrige la
+**Estado (2026-10-09): implementado en código y verificado con pruebas unitarias y un ensayo LOCAL
+(clúster PostgreSQL desechable con datos sintéticos); pendiente el ensayo real sobre la copia aislada
+(bloqueado por D-0 y D-1). Detalle por componente y por AT en §12.14.** Decisiones de producto
+resueltas: D-B1 **aprobada**, D-B2 **aprobada** (sin purga durante esta transición) y D-14
+**ratificada**.
+
+*Estado previo (2026-10-08): diseño técnico pendiente de validación (implementación + pruebas AT +
+corrida en la copia aislada).* Este commit sólo corrige la
 especificación según la revisión de Codex sobre `e4fb4f0`: no hay migraciones, código ni escrituras
 en bases. Con D-B1 aprobada, §12 **reemplaza** a §4.1 como diseño vigente (§4.1 queda como registro
 del plan previo); HT-2 y HT-4 dejan de plantear un bloqueo de producto y pasan a depender de
@@ -1168,3 +1185,100 @@ ensayo**. Cualquier compuerta fallida aborta antes de escribir más.
 | 4 | "Conservar los vínculos previos" contradecía G5 | Los vínculos `CostCenter*`, `EmployeeCompany`, `PositionSalaryCategory` y los alcances actuales de registros retirados pasan a **borrados autorizados** en la transacción de limpieza (previa a G5), sólo filas y sólo si no son evidencia protegida; tablas históricas y operativas **conservadas**; familias y conteos [R] enumerados + adaptaciones de manifiesto, respaldo y restauración | §12.4 (bloque nuevo), §12.9.4/§12.9.7, G4/G5, AT-5 |
 | 5 | Lookup, índice y pruebas no estaban alineados con D-13 ni con el archivo | `findZonedEstablishmentByCode` **recibe `zoneId`** y busca por zona + código **excluyendo archivados**; colisión `(zoneId, code)` validada **también al cambiar de zona** sin cambiar código; servicio, `@@unique([zoneId, code])` y AT-8 alineados | §12.8, §12.9.5, AT-8 (§12.10) |
 | 6 | Decisiones figuraban abiertas o condicionadas | **D-B1 aprobada**, **D-B2 aprobada sin purga en esta transición**, **D-14 ratificada** (empresa administrativa nullable; retiro funcional del sector); el diseño técnico queda **pendiente de validación**, no de decisión; sin decisiones nuevas para asuntos técnicos ya definidos | §12.11, §12.1 (I3), §12.3 (columnas), §4.1/HT-2/HT-3/HT-4, ADR §6/§11/§21 |
+
+### 12.14 Implementación y verificación (2026-10-09)
+
+Marcas: **[U]** verificado con pruebas unitarias (mocks / funciones puras, `vitest`); **[L]** verificado
+en un ensayo **local** (clúster PostgreSQL 18 desechable en el scratchpad, todas las migraciones del
+repo aplicadas con `migrate deploy`, datos sintéticos; ninguna base compartida); **[P]** pendiente del
+ensayo real sobre la copia aislada.
+
+#### 12.14.1 Estado recibido
+
+OpenCode dejó, sin push: `daf3cd3` (invariantes y rechazos en org-structure y puestos), `7f9db02`
+(rechazos en consumidores) y `1c68df4` (plan con historia, archivo y salvaguardas en scripts), sobre
+`28b3387` (columnas `archivedAt` + `isLegacy` de Área/Establecimiento) y `59f9295` (especificación).
+Suite de partida: 168 archivos / 2601 pruebas verdes. Se conservó todo lo válido; se corrigió:
+
+| Hallazgo en lo recibido | Corrección |
+|---|---|
+| El congelado no registraba clases: en C1 las empresas no entraban al inventario, así que **toda** historia hacia una empresa quedaba `outsideInventory` (bloqueo permanente sin salida) | C1 congela las empresas como `conservada`; un único criterio de membresía (`transitionClass`) para el congelado y la ampliación |
+| `conservada`/`nueva` se trataban como inventario en el cierre de retención, en las dimensiones de reglas y en el conteo de dependencias (una empresa C1 se habría archivado por el cierre de una UN retenida) | Sólo `borrable` se borra, archiva, cuenta como dependencia o exige decisión (`borrableIds`, `classOf`) |
+| Faltaba el ciclo de ampliación | `amplifyInventory`: ronda por ronda hasta `outsideInventory = ∅`, con IDs, clase y motivo por destino; aborta si un destino no existe |
+| Clase 4: "retener el destino" resolvía la referencia y dejaba una fila activa apuntando a un archivado (G5) | Sólo **retirar** resuelve, y sólo en la familia autorizada (`PositionOrgScope`); retener es raíz adicional opcional |
+| C2 con el gate de §12.7 apagado podía archivar una empresa por el cierre de una raíz histórica | `HISTORY_RETAINS_COMPANY_C2` (bloqueante) |
+| R3 sin exigencia de aprobación | `R3_NOT_APPROVED` si falta `approvedBy`; `r3References` es la única admisión no histórica de G5 |
+| El script de limpieza no recibía resoluciones de clase 4, no corría F0/F1, G3-G8 ni G7, archivaba con `now()` por fila | F0 como compuerta antes de escribir; F1 completo + V1 antes del commit; un único instante de archivo |
+| La restauración no revertía `archivedAt` | Revierte exactamente los IDs archivados del respaldo, con conteo |
+| V1 aceptaba como "esperado" cualquier borrado que el script pidiera | Lista cerrada de tablas de borrado autorizado (historia y auditoría nunca) |
+| Sin F0/F1 ni G1-G9 como código | `shapes.ts`, `guards.ts`, script `org-reorg-guards.ts` |
+
+#### 12.14.2 Componentes
+
+| # | Componente (§12.9) | Dónde | Estado |
+|---|---|---|---|
+| 1 | Columnas `archivedAt` (6) + `isLegacy` Área/Establecimiento | `20261008150000` | Implementado; **[L]** aplica sobre base vacía; **no aplicada a ninguna base compartida** |
+| 2 | Inventario con clases + `history` con IDs + ampliación | `scripts/org-reorg/lib.ts`, `org-reorg-inventory.ts` | **[U]** plan; **[L]** C1/C2 sobre fixture (ampliación de 1 ronda, `conservada`/`nueva`, G8); **[P]** copia |
+| 3 | Plan raíces → cierre → eliminables, aserción fail-closed, clase 4, R3, C2 | `reorg/cleanupPlan.ts` | **[U]**; **[L]** vía inventario |
+| 4 | Manifiesto/V1: `archivedAt` sólo en `retained`, familias autorizadas por tabla e ID | `reorg/manifest.ts` | **[U]**; **[P]** dentro de la limpieza |
+| 4b | Respaldo con familias borradas, `archived`, plan y snapshot G7 | `org-reorg-cleanup.ts` | Implementado; **[P]** (requiere D-0) |
+| 5 | Rechazos de servicio y listados sin archivados (lista cerrada §12.4) | módulos org-structure, positions, employees, users, workforce, clock-devices | **[U]** (AT-3, AT-4, AT-8) |
+| 6 | Frontend | — | Sin cambios: ninguna vista recibe archivados (overview y puestos los excluyen en el backend); no hay vistas de diagnóstico que deban rotular "Archivado" |
+| 7 | Restauración: reinserta familias, revierte archivo, repone vaciados | `org-reorg-restore.ts` | Implementado; **[P]** (requiere D-0) |
+| 8 | Contratos/docs | `BACKEND_API_CONTRACTS.md` ("Registros archivados"), `DATABASE_STANDARDS.md`, `PROJECT_CONTEXT.md`, este §12.14 | Hecho. `ARCHITECTURE_STANDARDS.md` sin cambios (no hay módulo ni capa nuevos) |
+| 9 | Guardas G1-G9 como script (AT-9) | `org-reorg-guards.ts` (`--phase` F0/F1/F2, exit 2) | **[L]** F0, F1 y F2; **[P]** copia |
+
+#### 12.14.3 Pruebas de aceptación
+
+| AT | Cobertura | Estado |
+|---|---|---|
+| AT-1 | `partitionHistoryReference`, aserción `∩ deletable`, `outsideInventory` sin flag, clases `borrable`/`conservada`/`nueva`, ampliación (`cleanupPlan.test.ts`); ampliación real (`pos-new`, `sec-new` → `nueva` en una ronda) | **[U]** + **[L]** |
+| AT-2 | Cada celda de §12.3 vieja/nueva pasa F0 sin `archivedAt`; cada mixto aborta con tabla + ID; F1 en ambos sentidos (`shapes.test.ts`); F0 real: limpio verde, mixto exit 2 con IDs | **[U]** + **[L]** |
+| AT-3 | Schemas rechazan `archivedAt`; 409 en editar/borrar archivados; sin ruta, servicio ni escritura de la app (`archiveSingleWriter.test.ts`) | **[U]** |
+| AT-4 | Padres (UN, sector, área) en alta y reubicación, alcances, centros de costo, ubicaciones, dispositivos, legajos (puesto, empresa), usuarios, `DoubleHourRule` (alta/edición), R3 aprobada en plan y G5 | **[U]**; G5 con R3 **[L]** |
+| AT-5 | `retained` = raíces + cierre; G3/G4 sobre el resultado (`guards.test.ts`); V1 con familias autorizadas (`manifest.test.ts`); F1 real sobre una aplicación manual correcta (verde) y una deliberadamente errónea (G2/F1, G3, G4, G5, G7 en rojo con IDs) | **[U]** + **[L]**; la transacción de limpieza real **[P]** |
+| AT-6 | G7 celda/fila/tabla, PK compuestas, `TIMESTAMPTZ` normalizado a UTC; G7 real con una celda tocada | **[U]** + **[L]** |
+| AT-7 | C2 aborta con el gate apagado (historia directa y por cierre); con el gate la empresa pasa a `retained`; R3 de catálogo no depende del gate | **[U]**; inventario C2 real **[L]**; activar el gate exige D-1 en C2 + §12.7.3 |
+| AT-8 | Lookup `(zoneId, code)` sin archivados, cambio de zona sin cambio de código, código de archivado → único de la base | **[U]**; con `@@unique([zoneId, code])` **[P]** (M2). Sin cambios en motor ni lecturas: no aplica rerun de `a8-3-compare` |
+| AT-9 | G1-G9 como script con exit ≠ 0 | **[L]** (F0, F1, F2); **[P]** en los puntos del §7.2 sobre la copia |
+
+Suite final del backend: 171 archivos / 2671 pruebas verdes; `typecheck`, `build` y `prisma validate`
+verdes; scripts `org-reorg*` sin errores de tipos (no están en el `tsconfig` del build: se
+chequearon con una configuración temporal).
+
+#### 12.14.4 Precisiones técnicas (no son decisiones de producto)
+
+- **R3 aprobada** = entrada R3 con `approvedBy` no vacío en `decisions.json` (formato del ADR §12.4).
+- **`decisions.json`** acepta el arreglo de reglas del ADR o `{ "rules": [...], "classFour": [{ table, column, target, retain, retire }] }`.
+- **Clase 4:** retirar resuelve; sólo `PositionOrgScope` es retirable (§12.4). Ubicaciones, dispositivos o nodos nuevos que dependan del inventario bloquean hasta resolverse en los datos.
+- **G6:** M2 debe nombrar sus CHECKs `Sector_archive_shape_check`, `Area_archive_shape_check` y `Establishment_archive_shape_check`. `migrate diff` corre con un schema temporal y una variable propia (`REORG_GUARD_DATABASE_URL`): la URL no viaja por argv ni puede caer en el `.env`.
+- **G8 en los pasos 5 y 8:** `outsideInventory = ∅` del congelado + ningún ID referenciado por la historia (congelada o viva) entre los eliminables del plan.
+- **G7 en el paso 8 — pendiente de definición:** la comparación es estricta contra el snapshot del paso 5. Si la recarga abre o cierra vigencias (A8-5, fecha de corte sin elegir), G7 marcará esas filas; cómo separar escrituras autorizadas de la recarga se define con A8-5, no se resuelve aquí.
+- **G9:** compuerta = índice de `Employee` encabezado por `status`; los `EXPLAIN` se adjuntan para revisión (dependen del volumen).
+- **G7 y zona horaria:** `row_to_json` escribe `TIMESTAMPTZ` con la zona de la sesión; el snapshot los normaliza a ISO UTC.
+
+#### 12.14.5 Hallazgos de la revisión independiente (commits separados)
+
+- **A — Asignación de puesto en Legajos (`add3d13`):** `create`/`update` revalidan el puesto **dentro de la
+  transacción** del guardado, con su cliente, `FOR SHARE` sobre la fila del puesto y contra el puesto
+  vigente del legajo leído allí; conservar el puesto actual no exige requisitos. Pruebas del cambio de
+  estado entre la validación temprana y el guardado (inactivación y pérdida de alcance) y del bloqueo
+  en el repositorio. **[U]**
+- **B — Reversión de `20261008150000` (`6ce4e5c`):** bloquea las seis tablas y aborta sin cambios si
+  hay cualquier `archivedAt` (sólo la restauración controlada revierte el archivo) o si algún
+  `isLegacy` de Área/Establecimiento difiere del criterio que el código anterior re-derivaría. **[L]**:
+  archivado → aborta; área re-apadrinada → aborta; datos limpios → retira sólo sus 8 columnas.
+
+#### 12.14.6 Migraciones
+
+Preparada: `20261008150000_org_catalog_archive_classification` (aditiva) y su reversión endurecida.
+**No se aplicó ninguna migración a Neon ni a ninguna base compartida;** sólo a la base local
+desechable. M2 no está escrita.
+
+#### 12.14.7 Bloqueos reales y siguiente paso
+
+- **D-0:** sin identidad Neon verificada, `org-reorg-cleanup` y `org-reorg-restore` no corren ni en dry-run: la transacción de limpieza real (F0 → plan → archivo → F1 + V1) y la restauración no se ejecutaron en ningún lado.
+- **D-1:** sin modo C1/C2 no hay inventario congelado que ensayar; en C2, además, el gate de §12.7.
+- **`decisions.json`:** R1/R2/R3 aprobadas para las reglas del inventario (p. ej. "Domingos" en C2) y resoluciones de clase 4 (`PositionOrgScope` de QA, HT-5).
+- **D-2, D-3, D-6, A8-5:** sin cambios; A8-5 además define G7 en el paso 8.
+- **Siguiente paso:** resolver D-0 y D-1; inventario congelado en la copia; `org-reorg-guards --phase=F0`; dry-run de la limpieza (F1 + V1 dentro de la transacción); `--apply --backup` + prueba de restauración; `org-reorg-guards --phase=F1`. Recién con F1 verde, escribir M2 (CHECKs con los nombres de G6) y ensayarla en `reorg-r2`.

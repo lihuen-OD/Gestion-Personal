@@ -426,6 +426,7 @@ Uso actual: `NIVEL_1_RRHH`.
 
 A6:
 - Los requisitos de puesto se aplican sólo a un puesto **nuevo** (`positionId` distinto del actual). Un legajo que conserva su puesto anterior sin alcance puede seguir editando el resto de sus datos; quitar el puesto (`null`) no exige requisitos.
+- Los requisitos (existe, no archivado, `ACTIVO`, con alcance) se **revalidan dentro de la transacción del guardado**, con la fila del puesto bloqueada (`FOR SHARE`) y contra el puesto vigente del legajo leído en esa transacción: un puesto inactivado entre la validación temprana y el guardado responde `409 EMPLOYEE_POSITION_INACTIVE` (o el código que corresponda) y no se escribe nada. Lo mismo en `POST /api/employees`.
 - `sectorId` es de sólo lectura: omitirlo o reenviar el mismo valor es válido; cualquier cambio (incluido `null`) responde `409 EMPLOYEE_LEGACY_SECTOR_READ_ONLY`. El frontend ya no lo envía.
 
 ### Validación contra el puesto
@@ -719,7 +720,7 @@ Devuelve `companies`, `businessUnits`, `sectors`, `areas`, `zones`, `establishme
 
 **Padres del modelo anterior**: hasta M2 se devuelven además, **sólo de lectura**, `sectors[].areaId`, `areas[].establishmentId` y `establishments[].companyId/businessUnitId`.
 
-**Clasificación legado/nuevo del sector (A8-3)**: `sectors[].isLegacy` es un dato **persistido** (`Sector.isLegacy`, fijado en el alta y backfilleado por la migración `20261008110000_sector_org_classification` con el criterio previo). El frontend lo recibe como `pendingReload`. Un sector **no** se clasifica por la ausencia de `businessUnitId`: M2 puede cambiar el padre sin re-interpretar la historia. El campo **no es editable**: `PATCH /org-structure/sectors/:id` lo ignora. Un área sin `sectorId` o un establecimiento sin `zoneId` sigue marcándose por la ausencia de su padre del modelo objetivo: es un registro **legado**, que la limpieza controlada va a eliminar.
+**Clasificación legado/nuevo del sector (A8-3)**: `sectors[].isLegacy` es un dato **persistido** (`Sector.isLegacy`, fijado en el alta y backfilleado por la migración `20261008110000_sector_org_classification` con el criterio previo). El frontend lo recibe como `pendingReload`. Un sector **no** se clasifica por la ausencia de `businessUnitId`: M2 puede cambiar el padre sin re-interpretar la historia. El campo **no es editable**: `PATCH /org-structure/sectors/:id` lo ignora. Desde `20261008150000_org_catalog_archive_classification` (en código, **no aplicada a ninguna base compartida**) `areas[].isLegacy` y `establishments[].isLegacy` también son persistidos (backfill con el criterio previo: área sin `sectorId`, establecimiento sin `zoneId`), se fijan en el alta y no se re-derivan del padre actual.
 
 **Cost centers:** traen sus vínculos M:N (`companies`, `businessUnits`, `sectors`, `areas`, `establishments`).
 
@@ -745,7 +746,7 @@ Reglas:
 - **Cambio de padre:**
   - Un registro **legado** no se reubica en el árbol nuevo (`409 ORG_STRUCTURE_LEGACY_RECORD`). Sí puede corregir código, nombre y estado.
   - Un nodo **en uso** no cambia de padre (`409 ORG_STRUCTURE_PARENT_IN_USE`, con `details.dependencies`). Decisión D-9 del ADR, ratificada el 2026-10-07. Para reorganizar nodos en uso hará falta una operación explícita que contemple sus referencias; hoy no existe.
-- **Centros de costo:** no agregan vínculos nuevos a sectores, áreas o establecimientos legados (`400 ORG_STRUCTURE_LEGACY_LINK`). Los vínculos que ya tenían se conservan.
+- **Centros de costo:** no agregan vínculos nuevos a sectores, áreas o establecimientos legados (`400 ORG_STRUCTURE_LEGACY_LINK`) ni a registros archivados (`409 ORG_STRUCTURE_ARCHIVED_RECORD`). La API no toca los vínculos existentes; los que apunten a registros retirados por la limpieza (borrados o archivados) son **borrado autorizado** de esa limpieza (A8 §12.4), no se conservan.
 - **Código de establecimiento:** único entre los establecimientos con zona (`409 UNIQUE_CONSTRAINT`). Hasta M2 la base conserva la unicidad legada por empresa.
 - **Transacción y auditoría:**
   - Cada escritura corre en una transacción `Serializable`. Un cambio concurrente responde `409 ORG_STRUCTURE_CONCURRENT_CHANGE`.
@@ -787,6 +788,33 @@ DELETE /api/org-structure/cost-centers/:id
 - Cada eliminación queda en auditoría (`action: DELETE`) dentro de la misma transacción.
 
 Ver `backend/src/modules/org-structure/orgStructure.dependencies.ts`.
+
+#### Registros archivados (A8-1, `docs/decisions/A8_M2_PREPARATION.md` §12)
+
+> En código en `feat/org-location-reorg`; la columna llega con la migración aditiva `20261008150000_org_catalog_archive_classification`, **no aplicada a ninguna base compartida**. Hasta que la limpieza controlada se ejecute no existe ningún registro archivado.
+
+`archivedAt` (en `Company`, `BusinessUnit`, `Establishment`, `Area`, `Sector`, `Position`) marca un registro del modelo anterior que la historia necesita conservar. Es distinto de `isLegacy` (origen, inmutable) y de `status` (`INACTIVO` es un nodo vivo y reactivable; archivado es congelado y de un solo sentido).
+
+- **No existe endpoint de archivo ni de desarchivo.** El único escritor es la transacción de limpieza (`scripts/org-reorg-cleanup.ts`); sólo la restauración controlada (`scripts/org-reorg-restore.ts`) lo revierte, junto con toda la limpieza.
+- **Entrada:** ningún schema acepta `archivedAt` (`POST`/`PATCH` de catálogo y de puestos con ese campo → `400`).
+- **Listados y selectores:** `GET /org-structure`, `GET /positions` y `GET /positions/options` excluyen archivados (`archivedAt IS NULL`).
+- **Inmutable:** `PATCH`/`DELETE` de un registro archivado → `409 ORG_STRUCTURE_ARCHIVED_RECORD` (puestos: `409 POSITION_ARCHIVED`).
+- **Nunca destino de una relación nueva** (lo ya existente no se valida de nuevo si no cambia):
+
+| Relación | Respuesta |
+|---|---|
+| Padre organizacional (`companyId` de UN, `businessUnitId` de sector, `sectorId` de área) en alta o reubicación | `409 ORG_STRUCTURE_ARCHIVED_RECORD` (antes que legado o inactivo) |
+| Vínculo nuevo de centro de costo | `409 ORG_STRUCTURE_ARCHIVED_RECORD` |
+| Alcance nuevo de puesto (`PositionOrgScope`) | `409 POSITION_SCOPE_ARCHIVED` |
+| Puesto asignado a un legajo (alta/edición; revalidado dentro de la transacción del guardado) | `400 EMPLOYEE_POSITION_ARCHIVED` |
+| Empresa empleadora nueva del legajo (`EmployeeCompany`) | `400 EMPLOYEE_COMPANY_ARCHIVED` |
+| Establecimiento de una ubicación de trabajo | `400 WORK_LOCATION_ESTABLISHMENT_ARCHIVED` |
+| Establecimiento de un dispositivo de fichada | `400 CLOCK_DEVICE_ESTABLISHMENT_ARCHIVED` |
+| Empresa del alcance de un usuario (`User.companyId`, nullable y administrativa, D-14) | `400 USER_COMPANY_ARCHIVED` |
+| `DoubleHourRule.companyId/sectorId/positionId` en alta, o asignación **nueva** en edición | `400 DOUBLE_HOUR_RULE_DESTINATION_ARCHIVED`; una FK que la regla ya tenía se conserva sin cambio (sólo sobreviven a la limpieza las referencias con R3 aprobada) |
+
+- **Códigos:** un archivado sigue ocupando su `code` (y `name` en empresas): reusarlo choca con el único de la base (`409 UNIQUE_CONSTRAINT`). Los establecimientos nuevos se validan por `(zoneId, code)` excluyendo archivados, también al cambiar de zona sin cambiar el código.
+- Historia, motor de horas especiales y vigencias resuelven siempre **por ID**: las referencias históricas a un archivado nunca se rechazan.
 
 ### Usuarios
 
@@ -1041,6 +1069,8 @@ POST /api/positions
 PATCH /api/positions/:id
 DELETE /api/positions/:id
 ```
+
+Archivo (A8-1): listado y opciones excluyen puestos archivados; `PATCH`/`DELETE` de un archivado → `409 POSITION_ARCHIVED`; un nodo archivado no puede ser alcance nuevo (`409 POSITION_SCOPE_ARCHIVED`). Ver "Registros archivados" en Estructura organizacional.
 
 Query de listado:
 

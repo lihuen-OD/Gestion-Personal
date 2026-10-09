@@ -85,6 +85,19 @@ The organizational model is under an approved reorganization that is **not imple
 - Never free a `DoubleHourRule` reference by setting its scope to `NULL`, and never delete the rule to free it. Both widen or erase special-hour history. See the ADR §6 for the only valid treatments.
 - Legacy cleanup is authorized only on `development`, only for old-model records in a frozen inventory, and only through the ADR's gated transactional script. It never deletes or re-keys employees or touches person-related records (hours, novelties, documents, labor movements, histories). Production is out of scope.
 
+### Catalog archive: `archivedAt` vs `isLegacy` vs `status` (added 2026-10-09, A8-1)
+
+Migration `20261008150000_org_catalog_archive_classification` (additive; **not applied to any shared database yet**) adds `archivedAt TIMESTAMPTZ NULL` (no default) to `Company`, `BusinessUnit`, `Establishment`, `Area`, `Sector` and `Position`, and persists `isLegacy` on `Area` and `Establishment` (as A8-3 did for `Sector`). Spec: `docs/decisions/A8_M2_PREPARATION.md` §12.
+
+- Three separate axes, never derived from each other:
+  - `archivedAt IS NOT NULL` = archived: an old-model row kept only because history references it. Frozen, one-way, excluded from every active listing/selector, never the target of a new relation.
+  - `isLegacy` = origin (old vs. new model). Set at creation, never re-derived from the current parent.
+  - `status` = operational state. `INACTIVO` is still a live, editable, reactivable node.
+- Single writer: only the cleanup transaction (`backend/scripts/org-reorg-cleanup.ts`) sets `archivedAt`, for exactly the plan's `retained` set, with an `AuditLog` row per record. No API input, service or endpoint writes or clears it; only the controlled restore (`org-reorg-restore.ts`) reverts it, together with the whole cleanup, before M2.
+- No purge during this transition (D-B2): archived rows and their old-model parent columns stay as-is.
+- Archived rows keep occupying their unique codes (no code reuse). New establishments are unique by `(zoneId, code)` among non-archived rows.
+- History tables, the special-hour engine and labor periods always resolve by ID; they never reject or rewrite a reference to an archived row.
+
 ## Position: salary categories and organizational scope (updated 2026-10-07)
 
 `Position` previously stored denormalized location text (`areaDepartment`, `sectorName`, `businessUnitName`, `establishmentName`, and their plural/array variants) and a `salaryRangeCategories` array, in parallel with real relations. These legacy fields have been removed from the schema (migration `20260818090000_drop_position_legacy_fields`). `Position.areaId` was removed as vestigial at the same time.
@@ -138,6 +151,11 @@ Migrations should:
 - include backfill strategy when needed
 - be reversible when possible
 - be documented if risky
+
+Hand-written rollbacks (`backend/prisma/rollbacks/*.down.sql`, added 2026-10-09):
+- run in one transaction and lock the affected tables before checking anything;
+- **abort without changes** when dropping a column or table would lose information that cannot be re-derived — e.g. any history row (`20261008090000`), any archived row, or a persisted classification that differs from the criterion the previous code would re-derive (`20261008150000`);
+- say in their header what SQL cannot check (code that must be reverted first, `prisma migrate resolve --rolled-back` afterwards). Data that a rollback refuses to drop is reverted through its controlled procedure, never by forcing the rollback.
 
 ## Audit and history
 

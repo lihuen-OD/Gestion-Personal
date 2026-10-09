@@ -1166,7 +1166,14 @@ para asuntos técnicos ya definidos.
   no cambia. **D-14** — empresa administrativa nullable, retiro funcional del sector. Guardas, columnas
   retirar-vs-conservar, cambios por componente y pruebas AT-1..AT-9 en A8 §12.3-§12.10; cadena de
   coherencia extremo a extremo en A8 §12.12.
-- **Estado:** **especificación corregida y decisiones resueltas, diseño técnico pendiente de
-  validación.** No se ejecuta M2 ni ningún paso destructivo hasta implementar §12, correr AT-1..AT-9
-  y verificar G1-G9 + F0/F1/F2 verdes sobre la copia aislada. Decisiones de producto que siguen
+- **Implementación (2026-10-09, A8 §12.14):** en código en `feat/org-location-reorg` y verificado con
+  pruebas unitarias y un ensayo **local** (PostgreSQL desechable, datos sintéticos) de inventario con
+  clases y ampliación, F0/F1 y G1-G9 (`scripts/org-reorg-guards.ts`); revalidación transaccional del
+  puesto en Legajos y reversión de `20261008150000` que no pierde archivo ni clasificación. **Ninguna
+  migración aplicada a Neon; limpieza y restauración no ejecutadas** (requieren D-0). Pendiente: ensayo
+  real en la copia (D-0, D-1, `decisions.json`) y M2.
+- **Estado:** **especificación corregida y decisiones resueltas; implementado y verificado
+  localmente, validación sobre la copia aislada pendiente.** No se ejecuta M2 ni ningún paso
+  destructivo hasta verificar G1-G9 + F0/F1 verdes sobre la copia aislada (AT pendientes de ensayo
+  real en A8 §12.14.3). Decisiones de producto que siguen
   abiertas: **D-1** (con la aclaración de §18.4), D-2, D-3, D-6, A8-5 y D-0 (A8 §12.11).
