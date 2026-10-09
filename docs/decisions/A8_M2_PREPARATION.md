@@ -1562,3 +1562,67 @@ Existencia y metadatos de ambas ramas, por GET de la API Neon, en
   de datos del cliente, que los reemplazará.
 - **Recuperación posible en cualquier momento:** `prisma/rollbacks/…m2.down.sql` + `org-reorg-restore`
   con `a8-copy2-cleanup-backup-2026-10-09.json`, o el `pg_dump` previo / la rama de respaldo.
+
+### 12.15 Traslado a development (2026-10-09)
+
+Autorizado por el usuario: código y base en `development`, con la limpieza acotada a lo pedido. Producción
+(`br-shy-frost`, rama por defecto) y demo (`br-wispy-breeze`, archivada) quedaron sin tocar.
+
+- **Código:** `development` = `origin/development` = `feat/org-location-reorg` (`2a1345d`), avance rápido
+  y sin force push. `org-location-reorg` y sus respaldos se conservan.
+- **Identidad:** el host `ep-gentle-resonance-aiftcbel` corresponde a la rama `br-dark-resonance-aib3a9t0`
+  "development", que no es la rama por defecto. Verificado (VERIFIED) con la API de Neon antes de escribir.
+- **Respaldos previos a cualquier escritura:**
+  - rama `br-bold-tree-aibhpb0a` (LSN `0/1D926508`, 15:53Z);
+  - rama `br-flat-wildflower-aiqklrde` "development-a8-backup-20261009" (LSN `0/1D959C58`, tomada
+    justo antes de migrar): es **el punto de restauración vigente**;
+  - `pg_dump` `a8-development-pre-2026-10-09.dump`, con SHA-256 verificado y **no probado**: no se
+    restauró (no hay `pg_restore` local).
+- **Migraciones:**
+  - las 4 previas a M2 (`org_location_expand`, `labor_history_periods`, `sector_org_classification`,
+    `org_catalog_archive_classification`) se aplicaron desde un directorio temporal sin M2;
+  - M2 (`20261009150000_org_location_contract_m2`) se aplicó con su archivo original sin cambios,
+    después de la limpieza;
+  - resultado: `migrate status` al día y `migrate diff` contra `schema.prisma` sin deriva.
+- **Limpieza** (`backend/scripts/dev-org-wipe.ts`, actor RRHH `admin@losod.local`):
+  - una sola transacción Serializable; dentro de ella y antes del commit se comprueba que las filas
+    borradas coincidan con las respaldadas, que la huella md5 de cada tabla conservada siga idéntica y
+    que se cumplan las precondiciones de M2;
+  - se borraron 233 filas: estructura salvo empresas, puestos y sus vínculos, `LaborMovement`,
+    `EmployeeCompany` y `EmployeeFieldHistory` de la sección `DATOS_LABORALES`;
+  - se vaciaron los datos laborales de los 32 legajos y el sector de 1 usuario;
+  - quedaron 2 auditorías `ORG_REORG_DEV_WIPE`;
+  - respaldo por fila en `a8-development-wipe-backup-2026-10-09.json`.
+  - El borrador anterior también borraba `EmployeeAssignment` (responsables) y `EmployeeBlockHistory`
+    (domicilio, horas especiales, responsables), que están **fuera del alcance** autorizado: se conservan.
+  - Las 2 `DoubleHourRule` no tenían alcance por sector, centro de costo ni puesto, así que ninguna se
+    amplió.
+- **Conteos finales:**
+
+  | Dato | Filas |
+  |---|---|
+  | Empresas | 6 |
+  | Unidades, sectores, áreas, zonas, establecimientos y centros de costo | 0 |
+  | Puestos | 0 |
+  | Legajos | 32 (datos laborales vacíos: 0 con valor) |
+  | Domicilios | 32 |
+  | Horas | 85 |
+  | Cierres | 7 |
+  | Novedades | 14 |
+  | Fichadas | 80 |
+  | Documentos | 0 |
+  | Responsables | 4 |
+  | Usuarios | 3 |
+  | Dispositivos | 5 |
+  | Auditoría | 2117 → 2119 |
+
+  No se recalculó ni se generó historia.
+- **App:** backend en `localhost:4002`, apuntado a development con `AUTOMATIC_JOBS_ENABLED=false`
+  (`AUTOMATIC_JOBS_DISABLED`), y Vite en `localhost:5174`. Smoke HTTP:
+  - login inválido → 401;
+  - `/auth/me`, `/org-structure` (6 empresas, resto 0), `/positions` (0), `/employees` (32) con
+    detalle, overview y overview-details sin puesto, centro de costo ni empresas, horas, novedades,
+    dispositivos y usuarios → 200.
+  - El organigrama del frontend usa `organizationChartMockService` (no lee la API): deuda previa.
+  - La verificación visual en navegador sigue a cargo del operador.
+- **Pendientes:** recarga de datos del cliente y fecha de corte.
