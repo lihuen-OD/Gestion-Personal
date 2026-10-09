@@ -1406,3 +1406,18 @@ manifiesto de la copia y se compara con `a8-rehearsal-copy-pre-2026-10-09.manife
 8. `L scripts/org-reorg-restore.ts --backup=… --actor-user-id=… --report=… --apply` → manifiesto y comparación completa con el previo.
 
 Sin M2 ni limpieza final en este bloque.
+
+#### 12.14.11 Ensayo en la copia: D-0 verificado, respaldo de rama bloqueado (2026-10-09)
+
+- **D-0 VERIFICADO por la API** (2026-10-09T12:08Z): proyecto `solitary-scene-44555429`; endpoint
+  `ep-rough-river-aioy7xp9` → rama `br-green-bonus-aixba3xg` = `org-location-reorg`, no es la rama por
+  defecto (la de por defecto es `production`). La credencial vive sólo en `backend/.env.neon-admin`.
+- **Estado de la copia sin cambios desde el `pg_dump`:** manifiesto tomado con identidad verificada
+  igual al del dump (5342 filas, 0 diferencias), antes y después del intento de rama.
+- **Respaldo de rama: bloqueado.** `POST /branches` → `400 BRANCHING_IS_NOT_ALLOWED: Branches with an
+  expiration date cannot have child branches`. No se creó ninguna rama (el proyecto sigue con 4).
+- **Hallazgo:** `org-location-reorg` tiene `expires_at = 2026-10-14T12:23:10Z` (creada el 2026-10-07
+  desde `development`): Neon la eliminará en esa fecha junto con todo lo que se ensaye en ella. La
+  ventana de historia del proyecto es de 6 h (`history_retention_seconds = 21600`).
+- **No se escribió nada en la copia:** sin respaldo doble (§7.1.3) no se aplica la migración ni se
+  ejecuta la limpieza. Opciones (decisión del usuario): ver la entrega del 2026-10-09.
