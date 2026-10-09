@@ -1488,3 +1488,39 @@ endpoints principales en 200, 0 errores 5xx → CHECKs y único rechazan altas i
 M2 + restauración: base idéntica al estado previo a la limpieza (sólo auditoría nueva).
 **Pendiente en la copia Neon [P]:** limpieza C1 aplicada + M2 + F2 + recarga; documentos de §2.6
 (AGENTS/CLAUDE "modelo actual", SECURITY_STANDARDS, PERFORMANCE…) cuando M2 se aplique.
+
+#### 12.14.14 A8 C1 + M2 + F2 aplicados a la copia Neon `org-location-reorg` (2026-10-09)
+
+Secuencia autorizada completa sobre la copia (no se tocó `development` ni producción; sin recarga ni
+datos nuevos). **Respaldo previo:** `pg_dump` `../../backups/a8-copy2-pre-2026-10-09.dump`
+(SHA-256 `9be1568b…`, restaurado con éxito sobre una base desechable y comparado: 69 tablas / 5528
+filas, 0 diferencias), manifiesto `a8-copy2-pre-2026-10-09.manifest.json` y rama de la API
+`br-dark-moon-aijz7ln0` (`org-location-reorg-a8-backup-20261009-b`, parent `br-green-bonus-aixba3xg`).
+
+- **Revalidación:** `migrate status` sólo con M2 pendiente (`a8-copy2-migrate-status-pre-2026-10-09.log`),
+  inventario sin casos nuevos (`a8-copy2-inventory-c1-2026-10-09.json`, `rules: []` y un único
+  `classFour` heredado del caso QA), guardas F0/G8 verdes.
+- **C1:** dry-run y apply (`a8-copy2-cleanup-{dryrun,apply}-2026-10-09.json`) con respaldo
+  `a8-copy2-cleanup-backup-2026-10-09.json` (SHA-256 `7c29510c…`) → `APLICADO`; V1 184 auditorías /
+  141 filas retiradas; **F1 verde** (G2, G3, G4, G5, G7, G8). Conservación comparada con los
+  manifiestos: se borró exactamente lo autorizado (Sector 42, Área 43, Establecimiento 18, BusinessUnit
+  11, Puesto 3, joins de CostCenter y 14 `PositionSalaryCategory`), Auditoría +184, 33 legajos con
+  `positionId`/`sectorId` vaciados y **0 cambios** en datos protegidos/horas/cierres/historia; el
+  único cambio fuera de lo listado es el `sectorId` del usuario `3414677e…` (NULLIFY autorizado, D-14).
+- **M2:** `prisma migrate deploy` aplicó `20261009150000_org_location_contract_m2` (64/64,
+  `a8-copy2-migrate-deploy-m2-2026-10-09.log`); la guarda previa pasó con `Employee/User/ClockDevice
+  .sectorId` sin valores, formas finales correctas y sin `(zoneId, code)` repetido. Tras aplicar:
+  tres columnas retiradas, CHECKs de archivo validados y `Establishment_zoneId_code_key` creado;
+  conservados la cadena legada y `@@unique([companyId, code])` (D-B2).
+- **F2 verde** (G1, G5, G6, G7, G8, G9 → `a8-copy2-guards-f2-2026-10-09.json`). Manifiesto
+  `a8-copy2-post-m2-2026-10-09.manifest.json`: contra el post-limpieza sólo cambian
+  `_prisma_migrations` (+1) y los hashes de `Employee`/`User`/`ClockDevice` por la columna retirada
+  (todas sus valores previos eran NULL, verificado antes del deploy), todo lo demás idéntico.
+- **Aplicación verificada:** backend sobre la copia en 4002 con `AUTOMATIC_JOBS_ENABLED=false`
+  (`AUTOMATIC_JOBS_DISABLED` en el log) y Vite en 5174 → login RRHH, `/org-structure` (6 empresas, 1
+  unidad, 2 sectores, 0 áreas, 2 zonas, 4 establecimientos, 3 centros de costo), legajos + detalle,
+  organigrama, puestos, ubicaciones de trabajo, listado/resumen/asistencia de horas y
+  `/dashboard/metrics` en 200. Al terminar quedaron corriendo: `npx tsx src/server.ts` en 4002 (con
+  `DATABASE_URL` de `.env.reorg`) y Vite en 5174.
+- **Recuperación posible en cualquier momento:** `prisma/rollbacks/…m2.down.sql` + `org-reorg-restore`
+  con `a8-copy2-cleanup-backup-2026-10-09.json`, o el `pg_dump` previo / la rama de respaldo.
