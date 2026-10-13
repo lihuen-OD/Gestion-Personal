@@ -1479,4 +1479,38 @@ describe("eliminación controlada de reglas (vista previa y confirmación)", () 
       .rejects.toMatchObject({ statusCode: 409, code: "DELETION_PREVIEW_CHANGED" });
     expect(mockedPrisma.doubleHourRule.delete).not.toHaveBeenCalled();
   });
+
+  it("sin horas, un cambio de multiplicador, prioridad o alcance invalida la configuración confirmada", async () => {
+    const original = ruleRow({ id: "rule-x3", name: "Prueba x3", multiplier: 2, priority: 1, companyId: "company-1", sectorId: null, costCenterId: null, positionId: null });
+    const changedConfig = { ...original, multiplier: 3, priority: 2, companyId: null, sectorId: "sector-1" };
+    mockedPrisma.doubleHourRule.findUnique
+      .mockResolvedValueOnce(original)
+      .mockResolvedValueOnce(changedConfig)
+      .mockResolvedValue(changedConfig);
+    vi.mocked(reinterpretSpecialHours).mockResolvedValue({ timeEntries: 0, breakdowns: 0, segments: 0, employees: 0, periods: [], rebuiltClosures: [], protectedPeriods: [], changes: { timeEntries: [], breakdowns: [], segments: [] } } as never);
+
+    const first = await workforceService.previewDoubleRuleDeletion("rule-x3");
+    await expect(workforceService.executeDoubleRuleDeletion("rule-x3", { token: first.token, confirmationText: "Prueba x3" }, { userId: "u1" }))
+      .rejects.toMatchObject({ code: "DELETION_PREVIEW_CHANGED" });
+    expect(mockedPrisma.doubleHourRule.delete).not.toHaveBeenCalled();
+    expect(auditService.registerWithin).not.toHaveBeenCalled();
+
+    const second = await workforceService.previewDoubleRuleDeletion("rule-x3");
+    await workforceService.executeDoubleRuleDeletion("rule-x3", { token: second.token, confirmationText: "Prueba x3" }, { userId: "u1" });
+    expect(mockedPrisma.doubleHourRule.delete).toHaveBeenCalledWith({ where: { id: "rule-x3" } });
+  });
+
+  it("reordenar empleados y fechas equivalentes no cambia la huella", async () => {
+    const employeeA = { ruleId: "rule-x3", employeeId: "emp-a" };
+    const employeeB = { ruleId: "rule-x3", employeeId: "emp-b" };
+    const dateA = { id: "date-a", ruleId: "rule-x3", date: new Date("2026-10-01"), isActive: true, createdAt: new Date("2026-09-01") };
+    const dateB = { id: "date-b", ruleId: "rule-x3", date: new Date("2026-10-02"), isActive: true, createdAt: new Date("2026-09-01") };
+    mockedPrisma.doubleHourRule.findUnique
+      .mockResolvedValueOnce(ruleRow({ id: "rule-x3", name: "Prueba x3", employees: [employeeA, employeeB], dates: [dateA, dateB] }))
+      .mockResolvedValueOnce(ruleRow({ id: "rule-x3", name: "Prueba x3", employees: [employeeB, employeeA], dates: [dateB, dateA] }));
+
+    const first = await workforceService.previewDoubleRuleDeletion("rule-x3");
+    const second = await workforceService.previewDoubleRuleDeletion("rule-x3");
+    expect(second.token).toBe(first.token);
+  });
 });

@@ -167,9 +167,10 @@ async function planDoubleRuleDeletionWithin(tx: PrismaTransactionClient, id: str
     preview: builder.build(
       { kind: "doubleHourRule", id, code: null, name: before.name, label: before.kind === "FERIADO" ? "Feriado" : "Regla de horas especiales" },
       {
-        deletedRule: ruleCalendar(before),
-        deletedEmployeeSelections: before.employees.map((row) => row.employeeId),
-        deletedDateSelections: before.dates.map((row) => ({ date: row.date, isActive: row.isActive })),
+        // Configuración completa que desaparece, no sólo el calendario usado
+        // por el motor: incluye multiplicador/prioridad/estado, alcance,
+        // autoría y las filas propias de empleados y fechas.
+        deletedRule: before,
         concreteResults: reinterpretation.changes,
         rebuiltClosures: reinterpretation.rebuiltClosures,
         protectedPeriods: reinterpretation.protectedPeriods,
