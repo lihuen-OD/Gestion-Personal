@@ -1,6 +1,6 @@
 # Fichador como app independiente (PWA) — Etapa 1: diagnóstico y plan
 
-> Estado: plan aprobado. **F0 cerrada para el entorno de desarrollo actual** (2026-10-06, ver [§18](#18-f0--implementación-y-resultado)); la medición de `TRUST_PROXY_HOPS` es requisito previo del primer deploy real del backend. F1 cerrada (2026-10-06, [§19](#19-f1--fichador-standalone-implementación)). **F2 cerrada a nivel de repositorio: READY FOR DEPLOY — validación real de infraestructura diferida** (2026-10-06, [§20](#20-f2--despliegue-independiente), decisión en §20.12); no bloquea el desarrollo local. **F3 implementada en local** (2026-10-06, [§21](#21-f3--pwa-local)). **F4 cerrada y migrada únicamente en staging** (2026-10-06, [§22](#22-f4--modelo-persistente-clockdevice)). **F5 implementada: enrolamiento individual y administración RRHH** ([§23](#23-f5--enrolamiento-y-administración-de-dispositivos)). **F6 cerrada definitivamente** (2026-10-07): autenticación individual obligatoria, validada con una fichada real controlada en staging ([§24](#24-f6--autenticación-individual-obligatoria-en-las-fichadas), §24.9). **F7 cerrada** (2026-10-13): `/api/clock/*` en paralelo con el legacy, `source = KIOSK`, cooldown y auditoría con el dispositivo como actor técnico, validada con una fichada real en staging ([§26](#26-f7--contrato-operativo-de-kiosco-backend)). **Próxima etapa: F8, pendiente de aprobación.**
+> Estado: plan aprobado. **F0 cerrada para el entorno de desarrollo actual** (2026-10-06, ver [§18](#18-f0--implementación-y-resultado)); la medición de `TRUST_PROXY_HOPS` es requisito previo del primer deploy real del backend. F1 cerrada (2026-10-06, [§19](#19-f1--fichador-standalone-implementación)). **F2 cerrada a nivel de repositorio: READY FOR DEPLOY — validación real de infraestructura diferida** (2026-10-06, [§20](#20-f2--despliegue-independiente), decisión en §20.12); no bloquea el desarrollo local. **F3 implementada en local** (2026-10-06, [§21](#21-f3--pwa-local)). **F4 cerrada y migrada únicamente en staging** (2026-10-06, [§22](#22-f4--modelo-persistente-clockdevice)). **F5 implementada: enrolamiento individual y administración RRHH** ([§23](#23-f5--enrolamiento-y-administración-de-dispositivos)). **F6 cerrada definitivamente** (2026-10-07): autenticación individual obligatoria, validada con una fichada real controlada en staging ([§24](#24-f6--autenticación-individual-obligatoria-en-las-fichadas), §24.9). **F7 cerrada** (2026-10-13): `/api/clock/*` en paralelo con el legacy, `source = KIOSK`, cooldown y auditoría con el dispositivo como actor técnico, validada con una fichada real en staging ([§26](#26-f7--contrato-operativo-de-kiosco-backend)). **F7.1 cerrada** (2026-10-13): hardening de transición antes de F8 —el source de la jornada sobrevive al cutover legacy → `/api/clock` y el reintento idempotente de un cooldown conserva `retryAfterSeconds`— (§26.12–§26.13). **Próxima etapa: F8, pendiente de aprobación.**
 > Los §1–§17 son el diagnóstico read-only original sobre `main @ 697968a` y describen el estado **previo** a F0 (por ejemplo, las rutas sin foto de §2 ya no existen).
 > **Numeración:** la secuencia vigente de etapas es la de [§25](#25-secuencia-vigente-de-etapas-reconciliada-el-2026-10-07). Los números F6–F15 de §17 y las referencias a etapas futuras dentro de §12–§23 usan la numeración **original** y se leen con la tabla de equivalencias de §25.1.
 
@@ -1842,8 +1842,9 @@ schema. La PWA y el admin no cambiaron en runtime. Producción no se tocó.
 
 - El controller recibe el canal de la ruta que lo monta. `/api/clock/*`
   escribe `KIOSK`; el legacy escribe `PUBLIC_CLOCK_PHOTO`, como en F6.
-- El valor llega a `AttendancePunch.source`, `WorkShift.source` y al
-  `TimeEntry` que se derive.
+- El valor llega a la `AttendancePunch` de esa fichada y, si la fichada abre
+  la jornada, a `WorkShift.source`. El `TimeEntry` toma el source de la
+  jornada, no el de la salida (F7.1, §26.12).
 - El body no puede elegirlo: el schema descarta `source` y `deviceId`.
 - No hay backfill: `ADMIN`, `PORTAL_DNI` y los `PUBLIC_CLOCK_PHOTO` existentes
   no cambian.
@@ -1892,8 +1893,9 @@ schema. La PWA y el admin no cambiaron en runtime. Producción no se tocó.
     diferencia de `details`, se devuelve también en production.
   - El intento queda `FAILED` con `CLOCK_PUNCH_COOLDOWN`/409 y su `deviceId`,
     `employeeId` y `requestId`.
-  - Repetir ese `requestId` devuelve el mismo 409 sin `retryAfterSeconds`;
-    una fichada nueva usa un `requestId` nuevo.
+  - Repetir ese `requestId` devuelve el mismo 409 con el mismo
+    `retryAfterSeconds` original (F7.1, §26.13); una fichada nueva usa un
+    `requestId` nuevo.
 - **No es un rate limit:** los cupos por IP y por dispositivo no cambian y
   ahora son compartidos entre namespaces (§26.6).
 
@@ -2120,3 +2122,116 @@ mediana de 323 ms ese momento.
   - F9 (heartbeat y gestión operativa, incluido el nombre del dispositivo en
     Asistencia);
   - F11 (retiro del legacy, auditoría de fichada no diferida, R9).
+
+### 26.12 F7.1 — Semántica final de `source` a través del cutover
+
+Hardening de transición antes de F8 (2026-10-13). No hubo migración ni se
+cambió ningún dato histórico.
+
+**El problema.** Antes de F8 la PWA ficha por el alias legacy. Una jornada
+abierta por el legacy (`PUBLIC_CLOCK_PHOTO`) y cerrada después del cutover por
+`/api/clock` (`KIOSK`) quedaba inconsistente: `WorkShift` `PUBLIC_CLOCK_PHOTO`
+pero `TimeEntry` `KIOSK`.
+
+**La causa.** `closeOpenWorkShift` escribía el `TimeEntry` (alta y
+actualización) con `input.source`, el canal de la request de salida. Era el
+único camino que lo hacía: `expireOpenWorkShifts`, el rollover y la reparación
+de horas normales ya usaban el source de la jornada.
+
+**Semántica final:**
+
+| Campo | Significa | Se escribe con |
+|---|---|---|
+| `AttendancePunch.source` | Canal de **esa** fichada | El canal de la request (la ruta), en ingreso, salida y rollover |
+| `WorkShift.source` | Canal que **originó** la jornada | El canal del ingreso que la abrió; nunca se reescribe |
+| `TimeEntry.source` | Origen de la jornada que produjo esas horas | `WorkShift.source`, leído dentro de la transacción de cierre |
+
+**El cambio.** En `closeOpenWorkShift`, el `TimeEntry` toma el
+`WorkShift.source` persistido, que devuelve el mismo `update` que vincula la
+salida, sin consulta extra. La salida (`AttendancePunch`) sigue usando el
+canal de la request. No hay ramas por valor (`if KIOSK`).
+
+**Casos cubiertos por tests (unitarios y PostgreSQL real):**
+
+| Caso | Ingreso | Salida | `WorkShift` | `TimeEntry` |
+|---|---|---|---|---|
+| Legacy IN → KIOSK OUT (cutover) | `PUBLIC_CLOCK_PHOTO` | `KIOSK` | `PUBLIC_CLOCK_PHOTO` | `PUBLIC_CLOCK_PHOTO` |
+| KIOSK IN → KIOSK OUT | `KIOSK` | `KIOSK` | `KIOSK` | `KIOSK` |
+| Legacy IN → legacy OUT | `PUBLIC_CLOCK_PHOTO` | `PUBLIC_CLOCK_PHOTO` | `PUBLIC_CLOCK_PHOTO` | `PUBLIC_CLOCK_PHOTO` |
+
+**Rollover** (jornada legacy vencida + IN por `/api/clock`):
+
+- la jornada vieja queda `FALTA_SALIDA` y conserva `PUBLIC_CLOCK_PHOTO`;
+- su `TimeEntry` de 0 h también es `PUBLIC_CLOCK_PHOTO`;
+- la fichada y la jornada nuevas son `KIOSK`.
+
+Ya era así; ahora está fijado por tests.
+
+**Efecto colateral, intencional.** El cierre manual de RRHH sobre una jornada
+de kiosco pasa por el mismo `closeOpenWorkShift`. Antes dejaba el `TimeEntry`
+como `ADMIN`; ahora toma el source de la jornada. La intervención sigue
+identificada por:
+
+- la salida `ADMIN`;
+- la observación `Cierre manual: …`;
+- su `AuditLog`.
+
+Ningún consumidor (backend, admin ni exportaciones) lee `TimeEntry.source`
+para filtrar o mostrar. La reparación de horas normales ya lo reconstruía con
+el source de la jornada.
+
+### 26.13 F7.1 — Metadata pública de error en intentos idempotentes
+
+**El problema.** El primer cooldown respondía `retryAfterSeconds`, pero
+`ClockPunchAttempt` sólo guardaba `errorCode`, `errorMessage` y `httpStatus`.
+Un cliente que perdía la respuesta y reintentaba el mismo `requestId`
+recuperaba el error sin `retryAfterSeconds`, y `GET attempts` tampoco lo
+traía.
+
+**Persistencia, sin migración.** `ClockPunchAttempt.response` (JSON, nullable)
+sólo se usaba para el resultado de un `COMPLETED`; en un `FAILED` quedaba
+`NULL`.
+
+- Desde F7.1, un `FAILED` cuyo `AppError` traía `retryAfterSeconds` guarda en
+  `response` `{ "error": { "retryAfterSeconds": N } }`
+  (`time-entries/clockAttemptErrorMeta.ts`, que escribe y relee esa forma).
+- Es una allowlist explícita: código, mensaje y status siguen en sus columnas,
+  y nunca se persiste `AppError.details`, stack ni datos internos.
+- Los errores que no traen `retryAfterSeconds` no escriben `response` y
+  mantienen el contrato anterior.
+- Una forma inválida al releer se ignora.
+
+**Contrato:**
+
+| | Primer request | Reintento del mismo `requestId` | `GET /api/clock/attempts/:requestId` |
+|---|---|---|---|
+| Cooldown | `409` + `error.retryAfterSeconds: N` | `409` + **el mismo** `N` | `status: FAILED`, `response: null`, `error: { code, message, httpStatus, retryAfterSeconds: N }` |
+| Otro error | sin `retryAfterSeconds` | igual | `error` sin `retryAfterSeconds` |
+
+**Reglas:**
+
+- El `N` guardado es el de la respuesta original. No se recalcula con el reloj
+  ni se decrementa en la base. F8 decide cómo mostrar la cuenta regresiva.
+- `GET attempts` de un `FAILED` nunca devuelve la metadata como `response`.
+- El aislamiento de F6 no cambia: otro dispositivo recibe 404 o
+  `CLOCK_IDEMPOTENCY_KEY_REUSED`, sin `retryAfterSeconds`.
+
+**`AppError`:** `publicRetryAfterSeconds` es el único criterio de un valor
+válido (entero finito ≥ 0). Se aplica al construir el error y al releerlo de
+la base, así que un valor inválido nunca se publica.
+
+**Validación de F7.1.** Fue local, con PostgreSQL real; no hizo falta otra
+fichada en staging.
+
+- Backend: 2826 tests verdes (27 opt-in salteados), typecheck, build y
+  `prisma validate`.
+- Integración (`clock.integration.test.ts`): 14/14 en 4 corridas. Los casos
+  nuevos son los tres de source por HTTP real (con la jornada envejecida 90
+  minutos en la base de test, para que la salida genere horas reales), el
+  rollover (jornada legacy envejecida 21 h) y la recuperación de
+  `retryAfterSeconds` (reintento después de 1,5 s, `GET attempts`, fila
+  guardada y aislamiento).
+- Mutaciones: volver a `input.source` en el `TimeEntry`, o reintentar sin la
+  metadata guardada, hace fallar los casos de integración y los unitarios
+  correspondientes.
+- Fichador y admin no cambiaron (ni contratos que consuman).

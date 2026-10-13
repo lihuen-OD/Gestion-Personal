@@ -212,10 +212,15 @@ El único hard delete permitido es un `PENDING` sin `AttendancePunch` ni
 ### Fichadas de kiosco y cooldown (F7, sin migración)
 
 - Las fichadas nuevas que entran por `/api/clock/*` se guardan con
-  `WorkShiftSource.KIOSK` (`AttendancePunch.source`, `WorkShift.source` y el
-  `TimeEntry` que derive). El alias legacy `/time-entries/clock/*` sigue
+  `WorkShiftSource.KIOSK`; el alias legacy `/time-entries/clock/*` sigue
   escribiendo `PUBLIC_CLOCK_PHOTO` hasta su retiro (F11). No hay backfill:
   `ADMIN`, `PORTAL_DNI` y los `PUBLIC_CLOCK_PHOTO` existentes no cambian.
+- Semántica de `source` (F7.1, válida para todos los caminos):
+  `AttendancePunch.source` = canal de esa fichada; `WorkShift.source` = canal
+  que originó la jornada (nunca se reescribe al cerrarla); `TimeEntry.source`
+  = `WorkShift.source` de la jornada que produjo esas horas. Cierre por
+  fichada o manual de RRHH, expiración automática, rollover y reparación de
+  horas normales aplican la misma regla.
 - El cooldown entre fichadas distintas del mismo empleado no agrega columnas
   ni índices: lee la última `AttendancePunch` no `RECHAZADA` con el índice
   existente `(employeeId, timestamp)` (Index Scan Backward, verificado con
@@ -225,5 +230,11 @@ El único hard delete permitido es un `PENDING` sin `AttendancePunch` ni
   de cierre (`closure:<employeeId>:<period>`), en un orden fijo.
 - `ClockPunchAttempt` no tiene columna de canal: el canal queda en la fichada
   (`source`) y el rechazo por cooldown en `errorCode = CLOCK_PUNCH_COOLDOWN`.
+- `ClockPunchAttempt.response` (F7.1): en un `COMPLETED` es el resultado
+  público; en un `FAILED` sólo guarda metadata pública del error que no tiene
+  columna propia, hoy `{ "error": { "retryAfterSeconds": N } }`, para que el
+  reintento del mismo `requestId` y `GET attempts` reproduzcan el error
+  original. Allowlist explícita (`clockAttemptErrorMeta.ts`): nunca
+  `AppError.details` ni datos internos. Sin migración.
 - `AuditLog` tampoco cambia: el dispositivo como actor técnico va en
   `after.actorClockDeviceId` (metadata) con `userId = NULL`.
