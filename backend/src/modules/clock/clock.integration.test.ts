@@ -91,7 +91,7 @@ describe.skipIf(!url)("F7 — /api/clock contra PostgreSQL local (cooldown y con
     await prisma.$executeRawUnsafe(`CREATE UNIQUE INDEX IF NOT EXISTS "WorkShift_one_open_per_employee" ON "WorkShift"("employeeId") WHERE status = 'ABIERTO' AND "endAt" IS NULL`);
 
     await prisma.hourConcept.create({ data: { code: "HC-NORMAL", name: "Hora normal", kind: "NORMAL", systemRole: "NORMAL_BASE" } });
-    for (const [index, key] of ["race", "legacy", "parallelA", "parallelB", "lockHeld", "lockFree", "txRace"].entries()) {
+    for (const [index, key] of ["race", "legacy", "parallelA", "parallelB", "lockHeld", "lockFree", "txRace", "cutover", "kioskBoth", "legacyBoth", "rollover"].entries()) {
       const created = await prisma.employee.create({ data: { legajo: `IT-${index + 1}`, cuil: `20-${index + 1}`, dni: `${index + 1}`, firstName: "Prueba", lastName: `IT ${key}` } });
       employees[key] = created.id;
     }
@@ -271,5 +271,61 @@ describe.skipIf(!url)("F7 — /api/clock contra PostgreSQL local (cooldown y con
     expect(rejected).toHaveLength(1);
     expect(rejected[0]!.reason).toBeInstanceOf(m.Conflict);
     expect(await punchesOf("txRace")).toHaveLength(1);
+  });
+
+  // ── F7.1 (plan §26.12): source de la jornada a través del cutover legacy → /api/clock ──
+
+  /**
+   * Fichada de ingreso REAL por HTTP y después se adelanta la jornada `minutes` hacia atrás
+   * en esta base de test (inicio y fichada de ingreso), para que la salida produzca tramos y
+   * TimeEntry reales (una jornada de segundos no genera horas) y quede fuera del cooldown.
+   */
+  async function clockInAndAge(employeeKey: string, path: string, device: Device, minutes: number) {
+    const entry = await call("POST", path, device, body(employeeKey, "IN"));
+    expect(entry.status).toBe(201);
+    const shift = (await m.prisma.workShift.findFirst({ where: { employeeId: employees[employeeKey]!, status: "ABIERTO" } }))!;
+    const startAt = new Date(shift.startAt.getTime() - minutes * 60_000);
+    await m.prisma.workShift.update({ where: { id: shift.id }, data: { startAt } });
+    await m.prisma.attendancePunch.update({ where: { id: shift.startPunchId! }, data: { timestamp: startAt } });
+    return shift.id;
+  }
+
+  async function sourcesOf(workShiftId: string) {
+    const shift = (await m.prisma.workShift.findUnique({ where: { id: workShiftId }, include: { startPunch: true, endPunch: true, timeEntries: true } }))!;
+    return { shift: shift.source, status: shift.status, start: shift.startPunch?.source, end: shift.endPunch?.source, entries: shift.timeEntries.map((entry) => entry.source) };
+  }
+
+  it.each([
+    ["legacy IN → KIOSK OUT (cutover): la salida es KIOSK pero la jornada y sus horas conservan PUBLIC_CLOCK_PHOTO", "cutover", "/time-entries/clock/photo-punch", "/clock/photo-punch", { start: "PUBLIC_CLOCK_PHOTO", end: "KIOSK", shift: "PUBLIC_CLOCK_PHOTO" }],
+    ["KIOSK IN → KIOSK OUT: todo KIOSK", "kioskBoth", "/clock/photo-punch", "/clock/photo-punch", { start: "KIOSK", end: "KIOSK", shift: "KIOSK" }],
+    ["legacy IN → legacy OUT: todo PUBLIC_CLOCK_PHOTO", "legacyBoth", "/time-entries/clock/photo-punch", "/time-entries/clock/photo-punch", { start: "PUBLIC_CLOCK_PHOTO", end: "PUBLIC_CLOCK_PHOTO", shift: "PUBLIC_CLOCK_PHOTO" }],
+  ] as const)("%s", async (_label, employeeKey, inPath, outPath, expected) => {
+    const workShiftId = await clockInAndAge(employeeKey, inPath, deviceA, 90);
+
+    const exit = await call("POST", outPath, deviceB, body(employeeKey, "OUT"));
+    expect(exit.status).toBe(201);
+
+    const sources = await sourcesOf(workShiftId);
+    expect(sources).toMatchObject({ status: "PROCESADO", start: expected.start, end: expected.end, shift: expected.shift });
+    expect(sources.entries.length).toBeGreaterThanOrEqual(1);
+    expect(new Set(sources.entries)).toEqual(new Set([expected.shift])); // TimeEntry.source = WorkShift.source
+    const minutes = (await m.prisma.timeEntry.aggregate({ where: { workShiftId }, _sum: { totalMinutes: true } }))._sum.totalMinutes;
+    expect(minutes).toBe(90); // el motor de horas cerró la jornada real
+    expect((await m.prisma.attendancePunch.findUnique({ where: { id: (await m.prisma.workShift.findUnique({ where: { id: workShiftId } }))!.endPunchId! } }))!.deviceId).toBe(deviceB.id);
+  });
+
+  it("rollover: jornada legacy vencida + IN por /api/clock → la vieja y su TimeEntry 0 h quedan PUBLIC_CLOCK_PHOTO; la fichada y la jornada nuevas son KIOSK", async () => {
+    const oldShiftId = await clockInAndAge("rollover", "/time-entries/clock/photo-punch", deviceA, 21 * 60);
+
+    const entry = await call("POST", "/clock/photo-punch", deviceB, body("rollover", "IN"));
+    expect(entry.status).toBe(201);
+    expect(entry.data!.previousOpenShift).toMatchObject({ id: oldShiftId, status: "FALTA_SALIDA" });
+
+    const old = await sourcesOf(oldShiftId);
+    expect(old).toMatchObject({ status: "FALTA_SALIDA", shift: "PUBLIC_CLOCK_PHOTO", start: "PUBLIC_CLOCK_PHOTO" });
+    expect(old.entries).toEqual(["PUBLIC_CLOCK_PHOTO"]);
+    const fresh = await sourcesOf(entry.data!.workShift.id);
+    expect(fresh).toMatchObject({ status: "ABIERTO", shift: "KIOSK", start: "KIOSK" });
+    expect(fresh.entries).toEqual([]);
   });
 });

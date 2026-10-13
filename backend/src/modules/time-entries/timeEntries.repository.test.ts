@@ -1801,6 +1801,66 @@ describe("F7 — guard del cooldown en las escrituras de fichada", () => {
   });
 });
 
+// F7.1 (docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md §26.12): AttendancePunch.source
+// = canal de cada fichada; WorkShift.source = canal que originó la jornada (no se
+// reescribe); TimeEntry.source = source de la jornada que produjo esas horas.
+describe("F7.1 — source de la jornada en el cierre y el rollover", () => {
+  const day = new Date("2026-10-13T00:00:00.000Z");
+  const segment = { date: day, startAt: new Date("2026-10-13T11:00:00.000Z"), endAt: new Date("2026-10-13T13:00:00.000Z"), minutes: 120, hours: 2, hourConceptId: "concept-normal", hourConceptName: "Hora normal" };
+  const close = (source: string) => timeEntriesRepository.closeOpenWorkShift({
+    workShiftId: "shift-open", employeeId: "employee-1", normalHourConceptId: "concept-normal", normalHourConceptName: "Hora normal",
+    source: source as never, endAt: segment.endAt, totalMinutes: 120, segments: [segment],
+  });
+
+  beforeEach(() => {
+    mockedPrisma.__tx.workShift.updateMany.mockResolvedValue({ count: 1 });
+    mockedPrisma.__tx.attendancePunch.create.mockResolvedValue({ id: "punch-out" });
+  });
+
+  it.each([
+    ["legacy IN → KIOSK OUT", "PUBLIC_CLOCK_PHOTO", "KIOSK"],
+    ["KIOSK IN → KIOSK OUT", "KIOSK", "KIOSK"],
+    ["legacy IN → legacy OUT", "PUBLIC_CLOCK_PHOTO", "PUBLIC_CLOCK_PHOTO"],
+    ["cierre manual de RRHH sobre una jornada de kiosco", "KIOSK", "ADMIN"],
+  ])("%s: la salida guarda el canal de la request y el TimeEntry nuevo el source de la jornada", async (_label, shiftSource, requestSource) => {
+    mockedPrisma.__tx.workShift.update.mockResolvedValue({ id: "shift-open", source: shiftSource });
+
+    await close(requestSource);
+
+    expect(mockedPrisma.__tx.attendancePunch.create).toHaveBeenCalledWith({ data: expect.objectContaining({ type: "SALIDA", source: requestSource }) });
+    expect(mockedPrisma.__tx.timeEntry.create.mock.calls[0]![0].data.source).toBe(shiftSource);
+    // La jornada conserva su source: el cierre no lo reescribe.
+    expect(mockedPrisma.__tx.workShift.updateMany.mock.calls[0]![0].data).not.toHaveProperty("source");
+    expect(mockedPrisma.__tx.workShift.update.mock.calls[0]![0].data).not.toHaveProperty("source");
+  });
+
+  it("legacy IN → KIOSK OUT sobre un TimeEntry existente del día: lo actualiza con el source de la jornada", async () => {
+    mockedPrisma.__tx.workShift.update.mockResolvedValue({ id: "shift-open", source: "PUBLIC_CLOCK_PHOTO" });
+    mockedPrisma.__tx.timeEntry.findMany.mockResolvedValue([{ id: "entry-existing", date: day, status: "APROBADO", actualMinutes: 60, totalMinutes: 60, observation: null }]);
+    mockedPrisma.__tx.timeEntry.update.mockResolvedValue({ id: "entry-existing" });
+
+    await close("KIOSK");
+
+    expect(mockedPrisma.__tx.timeEntry.create).not.toHaveBeenCalled();
+    expect(mockedPrisma.__tx.timeEntry.update.mock.calls[0]![0].data.source).toBe("PUBLIC_CLOCK_PHOTO");
+  });
+
+  it("rollover legacy vencido → KIOSK IN: jornada vieja y su TimeEntry 0 h conservan PUBLIC_CLOCK_PHOTO; fichada y jornada nuevas son KIOSK", async () => {
+    mockedPrisma.__tx.workShift.findFirst.mockResolvedValue({ id: "shift-prev", startAt: new Date("2026-10-12T10:00:00.000Z"), source: "PUBLIC_CLOCK_PHOTO", hourConcept: { id: "concept-normal", name: "Hora normal" } });
+    mockedPrisma.__tx.timeEntry.create.mockResolvedValue({});
+    mockedPrisma.__tx.attendancePunch.create.mockResolvedValue({ id: "punch-in" });
+    mockedPrisma.__tx.workShift.create.mockResolvedValue({ id: "shift-new" });
+
+    await timeEntriesRepository.rolloverExpiredOpenWorkShift({ openWorkShiftId: "shift-prev", employeeId: "employee-1", source: "KIOSK" as never, startAt: new Date("2026-10-13T11:00:00.000Z"), missingOutObservation: "Olvido de salida." });
+
+    expect(mockedPrisma.__tx.workShift.updateMany.mock.calls[0]![0].data).toMatchObject({ status: "FALTA_SALIDA" });
+    expect(mockedPrisma.__tx.workShift.updateMany.mock.calls[0]![0].data).not.toHaveProperty("source");
+    expect(mockedPrisma.__tx.timeEntry.create).toHaveBeenCalledWith({ data: expect.objectContaining({ workShiftId: "shift-prev", hours: 0, source: "PUBLIC_CLOCK_PHOTO" }) });
+    expect(mockedPrisma.__tx.attendancePunch.create).toHaveBeenCalledWith({ data: expect.objectContaining({ type: "INGRESO", source: "KIOSK" }) });
+    expect(mockedPrisma.__tx.workShift.create).toHaveBeenCalledWith({ data: expect.objectContaining({ source: "KIOSK", status: "ABIERTO" }) });
+  });
+});
+
 describe("rolloverExpiredOpenWorkShift — regresión de atribución de día/período (Etapa 2)", () => {
   it("la jornada anterior que arrancó a las 23:30 hora Argentina se atribuye a agosto/día 14, no a septiembre/día 1 en UTC", async () => {
     // 2026-08-14 23:30 ART = 2026-08-15 02:30 UTC.

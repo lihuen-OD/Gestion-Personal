@@ -1639,6 +1639,8 @@ export const timeEntriesRepository = {
             hours: 0,
             totalMinutes: 0,
             status: "APROBADO",
+            // F7.1: las horas (0 h) de la jornada vieja conservan SU source;
+            // la fichada y la jornada nuevas usan el canal de esta request.
             source: previous.source,
             segmentStartAt: previous.startAt,
             observation: `0 h — ${input.missingOutObservation}`,
@@ -2090,6 +2092,14 @@ export const timeEntriesRepository = {
           endPunchId: endPunch.id,
         },
       });
+      // F7.1 (FICHADOR_STANDALONE_PWA_PLAN.md §26.12): la salida
+      // (AttendancePunch) guarda el canal de ESTA request (`input.source`),
+      // pero las horas pertenecen a la jornada: el TimeEntry toma el source
+      // persistido del WorkShift, que nunca se reescribe. Es la misma regla de
+      // expireOpenWorkShifts, del rollover y de la reparación de horas
+      // normales. Una jornada abierta por el alias legacy y cerrada por
+      // /api/clock (o cerrada a mano por RRHH) conserva su origen.
+      const shiftSource = workShift.source;
 
       // Una sola consulta agrupando todas las fechas de la jornada en vez de
       // un findFirst por segmento -- mismo resultado (cada fecha es de un
@@ -2205,7 +2215,7 @@ export const timeEntriesRepository = {
               totalMinutes: nextRealMinutes,
               actualMinutes: nextRealMinutes,
               appliedMultiplier: multiplier,
-              source: input.source,
+              source: shiftSource,
               segmentStartAt: lastSegment.startAt,
               segmentEndAt: lastSegment.endAt,
               observation: `${currentObservation}${FICHADA_ORIGIN_NOTE}${rulesNote}`,
@@ -2230,7 +2240,7 @@ export const timeEntriesRepository = {
               status: "APROBADO",
               segmentStartAt: lastSegment.startAt,
               segmentEndAt: lastSegment.endAt,
-              source: input.source,
+              source: shiftSource,
               observation: `${FICHADA_ORIGIN_NOTE}${rulesNote}`,
             },
             include: timeEntryInclude,
