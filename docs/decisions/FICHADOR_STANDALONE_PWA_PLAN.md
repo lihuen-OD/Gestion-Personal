@@ -1,6 +1,6 @@
 # Fichador como app independiente (PWA) — Etapa 1: diagnóstico y plan
 
-> Estado: plan aprobado. **F0 cerrada para el entorno de desarrollo actual** (2026-10-06, ver [§18](#18-f0--implementación-y-resultado)); la medición de `TRUST_PROXY_HOPS` es requisito previo del primer deploy real del backend. F1 cerrada (2026-10-06, [§19](#19-f1--fichador-standalone-implementación)). **F2 cerrada a nivel de repositorio: READY FOR DEPLOY — validación real de infraestructura diferida** (2026-10-06, [§20](#20-f2--despliegue-independiente), decisión en §20.12); no bloquea el desarrollo local. **F3 implementada en local** (2026-10-06, [§21](#21-f3--pwa-local)). **F4 cerrada y migrada únicamente en staging** (2026-10-06, [§22](#22-f4--modelo-persistente-clockdevice)). **F5 implementada: enrolamiento individual y administración RRHH** ([§23](#23-f5--enrolamiento-y-administración-de-dispositivos)). **F6 cerrada definitivamente** (2026-10-07): autenticación individual obligatoria, validada con una fichada real controlada en staging ([§24](#24-f6--autenticación-individual-obligatoria-en-las-fichadas), §24.9). **Próxima etapa: F7, pendiente de aprobación.**
+> Estado: plan aprobado. **F0 cerrada para el entorno de desarrollo actual** (2026-10-06, ver [§18](#18-f0--implementación-y-resultado)); la medición de `TRUST_PROXY_HOPS` es requisito previo del primer deploy real del backend. F1 cerrada (2026-10-06, [§19](#19-f1--fichador-standalone-implementación)). **F2 cerrada a nivel de repositorio: READY FOR DEPLOY — validación real de infraestructura diferida** (2026-10-06, [§20](#20-f2--despliegue-independiente), decisión en §20.12); no bloquea el desarrollo local. **F3 implementada en local** (2026-10-06, [§21](#21-f3--pwa-local)). **F4 cerrada y migrada únicamente en staging** (2026-10-06, [§22](#22-f4--modelo-persistente-clockdevice)). **F5 implementada: enrolamiento individual y administración RRHH** ([§23](#23-f5--enrolamiento-y-administración-de-dispositivos)). **F6 cerrada definitivamente** (2026-10-07): autenticación individual obligatoria, validada con una fichada real controlada en staging ([§24](#24-f6--autenticación-individual-obligatoria-en-las-fichadas), §24.9). **F7 cerrada** (2026-10-13): `/api/clock/*` en paralelo con el legacy, `source = KIOSK`, cooldown y auditoría con el dispositivo como actor técnico, validada con una fichada real en staging ([§26](#26-f7--contrato-operativo-de-kiosco-backend)). **Próxima etapa: F8, pendiente de aprobación.**
 > Los §1–§17 son el diagnóstico read-only original sobre `main @ 697968a` y describen el estado **previo** a F0 (por ejemplo, las rutas sin foto de §2 ya no existen).
 > **Numeración:** la secuencia vigente de etapas es la de [§25](#25-secuencia-vigente-de-etapas-reconciliada-el-2026-10-07). Los números F6–F15 de §17 y las referencias a etapas futuras dentro de §12–§23 usan la numeración **original** y se leen con la tabla de equivalencias de §25.1.
 
@@ -1665,9 +1665,9 @@ ejecutado. No se implementó ninguna etapa nueva al reconciliar.
 | F4 | Modelo `ClockDevice` | F4 | Cerrada; migración sólo en staging (§22) |
 | F5 | Enrolamiento backend, panel RRHH (aprobar por código, revocar, borrar pendiente) y enrolamiento en la PWA | F5 + F6 + F7 | Cerrada (§23) |
 | F6 | Autenticación individual obligatoria en `/time-entries/clock/*`, `deviceId` en fichadas e intentos, rate limit por dispositivo, retiro del token compartido y de la copia del fichador en el admin | autenticación y atribución de F8; rate limit por dispositivo de F10 (§18.5); retiro de token y copia admin de F12 | **Cerrada definitivamente** el 2026-10-07 (§24.9) |
-| **F7** | **Contrato operativo de kiosco (backend):** `/api/clock/*` convive con `/time-entries/clock/*`; `source = KIOSK` en las fichadas nuevas de dispositivo; cooldown entre fichadas distintas; auditoría con el dispositivo como actor; Asistencia muestra "Kiosco · <dispositivo>"; matriz de staging en el namespace nuevo | resto de F8 | Pendiente. **Próxima etapa, requiere aprobación** |
+| F7 | Contrato operativo de kiosco (backend): `/api/clock/*` convive con `/time-entries/clock/*`; `source = KIOSK` en las fichadas nuevas de dispositivo; cooldown entre fichadas distintas; auditoría con el dispositivo como actor; matriz de staging en el namespace nuevo. ("Kiosco · <dispositivo>" en Asistencia se movió a F9, §26.11) | resto de F8 | **Cerrada** el 2026-10-13 (§26) |
 | F8 | Cutover del cliente: la PWA usa sólo `/api/clock/*`; reenvío con el mismo `requestId` ante 404 (§14.3); el kiosco nunca queda bloqueado; confirmación con la hora del servidor y retorno automático | F9 | Pendiente |
-| F9 | Heartbeat y gestión operativa de dispositivos: ping con `serverTime` y estado sin conexión (§13, §14.4); conectividad derivada en el panel; renombrar y cambiar sector; limpieza automática de `PENDING` vencidos | F10 + lo pendiente de la gestión de F5/F6 originales (`rename`, limpieza de pendientes, conectividad) | Pendiente |
+| F9 | Heartbeat y gestión operativa de dispositivos: ping con `serverTime` y estado sin conexión (§13, §14.4); conectividad derivada en el panel; renombrar y cambiar sector; limpieza automática de `PENDING` vencidos; Asistencia muestra "Kiosco · <dispositivo>" (movido desde F7) | F10 + lo pendiente de la gestión de F5/F6 originales (`rename`, limpieza de pendientes, conectividad) | Pendiente |
 | F10 | Cámara y operación de kiosco: Wake Lock, cámara abierta vs. por fichada, permiso en standalone, instrucciones de instalación ("Agregar a inicio") y de Acceso guiado | F11 + instrucciones de instalación de F7 (hoy sólo hay un aviso genérico en el Gate) | Pendiente |
 | F11 | Hardening y retiro del legado: retirar `/time-entries/clock/*` tras 7 días sin tráfico; retirar la ruta `/fichador` del admin y `AttendancePunch.kioskId`; límite de body antes de autenticar (R9); CSP enforced; auditoría de fichada no diferida; evaluar `CryptoKey` no exportable; store compartido de rate limit si hay más de una instancia (§25.3) | resto de F12 | Pendiente |
 | F12 | Piloto: 1 iPad, 1 establecimiento, 2 semanas. Prerrequisitos: infraestructura real (§20.9) y `TRUST_PROXY_HOPS` medido (§18.5) | F13 | Pendiente |
@@ -1703,6 +1703,7 @@ inmutable (cambiarla altera su checksum), así que ese "F12" se lee como F11.
 | Retiro de `/time-entries/clock/*` | F11 |
 | `WorkShiftSource.KIOSK` | F7 |
 | Cooldown | F7 |
+| Asistencia: "Kiosco · <dispositivo>" | F9 |
 | Heartbeat | F9 |
 | Retiro definitivo del legado (rutas, `/fichador` del admin, `kioskId`) | F11 |
 
@@ -1759,7 +1760,7 @@ ahora.** Ya figuraba como riesgo en §16.2.
 - **`TRUST_PROXY_HOPS`:** se mide en el primer deploy real del backend (§18.5).
   Es bloqueante para el piloto.
 
-### 25.5 Alcance confirmado de F7 (sin implementar)
+### 25.5 Alcance confirmado de F7 (implementado: ver §26)
 
 - **`source`:** hoy toda fichada nueva de dispositivo se guarda como
   `PUBLIC_CLOCK_PHOTO`, y así se verificó en la fichada real de §24.9. F7 la
@@ -1778,3 +1779,344 @@ ahora.** Ya figuraba como riesgo en §16.2.
     evaluado antes de guardar la foto.
 - **Namespace:** F7 crea `/api/clock/*` en paralelo, sin romper la PWA actual.
   F8 migra el cliente. F11 retira `/time-entries/clock/*`.
+
+---
+
+## 26. F7 — Contrato operativo de kiosco (backend)
+
+Implementada el 2026-10-13 sobre `main` (a partir de `43d76df`) y validada con
+una fichada real controlada en staging (§26.9). Sin migración ni cambios de
+schema. La PWA y el admin no cambiaron en runtime. Producción no se tocó.
+
+### 26.1 Punto de partida
+
+- Desde `8ef2307` (cierre de F6), `main` sumó 64 commits, ninguno del fichador.
+  Tres afectan a F7:
+  - A7/M2: `ClockDevice.sectorId` pasó a `establishmentId`. Sigue siendo
+    metadata y no autoriza nada (§25.2).
+  - D-5: las transacciones de fichada toman advisory locks de cierre
+    (`closure:<employeeId>:<period>`).
+  - `auditService.registerWithin`, que F7 no usa: la auditoría de fichada
+    sigue diferida hasta F11.
+- La rama `development` tenía 15 commits más que no están en `main`
+  (deletion, provincias). F7 se hizo sobre `main` por decisión explícita.
+  La base de staging ya tiene aplicadas dos migraciones de `development`; no
+  tocan tablas del fichador.
+
+### 26.2 Arquitectura y rutas
+
+```
+/api/clock/*  ───────────────┐
+                              ├─ mountClockOperationalRoutes ─ guardas (1 instancia) ─ clockController ─ timeEntriesService
+/api/time-entries/clock/*  ──┘   (legacy: + Deprecation)        IP → requireClockDevice → dispositivo
+```
+
+- Módulo nuevo `backend/src/modules/clock/`, con `clock.routes.ts` y
+  `clock.controller.ts`.
+  - Es una capa de transporte. El núcleo de la fichada (idempotencia,
+    cooldown, jornada y evidencia) sigue en `timeEntriesService` y no se
+    duplica.
+  - Es dueño de `/api/clock`, donde también monta el enrolamiento de
+    `clock-devices` (`/device/*`, sin cambios).
+- `time-entries` ya no tiene handlers de fichada. Su router reutiliza
+  `mountClockOperationalRoutes` con prefijo `/clock` y conserva el 404
+  terminal de F0.
+- Rutas: mismos nombres que el legacy, para que F8 sólo cambie la base.
+  Los nombres de §10 (`/punches`, `GET …/status`) quedan descartados.
+
+| Nuevo (`source = KIOSK`) | Legacy (`source = PUBLIC_CLOCK_PHOTO`, deprecado) |
+|---|---|
+| `GET /api/clock/employees?search=` | `GET /api/time-entries/clock/employees?search=` |
+| `POST /api/clock/status` | `POST /api/time-entries/clock/status` |
+| `POST /api/clock/photo-punch` | `POST /api/time-entries/clock/photo-punch` |
+| `GET /api/clock/attempts/:requestId?employeeId=` | `GET /api/time-entries/clock/attempts/:requestId?employeeId=` |
+
+- La autenticación es exactamente la de F6: `requireClockDevice()`, sólo
+  `ACTIVE`; `PENDING` → 403 `CLOCK_DEVICE_NOT_ACTIVE`, `REVOKED` → 403
+  `CLOCK_DEVICE_REVOKED`, credencial inválida → 401.
+- Requests y responses son idénticos entre los dos namespaces.
+- La minimización de F0 se mantiene: `dniSuffix`, sin conceptos ni filas
+  internas.
+
+### 26.3 Source
+
+- El controller recibe el canal de la ruta que lo monta. `/api/clock/*`
+  escribe `KIOSK`; el legacy escribe `PUBLIC_CLOCK_PHOTO`, como en F6.
+- El valor llega a `AttendancePunch.source`, `WorkShift.source` y al
+  `TimeEntry` que se derive.
+- El body no puede elegirlo: el schema descarta `source` y `deviceId`.
+- No hay backfill: `ADMIN`, `PORTAL_DNI` y los `PUBLIC_CLOCK_PHOTO` existentes
+  no cambian.
+- Ninguna lógica ramifica por source; sólo hay etiquetas. Asistencia ya
+  rotula `KIOSK` como "Kiosco".
+- Un reintento idempotente que llega por el otro namespace devuelve el
+  resultado guardado.
+
+### 26.4 Cooldown
+
+- **Configuración:** `CLOCK_PUNCH_COOLDOWN_SECONDS`, entero de 0 a 300 con
+  default 60 (el valor del plan, §14.3). `0` lo desactiva. Fuera de rango, el
+  backend no arranca. No requiere migración.
+- **Semántica:** se mide por empleado, sin importar dispositivo ni canal.
+  - Bloquea una fichada **distinta** (otro `requestId`) si existe una
+    `AttendancePunch` no `RECHAZADA` del empleado con
+    `timestamp > ahora(servidor) − ventana`.
+  - El reloj del dispositivo nunca participa.
+  - Aplica también al alias legacy: la regla es del empleado y el canal no
+    puede ser un bypass.
+- **Orden dentro de una fichada:**
+  1. Alta del intento por `requestId`: idempotencia. Un reintento, o un
+     `requestId` ajeno, se resuelve acá y nunca ve el cooldown.
+  2. Validación facial y legajo activo.
+  3. Cooldown (chequeo previo, que evita subir la foto).
+  4. Reglas de jornada (por eso un IN repetido dentro de la ventana responde
+     cooldown y no `CLOCK_ALREADY_OPEN`).
+  5. Foto.
+  6. Transacción, con el cooldown con autoridad.
+- **Concurrencia:** la primera sentencia de cada transacción de escritura del
+  kiosco (ingreso, rollover y salida) es
+  `pg_try_advisory_xact_lock(hashtextextended('clock-punch:<employeeId>', 0))`.
+  - Si otra fichada del mismo empleado tiene el lock, esta pierde al instante,
+    sin esperas ni timeouts.
+  - Con el lock tomado, una segunda sentencia lee la última fichada
+    confirmada. Si cae en la ventana, la transacción se revierte y la foto ya
+    subida se compensa.
+  - Son dos sentencias a propósito: unidas, el snapshot sería previo al lock.
+  - El lock va antes que los de cierre, en un orden único, así que no hay
+    ciclo posible.
+  - El lock es por empleado: empleados distintos no se bloquean.
+  - El cierre manual de RRHH no lo usa.
+- **Respuesta:** `409 CLOCK_PUNCH_COOLDOWN` con mensaje humano sin horas, ids
+  ni segundos y `error.retryAfterSeconds`.
+  - `retryAfterSeconds` es un campo público nuevo de `AppError` y, a
+    diferencia de `details`, se devuelve también en production.
+  - El intento queda `FAILED` con `CLOCK_PUNCH_COOLDOWN`/409 y su `deviceId`,
+    `employeeId` y `requestId`.
+  - Repetir ese `requestId` devuelve el mismo 409 sin `retryAfterSeconds`;
+    una fichada nueva usa un `requestId` nuevo.
+- **No es un rate limit:** los cupos por IP y por dispositivo no cambian y
+  ahora son compartidos entre namespaces (§26.6).
+
+### 26.5 Auditoría con el dispositivo como actor técnico
+
+- El `ClockDevice` no se convierte en `User`: `AuditLog.userId` queda `NULL`.
+- La descripción visible lleva el nombre del dispositivo:
+  `Ingreso con foto registrado desde el dispositivo de fichada "<nombre>" para legajo N.`
+  (o `Salida con foto registrada …`; si no tiene nombre, `sin nombre`).
+- La metadata lleva `after = { workShiftId, employeeId, source, actorClockDeviceId }`.
+  La UI de auditoría oculta las claves `*Id`.
+- Nunca se escriben hash, secreto ni pairing.
+- Sin spam:
+  - búsqueda, estado y polling de intentos no auditan;
+  - los rechazos (cooldown, jornada, facial) quedan en `ClockPunchAttempt`
+    (`FAILED`), no en `AuditLog`;
+  - una fichada confirmada escribe una sola fila.
+- La falla de storage, que ya se auditaba, ahora también nombra al
+  dispositivo.
+
+### 26.6 Rate limit, CORS y deprecación
+
+- Las guardas son una sola instancia montada en los dos namespaces: un bucket
+  por IP y uno por dispositivo, nunca uno por namespace. Usar ambos no
+  duplica el cupo, y hay un test que lo cubre.
+- CORS: sin cambios de código. Los tests fijan el preflight de `/api/clock/*`
+  (`authorization`, `content-type`, `x-clock-app-version`).
+- Las respuestas del legacy llevan `Deprecation: @1791849600` (RFC 9745,
+  2026-10-13).
+  - No está expuesto por CORS, así que la PWA no lo ve.
+  - No cambia el comportamiento.
+- Secuencia:
+  - **F7:** conviven los dos namespaces.
+  - **F8:** la PWA usa sólo `/api/clock/*` (reenvío con el mismo `requestId`,
+    UX del cooldown con `retryAfterSeconds`).
+  - **F11:** se retira `/time-entries/clock/*` tras 7 días sin tráfico.
+
+### 26.7 Archivos
+
+- **Backend:**
+  - `modules/clock/{clock.routes.ts, clock.controller.ts}` (nuevos);
+  - `modules/time-entries/clockPunchCooldown.ts` (nuevo);
+  - `timeEntries.{routes,controller,service,repository}.ts`;
+  - `routes.ts`, `config/env.ts`, `shared/errors/{AppError,errorHandler}.ts`;
+  - `.env.example`;
+  - `scripts/clock-staging-matrix.ts` (namespace nuevo; requiere
+    `CLOCK_PUNCH_COOLDOWN_SECONDS=0`; su TS2353 preexistente, §24.9, sigue
+    como deuda de tooling).
+- **Docs:** este plan, `BACKEND_API_CONTRACTS`, `SECURITY_STANDARDS`,
+  `PROJECT_CONTEXT`, `ARCHITECTURE_STANDARDS`, `DATABASE_STANDARDS`,
+  `LOCAL_DEVELOPMENT` y `DEVOPS_DEPLOYMENT_STANDARDS`.
+
+### 26.8 Tests
+
+- **Unitarios y HTTP (backend 2799 verdes):**
+  - servicio: source por canal, cooldown dentro y fuera de la ventana,
+    desactivado, orden respecto de la idempotencia y de las reglas de
+    jornada, carreras mapeadas con compensación, intento `FAILED`,
+    auditoría;
+  - repositorio: lock por empleado, orden lock → consulta → escritura, orden
+    respecto de los locks de cierre, sin guard para RRHH;
+  - helpers puros;
+  - controller;
+  - HTTP sobre `createApp` en los dos namespaces: matriz de autenticación,
+    source, `Deprecation`, cupo compartido, enrolamiento, 404;
+  - aislamiento JWT ↔ dispositivo;
+  - CORS.
+- **Integración contra PostgreSQL real**
+  (`modules/clock/clock.integration.test.ts`): opt-in con
+  `CLOCK_IT_DATABASE_URL` (sólo `localhost`/`clock_it*`; descarta el cliente
+  Prisma global y verifica `current_database()` antes de escribir). Cubre 9
+  casos:
+  - dos dispositivos con el mismo empleado en simultáneo producen una sola
+    fichada;
+  - reintento idempotente;
+  - cooldown;
+  - intentos aislados;
+  - auditoría;
+  - búsqueda y estado sin auditoría;
+  - salida real fuera de la ventana;
+  - empleados distintos en paralelo;
+  - legacy `PUBLIC_CLOCK_PHOTO` con cooldown compartido;
+  - lock tomado por otra transacción: falla en menos de 1,5 s y otro empleado
+    pasa;
+  - dos transacciones sin chequeo previo: escribe exactamente una.
+
+  Se corrió 8 veces, todas verdes.
+- **Fichador:** 103 verdes. **Admin:** 1229 verdes. Ninguno de los dos tuvo
+  cambios.
+
+### 26.9 Validación en staging (2026-10-13)
+
+**Resultado: 24/24 verificaciones.** Entorno: Neon `ep-gentle-resonance`, con
+`APP_ENV=staging`; nunca producción.
+
+**Cómo se probó:**
+
+- Backend propio en `:4003` con `AUTOMATIC_JOBS_ENABLED=false`.
+- Script con el contrato HTTP de la PWA.
+- Foto JPEG sintética con el formato de la PWA (`canvas.toDataURL`).
+- Storage real (Google Drive).
+- Aprobación RRHH con un token de 20 min de "Administrador RRHH", igual que en
+  §24.9.
+- La alerta `TURNO_NO_IDENTIFICADO` se aceptó explícitamente antes de correr.
+
+**Dispositivos:** `TEST F7 A` y `TEST F7 B`, enrolados por pairing y aprobados
+por RRHH. Los dos terminaron `REVOKED`.
+
+**Empleado:** "32 Prueba" (legajo 32), sin turno, sin jornada abierta y sin
+régimen.
+
+**Verificado:**
+
+- **Credenciales:**
+  - `PENDING` → 403;
+  - secreto ajeno, sin credencial o JWT de RRHH en `/api/clock` → 401;
+  - revocado → 403 `REVOKED` en los dos namespaces.
+- **Lecturas:**
+  - `GET /api/clock/employees` devuelve `dniSuffix` sin DNI;
+  - `POST /api/clock/status` no devuelve conceptos.
+- **Carrera real:** A y B, mismo empleado, requestIds distintos y
+  simultáneos.
+  - B ganó con 201. A recibió 409 `CLOCK_PUNCH_COOLDOWN` con
+    `retryAfterSeconds` 60.
+  - A había pasado el chequeo previo y subido la foto: lo cortó el guard de
+    la transacción y la foto quedó compensada (`StorageFile` `DELETED`).
+- **Idempotencia:** el reintento del `requestId` ganador devolvió 201 con la
+  misma jornada.
+- **Cooldown:**
+  - salida con `requestId` nuevo a los 18 s → 409, `retryAfterSeconds` 42;
+  - la misma salida por el legacy → 409 y `Deprecation: @1791849600`;
+  - el legacy `employees` sigue en 200.
+- **Intentos:**
+  - el dueño ve `COMPLETED`;
+  - el otro dispositivo recibe 404;
+  - el rechazado figura `FAILED`/`CLOCK_PUNCH_COOLDOWN`;
+  - el reuso del `requestId` desde otro dispositivo → 409
+    `CLOCK_IDEMPOTENCY_KEY_REUSED` sin datos.
+- **Fuera de la ventana** (después de 61 s): un IN nuevo → 409
+  `CLOCK_ALREADY_OPEN`. Las reglas de jornada vuelven a mandar.
+- **Base:**
+  - una sola `AttendancePunch` nueva: `INGRESO`, **`KIOSK`**, `deviceId` = B,
+    IP y user-agent de la request (el body traía `source: "ADMIN"`,
+    `deviceId` de B y un user-agent falso);
+  - `WorkShift` `KIOSK`;
+  - 5 intentos, cada uno con su `deviceId` y su código;
+  - `AuditLog`: `"Ingreso con foto registrado desde el dispositivo de fichada \"TEST F7 B\" para legajo 32."`,
+    con `userId` nulo y `actorClockDeviceId` = B.
+- **Plan de la consulta del cooldown:** Index Scan Backward sobre
+  `AttendancePunch_employeeId_timestamp_idx`. No hace falta un índice nuevo.
+
+**Limpieza:**
+
+- La jornada se cerró por "Marcar falta de salida" de RRHH con el motivo
+  `TEST F7: …` y quedó `FALTA_SALIDA`. No genera `TimeEntry`.
+- Los dos dispositivos quedaron revocados, sin borrado físico.
+- No se usó SQL.
+- Se conservan como evidencia de prueba la fichada, la jornada, los 5
+  intentos, la auditoría y las 2 fotos activas.
+- También se conserva **la alerta `TURNO_NO_IDENTIFICADO` (PENDIENTE) y su
+  notificación**. RRHH puede resolverla desde Alertas de turno.
+
+| Tabla | Antes | Después |
+|---|---|---|
+| `AttendancePunch` | 80 | 81 |
+| `ClockPunchAttempt` | 25 | 30 |
+| `WorkShift` | 47 | 48 |
+| `TimeEntry` / `TimeSegment` | 85 / 56 | 85 / 56 |
+| `ShiftAlert` | 91 | 92 (la aceptada) |
+| `SystemNotification` | 1196 | 1197 (la de esa alerta) |
+| `AuditLog` | 2199 | 2211 |
+| `ClockDevice` | 5 | 7 |
+| `StorageFile` | 165 | 168 (foto + miniatura del ganador; foto del perdedor compensada) |
+| `source` | ADMIN 4, PORTAL_DNI 7, PUBLIC_CLOCK_PHOTO 69 | igual + **KIOSK 1** |
+| `deviceId` no nulo (fichadas / intentos) | 1 / 1 | 2 / 6 |
+
+Las 12 filas de `AuditLog` son todas de la prueba:
+
+- 2 `ACTIVATE`;
+- 1 `CREATE WorkShift`;
+- 1 `UPDATE WorkShift` (falta de salida);
+- 2 `DEACTIVATE`;
+- 6 `REJECT Route`, de los 403 esperados (`PENDING` ×2 y `REVOKED` ×4).
+
+Ningún dato histórico cambió.
+
+### 26.10 Performance
+
+Medido desde esta máquina contra Neon us-east-1, con `SELECT 1` en una
+mediana de 323 ms ese momento.
+
+| Medición | Mediana | Qué es |
+|---|---|---|
+| Consulta del cooldown | 246 ms | ≈ 1 ida y vuelta (RTT); Index Scan Backward |
+| Lock de prueba aislado | 710 ms | BEGIN + lock + COMMIT de una transacción interactiva |
+
+- Dentro de la transacción real, el guard suma 2 sentencias: el lock y la
+  lectura.
+- Costo agregado por fichada: 1 consulta previa más 2 sentencias en la
+  transacción, sin N+1. Con el backend junto a la base (RTT de 1–5 ms), se
+  estima en menos de 15 ms.
+- La autenticación sigue costando un lookup por PK, como en F6. Búsqueda y
+  estado tardaron 663 y 608 ms.
+- La fichada de la carrera tardó 17,3 s, dominada por el upload real de la
+  foto a Drive (10,1 s). Un rechazo por cooldown, sin foto, tardó 1,7 s.
+
+### 26.11 Decisiones y desvíos respecto del plan original
+
+- **"Kiosco · <dispositivo>" en Asistencia → F9** (decisión del 2026-10-13).
+  Requiere tocar el DTO de asistencia y el admin. Con `KIOSK`, Asistencia ya
+  muestra "Kiosco" sin cambios.
+- **Código:** `CLOCK_PUNCH_COOLDOWN`, el de §14.3/§25.5. No se usó
+  `…_ACTIVE`.
+- **Mensaje:** §14.3 proponía "Ya registraste tu ingreso a las 08:01". F7 no
+  incluye horas ni segundos porque el intento lo guarda y lo repite. La UI de
+  F8 compone el texto con `retryAfterSeconds`.
+- **Lock no bloqueante** (`pg_try_…`) en lugar de esperar al otro: una
+  fichada simultánea del mismo empleado pierde al instante en vez de ocupar
+  una conexión del pool.
+- **Cooldown también en el legacy:** no cambia nada para la PWA, que muestra
+  el `message` de cualquier 409.
+- **Pendiente:**
+  - F8 (cliente);
+  - F9 (heartbeat y gestión operativa, incluido el nombre del dispositivo en
+    Asistencia);
+  - F11 (retiro del legacy, auditoría de fichada no diferida, R9).

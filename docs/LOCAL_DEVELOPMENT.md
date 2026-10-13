@@ -239,6 +239,32 @@ Para probar la revocación en caliente: con el fichador abierto, revocar el
 equipo desde **Configuración → Dispositivos de fichada** y escribir una
 búsqueda: el fichador se cierra y muestra "Dispositivo deshabilitado".
 
+### API del fichador y cooldown (F7)
+
+El backend sirve las rutas operativas en `/api/clock/*` (fichadas `KIOSK`) y
+mantiene `/api/time-entries/clock/*` como alias deprecado del mismo código
+(fichadas `PUBLIC_CLOCK_PHOTO`). Durante F7 la PWA sigue llamando al alias;
+pasa a `/api/clock/*` en F8. Las dos rutas comparten credencial y cupos.
+
+Cooldown: dos fichadas **distintas** del mismo empleado separadas por menos de
+`CLOCK_PUNCH_COOLDOWN_SECONDS` (default 60, en `backend/.env`) responden
+`409 CLOCK_PUNCH_COOLDOWN` con `retryAfterSeconds`; el reintento del mismo
+`requestId` no se ve afectado. Para probar IN → OUT seguidos en local sin
+esperar, levantar el backend con `CLOCK_PUNCH_COOLDOWN_SECONDS=0` (nunca en un
+entorno compartido) o esperar la ventana.
+
+Test de integración contra PostgreSQL local (cooldown y concurrencia reales,
+opt-in; vacía la base indicada, que debe ser `localhost` y llamarse `clock_it*`):
+
+```bash
+createdb -h localhost clock_it
+cd backend
+DATABASE_URL="postgresql://<usuario>@localhost:5432/clock_it" npx prisma db push --skip-generate
+CLOCK_IT_DATABASE_URL="postgresql://<usuario>@localhost:5432/clock_it" npx vitest run src/modules/clock/clock.integration.test.ts
+```
+
+Sin `CLOCK_IT_DATABASE_URL` el test se saltea (CI no lo corre).
+
 ### Para mostrar la app con VS Code Tunnel
 
 1. Levantar backend: `cd backend && npm run dev`.

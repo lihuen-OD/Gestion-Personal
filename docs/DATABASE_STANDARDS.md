@@ -207,5 +207,23 @@ vigente, asigna nombre/sector/autor y limpia `pairingCodeHash` y
 `pairingExpiresAt`. Sólo `ACTIVE` puede pasar a `REVOKED`; `REVOKED` es terminal.
 El único hard delete permitido es un `PENDING` sin `AttendancePunch` ni
 `ClockPunchAttempt`. Desde F6 las fichadas e intentos nuevos guardan
-`deviceId` del dispositivo autenticado (el histórico sigue en `NULL`); el
-cambio de `AttendancePunch.source` a `KIOSK` corresponde a F7 (plan §25).
+`deviceId` del dispositivo autenticado (el histórico sigue en `NULL`).
+
+### Fichadas de kiosco y cooldown (F7, sin migración)
+
+- Las fichadas nuevas que entran por `/api/clock/*` se guardan con
+  `WorkShiftSource.KIOSK` (`AttendancePunch.source`, `WorkShift.source` y el
+  `TimeEntry` que derive). El alias legacy `/time-entries/clock/*` sigue
+  escribiendo `PUBLIC_CLOCK_PHOTO` hasta su retiro (F11). No hay backfill:
+  `ADMIN`, `PORTAL_DNI` y los `PUBLIC_CLOCK_PHOTO` existentes no cambian.
+- El cooldown entre fichadas distintas del mismo empleado no agrega columnas
+  ni índices: lee la última `AttendancePunch` no `RECHAZADA` con el índice
+  existente `(employeeId, timestamp)` (Index Scan Backward, verificado con
+  `EXPLAIN` en staging). La concurrencia se resuelve con un advisory lock de
+  transacción por empleado (`clock-punch:<employeeId>`, no bloqueante), tomado
+  como primera sentencia de la transacción de escritura y antes de los locks
+  de cierre (`closure:<employeeId>:<period>`), en un orden fijo.
+- `ClockPunchAttempt` no tiene columna de canal: el canal queda en la fichada
+  (`source`) y el rechazo por cooldown en `errorCode = CLOCK_PUNCH_COOLDOWN`.
+- `AuditLog` tampoco cambia: el dispositivo como actor técnico va en
+  `after.actorClockDeviceId` (metadata) con `userId = NULL`.
