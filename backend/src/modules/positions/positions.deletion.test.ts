@@ -78,4 +78,28 @@ describe("positionsDeletion", () => {
     expect(preview.blockers.map((blocker) => blocker.code)).toEqual(["POSITION_ARCHIVED"]);
     await expect(positionsDeletion.execute("pos-1", { token: preview.token }, { userId: "u1" })).rejects.toMatchObject({ code: "DELETION_BLOCKED" });
   });
+
+  it("misma asignación con otra configuración salarial invalida la huella; el orden equivalente no", async () => {
+    model("position").findUnique.mockResolvedValue(position({}));
+    const salaryA = { positionId: "pos-1", salaryCategoryId: "cat-a" };
+    const salaryB = { positionId: "pos-1", salaryCategoryId: "cat-b" };
+    model("positionSalaryCategory").findMany
+      .mockResolvedValueOnce([salaryA, salaryB])
+      .mockResolvedValueOnce([salaryB, salaryA])
+      .mockResolvedValueOnce([salaryA])
+      .mockResolvedValue([salaryA]);
+
+    const ordered = await positionsDeletion.preview("pos-1");
+    const reordered = await positionsDeletion.preview("pos-1");
+    expect(reordered.token).toBe(ordered.token);
+
+    await expect(positionsDeletion.execute("pos-1", { token: ordered.token }, { userId: "u1" }))
+      .rejects.toMatchObject({ code: "DELETION_PREVIEW_CHANGED" });
+    expect(model("position").delete).not.toHaveBeenCalled();
+    expect(auditService.registerWithin).not.toHaveBeenCalled();
+
+    const current = await positionsDeletion.preview("pos-1");
+    await positionsDeletion.execute("pos-1", { token: current.token }, { userId: "u1" });
+    expect(model("position").delete).toHaveBeenCalled();
+  });
 });

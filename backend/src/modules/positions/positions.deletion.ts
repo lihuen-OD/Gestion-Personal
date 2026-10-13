@@ -34,10 +34,18 @@ async function buildPlan(db: Db, id: string, todayKey: string) {
     select: { id: true, code: true, name: true, archivedAt: true, _count: { select: { employeePeriods: true, orgScopes: true, salaryCategories: true, scopePeriods: true } } },
   });
   if (!position) throw new AppError("Position not found", 404, "POSITION_NOT_FOUND");
-  const [employees, rules, scopes] = await Promise.all([
+  const [employees, rules, scopes, salaryCategories, scopePeriods] = await Promise.all([
     db.employee.findMany({ where: { positionId: id }, select: { id: true, ...employeeReferenceSelect } }),
     db.doubleHourRule.findMany({ where: { positionId: id }, select: { id: true, name: true } }),
     db.positionOrgScope.findMany({ where: { positionId: id }, select: { id: true, level: true, companyId: true, businessUnitId: true, sectorId: true, areaId: true } }),
+    db.positionSalaryCategory.findMany({ where: { positionId: id }, select: { positionId: true, salaryCategoryId: true } }),
+    db.positionOrgScopePeriod.findMany({
+      where: { positionId: id },
+      select: {
+        id: true, positionId: true, effectiveFrom: true, effectiveTo: true, reason: true, createdByUserId: true,
+        nodes: { select: { id: true, periodId: true, level: true, companyId: true, businessUnitId: true, sectorId: true, areaId: true, areaSectorId: true } },
+      },
+    }),
   ]);
   const archive = position._count.employeePeriods > 0 || employees.length > 0 || rules.length > 0;
   const label = `${position.code} · ${position.name}`;
@@ -60,6 +68,8 @@ async function buildPlan(db: Db, id: string, todayKey: string) {
         position: { id, fate: archive ? "ARCHIVE" : "DELETE", archivedAt: position.archivedAt },
         employeePositions: employees.map((employee) => ({ employeeId: employee.id, fromPositionId: id, toPositionId: null, effectiveFrom: todayKey })),
         scopes: scopes.map((scope) => ({ ...scope, effectiveTo: todayKey })),
+        deletedSalaryCategories: salaryCategories,
+        deletedScopePeriods: scopePeriods,
         retainedRuleReferences: rules.map((rule) => ({ ruleId: rule.id, positionId: id })),
         protectedPeriods: [...protectedPeriods].sort(),
       },
