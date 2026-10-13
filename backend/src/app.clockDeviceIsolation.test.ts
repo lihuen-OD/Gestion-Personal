@@ -85,6 +85,11 @@ describe("F6 — aislamiento entre identidad de dispositivo y sesión de usuario
     ["POST", "/time-entries/clock/status", { employeeId: EMPLOYEE_ID }],
     ["POST", "/time-entries/clock/photo-punch", { requestId: REQUEST_ID, employeeId: EMPLOYEE_ID, punchType: "IN", photo: `data:image/jpeg;base64,${"A".repeat(400)}`, faceValidationStatus: "VALID" }],
     ["GET", `/time-entries/clock/attempts/${REQUEST_ID}?employeeId=${EMPLOYEE_ID}`, undefined],
+    // F7: namespace nuevo del dispositivo.
+    ["GET", "/clock/employees?search=ana", undefined],
+    ["POST", "/clock/status", { employeeId: EMPLOYEE_ID }],
+    ["POST", "/clock/photo-punch", { requestId: REQUEST_ID, employeeId: EMPLOYEE_ID, punchType: "IN", photo: `data:image/jpeg;base64,${"A".repeat(400)}`, faceValidationStatus: "VALID" }],
+    ["GET", `/clock/attempts/${REQUEST_ID}?employeeId=${EMPLOYEE_ID}`, undefined],
   ])("un JWT válido de RRHH contra %s %s → 401 sin ejecutar la fichada", async (method, path, body) => {
     const token = jwt.sign({ sub: "user-rrhh", email: "rrhh@example.com", role: "NIVEL_1_RRHH" }, env.JWT_ACCESS_SECRET, { expiresIn: "5m" });
     expect(await call(method, path, `Bearer ${token}`, body)).toEqual({ status: 401, code: "CLOCK_DEVICE_INVALID_CREDENTIAL" });

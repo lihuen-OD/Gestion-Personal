@@ -1,14 +1,12 @@
 import { Router } from "express";
 import { requireAuth } from "../../middlewares/auth";
 import { requireAnyRole } from "../../middlewares/authorization";
-import { createRateLimiter } from "../../middlewares/rateLimiter";
 import { asyncHandler } from "../../shared/http/asyncHandler";
 import { notFoundHandler } from "../../shared/errors/notFoundHandler";
-import { env } from "../../config/env";
 import { roles } from "../../shared/security/roles";
-import { authenticatedClockDevice, requireClockDevice } from "../clock-devices/clockDeviceAuthentication";
 import { validateBody } from "../../shared/validation/validateRequest";
 import { validateQuery } from "../../shared/validation/validateQuery";
+import { markLegacyClockRoute, mountClockOperationalRoutes } from "../clock/clock.routes";
 import { timeEntriesController } from "./timeEntries.controller";
 import {
   attendanceSummaryQuerySchema,
@@ -18,9 +16,6 @@ import {
   adminWorkShiftReasonSchema,
   createTimeEntrySchema,
   createWorkShiftSchema,
-  clockByEmployeeSchema,
-  clockEmployeeSearchQuerySchema,
-  clockPhotoPunchSchema,
   listTimeEntriesQuerySchema,
   previewWorkShiftSchema,
   rejectTimeEntrySchema,
@@ -32,35 +27,18 @@ import {
 
 export const timeEntriesRouter = Router();
 
-// Los endpoints /clock/* no tienen sesion de usuario (kiosco), asi que en vez
-// de requireAuth exigen un ClockDevice ACTIVE autenticado individualmente
-// (F6 de docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md). Orden de guardas:
-// 1. limite por IP, antes de autenticar: frena fuerza bruta de credenciales
-//    sin tocar la base; generoso para que varios kioscos detras de la misma
-//    red no compartan un cupo chico;
-// 2. requireClockDevice(): 401/403 antes de cualquier validacion o lectura;
-// 3. limite por dispositivo, keyed por el id YA autenticado: un deviceId
-//    inventado nunca crea un bucket.
+// LEGACY (F7, docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md §26): las rutas
+// del fichador se movieron a /api/clock/* (módulo clock). Éstas son un alias
+// del MISMO montaje (guardas y cupos compartidos, mismo controller y
+// servicio) que conserva el comportamiento de F6 —fichadas con source
+// PUBLIC_CLOCK_PHOTO— mientras la PWA sigue llamándolas. F8 migra la PWA y
+// F11 las retira. No agregar features acá.
 //
-// F0: estas cuatro rutas son TODO lo que el fichador necesita. Las guardas
-// van por ruta (no con un use("/clock") global) y el namespace se cierra con
-// un 404 explicito: cualquier otro /clock/* -- incluidas las rutas sin foto
-// retiradas en F0 -- responde 404 con o sin credencial, y nunca cae en el
-// requireAuth ni en las rutas parametricas (/:id) de abajo.
-const clockGuards = [
-  createRateLimiter({ windowMs: env.CLOCK_RATE_LIMIT_WINDOW_MS, max: env.CLOCK_IP_RATE_LIMIT_MAX }),
-  requireClockDevice({ recordPresence: true }),
-  createRateLimiter({
-    windowMs: env.CLOCK_RATE_LIMIT_WINDOW_MS,
-    max: env.CLOCK_RATE_LIMIT_MAX,
-    keyGenerator: (req) => `clock-device:${authenticatedClockDevice(req).id}`,
-  }),
-];
-
-timeEntriesRouter.get("/clock/employees", ...clockGuards, validateQuery(clockEmployeeSearchQuerySchema), asyncHandler(timeEntriesController.clockSearch));
-timeEntriesRouter.post("/clock/status", ...clockGuards, validateBody(clockByEmployeeSchema), asyncHandler(timeEntriesController.clockStatusByEmployee));
-timeEntriesRouter.post("/clock/photo-punch", ...clockGuards, validateBody(clockPhotoPunchSchema), asyncHandler(timeEntriesController.clockPhotoPunch));
-timeEntriesRouter.get("/clock/attempts/:requestId", ...clockGuards, asyncHandler(timeEntriesController.clockPunchAttemptStatus));
+// F0: estas cuatro rutas son TODO lo que el fichador necesita. El namespace
+// se cierra con un 404 explícito: cualquier otro /clock/* -- incluidas las
+// rutas sin foto retiradas en F0 -- responde 404 con o sin credencial, y
+// nunca cae en el requireAuth ni en las rutas paramétricas (/:id) de abajo.
+mountClockOperationalRoutes(timeEntriesRouter, { prefix: "/clock", source: "PUBLIC_CLOCK_PHOTO", before: [markLegacyClockRoute] });
 timeEntriesRouter.all(["/clock", "/clock/*"], notFoundHandler);
 
 timeEntriesRouter.use(requireAuth);

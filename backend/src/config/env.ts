@@ -31,6 +31,12 @@ const envSchema = z.object({
   // F6: cupo por IP previo a la autenticación (fuerza bruta de credenciales).
   // Más alto que el de dispositivo: varios kioscos pueden salir por la misma IP.
   CLOCK_IP_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(300),
+  // F7: ventana mínima entre dos fichadas DISTINTAS (otro requestId) del mismo
+  // empleado, medida con el reloj del servidor contra su última
+  // AttendancePunch, desde cualquier dispositivo o canal. No es la
+  // idempotencia (mismo requestId reintentado) ni un rate limit. 0 la
+  // desactiva; fuera de 0-300 el backend no arranca.
+  CLOCK_PUNCH_COOLDOWN_SECONDS: z.coerce.number().int().min(0).max(300).default(60),
   // F0 del fichador standalone (docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md
   // §F0 / trust proxy): cantidad EXACTA de proxies propios entre el cliente y
   // Express. Express toma como req.ip la entrada de X-Forwarded-For que está

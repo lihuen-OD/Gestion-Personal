@@ -14,7 +14,6 @@ vi.mock("./timeEntries.service", () => ({
     approve: vi.fn(),
     reject: vi.fn(),
     returnForCorrection: vi.fn(),
-    clockPhotoPunchIdempotent: vi.fn(),
     createWorkShift: vi.fn(),
     closeWorkShiftManually: vi.fn(),
   },
@@ -36,7 +35,7 @@ vi.mock("../employees/employees.controller", () => ({
 
 const mockedService = timeEntriesService as unknown as {
   create: Mock; update: Mock; submit: Mock; approve: Mock; reject: Mock; returnForCorrection: Mock;
-  clockPhotoPunchIdempotent: Mock; createWorkShift: Mock; closeWorkShiftManually: Mock;
+  createWorkShift: Mock; closeWorkShiftManually: Mock;
 };
 const mockedClearTimeEntriesReadCaches = clearTimeEntriesReadCaches as unknown as Mock;
 const mockedClearEmployeeReadCaches = clearEmployeeReadCaches as unknown as Mock;
@@ -51,12 +50,6 @@ function fakeReq(overrides: Partial<Request> = {}): Request {
     get: () => null,
     ...overrides,
   } as unknown as Request;
-}
-
-const kioskDevice = { id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd", status: "ACTIVE", name: "Recepción", sectorId: null } as const;
-
-function kioskReq(overrides: Partial<Request> = {}): Request {
-  return fakeReq({ user: undefined, clockDevice: kioskDevice, ...overrides });
 }
 
 function fakeRes(): Response {
@@ -74,7 +67,6 @@ beforeEach(() => {
   mockedService.approve.mockResolvedValue({ id: "entry-1", status: "APROBADO" });
   mockedService.reject.mockResolvedValue({ id: "entry-1", status: "RECHAZADO" });
   mockedService.returnForCorrection.mockResolvedValue({ id: "entry-1", status: "DEVUELTO" });
-  mockedService.clockPhotoPunchIdempotent.mockResolvedValue({ workShift: { id: "shift-1" } });
   mockedService.createWorkShift.mockResolvedValue({ workShift: { id: "shift-1" } });
   mockedService.closeWorkShiftManually.mockResolvedValue({ workShift: { id: "shift-1" } });
 });
@@ -135,14 +127,9 @@ describe("timeEntriesController — invalidación de employeeTimeGridCache (Etap
 // esta etapa, el breakdown automático también). Estos handlers ahora
 // invalidan ambas, con el mismo criterio acotado de 14C.2 (sólo la grilla
 // del empleado, no `clearEmployeeReadCaches()` completo). F0 del fichador
-// standalone retiró clockOut/clockOutByEmployee (caminos sin foto); quedan 3.
-describe("timeEntriesController — invalidación de employeeTimeGridCache en fichador/cierres (Etapa 15M.2)", () => {
-  it("clockPhotoPunch limpia time-entries y la grilla horaria del empleado", async () => {
-    await timeEntriesController.clockPhotoPunch(kioskReq(), fakeRes());
-    expect(mockedClearTimeEntriesReadCaches).toHaveBeenCalledTimes(1);
-    expect(mockedClearEmployeeTimeGridCache).toHaveBeenCalledTimes(1);
-  });
-
+// standalone retiró clockOut/clockOutByEmployee (caminos sin foto); desde F7
+// el handler de la fichada vive en modules/clock (ver clock.controller.test.ts).
+describe("timeEntriesController — invalidación de employeeTimeGridCache en cierres (Etapa 15M.2)", () => {
   it("createWorkShift limpia time-entries y la grilla horaria del empleado", async () => {
     await timeEntriesController.createWorkShift(fakeReq(), fakeRes());
     expect(mockedClearTimeEntriesReadCaches).toHaveBeenCalledTimes(1);
@@ -155,22 +142,9 @@ describe("timeEntriesController — invalidación de employeeTimeGridCache en fi
     expect(mockedClearEmployeeTimeGridCache).toHaveBeenCalledTimes(1);
   });
 
-  it("ninguno de los 3 amplía a clearEmployeeReadCaches() completo (sólo la grilla, mismo criterio de 14C.2)", async () => {
-    await timeEntriesController.clockPhotoPunch(kioskReq(), fakeRes());
+  it("ninguno de los 2 amplía a clearEmployeeReadCaches() completo (sólo la grilla, mismo criterio de 14C.2)", async () => {
     await timeEntriesController.createWorkShift(fakeReq(), fakeRes());
     await timeEntriesController.closeWorkShiftManually(fakeReq(), fakeRes());
     expect(mockedClearEmployeeReadCaches).not.toHaveBeenCalled();
-  });
-});
-
-describe("timeEntriesController — identidad del ClockDevice (F6)", () => {
-  it("clockPhotoPunch pasa al servicio el deviceId autenticado, nunca uno del body", async () => {
-    await timeEntriesController.clockPhotoPunch(kioskReq({ body: { deviceId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee" } }), fakeRes());
-    expect(mockedService.clockPhotoPunchIdempotent).toHaveBeenCalledWith(expect.anything(), kioskDevice.id, expect.anything());
-  });
-
-  it("sin req.clockDevice (ruta mal montada) falla cerrado con 401 y no llama al servicio", async () => {
-    await expect(timeEntriesController.clockPhotoPunch(fakeReq(), fakeRes())).rejects.toMatchObject({ statusCode: 401, code: "CLOCK_DEVICE_INVALID_CREDENTIAL" });
-    expect(mockedService.clockPhotoPunchIdempotent).not.toHaveBeenCalled();
   });
 });

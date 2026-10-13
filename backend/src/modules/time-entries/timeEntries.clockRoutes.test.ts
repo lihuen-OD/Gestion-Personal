@@ -201,11 +201,13 @@ describe.each(operationalRoutes)("F6 — $name exige un ClockDevice ACTIVE indiv
 
 describe("F6 — el dispositivo autenticado es la única fuente de deviceId", () => {
   it("photo-punch pasa al servicio el id autenticado aunque el body intente otro", async () => {
-    const result = await call("POST", "/clock/photo-punch", { authorization: credential(ACTIVE), body: { ...validPunch, deviceId: OTHER_ACTIVE.id } });
+    const result = await call("POST", "/clock/photo-punch", { authorization: credential(ACTIVE), body: { ...validPunch, deviceId: OTHER_ACTIVE.id, source: "KIOSK" } });
     expect(result.status).toBe(201);
-    const [input, deviceId] = vi.mocked(timeEntriesService.clockPhotoPunchIdempotent).mock.calls[0]!;
-    expect(deviceId).toBe(ACTIVE.id);
+    const [input, origin] = vi.mocked(timeEntriesService.clockPhotoPunchIdempotent).mock.calls[0]!;
+    // F7: el alias legacy conserva el source de F6; el body no lo cambia.
+    expect(origin).toEqual({ device: { id: ACTIVE.id, name: "Kiosco" }, source: "PUBLIC_CLOCK_PHOTO" });
     expect(input).not.toHaveProperty("deviceId");
+    expect(input).not.toHaveProperty("source");
   });
 
   it("attempts consulta en nombre del dispositivo autenticado", async () => {

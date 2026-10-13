@@ -66,6 +66,25 @@ describe("CORS para dos sitios independientes (admin + fichador)", () => {
     }
   });
 
+  // F7: el namespace nuevo /api/clock/* comparte backend y configuración CORS.
+  it("el preflight del namespace nuevo /clock/* pasa igual (POST con Authorization/Content-Type y GET con versión de app)", async () => {
+    for (const path of ["/clock/photo-punch", "/clock/status"]) {
+      const response = await preflight(FICHADOR, path);
+      expect(response.status).toBe(204);
+      expect(response.headers.get("access-control-allow-origin")).toBe(FICHADOR);
+      expect(response.headers.get("access-control-allow-headers")?.toLowerCase()).toContain("authorization");
+    }
+    for (const path of ["/clock/employees", "/clock/attempts/22222222-2222-4222-8222-222222222222"]) {
+      const response = await fetch(`${baseUrl}${path}`, {
+        method: "OPTIONS",
+        headers: { origin: FICHADOR, "access-control-request-method": "GET", "access-control-request-headers": "authorization, x-clock-app-version" },
+      });
+      expect(response.status).toBe(204);
+      expect(response.headers.get("access-control-allow-origin")).toBe(FICHADOR);
+    }
+    expect((await preflight("https://evil.example.com", "/clock/photo-punch")).headers.get("access-control-allow-origin")).toBeNull();
+  });
+
   it("el origin del admin y los locales (5174/5175) siguen permitidos", async () => {
     for (const origin of [ADMIN, "http://localhost:5174", "http://localhost:5175"]) {
       expect((await preflight(origin, "/auth/login")).headers.get("access-control-allow-origin")).toBe(origin);

@@ -1,52 +1,18 @@
 import type { RequestHandler } from "express";
 import { requestAuditContext } from "../../shared/audit/requestAuditContext";
-import { AppError } from "../../shared/errors/AppError";
 import { requireParam } from "../../shared/http/params";
-import type { AdminCloseWorkShiftInput, AdminWorkShiftReasonInput, AttendanceObservationsQuery, AttendanceSummaryQuery, ClockByEmployeeInput, ClockEmployeeSearchQuery, ClockPhotoPunchInput, CreateWorkShiftInput, ListTimeEntriesQuery, PreviewWorkShiftInput, ResolveAttendanceObservationInput, TimeEntriesExportQuery, TimeEntriesPeriodEmployeesQuery, TimeEntriesSummaryQuery } from "./timeEntries.schemas";
+import type { AdminCloseWorkShiftInput, AdminWorkShiftReasonInput, AttendanceObservationsQuery, AttendanceSummaryQuery, CreateWorkShiftInput, ListTimeEntriesQuery, PreviewWorkShiftInput, ResolveAttendanceObservationInput, TimeEntriesExportQuery, TimeEntriesPeriodEmployeesQuery, TimeEntriesSummaryQuery } from "./timeEntries.schemas";
 import { attendanceObservationsCache, attendanceSummaryCache, clearTimeEntriesReadCaches, homeSummaryCache, timeEntriesListCache, timeEntriesPeriodEmployeesCache, timeEntriesSummaryCache } from "./timeEntries.cache";
 import { timeEntriesExportToCsv, timeEntriesService } from "./timeEntries.service";
 import { clearEmployeeReadCaches, clearEmployeeTimeGridCache } from "../employees/employees.controller";
-import { authenticatedClockDevice } from "../clock-devices/clockDeviceAuthentication";
 
 function userScopedCacheKey(req: Parameters<RequestHandler>[0]) {
   return `${req.user?.id || "anon"}:${req.user?.role || "none"}:${req.originalUrl}`;
 }
 
+// Los handlers del fichador (/clock/*) viven en modules/clock/clock.controller.ts
+// desde F7: los comparten /api/clock/* y el alias legacy /time-entries/clock/*.
 export const timeEntriesController = {
-  clockSearch: (async (req, res) => {
-    const result = await timeEntriesService.clockSearch(req.query as unknown as ClockEmployeeSearchQuery);
-    res.json({ data: result });
-  }) satisfies RequestHandler,
-
-  clockStatusByEmployee: (async (req, res) => {
-    const result = await timeEntriesService.clockStatusByEmployee(req.body as ClockByEmployeeInput);
-    res.json({ data: result });
-  }) satisfies RequestHandler,
-
-  // Etapa 15M.2 (docs/decisions/ATTENDANCE_AUTO_BREAKDOWN_SYNC_15M2.md): una
-  // salida cierra el WorkShift y crea/actualiza TimeEntry NORMAL_BASE (y,
-  // desde esa etapa, dispara la sincronización automática de
-  // HourConceptBreakdown) — igual que create()/update() del guardado manual,
-  // eso invalida la grilla por-legajo (`employeeTimeGridCache`), no sólo las
-  // cachés de time-entries. Se usa la misma invalidación acotada que
-  // `create()`/`update()` (Etapa 14C.2), sin ampliar a
-  // `clearEmployeeReadCaches()` completo porque una fichada no toca legajo,
-  // listado, resumen ni organigrama.
-  clockPhotoPunch: (async (req, res) => {
-    // deviceId sale sólo de requireClockDevice; el body no puede elegirlo.
-    const result = await timeEntriesService.clockPhotoPunchIdempotent(req.body as ClockPhotoPunchInput, authenticatedClockDevice(req).id, requestAuditContext(req));
-    clearTimeEntriesReadCaches();
-    clearEmployeeTimeGridCache();
-    res.status(201).json({ data: result });
-  }) satisfies RequestHandler,
-
-  clockPunchAttemptStatus: (async (req, res) => {
-    const employeeId = typeof req.query.employeeId === "string" ? req.query.employeeId : "";
-    if (!employeeId) throw new AppError("employeeId is required", 400, "CLOCK_ATTEMPT_EMPLOYEE_REQUIRED");
-    const result = await timeEntriesService.clockPunchAttemptStatus(requireParam(req, "requestId"), employeeId, authenticatedClockDevice(req).id);
-    res.json({ data: result });
-  }) satisfies RequestHandler,
-
   list: (async (req, res) => {
     const key = userScopedCacheKey(req);
     const cached = timeEntriesListCache.get(key);

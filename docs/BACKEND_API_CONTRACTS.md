@@ -1178,18 +1178,35 @@ Rechazo:
 
 **Etapa 15G.1:** `approve` sólo cambia `status`/`approvedByUserId`/`approvedAt` y registra auditoría — nunca crea ni modifica `TimeEntry`, sea cual sea `timeEntryBehavior` del tipo. `reject` tampoco toca `TimeEntry` (nunca hubo nada que revertir).
 
-### Fichador público (clock)
+### Fichador (`clock`, F7) y alias legacy
+
+Módulo `backend/src/modules/clock/` (F7 de `docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md`, §26): capa de transporte del kiosco sobre el núcleo de fichada de `time-entries` (no tiene servicio propio). Monta el namespace del dispositivo `/api/clock/*` —el enrolamiento de `clock-devices` (`/device/*`, ver "Dispositivos de fichada") más las cuatro rutas operativas— y el mismo montaje se reutiliza como alias legacy bajo `/api/time-entries/clock/*`.
 
 ```txt
+GET  /api/clock/employees?search=
+POST /api/clock/status
+POST /api/clock/photo-punch
+GET  /api/clock/attempts/:requestId?employeeId=
+
+# Alias legacy (deprecado desde F7, se retira en F11; la PWA lo usa hasta F8):
 GET  /api/time-entries/clock/employees?search=
 POST /api/time-entries/clock/status
 POST /api/time-entries/clock/photo-punch
 GET  /api/time-entries/clock/attempts/:requestId?employeeId=
 ```
 
-Kiosco sin sesión de usuario. Desde F6 cada una de estas cuatro rutas exige un `ClockDevice` **ACTIVE** autenticado individualmente con `Authorization: ClockDevice <deviceId>.<secret>` (`requireClockDevice()`); no existe token compartido y `x-clock-device-token` ya no autentica nada. Orden de guardas: límite por IP previo a autenticar (`CLOCK_IP_RATE_LIMIT_MAX`), `requireClockDevice()`, límite por dispositivo autenticado (`CLOCK_RATE_LIMIT_MAX`), y recién después validación del body. No requieren `requireAuth` (y un JWT no las abre). Son las únicas rutas `/clock`: cualquier otra `/api/time-entries/clock/*` responde `404 ROUTE_NOT_FOUND` con o sin credencial (F0 del fichador standalone retiró `POST /clock/in`, `/clock/out`, `/clock/status-by-dni`, `/clock/in-by-dni` y `/clock/out-by-dni`, que fichaban sin foto). Ver `docs/SECURITY_STANDARDS.md` → "Public clock endpoints (fichador)".
+Los dos namespaces son **el mismo código**: mismas guardas (con las mismas instancias de limitadores, así que el cupo por IP y por dispositivo es uno solo entre ambos), misma validación, mismo controller (`clock.controller.ts`) y mismo servicio (`timeEntriesService`). Request y response son idénticos. Sólo difieren en:
 
-Errores de dispositivo (comunes a las cuatro rutas):
+| | `/api/clock/*` | `/api/time-entries/clock/*` (legacy) |
+|---|---|---|
+| `source` de la fichada (`AttendancePunch`, `WorkShift`, `TimeEntry` derivado) | `KIOSK` | `PUBLIC_CLOCK_PHOTO` (comportamiento F6) |
+| Header de respuesta | — | `Deprecation: @1791849600` (RFC 9745, 2026-10-13; no expuesto por CORS) |
+
+El `source` lo decide la **ruta**, nunca el cliente: cualquier `source` o `deviceId` del body se descarta (el schema no los acepta). Las fichadas históricas no se reescriben (no hay backfill). Un reintento idempotente (mismo `requestId` y payload, mismo dispositivo) devuelve el resultado guardado aunque llegue por el otro namespace.
+
+Kiosco sin sesión de usuario. Desde F6 cada ruta operativa exige un `ClockDevice` **ACTIVE** autenticado individualmente con `Authorization: ClockDevice <deviceId>.<secret>` (`requireClockDevice()`); no existe token compartido y `x-clock-device-token` ya no autentica nada. Orden de guardas: límite por IP previo a autenticar (`CLOCK_IP_RATE_LIMIT_MAX`), `requireClockDevice()`, límite por dispositivo autenticado (`CLOCK_RATE_LIMIT_MAX`), y recién después validación del body. No requieren `requireAuth` (y un JWT no las abre). Cualquier otra ruta bajo `/api/clock/*` o `/api/time-entries/clock/*` responde `404 ROUTE_NOT_FOUND` con o sin credencial (F0 del fichador standalone retiró `POST /clock/in`, `/clock/out`, `/clock/status-by-dni`, `/clock/in-by-dni` y `/clock/out-by-dni`, que fichaban sin foto). Ver `docs/SECURITY_STANDARDS.md` → "Public clock endpoints (fichador)".
+
+Errores de dispositivo y de fichada (comunes a los dos namespaces):
 
 | Status | Código | Cuándo |
 |---|---|---|
@@ -1197,9 +1214,25 @@ Errores de dispositivo (comunes a las cuatro rutas):
 | 403 | `CLOCK_DEVICE_NOT_ACTIVE` | Credencial válida de un dispositivo `PENDING` |
 | 403 | `CLOCK_DEVICE_REVOKED` | Credencial válida de un dispositivo `REVOKED` |
 | 404 | `CLOCK_ATTEMPT_NOT_FOUND` | `attempts/:requestId` inexistente, de otro dispositivo, histórico sin dispositivo o de otro empleado |
+| 409 | `CLOCK_PUNCH_COOLDOWN` | (F7) Fichada **distinta** (otro `requestId`) del mismo empleado dentro de `CLOCK_PUNCH_COOLDOWN_SECONDS` de su última fichada, o mientras otra fichada suya se está confirmando. Trae `error.retryAfterSeconds` |
+| 409 | `CLOCK_IDEMPOTENCY_KEY_REUSED` | `requestId` ya usado con otro payload o por otro dispositivo |
 | 429 | (rate limiter) | Cupo por IP o por dispositivo agotado |
 
-Atribución (F6): la fichada y el intento guardan `deviceId = req.clockDevice.id` (`AttendancePunch.deviceId`, `ClockPunchAttempt.deviceId`); cualquier `deviceId` del body se descarta. IP y user-agent persistidos salen de la request, nunca del body (`device.*` es sólo contexto informativo de la cámara). `requestId` sigue siendo único global: reutilizarlo desde otro dispositivo responde `409 CLOCK_IDEMPOTENCY_KEY_REUSED` sin exponer el resultado guardado. `source` sigue siendo `PUBLIC_CLOCK_PHOTO` hasta F7 (plan §25). En A7 el dispositivo se administra con `establishmentId`; la UI muestra `Zona · Establecimiento`. Es metadata física del aparato: no infiere ni restringe la ubicación laboral de las personas que puede buscar o fichar un dispositivo `ACTIVE`.
+**Cooldown (F7).** Ventana mínima entre dos fichadas distintas del mismo empleado, desde cualquier dispositivo y por cualquiera de los dos namespaces: cuenta toda `AttendancePunch` no `RECHAZADA` del empleado con `timestamp` > hora del servidor − `CLOCK_PUNCH_COOLDOWN_SECONDS` (default 60; 0 lo desactiva). Nunca usa el reloj del dispositivo. No es la idempotencia: un reintento del mismo `requestId` se resuelve antes y nunca recibe cooldown. Se evalúa después de la validación facial y del estado del legajo, y **antes** de las reglas de jornada (un ingreso repetido dentro de la ventana responde cooldown, no `CLOCK_ALREADY_OPEN`) y de guardar la foto. El intento rechazado queda `FAILED` con `CLOCK_PUNCH_COOLDOWN`/409, su `deviceId`, `employeeId` y `requestId`; reintentarlo con el mismo `requestId` repite el mismo 409 (sin `retryAfterSeconds`): una fichada nueva necesita un `requestId` nuevo. No genera `AuditLog` (como el resto de los rechazos de fichada).
+
+```json
+{
+  "error": {
+    "code": "CLOCK_PUNCH_COOLDOWN",
+    "message": "Ya registraste una fichada hace instantes. Esperá unos segundos antes de volver a fichar.",
+    "retryAfterSeconds": 42
+  }
+}
+```
+
+`retryAfterSeconds` (entero 1..ventana, calculado con la hora del servidor) es un campo público de `AppError`: a diferencia de `details`, el `errorHandler` lo devuelve también en production. El mensaje no incluye horas, segundos ni ids; la UI del kiosco (F8) arma su texto con `retryAfterSeconds`.
+
+Atribución (F6/F7): la fichada y el intento guardan `deviceId = req.clockDevice.id` (`AttendancePunch.deviceId`, `ClockPunchAttempt.deviceId`); cualquier `deviceId` del body se descarta. IP y user-agent persistidos salen de la request, nunca del body (`device.*` es sólo contexto informativo de la cámara). `requestId` sigue siendo único global: reutilizarlo desde otro dispositivo responde `409 CLOCK_IDEMPOTENCY_KEY_REUSED` sin exponer el resultado guardado. Auditoría de la fichada (`AuditLog` `CREATE WorkShift`): el dispositivo es el **actor técnico** —`userId` nulo, descripción con su nombre (`Ingreso con foto registrado desde el dispositivo de fichada "<nombre>" para legajo N.`) y `after = { workShiftId, employeeId, source, actorClockDeviceId }`—; nunca hay hash, secreto ni UUID en el texto visible. Búsqueda, estado y polling de intentos no auditan. En A7 el dispositivo se administra con `establishmentId`; la UI muestra `Zona · Establecimiento`. Es metadata física del aparato: no infiere ni restringe la ubicación laboral de las personas que puede buscar o fichar un dispositivo `ACTIVE`.
 
 Contrato de empleado en las cuatro respuestas (F0): `{ id, legajo, dniSuffix, firstName, lastName, name }` — `dniSuffix` son los últimos 3 dígitos del DNI; el DNI completo nunca se devuelve. `clock/status` devuelve `{ employee, openShift: { id, startAt } | null }` (sin conceptos horarios). La respuesta de salida de `photo-punch` devuelve `employee`, `workShift` (`id`, `startAt`, `endAt`, `totalMinutes`, `totalHours`) y `segments` (etiquetas para pantalla), sin las filas internas de `TimeEntry`/`TimeSegment`.
 
@@ -1863,10 +1896,12 @@ Rutas RRHH (`Bearer` JWT + Nivel 1):
 | POST | `/api/clock-devices/:id/revoke` | Transición terminal `ACTIVE → REVOKED` |
 | DELETE | `/api/clock-devices/:id` | Sólo `PENDING` sin fichadas/intentos |
 
-Desde F6 la misma credencial individual es la única que autentica
-`/api/time-entries/clock/*` (sólo `ACTIVE`; ver "Fichador público (clock)").
-No hay heartbeat todavía: la presencia se actualiza en `status` y, con
-throttle de 1 minuto, en las rutas operativas.
+Desde F6 la misma credencial individual es la única que autentica las rutas
+operativas `/api/clock/*` (F7) y su alias legacy `/api/time-entries/clock/*`
+(sólo `ACTIVE`; ver "Fichador (`clock`, F7) y alias legacy"). Desde F7 el
+router de enrolamiento se monta dentro de `clockRouter` (módulo `clock`), con
+las mismas rutas y límites. No hay heartbeat todavía (F9): la presencia se
+actualiza en `status` y, con throttle de 1 minuto, en las rutas operativas.
 
 ### Health (`health`, montado en `/api/health`)
 

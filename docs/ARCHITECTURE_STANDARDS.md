@@ -60,17 +60,26 @@ Suggested separation:
 
 Each module generally follows `*.routes.ts` → `*.controller.ts` → `*.service.ts` → `*.repository.ts` + `*.schemas.ts`. When adding a new module, add it here and to `docs/BACKEND_API_CONTRACTS.md` in the same change.
 
-audit, audit-parameters, auth, clock-devices, dashboard, document-categories, documents, employees, finnegans-export, health, hour-concepts, labor-history, novelties, novelty-types, org-structure, pending, positions, salary-categories, shifts, storage, time-entries, users, work-regimes, workforce-management.
+audit, audit-parameters, auth, clock, clock-devices, dashboard, document-categories, documents, employees, finnegans-export, health, hour-concepts, labor-history, novelties, novelty-types, org-structure, pending, positions, salary-categories, shifts, storage, time-entries, users, work-regimes, workforce-management.
 
 `labor-history` es un módulo interno sin rutas propias. Normaliza las vigencias que consume el motor de horas especiales (puesto, centro de costo, sector legado, empresas empleadoras y alcance organizacional del puesto). Sus servicios sólo escriben mediante la transacción dueña de `employees` o `positions`; sus repositorios reciben siempre el cliente Prisma/tx.
 
 `clock-devices` expone dos routers del mismo bounded context: enrolamiento
-público bajo `/api/clock` y administración RRHH bajo `/api/clock-devices`.
-No se mezcla con `time-entries`: `clock-devices` sólo exporta el middleware
-`requireClockDevice`, que desde F6 autentica las rutas de fichada; el núcleo
-de la fichada sigue en `time-entries`. El namespace operativo `/api/clock/*`
-y `source = KIOSK` corresponden a F7 (secuencia vigente en
-`docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md` §25).
+público (montado bajo `/api/clock` por el módulo `clock`) y administración
+RRHH bajo `/api/clock-devices`. No se mezcla con `time-entries`:
+`clock-devices` sólo exporta el middleware `requireClockDevice`, que desde F6
+autentica las rutas de fichada; el núcleo de la fichada sigue en
+`time-entries`.
+
+`clock` (F7, `docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md` §26) es la capa
+de transporte del kiosco: sólo `clock.routes.ts` + `clock.controller.ts`, sin
+servicio ni repositorio propios (excepción deliberada al patrón de arriba: el
+núcleo de la fichada —idempotencia, cooldown, jornada, evidencia— vive en
+`timeEntriesService` y no se duplica). Es dueño del namespace `/api/clock/*`
+y exporta `mountClockOperationalRoutes`, que `time-entries` reutiliza para el
+alias legacy `/time-entries/clock/*` (se retira en F11). El `source` de la
+fichada (`KIOSK` vs. `PUBLIC_CLOCK_PHOTO`) lo fija la ruta que monta el
+handler, nunca el cliente.
 
 Known deviation: `workforce-management` does not have its own repository layer yet (calls Prisma directly from the service) — do not copy that pattern for new modules.
 

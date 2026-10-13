@@ -2,6 +2,7 @@ import { ApprovalStatus, EmployeeStatus, Prisma, WorkShiftSource, WorkShiftStatu
 import { prisma, type PrismaTransactionClient } from "../../shared/prisma/client";
 import { AppError } from "../../shared/errors/AppError";
 import { FICHADA_ORIGIN_NOTE } from "./timeEntryObservationText";
+import { ClockPunchCooldownConflict, type ClockPunchCooldownGuard } from "./clockPunchCooldown";
 import { assertClosurePeriodsWritable, employeePeriodKey, findProtectedClosurePeriods } from "../../shared/monthlyClosure/closurePeriodGuard";
 import { noveltyCoversDay } from "../novelties/novelties.dateRange";
 import { resolveActiveWorkRegime } from "../work-regimes/workRegimes.service";
@@ -200,6 +201,38 @@ function punchEvidenceData(evidence?: PunchEvidenceInput) {
     deviceId: evidence.deviceId || null,
     rawPayload: evidence.rawPayload,
   };
+}
+
+// F7 (clockPunchCooldown.ts): cooldown entre fichadas DISTINTAS del mismo
+// empleado. Toda AttendancePunch no rechazada cuenta, sin importar
+// dispositivo ni canal.
+const cooldownRelevantPunchWhere = (employeeId: string, windowStart: Date): Prisma.AttendancePunchWhereInput => ({
+  employeeId,
+  status: { not: "RECHAZADA" },
+  timestamp: { gt: windowStart },
+});
+
+/**
+ * Primera sentencia de cada transacción de fichada del kiosco. Toma un
+ * advisory lock POR EMPLEADO sin esperar (`pg_try_…`): si otra fichada del
+ * mismo empleado lo tiene, ésta pierde al instante, sin colas ni timeouts.
+ * Con el lock tomado, la última fichada ya confirmada es visible (READ
+ * COMMITTED) y decide la ventana. Son DOS sentencias a propósito: unidas en
+ * una sola, la consulta usaría el snapshot del inicio de la sentencia (previo
+ * al lock) y podría no ver la fichada que otro confirmó justo antes de
+ * soltarlo. Va antes de los locks de cierre (D-5): el
+ * orden es siempre clock-punch → closure, y ningún otro camino toma éste,
+ * así que no puede formar un ciclo. Empleados distintos no comparten clave.
+ */
+async function guardClockPunchCooldown(tx: Pick<PrismaTransactionClient, "$queryRaw" | "attendancePunch">, employeeId: string, guard: ClockPunchCooldownGuard) {
+  const [lock] = await tx.$queryRaw<Array<{ locked: boolean }>>`SELECT pg_try_advisory_xact_lock(hashtextextended(${`clock-punch:${employeeId}`}, 0)) AS locked`;
+  if (!lock?.locked) throw new ClockPunchCooldownConflict(null);
+  const recent = await tx.attendancePunch.findFirst({
+    where: cooldownRelevantPunchWhere(employeeId, guard.windowStart),
+    orderBy: { timestamp: "desc" },
+    select: { timestamp: true },
+  });
+  if (recent) throw new ClockPunchCooldownConflict(recent.timestamp);
 }
 
 function minutesFromHours(hours: number) {
@@ -550,6 +583,17 @@ function resolvePeriodStatus(statuses: string[]) {
 const CLOSED_PERIOD_SHIFT_NOTE = "Período enviado o aprobado: la fichada se registró pero sus horas no se cargaron automáticamente. Requiere corrección explícita de RRHH.";
 
 export const timeEntriesRepository = {
+  // F7: chequeo previo (sin lock) del cooldown, antes de guardar la foto. La
+  // decisión con autoridad la toma guardClockPunchCooldown dentro de la
+  // transacción de escritura. Usa el índice (employeeId, timestamp).
+  findLatestClockPunchSince(employeeId: string, windowStart: Date) {
+    return prisma.attendancePunch.findFirst({
+      where: cooldownRelevantPunchWhere(employeeId, windowStart),
+      orderBy: { timestamp: "desc" },
+      select: { timestamp: true },
+    });
+  },
+
   createClockPunchAttempt(input: { requestId: string; employeeId: string; deviceId: string; punchType: "INGRESO" | "SALIDA"; requestHash: string }) {
     return prisma.clockPunchAttempt.create({ data: input });
   },
@@ -1534,8 +1578,9 @@ export const timeEntriesRepository = {
     return { count, items };
   },
 
-  createOpenWorkShift(input: { employeeId: string; hourConceptId?: string; hourConceptName?: string; source: WorkShiftSource; startAt: Date; punchEvidence?: PunchEvidenceInput }) {
+  createOpenWorkShift(input: { employeeId: string; hourConceptId?: string; hourConceptName?: string; source: WorkShiftSource; startAt: Date; punchEvidence?: PunchEvidenceInput; cooldown?: ClockPunchCooldownGuard }) {
     return prisma.$transaction(async (tx) => {
+      if (input.cooldown) await guardClockPunchCooldown(tx, input.employeeId, input.cooldown);
       const punch = await tx.attendancePunch.create({
         data: {
           employeeId: input.employeeId,
@@ -1561,8 +1606,9 @@ export const timeEntriesRepository = {
     });
   },
 
-  async rolloverExpiredOpenWorkShift(input: { openWorkShiftId: string; employeeId: string; hourConceptId?: string; hourConceptName?: string; source: WorkShiftSource; startAt: Date; missingOutObservation: string; punchEvidence?: PunchEvidenceInput }) {
+  async rolloverExpiredOpenWorkShift(input: { openWorkShiftId: string; employeeId: string; hourConceptId?: string; hourConceptName?: string; source: WorkShiftSource; startAt: Date; missingOutObservation: string; punchEvidence?: PunchEvidenceInput; cooldown?: ClockPunchCooldownGuard }) {
     const newShift = await prisma.$transaction(async (tx) => {
+      if (input.cooldown) await guardClockPunchCooldown(tx, input.employeeId, input.cooldown);
       const previous = await tx.workShift.findFirst({
         where: { id: input.openWorkShiftId, employeeId: input.employeeId, status: WorkShiftStatus.ABIERTO, endAt: null },
         include: { hourConcept: true },
@@ -1978,6 +2024,8 @@ export const timeEntriesRepository = {
     segments: Array<ClassifiedSegmentForPersistence>;
     observation?: string | null;
     punchEvidence?: PunchEvidenceInput;
+    // F7: sólo la salida del fichador; el cierre manual de RRHH no lo pasa.
+    cooldown?: ClockPunchCooldownGuard;
   }) {
     // Fuera de la transacción: sólo lecturas de configuración de sistema
     // (Horas Especiales activas + su alcance, conceptos nocturnos) que no
@@ -1997,6 +2045,7 @@ export const timeEntriesRepository = {
     const uniqueDates = [...new Map(input.segments.map((segment) => [segment.date.getTime(), segment.date])).values()];
 
     return prisma.$transaction(async (tx) => {
+      if (input.cooldown) await guardClockPunchCooldown(tx, input.employeeId, input.cooldown);
       // D-5: la salida se registra siempre, pero nunca carga horas en un
       // período enviado/aprobado: esas fechas quedan observadas para RRHH.
       const protectedPeriods = await findProtectedClosurePeriods(tx, uniqueDates.map((date) => ({ employeeId: input.employeeId, period: periodFromCalendarDate(date) })));

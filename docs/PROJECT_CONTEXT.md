@@ -183,7 +183,7 @@ The objective of this project is to build an internal enterprise system to centr
 
 The system is intended to replace fragmented Excel/Google Sheets workflows with a structured, scalable and auditable application.
 
-**Current state (updated after the 2026-08 technical audit): the system is no longer a frontend-only/mock prototype.** There is a real, production backend (Node/Express + TypeScript + Prisma + PostgreSQL, 24 modules under `backend/src/modules`) that the frontend consumes over HTTP. It includes JWT auth, backend-enforced role/employee-scope permissions, a real audit log, file storage (Google Drive/Cloudinary/local), and a fichador (time clock) flow without user session, authenticated per device (`ClockDevice`, since F6). A handful of `*MockService.ts` files remain in `frontend/src/services` as leftovers from the original mock-only phase — they are legacy, not the current data source, and most have already been removed once confirmed unused (see `docs/BACKEND_API_CONTRACTS.md` for the real endpoints). Before assuming any part of the system is "mock only", check `backend/src/modules` and `frontend/src/services/api` first.
+**Current state (updated after the 2026-08 technical audit): the system is no longer a frontend-only/mock prototype.** There is a real, production backend (Node/Express + TypeScript + Prisma + PostgreSQL, 25 modules under `backend/src/modules`) that the frontend consumes over HTTP. It includes JWT auth, backend-enforced role/employee-scope permissions, a real audit log, file storage (Google Drive/Cloudinary/local), and a fichador (time clock) flow without user session, authenticated per device (`ClockDevice`, since F6). A handful of `*MockService.ts` files remain in `frontend/src/services` as leftovers from the original mock-only phase — they are legacy, not the current data source, and most have already been removed once confirmed unused (see `docs/BACKEND_API_CONTRACTS.md` for the real endpoints). Before assuming any part of the system is "mock only", check `backend/src/modules` and `frontend/src/services/api` first.
 
 ## Users and roles
 
@@ -614,7 +614,7 @@ Domicilio must be handled as a single block history, not field-by-field.
 
 ### Modules implemented since this list was written
 
-The backend has 24 modules under `backend/src/modules`. The following exist and are in production use but were missing from the numbered list above — check `backend/src/modules/<name>` and `docs/BACKEND_API_CONTRACTS.md` before assuming a module doesn't exist:
+The backend has 25 modules under `backend/src/modules`. The following exist and are in production use but were missing from the numbered list above — check `backend/src/modules/<name>` and `docs/BACKEND_API_CONTRACTS.md` before assuming a module doesn't exist:
 
 * **shifts** (`shiftTemplate`, `shiftAssignment`, `shiftAlert`) — turnos: plantillas de turno, asignación a empleados, alertas de jornada abierta/vencida. Added 2026-07-23.
 * **work-regimes** (`WorkRegime`, `EmployeeWorkRegime`) — régimen laboral configurable por RRHH (turno obligatorio/flexible/sin turno; rollover automático o alerta crítica ante jornada abierta excedida) y su asignación a empleados con vigencia histórica. Instancias como Cosecha/Riego/Campaña son datos, no código. Added 2026-08-19.
@@ -627,6 +627,8 @@ The backend has 24 modules under `backend/src/modules`. The following exist and 
 * **health** — endpoint de healthcheck.
 * **dashboard** — métricas agregadas del home.
 * **labor-history** — módulo interno, sin rutas HTTP, que registra y consulta por fecha las vigencias de puesto, centro de costo, sector legado, empresas empleadoras y alcance del puesto para el motor de horas especiales (A7/D-5).
+* **clock** — capa de transporte del fichador (F7 del plan del fichador standalone): namespace del dispositivo `/api/clock/*` (enrolamiento de `clock-devices` + rutas operativas, fichadas `KIOSK`) y el mismo montaje como alias legacy `/time-entries/clock/*`. Sin servicio propio: el núcleo de la fichada sigue en `time-entries`. Added 2026-10-13.
+* **clock-devices** — identidad individual de los dispositivos de fichada (`ClockDevice`): enrolamiento por código, aprobación/revocación RRHH y el middleware `requireClockDevice`.
 
 ## Main business rules
 
@@ -729,14 +731,15 @@ Frontend:
 Fichador standalone (`fichador/`, since F1 of `docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md`):
 
 * Separate React 18 + TypeScript + Vite app with its own `package.json`/lockfile (no workspaces), port 5175. Only the time clock: no router, no `AuthContext`/JWT, no admin modules — enforced at build time by `fichador/scripts/check-bundle-isolation.mjs`.
-* Same four `/time-entries/clock/*` endpoints, each authenticated since F6 with the device's own `ClockDevice` credential (`Authorization: ClockDevice <id>.<secret>`, kept in IndexedDB); only `ACTIVE` devices operate. There is no shared kiosk token anymore. The admin app's `/fichador` no longer punches: it only points to this app (and, for RRHH, to Dispositivos de fichada).
+* Four operational endpoints, each authenticated since F6 with the device's own `ClockDevice` credential (`Authorization: ClockDevice <id>.<secret>`, kept in IndexedDB); only `ACTIVE` devices operate. There is no shared kiosk token anymore. Since F7 the backend serves them under `/api/clock/*` (punches recorded as `KIOSK`) and keeps `/time-entries/clock/*` as a deprecated alias of the same code (punches recorded as `PUBLIC_CLOCK_PHOTO`); the PWA still calls the alias until F8 moves it to `/api/clock/*`, and F11 retires the alias. The admin app's `/fichador` no longer punches: it only points to this app (and, for RRHH, to Dispositivos de fichada).
+* Punch cooldown since F7: two **different** punches (different `requestId`) of the same employee within `CLOCK_PUNCH_COOLDOWN_SECONDS` (default 60, server clock, any device, either namespace) get `409 CLOCK_PUNCH_COOLDOWN` with `retryAfterSeconds`; a retry of the same `requestId` is resolved by idempotency first and never hits the cooldown. A per-employee non-blocking advisory lock inside the write transaction makes it race-proof.
 * Installable PWA since F3 (`vite-plugin-pwa`): precached app shell, self-hosted MediaPipe (SIMD WASM + model) and Inter, so it opens and runs the face detector offline; the API is never cached and punches require the backend. Updates apply automatically only while the kiosk is idle.
 * Enrolamiento since F5: explicit setup, `{id, secret}` in IndexedDB, pairing code only in memory, pending polling every 7.5 seconds and an UX gate for `PENDING`/`REVOKED`. Since F6 the gate opens an in-memory device session only on `ACTIVE`; every operational request carries `Authorization: ClockDevice …` (`fichador/src/services/api/clockDeviceSession.ts`), and a `401`/`403` device rejection mid-session closes the fichador immediately (revoked → "deshabilitado por RRHH", lost credential → reconfigure with confirmation). Operational policy prefers installed standalone mode; browser mode remains available for local development.
 
 Backend:
 
 * Node.js + Express + TypeScript, under `backend/src`.
-* Modular monolith: 24 modules under `backend/src/modules`, each generally following controller → service → repository → schemas (zod) → routes. `labor-history` is intentionally internal and has no HTTP router: it owns dated engine-scope history used transactionally by `employees`, `positions` and `time-entries`.
+* Modular monolith: 25 modules under `backend/src/modules`, each generally following controller → service → repository → schemas (zod) → routes. `labor-history` is intentionally internal and has no HTTP router: it owns dated engine-scope history used transactionally by `employees`, `positions` and `time-entries`.
 * JWT auth (`backend/src/modules/auth`), role/employee-scope authorization enforced server-side (`backend/src/middlewares/authorization.ts` + per-module `employeeAccessWhere`), a generic audit-log helper (`backend/src/modules/audit`), and a shared TTL cache (`backend/src/shared/cache`).
 
 Database:
@@ -798,7 +801,7 @@ A few structural decisions worth knowing before you read the schema:
   * `Position.sectorId` and the other old-chain parent columns survive only as the shape of archived rows.
 * Position's salary category is a many-to-many via `PositionSalaryCategory`, not a single field.
 * Authorship fields (`createdByUserId`, `approvedByUserId`, `uploadedByUserId`, etc.) are real optional FKs to `User` with `onDelete: SetNull` — see `docs/DATABASE_STANDARDS.md`.
-* **Fichador F4/F5:** `ClockDevice` modela la identidad persistente individual con estados `PENDING`/`ACTIVE`/`REVOKED`, hashes de token/pairing, establecimiento opcional (el sector se retiró en M2) y trazabilidad. La migración F4 fue aplicada y verificada sólo en staging. F5 implementa enrolamiento, estado, pairing y administración RRHH; los secretos nunca se guardan en claro. `AttendancePunch.deviceId` y `ClockPunchAttempt.deviceId` siguen nullable y sin escritura histórica; `kioskId` continúa legado. **Desde F6 la autenticación individual es obligatoria en las cuatro rutas de fichada** (sólo `ACTIVE`; `PENDING`/`REVOKED` → 403) y las fichadas/intentos nuevos guardan `deviceId` desde la autenticación; el histórico queda en `NULL` y `source` no cambia hasta F7.
+* **Fichador F4/F5:** `ClockDevice` modela la identidad persistente individual con estados `PENDING`/`ACTIVE`/`REVOKED`, hashes de token/pairing, establecimiento opcional (el sector se retiró en M2) y trazabilidad. La migración F4 fue aplicada y verificada sólo en staging. F5 implementa enrolamiento, estado, pairing y administración RRHH; los secretos nunca se guardan en claro. `AttendancePunch.deviceId` y `ClockPunchAttempt.deviceId` siguen nullable y sin escritura histórica; `kioskId` continúa legado. **Desde F6 la autenticación individual es obligatoria en las cuatro rutas de fichada** (sólo `ACTIVE`; `PENDING`/`REVOKED` → 403) y las fichadas/intentos nuevos guardan `deviceId` desde la autenticación; el histórico queda en `NULL`. **Desde F7** las fichadas nuevas por `/api/clock/*` se guardan con `source = KIOSK` (el alias legacy conserva `PUBLIC_CLOCK_PHOTO`; el histórico no se reescribe), hay cooldown entre fichadas distintas del mismo empleado y la auditoría identifica al dispositivo como actor técnico (sin migración).
 * **Validación F5 staging (2026-10-06):** ciclo real completo sin fichar ni usar empleados; 79 `AttendancePunch`, 24 intentos, 85 horas y 46 jornadas sin cambios. Quedó un único dispositivo `TEST F5 ciclo completo` revocado para conservar su auditoría y 0 pendientes. Migraciones limpias; producción no fue tocada.
 
 ## Security rules specific to this project
@@ -807,7 +810,7 @@ Current state (backend already enforces this — see `docs/SECURITY_STANDARDS.md
 
 * Roles and employee-scope access are enforced server-side (`backend/src/middlewares/authorization.ts` + `employeeAccessWhere` per module), not only hidden in the UI.
 * Do not expose sensitive employee data unnecessarily in UI, even though the backend already scopes it.
-* The fichador endpoints (`/time-entries/clock/*`) have no user session: they require an individually authenticated `ClockDevice` in `ACTIVE`, carry per-IP and per-device rate limiters and only expose active employees — see `docs/SECURITY_STANDARDS.md` → "Public clock endpoints" and "Clock device authentication".
+* The fichador endpoints (`/api/clock/*` and the deprecated alias `/time-entries/clock/*`) have no user session: they require an individually authenticated `ClockDevice` in `ACTIVE`, carry per-IP and per-device rate limiters and only expose active employees — see `docs/SECURITY_STANDARDS.md` → "Public clock endpoints" and "Clock device authentication".
 * Face-liveness validation on the photo-punch flow is client-reported (MediaPipe in the browser), not a server-side biometric verification — do not treat it as a security control.
 * Sensitive changes (employee edits, time-entry corrections, novelty approvals, monthly closures, correction requests, login, permission-denied attempts, document access) go through `auditService.register` — see `backend/src/modules/audit`.
 * Employee documents/photos are stored via the storage module (Google Drive/Cloudinary/local) with server-side mime/extension/size validation; do not bypass it with ad-hoc upload handling.
@@ -817,7 +820,7 @@ Current state (backend already enforces this — see `docs/SECURITY_STANDARDS.md
 
 * Supervisión conserva PII completa por decisión actual; cualquier recorte requiere validar sus pantallas de gestión.
 * La evidencia fotográfica de asistencia sigue disponible para Nivel 3 y requiere una decisión específica de producto/seguridad.
-* El fichador ya no usa token compartido (retirado en F6): cada request de fichada se autentica y atribuye a su `ClockDevice`. Quedan para F7 `source = KIOSK`, el namespace `/api/clock/*` y el cooldown; para F9 el heartbeat (secuencia vigente: `docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md` §25).
+* El fichador ya no usa token compartido (retirado en F6): cada request de fichada se autentica y atribuye a su `ClockDevice`. F7 agregó `/api/clock/*`, `source = KIOSK` y el cooldown. Quedan: F8 (la PWA pasa a `/api/clock/*`), F9 (heartbeat y gestión operativa de dispositivos, incluido "Kiosco · <dispositivo>" en Asistencia) y F11 (retiro de `/time-entries/clock/*`) (secuencia vigente: `docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md` §25).
 * El organigrama advierte cuando alcanza el límite de 1000 empleados, pero todavía no implementa paginación completa.
 * La regla de conceptos horarios aditivos ya está definida, pero su implementación continúa pendiente y puede no coincidir con backend, frontend o esquema actuales.
 * El tratamiento de solapamientos de novedades **entre tipos distintos** (p. ej. Ausencia + Llegada tarde, Vacaciones + Licencia médica) continúa pendiente de definición de negocio — la Etapa 15G.3 sólo resolvió el caso "mismo tipo" (ver bullet debajo).

@@ -3,6 +3,7 @@ import type { Mock } from "vitest";
 import { prisma } from "../../shared/prisma/client";
 import { resolveDoubleHourMultipliersByDate, timeEntriesRepository } from "./timeEntries.repository";
 import { flagOpenShiftOverflowForReview, resolveOpenShiftOverflowAlert } from "../shifts/workShiftEvaluationRunner";
+import { ClockPunchCooldownConflict } from "./clockPunchCooldown";
 
 vi.mock("../shifts/workShiftEvaluationRunner", () => ({
   flagOpenShiftOverflowForReview: vi.fn().mockResolvedValue(undefined),
@@ -32,7 +33,7 @@ vi.mock("../../shared/prisma/client", () => {
     workShift: { findFirst: vi.fn(), findMany: vi.fn(), updateMany: vi.fn(), create: vi.fn(), update: vi.fn() },
     employeeHourConcept: { findFirst: vi.fn() },
     timeEntry: { create: vi.fn(), findFirst: vi.fn(), update: vi.fn(), findMany: vi.fn() },
-    attendancePunch: { create: vi.fn(), findMany: vi.fn() },
+    attendancePunch: { create: vi.fn(), findMany: vi.fn(), findFirst: vi.fn() },
     timeSegment: { create: vi.fn() },
     doubleHourRule: { findMany: vi.fn() },
     holidayWorkAssignment: { findMany: vi.fn() },
@@ -43,6 +44,8 @@ vi.mock("../../shared/prisma/client", () => {
     novelty: { findMany: vi.fn() },
     // D-5: closurePeriodGuard (lock + estado del cierre dentro de la transacción).
     $executeRaw: vi.fn().mockResolvedValue(0),
+    // F7: lock no bloqueante del cooldown por empleado (pg_try_advisory_xact_lock).
+    $queryRaw: vi.fn(),
     monthlyTimeClosure: { findMany: vi.fn().mockResolvedValue([]) },
   };
   return {
@@ -52,7 +55,7 @@ vi.mock("../../shared/prisma/client", () => {
       employeeHourConcept: { findFirst: vi.fn() },
       hourConcept: { findFirst: vi.fn(), findMany: vi.fn() },
       employeeWorkRegime: { findFirst: vi.fn() },
-      attendancePunch: { findMany: vi.fn(), count: vi.fn() },
+      attendancePunch: { findMany: vi.fn(), count: vi.fn(), findFirst: vi.fn() },
       attendanceInactivityIncident: { findMany: vi.fn(), count: vi.fn() },
       // Etapa 11A: create()/update() manuales resuelven el multiplicador de
       // Horas Especiales vía `prisma` directo (no `tx`) — ver comentario de
@@ -97,7 +100,8 @@ type TxMocks = {
   workShift: { findFirst: Mock; findMany: Mock; updateMany: Mock; create: Mock; update: Mock };
   employeeHourConcept: { findFirst: Mock };
   timeEntry: { create: Mock; findFirst: Mock; update: Mock; findMany: Mock };
-  attendancePunch: { create: Mock; findMany: Mock };
+  attendancePunch: { create: Mock; findMany: Mock; findFirst: Mock };
+  $queryRaw: Mock;
   timeSegment: { create: Mock };
   doubleHourRule: { findMany: Mock };
   holidayWorkAssignment: { findMany: Mock };
@@ -114,7 +118,7 @@ const mockedPrisma = prisma as unknown as {
   employeeHourConcept: { findFirst: Mock };
   hourConcept: { findFirst: Mock; findMany: Mock };
   employeeWorkRegime: { findFirst: Mock };
-  attendancePunch: { findMany: Mock; count: Mock };
+  attendancePunch: { findMany: Mock; count: Mock; findFirst: Mock };
   attendanceInactivityIncident: { findMany: Mock; count: Mock };
   employee: { count: Mock; findMany: Mock; findUnique: Mock };
   employeePositionPeriod: { findMany: Mock };
@@ -1693,6 +1697,106 @@ describe("createOpenWorkShift — AttendancePunch.ipAddress", () => {
 
     expect(mockedPrisma.__tx.attendancePunch.create).toHaveBeenCalledWith({
       data: expect.objectContaining({ type: "INGRESO", ipAddress: "203.0.113.7", userAgent: "kiosk-agent" }),
+    });
+  });
+});
+
+// F7 (docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md §26): el cooldown con
+// autoridad corre DENTRO de la transacción de escritura, como primera
+// sentencia: lock no bloqueante por empleado y última fichada ya confirmada.
+// La carrera real contra PostgreSQL está en clock/clock.integration.test.ts.
+describe("F7 — guard del cooldown en las escrituras de fichada", () => {
+  const windowStart = new Date("2026-10-13T16:00:00.000Z");
+  const lockKeyOf = (call: unknown[]) => (call.slice(1) as unknown[]).join("|");
+
+  beforeEach(() => {
+    mockedPrisma.__tx.$queryRaw.mockResolvedValue([{ locked: true }]);
+    mockedPrisma.__tx.attendancePunch.findFirst.mockResolvedValue(null);
+    mockedPrisma.__tx.attendancePunch.create.mockResolvedValue({ id: "punch-1" });
+    mockedPrisma.__tx.workShift.create.mockResolvedValue({ id: "shift-new" });
+  });
+
+  const openInput = (employeeId = "employee-1") => ({ employeeId, source: "KIOSK" as never, startAt: new Date("2026-10-13T16:01:00.000Z"), cooldown: { windowStart } });
+
+  it("toma un lock por empleado y busca la última fichada no rechazada dentro de la ventana, antes de insertar", async () => {
+    await timeEntriesRepository.createOpenWorkShift(openInput());
+
+    expect(lockKeyOf(mockedPrisma.__tx.$queryRaw.mock.calls[0]!)).toBe("clock-punch:employee-1");
+    expect(String((mockedPrisma.__tx.$queryRaw.mock.calls[0]![0] as string[]).join("?"))).toContain("pg_try_advisory_xact_lock");
+    expect(mockedPrisma.__tx.attendancePunch.findFirst).toHaveBeenCalledWith({
+      where: { employeeId: "employee-1", status: { not: "RECHAZADA" }, timestamp: { gt: windowStart } },
+      orderBy: { timestamp: "desc" },
+      select: { timestamp: true },
+    });
+    expect(mockedPrisma.__tx.$queryRaw.mock.invocationCallOrder[0]!).toBeLessThan(mockedPrisma.__tx.attendancePunch.create.mock.invocationCallOrder[0]!);
+  });
+
+  it("empleados distintos usan claves de lock distintas", async () => {
+    await timeEntriesRepository.createOpenWorkShift(openInput("employee-1"));
+    await timeEntriesRepository.createOpenWorkShift(openInput("employee-2"));
+    expect(mockedPrisma.__tx.$queryRaw.mock.calls.map(lockKeyOf)).toEqual(["clock-punch:employee-1", "clock-punch:employee-2"]);
+  });
+
+  it("si otra fichada del empleado tiene el lock, falla sin esperar ni escribir", async () => {
+    mockedPrisma.__tx.$queryRaw.mockResolvedValueOnce([{ locked: false }]);
+
+    const error = await timeEntriesRepository.createOpenWorkShift(openInput()).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(ClockPunchCooldownConflict);
+    expect((error as ClockPunchCooldownConflict).lastPunchAt).toBeNull();
+    expect(mockedPrisma.__tx.attendancePunch.findFirst).not.toHaveBeenCalled();
+    expect(mockedPrisma.__tx.attendancePunch.create).not.toHaveBeenCalled();
+  });
+
+  it("si hay una fichada confirmada dentro de la ventana, falla con su hora y no escribe", async () => {
+    const lastPunchAt = new Date("2026-10-13T16:00:50.000Z");
+    mockedPrisma.__tx.attendancePunch.findFirst.mockResolvedValueOnce({ timestamp: lastPunchAt });
+
+    const error = await timeEntriesRepository.createOpenWorkShift(openInput()).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(ClockPunchCooldownConflict);
+    expect((error as ClockPunchCooldownConflict).lastPunchAt).toEqual(lastPunchAt);
+    expect(mockedPrisma.__tx.attendancePunch.create).not.toHaveBeenCalled();
+    expect(mockedPrisma.__tx.workShift.create).not.toHaveBeenCalled();
+  });
+
+  it("rollover: el guard corre antes de leer o reclamar la jornada anterior", async () => {
+    mockedPrisma.__tx.attendancePunch.findFirst.mockResolvedValueOnce({ timestamp: new Date() });
+
+    await expect(timeEntriesRepository.rolloverExpiredOpenWorkShift({ openWorkShiftId: "shift-prev", employeeId: "employee-1", source: "KIOSK" as never, startAt: new Date(), missingOutObservation: "x", cooldown: { windowStart } }))
+      .rejects.toBeInstanceOf(ClockPunchCooldownConflict);
+    expect(mockedPrisma.__tx.workShift.findFirst).not.toHaveBeenCalled();
+    expect(mockedPrisma.__tx.workShift.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("salida: el lock del cooldown se toma antes que los locks de cierre (orden único, sin deadlock)", async () => {
+    const day = new Date("2026-10-13T00:00:00.000Z");
+    mockedPrisma.__tx.workShift.updateMany.mockResolvedValue({ count: 1 });
+    mockedPrisma.__tx.workShift.update.mockResolvedValue({ id: "shift-open" });
+
+    await timeEntriesRepository.closeOpenWorkShift({
+      workShiftId: "shift-open", employeeId: "employee-1", normalHourConceptId: "concept-normal", normalHourConceptName: "Hora normal",
+      source: "KIOSK" as never, endAt: new Date("2026-10-13T17:00:00.000Z"), totalMinutes: 60,
+      segments: [{ date: day, startAt: new Date("2026-10-13T16:00:00.000Z"), endAt: new Date("2026-10-13T17:00:00.000Z"), minutes: 60, hours: 1, hourConceptId: "concept-normal", hourConceptName: "Hora normal" }],
+      cooldown: { windowStart },
+    });
+
+    expect(mockedPrisma.__tx.$queryRaw.mock.invocationCallOrder[0]!).toBeLessThan(mockedPrisma.__tx.$executeRaw.mock.invocationCallOrder[0]!);
+  });
+
+  it("sin cooldown (cierre manual de RRHH, cargas administrativas) no toma el lock ni consulta", async () => {
+    await timeEntriesRepository.createOpenWorkShift({ employeeId: "employee-1", source: "ADMIN" as never, startAt: new Date() });
+    expect(mockedPrisma.__tx.$queryRaw).not.toHaveBeenCalled();
+    expect(mockedPrisma.__tx.attendancePunch.findFirst).not.toHaveBeenCalled();
+  });
+
+  it("findLatestClockPunchSince (chequeo previo, fuera de la transacción) usa el mismo criterio", async () => {
+    mockedPrisma.attendancePunch.findFirst.mockResolvedValueOnce(null);
+    await timeEntriesRepository.findLatestClockPunchSince("employee-1", windowStart);
+    expect(mockedPrisma.attendancePunch.findFirst).toHaveBeenCalledWith({
+      where: { employeeId: "employee-1", status: { not: "RECHAZADA" }, timestamp: { gt: windowStart } },
+      orderBy: { timestamp: "desc" },
+      select: { timestamp: true },
     });
   });
 });

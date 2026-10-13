@@ -5,6 +5,10 @@ import { prisma } from "../src/shared/prisma/client";
 import { storageService } from "../src/shared/storage/storage.service";
 import { generateClockDeviceSecret, hashClockDeviceSecret } from "../src/shared/security/clockDeviceCredentials";
 
+// F7: usa el namespace /api/clock/* (las fichadas quedan como KIOSK). Los
+// escenarios encadenan fichadas del mismo empleado en segundos, así que el
+// backend bajo prueba se levanta con CLOCK_PUNCH_COOLDOWN_SECONDS=0; el
+// cooldown se prueba aparte (clock.integration.test.ts y validación F7).
 const baseUrl = process.env.CLOCK_TEST_BASE_URL || "http://127.0.0.1:4003/api";
 const storageDownBaseUrl = process.env.CLOCK_STORAGE_DOWN_BASE_URL;
 const prefix = `STG-CLOCK-${Date.now()}`;
@@ -67,7 +71,7 @@ function payload(employeeId: string, punchType: "IN" | "OUT", requestId = random
 }
 
 function postPunch(body: ReturnType<typeof payload>, signal?: AbortSignal) {
-  return request("/time-entries/clock/photo-punch", {
+  return request("/clock/photo-punch", {
     method: "POST",
     headers: { "content-type": "application/json", authorization: clockAuthorization },
     body: JSON.stringify(body),
@@ -77,7 +81,7 @@ function postPunch(body: ReturnType<typeof payload>, signal?: AbortSignal) {
 
 async function pollAttempt(requestId: string, employeeId: string) {
   for (let i = 0; i < 30; i += 1) {
-    const response = await request(`/time-entries/clock/attempts/${requestId}?employeeId=${employeeId}`, { headers: { authorization: clockAuthorization } });
+    const response = await request(`/clock/attempts/${requestId}?employeeId=${employeeId}`, { headers: { authorization: clockAuthorization } });
     const data = (response.body as { data?: { status?: string } })?.data;
     if (data?.status === "COMPLETED" || data?.status === "FAILED") return response;
     await new Promise((resolve) => setTimeout(resolve, 500));
@@ -154,7 +158,7 @@ async function main() {
   assert(storageDownBaseUrl, "CLOCK_STORAGE_DOWN_BASE_URL is required for the storage failure scenario");
   const storageDown = await createEmployee("STORAGE-DOWN");
   const storageStarted = performance.now();
-  const storageResponse = await fetch(`${storageDownBaseUrl}/time-entries/clock/photo-punch`, {
+  const storageResponse = await fetch(`${storageDownBaseUrl}/clock/photo-punch`, {
     method: "POST",
     headers: { "content-type": "application/json", authorization: clockAuthorization },
     body: JSON.stringify(payload(storageDown.employee.id, "IN")),

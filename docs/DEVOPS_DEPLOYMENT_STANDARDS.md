@@ -109,7 +109,8 @@ Tres apps desplegadas por separado (`docs/decisions/FICHADOR_STANDALONE_PWA_PLAN
 | Fichador | `VITE_APP_VERSION` | opcional | opcional | opcional | versión informativa que ve el panel de RRHH; nunca autentica |
 | Fichador | `NODE_VERSION` | — | `22` (en `fichador/netlify.toml`) | `22` | misma mayor que CI |
 | Backend | `CORS_ORIGIN` | `http://localhost:5174,http://localhost:5175` | `https://<admin-test>,https://<fichador-test>` | `https://gestion.<dominio>,https://fichador.<dominio>` | lista explícita, sin `*` ni comodines de subdominio |
-| Backend | `CLOCK_RATE_LIMIT_MAX` / `CLOCK_IP_RATE_LIMIT_MAX` / `CLOCK_RATE_LIMIT_WINDOW_MS` | `30` / `300` / `300000` | ídem salvo medición | ídem salvo medición | cupo de `/time-entries/clock/*` por dispositivo autenticado y, antes de autenticar, por IP |
+| Backend | `CLOCK_RATE_LIMIT_MAX` / `CLOCK_IP_RATE_LIMIT_MAX` / `CLOCK_RATE_LIMIT_WINDOW_MS` | `30` / `300` / `300000` | ídem salvo medición | ídem salvo medición | cupo de `/api/clock/*` (y de su alias legacy `/time-entries/clock/*`, con los mismos buckets) por dispositivo autenticado y, antes de autenticar, por IP |
+| Backend | `CLOCK_PUNCH_COOLDOWN_SECONDS` | `60` (o sin definir) | `60` | `60` | F7: segundos mínimos entre dos fichadas **distintas** del mismo empleado (reloj del servidor, cualquier dispositivo). Entero 0–300; `0` lo desactiva (sólo para diagnóstico o para la matriz de staging); fuera de rango el backend no arranca. No es un rate limit ni la idempotencia |
 | Backend | `TRUST_PROXY_HOPS` | `0` | medido (§18.5) | medido | nunca copiado de documentación |
 | Backend | `CLIENT_IP_DIAGNOSTICS_ENABLED` | `false` | `false` (`true` sólo durante la medición) | `false` | |
 | Backend | `NODE_ENV` / `APP_ENV` | `development` / `local` o `staging` | `production` / `staging` | `production` / `production` | |

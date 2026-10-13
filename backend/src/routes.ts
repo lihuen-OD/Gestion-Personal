@@ -3,7 +3,8 @@ import { auditRouter } from "./modules/audit/audit.routes";
 import { auditParametersRouter } from "./modules/audit-parameters/auditParameters.routes";
 import { authRouter } from "./modules/auth/auth.routes";
 import { dashboardRouter } from "./modules/dashboard/dashboard.routes";
-import { clockDevicePublicRouter, clockDevicesAdminRouter } from "./modules/clock-devices/clockDevices.routes";
+import { clockRouter } from "./modules/clock/clock.routes";
+import { clockDevicesAdminRouter } from "./modules/clock-devices/clockDevices.routes";
 import { documentCategoriesRouter } from "./modules/document-categories/documentCategories.routes";
 import { documentsRouter } from "./modules/documents/documents.routes";
 import { employeesRouter } from "./modules/employees/employees.routes";
@@ -30,7 +31,9 @@ apiRouter.use("/auth", authRouter);
 apiRouter.use("/audit", auditRouter);
 apiRouter.use("/audit-parameters", auditParametersRouter);
 apiRouter.use("/dashboard", dashboardRouter);
-apiRouter.use("/clock", clockDevicePublicRouter);
+// Namespace del dispositivo (enrolamiento F5 + fichada F7); la administración
+// RRHH queda aparte, bajo /clock-devices, para no mezclar los dos middlewares.
+apiRouter.use("/clock", clockRouter);
 apiRouter.use("/clock-devices", clockDevicesAdminRouter);
 apiRouter.use("/document-categories", documentCategoriesRouter);
 apiRouter.use("/documents", documentsRouter);

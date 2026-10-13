@@ -1,6 +1,6 @@
 import { access } from "node:fs/promises";
 import { createHash } from "node:crypto";
-import { Prisma } from "@prisma/client";
+import { Prisma, type WorkShiftSource } from "@prisma/client";
 import { env } from "../../config/env";
 import type { AuditContext } from "../audit/audit.service";
 import { auditService } from "../audit/audit.service";
@@ -14,6 +14,7 @@ import { storageService } from "../../shared/storage/storage.service";
 import { storagePathBuilder } from "../../shared/storage/storagePathBuilder";
 import { timeEntriesRepository } from "./timeEntries.repository";
 import type { ClassifiedSegmentForPersistence } from "./timeEntries.repository";
+import { ClockPunchCooldownConflict, clockPunchCooldownError, clockPunchCooldownGuard } from "./clockPunchCooldown";
 import { attendanceRecipients, notifyUsers } from "../workforce-management/workforce.service";
 import { evaluateShiftEntry, evaluateShiftExit, notifyClassificationAlerts, flagOpenShiftOverflowForReview } from "../shifts/workShiftEvaluationRunner";
 import { compareOpenShiftRisk, computeOpenShiftRisk } from "../shifts/openShiftMonitor.service";
@@ -522,6 +523,30 @@ async function ensureClockEmployeeActive(employee: { id: string; status: string 
 }
 
 type ClockValidationContext = NonNullable<Awaited<ReturnType<typeof timeEntriesRepository.findClockValidationContext>>>;
+
+/**
+ * F7: canal por el que llega una fichada de dispositivo. Lo decide la RUTA,
+ * nunca el body: `/api/clock/*` → KIOSK; `/time-entries/clock/*` (legacy,
+ * se retira en F11) → PUBLIC_CLOCK_PHOTO, como hasta F6.
+ */
+export type ClockPunchSource = Extract<WorkShiftSource, "KIOSK" | "PUBLIC_CLOCK_PHOTO">;
+
+/** Quién registra la fichada: el ClockDevice autenticado (actor técnico, nunca un User) y su canal. */
+export type ClockPunchOrigin = {
+  device: { id: string; name: string | null };
+  source: ClockPunchSource;
+};
+
+function clockDeviceAuditLabel(origin: ClockPunchOrigin) {
+  return origin.device.name ? `"${origin.device.name}"` : "sin nombre";
+}
+
+// Metadata técnica de la auditoría de fichada. El id del dispositivo queda
+// sólo acá (la UI de auditoría oculta las claves *Id); la descripción visible
+// lleva el nombre.
+function clockPunchAuditAfter(workShiftId: string, employeeId: string, origin: ClockPunchOrigin): Prisma.InputJsonValue {
+  return { workShiftId, employeeId, source: origin.source, actorClockDeviceId: origin.device.id };
+}
 
 async function resolveClockValidationContext(employeeId: string) {
   const context = await timeEntriesRepository.findClockValidationContext(employeeId);
@@ -1256,7 +1281,13 @@ export const timeEntriesService = {
     };
   },
 
-  async clockPhotoPunchIdempotent(input: ClockPhotoPunchInput, deviceId: string, audit?: AuditContext) {
+  // F7: la idempotencia corre ANTES que el cooldown. El alta del intento por
+  // requestId es lo primero que escribe: un reintento del mismo requestId (o un
+  // intento ajeno) se resuelve en el catch de abajo sin llegar nunca a
+  // clockPhotoPunch, que es donde se evalúa el cooldown. Así un reintento
+  // legítimo jamás se convierte en CLOCK_PUNCH_COOLDOWN.
+  async clockPhotoPunchIdempotent(input: ClockPhotoPunchInput, origin: ClockPunchOrigin, audit?: AuditContext) {
+    const deviceId = origin.device.id;
     const totalStarted = performance.now();
     const validationStarted = performance.now();
     const validationContext = await resolveClockValidationContext(input.employeeId);
@@ -1288,7 +1319,7 @@ export const timeEntriesService = {
     }
 
     try {
-      const result = await timeEntriesService.clockPhotoPunch(input, deviceId, audit, validationContext, contextMs);
+      const result = await timeEntriesService.clockPhotoPunch(input, origin, audit, validationContext, contextMs);
       const serialized = JSON.parse(JSON.stringify(result)) as Prisma.InputJsonValue;
       const completionStarted = performance.now();
       await timeEntriesRepository.completeClockPunchAttempt(input.requestId, serialized).catch((error) => {
@@ -1314,6 +1345,8 @@ export const timeEntriesService = {
         severity: appError.statusCode >= 500 ? "critical" : "warning",
         requestId: input.requestId,
         employeeId: input.employeeId,
+        deviceId,
+        source: origin.source,
         code: appError.code,
         httpStatus: appError.statusCode,
       });
@@ -1321,12 +1354,13 @@ export const timeEntriesService = {
     }
   },
 
-  async clockPhotoPunch(input: ClockPhotoPunchInput, deviceId: string, audit?: AuditContext, preparedContext?: ClockValidationContext, contextMs = 0) {
+  async clockPhotoPunch(input: ClockPhotoPunchInput, origin: ClockPunchOrigin, audit?: AuditContext, preparedContext?: ClockValidationContext, contextMs = 0) {
     const coreStarted = performance.now();
     const context = preparedContext || await resolveClockValidationContext(input.employeeId);
     const employee = context;
     const punchType = input.punchType === "IN" ? "INGRESO" : "SALIDA";
     const now = new Date();
+    const deviceLabel = clockDeviceAuditLabel(origin);
     // faceValidationStatus es un resultado calculado en el navegador (MediaPipe) y reportado por el
     // cliente: es una señal de UX/deterrencia contra fichadas accidentales, NO una verificación
     // biométrica server-side. Nada en el backend re-valida la foto contra el rostro del empleado.
@@ -1334,6 +1368,15 @@ export const timeEntriesService = {
       throw new AppError("No se pudo validar el rostro para registrar la fichada.", 422, "CLOCK_FACE_VALIDATION_FAILED");
     }
     await ensureClockEmployeeActive(employee, punchType);
+    // F7: cooldown antes de las reglas de jornada y de guardar la foto. Este
+    // chequeo sólo ahorra el upload; la decisión con autoridad (lock por
+    // empleado) se repite dentro de la transacción de escritura.
+    const cooldownSeconds = env.CLOCK_PUNCH_COOLDOWN_SECONDS;
+    const cooldown = clockPunchCooldownGuard(now, cooldownSeconds);
+    if (cooldown) {
+      const recent = await timeEntriesRepository.findLatestClockPunchSince(employee.id, cooldown.windowStart);
+      if (recent) throw clockPunchCooldownError(recent.timestamp, now, cooldownSeconds);
+    }
     const currentOpenShift = context.workShifts[0] || null;
     const selectedConcept = input.punchType === "IN"
       ? await resolveShiftConcept(employee.id, input.hourConceptId, { restrictToNormalBase: true })
@@ -1371,7 +1414,7 @@ export const timeEntriesService = {
     let evidence: ClockPhotoEvidence;
     let deferredThumbnail: DeferredClockThumbnail;
     try {
-      const storedPhoto = await storeClockPunchPhoto(input, deviceId, now, audit);
+      const storedPhoto = await storeClockPunchPhoto(input, origin.device.id, now, audit);
       evidence = storedPhoto.evidence;
       deferredThumbnail = storedPhoto.thumbnail;
     } catch (error) {
@@ -1383,8 +1426,8 @@ export const timeEntriesService = {
         action: "CREATE",
         entity: "AttendancePunch",
         entityId: employee.id,
-        description: `Intento de fichada con foto no confirmado para legajo ${employee.legajo}: fallo al guardar evidencia fotografica.`,
-        after: { employeeId: employee.id, punchType, storageError: error instanceof Error ? error.message : "unknown" } as Prisma.InputJsonValue,
+        description: `Intento de fichada con foto no confirmado para legajo ${employee.legajo} desde el dispositivo de fichada ${deviceLabel}: fallo al guardar evidencia fotografica.`,
+        after: { employeeId: employee.id, punchType, source: origin.source, actorClockDeviceId: origin.device.id, storageError: error instanceof Error ? error.message : "unknown" } as Prisma.InputJsonValue,
       });
       throw new AppError("No se pudo guardar la evidencia fotográfica. El intento no fue confirmado.", 503, "CLOCK_PHOTO_STORAGE_FAILED");
     }
@@ -1406,13 +1449,15 @@ export const timeEntriesService = {
               employeeId: employee.id,
               hourConceptId: selectedConcept.id,
               hourConceptName: selectedConcept.name,
-              source: "PUBLIC_CLOCK_PHOTO",
+              source: origin.source,
               startAt: now,
               missingOutObservation: "Olvido de salida marcado automaticamente al registrar un nuevo ingreso desde el fichador con foto.",
               punchEvidence: evidence,
+              cooldown,
             });
           } catch (error) {
             await cleanupClockEvidence(evidence);
+            if (error instanceof ClockPunchCooldownConflict) throw clockPunchCooldownError(error.lastPunchAt, now, cooldownSeconds);
             if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
               throw new AppError("El ingreso ya fue registrado por otro intento.", 409, "CLOCK_ALREADY_OPEN");
             }
@@ -1427,8 +1472,8 @@ export const timeEntriesService = {
             action: "CREATE",
             entity: "WorkShift",
             entityId: workShift.id,
-            description: `Ingreso publico con foto registrado para legajo ${employee.legajo}.`,
-            after: { workShiftId: workShift.id, employeeId: employee.id, source: "PUBLIC_CLOCK_PHOTO" } as Prisma.InputJsonValue,
+            description: `Ingreso con foto registrado desde el dispositivo de fichada ${deviceLabel} para legajo ${employee.legajo}.`,
+            after: clockPunchAuditAfter(workShift.id, employee.id, origin),
           });
           if (workShift.startPunchId) scheduleClockThumbnail(input, deferredThumbnail, evidence, workShift.startPunchId);
           await evaluateShiftEntry(employee.id, workShift.id, now);
@@ -1458,12 +1503,14 @@ export const timeEntriesService = {
           employeeId: employee.id,
           hourConceptId: selectedConcept.id,
           hourConceptName: selectedConcept.name,
-          source: "PUBLIC_CLOCK_PHOTO",
+          source: origin.source,
           startAt: now,
           punchEvidence: evidence,
+          cooldown,
         });
       } catch (error) {
         await cleanupClockEvidence(evidence);
+        if (error instanceof ClockPunchCooldownConflict) throw clockPunchCooldownError(error.lastPunchAt, now, cooldownSeconds);
         if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
           throw new AppError("El ingreso ya fue registrado por otro intento.", 409, "CLOCK_ALREADY_OPEN");
         }
@@ -1474,8 +1521,8 @@ export const timeEntriesService = {
         action: "CREATE",
         entity: "WorkShift",
         entityId: workShift.id,
-        description: `Ingreso publico con foto registrado para legajo ${employee.legajo}.`,
-        after: { workShiftId: workShift.id, employeeId: employee.id, source: "PUBLIC_CLOCK_PHOTO" } as Prisma.InputJsonValue,
+        description: `Ingreso con foto registrado desde el dispositivo de fichada ${deviceLabel} para legajo ${employee.legajo}.`,
+        after: clockPunchAuditAfter(workShift.id, employee.id, origin),
       });
       if (workShift.startPunchId) scheduleClockThumbnail(input, deferredThumbnail, evidence, workShift.startPunchId);
       await evaluateShiftEntry(employee.id, workShift.id, now);
@@ -1516,19 +1563,20 @@ export const timeEntriesService = {
         employeeId: employee.id,
         normalHourConceptId: normalConcept.id,
         normalHourConceptName: normalConcept.name,
-        source: "PUBLIC_CLOCK_PHOTO",
+        source: origin.source,
         endAt: now,
         totalMinutes: calculation.totalMinutes,
         segments: classifiedSegments,
         punchEvidence: evidence,
+        cooldown,
       });
       scheduleClockAudit({
         ...audit,
         action: "CREATE",
         entity: "WorkShift",
         entityId: created.workShift.id,
-        description: `Salida publica con foto registrada para legajo ${employee.legajo}.`,
-        after: { workShiftId: created.workShift.id, employeeId: employee.id, source: "PUBLIC_CLOCK_PHOTO" } as Prisma.InputJsonValue,
+        description: `Salida con foto registrada desde el dispositivo de fichada ${deviceLabel} para legajo ${employee.legajo}.`,
+        after: clockPunchAuditAfter(created.workShift.id, employee.id, origin),
       });
       if (created.workShift.endPunchId) scheduleClockThumbnail(input, deferredThumbnail, evidence, created.workShift.endPunchId);
       await syncAutomaticBreakdownsAfterProcessedShift({
@@ -1569,6 +1617,7 @@ export const timeEntriesService = {
       };
     } catch (error) {
       await cleanupClockEvidence(evidence);
+      if (error instanceof ClockPunchCooldownConflict) throw clockPunchCooldownError(error.lastPunchAt, now, cooldownSeconds);
       if (error instanceof Error && error.message.startsWith("TIME_ENTRY_LOCKED:")) {
         throw new AppError("La salida coincide con una carga horaria aprobada o cerrada. Avisá a RRHH para corregirla.", 409, "CLOCK_LOCKED_TIME_ENTRY");
       }
