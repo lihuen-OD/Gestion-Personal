@@ -1,3 +1,12 @@
+/**
+ * Único criterio de un `retryAfterSeconds` válido (entero finito >= 0). Lo
+ * usan AppError y quien lo relea de una persistencia (JSON): un valor que no
+ * cumple se descarta, nunca se publica.
+ */
+export function publicRetryAfterSeconds(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : undefined;
+}
+
 export class AppError extends Error {
   readonly statusCode: number;
   readonly code: string;
@@ -14,6 +23,6 @@ export class AppError extends Error {
     this.statusCode = statusCode;
     this.code = code;
     this.details = details;
-    this.retryAfterSeconds = options.retryAfterSeconds;
+    this.retryAfterSeconds = publicRetryAfterSeconds(options.retryAfterSeconds);
   }
 }

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import type { Mock } from "vitest";
 import type { Request, Response } from "express";
-import { AppError } from "./AppError";
+import { AppError, publicRetryAfterSeconds } from "./AppError";
 import { auditService } from "../../modules/audit/audit.service";
 import { errorHandler } from "./errorHandler";
 
@@ -97,6 +97,17 @@ describe("errorHandler", () => {
     expect(res.json).toHaveBeenCalledWith({
       error: { code: "CLOCK_PUNCH_COOLDOWN", message: "Esperá", retryAfterSeconds: 42, details: { internal: true } },
     });
+  });
+
+  it("un retryAfterSeconds inválido nunca se publica (sólo enteros finitos >= 0)", () => {
+    for (const value of [Number.NaN, Number.POSITIVE_INFINITY, -1, 1.5, "3" as unknown as number]) {
+      expect(new AppError("x", 409, "X", undefined, { retryAfterSeconds: value }).retryAfterSeconds).toBeUndefined();
+    }
+    expect(publicRetryAfterSeconds(0)).toBe(0);
+    expect(publicRetryAfterSeconds(42)).toBe(42);
+    const res = fakeRes();
+    errorHandler(new AppError("x", 409, "X", undefined, { retryAfterSeconds: -5 }), fakeReq(), res, vi.fn());
+    expect(res.json).toHaveBeenCalledWith({ error: { code: "X", message: "x", details: undefined } });
   });
 
   it("mapea errores no-AppError a 500 sin auditar y sin cambiar el contrato de la respuesta", () => {

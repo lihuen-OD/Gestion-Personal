@@ -91,7 +91,7 @@ describe.skipIf(!url)("F7 — /api/clock contra PostgreSQL local (cooldown y con
     await prisma.$executeRawUnsafe(`CREATE UNIQUE INDEX IF NOT EXISTS "WorkShift_one_open_per_employee" ON "WorkShift"("employeeId") WHERE status = 'ABIERTO' AND "endAt" IS NULL`);
 
     await prisma.hourConcept.create({ data: { code: "HC-NORMAL", name: "Hora normal", kind: "NORMAL", systemRole: "NORMAL_BASE" } });
-    for (const [index, key] of ["race", "legacy", "parallelA", "parallelB", "lockHeld", "lockFree", "txRace", "cutover", "kioskBoth", "legacyBoth", "rollover"].entries()) {
+    for (const [index, key] of ["race", "legacy", "parallelA", "parallelB", "lockHeld", "lockFree", "txRace", "cutover", "kioskBoth", "legacyBoth", "rollover", "retryMeta"].entries()) {
       const created = await prisma.employee.create({ data: { legajo: `IT-${index + 1}`, cuil: `20-${index + 1}`, dni: `${index + 1}`, firstName: "Prueba", lastName: `IT ${key}` } });
       employees[key] = created.id;
     }
@@ -327,5 +327,36 @@ describe.skipIf(!url)("F7 — /api/clock contra PostgreSQL local (cooldown y con
     const fresh = await sourcesOf(entry.data!.workShift.id);
     expect(fresh).toMatchObject({ status: "ABIERTO", shift: "KIOSK", start: "KIOSK" });
     expect(fresh.entries).toEqual([]);
+  });
+
+  // ── F7.1 (plan §26.13): el reintento de un cooldown conserva el retryAfterSeconds original ──
+
+  it("cooldown recuperado por requestId conserva retryAfterSeconds (reintento y GET attempts), sin recalcular con el reloj", async () => {
+    expect((await call("POST", "/clock/photo-punch", deviceA, body("retryMeta", "IN"))).status).toBe(201);
+    const exit = body("retryMeta", "OUT");
+
+    const first = await call("POST", "/clock/photo-punch", deviceA, exit);
+    expect(first).toMatchObject({ status: 409, error: { code: "CLOCK_PUNCH_COOLDOWN" } });
+    const original = first.error!.retryAfterSeconds!;
+    expect(original).toBeGreaterThanOrEqual(1);
+
+    await sleep(1_500); // un recálculo daría al menos un segundo menos
+
+    const retry = await call("POST", "/clock/photo-punch", deviceA, exit);
+    expect(retry).toMatchObject({ status: 409, error: { code: "CLOCK_PUNCH_COOLDOWN", retryAfterSeconds: original } });
+    expect(retry.error).not.toHaveProperty("details");
+
+    const polled = await call("GET", `/clock/attempts/${exit.requestId}?employeeId=${employees.retryMeta}`, deviceA);
+    expect(polled).toMatchObject({ status: 200, data: { status: "FAILED", response: null, error: { code: "CLOCK_PUNCH_COOLDOWN", httpStatus: 409, retryAfterSeconds: original } } });
+
+    const stored = (await m.prisma.clockPunchAttempt.findUnique({ where: { requestId: exit.requestId } }))!;
+    expect(stored.response).toEqual({ error: { retryAfterSeconds: original } });
+
+    // Aislamiento F6 intacto: otro dispositivo no lo ve ni lo reutiliza.
+    expect(await call("GET", `/clock/attempts/${exit.requestId}?employeeId=${employees.retryMeta}`, deviceB)).toMatchObject({ status: 404, error: { code: "CLOCK_ATTEMPT_NOT_FOUND" } });
+    const reused = await call("POST", "/clock/photo-punch", deviceB, exit);
+    expect(reused).toMatchObject({ status: 409, error: { code: "CLOCK_IDEMPOTENCY_KEY_REUSED" } });
+    expect(reused.error).not.toHaveProperty("retryAfterSeconds");
+    expect(await punchesOf("retryMeta")).toHaveLength(1);
   });
 });

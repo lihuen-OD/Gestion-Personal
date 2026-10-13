@@ -56,6 +56,8 @@ vi.mock("../../shared/prisma/client", () => {
       hourConcept: { findFirst: vi.fn(), findMany: vi.fn() },
       employeeWorkRegime: { findFirst: vi.fn() },
       attendancePunch: { findMany: vi.fn(), count: vi.fn(), findFirst: vi.fn() },
+      // F7.1: persistencia del error público de un intento.
+      clockPunchAttempt: { update: vi.fn() },
       attendanceInactivityIncident: { findMany: vi.fn(), count: vi.fn() },
       // Etapa 11A: create()/update() manuales resuelven el multiplicador de
       // Horas Especiales vía `prisma` directo (no `tx`) — ver comentario de
@@ -119,6 +121,7 @@ const mockedPrisma = prisma as unknown as {
   hourConcept: { findFirst: Mock; findMany: Mock };
   employeeWorkRegime: { findFirst: Mock };
   attendancePunch: { findMany: Mock; count: Mock; findFirst: Mock };
+  clockPunchAttempt: { update: Mock };
   attendanceInactivityIncident: { findMany: Mock; count: Mock };
   employee: { count: Mock; findMany: Mock; findUnique: Mock };
   employeePositionPeriod: { findMany: Mock };
@@ -1858,6 +1861,22 @@ describe("F7.1 — source de la jornada en el cierre y el rollover", () => {
     expect(mockedPrisma.__tx.timeEntry.create).toHaveBeenCalledWith({ data: expect.objectContaining({ workShiftId: "shift-prev", hours: 0, source: "PUBLIC_CLOCK_PHOTO" }) });
     expect(mockedPrisma.__tx.attendancePunch.create).toHaveBeenCalledWith({ data: expect.objectContaining({ type: "INGRESO", source: "KIOSK" }) });
     expect(mockedPrisma.__tx.workShift.create).toHaveBeenCalledWith({ data: expect.objectContaining({ source: "KIOSK", status: "ABIERTO" }) });
+  });
+});
+
+describe("F7.1 — failClockPunchAttempt persiste sólo metadata pública", () => {
+  it("con retryAfterSeconds lo guarda en response bajo `error`", async () => {
+    await timeEntriesRepository.failClockPunchAttempt("req-1", { code: "CLOCK_PUNCH_COOLDOWN", message: "m", httpStatus: 409, retryAfterSeconds: 42 });
+    expect(mockedPrisma.clockPunchAttempt.update).toHaveBeenCalledWith({
+      where: { requestId: "req-1" },
+      data: { status: "FAILED", errorCode: "CLOCK_PUNCH_COOLDOWN", errorMessage: "m", httpStatus: 409, completedAt: expect.any(Date), response: { error: { retryAfterSeconds: 42 } } },
+    });
+  });
+
+  it("sin retryAfterSeconds (o inválido) no toca response", async () => {
+    await timeEntriesRepository.failClockPunchAttempt("req-2", { code: "CLOCK_ALREADY_OPEN", message: "m", httpStatus: 409 });
+    await timeEntriesRepository.failClockPunchAttempt("req-3", { code: "X", message: "m", httpStatus: 409, retryAfterSeconds: Number.NaN });
+    for (const [call] of mockedPrisma.clockPunchAttempt.update.mock.calls) expect(call.data).not.toHaveProperty("response");
   });
 });
 

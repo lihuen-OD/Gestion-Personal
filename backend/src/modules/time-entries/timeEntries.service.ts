@@ -15,6 +15,7 @@ import { storagePathBuilder } from "../../shared/storage/storagePathBuilder";
 import { timeEntriesRepository } from "./timeEntries.repository";
 import type { ClassifiedSegmentForPersistence } from "./timeEntries.repository";
 import { ClockPunchCooldownConflict, clockPunchCooldownError, clockPunchCooldownGuard } from "./clockPunchCooldown";
+import { failedAttemptRetryAfterSeconds } from "./clockAttemptErrorMeta";
 import { attendanceRecipients, notifyUsers } from "../workforce-management/workforce.service";
 import { evaluateShiftEntry, evaluateShiftExit, notifyClassificationAlerts, flagOpenShiftOverflowForReview } from "../shifts/workShiftEvaluationRunner";
 import { compareOpenShiftRisk, computeOpenShiftRisk } from "../shifts/openShiftMonitor.service";
@@ -1269,14 +1270,19 @@ export const timeEntriesService = {
         httpStatus: 503,
       });
     }
+    // F7.1: en un FAILED, `response` sólo guarda la metadata pública del
+    // error (clockAttemptErrorMeta.ts), que se publica dentro de `error` —el
+    // mismo retryAfterSeconds de la respuesta original—, nunca como resultado.
+    const retryAfterSeconds = attempt.status === "FAILED" ? failedAttemptRetryAfterSeconds(attempt.response) : undefined;
     return {
       requestId: attempt.requestId,
       status: attempt.status,
-      response: storedAttemptResponse(attempt.response),
+      response: attempt.status === "COMPLETED" ? storedAttemptResponse(attempt.response) : null,
       error: attempt.status === "FAILED" ? {
         code: attempt.errorCode || "CLOCK_ATTEMPT_FAILED",
         message: attempt.errorMessage || "La fichada no pudo completarse.",
         httpStatus: attempt.httpStatus || 500,
+        ...(retryAfterSeconds === undefined ? {} : { retryAfterSeconds }),
       } : null,
     };
   },
@@ -1312,8 +1318,12 @@ export const timeEntriesService = {
         throw new AppError("La clave de fichada ya fue utilizada para otra operación.", 409, "CLOCK_IDEMPOTENCY_KEY_REUSED");
       }
       if (existing.status === "COMPLETED" && existing.response) return storedAttemptResponse(existing.response);
+      // F7.1: reproduce el error guardado tal cual, incluido el
+      // retryAfterSeconds ORIGINAL (no se recalcula con el reloj actual).
       if (existing.status === "FAILED") {
-        throw new AppError(existing.errorMessage || "La fichada no pudo completarse.", existing.httpStatus || 409, existing.errorCode || "CLOCK_ATTEMPT_FAILED");
+        throw new AppError(existing.errorMessage || "La fichada no pudo completarse.", existing.httpStatus || 409, existing.errorCode || "CLOCK_ATTEMPT_FAILED", undefined, {
+          retryAfterSeconds: failedAttemptRetryAfterSeconds(existing.response),
+        });
       }
       throw new AppError("La fichada todavía se está procesando.", 409, "CLOCK_ATTEMPT_PROCESSING");
     }
@@ -1336,10 +1346,12 @@ export const timeEntriesService = {
       const appError = error instanceof AppError
         ? error
         : new AppError("No pudimos completar la fichada. El intento no fue confirmado.", 503, "CLOCK_TEMPORARY_FAILURE");
+      // Sólo campos públicos del error; `details` nunca se persiste.
       await timeEntriesRepository.failClockPunchAttempt(input.requestId, {
         code: appError.code,
         message: appError.message,
         httpStatus: appError.statusCode,
+        retryAfterSeconds: appError.retryAfterSeconds,
       }).catch(() => undefined);
       console.error("CLOCK_ATTEMPT_FAILED", {
         severity: appError.statusCode >= 500 ? "critical" : "warning",

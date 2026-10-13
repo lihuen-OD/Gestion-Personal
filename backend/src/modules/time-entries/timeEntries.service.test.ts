@@ -1664,7 +1664,8 @@ describe("F7 — canal KIOSK, cooldown y auditoría del dispositivo", () => {
       await expect(timeEntriesService.clockPhotoPunchIdempotent(input, KIOSK_CLOCK_ORIGIN)).rejects.toMatchObject({ statusCode: 409, code: "CLOCK_PUNCH_COOLDOWN", retryAfterSeconds: 40 });
 
       expect(repo.createClockPunchAttempt).toHaveBeenCalledWith(expect.objectContaining({ requestId: input.requestId, employeeId: activeEmployee.id, deviceId: CLOCK_DEVICE_ID, punchType: "SALIDA" }));
-      expect(repo.failClockPunchAttempt).toHaveBeenCalledWith(input.requestId, { code: "CLOCK_PUNCH_COOLDOWN", message: expect.any(String), httpStatus: 409 });
+      // F7.1: el retryAfterSeconds público viaja al intento para poder reproducirlo.
+      expect(repo.failClockPunchAttempt).toHaveBeenCalledWith(input.requestId, { code: "CLOCK_PUNCH_COOLDOWN", message: expect.any(String), httpStatus: 409, retryAfterSeconds: 40 });
       // Un rechazo no genera AuditLog: queda en ClockPunchAttempt (anti-spam).
       expect(mockedAuditRegister).not.toHaveBeenCalled();
       errorSpy.mockRestore();
@@ -1736,6 +1737,110 @@ describe("F7 — canal KIOSK, cooldown y auditoría del dispositivo", () => {
 
       expect(mockedAuditRegister).not.toHaveBeenCalled();
     });
+  });
+});
+
+// F7.1 (docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md §26.13): un intento
+// FAILED conserva la metadata pública del error (hoy retryAfterSeconds) para
+// que el reintento del mismo requestId y GET attempts reproduzcan exactamente
+// la respuesta original.
+describe("F7.1 — metadata pública del error en intentos idempotentes", () => {
+  const ATTEMPT_ID = "77777777-7777-4777-8777-777777777777";
+  const input = () => ({ ...clockPhotoPunchInput(), requestId: ATTEMPT_ID, punchType: "OUT" as const });
+  const failedAttempt = (overrides: Record<string, unknown> = {}) => ({
+    requestId: ATTEMPT_ID, employeeId: activeEmployee.id, deviceId: CLOCK_DEVICE_ID, punchType: "SALIDA", requestHash: clockAttemptHash(input()),
+    status: "FAILED", startedAt: new Date(), errorCode: "CLOCK_PUNCH_COOLDOWN", errorMessage: "Ya registraste una fichada hace instantes.", httpStatus: 409,
+    response: { error: { retryAfterSeconds: 42 } },
+    ...overrides,
+  });
+
+  beforeEach(() => {
+    repo.findClockValidationContext.mockResolvedValue({ ...activeEmployee, workShifts: [], hourConcepts: [] });
+  });
+
+  it("el reintento del mismo requestId reproduce el 409 con el retryAfterSeconds guardado, aunque haya pasado el tiempo", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(new Date(Date.now() + 30_000)); // no se recalcula con el reloj
+      repo.createClockPunchAttempt.mockRejectedValueOnce(prismaKnownError("P2002"));
+      repo.findClockPunchAttempt.mockResolvedValueOnce(failedAttempt());
+
+      const error = await timeEntriesService.clockPhotoPunchIdempotent(input(), KIOSK_CLOCK_ORIGIN).catch((caught: unknown) => caught);
+
+      expect(error).toBeInstanceOf(AppError);
+      expect(error).toMatchObject({ statusCode: 409, code: "CLOCK_PUNCH_COOLDOWN", message: "Ya registraste una fichada hace instantes.", retryAfterSeconds: 42 });
+      expect((error as AppError).details).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("un FAILED sin metadata (otros errores, intentos anteriores a F7.1) mantiene el contrato: sin retryAfterSeconds", async () => {
+    repo.createClockPunchAttempt.mockRejectedValueOnce(prismaKnownError("P2002"));
+    repo.findClockPunchAttempt.mockResolvedValueOnce(failedAttempt({ errorCode: "CLOCK_ALREADY_OPEN", errorMessage: "Ya existe un ingreso abierto.", response: null }));
+
+    const error = await timeEntriesService.clockPhotoPunchIdempotent(input(), KIOSK_CLOCK_ORIGIN).catch((caught: unknown) => caught);
+
+    expect(error).toMatchObject({ statusCode: 409, code: "CLOCK_ALREADY_OPEN" });
+    expect((error as AppError).retryAfterSeconds).toBeUndefined();
+  });
+
+  it.each([
+    ["texto", { error: { retryAfterSeconds: "42" } }],
+    ["negativo", { error: { retryAfterSeconds: -1 } }],
+    ["decimal", { error: { retryAfterSeconds: 1.5 } }],
+    ["forma ajena", { retryAfterSeconds: 42 }],
+  ])("metadata guardada con forma inválida (%s) se ignora, nunca se publica", async (_label, response) => {
+    repo.createClockPunchAttempt.mockRejectedValueOnce(prismaKnownError("P2002"));
+    repo.findClockPunchAttempt.mockResolvedValueOnce(failedAttempt({ response }));
+
+    const error = await timeEntriesService.clockPhotoPunchIdempotent(input(), KIOSK_CLOCK_ORIGIN).catch((caught: unknown) => caught);
+
+    expect((error as AppError).retryAfterSeconds).toBeUndefined();
+  });
+
+  it("otro error que no trae retryAfterSeconds se persiste sin él (contrato anterior intacto)", async () => {
+    repo.createClockPunchAttempt.mockResolvedValueOnce({});
+    repo.failClockPunchAttempt.mockResolvedValueOnce({});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await expect(timeEntriesService.clockPhotoPunchIdempotent({ ...input(), faceValidationStatus: "NO_FACE" }, KIOSK_CLOCK_ORIGIN)).rejects.toMatchObject({ code: "CLOCK_FACE_VALIDATION_FAILED" });
+
+    const [, stored] = repo.failClockPunchAttempt.mock.calls[0]! as [string, Record<string, unknown>];
+    expect(stored).toEqual({ code: "CLOCK_FACE_VALIDATION_FAILED", message: expect.any(String), httpStatus: 422, retryAfterSeconds: undefined });
+    expect(stored).not.toHaveProperty("details");
+    errorSpy.mockRestore();
+  });
+
+  it("GET attempts de un FAILED por cooldown expone el mismo retryAfterSeconds dentro de error y nunca la metadata como response", async () => {
+    repo.findClockPunchAttempt.mockResolvedValueOnce(failedAttempt());
+
+    const state = await timeEntriesService.clockPunchAttemptStatus(ATTEMPT_ID, activeEmployee.id, CLOCK_DEVICE_ID);
+
+    expect(state).toEqual({
+      requestId: ATTEMPT_ID,
+      status: "FAILED",
+      response: null,
+      error: { code: "CLOCK_PUNCH_COOLDOWN", message: "Ya registraste una fichada hace instantes.", httpStatus: 409, retryAfterSeconds: 42 },
+    });
+  });
+
+  it("GET attempts de un FAILED sin metadata no inventa retryAfterSeconds", async () => {
+    repo.findClockPunchAttempt.mockResolvedValueOnce(failedAttempt({ errorCode: "CLOCK_ALREADY_OPEN", response: null }));
+    const state = await timeEntriesService.clockPunchAttemptStatus(ATTEMPT_ID, activeEmployee.id, CLOCK_DEVICE_ID);
+    expect(state.error).not.toHaveProperty("retryAfterSeconds");
+    expect(state.response).toBeNull();
+  });
+
+  it("otro dispositivo sigue sin ver ni reusar el intento (404 / KEY_REUSED sin retryAfterSeconds)", async () => {
+    repo.findClockPunchAttempt.mockResolvedValueOnce(failedAttempt());
+    await expect(timeEntriesService.clockPunchAttemptStatus(ATTEMPT_ID, activeEmployee.id, OTHER_CLOCK_DEVICE_ID)).rejects.toMatchObject({ statusCode: 404, code: "CLOCK_ATTEMPT_NOT_FOUND" });
+
+    repo.createClockPunchAttempt.mockRejectedValueOnce(prismaKnownError("P2002"));
+    repo.findClockPunchAttempt.mockResolvedValueOnce(failedAttempt());
+    const reused = await timeEntriesService.clockPhotoPunchIdempotent(input(), { ...KIOSK_CLOCK_ORIGIN, device: { id: OTHER_CLOCK_DEVICE_ID, name: "Otro" } }).catch((caught: unknown) => caught);
+    expect(reused).toMatchObject({ statusCode: 409, code: "CLOCK_IDEMPOTENCY_KEY_REUSED" });
+    expect((reused as AppError).retryAfterSeconds).toBeUndefined();
   });
 });
 

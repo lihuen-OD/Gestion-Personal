@@ -3,6 +3,7 @@ import { prisma, type PrismaTransactionClient } from "../../shared/prisma/client
 import { AppError } from "../../shared/errors/AppError";
 import { FICHADA_ORIGIN_NOTE } from "./timeEntryObservationText";
 import { ClockPunchCooldownConflict, type ClockPunchCooldownGuard } from "./clockPunchCooldown";
+import { failedAttemptResponse } from "./clockAttemptErrorMeta";
 import { assertClosurePeriodsWritable, employeePeriodKey, findProtectedClosurePeriods } from "../../shared/monthlyClosure/closurePeriodGuard";
 import { noveltyCoversDay } from "../novelties/novelties.dateRange";
 import { resolveActiveWorkRegime } from "../work-regimes/workRegimes.service";
@@ -609,10 +610,13 @@ export const timeEntriesRepository = {
     });
   },
 
-  failClockPunchAttempt(requestId: string, error: { code: string; message: string; httpStatus: number }) {
+  // F7.1: `retryAfterSeconds` (público, si el error lo traía) queda en
+  // `response` para reproducir el mismo error en el reintento (clockAttemptErrorMeta.ts).
+  failClockPunchAttempt(requestId: string, error: { code: string; message: string; httpStatus: number; retryAfterSeconds?: number }) {
+    const response = failedAttemptResponse(error);
     return prisma.clockPunchAttempt.update({
       where: { requestId },
-      data: { status: "FAILED", errorCode: error.code, errorMessage: error.message, httpStatus: error.httpStatus, completedAt: new Date() },
+      data: { status: "FAILED", errorCode: error.code, errorMessage: error.message, httpStatus: error.httpStatus, completedAt: new Date(), ...(response ? { response } : {}) },
     });
   },
 
