@@ -53,6 +53,16 @@ describe.skipIf(!url)("eliminación controlada — PostgreSQL local real", () =>
     return { zone, north, south, unit, costCenter, position, employee, location, timeEntry };
   }
 
+  async function specialRuleWithOpenClosureFixture(suffix: string) {
+    await db.user.create({ data: { id: "it-user", name: "RRHH IT", email: "rrhh@deletion-it.local", passwordHash: "x", role: "NIVEL_1_RRHH" } });
+    const employee = await db.employee.create({ data: { id: `it-rule-employee-${suffix}`, legajo: `IT-R-${suffix}`, cuil: `20-0000000${suffix}-1`, dni: `0000000${suffix}`, firstName: "Regla", lastName: "Integración" } });
+    const concept = await db.hourConcept.create({ data: { id: `it-rule-normal-${suffix}`, code: `IT-RN-${suffix}`, name: "Horas normales", kind: "NORMAL", systemRole: "NORMAL_BASE" } });
+    const rule = await db.doubleHourRule.create({ data: { id: `it-rule-open-${suffix}`, name: "Regla con cierre abierto", recurrenceType: "RANGO", fromDate: new Date("2026-02-01"), toDate: new Date("2026-02-28"), weekdays: [1], multiplier: 2, priority: 1, reason: "IT" } });
+    const entry = await db.timeEntry.create({ data: { id: `it-rule-entry-${suffix}`, employeeId: employee.id, hourConceptId: concept.id, date: new Date("2026-02-02"), period: "2026-02", day: 2, hours: 8, totalMinutes: 480, appliedMultiplier: 2, status: "EN_REVISION" } });
+    const closure = await db.monthlyTimeClosure.create({ data: { id: `it-rule-closure-${suffix}`, employeeId: employee.id, period: "2026-02", status: "ABIERTO", snapshot: { marker: "confirmed-before", accounting: { totalWorkedMinutes: 480 } } } });
+    return { rule, entry, closure };
+  }
+
   beforeAll(async () => {
     assertLocalThrowaway(url!);
     process.env.DATABASE_URL = url;
@@ -158,6 +168,34 @@ describe.skipIf(!url)("eliminación controlada — PostgreSQL local real", () =>
     await workforceDeletion.executeDoubleRuleDeletion(rule.id, { token: second.token }, actor);
     expect(await db.doubleHourRule.count({ where: { id: rule.id } })).toBe(0);
     expect(await db.auditLog.count({ where: { entity: "DoubleHourRule", entityId: rule.id } })).toBe(1);
+  }, 60_000);
+
+  it("regla con horas y cierre abierto: el timestamp de reconstrucción no invalida una confirmación sin cambios", async () => {
+    const f = await specialRuleWithOpenClosureFixture("1");
+    const preview = await workforceDeletion.previewDoubleRuleDeletion(f.rule.id);
+
+    await workforceDeletion.executeDoubleRuleDeletion(f.rule.id, { token: preview.token, confirmationText: f.rule.name }, actor);
+
+    expect(await db.doubleHourRule.count({ where: { id: f.rule.id } })).toBe(0);
+    expect(Number((await db.timeEntry.findUniqueOrThrow({ where: { id: f.entry.id } })).appliedMultiplier)).toBe(1);
+    const closure = await db.monthlyTimeClosure.findUniqueOrThrow({ where: { id: f.closure.id } });
+    expect(closure.snapshot).toMatchObject({ recalculation: { reason: "SPECIAL_HOUR_RULE_CHANGED", doubleHourRuleId: f.rule.id, at: expect.any(String) } });
+    expect(await db.auditLog.count({ where: { entity: "MonthlyTimeClosure", entityId: f.closure.id } })).toBe(1);
+  }, 60_000);
+
+  it("regla con cierre abierto: cambiar el snapshot anterior invalida el token y revierte", async () => {
+    const f = await specialRuleWithOpenClosureFixture("2");
+    const preview = await workforceDeletion.previewDoubleRuleDeletion(f.rule.id);
+    const changedSnapshot = { marker: "changed-after-preview", accounting: { totalWorkedMinutes: 420 } };
+    await other.monthlyTimeClosure.update({ where: { id: f.closure.id }, data: { snapshot: changedSnapshot } });
+
+    await expect(workforceDeletion.executeDoubleRuleDeletion(f.rule.id, { token: preview.token, confirmationText: f.rule.name }, actor))
+      .rejects.toMatchObject({ code: "DELETION_PREVIEW_CHANGED" });
+
+    expect(await db.doubleHourRule.findUniqueOrThrow({ where: { id: f.rule.id } })).toMatchObject({ status: "ACTIVO" });
+    expect(Number((await db.timeEntry.findUniqueOrThrow({ where: { id: f.entry.id } })).appliedMultiplier)).toBe(2);
+    expect(await db.monthlyTimeClosure.findUniqueOrThrow({ where: { id: f.closure.id } })).toMatchObject({ snapshot: changedSnapshot });
+    expect(await db.auditLog.count()).toBe(0);
   }, 60_000);
 
   it("si falla la auditoría, revierte todas las mutaciones", async () => {

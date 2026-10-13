@@ -41,6 +41,22 @@ export type RebuiltClosureSnapshot = {
   after: Prisma.InputJsonObject;
 };
 
+/**
+ * Representación estable de un cierre reconstruido para confirmar planes.
+ * Conserva íntegros el snapshot anterior y el resultado contable; excluye
+ * únicamente el instante generado por cada reconstrucción simulada.
+ */
+export function confirmedClosureResult(closure: RebuiltClosureSnapshot) {
+  const after = closure.after as Record<string, unknown>;
+  const recalculation = after.recalculation && typeof after.recalculation === "object"
+    ? after.recalculation as Record<string, unknown>
+    : undefined;
+  return {
+    ...closure,
+    after: recalculation ? { ...after, recalculation: { ...recalculation, at: undefined } } : after,
+  };
+}
+
 function periodRange(period: string) {
   const [year, month] = period.split("-").map(Number);
   return { start: new Date(Date.UTC(year!, month! - 1, 1)), end: new Date(Date.UTC(year!, month!, 1)) };

@@ -10,7 +10,7 @@ import { mapAssociatedEmployee } from "../../shared/prisma/employeeAssociationQu
 import { formatEmployeeReference } from "../../shared/audit/employeeReference";
 import { employeeAccessWhere } from "../employees/employeeAccess";
 import { auditClosureRecalculations } from "../workforce-management/closureRecalculationAudit";
-import type { RebuiltClosureSnapshot } from "../workforce-management/closureSnapshot";
+import { confirmedClosureResult } from "../workforce-management/closureSnapshot";
 import { hourConceptsRepository, invalidateHourConceptsCache } from "./hourConcepts.repository";
 import type {
   CreateHourConceptInput,
@@ -154,17 +154,6 @@ async function planHourConceptDeletionWithin(tx: PrismaTransactionClient, id: st
 
 class HourConceptDeletionPreviewRollback extends Error {
   constructor(readonly preview: DeletionPreview) { super("hour concept deletion preview rollback"); }
-}
-
-function confirmedClosureResult(closure: RebuiltClosureSnapshot) {
-  const after = closure.after as Record<string, unknown>;
-  const recalculation = after.recalculation && typeof after.recalculation === "object" ? after.recalculation as Record<string, unknown> : undefined;
-  return {
-    ...closure,
-    // `at` se genera con el reloj al reconstruir y no cambia el resultado
-    // contable confirmado. El snapshot previo completo sí se conserva.
-    after: recalculation ? { ...after, recalculation: { ...recalculation, at: undefined } } : after,
-  };
 }
 
 export const hourConceptsService = {

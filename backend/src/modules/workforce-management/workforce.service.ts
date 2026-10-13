@@ -11,7 +11,7 @@ import { humanizePeriodEs } from "../../shared/datetime/argentinaTime";
 import { assertActorAuthorizedWithin, assertConfirmedPlan, DeletionPlanBuilder, type DeletionConfirmation, type DeletionPreview } from "../../shared/deletion/deletionPlan";
 import { buildActiveDatesByRule, resolveWinningRules, ruleMatchesDate, scopesCouldOverlap } from "./doubleHourRuleMatching";
 import type { CorrectionsQuery, ListNotificationsQuery } from "./workforce.schemas";
-import { buildClosureSnapshots } from "./closureSnapshot";
+import { buildClosureSnapshots, confirmedClosureResult } from "./closureSnapshot";
 import { employeeReferenceSelect, formatEmployeeReference, loadEmployeeReferences } from "../../shared/audit/employeeReference";
 import { formatArgentinaDate } from "../../shared/datetime/argentinaTime";
 import { auditClosureRecalculations } from "./closureRecalculationAudit";
@@ -172,7 +172,7 @@ async function planDoubleRuleDeletionWithin(tx: PrismaTransactionClient, id: str
         // autoría y las filas propias de empleados y fechas.
         deletedRule: before,
         concreteResults: reinterpretation.changes,
-        rebuiltClosures: reinterpretation.rebuiltClosures,
+        rebuiltClosures: reinterpretation.rebuiltClosures.map(confirmedClosureResult),
         protectedPeriods: reinterpretation.protectedPeriods,
       },
     ),

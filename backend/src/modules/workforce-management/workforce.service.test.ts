@@ -1480,6 +1480,41 @@ describe("eliminación controlada de reglas (vista previa y confirmación)", () 
     expect(mockedPrisma.doubleHourRule.delete).not.toHaveBeenCalled();
   });
 
+  it("ignora sólo el instante generado al reconstruir el mismo cierre", async () => {
+    const rebuilt = (at: string) => ({
+      id: "closure-1", employeeId: "emp-1", period: "2026-10",
+      before: { accounting: { totalWorkedMinutes: 480 } },
+      after: { accounting: { totalWorkedMinutes: 480, settlement: { totalMinutes: 480 } }, recalculation: { reason: "SPECIAL_HOUR_RULE_CHANGED", doubleHourRuleId: "rule-x3", doubleHourRuleName: "Prueba x3", at } },
+    });
+    vi.mocked(reinterpretSpecialHours)
+      .mockResolvedValueOnce({ ...changed, rebuiltClosures: [rebuilt("2026-10-13T10:00:00.000Z")] } as never)
+      .mockResolvedValueOnce({ ...changed, rebuiltClosures: [rebuilt("2026-10-13T10:00:01.000Z")] } as never);
+
+    const preview = await workforceService.previewDoubleRuleDeletion("rule-x3");
+    await workforceService.executeDoubleRuleDeletion("rule-x3", { token: preview.token, confirmationText: "Prueba x3" }, { userId: "u1" });
+
+    expect(mockedPrisma.doubleHourRule.delete).toHaveBeenCalledWith({ where: { id: "rule-x3" } });
+    expect(auditService.registerWithin).toHaveBeenCalledWith(mockedPrisma, expect.objectContaining({ entity: "MonthlyTimeClosure", entityId: "closure-1" }));
+  });
+
+  it("conserva en la huella el snapshot anterior y el resultado contable reconstruido", async () => {
+    const rebuilt = (beforeMinutes: number, afterMinutes: number, at: string) => ({
+      id: "closure-1", employeeId: "emp-1", period: "2026-10",
+      before: { accounting: { totalWorkedMinutes: beforeMinutes } },
+      after: { accounting: { totalWorkedMinutes: afterMinutes }, recalculation: { reason: "SPECIAL_HOUR_RULE_CHANGED", doubleHourRuleId: "rule-x3", doubleHourRuleName: "Prueba x3", at } },
+    });
+    vi.mocked(reinterpretSpecialHours)
+      .mockResolvedValueOnce({ ...changed, rebuiltClosures: [rebuilt(480, 480, "2026-10-13T10:00:00.000Z")] } as never)
+      .mockResolvedValueOnce({ ...changed, rebuiltClosures: [rebuilt(420, 450, "2026-10-13T10:00:01.000Z")] } as never);
+
+    const preview = await workforceService.previewDoubleRuleDeletion("rule-x3");
+    await expect(workforceService.executeDoubleRuleDeletion("rule-x3", { token: preview.token, confirmationText: "Prueba x3" }, { userId: "u1" }))
+      .rejects.toMatchObject({ code: "DELETION_PREVIEW_CHANGED" });
+
+    expect(mockedPrisma.doubleHourRule.delete).not.toHaveBeenCalled();
+    expect(auditService.registerWithin).not.toHaveBeenCalled();
+  });
+
   it("sin horas, un cambio de multiplicador, prioridad o alcance invalida la configuración confirmada", async () => {
     const original = ruleRow({ id: "rule-x3", name: "Prueba x3", multiplier: 2, priority: 1, companyId: "company-1", sectorId: null, costCenterId: null, positionId: null });
     const changedConfig = { ...original, multiplier: 3, priority: 2, companyId: null, sectorId: "sector-1" };
