@@ -336,7 +336,14 @@ export const positionApiService = {
     return response.data ? mapFromApi(response.data) : undefined;
   },
   async afterDeletion() {
-    await invalidateCacheFamily("positions", "position deleted");
+    await Promise.all([
+      invalidateCacheFamily("positions", "position deleted"),
+      // La eliminación controlada deja a sus ocupantes sin puesto: Legajos y
+      // Organigramas comparten la familia employees y no deben reutilizar esa
+      // asignación anterior.
+      invalidateCacheFamily("employees", "position deleted"),
+      invalidateCacheFamily("dashboard", "position deleted"),
+    ]);
   },
   getNextCode: nextCode,
 };
