@@ -18,6 +18,7 @@ import type { Employee } from "../types";
 import { confirmAction } from "../services/appDialog";
 import { EmployeeRemoteSelector } from "../components/employees/EmployeeRemoteSelector";
 import { SpecialHourRulesCalendarMonth } from "../components/workforce/SpecialHourRulesCalendarMonth";
+import { DeletionPreviewModal } from "../components/shared/DeletionPreviewModal";
 import { formatCalendarDate } from "../utils/date";
 import { argentinaDateKey } from "../utils/argentinaDateKey";
 import { useAuth } from "../context/AuthContext";
@@ -120,6 +121,7 @@ export function WorkScheduleSettingsPage() {
   const [working, setWorking] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [editingRuleId, setEditingRuleId] = useState<string>();
+  const [deletingRule, setDeletingRule] = useState<DoubleHourRule | null>(null);
   const [rule, setRule] = useState<RuleFormState>(emptyRuleForm);
   const [newDateInput, setNewDateInput] = useState("");
   // Etapa 12C: filtro por clasificación — client-side sobre `rules` (ya
@@ -293,25 +295,7 @@ export function WorkScheduleSettingsPage() {
     }
   };
 
-  const removeRule = async (item: DoubleHourRule) => {
-    // Eliminar ≠ Inactivar: borra físicamente la regla (creada por error),
-    // haya empezado o no. Para conservarla sin que aplique está el botón Power.
-    if (!(await confirmAction(`Esta acción eliminará definitivamente la regla "${item.name}" y recalculará las horas afectadas como si la regla no existiera. Las horas reales y las fichadas no se eliminarán.`, { title: "Eliminar regla", confirmLabel: "Eliminar definitivamente", tone: "danger" }))) return;
-    setWorking(true);
-    setTableError("");
-    setNotice("");
-    try {
-      await workforceApiService.removeDoubleHourRule(item.id);
-      setNotice("Regla eliminada definitivamente. Las horas afectadas se recalcularon.");
-      if (editingRuleId === item.id) resetRule();
-      await load();
-      notifyRulesMutated();
-    } catch (reason) {
-      setTableError(getUserErrorMessage(reason, "No se pudo eliminar la regla. Intentá nuevamente."));
-    } finally {
-      setWorking(false);
-    }
-  };
+  const removeRule = (item: DoubleHourRule) => setDeletingRule(item);
 
   if (roleLevel(user!.role) !== 1) return <Navigate to="/" />;
 
@@ -606,6 +590,7 @@ export function WorkScheduleSettingsPage() {
       <Section className="schedule-settings-section" title="Calendario de reglas" subtitle="Visualizá qué reglas aplican cada día y detectá superposiciones.">
         <SpecialHourRulesCalendarMonth refreshToken={calendarRefreshToken} kindFilter={kindFilter || undefined} />
       </Section>
+      {deletingRule ? <DeletionPreviewModal basePath={`/workforce/double-hour-rules/${encodeURIComponent(deletingRule.id)}`} title={`Eliminar regla “${deletingRule.name}”`} close={() => setDeletingRule(null)} onDeleted={() => { const deleted = deletingRule; setDeletingRule(null); if (editingRuleId === deleted.id) resetRule(); void workforceApiService.afterDoubleHourRuleDeletion().then(load).then(notifyRulesMutated); setNotice("Regla eliminada definitivamente. Las horas afectadas se recalcularon."); }} /> : null}
     </>
   );
 }

@@ -41,6 +41,7 @@ const api = vi.hoisted(() => ({
   createArea: vi.fn(async (item: unknown) => item),
   updateSector: vi.fn(async (item: unknown) => item),
   deleteEntity: vi.fn(async (_type: string, _id: string) => ({})),
+  afterDeletion: vi.fn(async () => undefined),
   removedIds: new Set<string>(),
 }));
 vi.mock("../services/api/orgStructureApiService", () => ({
@@ -51,6 +52,8 @@ vi.mock("../services/api/orgStructureApiService", () => ({
     createArea: api.createArea,
     updateSector: api.updateSector,
     deleteEntity: api.deleteEntity,
+    deletionPath: (type: string, id: string) => `/org-structure/${type.toLowerCase()}/${id}`,
+    afterDeletion: api.afterDeletion,
   },
 }));
 vi.mock("../services/appDialog", () => ({ confirmAction: vi.fn(async () => true) }));

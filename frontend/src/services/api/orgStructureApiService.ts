@@ -304,6 +304,10 @@ export const orgStructureApiService = {
   // Eliminación definitiva (sólo registros sin dependencias; si las tiene, el
   // backend responde 409 con el motivo de negocio).
   deleteEntity: (type: OrgStructureEntityType, id: string) => writeAndRefresh(apiRequest(`/org-structure/${orgEntityPaths[type]}/${encodeURIComponent(id)}`, { method: "DELETE" })),
+  /** Eliminación controlada (DeletionPreviewModal): recurso del protocolo de vista previa + confirmación. */
+  deletionPath: (type: OrgStructureEntityType, id: string) => `/org-structure/${orgEntityPaths[type]}/${encodeURIComponent(id)}`,
+  /** Después de una eliminación controlada: estructura, puestos, legajos y tablero cambian. */
+  afterDeletion: () => writeAndRefresh(Promise.resolve()),
 };
 
 const orgEntityPaths: Record<OrgStructureEntityType, string> = {

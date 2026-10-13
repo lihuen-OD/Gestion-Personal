@@ -170,6 +170,9 @@ export const hourConceptApiService = {
     await invalidateHourConceptDependentCaches("hour concept deleted");
     return response.data;
   },
+  async afterDeletion() {
+    await invalidateHourConceptDependentCaches("hour concept deleted");
+  },
 
   // Empleados habilitados para el concepto, vistos desde el concepto (Etapa
   // 8G; dedupe/cache agregado en 14H.5) — envuelto con `cachedData` (misma

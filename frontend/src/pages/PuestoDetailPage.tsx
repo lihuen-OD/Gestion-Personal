@@ -25,6 +25,7 @@ import { Tabs } from "../components/ui/Tabs";
 import { Button } from "../components/ui/Button";
 import { confirmAction } from "../services/appDialog";
 import { getUserErrorMessage } from "../services/api/apiClient";
+import { DeletionPreviewModal } from "../components/shared/DeletionPreviewModal";
 
 const tabs = ["Identificacion", "Proposito / Mision", "Rango Salarial", "Responsabilidades", "Relaciones", "Competencias", "Condiciones", "Indicadores", "Criterios", "Personas Asignadas", "Historial"];
 
@@ -41,6 +42,7 @@ export function PuestoDetailPage() {
   const [assignedCount, setAssignedCount] = useState(0);
   const [tab, setTab] = useState(0);
   const [notice, setNotice] = useState(location.state?.created ? "Puesto creado correctamente." : "");
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -126,13 +128,7 @@ export function PuestoDetailPage() {
     if (saved) setPosition(saved);
   };
 
-  const remove = async () => {
-    const message = assignedCount ? `Este puesto tiene ${assignedCount} persona(s) asignadas. No se borra para no romper legajos; se va a inactivar/ocultar. Confirmar?` : "Confirmar ocultar/eliminar este puesto?";
-    if (!await confirmAction(message, { title: "Ocultar puesto", confirmLabel: "Ocultar", tone: "danger" })) return;
-    const result = await positionApiService.removeOrHide(position.id);
-    if (result) { setPosition(result); setNotice("Puesto inactivado para conservar trazabilidad."); }
-    else navigate("/puestos");
-  };
+  const remove = () => setDeleting(true);
 
   const render = () => {
     if (tab === 0) return <PuestoIdentificationTab position={position} setPosition={setPosition} disabled={!canEdit} savedScopeKeys={savedScopeKeys} />;
@@ -160,5 +156,6 @@ export function PuestoDetailPage() {
     >
       {render()}
     </Section>
+    {deleting ? <DeletionPreviewModal basePath={`/positions/${encodeURIComponent(position.id)}`} title={`Eliminar puesto “${position.name}”`} close={() => setDeleting(false)} onDeleted={() => { void positionApiService.afterDeletion().then(() => navigate("/puestos")); }} /> : null}
   </>;
 }

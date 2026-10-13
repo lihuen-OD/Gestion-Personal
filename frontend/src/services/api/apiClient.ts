@@ -5,12 +5,15 @@ const REFRESH_TOKEN_KEY = "losod_refresh_token";
 export class ApiError extends Error {
   code: string;
   status: number;
+  /** Cuerpo de la respuesta de error (p. ej. la vista previa actualizada de una eliminación). */
+  payload?: unknown;
 
-  constructor(message: string, code: string, status: number) {
+  constructor(message: string, code: string, status: number, payload?: unknown) {
     super(message);
     this.name = "ApiError";
     this.code = code;
     this.status = status;
+    this.payload = payload;
   }
 }
 
@@ -203,6 +206,8 @@ type RequestOptions = Omit<RequestInit, "body"> & {
   apiCache?: boolean;
   /** @deprecated Compatibilidad temporal: usar services/cache para políticas TTL. */
   cacheTtlMs?: number;
+  /** El llamador muestra el error en contexto (p. ej. el modal de eliminación): sin aviso global. */
+  silentErrors?: boolean;
 };
 
 let refreshPromise: Promise<boolean> | null = null;
@@ -264,10 +269,10 @@ async function requestParsed<T>(path: string, options: RequestOptions) {
     const error = parsed.error;
     const message = formatApiErrorMessage(parsed);
     const code = error?.code || "API_ERROR";
-    if ((options.method || "GET").toUpperCase() !== "GET" && [400, 409, 422].includes(response.status)) {
+    if (!options.silentErrors && (options.method || "GET").toUpperCase() !== "GET" && [400, 409, 422].includes(response.status)) {
       notifyApiError(message, code, response.status);
     }
-    throw new ApiError(message, code, response.status);
+    throw new ApiError(message, code, response.status, parsed);
   }
 
   return payload as T;

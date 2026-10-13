@@ -10,6 +10,7 @@ import { StatCard } from "../components/ui/StatCard";
 import { ErrorState } from "../components/ui/ErrorState";
 import { LoadingState } from "../components/ui/LoadingState";
 import { Pagination } from "../components/ui/Pagination";
+import { DeletionPreviewModal } from "../components/shared/DeletionPreviewModal";
 import { useAuth } from "../context/AuthContext";
 import { orgStructureApiService } from "../services/api/orgStructureApiService";
 import { positionApiService, type PositionListSortKey } from "../services/api/positionApiService";
@@ -97,6 +98,7 @@ export function PuestosPage() {
   const { sort, toggleSort } = useSortState<PositionListSortKey>(resetPage);
   const [refresh, setRefresh] = useState(0);
   const [catalog, setCatalog] = useState<OrgStructureCatalog | undefined>(undefined);
+  const [deleting, setDeleting] = useState<Position | null>(null);
 
   // Etapa 9E: tabla paginada de verdad (antes traía hasta 300 puestos y
   // filtraba/paginaba 100% en el cliente contra ese fetch-all).
@@ -180,13 +182,7 @@ export function PuestosPage() {
     setRefresh((value) => value + 1);
   };
 
-  const remove = async (position: Position) => {
-    const assigned = getAssignedCount(position);
-    const message = assigned ? `El puesto ${position.name} tiene ${assigned} persona(s) asignadas. No se borra para no romper legajos; se va a inactivar/ocultar. Confirmar?` : `Confirmar ocultar/eliminar ${position.name}?`;
-    if (!await confirmAction(message, { title: "Ocultar puesto", confirmLabel: "Ocultar", tone: "danger" })) return;
-    await positionApiService.removeOrHide(position.id);
-    setRefresh((value) => value + 1);
-  };
+  const remove = (position: Position) => setDeleting(position);
 
   return (
     <>
@@ -217,6 +213,7 @@ export function PuestosPage() {
           )}
         </div>
       </Section>
+      {deleting ? <DeletionPreviewModal basePath={`/positions/${encodeURIComponent(deleting.id)}`} title={`Eliminar puesto “${deleting.name}”`} close={() => setDeleting(null)} onDeleted={() => { void positionApiService.afterDeletion().then(() => setRefresh((value) => value + 1)); setDeleting(null); }} /> : null}
     </>
   );
 }

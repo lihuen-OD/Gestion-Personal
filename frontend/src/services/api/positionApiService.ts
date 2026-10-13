@@ -335,5 +335,8 @@ export const positionApiService = {
     await invalidateCacheFamily("positions", "position removed");
     return response.data ? mapFromApi(response.data) : undefined;
   },
+  async afterDeletion() {
+    await invalidateCacheFamily("positions", "position deleted");
+  },
   getNextCode: nextCode,
 };

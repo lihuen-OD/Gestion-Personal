@@ -8,6 +8,7 @@ import { Section } from "../components/ui/Section";
 import { StatCard } from "../components/ui/StatCard";
 import { Tabs } from "../components/ui/Tabs";
 import { Button } from "../components/ui/Button";
+import { DeletionPreviewModal } from "../components/shared/DeletionPreviewModal";
 import { StructureTreeView } from "../components/org-structure/StructureTreeView";
 import { StructureNodeDetail } from "../components/org-structure/StructureNodeDetail";
 import { OrgStructureEditor, editorValidationError } from "../components/org-structure/OrgStructureEditor";
@@ -32,14 +33,6 @@ const views: Array<{ key: View; label: string }> = [
 ];
 
 const emptyCatalog: OrgStructureCatalog = { companies: [], businessUnits: [], sectors: [], areas: [], provinces: [], zones: [], establishments: [], establishmentUnits: [], costCenters: [] };
-
-// Tras un DELETE exitoso el registro se quita del catálogo en memoria antes de
-// que llegue el refetch. Es seguro porque el backend sólo borra registros sin
-// dependencias (nada en el catálogo lo referencia).
-function withoutEntity(catalog: OrgStructureCatalog, type: OrgStructureEntityType, id: string): OrgStructureCatalog {
-  const key = catalogListKey[type];
-  return { ...catalog, [key]: ((catalog[key] ?? []) as OrgStructureEntity[]).filter((item) => item.id !== id) };
-}
 
 const roleLevel = (role: Role) => role.startsWith("Nivel 1") ? 1 : role.startsWith("Nivel 2") ? 2 : 3;
 
@@ -154,32 +147,28 @@ export function OrgStructurePage() {
     }
   });
 
-  // Eliminar (árbol y tabla comparten este flujo): confirmación explícita y
-  // borrado definitivo sólo si el backend no encuentra dependencias.
-  const { isRunning: isDeleting, run: removeEntity } = useAsyncAction(async (type: OrgStructureEntityType, item: OrgStructureEntity) => {
-    const confirmed = await confirmAction("Esta acción elimina el registro de forma permanente y no se puede deshacer. Si sólo ya no debe utilizarse, inactivalo.", {
-      title: `¿Eliminar definitivamente “${item.name}”?`,
-      confirmLabel: "Eliminar definitivamente",
-      tone: "danger",
-    });
-    if (!confirmed) return;
-    try {
-      await orgStructureApiService.deleteEntity(type, item.id);
-      setApiCatalog((current) => (current ? withoutEntity(current, type, item.id) : current));
-      setSelectedKey((current) => ({ ORGANIZATION: findNode(trees.ORGANIZATION, current.ORGANIZATION)?.id === item.id ? null : current.ORGANIZATION, LOCATION: findNode(trees.LOCATION, current.LOCATION)?.id === item.id ? null : current.LOCATION }));
-      setEditing((current) => (current?.item.id === item.id ? null : current));
-      setRefresh((value) => value + 1);
-      flashNotice(deletedMessages[type]);
-    } catch (error) {
-      if (!shownGlobally(error)) setNotice(getUserErrorMessage(error, "No se pudo eliminar el registro. Intentá nuevamente."));
-    }
-  });
+  // Eliminar (árbol y tabla comparten este flujo): eliminación controlada con
+  // vista previa calculada por el backend (hijos, historia, personas y
+  // vínculos) y confirmación revalidada al ejecutar.
+  const [deleting, setDeleting] = useState<{ type: OrgStructureEntityType; item: OrgStructureEntity } | null>(null);
+  const removeEntity = useCallback((type: OrgStructureEntityType, item: OrgStructureEntity) => setDeleting({ type, item }), []);
+  const finishDeletion = async () => {
+    const current = deleting;
+    setDeleting(null);
+    if (!current) return;
+    await orgStructureApiService.afterDeletion();
+    // Con la cascada cambian también hijos y vínculos: se recarga el catálogo completo.
+    setSelectedKey((selected) => ({ ORGANIZATION: findNode(trees.ORGANIZATION, selected.ORGANIZATION)?.id === current.item.id ? null : selected.ORGANIZATION, LOCATION: findNode(trees.LOCATION, selected.LOCATION)?.id === current.item.id ? null : selected.LOCATION }));
+    setEditing((editingNow) => (editingNow?.item.id === current.item.id ? null : editingNow));
+    setRefresh((value) => value + 1);
+    flashNotice(deletedMessages[current.type]);
+  };
 
   const editNode = useCallback((node: OrgTreeNode) => {
     if (node.entity && node.type !== "GROUP") openEditor(node.type, node.entity, false);
   }, [openEditor]);
   const deleteNode = useCallback((node: OrgTreeNode) => {
-    if (node.entity && node.type !== "GROUP") void removeEntity(node.type, node.entity);
+    if (node.entity && node.type !== "GROUP") removeEntity(node.type, node.entity);
   }, [removeEntity]);
   const addChild = (node: OrgTreeNode, childType: OrgStructureEntityType) => openEditor(childType, blankEntity(childType, catalog, node.id), true);
   const selectNode = useCallback((node: OrgTreeNode) => setSelectedKey((current) => (treeKind ? { ...current, [treeKind]: node.key } : current)), [treeKind]);
@@ -224,7 +213,7 @@ export function OrgStructurePage() {
               label={treeKind === "ORGANIZATION" ? "Organización" : "Ubicaciones"}
               emptyText={treeKind === "ORGANIZATION" ? "Todavía no hay empresas cargadas." : "Todavía no hay provincias cargadas. Creá una provincia para empezar a cargar zonas y establecimientos."}
             />
-            <StructureNodeDetail kind={treeKind} node={selectedNode} onEdit={editNode} onAddChild={addChild} onToggleStatus={toggleNodeStatus} onDelete={deleteNode} busy={isTogglingStatus || isDeleting} />
+            <StructureNodeDetail kind={treeKind} node={selectedNode} onEdit={editNode} onAddChild={addChild} onToggleStatus={toggleNodeStatus} onDelete={deleteNode} busy={isTogglingStatus || Boolean(deleting)} />
           </div>
         )}
       </Section>
@@ -237,7 +226,7 @@ export function OrgStructurePage() {
           action={treeKind ? <Tabs className="view-switch" tabs={views} active={view} onChange={(key) => setView(key as View)} /> : undefined}
         >
           <DataTable status={isLoadingApi ? "loading" : activeRows.length === 0 ? "empty" : "ready"} minWidth={940} emptyText="No hay registros cargados para esta categoría.">
-            <OrgStructureTable key={tab} type={tab} catalog={catalog} items={activeRows} onEdit={(item) => openEditor(tab, item, false)} onDelete={(item) => void removeEntity(tab, item)} />
+            <OrgStructureTable key={tab} type={tab} catalog={catalog} items={activeRows} onEdit={(item) => openEditor(tab, item, false)} onDelete={(item) => removeEntity(tab, item)} />
           </DataTable>
         </Section>
       </>
@@ -253,6 +242,15 @@ export function OrgStructurePage() {
           <OrgStructureEditor type={editing.type} item={editing.item} catalog={catalog} isNew={editing.isNew} onChange={(item) => setEditing((current) => (current ? { ...current, item } : current))} />
         </Section>
       </div>
+    )}
+
+    {deleting && (
+      <DeletionPreviewModal
+        basePath={orgStructureApiService.deletionPath(deleting.type, deleting.item.id)}
+        title={`Eliminar ${orgNodeTypeLabels[deleting.type].toLowerCase()} “${deleting.item.name}”`}
+        close={() => setDeleting(null)}
+        onDeleted={() => void finishDeletion()}
+      />
     )}
   </>;
 }

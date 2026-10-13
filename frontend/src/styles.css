@@ -2469,3 +2469,25 @@ a.employee-hours-status-item:hover{border-color:var(--ds-blue-300);background:va
 @media(max-width:620px){.associated-structure-filters{grid-template-columns:1fr;margin:0 12px 12px}}
 /* Identificadores (legajo, CUIL) en una sola línea dentro de .table-shell. */
 .table-shell>table tbody td.cell-nowrap{white-space:nowrap!important;overflow-wrap:normal!important}
+
+/* Eliminación controlada (DeletionPreviewModal): impacto calculado por el backend. */
+.deletion-preview{gap:12px}
+.deletion-summary{margin:0;color:var(--color-text-secondary,#475569);font-size:13px;line-height:1.5}
+.deletion-groups{display:grid;gap:8px;margin:0;padding:0;list-style:none}
+.deletion-group{display:grid;gap:6px;min-width:0;padding:12px;border:1px solid var(--color-border-default);border-left:3px solid var(--color-border-strong);border-radius:var(--radius-md);background:#fff}
+.deletion-group.effect-delete{border-left-color:var(--color-danger)}
+.deletion-group.effect-archive,.deletion-group.effect-end,.deletion-group.effect-review{border-left-color:var(--color-warning)}
+.deletion-group-head{display:flex;align-items:center;gap:8px;min-width:0}
+.deletion-group-head b{flex:1;min-width:0;font-size:13px;color:var(--color-text-primary,#0f172a);overflow-wrap:anywhere}
+.deletion-group-count{flex:none;min-width:28px;padding:2px 8px;border-radius:999px;background:var(--color-bg-subtle);color:var(--color-text-secondary,#475569);font-size:12px;font-weight:700;text-align:center}
+.deletion-group>p{margin:0;color:var(--color-text-muted);font-size:12px;line-height:1.45}
+.deletion-group-items{display:flex;flex-wrap:wrap;gap:4px 6px;margin:0;padding:0;list-style:none}
+.deletion-group-items li{max-width:100%;padding:3px 8px;border:1px solid var(--color-border-default);border-radius:999px;background:var(--color-bg-subtle);color:var(--color-text-secondary,#475569);font-size:11px;overflow-wrap:anywhere}
+.deletion-group .table-link{justify-self:start;padding:0}
+.deletion-group-more{color:var(--color-text-muted);font-size:11px}
+.deletion-blockers{display:grid;gap:6px;padding:10px 12px;border:1px solid var(--color-danger-border);border-radius:var(--radius-md);background:var(--color-danger-bg);color:var(--color-danger);font-size:12px}
+.deletion-blockers ul{margin:0;padding-left:18px;display:grid;gap:4px}
+.deletion-changed{border-left-color:var(--color-warning)!important;background:var(--color-warning-bg)!important}
+.deletion-typed{display:grid;gap:6px}
+.deletion-typed>span{font-weight:600;color:var(--color-text-primary,#0f172a)}
+.deletion-typed input{width:100%}
