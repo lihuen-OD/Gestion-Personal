@@ -70,7 +70,8 @@ describe.skipIf(!url)("eliminación controlada — PostgreSQL local real", () =>
   it("zona: procesa establecimientos/unidades, retira el vínculo compartido y conserva persona, horas e historia", async () => {
     const f = await baseFixture();
     const preview = await orgDeletion.preview("zone", f.zone.id);
-    expect(preview.groups).toEqual(expect.arrayContaining([expect.objectContaining({ label: "Establecimientos", count: 2 }), expect.objectContaining({ label: "Unidades del establecimiento", count: 1 })]));
+    expect(preview.groups.filter((group) => group.key.startsWith("establishment.")).reduce((total, group) => total + group.count, 0)).toBe(2);
+    expect(preview.groups.find((group) => group.key === "establishmentUnit.archive")?.count).toBe(1);
     await orgDeletion.execute("zone", f.zone.id, { token: preview.token, confirmationText: preview.confirmationText }, actor);
     expect(await db.employee.count({ where: { id: f.employee.id } })).toBe(1);
     expect(await db.timeEntry.count({ where: { id: f.timeEntry.id } })).toBe(1);
@@ -118,7 +119,7 @@ describe.skipIf(!url)("eliminación controlada — PostgreSQL local real", () =>
     expect(await db.auditLog.count()).toBe(0);
     const second = await orgDeletion.preview("zone", f.zone.id);
     expect(second.token).not.toBe(first.token);
-    expect(second.groups.find((group) => group.label === "Establecimientos")?.count).toBe(3);
+    expect(second.groups.filter((group) => group.key.startsWith("establishment.")).reduce((total, group) => total + group.count, 0)).toBe(3);
     await orgDeletion.execute("zone", f.zone.id, { token: second.token, confirmationText: second.confirmationText }, actor);
     expect(await db.auditLog.count({ where: { entity: "Zone", entityId: f.zone.id } })).toBe(1);
   }, 60_000);
