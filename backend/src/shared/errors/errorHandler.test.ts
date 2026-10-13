@@ -89,6 +89,16 @@ describe("errorHandler", () => {
     expect(res.status).toHaveBeenCalledWith(404);
   });
 
+  it("expone retryAfterSeconds (dato público) sólo cuando el error lo trae", () => {
+    const res = fakeRes();
+
+    errorHandler(new AppError("Esperá", 409, "CLOCK_PUNCH_COOLDOWN", { internal: true }, { retryAfterSeconds: 42 }), fakeReq(), res, vi.fn());
+
+    expect(res.json).toHaveBeenCalledWith({
+      error: { code: "CLOCK_PUNCH_COOLDOWN", message: "Esperá", retryAfterSeconds: 42, details: { internal: true } },
+    });
+  });
+
   it("mapea errores no-AppError a 500 sin auditar y sin cambiar el contrato de la respuesta", () => {
     const req = fakeReq();
     const res = fakeRes();

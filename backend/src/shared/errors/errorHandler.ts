@@ -32,6 +32,7 @@ export const errorHandler: ErrorRequestHandler = (error, req, res, _next) => {
     error: {
       code: appError.code,
       message: appError.message,
+      ...(appError.retryAfterSeconds === undefined ? {} : { retryAfterSeconds: appError.retryAfterSeconds }),
       details: isProduction ? undefined : appError.details,
     },
   });
