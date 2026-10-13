@@ -19,6 +19,8 @@ describe.skipIf(!url)("eliminación controlada — PostgreSQL local real", () =>
   let other: PrismaClient;
   let orgDeletion: typeof import("./orgStructure.deletion").orgStructureDeletion;
   let positionDeletion: typeof import("../positions/positions.deletion").positionsDeletion;
+  let hourConceptDeletion: typeof import("../hour-concepts/hourConcepts.service").hourConceptsService;
+  let workforceDeletion: typeof import("../workforce-management/workforce.service").workforceService;
   const actor = { userId: "it-user", ipAddress: "127.0.0.1", userAgent: "vitest" };
 
   async function truncate() {
@@ -63,6 +65,8 @@ describe.skipIf(!url)("eliminación controlada — PostgreSQL local real", () =>
     if (!schema[0]?.zone || !schema[0]?.audit) throw new Error("La base deletion_it no tiene el esquema Prisma actual aplicado.");
     ({ orgStructureDeletion: orgDeletion } = await import("./orgStructure.deletion"));
     ({ positionsDeletion: positionDeletion } = await import("../positions/positions.deletion"));
+    ({ hourConceptsService: hourConceptDeletion } = await import("../hour-concepts/hourConcepts.service"));
+    ({ workforceService: workforceDeletion } = await import("../workforce-management/workforce.service"));
   }, 60_000);
   beforeEach(async () => { await removeFailureHook(); await truncate(); });
   afterAll(async () => { await Promise.all([db?.$disconnect(), other?.$disconnect()]); });
@@ -91,6 +95,69 @@ describe.skipIf(!url)("eliminación controlada — PostgreSQL local real", () =>
     expect(await db.employeePositionPeriod.count({ where: { employeeId: f.employee.id } })).toBeGreaterThanOrEqual(2);
     expect(await db.timeEntry.count({ where: { id: f.timeEntry.id } })).toBe(1);
     expect(await db.auditLog.count({ where: { entity: "Position", entityId: f.position.id } })).toBe(1);
+  }, 60_000);
+
+  it("puesto sin asignaciones: un cambio histórico con los mismos ids exige una segunda confirmación", async () => {
+    await db.user.create({ data: { id: "it-user", name: "RRHH IT", email: "rrhh@deletion-it.local", passwordHash: "x", role: "NIVEL_1_RRHH" } });
+    const company = await db.company.create({ data: { id: "it-company", code: "IT-C", name: "Empresa IT" } });
+    const position = await db.position.create({ data: { id: "it-position-free", code: "IT-PF", name: "Puesto libre" } });
+    const category = await db.salaryCategory.create({ data: { id: "it-salary", name: "Categoría IT", order: 1 } });
+    await db.positionSalaryCategory.create({ data: { positionId: position.id, salaryCategoryId: category.id } });
+    const period = await db.positionOrgScopePeriod.create({ data: { id: "it-scope-period", positionId: position.id, effectiveFrom: new Date("2026-01-01"), reason: "Original" } });
+    await db.positionOrgScopePeriodNode.create({ data: { id: "it-scope-node", periodId: period.id, level: "COMPANY", companyId: company.id } });
+
+    const first = await positionDeletion.preview(position.id);
+    await other.positionOrgScopePeriod.update({ where: { id: period.id }, data: { reason: "Corregido concurrentemente" } });
+    await expect(positionDeletion.execute(position.id, { token: first.token }, actor)).rejects.toMatchObject({ code: "DELETION_PREVIEW_CHANGED" });
+    expect(await db.position.count({ where: { id: position.id } })).toBe(1);
+    expect(await db.positionSalaryCategory.count({ where: { positionId: position.id } })).toBe(1);
+    expect(await db.positionOrgScopePeriod.findUniqueOrThrow({ where: { id: period.id } })).toMatchObject({ reason: "Corregido concurrentemente" });
+    expect(await db.auditLog.count()).toBe(0);
+
+    const second = await positionDeletion.preview(position.id);
+    await positionDeletion.execute(position.id, { token: second.token }, actor);
+    expect(await db.position.count({ where: { id: position.id } })).toBe(0);
+    expect(await db.auditLog.count({ where: { entity: "Position", entityId: position.id } })).toBe(1);
+  }, 60_000);
+
+  it("concepto horario: un snapshot abierto cambiado se revierte con token viejo y se confirma con una nueva preview", async () => {
+    await db.user.create({ data: { id: "it-user", name: "RRHH IT", email: "rrhh@deletion-it.local", passwordHash: "x", role: "NIVEL_1_RRHH" } });
+    const employee = await db.employee.create({ data: { id: "it-hour-employee", legajo: "IT-H01", cuil: "20-00000002-2", dni: "00000002", firstName: "Hora", lastName: "Integración" } });
+    await db.hourConcept.create({ data: { id: "it-normal", code: "IT-NORMAL", name: "Horas normales", kind: "NORMAL", systemRole: "NORMAL_BASE" } });
+    const concept = await db.hourConcept.create({ data: { id: "it-delete-hour", code: "IT-DEL", name: "Concepto a eliminar", kind: "OTRO", loadMode: "MANUAL", workTreatment: "ADDITIVE_TO_WORKED_TOTAL" } });
+    await db.hourConceptBreakdown.create({ data: { id: "it-breakdown", employeeId: employee.id, date: new Date("2026-02-02"), period: "2026-02", day: 2, hourConceptId: concept.id, minutes: 60, source: "MANUAL", status: "EN_REVISION" } });
+    const closure = await db.monthlyTimeClosure.create({ data: { id: "it-open-closure", employeeId: employee.id, period: "2026-02", status: "ABIERTO", snapshot: { marker: "preview" } } });
+
+    const first = await hourConceptDeletion.previewDeletion(concept.id);
+    await other.monthlyTimeClosure.update({ where: { id: closure.id }, data: { snapshot: { marker: "changed" } } });
+    await expect(hourConceptDeletion.executeDeletion(concept.id, { token: first.token, confirmationText: concept.name }, actor)).rejects.toMatchObject({ code: "DELETION_PREVIEW_CHANGED" });
+    expect(await db.hourConcept.count({ where: { id: concept.id } })).toBe(1);
+    expect(await db.hourConceptBreakdown.count({ where: { id: "it-breakdown" } })).toBe(1);
+    expect(await db.monthlyTimeClosure.findUniqueOrThrow({ where: { id: closure.id } })).toMatchObject({ snapshot: { marker: "changed" } });
+    expect(await db.auditLog.count()).toBe(0);
+
+    const second = await hourConceptDeletion.previewDeletion(concept.id);
+    await hourConceptDeletion.executeDeletion(concept.id, { token: second.token, confirmationText: concept.name }, actor);
+    expect(await db.hourConcept.count({ where: { id: concept.id } })).toBe(0);
+    expect(await db.auditLog.count({ where: { entityId: concept.id } })).toBe(1);
+    expect(await db.auditLog.count({ where: { entity: "MonthlyTimeClosure", entityId: closure.id } })).toBe(1);
+  }, 60_000);
+
+  it("regla sin horas: cambiar multiplicador/prioridad/alcance exige una segunda confirmación", async () => {
+    await db.user.create({ data: { id: "it-user", name: "RRHH IT", email: "rrhh@deletion-it.local", passwordHash: "x", role: "NIVEL_1_RRHH" } });
+    const company = await db.company.create({ data: { id: "it-rule-company", code: "IT-RC", name: "Empresa regla" } });
+    const rule = await db.doubleHourRule.create({ data: { id: "it-rule", name: "Regla sin horas", recurrenceType: "SEMANAL", fromDate: new Date("2026-01-01"), weekdays: [0], multiplier: 2, priority: 1, reason: "IT", companyId: company.id } });
+
+    const first = await workforceDeletion.previewDoubleRuleDeletion(rule.id);
+    await other.doubleHourRule.update({ where: { id: rule.id }, data: { multiplier: 3, priority: 2, companyId: null } });
+    await expect(workforceDeletion.executeDoubleRuleDeletion(rule.id, { token: first.token }, actor)).rejects.toMatchObject({ code: "DELETION_PREVIEW_CHANGED" });
+    expect(await db.doubleHourRule.findUniqueOrThrow({ where: { id: rule.id } })).toMatchObject({ priority: 2, companyId: null, status: "ACTIVO" });
+    expect(await db.auditLog.count()).toBe(0);
+
+    const second = await workforceDeletion.previewDoubleRuleDeletion(rule.id);
+    await workforceDeletion.executeDoubleRuleDeletion(rule.id, { token: second.token }, actor);
+    expect(await db.doubleHourRule.count({ where: { id: rule.id } })).toBe(0);
+    expect(await db.auditLog.count({ where: { entity: "DoubleHourRule", entityId: rule.id } })).toBe(1);
   }, 60_000);
 
   it("si falla la auditoría, revierte todas las mutaciones", async () => {
