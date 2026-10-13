@@ -2,7 +2,7 @@ import type { Prisma } from "@prisma/client";
 import type { PrismaTransactionClient } from "../../shared/prisma/client";
 import { calendarDateKey, periodFromCalendarDate } from "../../shared/datetime/argentinaTime";
 import { employeePeriodKey, findProtectedClosurePeriods } from "../../shared/monthlyClosure/closurePeriodGuard";
-import { evaluateSpecialHourRulesByDate, SpecialHourScopeHistoryMissingError, type SpecialHourEvaluation } from "../time-entries/timeEntries.repository";
+import { evaluateSpecialHourRulesForEmployees, SpecialHourScopeHistoryMissingError } from "../time-entries/timeEntries.repository";
 import { buildActiveDatesByRule, ruleMatchesDate, specialHourApplicationRows, type DoubleHourRuleForMatching } from "./doubleHourRuleMatching";
 import { findClosuresForEmployeePeriods, rebuildClosureSnapshots, type ClosureSnapshotRecalculation, type RebuiltClosureSnapshot } from "./closureSnapshot";
 
@@ -12,7 +12,8 @@ import { findClosuresForEmployeePeriods, rebuildClosureSnapshots, type ClosureSn
  * (docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md §15 y §16). Cuando RRHH crea,
  * edita o quita una regla, o cambia la convocatoria de un feriado, todo lo
  * derivado de la historia se recalcula con el MISMO motor que usa una carga
- * nueva (evaluateSpecialHourRulesByDate), dentro de la transacción del cambio:
+ * nueva (evaluateSpecialHourRulesByDate, en lote: evaluateSpecialHourRulesForEmployees),
+ * dentro de la transacción del cambio:
  *
  * - TimeEntry.appliedMultiplier y HourConceptBreakdown.appliedMultiplier;
  * - la traza por tramo (SpecialHourRuleApplication y TimeSegment.isSpecial);
@@ -175,20 +176,18 @@ async function reinterpretWindow(
     segments: touchedRows.segments.filter((row) => isProtected(segmentPeriod(row))),
   };
 
-  // Fechas por empleado → motor vigente, 2 consultas por empleado alcanzado
-  // (nunca por fila). El alcance (empresa/sector/centro/puesto/empleados) lo
-  // decide el motor: un empleado fuera del alcance resuelve su multiplicador
-  // sin la regla y no cambia.
+  // Fechas por empleado → motor vigente en lote: consultas fijas para todos
+  // los empleados alcanzados (nunca por empleado ni por fila). Cada consulta
+  // es un viaje a la base dentro de esta transacción con tiempo límite. El
+  // alcance (empresa/sector/centro/puesto/empleados) lo decide el motor: un
+  // empleado fuera del alcance resuelve su multiplicador sin la regla y no cambia.
   const datesByEmployee = new Map<string, Map<string, Date>>();
   for (const row of [...touchedRows.entries, ...touchedRows.breakdowns, ...touchedRows.segments]) {
     const dates = datesByEmployee.get(row.employeeId) ?? new Map<string, Date>();
     dates.set(calendarDateKey(row.date), row.date);
     datesByEmployee.set(row.employeeId, dates);
   }
-  const evaluations = new Map<string, Map<string, SpecialHourEvaluation>>();
-  for (const [employeeId, dates] of datesByEmployee) {
-    evaluations.set(employeeId, await evaluateSpecialHourRulesByDate(employeeId, [...dates.values()], db));
-  }
+  const evaluations = await evaluateSpecialHourRulesForEmployees(new Map([...datesByEmployee].map(([employeeId, dates]) => [employeeId, [...dates.values()]])), db);
   const evaluationFor = (row: { employeeId: string; date: Date }) => evaluations.get(row.employeeId)!.get(calendarDateKey(row.date))!;
   // Sin escrituras parciales: si alguna fila que se reescribiría no tiene
   // historia suficiente, se rechaza todo antes del primer update.

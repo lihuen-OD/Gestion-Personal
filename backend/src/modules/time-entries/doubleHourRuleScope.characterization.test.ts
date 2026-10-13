@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { evaluateSpecialHourRulesByDate, resolveSpecialHourRulesByDate } from "./timeEntries.repository";
+import { evaluateSpecialHourRulesByDate, evaluateSpecialHourRulesForEmployees, resolveSpecialHourRulesByDate } from "./timeEntries.repository";
 
 vi.mock("../../shared/prisma/client", () => ({ prisma: {} }));
 
@@ -101,5 +101,86 @@ describe("motor de horas especiales con historia temporal (D-5)", () => {
     const world: World = { rules: [domingos], employer: [{ ...period("2026-01-01", "2026-09-30"), companies: [{ companyId: "losod" }] }, { ...period("2026-10-01"), companies: [] }] };
     const resolved = await resolveSpecialHourRulesByDate("emp-1", [SUN_BEFORE], db(world));
     expect(Number(resolved.get("2026-09-27")!.multiplier)).toBe(2);
+  });
+});
+
+/**
+ * La reinterpretación de una regla evalúa a todos los legajos alcanzados en
+ * lote (evaluateSpecialHourRulesForEmployees). Antes eran 7 consultas por
+ * legajo dentro de la transacción de la vista previa de eliminación: con 17
+ * legajos superaba su timeout (P2028 → 500). El lote debe dar EXACTAMENTE lo
+ * mismo que el motor por legajo, con consultas fijas.
+ */
+describe("motor de horas especiales en lote (varios legajos)", () => {
+  type EmployeeRow<T> = T & { employeeId: string };
+  type MultiWorld = {
+    employer: Array<EmployeeRow<Row & { companies: Array<{ companyId: string }> }>>;
+    rules: Array<Record<string, unknown> & { kind: string; employees: Array<{ employeeId: string }> }>;
+    convocations: Array<{ date: Date; employeeId: string }>;
+  };
+  const forEmployee = (filter: string | { in: string[] }) => (row: { employeeId: string }) => (typeof filter === "string" ? row.employeeId === filter : filter.in.includes(row.employeeId));
+  type RuleWhere = { kind?: string; AND?: Array<{ OR: [unknown, { employees: { some: { employeeId: string | { in: string[] } } } }] }> };
+
+  function multiDb(world: MultiWorld) {
+    const calls = { count: 0 };
+    const reader = <A extends unknown[], R>(fn: (...args: A) => R) => async (...args: A) => { calls.count += 1; return fn(...args); };
+    const client = {
+      employeePositionPeriod: { findMany: reader(() => []) },
+      employeeCostCenterPeriod: { findMany: reader(() => []) },
+      employeeLegacySectorPeriod: { findMany: reader(() => []) },
+      employeeEmployerPeriod: { findMany: reader(({ where }: { where: { employeeId: string | { in: string[] } } }) => world.employer.filter(forEmployee(where.employeeId))) },
+      positionOrgScopePeriod: { findMany: reader(() => []) },
+      doubleHourRule: {
+        findMany: reader(({ where }: { where: RuleWhere }) => {
+          const listed = where.AND?.[0]?.OR[1].employees.some.employeeId;
+          return world.rules.filter((rule) => (!where.kind || rule.kind === where.kind) && (listed === undefined || !rule.employees.length || rule.employees.some(forEmployee(listed))));
+        }),
+      },
+      holidayWorkAssignment: { findMany: reader(() => world.convocations) },
+    };
+    return { client: client as never, calls };
+  }
+
+  const guardia = rule({ id: "guardia", name: "Guardia", weekdays: [6], multiplier: 1.5, employees: [{ employeeId: "emp-3" }] });
+  const world: MultiWorld = {
+    rules: [{ ...domingos, employees: [] }, { ...feriados, employees: [] }, guardia] as MultiWorld["rules"],
+    employer: [
+      { ...period("2026-01-01"), employeeId: "emp-1", companies: [{ companyId: "losod" }] },
+      { ...period("2026-10-01"), employeeId: "emp-2", companies: [{ companyId: "tropa" }] },
+    ],
+    convocations: [{ date: HOLIDAY, employeeId: "emp-3" }],
+  };
+  const datesByEmployee = new Map([
+    ["emp-1", [SUN_BEFORE, HOLIDAY, SAT]],
+    ["emp-2", [SUN_BEFORE, SUN_AFTER]],
+    ["emp-3", [HOLIDAY, SAT]],
+  ]);
+  const summarize = (evaluations: Map<string, { missingHistory?: { dimensions: string[] }; resolution?: { multiplier: unknown } }>) =>
+    Object.fromEntries([...evaluations].map(([key, value]) => [key, value.missingHistory ? `MISSING:${value.missingHistory.dimensions.join("+")}` : Number(value.resolution!.multiplier)]));
+
+  it("da el mismo resultado que el motor por legajo (historia faltante, convocatoria y lista explícita incluidas)", async () => {
+    const batch = await evaluateSpecialHourRulesForEmployees(datesByEmployee, multiDb(world).client);
+    const expected = {
+      "emp-1": { "2026-09-27": 2, "2026-10-12": 1, "2026-09-26": 1 },
+      "emp-2": { "2026-09-27": "MISSING:EMPLOYER", "2026-10-04": 1 },
+      "emp-3": { "2026-10-12": 2, "2026-09-26": 1.5 },
+    };
+    expect(Object.fromEntries([...batch].map(([employeeId, evaluations]) => [employeeId, summarize(evaluations)]))).toEqual(expected);
+    for (const [employeeId, dates] of datesByEmployee) {
+      const single = await evaluateSpecialHourRulesByDate(employeeId, dates, multiDb(world).client);
+      expect(summarize(single)).toEqual(expected[employeeId as keyof typeof expected]);
+    }
+  });
+
+  it("consultas fijas: la misma cantidad para 1 legajo que para 3 (antes, 7 por legajo)", async () => {
+    const one = multiDb(world);
+    await evaluateSpecialHourRulesForEmployees(new Map([["emp-1", datesByEmployee.get("emp-1")!]]), one.client);
+    const three = multiDb(world);
+    await evaluateSpecialHourRulesForEmployees(datesByEmployee, three.client);
+    expect(three.calls.count).toBe(one.calls.count);
+    expect(three.calls.count).toBeLessThanOrEqual(8);
+    const emptyRun = multiDb(world);
+    expect(await evaluateSpecialHourRulesForEmployees(new Map(), emptyRun.client)).toEqual(new Map());
+    expect(emptyRun.calls.count).toBe(0);
   });
 });

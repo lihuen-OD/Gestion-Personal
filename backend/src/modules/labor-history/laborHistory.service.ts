@@ -220,4 +220,28 @@ export const laborHistoryService = {
     const scopes = await repository.findScopePeriods(db, positionIds, range);
     return { position, costCenter, legacySector, employer, scopes };
   },
+
+  /**
+   * Igual que loadEngineScopeHistory para varios legajos con consultas fijas
+   * (no por legajo): la reinterpretación de una regla alcanza a muchos dentro
+   * de una sola transacción. `range` cubre las fechas de todos; el motor busca
+   * la vigencia de cada fecha, así que vigencias de más no cambian el resultado.
+   */
+  async loadEngineScopeHistoryByEmployee(db: HistoryReader, employeeIds: string[], range: { fromKey: DateKey; toKey: DateKey }): Promise<Map<string, EngineScopeHistory>> {
+    const [position, costCenter, legacySector, employer] = await Promise.all([
+      repository.findScalarPeriodsByEmployee(db, "POSITION", employeeIds, range),
+      repository.findScalarPeriodsByEmployee(db, "COST_CENTER", employeeIds, range),
+      repository.findScalarPeriodsByEmployee(db, "LEGACY_SECTOR", employeeIds, range),
+      repository.findEmployerPeriodsByEmployee(db, employeeIds, range),
+    ]);
+    const positionIdsOf = (employeeId: string) => [...new Set((position.get(employeeId) ?? []).map((period) => period.value).filter((value): value is string => Boolean(value)))];
+    const allScopes = await repository.findScopePeriods(db, [...new Set(employeeIds.flatMap(positionIdsOf))], range);
+    return new Map(employeeIds.map((employeeId) => [employeeId, {
+      position: position.get(employeeId) ?? [],
+      costCenter: costCenter.get(employeeId) ?? [],
+      legacySector: legacySector.get(employeeId) ?? [],
+      employer: employer.get(employeeId) ?? [],
+      scopes: new Map(positionIdsOf(employeeId).flatMap((positionId) => (allScopes.has(positionId) ? [[positionId, allScopes.get(positionId)!] as const] : []))),
+    }]));
+  },
 };
