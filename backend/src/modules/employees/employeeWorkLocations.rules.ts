@@ -1,5 +1,5 @@
 import { AppError } from "../../shared/errors/AppError";
-import { formatArgentinaDate } from "../../shared/datetime/argentinaTime";
+import { formatArgentinaDate, previousCalendarDateKey } from "../../shared/datetime/argentinaTime";
 
 /**
  * Reglas puras de ubicaciones de trabajo (ORG_LOCATION_REORGANIZATION.md
@@ -11,7 +11,7 @@ export type WorkLocationPeriod = { id: string; zoneId: string; effectiveFrom: st
 export type WorkLocationState = "CURRENT" | "FUTURE" | "ENDED";
 
 type NamedNode = { id: string; name: string; status: string };
-export type ResolvedZone = NamedNode;
+export type ResolvedZone = NamedNode & { archivedAt?: Date | null };
 // A8 §12.1: `archivedAt` alimenta el rechazo de asignación a un establecimiento archivado.
 export type ResolvedEstablishment = NamedNode & { zoneId: string | null; archivedAt?: Date | null };
 export type ResolvedUnit = NamedNode & { establishmentId: string; archivedAt?: Date | null };
@@ -78,6 +78,11 @@ export function assertZoneAndEstablishments(input: {
 }) {
   const { zone } = input;
   if (!zone) throw new AppError("La zona seleccionada no existe.", 400, "WORK_LOCATION_ZONE_INVALID");
+  // A8 §12.4: lo archivado (también por una eliminación controlada) es
+  // evidencia: no se asigna ni se reafirma en una corrección.
+  if (zone.archivedAt) {
+    throw new AppError(`La zona “${zone.name}” fue eliminada y no puede asignarse.`, 400, "WORK_LOCATION_ZONE_ARCHIVED");
+  }
   if (zone.status !== "ACTIVO" && input.keepZoneId !== zone.id) {
     throw new AppError(`La zona “${zone.name}” está inactiva y no puede asignarse.`, 409, "WORK_LOCATION_ZONE_INACTIVE");
   }
@@ -168,4 +173,38 @@ export function selectionKey(selections: EstablishmentSelection[]) {
 export function establishmentLabel(name: string, coverage: WorkLocationCoverage, unitNames: string[]) {
   if (coverage !== "UNITS") return name;
   return `${name} (${[...unitNames].sort((a, b) => a.localeCompare(b, "es")).join(", ")})`;
+}
+
+/** Nodos de Ubicaciones que se eliminan (eliminación controlada, shared/deletion). */
+export type LocationNodeRemoval = { zoneIds: ReadonlySet<string>; establishmentIds: ReadonlySet<string>; unitIds: ReadonlySet<string> };
+
+/**
+ * Qué pasa con una asignación que no terminó antes de hoy cuando se eliminan
+ * nodos de Ubicaciones. Nunca amplía: una selección de unidades que queda
+ * vacía saca al establecimiento, no lo convierte en "completo".
+ * - CLOSE: ya regía antes de hoy → se cierra ayer; si queda selección, sigue
+ *   desde hoy en una vigencia nueva (`next`).
+ * - NARROW: todavía no rige → se corrige la misma fila con lo que queda.
+ * - CANCEL: todavía no rige y no queda nada → se cancela (no tiene historia).
+ * null: no la alcanza (p. ej. establecimiento completo cuyo lote se elimina).
+ */
+export type WorkLocationDetachment =
+  | { kind: "CLOSE"; closeTo: string; next: EstablishmentSelection[] }
+  | { kind: "NARROW"; next: EstablishmentSelection[] }
+  | { kind: "CANCEL" };
+
+export function planWorkLocationDetachment(
+  row: { zoneId: string; effectiveFrom: string; establishments: EstablishmentSelection[] },
+  removal: LocationNodeRemoval,
+  todayKey: string,
+): WorkLocationDetachment | null {
+  const next = removal.zoneIds.has(row.zoneId)
+    ? []
+    : row.establishments
+      .filter((item) => !removal.establishmentIds.has(item.establishmentId))
+      .map((item) => (item.coverage === "UNITS" ? { ...item, unitIds: item.unitIds.filter((unitId) => !removal.unitIds.has(unitId)) } : item))
+      .filter((item) => item.coverage !== "UNITS" || item.unitIds.length > 0);
+  if (selectionKey(next) === selectionKey(row.establishments)) return null;
+  if (row.effectiveFrom >= todayKey) return next.length ? { kind: "NARROW", next } : { kind: "CANCEL" };
+  return { kind: "CLOSE", closeTo: previousCalendarDateKey(todayKey), next };
 }

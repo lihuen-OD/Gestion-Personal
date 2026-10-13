@@ -697,6 +697,28 @@ Reglas:
 - En storage local sirve el archivo desde `backend/uploads`.
 - En Cloudinary (Etapa 15D.3, `docs/decisions/CLOUDINARY_SECURE_DELIVERY_15D3.md`) el backend descarga el archivo del proveedor y lo sirve como respuesta autenticada — nunca redirige a una URL pública de Cloudinary, ni para documentos nuevos ni para los subidos antes de esta etapa.
 
+## Eliminación controlada con dependencias
+
+Protocolo común (`backend/src/shared/deletion/deletionPlan.ts`) de toda acción "Eliminar" de configuración con dependencias: estructura (empresa, unidad de negocio, sector, área, provincia, zona, establecimiento, unidad y centro de costo), puestos, reglas de horas especiales y conceptos horarios. Mismo permiso que el alta/edición de cada recurso (`NIVEL_1_RRHH`).
+
+```txt
+GET  /api/<recurso>/:id/deletion-preview
+POST /api/<recurso>/:id/deletion        { token, confirmationText? }
+```
+
+- **Vista previa** (`200 { data: DeletionPreview }`): `target`, `groups[]` (`key`, `effect`, `label`, `consequence`, `count`, `items[]` — hasta 50 nombres), `blockers[]`, `requiresTypedConfirmation`, `confirmationText` y `token` (huella SHA-256 de todos los ids alcanzados). `effect`: `DELETE` (hijos propios y configuración exclusiva sin historia), `ARCHIVE` (lo que la historia necesita: sale de catálogos y selectores, se conserva), `UNLINK` (vínculo compartido o referencia opcional; la entidad compartida se conserva), `END` (vigencias de personas que terminan ayer, con su historia), `REVIEW` (queda incompleto: recargar o revisar), `RECALCULATE` (resultados que se recalculan en períodos no protegidos).
+- **Confirmación:** se recalcula el plan dentro de la transacción de ejecución. Huella distinta → `409 DELETION_PREVIEW_CHANGED` con `preview` actualizada en el cuerpo (no en `details`); bloqueos → `409 DELETION_BLOCKED` con `preview`; nombre escrito incorrecto (si `requiresTypedConfirmation`: afecta personas, archiva o alcanza ≥ 10 registros) → `400 DELETION_CONFIRMATION_MISMATCH`; actor sin rol o inactivo, releído en la transacción → `403 DELETION_FORBIDDEN`; escritura concurrente → `409 DELETION_CONCURRENT_CHANGE`. Cualquier falla revierte todo; la auditoría se escribe dentro de la transacción y los cachés se limpian después del commit.
+- **Nunca** se borran personas, horas, cierres, novedades, documentos ni fichadas; los cambios de datos de personas rigen **desde hoy** con la misma historia que un cambio manual (y su protección de períodos enviados/aprobados). Las reglas de horas especiales que referencian lo eliminado no se modifican: el destino se archiva y la regla queda en `REVIEW`.
+
+| Recurso | Ruta base |
+|---|---|
+| Estructura | `/api/org-structure/{companies,business-units,sectors,areas,provinces,zones,establishments,establishment-units,cost-centers}` |
+| Puestos | `/api/positions` |
+| Reglas de horas especiales | `/api/workforce/double-hour-rules` |
+| Conceptos horarios | `/api/hour-concepts` |
+
+Los `DELETE` anteriores de esos recursos se conservan con su comportamiento propio (sin vista previa).
+
 ## Catálogos
 
 ### Estructura organizacional
@@ -764,7 +786,9 @@ Reglas:
   - La auditoría (`CREATE`/`UPDATE`/`DELETE`, con estado previo en `before`) se escribe **en la misma transacción**: si falla, el cambio se revierte.
   - Los cachés se limpian después del commit.
 
-Eliminación definitiva (sólo `NIVEL_1_RRHH`, mismo permiso que altas/ediciones):
+**Eliminación controlada con dependencias** (ver la sección común): la pantalla usa `GET /api/org-structure/<colección>/:id/deletion-preview` y `POST .../deletion`. El registro arrastra a sus hijos propios del modelo vigente; cada nodo se elimina si nada lo referencia como historia o se **archiva** si la historia lo necesita (períodos laborales, alcances históricos, ubicaciones pasadas, reglas, filas archivadas del modelo anterior). Al archivar, sectores, áreas y establecimientos se desprenden de su padre (CHECK de forma de M2); unidades de negocio, zonas y unidades lo conservan y su padre también se archiva. Desde hoy: ubicaciones de trabajo que regían se cierran ayer (o siguen con lo que queda; nunca se amplían a un establecimiento completo), las futuras se corrigen o cancelan; legajos pierden esa empresa empleadora o centro de costo; los puestos pierden sólo esos nodos de su alcance (sin nodos quedan pendientes de recarga). Se desvinculan `User.companyId` (administrativo) y `ClockDevice.establishmentId`; se retiran los vínculos de centros de costo (el centro se conserva). El overview excluye archivados y devuelve `reservedCodes` (códigos ocupados por archivados, para generar el siguiente).
+
+Eliminación sólo sin dependencias (endpoint anterior, sin vista previa; sólo `NIVEL_1_RRHH`):
 
 ```txt
 DELETE /api/org-structure/companies/:id
@@ -808,7 +832,7 @@ Ver `backend/src/modules/org-structure/orgStructure.dependencies.ts`.
 
 > La columna llega con la migración aditiva `20261008150000_org_catalog_archive_classification` (aplicada a `development` el 2026-10-09). En `development` no hay registros archivados: la limpieza autorizada retiró la estructura anterior en lugar de archivarla (`A8_M2_PREPARATION.md` §12.15).
 
-`archivedAt` (en `Company`, `BusinessUnit`, `Establishment`, `Area`, `Sector`, `Position`) marca un registro del modelo anterior que la historia necesita conservar. Es distinto de `isLegacy` (origen, inmutable) y de `status` (`INACTIVO` es un nodo vivo y reactivable; archivado es congelado y de un solo sentido).
+`archivedAt` (en `Company`, `BusinessUnit`, `Establishment`, `Area`, `Sector`, `Position`, `EstablishmentUnit` y, desde `20261013120000_archive_province_zone_cost_center`, `Province`, `Zone` y `CostCenter`) marca un registro que la historia necesita conservar: del modelo anterior (limpieza A8) o retirado por una eliminación controlada. Es distinto de `isLegacy` (origen, inmutable) y de `status` (`INACTIVO` es un nodo vivo y reactivable; archivado es congelado y de un solo sentido).
 
 - **No existe endpoint de archivo ni de desarchivo.** El único escritor es la transacción de limpieza (`scripts/org-reorg-cleanup.ts`); sólo la restauración controlada (`scripts/org-reorg-restore.ts`) lo revierte, junto con toda la limpieza.
 - **Entrada:** ningún schema acepta `archivedAt` (`POST`/`PATCH` de catálogo y de puestos con ese campo → `400`).
@@ -979,7 +1003,7 @@ No hay baja lógica (`deletedAt` se eliminó en la migración `20261003100000`) 
 La migración limpia todas las filas `deletedAt IS NOT NULL` de la política anterior con la misma preservación de jornadas de la eliminación definitiva. Si detecta un `TimeEntry` legacy asociado, aborta completa antes de modificar datos e informa los códigos implicados para auditoría manual.
 
 - **Deshabilitar** = `PATCH { status: "INACTIVO" }`. Conserva el concepto y su historia e impide nuevas cargas, asignaciones y clasificación automática.
-- **Eliminar** = `DELETE /api/hour-concepts/:id`. Es definitivo y no admite `?force`. En una transacción borra los desgloses, reglas y habilitaciones por legajo del concepto, reclasifica a Hora normal los `TimeSegment`/`WorkShift` que lo referenciaban, desvincula `Novelty.targetHourConceptId`, borra el concepto (el código queda libre) y recalcula los cierres afectados. Fichadas, jornadas y Horas base se conservan.
+- **Eliminar** = `DELETE /api/hour-concepts/:id` (o el flujo con vista previa `GET .../:id/deletion-preview` + `POST .../:id/deletion`, ver la sección común). Es definitivo y no admite `?force`. Se rechaza (`409 PERIOD_CLOSED`) si algún desglose, tramo o jornada del concepto cae en un período enviado o aprobado. En una transacción borra los desgloses, reglas y habilitaciones por legajo del concepto, reclasifica a Hora normal los `TimeSegment`/`WorkShift` que lo referenciaban, desvincula `Novelty.targetHourConceptId`, borra el concepto (el código queda libre) y recalcula los cierres afectados. Fichadas, jornadas y Horas base se conservan.
   - Respuesta: `{ data: { concept: { id, code, name }, deletedBreakdowns, deletedRules, deletedEmployeeAssignments, reclassifiedSegments, reclassifiedWorkShifts, unlinkedNovelties, recalculatedClosures } }`.
   - Errores: `409 HOUR_CONCEPT_SYSTEM_MANAGED` (Hora normal), `409 HOUR_CONCEPT_HAS_LEGACY_TIME_ENTRIES` (hay `TimeEntry` del concepto del modelo previo a 6L; no se borra nada) y `409 HOUR_CONCEPT_CHANGED_DURING_DELETE` (se cargaron horas mientras se eliminaba; la transacción no borró nada).
 
@@ -1105,6 +1129,8 @@ Los tres parámetros de alcance se envían juntos. `WITHIN` significa que algún
 El body A5 usa `orgScopes: [{ level, nodeId }]` (uno o más) y `salaryCategoryIds`. Un nodo abarca sus descendientes. El backend rechaza referencias inexistentes (`POSITION_SCOPE_INVALID`), nodos legados (`POSITION_SCOPE_LEGACY`), nodos inactivos agregados por primera vez (`POSITION_SCOPE_INACTIVE`) y duplicados/ancestro+descendiente (`POSITION_SCOPE_REDUNDANT`). Crear y reemplazar alcances, categorías y auditoría ocurre en una transacción `Serializable`; los cachés se invalidan después del commit.
 
 `Position.sectorId` continúa sólo como forma de los puestos archivados (CHECK de M2). Los puestos anteriores con `sectorId` y sin `orgScopes` se informan como pendientes de recarga: una edición que no toca alcance los conserva, sin conversión automática. Las altas nuevas no aceptan ni escriben `sectorId`.
+
+Eliminación controlada (`GET /api/positions/:id/deletion-preview` + `POST /api/positions/:id/deletion`, ver la sección común): las personas quedan sin puesto desde hoy (con historia); si alguien lo tuvo o una regla lo usa, el puesto se archiva y su alcance vigente se cierra desde hoy; si nadie lo usó, se borra con su configuración propia.
 
 `DELETE /api/positions/:id` (etapa A2 de la reorganización):
 
@@ -1800,7 +1826,7 @@ El resto de `entityType` (cierres, correcciones, novedades pendientes) no trae `
 - Reenviar el sector que la regla ya tiene, o editar otras dimensiones (por ejemplo "Domingos", por empresa empleadora), no cambia su alcance.
 - `companyId` es la empresa **empleadora** del legajo (`EmployeeCompany`).
 
-`DELETE /double-hour-rules/:id` elimina físicamente la regla y responde `{ data: { mode: "DELETED", id } }` sólo cuando puede retirar su traza y reinterpretar las horas sin tocar historia protegida.
+`DELETE /double-hour-rules/:id` elimina físicamente la regla y responde `{ data: { mode: "DELETED", id } }` sólo cuando puede retirar su traza y reinterpretar las horas sin tocar historia protegida. Dentro de la transacción la regla pasa primero a `INACTIVO` (el motor sólo lee reglas activas) y recién después se reinterpreta "como si no existiera" — hasta 2026-10-13 la reinterpretación corría con la regla todavía activa, no cambiaba multiplicadores y borraba aplicaciones también en períodos protegidos. La pantalla usa el flujo con vista previa (`GET /double-hour-rules/:id/deletion-preview`, que reinterpreta en una transacción revertida, y `POST /double-hour-rules/:id/deletion`; ver la sección común) con la auditoría dentro de la transacción.
 - Si existe traza dentro de un cierre `ENVIADO`, `APROBADO` o `CORRECCION_PENDIENTE`, responde `409 DOUBLE_HOUR_RULE_PROTECTED_HISTORY` y no escribe nada.
 - En los demás casos, la misma transacción retira su traza, borra la regla y reinterpreta las horas afectadas.
 - Para conservar una regla sin que aplique se usa `PATCH` con `status: "INACTIVO"`.

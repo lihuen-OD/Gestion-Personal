@@ -24,6 +24,8 @@ vi.mock("./employeeWorkLocations.repository", () => ({
     closeWithin: vi.fn(),
     correctWithin: vi.fn(),
     createBlockHistoryWithin: vi.fn(),
+    findOpenByNodesWithin: vi.fn(),
+    cancelWithin: vi.fn(),
   },
 }));
 vi.mock("../audit/audit.service", () => ({ auditService: { registerWithin: vi.fn() }, clearAuditDerivedCaches: vi.fn() }));
@@ -366,5 +368,39 @@ describe("unidades del establecimiento — cobertura explícita", () => {
 
     expect(result[0]!.establishments.map((item) => [item.name, item.coverage, item.units])).toEqual([["Campo La Esperanza", "ESTABLISHMENT", []], ["La Suiza", "ESTABLISHMENT", []]]);
     expect(result[1]!.zone).toMatchObject({ name: "Zona Sur", province: { name: "Entre Ríos" } });
+  });
+});
+
+describe("detachNodesWithin — eliminación controlada de nodos de Ubicaciones", () => {
+  const withEmployee = (value: ReturnType<typeof row>) => ({ ...value, employee: { id: "emp-1", legajo: "QA-A6", firstName: "Prueba", lastName: "Ubicaciones" } });
+  const context = { todayKey: "2026-10-13", reason: "Eliminación de la unidad del establecimiento “Lote Norte”", audit };
+
+  it("cierra ayer la vigente y sigue desde hoy sólo con lo que queda; cancela la futura que se queda sin nada; historial y auditoría por fila", async () => {
+    repo.cancelWithin.mockImplementation(() => { calls.push("cancel"); return Promise.resolve(); });
+    repo.findOpenByNodesWithin.mockResolvedValue([
+      withEmployee(row("loc-cur", ZONE_NORTH, "2026-01-01", null, [only(EST_SU, UNIT_N, UNIT_S)])),
+      withEmployee(row("loc-fut", ZONE_NORTH, "2027-01-01", null, [only(EST_SU, UNIT_N)])),
+      withEmployee(row("loc-full", ZONE_NORTH, "2026-01-01", null, full(EST_SU))),
+    ]);
+
+    const count = await employeeWorkLocationsService.detachNodesWithin(tx as never, { zoneIds: [], establishmentIds: [], unitIds: [UNIT_N] }, context);
+
+    // La asignación de establecimiento completo no cambia porque se elimine un lote.
+    expect(count).toBe(2);
+    expect(calls).toEqual(["close:loc-cur:2026-10-12", "create", "history", "audit", "cancel", "history", "audit"]);
+    expect(repo.createWithin).toHaveBeenCalledWith(tx, "emp-1", expect.objectContaining({ zoneId: ZONE_NORTH, establishments: [only(EST_SU, UNIT_S)], effectiveFrom: "2026-10-13", effectiveTo: null, reason: context.reason }), "user-rrhh");
+    expect(repo.cancelWithin).toHaveBeenCalledWith(tx, "loc-fut");
+    expect(repo.createBlockHistoryWithin).toHaveBeenCalledWith(tx, "emp-1", expect.objectContaining({ newValue: "Cambio · Zona Norte: La Suiza (Lote Sur) · desde el 13/10/2026, sin fecha de fin", reason: context.reason }), "user-rrhh");
+    expect(registerWithin.mock.calls.map(([, input]) => input.action)).toEqual(["UPDATE", "DELETE"]);
+  });
+
+  it("zona eliminada: la vigente termina ayer sin continuar (la persona queda sin ubicación en esa zona)", async () => {
+    repo.findOpenByNodesWithin.mockResolvedValue([withEmployee(row("loc-cur", ZONE_NORTH, "2026-01-01", null, full(EST_A, EST_B)))]);
+
+    await employeeWorkLocationsService.detachNodesWithin(tx as never, { zoneIds: [ZONE_NORTH], establishmentIds: [EST_A, EST_B], unitIds: [] }, context);
+
+    expect(calls).toEqual(["close:loc-cur:2026-10-12", "history", "audit"]);
+    expect(repo.createWithin).not.toHaveBeenCalled();
+    expect(repo.createBlockHistoryWithin).toHaveBeenCalledWith(tx, "emp-1", expect.objectContaining({ newValue: "Finalización · Zona Norte: Campo La Esperanza, Campo El Ombú · del 01/01/2026 al 12/10/2026", effectiveFrom: "2026-10-12" }), "user-rrhh");
   });
 });

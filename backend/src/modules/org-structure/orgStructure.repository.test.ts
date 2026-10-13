@@ -123,7 +123,10 @@ describe("orgStructureRepository — altas con el padre del modelo objetivo", ()
     await orgStructureRepository.getOverview();
     expect(mockedPrisma.company.findMany.mock.calls.at(0)?.[0]?.where).toEqual({ archivedAt: null });
     expect(mockedPrisma.sector.findMany.mock.calls.at(0)?.[0]?.where).toEqual({ archivedAt: null });
-    expect(mockedPrisma.zone.findMany.mock.calls.at(0)?.[0]?.where).toBeUndefined();
+    // Desde la eliminación controlada, zonas, provincias y centros de costo también pueden quedar archivados.
+    expect(mockedPrisma.zone.findMany.mock.calls.at(0)?.[0]?.where).toEqual({ archivedAt: null });
+    expect(mockedPrisma.province.findMany.mock.calls.at(0)?.[0]?.where).toEqual({ archivedAt: null });
+    expect(mockedPrisma.costCenter.findMany.mock.calls.at(0)?.[0]?.where).toEqual({ archivedAt: null });
     expect(mockedPrisma.establishmentUnit.findMany.mock.calls.at(0)?.[0]?.where).toEqual({ archivedAt: null });
   });
 });

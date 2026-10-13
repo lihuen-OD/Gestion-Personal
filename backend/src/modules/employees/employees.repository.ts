@@ -1093,6 +1093,11 @@ export const employeesRepository = {
   },
 
   /** Nombres de empresas ARCHIVADAS entre los IDs dados (A8 §12.4). */
+  // Eliminación controlada: el centro de costo archivado no recibe asignaciones nuevas.
+  findCostCenterForAssignment(costCenterId: string, db: PrismaTransactionClient = prisma) {
+    return db.costCenter.findUnique({ where: { id: costCenterId }, select: { name: true, archivedAt: true } });
+  },
+
   findArchivedCompanyNames(companyIds: string[]) {
     if (!companyIds.length) return Promise.resolve<string[]>([]);
     return prisma.company

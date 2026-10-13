@@ -23,11 +23,15 @@ vi.mock("./hourConcepts.repository", () => ({
     findWithUsage: vi.fn(),
     deletePermanently: vi.fn(),
     employeeReferences: vi.fn(),
+    transaction: vi.fn(),
+    findDeletionImpactWithin: vi.fn(),
+    deletePermanentlyWithin: vi.fn(),
+    employeeReferencesWithin: vi.fn(),
   },
 }));
 
 vi.mock("../audit/audit.service", () => ({
-  auditService: { register: vi.fn().mockResolvedValue(undefined) },
+  auditService: { register: vi.fn().mockResolvedValue(undefined), registerWithin: vi.fn().mockResolvedValue(undefined) },
 }));
 
 const repo = hourConceptsRepository as unknown as {
@@ -525,5 +529,47 @@ describe("auditoría — identidad humana del legajo, nunca el employeeId", () =
       expect(description).not.toContain(employeeUuid);
       expect(description).not.toContain(otherEmployeeUuid);
     }
+  });
+});
+
+describe("eliminación controlada de un concepto (vista previa y confirmación)", () => {
+  const tx = {
+    hourConcept: { findUnique: vi.fn().mockResolvedValue({ id: "hc-1", code: "HOR-005", name: "Prueba 02", systemRole: null }) },
+    user: { findUnique: vi.fn().mockResolvedValue({ role: "NIVEL_1_RRHH", status: "ACTIVO" }) },
+  };
+  const impact = (overrides: Record<string, unknown> = {}) => ({
+    breakdowns: [{ id: "b-1", employeeId: "emp-1", period: "2026-10" }], segments: [{ id: "s-1", employeeId: "emp-1", date: new Date("2026-10-05T00:00:00Z") }], workShifts: [],
+    novelties: [], rules: [{ id: "r-1", startTime: "22:00", endTime: "06:00" }], assignments: [{ employeeId: "emp-1", employee: { legajo: "31", firstName: "Juan", lastName: "Pérez" } }],
+    legacyTimeEntries: 0, pairs: [{ employeeId: "emp-1", period: "2026-10" }], protectedPeriods: new Map(), ...overrides,
+  });
+  const extendedRepo = hourConceptsRepository as unknown as Record<"transaction" | "findDeletionImpactWithin" | "deletePermanentlyWithin" | "employeeReferencesWithin", Mock>;
+
+  beforeEach(() => {
+    extendedRepo.transaction.mockImplementation((operation: (client: unknown) => unknown) => operation(tx));
+    extendedRepo.employeeReferencesWithin.mockResolvedValue(() => "Pérez, Juan · Legajo 31");
+    extendedRepo.deletePermanentlyWithin.mockResolvedValue({ concept: { id: "hc-1" }, deletedBreakdowns: 1, deletedRules: 1, deletedEmployeeAssignments: 1, reclassifiedSegments: 1, reclassifiedWorkShifts: 0, unlinkedNovelties: 0, rebuiltClosures: [] });
+  });
+
+  it("la vista previa resume lo que se borra, reclasifica y desvincula; un período protegido o cargas antiguas bloquean", async () => {
+    extendedRepo.findDeletionImpactWithin.mockResolvedValue(impact());
+    const preview = await hourConceptsService.previewDeletion("hc-1");
+    expect(preview.groups.map((group) => [group.key, group.count])).toEqual([["hourConcept.delete", 1], ["hourConcept.periods", 1], ["hourConcept.rows", 2], ["hourConcept.employees", 1], ["hourConcept.rules", 1]]);
+    expect(preview.blockers).toEqual([]);
+
+    extendedRepo.findDeletionImpactWithin.mockResolvedValue(impact({ legacyTimeEntries: 2, protectedPeriods: new Map([["emp-1:2026-09", "APROBADO"]]) }));
+    const blocked = await hourConceptsService.previewDeletion("hc-1");
+    expect(blocked.blockers.map((blocker) => blocker.code)).toEqual(["HOUR_CONCEPT_HAS_LEGACY_TIME_ENTRIES", "PERIOD_CLOSED"]);
+  });
+
+  it("confirmar revalida la huella dentro de la transacción y audita adentro; una huella vencida no borra nada", async () => {
+    extendedRepo.findDeletionImpactWithin.mockResolvedValue(impact());
+    const preview = await hourConceptsService.previewDeletion("hc-1");
+
+    await expect(hourConceptsService.executeDeletion("hc-1", { token: "a".repeat(64), confirmationText: "Prueba 02" }, { userId: "u1" })).rejects.toMatchObject({ statusCode: 409, code: "DELETION_PREVIEW_CHANGED" });
+    expect(extendedRepo.deletePermanentlyWithin).not.toHaveBeenCalled();
+
+    await hourConceptsService.executeDeletion("hc-1", { token: preview.token, confirmationText: "Prueba 02" }, { userId: "u1" });
+    expect(extendedRepo.deletePermanentlyWithin).toHaveBeenCalledWith(tx, "hc-1", { reason: "HOUR_CONCEPT_DELETED", hourConceptId: "hc-1", hourConceptCode: "HOR-005" });
+    expect(auditService.registerWithin).toHaveBeenCalledWith(tx, expect.objectContaining({ action: "DELETE", entity: "HourConcept", entityId: "hc-1" }));
   });
 });

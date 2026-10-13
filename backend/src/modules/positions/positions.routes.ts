@@ -2,6 +2,7 @@ import { Router } from "express";
 import { requireAuth } from "../../middlewares/auth";
 import { requireAnyRole } from "../../middlewares/authorization";
 import { asyncHandler } from "../../shared/http/asyncHandler";
+import { deletionConfirmationSchema } from "../../shared/deletion/deletionPlan";
 import { adminRoles, roles } from "../../shared/security/roles";
 import { validateBody } from "../../shared/validation/validateRequest";
 import { validateQuery } from "../../shared/validation/validateQuery";
@@ -31,3 +32,6 @@ positionsRouter.get("/:id", asyncHandler(positionsController.getById));
 positionsRouter.post("/", requireAnyRole(adminRoles), validateBody(createPositionSchema), asyncHandler(positionsController.create));
 positionsRouter.patch("/:id", requireAnyRole(adminRoles), validateBody(updatePositionSchema), asyncHandler(positionsController.update));
 positionsRouter.delete("/:id", requireAnyRole(adminRoles), asyncHandler(positionsController.remove));
+// Eliminación controlada con dependencias: vista previa y confirmación con la huella del plan.
+positionsRouter.get("/:id/deletion-preview", requireAnyRole(adminRoles), asyncHandler(positionsController.deletionPreview));
+positionsRouter.post("/:id/deletion", requireAnyRole(adminRoles), validateBody(deletionConfirmationSchema), asyncHandler(positionsController.executeDeletion));

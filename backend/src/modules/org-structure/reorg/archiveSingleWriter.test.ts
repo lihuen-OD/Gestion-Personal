@@ -4,12 +4,15 @@ import { describe, expect, it } from "vitest";
 
 /**
  * AT-3 (docs/decisions/A8_M2_PREPARATION.md §12.1 I1/I3): `archivedAt` tiene
- * un único escritor — la transacción de limpieza (`reorg/cleanupTransaction.ts`,
- * invocada sólo por `scripts/org-reorg-cleanup.ts`) y su reversión controlada
- * (`reorg/restoreTransaction.ts`, invocada por `scripts/org-reorg-restore.ts`). No existe
- * endpoint ni servicio de archivar/desarchivar, y ningún código de la app
- * escribe la columna. Los schemas de entrada la rechazan (orgStructure/positions
- * schemas tests); esto cubre lo que un test unitario por endpoint no ve.
+ * escritores cerrados — la transacción de limpieza (`reorg/cleanupTransaction.ts`,
+ * invocada sólo por `scripts/org-reorg-cleanup.ts`), su reversión controlada
+ * (`reorg/restoreTransaction.ts`, invocada por `scripts/org-reorg-restore.ts`) y,
+ * desde la eliminación controlada con dependencias (shared/deletion), las
+ * transacciones de eliminación de estructura y de puestos, que sólo ARCHIVAN
+ * (nunca desarchivan) lo que la historia necesita conservar. No existe endpoint
+ * ni servicio de archivar/desarchivar a pedido. Los schemas de entrada rechazan
+ * la columna (orgStructure/positions schemas tests); esto cubre lo que un test
+ * unitario por endpoint no ve.
  */
 const backend = join(__dirname, "..", "..", "..", "..");
 const src = join(backend, "src");
@@ -30,13 +33,23 @@ describe("AT-3 — archivo de un solo escritor", () => {
     for (const route of routes) expect(route.text, route.path).not.toMatch(/["'`][^"'`]*archiv[^"'`]*["'`]/i);
   });
 
-  it("ningún código de la app escribe archivedAt salvo las dos transacciones de reorganización", () => {
+  it("ningún código de la app escribe archivedAt salvo la reorganización y la eliminación controlada", () => {
     // Escrituras posibles: valor fecha/now en un objeto o en SQL crudo, o la columna dentro de `data:`.
     const write = /archivedAt"?\s*:\s*(new Date|now\(\)|Date\.now)|"archivedAt"\s*=\s*(now\(\)|\$\d|'|NULL)|SET\s+"archivedAt"|data:\s*\{[^}]*\barchivedAt\b/i;
     expect(sources.filter((file) => write.test(file.text)).map((file) => file.path).sort()).toEqual([
+      "src/modules/org-structure/orgStructure.deletion.ts",
       "src/modules/org-structure/reorg/cleanupTransaction.ts",
       "src/modules/org-structure/reorg/restoreTransaction.ts",
+      "src/modules/positions/positions.deletion.ts",
     ]);
+  });
+
+  it("la eliminación controlada sólo archiva: nunca vuelve archivedAt a NULL", () => {
+    for (const file of ["src/modules/org-structure/orgStructure.deletion.ts", "src/modules/positions/positions.deletion.ts"]) {
+      const text = sources.find((source) => source.path === file)?.text ?? "";
+      expect(text, file).toMatch(/archivedAt/);
+      expect(text, file).not.toMatch(/archivedAt"?\s*:\s*null|"archivedAt"\s*=\s*NULL/i);
+    }
   });
 
   it("ningún servicio de catálogo o de sus consumidores expone archivar/desarchivar", () => {

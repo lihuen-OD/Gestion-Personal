@@ -93,6 +93,7 @@ function fetchOverview() {
       select: { id: true, code: true, name: true, status: true, businessUnitId: true, areaId: true, isLegacy: true },
     }),
     prisma.costCenter.findMany({
+      where: { archivedAt: null },
       orderBy: { code: "asc" },
       select: {
         id: true,
@@ -109,10 +110,12 @@ function fetchOverview() {
     // Ubicaciones: una zona sin provincia es anterior a la provincia y queda
     // pendiente de recarga (no se infiere su provincia).
     prisma.zone.findMany({
+      where: { archivedAt: null },
       orderBy: { name: "asc" },
       select: { id: true, code: true, name: true, status: true, provinceId: true },
     }),
     prisma.province.findMany({
+      where: { archivedAt: null },
       orderBy: { name: "asc" },
       select: { id: true, code: true, name: true, status: true },
     }),
@@ -121,7 +124,37 @@ function fetchOverview() {
       orderBy: { name: "asc" },
       select: { id: true, code: true, name: true, status: true, establishmentId: true },
     }),
+    fetchReservedCodes(),
   ]);
+}
+
+// Códigos que ocupan los registros archivados (eliminación controlada): el
+// alta genera el código siguiente y no debe repetir uno reservado.
+async function fetchReservedCodes() {
+  const archived = { where: { archivedAt: { not: null } }, select: { code: true } } as const;
+  const [companies, businessUnits, sectors, areas, provinces, zones, establishments, establishmentUnits, costCenters] = await Promise.all([
+    prisma.company.findMany(archived),
+    prisma.businessUnit.findMany(archived),
+    prisma.sector.findMany(archived),
+    prisma.area.findMany(archived),
+    prisma.province.findMany(archived),
+    prisma.zone.findMany(archived),
+    prisma.establishment.findMany(archived),
+    prisma.establishmentUnit.findMany(archived),
+    prisma.costCenter.findMany(archived),
+  ]);
+  const codes = (rows: Array<{ code: string }>) => rows.map((row) => row.code);
+  return {
+    companies: codes(companies),
+    businessUnits: codes(businessUnits),
+    sectors: codes(sectors),
+    areas: codes(areas),
+    provinces: codes(provinces),
+    zones: codes(zones),
+    establishments: codes(establishments),
+    establishmentUnits: codes(establishmentUnits),
+    costCenters: codes(costCenters),
+  };
 }
 
 async function getCachedOverview(): Promise<OrgOverview> {
@@ -155,7 +188,7 @@ export interface OrgRecord {
   parentId: string | null;
   /** Registro del modelo anterior: clasificación persistida (`Sector`/`Area`/`Establishment.isLegacy`, A8-3); para el resto (nodos sin columna propia), false. */
   isLegacy: boolean;
-  /** A8-1 (§12.1): archivado ⇔ `archivedAt IS NOT NULL`. Sólo lo escribe la limpieza; `null` en los modelos sin la columna (centros de costo, zonas). */
+  /** A8-1 (§12.1): archivado ⇔ `archivedAt IS NOT NULL`. Lo escriben la limpieza A8 y la eliminación controlada (orgStructure.deletion.ts). */
   archivedAt: Date | null;
   counts: Partial<Record<OrgDependencyKey, number>>;
 }
@@ -225,8 +258,8 @@ const nodes: { [K in NodeKind]: NodeOps<K> } = {
   },
   province: {
     find: async (tx, id) => {
-      const row = await tx.province.findUnique({ where: { id }, select: { id: true, code: true, name: true, status: true, _count: { select: { zones: true } } } });
-      return row && { id: row.id, code: row.code, name: row.name, status: row.status, parentId: null, isLegacy: false, archivedAt: null, counts: row._count };
+      const row = await tx.province.findUnique({ where: { id }, select: { id: true, code: true, name: true, status: true, archivedAt: true, _count: { select: { zones: true } } } });
+      return row && { id: row.id, code: row.code, name: row.name, status: row.status, parentId: null, isLegacy: false, archivedAt: row.archivedAt, counts: row._count };
     },
     create: (tx, data) => tx.province.create({ data }),
     update: (tx, id, data) => tx.province.update({ where: { id }, data }),
@@ -234,9 +267,8 @@ const nodes: { [K in NodeKind]: NodeOps<K> } = {
   },
   zone: {
     find: async (tx, id) => {
-      const row = await tx.zone.findUnique({ where: { id }, select: { id: true, code: true, name: true, status: true, provinceId: true, _count: { select: { establishments: true } } } });
-      // La Zona no está en DELETE_ORDER: no tiene columna de archivo.
-      return row && { id: row.id, code: row.code, name: row.name, status: row.status, parentId: row.provinceId, isLegacy: false, archivedAt: null, counts: row._count };
+      const row = await tx.zone.findUnique({ where: { id }, select: { id: true, code: true, name: true, status: true, provinceId: true, archivedAt: true, _count: { select: { establishments: true } } } });
+      return row && { id: row.id, code: row.code, name: row.name, status: row.status, parentId: row.provinceId, isLegacy: false, archivedAt: row.archivedAt, counts: row._count };
     },
     create: (tx, data) => tx.zone.create({ data }),
     update: (tx, id, data) => tx.zone.update({ where: { id }, data }),
@@ -266,8 +298,8 @@ const nodes: { [K in NodeKind]: NodeOps<K> } = {
 
 const costCenterOps = {
   find: async (tx: Tx, id: string): Promise<OrgRecord | null> => {
-    const row = await tx.costCenter.findUnique({ where: { id }, select: { id: true, code: true, name: true, status: true, _count: { select: { employees: true, doubleHourRules: true, employeePeriods: true } } } });
-    return row && { id: row.id, code: row.code, name: row.name, status: row.status, parentId: null, isLegacy: false, archivedAt: null, counts: { ...row._count, laborHistory: row._count.employeePeriods } };
+    const row = await tx.costCenter.findUnique({ where: { id }, select: { id: true, code: true, name: true, status: true, archivedAt: true, _count: { select: { employees: true, doubleHourRules: true, employeePeriods: true } } } });
+    return row && { id: row.id, code: row.code, name: row.name, status: row.status, parentId: null, isLegacy: false, archivedAt: row.archivedAt, counts: { ...row._count, laborHistory: row._count.employeePeriods } };
   },
   // Sus vínculos propios se borran explícitamente antes que él (no se depende
   // del ON DELETE CASCADE de la base) — ver orgStructure.dependencies.ts.

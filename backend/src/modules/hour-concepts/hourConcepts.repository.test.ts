@@ -318,13 +318,13 @@ function transactionClient() {
   return {
     ...closureGuardMocks(),
     hourConcept: { update: vi.fn(), delete: vi.fn(), findFirstOrThrow: vi.fn() },
-    hourConceptBreakdown: { groupBy: vi.fn(), deleteMany: vi.fn(), updateMany: vi.fn(), update: vi.fn(), create: vi.fn(), createMany: vi.fn() },
-    timeSegment: { updateMany: vi.fn(), deleteMany: vi.fn() },
-    workShift: { updateMany: vi.fn(), deleteMany: vi.fn(), delete: vi.fn() },
-    novelty: { updateMany: vi.fn(), deleteMany: vi.fn() },
-    hourConceptRule: { deleteMany: vi.fn(), updateMany: vi.fn() },
-    employeeHourConcept: { deleteMany: vi.fn() },
-    timeEntry: { deleteMany: vi.fn(), updateMany: vi.fn(), delete: vi.fn() },
+    hourConceptBreakdown: { groupBy: vi.fn(), deleteMany: vi.fn(), updateMany: vi.fn(), update: vi.fn(), create: vi.fn(), createMany: vi.fn(), findMany: vi.fn().mockResolvedValue([]) },
+    timeSegment: { updateMany: vi.fn(), deleteMany: vi.fn(), findMany: vi.fn().mockResolvedValue([]) },
+    workShift: { updateMany: vi.fn(), deleteMany: vi.fn(), delete: vi.fn(), findMany: vi.fn().mockResolvedValue([]) },
+    novelty: { updateMany: vi.fn(), deleteMany: vi.fn(), findMany: vi.fn().mockResolvedValue([]) },
+    hourConceptRule: { deleteMany: vi.fn(), updateMany: vi.fn(), findMany: vi.fn().mockResolvedValue([]) },
+    employeeHourConcept: { deleteMany: vi.fn(), findMany: vi.fn().mockResolvedValue([]) },
+    timeEntry: { deleteMany: vi.fn(), updateMany: vi.fn(), delete: vi.fn(), count: vi.fn().mockResolvedValue(0) },
     attendancePunch: { deleteMany: vi.fn(), delete: vi.fn() },
   };
 }
@@ -429,6 +429,18 @@ describe("deletePermanently — eliminación definitiva transaccional", () => {
     expect(tx.novelty.updateMany).toHaveBeenCalledWith({ where: { targetHourConceptId: "prueba" }, data: { targetHourConceptId: null } });
     for (const destructive of [tx.timeSegment.deleteMany, tx.workShift.deleteMany, tx.workShift.delete, tx.novelty.deleteMany, tx.timeEntry.deleteMany, tx.timeEntry.updateMany, tx.timeEntry.delete, tx.attendancePunch.deleteMany, tx.attendancePunch.delete]) {
       expect(destructive).not.toHaveBeenCalled();
+    }
+  });
+
+  it("un tramo o una jornada en un período aprobado también bloquea (antes sólo se miraban los desgloses) y no escribe nada", async () => {
+    const tx = arrange();
+    tx.hourConceptBreakdown.groupBy.mockResolvedValue([]);
+    tx.timeSegment.findMany.mockResolvedValue([{ id: "seg-1", employeeId: "emp-9", date: new Date("2026-08-14T00:00:00.000Z") }]);
+    tx.monthlyTimeClosure.findMany.mockResolvedValue([{ employeeId: "emp-9", period: "2026-08", status: "APROBADO" }]);
+
+    await expect(hourConceptsRepository.deletePermanently("prueba", recalculation)).rejects.toMatchObject({ statusCode: 409, code: "PERIOD_CLOSED" });
+    for (const write of [tx.hourConceptBreakdown.deleteMany, tx.timeSegment.updateMany, tx.workShift.updateMany, tx.novelty.updateMany, tx.hourConceptRule.deleteMany, tx.employeeHourConcept.deleteMany, tx.hourConcept.delete]) {
+      expect(write).not.toHaveBeenCalled();
     }
   });
 

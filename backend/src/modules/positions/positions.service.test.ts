@@ -307,3 +307,35 @@ describe("archivo A8-1 — §12.1 I4 y §12.4 en puestos", () => {
     expect(auditService.registerWithin).not.toHaveBeenCalled();
   });
 });
+
+describe("positionsService.removeScopeNodesWithin — eliminación controlada de nodos de Organización", () => {
+  const tx = { position: { findUniqueOrThrow: vi.fn().mockResolvedValue({ id: "pos-1", code: "PUE-1", name: "Supervisor" }) } };
+  const context = { effectiveFrom: "2026-10-13", reason: "Eliminación del sector “Cosecha”", audit: { userId: "u1" } };
+  const recordScope = laborHistoryService.recordPositionScopeChangeWithin as unknown as Mock;
+
+  it("retira sólo los nodos eliminados, con historia por fecha y auditoría; el resto del alcance no cambia", async () => {
+    repo.findScopeKeys.mockResolvedValue([{ level: "SECTOR", sectorId: "sec-planta" }, { level: "AREA", areaId: "area-tractores" }]);
+    repo.resolveScopeNodes.mockResolvedValue({ companies: [], businessUnits: [], sectors: [{ id: "sec-planta", name: "Planta", status: "ACTIVO", businessUnitId: "bu-1", isLegacy: false, archivedAt: null, businessUnit: { companyId: "c-1" } }], areas: [] });
+
+    await expect(positionsService.removeScopeNodesWithin(tx as never, "pos-1", new Set(["AREA:area-tractores"]), context)).resolves.toEqual({ positionId: "pos-1", remaining: 1 });
+    expect(recordScope).toHaveBeenCalledWith(tx, { positionId: "pos-1", effectiveFrom: "2026-10-13", nodes: [{ level: "SECTOR", nodeId: "sec-planta", areaSectorId: null }], reason: context.reason, createdByUserId: "u1" });
+    expect(repo.updateWithin).toHaveBeenCalledWith(tx, "pos-1", { orgScopes: [{ level: "SECTOR", nodeId: "sec-planta" }] }, "u1");
+    expect(auditService.registerWithin).toHaveBeenCalledWith(tx, expect.objectContaining({ action: "UPDATE", entity: "Position", entityId: "pos-1" }));
+  });
+
+  it("sin nodos restantes queda sin alcance (pendiente de recarga): nunca se amplía", async () => {
+    repo.findScopeKeys.mockResolvedValue([{ level: "SECTOR", sectorId: "sec-cosecha" }]);
+
+    await positionsService.removeScopeNodesWithin(tx as never, "pos-1", new Set(["SECTOR:sec-cosecha"]), context);
+    expect(recordScope).toHaveBeenCalledWith(tx, expect.objectContaining({ nodes: [] }));
+    expect(repo.updateWithin).toHaveBeenCalledWith(tx, "pos-1", { orgScopes: [] }, "u1");
+    expect((auditService.registerWithin as unknown as Mock).mock.calls[0]![1].description).toContain("quedó sin alcance (pendiente de recarga)");
+  });
+
+  it("si el puesto no tenía esos nodos no escribe nada", async () => {
+    repo.findScopeKeys.mockResolvedValue([{ level: "COMPANY", companyId: "c-1" }]);
+    await expect(positionsService.removeScopeNodesWithin(tx as never, "pos-1", new Set(["SECTOR:otro"]), context)).resolves.toBeNull();
+    expect(recordScope).not.toHaveBeenCalled();
+    expect(repo.updateWithin).not.toHaveBeenCalled();
+  });
+});

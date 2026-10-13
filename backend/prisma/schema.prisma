@@ -612,12 +612,16 @@ model Sector {
 // Árbol de Ubicaciones, independiente de la Organización:
 // Provincia → Zona → Establecimiento → Unidad del establecimiento (opcional).
 model Province {
-  id        String       @id @default(uuid())
-  name      String
-  code      String       @unique
-  status    RecordStatus @default(ACTIVO)
-  createdAt DateTime     @default(now()) @db.Timestamptz(3)
-  updatedAt DateTime     @updatedAt @db.Timestamptz(3)
+  id         String       @id @default(uuid())
+  name       String
+  code       String       @unique
+  status     RecordStatus @default(ACTIVO)
+  // Archivo de un solo sentido de la eliminación controlada (shared/deletion):
+  // sale de catálogos y selectores pero se conserva porque lo referencia
+  // historia. Ninguna entrada de API lo escribe directamente.
+  archivedAt DateTime?    @db.Timestamptz(3)
+  createdAt  DateTime     @default(now()) @db.Timestamptz(3)
+  updatedAt  DateTime     @updatedAt @db.Timestamptz(3)
 
   zones Zone[]
 
@@ -629,6 +633,10 @@ model Zone {
   name       String
   code       String       @unique
   status     RecordStatus @default(ACTIVO)
+  // Archivo de un solo sentido de la eliminación controlada (shared/deletion):
+  // sale de catálogos y selectores pero se conserva porque lo referencia
+  // historia. Ninguna entrada de API lo escribe directamente.
+  archivedAt DateTime?    @db.Timestamptz(3)
   // Nulo sólo en zonas anteriores a la provincia: quedan pendientes de
   // recarga hasta que RRHH les asigne su provincia (no se infiere).
   provinceId String?
@@ -644,12 +652,16 @@ model Zone {
 }
 
 model CostCenter {
-  id        String       @id @default(uuid())
-  name      String
-  code      String       @unique
-  status    RecordStatus @default(ACTIVO)
-  createdAt DateTime     @default(now()) @db.Timestamptz(3)
-  updatedAt DateTime     @updatedAt @db.Timestamptz(3)
+  id         String       @id @default(uuid())
+  name       String
+  code       String       @unique
+  status     RecordStatus @default(ACTIVO)
+  // Archivo de un solo sentido de la eliminación controlada (shared/deletion):
+  // sale de catálogos y selectores pero se conserva porque lo referencia
+  // historia. Ninguna entrada de API lo escribe directamente.
+  archivedAt DateTime?    @db.Timestamptz(3)
+  createdAt  DateTime     @default(now()) @db.Timestamptz(3)
+  updatedAt  DateTime     @updatedAt @db.Timestamptz(3)
 
   employees       Employee[]
   companies       CostCenterCompany[]

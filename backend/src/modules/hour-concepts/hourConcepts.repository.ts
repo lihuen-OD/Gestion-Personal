@@ -6,7 +6,8 @@ import { associatedEmployeeSelect, buildEmployeeAssociationWhere } from "../../s
 import { employeeReferenceSelect, loadEmployeeReferences } from "../../shared/audit/employeeReference";
 import { countedBreakdownStatusWhere } from "../time-entries/workedTimeAccounting";
 import { findClosuresForHourConcept, rebuildClosureSnapshots, type ClosureSnapshotRecalculation } from "../workforce-management/closureSnapshot";
-import { assertClosurePeriodsWritable } from "../../shared/monthlyClosure/closurePeriodGuard";
+import { assertClosurePeriodsWritable, findProtectedClosurePeriods } from "../../shared/monthlyClosure/closurePeriodGuard";
+import { argentinaDateKey, calendarDateKey } from "../../shared/datetime/argentinaTime";
 import type { CreateHourConceptInput, ListHourConceptEmployeesQuery, ListHourConceptsQuery, UpdateHourConceptInput } from "./hourConcepts.schemas";
 
 // Cache en memoria para listados sin filtros. Etapa 14I.3: helper compartido
@@ -303,14 +304,43 @@ export const hourConceptsRepository = {
   // Un TimeEntry con este concepto (modelo previo a 6L) nunca se borra acá:
   // el service lo rechaza antes y la FK RESTRICT lo garantiza ante una carrera.
   deletePermanently(id: string, recalculation: ClosureSnapshotRecalculation) {
-    return prisma.$transaction(async (tx) => {
+    return prisma.$transaction((tx) => hourConceptsRepository.deletePermanentlyWithin(tx, id, recalculation), HISTORY_TRANSACTION_OPTIONS);
+  },
+
+  /**
+   * Lo que alcanza la eliminación (vista previa de shared/deletion), leído en
+   * la transacción que la ejecuta. Los pares empleado+período incluyen
+   * desgloses, tramos y jornadas: reclasificar un tramo o una jornada de un
+   * período enviado o aprobado también cambia historia protegida.
+   */
+  async findDeletionImpactWithin(tx: PrismaTransactionClient, id: string) {
+    const [breakdowns, segments, workShifts, novelties, rules, assignments, legacyTimeEntries] = await Promise.all([
+      tx.hourConceptBreakdown.findMany({ where: { hourConceptId: id }, select: { id: true, employeeId: true, period: true } }),
+      tx.timeSegment.findMany({ where: { hourConceptId: id }, select: { id: true, employeeId: true, date: true } }),
+      tx.workShift.findMany({ where: { hourConceptId: id }, select: { id: true, employeeId: true, startAt: true } }),
+      tx.novelty.findMany({ where: { targetHourConceptId: id }, select: { id: true, employee: { select: employeeReferenceSelect }, noveltyType: { select: { name: true } } } }),
+      tx.hourConceptRule.findMany({ where: { hourConceptId: id }, select: { id: true, startTime: true, endTime: true } }),
+      tx.employeeHourConcept.findMany({ where: { hourConceptId: id }, select: { employeeId: true, employee: { select: employeeReferenceSelect } } }),
+      tx.timeEntry.count({ where: { hourConceptId: id } }),
+    ]);
+    const pairs = [
+      ...breakdowns.map((row) => ({ employeeId: row.employeeId, period: row.period })),
+      ...segments.map((row) => ({ employeeId: row.employeeId, period: calendarDateKey(row.date).slice(0, 7) })),
+      ...workShifts.map((row) => ({ employeeId: row.employeeId, period: argentinaDateKey(row.startAt).slice(0, 7) })),
+    ];
+    const protectedPeriods = await findProtectedClosurePeriods(tx, pairs);
+    return { breakdowns, segments, workShifts, novelties, rules, assignments, legacyTimeEntries, pairs, protectedPeriods };
+  },
+
+  async deletePermanentlyWithin(tx: PrismaTransactionClient, id: string, recalculation: ClosureSnapshotRecalculation) {
       const [fallback, pairs] = await Promise.all([
         tx.hourConcept.findFirstOrThrow({ where: { systemRole: "NORMAL_BASE" }, select: { id: true, name: true } }),
         countedBreakdownPairs(tx, id),
       ]);
-      // Todos los desgloses del concepto (no sólo los que cuentan) se borran: se verifican todos.
-      const allPairs = await tx.hourConceptBreakdown.groupBy({ by: ["employeeId", "period"], where: { hourConceptId: id } });
-      await assertConceptHistoryWritable(tx, allPairs);
+      // Todo lo que se borra o se reclasifica (desgloses, tramos y jornadas) se
+      // verifica contra los cierres protegidos, no sólo los desgloses.
+      const { pairs: touchedPairs } = await hourConceptsRepository.findDeletionImpactWithin(tx, id);
+      await assertConceptHistoryWritable(tx, touchedPairs);
       const closures = await findClosuresForHourConcept(tx, id, pairs);
       const breakdowns = await tx.hourConceptBreakdown.deleteMany({ where: { hourConceptId: id } });
       const segments = await tx.timeSegment.updateMany({
@@ -333,6 +363,13 @@ export const hourConceptsRepository = {
         unlinkedNovelties: novelties.count,
         rebuiltClosures,
       };
-    }, HISTORY_TRANSACTION_OPTIONS);
+  },
+
+  transaction<T>(operation: (tx: PrismaTransactionClient) => Promise<T>) {
+    return prisma.$transaction(operation, HISTORY_TRANSACTION_OPTIONS);
+  },
+
+  employeeReferencesWithin(tx: PrismaTransactionClient, employeeIds: string[]) {
+    return loadEmployeeReferences(tx, employeeIds);
   },
 };

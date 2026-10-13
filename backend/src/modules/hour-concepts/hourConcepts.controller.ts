@@ -2,6 +2,7 @@ import type { RequestHandler } from "express";
 import { requestAuditContext } from "../../shared/audit/requestAuditContext";
 import { createTtlCache } from "../../shared/cache/ttlCache";
 import { requireParam } from "../../shared/http/params";
+import { deletionConflictResponse } from "../../shared/deletion/deletionPlan";
 import { clearEmployeeReadCaches } from "../employees/employees.controller";
 import { invalidateTimeGridCatalogCache } from "../employees/employees.repository";
 import { clearNoveltiesReadCaches } from "../novelties/novelties.cache";
@@ -85,5 +86,21 @@ export const hourConceptsController = {
     const result = await hourConceptsService.remove(requireParam(req, "id"), requestAuditContext(req));
     clearHourConceptDependentReadCaches();
     res.json({ data: result });
+  }) satisfies RequestHandler,
+
+  // Eliminación controlada (shared/deletion): vista previa y confirmación con la huella del plan.
+  deletionPreview: (async (req, res) => {
+    res.json({ data: await hourConceptsService.previewDeletion(requireParam(req, "id")) });
+  }) satisfies RequestHandler,
+  executeDeletion: (async (req, res) => {
+    try {
+      const result = await hourConceptsService.executeDeletion(requireParam(req, "id"), req.body, requestAuditContext(req));
+      clearHourConceptDependentReadCaches();
+      res.json({ data: result });
+    } catch (error) {
+      const conflict = deletionConflictResponse(error);
+      if (!conflict) throw error;
+      res.status(conflict.status).json(conflict.body);
+    }
   }) satisfies RequestHandler,
 };

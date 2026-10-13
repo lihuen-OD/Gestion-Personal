@@ -3,6 +3,8 @@ import { requestAuditContext } from "../../shared/audit/requestAuditContext";
 import { createTtlCache } from "../../shared/cache/ttlCache";
 import { requireParam } from "../../shared/http/params";
 import type { ListPositionEmployeesQuery, ListPositionOptionsQuery, ListPositionsQuery } from "./positions.schemas";
+import { deletionConflictResponse } from "../../shared/deletion/deletionPlan";
+import { positionsDeletion } from "./positions.deletion";
 import { positionsService } from "./positions.service";
 
 // Etapa 14D.4: mismo patrón ya usado en `employees.controller.ts` para
@@ -54,5 +56,21 @@ export const positionsController = {
     const item = await positionsService.remove(requireParam(req, "id"), requestAuditContext(req));
     positionOptionsCache.clear();
     res.json({ data: item });
+  }) satisfies RequestHandler,
+
+  // Eliminación controlada con dependencias (shared/deletion).
+  deletionPreview: (async (req, res) => {
+    res.json({ data: await positionsDeletion.preview(requireParam(req, "id")) });
+  }) satisfies RequestHandler,
+  executeDeletion: (async (req, res) => {
+    try {
+      const result = await positionsDeletion.execute(requireParam(req, "id"), req.body, requestAuditContext(req));
+      positionOptionsCache.clear();
+      res.json({ data: result });
+    } catch (error) {
+      const conflict = deletionConflictResponse(error);
+      if (!conflict) throw error;
+      res.status(conflict.status).json(conflict.body);
+    }
   }) satisfies RequestHandler,
 };

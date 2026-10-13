@@ -164,10 +164,10 @@ async function assertNoNewLegacyLinks(
 
 export const orgStructureService = {
   async getOverview() {
-    const [companies, businessUnits, establishments, areas, sectors, costCenters, zones, provinces, establishmentUnits] =
+    const [companies, businessUnits, establishments, areas, sectors, costCenters, zones, provinces, establishmentUnits, reservedCodes] =
       await orgStructureRepository.getOverview();
 
-    return { companies, businessUnits, sectors, areas, provinces, zones, establishments, establishmentUnits, costCenters };
+    return { companies, businessUnits, sectors, areas, provinces, zones, establishments, establishmentUnits, costCenters, reservedCodes };
   },
 
   async createNode<K extends NodeKind>(kind: K, input: NodeInputs[K][0], audit?: AuditContext): Promise<CatalogRow> {

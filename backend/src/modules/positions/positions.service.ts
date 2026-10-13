@@ -195,6 +195,33 @@ export const positionsService = {
     return positionsRepository.findById(item.id);
   },
 
+  /**
+   * Eliminación controlada de nodos de Organización (shared/deletion): retira
+   * esos nodos del alcance compartido del puesto desde `effectiveFrom`, con la
+   * historia por fecha y la protección de cierres de sus ocupantes, dentro de
+   * la transacción de la eliminación. Si no queda ningún nodo, el puesto queda
+   * "sin alcance" (pendiente de recarga): nunca se amplía ni se borra.
+   */
+  async removeScopeNodesWithin(tx: PrismaTransactionClient, positionId: string, removedKeys: ReadonlySet<string>, context: { effectiveFrom: string; reason: string; audit?: AuditContext }) {
+    const position = await tx.position.findUniqueOrThrow({ where: { id: positionId }, select: { id: true, code: true, name: true } });
+    const current = (await positionsRepository.findScopeKeys(tx, positionId)).map((scope) => ({ level: scope.level, nodeId: (scope.companyId || scope.businessUnitId || scope.sectorId || scope.areaId)! }));
+    const remaining = current.filter((scope) => !removedKeys.has(scopeKey(scope)));
+    if (remaining.length === current.length) return null;
+    const nodes = await validateScopes(tx, remaining, new Set(remaining.map(scopeKey)));
+    const scopeChange = await laborHistoryService.recordPositionScopeChangeWithin(tx, { positionId, effectiveFrom: context.effectiveFrom, nodes, reason: context.reason, createdByUserId: context.audit?.userId || null });
+    await positionsRepository.updateWithin(tx, positionId, { orgScopes: remaining }, context.audit?.userId || undefined);
+    await auditService.registerWithin(tx, {
+      ...context.audit,
+      action: "UPDATE",
+      entity: "Position",
+      entityId: positionId,
+      description: `Se actualizó puesto ${position.code} - ${position.name}: se retiraron del alcance nodos eliminados${remaining.length ? "" : " y quedó sin alcance (pendiente de recarga)"}.${scopeChangeSummary(scopeChange, context.reason)}`,
+      before: { orgScopes: current } as Prisma.InputJsonValue,
+      after: { orgScopes: remaining, scopeHistory: scopeChange } as Prisma.InputJsonValue,
+    });
+    return { positionId, remaining: remaining.length };
+  },
+
   // Con personas o reglas de horas especiales que lo referencian, el puesto se
   // inactiva (nunca se borra: ver positionsRepository.removeOrInactivate). La
   // auditoría se escribe en la misma transacción; los cachés, después.

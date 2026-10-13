@@ -53,7 +53,7 @@ export const employeeWorkLocationsRepository = {
   },
 
   findZone(db: PrismaTransactionClient, zoneId: string) {
-    return db.zone.findUnique({ where: { id: zoneId }, select: { id: true, name: true, status: true } });
+    return db.zone.findUnique({ where: { id: zoneId }, select: { id: true, name: true, status: true, archivedAt: true } });
   },
 
   findEstablishments(db: PrismaTransactionClient, ids: string[]) {
@@ -113,6 +113,32 @@ export const employeeWorkLocationsRepository = {
     await db.employeeWorkLocationUnit.deleteMany({ where: { workLocationId: id } });
     await db.employeeWorkLocationEstablishment.deleteMany({ where: { workLocationId: id } });
     await employeeWorkLocationsRepository.createSelectionsWithin(db, id, data.establishments);
+  },
+
+  /**
+   * Eliminación controlada: asignaciones que todavía rigen o rigen a futuro
+   * (no terminadas antes de `todayKey`) y usan alguno de los nodos que se
+   * eliminan. Las pasadas no se tocan: son historia.
+   */
+  findOpenByNodesWithin(db: PrismaTransactionClient, nodes: { zoneIds: string[]; establishmentIds: string[]; unitIds: string[] }, todayKey: string) {
+    const touches: Prisma.EmployeeWorkLocationWhereInput[] = [
+      ...(nodes.zoneIds.length ? [{ zoneId: { in: nodes.zoneIds } }] : []),
+      ...(nodes.establishmentIds.length ? [{ establishments: { some: { establishmentId: { in: nodes.establishmentIds } } } }] : []),
+      ...(nodes.unitIds.length ? [{ establishments: { some: { units: { some: { unitId: { in: nodes.unitIds } } } } } }] : []),
+    ];
+    if (!touches.length) return Promise.resolve([]);
+    return db.employeeWorkLocation.findMany({
+      where: { AND: [{ OR: [{ effectiveTo: null }, { effectiveTo: { gte: argentinaCalendarDate(todayKey) } }] }, { OR: touches }] },
+      include: { ...workLocationInclude, employee: { select: { id: true, ...employeeReferenceSelect } } },
+      orderBy: [{ employeeId: "asc" }, { effectiveFrom: "asc" }],
+    });
+  },
+
+  /** Cancela una asignación que todavía no rige (sin CASCADE: unidades, establecimientos y fila). */
+  async cancelWithin(db: PrismaTransactionClient, id: string) {
+    await db.employeeWorkLocationUnit.deleteMany({ where: { workLocationId: id } });
+    await db.employeeWorkLocationEstablishment.deleteMany({ where: { workLocationId: id } });
+    await db.employeeWorkLocation.delete({ where: { id }, select: { id: true } });
   },
 
   // Historial visible del legajo, en la misma transacción que las filas.

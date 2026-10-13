@@ -1,4 +1,5 @@
 import type { RequestHandler } from "express";
+import { deletionConflictResponse } from "../../shared/deletion/deletionPlan";
 import type { DoubleHourRuleKind } from "@prisma/client";
 import { requestAuditContext } from "../../shared/audit/requestAuditContext";
 import { requireParam } from "../../shared/http/params";
@@ -143,6 +144,23 @@ export const workforceController = {
     // La regla reinterpreta horas ya cargadas: equivalencias, grillas y cierres.
     clearWorkedTimeDerivedReadCaches();
     res.json({data});
+  }) satisfies RequestHandler,
+  // Eliminación controlada (shared/deletion): vista previa con la reinterpretación
+  // calculada en una transacción revertida y confirmación con su huella.
+  doubleRuleDeletionPreview: (async (req,res)=>{
+    res.json({data: await workforceService.previewDoubleRuleDeletion(requireParam(req,"id"))});
+  }) satisfies RequestHandler,
+  executeDoubleRuleDeletion: (async (req,res)=>{
+    try {
+      const data=await workforceService.executeDoubleRuleDeletion(requireParam(req,"id"),req.body,requestAuditContext(req));
+      clearDoubleRulesReadCache();
+      clearWorkedTimeDerivedReadCaches();
+      res.json({data});
+    } catch (error) {
+      const conflict=deletionConflictResponse(error);
+      if (!conflict) throw error;
+      res.status(conflict.status).json(conflict.body);
+    }
   }) satisfies RequestHandler,
   // Etapa 12B: req.query.kind ya viene validado/coercido por
   // validateQuery(calendarRangeQuerySchema) (mismo patrón que from/to) —

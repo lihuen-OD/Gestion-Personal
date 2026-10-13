@@ -1,7 +1,10 @@
 import type { Request, RequestHandler, Response } from "express";
 import { requestAuditContext } from "../../shared/audit/requestAuditContext";
 import { requireParam } from "../../shared/http/params";
+import { AppError } from "../../shared/errors/AppError";
+import { deletionConflictResponse } from "../../shared/deletion/deletionPlan";
 import type { OrgEntityKind } from "./orgStructure.dependencies";
+import { orgStructureDeletion } from "./orgStructure.deletion";
 import type { NodeKind } from "./orgStructure.repository";
 import { orgStructureService } from "./orgStructure.service";
 
@@ -17,6 +20,25 @@ const updateNode = (kind: NodeKind): AsyncHandler => async (req, res) => {
 const deleteEntity = (kind: OrgEntityKind): AsyncHandler => async (req, res) => {
   res.json({ data: await orgStructureService.deleteEntity(kind, requireParam(req, "id"), requestAuditContext(req)) });
 };
+
+// Colección de la URL → tipo de registro (eliminación controlada).
+const kindByCollection: Record<string, OrgEntityKind> = {
+  companies: "company",
+  "business-units": "businessUnit",
+  sectors: "sector",
+  areas: "area",
+  provinces: "province",
+  zones: "zone",
+  establishments: "establishment",
+  "establishment-units": "establishmentUnit",
+  "cost-centers": "costCenter",
+};
+
+function kindOf(req: Request): OrgEntityKind {
+  const kind = kindByCollection[requireParam(req, "collection")];
+  if (!kind) throw new AppError("Tipo de registro desconocido.", 404, "RECORD_NOT_FOUND");
+  return kind;
+}
 
 export const orgStructureController = {
   overview: (async (_req, res) => {
@@ -52,4 +74,17 @@ export const orgStructureController = {
   deleteEstablishment: deleteEntity("establishment"),
   deleteEstablishmentUnit: deleteEntity("establishmentUnit"),
   deleteCostCenter: deleteEntity("costCenter"),
+
+  deletionPreview: (async (req, res) => {
+    res.json({ data: await orgStructureDeletion.preview(kindOf(req), requireParam(req, "id")) });
+  }) satisfies RequestHandler,
+  executeDeletion: (async (req, res) => {
+    try {
+      res.json({ data: await orgStructureDeletion.execute(kindOf(req), requireParam(req, "id"), req.body, requestAuditContext(req)) });
+    } catch (error) {
+      const conflict = deletionConflictResponse(error);
+      if (!conflict) throw error;
+      res.status(conflict.status).json(conflict.body);
+    }
+  }) satisfies RequestHandler,
 };

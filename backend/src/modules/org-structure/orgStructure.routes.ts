@@ -3,6 +3,7 @@ import { requireAuth } from "../../middlewares/auth";
 import { requireAnyRole } from "../../middlewares/authorization";
 import { asyncHandler } from "../../shared/http/asyncHandler";
 import { adminRoles } from "../../shared/security/roles";
+import { deletionConfirmationSchema } from "../../shared/deletion/deletionPlan";
 import { validateBody } from "../../shared/validation/validateRequest";
 import { orgStructureController } from "./orgStructure.controller";
 import {
@@ -68,3 +69,8 @@ orgStructureRouter.delete("/zones/:id", requireAnyRole(adminRoles), asyncHandler
 orgStructureRouter.post("/cost-centers", requireAnyRole(adminRoles), validateBody(createCostCenterSchema), asyncHandler(orgStructureController.createCostCenter));
 orgStructureRouter.patch("/cost-centers/:id", requireAnyRole(adminRoles), validateBody(updateCostCenterSchema), asyncHandler(orgStructureController.updateCostCenter));
 orgStructureRouter.delete("/cost-centers/:id", requireAnyRole(adminRoles), asyncHandler(orgStructureController.deleteCostCenter));
+
+// Eliminación controlada con dependencias (shared/deletion): vista previa y
+// confirmación con la huella del plan. Mismo permiso que altas y ediciones.
+orgStructureRouter.get("/:collection/:id/deletion-preview", requireAnyRole(adminRoles), asyncHandler(orgStructureController.deletionPreview));
+orgStructureRouter.post("/:collection/:id/deletion", requireAnyRole(adminRoles), validateBody(deletionConfirmationSchema), asyncHandler(orgStructureController.executeDeletion));

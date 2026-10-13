@@ -3,6 +3,7 @@ import { requireAuth } from "../../middlewares/auth";
 import { requireAnyRole } from "../../middlewares/authorization";
 import { asyncHandler } from "../../shared/http/asyncHandler";
 import { adminRoles, roles } from "../../shared/security/roles";
+import { deletionConfirmationSchema } from "../../shared/deletion/deletionPlan";
 import { validateBody } from "../../shared/validation/validateRequest";
 import { validateQuery } from "../../shared/validation/validateQuery";
 import { hourConceptsController } from "./hourConcepts.controller";
@@ -28,6 +29,9 @@ hourConceptsRouter.patch("/:id", requireAnyRole(adminRoles), validateBody(update
 // transacción (hourConcepts.service.ts::remove). Para conservar la historia
 // se deshabilita (PATCH status INACTIVO), no se elimina.
 hourConceptsRouter.delete("/:id", requireAnyRole(adminRoles), asyncHandler(hourConceptsController.remove));
+// Eliminación controlada: vista previa y confirmación con la huella del plan.
+hourConceptsRouter.get("/:id/deletion-preview", requireAnyRole(adminRoles), asyncHandler(hourConceptsController.deletionPreview));
+hourConceptsRouter.post("/:id/deletion", requireAnyRole(adminRoles), validateBody(deletionConfirmationSchema), asyncHandler(hourConceptsController.executeDeletion));
 // Empleados habilitados para el concepto (Etapa 8G) — mismo criterio de
 // lectura cruzada que /employees: RRHH/supervisión/carga horaria.
 hourConceptsRouter.get(

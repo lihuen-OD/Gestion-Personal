@@ -21,6 +21,7 @@ vi.mock("./employees.repository", () => ({
     findPositionForAssignmentWithin: vi.fn(),
     findArchivedCompanyNames: vi.fn().mockResolvedValue([]),
     findArchivedCompanyNamesWithin: vi.fn().mockResolvedValue([]),
+    findCostCenterForAssignment: vi.fn().mockResolvedValue({ name: "CC", archivedAt: null }),
     update: vi.fn(),
     transaction: vi.fn((operation: (tx: unknown) => unknown) => operation({})),
     findLaborNamesWithin: vi.fn().mockResolvedValue({ positions: new Map(), costCenters: new Map(), companies: new Map() }),
