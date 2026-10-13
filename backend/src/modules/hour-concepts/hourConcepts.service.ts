@@ -108,6 +108,7 @@ async function planHourConceptDeletionWithin(tx: PrismaTransactionClient, id: st
   const concept = await tx.hourConcept.findUnique({ where: { id }, select: { id: true, code: true, name: true, systemRole: true } });
   if (!concept) throw new AppError("Hour concept not found", 404, "HOUR_CONCEPT_NOT_FOUND");
   const impact = await hourConceptsRepository.findDeletionImpactWithin(tx, id);
+  const fallback = await tx.hourConcept.findFirstOrThrow({ where: { systemRole: "NORMAL_BASE" }, select: { id: true, name: true } });
   const reference = await hourConceptsRepository.employeeReferencesWithin(tx, [...new Set(impact.pairs.map((pair) => pair.employeeId))]);
   const pairNames = new Map(impact.pairs.map((pair) => [`${pair.employeeId}:${pair.period}`, `${reference(pair.employeeId)} · ${humanizePeriodEs(pair.period)}`]));
   const builder = new DeletionPlanBuilder()
@@ -123,7 +124,23 @@ async function planHourConceptDeletionWithin(tx: PrismaTransactionClient, id: st
     const periods = [...new Set([...impact.protectedPeriods.keys()].map((key) => key.split(":")[1]!))].sort().map(humanizePeriodEs).join(", ");
     builder.block("PERIOD_CLOSED", `Tiene horas en períodos enviados o aprobados (${periods}), que están protegidos: inactivalo o corregí esos períodos mediante el procedimiento explícito de RRHH.`);
   }
-  return { concept, preview: builder.build({ kind: "hourConcept", id, code: concept.code, name: concept.name, label: "Concepto horario" }) };
+  return {
+    concept,
+    preview: builder.build(
+      { kind: "hourConcept", id, code: concept.code, name: concept.name, label: "Concepto horario" },
+      {
+        deleteConceptId: id,
+        fallbackConcept: fallback,
+        deletedBreakdowns: impact.breakdowns,
+        reclassifiedSegments: impact.segments.map((row) => ({ ...row, fromHourConceptId: id, toHourConceptId: fallback.id, toHourConceptName: fallback.name, toRuleId: null, toStatus: "SIN_CONCEPTO_COMPATIBLE" })),
+        reclassifiedWorkShifts: impact.workShifts.map((row) => ({ ...row, fromHourConceptId: id, toHourConceptId: fallback.id, toHourConceptName: fallback.name })),
+        unlinkedNovelties: impact.novelties.map((row) => ({ id: row.id, fromHourConceptId: id, toHourConceptId: null })),
+        deletedRules: impact.rules,
+        removedAssignments: impact.assignments.map((row) => ({ employeeId: row.employeeId, hourConceptId: id })),
+        protectedPeriods: [...impact.protectedPeriods.entries()],
+      },
+    ),
+  };
 }
 
 export const hourConceptsService = {

@@ -34,9 +34,10 @@ async function buildPlan(db: Db, id: string, todayKey: string) {
     select: { id: true, code: true, name: true, archivedAt: true, _count: { select: { employeePeriods: true, orgScopes: true, salaryCategories: true, scopePeriods: true } } },
   });
   if (!position) throw new AppError("Position not found", 404, "POSITION_NOT_FOUND");
-  const [employees, rules] = await Promise.all([
+  const [employees, rules, scopes] = await Promise.all([
     db.employee.findMany({ where: { positionId: id }, select: { id: true, ...employeeReferenceSelect } }),
     db.doubleHourRule.findMany({ where: { positionId: id }, select: { id: true, name: true } }),
+    db.positionOrgScope.findMany({ where: { positionId: id }, select: { id: true, level: true, companyId: true, businessUnitId: true, sectorId: true, areaId: true } }),
   ]);
   const archive = position._count.employeePeriods > 0 || employees.length > 0 || rules.length > 0;
   const label = `${position.code} · ${position.name}`;
@@ -51,7 +52,22 @@ async function buildPlan(db: Db, id: string, todayKey: string) {
     builder.block("DELETION_CLOSURE_PROTECTED", `Hay ${protectedPeriods.size} ${protectedPeriods.size === 1 ? "legajo" : "legajos"} con el período ${todayKey.slice(0, 7)} ya enviado o aprobado: el cambio desde hoy no se puede registrar hasta que se pida su corrección.`);
   }
   if (position.archivedAt) builder.block("POSITION_ARCHIVED", `El puesto “${position.name}” ya está archivado.`);
-  return { preview: builder.build({ kind: "position", id, code: position.code, name: position.name, label: "Puesto" }), archive, employees, scopeCount: position._count.orgScopes };
+  return {
+    preview: builder.build(
+      { kind: "position", id, code: position.code, name: position.name, label: "Puesto" },
+      {
+        effectiveDate: todayKey,
+        position: { id, fate: archive ? "ARCHIVE" : "DELETE", archivedAt: position.archivedAt },
+        employeePositions: employees.map((employee) => ({ employeeId: employee.id, fromPositionId: id, toPositionId: null, effectiveFrom: todayKey })),
+        scopes: scopes.map((scope) => ({ ...scope, effectiveTo: todayKey })),
+        retainedRuleReferences: rules.map((rule) => ({ ruleId: rule.id, positionId: id })),
+        protectedPeriods: [...protectedPeriods].sort(),
+      },
+    ),
+    archive,
+    employees,
+    scopes,
+  };
 }
 
 export const positionsDeletion = {
@@ -72,9 +88,8 @@ export const positionsDeletion = {
         for (const employee of plan.employees) await employeesService.detachLaborReferencesWithin(tx, employee.id, { positionId: id }, context);
         if (plan.archive) {
           // Alcance vigente cerrado desde hoy (queda en la historia por fecha) y puesto archivado.
-          if (plan.scopeCount) {
-            const scopes = await tx.positionOrgScope.findMany({ where: { positionId: id }, select: { level: true, companyId: true, businessUnitId: true, sectorId: true, areaId: true } });
-            await positionsService.removeScopeNodesWithin(tx, id, new Set(scopes.map((scope) => `${scope.level}:${scope.companyId || scope.businessUnitId || scope.sectorId || scope.areaId}`)), context);
+          if (plan.scopes.length) {
+            await positionsService.removeScopeNodesWithin(tx, id, new Set(plan.scopes.map((scope) => `${scope.level}:${scope.companyId || scope.businessUnitId || scope.sectorId || scope.areaId}`)), context);
           }
           await tx.position.update({ where: { id }, data: { archivedAt: new Date() } });
         } else {

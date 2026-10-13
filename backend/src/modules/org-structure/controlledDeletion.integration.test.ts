@@ -110,16 +110,17 @@ describe.skipIf(!url)("eliminación controlada — PostgreSQL local real", () =>
     }
   }, 60_000);
 
-  it("dos conexiones: una dependencia nueva invalida el token y la segunda confirmación usa el impacto actualizado", async () => {
+  it("dos conexiones: la misma selección con otra vigencia invalida el token y la segunda confirmación usa el plan actualizado", async () => {
     const f = await baseFixture();
     const first = await orgDeletion.preview("zone", f.zone.id);
-    await other.establishment.create({ data: { id: "it-est-concurrent", code: "IT-EC", name: "Granja concurrente", isLegacy: false, zoneId: f.zone.id } });
+    await other.employeeWorkLocation.update({ where: { id: f.location.id }, data: { effectiveFrom: new Date("2026-01-02") } });
     await expect(orgDeletion.execute("zone", f.zone.id, { token: first.token, confirmationText: first.confirmationText }, actor)).rejects.toMatchObject({ code: "DELETION_PREVIEW_CHANGED" });
-    expect(await db.establishment.count({ where: { zoneId: f.zone.id } })).toBe(3);
+    expect(await db.establishment.count({ where: { zoneId: f.zone.id } })).toBe(2);
+    expect(await db.employeeWorkLocation.findUniqueOrThrow({ where: { id: f.location.id } })).toMatchObject({ effectiveFrom: new Date("2026-01-02"), effectiveTo: null });
     expect(await db.auditLog.count()).toBe(0);
     const second = await orgDeletion.preview("zone", f.zone.id);
     expect(second.token).not.toBe(first.token);
-    expect(second.groups.filter((group) => group.key.startsWith("establishment.")).reduce((total, group) => total + group.count, 0)).toBe(3);
+    expect(second.groups.filter((group) => group.key.startsWith("establishment.")).reduce((total, group) => total + group.count, 0)).toBe(2);
     await orgDeletion.execute("zone", f.zone.id, { token: second.token, confirmationText: second.confirmationText }, actor);
     expect(await db.auditLog.count({ where: { entity: "Zone", entityId: f.zone.id } })).toBe(1);
   }, 60_000);

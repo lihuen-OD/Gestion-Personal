@@ -192,7 +192,7 @@ async function buildPlan(db: Db, kind: Kind, id: string, todayKey: string) {
     removedScopeKeys.size
       ? db.positionOrgScope.findMany({
         where: { OR: [{ companyId: { in: ids.company } }, { businessUnitId: { in: ids.businessUnit } }, { sectorId: { in: ids.sector } }, { areaId: { in: ids.area } }] },
-        select: { positionId: true, position: { select: { code: true, name: true, _count: { select: { orgScopes: true } } } } },
+        select: { id: true, positionId: true, level: true, companyId: true, businessUnitId: true, sectorId: true, areaId: true, position: { select: { code: true, name: true, _count: { select: { orgScopes: true } } } } },
       })
       : [],
     ids.company.length ? db.user.findMany({ where: { companyId: { in: ids.company } }, select: { id: true, name: true, email: true } }) : [],
@@ -243,7 +243,21 @@ async function buildPlan(db: Db, kind: Kind, id: string, todayKey: string) {
   }
   if (root.archivedAt) builder.block("ORG_STRUCTURE_ARCHIVED_RECORD", `${kindLabels[kind][0]} “${root.name}” ya está archivado.`);
 
-  const preview = builder.build({ kind, id, code: root.code, name: root.name, label: kindLabels[kind][0] });
+  const preview = builder.build(
+    { kind, id, code: root.code, name: root.name, label: kindLabels[kind][0] },
+    {
+      effectiveDate: todayKey,
+      nodes: [...byKind.entries()].flatMap(([nodeKind, nodes]) => nodes.map((node) => ({ kind: nodeKind, id: node.id, fate: fates.get(node.id), archivedAt: node.archivedAt }))),
+      workLocations: workLocations.map((entry) => ({ id: entry.row.id, effectiveFrom: entry.row.effectiveFrom, effectiveTo: entry.row.effectiveTo, plan: entry.plan })),
+      employerLinks: employers.map((row) => ({ employeeId: row.employeeId, fromCompanyIds: row.employee.companies.map((link) => link.companyId), removeCompanyIds: ids.company, effectiveFrom: todayKey })),
+      costCenterEmployees: costCenterEmployees.map((row) => ({ employeeId: row.id, fromCostCenterId: id, toCostCenterId: null, effectiveFrom: todayKey })),
+      positionScopes: scopeRows.map((row) => ({ id: row.id, positionId: row.positionId, level: row.level, companyId: row.companyId, businessUnitId: row.businessUnitId, sectorId: row.sectorId, areaId: row.areaId, effectiveFrom: todayKey })),
+      userCompanyLinks: users.map((row) => ({ userId: row.id, fromCompanyIds: ids.company, toCompanyId: null })),
+      deviceLocations: devices.map((row) => ({ deviceId: row.id, fromEstablishmentIds: ids.establishment, toEstablishmentId: null })),
+      costCenterLinks: costCenterLinks.items.map((row) => row.id),
+      protectedPeriods: [...protectedPeriods].sort(),
+    },
+  );
   return { preview, byKind, fates, ids, removedScopeKeys, positions: [...positions.keys()], employers, costCenterEmployees, users, devices };
 }
 

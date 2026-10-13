@@ -11,36 +11,45 @@ describe("DeletionPlanBuilder", () => {
       .add("establishment.delete", "DELETE", "Establecimientos", "Se borran", [{ id: "b", name: "La Sucho" }, { id: "a", name: "La Honoria" }])
       .add("establishment.delete", "DELETE", "Establecimientos", "Se borran", [{ id: "a", name: "La Honoria" }])
       .add("vacío", "DELETE", "Nada", "Nada", [])
-      .build(target);
+      .build(target, { effectiveDate: "2026-10-13" });
     expect(preview.groups).toEqual([{ key: "establishment.delete", effect: "DELETE", label: "Establecimientos", consequence: "Se borran", count: 2, items: [{ id: "a", name: "La Honoria" }, { id: "b", name: "La Sucho" }] }]);
   });
 
   it("la huella cambia si cambia cualquier id alcanzado, aunque el detalle no se liste", () => {
     const base = () => new DeletionPlanBuilder().add("rows", "RECALCULATE", "Filas", "x", items(3), { listed: false });
-    const a = base().build(target);
-    const b = base().build(target);
-    const c = new DeletionPlanBuilder().add("rows", "RECALCULATE", "Filas", "x", items(4), { listed: false }).build(target);
+    const a = base().build(target, { effectiveDate: "2026-10-13", selections: ["b", "a"] });
+    const b = base().build(target, { selections: ["a", "b"], effectiveDate: "2026-10-13" });
+    const c = new DeletionPlanBuilder().add("rows", "RECALCULATE", "Filas", "x", items(4), { listed: false }).build(target, { effectiveDate: "2026-10-13", selections: ["a", "b"] });
     expect(a.token).toBe(b.token);
     expect(c.token).not.toBe(a.token);
     expect(a.groups[0]).toMatchObject({ count: 3, items: [] });
   });
 
+  it("la huella canónica cambia con selecciones, vigencias o resultados aunque los ids visibles sean iguales", () => {
+    const build = (plan: unknown) => new DeletionPlanBuilder().add("rows", "RECALCULATE", "Filas", "x", items(1)).build(target, plan).token;
+    const base = { effectiveDate: "2026-10-13", selection: ["unit-a"], validity: { from: "2026-01-01", to: null }, results: [{ id: "row-1", from: 2, to: 1 }] };
+    expect(build(base)).toBe(build({ results: [...base.results].reverse(), validity: base.validity, selection: ["unit-a"], effectiveDate: "2026-10-13" }));
+    expect(build({ ...base, selection: ["unit-b"] })).not.toBe(build(base));
+    expect(build({ ...base, validity: { from: "2026-02-01", to: null } })).not.toBe(build(base));
+    expect(build({ ...base, results: [{ id: "row-1", from: 2, to: 2 }] })).not.toBe(build(base));
+  });
+
   it("pide escribir el nombre si afecta personas, archiva o alcanza muchos registros", () => {
-    expect(new DeletionPlanBuilder().add("x", "DELETE", "x", "x", items(1)).build(target).requiresTypedConfirmation).toBe(false);
-    expect(new DeletionPlanBuilder().add("x", "END", "x", "x", items(1), { affectsPeople: true }).build(target).requiresTypedConfirmation).toBe(true);
-    expect(new DeletionPlanBuilder().add("x", "ARCHIVE", "x", "x", items(1)).build(target).requiresTypedConfirmation).toBe(true);
-    expect(new DeletionPlanBuilder().add("x", "DELETE", "x", "x", items(TYPED_CONFIRMATION_THRESHOLD)).build(target).requiresTypedConfirmation).toBe(true);
+    expect(new DeletionPlanBuilder().add("x", "DELETE", "x", "x", items(1)).build(target, {}).requiresTypedConfirmation).toBe(false);
+    expect(new DeletionPlanBuilder().add("x", "END", "x", "x", items(1), { affectsPeople: true }).build(target, {}).requiresTypedConfirmation).toBe(true);
+    expect(new DeletionPlanBuilder().add("x", "ARCHIVE", "x", "x", items(1)).build(target, {}).requiresTypedConfirmation).toBe(true);
+    expect(new DeletionPlanBuilder().add("x", "DELETE", "x", "x", items(TYPED_CONFIRMATION_THRESHOLD)).build(target, {}).requiresTypedConfirmation).toBe(true);
   });
 
   it("lista hasta 50 ítems pero cuenta todos", () => {
-    const preview = new DeletionPlanBuilder().add("x", "DELETE", "x", "x", items(70)).build(target);
+    const preview = new DeletionPlanBuilder().add("x", "DELETE", "x", "x", items(70)).build(target, {});
     expect(preview.groups[0]).toMatchObject({ count: 70 });
     expect(preview.groups[0]!.items).toHaveLength(50);
   });
 });
 
 describe("assertConfirmedPlan", () => {
-  const preview = new DeletionPlanBuilder().add("x", "ARCHIVE", "x", "x", items(1)).build(target);
+  const preview = new DeletionPlanBuilder().add("x", "ARCHIVE", "x", "x", items(1)).build(target, {});
 
   it("plan distinto al de la vista previa → 409 con la vista previa nueva", () => {
     try {
@@ -53,7 +62,7 @@ describe("assertConfirmedPlan", () => {
   });
 
   it("bloqueos → 409 DELETION_BLOCKED", () => {
-    const blocked = new DeletionPlanBuilder().block("PERIOD_CLOSED", "Período aprobado.").build(target);
+    const blocked = new DeletionPlanBuilder().block("PERIOD_CLOSED", "Período aprobado.").build(target, {});
     expect(() => assertConfirmedPlan(blocked, { token: blocked.token })).toThrow(expect.objectContaining({ code: "DELETION_BLOCKED" }));
   });
 

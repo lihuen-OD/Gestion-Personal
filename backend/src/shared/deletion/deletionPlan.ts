@@ -86,12 +86,12 @@ export class DeletionPlanBuilder {
     return this;
   }
 
-  build(target: DeletionPreview["target"]): DeletionPreview {
+  build(target: DeletionPreview["target"], executablePlan: unknown): DeletionPreview {
     const groups = [...this.groups.values()].map(({ group, items, listed }) => {
       const sorted = [...items.entries()].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name, "es") || a.id.localeCompare(b.id));
       return { ...group, count: sorted.length, items: listed ? sorted : [], allIds: sorted.map((item) => item.id) };
     });
-    const token = fingerprint(target, groups.map(({ key, effect, allIds }) => ({ key, effect, ids: allIds })), this.blockers);
+    const token = fingerprint(target, groups.map(({ key, effect, allIds }) => ({ key, effect, ids: allIds })), this.blockers, executablePlan);
     const affected = groups.reduce((total, group) => total + group.count, 0);
     const archives = groups.some((group) => group.effect === "ARCHIVE");
     return {
@@ -105,12 +105,28 @@ export class DeletionPlanBuilder {
   }
 }
 
-function fingerprint(target: DeletionPreview["target"], groups: Array<{ key: string; effect: string; ids: string[] }>, blockers: DeletionBlocker[]) {
-  const canonical = JSON.stringify({
-    target: { kind: target.kind, id: target.id },
-    groups: [...groups].sort((a, b) => a.key.localeCompare(b.key)),
-    blockers: blockers.map((item) => item.code).sort(),
-  });
+function canonicalize(value: unknown): unknown {
+  if (value instanceof Date) return value.toISOString();
+  if (typeof value === "bigint") return value.toString();
+  if (Array.isArray(value)) return value.map(canonicalize).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
+  if (value && typeof value === "object") {
+    const serializable = "toJSON" in value && typeof value.toJSON === "function" ? value.toJSON() : value;
+    if (serializable !== value) return canonicalize(serializable);
+    return Object.fromEntries(Object.entries(value as Record<string, unknown>)
+      .filter(([, item]) => item !== undefined)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, item]) => [key, canonicalize(item)]));
+  }
+  return value;
+}
+
+function fingerprint(target: DeletionPreview["target"], groups: Array<{ key: string; effect: string; ids: string[] }>, blockers: DeletionBlocker[], executablePlan: unknown) {
+  const canonical = JSON.stringify(canonicalize({
+    target,
+    groups,
+    blockers,
+    executablePlan,
+  }));
   return createHash("sha256").update(canonical).digest("hex");
 }
 

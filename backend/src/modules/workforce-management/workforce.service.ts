@@ -161,7 +161,21 @@ async function planDoubleRuleDeletionWithin(tx: PrismaTransactionClient, id: str
       `La regla tiene resultados en períodos enviados o aprobados (${[...new Set(protectedPeriods.map((period) => humanizePeriodEs(period.period)))].join(", ")}). No se puede eliminar porque se perdería su traza histórica; inactivala o corregí esos períodos mediante el procedimiento explícito de RRHH.`,
     );
   }
-  return { before, reinterpretation, preview: builder.build({ kind: "doubleHourRule", id, code: null, name: before.name, label: before.kind === "FERIADO" ? "Feriado" : "Regla de horas especiales" }) };
+  return {
+    before,
+    reinterpretation,
+    preview: builder.build(
+      { kind: "doubleHourRule", id, code: null, name: before.name, label: before.kind === "FERIADO" ? "Feriado" : "Regla de horas especiales" },
+      {
+        deletedRule: ruleCalendar(before),
+        deletedEmployeeSelections: before.employees.map((row) => row.employeeId),
+        deletedDateSelections: before.dates.map((row) => ({ date: row.date, isActive: row.isActive })),
+        concreteResults: reinterpretation.changes,
+        rebuiltClosures: reinterpretation.rebuiltClosures,
+        protectedPeriods: reinterpretation.protectedPeriods,
+      },
+    ),
+  };
 }
 
 /** La vista previa reinterpreta en una transacción que siempre se revierte. */

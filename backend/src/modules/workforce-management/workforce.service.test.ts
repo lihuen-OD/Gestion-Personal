@@ -1468,4 +1468,15 @@ describe("eliminación controlada de reglas (vista previa y confirmación)", () 
     expect(auditService.registerWithin).toHaveBeenCalledWith(mockedPrisma, expect.objectContaining({ action: "DELETE", entity: "DoubleHourRule", entityId: "rule-x3" }));
     vi.mocked(reinterpretSpecialHours).mockReset();
   });
+
+  it("rechaza la confirmación si los mismos registros producirían otros multiplicadores", async () => {
+    vi.mocked(reinterpretSpecialHours)
+      .mockResolvedValueOnce(changed as never)
+      .mockResolvedValueOnce({ ...changed, changes: { ...changed.changes, timeEntries: [{ ...changed.changes.timeEntries[0]!, to: 2 }] } } as never);
+    const preview = await workforceService.previewDoubleRuleDeletion("rule-x3");
+
+    await expect(workforceService.executeDoubleRuleDeletion("rule-x3", { token: preview.token, confirmationText: "Prueba x3" }, { userId: "u1" }))
+      .rejects.toMatchObject({ statusCode: 409, code: "DELETION_PREVIEW_CHANGED" });
+    expect(mockedPrisma.doubleHourRule.delete).not.toHaveBeenCalled();
+  });
 });

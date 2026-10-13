@@ -534,7 +534,10 @@ describe("auditoría — identidad humana del legajo, nunca el employeeId", () =
 
 describe("eliminación controlada de un concepto (vista previa y confirmación)", () => {
   const tx = {
-    hourConcept: { findUnique: vi.fn().mockResolvedValue({ id: "hc-1", code: "HOR-005", name: "Prueba 02", systemRole: null }) },
+    hourConcept: {
+      findUnique: vi.fn().mockResolvedValue({ id: "hc-1", code: "HOR-005", name: "Prueba 02", systemRole: null }),
+      findFirstOrThrow: vi.fn().mockResolvedValue({ id: "normal", name: "Horas normales" }),
+    },
     user: { findUnique: vi.fn().mockResolvedValue({ role: "NIVEL_1_RRHH", status: "ACTIVO" }) },
   };
   const impact = (overrides: Record<string, unknown> = {}) => ({
