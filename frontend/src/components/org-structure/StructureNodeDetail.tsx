@@ -5,7 +5,7 @@ import { Button } from "../ui/Button";
 import type { OrgStructureEntityType } from "../../types/orgStructure.types";
 import { activoInactivoLabel } from "../../utils/status";
 import { OrgNodeIcon } from "./OrgNodeIcon";
-import { childSummary, orgChildType, orgNodeTypeLabels, orgNodeTypePlurals, PENDING_RELOAD_LABEL, type OrgTreeKind, type OrgTreeNode } from "./orgStructureTree";
+import { childSummary, orgChildType, orgNodeTypeLabels, orgNodeTypePlurals, PENDING_RELOAD_LABEL, ZONES_WITHOUT_PROVINCE_KEY, type OrgTreeKind, type OrgTreeNode } from "./orgStructureTree";
 
 function Fact({ label, value }: { label: string; value: ReactNode }) {
   return <div><dt>{label}</dt><dd>{value || "—"}</dd></div>;
@@ -24,7 +24,7 @@ function EntityFacts({ node }: { node: OrgTreeNode }) {
 
 const emptyHints: Record<OrgTreeKind, string> = {
   ORGANIZATION: "Elegí una empresa, unidad de negocio, sector o área para ver su detalle y administrarlo.",
-  LOCATION: "Elegí una zona o un establecimiento para ver su detalle y administrarlo.",
+  LOCATION: "Elegí una provincia, zona, establecimiento o unidad para ver su detalle y administrarlo.",
 };
 
 // Panel de detalle del nodo seleccionado: datos clave + acciones del nivel.
@@ -69,7 +69,7 @@ export function StructureNodeDetail({
       <div className="org-detail-head">
         <OrgNodeIcon type={node.type} size={18} large />
         <div>
-          <small>{isGroup ? "Estructura anterior" : orgNodeTypeLabels[node.type]}</small>
+          <small>{isGroup ? (node.key === ZONES_WITHOUT_PROVINCE_KEY ? PENDING_RELOAD_LABEL : "Estructura anterior") : orgNodeTypeLabels[node.type]}</small>
           <h4>{node.name}</h4>
         </div>
         {node.status ? <Badge tone={active ? "success" : "neutral"}>{activoInactivoLabel(node.status)}</Badge> : null}

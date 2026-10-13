@@ -78,13 +78,44 @@ describe("altas: padre obligatorio, activo y del modelo objetivo", () => {
       .rejects.toMatchObject({ statusCode: 400, message: "No encontramos el sector seleccionado." });
   });
 
-  it("una zona es raíz: no busca padre", async () => {
-    repo.createNode.mockResolvedValue({ id: "z1", code: "ZN-1", name: "Norte", status: "ACTIVO" });
+  it("una provincia es raíz: no busca padre", async () => {
+    repo.createNode.mockResolvedValue({ id: "p1", code: "ER", name: "Entre Ríos", status: "ACTIVO" });
 
-    await orgStructureService.createNode("zone", { code: "ZN-1", name: "Norte", status: "ACTIVO" });
+    await orgStructureService.createNode("province", { code: "ER", name: "Entre Ríos", status: "ACTIVO" });
 
     expect(repo.findNode).not.toHaveBeenCalled();
-    expect(registerWithin).toHaveBeenCalledWith(tx, expect.objectContaining({ entity: "Zone", description: "Se creó la zona ZN-1 - Norte." }));
+    expect(registerWithin).toHaveBeenCalledWith(tx, expect.objectContaining({ entity: "Province", description: "Se creó la provincia ER - Entre Ríos." }));
+  });
+
+  it("una zona nueva cuelga de una provincia activa", async () => {
+    repo.findNode.mockResolvedValue(record({ id: "p1", name: "Entre Ríos" }));
+    repo.createNode.mockResolvedValue({ id: "z1", code: "ZN-1", name: "Arroyo Barú", status: "ACTIVO" });
+
+    await orgStructureService.createNode("zone", { code: "ZN-1", name: "Arroyo Barú", status: "ACTIVO", provinceId: "p1" });
+
+    expect(repo.findNode).toHaveBeenCalledWith(tx, "province", "p1");
+    expect(registerWithin).toHaveBeenCalledWith(tx, expect.objectContaining({ entity: "Zone", description: "Se creó la zona ZN-1 - Arroyo Barú." }));
+  });
+
+  it("una unidad cuelga de un establecimiento activo", async () => {
+    repo.findNode.mockResolvedValue(record({ id: "est-1", name: "La Suiza", parentId: "z1" }));
+    repo.createNode.mockResolvedValue({ id: "u1", code: "LN", name: "Lote Norte", status: "ACTIVO" });
+
+    await orgStructureService.createNode("establishmentUnit", { code: "LN", name: "Lote Norte", status: "ACTIVO", establishmentId: "est-1" });
+
+    expect(repo.findNode).toHaveBeenCalledWith(tx, "establishment", "est-1");
+    expect(registerWithin).toHaveBeenCalledWith(tx, expect.objectContaining({ entity: "EstablishmentUnit", description: "Se creó la unidad del establecimiento LN - Lote Norte." }));
+  });
+
+  it("rechaza una unidad bajo un establecimiento archivado o de la estructura anterior", async () => {
+    repo.findNode.mockResolvedValueOnce(record({ id: "est-a", name: "Viejo", archivedAt: new Date("2026-10-01T00:00:00Z") }));
+    await expect(orgStructureService.createNode("establishmentUnit", { code: "LN", name: "Lote Norte", status: "ACTIVO", establishmentId: "est-a" }))
+      .rejects.toMatchObject({ statusCode: 409, code: "ORG_STRUCTURE_ARCHIVED_RECORD" });
+
+    repo.findNode.mockResolvedValueOnce(record({ id: "est-l", name: "Anterior", isLegacy: true }));
+    await expect(orgStructureService.createNode("establishmentUnit", { code: "LN", name: "Lote Norte", status: "ACTIVO", establishmentId: "est-l" }))
+      .rejects.toMatchObject({ statusCode: 400, code: "ORG_STRUCTURE_INVALID_PARENT" });
+    expect(repo.createNode).not.toHaveBeenCalled();
   });
 
   it("rechaza un código de establecimiento repetido entre los del modelo objetivo", async () => {
@@ -108,6 +139,40 @@ describe("altas: padre obligatorio, activo y del modelo objetivo", () => {
 });
 
 describe("ediciones: cambio de padre", () => {
+  it("asigna por primera vez la provincia a una zona anterior aunque tenga establecimientos (recarga)", async () => {
+    repo.findNode
+      .mockResolvedValueOnce(record({ id: "z-old", name: "Arroyo Barú", parentId: null, counts: { establishments: 3 } }))
+      .mockResolvedValueOnce(record({ id: "p1", name: "Entre Ríos" }));
+    repo.updateNode.mockResolvedValue({ id: "z-old", code: "ZN-1", name: "Arroyo Barú", status: "ACTIVO" });
+
+    await orgStructureService.updateNode("zone", "z-old", { provinceId: "p1" });
+
+    expect(repo.findNode).toHaveBeenLastCalledWith(tx, "province", "p1");
+    expect(repo.updateNode).toHaveBeenCalledWith(tx, "zone", "z-old", { provinceId: "p1" });
+  });
+
+  it("cambiar la provincia ya asignada de una zona en uso es una reubicación bloqueada (D-9)", async () => {
+    repo.findNode.mockResolvedValueOnce(record({ id: "z1", name: "Arroyo Barú", parentId: "p1", counts: { establishments: 2 } }));
+
+    await expect(orgStructureService.updateNode("zone", "z1", { provinceId: "p2" }))
+      .rejects.toMatchObject({ statusCode: 409, code: "ORG_STRUCTURE_PARENT_IN_USE", message: expect.stringContaining("2 establecimientos") });
+    expect(repo.updateNode).not.toHaveBeenCalled();
+  });
+
+  it("una unidad asignada a legajos no se mueve a otro establecimiento", async () => {
+    repo.findNode.mockResolvedValueOnce(record({ id: "u1", name: "Lote Norte", parentId: "est-1", counts: { workLocations: 4 } }));
+
+    await expect(orgStructureService.updateNode("establishmentUnit", "u1", { establishmentId: "est-2" }))
+      .rejects.toMatchObject({ statusCode: 409, code: "ORG_STRUCTURE_PARENT_IN_USE", message: expect.stringContaining("4 ubicaciones de trabajo de legajos") });
+  });
+
+  it("una unidad archivada no se edita", async () => {
+    repo.findNode.mockResolvedValueOnce(record({ id: "u1", name: "Lote Viejo", parentId: "est-1", archivedAt: new Date("2026-10-01T00:00:00Z") }));
+
+    await expect(orgStructureService.updateNode("establishmentUnit", "u1", { name: "Otro" }))
+      .rejects.toMatchObject({ statusCode: 409, code: "ORG_STRUCTURE_ARCHIVED_RECORD" });
+  });
+
   it("bloquea mover un nodo en uso (D-9) y no lo actualiza", async () => {
     repo.findNode.mockResolvedValueOnce(record({ id: "sec-1", name: "Cocina", parentId: "bu-1", counts: { areas: 2, positionScopes: 1 } }));
 

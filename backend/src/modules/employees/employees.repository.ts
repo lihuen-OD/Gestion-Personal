@@ -733,8 +733,14 @@ function currentWorkLocationsSelect(dateKey: string) {
   return {
     where: workLocationOnDateWhere(dateKey),
     select: {
-      zone: { select: { id: true, name: true } },
-      establishments: { select: { establishment: { select: { id: true, name: true } } } },
+      zone: { select: { id: true, name: true, province: { select: { id: true, name: true } } } },
+      establishments: {
+        select: {
+          coverage: true,
+          establishment: { select: { id: true, name: true } },
+          units: { select: { unit: { select: { id: true, name: true } } }, orderBy: { unit: { name: "asc" as const } } },
+        },
+      },
     },
     orderBy: { zone: { name: "asc" as const } },
   } satisfies Prisma.Employee$workLocationsArgs;

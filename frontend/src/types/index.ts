@@ -27,8 +27,8 @@ export interface Employee {
   /** A7: sólo en listado/organigrama. Alcances del puesto (contexto, nunca dato propio del legajo). */
   positionScopeCount?: number;
   positionScopes?: Array<{ level: "COMPANY" | "BUSINESS_UNIT" | "SECTOR" | "AREA"; nodeId: string; name: string }>;
-  /** A7: ubicaciones vigentes hoy (Argentina). */
-  currentWorkLocations?: Array<{ zoneId: string; zoneName: string; establishments: string[] }>;
+  /** A7: ubicaciones vigentes hoy (Argentina). `establishments` ya trae sus unidades específicas: "La Suiza (Lote Norte)". */
+  currentWorkLocations?: Array<{ zoneId: string; zoneName: string; provinceName?: string; establishments: string[] }>;
   /** A7: cantidad de ubicaciones vigentes o futuras (no finalizadas). */
   openWorkLocationCount?: number;
 }

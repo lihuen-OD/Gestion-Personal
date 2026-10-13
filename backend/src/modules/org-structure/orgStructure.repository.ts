@@ -7,6 +7,8 @@ import type {
   CreateCompanyInput,
   CreateCostCenterInput,
   CreateEstablishmentInput,
+  CreateEstablishmentUnitInput,
+  CreateProvinceInput,
   CreateSectorInput,
   CreateZoneInput,
   UpdateAreaInput,
@@ -14,6 +16,8 @@ import type {
   UpdateCompanyInput,
   UpdateCostCenterInput,
   UpdateEstablishmentInput,
+  UpdateEstablishmentUnitInput,
+  UpdateProvinceInput,
   UpdateSectorInput,
   UpdateZoneInput,
 } from "./orgStructure.schemas";
@@ -102,9 +106,20 @@ function fetchOverview() {
         sectors: { select: { sectorId: true } },
       },
     }),
+    // Ubicaciones: una zona sin provincia es anterior a la provincia y queda
+    // pendiente de recarga (no se infiere su provincia).
     prisma.zone.findMany({
       orderBy: { name: "asc" },
+      select: { id: true, code: true, name: true, status: true, provinceId: true },
+    }),
+    prisma.province.findMany({
+      orderBy: { name: "asc" },
       select: { id: true, code: true, name: true, status: true },
+    }),
+    prisma.establishmentUnit.findMany({
+      where: { archivedAt: null },
+      orderBy: { name: "asc" },
+      select: { id: true, code: true, name: true, status: true, establishmentId: true },
     }),
   ]);
 }
@@ -152,8 +167,10 @@ export interface NodeInputs {
   businessUnit: [CreateBusinessUnitInput, UpdateBusinessUnitInput];
   sector: [CreateSectorInput, UpdateSectorInput];
   area: [CreateAreaInput, UpdateAreaInput];
+  province: [CreateProvinceInput, UpdateProvinceInput];
   zone: [CreateZoneInput, UpdateZoneInput];
   establishment: [CreateEstablishmentInput, UpdateEstablishmentInput];
+  establishmentUnit: [CreateEstablishmentUnitInput, UpdateEstablishmentUnitInput];
 }
 
 interface NodeOps<K extends NodeKind> {
@@ -206,11 +223,20 @@ const nodes: { [K in NodeKind]: NodeOps<K> } = {
     update: (tx, id, data) => tx.area.update({ where: { id }, data: { ...data, isLegacy: undefined } }),
     remove: (tx, id) => tx.area.delete({ where: { id } }),
   },
+  province: {
+    find: async (tx, id) => {
+      const row = await tx.province.findUnique({ where: { id }, select: { id: true, code: true, name: true, status: true, _count: { select: { zones: true } } } });
+      return row && { id: row.id, code: row.code, name: row.name, status: row.status, parentId: null, isLegacy: false, archivedAt: null, counts: row._count };
+    },
+    create: (tx, data) => tx.province.create({ data }),
+    update: (tx, id, data) => tx.province.update({ where: { id }, data }),
+    remove: (tx, id) => tx.province.delete({ where: { id } }),
+  },
   zone: {
     find: async (tx, id) => {
-      const row = await tx.zone.findUnique({ where: { id }, select: { id: true, code: true, name: true, status: true, _count: { select: { establishments: true } } } });
+      const row = await tx.zone.findUnique({ where: { id }, select: { id: true, code: true, name: true, status: true, provinceId: true, _count: { select: { establishments: true } } } });
       // La Zona no está en DELETE_ORDER: no tiene columna de archivo.
-      return row && { id: row.id, code: row.code, name: row.name, status: row.status, parentId: null, isLegacy: false, archivedAt: null, counts: row._count };
+      return row && { id: row.id, code: row.code, name: row.name, status: row.status, parentId: row.provinceId, isLegacy: false, archivedAt: null, counts: row._count };
     },
     create: (tx, data) => tx.zone.create({ data }),
     update: (tx, id, data) => tx.zone.update({ where: { id }, data }),
@@ -218,7 +244,7 @@ const nodes: { [K in NodeKind]: NodeOps<K> } = {
   },
   establishment: {
     find: async (tx, id) => {
-      const row = await tx.establishment.findUnique({ where: { id }, select: { id: true, code: true, name: true, status: true, zoneId: true, isLegacy: true, archivedAt: true, _count: { select: { areas: true, costCenterLinks: true, workLocations: true, clockDevices: true } } } });
+      const row = await tx.establishment.findUnique({ where: { id }, select: { id: true, code: true, name: true, status: true, zoneId: true, isLegacy: true, archivedAt: true, _count: { select: { areas: true, units: true, costCenterLinks: true, workLocations: true, clockDevices: true } } } });
       return row && { id: row.id, code: row.code, name: row.name, status: row.status, parentId: row.zoneId, isLegacy: row.isLegacy, archivedAt: row.archivedAt, counts: row._count };
     },
     // Ver comentario de `area.create`: alta con criterio previo (sin zona del
@@ -226,6 +252,15 @@ const nodes: { [K in NodeKind]: NodeOps<K> } = {
     create: (tx, data) => tx.establishment.create({ data: { ...data, isLegacy: !data.zoneId } }),
     update: (tx, id, data) => tx.establishment.update({ where: { id }, data: { ...data, isLegacy: undefined } }),
     remove: (tx, id) => tx.establishment.delete({ where: { id } }),
+  },
+  establishmentUnit: {
+    find: async (tx, id) => {
+      const row = await tx.establishmentUnit.findUnique({ where: { id }, select: { id: true, code: true, name: true, status: true, establishmentId: true, archivedAt: true, _count: { select: { workLocations: true } } } });
+      return row && { id: row.id, code: row.code, name: row.name, status: row.status, parentId: row.establishmentId, isLegacy: false, archivedAt: row.archivedAt, counts: row._count };
+    },
+    create: (tx, data) => tx.establishmentUnit.create({ data }),
+    update: (tx, id, data) => tx.establishmentUnit.update({ where: { id }, data }),
+    remove: (tx, id) => tx.establishmentUnit.delete({ where: { id } }),
   },
 };
 

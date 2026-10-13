@@ -306,7 +306,7 @@ Must include:
 * Empresa (empleadora)
 * Centro de costo
 * Puesto (con su alcance organizacional, sólo lectura)
-* Ubicaciones de trabajo (zona + establecimientos)
+* Ubicaciones de trabajo (zona + establecimientos completos o unidades específicas)
 * Categoría de recibo
 * Categoría interna
 * Convenio
@@ -384,7 +384,7 @@ These values must be managed as selectable data through the real `org-structure`
 
 **Model in effect** (implemented through M2 and applied to `development` on 2026-10-09; `docs/decisions/ORG_LOCATION_REORGANIZATION.md`): two independent sections, each with a single required parent per active node and its own administration:
 * **A. Organization:** Company → Business unit → Sector → Area.
-* **B. Locations:** Zone → Establishment.
+* **B. Locations:** Province → Zone → Establishment → Establishment unit (optional). Zones created before provinces keep `provinceId` null and show as pending reload (never inferred). A work location assigns each establishment either whole (`coverage: ESTABLISHMENT`) or an explicit set of its units (`coverage: UNITS`).
 
 CostCenter remains the only many-to-many against the structure. The old-chain columns survive only as the shape of archived rows. See `docs/DATABASE_STANDARDS.md`.
 
@@ -792,7 +792,7 @@ Field-level model shapes are not duplicated here — they drift from the real sc
 A few structural decisions worth knowing before you read the schema:
 
 * **Organizational model in effect** (`docs/decisions/ORG_LOCATION_REORGANIZATION.md`, implemented through M2):
-  * Separate Organization (`Company → BusinessUnit → Sector → Area`) and Locations (`Zone → Establishment`) trees.
+  * Separate Organization (`Company → BusinessUnit → Sector → Area`) and Locations (`Province → Zone → Establishment → EstablishmentUnit`) trees.
   * Position scope via `PositionOrgScope`; employee work locations via `EmployeeWorkLocation`; labor history over time via the `Employee*Period` tables.
   * The employee has no sector of its own: `Employee.sectorId` (and `User.sectorId`, `ClockDevice.sectorId`) were dropped by M2. The employee's companies come from `EmployeeCompany` (employer company, with `isPrimary`).
   * `Position.sectorId` and the other old-chain parent columns survive only as the shape of archived rows.

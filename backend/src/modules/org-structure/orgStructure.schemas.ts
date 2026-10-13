@@ -3,7 +3,7 @@ import { z } from "zod";
 // Modelo objetivo (docs/decisions/ORG_LOCATION_REORGANIZATION.md §3.1): dos
 // árboles independientes, cada nodo con un único padre obligatorio.
 //   Organización: Empresa → Unidad de negocio → Sector → Área
-//   Ubicaciones:  Zona → Establecimiento
+//   Ubicaciones:  Provincia → Zona → Establecimiento → Unidad (opcional)
 // Las altas y ediciones ya no aceptan los padres del modelo anterior
 // (Sector.areaId, Area.establishmentId, Establishment.companyId/businessUnitId):
 // esas columnas siguen en la base sólo como legado de lectura hasta M2.
@@ -39,8 +39,16 @@ export const createAreaSchema = baseCatalogSchema.extend({
 });
 export const updateAreaSchema = createAreaSchema.partial();
 
-export const createZoneSchema = baseCatalogSchema;
-export const updateZoneSchema = baseCatalogSchema.partial();
+export const createProvinceSchema = baseCatalogSchema;
+export const updateProvinceSchema = baseCatalogSchema.partial();
+
+// Una zona nueva siempre tiene provincia. En la edición la provincia es
+// opcional (las zonas anteriores a la provincia corrigen sus datos sin ella)
+// pero nunca se puede quitar: no admite null.
+export const createZoneSchema = baseCatalogSchema.extend({
+  provinceId: z.string().uuid(),
+});
+export const updateZoneSchema = createZoneSchema.partial();
 
 export const createEstablishmentSchema = baseCatalogSchema.extend({
   zoneId: z.string().uuid(),
@@ -52,6 +60,11 @@ export const createEstablishmentSchema = baseCatalogSchema.extend({
   postalCode: z.string().trim().max(40).optional().nullable(),
 });
 export const updateEstablishmentSchema = createEstablishmentSchema.partial();
+
+export const createEstablishmentUnitSchema = baseCatalogSchema.extend({
+  establishmentId: z.string().uuid(),
+});
+export const updateEstablishmentUnitSchema = createEstablishmentUnitSchema.partial();
 
 export const createCostCenterSchema = baseCatalogSchema.extend({
   companyIds: idArraySchema,
@@ -70,9 +83,13 @@ export type CreateSectorInput = z.infer<typeof createSectorSchema>;
 export type UpdateSectorInput = z.infer<typeof updateSectorSchema>;
 export type CreateAreaInput = z.infer<typeof createAreaSchema>;
 export type UpdateAreaInput = z.infer<typeof updateAreaSchema>;
+export type CreateProvinceInput = z.infer<typeof createProvinceSchema>;
+export type UpdateProvinceInput = z.infer<typeof updateProvinceSchema>;
 export type CreateZoneInput = z.infer<typeof createZoneSchema>;
 export type UpdateZoneInput = z.infer<typeof updateZoneSchema>;
 export type CreateEstablishmentInput = z.infer<typeof createEstablishmentSchema>;
 export type UpdateEstablishmentInput = z.infer<typeof updateEstablishmentSchema>;
+export type CreateEstablishmentUnitInput = z.infer<typeof createEstablishmentUnitSchema>;
+export type UpdateEstablishmentUnitInput = z.infer<typeof updateEstablishmentUnitSchema>;
 export type CreateCostCenterInput = z.infer<typeof createCostCenterSchema>;
 export type UpdateCostCenterInput = z.infer<typeof updateCostCenterSchema>;

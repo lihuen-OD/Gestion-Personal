@@ -3,7 +3,7 @@
 //
 // Modelo objetivo (docs/decisions/ORG_LOCATION_REORGANIZATION.md §3.1):
 //   Organización: Empresa → Unidad de negocio → Sector → Área
-//   Ubicaciones:  Zona → Establecimiento
+//   Ubicaciones:  Provincia → Zona → Establecimiento → Unidad del establecimiento
 // Durante la transición (hasta M2) se cuentan también los vínculos del modelo
 // anterior que siguen en la base (UN → Establecimiento, Establecimiento →
 // Área, Área → Sector, sector de legajos/puestos/usuarios).
@@ -23,12 +23,14 @@
 // configuración y se eliminan explícitamente con él. Del lado de la otra
 // entidad sí bloquean: un sector con centros de costo asociados no se borra.
 
-export type OrgEntityKind = "company" | "businessUnit" | "sector" | "area" | "zone" | "establishment" | "costCenter";
+export type OrgEntityKind = "company" | "businessUnit" | "sector" | "area" | "province" | "zone" | "establishment" | "establishmentUnit" | "costCenter";
 
 export type OrgDependencyKey =
   | "businessUnits"
   | "sectors"
   | "areas"
+  | "zones"
+  | "units"
   | "establishments"
   | "employees"
   | "positions"
@@ -47,8 +49,10 @@ export const orgEntityDependencies: Record<OrgEntityKind, readonly OrgDependency
   // M2: un sector ya no tiene legajos ni usuarios propios (Employee/User.sectorId retirados).
   sector: ["areas", "positions", "costCenterLinks", "doubleHourRules", "positionScopes", "laborHistory", "scopeHistory"],
   area: ["sectors", "costCenterLinks", "positionScopes", "scopeHistory"],
+  province: ["zones"],
   zone: ["establishments"],
-  establishment: ["areas", "costCenterLinks", "workLocations", "clockDevices"],
+  establishment: ["areas", "units", "costCenterLinks", "workLocations", "clockDevices"],
+  establishmentUnit: ["workLocations"],
   costCenter: ["employees", "doubleHourRules", "laborHistory"],
 };
 
@@ -56,6 +60,8 @@ const dependencyLabels: Record<OrgDependencyKey, [singular: string, plural: stri
   businessUnits: ["unidad de negocio", "unidades de negocio"],
   sectors: ["sector", "sectores"],
   areas: ["área", "áreas"],
+  zones: ["zona", "zonas"],
+  units: ["unidad del establecimiento", "unidades del establecimiento"],
   establishments: ["establecimiento", "establecimientos"],
   employees: ["empleado", "empleados"],
   positions: ["puesto", "puestos"],
@@ -75,8 +81,10 @@ export const orgEntityLabels: Record<OrgEntityKind, { article: string; noun: str
   businessUnit: { article: "la", noun: "unidad de negocio", pronoun: "la", auditEntity: "BusinessUnit" },
   sector: { article: "el", noun: "sector", pronoun: "lo", auditEntity: "Sector" },
   area: { article: "el", noun: "área", pronoun: "la", auditEntity: "Area" },
+  province: { article: "la", noun: "provincia", pronoun: "la", auditEntity: "Province" },
   zone: { article: "la", noun: "zona", pronoun: "la", auditEntity: "Zone" },
   establishment: { article: "el", noun: "establecimiento", pronoun: "lo", auditEntity: "Establishment" },
+  establishmentUnit: { article: "la", noun: "unidad del establecimiento", pronoun: "la", auditEntity: "EstablishmentUnit" },
   costCenter: { article: "el", noun: "centro de costo", pronoun: "lo", auditEntity: "CostCenter" },
 };
 

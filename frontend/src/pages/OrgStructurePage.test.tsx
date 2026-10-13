@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
-import type { OrgArea, OrgBusinessUnit, OrgCompany, OrgCostCenter, OrgEstablishment, OrgSector, OrgZone } from "../types/orgStructure.types";
+import type { OrgArea, OrgBusinessUnit, OrgCompany, OrgCostCenter, OrgEstablishment, OrgEstablishmentUnit, OrgProvince, OrgSector, OrgZone } from "../types/orgStructure.types";
 
 const companies: OrgCompany[] = [
   { id: "1", code: "EMP-10", name: "beta", legalName: "", cuit: "", status: "ACTIVO" },
@@ -21,11 +21,16 @@ const areas: OrgArea[] = [
   { id: "a1", code: "AREA-1", name: "Parrilla", sectorId: "s1", status: "ACTIVO" },
   { id: "a-old", code: "AREA-90", name: "Administración anterior", pendingReload: true, status: "ACTIVO" },
 ];
-const zones: OrgZone[] = [{ id: "z1", code: "ZN-1", name: "Litoral", status: "ACTIVO" }];
+const provinces: OrgProvince[] = [{ id: "p1", code: "SF", name: "Santa Fe", status: "ACTIVO" }];
+const zones: OrgZone[] = [
+  { id: "z1", code: "ZN-1", name: "Litoral", provinceId: "p1", status: "ACTIVO" },
+  { id: "z-old", code: "ZN-9", name: "Zona previa", status: "ACTIVO" },
+];
 const establishments: OrgEstablishment[] = [
   { id: "e1", code: "EST-1", name: "Local Centro", zoneId: "z1", province: "Santa Fe", department: "Rosario", locality: "Rosario", address: "", status: "ACTIVO" },
   { id: "e-old", code: "EST-90", name: "Casa central anterior", companyId: "3", pendingReload: true, province: "", department: "", locality: "", address: "", status: "ACTIVO" },
 ];
+const establishmentUnits: OrgEstablishmentUnit[] = [{ id: "u1", code: "UNI-1", name: "Lote Norte", establishmentId: "e1", status: "ACTIVO" }];
 const costCenters: OrgCostCenter[] = [
   { id: "cc1", code: "CC-1", name: "Cocina central", companyIds: [], businessUnitIds: [], establishmentIds: [], areaIds: [], sectorIds: ["s1", "s-old"], status: "ACTIVO" },
 ];
@@ -41,7 +46,7 @@ const api = vi.hoisted(() => ({
 vi.mock("../services/api/orgStructureApiService", () => ({
   orgStructureApiService: {
     // Lo eliminado deja de venir en el catálogo refrescado (como el backend real).
-    getCatalog: () => Promise.resolve({ companies: companies.filter((item) => !api.removedIds.has(item.id)), businessUnits, sectors, areas, zones, establishments, costCenters }),
+    getCatalog: () => Promise.resolve({ companies: companies.filter((item) => !api.removedIds.has(item.id)), businessUnits, sectors, areas, provinces, zones, establishments, establishmentUnits, costCenters }),
     updateCompany: api.updateCompany,
     createArea: api.createArea,
     updateSector: api.updateSector,
@@ -93,14 +98,22 @@ describe("OrgStructurePage — secciones separadas", () => {
     expect(treeItem(/^Estructura anterior · pendiente de recarga/)).toBeInTheDocument();
   });
 
-  it("Ubicaciones muestra Zona → Establecimiento, con los establecimientos anteriores aparte", async () => {
+  it("Ubicaciones muestra Provincia → Zona → Establecimiento → Unidad, con zonas sin provincia y establecimientos anteriores aparte", async () => {
     await renderTree();
     await userEvent.click(screen.getByRole("button", { name: "Ubicaciones" }));
     expect(await screen.findByRole("tree", { name: "Ubicaciones" })).toBeInTheDocument();
-    expect(treeItem(/^Zona Litoral/)).toBeInTheDocument();
-    expect(treeItem(/^Establecimiento Local Centro/)).toHaveAttribute("aria-level", "2");
+    expect(treeItem(/^Provincia Santa Fe/)).toHaveAttribute("aria-level", "1");
+    expect(treeItem(/^Zona Litoral/)).toHaveAttribute("aria-level", "2");
+    expect(treeItem(/^Establecimiento Local Centro/)).toHaveAttribute("aria-level", "3");
+    expect(treeItem(/^Zonas sin provincia · pendiente de recarga \(1\)/)).toBeInTheDocument();
     expect(treeItem(/^Establecimientos anteriores · pendientes de recarga \(1\)/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Nueva zona" })).toBeInTheDocument();
+    expect(screen.getByText(/1 zona se cargó antes de las provincias/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Nueva provincia" })).toBeInTheDocument();
+
+    const detail = await select(/^Establecimiento Local Centro/, "Local Centro");
+    await userEvent.click(within(detail).getByRole("button", { name: "Agregar unidad" }));
+    expect(await screen.findByRole("heading", { name: "Nuevo registro · Unidad" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Establecimiento *")).toHaveValue("e1");
   });
 
   it("Centros de costo se administra en su propia sección, en tabla", async () => {

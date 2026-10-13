@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { OrgStructureCatalog } from "../../../types/orgStructure.types";
 import type { Employee } from "../../../types";
 import { organizationChartMockService } from "../../../services/organizationChartMockService";
-import { emptyStructureFilters, establishmentFilterOptions, isReloadPending, scopeFilterPending, scopeNodeOptions, structureFilterParams } from "./employeeStructureFilters";
+import { emptyStructureFilters, establishmentFilterOptions, isReloadPending, scopeFilterPending, scopeNodeOptions, structureFilterParams, zoneFilterOptions } from "./employeeStructureFilters";
 
 const catalog = {
   companies: [{ id: "c1", name: "Los O'Dwyer", status: "ACTIVO" }],
@@ -45,6 +45,11 @@ describe("opciones de catálogo", () => {
   it("establecimientos: sólo con zona; filtrados por zona si se eligió una", () => {
     expect(establishmentFilterOptions(catalog, "").map((item) => item.id)).toEqual(["e1", "e2"]);
     expect(establishmentFilterOptions(catalog, "z2").map((item) => item.id)).toEqual(["e2"]);
+  });
+
+  it("zonas: rotuladas con su provincia; una zona sin provincia no inventa ninguna", () => {
+    const withProvince = { ...catalog, provinces: [{ id: "p1", name: "Entre Ríos", status: "ACTIVO" }], zones: [{ id: "z1", name: "Zona Norte", provinceId: "p1", status: "ACTIVO" }, { id: "z2", name: "Zona Sur", status: "INACTIVO" }] } as unknown as OrgStructureCatalog;
+    expect(zoneFilterOptions(withProvince)).toEqual([{ id: "z1", label: "Entre Ríos › Zona Norte" }, { id: "z2", label: "Zona Sur (inactiva)" }]);
   });
 });
 

@@ -239,11 +239,20 @@ export const employeeTimeGridQuerySchema = z.object({
 // establecimientos no se deduplica acá: un duplicado se rechaza en el servicio.
 const workLocationReasonSchema = z.string().trim().min(2).max(600);
 const workLocationNotesSchema = z.string().trim().max(600).optional().nullable();
-const workLocationEstablishmentIdsSchema = z.array(z.string().uuid()).min(1).max(100);
+// Cada establecimiento elegido declara su cobertura de forma explícita:
+// ESTABLISHMENT = establecimiento completo (sin unidades); UNITS = sólo las
+// unidades listadas (al menos una). La coherencia cobertura/unidades, la
+// pertenencia y los estados se validan en employeeWorkLocations.rules.ts.
+const workLocationEstablishmentSelectionSchema = z.object({
+  establishmentId: z.string().uuid(),
+  coverage: z.enum(["ESTABLISHMENT", "UNITS"]),
+  unitIds: z.array(z.string().uuid()).max(200).default([]),
+});
+const workLocationEstablishmentsSchema = z.array(workLocationEstablishmentSelectionSchema).min(1).max(100);
 
 export const createEmployeeWorkLocationSchema = z.object({
   zoneId: z.string().uuid(),
-  establishmentIds: workLocationEstablishmentIdsSchema,
+  establishments: workLocationEstablishmentsSchema,
   effectiveFrom: calendarDateKeySchema,
   effectiveTo: calendarDateKeySchema.optional().nullable(),
   reason: workLocationReasonSchema,
@@ -263,7 +272,7 @@ export const endEmployeeWorkLocationSchema = z.object({
 // corrección obligatorio; sólo se envían los datos a corregir.
 export const correctEmployeeWorkLocationSchema = z.object({
   zoneId: z.string().uuid().optional(),
-  establishmentIds: workLocationEstablishmentIdsSchema.optional(),
+  establishments: workLocationEstablishmentsSchema.optional(),
   effectiveFrom: calendarDateKeySchema.optional(),
   effectiveTo: calendarDateKeySchema.optional().nullable(),
   reason: workLocationReasonSchema.optional(),
@@ -327,6 +336,7 @@ export type PositionValidationQuery = z.infer<typeof positionValidationQuerySche
 export type EmployeeTimeGridQuery = z.infer<typeof employeeTimeGridQuerySchema>;
 export type UpsertManualHourConceptBreakdownInput = z.infer<typeof upsertManualHourConceptBreakdownSchema>;
 export type ResolveManualHourConceptBreakdownInput = z.infer<typeof resolveManualHourConceptBreakdownSchema>;
+export type WorkLocationEstablishmentSelection = z.infer<typeof workLocationEstablishmentSelectionSchema>;
 export type CreateEmployeeWorkLocationInput = z.infer<typeof createEmployeeWorkLocationSchema>;
 export type ChangeEmployeeWorkLocationInput = z.infer<typeof changeEmployeeWorkLocationSchema>;
 export type EndEmployeeWorkLocationInput = z.infer<typeof endEmployeeWorkLocationSchema>;

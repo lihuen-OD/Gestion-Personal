@@ -58,7 +58,8 @@ The reorganization in `docs/decisions/ORG_LOCATION_REORGANIZATION.md` is **imple
 
 - Two independent trees, each active node with exactly **one required parent**:
   - **Organization:** `Company → BusinessUnit → Sector → Area` (`BusinessUnit.companyId`, `Sector.businessUnitId`, `Area.sectorId`).
-  - **Locations:** `Zone → Establishment` (`Establishment.zoneId`). An establishment has no company: legal ownership of a place is not the organizational scope of a position.
+  - **Locations:** `Province → Zone → Establishment → EstablishmentUnit` (`Zone.provinceId`, `Establishment.zoneId`, `EstablishmentUnit.establishmentId`). `Zone.provinceId` is nullable only for zones created before provinces (pending reload, never inferred). An establishment has no company: legal ownership of a place is not the organizational scope of a position.
+  - **Work-location coverage:** `EmployeeWorkLocationEstablishment.coverage` is explicit (`ESTABLISHMENT` = whole establishment, `UNITS` = only the rows in `EmployeeWorkLocationUnit`); an empty unit list never means "all". The composite FK `(unitId, establishmentId) → EstablishmentUnit(id, establishmentId)` guarantees in the database that an assigned unit belongs to the assigned establishment (`ON DELETE/UPDATE RESTRICT`).
 - Position scope: `PositionOrgScope` (see "Position" below). Employee work locations: `EmployeeWorkLocation` (+ `EmployeeWorkLocationEstablishment`). Labor history over time: `EmployeePositionPeriod`, `EmployeeCostCenterPeriod`, `EmployeeEmployerPeriod(+Company)` and `EmployeeLegacySectorPeriod` (evidence of the retired employee sector).
 - `Employee.sectorId`, `User.sectorId` and `ClockDevice.sectorId` were **dropped** by M2. A `ClockDevice` location is `establishmentId`.
 - An employee's companies come from the M:N `EmployeeCompany` (employer company + `isPrimary`), not from the tree.

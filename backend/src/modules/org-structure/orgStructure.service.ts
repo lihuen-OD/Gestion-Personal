@@ -19,12 +19,16 @@ import type {
 } from "./orgStructure.schemas";
 
 // Árboles del modelo objetivo (docs/decisions/ORG_LOCATION_REORGANIZATION.md
-// §3.1): cada nodo tiene un único padre obligatorio. Empresa y Zona son raíces.
+// §3.1): cada nodo tiene un único padre obligatorio. Empresa y Provincia son
+// raíces. La zona anterior a la provincia (provinceId nulo) es la única
+// excepción transitoria: queda pendiente de recarga hasta que se le asigne.
 const parentOf: Partial<Record<NodeKind, { kind: NodeKind; field: string }>> = {
   businessUnit: { kind: "company", field: "companyId" },
   sector: { kind: "businessUnit", field: "businessUnitId" },
   area: { kind: "sector", field: "sectorId" },
+  zone: { kind: "province", field: "provinceId" },
   establishment: { kind: "zone", field: "zoneId" },
+  establishmentUnit: { kind: "establishment", field: "establishmentId" },
 };
 
 function mapPrismaError(error: unknown) {
@@ -160,10 +164,10 @@ async function assertNoNewLegacyLinks(
 
 export const orgStructureService = {
   async getOverview() {
-    const [companies, businessUnits, establishments, areas, sectors, costCenters, zones] =
+    const [companies, businessUnits, establishments, areas, sectors, costCenters, zones, provinces, establishmentUnits] =
       await orgStructureRepository.getOverview();
 
-    return { companies, businessUnits, sectors, areas, zones, establishments, costCenters };
+    return { companies, businessUnits, sectors, areas, provinces, zones, establishments, establishmentUnits, costCenters };
   },
 
   async createNode<K extends NodeKind>(kind: K, input: NodeInputs[K][0], audit?: AuditContext): Promise<CatalogRow> {
@@ -205,7 +209,13 @@ export const orgStructureService = {
             "ORG_STRUCTURE_LEGACY_RECORD",
           );
         }
-        const dependencies = describeDependencies(kind, current.counts);
+        // Recarga de una zona anterior a la provincia: asignarle su provincia
+        // por primera vez no mueve nada de lo que la referencia (las
+        // ubicaciones apuntan a la zona y sus establecimientos), así que se
+        // permite aunque esté en uso. Cambiar una provincia ya asignada sí es
+        // una reubicación y sigue la regla D-9.
+        const firstProvince = kind === "zone" && current.parentId === null;
+        const dependencies = firstProvince ? [] : describeDependencies(kind, current.counts);
         if (dependencies.length) {
           throw new AppError(parentChangeBlockedMessage(kind, current.name, dependencies), 409, "ORG_STRUCTURE_PARENT_IN_USE", { dependencies });
         }

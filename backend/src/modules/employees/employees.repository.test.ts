@@ -377,7 +377,12 @@ describe("employeesRepository.findOrgChart / findOptions — Etapa 14C.3", () =>
         },
       },
       assignments: { select: { type: true, personName: true, user: { select: { id: true, name: true, employeeId: true } } } },
-      workLocations: expect.objectContaining({ select: { zone: { select: { id: true, name: true } }, establishments: { select: { establishment: { select: { id: true, name: true } } } } } }),
+      workLocations: expect.objectContaining({
+        select: {
+          zone: { select: { id: true, name: true, province: { select: { id: true, name: true } } } },
+          establishments: { select: { coverage: true, establishment: { select: { id: true, name: true } }, units: { select: { unit: { select: { id: true, name: true } } }, orderBy: { unit: { name: "asc" } } } } },
+        },
+      }),
       _count: { select: { workLocations: { where: { OR: [{ effectiveTo: null }, { effectiveTo: { gte: expect.any(Date) } }] } } } },
     });
   });

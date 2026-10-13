@@ -20,7 +20,7 @@ import { useAuth } from "../context/AuthContext";
 import { orgStructureApiService } from "../services/api/orgStructureApiService";
 import { subscribeCacheEvent } from "../services/cache";
 import type { Role } from "../types";
-import type { OrgArea, OrgBusinessUnit, OrgCompany, OrgCostCenter, OrgEstablishment, OrgSector, OrgStructureCatalog, OrgStructureEntity, OrgStructureEntityType, OrgZone } from "../types/orgStructure.types";
+import type { OrgArea, OrgBusinessUnit, OrgCompany, OrgCostCenter, OrgEstablishment, OrgEstablishmentUnit, OrgProvince, OrgSector, OrgStructureCatalog, OrgStructureEntity, OrgStructureEntityType, OrgZone } from "../types/orgStructure.types";
 import { useAsyncAction } from "../utils/useAsyncAction";
 
 type View = "tree" | "table";
@@ -31,14 +31,14 @@ const views: Array<{ key: View; label: string }> = [
   { key: "table", label: "Vista tabla" },
 ];
 
-const emptyCatalog: OrgStructureCatalog = { companies: [], businessUnits: [], sectors: [], areas: [], zones: [], establishments: [], costCenters: [] };
+const emptyCatalog: OrgStructureCatalog = { companies: [], businessUnits: [], sectors: [], areas: [], provinces: [], zones: [], establishments: [], establishmentUnits: [], costCenters: [] };
 
 // Tras un DELETE exitoso el registro se quita del catálogo en memoria antes de
 // que llegue el refetch. Es seguro porque el backend sólo borra registros sin
 // dependencias (nada en el catálogo lo referencia).
 function withoutEntity(catalog: OrgStructureCatalog, type: OrgStructureEntityType, id: string): OrgStructureCatalog {
   const key = catalogListKey[type];
-  return { ...catalog, [key]: (catalog[key] as OrgStructureEntity[]).filter((item) => item.id !== id) };
+  return { ...catalog, [key]: ((catalog[key] ?? []) as OrgStructureEntity[]).filter((item) => item.id !== id) };
 }
 
 const roleLevel = (role: Role) => role.startsWith("Nivel 1") ? 1 : role.startsWith("Nivel 2") ? 2 : 3;
@@ -54,8 +54,10 @@ async function persist(type: OrgStructureEntityType, item: OrgStructureEntity, i
   if (type === "BUSINESS_UNIT") return isNew ? api.createBusinessUnit(item as OrgBusinessUnit) : api.updateBusinessUnit(item as OrgBusinessUnit);
   if (type === "SECTOR") return isNew ? api.createSector(item as OrgSector) : api.updateSector(item as OrgSector);
   if (type === "AREA") return isNew ? api.createArea(item as OrgArea) : api.updateArea(item as OrgArea);
+  if (type === "PROVINCE") return isNew ? api.createProvince(item as OrgProvince) : api.updateProvince(item as OrgProvince);
   if (type === "ZONE") return isNew ? api.createZone(item as OrgZone) : api.updateZone(item as OrgZone);
   if (type === "ESTABLISHMENT") return isNew ? api.createEstablishment(item as OrgEstablishment) : api.updateEstablishment(item as OrgEstablishment);
+  if (type === "ESTABLISHMENT_UNIT") return isNew ? api.createEstablishmentUnit(item as OrgEstablishmentUnit) : api.updateEstablishmentUnit(item as OrgEstablishmentUnit);
   return isNew ? api.createCostCenter(item as OrgCostCenter) : api.updateCostCenter(item as OrgCostCenter);
 }
 
@@ -63,7 +65,7 @@ export function OrgStructurePage() {
   const { user } = useAuth();
   const [section, setSection] = useState<OrgSectionKey>("ORGANIZATION");
   const [view, setView] = useState<View>("tree");
-  const [tabByType, setTabByType] = useState<Record<OrgSectionKey, OrgStructureEntityType>>({ ORGANIZATION: "COMPANY", LOCATION: "ZONE", COST_CENTERS: "COST_CENTER" });
+  const [tabByType, setTabByType] = useState<Record<OrgSectionKey, OrgStructureEntityType>>({ ORGANIZATION: "COMPANY", LOCATION: "PROVINCE", COST_CENTERS: "COST_CENTER" });
   const [editing, setEditing] = useState<Editing | null>(null);
   const [refresh, setRefresh] = useState(0);
   const [notice, setNotice] = useState("");
@@ -101,10 +103,11 @@ export function OrgStructurePage() {
   const treeKind: OrgTreeKind | null = section === "COST_CENTERS" ? null : section;
   const selectedNode = useMemo(() => (treeKind ? findNode(trees[treeKind], selectedKey[treeKind]) : undefined), [trees, treeKind, selectedKey]);
   const pendingReload = catalog.sectors.filter((item) => item.pendingReload).length + catalog.areas.filter((item) => item.pendingReload).length + catalog.establishments.filter((item) => item.pendingReload).length;
+  const zonesWithoutProvince = catalog.zones.filter((zone) => !zone.provinceId).length;
   const counts = [
     { label: "Empresas", value: catalog.companies.length, detail: `${catalog.businessUnits.length} unidades de negocio` },
     { label: "Sectores y áreas", value: catalog.sectors.filter((item) => !item.pendingReload).length + catalog.areas.filter((item) => !item.pendingReload).length, detail: "Estructura nueva" },
-    { label: "Zonas", value: catalog.zones.length, detail: `${catalog.establishments.filter((item) => !item.pendingReload).length} establecimientos nuevos` },
+    { label: "Establecimientos", value: catalog.establishments.filter((item) => !item.pendingReload).length, detail: `${(catalog.provinces ?? []).length} provincias · ${catalog.zones.length} zonas · ${(catalog.establishmentUnits ?? []).length} unidades` },
     { label: "Pendientes de recarga", value: pendingReload, detail: "Estructura anterior" },
   ];
 
@@ -123,7 +126,7 @@ export function OrgStructurePage() {
 
   const { isRunning: isSaving, run: save } = useAsyncAction(async () => {
     if (!editing) return;
-    const invalid = editorValidationError(editing.type, editing.item);
+    const invalid = editorValidationError(editing.type, editing.item, editing.isNew);
     if (invalid) return setNotice(invalid);
     if (!apiCatalog) return setNotice("No se puede guardar sin la estructura cargada.");
     try {
@@ -185,7 +188,7 @@ export function OrgStructurePage() {
 
   const sectionConfig = orgSections.find((item) => item.key === section)!;
   const tab = tabByType[section];
-  const rootType: OrgStructureEntityType = section === "ORGANIZATION" ? "COMPANY" : section === "LOCATION" ? "ZONE" : "COST_CENTER";
+  const rootType: OrgStructureEntityType = section === "ORGANIZATION" ? "COMPANY" : section === "LOCATION" ? "PROVINCE" : "COST_CENTER";
   const effectiveView: View = section === "COST_CENTERS" ? "table" : view;
   const activeRows = itemsOf(catalog, tab);
   const newType = effectiveView === "tree" ? rootType : tab;
@@ -199,6 +202,7 @@ export function OrgStructurePage() {
     />
     {notice && <div className="toast">{notice}</div>}
     {apiWarning && <div className="info-note compact"><b>Sin conexión con la estructura</b><p>{apiWarning}</p></div>}
+    {zonesWithoutProvince > 0 && <div className="info-note compact"><b>Zonas sin provincia</b><p>{zonesWithoutProvince} {zonesWithoutProvince === 1 ? "zona se cargó" : "zonas se cargaron"} antes de las provincias y figuran como <b>pendientes de recarga</b>. Siguen en uso; asignales su provincia desde “Editar”.</p></div>}
     {pendingReload > 0 && <div className="info-note compact"><b>Estructura en transición</b><p>{pendingReload} registros de la estructura anterior figuran como <b>pendientes de recarga</b>. No reciben elementos nuevos ni se reubican: cargá la estructura nueva y la limpieza controlada los eliminará más adelante.</p></div>}
     <div className="stat-grid org-structure-summary">{counts.map((item) => <StatCard key={item.label} label={item.label} value={item.value} detail={item.detail} />)}</div>
 
@@ -218,7 +222,7 @@ export function OrgStructurePage() {
               selectedKey={selectedKey[treeKind]}
               onSelect={selectNode}
               label={treeKind === "ORGANIZATION" ? "Organización" : "Ubicaciones"}
-              emptyText={treeKind === "ORGANIZATION" ? "Todavía no hay empresas cargadas." : "Todavía no hay zonas cargadas. Creá una zona para empezar a cargar establecimientos."}
+              emptyText={treeKind === "ORGANIZATION" ? "Todavía no hay empresas cargadas." : "Todavía no hay provincias cargadas. Creá una provincia para empezar a cargar zonas y establecimientos."}
             />
             <StructureNodeDetail kind={treeKind} node={selectedNode} onEdit={editNode} onAddChild={addChild} onToggleStatus={toggleNodeStatus} onDelete={deleteNode} busy={isTogglingStatus || isDeleting} />
           </div>

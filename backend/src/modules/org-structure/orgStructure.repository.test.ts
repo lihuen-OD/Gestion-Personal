@@ -20,8 +20,10 @@ const { tx } = vi.hoisted(() => {
       businessUnit: model(),
       sector: model(),
       area: model(),
+      province: model(),
       zone: model(),
       establishment: model(),
+      establishmentUnit: model(),
       costCenter: model(),
       costCenterCompany: links(),
       costCenterBusinessUnit: links(),
@@ -116,10 +118,13 @@ describe("orgStructureRepository — altas con el padre del modelo objetivo", ()
     mockedPrisma.sector.findMany.mockResolvedValue([]);
     mockedPrisma.costCenter.findMany.mockResolvedValue([]);
     mockedPrisma.zone.findMany.mockResolvedValue([]);
+    mockedPrisma.province.findMany.mockResolvedValue([]);
+    mockedPrisma.establishmentUnit.findMany.mockResolvedValue([]);
     await orgStructureRepository.getOverview();
     expect(mockedPrisma.company.findMany.mock.calls.at(0)?.[0]?.where).toEqual({ archivedAt: null });
     expect(mockedPrisma.sector.findMany.mock.calls.at(0)?.[0]?.where).toEqual({ archivedAt: null });
     expect(mockedPrisma.zone.findMany.mock.calls.at(0)?.[0]?.where).toBeUndefined();
+    expect(mockedPrisma.establishmentUnit.findMany.mock.calls.at(0)?.[0]?.where).toEqual({ archivedAt: null });
   });
 });
 
@@ -179,11 +184,17 @@ describe("orgStructureRepository.getOverview", () => {
     mockedPrisma.area.findMany.mockResolvedValue([{ id: "area-1", code: "AREA-1", name: "Area 1", status: "ACTIVO", sectorId: "sec-1", establishmentId: null }]);
     mockedPrisma.sector.findMany.mockResolvedValue([{ id: "sec-1", code: "SEC-1", name: "Sector 1", status: "ACTIVO", businessUnitId: "bu-1", areaId: null }]);
     mockedPrisma.costCenter.findMany.mockResolvedValue([]);
-    mockedPrisma.zone.findMany.mockResolvedValue([{ id: "zone-1", code: "ZN-1", name: "Norte", status: "ACTIVO" }]);
+    mockedPrisma.zone.findMany.mockResolvedValue([{ id: "zone-1", code: "ZN-1", name: "Norte", status: "ACTIVO", provinceId: null }]);
+    mockedPrisma.province.findMany.mockResolvedValue([{ id: "prov-1", code: "ER", name: "Entre Ríos", status: "ACTIVO" }]);
+    mockedPrisma.establishmentUnit.findMany.mockResolvedValue([{ id: "unit-1", code: "LN", name: "Lote Norte", status: "ACTIVO", establishmentId: "est-1" }]);
 
-    const [, , , , , , zones] = await orgStructureRepository.getOverview();
+    const [, , , , , , zones, provinces, units] = await orgStructureRepository.getOverview();
 
-    expect(zones).toEqual([{ id: "zone-1", code: "ZN-1", name: "Norte", status: "ACTIVO" }]);
+    // Una zona anterior a la provincia viaja con provinceId null (pendiente de recarga).
+    expect(zones).toEqual([{ id: "zone-1", code: "ZN-1", name: "Norte", status: "ACTIVO", provinceId: null }]);
+    expect(provinces).toEqual([{ id: "prov-1", code: "ER", name: "Entre Ríos", status: "ACTIVO" }]);
+    expect(units).toEqual([{ id: "unit-1", code: "LN", name: "Lote Norte", status: "ACTIVO", establishmentId: "est-1" }]);
+    expect(mockedPrisma.zone.findMany.mock.calls.at(0)?.[0]?.select).toMatchObject({ provinceId: true });
     expect(mockedPrisma.sector.findMany.mock.calls.at(0)?.[0]?.select).toMatchObject({ businessUnitId: true, areaId: true });
     expect(mockedPrisma.area.findMany.mock.calls.at(0)?.[0]?.select).toMatchObject({ sectorId: true, establishmentId: true });
     expect(mockedPrisma.establishment.findMany.mock.calls.at(0)?.[0]?.select).toMatchObject({ zoneId: true, companyId: true, businessUnitId: true });

@@ -11,6 +11,8 @@ import {
   createCompanySchema,
   createCostCenterSchema,
   createEstablishmentSchema,
+  createEstablishmentUnitSchema,
+  createProvinceSchema,
   createSectorSchema,
   createZoneSchema,
   updateAreaSchema,
@@ -18,6 +20,8 @@ import {
   updateCompanySchema,
   updateCostCenterSchema,
   updateEstablishmentSchema,
+  updateEstablishmentUnitSchema,
+  updateProvinceSchema,
   updateSectorSchema,
   updateZoneSchema,
 } from "./orgStructure.schemas";
@@ -48,7 +52,15 @@ orgStructureRouter.post("/sectors", requireAnyRole(adminRoles), validateBody(cre
 orgStructureRouter.patch("/sectors/:id", requireAnyRole(adminRoles), validateBody(updateSectorSchema), asyncHandler(orgStructureController.updateSector));
 orgStructureRouter.delete("/sectors/:id", requireAnyRole(adminRoles), asyncHandler(orgStructureController.deleteSector));
 
-// Árbol de Ubicaciones (modelo objetivo): Zona → Establecimiento.
+// Árbol de Ubicaciones: Provincia → Zona → Establecimiento → Unidad.
+orgStructureRouter.post("/provinces", requireAnyRole(adminRoles), validateBody(createProvinceSchema), asyncHandler(orgStructureController.createProvince));
+orgStructureRouter.patch("/provinces/:id", requireAnyRole(adminRoles), validateBody(updateProvinceSchema), asyncHandler(orgStructureController.updateProvince));
+orgStructureRouter.delete("/provinces/:id", requireAnyRole(adminRoles), asyncHandler(orgStructureController.deleteProvince));
+
+orgStructureRouter.post("/establishment-units", requireAnyRole(adminRoles), validateBody(createEstablishmentUnitSchema), asyncHandler(orgStructureController.createEstablishmentUnit));
+orgStructureRouter.patch("/establishment-units/:id", requireAnyRole(adminRoles), validateBody(updateEstablishmentUnitSchema), asyncHandler(orgStructureController.updateEstablishmentUnit));
+orgStructureRouter.delete("/establishment-units/:id", requireAnyRole(adminRoles), asyncHandler(orgStructureController.deleteEstablishmentUnit));
+
 orgStructureRouter.post("/zones", requireAnyRole(adminRoles), validateBody(createZoneSchema), asyncHandler(orgStructureController.createZone));
 orgStructureRouter.patch("/zones/:id", requireAnyRole(adminRoles), validateBody(updateZoneSchema), asyncHandler(orgStructureController.updateZone));
 orgStructureRouter.delete("/zones/:id", requireAnyRole(adminRoles), asyncHandler(orgStructureController.deleteZone));

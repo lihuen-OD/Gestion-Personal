@@ -1,6 +1,7 @@
 import { apiRequest } from "./apiClient";
 import { appendSortParams, collectAllPages } from "./listQuery";
 import type { SortState } from "../../utils/sort";
+import { establishmentUnitsLabel } from "../../utils/workLocationPath";
 import { hourConceptApiService, mapHourConceptFromApi } from "./hourConceptApiService";
 import { mapNoveltyFromApi } from "./noveltyApiService";
 import { mapNoveltyTypeFromApi } from "./noveltyTypeApiService";
@@ -58,7 +59,10 @@ type ApiEmployee = {
     _count?: { orgScopes: number };
     orgScopes?: Array<{ level: "COMPANY" | "BUSINESS_UNIT" | "SECTOR" | "AREA"; company?: ApiNamedNode | null; businessUnit?: ApiNamedNode | null; sector?: ApiNamedNode | null; area?: ApiNamedNode | null }>;
   } | null;
-  workLocations?: Array<{ zone: ApiNamedNode; establishments: Array<{ establishment: ApiNamedNode }> }>;
+  workLocations?: Array<{
+    zone: ApiNamedNode & { province?: ApiNamedNode | null };
+    establishments: Array<{ coverage?: "ESTABLISHMENT" | "UNITS"; establishment: ApiNamedNode; units?: Array<{ unit: ApiNamedNode }> }>;
+  }>;
   _count?: { workLocations?: number };
   companies?: Array<{ isPrimary?: boolean; company: { id: string; name: string } }>;
   address?: {
@@ -393,7 +397,14 @@ function structureContextFromApi(item: ApiEmployee): Pick<Employee, "positionSco
     ...(item.position?._count ? { positionScopeCount: item.position._count.orgScopes } : scopes ? { positionScopeCount: scopes.length } : {}),
     ...(scopes ? { positionScopes: scopes } : {}),
     ...(item._count?.workLocations !== undefined ? { openWorkLocationCount: item._count.workLocations } : {}),
-    ...(item.workLocations ? { currentWorkLocations: item.workLocations.map((location) => ({ zoneId: location.zone.id, zoneName: location.zone.name, establishments: location.establishments.map((link) => link.establishment.name) })) } : {}),
+    ...(item.workLocations ? {
+      currentWorkLocations: item.workLocations.map((location) => ({
+        zoneId: location.zone.id,
+        zoneName: location.zone.name,
+        ...(location.zone.province ? { provinceName: location.zone.province.name } : {}),
+        establishments: location.establishments.map((link) => establishmentUnitsLabel(link.establishment.name, link.coverage, (link.units ?? []).map((item) => item.unit.name))),
+      })),
+    } : {}),
   };
 }
 

@@ -9,10 +9,14 @@ import { employeeAccessWhere } from "./employeeAccess";
 import { employeeWorkLocationsRepository as repository, type WorkLocationRow } from "./employeeWorkLocations.repository";
 import {
   assertNoOverlap,
+  assertUnitSelection,
   assertValidInterval,
   assertZoneAndEstablishments,
   describePeriod,
+  establishmentLabel,
+  selectionKey,
   workLocationState,
+  type EstablishmentSelection,
   type WorkLocationPeriod,
 } from "./employeeWorkLocations.rules";
 import type {
@@ -24,7 +28,7 @@ import type {
 
 const NEW_ROW_ID = "__new__";
 
-type Target = { zoneId: string; establishmentIds: string[]; effectiveFrom: string; effectiveTo: string | null; reason: string; notes: string | null };
+type Target = { zoneId: string; establishments: EstablishmentSelection[]; effectiveFrom: string; effectiveTo: string | null; reason: string; notes: string | null };
 type Resolved = { zoneName: string; establishmentNames: string[] };
 type WriteOutcome = {
   action: AuditAction;
@@ -41,12 +45,22 @@ const periodOf = (row: WorkLocationRow): WorkLocationPeriod => ({
   effectiveTo: row.effectiveTo ? calendarDateKey(row.effectiveTo) : null,
 });
 
+const selectionsOf = (row: WorkLocationRow): EstablishmentSelection[] => row.establishments.map((link) => ({
+  establishmentId: link.establishment.id,
+  coverage: link.coverage,
+  unitIds: link.units.map((item) => item.unit.id),
+}));
+
+// Toda selección se normaliza: con cobertura completa nunca viajan unidades.
+const normalized = (selections: Array<{ establishmentId: string; coverage: EstablishmentSelection["coverage"]; unitIds?: string[] }>): EstablishmentSelection[] =>
+  selections.map((item) => ({ establishmentId: item.establishmentId, coverage: item.coverage, unitIds: item.unitIds ?? [] }));
+
 function toDto(row: WorkLocationRow, todayKey: string) {
   const period = periodOf(row);
   return {
     id: row.id,
     zone: row.zone,
-    establishments: row.establishments.map((link) => link.establishment),
+    establishments: row.establishments.map((link) => ({ ...link.establishment, coverage: link.coverage, units: link.units.map((item) => item.unit) })),
     effectiveFrom: period.effectiveFrom,
     effectiveTo: period.effectiveTo,
     state: workLocationState(period, todayKey),
@@ -61,7 +75,10 @@ function toDto(row: WorkLocationRow, todayKey: string) {
 // DD/MM/AAAA, nunca ids técnicos.
 const summarize = (resolved: Resolved, period: Pick<WorkLocationPeriod, "effectiveFrom" | "effectiveTo">) =>
   `${resolved.zoneName}: ${resolved.establishmentNames.join(", ")} · ${describePeriod(period)}`;
-const resolvedOf = (row: WorkLocationRow): Resolved => ({ zoneName: row.zone.name, establishmentNames: row.establishments.map((link) => link.establishment.name) });
+const resolvedOf = (row: WorkLocationRow): Resolved => ({
+  zoneName: row.zone.name,
+  establishmentNames: row.establishments.map((link) => establishmentLabel(link.establishment.name, link.coverage, link.units.map((item) => item.unit.name))),
+});
 const snapshotOf = (row: WorkLocationRow) => ({ ...periodOf(row), zone: row.zone.name, establishments: resolvedOf(row).establishmentNames, reason: row.reason, notes: row.notes });
 
 function isExclusionViolation(error: unknown) {
@@ -79,23 +96,35 @@ function mapPersistenceError(error: unknown): never {
   throw error;
 }
 
-async function resolveTarget(tx: PrismaTransactionClient, target: Pick<Target, "zoneId" | "establishmentIds">, keep?: WorkLocationRow): Promise<Resolved> {
-  const [zone, establishments] = await Promise.all([
+async function resolveTarget(tx: PrismaTransactionClient, target: Pick<Target, "zoneId" | "establishments">, keep?: WorkLocationRow): Promise<Resolved> {
+  const establishmentIds = target.establishments.map((item) => item.establishmentId);
+  const unitIds = target.establishments.flatMap((item) => item.unitIds);
+  const [zone, establishments, units] = await Promise.all([
     repository.findZone(tx, target.zoneId),
-    repository.findEstablishments(tx, target.establishmentIds),
+    repository.findEstablishments(tx, establishmentIds),
+    repository.findUnits(tx, unitIds),
   ]);
   assertZoneAndEstablishments({
     zoneId: target.zoneId,
-    establishmentIds: target.establishmentIds,
+    establishmentIds,
     zone,
     establishments,
     keepZoneId: keep?.zoneId,
     keepEstablishmentIds: keep ? new Set(keep.establishments.map((link) => link.establishment.id)) : undefined,
   });
-  const nameById = new Map(establishments.map((item) => [item.id, item.name]));
+  assertUnitSelection({
+    selections: target.establishments,
+    establishments,
+    units,
+    keepUnitIds: keep ? new Set(keep.establishments.flatMap((link) => link.units.map((item) => item.unit.id))) : undefined,
+  });
+  const establishmentNameById = new Map(establishments.map((item) => [item.id, item.name]));
+  const unitNameById = new Map(units.map((item) => [item.id, item.name]));
   return {
     zoneName: zone!.name,
-    establishmentNames: target.establishmentIds.map((id) => nameById.get(id)!).sort((a, b) => a.localeCompare(b, "es")),
+    establishmentNames: target.establishments
+      .map((item) => establishmentLabel(establishmentNameById.get(item.establishmentId)!, item.coverage, item.unitIds.map((id) => unitNameById.get(id)!)))
+      .sort((a, b) => a.localeCompare(b, "es")),
   };
 }
 
@@ -104,8 +133,6 @@ function findOwnRow(rows: WorkLocationRow[], locationId: string) {
   if (!row) throw new AppError("Ubicación de trabajo no encontrada", 404, "WORK_LOCATION_NOT_FOUND");
   return row;
 }
-
-const sameSet = (a: string[], b: string[]) => a.length === b.length && a.every((item) => b.includes(item));
 
 /**
  * Escritura común: filas, historial visible del legajo y auditoría en una
@@ -156,7 +183,7 @@ export const employeeWorkLocationsService = {
 
   create(employeeId: string, input: CreateEmployeeWorkLocationInput, audit?: AuditContext) {
     return write(employeeId, audit, async (tx, rows, employeeReference) => {
-      const target: Target = { ...input, effectiveTo: input.effectiveTo ?? null, notes: input.notes || null };
+      const target: Target = { ...input, establishments: normalized(input.establishments), effectiveTo: input.effectiveTo ?? null, notes: input.notes || null };
       const resolved = await resolveTarget(tx, target);
       const period = { id: NEW_ROW_ID, zoneId: target.zoneId, effectiveFrom: target.effectiveFrom, effectiveTo: target.effectiveTo };
       assertValidInterval(period);
@@ -192,10 +219,10 @@ export const employeeWorkLocationsService = {
           "WORK_LOCATION_CHANGE_OUTSIDE_PERIOD",
         );
       }
-      const target: Target = { ...input, effectiveTo: input.effectiveTo ?? null, notes: input.notes || null };
+      const target: Target = { ...input, establishments: normalized(input.establishments), effectiveTo: input.effectiveTo ?? null, notes: input.notes || null };
       const resolved = await resolveTarget(tx, target);
-      if (target.zoneId === current.zoneId && sameSet(target.establishmentIds, current.establishments.map((link) => link.establishment.id))) {
-        throw new AppError("La zona y los establecimientos son los mismos que los actuales: no hay cambio para registrar.", 409, "WORK_LOCATION_CHANGE_EMPTY");
+      if (target.zoneId === current.zoneId && selectionKey(target.establishments) === selectionKey(selectionsOf(current))) {
+        throw new AppError("La zona, los establecimientos y las unidades son los mismos que los actuales: no hay cambio para registrar.", 409, "WORK_LOCATION_CHANGE_EMPTY");
       }
       const closed = { ...currentPeriod, effectiveTo: previousCalendarDateKey(changeDate) };
       const next = { id: NEW_ROW_ID, zoneId: target.zoneId, effectiveFrom: changeDate, effectiveTo: target.effectiveTo };
@@ -249,16 +276,16 @@ export const employeeWorkLocationsService = {
     return write(employeeId, audit, async (tx, rows, employeeReference) => {
       const current = findOwnRow(rows, locationId);
       const currentPeriod = periodOf(current);
-      const currentEstablishmentIds = current.establishments.map((link) => link.establishment.id);
+      const currentSelections = selectionsOf(current);
       const target: Target = {
         zoneId: input.zoneId ?? current.zoneId,
-        establishmentIds: input.establishmentIds ?? currentEstablishmentIds,
+        establishments: input.establishments ? normalized(input.establishments) : currentSelections,
         effectiveFrom: input.effectiveFrom ?? currentPeriod.effectiveFrom,
         effectiveTo: input.effectiveTo !== undefined ? input.effectiveTo : currentPeriod.effectiveTo,
         reason: input.reason ?? current.reason,
         notes: input.notes !== undefined ? input.notes || null : current.notes,
       };
-      const establishmentsChanged = !sameSet(target.establishmentIds, currentEstablishmentIds);
+      const establishmentsChanged = selectionKey(target.establishments) !== selectionKey(currentSelections);
       const changed = establishmentsChanged
         || target.zoneId !== current.zoneId
         || target.effectiveFrom !== currentPeriod.effectiveFrom

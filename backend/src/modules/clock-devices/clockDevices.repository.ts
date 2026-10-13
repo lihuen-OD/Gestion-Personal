@@ -16,7 +16,7 @@ export const clockDevicePublicSelect = {
   lastAppVersion: true,
   createdAt: true,
   updatedAt: true,
-  establishment: { select: { id: true, name: true, zone: { select: { id: true, name: true } } } },
+  establishment: { select: { id: true, name: true, zone: { select: { id: true, name: true, province: { select: { id: true, name: true } } } } } },
 } satisfies Prisma.ClockDeviceSelect;
 
 function whereFor(query: ListClockDevicesQuery): Prisma.ClockDeviceWhereInput {

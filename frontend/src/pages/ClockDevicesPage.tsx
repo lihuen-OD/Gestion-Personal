@@ -12,6 +12,7 @@ import { getUserErrorMessage } from "../services/api/apiClient";
 import { clockDeviceApiService, type ClockDevice, type ClockDeviceStatus } from "../services/api/clockDeviceApiService";
 import { orgStructureApiService } from "../services/api/orgStructureApiService";
 import { formatDateTime } from "../utils/date";
+import { zonePathLabel } from "../utils/workLocationPath";
 
 const statusLabel: Record<ClockDeviceStatus, string> = { PENDING: "Pendiente", ACTIVE: "Activo", REVOKED: "Revocado" };
 const statusTone: Record<ClockDeviceStatus, "warning" | "success" | "danger"> = { PENDING: "warning", ACTIVE: "success", REVOKED: "danger" };
@@ -53,7 +54,11 @@ export function ClockDevicesPage() {
       const resolved = await clockDeviceApiService.resolvePairing(pairingCode);
       setCandidate(resolved);
       const catalog = await orgStructureApiService.getCatalog();
-      setEstablishments(catalog.establishments.filter((item) => item.status === "ACTIVO" && item.zoneId).map(({ id, name, zoneId }) => ({ id, name, zoneName: catalog.zones.find((zone) => zone.id === zoneId)?.name || "Zona" })));
+      setEstablishments(catalog.establishments.filter((item) => item.status === "ACTIVO" && item.zoneId).map(({ id, name, zoneId }) => {
+        const zone = catalog.zones.find((item) => item.id === zoneId);
+        const province = catalog.provinces?.find((item) => item.id === zone?.provinceId);
+        return { id, name, zoneName: zone ? zonePathLabel(zone.name, province?.name) : "Zona" };
+      }));
     } catch (resolveError) { setError(getUserErrorMessage(resolveError, "El código no existe o venció.")); }
     finally { setBusy(false); }
   };
@@ -87,7 +92,7 @@ export function ClockDevicesPage() {
       </div>
       <DataTable status={status === "loading" ? "loading" : status === "error" ? "error" : items.length ? "ready" : "empty"} minWidth={980} emptyText="No hay dispositivos con estos filtros." errorMessage="No se pudieron cargar los dispositivos." onRetry={reload}>
         <table><thead><tr><th>Dispositivo</th><th>Estado</th><th>Establecimiento</th><th>Última conexión</th><th>Versión</th><th>Registrado</th><th>Acciones</th></tr></thead>
-          <tbody>{items.map((device) => <tr key={device.id}><td><b>{device.name || "Solicitud pendiente"}</b></td><td><Badge tone={statusTone[device.status]}>{statusLabel[device.status]}</Badge></td><td>{device.establishment ? `${device.establishment.zone.name} · ${device.establishment.name}` : "Sin establecimiento"}</td><td>{device.lastSeenAt ? formatDateTime(device.lastSeenAt) : "Nunca"}</td><td>{device.lastAppVersion || "-"}</td><td>{formatDateTime(device.createdAt)}</td><td><div className="table-actions">{device.status === "ACTIVE" ? <button className="table-icon-action" title="Revocar" onClick={() => void revoke(device)}><ShieldOff size={15} /></button> : null}{device.status === "PENDING" ? <button className="table-icon-action danger-link" title="Eliminar solicitud" onClick={() => void remove(device)}><Trash2 size={15} /></button> : null}</div></td></tr>)}</tbody></table>
+          <tbody>{items.map((device) => <tr key={device.id}><td><b>{device.name || "Solicitud pendiente"}</b></td><td><Badge tone={statusTone[device.status]}>{statusLabel[device.status]}</Badge></td><td>{device.establishment ? `${zonePathLabel(device.establishment.zone.name, device.establishment.zone.province?.name)} · ${device.establishment.name}` : "Sin establecimiento"}</td><td>{device.lastSeenAt ? formatDateTime(device.lastSeenAt) : "Nunca"}</td><td>{device.lastAppVersion || "-"}</td><td>{formatDateTime(device.createdAt)}</td><td><div className="table-actions">{device.status === "ACTIVE" ? <button className="table-icon-action" title="Revocar" onClick={() => void revoke(device)}><ShieldOff size={15} /></button> : null}{device.status === "PENDING" ? <button className="table-icon-action danger-link" title="Eliminar solicitud" onClick={() => void remove(device)}><Trash2 size={15} /></button> : null}</div></td></tr>)}</tbody></table>
       </DataTable>
       {meta.total > meta.pageSize ? <div className="form-actions"><Button disabled={page === 1} onClick={() => setPage((value) => value - 1)}>Anterior</Button><span className="muted small">Página {page}</span><Button disabled={!meta.hasMore} onClick={() => setPage((value) => value + 1)}>Siguiente</Button></div> : null}
     </Section>

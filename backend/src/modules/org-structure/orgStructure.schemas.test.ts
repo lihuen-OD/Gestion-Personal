@@ -5,6 +5,8 @@ import {
   createCompanySchema,
   createCostCenterSchema,
   createEstablishmentSchema,
+  createEstablishmentUnitSchema,
+  createProvinceSchema,
   createSectorSchema,
   createZoneSchema,
   updateAreaSchema,
@@ -12,6 +14,8 @@ import {
   updateCompanySchema,
   updateCostCenterSchema,
   updateEstablishmentSchema,
+  updateEstablishmentUnitSchema,
+  updateProvinceSchema,
   updateSectorSchema,
   updateZoneSchema,
 } from "./orgStructure.schemas";
@@ -34,10 +38,14 @@ const catalogCases: Array<[string, { safeParse: (value: unknown) => { success: b
   ["updateSector", updateSectorSchema, { code: "SEC-1" }],
   ["createArea", createAreaSchema, { code: "AREA-1", name: "Parrilla", sectorId: "00000000-0000-4000-8000-000000000001" }],
   ["updateArea", updateAreaSchema, { code: "AREA-1" }],
-  ["createZone", createZoneSchema, { code: "ZN-1", name: "Centro" }],
+  ["createZone", createZoneSchema, { code: "ZN-1", name: "Centro", provinceId: "00000000-0000-4000-8000-000000000001" }],
   ["updateZone", updateZoneSchema, { code: "ZN-1" }],
   ["createEstablishment", createEstablishmentSchema, { code: "EST-1", name: "Local", zoneId: "00000000-0000-4000-8000-000000000001" }],
   ["updateEstablishment", updateEstablishmentSchema, { code: "EST-1" }],
+  ["createProvince", createProvinceSchema, { code: "ER", name: "Entre Ríos" }],
+  ["updateProvince", updateProvinceSchema, { code: "ER" }],
+  ["createEstablishmentUnit", createEstablishmentUnitSchema, { code: "LN", name: "Lote Norte", establishmentId: "00000000-0000-4000-8000-000000000001" }],
+  ["updateEstablishmentUnit", updateEstablishmentUnitSchema, { code: "LN" }],
   ["createCostCenter", createCostCenterSchema, { code: "CC-1", name: "Compras" }],
   ["updateCostCenter", updateCostCenterSchema, { code: "CC-1" }],
   ["positions.createPosition", createPosition, { code: "PUE-1", name: "Director", orgScopes: [{ level: "COMPANY", nodeId: "00000000-0000-4000-8000-000000000001" }] }],
@@ -58,4 +66,15 @@ describe("AT-3 — ningún schema de entrada acepta archivedAt", () => {
       expect(schema.safeParse(base).success).toBe(true);
     });
   }
+});
+
+describe("Ubicaciones: provincia de la zona", () => {
+  it("una zona nueva exige provincia", () => {
+    expect(createZoneSchema.safeParse({ code: "ZN-1", name: "Centro" }).success).toBe(false);
+  });
+
+  it("la edición no puede quitar la provincia (no admite null) pero puede omitirla", () => {
+    expect(updateZoneSchema.safeParse({ provinceId: null }).success).toBe(false);
+    expect(updateZoneSchema.safeParse({ name: "Centro" }).success).toBe(true);
+  });
 });

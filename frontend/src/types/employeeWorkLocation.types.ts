@@ -4,10 +4,18 @@ export type WorkLocationState = "CURRENT" | "FUTURE" | "ENDED";
 
 export type WorkLocationNode = { id: string; code: string; name: string; status: "ACTIVO" | "INACTIVO" };
 
+/** ESTABLISHMENT = establecimiento completo; UNITS = sólo las unidades elegidas. Siempre explícito. */
+export type WorkLocationCoverage = "ESTABLISHMENT" | "UNITS";
+
+export type WorkLocationEstablishment = WorkLocationNode & { coverage: WorkLocationCoverage; units: WorkLocationNode[] };
+
+export type WorkLocationEstablishmentSelection = { establishmentId: string; coverage: WorkLocationCoverage; unitIds: string[] };
+
 export type EmployeeWorkLocation = {
   id: string;
-  zone: WorkLocationNode;
-  establishments: WorkLocationNode[];
+  /** `province` es null en zonas anteriores a la provincia (pendientes de recarga). */
+  zone: WorkLocationNode & { province?: { id: string; name: string } | null };
+  establishments: WorkLocationEstablishment[];
   effectiveFrom: string;
   effectiveTo: string | null;
   state: WorkLocationState;
@@ -19,7 +27,7 @@ export type EmployeeWorkLocation = {
 
 export type WorkLocationAssignmentInput = {
   zoneId: string;
-  establishmentIds: string[];
+  establishments: WorkLocationEstablishmentSelection[];
   effectiveFrom: string;
   effectiveTo: string | null;
   reason: string;

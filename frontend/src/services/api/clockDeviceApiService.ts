@@ -7,7 +7,7 @@ export type ClockDevice = {
   name: string | null;
   status: ClockDeviceStatus;
   establishmentId: string | null;
-  establishment: { id: string; name: string; zone: { id: string; name: string } } | null;
+  establishment: { id: string; name: string; zone: { id: string; name: string; province?: { id: string; name: string } | null } } | null;
   activatedAt: string | null;
   revokedAt: string | null;
   lastSeenAt: string | null;

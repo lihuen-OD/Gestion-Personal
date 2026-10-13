@@ -2,11 +2,16 @@ import { Prisma } from "@prisma/client";
 import { prisma, type PrismaTransactionClient } from "../../shared/prisma/client";
 import { argentinaCalendarDate } from "../../shared/datetime/argentinaTime";
 import { employeeReferenceSelect } from "../../shared/audit/employeeReference";
+import type { EstablishmentSelection } from "./employeeWorkLocations.rules";
 
 const workLocationInclude = {
-  zone: { select: { id: true, code: true, name: true, status: true } },
+  zone: { select: { id: true, code: true, name: true, status: true, province: { select: { id: true, name: true } } } },
   establishments: {
-    select: { establishment: { select: { id: true, code: true, name: true, status: true, zoneId: true } } },
+    select: {
+      coverage: true,
+      establishment: { select: { id: true, code: true, name: true, status: true, zoneId: true } },
+      units: { select: { unit: { select: { id: true, code: true, name: true, status: true } } }, orderBy: { unit: { name: "asc" } } },
+    },
     orderBy: { establishment: { name: "asc" } },
   },
   createdBy: { select: { id: true, name: true } },
@@ -16,7 +21,7 @@ export type WorkLocationRow = Prisma.EmployeeWorkLocationGetPayload<{ include: t
 
 type WorkLocationWrite = {
   zoneId: string;
-  establishmentIds: string[];
+  establishments: EstablishmentSelection[];
   effectiveFrom: string;
   effectiveTo: string | null;
   reason: string;
@@ -55,6 +60,21 @@ export const employeeWorkLocationsRepository = {
     return db.establishment.findMany({ where: { id: { in: Array.from(new Set(ids)) } }, select: { id: true, name: true, status: true, zoneId: true, archivedAt: true } });
   },
 
+  findUnits(db: PrismaTransactionClient, ids: string[]) {
+    if (!ids.length) return Promise.resolve([]);
+    return db.establishmentUnit.findMany({ where: { id: { in: Array.from(new Set(ids)) } }, select: { id: true, name: true, status: true, establishmentId: true, archivedAt: true } });
+  },
+
+  // Establecimientos con su cobertura y, para UNITS, sus unidades. La FK
+  // compuesta (unitId, establishmentId) vuelve a garantizar la pertenencia.
+  async createSelectionsWithin(db: PrismaTransactionClient, workLocationId: string, selections: EstablishmentSelection[]) {
+    await db.employeeWorkLocationEstablishment.createMany({
+      data: selections.map((item) => ({ workLocationId, establishmentId: item.establishmentId, coverage: item.coverage })),
+    });
+    const units = selections.flatMap((item) => (item.coverage === "UNITS" ? item.unitIds.map((unitId) => ({ workLocationId, establishmentId: item.establishmentId, unitId })) : []));
+    if (units.length) await db.employeeWorkLocationUnit.createMany({ data: units });
+  },
+
   async createWithin(db: PrismaTransactionClient, employeeId: string, data: WorkLocationWrite, createdByUserId?: string | null) {
     const created = await db.employeeWorkLocation.create({
       data: {
@@ -68,9 +88,7 @@ export const employeeWorkLocationsRepository = {
       },
       select: { id: true },
     });
-    await db.employeeWorkLocationEstablishment.createMany({
-      data: data.establishmentIds.map((establishmentId) => ({ workLocationId: created.id, establishmentId })),
-    });
+    await employeeWorkLocationsRepository.createSelectionsWithin(db, created.id, data.establishments);
     return created;
   },
 
@@ -78,7 +96,7 @@ export const employeeWorkLocationsRepository = {
     return db.employeeWorkLocation.update({ where: { id }, data: { effectiveTo: argentinaCalendarDate(effectiveTo) }, select: { id: true } });
   },
 
-  // Corrección: reemplaza explícitamente los establecimientos (sin CASCADE).
+  // Corrección: reemplaza explícitamente unidades y establecimientos (sin CASCADE).
   async correctWithin(db: PrismaTransactionClient, id: string, data: WorkLocationWrite, replaceEstablishments: boolean) {
     await db.employeeWorkLocation.update({
       where: { id },
@@ -92,10 +110,9 @@ export const employeeWorkLocationsRepository = {
       select: { id: true },
     });
     if (!replaceEstablishments) return;
+    await db.employeeWorkLocationUnit.deleteMany({ where: { workLocationId: id } });
     await db.employeeWorkLocationEstablishment.deleteMany({ where: { workLocationId: id } });
-    await db.employeeWorkLocationEstablishment.createMany({
-      data: data.establishmentIds.map((establishmentId) => ({ workLocationId: id, establishmentId })),
-    });
+    await employeeWorkLocationsRepository.createSelectionsWithin(db, id, data.establishments);
   },
 
   // Historial visible del legajo, en la misma transacción que las filas.

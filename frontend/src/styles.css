@@ -2344,6 +2344,8 @@ a.employee-hours-status-item:hover{border-color:var(--ds-blue-300);background:va
 .org-node-icon.type-sector{background:#fce7f3;color:#be185d}
 .org-node-icon.type-cost_center{background:#d1fae5;color:#047857}
 .org-node-icon.type-zone{background:#e0f2fe;color:#0369a1}
+.org-node-icon.type-province{background:#e0e7ff;color:#4338ca}
+.org-node-icon.type-establishment_unit{background:#ecfccb;color:#4d7c0f}
 .org-node-icon.type-group{background:var(--color-warning-bg);color:var(--color-warning)}
 .org-tree-text{flex:1;min-width:0}
 .org-tree-text b,.org-tree-text small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -2438,16 +2440,20 @@ a.employee-hours-status-item:hover{border-color:var(--ds-blue-300);background:va
 .work-location-form>.form-actions{grid-column:1/-1}
 .work-location-form legend{margin-bottom:7px;color:#42526a;font-size:12px;font-weight:700}
 .work-location-establishments-field{display:grid;gap:8px;min-width:0;margin:0;padding:0;border:0}
-.work-location-establishments-field .check-card span{display:grid;gap:2px}
-.work-location-establishments-field .check-card small{color:var(--color-text-muted);font-size:11px}
+.work-location-establishments-field .check-card span,.work-location-coverage .check-card span{display:grid;gap:2px}
+.work-location-establishments-field .check-card small,.work-location-coverage .check-card small{color:var(--color-text-muted);font-size:11px}
 .work-location-hint{color:var(--color-text-muted);font-size:11px}
+.work-location-coverage{display:grid;gap:10px;min-width:0;margin:0;padding:12px;border:1px solid var(--color-border-default);border-radius:var(--radius-lg);background:#fff}
+.work-location-coverage>legend{float:left;width:100%;margin:0;padding:0}
+.work-location-coverage-modes{display:flex;flex-wrap:wrap;gap:6px 18px;font-size:12px;font-weight:600;color:var(--color-text-primary)}
+.work-location-coverage-modes label{display:inline-flex;align-items:center;gap:6px}
 .work-location-dates{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 
 /* Alta de legajo: el alcance del puesto ya es una tarjeta; sin la caja de .form-wide. */
 .form-grid>.form-wide.labor-bare-slot{display:grid;gap:10px;padding:0;border:0;background:none}
 .labor-bare-slot>.info-note.compact{margin:0}
 @media(max-width:900px){.position-scope-grid{grid-template-columns:1fr}.org-scope-path-list li{grid-template-columns:1fr auto}.org-scope-level{grid-column:1/-1}}
-@media(max-width:620px){.modal-body .work-location-establishments-field .check-grid{grid-template-columns:1fr}.labor-pending-reload{margin:14px 14px 0}.labor-block-wrap{padding:0 14px}.work-location-list{padding:12px}.work-location-item{flex-direction:column}.work-location-actions{justify-content:flex-start;width:100%}.work-location-dates{grid-template-columns:1fr}}
+@media(max-width:620px){.modal-body .work-location-establishments-field .check-grid,.modal-body .work-location-coverage .check-grid{grid-template-columns:1fr}.labor-pending-reload{margin:14px 14px 0}.labor-block-wrap{padding:0 14px}.work-location-list{padding:12px}.work-location-item{flex-direction:column}.work-location-actions{justify-content:flex-start;width:100%}.work-location-dates{grid-template-columns:1fr}}
 /* A7: filtros de estructura y celdas de puesto/ubicación en listados. */
 .structure-filter-hint{grid-column:1/-1;margin:0;color:var(--color-text-muted);font-size:12px;line-height:1.5}
 .structure-filter-hint[role=status]{color:var(--color-warning);font-weight:600}

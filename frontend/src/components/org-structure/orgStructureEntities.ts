@@ -20,7 +20,7 @@ export type OrgSectionKey = "ORGANIZATION" | "LOCATION" | "COST_CENTERS";
 
 export const orgSections: Array<{ key: OrgSectionKey; label: string; types: OrgStructureEntityType[]; subtitle: string }> = [
   { key: "ORGANIZATION", label: "Organización", types: ["COMPANY", "BUSINESS_UNIT", "SECTOR", "AREA"], subtitle: "Empresa → Unidad de negocio → Sector → Área. Define el alcance organizativo de los puestos." },
-  { key: "LOCATION", label: "Ubicaciones", types: ["ZONE", "ESTABLISHMENT"], subtitle: "Zona → Establecimiento. Lugares físicos donde trabajan las personas, independientes de la organización." },
+  { key: "LOCATION", label: "Ubicaciones", types: ["PROVINCE", "ZONE", "ESTABLISHMENT", "ESTABLISHMENT_UNIT"], subtitle: "Provincia → Zona → Establecimiento → Unidad (opcional). Lugares físicos donde trabajan las personas, independientes de la organización." },
   { key: "COST_CENTERS", label: "Centros de costo", types: ["COST_CENTER"], subtitle: "Catálogo financiero vinculable a elementos de ambos árboles." },
 ];
 
@@ -33,8 +33,10 @@ export const orgTypeTabLabels: Record<OrgStructureEntityType, string> = {
   BUSINESS_UNIT: "Unidades de negocio",
   SECTOR: "Sectores",
   AREA: "Áreas",
+  PROVINCE: "Provincias",
   ZONE: "Zonas",
   ESTABLISHMENT: "Establecimientos",
+  ESTABLISHMENT_UNIT: "Unidades",
   COST_CENTER: "Centros de costo",
 };
 
@@ -43,8 +45,10 @@ export const newButtonLabels: Record<OrgStructureEntityType, string> = {
   BUSINESS_UNIT: "Nueva unidad de negocio",
   SECTOR: "Nuevo sector",
   AREA: "Nueva área",
+  PROVINCE: "Nueva provincia",
   ZONE: "Nueva zona",
   ESTABLISHMENT: "Nuevo establecimiento",
+  ESTABLISHMENT_UNIT: "Nueva unidad",
   COST_CENTER: "Nuevo centro de costo",
 };
 
@@ -53,8 +57,10 @@ export const savedMessages: Record<OrgStructureEntityType, string> = {
   BUSINESS_UNIT: "Unidad de negocio guardada correctamente.",
   SECTOR: "Sector guardado correctamente.",
   AREA: "Área guardada correctamente.",
+  PROVINCE: "Provincia guardada correctamente.",
   ZONE: "Zona guardada correctamente.",
   ESTABLISHMENT: "Establecimiento guardado correctamente.",
+  ESTABLISHMENT_UNIT: "Unidad guardada correctamente.",
   COST_CENTER: "Centro de costo guardado correctamente.",
 };
 
@@ -63,8 +69,10 @@ export const deletedMessages: Record<OrgStructureEntityType, string> = {
   BUSINESS_UNIT: "Unidad de negocio eliminada correctamente.",
   SECTOR: "Sector eliminado correctamente.",
   AREA: "Área eliminada correctamente.",
+  PROVINCE: "Provincia eliminada correctamente.",
   ZONE: "Zona eliminada correctamente.",
   ESTABLISHMENT: "Establecimiento eliminado correctamente.",
+  ESTABLISHMENT_UNIT: "Unidad eliminada correctamente.",
   COST_CENTER: "Centro de costo eliminado correctamente.",
 };
 
@@ -73,17 +81,21 @@ export const catalogListKey: Record<OrgStructureEntityType, keyof OrgStructureCa
   BUSINESS_UNIT: "businessUnits",
   SECTOR: "sectors",
   AREA: "areas",
+  PROVINCE: "provinces",
   ZONE: "zones",
   ESTABLISHMENT: "establishments",
+  ESTABLISHMENT_UNIT: "establishmentUnits",
   COST_CENTER: "costCenters",
 };
 
 /** Campo del padre del modelo nuevo en cada tipo. */
-export const parentField: Partial<Record<OrgStructureEntityType, "companyId" | "businessUnitId" | "sectorId" | "zoneId">> = {
+export const parentField: Partial<Record<OrgStructureEntityType, "companyId" | "businessUnitId" | "sectorId" | "provinceId" | "zoneId" | "establishmentId">> = {
   BUSINESS_UNIT: "companyId",
   SECTOR: "businessUnitId",
   AREA: "sectorId",
+  ZONE: "provinceId",
   ESTABLISHMENT: "zoneId",
+  ESTABLISHMENT_UNIT: "establishmentId",
 };
 
 const codePrefix: Record<OrgStructureEntityType, string> = {
@@ -91,13 +103,15 @@ const codePrefix: Record<OrgStructureEntityType, string> = {
   BUSINESS_UNIT: "UN",
   SECTOR: "SEC",
   AREA: "AREA",
+  PROVINCE: "PROV",
   ZONE: "ZN",
   ESTABLISHMENT: "EST",
+  ESTABLISHMENT_UNIT: "UNI",
   COST_CENTER: "CC",
 };
 
 export function itemsOf(catalog: OrgStructureCatalog, type: OrgStructureEntityType): OrgStructureEntity[] {
-  return catalog[catalogListKey[type]] as OrgStructureEntity[];
+  return (catalog[catalogListKey[type]] ?? []) as OrgStructureEntity[];
 }
 
 export function nextCodeFromCatalog(type: OrgStructureEntityType, catalog: OrgStructureCatalog) {
@@ -116,8 +130,10 @@ export function blankEntity(type: OrgStructureEntityType, catalog: OrgStructureC
   if (type === "BUSINESS_UNIT") return { ...base, companyId: parentId ?? "" };
   if (type === "SECTOR") return { ...base, businessUnitId: parentId, pendingReload: false };
   if (type === "AREA") return { ...base, sectorId: parentId, pendingReload: false };
-  if (type === "ZONE") return base;
+  if (type === "PROVINCE") return base;
+  if (type === "ZONE") return { ...base, provinceId: parentId };
   if (type === "ESTABLISHMENT") return { ...base, zoneId: parentId, pendingReload: false, province: "", department: "", locality: "", address: "", streetNumber: "", postalCode: "" };
+  if (type === "ESTABLISHMENT_UNIT") return { ...base, establishmentId: parentId ?? "" };
   return { ...base, companyIds: [], businessUnitIds: [], establishmentIds: [], areaIds: [], sectorIds: [], finnegansCode: "" };
 }
 
@@ -128,6 +144,15 @@ export function parentIdOf(type: OrgStructureEntityType, item: OrgStructureEntit
 
 export function isPendingReload(item: OrgStructureEntity) {
   return "pendingReload" in item && item.pendingReload === true;
+}
+
+/**
+ * Zona anterior a la provincia: no es un registro de la estructura anterior
+ * (recibe establecimientos y se edita normalmente), sólo le falta su
+ * provincia, que RRHH asigna en la recarga. Nunca se infiere.
+ */
+export function isZoneWithoutProvince(type: OrgStructureEntityType, item: OrgStructureEntity) {
+  return type === "ZONE" && !(item as { provinceId?: string }).provinceId;
 }
 
 export interface Option { id: string; name: string; disabled?: boolean }
@@ -148,7 +173,9 @@ export function parentOptions(type: OrgStructureEntityType, catalog: OrgStructur
   if (parentType === "COMPANY") return byName(catalog.companies.filter(eligible)).map((item) => ({ id: item.id, name: `${item.name}${suffix(item)}` }));
   if (parentType === "BUSINESS_UNIT") return byName(catalog.businessUnits.filter(eligible)).map((item: OrgBusinessUnit) => ({ id: item.id, name: `${nameIn(catalog.companies, item.companyId) ?? "Sin empresa"} · ${item.name}${suffix(item)}` }));
   if (parentType === "SECTOR") return byName(catalog.sectors.filter(eligible)).map((item: OrgSector) => ({ id: item.id, name: `${nameIn(catalog.businessUnits, item.businessUnitId) ?? "Sin unidad"} · ${item.name}${suffix(item)}` }));
-  return byName(catalog.zones.filter(eligible)).map((item) => ({ id: item.id, name: `${item.name}${suffix(item)}` }));
+  if (parentType === "PROVINCE") return byName((catalog.provinces ?? []).filter(eligible)).map((item) => ({ id: item.id, name: `${item.name}${suffix(item)}` }));
+  if (parentType === "ESTABLISHMENT") return byName(catalog.establishments.filter(eligible)).map((item: OrgEstablishment) => ({ id: item.id, name: `${nameIn(catalog.zones, item.zoneId) ?? "Sin zona"} · ${item.name}${suffix(item)}` }));
+  return byName(catalog.zones.filter(eligible)).map((item) => ({ id: item.id, name: `${nameIn(catalog.provinces ?? [], item.provinceId) ? `${nameIn(catalog.provinces ?? [], item.provinceId)} · ` : ""}${item.name}${suffix(item)}` }));
 }
 
 /** Descripción de la ubicación anterior de un registro pendiente de recarga (sólo lectura). */

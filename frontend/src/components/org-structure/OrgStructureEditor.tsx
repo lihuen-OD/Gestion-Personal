@@ -2,7 +2,7 @@ import { GeoAddressFields } from "../GeoAddressFields";
 import { Badge } from "../ui/Badge";
 import type { EmployeeAddress } from "../../types";
 import type { OrgCostCenter, OrgStructureCatalog, OrgStructureEntity, OrgStructureEntityType, OrgStructureStatus } from "../../types/orgStructure.types";
-import { costCenterLinkOptions, isPendingReload, legacyCostCenterLinks, legacyLocation, parentField, parentIdOf, parentOptions, type Option } from "./orgStructureEntities";
+import { costCenterLinkOptions, isPendingReload, isZoneWithoutProvince, legacyCostCenterLinks, legacyLocation, parentField, parentIdOf, parentOptions, type Option } from "./orgStructureEntities";
 import { knownMoveBlockers, orgNodeTypeLabels, orgParentType, PENDING_RELOAD_LABEL } from "./orgStructureTree";
 
 function TextField({ label, value, onChange, disabled }: { label: string; value: string; onChange: (value: string) => void; disabled?: boolean }) {
@@ -24,7 +24,9 @@ const parentPhrase: Partial<Record<OrgStructureEntityType, [indefinite: string, 
   COMPANY: ["una empresa", "activa"],
   BUSINESS_UNIT: ["una unidad de negocio", "activa"],
   SECTOR: ["un sector", "activo"],
+  PROVINCE: ["una provincia", "activa"],
   ZONE: ["una zona", "activa"],
+  ESTABLISHMENT: ["un establecimiento", "activo"],
 };
 
 function joinSpanish(parts: string[]) {
@@ -50,7 +52,12 @@ function ParentField({ type, item, catalog, isNew, onChange }: { type: OrgStruct
     </div>;
   }
   const current = parentIdOf(type, item);
-  const blockers = isNew ? [] : knownMoveBlockers(type, item.id, catalog);
+  // Zona anterior a la provincia: asignarle su provincia por primera vez es la
+  // recarga y no mueve nada de lo que la usa (el backend lo permite en uso).
+  // Se mira la zona guardada (no el borrador) para que elegir la provincia no bloquee el selector.
+  const saved = catalog.zones.find((zone) => zone.id === item.id);
+  const awaitingProvince = !isNew && type === "ZONE" && Boolean(saved) && isZoneWithoutProvince(type, saved!);
+  const blockers = isNew || awaitingProvince ? [] : knownMoveBlockers(type, item.id, catalog);
   const locked = blockers.length > 0;
   return <div className="org-parent-block">
     <small>Ubicación en la estructura</small>
@@ -58,7 +65,9 @@ function ParentField({ type, item, catalog, isNew, onChange }: { type: OrgStruct
       <option value="">Seleccioná {parentPhrase[parentType]![0]}</option>
       {parentOptions(type, catalog, current).map((option) => <option key={option.id} value={option.id}>{option.name}</option>)}
     </select></label>
-    {locked
+    {awaitingProvince
+      ? <p className="org-parent-hint" role="note"><Badge tone="warning">{PENDING_RELOAD_LABEL}</Badge> Esta zona se cargó antes de las provincias. Asignale su provincia; mientras tanto se puede guardar sin ella y sigue en uso.</p>
+      : locked
       ? <p className="org-parent-hint blocked" role="note">No se puede mover porque tiene {joinSpanish(blockers)}. Moverlo cambiaría su alcance para todos ellos; reorganizar elementos en uso requiere una operación específica.</p>
       : <p className="org-parent-hint">{isNew ? `Elegí ${parentPhrase[parentType]![0]} ${parentPhrase[parentType]![1]} de la estructura nueva.` : "Sólo se puede cambiar mientras no tenga elementos asociados. Si alguno existe (por ejemplo alcances de puestos o reglas de horas especiales), el sistema lo rechaza e informa el motivo."}</p>}
   </div>;
@@ -110,9 +119,9 @@ export function OrgStructureEditor({ type, item, catalog, isNew, onChange }: { t
 }
 
 /** Validación previa al guardado (el backend vuelve a validar todo). */
-export function editorValidationError(type: OrgStructureEntityType, item: OrgStructureEntity): string | null {
+export function editorValidationError(type: OrgStructureEntityType, item: OrgStructureEntity, isNew = true): string | null {
   if (!item.name.trim()) return "Completá el nombre antes de guardar.";
   const parentType = orgParentType[type];
-  if (parentType && !isPendingReload(item) && !parentIdOf(type, item)) return `Elegí ${parentPhrase[parentType]![0]} antes de guardar.`;
+  if (parentType && !isPendingReload(item) && !parentIdOf(type, item) && !(isZoneWithoutProvince(type, item) && !isNew)) return `Elegí ${parentPhrase[parentType]![0]} antes de guardar.`;
   return null;
 }

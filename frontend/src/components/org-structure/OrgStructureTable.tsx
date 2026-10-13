@@ -3,10 +3,11 @@ import { useMemo } from "react";
 import { Badge } from "../ui/Badge";
 import { OverflowCell } from "../ui/OverflowCell";
 import { SortableHeader } from "../ui/SortableHeader";
-import type { OrgArea, OrgBusinessUnit, OrgCostCenter, OrgEstablishment, OrgSector, OrgStructureCatalog, OrgStructureEntity, OrgStructureEntityType, OrgStructureStatus } from "../../types/orgStructure.types";
+import type { OrgArea, OrgBusinessUnit, OrgCostCenter, OrgEstablishment, OrgEstablishmentUnit, OrgSector, OrgStructureCatalog, OrgStructureEntity, OrgStructureEntityType, OrgStructureStatus, OrgZone } from "../../types/orgStructure.types";
 import { activoInactivoLabel } from "../../utils/status";
 import { useSort, type SortAccessors } from "../../utils/sort";
-import { isPendingReload } from "./orgStructureEntities";
+import { zonePathLabel } from "../../utils/workLocationPath";
+import { isPendingReload, isZoneWithoutProvince } from "./orgStructureEntities";
 import { costCenterLinkCounts, PENDING_RELOAD_LABEL } from "./orgStructureTree";
 
 type ColumnKey = "code" | "name" | "primary" | "secondary" | "status";
@@ -36,13 +37,26 @@ function relationColumns(type: OrgStructureEntityType, catalog: OrgStructureCata
     { label: "Sector", value: (item) => nameIn(catalog.sectors, (item as OrgArea).sectorId) },
     { label: "Unidad de negocio", value: (item) => nameIn(catalog.businessUnits, catalog.sectors.find((sector) => sector.id === (item as OrgArea).sectorId)?.businessUnitId) },
   ];
+  // Zona con su provincia ("Entre Ríos › Arroyo Barú"); sin provincia, sólo la zona.
+  const zonePath = (zoneId?: string) => {
+    const zone = catalog.zones.find((item) => item.id === zoneId);
+    return zone ? zonePathLabel(zone.name, nameIn(catalog.provinces ?? [], zone.provinceId)) : "";
+  };
+  if (type === "PROVINCE") return [
+    { label: "Zonas", value: (item) => count(catalog.zones.filter((zone) => zone.provinceId === item.id).length) },
+    { label: "Establecimientos", value: (item) => count(catalog.establishments.filter((establishment) => catalog.zones.some((zone) => zone.provinceId === item.id && zone.id === establishment.zoneId)).length) },
+  ];
   if (type === "ZONE") return [
+    { label: "Provincia", value: (item) => nameIn(catalog.provinces ?? [], (item as OrgZone).provinceId) },
     { label: "Establecimientos", value: (item) => count(catalog.establishments.filter((establishment) => establishment.zoneId === item.id).length) },
-    { label: "Establecimientos activos", value: (item) => count(catalog.establishments.filter((establishment) => establishment.zoneId === item.id && establishment.status === "ACTIVO").length) },
   ];
   if (type === "ESTABLISHMENT") return [
-    { label: "Zona", value: (item) => nameIn(catalog.zones, (item as OrgEstablishment).zoneId) },
+    { label: "Zona", value: (item) => zonePath((item as OrgEstablishment).zoneId) },
     { label: "Localidad", value: (item) => [(item as OrgEstablishment).locality, (item as OrgEstablishment).province].filter(Boolean).join(", ") },
+  ];
+  if (type === "ESTABLISHMENT_UNIT") return [
+    { label: "Establecimiento", value: (item) => nameIn(catalog.establishments, (item as OrgEstablishmentUnit).establishmentId) },
+    { label: "Zona", value: (item) => zonePath(catalog.establishments.find((establishment) => establishment.id === (item as OrgEstablishmentUnit).establishmentId)?.zoneId) },
   ];
   const links = (item: OrgCostCenter) => item.companyIds.length + item.businessUnitIds.length + item.sectorIds.length + item.areaIds.length + item.establishmentIds.length;
   return [
@@ -80,7 +94,7 @@ export function OrgStructureTable({ type, catalog, items, onEdit, onDelete }: { 
     </tr></thead>
     <tbody>{sorted.map((item) => <tr key={item.id}>
       <td><b>{item.code}</b></td>
-      <td><OverflowCell value={item.name} />{isPendingReload(item) ? <span className="table-sub"><Badge tone="warning">{PENDING_RELOAD_LABEL}</Badge></span> : null}</td>
+      <td><OverflowCell value={item.name} />{isPendingReload(item) || isZoneWithoutProvince(type, item) ? <span className="table-sub"><Badge tone="warning">{isZoneWithoutProvince(type, item) ? "Sin provincia · pendiente de recarga" : PENDING_RELOAD_LABEL}</Badge></span> : null}</td>
       <td><OverflowCell value={primary.value(item) || "-"} /></td>
       <td><OverflowCell value={secondary.value(item) || "-"} /></td>
       <td><StatusBadge status={item.status} /></td>
