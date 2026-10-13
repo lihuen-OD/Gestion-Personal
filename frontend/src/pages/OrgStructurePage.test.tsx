@@ -57,6 +57,7 @@ vi.mock("../services/api/orgStructureApiService", () => ({
   },
 }));
 vi.mock("../services/appDialog", () => ({ confirmAction: vi.fn(async () => true) }));
+vi.mock("../components/shared/DeletionPreviewModal", () => ({ DeletionPreviewModal: ({ basePath, title, close, onDeleted }: { basePath: string; title: string; close: () => void; onDeleted: () => void }) => <div role="dialog" aria-label={title}><span>{basePath}</span><button onClick={close}>Cancelar eliminación</button><button onClick={() => { api.removedIds.add(basePath.split("/").at(-1)!); onDeleted(); }}>Confirmar eliminación controlada</button></div> }));
 
 const { OrgStructurePage } = await import("./OrgStructurePage");
 const { confirmAction } = await import("../services/appDialog");
@@ -234,44 +235,42 @@ describe("OrgStructurePage — tabla y ordenamiento", () => {
 });
 
 describe("OrgStructurePage — eliminación segura (árbol y tabla)", () => {
-  it("árbol: Eliminar pide confirmación explícita; cancelar no elimina", async () => {
-    vi.mocked(confirmAction).mockResolvedValue(false);
+  it("árbol: Eliminar abre el protocolo y cancelar no elimina", async () => {
     await renderTree();
     const detail = await select(/^Empresa Cedro/, "Cedro");
     await userEvent.click(within(detail).getByRole("button", { name: "Eliminar" }));
-    expect(confirmAction).toHaveBeenCalledWith(
-      "Esta acción elimina el registro de forma permanente y no se puede deshacer. Si sólo ya no debe utilizarse, inactivalo.",
-      expect.objectContaining({ title: "¿Eliminar definitivamente “Cedro”?", confirmLabel: "Eliminar definitivamente", tone: "danger" }),
-    );
-    expect(api.deleteEntity).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog", { name: /Eliminar empresa “Cedro”/ })).toBeInTheDocument();
+    expect(screen.getByText("/org-structure/company/3")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Cancelar eliminación" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 
   it("árbol: confirmar llama al endpoint, cierra el panel, saca el nodo y avisa", async () => {
     await renderTree();
     const detail = await select(/^Empresa beta/, "beta");
     await userEvent.click(within(detail).getByRole("button", { name: "Eliminar" }));
-    await waitFor(() => expect(api.deleteEntity).toHaveBeenCalledWith("COMPANY", "1"));
+    await userEvent.click(screen.getByRole("button", { name: "Confirmar eliminación controlada" }));
+    await waitFor(() => expect(api.afterDeletion).toHaveBeenCalled());
     expect(await screen.findByText("Empresa eliminada correctamente.")).toBeInTheDocument();
     await waitFor(() => expect(screen.queryByRole("treeitem", { name: /^Empresa beta/ })).toBeNull());
     expect(screen.getByText("Seleccioná un elemento")).toBeInTheDocument();
   });
 
-  it("con dependencias no se elimina; el motivo lo muestra el aviso global (sin duplicarlo)", async () => {
-    api.deleteEntity.mockRejectedValue(new ApiError("No se puede eliminar la empresa “Cedro” porque tiene elementos asociados: 1 unidad de negocio. Podés inactivarla si ya no debe utilizarse.", "ORG_STRUCTURE_HAS_DEPENDENCIES", 409));
+  it("con dependencias abre la vista previa en vez de invocar el DELETE directo", async () => {
     await renderTree();
     const detail = await select(/^Empresa Cedro/, "Cedro");
     await userEvent.click(within(detail).getByRole("button", { name: "Eliminar" }));
-    await waitFor(() => expect(api.deleteEntity).toHaveBeenCalled());
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(api.deleteEntity).not.toHaveBeenCalled();
     expect(treeItem(/^Empresa Cedro/)).toBeInTheDocument();
     expect(screen.queryByText(/No se puede eliminar/)).toBeNull();
   });
 
-  it("un error no cubierto por el aviso global (p. ej. 404) se muestra en la página", async () => {
-    api.deleteEntity.mockRejectedValue(new ApiError("No encontramos el registro solicitado.", "RECORD_NOT_FOUND", 404));
+  it("la ruta del protocolo identifica el recurso seleccionado", async () => {
     await renderTree();
     const detail = await select(/^Empresa Cedro/, "Cedro");
     await userEvent.click(within(detail).getByRole("button", { name: "Eliminar" }));
-    expect(await screen.findByText("No encontramos el registro solicitado.")).toBeInTheDocument();
+    expect(screen.getByText("/org-structure/company/3")).toBeInTheDocument();
   });
 
   it("Inactivar confirma y persiste el cambio de estado", async () => {

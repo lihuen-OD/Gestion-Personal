@@ -10,6 +10,7 @@ import type { HourConcept } from "../types/hourConcept.types";
 vi.mock("../services/appDialog", () => ({
   confirmAction: vi.fn().mockResolvedValue(true),
 }));
+vi.mock("../components/shared/DeletionPreviewModal", () => ({ DeletionPreviewModal: ({ basePath, close, onDeleted }: { basePath: string; close: () => void; onDeleted: () => void }) => <div role="dialog"><span>{basePath}</span><button onClick={close}>Cancelar eliminación</button><button onClick={onDeleted}>Ejecutar eliminación</button></div> }));
 
 const mockUseAuth = vi.fn();
 vi.mock("../context/AuthContext", () => ({
@@ -232,7 +233,7 @@ describe("HourConceptsPage — corregir tratamiento y eliminar definitivamente",
     expect(confirmAction).not.toHaveBeenCalled();
   });
 
-  it("Eliminar: una única confirmación fuerte y un único DELETE (sin 409 ni force), y el concepto deja de listarse", async () => {
+  it("Eliminar usa el protocolo controlado y no el DELETE directo", async () => {
     const user = await renderWithPrueba();
     const remove = vi.spyOn(hourConceptApiService, "remove").mockResolvedValue({
       concept: { id: "prueba", code: "HOR-005", name: "Prueba 02" },
@@ -242,25 +243,16 @@ describe("HourConceptsPage — corregir tratamiento y eliminar definitivamente",
 
     await user.click(screen.getByRole("button", { name: "Eliminar" }));
 
-    await waitFor(() => expect(remove).toHaveBeenCalledTimes(1));
-    expect(remove).toHaveBeenCalledWith("prueba");
-    expect(confirmAction).toHaveBeenCalledTimes(1);
-    expect(confirmAction).toHaveBeenCalledWith(
-      'Se eliminará el concepto "Prueba 02" y las horas/configuración asociadas a él. Esta acción no se puede deshacer. Las fichadas y jornadas reales se conservarán. Si el concepto es válido pero ya no se usa, deshabilitalo para conservar su historial.',
-      { title: "Eliminar concepto definitivamente", confirmLabel: "Eliminar definitivamente", cancelLabel: "Cancelar", tone: "danger" },
-    );
-    expect(await screen.findByText('Se eliminó definitivamente el concepto "Prueba 02".')).toBeInTheDocument();
-    await waitFor(() => expect(screen.queryByText("HOR-005")).not.toBeInTheDocument());
+    expect(screen.getByText("/hour-concepts/prueba")).toBeInTheDocument();
+    expect(remove).not.toHaveBeenCalled();
   });
 
   it("Cancelar en la confirmación de eliminar no borra nada", async () => {
     const user = await renderWithPrueba();
     const remove = vi.spyOn(hourConceptApiService, "remove");
-    vi.mocked(confirmAction).mockResolvedValueOnce(false);
-
     await user.click(screen.getByRole("button", { name: "Eliminar" }));
-
-    await waitFor(() => expect(confirmAction).toHaveBeenCalled());
+    await user.click(screen.getByRole("button", { name: "Cancelar eliminación" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
     expect(remove).not.toHaveBeenCalled();
   });
 });

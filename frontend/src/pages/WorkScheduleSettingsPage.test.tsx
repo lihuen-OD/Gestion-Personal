@@ -23,6 +23,7 @@ if (!Element.prototype.scrollIntoView) {
 vi.mock("../services/appDialog", () => ({
   confirmAction: vi.fn().mockResolvedValue(true),
 }));
+vi.mock("../components/shared/DeletionPreviewModal", () => ({ DeletionPreviewModal: ({ basePath, close, onDeleted }: { basePath: string; close: () => void; onDeleted: () => void }) => <div role="dialog"><span>{basePath}</span><button onClick={close}>Cancelar eliminación</button><button onClick={onDeleted}>Ejecutar eliminación</button></div> }));
 
 const mockUseAuth = vi.fn();
 vi.mock("../context/AuthContext", () => ({
@@ -806,11 +807,8 @@ describe("WorkScheduleSettingsPage — Eliminar regla es borrado definitivo", ()
 
     await user.click(await screen.findByRole("button", { name: "Eliminar Validación en staging" }));
 
-    expect(confirmAction).toHaveBeenCalledWith(
-      'Esta acción eliminará definitivamente la regla "Validación en staging" y recalculará las horas afectadas como si la regla no existiera. Las horas reales y las fichadas no se eliminarán.',
-      { title: "Eliminar regla", confirmLabel: "Eliminar definitivamente", tone: "danger" },
-    );
-    expect(vi.mocked(confirmAction).mock.calls[0]![0]).not.toMatch(/inactiva/i);
+    expect(screen.getByText("/workforce/double-hour-rules/rule-prueba")).toBeInTheDocument();
+    expect(workforceApiService.removeDoubleHourRule).not.toHaveBeenCalled();
   });
 
   it("al confirmar, borra la regla ya iniciada, la fila desaparece, avisa y refresca el calendario", async () => {
@@ -822,9 +820,10 @@ describe("WorkScheduleSettingsPage — Eliminar regla es borrado definitivo", ()
     const calendarCalls = vi.mocked(workforceApiService.doubleHourRulesCalendar).mock.calls.length;
 
     await user.click(screen.getByRole("button", { name: "Eliminar Validación en staging" }));
+    await user.click(screen.getByRole("button", { name: "Ejecutar eliminación" }));
 
     await waitFor(() => expect(screen.queryByRole("button", { name: "Eliminar Validación en staging" })).not.toBeInTheDocument());
-    expect(workforceApiService.removeDoubleHourRule).toHaveBeenCalledWith("rule-prueba");
+    expect(workforceApiService.removeDoubleHourRule).not.toHaveBeenCalled();
     expect(workforceApiService.updateDoubleHourRule).not.toHaveBeenCalled();
     expect(await screen.findByText("Regla eliminada definitivamente. Las horas afectadas se recalcularon.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Eliminar Domingo" })).toBeInTheDocument();
@@ -833,11 +832,11 @@ describe("WorkScheduleSettingsPage — Eliminar regla es borrado definitivo", ()
 
   it("si se cancela la confirmación, no borra nada", async () => {
     vi.mocked(workforceApiService.doubleHourRules).mockResolvedValue([startedRule]);
-    vi.mocked(confirmAction).mockResolvedValueOnce(false);
     const user = userEvent.setup();
     renderPage();
 
     await user.click(await screen.findByRole("button", { name: "Eliminar Validación en staging" }));
+    await user.click(screen.getByRole("button", { name: "Cancelar eliminación" }));
 
     expect(workforceApiService.removeDoubleHourRule).not.toHaveBeenCalled();
     expect(screen.getByRole("button", { name: "Eliminar Validación en staging" })).toBeInTheDocument();
@@ -857,15 +856,15 @@ describe("WorkScheduleSettingsPage — Eliminar regla es borrado definitivo", ()
     expect(workforceApiService.removeDoubleHourRule).not.toHaveBeenCalled();
   });
 
-  it("si el backend falla al eliminar, muestra el error y la regla sigue en la tabla", async () => {
+  it("abrir la eliminación no ejecuta el DELETE anterior", async () => {
     vi.mocked(workforceApiService.doubleHourRules).mockResolvedValue([startedRule]);
-    vi.mocked(workforceApiService.removeDoubleHourRule).mockRejectedValue(new Error("network"));
     const user = userEvent.setup();
     renderPage();
 
     await user.click(await screen.findByRole("button", { name: "Eliminar Validación en staging" }));
 
-    expect(await screen.findByText("No se pudo eliminar la regla. Intentá nuevamente.")).toBeInTheDocument();
+    expect(screen.getByText("/workforce/double-hour-rules/rule-prueba")).toBeInTheDocument();
+    expect(workforceApiService.removeDoubleHourRule).not.toHaveBeenCalled();
     expect(screen.getByRole("button", { name: "Eliminar Validación en staging" })).toBeInTheDocument();
   });
 });

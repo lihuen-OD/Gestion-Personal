@@ -10,6 +10,7 @@ import type { Position } from "../types/position.types";
 vi.mock("../services/appDialog", () => ({
   confirmAction: vi.fn().mockResolvedValue(true),
 }));
+vi.mock("../components/shared/DeletionPreviewModal", () => ({ DeletionPreviewModal: ({ basePath, onDeleted }: { basePath: string; onDeleted: () => void }) => <div role="dialog"><span>{basePath}</span><button onClick={onDeleted}>Ejecutar eliminación</button></div> }));
 
 const mockUseAuth = vi.fn();
 vi.mock("../context/AuthContext", () => ({
@@ -182,14 +183,13 @@ describe("PuestosPage — Etapa 9E (paginación real)", () => {
       items: [buildPosition({ id: "pos-1", name: "Analista de RRHH", assignedCount: 0 })],
       meta: { total: 1, page: 1, pageSize: 25, hasMore: false },
     });
-    vi.mocked(positionApiService.removeOrHide).mockResolvedValue(undefined);
     vi.mocked(positionApiService.list).mockResolvedValue({ items: [], meta: { total: 0, page: 1, pageSize: 25, hasMore: false } });
     const user = userEvent.setup();
     renderPage();
     await screen.findByText("Analista de RRHH");
 
     await user.click(screen.getByRole("button", { name: "Eliminar" }));
-
-    await waitFor(() => expect(positionApiService.removeOrHide).toHaveBeenCalledWith("pos-1"));
+    expect(screen.getByText("/positions/pos-1")).toBeInTheDocument();
+    expect(positionApiService.removeOrHide).not.toHaveBeenCalled();
   });
 });
