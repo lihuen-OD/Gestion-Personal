@@ -10,6 +10,7 @@ import { mapAssociatedEmployee } from "../../shared/prisma/employeeAssociationQu
 import { formatEmployeeReference } from "../../shared/audit/employeeReference";
 import { employeeAccessWhere } from "../employees/employeeAccess";
 import { auditClosureRecalculations } from "../workforce-management/closureRecalculationAudit";
+import type { RebuiltClosureSnapshot } from "../workforce-management/closureSnapshot";
 import { hourConceptsRepository, invalidateHourConceptsCache } from "./hourConcepts.repository";
 import type {
   CreateHourConceptInput,
@@ -124,8 +125,15 @@ async function planHourConceptDeletionWithin(tx: PrismaTransactionClient, id: st
     const periods = [...new Set([...impact.protectedPeriods.keys()].map((key) => key.split(":")[1]!))].sort().map(humanizePeriodEs).join(", ");
     builder.block("PERIOD_CLOSED", `Tiene horas en períodos enviados o aprobados (${periods}), que están protegidos: inactivalo o corregí esos períodos mediante el procedimiento explícito de RRHH.`);
   }
+  const blocked = concept.systemRole === "NORMAL_BASE" || impact.legacyTimeEntries > 0 || impact.protectedPeriods.size > 0;
+  // Para conocer los cierres abiertos y el snapshot exacto resultante se usa
+  // la eliminación real. La preview siempre revierte esta transacción; en la
+  // confirmación estas mismas mutaciones sólo committean después de comparar
+  // la huella y registrar la auditoría.
+  const removal = blocked ? null : await hourConceptsRepository.deletePermanentlyWithin(tx, id, { reason: "HOUR_CONCEPT_DELETED", hourConceptId: id, hourConceptCode: concept.code });
   return {
     concept,
+    removal,
     preview: builder.build(
       { kind: "hourConcept", id, code: concept.code, name: concept.name, label: "Concepto horario" },
       {
@@ -138,8 +146,24 @@ async function planHourConceptDeletionWithin(tx: PrismaTransactionClient, id: st
         deletedRules: impact.rules,
         removedAssignments: impact.assignments.map((row) => ({ employeeId: row.employeeId, hourConceptId: id })),
         protectedPeriods: [...impact.protectedPeriods.entries()],
+        rebuiltClosures: removal?.rebuiltClosures.map(confirmedClosureResult) ?? [],
       },
     ),
+  };
+}
+
+class HourConceptDeletionPreviewRollback extends Error {
+  constructor(readonly preview: DeletionPreview) { super("hour concept deletion preview rollback"); }
+}
+
+function confirmedClosureResult(closure: RebuiltClosureSnapshot) {
+  const after = closure.after as Record<string, unknown>;
+  const recalculation = after.recalculation && typeof after.recalculation === "object" ? after.recalculation as Record<string, unknown> : undefined;
+  return {
+    ...closure,
+    // `at` se genera con el reloj al reconstruir y no cambia el resultado
+    // contable confirmado. El snapshot previo completo sí se conserva.
+    after: recalculation ? { ...after, recalculation: { ...recalculation, at: undefined } } : after,
   };
 }
 
@@ -314,7 +338,16 @@ export const hourConceptsService = {
   },
 
   async previewDeletion(id: string): Promise<DeletionPreview> {
-    return executeRemoval(() => hourConceptsRepository.transaction(async (tx) => (await planHourConceptDeletionWithin(tx, id)).preview));
+    try {
+      await executeRemoval(() => hourConceptsRepository.transaction(async (tx) => {
+        const plan = await planHourConceptDeletionWithin(tx, id);
+        throw new HourConceptDeletionPreviewRollback(plan.preview);
+      }));
+    } catch (error) {
+      if (error instanceof HourConceptDeletionPreviewRollback) return error.preview;
+      throw error;
+    }
+    throw new AppError("No se pudo calcular la vista previa.", 500, "DELETION_PREVIEW_FAILED");
   },
 
   async executeDeletion(id: string, confirmation: DeletionConfirmation, audit?: AuditContext) {
@@ -322,7 +355,8 @@ export const hourConceptsService = {
       await assertActorAuthorizedWithin(tx, audit?.userId, adminRoles);
       const plan = await planHourConceptDeletionWithin(tx, id);
       assertConfirmedPlan(plan.preview, confirmation);
-      const removal = await hourConceptsRepository.deletePermanentlyWithin(tx, id, { reason: "HOUR_CONCEPT_DELETED", hourConceptId: id, hourConceptCode: plan.concept.code });
+      if (!plan.removal) throw new AppError("La eliminación está bloqueada.", 409, "DELETION_BLOCKED", { preview: plan.preview });
+      const removal = plan.removal;
       const { rebuiltClosures, ...summary } = removal;
       await auditService.registerWithin(tx, {
         ...audit,

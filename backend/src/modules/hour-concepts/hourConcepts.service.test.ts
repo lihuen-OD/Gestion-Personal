@@ -569,10 +569,41 @@ describe("eliminación controlada de un concepto (vista previa y confirmación)"
     const preview = await hourConceptsService.previewDeletion("hc-1");
 
     await expect(hourConceptsService.executeDeletion("hc-1", { token: "a".repeat(64), confirmationText: "Prueba 02" }, { userId: "u1" })).rejects.toMatchObject({ statusCode: 409, code: "DELETION_PREVIEW_CHANGED" });
-    expect(extendedRepo.deletePermanentlyWithin).not.toHaveBeenCalled();
+    expect(auditService.registerWithin).not.toHaveBeenCalled();
 
     await hourConceptsService.executeDeletion("hc-1", { token: preview.token, confirmationText: "Prueba 02" }, { userId: "u1" });
     expect(extendedRepo.deletePermanentlyWithin).toHaveBeenCalledWith(tx, "hc-1", { reason: "HOUR_CONCEPT_DELETED", hourConceptId: "hc-1", hourConceptCode: "HOR-005" });
     expect(auditService.registerWithin).toHaveBeenCalledWith(tx, expect.objectContaining({ action: "DELETE", entity: "HourConcept", entityId: "hc-1" }));
+  });
+
+  it("un cierre abierto nuevo o con otro snapshot invalida la huella y una segunda preview confirma", async () => {
+    extendedRepo.findDeletionImpactWithin.mockResolvedValue(impact());
+    const closure = (before: unknown, after: unknown) => ({ id: "closure-1", employeeId: "emp-1", period: "2026-10", before, after });
+    extendedRepo.deletePermanentlyWithin
+      .mockResolvedValueOnce({ concept: { id: "hc-1" }, deletedBreakdowns: 1, deletedRules: 1, deletedEmployeeAssignments: 1, reclassifiedSegments: 1, reclassifiedWorkShifts: 0, unlinkedNovelties: 0, rebuiltClosures: [] })
+      .mockResolvedValueOnce({ concept: { id: "hc-1" }, deletedBreakdowns: 1, deletedRules: 1, deletedEmployeeAssignments: 1, reclassifiedSegments: 1, reclassifiedWorkShifts: 0, unlinkedNovelties: 0, rebuiltClosures: [closure({ total: 8 }, { total: 7 })] })
+      .mockResolvedValue({ concept: { id: "hc-1" }, deletedBreakdowns: 1, deletedRules: 1, deletedEmployeeAssignments: 1, reclassifiedSegments: 1, reclassifiedWorkShifts: 0, unlinkedNovelties: 0, rebuiltClosures: [closure({ total: 8 }, { total: 7 })] });
+
+    const first = await hourConceptsService.previewDeletion("hc-1");
+    await expect(hourConceptsService.executeDeletion("hc-1", { token: first.token, confirmationText: "Prueba 02" }, { userId: "u1" }))
+      .rejects.toMatchObject({ code: "DELETION_PREVIEW_CHANGED" });
+    expect(auditService.registerWithin).not.toHaveBeenCalled();
+
+    const second = await hourConceptsService.previewDeletion("hc-1");
+    expect(second.token).not.toBe(first.token);
+    await hourConceptsService.executeDeletion("hc-1", { token: second.token, confirmationText: "Prueba 02" }, { userId: "u1" });
+    expect(auditService.registerWithin).toHaveBeenCalledWith(tx, expect.objectContaining({ entity: "MonthlyTimeClosure", entityId: "closure-1" }));
+  });
+
+  it("reordenar cierres equivalentes no cambia la huella", async () => {
+    extendedRepo.findDeletionImpactWithin.mockResolvedValue(impact());
+    const a = { id: "closure-a", employeeId: "emp-1", period: "2026-10", before: { total: 8 }, after: { total: 7 } };
+    const b = { id: "closure-b", employeeId: "emp-2", period: "2026-10", before: { total: 4 }, after: { total: 3 } };
+    const result = { concept: { id: "hc-1" }, deletedBreakdowns: 1, deletedRules: 1, deletedEmployeeAssignments: 1, reclassifiedSegments: 1, reclassifiedWorkShifts: 0, unlinkedNovelties: 0 };
+    extendedRepo.deletePermanentlyWithin.mockResolvedValueOnce({ ...result, rebuiltClosures: [a, b] }).mockResolvedValueOnce({ ...result, rebuiltClosures: [b, a] });
+
+    const first = await hourConceptsService.previewDeletion("hc-1");
+    const second = await hourConceptsService.previewDeletion("hc-1");
+    expect(second.token).toBe(first.token);
   });
 });
