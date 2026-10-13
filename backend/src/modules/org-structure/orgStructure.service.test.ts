@@ -229,13 +229,25 @@ describe("centros de costo", () => {
   });
 
   it("conserva los vínculos legados que ya tenía: sólo valida los agregados", async () => {
-    repo.findCostCenterLinks.mockResolvedValue({ ...links, sectorIds: ["old-sec"] });
+    repo.findCostCenterLinks.mockResolvedValue({ ...links, name: "Cocina", archivedAt: null, sectorIds: ["old-sec"] });
     repo.updateCostCenter.mockResolvedValue({ id: "cc1", code: "CC-1", name: "Cocina", status: "ACTIVO" });
 
     await orgStructureService.updateCostCenter("cc1", { sectorIds: ["old-sec", "new-sec"] });
 
     expect(repo.findLegacyNames).toHaveBeenCalledWith(tx, { sectorIds: ["new-sec"], areaIds: [], establishmentIds: [] });
     expect(registerWithin).toHaveBeenCalledWith(tx, expect.objectContaining({ entity: "CostCenter", action: "UPDATE" }));
+  });
+
+  it("rechaza todo cambio sobre un centro archivado sin escribir vínculos ni auditoría", async () => {
+    repo.findCostCenterLinks.mockResolvedValue({ ...links, name: "Centro histórico", archivedAt: new Date("2026-10-01") });
+
+    await expect(orgStructureService.updateCostCenter("cc-archived", { code: "OTRO", name: "Otro", status: "INACTIVO", companyIds: ["company-1"] }))
+      .rejects.toMatchObject({ statusCode: 409, code: "ORG_STRUCTURE_ARCHIVED_RECORD", message: expect.stringContaining("archivado") });
+
+    expect(repo.findLegacyNames).not.toHaveBeenCalled();
+    expect(repo.findArchivedNames).not.toHaveBeenCalled();
+    expect(repo.updateCostCenter).not.toHaveBeenCalled();
+    expect(registerWithin).not.toHaveBeenCalled();
   });
 });
 

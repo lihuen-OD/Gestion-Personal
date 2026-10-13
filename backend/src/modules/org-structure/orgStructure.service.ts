@@ -270,6 +270,7 @@ export const orgStructureService = {
     const item = await execute(() => orgStructureRepository.transaction(async (tx) => {
       const currentLinks = await orgStructureRepository.findCostCenterLinks(tx, id);
       if (!currentLinks) notFound();
+      assertNotArchived("costCenter", currentLinks);
       await assertNoNewLegacyLinks(tx, input, currentLinks);
       const updated = await orgStructureRepository.updateCostCenter(tx, id, input);
       await auditService.registerWithin(tx, {

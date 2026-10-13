@@ -329,6 +329,11 @@ export interface CostCenterLinks {
   sectorIds: string[];
 }
 
+export interface CostCenterState extends CostCenterLinks {
+  name: string;
+  archivedAt: Date | null;
+}
+
 function costCenterData(input: CreateCostCenterInput | UpdateCostCenterInput) {
   const { companyIds: _companyIds, businessUnitIds: _businessUnitIds, establishmentIds: _establishmentIds, areaIds: _areaIds, sectorIds: _sectorIds, ...data } = input;
   return data;
@@ -428,10 +433,12 @@ export const orgStructureRepository = {
     return getCachedOverview();
   },
 
-  async findCostCenterLinks(tx: Tx, id: string): Promise<CostCenterLinks | null> {
+  async findCostCenterLinks(tx: Tx, id: string): Promise<CostCenterState | null> {
     const row = await tx.costCenter.findUnique({
       where: { id },
       select: {
+        name: true,
+        archivedAt: true,
         companies: { select: { companyId: true } },
         businessUnits: { select: { businessUnitId: true } },
         establishments: { select: { establishmentId: true } },
@@ -440,6 +447,8 @@ export const orgStructureRepository = {
       },
     });
     return row && {
+      name: row.name,
+      archivedAt: row.archivedAt,
       companyIds: row.companies.map((link) => link.companyId),
       businessUnitIds: row.businessUnits.map((link) => link.businessUnitId),
       establishmentIds: row.establishments.map((link) => link.establishmentId),
