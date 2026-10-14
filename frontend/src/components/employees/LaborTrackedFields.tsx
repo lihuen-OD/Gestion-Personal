@@ -199,7 +199,7 @@ export function MultiCompanyField({ employee, canEdit, user, onSaved }: TrackedF
                 ))}
               </div>
               <Field label="Fecha desde" type="date" value={from} set={setFrom} />
-              <Field label="Motivo del cambio" value={reason} set={setReason} />
+              <Field label="Motivo del cambio" value={reason} set={setReason} spellCheck />
               <LaborChangeNote />
               {error ? <p className="error">{error}</p> : null}
               <div className="form-actions">
@@ -335,7 +335,7 @@ export function EmployeePositionField({ employee, canEdit, user, onSaved }: Trac
                 </p>
               ) : null}
               <Field label="Fecha desde" type="date" value={from} set={setFrom} />
-              <Field label="Motivo del cambio" value={reason} set={setReason} />
+              <Field label="Motivo del cambio" value={reason} set={setReason} spellCheck />
               <LaborChangeNote />
               {error ? <p className="error">{error}</p> : null}
               <div className="form-actions">

@@ -343,7 +343,7 @@ export function ShiftAlertsPage() {
             </label>
             <label>
               Observación
-              <textarea value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Ej: se habilitó el turno correcto para el empleado" />
+              <textarea spellCheck lang="es-AR" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Ej: se habilitó el turno correcto para el empleado" />
             </label>
             {actionError ? <p className="error">{actionError}</p> : null}
             <div className="form-actions">

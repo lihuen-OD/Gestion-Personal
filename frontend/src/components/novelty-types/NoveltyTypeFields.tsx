@@ -1,3 +1,4 @@
+import type { InputHTMLAttributes, TextareaHTMLAttributes } from "react";
 import type {
   FinnegansValueUnit,
   NoveltyTimeEntryBehavior,
@@ -118,8 +119,8 @@ export function validateNoveltyType(item: NoveltyType): string | null {
   return null;
 }
 
-export function TextField({ label, value, onChange, disabled, type = "text" }: { label: string; value: string | number; onChange: (value: string) => void; disabled?: boolean; type?: string }) {
-  return <label>{label}<input type={type} value={value} disabled={disabled} onChange={(event) => onChange(event.target.value)} /></label>;
+export function TextField({ label, value, onChange, disabled, type = "text", spellCheck = false }: { label: string; value: string | number; onChange: (value: string) => void; disabled?: boolean; type?: string; spellCheck?: InputHTMLAttributes<HTMLInputElement>["spellCheck"] }) {
+  return <label>{label}<input type={type} value={value} disabled={disabled} spellCheck={spellCheck} lang={spellCheck ? "es-AR" : undefined} onChange={(event) => onChange(event.target.value)} /></label>;
 }
 
 // Etapa 15M.20: `labels` es opcional -- humaniza el texto visible de cada
@@ -129,8 +130,8 @@ export function SelectField({ label, value, onChange, options, labels, disabled 
   return <label>{label}<select value={value} disabled={disabled} onChange={(event) => onChange(event.target.value)}>{options.map((option) => <option key={option} value={option}>{labels?.[option] ?? option}</option>)}</select></label>;
 }
 
-export function TextAreaField({ label, value, onChange, disabled }: { label: string; value: string; onChange: (value: string) => void; disabled?: boolean }) {
-  return <label>{label}<textarea value={value} disabled={disabled} onChange={(event) => onChange(event.target.value)} /></label>;
+export function TextAreaField({ label, value, onChange, disabled, spellCheck = true }: { label: string; value: string; onChange: (value: string) => void; disabled?: boolean; spellCheck?: TextareaHTMLAttributes<HTMLTextAreaElement>["spellCheck"] }) {
+  return <label>{label}<textarea value={value} disabled={disabled} spellCheck={spellCheck} lang={spellCheck ? "es-AR" : undefined} onChange={(event) => onChange(event.target.value)} /></label>;
 }
 
 export function RoleChecklist({ label, value, onChange, disabled }: { label: string; value: string[]; onChange: (value: string[]) => void; disabled?: boolean }) {

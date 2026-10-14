@@ -110,7 +110,7 @@ export function OrgStructureEditor({ type, item, catalog, isNew, onChange }: { t
       {"legalName" in item && <TextField label="Razón social" value={item.legalName} onChange={(legalName) => set({ legalName })} />}
       {"cuit" in item && <TextField label="CUIT" value={item.cuit} onChange={(cuit) => set({ cuit })} />}
       {"finnegansCode" in item && <TextField label="Código Finnegans" value={item.finnegansCode || ""} onChange={(finnegansCode) => set({ finnegansCode })} />}
-      <div className="form-wide"><label>Observaciones<textarea value={item.notes || ""} onChange={(event) => set({ notes: event.target.value })} /></label></div>
+      <div className="form-wide"><label>Observaciones<textarea spellCheck lang="es-AR" value={item.notes || ""} onChange={(event) => set({ notes: event.target.value })} /></label></div>
     </div>
     {field ? <ParentField type={type} item={item} catalog={catalog} isNew={isNew} onChange={(parentId) => set({ [field]: parentId })} /> : null}
     {address && <div className="form-wide org-geo-panel"><GeoAddressFields value={address} onChange={(value) => set({ province: value.provinciaNombre, department: value.departamentoNombre, locality: value.localidadNombre, address: value.calle, streetNumber: value.numero, postalCode: value.codigoPostal })} showGeoActions={false} /></div>}

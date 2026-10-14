@@ -17,7 +17,7 @@ export function NoveltyTypeFinnegansTab({ item, setItem, disabled }: { item: Nov
 
     {item.rules.exportsToFinnegans ? (
       <div className="form-grid">
-        <label>Código Finnegans *<input disabled={disabled} value={item.finnegansCode || ""} onChange={(event) => setItem({ ...item, finnegansCode: event.target.value })} /></label>
+        <label>Código Finnegans *<input disabled={disabled} spellCheck={false} value={item.finnegansCode || ""} onChange={(event) => setItem({ ...item, finnegansCode: event.target.value })} /></label>
         <label>Nombre Finnegans *<input disabled={disabled} value={item.finnegansName || ""} onChange={(event) => setItem({ ...item, finnegansName: event.target.value })} /></label>
         <label>
           Unidad de Valor 1 *

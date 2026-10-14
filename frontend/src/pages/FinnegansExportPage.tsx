@@ -404,6 +404,8 @@ export function FinnegansExportPage() {
             <label>
               Motivo de reexportación
               <textarea
+                spellCheck
+                lang="es-AR"
                 value={reexportReason}
                 onChange={(event) => setReexportReason(event.target.value)}
                 placeholder="Ej.: se corrigió una novedad de licencia"

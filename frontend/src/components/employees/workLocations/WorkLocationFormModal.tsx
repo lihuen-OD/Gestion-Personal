@@ -167,9 +167,9 @@ export function WorkLocationFormModal({ mode, employeeId, catalog, location, clo
             </div>
           </>
         )}
-        <Field label={mode === "end" ? "Motivo de la finalización *" : mode === "correct" ? "Motivo de la asignación *" : "Motivo *"} value={draft.reason} set={(value) => set({ reason: value })} />
-        {mode !== "end" ? <Field label="Observaciones" value={draft.notes} set={(value) => set({ notes: value })} /> : null}
-        {mode === "correct" ? <Field label="Motivo de la corrección *" value={draft.correctionReason} set={(value) => set({ correctionReason: value })} /> : null}
+        <Field label={mode === "end" ? "Motivo de la finalización *" : mode === "correct" ? "Motivo de la asignación *" : "Motivo *"} value={draft.reason} set={(value) => set({ reason: value })} spellCheck />
+        {mode !== "end" ? <Field label="Observaciones" value={draft.notes} set={(value) => set({ notes: value })} spellCheck /> : null}
+        {mode === "correct" ? <Field label="Motivo de la corrección *" value={draft.correctionReason} set={(value) => set({ correctionReason: value })} spellCheck /> : null}
         {error ? <p className="error" role="alert">{error}</p> : null}
         <div className="form-actions">
           <Button variant="subtle" onClick={close} disabled={isRunning}>Cancelar</Button>

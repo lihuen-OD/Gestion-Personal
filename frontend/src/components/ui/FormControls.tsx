@@ -1,7 +1,16 @@
-import type { ReactNode } from "react";
+import type { InputHTMLAttributes, ReactNode } from "react";
 
-export function Field({ label, value, set, type = "text", disabled }: { label: string; value: string; set: (value: string) => void; type?: string; disabled?: boolean }) {
-  return <label>{label}<input type={type} value={value} disabled={disabled} onChange={(event) => set(event.target.value)} /></label>;
+type FieldProps = {
+  label: string;
+  value: string;
+  set: (value: string) => void;
+  type?: string;
+  disabled?: boolean;
+  spellCheck?: InputHTMLAttributes<HTMLInputElement>["spellCheck"];
+};
+
+export function Field({ label, value, set, type = "text", disabled, spellCheck = false }: FieldProps) {
+  return <label>{label}<input type={type} value={value} disabled={disabled} spellCheck={spellCheck} lang={spellCheck ? "es-AR" : undefined} onChange={(event) => set(event.target.value)} /></label>;
 }
 
 export function FormGrid({ className = "", children }: { className?: string; children: ReactNode }) {

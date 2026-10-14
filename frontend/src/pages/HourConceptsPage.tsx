@@ -82,7 +82,7 @@ function getFilterOptions(items: HourConcept[]) {
 function ConceptDataFields({ item, setItem }: { item: HourConcept; setItem: (item: HourConcept) => void }) {
   return (
     <div className="form-grid">
-      <label>Codigo<input value={item.code} disabled /></label>
+      <label>Codigo<input value={item.code} disabled spellCheck={false} /></label>
       <label>Nombre *<input value={item.name} onChange={(event) => setItem({ ...item, name: event.target.value })} /></label>
       <label>Tipo<select value={item.kind} onChange={(event) => setItem({ ...item, kind: event.target.value as HourConceptKind })}>{additionalKinds.map((kind) => <option key={kind} value={kind}>{hourConceptKindLabels[kind]}</option>)}</select></label>
       <label>Modo de carga *<select value={item.loadMode ?? "MANUAL"} onChange={(event) => setItem({ ...item, loadMode: event.target.value as HourConceptLoadMode })}>{Object.entries(loadModeLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>

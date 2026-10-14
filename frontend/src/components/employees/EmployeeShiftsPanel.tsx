@@ -174,7 +174,7 @@ export function EmployeeShiftsPanel({ employee, canEdit = false }: { employee: E
               onEffectiveToChange={setEffectiveTo}
               onWeekdaysChange={setWeekdays}
             />
-            <label className="field"><span>Observación (opcional)</span><input value={observation} onChange={(e) => setObservation(e.target.value)} placeholder="Ej: rota semana por medio con turno tarde" /></label>
+            <label className="field"><span>Observación (opcional)</span><input spellCheck lang="es-AR" value={observation} onChange={(e) => setObservation(e.target.value)} placeholder="Ej: rota semana por medio con turno tarde" /></label>
           </div>
           <div className="form-actions">
             <Button variant="primary" disabled={isAssigning || !selectedTemplateId || !effectiveFrom} onClick={assign}>

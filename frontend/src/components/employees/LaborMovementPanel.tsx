@@ -162,7 +162,7 @@ export function LaborMovementPanel({
               set={setReason}
               options={type === "ALTA" ? entryReasons : exitReasons}
             />
-            <Field label="Observación" value={observation} set={setObservation} />
+            <Field label="Observación" value={observation} set={setObservation} spellCheck />
             {error ? <p className="error">{error}</p> : null}
             <p className="info-note">
               Estado resultante actual: {status.status}. El estado laboral no se edita manualmente.

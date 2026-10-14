@@ -52,7 +52,7 @@ export function AppDialogHost() {
         {request.kind === "prompt" ? (
           <label className="field">
             <span>{request.inputLabel}</span>
-            <textarea autoFocus value={value} onChange={(event) => setValue(event.target.value)} rows={3} />
+            <textarea autoFocus spellCheck lang="es-AR" value={value} onChange={(event) => setValue(event.target.value)} rows={3} />
           </label>
         ) : null}
         <div className="form-actions">

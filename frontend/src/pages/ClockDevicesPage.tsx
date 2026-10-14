@@ -87,7 +87,7 @@ export function ClockDevicesPage() {
     <PageHeader eyebrow="FICHADOR" title="Dispositivos de fichada" description="Aprobá, ubicá y revocá los equipos habilitados para el fichador standalone." action={<Button variant="primary" icon={Check} onClick={() => setPairingOpen(true)}>Aprobar dispositivo</Button>} />
     <Section title="Equipos registrados" subtitle={`${meta.total} dispositivos encontrados`}>
       <div className="filters">
-        <label className="search-field"><Search size={16} /><input aria-label="Buscar dispositivo" placeholder="Buscar por nombre" value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} /></label>
+        <label className="search-field"><Search size={16} /><input spellCheck={false} aria-label="Buscar dispositivo" placeholder="Buscar por nombre" value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} /></label>
         <label>Estado<select value={filter} onChange={(event) => { setFilter(event.target.value as ClockDeviceStatus | ""); setPage(1); }}><option value="">Todos</option><option value="PENDING">Pendientes</option><option value="ACTIVE">Activos</option><option value="REVOKED">Revocados</option></select></label>
       </div>
       <DataTable status={status === "loading" ? "loading" : status === "error" ? "error" : items.length ? "ready" : "empty"} minWidth={980} emptyText="No hay dispositivos con estos filtros." errorMessage="No se pudieron cargar los dispositivos." onRetry={reload}>

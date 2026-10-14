@@ -1,11 +1,12 @@
+import type { InputHTMLAttributes, TextareaHTMLAttributes } from "react";
 import type { Position, PositionCompetency, PositionEvaluationCriterion, PositionIndicator, PositionRelation, PositionResponsibility, WorkModality } from "../../types/position.types";
 
-export function PuestoField({ label, value, onChange, type = "text", disabled = false }: { label: string; value: string; onChange: (value: string) => void; type?: string; disabled?: boolean }) {
-  return <label>{label}<input disabled={disabled} type={type} value={value} onChange={(event) => onChange(event.target.value)} /></label>;
+export function PuestoField({ label, value, onChange, type = "text", disabled = false, spellCheck = false }: { label: string; value: string; onChange: (value: string) => void; type?: string; disabled?: boolean; spellCheck?: InputHTMLAttributes<HTMLInputElement>["spellCheck"] }) {
+  return <label>{label}<input disabled={disabled} type={type} value={value} spellCheck={spellCheck} lang={spellCheck ? "es-AR" : undefined} onChange={(event) => onChange(event.target.value)} /></label>;
 }
 
-export function PuestoTextarea({ label, value, onChange, disabled = false }: { label: string; value: string; onChange: (value: string) => void; disabled?: boolean }) {
-  return <label className="form-wide">{label}<textarea disabled={disabled} value={value} onChange={(event) => onChange(event.target.value)} /></label>;
+export function PuestoTextarea({ label, value, onChange, disabled = false, spellCheck = true }: { label: string; value: string; onChange: (value: string) => void; disabled?: boolean; spellCheck?: TextareaHTMLAttributes<HTMLTextAreaElement>["spellCheck"] }) {
+  return <label className="form-wide">{label}<textarea disabled={disabled} value={value} spellCheck={spellCheck} lang={spellCheck ? "es-AR" : undefined} onChange={(event) => onChange(event.target.value)} /></label>;
 }
 
 // Etapa 15M.20: `labels` traduce el texto visible de cada opcion (p. ej.

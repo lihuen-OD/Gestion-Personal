@@ -377,7 +377,7 @@ export function WorkRegimesPage() {
             <small className="muted">Cantidad máxima de horas trabajadas antes de generar una alerta informativa. No modifica las horas registradas.</small>
             <label>
               Descripción
-              <textarea value={draft.description || ""} onChange={(event) => setDraft({ ...draft, description: event.target.value })} />
+              <textarea spellCheck lang="es-AR" value={draft.description || ""} onChange={(event) => setDraft({ ...draft, description: event.target.value })} />
             </label>
             <label>
               Estado

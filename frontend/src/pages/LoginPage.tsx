@@ -62,11 +62,11 @@ export function LoginPage() {
         <form onSubmit={submit} className="form-stack">
           <label>
             Email
-            <input value={email} onChange={(event) => setEmail(event.target.value)} />
+            <input type="email" spellCheck={false} value={email} onChange={(event) => setEmail(event.target.value)} />
           </label>
           <label>
             Contraseña
-            <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} />
+            <input type="password" spellCheck={false} value={password} onChange={(event) => setPassword(event.target.value)} />
           </label>
           {error && <span className="error">No pudimos iniciar sesión. Revisá el email y la contraseña e intentá nuevamente.</span>}
           <Button variant="primary" type="submit" disabled={loading}>

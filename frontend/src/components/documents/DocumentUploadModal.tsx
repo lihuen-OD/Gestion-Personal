@@ -204,6 +204,8 @@ export function DocumentUploadModal({
             <label>
               Observación documental
               <textarea
+                spellCheck
+                lang="es-AR"
                 value={notes}
                 onChange={(event) => setNotes(event.target.value)}
                 placeholder="Detalle opcional del archivo o circuito documental"

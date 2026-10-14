@@ -715,7 +715,7 @@ export function EmployeeHoursPage() {
               </label>
               <label className="form-wide">
                 Observaciones
-                <textarea value={manualObservation} onChange={(event) => setManualObservation(event.target.value)} />
+                <textarea spellCheck lang="es-AR" value={manualObservation} onChange={(event) => setManualObservation(event.target.value)} />
               </label>
             </div>
             <p className="table-sub">Guardar 0 horas elimina la carga manual de ese día.</p>
@@ -803,6 +803,8 @@ export function EmployeeHoursPage() {
               <label className="form-wide">
                 Observaciones
                 <textarea
+                  spellCheck
+                  lang="es-AR"
                   value={notes}
                   disabled={selectedLocked}
                   onChange={(event) => setNotes(event.target.value)}
@@ -811,7 +813,7 @@ export function EmployeeHoursPage() {
               {canCorrectApproved ? (
                 <label className="form-wide">
                   Motivo obligatorio de la corrección
-                  <textarea value={correctionReason} onChange={(event) => setCorrectionReason(event.target.value)} placeholder="Ej.: el encargado confirmó el horario correcto con el empleado" />
+                  <textarea spellCheck lang="es-AR" value={correctionReason} onChange={(event) => setCorrectionReason(event.target.value)} placeholder="Ej.: el encargado confirmó el horario correcto con el empleado" />
                 </label>
               ) : null}
             </div>
@@ -927,6 +929,8 @@ export function EmployeeHoursPage() {
                   <label>
                     Observacion documental
                     <textarea
+                      spellCheck
+                      lang="es-AR"
                       value={docNotes}
                       disabled={selectedLocked}
                       onChange={(event) => setDocNotes(event.target.value)}

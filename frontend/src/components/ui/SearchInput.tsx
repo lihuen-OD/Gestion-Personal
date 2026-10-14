@@ -5,7 +5,7 @@ export function SearchInput({ className = "", ...rest }: InputHTMLAttributes<HTM
   return (
     <label className={`search-field ${className}`.trim()}>
       <Search size={17} />
-      <input type="text" {...rest} />
+      <input type="text" {...rest} spellCheck={false} />
     </label>
   );
 }

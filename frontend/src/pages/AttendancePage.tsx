@@ -544,7 +544,7 @@ export function AttendancePage() {
             <span>Empleado</span>
             <div className="attendance-filter-control">
               <Search size={16} />
-              <input value={observedQuery} onChange={(event) => setObservedQuery(event.target.value)} placeholder="Nombre, legajo o puesto" />
+              <input spellCheck={false} value={observedQuery} onChange={(event) => setObservedQuery(event.target.value)} placeholder="Nombre, legajo o puesto" />
             </div>
           </label>
           <label>
@@ -582,7 +582,7 @@ export function AttendancePage() {
         <Modal title="Resolver problema de fichada" close={() => setReviewAction(undefined)}>
           <div className="form-stack">
             <div className="info-note compact"><b>Resolución con trazabilidad</b><p>El caso saldrá de pendientes y quedará disponible en el historial.</p></div>
-            <label>Cómo se resolvió<textarea value={reviewReason} onChange={(event) => setReviewReason(event.target.value)} placeholder="Ej.: se corrigió la salida según lo informado por el responsable" /></label>
+            <label>Cómo se resolvió<textarea spellCheck lang="es-AR" value={reviewReason} onChange={(event) => setReviewReason(event.target.value)} placeholder="Ej.: se corrigió la salida según lo informado por el responsable" /></label>
             {actionError ? <p className="error">{actionError}</p> : null}
             <div className="form-actions"><Button variant="subtle" onClick={() => setReviewAction(undefined)}>Cancelar</Button><Button onClick={confirmReviewAction} loading={actionLoading} disabled={!reviewReason.trim()}>Confirmar resolución</Button></div>
           </div>
@@ -614,7 +614,7 @@ export function AttendancePage() {
             {shiftAction.type !== "close" || closeReasonOption === "Otro" ? (
               <label>
                 {shiftAction.type === "close" ? "Detalle del motivo" : "Motivo obligatorio"}
-                <textarea value={actionReason} onChange={(event) => setActionReason(event.target.value)} placeholder="Indicá el motivo para dejar trazabilidad" />
+                <textarea spellCheck lang="es-AR" value={actionReason} onChange={(event) => setActionReason(event.target.value)} placeholder="Indicá el motivo para dejar trazabilidad" />
               </label>
             ) : null}
             {!actionReason.trim() ? <p className="error">El motivo es obligatorio.</p> : null}
