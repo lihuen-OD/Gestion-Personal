@@ -1,6 +1,6 @@
 # Fichador como app independiente (PWA) — Etapa 1: diagnóstico y plan
 
-> Estado: plan aprobado. **F0 cerrada para el entorno de desarrollo actual** (2026-10-06, ver [§18](#18-f0--implementación-y-resultado)); la medición de `TRUST_PROXY_HOPS` es requisito previo del primer deploy real del backend. F1 cerrada (2026-10-06, [§19](#19-f1--fichador-standalone-implementación)). **F2 cerrada a nivel de repositorio: READY FOR DEPLOY — validación real de infraestructura diferida** (2026-10-06, [§20](#20-f2--despliegue-independiente), decisión en §20.12); no bloquea el desarrollo local. **F3 implementada en local** (2026-10-06, [§21](#21-f3--pwa-local)). **F4 cerrada y migrada únicamente en staging** (2026-10-06, [§22](#22-f4--modelo-persistente-clockdevice)). **F5 implementada: enrolamiento individual y administración RRHH** ([§23](#23-f5--enrolamiento-y-administración-de-dispositivos)). **F6 cerrada definitivamente** (2026-10-07): autenticación individual obligatoria, validada con una fichada real controlada en staging ([§24](#24-f6--autenticación-individual-obligatoria-en-las-fichadas), §24.9). **F7 cerrada** (2026-10-13): `/api/clock/*` en paralelo con el legacy, `source = KIOSK`, cooldown y auditoría con el dispositivo como actor técnico, validada con una fichada real en staging ([§26](#26-f7--contrato-operativo-de-kiosco-backend)). **F7.1 cerrada** (2026-10-13): hardening de transición antes de F8 —el source de la jornada sobrevive al cutover legacy → `/api/clock` y el reintento idempotente de un cooldown conserva `retryAfterSeconds`— (§26.12–§26.13). **F8 cerrada** (2026-10-14): la PWA usa sólo `/api/clock/*`, recupera un resultado incierto con el mismo `requestId` (reenvío ante `404`), muestra el cooldown con cuenta regresiva y confirma con la hora del servidor antes de volver sola al inicio ([§27](#27-f8--cutover-del-cliente-a-apiclock)); F8.1 agrega una espera local corta si un cooldown llega sin `retryAfterSeconds` (§27.11). **Próxima etapa: F9, pendiente de aprobación.**
+> Estado: plan aprobado. **F0 cerrada para el entorno de desarrollo actual** (2026-10-06, ver [§18](#18-f0--implementación-y-resultado)); la medición de `TRUST_PROXY_HOPS` es requisito previo del primer deploy real del backend. F1 cerrada (2026-10-06, [§19](#19-f1--fichador-standalone-implementación)). **F2 cerrada a nivel de repositorio: READY FOR DEPLOY — validación real de infraestructura diferida** (2026-10-06, [§20](#20-f2--despliegue-independiente), decisión en §20.12); no bloquea el desarrollo local. **F3 implementada en local** (2026-10-06, [§21](#21-f3--pwa-local)). **F4 cerrada y migrada únicamente en staging** (2026-10-06, [§22](#22-f4--modelo-persistente-clockdevice)). **F5 implementada: enrolamiento individual y administración RRHH** ([§23](#23-f5--enrolamiento-y-administración-de-dispositivos)). **F6 cerrada definitivamente** (2026-10-07): autenticación individual obligatoria, validada con una fichada real controlada en staging ([§24](#24-f6--autenticación-individual-obligatoria-en-las-fichadas), §24.9). **F7 cerrada** (2026-10-13): `/api/clock/*` en paralelo con el legacy, `source = KIOSK`, cooldown y auditoría con el dispositivo como actor técnico, validada con una fichada real en staging ([§26](#26-f7--contrato-operativo-de-kiosco-backend)). **F7.1 cerrada** (2026-10-13): hardening de transición antes de F8 —el source de la jornada sobrevive al cutover legacy → `/api/clock` y el reintento idempotente de un cooldown conserva `retryAfterSeconds`— (§26.12–§26.13). **F8 cerrada** (2026-10-14): la PWA usa sólo `/api/clock/*`, recupera un resultado incierto con el mismo `requestId` (reenvío ante `404`), muestra el cooldown con cuenta regresiva y confirma con la hora del servidor antes de volver sola al inicio ([§27](#27-f8--cutover-del-cliente-a-apiclock)); F8.1 agrega una espera local corta si un cooldown llega sin `retryAfterSeconds` (§27.11). **F9 cerrada** (2026-10-14): heartbeat del dispositivo, conectividad derivada en el panel de RRHH, edición de nombre y establecimiento, limpieza de solicitudes `PENDING` abandonadas y "Kiosco · <dispositivo>" en Asistencia, validada en staging ([§28](#28-f9--heartbeat-y-gestión-operativa-de-dispositivos)). **Próxima etapa: F10, pendiente de aprobación.**
 > Los §1–§17 son el diagnóstico read-only original sobre `main @ 697968a` y describen el estado **previo** a F0 (por ejemplo, las rutas sin foto de §2 ya no existen).
 > **Numeración:** la secuencia vigente de etapas es la de [§25](#25-secuencia-vigente-de-etapas-reconciliada-el-2026-10-07). Los números F6–F15 de §17 y las referencias a etapas futuras dentro de §12–§23 usan la numeración **original** y se leen con la tabla de equivalencias de §25.1.
 
@@ -1667,7 +1667,7 @@ ejecutado. No se implementó ninguna etapa nueva al reconciliar.
 | F6 | Autenticación individual obligatoria en `/time-entries/clock/*`, `deviceId` en fichadas e intentos, rate limit por dispositivo, retiro del token compartido y de la copia del fichador en el admin | autenticación y atribución de F8; rate limit por dispositivo de F10 (§18.5); retiro de token y copia admin de F12 | **Cerrada definitivamente** el 2026-10-07 (§24.9) |
 | F7 | Contrato operativo de kiosco (backend): `/api/clock/*` convive con `/time-entries/clock/*`; `source = KIOSK` en las fichadas nuevas de dispositivo; cooldown entre fichadas distintas; auditoría con el dispositivo como actor; matriz de staging en el namespace nuevo. ("Kiosco · <dispositivo>" en Asistencia se movió a F9, §26.11) | resto de F8 | **Cerrada** el 2026-10-13 (§26) |
 | F8 | Cutover del cliente: la PWA usa sólo `/api/clock/*`; reenvío con el mismo `requestId` ante 404 (§14.3); el kiosco nunca queda bloqueado; confirmación con la hora del servidor y retorno automático | F9 | **Cerrada** el 2026-10-14 (§27) |
-| F9 | Heartbeat y gestión operativa de dispositivos: ping con `serverTime` y estado sin conexión (§13, §14.4); conectividad derivada en el panel; renombrar y cambiar sector; limpieza automática de `PENDING` vencidos; Asistencia muestra "Kiosco · <dispositivo>" (movido desde F7) | F10 + lo pendiente de la gestión de F5/F6 originales (`rename`, limpieza de pendientes, conectividad) | Pendiente |
+| F9 | Heartbeat y gestión operativa de dispositivos: ping con `serverTime` y estado sin conexión (§13, §14.4); conectividad derivada en el panel; renombrar y cambiar sector; limpieza automática de `PENDING` vencidos; Asistencia muestra "Kiosco · <dispositivo>" (movido desde F7) | F10 + lo pendiente de la gestión de F5/F6 originales (`rename`, limpieza de pendientes, conectividad) | **Cerrada** el 2026-10-14 (§28). "Cambiar sector" se implementó como cambiar **establecimiento**: M2 retiró el sector del dispositivo |
 | F10 | Cámara y operación de kiosco: Wake Lock, cámara abierta vs. por fichada, permiso en standalone, instrucciones de instalación ("Agregar a inicio") y de Acceso guiado | F11 + instrucciones de instalación de F7 (hoy sólo hay un aviso genérico en el Gate) | Pendiente |
 | F11 | Hardening y retiro del legado: retirar `/time-entries/clock/*` tras 7 días sin tráfico; retirar la ruta `/fichador` del admin y `AttendancePunch.kioskId`; límite de body antes de autenticar (R9); CSP enforced; auditoría de fichada no diferida; evaluar `CryptoKey` no exportable; store compartido de rate limit si hay más de una instancia (§25.3) | resto de F12 | Pendiente |
 | F12 | Piloto: 1 iPad, 1 establecimiento, 2 semanas. Prerrequisitos: infraestructura real (§20.9) y `TRUST_PROXY_HOPS` medido (§18.5) | F13 | Pendiente |
@@ -2546,3 +2546,340 @@ Hardening del cliente (2026-10-14). Backend y semántica normal sin cambios.
 - **Tests.** 3 unitarios y 1 E2E. Una mutación que cambia `??` por `||` o
   quita el fallback hace fallar los unitarios. El E2E falla contra el código
   previo a F8.1.
+
+---
+
+## 28. F9 — Heartbeat y gestión operativa de dispositivos
+
+Implementada el 2026-10-14 sobre `main` (a partir de `49895de`) y validada en
+staging (§28.11). Sin migración ni cambios de schema: `ClockDevice` ya tenía
+`name`, `establishmentId`, `lastSeenAt`, `lastIp`, `lastUserAgent` y
+`lastAppVersion`. Las rutas legacy siguen vivas y producción no se tocó.
+
+### 28.1 Decisiones que reemplazan §13 y §14.4
+
+| Tema | Propuesta original (§13, §14.4) | F9 |
+|---|---|---|
+| Frecuencia | Cada 2 min | Cada 60 s, más uno al abrir y uno al volver a primer plano |
+| "En línea" | `lastSeenAt` ≤ 5 min | ≤ 150 s (tolera un heartbeat perdido) |
+| Estados | En línea / visto recientemente / sin conexión | En línea / sin conexión / sin conexión registrada |
+| Versión de app | En el body | Header `X-Clock-App-Version` (ya existía) |
+| `serverTime` | Reloj corregido en el kiosco | Llega, pero no ajusta ningún reloj (§28.4) |
+| PWA "sin conexión" por heartbeat | Banner y botones deshabilitados | No: la PWA no muestra nada; sin red ya lo resuelve el flujo de F8 |
+| Revocado | Respuesta `REVOKED` | `403 CLOCK_DEVICE_REVOKED`, mismo mecanismo de F6 |
+
+### 28.2 Heartbeat (backend)
+
+- `POST /api/clock/heartbeat`, sin body. No existe en el alias legacy.
+- Guardas, en orden:
+  1. límite por IP **propio**, antes de autenticar (`CLOCK_IP_RATE_LIMIT_MAX`
+     en `CLOCK_RATE_LIMIT_WINDOW_MS`);
+  2. `requireClockDevice()`: sólo `ACTIVE`; `PENDING`/`REVOKED` → 403 y
+     credencial inválida → 401;
+  3. límite por dispositivo ya autenticado: 10 cada 5 min.
+
+  Ninguno comparte bucket con las rutas de fichada: el heartbeat nunca gasta
+  el cupo operativo.
+- Escribe `lastSeenAt`, `lastIp` (`req.ip`, respeta `TRUST_PROXY_HOPS`),
+  `lastUserAgent` (header) y `lastAppVersion` (header validado; uno inválido
+  no pisa el anterior). Es un único `UPDATE … WHERE id AND status = 'ACTIVE'`:
+  un equipo revocado entre la autenticación y la escritura recibe
+  `403 CLOCK_DEVICE_REVOKED` y no queda marcado como visto.
+- El body no se lee: un `ip`, `userAgent`, `deviceId` o `appVersion` ahí se
+  ignora.
+- Respuesta: `{ device: { id, name, status, establishment }, serverTime }`.
+  Nunca hashes, IP, user-agent ni quién lo aprobó.
+- No genera `AuditLog`: es presencia técnica, no un evento de negocio.
+- Escritura: un `UPDATE` por minuto por equipo, sin throttle adicional.
+
+### 28.3 Conectividad derivada
+
+- Una sola fuente: `clockDeviceConnectivity` (backend,
+  `clock-devices/clockDeviceConnectivity.ts`), con
+  `CLOCK_DEVICE_ONLINE_WINDOW_MS = 150 s`. El admin sólo traduce el valor.
+- Sólo un `ACTIVE` tiene conectividad: `ONLINE`, `OFFLINE` o `NEVER_SEEN`
+  (sin `lastSeenAt`). `PENDING` y `REVOKED` → `null`. Un revocado nunca se
+  muestra "en línea", aunque haya consultado `/device/status` hace segundos.
+- `lastSeenAt` es el **último contacto válido**: heartbeat, rutas operativas
+  (presencia con throttle de 60 s, F6) o `/device/status`. Antes de F9 sólo
+  había presencia eventual (un equipo abierto sin uso no hablaba); con el
+  heartbeat explícito, "sin conexión" pasa a significar algo.
+- No se persiste ningún `online`: se calcula al leer, así un equipo que deja
+  de hablar pasa solo a "sin conexión".
+
+### 28.4 PWA
+
+- `useClockDeviceHeartbeat` (`features/device/`) lo monta `ClockDeviceGate`
+  sólo con el equipo `ACTIVE` y la sesión abierta, así que no hay heartbeat en
+  `PENDING`, `REVOKED` ni sin credencial. No tiene UI y no vive en
+  `TimeClockPage`.
+- Manda uno al habilitarse, uno cada 60 s y uno al volver a primer plano
+  (`visibilitychange`), con 15 s de separación mínima para no hacer ráfagas.
+  Nunca manda dos a la vez y tiene un timeout de 15 s.
+- Corre independiente de la fichada: no la bloquea ni toca su `requestId`.
+- Ante red, 5xx o 429, silencio (el panel lo verá "sin conexión").
+- Ante 401/403 del dispositivo, deja de mandar: `clockDeviceRequest` cierra la
+  sesión y el Gate bloquea (F6).
+- iOS suspende el JS de una PWA en segundo plano, así que la conectividad es
+  best-effort. Por eso se manda uno apenas la app vuelve a estar visible.
+- `serverTime` llega pero no ajusta ningún reloj: la hora oficial de una
+  fichada ya la da el backend (F8).
+- Corrección asociada en `clockDeviceSession`: un rechazo cierra la sesión si
+  la credencial rechazada es la activa **por valor** (id y secreto), no por
+  referencia.
+  - El Gate puede reabrir la sesión con otra copia de la misma identidad
+    mientras un request vuela. En desarrollo pasa siempre, con la
+    verificación duplicada de StrictMode.
+  - Con la comparación por referencia, el 403 de ese heartbeat no cerraba la
+    sesión: el E2E de "revocado sin uso" fallaba 4 de cada 6 veces.
+  - El rechazo de una credencial **anterior** (equipo reconfigurado entre
+    medio) se sigue ignorando.
+- El service worker nunca cachea `/api/clock/heartbeat` (`pwa-config.test`).
+  El build exige la ruta en el bundle (`check-bundle-isolation`).
+- Los tests unitarios del fichador ya no pueden salir a la red: un `fetch` sin
+  stub falla como "sin conexión" (`src/test/setupTests.ts`).
+
+### 28.5 Gestión RRHH
+
+- **`PATCH /api/clock-devices/:id`** (`requireAuth`, rol RRHH). Body
+  `.strict()` con `{ name?, establishmentId? }`: estado, credenciales, fechas o
+  presencia en el body se **rechazan** con 400, no se ignoran.
+- **Qué se puede editar:**
+  - `PENDING` y `ACTIVE` son editables.
+  - **`REVOKED` no**: `409 CLOCK_DEVICE_NOT_EDITABLE`. Es terminal y su
+    nombre sigue identificando sus fichadas en Asistencia.
+  - Un `PENDING` puede nombrarse antes de aprobarlo; la aprobación precarga
+    ese nombre y ese establecimiento.
+- **Validación:**
+  - Nombre: trim, entre 2 y 120 caracteres.
+  - Establecimiento: la misma regla que la activación, extraída a una función
+    compartida sin cambiar el comportamiento de `activate`. Tiene que existir,
+    estar `ACTIVO`, tener zona (modelo vigente Zona → Establecimiento) y no
+    estar archivado. Si no cumple: `CLOCK_DEVICE_ESTABLISHMENT_ARCHIVED` o
+    `CLOCK_DEVICE_ESTABLISHMENT_INVALID`.
+  - `null` = sin establecimiento: el schema es nullable y la activación ya lo
+    admitía.
+- **La ubicación es física:** describe dónde está instalado el equipo y no
+  restringe a quién se puede buscar o fichar ahí (§25.2). El modal lo dice.
+- **Auditoría:**
+  - `AuditLog` `UPDATE` con `before`/`after` = `{ name, establishmentId,
+    establishment }` y el usuario de RRHH como actor; sin hashes, IP ni
+    user-agent.
+  - Sin cambios reales no se escribe ni se audita.
+  - Activar, revocar y borrar siguen auditados como en F5.
+- **Invalidación:** renombrar invalida las cachés de lectura de Asistencia en
+  el backend (`clearTimeEntriesReadCaches`) y en el frontend (familia
+  `time-entries`). La integración real lo detectó: sin la invalidación,
+  Asistencia mostraba el nombre viejo hasta el TTL.
+- **Listado:**
+  - Columnas: dispositivo (con fecha de alta o revocación debajo), estado,
+    conexión (punto y etiqueta, no un chip), establecimiento, última conexión
+    (`DD/MM/AAAA · HH:mm`), versión y acciones (editar, revocar, eliminar
+    solicitud).
+  - IP y user-agent no se muestran. Siguen en el contrato del listado, como
+    desde F5.
+- **Refresco:**
+  - Silencioso cada 30 s, sólo con la pantalla abierta y visible.
+  - Sin skeleton y sin tocar modales ni filtros.
+  - Si falla, la lista queda y aparece el aviso "No pudimos actualizar el
+    estado de los dispositivos.". Nunca convierte todo en "sin conexión" por
+    un fallo propio.
+  - Después de editar, revocar o eliminar, también refresca en silencio.
+- Cumple `PERFORMANCE_STANDARDS.md`: carga inicial separada del refresco, nada
+  se blanquea, errores dentro de su sección, el catálogo de establecimientos se
+  carga al abrir un modal y no hay cachés nuevas.
+
+### 28.6 Limpieza de solicitudes `PENDING` abandonadas
+
+- **Criterio:**
+  - `PENDING`, nunca activado ni revocado;
+  - código vencido;
+  - creado **y** sin ningún contacto desde hace más de 24 h
+    (`STALE_PENDING_DEVICE_MS`);
+  - sin fichadas ni intentos.
+
+  Un equipo que sigue en la pantalla de espera consulta su estado cada 7,5 s,
+  así que nunca llega al umbral.
+- Corre como un paso más del tick de mantenimiento existente
+  (`clockPunchMaintenance`, sólo con `AUTOMATIC_JOBS_ENABLED`), sin un
+  `setInterval` nuevo. Un error en ese paso no corta el resto del tick.
+- **Seguridad del borrado:**
+  - Hasta 50 por tick.
+  - Cada `DELETE` repite todas las condiciones: si entre la lectura y el
+    borrado RRHH lo aprobó o el equipo volvió a conectarse, no se toca.
+  - Nunca toca `ACTIVE` ni `REVOKED`. Además, las FK `Restrict` impiden
+    borrar un equipo con historia.
+- Cada borrado queda en `AuditLog` (`DELETE`, sistema como actor).
+- El borrado manual de un pendiente sin historia (F5) no cambió.
+- Al habilitar los jobs con F9 desplegado, se borrarán los `PENDING`
+  abandonados que haya. En staging había 0.
+
+### 28.7 Asistencia: "Kiosco · <dispositivo>"
+
+- **Backend:** las dos consultas de Asistencia (`attendanceSummary` y
+  `attendanceObservations`) traen `device: { name }` en `startPunch`,
+  `endPunch` y la fichada observada, en la misma consulta. Para observaciones
+  es un `include`: siguen todos los campos de la fichada.
+- **Sin N+1, medido.** El endpoint emite exactamente 2 sentencias SQL con 1 o
+  con 3 jornadas: el preview `relationJoins` resuelve la relación con un JOIN.
+- **Frontend** (`attendanceSourceLabel`):
+  - `KIOSK` con dispositivo → "Kiosco · <nombre>";
+  - `KIOSK` histórico sin dispositivo → "Kiosco";
+  - `PUBLIC_CLOCK_PHOTO` conserva "Fichador con foto", aunque desde F6 tenga
+    dispositivo;
+  - el resto no cambia;
+  - un origen desconocido muestra "Origen no identificado", nunca el enum.
+
+  La fila de una jornada usa `WorkShift.source` y el dispositivo de su fichada
+  de ingreso.
+- **Nombre ACTUAL, sin snapshot.** Renombrar el equipo cambia también cómo se
+  ven sus fichadas anteriores. Un revocado conserva su nombre (FK `Restrict`).
+  Si el negocio necesita el nombre histórico exacto, queda para otra etapa.
+- No se duplica el nombre en `WorkShift` ni en `TimeEntry`: la atribución
+  sigue siendo `AttendancePunch.deviceId`.
+
+### 28.8 Archivos
+
+| Área | Archivos |
+|---|---|
+| Backend | `clock-devices/clockDeviceConnectivity.ts` (nuevo), `clockDevices.{repository,service,schemas,controller,routes}.ts`, `time-entries/clockPunchMaintenance.ts`, `time-entries/timeEntries.repository.ts` |
+| Admin | `pages/ClockDevicesPage.tsx`, `services/api/clockDeviceApiService.ts`, `services/api/attendanceApiService.ts`, `pages/AttendancePage.tsx`, `utils/attendanceSource.ts` (nuevo), `styles.css` |
+| Fichador | `features/device/useClockDeviceHeartbeat.ts` (nuevo), `features/device/ClockDeviceGate.tsx`, `services/api/timeClockApiService.ts`, `services/api/clockDeviceSession.ts`, `test/setupTests.ts`, `scripts/check-bundle-isolation.mjs`, `scripts/pwa-config.test.mjs` |
+
+### 28.9 Tests
+
+**Backend:** 2886 en verde (33 opt-in salteados), además de typecheck, build
+y `prisma validate`. Lo nuevo o ampliado:
+
+- conectividad (10);
+- heartbeat por HTTP sobre la app real (12):
+  - `ACTIVE`/`PENDING`/`REVOKED`;
+  - 401;
+  - body falsificado;
+  - versión inválida;
+  - sin secretos ni `AuditLog`;
+  - revocado durante la escritura;
+  - sin alias legacy;
+  - cupo propio, que no consume el operativo;
+- schema del `PATCH` (17);
+- servicio (16):
+  - heartbeat;
+  - edición: auditoría, sin cambios, `REVOKED`, carrera y `PENDING`;
+  - limpieza;
+  - conectividad en el listado;
+- repositorio (9), contrato del módulo, preflight CORS del heartbeat y
+  consultas de Asistencia.
+
+**PostgreSQL real** (`clockDevices.integration.test.ts`, base propia
+`clock_it_devices`), 6 casos:
+
+- el heartbeat actualiza la presencia desde la request;
+- `PENDING`/`REVOKED` no la actualizan;
+- conectividad en el listado y vuelta a "en línea";
+- `PATCH` con auditoría y rechazos;
+- fichada `KIOSK` → Asistencia con el nombre actual (también renombrado y
+  revocado) y medición de sentencias;
+- matriz de limpieza: 2 borrados y 8 conservados, entre ellos con intento,
+  con fichada, activado alguna vez, con código vigente, todavía consultando,
+  `ACTIVE` y `REVOKED` viejos.
+
+Corre junto con la de F7: 20/20 en paralelo.
+
+**Admin:** 1247 en verde, más typecheck y build. Nuevos:
+
+- página de dispositivos: estados y conectividad, edición, refresco
+  silencioso, pausa con la pestaña oculta y modal intacto;
+- servicio (`PATCH` e invalidación);
+- `attendanceSourceLabel` (11);
+- Asistencia con "Kiosco · <nombre>".
+
+**Fichador:** 175 unitarios, 30 de scripts, build con aislamiento, E2E 17/17
+y PWA E2E 2/2. Nuevos:
+
+- hook (10);
+- Gate (4);
+- sesión por valor (2);
+- E2E "revocado sin uso: el heartbeat lo bloquea solo".
+
+Las dos E2E de revocación pasaron 16/16 en corridas repetidas.
+
+**Mutaciones:**
+
+- comparar la sesión por referencia hace fallar el test nuevo de la sesión;
+- sin la invalidación de cachés, la integración muestra el nombre viejo en
+  Asistencia.
+
+### 28.10 Validación local con stack real y revisión visual
+
+**El stack.** Backend del worktree en una base local con datos sembrados en
+todos los estados (`APP_ENV=local`, sin jobs), con el admin y el fichador
+apuntando a él. Resultados:
+
+- un heartbeat real lleva a un equipo "sin conexión" a "en línea" y actualiza
+  la versión;
+- un heartbeat de un revocado → 403;
+- el fichador real manda un solo heartbeat al abrir y la base registra
+  `lastSeenAt`, la versión del header y el user-agent del navegador;
+- renombrar desde el modal se refleja en el acto en Asistencia.
+
+**La revisión.** Listado a 1366, 1440 y 1920; tablet 1024; modal en desktop y
+mobile 390; aviso de refresco fallido; toast; Asistencia. Defectos encontrados
+y corregidos:
+
+1. A 1366×768 la columna Acciones quedaba cortada: el `minWidth` de la tabla
+   (1040) superaba el ancho disponible. Se bajó a 960.
+2. El modal de edición heredaba dos columnas implícitas (regla global
+   `.form-stack>.form-actions`) y el error se veía como texto gris suelto.
+   Ahora tiene grilla explícita (dos campos en desktop, una columna en mobile)
+   y el error usa `.error`.
+3. El aviso de refresco fallido usaba `.form-error`, que no tiene estilo
+   propio. Ahora es un aviso con tono warning e ícono.
+
+**Observaciones sin corregir (fuera de alcance):**
+
+- el `Modal` compartido del admin no expone `role="dialog"`;
+- en tablet la tabla scrollea dentro de su contenedor, que es el patrón
+  compartido de la app.
+
+### 28.11 Validación en staging (2026-10-14)
+
+Backend aislado de este worktree en `:4003` contra staging
+(`ep-gentle-resonance`, `APP_ENV=staging`), con
+`AUTOMATIC_JOBS_ENABLED=false`. Verificación por lecturas Prisma.
+
+Staging tiene dos migraciones de `development` que `main` no conoce
+(`…province_establishment_units` y `…archive_province_zone_cost_center`).
+F9 sólo escribe `ClockDevice` y `AuditLog`, cuyas columnas son idénticas, y
+lee campos que existen en ambos.
+
+| Paso | Resultado |
+|---|---|
+| Registro + `PATCH` del `PENDING` (`"  TEST F9  "`) | Nombre recortado, sin conectividad; la aprobación precargó el nombre |
+| Heartbeat real | 200, `serverTime` del backend, `lastSeenAt` avanzó, versión y user-agent del header; IP y versión del body ignoradas |
+| Conectividad | En línea → 155 s sin contacto → **sin conexión** → heartbeat → en línea |
+| Renombrar + establecimiento | "TEST F9 renombrado", "Arroyo Barú · Oficina Central"; un body con `status` → 400 |
+| AuditLog | `UPDATE` (pendiente), `ACTIVATE`, `UPDATE` (nombre y ubicación), todos del usuario RRHH, sin secretos; 0 filas por heartbeat |
+| Asistencia (sólo lectura, sin fichada nueva) | La fichada `KIOSK` de F7 trae el nombre "TEST F7 B" (equipo revocado). La legacy de F6 trae su dispositivo y el admin conserva "Fichador con foto". Las históricas no traen dispositivo |
+| Revocar | Heartbeat → `403 CLOCK_DEVICE_REVOKED`, sin conectividad, `PATCH` → 409 |
+| Limpieza | Sobre un `PENDING` de prueba envejecido sólo en esa fila. Se verificó antes que era el único candidato y la limpieza real lo borró, con auditoría del sistema. Los 8 `REVOKED` quedaron intactos y una segunda corrida borró 0 |
+
+**Queda en staging:**
+
+- "TEST F9 renombrado" (`REVOKED`), como los equipos de prueba de F5–F7, con
+  su auditoría;
+- la auditoría del pendiente borrado.
+
+No se creó ninguna fichada ni alerta.
+
+### 28.12 Pendiente (no es F9)
+
+- F10: Wake Lock, cámara persistente y congelada durante el envío, jerarquía
+  de botones, ícono de "Actualizar estado", instalación e instrucciones para
+  iPad, Acceso guiado.
+- F11: retiro de `/time-entries/clock/*`, `AttendancePunch.kioskId` y el
+  `/fichador` del admin, más el hardening de body limit y CSP.
+- Sin etapa asignada:
+  - `role="dialog"` en el `Modal` compartido del admin;
+  - un snapshot del nombre del dispositivo por fichada, si el negocio lo pide.
+- Sigue documentada la deuda de `expireOpenWorkShifts` (auditoría y caché,
+  `PERFORMANCE_STANDARDS.md` §10).

@@ -1872,6 +1872,10 @@ Capa compartida de archivos (documentos, evidencia fotográfica del fichador). T
 DTO seguro de dispositivo: `id`, `name`, `status`, `establishmentId`, `establishment` (con `zone`),
 timestamps de activación/revocación/última conexión/creación, última IP,
 user-agent y versión. Nunca incluye `tokenHash`, `pairingCodeHash` ni secreto.
+Desde F9 las rutas RRHH agregan `connectivity`: `ONLINE`, `OFFLINE`,
+`NEVER_SEEN`, o `null` para `PENDING`/`REVOKED`. Se deriva al leer de
+`lastSeenAt`, con una ventana de 150 s (`clockDeviceConnectivity.ts`), y no se
+persiste.
 
 Rutas públicas, con rate limit independiente:
 
@@ -1880,10 +1884,15 @@ Rutas públicas, con rate limit independiente:
 | POST | `/api/clock/device/register` | IP/rate limit | Crea `PENDING`; devuelve una vez `{ device, secret }`, con código claro y vencimiento dentro de `device` |
 | GET | `/api/clock/device/status` | `Authorization: ClockDevice <id>.<secret>`, cualquier estado | Estado seguro y actualización de metadata de última conexión; un `REVOKED` recibe `200` con su estado para poder mostrarlo |
 | POST | `/api/clock/device/pairing-code/refresh` | idem | Sólo `PENDING`; invalida el código anterior y devuelve código/vencimiento nuevos |
+| POST | `/api/clock/heartbeat` | `Authorization: ClockDevice …`, sólo `ACTIVE` | F9. Sin body. Actualiza `lastSeenAt`, `lastIp` y `lastUserAgent` de la request, y `lastAppVersion` del header `X-Clock-App-Version`; el body nunca se lee. Responde `{ device: { id, name, status, establishment }, serverTime }`. No audita. Si el equipo fue revocado entre la autenticación y la escritura → `403 CLOCK_DEVICE_REVOKED`. No existe en el alias legacy |
 
 Rate limits por IP: registro `5/10 min`, estado `120/5 min`, refresh `10/10
 min`; además hay un máximo operativo de 20 solicitudes pendientes. La
-resolución RRHH usa `10/5 min`, separada de las anteriores.
+resolución RRHH usa `10/5 min`, separada de las anteriores. El heartbeat (F9)
+tiene dos límites propios, que nunca consumen el cupo de fichadas:
+
+- por IP antes de autenticar (`CLOCK_IP_RATE_LIMIT_MAX`);
+- `10/5 min` por dispositivo ya autenticado.
 
 Rutas RRHH (`Bearer` JWT + Nivel 1):
 
@@ -1893,15 +1902,51 @@ Rutas RRHH (`Bearer` JWT + Nivel 1):
 | GET | `/api/clock-devices/:id` | Detalle seguro |
 | POST | `/api/clock-devices/resolve-pairing` | Resuelve `{ pairingCode }` a metadata segura de un pendiente vigente |
 | POST | `/api/clock-devices/:id/activate` | `{ pairingCode, name, establishmentId? }`; consume pairing y activa atómicamente |
+| PATCH | `/api/clock-devices/:id` | F9. Body `.strict()` `{ name?, establishmentId? }`, al menos uno; cualquier otro campo → `400 VALIDATION_ERROR`. Detalle abajo |
 | POST | `/api/clock-devices/:id/revoke` | Transición terminal `ACTIVE → REVOKED` |
 | DELETE | `/api/clock-devices/:id` | Sólo `PENDING` sin fichadas/intentos |
+
+**`PATCH /api/clock-devices/:id` (F9):**
+
+- Editable sólo en `PENDING` o `ACTIVE`; un `REVOKED` → `409 CLOCK_DEVICE_NOT_EDITABLE`.
+- Nombre: trim, entre 2 y 120 caracteres.
+- `establishmentId`: un establecimiento `ACTIVO`, con zona y no archivado
+  (`400 CLOCK_DEVICE_ESTABLISHMENT_INVALID` / `CLOCK_DEVICE_ESTABLISHMENT_ARCHIVED`).
+  `null` = sin establecimiento.
+- Audita `UPDATE` con antes/después; sin cambios reales no escribe.
+- Invalida las cachés de Asistencia.
 
 Desde F6 la misma credencial individual es la única que autentica las rutas
 operativas `/api/clock/*` (F7) y su alias legacy `/api/time-entries/clock/*`
 (sólo `ACTIVE`; ver "Fichador (`clock`, F7) y alias legacy"). Desde F7 el
 router de enrolamiento se monta dentro de `clockRouter` (módulo `clock`), con
-las mismas rutas y límites. No hay heartbeat todavía (F9): la presencia se
-actualiza en `status` y, con throttle de 1 minuto, en las rutas operativas.
+las mismas rutas y límites.
+
+**Presencia (F9):** `lastSeenAt` es el último contacto válido:
+
+- el heartbeat de la PWA, cada 60 s;
+- `status`;
+- las rutas operativas, con throttle de 1 minuto.
+
+La conectividad del panel se deriva de ese dato. La ubicación del dispositivo
+es física y no restringe a quién se puede fichar.
+
+**Limpieza automática (F9).** El tick de mantenimiento (con
+`AUTOMATIC_JOBS_ENABLED`) borra hasta 50 `PENDING` por pasada que cumplan
+todo esto:
+
+- nunca activados;
+- con el código vencido;
+- creados y sin contacto desde hace más de 24 h;
+- sin fichadas ni intentos.
+
+Cada borrado se audita con el sistema como actor.
+
+**Asistencia (F9).** `GET /api/time-entries/attendance` y
+`/attendance/observations` traen `device: { name } | null` en `startPunch`,
+`endPunch` y en la fichada observada, en la misma consulta (sin N+1). Es el
+nombre **actual** del dispositivo. El admin muestra "Kiosco · <nombre>" para
+`KIOSK`.
 
 ### Health (`health`, montado en `/api/health`)
 

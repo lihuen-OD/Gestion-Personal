@@ -238,3 +238,26 @@ El único hard delete permitido es un `PENDING` sin `AttendancePunch` ni
   `AppError.details` ni datos internos. Sin migración.
 - `AuditLog` tampoco cambia: el dispositivo como actor técnico va en
   `after.actorClockDeviceId` (metadata) con `userId = NULL`.
+
+### Operación de dispositivos (F9, sin migración)
+
+- **Heartbeat.** Escribe `lastSeenAt`, `lastIp`, `lastUserAgent` y
+  `lastAppVersion`, columnas que ya existían. Es un `UPDATE` por minuto por
+  equipo, condicionado a `status = 'ACTIVE'` en el mismo `WHERE`.
+- **Conectividad.** No hay columna `online`: se deriva al leer de
+  `lastSeenAt`. El índice `(status, lastSeenAt)` ya cubre el listado.
+- **Edición.** Sólo toca `name` y `establishmentId` de un `PENDING` o
+  `ACTIVE`. `REVOKED` sigue terminal y conserva su nombre, que Asistencia
+  muestra como nombre actual del equipo (no hay snapshot por fichada).
+- **Hard delete.** Además del borrado manual de F5, la limpieza automática
+  borra `PENDING` abandonados con un criterio estricto:
+  - nunca activados ni revocados;
+  - con el código vencido;
+  - creados y sin contacto hace más de 24 h;
+  - sin `AttendancePunch` ni `ClockPunchAttempt`.
+
+  Repite las condiciones en cada `DELETE` y deja auditado cada borrado. Nunca
+  usa `CASCADE`; las FK de fichadas e intentos siguen `Restrict`.
+- **Asistencia.** Lee `AttendancePunch.device.name` por la relación existente,
+  en la misma consulta. No se duplica el nombre en `WorkShift` ni en
+  `TimeEntry`.

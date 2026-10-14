@@ -274,6 +274,50 @@ CLOCK_IT_DATABASE_URL="postgresql://<usuario>@localhost:5432/clock_it" npx vites
 
 Sin `CLOCK_IT_DATABASE_URL` el test se saltea (CI no lo corre).
 
+### Heartbeat, conectividad y dispositivos (F9)
+
+**Heartbeat.** Con el equipo `ACTIVE`, la PWA manda `POST /api/clock/heartbeat`
+al abrir, cada 60 s y al volver a primer plano. En **Configuración →
+Dispositivos de fichada** el equipo figura así:
+
+- "En línea", si el último contacto fue hace 150 s o menos;
+- "Sin conexión", si fue antes;
+- "Sin conexión registrada", si nunca hubo contacto.
+
+El listado se refresca solo cada 30 s mientras la pestaña está visible. Para
+ver el paso a "sin conexión", cerrar el fichador y esperar unos 2,5 minutos.
+
+**Editar.** Desde el mismo listado se edita el nombre y el establecimiento:
+
+- se puede en `PENDING` y en `ACTIVE`, no en `REVOKED`;
+- el nombre aparece en Asistencia como "Kiosco · <nombre>" en las fichadas de
+  ese equipo.
+
+**Limpieza.** La de solicitudes `PENDING` abandonadas (más de 24 h sin
+contacto) corre en el tick de mantenimiento, así que en local sólo se ejecuta
+con `AUTOMATIC_JOBS_ENABLED=true`.
+
+Integración contra PostgreSQL local, opt-in. Usa su **propia** base, porque
+vacía la indicada al empezar; así puede correr en paralelo con la de F7:
+
+```bash
+createdb -h localhost clock_it_devices
+cd backend
+DATABASE_URL="postgresql://<usuario>@localhost:5432/clock_it_devices" npx prisma db push --skip-generate
+CLOCK_DEVICES_IT_DATABASE_URL="postgresql://<usuario>@localhost:5432/clock_it_devices" npx vitest run src/modules/clock-devices/clockDevices.integration.test.ts
+```
+
+**Tests unitarios del fichador.** Ya no pueden salir a la red: un `fetch` que
+el test no stubbea falla como "sin conexión" (`src/test/setupTests.ts`). Así
+el heartbeat del Gate nunca llega a un backend real en `localhost`.
+
+**Prisma Client y cambio de rama.** Después de cambiar de rama, si el
+`schema.prisma` cambió, correr `npx prisma generate` en `backend/` y
+reiniciar `tsx watch`, que no vigila `node_modules`. Si no, el backend puede
+responder 500 con un `PrismaClientValidationError`, por ejemplo "Unknown
+field `province` for select statement on model `Zone`": el código de una rama
+contra el cliente generado con el schema de otra.
+
 ### Para mostrar la app con VS Code Tunnel
 
 1. Levantar backend: `cd backend && npm run dev`.

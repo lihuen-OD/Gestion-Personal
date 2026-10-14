@@ -89,6 +89,37 @@ Technical actor in the audit trail (F7): a device is never turned into a `User`.
 
 Presence: on operational routes the middleware refreshes `lastSeenAt`, `lastIp`, `lastUserAgent` and `lastAppVersion` at most once per minute per device, conditionally and without blocking the response. `X-Clock-App-Version` is informative only and validated as a short version string; it never takes part in authentication.
 
+Heartbeat (F9): `POST /api/clock/heartbeat`.
+
+- **Guards:** a per-IP limiter before authentication, `requireClockDevice()`
+  (`ACTIVE` only; no JWT, no body identity), then a per-device limiter keyed
+  by the authenticated id (10 / 5 min). Both are separate instances from the
+  operational limiters, so presence never eats the punch quota.
+- **Write:** IP, user-agent and version come from the request and the header;
+  the body is never read. A single `UPDATE … WHERE status = 'ACTIVE'` keeps a
+  device revoked mid-request from being marked as seen.
+- **Response:** device id, name, status and establishment, plus `serverTime`.
+  Never hashes, IP or user-agent.
+- **No audit:** each ping is technical presence and writes no `AuditLog` row.
+- **Not cached:** the service worker never caches it, like every other `/api`
+  call.
+- **Admin connectivity:** derived from `lastSeenAt` and never persisted. A
+  `REVOKED` device is never shown online.
+
+RRHH device management (F9): `PATCH /api/clock-devices/:id`.
+
+- **Access:** `requireAuth` plus the RRHH role, like the rest of
+  `/api/clock-devices`.
+- **Body:** a `.strict()` schema that accepts only `name` and
+  `establishmentId`. Status, credentials, timestamps and presence are
+  rejected, so there is no mass assignment.
+- **Edits:** a `REVOKED` device is not editable. Every real change writes an
+  `UPDATE` audit row with before/after (name, establishment) and the RRHH
+  user. No hashes, IP or user-agent are ever stored in it.
+- **Stale `PENDING` cleanup:** automatic, system actor, audited. It deletes
+  only never-activated devices with no punches and no attempts; the
+  conditions are repeated in every `DELETE`, and the FKs stay `Restrict`.
+
 Logging: request logs never include headers; `/health/client-ip` never echoes `Authorization`; the presence-update failure log carries only the device id and the error message; `CLOCK_ATTEMPT_FAILED` carries request/employee/device ids, source and the error code, never the photo, the credential or the token hash. A rejected device request (`403`) is recorded by the global "Acceso denegado" audit rule like any other forbidden request; searches, status reads and attempt polling add no audit noise. A punch that is confirmed writes exactly one `AuditLog` row (see "Technical actor" above).
 
 ### Individual device enrollment (F5)
