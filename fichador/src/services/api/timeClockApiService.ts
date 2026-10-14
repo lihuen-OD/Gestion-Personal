@@ -1,6 +1,6 @@
 import { clockDeviceRequest } from "./clockDeviceSession";
 
-// Los cuatro endpoints operativos del fichador. El fichador no tiene sesión
+// Los endpoints operativos del fichador (más el heartbeat de F9). El fichador no tiene sesión
 // de usuario: cada request va autenticado como el ClockDevice ACTIVE de este
 // equipo (F6, docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md). La credencial
 // la agrega clockDeviceRequest; acá no se maneja ningún secreto.
@@ -14,10 +14,20 @@ export const clockEndpoints = {
   status: "/clock/status",
   photoPunch: "/clock/photo-punch",
   attempt: (requestId: string) => `/clock/attempts/${encodeURIComponent(requestId)}`,
+  // F9: señal de presencia (features/device/useClockDeviceHeartbeat.ts).
+  heartbeat: "/clock/heartbeat",
 } as const;
 
 /** Tope de espera del POST de fichada: el backend puede tardar ~10 s guardando la foto (F7, §26.10). */
 export const PHOTO_PUNCH_TIMEOUT_MS = 20_000;
+/** F9: un heartbeat colgado no debe frenar el siguiente (salen de a uno). */
+export const HEARTBEAT_TIMEOUT_MS = 15_000;
+
+/** F9: lo que el dispositivo sabe de sí mismo. `serverTime` es la hora del backend (el reloj del equipo nunca es autoridad). */
+export type ClockHeartbeat = {
+  device: { id: string; name: string | null; status: "ACTIVE"; establishment: { id: string; name: string; zone: { id: string; name: string } | null } | null };
+  serverTime: string;
+};
 
 // El backend nunca devuelve el DNI completo al kiosco: sólo sus últimos 3
 // dígitos, para distinguir homónimos (F0 del fichador standalone).
@@ -137,6 +147,16 @@ export const timeClockApiService = {
   async attemptStatus(requestId: string, employeeId: string) {
     const params = new URLSearchParams({ employeeId });
     const response = await clockDeviceRequest<ClockAttemptStatusResponse>(`${clockEndpoints.attempt(requestId)}?${params.toString()}`);
+    return response.data;
+  },
+
+  // F9: sin body. La versión de la app viaja en X-Clock-App-Version (la agrega
+  // clockDeviceRequest); IP y user-agent los toma el backend de la request.
+  async heartbeat() {
+    const response = await clockDeviceRequest<{ data: ClockHeartbeat }>(clockEndpoints.heartbeat, {
+      method: "POST",
+      signal: AbortSignal.timeout(HEARTBEAT_TIMEOUT_MS),
+    });
     return response.data;
   },
 };

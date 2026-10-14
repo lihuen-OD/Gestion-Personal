@@ -54,8 +54,9 @@ const retiredCredentialMarkers = ["x-clock-device-token", "VITE_CLOCK_DEVICE_TOK
 // llamarlo (ni como fallback).
 const legacyNamespaceMarkers = ["/time-entries/clock", "time-entries"];
 // Prueba de vida: si el build no contiene el fichador, sus rutas de
-// /api/clock y su autenticación por dispositivo, el chequeo no vale.
-const requiredMarkers = ["/clock/photo-punch", "/clock/attempts/", "/clock/employees", "/clock/status", "ClockDevice "];
+// /api/clock y su autenticación por dispositivo, el chequeo no vale. F9:
+// también el heartbeat.
+const requiredMarkers = ["/clock/photo-punch", "/clock/attempts/", "/clock/employees", "/clock/status", "/clock/heartbeat", "ClockDevice "];
 
 const assets = walk(join(root, "dist")).filter((path) => /\.(js|css|html)$/.test(path));
 const bundle = assets.map((path) => ({ path, text: readFileSync(path, "utf8") }));

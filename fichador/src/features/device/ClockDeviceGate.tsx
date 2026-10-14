@@ -4,6 +4,7 @@ import { ApiError, getUserErrorMessage } from "../../services/api/apiClient";
 import { clockDeviceApiService, type ClockDeviceState } from "../../services/api/clockDeviceApiService";
 import { clockDeviceSession, type ClockDeviceAuthFailure } from "../../services/api/clockDeviceSession";
 import { clockDeviceStorage, type StoredClockDeviceIdentity } from "./clockDeviceStorage";
+import { useClockDeviceHeartbeat } from "./useClockDeviceHeartbeat";
 
 const POLL_MS = 7_500;
 let registrationPromise: ReturnType<typeof clockDeviceApiService.register> | null = null;
@@ -103,6 +104,10 @@ export function ClockDeviceGate({ children }: { children: ReactNode }) {
     }, POLL_MS);
     return () => window.clearInterval(poll);
   }, [identity, device?.status, applyDevice]);
+
+  // F9: con la sesión operativa abierta (ACTIVE) el equipo avisa que sigue
+  // conectado. PENDING, REVOKED o credencial perdida: no hay heartbeat.
+  useClockDeviceHeartbeat(device?.status === "ACTIVE" && !credentialLost);
 
   const configure = async () => {
     setBusy(true); setError("");

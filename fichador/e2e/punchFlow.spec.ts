@@ -24,6 +24,8 @@ async function openKiosk(page: Page, handlers: { punch?: Handler; attempt?: Hand
     const call = { method: request.method(), path, body: request.method() === "POST" ? (request.postDataJSON() as Record<string, unknown>) : null };
     calls.push(call);
     if (path === "/clock/device/status") return json(route, 200, { data: { id: "00000000-0000-4000-8000-000000000001", name: "TEST F8", status: "ACTIVE" } });
+    // F9: presencia del equipo, independiente de la fichada.
+    if (path === "/clock/heartbeat") return json(route, 200, { data: { device: { id: "00000000-0000-4000-8000-000000000001", name: "TEST F8", status: "ACTIVE", establishment: null }, serverTime: new Date().toISOString() } });
     if (path === "/clock/employees") return json(route, 200, { data: [employee] });
     if (path === "/clock/status") return json(route, 200, { data: { employee, openShift: null } });
     if (path === "/clock/photo-punch") {
@@ -66,7 +68,9 @@ async function captureAndConfirm(page: Page) {
   await confirm.click();
 }
 
-const operational = (calls: ApiCall[]) => calls.filter(({ path }) => !path.startsWith("/clock/device/"));
+// Requests de la fichada: sin el estado del equipo ni el heartbeat (F9), que
+// corren aparte.
+const operational = (calls: ApiCall[]) => calls.filter(({ path }) => !path.startsWith("/clock/device/") && path !== "/clock/heartbeat");
 const punchBodies = (calls: ApiCall[]) => calls.filter(({ path }) => path === "/clock/photo-punch").map(({ body }) => body!);
 
 function expectOnlyClockNamespace(calls: ApiCall[]) {
@@ -91,6 +95,8 @@ test("ACTIVE → busca → estado → ficha → confirmación con hora del servi
 
   expect(operational(calls).map(({ method, path }) => `${method} ${path}`)).toEqual(["GET /clock/employees", "POST /clock/status", "POST /clock/photo-punch"]);
   expectOnlyClockNamespace(operational(calls));
+  // F9: el heartbeat salió al abrir el fichador, sin body (la versión va en el header).
+  expect(calls.filter(({ method, path }) => method === "POST" && path === "/clock/heartbeat").map(({ body }) => body)).toEqual([null]);
   const [body] = punchBodies(calls);
   expect(body).toMatchObject({ employeeId: "employee-1", punchType: "IN", faceValidationStatus: "VALID" });
   expect(body).not.toHaveProperty("source");

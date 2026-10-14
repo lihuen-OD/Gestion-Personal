@@ -56,6 +56,9 @@ describe("service worker (Workbox)", () => {
       "https://api-test.example.com/api/clock/attempts/11111111-1111-4111-8111-111111111111?employeeId=e-1",
       "https://api-test.example.com/api/clock/employees?search=go",
       "http://localhost:5175/api/clock/photo-punch",
+      // F9: el heartbeat tampoco se cachea (un "online" cacheado mentiría).
+      "https://api-test.example.com/api/clock/heartbeat",
+      "http://localhost:5175/api/clock/heartbeat",
       "https://api-test.example.com/api/clock/device/register",
       "https://api-test.example.com/api/clock/device/status",
       "https://api-test.example.com/api/clock/device/pairing-code/refresh",

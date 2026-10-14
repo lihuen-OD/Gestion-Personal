@@ -60,10 +60,21 @@ export async function clockDeviceRequest<T>(path: string, options: RequestOption
     for (const [name, value] of Object.entries(clockDeviceHeaders(identity))) headers.set(name, value);
     return await apiRequest<T>(path, { ...options, headers });
   } catch (error) {
-    if (isClockDeviceAuthFailure(error) && activeIdentity === identity) {
+    if (isClockDeviceAuthFailure(error) && sameCredential(activeIdentity, identity)) {
       activeIdentity = null;
       failureListeners.forEach((listener) => listener(error.code));
     }
     throw error;
   }
+}
+
+/**
+ * F9: se compara la CREDENCIAL, no el objeto. El Gate puede reabrir la sesión
+ * con otra copia de la misma identidad (otra lectura de IndexedDB, una
+ * verificación repetida) mientras un request está en vuelo, y el rechazo de esa
+ * credencial igual tiene que cerrar la sesión y avisar. Lo que sí se ignora es
+ * el rechazo de una credencial ANTERIOR (equipo reconfigurado entre medio).
+ */
+function sameCredential(active: StoredClockDeviceIdentity | null, rejected: StoredClockDeviceIdentity) {
+  return active !== null && active.id === rejected.id && active.secret === rejected.secret;
 }

@@ -158,3 +158,58 @@ describe("ClockDeviceGate — sólo un ClockDevice ACTIVE opera (F6)", () => {
     expect(clockDeviceStorage.clear).not.toHaveBeenCalled();
   });
 });
+
+// F9 (docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md §28): el Gate es el único
+// que manda heartbeats, y sólo con la sesión operativa abierta.
+describe("ClockDeviceGate — heartbeat (F9)", () => {
+  const heartbeatCalls = () => vi.mocked(fetch).mock.calls.filter(([url]) => String(url).endsWith("/clock/heartbeat"));
+
+  it("ACTIVE: manda el heartbeat al abrir, con la credencial del equipo", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(200, { data: { device: device("ACTIVE"), serverTime: new Date().toISOString() } })));
+    vi.mocked(clockDeviceStorage.get).mockResolvedValue(IDENTITY);
+    vi.mocked(clockDeviceApiService.status).mockResolvedValue(device("ACTIVE"));
+    renderGate();
+    await screen.findByText("Fichador de personal");
+
+    await waitFor(() => expect(heartbeatCalls()).toHaveLength(1));
+    const [, init] = heartbeatCalls()[0]!;
+    expect((init as RequestInit).method).toBe("POST");
+    expect(new Headers((init as RequestInit).headers).get("authorization")).toBe(`ClockDevice ${IDENTITY.id}.${IDENTITY.secret}`);
+    expect((init as RequestInit).body).toBeUndefined();
+  });
+
+  it.each(["PENDING", "REVOKED"] as const)("%s: no manda heartbeat", async (status) => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(200, {})));
+    vi.mocked(clockDeviceStorage.get).mockResolvedValue(IDENTITY);
+    vi.mocked(clockDeviceApiService.status).mockResolvedValue(device(status));
+    renderGate();
+    await screen.findByRole("heading", { name: status === "PENDING" ? "Esperando aprobación" : "Dispositivo deshabilitado" });
+
+    expect(heartbeatCalls()).toHaveLength(0);
+  });
+
+  it("un heartbeat rechazado porque RRHH revocó el equipo cierra el fichador sin reintentos (mecanismo F6)", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(403, { error: { code: "CLOCK_DEVICE_REVOKED", message: "Este dispositivo fue deshabilitado por RRHH." } })));
+    vi.mocked(clockDeviceStorage.get).mockResolvedValue(IDENTITY);
+    vi.mocked(clockDeviceApiService.status).mockResolvedValue(device("ACTIVE"));
+    renderGate();
+
+    expect(await screen.findByRole("heading", { name: "Dispositivo deshabilitado" })).toBeInTheDocument();
+    expect(screen.queryByText("Fichador de personal")).not.toBeInTheDocument();
+    expect(clockDeviceSession.isActive()).toBe(false);
+    expect(heartbeatCalls()).toHaveLength(1);
+    expect(clockDeviceStorage.clear).not.toHaveBeenCalled();
+  });
+
+  it("sin red el heartbeat falla en silencio: el fichador sigue abierto y la sesión intacta", async () => {
+    vi.mocked(clockDeviceStorage.get).mockResolvedValue(IDENTITY);
+    vi.mocked(clockDeviceApiService.status).mockResolvedValue(device("ACTIVE"));
+    renderGate();
+    await screen.findByText("Fichador de personal");
+
+    await waitFor(() => expect(heartbeatCalls()).toHaveLength(1));
+    expect(screen.getByText("Fichador de personal")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(clockDeviceSession.isActive()).toBe(true);
+  });
+});

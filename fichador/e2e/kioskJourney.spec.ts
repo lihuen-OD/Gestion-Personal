@@ -14,7 +14,7 @@ const DEVICE_AUTHORIZATION = `ClockDevice ${DEVICE_ID}.${DEVICE_SECRET}`;
 
 type ApiCall = { call: string; authorization: string | undefined; legacyToken: string | undefined };
 
-async function mockApi(page: Page, options: { revokeOperational?: boolean } = {}) {
+async function mockApi(page: Page, options: { revokeOperational?: boolean; revokeHeartbeat?: boolean } = {}) {
   const apiCalls: ApiCall[] = [];
   await page.route("http://127.0.0.1:59999/**", async (route) => {
     const request = route.request();
@@ -22,6 +22,13 @@ async function mockApi(page: Page, options: { revokeOperational?: boolean } = {}
     const headers = request.headers();
     apiCalls.push({ call: `${request.method()} ${path}`, authorization: headers.authorization, legacyToken: headers["x-clock-device-token"] });
     if (path === "/clock/device/status") return route.fulfill({ json: { data: { id: DEVICE_ID, name: "TEST E2E", status: "ACTIVE" } } });
+    // F9: heartbeat del equipo. Por defecto responde OK; `revokeHeartbeat`
+    // simula que RRHH revocó el equipo mientras nadie lo usa.
+    if (path === "/clock/heartbeat") {
+      return options.revokeHeartbeat
+        ? route.fulfill({ status: 403, json: { error: { code: "CLOCK_DEVICE_REVOKED", message: "Este dispositivo fue deshabilitado por RRHH." } } })
+        : route.fulfill({ json: { data: { device: { id: DEVICE_ID, name: "TEST E2E", status: "ACTIVE", establishment: null }, serverTime: new Date().toISOString() } } });
+    }
     if (path.startsWith("/clock/") && !path.startsWith("/clock/device/") && options.revokeOperational) {
       return route.fulfill({ status: 403, json: { error: { code: "CLOCK_DEVICE_REVOKED", message: "Este dispositivo fue deshabilitado por RRHH." } } });
     }
@@ -68,8 +75,9 @@ test("abre, busca, selecciona, abre la cámara, cancela y vuelve al inicio sin f
   await page.getByRole("button", { name: "Cambiar empleado" }).click();
   await expect(page.getByLabel("Buscar por nombre o apellido")).toHaveValue("");
 
-  // F8: operación sólo por /api/clock/*; nada del namespace legacy.
-  expect(apiCalls.map(({ call }) => call)).toEqual(["GET /clock/device/status", "GET /clock/device/status", "GET /clock/employees", "POST /clock/status"]);
+  // F8: operación sólo por /api/clock/*; nada del namespace legacy. F9: un
+  // heartbeat al abrir el fichador (el siguiente sale al minuto).
+  expect(apiCalls.map(({ call }) => call)).toEqual(["GET /clock/device/status", "GET /clock/device/status", "POST /clock/heartbeat", "GET /clock/employees", "POST /clock/status"]);
   expect(apiCalls.some(({ call }) => call.includes("time-entries"))).toBe(false);
   // Todas las llamadas (estado del equipo y operativas) usan la credencial
   // individual; ninguna manda el token compartido retirado.
@@ -105,6 +113,18 @@ test("RRHH revoca con la app abierta: el siguiente request bloquea el fichador s
   expect(apiCalls.filter(({ call }) => call.startsWith("GET /clock/employees"))).toHaveLength(1);
 });
 
+test("F9 — RRHH revoca un equipo que nadie está usando: el heartbeat lo bloquea solo, sin reintentos", async ({ page }) => {
+  const apiCalls = await mockApi(page, { revokeHeartbeat: true });
+  await seedActiveIdentity(page);
+  await page.goto("/");
+
+  await expect(page.getByRole("heading", { name: "Dispositivo deshabilitado" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Fichador de personal" })).toBeHidden();
+  await page.waitForTimeout(1_000);
+  expect(apiCalls.filter(({ call }) => call === "POST /clock/heartbeat")).toHaveLength(1);
+  expect(apiCalls.filter(({ call }) => !call.startsWith("GET /clock/device/status") && call !== "POST /clock/heartbeat")).toEqual([]);
+});
+
 test("enrolamiento explícito: registra, muestra código y libera al ser aprobado", async ({ page }) => {
   await page.route("http://127.0.0.1:59999/**", async (route) => {
     const path = new URL(route.request().url()).pathname.replace(/^\/api/, "");
@@ -130,6 +150,6 @@ for (const path of ["/legajos", "/configuracion", "/usuarios", "/auditoria"]) {
     await expect(page.getByRole("heading", { name: "Página no encontrada" })).toBeVisible();
     await page.getByRole("link", { name: "Ir al fichador" }).click();
     await expect(page.getByRole("heading", { name: "Fichador de personal" })).toBeVisible();
-    expect(apiCalls.map(({ call }) => call)).toEqual(["GET /clock/device/status", "GET /clock/device/status"]);
+    expect(apiCalls.map(({ call }) => call)).toEqual(["GET /clock/device/status", "GET /clock/device/status", "POST /clock/heartbeat"]);
   });
 }

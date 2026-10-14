@@ -65,6 +65,40 @@ describe("clockDeviceSession — credencial individual del fichador (F6)", () =>
     unsubscribe();
   });
 
+  // F9: el heartbeat sale apenas el Gate abre la sesión, y el Gate puede
+  // reabrirla con otra copia de la misma identidad mientras el request vuela.
+  it("si la sesión se reabrió con la MISMA credencial (otro objeto) mientras el request volaba, el rechazo igual la cierra y avisa", async () => {
+    clockDeviceSession.start(IDENTITY);
+    const listener = vi.fn();
+    const unsubscribe = clockDeviceSession.onAuthFailure(listener);
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => {
+      clockDeviceSession.start({ ...IDENTITY });
+      return jsonResponse(403, { error: { code: "CLOCK_DEVICE_REVOKED", message: "rechazado" } });
+    }));
+
+    await expect(clockDeviceRequest("/clock/heartbeat", { method: "POST" })).rejects.toMatchObject({ code: "CLOCK_DEVICE_REVOKED" });
+
+    expect(clockDeviceSession.isActive()).toBe(false);
+    expect(listener).toHaveBeenCalledWith("CLOCK_DEVICE_REVOKED");
+    unsubscribe();
+  });
+
+  it("el rechazo de una credencial ANTERIOR (equipo reconfigurado mientras el request volaba) no cierra la sesión nueva", async () => {
+    clockDeviceSession.start(IDENTITY);
+    const listener = vi.fn();
+    const unsubscribe = clockDeviceSession.onAuthFailure(listener);
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => {
+      clockDeviceSession.start({ id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", secret: "t".repeat(43) });
+      return jsonResponse(401, { error: { code: "CLOCK_DEVICE_INVALID_CREDENTIAL", message: "rechazado" } });
+    }));
+
+    await expect(clockDeviceRequest("/clock/heartbeat", { method: "POST" })).rejects.toMatchObject({ code: "CLOCK_DEVICE_INVALID_CREDENTIAL" });
+
+    expect(clockDeviceSession.isActive()).toBe(true);
+    expect(listener).not.toHaveBeenCalled();
+    unsubscribe();
+  });
+
   it.each([
     ["503 del servidor", () => Promise.resolve(jsonResponse(503, { error: { code: "CLOCK_TEMPORARY_FAILURE", message: "x" } })), ApiError],
     ["sin red", () => Promise.reject(new TypeError("Failed to fetch")), NetworkError],
