@@ -1,6 +1,6 @@
 # Fichador como app independiente (PWA) — Etapa 1: diagnóstico y plan
 
-> Estado: plan aprobado. **F0 cerrada para el entorno de desarrollo actual** (2026-10-06, ver [§18](#18-f0--implementación-y-resultado)); la medición de `TRUST_PROXY_HOPS` es requisito previo del primer deploy real del backend. F1 cerrada (2026-10-06, [§19](#19-f1--fichador-standalone-implementación)). **F2 cerrada a nivel de repositorio: READY FOR DEPLOY — validación real de infraestructura diferida** (2026-10-06, [§20](#20-f2--despliegue-independiente), decisión en §20.12); no bloquea el desarrollo local. **F3 implementada en local** (2026-10-06, [§21](#21-f3--pwa-local)). **F4 cerrada y migrada únicamente en staging** (2026-10-06, [§22](#22-f4--modelo-persistente-clockdevice)). **F5 implementada: enrolamiento individual y administración RRHH** ([§23](#23-f5--enrolamiento-y-administración-de-dispositivos)). **F6 cerrada definitivamente** (2026-10-07): autenticación individual obligatoria, validada con una fichada real controlada en staging ([§24](#24-f6--autenticación-individual-obligatoria-en-las-fichadas), §24.9). **F7 cerrada** (2026-10-13): `/api/clock/*` en paralelo con el legacy, `source = KIOSK`, cooldown y auditoría con el dispositivo como actor técnico, validada con una fichada real en staging ([§26](#26-f7--contrato-operativo-de-kiosco-backend)). **F7.1 cerrada** (2026-10-13): hardening de transición antes de F8 —el source de la jornada sobrevive al cutover legacy → `/api/clock` y el reintento idempotente de un cooldown conserva `retryAfterSeconds`— (§26.12–§26.13). **Próxima etapa: F8, pendiente de aprobación.**
+> Estado: plan aprobado. **F0 cerrada para el entorno de desarrollo actual** (2026-10-06, ver [§18](#18-f0--implementación-y-resultado)); la medición de `TRUST_PROXY_HOPS` es requisito previo del primer deploy real del backend. F1 cerrada (2026-10-06, [§19](#19-f1--fichador-standalone-implementación)). **F2 cerrada a nivel de repositorio: READY FOR DEPLOY — validación real de infraestructura diferida** (2026-10-06, [§20](#20-f2--despliegue-independiente), decisión en §20.12); no bloquea el desarrollo local. **F3 implementada en local** (2026-10-06, [§21](#21-f3--pwa-local)). **F4 cerrada y migrada únicamente en staging** (2026-10-06, [§22](#22-f4--modelo-persistente-clockdevice)). **F5 implementada: enrolamiento individual y administración RRHH** ([§23](#23-f5--enrolamiento-y-administración-de-dispositivos)). **F6 cerrada definitivamente** (2026-10-07): autenticación individual obligatoria, validada con una fichada real controlada en staging ([§24](#24-f6--autenticación-individual-obligatoria-en-las-fichadas), §24.9). **F7 cerrada** (2026-10-13): `/api/clock/*` en paralelo con el legacy, `source = KIOSK`, cooldown y auditoría con el dispositivo como actor técnico, validada con una fichada real en staging ([§26](#26-f7--contrato-operativo-de-kiosco-backend)). **F7.1 cerrada** (2026-10-13): hardening de transición antes de F8 —el source de la jornada sobrevive al cutover legacy → `/api/clock` y el reintento idempotente de un cooldown conserva `retryAfterSeconds`— (§26.12–§26.13). **F8 cerrada** (2026-10-14): la PWA usa sólo `/api/clock/*`, recupera un resultado incierto con el mismo `requestId` (reenvío ante `404`), muestra el cooldown con cuenta regresiva y confirma con la hora del servidor antes de volver sola al inicio ([§27](#27-f8--cutover-del-cliente-a-apiclock)). **Próxima etapa: F9, pendiente de aprobación.**
 > Los §1–§17 son el diagnóstico read-only original sobre `main @ 697968a` y describen el estado **previo** a F0 (por ejemplo, las rutas sin foto de §2 ya no existen).
 > **Numeración:** la secuencia vigente de etapas es la de [§25](#25-secuencia-vigente-de-etapas-reconciliada-el-2026-10-07). Los números F6–F15 de §17 y las referencias a etapas futuras dentro de §12–§23 usan la numeración **original** y se leen con la tabla de equivalencias de §25.1.
 
@@ -1666,7 +1666,7 @@ ejecutado. No se implementó ninguna etapa nueva al reconciliar.
 | F5 | Enrolamiento backend, panel RRHH (aprobar por código, revocar, borrar pendiente) y enrolamiento en la PWA | F5 + F6 + F7 | Cerrada (§23) |
 | F6 | Autenticación individual obligatoria en `/time-entries/clock/*`, `deviceId` en fichadas e intentos, rate limit por dispositivo, retiro del token compartido y de la copia del fichador en el admin | autenticación y atribución de F8; rate limit por dispositivo de F10 (§18.5); retiro de token y copia admin de F12 | **Cerrada definitivamente** el 2026-10-07 (§24.9) |
 | F7 | Contrato operativo de kiosco (backend): `/api/clock/*` convive con `/time-entries/clock/*`; `source = KIOSK` en las fichadas nuevas de dispositivo; cooldown entre fichadas distintas; auditoría con el dispositivo como actor; matriz de staging en el namespace nuevo. ("Kiosco · <dispositivo>" en Asistencia se movió a F9, §26.11) | resto de F8 | **Cerrada** el 2026-10-13 (§26) |
-| F8 | Cutover del cliente: la PWA usa sólo `/api/clock/*`; reenvío con el mismo `requestId` ante 404 (§14.3); el kiosco nunca queda bloqueado; confirmación con la hora del servidor y retorno automático | F9 | Pendiente |
+| F8 | Cutover del cliente: la PWA usa sólo `/api/clock/*`; reenvío con el mismo `requestId` ante 404 (§14.3); el kiosco nunca queda bloqueado; confirmación con la hora del servidor y retorno automático | F9 | **Cerrada** el 2026-10-14 (§27) |
 | F9 | Heartbeat y gestión operativa de dispositivos: ping con `serverTime` y estado sin conexión (§13, §14.4); conectividad derivada en el panel; renombrar y cambiar sector; limpieza automática de `PENDING` vencidos; Asistencia muestra "Kiosco · <dispositivo>" (movido desde F7) | F10 + lo pendiente de la gestión de F5/F6 originales (`rename`, limpieza de pendientes, conectividad) | Pendiente |
 | F10 | Cámara y operación de kiosco: Wake Lock, cámara abierta vs. por fichada, permiso en standalone, instrucciones de instalación ("Agregar a inicio") y de Acceso guiado | F11 + instrucciones de instalación de F7 (hoy sólo hay un aviso genérico en el Gate) | Pendiente |
 | F11 | Hardening y retiro del legado: retirar `/time-entries/clock/*` tras 7 días sin tráfico; retirar la ruta `/fichador` del admin y `AttendancePunch.kioskId`; límite de body antes de autenticar (R9); CSP enforced; auditoría de fichada no diferida; evaluar `CryptoKey` no exportable; store compartido de rate limit si hay más de una instancia (§25.3) | resto de F12 | Pendiente |
@@ -2235,3 +2235,286 @@ fichada en staging.
   metadata guardada, hace fallar los casos de integración y los unitarios
   correspondientes.
 - Fichador y admin no cambiaron (ni contratos que consuman).
+
+---
+
+## 27. F8 — Cutover del cliente a `/api/clock/*`
+
+Implementada el 2026-10-14 sobre `main` (a partir de `f5d733e`). Sólo cambió
+`fichador/`: ni backend, ni schema, ni admin. Las rutas legacy
+`/api/time-entries/clock/*` siguen vivas, con su header `Deprecation`, hasta
+F11. Producción no se tocó.
+
+### 27.1 Namespace
+
+- Las cuatro rutas operativas salen de una única fuente,
+  `clockEndpoints` en `fichador/src/services/api/timeClockApiService.ts`:
+  `/clock/employees`, `/clock/status`, `/clock/photo-punch` y
+  `/clock/attempts/:requestId`. Todas llevan `Authorization: ClockDevice …`
+  (F6); ninguna lleva JWT.
+- El cliente no manda `source`, `deviceId` ni una hora propia: el backend los
+  decide (§26.3, §24.2). Las fichadas de la PWA quedan `KIOSK`.
+- `npm run build` falla si el bundle contiene `time-entries` o
+  `/time-entries/clock`, o si le falta alguna de las cuatro rutas
+  (`scripts/check-bundle-isolation.mjs`). La regla se probó por mutación:
+  una marca legacy inyectada en `dist` hace fallar el chequeo.
+
+### 27.2 Una intención, un `requestId`
+
+- El `requestId` (`crypto.randomUUID()`) nace al tocar **Marcar
+  ingreso/salida** y se conserva durante toda la captura y la recuperación.
+- Se descarta al terminar la intención: éxito, error definitivo o resultado
+  no confirmado. La siguiente intención siempre tiene uno nuevo.
+- Doble tap: dos guardas síncronas (`intentLock` al abrir la cámara,
+  `submitLock` al confirmar) llegan antes del re-render. Resultado: una sola
+  intención y un solo POST.
+
+### 27.3 Envío y recuperación
+
+`fichador/src/features/punch/punchSubmission.ts`, fuera de React (la página
+sólo muestra etapas y resultados):
+
+| Respuesta del POST | Lectura | Qué hace el cliente |
+|---|---|---|
+| `201` | Cierta | Éxito |
+| Error HTTP con código del backend (negocio, dispositivo, cooldown, `5xx` `CLOCK_*`) | Cierta | Lo muestra, sin reintentar |
+| Sin respuesta (red, timeout de 20 s del cliente), `5xx` sin código `CLOCK_*` (proxy/gateway) o `CLOCK_ATTEMPT_PROCESSING` | Incierta: la fichada pudo registrarse | Consulta `GET /clock/attempts/:requestId` con el **mismo** `requestId` |
+
+Recuperación:
+
+- Esperas antes de cada consulta: 0,5 / 1 / 1,5 / 2 / 3 / 3 / 3 / 4 / 4 / 4 /
+  4 / 4,5 / 5 / 5 s. Son ≤ 14 consultas y ~44,5 s en total, holgado para un
+  upload de foto de ~10 s (§26.10).
+- Peor caso de una intención: 18 requests (1 POST, 14 consultas y 3
+  reenvíos), dentro del cupo por dispositivo de 30 cada 5 min (§24.3).
+- `COMPLETED` → éxito con el `response` guardado.
+- `FAILED` → el error guardado, incluido `retryAfterSeconds` (§26.13).
+- `PROCESSING` → sigue consultando; la UI pasa a "confirmando".
+- **`404` = el backend todavía no tiene el intento.** Tras 2 `404` seguidos
+  se reenvía **el mismo POST** (mismo `requestId` y mismo payload; es seguro
+  por la idempotencia), hasta 3 veces (§14.3).
+- Red, `5xx` o `429` en la consulta: sigue dentro del presupuesto.
+- `401`/`403` del dispositivo: corta. La sesión ya se cerró y el Gate bloquea
+  (F6).
+- Presupuesto agotado sin respuesta cierta → **no confirmado**: mensaje
+  "No pudimos confirmar el estado de esta fichada. Esperá unos segundos y
+  volvé a intentar.", el estado del legajo se vuelve a consultar y el kiosco
+  queda libre. Un nuevo intento usa otro `requestId`; si la anterior sí se
+  registró, el cooldown o el estado de la jornada lo dicen.
+- Un `requestId` que el backend no reconoce como propio
+  (`CLOCK_IDEMPOTENCY_KEY_REUSED`) no se "arregla" con otro id: mensaje
+  "No pudimos recuperar esta fichada. Volvé a iniciar el proceso." En
+  desarrollo deja un `console.warn` con el código y nada más; el build de
+  producción no lo incluye.
+
+### 27.4 Qué ve la persona
+
+Etapas dentro del modal de cámara. Durante el envío, el estado del detector
+de rostros se oculta y las acciones quedan deshabilitadas. Nunca dice
+"fallida" mientras el resultado es incierto.
+
+| Etapa | Cuándo | Texto |
+|---|---|---|
+| Enviando | POST en curso | "Registrando fichada…" / "Guardando evidencia fotográfica. No cierres esta pantalla." |
+| Lento | POST en curso después de 4 s | "Esto puede demorar unos segundos porque estamos guardando la evidencia…" |
+| Verificando | Respuesta perdida; se consulta el intento | "Estamos verificando si la fichada se registró…" / "No vuelvas a fichar…" |
+| Confirmando | El intento está `PROCESSING` | "Estamos confirmando tu fichada…" |
+
+**Éxito.** "Entrada registrada" o "Salida registrada", nombre y apellido, y
+la hora **del servidor** en `HH:mm`, hora Argentina (`formatTime`): el
+`startAt` del ingreso o el `endAt` de la salida. Nunca usa el reloj del
+equipo. Si el ingreso cerró por rollover una jornada vieja, lo aclara. A los
+3,5 s el kiosco vuelve solo al inicio (búsqueda vacía, sin empleado), sin
+recargar la app ni tocar la credencial.
+
+**Cooldown** (`409 CLOCK_PUNCH_COOLDOWN`, directo o recuperado de un intento
+`FAILED`):
+
+- Aviso ámbar: "Ya registraste una fichada hace unos segundos." / "Podés
+  volver a intentar en N s.".
+- La cuenta regresiva es local, con el `retryAfterSeconds` original; no
+  consulta al backend.
+- Se calcula en cada render contra un deadline fijo, así que nunca muestra un
+  segundo de más ni habilita tarde.
+- Al llegar a 0 habilita los botones; no ficha sola.
+- Sin `retryAfterSeconds` muestra "Esperá unos segundos y volvé a intentar."
+
+**Errores definitivos:**
+
+- Se muestra el `message` del backend.
+- Si el código indica que la jornada cambió (`CLOCK_ALREADY_OPEN`,
+  `CLOCK_NO_OPEN_SHIFT`, `CLOCK_ALREADY_CLOSED`, `CLOCK_SHIFT_CHANGED`), el
+  estado del legajo se refresca en silencio antes del próximo intento.
+
+**Dispositivo revocado o credencial inválida** en cualquier momento, también
+durante la recuperación: no hay mensaje en el fichador. El Gate de F6 lo
+bloquea ("Dispositivo deshabilitado") y no hay reintentos.
+
+### 27.5 Sin conexión
+
+No hay fichadas offline. Con `navigator.onLine === false`:
+
+- al tocar Marcar ingreso/salida no se abre la cámara;
+- al confirmar, no sale el POST y el intento se descarta.
+
+En los dos casos se muestra "Sin conexión. No se puede registrar la
+fichada." Si la red se corta con el POST ya enviado, es un resultado incierto
+y sigue §27.3.
+
+### 27.6 Actualizaciones de la PWA y recarga
+
+- `kioskActivity` marca el kiosco ocupado con búsqueda escrita, empleado
+  elegido, cámara abierta, envío o verificación en curso, y mientras se ve un
+  resultado. Una actualización del service worker nunca se aplica en medio
+  de una fichada (F3).
+- **Limitación aceptada:** el `requestId` vive sólo en memoria. Si la página
+  se recarga durante el envío (cierre de Safari, recarga manual), ese
+  `requestId` se pierde y no se recupera.
+  - Al volver, el estado del legajo muestra si la fichada quedó.
+  - Una fichada nueva dentro de la ventana recibe cooldown.
+  - Persistir intentos en vuelo (IndexedDB) queda fuera de F8; se reevalúa si
+    el piloto (F12) lo muestra como problema real.
+
+### 27.7 Archivos
+
+| Archivo | Cambio |
+|---|---|
+| `src/services/api/timeClockApiService.ts` | `clockEndpoints`, timeout del POST (20 s), tipos del intento |
+| `src/services/api/apiClient.ts` | `ApiError.retryAfterSeconds`, `apiErrorFromStored`, mensajes de `REUSED`/`PROCESSING` |
+| `src/features/punch/punchSubmission.ts` (nuevo) | Envío y recuperación (§27.3) |
+| `src/pages/TimeClockPage.tsx` | Intención con `requestId`, etapas, éxito con auto-reset, cooldown, offline, refresh de estado |
+| `src/components/time-clock/FaceCaptureModal.tsx` | Etapas del envío. Corrección: la detección se detiene al capturar |
+| `src/utils/date.ts` | `formatTime` (HH:mm, Argentina) |
+| `src/styles.css` | Éxito, cooldown y correcciones visuales (§27.8) |
+| `scripts/check-bundle-isolation.mjs`, `scripts/pwa-config.test.mjs` | Namespace nuevo obligatorio, legacy y detector falso prohibidos |
+| `vite.config.ts`, `playwright.config.ts`, `e2e/support/fakeTasksVision.ts` (nuevo) | Detector de rostros falso **sólo** para E2E (`FICHADOR_E2E_FAKE_FACE=1`, servidor 5186) |
+| `e2e/punchFlow.spec.ts` (nuevo), `e2e/kioskJourney.spec.ts`, `e2e/offlineShell.pwa.ts` | Flujos de §27.9 |
+
+### 27.8 Revisión visual
+
+Se capturaron 15 estados en iPad vertical (820×1180), iPad horizontal
+(1180×820) y escritorio (1440×900), con el API mockeado, cámara falsa de
+Chromium y el detector falso: listo, búsqueda, seleccionado, ingreso abierto,
+cámara, enviando, lento, verificando, confirmando, éxito de ingreso, éxito de
+salida, cooldown, sin red, error definitivo y revocado.
+
+Cada captura se controló también por script: sin UUID ni códigos técnicos
+visibles, sin overflow horizontal, modal dentro del viewport, y durante el
+envío sin estado del detector, sin "fallida", sin acciones habilitadas y sin
+scroll en el modal.
+
+Defectos encontrados y corregidos. Todos venían del CSS de F1 y F8 los dejó a
+la vista:
+
+1. En pantallas de 981 px o más, el fondo del modal quedaba desplazado 256 px:
+   era el CSS copiado del admin, que tiene sidebar.
+2. En horizontal, el video ocupaba todo el alto y dejaba fuera del viewport
+   el estado del envío y las acciones. Ahora el video conserva 4:3 y achica
+   su ancho según el alto disponible.
+3. Durante el envío aparecía un falso "La imagen está muy oscura": el loop de
+   detección seguía corriendo con la cámara ya apagada. Ahora se detiene al
+   capturar y el estado del detector se oculta mientras se envía.
+4. Los botones de ícono deshabilitados se veían activos: la X del modal
+   mientras se confirma y "Actualizar estado" sin empleado. Ahora tienen el
+   mismo tratamiento que `.button:disabled`.
+
+Observaciones no corregidas (comportamiento previo, fuera de alcance):
+
+- Con un ingreso abierto, "Marcar salida" (botón secundario) pesa menos que
+  "Marcar ingreso" deshabilitado (primario atenuado). Es jerarquía heredada;
+  se revisa con la operación de kiosco (F10).
+- Al capturar, la cámara se libera y el video queda negro durante el envío;
+  la etapa lo explica. Mostrar la foto congelada sería un cambio de cámara
+  (F10).
+- "Actualizar estado" usa el ícono de lupa.
+
+### 27.9 Tests
+
+Unitarios (Vitest): 155 en 12 archivos, más 30 de scripts. Los nuevos o
+ampliados en F8:
+
+- `punchSubmission.test.ts` (26):
+  - certeza vs. incertidumbre;
+  - `COMPLETED`, `FAILED` con `retryAfterSeconds` y `PROCESSING`;
+  - `404` → reenvío del mismo input, con el tope de reenvíos;
+  - presupuesto agotado → no confirmado;
+  - auth en la consulta;
+  - cancelación.
+- `TimeClockPage.test.tsx`, bloque F8 (15):
+  - éxito con hora del servidor y auto-reset; `endAt` en la salida;
+  - `requestId` nuevo por intención;
+  - respuesta perdida → mismo id; `PROCESSING` → `COMPLETED`;
+  - cuenta regresiva sin llamadas al backend; cooldown recuperado por
+    consulta;
+  - sin red antes de abrir y al confirmar;
+  - no confirmado → refresh e id nuevo;
+  - `REUSED`; refresh por jornada cambiada;
+  - revocado; doble tap;
+  - claves exactas del payload.
+- `FaceCaptureModal.test.tsx` (4 etapas).
+- `apiClient.test.ts`: contrato `/api/clock` y ausencia de `time-entries` y
+  del token retirado.
+
+E2E (Playwright), 15 en total:
+
+- `kioskJourney` (7) sobre el detector real.
+- `punchFlow` (8) sobre el detector falso:
+  - éxito por `/api/clock` con vuelta al inicio;
+  - cuenta regresiva del cooldown;
+  - respuesta perdida;
+  - POST que nunca llegó (`404` ×2 → reenvío idéntico);
+  - revocación durante la fichada;
+  - backend lento;
+  - doble tap;
+  - sin red.
+
+PWA E2E (2): instalable; y sin red, donde la fichada se bloquea con estado
+claro y el detector se sirve del precache.
+
+**Contra el backend real (local).** Backend de `main` sobre PostgreSQL local
+`clock_it`, con `AUTOMATIC_JOBS_ENABLED=false` y
+`CLOCK_PUNCH_COOLDOWN_SECONDS=5`, y el fichador con el detector falso. Pasaron:
+
+- ingreso con hora del servidor;
+- cooldown real con cuenta regresiva;
+- respuesta perdida real (la request llega al backend y la respuesta se
+  aborta), recuperada con una sola consulta;
+- POST que nunca llegó: `404` ×2 y reenvío del mismo id → `201`.
+
+En la base quedaron 4 intentos (`COMPLETED`, `FAILED` por cooldown,
+`COMPLETED`, `COMPLETED`) y 3 fichadas, todas `KIOSK` y con el `deviceId` del
+equipo de prueba. Ninguna duplicada; 0 requests al namespace legacy.
+
+**Staging: sin fichada nueva, a propósito.** No aportaría evidencia que no
+exista ya:
+
+- El backend no cambió en F8, y §26.9 ya validó en staging `/api/clock`,
+  `KIOSK` y el cooldown con una fichada real.
+- El cliente se validó contra ese mismo código del backend sobre PostgreSQL
+  real.
+- Una fichada en staging exige cámara y rostro reales, y genera otra alerta.
+
+La primera fichada real de la PWA por `/api/clock` queda para la validación
+en equipo de F10/F12.
+
+**Búsquedas de cierre.**
+
+- `rg "time-entries/clock" fichador/src fichador/e2e` → sólo un comentario
+  en `timeClockApiService.ts`.
+- `rg "time-entries"` además encuentra tests que verifican la **ausencia**
+  (`apiClient.test.ts`, `kioskJourney.spec.ts`, `punchFlow.spec.ts`) y la
+  marca prohibida del chequeo de aislamiento.
+- El token retirado sólo aparece en guardas: tests de ausencia, el rechazo de
+  `hosting-headers.mjs` y las marcas prohibidas del aislamiento.
+- `dist/`:
+  - 0 `time-entries`;
+  - 0 marcas del detector falso y del token retirado;
+  - las cuatro rutas `/clock/*` presentes.
+
+### 27.10 Pendiente (no es F8)
+
+- F9: heartbeat, gestión operativa de dispositivos y "Kiosco · <dispositivo>"
+  en Asistencia.
+- F10: Wake Lock, cámara y Acceso guiado.
+- F11: retiro de `/time-entries/clock/*` tras 7 días sin tráfico y el resto
+  del hardening de §25.1.

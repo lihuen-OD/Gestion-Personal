@@ -1188,7 +1188,7 @@ POST /api/clock/status
 POST /api/clock/photo-punch
 GET  /api/clock/attempts/:requestId?employeeId=
 
-# Alias legacy (deprecado desde F7, se retira en F11; la PWA lo usa hasta F8):
+# Alias legacy (deprecado desde F7, se retira en F11; la PWA ya no lo usa desde F8):
 GET  /api/time-entries/clock/employees?search=
 POST /api/time-entries/clock/status
 POST /api/time-entries/clock/photo-punch

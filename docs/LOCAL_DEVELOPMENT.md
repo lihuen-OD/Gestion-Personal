@@ -166,7 +166,7 @@ npm install
 npm run dev          # http://localhost:5175 (puerto fijo, strictPort)
 npm run test         # unit/componente (Vitest)
 npm run build        # tsc + vite build + dist/_headers + chequeo de aislamiento
-npm run e2e          # journey Playwright con el API mockeado (no toca datos)
+npm run e2e          # Playwright con el API mockeado (no toca datos): journey + fichada completa (F8)
 npm run e2e:pwa      # PWA contra build + preview: SW, precache y offline (puerto 5195)
 npm run icons        # regenera los íconos placeholder de la PWA
 ```
@@ -191,8 +191,16 @@ Frontend (admin):   http://localhost:5174
 Fichador:           http://localhost:5175
 ```
 
-Los tres pueden correr a la vez. El e2e del fichador levanta su propio Vite en
-`5185` con el API mockeado.
+Los tres pueden correr a la vez. El e2e del fichador levanta sus propios Vite
+con el API mockeado:
+
+- `5185`, con el detector de rostros real;
+- `5186`, con un detector **falso** (`FICHADOR_E2E_FAKE_FACE=1`, alias de
+  `@mediapipe/tasks-vision` a `e2e/support/fakeTasksVision.ts`) para recorrer
+  la fichada completa con la cámara falsa de Chromium.
+
+El detector falso nunca llega al build: `npm run build` falla si encuentra su
+marca. Ver `docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md` §27.
 
 Si el backend usa otro puerto, actualizar ambos valores con el mismo puerto:
 
@@ -239,12 +247,13 @@ Para probar la revocación en caliente: con el fichador abierto, revocar el
 equipo desde **Configuración → Dispositivos de fichada** y escribir una
 búsqueda: el fichador se cierra y muestra "Dispositivo deshabilitado".
 
-### API del fichador y cooldown (F7)
+### API del fichador y cooldown (F7/F8)
 
 El backend sirve las rutas operativas en `/api/clock/*` (fichadas `KIOSK`) y
 mantiene `/api/time-entries/clock/*` como alias deprecado del mismo código
-(fichadas `PUBLIC_CLOCK_PHOTO`). Durante F7 la PWA sigue llamando al alias;
-pasa a `/api/clock/*` en F8. Las dos rutas comparten credencial y cupos.
+(fichadas `PUBLIC_CLOCK_PHOTO`). Desde F8 la PWA llama sólo a `/api/clock/*`.
+El alias queda para clientes viejos hasta F11. Las dos rutas comparten
+credencial y cupos.
 
 Cooldown: dos fichadas **distintas** del mismo empleado separadas por menos de
 `CLOCK_PUNCH_COOLDOWN_SECONDS` (default 60, en `backend/.env`) responden
