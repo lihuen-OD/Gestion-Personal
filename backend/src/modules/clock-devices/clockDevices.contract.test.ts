@@ -14,7 +14,23 @@ describe("F5 — contrato de enrolamiento de ClockDevice", () => {
     expect(routes).toContain('"/:id/activate"');
     expect(routes).toContain('"/:id/revoke"');
     expect(routes).toContain("requireAuth, requireAnyRole(adminRoles)");
-    expect(routes.match(/createRateLimiter\(\{/g)).toHaveLength(4);
+    // F5: register, status, pairing refresh, resolve-pairing. F9: heartbeat por IP y por dispositivo.
+    expect(routes.match(/createRateLimiter\(\{/g)).toHaveLength(6);
+  });
+
+  it("F9: el heartbeat exige ACTIVE, tiene limitadores propios (IP antes, dispositivo después) y no audita", () => {
+    const routes = moduleFile("clockDevices.routes.ts");
+    const heartbeat = routes.slice(routes.indexOf('"/heartbeat"'), routes.indexOf("clockDevicesController.heartbeat"));
+    const ipLimiter = heartbeat.indexOf("CLOCK_IP_RATE_LIMIT_MAX");
+    const auth = heartbeat.indexOf("requireClockDevice()");
+    const deviceLimiter = heartbeat.indexOf("`clock-heartbeat:${authenticatedClockDevice(req).id}`");
+    expect(ipLimiter).toBeGreaterThan(-1);
+    expect(auth).toBeGreaterThan(ipLimiter);
+    expect(deviceLimiter).toBeGreaterThan(auth);
+    const service = moduleFile("clockDevices.service.ts");
+    const heartbeatService = service.slice(service.indexOf("async heartbeat"), service.indexOf("async refreshPairing"));
+    expect(heartbeatService).not.toContain("auditService");
+    expect(routes).toContain('clockDevicesAdminRouter.patch("/:id", validateBody(updateClockDeviceSchema)');
   });
 
   it("ningún DTO público selecciona hashes ni secretos persistidos", () => {

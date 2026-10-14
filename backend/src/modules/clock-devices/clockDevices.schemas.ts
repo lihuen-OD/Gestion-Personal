@@ -18,6 +18,13 @@ export const activateClockDeviceSchema = z.object({
   establishmentId: z.string().uuid().nullable().optional(),
 });
 
+// F9: lo único que RRHH edita de un dispositivo. `.strict()`: estado,
+// credenciales, fechas o presencia en el body se rechazan, no se ignoran.
+export const updateClockDeviceSchema = z.object({
+  name: z.string().trim().min(2).max(120).optional(),
+  establishmentId: z.string().uuid().nullable().optional(),
+}).strict().refine((input) => input.name !== undefined || input.establishmentId !== undefined, { message: "Indicá el nombre o el establecimiento." });
+
 export const listClockDevicesQuerySchema = z.object({
   search: z.string().trim().max(120).optional(),
   status: clockDeviceStatusSchema.optional(),
@@ -29,4 +36,5 @@ export const listClockDevicesQuerySchema = z.object({
 export type RegisterClockDeviceInput = z.infer<typeof registerClockDeviceSchema>;
 export type ResolvePairingInput = z.infer<typeof resolvePairingSchema>;
 export type ActivateClockDeviceInput = z.infer<typeof activateClockDeviceSchema>;
+export type UpdateClockDeviceInput = z.infer<typeof updateClockDeviceSchema>;
 export type ListClockDevicesQuery = z.infer<typeof listClockDevicesQuerySchema>;

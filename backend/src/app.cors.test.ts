@@ -66,6 +66,23 @@ describe("CORS para dos sitios independientes (admin + fichador)", () => {
     }
   });
 
+  // F9: el heartbeat usa exactamente los headers que el fichador ya mandaba
+  // (Authorization + X-Clock-App-Version): no hace falta ampliar CORS.
+  it("el preflight de POST /clock/heartbeat pasa con Authorization y X-Clock-App-Version, y no para otro origin", async () => {
+    const heartbeatPreflight = (origin: string) => fetch(`${baseUrl}/clock/heartbeat`, {
+      method: "OPTIONS",
+      headers: { origin, "access-control-request-method": "POST", "access-control-request-headers": "authorization, x-clock-app-version" },
+    });
+    const response = await heartbeatPreflight(FICHADOR);
+    expect(response.status).toBe(204);
+    expect(response.headers.get("access-control-allow-origin")).toBe(FICHADOR);
+    expect(response.headers.get("access-control-allow-methods")).toContain("POST");
+    expect(response.headers.get("access-control-allow-headers")?.split(",").map((header) => header.trim().toLowerCase())).toEqual(
+      expect.arrayContaining(["authorization", "x-clock-app-version"]),
+    );
+    expect((await heartbeatPreflight("https://evil.example.com")).headers.get("access-control-allow-origin")).toBeNull();
+  });
+
   // F7: el namespace nuevo /api/clock/* comparte backend y configuración CORS.
   it("el preflight del namespace nuevo /clock/* pasa igual (POST con Authorization/Content-Type y GET con versión de app)", async () => {
     for (const path of ["/clock/photo-punch", "/clock/status"]) {

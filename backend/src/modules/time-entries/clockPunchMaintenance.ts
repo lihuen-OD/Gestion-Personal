@@ -6,6 +6,7 @@ import { runAttendanceInactivityCatchUp } from "./attendanceInactivityScheduler"
 import { checkMissingExpectedEntries } from "./missingEntry.service";
 import { runMissingEntryCatchUp } from "./missingEntryScheduler";
 import { checkMissingOutRisk } from "../shifts/openShiftMonitor.service";
+import { clockDevicesService } from "../clock-devices/clockDevices.service";
 
 let running = false;
 let lastOrphanCount: number | undefined;
@@ -78,6 +79,18 @@ export async function maintainClockPunchAttempts() {
       console.info("CLOCK_ATTEMPTS_RETENTION_APPLIED", {
         count: removed.count,
         retentionDays: env.CLOCK_ATTEMPT_RETENTION_DAYS,
+      });
+    }
+
+    // F9: solicitudes PENDING de dispositivos abandonadas (criterios en
+    // clockDevicesService.cleanupStalePending). Un error acá no corta el tick.
+    try {
+      const pendingCleanup = await clockDevicesService.cleanupStalePending(new Date(now));
+      if (pendingCleanup.deleted > 0) console.info("CLOCK_DEVICE_STALE_PENDING_DELETED", pendingCleanup);
+    } catch (error) {
+      console.error("CLOCK_DEVICE_STALE_PENDING_CLEANUP_FAILED", {
+        severity: "warning",
+        error: error instanceof Error ? error.message : String(error),
       });
     }
 
