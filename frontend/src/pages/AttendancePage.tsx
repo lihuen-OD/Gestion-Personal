@@ -21,6 +21,7 @@ import { NoveltyFromContextModal } from "../components/novelties/NoveltyFromCont
 import { buildNoveltyPrefillFromAttendanceShiftProblem, buildNoveltyPrefillFromInactivityIncident, type NoveltyPrefillContext } from "../utils/noveltyFromAlert";
 import { TOAST_SUCCESS_MS } from "../utils/toast";
 import { workShiftStatusLabel, workShiftStatusTone } from "../utils/status";
+import { attendanceSourceLabel } from "../utils/attendanceSource";
 
 const OBSERVED_PAGE_SIZE = 10;
 
@@ -64,21 +65,6 @@ function toDateTimeLocalValue(value = new Date()) {
   return local.toISOString().slice(0, 16);
 }
 
-function sourceLabel(source: string) {
-  const labels: Record<string, string> = {
-    ADMIN: "Admin",
-    PORTAL_DNI: "Fichador",
-    PUBLIC_CLOCK_PHOTO: "Fichador con foto",
-    KIOSK: "Kiosco",
-    BIOTIME: "BioTime",
-    FACIAL: "Facial",
-  };
-  // Etapa 15M.20: fallback fijo en vez de devolver el enum crudo — cubre
-  // hoy los 6/6 valores de WorkShiftSource, pero si el backend agrega uno
-  // nuevo no debe filtrarse a la UI sin traducir.
-  return labels[source] || "Origen no identificado";
-}
-
 function faceStatusLabel(status?: string | null) {
   const labels: Record<string, string> = {
     VALID: "Rostro válido",
@@ -88,7 +74,7 @@ function faceStatusLabel(status?: string | null) {
     FACE_TOO_SMALL: "Rostro pequeño",
     CAMERA_ERROR: "Error cámara",
   };
-  // Etapa 15M.20: idem sourceLabel — cubre hoy los 6/6 valores de
+  // Etapa 15M.20: idem attendanceSourceLabel — cubre hoy los 6/6 valores de
   // FaceValidationStatus, con fallback fijo en vez del enum crudo.
   if (!status) return "Sin validación";
   return labels[status] || "Estado de validación no identificado";
@@ -182,7 +168,7 @@ function ShiftRows({ items, emptyText, showSegments = false, showRisk = false, o
               <PunchEvidence punch={shift.endPunch} label="Ver foto" onViewPhoto={onViewPhoto} />
             </td>
             <td>{formatDurationMinutes(shift.workedMinutes || shift.totalMinutes)}</td>
-            <td>{sourceLabel(shift.source)}</td>
+            <td>{attendanceSourceLabel(shift.source, shift.startPunch?.device?.name)}</td>
             {showRisk && <td>{shift.shiftTemplate ? shift.shiftTemplate.name : <em>Sin turno</em>}</td>}
             {showRisk && <td>{formatDateTime(shift.risk?.expectedExitAt)}</td>}
             <td><Badge tone={workShiftStatusTone(shift.status)}>{workShiftStatusLabel(shift.status)}</Badge></td>
@@ -282,7 +268,7 @@ function ObservationRows({ items, onViewPhoto, onResolve, onViewSegments, onCrea
             {item.kind === "PUNCH" && hasPunchPhoto(item.punch) ? <button type="button" className="table-icon-action" title="Ver foto" aria-label="Ver foto" onClick={() => onViewPhoto(item.punch.id)}><Camera size={14} /><span>Ver foto</span></button> : null}
             {item.kind === "SHIFT" ? <button type="button" className="table-icon-action" title="Ver tramos" aria-label="Ver tramos" onClick={() => onViewSegments(item.shift)}><Eye size={14} /><span>Ver tramos</span></button> : null}
           </td>
-          <td>{sourceLabel(record.source)}</td>
+          <td>{attendanceSourceLabel(record.source, item.kind === "SHIFT" ? item.shift.startPunch?.device?.name : item.punch.device?.name)}</td>
           <td>
             {isPending ? <button type="button" className="table-icon-action" title="Resolver" aria-label="Resolver" onClick={() => onResolve(item.kind, record.id)}><CheckCircle2 size={14} /><span>Resolver</span></button> : <Badge tone="success">Resuelta</Badge>}
             {item.kind === "SHIFT" ? <button type="button" className="table-icon-action" title="Registrar novedad a partir de esta alerta" aria-label="Crear novedad" onClick={() => onCreateNovelty(buildNoveltyPrefillFromAttendanceShiftProblem(item.shift, problem))}><FilePlus2 size={14} /><span>Crear novedad</span></button> : null}

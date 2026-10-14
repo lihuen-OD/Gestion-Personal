@@ -115,6 +115,12 @@ const attendanceTimeSegmentSelect = {
   },
 } satisfies Prisma.TimeSegmentSelect;
 
+// F9 (docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md §28): nombre ACTUAL del
+// dispositivo que hizo la fichada, para mostrar "Kiosco · <nombre>" en
+// Asistencia. Viaja en la misma consulta (relación anidada: una lectura por
+// nivel, nunca una por fila). Sólo el nombre, ni metadata técnica del equipo.
+const attendancePunchDevice = { select: { name: true } } satisfies Prisma.ClockDeviceDefaultArgs;
+
 const attendanceTimeEntrySelect = {
   id: true,
   date: true,
@@ -1134,6 +1140,7 @@ export const timeEntriesRepository = {
               faceDetected: true,
               faceValidationStatus: true,
               faceDetectionScore: true,
+              device: attendancePunchDevice,
             },
           },
           endPunch: {
@@ -1150,6 +1157,7 @@ export const timeEntriesRepository = {
               faceDetected: true,
               faceValidationStatus: true,
               faceDetectionScore: true,
+              device: attendancePunchDevice,
             },
           },
           timeSegments: {
@@ -1187,6 +1195,7 @@ export const timeEntriesRepository = {
           faceDetected: true,
           faceValidationStatus: true,
           faceDetectionScore: true,
+          device: attendancePunchDevice,
           employee: { select: employeeSelect },
         },
         orderBy: { timestamp: "desc" },
@@ -1278,8 +1287,8 @@ export const timeEntriesRepository = {
       where: shiftWhere,
       include: {
         employee: { select: employeeSelect },
-        startPunch: true,
-        endPunch: true,
+        startPunch: { include: { device: attendancePunchDevice } },
+        endPunch: { include: { device: attendancePunchDevice } },
         timeSegments: { select: attendanceTimeSegmentSelect, orderBy: { fromDateTime: "asc" } },
         timeEntries: { select: attendanceTimeEntrySelect, orderBy: { date: "asc" } },
       },
@@ -1288,7 +1297,7 @@ export const timeEntriesRepository = {
     });
     const findPunches = () => prisma.attendancePunch.findMany({
       where: punchWhere,
-      include: { employee: { select: employeeSelect } },
+      include: { employee: { select: employeeSelect }, device: attendancePunchDevice },
       orderBy: [{ timestamp: "desc" }, { id: "desc" }],
       take: input.take + 1,
     });

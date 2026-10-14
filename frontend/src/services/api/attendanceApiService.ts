@@ -114,6 +114,8 @@ export type AttendancePunchEvidence = {
   faceDetected: boolean;
   faceValidationStatus?: string | null;
   faceDetectionScore?: number | null;
+  /** F9: nombre ACTUAL del dispositivo que hizo la fichada (null en fichadas sin dispositivo). */
+  device?: { name: string | null } | null;
 };
 
 export type AttendancePunch = {
@@ -134,6 +136,8 @@ export type AttendancePunch = {
   faceDetected: boolean;
   faceValidationStatus?: string | null;
   faceDetectionScore?: number | null;
+  /** F9: nombre ACTUAL del dispositivo que hizo la fichada (null en fichadas sin dispositivo). */
+  device?: { name: string | null } | null;
   employee: AttendanceEmployee;
 };
 

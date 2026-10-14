@@ -2679,8 +2679,16 @@ describe("attendanceObservations — Etapa 14G.3, sin $transaction y sin queries
   it("sigue trayendo startPunch/endPunch/timeSegments/timeEntries en el shift (contrato de respuesta sin recortar campos)", async () => {
     await timeEntriesRepository.attendanceObservations(baseInput);
     const shiftCall = mockedPrisma.workShift.findMany.mock.calls[0]![0] as { include: { startPunch: unknown; endPunch: unknown } };
-    expect(shiftCall.include.startPunch).toBe(true);
-    expect(shiftCall.include.endPunch).toBe(true);
+    // F9: `include` (no `select`): siguen todos los campos de la fichada, más
+    // sólo el nombre del dispositivo para "Kiosco · <nombre>".
+    expect(shiftCall.include.startPunch).toEqual({ include: { device: { select: { name: true } } } });
+    expect(shiftCall.include.endPunch).toEqual({ include: { device: { select: { name: true } } } });
+  });
+
+  it("F9: la fichada observada trae el nombre del dispositivo en la misma consulta", async () => {
+    await timeEntriesRepository.attendanceObservations(baseInput);
+    const punchCall = mockedPrisma.attendancePunch.findMany.mock.calls[0]![0] as { include: Record<string, unknown> };
+    expect(punchCall.include.device).toEqual({ select: { name: true } });
   });
 });
 

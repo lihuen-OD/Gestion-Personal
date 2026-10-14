@@ -389,3 +389,27 @@ describe("AttendancePage — Etapa 15M.16 (el toast de 'Novedad creada' es tempo
     );
   });
 });
+
+// F9 (docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md §28): el origen de una
+// jornada de kiosco nombra al dispositivo con el dato que trae la misma
+// respuesta (sin pedir dispositivos aparte).
+describe("AttendancePage — F9 (Kiosco · <dispositivo>)", () => {
+  const punchEvidence = (deviceName: string | null) => ({ id: `p-${deviceName}`, timestamp: "2026-08-27T12:00:00.000Z", source: "KIOSK", status: "VALIDA", faceDetected: true, device: deviceName === null ? null : { name: deviceName } });
+
+  it("muestra 'Kiosco · <nombre>' con dispositivo, 'Kiosco' en el histórico sin dispositivo y conserva el resto de los orígenes", async () => {
+    vi.mocked(attendanceApiService.getSummary).mockResolvedValue(buildSummary({
+      totals: { open: 3, closed: 0, observed: 0, workedHours: 0 },
+      openShifts: [
+        buildShift({ id: "s-kiosk", source: "KIOSK", startPunch: punchEvidence("Pañol principal") }),
+        buildShift({ id: "s-history", employeeId: "employee-2", source: "KIOSK", startPunch: punchEvidence(null), employee: { id: "employee-2", legajo: "200", dni: "30222333", firstName: "Bruno", lastName: "Diaz", status: "ACTIVO" } }),
+        buildShift({ id: "s-legacy", employeeId: "employee-3", source: "PUBLIC_CLOCK_PHOTO", startPunch: { ...punchEvidence("Pañol principal"), source: "PUBLIC_CLOCK_PHOTO" }, employee: { id: "employee-3", legajo: "300", dni: "30333444", firstName: "Carla", lastName: "Ruiz", status: "ACTIVO" } }),
+      ],
+    }));
+    renderPage();
+
+    expect(await screen.findByText("Kiosco · Pañol principal")).toBeInTheDocument();
+    expect(screen.getByText("Kiosco")).toBeInTheDocument();
+    expect(screen.getByText("Fichador con foto")).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/undefined|KIOSK|PUBLIC_CLOCK_PHOTO/);
+  });
+});
