@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { OFFLINE_MESSAGE, SUCCESS_RESET_MS, TimeClockPage, UNCONFIRMED_MESSAGE } from "./TimeClockPage";
+import { FALLBACK_COOLDOWN_SECONDS, OFFLINE_MESSAGE, SUCCESS_RESET_MS, TimeClockPage, UNCONFIRMED_MESSAGE } from "./TimeClockPage";
 import { timeClockApiService } from "../services/api/timeClockApiService";
 import { ApiError, NetworkError } from "../services/api/apiClient";
 import { kioskActivity } from "../pwa/kioskActivity";
@@ -519,6 +519,75 @@ describe("TimeClockPage — F8: confirmación, recuperación, cooldown y retorno
 
     expect(screen.getByText("Ya registraste una fichada hace unos segundos.")).toBeInTheDocument();
     expect(screen.getByRole("timer")).toHaveTextContent("Podés volver a intentar en 42 s.");
+  });
+
+  // F8.1: un cooldown SIN retryAfterSeconds (intento anterior a F7.1, backend
+  // desactualizado o respuesta incompleta) no habilita de inmediato: espera
+  // local de FALLBACK_COOLDOWN_SECONDS con la misma UX y sin requests.
+  const allBackendCalls = () => Object.values(timeClockApiService).map((fn) => vi.mocked(fn).mock.calls.length);
+
+  it("cooldown del POST sin retryAfterSeconds: fallback local, botones deshabilitados, sin requests y al terminar habilita según el legajo", async () => {
+    mockNoOpenShift();
+    vi.mocked(timeClockApiService.photoPunch).mockRejectedValue(new ApiError("Ya registraste una fichada hace instantes.", "CLOCK_PUNCH_COOLDOWN", 409));
+    await selectWithFakeTimers();
+    await openCapture(/Marcar ingreso/i);
+    await confirm();
+
+    expect(screen.getByText("Ya registraste una fichada hace unos segundos.")).toBeInTheDocument();
+    expect(screen.getByRole("timer")).toHaveTextContent(`Podés volver a intentar en ${FALLBACK_COOLDOWN_SECONDS} s.`);
+    expect(screen.getByRole("button", { name: /Marcar ingreso/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /Marcar salida/i })).toBeDisabled();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/CLOCK_|retryAfterSeconds/);
+    const callsBefore = allBackendCalls();
+
+    await flush((FALLBACK_COOLDOWN_SECONDS - 1) * 1_000);
+    expect(screen.getByRole("timer")).toHaveTextContent("Podés volver a intentar en 1 s.");
+    expect(screen.getByRole("button", { name: /Marcar ingreso/i })).toBeDisabled();
+    await flush(1_000);
+
+    expect(screen.queryByText("Ya registraste una fichada hace unos segundos.")).not.toBeInTheDocument();
+    // Según el estado real del legajo (sin ingreso abierto): ingreso sí, salida no.
+    expect(screen.getByRole("button", { name: /Marcar ingreso/i })).toBeEnabled();
+    expect(screen.getByRole("button", { name: /Marcar salida/i })).toBeDisabled();
+    // El empleado sigue elegido; nada se fichó solo ni se consultó.
+    expect(screen.getByText("Legajo 100 · DNI terminado en 456")).toBeInTheDocument();
+    expect(allBackendCalls()).toEqual(callsBefore);
+  });
+
+  it("cooldown recuperado de un intento guardado sin retryAfterSeconds (anterior a F7.1): mismo fallback, también para la salida", async () => {
+    mockOpenShift();
+    vi.mocked(timeClockApiService.photoPunch).mockRejectedValue(new NetworkError());
+    vi.mocked(timeClockApiService.attemptStatus).mockResolvedValueOnce({
+      requestId: "x", status: "FAILED", response: null,
+      error: { code: "CLOCK_PUNCH_COOLDOWN", message: "Ya registraste una fichada hace instantes.", httpStatus: 409 },
+    });
+    await selectWithFakeTimers();
+    await openCapture(/Marcar salida/i);
+    await confirm();
+    await flush(500);
+
+    expect(screen.getByRole("timer")).toHaveTextContent(`Podés volver a intentar en ${FALLBACK_COOLDOWN_SECONDS} s.`);
+    expect(screen.getByRole("button", { name: /Marcar salida/i })).toBeDisabled();
+    const callsBefore = allBackendCalls();
+
+    await flush(FALLBACK_COOLDOWN_SECONDS * 1_000);
+
+    expect(screen.queryByRole("timer")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Marcar salida/i })).toBeEnabled();
+    expect(allBackendCalls()).toEqual(callsBefore);
+  });
+
+  it("retryAfterSeconds = 0 es un valor válido del backend: NO aplica el fallback, no bloquea y no ficha sola", async () => {
+    mockNoOpenShift();
+    vi.mocked(timeClockApiService.photoPunch).mockRejectedValue(new ApiError("Ya registraste una fichada hace instantes.", "CLOCK_PUNCH_COOLDOWN", 409, 0));
+    await selectWithFakeTimers();
+    await openCapture(/Marcar ingreso/i);
+    await confirm();
+
+    expect(screen.queryByRole("timer")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Marcar ingreso/i })).toBeEnabled();
+    expect(timeClockApiService.photoPunch).toHaveBeenCalledTimes(1);
   });
 
   it("sin conexión antes de empezar: no abre la cámara ni sale ningún request", async () => {

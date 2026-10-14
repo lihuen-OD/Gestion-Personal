@@ -26,6 +26,14 @@ const MAX_CLOCK_SHIFT_MINUTES = 20 * 60;
 export const SUCCESS_RESET_MS = 3_500;
 /** A partir de cuándo el envío avisa que puede demorar (la foto puede tardar ~10 s). */
 const SLOW_SUBMIT_MS = 4_000;
+/**
+ * F8.1: espera local de un cooldown que llegó SIN retryAfterSeconds (intento
+ * anterior a F7.1, backend desactualizado o respuesta incompleta). Sólo evita
+ * habilitar de inmediato; no es la ventana real del backend, que no se
+ * adivina: si se reintenta antes de tiempo, el backend vuelve a responder
+ * cooldown con su tiempo exacto.
+ */
+export const FALLBACK_COOLDOWN_SECONDS = 5;
 
 export const OFFLINE_MESSAGE = "Sin conexión. No se puede registrar la fichada.";
 export const UNCONFIRMED_MESSAGE = "No pudimos confirmar el estado de esta fichada. Esperá unos segundos y volvé a intentar.";
@@ -43,7 +51,7 @@ type PunchFlow =
   | { step: "submitting"; punchType: PunchType; requestId: string; stage: SubmissionStage };
 type PunchView =
   | { kind: "success"; punchType: PunchType; employee: ClockEmployee; at: string; previousOpenShiftAt?: string }
-  | { kind: "cooldown"; seconds?: number; deadline?: number }
+  | { kind: "cooldown"; deadline: number }
   | { kind: "error"; message: string };
 
 const sleep = (ms: number) => new Promise<void>((resolve) => window.setTimeout(resolve, ms));
@@ -71,6 +79,11 @@ function employeeIdentity(employee: ClockEmployee) {
 
 function formatCurrentTime(value: Date) {
   return value.toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+}
+
+/** Espera de un cooldown: la del backend (0 incluido, por eso `??`) o el fallback local. */
+function cooldownSeconds(failure: ApiError) {
+  return failure.retryAfterSeconds ?? FALLBACK_COOLDOWN_SECONDS;
 }
 
 /** Hora OFICIAL de la fichada: la que devolvió el backend, nunca el reloj del equipo. */
@@ -160,11 +173,12 @@ export function TimeClockPage() {
   }, [view, resetKiosk]);
 
   // Cooldown: cuenta regresiva local con el retryAfterSeconds original del
-  // backend; al llegar a 0 se habilita de nuevo, sin fichar automáticamente.
+  // backend (o FALLBACK_COOLDOWN_SECONDS si no vino); al llegar a 0 se
+  // habilita de nuevo, sin fichar automáticamente.
   const cooldownRemaining = useSecondsLeft(view?.kind === "cooldown" ? view.deadline : undefined);
   const cooldownActive = cooldownRemaining > 0;
   useEffect(() => {
-    if (view?.kind === "cooldown" && view.deadline && !cooldownActive) setView(null);
+    if (view?.kind === "cooldown" && !cooldownActive) setView(null);
   }, [view, cooldownActive]);
 
   const canSubmit = Boolean(selected?.id) && !loading && !punch && !cooldownActive && view?.kind !== "success";
@@ -257,8 +271,7 @@ export function TimeClockPage() {
     // fichador (F6). No es un error de red ni de la fichada.
     if (isClockDeviceAuthFailure(failure)) return;
     if (failure.code === "CLOCK_PUNCH_COOLDOWN") {
-      const seconds = failure.retryAfterSeconds;
-      setView({ kind: "cooldown", seconds, deadline: seconds !== undefined ? Date.now() + seconds * 1000 : undefined });
+      setView({ kind: "cooldown", deadline: Date.now() + cooldownSeconds(failure) * 1000 });
       return;
     }
     if (failure.code === "CLOCK_IDEMPOTENCY_KEY_REUSED" && import.meta.env.DEV) {
@@ -407,14 +420,12 @@ export function TimeClockPage() {
               <p className="muted">El fichador registra únicamente entrada y salida. Los conceptos horarios se calculan o cargan luego desde la gestión horaria.</p>
             ) : null}
 
-            {view?.kind === "cooldown" ? (
+            {view?.kind === "cooldown" && cooldownActive ? (
               <div className="clock-cooldown" role="status">
                 <Clock3 className="clock-cooldown-icon" aria-hidden="true" />
                 <div>
                   <b>Ya registraste una fichada hace unos segundos.</b>
-                  <span role="timer" aria-live="off">
-                    {cooldownActive ? `Podés volver a intentar en ${cooldownRemaining} s.` : "Esperá unos segundos y volvé a intentar."}
-                  </span>
+                  <span role="timer" aria-live="off">Podés volver a intentar en {cooldownRemaining} s.</span>
                 </div>
               </div>
             ) : null}

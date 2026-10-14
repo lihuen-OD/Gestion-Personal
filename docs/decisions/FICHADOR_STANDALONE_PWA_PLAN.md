@@ -1,6 +1,6 @@
 # Fichador como app independiente (PWA) — Etapa 1: diagnóstico y plan
 
-> Estado: plan aprobado. **F0 cerrada para el entorno de desarrollo actual** (2026-10-06, ver [§18](#18-f0--implementación-y-resultado)); la medición de `TRUST_PROXY_HOPS` es requisito previo del primer deploy real del backend. F1 cerrada (2026-10-06, [§19](#19-f1--fichador-standalone-implementación)). **F2 cerrada a nivel de repositorio: READY FOR DEPLOY — validación real de infraestructura diferida** (2026-10-06, [§20](#20-f2--despliegue-independiente), decisión en §20.12); no bloquea el desarrollo local. **F3 implementada en local** (2026-10-06, [§21](#21-f3--pwa-local)). **F4 cerrada y migrada únicamente en staging** (2026-10-06, [§22](#22-f4--modelo-persistente-clockdevice)). **F5 implementada: enrolamiento individual y administración RRHH** ([§23](#23-f5--enrolamiento-y-administración-de-dispositivos)). **F6 cerrada definitivamente** (2026-10-07): autenticación individual obligatoria, validada con una fichada real controlada en staging ([§24](#24-f6--autenticación-individual-obligatoria-en-las-fichadas), §24.9). **F7 cerrada** (2026-10-13): `/api/clock/*` en paralelo con el legacy, `source = KIOSK`, cooldown y auditoría con el dispositivo como actor técnico, validada con una fichada real en staging ([§26](#26-f7--contrato-operativo-de-kiosco-backend)). **F7.1 cerrada** (2026-10-13): hardening de transición antes de F8 —el source de la jornada sobrevive al cutover legacy → `/api/clock` y el reintento idempotente de un cooldown conserva `retryAfterSeconds`— (§26.12–§26.13). **F8 cerrada** (2026-10-14): la PWA usa sólo `/api/clock/*`, recupera un resultado incierto con el mismo `requestId` (reenvío ante `404`), muestra el cooldown con cuenta regresiva y confirma con la hora del servidor antes de volver sola al inicio ([§27](#27-f8--cutover-del-cliente-a-apiclock)). **Próxima etapa: F9, pendiente de aprobación.**
+> Estado: plan aprobado. **F0 cerrada para el entorno de desarrollo actual** (2026-10-06, ver [§18](#18-f0--implementación-y-resultado)); la medición de `TRUST_PROXY_HOPS` es requisito previo del primer deploy real del backend. F1 cerrada (2026-10-06, [§19](#19-f1--fichador-standalone-implementación)). **F2 cerrada a nivel de repositorio: READY FOR DEPLOY — validación real de infraestructura diferida** (2026-10-06, [§20](#20-f2--despliegue-independiente), decisión en §20.12); no bloquea el desarrollo local. **F3 implementada en local** (2026-10-06, [§21](#21-f3--pwa-local)). **F4 cerrada y migrada únicamente en staging** (2026-10-06, [§22](#22-f4--modelo-persistente-clockdevice)). **F5 implementada: enrolamiento individual y administración RRHH** ([§23](#23-f5--enrolamiento-y-administración-de-dispositivos)). **F6 cerrada definitivamente** (2026-10-07): autenticación individual obligatoria, validada con una fichada real controlada en staging ([§24](#24-f6--autenticación-individual-obligatoria-en-las-fichadas), §24.9). **F7 cerrada** (2026-10-13): `/api/clock/*` en paralelo con el legacy, `source = KIOSK`, cooldown y auditoría con el dispositivo como actor técnico, validada con una fichada real en staging ([§26](#26-f7--contrato-operativo-de-kiosco-backend)). **F7.1 cerrada** (2026-10-13): hardening de transición antes de F8 —el source de la jornada sobrevive al cutover legacy → `/api/clock` y el reintento idempotente de un cooldown conserva `retryAfterSeconds`— (§26.12–§26.13). **F8 cerrada** (2026-10-14): la PWA usa sólo `/api/clock/*`, recupera un resultado incierto con el mismo `requestId` (reenvío ante `404`), muestra el cooldown con cuenta regresiva y confirma con la hora del servidor antes de volver sola al inicio ([§27](#27-f8--cutover-del-cliente-a-apiclock)); F8.1 agrega una espera local corta si un cooldown llega sin `retryAfterSeconds` (§27.11). **Próxima etapa: F9, pendiente de aprobación.**
 > Los §1–§17 son el diagnóstico read-only original sobre `main @ 697968a` y describen el estado **previo** a F0 (por ejemplo, las rutas sin foto de §2 ya no existen).
 > **Numeración:** la secuencia vigente de etapas es la de [§25](#25-secuencia-vigente-de-etapas-reconciliada-el-2026-10-07). Los números F6–F15 de §17 y las referencias a etapas futuras dentro de §12–§23 usan la numeración **original** y se leen con la tabla de equivalencias de §25.1.
 
@@ -2337,7 +2337,8 @@ recargar la app ni tocar la credencial.
 - Se calcula en cada render contra un deadline fijo, así que nunca muestra un
   segundo de más ni habilita tarde.
 - Al llegar a 0 habilita los botones; no ficha sola.
-- Sin `retryAfterSeconds` muestra "Esperá unos segundos y volvé a intentar."
+- Sin `retryAfterSeconds` aplica una espera local corta, con la misma cuenta
+  regresiva (F8.1, §27.11).
 
 **Errores definitivos:**
 
@@ -2518,3 +2519,30 @@ en equipo de F10/F12.
 - F10: Wake Lock, cámara y Acceso guiado.
 - F11: retiro de `/time-entries/clock/*` tras 7 días sin tráfico y el resto
   del hardening de §25.1.
+
+### 27.11 F8.1 — Cooldown sin `retryAfterSeconds`
+
+Hardening del cliente (2026-10-14). Backend y semántica normal sin cambios.
+
+- **El problema.** Con F8, un `409 CLOCK_PUNCH_COOLDOWN` sin
+  `retryAfterSeconds` no tenía deadline. La cuenta regresiva daba 0, los
+  botones quedaban habilitados en el acto y el aviso no se iba.
+- **Por qué es sólo defensa.** El backend actual (F7.1) siempre manda
+  `retryAfterSeconds`, también al reintentar y en `GET attempts`. Puede faltar
+  en un intento guardado antes de F7.1, en un backend desactualizado o en una
+  respuesta incompleta.
+- **La regla.** `FALLBACK_COOLDOWN_SECONDS = 5` (`TimeClockPage.tsx`) se usa
+  sólo cuando falta el valor (`??`). Un `0` válido del backend se respeta y no
+  bloquea.
+- **Qué hace.** Muestra la misma UX y la misma cuenta regresiva ("Podés
+  volver a intentar en 5 s."), con los dos botones deshabilitados. Es 100 %
+  local: sin requests y sin reusar el `requestId`. Al llegar a 0 habilita
+  según el estado del legajo, sin fichar sola.
+- **Por qué 5 s.** Alcanza para que un reintento inmediato o un doble toque
+  no vuelvan a ofrecer la fichada. No pretende ser la ventana real del
+  backend: el cliente no la conoce y no debe inventarla. Si se reintenta antes
+  de tiempo, el backend responde otra vez cooldown con su tiempo exacto, y el
+  rechazo es barato porque se evalúa antes de guardar la foto (§26.4).
+- **Tests.** 3 unitarios y 1 E2E. Una mutación que cambia `??` por `||` o
+  quita el fallback hace fallar los unitarios. El E2E falla contra el código
+  previo a F8.1.

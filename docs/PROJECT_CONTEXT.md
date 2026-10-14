@@ -736,7 +736,7 @@ Fichador standalone (`fichador/`, since F1 of `docs/decisions/FICHADOR_STANDALON
 * Source semantics (F7.1): `AttendancePunch.source` is the channel of each punch, `WorkShift.source` the channel that opened the shift (never rewritten), and `TimeEntry.source` always the shift's source — so a shift opened through the legacy alias and closed through `/api/clock` keeps `PUBLIC_CLOCK_PHOTO` for the shift and its hours, with a `KIOSK` exit punch.
 * Punch flow since F8 (`fichador/src/features/punch/punchSubmission.ts`, plan §27):
   * One `requestId` per intent. An uncertain result (no response, client timeout, a 5xx without a `CLOCK_*` code, or `PROCESSING`) is recovered through `GET /api/clock/attempts/:requestId` with that same id. Two consecutive `404`s resend the identical POST, at most 3 times. When the ~45 s budget runs out the result is "not confirmed": the kiosk is freed and the employee status is refreshed.
-  * Cooldown is shown with a local countdown from the original `retryAfterSeconds`.
+  * Cooldown is shown with a local countdown from the original `retryAfterSeconds`. If it is missing (pre-F7.1 attempt, outdated backend), a short local fallback of 5 s applies (F8.1); a valid `0` is respected.
   * Success shows the server time (`HH:mm`, Argentina) and the kiosk returns to idle after 3.5 s.
   * No offline punches: no camera and no request without a connection.
 * Installable PWA since F3 (`vite-plugin-pwa`): precached app shell, self-hosted MediaPipe (SIMD WASM + model) and Inter, so it opens and runs the face detector offline; the API is never cached and punches require the backend. Updates apply automatically only while the kiosk is idle.

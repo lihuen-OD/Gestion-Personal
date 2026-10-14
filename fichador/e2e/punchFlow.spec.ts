@@ -115,6 +115,31 @@ test("cooldown: muestra la cuenta regresiva del retryAfterSeconds y habilita al 
   expect(calls.some(({ path }) => path.startsWith("/clock/attempts/"))).toBe(false);
 });
 
+// F8.1: sin retryAfterSeconds (backend viejo, respuesta incompleta) la PWA no
+// habilita de inmediato: espera local de FALLBACK_COOLDOWN_SECONDS (5 s,
+// TimeClockPage.tsx) con la misma cuenta regresiva.
+test("cooldown sin retryAfterSeconds: espera local corta, no habilita de inmediato y no ficha sola", async ({ page }) => {
+  const calls = await openKiosk(page, {
+    punch: (route) => json(route, 409, { error: { code: "CLOCK_PUNCH_COOLDOWN", message: "Ya registraste una fichada hace instantes. Esperá unos segundos antes de volver a fichar." } }),
+  });
+  await selectEmployee(page);
+  await captureAndConfirm(page);
+  const clockIn = page.getByRole("button", { name: /Marcar ingreso/ });
+
+  await expect(page.getByText("Ya registraste una fichada hace unos segundos.")).toBeVisible();
+  await expect(page.getByRole("timer")).toHaveText(/Podés volver a intentar en [45] s\./);
+  await expect(clockIn).toBeDisabled();
+  await expect(page.getByText(/CLOCK_|retryAfterSeconds/)).toHaveCount(0);
+  // Segundos después sigue bloqueado: no fue una habilitación inmediata.
+  await expect(page.getByRole("timer")).toHaveText(/Podés volver a intentar en [12] s\./, { timeout: 5_000 });
+  await expect(clockIn).toBeDisabled();
+
+  await expect(clockIn).toBeEnabled({ timeout: 4_000 });
+  await expect(page.getByText("Ya registraste una fichada hace unos segundos.")).toBeHidden();
+  expect(punchBodies(calls)).toHaveLength(1);
+  expect(calls.some(({ path }) => path.startsWith("/clock/attempts/"))).toBe(false);
+});
+
 test("respuesta perdida: verifica el MISMO requestId y confirma sin una segunda fichada", async ({ page }) => {
   let requestId = "";
   const calls = await openKiosk(page, {
