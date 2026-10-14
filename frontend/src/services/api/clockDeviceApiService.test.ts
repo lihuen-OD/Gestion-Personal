@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("./apiClient", () => ({ apiRequest: vi.fn() }));
+vi.mock("../cache", () => ({ invalidateCacheFamily: vi.fn().mockResolvedValue(undefined) }));
 const { apiRequest } = await import("./apiClient");
+const { invalidateCacheFamily } = await import("../cache");
 const { clockDeviceApiService } = await import("./clockDeviceApiService");
 
 describe("clockDeviceApiService administrativo", () => {
@@ -22,5 +24,12 @@ describe("clockDeviceApiService administrativo", () => {
     await clockDeviceApiService.deletePending("d2");
     expect(apiRequest).toHaveBeenNthCalledWith(1, "/clock-devices/d1/revoke", { method: "POST" });
     expect(apiRequest).toHaveBeenNthCalledWith(2, "/clock-devices/d2", { method: "DELETE" });
+  });
+
+  it("F9: edita con PATCH sólo nombre/establecimiento e invalida la caché de Asistencia", async () => {
+    vi.mocked(apiRequest).mockResolvedValue({ data: { id: "d1", name: "Pañol" } });
+    await clockDeviceApiService.update("d1", { name: "Pañol", establishmentId: null });
+    expect(apiRequest).toHaveBeenCalledWith("/clock-devices/d1", { method: "PATCH", body: { name: "Pañol", establishmentId: null } });
+    expect(invalidateCacheFamily).toHaveBeenCalledWith("time-entries", "clock device updated");
   });
 });

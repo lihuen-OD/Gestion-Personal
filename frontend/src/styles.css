@@ -2463,3 +2463,27 @@ a.employee-hours-status-item:hover{border-color:var(--ds-blue-300);background:va
 @media(max-width:620px){.associated-structure-filters{grid-template-columns:1fr;margin:0 12px 12px}}
 /* Identificadores (legajo, CUIL) en una sola línea dentro de .table-shell. */
 .table-shell>table tbody td.cell-nowrap{white-space:nowrap!important;overflow-wrap:normal!important}
+/* F9: Dispositivos de fichada. Conectividad derivada del último contacto
+   (heartbeat): un punto y una etiqueta corta, no un chip, para no competir con
+   el badge de estado administrativo. */
+.clock-device-cell b,.clock-device-cell span{display:block}
+.clock-device-cell span{margin-top:2px;color:var(--color-text-muted);font-size:12px;font-weight:500}
+.device-connectivity{display:inline-flex;align-items:center;gap:7px;color:var(--color-text-secondary);font-size:12px;font-weight:600;white-space:nowrap}
+.device-connectivity i{flex:none;width:8px;height:8px;border-radius:50%;background:var(--color-border-strong)}
+.device-connectivity.online{color:var(--color-success)}
+.device-connectivity.online i{background:var(--color-success);box-shadow:0 0 0 3px var(--color-success-bg)}
+.device-connectivity.offline{color:var(--color-warning)}
+.device-connectivity.offline i{background:var(--color-warning);box-shadow:0 0 0 3px var(--color-warning-bg)}
+.device-connectivity.never_seen{color:var(--color-text-muted)}
+/* F9: modal "Editar dispositivo". Grilla explícita: nombre y establecimiento
+   lado a lado en desktop; la nota y el error ocupan toda la fila (sin esto,
+   .form-stack>.form-actions{grid-column:span 2} arma dos columnas implícitas y
+   los deja desparejos). Una sola columna en mobile. */
+.modal-body .clock-device-form{grid-template-columns:repeat(2,minmax(0,1fr))}
+.clock-device-form>.info-note,.clock-device-form>.error,.clock-device-form>.form-actions{grid-column:1/-1}
+.clock-device-form>.info-note{margin:0}
+@media(max-width:620px){.modal-body .clock-device-form{grid-template-columns:minmax(0,1fr)}}
+/* F9: el refresco silencioso de Dispositivos falló. Es un aviso (los datos
+   pueden estar desactualizados), no un error: tono warning, la lista queda. */
+.clock-devices-refresh-warning{display:flex;align-items:center;gap:8px;margin:0 0 12px;padding:10px 14px;border:1px solid var(--color-warning-border);border-radius:10px;background:var(--color-warning-bg);color:var(--color-warning);font-size:13px;font-weight:600;line-height:1.4}
+.clock-devices-refresh-warning svg{flex:none}
