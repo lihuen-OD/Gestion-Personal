@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ApiError, NetworkError, apiRequest, formatClockErrorMessage, getUserErrorMessage } from "./apiClient";
+import { ApiError, NetworkError, apiErrorFromStored, apiRequest, formatClockErrorMessage, getUserErrorMessage } from "./apiClient";
 import { clockDeviceSession } from "./clockDeviceSession";
-import { timeClockApiService } from "./timeClockApiService";
+import { clockEndpoints, timeClockApiService } from "./timeClockApiService";
 
 function jsonResponse(status: number, body: unknown) {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -22,12 +22,12 @@ describe("apiClient del fichador — errores para la persona que ficha", () => {
     [403, "CLOCK_DEVICE_REVOKED", "Este dispositivo fue deshabilitado por RRHH."],
   ])("%i %s: mensaje humano, nunca el texto técnico del backend", async (status, code, message) => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(status, { error: { code, message: "Invalid device credentials" } })));
-    await expect(apiRequest("/time-entries/clock/status")).rejects.toMatchObject({ name: "ApiError", status, code, message });
+    await expect(apiRequest("/clock/status")).rejects.toMatchObject({ name: "ApiError", status, code, message });
   });
 
   it("429 (cuerpo de texto del rate limiter): pide esperar", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("Too many requests, please try again later.", { status: 429 })));
-    await expect(apiRequest("/time-entries/clock/employees?search=go")).rejects.toMatchObject({ status: 429, message: expect.stringMatching(/demasiados intentos/) });
+    await expect(apiRequest("/clock/employees?search=go")).rejects.toMatchObject({ status: 429, message: expect.stringMatching(/demasiados intentos/) });
   });
 
   it("409 de negocio CLOCK_*: usa el mensaje del backend (ya escrito para el kiosco)", () => {
@@ -45,7 +45,7 @@ describe("apiClient del fichador — errores para la persona que ficha", () => {
 
   it("backend apagado / sin Internet: NetworkError (no ApiError, para que la verificación del intento siga)", async () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("Failed to fetch")));
-    const error = await apiRequest("/time-entries/clock/status").catch((caught: unknown) => caught);
+    const error = await apiRequest("/clock/status").catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(NetworkError);
     expect(error).not.toBeInstanceOf(ApiError);
     expect(getUserErrorMessage(error, "x")).toMatch(/No hay conexión con el servidor/);
@@ -53,7 +53,7 @@ describe("apiClient del fichador — errores para la persona que ficha", () => {
 
   it("timeout: el error de AbortSignal se propaga tal cual (mismo comportamiento que el admin)", async () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new DOMException("timeout", "TimeoutError")));
-    await expect(apiRequest("/time-entries/clock/photo-punch", { method: "POST", body: {} })).rejects.toMatchObject({ name: "TimeoutError" });
+    await expect(apiRequest("/clock/photo-punch", { method: "POST", body: {} })).rejects.toMatchObject({ name: "TimeoutError" });
   });
 
   it("un error desconocido nunca se muestra crudo", () => {
@@ -61,7 +61,7 @@ describe("apiClient del fichador — errores para la persona que ficha", () => {
   });
 });
 
-describe("timeClockApiService del fichador — sólo los cuatro endpoints, sin JWT", () => {
+describe("timeClockApiService del fichador — sólo los cuatro endpoints de /api/clock, sin JWT (F8)", () => {
   it("autentica con la identidad individual del equipo, nunca con Bearer ni con el token compartido retirado", async () => {
     vi.stubEnv("VITE_CLOCK_DEVICE_TOKEN", "temporary-shared-token");
     clockDeviceSession.start(IDENTITY);
@@ -72,14 +72,14 @@ describe("timeClockApiService del fichador — sólo los cuatro endpoints, sin J
 
     const [url, init] = fetchMock.mock.calls[0]!;
     const headers = new Headers((init as RequestInit).headers);
-    expect(String(url)).toMatch(/\/time-entries\/clock\/employees\?search=Gomez$/);
+    expect(String(url)).toMatch(/\/api\/clock\/employees\?search=Gomez$/);
     expect(headers.get("authorization")).toBe(`ClockDevice ${IDENTITY.id}.${IDENTITY.secret}`);
     expect(headers.get("x-clock-app-version")).toBeTruthy();
     expect(headers.has("x-clock-device-token")).toBe(false);
     expect(JSON.stringify([...headers])).not.toContain("temporary-shared-token");
   });
 
-  it("usa exactamente los endpoints vigentes de F0, todos con la credencial del equipo", async () => {
+  it("usa exactamente los endpoints de /api/clock (F8), todos con la credencial del equipo y ninguno del namespace legacy", async () => {
     clockDeviceSession.start(IDENTITY);
     const fetchMock = vi.fn().mockImplementation(async () => jsonResponse(200, { data: {} }));
     vi.stubGlobal("fetch", fetchMock);
@@ -90,12 +90,57 @@ describe("timeClockApiService del fichador — sólo los cuatro endpoints, sin J
 
     const calls = fetchMock.mock.calls.map(([url, init]) => `${(init as RequestInit).method} ${String(url).replace(/^.*\/api/, "")}`);
     expect(calls).toEqual([
-      "POST /time-entries/clock/status",
-      "POST /time-entries/clock/photo-punch",
-      "GET /time-entries/clock/attempts/r-1?employeeId=employee-1",
+      "POST /clock/status",
+      "POST /clock/photo-punch",
+      "GET /clock/attempts/r-1?employeeId=employee-1",
     ]);
+    expect(fetchMock.mock.calls.map(([url]) => String(url)).join(" ")).not.toContain("time-entries");
     for (const [, init] of fetchMock.mock.calls) {
       expect(new Headers((init as RequestInit).headers).get("authorization")).toBe(`ClockDevice ${IDENTITY.id}.${IDENTITY.secret}`);
     }
+  });
+});
+
+describe("F8 — contrato del cliente con /api/clock", () => {
+  it("las rutas operativas salen de una sola fuente y ninguna es legacy", () => {
+    expect(clockEndpoints).toMatchObject({ employees: "/clock/employees", status: "/clock/status", photoPunch: "/clock/photo-punch" });
+    expect(clockEndpoints.attempt("r-1")).toBe("/clock/attempts/r-1");
+    expect(JSON.stringify(clockEndpoints)).not.toContain("time-entries");
+  });
+
+  it("photo-punch manda el payload tal cual: sin source ni deviceId, con el requestId de la intención", async () => {
+    clockDeviceSession.start(IDENTITY);
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(201, { data: {} }));
+    vi.stubGlobal("fetch", fetchMock);
+    const input = { requestId: "11111111-1111-4111-8111-111111111111", employeeId: "employee-1", punchType: "OUT" as const, photo: "data:image/jpeg;base64,AA", thumbnail: "data:image/jpeg;base64,AA", faceValidationStatus: "VALID" as const, faceDetectionScore: 0.9, device: { platform: "iPad" } };
+
+    await timeClockApiService.photoPunch(input);
+
+    const sent = JSON.parse(String((fetchMock.mock.calls[0]![1] as RequestInit).body)) as Record<string, unknown>;
+    expect(sent).toEqual(input);
+    expect(sent).not.toHaveProperty("source");
+    expect(sent).not.toHaveProperty("deviceId");
+    expect(sent).not.toHaveProperty("timestamp");
+  });
+
+  it("un 409 de cooldown conserva retryAfterSeconds en el ApiError", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(409, { error: { code: "CLOCK_PUNCH_COOLDOWN", message: "Ya registraste una fichada hace instantes.", retryAfterSeconds: 42 } })));
+    await expect(apiRequest("/clock/photo-punch", { method: "POST", body: {} })).rejects.toMatchObject({ code: "CLOCK_PUNCH_COOLDOWN", status: 409, retryAfterSeconds: 42 });
+  });
+
+  it.each([["texto", "42"], ["negativo", -1], ["decimal", 1.5]])("un retryAfterSeconds inválido (%s) se ignora", async (_label, value) => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(409, { error: { code: "CLOCK_PUNCH_COOLDOWN", message: "x", retryAfterSeconds: value } })));
+    const error = await apiRequest("/clock/photo-punch", { method: "POST", body: {} }).catch((caught: unknown) => caught);
+    expect((error as ApiError).retryAfterSeconds).toBeUndefined();
+  });
+
+  it("el error guardado de un intento (GET attempts) se rearma igual que la respuesta original", () => {
+    const error = apiErrorFromStored({ code: "CLOCK_PUNCH_COOLDOWN", message: "Ya registraste una fichada hace instantes.", httpStatus: 409, retryAfterSeconds: 42 });
+    expect(error).toMatchObject({ code: "CLOCK_PUNCH_COOLDOWN", status: 409, retryAfterSeconds: 42, message: "Ya registraste una fichada hace instantes." });
+  });
+
+  it("CLOCK_IDEMPOTENCY_KEY_REUSED: mensaje humano para volver a empezar, nunca el texto técnico", () => {
+    expect(formatClockErrorMessage(409, { error: { code: "CLOCK_IDEMPOTENCY_KEY_REUSED", message: "La clave de fichada ya fue utilizada para otra operación." } }))
+      .toBe("No pudimos recuperar esta fichada. Volvé a iniciar el proceso.");
   });
 });

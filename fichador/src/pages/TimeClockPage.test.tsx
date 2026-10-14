@@ -1,7 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { TimeClockPage } from "./TimeClockPage";
+import { OFFLINE_MESSAGE, SUCCESS_RESET_MS, TimeClockPage, UNCONFIRMED_MESSAGE } from "./TimeClockPage";
 import { timeClockApiService } from "../services/api/timeClockApiService";
 import { ApiError, NetworkError } from "../services/api/apiClient";
 import { kioskActivity } from "../pwa/kioskActivity";
@@ -137,7 +137,7 @@ describe("TimeClockPage — fichador sin selector de concepto horario (Etapa 6K)
     expect(payload).not.toHaveProperty("hourType");
     expect(payload).toMatchObject({ punchType: "IN", employeeId: "employee-1" });
 
-    expect(await screen.findByText(/Ingreso registrado/i)).toBeInTheDocument();
+    expect(await screen.findByText("Entrada registrada")).toBeInTheDocument();
   });
 
   it("permite marcar salida y el payload de fichada tampoco incluye conceptos", async () => {
@@ -255,28 +255,7 @@ describe("TimeClockPage standalone (F1) — flujo, errores e idempotencia", () =
     expect(await screen.findByText(/demasiados intentos/i)).toBeInTheDocument();
   });
 
-  it("cada intención de fichar usa un requestId UUID nuevo", async () => {
-    mockNoOpenShift();
-    vi.mocked(timeClockApiService.photoPunch).mockResolvedValue({ employee: employeeMatch, workShift: { id: "shift-1", startAt: nowIso() } });
-    const user = await selectEmployee();
-
-    await confirmCapture(user, /Marcar ingreso/i);
-    await screen.findByText(/Ingreso registrado/i);
-    vi.mocked(timeClockApiService.photoPunch).mockResolvedValue({
-      employee: employeeMatch,
-      workShift: { id: "shift-1", startAt: isoHoursAgo(1), endAt: nowIso(), totalMinutes: 60, totalHours: 1 },
-      segments: [],
-    });
-    await confirmCapture(user, /Marcar salida/i);
-    await screen.findByText(/Salida registrada/i);
-
-    const [first, second] = vi.mocked(timeClockApiService.photoPunch).mock.calls.map(([input]) => input.requestId);
-    expect(first).toMatch(UUID_PATTERN);
-    expect(second).toMatch(UUID_PATTERN);
-    expect(second).not.toBe(first);
-  });
-
-  it("si la respuesta se pierde (red), verifica el MISMO requestId y aplica el resultado ya registrado, sin reenviar", async () => {
+  it("si la respuesta se pierde (red), verifica el MISMO requestId y aplica el resultado ya registrado, sin reenviar (COMPLETED recuperado = éxito normal)", async () => {
     mockNoOpenShift();
     vi.mocked(timeClockApiService.photoPunch).mockRejectedValue(new NetworkError());
     vi.mocked(timeClockApiService.attemptStatus).mockResolvedValue({
@@ -289,13 +268,13 @@ describe("TimeClockPage standalone (F1) — flujo, errores e idempotencia", () =
 
     await confirmCapture(user, /Marcar ingreso/i);
 
-    expect(await screen.findByText(/Ingreso registrado/i)).toBeInTheDocument();
+    expect(await screen.findByText("Entrada registrada")).toBeInTheDocument();
     const sentRequestId = vi.mocked(timeClockApiService.photoPunch).mock.calls[0]![0].requestId;
     expect(timeClockApiService.attemptStatus).toHaveBeenCalledWith(sentRequestId, "employee-1");
     expect(timeClockApiService.photoPunch).toHaveBeenCalledTimes(1);
   });
 
-  it("409 de negocio confirmado por el intento: muestra el mensaje del backend y libera la pantalla", async () => {
+  it("409 de negocio del POST: es definitivo (F8: no consulta el intento), muestra el mensaje del backend y libera la pantalla", async () => {
     mockNoOpenShift();
     vi.mocked(timeClockApiService.photoPunch).mockRejectedValue(new ApiError("Ya existe un ingreso abierto para este empleado.", "CLOCK_ALREADY_OPEN", 409));
     vi.mocked(timeClockApiService.attemptStatus).mockResolvedValue({
@@ -311,6 +290,7 @@ describe("TimeClockPage standalone (F1) — flujo, errores e idempotencia", () =
     expect(await screen.findByText("Ya existe un ingreso abierto para este empleado.")).toBeInTheDocument();
     await waitFor(() => expect(screen.queryByTestId("face-capture-modal")).not.toBeInTheDocument());
     expect(screen.getByRole("button", { name: /Marcar ingreso/i })).toBeEnabled();
+    expect(timeClockApiService.attemptStatus).not.toHaveBeenCalled();
   });
 
   it("impide el doble envío: dos confirmaciones mientras la fichada está en curso mandan una sola", async () => {
@@ -325,7 +305,7 @@ describe("TimeClockPage standalone (F1) — flujo, errores e idempotencia", () =
 
     expect(timeClockApiService.photoPunch).toHaveBeenCalledTimes(1);
     resolvePunch({ employee: employeeMatch, workShift: { id: "shift-1", startAt: nowIso() } });
-    expect(await screen.findByText(/Ingreso registrado/i)).toBeInTheDocument();
+    expect(await screen.findByText("Entrada registrada")).toBeInTheDocument();
   });
 });
 
@@ -348,5 +328,305 @@ describe("TimeClockPage — kiosco ocupado/ocioso para las actualizaciones (F3)"
 
     await confirmCapture(user, /Marcar ingreso/i);
     expect(kioskActivity.isIdle()).toBe(false);
+  });
+});
+
+// F8 (docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md §27): confirmación con
+// hora del servidor, retorno automático, recuperación por requestId, cooldown
+// con cuenta regresiva local y estados sin red. Timers falsos: ninguna espera
+// real (polling, cuenta regresiva y retorno automático se adelantan).
+describe("TimeClockPage — F8: confirmación, recuperación, cooldown y retorno al inicio", () => {
+  // 15:30 UTC en el reloj del equipo = 12:30 en Argentina: distinto de la hora
+  // del servidor que devuelve el backend, para probar cuál se muestra.
+  const DEVICE_NOW = new Date("2026-10-13T15:30:00.000Z");
+  const SERVER_START = "2026-10-13T11:01:00.000Z"; // 08:01 ART
+  const SERVER_END = "2026-10-13T19:07:00.000Z"; // 16:07 ART
+  const inResult = { employee: employeeMatch, workShift: { id: "shift-1", startAt: SERVER_START } };
+  const outResult = { employee: employeeMatch, workShift: { id: "shift-1", startAt: SERVER_START, endAt: SERVER_END, totalMinutes: 486, totalHours: 8.1 }, segments: [] };
+  const flush = (ms = 0) => act(async () => { await vi.advanceTimersByTimeAsync(ms); });
+  const notFound = () => new ApiError("No se encontró el intento de fichada.", "CLOCK_ATTEMPT_NOT_FOUND", 404);
+  let onLine: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"] });
+    vi.setSystemTime(DEVICE_NOW);
+    onLine = vi.spyOn(window.navigator, "onLine", "get").mockReturnValue(true);
+  });
+
+  afterEach(() => {
+    onLine.mockRestore();
+    vi.useRealTimers();
+  });
+
+  // fireEvent (síncrono) en vez de userEvent: el asyncWrapper de Testing
+  // Library espera un setTimeout(0) que con los timers falsos de Vitest nunca
+  // dispara.
+  async function searchAndSelect() {
+    fireEvent.change(screen.getByLabelText("Buscar por nombre o apellido"), { target: { value: "Gomez" } });
+    await flush(300);
+    fireEvent.click(screen.getByText("Gomez, Ana"));
+    await flush();
+  }
+
+  async function selectWithFakeTimers() {
+    render(<TimeClockPage />);
+    await searchAndSelect();
+  }
+
+  async function openCapture(punch: RegExp) {
+    fireEvent.click(screen.getByRole("button", { name: punch }));
+    await flush();
+    expect(screen.getByTestId("face-capture-modal")).toBeInTheDocument();
+  }
+
+  async function confirm() {
+    fireEvent.click(screen.getByRole("button", { name: /Confirmar captura/i }));
+    await flush();
+  }
+
+  const sentRequestIds = () => vi.mocked(timeClockApiService.photoPunch).mock.calls.map(([sent]) => sent.requestId);
+
+  it("éxito: confirma con la hora DEL SERVIDOR (no la del equipo) y vuelve solo al inicio", async () => {
+    mockNoOpenShift();
+    vi.mocked(timeClockApiService.photoPunch).mockResolvedValue(inResult);
+    await selectWithFakeTimers();
+    await openCapture(/Marcar ingreso/i);
+    await confirm();
+
+    expect(screen.getByText("Entrada registrada")).toBeInTheDocument();
+    expect(screen.getByText("Ana Gomez")).toBeInTheDocument();
+    expect(screen.getByText("08:01")).toBeInTheDocument();
+    expect(screen.queryByText("12:30")).not.toBeInTheDocument();
+    expect(screen.getByText("Podés continuar.")).toBeInTheDocument();
+    expect(screen.queryByTestId("face-capture-modal")).not.toBeInTheDocument();
+    expect(kioskActivity.isIdle()).toBe(false);
+    // Nada técnico en pantalla.
+    expect(document.body.textContent).not.toMatch(/shift-1|KIOSK|requestId|[0-9a-f]{8}-[0-9a-f]{4}-/i);
+
+    await flush(SUCCESS_RESET_MS);
+
+    expect(screen.queryByText("Entrada registrada")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Buscar por nombre o apellido")).toHaveValue("");
+    expect(screen.queryByText("Legajo 100 · DNI terminado en 456")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Marcar ingreso/i })).toBeDisabled();
+    expect(kioskActivity.isIdle()).toBe(true);
+  });
+
+  it("salida: muestra 'Salida registrada' con el endAt del servidor", async () => {
+    mockOpenShift();
+    vi.mocked(timeClockApiService.photoPunch).mockResolvedValue(outResult);
+    await selectWithFakeTimers();
+    await openCapture(/Marcar salida/i);
+    await confirm();
+
+    expect(screen.getByText("Salida registrada")).toBeInTheDocument();
+    expect(screen.getByText("16:07")).toBeInTheDocument();
+  });
+
+  it("cada intención usa un requestId nuevo; después del retorno automático la siguiente fichada genera otro", async () => {
+    mockNoOpenShift();
+    vi.mocked(timeClockApiService.photoPunch).mockResolvedValue(inResult);
+    await selectWithFakeTimers();
+    await openCapture(/Marcar ingreso/i);
+    await confirm();
+    await flush(SUCCESS_RESET_MS);
+
+    mockOpenShift();
+    vi.mocked(timeClockApiService.photoPunch).mockResolvedValue(outResult);
+    await searchAndSelect();
+    await openCapture(/Marcar salida/i);
+    await confirm();
+
+    const [first, second] = sentRequestIds();
+    expect(first).toMatch(UUID_PATTERN);
+    expect(second).toMatch(UUID_PATTERN);
+    expect(second).not.toBe(first);
+  });
+
+  it("respuesta perdida → 'verificando' → intento 404, 404 → reenvía el MISMO POST → éxito, sin requestId nuevo", async () => {
+    mockNoOpenShift();
+    vi.mocked(timeClockApiService.photoPunch).mockRejectedValueOnce(new NetworkError()).mockResolvedValueOnce(inResult);
+    vi.mocked(timeClockApiService.attemptStatus).mockRejectedValueOnce(notFound()).mockRejectedValueOnce(notFound());
+    await selectWithFakeTimers();
+    await openCapture(/Marcar ingreso/i);
+    await confirm();
+
+    // Resultado desconocido: nunca "fichada fallida", el kiosco sigue ocupado.
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(kioskActivity.isIdle()).toBe(false);
+
+    await flush(500);
+    await flush(1_000);
+
+    expect(screen.getByText("Entrada registrada")).toBeInTheDocument();
+    const ids = sentRequestIds();
+    expect(ids).toHaveLength(2);
+    expect(ids[1]).toBe(ids[0]);
+    expect(vi.mocked(timeClockApiService.attemptStatus).mock.calls.every(([requestId]) => requestId === ids[0])).toBe(true);
+  });
+
+  it("PROCESSING: sigue confirmando y termina en éxito normal (COMPLETED recuperado)", async () => {
+    mockNoOpenShift();
+    vi.mocked(timeClockApiService.photoPunch).mockRejectedValue(new DOMException("timeout", "TimeoutError"));
+    vi.mocked(timeClockApiService.attemptStatus)
+      .mockResolvedValueOnce({ requestId: "x", status: "PROCESSING", response: null, error: null })
+      .mockResolvedValueOnce({ requestId: "x", status: "COMPLETED", response: inResult, error: null });
+    await selectWithFakeTimers();
+    await openCapture(/Marcar ingreso/i);
+    await confirm();
+    await flush(500);
+    expect(screen.queryByText("Entrada registrada")).not.toBeInTheDocument();
+    await flush(1_000);
+
+    expect(screen.getByText("Entrada registrada")).toBeInTheDocument();
+    expect(timeClockApiService.photoPunch).toHaveBeenCalledTimes(1);
+  });
+
+  it("cooldown del POST: cuenta regresiva local sin consultar al backend y, al llegar a 0, habilita sin fichar sola", async () => {
+    mockNoOpenShift();
+    vi.mocked(timeClockApiService.photoPunch).mockRejectedValue(new ApiError("Ya registraste una fichada hace instantes.", "CLOCK_PUNCH_COOLDOWN", 409, 3));
+    await selectWithFakeTimers();
+    await openCapture(/Marcar ingreso/i);
+    await confirm();
+
+    expect(screen.getByText("Ya registraste una fichada hace unos segundos.")).toBeInTheDocument();
+    expect(screen.getByRole("timer")).toHaveTextContent("Podés volver a intentar en 3 s.");
+    expect(screen.getByRole("button", { name: /Marcar ingreso/i })).toBeDisabled();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument(); // no es un error grave
+    const callsBefore = [timeClockApiService.status, timeClockApiService.attemptStatus, timeClockApiService.photoPunch].map((fn) => vi.mocked(fn).mock.calls.length);
+
+    await flush(1_000);
+    expect(screen.getByRole("timer")).toHaveTextContent("Podés volver a intentar en 2 s.");
+    await flush(2_000);
+
+    expect(screen.queryByText("Ya registraste una fichada hace unos segundos.")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Marcar ingreso/i })).toBeEnabled();
+    const callsAfter = [timeClockApiService.status, timeClockApiService.attemptStatus, timeClockApiService.photoPunch].map((fn) => vi.mocked(fn).mock.calls.length);
+    expect(callsAfter).toEqual(callsBefore);
+  });
+
+  it("cooldown recuperado por la verificación (respuesta perdida) usa la misma UX y el retryAfterSeconds guardado", async () => {
+    mockNoOpenShift();
+    vi.mocked(timeClockApiService.photoPunch).mockRejectedValue(new NetworkError());
+    vi.mocked(timeClockApiService.attemptStatus).mockResolvedValueOnce({
+      requestId: "x", status: "FAILED", response: null,
+      error: { code: "CLOCK_PUNCH_COOLDOWN", message: "Ya registraste una fichada hace instantes.", httpStatus: 409, retryAfterSeconds: 42 },
+    });
+    await selectWithFakeTimers();
+    await openCapture(/Marcar ingreso/i);
+    await confirm();
+    await flush(500);
+
+    expect(screen.getByText("Ya registraste una fichada hace unos segundos.")).toBeInTheDocument();
+    expect(screen.getByRole("timer")).toHaveTextContent("Podés volver a intentar en 42 s.");
+  });
+
+  it("sin conexión antes de empezar: no abre la cámara ni sale ningún request", async () => {
+    mockNoOpenShift();
+    await selectWithFakeTimers();
+    onLine.mockReturnValue(false);
+
+    fireEvent.click(screen.getByRole("button", { name: /Marcar ingreso/i }));
+    await flush();
+
+    expect(screen.getByText(OFFLINE_MESSAGE)).toBeInTheDocument();
+    expect(screen.queryByTestId("face-capture-modal")).not.toBeInTheDocument();
+    expect(timeClockApiService.photoPunch).not.toHaveBeenCalled();
+  });
+
+  it("se cae la red con la cámara abierta: al confirmar descarta el intento sin enviar nada", async () => {
+    mockNoOpenShift();
+    await selectWithFakeTimers();
+    await openCapture(/Marcar ingreso/i);
+    onLine.mockReturnValue(false);
+    await confirm();
+
+    expect(screen.getByText(OFFLINE_MESSAGE)).toBeInTheDocument();
+    expect(screen.queryByTestId("face-capture-modal")).not.toBeInTheDocument();
+    expect(timeClockApiService.photoPunch).not.toHaveBeenCalled();
+  });
+
+  it("resultado imposible de confirmar: mensaje claro, refresca el estado del legajo y libera el kiosco con un requestId nuevo", async () => {
+    mockNoOpenShift();
+    vi.mocked(timeClockApiService.photoPunch).mockRejectedValue(new NetworkError());
+    vi.mocked(timeClockApiService.attemptStatus).mockRejectedValue(new NetworkError());
+    await selectWithFakeTimers();
+    await openCapture(/Marcar ingreso/i);
+    await confirm();
+    await flush(45_000);
+
+    expect(screen.getByRole("alert")).toHaveTextContent(UNCONFIRMED_MESSAGE);
+    expect(timeClockApiService.status).toHaveBeenCalledTimes(2); // selección + refresco
+    expect(screen.getByRole("button", { name: /Marcar ingreso/i })).toBeEnabled();
+
+    vi.mocked(timeClockApiService.photoPunch).mockResolvedValue(inResult);
+    await openCapture(/Marcar ingreso/i);
+    await confirm();
+    const ids = sentRequestIds();
+    expect(ids[ids.length - 1]).not.toBe(ids[0]);
+  });
+
+  it("CLOCK_IDEMPOTENCY_KEY_REUSED: abandona el intento con un mensaje humano y no reintenta con otro requestId", async () => {
+    mockNoOpenShift();
+    vi.mocked(timeClockApiService.photoPunch).mockRejectedValue(new ApiError("No pudimos recuperar esta fichada. Volvé a iniciar el proceso.", "CLOCK_IDEMPOTENCY_KEY_REUSED", 409));
+    await selectWithFakeTimers();
+    await openCapture(/Marcar ingreso/i);
+    await confirm();
+
+    expect(screen.getByRole("alert")).toHaveTextContent("No pudimos recuperar esta fichada. Volvé a iniciar el proceso.");
+    expect(timeClockApiService.photoPunch).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("button", { name: /Marcar ingreso/i })).toBeEnabled();
+  });
+
+  it("error de negocio que cambia la jornada: muestra el mensaje del backend y refresca el estado real", async () => {
+    mockNoOpenShift();
+    vi.mocked(timeClockApiService.photoPunch).mockRejectedValue(new ApiError("Ya existe un ingreso abierto para este empleado.", "CLOCK_ALREADY_OPEN", 409));
+    await selectWithFakeTimers();
+    mockOpenShift();
+    await openCapture(/Marcar ingreso/i);
+    await confirm();
+    await flush();
+
+    expect(screen.getByRole("alert")).toHaveTextContent("Ya existe un ingreso abierto para este empleado.");
+    expect(screen.getByText("Ingreso abierto")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Marcar salida/i })).toBeEnabled();
+  });
+
+  it("revocación durante el envío: no lo muestra como error de fichada (el Gate bloquea el fichador)", async () => {
+    mockNoOpenShift();
+    vi.mocked(timeClockApiService.photoPunch).mockRejectedValue(new ApiError("Este dispositivo fue deshabilitado por RRHH.", "CLOCK_DEVICE_REVOKED", 403));
+    await selectWithFakeTimers();
+    await openCapture(/Marcar ingreso/i);
+    await confirm();
+
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(timeClockApiService.attemptStatus).not.toHaveBeenCalled();
+  });
+
+  it("doble tap en 'Marcar ingreso' → una sola intención, un solo requestId y un solo POST", async () => {
+    mockNoOpenShift();
+    vi.mocked(timeClockApiService.photoPunch).mockResolvedValue(inResult);
+    await selectWithFakeTimers();
+    const button = screen.getByRole("button", { name: /Marcar ingreso/i });
+    await act(async () => {
+      button.click();
+      button.click();
+    });
+    await flush();
+    expect(screen.getAllByTestId("face-capture-modal")).toHaveLength(1);
+
+    await confirm();
+    expect(timeClockApiService.photoPunch).toHaveBeenCalledTimes(1);
+  });
+
+  it("el payload enviado no lleva source, deviceId ni hora del cliente", async () => {
+    mockNoOpenShift();
+    vi.mocked(timeClockApiService.photoPunch).mockResolvedValue(inResult);
+    await selectWithFakeTimers();
+    await openCapture(/Marcar ingreso/i);
+    await confirm();
+
+    const sent = vi.mocked(timeClockApiService.photoPunch).mock.calls[0]![0] as Record<string, unknown>;
+    expect(Object.keys(sent).sort()).toEqual(["device", "employeeId", "faceDetectionScore", "faceValidationStatus", "photo", "punchType", "requestId", "thumbnail"]);
   });
 });

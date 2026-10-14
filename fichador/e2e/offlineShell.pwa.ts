@@ -52,7 +52,7 @@ test("instalable: manifest enlazado y service worker activo con el shell y Media
   expect(cached.some((path) => path.includes("nosimd"))).toBe(false);
 });
 
-test("sin red: la app abre, bloquea la fichada con un estado claro, el 404 sigue local y la cámara+detector funcionan", async ({ page, context }) => {
+test("sin red: la app abre, bloquea la fichada con un estado claro, el 404 sigue local y el detector se sirve del precache", async ({ page, context }) => {
   const external: string[] = [];
   page.on("request", (request) => {
     const { hostname } = new URL(request.url());
@@ -70,10 +70,19 @@ test("sin red: la app abre, bloquea la fichada con un estado claro, el 404 sigue
   await page.unrouteAll();
   await context.setOffline(true);
 
-  // Detector offline: el WASM y el modelo salen del precache.
+  // Detector offline: el WASM y el modelo salen del precache (el service
+  // worker los sirve sin red).
+  const detectorAssets = await page.evaluate(async () => Promise.all(
+    ["/mediapipe/wasm/vision_wasm_internal.wasm", "/mediapipe/wasm/vision_wasm_internal.js", "/mediapipe/models/blaze_face_short_range.tflite"]
+      .map(async (path) => ({ path, ok: (await fetch(path)).ok })),
+  ));
+  expect(detectorAssets.every(({ ok }) => ok)).toBe(true);
+
+  // F8: sin red no se empieza una fichada (no hay fichadas offline): ni
+  // cámara ni request, con un estado claro.
   await page.getByRole("button", { name: /Marcar ingreso/ }).click();
-  await expect(page.getByText("No se detectó una cara.")).toBeVisible({ timeout: 30_000 });
-  await page.getByRole("button", { name: "Cancelar" }).click();
+  await expect(page.getByText("Sin conexión. No se puede registrar la fichada.")).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "Confirmar fichada con foto" })).toHaveCount(0);
 
   // La app abre sin red y bloquea antes de exponer el fichador porque no
   // puede revalidar la identidad individual. La identidad se conserva: sólo

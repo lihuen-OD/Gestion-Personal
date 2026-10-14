@@ -467,3 +467,40 @@ html,body{
    padding queda igual que antes. */
 .clock-page{padding:max(24px,env(safe-area-inset-top)) max(24px,env(safe-area-inset-right)) max(24px,env(safe-area-inset-bottom)) max(24px,env(safe-area-inset-left))!important}
 .modal-backdrop{padding:max(16px,env(safe-area-inset-top)) max(16px,env(safe-area-inset-right)) max(16px,env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left))}
+
+/* Propio del fichador standalone (F8): confirmación de una fichada con la
+   hora del servidor (vuelve sola al inicio) y cooldown informativo. Mismos
+   tokens del sistema visual; el cooldown no es un error, va en ámbar. */
+.clock-success{display:grid;justify-items:center;gap:6px;padding:28px 20px;border:1px solid var(--ds-emerald-200);border-radius:14px;background:var(--ds-emerald-50);text-align:center}
+.clock-success-icon{width:56px;height:56px;color:var(--ds-emerald-600)}
+.clock-success b{color:var(--ds-emerald-700);font-size:22px;font-weight:750}
+.clock-success-name{color:var(--ds-slate-900);font-size:18px;font-weight:650}
+.clock-success-time{color:var(--ds-slate-900);font-size:44px;font-weight:750;font-variant-numeric:tabular-nums;line-height:1.1}
+.clock-success small{max-width:420px;color:var(--ds-slate-600);font-size:13px;line-height:1.4}
+.clock-success-hint{margin-top:4px;color:var(--ds-slate-600);font-size:14px}
+.clock-cooldown{display:flex;align-items:flex-start;gap:12px;padding:14px;border:1px solid var(--ds-amber-200);border-radius:12px;background:var(--ds-amber-50)}
+.clock-cooldown-icon{flex:none;width:22px;height:22px;margin-top:1px;color:var(--ds-amber-700)}
+.clock-cooldown div{display:grid;gap:3px}
+.clock-cooldown b{color:var(--ds-slate-900);font-size:15px}
+.clock-cooldown span{color:var(--ds-amber-700);font-size:15px;font-weight:650;font-variant-numeric:tabular-nums}
+.clock-actions .button:focus-visible,.clock-results-list button:focus-visible,.table-link:focus-visible{outline:3px solid var(--ds-blue-600);outline-offset:2px}
+
+/* Propio del fichador standalone (F8, revisión visual): el fichador no tiene
+   sidebar, pero el CSS del modal copiado del admin desplazaba el fondo 256 px
+   en pantallas anchas. Y en pantallas apaisadas (iPad horizontal,
+   escritorio) el video ocupaba todo el alto y dejaba fuera del viewport el
+   estado del detector, el del envío ("verificando", "confirmando") y las
+   acciones. El video conserva 4:3 y achica su ancho según el alto disponible.
+   Los botones de ícono deshabilitados (la X del modal mientras se confirma la
+   fichada, "Actualizar estado" sin empleado) se veían activos: mismo
+   tratamiento que .button:disabled. */
+.icon-button:disabled{cursor:not-allowed;opacity:.55}
+.icon-button:disabled:hover{background:transparent;color:var(--color-text-muted)}
+@media(min-width:981px){
+  .modal-backdrop{inset:0!important}
+  .modal{width:min(860px,calc(100vw - 48px))!important}
+}
+@media(min-width:621px){
+  .face-video-shell{width:min(100%,calc((100vh - 400px) * 4 / 3))!important;margin-inline:auto!important}
+  .face-video-shell{width:min(100%,calc((100dvh - 400px) * 4 / 3))!important}
+}

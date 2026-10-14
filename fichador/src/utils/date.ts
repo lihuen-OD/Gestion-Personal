@@ -25,3 +25,9 @@ export function formatDateTime(value: string | Date): string {
   if (!date) return "-";
   return `${formatCalendarDate(argentinaDateKey(date))} · ${instantTimeFormatter.format(date)}`;
 }
+
+/** F8: "HH:mm" en hora Argentina de un instante devuelto por el backend. */
+export function formatTime(value: string | Date): string {
+  const date = toValidDate(value);
+  return date ? instantTimeFormatter.format(date) : "-";
+}

@@ -22,11 +22,11 @@ async function mockApi(page: Page, options: { revokeOperational?: boolean } = {}
     const headers = request.headers();
     apiCalls.push({ call: `${request.method()} ${path}`, authorization: headers.authorization, legacyToken: headers["x-clock-device-token"] });
     if (path === "/clock/device/status") return route.fulfill({ json: { data: { id: DEVICE_ID, name: "TEST E2E", status: "ACTIVE" } } });
-    if (path.startsWith("/time-entries/clock/") && options.revokeOperational) {
+    if (path.startsWith("/clock/") && !path.startsWith("/clock/device/") && options.revokeOperational) {
       return route.fulfill({ status: 403, json: { error: { code: "CLOCK_DEVICE_REVOKED", message: "Este dispositivo fue deshabilitado por RRHH." } } });
     }
-    if (path === "/time-entries/clock/employees") return route.fulfill({ json: { data: [employee] } });
-    if (path === "/time-entries/clock/status") return route.fulfill({ json: { data: { employee, openShift: null } } });
+    if (path === "/clock/employees") return route.fulfill({ json: { data: [employee] } });
+    if (path === "/clock/status") return route.fulfill({ json: { data: { employee, openShift: null } } });
     return route.fulfill({ status: 404, json: { error: { code: "ROUTE_NOT_FOUND" } } });
   });
   return apiCalls;
@@ -68,7 +68,9 @@ test("abre, busca, selecciona, abre la cámara, cancela y vuelve al inicio sin f
   await page.getByRole("button", { name: "Cambiar empleado" }).click();
   await expect(page.getByLabel("Buscar por nombre o apellido")).toHaveValue("");
 
-  expect(apiCalls.map(({ call }) => call)).toEqual(["GET /clock/device/status", "GET /clock/device/status", "GET /time-entries/clock/employees", "POST /time-entries/clock/status"]);
+  // F8: operación sólo por /api/clock/*; nada del namespace legacy.
+  expect(apiCalls.map(({ call }) => call)).toEqual(["GET /clock/device/status", "GET /clock/device/status", "GET /clock/employees", "POST /clock/status"]);
+  expect(apiCalls.some(({ call }) => call.includes("time-entries"))).toBe(false);
   // Todas las llamadas (estado del equipo y operativas) usan la credencial
   // individual; ninguna manda el token compartido retirado.
   for (const { call, authorization, legacyToken } of apiCalls) {
@@ -100,7 +102,7 @@ test("RRHH revoca con la app abierta: el siguiente request bloquea el fichador s
   }));
   expect(stored).toMatchObject({ id: DEVICE_ID });
   await page.waitForTimeout(1_000);
-  expect(apiCalls.filter(({ call }) => call.includes("/time-entries/clock/"))).toHaveLength(1);
+  expect(apiCalls.filter(({ call }) => call.startsWith("GET /clock/employees"))).toHaveLength(1);
 });
 
 test("enrolamiento explícito: registra, muestra código y libera al ser aprobado", async ({ page }) => {

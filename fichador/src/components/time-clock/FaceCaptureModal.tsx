@@ -141,12 +141,31 @@ export function FaceDetectionStatus({ state }: { state: FaceState }) {
   );
 }
 
-export function FaceCaptureModal({ punchType, onCancel, onConfirm, submitting = false, submissionStage = "registering" }: { punchType: "IN" | "OUT"; onCancel: () => void; onConfirm: (result: FaceCaptureResult) => void; submitting?: boolean; submissionStage?: "registering" | "slow" | "checking" }) {
+/**
+ * F8: etapa del envío mientras la cámara ya entregó la foto.
+ * - sending/slow: el POST está en curso (slow = pasaron unos segundos).
+ * - verifying: no hubo respuesta confiable; se consulta el intento por su
+ *   requestId. Nunca se presenta como "fichada fallida".
+ * - confirming: el backend todavía la está procesando (PROCESSING).
+ */
+export type SubmissionStage = "sending" | "slow" | "verifying" | "confirming";
+
+const SUBMISSION_TEXT: Record<SubmissionStage, { title: string; detail: string }> = {
+  sending: { title: "Registrando fichada…", detail: "Guardando evidencia fotográfica. No cierres esta pantalla." },
+  slow: { title: "Registrando fichada…", detail: "Esto puede demorar unos segundos porque estamos guardando la evidencia. No cierres esta pantalla." },
+  verifying: { title: "Estamos verificando si la fichada se registró…", detail: "No vuelvas a fichar: en unos segundos te confirmamos el resultado." },
+  confirming: { title: "Estamos confirmando tu fichada…", detail: "El servidor todavía la está procesando. No cierres esta pantalla." },
+};
+
+export function FaceCaptureModal({ punchType, onCancel, onConfirm, submitting = false, submissionStage = "sending" }: { punchType: "IN" | "OUT"; onCancel: () => void; onConfirm: (result: FaceCaptureResult) => void; submitting?: boolean; submissionStage?: SubmissionStage }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const detectorRef = useRef<FaceDetector | null>(null);
   const frameRef = useRef<number>();
   const submitGuardRef = useRef(false);
+  // F8: con la foto ya capturada la cámara se apaga; la detección no sigue
+  // corriendo sobre el video negro (mostraba "imagen muy oscura" durante el envío).
+  const capturedRef = useRef(false);
   const [state, setState] = useState<FaceState>({ status: "LOADING", message: "Buscando rostro...", valid: false });
   const [cameraLabel, setCameraLabel] = useState<string>();
 
@@ -200,6 +219,7 @@ export function FaceCaptureModal({ punchType, onCancel, onConfirm, submitting = 
         });
 
         const detect = () => {
+          if (capturedRef.current) return;
           const currentVideo = videoRef.current;
           const detector = detectorRef.current;
           if (!currentVideo || !detector || currentVideo.readyState < 2) {
@@ -260,6 +280,11 @@ export function FaceCaptureModal({ punchType, onCancel, onConfirm, submitting = 
     }
 
     submitGuardRef.current = true;
+    capturedRef.current = true;
+    if (frameRef.current) {
+      window.cancelAnimationFrame(frameRef.current);
+      window.clearTimeout(frameRef.current);
+    }
     streamRef.current?.getTracks().forEach((track) => track.stop());
     detectorRef.current?.close();
     onConfirm({
@@ -288,22 +313,20 @@ export function FaceCaptureModal({ punchType, onCancel, onConfirm, submitting = 
           <video ref={videoRef} className="face-video" muted playsInline />
           <div className="face-guide" aria-hidden="true" />
         </div>
-        <FaceDetectionStatus state={state} />
+        {submitting ? null : <FaceDetectionStatus state={state} />}
         {submitting ? (
           <div className="face-status valid" role="status" aria-live="polite">
             <Loader2 size={18} className="spin-icon" />
             <span>
-              <b>{submissionStage === "checking" ? "Verificando la fichada..." : "Registrando fichada..."}</b><br />
-              Guardando evidencia fotográfica...<br />
-              No cierres esta pantalla.
-              {submissionStage === "slow" ? <><br />Esto puede demorar unos segundos porque estamos guardando la evidencia.</> : null}
+              <b>{SUBMISSION_TEXT[submissionStage].title}</b><br />
+              {SUBMISSION_TEXT[submissionStage].detail}
             </span>
           </div>
         ) : null}
         <div className="form-actions">
           <Button variant="ghost" icon={X} onClick={onCancel} disabled={submitting}>Cancelar</Button>
           <Button variant="primary" icon={Camera} disabled={!state.valid} loading={submitting} onClick={confirm}>
-            {submitting ? "Registrando fichada..." : punchType === "IN" ? "Confirmar ingreso" : "Confirmar salida"}
+            {submitting ? "Procesando…" : punchType === "IN" ? "Confirmar ingreso" : "Confirmar salida"}
           </Button>
         </div>
       </div>

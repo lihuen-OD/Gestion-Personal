@@ -74,7 +74,7 @@ describe("clockDeviceSession — credencial individual del fichador (F6)", () =>
     const unsubscribe = clockDeviceSession.onAuthFailure(listener);
     vi.stubGlobal("fetch", vi.fn().mockImplementation(respond));
 
-    await expect(clockDeviceRequest("/time-entries/clock/status", { method: "POST", body: {} })).rejects.toBeInstanceOf(errorType);
+    await expect(clockDeviceRequest("/clock/status", { method: "POST", body: {} })).rejects.toBeInstanceOf(errorType);
 
     expect(listener).not.toHaveBeenCalled();
     expect(clockDeviceSession.isActive()).toBe(true);

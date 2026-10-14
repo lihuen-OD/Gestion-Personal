@@ -44,7 +44,7 @@ export const clockDeviceSession = {
 };
 
 /**
- * Request operativo del fichador (/time-entries/clock/*). Sin sesión activa
+ * Request operativo del fichador (/clock/*, F8). Sin sesión activa
  * no sale a la red. Ante un rechazo de credencial (401/403 de dispositivo)
  * cierra la sesión antes de avisar: ningún reintento posterior (verificación
  * de una fichada, búsqueda en curso) vuelve a mandar la credencial rechazada.

@@ -83,3 +83,26 @@ describe("FaceCaptureModal — estados de cámara", () => {
     expect(stop).toHaveBeenCalled();
   });
 });
+
+// F8: con la foto enviada, el modal sólo informa la etapa del envío (nunca
+// "fichada fallida" mientras el resultado es incierto) y no se puede cerrar
+// ni volver a confirmar.
+describe("FaceCaptureModal — etapas del envío (F8)", () => {
+  it.each([
+    ["sending", "Registrando fichada…"],
+    ["slow", "Esto puede demorar unos segundos"],
+    ["verifying", "Estamos verificando si la fichada se registró…"],
+    ["confirming", "Estamos confirmando tu fichada…"],
+  ] as const)("%s → %s, sin el estado del detector y con las acciones deshabilitadas", (stage, text) => {
+    setMediaDevices(undefined);
+    render(<FaceCaptureModal punchType="IN" onCancel={vi.fn()} onConfirm={vi.fn()} submitting submissionStage={stage} />);
+
+    expect(screen.getByText(new RegExp(text.replace(/[…?]/g, ".")))).toBeInTheDocument();
+    expect(screen.queryByText(CAMERA_MESSAGES.unavailable)).not.toBeInTheDocument();
+    expect(screen.queryByText(CAMERA_MESSAGES.insecureContext)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Procesando…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Cancelar" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Cerrar" })).toBeDisabled();
+    expect(screen.queryByText(/fallida|falló/i)).not.toBeInTheDocument();
+  });
+});

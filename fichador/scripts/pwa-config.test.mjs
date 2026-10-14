@@ -50,8 +50,12 @@ describe("service worker (Workbox)", () => {
     const [rule] = workbox.runtimeCaching;
     expect(rule.urlPattern.test("http://localhost:5175/mediapipe/wasm/vision_wasm_nosimd_internal.wasm")).toBe(true);
     for (const url of [
-      "http://localhost:4002/api/time-entries/clock/status",
-      "https://api-test.example.com/api/time-entries/clock/photo-punch",
+      // F8: las rutas operativas de la PWA (/api/clock/*), también en el mismo origin.
+      "http://localhost:4002/api/clock/status",
+      "https://api-test.example.com/api/clock/photo-punch",
+      "https://api-test.example.com/api/clock/attempts/11111111-1111-4111-8111-111111111111?employeeId=e-1",
+      "https://api-test.example.com/api/clock/employees?search=go",
+      "http://localhost:5175/api/clock/photo-punch",
       "https://api-test.example.com/api/clock/device/register",
       "https://api-test.example.com/api/clock/device/status",
       "https://api-test.example.com/api/clock/device/pairing-code/refresh",

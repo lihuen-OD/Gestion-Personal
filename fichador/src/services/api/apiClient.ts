@@ -11,20 +11,28 @@ const API_URL = (import.meta.env.VITE_API_URL || "http://localhost:4002/api").re
 export class ApiError extends Error {
   code: string;
   status: number;
+  /** F8: segundos públicos de espera que manda el backend (p. ej. CLOCK_PUNCH_COOLDOWN). */
+  retryAfterSeconds?: number;
 
-  constructor(message: string, code: string, status: number) {
+  constructor(message: string, code: string, status: number, retryAfterSeconds?: number) {
     super(message);
     this.name = "ApiError";
     this.code = code;
     this.status = status;
+    this.retryAfterSeconds = publicRetryAfterSeconds(retryAfterSeconds);
   }
+}
+
+/** Mismo criterio que el backend: entero finito >= 0; cualquier otra cosa se ignora. */
+export function publicRetryAfterSeconds(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : undefined;
 }
 
 /**
  * No hubo respuesta HTTP (backend apagado, sin Internet, DNS, CORS). A
- * propósito NO es un ApiError: el flujo de verificación de una fichada
- * (TimeClockPage.verifyAttempt) sólo corta ante un ApiError real y sigue
- * consultando ante fallas de red, porque el intento pudo haber llegado.
+ * propósito NO es un ApiError: la recuperación de una fichada
+ * (features/punch/punchSubmission.ts) lo trata como resultado incierto y
+ * consulta el intento, porque el request pudo haber llegado.
  */
 export class NetworkError extends Error {
   constructor() {
@@ -33,7 +41,7 @@ export class NetworkError extends Error {
   }
 }
 
-type ApiErrorPayload = { error?: { code?: string; message?: string } };
+type ApiErrorPayload = { error?: { code?: string; message?: string; retryAfterSeconds?: unknown } };
 
 // Los mensajes CLOCK_* del backend ya están escritos para la persona que
 // ficha; el resto se traduce a un texto de negocio sin detalle técnico.
@@ -44,6 +52,10 @@ const messagesByCode: Record<string, string> = {
   CLOCK_DEVICE_NOT_PENDING: "Este dispositivo ya no tiene una aprobación pendiente.",
   CLOCK_DEVICE_PENDING_LIMIT: "Hay demasiadas solicitudes pendientes. Pedile a RRHH que elimine las que no se usan.",
   CLOCK_DEVICE_PAIRING_UNAVAILABLE: "No pudimos generar el código. Esperá un momento e intentá nuevamente.",
+  // F8: un requestId que el backend no reconoce como propio no se "arregla"
+  // regenerándolo: el intento se abandona y la persona empieza de nuevo.
+  CLOCK_IDEMPOTENCY_KEY_REUSED: "No pudimos recuperar esta fichada. Volvé a iniciar el proceso.",
+  CLOCK_ATTEMPT_PROCESSING: "Estamos confirmando tu fichada…",
   VALIDATION_ERROR: "No pudimos procesar la fichada. Intentá nuevamente.",
   ROUTE_NOT_FOUND: "La operación solicitada no está disponible.",
 };
@@ -55,6 +67,12 @@ export function formatClockErrorMessage(status: number, payload: ApiErrorPayload
   if (code?.startsWith("CLOCK_") && payload.error?.message) return payload.error.message;
   if (status >= 500) return "El servicio no está disponible en este momento. Intentá nuevamente en unos minutos.";
   return "No pudimos completar la operación. Intentá nuevamente.";
+}
+
+/** Rearma un ApiError a partir del error público guardado en un intento (GET attempts). */
+export function apiErrorFromStored(error: { code: string; message: string; httpStatus: number; retryAfterSeconds?: unknown }) {
+  const payload = { error: { code: error.code, message: error.message } };
+  return new ApiError(formatClockErrorMessage(error.httpStatus, payload), error.code, error.httpStatus, publicRetryAfterSeconds(error.retryAfterSeconds));
 }
 
 /** Mensaje para la persona que ficha: nunca un stack trace ni un error técnico. */
@@ -89,7 +107,7 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
   const payload: unknown = isJson ? await response.json().catch(() => null) : await response.text().catch(() => "");
   if (!response.ok) {
     const parsed = typeof payload === "object" && payload ? (payload as ApiErrorPayload) : {};
-    throw new ApiError(formatClockErrorMessage(response.status, parsed), parsed.error?.code || "API_ERROR", response.status);
+    throw new ApiError(formatClockErrorMessage(response.status, parsed), parsed.error?.code || "API_ERROR", response.status, publicRetryAfterSeconds(parsed.error?.retryAfterSeconds));
   }
   return payload as T;
 }

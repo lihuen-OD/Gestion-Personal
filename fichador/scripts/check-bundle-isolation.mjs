@@ -43,15 +43,19 @@ const adminMarkers = [
   "losod_access_token", "losod_refresh_token", "/auth/refresh", "/auth/login",
   "/workforce", "/hour-concepts", "/audit-parameters", "/finnegans-export",
   // Endpoint admin de legajos al inicio de un literal ("/employees…): el
-  // fichador sí usa /time-entries/clock/employees, que no debe contar.
+  // fichador sí usa /clock/employees, que no debe contar.
   /["'`]\/employees\b/,
 ];
 // F6: el token compartido del kiosco fue retirado. Ningún rastro de esa
 // credencial (header ni variable) puede volver al bundle.
 const retiredCredentialMarkers = ["x-clock-device-token", "VITE_CLOCK_DEVICE_TOKEN"];
-// Prueba de vida: si el build no contiene el fichador y su autenticación por
-// dispositivo, el chequeo no vale.
-const requiredMarkers = ["/time-entries/clock/photo-punch", "/time-entries/clock/attempts/", "ClockDevice "];
+// F8: la PWA usa sólo el namespace del dispositivo /api/clock/*. El alias
+// legacy sigue en el backend hasta F11, pero el cliente no puede volver a
+// llamarlo (ni como fallback).
+const legacyNamespaceMarkers = ["/time-entries/clock", "time-entries"];
+// Prueba de vida: si el build no contiene el fichador, sus rutas de
+// /api/clock y su autenticación por dispositivo, el chequeo no vale.
+const requiredMarkers = ["/clock/photo-punch", "/clock/attempts/", "/clock/employees", "/clock/status", "ClockDevice "];
 
 const assets = walk(join(root, "dist")).filter((path) => /\.(js|css|html)$/.test(path));
 const bundle = assets.map((path) => ({ path, text: readFileSync(path, "utf8") }));
@@ -65,6 +69,16 @@ for (const marker of retiredCredentialMarkers) {
   for (const { path, text } of bundle) {
     if (text.includes(marker)) failures.push(`${relative(root, path)} contiene la credencial compartida retirada: ${marker}`);
   }
+}
+for (const marker of legacyNamespaceMarkers) {
+  for (const { path, text } of bundle) {
+    if (text.includes(marker)) failures.push(`${relative(root, path)} usa el namespace legacy del fichador: ${marker}`);
+  }
+}
+// F8: el detector falso de los E2E (e2e/support/fakeTasksVision.ts) nunca
+// puede llegar a un build real.
+for (const { path, text } of bundle) {
+  if (text.includes("E2E_FAKE_FACE_DETECTOR")) failures.push(`${relative(root, path)} contiene el detector de rostros falso de los E2E`);
 }
 for (const marker of requiredMarkers) {
   if (!bundle.some(({ text }) => text.includes(marker))) failures.push(`el bundle no contiene "${marker}": ¿se buildeó el fichador?`);
