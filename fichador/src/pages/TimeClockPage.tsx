@@ -6,7 +6,7 @@
 // (features/punch/punchSubmission.ts), el cooldown se muestra con cuenta
 // regresiva local y una fichada confirmada vuelve sola al estado inicial.
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { CheckCircle2, Clock3, LogIn, LogOut, Search } from "lucide-react";
+import { CheckCircle2, Clock3, LogIn, LogOut, RefreshCw } from "lucide-react";
 import { getUserErrorMessage, type ApiError } from "../services/api/apiClient";
 import { isClockDeviceAuthFailure } from "../services/api/clockDeviceSession";
 import { timeClockApiService, type ClockEmployee, type ClockPunchResult } from "../services/api/timeClockApiService";
@@ -193,6 +193,7 @@ export function TimeClockPage() {
   const openShiftExceeded = openShiftMinutes > MAX_CLOCK_SHIFT_MINUTES;
   const canClockIn = canSubmit && (!status?.openShift || openShiftExceeded);
   const canClockOut = canSubmit && Boolean(status?.openShift) && !openShiftExceeded;
+  const exitIsPrimary = Boolean(status?.openShift) && !openShiftExceeded;
 
   const loadStatus = async (employeeId: string) => {
     setLoading(true);
@@ -396,8 +397,9 @@ export function TimeClockPage() {
                   }}
                   placeholder="Ej.: Pérez Juan"
                 />
-                <button type="button" className="icon-button" onClick={() => void refreshStatus()} title="Actualizar estado" aria-label="Actualizar estado" disabled={!selected || Boolean(punch)}>
-                  <Search />
+                {/* F10: actualizar el estado del legajo (no es una búsqueda); gira mientras consulta. */}
+                <button type="button" className="icon-button" onClick={() => void refreshStatus()} title="Actualizar estado" aria-label="Actualizar estado" disabled={!selected || Boolean(punch) || loading}>
+                  <RefreshCw className={selected && loading ? "spin-icon" : undefined} />
                 </button>
               </div>
             </label>
@@ -443,11 +445,15 @@ export function TimeClockPage() {
               </div>
             ) : null}
 
+            {/* F10: la acción que corresponde al estado del legajo es la principal
+                (sólo jerarquía visual; habilitarlas sigue siendo canClockIn/canClockOut).
+                Con un ingreso abierto, la salida; sin ingreso abierto o con la
+                jornada vencida (olvido de salida), el ingreso. */}
             <div className="clock-actions">
-              <Button variant="primary" icon={LogIn} disabled={!canClockIn} onClick={() => startPunch("IN")}>
+              <Button variant={exitIsPrimary ? "subtle" : "primary"} icon={LogIn} disabled={!canClockIn} onClick={() => startPunch("IN")}>
                 {openShiftExceeded ? "Marcar nuevo ingreso" : "Marcar ingreso"}
               </Button>
-              <Button variant="subtle" icon={LogOut} disabled={!canClockOut} onClick={() => startPunch("OUT")}>
+              <Button variant={exitIsPrimary ? "primary" : "subtle"} icon={LogOut} disabled={!canClockOut} onClick={() => startPunch("OUT")}>
                 Marcar salida
               </Button>
             </div>
