@@ -12,7 +12,7 @@ import type { AttendanceObservationsQuery } from "./timeEntries.schemas";
 import { evaluateShiftExit, flagOpenShiftOverflowForReview, notifyClassificationAlerts } from "../shifts/workShiftEvaluationRunner";
 import { resolveActiveWorkRegime } from "../work-regimes/workRegimes.service";
 import { notifyUsers } from "../workforce-management/workforce.service";
-import { auditService } from "../audit/audit.service";
+import { auditService, clearAuditDerivedCaches } from "../audit/audit.service";
 import { hourConceptsRepository } from "../hour-concepts/hourConcepts.repository";
 import { automaticHourConceptBreakdownsService } from "../employees/automaticHourConceptBreakdowns.service";
 import { storageService } from "../../shared/storage/storage.service";
@@ -124,7 +124,8 @@ vi.mock("../work-regimes/workRegimes.service", () => ({
 }));
 
 vi.mock("../audit/audit.service", () => ({
-  auditService: { register: vi.fn().mockResolvedValue(null) },
+  auditService: { register: vi.fn().mockResolvedValue(null), registerWithin: vi.fn().mockResolvedValue({}) },
+  clearAuditDerivedCaches: vi.fn(),
 }));
 
 // Sin reglas activas ni conceptos habilitados: ejercita a proposito el modo
@@ -184,6 +185,8 @@ const mockedResolveActiveWorkRegime = resolveActiveWorkRegime as unknown as Mock
 const mockedFlagOpenShiftOverflowForReview = flagOpenShiftOverflowForReview as unknown as Mock;
 const mockedNotifyUsers = notifyUsers as unknown as Mock;
 const mockedAuditRegister = auditService.register as unknown as Mock;
+const mockedAuditRegisterWithin = auditService.registerWithin as unknown as Mock;
+const mockedClearAuditCaches = clearAuditDerivedCaches as unknown as Mock;
 const mockedNotifyClassificationAlerts = notifyClassificationAlerts as unknown as Mock;
 const mockedFindActiveRules = hourConceptsRepository.findActiveRules as unknown as Mock;
 const mockedFindEnabledConceptIds = hourConceptsRepository.findEnabledConceptIds as unknown as Mock;
@@ -1682,15 +1685,27 @@ describe("F7 — canal KIOSK, cooldown y auditoría del dispositivo", () => {
   });
 
   describe("auditoría con el dispositivo como actor técnico", () => {
+    // F11 (plan §30): la auditoría viaja como un writer que el repositorio
+    // ejecuta DENTRO de la transacción de la fichada. Acá el repositorio está
+    // mockeado: se toma el writer que recibió y se lo corre con una tx falsa.
+    const fakeTx = { marker: "tx" };
+    async function auditWrittenBy(repoFn: Mock, workShiftId: string) {
+      const { audit } = repoFn.mock.calls[0]![0] as { audit?: (tx: unknown, workShift: { id: string }) => Promise<unknown> };
+      expect(audit).toEqual(expect.any(Function));
+      await audit!(fakeTx, { id: workShiftId });
+      expect(mockedAuditRegisterWithin).toHaveBeenCalledTimes(1);
+      const [tx, entry] = mockedAuditRegisterWithin.mock.calls[0]!;
+      expect(tx).toBe(fakeTx);
+      return entry as { userId: unknown; description: string; after: Record<string, unknown>; entity: string; ipAddress: string; action: string; entityId: string };
+    }
+
     it("el ingreso queda auditado con el nombre del dispositivo (sin UUID visible) y su id sólo en la metadata", async () => {
-      vi.useFakeTimers({ toFake: ["setTimeout"] });
       repo.createOpenWorkShift.mockResolvedValueOnce({ id: "shift-1", startAt: new Date(), startPunchId: null });
 
       await timeEntriesService.clockPhotoPunch(punch("IN"), KIOSK_CLOCK_ORIGIN, { userId: null, ipAddress: "203.0.113.7", userAgent: "kiosk-agent" }, context());
-      await vi.advanceTimersByTimeAsync(600);
 
-      expect(mockedAuditRegister).toHaveBeenCalledTimes(1);
-      const entry = mockedAuditRegister.mock.calls[0]![0] as { userId: unknown; description: string; after: Record<string, unknown>; entity: string; ipAddress: string };
+      const entry = await auditWrittenBy(repo.createOpenWorkShift, "shift-1");
+      expect(entry).toMatchObject({ action: "CREATE", entityId: "shift-1" });
       expect(entry).toMatchObject({ entity: "WorkShift", userId: null, ipAddress: "203.0.113.7" });
       expect(entry.description).toBe('Ingreso con foto registrado desde el dispositivo de fichada "Pañol 01" para legajo 100.');
       expect(entry.description).not.toMatch(UUID_PATTERN);
@@ -1698,29 +1713,79 @@ describe("F7 — canal KIOSK, cooldown y auditoría del dispositivo", () => {
       expect(JSON.stringify(entry)).not.toMatch(/tokenHash|secret|pairing/i);
     });
 
-    it("la salida también nombra al dispositivo", async () => {
-      vi.useFakeTimers({ toFake: ["setTimeout"] });
+    it("la salida también nombra al dispositivo, en la transacción del cierre", async () => {
       repo.closeOpenWorkShift.mockResolvedValueOnce({ workShift: { id: "shift-open", startAt: openShift().startAt, endAt: new Date(), totalMinutes: 60, endPunchId: null } });
 
       await timeEntriesService.clockPhotoPunch(punch("OUT"), KIOSK_CLOCK_ORIGIN, undefined, context([openShift()]));
-      await vi.advanceTimersByTimeAsync(600);
 
-      expect(mockedAuditRegister).toHaveBeenCalledWith(expect.objectContaining({
+      expect(await auditWrittenBy(repo.closeOpenWorkShift, "shift-open")).toMatchObject({
         description: 'Salida con foto registrada desde el dispositivo de fichada "Pañol 01" para legajo 100.',
-        after: expect.objectContaining({ source: "KIOSK", actorClockDeviceId: CLOCK_DEVICE_ID }),
-      }));
+        after: expect.objectContaining({ workShiftId: "shift-open", source: "KIOSK", actorClockDeviceId: CLOCK_DEVICE_ID }),
+      });
+    });
+
+    it("el nuevo ingreso tras un olvido de salida (rollover) audita la jornada nueva en su transacción", async () => {
+      repo.rolloverExpiredOpenWorkShift.mockResolvedValueOnce({ id: "shift-new", startAt: new Date(), startPunchId: null });
+      const expired = { id: "shift-excedida", startAt: new Date(Date.now() - 21 * 60 * 60_000), hourConcept: normalConcept };
+
+      await timeEntriesService.clockPhotoPunch(punch("IN"), KIOSK_CLOCK_ORIGIN, undefined, context([expired]));
+
+      expect(await auditWrittenBy(repo.rolloverExpiredOpenWorkShift, "shift-new")).toMatchObject({
+        entityId: "shift-new",
+        description: 'Ingreso con foto registrado desde el dispositivo de fichada "Pañol 01" para legajo 100.',
+      });
     });
 
     it("un dispositivo sin nombre se describe como 'sin nombre', nunca por su id", async () => {
-      vi.useFakeTimers({ toFake: ["setTimeout"] });
       repo.createOpenWorkShift.mockResolvedValueOnce({ id: "shift-1", startAt: new Date(), startPunchId: null });
 
       await timeEntriesService.clockPhotoPunch(punch("IN"), { device: { id: CLOCK_DEVICE_ID, name: null }, source: "KIOSK" }, undefined, context());
-      await vi.advanceTimersByTimeAsync(600);
 
-      const { description } = mockedAuditRegister.mock.calls[0]![0] as { description: string };
+      const { description } = await auditWrittenBy(repo.createOpenWorkShift, "shift-1");
       expect(description).toContain("dispositivo de fichada sin nombre");
       expect(description).not.toMatch(UUID_PATTERN);
+    });
+
+    it("F11: nada queda diferido: sin timers, sin register fuera de la transacción, y los cachés se limpian recién después del commit", async () => {
+      vi.useFakeTimers({ toFake: ["setTimeout"] });
+      let committed = false;
+      repo.createOpenWorkShift.mockImplementationOnce(async () => {
+        expect(mockedClearAuditCaches).not.toHaveBeenCalled();
+        committed = true;
+        return { id: "shift-1", startAt: new Date(), startPunchId: null };
+      });
+
+      await timeEntriesService.clockPhotoPunch(punch("IN"), KIOSK_CLOCK_ORIGIN, undefined, context());
+
+      expect(committed).toBe(true);
+      expect(vi.getTimerCount()).toBe(0);
+      expect(mockedAuditRegister).not.toHaveBeenCalled();
+      expect(mockedClearAuditCaches).toHaveBeenCalledTimes(1);
+    });
+
+    it("F11: si la auditoría falla, la transacción se revierte: el error se propaga, la evidencia se compensa y no se limpian cachés", async () => {
+      repo.createOpenWorkShift.mockRejectedValueOnce(new Error("audit insert failed"));
+
+      await expect(timeEntriesService.clockPhotoPunch(punch("IN"), KIOSK_CLOCK_ORIGIN, undefined, context())).rejects.toThrow("audit insert failed");
+
+      expect(mockedDeleteManaged).toHaveBeenCalledWith("file-1");
+      expect(mockedClearAuditCaches).not.toHaveBeenCalled();
+      expect(mockedAuditRegister).not.toHaveBeenCalled();
+    });
+
+    it("F11: por el camino idempotente, una auditoría fallida deja el intento FAILED (503 CLOCK_TEMPORARY_FAILURE): no se confirma nada", async () => {
+      const input = punch("IN");
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      repo.findClockValidationContext.mockResolvedValue(context());
+      repo.createClockPunchAttempt.mockResolvedValueOnce({});
+      repo.failClockPunchAttempt.mockResolvedValueOnce({});
+      repo.createOpenWorkShift.mockRejectedValueOnce(new Error("audit insert failed"));
+
+      await expect(timeEntriesService.clockPhotoPunchIdempotent(input, KIOSK_CLOCK_ORIGIN)).rejects.toMatchObject({ statusCode: 503, code: "CLOCK_TEMPORARY_FAILURE" });
+
+      expect(repo.failClockPunchAttempt).toHaveBeenCalledWith(input.requestId, expect.objectContaining({ code: "CLOCK_TEMPORARY_FAILURE", httpStatus: 503 }));
+      expect(repo.completeClockPunchAttempt).not.toHaveBeenCalled();
+      errorSpy.mockRestore();
     });
 
     it("buscar empleados y consultar estado no generan auditoría", async () => {

@@ -34,6 +34,7 @@ type Modules = {
   prisma: typeof import("../../shared/prisma/client").prisma;
   repository: typeof import("../time-entries/timeEntries.repository").timeEntriesRepository;
   Conflict: typeof import("../time-entries/clockPunchCooldown").ClockPunchCooldownConflict;
+  auditService: typeof import("../audit/audit.service").auditService;
 };
 
 describe.skipIf(!url)("F7 — /api/clock contra PostgreSQL local (cooldown y concurrencia reales)", () => {
@@ -71,7 +72,7 @@ describe.skipIf(!url)("F7 — /api/clock contra PostgreSQL local (cooldown y con
     // apuntaría al .env. Se descarta para que el import de abajo cree uno contra clock_it.
     delete (globalThis as { prisma?: unknown }).prisma;
 
-    const [{ createApp }, { env }, { prisma }, { timeEntriesRepository }, { ClockPunchCooldownConflict }, credentials, { storageService }] = await Promise.all([
+    const [{ createApp }, { env }, { prisma }, { timeEntriesRepository }, { ClockPunchCooldownConflict }, credentials, { storageService }, { auditService }] = await Promise.all([
       import("../../app"),
       import("../../config/env"),
       import("../../shared/prisma/client"),
@@ -79,8 +80,9 @@ describe.skipIf(!url)("F7 — /api/clock contra PostgreSQL local (cooldown y con
       import("../time-entries/clockPunchCooldown"),
       import("../../shared/security/clockDeviceCredentials"),
       import("../../shared/storage/storage.service"),
+      import("../audit/audit.service"),
     ]);
-    m = { createApp, env, prisma, repository: timeEntriesRepository, Conflict: ClockPunchCooldownConflict };
+    m = { createApp, env, prisma, repository: timeEntriesRepository, Conflict: ClockPunchCooldownConflict, auditService };
 
     const [connected] = await prisma.$queryRawUnsafe<Array<{ db: string }>>("SELECT current_database() AS db");
     if (!connected?.db.startsWith("clock_it")) throw new Error(`La app quedó conectada a ${connected?.db}, no a clock_it*: se aborta sin escribir.`);
@@ -92,7 +94,7 @@ describe.skipIf(!url)("F7 — /api/clock contra PostgreSQL local (cooldown y con
     await prisma.$executeRawUnsafe(`CREATE UNIQUE INDEX IF NOT EXISTS "WorkShift_one_open_per_employee" ON "WorkShift"("employeeId") WHERE status = 'ABIERTO' AND "endAt" IS NULL`);
 
     await prisma.hourConcept.create({ data: { code: "HC-NORMAL", name: "Hora normal", kind: "NORMAL", systemRole: "NORMAL_BASE" } });
-    for (const [index, key] of ["race", "legacy", "parallelA", "parallelB", "lockHeld", "lockFree", "txRace", "cutover", "kioskBoth", "rollover", "retryMeta"].entries()) {
+    for (const [index, key] of ["race", "legacy", "parallelA", "parallelB", "lockHeld", "lockFree", "txRace", "cutover", "kioskBoth", "rollover", "retryMeta", "auditDown"].entries()) {
       const created = await prisma.employee.create({ data: { legajo: `IT-${index + 1}`, cuil: `20-${index + 1}`, dni: `${index + 1}`, firstName: "Prueba", lastName: `IT ${key}` } });
       employees[key] = created.id;
     }
@@ -123,7 +125,7 @@ describe.skipIf(!url)("F7 — /api/clock contra PostgreSQL local (cooldown y con
   }, 60_000);
 
   afterAll(async () => {
-    await sleep(1_000); // miniatura (750 ms) y auditoría (500 ms) diferidas de la última fichada
+    await sleep(1_000); // miniatura diferida (750 ms) de la última fichada; la auditoría es transaccional (F11)
     await new Promise<void>((resolve) => server?.close(() => resolve()));
     await m?.prisma.$disconnect();
     await holder?.$disconnect();
@@ -181,8 +183,8 @@ describe.skipIf(!url)("F7 — /api/clock contra PostgreSQL local (cooldown y con
     expect(await call("GET", `/clock/attempts/${completed.requestId}?employeeId=${employees.race}`, winner)).toMatchObject({ status: 200, data: { status: "COMPLETED" } });
   });
 
+  // F11: sin esperar nada: la auditoría se escribió en la transacción de la fichada.
   it("la fichada queda auditada con el dispositivo como actor técnico (nombre visible, id sólo en metadata, sin usuario)", async () => {
-    await sleep(700);
     const [shift] = await m.prisma.workShift.findMany({ where: { employeeId: employees.race! } });
     const logs = await m.prisma.auditLog.findMany({ where: { entity: "WorkShift", entityId: shift!.id } });
     expect(logs).toHaveLength(1);
@@ -213,6 +215,9 @@ describe.skipIf(!url)("F7 — /api/clock contra PostgreSQL local (cooldown y con
       expect(punches[1]!.deviceId).toBe(deviceA.id);
       const [shift] = await m.prisma.workShift.findMany({ where: { employeeId: employees.race! } });
       expect(shift!.status).not.toBe("ABIERTO");
+      // F11: exactamente una auditoría por fichada confirmada (ingreso + salida), apenas responde.
+      const logs = await m.prisma.auditLog.findMany({ where: { entity: "WorkShift", entityId: shift!.id }, orderBy: { createdAt: "asc" } });
+      expect(logs.map((log) => log.description.split(" ")[0])).toEqual(["Ingreso", "Salida"]);
     } finally {
       m.env.CLOCK_PUNCH_COOLDOWN_SECONDS = 60;
     }
@@ -272,6 +277,36 @@ describe.skipIf(!url)("F7 — /api/clock contra PostgreSQL local (cooldown y con
     expect(rejected).toHaveLength(1);
     expect(rejected[0]!.reason).toBeInstanceOf(m.Conflict);
     expect(await punchesOf("txRace")).toHaveLength(1);
+  });
+
+  // ── F11 (plan §30): auditoría de la fichada en la misma transacción ──
+
+  it("si la auditoría falla dentro de la transacción, no queda fichada: 503 no confirmado, intento FAILED, evidencia compensada; el reintento no duplica y un requestId nuevo ficha con una sola auditoría", async () => {
+    const auditsBefore = await m.prisma.auditLog.count();
+    const failing = body("auditDown", "IN");
+    const spy = vi.spyOn(m.auditService, "registerWithin").mockRejectedValueOnce(new Error("audit store down"));
+    try {
+      expect(await call("POST", "/clock/photo-punch", deviceA, failing)).toMatchObject({ status: 503, error: { code: "CLOCK_TEMPORARY_FAILURE" } });
+    } finally {
+      spy.mockRestore();
+    }
+    expect(await punchesOf("auditDown")).toHaveLength(0);
+    expect(await m.prisma.workShift.count({ where: { employeeId: employees.auditDown! } })).toBe(0);
+    expect(await m.prisma.auditLog.count()).toBe(auditsBefore);
+    expect(await m.prisma.clockPunchAttempt.findUnique({ where: { requestId: failing.requestId } })).toMatchObject({ status: "FAILED", errorCode: "CLOCK_TEMPORARY_FAILURE", httpStatus: 503 });
+    const evidence = await m.prisma.storageFile.findMany({ where: { employeeId: employees.auditDown!, module: "FICHADAS" } });
+    expect(evidence.length).toBeGreaterThanOrEqual(1);
+    expect(evidence.every((file) => file.status === "DELETED")).toBe(true);
+
+    // Mismo requestId: devuelve el resultado guardado, sin volver a fichar.
+    expect(await call("POST", "/clock/photo-punch", deviceA, failing)).toMatchObject({ status: 503, error: { code: "CLOCK_TEMPORARY_FAILURE" } });
+    expect(await punchesOf("auditDown")).toHaveLength(0);
+
+    // requestId nuevo (la PWA lo genera para la próxima intención): ficha con su única auditoría.
+    expect((await call("POST", "/clock/photo-punch", deviceA, body("auditDown", "IN"))).status).toBe(201);
+    const [shift] = await m.prisma.workShift.findMany({ where: { employeeId: employees.auditDown! } });
+    expect(await punchesOf("auditDown")).toHaveLength(1);
+    expect(await m.prisma.auditLog.count({ where: { entity: "WorkShift", entityId: shift!.id } })).toBe(1);
   });
 
   // ── F7.1 (plan §26.12): source de la jornada a través del cutover legacy → /api/clock ──

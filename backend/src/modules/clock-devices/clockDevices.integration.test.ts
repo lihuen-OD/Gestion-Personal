@@ -130,7 +130,7 @@ describe.skipIf(!url)("F9 — dispositivos de fichada contra PostgreSQL local", 
   }, 60_000);
 
   afterAll(async () => {
-    await sleep(1_000); // miniatura y auditoría diferidas de la última fichada
+    await sleep(1_000); // miniatura diferida de la última fichada (la auditoría es transaccional desde F11)
     await new Promise<void>((resolve) => server?.close(() => resolve()));
     await m?.prisma.$disconnect();
     await holder?.$disconnect();

@@ -176,6 +176,15 @@ type PunchEvidenceInput = {
   rawPayload?: Prisma.InputJsonValue;
 };
 
+/**
+ * F11 (docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md §30): la auditoría de una
+ * fichada se escribe DENTRO de la transacción que la registra
+ * (auditService.registerWithin). Si la auditoría falla, la fichada se revierte
+ * entera: nunca queda una fichada confirmada sin su AuditLog. Recibe la
+ * jornada creada o cerrada para usar su id.
+ */
+export type ClockPunchAuditWriter = (tx: PrismaTransactionClient, workShift: { id: string }) => Promise<unknown>;
+
 // Segmento ya clasificado (etapa de Turnos V1 — clasificación multi-concepto):
 // cada tramo trae su propio concepto detectado, no uno uniforme para toda la
 // jornada. conceptStatus/hourConceptRuleId son opcionales para no romper los
@@ -1591,7 +1600,7 @@ export const timeEntriesRepository = {
     return { count, items };
   },
 
-  createOpenWorkShift(input: { employeeId: string; hourConceptId?: string; hourConceptName?: string; source: WorkShiftSource; startAt: Date; punchEvidence?: PunchEvidenceInput; cooldown?: ClockPunchCooldownGuard }) {
+  createOpenWorkShift(input: { employeeId: string; hourConceptId?: string; hourConceptName?: string; source: WorkShiftSource; startAt: Date; punchEvidence?: PunchEvidenceInput; cooldown?: ClockPunchCooldownGuard; audit?: ClockPunchAuditWriter }) {
     return prisma.$transaction(async (tx) => {
       if (input.cooldown) await guardClockPunchCooldown(tx, input.employeeId, input.cooldown);
       const punch = await tx.attendancePunch.create({
@@ -1604,7 +1613,7 @@ export const timeEntriesRepository = {
         },
       });
 
-      return tx.workShift.create({
+      const workShift = await tx.workShift.create({
         data: {
           employeeId: input.employeeId,
           hourConceptId: input.hourConceptId,
@@ -1616,10 +1625,12 @@ export const timeEntriesRepository = {
           maxAllowedMinutes: 20 * 60,
         },
       });
+      if (input.audit) await input.audit(tx, workShift);
+      return workShift;
     });
   },
 
-  async rolloverExpiredOpenWorkShift(input: { openWorkShiftId: string; employeeId: string; hourConceptId?: string; hourConceptName?: string; source: WorkShiftSource; startAt: Date; missingOutObservation: string; punchEvidence?: PunchEvidenceInput; cooldown?: ClockPunchCooldownGuard }) {
+  async rolloverExpiredOpenWorkShift(input: { openWorkShiftId: string; employeeId: string; hourConceptId?: string; hourConceptName?: string; source: WorkShiftSource; startAt: Date; missingOutObservation: string; punchEvidence?: PunchEvidenceInput; cooldown?: ClockPunchCooldownGuard; audit?: ClockPunchAuditWriter }) {
     const newShift = await prisma.$transaction(async (tx) => {
       if (input.cooldown) await guardClockPunchCooldown(tx, input.employeeId, input.cooldown);
       const previous = await tx.workShift.findFirst({
@@ -1672,7 +1683,7 @@ export const timeEntriesRepository = {
         },
       });
 
-      return tx.workShift.create({
+      const workShift = await tx.workShift.create({
         data: {
           employeeId: input.employeeId,
           hourConceptId: input.hourConceptId,
@@ -1684,6 +1695,8 @@ export const timeEntriesRepository = {
           maxAllowedMinutes: 20 * 60,
         },
       });
+      if (input.audit) await input.audit(tx, workShift);
+      return workShift;
     });
 
     // Etapa 10B: mismo fix que expireOpenWorkShifts — este camino también
@@ -2041,6 +2054,8 @@ export const timeEntriesRepository = {
     punchEvidence?: PunchEvidenceInput;
     // F7: sólo la salida del fichador; el cierre manual de RRHH no lo pasa.
     cooldown?: ClockPunchCooldownGuard;
+    // F11: sólo la salida del fichador (el cierre manual audita aparte).
+    audit?: ClockPunchAuditWriter;
   }) {
     // Fuera de la transacción: sólo lecturas de configuración de sistema
     // (Horas Especiales activas + su alcance, conceptos nocturnos) que no
@@ -2265,6 +2280,7 @@ export const timeEntriesRepository = {
         await tx.specialHourRuleApplication.createMany({ data: pendingRuleApplications });
       }
 
+      if (input.audit) await input.audit(tx, workShift);
       return { workShift, entries, timeSegments };
       // maxWait: cuánto puede esperar para conseguir una conexión del pool
       // (default 2000ms, mismo valor -- no era el problema real). timeout:

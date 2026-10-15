@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { Prisma, type WorkShiftSource } from "@prisma/client";
 import { env } from "../../config/env";
 import type { AuditContext } from "../audit/audit.service";
-import { auditService } from "../audit/audit.service";
+import { auditService, clearAuditDerivedCaches } from "../audit/audit.service";
 import { AppError } from "../../shared/errors/AppError";
 import { prisma } from "../../shared/prisma/client";
 import { employeeAccessWhere } from "../employees/employeeAccess";
@@ -13,7 +13,7 @@ import { findUnapprovedEmployeeIdsForExport, isMonthlyClosureLocked } from "../.
 import { storageService } from "../../shared/storage/storage.service";
 import { storagePathBuilder } from "../../shared/storage/storagePathBuilder";
 import { timeEntriesRepository } from "./timeEntries.repository";
-import type { ClassifiedSegmentForPersistence } from "./timeEntries.repository";
+import type { ClassifiedSegmentForPersistence, ClockPunchAuditWriter } from "./timeEntries.repository";
 import { ClockPunchCooldownConflict, clockPunchCooldownError, clockPunchCooldownGuard } from "./clockPunchCooldown";
 import { failedAttemptRetryAfterSeconds } from "./clockAttemptErrorMeta";
 import { attendanceRecipients, notifyUsers } from "../workforce-management/workforce.service";
@@ -719,17 +719,26 @@ function scheduleClockThumbnail(input: ClockPhotoPunchInput, thumbnail: Deferred
   timer.unref();
 }
 
-function scheduleClockAudit(input: Parameters<typeof auditService.register>[0]) {
-  const timer = setTimeout(() => {
-    void auditService.register(input).catch((error) => {
-      console.error("CLOCK_AUDIT_DEFERRED_FAILED", {
-        severity: "critical",
-        entityId: input.entityId,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    });
-  }, 500);
-  timer.unref();
+/**
+ * F11 (docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md §30): la auditoría de la
+ * fichada se escribe en la MISMA transacción que la jornada (antes era un
+ * setTimeout de 500 ms sin await: si el proceso caía o la escritura fallaba,
+ * quedaba la fichada sin su AuditLog y sólo un console.error). Si la
+ * auditoría falla, la transacción se revierte: no hay fichada, la evidencia
+ * se compensa y el intento queda FAILED (503 CLOCK_TEMPORARY_FAILURE). Un
+ * reintento del mismo requestId devuelve ese resultado guardado; uno nuevo
+ * ficha de cero. Nunca hay dos fichadas ni dos auditorías.
+ * Los cachés derivados de la auditoría se limpian después del commit.
+ */
+function clockPunchAuditWriter(audit: AuditContext | undefined, description: string, employeeId: string, origin: ClockPunchOrigin): ClockPunchAuditWriter {
+  return (tx, workShift) => auditService.registerWithin(tx, {
+    ...audit,
+    action: "CREATE",
+    entity: "WorkShift",
+    entityId: workShift.id,
+    description,
+    after: clockPunchAuditAfter(workShift.id, employeeId, origin),
+  });
 }
 
 export function clockAttemptHash(input: ClockPhotoPunchInput) {
@@ -1467,6 +1476,7 @@ export const timeEntriesService = {
               missingOutObservation: "Olvido de salida marcado automaticamente al registrar un nuevo ingreso desde el fichador con foto.",
               punchEvidence: evidence,
               cooldown,
+              audit: clockPunchAuditWriter(audit, `Ingreso con foto registrado desde el dispositivo de fichada ${deviceLabel} para legajo ${employee.legajo}.`, employee.id, origin),
             });
           } catch (error) {
             await cleanupClockEvidence(evidence);
@@ -1479,15 +1489,8 @@ export const timeEntriesService = {
             }
             throw error;
           }
+          clearAuditDerivedCaches();
           await notifyMissingExit(employee.id, openShift.id, openShift.startAt);
-          scheduleClockAudit({
-            ...audit,
-            action: "CREATE",
-            entity: "WorkShift",
-            entityId: workShift.id,
-            description: `Ingreso con foto registrado desde el dispositivo de fichada ${deviceLabel} para legajo ${employee.legajo}.`,
-            after: clockPunchAuditAfter(workShift.id, employee.id, origin),
-          });
           if (workShift.startPunchId) scheduleClockThumbnail(input, deferredThumbnail, evidence, workShift.startPunchId);
           await evaluateShiftEntry(employee.id, workShift.id, now);
           return {
@@ -1520,6 +1523,7 @@ export const timeEntriesService = {
           startAt: now,
           punchEvidence: evidence,
           cooldown,
+          audit: clockPunchAuditWriter(audit, `Ingreso con foto registrado desde el dispositivo de fichada ${deviceLabel} para legajo ${employee.legajo}.`, employee.id, origin),
         });
       } catch (error) {
         await cleanupClockEvidence(evidence);
@@ -1529,14 +1533,7 @@ export const timeEntriesService = {
         }
         throw error;
       }
-      scheduleClockAudit({
-        ...audit,
-        action: "CREATE",
-        entity: "WorkShift",
-        entityId: workShift.id,
-        description: `Ingreso con foto registrado desde el dispositivo de fichada ${deviceLabel} para legajo ${employee.legajo}.`,
-        after: clockPunchAuditAfter(workShift.id, employee.id, origin),
-      });
+      clearAuditDerivedCaches();
       if (workShift.startPunchId) scheduleClockThumbnail(input, deferredThumbnail, evidence, workShift.startPunchId);
       await evaluateShiftEntry(employee.id, workShift.id, now);
       console.info("CLOCK_PHOTO_PUNCH_PHASE_TIMING", {
@@ -1582,15 +1579,9 @@ export const timeEntriesService = {
         segments: classifiedSegments,
         punchEvidence: evidence,
         cooldown,
+        audit: clockPunchAuditWriter(audit, `Salida con foto registrada desde el dispositivo de fichada ${deviceLabel} para legajo ${employee.legajo}.`, employee.id, origin),
       });
-      scheduleClockAudit({
-        ...audit,
-        action: "CREATE",
-        entity: "WorkShift",
-        entityId: created.workShift.id,
-        description: `Salida con foto registrada desde el dispositivo de fichada ${deviceLabel} para legajo ${employee.legajo}.`,
-        after: clockPunchAuditAfter(created.workShift.id, employee.id, origin),
-      });
+      clearAuditDerivedCaches();
       if (created.workShift.endPunchId) scheduleClockThumbnail(input, deferredThumbnail, evidence, created.workShift.endPunchId);
       await syncAutomaticBreakdownsAfterProcessedShift({
         employeeId: employee.id,
