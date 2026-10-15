@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { apiRequest } from "./apiClient";
 import { clearAllAppCaches, invalidateCacheFamily } from "../cache";
+import { employeeApiService } from "./employeeApiService";
 import { positionApiService } from "./positionApiService";
 
 vi.mock("./apiClient", async (importOriginal) => {
@@ -115,6 +116,27 @@ describe("positionApiService.getAssignedEmployees — dedupe/cache frontend (Eta
 
     await positionApiService.getAssignedEmployees("pos-1");
     expect(apiRequest).toHaveBeenCalledTimes(2);
+  });
+
+  it("afterDeletion invalida puestos, legajos, organigrama y vistas derivadas", async () => {
+    vi.mocked(apiRequest).mockImplementation(async (path) => path.startsWith("/employees/org-chart")
+      ? { data: [apiEmployee], context: [], meta: { total: 1, page: 1, pageSize: 1000, hasMore: false } }
+      : { data: [apiEmployee], meta: { total: 1, page: 1, pageSize: 200, hasMore: false } } as never);
+
+    await employeeApiService.getAll();
+    await employeeApiService.getOrgChart();
+    await employeeApiService.getAll();
+    await employeeApiService.getOrgChart();
+    expect(apiRequest).toHaveBeenCalledTimes(2);
+
+    await positionApiService.afterDeletion();
+
+    expect(invalidateCacheFamily).toHaveBeenCalledWith("positions", "position deleted");
+    expect(invalidateCacheFamily).toHaveBeenCalledWith("employees", "position deleted");
+    expect(invalidateCacheFamily).toHaveBeenCalledWith("dashboard", "position deleted");
+    await employeeApiService.getAll();
+    await employeeApiService.getOrgChart();
+    expect(apiRequest).toHaveBeenCalledTimes(4);
   });
 
   it("envía alcances A5 y nunca convierte sectorId legado", async () => {

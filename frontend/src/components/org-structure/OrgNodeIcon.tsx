@@ -1,4 +1,4 @@
-import { Archive, Building2, Factory, LayoutGrid, Layers, MapPin, Users, Wallet, type LucideIcon } from "lucide-react";
+import { Archive, Building2, Factory, LandPlot, LayoutGrid, Layers, Map as MapIcon, MapPin, Users, Wallet, type LucideIcon } from "lucide-react";
 import type { OrgTreeNodeType } from "./orgStructureTree";
 
 const icons: Record<OrgTreeNodeType, LucideIcon> = {
@@ -6,8 +6,10 @@ const icons: Record<OrgTreeNodeType, LucideIcon> = {
   BUSINESS_UNIT: Layers,
   SECTOR: Users,
   AREA: LayoutGrid,
+  PROVINCE: MapIcon,
   ZONE: MapPin,
   ESTABLISHMENT: Factory,
+  ESTABLISHMENT_UNIT: LandPlot,
   COST_CENTER: Wallet,
   GROUP: Archive,
 };

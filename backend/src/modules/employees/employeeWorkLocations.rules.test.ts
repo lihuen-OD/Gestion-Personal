@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assertNoOverlap, assertValidInterval, assertZoneAndEstablishments, periodsOverlap, workLocationState } from "./employeeWorkLocations.rules";
+import { assertNoOverlap, assertValidInterval, assertZoneAndEstablishments, periodsOverlap, planWorkLocationDetachment, workLocationState } from "./employeeWorkLocations.rules";
 
 const period = (id: string, zoneId: string, effectiveFrom: string, effectiveTo: string | null) => ({ id, zoneId, effectiveFrom, effectiveTo });
 
@@ -83,5 +83,36 @@ describe("assertZoneAndEstablishments — selección explícita (D-2)", () => {
   it("conserva un nodo inactivo que ya estaba en el registro corregido", () => {
     expect(check({ establishmentIds: ["e4"], keepEstablishmentIds: new Set(["e4"]) })).not.toThrow();
     expect(check({ zone: { ...zone, status: "INACTIVO" }, keepZoneId: "north" })).not.toThrow();
+  });
+});
+
+describe("planWorkLocationDetachment — eliminación controlada de nodos de Ubicaciones", () => {
+  const today = "2026-10-13";
+  const full = (establishmentId: string) => ({ establishmentId, coverage: "ESTABLISHMENT" as const, unitIds: [] });
+  const units = (establishmentId: string, ...unitIds: string[]) => ({ establishmentId, coverage: "UNITS" as const, unitIds });
+  const removal = (nodes: { zoneIds?: string[]; establishmentIds?: string[]; unitIds?: string[] }) => ({ zoneIds: new Set(nodes.zoneIds ?? []), establishmentIds: new Set(nodes.establishmentIds ?? []), unitIds: new Set(nodes.unitIds ?? []) });
+
+  it("zona eliminada: la vigente termina ayer sin continuar; la que empieza hoy o después se cancela", () => {
+    expect(planWorkLocationDetachment({ zoneId: "z", effectiveFrom: "2026-01-01", establishments: [full("oc")] }, removal({ zoneIds: ["z"], establishmentIds: ["oc"] }), today)).toEqual({ kind: "CLOSE", closeTo: "2026-10-12", next: [] });
+    expect(planWorkLocationDetachment({ zoneId: "z", effectiveFrom: today, establishments: [full("oc")] }, removal({ zoneIds: ["z"] }), today)).toEqual({ kind: "CANCEL" });
+    expect(planWorkLocationDetachment({ zoneId: "z", effectiveFrom: "2027-01-01", establishments: [full("oc")] }, removal({ zoneIds: ["z"] }), today)).toEqual({ kind: "CANCEL" });
+  });
+
+  it("establecimiento eliminado: sigue desde hoy con los demás establecimientos de la zona", () => {
+    expect(planWorkLocationDetachment({ zoneId: "z", effectiveFrom: "2026-01-01", establishments: [full("oc"), units("ls", "ln")] }, removal({ establishmentIds: ["oc"] }), today))
+      .toEqual({ kind: "CLOSE", closeTo: "2026-10-12", next: [units("ls", "ln")] });
+    expect(planWorkLocationDetachment({ zoneId: "z", effectiveFrom: "2027-01-01", establishments: [full("oc"), full("ls")] }, removal({ establishmentIds: ["oc"] }), today))
+      .toEqual({ kind: "NARROW", next: [full("ls")] });
+  });
+
+  it("unidad eliminada: nunca amplía — sin unidades restantes el establecimiento sale de la selección", () => {
+    expect(planWorkLocationDetachment({ zoneId: "z", effectiveFrom: "2026-01-01", establishments: [units("ls", "ln", "lsu")] }, removal({ unitIds: ["ln"] }), today))
+      .toEqual({ kind: "CLOSE", closeTo: "2026-10-12", next: [units("ls", "lsu")] });
+    expect(planWorkLocationDetachment({ zoneId: "z", effectiveFrom: "2026-01-01", establishments: [units("ls", "ln"), full("oc")] }, removal({ unitIds: ["ln"] }), today))
+      .toEqual({ kind: "CLOSE", closeTo: "2026-10-12", next: [full("oc")] });
+  });
+
+  it("un establecimiento completo no cambia porque se elimine una de sus unidades", () => {
+    expect(planWorkLocationDetachment({ zoneId: "z", effectiveFrom: "2026-01-01", establishments: [full("ls")] }, removal({ unitIds: ["ln"] }), today)).toBeNull();
   });
 });

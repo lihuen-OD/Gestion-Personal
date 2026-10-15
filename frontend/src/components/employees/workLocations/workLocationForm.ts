@@ -1,13 +1,22 @@
-import type { OrgEstablishment, OrgStructureCatalog, OrgZone } from "../../../types/orgStructure.types";
-import type { EmployeeWorkLocation, WorkLocationAssignmentInput, WorkLocationCorrectionInput, WorkLocationState } from "../../../types/employeeWorkLocation.types";
+import type { OrgEstablishment, OrgEstablishmentUnit, OrgStructureCatalog, OrgZone } from "../../../types/orgStructure.types";
+import type {
+  EmployeeWorkLocation,
+  WorkLocationAssignmentInput,
+  WorkLocationCorrectionInput,
+  WorkLocationEstablishment,
+  WorkLocationEstablishmentSelection,
+  WorkLocationState,
+} from "../../../types/employeeWorkLocation.types";
 import { formatCalendarDate } from "../../../utils/date";
 import { nextCalendarDateKey } from "../../../utils/argentinaDateKey";
+import { establishmentUnitsLabel, zonePathLabel } from "../../../utils/workLocationPath";
 
 export type WorkLocationFormMode = "create" | "change" | "end" | "correct";
 
 export type WorkLocationDraft = {
   zoneId: string;
-  establishmentIds: string[];
+  /** Un elemento por establecimiento elegido, con su cobertura explícita. */
+  establishments: WorkLocationEstablishmentSelection[];
   effectiveFrom: string;
   effectiveTo: string;
   reason: string;
@@ -38,9 +47,10 @@ export function sortWorkLocations(rows: EmployeeWorkLocation[]) {
  * corregir, se conservan los nodos inactivos que ya estaban en el registro.
  */
 export function zoneOptions(catalog: OrgStructureCatalog, keepZoneId?: string): OrgZone[] {
+  const path = (zone: OrgZone) => zonePathLabel(zone.name, catalog.provinces?.find((province) => province.id === zone.provinceId)?.name);
   return catalog.zones
     .filter((zone) => zone.status === "ACTIVO" || zone.id === keepZoneId)
-    .sort((a, b) => a.name.localeCompare(b.name, "es"));
+    .sort((a, b) => path(a).localeCompare(path(b), "es"));
 }
 
 export function establishmentOptions(catalog: OrgStructureCatalog, zoneId: string, keepIds: ReadonlySet<string> = new Set()): OrgEstablishment[] {
@@ -49,16 +59,42 @@ export function establishmentOptions(catalog: OrgStructureCatalog, zoneId: strin
     .sort((a, b) => a.name.localeCompare(b.name, "es"));
 }
 
+/** Unidades activas del establecimiento; al corregir se conservan las inactivas ya asignadas. */
+export function unitOptions(catalog: OrgStructureCatalog, establishmentId: string, keepIds: ReadonlySet<string> = new Set()): OrgEstablishmentUnit[] {
+  return (catalog.establishmentUnits ?? [])
+    .filter((item) => item.establishmentId === establishmentId && (item.status === "ACTIVO" || keepIds.has(item.id)))
+    .sort((a, b) => a.name.localeCompare(b.name, "es"));
+}
+
+/** "La Suiza (Lote Norte, Lote Sur)" o "Oficina Central". */
+export function establishmentSummary(item: Pick<WorkLocationEstablishment, "name" | "coverage" | "units">) {
+  return establishmentUnitsLabel(item.name, item.coverage, item.units.map((unit) => unit.name));
+}
+
+/** "Entre Ríos › Arroyo Barú", o sólo la zona si todavía no tiene provincia. */
+export function zonePath(zone: EmployeeWorkLocation["zone"]) {
+  return zonePathLabel(zone.name, zone.province?.name);
+}
+
+const selectionOf = (item: WorkLocationEstablishment): WorkLocationEstablishmentSelection => ({
+  establishmentId: item.id,
+  coverage: item.coverage,
+  unitIds: item.coverage === "UNITS" ? item.units.map((unit) => unit.id) : [],
+});
+
+const selectionKey = (items: WorkLocationEstablishmentSelection[]) =>
+  items.map((item) => `${item.establishmentId}:${item.coverage}:${item.coverage === "UNITS" ? [...item.unitIds].sort().join(",") : ""}`).sort().join("|");
+
 export function draftFrom(mode: WorkLocationFormMode, todayKey: string, location?: EmployeeWorkLocation): WorkLocationDraft {
-  const blank = { zoneId: "", establishmentIds: [], effectiveFrom: todayKey, effectiveTo: "", reason: "", notes: "", correctionReason: "" };
+  const blank = { zoneId: "", establishments: [], effectiveFrom: todayKey, effectiveTo: "", reason: "", notes: "", correctionReason: "" };
   if (!location || mode === "create") return blank;
   if (mode === "end") return { ...blank, effectiveFrom: location.effectiveFrom, effectiveTo: todayKey < location.effectiveFrom ? location.effectiveFrom : todayKey };
-  const establishmentIds = location.establishments.map((item) => item.id);
+  const establishments = location.establishments.map(selectionOf);
   if (mode === "change") {
     const firstAllowed = nextCalendarDateKey(location.effectiveFrom);
-    return { ...blank, zoneId: location.zone.id, establishmentIds, effectiveFrom: todayKey < firstAllowed ? firstAllowed : todayKey, effectiveTo: location.effectiveTo || "" };
+    return { ...blank, zoneId: location.zone.id, establishments, effectiveFrom: todayKey < firstAllowed ? firstAllowed : todayKey, effectiveTo: location.effectiveTo || "" };
   }
-  return { zoneId: location.zone.id, establishmentIds, effectiveFrom: location.effectiveFrom, effectiveTo: location.effectiveTo || "", reason: location.reason, notes: location.notes || "", correctionReason: "" };
+  return { zoneId: location.zone.id, establishments, effectiveFrom: location.effectiveFrom, effectiveTo: location.effectiveTo || "", reason: location.reason, notes: location.notes || "", correctionReason: "" };
 }
 
 /** Validación de la UI; el backend sigue siendo la autoridad. */
@@ -70,7 +106,8 @@ export function workLocationDraftError(mode: WorkLocationFormMode, draft: WorkLo
     return "";
   }
   if (!draft.zoneId) return "Seleccioná una zona.";
-  if (!draft.establishmentIds.length) return "Seleccioná al menos un establecimiento de la zona. No existe la opción “zona completa”.";
+  if (!draft.establishments.length) return "Seleccioná al menos un establecimiento de la zona. No existe la opción “zona completa”.";
+  if (draft.establishments.some((item) => item.coverage === "UNITS" && !item.unitIds.length)) return "Elegí al menos una unidad en cada establecimiento marcado con “Unidades específicas”, o marcalo como establecimiento completo.";
   if (!draft.effectiveFrom) return "La fecha desde es obligatoria.";
   if (draft.effectiveTo && draft.effectiveTo < draft.effectiveFrom) return "La fecha hasta no puede ser anterior a la fecha desde.";
   if (draft.reason.trim().length < 2) return "El motivo es obligatorio.";
@@ -81,7 +118,7 @@ export function workLocationDraftError(mode: WorkLocationFormMode, draft: WorkLo
 export function assignmentPayload(draft: WorkLocationDraft): WorkLocationAssignmentInput {
   return {
     zoneId: draft.zoneId,
-    establishmentIds: draft.establishmentIds,
+    establishments: draft.establishments.map((item) => ({ ...item, unitIds: item.coverage === "UNITS" ? item.unitIds : [] })),
     effectiveFrom: draft.effectiveFrom,
     effectiveTo: draft.effectiveTo || null,
     reason: draft.reason.trim(),
@@ -92,11 +129,10 @@ export function assignmentPayload(draft: WorkLocationDraft): WorkLocationAssignm
 /** Corrección: sólo los datos que difieren del registro original. */
 export function correctionPayload(location: EmployeeWorkLocation, draft: WorkLocationDraft): WorkLocationCorrectionInput {
   const next = assignmentPayload(draft);
-  const currentIds = location.establishments.map((item) => item.id);
-  const sameEstablishments = currentIds.length === next.establishmentIds.length && next.establishmentIds.every((id) => currentIds.includes(id));
+  const sameEstablishments = selectionKey(next.establishments) === selectionKey(location.establishments.map(selectionOf));
   return {
     ...(next.zoneId !== location.zone.id ? { zoneId: next.zoneId } : {}),
-    ...(!sameEstablishments ? { establishmentIds: next.establishmentIds } : {}),
+    ...(!sameEstablishments ? { establishments: next.establishments } : {}),
     ...(next.effectiveFrom !== location.effectiveFrom ? { effectiveFrom: next.effectiveFrom } : {}),
     ...(next.effectiveTo !== location.effectiveTo ? { effectiveTo: next.effectiveTo } : {}),
     ...(next.reason !== location.reason ? { reason: next.reason } : {}),

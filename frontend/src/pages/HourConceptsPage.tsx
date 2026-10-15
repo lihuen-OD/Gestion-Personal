@@ -2,6 +2,7 @@ import { Pencil, Plus, Power, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { HourConceptRulesPanel } from "../components/hour-concepts/HourConceptRulesPanel";
 import { AssociatedEmployeesPanel } from "../components/shared/AssociatedEmployeesPanel";
+import { DeletionPreviewModal } from "../components/shared/DeletionPreviewModal";
 import { OverflowCell } from "../components/ui/OverflowCell";
 import { FilterPanel } from "../components/ui/FilterPanel";
 import { DataTable } from "../components/ui/DataTable";
@@ -81,7 +82,7 @@ function getFilterOptions(items: HourConcept[]) {
 function ConceptDataFields({ item, setItem }: { item: HourConcept; setItem: (item: HourConcept) => void }) {
   return (
     <div className="form-grid">
-      <label>Codigo<input value={item.code} disabled /></label>
+      <label>Codigo<input value={item.code} disabled spellCheck={false} /></label>
       <label>Nombre *<input value={item.name} onChange={(event) => setItem({ ...item, name: event.target.value })} /></label>
       <label>Tipo<select value={item.kind} onChange={(event) => setItem({ ...item, kind: event.target.value as HourConceptKind })}>{additionalKinds.map((kind) => <option key={kind} value={kind}>{hourConceptKindLabels[kind]}</option>)}</select></label>
       <label>Modo de carga *<select value={item.loadMode ?? "MANUAL"} onChange={(event) => setItem({ ...item, loadMode: event.target.value as HourConceptLoadMode })}>{Object.entries(loadModeLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
@@ -109,6 +110,7 @@ export function HourConceptsPage() {
   const { user } = useAuth();
   const [filters, setFilters] = useState<HourConceptFilters>({ search: "", kind: "", status: "" });
   const [editing, setEditing] = useState<HourConcept | null>(null);
+  const [deleting, setDeleting] = useState<HourConcept | null>(null);
   const [notice, setNotice] = useState("");
   const [refresh, setRefresh] = useState(0);
   const [apiItems, setApiItems] = useState<HourConcept[] | null>(null);
@@ -240,24 +242,7 @@ export function HourConceptsPage() {
   // concepto, reglas, legajos habilitados) y libera el código. Fichadas y
   // jornadas reales se conservan. Para conservar la historia de un concepto
   // válido se usa Deshabilitar.
-  const removeConcept = async (item: HourConcept) => {
-    const confirmed = await confirmAction(
-      `Se eliminará el concepto "${item.name}" y las horas/configuración asociadas a él. Esta acción no se puede deshacer. Las fichadas y jornadas reales se conservarán. Si el concepto es válido pero ya no se usa, deshabilitalo para conservar su historial.`,
-      { title: "Eliminar concepto definitivamente", confirmLabel: "Eliminar definitivamente", cancelLabel: "Cancelar", tone: "danger" },
-    );
-    if (!confirmed) return;
-
-    try {
-      await hourConceptApiService.remove(item.id);
-      if (editing?.id === item.id) setEditing(null);
-      setNotice(`Se eliminó definitivamente el concepto "${item.name}".`);
-      setRefresh((value) => value + 1);
-      setTimeout(() => setNotice(""), TOAST_SUCCESS_MS);
-    } catch (removeError) {
-      setNotice(getUserErrorMessage(removeError, "No pudimos eliminar el concepto horario."));
-      setTimeout(() => setNotice(""), 3500);
-    }
-  };
+  const removeConcept = (item: HourConcept) => setDeleting(item);
 
   const editable = roleLevel(user!.role) === 1;
 
@@ -315,7 +300,7 @@ export function HourConceptsPage() {
                         >
                           <Power size={14} /><span>{item.status === "ACTIVO" ? "Deshabilitar" : "Habilitar"}</span>
                         </button>
-                        <button className="table-icon-action danger-link" title="Eliminar" aria-label="Eliminar" onClick={() => void removeConcept(item)}>
+                        <button className="table-icon-action danger-link" title="Eliminar" aria-label="Eliminar" onClick={() => removeConcept(item)}>
                           <Trash2 size={14} /><span>Eliminar</span>
                         </button>
                       </div>
@@ -361,6 +346,7 @@ export function HourConceptsPage() {
           )}
         </div>
       )}
+      {deleting ? <DeletionPreviewModal basePath={`/hour-concepts/${encodeURIComponent(deleting.id)}`} title={`Eliminar concepto horario “${deleting.name}”`} close={() => setDeleting(null)} onDeleted={() => { const deleted = deleting; setDeleting(null); if (editing?.id === deleted.id) setEditing(null); void hourConceptApiService.afterDeletion().then(() => setRefresh((value) => value + 1)); setNotice(`Se eliminó definitivamente el concepto “${deleted.name}”.`); setTimeout(() => setNotice(""), TOAST_SUCCESS_MS); }} /> : null}
     </>
   );
 }

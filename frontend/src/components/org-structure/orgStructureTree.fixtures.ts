@@ -15,10 +15,20 @@ export const treeCatalog: OrgStructureCatalog = {
     { id: "a1", code: "AREA-1", name: "Liquidaciones", sectorId: "s1", status: "ACTIVO" },
     { id: "a-old", code: "AREA-90", name: "Administración anterior", establishmentId: "e-old", pendingReload: true, status: "ACTIVO" },
   ],
-  zones: [{ id: "z1", code: "ZN-1", name: "Litoral", status: "ACTIVO" }],
+  provinces: [{ id: "p1", code: "SF", name: "Santa Fe", status: "ACTIVO" }],
+  zones: [
+    { id: "z1", code: "ZN-1", name: "Litoral", provinceId: "p1", status: "ACTIVO" },
+    // Zona anterior a la provincia: pendiente de recarga, sigue en uso.
+    { id: "z-old", code: "ZN-9", name: "Zona previa", status: "ACTIVO" },
+  ],
   establishments: [
     { id: "e1", code: "EST-1", name: "Planta 1", zoneId: "z1", province: "Santa Fe", department: "Rosario", locality: "Rosario", address: "Calle", status: "ACTIVO" },
+    { id: "e2", code: "EST-2", name: "Oficina Central", zoneId: "z-old", province: "", department: "", locality: "", address: "", status: "ACTIVO" },
     { id: "e-old", code: "EST-90", name: "Casa central anterior", companyId: "c1", businessUnitId: "bu1", pendingReload: true, province: "", department: "", locality: "", address: "", status: "ACTIVO" },
+  ],
+  establishmentUnits: [
+    { id: "u2", code: "UNI-2", name: "Lote Sur", establishmentId: "e1", status: "ACTIVO" },
+    { id: "u1", code: "UNI-1", name: "Lote Norte", establishmentId: "e1", status: "ACTIVO" },
   ],
   costCenters: [
     { id: "cc1", code: "RH-001", name: "Centro RRHH", companyIds: [], businessUnitIds: [], establishmentIds: ["e1"], areaIds: [], sectorIds: ["s1"], status: "ACTIVO" },

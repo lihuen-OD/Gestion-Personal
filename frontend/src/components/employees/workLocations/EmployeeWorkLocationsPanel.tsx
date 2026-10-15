@@ -10,7 +10,7 @@ import { ErrorState } from "../../ui/ErrorState";
 import { LoadingState } from "../../ui/LoadingState";
 import { BlockHistoryTimeline } from "../FieldHistoryControls";
 import { WorkLocationFormModal } from "./WorkLocationFormModal";
-import { describeWorkLocationPeriod, sortWorkLocations, workLocationStateLabels, workLocationStateTones, type WorkLocationFormMode } from "./workLocationForm";
+import { describeWorkLocationPeriod, establishmentSummary, sortWorkLocations, workLocationStateLabels, workLocationStateTones, zonePath, type WorkLocationFormMode } from "./workLocationForm";
 
 type Props = {
   employeeId: string;
@@ -72,7 +72,7 @@ export function EmployeeWorkLocationsPanel({ employeeId, canEdit, onLoaded }: Pr
         <div>
           <h3>Ubicaciones de trabajo</h3>
           <p>{status !== "success" ? "Zonas y establecimientos asignados con vigencia." : zoneCount ? `${zoneCount} ${zoneCount === 1 ? "zona vigente" : "zonas vigentes"} · ${rows.length} ${rows.length === 1 ? "registro" : "registros"} en total` : rows.length ? "Sin ubicaciones vigentes hoy." : "Sin ubicaciones cargadas."}</p>
-          <small>Cada asignación vincula una zona con establecimientos elegidos de esa zona. Se pueden tener varias zonas a la vez.</small>
+          <small>Cada asignación vincula una zona con establecimientos elegidos de esa zona, completos o con unidades específicas. Se pueden tener varias zonas a la vez.</small>
         </div>
         <div className="tracked-actions">
           <Button variant="subtle" onClick={() => setShowHistory(!showHistory)}>{showHistory ? "Ocultar historial" : "Ver historial"}</Button>
@@ -89,12 +89,12 @@ export function EmployeeWorkLocationsPanel({ employeeId, canEdit, onLoaded }: Pr
             <article className={`work-location-item ${location.state.toLowerCase()}`} key={location.id}>
               <div className="work-location-main">
                 <div className="work-location-title">
-                  <b>{location.zone.name}</b>
+                  <b>{zonePath(location.zone)}</b>
                   <Badge tone={workLocationStateTones[location.state]}>{workLocationStateLabels[location.state]}</Badge>
                 </div>
                 <span className="work-location-period">{describeWorkLocationPeriod(location)}</span>
                 <div className="work-location-establishments" aria-label="Establecimientos">
-                  {location.establishments.map((item) => <span key={item.id}>{item.name}</span>)}
+                  {location.establishments.map((item) => <span key={item.id} title={item.coverage === "UNITS" ? "Unidades específicas" : "Establecimiento completo"}>{establishmentSummary(item)}</span>)}
                 </div>
                 <small>Motivo: {location.reason}{location.notes ? ` · ${location.notes}` : ""}</small>
               </div>

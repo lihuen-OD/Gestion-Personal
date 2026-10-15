@@ -205,6 +205,8 @@ export function NoveltyTable({
             <label>
               Motivo del rechazo *
               <textarea
+                spellCheck
+                lang="es-AR"
                 value={rejectReason}
                 onChange={(event) => setRejectReason(event.target.value)}
                 placeholder="Indicá el motivo para dejar trazabilidad"

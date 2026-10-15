@@ -13,6 +13,7 @@ import { clockDeviceApiService, type ClockDevice, type ClockDeviceConnectivity, 
 import { orgStructureApiService } from "../services/api/orgStructureApiService";
 import { formatDateTime, formatInstantDate } from "../utils/date";
 import { TOAST_SUCCESS_MS } from "../utils/toast";
+import { zonePathLabel } from "../utils/workLocationPath";
 
 const statusLabel: Record<ClockDeviceStatus, string> = { PENDING: "Pendiente", ACTIVE: "Activo", REVOKED: "Revocado" };
 const statusTone: Record<ClockDeviceStatus, "warning" | "success" | "danger"> = { PENDING: "warning", ACTIVE: "success", REVOKED: "danger" };
@@ -31,7 +32,9 @@ export const CLOCK_DEVICES_REFRESH_ERROR = "No pudimos actualizar el estado de l
 type EstablishmentOption = { id: string; label: string };
 
 function locationLabel(establishment: NonNullable<ClockDevice["establishment"]>) {
-  return establishment.zone ? `${establishment.zone.name} · ${establishment.name}` : establishment.name;
+  return establishment.zone
+    ? `${zonePathLabel(establishment.zone.name, establishment.zone.province?.name)} · ${establishment.name}`
+    : establishment.name;
 }
 
 function deviceSubtitle(device: ClockDevice) {
@@ -112,7 +115,11 @@ export function ClockDevicesPage() {
     const catalog = await orgStructureApiService.getCatalog();
     const options = catalog.establishments
       .filter((item) => item.status === "ACTIVO" && item.zoneId)
-      .map(({ id, name, zoneId }) => ({ id, label: `${catalog.zones.find((zone) => zone.id === zoneId)?.name || "Zona"} · ${name}` }));
+      .map(({ id, name, zoneId }) => {
+        const zone = catalog.zones.find((item) => item.id === zoneId);
+        const province = catalog.provinces?.find((item) => item.id === zone?.provinceId);
+        return { id, label: `${zone ? zonePathLabel(zone.name, province?.name) : "Zona"} · ${name}` };
+      });
     setEstablishments(options);
     return options;
   };
@@ -187,7 +194,7 @@ export function ClockDevicesPage() {
     <PageHeader eyebrow="FICHADOR" title="Dispositivos de fichada" description="Aprobá, ubicá y revocá los equipos habilitados para el fichador standalone." action={<Button variant="primary" icon={Check} onClick={() => setPairingOpen(true)}>Aprobar dispositivo</Button>} />
     <Section title="Equipos registrados" subtitle={`${meta.total} dispositivos encontrados`}>
       <div className="filters">
-        <label className="search-field"><Search size={16} /><input aria-label="Buscar dispositivo" placeholder="Buscar por nombre" value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} /></label>
+        <label className="search-field"><Search size={16} /><input spellCheck={false} aria-label="Buscar dispositivo" placeholder="Buscar por nombre" value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} /></label>
         <label>Estado<select value={filter} onChange={(event) => { setFilter(event.target.value as ClockDeviceStatus | ""); setPage(1); }}><option value="">Todos</option><option value="PENDING">Pendientes</option><option value="ACTIVE">Activos</option><option value="REVOKED">Revocados</option></select></label>
       </div>
       {refreshError && status === "ready" ? <div className="clock-devices-refresh-warning" role="status"><AlertTriangle size={15} aria-hidden="true" /><span>{refreshError}</span></div> : null}

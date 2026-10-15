@@ -84,13 +84,10 @@ describe("HourConceptsPage — nomenclatura correcta (Etapa 8M)", () => {
       expect(source).toContain("Eliminar");
     });
 
-    // docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md §14: Eliminar es
-    // definitivo (una sola confirmación fuerte); Deshabilitar conserva la historia.
-    it("eliminar usa una confirmación fuerte única: título, advertencia y botones exactos", () => {
-      expect(source).toContain('title: "Eliminar concepto definitivamente"');
-      expect(source).toContain("y las horas/configuración asociadas a él. Esta acción no se puede deshacer. Las fichadas y jornadas reales se conservarán.");
-      expect(source).toContain('confirmLabel: "Eliminar definitivamente"');
-      expect(source).toContain('cancelLabel: "Cancelar"');
+    it("eliminar abre el protocolo común con vista previa calculada por backend", () => {
+      expect(source).toContain("DeletionPreviewModal");
+      expect(source).toContain('basePath={`/hour-concepts/${encodeURIComponent(deleting.id)}`}');
+      expect(source).toContain("hourConceptApiService.afterDeletion()");
     });
 
     it("ya no existe el flujo 409 → segunda confirmación → force (baja lógica)", () => {

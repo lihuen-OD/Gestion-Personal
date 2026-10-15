@@ -2,10 +2,15 @@ import { Prisma, type HourConceptWorkTreatment } from "@prisma/client";
 import type { AuditContext } from "../audit/audit.service";
 import { auditService } from "../audit/audit.service";
 import { AppError } from "../../shared/errors/AppError";
+import { humanizePeriodEs } from "../../shared/datetime/argentinaTime";
+import { adminRoles } from "../../shared/security/roles";
+import { assertActorAuthorizedWithin, assertConfirmedPlan, DeletionPlanBuilder, type DeletionConfirmation, type DeletionPreview } from "../../shared/deletion/deletionPlan";
+import type { PrismaTransactionClient } from "../../shared/prisma/client";
 import { mapAssociatedEmployee } from "../../shared/prisma/employeeAssociationQuery";
 import { formatEmployeeReference } from "../../shared/audit/employeeReference";
 import { employeeAccessWhere } from "../employees/employeeAccess";
 import { auditClosureRecalculations } from "../workforce-management/closureRecalculationAudit";
+import { confirmedClosureResult } from "../workforce-management/closureSnapshot";
 import { hourConceptsRepository, invalidateHourConceptsCache } from "./hourConcepts.repository";
 import type {
   CreateHourConceptInput,
@@ -91,6 +96,64 @@ async function executeRemoval<T>(operation: () => Promise<T>) {
     mapPrismaError(error);
     throw error;
   }
+}
+
+/**
+ * Eliminación controlada (shared/deletion) con la semántica propia del módulo
+ * (WORKED_TIME_ACCOUNTING_MODEL.md §14): borra desgloses y configuración,
+ * reclasifica tramos y jornadas a Hora normal y desvincula novedades; nunca
+ * toca minutos, fichadas ni Horas base. Bloquea si algo de eso cae en un
+ * período enviado o aprobado, o si hay cargas del modelo anterior.
+ */
+async function planHourConceptDeletionWithin(tx: PrismaTransactionClient, id: string) {
+  const concept = await tx.hourConcept.findUnique({ where: { id }, select: { id: true, code: true, name: true, systemRole: true } });
+  if (!concept) throw new AppError("Hour concept not found", 404, "HOUR_CONCEPT_NOT_FOUND");
+  const impact = await hourConceptsRepository.findDeletionImpactWithin(tx, id);
+  const fallback = await tx.hourConcept.findFirstOrThrow({ where: { systemRole: "NORMAL_BASE" }, select: { id: true, name: true } });
+  const reference = await hourConceptsRepository.employeeReferencesWithin(tx, [...new Set(impact.pairs.map((pair) => pair.employeeId))]);
+  const pairNames = new Map(impact.pairs.map((pair) => [`${pair.employeeId}:${pair.period}`, `${reference(pair.employeeId)} · ${humanizePeriodEs(pair.period)}`]));
+  const builder = new DeletionPlanBuilder()
+    .add("hourConcept.delete", "DELETE", "Concepto horario que se elimina", "Se borra con sus reglas; el código queda libre.", [{ id, name: `${concept.code} · ${concept.name}` }])
+    .add("hourConcept.periods", "RECALCULATE", "Personas y períodos alcanzados", `Se borran ${impact.breakdowns.length} desgloses, ${impact.segments.length} tramos y ${impact.workShifts.length} jornadas pasan a Hora normal y se recalculan los cierres abiertos que lo incluían. Fichadas, jornadas, minutos y Horas base se conservan.`, [...pairNames.entries()].map(([pairId, name]) => ({ id: pairId, name })), { affectsPeople: true })
+    .add("hourConcept.rows", "RECALCULATE", "Registros horarios alcanzados", "Detalle técnico (desgloses, tramos y jornadas).", [...impact.breakdowns, ...impact.segments, ...impact.workShifts].map((row) => ({ id: row.id, name: row.id })), { listed: false })
+    .add("hourConcept.employees", "UNLINK", "Legajos que dejan de tenerlo habilitado", "Se quita la habilitación; el legajo no cambia.", impact.assignments.map((row) => ({ id: row.employeeId, name: formatEmployeeReference(row.employee) })), { affectsPeople: true })
+    .add("hourConcept.novelties", "UNLINK", "Novedades que dejan de apuntar a este concepto", "La novedad se conserva sin concepto destino.", impact.novelties.map((row) => ({ id: row.id, name: `${row.noveltyType.name} · ${formatEmployeeReference(row.employee)}` })), { affectsPeople: true })
+    .add("hourConcept.rules", "DELETE", "Reglas horarias del concepto", "Configuración exclusiva: se borra con el concepto.", impact.rules.map((row) => ({ id: row.id, name: `${row.startTime}–${row.endTime}` })));
+  if (concept.systemRole === "NORMAL_BASE") builder.block("HOUR_CONCEPT_SYSTEM_MANAGED", "El concepto base Horas normales es administrado por el sistema.");
+  if (impact.legacyTimeEntries > 0) builder.block("HOUR_CONCEPT_HAS_LEGACY_TIME_ENTRIES", `Tiene ${impact.legacyTimeEntries} carga(s) de horas del modelo anterior que pueden ser jornada trabajada: deshabilitalo en lugar de eliminarlo.`);
+  if (impact.protectedPeriods.size) {
+    const periods = [...new Set([...impact.protectedPeriods.keys()].map((key) => key.split(":")[1]!))].sort().map(humanizePeriodEs).join(", ");
+    builder.block("PERIOD_CLOSED", `Tiene horas en períodos enviados o aprobados (${periods}), que están protegidos: inactivalo o corregí esos períodos mediante el procedimiento explícito de RRHH.`);
+  }
+  const blocked = concept.systemRole === "NORMAL_BASE" || impact.legacyTimeEntries > 0 || impact.protectedPeriods.size > 0;
+  // Para conocer los cierres abiertos y el snapshot exacto resultante se usa
+  // la eliminación real. La preview siempre revierte esta transacción; en la
+  // confirmación estas mismas mutaciones sólo committean después de comparar
+  // la huella y registrar la auditoría.
+  const removal = blocked ? null : await hourConceptsRepository.deletePermanentlyWithin(tx, id, { reason: "HOUR_CONCEPT_DELETED", hourConceptId: id, hourConceptCode: concept.code });
+  return {
+    concept,
+    removal,
+    preview: builder.build(
+      { kind: "hourConcept", id, code: concept.code, name: concept.name, label: "Concepto horario" },
+      {
+        deleteConceptId: id,
+        fallbackConcept: fallback,
+        deletedBreakdowns: impact.breakdowns,
+        reclassifiedSegments: impact.segments.map((row) => ({ ...row, fromHourConceptId: id, toHourConceptId: fallback.id, toHourConceptName: fallback.name, toRuleId: null, toStatus: "SIN_CONCEPTO_COMPATIBLE" })),
+        reclassifiedWorkShifts: impact.workShifts.map((row) => ({ ...row, fromHourConceptId: id, toHourConceptId: fallback.id, toHourConceptName: fallback.name })),
+        unlinkedNovelties: impact.novelties.map((row) => ({ id: row.id, fromHourConceptId: id, toHourConceptId: null })),
+        deletedRules: impact.rules,
+        removedAssignments: impact.assignments.map((row) => ({ employeeId: row.employeeId, hourConceptId: id })),
+        protectedPeriods: [...impact.protectedPeriods.entries()],
+        rebuiltClosures: removal?.rebuiltClosures.map(confirmedClosureResult) ?? [],
+      },
+    ),
+  };
+}
+
+class HourConceptDeletionPreviewRollback extends Error {
+  constructor(readonly preview: DeletionPreview) { super("hour concept deletion preview rollback"); }
 }
 
 export const hourConceptsService = {
@@ -261,5 +324,58 @@ export const hourConceptsService = {
     });
     await auditClosureRecalculations(rebuiltClosures, `eliminación definitiva del concepto ${item.code} - ${item.name}`, audit, hourConceptsRepository.employeeReferences);
     return { ...summary, recalculatedClosures: rebuiltClosures.length };
+  },
+
+  async previewDeletion(id: string): Promise<DeletionPreview> {
+    try {
+      await executeRemoval(() => hourConceptsRepository.transaction(async (tx) => {
+        const plan = await planHourConceptDeletionWithin(tx, id);
+        throw new HourConceptDeletionPreviewRollback(plan.preview);
+      }));
+    } catch (error) {
+      if (error instanceof HourConceptDeletionPreviewRollback) return error.preview;
+      throw error;
+    }
+    throw new AppError("No se pudo calcular la vista previa.", 500, "DELETION_PREVIEW_FAILED");
+  },
+
+  async executeDeletion(id: string, confirmation: DeletionConfirmation, audit?: AuditContext) {
+    const result = await executeRemoval(() => hourConceptsRepository.transaction(async (tx) => {
+      await assertActorAuthorizedWithin(tx, audit?.userId, adminRoles);
+      const plan = await planHourConceptDeletionWithin(tx, id);
+      assertConfirmedPlan(plan.preview, confirmation);
+      if (!plan.removal) throw new AppError("La eliminación está bloqueada.", 409, "DELETION_BLOCKED", { preview: plan.preview });
+      const removal = plan.removal;
+      const { rebuiltClosures, ...summary } = removal;
+      await auditService.registerWithin(tx, {
+        ...audit,
+        action: "DELETE",
+        entity: "HourConcept",
+        entityId: id,
+        description:
+          `Se eliminó definitivamente el concepto horario ${plan.concept.code} - ${plan.concept.name}: ` +
+          `${summary.deletedBreakdowns} desglose(s), ${summary.deletedRules} regla(s) y ${summary.deletedEmployeeAssignments} habilitación(es) por legajo borradas; ` +
+          `${summary.reclassifiedSegments} tramo(s) y ${summary.reclassifiedWorkShifts} jornada(s) reclasificados a Hora normal; ` +
+          `${summary.unlinkedNovelties} novedad(es) desvinculadas; ${rebuiltClosures.length} cierre(s) recalculados. ` +
+          "Fichadas, jornadas y Horas base se conservan.",
+        before: { target: plan.preview.target, groups: plan.preview.groups } as unknown as Prisma.InputJsonValue,
+        after: { ...summary, recalculatedClosureIds: rebuiltClosures.map((closure) => closure.id) } as Prisma.InputJsonValue,
+      });
+      const reference = await hourConceptsRepository.employeeReferencesWithin(tx, rebuiltClosures.map((closure) => closure.employeeId));
+      for (const closure of rebuiltClosures) {
+        await auditService.registerWithin(tx, {
+          ...audit,
+          action: "UPDATE",
+          entity: "MonthlyTimeClosure",
+          entityId: closure.id,
+          description: `Se recalculó el snapshot del cierre de ${humanizePeriodEs(closure.period)} de ${reference(closure.employeeId)} por eliminación definitiva del concepto ${plan.concept.code} - ${plan.concept.name}. El estado del cierre no cambia.`,
+          before: { snapshot: closure.before } as Prisma.InputJsonValue,
+          after: { snapshot: closure.after } as Prisma.InputJsonValue,
+        });
+      }
+      return { preview: plan.preview, summary, recalculatedClosures: rebuiltClosures.length };
+    }));
+    invalidateHourConceptsCache();
+    return { done: true, target: result.preview.target, groups: result.preview.groups, ...result.summary, recalculatedClosures: result.recalculatedClosures };
   },
 };

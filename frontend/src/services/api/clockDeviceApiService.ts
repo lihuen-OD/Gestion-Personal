@@ -15,7 +15,7 @@ export type ClockDevice = {
   status: ClockDeviceStatus;
   connectivity: ClockDeviceConnectivity | null;
   establishmentId: string | null;
-  establishment: { id: string; name: string; zone: { id: string; name: string } | null } | null;
+  establishment: { id: string; name: string; zone: { id: string; name: string; province?: { id: string; name: string } | null } | null } | null;
   activatedAt: string | null;
   revokedAt: string | null;
   lastSeenAt: string | null;

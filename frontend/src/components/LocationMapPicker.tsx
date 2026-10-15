@@ -102,7 +102,7 @@ export function LocationMapPicker(props: LocationMapPickerProps) {
     </div>
     {!props.readOnly && <div className="google-map-url-panel">
       <label>URL de Google Maps
-        <input value={mapsUrl} placeholder="Pegá el link de Google Maps para tomar sus coordenadas" onChange={(event) => { setMapsUrl(event.target.value); setMapsUrlError(""); }} />
+        <input type="url" spellCheck={false} value={mapsUrl} placeholder="Pegá el link de Google Maps para tomar sus coordenadas" onChange={(event) => { setMapsUrl(event.target.value); setMapsUrlError(""); }} />
       </label>
       <Button type="button" variant="subtle" disabled={!mapsUrl.trim()} onClick={applyGoogleMapsUrl}>Usar coordenadas del link</Button>
       {mapsUrlError && <small>{mapsUrlError}</small>}

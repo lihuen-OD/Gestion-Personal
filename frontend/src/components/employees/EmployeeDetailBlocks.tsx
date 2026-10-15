@@ -251,7 +251,7 @@ export function AddressEditBlock({ employee, user, canEdit, onSaved }: EmployeeB
               </div>
               <div className="address-change-grid">
                 <Field label="Fecha desde" type="date" value={from} set={setFrom} />
-                <Field label="Motivo del cambio" value={reason} set={setReason} />
+                <Field label="Motivo del cambio" value={reason} set={setReason} spellCheck />
               </div>
               {error ? <p className="error">{error}</p> : null}
             </div>
@@ -401,8 +401,8 @@ export function AssignmentBlock({
               excludeId={employee.id}
             />
             <Field label="Fecha desde" type="date" value={from} set={setFrom} />
-            <Field label="Observacion" value={notes} set={setNotes} />
-            <Field label="Motivo del cambio" value={reason} set={setReason} />
+            <Field label="Observacion" value={notes} set={setNotes} spellCheck />
+            <Field label="Motivo del cambio" value={reason} set={setReason} spellCheck />
             {error ? <p className="error">{error}</p> : null}
             <div className="form-actions">
               <Button variant="subtle" onClick={() => setEditing(false)}>
@@ -513,9 +513,9 @@ export function TransportBlock({ employee, user, canEdit, onSaved }: EmployeeBlo
             {transport === "Sí" ? (
               <Field label="Ciudad / Localidad de origen" value={city} set={setCity} />
             ) : null}
-            <Field label="Observaciones" value={notes} set={setNotes} />
+            <Field label="Observaciones" value={notes} set={setNotes} spellCheck />
             <Field label="Fecha desde" type="date" value={from} set={setFrom} />
-            <Field label="Motivo del cambio" value={reason} set={setReason} />
+            <Field label="Motivo del cambio" value={reason} set={setReason} spellCheck />
             {error ? <p className="error">{error}</p> : null}
             <div className="form-actions">
               <Button variant="subtle" onClick={() => setEditing(false)}>
@@ -631,7 +631,7 @@ export function HoursSpecialBlock({ employee, user, canEdit, onSaved }: Employee
               ))}
             </div>
             <Field label="Fecha desde" type="date" value={from} set={setFrom} />
-            <Field label="Motivo del cambio" value={reason} set={setReason} />
+            <Field label="Motivo del cambio" value={reason} set={setReason} spellCheck />
             {error ? <p className="error">{error}</p> : null}
             <div className="form-actions">
               <Button variant="subtle" onClick={() => setEditing(false)}>

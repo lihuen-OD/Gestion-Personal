@@ -104,11 +104,11 @@ export function ShiftTemplateFormFields({ value, onChange, disabled }: { value: 
   return (
     <div className="shift-template-fields">
       <div className="form-grid">
-        <label className="field"><span>Código</span><input required disabled={disabled} value={value.code} onChange={(e) => set({ code: e.target.value })} /></label>
+        <label className="field"><span>Código</span><input required disabled={disabled} spellCheck={false} value={value.code} onChange={(e) => set({ code: e.target.value })} /></label>
         <label className="field"><span>Nombre</span><input required disabled={disabled} value={value.name} onChange={(e) => set({ name: e.target.value })} /></label>
         <label className="field"><span>Categoría / tipo</span><input disabled={disabled} placeholder="Ej: Administrativo, Cosecha, Sereno" value={value.categoryName} onChange={(e) => set({ categoryName: e.target.value })} /></label>
         <label className="field"><span>Estado</span><select disabled={disabled} value={value.status} onChange={(e) => set({ status: e.target.value as "ACTIVO" | "INACTIVO" })}><option value="ACTIVO">Activo</option><option value="INACTIVO">Inactivo</option></select></label>
-        <label className="field form-wide"><span>Descripción</span><textarea disabled={disabled} value={value.description} onChange={(e) => set({ description: e.target.value })} /></label>
+        <label className="field form-wide"><span>Descripción</span><textarea disabled={disabled} spellCheck lang="es-AR" value={value.description} onChange={(e) => set({ description: e.target.value })} /></label>
       </div>
 
       <div className="form-grid">

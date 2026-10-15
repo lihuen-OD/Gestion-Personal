@@ -300,6 +300,8 @@ export function NoveltyModal({
                 <label>
                   Observacion documental
                   <textarea
+                    spellCheck
+                    lang="es-AR"
                     value={docNotes}
                     onChange={(event) => setDocNotes(event.target.value)}
                     placeholder="Detalle opcional del documento adjunto"
@@ -316,6 +318,8 @@ export function NoveltyModal({
               <label>
                 Observación
                 <textarea
+                  spellCheck
+                  lang="es-AR"
                   value={docNotes}
                   onChange={(event) => setDocNotes(event.target.value)}
                   placeholder="Detalle de la novedad"

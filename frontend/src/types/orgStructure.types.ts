@@ -1,6 +1,6 @@
 // Estructura en transición (docs/decisions/ORG_LOCATION_REORGANIZATION.md):
 //   Organización: Empresa → Unidad de negocio → Sector → Área
-//   Ubicaciones:  Zona → Establecimiento
+//   Ubicaciones:  Provincia → Zona → Establecimiento → Unidad (opcional)
 // Los padres del modelo anterior (Sector.areaId, Area.establishmentId,
 // Establishment.companyId/businessUnitId) se conservan SÓLO de lectura para
 // los consumidores que todavía los usan (Puestos, Legajos; se adaptan en
@@ -8,7 +8,7 @@
 // tiene padre del modelo nuevo y la limpieza controlada lo va a eliminar.
 
 export type OrgStructureStatus = "ACTIVO" | "INACTIVO";
-export type OrgStructureEntityType = "COMPANY" | "BUSINESS_UNIT" | "SECTOR" | "AREA" | "ZONE" | "ESTABLISHMENT" | "COST_CENTER";
+export type OrgStructureEntityType = "COMPANY" | "BUSINESS_UNIT" | "SECTOR" | "AREA" | "PROVINCE" | "ZONE" | "ESTABLISHMENT" | "ESTABLISHMENT_UNIT" | "COST_CENTER";
 
 export interface OrgCompany {
   id: string;
@@ -55,10 +55,30 @@ export interface OrgArea {
   notes?: string;
 }
 
+export interface OrgProvince {
+  id: string;
+  code: string;
+  name: string;
+  status: OrgStructureStatus;
+  notes?: string;
+}
+
 export interface OrgZone {
   id: string;
   code: string;
   name: string;
+  /** Vacío sólo en zonas anteriores a la provincia: pendientes de recarga (no se infiere). */
+  provinceId?: string;
+  status: OrgStructureStatus;
+  notes?: string;
+}
+
+/** Unidad física dentro de un establecimiento (lote, galpón...). Opcional. */
+export interface OrgEstablishmentUnit {
+  id: string;
+  code: string;
+  name: string;
+  establishmentId: string;
   status: OrgStructureStatus;
   notes?: string;
 }
@@ -106,6 +126,9 @@ export interface OrgStructureCatalog {
   zones: OrgZone[];
   establishments: OrgEstablishment[];
   costCenters: OrgCostCenter[];
+  /** Siempre presentes en el catálogo de la API; opcionales para catálogos armados a mano. */
+  provinces?: OrgProvince[];
+  establishmentUnits?: OrgEstablishmentUnit[];
 }
 
 export interface OrgStructureFilters {
@@ -113,4 +136,4 @@ export interface OrgStructureFilters {
   status: string;
 }
 
-export type OrgStructureEntity = OrgCompany | OrgBusinessUnit | OrgSector | OrgArea | OrgZone | OrgEstablishment | OrgCostCenter;
+export type OrgStructureEntity = OrgCompany | OrgBusinessUnit | OrgSector | OrgArea | OrgProvince | OrgZone | OrgEstablishment | OrgEstablishmentUnit | OrgCostCenter;

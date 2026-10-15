@@ -419,10 +419,10 @@ model User {
 }
 
 model Company {
-  id        String       @id @default(uuid())
-  name      String       @unique
-  code      String       @unique
-  status    RecordStatus @default(ACTIVO)
+  id     String       @id @default(uuid())
+  name   String       @unique
+  code   String       @unique
+  status RecordStatus @default(ACTIVO)
 
   // A8-1 (A8_M2_PREPARATION.md §12.1): archivo de un solo sentido, separado
   // de `isLegacy` (origen) y de `status` (estado operativo). Sólo la
@@ -430,8 +430,8 @@ model Company {
   // que lo setee. D-B1 aprobada; la purga de filas archivadas es una etapa
   // futura (D-B2, sin purga en esta transición).
   archivedAt DateTime? @db.Timestamptz(3)
-  createdAt DateTime     @default(now()) @db.Timestamptz(3)
-  updatedAt DateTime     @updatedAt @db.Timestamptz(3)
+  createdAt  DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt  DateTime  @updatedAt @db.Timestamptz(3)
 
   users               User[]
   businessUnits       BusinessUnit[]
@@ -458,8 +458,8 @@ model BusinessUnit {
   // que lo setee. D-B1 aprobada; la purga de filas archivadas es una etapa
   // futura (D-B2, sin purga en esta transición).
   archivedAt DateTime? @db.Timestamptz(3)
-  createdAt DateTime     @default(now()) @db.Timestamptz(3)
-  updatedAt DateTime     @updatedAt @db.Timestamptz(3)
+  createdAt  DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt  DateTime  @updatedAt @db.Timestamptz(3)
 
   company           Company                      @relation(fields: [companyId], references: [id])
   // LEGADO (modelo actual): establecimientos colgados de la UN. Se retira en
@@ -481,24 +481,24 @@ model BusinessUnit {
 // los usa) y se eliminan en M2. Durante la transición `zoneId` es nullable en
 // la base y obligatorio en el servicio.
 model Establishment {
-  id             String       @id @default(uuid())
-  name           String
-  code           String
-  status         RecordStatus @default(ACTIVO)
+  id       String       @id @default(uuid())
+  name     String
+  code     String
+  status   RecordStatus @default(ACTIVO)
   // A8-3 / A8 §12: clasificación legado/nuevo PERSISTENTE (igual que
   // `Sector.isLegacy`), fijada en el alta con el criterio previo (¿tenía
   // padre del modelo objetivo al crearse?) y sin default: el alta la
   // clasifica explícitamente. No se rederiva de `zoneId`/`companyId` ni se
   // expone a ediciones; M2 cambia esos padres y la derivación dejaría de
   // significar origen.
-  isLegacy       Boolean
+  isLegacy Boolean
 
   // A8-1 (A8_M2_PREPARATION.md §12.1): archivo de un solo sentido, separado
   // de `isLegacy` (origen) y de `status` (estado operativo). Sólo la
   // transacción de limpieza (B3) lo escribe; sin @default y sin ruta de alta
   // que lo setee. D-B1 aprobada; la purga de filas archivadas es una etapa
   // futura (D-B2, sin purga en esta transición).
-  archivedAt DateTime? @db.Timestamptz(3)
+  archivedAt     DateTime? @db.Timestamptz(3)
   companyId      String?
   businessUnitId String?
   zoneId         String?
@@ -508,8 +508,8 @@ model Establishment {
   street         String?
   streetNumber   String?
   postalCode     String?
-  createdAt      DateTime     @default(now()) @db.Timestamptz(3)
-  updatedAt      DateTime     @updatedAt @db.Timestamptz(3)
+  createdAt      DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime  @updatedAt @db.Timestamptz(3)
 
   // M1 relaja NOT NULL de companyId, pero conserva ON DELETE RESTRICT
   // explícito (sin onDelete, Prisma pasaría una relación opcional a SET NULL).
@@ -521,6 +521,7 @@ model Establishment {
   costCenterLinks CostCenterEstablishment[]
   workLocations   EmployeeWorkLocationEstablishment[]
   clockDevices    ClockDevice[]
+  units           EstablishmentUnit[]
 
   // Los dos únicos conviven (A8 §12.8): (companyId, code) gobierna las filas
   // archivadas del modelo anterior y (zoneId, code) las del modelo nuevo
@@ -534,24 +535,24 @@ model Establishment {
 // Modelo objetivo: Sector → Área. `establishmentId` y `sectors` son LEGADO del
 // modelo actual (Establecimiento → Área → Sector) y se eliminan en M2.
 model Area {
-  id              String       @id @default(uuid())
-  name            String
-  code            String       @unique
-  status          RecordStatus @default(ACTIVO)
+  id       String       @id @default(uuid())
+  name     String
+  code     String       @unique
+  status   RecordStatus @default(ACTIVO)
   // Ver comentario de `Establishment.isLegacy`: origen fijado en el alta
   // (criterio: sin `sectorId` del modelo objetivo al crearse), sin default.
-  isLegacy        Boolean
+  isLegacy Boolean
 
   // A8-1 (A8_M2_PREPARATION.md §12.1): archivo de un solo sentido, separado
   // de `isLegacy` (origen) y de `status` (estado operativo). Sólo la
   // transacción de limpieza (B3) lo escribe; sin @default y sin ruta de alta
   // que lo setee. D-B1 aprobada; la purga de filas archivadas es una etapa
   // futura (D-B2, sin purga en esta transición).
-  archivedAt DateTime? @db.Timestamptz(3)
+  archivedAt      DateTime? @db.Timestamptz(3)
   establishmentId String?
   sectorId        String?
-  createdAt       DateTime     @default(now()) @db.Timestamptz(3)
-  updatedAt       DateTime     @updatedAt @db.Timestamptz(3)
+  createdAt       DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime  @updatedAt @db.Timestamptz(3)
 
   establishment     Establishment?               @relation(fields: [establishmentId], references: [id])
   sector            Sector?                      @relation("SectorAreas", fields: [sectorId], references: [id], onDelete: Restrict)
@@ -588,9 +589,9 @@ model Sector {
   // padre de un sector no cambia esta clasificación ni reinterpretar la
   // historia de las reglas. Sin @default: el alta debe clasificar
   // explícitamente, nunca se asume un valor.
-  isLegacy       Boolean
-  createdAt      DateTime     @default(now()) @db.Timestamptz(3)
-  updatedAt      DateTime     @updatedAt @db.Timestamptz(3)
+  isLegacy  Boolean
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
 
   area                     Area?                        @relation("LegacyAreaSectors", fields: [areaId], references: [id])
   businessUnit             BusinessUnit?                @relation("BusinessUnitSectors", fields: [businessUnitId], references: [id], onDelete: Restrict)
@@ -608,29 +609,59 @@ model Sector {
   @@index([businessUnitId])
 }
 
-// Modelo objetivo: raíz del árbol de Ubicaciones (Zona → Establecimiento),
-// independiente de la Organización.
-model Zone {
-  id        String       @id @default(uuid())
-  name      String
-  code      String       @unique
-  status    RecordStatus @default(ACTIVO)
-  createdAt DateTime     @default(now()) @db.Timestamptz(3)
-  updatedAt DateTime     @updatedAt @db.Timestamptz(3)
+// Árbol de Ubicaciones, independiente de la Organización:
+// Provincia → Zona → Establecimiento → Unidad del establecimiento (opcional).
+model Province {
+  id         String       @id @default(uuid())
+  name       String
+  code       String       @unique
+  status     RecordStatus @default(ACTIVO)
+  // Archivo de un solo sentido de la eliminación controlada (shared/deletion):
+  // sale de catálogos y selectores pero se conserva porque lo referencia
+  // historia. Ninguna entrada de API lo escribe directamente.
+  archivedAt DateTime?    @db.Timestamptz(3)
+  createdAt  DateTime     @default(now()) @db.Timestamptz(3)
+  updatedAt  DateTime     @updatedAt @db.Timestamptz(3)
 
-  establishments Establishment[]
-  workLocations  EmployeeWorkLocation[]
+  zones Zone[]
 
   @@index([status])
 }
 
+model Zone {
+  id         String       @id @default(uuid())
+  name       String
+  code       String       @unique
+  status     RecordStatus @default(ACTIVO)
+  // Archivo de un solo sentido de la eliminación controlada (shared/deletion):
+  // sale de catálogos y selectores pero se conserva porque lo referencia
+  // historia. Ninguna entrada de API lo escribe directamente.
+  archivedAt DateTime?    @db.Timestamptz(3)
+  // Nulo sólo en zonas anteriores a la provincia: quedan pendientes de
+  // recarga hasta que RRHH les asigne su provincia (no se infiere).
+  provinceId String?
+  createdAt  DateTime     @default(now()) @db.Timestamptz(3)
+  updatedAt  DateTime     @updatedAt @db.Timestamptz(3)
+
+  province       Province?              @relation(fields: [provinceId], references: [id], onDelete: Restrict)
+  establishments Establishment[]
+  workLocations  EmployeeWorkLocation[]
+
+  @@index([status])
+  @@index([provinceId])
+}
+
 model CostCenter {
-  id        String       @id @default(uuid())
-  name      String
-  code      String       @unique
-  status    RecordStatus @default(ACTIVO)
-  createdAt DateTime     @default(now()) @db.Timestamptz(3)
-  updatedAt DateTime     @updatedAt @db.Timestamptz(3)
+  id         String       @id @default(uuid())
+  name       String
+  code       String       @unique
+  status     RecordStatus @default(ACTIVO)
+  // Archivo de un solo sentido de la eliminación controlada (shared/deletion):
+  // sale de catálogos y selectores pero se conserva porque lo referencia
+  // historia. Ninguna entrada de API lo escribe directamente.
+  archivedAt DateTime?    @db.Timestamptz(3)
+  createdAt  DateTime     @default(now()) @db.Timestamptz(3)
+  updatedAt  DateTime     @updatedAt @db.Timestamptz(3)
 
   employees       Employee[]
   companies       CostCenterCompany[]
@@ -735,8 +766,8 @@ model Position {
   // futura (D-B2, sin purga en esta transición).
   archivedAt DateTime? @db.Timestamptz(3)
 
-  createdAt             DateTime     @default(now()) @db.Timestamptz(3)
-  updatedAt             DateTime     @updatedAt @db.Timestamptz(3)
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
 
   // LEGADO: `sectorId` es la ubicación del modelo actual; lo reemplaza
   // `orgScopes` (modelo objetivo) y se elimina en M2.
@@ -920,17 +951,69 @@ model EmployeeWorkLocation {
   @@index([zoneId])
 }
 
+// Cobertura de un establecimiento dentro de una ubicación de trabajo: el
+// establecimiento completo o una selección explícita de sus unidades. Nunca se
+// infiere de una lista vacía.
+enum WorkLocationCoverage {
+  ESTABLISHMENT
+  UNITS
+}
+
 // Establecimientos de una ubicación de trabajo. Deben pertenecer a la zona de
 // la asignación (validado en el servicio dentro de la transacción).
 model EmployeeWorkLocationEstablishment {
   workLocationId  String
   establishmentId String
+  // ESTABLISHMENT = establecimiento completo (también toda asignación previa a
+  // las unidades); UNITS = sólo las unidades de EmployeeWorkLocationUnit.
+  coverage        WorkLocationCoverage @default(ESTABLISHMENT)
 
-  workLocation  EmployeeWorkLocation @relation(fields: [workLocationId], references: [id], onDelete: Restrict)
-  establishment Establishment        @relation(fields: [establishmentId], references: [id], onDelete: Restrict)
+  workLocation  EmployeeWorkLocation       @relation(fields: [workLocationId], references: [id], onDelete: Restrict)
+  establishment Establishment              @relation(fields: [establishmentId], references: [id], onDelete: Restrict)
+  units         EmployeeWorkLocationUnit[]
 
   @@id([workLocationId, establishmentId])
   @@index([establishmentId])
+}
+
+// Unidad física dentro de un establecimiento (lote, galpón, oficina...). Hoja
+// opcional del árbol de Ubicaciones.
+model EstablishmentUnit {
+  id              String       @id @default(uuid())
+  establishmentId String
+  name            String
+  code            String
+  status          RecordStatus @default(ACTIVO)
+  // Archivo de un solo sentido, igual que Establishment.archivedAt: ninguna
+  // entrada de API lo escribe; un archivado no recibe asignaciones nuevas.
+  archivedAt      DateTime?    @db.Timestamptz(3)
+  createdAt       DateTime     @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime     @updatedAt @db.Timestamptz(3)
+
+  establishment Establishment              @relation(fields: [establishmentId], references: [id], onDelete: Restrict)
+  workLocations EmployeeWorkLocationUnit[]
+
+  @@unique([establishmentId, code])
+  // Destino de la FK compuesta de EmployeeWorkLocationUnit: la base garantiza
+  // que la unidad asignada pertenece al establecimiento asignado.
+  @@unique([id, establishmentId])
+  @@index([status])
+}
+
+// Unidades específicas de un establecimiento asignado con cobertura UNITS.
+// onUpdate Restrict: una unidad asignada nunca cambia de establecimiento por
+// arrastre (el servicio ya bloquea moverla en uso, regla D-9).
+model EmployeeWorkLocationUnit {
+  workLocationId  String
+  establishmentId String
+  unitId          String
+
+  assignment EmployeeWorkLocationEstablishment @relation(fields: [workLocationId, establishmentId], references: [workLocationId, establishmentId], onDelete: Restrict, onUpdate: Restrict)
+  unit       EstablishmentUnit                 @relation(fields: [unitId, establishmentId], references: [id, establishmentId], onDelete: Restrict, onUpdate: Restrict)
+
+  @@id([workLocationId, unitId])
+  @@index([workLocationId, establishmentId])
+  @@index([unitId, establishmentId])
 }
 
 // ---------------------------------------------------------------------------

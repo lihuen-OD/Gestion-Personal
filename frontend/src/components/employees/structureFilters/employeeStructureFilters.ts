@@ -2,6 +2,7 @@ import type { OrgStructureCatalog } from "../../../types/orgStructure.types";
 import type { Employee } from "../../../types";
 import type { PositionOrgScopeLevel } from "../../../types/position.types";
 import { orgScopePathNames } from "../../org-structure/orgScopePath";
+import { zonePathLabel } from "../../../utils/workLocationPath";
 
 /**
  * A7 (ORG_LOCATION_REORGANIZATION.md §16): filtros de estructura para
@@ -71,8 +72,15 @@ export function scopeNodeOptions(catalog: OrgStructureCatalog, level: "" | Posit
     .sort((a, b) => a.label.localeCompare(b.label, "es"));
 }
 
+/** Zonas rotuladas con su provincia ("Entre Ríos › Arroyo Barú"); sin provincia, sólo la zona. */
 export function zoneFilterOptions(catalog: OrgStructureCatalog): NodeOption[] {
-  return catalog.zones.map((zone) => ({ id: zone.id, label: zone.status === "ACTIVO" ? zone.name : `${zone.name} (inactiva)` })).sort((a, b) => a.label.localeCompare(b.label, "es"));
+  const provinceName = (id?: string) => catalog.provinces?.find((province) => province.id === id)?.name;
+  return catalog.zones
+    .map((zone) => {
+      const path = zonePathLabel(zone.name, provinceName(zone.provinceId));
+      return { id: zone.id, label: zone.status === "ACTIVO" ? path : `${path} (inactiva)` };
+    })
+    .sort((a, b) => a.label.localeCompare(b.label, "es"));
 }
 
 export function establishmentFilterOptions(catalog: OrgStructureCatalog, zoneId: string): NodeOption[] {

@@ -13,7 +13,7 @@ import { sortItems } from "../../utils/sort";
 // §3.1), armados sólo con los padres del modelo nuevo que trae el catálogo
 // (GET /org-structure):
 //   Organización: Empresa → Unidad de negocio → Sector → Área
-//   Ubicaciones:  Zona → Establecimiento
+//   Ubicaciones:  Provincia → Zona → Establecimiento → Unidad (opcional)
 // Los registros de la estructura anterior (sector sin unidad de negocio, área
 // sin sector, establecimiento sin zona) no se ubican en el árbol nuevo: se
 // agrupan como "pendientes de recarga" para que sigan visibles hasta la
@@ -47,8 +47,10 @@ export const orgNodeTypeLabels: Record<OrgTreeNodeType, string> = {
   BUSINESS_UNIT: "Unidad de negocio",
   SECTOR: "Sector",
   AREA: "Área",
+  PROVINCE: "Provincia",
   ZONE: "Zona",
   ESTABLISHMENT: "Establecimiento",
+  ESTABLISHMENT_UNIT: "Unidad",
   COST_CENTER: "Centro de costo",
   GROUP: "Grupo",
 };
@@ -58,8 +60,10 @@ export const orgNodeTypePlurals: Record<OrgTreeNodeType, string> = {
   BUSINESS_UNIT: "unidades de negocio",
   SECTOR: "sectores",
   AREA: "áreas",
+  PROVINCE: "provincias",
   ZONE: "zonas",
   ESTABLISHMENT: "establecimientos",
+  ESTABLISHMENT_UNIT: "unidades",
   COST_CENTER: "centros de costo",
   GROUP: "grupos",
 };
@@ -69,7 +73,9 @@ export const orgChildType: Partial<Record<OrgStructureEntityType, OrgStructureEn
   COMPANY: "BUSINESS_UNIT",
   BUSINESS_UNIT: "SECTOR",
   SECTOR: "AREA",
+  PROVINCE: "ZONE",
   ZONE: "ESTABLISHMENT",
+  ESTABLISHMENT: "ESTABLISHMENT_UNIT",
 };
 
 /** Padre del modelo nuevo de cada tipo. */
@@ -77,11 +83,14 @@ export const orgParentType: Partial<Record<OrgStructureEntityType, OrgStructureE
   BUSINESS_UNIT: "COMPANY",
   SECTOR: "BUSINESS_UNIT",
   AREA: "SECTOR",
+  ZONE: "PROVINCE",
   ESTABLISHMENT: "ZONE",
+  ESTABLISHMENT_UNIT: "ESTABLISHMENT",
 };
 
 export const LEGACY_ORGANIZATION_KEY = "LEGACY_ORGANIZATION";
 export const LEGACY_LOCATION_KEY = "LEGACY_LOCATION";
+export const ZONES_WITHOUT_PROVINCE_KEY = "ZONES_WITHOUT_PROVINCE";
 export const PENDING_RELOAD_LABEL = "Pendiente de recarga";
 
 function groupBy<T>(items: readonly T[], parentId: (item: T) => string | undefined) {
@@ -154,10 +163,21 @@ export function buildOrganizationTree(catalog: OrgStructureCatalog): OrgTreeNode
   return [...roots, groupNode(LEGACY_ORGANIZATION_KEY, legacyName, LEGACY_NOTE, [], subgroups)];
 }
 
+const ZONES_WITHOUT_PROVINCE_NOTE = "Zonas cargadas antes de las provincias. Siguen en uso (reciben establecimientos y asignaciones); falta asignarles su provincia desde “Editar”. No se infiere ninguna.";
+
 export function buildLocationTree(catalog: OrgStructureCatalog): OrgTreeNode[] {
   const costCenters = costCenterLinkCounts(catalog);
   const establishmentsByZone = groupBy(catalog.establishments.filter((item) => !item.pendingReload), (item) => item.zoneId);
-  const roots = byName(catalog.zones).map((zone) => makeNode("ZONE", zone, "", [], (key, path) => byName(establishmentsByZone.get(zone.id) ?? []).map((item) => makeNode("ESTABLISHMENT", item, key, path, () => [], costCenters)), costCenters));
+  const unitsByEstablishment = groupBy(catalog.establishmentUnits ?? [], (item) => item.establishmentId);
+  const unitNodes = (establishmentId: string) => (key: string, path: string[]) => byName(unitsByEstablishment.get(establishmentId) ?? []).map((unit) => makeNode("ESTABLISHMENT_UNIT", unit, key, path, () => [], costCenters));
+  const establishmentNodes = (zoneId: string) => (key: string, path: string[]) => byName(establishmentsByZone.get(zoneId) ?? []).map((item) => makeNode("ESTABLISHMENT", item, key, path, unitNodes(item.id), costCenters));
+  const zonesByProvince = groupBy(catalog.zones, (item) => item.provinceId);
+  const roots = byName(catalog.provinces ?? []).map((province) => makeNode("PROVINCE", province, "", [], (key, path) => byName(zonesByProvince.get(province.id) ?? []).map((zone) => makeNode("ZONE", zone, key, path, establishmentNodes(zone.id), costCenters)), costCenters));
+  const withoutProvince = catalog.zones.filter((zone) => !zone.provinceId);
+  if (withoutProvince.length) {
+    const groupName = `Zonas sin provincia · ${PENDING_RELOAD_LABEL.toLowerCase()} (${withoutProvince.length})`;
+    roots.push(groupNode(ZONES_WITHOUT_PROVINCE_KEY, groupName, ZONES_WITHOUT_PROVINCE_NOTE, [], byName(withoutProvince).map((zone) => makeNode("ZONE", zone, ZONES_WITHOUT_PROVINCE_KEY, [groupName], establishmentNodes(zone.id), costCenters))));
+  }
   const legacy: OrgEstablishment[] = catalog.establishments.filter((item) => item.pendingReload);
   if (!legacy.length) return roots;
   const legacyName = `Establecimientos anteriores · pendientes de recarga (${legacy.length})`;
@@ -244,7 +264,9 @@ export function knownMoveBlockers(type: OrgStructureEntityType, id: string, cata
     type === "COMPANY" ? catalog.businessUnits.filter((item) => item.companyId === id).length
     : type === "BUSINESS_UNIT" ? catalog.sectors.filter((item) => item.businessUnitId === id).length
     : type === "SECTOR" ? catalog.areas.filter((item) => item.sectorId === id).length
+    : type === "PROVINCE" ? catalog.zones.filter((item) => item.provinceId === id).length
     : type === "ZONE" ? catalog.establishments.filter((item) => item.zoneId === id).length
+    : type === "ESTABLISHMENT" ? (catalog.establishmentUnits ?? []).filter((item) => item.establishmentId === id).length
     : 0;
   const child = orgChildType[type];
   const costCenters = costCenterLinkCounts(catalog).get(id) ?? 0;

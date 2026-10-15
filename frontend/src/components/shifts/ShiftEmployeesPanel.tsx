@@ -209,7 +209,7 @@ export function ShiftEmployeesPanel({ shiftTemplateId, canEdit }: { shiftTemplat
                 onWeekdaysChange={setWeekdays}
               />
             </div>
-            <label className="field"><span>Observación (opcional)</span><input value={observation} onChange={(e) => setObservation(e.target.value)} placeholder="Ej: rota semana por medio con turno tarde" /></label>
+            <label className="field"><span>Observación (opcional)</span><input spellCheck lang="es-AR" value={observation} onChange={(e) => setObservation(e.target.value)} placeholder="Ej: rota semana por medio con turno tarde" /></label>
             <div className="form-actions">
               <Button variant="subtle" onClick={closeAddModal}>Cancelar</Button>
               <Button variant="primary" disabled={isAssigning || !selected.length || !effectiveFrom} onClick={assignSelected}>{isAssigning ? "Asignando..." : "Asignar seleccionados"}</Button>

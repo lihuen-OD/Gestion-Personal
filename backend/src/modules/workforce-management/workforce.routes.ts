@@ -5,6 +5,7 @@ import { asyncHandler } from "../../shared/http/asyncHandler";
 import { validateBody } from "../../shared/validation/validateRequest";
 import { validateQuery } from "../../shared/validation/validateQuery";
 import { roles } from "../../shared/security/roles";
+import { deletionConfirmationSchema } from "../../shared/deletion/deletionPlan";
 import { workforceController as c } from "./workforce.controller";
 import { calendarRangeQuerySchema, closureBulkSchema, closureSubmitSchema, correctionCreateSchema, correctionReviewSchema, correctionsQuerySchema, doubleRuleSchema, listNotificationsQuerySchema, periodQuerySchema, returnClosureSchema, shiftTemplateSchema, updateDoubleRuleSchema, updateShiftTemplateSchema } from "./workforce.schemas";
 
@@ -31,3 +32,6 @@ workforceRouter.get("/double-hour-rules/calendar",requireAnyRole(all),validateQu
 workforceRouter.post("/double-hour-rules",requireAnyRole([roles.rrhh]),validateBody(doubleRuleSchema),asyncHandler(c.createDoubleRule));
 workforceRouter.patch("/double-hour-rules/:id",requireAnyRole([roles.rrhh]),validateBody(updateDoubleRuleSchema),asyncHandler(c.updateDoubleRule));
 workforceRouter.delete("/double-hour-rules/:id",requireAnyRole([roles.rrhh]),asyncHandler(c.removeDoubleRule));
+// Eliminación controlada: vista previa (reinterpretación revertida) y confirmación con la huella del plan.
+workforceRouter.get("/double-hour-rules/:id/deletion-preview",requireAnyRole([roles.rrhh]),asyncHandler(c.doubleRuleDeletionPreview));
+workforceRouter.post("/double-hour-rules/:id/deletion",requireAnyRole([roles.rrhh]),validateBody(deletionConfirmationSchema),asyncHandler(c.executeDoubleRuleDeletion));

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { treeCatalog } from "./orgStructureTree.fixtures";
-import { buildLocationTree, buildOrganizationTree, collectParentKeys, filterOrgTree, flattenVisible, knownMoveBlockers, LEGACY_LOCATION_KEY, LEGACY_ORGANIZATION_KEY, type OrgTreeNode } from "./orgStructureTree";
+import { buildLocationTree, buildOrganizationTree, collectParentKeys, filterOrgTree, flattenVisible, knownMoveBlockers, LEGACY_LOCATION_KEY, LEGACY_ORGANIZATION_KEY, ZONES_WITHOUT_PROVINCE_KEY, type OrgTreeNode } from "./orgStructureTree";
 
 const names = (nodes: OrgTreeNode[]) => nodes.map((node) => node.name);
 
@@ -34,9 +34,21 @@ describe("buildOrganizationTree", () => {
 describe("buildLocationTree", () => {
   const tree = buildLocationTree(treeCatalog);
 
-  it("arma Zona → Establecimiento, independiente de la organización", () => {
-    expect(tree[0]).toMatchObject({ type: "ZONE", name: "Litoral" });
-    expect(tree[0]!.children[0]).toMatchObject({ type: "ESTABLISHMENT", name: "Planta 1", path: ["Litoral"], costCenterCount: 1 });
+  it("arma Provincia → Zona → Establecimiento → Unidad, independiente de la organización", () => {
+    expect(tree[0]).toMatchObject({ type: "PROVINCE", name: "Santa Fe" });
+    const zone = tree[0]!.children[0]!;
+    expect(zone).toMatchObject({ type: "ZONE", name: "Litoral", path: ["Santa Fe"] });
+    const establishment = zone.children[0]!;
+    expect(establishment).toMatchObject({ type: "ESTABLISHMENT", name: "Planta 1", path: ["Santa Fe", "Litoral"], costCenterCount: 1 });
+    expect(establishment.children.map((node) => [node.type, node.name])).toEqual([["ESTABLISHMENT_UNIT", "Lote Norte"], ["ESTABLISHMENT_UNIT", "Lote Sur"]]);
+    expect(establishment.children[0]!.path).toEqual(["Santa Fe", "Litoral", "Planta 1"]);
+  });
+
+  it("un establecimiento sin unidades es una hoja; la zona sin provincia queda pendiente de recarga y conserva sus establecimientos", () => {
+    const pending = tree.find((node) => node.key === ZONES_WITHOUT_PROVINCE_KEY)!;
+    expect(pending).toMatchObject({ type: "GROUP", name: "Zonas sin provincia · pendiente de recarga (1)" });
+    expect(pending.children[0]).toMatchObject({ type: "ZONE", name: "Zona previa" });
+    expect(pending.children[0]!.children[0]).toMatchObject({ type: "ESTABLISHMENT", name: "Oficina Central", children: [] });
   });
 
   it("los establecimientos sin zona quedan pendientes de recarga", () => {
@@ -51,6 +63,9 @@ describe("knownMoveBlockers (D-9)", () => {
     expect(knownMoveBlockers("SECTOR", "s1", treeCatalog)).toEqual(["1 área", "1 centro de costo"]);
     expect(knownMoveBlockers("BUSINESS_UNIT", "bu1", treeCatalog)).toEqual(["2 sectores"]);
     expect(knownMoveBlockers("ZONE", "z1", treeCatalog)).toEqual(["1 establecimiento"]);
+    expect(knownMoveBlockers("PROVINCE", "p1", treeCatalog)).toEqual(["1 zona"]);
+    expect(knownMoveBlockers("ESTABLISHMENT", "e1", treeCatalog)).toEqual(["2 unidades", "1 centro de costo"]);
+    expect(knownMoveBlockers("ESTABLISHMENT_UNIT", "u1", treeCatalog)).toEqual([]);
     expect(knownMoveBlockers("AREA", "a1", treeCatalog)).toEqual([]);
   });
 });

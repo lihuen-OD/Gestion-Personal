@@ -425,6 +425,16 @@ async function assertAssignableCompanies(companyIds?: Array<string | null>, curr
   }
 }
 
+// Eliminación controlada: un centro de costo archivado no recibe asignaciones
+// nuevas; el legajo que ya lo tenía lo conserva (no es una relación nueva).
+async function assertAssignableCostCenter(costCenterId: string | null | undefined, currentCostCenterId: string | null, tx?: PrismaTransactionClient) {
+  if (!costCenterId || costCenterId === currentCostCenterId) return;
+  const costCenter = await employeesRepository.findCostCenterForAssignment(costCenterId, tx);
+  if (costCenter?.archivedAt) {
+    throw new AppError(`El centro de costo “${costCenter.name}” fue eliminado y no puede asignarse.`, 400, "EMPLOYEE_COST_CENTER_ARCHIVED");
+  }
+}
+
 async function assertAssignableHourConceptIds(hourConceptIds: string[]) {
   const uniqueIds = Array.from(new Set(hourConceptIds.filter(Boolean)));
   if (!uniqueIds.length) return uniqueIds;
@@ -843,12 +853,14 @@ export const employeesService = {
     await ensureUniqueEmployee(input);
     await assertAssignablePosition(input.positionId, null);
     await assertAssignableCompanies(input.companyIds);
+    await assertAssignableCostCenter(input.costCenterId, null);
     const hourConceptIds = await assertAssignableHourConceptIds(input.hourConceptIds ?? []);
     const historyFrom = initialHistoryDate(input);
     // D-5: legajo, historia temporal inicial y auditoría en una transacción.
     const employee = await execute(() => inLaborTransaction(async (tx) => {
       await assertAssignablePosition(input.positionId, null, tx);
       await assertAssignableCompanies(input.companyIds, [], tx);
+      await assertAssignableCostCenter(input.costCenterId, null, tx);
       const created = await employeesRepository.create({ ...input, hourConceptIds }, audit?.userId, tx);
       await laborHistoryService.openEmployeeHistoryWithin(tx, {
         employeeId: created.id,
@@ -881,6 +893,7 @@ export const employeesService = {
     ]);
     if (!snapshot) throw new AppError("Employee not found", 404, "EMPLOYEE_NOT_FOUND");
     await assertAssignablePosition(fields.positionId, snapshot.positionId);
+    await assertAssignableCostCenter(fields.costCenterId, snapshot.costCenterId);
     const effectiveInput = omitUnchangedEmployeeRelations(fields, snapshot);
     await assertAssignableCompanies(effectiveInput.companyIds, snapshot.companies.map((company) => company.companyId));
     assertLaborChangeProvided(laborChangesOf(effectiveInput, snapshot), laborChange);
@@ -894,6 +907,7 @@ export const employeesService = {
       // leídos en esta transacción, ANTES de cualquier escritura: conservar lo
       // que el legajo ya tiene no exige los requisitos de una asignación nueva.
       await assertAssignablePosition(fields.positionId, before.positionId, tx);
+      await assertAssignableCostCenter(fields.costCenterId, before.costCenterId, tx);
       if (effectiveInput.companyIds !== undefined) await assertAssignableCompanies(effectiveInput.companyIds, before.companies.map((company) => company.companyId), tx);
       const changes = laborChangesOf(effectiveInput, before);
       assertLaborChangeProvided(changes, laborChange);
@@ -936,6 +950,54 @@ export const employeesService = {
     }));
     clearAuditDerivedCaches();
     return employee;
+  },
+
+  /**
+   * Eliminación controlada (shared/deletion): retira desde `effectiveFrom` el
+   * puesto, el centro de costo y/o las empresas empleadoras que se eliminan,
+   * DENTRO de la transacción de la eliminación y con lo mismo que un cambio
+   * manual: columna vigente, historia temporal (con su protección de cierres),
+   * historial visible y auditoría. Nada anterior a `effectiveFrom` cambia y el
+   * legajo nunca se borra: el dato queda "sin cargar" para recargarlo.
+   * Devuelve null si el legajo ya no tenía esas referencias.
+   */
+  async detachLaborReferencesWithin(
+    tx: PrismaTransactionClient,
+    employeeId: string,
+    detach: { positionId?: string; costCenterId?: string; companyIds?: string[] },
+    context: { effectiveFrom: string; reason: string; audit?: AuditContext },
+  ) {
+    const before = await employeesRepository.findUpdateAuditSnapshot(employeeId, tx);
+    if (!before) throw new AppError("Employee not found", 404, "EMPLOYEE_NOT_FOUND");
+    const input: UpdateEmployeeInput = {};
+    if (detach.positionId && before.positionId === detach.positionId) input.positionId = null;
+    if (detach.costCenterId && before.costCenterId === detach.costCenterId) input.costCenterId = null;
+    if (detach.companyIds?.length) {
+      const removed = new Set(detach.companyIds);
+      const remaining = before.companies.filter((link) => !removed.has(link.companyId));
+      if (remaining.length !== before.companies.length) {
+        // La principal sigue siendo la misma si queda; si no, la primera restante.
+        input.companyIds = remaining.map((link) => link.companyId);
+        input.primaryCompanyId = (remaining.find((link) => link.isPrimary) ?? remaining[0])?.companyId ?? null;
+      }
+    }
+    const changes = laborChangesOf(input, before);
+    if (!hasLaborChanges(changes)) return null;
+    const userId = context.audit?.userId || null;
+    const laborChange = { effectiveFrom: context.effectiveFrom, reason: context.reason };
+    const updated = await employeesRepository.update(employeeId, input, tx);
+    const laborHistory = await laborHistoryService.recordEmployeeChangesWithin(tx, { employeeId, effectiveFrom: context.effectiveFrom, reason: context.reason, createdByUserId: userId, changes });
+    const laborFields = await recordLaborFieldHistoryWithin(tx, employeeId, before, changes, laborChange, userId);
+    await auditService.registerWithin(tx, {
+      ...context.audit,
+      action: "UPDATE",
+      entity: "Employee",
+      entityId: employeeId,
+      description: `Se actualizo el legajo ${before.legajo} - ${before.lastName}, ${before.firstName}. Datos laborales desde el ${formatArgentinaDate(context.effectiveFrom)}: ${laborFields.map((entry) => `${entry.fieldLabel} ${entry.oldValue || "sin dato"} → ${entry.newValue}`).join("; ")}. Motivo: ${context.reason}`,
+      before: before as Prisma.InputJsonValue,
+      after: { ...before, ...updated, ...(input.companyIds !== undefined ? { companies: desiredCompanies(input) } : {}), laborChange, laborHistory } as Prisma.InputJsonValue,
+    });
+    return { employeeId, fields: laborFields };
   },
 
   async replaceAssignments(id: string, input: ReplaceEmployeeAssignmentsInput, audit?: AuditContext) {

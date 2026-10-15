@@ -202,7 +202,7 @@ export function FieldWithHistory({
                 <Field label="Nuevo valor" value={next} set={setNext} />
               )}
               <Field label="Fecha desde" type="date" value={from} set={setFrom} />
-              <Field label="Motivo del cambio" value={reason} set={setReason} />
+              <Field label="Motivo del cambio" value={reason} set={setReason} spellCheck />
               {laborTracked ? <p className="muted small">Rige desde la fecha indicada. No modifica fechas anteriores ni recalcula horas ya cargadas.</p> : null}
               {error ? <p className="error">{error}</p> : null}
               <div className="form-actions">

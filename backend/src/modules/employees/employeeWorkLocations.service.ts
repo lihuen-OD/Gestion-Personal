@@ -9,10 +9,17 @@ import { employeeAccessWhere } from "./employeeAccess";
 import { employeeWorkLocationsRepository as repository, type WorkLocationRow } from "./employeeWorkLocations.repository";
 import {
   assertNoOverlap,
+  assertUnitSelection,
   assertValidInterval,
   assertZoneAndEstablishments,
   describePeriod,
+  establishmentLabel,
+  planWorkLocationDetachment,
+  selectionKey,
   workLocationState,
+  type EstablishmentSelection,
+  type LocationNodeRemoval,
+  type WorkLocationDetachment,
   type WorkLocationPeriod,
 } from "./employeeWorkLocations.rules";
 import type {
@@ -24,7 +31,7 @@ import type {
 
 const NEW_ROW_ID = "__new__";
 
-type Target = { zoneId: string; establishmentIds: string[]; effectiveFrom: string; effectiveTo: string | null; reason: string; notes: string | null };
+type Target = { zoneId: string; establishments: EstablishmentSelection[]; effectiveFrom: string; effectiveTo: string | null; reason: string; notes: string | null };
 type Resolved = { zoneName: string; establishmentNames: string[] };
 type WriteOutcome = {
   action: AuditAction;
@@ -41,12 +48,22 @@ const periodOf = (row: WorkLocationRow): WorkLocationPeriod => ({
   effectiveTo: row.effectiveTo ? calendarDateKey(row.effectiveTo) : null,
 });
 
+const selectionsOf = (row: WorkLocationRow): EstablishmentSelection[] => row.establishments.map((link) => ({
+  establishmentId: link.establishment.id,
+  coverage: link.coverage,
+  unitIds: link.units.map((item) => item.unit.id),
+}));
+
+// Toda selección se normaliza: con cobertura completa nunca viajan unidades.
+const normalized = (selections: Array<{ establishmentId: string; coverage: EstablishmentSelection["coverage"]; unitIds?: string[] }>): EstablishmentSelection[] =>
+  selections.map((item) => ({ establishmentId: item.establishmentId, coverage: item.coverage, unitIds: item.unitIds ?? [] }));
+
 function toDto(row: WorkLocationRow, todayKey: string) {
   const period = periodOf(row);
   return {
     id: row.id,
     zone: row.zone,
-    establishments: row.establishments.map((link) => link.establishment),
+    establishments: row.establishments.map((link) => ({ ...link.establishment, coverage: link.coverage, units: link.units.map((item) => item.unit) })),
     effectiveFrom: period.effectiveFrom,
     effectiveTo: period.effectiveTo,
     state: workLocationState(period, todayKey),
@@ -61,7 +78,10 @@ function toDto(row: WorkLocationRow, todayKey: string) {
 // DD/MM/AAAA, nunca ids técnicos.
 const summarize = (resolved: Resolved, period: Pick<WorkLocationPeriod, "effectiveFrom" | "effectiveTo">) =>
   `${resolved.zoneName}: ${resolved.establishmentNames.join(", ")} · ${describePeriod(period)}`;
-const resolvedOf = (row: WorkLocationRow): Resolved => ({ zoneName: row.zone.name, establishmentNames: row.establishments.map((link) => link.establishment.name) });
+const resolvedOf = (row: WorkLocationRow): Resolved => ({
+  zoneName: row.zone.name,
+  establishmentNames: row.establishments.map((link) => establishmentLabel(link.establishment.name, link.coverage, link.units.map((item) => item.unit.name))),
+});
 const snapshotOf = (row: WorkLocationRow) => ({ ...periodOf(row), zone: row.zone.name, establishments: resolvedOf(row).establishmentNames, reason: row.reason, notes: row.notes });
 
 function isExclusionViolation(error: unknown) {
@@ -79,23 +99,52 @@ function mapPersistenceError(error: unknown): never {
   throw error;
 }
 
-async function resolveTarget(tx: PrismaTransactionClient, target: Pick<Target, "zoneId" | "establishmentIds">, keep?: WorkLocationRow): Promise<Resolved> {
-  const [zone, establishments] = await Promise.all([
+async function resolveTarget(tx: PrismaTransactionClient, target: Pick<Target, "zoneId" | "establishments">, keep?: WorkLocationRow): Promise<Resolved> {
+  const establishmentIds = target.establishments.map((item) => item.establishmentId);
+  const unitIds = target.establishments.flatMap((item) => item.unitIds);
+  const [zone, establishments, units] = await Promise.all([
     repository.findZone(tx, target.zoneId),
-    repository.findEstablishments(tx, target.establishmentIds),
+    repository.findEstablishments(tx, establishmentIds),
+    repository.findUnits(tx, unitIds),
   ]);
   assertZoneAndEstablishments({
     zoneId: target.zoneId,
-    establishmentIds: target.establishmentIds,
+    establishmentIds,
     zone,
     establishments,
     keepZoneId: keep?.zoneId,
     keepEstablishmentIds: keep ? new Set(keep.establishments.map((link) => link.establishment.id)) : undefined,
   });
-  const nameById = new Map(establishments.map((item) => [item.id, item.name]));
+  assertUnitSelection({
+    selections: target.establishments,
+    establishments,
+    units,
+    keepUnitIds: keep ? new Set(keep.establishments.flatMap((link) => link.units.map((item) => item.unit.id))) : undefined,
+  });
+  const establishmentNameById = new Map(establishments.map((item) => [item.id, item.name]));
+  const unitNameById = new Map(units.map((item) => [item.id, item.name]));
   return {
     zoneName: zone!.name,
-    establishmentNames: target.establishmentIds.map((id) => nameById.get(id)!).sort((a, b) => a.localeCompare(b, "es")),
+    establishmentNames: target.establishments
+      .map((item) => establishmentLabel(establishmentNameById.get(item.establishmentId)!, item.coverage, item.unitIds.map((id) => unitNameById.get(id)!)))
+      .sort((a, b) => a.localeCompare(b, "es")),
+  };
+}
+
+type LocationNodeIds = { zoneIds: string[]; establishmentIds: string[]; unitIds: string[] };
+
+const removalOf = (nodes: LocationNodeIds): LocationNodeRemoval => ({ zoneIds: new Set(nodes.zoneIds), establishmentIds: new Set(nodes.establishmentIds), unitIds: new Set(nodes.unitIds) });
+
+// Nombres de una selección derivada de la fila (sus establecimientos y unidades ya vienen cargados).
+function labelsOf(row: WorkLocationRow, selections: EstablishmentSelection[]): Resolved {
+  const linkById = new Map(row.establishments.map((link) => [link.establishment.id, link]));
+  return {
+    zoneName: row.zone.name,
+    establishmentNames: selections.map((item) => {
+      const link = linkById.get(item.establishmentId)!;
+      const unitNames = new Map(link.units.map((unit) => [unit.unit.id, unit.unit.name]));
+      return establishmentLabel(link.establishment.name, item.coverage, item.unitIds.map((id) => unitNames.get(id) ?? ""));
+    }).sort((a, b) => a.localeCompare(b, "es")),
   };
 }
 
@@ -104,8 +153,6 @@ function findOwnRow(rows: WorkLocationRow[], locationId: string) {
   if (!row) throw new AppError("Ubicación de trabajo no encontrada", 404, "WORK_LOCATION_NOT_FOUND");
   return row;
 }
-
-const sameSet = (a: string[], b: string[]) => a.length === b.length && a.every((item) => b.includes(item));
 
 /**
  * Escritura común: filas, historial visible del legajo y auditoría en una
@@ -141,6 +188,32 @@ async function write(
   return employeeWorkLocationsService.listUnscoped(employeeId);
 }
 
+async function applyDetachment(tx: PrismaTransactionClient, row: WorkLocationRow, plan: WorkLocationDetachment, context: { todayKey: string; reason: string; audit?: AuditContext }) {
+  const current = periodOf(row);
+  if (plan.kind === "CANCEL") {
+    await repository.cancelWithin(tx, row.id);
+    return { description: "Se canceló una ubicación de trabajo futura", history: "Cancelación · la ubicación no llegó a regir", effectiveFrom: current.effectiveFrom, after: { cancelled: true } };
+  }
+  if (plan.kind === "NARROW") {
+    await repository.correctWithin(tx, row.id, { zoneId: row.zoneId, establishments: plan.next, effectiveFrom: current.effectiveFrom, effectiveTo: current.effectiveTo, reason: row.reason, notes: row.notes }, true);
+    const next = summarize(labelsOf(row, plan.next), current);
+    return { description: "Se corrigió una ubicación de trabajo futura", history: `Corrección · ${next}`, effectiveFrom: current.effectiveFrom, after: { ...current, establishments: labelsOf(row, plan.next).establishmentNames } };
+  }
+  await repository.closeWithin(tx, row.id, plan.closeTo);
+  if (!plan.next.length) {
+    return { description: "Se finalizó una ubicación de trabajo", history: `Finalización · ${summarize(resolvedOf(row), { ...current, effectiveTo: plan.closeTo })}`, effectiveFrom: plan.closeTo, after: { ...current, effectiveTo: plan.closeTo } };
+  }
+  const next = { effectiveFrom: context.todayKey, effectiveTo: current.effectiveTo };
+  const created = await repository.createWithin(tx, row.employeeId, { zoneId: row.zoneId, establishments: plan.next, ...next, reason: context.reason, notes: row.notes }, context.audit?.userId);
+  const labels = labelsOf(row, plan.next);
+  return {
+    description: "Se cambió una ubicación de trabajo",
+    history: `Cambio · ${summarize(labels, next)}`,
+    effectiveFrom: context.todayKey,
+    after: { closed: { ...current, effectiveTo: plan.closeTo }, created: { ...next, id: created.id, zone: labels.zoneName, establishments: labels.establishmentNames } },
+  };
+}
+
 export const employeeWorkLocationsService = {
   async list(employeeId: string, user: Express.AuthUser) {
     const employee = await repository.findEmployeeReference(employeeId, employeeAccessWhere(user));
@@ -154,9 +227,48 @@ export const employeeWorkLocationsService = {
     return rows.map((row) => toDto(row, todayKey));
   },
 
+  /**
+   * Eliminación controlada (shared/deletion): asignaciones abiertas alcanzadas
+   * por nodos de Ubicaciones que se eliminan y qué les pasa. Sólo lectura.
+   */
+  async previewNodeDetachmentWithin(db: PrismaTransactionClient, nodes: LocationNodeIds, todayKey: string) {
+    const removal = removalOf(nodes);
+    const rows = await repository.findOpenByNodesWithin(db, nodes, todayKey);
+    return rows.flatMap((row) => {
+      const plan = planWorkLocationDetachment({ zoneId: row.zoneId, effectiveFrom: periodOf(row).effectiveFrom, establishments: selectionsOf(row) }, removal, todayKey);
+      return plan ? [{ row, plan, employeeName: formatEmployeeReference(row.employee) }] : [];
+    });
+  },
+
+  /**
+   * Aplica la desvinculación dentro de la transacción de la eliminación: cierra
+   * ayer lo que ya regía (y sigue desde hoy con lo que queda), corrige o cancela
+   * lo que todavía no rige y deja historial visible y auditoría por persona.
+   * Las vigencias terminadas antes de hoy no se tocan.
+   */
+  async detachNodesWithin(tx: PrismaTransactionClient, nodes: LocationNodeIds, context: { todayKey: string; reason: string; audit?: AuditContext }) {
+    const affected = await employeeWorkLocationsService.previewNodeDetachmentWithin(tx, nodes, context.todayKey);
+    for (const { row, plan, employeeName } of affected) {
+      const current = periodOf(row);
+      const before = summarize(resolvedOf(row), current);
+      const outcome = await applyDetachment(tx, row, plan, context);
+      await repository.createBlockHistoryWithin(tx, row.employeeId, { oldValue: before, newValue: outcome.history, effectiveFrom: outcome.effectiveFrom, reason: context.reason }, context.audit?.userId);
+      await auditService.registerWithin(tx, {
+        ...context.audit,
+        action: plan.kind === "CANCEL" ? "DELETE" : "UPDATE",
+        entity: "EmployeeWorkLocation",
+        entityId: row.employeeId,
+        description: `${outcome.description} de ${employeeName}: ${before}. Motivo: ${context.reason}`,
+        before: snapshotOf(row),
+        after: outcome.after as Prisma.InputJsonValue,
+      });
+    }
+    return affected.length;
+  },
+
   create(employeeId: string, input: CreateEmployeeWorkLocationInput, audit?: AuditContext) {
     return write(employeeId, audit, async (tx, rows, employeeReference) => {
-      const target: Target = { ...input, effectiveTo: input.effectiveTo ?? null, notes: input.notes || null };
+      const target: Target = { ...input, establishments: normalized(input.establishments), effectiveTo: input.effectiveTo ?? null, notes: input.notes || null };
       const resolved = await resolveTarget(tx, target);
       const period = { id: NEW_ROW_ID, zoneId: target.zoneId, effectiveFrom: target.effectiveFrom, effectiveTo: target.effectiveTo };
       assertValidInterval(period);
@@ -192,10 +304,10 @@ export const employeeWorkLocationsService = {
           "WORK_LOCATION_CHANGE_OUTSIDE_PERIOD",
         );
       }
-      const target: Target = { ...input, effectiveTo: input.effectiveTo ?? null, notes: input.notes || null };
+      const target: Target = { ...input, establishments: normalized(input.establishments), effectiveTo: input.effectiveTo ?? null, notes: input.notes || null };
       const resolved = await resolveTarget(tx, target);
-      if (target.zoneId === current.zoneId && sameSet(target.establishmentIds, current.establishments.map((link) => link.establishment.id))) {
-        throw new AppError("La zona y los establecimientos son los mismos que los actuales: no hay cambio para registrar.", 409, "WORK_LOCATION_CHANGE_EMPTY");
+      if (target.zoneId === current.zoneId && selectionKey(target.establishments) === selectionKey(selectionsOf(current))) {
+        throw new AppError("La zona, los establecimientos y las unidades son los mismos que los actuales: no hay cambio para registrar.", 409, "WORK_LOCATION_CHANGE_EMPTY");
       }
       const closed = { ...currentPeriod, effectiveTo: previousCalendarDateKey(changeDate) };
       const next = { id: NEW_ROW_ID, zoneId: target.zoneId, effectiveFrom: changeDate, effectiveTo: target.effectiveTo };
@@ -249,16 +361,16 @@ export const employeeWorkLocationsService = {
     return write(employeeId, audit, async (tx, rows, employeeReference) => {
       const current = findOwnRow(rows, locationId);
       const currentPeriod = periodOf(current);
-      const currentEstablishmentIds = current.establishments.map((link) => link.establishment.id);
+      const currentSelections = selectionsOf(current);
       const target: Target = {
         zoneId: input.zoneId ?? current.zoneId,
-        establishmentIds: input.establishmentIds ?? currentEstablishmentIds,
+        establishments: input.establishments ? normalized(input.establishments) : currentSelections,
         effectiveFrom: input.effectiveFrom ?? currentPeriod.effectiveFrom,
         effectiveTo: input.effectiveTo !== undefined ? input.effectiveTo : currentPeriod.effectiveTo,
         reason: input.reason ?? current.reason,
         notes: input.notes !== undefined ? input.notes || null : current.notes,
       };
-      const establishmentsChanged = !sameSet(target.establishmentIds, currentEstablishmentIds);
+      const establishmentsChanged = selectionKey(target.establishments) !== selectionKey(currentSelections);
       const changed = establishmentsChanged
         || target.zoneId !== current.zoneId
         || target.effectiveFrom !== currentPeriod.effectiveFrom

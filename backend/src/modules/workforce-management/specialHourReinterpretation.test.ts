@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Mock } from "vitest";
 import type { PrismaTransactionClient } from "../../shared/prisma/client";
 import { accountDay, toAccountingBaseEntry, toAccountingBreakdown } from "../time-entries/workedTimeAccounting";
-import { evaluateSpecialHourRulesByDate } from "../time-entries/timeEntries.repository";
+import { evaluateSpecialHourRulesForEmployees } from "../time-entries/timeEntries.repository";
 import { buildActiveDatesByRule, resolveWinningRules, ruleMatchesDate, specialHourRulesForEmployeeOnDate } from "./doubleHourRuleMatching";
 import { rebuildClosureSnapshots } from "./closureSnapshot";
 import { affectedWindow, reinterpretSpecialHours, reinterpretSpecialHoursOnDates, type RuleCalendar } from "./specialHourReinterpretation";
@@ -24,7 +24,7 @@ import { affectedWindow, reinterpretSpecialHours, reinterpretSpecialHoursOnDates
 
 vi.mock("../../shared/prisma/client", () => ({ prisma: {} }));
 vi.mock("../time-entries/timeEntries.repository", () => ({
-  evaluateSpecialHourRulesByDate: vi.fn(),
+  evaluateSpecialHourRulesForEmployees: vi.fn(),
   SpecialHourScopeHistoryMissingError: class extends Error {
     code = "SPECIAL_HOUR_SCOPE_HISTORY_MISSING";
     constructor(public readonly missing: { employeeId: string; date: string }) { super(`missing ${missing.employeeId} ${missing.date}`); }
@@ -146,12 +146,14 @@ beforeEach(() => {
   vi.clearAllMocks();
   world = emptyWorld();
   db = fakeDb();
-  (evaluateSpecialHourRulesByDate as unknown as Mock).mockImplementation(async (employeeId: string, dates: Date[]) => new Map([...engine(employeeId, dates)].map(([key, resolution]) => [
+  const evaluate = (employeeId: string, dates: Date[]) => new Map([...engine(employeeId, dates)].map(([key, resolution]) => [
     key,
     world.missingHistory.has(`${employeeId}|${key}`)
       ? { missingHistory: { employeeId, date: key, period: key.slice(0, 7), dimensions: ["EMPLOYER"], ruleId: "rule-x", ruleName: "Regla" } }
       : { resolution },
-  ])));
+  ]));
+  (evaluateSpecialHourRulesForEmployees as unknown as Mock).mockImplementation(async (datesByEmployee: Map<string, Date[]>) =>
+    new Map([...datesByEmployee].map(([employeeId, dates]) => [employeeId, evaluate(employeeId, dates)])));
   (rebuildClosureSnapshots as unknown as Mock).mockImplementation(async (_db, closures: Closure[]) =>
     closures.map((closure) => ({ id: closure.id, employeeId: closure.employeeId, period: closure.period, before: closure.snapshot, after: { recalculated: true } })));
 });
@@ -394,7 +396,7 @@ describe("Hora Especial reinterpreta las horas ya cargadas (orden indistinto)", 
     const result = await reinterpret(null, feriado());
 
     expect(result.timeEntries).toBe(0);
-    expect(evaluateSpecialHourRulesByDate).not.toHaveBeenCalled();
+    expect(evaluateSpecialHourRulesForEmployees).toHaveBeenCalledWith(new Map(), db);
   });
 });
 
@@ -623,6 +625,27 @@ describe("Eliminar definitivamente una regla reinterpreta como si nunca hubiera 
     expect(world.entries[0]!.appliedMultiplier).toBe(2);
     expect(result.protectedPeriods[0]).toMatchObject({ employeeId: JUAN, status: "APROBADO", timeEntries: 1 });
     expect(world.closures[0]!.status).toBe("APROBADO");
+  });
+
+  // Preview de eliminación de “Feriados” en development (2026-10-13): 17 legajos
+  // alcanzados × 7 consultas del motor por legajo ≈ 134 viajes secuenciales
+  // dentro de la transacción revertida → superaba su timeout de 30 s y la
+  // consulta siguiente fallaba con P2028 (500).
+  it("feriado con muchos legajos: el motor evalúa a todos en UNA llamada y el período protegido se sigue informando", async () => {
+    world.rules.push(feriados());
+    for (const employeeId of [JUAN, ANA, PEDRO]) {
+      loadHours(employeeId, OCT_5, 8);
+      world.entries.at(-1)!.appliedMultiplier = 2;
+    }
+    world.closures.push({ id: "closure-pedro", employeeId: PEDRO, period: "2026-10", status: "APROBADO", snapshot: { accounting: {} } });
+
+    const result = await deleteRule(feriados());
+
+    expect(evaluateSpecialHourRulesForEmployees).toHaveBeenCalledTimes(1);
+    expect([...(evaluateSpecialHourRulesForEmployees as unknown as Mock).mock.calls[0]![0].keys()].sort()).toEqual([ANA, JUAN, PEDRO].sort());
+    expect(result).toMatchObject({ timeEntries: 2, employees: 2 });
+    expect(result.protectedPeriods).toEqual([{ employeeId: PEDRO, period: "2026-10", status: "APROBADO", timeEntries: 1, breakdowns: 0, segments: 0, missingHistory: 0 }]);
+    expect(world.entries.map((row) => [row.employeeId, row.appliedMultiplier])).toEqual([[JUAN, 1], [ANA, 1], [PEDRO, 2]]);
   });
 
   it("una regla ya INACTIVA no tenía efecto: eliminarla no cambia ninguna hora", async () => {

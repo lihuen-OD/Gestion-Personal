@@ -8,9 +8,10 @@ import { isMonthlyClosureLocked } from "../../shared/monthlyClosure/closureLock"
 import type { AuditContext } from "../audit/audit.service";
 import { auditService } from "../audit/audit.service";
 import { humanizePeriodEs } from "../../shared/datetime/argentinaTime";
+import { assertActorAuthorizedWithin, assertConfirmedPlan, DeletionPlanBuilder, type DeletionConfirmation, type DeletionPreview } from "../../shared/deletion/deletionPlan";
 import { buildActiveDatesByRule, resolveWinningRules, ruleMatchesDate, scopesCouldOverlap } from "./doubleHourRuleMatching";
 import type { CorrectionsQuery, ListNotificationsQuery } from "./workforce.schemas";
-import { buildClosureSnapshots } from "./closureSnapshot";
+import { buildClosureSnapshots, confirmedClosureResult } from "./closureSnapshot";
 import { employeeReferenceSelect, formatEmployeeReference, loadEmployeeReferences } from "../../shared/audit/employeeReference";
 import { formatArgentinaDate } from "../../shared/datetime/argentinaTime";
 import { auditClosureRecalculations } from "./closureRecalculationAudit";
@@ -131,6 +132,84 @@ function describeRuleSchedule(rule: RuleForChange) {
   return `los ${weekdays} ${range}`;
 }
 
+/**
+ * Eliminación de una regla (protocolo de shared/deletion). El motor sólo lee
+ * reglas ACTIVO: dentro de la transacción la regla se inactiva ANTES de
+ * reinterpretar, para recalcular como si no existiera (mismo orden que alta y
+ * edición: primero el estado nuevo, después la reinterpretación). Antes la
+ * reinterpretación corría con la regla todavía activa: no cambiaba ningún
+ * multiplicador, no detectaba períodos protegidos y después se borraban sus
+ * aplicaciones también en esos períodos.
+ */
+async function planDoubleRuleDeletionWithin(tx: PrismaTransactionClient, id: string) {
+  const before = await tx.doubleHourRule.findUnique({ where: { id }, include: { employees: true, dates: true } });
+  if (!before) throw new AppError("No encontramos la regla solicitada", 404, "DOUBLE_HOUR_RULE_NOT_FOUND");
+  if (before.status === "ACTIVO") await tx.doubleHourRule.update({ where: { id }, data: { status: "INACTIVO" } });
+  const reinterpretation = await reinterpretSpecialHours(tx, { before: ruleCalendar(before), after: null }, { doubleHourRuleId: id, doubleHourRuleName: before.name });
+  const changedRows = [...reinterpretation.changes.timeEntries, ...reinterpretation.changes.breakdowns];
+  const reference = await loadEmployeeReferences(tx, [...new Set(changedRows.map((row) => row.employeeId))]);
+  const pairs = new Map(changedRows.map((row) => [`${row.employeeId}:${row.date.slice(0, 7)}`, `${reference(row.employeeId)} · ${humanizePeriodEs(row.date.slice(0, 7))}`]));
+  const noun = ruleNoun(before);
+  const builder = new DeletionPlanBuilder()
+    .add("doubleHourRule.delete", "DELETE", before.kind === "FERIADO" ? "Feriado que se elimina" : "Regla que se elimina", `Se borra con su configuración propia: ${before.dates.length} ${before.dates.length === 1 ? "fecha" : "fechas"} y ${before.employees.length} ${before.employees.length === 1 ? "persona elegida" : "personas elegidas"}.`, [{ id, name: before.name }])
+    .add("hours.recalculate", "RECALCULATE", "Personas y períodos que se recalculan", `Se recalculan como si ${noun} no existiera: ${reinterpretation.timeEntries} cargas, ${reinterpretation.breakdowns} desgloses y ${reinterpretation.segments} tramos de fichada. Cambia sólo el multiplicador, nunca los minutos; ${reinterpretation.rebuiltClosures.length} cierres abiertos se reconstruyen. Los períodos enviados o aprobados no se tocan.`, [...pairs.entries()].map(([pairId, name]) => ({ id: pairId, name })), { affectsPeople: true })
+    .add("hours.rows", "RECALCULATE", "Registros horarios que cambian de multiplicador", "Detalle técnico de la reinterpretación (cargas, desgloses y tramos).", [...changedRows, ...reinterpretation.changes.segments].map((row) => ({ id: row.id, name: row.id })), { listed: false });
+  const protectedPeriods = reinterpretation.protectedPeriods.filter((period) => period.timeEntries + period.breakdowns + period.segments + period.missingHistory > 0);
+  if (protectedPeriods.length) {
+    builder.block(
+      "DOUBLE_HOUR_RULE_PROTECTED_HISTORY",
+      `La regla tiene resultados en períodos enviados o aprobados (${[...new Set(protectedPeriods.map((period) => humanizePeriodEs(period.period)))].join(", ")}). No se puede eliminar porque se perdería su traza histórica; inactivala o corregí esos períodos mediante el procedimiento explícito de RRHH.`,
+    );
+  }
+  return {
+    before,
+    reinterpretation,
+    preview: builder.build(
+      { kind: "doubleHourRule", id, code: null, name: before.name, label: before.kind === "FERIADO" ? "Feriado" : "Regla de horas especiales" },
+      {
+        // Configuración completa que desaparece, no sólo el calendario usado
+        // por el motor: incluye multiplicador/prioridad/estado, alcance,
+        // autoría y las filas propias de empleados y fechas.
+        deletedRule: before,
+        concreteResults: reinterpretation.changes,
+        rebuiltClosures: reinterpretation.rebuiltClosures.map(confirmedClosureResult),
+        protectedPeriods: reinterpretation.protectedPeriods,
+      },
+    ),
+  };
+}
+
+/** La vista previa reinterpreta en una transacción que siempre se revierte. */
+class DeletionPreviewRollback extends Error {
+  constructor(readonly preview: DeletionPreview) { super("deletion preview rollback"); }
+}
+
+async function deleteDoubleRuleWithin(tx: PrismaTransactionClient, plan: Awaited<ReturnType<typeof planDoubleRuleDeletionWithin>>, audit?: AuditContext) {
+  const { before, reinterpretation } = plan;
+  // Sin períodos protegidos alcanzados no quedan aplicaciones de la regla: la
+  // reinterpretación ya las reemplazó. Se borran explícitamente por si acaso.
+  await tx.specialHourRuleApplication.deleteMany({ where: { doubleHourRuleId: before.id } });
+  await tx.doubleHourRule.delete({ where: { id: before.id } });
+  await auditService.registerWithin(tx, {
+    ...audit, action: "DELETE", entity: "DoubleHourRule", entityId: before.id,
+    description: `Se eliminó definitivamente ${ruleNoun(before)} ${before.name} (${describeRuleSchedule(before)}, ${formatMultiplierLabel(before.multiplier)}). ${describeReinterpretation(reinterpretation)}`,
+    before: before as Prisma.InputJsonValue,
+    after: { reinterpretation: reinterpretationMetadata(reinterpretation) } as Prisma.InputJsonValue,
+  });
+  if (reinterpretation.rebuiltClosures.length) {
+    const reference = await loadEmployeeReferences(tx, reinterpretation.rebuiltClosures.map((closure) => closure.employeeId));
+    const ofRule = before.kind === "FERIADO" ? "del feriado" : "de la regla de horas especiales";
+    for (const closure of reinterpretation.rebuiltClosures) {
+      await auditService.registerWithin(tx, {
+        ...audit, action: "UPDATE", entity: "MonthlyTimeClosure", entityId: closure.id,
+        description: `Se recalculó el snapshot del cierre de ${humanizePeriodEs(closure.period)} de ${reference(closure.employeeId)} por eliminación ${ofRule} ${before.name}. El estado del cierre no cambia.`,
+        before: { snapshot: closure.before } as Prisma.InputJsonValue,
+        after: { snapshot: closure.after } as Prisma.InputJsonValue,
+      });
+    }
+  }
+}
+
 async function auditSpecialHourRuleClosures(rule: RuleForChange, result: SpecialHourReinterpretation, audit?: AuditContext) {
   const ofRule = rule.kind === "FERIADO" ? "del feriado" : "de la regla de horas especiales";
   await auditClosureRecalculations(result.rebuiltClosures, `cambio ${ofRule} ${rule.name}`, audit, (employeeIds) => loadEmployeeReferences(prisma, employeeIds));
@@ -154,18 +233,20 @@ async function assertRuleSectorSupported(sectorId: string | null | undefined, cu
 // archivo, así el UPDATE de archivo de la limpieza no se cuela entre la
 // comprobación y la escritura; `current` son las FKs leídas en esa misma
 // transacción. Sin `lock` es el rechazo temprano.
-type RuleTargetKey = "companyId" | "sectorId" | "positionId";
-const RULE_TARGETS: Record<RuleTargetKey, { table: "Company" | "Sector" | "Position"; label: string }> = {
+type RuleTargetKey = "companyId" | "sectorId" | "positionId" | "costCenterId";
+const RULE_TARGETS: Record<RuleTargetKey, { table: "Company" | "Sector" | "Position" | "CostCenter"; label: string }> = {
   companyId: { table: "Company", label: "empresa" },
   sectorId: { table: "Sector", label: "sector" },
   positionId: { table: "Position", label: "puesto" },
+  // Desde la eliminación controlada un centro de costo también puede quedar archivado.
+  costCenterId: { table: "CostCenter", label: "centro de costo" },
 };
-type RuleTargetReader = Pick<PrismaTransactionClient, "company" | "sector" | "position" | "$queryRawUnsafe">;
+type RuleTargetReader = Pick<PrismaTransactionClient, "company" | "sector" | "position" | "costCenter" | "$queryRawUnsafe">;
 
 async function assertRuleDestinationsNotArchived(
   db: RuleTargetReader,
-  input: { companyId?: string | null; sectorId?: string | null; positionId?: string | null },
-  current?: { companyId?: string | null; sectorId?: string | null; positionId?: string | null } | null,
+  input: { companyId?: string | null; sectorId?: string | null; positionId?: string | null; costCenterId?: string | null },
+  current?: { companyId?: string | null; sectorId?: string | null; positionId?: string | null; costCenterId?: string | null } | null,
   options: { lock?: boolean } = {},
 ) {
   const keys = Object.keys(RULE_TARGETS) as RuleTargetKey[];
@@ -175,15 +256,17 @@ async function assertRuleDestinationsNotArchived(
     for (const key of changed) await db.$queryRawUnsafe(`SELECT "id" FROM "${RULE_TARGETS[key].table}" WHERE "id" = $1 FOR SHARE`, input[key]);
   }
   const idsOf = (key: RuleTargetKey) => (changed.includes(key) ? [input[key]!] : []);
-  const [companies, sectors, positions] = await Promise.all([
+  const [companies, sectors, positions, costCenters] = await Promise.all([
     idsOf("companyId").length ? db.company.findMany({ where: { id: { in: idsOf("companyId") }, archivedAt: { not: null } }, select: { name: true } }) : Promise.resolve([]),
     idsOf("sectorId").length ? db.sector.findMany({ where: { id: { in: idsOf("sectorId") }, archivedAt: { not: null } }, select: { name: true } }) : Promise.resolve([]),
     idsOf("positionId").length ? db.position.findMany({ where: { id: { in: idsOf("positionId") }, archivedAt: { not: null } }, select: { name: true } }) : Promise.resolve([]),
+    idsOf("costCenterId").length ? db.costCenter.findMany({ where: { id: { in: idsOf("costCenterId") }, archivedAt: { not: null } }, select: { name: true } }) : Promise.resolve([]),
   ]);
   const archived = [
     ...companies.map((row) => `${RULE_TARGETS.companyId.label} “${row.name}”`),
     ...sectors.map((row) => `${RULE_TARGETS.sectorId.label} “${row.name}”`),
     ...positions.map((row) => `${RULE_TARGETS.positionId.label} “${row.name}”`),
+    ...costCenters.map((row) => `${RULE_TARGETS.costCenterId.label} “${row.name}”`),
   ];
   if (archived.length) {
     throw new AppError(`No se puede asignar la regla a un registro archivado: ${archived.join(", ")}.`, 400, "DOUBLE_HOUR_RULE_DESTINATION_ARCHIVED");
@@ -400,20 +483,28 @@ export const workforceService = {
     });
     return item;
   },
+  // Revisión de la eliminación controlada: conteo, escritura y auditoría en una
+  // transacción Serializable (una asignación o jornada concurrente aborta una
+  // de las dos, nunca se borra en cascada en silencio). Las convocatorias de
+  // feriado son historia como las jornadas: con ellas el turno se inactiva,
+  // en vez de dejar su referencia en NULL.
   async removeShiftTemplate(id: string, audit?: AuditContext) {
-    const before = await prisma.shiftTemplate.findUnique({ where: { id }, include: { _count: { select: { workShifts: true, assignments: true } } } });
-    if (!before) throw new AppError("No encontramos el turno solicitado", 404, "SHIFT_TEMPLATE_NOT_FOUND");
-    if (before._count.workShifts > 0) {
-      const item = await prisma.shiftTemplate.update({ where: { id }, data: { status: "INACTIVO" } });
-      await auditService.register({ ...audit, action: "DEACTIVATE", entity: "ShiftTemplate", entityId: id, description: `Se inactivó el turno ${before.code} porque tiene jornadas históricas asociadas.`, before: before as Prisma.InputJsonValue, after: item as Prisma.InputJsonValue });
-      return { mode: "INACTIVATED" as const, item, relatedWorkShifts: before._count.workShifts };
-    }
-    if (before._count.assignments > 0) {
-      throw new AppError("No se puede eliminar el turno porque tiene asignaciones de empleados asociadas", 409, "SHIFT_TEMPLATE_HAS_ASSIGNMENTS");
-    }
-    await prisma.shiftTemplate.delete({ where: { id } });
-    await auditService.register({ ...audit, action: "DELETE", entity: "ShiftTemplate", entityId: id, description: `Se eliminó el turno sin uso ${before.code} - ${before.name}.`, before: before as Prisma.InputJsonValue });
-    return { mode: "DELETED" as const, id, relatedWorkShifts: 0 };
+    return execute(() => prisma.$transaction(async (tx) => {
+      const before = await tx.shiftTemplate.findUnique({ where: { id }, include: { _count: { select: { workShifts: true, assignments: true, holidayWorkAssignments: true } } } });
+      if (!before) throw new AppError("No encontramos el turno solicitado", 404, "SHIFT_TEMPLATE_NOT_FOUND");
+      const history = before._count.workShifts + before._count.holidayWorkAssignments;
+      if (history > 0) {
+        const item = await tx.shiftTemplate.update({ where: { id }, data: { status: "INACTIVO" } });
+        await auditService.registerWithin(tx, { ...audit, action: "DEACTIVATE", entity: "ShiftTemplate", entityId: id, description: `Se inactivó el turno ${before.code} porque tiene jornadas o convocatorias de feriado históricas asociadas.`, before: before as Prisma.InputJsonValue, after: item as Prisma.InputJsonValue });
+        return { mode: "INACTIVATED" as const, item, relatedWorkShifts: before._count.workShifts };
+      }
+      if (before._count.assignments > 0) {
+        throw new AppError("No se puede eliminar el turno porque tiene asignaciones de empleados asociadas", 409, "SHIFT_TEMPLATE_HAS_ASSIGNMENTS");
+      }
+      await tx.shiftTemplate.delete({ where: { id } });
+      await auditService.registerWithin(tx, { ...audit, action: "DELETE", entity: "ShiftTemplate", entityId: id, description: `Se eliminó el turno sin uso ${before.code} - ${before.name}.`, before: before as Prisma.InputJsonValue });
+      return { mode: "DELETED" as const, id, relatedWorkShifts: 0 };
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }));
   },
   // Etapa 8B: se agregan dates (calendario FECHA) y los 4 nombres de scope
   // (empresa/sector/centro de costo/puesto) para que el frontend no necesite
@@ -566,35 +657,41 @@ export const workforceService = {
   // (las reglas que quedan resuelven el multiplicador). Nunca toca minutos,
   // fichadas ni jornadas. Si el recálculo falla, la regla sigue existiendo.
   // El AuditLog (before = configuración completa) conserva la historia.
+  // Endpoint anterior (DELETE): mismo plan y misma corrección de orden que la
+  // eliminación controlada, sin vista previa. Con períodos protegidos alcanzados, 409.
   async removeDoubleRule(id: string, audit?: AuditContext) {
-    const before = await prisma.doubleHourRule.findUnique({ where: { id }, include: { employees: true, dates: true } });
-    if (!before) throw new AppError("No encontramos la regla solicitada", 404, "DOUBLE_HOUR_RULE_NOT_FOUND");
-    const reinterpretation = await execute(() => prisma.$transaction(async (tx) => {
-      const result = await reinterpretSpecialHours(tx, { before: ruleCalendar(before), after: null }, { doubleHourRuleId: id, doubleHourRuleName: before.name });
-      // Borrar la regla también borraría su traza histórica. Si hay un cierre
-      // protegido que cambiaría, abortamos toda la transacción: ni la regla ni
-      // sus aplicaciones pueden desaparecer por fuera de una corrección
-      // explícita y auditada (D-5). Un período protegido sin historia
-      // suficiente para evaluarlo también bloquea: no se sabe si cambiaría.
-      if (result.protectedPeriods.some((period) => period.timeEntries + period.breakdowns + period.segments + period.missingHistory > 0)) {
-        throw new AppError(
-          "La regla tiene resultados en períodos enviados o aprobados. No se puede eliminar porque se perdería su traza histórica; inactivala o corregí esos períodos mediante el procedimiento explícito de RRHH.",
-          409,
-          "DOUBLE_HOUR_RULE_PROTECTED_HISTORY",
-          { protectedPeriods: result.protectedPeriods },
-        );
+    await execute(() => prisma.$transaction(async (tx) => {
+      const plan = await planDoubleRuleDeletionWithin(tx, id);
+      if (plan.preview.blockers.length) {
+        throw new AppError(plan.preview.blockers.map((item) => item.message).join(" "), 409, "DOUBLE_HOUR_RULE_PROTECTED_HISTORY", { protectedPeriods: plan.reinterpretation.protectedPeriods });
       }
-      await tx.specialHourRuleApplication.deleteMany({ where: { doubleHourRuleId: id } });
-      await tx.doubleHourRule.delete({ where: { id } });
-      return result;
+      await deleteDoubleRuleWithin(tx, plan, audit);
     }, SPECIAL_HOUR_RULE_TRANSACTION_OPTIONS));
-    await auditService.register({
-      ...audit, action: "DELETE", entity: "DoubleHourRule", entityId: id,
-      description: `Se eliminó definitivamente ${ruleNoun(before)} ${before.name} (${describeRuleSchedule(before)}, ${formatMultiplierLabel(before.multiplier)}). ${describeReinterpretation(reinterpretation)}`,
-      before: before as Prisma.InputJsonValue,
-      after: { reinterpretation: reinterpretationMetadata(reinterpretation) } as Prisma.InputJsonValue,
-    });
-    await auditSpecialHourRuleClosures(before, reinterpretation, audit);
     return { mode: "DELETED" as const, id };
+  },
+
+  async previewDoubleRuleDeletion(id: string): Promise<DeletionPreview> {
+    try {
+      await prisma.$transaction(async (tx) => {
+        const plan = await planDoubleRuleDeletionWithin(tx, id);
+        throw new DeletionPreviewRollback(plan.preview);
+      }, SPECIAL_HOUR_RULE_TRANSACTION_OPTIONS);
+    } catch (error) {
+      if (error instanceof DeletionPreviewRollback) return error.preview;
+      mapPrismaError(error);
+      throw error;
+    }
+    throw new AppError("No se pudo calcular la vista previa.", 500, "DELETION_PREVIEW_FAILED");
+  },
+
+  async executeDoubleRuleDeletion(id: string, confirmation: DeletionConfirmation, audit?: AuditContext) {
+    const preview = await execute(() => prisma.$transaction(async (tx) => {
+      await assertActorAuthorizedWithin(tx, audit?.userId, [roles.rrhh]);
+      const plan = await planDoubleRuleDeletionWithin(tx, id);
+      assertConfirmedPlan(plan.preview, confirmation);
+      await deleteDoubleRuleWithin(tx, plan, audit);
+      return plan.preview;
+    }, SPECIAL_HOUR_RULE_TRANSACTION_OPTIONS));
+    return { done: true, target: preview.target, groups: preview.groups };
   },
 };

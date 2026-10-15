@@ -56,21 +56,49 @@ function nodeFromRow(row: { level: OrgScopeLevel; companyId: string | null; busi
 
 const nodeSelect = { level: true, companyId: true, businessUnitId: true, sectorId: true, areaId: true, areaSectorId: true } as const;
 
+// Un legajo o varios en una sola consulta (`{ in: [...] }`): el motor evalúa
+// en lote a todos los legajos que alcanza un cambio de regla.
+type EmployeeFilter = string | { in: string[] };
+type EmployeePeriod<V> = { employeeId: string; period: Period<V> };
+
+async function scalarRows(db: HistoryReader, dimension: ScalarDimension, employeeId: EmployeeFilter, range?: { fromKey: DateKey; toKey: DateKey }): Promise<EmployeePeriod<string | null>[]> {
+  const where = { employeeId, ...overlapping(range) };
+  if (dimension === "POSITION") {
+    return (await db.employeePositionPeriod.findMany({ where, orderBy, select: { ...periodSelect, employeeId: true, positionId: true } })).map((row) => ({ employeeId: row.employeeId, period: asPeriod(row, row.positionId) }));
+  }
+  if (dimension === "COST_CENTER") {
+    return (await db.employeeCostCenterPeriod.findMany({ where, orderBy, select: { ...periodSelect, employeeId: true, costCenterId: true } })).map((row) => ({ employeeId: row.employeeId, period: asPeriod(row, row.costCenterId) }));
+  }
+  return (await db.employeeLegacySectorPeriod.findMany({ where, orderBy, select: { ...periodSelect, employeeId: true, sectorId: true } })).map((row) => ({ employeeId: row.employeeId, period: asPeriod(row, row.sectorId) }));
+}
+
+async function employerRows(db: HistoryReader, employeeId: EmployeeFilter, range?: { fromKey: DateKey; toKey: DateKey }): Promise<EmployeePeriod<string[]>[]> {
+  const rows = await db.employeeEmployerPeriod.findMany({ where: { employeeId, ...overlapping(range) }, orderBy, select: { ...periodSelect, employeeId: true, companies: { select: { companyId: true } } } });
+  return rows.map((row) => ({ employeeId: row.employeeId, period: asPeriod(row, row.companies.map((link) => link.companyId).sort()) }));
+}
+
+/** Agrupa por legajo conservando el orden por effectiveFrom; todo legajo pedido tiene su lista (vacía si no hay vigencias). */
+function byEmployee<V>(employeeIds: string[], rows: EmployeePeriod<V>[]) {
+  const result = new Map<string, Period<V>[]>(employeeIds.map((employeeId) => [employeeId, []]));
+  for (const row of rows) result.get(row.employeeId)?.push(row.period);
+  return result;
+}
+
 export const laborHistoryRepository = {
   async findScalarPeriods(db: HistoryReader, dimension: ScalarDimension, employeeId: string, range?: { fromKey: DateKey; toKey: DateKey }): Promise<Period<string | null>[]> {
-    const where = { employeeId, ...overlapping(range) };
-    if (dimension === "POSITION") {
-      return (await db.employeePositionPeriod.findMany({ where, orderBy, select: { ...periodSelect, positionId: true } })).map((row) => asPeriod(row, row.positionId));
-    }
-    if (dimension === "COST_CENTER") {
-      return (await db.employeeCostCenterPeriod.findMany({ where, orderBy, select: { ...periodSelect, costCenterId: true } })).map((row) => asPeriod(row, row.costCenterId));
-    }
-    return (await db.employeeLegacySectorPeriod.findMany({ where, orderBy, select: { ...periodSelect, sectorId: true } })).map((row) => asPeriod(row, row.sectorId));
+    return (await scalarRows(db, dimension, employeeId, range)).map((row) => row.period);
+  },
+
+  async findScalarPeriodsByEmployee(db: HistoryReader, dimension: ScalarDimension, employeeIds: string[], range?: { fromKey: DateKey; toKey: DateKey }): Promise<Map<string, Period<string | null>[]>> {
+    return byEmployee(employeeIds, employeeIds.length ? await scalarRows(db, dimension, { in: employeeIds }, range) : []);
   },
 
   async findEmployerPeriods(db: HistoryReader, employeeId: string, range?: { fromKey: DateKey; toKey: DateKey }): Promise<Period<string[]>[]> {
-    const rows = await db.employeeEmployerPeriod.findMany({ where: { employeeId, ...overlapping(range) }, orderBy, select: { ...periodSelect, companies: { select: { companyId: true } } } });
-    return rows.map((row) => asPeriod(row, row.companies.map((link) => link.companyId).sort()));
+    return (await employerRows(db, employeeId, range)).map((row) => row.period);
+  },
+
+  async findEmployerPeriodsByEmployee(db: HistoryReader, employeeIds: string[], range?: { fromKey: DateKey; toKey: DateKey }): Promise<Map<string, Period<string[]>[]>> {
+    return byEmployee(employeeIds, employeeIds.length ? await employerRows(db, { in: employeeIds }, range) : []);
   },
 
   async findScopePeriods(db: HistoryReader, positionIds: string[], range?: { fromKey: DateKey; toKey: DateKey }): Promise<Map<string, Period<ScopeNodeSnapshot[]>[]>> {

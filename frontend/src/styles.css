@@ -2344,6 +2344,8 @@ a.employee-hours-status-item:hover{border-color:var(--ds-blue-300);background:va
 .org-node-icon.type-sector{background:#fce7f3;color:#be185d}
 .org-node-icon.type-cost_center{background:#d1fae5;color:#047857}
 .org-node-icon.type-zone{background:#e0f2fe;color:#0369a1}
+.org-node-icon.type-province{background:#e0e7ff;color:#4338ca}
+.org-node-icon.type-establishment_unit{background:#ecfccb;color:#4d7c0f}
 .org-node-icon.type-group{background:var(--color-warning-bg);color:var(--color-warning)}
 .org-tree-text{flex:1;min-width:0}
 .org-tree-text b,.org-tree-text small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -2433,16 +2435,20 @@ a.employee-hours-status-item:hover{border-color:var(--ds-blue-300);background:va
 .work-location-form>.form-actions{grid-column:1/-1}
 .work-location-form legend{margin-bottom:7px;color:#42526a;font-size:12px;font-weight:700}
 .work-location-establishments-field{display:grid;gap:8px;min-width:0;margin:0;padding:0;border:0}
-.work-location-establishments-field .check-card span{display:grid;gap:2px}
-.work-location-establishments-field .check-card small{color:var(--color-text-muted);font-size:11px}
+.work-location-establishments-field .check-card span,.work-location-coverage .check-card span{display:grid;gap:2px}
+.work-location-establishments-field .check-card small,.work-location-coverage .check-card small{color:var(--color-text-muted);font-size:11px}
 .work-location-hint{color:var(--color-text-muted);font-size:11px}
+.work-location-coverage{display:grid;gap:10px;min-width:0;margin:0;padding:12px;border:1px solid var(--color-border-default);border-radius:var(--radius-lg);background:#fff}
+.work-location-coverage>legend{float:left;width:100%;margin:0;padding:0}
+.work-location-coverage-modes{display:flex;flex-wrap:wrap;gap:6px 18px;font-size:12px;font-weight:600;color:var(--color-text-primary)}
+.work-location-coverage-modes label{display:inline-flex;align-items:center;gap:6px}
 .work-location-dates{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 
 /* Alta de legajo: el alcance del puesto ya es una tarjeta; sin la caja de .form-wide. */
 .form-grid>.form-wide.labor-bare-slot{display:grid;gap:10px;padding:0;border:0;background:none}
 .labor-bare-slot>.info-note.compact{margin:0}
 @media(max-width:900px){.position-scope-grid{grid-template-columns:1fr}.org-scope-path-list li{grid-template-columns:1fr auto}.org-scope-level{grid-column:1/-1}}
-@media(max-width:620px){.modal-body .work-location-establishments-field .check-grid{grid-template-columns:1fr}.labor-pending-reload{margin:14px 14px 0}.labor-block-wrap{padding:0 14px}.work-location-list{padding:12px}.work-location-item{flex-direction:column}.work-location-actions{justify-content:flex-start;width:100%}.work-location-dates{grid-template-columns:1fr}}
+@media(max-width:620px){.modal-body .work-location-establishments-field .check-grid,.modal-body .work-location-coverage .check-grid{grid-template-columns:1fr}.labor-pending-reload{margin:14px 14px 0}.labor-block-wrap{padding:0 14px}.work-location-list{padding:12px}.work-location-item{flex-direction:column}.work-location-actions{justify-content:flex-start;width:100%}.work-location-dates{grid-template-columns:1fr}}
 /* A7: filtros de estructura y celdas de puesto/ubicación en listados. */
 .structure-filter-hint{grid-column:1/-1;margin:0;color:var(--color-text-muted);font-size:12px;line-height:1.5}
 .structure-filter-hint[role=status]{color:var(--color-warning);font-weight:600}
@@ -2482,3 +2488,25 @@ a.employee-hours-status-item:hover{border-color:var(--ds-blue-300);background:va
    pueden estar desactualizados), no un error: tono warning, la lista queda. */
 .clock-devices-refresh-warning{display:flex;align-items:center;gap:8px;margin:0 0 12px;padding:10px 14px;border:1px solid var(--color-warning-border);border-radius:10px;background:var(--color-warning-bg);color:var(--color-warning);font-size:13px;font-weight:600;line-height:1.4}
 .clock-devices-refresh-warning svg{flex:none}
+
+/* Eliminación controlada (DeletionPreviewModal): impacto calculado por el backend. */
+.deletion-preview{gap:12px}
+.deletion-summary{margin:0;color:var(--color-text-secondary,#475569);font-size:13px;line-height:1.5}
+.deletion-groups{display:grid;gap:8px;margin:0;padding:0;list-style:none}
+.deletion-group{display:grid;gap:6px;min-width:0;padding:12px;border:1px solid var(--color-border-default);border-left:3px solid var(--color-border-strong);border-radius:var(--radius-md);background:#fff}
+.deletion-group.effect-delete{border-left-color:var(--color-danger)}
+.deletion-group.effect-archive,.deletion-group.effect-end,.deletion-group.effect-review{border-left-color:var(--color-warning)}
+.deletion-group-head{display:flex;align-items:center;gap:8px;min-width:0}
+.deletion-group-head b{flex:1;min-width:0;font-size:13px;color:var(--color-text-primary,#0f172a);overflow-wrap:anywhere}
+.deletion-group-count{flex:none;min-width:28px;padding:2px 8px;border-radius:999px;background:var(--color-bg-subtle);color:var(--color-text-secondary,#475569);font-size:12px;font-weight:700;text-align:center}
+.deletion-group>p{margin:0;color:var(--color-text-muted);font-size:12px;line-height:1.45}
+.deletion-group-items{display:flex;flex-wrap:wrap;gap:4px 6px;margin:0;padding:0;list-style:none}
+.deletion-group-items li{max-width:100%;padding:3px 8px;border:1px solid var(--color-border-default);border-radius:999px;background:var(--color-bg-subtle);color:var(--color-text-secondary,#475569);font-size:11px;overflow-wrap:anywhere}
+.deletion-group .table-link{justify-self:start;padding:0}
+.deletion-group-more{color:var(--color-text-muted);font-size:11px}
+.deletion-blockers{display:grid;gap:6px;padding:10px 12px;border:1px solid var(--color-danger-border);border-radius:var(--radius-md);background:var(--color-danger-bg);color:var(--color-danger);font-size:12px}
+.deletion-blockers ul{margin:0;padding-left:18px;display:grid;gap:4px}
+.deletion-changed{border-left-color:var(--color-warning)!important;background:var(--color-warning-bg)!important}
+.deletion-typed{display:grid;gap:6px}
+.deletion-typed>span{font-weight:600;color:var(--color-text-primary,#0f172a)}
+.deletion-typed input{width:100%}

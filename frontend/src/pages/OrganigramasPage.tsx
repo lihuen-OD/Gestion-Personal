@@ -13,6 +13,7 @@ import { OrgChartTabs, type OrgChartTab } from "../components/organigramas/OrgCh
 import { EmployeeStructureFilterControls } from "../components/employees/structureFilters/EmployeeStructureFilterControls";
 import { emptyStructureFilters, hasStructureFilters, isReloadPending, structureFilterParams, type EmployeeStructureFilterValue } from "../components/employees/structureFilters/employeeStructureFilters";
 import { useOrgStructureCatalog } from "../components/employees/structureFilters/useOrgStructureCatalog";
+import { workLocationLabel } from "../utils/workLocationPath";
 import { PageHeader } from "../components/ui/PageHeader";
 import { Button } from "../components/ui/Button";
 import { ErrorState } from "../components/ui/ErrorState";
@@ -34,7 +35,7 @@ async function exportOrganigramWorkbook(employees: Employee[], tab: OrgChartTab)
     employee.companies?.length ? employee.companies.join(", ") : employee.company,
     employee.puestoNombre || employee.position,
     employee.positionScopes?.map((scope) => scope.name).join(", ") || "",
-    employee.currentWorkLocations?.map((location) => `${location.zoneName}: ${location.establishments.join(", ")}`).join(" | ") || "",
+    employee.currentWorkLocations?.map(workLocationLabel).join(" | ") || "",
     employee.internalCategory || employee.receiptCategory,
     employee.directManagers?.length ? employee.directManagers.join(", ") : employee.directManager,
     employee.timeResponsibles?.length ? employee.timeResponsibles.join(", ") : employee.timeResponsible,

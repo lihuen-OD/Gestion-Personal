@@ -3,6 +3,7 @@ import { requireAuth } from "../../middlewares/auth";
 import { requireAnyRole } from "../../middlewares/authorization";
 import { asyncHandler } from "../../shared/http/asyncHandler";
 import { adminRoles } from "../../shared/security/roles";
+import { deletionConfirmationSchema } from "../../shared/deletion/deletionPlan";
 import { validateBody } from "../../shared/validation/validateRequest";
 import { orgStructureController } from "./orgStructure.controller";
 import {
@@ -11,6 +12,8 @@ import {
   createCompanySchema,
   createCostCenterSchema,
   createEstablishmentSchema,
+  createEstablishmentUnitSchema,
+  createProvinceSchema,
   createSectorSchema,
   createZoneSchema,
   updateAreaSchema,
@@ -18,6 +21,8 @@ import {
   updateCompanySchema,
   updateCostCenterSchema,
   updateEstablishmentSchema,
+  updateEstablishmentUnitSchema,
+  updateProvinceSchema,
   updateSectorSchema,
   updateZoneSchema,
 } from "./orgStructure.schemas";
@@ -48,7 +53,15 @@ orgStructureRouter.post("/sectors", requireAnyRole(adminRoles), validateBody(cre
 orgStructureRouter.patch("/sectors/:id", requireAnyRole(adminRoles), validateBody(updateSectorSchema), asyncHandler(orgStructureController.updateSector));
 orgStructureRouter.delete("/sectors/:id", requireAnyRole(adminRoles), asyncHandler(orgStructureController.deleteSector));
 
-// Árbol de Ubicaciones (modelo objetivo): Zona → Establecimiento.
+// Árbol de Ubicaciones: Provincia → Zona → Establecimiento → Unidad.
+orgStructureRouter.post("/provinces", requireAnyRole(adminRoles), validateBody(createProvinceSchema), asyncHandler(orgStructureController.createProvince));
+orgStructureRouter.patch("/provinces/:id", requireAnyRole(adminRoles), validateBody(updateProvinceSchema), asyncHandler(orgStructureController.updateProvince));
+orgStructureRouter.delete("/provinces/:id", requireAnyRole(adminRoles), asyncHandler(orgStructureController.deleteProvince));
+
+orgStructureRouter.post("/establishment-units", requireAnyRole(adminRoles), validateBody(createEstablishmentUnitSchema), asyncHandler(orgStructureController.createEstablishmentUnit));
+orgStructureRouter.patch("/establishment-units/:id", requireAnyRole(adminRoles), validateBody(updateEstablishmentUnitSchema), asyncHandler(orgStructureController.updateEstablishmentUnit));
+orgStructureRouter.delete("/establishment-units/:id", requireAnyRole(adminRoles), asyncHandler(orgStructureController.deleteEstablishmentUnit));
+
 orgStructureRouter.post("/zones", requireAnyRole(adminRoles), validateBody(createZoneSchema), asyncHandler(orgStructureController.createZone));
 orgStructureRouter.patch("/zones/:id", requireAnyRole(adminRoles), validateBody(updateZoneSchema), asyncHandler(orgStructureController.updateZone));
 orgStructureRouter.delete("/zones/:id", requireAnyRole(adminRoles), asyncHandler(orgStructureController.deleteZone));
@@ -56,3 +69,8 @@ orgStructureRouter.delete("/zones/:id", requireAnyRole(adminRoles), asyncHandler
 orgStructureRouter.post("/cost-centers", requireAnyRole(adminRoles), validateBody(createCostCenterSchema), asyncHandler(orgStructureController.createCostCenter));
 orgStructureRouter.patch("/cost-centers/:id", requireAnyRole(adminRoles), validateBody(updateCostCenterSchema), asyncHandler(orgStructureController.updateCostCenter));
 orgStructureRouter.delete("/cost-centers/:id", requireAnyRole(adminRoles), asyncHandler(orgStructureController.deleteCostCenter));
+
+// Eliminación controlada con dependencias (shared/deletion): vista previa y
+// confirmación con la huella del plan. Mismo permiso que altas y ediciones.
+orgStructureRouter.get("/:collection/:id/deletion-preview", requireAnyRole(adminRoles), asyncHandler(orgStructureController.deletionPreview));
+orgStructureRouter.post("/:collection/:id/deletion", requireAnyRole(adminRoles), validateBody(deletionConfirmationSchema), asyncHandler(orgStructureController.executeDeletion));

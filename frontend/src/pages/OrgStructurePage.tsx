@@ -8,6 +8,7 @@ import { Section } from "../components/ui/Section";
 import { StatCard } from "../components/ui/StatCard";
 import { Tabs } from "../components/ui/Tabs";
 import { Button } from "../components/ui/Button";
+import { DeletionPreviewModal } from "../components/shared/DeletionPreviewModal";
 import { StructureTreeView } from "../components/org-structure/StructureTreeView";
 import { StructureNodeDetail } from "../components/org-structure/StructureNodeDetail";
 import { OrgStructureEditor, editorValidationError } from "../components/org-structure/OrgStructureEditor";
@@ -20,7 +21,7 @@ import { useAuth } from "../context/AuthContext";
 import { orgStructureApiService } from "../services/api/orgStructureApiService";
 import { subscribeCacheEvent } from "../services/cache";
 import type { Role } from "../types";
-import type { OrgArea, OrgBusinessUnit, OrgCompany, OrgCostCenter, OrgEstablishment, OrgSector, OrgStructureCatalog, OrgStructureEntity, OrgStructureEntityType, OrgZone } from "../types/orgStructure.types";
+import type { OrgArea, OrgBusinessUnit, OrgCompany, OrgCostCenter, OrgEstablishment, OrgEstablishmentUnit, OrgProvince, OrgSector, OrgStructureCatalog, OrgStructureEntity, OrgStructureEntityType, OrgZone } from "../types/orgStructure.types";
 import { useAsyncAction } from "../utils/useAsyncAction";
 
 type View = "tree" | "table";
@@ -31,15 +32,7 @@ const views: Array<{ key: View; label: string }> = [
   { key: "table", label: "Vista tabla" },
 ];
 
-const emptyCatalog: OrgStructureCatalog = { companies: [], businessUnits: [], sectors: [], areas: [], zones: [], establishments: [], costCenters: [] };
-
-// Tras un DELETE exitoso el registro se quita del catálogo en memoria antes de
-// que llegue el refetch. Es seguro porque el backend sólo borra registros sin
-// dependencias (nada en el catálogo lo referencia).
-function withoutEntity(catalog: OrgStructureCatalog, type: OrgStructureEntityType, id: string): OrgStructureCatalog {
-  const key = catalogListKey[type];
-  return { ...catalog, [key]: (catalog[key] as OrgStructureEntity[]).filter((item) => item.id !== id) };
-}
+const emptyCatalog: OrgStructureCatalog = { companies: [], businessUnits: [], sectors: [], areas: [], provinces: [], zones: [], establishments: [], establishmentUnits: [], costCenters: [] };
 
 const roleLevel = (role: Role) => role.startsWith("Nivel 1") ? 1 : role.startsWith("Nivel 2") ? 2 : 3;
 
@@ -54,8 +47,10 @@ async function persist(type: OrgStructureEntityType, item: OrgStructureEntity, i
   if (type === "BUSINESS_UNIT") return isNew ? api.createBusinessUnit(item as OrgBusinessUnit) : api.updateBusinessUnit(item as OrgBusinessUnit);
   if (type === "SECTOR") return isNew ? api.createSector(item as OrgSector) : api.updateSector(item as OrgSector);
   if (type === "AREA") return isNew ? api.createArea(item as OrgArea) : api.updateArea(item as OrgArea);
+  if (type === "PROVINCE") return isNew ? api.createProvince(item as OrgProvince) : api.updateProvince(item as OrgProvince);
   if (type === "ZONE") return isNew ? api.createZone(item as OrgZone) : api.updateZone(item as OrgZone);
   if (type === "ESTABLISHMENT") return isNew ? api.createEstablishment(item as OrgEstablishment) : api.updateEstablishment(item as OrgEstablishment);
+  if (type === "ESTABLISHMENT_UNIT") return isNew ? api.createEstablishmentUnit(item as OrgEstablishmentUnit) : api.updateEstablishmentUnit(item as OrgEstablishmentUnit);
   return isNew ? api.createCostCenter(item as OrgCostCenter) : api.updateCostCenter(item as OrgCostCenter);
 }
 
@@ -63,7 +58,7 @@ export function OrgStructurePage() {
   const { user } = useAuth();
   const [section, setSection] = useState<OrgSectionKey>("ORGANIZATION");
   const [view, setView] = useState<View>("tree");
-  const [tabByType, setTabByType] = useState<Record<OrgSectionKey, OrgStructureEntityType>>({ ORGANIZATION: "COMPANY", LOCATION: "ZONE", COST_CENTERS: "COST_CENTER" });
+  const [tabByType, setTabByType] = useState<Record<OrgSectionKey, OrgStructureEntityType>>({ ORGANIZATION: "COMPANY", LOCATION: "PROVINCE", COST_CENTERS: "COST_CENTER" });
   const [editing, setEditing] = useState<Editing | null>(null);
   const [refresh, setRefresh] = useState(0);
   const [notice, setNotice] = useState("");
@@ -101,10 +96,11 @@ export function OrgStructurePage() {
   const treeKind: OrgTreeKind | null = section === "COST_CENTERS" ? null : section;
   const selectedNode = useMemo(() => (treeKind ? findNode(trees[treeKind], selectedKey[treeKind]) : undefined), [trees, treeKind, selectedKey]);
   const pendingReload = catalog.sectors.filter((item) => item.pendingReload).length + catalog.areas.filter((item) => item.pendingReload).length + catalog.establishments.filter((item) => item.pendingReload).length;
+  const zonesWithoutProvince = catalog.zones.filter((zone) => !zone.provinceId).length;
   const counts = [
     { label: "Empresas", value: catalog.companies.length, detail: `${catalog.businessUnits.length} unidades de negocio` },
     { label: "Sectores y áreas", value: catalog.sectors.filter((item) => !item.pendingReload).length + catalog.areas.filter((item) => !item.pendingReload).length, detail: "Estructura nueva" },
-    { label: "Zonas", value: catalog.zones.length, detail: `${catalog.establishments.filter((item) => !item.pendingReload).length} establecimientos nuevos` },
+    { label: "Establecimientos", value: catalog.establishments.filter((item) => !item.pendingReload).length, detail: `${(catalog.provinces ?? []).length} provincias · ${catalog.zones.length} zonas · ${(catalog.establishmentUnits ?? []).length} unidades` },
     { label: "Pendientes de recarga", value: pendingReload, detail: "Estructura anterior" },
   ];
 
@@ -123,7 +119,7 @@ export function OrgStructurePage() {
 
   const { isRunning: isSaving, run: save } = useAsyncAction(async () => {
     if (!editing) return;
-    const invalid = editorValidationError(editing.type, editing.item);
+    const invalid = editorValidationError(editing.type, editing.item, editing.isNew);
     if (invalid) return setNotice(invalid);
     if (!apiCatalog) return setNotice("No se puede guardar sin la estructura cargada.");
     try {
@@ -151,32 +147,28 @@ export function OrgStructurePage() {
     }
   });
 
-  // Eliminar (árbol y tabla comparten este flujo): confirmación explícita y
-  // borrado definitivo sólo si el backend no encuentra dependencias.
-  const { isRunning: isDeleting, run: removeEntity } = useAsyncAction(async (type: OrgStructureEntityType, item: OrgStructureEntity) => {
-    const confirmed = await confirmAction("Esta acción elimina el registro de forma permanente y no se puede deshacer. Si sólo ya no debe utilizarse, inactivalo.", {
-      title: `¿Eliminar definitivamente “${item.name}”?`,
-      confirmLabel: "Eliminar definitivamente",
-      tone: "danger",
-    });
-    if (!confirmed) return;
-    try {
-      await orgStructureApiService.deleteEntity(type, item.id);
-      setApiCatalog((current) => (current ? withoutEntity(current, type, item.id) : current));
-      setSelectedKey((current) => ({ ORGANIZATION: findNode(trees.ORGANIZATION, current.ORGANIZATION)?.id === item.id ? null : current.ORGANIZATION, LOCATION: findNode(trees.LOCATION, current.LOCATION)?.id === item.id ? null : current.LOCATION }));
-      setEditing((current) => (current?.item.id === item.id ? null : current));
-      setRefresh((value) => value + 1);
-      flashNotice(deletedMessages[type]);
-    } catch (error) {
-      if (!shownGlobally(error)) setNotice(getUserErrorMessage(error, "No se pudo eliminar el registro. Intentá nuevamente."));
-    }
-  });
+  // Eliminar (árbol y tabla comparten este flujo): eliminación controlada con
+  // vista previa calculada por el backend (hijos, historia, personas y
+  // vínculos) y confirmación revalidada al ejecutar.
+  const [deleting, setDeleting] = useState<{ type: OrgStructureEntityType; item: OrgStructureEntity } | null>(null);
+  const removeEntity = useCallback((type: OrgStructureEntityType, item: OrgStructureEntity) => setDeleting({ type, item }), []);
+  const finishDeletion = async () => {
+    const current = deleting;
+    setDeleting(null);
+    if (!current) return;
+    await orgStructureApiService.afterDeletion();
+    // Con la cascada cambian también hijos y vínculos: se recarga el catálogo completo.
+    setSelectedKey((selected) => ({ ORGANIZATION: findNode(trees.ORGANIZATION, selected.ORGANIZATION)?.id === current.item.id ? null : selected.ORGANIZATION, LOCATION: findNode(trees.LOCATION, selected.LOCATION)?.id === current.item.id ? null : selected.LOCATION }));
+    setEditing((editingNow) => (editingNow?.item.id === current.item.id ? null : editingNow));
+    setRefresh((value) => value + 1);
+    flashNotice(deletedMessages[current.type]);
+  };
 
   const editNode = useCallback((node: OrgTreeNode) => {
     if (node.entity && node.type !== "GROUP") openEditor(node.type, node.entity, false);
   }, [openEditor]);
   const deleteNode = useCallback((node: OrgTreeNode) => {
-    if (node.entity && node.type !== "GROUP") void removeEntity(node.type, node.entity);
+    if (node.entity && node.type !== "GROUP") removeEntity(node.type, node.entity);
   }, [removeEntity]);
   const addChild = (node: OrgTreeNode, childType: OrgStructureEntityType) => openEditor(childType, blankEntity(childType, catalog, node.id), true);
   const selectNode = useCallback((node: OrgTreeNode) => setSelectedKey((current) => (treeKind ? { ...current, [treeKind]: node.key } : current)), [treeKind]);
@@ -185,7 +177,7 @@ export function OrgStructurePage() {
 
   const sectionConfig = orgSections.find((item) => item.key === section)!;
   const tab = tabByType[section];
-  const rootType: OrgStructureEntityType = section === "ORGANIZATION" ? "COMPANY" : section === "LOCATION" ? "ZONE" : "COST_CENTER";
+  const rootType: OrgStructureEntityType = section === "ORGANIZATION" ? "COMPANY" : section === "LOCATION" ? "PROVINCE" : "COST_CENTER";
   const effectiveView: View = section === "COST_CENTERS" ? "table" : view;
   const activeRows = itemsOf(catalog, tab);
   const newType = effectiveView === "tree" ? rootType : tab;
@@ -199,6 +191,7 @@ export function OrgStructurePage() {
     />
     {notice && <div className="toast">{notice}</div>}
     {apiWarning && <div className="info-note compact"><b>Sin conexión con la estructura</b><p>{apiWarning}</p></div>}
+    {zonesWithoutProvince > 0 && <div className="info-note compact"><b>Zonas sin provincia</b><p>{zonesWithoutProvince} {zonesWithoutProvince === 1 ? "zona se cargó" : "zonas se cargaron"} antes de las provincias y figuran como <b>pendientes de recarga</b>. Siguen en uso; asignales su provincia desde “Editar”.</p></div>}
     {pendingReload > 0 && <div className="info-note compact"><b>Estructura en transición</b><p>{pendingReload} registros de la estructura anterior figuran como <b>pendientes de recarga</b>. No reciben elementos nuevos ni se reubican: cargá la estructura nueva y la limpieza controlada los eliminará más adelante.</p></div>}
     <div className="stat-grid org-structure-summary">{counts.map((item) => <StatCard key={item.label} label={item.label} value={item.value} detail={item.detail} />)}</div>
 
@@ -218,9 +211,9 @@ export function OrgStructurePage() {
               selectedKey={selectedKey[treeKind]}
               onSelect={selectNode}
               label={treeKind === "ORGANIZATION" ? "Organización" : "Ubicaciones"}
-              emptyText={treeKind === "ORGANIZATION" ? "Todavía no hay empresas cargadas." : "Todavía no hay zonas cargadas. Creá una zona para empezar a cargar establecimientos."}
+              emptyText={treeKind === "ORGANIZATION" ? "Todavía no hay empresas cargadas." : "Todavía no hay provincias cargadas. Creá una provincia para empezar a cargar zonas y establecimientos."}
             />
-            <StructureNodeDetail kind={treeKind} node={selectedNode} onEdit={editNode} onAddChild={addChild} onToggleStatus={toggleNodeStatus} onDelete={deleteNode} busy={isTogglingStatus || isDeleting} />
+            <StructureNodeDetail kind={treeKind} node={selectedNode} onEdit={editNode} onAddChild={addChild} onToggleStatus={toggleNodeStatus} onDelete={deleteNode} busy={isTogglingStatus || Boolean(deleting)} />
           </div>
         )}
       </Section>
@@ -233,7 +226,7 @@ export function OrgStructurePage() {
           action={treeKind ? <Tabs className="view-switch" tabs={views} active={view} onChange={(key) => setView(key as View)} /> : undefined}
         >
           <DataTable status={isLoadingApi ? "loading" : activeRows.length === 0 ? "empty" : "ready"} minWidth={940} emptyText="No hay registros cargados para esta categoría.">
-            <OrgStructureTable key={tab} type={tab} catalog={catalog} items={activeRows} onEdit={(item) => openEditor(tab, item, false)} onDelete={(item) => void removeEntity(tab, item)} />
+            <OrgStructureTable key={tab} type={tab} catalog={catalog} items={activeRows} onEdit={(item) => openEditor(tab, item, false)} onDelete={(item) => removeEntity(tab, item)} />
           </DataTable>
         </Section>
       </>
@@ -249,6 +242,15 @@ export function OrgStructurePage() {
           <OrgStructureEditor type={editing.type} item={editing.item} catalog={catalog} isNew={editing.isNew} onChange={(item) => setEditing((current) => (current ? { ...current, item } : current))} />
         </Section>
       </div>
+    )}
+
+    {deleting && (
+      <DeletionPreviewModal
+        basePath={orgStructureApiService.deletionPath(deleting.type, deleting.item.id)}
+        title={`Eliminar ${orgNodeTypeLabels[deleting.type].toLowerCase()} “${deleting.item.name}”`}
+        close={() => setDeleting(null)}
+        onDeleted={() => void finishDeletion()}
+      />
     )}
   </>;
 }

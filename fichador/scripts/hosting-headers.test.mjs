@@ -151,7 +151,14 @@ describe("buildApiUrl — el API del header es el del bundle", () => {
   it("toma VITE_API_URL del .env del modo, como Vite", () => {
     root = mkdtempSync(join(tmpdir(), "fichador-env-"));
     writeFileSync(join(root, ".env.production"), "VITE_API_URL=https://api-env.example.com/api\n");
-    expect(buildApiUrl("production", root)).toBe("https://api-env.example.com/api");
+    const inheritedApiUrl = process.env.VITE_API_URL;
+    delete process.env.VITE_API_URL;
+    try {
+      expect(buildApiUrl("production", root)).toBe("https://api-env.example.com/api");
+    } finally {
+      if (inheritedApiUrl === undefined) delete process.env.VITE_API_URL;
+      else process.env.VITE_API_URL = inheritedApiUrl;
+    }
   });
 
   it("process.env gana sobre el .env (variables del hosting)", () => {

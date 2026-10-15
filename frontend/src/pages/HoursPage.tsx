@@ -1236,6 +1236,8 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
             <label>
               Observación obligatoria
               <textarea
+                spellCheck
+                lang="es-AR"
                 value={reviewReason}
                 onChange={(event) => setReviewReason(event.target.value)}
                 placeholder="Indicá el motivo para dejar trazabilidad"
@@ -1283,6 +1285,8 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
             <label>
               Observación obligatoria
               <textarea
+                spellCheck
+                lang="es-AR"
                 value={reviewReason}
                 onChange={(event) => setReviewReason(event.target.value)}
                 placeholder="Indicá el motivo para dejar trazabilidad"
@@ -1322,6 +1326,8 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
             <label>
               Observación obligatoria
               <textarea
+                spellCheck
+                lang="es-AR"
                 value={reviewReason}
                 onChange={(event) => setReviewReason(event.target.value)}
                 placeholder="Indicá el motivo para dejar trazabilidad"

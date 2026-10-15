@@ -36,7 +36,7 @@ vi.mock("../../shared/prisma/client", () => ({
     // de notificaciones "no asistió" (entityType AttendanceInactivityIncident)
     // con el mismo patrón ya usado para ShiftAlert/WorkShift/Employee.
     attendanceInactivityIncident: { findMany: vi.fn() },
-    user: { findMany: vi.fn().mockResolvedValue([]) },
+    user: { findMany: vi.fn().mockResolvedValue([]), findUnique: vi.fn().mockResolvedValue({ role: "NIVEL_1_RRHH", status: "ACTIVO" }) },
     // D-5: advisory locks del closurePeriodGuard dentro de las transacciones.
     $executeRaw: vi.fn().mockResolvedValue(0),
     // A8 §12.4: bloqueo FOR SHARE de destinos de reglas dentro de la transacción.
@@ -46,14 +46,14 @@ vi.mock("../../shared/prisma/client", () => ({
 }));
 
 vi.mock("../audit/audit.service", () => ({
-  auditService: { register: vi.fn().mockResolvedValue(null) },
+  auditService: { register: vi.fn().mockResolvedValue(null), registerWithin: vi.fn().mockResolvedValue(null) },
 }));
 
 // La reinterpretación de la historia tiene su propio test
 // (specialHourReinterpretation.test.ts); acá sólo importa que el CRUD de
 // reglas la invoque dentro de la misma transacción.
 vi.mock("./specialHourReinterpretation", () => ({
-  reinterpretSpecialHours: vi.fn().mockResolvedValue({ timeEntries: 0, breakdowns: 0, segments: 0, employees: 0, periods: [], rebuiltClosures: [], protectedPeriods: [] }),
+  reinterpretSpecialHours: vi.fn().mockResolvedValue({ timeEntries: 0, breakdowns: 0, segments: 0, employees: 0, periods: [], rebuiltClosures: [], protectedPeriods: [], changes: { timeEntries: [], breakdowns: [], segments: [] } }),
 }));
 
 // Fila completa de DoubleHourRule (las columnas son NOT NULL en schema.prisma).
@@ -417,7 +417,7 @@ describe("workforceService — FK reales sobre ShiftTemplate/DoubleHourRule", ()
       id: "template-1",
       code: "T-1",
       name: "Turno",
-      _count: { workShifts: 0, assignments: 1 },
+      _count: { workShifts: 0, assignments: 1, holidayWorkAssignments: 0 },
     });
 
     await expect(workforceService.removeShiftTemplate("template-1")).rejects.toMatchObject({
@@ -433,7 +433,7 @@ describe("workforceService — FK reales sobre ShiftTemplate/DoubleHourRule", ()
       id: "template-1",
       code: "T-1",
       name: "Turno",
-      _count: { workShifts: 2, assignments: 0 },
+      _count: { workShifts: 2, assignments: 0, holidayWorkAssignments: 0 },
     });
     mockedPrisma.shiftTemplate.update.mockResolvedValue({ id: "template-1", code: "T-1", status: "INACTIVO" });
 
@@ -441,12 +441,22 @@ describe("workforceService — FK reales sobre ShiftTemplate/DoubleHourRule", ()
     expect(mockedPrisma.shiftTemplate.delete).not.toHaveBeenCalled();
   });
 
+  it("una convocatoria de feriado también es historia: inactiva en vez de dejar su referencia en NULL, y audita dentro de la transacción", async () => {
+    mockedPrisma.shiftTemplate.findUnique.mockResolvedValue({ id: "template-1", code: "T-1", name: "Turno", _count: { workShifts: 0, assignments: 0, holidayWorkAssignments: 1 } });
+    mockedPrisma.shiftTemplate.update.mockResolvedValue({ id: "template-1", code: "T-1", status: "INACTIVO" });
+
+    await expect(workforceService.removeShiftTemplate("template-1")).resolves.toMatchObject({ mode: "INACTIVATED" });
+    expect(mockedPrisma.shiftTemplate.delete).not.toHaveBeenCalled();
+    expect(mockedPrisma.$transaction).toHaveBeenCalledWith(expect.any(Function), { isolationLevel: "Serializable" });
+    expect(auditService.registerWithin).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ action: "DEACTIVATE", entity: "ShiftTemplate" }));
+  });
+
   it("borra un turno sin asignaciones ni jornadas", async () => {
     mockedPrisma.shiftTemplate.findUnique.mockResolvedValue({
       id: "template-1",
       code: "T-1",
       name: "Turno",
-      _count: { workShifts: 0, assignments: 0 },
+      _count: { workShifts: 0, assignments: 0, holidayWorkAssignments: 0 },
     });
     mockedPrisma.shiftTemplate.delete.mockResolvedValue({ id: "template-1" });
 
@@ -456,7 +466,9 @@ describe("workforceService — FK reales sobre ShiftTemplate/DoubleHourRule", ()
 
   // Eliminar = borrado físico SIEMPRE, sin importar vigencia ni estado. La
   // política anterior (regla ya iniciada → se inactivaba) se quitó: Inactivar
-  // es el botón Power (PATCH status), no el tacho.
+  // es el botón Power (PATCH status), no el tacho. Dentro de la transacción la
+  // regla activa pasa a INACTIVO sólo para que el motor reinterprete sin ella;
+  // termina borrada en la misma transacción.
   it.each([
     ["A — futura", { fromDate: new Date("2026-12-01T00:00:00.000Z"), toDate: null, status: "ACTIVO" }],
     ["B — activa y ya iniciada", { fromDate: new Date("2026-01-01T00:00:00.000Z"), toDate: null, status: "ACTIVO" }],
@@ -474,8 +486,9 @@ describe("workforceService — FK reales sobre ShiftTemplate/DoubleHourRule", ()
 
     expect(mockedPrisma.specialHourRuleApplication.deleteMany).toHaveBeenCalledWith({ where: { doubleHourRuleId: "rule-1" } });
     expect(mockedPrisma.doubleHourRule.delete).toHaveBeenCalledWith({ where: { id: "rule-1" } });
-    expect(mockedPrisma.doubleHourRule.update).not.toHaveBeenCalled();
-    expect(auditService.register).toHaveBeenCalledWith(expect.objectContaining({ action: "DELETE", entity: "DoubleHourRule", entityId: "rule-1" }));
+    if (vigency.status === "ACTIVO") expect(mockedPrisma.doubleHourRule.update).toHaveBeenCalledWith({ where: { id: "rule-1" }, data: { status: "INACTIVO" } });
+    else expect(mockedPrisma.doubleHourRule.update).not.toHaveBeenCalled();
+    expect(auditService.registerWithin).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ action: "DELETE", entity: "DoubleHourRule", entityId: "rule-1" }));
   });
 
   it("regla inexistente → 404, sin borrar ni auditar", async () => {
@@ -1223,6 +1236,7 @@ describe("workforceService — reglas de Hora Especial reinterpretan la historia
     timeEntries: 23, breakdowns: 0, segments: 23, employees: 18, periods: ["2026-10"],
     rebuiltClosures: [{ id: "closure-1", employeeId: "016dc01c-655d-4474-8319-67f1b8108c93", period: "2026-10", before: {}, after: {} }],
     protectedPeriods: [],
+    changes: { timeEntries: [], breakdowns: [], segments: [] },
     ...overrides,
   });
   const feriadoRow = (overrides: Record<string, unknown> = {}) => ruleRow({
@@ -1280,6 +1294,7 @@ describe("workforceService — reglas de Hora Especial reinterpretan la historia
     mockedPrisma.doubleHourRule.findUnique.mockResolvedValue(feriadoRow({ multiplier: 2, employees: [] }));
     mockedPrisma.employee.findMany.mockResolvedValue([{ id: "016dc01c-655d-4474-8319-67f1b8108c93", legajo: "30", firstName: "Juan", lastName: "Pérez" }]);
     const order: string[] = [];
+    mockedPrisma.doubleHourRule.update.mockImplementationOnce(async () => { order.push("inactivación"); return {}; });
     mockedPrisma.specialHourRuleApplication.deleteMany.mockImplementationOnce(async () => { order.push("traza"); return { count: 23 }; });
     mockedPrisma.doubleHourRule.delete.mockImplementationOnce(async () => { order.push("regla"); return { id: "rule-feriado" }; });
     vi.mocked(reinterpretSpecialHours).mockImplementationOnce(async () => { order.push("reinterpretación"); return reinterpretation() as never; });
@@ -1290,17 +1305,22 @@ describe("workforceService — reglas de Hora Especial reinterpretan la historia
     }
 
     expect(mockedPrisma.$transaction).toHaveBeenCalledWith(expect.any(Function), { timeout: 30_000 });
-    expect(order).toEqual(["reinterpretación", "traza", "regla"]);
+    // Bug corregido: la regla se inactiva ANTES de reinterpretar (el motor sólo
+    // lee reglas ACTIVO); antes la reinterpretación la seguía viendo vigente.
+    expect(order).toEqual(["inactivación", "reinterpretación", "traza", "regla"]);
     expect(reinterpretSpecialHours).toHaveBeenCalledWith(mockedPrisma, { before: expect.objectContaining({ id: "rule-feriado" }), after: null }, { doubleHourRuleId: "rule-feriado", doubleHourRuleName: "Día de la Raza" });
-    expect(auditDescriptions()).toEqual([
+    // Auditoría dentro de la transacción (registerWithin), no después del commit.
+    const withinDescriptions = (auditService.registerWithin as Mock).mock.calls.map(([, input]) => input.description as string);
+    expect(withinDescriptions).toEqual([
       "Se eliminó definitivamente el feriado Día de la Raza (03/10/2026, x2). Se recalcularon 23 carga(s) de 18 legajo(s) y 1 cierre(s) mensual(es).",
-      "Se recalculó el snapshot del cierre de octubre de 2026 de Pérez, Juan · Legajo 30 por cambio del feriado Día de la Raza. El estado del cierre no cambia.",
+      "Se recalculó el snapshot del cierre de octubre de 2026 de Pérez, Juan · Legajo 30 por eliminación del feriado Día de la Raza. El estado del cierre no cambia.",
     ]);
-    const ruleAudit = (auditService.register as Mock).mock.calls[0]![0];
+    expect(auditService.register).not.toHaveBeenCalled();
+    const ruleAudit = (auditService.registerWithin as Mock).mock.calls[0]![1];
     expect(ruleAudit).toMatchObject({ action: "DELETE", entity: "DoubleHourRule", entityId: "rule-feriado" });
     expect(ruleAudit.before).toMatchObject({ id: "rule-feriado", name: "Día de la Raza", kind: "FERIADO", multiplier: 2 });
     expect(ruleAudit.after).toEqual({ reinterpretation: { timeEntries: 23, breakdowns: 0, segments: 23, employees: 18, periods: ["2026-10"], protectedPeriods: [], recalculatedClosureIds: ["closure-1"] } });
-    for (const description of auditDescriptions()) expect(description).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-/);
+    for (const description of withinDescriptions) expect(description).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-/);
   });
 
   it("J — si la reinterpretación falla al eliminar, el error sale de la transacción (la regla y su traza se revierten) y no se audita", async () => {
@@ -1327,6 +1347,7 @@ describe("workforceService — reglas de Hora Especial reinterpretan la historia
     expect(mockedPrisma.specialHourRuleApplication.deleteMany).not.toHaveBeenCalled();
     expect(mockedPrisma.doubleHourRule.delete).not.toHaveBeenCalled();
     expect(auditService.register).not.toHaveBeenCalled();
+    expect(auditService.registerWithin).not.toHaveBeenCalled();
   });
 
   it("D-5 — tampoco elimina la regla si un período protegido no se puede evaluar por falta de historia laboral", async () => {
@@ -1403,5 +1424,128 @@ describe("workforceService — reglas de horas especiales y sectores del modelo 
     mockedPrisma.sector.findUnique.mockResolvedValueOnce(null);
     await expect(workforceService.createDoubleRule({ name: "X", recurrenceType: "SEMANAL", weekdays: [0], sectorId: "missing", employeeIds: [] }, user))
       .rejects.toMatchObject({ statusCode: 400, code: "DOUBLE_HOUR_RULE_SECTOR_INVALID" });
+  });
+});
+
+describe("eliminación controlada de reglas (vista previa y confirmación)", () => {
+  const rule = () => ruleRow({ id: "rule-x3", name: "Prueba x3", recurrenceType: "RANGO", fromDate: new Date("2026-10-01T00:00:00.000Z"), toDate: new Date("2026-10-31T00:00:00.000Z"), multiplier: 3, status: "ACTIVO", employees: [], dates: [] });
+  const changed = { timeEntries: 2, breakdowns: 0, segments: 2, employees: 1, periods: ["2026-10"], rebuiltClosures: [], protectedPeriods: [], changes: { timeEntries: [{ id: "te-1", employeeId: "emp-1", date: "2026-10-05", from: 3, to: 1 }], breakdowns: [], segments: [{ id: "seg-1", fromIsSpecial: true, toIsSpecial: false, fromTrace: "", toTrace: "" }] } };
+
+  beforeEach(() => {
+    mockedPrisma.doubleHourRule.findUnique.mockResolvedValue(rule());
+    mockedPrisma.employee.findMany.mockResolvedValue([{ id: "emp-1", legajo: "31", firstName: "Juan", lastName: "Pérez" }]);
+  });
+
+  it("la vista previa reinterpreta sin la regla en una transacción que se revierte y no borra nada", async () => {
+    vi.mocked(reinterpretSpecialHours).mockResolvedValueOnce(changed as never);
+    const preview = await workforceService.previewDoubleRuleDeletion("rule-x3");
+
+    expect(mockedPrisma.doubleHourRule.update).toHaveBeenCalledWith({ where: { id: "rule-x3" }, data: { status: "INACTIVO" } });
+    expect(mockedPrisma.doubleHourRule.delete).not.toHaveBeenCalled();
+    expect(preview.groups.map((group) => [group.key, group.count])).toEqual([["doubleHourRule.delete", 1], ["hours.recalculate", 1], ["hours.rows", 2]]);
+    expect(preview.requiresTypedConfirmation).toBe(true);
+  });
+
+  it("un período protegido alcanzado bloquea la confirmación (409 DELETION_BLOCKED) sin borrar", async () => {
+    vi.mocked(reinterpretSpecialHours).mockResolvedValue({ ...changed, protectedPeriods: [{ employeeId: "emp-1", period: "2026-09", status: "APROBADO", timeEntries: 1, breakdowns: 0, segments: 0, missingHistory: 0 }] } as never);
+    const preview = await workforceService.previewDoubleRuleDeletion("rule-x3");
+    expect(preview.blockers.map((blocker) => blocker.code)).toEqual(["DOUBLE_HOUR_RULE_PROTECTED_HISTORY"]);
+
+    await expect(workforceService.executeDoubleRuleDeletion("rule-x3", { token: preview.token, confirmationText: "Prueba x3" }, { userId: "u1" })).rejects.toMatchObject({ statusCode: 409, code: "DELETION_BLOCKED" });
+    expect(mockedPrisma.doubleHourRule.delete).not.toHaveBeenCalled();
+    vi.mocked(reinterpretSpecialHours).mockReset();
+  });
+
+  it("confirmar con la huella vigente borra la regla y audita dentro de la transacción; con otra huella, 409 sin borrar", async () => {
+    vi.mocked(reinterpretSpecialHours).mockResolvedValue(changed as never);
+    const preview = await workforceService.previewDoubleRuleDeletion("rule-x3");
+
+    await expect(workforceService.executeDoubleRuleDeletion("rule-x3", { token: "0".repeat(64), confirmationText: "Prueba x3" }, { userId: "u1" })).rejects.toMatchObject({ statusCode: 409, code: "DELETION_PREVIEW_CHANGED" });
+    expect(mockedPrisma.doubleHourRule.delete).not.toHaveBeenCalled();
+
+    await workforceService.executeDoubleRuleDeletion("rule-x3", { token: preview.token, confirmationText: "Prueba x3" }, { userId: "u1" });
+    expect(mockedPrisma.doubleHourRule.delete).toHaveBeenCalledWith({ where: { id: "rule-x3" } });
+    expect(auditService.registerWithin).toHaveBeenCalledWith(mockedPrisma, expect.objectContaining({ action: "DELETE", entity: "DoubleHourRule", entityId: "rule-x3" }));
+    vi.mocked(reinterpretSpecialHours).mockReset();
+  });
+
+  it("rechaza la confirmación si los mismos registros producirían otros multiplicadores", async () => {
+    vi.mocked(reinterpretSpecialHours)
+      .mockResolvedValueOnce(changed as never)
+      .mockResolvedValueOnce({ ...changed, changes: { ...changed.changes, timeEntries: [{ ...changed.changes.timeEntries[0]!, to: 2 }] } } as never);
+    const preview = await workforceService.previewDoubleRuleDeletion("rule-x3");
+
+    await expect(workforceService.executeDoubleRuleDeletion("rule-x3", { token: preview.token, confirmationText: "Prueba x3" }, { userId: "u1" }))
+      .rejects.toMatchObject({ statusCode: 409, code: "DELETION_PREVIEW_CHANGED" });
+    expect(mockedPrisma.doubleHourRule.delete).not.toHaveBeenCalled();
+  });
+
+  it("ignora sólo el instante generado al reconstruir el mismo cierre", async () => {
+    const rebuilt = (at: string) => ({
+      id: "closure-1", employeeId: "emp-1", period: "2026-10",
+      before: { accounting: { totalWorkedMinutes: 480 } },
+      after: { accounting: { totalWorkedMinutes: 480, settlement: { totalMinutes: 480 } }, recalculation: { reason: "SPECIAL_HOUR_RULE_CHANGED", doubleHourRuleId: "rule-x3", doubleHourRuleName: "Prueba x3", at } },
+    });
+    vi.mocked(reinterpretSpecialHours)
+      .mockResolvedValueOnce({ ...changed, rebuiltClosures: [rebuilt("2026-10-13T10:00:00.000Z")] } as never)
+      .mockResolvedValueOnce({ ...changed, rebuiltClosures: [rebuilt("2026-10-13T10:00:01.000Z")] } as never);
+
+    const preview = await workforceService.previewDoubleRuleDeletion("rule-x3");
+    await workforceService.executeDoubleRuleDeletion("rule-x3", { token: preview.token, confirmationText: "Prueba x3" }, { userId: "u1" });
+
+    expect(mockedPrisma.doubleHourRule.delete).toHaveBeenCalledWith({ where: { id: "rule-x3" } });
+    expect(auditService.registerWithin).toHaveBeenCalledWith(mockedPrisma, expect.objectContaining({ entity: "MonthlyTimeClosure", entityId: "closure-1" }));
+  });
+
+  it("conserva en la huella el snapshot anterior y el resultado contable reconstruido", async () => {
+    const rebuilt = (beforeMinutes: number, afterMinutes: number, at: string) => ({
+      id: "closure-1", employeeId: "emp-1", period: "2026-10",
+      before: { accounting: { totalWorkedMinutes: beforeMinutes } },
+      after: { accounting: { totalWorkedMinutes: afterMinutes }, recalculation: { reason: "SPECIAL_HOUR_RULE_CHANGED", doubleHourRuleId: "rule-x3", doubleHourRuleName: "Prueba x3", at } },
+    });
+    vi.mocked(reinterpretSpecialHours)
+      .mockResolvedValueOnce({ ...changed, rebuiltClosures: [rebuilt(480, 480, "2026-10-13T10:00:00.000Z")] } as never)
+      .mockResolvedValueOnce({ ...changed, rebuiltClosures: [rebuilt(420, 450, "2026-10-13T10:00:01.000Z")] } as never);
+
+    const preview = await workforceService.previewDoubleRuleDeletion("rule-x3");
+    await expect(workforceService.executeDoubleRuleDeletion("rule-x3", { token: preview.token, confirmationText: "Prueba x3" }, { userId: "u1" }))
+      .rejects.toMatchObject({ code: "DELETION_PREVIEW_CHANGED" });
+
+    expect(mockedPrisma.doubleHourRule.delete).not.toHaveBeenCalled();
+    expect(auditService.registerWithin).not.toHaveBeenCalled();
+  });
+
+  it("sin horas, un cambio de multiplicador, prioridad o alcance invalida la configuración confirmada", async () => {
+    const original = ruleRow({ id: "rule-x3", name: "Prueba x3", multiplier: 2, priority: 1, companyId: "company-1", sectorId: null, costCenterId: null, positionId: null });
+    const changedConfig = { ...original, multiplier: 3, priority: 2, companyId: null, sectorId: "sector-1" };
+    mockedPrisma.doubleHourRule.findUnique
+      .mockResolvedValueOnce(original)
+      .mockResolvedValueOnce(changedConfig)
+      .mockResolvedValue(changedConfig);
+    vi.mocked(reinterpretSpecialHours).mockResolvedValue({ timeEntries: 0, breakdowns: 0, segments: 0, employees: 0, periods: [], rebuiltClosures: [], protectedPeriods: [], changes: { timeEntries: [], breakdowns: [], segments: [] } } as never);
+
+    const first = await workforceService.previewDoubleRuleDeletion("rule-x3");
+    await expect(workforceService.executeDoubleRuleDeletion("rule-x3", { token: first.token, confirmationText: "Prueba x3" }, { userId: "u1" }))
+      .rejects.toMatchObject({ code: "DELETION_PREVIEW_CHANGED" });
+    expect(mockedPrisma.doubleHourRule.delete).not.toHaveBeenCalled();
+    expect(auditService.registerWithin).not.toHaveBeenCalled();
+
+    const second = await workforceService.previewDoubleRuleDeletion("rule-x3");
+    await workforceService.executeDoubleRuleDeletion("rule-x3", { token: second.token, confirmationText: "Prueba x3" }, { userId: "u1" });
+    expect(mockedPrisma.doubleHourRule.delete).toHaveBeenCalledWith({ where: { id: "rule-x3" } });
+  });
+
+  it("reordenar empleados y fechas equivalentes no cambia la huella", async () => {
+    const employeeA = { ruleId: "rule-x3", employeeId: "emp-a" };
+    const employeeB = { ruleId: "rule-x3", employeeId: "emp-b" };
+    const dateA = { id: "date-a", ruleId: "rule-x3", date: new Date("2026-10-01"), isActive: true, createdAt: new Date("2026-09-01") };
+    const dateB = { id: "date-b", ruleId: "rule-x3", date: new Date("2026-10-02"), isActive: true, createdAt: new Date("2026-09-01") };
+    mockedPrisma.doubleHourRule.findUnique
+      .mockResolvedValueOnce(ruleRow({ id: "rule-x3", name: "Prueba x3", employees: [employeeA, employeeB], dates: [dateA, dateB] }))
+      .mockResolvedValueOnce(ruleRow({ id: "rule-x3", name: "Prueba x3", employees: [employeeB, employeeA], dates: [dateB, dateA] }));
+
+    const first = await workforceService.previewDoubleRuleDeletion("rule-x3");
+    const second = await workforceService.previewDoubleRuleDeletion("rule-x3");
+    expect(second.token).toBe(first.token);
   });
 });

@@ -7,8 +7,8 @@ import { clockDeviceRequest } from "./clockDeviceSession";
 //
 // F8: única fuente de rutas del fichador, en el namespace del dispositivo
 // `/api/clock/*` (las fichadas quedan KIOSK). El alias legacy
-// `/api/time-entries/clock/*` sigue vivo en el backend hasta F11, pero la
-// PWA ya no lo usa ni cae en él como fallback.
+// `/api/time-entries/clock/*` se retiró en F11 y responde 404; la PWA no lo usa
+// ni cae en él como fallback.
 export const clockEndpoints = {
   employees: "/clock/employees",
   status: "/clock/status",

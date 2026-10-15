@@ -331,6 +331,9 @@ export const workforceApiService = {
     await invalidateDoubleHourRuleDependentCaches("double hour rule removed");
     return result;
   },
+  async afterDoubleHourRuleDeletion() {
+    await invalidateDoubleHourRuleDependentCaches("double hour rule deleted");
+  },
   // Etapa 12B: `kind` opcional — sin pasarlo, comportamiento idéntico al de
   // antes de esta etapa (sin filtro). Pensado para el futuro filtro de
   // asignaciones de feriado de Turnos (kind="FERIADO"), no usado todavía por

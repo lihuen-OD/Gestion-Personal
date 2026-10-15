@@ -22,6 +22,7 @@ vi.mock("./employees.repository", () => ({
     findPositionForAssignmentWithin: vi.fn(),
     findArchivedCompanyNames: vi.fn().mockResolvedValue([]),
     findArchivedCompanyNamesWithin: vi.fn().mockResolvedValue([]),
+    findCostCenterForAssignment: vi.fn().mockResolvedValue({ name: "CC", archivedAt: null }),
     update: vi.fn(),
     create: vi.fn(),
     transaction: vi.fn(),
@@ -162,5 +163,42 @@ describe("employeesService.create — historia inicial", () => {
       vi.useRealTimers();
     }
     expect(history.openEmployeeHistoryWithin).toHaveBeenCalledWith(tx, expect.objectContaining({ effectiveFrom: "2026-10-08" }));
+  });
+});
+
+describe("employeesService.detachLaborReferencesWithin — eliminación controlada", () => {
+  const context = { effectiveFrom: "2026-10-13", reason: "Eliminación del puesto “Administrativo”", audit: { userId: "u1" } };
+
+  it("desvincula el puesto desde hoy con historia, historial visible y auditoría en la transacción recibida", async () => {
+    const result = await employeesService.detachLaborReferencesWithin(tx as never, "emp-1", { positionId: "pos-a" }, context);
+
+    expect(repo.update).toHaveBeenCalledWith("emp-1", { positionId: null }, tx);
+    expect(history.recordEmployeeChangesWithin).toHaveBeenCalledWith(tx, { employeeId: "emp-1", effectiveFrom: "2026-10-13", reason: context.reason, createdByUserId: "u1", changes: { positionId: null } });
+    expect(repo.createFieldHistoryWithin).toHaveBeenCalledWith(tx, "emp-1", { field: "positionId", fieldLabel: "Puesto", oldValue: "Administrativo", newValue: "Sin puesto vinculado", effectiveFrom: "2026-10-13", reason: context.reason }, "u1");
+    expect(registerWithin).toHaveBeenCalledWith(tx, expect.objectContaining({ action: "UPDATE", entity: "Employee", entityId: "emp-1", description: expect.stringContaining("Puesto Administrativo → Sin puesto vinculado") }));
+    expect(result).toMatchObject({ employeeId: "emp-1" });
+  });
+
+  it("al quitar la empresa principal, la principal pasa a la siguiente que queda", async () => {
+    await employeesService.detachLaborReferencesWithin(tx as never, "emp-1", { companyIds: ["losod"] }, context);
+
+    expect(repo.update).toHaveBeenCalledWith("emp-1", { companyIds: ["tropa"], primaryCompanyId: "tropa" }, tx);
+    expect(history.recordEmployeeChangesWithin).toHaveBeenCalledWith(tx, expect.objectContaining({ changes: { companyIds: ["tropa"] } }));
+  });
+
+  it("sin la referencia (ya no la tenía) no escribe nada", async () => {
+    await expect(employeesService.detachLaborReferencesWithin(tx as never, "emp-1", { positionId: "otro", costCenterId: "otro" }, context)).resolves.toBeNull();
+    expect(repo.update).not.toHaveBeenCalled();
+    expect(registerWithin).not.toHaveBeenCalled();
+  });
+});
+
+describe("centro de costo archivado (eliminación controlada)", () => {
+  it("no se asigna como nuevo; el legajo que ya lo tenía puede guardarse igual", async () => {
+    (employeesRepository.findCostCenterForAssignment as unknown as Mock).mockResolvedValue({ name: "Campo", archivedAt: new Date("2026-10-13T12:00:00Z") });
+    await expect(employeesService.update("emp-1", { costCenterId: "cc-b", laborChange })).rejects.toMatchObject({ statusCode: 400, code: "EMPLOYEE_COST_CENTER_ARCHIVED" });
+    expect(repo.update).not.toHaveBeenCalled();
+    await employeesService.update("emp-1", { costCenterId: "cc-a", internalCategory: "B" });
+    expect(repo.update).toHaveBeenCalled();
   });
 });

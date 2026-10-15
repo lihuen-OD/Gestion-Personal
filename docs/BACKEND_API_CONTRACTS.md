@@ -247,7 +247,7 @@ Compartidos por `GET /api/employees`, `/api/employees/org-chart`, `/api/employee
   - `WITHIN` ("Ubicado dentro de"): algún alcance es el nodo o un descendiente.
   - `COVERS` ("Abarca"): algún alcance es el nodo o un ancestro.
   - Los tres viajan juntos; **no hay modo por defecto** (D-7). Un filtro incompleto responde `400 VALIDATION_ERROR`.
-- `locationZoneId` / `locationEstablishmentId`: una ubicación de trabajo con esa zona y/o establecimiento **vigente** el día `locationDate` (`YYYY-MM-DD`, por defecto hoy en Argentina). Zona y establecimiento se evalúan en la misma asignación. `locationDate` sin zona ni establecimiento → `400`.
+- `locationZoneId` / `locationEstablishmentId`: una ubicación de trabajo con esa zona y/o establecimiento **vigente** el día `locationDate` (`YYYY-MM-DD`, por defecto hoy en Argentina). Zona y establecimiento se evalúan en la misma asignación; un establecimiento asignado con unidades específicas también cuenta. `locationDate` sin zona ni establecimiento → `400`.
 - `reloadStatus`:
   - `PENDING`: sin puesto, puesto sin alcance o sin ninguna ubicación vigente o futura.
   - `COMPLETE`: lo contrario.
@@ -483,8 +483,11 @@ Respuesta de lectura y de toda escritura (lista completa del legajo, ordenada po
   "data": [
     {
       "id": "uuid",
-      "zone": { "id": "uuid", "code": "ZN", "name": "Zona Norte", "status": "ACTIVO" },
-      "establishments": [{ "id": "uuid", "code": "EN1", "name": "Campo La Esperanza", "status": "ACTIVO", "zoneId": "uuid" }],
+      "zone": { "id": "uuid", "code": "ZN", "name": "Arroyo Barú", "status": "ACTIVO", "province": { "id": "uuid", "name": "Entre Ríos" } },
+      "establishments": [
+        { "id": "uuid", "code": "OC", "name": "Oficina Central", "status": "ACTIVO", "zoneId": "uuid", "coverage": "ESTABLISHMENT", "units": [] },
+        { "id": "uuid", "code": "LS", "name": "La Suiza", "status": "ACTIVO", "zoneId": "uuid", "coverage": "UNITS", "units": [{ "id": "uuid", "code": "LN", "name": "Lote Norte", "status": "ACTIVO" }] }
+      ],
       "effectiveFrom": "2026-10-01",
       "effectiveTo": null,
       "state": "CURRENT",
@@ -502,7 +505,10 @@ Alta (`POST .../work-locations`, `201`) y cambio con nueva vigencia (`POST .../:
 ```json
 {
   "zoneId": "uuid",
-  "establishmentIds": ["uuid", "uuid"],
+  "establishments": [
+    { "establishmentId": "uuid", "coverage": "ESTABLISHMENT" },
+    { "establishmentId": "uuid", "coverage": "UNITS", "unitIds": ["uuid", "uuid"] }
+  ],
   "effectiveFrom": "2026-10-01",
   "effectiveTo": null,
   "reason": "Motivo (2-600)",
@@ -510,13 +516,14 @@ Alta (`POST .../work-locations`, `201`) y cambio con nueva vigencia (`POST .../:
 }
 ```
 
-- **Cambio desde D:** la ubicación indicada se cierra en `D − 1` y la nueva empieza en `D`, en una transacción. `D` debe ser posterior al inicio de la vigente (`409 WORK_LOCATION_CHANGE_DATE_INVALID`: eso es una corrección) y no posterior a su fin (`409 WORK_LOCATION_CHANGE_OUTSIDE_PERIOD`). Puede cambiar de zona. Misma zona y mismos establecimientos → `409 WORK_LOCATION_CHANGE_EMPTY`.
+- **Cambio desde D:** la ubicación indicada se cierra en `D − 1` y la nueva empieza en `D`, en una transacción. `D` debe ser posterior al inicio de la vigente (`409 WORK_LOCATION_CHANGE_DATE_INVALID`: eso es una corrección) y no posterior a su fin (`409 WORK_LOCATION_CHANGE_OUTSIDE_PERIOD`). Puede cambiar de zona. Misma zona, mismos establecimientos, misma cobertura y mismas unidades (sin importar el orden) → `409 WORK_LOCATION_CHANGE_EMPTY`.
 - **Finalización** (`POST .../:locationId/end`, `200`): `{ "effectiveTo": "2026-12-31", "reason": "..." }`. Sólo para una vigencia abierta; si ya tiene fin → `409 WORK_LOCATION_ALREADY_ENDED` (usar corrección).
-- **Corrección** (`PATCH .../:locationId`, `200`): corrige el mismo registro sin crear vigencia nueva. Campos opcionales `zoneId`, `establishmentIds`, `effectiveFrom`, `effectiveTo` (admite `null` para reabrir), `reason`, `notes`; `correctionReason` obligatorio. Sin diferencias → `400 WORK_LOCATION_CORRECTION_EMPTY`.
+- **Corrección** (`PATCH .../:locationId`, `200`): corrige el mismo registro sin crear vigencia nueva. Campos opcionales `zoneId`, `establishments` (reemplaza la selección completa), `effectiveFrom`, `effectiveTo` (admite `null` para reabrir), `reason`, `notes`; `correctionReason` obligatorio. Sin diferencias → `400 WORK_LOCATION_CORRECTION_EMPTY`.
 
 Validaciones comunes (servicio, dentro de la transacción; la base además tiene CHECK y exclusión `btree_gist`):
 - Selección explícita: al menos un establecimiento (`400`); no existe "zona completa" (D-2 sigue pendiente).
 - `WORK_LOCATION_ZONE_INVALID` (400), `WORK_LOCATION_ZONE_INACTIVE`, `WORK_LOCATION_ESTABLISHMENT_INVALID` (400), `WORK_LOCATION_ESTABLISHMENT_DUPLICATE`, `WORK_LOCATION_ESTABLISHMENT_ZONE_MISMATCH`, `WORK_LOCATION_ESTABLISHMENT_LEGACY` (establecimiento sin zona, del modelo anterior), `WORK_LOCATION_ESTABLISHMENT_INACTIVE` (409). Al corregir se conservan la zona y los establecimientos inactivos que ya tenía el registro.
+- Cobertura explícita por establecimiento (`coverage`): `ESTABLISHMENT` = establecimiento completo, sin unidades (`400 WORK_LOCATION_UNITS_NOT_ALLOWED` si trae alguna); `UNITS` = sólo las unidades listadas, al menos una (`400 WORK_LOCATION_UNITS_REQUIRED`). Una lista vacía nunca significa "todas". Cada unidad debe existir (`400 WORK_LOCATION_UNIT_INVALID`), no estar archivada (`400 WORK_LOCATION_UNIT_ARCHIVED`), pertenecer a ese establecimiento (`409 WORK_LOCATION_UNIT_ESTABLISHMENT_MISMATCH`; la base lo garantiza además con una FK compuesta), no repetirse (`409 WORK_LOCATION_UNIT_DUPLICATE`) y estar activa (`409 WORK_LOCATION_UNIT_INACTIVE`; al corregir se conservan las inactivas que ya tenía el registro). Las asignaciones anteriores a las unidades se leen como `ESTABLISHMENT`.
 - `400 WORK_LOCATION_INVALID_INTERVAL` si `effectiveTo < effectiveFrom`.
 - `409 WORK_LOCATION_OVERLAP`: misma persona y zona superpuestas, incluidas vigencias futuras; el mensaje indica el período en conflicto. Zonas distintas pueden superponerse. Una violación de la exclusión por escritura concurrente devuelve el mismo código; un conflicto de serialización, `409 WORK_LOCATION_CONCURRENT_CHANGE`.
 - `404 WORK_LOCATION_NOT_FOUND` si la ubicación no pertenece al legajo.
@@ -716,6 +723,28 @@ Reglas:
 - En storage local sirve el archivo desde `backend/uploads`.
 - En Cloudinary (Etapa 15D.3, `docs/decisions/CLOUDINARY_SECURE_DELIVERY_15D3.md`) el backend descarga el archivo del proveedor y lo sirve como respuesta autenticada — nunca redirige a una URL pública de Cloudinary, ni para documentos nuevos ni para los subidos antes de esta etapa.
 
+## Eliminación controlada con dependencias
+
+Protocolo común (`backend/src/shared/deletion/deletionPlan.ts`) de toda acción "Eliminar" de configuración con dependencias: estructura (empresa, unidad de negocio, sector, área, provincia, zona, establecimiento, unidad y centro de costo), puestos, reglas de horas especiales y conceptos horarios. Mismo permiso que el alta/edición de cada recurso (`NIVEL_1_RRHH`).
+
+```txt
+GET  /api/<recurso>/:id/deletion-preview
+POST /api/<recurso>/:id/deletion        { token, confirmationText? }
+```
+
+- **Vista previa** (`200 { data: DeletionPreview }`): `target`, `groups[]` (`key`, `effect`, `label`, `consequence`, `count`, `items[]` — hasta 50 nombres), `blockers[]`, `requiresTypedConfirmation`, `confirmationText` y `token` (huella SHA-256 de todos los ids alcanzados). `effect`: `DELETE` (hijos propios y configuración exclusiva sin historia), `ARCHIVE` (lo que la historia necesita: sale de catálogos y selectores, se conserva), `UNLINK` (vínculo compartido o referencia opcional; la entidad compartida se conserva), `END` (vigencias de personas que terminan ayer, con su historia), `REVIEW` (queda incompleto: recargar o revisar), `RECALCULATE` (resultados que se recalculan en períodos no protegidos).
+- **Confirmación:** se recalcula el plan dentro de la transacción de ejecución. Huella distinta → `409 DELETION_PREVIEW_CHANGED` con `preview` actualizada en el cuerpo (no en `details`); bloqueos → `409 DELETION_BLOCKED` con `preview`; nombre escrito incorrecto (si `requiresTypedConfirmation`: afecta personas, archiva o alcanza ≥ 10 registros) → `400 DELETION_CONFIRMATION_MISMATCH`; actor sin rol o inactivo, releído en la transacción → `403 DELETION_FORBIDDEN`; escritura concurrente → `409 DELETION_CONCURRENT_CHANGE`. Cualquier falla revierte todo; la auditoría se escribe dentro de la transacción y los cachés se limpian después del commit.
+- **Nunca** se borran personas, horas, cierres, novedades, documentos ni fichadas; los cambios de datos de personas rigen **desde hoy** con la misma historia que un cambio manual (y su protección de períodos enviados/aprobados). Las reglas de horas especiales que referencian lo eliminado no se modifican: el destino se archiva y la regla queda en `REVIEW`.
+
+| Recurso | Ruta base |
+|---|---|
+| Estructura | `/api/org-structure/{companies,business-units,sectors,areas,provinces,zones,establishments,establishment-units,cost-centers}` |
+| Puestos | `/api/positions` |
+| Reglas de horas especiales | `/api/workforce/double-hour-rules` |
+| Conceptos horarios | `/api/hour-concepts` |
+
+Los `DELETE` anteriores de esos recursos se conservan con su comportamiento propio (sin vista previa).
+
 ## Catálogos
 
 ### Estructura organizacional
@@ -725,13 +754,13 @@ Reglas:
 Dos árboles independientes, cada nodo con un único padre obligatorio:
 
 - **Organización:** Empresa → Unidad de negocio → Sector → Área.
-- **Ubicaciones:** Zona → Establecimiento.
+- **Ubicaciones:** Provincia → Zona → Establecimiento → Unidad del establecimiento (opcional).
 
 ```txt
 GET /api/org-structure
 ```
 
-Devuelve `companies`, `businessUnits`, `sectors`, `areas`, `zones`, `establishments` y `costCenters`.
+Devuelve `companies`, `businessUnits`, `sectors`, `areas`, `provinces`, `zones`, `establishments`, `establishmentUnits` (sin archivadas) y `costCenters`. `zones[].provinceId` es `null` sólo en zonas anteriores a la provincia (migración `20261009180000_location_province_establishment_units`): quedan **pendientes de recarga** y siguen en uso; la provincia no se infiere.
 
 **Padre del modelo objetivo** de cada nodo:
 
@@ -740,7 +769,9 @@ Devuelve `companies`, `businessUnits`, `sectors`, `areas`, `zones`, `establishme
 | Unidad de negocio | `companyId` |
 | Sector | `businessUnitId` |
 | Área | `sectorId` |
+| Zona | `provinceId` |
 | Establecimiento | `zoneId` (más el domicilio) |
+| Unidad del establecimiento | `establishmentId` |
 
 **Padres del modelo anterior**: hasta M2 se devuelven además, **sólo de lectura**, `sectors[].areaId`, `areas[].establishmentId` y `establishments[].companyId/businessUnitId`.
 
@@ -757,8 +788,10 @@ POST/PATCH /api/org-structure/companies        { code, name, status }
 POST/PATCH /api/org-structure/business-units   { code, name, status, companyId }
 POST/PATCH /api/org-structure/sectors          { code, name, status, businessUnitId }
 POST/PATCH /api/org-structure/areas            { code, name, status, sectorId }
-POST/PATCH /api/org-structure/zones            { code, name, status }
+POST/PATCH /api/org-structure/provinces        { code, name, status }
+POST/PATCH /api/org-structure/zones            { code, name, status, provinceId }
 POST/PATCH /api/org-structure/establishments   { code, name, status, zoneId, province?, department?, city?, street?, streetNumber?, postalCode? }
+POST/PATCH /api/org-structure/establishment-units { code, name, status, establishmentId }
 POST/PATCH /api/org-structure/cost-centers     { code, name, status, companyIds[], businessUnitIds[], sectorIds[], areaIds[], establishmentIds[] }
 ```
 
@@ -770,6 +803,8 @@ Reglas:
 - **Cambio de padre:**
   - Un registro **legado** no se reubica en el árbol nuevo (`409 ORG_STRUCTURE_LEGACY_RECORD`). Sí puede corregir código, nombre y estado.
   - Un nodo **en uso** no cambia de padre (`409 ORG_STRUCTURE_PARENT_IN_USE`, con `details.dependencies`). Decisión D-9 del ADR, ratificada el 2026-10-07. Para reorganizar nodos en uso hará falta una operación explícita que contemple sus referencias; hoy no existe.
+  - Excepción de recarga: asignar **por primera vez** la provincia a una zona anterior a la provincia se permite aunque esté en uso (no mueve nada de lo que la referencia). Cambiar una provincia ya asignada sigue la regla D-9. Una zona sin provincia puede corregir código, nombre o estado sin enviarla.
+- **Código de unidad:** único dentro de su establecimiento (`409 UNIQUE_CONSTRAINT`). Una unidad archivada no se edita ni recibe asignaciones; ninguna entrada de la API escribe `archivedAt`.
 - **Centros de costo:** no agregan vínculos nuevos a sectores, áreas o establecimientos legados (`400 ORG_STRUCTURE_LEGACY_LINK`) ni a registros archivados (`409 ORG_STRUCTURE_ARCHIVED_RECORD`). La API no toca los vínculos existentes; los que apunten a registros retirados por la limpieza (borrados o archivados) son **borrado autorizado** de esa limpieza (A8 §12.4), no se conservan.
 - **Código de establecimiento:** único entre los establecimientos con zona (`409 UNIQUE_CONSTRAINT`). Hasta M2 la base conserva la unicidad legada por empresa.
 - **Transacción y auditoría:**
@@ -777,15 +812,19 @@ Reglas:
   - La auditoría (`CREATE`/`UPDATE`/`DELETE`, con estado previo en `before`) se escribe **en la misma transacción**: si falla, el cambio se revierte.
   - Los cachés se limpian después del commit.
 
-Eliminación definitiva (sólo `NIVEL_1_RRHH`, mismo permiso que altas/ediciones):
+**Eliminación controlada con dependencias** (ver la sección común): la pantalla usa `GET /api/org-structure/<colección>/:id/deletion-preview` y `POST .../deletion`. El registro arrastra a sus hijos propios del modelo vigente; cada nodo se elimina si nada lo referencia como historia o se **archiva** si la historia lo necesita (períodos laborales, alcances históricos, ubicaciones pasadas, reglas, filas archivadas del modelo anterior). Al archivar, sectores, áreas y establecimientos se desprenden de su padre (CHECK de forma de M2); unidades de negocio, zonas y unidades lo conservan y su padre también se archiva. Desde hoy: ubicaciones de trabajo que regían se cierran ayer (o siguen con lo que queda; nunca se amplían a un establecimiento completo), las futuras se corrigen o cancelan; legajos pierden esa empresa empleadora o centro de costo; los puestos pierden sólo esos nodos de su alcance (sin nodos quedan pendientes de recarga). Se desvinculan `User.companyId` (administrativo) y `ClockDevice.establishmentId`; se retiran los vínculos de centros de costo (el centro se conserva). El overview excluye archivados y devuelve `reservedCodes` (códigos ocupados por archivados, para generar el siguiente).
+
+Eliminación sólo sin dependencias (endpoint anterior, sin vista previa; sólo `NIVEL_1_RRHH`):
 
 ```txt
 DELETE /api/org-structure/companies/:id
 DELETE /api/org-structure/business-units/:id
 DELETE /api/org-structure/sectors/:id
 DELETE /api/org-structure/areas/:id
+DELETE /api/org-structure/provinces/:id
 DELETE /api/org-structure/zones/:id
 DELETE /api/org-structure/establishments/:id
+DELETE /api/org-structure/establishment-units/:id
 DELETE /api/org-structure/cost-centers/:id
 ```
 
@@ -801,8 +840,10 @@ DELETE /api/org-structure/cost-centers/:id
 | Unidad de negocio | sectores, establecimientos (legado), centros de costo asociados, alcances de puestos |
 | Sector | áreas, empleados (legado), puestos (legado), usuarios con alcance (legado), centros de costo asociados, reglas de horas especiales, alcances de puestos |
 | Área | sectores (legado), centros de costo asociados, alcances de puestos |
+| Provincia | zonas |
 | Zona | establecimientos |
-| Establecimiento | áreas (legado), centros de costo asociados, ubicaciones de trabajo de legajos, dispositivos de fichada |
+| Establecimiento | áreas (legado), unidades, centros de costo asociados, ubicaciones de trabajo de legajos, dispositivos de fichada |
+| Unidad del establecimiento | ubicaciones de trabajo de legajos (incluidas las históricas) |
 | Centro de costo | empleados, reglas de horas especiales. Sus propios vínculos se borran explícitamente con él, no por CASCADE |
 
 **Protección en la base:** la base no protege todos los casos del modelo anterior por sí sola (varias FK son `ON DELETE SET NULL` y `EmployeeCompany` es `CASCADE`). Las FKs nuevas de M1 sí son `RESTRICT`: los padres nuevos, los alcances de puestos, las ubicaciones de legajos, `ClockDevice.establishmentId` y las cuatro dimensiones de `DoubleHourRule`. Por eso el conteo y el borrado corren en una transacción `Serializable`, y un alta concurrente de una dependencia hace fallar la operación (`409 ORG_STRUCTURE_CONCURRENT_CHANGE`).
@@ -817,7 +858,7 @@ Ver `backend/src/modules/org-structure/orgStructure.dependencies.ts`.
 
 > La columna llega con la migración aditiva `20261008150000_org_catalog_archive_classification` (aplicada a `development` el 2026-10-09). En `development` no hay registros archivados: la limpieza autorizada retiró la estructura anterior en lugar de archivarla (`A8_M2_PREPARATION.md` §12.15).
 
-`archivedAt` (en `Company`, `BusinessUnit`, `Establishment`, `Area`, `Sector`, `Position`) marca un registro del modelo anterior que la historia necesita conservar. Es distinto de `isLegacy` (origen, inmutable) y de `status` (`INACTIVO` es un nodo vivo y reactivable; archivado es congelado y de un solo sentido).
+`archivedAt` (en `Company`, `BusinessUnit`, `Establishment`, `Area`, `Sector`, `Position`, `EstablishmentUnit` y, desde `20261013120000_archive_province_zone_cost_center`, `Province`, `Zone` y `CostCenter`) marca un registro que la historia necesita conservar: del modelo anterior (limpieza A8) o retirado por una eliminación controlada. Es distinto de `isLegacy` (origen, inmutable) y de `status` (`INACTIVO` es un nodo vivo y reactivable; archivado es congelado y de un solo sentido).
 
 - **No existe endpoint de archivo ni de desarchivo.** El único escritor es la transacción de limpieza (`scripts/org-reorg-cleanup.ts`); sólo la restauración controlada (`scripts/org-reorg-restore.ts`) lo revierte, junto con toda la limpieza.
 - **Entrada:** ningún schema acepta `archivedAt` (`POST`/`PATCH` de catálogo y de puestos con ese campo → `400`).
@@ -988,7 +1029,7 @@ No hay baja lógica (`deletedAt` se eliminó en la migración `20261003100000`) 
 La migración limpia todas las filas `deletedAt IS NOT NULL` de la política anterior con la misma preservación de jornadas de la eliminación definitiva. Si detecta un `TimeEntry` legacy asociado, aborta completa antes de modificar datos e informa los códigos implicados para auditoría manual.
 
 - **Deshabilitar** = `PATCH { status: "INACTIVO" }`. Conserva el concepto y su historia e impide nuevas cargas, asignaciones y clasificación automática.
-- **Eliminar** = `DELETE /api/hour-concepts/:id`. Es definitivo y no admite `?force`. En una transacción borra los desgloses, reglas y habilitaciones por legajo del concepto, reclasifica a Hora normal los `TimeSegment`/`WorkShift` que lo referenciaban, desvincula `Novelty.targetHourConceptId`, borra el concepto (el código queda libre) y recalcula los cierres afectados. Fichadas, jornadas y Horas base se conservan.
+- **Eliminar** = `DELETE /api/hour-concepts/:id` (o el flujo con vista previa `GET .../:id/deletion-preview` + `POST .../:id/deletion`, ver la sección común). Es definitivo y no admite `?force`. Se rechaza (`409 PERIOD_CLOSED`) si algún desglose, tramo o jornada del concepto cae en un período enviado o aprobado. En una transacción borra los desgloses, reglas y habilitaciones por legajo del concepto, reclasifica a Hora normal los `TimeSegment`/`WorkShift` que lo referenciaban, desvincula `Novelty.targetHourConceptId`, borra el concepto (el código queda libre) y recalcula los cierres afectados. Fichadas, jornadas y Horas base se conservan.
   - Respuesta: `{ data: { concept: { id, code, name }, deletedBreakdowns, deletedRules, deletedEmployeeAssignments, reclassifiedSegments, reclassifiedWorkShifts, unlinkedNovelties, recalculatedClosures } }`.
   - Errores: `409 HOUR_CONCEPT_SYSTEM_MANAGED` (Hora normal), `409 HOUR_CONCEPT_HAS_LEGACY_TIME_ENTRIES` (hay `TimeEntry` del concepto del modelo previo a 6L; no se borra nada) y `409 HOUR_CONCEPT_CHANGED_DURING_DELETE` (se cargaron horas mientras se eliminaba; la transacción no borró nada).
 
@@ -1114,6 +1155,8 @@ Los tres parámetros de alcance se envían juntos. `WITHIN` significa que algún
 El body A5 usa `orgScopes: [{ level, nodeId }]` (uno o más) y `salaryCategoryIds`. Un nodo abarca sus descendientes. El backend rechaza referencias inexistentes (`POSITION_SCOPE_INVALID`), nodos legados (`POSITION_SCOPE_LEGACY`), nodos inactivos agregados por primera vez (`POSITION_SCOPE_INACTIVE`) y duplicados/ancestro+descendiente (`POSITION_SCOPE_REDUNDANT`). Crear y reemplazar alcances, categorías y auditoría ocurre en una transacción `Serializable`; los cachés se invalidan después del commit.
 
 `Position.sectorId` continúa sólo como forma de los puestos archivados (CHECK de M2). Los puestos anteriores con `sectorId` y sin `orgScopes` se informan como pendientes de recarga: una edición que no toca alcance los conserva, sin conversión automática. Las altas nuevas no aceptan ni escriben `sectorId`.
+
+Eliminación controlada (`GET /api/positions/:id/deletion-preview` + `POST /api/positions/:id/deletion`, ver la sección común): las personas quedan sin puesto desde hoy (con historia); si alguien lo tuvo o una regla lo usa, el puesto se archiva y su alcance vigente se cierra desde hoy; si nadie lo usó, se borra con su configuración propia.
 
 `DELETE /api/positions/:id` (etapa A2 de la reorganización):
 
@@ -1248,7 +1291,7 @@ Errores de dispositivo y de fichada:
 
 `retryAfterSeconds` (entero 1..ventana, calculado con la hora del servidor) es un campo público de `AppError`: a diferencia de `details`, el `errorHandler` lo devuelve también en production. El mensaje no incluye horas, segundos ni ids; la UI del kiosco (F8) arma su texto con `retryAfterSeconds`.
 
-Atribución (F6/F7): la fichada y el intento guardan `deviceId = req.clockDevice.id` (`AttendancePunch.deviceId`, `ClockPunchAttempt.deviceId`); cualquier `deviceId` del body se descarta. IP y user-agent persistidos salen de la request, nunca del body (`device.*` es sólo contexto informativo de la cámara). `requestId` sigue siendo único global: reutilizarlo desde otro dispositivo responde `409 CLOCK_IDEMPOTENCY_KEY_REUSED` sin exponer el resultado guardado. Auditoría de la fichada (`AuditLog` `CREATE WorkShift`, una por fichada confirmada, escrita en la misma transacción que la jornada desde F11): el dispositivo es el **actor técnico** —`userId` nulo, descripción con su nombre (`Ingreso con foto registrado desde el dispositivo de fichada "<nombre>" para legajo N.`) y `after = { workShiftId, employeeId, source, actorClockDeviceId }`—; nunca hay hash, secreto ni UUID en el texto visible. Búsqueda, estado y polling de intentos no auditan. En A7 el dispositivo se administra con `establishmentId`; la UI muestra `Zona · Establecimiento`. Es metadata física del aparato: no infiere ni restringe la ubicación laboral de las personas que puede buscar o fichar un dispositivo `ACTIVE`.
+Atribución (F6/F7): la fichada y el intento guardan `deviceId = req.clockDevice.id` (`AttendancePunch.deviceId`, `ClockPunchAttempt.deviceId`); cualquier `deviceId` del body se descarta. IP y user-agent persistidos salen de la request, nunca del body (`device.*` es sólo contexto informativo de la cámara). `requestId` sigue siendo único global: reutilizarlo desde otro dispositivo responde `409 CLOCK_IDEMPOTENCY_KEY_REUSED` sin exponer el resultado guardado. Auditoría de la fichada (`AuditLog` `CREATE WorkShift`, una por fichada confirmada, escrita en la misma transacción que la jornada desde F11): el dispositivo es el **actor técnico** —`userId` nulo, descripción con su nombre (`Ingreso con foto registrado desde el dispositivo de fichada "<nombre>" para legajo N.`) y `after = { workShiftId, employeeId, source, actorClockDeviceId }`—; nunca hay hash, secreto ni UUID en el texto visible. Búsqueda, estado y polling de intentos no auditan. En A7 el dispositivo se administra con `establishmentId`; la UI muestra `Provincia › Zona · Establecimiento` cuando hay provincia y `Zona · Establecimiento` cuando no la hay. Es metadata física del aparato: no infiere ni restringe la ubicación laboral de las personas que puede buscar o fichar un dispositivo `ACTIVE`.
 
 Contrato de empleado en las cuatro respuestas (F0): `{ id, legajo, dniSuffix, firstName, lastName, name }` — `dniSuffix` son los últimos 3 dígitos del DNI; el DNI completo nunca se devuelve. `clock/status` devuelve `{ employee, openShift: { id, startAt } | null }` (sin conceptos horarios). La respuesta de salida de `photo-punch` devuelve `employee`, `workShift` (`id`, `startAt`, `endAt`, `totalMinutes`, `totalHours`) y `segments` (etiquetas para pantalla), sin las filas internas de `TimeEntry`/`TimeSegment`.
 
@@ -1832,7 +1875,7 @@ El resto de `entityType` (cierres, correcciones, novedades pendientes) no trae `
 - Reenviar el sector que la regla ya tiene, o editar otras dimensiones (por ejemplo "Domingos", por empresa empleadora), no cambia su alcance.
 - `companyId` es la empresa **empleadora** del legajo (`EmployeeCompany`).
 
-`DELETE /double-hour-rules/:id` elimina físicamente la regla y responde `{ data: { mode: "DELETED", id } }` sólo cuando puede retirar su traza y reinterpretar las horas sin tocar historia protegida.
+`DELETE /double-hour-rules/:id` elimina físicamente la regla y responde `{ data: { mode: "DELETED", id } }` sólo cuando puede retirar su traza y reinterpretar las horas sin tocar historia protegida. Dentro de la transacción la regla pasa primero a `INACTIVO` (el motor sólo lee reglas activas) y recién después se reinterpreta "como si no existiera" — hasta 2026-10-13 la reinterpretación corría con la regla todavía activa, no cambiaba multiplicadores y borraba aplicaciones también en períodos protegidos. La pantalla usa el flujo con vista previa (`GET /double-hour-rules/:id/deletion-preview`, que reinterpreta en una transacción revertida, y `POST /double-hour-rules/:id/deletion`; ver la sección común) con la auditoría dentro de la transacción.
 - Si existe traza dentro de un cierre `ENVIADO`, `APROBADO` o `CORRECCION_PENDIENTE`, responde `409 DOUBLE_HOUR_RULE_PROTECTED_HISTORY` y no escribe nada.
 - En los demás casos, la misma transacción retira su traza, borra la regla y reinterpreta las horas afectadas.
 - Para conservar una regla sin que aplique se usa `PATCH` con `status: "INACTIVO"`.

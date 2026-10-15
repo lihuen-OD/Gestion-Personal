@@ -16,7 +16,7 @@ The sections below are a generic design-system template shared across projects a
 * **Organigramas** — org chart (`OrganigramasPage.tsx`).
 * **Auditoría** — audit log viewer, RRHH-only (`AuditPage.tsx`, `AuditParametersPage.tsx`).
 * **Usuarios** — user/role admin (`UsersPage.tsx`).
-* **Estructura Organizacional** — company/business-unit/establishment/area/sector/cost-center (`OrgStructurePage.tsx`). This is the current model. The approved reorganization (not implemented; `docs/decisions/ORG_LOCATION_REORGANIZATION.md`) splits it into two independently managed sections: **Organización** (Empresa → UN → Sector → Área) and **Ubicaciones** (Zona → Establecimiento). Cost centers link to both.
+* **Estructura Organizacional** — `OrgStructurePage.tsx` administra por separado **Organización** (Empresa → UN → Sector → Área), **Ubicaciones** (Provincia → Zona → Establecimiento → Unidad opcional) y **Centros de costo**, vinculables a ambos árboles. La reorganización aprobada está implementada hasta M2; los detalles del modelo vigente están en `docs/decisions/ORG_LOCATION_REORGANIZATION.md`.
 * **Horas especiales / Conceptos horarios**, **Cierres mensuales**, **Exportación Finnegans**, **Notificaciones**, **Reportes**, **Configuración** — see `frontend/src/pages` for the corresponding file.
 
 Match the reference UI system below for all of these — same sidebar/topbar/card/table/form/badge/spacing conventions — not a new visual identity per screen.

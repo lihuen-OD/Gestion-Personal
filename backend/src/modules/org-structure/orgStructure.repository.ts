@@ -7,6 +7,8 @@ import type {
   CreateCompanyInput,
   CreateCostCenterInput,
   CreateEstablishmentInput,
+  CreateEstablishmentUnitInput,
+  CreateProvinceInput,
   CreateSectorInput,
   CreateZoneInput,
   UpdateAreaInput,
@@ -14,6 +16,8 @@ import type {
   UpdateCompanyInput,
   UpdateCostCenterInput,
   UpdateEstablishmentInput,
+  UpdateEstablishmentUnitInput,
+  UpdateProvinceInput,
   UpdateSectorInput,
   UpdateZoneInput,
 } from "./orgStructure.schemas";
@@ -89,6 +93,7 @@ function fetchOverview() {
       select: { id: true, code: true, name: true, status: true, businessUnitId: true, areaId: true, isLegacy: true },
     }),
     prisma.costCenter.findMany({
+      where: { archivedAt: null },
       orderBy: { code: "asc" },
       select: {
         id: true,
@@ -102,11 +107,54 @@ function fetchOverview() {
         sectors: { select: { sectorId: true } },
       },
     }),
+    // Ubicaciones: una zona sin provincia es anterior a la provincia y queda
+    // pendiente de recarga (no se infiere su provincia).
     prisma.zone.findMany({
+      where: { archivedAt: null },
+      orderBy: { name: "asc" },
+      select: { id: true, code: true, name: true, status: true, provinceId: true },
+    }),
+    prisma.province.findMany({
+      where: { archivedAt: null },
       orderBy: { name: "asc" },
       select: { id: true, code: true, name: true, status: true },
     }),
+    prisma.establishmentUnit.findMany({
+      where: { archivedAt: null },
+      orderBy: { name: "asc" },
+      select: { id: true, code: true, name: true, status: true, establishmentId: true },
+    }),
+    fetchReservedCodes(),
   ]);
+}
+
+// Códigos que ocupan los registros archivados (eliminación controlada): el
+// alta genera el código siguiente y no debe repetir uno reservado.
+async function fetchReservedCodes() {
+  const archived = { where: { archivedAt: { not: null } }, select: { code: true } } as const;
+  const [companies, businessUnits, sectors, areas, provinces, zones, establishments, establishmentUnits, costCenters] = await Promise.all([
+    prisma.company.findMany(archived),
+    prisma.businessUnit.findMany(archived),
+    prisma.sector.findMany(archived),
+    prisma.area.findMany(archived),
+    prisma.province.findMany(archived),
+    prisma.zone.findMany(archived),
+    prisma.establishment.findMany(archived),
+    prisma.establishmentUnit.findMany(archived),
+    prisma.costCenter.findMany(archived),
+  ]);
+  const codes = (rows: Array<{ code: string }>) => rows.map((row) => row.code);
+  return {
+    companies: codes(companies),
+    businessUnits: codes(businessUnits),
+    sectors: codes(sectors),
+    areas: codes(areas),
+    provinces: codes(provinces),
+    zones: codes(zones),
+    establishments: codes(establishments),
+    establishmentUnits: codes(establishmentUnits),
+    costCenters: codes(costCenters),
+  };
 }
 
 async function getCachedOverview(): Promise<OrgOverview> {
@@ -140,7 +188,7 @@ export interface OrgRecord {
   parentId: string | null;
   /** Registro del modelo anterior: clasificación persistida (`Sector`/`Area`/`Establishment.isLegacy`, A8-3); para el resto (nodos sin columna propia), false. */
   isLegacy: boolean;
-  /** A8-1 (§12.1): archivado ⇔ `archivedAt IS NOT NULL`. Sólo lo escribe la limpieza; `null` en los modelos sin la columna (centros de costo, zonas). */
+  /** A8-1 (§12.1): archivado ⇔ `archivedAt IS NOT NULL`. Lo escriben la limpieza A8 y la eliminación controlada (orgStructure.deletion.ts). */
   archivedAt: Date | null;
   counts: Partial<Record<OrgDependencyKey, number>>;
 }
@@ -152,8 +200,10 @@ export interface NodeInputs {
   businessUnit: [CreateBusinessUnitInput, UpdateBusinessUnitInput];
   sector: [CreateSectorInput, UpdateSectorInput];
   area: [CreateAreaInput, UpdateAreaInput];
+  province: [CreateProvinceInput, UpdateProvinceInput];
   zone: [CreateZoneInput, UpdateZoneInput];
   establishment: [CreateEstablishmentInput, UpdateEstablishmentInput];
+  establishmentUnit: [CreateEstablishmentUnitInput, UpdateEstablishmentUnitInput];
 }
 
 interface NodeOps<K extends NodeKind> {
@@ -206,11 +256,19 @@ const nodes: { [K in NodeKind]: NodeOps<K> } = {
     update: (tx, id, data) => tx.area.update({ where: { id }, data: { ...data, isLegacy: undefined } }),
     remove: (tx, id) => tx.area.delete({ where: { id } }),
   },
+  province: {
+    find: async (tx, id) => {
+      const row = await tx.province.findUnique({ where: { id }, select: { id: true, code: true, name: true, status: true, archivedAt: true, _count: { select: { zones: true } } } });
+      return row && { id: row.id, code: row.code, name: row.name, status: row.status, parentId: null, isLegacy: false, archivedAt: row.archivedAt, counts: row._count };
+    },
+    create: (tx, data) => tx.province.create({ data }),
+    update: (tx, id, data) => tx.province.update({ where: { id }, data }),
+    remove: (tx, id) => tx.province.delete({ where: { id } }),
+  },
   zone: {
     find: async (tx, id) => {
-      const row = await tx.zone.findUnique({ where: { id }, select: { id: true, code: true, name: true, status: true, _count: { select: { establishments: true } } } });
-      // La Zona no está en DELETE_ORDER: no tiene columna de archivo.
-      return row && { id: row.id, code: row.code, name: row.name, status: row.status, parentId: null, isLegacy: false, archivedAt: null, counts: row._count };
+      const row = await tx.zone.findUnique({ where: { id }, select: { id: true, code: true, name: true, status: true, provinceId: true, archivedAt: true, _count: { select: { establishments: true } } } });
+      return row && { id: row.id, code: row.code, name: row.name, status: row.status, parentId: row.provinceId, isLegacy: false, archivedAt: row.archivedAt, counts: row._count };
     },
     create: (tx, data) => tx.zone.create({ data }),
     update: (tx, id, data) => tx.zone.update({ where: { id }, data }),
@@ -218,7 +276,7 @@ const nodes: { [K in NodeKind]: NodeOps<K> } = {
   },
   establishment: {
     find: async (tx, id) => {
-      const row = await tx.establishment.findUnique({ where: { id }, select: { id: true, code: true, name: true, status: true, zoneId: true, isLegacy: true, archivedAt: true, _count: { select: { areas: true, costCenterLinks: true, workLocations: true, clockDevices: true } } } });
+      const row = await tx.establishment.findUnique({ where: { id }, select: { id: true, code: true, name: true, status: true, zoneId: true, isLegacy: true, archivedAt: true, _count: { select: { areas: true, units: true, costCenterLinks: true, workLocations: true, clockDevices: true } } } });
       return row && { id: row.id, code: row.code, name: row.name, status: row.status, parentId: row.zoneId, isLegacy: row.isLegacy, archivedAt: row.archivedAt, counts: row._count };
     },
     // Ver comentario de `area.create`: alta con criterio previo (sin zona del
@@ -227,12 +285,21 @@ const nodes: { [K in NodeKind]: NodeOps<K> } = {
     update: (tx, id, data) => tx.establishment.update({ where: { id }, data: { ...data, isLegacy: undefined } }),
     remove: (tx, id) => tx.establishment.delete({ where: { id } }),
   },
+  establishmentUnit: {
+    find: async (tx, id) => {
+      const row = await tx.establishmentUnit.findUnique({ where: { id }, select: { id: true, code: true, name: true, status: true, establishmentId: true, archivedAt: true, _count: { select: { workLocations: true } } } });
+      return row && { id: row.id, code: row.code, name: row.name, status: row.status, parentId: row.establishmentId, isLegacy: false, archivedAt: row.archivedAt, counts: row._count };
+    },
+    create: (tx, data) => tx.establishmentUnit.create({ data }),
+    update: (tx, id, data) => tx.establishmentUnit.update({ where: { id }, data }),
+    remove: (tx, id) => tx.establishmentUnit.delete({ where: { id } }),
+  },
 };
 
 const costCenterOps = {
   find: async (tx: Tx, id: string): Promise<OrgRecord | null> => {
-    const row = await tx.costCenter.findUnique({ where: { id }, select: { id: true, code: true, name: true, status: true, _count: { select: { employees: true, doubleHourRules: true, employeePeriods: true } } } });
-    return row && { id: row.id, code: row.code, name: row.name, status: row.status, parentId: null, isLegacy: false, archivedAt: null, counts: { ...row._count, laborHistory: row._count.employeePeriods } };
+    const row = await tx.costCenter.findUnique({ where: { id }, select: { id: true, code: true, name: true, status: true, archivedAt: true, _count: { select: { employees: true, doubleHourRules: true, employeePeriods: true } } } });
+    return row && { id: row.id, code: row.code, name: row.name, status: row.status, parentId: null, isLegacy: false, archivedAt: row.archivedAt, counts: { ...row._count, laborHistory: row._count.employeePeriods } };
   },
   // Sus vínculos propios se borran explícitamente antes que él (no se depende
   // del ON DELETE CASCADE de la base) — ver orgStructure.dependencies.ts.
@@ -260,6 +327,11 @@ export interface CostCenterLinks {
   establishmentIds: string[];
   areaIds: string[];
   sectorIds: string[];
+}
+
+export interface CostCenterState extends CostCenterLinks {
+  name: string;
+  archivedAt: Date | null;
 }
 
 function costCenterData(input: CreateCostCenterInput | UpdateCostCenterInput) {
@@ -361,10 +433,12 @@ export const orgStructureRepository = {
     return getCachedOverview();
   },
 
-  async findCostCenterLinks(tx: Tx, id: string): Promise<CostCenterLinks | null> {
+  async findCostCenterLinks(tx: Tx, id: string): Promise<CostCenterState | null> {
     const row = await tx.costCenter.findUnique({
       where: { id },
       select: {
+        name: true,
+        archivedAt: true,
         companies: { select: { companyId: true } },
         businessUnits: { select: { businessUnitId: true } },
         establishments: { select: { establishmentId: true } },
@@ -373,6 +447,8 @@ export const orgStructureRepository = {
       },
     });
     return row && {
+      name: row.name,
+      archivedAt: row.archivedAt,
       companyIds: row.companies.map((link) => link.companyId),
       businessUnitIds: row.businessUnits.map((link) => link.businessUnitId),
       establishmentIds: row.establishments.map((link) => link.establishmentId),

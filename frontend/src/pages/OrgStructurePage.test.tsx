@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
-import type { OrgArea, OrgBusinessUnit, OrgCompany, OrgCostCenter, OrgEstablishment, OrgSector, OrgZone } from "../types/orgStructure.types";
+import type { OrgArea, OrgBusinessUnit, OrgCompany, OrgCostCenter, OrgEstablishment, OrgEstablishmentUnit, OrgProvince, OrgSector, OrgZone } from "../types/orgStructure.types";
 
 const companies: OrgCompany[] = [
   { id: "1", code: "EMP-10", name: "beta", legalName: "", cuit: "", status: "ACTIVO" },
@@ -21,11 +21,16 @@ const areas: OrgArea[] = [
   { id: "a1", code: "AREA-1", name: "Parrilla", sectorId: "s1", status: "ACTIVO" },
   { id: "a-old", code: "AREA-90", name: "Administración anterior", pendingReload: true, status: "ACTIVO" },
 ];
-const zones: OrgZone[] = [{ id: "z1", code: "ZN-1", name: "Litoral", status: "ACTIVO" }];
+const provinces: OrgProvince[] = [{ id: "p1", code: "SF", name: "Santa Fe", status: "ACTIVO" }];
+const zones: OrgZone[] = [
+  { id: "z1", code: "ZN-1", name: "Litoral", provinceId: "p1", status: "ACTIVO" },
+  { id: "z-old", code: "ZN-9", name: "Zona previa", status: "ACTIVO" },
+];
 const establishments: OrgEstablishment[] = [
   { id: "e1", code: "EST-1", name: "Local Centro", zoneId: "z1", province: "Santa Fe", department: "Rosario", locality: "Rosario", address: "", status: "ACTIVO" },
   { id: "e-old", code: "EST-90", name: "Casa central anterior", companyId: "3", pendingReload: true, province: "", department: "", locality: "", address: "", status: "ACTIVO" },
 ];
+const establishmentUnits: OrgEstablishmentUnit[] = [{ id: "u1", code: "UNI-1", name: "Lote Norte", establishmentId: "e1", status: "ACTIVO" }];
 const costCenters: OrgCostCenter[] = [
   { id: "cc1", code: "CC-1", name: "Cocina central", companyIds: [], businessUnitIds: [], establishmentIds: [], areaIds: [], sectorIds: ["s1", "s-old"], status: "ACTIVO" },
 ];
@@ -36,19 +41,23 @@ const api = vi.hoisted(() => ({
   createArea: vi.fn(async (item: unknown) => item),
   updateSector: vi.fn(async (item: unknown) => item),
   deleteEntity: vi.fn(async (_type: string, _id: string) => ({})),
+  afterDeletion: vi.fn(async () => undefined),
   removedIds: new Set<string>(),
 }));
 vi.mock("../services/api/orgStructureApiService", () => ({
   orgStructureApiService: {
     // Lo eliminado deja de venir en el catálogo refrescado (como el backend real).
-    getCatalog: () => Promise.resolve({ companies: companies.filter((item) => !api.removedIds.has(item.id)), businessUnits, sectors, areas, zones, establishments, costCenters }),
+    getCatalog: () => Promise.resolve({ companies: companies.filter((item) => !api.removedIds.has(item.id)), businessUnits, sectors, areas, provinces, zones, establishments, establishmentUnits, costCenters }),
     updateCompany: api.updateCompany,
     createArea: api.createArea,
     updateSector: api.updateSector,
     deleteEntity: api.deleteEntity,
+    deletionPath: (type: string, id: string) => `/org-structure/${type.toLowerCase()}/${id}`,
+    afterDeletion: api.afterDeletion,
   },
 }));
 vi.mock("../services/appDialog", () => ({ confirmAction: vi.fn(async () => true) }));
+vi.mock("../components/shared/DeletionPreviewModal", () => ({ DeletionPreviewModal: ({ basePath, title, close, onDeleted }: { basePath: string; title: string; close: () => void; onDeleted: () => void }) => <div role="dialog" aria-label={title}><span>{basePath}</span><button onClick={close}>Cancelar eliminación</button><button onClick={() => { api.removedIds.add(basePath.split("/").at(-1)!); onDeleted(); }}>Confirmar eliminación controlada</button></div> }));
 
 const { OrgStructurePage } = await import("./OrgStructurePage");
 const { confirmAction } = await import("../services/appDialog");
@@ -93,14 +102,22 @@ describe("OrgStructurePage — secciones separadas", () => {
     expect(treeItem(/^Estructura anterior · pendiente de recarga/)).toBeInTheDocument();
   });
 
-  it("Ubicaciones muestra Zona → Establecimiento, con los establecimientos anteriores aparte", async () => {
+  it("Ubicaciones muestra Provincia → Zona → Establecimiento → Unidad, con zonas sin provincia y establecimientos anteriores aparte", async () => {
     await renderTree();
     await userEvent.click(screen.getByRole("button", { name: "Ubicaciones" }));
     expect(await screen.findByRole("tree", { name: "Ubicaciones" })).toBeInTheDocument();
-    expect(treeItem(/^Zona Litoral/)).toBeInTheDocument();
-    expect(treeItem(/^Establecimiento Local Centro/)).toHaveAttribute("aria-level", "2");
+    expect(treeItem(/^Provincia Santa Fe/)).toHaveAttribute("aria-level", "1");
+    expect(treeItem(/^Zona Litoral/)).toHaveAttribute("aria-level", "2");
+    expect(treeItem(/^Establecimiento Local Centro/)).toHaveAttribute("aria-level", "3");
+    expect(treeItem(/^Zonas sin provincia · pendiente de recarga \(1\)/)).toBeInTheDocument();
     expect(treeItem(/^Establecimientos anteriores · pendientes de recarga \(1\)/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Nueva zona" })).toBeInTheDocument();
+    expect(screen.getByText(/1 zona se cargó antes de las provincias/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Nueva provincia" })).toBeInTheDocument();
+
+    const detail = await select(/^Establecimiento Local Centro/, "Local Centro");
+    await userEvent.click(within(detail).getByRole("button", { name: "Agregar unidad" }));
+    expect(await screen.findByRole("heading", { name: "Nuevo registro · Unidad" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Establecimiento *")).toHaveValue("e1");
   });
 
   it("Centros de costo se administra en su propia sección, en tabla", async () => {
@@ -218,44 +235,42 @@ describe("OrgStructurePage — tabla y ordenamiento", () => {
 });
 
 describe("OrgStructurePage — eliminación segura (árbol y tabla)", () => {
-  it("árbol: Eliminar pide confirmación explícita; cancelar no elimina", async () => {
-    vi.mocked(confirmAction).mockResolvedValue(false);
+  it("árbol: Eliminar abre el protocolo y cancelar no elimina", async () => {
     await renderTree();
     const detail = await select(/^Empresa Cedro/, "Cedro");
     await userEvent.click(within(detail).getByRole("button", { name: "Eliminar" }));
-    expect(confirmAction).toHaveBeenCalledWith(
-      "Esta acción elimina el registro de forma permanente y no se puede deshacer. Si sólo ya no debe utilizarse, inactivalo.",
-      expect.objectContaining({ title: "¿Eliminar definitivamente “Cedro”?", confirmLabel: "Eliminar definitivamente", tone: "danger" }),
-    );
-    expect(api.deleteEntity).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog", { name: /Eliminar empresa “Cedro”/ })).toBeInTheDocument();
+    expect(screen.getByText("/org-structure/company/3")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Cancelar eliminación" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 
   it("árbol: confirmar llama al endpoint, cierra el panel, saca el nodo y avisa", async () => {
     await renderTree();
     const detail = await select(/^Empresa beta/, "beta");
     await userEvent.click(within(detail).getByRole("button", { name: "Eliminar" }));
-    await waitFor(() => expect(api.deleteEntity).toHaveBeenCalledWith("COMPANY", "1"));
+    await userEvent.click(screen.getByRole("button", { name: "Confirmar eliminación controlada" }));
+    await waitFor(() => expect(api.afterDeletion).toHaveBeenCalled());
     expect(await screen.findByText("Empresa eliminada correctamente.")).toBeInTheDocument();
     await waitFor(() => expect(screen.queryByRole("treeitem", { name: /^Empresa beta/ })).toBeNull());
     expect(screen.getByText("Seleccioná un elemento")).toBeInTheDocument();
   });
 
-  it("con dependencias no se elimina; el motivo lo muestra el aviso global (sin duplicarlo)", async () => {
-    api.deleteEntity.mockRejectedValue(new ApiError("No se puede eliminar la empresa “Cedro” porque tiene elementos asociados: 1 unidad de negocio. Podés inactivarla si ya no debe utilizarse.", "ORG_STRUCTURE_HAS_DEPENDENCIES", 409));
+  it("con dependencias abre la vista previa en vez de invocar el DELETE directo", async () => {
     await renderTree();
     const detail = await select(/^Empresa Cedro/, "Cedro");
     await userEvent.click(within(detail).getByRole("button", { name: "Eliminar" }));
-    await waitFor(() => expect(api.deleteEntity).toHaveBeenCalled());
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(api.deleteEntity).not.toHaveBeenCalled();
     expect(treeItem(/^Empresa Cedro/)).toBeInTheDocument();
     expect(screen.queryByText(/No se puede eliminar/)).toBeNull();
   });
 
-  it("un error no cubierto por el aviso global (p. ej. 404) se muestra en la página", async () => {
-    api.deleteEntity.mockRejectedValue(new ApiError("No encontramos el registro solicitado.", "RECORD_NOT_FOUND", 404));
+  it("la ruta del protocolo identifica el recurso seleccionado", async () => {
     await renderTree();
     const detail = await select(/^Empresa Cedro/, "Cedro");
     await userEvent.click(within(detail).getByRole("button", { name: "Eliminar" }));
-    expect(await screen.findByText("No encontramos el registro solicitado.")).toBeInTheDocument();
+    expect(screen.getByText("/org-structure/company/3")).toBeInTheDocument();
   });
 
   it("Inactivar confirma y persiste el cambio de estado", async () => {

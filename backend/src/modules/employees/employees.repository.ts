@@ -733,8 +733,14 @@ function currentWorkLocationsSelect(dateKey: string) {
   return {
     where: workLocationOnDateWhere(dateKey),
     select: {
-      zone: { select: { id: true, name: true } },
-      establishments: { select: { establishment: { select: { id: true, name: true } } } },
+      zone: { select: { id: true, name: true, province: { select: { id: true, name: true } } } },
+      establishments: {
+        select: {
+          coverage: true,
+          establishment: { select: { id: true, name: true } },
+          units: { select: { unit: { select: { id: true, name: true } } }, orderBy: { unit: { name: "asc" as const } } },
+        },
+      },
     },
     orderBy: { zone: { name: "asc" as const } },
   } satisfies Prisma.Employee$workLocationsArgs;
@@ -1087,6 +1093,11 @@ export const employeesRepository = {
   },
 
   /** Nombres de empresas ARCHIVADAS entre los IDs dados (A8 §12.4). */
+  // Eliminación controlada: el centro de costo archivado no recibe asignaciones nuevas.
+  findCostCenterForAssignment(costCenterId: string, db: PrismaTransactionClient = prisma) {
+    return db.costCenter.findUnique({ where: { id: costCenterId }, select: { name: true, archivedAt: true } });
+  },
+
   findArchivedCompanyNames(companyIds: string[]) {
     if (!companyIds.length) return Promise.resolve<string[]>([]);
     return prisma.company

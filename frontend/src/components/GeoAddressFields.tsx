@@ -29,7 +29,7 @@ function GeoSelect({ label, value, options, disabled, loading, emptyText, onSele
   useEffect(() => setQuery(value), [value]);
 
   return <label>{label}
-    <input disabled={disabled} value={query} list={listId} placeholder={disabled ? "Seleccioná el campo anterior" : loading ? "Cargando..." : "Buscar o seleccionar"} onChange={(event) => {
+    <input disabled={disabled} spellCheck={false} value={query} list={listId} placeholder={disabled ? "Seleccioná el campo anterior" : loading ? "Cargando..." : "Buscar o seleccionar"} onChange={(event) => {
       const next = event.target.value;
       setQuery(next);
       onQuery?.(next);
@@ -193,9 +193,9 @@ export function GeoAddressFields({ value, onChange, includeStreet = true, showGe
         setStreet({ calle: query, direccionNormalizada: "", fuenteGeocoding: undefined, precisionGeocoding: undefined });
         resetStreetSearch();
       }} onSelect={useStreet} />
-      <label>Número<input disabled={readOnly || !value.calle} value={value.numero} list="geo-address-number-list" placeholder={rangeText || "Ingresá número o S/N"} onChange={(event) => { setLastGeocoded(""); setGeoStatus(""); setGeoError(""); setStreet({ numero: event.target.value, direccionNormalizada: "", fuenteGeocoding: undefined, precisionGeocoding: undefined }); }} />{rangeText && <small>{rangeText}</small>}<datalist id="geo-address-number-list">{numberSuggestions.map((number) => <option key={number} value={number} />)}</datalist></label>
+      <label>Número<input disabled={readOnly || !value.calle} spellCheck={false} value={value.numero} list="geo-address-number-list" placeholder={rangeText || "Ingresá número o S/N"} onChange={(event) => { setLastGeocoded(""); setGeoStatus(""); setGeoError(""); setStreet({ numero: event.target.value, direccionNormalizada: "", fuenteGeocoding: undefined, precisionGeocoding: undefined }); }} />{rangeText && <small>{rangeText}</small>}<datalist id="geo-address-number-list">{numberSuggestions.map((number) => <option key={number} value={number} />)}</datalist></label>
     </>}
-    <label>Código postal<input disabled={readOnly} value={value.codigoPostal} onChange={(event) => set({ codigoPostal: event.target.value })} /></label>
+    <label>Código postal<input disabled={readOnly} spellCheck={false} value={value.codigoPostal} onChange={(event) => set({ codigoPostal: event.target.value })} /></label>
     {includeStreet && showGeoActions && <div className="geo-address-actions">
       <a className={`button subtle ${isReadyToGeocode ? "" : "disabled-link"}`} href={isReadyToGeocode ? googleMapsUrl(value) : undefined} target="_blank" rel="noreferrer">Abrir en Google Maps</a>
       <small>La localidad centra el mapa automáticamente. Para una ubicación exacta, abrí Google Maps y pegá luego el link en el mapa.</small>

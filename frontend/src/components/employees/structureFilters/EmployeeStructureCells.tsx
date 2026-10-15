@@ -1,4 +1,5 @@
 import type { Employee } from "../../../types";
+import { workLocationLabel } from "../../../utils/workLocationPath";
 import { Badge } from "../../ui/Badge";
 import { isReloadPending } from "./employeeStructureFilters";
 
@@ -15,6 +16,9 @@ export function EmployeeStructureCells({ employee }: { employee: Employee }) {
       ? `${employee.positionScopeCount} ${employee.positionScopeCount === 1 ? "alcance" : "alcances"}`
       : employee.positionId ? "Sin alcance" : "";
   const zones = employee.currentWorkLocations?.map((location) => location.zoneName) ?? [];
+  // La celda conserva el nombre corto de la zona; la ruta completa (provincia,
+  // establecimientos y unidades) queda en el tooltip.
+  const routes = employee.currentWorkLocations?.map(workLocationLabel).join(" · ") ?? "";
   return (
     <>
       <td className="structure-cell">
@@ -23,7 +27,7 @@ export function EmployeeStructureCells({ employee }: { employee: Employee }) {
         {isReloadPending(employee) ? <Badge tone="warning">Pendiente de recarga</Badge> : null}
       </td>
       <td className="structure-cell">
-        {zones.length ? <span title={zones.join(", ")}>{Array.from(new Set(zones)).join(", ")}</span> : <small>Sin ubicación vigente</small>}
+        {zones.length ? <span title={routes}>{Array.from(new Set(zones)).join(", ")}</span> : <small>Sin ubicación vigente</small>}
       </td>
     </>
   );
