@@ -3610,3 +3610,229 @@ default y salida conserva `timeout: 10_000`. No hay N+1 ni consultas nuevas
 dentro del lock aparte de ese update fail-closed; la integración local no
 mostró una ampliación relevante del tiempo total frente al ruido normal de
 I/O. No se agregó cache, dependencia ni migración.
+
+## 31. F12-A — preparación del piloto controlado
+
+Preparada el 2026-10-15 sobre `main` en `51dd7a4`. Es una etapa de
+infraestructura y validación: **cero cambios de runtime, schema o UI**. No se
+creó ningún recurso externo, no se desplegó, no se enroló ningún dispositivo
+y no se ejecutó ninguna fichada. F12-B empieza sólo cuando todos los gates de
+esta sección estén completos.
+
+### 31.1 Arquitectura aislada del piloto
+
+```text
+iPad (Safari / app instalada) ──HTTPS──> https://<fichador-piloto>
+                                            │
+                                            └──HTTPS──> https://<backend-piloto>/api
+Admin RRHH piloto ────────────HTTPS──> https://<admin-piloto> ──HTTPS──┘
+                                                              │
+                                        PostgreSQL piloto <───┤
+                                        Storage piloto <──────┘
+```
+
+Los cinco recursos son independientes de producción: backend de una sola
+instancia, sitio estático del fichador, sitio estático del admin, DB y storage.
+No hay configuración versionada de hosting para backend ni admin; deben
+crearse/configurarse manualmente. El fichador sí tiene `fichador/netlify.toml`
+con build, SPA fallback y deploy previews/branch deploys apagados.
+
+URLs pendientes de asignación:
+
+| Recurso | URL/origen a completar |
+|---|---|
+| Backend | `https://<backend-piloto>`; API `https://<backend-piloto>/api` |
+| Fichador | `https://<fichador-piloto>` |
+| Admin | `https://<admin-piloto>` |
+
+### 31.2 Gates manuales antes de desplegar
+
+- [ ] Elegir proveedor/región y **una sola instancia** de backend. Más de una
+  requiere antes un store compartido para todos los rate limits (§25.3).
+- [ ] Crear DB piloto, distinta de producción, con backup/snapshot previo.
+- [ ] Crear storage piloto privado, distinto del de producción.
+- [ ] Crear los dos sitios estáticos separados (`frontend/` y `fichador/`).
+- [ ] Asignar las tres URLs HTTPS estables; no usar preview URLs.
+- [ ] Configurar secretos sólo en los paneles de cada servicio.
+- [ ] Verificar CI verde para el SHA exacto que se despliega.
+- [ ] Verificar migraciones de la DB piloto antes de iniciar el backend.
+- [ ] Construir el fichador con su `VITE_API_URL` final y comprobar `_headers`.
+- [ ] Medir `TRUST_PROXY_HOPS` (§31.7); es bloqueante para F12-B.
+- [ ] Desactivar la sonda de IP y hacer el smoke test previo al iPad.
+
+### 31.3 Variables del backend piloto
+
+No se registran valores reales en este documento.
+
+| Grupo | Variables | Política para piloto |
+|---|---|---|
+| Obligatorias sin default útil | `DATABASE_URL`, `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET` | DB piloto y secretos aleatorios exclusivos del piloto (mínimo 16 caracteres por schema; usar mayor entropía). Nunca reutilizar producción |
+| Entorno explícito | `NODE_ENV=production`, `APP_ENV=staging`, `PORT` si el proveedor no lo inyecta, `API_PREFIX=/api`, `TZ=America/Argentina/Cordoba` | No depender de defaults de desarrollo |
+| CORS | `CORS_ORIGIN=https://<admin-piloto>,https://<fichador-piloto>` | Sólo origins, sin path, barra final ni wildcard |
+| Proxy | `TRUST_PROXY_HOPS=<medido>`, `CLIENT_IP_DIAGNOSTICS_ENABLED=false` | La sonda se habilita sólo durante la medición |
+| Auth | `JWT_ACCESS_EXPIRES_IN=15m`, `JWT_REFRESH_EXPIRES_IN=7d` | Defaults aceptables; confirmar política del piloto |
+| Rate limits | `RATE_LIMIT_WINDOW_MS=900000`, `RATE_LIMIT_MAX=300`, `LOGIN_RATE_LIMIT_WINDOW_MS=900000`, `LOGIN_RATE_LIMIT_MAX=10`, `REFRESH_RATE_LIMIT_WINDOW_MS=900000`, `REFRESH_RATE_LIMIT_MAX=30`, `CLOCK_RATE_LIMIT_WINDOW_MS=300000`, `CLOCK_RATE_LIMIT_MAX=30`, `CLOCK_IP_RATE_LIMIT_MAX=300` | Defaults aceptables para una instancia; observar 429 durante el piloto |
+| Fichada | `CLOCK_PUNCH_COOLDOWN_SECONDS=60`, `CLOCK_ATTEMPT_PROCESSING_TTL_MS=60000`, `CLOCK_ATTEMPT_RETENTION_DAYS=30`, `CLOCK_ATTEMPT_MAINTENANCE_INTERVAL_MS=60000` | Defaults aprobados; no usar cooldown 0 en el piloto |
+| Jobs | `AUTOMATIC_JOBS_ENABLED` y variables de inactividad/catch-up | Decidir conscientemente. Si la DB piloto contiene datos compartidos de staging, revisar impacto de jobs antes de usar `true`; no dejar dos backends ejecutándolos sobre la misma DB |
+| Observabilidad | `PERFORMANCE_LOGGING_ENABLED=true`, `PERFORMANCE_LOGGING_SAMPLE_RATE=1`, `PERFORMANCE_LOG_INCLUDE_QUERY_METRICS=true`, umbrales `1000/3000` ms | Recomendado durante piloto controlado; revisar volumen y sanitización |
+| Storage | `PUNCH_PHOTO_STORAGE_PROVIDER` más credenciales del provider elegido | Debe apuntar sólo al storage piloto (§31.6) |
+| Migraciones | `DIRECT_URL` si el proveedor la necesita para `prisma migrate status/deploy` | Opcional y secreta; no usar contra producción |
+
+No definir `CLOCK_DEVICE_TOKEN` ni `JSON_BODY_LIMIT`: están retiradas. No
+ejecutar el demo seed ni configurar credenciales demo reales.
+
+### 31.4 Variables de los sitios estáticos
+
+**Fichador:** `VITE_API_URL=https://<backend-piloto>/api` es obligatoria en el
+hosting y el build falla si no es HTTPS. `VITE_APP_VERSION` es opcional pero
+recomendable (SHA corto o versión del piloto) para verla en RRHH.
+`FICHADOR_E2E_FAKE_FACE` es sólo una variable de proceso de Playwright: no se
+define en el sitio. `VITE_CLOCK_DEVICE_TOKEN` está prohibida y hace fallar el
+build.
+
+**Admin:** `VITE_API_URL=https://<backend-piloto>/api` y
+`VITE_DEMO_MODE=false`. No definir `VITE_DEMO_*` en el deploy. El repo no trae
+configuración de hosting/headers del admin: es un gate manual de
+infraestructura, no un cambio requerido por el fichador.
+
+### 31.5 CORS, HTTPS y CSP
+
+- `CORS_ORIGIN` contiene exactamente los origins HTTPS del admin y fichador.
+- `cors` refleja los headers del preflight; los tests existentes cubren
+  `Authorization: ClockDevice ...`. El admin usa Bearer/refresh en body y
+  `credentials: true` sigue habilitado.
+- Backend, admin y fichador deben responder por HTTPS con certificados
+  válidos. HTTP/localhost no cuenta como evidencia del piloto.
+- El build genera `dist/_headers`. Verificar en la respuesta real del
+  fichador `Content-Security-Policy` (no Report-Only), HSTS,
+  `Permissions-Policy: camera=(self)` y `connect-src` con exactamente el
+  origin del backend piloto.
+- No agregar wildcard, `unsafe-inline`, `unsafe-eval` ni origins de terceros.
+
+### 31.6 DB y storage
+
+**DB:** usar una DB piloto/staging, nunca producción. Antes del deploy:
+
+1. guardar backup/snapshot e identificar host y nombre sin pegarlos en logs;
+2. ejecutar `npx prisma migrate status` apuntando explícitamente a esa DB;
+3. comparar `_prisma_migrations` con `backend/prisma/migrations` y resolver
+   cualquier drift antes de escribir;
+4. confirmar que están las migraciones de `ClockPunchAttempt`, `ClockDevice`,
+   `deviceId` y ubicación vigente del dispositivo;
+5. documentar migraciones adicionales provenientes de `development`. El
+   antecedente de §26.1 registra dos en staging; no se asume que siga igual;
+6. no generar migraciones. F11.1 no cambió schema.
+
+**Storage:** `local` no es aceptable en un host efímero. Para el piloto se
+prefiere Google Drive porque el flujo de fichadas ya fue validado allí en
+staging; requiere `PUNCH_PHOTO_STORAGE_PROVIDER=google_drive`,
+`GOOGLE_DRIVE_ENABLED=true`, root folder y service account exclusivos del
+piloto. Alternativamente puede elegirse Cloudinary autenticado, pero debe
+validarse primero upload, descarga y borrado reales con una cuenta piloto.
+Confirmar carpeta/bucket privado, permisos mínimos, cuota, retención y que
+foto original y thumbnail creen dos `StorageFile` vinculados. Probar cleanup
+con un rechazo controlado antes del iPad, sin usar storage productivo.
+
+### 31.7 Medición obligatoria de `TRUST_PROXY_HOPS`
+
+No hace falta un endpoint nuevo: existe `GET /api/health/client-ip`, apagado
+por default, limitado y sin credenciales ni cookies.
+
+1. Desplegar el backend piloto con `TRUST_PROXY_HOPS=0` y
+   `CLIENT_IP_DIAGNOSTICS_ENABLED=true`.
+2. Desde una red cuya IP pública pueda verificarse, pedir
+   `GET https://<backend-piloto>/api/health/client-ip` y guardar `ip`,
+   `remoteAddress`, `xForwardedFor`, cantidad/orden de entradas y headers del
+   proveedor/CDN.
+3. Repetir desde una segunda salida real (por ejemplo datos móviles) para
+   distinguir cliente y proxies estables.
+4. Repetir enviando a propósito un valor falso a la izquierda de
+   `X-Forwarded-For`. El valor elegido finalmente nunca debe convertir esa
+   entrada controlada por el cliente en `req.ip`.
+5. Contar desde la derecha sólo los proxies realmente controlados por la
+   plataforma entre el socket y el cliente. Configurar ese número exacto
+   (0–5), reiniciar y repetir ambos orígenes más el intento de spoofing.
+6. PASS: `req.ip` coincide con cada cliente real, cambia entre ambas redes y
+   no coincide con la entrada falsa; `remoteAddress`/cadena explican todos los
+   saltos. Si no, ajustar y repetir; nunca probar valores al azar en piloto.
+7. Fijar el valor verificado, poner
+   `CLIENT_IP_DIAGNOSTICS_ENABLED=false`, reiniciar y confirmar 404 en la
+   sonda. Repetir la medición si se agrega o retira CDN/proxy.
+
+### 31.8 Smoke test previo y observabilidad
+
+Antes del iPad, con un legajo exclusivamente de prueba o persona autorizada:
+
+- health 200 y `appEnv=staging`;
+- login RRHH real, listado de dispositivos y resolución de pairing;
+- registro PENDING → aprobación → ACTIVE → heartbeat/ONLINE;
+- búsqueda, status, IN, cooldown, OUT y consulta de recovery por el mismo
+  `requestId`;
+- una sola fichada/auditoría por intención; response guardado en COMPLETED;
+- original y thumbnail en storage piloto; descarga protegida y cleanup;
+- revocar el dispositivo de smoke test al terminar, sin borrar historia.
+
+Logs/mediciones existentes a observar:
+
+| Señal | Evidencia |
+|---|---|
+| HTTP, heartbeat, auth/recovery, 401/403/409/429/5xx | log JSON de request: ruta sanitizada, status, duración, requestId y queries |
+| Fichada | `CLOCK_PHOTO_PUNCH_TOTAL_TIMING` y `CLOCK_PHOTO_PUNCH_PHASE_TIMING` |
+| Storage | `CLOCK_PHOTO_STORAGE_TIMING`, `CLOCK_PHOTO_THUMBNAIL_TIMING` y errores `CLOCK_*STORAGE*`/`CLOCK_PHOTO_THUMBNAIL_FAILED` |
+| Attempt | 201 + fila `COMPLETED`; `CLOCK_ATTEMPT_FAILED` o `CLOCK_PUNCH_POST_COMMIT_STEP_FAILED` en error |
+| Device | `lastSeenAt`, `lastIp`, `lastAppVersion`, estado ONLINE/OFFLINE y `CLOCK_DEVICE_PRESENCE_UPDATE_FAILED` |
+| Auditoría | un `AuditLog` por fichada, activación y revocación |
+| CSP/cámara/red | consola remota de Safari y mensajes de la PWA, sin agregar telemetría todavía |
+
+Nunca registrar foto/base64, thumbnail, `Authorization`, secreto del device,
+hashes, JWT, pairing hash ni URLs/credenciales de DB/storage.
+
+### 31.9 Checklist de iPad para F12-B
+
+Registrar cada fila como `PASS`, `FAIL`, `OBSERVAR` o `NO PROBADO`, con fecha,
+iPad/iPadOS, versión desplegada y evidencia breve.
+
+| Área | Escenario | Criterio PASS |
+|---|---|---|
+| Instalación | Abrir HTTPS en Safari, Agregar a inicio y abrir el ícono | Modo standalone, sin barra de Safari y sin errores CSP |
+| Enrolamiento | Configurar desde el ícono, pairing RRHH, ACTIVE | Credencial sólo en la app instalada; heartbeat y panel “En línea” |
+| Cámara | Permiso inicial, captura válida y foto congelada | Preview fluida; al confirmar se apagan tracks y queda la captura |
+| Cámara | Permiso denegado/bloqueado | Mensaje accionable, sin request ni fichada |
+| Background | Cambiar de app antes de confirmar y volver | Cámara apagada; no reabre sola; la próxima intención usa requestId nuevo |
+| Wake Lock | Visible, background/foreground, batería/corriente | Se mantiene cuando iPadOS lo permite y se readquiere al volver; cualquier limitación se marca OBSERVAR |
+| IN | Ingreso real controlado | Hora del servidor, una fichada, audit y attempt COMPLETED |
+| Cooldown | Nueva intención dentro de 60 s | 409 con cuenta regresiva; no duplica |
+| OUT | Salida luego del cooldown | Cierra la misma jornada y genera horas/tramos esperados |
+| Recovery | Interrumpir la respuesta sin cambiar la intención | Consulta/reenvío conserva el mismo requestId y nunca duplica |
+| PWA | Reload y actualización mientras está idle/ocupada | SW activo; actualización sólo idle; no interrumpe cámara/envío/aviso |
+| Offline | Carga previa online, luego sin red | Shell y detector abren; fichada bloqueada claramente; al volver la red recupera |
+| Persistencia | Cerrar/reabrir y reiniciar iPad | Mantiene credencial. Si iOS limpia storage: OBSERVAR, reenrolar y documentar |
+| Orientación | Portrait y landscape | Sin overflow, solapamiento ni controles inaccesibles |
+| Acceso guiado | Activar, bloquear/salir y volver | Reduce salidas accidentales; documentar que no es control de seguridad |
+| RRHH | Presencia, nombre/ubicación, fichada en Asistencia | Dispositivo y actor técnico correctos, sin DNI completo en el kiosco |
+
+Una fila crítica de fichada, duplicación, seguridad, storage, CSP o recovery en
+`FAIL` bloquea el piloto. `OBSERVAR` sólo se admite para comportamiento
+best-effort/plataforma (Wake Lock o persistencia iOS) con workaround operativo
+documentado. `NO PROBADO` nunca permite cerrar F12.
+
+### 31.10 Rollback y cierre de F12-A
+
+Rollback del piloto, en orden:
+
+1. revocar el `ClockDevice` desde RRHH (bloqueo server-side inmediato);
+2. despublicar/proteger el sitio del fichador o retirar su acceso, sin borrar
+   historia ni reutilizar el origin para otro entorno;
+3. detener la instancia del backend piloto si el problema es general;
+4. conservar DB, `AuditLog`, attempts, fichadas y `StorageFile` para análisis;
+5. rotar secretos/credenciales sólo si hay sospecha de exposición;
+6. restaurar desde snapshot únicamente ante corrupción confirmada y con plan
+   revisado; nunca como limpieza rutinaria.
+
+**Bloqueos actuales para F12-B:** faltan crear/asignar manualmente backend,
+admin, fichador, DB y storage aislados; completar URLs y secretos; verificar
+migraciones/drift; medir `TRUST_PROXY_HOPS`; confirmar headers/CORS reales;
+elegir el legajo/persona autorizada y el iPad/iPadOS. Ninguno requiere hoy un
+cambio de código. El próximo paso es crear esos recursos manualmente, llenar
+la checklist de gates y ejecutar el smoke test previo; recién después se
+agenda la prueba física de §31.9.
