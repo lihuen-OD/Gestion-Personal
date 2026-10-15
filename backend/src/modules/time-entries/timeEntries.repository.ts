@@ -1,4 +1,4 @@
-import { ApprovalStatus, EmployeeStatus, Prisma, WorkShiftSource, WorkShiftStatus } from "@prisma/client";
+import { ApprovalStatus, EmployeeStatus, Prisma, WorkShiftSource, WorkShiftStatus, type WorkShift } from "@prisma/client";
 import { prisma, type PrismaTransactionClient } from "../../shared/prisma/client";
 import { AppError } from "../../shared/errors/AppError";
 import { FICHADA_ORIGIN_NOTE } from "./timeEntryObservationText";
@@ -177,13 +177,30 @@ type PunchEvidenceInput = {
 };
 
 /**
- * F11 (docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md §30): la auditoría de una
- * fichada se escribe DENTRO de la transacción que la registra
- * (auditService.registerWithin). Si la auditoría falla, la fichada se revierte
- * entera: nunca queda una fichada confirmada sin su AuditLog. Recibe la
- * jornada creada o cerrada para usar su id.
+ * Escritura que corre DENTRO de la transacción de una fichada, con la jornada
+ * ya escrita (creada o cerrada), que recibe para usar su id y sus horarios.
+ * Si falla, la fichada entera se revierte. La fichada la usa para:
+ * - F11 (docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md §30): su AuditLog
+ *   (auditService.registerWithin); nunca queda una fichada sin auditoría.
+ * - F11.1 (§30.15): pasar su ClockPunchAttempt a COMPLETED con el resultado;
+ *   nunca queda una fichada confirmada con el intento PROCESSING, ni un
+ *   intento COMPLETED sin fichada.
  */
-export type ClockPunchAuditWriter = (tx: PrismaTransactionClient, workShift: { id: string }) => Promise<unknown>;
+export type ClockPunchTransactionWriter = (tx: PrismaTransactionClient, workShift: WorkShift) => Promise<unknown>;
+
+export type ClockPunchAttemptKey = { requestId: string; deviceId: string; employeeId: string; punchType: "INGRESO" | "SALIDA" };
+
+/**
+ * F11.1: el intento ya no estaba PROCESSING para ese dispositivo, empleado y
+ * tipo cuando la fichada iba a confirmarlo (el TTL lo venció, otro proceso lo
+ * cerró). Revierte la fichada: nunca se confirma contra un intento FAILED.
+ */
+export class ClockPunchAttemptNotProcessing extends Error {
+  constructor(readonly requestId: string) {
+    super("CLOCK_ATTEMPT_NOT_PROCESSING");
+    this.name = "ClockPunchAttemptNotProcessing";
+  }
+}
 
 // Segmento ya clasificado (etapa de Turnos V1 — clasificación multi-concepto):
 // cada tramo trae su propio concepto detectado, no uno uniforme para toda la
@@ -618,21 +635,30 @@ export const timeEntriesRepository = {
     return prisma.clockPunchAttempt.findUnique({ where: { requestId } });
   },
 
-  completeClockPunchAttempt(requestId: string, response: Prisma.InputJsonValue) {
-    return prisma.clockPunchAttempt.update({
-      where: { requestId },
+  // F11.1: el intento pasa a COMPLETED DENTRO de la transacción de la fichada
+  // (`db` es esa transacción; ver ClockPunchTransactionWriter) y sólo desde
+  // PROCESSING, con su mismo dispositivo, empleado y tipo. Si no coincide,
+  // lanza y la fichada se revierte.
+  async completeClockPunchAttempt(key: ClockPunchAttemptKey, response: Prisma.InputJsonValue, db: PrismaTransactionClient) {
+    const { count } = await db.clockPunchAttempt.updateMany({
+      where: { ...key, status: "PROCESSING" },
       data: { status: "COMPLETED", response, completedAt: new Date(), errorCode: null, errorMessage: null, httpStatus: 200 },
     });
+    if (count !== 1) throw new ClockPunchAttemptNotProcessing(key.requestId);
   },
 
   // F7.1: `retryAfterSeconds` (público, si el error lo traía) queda en
   // `response` para reproducir el mismo error en el reintento (clockAttemptErrorMeta.ts).
-  failClockPunchAttempt(requestId: string, error: { code: string; message: string; httpStatus: number; retryAfterSeconds?: number }) {
+  // F11.1: sólo un intento PROCESSING pasa a FAILED. Un COMPLETED (fichada ya
+  // confirmada en su transacción) nunca se pisa. Devuelve el intento tal como
+  // quedó, para que el llamador sepa si la fichada se confirmó.
+  async failClockPunchAttempt(requestId: string, error: { code: string; message: string; httpStatus: number; retryAfterSeconds?: number }) {
     const response = failedAttemptResponse(error);
-    return prisma.clockPunchAttempt.update({
-      where: { requestId },
+    await prisma.clockPunchAttempt.updateMany({
+      where: { requestId, status: "PROCESSING" },
       data: { status: "FAILED", errorCode: error.code, errorMessage: error.message, httpStatus: error.httpStatus, completedAt: new Date(), ...(response ? { response } : {}) },
     });
+    return prisma.clockPunchAttempt.findUnique({ where: { requestId } });
   },
 
   expireClockPunchAttempts(processingBefore: Date) {
@@ -1600,7 +1626,7 @@ export const timeEntriesRepository = {
     return { count, items };
   },
 
-  createOpenWorkShift(input: { employeeId: string; hourConceptId?: string; hourConceptName?: string; source: WorkShiftSource; startAt: Date; punchEvidence?: PunchEvidenceInput; cooldown?: ClockPunchCooldownGuard; audit?: ClockPunchAuditWriter }) {
+  createOpenWorkShift(input: { employeeId: string; hourConceptId?: string; hourConceptName?: string; source: WorkShiftSource; startAt: Date; punchEvidence?: PunchEvidenceInput; cooldown?: ClockPunchCooldownGuard; audit?: ClockPunchTransactionWriter; completeAttempt?: ClockPunchTransactionWriter }) {
     return prisma.$transaction(async (tx) => {
       if (input.cooldown) await guardClockPunchCooldown(tx, input.employeeId, input.cooldown);
       const punch = await tx.attendancePunch.create({
@@ -1626,11 +1652,12 @@ export const timeEntriesRepository = {
         },
       });
       if (input.audit) await input.audit(tx, workShift);
+      if (input.completeAttempt) await input.completeAttempt(tx, workShift);
       return workShift;
     });
   },
 
-  async rolloverExpiredOpenWorkShift(input: { openWorkShiftId: string; employeeId: string; hourConceptId?: string; hourConceptName?: string; source: WorkShiftSource; startAt: Date; missingOutObservation: string; punchEvidence?: PunchEvidenceInput; cooldown?: ClockPunchCooldownGuard; audit?: ClockPunchAuditWriter }) {
+  async rolloverExpiredOpenWorkShift(input: { openWorkShiftId: string; employeeId: string; hourConceptId?: string; hourConceptName?: string; source: WorkShiftSource; startAt: Date; missingOutObservation: string; punchEvidence?: PunchEvidenceInput; cooldown?: ClockPunchCooldownGuard; audit?: ClockPunchTransactionWriter; completeAttempt?: ClockPunchTransactionWriter }) {
     const newShift = await prisma.$transaction(async (tx) => {
       if (input.cooldown) await guardClockPunchCooldown(tx, input.employeeId, input.cooldown);
       const previous = await tx.workShift.findFirst({
@@ -1696,6 +1723,7 @@ export const timeEntriesRepository = {
         },
       });
       if (input.audit) await input.audit(tx, workShift);
+      if (input.completeAttempt) await input.completeAttempt(tx, workShift);
       return workShift;
     });
 
@@ -2054,8 +2082,10 @@ export const timeEntriesRepository = {
     punchEvidence?: PunchEvidenceInput;
     // F7: sólo la salida del fichador; el cierre manual de RRHH no lo pasa.
     cooldown?: ClockPunchCooldownGuard;
-    // F11: sólo la salida del fichador (el cierre manual audita aparte).
-    audit?: ClockPunchAuditWriter;
+    // F11/F11.1: sólo la salida del fichador (el cierre manual audita aparte
+    // y no tiene intento de fichada).
+    audit?: ClockPunchTransactionWriter;
+    completeAttempt?: ClockPunchTransactionWriter;
   }) {
     // Fuera de la transacción: sólo lecturas de configuración de sistema
     // (Horas Especiales activas + su alcance, conceptos nocturnos) que no
@@ -2281,6 +2311,7 @@ export const timeEntriesRepository = {
       }
 
       if (input.audit) await input.audit(tx, workShift);
+      if (input.completeAttempt) await input.completeAttempt(tx, workShift);
       return { workShift, entries, timeSegments };
       // maxWait: cuánto puede esperar para conseguir una conexión del pool
       // (default 2000ms, mismo valor -- no era el problema real). timeout:

@@ -1,6 +1,6 @@
 import { access } from "node:fs/promises";
 import { createHash } from "node:crypto";
-import { Prisma, type WorkShiftSource } from "@prisma/client";
+import { Prisma, type WorkShift, type WorkShiftSource } from "@prisma/client";
 import { env } from "../../config/env";
 import type { AuditContext } from "../audit/audit.service";
 import { auditService, clearAuditDerivedCaches } from "../audit/audit.service";
@@ -13,7 +13,7 @@ import { findUnapprovedEmployeeIdsForExport, isMonthlyClosureLocked } from "../.
 import { storageService } from "../../shared/storage/storage.service";
 import { storagePathBuilder } from "../../shared/storage/storagePathBuilder";
 import { timeEntriesRepository } from "./timeEntries.repository";
-import type { ClassifiedSegmentForPersistence, ClockPunchAuditWriter } from "./timeEntries.repository";
+import type { ClassifiedSegmentForPersistence, ClockPunchAttemptKey, ClockPunchTransactionWriter } from "./timeEntries.repository";
 import { ClockPunchCooldownConflict, clockPunchCooldownError, clockPunchCooldownGuard } from "./clockPunchCooldown";
 import { failedAttemptRetryAfterSeconds } from "./clockAttemptErrorMeta";
 import { attendanceRecipients, notifyUsers } from "../workforce-management/workforce.service";
@@ -730,7 +730,7 @@ function scheduleClockThumbnail(input: ClockPhotoPunchInput, thumbnail: Deferred
  * ficha de cero. Nunca hay dos fichadas ni dos auditorías.
  * Los cachés derivados de la auditoría se limpian después del commit.
  */
-function clockPunchAuditWriter(audit: AuditContext | undefined, description: string, employeeId: string, origin: ClockPunchOrigin): ClockPunchAuditWriter {
+function clockPunchAuditWriter(audit: AuditContext | undefined, description: string, employeeId: string, origin: ClockPunchOrigin): ClockPunchTransactionWriter {
   return (tx, workShift) => auditService.registerWithin(tx, {
     ...audit,
     action: "CREATE",
@@ -738,6 +738,59 @@ function clockPunchAuditWriter(audit: AuditContext | undefined, description: str
     entityId: workShift.id,
     description,
     after: clockPunchAuditAfter(workShift.id, employeeId, origin),
+  });
+}
+
+// Resultado público de una fichada (lo que responde photo-punch y lo que el
+// intento guarda para el reintento y para GET attempts). Se arma con la fila
+// de la jornada que devuelve la transacción, así lo guardado y lo respondido
+// son el mismo objeto.
+function clockEntryResult(employee: ClockValidationContext, workShift: Pick<WorkShift, "id" | "startAt">, previousOpenShift?: { id: string; startAt: Date }) {
+  return {
+    employee: publicEmployeeLabel(employee),
+    ...(previousOpenShift ? { previousOpenShift: { id: previousOpenShift.id, startAt: previousOpenShift.startAt, status: "FALTA_SALIDA" as const } } : {}),
+    workShift: { id: workShift.id, startAt: workShift.startAt },
+  };
+}
+
+function clockExitResult(employee: ClockValidationContext, workShift: Pick<WorkShift, "id" | "startAt" | "endAt" | "totalMinutes">, calculation: ReturnType<typeof buildShiftSegments>) {
+  return {
+    employee: publicEmployeeLabel(employee),
+    workShift: {
+      id: workShift.id,
+      startAt: workShift.startAt,
+      endAt: workShift.endAt,
+      totalMinutes: workShift.totalMinutes,
+      totalHours: Number((calculation.totalMinutes / 60).toFixed(2)),
+    },
+    segments: calculation.segments.map((segment) => ({
+      date: segment.date,
+      startAt: segment.startAt,
+      endAt: segment.endAt,
+      minutes: segment.minutes,
+      hours: segment.hours,
+      label: segment.label,
+    })),
+  };
+}
+
+/**
+ * F11.1 (docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md §30.15): el intento
+ * pasa a COMPLETED con el resultado DENTRO de la transacción de la fichada,
+ * después de su auditoría. Antes era un UPDATE posterior con `.catch(log)`: si
+ * fallaba, la fichada quedaba confirmada con el intento PROCESSING y la
+ * recuperación por requestId terminaba en "no confirmado". Ahora fichada,
+ * auditoría e intento se confirman o se revierten juntos.
+ */
+function clockAttemptCompletionWriter(key: ClockPunchAttemptKey, buildResult: (workShift: WorkShift) => unknown): ClockPunchTransactionWriter {
+  return (tx, workShift) => timeEntriesRepository.completeClockPunchAttempt(key, JSON.parse(JSON.stringify(buildResult(workShift))) as Prisma.InputJsonValue, tx);
+}
+
+// El error guardado de un intento FAILED, tal como lo recibe un reintento del
+// mismo requestId (F7.1: con su retryAfterSeconds original).
+function failedAttemptError(attempt: { errorMessage: string | null; httpStatus: number | null; errorCode: string | null; response: Prisma.JsonValue | null }) {
+  return new AppError(attempt.errorMessage || "La fichada no pudo completarse.", attempt.httpStatus || 409, attempt.errorCode || "CLOCK_ATTEMPT_FAILED", undefined, {
+    retryAfterSeconds: failedAttemptRetryAfterSeconds(attempt.response),
   });
 }
 
@@ -1273,12 +1326,15 @@ export const timeEntriesService = {
     if (!attempt || attempt.deviceId !== deviceId || attempt.employeeId !== employeeId) {
       throw new AppError("No se encontró el intento de fichada.", 404, "CLOCK_ATTEMPT_NOT_FOUND");
     }
+    // F11.1: un PROCESSING vencido es de verdad "no confirmado": la
+    // confirmación es atómica con la fichada, y la que llegue tarde se revierte
+    // (sólo completa desde PROCESSING). Si justo se confirmó, queda COMPLETED.
     if (attempt.status === "PROCESSING" && Date.now() - attempt.startedAt.getTime() > env.CLOCK_ATTEMPT_PROCESSING_TTL_MS) {
-      attempt = await timeEntriesRepository.failClockPunchAttempt(requestId, {
+      attempt = (await timeEntriesRepository.failClockPunchAttempt(requestId, {
         code: "CLOCK_ATTEMPT_TIMEOUT",
         message: "La fichada no pudo confirmarse dentro del tiempo esperado. Iniciá un nuevo intento.",
         httpStatus: 503,
-      });
+      })) ?? attempt;
     }
     // F7.1: en un FAILED, `response` sólo guarda la metadata pública del
     // error (clockAttemptErrorMeta.ts), que se publica dentro de `error` —el
@@ -1330,25 +1386,17 @@ export const timeEntriesService = {
       if (existing.status === "COMPLETED" && existing.response) return storedAttemptResponse(existing.response);
       // F7.1: reproduce el error guardado tal cual, incluido el
       // retryAfterSeconds ORIGINAL (no se recalcula con el reloj actual).
-      if (existing.status === "FAILED") {
-        throw new AppError(existing.errorMessage || "La fichada no pudo completarse.", existing.httpStatus || 409, existing.errorCode || "CLOCK_ATTEMPT_FAILED", undefined, {
-          retryAfterSeconds: failedAttemptRetryAfterSeconds(existing.response),
-        });
-      }
+      if (existing.status === "FAILED") throw failedAttemptError(existing);
       throw new AppError("La fichada todavía se está procesando.", 409, "CLOCK_ATTEMPT_PROCESSING");
     }
 
     try {
+      // F11.1: el intento queda COMPLETED dentro de la transacción de la
+      // fichada (clockAttemptCompletionWriter); acá no queda nada por confirmar.
       const result = await timeEntriesService.clockPhotoPunch(input, origin, audit, validationContext, contextMs);
-      const serialized = JSON.parse(JSON.stringify(result)) as Prisma.InputJsonValue;
-      const completionStarted = performance.now();
-      await timeEntriesRepository.completeClockPunchAttempt(input.requestId, serialized).catch((error) => {
-        console.error("CLOCK_ATTEMPT_COMPLETION_UPDATE_FAILED", { requestId: input.requestId, error });
-      });
       console.info("CLOCK_PHOTO_PUNCH_TOTAL_TIMING", {
         requestId: input.requestId,
         contextMs,
-        attemptCompletionMs: Number((performance.now() - completionStarted).toFixed(1)),
         totalMs: Number((performance.now() - totalStarted).toFixed(1)),
       });
       return result;
@@ -1356,13 +1404,28 @@ export const timeEntriesService = {
       const appError = error instanceof AppError
         ? error
         : new AppError("No pudimos completar la fichada. El intento no fue confirmado.", 503, "CLOCK_TEMPORARY_FAILURE");
-      // Sólo campos públicos del error; `details` nunca se persiste.
-      await timeEntriesRepository.failClockPunchAttempt(input.requestId, {
+      // Sólo campos públicos del error; `details` nunca se persiste. F11.1:
+      // sólo pasa a FAILED un intento PROCESSING, y devuelve cómo quedó.
+      const current = await timeEntriesRepository.failClockPunchAttempt(input.requestId, {
         code: appError.code,
         message: appError.message,
         httpStatus: appError.statusCode,
         retryAfterSeconds: appError.retryAfterSeconds,
-      }).catch(() => undefined);
+      }).catch(() => null);
+      // F11.1: la fichada ya se confirmó (intento COMPLETED en su
+      // transacción) y lo que falló fue un paso posterior: se responde el
+      // resultado guardado, igual que a un reintento del mismo requestId.
+      // Nunca se informa como no confirmada una fichada que existe.
+      if (current?.status === "COMPLETED" && current.response) {
+        console.error("CLOCK_PUNCH_POST_COMMIT_STEP_FAILED", {
+          severity: "critical",
+          requestId: input.requestId,
+          employeeId: input.employeeId,
+          deviceId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        return storedAttemptResponse(current.response);
+      }
       console.error("CLOCK_ATTEMPT_FAILED", {
         severity: appError.statusCode >= 500 ? "critical" : "warning",
         requestId: input.requestId,
@@ -1372,6 +1435,10 @@ export const timeEntriesService = {
         code: appError.code,
         httpStatus: appError.statusCode,
       });
+      // Ya estaba FAILED por otra vía (p. ej. el TTL lo venció y la
+      // confirmación se revirtió): se responde ese mismo error, el que verá
+      // un reintento del mismo requestId.
+      if (current?.status === "FAILED" && current.errorCode !== appError.code) throw failedAttemptError(current);
       throw appError;
     }
   },
@@ -1383,6 +1450,8 @@ export const timeEntriesService = {
     const punchType = input.punchType === "IN" ? "INGRESO" : "SALIDA";
     const now = new Date();
     const deviceLabel = clockDeviceAuditLabel(origin);
+    // F11.1: el intento que esta fichada confirma dentro de su transacción.
+    const attemptKey: ClockPunchAttemptKey = { requestId: input.requestId, deviceId: origin.device.id, employeeId: input.employeeId, punchType };
     // faceValidationStatus es un resultado calculado en el navegador (MediaPipe) y reportado por el
     // cliente: es una señal de UX/deterrencia contra fichadas accidentales, NO una verificación
     // biométrica server-side. Nada en el backend re-valida la foto contra el rostro del empleado.
@@ -1477,6 +1546,7 @@ export const timeEntriesService = {
               punchEvidence: evidence,
               cooldown,
               audit: clockPunchAuditWriter(audit, `Ingreso con foto registrado desde el dispositivo de fichada ${deviceLabel} para legajo ${employee.legajo}.`, employee.id, origin),
+              completeAttempt: clockAttemptCompletionWriter(attemptKey, (created) => clockEntryResult(employee, created, openShift)),
             });
           } catch (error) {
             await cleanupClockEvidence(evidence);
@@ -1493,18 +1563,7 @@ export const timeEntriesService = {
           await notifyMissingExit(employee.id, openShift.id, openShift.startAt);
           if (workShift.startPunchId) scheduleClockThumbnail(input, deferredThumbnail, evidence, workShift.startPunchId);
           await evaluateShiftEntry(employee.id, workShift.id, now);
-          return {
-            employee: publicEmployeeLabel(employee),
-            previousOpenShift: {
-              id: openShift.id,
-              startAt: openShift.startAt,
-              status: "FALTA_SALIDA",
-            },
-            workShift: {
-              id: workShift.id,
-              startAt: workShift.startAt,
-            },
-          };
+          return clockEntryResult(employee, workShift, openShift);
         }
         if (exceededMinutes > MAX_SHIFT_MINUTES) {
           await flagOpenShiftOverflowForReview(employee.id, openShift.id, exceededMinutes, now);
@@ -1524,6 +1583,7 @@ export const timeEntriesService = {
           punchEvidence: evidence,
           cooldown,
           audit: clockPunchAuditWriter(audit, `Ingreso con foto registrado desde el dispositivo de fichada ${deviceLabel} para legajo ${employee.legajo}.`, employee.id, origin),
+          completeAttempt: clockAttemptCompletionWriter(attemptKey, (created) => clockEntryResult(employee, created)),
         });
       } catch (error) {
         await cleanupClockEvidence(evidence);
@@ -1545,13 +1605,7 @@ export const timeEntriesService = {
         storageTotalMs: evidence.performance.totalMs,
         coreMs: Number((performance.now() - coreStarted).toFixed(1)),
       });
-      return {
-        employee: publicEmployeeLabel(employee),
-        workShift: {
-          id: workShift.id,
-          startAt: workShift.startAt,
-        },
-      };
+      return clockEntryResult(employee, workShift);
     }
 
     const openShift = currentOpenShift;
@@ -1566,9 +1620,11 @@ export const timeEntriesService = {
     }
     const { hourConcept, normalConcept, calculation } = exitPreparation;
 
+    let classifiedSegments: Awaited<ReturnType<typeof classifySegmentsForEmployee>>;
+    let created: Awaited<ReturnType<typeof timeEntriesRepository.closeOpenWorkShift>>;
     try {
-      const classifiedSegments = await classifySegmentsForEmployee(employee.id, calculation.segments, hourConcept);
-      const created = await timeEntriesRepository.closeOpenWorkShift({
+      classifiedSegments = await classifySegmentsForEmployee(employee.id, calculation.segments, hourConcept);
+      created = await timeEntriesRepository.closeOpenWorkShift({
         workShiftId: openShift.id,
         employeeId: employee.id,
         normalHourConceptId: normalConcept.id,
@@ -1580,45 +1636,8 @@ export const timeEntriesService = {
         punchEvidence: evidence,
         cooldown,
         audit: clockPunchAuditWriter(audit, `Salida con foto registrada desde el dispositivo de fichada ${deviceLabel} para legajo ${employee.legajo}.`, employee.id, origin),
+        completeAttempt: clockAttemptCompletionWriter(attemptKey, (closed) => clockExitResult(employee, closed, calculation)),
       });
-      clearAuditDerivedCaches();
-      if (created.workShift.endPunchId) scheduleClockThumbnail(input, deferredThumbnail, evidence, created.workShift.endPunchId);
-      await syncAutomaticBreakdownsAfterProcessedShift({
-        employeeId: employee.id,
-        workShiftId: created.workShift.id,
-        segments: classifiedSegments,
-        audit,
-      });
-      await evaluateShiftExitSafely(employee.id, created.workShift.id, now, classifiedSegments);
-      console.info("CLOCK_PHOTO_PUNCH_PHASE_TIMING", {
-        requestId: input.requestId,
-        punchType: input.punchType,
-        contextMs,
-        storageOriginalMs: evidence.performance.originalMs,
-        storageThumbnailMs: evidence.performance.thumbnailMs,
-        storageTotalMs: evidence.performance.totalMs,
-        transactionAndAuditMs: Number((performance.now() - coreStarted - evidence.performance.totalMs).toFixed(1)),
-        coreMs: Number((performance.now() - coreStarted).toFixed(1)),
-        segments: calculation.segments.length,
-      });
-      return {
-        employee: publicEmployeeLabel(employee),
-        workShift: {
-          id: created.workShift.id,
-          startAt: created.workShift.startAt,
-          endAt: created.workShift.endAt,
-          totalMinutes: created.workShift.totalMinutes,
-          totalHours: Number((calculation.totalMinutes / 60).toFixed(2)),
-        },
-        segments: calculation.segments.map((segment) => ({
-          date: segment.date,
-          startAt: segment.startAt,
-          endAt: segment.endAt,
-          minutes: segment.minutes,
-          hours: segment.hours,
-          label: segment.label,
-        })),
-      };
     } catch (error) {
       await cleanupClockEvidence(evidence);
       if (error instanceof ClockPunchCooldownConflict) throw clockPunchCooldownError(error.lastPunchAt, now, cooldownSeconds);
@@ -1630,6 +1649,29 @@ export const timeEntriesService = {
       }
       throw error;
     }
+    // F11.1: desde acá la salida ya está confirmada (fichada, auditoría e
+    // intento COMPLETED). Nada de lo que sigue compensa la evidencia.
+    clearAuditDerivedCaches();
+    if (created.workShift.endPunchId) scheduleClockThumbnail(input, deferredThumbnail, evidence, created.workShift.endPunchId);
+    await syncAutomaticBreakdownsAfterProcessedShift({
+      employeeId: employee.id,
+      workShiftId: created.workShift.id,
+      segments: classifiedSegments,
+      audit,
+    });
+    await evaluateShiftExitSafely(employee.id, created.workShift.id, now, classifiedSegments);
+    console.info("CLOCK_PHOTO_PUNCH_PHASE_TIMING", {
+      requestId: input.requestId,
+      punchType: input.punchType,
+      contextMs,
+      storageOriginalMs: evidence.performance.originalMs,
+      storageThumbnailMs: evidence.performance.thumbnailMs,
+      storageTotalMs: evidence.performance.totalMs,
+      transactionAndAuditMs: Number((performance.now() - coreStarted - evidence.performance.totalMs).toFixed(1)),
+      coreMs: Number((performance.now() - coreStarted).toFixed(1)),
+      segments: calculation.segments.length,
+    });
+    return clockExitResult(employee, created.workShift, calculation);
   },
 
   async update(id: string, input: UpdateTimeEntryInput, user: Express.AuthUser, audit?: AuditContext) {
