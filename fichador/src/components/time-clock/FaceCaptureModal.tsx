@@ -3,6 +3,8 @@ import { AlertTriangle, Camera, CheckCircle2, Loader2, X } from "lucide-react";
 import { FaceDetector, FilesetResolver, type Detection } from "@mediapipe/tasks-vision";
 import { Modal } from "../ui/Modal";
 import { Button } from "../ui/Button";
+import { isIOSDevice } from "../../pwa/platform";
+import { CAMERA_PAUSED_MESSAGE } from "./captureMessages";
 
 export type FaceValidationStatus = "VALID" | "NO_FACE" | "MULTIPLE_FACES" | "LOW_LIGHT" | "FACE_TOO_SMALL" | "CAMERA_ERROR";
 
@@ -40,6 +42,9 @@ export const CAMERA_MESSAGES = {
   insecureContext: "La cámara sólo funciona con una conexión segura (HTTPS). Avisá a RRHH.",
   unavailable: "Cámara no disponible en este dispositivo.",
   denied: "Permití el acceso a la cámara para registrar la fichada.",
+  // F10: en iPad/iPhone un permiso denegado no se vuelve a preguntar; se
+  // habilita desde los ajustes del equipo (sin inventar una ruta exacta).
+  deniedIOS: "El acceso a la cámara está bloqueado. Activalo desde Ajustes del dispositivo y volvé al fichador.",
   notFound: "No se encontró una cámara en este dispositivo.",
   busy: "La cámara está siendo usada por otra aplicación. Cerrala e intentá nuevamente.",
   unexpected: "No se pudo iniciar la cámara. Intentá nuevamente.",
@@ -50,9 +55,9 @@ export function cameraUnavailableMessage(isSecureContext: boolean) {
   return isSecureContext ? CAMERA_MESSAGES.unavailable : CAMERA_MESSAGES.insecureContext;
 }
 
-export function cameraErrorMessage(error: unknown) {
+export function cameraErrorMessage(error: unknown, ios: boolean = isIOSDevice()) {
   const name = error instanceof Error || error instanceof DOMException ? error.name : "";
-  if (["NotAllowedError", "SecurityError", "PermissionDeniedError"].includes(name)) return CAMERA_MESSAGES.denied;
+  if (["NotAllowedError", "SecurityError", "PermissionDeniedError"].includes(name)) return ios ? CAMERA_MESSAGES.deniedIOS : CAMERA_MESSAGES.denied;
   if (["NotFoundError", "OverconstrainedError", "DevicesNotFoundError"].includes(name)) return CAMERA_MESSAGES.notFound;
   if (["NotReadableError", "TrackStartError", "AbortError"].includes(name)) return CAMERA_MESSAGES.busy;
   return CAMERA_MESSAGES.unexpected;
@@ -111,7 +116,9 @@ function averageBrightness(video: HTMLVideoElement) {
   return total / (data.length / 4);
 }
 
-function captureCompressedPhoto(video: HTMLVideoElement, maxWidth = 800, quality = 0.82) {
+// La evidencia se dibuja tal como la entrega la cámara (sin espejar): la vista
+// previa se espeja sólo por CSS para que la persona se vea "como en un espejo".
+export function captureCompressedPhoto(video: HTMLVideoElement, maxWidth = 800, quality = 0.82) {
   if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || video.videoWidth < 320 || video.videoHeight < 240) {
     throw new Error("La cámara todavía no entregó una imagen completa.");
   }
@@ -157,7 +164,22 @@ const SUBMISSION_TEXT: Record<SubmissionStage, { title: string; detail: string }
   confirming: { title: "Estamos confirmando tu fichada…", detail: "El servidor todavía la está procesando. No cierres esta pantalla." },
 };
 
-export function FaceCaptureModal({ punchType, onCancel, onConfirm, submitting = false, submissionStage = "sending" }: { punchType: "IN" | "OUT"; onCancel: () => void; onConfirm: (result: FaceCaptureResult) => void; submitting?: boolean; submissionStage?: SubmissionStage }) {
+/**
+ * Cámara de una fichada (F1; F8 etapas del envío; F10 ciclo de vida de kiosco,
+ * docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md §29).
+ *
+ * - La cámara se abre al montar el modal (una intención de fichar) y se apaga
+ *   al capturar, cancelar, cerrar o desmontar (también cuando el Gate desmonta
+ *   el fichador por una revocación). Nunca queda abierta en segundo plano.
+ * - Al capturar queda visible la foto congelada (sólo en memoria, mientras dure
+ *   la intención): nada de video negro durante "registrando / verificando /
+ *   confirmando", y no se vuelve a pedir la cámara ni a detectar rostros.
+ * - Si el fichador pasa a segundo plano antes de confirmar, la cámara y el
+ *   detector se apagan y se avisa a la página (`onInterrupted`): la captura
+ *   queda invalidada y se empieza de nuevo. Después de confirmar, el envío
+ *   sigue su curso (la foto ya se tomó).
+ */
+export function FaceCaptureModal({ punchType, onCancel, onConfirm, onInterrupted, submitting = false, submissionStage = "sending" }: { punchType: "IN" | "OUT"; onCancel: () => void; onConfirm: (result: FaceCaptureResult) => void; onInterrupted?: () => void; submitting?: boolean; submissionStage?: SubmissionStage }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const detectorRef = useRef<FaceDetector | null>(null);
@@ -166,11 +188,32 @@ export function FaceCaptureModal({ punchType, onCancel, onConfirm, submitting = 
   // F8: con la foto ya capturada la cámara se apaga; la detección no sigue
   // corriendo sobre el video negro (mostraba "imagen muy oscura" durante el envío).
   const capturedRef = useRef(false);
+  // F10: la cámara se apagó por pasar a segundo plano; nada la vuelve a encender.
+  const interruptedRef = useRef(false);
+  const onInterruptedRef = useRef(onInterrupted);
+  onInterruptedRef.current = onInterrupted;
   const [state, setState] = useState<FaceState>({ status: "LOADING", message: "Buscando rostro...", valid: false });
   const [cameraLabel, setCameraLabel] = useState<string>();
+  const [frozenFrame, setFrozenFrame] = useState<string | null>(null);
+
+  // Apaga detector y cámara y suelta el video. Idempotente.
+  const stopCamera = useCallback(() => {
+    if (frameRef.current) {
+      window.cancelAnimationFrame(frameRef.current);
+      window.clearTimeout(frameRef.current);
+      frameRef.current = undefined;
+    }
+    detectorRef.current?.close();
+    detectorRef.current = null;
+    streamRef.current?.getTracks().forEach((track) => track.stop());
+    streamRef.current = null;
+    if (videoRef.current) videoRef.current.srcObject = null;
+  }, []);
 
   useEffect(() => {
+    // Por corrida del efecto: StrictMode monta, desmonta y vuelve a montar.
     let cancelled = false;
+    const stopped = () => cancelled || interruptedRef.current;
 
     async function start() {
       if (!navigator.mediaDevices?.getUserMedia) {
@@ -187,7 +230,7 @@ export function FaceCaptureModal({ punchType, onCancel, onConfirm, submitting = 
           },
           audio: false,
         });
-        if (cancelled) {
+        if (stopped()) {
           stream.getTracks().forEach((track) => track.stop());
           return;
         }
@@ -202,14 +245,14 @@ export function FaceCaptureModal({ punchType, onCancel, onConfirm, submitting = 
         // Con el stream ya obtenido, la falla es de reproducción (play()), no
         // de permisos/dispositivo: no se la presenta como cámara ocupada.
         const message = streamRef.current ? CAMERA_MESSAGES.unexpected : cameraErrorMessage(error);
-        if (!cancelled) setState({ status: "CAMERA_ERROR", message, valid: false });
+        if (!stopped()) setState({ status: "CAMERA_ERROR", message, valid: false });
         return;
       }
 
       try {
         const vision = await FilesetResolver.forVisionTasks(WASM_URL);
-        if (cancelled) return;
-        detectorRef.current = await FaceDetector.createFromOptions(vision, {
+        if (stopped()) return;
+        const detector = await FaceDetector.createFromOptions(vision, {
           baseOptions: {
             modelAssetPath: MODEL_URL,
             delegate: "GPU",
@@ -217,12 +260,17 @@ export function FaceCaptureModal({ punchType, onCancel, onConfirm, submitting = 
           runningMode: "VIDEO",
           minDetectionConfidence: 0.55,
         });
+        if (stopped()) {
+          detector.close();
+          return;
+        }
+        detectorRef.current = detector;
 
         const detect = () => {
-          if (capturedRef.current) return;
+          if (capturedRef.current || stopped()) return;
           const currentVideo = videoRef.current;
-          const detector = detectorRef.current;
-          if (!currentVideo || !detector || currentVideo.readyState < 2) {
+          const currentDetector = detectorRef.current;
+          if (!currentVideo || !currentDetector || currentVideo.readyState < 2) {
             frameRef.current = window.requestAnimationFrame(detect);
             return;
           }
@@ -231,31 +279,41 @@ export function FaceCaptureModal({ punchType, onCancel, onConfirm, submitting = 
           if (brightness < 42) {
             setState({ status: "LOW_LIGHT", message: "La imagen está muy oscura. Buscá mejor iluminación.", valid: false });
           } else {
-            const detections = detector.detectForVideo(currentVideo, performance.now()).detections;
+            const detections = currentDetector.detectForVideo(currentVideo, performance.now()).detections;
             setState(statusForDetection(detections, currentVideo));
           }
           frameRef.current = window.setTimeout(detect, 220) as unknown as number;
         };
         detect();
       } catch {
-        if (!cancelled) setState({ status: "CAMERA_ERROR", message: CAMERA_MESSAGES.detectorUnavailable, valid: false });
+        if (!stopped()) setState({ status: "CAMERA_ERROR", message: CAMERA_MESSAGES.detectorUnavailable, valid: false });
       }
     }
 
     start();
     return () => {
       cancelled = true;
-      if (frameRef.current) {
-        window.cancelAnimationFrame(frameRef.current);
-        window.clearTimeout(frameRef.current);
-      }
-      detectorRef.current?.close();
-      streamRef.current?.getTracks().forEach((track) => track.stop());
+      stopCamera();
     };
-  }, []);
+  }, [stopCamera]);
+
+  // F10: a segundo plano antes de confirmar → cámara y detector apagados (iOS
+  // puede suspender el stream sin avisar) y la captura queda invalidada. Al
+  // volver nunca se reabre sola: se empieza una captura nueva.
+  useEffect(() => {
+    const onVisibilityChange = () => {
+      if (document.visibilityState !== "hidden" || capturedRef.current || interruptedRef.current) return;
+      interruptedRef.current = true;
+      stopCamera();
+      setState({ status: "CAMERA_ERROR", message: CAMERA_PAUSED_MESSAGE, valid: false });
+      onInterruptedRef.current?.();
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", onVisibilityChange);
+  }, [stopCamera]);
 
   const confirm = useCallback(() => {
-    if (submitting || submitGuardRef.current) return;
+    if (submitting || submitGuardRef.current || interruptedRef.current) return;
     const video = videoRef.current;
     if (!video || !state.valid) return;
     if (averageBrightness(video) < 42) {
@@ -281,12 +339,10 @@ export function FaceCaptureModal({ punchType, onCancel, onConfirm, submitting = 
 
     submitGuardRef.current = true;
     capturedRef.current = true;
-    if (frameRef.current) {
-      window.cancelAnimationFrame(frameRef.current);
-      window.clearTimeout(frameRef.current);
-    }
-    streamRef.current?.getTracks().forEach((track) => track.stop());
-    detectorRef.current?.close();
+    // F10: la foto tomada queda a la vista mientras se envía (sólo en memoria;
+    // se descarta con el modal).
+    setFrozenFrame(photo);
+    stopCamera();
     onConfirm({
       photo,
       thumbnail,
@@ -299,7 +355,7 @@ export function FaceCaptureModal({ punchType, onCancel, onConfirm, submitting = 
         cameraLabel,
       },
     });
-  }, [cameraLabel, onConfirm, state.score, state.valid, submitting]);
+  }, [cameraLabel, onConfirm, state.score, state.valid, stopCamera, submitting]);
 
   useEffect(() => {
     if (!submitting) submitGuardRef.current = false;
@@ -310,7 +366,8 @@ export function FaceCaptureModal({ punchType, onCancel, onConfirm, submitting = 
       <div className="face-capture">
         <p className="face-subtitle">Ubicá tu rostro dentro del recuadro para registrar la {punchType === "IN" ? "entrada" : "salida"}.</p>
         <div className="face-video-shell">
-          <video ref={videoRef} className="face-video" muted playsInline />
+          <video ref={videoRef} className={frozenFrame ? "face-video is-frozen" : "face-video"} muted playsInline />
+          {frozenFrame ? <img className="face-frozen" src={frozenFrame} alt="Foto tomada para esta fichada" /> : null}
           <div className="face-guide" aria-hidden="true" />
         </div>
         {submitting ? null : <FaceDetectionStatus state={state} />}

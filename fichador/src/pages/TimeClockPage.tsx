@@ -14,6 +14,7 @@ import { submitPunch, type PunchOutcome } from "../features/punch/punchSubmissio
 import { Button } from "../components/ui/Button";
 import { LoadingState } from "../components/ui/LoadingState";
 import type { FaceCaptureResult, SubmissionStage } from "../components/time-clock/FaceCaptureModal";
+import { CAMERA_PAUSED_MESSAGE } from "../components/time-clock/captureMessages";
 import { formatDateTime, formatTime } from "../utils/date";
 import { kioskActivity } from "../pwa/kioskActivity";
 
@@ -52,7 +53,9 @@ type PunchFlow =
 type PunchView =
   | { kind: "success"; punchType: PunchType; employee: ClockEmployee; at: string; previousOpenShiftAt?: string }
   | { kind: "cooldown"; deadline: number }
-  | { kind: "error"; message: string };
+  | { kind: "error"; message: string }
+  // F10: aviso neutro (no es un error), p. ej. la cámara se pausó al pasar a segundo plano.
+  | { kind: "notice"; message: string };
 
 const sleep = (ms: number) => new Promise<void>((resolve) => window.setTimeout(resolve, ms));
 
@@ -260,6 +263,16 @@ export function TimeClockPage() {
     intentLock.current = false;
   };
 
+  // F10: el fichador pasó a segundo plano con la cámara abierta y sin
+  // confirmar. La cámara ya se apagó: la intención se descarta (su requestId
+  // nunca se envió) y la próxima captura empieza de cero, con otro requestId.
+  const cameraInterrupted = () => {
+    if (punch?.step !== "capturing") return;
+    setPunch(null);
+    intentLock.current = false;
+    setView({ kind: "notice", message: CAMERA_PAUSED_MESSAGE });
+  };
+
   const finishIntent = () => {
     setPunch(null);
     intentLock.current = false;
@@ -440,6 +453,7 @@ export function TimeClockPage() {
             </div>
 
             {view?.kind === "error" ? <p className="error" role="alert">{view.message}</p> : null}
+            {view?.kind === "notice" ? <p className="clock-notice" role="status">{view.message}</p> : null}
             {error ? <p className="error" role="alert">{error}</p> : null}
           </>
         )}
@@ -452,6 +466,7 @@ export function TimeClockPage() {
             submitting={punch.step === "submitting"}
             submissionStage={punch.step === "submitting" ? punch.stage : "sending"}
             onCancel={cancelCapture}
+            onInterrupted={cameraInterrupted}
             onConfirm={(capture) => void confirmPhotoPunch(capture)}
           />
         </Suspense>
