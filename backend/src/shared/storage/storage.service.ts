@@ -3,6 +3,7 @@ import { AppError } from "../errors/AppError";
 import { cloudinaryStorageProvider } from "./cloudinaryStorage.provider";
 import { googleDriveStorageProvider } from "./googleDriveStorage.provider";
 import { localStorageProvider } from "./localStorage.provider";
+import { neonObjectStorageProvider } from "./neonObjectStorage.provider";
 import { storageFilesRepository } from "./storageFiles.repository";
 import { checksum, fileExtension, safeFileName, validateStorageFile } from "./storageValidation";
 import type {
@@ -16,6 +17,7 @@ import type {
 import { clockPunchMetric } from "../observability/clockPunchTelemetry";
 
 function providerByEnvName(name: string | undefined): StorageProvider {
+  if (name === "neon_object_storage") return neonObjectStorageProvider;
   if (name === "google_drive") return googleDriveStorageProvider;
   if (name === "cloudinary") return cloudinaryStorageProvider;
   return localStorageProvider;
@@ -47,9 +49,17 @@ function uploadProviderFor(module: ManagedStorageObjectInput["module"]): Storage
 }
 
 function providerName(resultProvider: string) {
+  if (resultProvider === "neon_object_storage") return "NEON_OBJECT_STORAGE" as const;
   if (resultProvider === "google_drive") return "GOOGLE_DRIVE" as const;
   if (resultProvider === "cloudinary") return "CLOUDINARY" as const;
   return "LOCAL" as const;
+}
+
+function telemetryProvider(selectedProvider: StorageProvider) {
+  if (selectedProvider === neonObjectStorageProvider) return "neon_object_storage";
+  if (selectedProvider === googleDriveStorageProvider) return "google_drive";
+  if (selectedProvider === cloudinaryStorageProvider) return "cloudinary";
+  return "local";
 }
 
 /**
@@ -85,6 +95,7 @@ const providerRegistry: Record<PersistedStorageProvider, StorageProvider> = {
   LOCAL: localStorageProvider,
   GOOGLE_DRIVE: googleDriveStorageProvider,
   CLOUDINARY: cloudinaryStorageProvider,
+  NEON_OBJECT_STORAGE: neonObjectStorageProvider,
 };
 
 function providerFor(name: PersistedStorageProvider): StorageProvider {
@@ -117,9 +128,9 @@ export const storageService = {
     try {
       const { telemetryRequestId: _telemetryRequestId, ...providerInput } = input;
       uploaded = await selectedProvider.upload({ ...providerInput, fileName });
-      if (input.telemetryRequestId) clockPunchMetric({ requestId: input.telemetryRequestId, phase: "primary_upload", durationMs: performance.now() - uploadStartedAt, bytes: input.buffer?.length, provider: selectedProvider === googleDriveStorageProvider ? "google_drive" : selectedProvider === cloudinaryStorageProvider ? "cloudinary" : "local", result: "success" });
+      if (input.telemetryRequestId) clockPunchMetric({ requestId: input.telemetryRequestId, phase: "primary_upload", durationMs: performance.now() - uploadStartedAt, bytes: input.buffer?.length, provider: uploaded.provider, result: "success" });
     } catch (error) {
-      if (input.telemetryRequestId) clockPunchMetric({ requestId: input.telemetryRequestId, phase: "primary_upload", durationMs: performance.now() - uploadStartedAt, bytes: input.buffer?.length, provider: selectedProvider === googleDriveStorageProvider ? "google_drive" : selectedProvider === cloudinaryStorageProvider ? "cloudinary" : "local", result: "error" });
+      if (input.telemetryRequestId) clockPunchMetric({ requestId: input.telemetryRequestId, phase: "primary_upload", durationMs: performance.now() - uploadStartedAt, bytes: input.buffer?.length, provider: telemetryProvider(selectedProvider), result: "error" });
       throw error;
     }
     try {
@@ -219,5 +230,9 @@ export const storageService = {
 
   async deleteStoredFile(file: StorageFileRef) {
     await providerFor(file.storageProvider).delete(file.storageKey, file.metadata);
+  },
+
+  existsStoredFile(file: StorageFileRef) {
+    return providerFor(file.storageProvider).exists?.(file.storageKey);
   },
 };

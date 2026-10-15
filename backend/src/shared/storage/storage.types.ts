@@ -7,7 +7,7 @@ import type {
 
 export type { PersistedStorageProvider };
 
-export type StorageProviderName = "local" | "cloudinary" | "google_drive";
+export type StorageProviderName = "local" | "cloudinary" | "google_drive" | "neon_object_storage";
 
 export interface StorageObjectInput {
   buffer?: Buffer;
@@ -41,6 +41,8 @@ export interface StorageObjectResult {
   cloudinaryAssetId?: string;
   cloudinaryVersion?: string;
   cloudinaryFormat?: string;
+  etag?: string;
+  checksumSha256?: string;
 }
 
 export interface ManagedStorageObjectInput extends StorageObjectInput {
@@ -76,6 +78,7 @@ export interface StorageProvider {
   getPublicUrl(storageKey: string, metadata?: unknown): string | undefined;
   getFilePath(storageKey: string): string | undefined;
   download?(storageKey: string, metadata?: unknown): Promise<StorageDownloadResult>;
+  exists?(storageKey: string): Promise<boolean>;
 }
 
 /**

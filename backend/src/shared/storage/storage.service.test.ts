@@ -6,6 +6,7 @@ import { storageService, storageProviderRegistry } from "./storage.service";
 import { localStorageProvider } from "./localStorage.provider";
 import { googleDriveStorageProvider } from "./googleDriveStorage.provider";
 import { cloudinaryStorageProvider } from "./cloudinaryStorage.provider";
+import { neonObjectStorageProvider } from "./neonObjectStorage.provider";
 import { storageFilesRepository } from "./storageFiles.repository";
 
 /**
@@ -26,6 +27,9 @@ vi.mock("./googleDriveStorage.provider", () => ({
 
 vi.mock("./cloudinaryStorage.provider", () => ({
   cloudinaryStorageProvider: { upload: vi.fn(), delete: vi.fn(), getPublicUrl: vi.fn(), getFilePath: vi.fn(), download: vi.fn() },
+}));
+vi.mock("./neonObjectStorage.provider", () => ({
+  neonObjectStorageProvider: { upload: vi.fn(), delete: vi.fn(), getPublicUrl: vi.fn(), getFilePath: vi.fn(), download: vi.fn(), exists: vi.fn() },
 }));
 
 vi.mock("./storageFiles.repository", () => ({
@@ -50,6 +54,7 @@ type MockProvider = { upload: Mock; delete: Mock; getPublicUrl: Mock; getFilePat
 const local = localStorageProvider as unknown as MockProvider;
 const drive = googleDriveStorageProvider as unknown as MockProvider;
 const cloudinary = cloudinaryStorageProvider as unknown as MockProvider;
+const neon = neonObjectStorageProvider as unknown as MockProvider;
 const filesRepo = storageFilesRepository as unknown as { findById: Mock; updateStatus: Mock; create: Mock };
 
 describe("storageService — provider persistido por StorageFile (Etapa 15D.1)", () => {
@@ -83,6 +88,13 @@ describe("storageService — provider persistido por StorageFile (Etapa 15D.1)",
     expect(result).toEqual({ buffer: Buffer.from("foto-cloudinary") });
     expect(cloudinary.download).toHaveBeenCalledWith("cloud-key-1", undefined);
     expect(drive.download).not.toHaveBeenCalled();
+  });
+
+  it("registry resuelve NEON_OBJECT_STORAGE sin afectar Google Drive histórico", async () => {
+    neon.download.mockResolvedValue({ buffer: Buffer.from("foto-neon") });
+    drive.download.mockResolvedValue({ buffer: Buffer.from("foto-drive") });
+    await expect(storageService.downloadStoredFile({ storageProvider: "NEON_OBJECT_STORAGE", storageKey: "new-key" })).resolves.toEqual({ buffer: Buffer.from("foto-neon") });
+    await expect(storageService.downloadStoredFile({ storageProvider: "GOOGLE_DRIVE", storageKey: "old-key" })).resolves.toEqual({ buffer: Buffer.from("foto-drive") });
   });
 
   it("deleteStoredFile usa el provider persistido, no el global activo, y pasa la metadata persistida (Etapa 15D.3)", async () => {

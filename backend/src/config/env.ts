@@ -55,7 +55,7 @@ const envSchema = z.object({
   LOGIN_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(10),
   REFRESH_RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(15 * 60 * 1000),
   REFRESH_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(30),
-  STORAGE_PROVIDER: z.enum(["local", "cloudinary", "google_drive"]).default("local"),
+  STORAGE_PROVIDER: z.enum(["local", "cloudinary", "google_drive", "neon_object_storage"]).default("local"),
   // Etapa 15D.2 (docs/decisions/STORAGE_UPLOAD_POLICY_15D2.md): opcionales,
   // sin default — sólo afectan qué provider recibe un upload NUEVO por
   // módulo/propósito. Cadena de resolución: la variable específica del
@@ -64,9 +64,15 @@ const envSchema = z.object({
   // igual que antes de esta etapa. La lectura/eliminación de archivos ya
   // existentes nunca usa estas variables — sigue resolviendo por
   // StorageFile.storageProvider persistido (Etapa 15D.1).
-  DEFAULT_STORAGE_PROVIDER: z.enum(["local", "cloudinary", "google_drive"]).optional(),
-  DOCUMENT_STORAGE_PROVIDER: z.enum(["local", "cloudinary", "google_drive"]).optional(),
-  PUNCH_PHOTO_STORAGE_PROVIDER: z.enum(["local", "cloudinary", "google_drive"]).optional(),
+  DEFAULT_STORAGE_PROVIDER: z.enum(["local", "cloudinary", "google_drive", "neon_object_storage"]).optional(),
+  DOCUMENT_STORAGE_PROVIDER: z.enum(["local", "cloudinary", "google_drive", "neon_object_storage"]).optional(),
+  PUNCH_PHOTO_STORAGE_PROVIDER: z.enum(["local", "cloudinary", "google_drive", "neon_object_storage"]).optional(),
+  NEON_OBJECT_STORAGE_ENDPOINT: z.string().url().optional(),
+  NEON_OBJECT_STORAGE_REGION: z.string().default("us-east-1"),
+  NEON_OBJECT_STORAGE_BUCKET: z.string().min(1).optional(),
+  NEON_OBJECT_STORAGE_ACCESS_KEY_ID: z.string().min(1).optional(),
+  NEON_OBJECT_STORAGE_SECRET_ACCESS_KEY: z.string().min(1).optional(),
+  NEON_OBJECT_STORAGE_TIMEOUT_MS: z.coerce.number().int().positive().default(5_000),
   CLOUDINARY_CLOUD_NAME: z.string().optional(),
   CLOUDINARY_API_KEY: z.string().optional(),
   CLOUDINARY_API_SECRET: z.string().optional(),

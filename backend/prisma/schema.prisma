@@ -154,6 +154,7 @@ enum StorageProvider {
   LOCAL
   CLOUDINARY
   GOOGLE_DRIVE
+  NEON_OBJECT_STORAGE
 }
 
 enum StorageModule {
