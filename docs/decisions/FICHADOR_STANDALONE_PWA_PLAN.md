@@ -1670,9 +1670,15 @@ ejecutado. No se implementó ninguna etapa nueva al reconciliar.
 | F9 | Heartbeat y gestión operativa de dispositivos: ping con `serverTime` y estado sin conexión (§13, §14.4); conectividad derivada en el panel; renombrar y cambiar sector; limpieza automática de `PENDING` vencidos; Asistencia muestra "Kiosco · <dispositivo>" (movido desde F7) | F10 + lo pendiente de la gestión de F5/F6 originales (`rename`, limpieza de pendientes, conectividad) | **Cerrada** el 2026-10-14 (§28). "Cambiar sector" se implementó como cambiar **establecimiento**: M2 retiró el sector del dispositivo |
 | F10 | Cámara y operación de kiosco: Wake Lock, cámara abierta vs. por fichada, permiso en standalone, instrucciones de instalación ("Agregar a inicio") y de Acceso guiado | F11 + instrucciones de instalación de F7 (hoy sólo hay un aviso genérico en el Gate) | **Cerrada** el 2026-10-15 (§29). La cámara sigue abriéndose por fichada; la validación en iPad real pasa a F12 (§29.13) |
 | F11 | Hardening y retiro del legado: retirar `/time-entries/clock/*` tras 7 días sin tráfico; retirar la ruta `/fichador` del admin y `AttendancePunch.kioskId`; límite de body antes de autenticar (R9); CSP enforced; auditoría de fichada no diferida; evaluar `CryptoKey` no exportable; store compartido de rate limit si hay más de una instancia (§25.3) | resto de F12 | **Cerrada** el 2026-10-15 (§30). El criterio de 7 días no aplicó (nunca hubo rollout, §30.3). `kioskId` (migración), la clave no exportable (cambio de protocolo) y el store compartido (una sola instancia) quedan diferidos |
-| F12 | Piloto: 1 iPad, 1 establecimiento, 2 semanas. Prerrequisitos: infraestructura real (§20.9) y `TRUST_PROXY_HOPS` medido (§18.5). Incluye la validación en iPad real que F10 no pudo hacer (§29.13) y la CSP enforced en Safari (§30.6) | F13 | Pendiente |
-| F13 | Rollout a producción, con aprobación explícita para migraciones | F14 | Pendiente |
+| F12 | Validación local cerrada + compatibilidad física en los dispositivos finalmente elegidos, sobre staging público real. La matriz candidata incluye iPadOS y Android, pero sólo son obligatorios los tipos seleccionados para el despliegue | F13 | **F12-local PASS**; infraestructura LAN técnicamente validada y prueba física diferida; device compatibility y public staging pendientes ([decisión vigente](FICHADOR_F12_LOCAL_CLOSURE_AND_DEVICE_COMPATIBILITY.md)) |
+| F13 | Rollout a producción, con aprobación explícita para migraciones; no incluye la creación de staging | F14 | **No iniciada**; bloqueada hasta cerrar F12 device compatibility en staging público |
 | F14 | Reconocimiento facial: proyecto aparte, requiere definición legal | F15 | Fuera de esta iniciativa |
+
+**Estado documental vigente (2026-10-15):** F0–F11.1 están cerradas;
+F12-local está en PASS. La compatibilidad física no falló: se difirió a un
+staging público con HTTPS válido porque todavía no se eligió el hardware
+final. F13 continúa siendo producción y no empezó. Ver la decisión de cierre
+de F12 para la evidencia, matriz y gates completos.
 
 **Equivalencias** para leer §12–§23 y los comentarios históricos:
 
@@ -3553,6 +3559,9 @@ por esto. Quedó documentado en `SECURITY_STANDARDS.md`.
   - `check-bundle-isolation` rechaza el build si el alias vuelve al bundle.
 - **`kioskId`:** migración con guarda cuando se autorice (§30.8).
 - **Deuda:** `expireOpenWorkShifts` sin auditoría.
+- **Storage:** se observó `CLOCK_STORAGE_ORPHAN_EVIDENCE_DETECTED` con
+  `count: 10`, preexistente y no asociado a un punch nuevo. Se investiga en
+  una etapa separada antes de producción; F12 no modifica ni limpia la DB.
 
 ### 30.15 F11.1 — confirmación atómica del intento
 
@@ -3612,6 +3621,13 @@ mostró una ampliación relevante del tiempo total frente al ruido normal de
 I/O. No se agregó cache, dependencia ni migración.
 
 ## 31. F12-A — preparación del piloto controlado
+
+> **Decisión posterior (2026-10-15):** esta preparación sigue siendo válida
+> como diseño del futuro staging público, pero ya no conduce a una prueba
+> exclusiva de iPad por LAN. F12-local cerró en PASS y la compatibilidad
+> física se ejecutará en public staging contra la matriz de hardware realmente
+> seleccionada. Ver
+> [FICHADOR_F12_LOCAL_CLOSURE_AND_DEVICE_COMPATIBILITY.md](FICHADOR_F12_LOCAL_CLOSURE_AND_DEVICE_COMPATIBILITY.md).
 
 Preparada el 2026-10-15 sobre `main` en `51dd7a4`. Es una etapa de
 infraestructura y validación: **cero cambios de runtime, schema o UI**. No se

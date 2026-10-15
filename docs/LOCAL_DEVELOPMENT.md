@@ -356,8 +356,10 @@ Para ver la foto congelada sin un backend lento, usar el E2E
   configurado en Safari se configura de nuevo desde el ícono y RRHH aprueba
   esa nueva solicitud.
 
-**iPad real.** No se validó en F10; queda en la checklist del piloto (F12,
-plan §29.13).
+**Dispositivos físicos reales.** F12-local cerró en PASS sobre Mac. La prueba
+de compatibilidad en iPadOS/Android se difirió deliberadamente al futuro
+staging público con HTTPS válido, cuando esté seleccionado el hardware final;
+no se considera un FAIL. Ver la decisión de cierre de F12 y el plan §31.
 
 **Prisma Client y cambio de rama.** Después de cambiar de rama, si el
 `schema.prisma` cambió, correr `npx prisma generate` en `backend/` y
